@@ -115,15 +115,38 @@ pub fn source(fid: u16) -> DoSource {
     }
 }
 
-/// Build the 16-byte full AID with the 4-byte device serial spliced in at
-/// offset 10.
-pub fn full_aid(serial: &[u8; 4]) -> [u8; 16] {
+/// The 8-digit device serial as 4 packed-BCD bytes, matching how a real YubiKey
+/// carries the serial in its OpenPGP AID (empirically `37 36 50 93` for device
+/// 37365093). Hosts render the OpenPGP card serial as raw hex, so BCD makes it
+/// read as the same decimal the device reports over PIV/OTP. The masked serial is
+/// <= 8 digits (`serial[0] & 0x03`), so it always fits.
+pub fn serial_bcd(serial: &[u8; 4]) -> [u8; 4] {
+    let mut n = u32::from_be_bytes(*serial);
+    let mut out = [0u8; 4];
+    for byte in out.iter_mut().rev() {
+        let lo = (n % 10) as u8;
+        n /= 10;
+        let hi = (n % 10) as u8;
+        n /= 10;
+        *byte = (hi << 4) | lo;
+    }
+    out
+}
+
+/// Build the 16-byte full AID: prefix + card-spec version + `manufacturer`
+/// (bytes 8-9) + the 4-byte `serial` at offset 10.
+pub fn full_aid(serial: &[u8; 4], manufacturer: u16) -> [u8; 16] {
     let mut aid = [0u8; 16];
     aid[..6].copy_from_slice(OPENPGP_AID);
     aid[6] = OPGP_VERSION_MAJOR;
     aid[7] = OPGP_VERSION_MINOR;
-    aid[8] = 0xff;
-    aid[9] = 0xfe;
+    aid[8..10].copy_from_slice(&manufacturer.to_be_bytes());
     aid[10..14].copy_from_slice(serial);
     aid
+}
+
+/// The device's full OpenPGP AID: the chip id masked to the 8-digit serial,
+/// BCD-encoded (YubiKey convention), spliced under `manufacturer`.
+pub fn aid_for(serial_id: &[u8; 8], manufacturer: u16) -> [u8; 16] {
+    full_aid(&serial_bcd(&rsk_mgmt::serial4(*serial_id)), manufacturer)
 }

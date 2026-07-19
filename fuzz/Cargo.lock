@@ -1444,6 +1444,7 @@ dependencies = [
  "rsa",
  "rsk-crypto",
  "rsk-fs",
+ "rsk-mgmt",
  "rsk-rsa-asm",
  "rsk-sdk",
  "x25519-dalek",

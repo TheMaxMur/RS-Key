@@ -110,6 +110,15 @@ const USB_PID: u16 = env_u16(env!("PK_USB_PID"));
 const USB_MANUFACTURER: &str = env!("PK_USB_MANUFACTURER");
 const USB_PRODUCT: &str = env!("PK_USB_PRODUCT");
 
+// OpenPGP AID manufacturer id: the Yubico id when we present the Yubico VID (so
+// hosts show the same vendor as a real YubiKey), else the unmanaged range — the
+// default RS-Key identity is not Yubico. Same condition as the descriptor strings.
+const OPENPGP_MFR: u16 = if USB_VID == 0x1050 {
+    rsk_openpgp::consts::OPGP_MFR_YUBICO
+} else {
+    rsk_openpgp::consts::OPGP_MFR_UNMANAGED
+};
+
 const fn env_u32(s: &str) -> u32 {
     let b = s.as_bytes();
     let mut acc = 0u32;
@@ -440,7 +449,7 @@ async fn main(spawner: Spawner) {
     config.max_power = 100;
     config.max_packet_size_0 = 64;
     // bcdDevice build counter; also surfaced on the trusted-display Firmware screen.
-    let device_release: u16 = 0x0830;
+    let device_release: u16 = 0x0835;
     config.device_release = device_release;
 
     let mut builder = Builder::new(

@@ -15,6 +15,9 @@ unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
 rsk-sdk = { workspace = true }
 rsk-fs = { workspace = true }
 rsk-crypto = { workspace = true }
+# `serial4` — the one canonical chip-id -> 8-digit-serial masking, already shared
+# by PIV/OTP/mgmt, so the OpenPGP AID serial matches the rest of the identity.
+rsk-mgmt = { workspace = true }
 # `alloc` for the Vec impls (RSA prime bytes + decipher plaintext).
 zeroize = { workspace = true, features = ["alloc"] }
 p256 = { workspace = true }

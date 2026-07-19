@@ -13,6 +13,52 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+### Fixed
+
+- **Four small YubiKey-conformance nits surfaced by a full differential against a
+  real YubiKey 5.7.4.** None broke tooling, but each now matches the YubiKey
+  byte-for-byte: (1) standalone GET DATA of the OpenPGP General Feature Management
+  DO (`7F74`) returned the bare flag `20` instead of the `81 01 20` sub-DO a real
+  card returns — the primitive-DO unwrap no longer strips this constructed DO;
+  (2) the OpenPGP algorithm-information DO (`FA`) advertised the DEC slot's NIST /
+  secp256k1 curves as ECDSA (`0x13`) instead of ECDH (`0x12`) — the applet already
+  accepted ECDH decryption keys, only the advertisement was wrong; (3) the CCID OTP
+  status was 7 bytes (a stray trailing `0x00`) instead of the canonical 6; (4) the
+  OATH device id / PBKDF2 salt (SELECT tag `71`) was the raw chip-id hex text,
+  making it predictable from the semi-public serial — it is now an opaque one-way
+  hash of the device seed, stable across boots like a YubiKey's. **A device with an
+  OATH access code set must re-set it once after this change** (the salt moved).
+  **bcdDevice → 0x0835.**
+
+- **The OpenPGP card serial now matches the rest of the device identity.** The
+  OpenPGP application AID (GET DATA `0x4F`) spliced in the *raw* chip-id bytes, so
+  hosts rendered a serial unrelated to the one PIV (`INS 0xF8`), Management READ
+  CONFIG and OTP GET SERIAL report — visible on Windows / Kleopatra as an OpenPGP
+  serial with no bearing on the PIV one (issue #44). OpenPGP now carries the
+  8-digit device serial as packed BCD, matching a real YubiKey (whose OpenPGP AID
+  holds e.g. `37 36 50 93` for device serial 37365093), so `gpg` renders the same
+  decimal across all applets. Persistent keys and PINs are unaffected: the PIN/DEK
+  derivation roots on `sha256` of the full 8-byte chip id, not the serial. On an
+  already-provisioned device GnuPG's scdaemon sees the card under its corrected
+  serial once and re-adopts it (a one-time reconnect, no re-provisioning).
+- **OpenPGP now reports the device firmware version and an identity-consistent
+  manufacturer.** The vendor VERSION command (INS `0xF1`, read by `ykman openpgp
+  info` as "Application version") returned a hardcoded `4.6.0` inherited from the
+  upstream project; it now returns the shared `FIRMWARE_VERSION` (default `5.7.4`,
+  `FW_VERSION`-overridable at build time) that FIDO / OATH / OTP / Management
+  already report, matching a real YubiKey where the OpenPGP applet version equals
+  the firmware version. The OpenPGP AID manufacturer id (bytes 8-9) now follows the
+  USB identity: `0x0006` (Yubico) on the `VIDPID=Yubikey5` interop build so hosts
+  show the same vendor as a real YubiKey, `0xFFFE` (unmanaged range) on the default
+  RS-Key identity, which is not Yubico.
+- **The OpenPGP Key Information DO (`0xDE`) is now spec-conformant.** It was emitted
+  as a bare child of the application-related-data (`0x6E`) with 0-indexed key
+  references (`00/01/02`); the OpenPGP Card 3.4 spec nests it inside the `0x73`
+  discretionary DOs with references `01/02/03` for SIG/DEC/AUT. `ykman >= 5.2` reads
+  the DO from the discretionary set and keys on those references, so with the
+  firmware version now reporting 5.7.4, `ykman openpgp info` used to crash
+  (`KeyError`); it now reads the card. **bcdDevice → 0x0834.**
+
 ## [0.3.10] - 2026-07-20
 
 ### Fixed

@@ -284,9 +284,12 @@ impl<'a> OtpApplet<'a> {
         [maj, min, patch, self.config_seq, opts, 0, 0]
     }
 
-    /// Push the 7-byte status record onto the CCID response.
+    /// Push the status record onto the CCID response. The Yubico OTP status is
+    /// 6 bytes — version(3), program sequence(1), 2-byte touch/valid level — so the
+    /// 7th byte of [`Self::status_bytes`] (the keyboard-frame-only idle status byte)
+    /// is dropped here to match a real YubiKey.
     fn status<S: Storage>(&mut self, fs: &mut Fs<S>, res: &mut ResBuf) -> Sw {
-        res.extend(&self.status_bytes(fs));
+        res.extend(&self.status_bytes(fs)[..6]);
         Sw::OK
     }
 

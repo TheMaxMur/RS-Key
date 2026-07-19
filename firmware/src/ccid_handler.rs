@@ -51,8 +51,8 @@ pub struct CcidApplets<'a> {
 }
 
 impl<'a> CcidApplets<'a> {
-    /// `serial_id` is the device chip id (its first 4 bytes go into the OpenPGP
-    /// full AID); `rng` is the hardware TRNG shared with the CTAPHID handler.
+    /// `serial_id` is the device chip id (its BCD-encoded 8-digit serial goes into
+    /// the OpenPGP full AID); `rng` is the hardware TRNG shared with the CTAPHID handler.
     /// The three `presence` params are the same physical presence source (BOOTSEL
     /// by default, optionally a GPIO button) behind per-applet traits (the
     /// caller's concrete `&RefCell` coerces to each).
@@ -79,7 +79,8 @@ impl<'a> CcidApplets<'a> {
             // The vendor reboot-to-BOOTSEL (P1=01) is gated by the same presence
             // as the rescue applet, closing the cross-AID bypass of that gate.
             vendor: VendorApplet::new(rescue_presence),
-            openpgp: OpenpgpApplet::new(serial_id, serial_hash, otp_key, rng, presence),
+            openpgp: OpenpgpApplet::new(serial_id, serial_hash, otp_key, rng, presence)
+                .with_manufacturer(crate::OPENPGP_MFR),
             management: ManagementApplet::new(serial_id, mgmt_presence),
             // Touch-flagged OATH credentials gate CALCULATE on the same button.
             oath: OathApplet::new(serial_id, serial_hash, otp_key, rng, oath_presence),

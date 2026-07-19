@@ -95,7 +95,10 @@ pub fn get_data<S: Storage>(
     // unwrapped `4F …` makes `ykman openpgp info` fail (`Incorrect TLV
     // length`, reproduced live on 0x0755). Flash DOs are raw stored values and
     // carry no wrapper to strip.
-    if !matches!(src, DoSource::Flash) && data_len > 0 && out[0] & 0x20 == 0 {
+    // EF_GFM (7F74) is a constructed DO whose value is itself the sub-DO 81 01 20;
+    // read standalone that value is one primitive TLV, but it must NOT be unwrapped
+    // — a real YubiKey returns the whole 81 01 20, and clients expect the sub-DO.
+    if !matches!(src, DoSource::Flash) && fid != EF_GFM && data_len > 0 && out[0] & 0x20 == 0 {
         let dec = outer_tlv_header(&out[..data_len]);
         if dec > 0 {
             out.copy_within(dec..data_len, 0);

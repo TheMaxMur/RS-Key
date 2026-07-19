@@ -122,9 +122,11 @@ pub struct OpenpgpApplet<'a> {
 }
 
 impl<'a> OpenpgpApplet<'a> {
-    /// `serial_id` is the device chip id (its first 4 bytes go into the full
-    /// AID); `serial_hash` + `serial_id` form the [`Device`] context for the PIN
-    /// KDF; `rng` is the shared hardware TRNG; `presence` the shared BOOTSEL button.
+    /// `serial_id` is the device chip id (its BCD-encoded 8-digit serial goes into
+    /// the full AID); `serial_hash` + `serial_id` form the [`Device`] context for
+    /// the PIN KDF; `rng` is the shared hardware TRNG; `presence` the shared BOOTSEL
+    /// button. The AID manufacturer defaults to the unmanaged range — see
+    /// [`Self::with_manufacturer`].
     pub fn new(
         serial_id: [u8; 8],
         serial_hash: [u8; 32],
@@ -132,18 +134,27 @@ impl<'a> OpenpgpApplet<'a> {
         rng: &'a RefCell<dyn Rng>,
         presence: &'a RefCell<dyn UserPresence>,
     ) -> Self {
-        let serial4 = [serial_id[0], serial_id[1], serial_id[2], serial_id[3]];
         Self {
             serial_id,
             serial_hash,
             otp_key,
-            full_aid: files::full_aid(&serial4),
+            // Default RS-Key identity; firmware calls `with_manufacturer` to swap
+            // in the Yubico id when it presents the Yubico VID.
+            full_aid: files::aid_for(&serial_id, consts::OPGP_MFR_UNMANAGED),
             sess: Session::new(),
             current_ef: None,
             rng,
             presence,
             scratch: [0u8; SCRATCH],
         }
+    }
+
+    /// Set the OpenPGP AID manufacturer id (bytes 8-9). Firmware passes
+    /// [`consts::OPGP_MFR_YUBICO`] on the Yubico-VID interop build so hosts show
+    /// the same vendor as a real YubiKey; the default is the unmanaged range.
+    pub fn with_manufacturer(mut self, manufacturer: u16) -> Self {
+        self.full_aid = files::aid_for(&self.serial_id, manufacturer);
+        self
     }
 
     /// Clear the RAM auth state. (File init is done once at boot via
@@ -446,11 +457,10 @@ impl<S: Storage> Applet<Fs<S>> for OpenpgpApplet<'_> {
                 sw
             }
             consts::INS_VERSION => {
-                res.extend(&[
-                    consts::PIPGP_VERSION_MAJOR,
-                    consts::PIPGP_VERSION_MINOR,
-                    0x00,
-                ]);
+                // Report the shared device firmware version, like a real YubiKey
+                // (whose OpenPGP applet version == its firmware version).
+                let (major, minor, patch) = rsk_sdk::FIRMWARE_VERSION;
+                res.extend(&[major, minor, patch]);
                 Sw::OK
             }
             consts::INS_MSE => mse::mse(&mut self.sess, apdu),
