@@ -13,6 +13,7 @@
 - [Releases & verification](releases.md)
 - [Supply chain](supply-chain.md)
 - [Linux host setup](linux.md)
+- [Windows host setup](windows.md)
 
 # Using the device
 
