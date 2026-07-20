@@ -90,6 +90,11 @@ bulk stream, ISO-7816 APDUs, CTAP2 CBOR. Defenses:
 - Before secure boot is enabled, this attacker wins against the OTP tier:
   their firmware reads the MKEK exactly like ours does. That is why the
   production page calls the two stages one story.
+- The **USB/smartcard identity** (VID/PID, manufacturer, product, OpenPGP AID
+  vendor) is fully host-configurable at runtime via the phy record and is not an
+  authenticity signal: a phy write that sets the Yubico VID makes a stock key
+  present a full Yubico identity. Treat it as cosmetic, never as proof a device is
+  genuine — attestation (device-key / org cert) is the authenticity mechanism.
 
 ### 4. Physical / lab attacks — OUT OF SCOPE
 

@@ -71,6 +71,7 @@ impl<'a> CcidApplets<'a> {
         otp_key: Option<[u8; 32]>,
         devk: Option<[u8; 32]>,
         kv_total: u32,
+        openpgp_mfr: u16,
     ) -> Self {
         Self {
             fs,
@@ -80,7 +81,7 @@ impl<'a> CcidApplets<'a> {
             // as the rescue applet, closing the cross-AID bypass of that gate.
             vendor: VendorApplet::new(rescue_presence),
             openpgp: OpenpgpApplet::new(serial_id, serial_hash, otp_key, rng, presence)
-                .with_manufacturer(crate::OPENPGP_MFR),
+                .with_manufacturer(openpgp_mfr),
             management: ManagementApplet::new(serial_id, mgmt_presence),
             // Touch-flagged OATH credentials gate CALCULATE on the same button.
             oath: OathApplet::new(serial_id, serial_hash, otp_key, rng, oath_presence),

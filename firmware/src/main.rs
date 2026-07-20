@@ -110,14 +110,19 @@ const USB_PID: u16 = env_u16(env!("PK_USB_PID"));
 const USB_MANUFACTURER: &str = env!("PK_USB_MANUFACTURER");
 const USB_PRODUCT: &str = env!("PK_USB_PRODUCT");
 
-// OpenPGP AID manufacturer id: the Yubico id when we present the Yubico VID (so
-// hosts show the same vendor as a real YubiKey), else the unmanaged range — the
-// default RS-Key identity is not Yubico. Same condition as the descriptor strings.
-const OPENPGP_MFR: u16 = if USB_VID == 0x1050 {
-    rsk_openpgp::consts::OPGP_MFR_YUBICO
-} else {
-    rsk_openpgp::consts::OPGP_MFR_UNMANAGED
-};
+/// OpenPGP AID manufacturer id for an effective USB VID: the Yubico id when the
+/// key presents the Yubico VID (so hosts show the same vendor as a real YubiKey),
+/// else the unmanaged range. Keyed on the EFFECTIVE (phy-overridden) VID, not the
+/// build VID, so a runtime Yubico repoint is internally consistent.
+/// ⚠ this lets a phy-repointed default key present a full Yubico identity at
+/// runtime — a deliberate masquerade capability (see docs/threat-model.md).
+fn openpgp_mfr_for(vid: u16) -> u16 {
+    if vid == 0x1050 {
+        rsk_openpgp::consts::OPGP_MFR_YUBICO
+    } else {
+        rsk_openpgp::consts::OPGP_MFR_UNMANAGED
+    }
+}
 
 const fn env_u32(s: &str) -> u32 {
     let b = s.as_bytes();
@@ -446,14 +451,25 @@ async fn main(spawner: Spawner) {
     let driver = UsbDriver::new(p.USB, Irqs);
     Timer::after_millis(200).await;
 
+    // Manufacturer string + OpenPGP AID vendor track the EFFECTIVE (phy-overridden)
+    // VID, so a runtime Yubico VID yields a consistent Yubico identity (fixes the
+    // "manufacturer stays RS-Key" report). ⚠ a phy-repointed key can thus present a
+    // full Yubico identity at runtime — a deliberate masquerade (docs/threat-model).
+    let usb_manufacturer = if usb_vid == 0x1050 {
+        "Yubico"
+    } else {
+        USB_MANUFACTURER
+    };
+    let openpgp_mfr = openpgp_mfr_for(usb_vid);
+
     let mut config = UsbConfig::new(usb_vid, usb_pid);
-    config.manufacturer = Some(USB_MANUFACTURER);
+    config.manufacturer = Some(usb_manufacturer);
     config.product = Some(usb_product);
     config.serial_number = Some("rs-key-0001");
     config.max_power = 100;
     config.max_packet_size_0 = 64;
     // bcdDevice build counter; also surfaced on the trusted-display Firmware screen.
-    let device_release: u16 = 0x083A;
+    let device_release: u16 = 0x083B;
     config.device_release = device_release;
 
     let mut builder = Builder::new(
@@ -842,6 +858,7 @@ async fn main(spawner: Spawner) {
         otp_mkek,
         otp_devk,
         kv_total,
+        openpgp_mfr,
     );
     spawner.spawn(worker_task(worker).unwrap());
 }

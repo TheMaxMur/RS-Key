@@ -276,6 +276,7 @@ impl<'a> Worker<'a> {
         otp_key: Option<[u8; 32]>,
         devk: Option<[u8; 32]>,
         kv_total: u32,
+        openpgp_mfr: u16,
     ) -> Self {
         Self {
             ctap: AppletHandler::new(
@@ -302,6 +303,7 @@ impl<'a> Worker<'a> {
                 otp_key,
                 devk,
                 kv_total,
+                openpgp_mfr,
             ),
             rng,
             presence,
