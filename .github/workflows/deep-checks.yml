@@ -230,8 +230,8 @@ jobs:
           nix develop -c cargo llvm-cov --summary-only --fail-under-lines 80 \
             --target x86_64-unknown-linux-gnu \
             -p rsk-sdk -p rsk-fs -p rsk-usb -p rsk-crypto -p rsk-fido -p rsk-openpgp \
-            -p rsk-rsa-asm -p rsk-mgmt -p rsk-oath -p rsk-otp -p rsk-piv -p rsk-rescue \
-            -p rsk-led -p rsk-ui -p rsk-bip39 -p rsk-slip39
+            -p rsk-rsa-asm -p rsk-sha512 -p rsk-mgmt -p rsk-oath -p rsk-otp -p rsk-piv \
+            -p rsk-rescue -p rsk-led -p rsk-ui -p rsk-bip39 -p rsk-slip39 -p rsk-bench
 
   complexity:
     runs-on: ubuntu-latest
