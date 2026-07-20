@@ -46,6 +46,24 @@ const FORM_FACTOR_USB_A_KEYCHAIN: u8 = 0x01;
 const INS_WRITE_CONFIG: u8 = 0x1C;
 const INS_READ_CONFIG: u8 = 0x1D;
 const INS_RESET: u8 = 0x1E;
+// ykman's device-wide reset (ManagementSession.device_reset) is INS 0x1F; RS-Key's
+// own placeholder was 0x1E. The DEFAULT build honours BOTH as a factory reset;
+// strict-config keeps them unsupported. DEFAULT-build only.
+#[cfg(not(feature = "strict-config"))]
+const INS_DEVICE_RESET: u8 = 0x1F;
+
+/// Pending device-wide factory-reset request, set by the Management RESET command
+/// and drained by the firmware after the command's SW_OK. DEFAULT build only.
+#[cfg(not(feature = "strict-config"))]
+static DEVICE_RESET: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+/// Take (and clear) a pending device-wide factory-reset request. The firmware
+/// polls this after the RESET SW_OK, then wipes all flash (keeping attestation)
+/// and reboots. `strict-config` never sets it (RESET stays `6D00`).
+#[cfg(not(feature = "strict-config"))]
+pub fn take_device_reset() -> bool {
+    DEVICE_RESET.swap(false, core::sync::atomic::Ordering::Relaxed)
+}
 
 /// EF holding the persisted enabled-applications TLV. Outside both the FIDO and
 /// OpenPGP reset scopes, so the capability config is sticky.
@@ -227,6 +245,19 @@ impl<'a> ManagementApplet<'a> {
             Err(DevConfError::Store) => Sw::MEMORY_FAILURE,
         }
     }
+
+    /// Management RESET (INS 0x1E / ykman's 0x1F): request a device-wide factory
+    /// reset. Even on the permissive default this is presence-gated — an
+    /// unauthenticated one-APDU wipe from any USB host would be a silent-brick
+    /// footgun. The firmware does the flash wipe + reboot after this SW_OK.
+    #[cfg(not(feature = "strict-config"))]
+    fn request_device_reset(&mut self) -> Sw {
+        if !self.require_presence(Confirm::titled("Factory reset the device?")) {
+            return Sw::CONDITIONS_NOT_SATISFIED;
+        }
+        DEVICE_RESET.store(true, core::sync::atomic::Ordering::Relaxed);
+        Sw::OK
+    }
 }
 
 impl<S: Storage> Applet<Fs<S>> for ManagementApplet<'_> {
@@ -252,8 +283,12 @@ impl<S: Storage> Applet<Fs<S>> for ManagementApplet<'_> {
         match apdu.ins {
             INS_READ_CONFIG => config_tlv(&self.serial, fs, res),
             INS_WRITE_CONFIG => self.write_config(apdu, fs),
-            // Device-wide factory reset is not implemented; ykman resets FIDO
-            // over CTAP instead.
+            // DEFAULT build: a presence-gated device-wide factory reset (ykman
+            // parity), serviced by the firmware after this SW_OK. strict-config
+            // keeps it unsupported (ykman resets FIDO over CTAP instead).
+            #[cfg(not(feature = "strict-config"))]
+            INS_RESET | INS_DEVICE_RESET => self.request_device_reset(),
+            #[cfg(feature = "strict-config")]
             INS_RESET => Sw::INS_NOT_SUPPORTED,
             _ => Sw::INS_NOT_SUPPORTED,
         }

@@ -93,8 +93,11 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   `EF_DEV_CONF` every READ CONFIG echoes — and the remaining OTP-HID admin slots:
   SCAN_MAP (`0x12`, functional — a stored custom scancode map remaps typed OTP
   output for non-US hosts) plus DEVICE_CONFIG (`0x11`) and NDEF (`0x08`/`0x09`) as
-  accept+store (inert on this USB-only board, no NFC radio). (Management RESET
-  lands in a follow-up commit behind the same feature.) **bcdDevice → 0x0840.**
+  accept+store (inert on this USB-only board, no NFC radio). Management RESET
+  (INS `0x1E` / ykman's `0x1F`) is a device-wide factory reset in the default build
+  — presence-gated even here, since an ungated one-APDU wipe would be a footgun —
+  wiping all flash but the org attestation and rebooting to re-provision; it stays
+  `6D00` under strict-config. **bcdDevice → 0x0841.**
 - **The USB manufacturer string and OpenPGP AID vendor now follow the effective
   (phy-overridden) VID at runtime.** Previously only the *build-time* VID chose them
   (`VIDPID=Yubikey5`), so a runtime Yubico-VID repoint via PicoForge kept the

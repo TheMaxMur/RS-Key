@@ -162,6 +162,18 @@ impl<'a> CcidApplets<'a> {
         self.resp.zeroize();
     }
 
+    /// Device-wide factory reset: wipe all flash but the org attestation, exactly
+    /// like the trusted-display factory-reset flow (`rsk_fido::survives_factory_reset`).
+    /// The next boot re-provisions a fresh seed. Called by the worker after a
+    /// Management RESET's SW_OK, then a reboot. DEFAULT build only.
+    #[cfg(not(feature = "strict-config"))]
+    pub fn factory_wipe(&mut self) {
+        let _ = self
+            .fs
+            .borrow_mut()
+            .factory_wipe(rsk_fido::survives_factory_reset);
+    }
+
     /// Drop any in-flight incoming command chain and held response remainder. Called
     /// before the out-of-band secure-PIN VERIFY dispatch so a host-initiated chaining
     /// latch cannot absorb the on-pad PIN as a chain segment (defence-in-depth beside

@@ -336,6 +336,14 @@ impl<'a> Worker<'a> {
                     if let Some(mode) = crate::vendor::take_reboot() {
                         self.reboot(mode).await;
                     }
+                    // A Management factory reset (DEFAULT build) likewise runs after
+                    // its SW_OK: wipe all flash but the attestation, then reboot to
+                    // re-provision a fresh seed.
+                    #[cfg(not(feature = "strict-config"))]
+                    if rsk_mgmt::take_device_reset() {
+                        self.ccid.factory_wipe();
+                        self.reboot(1).await;
+                    }
                 }
                 Either3::Second(_) => self.handle_otp_hid(),
                 Either3::Third(_) => {

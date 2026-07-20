@@ -323,7 +323,45 @@ fn bad_cla_and_ins_rejected() {
     assert_eq!(sw, Sw::CLA_NOT_SUPPORTED);
     let (sw, _) = process(&mut app, &mut fs, &[0x00, 0xEE, 0, 0, 0x00]);
     assert_eq!(sw, Sw::INS_NOT_SUPPORTED);
-    // RESET is recognised but deferred.
-    let (sw, _) = process(&mut app, &mut fs, &[0x00, INS_RESET, 0, 0, 0x00]);
-    assert_eq!(sw, Sw::INS_NOT_SUPPORTED);
+    // RESET stays unsupported under strict-config; on the default build it is a
+    // (presence-gated) device-wide reset, exercised by its own tests below.
+    #[cfg(feature = "strict-config")]
+    {
+        let (sw, _) = process(&mut app, &mut fs, &[0x00, INS_RESET, 0, 0, 0x00]);
+        assert_eq!(sw, Sw::INS_NOT_SUPPORTED);
+    }
+}
+
+#[cfg(not(feature = "strict-config"))]
+#[test]
+fn device_reset_denied_without_presence() {
+    // Even ungated everywhere else, a device-wide reset is presence-gated
+    // (irreversible). A declined touch refuses it and queues nothing — and does
+    // not touch the process-global reset flag.
+    let presence = RefCell::new(DenyPresence);
+    let mut app = ManagementApplet::new([0; 8], &presence);
+    let mut fs = fs();
+    for ins in [INS_RESET, 0x1F] {
+        let (sw, _) = process(&mut app, &mut fs, &[0x00, ins, 0, 0, 0x00]);
+        assert_eq!(sw, Sw::CONDITIONS_NOT_SATISFIED);
+    }
+}
+
+#[cfg(not(feature = "strict-config"))]
+#[test]
+fn device_reset_signals_the_firmware_on_presence() {
+    // The only test that touches the process-global DEVICE_RESET flag, so it can
+    // drain/observe it without racing a sibling. ykman sends 0x1F; RS-Key's own
+    // 0x1E is honoured too.
+    let _ = take_device_reset(); // clear any stale value
+    let presence = RefCell::new(AlwaysConfirm);
+    let mut app = ManagementApplet::new([0; 8], &presence);
+    let mut fs = fs();
+    let (sw, _) = process(&mut app, &mut fs, &[0x00, 0x1F, 0, 0, 0x00]);
+    assert_eq!(sw, Sw::OK);
+    assert!(
+        take_device_reset(),
+        "a presence-confirmed RESET queues the wipe"
+    );
+    assert!(!take_device_reset(), "take clears the flag");
 }
