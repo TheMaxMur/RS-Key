@@ -37,8 +37,13 @@ RS-Key is a USB composite device exposing two host-reachable transports:
 | **CTAPHID** (FIDO HID, usage page `0xF1D0`) | CTAP1/U2F, CTAP2, and the `authenticatorVendor 0x41` vendor command | `hidapi` |
 | **CCID** (PC/SC smart-card) | All ISO-7816 applets, selected by AID | `pyscard` / PC/SC |
 
-A keyboard (HID) interface also exists for Yubico OTP; it is not a configuration
-surface and is out of scope here.
+A keyboard (HID) interface also exists for Yubico OTP. On the default build it
+also carries the ykman OTP-HID admin writes (SET_DEVICE_INFO `0x15`,
+DEVICE_CONFIG `0x11`, SCAN_MAP `0x12`, NDEF `0x08`/`0x09`) — ungated, like a stock
+YubiKey; `strict-config` refuses them. SET_DEVICE_INFO shares the same
+`EF_DEV_CONF` DeviceInfo store as the CCID WRITE CONFIG (§6); the rest are inert
+on this USB-only board except SCAN_MAP (it remaps typed OTP output). The frame
+codec itself is otherwise out of scope here.
 
 ### 1.1 CCID APDU framing
 
@@ -284,8 +289,8 @@ applications are enabled. Source:
 | INS | Name | Request | Response |
 |---|---|---|---|
 | `1D` | READ CONFIG | — | DeviceInfo TLV (see below) |
-| `1C` | WRITE CONFIG | `data[0]` = inner length `n`, then `n` bytes of enabled-apps TLV (`n ≤ 64`) | — (user-presence-gated) |
-| `1E` | RESET | — | `6D00` (device-wide reset not implemented; reset FIDO over CTAP) |
+| `1C` | WRITE CONFIG | `data[0]` = inner length `n`, then `n` bytes of enabled-apps TLV (`n ≤ 64`) | — (ungated by default; presence-gated under `strict-config`) |
+| `1E` / `1F` | RESET / DEVICE RESET | — | device-wide factory reset (presence-gated) on the default build; `6D00` under `strict-config` |
 
 ### 6.1 DeviceInfo TLV (READ CONFIG `0x1D`)
 
@@ -323,10 +328,16 @@ FIDO2+U2F → inner blob `03 02 02 02`, full APDU
 `00 1C 00 00 05 04 03 02 02 02`.
 
 > WRITE CONFIG refuses an inner blob > 64 bytes (`6A80`) so a malformed config
-> can't wedge later reads. It also requires an **on-device user-presence
-> confirmation** (Approve on the trusted-display build, a BOOTSEL press
-> otherwise). A hostile USB host cannot rewrite the reported config on its own;
-> declined/timed-out → `6985`. There is no separate config-lock code.
+> can't wedge later reads. **On the default build the write is ungated** (full
+> ykman parity — any USB host can rewrite the reported config, matching a stock
+> YubiKey with no config-lock code). Building `--features strict-config` restores
+> an **on-device user-presence confirmation** (Approve on the trusted-display
+> build, a BOOTSEL press otherwise), so a hostile host cannot rewrite it
+> unattended (declined/timed-out → `6985`). RESET (`1E`/`1F`) is a device-wide
+> factory reset on the default build — presence-gated even there, since an
+> ungated one-APDU wipe would be a footgun — and `6D00` under `strict-config`.
+> Either way the identity is cosmetic, never an authenticity signal (see
+> docs/threat-model.md §1/§3).
 
 ---
 
@@ -386,7 +397,10 @@ firmware predates the rescue applet.
 > hostile USB host. Read-only status (`1E/*`), the pubkey read (`10/02`), SET RTC
 > (`1C/02`) and a warm reboot (`1F/00`) stay ungated.
 >
-> The **Management** applet's WRITE CONFIG (`§6`, INS `1C`) is gated the same way.
+> The **Management** applet's WRITE CONFIG (`§6`, INS `1C`) is gated the same way
+> **only under `strict-config`**; the default build ungates it (§6). The rescue
+> phy WRITE (`1C/01`), OTP-fuse burns and BOOTSEL reboot above stay gated in both
+> builds — they are not part of the ykman admin-write flip.
 >
 > The **vendor** applet (§8) exposes the same reboot verb, reachable over both the
 > CCID and CTAPHID transports; its `1F/01` (BOOTSEL) is gated identically, so the
@@ -530,7 +544,7 @@ Keys 3/4 are present only when a PIN is set (see gating).
 | `09` | ATT_IMPORT | `{1: blob(60), 2: DER chain}` | — | MSE + touch + PIN-token |
 | `0A` | ATT_CLEAR | — | — | MSE + touch + PIN-token |
 | `0B` | ATT_STATE | — | `{1: present, 2: sha256(chain)?}` | **ungated** |
-| `0C` | CONFIG_WRITE | `{1: target(uint), 2: blob(bstr)}` — target `0`=DEV_CONF, `1`=PHY, `2`=LED | — | touch + PIN-token; **no MSE** |
+| `0C` | CONFIG_WRITE | `{1: target(uint), 2: blob(bstr)}` — target `0`=DEV_CONF, `1`=PHY, `2`=LED | — | **ungated by default**; touch + PIN-token under `strict-config`; no MSE |
 | `0D` | CONFIG_READ | `{1: target(uint)}` — target `1`=PHY, `2`=LED | `{1: blob(bstr)}` | **ungated** |
 
 > ### Device configuration over FIDO (`CONFIG_WRITE 0x0C`)
@@ -546,9 +560,10 @@ Keys 3/4 are present only when a PIN is set (see gating).
 > firmware, which reloads the block after a `0x41` command (the LED atomics are
 > firmware-side; `CONFIG_READ 0x02` returns the current block, seeded with the build
 > defaults on first boot, so a host can read-modify-write it). No MSE channel. The
-> config is not secret. It is gated by a
-> physical touch **and**, when a PIN is set, a `pinUvAuthToken` with the `acfg`
-> permission (the MAC below): a **stronger** gate than the CCID path's
+> config is not secret. **On the default build this write is ungated** (full ykman
+> parity — any USB host process can rewrite it). Building `--features strict-config`
+> gates it on a physical touch **and**, when a PIN is set, a `pinUvAuthToken` with
+> the `acfg` permission (the MAC below): a **stronger** gate than the CCID path's
 > presence-only, because CTAPHID is reachable by any unprivileged host process.
 > The write lands in the same `EF_DEV_CONF`, so a later CCID READ CONFIG echoes it.
 
