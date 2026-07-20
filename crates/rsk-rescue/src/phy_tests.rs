@@ -103,3 +103,84 @@ fn save_and_load() {
     // The load-time default materializes ITF_ALL.
     assert_eq!(got.enabled_usb_itf, Some(USB_ITF_ALL));
 }
+
+#[test]
+fn overlay_preserves_untouched_tags() {
+    let base = PhyData {
+        vid_pid: Some((0x1050, 0x0407)),
+        usb_product: Product::new(b"Yubico YubiKey OTP+FIDO+CCID"),
+        led_order: Some(LED_ORDER_GRB),
+        led_num: Some(3),
+        opts: OPT_LED_STEADY,
+        enabled_usb_itf: Some(USB_ITF_ALL),
+        ..Default::default()
+    };
+    // A partial write that changes only VID/PID (tag 0x00).
+    let merged = base.overlay(&[TAG_VIDPID, 4, 0x12, 0x34, 0x56, 0x78]);
+    assert_eq!(merged.vid_pid, Some((0x1234, 0x5678)));
+    // Everything the host omitted survives — the picoforge#102 / RS-Key#33 bug.
+    assert_eq!(
+        merged.usb_product,
+        Product::new(b"Yubico YubiKey OTP+FIDO+CCID")
+    );
+    assert_eq!(merged.led_order, Some(LED_ORDER_GRB));
+    assert_eq!(merged.led_num, Some(3));
+    assert_eq!(merged.opts, OPT_LED_STEADY);
+}
+
+#[test]
+fn overlay_opts_only_changes_when_tag_present() {
+    let base = PhyData {
+        opts: OPT_LED_STEADY,
+        ..Default::default()
+    };
+    // No OPTS tag → opts preserved (a full `parse` would zero it — that is the
+    // reason overlay must key on physical tag presence, not the parsed struct).
+    assert_eq!(base.overlay(&[TAG_LED_GPIO, 1, 7]).opts, OPT_LED_STEADY);
+    // An explicit OPTS=0 TLV clears it.
+    assert_eq!(base.overlay(&[TAG_OPTS, 2, 0, 0]).opts, 0);
+}
+
+#[test]
+fn merge_save_does_not_wipe_stored_tags() {
+    let mut fs = rsk_fs::Fs::new(rsk_fs::storage::ram::RamStorage::new());
+    save(
+        &mut fs,
+        &PhyData {
+            vid_pid: Some((0x1050, 0x0407)),
+            usb_product: Product::new(b"Yubico YubiKey OTP+FIDO+CCID"),
+            led_order: Some(LED_ORDER_GRB),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    // A later VID/PID-only write must not reset the product or LED order.
+    merge_save(&mut fs, &[TAG_VIDPID, 4, 0x00, 0x00, 0x00, 0x00]).unwrap();
+    let got = load(&mut fs).unwrap();
+    assert_eq!(got.vid_pid, Some((0x0000, 0x0000)));
+    assert_eq!(
+        got.usb_product,
+        Product::new(b"Yubico YubiKey OTP+FIDO+CCID")
+    );
+    assert_eq!(got.led_order, Some(LED_ORDER_GRB));
+}
+
+#[test]
+fn normalize_appends_ccid_token_to_tokenless_yubikey_name() {
+    let mut out = [0u8; 64];
+    let n = normalize_usb_product(b"Yubico YubiKey", &mut out);
+    assert_eq!(&out[..n], b"Yubico YubiKey OTP+FIDO+CCID");
+    // Case-insensitive "yubikey" match; a lowercase 'ccid' is not the token ykman
+    // scans for, so the uppercase token is still appended.
+    let n = normalize_usb_product(b"my yubikey", &mut out);
+    assert_eq!(&out[..n], b"my yubikey OTP+FIDO+CCID");
+}
+
+#[test]
+fn normalize_leaves_compliant_or_non_yubikey_names_untouched() {
+    let mut out = [0u8; 64];
+    let n = normalize_usb_product(b"Yubico YubiKey OTP+FIDO+CCID", &mut out);
+    assert_eq!(&out[..n], b"Yubico YubiKey OTP+FIDO+CCID");
+    let n = normalize_usb_product(b"RS-Key Security Key", &mut out);
+    assert_eq!(&out[..n], b"RS-Key Security Key");
+}

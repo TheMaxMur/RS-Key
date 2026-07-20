@@ -44,6 +44,21 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Changed
 
+- **The USB manufacturer string and OpenPGP AID vendor now follow the effective
+  (phy-overridden) VID at runtime.** Previously only the *build-time* VID chose them
+  (`VIDPID=Yubikey5`), so a runtime Yubico-VID repoint via PicoForge kept the
+  manufacturer `RS-Key` and the OpenPGP AID vendor unmanaged; both now switch with
+  the effective VID for a consistent identity (fixes the "manufacturer stays RS-Key"
+  report, picoforge#102). ⚠️ this lets a phy-repointed default key present a full
+  Yubico identity at runtime — a deliberate masquerade capability, previously
+  build-time-only (see docs/threat-model.md). **bcdDevice → 0x083B.**
+- **A FIDO PHY config-write now warm-reboots the device by default**, so a
+  VID/PID/product/interface change applies without a manual replug (RS-Key#33). The
+  phy `DISABLE_POWER_RESET` option bit (clear by default) turns it off; a `CONFIG_READ`
+  never reboots.
+- **The `flow` and `sparkle` LED effects honour the configured status colour**
+  instead of a fixed yellow→red gradient / random RGB, so a per-status colour set
+  via PicoForge or `rsk led` is actually shown.
 - **Faster PIN: the clientPIN key-agreement key is generated at power-up and its
   public key is cached.** The first PIN entry after plugging the key in used to be
   noticeably slower than the rest (a one-time elliptic-curve key generation on the
@@ -66,6 +81,27 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **A partial PicoForge config write no longer resets the fields it didn't touch.**
+  The FIDO `CONFIG_WRITE` (`0x0C`, target PHY) and CCID rescue `WRITE 0x1C` used to
+  *replace* the whole `EF_PHY` record with a parse of the incoming blob, so any tag a
+  host omitted (product name, LED order/count, VID/PID) reverted to the build
+  default. Both paths now do a read-modify-write merge (`phy::merge_save`): only the
+  TLV tags in the blob are updated, the rest are preserved. Closes the firmware half
+  of picoforge#102 / RS-Key#33. **bcdDevice → 0x083A.**
+- **A YubiKey-masquerade product string can no longer crash Yubico Authenticator on
+  Windows.** `ykman` derives a YubiKey PID from the PC/SC reader name; a name with
+  `Yubico YubiKey` but no `OTP`/`FIDO`/`CCID` token makes it build the non-existent
+  PID `YK4_` and raise `KeyError`, aborting the whole card scan. The firmware now
+  appends ` OTP+FIDO+CCID` to a runtime product that looks like a YubiKey but omits
+  the `CCID` token (`normalize_usb_product`).
+- **"Steady / keep-LED-on" now works on the addressable (WS2812) backend.** The
+  animated effects (vapor/flow/bounce/sparkle) ignored `LED_STEADY` — only the legacy
+  on/off renderer read it — so on the default build the LED kept animating; the render
+  loop now shows the status colour solidly when steady is set.
+- **Plain single-colour LEDs now dim, and the `LED_DIMMABLE` bit is honoured.** The
+  `gpio` backend was on/off only, so brightness (and PicoForge's "LED Dimmable") did
+  nothing on a plain LED; it now uses software PWM (~500 Hz). The phy `LED_DIMMABLE`
+  option bit gates the global boot-brightness override. **bcdDevice → 0x083C.**
 - **Four small YubiKey-conformance nits surfaced by a full differential against a
   real YubiKey 5.7.4.** None broke tooling, but each now matches the YubiKey
   byte-for-byte: (1) standalone GET DATA of the OpenPGP General Feature Management

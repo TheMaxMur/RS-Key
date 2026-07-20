@@ -260,7 +260,9 @@ static FLASH_CELL: StaticCell<RefCell<flash_storage::AsyncFlash>> = StaticCell::
 static RNG_CELL: StaticCell<RefCell<FidoRng>> = StaticCell::new();
 static PRESENCE: StaticCell<RefCell<presence::Presence>> = StaticCell::new();
 static RESCUE_PLATFORM: StaticCell<RefCell<rescue_platform::RescuePlatform>> = StaticCell::new();
-static PHY_PRODUCT: StaticCell<[u8; 32]> = StaticCell::new();
+// Sized for a 32-byte phy product plus the appended YubiKey interface-token
+// suffix (`normalize_usb_product`), so a masquerade name is never truncated.
+static PHY_PRODUCT: StaticCell<[u8; 64]> = StaticCell::new();
 // The mipidsi SPI pixel-batch buffer for the `display` build: bigger = fewer SPI
 // transactions per fill. 4 KiB ≈ 8 full panel rows per chunk.
 #[cfg(feature = "display")]
@@ -357,9 +359,11 @@ async fn main(spawner: Spawner) {
             (usb_vid, usb_pid) = (vid, pid);
         }
         if let Some(s) = phy.usb_product.as_ref().and_then(|prod| prod.as_str()) {
-            let buf = PHY_PRODUCT.init([0; 32]);
-            buf[..s.len()].copy_from_slice(s.as_bytes());
-            if let Ok(stored) = core::str::from_utf8(&buf[..s.len()]) {
+            let buf = PHY_PRODUCT.init([0; 64]);
+            // Normalize a YubiKey-masquerade product so it can't present a
+            // token-less PC/SC reader name that crashes ykman on Windows.
+            let n = rsk_rescue::phy::normalize_usb_product(s.as_bytes(), buf);
+            if let Ok(stored) = core::str::from_utf8(&buf[..n]) {
                 usb_product = stored;
             }
         }
@@ -449,7 +453,7 @@ async fn main(spawner: Spawner) {
     config.max_power = 100;
     config.max_packet_size_0 = 64;
     // bcdDevice build counter; also surfaced on the trusted-display Firmware screen.
-    let device_release: u16 = 0x0839;
+    let device_release: u16 = 0x083A;
     config.device_release = device_release;
 
     let mut builder = Builder::new(

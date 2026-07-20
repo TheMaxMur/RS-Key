@@ -56,6 +56,20 @@ use crate::seed::{
 use crate::state::{PERM_ACFG, puat_subcommand_msg};
 use crate::{Ctx, Rng};
 
+use core::sync::atomic::{AtomicBool, Ordering};
+
+/// Set when a FIDO `CONFIG_WRITE` persists the PHY record; the firmware handler
+/// consumes it to warm-reboot (re-enumerate) so the new USB identity applies
+/// without a manual replug, unless `OPT_DISABLE_POWER_RESET` is set. Cross-layer
+/// because the reboot verb lives in the firmware, not this applet.
+static PHY_WRITTEN: AtomicBool = AtomicBool::new(false);
+
+/// Take and clear the "a PHY config-write just happened" flag (the firmware
+/// handler reads it after the `0x41` response flushes).
+pub fn take_phy_written() -> bool {
+    PHY_WRITTEN.swap(false, Ordering::Relaxed)
+}
+
 // Sized for ATT_IMPORT's wrapped key + a full cert chain (≤ 2048 B); every
 // other subcommand stays tiny. The pinUvAuth MAC covers these bytes verbatim.
 const MAX_RAW_SUBPARA: usize = 2200;
@@ -229,11 +243,13 @@ fn config_write<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> CtapResul
             DevConfError::TooLong => CtapError::InvalidLength,
             DevConfError::Store => CtapError::Other,
         })?,
-        // The phy record (VID/PID, USB interfaces, LED, presence-timeout) — the
-        // same lenient parse + save the CCID rescue WRITE 0x1C uses; takes effect
-        // on the next boot (main reads EF_PHY), like the CCID path.
+        // The phy record (VID/PID, USB interfaces, LED, presence-timeout) — a
+        // read-modify-write merge (the same `merge_save` the CCID rescue WRITE 0x1C
+        // uses), so a host that sends only the fields it changed cannot wipe the
+        // rest. Takes effect on the next boot (main reads EF_PHY), like the CCID path.
         CONFIG_TARGET_PHY => {
-            phy::save(ctx.fs, &phy::PhyData::parse(req.blob)).map_err(|_| CtapError::Other)?
+            phy::merge_save(ctx.fs, req.blob).map_err(|_| CtapError::Other)?;
+            PHY_WRITTEN.store(true, Ordering::Relaxed);
         }
         // The LED config block; persisted here and applied *live* by the firmware
         // CTAPHID handler, which reloads EF_LED_CONF after a 0x41 command (the LED

@@ -99,3 +99,16 @@ fn serialize_parse_roundtrip() {
     assert_eq!(got.led_order, phy.led_order);
     assert_eq!(got.led_num, phy.led_num);
 }
+
+/// `overlay` over any base record and any ≤12-byte host blob never panics or
+/// overreads — the merge write (`merge_save`) walks host-controlled bytes on top
+/// of the stored record, so it must be as total as `parse`.
+#[kani::proof]
+#[kani::unwind(14)]
+fn overlay_any_input() {
+    const N: usize = 12;
+    let data: [u8; N] = kani::any();
+    let n: usize = kani::any();
+    kani::assume(n <= N);
+    let _ = PhyData::default().overlay(&data[..n]);
+}

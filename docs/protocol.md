@@ -180,7 +180,19 @@ The build picks a VID/PID preset (`firmware/build.rs`):
 | others | NitroHSM, NitroFIDO2, GnuPG, Pico, Dev | — | local interop only |
 
 VID/PID can also be overridden at **runtime** via the phy record (§7, tag `0x00`),
-which takes effect at the next boot.
+which takes effect at the next boot. So can the product string (tag `0x09`); if a
+runtime product looks like a YubiKey (`yubikey`, any case) but omits the smartcard
+`CCID` token, the firmware appends ` OTP+FIDO+CCID` before enumerating — a
+token-less `Yubico YubiKey` reader name otherwise crashes `ykman` / Yubico
+Authenticator on Windows (`_pid_from_name` → `PID.of` → `KeyError('YK4_')`, which
+aborts the whole PC/SC scan). Source: `normalize_usb_product` in `phy.rs`.
+
+The **manufacturer string** and the OpenPGP AID vendor id are NOT separate phy
+fields: they track the effective (phy-overridden) VID — a runtime Yubico VID
+(`0x1050`) presents `Yubico` + the Yubico OpenPGP vendor, otherwise the build's
+default. ⚠️ so a phy-repointed default key can present a full Yubico identity at
+runtime; the USB/smartcard identity is cosmetic and host-configurable, never a
+security or anti-counterfeiting control (see docs/threat-model.md).
 
 **Recognizing an RS-Key by PC/SC reader name:** the reader name contains `RS-Key`
 (default build) or `RSK` (Yubico-interop build). Neither appears in a genuine
@@ -387,6 +399,12 @@ optional. An unknown tag is skipped; a record whose length runs past the buffer
 ends the parse. The firmware applies the record at **boot** (USB identity + LED
 hardware).
 
+A **write** (CCID `WRITE 0x1C` §6, or FIDO `CONFIG_WRITE 0x0C` target `1` §9) is a
+**read-modify-write merge**: only the tags the blob carries are updated; every
+untouched tag keeps its stored value. So a host may send just the fields it
+changed without wiping the rest, and a tag is cleared only by an explicit
+zero/empty TLV. (A host may still do a full read-modify-write for clarity.)
+
 ![EF_PHY record: a TAG(1) LEN(1) VALUE(LEN) triple, then a worked three-record blob concatenating VIDPID (1209:0001), LED_DRIVER (ws2812) and OPTS (LED_STEADY)](images/phy-record.svg)
 
 | Tag | Name | Len | Value |
@@ -516,8 +534,9 @@ Keys 3/4 are present only when a PIN is set (see gating).
 > the same config over CTAPHID. `target` selects the record: `0x00` = the
 > management enabled-apps TLV (`EF_DEV_CONF`, the §6 blob, `≤ 64` bytes → the same
 > `CTAP1_ERR_INVALID_LENGTH 0x03` cap); `0x01` = the phy record (`EF_PHY`, §7.1:
-> VID/PID, USB interfaces, LED wiring, presence-timeout; the same lenient TLV parse
-> the CCID path uses, effective on the next boot); `0x02` = the LED config block
+> VID/PID, USB interfaces, LED wiring, presence-timeout; a **read-modify-write
+> merge** — only the TLV tags in the blob are updated, the rest preserved (the same
+> `merge_save` the CCID path uses), effective on the next boot); `0x02` = the LED config block
 > (`EF_LED_CONF`, §8, `CONF_LEN` bytes), persisted and then applied **live** by the
 > firmware, which reloads the block after a `0x41` command (the LED atomics are
 > firmware-side; `CONFIG_READ 0x02` returns the current block, seeded with the build
@@ -612,8 +631,9 @@ SET     00 10 40 11        # P1=0x40 brightness, P2 = color 1 | status 1<<4 = 0x
 1. **The phy record (§7.1) is your existing PicoForge config path.** Same TLV
    layout, same `LedDriverType` numbering. The differences to handle: the Rescue
    **AID** is `A0 58 3F C1 9B 7E 4F 21` (not the upstream one), the Rescue **CLA is
-   `0x80`**, and tag `0x0D` (LED_ORDER) is an RS-Key extension you can skip on read
-   but should preserve on a read-modify-write.
+   `0x80`**, and tag `0x0D` (LED_ORDER) is an RS-Key extension you can skip on read.
+   You need not re-send unmodelled/untouched tags: the phy write is a **merge**
+   (§7.1), so omitting a tag no longer wipes it — send only the fields you changed.
 2. **Hardware config over FIDO (no PC/SC) is supported**: PicoForge's legacy
    hardware-config path. Send `authenticatorConfig` (CTAP `0x0D`) with subCommand
    `vendorPrototype` (`0xFF`) and subCommandParams `{1: vendorCommandId(u64),
@@ -622,7 +642,10 @@ SET     00 10 40 11        # P1=0x40 brightness, P2 = color 1 | status 1<<4 = 0x
    next boot: `PhysicalVidPid 0x6fcb19b0cbe3acfa` (value `(vid<<16)|pid`),
    `PhysicalLedGpio 0x7b392a394de9f948`, `PhysicalLedBrightness 0x76a85945985d02fd`,
    `PhysicalOptions 0x269f3b09eceb805f` (bitmask `0x2` dimmable / `0x4`
-   disable-power-reset / `0x8` led-steady). Product name, touch-timeout, LED driver
+   disable-power-reset / `0x8` led-steady — all three are honoured: dimmable gates
+   the global boot-brightness override, led-steady forces a solid LED, and
+   disable-power-reset — clear by default — lets a FIDO phy write auto-reboot so the
+   change applies without a replug). Product name, touch-timeout, LED driver
    and curves stay Rescue-only. RS-Key reports firmware `5.x` (< 7), so PicoForge
    enables its legacy hardware-config path. (RS-Key's own `rsk` uses the CTAPHID
    `0x41` `CONFIG_WRITE/READ` path instead, see §9, which also covers those

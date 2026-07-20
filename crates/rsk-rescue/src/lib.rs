@@ -228,8 +228,9 @@ impl<'a> RescueApplet<'a> {
                 if !self.require_presence(Confirm::titled("Write device config?")) {
                     return Sw::CONDITIONS_NOT_SATISFIED;
                 }
-                let parsed = phy::PhyData::parse(apdu.data);
-                if phy::save(fs, &parsed).is_err() {
+                // Read-modify-write merge: a partial record overlays the stored one
+                // (a host that sends only changed tags can't wipe the rest).
+                if phy::merge_save(fs, apdu.data).is_err() {
                     return Sw::EXEC_ERROR;
                 }
                 Sw::OK
