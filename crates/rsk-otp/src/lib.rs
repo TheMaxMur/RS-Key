@@ -73,6 +73,22 @@ pub(crate) const SLOT_COUNT: usize = 4;
 /// be written/relocated to an FID no code ever reaches again.
 const EF_OTP_SLOT_LAST: u16 = EF_OTP_SLOT1 + SLOT_COUNT as u16 - 1;
 
+// ykman OTP-HID admin-slot storage (DEFAULT build only). Above the slot range
+// (0xBB00..=0xBB03) and outside every applet-reset scope; read back
+// forward-compatibly, so an already-provisioned device survives the upgrade.
+#[cfg(not(feature = "strict-config"))]
+const EF_OTP_SCANMAP: u16 = 0xBB10;
+#[cfg(not(feature = "strict-config"))]
+const EF_OTP_NDEF1: u16 = 0xBB11;
+#[cfg(not(feature = "strict-config"))]
+const EF_OTP_NDEF2: u16 = 0xBB12;
+#[cfg(not(feature = "strict-config"))]
+const EF_OTP_DEVCFG: u16 = 0xBB13;
+#[cfg(not(feature = "strict-config"))]
+const EF_OTP_NDEF_MAX: usize = 64;
+#[cfg(not(feature = "strict-config"))]
+const EF_OTP_DEVCFG_MAX: usize = 32;
+
 /// Slot-config field offsets (packed, 52 bytes).
 pub(crate) const FIXED_SIZE: usize = 16;
 pub(crate) const UID_SIZE: usize = 6;
@@ -139,6 +155,24 @@ const P1_CHAL_HMAC_SLOT2: u8 = 0x38;
 // a no-op like a config write it does not honour.
 #[cfg(not(feature = "strict-config"))]
 const P1_SET_DEVICE_INFO: u8 = 0x15;
+// The remaining ykman OTP-HID admin slots, DEFAULT-build only. SCAN_MAP is
+// functional (button_ticket remaps typed output through it); DEVICE_CONFIG
+// (legacy set-mode) and NDEF are inert on this USB-only board (no NFC radio; the
+// interface set lives in EF_PHY), so they are accept+store for ykman parity.
+#[cfg(not(feature = "strict-config"))]
+const P1_NDEF1: u8 = 0x08;
+#[cfg(not(feature = "strict-config"))]
+const P1_NDEF2: u8 = 0x09;
+#[cfg(not(feature = "strict-config"))]
+const P1_DEVICE_CONFIG: u8 = 0x11;
+#[cfg(not(feature = "strict-config"))]
+const P1_SCAN_MAP: u8 = 0x12;
+/// The 45-character YubiKey set a custom scan map covers, in scan-map index
+/// order: modhex lowercase, modhex uppercase, digits, then `!` `\t` `\r`.
+#[cfg(not(feature = "strict-config"))]
+const YUBICO_CHARSET: &[u8; 45] = b"cbdefghijklnrtuvCBDEFGHIJKLNRTUV0123456789!\t\r";
+#[cfg(not(feature = "strict-config"))]
+const SCANMAP_LEN: usize = 45;
 
 /// "Wrong data" in this protocol is reported as `0x6700` (wrong length).
 const SW_WRONG_DATA: Sw = Sw::WRONG_LENGTH;
@@ -245,7 +279,15 @@ impl<'a> OtpApplet<'a> {
             rec[CONFIG_SIZE..].copy_from_slice(&tail);
             let _ = self.put_slot(fs, fid, &rec);
         }
-        Some((t.len, t.encode))
+        let (len, encode) = (t.len, t.encode);
+        // Functional custom scancode map (0x12): if one is stored and the whole
+        // typed output is within the covered 45-char set, emit raw scancodes so a
+        // non-US host types the intended characters. Absent under strict-config.
+        #[cfg(not(feature = "strict-config"))]
+        if encode && self.apply_scanmap(fs, &mut out[..len]) {
+            return Some((len, false));
+        }
+        Some((len, encode))
     }
 
     /// First 10 chars of the serial hex string — mixed into the Yubico-mode
@@ -610,6 +652,14 @@ impl<'a> OtpApplet<'a> {
             }
             #[cfg(not(feature = "strict-config"))]
             P1_SET_DEVICE_INFO => self.cmd_set_device_info(apdu, fs),
+            #[cfg(not(feature = "strict-config"))]
+            P1_DEVICE_CONFIG => self.cmd_device_config(apdu, fs),
+            #[cfg(not(feature = "strict-config"))]
+            P1_SCAN_MAP => self.cmd_scan_map(apdu, fs),
+            #[cfg(not(feature = "strict-config"))]
+            P1_NDEF1 => self.cmd_ndef(apdu, fs, false),
+            #[cfg(not(feature = "strict-config"))]
+            P1_NDEF2 => self.cmd_ndef(apdu, fs, true),
             // Unknown P1 values (and, under `strict-config`, the admin-write
             // slots) fall through to a bare OK — the deliberate silent no-op the
             // host reads as "not implemented".
@@ -643,6 +693,76 @@ impl<'a> OtpApplet<'a> {
             Err(rsk_mgmt::DevConfError::Store) => Sw::MEMORY_FAILURE,
         }
     }
+
+    /// Legacy set-mode (`0x11`): the enabled-interface set lives in EF_PHY and is
+    /// applied only at boot, so this is accept+store for ykman parity — inert on
+    /// this USB-only board. Absent under `strict-config`.
+    #[cfg(not(feature = "strict-config"))]
+    fn cmd_device_config<S: Storage>(&mut self, apdu: &Apdu, fs: &mut Fs<S>) -> Sw {
+        let n = apdu.data.len().min(EF_OTP_DEVCFG_MAX);
+        if n != 0 {
+            let _ = fs.put(EF_OTP_DEVCFG, &apdu.data[..n]);
+        }
+        Sw::OK
+    }
+
+    /// NDEF program (`0x08`/`0x09`): no NFC radio, so accept+store only — the
+    /// stored record is never emitted over any transport. Absent under
+    /// `strict-config`.
+    #[cfg(not(feature = "strict-config"))]
+    fn cmd_ndef<S: Storage>(&mut self, apdu: &Apdu, fs: &mut Fs<S>, slot2: bool) -> Sw {
+        let n = apdu.data.len().min(EF_OTP_NDEF_MAX);
+        if n != 0 {
+            let fid = if slot2 { EF_OTP_NDEF2 } else { EF_OTP_NDEF1 };
+            let _ = fs.put(fid, &apdu.data[..n]);
+        }
+        Sw::OK
+    }
+
+    /// SCAN_MAP (`0x12`): store the 45-byte custom HID-scancode table (yubikit
+    /// `write_scan_map` puts it at the head of the frame; a trailing access code
+    /// is ignored). `button_ticket` then remaps typed output through it. Absent
+    /// under `strict-config`. (Exact HID framing is HW-unverified.)
+    #[cfg(not(feature = "strict-config"))]
+    fn cmd_scan_map<S: Storage>(&mut self, apdu: &Apdu, fs: &mut Fs<S>) -> Sw {
+        if apdu.data.len() < SCANMAP_LEN {
+            return Sw::OK;
+        }
+        let _ = fs.put(EF_OTP_SCANMAP, &apdu.data[..SCANMAP_LEN]);
+        Sw::OK
+    }
+
+    /// If a complete custom scan map is stored AND every byte of `buf` (the typed
+    /// output) is in the covered 45-char set, rewrite `buf` to the mapped raw HID
+    /// scancodes (high bit = LeftShift) and return true; otherwise leave `buf`
+    /// untouched (the caller keeps the ASCII path). All-or-nothing.
+    #[cfg(not(feature = "strict-config"))]
+    fn apply_scanmap<S: Storage>(&self, fs: &mut Fs<S>, buf: &mut [u8]) -> bool {
+        let mut map = [0u8; SCANMAP_LEN];
+        if fs
+            .read(EF_OTP_SCANMAP, &mut map)
+            .is_none_or(|n| n < SCANMAP_LEN)
+        {
+            return false;
+        }
+        if buf.iter().any(|&c| scanmap_scancode(&map, c).is_none()) {
+            return false;
+        }
+        for c in buf.iter_mut() {
+            *c = scanmap_scancode(&map, *c).unwrap();
+        }
+        true
+    }
+}
+
+/// The raw HID scancode (high bit = LeftShift) a custom scan map assigns to `ch`,
+/// or None if `ch` is outside the 45-char YubiKey set the map covers.
+#[cfg(not(feature = "strict-config"))]
+fn scanmap_scancode(map: &[u8], ch: u8) -> Option<u8> {
+    if map.len() < SCANMAP_LEN {
+        return None;
+    }
+    YUBICO_CHARSET.iter().position(|&c| c == ch).map(|i| map[i])
 }
 
 impl<S: Storage> Applet<Fs<S>> for OtpApplet<'_> {

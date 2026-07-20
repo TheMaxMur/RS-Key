@@ -744,3 +744,85 @@ fn legacy_plaintext_slot_migrates_and_stays_usable() {
     let (sw2, body2) = run(&mut app, &mut fs, &otp_apdu(0x30, 0, &chal));
     assert_eq!((sw2, body2), (Sw::OK, body));
 }
+
+#[cfg(not(feature = "strict-config"))]
+#[test]
+fn scanmap_scancode_maps_the_yubico_set_in_order() {
+    // The yubikit DEFAULT_SCAN_MAP: 45 raw HID scancodes for the 45-char set, in
+    // scan-map order (modhex lc, modhex uc with 0x80=shift, digits, ! \t \r).
+    let default_map: [u8; 45] = [
+        0x06, 0x05, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x11, 0x15, 0x17, 0x18,
+        0x19, 0x86, 0x85, 0x87, 0x88, 0x89, 0x8a, 0x8b, 0x8c, 0x8d, 0x8e, 0x8f, 0x91, 0x95, 0x97,
+        0x98, 0x99, 0x27, 0x1e, 0x1f, 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x9e, 0x2b, 0x28,
+    ];
+    assert_eq!(scanmap_scancode(&default_map, b'c'), Some(0x06)); // index 0
+    assert_eq!(scanmap_scancode(&default_map, b'v'), Some(0x19)); // index 15
+    assert_eq!(scanmap_scancode(&default_map, b'C'), Some(0x86)); // index 16 (shift)
+    assert_eq!(scanmap_scancode(&default_map, b'9'), Some(0x26)); // index 41
+    assert_eq!(scanmap_scancode(&default_map, b'!'), Some(0x9e)); // index 42
+    // Chars outside the covered set keep the ASCII path.
+    assert_eq!(scanmap_scancode(&default_map, b'z'), None);
+    assert_eq!(scanmap_scancode(&default_map, b'@'), None);
+    // A short map is rejected (never partially remaps).
+    assert_eq!(scanmap_scancode(&[0u8; 10], b'c'), None);
+}
+
+#[cfg(not(feature = "strict-config"))]
+#[test]
+fn scan_map_remaps_typed_button_ticket_output() {
+    // DEFAULT: with a stored custom scan map, a typed OTP ticket comes out as RAW
+    // scancodes (encode=false), every in-set char remapped through the table.
+    let mut fs = new_fs();
+    let presence = RefCell::new(AlwaysConfirm);
+    let rng = RefCell::new(CountRng(7));
+    let mut app = OtpApplet::new(SERIAL, SERIAL_HASH, None, &rng, &presence);
+    // A plain Yubico-OTP slot 1: types 44 modhex chars, all in the covered set.
+    let cfg = build_config(&[0, 1, 2, 3, 4, 5], &[1; 6], &[2; 16], &[0; 6], 0, 0, 0);
+    assert_eq!(
+        configure(&mut app, &mut fs, 0x01, 0, &cfg, &[0; 6]).0,
+        Sw::OK
+    );
+
+    // No scan map yet → ASCII-encoded output.
+    let mut out = [0u8; ticket::MAX_TICKET];
+    let (_, enc) = app.button_ticket(1, 0, [0, 0], &mut fs, &mut out).unwrap();
+    assert!(enc, "no scan map → ASCII path");
+
+    // Store a distinctive all-0x40 scan map via SLOT_SCAN_MAP (0x12).
+    let mut payload = [0u8; hid::PAYLOAD_SIZE];
+    payload[..45].fill(0x40);
+    let mut o = [0u8; 64];
+    let mut res = ResBuf::new(&mut o);
+    assert_eq!(app.process_hid(0x12, &payload, &mut fs, &mut res), Sw::OK);
+
+    // Now the ticket is raw scancodes, every byte remapped to 0x40.
+    let (n, enc) = app.button_ticket(1, 0, [0, 0], &mut fs, &mut out).unwrap();
+    assert!(!enc, "custom scan map → raw scancodes");
+    assert!(
+        n > 0 && out[..n].iter().all(|&b| b == 0x40),
+        "every modhex char must be remapped through the scan map"
+    );
+}
+
+#[cfg(not(feature = "strict-config"))]
+#[test]
+fn ndef_and_device_config_accept_and_store() {
+    // DEFAULT: NDEF (0x08/0x09) and DEVICE_CONFIG (0x11) accept+store (inert on
+    // USB-only HW) — the ykman calls succeed with an empty body and the records
+    // persist to their FIDs.
+    let mut fs = new_fs();
+    let presence = RefCell::new(AlwaysConfirm);
+    let rng = RefCell::new(CountRng(7));
+    let mut app = OtpApplet::new(SERIAL, SERIAL_HASH, None, &rng, &presence);
+    let mut payload = [0u8; hid::PAYLOAD_SIZE];
+    payload[..3].copy_from_slice(&[0xAB, 0xCD, 0xEF]);
+    for slot in [0x08u8, 0x09, 0x11] {
+        let mut o = [0u8; 64];
+        let mut res = ResBuf::new(&mut o);
+        assert_eq!(app.process_hid(slot, &payload, &mut fs, &mut res), Sw::OK);
+        assert!(res.as_slice().is_empty(), "slot {slot:#x} streams no body");
+    }
+    assert!(fs.has_data(EF_OTP_NDEF1));
+    assert!(fs.has_data(EF_OTP_NDEF2));
+    assert!(fs.has_data(EF_OTP_DEVCFG));
+}
