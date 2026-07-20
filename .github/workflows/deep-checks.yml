@@ -8,6 +8,9 @@
 #   fuzz — a timed libFuzzer pass over every cargo-fuzz target. The corpus
 #          is carried between runs via the actions cache, so its coverage
 #          accumulates day over day; crash artifacts are uploaded.
+#   fuzz-coverage — per-target libFuzzer region/line coverage over that
+#          accumulated corpus (scripts/fuzz-coverage.sh): a summary table on the
+#          step page and the per-target HTML uploaded. Advisory, not a gate.
 #   kani — the #[kani::proof] bounded model-checking harnesses (docs/
 #          testing.md). Kani is not in nixpkgs and its setup downloads a
 #          prebuilt CBMC bundle, so this one job is rustup-based, not nix.
@@ -26,6 +29,7 @@
 # and self-tests on any push that edits this file. Local equivalents:
 #   nix develop .#fuzz -c cargo miri test --manifest-path fuzz/Cargo.toml
 #   nix develop .#fuzz -c cargo fuzz run <target> -- -max_total_time=120
+#   nix develop .#fuzz -c ./scripts/fuzz-coverage.sh
 #   cargo kani -p rsk-sdk -p rsk-fs -p rsk-rsa-asm -p rsk-crypto -p rsk-mldsa -p rsk-rescue -p rsk-openpgp -p rsk-otp -p rsk-piv -p rsk-oath -p rsk-usb  (cargo install kani-verifier)
 #   nix develop -c cargo llvm-cov --summary-only --fail-under-lines 80 --target <host> -p rsk-sdk … -p rsk-slip39
 #   nix develop -c ./scripts/complexity_gate.sh
@@ -43,7 +47,12 @@ on:
   push:
     branches: [main]
     paths:
-      [".github/workflows/deep-checks.yml", "nix/devshells.nix", "nix/firmware.nix"]
+      [
+        ".github/workflows/deep-checks.yml",
+        "nix/devshells.nix",
+        "nix/firmware.nix",
+        "scripts/fuzz-coverage.sh",
+      ]
 
 permissions:
   contents: read
@@ -145,6 +154,51 @@ jobs:
         with:
           path: fuzz/corpus
           key: fuzz-corpus-${{ github.run_id }}
+
+  fuzz-coverage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+
+      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+        with:
+          primary-key: nix-fuzz-${{ runner.os }}-${{ hashFiles('flake.lock') }}
+          restore-prefixes-first-match: |
+            nix-fuzz-${{ runner.os }}-
+            nix-${{ runner.os }}-
+
+      # The instrumented coverage build lives in fuzz/coverage/.build (a distinct
+      # target-dir from the fuzzing build), so cache it under its own key.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            fuzz/coverage/.build
+          key: fuzz-cov-${{ runner.os }}-${{ hashFiles('fuzz/Cargo.lock', 'flake.lock') }}
+          restore-keys: fuzz-cov-${{ runner.os }}-
+
+      # Read (never write) the corpus the `fuzz` job accumulated on the previous
+      # run: coverage measures those saved inputs, not a fresh fuzzing pass.
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: fuzz/corpus
+          key: fuzz-corpus-${{ github.run_id }}
+          restore-keys: fuzz-corpus-
+
+      - name: per-target libFuzzer coverage over the accumulated corpus
+        run: nix develop .#fuzz -c ./scripts/fuzz-coverage.sh
+
+      - name: upload the per-target HTML reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fuzz-coverage-${{ github.run_id }}
+          path: fuzz/coverage/*/html
+          if-no-files-found: ignore
 
   kani:
     runs-on: ubuntu-latest

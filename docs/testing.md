@@ -123,7 +123,10 @@ nix develop .#fuzz -c cargo miri test --manifest-path fuzz/Cargo.toml
 
 Neither suite gates a commit. CI runs both daily in the `deep-checks`
 workflow: the Miri suite, plus a timed libFuzzer pass over every target with
-the corpus carried between runs, crash artifacts uploaded.
+the corpus carried between runs, crash artifacts uploaded. A separate
+`fuzz-coverage` job then measures per-target region/line coverage over that
+accumulated corpus (`scripts/fuzz-coverage.sh`, run it the same way locally),
+writing a summary table and uploading a per-target HTML report.
 
 ## Kani proofs
 
