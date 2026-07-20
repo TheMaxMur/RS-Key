@@ -28,7 +28,7 @@ const RESIDENT_PATH_FIRST: u32 = 0x8000_0000 | 10022;
 /// expanded to [`RATCHET_LEN`] (66 — a P-521 scalar); by HKDF's prefix property
 /// the expansion width never changes the leading bytes, so each curve's scalar
 /// is just its length sliced off the front.
-fn ratchet(seed: &[u8; 32], path: &[u8; KEY_PATH_LEN]) -> [u8; RATCHET_LEN] {
+pub(crate) fn ratchet(seed: &[u8; 32], path: &[u8; KEY_PATH_LEN]) -> [u8; RATCHET_LEN] {
     let mut outk = [0u8; RATCHET_LEN]; // [ikm(32) | info(32) | extra]; info starts zero
     outk[..32].copy_from_slice(seed);
     for i in 0..KEY_PATH_ENTRIES {

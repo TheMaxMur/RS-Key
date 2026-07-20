@@ -22,6 +22,15 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   arithmetic for the 512-bit brainpool curve exists yet. The applet keys off the
   `bp256` / `bp384` crates (fiat-crypto backend), checked byte-for-byte against
   OpenSSL test vectors. **bcdDevice → 0x0836.**
+- **`rsk bench` — an on-device crypto-latency harness that survives XIP-cache
+  noise.** Steady-state EC latency on the RP2350 shifts ±~30 ms with code layout
+  (the hot working set overflows the 16 KB XIP cache), so a host-timed mean fakes
+  regressions. The new `bench` firmware feature (vendor command, never shipped —
+  like `keygen-bench`) times a primitive with the device's own timer and returns a
+  robust median / MAD plus a separate cold-cache sample; `rsk bench --compare`
+  gives an A/B verdict between two saved runs. The summary is computed on-device by
+  the new host-tested, Kani-proved `rsk-bench` crate. Feature is off by default, so
+  the shipped image is byte-for-byte unchanged — **no bcdDevice bump.**
 
 ### Changed
 

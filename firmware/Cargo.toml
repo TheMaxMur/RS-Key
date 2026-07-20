@@ -49,6 +49,9 @@ rsk-crypto = { workspace = true }
 # core1's prime search owns an IncrementalSieve per core, and the keygen-bench
 # vendor command times the primitives directly.
 rsk-rsa-asm = { workspace = true }
+# Robust summary stats for the `bench` latency-harness vendor command. Optional —
+# pulled in only by `--features bench`, never the shipped image.
+rsk-bench = { workspace = true, optional = true }
 # Zeroize the transient TRNG seed/reseed buffers in `FidoRng` (workspace dep, already
 # pulled by rsk-crypto — no new version).
 zeroize = { workspace = true }
@@ -99,6 +102,13 @@ strong-pin = ["rsk-fido/strong-pin"]
 # Keygen microbenchmark vendor command (INS 0x13). Debug/measurement only —
 # never ship it: it exposes a timing oracle over the primality primitives.
 keygen-bench = []
+# On-device latency harness (vendor INS 0x14). Debug/measurement only, never
+# shipped — like keygen-bench it exposes a timing oracle, here over the EC / KDF
+# hot paths. Times a primitive over many iterations via the RP2350 timer and
+# returns a robust median/MAD + a cold-cache sample (see `rsk bench`), so EC
+# latency A/B survives the XIP-cache/code-layout noise. Pulls in `rsk-bench` for
+# the (gated, Kani-proved) on-device summary.
+bench = ["dep:rsk-bench", "rsk-fido/bench"]
 # FIDO Conformance Tool build profile (see rsk-fido's feature docs): suppresses
 # the EdDSA (-8) advertisement so the tool can verify every advertised algorithm.
 # The shipping build advertises -8 (Windows WebAuthn / `ed25519-sk`). Build

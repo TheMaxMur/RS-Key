@@ -45,7 +45,7 @@ firmware_size_budget() {
 
 run "fmt"                      cargo fmt --all --check
 run "clippy (embedded)"        cargo clippy --workspace -- -D warnings
-run "clippy (host tests)"      cargo clippy -p rsk-sdk -p rsk-fs -p rsk-usb -p rsk-crypto -p rsk-fido -p rsk-openpgp -p rsk-rsa-asm -p rsk-sha512 -p rsk-mgmt -p rsk-oath -p rsk-otp -p rsk-piv -p rsk-rescue -p rsk-led -p rsk-ui -p rsk-bip39 -p rsk-slip39 --target "$HOST" --all-targets -- -D warnings
+run "clippy (host tests)"      cargo clippy -p rsk-sdk -p rsk-fs -p rsk-usb -p rsk-crypto -p rsk-fido -p rsk-openpgp -p rsk-rsa-asm -p rsk-sha512 -p rsk-mgmt -p rsk-oath -p rsk-otp -p rsk-piv -p rsk-rescue -p rsk-led -p rsk-ui -p rsk-bip39 -p rsk-slip39 -p rsk-bench --target "$HOST" --all-targets -- -D warnings
 # tools/tui is its own workspace (host-only), so the --all/--workspace runs
 # above never see it — gate it explicitly. Its lockfile was scanned by nobody
 # until Dependabot flagged a transitive advisory from the GitHub side.
@@ -66,7 +66,7 @@ run "fmt (fuzz)"               cargo fmt --manifest-path fuzz/Cargo.toml --check
 # `--tests` also covers tests/miri.rs, which mirrors the same constructors (its
 # drift went unseen for a wave of unpushed commits until a local miri run).
 run "check (fuzz)"             cargo check --manifest-path fuzz/Cargo.toml --tests --target "$HOST"
-run "test (host)"              cargo test -p rsk-sdk -p rsk-fs -p rsk-usb -p rsk-crypto -p rsk-fido -p rsk-openpgp -p rsk-rsa-asm -p rsk-sha512 -p rsk-mgmt -p rsk-oath -p rsk-otp -p rsk-piv -p rsk-rescue -p rsk-led -p rsk-ui -p rsk-bip39 -p rsk-slip39 --target "$HOST"
+run "test (host)"              cargo test -p rsk-sdk -p rsk-fs -p rsk-usb -p rsk-crypto -p rsk-fido -p rsk-openpgp -p rsk-rsa-asm -p rsk-sha512 -p rsk-mgmt -p rsk-oath -p rsk-otp -p rsk-piv -p rsk-rescue -p rsk-led -p rsk-ui -p rsk-bip39 -p rsk-slip39 -p rsk-bench --target "$HOST"
 # The PQC-advertisement opt-in changes the getInfo shape — test both forms.
 run "test (advertise-pqc)"     cargo test -p rsk-fido --features advertise-pqc --target "$HOST" getinfo
 # fido-conformance suppresses the default EdDSA (-8) advertisement — verify that
@@ -82,6 +82,13 @@ run "clippy (fips firmware)"   cargo clippy -p firmware --features fips-profile 
 # reuses the fips name-filter dodge (regular fixtures assume the 4-char floor).
 run "test (strong-pin)"        cargo test -p rsk-fido --features strong-pin --target "$HOST" strong_pin
 run "clippy (strong-pin fw)"   cargo clippy -p firmware --features strong-pin -- -D warnings
+# The `bench` latency-harness vendor command (never shipped) is only compiled with
+# its feature on, so gate that build here — otherwise a signature change to the EC /
+# KDF hot paths it times would rot the bench module unseen (keep it compiling). The
+# host test proves each selector still drives the REAL primitive, not an error path.
+run "clippy (bench fw)"        cargo clippy -p firmware --features bench -- -D warnings
+run "clippy (bench host)"      cargo clippy -p rsk-fido --features bench --target "$HOST" --all-targets -- -D warnings
+run "test (bench)"             cargo test -p rsk-fido --features bench --target "$HOST" bench
 # The display path (panel driver + touch) is `LED_KIND=none`-only, so the default
 # embedded clippy above never lints it — gate it explicitly, like the fips firmware.
 run "clippy (display firmware)" env LED_KIND=none cargo clippy -p firmware --features display -- -D warnings

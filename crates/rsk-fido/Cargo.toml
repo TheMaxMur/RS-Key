@@ -93,3 +93,10 @@ ea-conformance-rpid = ["fido-conformance"]
 # built-in UV), makeCredential / getAssertion return CTAP2_ERR_PUAT_REQUIRED until a
 # PIN is configured — the standard alwaysUv cue for the platform to set one.
 always-uv = []
+# On-device latency-harness timing entrypoints (`bench` module). OFF by default,
+# NEVER shipped — enabling it exposes a vendor timing oracle over the crypto
+# primitives, like `keygen-bench`. Drives the real hot paths (variable-base P-256
+# ECDH, the getAssertion comb sign, the HKDF-SHA512 ratchet) with fixed public
+# inputs so `firmware --features bench` can time them via the RP2350 timer and
+# report a robust median/MAD + a cold-cache sample. See `rsk bench`.
+bench = []

@@ -1104,6 +1104,7 @@ dependencies = [
  "mipidsi",
  "panic-halt",
  "rp-pac",
+ "rsk-bench",
  "rsk-bip39",
  "rsk-crypto",
  "rsk-fido",
@@ -2144,6 +2145,10 @@ dependencies = [
  "subtle",
  "zeroize",
 ]
+
+[[package]]
+name = "rsk-bench"
+version = "0.1.0"
 
 [[package]]
 name = "rsk-bip39"

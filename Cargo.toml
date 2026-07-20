@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["firmware", "rsk-wipe", "crates/rsk-sdk", "crates/rsk-fs", "crates/rsk-usb", "crates/rsk-crypto", "crates/rsk-fido", "crates/rsk-openpgp", "crates/rsk-rsa-asm", "crates/rsk-sha512", "crates/rsk-mgmt", "crates/rsk-oath", "crates/rsk-otp", "crates/rsk-piv", "crates/rsk-rescue", "crates/rsk-led", "crates/rsk-ui", "crates/rsk-bip39", "crates/rsk-slip39", "crates/rsk-mldsa"]
+members = ["firmware", "rsk-wipe", "crates/rsk-sdk", "crates/rsk-fs", "crates/rsk-usb", "crates/rsk-crypto", "crates/rsk-fido", "crates/rsk-openpgp", "crates/rsk-rsa-asm", "crates/rsk-sha512", "crates/rsk-mgmt", "crates/rsk-oath", "crates/rsk-otp", "crates/rsk-piv", "crates/rsk-rescue", "crates/rsk-led", "crates/rsk-ui", "crates/rsk-bip39", "crates/rsk-slip39", "crates/rsk-mldsa", "crates/rsk-bench"]
 
 # Embassy crates are versioned together; pin them all to the same git source so
 # they stay mutually compatible. We track `branch = "main"`, not a crates.io
@@ -48,6 +48,10 @@ rsk-slip39 = { path = "crates/rsk-slip39" }
 # Stack-optimized ML-DSA (FIPS 204) for ML-DSA-44 and -65 — streams the matrix A
 # so -65 fits the RP2350 main stack. Host-tested against NIST ACVP KATs + Kani.
 rsk-mldsa = { path = "crates/rsk-mldsa" }
+# Robust summary stats for the on-device latency harness — used only by the
+# firmware `bench` feature (a debug/measurement build, never shipped). Host-tested
+# + Kani-proved; the device computes the summary so the reported number is gated.
+rsk-bench = { path = "crates/rsk-bench" }
 # Trusted-display driver stack — compiled ONLY into the `display` firmware flavor
 # (and rsk-ui's host tests), never the standard key (all `dep:`-gated). embedded-
 # graphics: no_std 2D text/primitives + the `DrawTarget` trait the renderer is

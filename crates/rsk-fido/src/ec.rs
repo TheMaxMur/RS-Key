@@ -122,7 +122,7 @@ pub(crate) fn sec1_uncompressed(x: impl AsRef<[u8]>, y: impl AsRef<[u8]>) -> all
 /// instead of the crate's generic mul. Replicates ecdsa 0.17's
 /// `sign_prehashed_rfc6979` body (`KGenerator` over `int2octets(d) ‖ bits2octets(z)`,
 /// then `reduce` of the SEC1 x-coordinate). `out` must hold [`MAX_DER_SIG`] bytes.
-fn sign_p256_comb(d: &p256::Scalar, msg: &[u8], out: &mut [u8]) -> usize {
+pub(crate) fn sign_p256_comb(d: &p256::Scalar, msg: &[u8], out: &mut [u8]) -> usize {
     use p256::elliptic_curve::Curve; // ORDER
     use p256::elliptic_curve::PrimeField; // to_repr / from_repr
     use p256::elliptic_curve::ops::Reduce;
