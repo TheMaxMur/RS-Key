@@ -107,7 +107,7 @@ jobs:
           done
           ls -l dist
 
-      - name: reproducibility gate — rebuild all 5, require bit-identical
+      - name: reproducibility gate — rebuild all 11, require bit-identical
         run: |
           # `nix build --rebuild` recompiles the derivation already in the store
           # and fails with a hash mismatch if the output is not bit-identical.
