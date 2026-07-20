@@ -13,6 +13,9 @@ p256 = { workspace = true }
 p384 = { workspace = true }
 p521 = { workspace = true }
 k256 = { workspace = true }
+# Named directly for `DigestAlgorithm` (the curve's ECDSA digest) — the p*/k256
+# `ecdsa` modules don't re-export the trait. Same ecdsa 0.17 the curves use.
+ecdsa = { workspace = true }
 ed25519-dalek = { workspace = true }
 rfc6979 = { workspace = true }
 rsk-crypto = { workspace = true }
@@ -25,9 +28,12 @@ sha2 = { workspace = true }
 zeroize = { workspace = true }
 
 [build-dependencies]
-# Host-side P-256 / P-521 arithmetic to generate the fixed-base comb tables (build.rs).
+# Host-side EC arithmetic to generate the fixed-base comb tables (build.rs) for
+# every curve that signs through the comb: P-256 / P-384 / P-521 / secp256k1.
 p256 = { workspace = true }
+p384 = { workspace = true }
 p521 = { workspace = true }
+k256 = { workspace = true }
 
 [dev-dependencies]
 minicbor = { workspace = true }

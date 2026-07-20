@@ -215,7 +215,7 @@ pub fn sign_digest(key: &SigningKey, digest: &[u8; 32]) -> Option<[u8; 64]> {
 /// returns it.
 pub fn public_uncompressed(key: &SigningKey) -> [u8; 65] {
     let mut out = [0u8; 65];
-    let pt = key.verifying_key().to_encoded_point(false);
+    let pt = key.verifying_key().to_sec1_point(false);
     out.copy_from_slice(pt.as_bytes());
     out
 }

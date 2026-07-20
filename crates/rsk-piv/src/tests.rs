@@ -1905,9 +1905,9 @@ fn ecdh_on_key_management_slot() {
     );
     assert_eq!(sw, Sw::OK);
     let card_point = ec_point_of(&resp);
-    use p256::elliptic_curve::sec1::ToEncodedPoint;
+    use p256::elliptic_curve::sec1::ToSec1Point;
     let host_sk = p256::SecretKey::from_slice(&[7u8; 32]).unwrap();
-    let host_pub_unc = host_sk.public_key().to_encoded_point(false);
+    let host_pub_unc = host_sk.public_key().to_sec1_point(false);
     let mut msg = vec![0x7C, 0x45, 0x82, 0x00, 0x85, 0x41];
     msg.extend_from_slice(host_pub_unc.as_bytes());
     let (sw, out) = run(

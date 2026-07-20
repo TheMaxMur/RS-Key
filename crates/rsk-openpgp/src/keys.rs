@@ -16,9 +16,7 @@ use rsk_fs::{Fs, KeyFid, Sealed, Storage};
 use rsk_sdk::Sw;
 
 use p256::ecdsa::signature::hazmat::PrehashSigner;
-use p256::elliptic_curve::rand_core;
-use p256::elliptic_curve::sec1::FromEncodedPoint;
-use p521::ecdsa::signature::hazmat::RandomizedPrehashSigner;
+use p256::elliptic_curve::sec1::FromSec1Point;
 
 use num_bigint_dig::prime::probably_prime_lucas;
 use rsa::traits::{PrivateKeyParts, PublicKeyParts};
@@ -31,7 +29,10 @@ pub use rsa::RsaPrivateKey;
 
 use crate::Rng;
 use crate::consts::*;
-use crate::dobj::{ATTR_CV25519, ATTR_ED25519, ATTR_P256K1, ATTR_P256R1, ATTR_P384R1, ATTR_P521R1};
+use crate::dobj::{
+    ATTR_BP256R1, ATTR_BP384R1, ATTR_CV25519, ATTR_ED25519, ATTR_P256K1, ATTR_P256R1, ATTR_P384R1,
+    ATTR_P521R1,
+};
 use crate::pin::{Session, load_dek};
 
 /// Largest raw ECDSA signature: P-521 `r ‖ s` = 2×66 bytes.
@@ -188,6 +189,10 @@ pub enum Curve {
     P384,
     P521,
     K256,
+    /// brainpoolP256r1 (RFC 5639).
+    Bp256,
+    /// brainpoolP384r1 (RFC 5639).
+    Bp384,
     Ed25519,
     /// Curve25519 ECDH (the decipher key); OpenPGP "Cv25519".
     X25519,
@@ -200,6 +205,8 @@ impl Curve {
             Curve::P384 => 4,
             Curve::P521 => 5,
             Curve::K256 => 12,
+            Curve::Bp256 => 6,
+            Curve::Bp384 => 7,
             Curve::Ed25519 => 30,
             Curve::X25519 => 31,
         }
@@ -211,6 +218,8 @@ impl Curve {
             4 => Curve::P384,
             5 => Curve::P521,
             12 => Curve::K256,
+            6 => Curve::Bp256,
+            7 => Curve::Bp384,
             30 => Curve::Ed25519,
             31 => Curve::X25519,
             _ => return None,
@@ -221,7 +230,7 @@ impl Curve {
 /// Map a stored algorithm-attribute (`[algo_id ‖ oid]`) to its curve by matching
 /// the **OID only**: for a NIST curve the leading id byte is `ECDSA` (0x13) on a
 /// signing key but `ECDH` (0x12) on the decipher key, yet both denote the same
-/// curve. Unsupported curves (brainpool / X448 / Ed448) return `None`.
+/// curve. Unsupported curves (X448 / Ed448) return `None`.
 pub fn curve_from_attr(attr: &[u8]) -> Option<Curve> {
     let oid = attr.get(1..)?;
     fn oid_of(tmpl: &[u8]) -> &[u8] {
@@ -233,6 +242,10 @@ pub fn curve_from_attr(attr: &[u8]) -> Option<Curve> {
         Some(Curve::P384)
     } else if oid == oid_of(ATTR_P521R1) {
         Some(Curve::P521)
+    } else if oid == oid_of(ATTR_BP256R1) {
+        Some(Curve::Bp256)
+    } else if oid == oid_of(ATTR_BP384R1) {
+        Some(Curve::Bp384)
     } else if oid == oid_of(ATTR_P256K1) {
         Some(Curve::K256)
     } else if oid == oid_of(ATTR_ED25519) {
@@ -253,6 +266,8 @@ pub enum PrivKey {
     P384([u8; 48]),
     P521([u8; 66]),
     K256([u8; 32]),
+    Bp256([u8; 32]),
+    Bp384([u8; 48]),
     Ed25519([u8; 32]),
     /// Curve25519 ECDH: the imported scalar as a big-endian MPI (reversed to the
     /// little-endian RFC 7748 form only at agreement time).
@@ -265,7 +280,8 @@ impl Drop for PrivKey {
             PrivKey::P256(s) | PrivKey::K256(s) | PrivKey::Ed25519(s) | PrivKey::X25519(s) => {
                 s.zeroize()
             }
-            PrivKey::P384(s) => s.zeroize(),
+            PrivKey::Bp256(s) => s.zeroize(),
+            PrivKey::P384(s) | PrivKey::Bp384(s) => s.zeroize(),
             PrivKey::P521(s) => s.zeroize(),
         }
     }
@@ -292,6 +308,8 @@ impl PrivKey {
             Curve::P384 => PrivKey::P384(pad::<48>(scalar)?),
             Curve::P521 => PrivKey::P521(pad::<66>(scalar)?),
             Curve::K256 => PrivKey::K256(pad::<32>(scalar)?),
+            Curve::Bp256 => PrivKey::Bp256(pad::<32>(scalar)?),
+            Curve::Bp384 => PrivKey::Bp384(pad::<48>(scalar)?),
             Curve::Ed25519 => PrivKey::Ed25519(pad::<32>(scalar)?),
             Curve::X25519 => PrivKey::X25519(pad::<32>(scalar)?),
         })
@@ -305,26 +323,77 @@ impl PrivKey {
         // clones it (the `SecretKey` itself zeroizes on drop).
         match curve {
             Curve::P256 => {
-                let mut b = p256::SecretKey::random(&mut RngAdapter(rng)).to_bytes();
-                let k = Self::from_scalar(curve, b.as_slice());
+                let mut b = [0u8; 32];
+                loop {
+                    rng.fill(&mut b);
+                    if p256::SecretKey::from_bytes(&p256::FieldBytes::from(b)).is_ok() {
+                        break;
+                    }
+                }
+                let k = Self::from_scalar(curve, &b);
                 b.zeroize();
                 k
             }
             Curve::P384 => {
-                let mut b = p384::SecretKey::random(&mut RngAdapter(rng)).to_bytes();
-                let k = Self::from_scalar(curve, b.as_slice());
+                let mut b = [0u8; 48];
+                loop {
+                    rng.fill(&mut b);
+                    if p384::SecretKey::from_bytes(&p384::FieldBytes::from(b)).is_ok() {
+                        break;
+                    }
+                }
+                let k = Self::from_scalar(curve, &b);
                 b.zeroize();
                 k
             }
             Curve::P521 => {
-                let mut b = p521::SecretKey::random(&mut RngAdapter(rng)).to_bytes();
-                let k = Self::from_scalar(curve, b.as_slice());
+                let mut b = [0u8; 66];
+                loop {
+                    rng.fill(&mut b);
+                    b[0] &= 0x01; // a P-521 scalar is 521 bits: keep only the top bit
+                    if p521::SecretKey::from_bytes(&p521::FieldBytes::from(b)).is_ok() {
+                        break;
+                    }
+                }
+                let k = Self::from_scalar(curve, &b);
                 b.zeroize();
                 k
             }
             Curve::K256 => {
-                let mut b = k256::SecretKey::random(&mut RngAdapter(rng)).to_bytes();
-                let k = Self::from_scalar(curve, b.as_slice());
+                let mut b = [0u8; 32];
+                loop {
+                    rng.fill(&mut b);
+                    if k256::SecretKey::from_bytes(&k256::FieldBytes::from(b)).is_ok() {
+                        break;
+                    }
+                }
+                let k = Self::from_scalar(curve, &b);
+                b.zeroize();
+                k
+            }
+            // 0.14 `SecretKey::random` wants a rand_core 0.10 rng our `Rng` can't
+            // supply; reject-sample raw bytes instead (`from_bytes` validates [1,n)).
+            Curve::Bp256 => {
+                let mut b = [0u8; 32];
+                loop {
+                    rng.fill(&mut b);
+                    if bp256::r1::SecretKey::from_bytes(&bp256::r1::FieldBytes::from(b)).is_ok() {
+                        break;
+                    }
+                }
+                let k = Self::from_scalar(curve, &b);
+                b.zeroize();
+                k
+            }
+            Curve::Bp384 => {
+                let mut b = [0u8; 48];
+                loop {
+                    rng.fill(&mut b);
+                    if bp384::r1::SecretKey::from_bytes(&bp384::r1::FieldBytes::from(b)).is_ok() {
+                        break;
+                    }
+                }
+                let k = Self::from_scalar(curve, &b);
                 b.zeroize();
                 k
             }
@@ -346,6 +415,8 @@ impl PrivKey {
             PrivKey::P384(_) => Curve::P384,
             PrivKey::P521(_) => Curve::P521,
             PrivKey::K256(_) => Curve::K256,
+            PrivKey::Bp256(_) => Curve::Bp256,
+            PrivKey::Bp384(_) => Curve::Bp384,
             PrivKey::Ed25519(_) => Curve::Ed25519,
             PrivKey::X25519(_) => Curve::X25519,
         }
@@ -355,53 +426,60 @@ impl PrivKey {
     /// format; treat as key material.
     pub fn scalar(&self) -> &[u8] {
         match self {
-            PrivKey::P256(s) | PrivKey::K256(s) | PrivKey::Ed25519(s) | PrivKey::X25519(s) => s,
-            PrivKey::P384(s) => s,
+            PrivKey::P256(s)
+            | PrivKey::K256(s)
+            | PrivKey::Bp256(s)
+            | PrivKey::Ed25519(s)
+            | PrivKey::X25519(s) => s,
+            PrivKey::P384(s) | PrivKey::Bp384(s) => s,
             PrivKey::P521(s) => s,
         }
     }
 
     /// Sign `prehash` (the message digest gpg sends for ECDSA, or the raw message
     /// for EdDSA) into `out` as raw `r ‖ s` (or the 64-byte EdDSA signature);
-    /// returns the length. P-256/P-384/secp256k1 sign deterministically
-    /// (RFC 6979); P-521 (no deterministic signer in the crate) uses `rng`.
-    pub fn sign(&self, prehash: &[u8], rng: &mut dyn Rng, out: &mut [u8]) -> Result<usize, Sw> {
+    /// returns the length. All curves now sign deterministically (RFC 6979; 0.14's
+    /// p521 gained a deterministic signer), so no RNG is used — `_rng` is kept only
+    /// for the shared applet signature.
+    pub fn sign(&self, prehash: &[u8], _rng: &mut dyn Rng, out: &mut [u8]) -> Result<usize, Sw> {
         fn put(b: &[u8], out: &mut [u8]) -> usize {
             out[..b.len()].copy_from_slice(b);
             b.len()
         }
         match self {
             PrivKey::P256(s) => {
-                let k = p256::ecdsa::SigningKey::from_bytes(p256::FieldBytes::from_slice(s))
+                let k = p256::ecdsa::SigningKey::from_bytes(&p256::FieldBytes::from(*s))
                     .map_err(|_| Sw::EXEC_ERROR)?;
                 let sig: p256::ecdsa::Signature =
                     k.sign_prehash(prehash).map_err(|_| Sw::EXEC_ERROR)?;
                 Ok(put(sig.to_bytes().as_slice(), out))
             }
             PrivKey::P384(s) => {
-                let k = p384::ecdsa::SigningKey::from_bytes(p384::FieldBytes::from_slice(s))
+                let k = p384::ecdsa::SigningKey::from_bytes(&p384::FieldBytes::from(*s))
                     .map_err(|_| Sw::EXEC_ERROR)?;
                 let sig: p384::ecdsa::Signature =
                     k.sign_prehash(prehash).map_err(|_| Sw::EXEC_ERROR)?;
                 Ok(put(sig.to_bytes().as_slice(), out))
             }
             PrivKey::K256(s) => {
-                let k = k256::ecdsa::SigningKey::from_bytes(k256::FieldBytes::from_slice(s))
+                let k = k256::ecdsa::SigningKey::from_bytes(&k256::FieldBytes::from(*s))
                     .map_err(|_| Sw::EXEC_ERROR)?;
                 let sig: k256::ecdsa::Signature =
                     k.sign_prehash(prehash).map_err(|_| Sw::EXEC_ERROR)?;
                 Ok(put(sig.to_bytes().as_slice(), out))
             }
             PrivKey::P521(s) => {
-                let k = p521::ecdsa::SigningKey::from_bytes(p521::FieldBytes::from_slice(s))
+                // 0.14's p521 has a deterministic RFC 6979 signer (its `sha512`
+                // feature), so no random nonce / rand_core adapter is needed here.
+                let k = p521::ecdsa::SigningKey::from_bytes(&p521::FieldBytes::from(*s))
                     .map_err(|_| Sw::EXEC_ERROR)?;
-                let mut ad = RngAdapter(rng);
-                let sig: p521::ecdsa::Signature = k
-                    .sign_prehash_with_rng(&mut ad, prehash)
-                    .map_err(|_| Sw::EXEC_ERROR)?;
+                let sig: p521::ecdsa::Signature =
+                    k.sign_prehash(prehash).map_err(|_| Sw::EXEC_ERROR)?;
                 let b = sig.to_bytes();
                 Ok(put(&b[..], out))
             }
+            PrivKey::Bp256(s) => sign_bp256(s, prehash, out),
+            PrivKey::Bp384(s) => sign_bp384(s, prehash, out),
             PrivKey::Ed25519(seed) => {
                 use ed25519_dalek::Signer;
                 let k = ed25519_dalek::SigningKey::from_bytes(seed);
@@ -422,36 +500,29 @@ impl PrivKey {
         }
         match self {
             PrivKey::P256(s) => {
-                let k = p256::ecdsa::SigningKey::from_bytes(p256::FieldBytes::from_slice(s))
+                let k = p256::ecdsa::SigningKey::from_bytes(&p256::FieldBytes::from(*s))
                     .map_err(|_| Sw::EXEC_ERROR)?;
-                Ok(put(
-                    k.verifying_key().to_encoded_point(false).as_bytes(),
-                    out,
-                ))
+                Ok(put(k.verifying_key().to_sec1_point(false).as_bytes(), out))
             }
             PrivKey::P384(s) => {
-                let k = p384::ecdsa::SigningKey::from_bytes(p384::FieldBytes::from_slice(s))
+                let k = p384::ecdsa::SigningKey::from_bytes(&p384::FieldBytes::from(*s))
                     .map_err(|_| Sw::EXEC_ERROR)?;
-                Ok(put(
-                    k.verifying_key().to_encoded_point(false).as_bytes(),
-                    out,
-                ))
+                Ok(put(k.verifying_key().to_sec1_point(false).as_bytes(), out))
             }
             PrivKey::K256(s) => {
-                let k = k256::ecdsa::SigningKey::from_bytes(k256::FieldBytes::from_slice(s))
+                let k = k256::ecdsa::SigningKey::from_bytes(&k256::FieldBytes::from(*s))
                     .map_err(|_| Sw::EXEC_ERROR)?;
-                Ok(put(
-                    k.verifying_key().to_encoded_point(false).as_bytes(),
-                    out,
-                ))
+                Ok(put(k.verifying_key().to_sec1_point(false).as_bytes(), out))
             }
             PrivKey::P521(s) => {
-                let k = p521::ecdsa::SigningKey::from_bytes(p521::FieldBytes::from_slice(s))
+                let k = p521::ecdsa::SigningKey::from_bytes(&p521::FieldBytes::from(*s))
                     .map_err(|_| Sw::EXEC_ERROR)?;
                 // p521's newtype `verifying_key()` is dead-cfg'd; derive via From.
                 let vk = p521::ecdsa::VerifyingKey::from(&k);
-                Ok(put(vk.to_encoded_point(false).as_bytes(), out))
+                Ok(put(vk.to_sec1_point(false).as_bytes(), out))
             }
+            PrivKey::Bp256(s) => pubkey_bp256(s, out),
+            PrivKey::Bp384(s) => pubkey_bp384(s, out),
             PrivKey::Ed25519(seed) => {
                 let k = ed25519_dalek::SigningKey::from_bytes(seed);
                 Ok(put(&k.verifying_key().to_bytes(), out))
@@ -476,6 +547,8 @@ impl PrivKey {
             PrivKey::P384(s) => ecdh_p384(s, peer_point, out),
             PrivKey::P521(s) => ecdh_p521(s, peer_point, out),
             PrivKey::K256(s) => ecdh_k256(s, peer_point, out),
+            PrivKey::Bp256(s) => ecdh_bp256(s, peer_point, out),
+            PrivKey::Bp384(s) => ecdh_bp384(s, peer_point, out),
             PrivKey::X25519(s) => ecdh_x25519(s, peer_point, out),
             PrivKey::Ed25519(_) => Err(Sw::FUNC_NOT_SUPPORTED),
         }
@@ -485,10 +558,10 @@ impl PrivKey {
 /// P-256 ECDH: peer point parsed as a SEC1 uncompressed point, shared secret =
 /// the affine x-coordinate.
 fn ecdh_p256(scalar: &[u8; 32], peer_point: &[u8], out: &mut [u8]) -> Result<usize, Sw> {
-    let sk = p256::SecretKey::from_bytes(p256::FieldBytes::from_slice(scalar))
+    let sk = p256::SecretKey::from_bytes(&p256::FieldBytes::from(*scalar))
         .map_err(|_| Sw::DATA_INVALID)?;
-    let ep = p256::EncodedPoint::from_bytes(peer_point).map_err(|_| Sw::DATA_INVALID)?;
-    let peer = Option::<p256::PublicKey>::from(p256::PublicKey::from_encoded_point(&ep))
+    let ep = p256::Sec1Point::from_bytes(peer_point).map_err(|_| Sw::DATA_INVALID)?;
+    let peer = Option::<p256::PublicKey>::from(p256::PublicKey::from_sec1_point(&ep))
         .ok_or(Sw::DATA_INVALID)?;
     let shared = p256::ecdh::diffie_hellman(sk.to_nonzero_scalar(), peer.as_affine());
     let z = shared.raw_secret_bytes();
@@ -498,10 +571,10 @@ fn ecdh_p256(scalar: &[u8; 32], peer_point: &[u8], out: &mut [u8]) -> Result<usi
 
 /// P-384 ECDH — same SEC1 idiom as [`ecdh_p256`], 48-byte shared x-coordinate.
 fn ecdh_p384(scalar: &[u8; 48], peer_point: &[u8], out: &mut [u8]) -> Result<usize, Sw> {
-    let sk = p384::SecretKey::from_bytes(p384::FieldBytes::from_slice(scalar))
+    let sk = p384::SecretKey::from_bytes(&p384::FieldBytes::from(*scalar))
         .map_err(|_| Sw::DATA_INVALID)?;
-    let ep = p384::EncodedPoint::from_bytes(peer_point).map_err(|_| Sw::DATA_INVALID)?;
-    let peer = Option::<p384::PublicKey>::from(p384::PublicKey::from_encoded_point(&ep))
+    let ep = p384::Sec1Point::from_bytes(peer_point).map_err(|_| Sw::DATA_INVALID)?;
+    let peer = Option::<p384::PublicKey>::from(p384::PublicKey::from_sec1_point(&ep))
         .ok_or(Sw::DATA_INVALID)?;
     let shared = p384::ecdh::diffie_hellman(sk.to_nonzero_scalar(), peer.as_affine());
     let z = shared.raw_secret_bytes();
@@ -511,10 +584,10 @@ fn ecdh_p384(scalar: &[u8; 48], peer_point: &[u8], out: &mut [u8]) -> Result<usi
 
 /// P-521 ECDH — 66-byte shared x-coordinate.
 fn ecdh_p521(scalar: &[u8; 66], peer_point: &[u8], out: &mut [u8]) -> Result<usize, Sw> {
-    let sk = p521::SecretKey::from_bytes(p521::FieldBytes::from_slice(scalar))
+    let sk = p521::SecretKey::from_bytes(&p521::FieldBytes::from(*scalar))
         .map_err(|_| Sw::DATA_INVALID)?;
-    let ep = p521::EncodedPoint::from_bytes(peer_point).map_err(|_| Sw::DATA_INVALID)?;
-    let peer = Option::<p521::PublicKey>::from(p521::PublicKey::from_encoded_point(&ep))
+    let ep = p521::Sec1Point::from_bytes(peer_point).map_err(|_| Sw::DATA_INVALID)?;
+    let peer = Option::<p521::PublicKey>::from(p521::PublicKey::from_sec1_point(&ep))
         .ok_or(Sw::DATA_INVALID)?;
     let shared = p521::ecdh::diffie_hellman(sk.to_nonzero_scalar(), peer.as_affine());
     let z = shared.raw_secret_bytes();
@@ -524,12 +597,90 @@ fn ecdh_p521(scalar: &[u8; 66], peer_point: &[u8], out: &mut [u8]) -> Result<usi
 
 /// secp256k1 ECDH — 32-byte shared x-coordinate.
 fn ecdh_k256(scalar: &[u8; 32], peer_point: &[u8], out: &mut [u8]) -> Result<usize, Sw> {
-    let sk = k256::SecretKey::from_bytes(k256::FieldBytes::from_slice(scalar))
+    let sk = k256::SecretKey::from_bytes(&k256::FieldBytes::from(*scalar))
         .map_err(|_| Sw::DATA_INVALID)?;
-    let ep = k256::EncodedPoint::from_bytes(peer_point).map_err(|_| Sw::DATA_INVALID)?;
-    let peer = Option::<k256::PublicKey>::from(k256::PublicKey::from_encoded_point(&ep))
+    let ep = k256::Sec1Point::from_bytes(peer_point).map_err(|_| Sw::DATA_INVALID)?;
+    let peer = Option::<k256::PublicKey>::from(k256::PublicKey::from_sec1_point(&ep))
         .ok_or(Sw::DATA_INVALID)?;
     let shared = k256::ecdh::diffie_hellman(sk.to_nonzero_scalar(), peer.as_affine());
+    let z = shared.raw_secret_bytes();
+    out[..z.len()].copy_from_slice(z.as_slice());
+    Ok(z.len())
+}
+
+// brainpoolP256r1 / brainpoolP384r1 (bp256/bp384 0.14, fiat-crypto backend). These
+// crates leave `SigningKey`/`VerifyingKey` generic in `ecdsa`, so name them there;
+// signing is deterministic RFC 6979 (bp `sha256`/`sha384` feature) like P-256/P-384.
+
+/// brainpoolP256r1 ECDSA — raw `r ‖ s` (64 bytes).
+fn sign_bp256(s: &[u8; 32], prehash: &[u8], out: &mut [u8]) -> Result<usize, Sw> {
+    use ecdsa::signature::hazmat::PrehashSigner;
+    let k =
+        ecdsa::SigningKey::<bp256::BrainpoolP256r1>::from_bytes(&bp256::r1::FieldBytes::from(*s))
+            .map_err(|_| Sw::EXEC_ERROR)?;
+    let sig: bp256::r1::ecdsa::Signature = k.sign_prehash(prehash).map_err(|_| Sw::EXEC_ERROR)?;
+    let b = sig.to_bytes();
+    out[..b.len()].copy_from_slice(&b);
+    Ok(b.len())
+}
+
+/// brainpoolP384r1 ECDSA — raw `r ‖ s` (96 bytes).
+fn sign_bp384(s: &[u8; 48], prehash: &[u8], out: &mut [u8]) -> Result<usize, Sw> {
+    use ecdsa::signature::hazmat::PrehashSigner;
+    let k =
+        ecdsa::SigningKey::<bp384::BrainpoolP384r1>::from_bytes(&bp384::r1::FieldBytes::from(*s))
+            .map_err(|_| Sw::EXEC_ERROR)?;
+    let sig: bp384::r1::ecdsa::Signature = k.sign_prehash(prehash).map_err(|_| Sw::EXEC_ERROR)?;
+    let b = sig.to_bytes();
+    out[..b.len()].copy_from_slice(&b);
+    Ok(b.len())
+}
+
+/// brainpoolP256r1 public point: SEC1 uncompressed `04 ‖ x ‖ y` (65 bytes).
+fn pubkey_bp256(s: &[u8; 32], out: &mut [u8]) -> Result<usize, Sw> {
+    let k =
+        ecdsa::SigningKey::<bp256::BrainpoolP256r1>::from_bytes(&bp256::r1::FieldBytes::from(*s))
+            .map_err(|_| Sw::EXEC_ERROR)?;
+    let pt = k.verifying_key().to_sec1_point(false);
+    let b = pt.as_bytes();
+    out[..b.len()].copy_from_slice(b);
+    Ok(b.len())
+}
+
+/// brainpoolP384r1 public point: SEC1 uncompressed `04 ‖ x ‖ y` (97 bytes).
+fn pubkey_bp384(s: &[u8; 48], out: &mut [u8]) -> Result<usize, Sw> {
+    let k =
+        ecdsa::SigningKey::<bp384::BrainpoolP384r1>::from_bytes(&bp384::r1::FieldBytes::from(*s))
+            .map_err(|_| Sw::EXEC_ERROR)?;
+    let pt = k.verifying_key().to_sec1_point(false);
+    let b = pt.as_bytes();
+    out[..b.len()].copy_from_slice(b);
+    Ok(b.len())
+}
+
+/// brainpoolP256r1 ECDH — SEC1 peer point, 32-byte shared x-coordinate.
+fn ecdh_bp256(scalar: &[u8; 32], peer_point: &[u8], out: &mut [u8]) -> Result<usize, Sw> {
+    let sk = bp256::r1::SecretKey::from_bytes(&bp256::r1::FieldBytes::from(*scalar))
+        .map_err(|_| Sw::DATA_INVALID)?;
+    let pk =
+        bp256::elliptic_curve::PublicKey::<bp256::BrainpoolP256r1>::from_sec1_bytes(peer_point)
+            .map_err(|_| Sw::DATA_INVALID)?;
+    let shared =
+        bp256::elliptic_curve::ecdh::diffie_hellman(sk.to_nonzero_scalar(), pk.as_affine());
+    let z = shared.raw_secret_bytes();
+    out[..z.len()].copy_from_slice(z.as_slice());
+    Ok(z.len())
+}
+
+/// brainpoolP384r1 ECDH — SEC1 peer point, 48-byte shared x-coordinate.
+fn ecdh_bp384(scalar: &[u8; 48], peer_point: &[u8], out: &mut [u8]) -> Result<usize, Sw> {
+    let sk = bp384::r1::SecretKey::from_bytes(&bp384::r1::FieldBytes::from(*scalar))
+        .map_err(|_| Sw::DATA_INVALID)?;
+    let pk =
+        bp384::elliptic_curve::PublicKey::<bp384::BrainpoolP384r1>::from_sec1_bytes(peer_point)
+            .map_err(|_| Sw::DATA_INVALID)?;
+    let shared =
+        bp384::elliptic_curve::ecdh::diffie_hellman(sk.to_nonzero_scalar(), pk.as_affine());
     let z = shared.raw_secret_bytes();
     out[..z.len()].copy_from_slice(z.as_slice());
     Ok(z.len())
@@ -1195,12 +1346,13 @@ pub fn rsa_decipher(
     Ok(n)
 }
 
-/// Adapts the crate [`Rng`] to `rand_core` for P-521's randomized signer and the
-/// RSA blinding / signing (the curves with a deterministic signer skip it).
+/// Adapts the crate [`Rng`] to the `rsa` crate's `rand_core` (still 0.6, distinct
+/// from the EC stack's 0.10) for RSA blinding / signing. The EC curves no longer
+/// need it — deterministic signers, and keygen reject-samples raw bytes.
 /// `pub(crate)` so the applet tests can drive the `rsa` crate's randomized APIs.
 pub(crate) struct RngAdapter<'a>(pub(crate) &'a mut dyn Rng);
 
-impl rand_core::RngCore for RngAdapter<'_> {
+impl rsa::rand_core::RngCore for RngAdapter<'_> {
     fn next_u32(&mut self) -> u32 {
         let mut b = [0u8; 4];
         self.0.fill(&mut b);
@@ -1214,12 +1366,12 @@ impl rand_core::RngCore for RngAdapter<'_> {
     fn fill_bytes(&mut self, dst: &mut [u8]) {
         self.0.fill(dst);
     }
-    fn try_fill_bytes(&mut self, dst: &mut [u8]) -> Result<(), rand_core::Error> {
+    fn try_fill_bytes(&mut self, dst: &mut [u8]) -> Result<(), rsa::rand_core::Error> {
         self.0.fill(dst);
         Ok(())
     }
 }
-impl rand_core::CryptoRng for RngAdapter<'_> {}
+impl rsa::rand_core::CryptoRng for RngAdapter<'_> {}
 
 #[cfg(test)]
 #[path = "keys_tests.rs"]

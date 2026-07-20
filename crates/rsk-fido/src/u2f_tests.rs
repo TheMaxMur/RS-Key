@@ -4,7 +4,7 @@
 use super::*;
 use crate::consts::EF_ALWAYS_UV;
 use crate::seed::ensure_seed;
-use p256::EncodedPoint;
+use p256::Sec1Point;
 use p256::ecdsa::{Signature, VerifyingKey, signature::Verifier};
 use rsk_crypto::Device;
 use rsk_fs::Fs;
@@ -47,8 +47,8 @@ fn ext_apdu(ins: u8, p1: u8, data: &[u8]) -> std::vec::Vec<u8> {
 }
 
 fn vkey(x: &[u8], y: &[u8]) -> VerifyingKey {
-    let pt = EncodedPoint::from_affine_coordinates(x.into(), y.into(), false);
-    VerifyingKey::from_encoded_point(&pt).unwrap()
+    let pt = Sec1Point::from_bytes(&crate::ec::sec1_uncompressed(x, y)).unwrap();
+    VerifyingKey::from_sec1_point(&pt).unwrap()
 }
 
 struct Fixed(crate::Presence);

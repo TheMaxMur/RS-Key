@@ -13,6 +13,29 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+### Added
+
+- **OpenPGP brainpoolP256r1 and brainpoolP384r1** (ECDSA on the sign / auth slots,
+  ECDH on the decrypt slot). gpg can now `key-attr` / `generate` / `keytocard` a
+  brainpool key, matching the curves a real YubiKey 5.7.4 advertises in the
+  algorithm-information DO (`0xFA`). brainpoolP512r1 stays absent — no Rust
+  arithmetic for the 512-bit brainpool curve exists yet. The applet keys off the
+  `bp256` / `bp384` crates (fiat-crypto backend), checked byte-for-byte against
+  OpenSSL test vectors. **bcdDevice → 0x0836.**
+
+### Changed
+
+- **The elliptic-curve stack moved from RustCrypto 0.13 to 0.14** (`p256` / `p384`
+  / `p521` / `k256`, with `elliptic-curve` 0.14 and `ecdsa` 0.17), so brainpool and
+  the NIST curves share one arithmetic generation instead of two — cutting ~138 KB
+  of flash. EC signatures are byte-for-byte unchanged (host KATs prove it), so
+  keys provisioned before the upgrade keep working. **bcdDevice → 0x0836.**
+- **P-384 and secp256k1 FIDO signatures now sign through the fixed-base comb**
+  (as P-256 and P-521 already did), skipping 0.14's slower generic scalar
+  multiplication: on the RP2350, P-384 `getAssertion` drops ~570 → ~230 ms and
+  secp256k1 ~86 → ~50 ms. The signatures stay byte-identical to the crate signer,
+  secp256k1's low-S normalization included. **bcdDevice → 0x0837.**
+
 ### Fixed
 
 - **Four small YubiKey-conformance nits surfaced by a full differential against a

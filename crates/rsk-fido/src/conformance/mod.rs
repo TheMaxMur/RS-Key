@@ -12,7 +12,7 @@
 use super::*;
 use crate::u2f::process_u2f;
 use minicbor::Decoder;
-use p256::EncodedPoint;
+use p256::Sec1Point;
 use p256::ecdsa::{Signature, VerifyingKey, signature::Verifier};
 use rsk_crypto::pinproto::PinProto;
 use rsk_fs::storage::ram::RamStorage;
@@ -282,8 +282,8 @@ fn canonical_lt(a: &str, b: &str) -> bool {
 /// Assert an ECDSA P-256 signature (`der_sig`) over `msg` verifies under the
 /// public key `(x, y)` — the cryptographic check a conformance tool performs.
 fn verify_p256(x: &[u8], y: &[u8], msg: &[u8], der_sig: &[u8]) {
-    let pt = EncodedPoint::from_affine_coordinates(x.into(), y.into(), false);
-    let vk = VerifyingKey::from_encoded_point(&pt).unwrap();
+    let pt = Sec1Point::from_bytes(&crate::ec::sec1_uncompressed(x, y)).unwrap();
+    let vk = VerifyingKey::from_sec1_point(&pt).unwrap();
     vk.verify(msg, &Signature::from_der(der_sig).unwrap())
         .expect("P-256 signature verifies under the given public key");
 }

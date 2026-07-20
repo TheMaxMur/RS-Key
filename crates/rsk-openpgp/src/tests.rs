@@ -272,7 +272,7 @@ fn ec_import(crt: u8, scalar: &[u8]) -> Vec<u8> {
 }
 
 fn p256_vk(scalar: &[u8; 32]) -> p256::ecdsa::VerifyingKey {
-    let sk = p256::ecdsa::SigningKey::from_bytes(p256::FieldBytes::from_slice(scalar)).unwrap();
+    let sk = p256::ecdsa::SigningKey::from_bytes(&p256::FieldBytes::from(*scalar)).unwrap();
     *sk.verifying_key()
 }
 
@@ -396,7 +396,7 @@ fn import_p256_dec_then_pso_decipher_ecdh() {
 
     // An ephemeral peer key; the card must return the shared x-coordinate.
     let eph = [0x33u8; 32];
-    let eph_pub = p256_vk(&eph).to_encoded_point(false);
+    let eph_pub = p256_vk(&eph).to_sec1_point(false);
     let f86 = [&[0x86, eph_pub.as_bytes().len() as u8], eph_pub.as_bytes()].concat();
     let f7f49 = [&[0x7F, 0x49, f86.len() as u8], f86.as_slice()].concat();
     let a6 = [&[0xA6, f7f49.len() as u8], f7f49.as_slice()].concat();
@@ -406,7 +406,7 @@ fn import_p256_dec_then_pso_decipher_ecdh() {
     assert_eq!(sw, Sw::OK);
 
     // Expected = ECDH(dec_scalar, eph_pub).x.
-    let sk = p256::SecretKey::from_bytes(p256::FieldBytes::from_slice(&dec_scalar)).unwrap();
+    let sk = p256::SecretKey::from_bytes(&p256::FieldBytes::from(dec_scalar)).unwrap();
     let peer = p256::PublicKey::from_sec1_bytes(eph_pub.as_bytes()).unwrap();
     let shared = p256::ecdh::diffie_hellman(sk.to_nonzero_scalar(), peer.as_affine());
     assert_eq!(&z, shared.raw_secret_bytes().as_slice());
@@ -436,7 +436,7 @@ fn mse_redirects_decipher_to_aut_slot() {
 
     // One peer ephemeral key, reused across both deciphers.
     let eph = [0x33u8; 32];
-    let eph_pub = p256_vk(&eph).to_encoded_point(false);
+    let eph_pub = p256_vk(&eph).to_sec1_point(false);
     let f86 = [&[0x86, eph_pub.as_bytes().len() as u8], eph_pub.as_bytes()].concat();
     let f7f49 = [&[0x7F, 0x49, f86.len() as u8], f86.as_slice()].concat();
     let a6 = [&[0xA6, f7f49.len() as u8], f7f49.as_slice()].concat();
@@ -455,7 +455,7 @@ fn mse_redirects_decipher_to_aut_slot() {
     let (z_aut, sw) = run(&mut app, &mut fs, &dec_cmd);
     assert_eq!(sw, Sw::OK);
     assert_ne!(z_dec, z_aut, "MSE did not redirect the decipher slot");
-    let sk = p256::SecretKey::from_bytes(p256::FieldBytes::from_slice(&aut_scalar)).unwrap();
+    let sk = p256::SecretKey::from_bytes(&p256::FieldBytes::from(aut_scalar)).unwrap();
     let peer = p256::PublicKey::from_sec1_bytes(eph_pub.as_bytes()).unwrap();
     let shared = p256::ecdh::diffie_hellman(sk.to_nonzero_scalar(), peer.as_affine());
     assert_eq!(&z_aut, shared.raw_secret_bytes().as_slice());
@@ -820,7 +820,7 @@ fn generate_dec_ecdh_mints_aes_key() {
     // ECDH(dec_priv, eph_pub).x == ECDH(eph_priv, dec_pub).x.
     verify_pin(&mut app, &mut fs, consts::PW1_MODE82, consts::PW1_DEFAULT);
     let eph = [0x33u8; 32];
-    let eph_pub = p256_vk(&eph).to_encoded_point(false);
+    let eph_pub = p256_vk(&eph).to_sec1_point(false);
     let f86 = [&[0x86, eph_pub.as_bytes().len() as u8], eph_pub.as_bytes()].concat();
     let f7f49 = [&[0x7F, 0x49, f86.len() as u8], f86.as_slice()].concat();
     let a6 = [&[0xA6, f7f49.len() as u8], f7f49.as_slice()].concat();
@@ -828,7 +828,7 @@ fn generate_dec_ecdh_mints_aes_key() {
     a.extend_from_slice(&a6);
     let (z, sw) = run(&mut app, &mut fs, &a);
     assert_eq!(sw, Sw::OK);
-    let sk = p256::SecretKey::from_bytes(p256::FieldBytes::from_slice(&eph)).unwrap();
+    let sk = p256::SecretKey::from_bytes(&p256::FieldBytes::from(eph)).unwrap();
     let peer = p256::PublicKey::from_sec1_bytes(&point).unwrap();
     let shared = p256::ecdh::diffie_hellman(sk.to_nonzero_scalar(), peer.as_affine());
     assert_eq!(&z, shared.raw_secret_bytes().as_slice());

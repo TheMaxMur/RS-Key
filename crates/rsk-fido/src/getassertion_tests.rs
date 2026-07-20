@@ -6,7 +6,7 @@ use crate::consts::{ALG_ES256, EF_ALWAYS_UV};
 use crate::makecredential::make_credential;
 use crate::seed::ensure_seed;
 use minicbor::Decoder;
-use p256::EncodedPoint;
+use p256::Sec1Point;
 use p256::ecdsa::{Signature, VerifyingKey, signature::Verifier};
 use rsk_crypto::Device;
 use rsk_fs::Fs;
@@ -123,8 +123,8 @@ fn verify_assertion(resp: &[u8], x: &[u8; 32], y: &[u8; 32]) -> usize {
     assert_eq!(auth_data[32] & 0x01, 0x01); // UP
     assert_eq!(auth_data[32] & 0x40, 0x00); // no AT
 
-    let pt = EncodedPoint::from_affine_coordinates(x.into(), y.into(), false);
-    let vk = VerifyingKey::from_encoded_point(&pt).unwrap();
+    let pt = Sec1Point::from_bytes(&crate::ec::sec1_uncompressed(x, y)).unwrap();
+    let vk = VerifyingKey::from_sec1_point(&pt).unwrap();
     let mut signed = auth_data;
     signed.extend_from_slice(&CDH);
     let s = Signature::from_der(&sig).unwrap();
@@ -2374,12 +2374,8 @@ fn es384_register_then_login_verifies() {
     };
     let ad = assertion_auth_data(&ga);
     let sig = assertion_sig(&ga);
-    let pt = p384::EncodedPoint::from_affine_coordinates(
-        p384::FieldBytes::from_slice(&x),
-        p384::FieldBytes::from_slice(&y),
-        false,
-    );
-    let vk = VerifyingKey::from_encoded_point(&pt).unwrap();
+    let pt = p384::Sec1Point::from_bytes(&crate::ec::sec1_uncompressed(x, y)).unwrap();
+    let vk = VerifyingKey::from_sec1_point(&pt).unwrap();
     let mut signed = ad;
     signed.extend_from_slice(&CDH);
     vk.verify(&signed, &Signature::from_der(&sig).unwrap())
@@ -2747,12 +2743,8 @@ fn classic_to_pqc_upgrade() {
     let sig = assertion_sig(&ga_old);
     let mut signed = assertion_auth_data(&ga_old);
     signed.extend_from_slice(&CDH);
-    let pt = p256::EncodedPoint::from_affine_coordinates(
-        p256::FieldBytes::from_slice(&x),
-        p256::FieldBytes::from_slice(&y),
-        false,
-    );
-    let vk = VerifyingKey::from_encoded_point(&pt).unwrap();
+    let pt = p256::Sec1Point::from_bytes(&crate::ec::sec1_uncompressed(x, y)).unwrap();
+    let vk = VerifyingKey::from_sec1_point(&pt).unwrap();
     vk.verify(&signed, &Signature::from_der(&sig).unwrap())
         .expect("pre-upgrade ES256 credential still asserts");
 }

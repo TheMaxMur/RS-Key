@@ -24,6 +24,11 @@ p256 = { workspace = true }
 p384 = { workspace = true }
 p521 = { workspace = true }
 k256 = { workspace = true }
+# Brainpool P-256 / P-384 for the OpenPGP applet — see the workspace note.
+bp256 = { workspace = true }
+bp384 = { workspace = true }
+ecdsa = { workspace = true }
+elliptic-curve = { workspace = true }
 ed25519-dalek = { workspace = true }
 x25519-dalek = { workspace = true }
 rsa = { workspace = true }

@@ -5,7 +5,7 @@ use super::*;
 use crate::consts::EF_ALWAYS_UV;
 use crate::seed::ensure_seed;
 use minicbor::Decoder;
-use p256::EncodedPoint;
+use p256::Sec1Point;
 use p256::ecdsa::{Signature, VerifyingKey, signature::Verifier};
 use rsk_crypto::Device;
 use rsk_fs::Fs;
@@ -354,8 +354,8 @@ fn verify_response(resp: &[u8], client_data_hash: &[u8; 32]) -> std::vec::Vec<u8
     assert_eq!(cd.i8().unwrap(), -3);
     let y = cd.bytes().unwrap().to_vec();
 
-    let pt = EncodedPoint::from_affine_coordinates(x[..].into(), y[..].into(), false);
-    let vk = VerifyingKey::from_encoded_point(&pt).unwrap();
+    let pt = Sec1Point::from_bytes(&crate::ec::sec1_uncompressed(x, y)).unwrap();
+    let vk = VerifyingKey::from_sec1_point(&pt).unwrap();
     let mut signed = auth_data.clone();
     signed.extend_from_slice(client_data_hash);
     let s = Signature::from_der(&sig).unwrap();
@@ -452,7 +452,7 @@ fn unsupported_alg_rejected() {
 
 #[test]
 fn enterprise_attestation_uses_org_chain_when_provisioned() {
-    use p256::EncodedPoint;
+    use p256::Sec1Point;
     use p256::ecdsa::{Signature, VerifyingKey, signature::Verifier};
 
     let mut fs = Fs::new(RamStorage::new());
@@ -535,8 +535,8 @@ fn enterprise_attestation_uses_org_chain_when_provisioned() {
 
     // The signature is the org key's, over authData ‖ clientDataHash.
     let (x, y) = P256Key::from_scalar(&org_scalar).unwrap().public_xy();
-    let pt = EncodedPoint::from_affine_coordinates((&x).into(), (&y).into(), false);
-    let vk = VerifyingKey::from_encoded_point(&pt).unwrap();
+    let pt = Sec1Point::from_bytes(&crate::ec::sec1_uncompressed(x, y)).unwrap();
+    let vk = VerifyingKey::from_sec1_point(&pt).unwrap();
     let mut msg = auth_data;
     msg.extend_from_slice(&[0xCD; 32]);
     vk.verify(&msg, &Signature::from_der(&sig).unwrap())
@@ -1264,8 +1264,8 @@ fn enterprise_attestation_level2_full_attestation() {
     // scalar), not the credential key.
     let device_key = P256Key::from_scalar(&seed).unwrap();
     let (x, y) = device_key.public_xy();
-    let pt = EncodedPoint::from_affine_coordinates(x[..].into(), y[..].into(), false);
-    let vk = VerifyingKey::from_encoded_point(&pt).unwrap();
+    let pt = Sec1Point::from_bytes(&crate::ec::sec1_uncompressed(x, y)).unwrap();
+    let vk = VerifyingKey::from_sec1_point(&pt).unwrap();
     let mut signed = ad.clone();
     signed.extend_from_slice(&[0xCD; 32]);
     let s = Signature::from_der(&sig).unwrap();

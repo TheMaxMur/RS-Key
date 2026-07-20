@@ -15,8 +15,8 @@
 //! `FidoState`); the scalar and the peer's public point are passed in, keeping
 //! the module pure and host-testable.
 
-use p256::elliptic_curve::sec1::{FromEncodedPoint, ToEncodedPoint};
-use p256::{EncodedPoint, FieldBytes, PublicKey, SecretKey, ecdh};
+use p256::elliptic_curve::sec1::{FromSec1Point, ToSec1Point};
+use p256::{FieldBytes, PublicKey, Sec1Point, SecretKey, ecdh};
 use zeroize::Zeroize;
 
 use crate::aes::{Mode, aes_decrypt, aes_encrypt};
@@ -82,8 +82,8 @@ impl PinProto {
 /// `(x, y)`, each 32 bytes — the COSE key coordinates returned by
 /// `getKeyAgreement`. `None` if the scalar is out of range.
 pub fn public_xy(scalar: &[u8; 32]) -> Option<([u8; 32], [u8; 32])> {
-    let sk = SecretKey::from_bytes(FieldBytes::from_slice(scalar)).ok()?;
-    let pt = sk.public_key().to_encoded_point(false);
+    let sk = SecretKey::from_bytes(&FieldBytes::from(*scalar)).ok()?;
+    let pt = sk.public_key().to_sec1_point(false);
     let mut x = [0u8; 32];
     let mut y = [0u8; 32];
     x.copy_from_slice(pt.x()?);
@@ -128,9 +128,14 @@ pub fn ecdh(
 /// key from this, so it needs the bare secret rather than the clientPIN `kdf`
 /// output. `Err` if the peer point is not a valid P-256 public key.
 pub fn ecdh_raw(our_scalar: &[u8; 32], peer_x: &[u8; 32], peer_y: &[u8; 32]) -> Result<[u8; 32]> {
-    let sk = SecretKey::from_bytes(FieldBytes::from_slice(our_scalar)).map_err(|_| Error::Ecdh)?;
-    let ep = EncodedPoint::from_affine_coordinates(peer_x.into(), peer_y.into(), false);
-    let peer = Option::<PublicKey>::from(PublicKey::from_encoded_point(&ep)).ok_or(Error::Ecdh)?;
+    let sk = SecretKey::from_bytes(&FieldBytes::from(*our_scalar)).map_err(|_| Error::Ecdh)?;
+    // 0.14 dropped `Sec1Point::from_affine_coordinates`; splice `04 ‖ x ‖ y`.
+    let mut sec1 = [0u8; 65];
+    sec1[0] = 0x04;
+    sec1[1..33].copy_from_slice(peer_x);
+    sec1[33..].copy_from_slice(peer_y);
+    let ep = Sec1Point::from_bytes(&sec1).map_err(|_| Error::Ecdh)?;
+    let peer = Option::<PublicKey>::from(PublicKey::from_sec1_point(&ep)).ok_or(Error::Ecdh)?;
     let shared = ecdh::diffie_hellman(sk.to_nonzero_scalar(), peer.as_affine());
     let mut z = [0u8; 32];
     z.copy_from_slice(shared.raw_secret_bytes());

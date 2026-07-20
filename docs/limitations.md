@@ -6,10 +6,10 @@ covers the security boundary. This page covers feature and hardware gaps.
 
 ## Cryptography
 
-- **Brainpool curves (OpenPGP)**: not offered. There is no mature, audited
-  `no_std` Rust implementation of brainpoolP256/384/512r1. The existing
-  crates are experimental. The applet does not advertise the curves, so
-  clients never select them. *Status: until a serious crate exists.*
+- **brainpoolP512r1 (OpenPGP)**: not offered. brainpoolP256r1 and P384r1 are
+  supported (advertised in DO `0xFA`, generate / keytocard / sign / decrypt), but
+  no Rust arithmetic for the 512-bit brainpool curve exists yet, so the applet
+  neither advertises nor generates it. *Status: until a crate exists.*
 - **X448 / Ed448 (OpenPGP)**: not offered, same reason. RustCrypto coverage
   of Curve448 is thin and unaudited. Cv25519/Ed25519 plus the NIST curves and
   secp256k1 cover practical use. *Status: until a serious crate exists.*

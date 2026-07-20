@@ -237,6 +237,10 @@ fn curve_id(c: Curve) -> u8 {
         Curve::P384 => 4,
         Curve::P521 => 5,
         Curve::K256 => 12,
+        // Shared tags with rsk-openpgp Curve::id(); PIV never generates brainpool
+        // but the exhaustive match must cover every variant.
+        Curve::Bp256 => 6,
+        Curve::Bp384 => 7,
         Curve::Ed25519 => 30,
         Curve::X25519 => 31,
     }

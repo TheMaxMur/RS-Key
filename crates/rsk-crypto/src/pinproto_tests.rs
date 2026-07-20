@@ -45,9 +45,13 @@ fn kdf_wiring_matches_spec() {
     let mut s2 = [0u8; 64];
     ecdh(PinProto::Two, &a, &bx, &by, &mut s2).unwrap();
 
-    let sk = SecretKey::from_bytes(FieldBytes::from_slice(&a)).unwrap();
-    let ep = EncodedPoint::from_affine_coordinates((&bx).into(), (&by).into(), false);
-    let peer = Option::<PublicKey>::from(PublicKey::from_encoded_point(&ep)).unwrap();
+    let sk = SecretKey::from_bytes(&FieldBytes::from(a)).unwrap();
+    let mut sec1 = [0u8; 65];
+    sec1[0] = 0x04;
+    sec1[1..33].copy_from_slice(&bx);
+    sec1[33..].copy_from_slice(&by);
+    let ep = Sec1Point::from_bytes(&sec1).unwrap();
+    let peer = Option::<PublicKey>::from(PublicKey::from_sec1_point(&ep)).unwrap();
     let z = ecdh::diffie_hellman(sk.to_nonzero_scalar(), peer.as_affine());
     let z = z.raw_secret_bytes();
 

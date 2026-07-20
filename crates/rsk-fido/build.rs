@@ -17,7 +17,7 @@ const W: usize = 4;
 macro_rules! gen_comb {
     ($curve:ident, $d:expr, $coord:expr, $constname:literal, $file:literal) => {{
         use $curve::ProjectivePoint;
-        use $curve::elliptic_curve::sec1::ToEncodedPoint;
+        use $curve::elliptic_curve::sec1::ToSec1Point;
 
         // base[j] = 2^{j·D}·G, by repeated doubling of the generator.
         let mut base = [ProjectivePoint::GENERATOR; W];
@@ -41,7 +41,7 @@ macro_rules! gen_comb {
                         acc += *b;
                     }
                 }
-                let ep = acc.to_affine().to_encoded_point(false);
+                let ep = acc.to_affine().to_sec1_point(false);
                 let mut x = [0u8; $coord];
                 let mut y = [0u8; $coord];
                 x.copy_from_slice(ep.x().expect("affine x"));
@@ -67,5 +67,7 @@ macro_rules! gen_comb {
 fn main() {
     gen_comb!(p521, 131, 66, "GEN_COMB", "gen_comb_p521.rs"); // ceil(521/4) = 131
     gen_comb!(p256, 64, 32, "GEN_COMB_P256", "gen_comb_p256.rs"); // ceil(256/4) = 64
+    gen_comb!(p384, 96, 48, "GEN_COMB_P384", "gen_comb_p384.rs"); // ceil(384/4) = 96
+    gen_comb!(k256, 64, 32, "GEN_COMB_K256", "gen_comb_k256.rs"); // ceil(256/4) = 64
     println!("cargo:rerun-if-changed=build.rs");
 }

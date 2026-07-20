@@ -212,12 +212,8 @@ fn verifies(alg: i64, key: &CoseKey, msg: &[u8], sig: &[u8]) -> bool {
     match (alg, key) {
         (ALG_ES256, CoseKey::Ec2 { x, y }) => {
             use p256::ecdsa::{Signature, VerifyingKey, signature::Verifier};
-            let pt = p256::EncodedPoint::from_affine_coordinates(
-                p256::FieldBytes::from_slice(x),
-                p256::FieldBytes::from_slice(y),
-                false,
-            );
-            let vk = VerifyingKey::from_encoded_point(&pt).unwrap();
+            let pt = p256::Sec1Point::from_bytes(&crate::ec::sec1_uncompressed(x, y)).unwrap();
+            let vk = VerifyingKey::from_sec1_point(&pt).unwrap();
             let Ok(s) = Signature::from_der(sig) else {
                 return false;
             };
@@ -225,12 +221,8 @@ fn verifies(alg: i64, key: &CoseKey, msg: &[u8], sig: &[u8]) -> bool {
         }
         (ALG_ES384, CoseKey::Ec2 { x, y }) => {
             use p384::ecdsa::{Signature, VerifyingKey, signature::Verifier};
-            let pt = p384::EncodedPoint::from_affine_coordinates(
-                p384::FieldBytes::from_slice(x),
-                p384::FieldBytes::from_slice(y),
-                false,
-            );
-            let vk = VerifyingKey::from_encoded_point(&pt).unwrap();
+            let pt = p384::Sec1Point::from_bytes(&crate::ec::sec1_uncompressed(x, y)).unwrap();
+            let vk = VerifyingKey::from_sec1_point(&pt).unwrap();
             let Ok(s) = Signature::from_der(sig) else {
                 return false;
             };
@@ -238,12 +230,8 @@ fn verifies(alg: i64, key: &CoseKey, msg: &[u8], sig: &[u8]) -> bool {
         }
         (ALG_ES512, CoseKey::Ec2 { x, y }) => {
             use p521::ecdsa::{Signature, VerifyingKey, signature::Verifier};
-            let pt = p521::EncodedPoint::from_affine_coordinates(
-                p521::FieldBytes::from_slice(x),
-                p521::FieldBytes::from_slice(y),
-                false,
-            );
-            let vk = VerifyingKey::from_encoded_point(&pt).unwrap();
+            let pt = p521::Sec1Point::from_bytes(&crate::ec::sec1_uncompressed(x, y)).unwrap();
+            let vk = VerifyingKey::from_sec1_point(&pt).unwrap();
             let Ok(s) = Signature::from_der(sig) else {
                 return false;
             };
