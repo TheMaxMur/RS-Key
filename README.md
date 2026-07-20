@@ -181,8 +181,8 @@ record `rsk hw` writes — see the
   attacks are out of scope.
 - **Seed backup covers the deterministic identity only** — resident passkeys,
   OpenPGP and PIV keys do not survive a board swap.
-- **No Brainpool / X448 / Ed448** OpenPGP curves (no mature `no_std` Rust
-  implementations).
+- **No brainpoolP512r1 / X448 / Ed448** OpenPGP curves (no mature `no_std` Rust
+  arithmetic yet); brainpoolP256r1 and P384r1 are supported.
 - The default USB identity is **RS-Key's own** pid.codes id `0x1209:0x0001`;
   the YubiKey USB identity that `ykman` / Yubico Authenticator auto-recognize is
   the opt-in `VIDPID=Yubikey5` build, not for distribution.

@@ -132,9 +132,11 @@ covers the security boundary. This page covers feature and hardware gaps.
   build.
 - **OpenPGP secure messaging** is not implemented (rarely used by clients;
   PINs gate everything in practice).
-- **One physical button.** Touch = the BOOTSEL button. There is no
-  fingerprint, no display, and "number matching" style UV is impossible.
-  UV is the PIN.
+- **One physical button on the base build.** Touch = the BOOTSEL button, and
+  there is no fingerprint reader, so UV is the PIN and "number matching" style
+  UV is impossible. The trusted-display flavor
+  ([guides/display.md](guides/display.md)) adds a screen for on-device PIN entry
+  and per-signature relying-party approval, but still no biometric UV.
 
 ## Operational
 
