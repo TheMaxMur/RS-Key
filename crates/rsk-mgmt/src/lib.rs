@@ -211,11 +211,14 @@ impl<'a> ManagementApplet<'a> {
         if apdu.nc - 1 > EF_DEV_CONF_MAX {
             return Sw::INCORRECT_PARAMS;
         }
-        // Rewriting the reported DeviceInfo is a privileged, sticky change; gate
-        // it on the operator, not just the USB host. There is no config-lock code
-        // to enforce (the CONFIG_LOCK byte is only reported), so presence is the
-        // authentication of record — matching every sibling applet's write path.
-        if !self.require_presence(Confirm::titled("Write device config?")) {
+        // Rewriting the reported DeviceInfo is a privileged, sticky change. Under
+        // `strict-config` gate it on operator presence (the CONFIG_LOCK byte is
+        // only reported, never enforced, so presence is the authentication of
+        // record). The DEFAULT build is ungated for full YubiKey/ykman parity —
+        // any USB host can rewrite DeviceInfo (docs/threat-model.md).
+        if cfg!(feature = "strict-config")
+            && !self.require_presence(Confirm::titled("Write device config?"))
+        {
             return Sw::CONDITIONS_NOT_SATISFIED;
         }
         match persist_dev_conf(fs, &apdu.data[1..apdu.nc]) {

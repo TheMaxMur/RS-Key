@@ -234,9 +234,16 @@ fn config_read<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req, out: &mut [u8
 /// because CTAPHID is reachable by any unprivileged host process. No MSE channel
 /// — the config blobs are not secret, only their authorship must be proven.
 fn config_write<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> CtapResult {
-    pin_gate(ctx, req)?;
-    if !ctx.check_user_presence(crate::Confirm::titled("Write device config?")) {
-        return Err(CtapError::OperationDenied);
+    // DEFAULT build: ungated device-config write (full YubiKey/ykman parity).
+    // `strict-config` restores the PIN (PERM_ACFG) + touch gate — a stronger gate
+    // than the CCID path's presence-only, since CTAPHID is reachable by any
+    // unprivileged host process (docs/threat-model.md).
+    #[cfg(feature = "strict-config")]
+    {
+        pin_gate(ctx, req)?;
+        if !ctx.check_user_presence(crate::Confirm::titled("Write device config?")) {
+            return Err(CtapError::OperationDenied);
+        }
     }
     match req.target {
         CONFIG_TARGET_DEV_CONF => persist_dev_conf(ctx.fs, req.blob).map_err(|e| match e {

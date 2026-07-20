@@ -1138,6 +1138,7 @@ fn config_write_persists_dev_conf_visible_to_ccid() {
     assert!(dev_conf_readback(&mut fs).ends_with(DEV_CONF_BLOB));
 }
 
+#[cfg(feature = "strict-config")]
 #[test]
 fn config_write_requires_touch() {
     let (mut fs, mut rng, mut st) = setup();
@@ -1197,6 +1198,7 @@ fn config_write_unknown_target_rejected() {
     );
 }
 
+#[cfg(feature = "strict-config")]
 #[test]
 fn config_write_with_pin_requires_token() {
     let (mut fs, mut rng, mut st) = setup();
@@ -1215,6 +1217,31 @@ fn config_write_with_pin_requires_token() {
         ),
         Err(CtapError::PuatRequired)
     );
+}
+
+#[cfg(not(feature = "strict-config"))]
+#[test]
+fn config_write_default_ungated_persists_without_touch_or_token() {
+    // DEFAULT (permissive) build: CONFIG_WRITE persists with NO touch and NO
+    // token, even with a PIN set — full ykman/host parity. `Decline` denies the
+    // touch and no pinUvAuthToken is supplied; the write must still succeed.
+    let (mut fs, mut rng, mut st) = setup();
+    fs.put(EF_PIN, &[8, 4, 1]).unwrap();
+    let mut req = [0u8; 96];
+    let n = config_write_req(CONFIG_TARGET_DEV_CONF, DEV_CONF_BLOB, false, &mut req);
+    let mut out = [0u8; 16];
+    assert_eq!(
+        call(
+            &mut fs,
+            &mut rng,
+            &mut st,
+            &mut Decline,
+            &req[..n],
+            &mut out
+        ),
+        Ok(0)
+    );
+    assert!(dev_conf_readback(&mut fs).ends_with(DEV_CONF_BLOB));
 }
 
 #[test]

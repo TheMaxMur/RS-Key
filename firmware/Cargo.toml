@@ -131,6 +131,18 @@ strict-up = ["rsk-fido/strict-up"]
 # operations return PUAT_REQUIRED until you do (the platform is prompted to set one).
 # Still runtime-toggleable; an authenticatorReset returns it to this compiled default.
 always-uv = ["rsk-fido/always-uv"]
+# Restore today's strict admin-write authorization. The DEFAULT build is now the
+# permissive, full-YubiKey/ykman-compatible admin surface: device-config writes
+# (CCID Management WRITE CONFIG, FIDO vendor CONFIG_WRITE, the CTAPHID/OTP-HID
+# transport writes) are UNGATED, and Management RESET + the OTP-HID
+# SET_DEVICE_INFO/DEVICE_CONFIG/SCAN_MAP/NDEF slots are served. `--features
+# strict-config` re-imposes the presence/PIN gates and refuses the ungated
+# transport writes (= the historical shipped behaviour). This deliberately
+# weakens the DEFAULT threat model (any USB host can rewrite the reported
+# identity with no operator confirmation) — see docs/threat-model.md. NOT the
+# runtime flash flag EF_HARDENED. Build the strict image `--features
+# strict-config`; ship it as the `firmware-strict-config` release flavor.
+strict-config = ["rsk-mgmt/strict-config", "rsk-fido/strict-config", "rsk-otp/strict-config"]
 # Trusted-display build for a screen+touch board (Waveshare RP2350-Touch-LCD-2.8):
 # on-screen Approve/Deny showing the relying party, on-device PIN entry, lock, and
 # settings. OFF by default and entirely `dep:`-gated, so a standard key without a

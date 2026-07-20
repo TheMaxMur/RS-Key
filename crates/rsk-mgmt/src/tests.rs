@@ -259,10 +259,12 @@ fn write_config_rejects_bad_length() {
     assert_eq!(sw, Sw::INCORRECT_PARAMS);
 }
 
+#[cfg(feature = "strict-config")]
 #[test]
 fn write_config_requires_user_presence() {
-    // A well-formed WRITE CONFIG is refused without a physical confirmation,
-    // and nothing is persisted — a hostile USB host cannot rewrite DeviceInfo.
+    // strict-config: a well-formed WRITE CONFIG is refused without a physical
+    // confirmation, and nothing is persisted — a hostile USB host cannot rewrite
+    // DeviceInfo. (The DEFAULT build is ungated; see the permissive twin below.)
     let presence = RefCell::new(DenyPresence);
     let mut app = ManagementApplet::new([0; 8], &presence);
     let mut fs = fs();
@@ -282,6 +284,34 @@ fn write_config_requires_user_presence() {
         fs.read(EF_DEV_CONF, &mut [0u8; 8]).is_none(),
         "nothing persisted without presence"
     );
+}
+
+#[cfg(not(feature = "strict-config"))]
+#[test]
+fn write_config_default_is_ungated_and_persists() {
+    // DEFAULT (permissive) build: WRITE CONFIG succeeds with NO presence — full
+    // YubiKey/ykman parity. Denying presence must not block it, and the blob must
+    // land in EF_DEV_CONF so a later READ CONFIG echoes it.
+    let presence = RefCell::new(DenyPresence);
+    let mut app = ManagementApplet::new([0; 8], &presence);
+    let mut fs = fs();
+    let blob = [TAG_USB_ENABLED, 0x02, 0x02, 0x02];
+    let mut cmd = std::vec![
+        0x00,
+        INS_WRITE_CONFIG,
+        0,
+        0,
+        (blob.len() + 1) as u8,
+        blob.len() as u8
+    ];
+    cmd.extend_from_slice(&blob);
+    let (sw, _) = process(&mut app, &mut fs, &cmd);
+    assert_eq!(sw, Sw::OK);
+    let mut got = [0u8; 8];
+    let n = fs
+        .read(EF_DEV_CONF, &mut got)
+        .expect("persisted without presence");
+    assert_eq!(&got[..n], &blob);
 }
 
 #[test]

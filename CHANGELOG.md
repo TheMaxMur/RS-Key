@@ -15,6 +15,12 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Added
 
+- **`strict-config` cargo feature** — restores the strict admin-write
+  authorization that used to be the shipped default (device-config writes
+  presence/PIN-gated, ungated transport writes refused). OFF by default now; see
+  the "default posture flipped" Changed entry. Build/ship the strict image with
+  `--features strict-config` (release flavor `firmware-strict-config`). Distinct
+  from the runtime flash flag `EF_HARDENED`.
 - **Build-time AAGUID override.** `AAGUID=<uuid-or-32-hex> cargo build` bakes a
   custom FIDO2 AAGUID (the authenticator-model id in getInfo / attestation): the
   value is validated in `crates/rsk-fido/build.rs` and const-parsed in `consts.rs`
@@ -74,6 +80,17 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Changed
 
+- **⚠️ Default security posture flipped: device-config writes are now UNGATED by
+  default (full YubiKey/ykman parity).** On the default build the CCID Management
+  WRITE CONFIG (`0x1C`) and the FIDO vendor CONFIG_WRITE (`0x0C`) no longer require
+  operator presence / a PIN `pinUvAuthToken` — any USB host can rewrite the
+  reported DeviceInfo. The previous presence/PIN-gated behaviour is now opt-in via
+  `--features strict-config`. This deliberately weakens the DEFAULT threat model
+  (docs/threat-model.md); build/ship `firmware-strict-config` for the strict
+  posture. Part of a broader default→permissive flip (further ungated ykman admin
+  surface — Management RESET, OTP-HID SET_DEVICE_INFO/DEVICE_CONFIG/SCAN_MAP/NDEF,
+  CTAPHID WRITE CONFIG — lands in follow-up commits behind the same feature).
+  **bcdDevice → 0x083E.**
 - **The USB manufacturer string and OpenPGP AID vendor now follow the effective
   (phy-overridden) VID at runtime.** Previously only the *build-time* VID chose them
   (`VIDPID=Yubikey5`), so a runtime Yubico-VID repoint via PicoForge kept the

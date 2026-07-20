@@ -82,6 +82,12 @@ run "clippy (fips firmware)"   cargo clippy -p firmware --features fips-profile 
 # reuses the fips name-filter dodge (regular fixtures assume the 4-char floor).
 run "test (strong-pin)"        cargo test -p rsk-fido --features strong-pin --target "$HOST" strong_pin
 run "clippy (strong-pin fw)"   cargo clippy -p firmware --features strong-pin -- -D warnings
+# `strict-config` restores today's strict admin-write authorization (the DEFAULT
+# build is the permissive full-YubiKey-compat surface). The default path is what
+# every run above lints/tests; gate the strict path explicitly or it rots.
+run "clippy (strict-config fw)"  cargo clippy -p firmware --features strict-config -- -D warnings
+run "clippy (strict-config host)" cargo clippy -p rsk-mgmt -p rsk-otp -p rsk-fido --features strict-config --target "$HOST" --all-targets -- -D warnings
+run "test (strict-config)"       cargo test -p rsk-mgmt -p rsk-otp -p rsk-fido --features strict-config --target "$HOST"
 # The `bench` latency-harness vendor command (never shipped) is only compiled with
 # its feature on, so gate that build here — otherwise a signature change to the EC /
 # KDF hot paths it times would rot the bench module unseen (keep it compiling). The

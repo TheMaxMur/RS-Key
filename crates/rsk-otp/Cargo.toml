@@ -13,6 +13,12 @@ unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
 # HMAC-SHA1 / Yubico-mode challenge-response) plus the keyboard HID interface —
 # the `hid` frame codec and the `ticket` typed-OTP generator (modhex / HOTP /
 # static password).
+[features]
+# See firmware's `strict-config`. OFF by default: the default build serves the
+# OTP-HID admin writes (SET_DEVICE_INFO/DEVICE_CONFIG/SCAN_MAP/NDEF) as a real
+# YubiKey does; `--features strict-config` restores today's silent-OK no-op.
+strict-config = []
+
 [dependencies]
 rsk-sdk = { workspace = true }
 rsk-fs = { workspace = true }
