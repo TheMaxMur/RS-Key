@@ -41,6 +41,14 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   gives an A/B verdict between two saved runs. The summary is computed on-device by
   the new host-tested, Kani-proved `rsk-bench` crate. Feature is off by default, so
   the shipped image is byte-for-byte unchanged — **no bcdDevice bump.**
+- **Default firmware images for 2 MB and 16 MB boards.** The signed release now
+  ships `firmware-2mb` (`FLASH_SIZE=2M KVMAIN=896K`) and `firmware-16mb`
+  (`FLASH_SIZE=16M`) alongside the 4 MB default — the flash-geometry siblings of
+  the default image, same feature set and RS-Key identity, for boards whose chip
+  is not the 4 MB default (Seeed XIAO RP2350 / Waveshare RP2350-Zero-CM at 2 MB;
+  TenStar RP2350-USB at 16 MB). PR CI smoke-builds both so a 2 MB link/fit
+  regression is caught early. Build/release wiring only; the 4 MB default image is
+  byte-for-byte unchanged — **no bcdDevice bump.**
 
 ### Changed
 

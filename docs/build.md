@@ -163,6 +163,8 @@ check the seal with `picotool`. The flavors mirror the
 | `.#firmware-always-uv` | `--features always-uv` (CTAP 2.1 `alwaysUv` on by default; also `.#firmware-always-uv-pqc`) |
 | `.#firmware-strict-up` | `--features strict-up` (touch on every assertion — **not spec-conformant** for `up:false`; also `.#firmware-strict-up-pqc`) |
 | `.#firmware-display` | `--features display`, `FLASH_SIZE=16M`, `LED_KIND=none` (experimental, Waveshare RP2350-Touch-LCD-2.8) |
+| `.#firmware-2mb` | default features + RS-Key identity, `FLASH_SIZE=2M`, `KVMAIN=896K` (2 MB boards: Seeed XIAO RP2350, Waveshare RP2350-Zero-CM) |
+| `.#firmware-16mb` | default features + RS-Key identity, `FLASH_SIZE=16M` (16 MB boards, e.g. TenStar RP2350-USB) |
 
 Two caveats:
 
