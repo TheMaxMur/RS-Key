@@ -170,6 +170,11 @@ Separately, **`rsk-wipe`** is a RAM-only flash-erase *image* you flash
 deliberately to wipe a board for clean-slate testing — it is built and flashed
 like firmware, not run from `PATH` ([rsk-wipe/README.md](rsk-wipe/README.md)).
 
+Third-party: **[PicoForge](https://github.com/librekeys/picoforge)** (from the
+librekeys project) is a desktop GUI that configures an RS-Key over the same `phy`
+record `rsk hw` writes — see the
+[host protocol](docs/protocol.md#11-integration-notes-for-picoforge).
+
 ## Limitations (short list)
 
 - **No secure element.** OTP + secure boot is real hardening, but physical
