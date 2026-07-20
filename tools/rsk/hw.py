@@ -1,17 +1,19 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 RS-Key contributors
 
-"""rsk hw — LED hardware wiring (data pin / driver / wire order) via the phy record.
+"""rsk hw — device hardware wiring and USB-identity strings via the phy record.
 
 The phy record (`EF_PHY`) is the device-config blob PicoForge also writes; it
 survives every applet reset and is applied at boot. The rescue applet exposes it
 as READ (INS 0x1E, P1=01) and WRITE (INS 0x1C, P1=01). This command does a
-read-modify-write of ONLY the LED fields, so a USB identity / option set elsewhere
-(PicoForge, a future `rsk` identity command) is preserved.
+read-modify-write of ONLY the fields you pass, so anything set elsewhere
+(PicoForge, another flag) is preserved.
 
-  --led-pin     the WS2812/gpio data GPIO (overrides the firmware build LED_PIN)
-  --led-driver  the backend: gpio / pimoroni / ws2812 (overrides build LED_KIND)
-  --led-order   the WS2812 wire byte order: rgb / grb (overrides build LED_ORDER)
+  --led-pin       the WS2812/gpio data GPIO (overrides the firmware build LED_PIN)
+  --led-driver    the backend: gpio / pimoroni / ws2812 (overrides build LED_KIND)
+  --led-order     the WS2812 wire byte order: rgb / grb (overrides build LED_ORDER)
+  --manufacturer  the USB iManufacturer string (overrides the build/VID default)
+  --product       the USB iProduct string (overrides the build/VID default)
 
 A non-`none` firmware build compiles all three backends, so these switch the LED
 at runtime — no reflash. The change applies at the NEXT boot, so a warm reboot is
@@ -40,6 +42,11 @@ TAG_LED_DRIVER = 0x0C
 TAG_LED_ORDER = 0x0D  # RS-Key vendor tag (PicoForge skips it as unknown)
 TAG_LED_NUM = 0x0E  # RS-Key vendor tag: addressable LED count
 TAG_PRESENCE_TIMEOUT = 0x08  # touch-wait timeout (seconds); PicoForge compatible
+TAG_USB_PRODUCT = 0x09  # iProduct string (NUL-terminated); PicoForge compatible
+TAG_USB_MANUFACTURER = 0x0F  # RS-Key vendor tag: iManufacturer string (NUL-terminated)
+
+# Firmware caps the phy product / manufacturer string at 32 bytes (rsk-rescue Product).
+USB_STR_MAX = 32
 
 # Driver numbering follows PicoForge's LedDriverType.
 DRIVERS = {"gpio": 1, "pimoroni": 2, "ws2812": 3}
@@ -50,7 +57,9 @@ ORDER_NAMES = {v: k for k, v in ORDERS.items()}
 
 def register(sub):
     p = sub.add_parser(
-        "hw", help="device hardware config (LED wiring + touch timeout) via the phy record"
+        "hw",
+        help="device hardware + USB-identity config (LED wiring, touch timeout, "
+        "manufacturer/product strings) via the phy record",
     )
     p.add_argument(
         "--led-pin",
@@ -79,6 +88,18 @@ def register(sub):
         type=int,
         metavar="1-255",
         help="touch-wait timeout in seconds (PicoForge compatible; firmware default 30)",
+    )
+    p.add_argument(
+        "--manufacturer",
+        metavar="STR",
+        help="USB iManufacturer string (≤32 bytes), overriding the build/VID-derived "
+        "default. A Yubico VID already fills in 'Yubico' on its own; set this to pick "
+        "your own brand or opt out of the Yubico identity.",
+    )
+    p.add_argument(
+        "--product",
+        metavar="STR",
+        help="USB iProduct string (≤32 bytes), overriding the build/VID-derived default",
     )
     p.add_argument(
         "--get", action="store_true", help="read the current phy config and exit"
@@ -129,6 +150,20 @@ def _upsert(tlvs, tag, value):
     tlvs.append((tag, bytes([value])))
 
 
+def _upsert_str(tlvs, tag, s):
+    """Set or replace a NUL-terminated string TLV (the firmware wire format:
+    value = UTF-8 bytes + a trailing NUL). Rejects an over-cap string."""
+    raw = s.encode("utf-8")
+    if not 1 <= len(raw) <= USB_STR_MAX:
+        raise SystemExit(f"string for tag {tag:#04x} must be 1–{USB_STR_MAX} UTF-8 bytes")
+    val = raw + b"\x00"
+    for idx, (t, _) in enumerate(tlvs):
+        if t == tag:
+            tlvs[idx] = (tag, val)
+            return
+    tlvs.append((tag, val))
+
+
 def _read_phy(conn):
     d, s1, s2 = rescue_read(conn, 0x01)
     if (s1, s2) != ccid.SW_OK:
@@ -154,6 +189,14 @@ def _show(tlvs):
     tmo = by.get(TAG_PRESENCE_TIMEOUT)
     print(f"  touch   {str(tmo[0]) + 's' if tmo else '(build default 30s)'}")
 
+    def _str(v):
+        return v.rstrip(b"\x00").decode("utf-8", "replace") if v else None
+
+    mfr = _str(by.get(TAG_USB_MANUFACTURER))
+    prod = _str(by.get(TAG_USB_PRODUCT))
+    print(f"  mfr     {mfr if mfr else '(build/VID default)'}")
+    print(f"  product {prod if prod else '(build/VID default)'}")
+
 
 def _would_set(args):
     """Whether any config flag was passed (vs a bare read/--get)."""
@@ -163,6 +206,8 @@ def _would_set(args):
         or args.led_order is not None
         or args.led_num is not None
         or args.touch_timeout is not None
+        or args.manufacturer is not None
+        or args.product is not None
     )
 
 
@@ -185,6 +230,10 @@ def _apply_args(tlvs, args):
         if not 1 <= args.touch_timeout <= 255:
             raise SystemExit("--touch-timeout must be 1–255 (seconds)")
         _upsert(tlvs, TAG_PRESENCE_TIMEOUT, args.touch_timeout)
+    if args.manufacturer is not None:
+        _upsert_str(tlvs, TAG_USB_MANUFACTURER, args.manufacturer)
+    if args.product is not None:
+        _upsert_str(tlvs, TAG_USB_PRODUCT, args.product)
 
 
 def run(args):

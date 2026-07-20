@@ -2,11 +2,12 @@
 // Copyright (C) 2026 RS-Key contributors
 
 //! The `phy` device-configuration blob: a TLV record in `EF_PHY` holding USB
-//! identity (VID/PID, product string), LED wiring and options. The rescue applet
-//! reads/writes it verbatim; at boot the firmware applies the USB identity AND the
-//! LED hardware — pin (`led_gpio`), driver (`led_driver`), brightness/steady, and
-//! the WS2812 wire order (`led_order`). The tags below match PicoForge;
-//! `led_order` (tag `0x0D`) is an RS-Key extension PicoForge skips as unknown.
+//! identity (VID/PID, product & manufacturer strings), LED wiring and options.
+//! The rescue applet reads/writes it verbatim; at boot the firmware applies the
+//! USB identity AND the LED hardware — pin (`led_gpio`), driver (`led_driver`),
+//! brightness/steady, and the WS2812 wire order (`led_order`). The tags below
+//! match PicoForge; `led_order` (`0x0D`), `led_num` (`0x0E`) and
+//! `usb_manufacturer` (`0x0F`) are RS-Key extensions PicoForge skips as unknown.
 
 use rsk_fs::{Fs, Storage};
 
@@ -35,6 +36,9 @@ const TAG_LED_ORDER: u8 = 0xD;
 // RS-Key vendor tag: number of physically-connected addressable LEDs.
 // 0 = unset (use the build's MAX_LEDS default).
 const TAG_LED_NUM: u8 = 0xE;
+// RS-Key vendor tag: USB iManufacturer string, NUL-terminated exactly like
+// USB_PRODUCT (0x09). PicoForge skips it as unknown, so `merge_save` preserves it.
+const TAG_USB_MANUFACTURER: u8 = 0xF;
 
 /// `led_order` wire value: a standard WS2812B (GRB) part, red↔green swapped.
 pub const LED_ORDER_GRB: u8 = 1;
@@ -75,8 +79,9 @@ pub fn effective_usb_itf(phy: &PhyData) -> u8 {
     }
 }
 
-/// Largest serialized record (every TLV present, 32-byte product). The trailing
-/// `(2 + 1) × 2` covers the RS-Key `led_order` and `led_num` tags.
+/// Largest serialized record (every TLV present, 32-byte product & manufacturer).
+/// The trailing `(2 + 1) × 2` covers the RS-Key `led_order` / `led_num` tags and
+/// `(2 + 33)` the RS-Key `usb_manufacturer` string.
 pub const PHY_MAX_SIZE: usize = (2 + 4)
     + (2 + 1)
     + (2 + 1)
@@ -87,7 +92,8 @@ pub const PHY_MAX_SIZE: usize = (2 + 4)
     + (2 + 1)
     + (2 + 1)
     + (2 + 1)
-    + (2 + 1); // led_num
+    + (2 + 1) // led_num
+    + (2 + 33); // usb_manufacturer
 
 const PRODUCT_CAP: usize = 32;
 
@@ -132,6 +138,9 @@ pub struct PhyData {
     /// `None` / `0` keeps the firmware's built-in 30 s default.
     pub presence_timeout: Option<u8>,
     pub usb_product: Option<Product>,
+    /// USB iManufacturer string (tag `0x0F`, RS-Key extension). Absent ⇒ the
+    /// firmware falls back to the VID-derived default, then the build default.
+    pub usb_manufacturer: Option<Product>,
     pub enabled_curves: Option<u32>,
     pub enabled_usb_itf: Option<u8>,
     pub led_driver: Option<u8>,
@@ -189,6 +198,10 @@ impl PhyData {
                     let s = &v[..v.iter().position(|&b| b == 0).unwrap_or(tlen)];
                     phy.usb_product = Product::new(s);
                 }
+                (TAG_USB_MANUFACTURER, 1..=33) => {
+                    let s = &v[..v.iter().position(|&b| b == 0).unwrap_or(tlen)];
+                    phy.usb_manufacturer = Product::new(s);
+                }
                 (TAG_ENABLED_CURVES, 4) => {
                     phy.enabled_curves = Some(u32::from_be_bytes([v[0], v[1], v[2], v[3]]));
                 }
@@ -226,6 +239,12 @@ impl PhyData {
         if let Some(p) = &self.usb_product {
             let s = p.as_bytes();
             w.raw(&[TAG_USB_PRODUCT, (s.len() + 1) as u8])?;
+            w.raw(s)?;
+            w.raw(&[0])?;
+        }
+        if let Some(m) = &self.usb_manufacturer {
+            let s = m.as_bytes();
+            w.raw(&[TAG_USB_MANUFACTURER, (s.len() + 1) as u8])?;
             w.raw(s)?;
             w.raw(&[0])?;
         }

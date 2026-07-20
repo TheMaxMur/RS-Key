@@ -93,8 +93,10 @@ bulk stream, ISO-7816 APDUs, CTAP2 CBOR. Defenses:
 - The **USB/smartcard identity** (VID/PID, manufacturer, product, OpenPGP AID
   vendor) is fully host-configurable at runtime via the phy record and is not an
   authenticity signal: a phy write that sets the Yubico VID makes a stock key
-  present a full Yubico identity. Treat it as cosmetic, never as proof a device is
-  genuine — attestation (device-key / org cert) is the authenticity mechanism.
+  present a full Yubico identity, and the manufacturer/product strings are also
+  settable outright (phy tags `0x0F` / `0x09`), so any VID can carry any vendor
+  name. Treat it as cosmetic, never as proof a device is genuine — attestation
+  (device-key / org cert) is the authenticity mechanism.
 
 ### 4. Physical / lab attacks — OUT OF SCOPE
 

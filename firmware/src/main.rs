@@ -110,6 +110,15 @@ const USB_PID: u16 = env_u16(env!("PK_USB_PID"));
 const USB_MANUFACTURER: &str = env!("PK_USB_MANUFACTURER");
 const USB_PRODUCT: &str = env!("PK_USB_PRODUCT");
 
+/// The Yubico USB identity presented when the effective VID is Yubico's and the
+/// phy record carries no explicit string override — so a runtime VID-only repoint
+/// to Yubico still "just works" for ykman / Yubico Authenticator, which key off
+/// this reader name (manufacturer + product). An explicit phy `usb_manufacturer`
+/// (`0x0F`) or `usb_product` (`0x09`) tag always wins over these defaults.
+const YUBICO_VID: u16 = 0x1050;
+const YUBICO_MANUFACTURER: &str = "Yubico";
+const YUBICO_PRODUCT: &str = "YubiKey RSK OTP+FIDO+CCID";
+
 /// OpenPGP AID manufacturer id for an effective USB VID: the Yubico id when the
 /// key presents the Yubico VID (so hosts show the same vendor as a real YubiKey),
 /// else the unmanaged range. Keyed on the EFFECTIVE (phy-overridden) VID, not the
@@ -117,7 +126,7 @@ const USB_PRODUCT: &str = env!("PK_USB_PRODUCT");
 /// ⚠ this lets a phy-repointed default key present a full Yubico identity at
 /// runtime — a deliberate masquerade capability (see docs/threat-model.md).
 fn openpgp_mfr_for(vid: u16) -> u16 {
-    if vid == 0x1050 {
+    if vid == YUBICO_VID {
         rsk_openpgp::consts::OPGP_MFR_YUBICO
     } else {
         rsk_openpgp::consts::OPGP_MFR_UNMANAGED
@@ -268,6 +277,9 @@ static RESCUE_PLATFORM: StaticCell<RefCell<rescue_platform::RescuePlatform>> = S
 // Sized for a 32-byte phy product plus the appended YubiKey interface-token
 // suffix (`normalize_usb_product`), so a masquerade name is never truncated.
 static PHY_PRODUCT: StaticCell<[u8; 64]> = StaticCell::new();
+// Holds a phy-provided iManufacturer string (`0x0F`) for the device's lifetime so
+// the descriptor's `&'static str` outlives the embassy Builder. 32-byte phy cap.
+static PHY_MANUFACTURER: StaticCell<[u8; 64]> = StaticCell::new();
 // The mipidsi SPI pixel-batch buffer for the `display` build: bigger = fewer SPI
 // transactions per fill. 4 KiB ≈ 8 full panel rows per chunk.
 #[cfg(feature = "display")]
@@ -354,10 +366,15 @@ async fn main(spawner: Spawner) {
 
     let mut usb_vid = USB_VID;
     let mut usb_pid = USB_PID;
-    let mut usb_product = USB_PRODUCT;
     let mut usb_itf = rsk_rescue::phy::USB_ITF_ALL;
-    // The phy record drives USB identity (here) and the LED hardware (pin/driver/
-    // wire order, applied at the spawn site below) — keep it in scope for both.
+    // Explicit phy string overrides; `None` ⇒ the VID-derived default, then the
+    // build const, are chosen at the identity assembly below. The product is
+    // normalized against the ykman YK4_ crash; the manufacturer is copied verbatim
+    // (that crash is a product/reader-name concern only). Both need a StaticCell so
+    // the descriptor's `&'static str` outlives the USB Builder. The phy record also
+    // drives the LED hardware, applied at the spawn site below.
+    let mut phy_product: Option<&str> = None;
+    let mut phy_manufacturer: Option<&str> = None;
     let phy = rsk_rescue::phy::load(&mut fs);
     if let Some(phy) = &phy {
         if let Some((vid, pid)) = phy.vid_pid {
@@ -365,12 +382,14 @@ async fn main(spawner: Spawner) {
         }
         if let Some(s) = phy.usb_product.as_ref().and_then(|prod| prod.as_str()) {
             let buf = PHY_PRODUCT.init([0; 64]);
-            // Normalize a YubiKey-masquerade product so it can't present a
-            // token-less PC/SC reader name that crashes ykman on Windows.
             let n = rsk_rescue::phy::normalize_usb_product(s.as_bytes(), buf);
-            if let Ok(stored) = core::str::from_utf8(&buf[..n]) {
-                usb_product = stored;
-            }
+            phy_product = core::str::from_utf8(&buf[..n]).ok();
+        }
+        if let Some(s) = phy.usb_manufacturer.as_ref().and_then(|m| m.as_str()) {
+            let sb = s.as_bytes(); // Product caps at 32 bytes, so it always fits 64
+            let buf = PHY_MANUFACTURER.init([0; 64]);
+            buf[..sb.len()].copy_from_slice(sb);
+            phy_manufacturer = core::str::from_utf8(&buf[..sb.len()]).ok();
         }
         usb_itf = rsk_rescue::phy::effective_usb_itf(phy);
         // Touch-wait timeout (phy tag 0x08, seconds; 0/absent = default).
@@ -456,15 +475,19 @@ async fn main(spawner: Spawner) {
     let driver = UsbDriver::new(p.USB, Irqs);
     Timer::after_millis(200).await;
 
-    // Manufacturer string + OpenPGP AID vendor track the EFFECTIVE (phy-overridden)
-    // VID, so a runtime Yubico VID yields a consistent Yubico identity (fixes the
-    // "manufacturer stays RS-Key" report). ⚠ a phy-repointed key can thus present a
-    // full Yubico identity at runtime — a deliberate masquerade (docs/threat-model).
-    let usb_manufacturer = if usb_vid == 0x1050 {
-        "Yubico"
+    // Manufacturer + product strings and the OpenPGP AID vendor follow the
+    // EFFECTIVE (phy-overridden) VID, so a runtime Yubico VID yields a consistent
+    // Yubico identity that ykman / Yubico Authenticator recognize. Precedence per
+    // string: an explicit phy override > the VID-derived default > the build const.
+    // ⚠ a phy-repointed key can thus present a full Yubico identity at runtime —
+    // a deliberate masquerade capability (docs/threat-model).
+    let (vid_manufacturer, vid_product) = if usb_vid == YUBICO_VID {
+        (YUBICO_MANUFACTURER, YUBICO_PRODUCT)
     } else {
-        USB_MANUFACTURER
+        (USB_MANUFACTURER, USB_PRODUCT)
     };
+    let usb_manufacturer = phy_manufacturer.unwrap_or(vid_manufacturer);
+    let usb_product = phy_product.unwrap_or(vid_product);
     let openpgp_mfr = openpgp_mfr_for(usb_vid);
 
     let mut config = UsbConfig::new(usb_vid, usb_pid);
@@ -474,7 +497,7 @@ async fn main(spawner: Spawner) {
     config.max_power = 100;
     config.max_packet_size_0 = 64;
     // bcdDevice build counter; also surfaced on the trusted-display Firmware screen.
-    let device_release: u16 = 0x083C;
+    let device_release: u16 = 0x083D;
     config.device_release = device_release;
 
     let mut builder = Builder::new(

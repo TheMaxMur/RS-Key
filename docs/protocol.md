@@ -179,18 +179,22 @@ The build picks a VID/PID preset (`firmware/build.rs`):
 | `Yubikey5` (opt-in interop) | `1050:0407` | `Yubico` / `YubiKey RSK OTP+FIDO+CCID` | so `ykman`/Yubico Authenticator derive PID from the PC/SC reader name |
 | others | NitroHSM, NitroFIDO2, GnuPG, Pico, Dev | — | local interop only |
 
-VID/PID can also be overridden at **runtime** via the phy record (§7, tag `0x00`),
-which takes effect at the next boot. So can the product string (tag `0x09`); if a
-runtime product looks like a YubiKey (`yubikey`, any case) but omits the smartcard
-`CCID` token, the firmware appends ` OTP+FIDO+CCID` before enumerating — a
-token-less `Yubico YubiKey` reader name otherwise crashes `ykman` / Yubico
-Authenticator on Windows (`_pid_from_name` → `PID.of` → `KeyError('YK4_')`, which
-aborts the whole PC/SC scan). Source: `normalize_usb_product` in `phy.rs`.
+The VID/PID, the product string and the manufacturer string can all be overridden
+at **runtime** via the phy record (§7), taking effect at the next boot: VID/PID
+(tag `0x00`), product (tag `0x09`) and manufacturer (tag `0x0F`). If a runtime
+product looks like a YubiKey (`yubikey`, any case) but omits the smartcard `CCID`
+token, the firmware appends ` OTP+FIDO+CCID` before enumerating — a token-less
+`Yubico YubiKey` reader name otherwise crashes `ykman` / Yubico Authenticator on
+Windows (`_pid_from_name` → `PID.of` → `KeyError('YK4_')`, which aborts the whole
+PC/SC scan). Source: `normalize_usb_product` in `phy.rs`.
 
-The **manufacturer string** and the OpenPGP AID vendor id are NOT separate phy
-fields: they track the effective (phy-overridden) VID — a runtime Yubico VID
-(`0x1050`) presents `Yubico` + the Yubico OpenPGP vendor, otherwise the build's
-default. ⚠️ so a phy-repointed default key can present a full Yubico identity at
+Each string is resolved in precedence order: an **explicit phy tag** (`0x0F` /
+`0x09`) wins; otherwise the **effective VID** picks a default — a Yubico VID
+(`0x1050`) yields `Yubico` / `YubiKey RSK OTP+FIDO+CCID` plus the Yubico OpenPGP AID
+vendor, so setting only the Yubico VID/PID makes the whole identity "just work" for
+`ykman` / Yubico Authenticator; otherwise the **build const**. The OpenPGP AID
+vendor id stays keyed on the effective VID (a registered number, not a free
+string). ⚠️ so a phy-repointed default key can present a full Yubico identity at
 runtime; the USB/smartcard identity is cosmetic and host-configurable, never a
 security or anti-counterfeiting control (see docs/threat-model.md).
 
@@ -420,17 +424,18 @@ zero/empty TLV. (A host may still do a full read-modify-write for clarity.)
 | `0C` | LED_DRIVER | 1 | `1` = gpio, `2` = pimoroni, `3` = ws2812 (follows PicoForge `LedDriverType`) |
 | `0D` | LED_ORDER | 1 | **RS-Key extension** — WS2812 wire order: `0` = rgb, `1` = grb |
 | `0E` | LED_NUM | 1 | **RS-Key extension** — addressable LEDs actually connected (`1..=255`; `0`/absent = the build's `MAX_LEDS`). Firmware saturates a value above its compiled `MAX_LEDS` ceiling. |
+| `0F` | USB_MANUFACTURER | 1..33 | **RS-Key extension** — iManufacturer string + trailing `NUL` (length **includes** the NUL). Absent ⇒ the VID-derived default, then the build const. |
 
 Notes for a host implementation:
 - **Read-modify-write.** READ the record, change only your tags, WRITE it back.
   This is exactly what `rsk hw` does (`tools/rsk/hw.py`).
   Preserve tags you don't recognize.
-- **RS-Key-specific tags** PicoForge skips as unknown: `0x0B` (ENABLED_USB_ITF)
-  and `0x0E` (LED_NUM). RS-Key's own tools preserve them across a RMW; LED_NUM
-  sets how many daisy-chained addressable LEDs are lit (the binary carries a
-  compile-time `MAX_LEDS` ceiling and drives the first LED_NUM of it). The rest,
-  including `0x08` (PRESENCE_TIMEOUT) and `0x0D` (LED_ORDER), is shared with
-  PicoForge.
+- **RS-Key-specific tags** PicoForge skips as unknown: `0x0B` (ENABLED_USB_ITF),
+  `0x0E` (LED_NUM) and `0x0F` (USB_MANUFACTURER). RS-Key's own tools preserve them
+  across a RMW; LED_NUM sets how many daisy-chained addressable LEDs are lit (the
+  binary carries a compile-time `MAX_LEDS` ceiling and drives the first LED_NUM of
+  it). The rest, including `0x08` (PRESENCE_TIMEOUT) and `0x0D` (LED_ORDER), is
+  shared with PicoForge.
 - **`ENABLED_USB_ITF`**: absent ⇒ ALL. A mask that would disable every interface
   the firmware actually builds (`CCID | HID | KB`) is rejected and falls back to
   ALL. Otherwise CCID would vanish and the rescue applet that could fix it would

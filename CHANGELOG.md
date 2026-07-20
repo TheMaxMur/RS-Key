@@ -15,6 +15,19 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Added
 
+- **The USB manufacturer/product strings are runtime-configurable via the phy
+  record, and a Yubico VID now auto-fills the whole identity.** A new phy tag
+  `0x0F` (USB_MANUFACTURER) sets the iManufacturer string; `rsk hw` gains
+  `--manufacturer` / `--product`. Precedence per string: an explicit phy tag wins,
+  else the effective VID picks a default (a Yubico VID `0x1050` fills in both
+  `Yubico` and `YubiKey RSK OTP+FIDO+CCID`, so a VID-only repoint via PicoForge /
+  `rsk hw` now "just works" for `ykman` / Yubico Authenticator — previously the
+  manufacturer followed the VID but the product did not), else the build const.
+  The default build still presents its own RS-Key identity; nothing masquerades
+  unless you set it. ⚠️ an explicit manufacturer/product lets any VID carry any
+  vendor name — the identity stays cosmetic, never an authenticity signal
+  (docs/threat-model.md). Forward-compatible: an old phy record without `0x0F`
+  falls back to the VID/build default. **bcdDevice → 0x083D.**
 - **PIV serves a default CHUID, so a freshly flashed card works under Windows
   CAPI.** The Windows PIV minidriver enumerates a card's containers from the Card
   Holder Unique Identifier (CHUID, object `5FC102`); a card that had none answered

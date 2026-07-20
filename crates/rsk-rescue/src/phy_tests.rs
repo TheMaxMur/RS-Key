@@ -12,6 +12,7 @@ fn roundtrip_all_fields() {
         opts: OPT_LED_STEADY | OPT_DIMM,
         presence_timeout: Some(20),
         usb_product: Product::new(b"RSK Custom"),
+        usb_manufacturer: Product::new(b"RS-Key"),
         enabled_curves: Some(0x3FF),
         enabled_usb_itf: Some(USB_ITF_CCID | USB_ITF_HID),
         led_driver: Some(3),
@@ -85,6 +86,28 @@ fn product_string_stops_at_nul_and_caps_at_32() {
     assert_eq!(phy.usb_product.unwrap().as_bytes(), b"ab");
     assert!(Product::new(&[b'x'; 33]).is_none());
     assert!(Product::new(b"").is_none());
+}
+
+#[test]
+fn usb_manufacturer_roundtrips_and_survives_partial_write() {
+    let phy = PhyData {
+        vid_pid: Some((0x1050, 0x0407)),
+        usb_manufacturer: Product::new(b"Yubico"),
+        ..Default::default()
+    };
+    let mut buf = [0u8; PHY_MAX_SIZE];
+    let n = phy.serialize(&mut buf).unwrap();
+    assert_eq!(
+        PhyData::parse(&buf[..n]).usb_manufacturer,
+        Product::new(b"Yubico")
+    );
+    // The string stops at an embedded NUL, exactly like USB_PRODUCT.
+    let parsed = PhyData::parse(&[TAG_USB_MANUFACTURER, 4, b'A', b'B', 0, b'C']);
+    assert_eq!(parsed.usb_manufacturer.unwrap().as_bytes(), b"AB");
+    // A later write that omits tag 0x0F preserves the stored manufacturer.
+    let merged = phy.overlay(&[TAG_LED_GPIO, 1, 7]);
+    assert_eq!(merged.usb_manufacturer, Product::new(b"Yubico"));
+    assert_eq!(merged.led_gpio, Some(7));
 }
 
 #[test]
