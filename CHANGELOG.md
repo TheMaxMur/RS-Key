@@ -87,10 +87,12 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   reported DeviceInfo. The previous presence/PIN-gated behaviour is now opt-in via
   `--features strict-config`. This deliberately weakens the DEFAULT threat model
   (docs/threat-model.md); build/ship `firmware-strict-config` for the strict
-  posture. Part of a broader default→permissive flip (further ungated ykman admin
-  surface — Management RESET, OTP-HID SET_DEVICE_INFO/DEVICE_CONFIG/SCAN_MAP/NDEF,
-  CTAPHID WRITE CONFIG — lands in follow-up commits behind the same feature).
-  **bcdDevice → 0x083E.**
+  posture. Part of a broader default→permissive flip: the default build also now
+  serves ykman's CTAPHID vendor WRITE CONFIG (`0x43`) and the OTP-HID
+  SET_DEVICE_INFO (`0x15`) DeviceInfo writes — both ungated, persisting the same
+  `EF_DEV_CONF` every READ CONFIG echoes. (Management RESET and the remaining
+  OTP-HID DEVICE_CONFIG/SCAN_MAP/NDEF slots land in follow-up commits behind the
+  same feature.) **bcdDevice → 0x083F.**
 - **The USB manufacturer string and OpenPGP AID vendor now follow the effective
   (phy-overridden) VID at runtime.** Previously only the *build-time* VID chose them
   (`VIDPID=Yubikey5`), so a runtime Yubico-VID repoint via PicoForge kept the

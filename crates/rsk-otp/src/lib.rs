@@ -134,6 +134,11 @@ const P1_CHAL_OTP_SLOT1: u8 = 0x20;
 const P1_CHAL_OTP_SLOT2: u8 = 0x28;
 const P1_CHAL_HMAC_SLOT1: u8 = 0x30;
 const P1_CHAL_HMAC_SLOT2: u8 = 0x38;
+// ykman DeviceInfo write over the OTP transport (SLOT_YK4_SET_DEVICE_INFO).
+// Served only on the DEFAULT (permissive) build; `strict-config` swallows it as
+// a no-op like a config write it does not honour.
+#[cfg(not(feature = "strict-config"))]
+const P1_SET_DEVICE_INFO: u8 = 0x15;
 
 /// "Wrong data" in this protocol is reported as `0x6700` (wrong length).
 const SW_WRONG_DATA: Sw = Sw::WRONG_LENGTH;
@@ -603,8 +608,39 @@ impl<'a> OtpApplet<'a> {
             P1_CHAL_OTP_SLOT1 | P1_CHAL_OTP_SLOT2 | P1_CHAL_HMAC_SLOT1 | P1_CHAL_HMAC_SLOT2 => {
                 self.cmd_calculate(apdu, fs, res)
             }
-            // Unknown P1 values fall through to a bare OK.
+            #[cfg(not(feature = "strict-config"))]
+            P1_SET_DEVICE_INFO => self.cmd_set_device_info(apdu, fs),
+            // Unknown P1 values (and, under `strict-config`, the admin-write
+            // slots) fall through to a bare OK — the deliberate silent no-op the
+            // host reads as "not implemented".
             _ => Sw::OK,
+        }
+    }
+
+    /// SLOT_YK4_SET_DEVICE_INFO (`0x15`): ykman's DeviceInfo write over the OTP
+    /// transport. The body is `[len][DeviceConfig TLV]` (yubikit
+    /// `DeviceConfig.get_bytes()`) — the SAME blob CCID WRITE CONFIG persists, so a
+    /// write here round-trips into the `0x13` / CCID READ CONFIG / CTAPHID `0x42`
+    /// reads. Over the keyboard-HID transport the APDU body is a fixed 64 bytes, so
+    /// trust the inner length byte, not `nc`. Ungated (parity); an empty inner
+    /// blob is a no-op. Absent under `strict-config` (falls to the bare-OK swallow).
+    #[cfg(not(feature = "strict-config"))]
+    fn cmd_set_device_info<S: Storage>(&mut self, apdu: &Apdu, fs: &mut Fs<S>) -> Sw {
+        let data = apdu.data;
+        if data.is_empty() {
+            return Sw::OK;
+        }
+        let len = data[0] as usize;
+        if len == 0 {
+            return Sw::OK; // no config bytes → nothing to persist (status frame only)
+        }
+        if 1 + len > data.len() {
+            return Sw::INCORRECT_PARAMS;
+        }
+        match rsk_mgmt::persist_dev_conf(fs, &data[1..1 + len]) {
+            Ok(()) => Sw::OK,
+            Err(rsk_mgmt::DevConfError::TooLong) => Sw::INCORRECT_PARAMS,
+            Err(rsk_mgmt::DevConfError::Store) => Sw::MEMORY_FAILURE,
         }
     }
 }

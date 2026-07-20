@@ -30,11 +30,17 @@ const RESP_CAP: usize = 2038;
 const IDX_OPENPGP: usize = 1;
 const IDX_PIV: usize = 5;
 
-/// YubiKey Management vendor command number carried over CTAPHID (logical, i.e.
-/// `TYPE_INIT` already stripped by the transport). Only READ CONFIG is served — it
-/// is what `ykman` / Yubico Authenticator read to identify the key over the FIDO
-/// interface; WRITE CONFIG / mode-switch stay CCID + OTP only.
+/// YubiKey Management vendor commands carried over CTAPHID (logical, i.e.
+/// `TYPE_INIT` already stripped by the transport). READ CONFIG (`0x42`) is what
+/// `ykman` / Yubico Authenticator read to identify the key over the FIDO
+/// interface. The DEFAULT build ALSO serves WRITE CONFIG (`0x43`) ungated, for
+/// full ykman parity; `--features strict-config` refuses it (see the write arm).
 const CTAP_READ_CONFIG: u8 = 0x42;
+/// WRITE CONFIG (ykman `CTAP_WRITE_CONFIG`): persist the DeviceConfig blob. Served
+/// only on the DEFAULT (permissive) build — under `strict-config` a config write
+/// stays CCID/FIDO-CBOR-gated only, so this is not carried.
+#[cfg(not(feature = "strict-config"))]
+const CTAP_WRITE_CONFIG: u8 = 0x43;
 
 pub struct CcidApplets<'a> {
     fs: &'a RefCell<Store>,
@@ -123,6 +129,27 @@ impl<'a> CcidApplets<'a> {
                     res.len()
                 };
                 Some(&self.resp[..n])
+            }
+            // DEFAULT build only: ykman's WRITE CONFIG over FIDO. The payload is
+            // the DeviceConfig `get_bytes()` blob — a leading length byte then the
+            // TLV — the same store CCID WRITE CONFIG / OTP-HID SET_DEVICE_INFO use,
+            // so it round-trips into every READ CONFIG. Ungated for parity (a
+            // strict build never defines this arm; the write stays gated elsewhere).
+            #[cfg(not(feature = "strict-config"))]
+            CTAP_WRITE_CONFIG => {
+                if _data.is_empty() {
+                    return None;
+                }
+                let len = _data[0] as usize;
+                if 1 + len > _data.len() {
+                    return None;
+                }
+                let ok = {
+                    let mut fsb = self.fs.borrow_mut();
+                    rsk_mgmt::persist_dev_conf(&mut *fsb, &_data[1..1 + len]).is_ok()
+                };
+                // An empty body is the ykman-expected acknowledgement.
+                if ok { Some(&self.resp[..0]) } else { None }
             }
             _ => None,
         }
