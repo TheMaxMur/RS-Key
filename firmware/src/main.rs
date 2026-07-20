@@ -429,7 +429,12 @@ async fn main(spawner: Spawner) {
     // the wire order is not in EF_LED_CONF, so it stands.
     #[cfg(not(led_kind = "none"))]
     if let Some(phy) = &phy {
-        if let Some(b) = phy.led_brightness {
+        // OPT_DIMM ("LED Dimmable") gates the global brightness override: without
+        // it, the boot brightness is not forced and the per-status EF_LED_CONF /
+        // defaults stand, so the toggle actually means something.
+        if phy.opts & rsk_rescue::phy::OPT_DIMM != 0
+            && let Some(b) = phy.led_brightness
+        {
             led::set_all_brightness(b);
         }
         led::set_steady(phy.opts & rsk_rescue::phy::OPT_LED_STEADY != 0);
@@ -469,7 +474,7 @@ async fn main(spawner: Spawner) {
     config.max_power = 100;
     config.max_packet_size_0 = 64;
     // bcdDevice build counter; also surfaced on the trusted-display Firmware screen.
-    let device_release: u16 = 0x083B;
+    let device_release: u16 = 0x083C;
     config.device_release = device_release;
 
     let mut builder = Builder::new(

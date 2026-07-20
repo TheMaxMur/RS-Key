@@ -10,8 +10,8 @@
 //! status in atomics. The render half is chosen at build time by `LED_KIND`:
 //! [`Blinker::tick`] computes the colour to show each tick, and one of the
 //! `*_task`s drives the hardware — `ws2812` (addressable RGB), `gpio` (a plain
-//! on/off LED, colour collapsed to lit/unlit), `pimoroni` (3-pin PWM RGB), or
-//! `none` (no indicator).
+//! single-colour LED: hue collapsed to lit/unlit, brightness via software PWM),
+//! `pimoroni` (3-pin PWM RGB), or `none` (no indicator).
 
 use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
@@ -33,7 +33,7 @@ use embassy_rp::peripherals::PIO0;
 use embassy_rp::pio_programs::ws2812::{PioWs2812, Rgb as Ws2812Order};
 
 #[cfg(not(led_kind = "none"))]
-use embassy_rp::gpio::{Level, Output};
+use embassy_rp::gpio::Output;
 
 #[cfg(not(led_kind = "none"))]
 use embassy_rp::pwm::{Config as PwmConfig, Pwm};
@@ -103,8 +103,8 @@ const DEFAULT_BRIGHTNESS: u8 = 16;
 pub const EFFECT_LEGACY: u8 = 0;
 pub const EFFECT_VAPOR: u8 = 1; // breathing (all LEDs pulse together)
 pub const EFFECT_BOUNCE: u8 = 2; // smooth bounce with half-step interpolation
-pub const EFFECT_FLOW: u8 = 3; // unidirectional yellow→red flow
-pub const EFFECT_SPARKLE: u8 = 4; // random-colour sparkle per LED
+pub const EFFECT_FLOW: u8 = 3; // comet of the status colour with a dimming trail
+pub const EFFECT_SPARKLE: u8 = 4; // per-LED twinkle in the status colour
 
 /// Default effect per status (used when the stored effect is 0 / legacy,
 /// and as the initial value before any `rsk led` command).
@@ -453,10 +453,12 @@ fn effect_bounce(status: usize, tick: u32) -> [RGB8; MAX_LEDS] {
     buf
 }
 
-/// Hot flow: a yellow→orange→red gradient flows unidirectionally left to
-/// right with a trailing wake. Trail length adapts to the runtime LED count.
+/// Flow: a comet of the configured status colour glides unidirectionally with a
+/// trailing wake that dims along its length. Trail length adapts to the runtime
+/// LED count. Honours the per-status colour (was a fixed yellow→red gradient).
 #[cfg(not(led_kind = "none"))]
 fn effect_flow(status: usize, tick: u32) -> [RGB8; MAX_LEDS] {
+    let color_idx = STATUS_COLOR[status].load(Ordering::Relaxed);
     let peak = STATUS_BRIGHTNESS[status].load(Ordering::Relaxed) as u16;
     if peak == 0 {
         return [RGB8::default(); MAX_LEDS];
@@ -474,30 +476,28 @@ fn effect_flow(status: usize, tick: u32) -> [RGB8; MAX_LEDS] {
     let mut buf = [RGB8::default(); MAX_LEDS];
     for (i, led) in buf[..n].iter_mut().enumerate() {
         let dist = (i + n - front) % n;
-        let (r, g, b, bright) = match dist {
-            0 => (255, 255, 0, peak),
-            1 if trail >= 1 => (255, 128, 0, peak * 3 / 5),
-            2 if trail >= 2 => (255, 64, 0, peak * 2 / 5),
-            3 if trail >= 3 => (128, 16, 0, peak / 5),
-            4 if trail >= 4 => (64, 0, 0, peak / 8),
+        let bright = match dist {
+            0 => peak,
+            1 if trail >= 1 => peak * 3 / 5,
+            2 if trail >= 2 => peak * 2 / 5,
+            3 if trail >= 3 => peak / 5,
+            4 if trail >= 4 => peak / 8,
             _ => continue,
         };
-        *led = RGB8 {
-            r: (r as u16 * bright / 255) as u8,
-            g: (g as u16 * bright / 255) as u8,
-            b: (b as u16 * bright / 255) as u8,
-        };
+        *led = color_rgb(color_idx, bright as u8);
     }
     buf
 }
 
-/// Random sparkle: each LED independently flashes a random colour
-/// (~25 % duty cycle, deterministic splitmix32 hash). `speed` is the number of
-/// ticks a pattern is held before the field re-rolls (`0` = built-in default
-/// 8 ≈ 40 ms); seeding on `tick / speed` rather than `tick` both honors
-/// `--speed` and tames the otherwise per-tick (~200 Hz) strobe.
+/// Sparkle: each LED independently twinkles in the configured status colour
+/// (~25 % duty cycle, deterministic splitmix32 hash) at a pseudo-random brightness.
+/// Honours the per-status colour (was random RGB). `speed` is the number of ticks a
+/// pattern is held before the field re-rolls (`0` = built-in default 8 ≈ 40 ms);
+/// seeding on `tick / speed` rather than `tick` both honors `--speed` and tames the
+/// otherwise per-tick (~200 Hz) strobe.
 #[cfg(not(led_kind = "none"))]
 fn effect_sparkle(status: usize, tick: u32) -> [RGB8; MAX_LEDS] {
+    let color_idx = STATUS_COLOR[status].load(Ordering::Relaxed);
     let peak = STATUS_BRIGHTNESS[status].load(Ordering::Relaxed);
     if peak == 0 {
         return [RGB8::default(); MAX_LEDS];
@@ -510,12 +510,10 @@ fn effect_sparkle(status: usize, tick: u32) -> [RGB8; MAX_LEDS] {
     for (i, led) in buf[..n].iter_mut().enumerate() {
         let h = splitmix32(step ^ (i as u32 * 0x9e3779b9));
         if (h & 0xFF) < 64 {
-            let scale = |v: u8| -> u8 { (v as u16 * peak as u16 / 255) as u8 };
-            *led = RGB8 {
-                r: scale((h >> 16) as u8),
-                g: scale((h >> 8) as u8),
-                b: scale(h as u8),
-            };
+            // Configured hue, brightness scaled 96/255..=peak so each spark stays
+            // visible — a twinkle in the chosen colour, not random RGB.
+            let factor = 96 + (h >> 16) as u16 % 160; // 96..=255
+            *led = color_rgb(color_idx, (peak as u16 * factor / 255) as u8);
         }
     }
     buf
@@ -561,7 +559,14 @@ pub async fn ws2812_task(mut ws2812: PioWs2812<'static, PIO0, 0, MAX_LEDS, Ws281
         tick = tick.wrapping_add(1);
         let s = (LED_STATUS.load(Ordering::Relaxed) as usize).min(N_STATUS - 1);
 
-        let buf = dispatch(s, tick, &mut on_phase, &mut phase_end);
+        // Steady mode shows the status colour solidly. The animated effects
+        // otherwise ignore LED_STEADY (only the legacy on/off renderer reads it),
+        // so honour it here for every effect — PicoForge's "Steady" writes it.
+        let buf = if LED_STEADY.load(Ordering::Relaxed) {
+            steady_frame(s)
+        } else {
+            dispatch(s, tick, &mut on_phase, &mut phase_end)
+        };
 
         // Per-pixel r/g wire-order swap (GRB-corrected parts).
         let mut buf = buf;
@@ -573,6 +578,22 @@ pub async fn ws2812_task(mut ws2812: PioWs2812<'static, PIO0, 0, MAX_LEDS, Ws281
         ws2812.write(&buf).await;
         Timer::after_millis(5).await;
     }
+}
+
+/// Solid frame for steady mode: the status colour lit across the runtime LEDs,
+/// no animation. Every effect defers to this when `LED_STEADY` is set.
+#[cfg(not(led_kind = "none"))]
+fn steady_frame(s: usize) -> [RGB8; MAX_LEDS] {
+    let c = color_rgb(
+        STATUS_COLOR[s].load(Ordering::Relaxed),
+        STATUS_BRIGHTNESS[s].load(Ordering::Relaxed),
+    );
+    let n = runtime_leds() as usize;
+    let mut buf = [RGB8::default(); MAX_LEDS];
+    for led in buf[..n].iter_mut() {
+        *led = c;
+    }
+    buf
 }
 
 /// Choose and run the effect for status `s`. Exposed as a separate function
@@ -616,20 +637,29 @@ fn legacy_broadcast(s: usize, on_phase: &mut bool, phase_end: &mut Instant) -> [
     buf
 }
 
-/// `gpio` backend: a plain on/off LED (active-high). Hue and brightness collapse
-/// to lit/unlit — only the blink *pattern* distinguishes statuses.
+/// `gpio` backend: a plain single-colour LED (active-high). Hue collapses to
+/// lit/unlit, but brightness is honoured via **software PWM** — a short on/off
+/// duty cycle over a ~2 ms (500 Hz, flicker-free) period, duty = brightness/255.
+/// So the configured brightness (and PicoForge's "Dimmable") actually dims a plain
+/// LED, not just a WS2812 one.
 #[cfg(not(led_kind = "none"))]
 #[embassy_executor::task]
 pub async fn gpio_task(mut led: Output<'static>) {
+    const PERIOD_US: u64 = 2000;
     let mut blinker = Blinker::new();
     loop {
         let c = blinker.tick();
-        led.set_level(if (c.r | c.g | c.b) != 0 {
-            Level::High
-        } else {
-            Level::Low
-        });
-        Timer::after_millis(5).await;
+        // The lit LED's brightness is the brightest channel of the status colour.
+        let duty = c.r.max(c.g).max(c.b) as u64;
+        let on_us = PERIOD_US * duty / 255;
+        if on_us > 0 {
+            led.set_high();
+            Timer::after_micros(on_us).await;
+        }
+        if on_us < PERIOD_US {
+            led.set_low();
+            Timer::after_micros(PERIOD_US - on_us).await;
+        }
     }
 }
 
