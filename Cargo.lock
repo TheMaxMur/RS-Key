@@ -2179,18 +2179,30 @@ dependencies = [
 ]
 
 [[package]]
-name = "rsk-fido"
+name = "rsk-ec"
 version = "0.1.0"
 dependencies = [
  "ecdsa",
+ "k256",
+ "p256",
+ "p384",
+ "p521",
+ "rfc6979",
+ "zeroize",
+]
+
+[[package]]
+name = "rsk-fido"
+version = "0.1.0"
+dependencies = [
  "ed25519-dalek",
  "k256",
  "minicbor",
  "p256",
  "p384",
  "p521",
- "rfc6979",
  "rsk-crypto",
+ "rsk-ec",
  "rsk-fs",
  "rsk-led",
  "rsk-mgmt",
@@ -2254,6 +2266,7 @@ dependencies = [
  "p521",
  "rsa",
  "rsk-crypto",
+ "rsk-ec",
  "rsk-fs",
  "rsk-mgmt",
  "rsk-rsa-asm",

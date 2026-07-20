@@ -1,0 +1,34 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+[package]
+name = "rsk-ec"
+version = "0.1.0"
+license = "AGPL-3.0-only"
+edition = "2024"
+publish = false
+build = "build.rs"
+
+# Fixed-base Lim–Lee comb scalar multiplication for the NIST/secp Weierstrass
+# curves, shared by every applet that signs on the generator: FIDO credentials,
+# PIV GENERAL AUTHENTICATE, OpenPGP PSO:CDS. `k·G` (ECDSA nonce commitment) and
+# `d·G` (public-key derivation) both run through a width-4 comb — several× faster
+# than the crate's generic `mul_by_generator` on the in-order Cortex-M33, and
+# bit-identical to it (KAT-checked). ECDH stays on the crate (variable base).
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
+
+[dependencies]
+p256 = { workspace = true }
+p384 = { workspace = true }
+p521 = { workspace = true }
+k256 = { workspace = true }
+# `algorithm` provides each curve's `DigestAlgorithm::Digest` (the RFC 6979 hash).
+ecdsa = { workspace = true, features = ["algorithm"] }
+rfc6979 = { workspace = true }
+zeroize = { workspace = true }
+
+# The comb tables are precomputed at build time from each curve's generator.
+[build-dependencies]
+p256 = { workspace = true }
+p384 = { workspace = true }
+p521 = { workspace = true }
+k256 = { workspace = true }
