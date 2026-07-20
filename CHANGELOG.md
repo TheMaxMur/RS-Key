@@ -80,6 +80,20 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Changed
 
+- **Faster PIV/OpenPGP EC signing and key derivation.** The generic RustCrypto
+  signer PIV GENERAL AUTHENTICATE and OpenPGP PSO:CDS used derived the public key
+  `d·G` on every signature (never used when only signing) and ran `k·G` through
+  the crate's slow generic `mul_by_generator`. Both `k·G` (ECDSA nonce commitment)
+  and `d·G` (public-key derivation, used by keygen and GET DATA) now go through the
+  shared fixed-base comb in the new **`rsk-ec`** crate — several× faster on the
+  in-order Cortex-M33 and **byte-identical** to the crate (KAT-checked). The comb is
+  **constant-time** (branch-free window add with a `subtle` table select), so it does
+  not leak the nonce/scalar via timing — matching the crate's `mul_by_generator`; this
+  also hardens the comb FIDO already carried, which `rsk-ec` now de-duplicates, so all
+  three applets share one KAT-verified constant-time implementation. ECDSA over
+  P-256/P-384/secp256k1 and the P-521 pubkey are covered; ECDH is variable-base and
+  unchanged. On-device (Waveshare Zero):
+  P-384 ECDSA sign ~537 ms → ~0.2 s, P-256 sign ~100 → ~50 ms, EC keygen much faster.
 - **Faster PIV RSA signing** (~3.1× on RSA-2048, ~2.9× on RSA-4096; on-device
   medians — 0.13 s / 0.86 s — now beat a real YubiKey 5.7's 0.18 s / 1.39 s).
   Slot private-key operations now run the

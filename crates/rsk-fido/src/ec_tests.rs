@@ -78,7 +78,7 @@ fn p521_comb_matches_mul_by_generator() {
     for r in reprs {
         let fb = p521::FieldBytes::from(r);
         let k = Option::<Scalar>::from(Scalar::from_repr(fb)).expect("scalar in range");
-        let got = comb_mul(&k).to_affine().to_sec1_point(false);
+        let got = rsk_ec::comb_mul_p521(&k).to_affine().to_sec1_point(false);
         let want = p521::ProjectivePoint::mul_by_generator(&k)
             .to_affine()
             .to_sec1_point(false);
@@ -114,7 +114,7 @@ fn p256_comb_matches_mul_by_generator() {
     for r in reprs {
         let fb = p256::FieldBytes::from(r);
         let k = Option::<Scalar>::from(Scalar::from_repr(fb)).expect("scalar in range");
-        let got = comb_mul_p256(&k).to_affine().to_sec1_point(false);
+        let got = rsk_ec::comb_mul_p256(&k).to_affine().to_sec1_point(false);
         let want = p256::ProjectivePoint::mul_by_generator(&k)
             .to_affine()
             .to_sec1_point(false);
@@ -177,7 +177,7 @@ fn p384_comb_matches_mul_by_generator() {
     for r in reprs {
         let fb = p384::FieldBytes::from(r);
         let k = Option::<Scalar>::from(Scalar::from_repr(fb)).expect("scalar in range");
-        let got = comb_mul_p384(&k).to_affine().to_sec1_point(false);
+        let got = rsk_ec::comb_mul_p384(&k).to_affine().to_sec1_point(false);
         let want = p384::ProjectivePoint::mul_by_generator(&k)
             .to_affine()
             .to_sec1_point(false);
@@ -209,7 +209,7 @@ fn k256_comb_matches_mul_by_generator() {
     for r in reprs {
         let fb = k256::FieldBytes::from(r);
         let k = Option::<Scalar>::from(Scalar::from_repr(fb)).expect("scalar in range");
-        let got = comb_mul_k256(&k).to_affine().to_sec1_point(false);
+        let got = rsk_ec::comb_mul_k256(&k).to_affine().to_sec1_point(false);
         let want = k256::ProjectivePoint::mul_by_generator(&k)
             .to_affine()
             .to_sec1_point(false);

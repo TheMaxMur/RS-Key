@@ -8,7 +8,7 @@
 //! `r ‖ s` (fixed field width), NOT DER.
 
 use alloc::boxed::Box;
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 use rsk_crypto::aes::aes_decrypt_cfb_256;
 use rsk_crypto::{Device, aes256gcm_decrypt, aes256gcm_encrypt, hmac_sha256};
@@ -447,25 +447,52 @@ impl PrivKey {
             b.len()
         }
         match self {
+            // NIST/secp curves sign through the shared fixed-base comb (k·G) —
+            // byte-identical to the crate's `sign_prehash`, but without the wasted
+            // public-key derivation the generic `SigningKey` did on every signature.
             PrivKey::P256(s) => {
-                let k = p256::ecdsa::SigningKey::from_bytes(&p256::FieldBytes::from(*s))
-                    .map_err(|_| Sw::EXEC_ERROR)?;
-                let sig: p256::ecdsa::Signature =
-                    k.sign_prehash(prehash).map_err(|_| Sw::EXEC_ERROR)?;
+                use p256::elliptic_curve::PrimeField;
+                let d = Zeroizing::new(
+                    Option::<p256::Scalar>::from(p256::Scalar::from_repr(p256::FieldBytes::from(
+                        *s,
+                    )))
+                    .ok_or(Sw::EXEC_ERROR)?,
+                );
+                let nz = Zeroizing::new(
+                    Option::<p256::NonZeroScalar>::from(p256::NonZeroScalar::new(*d))
+                        .ok_or(Sw::EXEC_ERROR)?,
+                );
+                let sig = rsk_ec::sign_p256(&nz, prehash).ok_or(Sw::EXEC_ERROR)?;
                 Ok(put(sig.to_bytes().as_slice(), out))
             }
             PrivKey::P384(s) => {
-                let k = p384::ecdsa::SigningKey::from_bytes(&p384::FieldBytes::from(*s))
-                    .map_err(|_| Sw::EXEC_ERROR)?;
-                let sig: p384::ecdsa::Signature =
-                    k.sign_prehash(prehash).map_err(|_| Sw::EXEC_ERROR)?;
+                use p384::elliptic_curve::PrimeField;
+                let d = Zeroizing::new(
+                    Option::<p384::Scalar>::from(p384::Scalar::from_repr(p384::FieldBytes::from(
+                        *s,
+                    )))
+                    .ok_or(Sw::EXEC_ERROR)?,
+                );
+                let nz = Zeroizing::new(
+                    Option::<p384::NonZeroScalar>::from(p384::NonZeroScalar::new(*d))
+                        .ok_or(Sw::EXEC_ERROR)?,
+                );
+                let sig = rsk_ec::sign_p384(&nz, prehash).ok_or(Sw::EXEC_ERROR)?;
                 Ok(put(sig.to_bytes().as_slice(), out))
             }
             PrivKey::K256(s) => {
-                let k = k256::ecdsa::SigningKey::from_bytes(&k256::FieldBytes::from(*s))
-                    .map_err(|_| Sw::EXEC_ERROR)?;
-                let sig: k256::ecdsa::Signature =
-                    k.sign_prehash(prehash).map_err(|_| Sw::EXEC_ERROR)?;
+                use k256::elliptic_curve::PrimeField;
+                let d = Zeroizing::new(
+                    Option::<k256::Scalar>::from(k256::Scalar::from_repr(k256::FieldBytes::from(
+                        *s,
+                    )))
+                    .ok_or(Sw::EXEC_ERROR)?,
+                );
+                let nz = Zeroizing::new(
+                    Option::<k256::NonZeroScalar>::from(k256::NonZeroScalar::new(*d))
+                        .ok_or(Sw::EXEC_ERROR)?,
+                );
+                let sig = rsk_ec::sign_k256(&nz, prehash).ok_or(Sw::EXEC_ERROR)?;
                 Ok(put(sig.to_bytes().as_slice(), out))
             }
             PrivKey::P521(s) => {
@@ -499,27 +526,71 @@ impl PrivKey {
             b.len()
         }
         match self {
+            // Public-key derivation `d·G` is fixed-base — the shared comb (identical
+            // point to the crate's `verifying_key`, several× faster on Cortex-M33).
             PrivKey::P256(s) => {
-                let k = p256::ecdsa::SigningKey::from_bytes(&p256::FieldBytes::from(*s))
-                    .map_err(|_| Sw::EXEC_ERROR)?;
-                Ok(put(k.verifying_key().to_sec1_point(false).as_bytes(), out))
+                use p256::elliptic_curve::PrimeField;
+                use p256::elliptic_curve::sec1::ToSec1Point;
+                let d = Zeroizing::new(
+                    Option::<p256::Scalar>::from(p256::Scalar::from_repr(p256::FieldBytes::from(
+                        *s,
+                    )))
+                    .ok_or(Sw::EXEC_ERROR)?,
+                );
+                let nz = Zeroizing::new(
+                    Option::<p256::NonZeroScalar>::from(p256::NonZeroScalar::new(*d))
+                        .ok_or(Sw::EXEC_ERROR)?,
+                );
+                let pt = rsk_ec::comb_mul_p256(&nz).to_affine().to_sec1_point(false);
+                Ok(put(pt.as_bytes(), out))
             }
             PrivKey::P384(s) => {
-                let k = p384::ecdsa::SigningKey::from_bytes(&p384::FieldBytes::from(*s))
-                    .map_err(|_| Sw::EXEC_ERROR)?;
-                Ok(put(k.verifying_key().to_sec1_point(false).as_bytes(), out))
+                use p384::elliptic_curve::PrimeField;
+                use p384::elliptic_curve::sec1::ToSec1Point;
+                let d = Zeroizing::new(
+                    Option::<p384::Scalar>::from(p384::Scalar::from_repr(p384::FieldBytes::from(
+                        *s,
+                    )))
+                    .ok_or(Sw::EXEC_ERROR)?,
+                );
+                let nz = Zeroizing::new(
+                    Option::<p384::NonZeroScalar>::from(p384::NonZeroScalar::new(*d))
+                        .ok_or(Sw::EXEC_ERROR)?,
+                );
+                let pt = rsk_ec::comb_mul_p384(&nz).to_affine().to_sec1_point(false);
+                Ok(put(pt.as_bytes(), out))
             }
             PrivKey::K256(s) => {
-                let k = k256::ecdsa::SigningKey::from_bytes(&k256::FieldBytes::from(*s))
-                    .map_err(|_| Sw::EXEC_ERROR)?;
-                Ok(put(k.verifying_key().to_sec1_point(false).as_bytes(), out))
+                use k256::elliptic_curve::PrimeField;
+                use k256::elliptic_curve::sec1::ToSec1Point;
+                let d = Zeroizing::new(
+                    Option::<k256::Scalar>::from(k256::Scalar::from_repr(k256::FieldBytes::from(
+                        *s,
+                    )))
+                    .ok_or(Sw::EXEC_ERROR)?,
+                );
+                let nz = Zeroizing::new(
+                    Option::<k256::NonZeroScalar>::from(k256::NonZeroScalar::new(*d))
+                        .ok_or(Sw::EXEC_ERROR)?,
+                );
+                let pt = rsk_ec::comb_mul_k256(&nz).to_affine().to_sec1_point(false);
+                Ok(put(pt.as_bytes(), out))
             }
             PrivKey::P521(s) => {
-                let k = p521::ecdsa::SigningKey::from_bytes(&p521::FieldBytes::from(*s))
-                    .map_err(|_| Sw::EXEC_ERROR)?;
-                // p521's newtype `verifying_key()` is dead-cfg'd; derive via From.
-                let vk = p521::ecdsa::VerifyingKey::from(&k);
-                Ok(put(vk.to_sec1_point(false).as_bytes(), out))
+                use p521::elliptic_curve::PrimeField;
+                use p521::elliptic_curve::sec1::ToSec1Point;
+                let d = Zeroizing::new(
+                    Option::<p521::Scalar>::from(p521::Scalar::from_repr(p521::FieldBytes::from(
+                        *s,
+                    )))
+                    .ok_or(Sw::EXEC_ERROR)?,
+                );
+                let nz = Zeroizing::new(
+                    Option::<p521::NonZeroScalar>::from(p521::NonZeroScalar::new(*d))
+                        .ok_or(Sw::EXEC_ERROR)?,
+                );
+                let pt = rsk_ec::comb_mul_p521(&nz).to_affine().to_sec1_point(false);
+                Ok(put(pt.as_bytes(), out))
             }
             PrivKey::Bp256(s) => pubkey_bp256(s, out),
             PrivKey::Bp384(s) => pubkey_bp384(s, out),
