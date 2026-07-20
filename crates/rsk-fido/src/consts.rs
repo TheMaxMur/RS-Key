@@ -155,10 +155,31 @@ pub const FLAG_ED: u8 = 0x80; // extension data included
 /// = `2479c7bf-6b30-5683-9ec8-0e8171a918b7`. Self-assigned: an AAGUID needs no
 /// central registration; FIDO MDS *listing* (a separate, certification-gated
 /// step) is not required for the value itself. One AAGUID across every VID/PID
-/// flavor — it identifies the firmware model, not the USB branding.
-pub const AAGUID: [u8; 16] = [
-    0x24, 0x79, 0xC7, 0xBF, 0x6B, 0x30, 0x56, 0x83, 0x9E, 0xC8, 0x0E, 0x81, 0x71, 0xA9, 0x18, 0xB7,
-];
+/// flavor — it identifies the firmware model, not the USB branding. Build-time
+/// override: `AAGUID=<uuid-or-32-hex> cargo build` (resolved in `build.rs` and
+/// baked as `PK_AAGUID`); the checked-in metadata statement then no longer matches.
+pub const AAGUID: [u8; 16] = parse_aaguid(env!("PK_AAGUID"));
+
+/// Const-parse the 32-char lowercase-hex `PK_AAGUID` (validated in `build.rs`)
+/// into the 16 AAGUID bytes at compile time.
+const fn parse_aaguid(s: &str) -> [u8; 16] {
+    let b = s.as_bytes();
+    let mut out = [0u8; 16];
+    let mut i = 0;
+    while i < 16 {
+        out[i] = (hex_nibble(b[2 * i]) << 4) | hex_nibble(b[2 * i + 1]);
+        i += 1;
+    }
+    out
+}
+
+const fn hex_nibble(c: u8) -> u8 {
+    match c {
+        b'0'..=b'9' => c - b'0',
+        b'a'..=b'f' => c - b'a' + 10,
+        _ => 0, // build.rs guarantees lowercase hex, so this is unreachable
+    }
+}
 
 /// firmwareVersion reported by getInfo (CTAP `0x0E`): the shared
 /// [`rsk_sdk::FIRMWARE_VERSION`] (default 5.7.4, `FW_VERSION`-overridable) in

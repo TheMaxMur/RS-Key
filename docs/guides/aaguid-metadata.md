@@ -42,6 +42,11 @@ A few consequences worth knowing:
   at registration time. Resident keys made on an older build still assert
   fine. Only *new* registrations report the new AAGUID. An RP that pinned the
   old AAGUID for attestation matching would need a re-enroll.
+- **Build-time override.** `AAGUID=<uuid-or-32-hex> cargo build` bakes a custom
+  AAGUID (`build.rs` validates it, `consts.rs` const-parses it); omit the flag to
+  keep the default above. A non-default build makes the checked-in Metadata
+  Statement (and the drift guard below) no longer match — reserve it for a fork
+  that ships its own metadata, not a cosmetic tweak.
 
 ## The Metadata Statement
 
@@ -63,9 +68,9 @@ embedded `authenticatorGetInfo` that mirrors exactly what the device returns to
 | `upv` | `1.0`: matches the `FIDO_2_0` entry the device advertises in `versions` |
 
 A drift guard, [`tests/62_metadata_statement.py`](https://github.com/TheMaxMur/RS-Key/blob/main/tests/62_metadata_statement.py),
-checks the statement against both the firmware source (the AAGUID const) and a
-live device (the embedded `authenticatorGetInfo` vs the real one). Run it by
-hand. It is not in the hardware gate.
+checks the statement against both the firmware source (the default AAGUID in
+`build.rs`) and a live device (the embedded `authenticatorGetInfo` vs the real
+one). Run it by hand. It is not in the hardware gate.
 
 ### Two caveats baked into the statement
 

@@ -15,6 +15,15 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Added
 
+- **Build-time AAGUID override.** `AAGUID=<uuid-or-32-hex> cargo build` bakes a
+  custom FIDO2 AAGUID (the authenticator-model id in getInfo / attestation): the
+  value is validated in `crates/rsk-fido/build.rs` and const-parsed in `consts.rs`
+  (baked as `PK_AAGUID`), defaulting to RS-Key's reproducible UUIDv5. It is meant
+  for a fork that ships its own metadata — a non-default AAGUID makes the
+  checked-in metadata statement no longer match, and advertising a real vendor's
+  AAGUID would be an attestation forgery that fails to chain anyway. The default
+  build's AAGUID is unchanged and its image is **byte-for-byte identical**
+  (compile-time const parse, no runtime code) — **no bcdDevice bump.**
 - **The USB manufacturer/product strings are runtime-configurable via the phy
   record, and a Yubico VID now auto-fills the whole identity.** A new phy tag
   `0x0F` (USB_MANUFACTURER) sets the iManufacturer string; `rsk hw` gains

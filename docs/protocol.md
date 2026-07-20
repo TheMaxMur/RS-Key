@@ -209,7 +209,7 @@ YubiKey's reader name. Reference: `RSK_READER_TOKENS` in
 |---|---|---|
 | firmwareVersion | `5.7.4` → `0x00050704` | CTAP getInfo `0x0E`; Management/OTP DeviceInfo `TAG_VERSION`; Management SELECT (`"5.7.4"` ASCII) |
 | `bcdDevice` | `0x0780` (build counter, increments per firmware change) | USB device descriptor (`firmware/src/main.rs` `device_release`) |
-| AAGUID | `2479c7bf-6b30-5683-9ec8-0e8171a918b7` | CTAP getInfo `0x03`; one value across every VID/PID flavor |
+| AAGUID | `2479c7bf-6b30-5683-9ec8-0e8171a918b7` | CTAP getInfo `0x03`; one value across every VID/PID flavor of a build, overridable at build time with `AAGUID=<uuid>` |
 
 The firmware version is overridable at build time (`FW_VERSION=X.Y.Z`); `5.7.4`
 mirrors a current YubiKey 5 so Yubico tooling is satisfied under the Yubico VID.
