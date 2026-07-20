@@ -1573,11 +1573,13 @@ dependencies = [
 name = "rsk-piv"
 version = "0.1.0"
 dependencies = [
+ "num-bigint-dig",
  "rsa",
  "rsk-crypto",
  "rsk-fs",
  "rsk-mgmt",
  "rsk-openpgp",
+ "rsk-rsa-asm",
  "rsk-sdk",
  "zeroize",
 ]

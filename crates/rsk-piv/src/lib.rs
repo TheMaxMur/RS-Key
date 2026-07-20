@@ -1304,30 +1304,6 @@ pub fn wrap_cert_object(cert: &[u8], out: &mut [u8]) -> usize {
     p + 5
 }
 
-/// Adapts [`Rng`] to `rand_core` for the `rsa` crate's blinded private op.
-pub(crate) struct RngAdapter<'a>(pub(crate) &'a mut dyn Rng);
-
-impl rsa::rand_core::RngCore for RngAdapter<'_> {
-    fn next_u32(&mut self) -> u32 {
-        let mut b = [0u8; 4];
-        self.0.fill(&mut b);
-        u32::from_le_bytes(b)
-    }
-    fn next_u64(&mut self) -> u64 {
-        let mut b = [0u8; 8];
-        self.0.fill(&mut b);
-        u64::from_le_bytes(b)
-    }
-    fn fill_bytes(&mut self, dst: &mut [u8]) {
-        self.0.fill(dst);
-    }
-    fn try_fill_bytes(&mut self, dst: &mut [u8]) -> Result<(), rsa::rand_core::Error> {
-        self.0.fill(dst);
-        Ok(())
-    }
-}
-impl rsa::rand_core::CryptoRng for RngAdapter<'_> {}
-
 /// Kani proof harnesses (`cargo kani -p rsk-piv`): exhaustive over every input up
 /// to the stated bound, where the unit tests only sample.
 #[cfg(kani)]

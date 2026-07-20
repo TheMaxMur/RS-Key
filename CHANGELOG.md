@@ -80,6 +80,20 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Changed
 
+- **Faster PIV RSA signing** (~3.1× on RSA-2048, ~2.9× on RSA-4096; on-device
+  medians — 0.13 s / 0.86 s — now beat a real YubiKey 5.7's 0.18 s / 1.39 s).
+  Slot private-key operations now run the
+  CRT modexp through the vendored UMAAL assembly (`rsk_rsa_asm::sign_crt`) instead
+  of the pure-Rust `num-bigint-dig` 4-bit-window path, and the two full-width
+  public-exponent modexps around it — the blinding factor `rᵉ` and the fault
+  check `sigᵉ` — now use the asm too (`rsk_rsa_asm::modexp_pub`). The sealed key
+  caches the CRT parameters (`P‖Q‖dP‖dQ‖qInv`) so a signature no longer rebuilds
+  `d`/`dP`/`dQ`/`qInv` (two modular inversions) every time. Base blinding and the
+  Bellcore fault check (`sigᵉ ≡ c mod n`) are kept — the fault check also means a
+  faulted CRT half or an asm/marshaling bug can never emit a valid signature.
+  Forward-compatible: keys sealed by an older firmware (`P‖Q` only) still load and
+  sign — they get the fast modexp but recompute the CRT parameters once per
+  signature until re-provisioned. OpenPGP RSA is unchanged (separate seal path).
 - **⚠️ Default security posture flipped: device-config writes are now UNGATED by
   default (full YubiKey/ykman parity).** On the default build the CCID Management
   WRITE CONFIG (`0x1C`) and the FIDO vendor CONFIG_WRITE (`0x0C`) no longer require
