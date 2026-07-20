@@ -242,7 +242,10 @@ needs only the identifiers above. RS-Key implements:
   is recognised but unsupported: its response overruns `maxMsgSize`.
   (`crates/rsk-fido/src/consts.rs`.)
 - **CTAP1 / U2F 1.1/1.2.**
-- **PIV**: NIST SP 800-73 (Yubico PIV extensions for metadata).
+- **PIV**: NIST SP 800-73 (Yubico PIV extensions for metadata). `GET DATA` for
+  the CHUID (`5FC102`) returns a synthesized default (non-federal FASC-N + a
+  device-stable GUID = `sha256(serial)[..16]`) when the host has not written one,
+  so the Windows minidriver can enumerate the card; a host-written CHUID overrides it.
 - **OATH**: Yubico OATH (TOTP/HOTP).
 - **OTP**: Yubico OTP / HOTP keyboard + CCID.
 - **OpenPGP card 3.x.**

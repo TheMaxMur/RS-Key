@@ -15,6 +15,16 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Added
 
+- **PIV serves a default CHUID, so a freshly flashed card works under Windows
+  CAPI.** The Windows PIV minidriver enumerates a card's containers from the Card
+  Holder Unique Identifier (CHUID, object `5FC102`); a card that had none answered
+  `6A82`, and CryptoAPI sign / auth then stayed "pending" on slots `9A`/`9C`. The
+  applet now synthesizes a default CHUID when none is provisioned — the well-known
+  non-federal FASC-N plus a device-stable GUID (`sha256(serial)[..16]`), the same
+  shape `ykman piv objects generate chuid` writes. A host-written CHUID still
+  overrides it (flash is read first). RSA/EC signing itself was always correct
+  (verified byte-for-byte against a real YubiKey 5.7.4); this is the enumeration
+  half of the issue #44 PIV-under-CAPI reports. **bcdDevice → 0x0839.**
 - **OpenPGP brainpoolP256r1 and brainpoolP384r1** (ECDSA on the sign / auth slots,
   ECDH on the decrypt slot). gpg can now `key-attr` / `generate` / `keytocard` a
   brainpool key, matching the curves a real YubiKey 5.7.4 advertises in the

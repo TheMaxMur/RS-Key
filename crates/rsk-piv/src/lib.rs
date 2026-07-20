@@ -13,6 +13,7 @@
 extern crate alloc;
 
 mod auth;
+mod chuid;
 pub mod files;
 pub mod info;
 mod keygen;
@@ -71,6 +72,7 @@ const INS_SET_MGMKEY: u8 = 0xFF;
 /// enabled). The key itself is synthesized from the sealed 0x9B auth slot, never
 /// stored a second time.
 const PRINTED_ID: u32 = 0x5FC109;
+const CHUID_ID: u32 = 0x5FC102;
 /// PivmanData (ADMIN DATA) TLV: outer `0x80 { 0x81 = flags, 0x82 = derived-key
 /// salt, 0x83 = PIN-change timestamp }`; flag bit `0x02` means the management key
 /// is PIN-protected (a host reads it back from PRINTED). ykman writes the salt
@@ -566,6 +568,15 @@ impl PivApplet<'_> {
         // prefix instead of panicking on the slice.
         let n = match fs.read(fid, &mut obj) {
             Some(n) if n > 0 => n.min(obj.len()),
+            // No host-provisioned CHUID: synthesize a default so Windows' PIV
+            // minidriver has the card GUID it needs to enumerate the slots (a
+            // 6A82 here leaves RSA/EC auth "pending" under CAPI). A real PUT DATA
+            // persists at this same fid and wins the read above.
+            _ if id == CHUID_ID => {
+                let synth = chuid::default_chuid(&self.serial_hash);
+                obj[..synth.len()].copy_from_slice(&synth);
+                synth.len()
+            }
             _ => return Sw::FILE_NOT_FOUND,
         };
         if push_tlv(res, TAG_DATA_OBJECT, &obj[..n]).is_err() {

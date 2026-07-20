@@ -2093,7 +2093,8 @@ fn objects_roundtrip_and_discovery() {
     );
     assert_eq!(sw, Sw::OK);
     assert_eq!(find_tag(&obj, 0x53).unwrap(), &chuid);
-    // Empty 53 deletes; reads then 6A82.
+    // Empty 53 deletes the host CHUID; the card then falls back to a synthesized
+    // default (a valid GUID for the Windows minidriver) rather than answering 6A82.
     let (sw, _) = run(
         &mut app,
         &mut fs,
@@ -2103,7 +2104,7 @@ fn objects_roundtrip_and_discovery() {
         &[0x5C, 0x03, 0x5F, 0xC1, 0x02, 0x53, 0x00],
     );
     assert_eq!(sw, Sw::OK);
-    let (sw, _) = run(
+    let (sw, obj) = run(
         &mut app,
         &mut fs,
         INS_GET_DATA,
@@ -2111,7 +2112,11 @@ fn objects_roundtrip_and_discovery() {
         0xFF,
         &[0x5C, 0x03, 0x5F, 0xC1, 0x02],
     );
-    assert_eq!(sw, Sw::FILE_NOT_FOUND);
+    assert_eq!(sw, Sw::OK);
+    assert_eq!(
+        find_tag(&obj, 0x53).unwrap(),
+        &crate::chuid::default_chuid(&HASH)
+    );
     // Unknown object id.
     let (sw, _) = run(
         &mut app,
@@ -2122,6 +2127,32 @@ fn objects_roundtrip_and_discovery() {
         &[0x5C, 0x03, 0x5F, 0x00, 0x01],
     );
     assert_eq!(sw, Sw::FILE_NOT_FOUND);
+}
+
+#[test]
+fn chuid_synthesized_on_fresh_card() {
+    // A freshly flashed card with no host-written CHUID still serves one, so the
+    // Windows PIV minidriver has the card GUID it needs to enumerate the slots
+    // (issue #44 follow-up: without it, RSA/EC auth stays "pending" under CAPI).
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    let (sw, obj) = run(
+        &mut app,
+        &mut fs,
+        INS_GET_DATA,
+        0x3F,
+        0xFF,
+        &[0x5C, 0x03, 0x5F, 0xC1, 0x02],
+    );
+    assert_eq!(sw, Sw::OK);
+    let body = find_tag(&obj, 0x53).unwrap();
+    assert_eq!(body, &crate::chuid::default_chuid(&HASH));
+    // The GUID (tag 34) is the serial-hash prefix: stable across reboots and
+    // device-unique, so Windows never re-enrols the card.
+    assert_eq!(&body[29..45], &HASH[..16]);
 }
 
 #[test]
