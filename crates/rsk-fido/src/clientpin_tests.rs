@@ -1376,3 +1376,24 @@ fn pin_uv_auth_token_timer_ignores_idle_and_wrap() {
     idle.mark_token_used(12_345);
     assert_eq!(idle.paut.last_used_ms, 0);
 }
+
+#[test]
+fn ephemeral_public_is_cached_and_matches_a_fresh_derive() {
+    let mut rng = SeqRng(42);
+    let mut state = FidoState::new();
+    // Uninitialized: no ephemeral key-agreement key yet.
+    assert!(state.ephemeral_public().is_none());
+    // ensure_initialized is what boot (and, before the fix, the first clientPIN)
+    // calls; it must leave a cached public key consistent with the scalar.
+    state.ensure_initialized(&mut rng);
+    let cached = state.ephemeral_public().expect("initialized");
+    // The cache equals a fresh d·G of the stored scalar (correctness) and is
+    // stable across calls (getKeyAgreement no longer recomputes the multiply).
+    assert_eq!(cached, public_xy(state.ephemeral_scalar()).unwrap());
+    assert_eq!(state.ephemeral_public().unwrap(), cached);
+    // The wrong-PIN regenerate path refreshes both the scalar and the cache.
+    state.regenerate(&mut rng);
+    let cached2 = state.ephemeral_public().unwrap();
+    assert_eq!(cached2, public_xy(state.ephemeral_scalar()).unwrap());
+    assert_ne!(cached2, cached);
+}

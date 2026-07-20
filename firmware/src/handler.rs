@@ -151,6 +151,11 @@ impl<'a> AppletHandler<'a> {
         // rides in FidoState so the pure FIDO logic stays caller-supplied.
         let mut fido_state = rsk_fido::FidoState::new();
         fido_state.devk = devk;
+        // Generate the clientPIN ephemeral key-agreement key at power-up (CTAP 2.1
+        // §6.5.5.7), not lazily on the first clientPIN — so the first PIN entry
+        // after plug-in doesn't pay the one-time ~40 ms `d·G`. The TRNG is seeded
+        // by the time the worker builds the handler.
+        fido_state.ensure_initialized(&mut *rng.borrow_mut());
         Self {
             fs,
             disp: Dispatcher::new(),

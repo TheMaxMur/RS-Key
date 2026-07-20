@@ -34,6 +34,15 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Changed
 
+- **Faster PIN: the clientPIN key-agreement key is generated at power-up and its
+  public key is cached.** The first PIN entry after plugging the key in used to be
+  noticeably slower than the rest (a one-time elliptic-curve key generation on the
+  first `clientPIN` command); it now happens at boot, off the critical path. And
+  because every `getKeyAgreement` was needlessly re-deriving the same public key,
+  caching it speeds up *every* PIN operation, not just the first. Measured on the
+  RP2350: first PIN ~162 → ~64 ms and each subsequent PIN ~106 → ~62 ms (a real
+  YubiKey, for reference, is ~166 first / ~98 steady). The wire behaviour is
+  unchanged (same key, same protocol). **bcdDevice → 0x0838.**
 - **The elliptic-curve stack moved from RustCrypto 0.13 to 0.14** (`p256` / `p384`
   / `p521` / `k256`, with `elliptic-curve` 0.14 and `ecdsa` 0.17), so brainpool and
   the NIST curves share one arithmetic generation instead of two — cutting ~138 KB
