@@ -110,6 +110,11 @@ jobs:
           - name: 16mb
             args: ""
             env: "FLASH_SIZE=16M"
+          # The strict admin-write posture (historical default). The permissive
+          # default is what every other row builds; smoke-build this so the
+          # strict-gated code keeps compiling.
+          - name: strict-config
+            args: "--features strict-config"
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:

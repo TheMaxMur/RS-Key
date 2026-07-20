@@ -301,6 +301,17 @@ in
       name = "firmware-16mb";
       flashSize = "16M";
     };
+    # The strict admin-write posture as its own shipped flavor. The default
+    # `firmware` is now the permissive, full-ykman-compatible admin surface;
+    # `firmware-strict-config` restores the historical presence/PIN-gated config
+    # writes and refuses the ungated transport writes (docs/threat-model.md).
+    firmware-strict-config = mkFirmware {
+      name = "firmware-strict-config";
+      cargoFlags = [
+        "--features"
+        "strict-config"
+      ];
+    };
   };
 
   # The firmware builder itself, for arbitrary one-off declarative combos
