@@ -313,7 +313,7 @@ def _run_fido(args):
     blob = _serialize_tlv(tlvs)
     pin = resolve_pin(args, has_pin=device_has_pin(dev, cid))
     print(
-        "approve on the device (touch) to write the phy config over FIDO…",
+        "if the device prompts for a touch, approve it (only strict-config builds gate this FIDO write)…",
         file=sys.stderr,
     )
     fields = _gated(CONFIG_WRITE, {1: CONFIG_TARGET_PHY, 2: blob}, dev, cid, pin)
