@@ -999,6 +999,11 @@ pub fn rsa_from_pqe(e: &[u8], p: &[u8], q: &[u8]) -> Option<RsaPrivateKey> {
 /// The RSA public exponent, fixed at 65537 (what `load_rsa_key` assumes).
 const RSA_E: u32 = 65_537;
 
+/// 65537 big-endian — the fixed PIV/generated RSA public exponent as bytes, so a
+/// caller that already has the modulus (PIV GET METADATA) can build the public-key
+/// DO without a `BigUint` or a magic literal. Equals `BigUint::from(RSA_E)` serialized.
+pub const RSA_PUB_EXP_BE: &[u8] = &[0x01, 0x00, 0x01];
+
 /// The RSA prime search as a *stepper*, so the CCID transport can yield — and
 /// send time-extension keepalives — between candidates. Each
 /// [`step`](RsaKeygen::step) tests ONE random candidate (a bounded chunk: one
@@ -1304,28 +1309,37 @@ pub fn load_rsa_crt<S: Storage>(
 
 /// Build the public-key DO `7F49 82 LL { 81 82 <N> · 82 <Elen> <E> }` (modulus
 /// tag 0x81 with a 2-byte length, exponent tag 0x82 with a 1-byte one).
-pub fn make_rsa_response(key: &RsaPrivateKey, out: &mut [u8]) -> usize {
-    let nb = key.n().to_bytes_be();
-    let eb = key.e().to_bytes_be();
-    let mut p = 0;
-    out[p] = 0x7f;
-    out[p + 1] = 0x49;
-    out[p + 2] = 0x82; // 2-byte outer length, back-patched below
-    p += 5;
-    let inner = p;
-    out[p] = 0x81;
-    out[p + 1] = 0x82;
-    out[p + 2..p + 4].copy_from_slice(&(nb.len() as u16).to_be_bytes());
-    p += 4;
-    out[p..p + nb.len()].copy_from_slice(&nb);
-    p += nb.len();
+/// The inner RSA public-key body `81 82 <nlen:u16-be> N 82 <elen:u8> E` (no `7F49`
+/// wrapper), from the modulus and exponent bytes. Returns its length
+/// (`4 + n.len() + 2 + e.len()`). Shared by [`make_rsa_response`] and the PIV
+/// GET METADATA path, which has `N` and `e` directly and must not rebuild the key.
+pub fn make_rsa_pub_body(n: &[u8], e: &[u8], out: &mut [u8]) -> usize {
+    out[0] = 0x81;
+    out[1] = 0x82;
+    out[2..4].copy_from_slice(&(n.len() as u16).to_be_bytes());
+    let mut p = 4;
+    out[p..p + n.len()].copy_from_slice(n);
+    p += n.len();
     out[p] = 0x82;
-    out[p + 1] = eb.len() as u8;
+    out[p + 1] = e.len() as u8;
     p += 2;
-    out[p..p + eb.len()].copy_from_slice(&eb);
-    p += eb.len();
-    out[3..5].copy_from_slice(&((p - inner) as u16).to_be_bytes());
-    p
+    out[p..p + e.len()].copy_from_slice(e);
+    p + e.len()
+}
+
+pub fn make_rsa_response(key: &RsaPrivateKey, out: &mut [u8]) -> usize {
+    out[0] = 0x7f;
+    out[1] = 0x49;
+    out[2] = 0x82; // 2-byte inner length, back-patched below
+    // e stays sourced from the key: an imported OpenPGP key may carry a non-65537
+    // exponent, so only the PIV metadata caller is allowed to hardcode 65537.
+    let body = make_rsa_pub_body(
+        &key.n().to_bytes_be(),
+        &key.e().to_bytes_be(),
+        &mut out[5..],
+    );
+    out[3..5].copy_from_slice(&(body as u16).to_be_bytes());
+    5 + body
 }
 
 /// Find the recognised DigestInfo prefix + hash for a canonical PKCS#1 DigestInfo

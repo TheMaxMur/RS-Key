@@ -176,6 +176,11 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **PIV `GET METADATA` on an RSA slot is ~30× faster.** It rebuilt the entire
+  private key — `from_p_q`'s `dP/dQ/qInv` modular inverses, ~50 ms on RSA-4096 —
+  only to emit the public modulus; it now computes `N = p·q` directly (the fixed
+  65537 exponent needs no rebuild). Output is byte-for-byte identical.
+  **bcdDevice → 0x0845.**
 - **A partial PicoForge config write no longer resets the fields it didn't touch.**
   The FIDO `CONFIG_WRITE` (`0x0C`, target PHY) and CCID rescue `WRITE 0x1C` used to
   *replace* the whole `EF_PHY` record with a parse of the incoming blob, so any tag a

@@ -15,7 +15,7 @@ use rsk_openpgp::Rng;
 use rsk_openpgp::keys::{Curve, PrivKey};
 use rsk_openpgp::rsa_crt;
 use rsk_sdk::Sw;
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 pub use rsk_openpgp::rsa_crt::RsaCrt;
 
@@ -200,9 +200,42 @@ pub fn store_rsa_key<S: Storage>(
     r
 }
 
+/// Load a sealed RSA key and return ONLY its public modulus `N = p·q`, big-endian
+/// into `out`, returning `N`'s length. Skips [`RsaPrivateKey::from_p_q`]'s CRT
+/// precompute — the `dP/dQ/qInv` modular inverses that cost ~50 ms on RSA-4096 —
+/// because GET METADATA needs only `N` and the fixed 65537 exponent, never the
+/// private key. `p`/`q` ride in [`Zeroizing`] (num-bigint has no scrubbing `Drop`,
+/// the recorded RSA hygiene lesson); the product `N` is public. Byte-identical to
+/// `load_rsa_key(..)?.n().to_bytes_be()`, just without the key rebuild.
+pub fn load_rsa_modulus<S: Storage>(
+    dev: &Device,
+    fs: &mut Fs<S>,
+    fid: KeyFid,
+    out: &mut [u8],
+) -> Result<usize, Sw> {
+    let mut plain = [0u8; MAX_PLAIN];
+    let n = seal_read(dev, fs, fid, &mut plain)?;
+    let r = (|| {
+        // Only `half` and the first `2*half` bytes are read, so the 2-vs-5-field
+        // length classification (the `_` bool) cannot change `N` — collision-immune.
+        let (half, _) = rsa_crt::parse_rsa_blob(&plain[..n])?;
+        let p = Zeroizing::new(BigUint::from_bytes_be(&plain[..half]));
+        let q = Zeroizing::new(BigUint::from_bytes_be(&plain[half..2 * half]));
+        let nb = (&*p * &*q).to_bytes_be();
+        if nb.len() > out.len() {
+            return Err(Sw::WRONG_LENGTH);
+        }
+        out[..nb.len()].copy_from_slice(&nb);
+        Ok(nb.len())
+    })();
+    plain.zeroize();
+    r
+}
+
 /// Load an RSA key sealed by [`store_rsa_key`] (either layout) into an
-/// [`RsaPrivateKey`] (`E` fixed at 65537). Used by the non-signing paths (GET
-/// METADATA, cert build); signing uses [`load_rsa_crt`], which skips the rebuild.
+/// [`RsaPrivateKey`] (`E` fixed at 65537). Used by the cert-build path (the retired
+/// on-device RSA finish); signing uses [`load_rsa_crt`] and GET METADATA uses
+/// [`load_rsa_modulus`], both of which skip the full key rebuild.
 pub fn load_rsa_key<S: Storage>(
     dev: &Device,
     fs: &mut Fs<S>,

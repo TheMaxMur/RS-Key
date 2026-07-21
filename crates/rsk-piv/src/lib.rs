@@ -25,7 +25,7 @@ use core::cell::RefCell;
 use rsk_crypto::Device;
 use rsk_fs::{Fs, Sealed, Storage};
 pub use rsk_openpgp::Rng;
-use rsk_openpgp::keys::{MAX_RSA_PUBDO, make_rsa_response};
+use rsk_openpgp::keys::{MAX_RSA_BYTES, MAX_RSA_PUBDO, RSA_PUB_EXP_BE, make_rsa_pub_body};
 // PIV reuses the OpenPGP user-presence trait, so the firmware's existing
 // `impl rsk_openpgp::UserPresence for ButtonPresence` already drives PIV touch.
 use rsa::RsaPrivateKey;
@@ -760,15 +760,15 @@ impl PivApplet<'_> {
         let mut body = [0u8; MAX_RSA_PUBDO];
         let n = match meta[0] {
             ALGO_RSA1024 | ALGO_RSA2048 | ALGO_RSA3072 | ALGO_RSA4096 => {
-                let key = match seal::load_rsa_key(dev, fs, key_fid(slot)) {
-                    Ok(k) => k,
+                // Emit the public modulus without rebuilding the private key: GET
+                // METADATA needs only N (= p·q) + e (always 65537 for PIV), never
+                // `from_p_q`'s ~50 ms CRT precompute. Output byte-identical.
+                let mut nbuf = [0u8; MAX_RSA_BYTES];
+                let nlen = match seal::load_rsa_modulus(dev, fs, key_fid(slot), &mut nbuf) {
+                    Ok(l) => l,
                     Err(_) => return Sw::EXEC_ERROR,
                 };
-                // `make_rsa_response` emits `7F49 82 LL { 81 … 82 … }`; reuse
-                // its body, skipping the 5-byte 7F49 header.
-                let full = make_rsa_response(&key, &mut body);
-                body.copy_within(5..full, 0);
-                full - 5
+                make_rsa_pub_body(&nbuf[..nlen], RSA_PUB_EXP_BE, &mut body)
             }
             ALGO_ECCP256 | ALGO_ECCP384 | ALGO_ED25519 | ALGO_X25519 => {
                 // Emit the slot public point without recomputing the ~tens-of-ms

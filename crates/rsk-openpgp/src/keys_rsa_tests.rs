@@ -69,6 +69,33 @@ fn import_recovers_modulus() {
 }
 
 #[test]
+fn make_rsa_pub_body_matches_make_rsa_response_inner() {
+    // The PIV GET METADATA path builds the DO from N + e directly (no key
+    // rebuild); it must be byte-identical to make_rsa_response's inner body — the
+    // same bytes the old metadata path emitted, minus the 5-byte 7F49 wrapper.
+    let key = test_key();
+    let mut full_out = [0u8; MAX_RSA_PUBDO];
+    let full = make_rsa_response(&key, &mut full_out);
+    let mut body_out = [0u8; MAX_RSA_PUBDO];
+    let body = make_rsa_pub_body(
+        &key.n().to_bytes_be(),
+        &key.e().to_bytes_be(),
+        &mut body_out,
+    );
+    assert_eq!(&body_out[..body], &full_out[5..full]);
+}
+
+#[test]
+fn rsa_pub_exp_be_is_65537() {
+    // The metadata path hardcodes RSA_PUB_EXP_BE; it must serialize the same 65537
+    // exponent make_rsa_response emits from key.e().
+    assert_eq!(
+        RSA_PUB_EXP_BE,
+        rsa::BigUint::from(RSA_E).to_bytes_be().as_slice()
+    );
+}
+
+#[test]
 fn sign_digestinfo_verifies() {
     let key = test_key();
     // A SHA-256 DigestInfo (what gpg sends for an RSA signature).
