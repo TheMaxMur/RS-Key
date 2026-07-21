@@ -45,7 +45,7 @@ firmware_size_budget() {
 
 run "fmt"                      cargo fmt --all --check
 run "clippy (embedded)"        cargo clippy --workspace -- -D warnings
-run "clippy (host tests)"      cargo clippy -p rsk-sdk -p rsk-fs -p rsk-usb -p rsk-crypto -p rsk-fido -p rsk-openpgp -p rsk-rsa-asm -p rsk-sha512 -p rsk-mgmt -p rsk-oath -p rsk-otp -p rsk-piv -p rsk-rescue -p rsk-led -p rsk-ui -p rsk-bip39 -p rsk-slip39 -p rsk-bench --target "$HOST" --all-targets -- -D warnings
+run "clippy (host tests)"      cargo clippy -p rsk-sdk -p rsk-fs -p rsk-usb -p rsk-crypto -p rsk-fido -p rsk-openpgp -p rsk-rsa-asm -p rsk-sha512 -p rsk-ec -p rsk-mldsa -p rsk-mgmt -p rsk-oath -p rsk-otp -p rsk-piv -p rsk-rescue -p rsk-led -p rsk-ui -p rsk-bip39 -p rsk-slip39 -p rsk-bench --target "$HOST" --all-targets -- -D warnings
 # tools/tui is its own workspace (host-only), so the --all/--workspace runs
 # above never see it — gate it explicitly. Its lockfile was scanned by nobody
 # until Dependabot flagged a transitive advisory from the GitHub side.
@@ -66,7 +66,7 @@ run "fmt (fuzz)"               cargo fmt --manifest-path fuzz/Cargo.toml --check
 # `--tests` also covers tests/miri.rs, which mirrors the same constructors (its
 # drift went unseen for a wave of unpushed commits until a local miri run).
 run "check (fuzz)"             cargo check --manifest-path fuzz/Cargo.toml --tests --target "$HOST"
-run "test (host)"              cargo test -p rsk-sdk -p rsk-fs -p rsk-usb -p rsk-crypto -p rsk-fido -p rsk-openpgp -p rsk-rsa-asm -p rsk-sha512 -p rsk-mgmt -p rsk-oath -p rsk-otp -p rsk-piv -p rsk-rescue -p rsk-led -p rsk-ui -p rsk-bip39 -p rsk-slip39 -p rsk-bench --target "$HOST"
+run "test (host)"              cargo test -p rsk-sdk -p rsk-fs -p rsk-usb -p rsk-crypto -p rsk-fido -p rsk-openpgp -p rsk-rsa-asm -p rsk-sha512 -p rsk-ec -p rsk-mldsa -p rsk-mgmt -p rsk-oath -p rsk-otp -p rsk-piv -p rsk-rescue -p rsk-led -p rsk-ui -p rsk-bip39 -p rsk-slip39 -p rsk-bench --target "$HOST"
 # The PQC-advertisement opt-in changes the getInfo shape — test both forms.
 run "test (advertise-pqc)"     cargo test -p rsk-fido --features advertise-pqc --target "$HOST" getinfo
 # fido-conformance suppresses the default EdDSA (-8) advertisement — verify that
