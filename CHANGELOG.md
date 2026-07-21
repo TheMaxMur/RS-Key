@@ -107,7 +107,20 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   faulted CRT half or an asm/marshaling bug can never emit a valid signature.
   Forward-compatible: keys sealed by an older firmware (`P‖Q` only) still load and
   sign — they get the fast modexp but recompute the CRT parameters once per
-  signature until re-provisioned. OpenPGP RSA is unchanged (separate seal path).
+  signature until re-provisioned. OpenPGP RSA gets the same treatment — see below.
+- **Faster OpenPGP RSA signing** (PSO:CDS and INTERNAL AUTHENTICATE), the same
+  ~3× win the PIV applet already banked. gpg RSA signatures now run the CRT
+  private operation on the vendored UMAAL assembly (`rsk_rsa_asm::sign_crt` /
+  `modexp_pub`, via the shared `rsk_openpgp::rsa_crt` extracted from the PIV
+  path) instead of the pure-Rust `num-bigint-dig` path that rebuilt `dP`/`dQ`/
+  `qInv` (two modular inversions) on every signature. The sealed key now caches
+  the CRT parameters (`P‖Q‖dP‖dQ‖qInv`). Base blinding and the Bellcore fault
+  check (`sigᵉ ≡ c mod n`) are kept, so a faulted CRT half or an asm/marshaling
+  bug can never emit a valid signature. PSO:DECIPHER is unchanged (still the `rsa`
+  crate's constant-time PKCS#1 v1.5 unpadding). Forward-compatible: keys sealed by
+  an older firmware (`P‖Q`, including the legacy CFB seal) still load and sign —
+  they recompute the CRT parameters once and re-seal forward to the new
+  authenticated 5-field layout.
 - **⚠️ Default security posture flipped: device-config writes are now UNGATED by
   default (full YubiKey/ykman parity).** On the default build the CCID Management
   WRITE CONFIG (`0x1C`) and the FIDO vendor CONFIG_WRITE (`0x0C`) no longer require

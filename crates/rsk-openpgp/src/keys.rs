@@ -34,6 +34,7 @@ use crate::dobj::{
     ATTR_P521R1,
 };
 use crate::pin::{Session, load_dek};
+use crate::rsa_crt::{self, RsaCrt};
 
 /// Largest raw ECDSA signature: P-521 `r ‖ s` = 2×66 bytes.
 pub const MAX_EC_SIG: usize = 132;
@@ -939,19 +940,22 @@ pub fn inc_sig_count<S: Storage>(fs: &mut Fs<S>, sess: &mut Session) -> Result<(
 
 // ---------------------------------------------------------------------- RSA --
 //
-// The big-integer arithmetic is the `rsa` crate (heap-backed). The stored blob
-// is `P ‖ Q` (each half of `key_size`); on load the exponent is forced to
-// 65537 — gpg only ever imports e = 65537.
+// Keygen, cert signing, and the public paths use the `rsa` crate (heap-backed);
+// the applet's own PSO:CDS / INTERNAL AUTHENTICATE run the CRT private op on the
+// UMAAL asm ([`rsa_crt`]). The stored blob is `P ‖ Q ‖ dP ‖ dQ ‖ qInv` (older
+// `P ‖ Q` blobs still load); on load the exponent is forced to 65537 — gpg only
+// ever imports e = 65537.
 
 /// Largest RSA modulus handled (RSA-4096 = 512 bytes).
 pub const MAX_RSA_BYTES: usize = 512;
-/// Largest stored RSA blob: `P ‖ Q` for RSA-4096.
-const MAX_RSA_KDATA: usize = 512;
+/// Largest stored RSA blob: `P ‖ Q ‖ dP ‖ dQ ‖ qInv` for RSA-4096 (five 256-byte
+/// fields — the CRT params cached alongside the primes; see [`rsa_crt`]).
+const MAX_RSA_KDATA: usize = rsa_crt::MAX_CRT_PLAIN;
 /// Largest RSA public-key DO `7F49 82 LL { 81 82 <N> · 82 <Elen> <E> }`.
 pub const MAX_RSA_PUBDO: usize = 5 + 4 + MAX_RSA_BYTES + 2 + 8;
 
 /// PKCS#1 DigestInfo prefixes (`SEQ { SEQ { OID, NULL }, OCTET STRING }` header,
-/// without the trailing hash) for the five hashes `rsa_sign` recognises.
+/// without the trailing hash) for the five hashes `rsa_sign_em` recognises.
 const DI_SHA1: &[u8] = &[
     0x30, 0x21, 0x30, 0x09, 0x06, 0x05, 0x2b, 0x0e, 0x03, 0x02, 0x1a, 0x05, 0x00, 0x04, 0x14,
 ];
@@ -1205,7 +1209,8 @@ pub fn generate_rsa(rng: &mut dyn Rng, nbits: usize) -> Result<RsaPrivateKey, Sw
     }
 }
 
-/// Seal the RSA key's `P ‖ Q` under the DEK and write it to `fid`.
+/// Seal the RSA key's CRT params `P ‖ Q ‖ dP ‖ dQ ‖ qInv` under the DEK and write
+/// it to `fid`, so signing skips the per-op key rebuild (see [`rsa_crt`]).
 pub fn store_rsa_key<S: Storage>(
     dev: &Device,
     fs: &mut Fs<S>,
@@ -1213,26 +1218,10 @@ pub fn store_rsa_key<S: Storage>(
     fid: KeyFid,
     key: &RsaPrivateKey,
 ) -> Result<(), Sw> {
-    let primes = key.primes();
-    if primes.len() != 2 {
-        return Err(Sw::EXEC_ERROR);
-    }
-    let mut pb = primes[0].to_bytes_be();
-    let mut qb = primes[1].to_bytes_be();
-    let half = pb.len().max(qb.len());
-    let n = 2 * half;
-    if n > MAX_RSA_KDATA {
-        pb.zeroize();
-        qb.zeroize();
-        return Err(Sw::WRONG_LENGTH);
-    }
     let mut kdata = [0u8; MAX_RSA_KDATA];
-    kdata[half - pb.len()..half].copy_from_slice(&pb);
-    kdata[n - qb.len()..n].copy_from_slice(&qb);
-    pb.zeroize();
-    qb.zeroize();
     let mut blob = [0u8; MAX_RSA_KDATA + DEK_SEAL_OVERHEAD];
     let r = (|| {
+        let n = rsa_crt::crt_plaintext(key, &mut kdata)?;
         let bn = dek_seal(dev, fs, sess, fid, &kdata[..n], &mut blob)?;
         fs.put_key(fid, Sealed::wrap(&blob[..bn]))
             .map_err(|_| Sw::MEMORY_FAILURE)
@@ -1242,8 +1231,11 @@ pub fn store_rsa_key<S: Storage>(
     r
 }
 
-/// Read and unseal the RSA key at `fid`, rebuilding it from `P ‖ Q` with
-/// `E = 65537`. A key still in the legacy CFB seal is re-sealed forward.
+/// Read and unseal the RSA key at `fid`, rebuilding it from `P ‖ Q` (present at
+/// the front of either the 2-field or the 5-field CRT layout) with `E = 65537`.
+/// Used by the non-signing paths (DECIPHER, GET METADATA); signing uses
+/// [`load_rsa_crt`], which skips the rebuild. A key still in the legacy CFB seal
+/// is re-sealed forward.
 pub fn load_rsa_key<S: Storage>(
     dev: &Device,
     fs: &mut Fs<S>,
@@ -1256,12 +1248,9 @@ pub fn load_rsa_key<S: Storage>(
     let mut kdata = [0u8; MAX_RSA_KDATA];
     let res = (|| {
         let (n, legacy) = dek_unseal(dev, fs, sess, &blob[..bn], &mut kdata)?;
-        if n < 2 || n % 2 != 0 {
-            return Err(WRONG_DATA);
-        }
-        let half = n / 2;
+        let (half, _) = rsa_crt::parse_rsa_blob(&kdata[..n]).map_err(|_| WRONG_DATA)?;
         let p = BigUint::from_bytes_be(&kdata[..half]);
-        let q = BigUint::from_bytes_be(&kdata[half..n]);
+        let q = BigUint::from_bytes_be(&kdata[half..2 * half]);
         let key = RsaPrivateKey::from_p_q(p, q, BigUint::from(RSA_E)).map_err(|_| WRONG_DATA)?;
         Ok((key, legacy))
     })();
@@ -1272,6 +1261,45 @@ pub fn load_rsa_key<S: Storage>(
         let _ = store_rsa_key(dev, fs, sess, fid, &key);
     }
     Ok(key)
+}
+
+/// Load the CRT signing parameters of an RSA key — new `P‖Q‖dP‖dQ‖qInv` blobs
+/// slice directly, older `P‖Q` blobs recompute once (see [`rsa_crt::crt_from_plain`]).
+/// A key still in the legacy CFB seal is re-sealed forward, upgrading it straight
+/// to the 5-field authenticated layout.
+pub fn load_rsa_crt<S: Storage>(
+    dev: &Device,
+    fs: &mut Fs<S>,
+    sess: &Session,
+    fid: KeyFid,
+) -> Result<RsaCrt, Sw> {
+    let mut blob = [0u8; MAX_RSA_KDATA + DEK_SEAL_OVERHEAD];
+    let bn = fs.read_key(fid, &mut blob).ok_or(Sw::REFERENCE_NOT_FOUND)?;
+    let bn = bn.min(blob.len());
+    let mut kdata = [0u8; MAX_RSA_KDATA];
+    let unsealed = dek_unseal(dev, fs, sess, &blob[..bn], &mut kdata);
+    blob.zeroize();
+    let (n, legacy) = match unsealed {
+        Ok(v) => v,
+        Err(e) => {
+            kdata.zeroize();
+            return Err(e);
+        }
+    };
+    let crt = rsa_crt::crt_from_plain(&kdata[..n]);
+    // Migrate a legacy CFB key forward — now straight to the 5-field GCM layout.
+    if legacy
+        && crt.is_ok()
+        && let Ok((half, _)) = rsa_crt::parse_rsa_blob(&kdata[..n])
+    {
+        let p = BigUint::from_bytes_be(&kdata[..half]);
+        let q = BigUint::from_bytes_be(&kdata[half..2 * half]);
+        if let Ok(key) = RsaPrivateKey::from_p_q(p, q, BigUint::from(RSA_E)) {
+            let _ = store_rsa_key(dev, fs, sess, fid, &key);
+        }
+    }
+    kdata.zeroize();
+    crt
 }
 
 /// Build the public-key DO `7F49 82 LL { 81 82 <N> · 82 <Elen> <E> }` (modulus
@@ -1312,7 +1340,7 @@ fn match_digestinfo(data: &[u8]) -> Option<(&'static [u8], &[u8])> {
     None
 }
 
-/// Largest DigestInfo `rsa_sign` builds: 19-byte prefix (SHA-512) + 64-byte hash.
+/// Largest DigestInfo `rsa_sign_em` builds: 19-byte prefix (SHA-512) + 64-byte hash.
 pub const MAX_RSA_DIGESTINFO: usize = 19 + 64;
 
 /// Decide what PKCS#1 v1.5 should sign: write the canonical DigestInfo
@@ -1333,9 +1361,49 @@ pub fn rsa_sign_em(data: &[u8], em: &mut [u8; MAX_RSA_DIGESTINFO]) -> Option<usi
     Some(dlen)
 }
 
-/// PKCS#1 v1.5 over the supplied data. If it is a DigestInfo (or a bare hash
-/// whose length names the algorithm), sign that digest; otherwise fall back to
-/// the raw private operation.
+/// PKCS#1 v1.5 sign over the supplied data with the cached CRT params on the
+/// UMAAL asm. If `data` is a DigestInfo (or a bare hash whose length names the
+/// algorithm), build the EMSA-PKCS1-v1_5 encoding and sign that; otherwise treat
+/// `data` as a raw block. Either way the block runs through the blinded,
+/// Bellcore-fault-checked private op ([`rsa_crt::sign_crt`]).
+pub fn rsa_sign_crt(
+    crt: &RsaCrt,
+    data: &[u8],
+    rng: &mut dyn Rng,
+    out: &mut [u8],
+) -> Result<usize, Sw> {
+    let mlen = crt.modulus_len();
+    let mut em = [0u8; MAX_RSA_BYTES];
+    let mut di = [0u8; MAX_RSA_DIGESTINFO];
+    match rsa_sign_em(data, &mut di) {
+        Some(dlen) => {
+            // EM = 00 01 PS 00 ‖ DigestInfo, PS = 0xFF·(mlen−dlen−3), at least 8.
+            if mlen < dlen + 11 {
+                return Err(Sw::WRONG_LENGTH);
+            }
+            let ps_end = mlen - dlen - 1;
+            em[1] = 0x01;
+            em[2..ps_end].fill(0xff);
+            em[ps_end + 1..mlen].copy_from_slice(&di[..dlen]);
+        }
+        // gpg never reaches this — it always sends a DigestInfo — but a raw block
+        // still signs (left-padded to the modulus width) through the same blinded,
+        // fault-checked op, so no non-conformant caller sees a different path.
+        None => {
+            if data.len() > mlen {
+                return Err(WRONG_DATA);
+            }
+            em[mlen - data.len()..mlen].copy_from_slice(data);
+        }
+    }
+    rsa_crt::sign_crt(crt, &em[..mlen], rng, out)
+}
+
+/// PKCS#1 v1.5 over the supplied data with a full [`RsaPrivateKey`] on the `rsa`
+/// crate. Used by the PIV x509 cert-signing path (`rsk_piv::x509`); the OpenPGP
+/// applet's own PSO:CDS / INTERNAL AUTHENTICATE use [`rsa_sign_crt`] (asm). If it
+/// is a DigestInfo (or a bare hash whose length names the algorithm), sign that
+/// digest; otherwise fall back to the raw private operation.
 pub fn rsa_sign(
     key: &RsaPrivateKey,
     data: &[u8],

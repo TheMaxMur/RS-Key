@@ -14,7 +14,10 @@ use zeroize::Zeroize;
 
 use crate::consts::*;
 use crate::importdata::tag_len;
-use crate::keys::{inc_sig_count, load_aes_key, load_ec_key, load_rsa_key, rsa_decipher, rsa_sign};
+use crate::keys::{
+    inc_sig_count, load_aes_key, load_ec_key, load_rsa_crt, load_rsa_key, rsa_decipher,
+    rsa_sign_crt,
+};
 use crate::pin::Session;
 use crate::{Rng, UserPresence, check_uif};
 
@@ -94,14 +97,15 @@ fn try_pso<S: Storage>(
     let mut algo_buf = [0u8; 16];
     let algo0 = algo_id(fs, algo_fid, &mut algo_buf);
     if algo0 == ALGO_RSA {
-        let key = load_rsa_key(dev, fs, sess, pk_fid)?;
         if (p1, p2) == (0x9E, 0x9A) {
-            let n = rsa_sign(&key, data, rng, out)?;
+            let crt = load_rsa_crt(dev, fs, sess, pk_fid)?;
+            let n = rsa_sign_crt(&crt, data, rng, out)?;
             inc_sig_count(fs, sess)?;
             return Ok(n);
         }
         // DECIPHER: PKCS#1 v1.5 decrypt the ciphertext that follows the leading
         // OpenPGP padding-indicator byte.
+        let key = load_rsa_key(dev, fs, sess, pk_fid)?;
         return rsa_decipher(&key, rng, data, out);
     }
 

@@ -2,7 +2,7 @@
 // Copyright (C) 2026 RS-Key contributors
 
 use super::*;
-use rsa::RsaPublicKey;
+use rsa::{Pkcs1v15Sign, RsaPublicKey};
 
 // A fixed RSA-2048 key (openssl genrsa), primes sans the DER sign byte.
 const P_HEX: &str = "f05c23060effc422e4310c13b5aecda74744925c97c17d202aa9ed306941fa1e942e61c8d9c80961cf90459af36b9e7d529610f5165d60836de5aef2aeb47ea500c5a61bb96fd3bb4aca36d45464cce24ff0b67bb3ba382d9bdd95b7133eab86125800f10b0627fe1bd7689802d767dd9911eefb60d76e2ec860163f3077a5bd";
@@ -28,6 +28,14 @@ impl Rng for SeqRng {
 
 fn test_key() -> RsaPrivateKey {
     rsa_from_pqe(&[0x01, 0x00, 0x01], &hex(P_HEX), &hex(Q_HEX)).unwrap()
+}
+
+/// The CRT signing view the applet builds at seal time, so the sign tests drive
+/// the same path production does.
+fn crt_of(key: &RsaPrivateKey) -> crate::rsa_crt::RsaCrt {
+    let mut plain = [0u8; crate::rsa_crt::MAX_CRT_PLAIN];
+    let n = crate::rsa_crt::crt_plaintext(key, &mut plain).unwrap();
+    crate::rsa_crt::crt_from_plain(&plain[..n]).unwrap()
 }
 
 #[test]
@@ -87,6 +95,56 @@ fn sign_bare_hash_infers_alg() {
     RsaPublicKey::from(&key)
         .verify(Pkcs1v15Sign::new_unprefixed(), &di, &sig[..n])
         .unwrap();
+}
+
+#[test]
+fn sign_crt_digestinfo_verifies() {
+    // The applet's asm CRT signer must produce the same verifiable PKCS#1 v1.5
+    // signature as the `rsa`-crate path, over the CRT view built at seal time.
+    let key = test_key();
+    let mut di = DI_SHA256.to_vec();
+    di.extend_from_slice(&[0x42u8; 32]);
+    let mut asm = [0u8; MAX_RSA_BYTES];
+    let n = rsa_sign_crt(&crt_of(&key), &di, &mut SeqRng(1), &mut asm).unwrap();
+    assert_eq!(n, 256);
+    RsaPublicKey::from(&key)
+        .verify(Pkcs1v15Sign::new_unprefixed(), &di, &asm[..n])
+        .unwrap();
+    // PKCS#1 v1.5 is deterministic, so it is byte-identical to the crate signer.
+    let mut crate_sig = [0u8; MAX_RSA_BYTES];
+    let cn = rsa_sign(&key, &di, &mut SeqRng(2), &mut crate_sig).unwrap();
+    assert_eq!(&asm[..n], &crate_sig[..cn]);
+}
+
+#[test]
+fn parse_disambiguates_320_byte_collision() {
+    // n=320 reads as both 5·64 (RSA-1024 CRT) and 2·160 (RSA-2560 P‖Q). A genuine
+    // 5-field blob is recognised via qInv·Q ≡ 1 mod P; a legacy P‖Q blob is not,
+    // so an already-provisioned RSA-2560 key still loads as 2-field after upgrade.
+    let k = RsaPrivateKey::new(&mut RngAdapter(&mut SeqRng(5)), 1024).unwrap();
+    let mut five = [0u8; crate::rsa_crt::MAX_CRT_PLAIN];
+    let fl = crate::rsa_crt::crt_plaintext(&k, &mut five).unwrap();
+    assert_eq!(fl, 320);
+    assert_eq!(
+        crate::rsa_crt::parse_rsa_blob(&five[..fl]).unwrap(),
+        (64, true)
+    );
+    // A 320-byte P‖Q blob (varied bytes, top bit set so P ≥ 2) reads as 2-field.
+    let mut two = [0u8; 320];
+    for (i, b) in two.iter_mut().enumerate() {
+        *b = (i as u8).wrapping_mul(7).wrapping_add(3);
+    }
+    two[0] |= 0x80;
+    assert_eq!(crate::rsa_crt::parse_rsa_blob(&two).unwrap(), (160, false));
+}
+
+#[test]
+fn crt_plaintext_rejects_non_mult32_width() {
+    // A non-32-multiple prime width (RSA-640 → 40-byte primes) has no asm CRT
+    // path; sealing must fail loud, not seal a blob the loader would refuse.
+    let k = RsaPrivateKey::new(&mut RngAdapter(&mut SeqRng(11)), 640).unwrap();
+    let mut buf = [0u8; crate::rsa_crt::MAX_CRT_PLAIN];
+    assert!(crate::rsa_crt::crt_plaintext(&k, &mut buf).is_err());
 }
 
 #[test]
