@@ -9,12 +9,12 @@
 //! once per logical operation (mutual auth touches at the witness step only);
 //! a witness mismatch fails closed; symmetric operations are 9B-only.
 
-use rsa::BigUint;
 use rsk_crypto::{
     Device, aes_ecb_decrypt_block, aes_ecb_encrypt_block, des3_decrypt_block, des3_encrypt_block,
 };
 use rsk_fs::{Fs, Storage};
 use rsk_openpgp::keys::Curve;
+use rsk_openpgp::rsa_crt;
 use rsk_openpgp::{Presence, Rng, UserPresence};
 use rsk_sdk::tlv::find_tag;
 use rsk_sdk::{ResBuf, Sw};
@@ -25,9 +25,6 @@ use crate::keygen;
 use crate::seal;
 use crate::x509;
 use crate::{ChallengeKind, Session, WRONG_DATA, ct_eq, dyn_auth_resp};
-
-/// Largest RSA modulus this applet stores/signs (RSA-4096 = 512 bytes).
-const MAX_RSA_BYTES: usize = 2 * rsk_rsa_asm::MAX_MOD;
 
 enum Dir {
     Encrypt,
@@ -176,8 +173,8 @@ impl<S: Storage> GenAuth<'_, S> {
                 if c.len() != crt.modulus_len() {
                     return Err(Sw::INCORRECT_PARAMS);
                 }
-                let mut out = [0u8; MAX_RSA_BYTES];
-                let n = rsa_sign_crt(&crt, c, self.rng, &mut out)?;
+                let mut out = [0u8; rsa_crt::MAX_RSA_BYTES];
+                let n = rsa_crt::sign_crt(&crt, c, self.rng, &mut out)?;
                 dyn_auth_resp(res, TAG_AUTH_RESPONSE, &out[..n])?;
                 out.zeroize();
             }
@@ -270,97 +267,6 @@ impl<S: Storage> GenAuth<'_, S> {
         shared.zeroize();
         Ok(())
     }
-}
-
-/// Raw RSA private-key operation `sⁱᵍ = cᵈ mod n`, computed over the cached CRT
-/// parameters with the UMAAL asm ([`rsk_rsa_asm::sign_crt`]). Base-blinded
-/// `(c·rᵉ)ᵈ·r⁻¹ mod n` with a fresh random `r`, so the variable-time modexp
-/// cannot become a timing oracle; then Bellcore fault-checked (`sⁱᵍᵉ ≡ c mod n`)
-/// so a faulted CRT half — or an asm/marshaling bug — can never leave as a valid
-/// signature. Writes the `modulus_len`-byte big-endian signature to `out`.
-fn rsa_sign_crt(
-    crt: &seal::RsaCrt,
-    c: &[u8],
-    rng: &mut dyn Rng,
-    out: &mut [u8],
-) -> Result<usize, Sw> {
-    use num_bigint_dig::ModInverse;
-    use zeroize::Zeroizing;
-    let mlen = crt.modulus_len();
-    // num-bigint-dig's BigUint has no zeroizing Drop (its heap limbs are freed
-    // un-wiped), so every secret value here rides in a `Zeroizing` that scrubs it
-    // on drop — on the success path and every `?`/error return alike.
-    let p = Zeroizing::new(BigUint::from_bytes_be(crt.p()));
-    let q = Zeroizing::new(BigUint::from_bytes_be(crt.q()));
-    let n = &*p * &*q;
-    let m = BigUint::from_bytes_be(c);
-
-    // Modulus little-endian + the public exponent 65537 (big-endian), for the asm
-    // public-exponent modexp that both blinding (`rᵉ`) and the fault check
-    // (`sⁱᵍᵉ`) use — the two full-width modexps that otherwise ran on num-bigint.
-    let e_be = [0x01u8, 0x00, 0x01];
-    let mut n_le = [0u8; MAX_RSA_BYTES];
-    let nb = n.to_bytes_le();
-    n_le[..nb.len()].copy_from_slice(&nb);
-    let pub_pow = |base: &BigUint| -> Option<BigUint> {
-        let mut b_le = [0u8; MAX_RSA_BYTES];
-        let bb = base.to_bytes_le();
-        b_le[..bb.len()].copy_from_slice(&bb);
-        let mut o_le = [0u8; MAX_RSA_BYTES];
-        let ok = rsk_rsa_asm::modexp_pub(&b_le[..mlen], &e_be, &n_le[..mlen], &mut o_le[..mlen]);
-        let out = ok.then(|| BigUint::from_bytes_le(&o_le[..mlen]));
-        b_le.zeroize();
-        o_le.zeroize();
-        out
-    };
-
-    // Fresh blinding factor r, invertible mod n (retry on the negligible chance
-    // r shares a factor with n — that candidate is a multiple of p or q, so wipe
-    // it too rather than free a value that reveals a prime factor).
-    let (r, r_inv) = loop {
-        let mut rb = [0u8; MAX_RSA_BYTES];
-        rng.fill(&mut rb[..mlen]);
-        let mut cand = BigUint::from_bytes_be(&rb[..mlen]) % &n;
-        rb.zeroize();
-        match (&cand).mod_inverse(&n).and_then(|i| i.to_biguint()) {
-            Some(inv) => break (Zeroizing::new(cand), Zeroizing::new(inv)),
-            None => cand.zeroize(),
-        }
-    };
-    let blinded = Zeroizing::new((&m * pub_pow(&r).ok_or(Sw::EXEC_ERROR)?) % &n);
-
-    // CRT private op on the blinded message, then unblind.
-    let mut base_le = [0u8; MAX_RSA_BYTES];
-    let mut bl = blinded.to_bytes_le();
-    base_le[..bl.len()].copy_from_slice(&bl);
-    bl.zeroize();
-    let mut sig_le = [0u8; MAX_RSA_BYTES];
-    rsk_rsa_asm::sign_crt(
-        &base_le[..mlen],
-        crt.dp(),
-        crt.dq(),
-        crt.p(),
-        crt.q(),
-        crt.qinv(),
-        &mut sig_le[..mlen],
-    );
-    let s_blind = Zeroizing::new(BigUint::from_bytes_le(&sig_le[..mlen]));
-    let s = (&*s_blind * &*r_inv) % &n;
-    base_le.zeroize();
-    sig_le.zeroize();
-
-    // Bellcore fault check: a correct signature satisfies sⁱᵍᵉ ≡ c (mod n).
-    if pub_pow(&s).ok_or(Sw::EXEC_ERROR)? != m {
-        return Err(Sw::EXEC_ERROR);
-    }
-    let sb = s.to_bytes_be();
-    if sb.len() > mlen {
-        return Err(Sw::EXEC_ERROR);
-    }
-    let off = mlen - sb.len();
-    out[..off].fill(0);
-    out[off..mlen].copy_from_slice(&sb);
-    Ok(mlen)
 }
 
 #[allow(clippy::too_many_arguments)]

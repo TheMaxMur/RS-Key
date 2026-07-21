@@ -25,6 +25,7 @@ pub mod mse;
 pub mod pin;
 pub mod pso;
 pub mod putdata;
+pub mod rsa_crt;
 pub mod select;
 pub mod terminate;
 
