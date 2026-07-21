@@ -28,6 +28,9 @@ fn run_ctx<T>(
     state: &mut FidoState,
     f: impl FnOnce(&mut Ctx<RamStorage, SeqRng>) -> T,
 ) -> T {
+    // The journal is opt-in (OFF by default); these tests drive the ring machinery
+    // with logging ON. The default-OFF gate is covered by `append_is_noop_when_off`.
+    let _ = set_enabled(fs, true);
     let mut rng = SeqRng(1);
     let mut presence = AlwaysConfirm;
     let mut ctx = Ctx {
@@ -121,6 +124,45 @@ fn fold_and_scrub_keeps_chain_and_deletes_details() {
     });
     let (head, _) = chain_head(&dev(), &mut fs);
     assert_eq!(head, reference_head(&reference));
+}
+
+#[test]
+fn append_is_noop_when_off() {
+    // Opt-in: with EF_AUDIT_ENABLED absent (the shipped default), append writes
+    // nothing to flash — no boot entry, no meta, chain stays at genesis.
+    let mut fs = Fs::new(RamStorage::new());
+    let mut state = FidoState::new();
+    {
+        let mut rng = SeqRng(1);
+        let mut presence = AlwaysConfirm;
+        let mut ctx = Ctx {
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 12345,
+            presence: &mut presence,
+        };
+        assert!(!is_enabled(ctx.fs));
+        append(&mut ctx, EV_MAKE_CRED, 0, &[0xAA; 8]);
+        append(&mut ctx, EV_GET_ASSERT, 0, &[0xBB; 8]);
+    }
+
+    let (head, m) = chain_head(&dev(), &mut fs);
+    assert_eq!(m.seq_next, 0, "off: nothing appended");
+    assert!(!fs.has_data(EF_AUDIT_META));
+    assert!(!fs.has_data(EF_AUDIT_RING));
+    assert_eq!(head, genesis(&dev()));
+}
+
+#[test]
+fn set_enabled_round_trips() {
+    let mut fs = Fs::new(RamStorage::new());
+    assert!(!is_enabled(&mut fs)); // default OFF
+    set_enabled(&mut fs, true).unwrap();
+    assert!(is_enabled(&mut fs));
+    set_enabled(&mut fs, false).unwrap();
+    assert!(!is_enabled(&mut fs));
 }
 
 #[test]

@@ -546,6 +546,7 @@ Keys 3/4 are present only when a PIN is set (see gating).
 | `0B` | ATT_STATE | — | `{1: present, 2: sha256(chain)?}` | **ungated** |
 | `0C` | CONFIG_WRITE | `{1: target(uint), 2: blob(bstr)}` — target `0`=DEV_CONF, `1`=PHY, `2`=LED | — | **ungated by default**; touch + PIN-token under `strict-config`; no MSE |
 | `0D` | CONFIG_READ | `{1: target(uint)}` — target `1`=PHY, `2`=LED | `{1: blob(bstr)}` | **ungated** |
+| `0E` | AUDIT_CONFIG | `{1: op(uint)}` — `0`=disable, `1`=enable, `2`=status | `{1: enabled(bool)}` | set: PIN-token + touch; status (`2`): **ungated** |
 
 > ### Device configuration over FIDO (`CONFIG_WRITE 0x0C`)
 > The pcscd-free twin of the CCID device-config writes (§6 WRITE CONFIG and the

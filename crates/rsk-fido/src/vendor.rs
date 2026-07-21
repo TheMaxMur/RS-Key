@@ -42,9 +42,9 @@ use crate::cert;
 use crate::consts::{
     CONFIG_TARGET_DEV_CONF, CONFIG_TARGET_LED, CONFIG_TARGET_PHY, CTAP_VENDOR, EF_ATT_CHAIN,
     EF_ATT_KEY, EF_BACKUP_SEALED, EF_EE_DEV, EF_KEY_DEV, EF_KEY_DEV_ENC, EF_PIN, VENDOR_ATT_CLEAR,
-    VENDOR_ATT_IMPORT, VENDOR_ATT_STATE, VENDOR_AUDIT_CHECKPOINT, VENDOR_AUDIT_READ,
-    VENDOR_BACKUP_EXPORT, VENDOR_BACKUP_FINALIZE, VENDOR_BACKUP_LOAD, VENDOR_BACKUP_STATE,
-    VENDOR_CONFIG_READ, VENDOR_CONFIG_WRITE, VENDOR_MSE, VENDOR_UNLOCK,
+    VENDOR_ATT_IMPORT, VENDOR_ATT_STATE, VENDOR_AUDIT_CHECKPOINT, VENDOR_AUDIT_CONFIG,
+    VENDOR_AUDIT_READ, VENDOR_BACKUP_EXPORT, VENDOR_BACKUP_FINALIZE, VENDOR_BACKUP_LOAD,
+    VENDOR_BACKUP_STATE, VENDOR_CONFIG_READ, VENDOR_CONFIG_WRITE, VENDOR_MSE, VENDOR_UNLOCK,
 };
 use crate::cose::cose_key_ecdh;
 use crate::ec::P256Key;
@@ -133,7 +133,10 @@ fn parse(data: &[u8]) -> Result<Req<'_>, CtapError> {
                     } else if sk == 2 && req.subcommand == VENDOR_MSE {
                         req.mlkem_ek = cbor(d.bytes())?;
                     } else if sk == 1
-                        && matches!(req.subcommand, VENDOR_CONFIG_WRITE | VENDOR_CONFIG_READ)
+                        && matches!(
+                            req.subcommand,
+                            VENDOR_CONFIG_WRITE | VENDOR_CONFIG_READ | VENDOR_AUDIT_CONFIG
+                        )
                     {
                         req.target = cbor(d.u32())? as u64;
                     } else if sk == 2 && req.subcommand == VENDOR_CONFIG_WRITE {
@@ -184,6 +187,7 @@ pub fn vendor<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, data: &[u8], out: &mut [u
         VENDOR_UNLOCK => unlock(ctx, &req),
         VENDOR_AUDIT_READ => audit_read(ctx, &req, out),
         VENDOR_AUDIT_CHECKPOINT => audit_checkpoint(ctx, &req, out),
+        VENDOR_AUDIT_CONFIG => audit_config(ctx, &req, out),
         VENDOR_ATT_IMPORT => att_import(ctx, &req),
         VENDOR_ATT_CLEAR => att_clear(ctx, &req),
         VENDOR_ATT_STATE => att_state(ctx, out),
@@ -354,6 +358,33 @@ fn audit_checkpoint<S: Storage, R: Rng>(
         return Err(CtapError::OperationDenied);
     }
     journal::vendor_checkpoint(ctx, req.blob, out)
+}
+
+/// `AUDIT_CONFIG` (`subCommandParams` key 1): `2` = read-only status (ungated, like
+/// ATT_STATE — whether logging is on is not the journal content); `1` = enable, `0`
+/// = disable. Opt-in and OFF by default. A set is gated like AUDIT_CHECKPOINT — a
+/// PIN token when a PIN is set, plus a physical touch — so a silent host cannot flip
+/// a user's tamper-evident trail. The transition is journalled itself: an ENABLE
+/// after the flag is set, a DISABLE just before it clears, so the last live entry
+/// marks when logging stopped. Always returns `{1: enabled}`.
+fn audit_config<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req, out: &mut [u8]) -> CtapResult {
+    if req.target != 2 {
+        pin_gate(ctx, req)?;
+        if !ctx.check_user_presence(crate::Confirm::titled("Change audit logging?")) {
+            return Err(CtapError::OperationDenied);
+        }
+        if req.target != 0 {
+            journal::set_enabled(ctx.fs, true).map_err(|_| CtapError::Other)?;
+            journal::append(ctx, journal::EV_AUDIT_CFG, 1, &[]);
+        } else {
+            journal::append(ctx, journal::EV_AUDIT_CFG, 0, &[]);
+            journal::set_enabled(ctx.fs, false).map_err(|_| CtapError::Other)?;
+        }
+    }
+    encode(out, |e| {
+        e.map(1)?.u8(1)?.bool(journal::is_enabled(ctx.fs))?;
+        Ok(())
+    })
 }
 
 /// Decrypt the channel-wrapped 32-byte lock key carried in `blob`

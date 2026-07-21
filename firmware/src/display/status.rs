@@ -67,7 +67,7 @@ pub(super) fn audit_kind(ev: u8) -> rsk_ui::AuditKind {
         j::EV_BOOT => K::Boot,
         j::EV_RESET => K::Reset,
         j::EV_LOCK_ENGAGE | j::EV_LOCK_RELEASE => K::Lock,
-        j::EV_CFG_MIN_PIN | j::EV_CFG_EA | j::EV_CFG_ALWAYS_UV => K::Config,
+        j::EV_CFG_MIN_PIN | j::EV_CFG_EA | j::EV_CFG_ALWAYS_UV | j::EV_AUDIT_CFG => K::Config,
         j::EV_BACKUP_EXPORT | j::EV_BACKUP_LOAD | j::EV_BACKUP_FINALIZE => K::Backup,
         _ => K::Other,
     }

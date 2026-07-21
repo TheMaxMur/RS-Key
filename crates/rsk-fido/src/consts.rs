@@ -50,6 +50,7 @@ pub const VENDOR_ATT_CLEAR: u64 = 0x0A; // remove the org attestation
 pub const VENDOR_ATT_STATE: u64 = 0x0B; // {present, chain hash} — ungated
 pub const VENDOR_CONFIG_WRITE: u64 = 0x0C; // persist a device-config blob (PIN + touch)
 pub const VENDOR_CONFIG_READ: u64 = 0x0D; // read a device-config record (ungated, for host RMW)
+pub const VENDOR_AUDIT_CONFIG: u64 = 0x0E; // turn the audit journal on/off (PIN + touch), OFF by default
 
 // Config-write targets — `subCommandParams` key 1 of `VENDOR_CONFIG_WRITE`. The
 // FIDO-transport twin of the CCID device-config writes, so a host without a
@@ -231,6 +232,12 @@ pub const MAX_MIN_PIN_RPIDS: usize = 8;
 // authenticatorReset wipes an explicit set (reset.rs), PIV factory-reset wipes
 // 0xD100..=0xD2FF; the journal survives both by construction.
 pub const EF_AUDIT_META: u16 = 0xC100; // ver ‖ seq_next ‖ start ‖ epoch hash
+/// Opt-in flag for the audit journal: journalling is OFF unless this file is
+/// present. Absent by default (fresh + upgraded devices) so `journal::append`
+/// writes nothing; the host turns it on with `VENDOR_AUDIT_CONFIG`. Sits in the
+/// audit block (outside `authenticatorReset`), so a host reset keeps the user's
+/// choice while the full display factory-wipe clears it back to the OFF default.
+pub const EF_AUDIT_ENABLED: u16 = 0xC101;
 pub const EF_AUDIT_RING: u16 = 0xC110; // entry slots, 0xC110..0xC110+AUDIT_RING_SLOTS
 pub const AUDIT_RING_SLOTS: u32 = 128;
 pub const EF_KEY_DEV: KeyFid = KeyFid::new(0xCC00); // device master seed, kbase-sealed

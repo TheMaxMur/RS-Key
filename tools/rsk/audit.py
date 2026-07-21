@@ -26,7 +26,7 @@ import sys
 from .backup import ERR_NOT_ALLOWED, _die_pin_required, _die_touch_denied, _gated, _vendor
 from .common import add_pin_arg, connect_fido, device_has_pin, die, resolve_pin
 
-AUDIT_READ, AUDIT_CHECKPOINT = 7, 8
+AUDIT_READ, AUDIT_CHECKPOINT, AUDIT_CONFIG = 7, 8, 14
 ENTRY_LEN = 20
 CKPT_TAG = b"RSK-AUDIT-CKPT-v1"
 
@@ -54,6 +54,7 @@ EVENTS = {
     0x13: "ATT_CLEAR",
     0x14: "CFG_ALWAYS_UV",
     0x15: "CONFIG_WRITE",
+    0x16: "AUDIT_CFG",
 }
 
 
@@ -69,6 +70,17 @@ def register(sub):
     add_pin_arg(v)
     v.add_argument("--expect-key", help="pin the attestation pubkey (hex SEC1, from a prior verify)")
     v.set_defaults(func=cmd_verify)
+
+    st = g.add_parser("status", help="show whether journalling is on (no touch)")
+    st.set_defaults(func=cmd_status)
+
+    en = g.add_parser("enable", help="turn journalling ON (PIN + touch)")
+    add_pin_arg(en)
+    en.set_defaults(func=cmd_enable)
+
+    dis = g.add_parser("disable", help="turn journalling OFF (PIN + touch)")
+    add_pin_arg(dis)
+    dis.set_defaults(func=cmd_disable)
 
 
 def _fold(epoch, entries):
@@ -141,6 +153,41 @@ def cmd_log(args):
     print(f"epoch : {epoch.hex()}")
     print(f"head  : {_fold(epoch, entries).hex()}  (chain over the window — OK)\n")
     print_entries(entries)
+
+
+def _audit_state(dev, cid):
+    """AUDIT_CONFIG status query (target 2, ungated) → whether journalling is on."""
+    st, m = _vendor(dev, cid, {1: AUDIT_CONFIG, 2: {1: 2}})
+    if st != 0:
+        die(f"audit status failed: {st:#x}")
+    return bool(m.get(1))
+
+
+def cmd_status(args):
+    dev, cid = connect_fido()
+    print(f"audit journalling: {'ON' if _audit_state(dev, cid) else 'OFF'}")
+
+
+def _audit_set(args, target, verb):
+    # OFF by default: journalling is opt-in, so nothing is written to the key's
+    # flash until it is turned on here (and it stops the moment it is turned off).
+    dev, cid = connect_fido()
+    pin = resolve_pin(args, has_pin=device_has_pin(dev, cid))
+    print("touch the device (BOOTSEL) to confirm…", file=sys.stderr)
+    st, m = _vendor(dev, cid, _gated(AUDIT_CONFIG, {1: target}, dev, cid, pin))
+    _die_pin_required(st)
+    _die_touch_denied(st)
+    if st != 0:
+        die(f"audit {verb} failed: {st:#x}")
+    print(f"audit journalling: {'ON' if bool(m.get(1)) else 'OFF'} — {verb}d ✓")
+
+
+def cmd_enable(args):
+    _audit_set(args, 1, "enable")
+
+
+def cmd_disable(args):
+    _audit_set(args, 0, "disable")
 
 
 def cmd_verify(args):

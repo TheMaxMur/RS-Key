@@ -15,6 +15,16 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Added
 
+- **The audit journal is now opt-in and OFF by default.** It used to record every
+  boot and FIDO/config/backup event to a flash ring unconditionally; that write
+  churn is now gated behind a per-device flag that ships **off**, so a default key
+  writes no journal entries. Turn it on/off from the host with `rsk audit enable` /
+  `rsk audit disable` (`rsk audit status` reads the state without a touch), or the
+  new `VENDOR_AUDIT_CONFIG` (0x0E) CTAP vendor subcommand. A change needs a PIN
+  (when set) plus a touch — a silent host cannot flip a user's tamper-evident trail
+  — and the transition is itself journalled. An existing device upgrades to off; its
+  prior journal and hash chain are preserved (still readable and checkpointable),
+  logging just stops until re-enabled. **bcdDevice → 0x0847.**
 - **`strict-config` cargo feature** — restores the strict admin-write
   authorization that used to be the shipped default (device-config writes
   presence/PIN-gated, ungated transport writes refused). OFF by default now; see
