@@ -235,7 +235,11 @@ fn config_tlv_clamps_a_lying_over_read() {
         fn size(&mut self, fid: u16) -> Option<usize> {
             (fid == EF_DEV_CONF).then_some(255)
         }
-        fn for_each_key(&mut self, _: &mut dyn FnMut(u16)) {}
+        // A stub that yields no keys yet holds EF_DEV_CONF via read/size: report
+        // "incomplete" so `scan` never fast-decides the held key absent.
+        fn for_each_key(&mut self, _: &mut dyn FnMut(u16)) -> bool {
+            false
+        }
     }
     let mut fs = Fs::new(OverRead);
     let mut out = [0u8; 256];

@@ -19,6 +19,9 @@ struct CountingStorage {
     size_calls: u32,
     remove_calls: u32,
     write_calls: u32,
+    /// What `for_each_key` reports as its completion (models a read-fault-truncated
+    /// boot scan when `false`); the keys are still yielded either way.
+    scan_complete: bool,
 }
 impl CountingStorage {
     fn new() -> Self {
@@ -28,6 +31,7 @@ impl CountingStorage {
             size_calls: 0,
             remove_calls: 0,
             write_calls: 0,
+            scan_complete: true,
         }
     }
 }
@@ -48,9 +52,52 @@ impl Storage for CountingStorage {
         self.size_calls += 1;
         self.inner.size(fid)
     }
-    fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) {
-        self.inner.for_each_key(f)
+    fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) -> bool {
+        let _ = self.inner.for_each_key(f);
+        self.scan_complete
     }
+}
+
+#[test]
+fn complete_scan_decides_absence_o1() {
+    // The cold-Certificates fix: a scan that runs to completion enumerated every
+    // live key, so an un-yielded sibling FID is authoritatively absent and
+    // read/size/has_data answer from the decided bitmap — no per-slot backend scan
+    // (on device the ~92 ms flash walk the Yubico Authenticator triggers per empty
+    // PIV cert slot).
+    let mut st = CountingStorage::new();
+    st.inner.write(0xD20A, b"cert").unwrap(); // one live cert, bypass the counters
+    let mut fs = Fs::new(st);
+    fs.scan(); // scan_complete = true → decides the whole FID space
+    let mut buf = [0u8; 8];
+    assert_eq!(fs.read(0xD20B, &mut buf), None); // empty sibling: from the bitmap
+    assert_eq!(fs.size(0xD20B), None);
+    assert!(!fs.has_data(0xD20B));
+    let st = fs.into_storage();
+    assert_eq!(
+        st.read_calls, 0,
+        "complete scan → absence answered without a probe"
+    );
+    assert_eq!(st.size_calls, 0);
+}
+
+#[test]
+fn truncated_scan_keeps_confirm_on_miss() {
+    // A boot scan cut short by a flash read fault must NOT decide absence: an
+    // un-yielded FID stays unknown and is confirmed against the reliable backend,
+    // so a committed key the truncated walk missed is never read back as absent.
+    let mut st = CountingStorage::new();
+    st.scan_complete = false; // model the read-fault truncation
+    st.inner.write(0xD20A, b"cert").unwrap();
+    let mut fs = Fs::new(st);
+    fs.scan(); // reports incomplete → decided stays per-yielded-key only
+    let mut buf = [0u8; 8];
+    assert_eq!(fs.read(0xD20B, &mut buf), None); // absent, but confirmed via backend
+    let st = fs.into_storage();
+    assert_eq!(
+        st.read_calls, 1,
+        "incomplete scan → an absent read still confirms once against the backend"
+    );
 }
 
 #[test]

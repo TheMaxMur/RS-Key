@@ -1234,7 +1234,7 @@ fn pin_verify_fails_closed_when_the_retry_write_does_not_persist() {
         fn size(&mut self, fid: u16) -> Option<usize> {
             self.inner.size(fid)
         }
-        fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) {
+        fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) -> bool {
             self.inner.for_each_key(f)
         }
     }

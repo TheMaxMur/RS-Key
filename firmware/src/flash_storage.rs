@@ -232,9 +232,14 @@ impl Storage for FlashStorage {
         Some(value.len())
     }
 
-    fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) {
-        for_each_in(&mut self.main, &mut self.buf, f);
-        for_each_in(&mut self.counter, &mut self.buf, f);
+    fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) -> bool {
+        // Both partitions must complete before an un-yielded FID counts as absent:
+        // `Fs::scan`'s `decided.fill` trusts only a globally complete enumeration.
+        // Run both regardless of the first's result so `f` still sees every key it
+        // can (the `&&` here is over the outcomes, not a short-circuit of the walk).
+        let main_done = for_each_in(&mut self.main, &mut self.buf, f);
+        let counter_done = for_each_in(&mut self.counter, &mut self.buf, f);
+        main_done && counter_done
     }
 
     /// Physically scrub superseded records from the **main** partition (where
@@ -276,15 +281,25 @@ impl Storage for FlashStorage {
 }
 
 /// Iterate every live key in one partition (used by `for_each_key` over both).
+/// Returns `true` iff the walk reached its natural `None` terminator, i.e. it
+/// enumerated every live key. `MapItemIter::next` reaches `None` only after
+/// cycling the full ring; the sole early exit is a genuine flash READ FAULT
+/// (`Err`), which a NOR power cut never produces (a torn write yields deterministic
+/// bytes, not a read error). A `false` return therefore flags a truncated
+/// enumeration the caller must not read as "those keys are absent".
 fn for_each_in<C: CacheImpl<u16>>(
     map: &mut MapStorage<u16, SharedFlash, C>,
     buf: &mut [u8],
     f: &mut dyn FnMut(u16),
-) {
+) -> bool {
     let Ok(mut iter) = block_on(map.fetch_all_items(buf)) else {
-        return;
+        return false;
     };
-    while let Ok(Some((key, _))) = block_on(iter.next::<&[u8]>(buf)) {
-        f(key);
+    loop {
+        match block_on(iter.next::<&[u8]>(buf)) {
+            Ok(Some((key, _))) => f(key),
+            Ok(None) => return true,
+            Err(_) => return false,
+        }
     }
 }

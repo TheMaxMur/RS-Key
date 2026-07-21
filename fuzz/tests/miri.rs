@@ -160,7 +160,10 @@ fn miri_fs_meta() {
         fn size(&mut self, fid: u16) -> Option<usize> {
             (fid == rsk_fs::EF_META).then_some(self.0.len())
         }
-        fn for_each_key(&mut self, _f: &mut dyn FnMut(u16)) {}
+        // Non-enumerating stub: report "incomplete" so `scan` keeps confirm-on-miss.
+        fn for_each_key(&mut self, _f: &mut dyn FnMut(u16)) -> bool {
+            false
+        }
     }
 
     for data in [&b""[..], b"\x00\x00", b"\xcf\x01\x01\x42"] {
@@ -1748,7 +1751,10 @@ fn miri_power_cut() {
             };
             Some(value.len())
         }
-        fn for_each_key(&mut self, _f: &mut dyn FnMut(u16)) {}
+        // Non-enumerating stub: report "incomplete" so `scan` keeps confirm-on-miss.
+        fn for_each_key(&mut self, _f: &mut dyn FnMut(u16)) -> bool {
+            false
+        }
     }
 
     let flash = Rc::new(RefCell::new(Mock::new(

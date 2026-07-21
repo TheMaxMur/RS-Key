@@ -184,9 +184,12 @@ impl Storage for TortureStorage {
         };
         Some(value.len())
     }
-    fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) {
-        for_each_in(&mut self.main, &mut self.buf, f);
-        for_each_in(&mut self.counter, &mut self.buf, f);
+    fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) -> bool {
+        // Mirror the firmware: both partitions must complete for the caller to
+        // trust absence-by-omission. Runs both regardless of the first's outcome.
+        let main_done = for_each_in(&mut self.main, &mut self.buf, f);
+        let counter_done = for_each_in(&mut self.counter, &mut self.buf, f);
+        main_done && counter_done
     }
 }
 
@@ -194,12 +197,16 @@ fn for_each_in<C: CacheImpl<u16>>(
     map: &mut MapStorage<u16, SharedMock, C>,
     buf: &mut [u8],
     f: &mut dyn FnMut(u16),
-) {
+) -> bool {
     let Ok(mut iter) = block_on(map.fetch_all_items(buf)) else {
-        return;
+        return false;
     };
-    while let Ok(Some((key, _))) = block_on(iter.next::<&[u8]>(buf)) {
-        f(key);
+    loop {
+        match block_on(iter.next::<&[u8]>(buf)) {
+            Ok(Some((key, _))) => f(key),
+            Ok(None) => return true,
+            Err(_) => return false,
+        }
     }
 }
 

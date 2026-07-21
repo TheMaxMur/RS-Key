@@ -23,7 +23,10 @@ pub trait Storage {
     }
     /// Invoke `f` once per stored key (used to rebuild the dynamic-file set and to
     /// probe credential slots without a per-slot `read` of every absent FID).
-    fn for_each_key(&mut self, f: &mut dyn FnMut(u16));
+    /// Returns `true` iff the enumeration ran to completion — every live key was
+    /// yielded. A `false` return means the walk was truncated (a flash read fault),
+    /// so the caller MUST NOT treat an un-yielded FID as absent (see [`Fs::scan`]).
+    fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) -> bool;
     /// Physically reclaim superseded records so that *overwritten* and *deleted*
     /// payloads are erased from the medium, not merely unlinked.
     ///
@@ -77,10 +80,11 @@ pub mod ram {
         fn size(&mut self, fid: u16) -> Option<usize> {
             self.map.get(&fid).map(|v| v.len())
         }
-        fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) {
+        fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) -> bool {
             for &k in self.map.keys() {
                 f(k);
             }
+            true // the RAM map iterates in memory; it cannot fault mid-walk
         }
     }
 }

@@ -181,6 +181,18 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   only to emit the public modulus; it now computes `N = p·q` directly (the fixed
   65537 exponent needs no rebuild). Output is byte-for-byte identical.
   **bcdDevice → 0x0845.**
+- **The first PIV Certificates-page open after a cold plug-in is no longer slow.**
+  A cold `read`/`has_data` of an absent FID scanned the whole flash partition to
+  prove absence, so the Yubico Authenticator Certificates tab — which probes the
+  cert object of all ~24 PIV slots, most empty — paid a full-partition scan per
+  empty slot on the first open of each power cycle (up to ~2 s on a well-used
+  device). The boot `scan()` now reports whether it enumerated the whole store,
+  and on a *complete* enumeration decides the entire FID space absent-by-omission,
+  so every applet's cold absent lookup is O(1) instead of a per-slot flash walk.
+  Robust by construction: a read-fault-truncated scan keeps confirm-on-miss, and a
+  torn power cut cannot hide a committed key (the forward ring walk is a
+  page-superset of `fetch_item`'s, and reclaim erases a source only after
+  forwarding its items). **bcdDevice → 0x0846.**
 - **A partial PicoForge config write no longer resets the fields it didn't touch.**
   The FIDO `CONFIG_WRITE` (`0x0C`, target PHY) and CCID rescue `WRITE 0x1C` used to
   *replace* the whole `EF_PHY` record with a parse of the incoming blob, so any tag a

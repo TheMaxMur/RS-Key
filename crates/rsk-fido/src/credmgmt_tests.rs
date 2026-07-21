@@ -1405,7 +1405,7 @@ impl Storage for CountingStorage {
     fn size(&mut self, fid: u16) -> Option<usize> {
         self.inner.size(fid)
     }
-    fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) {
+    fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) -> bool {
         self.inner.for_each_key(f)
     }
 }

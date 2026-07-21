@@ -31,7 +31,10 @@ impl Storage for MetaBlob<'_> {
     fn size(&mut self, fid: u16) -> Option<usize> {
         (fid == rsk_fs::EF_META).then_some(self.0.len())
     }
-    fn for_each_key(&mut self, _f: &mut dyn FnMut(u16)) {}
+    // Non-enumerating stub: report "incomplete" so `scan` keeps confirm-on-miss.
+    fn for_each_key(&mut self, _f: &mut dyn FnMut(u16)) -> bool {
+        false
+    }
 }
 
 fuzz_target!(|data: &[u8]| {
