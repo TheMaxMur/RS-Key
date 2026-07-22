@@ -348,7 +348,9 @@ fn reboot_verify(
 
 fuzz_target!(|data: &[u8]| {
     let flash = Rc::new(RefCell::new(Mock::new(
-        WriteCountCheck::Disabled,
+        // Twice, not OnceOnly: remove_item rewrites the header once (erase_data,
+        // crc=None), which OnceOnly would false-flag; this catches a 3rd write.
+        WriteCountCheck::Twice,
         None,
         true,
     )));
