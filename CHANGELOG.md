@@ -13,6 +13,15 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+### Security
+
+- **`rsk hw` no longer lets a counterfeit device inject terminal escapes.** The phy
+  dump printed the device-controlled USB manufacturer/product strings raw, so a
+  hostile device could embed ANSI/OSC/bidi sequences to forge terminal output (e.g.
+  a fake "verified") or write the operator's clipboard. They now pass through the
+  same `sanitize()` filter every other device-string printer already uses. Host-only
+  (`tools/rsk` → 0.3.18); no `bcdDevice` change.
+
 ### Added
 
 - **The audit journal is now opt-in and OFF by default.** It used to record every

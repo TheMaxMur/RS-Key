@@ -128,3 +128,24 @@ def test_apply_args_rejects_out_of_range():
 def test_would_set_distinguishes_read_from_write():
     assert not hw._would_set(_Args())
     assert hw._would_set(_Args(touch_timeout=45))
+
+
+def test_show_sanitizes_device_strings(capsys):
+    # A counterfeit device can embed ANSI/OSC escapes in the USB identity strings;
+    # _show must render them stripped, never injecting terminal control (run-25).
+    tlvs = [
+        (hw.TAG_USB_PRODUCT, b"\x1b]0;pwn\x07evil\x00"),
+        (hw.TAG_USB_MANUFACTURER, b"Acme\x00"),
+    ]
+    hw._show(tlvs)
+    out = capsys.readouterr().out
+    assert "\x1b" not in out
+    assert "evil" in out and "Acme" in out
+
+
+def test_show_absent_strings_use_build_default(capsys):
+    # Absent identity tags must print the build-default marker, not literal "None".
+    hw._show([])
+    out = capsys.readouterr().out
+    assert "(build/VID default)" in out
+    assert "None" not in out

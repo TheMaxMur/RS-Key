@@ -33,7 +33,7 @@ from .backup import (
     _gated,
     _vendor,
 )
-from .common import add_pin_arg, connect_fido, device_has_pin, die, resolve_pin
+from .common import add_pin_arg, connect_fido, device_has_pin, die, resolve_pin, sanitize
 from .status import RESCUE_AID, rescue_read
 
 # phy TLV tags — must match crates/rsk-rescue/src/phy.rs.
@@ -190,7 +190,9 @@ def _show(tlvs):
     print(f"  touch   {str(tmo[0]) + 's' if tmo else '(build default 30s)'}")
 
     def _str(v):
-        return v.rstrip(b"\x00").decode("utf-8", "replace") if v else None
+        # Device-controlled USB identity strings; sanitize INSIDE the guard so an
+        # absent field stays None (sanitize(None) == "None" would print literally).
+        return sanitize(v.rstrip(b"\x00").decode("utf-8", "replace")) if v else None
 
     mfr = _str(by.get(TAG_USB_MANUFACTURER))
     prod = _str(by.get(TAG_USB_PRODUCT))
