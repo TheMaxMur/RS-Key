@@ -30,6 +30,12 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **`ykman otp swap` now works.** The OTP applet's SWAP (slot `0x06`) accepted only
+  an empty body or RS-Key's `[a,b]` 4-slot-offset extension, but ykman/yubikit send
+  the standard swap as a bare 6-byte access code (no offset bytes). RS-Key rejected
+  that frame as `WRONG_LENGTH`, so the host saw `Failed to write` / `No data`; it now
+  swaps slots 1↔2 and honours the code. Found by a full OTP-HID differential against
+  a real YubiKey — every other OTP-HID command already matched. **bcdDevice → 0x084B.**
 - **`ykman config usb` no longer fails with `CommandRejectedError: No data` over the
   OTP keyboard transport.** ykman/yubikit confirm an OTP-HID config write by the
   status frame's program-sequence byte advancing; `SET_DEVICE_INFO` (and the other

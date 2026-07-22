@@ -495,25 +495,32 @@ impl<'a> OtpApplet<'a> {
     }
 
     /// P1 = 0x06: swap the two slots. Body layouts: empty = slots 1↔2, no code;
-    /// `[a,b]` = slots (1+a)↔(2+b); `[a,b,code0..code5]` = the same pair with a
-    /// 6-byte access code. Swapping moves/deletes stored configs, so — like
-    /// cmd_configure/cmd_update/delete (docs/guides/otp.md) — a programmed slot is
-    /// only touched when the presented code matches its stored access code; an
-    /// unprotected slot's all-zero code is satisfied by the default, so a plain
-    /// `ykman otp swap` of unprotected slots is unchanged. Out-of-range offsets
-    /// are rejected so a swap can never orphan a slot outside the 4-slot range.
+    /// `[code0..code5]` (6 bytes) = slots 1↔2 with an access code — the frame
+    /// `ykman`/yubikit actually send for `otp swap`; `[a,b]` = slots (1+a)↔(2+b);
+    /// `[a,b,code0..code5]` = that pair with a 6-byte access code. Swapping
+    /// moves/deletes stored configs, so — like cmd_configure/cmd_update/delete
+    /// (docs/guides/otp.md) — a programmed slot is only touched when the presented
+    /// code matches its stored access code; an unprotected slot's all-zero code is
+    /// satisfied by the default, so a plain `ykman otp swap` of unprotected slots
+    /// is unchanged. Out-of-range offsets are rejected so a swap can never orphan a
+    /// slot outside the 4-slot range.
     fn cmd_swap<S: Storage>(&mut self, apdu: &Apdu, fs: &mut Fs<S>, res: &mut ResBuf) -> Sw {
         let (mut fid1, mut fid2) = (EF_OTP_SLOT1, EF_OTP_SLOT2);
         let mut code = [0u8; ACC_CODE_SIZE];
-        if apdu.nc > 0 {
-            if apdu.nc != 2 && apdu.nc != 2 + ACC_CODE_SIZE {
-                return Sw::WRONG_LENGTH;
-            }
+        if apdu.nc == ACC_CODE_SIZE {
+            // The standard `ykman otp swap` frame: a bare 6-byte access code, no
+            // slot-offset bytes → swap the default slots 1↔2 with it. Missing this
+            // arm rejected the real swap as WRONG_LENGTH (ykman: "Failed to write").
+            code.copy_from_slice(&apdu.data[..ACC_CODE_SIZE]);
+        } else if apdu.nc == 2 || apdu.nc == 2 + ACC_CODE_SIZE {
+            // RS-Key's 4-slot extension: [a,b] offsets, optionally + a 6-byte code.
             fid1 += apdu.data[0] as u16;
             fid2 += apdu.data[1] as u16;
             if apdu.nc == 2 + ACC_CODE_SIZE {
                 code.copy_from_slice(&apdu.data[2..2 + ACC_CODE_SIZE]);
             }
+        } else if apdu.nc != 0 {
+            return Sw::WRONG_LENGTH;
         }
         if fid1 > EF_OTP_SLOT_LAST || fid2 > EF_OTP_SLOT_LAST {
             return Sw::INCORRECT_P1P2;
