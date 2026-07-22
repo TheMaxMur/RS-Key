@@ -497,8 +497,9 @@ impl PrivKey {
                 Ok(put(sig.to_bytes().as_slice(), out))
             }
             PrivKey::P521(s) => {
-                // 0.14's p521 has a deterministic RFC 6979 signer (its `sha512`
-                // feature), so no random nonce / rand_core adapter is needed here.
+                // 0.14's p521 has a deterministic RFC 6979 signer (its `sha512` feature),
+                // so no random nonce / rand_core adapter is needed here. (FIDO's comb path
+                // instead signs P-521 with a random TRNG nonce -- both are safe.)
                 let k = p521::ecdsa::SigningKey::from_bytes(&p521::FieldBytes::from(*s))
                     .map_err(|_| Sw::EXEC_ERROR)?;
                 let sig: p521::ecdsa::Signature =

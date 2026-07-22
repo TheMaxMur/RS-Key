@@ -288,8 +288,9 @@ impl CredKey {
             Self::P384(d) => sign_p384_comb(d, msg, out),
             Self::K256(d) => sign_k256_comb(d, msg, out),
             Self::P521(d) => {
-                // P-521's nonce is random (no deterministic signer): the comb signer
-                // reject-samples a 521-bit scalar from the device TRNG via the closure.
+                // P-521 here signs with a RANDOM nonce: this comb path reject-samples a
+                // fresh 521-bit scalar from the device TRNG via the closure. A deterministic
+                // RFC 6979 signer exists (OpenPGP uses it) -- both safe; don't drop this feed.
                 let d: &p521::Scalar = d; // deref-coerce &NonZeroScalar → &Scalar
                 let h = rsk_crypto::sha512(msg);
                 let sig = rsk_ec::sign_p521(d, &h, &mut |b| rng.fill(b)).expect("nonzero r, s");
