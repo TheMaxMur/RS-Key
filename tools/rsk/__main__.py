@@ -4,11 +4,11 @@
 """rsk — RS-Key device CLI entry point (`python -m rsk`, or `rsk` in the shell)."""
 import argparse
 
-from . import (__version__, audit, backup, fido, hw, inventory, led, lock, offboard, openpgp,
-               otp, pair, reboot, secureboot, status)
+from . import (__version__, audit, backup, bench, fido, hw, inventory, led, lock, offboard,
+               openpgp, otp, pair, reboot, secureboot, status)
 
 GROUPS = [status, inventory, backup, pair, lock, secureboot, otp, fido, led, hw, openpgp, reboot,
-          audit, offboard]
+          audit, offboard, bench]
 
 
 def main():

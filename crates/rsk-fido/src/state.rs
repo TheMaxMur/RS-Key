@@ -203,6 +203,11 @@ impl PinUvAuthToken {
 pub struct FidoState {
     ephemeral: [u8; 32],
     ephemeral_set: bool,
+    /// Cached `getKeyAgreement` public key `d·G` for the current `ephemeral`
+    /// scalar, computed once in [`Self::regenerate`] so each getKeyAgreement need
+    /// not recompute the scalar multiply (~40 ms on the M33). Public — it is what
+    /// getKeyAgreement returns — so no zeroize.
+    ephemeral_pub: ([u8; 32], [u8; 32]),
     pub paut: PinUvAuthToken,
     /// The persistent (PCMR) token. RAM-resident; not persisted across reboots.
     pub ppaut_token: [u8; 32],
@@ -247,6 +252,7 @@ impl FidoState {
         Self {
             ephemeral: [0; 32],
             ephemeral_set: false,
+            ephemeral_pub: ([0; 32], [0; 32]),
             paut: PinUvAuthToken::new(),
             ppaut_token: [0; 32],
             ppaut_permissions: 0,
@@ -293,11 +299,15 @@ impl FidoState {
         }
     }
 
-    /// `regenerate`: draw a new ephemeral ECDH scalar (in range `[1, n)`).
+    /// `regenerate`: draw a new ephemeral ECDH scalar (in range `[1, n)`) and
+    /// cache its public key `d·G` — the same multiply that validates the scalar,
+    /// so [`Self::ephemeral_public`] (called on every getKeyAgreement) reuses it
+    /// instead of recomputing.
     pub fn regenerate(&mut self, rng: &mut impl Rng) {
         loop {
             rng.fill(&mut self.ephemeral);
-            if public_xy(&self.ephemeral).is_some() {
+            if let Some(xy) = public_xy(&self.ephemeral) {
+                self.ephemeral_pub = xy;
                 break;
             }
         }
@@ -308,9 +318,10 @@ impl FidoState {
         &self.ephemeral
     }
 
-    /// The ephemeral public key `(x, y)` returned by `getKeyAgreement`.
+    /// The ephemeral public key `(x, y)` returned by `getKeyAgreement` — the value
+    /// cached by [`Self::regenerate`] (consistent with `ephemeral` by construction).
     pub fn ephemeral_public(&self) -> Option<([u8; 32], [u8; 32])> {
-        public_xy(&self.ephemeral)
+        self.ephemeral_set.then_some(self.ephemeral_pub)
     }
 
     /// `resetPinUvAuthToken`: new random token, cleared permissions / flags.

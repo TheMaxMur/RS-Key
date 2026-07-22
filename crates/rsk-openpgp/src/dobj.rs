@@ -21,9 +21,14 @@ pub(crate) const ATTR_P256R1: &[u8] = &[
 ];
 pub(crate) const ATTR_P384R1: &[u8] = &[6, ALGO_ECDSA, 0x2B, 0x81, 0x04, 0x00, 0x22];
 pub(crate) const ATTR_P521R1: &[u8] = &[6, ALGO_ECDSA, 0x2B, 0x81, 0x04, 0x00, 0x23];
-// brainpoolP256r1/384r1/512r1 are NOT advertised (0xfa) nor matched (curve_from_attr):
-// RustCrypto's bp256/bp384 expose only WIP arithmetic and there is no bp512 crate,
-// so shipping brainpool would mean unaudited curve math.
+// brainpoolP256r1/384r1 (RFC 5639, OID 1.3.36.3.3.2.8.1.1.{7,11}) — bp256/bp384 0.14
+// fiat-crypto backend. bp512r1 (…1.1.13) is still omitted: no bp512 crate exists.
+pub(crate) const ATTR_BP256R1: &[u8] = &[
+    10, ALGO_ECDSA, 0x2B, 0x24, 0x03, 0x03, 0x02, 0x08, 0x01, 0x01, 0x07,
+];
+pub(crate) const ATTR_BP384R1: &[u8] = &[
+    10, ALGO_ECDSA, 0x2B, 0x24, 0x03, 0x03, 0x02, 0x08, 0x01, 0x01, 0x0B,
+];
 pub(crate) const ATTR_CV25519: &[u8] = &[
     11, ALGO_ECDH, 0x2b, 0x06, 0x01, 0x04, 0x01, 0x97, 0x55, 0x01, 0x05, 0x01,
 ];
@@ -181,13 +186,12 @@ impl<'a, S: Storage> DoWriter<'a, S> {
 
     fn emit_app_data(&mut self, mode: i32) -> usize {
         let fids = [
-            6,
+            5,
             EF_FULL_AID,
             EF_HIST_BYTES,
             EF_EXLEN_INFO,
             EF_GFM,
             EF_DISCRETE_DO,
-            EF_KEY_INFO,
         ];
         self.constructed((EF_APP_DATA & 0xff) as u8, &fids, mode)
     }
@@ -198,8 +202,11 @@ impl<'a, S: Storage> DoWriter<'a, S> {
     }
 
     fn emit_discrete_do(&mut self, mode: i32) -> usize {
+        // 0xDE (Key Information) is a child of the 0x73 discretionary DOs per the
+        // OpenPGP Card spec — where ykman >= 5.2 looks for it — not a bare child of
+        // 0x6E. Placed after the generation times, before the UIF DOs, as YubiKey does.
         let fids = [
-            11,
+            12,
             EF_EXT_CAP,
             EF_ALGO_SIG,
             EF_ALGO_DEC,
@@ -208,6 +215,7 @@ impl<'a, S: Storage> DoWriter<'a, S> {
             EF_FP,
             EF_CA_FP,
             EF_TS_ALL,
+            EF_KEY_INFO,
             EF_UIF_SIG,
             EF_UIF_DEC,
             EF_UIF_AUT,
@@ -278,8 +286,11 @@ impl<'a, S: Storage> DoWriter<'a, S> {
             self.push((EF_KEY_INFO & 0xff) as u8);
             self.push(6);
         }
-        for (slot, fid) in [(0u8, EF_PK_SIG), (1, EF_PK_DEC), (2, EF_PK_AUT)] {
-            self.push(slot);
+        // OpenPGP Card 3.4 §4.4.3.8: key-ref 01=SIG, 02=DEC, 03=AUT, then a status
+        // byte (00 = not present, 01 = present). ykman >= 5.2 keys its parse on
+        // these refs, so they must be the spec values, not 0-indexed.
+        for (key_ref, fid) in [(1u8, EF_PK_SIG), (2, EF_PK_DEC), (3, EF_PK_AUT)] {
+            self.push(key_ref);
             let present = self.fs.has_key(fid);
             self.push(if present { 0x01 } else { 0x00 });
         }
@@ -302,7 +313,15 @@ impl<'a, S: Storage> DoWriter<'a, S> {
     fn emit_algo(&mut self, algo: &[u8], tag: u16) -> usize {
         self.push((tag & 0xff) as u8);
         let n = algo[0] as usize + 1;
-        self.extend(&algo[..n]);
+        // The DEC list carries the same curve OIDs as SIG/AUT but as ECDH (0x12),
+        // not ECDSA (0x13): a decryption key does key agreement (matches YubiKey).
+        if tag == EF_ALGO_DEC && algo.get(1) == Some(&ALGO_ECDSA) {
+            self.push(algo[0]);
+            self.push(ALGO_ECDH);
+            self.extend(&algo[2..n]);
+        } else {
+            self.extend(&algo[..n]);
+        }
         algo[0] as usize + 2
     }
 
@@ -321,6 +340,8 @@ impl<'a, S: Storage> DoWriter<'a, S> {
                 ATTR_P256R1,
                 ATTR_P384R1,
                 ATTR_P521R1,
+                ATTR_BP256R1,
+                ATTR_BP384R1,
                 ATTR_ED25519,
                 ATTR_ED448,
             ];
@@ -333,6 +354,8 @@ impl<'a, S: Storage> DoWriter<'a, S> {
                 ATTR_P256R1,
                 ATTR_P384R1,
                 ATTR_P521R1,
+                ATTR_BP256R1,
+                ATTR_BP384R1,
                 ATTR_CV25519,
                 ATTR_X448,
             ];
@@ -345,6 +368,8 @@ impl<'a, S: Storage> DoWriter<'a, S> {
                 ATTR_P256R1,
                 ATTR_P384R1,
                 ATTR_P521R1,
+                ATTR_BP256R1,
+                ATTR_BP384R1,
                 ATTR_ED25519,
                 ATTR_ED448,
             ];

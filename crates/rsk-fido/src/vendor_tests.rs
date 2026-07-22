@@ -1138,6 +1138,7 @@ fn config_write_persists_dev_conf_visible_to_ccid() {
     assert!(dev_conf_readback(&mut fs).ends_with(DEV_CONF_BLOB));
 }
 
+#[cfg(feature = "strict-config")]
 #[test]
 fn config_write_requires_touch() {
     let (mut fs, mut rng, mut st) = setup();
@@ -1197,6 +1198,7 @@ fn config_write_unknown_target_rejected() {
     );
 }
 
+#[cfg(feature = "strict-config")]
 #[test]
 fn config_write_with_pin_requires_token() {
     let (mut fs, mut rng, mut st) = setup();
@@ -1215,6 +1217,31 @@ fn config_write_with_pin_requires_token() {
         ),
         Err(CtapError::PuatRequired)
     );
+}
+
+#[cfg(not(feature = "strict-config"))]
+#[test]
+fn config_write_default_ungated_persists_without_touch_or_token() {
+    // DEFAULT (permissive) build: CONFIG_WRITE persists with NO touch and NO
+    // token, even with a PIN set — full ykman/host parity. `Decline` denies the
+    // touch and no pinUvAuthToken is supplied; the write must still succeed.
+    let (mut fs, mut rng, mut st) = setup();
+    fs.put(EF_PIN, &[8, 4, 1]).unwrap();
+    let mut req = [0u8; 96];
+    let n = config_write_req(CONFIG_TARGET_DEV_CONF, DEV_CONF_BLOB, false, &mut req);
+    let mut out = [0u8; 16];
+    assert_eq!(
+        call(
+            &mut fs,
+            &mut rng,
+            &mut st,
+            &mut Decline,
+            &req[..n],
+            &mut out
+        ),
+        Ok(0)
+    );
+    assert!(dev_conf_readback(&mut fs).ends_with(DEV_CONF_BLOB));
 }
 
 #[test]
@@ -1426,4 +1453,42 @@ fn audit_read_without_pin_requires_touch() {
         )
         .is_ok()
     );
+}
+
+/// Build a `VENDOR_AUDIT_CONFIG` request `{1: subcmd, 2: {1: target}}`.
+fn audit_config_req(target: u64, buf: &mut [u8]) -> usize {
+    let mut e = Encoder::new(Cursor::new(buf));
+    e.map(2).unwrap();
+    e.u8(1).unwrap().u64(VENDOR_AUDIT_CONFIG).unwrap();
+    e.u8(2)
+        .unwrap()
+        .map(1)
+        .unwrap()
+        .u8(1)
+        .unwrap()
+        .u64(target)
+        .unwrap();
+    e.writer().position()
+}
+
+#[test]
+fn audit_config_rejects_unknown_target() {
+    let (mut fs, mut rng, mut st) = setup(); // no PIN → pin_gate is a no-op
+    let mut req = [0u8; 32];
+    // 0/1/2 are the only defined ops; a 3 must not silently alias to enable.
+    let n = audit_config_req(3, &mut req);
+    let mut out = [0u8; 32];
+    assert_eq!(
+        call(
+            &mut fs,
+            &mut rng,
+            &mut st,
+            &mut AlwaysConfirm,
+            &req[..n],
+            &mut out
+        ),
+        Err(CtapError::InvalidParameter)
+    );
+    // The rejected op changed nothing: journalling stays OFF by default.
+    assert!(!crate::journal::is_enabled(&mut fs));
 }

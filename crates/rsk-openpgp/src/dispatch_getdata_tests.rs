@@ -94,8 +94,8 @@ fn getdata_aid_case2_via_dispatcher_returns_aid_not_6d00() {
     );
     assert_eq!(
         &aid[10..14],
-        &SERIAL_ID[..4],
-        "device serial spliced at offset 10"
+        &crate::files::serial_bcd(&rsk_mgmt::serial4(SERIAL_ID)),
+        "BCD device serial spliced at offset 10 (YubiKey convention)"
     );
 
     // Case-1 GET DATA 0x4F (no Le) — the 4-byte form, also 6D00 on hardware.

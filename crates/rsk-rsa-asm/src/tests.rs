@@ -220,3 +220,85 @@ fn fermat_accepts_prime_rejects_composite() {
         assert!(!passes_fermat_base2(&c_le), "a composite must fail Fermat");
     }
 }
+
+/// A second distinct 256-bit prime (different seed from [`a_prime_le`]).
+fn another_prime_le() -> Vec<u8> {
+    let seed = BigUint::from_bytes_le(&[
+        0xf1, 0xe2, 0xd3, 0xc4, 0xb5, 0xa6, 0x97, 0x88, 0x79, 0x6a, 0x5b, 0x4c, 0x3d, 0x2e, 0x1f,
+        0x00, 0x10, 0x32, 0x54, 0x76, 0x98, 0xba, 0xdc, 0xfe, 0xef, 0xcd, 0xab, 0x89, 0x67, 0x45,
+        0x23, 0xf1,
+    ]);
+    let mut le = num_bigint_dig::prime::next_prime(&seed).to_bytes_le();
+    le.resize(32, 0);
+    le
+}
+
+/// Big-endian, zero-padded to `len` bytes.
+fn to_be_fixed(x: &BigUint, len: usize) -> Vec<u8> {
+    let be = x.to_bytes_be();
+    let mut out = vec![0u8; len];
+    out[len - be.len()..].copy_from_slice(&be);
+    out
+}
+
+#[test]
+fn sign_crt_matches_biguint() {
+    use num_bigint_dig::ModInverse;
+    let half = 32; // two 256-bit primes → a 512-bit modulus
+    let p = BigUint::from_bytes_le(&a_prime_le());
+    let q = BigUint::from_bytes_le(&another_prime_le());
+    assert_ne!(p, q);
+    let e = BigUint::from(65_537u32);
+    let n = &p * &q;
+    let p1 = &p - 1u32;
+    let q1 = &q - 1u32;
+    let d = e
+        .clone()
+        .mod_inverse(&p1 * &q1)
+        .unwrap()
+        .to_biguint()
+        .unwrap();
+    let dp = &d % &p1;
+    let dq = &d % &q1;
+    let qinv = q.clone().mod_inverse(&p).unwrap().to_biguint().unwrap();
+
+    let m = BigUint::from_bytes_be(b"an RSA CRT signing round-trip check!") % &n;
+    let s_ref = m.modpow(&d, &n);
+
+    let mut base_le = vec![0u8; 2 * half];
+    let mb = m.to_bytes_le();
+    base_le[..mb.len()].copy_from_slice(&mb);
+    let mut out = vec![0u8; 2 * half];
+    sign_crt(
+        &base_le,
+        &dp.to_bytes_be(),
+        &dq.to_bytes_be(),
+        &to_be_fixed(&p, half),
+        &to_be_fixed(&q, half),
+        &to_be_fixed(&qinv, half),
+        &mut out,
+    );
+    assert_eq!(
+        BigUint::from_bytes_le(&out),
+        s_ref,
+        "CRT sign must equal m^d mod n"
+    );
+}
+
+#[test]
+fn modexp_pub_matches_biguint() {
+    // base^65537 mod n over a 512-bit odd modulus (a two-prime product).
+    let n = BigUint::from_bytes_le(&a_prime_le()) * BigUint::from_bytes_le(&another_prime_le());
+    let mlen = 64;
+    let base = BigUint::from_bytes_be(b"public-exponent modexp round-trip check!") % &n;
+    let want = base.modpow(&BigUint::from(65_537u32), &n);
+    let mut base_le = vec![0u8; mlen];
+    let bb = base.to_bytes_le();
+    base_le[..bb.len()].copy_from_slice(&bb);
+    let mut n_le = vec![0u8; mlen];
+    let nb = n.to_bytes_le();
+    n_le[..nb.len()].copy_from_slice(&nb);
+    let mut out = vec![0u8; mlen];
+    assert!(modexp_pub(&base_le, &[0x01, 0x00, 0x01], &n_le, &mut out));
+    assert_eq!(BigUint::from_bytes_le(&out), want, "base^e mod n mismatch");
+}

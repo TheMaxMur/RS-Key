@@ -123,7 +123,10 @@ nix develop .#fuzz -c cargo miri test --manifest-path fuzz/Cargo.toml
 
 Neither suite gates a commit. CI runs both daily in the `deep-checks`
 workflow: the Miri suite, plus a timed libFuzzer pass over every target with
-the corpus carried between runs, crash artifacts uploaded.
+the corpus carried between runs, crash artifacts uploaded. A separate
+`fuzz-coverage` job then measures per-target region/line coverage over that
+accumulated corpus (`scripts/fuzz-coverage.sh`, run it the same way locally),
+writing a summary table and uploading a per-target HTML report.
 
 ## Kani proofs
 
@@ -218,6 +221,38 @@ test corpus and the Gnuk/OpenPGP card suite (see
 [third_party/](https://github.com/TheMaxMur/RS-Key/tree/main/third_party) if
 vendored, or run them from their upstream checkouts). Running an upstream
 corpus shows conformance on the cases it covers; it is not a security audit.
+
+## Latency harness
+
+Timing a crypto primitive from the host is noisy. On the RP2350 the hot working
+set (the variable-base P-256 scalar multiply is ~34 KB) overflows the 16 KB XIP
+cache, so which cache lines evict depends on where the linker placed the code.
+Steady-state EC latency then swings ±~30 ms from an innocent code move, and a
+host-timed mean over a few USB round-trips reports that swing as a regression.
+
+`rsk bench` measures on the device instead. The `bench` firmware feature adds a
+vendor command (like `keygen-bench`, never shipped) that times a primitive with
+the RP2350's own timer, so there is no USB jitter, and returns a robust summary:
+a `median` and `MAD` over the warm samples plus a separate `cold` first sample
+(the ~1.4x cold-cache op right after a power-cycle). The summary is computed
+on-device by the Kani-proved `rsk-bench` crate, so the number is not re-derived
+host-side.
+
+```sh
+# build + flash a bench image (it is a --features bench build, so never ship it)
+cargo build --release -p firmware --features bench,no-touch
+# then, from the dev shell or the venv that has pyscard:
+rsk bench ecdh                 # variable-base P-256 ECDH (the layout-sensitive one)
+rsk bench sign                 # P-256 comb sign (the getAssertion hot path)
+rsk bench ratchet              # the HKDF-SHA512 key-derivation ratchet
+```
+
+To A/B two builds without the cross-session trap that faked a "-33%" during the
+0.14 EC migration: measure one build with `--save a.json`, flash the other,
+measure with `--save b.json`, then `rsk bench --compare a.json b.json` prints
+whether the median moved by more than the pooled noise. Always compare in one
+sitting; comparing raw numbers across sessions or builds reads cache-layout luck
+as a real change.
 
 ## FIDO conformance
 

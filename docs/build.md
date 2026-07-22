@@ -33,6 +33,7 @@ flowchart TD
 | `strict-up` | off | Require a touch on **every** `getAssertion`. By default RS-Key honors the platform's silent pre-flight probe (`up:false`): it returns the discovery assertion with no touch and the UP flag clear, so a WebAuthn login with an `allowCredentials` (non-resident) credential is a **single** touch, matching the CTAP2 spec and YubiKey. With `strict-up` the button is polled even for that probe, so such a login asks for **two** touches (one for the probe, one for the real assertion). A deliberately stricter "every assertion needs an explicit gesture" stance for those who want it; it is **not** spec-conformant for `up:false`. Resident-credential / passkey logins are a single touch either way. `fido-conformance` enables this implicitly (the conformance pass was validated with it). |
 | `always-uv` | off | Bake the CTAP 2.1 `alwaysUv` option **on by default**, so the key requires user verification (a PIN — or the `display` build's built-in UV pad) for **every** makeCredential / getAssertion straight out of the box, with no post-flash `ykman fido config toggle-always-uv`. The shipped image leaves alwaysUv off until a platform turns it on; this flag flips the default. It stays runtime-toggleable — `toggleAlwaysUv` writes an override that survives reboots but not an `authenticatorReset`, which restores this compiled default. **Set a PIN after flashing:** with alwaysUv on and no PIN, FIDO operations return `CTAP2_ERR_PUAT_REQUIRED` until one is set — the standard cue for the platform (Windows, Chrome) to prompt for a PIN. While alwaysUv is on the **CTAP1/U2F interface is disabled** (CTAP 2.1 §7.2.4, as on a YubiKey): U2F only proves presence, never verification, so legacy U2F-only logins stop working, and getInfo drops `U2F_V2` from its advertised `versions`; WebAuthn / CTAP2 (passkeys) are unaffected. |
 | `display` | off | **Experimental** trusted-display build for a screen + touch board (Waveshare RP2350-Touch-LCD-2.8). Adds an on-screen **Approve / Deny** that paints the real relying party for every touch (Deny refuses with `OPERATION_DENIED`), an on-device **PIN pad** (built-in user verification (`options.uv`), plus a CCID **pinpad** so GnuPG / OpenSC collect the OpenPGP / PIV PIN on the panel, never over USB), a read-only **Apps** browser (OpenPGP / PIV / OATH state, no PIN), a **Passkeys** manager (delete / rename on-device), and **Settings** (device & FIDO PINs, on-screen BIP-39 / SLIP-39 recovery export, audit log, factory reset). Entirely `dep:`-gated. A standard key compiles **none** of it, so its image is unaffected. Build it `LED_KIND=none FLASH_SIZE=16M … --features display` (the panel takes GPIO16 for its backlight; a compile-time guard enforces `LED_KIND=none`). Full walkthrough with screenshots: [guides/display.md](guides/display.md). |
+| `strict-config` | off | **Restores the historical strict admin-write authorization.** The DEFAULT build is now the permissive, full-ykman/YubiKey-compatible admin surface: device-config writes (CCID Management `WRITE CONFIG`, FIDO vendor `CONFIG_WRITE`, the CTAPHID `0x43` and OTP-HID `0x15` transport writes) are **ungated**, and Management RESET (device-wide factory reset) plus the OTP-HID `DEVICE_CONFIG` / `SCAN_MAP` / `NDEF` slots are served. `--features strict-config` re-imposes the presence/PIN gates and refuses the ungated transport writes — the historical shipped behavior. This deliberately weakens the DEFAULT threat model: any USB host can rewrite the reported identity with no operator confirmation ([threat-model.md](threat-model.md)). **Not** the runtime flash flag `EF_HARDENED`. Ship it as `firmware-strict-config`. |
 
 ## Environment variables
 
@@ -123,6 +124,9 @@ cargo build --release -p firmware --features advertise-pqc
 
 # ship with CTAP 2.1 alwaysUv enabled by default (set a PIN after flashing)
 cargo build --release -p firmware --features always-uv
+
+# strict admin-write posture (the historical default; config writes stay gated)
+cargo build --release -p firmware --features strict-config
 ```
 
 ## `nix build` (hermetic, no dev shell)
@@ -163,6 +167,9 @@ check the seal with `picotool`. The flavors mirror the
 | `.#firmware-always-uv` | `--features always-uv` (CTAP 2.1 `alwaysUv` on by default; also `.#firmware-always-uv-pqc`) |
 | `.#firmware-strict-up` | `--features strict-up` (touch on every assertion — **not spec-conformant** for `up:false`; also `.#firmware-strict-up-pqc`) |
 | `.#firmware-display` | `--features display`, `FLASH_SIZE=16M`, `LED_KIND=none` (experimental, Waveshare RP2350-Touch-LCD-2.8) |
+| `.#firmware-2mb` | default features + RS-Key identity, `FLASH_SIZE=2M`, `KVMAIN=896K` (2 MB boards: Seeed XIAO RP2350, Waveshare RP2350-Zero-CM) |
+| `.#firmware-16mb` | default features + RS-Key identity, `FLASH_SIZE=16M` (16 MB boards, e.g. TenStar RP2350-USB) |
+| `.#firmware-strict-config` | `--features strict-config` (historical strict admin-write posture; the default `firmware` is now the permissive full-ykman admin surface) |
 
 Two caveats:
 

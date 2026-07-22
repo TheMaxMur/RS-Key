@@ -74,16 +74,16 @@ gpg read back):
 
 | Family | Choices | Notes |
 |---|---|---|
-| ECC (sign/auth) | **Ed25519**, NIST **P-256 / P-384 / P-521**, **secp256k1** | EdDSA on Ed25519; ECDSA on the Weierstrass curves |
-| ECC (encrypt) | **Cv25519** (X25519), NIST **P-256 / P-384 / P-521**, **secp256k1** | ECDH; the DEC slot only |
+| ECC (sign/auth) | **Ed25519**, NIST **P-256 / P-384 / P-521**, **secp256k1**, **brainpoolP256r1 / P384r1** | EdDSA on Ed25519; ECDSA on the Weierstrass curves |
+| ECC (encrypt) | **Cv25519** (X25519), NIST **P-256 / P-384 / P-521**, **secp256k1**, **brainpoolP256r1 / P384r1** | ECDH; the DEC slot only |
 | RSA | **2048 / 3072 / 4096** | exponent fixed at 65537 (what gpg imports) |
 
 Not supported. gpg will offer them, and the card even accepts the `key-attr`
 write, but **GENERATE / keytocard** then refuses with `0x6A81` "Function not
-supported": **brainpool** (P-256/384/512), **X448**, **Ed448**. (X448 and Ed448
-still appear in the `0xFA` advertisement but are non-functional; brainpool is
-not advertised at all.) RustCrypto exposes only work-in-progress arithmetic for
-those, so shipping them would mean unaudited curve math.
+supported": **X448**, **Ed448**, and **brainpoolP512r1**. (X448 and Ed448 still
+appear in the `0xFA` advertisement but are non-functional; brainpoolP512r1 is not
+advertised.) No mature `no_std` Rust arithmetic exists for those yet, so shipping
+them would mean unaudited curve math.
 
 On-card generation means the private keys never existed anywhere else, and
 **cannot be backed up**. gpg's "make an off-card backup" prompt covers the

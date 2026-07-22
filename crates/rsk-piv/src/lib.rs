@@ -13,6 +13,7 @@
 extern crate alloc;
 
 mod auth;
+mod chuid;
 pub mod files;
 pub mod info;
 mod keygen;
@@ -24,7 +25,7 @@ use core::cell::RefCell;
 use rsk_crypto::Device;
 use rsk_fs::{Fs, Sealed, Storage};
 pub use rsk_openpgp::Rng;
-use rsk_openpgp::keys::{MAX_RSA_PUBDO, make_rsa_response};
+use rsk_openpgp::keys::{MAX_RSA_BYTES, MAX_RSA_PUBDO, RSA_PUB_EXP_BE, make_rsa_pub_body};
 // PIV reuses the OpenPGP user-presence trait, so the firmware's existing
 // `impl rsk_openpgp::UserPresence for ButtonPresence` already drives PIV touch.
 use rsa::RsaPrivateKey;
@@ -71,6 +72,7 @@ const INS_SET_MGMKEY: u8 = 0xFF;
 /// enabled). The key itself is synthesized from the sealed 0x9B auth slot, never
 /// stored a second time.
 const PRINTED_ID: u32 = 0x5FC109;
+const CHUID_ID: u32 = 0x5FC102;
 /// PivmanData (ADMIN DATA) TLV: outer `0x80 { 0x81 = flags, 0x82 = derived-key
 /// salt, 0x83 = PIN-change timestamp }`; flag bit `0x02` means the management key
 /// is PIN-protected (a host reads it back from PRINTED). ykman writes the salt
@@ -566,6 +568,15 @@ impl PivApplet<'_> {
         // prefix instead of panicking on the slice.
         let n = match fs.read(fid, &mut obj) {
             Some(n) if n > 0 => n.min(obj.len()),
+            // No host-provisioned CHUID: synthesize a default so Windows' PIV
+            // minidriver has the card GUID it needs to enumerate the slots (a
+            // 6A82 here leaves RSA/EC auth "pending" under CAPI). A real PUT DATA
+            // persists at this same fid and wins the read above.
+            _ if id == CHUID_ID => {
+                let synth = chuid::default_chuid(&self.serial_hash);
+                obj[..synth.len()].copy_from_slice(&synth);
+                synth.len()
+            }
             _ => return Sw::FILE_NOT_FOUND,
         };
         if push_tlv(res, TAG_DATA_OBJECT, &obj[..n]).is_err() {
@@ -749,15 +760,15 @@ impl PivApplet<'_> {
         let mut body = [0u8; MAX_RSA_PUBDO];
         let n = match meta[0] {
             ALGO_RSA1024 | ALGO_RSA2048 | ALGO_RSA3072 | ALGO_RSA4096 => {
-                let key = match seal::load_rsa_key(dev, fs, key_fid(slot)) {
-                    Ok(k) => k,
+                // Emit the public modulus without rebuilding the private key: GET
+                // METADATA needs only N (= p·q) + e (always 65537 for PIV), never
+                // `from_p_q`'s ~50 ms CRT precompute. Output byte-identical.
+                let mut nbuf = [0u8; MAX_RSA_BYTES];
+                let nlen = match seal::load_rsa_modulus(dev, fs, key_fid(slot), &mut nbuf) {
+                    Ok(l) => l,
                     Err(_) => return Sw::EXEC_ERROR,
                 };
-                // `make_rsa_response` emits `7F49 82 LL { 81 … 82 … }`; reuse
-                // its body, skipping the 5-byte 7F49 header.
-                let full = make_rsa_response(&key, &mut body);
-                body.copy_within(5..full, 0);
-                full - 5
+                make_rsa_pub_body(&nbuf[..nlen], RSA_PUB_EXP_BE, &mut body)
             }
             ALGO_ECCP256 | ALGO_ECCP384 | ALGO_ED25519 | ALGO_X25519 => {
                 // Emit the slot public point without recomputing the ~tens-of-ms
@@ -1292,30 +1303,6 @@ pub fn wrap_cert_object(cert: &[u8], out: &mut [u8]) -> usize {
     out[p..p + 5].copy_from_slice(&[0x71, 0x01, 0x00, 0xFE, 0x00]);
     p + 5
 }
-
-/// Adapts [`Rng`] to `rand_core` for the `rsa` crate's blinded private op.
-pub(crate) struct RngAdapter<'a>(pub(crate) &'a mut dyn Rng);
-
-impl rsa::rand_core::RngCore for RngAdapter<'_> {
-    fn next_u32(&mut self) -> u32 {
-        let mut b = [0u8; 4];
-        self.0.fill(&mut b);
-        u32::from_le_bytes(b)
-    }
-    fn next_u64(&mut self) -> u64 {
-        let mut b = [0u8; 8];
-        self.0.fill(&mut b);
-        u64::from_le_bytes(b)
-    }
-    fn fill_bytes(&mut self, dst: &mut [u8]) {
-        self.0.fill(dst);
-    }
-    fn try_fill_bytes(&mut self, dst: &mut [u8]) -> Result<(), rsa::rand_core::Error> {
-        self.0.fill(dst);
-        Ok(())
-    }
-}
-impl rsa::rand_core::CryptoRng for RngAdapter<'_> {}
 
 /// Kani proof harnesses (`cargo kani -p rsk-piv`): exhaustive over every input up
 /// to the stated bound, where the unit tests only sample.

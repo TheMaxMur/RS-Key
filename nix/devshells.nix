@@ -118,6 +118,7 @@
       echo "  rustc: $(rustc --version 2>/dev/null)"
       echo "List:   cargo fuzz list"
       echo "Run:    cargo fuzz run <target> -- -max_total_time=30"
+      echo "Cov:    ./scripts/fuzz-coverage.sh [target]   # per-target coverage → fuzz/coverage/"
       echo "Miri:   cargo miri test --manifest-path fuzz/Cargo.toml"
     '';
   };

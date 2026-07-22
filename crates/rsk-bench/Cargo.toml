@@ -1,0 +1,18 @@
+[package]
+name = "rsk-bench"
+version = "0.1.0"
+license = "AGPL-3.0-only"
+edition = "2024"
+publish = false
+
+# Robust summary statistics for the on-device latency harness (the vendor
+# `INS_BENCH` timing loop, firmware `bench` feature). `no_std`, no alloc, no
+# deps: the same code runs on the device (over a fixed sample buffer) and is
+# host-tested + Kani-proved, so the number the operator reads is produced by
+# gated code with no host-side arithmetic to second-guess. It exists to make EC
+# latency A/B trustworthy — steady-state timing on the RP2350 is XIP-cache /
+# code-layout sensitive (±~30 ms), so a naive host-timed mean fakes regressions;
+# median + MAD + a separate cold sample are the honest read. `cfg(kani)` guards
+# the proof harness.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }

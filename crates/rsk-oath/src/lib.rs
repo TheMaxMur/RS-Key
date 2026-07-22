@@ -202,15 +202,16 @@ impl<'a> OathApplet<'a> {
         }
     }
 
-    /// First 8 chars of the serial hex string — the device id ykman salts its
-    /// PBKDF2 access-code derivation with.
+    /// The 8-byte OATH device id — the salt ykman folds into its PBKDF2 access-code
+    /// derivation. A one-way hash of `serial_hash` (sha256 of the full chip id), so
+    /// it is stable across boots yet opaque like a real YubiKey's: not predictable
+    /// from the semi-public device serial, and it does not expose `serial_hash`.
     fn serial_name(&self) -> [u8; 8] {
-        const HEX: &[u8; 16] = b"0123456789ABCDEF";
+        let mut input = [0u8; 40];
+        input[..8].copy_from_slice(b"rsk-oath");
+        input[8..].copy_from_slice(&self.serial_hash);
         let mut out = [0u8; 8];
-        for (i, b) in self.serial_id[..4].iter().enumerate() {
-            out[2 * i] = HEX[(b >> 4) as usize];
-            out[2 * i + 1] = HEX[(b & 0xF) as usize];
-        }
+        out.copy_from_slice(&rsk_crypto::sha256(&input)[..8]);
         out
     }
 

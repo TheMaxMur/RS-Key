@@ -13,6 +13,280 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-07-22
+
+### Security
+
+- **`rsk hw` no longer lets a counterfeit device inject terminal escapes.** The phy
+  dump printed the device-controlled USB manufacturer/product strings raw, so a
+  hostile device could embed ANSI/OSC/bidi sequences to forge terminal output (e.g.
+  a fake "verified") or write the operator's clipboard. They now pass through the
+  same `sanitize()` filter every other device-string printer already uses. Host-only
+  (`tools/rsk` → 0.3.18); no `bcdDevice` change.
+- **OpenPGP key import rejects an RSA public exponent other than 65537.** The signer
+  and DECIPHER hardcode e = 65537, so importing a key with a different exponent used
+  to store a silently-unusable key while the public-key DO advertised the imported e;
+  import now fails with `6A80` (incorrect parameters), matching the PIV path.
+  **bcdDevice → 0x0848.**
+- **`VENDOR_AUDIT_CONFIG` rejects an unknown op instead of enabling.** Any target
+  other than 0 (disable) / 1 (enable) / 2 (status) used to alias to enable; an
+  unknown op is now rejected with `CTAP2_ERR_INVALID_PARAMETER`. **bcdDevice → 0x0849.**
+
+### Added
+
+- **The audit journal is now opt-in and OFF by default.** It used to record every
+  boot and FIDO/config/backup event to a flash ring unconditionally; that write
+  churn is now gated behind a per-device flag that ships **off**, so a default key
+  writes no journal entries. Turn it on/off from the host with `rsk audit enable` /
+  `rsk audit disable` (`rsk audit status` reads the state without a touch), or the
+  new `VENDOR_AUDIT_CONFIG` (0x0E) CTAP vendor subcommand. A change needs a PIN
+  (when set) plus a touch — a silent host cannot flip a user's tamper-evident trail
+  — and the transition is itself journalled. An existing device upgrades to off; its
+  prior journal and hash chain are preserved (still readable and checkpointable),
+  logging just stops until re-enabled. **bcdDevice → 0x0847.**
+- **`strict-config` cargo feature** — restores the strict admin-write
+  authorization that used to be the shipped default (device-config writes
+  presence/PIN-gated, ungated transport writes refused). OFF by default now; see
+  the "default posture flipped" Changed entry. Build/ship the strict image with
+  `--features strict-config` (release flavor `firmware-strict-config`). Distinct
+  from the runtime flash flag `EF_HARDENED`.
+- **Build-time AAGUID override.** `AAGUID=<uuid-or-32-hex> cargo build` bakes a
+  custom FIDO2 AAGUID (the authenticator-model id in getInfo / attestation): the
+  value is validated in `crates/rsk-fido/build.rs` and const-parsed in `consts.rs`
+  (baked as `PK_AAGUID`), defaulting to RS-Key's reproducible UUIDv5. It is meant
+  for a fork that ships its own metadata — a non-default AAGUID makes the
+  checked-in metadata statement no longer match, and advertising a real vendor's
+  AAGUID would be an attestation forgery that fails to chain anyway. The default
+  build's AAGUID is unchanged and its image is **byte-for-byte identical**
+  (compile-time const parse, no runtime code) — **no bcdDevice bump.**
+- **The USB manufacturer/product strings are runtime-configurable via the phy
+  record, and a Yubico VID now auto-fills the whole identity.** A new phy tag
+  `0x0F` (USB_MANUFACTURER) sets the iManufacturer string; `rsk hw` gains
+  `--manufacturer` / `--product`. Precedence per string: an explicit phy tag wins,
+  else the effective VID picks a default (a Yubico VID `0x1050` fills in both
+  `Yubico` and `YubiKey RSK OTP+FIDO+CCID`, so a VID-only repoint via PicoForge /
+  `rsk hw` now "just works" for `ykman` / Yubico Authenticator — previously the
+  manufacturer followed the VID but the product did not), else the build const.
+  The default build still presents its own RS-Key identity; nothing masquerades
+  unless you set it. ⚠️ an explicit manufacturer/product lets any VID carry any
+  vendor name — the identity stays cosmetic, never an authenticity signal
+  (docs/threat-model.md). Forward-compatible: an old phy record without `0x0F`
+  falls back to the VID/build default. **bcdDevice → 0x083D.**
+- **PIV serves a default CHUID, so a freshly flashed card works under Windows
+  CAPI.** The Windows PIV minidriver enumerates a card's containers from the Card
+  Holder Unique Identifier (CHUID, object `5FC102`); a card that had none answered
+  `6A82`, and CryptoAPI sign / auth then stayed "pending" on slots `9A`/`9C`. The
+  applet now synthesizes a default CHUID when none is provisioned — the well-known
+  non-federal FASC-N plus a device-stable GUID (`sha256(serial)[..16]`), the same
+  shape `ykman piv objects generate chuid` writes. A host-written CHUID still
+  overrides it (flash is read first). RSA/EC signing itself was always correct
+  (verified byte-for-byte against a real YubiKey 5.7.4); this is the enumeration
+  half of the issue #44 PIV-under-CAPI reports. **bcdDevice → 0x0839.**
+- **OpenPGP brainpoolP256r1 and brainpoolP384r1** (ECDSA on the sign / auth slots,
+  ECDH on the decrypt slot). gpg can now `key-attr` / `generate` / `keytocard` a
+  brainpool key, matching the curves a real YubiKey 5.7.4 advertises in the
+  algorithm-information DO (`0xFA`). brainpoolP512r1 stays absent — no Rust
+  arithmetic for the 512-bit brainpool curve exists yet. The applet keys off the
+  `bp256` / `bp384` crates (fiat-crypto backend), checked byte-for-byte against
+  OpenSSL test vectors. **bcdDevice → 0x0836.**
+- **`rsk bench` — an on-device crypto-latency harness that survives XIP-cache
+  noise.** Steady-state EC latency on the RP2350 shifts ±~30 ms with code layout
+  (the hot working set overflows the 16 KB XIP cache), so a host-timed mean fakes
+  regressions. The new `bench` firmware feature (vendor command, never shipped —
+  like `keygen-bench`) times a primitive with the device's own timer and returns a
+  robust median / MAD plus a separate cold-cache sample; `rsk bench --compare`
+  gives an A/B verdict between two saved runs. The summary is computed on-device by
+  the new host-tested, Kani-proved `rsk-bench` crate. Feature is off by default, so
+  the shipped image is byte-for-byte unchanged — **no bcdDevice bump.**
+- **Default firmware images for 2 MB and 16 MB boards.** The signed release now
+  ships `firmware-2mb` (`FLASH_SIZE=2M KVMAIN=896K`) and `firmware-16mb`
+  (`FLASH_SIZE=16M`) alongside the 4 MB default — the flash-geometry siblings of
+  the default image, same feature set and RS-Key identity, for boards whose chip
+  is not the 4 MB default (Seeed XIAO RP2350 / Waveshare RP2350-Zero-CM at 2 MB;
+  TenStar RP2350-USB at 16 MB). PR CI smoke-builds both so a 2 MB link/fit
+  regression is caught early. Build/release wiring only; the 4 MB default image is
+  byte-for-byte unchanged — **no bcdDevice bump.**
+
+### Changed
+
+- **Faster PIV/OpenPGP EC signing and key derivation.** The generic RustCrypto
+  signer PIV GENERAL AUTHENTICATE and OpenPGP PSO:CDS used derived the public key
+  `d·G` on every signature (never used when only signing) and ran `k·G` through
+  the crate's slow generic `mul_by_generator`. Both `k·G` (ECDSA nonce commitment)
+  and `d·G` (public-key derivation, used by keygen and GET DATA) now go through the
+  shared fixed-base comb in the new **`rsk-ec`** crate — several× faster on the
+  in-order Cortex-M33 and **byte-identical** to the crate (KAT-checked). The comb is
+  **constant-time** (branch-free window add with a `subtle` table select), so it does
+  not leak the nonce/scalar via timing — matching the crate's `mul_by_generator`; this
+  also hardens the comb FIDO already carried, which `rsk-ec` now de-duplicates, so all
+  three applets share one KAT-verified constant-time implementation. ECDSA over
+  P-256/P-384/secp256k1 and the P-521 pubkey are covered; ECDH is variable-base and
+  unchanged. On-device (Waveshare Zero):
+  P-384 ECDSA sign ~537 ms → ~0.2 s, P-256 sign ~100 → ~50 ms, EC keygen much faster.
+- **Faster PIV RSA signing** (~3.1× on RSA-2048, ~2.9× on RSA-4096; on-device
+  medians — 0.13 s / 0.86 s — now beat a real YubiKey 5.7's 0.18 s / 1.39 s).
+  Slot private-key operations now run the
+  CRT modexp through the vendored UMAAL assembly (`rsk_rsa_asm::sign_crt`) instead
+  of the pure-Rust `num-bigint-dig` 4-bit-window path, and the two full-width
+  public-exponent modexps around it — the blinding factor `rᵉ` and the fault
+  check `sigᵉ` — now use the asm too (`rsk_rsa_asm::modexp_pub`). The sealed key
+  caches the CRT parameters (`P‖Q‖dP‖dQ‖qInv`) so a signature no longer rebuilds
+  `d`/`dP`/`dQ`/`qInv` (two modular inversions) every time. Base blinding and the
+  Bellcore fault check (`sigᵉ ≡ c mod n`) are kept — the fault check also means a
+  faulted CRT half or an asm/marshaling bug can never emit a valid signature.
+  Forward-compatible: keys sealed by an older firmware (`P‖Q` only) still load and
+  sign — they get the fast modexp but recompute the CRT parameters once per
+  signature until re-provisioned. OpenPGP RSA gets the same treatment — see below.
+- **Faster OpenPGP RSA signing** (PSO:CDS and INTERNAL AUTHENTICATE), the same
+  ~3× win the PIV applet already banked. gpg RSA signatures now run the CRT
+  private operation on the vendored UMAAL assembly (`rsk_rsa_asm::sign_crt` /
+  `modexp_pub`, via the shared `rsk_openpgp::rsa_crt` extracted from the PIV
+  path) instead of the pure-Rust `num-bigint-dig` path that rebuilt `dP`/`dQ`/
+  `qInv` (two modular inversions) on every signature. The sealed key now caches
+  the CRT parameters (`P‖Q‖dP‖dQ‖qInv`). Base blinding and the Bellcore fault
+  check (`sigᵉ ≡ c mod n`) are kept, so a faulted CRT half or an asm/marshaling
+  bug can never emit a valid signature. PSO:DECIPHER is unchanged (still the `rsa`
+  crate's constant-time PKCS#1 v1.5 unpadding). Forward-compatible: keys sealed by
+  an older firmware (`P‖Q`, including the legacy CFB seal) still load and sign —
+  they recompute the CRT parameters once and re-seal forward to the new
+  authenticated 5-field layout.
+- **⚠️ Default security posture flipped: device-config writes are now UNGATED by
+  default (full YubiKey/ykman parity).** On the default build the CCID Management
+  WRITE CONFIG (`0x1C`) and the FIDO vendor CONFIG_WRITE (`0x0C`) no longer require
+  operator presence / a PIN `pinUvAuthToken` — any USB host can rewrite the
+  reported DeviceInfo. The previous presence/PIN-gated behaviour is now opt-in via
+  `--features strict-config`. This deliberately weakens the DEFAULT threat model
+  (docs/threat-model.md); build/ship `firmware-strict-config` for the strict
+  posture. Part of a broader default→permissive flip: the default build also now
+  serves ykman's CTAPHID vendor WRITE CONFIG (`0x43`) and the OTP-HID
+  SET_DEVICE_INFO (`0x15`) DeviceInfo writes — both ungated, persisting the same
+  `EF_DEV_CONF` every READ CONFIG echoes — and the remaining OTP-HID admin slots:
+  SCAN_MAP (`0x12`, functional — a stored custom scancode map remaps typed OTP
+  output for non-US hosts) plus DEVICE_CONFIG (`0x11`) and NDEF (`0x08`/`0x09`) as
+  accept+store (inert on this USB-only board, no NFC radio). Management RESET
+  (INS `0x1E` / ykman's `0x1F`) is a device-wide factory reset in the default build
+  — presence-gated even here, since an ungated one-APDU wipe would be a footgun —
+  wiping all flash but the org attestation and rebooting to re-provision; it stays
+  `6D00` under strict-config. **bcdDevice → 0x0841.**
+- **The USB manufacturer string and OpenPGP AID vendor now follow the effective
+  (phy-overridden) VID at runtime.** Previously only the *build-time* VID chose them
+  (`VIDPID=Yubikey5`), so a runtime Yubico-VID repoint via PicoForge kept the
+  manufacturer `RS-Key` and the OpenPGP AID vendor unmanaged; both now switch with
+  the effective VID for a consistent identity (fixes the "manufacturer stays RS-Key"
+  report, picoforge#102). ⚠️ this lets a phy-repointed default key present a full
+  Yubico identity at runtime — a deliberate masquerade capability, previously
+  build-time-only (see docs/threat-model.md). **bcdDevice → 0x083B.**
+- **A FIDO PHY config-write now warm-reboots the device by default**, so a
+  VID/PID/product/interface change applies without a manual replug (RS-Key#33). The
+  phy `DISABLE_POWER_RESET` option bit (clear by default) turns it off; a `CONFIG_READ`
+  never reboots.
+- **The `flow` and `sparkle` LED effects honour the configured status colour**
+  instead of a fixed yellow→red gradient / random RGB, so a per-status colour set
+  via PicoForge or `rsk led` is actually shown.
+- **Faster PIN: the clientPIN key-agreement key is generated at power-up and its
+  public key is cached.** The first PIN entry after plugging the key in used to be
+  noticeably slower than the rest (a one-time elliptic-curve key generation on the
+  first `clientPIN` command); it now happens at boot, off the critical path. And
+  because every `getKeyAgreement` was needlessly re-deriving the same public key,
+  caching it speeds up *every* PIN operation, not just the first. Measured on the
+  RP2350: first PIN ~162 → ~64 ms and each subsequent PIN ~106 → ~62 ms (a real
+  YubiKey, for reference, is ~166 first / ~98 steady). The wire behaviour is
+  unchanged (same key, same protocol). **bcdDevice → 0x0838.**
+- **The elliptic-curve stack moved from RustCrypto 0.13 to 0.14** (`p256` / `p384`
+  / `p521` / `k256`, with `elliptic-curve` 0.14 and `ecdsa` 0.17), so brainpool and
+  the NIST curves share one arithmetic generation instead of two — cutting ~138 KB
+  of flash. EC signatures are byte-for-byte unchanged (host KATs prove it), so
+  keys provisioned before the upgrade keep working. **bcdDevice → 0x0836.**
+- **P-384 and secp256k1 FIDO signatures now sign through the fixed-base comb**
+  (as P-256 and P-521 already did), skipping 0.14's slower generic scalar
+  multiplication: on the RP2350, P-384 `getAssertion` drops ~570 → ~230 ms and
+  secp256k1 ~86 → ~50 ms. The signatures stay byte-identical to the crate signer,
+  secp256k1's low-S normalization included. **bcdDevice → 0x0837.**
+
+### Fixed
+
+- **PIV `GET METADATA` on an RSA slot is ~30× faster.** It rebuilt the entire
+  private key — `from_p_q`'s `dP/dQ/qInv` modular inverses, ~50 ms on RSA-4096 —
+  only to emit the public modulus; it now computes `N = p·q` directly (the fixed
+  65537 exponent needs no rebuild). Output is byte-for-byte identical.
+  **bcdDevice → 0x0845.**
+- **The first PIV Certificates-page open after a cold plug-in is no longer slow.**
+  A cold `read`/`has_data` of an absent FID scanned the whole flash partition to
+  prove absence, so the Yubico Authenticator Certificates tab — which probes the
+  cert object of all ~24 PIV slots, most empty — paid a full-partition scan per
+  empty slot on the first open of each power cycle (up to ~2 s on a well-used
+  device). The boot `scan()` now reports whether it enumerated the whole store,
+  and on a *complete* enumeration decides the entire FID space absent-by-omission,
+  so every applet's cold absent lookup is O(1) instead of a per-slot flash walk.
+  Robust by construction: a read-fault-truncated scan keeps confirm-on-miss, and a
+  torn power cut cannot hide a committed key (the forward ring walk is a
+  page-superset of `fetch_item`'s, and reclaim erases a source only after
+  forwarding its items). **bcdDevice → 0x0846.**
+- **A partial PicoForge config write no longer resets the fields it didn't touch.**
+  The FIDO `CONFIG_WRITE` (`0x0C`, target PHY) and CCID rescue `WRITE 0x1C` used to
+  *replace* the whole `EF_PHY` record with a parse of the incoming blob, so any tag a
+  host omitted (product name, LED order/count, VID/PID) reverted to the build
+  default. Both paths now do a read-modify-write merge (`phy::merge_save`): only the
+  TLV tags in the blob are updated, the rest are preserved. Closes the firmware half
+  of picoforge#102 / RS-Key#33. **bcdDevice → 0x083A.**
+- **A YubiKey-masquerade product string can no longer crash Yubico Authenticator on
+  Windows.** `ykman` derives a YubiKey PID from the PC/SC reader name; a name with
+  `Yubico YubiKey` but no `OTP`/`FIDO`/`CCID` token makes it build the non-existent
+  PID `YK4_` and raise `KeyError`, aborting the whole card scan. The firmware now
+  appends ` OTP+FIDO+CCID` to a runtime product that looks like a YubiKey but omits
+  the `CCID` token (`normalize_usb_product`).
+- **"Steady / keep-LED-on" now works on the addressable (WS2812) backend.** The
+  animated effects (vapor/flow/bounce/sparkle) ignored `LED_STEADY` — only the legacy
+  on/off renderer read it — so on the default build the LED kept animating; the render
+  loop now shows the status colour solidly when steady is set.
+- **Plain single-colour LEDs now dim, and the `LED_DIMMABLE` bit is honoured.** The
+  `gpio` backend was on/off only, so brightness (and PicoForge's "LED Dimmable") did
+  nothing on a plain LED; it now uses software PWM (~500 Hz). The phy `LED_DIMMABLE`
+  option bit gates the global boot-brightness override. **bcdDevice → 0x083C.**
+- **Four small YubiKey-conformance nits surfaced by a full differential against a
+  real YubiKey 5.7.4.** None broke tooling, but each now matches the YubiKey
+  byte-for-byte: (1) standalone GET DATA of the OpenPGP General Feature Management
+  DO (`7F74`) returned the bare flag `20` instead of the `81 01 20` sub-DO a real
+  card returns — the primitive-DO unwrap no longer strips this constructed DO;
+  (2) the OpenPGP algorithm-information DO (`FA`) advertised the DEC slot's NIST /
+  secp256k1 curves as ECDSA (`0x13`) instead of ECDH (`0x12`) — the applet already
+  accepted ECDH decryption keys, only the advertisement was wrong; (3) the CCID OTP
+  status was 7 bytes (a stray trailing `0x00`) instead of the canonical 6; (4) the
+  OATH device id / PBKDF2 salt (SELECT tag `71`) was the raw chip-id hex text,
+  making it predictable from the semi-public serial — it is now an opaque one-way
+  hash of the device seed, stable across boots like a YubiKey's. **A device with an
+  OATH access code set must re-set it once after this change** (the salt moved).
+  **bcdDevice → 0x0835.**
+
+- **The OpenPGP card serial now matches the rest of the device identity.** The
+  OpenPGP application AID (GET DATA `0x4F`) spliced in the *raw* chip-id bytes, so
+  hosts rendered a serial unrelated to the one PIV (`INS 0xF8`), Management READ
+  CONFIG and OTP GET SERIAL report — visible on Windows / Kleopatra as an OpenPGP
+  serial with no bearing on the PIV one (issue #44). OpenPGP now carries the
+  8-digit device serial as packed BCD, matching a real YubiKey (whose OpenPGP AID
+  holds e.g. `37 36 50 93` for device serial 37365093), so `gpg` renders the same
+  decimal across all applets. Persistent keys and PINs are unaffected: the PIN/DEK
+  derivation roots on `sha256` of the full 8-byte chip id, not the serial. On an
+  already-provisioned device GnuPG's scdaemon sees the card under its corrected
+  serial once and re-adopts it (a one-time reconnect, no re-provisioning).
+- **OpenPGP now reports the device firmware version and an identity-consistent
+  manufacturer.** The vendor VERSION command (INS `0xF1`, read by `ykman openpgp
+  info` as "Application version") returned a hardcoded `4.6.0` inherited from the
+  upstream project; it now returns the shared `FIRMWARE_VERSION` (default `5.7.4`,
+  `FW_VERSION`-overridable at build time) that FIDO / OATH / OTP / Management
+  already report, matching a real YubiKey where the OpenPGP applet version equals
+  the firmware version. The OpenPGP AID manufacturer id (bytes 8-9) now follows the
+  USB identity: `0x0006` (Yubico) on the `VIDPID=Yubikey5` interop build so hosts
+  show the same vendor as a real YubiKey, `0xFFFE` (unmanaged range) on the default
+  RS-Key identity, which is not Yubico.
+- **The OpenPGP Key Information DO (`0xDE`) is now spec-conformant.** It was emitted
+  as a bare child of the application-related-data (`0x6E`) with 0-indexed key
+  references (`00/01/02`); the OpenPGP Card 3.4 spec nests it inside the `0x73`
+  discretionary DOs with references `01/02/03` for SIG/DEC/AUT. `ykman >= 5.2` reads
+  the DO from the discretionary set and keys on those references, so with the
+  firmware version now reporting 5.7.4, `ykman openpgp info` used to crash
+  (`KeyError`); it now reads the card. **bcdDevice → 0x0834.**
+
 ## [0.3.10] - 2026-07-20
 
 ### Fixed
@@ -1906,7 +2180,8 @@ family that keeps the "enterprise" features in the open tree.
   signature of it, and a CycloneDX SBOM. See
   [docs/releases.md](docs/releases.md) to verify a download.
 
-[Unreleased]: https://github.com/TheMaxMur/RS-Key/compare/v0.3.10...HEAD
+[Unreleased]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/TheMaxMur/RS-Key/compare/v0.3.10...v0.4.0
 [0.3.10]: https://github.com/TheMaxMur/RS-Key/compare/v0.3.9...v0.3.10
 [0.3.9]: https://github.com/TheMaxMur/RS-Key/compare/v0.3.8...v0.3.9
 [0.3.8]: https://github.com/TheMaxMur/RS-Key/compare/v0.3.7...v0.3.8

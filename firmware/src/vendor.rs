@@ -45,6 +45,18 @@ const INS_CORE1_STATS: u8 = 0x12;
 const INS_KEYGEN_BENCH: u8 = 0x13;
 #[cfg(feature = "keygen-bench")]
 const BENCH_ITERS: u32 = 400;
+// LATENCY MICROBENCH (bench builds only): time one EC / KDF hot path via the
+// RP2350 timer. P1 selects the primitive (0 = variable-base P-256 ECDH, the
+// XIP-cache-sensitive clientPIN path; 1 = the getAssertion comb sign; 2 = the
+// HKDF-SHA512 ratchet), P2 = warmup samples dropped from the warm stats. Computes
+// a robust median/MAD + a cold sample on-device (via the Kani-proved rsk-bench)
+// and returns the 20-byte Summary. Behind `bench` so it never ships — a timing
+// oracle, like keygen-bench. Sample count is kept modest so the slowest path
+// (ECDH, ~106 ms) finishes one blocking CCID APDU well inside PC/SC timeouts.
+#[cfg(feature = "bench")]
+const INS_BENCH: u8 = 0x14;
+#[cfg(feature = "bench")]
+const BENCH_SAMPLES: usize = 32;
 const INS_REBOOT: u8 = 0x1F; // P1: 0 = warm reboot, 1 = secure reboot to BOOTSEL
 
 /// Pending reboot request: 0 = none, 1 = warm reboot,
@@ -165,6 +177,26 @@ impl<S: Storage> Applet<Fs<S>> for VendorApplet<'_> {
                     _ => return Sw::INCORRECT_P1P2,
                 }
                 res.extend(&BENCH_ITERS.to_le_bytes());
+                Sw::OK
+            }
+            #[cfg(feature = "bench")]
+            INS_BENCH => {
+                use embassy_time::Instant;
+                if apdu.p1 > 2 {
+                    return Sw::INCORRECT_P1P2;
+                }
+                let sel = apdu.p1;
+                let warmup = apdu.p2 as usize;
+                let mut samples = [0u32; BENCH_SAMPLES];
+                for slot in samples.iter_mut() {
+                    let t0 = Instant::now();
+                    // black_box so the compiler can't hoist/fold the timed call.
+                    core::hint::black_box(rsk_fido::bench::run(sel));
+                    // Ops are 60–500 ms → microseconds fit u32 with room to spare.
+                    *slot = t0.elapsed().as_micros() as u32;
+                }
+                let summary = rsk_bench::summarize(&mut samples, warmup);
+                res.extend(&summary.to_le_bytes());
                 Sw::OK
             }
             INS_REBOOT => {

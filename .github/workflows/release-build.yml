@@ -12,8 +12,8 @@
 # an inline `attest-build-provenance` step can prove, i.e. Build L2).
 # See https://docs.github.com/actions/security-guides/using-artifact-attestations-and-reusable-workflows-to-achieve-slsa-v1-build-level-3
 #
-# This job: builds the 11 shipped firmware flavors reproducibly via `nix build`,
-# GATES on a bit-identical rebuild of all eleven (a non-reproducible image fails the
+# This job: builds the 14 shipped firmware flavors reproducibly via `nix build`,
+# GATES on a bit-identical rebuild of all fourteen (a non-reproducible image fails the
 # job before anything is published), generates a CycloneDX SBOM, hashes everything
 # into SHA256SUMS, attests GitHub build provenance for every .uf2, signs the
 # checksums with keyless cosign (sigstore/Fulcio via OIDC — no private key), and
@@ -84,20 +84,23 @@ jobs:
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
 
-      - name: build the 11 reproducible firmware flavors
+      - name: build the 14 reproducible firmware flavors
         run: |
           tag="${{ steps.tag.outputs.tag }}"
           mkdir -p dist
           # The ten touch-required flavors (default/pqc, fips/fips-pqc, the
           # strong-pin PIN-hardening pair, and the always-uv / strict-up behavior
           # pairs) plus the trusted-display flavor (its on-screen Approve/Deny is
-          # the physical-consent gate). `strict-up` ships with a caveat: it is not
-          # spec-conformant for the up:false pre-flight (docs/releases.md). The
-          # `no-touch` flavors auto-confirm user presence (test-only; see
-          # firmware/Cargo.toml "Never ship a no-touch build") and MUST NOT be
-          # published — a signed no-touch asset would remove the physical-consent
-          # gate from an end-user build.
-          for pkg in firmware firmware-pqc firmware-fips firmware-fips-pqc firmware-strong-pin firmware-strong-pin-pqc firmware-always-uv firmware-always-uv-pqc firmware-strict-up firmware-strict-up-pqc firmware-display; do
+          # the physical-consent gate) and the two flash-geometry siblings of the
+          # default image (2mb / 16mb — same features + RS-Key identity, only the
+          # flash map differs, for boards whose chip is not the 4 MB default).
+          # `strict-up` ships with a caveat: it is not spec-conformant for the
+          # up:false pre-flight (docs/releases.md). The `no-touch` flavors
+          # auto-confirm user presence (test-only; see firmware/Cargo.toml
+          # "Never ship a no-touch build") and MUST NOT be published — a signed
+          # no-touch asset would remove the physical-consent gate from an
+          # end-user build.
+          for pkg in firmware firmware-pqc firmware-fips firmware-fips-pqc firmware-strong-pin firmware-strong-pin-pqc firmware-always-uv firmware-always-uv-pqc firmware-strict-up firmware-strict-up-pqc firmware-display firmware-2mb firmware-16mb firmware-strict-config; do
             echo "::group::nix build .#$pkg"
             out="$(nix build ".#$pkg" --no-link --print-out-paths)"
             label="${pkg#firmware}"; label="${label#-}"
@@ -107,17 +110,17 @@ jobs:
           done
           ls -l dist
 
-      - name: reproducibility gate — rebuild all 5, require bit-identical
+      - name: reproducibility gate — rebuild all 14, require bit-identical
         run: |
           # `nix build --rebuild` recompiles the derivation already in the store
           # and fails with a hash mismatch if the output is not bit-identical.
           # A non-reproducible flavor fails here, before the release is created.
-          for pkg in firmware firmware-pqc firmware-fips firmware-fips-pqc firmware-strong-pin firmware-strong-pin-pqc firmware-always-uv firmware-always-uv-pqc firmware-strict-up firmware-strict-up-pqc firmware-display; do
+          for pkg in firmware firmware-pqc firmware-fips firmware-fips-pqc firmware-strong-pin firmware-strong-pin-pqc firmware-always-uv firmware-always-uv-pqc firmware-strict-up firmware-strict-up-pqc firmware-display firmware-2mb firmware-16mb firmware-strict-config; do
             echo "::group::nix build .#$pkg --rebuild"
             nix build ".#$pkg" --rebuild --no-link
             echo "::endgroup::"
           done
-          echo "all 11 flavors rebuilt bit-identical"
+          echo "all 14 flavors rebuilt bit-identical"
 
       - name: generate the CycloneDX SBOM
         run: |

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["firmware", "rsk-wipe", "crates/rsk-sdk", "crates/rsk-fs", "crates/rsk-usb", "crates/rsk-crypto", "crates/rsk-fido", "crates/rsk-openpgp", "crates/rsk-rsa-asm", "crates/rsk-sha512", "crates/rsk-mgmt", "crates/rsk-oath", "crates/rsk-otp", "crates/rsk-piv", "crates/rsk-rescue", "crates/rsk-led", "crates/rsk-ui", "crates/rsk-bip39", "crates/rsk-slip39", "crates/rsk-mldsa"]
+members = ["firmware", "rsk-wipe", "crates/rsk-sdk", "crates/rsk-fs", "crates/rsk-usb", "crates/rsk-crypto", "crates/rsk-fido", "crates/rsk-openpgp", "crates/rsk-rsa-asm", "crates/rsk-ec", "crates/rsk-sha512", "crates/rsk-mgmt", "crates/rsk-oath", "crates/rsk-otp", "crates/rsk-piv", "crates/rsk-rescue", "crates/rsk-led", "crates/rsk-ui", "crates/rsk-bip39", "crates/rsk-slip39", "crates/rsk-mldsa", "crates/rsk-bench"]
 
 # Embassy crates are versioned together; pin them all to the same git source so
 # they stay mutually compatible. We track `branch = "main"`, not a crates.io
@@ -29,6 +29,7 @@ rsk-crypto = { path = "crates/rsk-crypto" }
 rsk-fido = { path = "crates/rsk-fido" }
 rsk-openpgp = { path = "crates/rsk-openpgp" }
 rsk-rsa-asm = { path = "crates/rsk-rsa-asm" }
+rsk-ec = { path = "crates/rsk-ec" }
 # Fast byte-identical SHA-512/384 for the Cortex-M33 — a compact rolled
 # compression that fits the XIP cache, replacing `sha2`'s ~28 KB unrolled soft
 # backend on the FIDO key-derivation ratchet without changing any credential key.
@@ -48,6 +49,10 @@ rsk-slip39 = { path = "crates/rsk-slip39" }
 # Stack-optimized ML-DSA (FIPS 204) for ML-DSA-44 and -65 — streams the matrix A
 # so -65 fits the RP2350 main stack. Host-tested against NIST ACVP KATs + Kani.
 rsk-mldsa = { path = "crates/rsk-mldsa" }
+# Robust summary stats for the on-device latency harness — used only by the
+# firmware `bench` feature (a debug/measurement build, never shipped). Host-tested
+# + Kani-proved; the device computes the summary so the reported number is gated.
+rsk-bench = { path = "crates/rsk-bench" }
 # Trusted-display driver stack — compiled ONLY into the `display` firmware flavor
 # (and rsk-ui's host tests), never the standard key (all `dep:`-gated). embedded-
 # graphics: no_std 2D text/primitives + the `DrawTarget` trait the renderer is
@@ -64,13 +69,23 @@ u8g2-fonts = { version = "0.8", default-features = false, features = ["embedded_
 mipidsi = { version = "0.10" }
 embedded-hal-bus = { version = "0.3", default-features = false }
 minicbor = { version = "2.2", default-features = false }
-p256 = { version = "0.13", default-features = false, features = ["ecdsa", "arithmetic", "ecdh"] }
-# Additional FIDO2 signing curves; same 0.13 RustCrypto ecosystem as p256.
-p384 = { version = "0.13", default-features = false, features = ["ecdsa", "arithmetic", "ecdh"] }
-# p521 0.13 has no deterministic ECDSA (no DigestPrimitive); its newtype signs with
-# a random nonce (SHA-512 internally), which is no_std-friendly.
-p521 = { version = "0.13", default-features = false, features = ["ecdsa", "arithmetic", "ecdh"] }
-k256 = { version = "0.13", default-features = false, features = ["ecdsa", "arithmetic", "ecdh"] }
+p256 = { version = "0.14", default-features = false, features = ["ecdsa", "arithmetic", "ecdh"] }
+# Additional FIDO2 signing curves; same 0.14 RustCrypto ecosystem as p256.
+p384 = { version = "0.14", default-features = false, features = ["ecdsa", "arithmetic", "ecdh"] }
+p521 = { version = "0.14", default-features = false, features = ["ecdsa", "arithmetic", "ecdh"] }
+k256 = { version = "0.14", default-features = false, features = ["ecdsa", "arithmetic", "ecdh"] }
+# Brainpool for the OpenPGP applet. The bp256/bp384 wrappers are still 0.14.0-rc.15
+# (no stable release yet), but their ecdsa/elliptic-curve/primeorder deps resolve to
+# the SAME stable 0.14 line as the NIST curves above — one EC generation, no
+# duplication. The looped crypto-bigint field backend is picked in .cargo/config
+# (`bp*_backend="bigint"`) — smaller than fiat, and brainpool is not a hot path.
+bp256 = { version = "=0.14.0-rc.15", default-features = false, features = ["ecdsa", "arithmetic", "sha256"] }
+bp384 = { version = "=0.14.0-rc.15", default-features = false, features = ["ecdsa", "arithmetic", "sha384"] }
+# ecdsa 0.17 / elliptic-curve 0.14: the single EC generation shared by every curve.
+# `ecdsa` is named directly for the brainpool SigningKey (bp* don't alias it),
+# `elliptic-curve` for brainpool ECDH.
+ecdsa = { version = "0.17", default-features = false, features = ["algorithm"] }
+elliptic-curve = { version = "0.14", default-features = false, features = ["ecdh", "arithmetic", "sec1"] }
 # EdDSA (Ed25519) — OKP key, deterministic 64-byte signature.
 ed25519-dalek = { version = "2", default-features = false, features = ["zeroize"] }
 # X25519 ECDH for OpenPGP Cv25519. Same curve25519-dalek 4 backend as
@@ -93,7 +108,7 @@ hmac = { version = "0.12", default-features = false }
 # RFC 6979 deterministic ECDSA nonces — already in the tree transitively via
 # `ecdsa`; a direct dep so `ec.rs` can derive `k` itself and swap the crate's
 # generic `k·G` for the fixed-base comb while keeping byte-identical signatures.
-rfc6979 = { version = "0.4", default-features = false }
+rfc6979 = { version = "0.6", default-features = false }
 hkdf = { version = "0.12", default-features = false }
 # `zeroize` wipes the expanded round keys when a cipher instance drops.
 aes = { version = "0.8", default-features = false, features = ["zeroize"] }

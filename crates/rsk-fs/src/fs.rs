@@ -33,18 +33,21 @@ pub struct Fs<S: Storage> {
     /// Yubico Authenticator reads) was O(slots · flash). Set on every write,
     /// cleared on every remove; `scan` seeds it from `for_each_key`.
     ///
-    /// A bare clear bit is NOT trusted as "absent": the bulk `for_each_key` can
-    /// silently under-count a key after a torn power-cut migration (the reliable
-    /// per-key `fetch_item` still recovers it), which would turn a clear bit into
-    /// a false-absent — committed data read back as gone. `decided` gates that.
+    /// A bare clear bit is trusted as "absent" only once `decided` confirms it:
+    /// `for_each_key` returning *complete* means it enumerated every live key (its
+    /// forward ring walk is a page-superset of `fetch_item`'s, and reclaim erases a
+    /// source only after forwarding its items — no torn power cut can hide a
+    /// committed key), so `scan` decides the whole space. A walk truncated by a
+    /// flash read fault leaves the un-yielded FIDs undecided instead.
     present: [u8; FID_PRESENT_BYTES],
     /// Authority bit for [`present`](Self#structfield.present): set iff `fid`'s
-    /// present/absent state is confirmed. `scan` marks only the keys the bulk
-    /// pass actually enumerated; every other FID stays *unknown* until a backend
-    /// probe decides it — never a possibly-wrong fast "absent". `fetch_item` is
-    /// the source of truth and the cache only memoises it, so a false-absent is
-    /// impossible. Cost: the first probe of each absent FID per boot pays one
-    /// backend scan, then it is O(1). See [`known_absent`](Self::known_absent).
+    /// present/absent state is confirmed. After a *complete* `scan` (`for_each_key`
+    /// ran to its `None` terminator) EVERY FID is decided — present ones from the
+    /// walk, all others authoritatively absent — so a cold absent read is O(1). If
+    /// the walk was truncated (a read fault) only the enumerated keys are decided;
+    /// the rest stay *unknown* and fall through to the reliable per-key `fetch_item`,
+    /// which memoises the answer, so a false-absent is impossible either way. See
+    /// [`known_absent`](Self::known_absent) and [`scan`](Self::scan).
     decided: [u8; FID_PRESENT_BYTES],
     /// Monotonic counter bumped on every content-changing `put`/`delete`. A caller
     /// caching a derived view of the store (e.g. the credMgmt slot→rpIdHash index)
@@ -138,11 +141,8 @@ impl<S: Storage> Fs<S> {
         dynamic.clear();
         present.fill(0);
         decided.fill(0);
-        self.storage.for_each_key(&mut |fid| {
+        let complete = self.storage.for_each_key(&mut |fid| {
             // Every enumerated key — dynamic or EF_META — is confirmed present.
-            // Keys the bulk pass does NOT yield stay *undecided* (not fast-absent),
-            // so a torn-migration under-count can't turn one into a false-absent;
-            // it is confirmed against the backend on first access.
             let (i, m) = ((fid >> 3) as usize, 1u8 << (fid & 7));
             present[i] |= m;
             decided[i] |= m;
@@ -156,6 +156,17 @@ impl<S: Storage> Fs<S> {
                 let _ = dynamic.push(fid);
             }
         });
+        // A COMPLETE enumeration yielded every live key: the backend's forward ring
+        // walk is a page-superset of `fetch_item`'s, and page reclaim erases a source
+        // only after forwarding its items, so no torn power cut can hide a committed
+        // key from it. An un-yielded FID is then authoritatively absent — decide the
+        // whole FID space so a cold absent `read`/`has_data` is O(1) instead of a
+        // full-partition scan. Only a flash READ FAULT can truncate the walk
+        // (`complete == false`); then leave the un-yielded FIDs *undecided* so
+        // confirm-on-miss re-probes them and a hidden live page is never read absent.
+        if complete {
+            decided.fill(0xFF);
+        }
     }
 
     /// Copy file contents into `buf`; returns the value's full length, or `None`.

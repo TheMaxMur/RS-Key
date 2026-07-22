@@ -30,11 +30,17 @@ const RESP_CAP: usize = 2038;
 const IDX_OPENPGP: usize = 1;
 const IDX_PIV: usize = 5;
 
-/// YubiKey Management vendor command number carried over CTAPHID (logical, i.e.
-/// `TYPE_INIT` already stripped by the transport). Only READ CONFIG is served — it
-/// is what `ykman` / Yubico Authenticator read to identify the key over the FIDO
-/// interface; WRITE CONFIG / mode-switch stay CCID + OTP only.
+/// YubiKey Management vendor commands carried over CTAPHID (logical, i.e.
+/// `TYPE_INIT` already stripped by the transport). READ CONFIG (`0x42`) is what
+/// `ykman` / Yubico Authenticator read to identify the key over the FIDO
+/// interface. The DEFAULT build ALSO serves WRITE CONFIG (`0x43`) ungated, for
+/// full ykman parity; `--features strict-config` refuses it (see the write arm).
 const CTAP_READ_CONFIG: u8 = 0x42;
+/// WRITE CONFIG (ykman `CTAP_WRITE_CONFIG`): persist the DeviceConfig blob. Served
+/// only on the DEFAULT (permissive) build — under `strict-config` a config write
+/// stays CCID/FIDO-CBOR-gated only, so this is not carried.
+#[cfg(not(feature = "strict-config"))]
+const CTAP_WRITE_CONFIG: u8 = 0x43;
 
 pub struct CcidApplets<'a> {
     fs: &'a RefCell<Store>,
@@ -51,8 +57,8 @@ pub struct CcidApplets<'a> {
 }
 
 impl<'a> CcidApplets<'a> {
-    /// `serial_id` is the device chip id (its first 4 bytes go into the OpenPGP
-    /// full AID); `rng` is the hardware TRNG shared with the CTAPHID handler.
+    /// `serial_id` is the device chip id (its BCD-encoded 8-digit serial goes into
+    /// the OpenPGP full AID); `rng` is the hardware TRNG shared with the CTAPHID handler.
     /// The three `presence` params are the same physical presence source (BOOTSEL
     /// by default, optionally a GPIO button) behind per-applet traits (the
     /// caller's concrete `&RefCell` coerces to each).
@@ -71,6 +77,7 @@ impl<'a> CcidApplets<'a> {
         otp_key: Option<[u8; 32]>,
         devk: Option<[u8; 32]>,
         kv_total: u32,
+        openpgp_mfr: u16,
     ) -> Self {
         Self {
             fs,
@@ -79,7 +86,8 @@ impl<'a> CcidApplets<'a> {
             // The vendor reboot-to-BOOTSEL (P1=01) is gated by the same presence
             // as the rescue applet, closing the cross-AID bypass of that gate.
             vendor: VendorApplet::new(rescue_presence),
-            openpgp: OpenpgpApplet::new(serial_id, serial_hash, otp_key, rng, presence),
+            openpgp: OpenpgpApplet::new(serial_id, serial_hash, otp_key, rng, presence)
+                .with_manufacturer(openpgp_mfr),
             management: ManagementApplet::new(serial_id, mgmt_presence),
             // Touch-flagged OATH credentials gate CALCULATE on the same button.
             oath: OathApplet::new(serial_id, serial_hash, otp_key, rng, oath_presence),
@@ -122,6 +130,27 @@ impl<'a> CcidApplets<'a> {
                 };
                 Some(&self.resp[..n])
             }
+            // DEFAULT build only: ykman's WRITE CONFIG over FIDO. The payload is
+            // the DeviceConfig `get_bytes()` blob — a leading length byte then the
+            // TLV — the same store CCID WRITE CONFIG / OTP-HID SET_DEVICE_INFO use,
+            // so it round-trips into every READ CONFIG. Ungated for parity (a
+            // strict build never defines this arm; the write stays gated elsewhere).
+            #[cfg(not(feature = "strict-config"))]
+            CTAP_WRITE_CONFIG => {
+                if _data.is_empty() {
+                    return None;
+                }
+                let len = _data[0] as usize;
+                if 1 + len > _data.len() {
+                    return None;
+                }
+                let ok = {
+                    let mut fsb = self.fs.borrow_mut();
+                    rsk_mgmt::persist_dev_conf(&mut *fsb, &_data[1..1 + len]).is_ok()
+                };
+                // An empty body is the ykman-expected acknowledgement.
+                if ok { Some(&self.resp[..0]) } else { None }
+            }
             _ => None,
         }
     }
@@ -131,6 +160,18 @@ impl<'a> CcidApplets<'a> {
     pub fn scrub(&mut self) {
         use zeroize::Zeroize;
         self.resp.zeroize();
+    }
+
+    /// Device-wide factory reset: wipe all flash but the org attestation, exactly
+    /// like the trusted-display factory-reset flow (`rsk_fido::survives_factory_reset`).
+    /// The next boot re-provisions a fresh seed. Called by the worker after a
+    /// Management RESET's SW_OK, then a reboot. DEFAULT build only.
+    #[cfg(not(feature = "strict-config"))]
+    pub fn factory_wipe(&mut self) {
+        let _ = self
+            .fs
+            .borrow_mut()
+            .factory_wipe(rsk_fido::survives_factory_reset);
     }
 
     /// Drop any in-flight incoming command chain and held response remainder. Called

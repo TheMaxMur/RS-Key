@@ -57,6 +57,33 @@ def test_upsert_appends_when_absent():
     assert tlvs == [(0x06, b"\x00\x00"), (hw.TAG_LED_DRIVER, b"\x01")]
 
 
+def test_upsert_str_encodes_nul_terminated_and_preserves_others():
+    # Setting the USB identity strings must not disturb existing LED tags, and the
+    # value carries the trailing NUL the firmware parser expects.
+    tlvs = [(hw.TAG_LED_GPIO, b"\x16"), (hw.TAG_LED_ORDER, b"\x01")]
+    hw._upsert_str(tlvs, hw.TAG_USB_MANUFACTURER, "Yubico")
+    hw._upsert_str(tlvs, hw.TAG_USB_PRODUCT, "YubiKey RSK OTP+FIDO+CCID")
+    by = dict(tlvs)
+    assert by[hw.TAG_USB_MANUFACTURER] == b"Yubico\x00"
+    assert by[hw.TAG_USB_PRODUCT] == b"YubiKey RSK OTP+FIDO+CCID\x00"
+    assert by[hw.TAG_LED_GPIO] == b"\x16"
+    # A second set replaces in place, not duplicates.
+    hw._upsert_str(tlvs, hw.TAG_USB_MANUFACTURER, "Acme")
+    assert dict(tlvs)[hw.TAG_USB_MANUFACTURER] == b"Acme\x00"
+    assert sum(1 for t, _ in tlvs if t == hw.TAG_USB_MANUFACTURER) == 1
+    # The whole record round-trips through the firmware-shaped parser.
+    assert hw._parse_tlv(hw._serialize_tlv(tlvs)) == tlvs
+
+
+def test_upsert_str_rejects_oversize_and_empty():
+    for bad in ["x" * 33, ""]:
+        try:
+            hw._upsert_str([], hw.TAG_USB_MANUFACTURER, bad)
+        except SystemExit:
+            continue
+        raise AssertionError(f"string {bad!r} was not rejected")
+
+
 def test_driver_and_order_maps_match_firmware():
     # PicoForge LedDriverType numbering, and the RS-Key order values.
     assert hw.DRIVERS == {"gpio": 1, "pimoroni": 2, "ws2812": 3}
@@ -68,7 +95,13 @@ class _Args:
 
     def __init__(self, **kw):
         defaults = dict(
-            led_pin=None, led_driver=None, led_order=None, led_num=None, touch_timeout=None
+            led_pin=None,
+            led_driver=None,
+            led_order=None,
+            led_num=None,
+            touch_timeout=None,
+            manufacturer=None,
+            product=None,
         )
         defaults.update(kw)
         self.__dict__.update(defaults)
@@ -95,3 +128,24 @@ def test_apply_args_rejects_out_of_range():
 def test_would_set_distinguishes_read_from_write():
     assert not hw._would_set(_Args())
     assert hw._would_set(_Args(touch_timeout=45))
+
+
+def test_show_sanitizes_device_strings(capsys):
+    # A counterfeit device can embed ANSI/OSC escapes in the USB identity strings;
+    # _show must render them stripped, never injecting terminal control (run-25).
+    tlvs = [
+        (hw.TAG_USB_PRODUCT, b"\x1b]0;pwn\x07evil\x00"),
+        (hw.TAG_USB_MANUFACTURER, b"Acme\x00"),
+    ]
+    hw._show(tlvs)
+    out = capsys.readouterr().out
+    assert "\x1b" not in out
+    assert "evil" in out and "Acme" in out
+
+
+def test_show_absent_strings_use_build_default(capsys):
+    # Absent identity tags must print the build-default marker, not literal "None".
+    hw._show([])
+    out = capsys.readouterr().out
+    assert "(build/VID default)" in out
+    assert "None" not in out

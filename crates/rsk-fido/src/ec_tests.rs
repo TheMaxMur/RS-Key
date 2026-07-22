@@ -2,7 +2,7 @@
 // Copyright (C) 2026 RS-Key contributors
 
 use super::*;
-use p256::EncodedPoint;
+use p256::Sec1Point;
 use p256::ecdsa::{Signature, VerifyingKey, signature::Verifier};
 
 #[test]
@@ -19,8 +19,8 @@ fn sign_is_deterministic_and_verifies() {
 
     // Reconstruct the public key from the COSE coords and verify.
     let (x, y) = key.public_xy();
-    let pt = EncodedPoint::from_affine_coordinates((&x).into(), (&y).into(), false);
-    let vk = VerifyingKey::from_encoded_point(&pt).unwrap();
+    let pt = Sec1Point::from_bytes(&sec1_uncompressed(x, y)).unwrap();
+    let vk = VerifyingKey::from_sec1_point(&pt).unwrap();
     let sig = Signature::from_der(&a[..na]).unwrap();
     assert!(vk.verify(msg, &sig).is_ok());
 }
@@ -54,8 +54,8 @@ const MSG: &[u8] = b"authData||clientDataHash";
 fn p521_comb_matches_mul_by_generator() {
     use p521::Scalar;
     use p521::elliptic_curve::PrimeField;
-    use p521::elliptic_curve::ops::MulByGenerator;
-    use p521::elliptic_curve::sec1::ToEncodedPoint;
+    use p521::elliptic_curve::group::Group;
+    use p521::elliptic_curve::sec1::ToSec1Point;
 
     // Scalars exercising each 131-bit comb block, its boundaries, and a spread.
     let mut reprs: std::vec::Vec<[u8; 66]> = std::vec::Vec::new();
@@ -76,12 +76,12 @@ fn p521_comb_matches_mul_by_generator() {
     reprs.push(spread);
 
     for r in reprs {
-        let fb = p521::FieldBytes::clone_from_slice(&r);
+        let fb = p521::FieldBytes::from(r);
         let k = Option::<Scalar>::from(Scalar::from_repr(fb)).expect("scalar in range");
-        let got = comb_mul(&k).to_affine().to_encoded_point(false);
+        let got = rsk_ec::comb_mul_p521(&k).to_affine().to_sec1_point(false);
         let want = p521::ProjectivePoint::mul_by_generator(&k)
             .to_affine()
-            .to_encoded_point(false);
+            .to_sec1_point(false);
         assert_eq!(got, want, "comb mismatch for scalar {r:?}");
     }
 }
@@ -90,8 +90,8 @@ fn p521_comb_matches_mul_by_generator() {
 fn p256_comb_matches_mul_by_generator() {
     use p256::Scalar;
     use p256::elliptic_curve::PrimeField;
-    use p256::elliptic_curve::ops::MulByGenerator;
-    use p256::elliptic_curve::sec1::ToEncodedPoint;
+    use p256::elliptic_curve::group::Group;
+    use p256::elliptic_curve::sec1::ToSec1Point;
 
     // Scalars exercising each 64-bit comb block, its start, the top bit, and a spread.
     let mut reprs: std::vec::Vec<[u8; 32]> = std::vec::Vec::new();
@@ -112,12 +112,12 @@ fn p256_comb_matches_mul_by_generator() {
     reprs.push(spread);
 
     for r in reprs {
-        let fb = p256::FieldBytes::clone_from_slice(&r);
+        let fb = p256::FieldBytes::from(r);
         let k = Option::<Scalar>::from(Scalar::from_repr(fb)).expect("scalar in range");
-        let got = comb_mul_p256(&k).to_affine().to_encoded_point(false);
+        let got = rsk_ec::comb_mul_p256(&k).to_affine().to_sec1_point(false);
         let want = p256::ProjectivePoint::mul_by_generator(&k)
             .to_affine()
-            .to_encoded_point(false);
+            .to_sec1_point(false);
         assert_eq!(got, want, "comb mismatch for scalar {r:?}");
     }
 }
@@ -128,25 +128,128 @@ fn p256_comb_sign_matches_crate() {
     // deterministic k, and comb_mul_p256 == mul_by_generator. A mismatch means a
     // wrong k (bad order/z derivation) or a comb bug — either would be a silent
     // wire-format regression for every P-256 credential.
-    use p256::ecdsa::{DerSignature, SigningKey, signature::Signer};
+    use p256::ecdsa::{SigningKey, signature::Signer};
 
     let msgs: &[&[u8]] = &[b"", b"authData||clientDataHash", &[0xABu8; 200]];
     for seed in [0x01u8, 0x11, 0x7F, 0xC3, 0xFE] {
         let scalar = [seed; 32];
-        let signing = match SigningKey::from_bytes(p256::FieldBytes::from_slice(&scalar)) {
+        let signing = match SigningKey::from_bytes(&p256::FieldBytes::from(scalar)) {
             Ok(s) => s,
             Err(_) => continue, // out-of-range scalar
         };
         for msg in msgs {
-            let want: DerSignature = signing.sign(msg);
+            // 0.17 only impls `Signer<Signature>`; DER via `to_der()`.
+            let want: Signature = signing.sign(msg);
             let mut got = [0u8; MAX_DER_SIG];
             let n = sign_p256_comb(signing.as_nonzero_scalar(), msg, &mut got);
             assert_eq!(
                 &got[..n],
-                want.as_bytes(),
+                want.to_der().as_bytes(),
                 "seed={seed:#x} msg_len={}",
                 msg.len()
             );
+        }
+    }
+}
+
+#[test]
+fn p384_comb_matches_mul_by_generator() {
+    use p384::Scalar;
+    use p384::elliptic_curve::PrimeField;
+    use p384::elliptic_curve::group::Group;
+    use p384::elliptic_curve::sec1::ToSec1Point;
+    let mut reprs: std::vec::Vec<[u8; 48]> = std::vec::Vec::new();
+    reprs.push([0u8; 48]);
+    let mut one = [0u8; 48];
+    one[47] = 1;
+    reprs.push(one);
+    for bitpos in [96usize, 192, 288, 383] {
+        let mut r = [0u8; 48];
+        r[47 - bitpos / 8] = 1 << (bitpos % 8);
+        reprs.push(r);
+    }
+    let mut spread = [0u8; 48];
+    for (b, byte) in spread.iter_mut().enumerate() {
+        *byte = (b as u8).wrapping_mul(37).wrapping_add(1);
+    }
+    spread[0] = 0;
+    reprs.push(spread);
+    for r in reprs {
+        let fb = p384::FieldBytes::from(r);
+        let k = Option::<Scalar>::from(Scalar::from_repr(fb)).expect("scalar in range");
+        let got = rsk_ec::comb_mul_p384(&k).to_affine().to_sec1_point(false);
+        let want = p384::ProjectivePoint::mul_by_generator(&k)
+            .to_affine()
+            .to_sec1_point(false);
+        assert_eq!(got, want, "p384 comb mismatch for {r:?}");
+    }
+}
+
+#[test]
+fn k256_comb_matches_mul_by_generator() {
+    use k256::Scalar;
+    use k256::elliptic_curve::PrimeField;
+    use k256::elliptic_curve::sec1::ToSec1Point;
+    let mut reprs: std::vec::Vec<[u8; 32]> = std::vec::Vec::new();
+    reprs.push([0u8; 32]);
+    let mut one = [0u8; 32];
+    one[31] = 1;
+    reprs.push(one);
+    for bitpos in [64usize, 128, 192, 255] {
+        let mut r = [0u8; 32];
+        r[31 - bitpos / 8] = 1 << (bitpos % 8);
+        reprs.push(r);
+    }
+    let mut spread = [0u8; 32];
+    for (b, byte) in spread.iter_mut().enumerate() {
+        *byte = (b as u8).wrapping_mul(37).wrapping_add(1);
+    }
+    spread[0] = 0;
+    reprs.push(spread);
+    for r in reprs {
+        let fb = k256::FieldBytes::from(r);
+        let k = Option::<Scalar>::from(Scalar::from_repr(fb)).expect("scalar in range");
+        let got = rsk_ec::comb_mul_k256(&k).to_affine().to_sec1_point(false);
+        let want = k256::ProjectivePoint::mul_by_generator(&k)
+            .to_affine()
+            .to_sec1_point(false);
+        assert_eq!(got, want, "k256 comb mismatch for {r:?}");
+    }
+}
+
+#[test]
+fn p384_sign_matches_crate() {
+    use p384::ecdsa::{SigningKey, signature::Signer};
+    let msgs: &[&[u8]] = &[b"", b"authData||clientDataHash", &[0xABu8; 200]];
+    for seed in [0x01u8, 0x11, 0x7F, 0xC3, 0xFE] {
+        let signing = match SigningKey::from_bytes(&p384::FieldBytes::from([seed; 48])) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        for msg in msgs {
+            let want: p384::ecdsa::Signature = signing.sign(msg);
+            let mut got = [0u8; MAX_SIG_LEN];
+            let n = sign_p384_comb(signing.as_nonzero_scalar(), msg, &mut got);
+            assert_eq!(&got[..n], want.to_der().as_bytes(), "p384 seed={seed:#x}");
+        }
+    }
+}
+
+#[test]
+fn k256_sign_matches_crate() {
+    // secp256k1 mandates low-S; the crate signer normalizes, so must our comb.
+    use k256::ecdsa::{SigningKey, signature::Signer};
+    let msgs: &[&[u8]] = &[b"", b"authData||clientDataHash", &[0xABu8; 200]];
+    for seed in [0x01u8, 0x11, 0x7F, 0xC3, 0xFE] {
+        let signing = match SigningKey::from_bytes(&k256::FieldBytes::from([seed; 32])) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        for msg in msgs {
+            let want: k256::ecdsa::Signature = signing.sign(msg);
+            let mut got = [0u8; MAX_SIG_LEN];
+            let n = sign_k256_comb(signing.as_nonzero_scalar(), msg, &mut got);
+            assert_eq!(&got[..n], want.to_der().as_bytes(), "k256 seed={seed:#x}");
         }
     }
 }
@@ -193,12 +296,8 @@ fn p384_sign_verifies_under_cose_key() {
     let n = key.sign(MSG, &mut SeqRng(1), &mut sig);
     let (x, y) = cose_xy(&key);
     assert_eq!(x.len(), 48);
-    let pt = p384::EncodedPoint::from_affine_coordinates(
-        p384::FieldBytes::from_slice(&x),
-        p384::FieldBytes::from_slice(&y),
-        false,
-    );
-    let vk = VerifyingKey::from_encoded_point(&pt).unwrap();
+    let pt = p384::Sec1Point::from_bytes(&sec1_uncompressed(x, y)).unwrap();
+    let vk = VerifyingKey::from_sec1_point(&pt).unwrap();
     vk.verify(MSG, &Signature::from_der(&sig[..n]).unwrap())
         .unwrap();
 }
@@ -212,12 +311,8 @@ fn p521_sign_verifies_under_cose_key() {
     let n = key.sign(MSG, &mut SeqRng(1), &mut sig);
     let (x, y) = cose_xy(&key);
     assert_eq!(x.len(), 66);
-    let pt = p521::EncodedPoint::from_affine_coordinates(
-        p521::FieldBytes::from_slice(&x),
-        p521::FieldBytes::from_slice(&y),
-        false,
-    );
-    let vk = VerifyingKey::from_encoded_point(&pt).unwrap();
+    let pt = p521::Sec1Point::from_bytes(&sec1_uncompressed(x, y)).unwrap();
+    let vk = VerifyingKey::from_sec1_point(&pt).unwrap();
     vk.verify(MSG, &Signature::from_der(&sig[..n]).unwrap())
         .unwrap();
 }
@@ -231,12 +326,8 @@ fn k256_sign_verifies_under_cose_key() {
     let n = key.sign(MSG, &mut SeqRng(1), &mut sig);
     let (x, y) = cose_xy(&key);
     assert_eq!(x.len(), 32);
-    let pt = k256::EncodedPoint::from_affine_coordinates(
-        k256::FieldBytes::from_slice(&x),
-        k256::FieldBytes::from_slice(&y),
-        false,
-    );
-    let vk = VerifyingKey::from_encoded_point(&pt).unwrap();
+    let pt = k256::Sec1Point::from_bytes(&sec1_uncompressed(x, y)).unwrap();
+    let vk = VerifyingKey::from_sec1_point(&pt).unwrap();
     vk.verify(MSG, &Signature::from_der(&sig[..n]).unwrap())
         .unwrap();
 }

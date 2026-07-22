@@ -205,8 +205,8 @@ fn select_status_and_config_seq() {
     let mut app = OtpApplet::new(SERIAL, SERIAL_HASH, None, &rng, &presence);
     let (sw, body) = select(&mut app, &mut fs);
     assert_eq!(sw, Sw::OK);
-    // Empty device: version 5.7.4, seq 0, no valid/touch bits.
-    assert_eq!(body, [5, 7, 4, 0, 0, 0, 0]);
+    // Empty device: 6-byte YubiKey status — version 5.7.4, seq 0, no valid/touch.
+    assert_eq!(body, [5, 7, 4, 0, 0, 0]);
 
     // Program slot 1 (HMAC chalresp, no touch): VALID without TOUCH.
     let cfgd = chalresp_config(&[0xAA; 20], &[0; 6], 0);
@@ -583,10 +583,10 @@ fn hid_frame_device_info_read() {
     assert_eq!(&resp[..r_len + 1], &body[..]);
 }
 
-/// Frame commands we do not implement (e.g. SLOT_YK4_SET_DEVICE_INFO 0x15)
-/// answer OK with no body — the firmware glue then serves the idle status
-/// frame, which yubikit turns into a clean CommandRejectedError("No data")
-/// instead of blocking in `_read_frame`.
+/// Unhandled frame slots (0x11/0x12) and an empty-bodied SET_DEVICE_INFO (0x15)
+/// answer OK with no body — the firmware glue then serves the idle status frame,
+/// which yubikit turns into a clean CommandRejectedError("No data") instead of
+/// blocking in `_read_frame`. (0x15's real DeviceConfig write is covered below.)
 #[test]
 fn hid_frame_unknown_command_answers_empty() {
     let mut fs = new_fs();
@@ -604,6 +604,70 @@ fn hid_frame_unknown_command_answers_empty() {
             "slot {slot:#x} must not stream a body"
         );
     }
+}
+
+#[cfg(not(feature = "strict-config"))]
+#[test]
+fn hid_frame_set_device_info_round_trips_to_config() {
+    // DEFAULT: SET_DEVICE_INFO (0x15) persists the DeviceConfig, and a later GET
+    // CONFIG (0x13) echoes the written USB_ENABLED (0x0202 ⊆ SUPPORTED_CAPS) —
+    // full ykman parity, the same EF_DEV_CONF the CCID WRITE CONFIG path uses.
+    let mut fs = new_fs();
+    let presence = RefCell::new(AlwaysConfirm);
+    let rng = RefCell::new(CountRng(7));
+    let mut app = OtpApplet::new(SERIAL, SERIAL_HASH, None, &rng, &presence);
+    // DeviceConfig.get_bytes(): [inner_len=4][TAG_USB_ENABLED=0x03, len=0x02, 0x0202].
+    let mut payload = [0u8; hid::PAYLOAD_SIZE];
+    payload[..5].copy_from_slice(&[0x04, 0x03, 0x02, 0x02, 0x02]);
+    let mut out = [0u8; 64];
+    let mut res = ResBuf::new(&mut out);
+    assert_eq!(app.process_hid(0x15, &payload, &mut fs, &mut res), Sw::OK);
+    assert!(res.as_slice().is_empty(), "a write streams no body");
+
+    let mut out2 = [0u8; 256];
+    let mut res2 = ResBuf::new(&mut out2);
+    assert_eq!(
+        app.process_hid(0x13, &[0u8; hid::PAYLOAD_SIZE], &mut fs, &mut res2),
+        Sw::OK
+    );
+    assert!(
+        res2.as_slice()
+            .windows(4)
+            .any(|w| w == [0x03, 0x02, 0x02, 0x02]),
+        "0x13 GET CONFIG must echo the persisted USB_ENABLED"
+    );
+}
+
+#[cfg(feature = "strict-config")]
+#[test]
+fn hid_frame_set_device_info_ignored_under_strict() {
+    // strict-config: a real SET_DEVICE_INFO (0x15) is swallowed (silent OK, no
+    // body) and persists nothing — a hostile host cannot rewrite DeviceInfo over
+    // the OTP keyboard transport.
+    let mut fs = new_fs();
+    let presence = RefCell::new(AlwaysConfirm);
+    let rng = RefCell::new(CountRng(7));
+    let mut app = OtpApplet::new(SERIAL, SERIAL_HASH, None, &rng, &presence);
+    let mut before = [0u8; 256];
+    let mut rb = ResBuf::new(&mut before);
+    app.process_hid(0x13, &[0u8; hid::PAYLOAD_SIZE], &mut fs, &mut rb);
+    let before = rb.as_slice().to_vec();
+
+    let mut payload = [0u8; hid::PAYLOAD_SIZE];
+    payload[..5].copy_from_slice(&[0x04, 0x03, 0x02, 0x02, 0x02]);
+    let mut out = [0u8; 64];
+    let mut res = ResBuf::new(&mut out);
+    assert_eq!(app.process_hid(0x15, &payload, &mut fs, &mut res), Sw::OK);
+    assert!(res.as_slice().is_empty());
+
+    let mut after = [0u8; 256];
+    let mut ra = ResBuf::new(&mut after);
+    app.process_hid(0x13, &[0u8; hid::PAYLOAD_SIZE], &mut fs, &mut ra);
+    assert_eq!(
+        before,
+        ra.as_slice(),
+        "strict-config must not persist a 0x15 write"
+    );
 }
 
 #[test]
@@ -679,4 +743,86 @@ fn legacy_plaintext_slot_migrates_and_stays_usable() {
     migrate_seal(&dev, &mut fs, &mut mrng);
     let (sw2, body2) = run(&mut app, &mut fs, &otp_apdu(0x30, 0, &chal));
     assert_eq!((sw2, body2), (Sw::OK, body));
+}
+
+#[cfg(not(feature = "strict-config"))]
+#[test]
+fn scanmap_scancode_maps_the_yubico_set_in_order() {
+    // The yubikit DEFAULT_SCAN_MAP: 45 raw HID scancodes for the 45-char set, in
+    // scan-map order (modhex lc, modhex uc with 0x80=shift, digits, ! \t \r).
+    let default_map: [u8; 45] = [
+        0x06, 0x05, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x11, 0x15, 0x17, 0x18,
+        0x19, 0x86, 0x85, 0x87, 0x88, 0x89, 0x8a, 0x8b, 0x8c, 0x8d, 0x8e, 0x8f, 0x91, 0x95, 0x97,
+        0x98, 0x99, 0x27, 0x1e, 0x1f, 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x9e, 0x2b, 0x28,
+    ];
+    assert_eq!(scanmap_scancode(&default_map, b'c'), Some(0x06)); // index 0
+    assert_eq!(scanmap_scancode(&default_map, b'v'), Some(0x19)); // index 15
+    assert_eq!(scanmap_scancode(&default_map, b'C'), Some(0x86)); // index 16 (shift)
+    assert_eq!(scanmap_scancode(&default_map, b'9'), Some(0x26)); // index 41
+    assert_eq!(scanmap_scancode(&default_map, b'!'), Some(0x9e)); // index 42
+    // Chars outside the covered set keep the ASCII path.
+    assert_eq!(scanmap_scancode(&default_map, b'z'), None);
+    assert_eq!(scanmap_scancode(&default_map, b'@'), None);
+    // A short map is rejected (never partially remaps).
+    assert_eq!(scanmap_scancode(&[0u8; 10], b'c'), None);
+}
+
+#[cfg(not(feature = "strict-config"))]
+#[test]
+fn scan_map_remaps_typed_button_ticket_output() {
+    // DEFAULT: with a stored custom scan map, a typed OTP ticket comes out as RAW
+    // scancodes (encode=false), every in-set char remapped through the table.
+    let mut fs = new_fs();
+    let presence = RefCell::new(AlwaysConfirm);
+    let rng = RefCell::new(CountRng(7));
+    let mut app = OtpApplet::new(SERIAL, SERIAL_HASH, None, &rng, &presence);
+    // A plain Yubico-OTP slot 1: types 44 modhex chars, all in the covered set.
+    let cfg = build_config(&[0, 1, 2, 3, 4, 5], &[1; 6], &[2; 16], &[0; 6], 0, 0, 0);
+    assert_eq!(
+        configure(&mut app, &mut fs, 0x01, 0, &cfg, &[0; 6]).0,
+        Sw::OK
+    );
+
+    // No scan map yet → ASCII-encoded output.
+    let mut out = [0u8; ticket::MAX_TICKET];
+    let (_, enc) = app.button_ticket(1, 0, [0, 0], &mut fs, &mut out).unwrap();
+    assert!(enc, "no scan map → ASCII path");
+
+    // Store a distinctive all-0x40 scan map via SLOT_SCAN_MAP (0x12).
+    let mut payload = [0u8; hid::PAYLOAD_SIZE];
+    payload[..45].fill(0x40);
+    let mut o = [0u8; 64];
+    let mut res = ResBuf::new(&mut o);
+    assert_eq!(app.process_hid(0x12, &payload, &mut fs, &mut res), Sw::OK);
+
+    // Now the ticket is raw scancodes, every byte remapped to 0x40.
+    let (n, enc) = app.button_ticket(1, 0, [0, 0], &mut fs, &mut out).unwrap();
+    assert!(!enc, "custom scan map → raw scancodes");
+    assert!(
+        n > 0 && out[..n].iter().all(|&b| b == 0x40),
+        "every modhex char must be remapped through the scan map"
+    );
+}
+
+#[cfg(not(feature = "strict-config"))]
+#[test]
+fn ndef_and_device_config_accept_and_store() {
+    // DEFAULT: NDEF (0x08/0x09) and DEVICE_CONFIG (0x11) accept+store (inert on
+    // USB-only HW) — the ykman calls succeed with an empty body and the records
+    // persist to their FIDs.
+    let mut fs = new_fs();
+    let presence = RefCell::new(AlwaysConfirm);
+    let rng = RefCell::new(CountRng(7));
+    let mut app = OtpApplet::new(SERIAL, SERIAL_HASH, None, &rng, &presence);
+    let mut payload = [0u8; hid::PAYLOAD_SIZE];
+    payload[..3].copy_from_slice(&[0xAB, 0xCD, 0xEF]);
+    for slot in [0x08u8, 0x09, 0x11] {
+        let mut o = [0u8; 64];
+        let mut res = ResBuf::new(&mut o);
+        assert_eq!(app.process_hid(slot, &payload, &mut fs, &mut res), Sw::OK);
+        assert!(res.as_slice().is_empty(), "slot {slot:#x} streams no body");
+    }
+    assert!(fs.has_data(EF_OTP_NDEF1));
+    assert!(fs.has_data(EF_OTP_NDEF2));
+    assert!(fs.has_data(EF_OTP_DEVCFG));
 }

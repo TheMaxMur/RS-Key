@@ -268,11 +268,32 @@ fn select_reports_version_and_serial() {
     assert_eq!(&body[..5], &[TAG_T_VERSION, 3, 5, 7, 4]);
     assert_eq!(body[5], TAG_NAME);
     assert_eq!(body[6], 8);
-    assert_eq!(&body[7..15], b"12345678");
+    // The device id is an opaque one-way hash of serial_hash, NOT the raw serial
+    // hex — so it is not predictable from the semi-public device serial.
+    assert_ne!(
+        &body[7..15],
+        b"12345678",
+        "must not leak the raw serial hex"
+    );
     // No access code: no challenge TLV, applet usable straight away.
     assert_eq!(body.len(), 15);
     let (sw, _) = run(&mut app, &mut fs, &apdu(INS_LIST, 0, 0, &[]));
     assert_eq!(sw, Sw::OK);
+
+    // Stable across re-SELECT, and bound to serial_hash (a different hash differs).
+    let (_, body2) = select(&mut app, &mut fs);
+    assert_eq!(
+        &body2[7..15],
+        &body[7..15],
+        "device id must be stable across boots"
+    );
+    let mut other = OathApplet::new(SERIAL, [0x33; 32], None, &rng, &touch);
+    let (_, body3) = select(&mut other, &mut fs);
+    assert_ne!(
+        &body3[7..15],
+        &body[7..15],
+        "device id must depend on serial_hash"
+    );
 }
 
 #[test]

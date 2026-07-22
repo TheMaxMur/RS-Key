@@ -276,6 +276,7 @@ impl<'a> Worker<'a> {
         otp_key: Option<[u8; 32]>,
         devk: Option<[u8; 32]>,
         kv_total: u32,
+        openpgp_mfr: u16,
     ) -> Self {
         Self {
             ctap: AppletHandler::new(
@@ -302,6 +303,7 @@ impl<'a> Worker<'a> {
                 otp_key,
                 devk,
                 kv_total,
+                openpgp_mfr,
             ),
             rng,
             presence,
@@ -333,6 +335,14 @@ impl<'a> Worker<'a> {
                     // been sent (the reset can't run mid-dispatch).
                     if let Some(mode) = crate::vendor::take_reboot() {
                         self.reboot(mode).await;
+                    }
+                    // A Management factory reset (DEFAULT build) likewise runs after
+                    // its SW_OK: wipe all flash but the attestation, then reboot to
+                    // re-provision a fresh seed.
+                    #[cfg(not(feature = "strict-config"))]
+                    if rsk_mgmt::take_device_reset() {
+                        self.ccid.factory_wipe();
+                        self.reboot(1).await;
                     }
                 }
                 Either3::Second(_) => self.handle_otp_hid(),

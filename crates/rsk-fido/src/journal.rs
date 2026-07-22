@@ -31,7 +31,7 @@ use rsk_crypto::mac::hkdf_sha256;
 use rsk_crypto::{Device, sha256};
 use rsk_fs::{Fs, Storage};
 
-use crate::consts::{AUDIT_RING_SLOTS, EF_AUDIT_META, EF_AUDIT_RING};
+use crate::consts::{AUDIT_RING_SLOTS, EF_AUDIT_ENABLED, EF_AUDIT_META, EF_AUDIT_RING};
 use crate::ec::{MAX_DER_SIG, P256Key};
 use crate::error::{CtapError, CtapResult};
 use crate::{Ctx, Rng};
@@ -60,6 +60,9 @@ pub const EV_ATT_IMPORT: u8 = 0x12;
 pub const EV_ATT_CLEAR: u8 = 0x13;
 pub const EV_CFG_ALWAYS_UV: u8 = 0x14;
 pub const EV_CONFIG_WRITE: u8 = 0x15; // device-config write over the FIDO vendor channel
+/// aux: 1 = journalling turned on, 0 = turned off (the off entry is the last one
+/// written, recorded before the flag flips, so the trail shows when it stopped).
+pub const EV_AUDIT_CFG: u8 = 0x16;
 
 /// Entry: `seq(4 LE) ‖ uptime_ms(4 LE) ‖ event(1) ‖ aux(1) ‖ detail(8) ‖ rsvd(2)`.
 pub const ENTRY_LEN: usize = 20;
@@ -150,9 +153,30 @@ fn build_entry(seq: u32, now_ms: u64, ev: u8, aux: u8, detail: &[u8]) -> [u8; EN
     e
 }
 
+/// Whether the audit journal is turned on. Opt-in: OFF unless the host enabled it
+/// (`EF_AUDIT_ENABLED` present), so a default device writes no journal entries. The
+/// probe is O(1) — a decided-absent bitmap hit when off, a cached read when on.
+pub(crate) fn is_enabled<S: Storage>(fs: &mut Fs<S>) -> bool {
+    fs.has_data(EF_AUDIT_ENABLED)
+}
+
+/// Turn journalling on (write the flag) or off (delete it). Best-effort; the
+/// caller records the transition in the journal itself (see [`vendor`]).
+pub(crate) fn set_enabled<S: Storage>(fs: &mut Fs<S>, on: bool) -> Result<(), ()> {
+    if on {
+        fs.put(EF_AUDIT_ENABLED, &[1]).map_err(|_| ())
+    } else {
+        fs.delete(EF_AUDIT_ENABLED).map_err(|_| ())
+    }
+}
+
 /// Append one event, opening the power cycle with an [`EV_BOOT`] entry first.
 /// Errors are swallowed — the journal never fails the operation it records.
+/// A no-op while journalling is off (opt-in, [`is_enabled`]): no flash is written.
 pub fn append<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, ev: u8, aux: u8, detail: &[u8]) {
+    if !is_enabled(ctx.fs) {
+        return;
+    }
     if !ctx.state.audit_boot_logged {
         ctx.state.audit_boot_logged = true;
         let _ = raw_append(ctx, EV_BOOT, 0, &[]);

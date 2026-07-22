@@ -9,4 +9,6 @@ rustflags = [
   "-C", "link-arg=--nmagic",
   "-C", "link-arg=-Tlink.x",
   "-C", "target-cpu=cortex-m33",
+  "--cfg", "bp256_backend=\"bigint\"",
+  "--cfg", "bp384_backend=\"bigint\"",
 ]

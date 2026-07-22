@@ -2,11 +2,12 @@
 // Copyright (C) 2026 RS-Key contributors
 
 //! The `phy` device-configuration blob: a TLV record in `EF_PHY` holding USB
-//! identity (VID/PID, product string), LED wiring and options. The rescue applet
-//! reads/writes it verbatim; at boot the firmware applies the USB identity AND the
-//! LED hardware — pin (`led_gpio`), driver (`led_driver`), brightness/steady, and
-//! the WS2812 wire order (`led_order`). The tags below match PicoForge;
-//! `led_order` (tag `0x0D`) is an RS-Key extension PicoForge skips as unknown.
+//! identity (VID/PID, product & manufacturer strings), LED wiring and options.
+//! The rescue applet reads/writes it verbatim; at boot the firmware applies the
+//! USB identity AND the LED hardware — pin (`led_gpio`), driver (`led_driver`),
+//! brightness/steady, and the WS2812 wire order (`led_order`). The tags below
+//! match PicoForge; `led_order` (`0x0D`), `led_num` (`0x0E`) and
+//! `usb_manufacturer` (`0x0F`) are RS-Key extensions PicoForge skips as unknown.
 
 use rsk_fs::{Fs, Storage};
 
@@ -28,13 +29,16 @@ const TAG_USB_PRODUCT: u8 = 0x9;
 const TAG_ENABLED_CURVES: u8 = 0xA;
 const TAG_ENABLED_USB_ITF: u8 = 0xB;
 const TAG_LED_DRIVER: u8 = 0xC;
-// RS-Key vendor tag (not in PicoForge): WS2812 wire byte order —
-// 0 = rgb (passthrough), 1 = grb (red/green swapped). PicoForge skips it as
-// unknown and drops it on a read-modify-write; RS-Key's own tools preserve it.
+// RS-Key vendor tag: WS2812 wire byte order — 0 = rgb (passthrough), 1 = grb
+// (red/green swapped). A host that omits it on a write no longer loses it: the
+// phy write is a merge (see `merge_save`), so untouched/unknown tags survive.
 const TAG_LED_ORDER: u8 = 0xD;
 // RS-Key vendor tag: number of physically-connected addressable LEDs.
 // 0 = unset (use the build's MAX_LEDS default).
 const TAG_LED_NUM: u8 = 0xE;
+// RS-Key vendor tag: USB iManufacturer string, NUL-terminated exactly like
+// USB_PRODUCT (0x09). PicoForge skips it as unknown, so `merge_save` preserves it.
+const TAG_USB_MANUFACTURER: u8 = 0xF;
 
 /// `led_order` wire value: a standard WS2812B (GRB) part, red↔green swapped.
 pub const LED_ORDER_GRB: u8 = 1;
@@ -75,8 +79,9 @@ pub fn effective_usb_itf(phy: &PhyData) -> u8 {
     }
 }
 
-/// Largest serialized record (every TLV present, 32-byte product). The trailing
-/// `(2 + 1) × 2` covers the RS-Key `led_order` and `led_num` tags.
+/// Largest serialized record (every TLV present, 32-byte product & manufacturer).
+/// The trailing `(2 + 1) × 2` covers the RS-Key `led_order` / `led_num` tags and
+/// `(2 + 33)` the RS-Key `usb_manufacturer` string.
 pub const PHY_MAX_SIZE: usize = (2 + 4)
     + (2 + 1)
     + (2 + 1)
@@ -87,7 +92,8 @@ pub const PHY_MAX_SIZE: usize = (2 + 4)
     + (2 + 1)
     + (2 + 1)
     + (2 + 1)
-    + (2 + 1); // led_num
+    + (2 + 1) // led_num
+    + (2 + 33); // usb_manufacturer
 
 const PRODUCT_CAP: usize = 32;
 
@@ -132,6 +138,9 @@ pub struct PhyData {
     /// `None` / `0` keeps the firmware's built-in 30 s default.
     pub presence_timeout: Option<u8>,
     pub usb_product: Option<Product>,
+    /// USB iManufacturer string (tag `0x0F`, RS-Key extension). Absent ⇒ the
+    /// firmware falls back to the VID-derived default, then the build default.
+    pub usb_manufacturer: Option<Product>,
     pub enabled_curves: Option<u32>,
     pub enabled_usb_itf: Option<u8>,
     pub led_driver: Option<u8>,
@@ -143,11 +152,27 @@ pub struct PhyData {
 }
 
 impl PhyData {
-    /// Unknown tags are skipped; a TLV running past the end of the input ends
-    /// the parse — the parser must never overread. A record without
-    /// ENABLED_USB_ITF gets ALL.
+    /// Parse a full phy record: overlay every TLV onto a default record, then
+    /// materialize the ENABLED_USB_ITF default (a record without it gets ALL) —
+    /// the boot path relies on that. Unknown tags are skipped; a TLV running past
+    /// the end ends the parse (the parser must never overread).
     pub fn parse(data: &[u8]) -> PhyData {
-        let mut phy = PhyData::default();
+        let mut phy = PhyData::default().overlay(data);
+        if phy.enabled_usb_itf.is_none() {
+            phy.enabled_usb_itf = Some(USB_ITF_ALL);
+        }
+        phy
+    }
+
+    /// Overlay only the TLV tags physically present in `data` onto `self`, leaving
+    /// every untouched field at its current value — the read-modify-write half of
+    /// `merge_save`. Unlike `parse` it neither starts from a default record nor
+    /// forces ENABLED_USB_ITF to ALL, so a partial host write preserves the stored
+    /// VID/PID, product, LED order/count and interface mask it did not carry (a tag
+    /// is cleared only by an explicit zero/empty TLV, never by omission). Unknown
+    /// tags are skipped; a TLV running past the end ends the walk (never overread).
+    pub fn overlay(&self, data: &[u8]) -> PhyData {
+        let mut phy = *self;
         let mut p = data;
         while p.len() >= 2 {
             let tag = p[0];
@@ -173,6 +198,10 @@ impl PhyData {
                     let s = &v[..v.iter().position(|&b| b == 0).unwrap_or(tlen)];
                     phy.usb_product = Product::new(s);
                 }
+                (TAG_USB_MANUFACTURER, 1..=33) => {
+                    let s = &v[..v.iter().position(|&b| b == 0).unwrap_or(tlen)];
+                    phy.usb_manufacturer = Product::new(s);
+                }
                 (TAG_ENABLED_CURVES, 4) => {
                     phy.enabled_curves = Some(u32::from_be_bytes([v[0], v[1], v[2], v[3]]));
                 }
@@ -183,9 +212,6 @@ impl PhyData {
                 _ => {}
             }
             p = &p[tlen..];
-        }
-        if phy.enabled_usb_itf.is_none() {
-            phy.enabled_usb_itf = Some(USB_ITF_ALL);
         }
         phy
     }
@@ -213,6 +239,12 @@ impl PhyData {
         if let Some(p) = &self.usb_product {
             let s = p.as_bytes();
             w.raw(&[TAG_USB_PRODUCT, (s.len() + 1) as u8])?;
+            w.raw(s)?;
+            w.raw(&[0])?;
+        }
+        if let Some(m) = &self.usb_manufacturer {
+            let s = m.as_bytes();
+            w.raw(&[TAG_USB_MANUFACTURER, (s.len() + 1) as u8])?;
             w.raw(s)?;
             w.raw(&[0])?;
         }
@@ -272,6 +304,65 @@ pub fn save<S: Storage>(fs: &mut Fs<S>, phy: &PhyData) -> rsk_sdk::error::Result
         .serialize(&mut buf)
         .ok_or(rsk_sdk::error::Error::NoMemory)?;
     fs.put(EF_PHY, &buf[..n])
+}
+
+/// Persist a host-written phy blob as a read-modify-write: overlay only the tags
+/// present in `data` onto the stored record, then save. The durability-safe write
+/// shared by the FIDO `CONFIG_WRITE` and CCID `WRITE 0x1C` paths — a host tool that
+/// sends only the fields it changed (as PicoForge does) can no longer wipe the
+/// VID/PID, product, LED order/count or any tag it omitted. A tag is cleared only
+/// by an explicit zero/empty TLV; `rsk` and PicoForge upsert full records, so
+/// nothing regresses. (This closes picoforge#102 / RS-Key#33 on the firmware side.)
+pub fn merge_save<S: Storage>(fs: &mut Fs<S>, data: &[u8]) -> rsk_sdk::error::Result<()> {
+    let merged = load(fs).unwrap_or_default().overlay(data);
+    save(fs, &merged)
+}
+
+/// The smartcard interface-token suffix a real YubiKey carries in its USB product
+/// string. `normalize_usb_product` appends it to a YubiKey-masquerade product
+/// that lacks a token.
+const YK_TOKEN_SUFFIX: &[u8] = b" OTP+FIDO+CCID";
+
+/// Case-sensitive substring test (no_std, no alloc).
+fn contains(hay: &[u8], needle: &[u8]) -> bool {
+    !needle.is_empty()
+        && needle.len() <= hay.len()
+        && hay.windows(needle.len()).any(|w| w == needle)
+}
+
+/// ASCII-case-insensitive substring test; `needle` must be ASCII-lowercase.
+fn contains_ci(hay: &[u8], needle: &[u8]) -> bool {
+    !needle.is_empty()
+        && needle.len() <= hay.len()
+        && hay.windows(needle.len()).any(|w| {
+            w.iter()
+                .zip(needle)
+                .all(|(a, b)| a.to_ascii_lowercase() == *b)
+        })
+}
+
+/// Normalize the effective USB product string so RS-Key can never present a
+/// YubiKey-masquerade name that crashes `ykman` / Yubico Authenticator on Windows.
+///
+/// ykman derives a YubiKey PID purely from the PC/SC reader name (`_pid_from_name`):
+/// a name containing `yubico yubikey` but none of the uppercase interface tokens
+/// `OTP`/`FIDO`/`CCID`/`U2F` yields an empty interface set, and `PID.of` then builds
+/// the non-existent enum key `YK4_` → `KeyError('YK4_')` aborts the whole card scan.
+/// When `name` looks like a YubiKey (contains `yubikey`, any case) but lacks the
+/// `CCID` token, append `YK_TOKEN_SUFFIX`; otherwise copy verbatim. Writes into
+/// `out`, returns the length written (falls back to a plain copy if it would not fit).
+pub fn normalize_usb_product(name: &[u8], out: &mut [u8]) -> usize {
+    if contains_ci(name, b"yubikey")
+        && !contains(name, b"CCID")
+        && name.len() + YK_TOKEN_SUFFIX.len() <= out.len()
+    {
+        out[..name.len()].copy_from_slice(name);
+        out[name.len()..name.len() + YK_TOKEN_SUFFIX.len()].copy_from_slice(YK_TOKEN_SUFFIX);
+        return name.len() + YK_TOKEN_SUFFIX.len();
+    }
+    let n = name.len().min(out.len());
+    out[..n].copy_from_slice(&name[..n]);
+    n
 }
 
 /// Kani proof harnesses (`cargo kani -p rsk-rescue`): the phy record is parsed

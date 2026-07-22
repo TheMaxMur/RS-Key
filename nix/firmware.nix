@@ -85,6 +85,7 @@ let
       fwVersion ? envOr "FW_VERSION" null, # X.Y.Z reported everywhere
       xoscDelayMult ? envOr "XOSC_DELAY_MULT" null, # 1..1024 crystal settle
       flashSize ? envOr "FLASH_SIZE" null, # bytes / 0xHEX / <n>K|M (default 4M)
+      kvmain ? envOr "KVMAIN" null, # KV main-partition size (default 1408K; shrink for 2 MB boards)
       ledPin ? envOr "LED_PIN" null, # WS2812 data GPIO 0..=29 (default 16)
       ledKind ? envOr "LED_KIND" null, # ws2812 | gpio | pimoroni | none (default ws2812)
       presencePin ? envOr "PRESENCE_PIN" null, # BOOTSEL or GPIO 0..=29
@@ -101,6 +102,7 @@ let
         FW_VERSION = fwVersion;
         XOSC_DELAY_MULT = if xoscDelayMult == null then null else toString xoscDelayMult;
         FLASH_SIZE = if flashSize == null then null else toString flashSize;
+        KVMAIN = if kvmain == null then null else toString kvmain;
         LED_PIN = if ledPin == null then null else toString ledPin;
         LED_KIND = ledKind;
         PRESENCE_PIN = if presencePin == null then null else toString presencePin;
@@ -282,6 +284,32 @@ in
       cargoFlags = [
         "--features"
         "display"
+      ];
+    };
+    # Default (feature-less, RS-Key identity) images for boards whose physical
+    # flash is not the 4 MB default — the geometry siblings of `firmware`. The
+    # FLASH_SIZE must match the chip (it is the embassy Flash const generic). A
+    # 2 MB board needs a shrunk KVMAIN so ≥1 MiB is left for code (build.rs
+    # assert_layout_fits); 16 MB keeps the default KVMAIN and only enlarges the
+    # (unused) code region. The KV store does not grow with flash by design.
+    firmware-2mb = mkFirmware {
+      name = "firmware-2mb";
+      flashSize = "2M";
+      kvmain = "896K";
+    };
+    firmware-16mb = mkFirmware {
+      name = "firmware-16mb";
+      flashSize = "16M";
+    };
+    # The strict admin-write posture as its own shipped flavor. The default
+    # `firmware` is now the permissive, full-ykman-compatible admin surface;
+    # `firmware-strict-config` restores the historical presence/PIN-gated config
+    # writes and refuses the ungated transport writes (docs/threat-model.md).
+    firmware-strict-config = mkFirmware {
+      name = "firmware-strict-config";
+      cargoFlags = [
+        "--features"
+        "strict-config"
       ];
     };
   };

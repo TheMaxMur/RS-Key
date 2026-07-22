@@ -42,7 +42,7 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 META = os.path.join(ROOT, "metadata", "rs-key.metadata.json")
 CONF_META = os.path.join(ROOT, "metadata", "rs-key.conformance.metadata.json")
-CONSTS = os.path.join(ROOT, "crates", "rsk-fido", "src", "consts.rs")
+BUILD_RS = os.path.join(ROOT, "crates", "rsk-fido", "build.rs")
 
 # FIDO Registry (v2.2) sign-algorithm string <-> COSE alg id, classic set only.
 ALG_STR_TO_COSE = {
@@ -66,14 +66,16 @@ STATEFUL_OPTIONS = {"ep", "clientPin"}
 
 
 def firmware_aaguid_bytes():
-    src = open(CONSTS).read()
-    m = re.search(r"pub const AAGUID:\s*\[u8;\s*16\]\s*=\s*\[(.*?)\];", src, re.S)
+    # consts.rs const-parses the AAGUID from build.rs's PK_AAGUID (an `AAGUID=` env
+    # overrides it at build time); the default UUID literal lives in build.rs.
+    src = open(BUILD_RS).read()
+    m = re.search(r'const DEFAULT:\s*&str\s*=\s*"([0-9a-fA-F-]+)"', src)
     if not m:
-        sys.exit("could not find the AAGUID const in consts.rs")
-    vals = [int(x, 16) for x in re.findall(r"0x[0-9A-Fa-f]{2}", m.group(1))]
-    if len(vals) != 16:
-        sys.exit(f"AAGUID const has {len(vals)} bytes, expected 16")
-    return bytes(vals)
+        sys.exit("could not find the default AAGUID in rsk-fido/build.rs")
+    hexstr = m.group(1).replace("-", "").lower()
+    if len(hexstr) != 32:
+        sys.exit(f"AAGUID default has {len(hexstr)} hex chars, expected 32")
+    return bytes.fromhex(hexstr)
 
 
 def part_a(stmt):

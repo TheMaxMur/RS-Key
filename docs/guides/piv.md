@@ -11,6 +11,10 @@ PKCS#11 / OpenSC and OS-native (macOS CryptoTokenKit, Windows) routes below
 identify the card by its applet, not the reader name, so they work on the default
 build.
 
+> **Windows note:** the card serves a default CHUID automatically — the Windows
+> PIV minidriver needs it to enumerate the certificate containers, so no manual
+> `ykman piv objects generate chuid` step is required.
+
 Prereqs: on Linux, `pcscd` plus the polkit rule from [linux.md](../linux.md);
 if you also use GnuPG, the `disable-ccid` line so `scdaemon` and `pcscd` stop
 fighting over the reader. Check the card is visible (the `ykman` commands here

@@ -151,6 +151,11 @@ impl<'a> AppletHandler<'a> {
         // rides in FidoState so the pure FIDO logic stays caller-supplied.
         let mut fido_state = rsk_fido::FidoState::new();
         fido_state.devk = devk;
+        // Generate the clientPIN ephemeral key-agreement key at power-up (CTAP 2.1
+        // §6.5.5.7), not lazily on the first clientPIN — so the first PIN entry
+        // after plug-in doesn't pay the one-time ~40 ms `d·G`. The TRNG is seeded
+        // by the time the worker builds the handler.
+        fido_state.ensure_initialized(&mut *rng.borrow_mut());
         Self {
             fs,
             disp: Dispatcher::new(),
@@ -264,6 +269,17 @@ impl AppletHandler<'_> {
         if data.first() == Some(&rsk_fido::consts::CTAP_VENDOR) {
             let mut fsb = self.fs.borrow_mut();
             crate::vendor::load_led_config(&mut fsb);
+            // A PHY config-write changes the USB identity, which is only read at
+            // boot. If power-cycle-on-reset is enabled (phy opts, the default),
+            // warm-reboot so the new VID/PID/product/interfaces apply without a
+            // manual replug (fixes the "config doesn't take effect" report). The
+            // reset runs in the worker after this response flushes.
+            if rsk_fido::vendor::take_phy_written() {
+                let phy = rsk_rescue::phy::load(&mut fsb).unwrap_or_default();
+                if phy.opts & rsk_rescue::phy::OPT_DISABLE_POWER_RESET == 0 {
+                    crate::vendor::request_reboot(false);
+                }
+            }
         }
         &self.resp[..n]
     }

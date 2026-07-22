@@ -2,7 +2,7 @@
 // Copyright (C) 2026 RS-Key contributors
 
 use super::*;
-use p256::EncodedPoint;
+use p256::Sec1Point;
 use p256::ecdsa::{Signature, VerifyingKey, signature::Verifier};
 
 #[test]
@@ -31,8 +31,8 @@ fn cert_is_well_formed_and_self_signed() {
     let sig_der = &cert[sig_off + 3..sig_off + 2 + bit_len];
 
     let (x, y) = key.public_xy();
-    let pt = EncodedPoint::from_affine_coordinates((&x).into(), (&y).into(), false);
-    let vk = VerifyingKey::from_encoded_point(&pt).unwrap();
+    let pt = Sec1Point::from_bytes(&crate::ec::sec1_uncompressed(x, y)).unwrap();
+    let vk = VerifyingKey::from_sec1_point(&pt).unwrap();
     let sig = Signature::from_der(sig_der).unwrap();
     vk.verify(tbs, &sig).expect("cert is validly self-signed");
 

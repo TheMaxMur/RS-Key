@@ -14,10 +14,12 @@ pub const OPENPGP_AID: &[u8] = &[0xD2, 0x76, 0x00, 0x01, 0x24, 0x01];
 pub const OPGP_VERSION_MAJOR: u8 = 0x03;
 pub const OPGP_VERSION_MINOR: u8 = 0x04;
 
-/// Firmware version reported by the vendor VERSION command (INS 0xF1); the
-/// value pico-openpgp host tools expect.
-pub const PIPGP_VERSION_MAJOR: u8 = 0x04;
-pub const PIPGP_VERSION_MINOR: u8 = 0x06;
+/// OpenPGP AID manufacturer id (bytes 8-9). `0x0006` = Yubico, used by the
+/// `VIDPID=Yubikey5` interop build so hosts show the same vendor as a real
+/// YubiKey; `0xFFFE` = the unmanaged/test range for the default RS-Key identity,
+/// which is not Yubico. Firmware picks it from the USB VID.
+pub const OPGP_MFR_YUBICO: u16 = 0x0006;
+pub const OPGP_MFR_UNMANAGED: u16 = 0xFFFE;
 
 // Algorithm IDs (first byte of an algorithm-attributes DO).
 pub const ALGO_RSA: u8 = 0x01;

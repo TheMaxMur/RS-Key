@@ -235,3 +235,9 @@ mod tests;
 
 #[cfg(test)]
 mod conformance;
+
+/// On-device latency-harness timing entrypoints. The `bench` feature gates a
+/// vendor timing oracle over the crypto primitives — a debug/measurement build,
+/// never shipped (see the module docs).
+#[cfg(feature = "bench")]
+pub mod bench;

@@ -9,13 +9,12 @@
 //! once per logical operation (mutual auth touches at the witness step only);
 //! a witness mismatch fails closed; symmetric operations are 9B-only.
 
-use rsa::BigUint;
-use rsa::traits::PublicKeyParts;
 use rsk_crypto::{
     Device, aes_ecb_decrypt_block, aes_ecb_encrypt_block, des3_decrypt_block, des3_encrypt_block,
 };
 use rsk_fs::{Fs, Storage};
 use rsk_openpgp::keys::Curve;
+use rsk_openpgp::rsa_crt;
 use rsk_openpgp::{Presence, Rng, UserPresence};
 use rsk_sdk::tlv::find_tag;
 use rsk_sdk::{ResBuf, Sw};
@@ -25,7 +24,7 @@ use crate::files::*;
 use crate::keygen;
 use crate::seal;
 use crate::x509;
-use crate::{ChallengeKind, RngAdapter, Session, WRONG_DATA, ct_eq, dyn_auth_resp};
+use crate::{ChallengeKind, Session, WRONG_DATA, ct_eq, dyn_auth_resp};
 
 enum Dir {
     Encrypt,
@@ -170,21 +169,13 @@ impl<S: Storage> GenAuth<'_, S> {
         match self.algo {
             ALGO_RSA1024 | ALGO_RSA2048 | ALGO_RSA3072 | ALGO_RSA4096 => {
                 check_touch(self.touch_policy, self.presence)?;
-                let mut key = seal::load_rsa_key(self.dev, self.fs, key_fid(self.key_ref))?;
-                let _ = key.precompute();
-                if c.len() != key.size() {
+                let crt = seal::load_rsa_crt(self.dev, self.fs, key_fid(self.key_ref))?;
+                if c.len() != crt.modulus_len() {
                     return Err(Sw::INCORRECT_PARAMS);
                 }
-                let m = BigUint::from_bytes_be(c);
-                let mut ad = RngAdapter(self.rng);
-                let pt = rsa::hazmat::rsa_decrypt_and_check(&key, Some(&mut ad), &m)
-                    .map_err(|_| Sw::EXEC_ERROR)?;
-                let mut out = [0u8; 512];
-                let bytes = pt.to_bytes_be();
-                let off = key.size() - bytes.len();
-                out[..off].fill(0);
-                out[off..key.size()].copy_from_slice(&bytes);
-                dyn_auth_resp(res, TAG_AUTH_RESPONSE, &out[..key.size()])?;
+                let mut out = [0u8; rsa_crt::MAX_RSA_BYTES];
+                let n = rsa_crt::sign_crt(&crt, c, self.rng, &mut out)?;
+                dyn_auth_resp(res, TAG_AUTH_RESPONSE, &out[..n])?;
                 out.zeroize();
             }
             ALGO_ECCP256 | ALGO_ECCP384 => {

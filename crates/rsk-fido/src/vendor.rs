@@ -42,9 +42,9 @@ use crate::cert;
 use crate::consts::{
     CONFIG_TARGET_DEV_CONF, CONFIG_TARGET_LED, CONFIG_TARGET_PHY, CTAP_VENDOR, EF_ATT_CHAIN,
     EF_ATT_KEY, EF_BACKUP_SEALED, EF_EE_DEV, EF_KEY_DEV, EF_KEY_DEV_ENC, EF_PIN, VENDOR_ATT_CLEAR,
-    VENDOR_ATT_IMPORT, VENDOR_ATT_STATE, VENDOR_AUDIT_CHECKPOINT, VENDOR_AUDIT_READ,
-    VENDOR_BACKUP_EXPORT, VENDOR_BACKUP_FINALIZE, VENDOR_BACKUP_LOAD, VENDOR_BACKUP_STATE,
-    VENDOR_CONFIG_READ, VENDOR_CONFIG_WRITE, VENDOR_MSE, VENDOR_UNLOCK,
+    VENDOR_ATT_IMPORT, VENDOR_ATT_STATE, VENDOR_AUDIT_CHECKPOINT, VENDOR_AUDIT_CONFIG,
+    VENDOR_AUDIT_READ, VENDOR_BACKUP_EXPORT, VENDOR_BACKUP_FINALIZE, VENDOR_BACKUP_LOAD,
+    VENDOR_BACKUP_STATE, VENDOR_CONFIG_READ, VENDOR_CONFIG_WRITE, VENDOR_MSE, VENDOR_UNLOCK,
 };
 use crate::cose::cose_key_ecdh;
 use crate::ec::P256Key;
@@ -55,6 +55,20 @@ use crate::seed::{
 };
 use crate::state::{PERM_ACFG, puat_subcommand_msg};
 use crate::{Ctx, Rng};
+
+use core::sync::atomic::{AtomicBool, Ordering};
+
+/// Set when a FIDO `CONFIG_WRITE` persists the PHY record; the firmware handler
+/// consumes it to warm-reboot (re-enumerate) so the new USB identity applies
+/// without a manual replug, unless `OPT_DISABLE_POWER_RESET` is set. Cross-layer
+/// because the reboot verb lives in the firmware, not this applet.
+static PHY_WRITTEN: AtomicBool = AtomicBool::new(false);
+
+/// Take and clear the "a PHY config-write just happened" flag (the firmware
+/// handler reads it after the `0x41` response flushes).
+pub fn take_phy_written() -> bool {
+    PHY_WRITTEN.swap(false, Ordering::Relaxed)
+}
 
 // Sized for ATT_IMPORT's wrapped key + a full cert chain (≤ 2048 B); every
 // other subcommand stays tiny. The pinUvAuth MAC covers these bytes verbatim.
@@ -119,7 +133,10 @@ fn parse(data: &[u8]) -> Result<Req<'_>, CtapError> {
                     } else if sk == 2 && req.subcommand == VENDOR_MSE {
                         req.mlkem_ek = cbor(d.bytes())?;
                     } else if sk == 1
-                        && matches!(req.subcommand, VENDOR_CONFIG_WRITE | VENDOR_CONFIG_READ)
+                        && matches!(
+                            req.subcommand,
+                            VENDOR_CONFIG_WRITE | VENDOR_CONFIG_READ | VENDOR_AUDIT_CONFIG
+                        )
                     {
                         req.target = cbor(d.u32())? as u64;
                     } else if sk == 2 && req.subcommand == VENDOR_CONFIG_WRITE {
@@ -170,6 +187,7 @@ pub fn vendor<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, data: &[u8], out: &mut [u
         VENDOR_UNLOCK => unlock(ctx, &req),
         VENDOR_AUDIT_READ => audit_read(ctx, &req, out),
         VENDOR_AUDIT_CHECKPOINT => audit_checkpoint(ctx, &req, out),
+        VENDOR_AUDIT_CONFIG => audit_config(ctx, &req, out),
         VENDOR_ATT_IMPORT => att_import(ctx, &req),
         VENDOR_ATT_CLEAR => att_clear(ctx, &req),
         VENDOR_ATT_STATE => att_state(ctx, out),
@@ -220,20 +238,29 @@ fn config_read<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req, out: &mut [u8
 /// because CTAPHID is reachable by any unprivileged host process. No MSE channel
 /// — the config blobs are not secret, only their authorship must be proven.
 fn config_write<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> CtapResult {
-    pin_gate(ctx, req)?;
-    if !ctx.check_user_presence(crate::Confirm::titled("Write device config?")) {
-        return Err(CtapError::OperationDenied);
+    // DEFAULT build: ungated device-config write (full YubiKey/ykman parity).
+    // `strict-config` restores the PIN (PERM_ACFG) + touch gate — a stronger gate
+    // than the CCID path's presence-only, since CTAPHID is reachable by any
+    // unprivileged host process (docs/threat-model.md).
+    #[cfg(feature = "strict-config")]
+    {
+        pin_gate(ctx, req)?;
+        if !ctx.check_user_presence(crate::Confirm::titled("Write device config?")) {
+            return Err(CtapError::OperationDenied);
+        }
     }
     match req.target {
         CONFIG_TARGET_DEV_CONF => persist_dev_conf(ctx.fs, req.blob).map_err(|e| match e {
             DevConfError::TooLong => CtapError::InvalidLength,
             DevConfError::Store => CtapError::Other,
         })?,
-        // The phy record (VID/PID, USB interfaces, LED, presence-timeout) — the
-        // same lenient parse + save the CCID rescue WRITE 0x1C uses; takes effect
-        // on the next boot (main reads EF_PHY), like the CCID path.
+        // The phy record (VID/PID, USB interfaces, LED, presence-timeout) — a
+        // read-modify-write merge (the same `merge_save` the CCID rescue WRITE 0x1C
+        // uses), so a host that sends only the fields it changed cannot wipe the
+        // rest. Takes effect on the next boot (main reads EF_PHY), like the CCID path.
         CONFIG_TARGET_PHY => {
-            phy::save(ctx.fs, &phy::PhyData::parse(req.blob)).map_err(|_| CtapError::Other)?
+            phy::merge_save(ctx.fs, req.blob).map_err(|_| CtapError::Other)?;
+            PHY_WRITTEN.store(true, Ordering::Relaxed);
         }
         // The LED config block; persisted here and applied *live* by the firmware
         // CTAPHID handler, which reloads EF_LED_CONF after a 0x41 command (the LED
@@ -331,6 +358,38 @@ fn audit_checkpoint<S: Storage, R: Rng>(
         return Err(CtapError::OperationDenied);
     }
     journal::vendor_checkpoint(ctx, req.blob, out)
+}
+
+/// `AUDIT_CONFIG` (`subCommandParams` key 1): `2` = read-only status (ungated, like
+/// ATT_STATE — whether logging is on is not the journal content); `1` = enable, `0`
+/// = disable. Opt-in and OFF by default. A set is gated like AUDIT_CHECKPOINT — a
+/// PIN token when a PIN is set, plus a physical touch — so a silent host cannot flip
+/// a user's tamper-evident trail. The transition is journalled itself: an ENABLE
+/// after the flag is set, a DISABLE just before it clears, so the last live entry
+/// marks when logging stopped. Always returns `{1: enabled}`.
+fn audit_config<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req, out: &mut [u8]) -> CtapResult {
+    match req.target {
+        2 => {} // ungated status read; falls through to the encode below
+        0 | 1 => {
+            pin_gate(ctx, req)?;
+            if !ctx.check_user_presence(crate::Confirm::titled("Change audit logging?")) {
+                return Err(CtapError::OperationDenied);
+            }
+            if req.target == 1 {
+                journal::set_enabled(ctx.fs, true).map_err(|_| CtapError::Other)?;
+                journal::append(ctx, journal::EV_AUDIT_CFG, 1, &[]);
+            } else {
+                journal::append(ctx, journal::EV_AUDIT_CFG, 0, &[]);
+                journal::set_enabled(ctx.fs, false).map_err(|_| CtapError::Other)?;
+            }
+        }
+        // Reject an unknown op rather than aliasing it to enable.
+        _ => return Err(CtapError::InvalidParameter),
+    }
+    encode(out, |e| {
+        e.map(1)?.u8(1)?.bool(journal::is_enabled(ctx.fs))?;
+        Ok(())
+    })
 }
 
 /// Decrypt the channel-wrapped 32-byte lock key carried in `blob`

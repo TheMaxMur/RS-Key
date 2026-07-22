@@ -6,10 +6,10 @@ covers the security boundary. This page covers feature and hardware gaps.
 
 ## Cryptography
 
-- **Brainpool curves (OpenPGP)**: not offered. There is no mature, audited
-  `no_std` Rust implementation of brainpoolP256/384/512r1. The existing
-  crates are experimental. The applet does not advertise the curves, so
-  clients never select them. *Status: until a serious crate exists.*
+- **brainpoolP512r1 (OpenPGP)**: not offered. brainpoolP256r1 and P384r1 are
+  supported (advertised in DO `0xFA`, generate / keytocard / sign / decrypt), but
+  no Rust arithmetic for the 512-bit brainpool curve exists yet, so the applet
+  neither advertises nor generates it. *Status: until a crate exists.*
 - **X448 / Ed448 (OpenPGP)**: not offered, same reason. RustCrypto coverage
   of Curve448 is thin and unaudited. Cv25519/Ed25519 plus the NIST curves and
   secp256k1 cover practical use. *Status: until a serious crate exists.*
@@ -132,9 +132,11 @@ covers the security boundary. This page covers feature and hardware gaps.
   build.
 - **OpenPGP secure messaging** is not implemented (rarely used by clients;
   PINs gate everything in practice).
-- **One physical button.** Touch = the BOOTSEL button. There is no
-  fingerprint, no display, and "number matching" style UV is impossible.
-  UV is the PIN.
+- **One physical button on the base build.** Touch = the BOOTSEL button, and
+  there is no fingerprint reader, so UV is the PIN and "number matching" style
+  UV is impossible. The trusted-display flavor
+  ([guides/display.md](guides/display.md)) adds a screen for on-device PIN entry
+  and per-signature relying-party approval, but still no biometric UV.
 
 ## Operational
 

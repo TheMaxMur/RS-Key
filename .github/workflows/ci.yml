@@ -100,6 +100,21 @@ jobs:
           - name: display
             args: "--features display"
             env: "LED_KIND=none FLASH_SIZE=16M"
+          # Flash-geometry siblings of the default image (default features, RS-Key
+          # identity). 2mb shrinks KVMAIN so the image still fits ≥1 MiB of code;
+          # smoke-building it here catches a link/fit regression in PR CI rather
+          # than at tag time.
+          - name: 2mb
+            args: ""
+            env: "FLASH_SIZE=2M KVMAIN=896K"
+          - name: 16mb
+            args: ""
+            env: "FLASH_SIZE=16M"
+          # The strict admin-write posture (historical default). The permissive
+          # default is what every other row builds; smoke-build this so the
+          # strict-gated code keeps compiling.
+          - name: strict-config
+            args: "--features strict-config"
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:

@@ -5,6 +5,14 @@ license = "AGPL-3.0-only"
 edition = "2024"
 publish = false
 
+[features]
+# Restore the strict config-write authorization (today's shipped behaviour):
+# WRITE CONFIG 0x1C requires operator presence and RESET 0x1E stays unsupported.
+# OFF by default now — the default build is the permissive, full-YubiKey-compat
+# admin surface. `--features strict-config` re-gates it. (Distinct from the
+# runtime flash flag EF_HARDENED — this is a compile-time policy feature.)
+strict-config = []
+
 [dependencies]
 rsk-sdk = { workspace = true }
 rsk-fs = { workspace = true }

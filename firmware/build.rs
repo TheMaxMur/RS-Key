@@ -513,6 +513,11 @@ fn resolve_xosc_delay_mult() -> u32 {
 /// the device's PID *purely from the PC/SC reader name* (it must contain "Yubico
 /// YubiKey"). That is an opt-in local-interop flavor — built by the interop suite
 /// / CI matrix only — never for distribution.
+///
+/// NOTE: these are the *build-time* defaults. At runtime the manufacturer string
+/// and OpenPGP AID vendor follow the effective (phy-overridden) VID (see `main`),
+/// so a phy write that sets the Yubico VID presents the Yubico identity even on a
+/// default build. The USB/smartcard identity is cosmetic, never a security control.
 fn resolve_identity() -> (u16, u16, String, String) {
     let preset = env::var("VIDPID").unwrap_or_else(|_| "RSKey".into());
     let (mut vid, mut pid) = match preset.as_str() {

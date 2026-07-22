@@ -13,8 +13,6 @@ use minicbor::Encoder;
 use minicbor::encode::{Error as CborError, Write};
 use p256::FieldBytes;
 use p256::ecdsa::SigningKey;
-use p256::ecdsa::signature::Signer;
-use p256::elliptic_curve::rand_core;
 use zeroize::Zeroize;
 
 use crate::Rng;
@@ -33,111 +31,49 @@ pub const MAX_SIG_LEN: usize = rsk_crypto::MLDSA65_SIG_LEN; // 3309
 /// (the ML-DSA-44 seed needs only the first 32).
 pub const RATCHET_LEN: usize = 66;
 
-// Fixed-base comb tables (`build.rs`-generated): 16 entries `T[i]`, affine
-// `(x, y)` big-endian; `T[0]` is an unused identity sentinel.
-include!(concat!(env!("OUT_DIR"), "/gen_comb_p521.rs"));
-include!(concat!(env!("OUT_DIR"), "/gen_comb_p256.rs"));
-
-/// Comb width / bits-per-block — MUST match `build.rs`.
-const COMB_W: usize = 4;
-const COMB_D: usize = 131; // P-521: ceil(521 / 4)
-const COMB_D_P256: usize = 64; // P-256: ceil(256 / 4)
-
-/// Emits `<name>(k) -> k·G` for one curve via a width-`COMB_W` Lim–Lee comb over its
-/// `build.rs` table: `D` doublings + `D` mixed additions, several × faster than the
-/// crate's generic variable-base `mul_by_generator` on the in-order Cortex-M33, and
-/// bit-identical to it (KAT-checked in tests). Used for ECDSA signing's `k·G` and the
-/// public-key derivation `d·G` (both fixed-base on G). `$rl` = the scalar's big-endian
-/// repr length, `$bits` = the field bit width.
-macro_rules! comb_mul_fn {
-    ($name:ident, $c:ident, $table:ident, $d:expr, $bits:expr, $rl:expr) => {
-        fn $name(k: &$c::Scalar) -> $c::ProjectivePoint {
-            use $c::elliptic_curve::PrimeField;
-            use $c::elliptic_curve::sec1::FromEncodedPoint;
-
-            // Reconstruct the table points from the const bytes (once per call; the 15
-            // deserializations are negligible beside `$d` point additions). Index 0 is
-            // the identity sentinel, never read (the comb skips a zero window).
-            let mut tbl = [$c::AffinePoint::GENERATOR; 1 << COMB_W];
-            for (i, (x, y)) in $table.iter().enumerate().skip(1) {
-                let ep = $c::EncodedPoint::from_affine_coordinates(
-                    $c::FieldBytes::from_slice(x),
-                    $c::FieldBytes::from_slice(y),
-                    false,
-                );
-                tbl[i] = Option::from($c::AffinePoint::from_encoded_point(&ep))
-                    .expect("valid comb point");
-            }
-
-            let repr = k.to_repr(); // `$rl`-byte big-endian
-            let bit = |n: usize| -> usize {
-                if n >= $bits {
-                    0
-                } else {
-                    ((repr[$rl - 1 - n / 8] >> (n % 8)) & 1) as usize
-                }
-            };
-
-            let mut q = $c::ProjectivePoint::IDENTITY;
-            for t in (0..$d).rev() {
-                q += q; // double
-                let mut idx = 0usize;
-                for j in 0..COMB_W {
-                    idx |= bit(j * $d + t) << j;
-                }
-                if idx != 0 {
-                    q += tbl[idx]; // mixed add: ProjectivePoint += AffinePoint
-                }
-            }
-            q
-        }
-    };
+/// Test helper: the SEC1 uncompressed encoding `04 ‖ x ‖ y`, to rebuild a point
+/// from affine coordinates (0.14 dropped `Sec1Point::from_affine_coordinates`).
+#[cfg(test)]
+pub(crate) fn sec1_uncompressed(x: impl AsRef<[u8]>, y: impl AsRef<[u8]>) -> alloc::vec::Vec<u8> {
+    let (x, y) = (x.as_ref(), y.as_ref());
+    let mut b = alloc::vec::Vec::with_capacity(1 + x.len() + y.len());
+    b.push(0x04);
+    b.extend_from_slice(x);
+    b.extend_from_slice(y);
+    b
 }
 
-comb_mul_fn!(comb_mul, p521, GEN_COMB, COMB_D, 521, 66);
-comb_mul_fn!(comb_mul_p256, p256, GEN_COMB_P256, COMB_D_P256, 256, 32);
-
-/// The P-256 group order `n`, big-endian — the RFC 6979 modulus. Validated by the
-/// byte-exact `p256_comb_sign_matches_crate` test (a wrong `n` yields a wrong `k`).
-const P256_ORDER: [u8; 32] = [
-    0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-    0xBC, 0xE6, 0xFA, 0xAD, 0xA7, 0x17, 0x9E, 0x84, 0xF3, 0xB9, 0xCA, 0xC2, 0xFC, 0x63, 0x25, 0x51,
-];
-
-/// Deterministic ECDSA-SHA256 (RFC 6979) over `msg` with private scalar `d`,
-/// DER-encoded into `out`; returns the length. Byte-identical to
-/// `p256::ecdsa::SigningKey::sign` — the crate's own RFC 6979 `k`, but `R = k·G`
-/// comes from the fixed-base [`comb_mul_p256`] (KAT-identical to `mul_by_generator`)
-/// instead of the crate's generic mul. Takes the bare scalar so the caller need not
-/// build a `SigningKey` (which would derive the public key — a fixed-base mul wasted
-/// when only signing). `out` must hold [`MAX_DER_SIG`] bytes.
-fn sign_p256_comb(d: &p256::Scalar, msg: &[u8], out: &mut [u8]) -> usize {
-    use p256::U256;
-    use p256::elliptic_curve::PrimeField; // to_repr / from_repr
-    use p256::elliptic_curve::ops::Reduce;
-    use p256::elliptic_curve::point::AffineCoordinates;
-
-    // z = bits2field(SHA-256(msg)): for P-256 the 32-byte digest IS the field-bytes
-    // input (no truncation), exactly what `ecdsa::hazmat::bits2field` feeds the signer.
-    let z_fb: FieldBytes = *FieldBytes::from_slice(&rsk_crypto::sha256(msg));
-    // RFC 6979 nonce, derived byte-for-byte as the crate does (HMAC-SHA256 DRBG over
-    // `int2octets(d) ‖ z`, rejection-free since P-256's field width equals its qlen).
-    let kb = rfc6979::generate_k::<sha2::Sha256, _>(
-        &d.to_repr(),
-        FieldBytes::from_slice(&P256_ORDER),
-        &z_fb,
-        &[],
-    );
-    let k = Option::<p256::Scalar>::from(p256::Scalar::from_repr(kb)).expect("generate_k: 0<k<n");
-    let k_inv = Option::<p256::Scalar>::from(k.invert()).expect("nonzero k is invertible");
-    let z = <p256::Scalar as Reduce<U256>>::reduce_bytes(&z_fb);
-    let r = <p256::Scalar as Reduce<U256>>::reduce_bytes(&comb_mul_p256(&k).to_affine().x());
-    let s = k_inv * (z + r * *d);
-    let sig = p256::ecdsa::Signature::from_scalars(r, s).expect("nonzero r, s");
+/// Deterministic ECDSA-SHA256 over `msg` with scalar `d`, DER into `out`; the comb
+/// signer ([`rsk_ec::sign_p256`]) — byte-identical to `p256::ecdsa::SigningKey::sign`.
+pub(crate) fn sign_p256_comb(d: &p256::Scalar, msg: &[u8], out: &mut [u8]) -> usize {
+    let h = rsk_crypto::sha256(msg);
+    let sig = rsk_ec::sign_p256(d, &h).expect("nonzero r, s");
     let der = sig.to_der();
-    let bytes = der.as_bytes();
-    out[..bytes.len()].copy_from_slice(bytes);
-    bytes.len()
+    let b = der.as_bytes();
+    out[..b.len()].copy_from_slice(b);
+    b.len()
+}
+
+/// Deterministic ECDSA-SHA384 over `msg` with P-384 scalar `d`, DER into `out`;
+/// byte-identical to `p384::ecdsa::SigningKey::sign` ([`rsk_ec::sign_p384`]).
+fn sign_p384_comb(d: &p384::Scalar, msg: &[u8], out: &mut [u8]) -> usize {
+    let h = rsk_crypto::sha384(msg);
+    let sig = rsk_ec::sign_p384(d, &h).expect("nonzero r, s");
+    let der = sig.to_der();
+    let b = der.as_bytes();
+    out[..b.len()].copy_from_slice(b);
+    b.len()
+}
+
+/// Deterministic ECDSA-SHA256 over `msg` with secp256k1 scalar `d` (low-S), DER into
+/// `out`; byte-identical to `k256::ecdsa::SigningKey::sign` ([`rsk_ec::sign_k256`]).
+fn sign_k256_comb(d: &k256::Scalar, msg: &[u8], out: &mut [u8]) -> usize {
+    let h = rsk_crypto::sha256(msg);
+    let sig = rsk_ec::sign_k256(d, &h).expect("nonzero r, s");
+    let der = sig.to_der();
+    let b = der.as_bytes();
+    out[..b.len()].copy_from_slice(b);
+    b.len()
 }
 
 /// A P-256 signing keypair derived from a 32-byte scalar.
@@ -150,15 +86,15 @@ impl P256Key {
     /// ratchet output). Returns `None` if the scalar is out of range `[1, n)` —
     /// the caller treats that as a derivation failure.
     pub fn from_scalar(scalar: &[u8; 32]) -> Option<Self> {
-        let fb = FieldBytes::from_slice(scalar);
-        SigningKey::from_bytes(fb)
+        let fb = FieldBytes::from(*scalar);
+        SigningKey::from_bytes(&fb)
             .ok()
             .map(|signing| Self { signing })
     }
 
     /// Uncompressed public point as `(x, y)`, each 32 bytes — the COSE key coords.
     pub fn public_xy(&self) -> ([u8; 32], [u8; 32]) {
-        let pt = self.signing.verifying_key().to_encoded_point(false);
+        let pt = self.signing.verifying_key().to_sec1_point(false);
         let mut x = [0u8; 32];
         let mut y = [0u8; 32];
         x.copy_from_slice(pt.x().expect("uncompressed point has x"));
@@ -177,14 +113,15 @@ impl P256Key {
 /// A multi-scheme CTAP2 credential signing key, selected by the credential's
 /// stored `curve`.
 pub enum CredKey {
-    // P-256 and P-521 hold the bare scalar, not a `SigningKey`: building a `SigningKey`
-    // eagerly derives the public key (a fixed-base mul) that getAssertion never needs —
-    // it only signs. Both signing's `k·G` and `cose_public`'s `d·G` go through the
-    // fixed-base comb ([`comb_mul_p256`] / [`comb_mul`]).
+    // All four Weierstrass curves hold the bare scalar, not a `SigningKey`: building a
+    // `SigningKey` eagerly derives the public key (a fixed-base mul) that getAssertion
+    // never needs — it only signs. Both signing's `k·G` and `cose_public`'s `d·G` go
+    // through the fixed-base comb (`comb_mul_p256`/`_p384`/`comb_mul`/`comb_mul_k256`),
+    // which bypasses the crate's variable-time scalar-mul (slow on Cortex-M33).
     P256(p256::NonZeroScalar),
-    P384(p384::ecdsa::SigningKey),
+    P384(p384::NonZeroScalar),
     P521(p521::NonZeroScalar),
-    K256(k256::ecdsa::SigningKey),
+    K256(k256::NonZeroScalar),
     Ed25519(ed25519_dalek::SigningKey),
     // ML-DSA-44's ~13 KB expanded key (the in-tree `rsk-mldsa`, which streams the
     // matrix A so signing fits the RP2350 stack). HEAP-BOXED, not inline: signing
@@ -198,13 +135,15 @@ pub enum CredKey {
     MlDsa65(Box<rsk_crypto::MlDsa65>),
 }
 
-// The SigningKey variants zeroize themselves on drop; the bare P-256 / P-521
-// scalars don't (`NonZeroScalar` has no `Drop`).
+// The bare Weierstrass scalars need explicit zeroize (`NonZeroScalar` has no `Drop`);
+// Ed25519's `SigningKey` and the boxed ML-DSA keys zeroize themselves.
 impl Drop for CredKey {
     fn drop(&mut self) {
         match self {
             Self::P256(s) => s.zeroize(),
+            Self::P384(s) => s.zeroize(),
             Self::P521(s) => s.zeroize(),
+            Self::K256(s) => s.zeroize(),
             _ => {}
         }
     }
@@ -267,33 +206,35 @@ impl CredKey {
         match curve {
             c if c == CURVE_P256 as i64 => {
                 use p256::elliptic_curve::PrimeField;
-                let mut fb = p256::FieldBytes::clone_from_slice(raw.get(..32)?);
+                let mut fb = p256::FieldBytes::try_from(raw.get(..32)?).ok()?;
                 let scalar = Option::<p256::Scalar>::from(p256::Scalar::from_repr(fb));
                 fb.zeroize();
                 Some(Self::P256(Option::from(p256::NonZeroScalar::new(scalar?))?))
             }
             c if c == CURVE_P384 as i64 => {
-                let mut fb = p384::FieldBytes::clone_from_slice(raw.get(..48)?);
-                let key = p384::ecdsa::SigningKey::from_bytes(&fb).ok();
+                use p384::elliptic_curve::PrimeField;
+                let mut fb = p384::FieldBytes::try_from(raw.get(..48)?).ok()?;
+                let scalar = Option::<p384::Scalar>::from(p384::Scalar::from_repr(fb));
                 fb.zeroize();
-                Some(Self::P384(key?))
+                Some(Self::P384(Option::from(p384::NonZeroScalar::new(scalar?))?))
             }
             c if c == CURVE_P521 as i64 => {
                 use p521::elliptic_curve::PrimeField;
                 let mut buf = [0u8; 66];
                 buf.copy_from_slice(raw.get(..66)?);
                 buf[0] >>= 7; // a P-521 scalar is 521 bits: keep only the top byte's bit
-                let mut fb = p521::FieldBytes::clone_from_slice(&buf);
+                let mut fb = p521::FieldBytes::try_from(&buf[..]).ok()?;
                 buf.zeroize();
                 let scalar = Option::<p521::Scalar>::from(p521::Scalar::from_repr(fb));
                 fb.zeroize();
                 Some(Self::P521(Option::from(p521::NonZeroScalar::new(scalar?))?))
             }
             c if c == CURVE_P256K1 as i64 => {
-                let mut fb = k256::FieldBytes::clone_from_slice(raw.get(..32)?);
-                let key = k256::ecdsa::SigningKey::from_bytes(&fb).ok();
+                use k256::elliptic_curve::PrimeField;
+                let mut fb = k256::FieldBytes::try_from(raw.get(..32)?).ok()?;
+                let scalar = Option::<k256::Scalar>::from(k256::Scalar::from_repr(fb));
                 fb.zeroize();
-                Some(Self::K256(key?))
+                Some(Self::K256(Option::from(k256::NonZeroScalar::new(scalar?))?))
             }
             c if c == CURVE_ED25519 as i64 => {
                 // The 32-byte seed is hashed to the scalar internally; the
@@ -344,45 +285,22 @@ impl CredKey {
         }
         match self {
             Self::P256(k) => sign_p256_comb(k, msg, out),
-            Self::P384(k) => {
-                let s: p384::ecdsa::DerSignature = k.sign(msg);
-                put(s.as_bytes(), out)
-            }
-            Self::K256(k) => {
-                let s: k256::ecdsa::DerSignature = k.sign(msg);
-                put(s.as_bytes(), out)
-            }
+            Self::P384(d) => sign_p384_comb(d, msg, out),
+            Self::K256(d) => sign_k256_comb(d, msg, out),
             Self::P521(d) => {
-                use p521::elliptic_curve::Field;
-                use p521::elliptic_curve::ops::Reduce;
-                use p521::elliptic_curve::point::AffineCoordinates;
-                use p521::{FieldBytes, Scalar, U576};
-
-                let d: &Scalar = d; // deref-coerce &NonZeroScalar → &Scalar
-
-                // bits2field(SHA-512(msg)): P-521's field (66 B) is wider than the
-                // 64-byte hash, so left-pad (no bit truncation) then reduce mod n —
-                // exactly what `ecdsa::hazmat` feeds `sign_prehashed`.
+                // P-521 here signs with a RANDOM nonce: this comb path reject-samples a
+                // fresh 521-bit scalar from the device TRNG via the closure. A deterministic
+                // RFC 6979 signer exists (OpenPGP uses it) -- both safe; don't drop this feed.
+                let d: &p521::Scalar = d; // deref-coerce &NonZeroScalar → &Scalar
                 let h = rsk_crypto::sha512(msg);
-                let mut zf = FieldBytes::default();
-                zf[2..].copy_from_slice(&h);
-                let z = <Scalar as Reduce<U576>>::reduce_bytes(&zf);
-
-                // `sign_prehashed`'s body, but with R = k·G via the fixed-base comb.
-                loop {
-                    let k = Scalar::random(RngAdapter(&mut *rng));
-                    let Some(k_inv) = Option::<Scalar>::from(k.invert()) else {
-                        continue;
-                    };
-                    let r = <Scalar as Reduce<U576>>::reduce_bytes(&comb_mul(&k).to_affine().x());
-                    let s = k_inv * (z + r * *d);
-                    if let Ok(sig) = p521::ecdsa::Signature::from_scalars(r, s) {
-                        return put(sig.to_der().as_bytes(), out);
-                    }
-                }
+                let sig = rsk_ec::sign_p521(d, &h, &mut |b| rng.fill(b)).expect("nonzero r, s");
+                put(sig.to_der().as_bytes(), out)
             }
             Self::Ed25519(k) => {
                 // EdDSA is deterministic; the signature is the raw 64 bytes, not DER.
+                // ed25519-dalek is on signature 2.2 (its own `Signer`), not the EC
+                // stack's 3.0 — bring the matching trait in locally.
+                use ed25519_dalek::Signer;
                 let s: ed25519_dalek::Signature = k.sign(msg);
                 put(&s.to_bytes(), out)
             }
@@ -398,8 +316,8 @@ impl CredKey {
         match self {
             Self::P256(d) => {
                 // Derive the public key d·G with the fixed-base comb (no SigningKey).
-                use p256::elliptic_curve::sec1::ToEncodedPoint;
-                let p = comb_mul_p256(d).to_affine().to_encoded_point(false);
+                use p256::elliptic_curve::sec1::ToSec1Point;
+                let p = rsk_ec::comb_mul_p256(d).to_affine().to_sec1_point(false);
                 cose_key_ec2_var(
                     enc,
                     ALG_ES256,
@@ -408,8 +326,9 @@ impl CredKey {
                     p.y().expect("y"),
                 )
             }
-            Self::P384(k) => {
-                let p = k.verifying_key().to_encoded_point(false);
+            Self::P384(d) => {
+                use p384::elliptic_curve::sec1::ToSec1Point;
+                let p = rsk_ec::comb_mul_p384(d).to_affine().to_sec1_point(false);
                 cose_key_ec2_var(
                     enc,
                     ALG_ES384,
@@ -420,8 +339,8 @@ impl CredKey {
             }
             Self::P521(d) => {
                 // Derive the public key d·G with the fixed-base comb (no SigningKey).
-                use p521::elliptic_curve::sec1::ToEncodedPoint;
-                let p = comb_mul(d).to_affine().to_encoded_point(false);
+                use p521::elliptic_curve::sec1::ToSec1Point;
+                let p = rsk_ec::comb_mul_p521(d).to_affine().to_sec1_point(false);
                 cose_key_ec2_var(
                     enc,
                     ALG_ES512,
@@ -430,8 +349,9 @@ impl CredKey {
                     p.y().expect("y"),
                 )
             }
-            Self::K256(k) => {
-                let p = k.verifying_key().to_encoded_point(false);
+            Self::K256(d) => {
+                use k256::elliptic_curve::sec1::ToSec1Point;
+                let p = rsk_ec::comb_mul_k256(d).to_affine().to_sec1_point(false);
                 cose_key_ec2_var(
                     enc,
                     ALG_ES256K,
@@ -462,21 +382,42 @@ impl CredKey {
         }
         match self {
             Self::P256(d) => {
-                use p256::elliptic_curve::sec1::ToEncodedPoint;
+                use p256::elliptic_curve::sec1::ToSec1Point;
                 put(
-                    comb_mul_p256(d)
+                    rsk_ec::comb_mul_p256(d)
                         .to_affine()
-                        .to_encoded_point(false)
+                        .to_sec1_point(false)
                         .as_bytes(),
                     out,
                 )
             }
-            Self::P384(k) => put(k.verifying_key().to_encoded_point(false).as_bytes(), out),
-            Self::K256(k) => put(k.verifying_key().to_encoded_point(false).as_bytes(), out),
-            Self::P521(d) => {
-                use p521::elliptic_curve::sec1::ToEncodedPoint;
+            Self::P384(d) => {
+                use p384::elliptic_curve::sec1::ToSec1Point;
                 put(
-                    comb_mul(d).to_affine().to_encoded_point(false).as_bytes(),
+                    rsk_ec::comb_mul_p384(d)
+                        .to_affine()
+                        .to_sec1_point(false)
+                        .as_bytes(),
+                    out,
+                )
+            }
+            Self::K256(d) => {
+                use k256::elliptic_curve::sec1::ToSec1Point;
+                put(
+                    rsk_ec::comb_mul_k256(d)
+                        .to_affine()
+                        .to_sec1_point(false)
+                        .as_bytes(),
+                    out,
+                )
+            }
+            Self::P521(d) => {
+                use p521::elliptic_curve::sec1::ToSec1Point;
+                put(
+                    rsk_ec::comb_mul_p521(d)
+                        .to_affine()
+                        .to_sec1_point(false)
+                        .as_bytes(),
                     out,
                 )
             }
@@ -533,31 +474,6 @@ pub fn cose_public_from_point<W: Write>(
         _ => Err(CborError::message("uncacheable curve")),
     }
 }
-
-/// Adapts the crate's [`Rng`] to `rand_core` for the one curve (P-521) that needs
-/// a random ECDSA nonce. The wrapped source is the device TRNG in firmware.
-struct RngAdapter<'a, R: Rng>(&'a mut R);
-
-impl<R: Rng> rand_core::RngCore for RngAdapter<'_, R> {
-    fn next_u32(&mut self) -> u32 {
-        let mut b = [0u8; 4];
-        self.0.fill(&mut b);
-        u32::from_le_bytes(b)
-    }
-    fn next_u64(&mut self) -> u64 {
-        let mut b = [0u8; 8];
-        self.0.fill(&mut b);
-        u64::from_le_bytes(b)
-    }
-    fn fill_bytes(&mut self, dst: &mut [u8]) {
-        self.0.fill(dst);
-    }
-    fn try_fill_bytes(&mut self, dst: &mut [u8]) -> Result<(), rand_core::Error> {
-        self.0.fill(dst);
-        Ok(())
-    }
-}
-impl<R: Rng> rand_core::CryptoRng for RngAdapter<'_, R> {}
 
 #[cfg(test)]
 #[path = "ec_tests.rs"]

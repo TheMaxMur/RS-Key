@@ -50,6 +50,7 @@ pub const VENDOR_ATT_CLEAR: u64 = 0x0A; // remove the org attestation
 pub const VENDOR_ATT_STATE: u64 = 0x0B; // {present, chain hash} — ungated
 pub const VENDOR_CONFIG_WRITE: u64 = 0x0C; // persist a device-config blob (PIN + touch)
 pub const VENDOR_CONFIG_READ: u64 = 0x0D; // read a device-config record (ungated, for host RMW)
+pub const VENDOR_AUDIT_CONFIG: u64 = 0x0E; // turn the audit journal on/off (PIN + touch), OFF by default
 
 // Config-write targets — `subCommandParams` key 1 of `VENDOR_CONFIG_WRITE`. The
 // FIDO-transport twin of the CCID device-config writes, so a host without a
@@ -155,10 +156,31 @@ pub const FLAG_ED: u8 = 0x80; // extension data included
 /// = `2479c7bf-6b30-5683-9ec8-0e8171a918b7`. Self-assigned: an AAGUID needs no
 /// central registration; FIDO MDS *listing* (a separate, certification-gated
 /// step) is not required for the value itself. One AAGUID across every VID/PID
-/// flavor — it identifies the firmware model, not the USB branding.
-pub const AAGUID: [u8; 16] = [
-    0x24, 0x79, 0xC7, 0xBF, 0x6B, 0x30, 0x56, 0x83, 0x9E, 0xC8, 0x0E, 0x81, 0x71, 0xA9, 0x18, 0xB7,
-];
+/// flavor — it identifies the firmware model, not the USB branding. Build-time
+/// override: `AAGUID=<uuid-or-32-hex> cargo build` (resolved in `build.rs` and
+/// baked as `PK_AAGUID`); the checked-in metadata statement then no longer matches.
+pub const AAGUID: [u8; 16] = parse_aaguid(env!("PK_AAGUID"));
+
+/// Const-parse the 32-char lowercase-hex `PK_AAGUID` (validated in `build.rs`)
+/// into the 16 AAGUID bytes at compile time.
+const fn parse_aaguid(s: &str) -> [u8; 16] {
+    let b = s.as_bytes();
+    let mut out = [0u8; 16];
+    let mut i = 0;
+    while i < 16 {
+        out[i] = (hex_nibble(b[2 * i]) << 4) | hex_nibble(b[2 * i + 1]);
+        i += 1;
+    }
+    out
+}
+
+const fn hex_nibble(c: u8) -> u8 {
+    match c {
+        b'0'..=b'9' => c - b'0',
+        b'a'..=b'f' => c - b'a' + 10,
+        _ => 0, // build.rs guarantees lowercase hex, so this is unreachable
+    }
+}
 
 /// firmwareVersion reported by getInfo (CTAP `0x0E`): the shared
 /// [`rsk_sdk::FIRMWARE_VERSION`] (default 5.7.4, `FW_VERSION`-overridable) in
@@ -210,6 +232,12 @@ pub const MAX_MIN_PIN_RPIDS: usize = 8;
 // authenticatorReset wipes an explicit set (reset.rs), PIV factory-reset wipes
 // 0xD100..=0xD2FF; the journal survives both by construction.
 pub const EF_AUDIT_META: u16 = 0xC100; // ver ‖ seq_next ‖ start ‖ epoch hash
+/// Opt-in flag for the audit journal: journalling is OFF unless this file is
+/// present. Absent by default (fresh + upgraded devices) so `journal::append`
+/// writes nothing; the host turns it on with `VENDOR_AUDIT_CONFIG`. Sits in the
+/// audit block (outside `authenticatorReset`), so a host reset keeps the user's
+/// choice while the full display factory-wipe clears it back to the OFF default.
+pub const EF_AUDIT_ENABLED: u16 = 0xC101;
 pub const EF_AUDIT_RING: u16 = 0xC110; // entry slots, 0xC110..0xC110+AUDIT_RING_SLOTS
 pub const AUDIT_RING_SLOTS: u32 = 128;
 pub const EF_KEY_DEV: KeyFid = KeyFid::new(0xCC00); // device master seed, kbase-sealed

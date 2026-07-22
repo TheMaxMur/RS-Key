@@ -15,17 +15,27 @@ unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
 rsk-sdk = { workspace = true }
 rsk-fs = { workspace = true }
 rsk-crypto = { workspace = true }
+# `serial4` — the one canonical chip-id -> 8-digit-serial masking, already shared
+# by PIV/OTP/mgmt, so the OpenPGP AID serial matches the rest of the identity.
+rsk-mgmt = { workspace = true }
 # `alloc` for the Vec impls (RSA prime bytes + decipher plaintext).
 zeroize = { workspace = true, features = ["alloc"] }
 p256 = { workspace = true }
 p384 = { workspace = true }
 p521 = { workspace = true }
 k256 = { workspace = true }
+# Brainpool P-256 / P-384 for the OpenPGP applet — see the workspace note.
+bp256 = { workspace = true }
+bp384 = { workspace = true }
+ecdsa = { workspace = true }
+elliptic-curve = { workspace = true }
 ed25519-dalek = { workspace = true }
 x25519-dalek = { workspace = true }
 rsa = { workspace = true }
 num-bigint-dig = { workspace = true }
 rsk-rsa-asm = { workspace = true }
+# Shared fixed-base comb ECDSA signers + d·G (k·G for sign, public-key derivation).
+rsk-ec = { workspace = true }
 
 [dev-dependencies]
 rsk-fs = { workspace = true, features = ["test-util"] }

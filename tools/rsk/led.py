@@ -233,7 +233,7 @@ def _run_fido(args):
     _apply_block(block, args)
     pin = resolve_pin(args, has_pin=device_has_pin(dev, cid))
     print(
-        "approve on the device (touch) to write the LED config over FIDO…",
+        "if the device prompts for a touch, approve it (only strict-config builds gate this FIDO write)…",
         file=sys.stderr,
     )
     fields = _gated(CONFIG_WRITE, {1: CONFIG_TARGET_LED, 2: bytes(block)}, dev, cid, pin)

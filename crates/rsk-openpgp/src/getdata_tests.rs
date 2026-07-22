@@ -2,6 +2,7 @@
 // Copyright (C) 2026 RS-Key contributors
 
 use super::*;
+use crate::consts::OPGP_MFR_UNMANAGED;
 use crate::files::full_aid;
 use rsk_fs::storage::ram::RamStorage;
 
@@ -12,7 +13,7 @@ fn fs() -> Fs<RamStorage> {
 }
 
 fn aid() -> [u8; 16] {
-    full_aid(&[1, 2, 3, 4])
+    full_aid(&[1, 2, 3, 4], OPGP_MFR_UNMANAGED)
 }
 
 #[test]
@@ -39,6 +40,19 @@ fn algo_sig_is_stripped_to_bare_value() {
     let (n, sw) = get_data(EF_ALGO_SIG, false, false, &mut fs, &a, &mut cur, &mut out);
     assert_eq!(sw, Sw::OK);
     assert_eq!(&out[..n], &[ALGO_RSA, 0x08, 0x00, 0x00, 0x20, 0x00]);
+}
+
+#[test]
+fn gfm_7f74_keeps_its_sub_do() {
+    // 7F74 (general feature management): its value is the sub-DO 81 01 20 and must
+    // be returned whole, as a real YubiKey does — NOT unwrapped to a bare 20.
+    let mut fs = fs();
+    let a = aid();
+    let mut out = [0u8; 64];
+    let mut cur = None;
+    let (n, sw) = get_data(EF_GFM, false, false, &mut fs, &a, &mut cur, &mut out);
+    assert_eq!(sw, Sw::OK);
+    assert_eq!(&out[..n], &[0x81, 0x01, 0x20]);
 }
 
 #[test]

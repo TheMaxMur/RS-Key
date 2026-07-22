@@ -47,6 +47,8 @@ impl SlotAlgo {
             SlotAlgo::Ec(Curve::P256) => "NIST P-256",
             SlotAlgo::Ec(Curve::P384) => "NIST P-384",
             SlotAlgo::Ec(Curve::P521) => "NIST P-521",
+            SlotAlgo::Ec(Curve::Bp256) => "brainpoolP256r1",
+            SlotAlgo::Ec(Curve::Bp384) => "brainpoolP384r1",
             SlotAlgo::Ec(Curve::K256) => "secp256k1",
             SlotAlgo::Ec(Curve::Ed25519) => "Ed25519",
             SlotAlgo::Ec(Curve::X25519) => "Cv25519",

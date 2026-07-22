@@ -8,7 +8,7 @@ The status LED is the device's only display. On the reference board (the
 Three hardware properties of the indicator are **compile-time** knobs set by build
 flags. A fourth, `MAX_LEDS`, sets the upper bound for the PIO buffer. The actual
 number of connected LEDs is configured at **runtime** via `rsk hw --led-num` (or
-PicoForge) and must be ≤ `MAX_LEDS`.
+[PicoForge](https://github.com/librekeys/picoforge)) and must be ≤ `MAX_LEDS`.
 
 | Knob | Default | When to change it |
 |---|---|---|

@@ -14,7 +14,8 @@ p384 = { workspace = true }
 p521 = { workspace = true }
 k256 = { workspace = true }
 ed25519-dalek = { workspace = true }
-rfc6979 = { workspace = true }
+# Shared fixed-base comb scalar-mul + ECDSA comb signers (k·G / d·G).
+rsk-ec = { workspace = true }
 rsk-crypto = { workspace = true }
 rsk-fs = { workspace = true }
 rsk-led = { workspace = true }
@@ -23,11 +24,6 @@ rsk-rescue = { workspace = true }
 rsk-sdk = { workspace = true }
 sha2 = { workspace = true }
 zeroize = { workspace = true }
-
-[build-dependencies]
-# Host-side P-256 / P-521 arithmetic to generate the fixed-base comb tables (build.rs).
-p256 = { workspace = true }
-p521 = { workspace = true }
 
 [dev-dependencies]
 minicbor = { workspace = true }
@@ -87,3 +83,15 @@ ea-conformance-rpid = ["fido-conformance"]
 # built-in UV), makeCredential / getAssertion return CTAP2_ERR_PUAT_REQUIRED until a
 # PIN is configured — the standard alwaysUv cue for the platform to set one.
 always-uv = []
+# Restore the strict config-write authorization on the FIDO vendor CONFIG_WRITE
+# (0x0C): PIN (PERM_ACFG) + touch. OFF by default now — the default build writes
+# device config ungated (full YubiKey/ykman parity); `--features strict-config`
+# re-imposes the gate. See firmware's `strict-config`.
+strict-config = []
+# On-device latency-harness timing entrypoints (`bench` module). OFF by default,
+# NEVER shipped — enabling it exposes a vendor timing oracle over the crypto
+# primitives, like `keygen-bench`. Drives the real hot paths (variable-base P-256
+# ECDH, the getAssertion comb sign, the HKDF-SHA512 ratchet) with fixed public
+# inputs so `firmware --features bench` can time them via the RP2350 timer and
+# report a robust median/MAD + a cold-cache sample. See `rsk bench`.
+bench = []

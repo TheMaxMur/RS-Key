@@ -8,7 +8,8 @@
 //! On a board with no provisioned OTP key the OpenPGP PIN verifier and the card
 //! AID are both derived from the device serial: the PIN KDF roots on
 //! `serial_hash` (`kbase = HKDF(SALT_NOOTP, serial_hash)`, see
-//! `rsk_crypto::kdf`), and `full_aid` splices `serial_id[..4]` in at offset 10.
+//! `rsk_crypto::kdf`), and `full_aid` splices the BCD-encoded 8-digit device
+//! serial (`serial_bcd(rsk_mgmt::serial4(serial_id))`) in at offset 10.
 //! `firmware/src/main.rs` computes both from a single boot-time read,
 //! `serial_id = get_chipid().unwrap_or(0)`, `serial_hash = sha256(serial_id)`.
 //!
@@ -179,6 +180,94 @@ fn serial_change_moves_the_card_aid() {
         &aid_b[10..14],
         "a changed serial moves the card AID/serial scdaemon keys on"
     );
+}
+
+/// `serial_bcd` matches the encoding observed on real hardware: a YubiKey (device
+/// serial 37365093) carries BCD `37 36 50 93` in its OpenPGP AID, while PIV `INS
+/// 0xF8` carries the binary `02 3A 25 65`. RS-Key must BCD-encode the same way.
+#[test]
+fn serial_bcd_matches_yubikey_encoding() {
+    // Observed on a real YubiKey 5C NFC over PC/SC.
+    assert_eq!(
+        crate::files::serial_bcd(&37365093u32.to_be_bytes()),
+        [0x37, 0x36, 0x50, 0x93]
+    );
+    // The RS-Key under test (masked serial 47537774).
+    assert_eq!(
+        crate::files::serial_bcd(&47537774u32.to_be_bytes()),
+        [0x47, 0x53, 0x77, 0x74]
+    );
+}
+
+/// The OpenPGP card serial in the AID is the BCD of the device serial the other
+/// applets report (`rsk_mgmt::serial4`, PIV `INS 0xF8`) — the YubiKey convention,
+/// so `gpg` renders it as the same decimal. Before this, OpenPGP spliced the *raw*
+/// chip-id bytes, so one device advertised two unrelated serials (issue #44).
+#[test]
+fn card_aid_serial_matches_device_serial() {
+    let (id, hash) = boot(CHIPID_A);
+    let mut fs = provision(&id, &hash);
+    let rng = RefCell::new(CountRng(0));
+    let presence = RefCell::new(crate::AlwaysConfirm);
+
+    let mut app = applet(id, hash, &rng, &presence);
+    let aid = get_aid(&mut app, &mut fs);
+
+    assert_eq!(
+        &aid[10..14],
+        &crate::files::serial_bcd(&rsk_mgmt::serial4(id)),
+        "the OpenPGP AID serial must be the BCD of the 8-digit device serial (== PIV F8)"
+    );
+    // The raw chip-id bytes must NOT leak into the AID.
+    assert_ne!(
+        &aid[10..14],
+        &id[..4],
+        "raw chip-id bytes must not be the card serial"
+    );
+}
+
+/// The AID manufacturer id (bytes 8-9) follows the identity: the default RS-Key
+/// build is the unmanaged range, the Yubico-VID interop build is the Yubico id,
+/// so a host shows the same vendor a real YubiKey would.
+#[test]
+fn aid_manufacturer_follows_identity() {
+    let (id, hash) = boot(CHIPID_A);
+    let mut fs = provision(&id, &hash);
+    let rng = RefCell::new(CountRng(0));
+    let presence = RefCell::new(crate::AlwaysConfirm);
+
+    let mut def = applet(id, hash, &rng, &presence);
+    assert_eq!(
+        &get_aid(&mut def, &mut fs)[8..10],
+        &[0xFF, 0xFE],
+        "default = unmanaged"
+    );
+
+    let mut yk = applet(id, hash, &rng, &presence).with_manufacturer(consts::OPGP_MFR_YUBICO);
+    assert_eq!(
+        &get_aid(&mut yk, &mut fs)[8..10],
+        &[0x00, 0x06],
+        "Yubico VID = Yubico id"
+    );
+}
+
+/// The OpenPGP vendor VERSION command (INS 0xF1) reports the shared device
+/// firmware version, matching a real YubiKey (whose OpenPGP "Application version"
+/// == its firmware version), not a separate hardcoded number.
+#[test]
+fn version_ins_reports_firmware_version() {
+    let (id, hash) = boot(CHIPID_A);
+    let mut fs = provision(&id, &hash);
+    let rng = RefCell::new(CountRng(0));
+    let presence = RefCell::new(crate::AlwaysConfirm);
+    let mut app = applet(id, hash, &rng, &presence);
+
+    let apdu = Apdu::parse(&[0x00, consts::INS_VERSION, 0x00, 0x00, 0x00]).unwrap();
+    let mut buf = [0u8; SCRATCH];
+    let mut res = ResBuf::new(&mut buf);
+    assert_eq!(app.process(&apdu, &mut fs, &mut res), Sw::OK);
+    let (major, minor, patch) = rsk_sdk::FIRMWARE_VERSION;
+    assert_eq!(res.as_slice(), &[major, minor, patch]);
 }
 
 #[test]

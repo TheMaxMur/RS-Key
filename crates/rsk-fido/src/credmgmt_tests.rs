@@ -1188,7 +1188,7 @@ fn update_user_reseals_maximal_box() {
 // ECDSA public key (x, y). Proves the signing key is the one makeCredential
 // issued — used before AND after an updateUserInformation reseal.
 fn assert_ga_signs_under(fs: &mut Fs<RamStorage>, id: &[u8], x: &[u8; 32], y: &[u8; 32]) {
-    use p256::EncodedPoint;
+    use p256::Sec1Point;
     use p256::ecdsa::{Signature, VerifyingKey, signature::Verifier};
     let mut buf = [0u8; 256];
     let req = {
@@ -1224,8 +1224,8 @@ fn assert_ga_signs_under(fs: &mut Fs<RamStorage>, id: &[u8], x: &[u8; 32], y: &[
     let ad = d.bytes().unwrap().to_vec();
     assert_eq!(d.u8().unwrap(), 3);
     let sig = d.bytes().unwrap().to_vec();
-    let pt = EncodedPoint::from_affine_coordinates(x.into(), y.into(), false);
-    let vk = VerifyingKey::from_encoded_point(&pt).unwrap();
+    let pt = Sec1Point::from_bytes(&crate::ec::sec1_uncompressed(x, y)).unwrap();
+    let vk = VerifyingKey::from_sec1_point(&pt).unwrap();
     let mut signed = ad;
     signed.extend_from_slice(&CDH);
     vk.verify(&signed, &Signature::from_der(&sig).unwrap())
@@ -1405,7 +1405,7 @@ impl Storage for CountingStorage {
     fn size(&mut self, fid: u16) -> Option<usize> {
         self.inner.size(fid)
     }
-    fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) {
+    fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) -> bool {
         self.inner.for_each_key(f)
     }
 }
