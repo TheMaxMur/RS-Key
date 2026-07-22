@@ -638,6 +638,47 @@ fn hid_frame_set_device_info_round_trips_to_config() {
     );
 }
 
+#[cfg(not(feature = "strict-config"))]
+#[test]
+fn hid_frame_set_device_info_bumps_program_sequence() {
+    // ykman/yubikit confirm an OTP-transport config write by the program-sequence
+    // byte in the status frame advancing (`_is_sequence_updated`), not by a response
+    // body. Before the fix `ykman config usb` failed with CommandRejectedError("No
+    // data") because SET_DEVICE_INFO left the sequence unchanged. A real (non-empty)
+    // write must advance it exactly like a slot configure.
+    let mut fs = new_fs();
+    let presence = RefCell::new(AlwaysConfirm);
+    let rng = RefCell::new(CountRng(7));
+    let mut app = OtpApplet::new(SERIAL, SERIAL_HASH, None, &rng, &presence);
+    let seq_before = app.hid_status_frame(&mut fs)[4];
+
+    // DeviceConfig.get_bytes() for `config usb --disable PIV`: [len=4][03 02 02 2B].
+    let mut payload = [0u8; hid::PAYLOAD_SIZE];
+    payload[..5].copy_from_slice(&[0x04, 0x03, 0x02, 0x02, 0x2B]);
+    let mut out = [0u8; 64];
+    let mut res = ResBuf::new(&mut out);
+    assert_eq!(app.process_hid(0x15, &payload, &mut fs, &mut res), Sw::OK);
+    assert_eq!(
+        app.hid_status_frame(&mut fs)[4],
+        seq_before.wrapping_add(1),
+        "SET_DEVICE_INFO must advance pgmSeq so ykman sees the write"
+    );
+
+    // An empty (no-op) write must NOT bump — yubikit's benign "No data" is correct
+    // there, and a spurious bump would report a phantom config change.
+    let seq_after = app.hid_status_frame(&mut fs)[4];
+    let mut r2 = ResBuf::new(&mut out);
+    assert_eq!(
+        app.process_hid(0x15, &[0u8; hid::PAYLOAD_SIZE], &mut fs, &mut r2),
+        Sw::OK
+    );
+    assert_eq!(
+        app.hid_status_frame(&mut fs)[4],
+        seq_after,
+        "empty write is a no-op"
+    );
+}
+
 #[cfg(feature = "strict-config")]
 #[test]
 fn hid_frame_set_device_info_ignored_under_strict() {

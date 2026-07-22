@@ -367,6 +367,9 @@ impl<'a> Worker<'a> {
     /// `EXCHANGE` after `DONE`, and the lock's critical section is momentary, so
     /// the high-priority executor is never blocked.
     async fn handle_transport(&mut self) {
+        // A config write since the last request may have changed the enabled set;
+        // reload it before any gate consults it.
+        self.refresh_caps_if_dirty();
         // Show the processing status for the dispatch; the first request also
         // flips the boot status to idle for good.
         crate::led::set_status(crate::led::STATUS_PROCESSING);
@@ -378,6 +381,15 @@ impl<'a> Worker<'a> {
             if ex.kind == Kind::Secure {
                 self.handle_secure_req(&mut ex);
             } else {
+                // FIDO2 (CBOR) / U2F (MSG) disabled via `ykman config usb` answer a
+                // deny; the interface stays enumerated (descriptor fixed at boot) but
+                // does nothing until re-enabled. The re-enable path — CCID management
+                // and the FIDO Management vendor command (`Kind::Vendor`) — is never
+                // gated, so a disable is always reversible.
+                let fido2_on = self.ccid.caps_enabled(rsk_mgmt::CAP_FIDO2);
+                let u2f_on = self.ccid.caps_enabled(rsk_mgmt::CAP_U2F);
+                let cbor_denied = [rsk_fido::CtapError::OperationDenied as u8];
+                let u2f_denied = rsk_sdk::Sw::CONDITIONS_NOT_SATISFIED.to_bytes();
                 let Exchange {
                     kind,
                     vcmd,
@@ -389,7 +401,9 @@ impl<'a> Worker<'a> {
                     ..
                 } = &mut *ex;
                 let r: &[u8] = match *kind {
+                    Kind::Cbor if !fido2_on => &cbor_denied,
                     Kind::Cbor => self.ctap.handle_cbor(&req[..*req_len]),
+                    Kind::Msg if !u2f_on => &u2f_denied,
                     Kind::Msg => {
                         // A CTAPHID_INIT since the last MSG drops the applet
                         // selection so U2F isn't hijacked by a sticky vendor SELECT.
@@ -508,10 +522,21 @@ impl<'a> Worker<'a> {
     /// One keyboard-interface OTP frame command: run it against flash and stash
     /// the response for the GET_REPORT poller. A CHAL_BTN_TRIG slot blocks here in
     /// a touch wait; the high-priority GET_REPORT polls report `0x20` meanwhile.
+    /// Reload the cached enabled-applications mask if a config write flipped the
+    /// dirty latch, so the CCID / FIDO2 / U2F / OTP gates all act on the new set
+    /// before the next request. Cheap (one relaxed atomic) on the common no-change
+    /// path; a flash re-read only right after `ykman config usb` changed it.
+    fn refresh_caps_if_dirty(&mut self) {
+        if rsk_mgmt::take_dev_conf_dirty() {
+            self.ccid.refresh_enabled();
+        }
+    }
+
     fn handle_otp_hid(&mut self) {
         let Some((slot, payload)) = otp_kbd::take_request() else {
             return;
         };
+        self.refresh_caps_if_dirty();
         crate::led::set_status(crate::led::STATUS_PROCESSING);
         let (body, n, status) = self.ccid.handle_otp_hid(slot, &payload);
         otp_kbd::finish_response(status, &body[..n]);

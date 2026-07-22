@@ -13,6 +13,31 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+### Changed
+
+- **`ykman config usb --disable`/`--enable` now actually disables applications.**
+  The enabled-applications mask (`USB_ENABLED` in the Management DeviceConfig) used
+  to be reporting-only — a "disabled" app kept working. It is now **enforced**: a
+  disabled application's applet stops answering — PIV/OpenPGP/OATH/OTP return `6A82`
+  on CCID SELECT, FIDO2 (CBOR) and U2F (MSG) are refused over CTAPHID, and the OTP
+  keyboard goes inert (no typed tickets, no challenge-response). It takes effect
+  live (next command, no replug) and is **reversible**: the Management applet, the
+  FIDO vendor `CONFIG_WRITE`, and the OTP-HID identify/config slots are never gated,
+  so any one transport can re-enable. On the default build the admin write stays
+  ungated for ykman parity, so a hostile host can toggle applications — a reversible
+  DoS, documented in docs/threat-model.md; `--features strict-config` gates the
+  write on operator presence. **bcdDevice → 0x084A.**
+
+### Fixed
+
+- **`ykman config usb` no longer fails with `CommandRejectedError: No data` over the
+  OTP keyboard transport.** ykman/yubikit confirm an OTP-HID config write by the
+  status frame's program-sequence byte advancing; `SET_DEVICE_INFO` (and the other
+  OTP-HID admin writes) persisted the config but never bumped that counter — so on a
+  host without PC/SC, where ykman falls back from CCID to the OTP-HID transport, the
+  write was reported rejected even though it took. They now advance the sequence like
+  a slot configure. **bcdDevice → 0x084A.**
+
 ## [0.4.0] - 2026-07-22
 
 ### Security

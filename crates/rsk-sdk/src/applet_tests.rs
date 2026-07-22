@@ -385,6 +385,67 @@ fn extended_le_response_is_not_chained() {
 }
 
 #[test]
+fn set_enabled_hides_a_disabled_applet() {
+    // A cleared enable bit makes an applet invisible: its AID matches nothing on
+    // SELECT (FILE_NOT_FOUND), exactly as `ykman config usb --disable X` intends,
+    // while its still-enabled neighbour selects and dispatches normally.
+    let mut echo = Echo { selected: false }; // index 0
+    let mut chunk = Chunky {
+        body_len: 3,
+        chain: false,
+    }; // index 1
+    let mut applets: [&mut dyn Applet<()>; 2] = [&mut echo, &mut chunk];
+    let mut disp = Dispatcher::new();
+    let mut out = [0u8; 64];
+    let mut res = ResBuf::new(&mut out);
+
+    disp.set_enabled(0b10); // disable index 0 (Echo), keep index 1 (Chunky)
+
+    let mut sel0 = vec![0x00, 0xA4, 0x04, 0x00, 0x08];
+    sel0.extend_from_slice(&[0xA0, 0x00, 0x00, 0x06, 0x47, 0x2F, 0x00, 0x01]);
+    assert_eq!(
+        disp.process(&sel0, &mut applets, &mut (), &mut res),
+        Sw::FILE_NOT_FOUND
+    );
+    assert_eq!(disp.current(), None);
+
+    let sel1 = [
+        0x00, 0xA4, 0x04, 0x00, 0x08, 0xA0, 0x00, 0x00, 0x06, 0x47, 0x2F, 0x00, 0x02,
+    ];
+    assert_eq!(disp.process(&sel1, &mut applets, &mut (), &mut res), Sw::OK);
+    assert_eq!(disp.current(), Some(1));
+
+    // Re-enable Echo and confirm it selects again — a disable is reversible.
+    disp.set_enabled(u32::MAX);
+    assert_eq!(disp.process(&sel0, &mut applets, &mut (), &mut res), Sw::OK);
+    assert_eq!(disp.current(), Some(0));
+}
+
+#[test]
+fn disabling_the_current_applet_makes_it_unreachable() {
+    // The contrived window: an applet is selected, then disabled before its next
+    // command (config changed over another transport). Dispatch-to-current
+    // re-checks the enable bit, so the command finds nothing.
+    let mut echo = Echo { selected: false };
+    let mut applets: [&mut dyn Applet<()>; 1] = [&mut echo];
+    let mut disp = Dispatcher::new();
+    let mut out = [0u8; 64];
+    let mut res = ResBuf::new(&mut out);
+
+    let mut sel = vec![0x00, 0xA4, 0x04, 0x00, 0x08];
+    sel.extend_from_slice(&[0xA0, 0x00, 0x00, 0x06, 0x47, 0x2F, 0x00, 0x01]);
+    assert_eq!(disp.process(&sel, &mut applets, &mut (), &mut res), Sw::OK);
+    assert_eq!(disp.current(), Some(0));
+
+    disp.set_enabled(0); // disabled since SELECT
+    let cmd = [0x00, 0x10, 0x00, 0x00, 0x03, 0xDE, 0xAD, 0xBE];
+    assert_eq!(
+        disp.process(&cmd, &mut applets, &mut (), &mut res),
+        Sw::FILE_NOT_FOUND
+    );
+}
+
+#[test]
 fn opt_out_applet_is_never_chained() {
     let mut c = Chunky {
         body_len: 269,

@@ -115,6 +115,10 @@ pub struct Dispatcher {
     pending_len: usize,
     pending_off: usize,
     pending_sw: Sw,
+    /// Bit `i` set → applet index `i` is selectable; cleared → invisible. Set by
+    /// [`Self::set_enabled`] from the persisted enabled-applications config;
+    /// defaults to all-active so callers that never restrict are unaffected.
+    enabled: u32,
 }
 
 impl Default for Dispatcher {
@@ -134,12 +138,28 @@ impl Dispatcher {
             pending_len: 0,
             pending_off: 0,
             pending_sw: Sw::OK,
+            enabled: u32::MAX,
         }
     }
 
     /// Index of the currently selected applet, if any.
     pub fn current(&self) -> Option<usize> {
         self.current
+    }
+
+    /// Restrict which registered applets are selectable: bit `i` set → applet
+    /// index `i` is active; cleared → invisible (SELECT and any command to it
+    /// return `FILE_NOT_FOUND`, exactly as if it were not registered). Indices
+    /// `≥ 32` are always active. The firmware sets this from the persisted
+    /// enabled-applications config, so `ykman config usb --disable X` really
+    /// removes X's applet rather than only hiding it from the DeviceInfo report.
+    pub fn set_enabled(&mut self, mask: u32) {
+        self.enabled = mask;
+    }
+
+    /// Whether applet index `i` is currently active (see [`Self::set_enabled`]).
+    fn selectable(&self, i: usize) -> bool {
+        i >= 32 || self.enabled & (1 << i) != 0
     }
 
     /// Drop any selected applet. Used when a fresh logical session begins (a
@@ -214,11 +234,10 @@ impl Dispatcher {
                 ne: apdu.ne,
                 data: &self.chain[..total],
             };
-            let chain_ok = self
-                .current
-                .map(|i| applets[i].response_chaining())
-                .unwrap_or(false);
-            let sw = match self.current {
+            // A disabled current applet is unreachable, like a dropped selection.
+            let cur = self.current.filter(|&i| self.selectable(i));
+            let chain_ok = cur.map(|i| applets[i].response_chaining()).unwrap_or(false);
+            let sw = match cur {
                 Some(i) => applets[i].process(&combined, ctx, res),
                 None => Sw::FILE_NOT_FOUND,
             };
@@ -227,11 +246,12 @@ impl Dispatcher {
             return self.maybe_chain(sw, apdu.ne, chain_ok, res);
         }
 
-        // SELECT by AID.
+        // SELECT by AID. A disabled applet is skipped, so its AID matches nothing
+        // (→ FILE_NOT_FOUND) just as if it were never registered.
         if apdu.ins == 0xA4 && apdu.p1 == 0x04 && (apdu.p2 == 0x00 || apdu.p2 == 0x04) {
-            let found = applets.iter().position(|app| {
+            let found = applets.iter().enumerate().position(|(i, app)| {
                 let aid = app.aid();
-                apdu.data.len() >= aid.len() && &apdu.data[..aid.len()] == aid
+                self.selectable(i) && apdu.data.len() >= aid.len() && &apdu.data[..aid.len()] == aid
             });
             return match found {
                 Some(i) => {
@@ -250,14 +270,14 @@ impl Dispatcher {
             };
         }
 
-        // Dispatch to the selected applet.
+        // Dispatch to the selected applet (unless it was disabled since SELECT).
         match self.current {
-            Some(i) => {
+            Some(i) if self.selectable(i) => {
                 let chain_ok = applets[i].response_chaining();
                 let sw = applets[i].process(&apdu, ctx, res);
                 self.maybe_chain(sw, apdu.ne, chain_ok, res)
             }
-            None => Sw::FILE_NOT_FOUND,
+            _ => Sw::FILE_NOT_FOUND,
         }
     }
 

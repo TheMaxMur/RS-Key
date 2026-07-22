@@ -174,6 +174,27 @@ const YUBICO_CHARSET: &[u8; 45] = b"cbdefghijklnrtuvCBDEFGHIJKLNRTUV0123456789!\
 #[cfg(not(feature = "strict-config"))]
 const SCANMAP_LEN: usize = 45;
 
+/// Whether a keyboard-HID slot P1 is an OTP *function* — programming a slot
+/// (configure/update/swap) or a challenge-response — as opposed to an
+/// identify/config slot (GET SERIAL, READ/WRITE CONFIG, status, admin). When the
+/// OTP application is disabled via `ykman config usb`, the firmware takes the
+/// former inert while keeping the latter live, so the host can still read the
+/// DeviceInfo and re-enable OTP.
+pub fn is_function_slot(slot_id: u8) -> bool {
+    matches!(
+        slot_id,
+        P1_CONFIG_SLOT1
+            | P1_CONFIG_SLOT2
+            | P1_UPDATE_SLOT1
+            | P1_UPDATE_SLOT2
+            | P1_SWAP
+            | P1_CHAL_OTP_SLOT1
+            | P1_CHAL_OTP_SLOT2
+            | P1_CHAL_HMAC_SLOT1
+            | P1_CHAL_HMAC_SLOT2
+    )
+}
+
 /// "Wrong data" in this protocol is reported as `0x6700` (wrong length).
 const SW_WRONG_DATA: Sw = Sw::WRONG_LENGTH;
 
@@ -688,7 +709,14 @@ impl<'a> OtpApplet<'a> {
             return Sw::INCORRECT_PARAMS;
         }
         match rsk_mgmt::persist_dev_conf(fs, &data[1..1 + len]) {
-            Ok(()) => Sw::OK,
+            Ok(()) => {
+                // ykman/yubikit confirm an OTP-transport write by the program-
+                // sequence byte in the status frame advancing (`_is_sequence_updated`),
+                // not by any response body. Bump it like a slot configure/update/swap
+                // or `ykman config usb` fails with `CommandRejectedError: No data`.
+                self.config_seq = self.config_seq.wrapping_add(1);
+                Sw::OK
+            }
             Err(rsk_mgmt::DevConfError::TooLong) => Sw::INCORRECT_PARAMS,
             Err(rsk_mgmt::DevConfError::Store) => Sw::MEMORY_FAILURE,
         }
@@ -702,6 +730,7 @@ impl<'a> OtpApplet<'a> {
         let n = apdu.data.len().min(EF_OTP_DEVCFG_MAX);
         if n != 0 {
             let _ = fs.put(EF_OTP_DEVCFG, &apdu.data[..n]);
+            self.config_seq = self.config_seq.wrapping_add(1); // pgmSeq bump (see cmd_set_device_info)
         }
         Sw::OK
     }
@@ -715,6 +744,7 @@ impl<'a> OtpApplet<'a> {
         if n != 0 {
             let fid = if slot2 { EF_OTP_NDEF2 } else { EF_OTP_NDEF1 };
             let _ = fs.put(fid, &apdu.data[..n]);
+            self.config_seq = self.config_seq.wrapping_add(1); // pgmSeq bump (see cmd_set_device_info)
         }
         Sw::OK
     }
@@ -729,6 +759,7 @@ impl<'a> OtpApplet<'a> {
             return Sw::OK;
         }
         let _ = fs.put(EF_OTP_SCANMAP, &apdu.data[..SCANMAP_LEN]);
+        self.config_seq = self.config_seq.wrapping_add(1); // pgmSeq bump (see cmd_set_device_info)
         Sw::OK
     }
 

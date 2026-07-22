@@ -42,8 +42,11 @@ also carries the ykman OTP-HID admin writes (SET_DEVICE_INFO `0x15`,
 DEVICE_CONFIG `0x11`, SCAN_MAP `0x12`, NDEF `0x08`/`0x09`) — ungated, like a stock
 YubiKey; `strict-config` refuses them. SET_DEVICE_INFO shares the same
 `EF_DEV_CONF` DeviceInfo store as the CCID WRITE CONFIG (§6); the rest are inert
-on this USB-only board except SCAN_MAP (it remaps typed OTP output). The frame
-codec itself is otherwise out of scope here.
+on this USB-only board except SCAN_MAP (it remaps typed OTP output). Each admin
+write **advances the status frame's program-sequence byte** — that increment is
+how ykman/yubikit confirm it (a write that left the sequence unchanged reports
+`CommandRejectedError: No data`, which is what blocked `ykman config usb` over
+this transport before). The frame codec itself is otherwise out of scope here.
 
 ### 1.1 CCID APDU framing
 
@@ -326,6 +329,17 @@ fixed `USB_SUPPORTED/SERIAL/FORM_FACTOR/VERSION` prefix.
 WRITE CONFIG a `TAG_USB_ENABLED(03)` TLV with the desired mask, e.g. enable only
 FIDO2+U2F → inner blob `03 02 02 02`, full APDU
 `00 1C 00 00 05 04 03 02 02 02`.
+
+`USB_ENABLED` is **enforced**, not merely reported: a cleared bit makes that
+application's applet stop answering — PIV/OpenPGP/OATH/OTP return `6A82` on
+CCID SELECT, FIDO2 (CBOR) and U2F (MSG) are refused over CTAPHID, and the OTP
+keyboard goes inert. The change is live (next command; no replug). Its ceiling
+is `USB_SUPPORTED`, so a wider host-written mask is clamped. The re-enable path
+is never gated — the Management applet (§6), the FIDO vendor `CONFIG_WRITE`
+(§9) and the OTP-HID identify/config slots stay reachable — so a disable is
+always reversible. Building `--features strict-config` gates the *write* on
+operator presence; the enforcement of a persisted mask is the same on both
+builds.
 
 > WRITE CONFIG refuses an inner blob > 64 bytes (`6A80`) so a malformed config
 > can't wedge later reads. **On the default build the write is ungated** (full
@@ -672,7 +686,8 @@ SET     00 10 40 11        # P1=0x40 brightness, P2 = color 1 | status 1<<4 = 0x
    `0x41` `CONFIG_WRITE/READ` path instead, see §9, which also covers those
    extras.)
 3. **Applet enable/disable** is the Yubico-compatible Management applet (§6),
-   identical to how you'd configure a YubiKey's USB applications.
+   identical to how you'd configure a YubiKey's USB applications — and enforced:
+   a disabled application's applet stops answering (see §6, `USB_ENABLED`).
 4. **Version-gate** on the Rescue SELECT identity (`01 02 08 06 …`, §7) and the
    Management SELECT version string. Treat unknown phy tags / `0x41` subcommands as
    skippable, not errors.
