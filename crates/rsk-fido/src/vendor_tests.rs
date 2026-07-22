@@ -1454,3 +1454,41 @@ fn audit_read_without_pin_requires_touch() {
         .is_ok()
     );
 }
+
+/// Build a `VENDOR_AUDIT_CONFIG` request `{1: subcmd, 2: {1: target}}`.
+fn audit_config_req(target: u64, buf: &mut [u8]) -> usize {
+    let mut e = Encoder::new(Cursor::new(buf));
+    e.map(2).unwrap();
+    e.u8(1).unwrap().u64(VENDOR_AUDIT_CONFIG).unwrap();
+    e.u8(2)
+        .unwrap()
+        .map(1)
+        .unwrap()
+        .u8(1)
+        .unwrap()
+        .u64(target)
+        .unwrap();
+    e.writer().position()
+}
+
+#[test]
+fn audit_config_rejects_unknown_target() {
+    let (mut fs, mut rng, mut st) = setup(); // no PIN → pin_gate is a no-op
+    let mut req = [0u8; 32];
+    // 0/1/2 are the only defined ops; a 3 must not silently alias to enable.
+    let n = audit_config_req(3, &mut req);
+    let mut out = [0u8; 32];
+    assert_eq!(
+        call(
+            &mut fs,
+            &mut rng,
+            &mut st,
+            &mut AlwaysConfirm,
+            &req[..n],
+            &mut out
+        ),
+        Err(CtapError::InvalidParameter)
+    );
+    // The rejected op changed nothing: journalling stays OFF by default.
+    assert!(!crate::journal::is_enabled(&mut fs));
+}

@@ -368,18 +368,23 @@ fn audit_checkpoint<S: Storage, R: Rng>(
 /// after the flag is set, a DISABLE just before it clears, so the last live entry
 /// marks when logging stopped. Always returns `{1: enabled}`.
 fn audit_config<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req, out: &mut [u8]) -> CtapResult {
-    if req.target != 2 {
-        pin_gate(ctx, req)?;
-        if !ctx.check_user_presence(crate::Confirm::titled("Change audit logging?")) {
-            return Err(CtapError::OperationDenied);
+    match req.target {
+        2 => {} // ungated status read; falls through to the encode below
+        0 | 1 => {
+            pin_gate(ctx, req)?;
+            if !ctx.check_user_presence(crate::Confirm::titled("Change audit logging?")) {
+                return Err(CtapError::OperationDenied);
+            }
+            if req.target == 1 {
+                journal::set_enabled(ctx.fs, true).map_err(|_| CtapError::Other)?;
+                journal::append(ctx, journal::EV_AUDIT_CFG, 1, &[]);
+            } else {
+                journal::append(ctx, journal::EV_AUDIT_CFG, 0, &[]);
+                journal::set_enabled(ctx.fs, false).map_err(|_| CtapError::Other)?;
+            }
         }
-        if req.target != 0 {
-            journal::set_enabled(ctx.fs, true).map_err(|_| CtapError::Other)?;
-            journal::append(ctx, journal::EV_AUDIT_CFG, 1, &[]);
-        } else {
-            journal::append(ctx, journal::EV_AUDIT_CFG, 0, &[]);
-            journal::set_enabled(ctx.fs, false).map_err(|_| CtapError::Other)?;
-        }
+        // Reject an unknown op rather than aliasing it to enable.
+        _ => return Err(CtapError::InvalidParameter),
     }
     encode(out, |e| {
         e.map(1)?.u8(1)?.bool(journal::is_enabled(ctx.fs))?;

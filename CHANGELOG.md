@@ -26,6 +26,9 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   to store a silently-unusable key while the public-key DO advertised the imported e;
   import now fails with `6A80` (incorrect parameters), matching the PIV path.
   **bcdDevice → 0x0848.**
+- **`VENDOR_AUDIT_CONFIG` rejects an unknown op instead of enabling.** Any target
+  other than 0 (disable) / 1 (enable) / 2 (status) used to alias to enable; an
+  unknown op is now rejected with `CTAP2_ERR_INVALID_PARAMETER`. **bcdDevice → 0x0849.**
 
 ### Added
 
