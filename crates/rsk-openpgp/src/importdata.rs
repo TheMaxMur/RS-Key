@@ -12,8 +12,8 @@ use rsk_sdk::Sw;
 
 use crate::consts::*;
 use crate::keys::{
-    MAX_EC_POINT, MAX_RSA_PUBDO, PrivKey, curve_from_attr, make_ec_pubkey_do, make_rsa_response,
-    reset_sig_count, rsa_from_pqe, store_ec_key, store_rsa_key,
+    MAX_EC_POINT, MAX_RSA_PUBDO, PrivKey, RSA_PUB_EXP_BE, curve_from_attr, make_ec_pubkey_do,
+    make_rsa_response, reset_sig_count, rsa_from_pqe, store_ec_key, store_rsa_key,
 };
 use crate::pin::Session;
 
@@ -160,6 +160,17 @@ fn try_import<S: Storage>(
                 None => return Err(WRONG_DATA),
             };
             if e.is_empty() || p.is_empty() || q.is_empty() {
+                return Err(WRONG_DATA);
+            }
+            // The CRT signer / DECIPHER hardcode e = 65537 (rsa_crt.rs); another
+            // exponent signs with the wrong e while the public DO advertises the
+            // real one -- silently unusable. gpg only ever imports e = 65537.
+            if !e
+                .iter()
+                .copied()
+                .skip_while(|&b| b == 0)
+                .eq(RSA_PUB_EXP_BE.iter().copied())
+            {
                 return Err(WRONG_DATA);
             }
             let key = rsa_from_pqe(e, p, q).ok_or(Sw::EXEC_ERROR)?;

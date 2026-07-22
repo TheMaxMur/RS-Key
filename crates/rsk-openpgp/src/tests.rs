@@ -589,6 +589,33 @@ fn import_rsa_sig_then_pso_sign_verifies() {
 }
 
 #[test]
+fn import_rsa_rejects_non_65537_exponent() {
+    let rng = RefCell::new(CountRng(7));
+    let mut fs = make_fs();
+    let presence = RefCell::new(crate::AlwaysConfirm);
+    let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
+    verify_pin(&mut app, &mut fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
+
+    // The CRT signer / DECIPHER hardcode e = 65537, so a key with e = 3 would be
+    // silently unusable; import must reject it, not store a dead key.
+    let (_, sw) = run(
+        &mut app,
+        &mut fs,
+        &rsa_import(0xB6, &[0x03], &hx(RSA_P), &hx(RSA_Q)),
+    );
+    assert_eq!(sw, consts::WRONG_DATA);
+    assert!(!fs.has_data(consts::EF_PK_SIG.get()));
+
+    // A leading-zero-padded 65537 MPI is still accepted (padding tolerated).
+    let (_, sw) = run(
+        &mut app,
+        &mut fs,
+        &rsa_import(0xB6, &[0x00, 0x01, 0x00, 0x01], &hx(RSA_P), &hx(RSA_Q)),
+    );
+    assert_eq!(sw, Sw::OK);
+}
+
+#[test]
 fn import_rsa_dec_then_pso_decipher() {
     let rng = RefCell::new(CountRng(7));
     let mut fs = make_fs();

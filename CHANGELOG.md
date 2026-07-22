@@ -21,6 +21,11 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   a fake "verified") or write the operator's clipboard. They now pass through the
   same `sanitize()` filter every other device-string printer already uses. Host-only
   (`tools/rsk` → 0.3.18); no `bcdDevice` change.
+- **OpenPGP key import rejects an RSA public exponent other than 65537.** The signer
+  and DECIPHER hardcode e = 65537, so importing a key with a different exponent used
+  to store a silently-unusable key while the public-key DO advertised the imported e;
+  import now fails with `6A80` (incorrect parameters), matching the PIV path.
+  **bcdDevice → 0x0848.**
 
 ### Added
 
