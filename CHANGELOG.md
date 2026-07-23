@@ -30,6 +30,14 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **FIDO: `makeCredential` no longer answers `excludeList` without a touch.** An
+  `excludeList` hit returned `CTAP2_ERR_CREDENTIAL_EXCLUDED` instantly, before any
+  user-presence gesture, so a host holding a candidate credential id could silently
+  probe whether it is registered on the inserted key (an rpId-bound existence
+  oracle). CTAP 2.1 §6.1.2 requires the presence gesture before disclosing the
+  match; RS-Key already did this on the `getAssertion` no-match path and now does it
+  here too, spending the pinUvAuthToken on that touch. **bcdDevice → 0x084D.**
+
 - **FIDO: a pinUvAuthToken no longer keeps its permissions across a touch.**
   After a user-presence-gated `makeCredential` or `getAssertion`, CTAP 2.1 §6.5.5.7
   requires clearing the token's user-present / user-verified flags and every

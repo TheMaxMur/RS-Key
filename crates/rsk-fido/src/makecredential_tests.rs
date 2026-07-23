@@ -1093,6 +1093,106 @@ fn make_credential_spends_token_permissions_except_lbw() {
     );
 }
 
+// Register a non-resident credential and return its credential id (from authData:
+// rpIdHash(32) flags(1) ctr(4) aaguid(16) credLen(2) credId …).
+fn register_and_get_cred_id(
+    fs: &mut Fs<RamStorage>,
+    rng: &mut SeqRng,
+    state: &mut crate::FidoState,
+) -> std::vec::Vec<u8> {
+    let mut out = [0u8; 1024];
+    let mut presence = crate::AlwaysConfirm;
+    let mut ctx = Ctx {
+        presence: &mut presence,
+        dev: dev(),
+        fs,
+        rng,
+        state,
+        now_ms: 1000,
+    };
+    let n = make_credential(&mut ctx, &build_request(false), &mut out).unwrap();
+    let ad = verify_response(&out[..n], &[0xCD; 32]);
+    let clen = u16::from_be_bytes([ad[53], ad[54]]) as usize;
+    ad[55..55 + clen].to_vec()
+}
+
+// §6.1.2: an excludeList hit must poll user presence BEFORE disclosing
+// CTAP2_ERR_CREDENTIAL_EXCLUDED, so the device isn't a silent credential-existence
+// oracle. A declining button therefore fails the touch (OperationDenied) instead of
+// instantly confirming the credential exists.
+#[test]
+fn excluded_makecredential_requires_touch_before_disclosing() {
+    let mut fs = Fs::new(RamStorage::new());
+    let mut rng = SeqRng(1);
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+    let mut state = crate::FidoState::new();
+    let cred_id = register_and_get_cred_id(&mut fs, &mut rng, &mut state);
+    let req = mc_build(5, |e| {
+        good_params(e);
+        e.u8(5).unwrap().array(1).unwrap().map(2).unwrap();
+        e.str("id").unwrap().bytes(&cred_id).unwrap();
+        e.str("type").unwrap().str("public-key").unwrap();
+    });
+    let mut out = [0u8; 1024];
+    let mut presence = Decline;
+    let mut ctx = Ctx {
+        presence: &mut presence,
+        dev: dev(),
+        fs: &mut fs,
+        rng: &mut rng,
+        state: &mut state,
+        now_ms: 1000,
+    };
+    assert_eq!(
+        make_credential(&mut ctx, &req, &mut out),
+        Err(CtapError::OperationDenied),
+        "excluded makeCredential must poll presence before disclosing the match"
+    );
+}
+
+// The confirmed path still returns CREDENTIAL_EXCLUDED, and the touch spends the
+// pinUvAuthToken so a mc|acfg token can't ride an excluded registration into config.
+#[test]
+fn excluded_makecredential_confirms_then_spends_token() {
+    let mut fs = Fs::new(RamStorage::new());
+    let mut rng = SeqRng(1);
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+    let mut state = crate::FidoState::new();
+    let cred_id = register_and_get_cred_id(&mut fs, &mut rng, &mut state);
+    let token = arm_pin(&mut fs, &mut state);
+    state.paut.permissions = PERM_MC | crate::state::PERM_ACFG | crate::state::PERM_LBW;
+    let cdh = [0xCDu8; 32];
+    let mut param = [0u8; 32];
+    let plen = rsk_crypto::pinproto::authenticate(PinProto::Two, &token, &cdh, &mut param).unwrap();
+    let req = mc_build(7, |e| {
+        good_params(e);
+        e.u8(5).unwrap().array(1).unwrap().map(2).unwrap();
+        e.str("id").unwrap().bytes(&cred_id).unwrap();
+        e.str("type").unwrap().str("public-key").unwrap();
+        e.u8(8).unwrap().bytes(&param[..plen]).unwrap();
+        e.u8(9).unwrap().u64(2).unwrap();
+    });
+    let mut out = [0u8; 1024];
+    let mut presence = crate::AlwaysConfirm;
+    let mut ctx = Ctx {
+        presence: &mut presence,
+        dev: dev(),
+        fs: &mut fs,
+        rng: &mut rng,
+        state: &mut state,
+        now_ms: 1000,
+    };
+    assert_eq!(
+        make_credential(&mut ctx, &req, &mut out),
+        Err(CtapError::CredentialExcluded)
+    );
+    assert_eq!(
+        state.paut.permissions,
+        crate::state::PERM_LBW,
+        "the excluded-registration touch spends the token too"
+    );
+}
+
 #[test]
 fn make_credential_requires_pin_when_set() {
     let mut fs = Fs::new(RamStorage::new());

@@ -474,6 +474,12 @@ fn make_credential_inner<S: Storage, R: Rng>(
     // (a UV-required credProtect credential is invisible without UV — §12.1).
     for &id in &req.exclude[..req.exclude_len] {
         if exclude_hit(ctx.fs, seed, rp_id_hash, id, uv) {
+            // §6.1.2 requires a user-presence gesture BEFORE disclosing the match, so
+            // the device isn't a silent credential-existence oracle (matches the
+            // getAssertion no-match poll and a real YubiKey). `up` is implicit; spend
+            // the token on that touch too, so acfg can't ride it (GHSA-wqjm class).
+            ctx.require_presence(crate::Confirm::titled("Use this key?"))?;
+            ctx.state.consume_after_user_presence();
             return Err(CtapError::CredentialExcluded);
         }
     }
