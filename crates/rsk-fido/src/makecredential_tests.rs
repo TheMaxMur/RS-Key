@@ -1013,6 +1013,86 @@ fn make_credential_with_pin_sets_uv_flag() {
     assert_eq!(auth_data[32] & FLAG_UV, FLAG_UV, "UV flag must be set");
 }
 
+// An authenticatorConfig/toggleAlwaysUv request MAC'd under `token` (protocol two,
+// no subCommandParams): `{1: subCommand, 3: proto, 4: pinUvAuthParam}`.
+fn config_toggle_always_uv_req(token: &[u8; 32]) -> std::vec::Vec<u8> {
+    let sub = crate::consts::CONFIG_TOGGLE_ALWAYS_UV as u8;
+    let mut vp = std::vec![0xffu8; 32];
+    vp.push(crate::consts::CTAP_CONFIG);
+    vp.push(sub);
+    let mut mac = [0u8; 32];
+    let mlen = rsk_crypto::pinproto::authenticate(PinProto::Two, token, &vp, &mut mac).unwrap();
+    let mut req = std::vec::Vec::new();
+    req.push(0xA3); // map(3)
+    req.extend_from_slice(&[0x01, sub]); // 1: subCommand
+    req.extend_from_slice(&[0x03, 0x02]); // 3: pinUvAuthProtocol = 2
+    req.push(0x04); // 4: pinUvAuthParam
+    req.push(0x58);
+    req.push(mlen as u8);
+    req.extend_from_slice(&mac[..mlen]);
+    req
+}
+
+// GHSA-wqjm-653g-hgw3: a UP-gated makeCredential must run
+// clearPinUvAuthTokenPermissionsExceptLbw (CTAP 2.1 §6.5.5.7). A token armed with
+// mc|acfg|lbw keeps only lbw after the touch, so the acfg permission can't ride the
+// registration into a no-touch authenticatorConfig.
+#[test]
+fn make_credential_spends_token_permissions_except_lbw() {
+    let mut fs = Fs::new(RamStorage::new());
+    let mut rng = SeqRng(1);
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+    let mut state = crate::FidoState::new();
+    let token = arm_pin(&mut fs, &mut state);
+    state.paut.permissions = PERM_MC | crate::state::PERM_ACFG | crate::state::PERM_LBW;
+
+    let cdh = [0xCDu8; 32];
+    let mut param = [0u8; 32];
+    let plen = rsk_crypto::pinproto::authenticate(PinProto::Two, &token, &cdh, &mut param).unwrap();
+    let req = build_request_pin(&param[..plen], 2);
+    let mut out = [0u8; 1024];
+    {
+        let mut presence = crate::AlwaysConfirm;
+        let mut ctx = Ctx {
+            presence: &mut presence,
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 1000,
+        };
+        make_credential(&mut ctx, &req, &mut out).unwrap();
+    }
+    assert_eq!(
+        state.paut.permissions,
+        crate::state::PERM_LBW,
+        "only largeBlobWrite survives a UP-gated makeCredential"
+    );
+    assert!(
+        !state.user_verified(),
+        "the §6.5.5.7 triad also clears the token's user-verified flag"
+    );
+
+    // The behavioural consequence: authenticatorConfig over the same token is now
+    // rejected — the touch spent the acfg permission (the PoC's step 4).
+    let cfg = config_toggle_always_uv_req(&token);
+    let mut cfg_out = [0u8; 64];
+    let mut presence = crate::AlwaysConfirm;
+    let mut ctx = Ctx {
+        presence: &mut presence,
+        dev: dev(),
+        fs: &mut fs,
+        rng: &mut rng,
+        state: &mut state,
+        now_ms: 1000,
+    };
+    assert_eq!(
+        crate::config::authenticator_config(&mut ctx, &cfg, &mut cfg_out),
+        Err(CtapError::PinAuthInvalid),
+        "acfg must not ride the makeCredential touch (GHSA-wqjm-653g-hgw3)"
+    );
+}
+
 #[test]
 fn make_credential_requires_pin_when_set() {
     let mut fs = Fs::new(RamStorage::new());

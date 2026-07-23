@@ -30,6 +30,20 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **FIDO: a pinUvAuthToken no longer keeps its permissions across a touch.**
+  After a user-presence-gated `makeCredential` or `getAssertion`, CTAP 2.1 §6.5.5.7
+  requires clearing the token's user-present / user-verified flags and every
+  permission except `largeBlobWrite`. RS-Key only refreshed the token's inactivity
+  timer, so a token minted with `mc|ga|acfg` could register or authenticate with one
+  touch and then run `authenticatorConfig` (`toggleAlwaysUv`,
+  `enableEnterpriseAttestation`) with **no second touch**. RS-Key now runs the full
+  §6.5.5.7 triad at every place a `makeCredential` / `getAssertion` tests presence —
+  including the `getAssertion` no-match (`NO_CREDENTIALS`) branch, which takes a real
+  anti-oracle touch. (`makeCredential`'s `up` is implicit; `getAssertion` keys on the
+  raw `up`, so a silent `up:false` pre-flight still does not consume the token.)
+  Authenticated (needs a valid PIN/UV token); reported by @cresseelia
+  (GHSA-wqjm-653g-hgw3). **bcdDevice → 0x084C.**
+
 - **`ykman otp swap` now works.** The OTP applet's SWAP (slot `0x06`) accepted only
   an empty body or RS-Key's `[a,b]` 4-slot-offset extension, but ykman/yubikit send
   the standard swap as a bare 6-byte access code (no offset bytes). RS-Key rejected

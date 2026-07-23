@@ -578,6 +578,12 @@ fn get_assertion_inner<S: Storage, R: Rng>(
         if want_up {
             ctx.require_presence(crate::Confirm::new("Sign in?", req.rp_id.as_bytes(), &[]))?;
         }
+        // That poll is a real presence gesture, so spend the token like the success
+        // path — a no-match ceremony must not leave an acfg token usable without a
+        // fresh touch (GHSA-wqjm-653g-hgw3). Same raw-`up` key as above.
+        if req.up {
+            ctx.state.consume_after_user_presence();
+        }
         return Err(CtapError::NoCredentials);
     }
 
@@ -668,6 +674,14 @@ fn get_assertion_inner<S: Storage, R: Rng>(
             req.rp_id.as_bytes(),
             account,
         ))?;
+    }
+
+    // Spend the pinUvAuthToken now presence was asserted (CTAP 2.1 §6.2.2 / §6.5.5.7
+    // triad; GHSA-wqjm-653g-hgw3). Keyed on the raw `up`, NOT want_up: a strict-up
+    // pre-flight (up:false) stays inert and must not consume the token, else the real
+    // assertion loses its permission.
+    if req.up {
+        ctx.state.consume_after_user_presence();
     }
 
     // authData = rpIdHash | flags([UP][,UV][,ED]) | counter [| ext] — no attestedCredentialData.

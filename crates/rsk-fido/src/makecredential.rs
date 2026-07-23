@@ -561,6 +561,11 @@ fn make_credential_inner<S: Storage, R: Rng>(
         req.user_name.as_bytes(),
     ))?;
 
+    // Spend the pinUvAuthToken now the presence test passed (CTAP 2.1 §6.5.5.7
+    // triad; GHSA-wqjm-653g-hgw3). makeCredential's `up` is implicitly true; on the
+    // no-PIN path no token is in use so this is a no-op.
+    ctx.state.consume_after_user_presence();
+
     // authData = rpIdHash | flags | counter | aaguid | credIdLen | credId | COSEpubkey | ext.
     // Worst case (ML-DSA-65): AUTH_DATA_HEADER(55) + CRED_BOX_MAX(748) +
     // COSE_AKP_MLDSA65_MAX(1962) + MC_EXT_MAX(192) + clientDataHash(32) = 2989,
