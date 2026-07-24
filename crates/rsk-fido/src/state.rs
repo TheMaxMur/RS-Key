@@ -376,6 +376,16 @@ impl FidoState {
         }
     }
 
+    /// [`Self::consume_after_user_presence`], run only when `user_present`. The
+    /// getAssertion call sites key on the raw `up`, so a silent up:false pre-flight
+    /// stays inert (GHSA-wqjm-653g-hgw3); folding the guard in here keeps the caller
+    /// (`get_assertion_inner`) under the cognitive-complexity ceiling.
+    pub fn consume_after_user_presence_if(&mut self, user_present: bool) {
+        if user_present {
+            self.consume_after_user_presence();
+        }
+    }
+
     /// `stopUsingPinUvAuthToken` — drop the in-use state, permissions, and
     /// presence/rpId binding. The token bytes stay put; `in_use == false` and
     /// zero permissions make every downstream check fail closed.
