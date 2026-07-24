@@ -239,6 +239,59 @@ fn select_by_fid_is_unsupported_like_a_yubikey() {
     assert_eq!(disp.current(), Some(0));
 }
 
+// Models the OATH applet: INS 0xA4 is CALCULATE ALL (its own command, `p1=0 p2=1`),
+// NOT a SELECT. The first cut of the issue-#44 fix blanket-shadowed `A4 p1=0` and
+// wrongly returned 6D00 here, breaking OATH calculate-all (Yubico Authenticator).
+struct Oathish;
+impl Applet<()> for Oathish {
+    fn aid(&self) -> &'static [u8] {
+        &[0xA0, 0x00, 0x00, 0x05, 0x27, 0x21, 0x01]
+    }
+    fn select(&mut self, _reselect: bool, _ctx: &mut (), _res: &mut ResBuf) -> Sw {
+        Sw::OK
+    }
+    fn process(&mut self, apdu: &Apdu, _ctx: &mut (), res: &mut ResBuf) -> Sw {
+        if apdu.ins == 0xA4 && apdu.p1 == 0x00 && apdu.p2 == 0x01 {
+            res.push(0x99); // a CALCULATE ALL response body
+            Sw::OK
+        } else {
+            Sw::INS_NOT_SUPPORTED
+        }
+    }
+}
+
+#[test]
+fn oath_calculate_all_is_not_shadowed_by_the_select_mf_rule() {
+    // INS 0xA4 is overloaded: OATH CALCULATE ALL is `00 A4 00 01 …`. The SELECT-MF
+    // 6D00 rule (issue #44) keys on P2=0x0C, so CALCULATE ALL (P2=0x01) still
+    // reaches the applet — a regression guard for the Yubico Authenticator.
+    let mut app = Oathish;
+    let mut applets: [&mut dyn Applet<()>; 1] = [&mut app];
+    let mut disp = Dispatcher::new();
+    let mut out = [0u8; 16];
+    let mut res = ResBuf::new(&mut out);
+
+    let sel = [
+        0x00, 0xA4, 0x04, 0x00, 0x07, 0xA0, 0x00, 0x00, 0x05, 0x27, 0x21, 0x01,
+    ];
+    assert_eq!(disp.process(&sel, &mut applets, &mut (), &mut res), Sw::OK);
+
+    // CALCULATE ALL (A4 p1=00 p2=01) routes to the applet.
+    let calc_all = [0x00, 0xA4, 0x00, 0x01, 0x02, 0x74, 0x00];
+    assert_eq!(
+        disp.process(&calc_all, &mut applets, &mut (), &mut res),
+        Sw::OK
+    );
+    assert_eq!(res.as_slice(), &[0x99]);
+
+    // But the master-file SELECT (P2=0x0C) is still shadowed with 6D00.
+    let sel_mf = [0x00, 0xA4, 0x00, 0x0C, 0x02, 0x3F, 0x00];
+    assert_eq!(
+        disp.process(&sel_mf, &mut applets, &mut (), &mut res),
+        Sw::INS_NOT_SUPPORTED
+    );
+}
+
 // Returns `body_len` bytes (value = index & 0xFF) for GET DATA (INS 0xCA);
 // `chain` toggles opt-in to dispatcher response chaining.
 struct Chunky {

@@ -270,12 +270,12 @@ impl Dispatcher {
             };
         }
 
-        // A YubiKey-class card is applet-only — no ISO master file — so a SELECT
-        // by FID/path (P1=0x00, e.g. GnuPG scdaemon's `SELECT 3F00` probe) is
-        // unsupported. Answering 6D00 like a real YubiKey lets scdaemon recognise
-        // the device and read its serial from the management applet; on any other
-        // status word it skips that and shows a raw serial (issue #44).
-        if apdu.ins == 0xA4 && apdu.p1 == 0x00 {
+        // The master-file SELECT (`00 A4 00 0C …`, GnuPG scdaemon's `3F00` probe)
+        // must answer 6D00 like a YubiKey, or scdaemon skips its YubiKey detection
+        // and shows a raw serial (issue #44). Key on P2=0x0C (SELECT, no response
+        // data): INS 0xA4 is overloaded — OATH reuses it for CALCULATE ALL
+        // (`A4 p1=00 p2=01`), which must still reach the applet, not be shadowed.
+        if apdu.ins == 0xA4 && apdu.p1 == 0x00 && apdu.p2 == 0x0C {
             return Sw::INS_NOT_SUPPORTED;
         }
 

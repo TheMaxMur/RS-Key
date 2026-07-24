@@ -41,15 +41,24 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
-- **Smart card: `SELECT` of the ISO master file (`3F00`) now answers `6D00`, the way
+- **OATH `CALCULATE ALL` no longer breaks the Yubico Authenticator (regression of the
+  unreleased issue-#44 SELECT fix).** YKOATH `CALCULATE ALL` reuses instruction byte
+  `0xA4` — the same as `SELECT` — as `00 A4 00 01 …`. The first cut of the
+  master-file-`SELECT`→`6D00` rule matched on `INS 0xA4` + `P1=0x00` and so shadowed
+  `CALCULATE ALL`, returning `6D00`; the Yubico Authenticator (which refreshes codes
+  with `CALCULATE ALL`) then failed and spun, re-connecting in a loop (the LED blinked
+  hard). The rule now keys on `P2=0x0C` (`SELECT`, no response data), which
+  `CALCULATE ALL` (`P2=0x01`) does not use. **bcdDevice → 0x0850.**
+
+- **Smart card: the master-file `SELECT` (`00 A4 00 0C …`) now answers `6D00`, the way
   a YubiKey does.** GnuPG's `scdaemon` probes a card with `SELECT 3F00` and only when
   that fails with a card error does it recognise a YubiKey and read the real serial
   from the management applet. RS-Key answered `6A88`, so `scdaemon` skipped that step:
   Kleopatra / `gpg --card-status` showed a raw serial (`0006 47537774`) instead of the
   device serial and did not surface the PIV application alongside OpenPGP. The applet
-  dispatcher now returns `6D00` for any `SELECT`-by-FID (`P1=0x00`) — RS-Key is
-  applet-only and has no master file — so the whole YubiKey code path in `scdaemon`
-  runs. Found via a live differential against a real YubiKey (issue #44).
+  dispatcher now returns `6D00` for the master-file `SELECT` (`A4 P1=0x00 P2=0x0C`) —
+  RS-Key is applet-only and has no master file — so the whole YubiKey code path in
+  `scdaemon` runs. Found via a live differential against a real YubiKey (issue #44).
   **bcdDevice → 0x084E.**
 
 - **FIDO: `makeCredential` no longer answers `excludeList` without a touch.** An
