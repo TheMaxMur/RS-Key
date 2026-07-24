@@ -30,6 +30,17 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **Smart card: `SELECT` of the ISO master file (`3F00`) now answers `6D00`, the way
+  a YubiKey does.** GnuPG's `scdaemon` probes a card with `SELECT 3F00` and only when
+  that fails with a card error does it recognise a YubiKey and read the real serial
+  from the management applet. RS-Key answered `6A88`, so `scdaemon` skipped that step:
+  Kleopatra / `gpg --card-status` showed a raw serial (`0006 47537774`) instead of the
+  device serial and did not surface the PIV application alongside OpenPGP. The applet
+  dispatcher now returns `6D00` for any `SELECT`-by-FID (`P1=0x00`) — RS-Key is
+  applet-only and has no master file — so the whole YubiKey code path in `scdaemon`
+  runs. Found via a live differential against a real YubiKey (issue #44).
+  **bcdDevice → 0x084E.**
+
 - **FIDO: `makeCredential` no longer answers `excludeList` without a touch.** An
   `excludeList` hit returned `CTAP2_ERR_CREDENTIAL_EXCLUDED` instantly, before any
   user-presence gesture, so a host holding a candidate credential id could silently

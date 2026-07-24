@@ -179,6 +179,66 @@ fn select_unknown_aid() {
     );
 }
 
+// Mimics OpenPGP/PIV: a current applet whose own SELECT handler answers a
+// non-6D00 status (6A88, exactly as OpenPGP's `cmd_select` does) for a SELECT it
+// does not recognise. Used to prove the dispatcher shadows it on a by-FID SELECT.
+struct PickySelect;
+impl Applet<()> for PickySelect {
+    fn aid(&self) -> &'static [u8] {
+        &[0xA0, 0x00, 0x00, 0x06, 0x47, 0x2F, 0x00, 0x03]
+    }
+    fn select(&mut self, _reselect: bool, _ctx: &mut (), _res: &mut ResBuf) -> Sw {
+        Sw::OK
+    }
+    fn process(&mut self, apdu: &Apdu, _ctx: &mut (), _res: &mut ResBuf) -> Sw {
+        if apdu.ins == 0xA4 {
+            Sw::REFERENCE_NOT_FOUND // 6A88 — what OpenPGP returns for a foreign SELECT
+        } else {
+            Sw::INS_NOT_SUPPORTED
+        }
+    }
+}
+
+#[test]
+fn select_by_fid_is_unsupported_like_a_yubikey() {
+    // GnuPG scdaemon probes a card with `SELECT 3F00` (P1=0x00, select the ISO
+    // master file). A real YubiKey answers 6D00, which is the trigger for scdaemon
+    // to recognise it and read its serial from the management applet. RS-Key is
+    // applet-only (no MF), so the dispatcher must answer 6D00 *before* dispatch —
+    // otherwise the current applet (OpenPGP) returns 6A88 and scdaemon shows a raw
+    // serial and drops PIV (issue #44).
+    let mut app = PickySelect;
+    let mut applets: [&mut dyn Applet<()>; 1] = [&mut app];
+    let mut disp = Dispatcher::new();
+    let mut out = [0u8; 16];
+    let mut res = ResBuf::new(&mut out);
+
+    // 00 A4 00 0C 02 3F 00 — SELECT the master file by FID.
+    let sel_mf = [0x00, 0xA4, 0x00, 0x0C, 0x02, 0x3F, 0x00];
+
+    // Answered 6D00 even with no applet selected.
+    assert_eq!(
+        disp.process(&sel_mf, &mut applets, &mut (), &mut res),
+        Sw::INS_NOT_SUPPORTED
+    );
+
+    // Select the applet by AID (P1=0x04 still works), then probe by FID: the
+    // dispatcher shadows the applet's 6A88 with 6D00.
+    let sel_aid = [
+        0x00, 0xA4, 0x04, 0x00, 0x08, 0xA0, 0x00, 0x00, 0x06, 0x47, 0x2F, 0x00, 0x03,
+    ];
+    assert_eq!(
+        disp.process(&sel_aid, &mut applets, &mut (), &mut res),
+        Sw::OK
+    );
+    assert_eq!(
+        disp.process(&sel_mf, &mut applets, &mut (), &mut res),
+        Sw::INS_NOT_SUPPORTED
+    );
+    // The by-AID selection survives — the FID probe did not deselect it.
+    assert_eq!(disp.current(), Some(0));
+}
+
 // Returns `body_len` bytes (value = index & 0xFF) for GET DATA (INS 0xCA);
 // `chain` toggles opt-in to dispatcher response chaining.
 struct Chunky {

@@ -270,6 +270,15 @@ impl Dispatcher {
             };
         }
 
+        // A YubiKey-class card is applet-only — no ISO master file — so a SELECT
+        // by FID/path (P1=0x00, e.g. GnuPG scdaemon's `SELECT 3F00` probe) is
+        // unsupported. Answering 6D00 like a real YubiKey lets scdaemon recognise
+        // the device and read its serial from the management applet; on any other
+        // status word it skips that and shows a raw serial (issue #44).
+        if apdu.ins == 0xA4 && apdu.p1 == 0x00 {
+            return Sw::INS_NOT_SUPPORTED;
+        }
+
         // Dispatch to the selected applet (unless it was disabled since SELECT).
         match self.current {
             Some(i) if self.selectable(i) => {
