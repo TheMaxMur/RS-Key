@@ -37,8 +37,8 @@ use crate::consts::{
 use crate::credential::{
     CRED_BOX_MAX, CRED_PUBKEY_MAX, CRED_REC_MAX, CRED_RESIDENT_LEN, CredExt, CredInput, Credential,
     RECORD_PREFIX, RP_ID_MAX, USER_ID_MAX, USER_NAME_MAX, cred_record_box, credential_create,
-    credential_load, credential_store, derive_large_blob_key, derive_resident, is_resident,
-    resident_key_input, slot_map, truncate_utf8,
+    credential_load, credential_store, derive_large_blob_key, derive_resident, resident_key_input,
+    slot_map, truncate_utf8,
 };
 use crate::ec::{CredKey, MAX_SIG_LEN, P256Key};
 use crate::error::{CtapError, CtapResult};
@@ -799,10 +799,10 @@ fn exclude_hit<S: Storage>(
 ) -> bool {
     let visible = |c: &Credential| c.ext.cred_protect != CRED_PROT_UV_REQUIRED || uv;
     let mut scratch = [0u8; CRED_REC_MAX];
-    if is_resident(id) {
-        if id.len() != CRED_RESIDENT_LEN {
-            return false;
-        }
+    // A resident id is exactly 42 bytes, matched against the stored records; fall
+    // back to the non-resident box path for anything else — and for a 42-byte id
+    // not stored as a resident — so no cleartext marker is needed.
+    if id.len() == CRED_RESIDENT_LEN {
         let mut rec = [0u8; CRED_REC_MAX];
         let mut occupied = [false; MAX_RESIDENT_CREDENTIALS as usize];
         slot_map(fs, crate::consts::EF_CRED, &mut occupied);
@@ -820,12 +820,10 @@ fn exclude_hit<S: Storage>(
                     .unwrap_or(false);
             }
         }
-        false
-    } else {
-        credential_load(seed, id, rp_id_hash, &mut scratch)
-            .map(|c| visible(&c))
-            .unwrap_or(false)
     }
+    credential_load(seed, id, rp_id_hash, &mut scratch)
+        .map(|c| visible(&c))
+        .unwrap_or(false)
 }
 
 /// Build the makeCredential authData extension map (credBlob bool / credProtect /

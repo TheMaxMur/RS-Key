@@ -2268,9 +2268,10 @@ fn hmac_secret_survives_updateuserinfo_reseal_end_to_end() {
 
     let mc = run_mc_state(&mut fs, &mut rng, &mut state, &mc_request_lbk_hmac());
     let (resident_id, ..) = parse_mc(&mc);
-    assert_eq!(
-        resident_id[8], 2,
-        "new resident credential carries the v3 marker"
+    assert_ne!(
+        &resident_id[4..8],
+        b"\xf1\xd0\x02\x03",
+        "new resident id is prefix-free v4"
     );
 
     // Platform half (protocol two): ECDH against the authenticator ephemeral,

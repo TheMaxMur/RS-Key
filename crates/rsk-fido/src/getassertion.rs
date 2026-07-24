@@ -23,8 +23,8 @@ use crate::consts::{
 };
 use crate::credential::{
     CRED_BOX_MAX, CRED_REC_MAX, CRED_RESIDENT_LEN, Credential, RECORD_PREFIX, USER_ID_MAX,
-    USER_NAME_MAX, cred_record_box, credential_load, derive_large_blob_key, is_resident,
-    resident_key_input, slot_map,
+    USER_NAME_MAX, cred_record_box, credential_load, derive_large_blob_key, resident_key_input,
+    slot_map,
 };
 use crate::ec::{CredKey, MAX_SIG_LEN};
 use crate::error::{CtapError, CtapResult};
@@ -417,8 +417,11 @@ fn resolve_from_allowlist<S: Storage, R: Rng>(
     let mut occupied = [false; MAX_RESIDENT_CREDENTIALS as usize];
     slot_map(ctx.fs, EF_CRED, &mut occupied);
     for &id in &req.allow[..req.allow_len] {
-        if is_resident(id) {
-            // Look up the full box by its 42-byte resident id.
+        // A resident id is exactly 42 bytes, matched against the stored records;
+        // fall back to the non-resident box path for anything else — and for a
+        // 42-byte id not stored as a resident — so no cleartext marker is needed.
+        let mut resident_hit = false;
+        if id.len() == CRED_RESIDENT_LEN {
             for i in 0..MAX_RESIDENT_CREDENTIALS {
                 if !occupied[i as usize] {
                     continue;
@@ -427,11 +430,7 @@ fn resolve_from_allowlist<S: Storage, R: Rng>(
                     continue;
                 };
                 let n = n.min(rec.len());
-                if n >= RECORD_PREFIX
-                    && rec[..32] == *rp_id_hash
-                    && id.len() == CRED_RESIDENT_LEN
-                    && rec[32..RECORD_PREFIX] == *id
-                {
+                if n >= RECORD_PREFIX && rec[..32] == *rp_id_hash && rec[32..RECORD_PREFIX] == *id {
                     best.consider(
                         seed,
                         rp_id_hash,
@@ -442,10 +441,12 @@ fn resolve_from_allowlist<S: Storage, R: Rng>(
                         true,
                         &mut scratch,
                     );
+                    resident_hit = true;
                     break;
                 }
             }
-        } else {
+        }
+        if !resident_hit {
             best.consider(seed, rp_id_hash, id, None, None, uv, true, &mut scratch);
         }
     }

@@ -36,7 +36,9 @@ fn create_load_roundtrip() {
     let rp_hash = sha256(b"example.com");
     let mut out = [0u8; 512];
     let len = credential_create(&SEED, &d, &input(), &rp_hash, &IV, &mut out).unwrap();
-    assert_eq!(&out[..4], CRED_PROTO);
+    // Prefix-free: the box now opens with the iv and carries no cleartext marker.
+    assert_eq!(&out[..IV_LEN], &IV);
+    assert_ne!(&out[..PROTO_LEN], CRED_PROTO);
 
     let mut scratch = [0u8; 512];
     let c = credential_load(&SEED, &out[..len], &rp_hash, &mut scratch).unwrap();
@@ -125,9 +127,80 @@ fn tampered_box_fails() {
     let rp_hash = sha256(b"example.com");
     let mut out = [0u8; 512];
     let len = credential_create(&SEED, &d, &input(), &rp_hash, &IV, &mut out).unwrap();
-    out[HEAD_LEN] ^= 0x01; // flip a ciphertext byte
+    out[IV_LEN] ^= 0x01; // flip the first ciphertext byte
     let mut scratch = [0u8; 512];
     assert!(credential_load(&SEED, &out[..len], &rp_hash, &mut scratch).is_none());
+}
+
+#[test]
+fn box_has_no_cleartext_fingerprint() {
+    // The point of the format: two credentials for the SAME rp+user share no fixed
+    // prefix — the id is indistinguishable from random, like a YubiKey's. A flash
+    // dump or a colluding RP can't fingerprint the model/device off a leading marker.
+    let d = dev();
+    let rp_hash = sha256(b"example.com");
+    let mut a = [0u8; 512];
+    let mut b = [0u8; 512];
+    let la = credential_create(&SEED, &d, &input(), &rp_hash, &[0x11; 12], &mut a).unwrap();
+    let lb = credential_create(&SEED, &d, &input(), &rp_hash, &[0x22; 12], &mut b).unwrap();
+    assert_ne!(&a[..PROTO_LEN], CRED_PROTO, "no f1d00202 marker");
+    assert_ne!(&b[..PROTO_LEN], CRED_PROTO);
+    assert_ne!(&a[..4], &b[..4], "different ivs → different leading bytes");
+    // A non-rk box must not look like a resident id either.
+    assert!(!is_resident(&a[..la]));
+    assert!(!is_resident(&b[..lb]));
+}
+
+#[test]
+fn legacy_is22_box_still_loads() {
+    // A credential a relying party registered before the prefix-free format: the
+    // f1d00202-prefixed, silent-tagged proto-0x02 box. Its ciphertext + poly tag
+    // are byte-identical to the new format (same key label, iv, AAD, plaintext) —
+    // only the 4-byte prefix and the silent tag (over the longer prefix) differ.
+    let d = dev();
+    let rp_hash = sha256(b"example.com");
+    let mut newbox = [0u8; 512];
+    let nlen = credential_create(&SEED, &d, &input(), &rp_hash, &IV, &mut newbox).unwrap();
+    let core = nlen - SILENT_TAG_LEN; // iv ‖ ct ‖ poly
+    let mut old = [0u8; 512];
+    old[..PROTO_LEN].copy_from_slice(CRED_PROTO);
+    old[PROTO_LEN..PROTO_LEN + core].copy_from_slice(&newbox[..core]);
+    let st = silent_tag(&d, &old[..PROTO_LEN + core], &rp_hash);
+    old[PROTO_LEN + core..PROTO_LEN + core + SILENT_TAG_LEN].copy_from_slice(&st);
+    let olen = PROTO_LEN + core + SILENT_TAG_LEN;
+    assert_eq!(&old[..PROTO_LEN], CRED_PROTO); // it IS the legacy framing
+
+    let mut scratch = [0u8; 512];
+    let c = credential_load(&SEED, &old[..olen], &rp_hash, &mut scratch).unwrap();
+    assert_eq!(c.rp_id, "example.com");
+    assert_eq!(c.user_id, &[0xDE, 0xAD, 0xBE, 0xEF]);
+    assert_eq!(c.user_name, "alice");
+}
+
+#[test]
+fn legacy_non_silent_box_still_loads() {
+    // The oldest framing: proto ‖ iv ‖ ct ‖ poly, no silent tag, key from the
+    // on-wire proto. Confirm the fallback trial still opens it.
+    let rp_hash = sha256(b"example.com");
+    let older_proto = b"\xf1\xd0\x02\x01";
+    let mut boxbuf = [0u8; 512];
+    boxbuf[..PROTO_LEN].copy_from_slice(older_proto);
+    boxbuf[PROTO_LEN..HEAD_LEN].copy_from_slice(&IV);
+    let rs = {
+        let mut enc = Encoder::new(Cursor::new(&mut boxbuf[HEAD_LEN..512 - TAG_LEN]));
+        encode_body(&mut enc, &input()).unwrap();
+        enc.writer().position()
+    };
+    let mut key = derive_chacha_key(&SEED, older_proto);
+    let tag = chacha20poly1305_encrypt(&key, &IV, &rp_hash, &mut boxbuf[HEAD_LEN..HEAD_LEN + rs]);
+    key.zeroize();
+    boxbuf[HEAD_LEN + rs..HEAD_LEN + rs + TAG_LEN].copy_from_slice(&tag);
+    let blen = HEAD_LEN + rs + TAG_LEN;
+
+    let mut scratch = [0u8; 512];
+    let c = credential_load(&SEED, &boxbuf[..blen], &rp_hash, &mut scratch).unwrap();
+    assert_eq!(c.rp_id, "example.com");
+    assert_eq!(c.user_name, "alice");
 }
 
 #[test]
@@ -159,60 +232,70 @@ fn large_blob_key_deterministic_and_box_sensitive() {
     assert_ne!(k1, derive_hmac_key(&SEED, &box1)[..32]);
 }
 
-#[test]
-fn resident_id_format_and_determinism() {
-    let d = dev();
-    let cred_id = [0x55u8; 80];
-    let r1 = derive_resident(&cred_id, &d);
-    let r2 = derive_resident(&cred_id, &d);
-    assert_eq!(r1, r2);
-    assert_eq!(r1.len(), CRED_RESIDENT_LEN);
-    assert_eq!(&r1[4..8], CRED_PROTO_RESIDENT);
-    // New resident ids are stamped v3 (byte 8), in the header before the chain.
-    assert_eq!(r1[RESIDENT_VERSION_IDX], RESIDENT_VERSION_V3);
-    assert_eq!(r1[9], 0);
-    assert!(is_resident(&r1));
-}
-
-// The v2 marker sits OUTSIDE the [10..42] HMAC chain, so it never feeds the id's
-// entropy. Prove it by recomputing the chain independently from ONLY its documented
-// inputs — the serial-derived header tail and the box — with the version byte
-// nowhere in the seed. If a refactor ever folded offset 8 into the chain, the real
-// id would diverge from this recomputation. (Flipping byte 8 on a COPY of the output
-// and comparing the tail proves nothing — the tail is below the mutated index by
-// construction, so it is equal for any array.)
-#[test]
-fn resident_version_marker_is_outside_the_hash_chain() {
-    let d = dev();
-    let cred_id = [0x55u8; 80];
-    let id = derive_resident(&cred_id, &d);
-    assert_eq!(id[RESIDENT_VERSION_IDX], RESIDENT_VERSION_V3);
-
-    // Seed = the pre-chain contents of outk[10..42]: the serial HMAC's tail
-    // (h0[10..32]) then zeroes. The version byte at offset 8 is not part of it.
+/// A pre-v4 (v1/v2/v3) resident id, as older firmware wrote it:
+/// `serial-derived(4) ‖ f1d00203 ‖ version ‖ 00 ‖ HMAC-chain(32)`. Used to prove
+/// the v4 dispatch keeps those already-provisioned ids working.
+fn legacy_resident_id(cred_id: &[u8], d: &Device, version: u8) -> [u8; CRED_RESIDENT_LEN] {
+    const HEADER: usize = 10; // serial(4) ‖ f1d00203(4) ‖ version(1) ‖ 00
+    let mut outk = [0u8; CRED_RESIDENT_LEN];
     let h0 = hmac_sha256(&[0u8; 32], d.serial_id);
-    let mut seed = [0u8; CRED_RESIDENT_LEN - CRED_RESIDENT_HEADER_LEN];
-    let tail = &h0[CRED_RESIDENT_HEADER_LEN..];
-    seed[..tail.len()].copy_from_slice(tail);
-
-    let mut chain = hmac_sha256(&seed, b"SLIP-0022");
+    outk[..32].copy_from_slice(&h0);
+    outk[4..8].copy_from_slice(CRED_PROTO_RESIDENT);
+    outk[RESIDENT_VERSION_IDX] = version;
+    outk[9] = 0;
+    let mut chain = [0u8; 32];
+    chain.copy_from_slice(&outk[HEADER..]);
+    chain = hmac_sha256(&chain, b"SLIP-0022");
     chain = hmac_sha256(&chain, &cred_id[..PROTO_LEN]);
     chain = hmac_sha256(&chain, b"resident");
-    chain = hmac_sha256(&chain, &cred_id);
-    assert_eq!(
-        &id[CRED_RESIDENT_HEADER_LEN..],
-        &chain[..],
-        "the [10..42] chain must not read the version byte at offset 8"
-    );
+    chain = hmac_sha256(&chain, cred_id);
+    outk[HEADER..].copy_from_slice(&chain);
+    outk
 }
 
-// The reseal-stability fix at the derivation level: a v2 resident id is the key
-// input regardless of the (resealed) box, so the signing / hmac-secret /
-// largeBlobKey derivations are identical across an updateUserInformation box
-// swap; a v1 id (older firmware) still follows the box; a non-resident box has no
-// id. Also pins per-credential key uniqueness.
 #[test]
-fn resident_key_input_v2_is_reseal_stable_v1_follows_box() {
+fn resident_id_is_random_and_carries_no_fingerprint() {
+    let d = dev();
+    let r1 = derive_resident(&[0x55u8; 80], &d);
+    let r2 = derive_resident(&[0xAAu8; 80], &d);
+    // Deterministic per box, 42 bytes.
+    assert_eq!(r1, derive_resident(&[0x55u8; 80], &d));
+    assert_eq!(r1.len(), CRED_RESIDENT_LEN);
+    // No legacy model marker, and never mistakable for a legacy id.
+    assert_ne!(&r1[4..8], CRED_PROTO_RESIDENT);
+    assert!(!is_resident(&r1));
+    // No device-constant header: the old scheme put HMAC(0,serial)[..4] at [0..4],
+    // shared by every id on the device (a cross-RP correlation handle). Gone now.
+    let old_header = hmac_sha256(&[0u8; 32], d.serial_id);
+    assert_ne!(&r1[..4], &old_header[..4]);
+    // Two credentials on the SAME device share no fixed prefix — like a YubiKey's.
+    assert_ne!(&r1[..10], &r2[..10]);
+}
+
+#[test]
+fn legacy_resident_ids_still_dispatch_correctly() {
+    let d = dev();
+    let box1 = [0x55u8; 80];
+    // v3 legacy id: marker present, version ≥ v2 → keys off the stable id.
+    let v3 = legacy_resident_id(&box1, &d, RESIDENT_VERSION_V3);
+    assert!(is_resident(&v3));
+    assert_eq!(resident_key_input(&box1, Some(&v3[..])), &v3[..]);
+    // v1 legacy id: marker present, version 0 → keys off the BOX (old pubkey verifies).
+    let v1 = legacy_resident_id(&box1, &d, 0);
+    assert!(is_resident(&v1));
+    assert_eq!(resident_key_input(&box1, Some(&v1[..])), &box1[..]);
+    // v4 id: no marker → keys off the id, never mistaken for v1-off-box.
+    let v4 = derive_resident(&box1, &d);
+    assert!(!is_resident(&v4));
+    assert_eq!(resident_key_input(&box1, Some(&v4[..])), &v4[..]);
+}
+
+// A v4 resident id is the key input regardless of the (resealed) box, so the
+// signing / hmac-secret / largeBlobKey derivations are identical across an
+// updateUserInformation box swap; a legacy v1 id still follows the box; a
+// non-resident box has no id. Also pins per-credential key uniqueness.
+#[test]
+fn resident_key_input_reseal_stable_and_v1_follows_box() {
     use crate::keyderiv::fido_load_key;
     let d = dev();
     // Two DIFFERENT boxes, as an updateUserInformation reseal (fresh IV) yields.
@@ -220,15 +303,13 @@ fn resident_key_input_v2_is_reseal_stable_v1_follows_box() {
     let box2 = [0xAAu8; 80];
 
     let rid = derive_resident(&box1, &d);
-    assert_eq!(rid[RESIDENT_VERSION_IDX], RESIDENT_VERSION_V3);
+    assert!(!is_resident(&rid)); // v4, prefix-free
 
-    // v2/v3: the key input is the STABLE id, independent of the box.
-    assert_eq!(resident_key_input(&box1, Some(&rid[..])), &rid[..]);
-    assert_eq!(resident_key_input(&box2, Some(&rid[..])), &rid[..]);
-    let (ki1, ki2) = (
-        resident_key_input(&box1, Some(&rid[..])),
-        resident_key_input(&box2, Some(&rid[..])),
-    );
+    // v4: the key input is the STABLE id, independent of the box.
+    let ki1 = resident_key_input(&box1, Some(&rid[..]));
+    let ki2 = resident_key_input(&box2, Some(&rid[..]));
+    assert_eq!(ki1, &rid[..]);
+    assert_eq!(ki2, &rid[..]);
     assert_eq!(
         fido_load_key(&SEED, ki1),
         fido_load_key(&SEED, ki2),
@@ -245,22 +326,18 @@ fn resident_key_input_v2_is_reseal_stable_v1_follows_box() {
         "largeBlobKey stable across reseal"
     );
 
-    // v1 (marker 0): the key input is the box, so the RP's box-derived pubkey
-    // keeps verifying — no rotation, no regression for older credentials.
-    let mut rid_v1 = rid;
-    rid_v1[RESIDENT_VERSION_IDX] = 0;
-    assert_eq!(resident_key_input(&box1, Some(&rid_v1[..])), &box1[..]);
-    assert_eq!(resident_key_input(&box2, Some(&rid_v1[..])), &box2[..]);
+    // Legacy v1 (marker, version 0): the key input is the box, so an older
+    // credential's RP-stored pubkey keeps verifying — no regression.
+    let v1 = legacy_resident_id(&box1, &d, 0);
+    assert_eq!(resident_key_input(&box1, Some(&v1[..])), &box1[..]);
+    assert_eq!(resident_key_input(&box2, Some(&v1[..])), &box2[..]);
 
     // Non-resident credential: no resident id → the box.
     assert_eq!(resident_key_input(&box1, None), &box1[..]);
 
-    // Uniqueness: two distinct credentials get distinct v2 ids → distinct keys.
+    // Uniqueness: two distinct credentials get distinct ids → distinct keys.
     let rid_other = derive_resident(&box2, &d);
-    assert_ne!(
-        rid[CRED_RESIDENT_HEADER_LEN..],
-        rid_other[CRED_RESIDENT_HEADER_LEN..]
-    );
+    assert_ne!(rid, rid_other);
     assert_ne!(
         fido_load_key(&SEED, &rid[..]),
         fido_load_key(&SEED, &rid_other[..])
