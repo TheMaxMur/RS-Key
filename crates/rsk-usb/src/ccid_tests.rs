@@ -17,11 +17,28 @@ fn msg(msg_type: u8, seq: u8, payload: &[u8]) -> Vec<u8> {
 }
 
 #[test]
+fn atr_identities_are_well_formed() {
+    // A T=1 ATR ends with a TCK: the XOR of every byte after TS (T0..TCK) is 0.
+    // Guard it for both — ATR_RSKEY is hand-derived from ATR_YUBIKEY (relabelled
+    // "RS-Key", checksum recomputed), so a typo would ship a malformed ATR.
+    for atr in [ATR_YUBIKEY, ATR_RSKEY] {
+        assert_eq!(atr[1..].iter().fold(0u8, |a, &b| a ^ b), 0, "bad TCK");
+    }
+    // Identical protocol / card-capability bytes (only the historical label plus
+    // the K length and TCK differ), so a host negotiates T=1 the same on either.
+    assert_eq!(&ATR_YUBIKEY[2..14], &ATR_RSKEY[2..14]);
+    // The default build carries the "RS-Key" label and never the "YubiKey" one.
+    assert!(ATR_RSKEY.windows(6).any(|w| w == b"RS-Key"));
+    assert!(ATR_RSKEY.windows(7).all(|w| w != b"YubiKey"));
+    assert!(ATR_YUBIKEY.windows(7).any(|w| w == b"YubiKey"));
+}
+
+#[test]
 fn slot_status_returns_ret_with_status() {
     let mut status = STATUS_INACTIVE;
     let mut out = [0u8; 64];
     let m = msg(CCID_SLOT_STATUS, 7, &[]);
-    let n = process_message(&m, ATR_FIDO, &mut status, &mut out);
+    let n = process_message(&m, ATR_YUBIKEY, &mut status, &mut out);
     assert_eq!(n, 10);
     assert_eq!(out[0], CCID_SLOT_STATUS_RET);
     assert_eq!(&out[1..5], &[0, 0, 0, 0]); // dwLength 0
@@ -34,15 +51,15 @@ fn power_on_returns_atr_and_activates() {
     let mut status = STATUS_INACTIVE;
     let mut out = [0u8; 64];
     let m = msg(CCID_POWER_ON, 1, &[]);
-    let n = process_message(&m, ATR_FIDO, &mut status, &mut out);
-    assert_eq!(n, 10 + ATR_FIDO.len());
+    let n = process_message(&m, ATR_YUBIKEY, &mut status, &mut out);
+    assert_eq!(n, 10 + ATR_YUBIKEY.len());
     assert_eq!(out[0], CCID_DATA_BLOCK_RET);
     assert_eq!(
         u32::from_le_bytes([out[1], out[2], out[3], out[4]]),
-        ATR_FIDO.len() as u32
+        ATR_YUBIKEY.len() as u32
     );
     assert_eq!(out[7], STATUS_ACTIVE);
-    assert_eq!(&out[10..10 + ATR_FIDO.len()], ATR_FIDO);
+    assert_eq!(&out[10..10 + ATR_YUBIKEY.len()], ATR_YUBIKEY);
     assert_eq!(status, STATUS_ACTIVE); // slot now powered
 }
 
@@ -51,7 +68,7 @@ fn power_off_deactivates() {
     let mut status = STATUS_ACTIVE;
     let mut out = [0u8; 64];
     let m = msg(CCID_POWER_OFF, 2, &[]);
-    let n = process_message(&m, ATR_FIDO, &mut status, &mut out);
+    let n = process_message(&m, ATR_YUBIKEY, &mut status, &mut out);
     assert_eq!(n, 10);
     assert_eq!(out[0], CCID_SLOT_STATUS_RET);
     assert_eq!(out[7], STATUS_INACTIVE);
@@ -64,7 +81,7 @@ fn get_params_returns_t1() {
     let mut out = [0u8; 64];
     for ty in [CCID_GET_PARAMS, CCID_SET_PARAMS, CCID_RESET_PARAMS] {
         let m = msg(ty, 3, &[]);
-        let n = process_message(&m, ATR_FIDO, &mut status, &mut out);
+        let n = process_message(&m, ATR_YUBIKEY, &mut status, &mut out);
         assert_eq!(n, 17);
         assert_eq!(out[0], CCID_PARAMS_RET);
         assert_eq!(out[9], 0x01); // T=1
@@ -77,7 +94,7 @@ fn set_rate_returns_eight_zeros() {
     let mut status = STATUS_ACTIVE;
     let mut out = [0u8; 64];
     let m = msg(CCID_SET_RATE, 4, &[]);
-    let n = process_message(&m, ATR_FIDO, &mut status, &mut out);
+    let n = process_message(&m, ATR_YUBIKEY, &mut status, &mut out);
     assert_eq!(n, 18);
     assert_eq!(out[0], CCID_SET_RATE_RET);
     assert_eq!(&out[10..18], &[0u8; 8]);
@@ -92,7 +109,7 @@ fn xfr_block_located_and_framed() {
     let m = msg(CCID_XFR_BLOCK, 5, &apdu);
     let mut status = STATUS_ACTIVE;
     let mut out = [0u8; 64];
-    assert_eq!(process_message(&m, ATR_FIDO, &mut status, &mut out), 0);
+    assert_eq!(process_message(&m, ATR_YUBIKEY, &mut status, &mut out), 0);
 
     let (a, b) = xfr_apdu(&m).expect("xfr apdu range");
     assert_eq!(&m[a..b], &apdu);
@@ -141,7 +158,7 @@ fn unknown_type_no_response() {
     let mut status = STATUS_ACTIVE;
     let mut out = [0u8; 64];
     let m = msg(0x42, 6, &[]);
-    let n = process_message(&m, ATR_FIDO, &mut status, &mut out);
+    let n = process_message(&m, ATR_YUBIKEY, &mut status, &mut out);
     assert_eq!(n, 0);
 }
 
@@ -149,7 +166,7 @@ fn unknown_type_no_response() {
 fn short_message_ignored() {
     let mut status = STATUS_ACTIVE;
     let mut out = [0u8; 64];
-    let n = process_message(&[0x65, 0, 0], ATR_FIDO, &mut status, &mut out);
+    let n = process_message(&[0x65, 0, 0], ATR_YUBIKEY, &mut status, &mut out);
     assert_eq!(n, 0);
 }
 

@@ -75,10 +75,23 @@ pub const MAX_CCID_MSG: usize = 2048;
 /// the `is_multiple_of` modulus and the endpoint allocations in lockstep.
 const EP_PACKET_SIZE: usize = 64;
 
-/// ATR for the FIDO card.
-pub const ATR_FIDO: &[u8] = &[
+/// ATR presented on the Yubico-identity build (effective VID == Yubico): a real
+/// YubiKey 5's answer-to-reset, byte-for-byte, so `ykman`/`ykmd` and the Windows
+/// "YubiKey Smart Card" minidriver treat the card exactly like a YubiKey. The
+/// historical bytes carry a card-capabilities compact-TLV + the "YubiKey" label.
+pub const ATR_YUBIKEY: &[u8] = &[
     0x3b, 0xfd, 0x13, 0x00, 0x00, 0x81, 0x31, 0xfe, 0x15, 0x80, 0x73, 0xc0, 0x21, 0xc0, 0x57, 0x59,
     0x75, 0x62, 0x69, 0x4b, 0x65, 0x79, 0x40,
+];
+
+/// ATR presented on the default RS-Key build (non-Yubico VID): identical T=1 card
+/// capabilities to [`ATR_YUBIKEY`], but the historical-byte label is "RS-Key", not
+/// "YubiKey" — the card does not impersonate a YubiKey when it is not carrying the
+/// Yubico USB identity (mirrors the VID-gated iManufacturer / OpenPGP AID). The
+/// last byte is the recomputed TCK (XOR checksum over T0..historical bytes).
+pub const ATR_RSKEY: &[u8] = &[
+    0x3b, 0xfc, 0x13, 0x00, 0x00, 0x81, 0x31, 0xfe, 0x15, 0x80, 0x73, 0xc0, 0x21, 0xc0, 0x56, 0x52,
+    0x53, 0x2d, 0x4b, 0x65, 0x79, 0x4b,
 ];
 
 /// T=1 parameters returned for Get/Set/Reset Parameters (`bmFindexDindex,
@@ -246,7 +259,7 @@ pub struct Ccid<'d, D: Driver<'d>, H: ApduHandler> {
 impl<'d, D: Driver<'d>, H: ApduHandler> Ccid<'d, D, H> {
     /// Allocate the CCID interface (class 0x0B, 3 endpoints: bulk OUT, bulk IN,
     /// interrupt IN) on `builder` and build the transport. `atr` is the card's
-    /// answer-to-reset (e.g. [`ATR_FIDO`]). `pin_support` sets the descriptor's
+    /// answer-to-reset (e.g. [`ATR_YUBIKEY`]). `pin_support` sets the descriptor's
     /// `bPINSupport` byte: `0x00` (no pinpad) on a standard build, `0x01` (VERIFY)
     /// on a display build so a host driver drives on-device PIN entry. Every host
     /// CCID stack reads this byte straight from the descriptor; it is the single

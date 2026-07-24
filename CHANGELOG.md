@@ -15,6 +15,17 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Changed
 
+- **The default build's CCID ATR no longer impersonates a YubiKey.** The card's
+  answer-to-reset was the YubiKey 5's ATR on every build; it is now gated on the
+  effective USB VID, exactly like the iManufacturer and OpenPGP AID. A Yubico
+  identity build (`VIDPID=Yubikey5`, or a PicoForge-repointed VID) keeps the
+  YubiKey ATR for `ykman` / `ykmd` compatibility; the default RS-Key build
+  presents an ATR with the same T=1 card capabilities but a `RS-Key`
+  historical-byte label. On Windows a default build is therefore no longer bound
+  to Yubico's `ykmd` minidriver by the "YubiKey Smart Card" ATR entry — PIV falls
+  to the inbox `msclmd` (which recognises the card by its PIV AID). **bcdDevice →
+  0x084F.**
+
 - **`ykman config usb --disable`/`--enable` now actually disables applications.**
   The enabled-applications mask (`USB_ENABLED` in the Management DeviceConfig) used
   to be reporting-only — a "disabled" app kept working. It is now **enforced**: a
