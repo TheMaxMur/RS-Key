@@ -351,6 +351,71 @@ fn device_reset_denied_without_presence() {
     }
 }
 
+#[test]
+fn enabled_from_conf_reads_usb_enabled_tag() {
+    // ykman `config usb --disable PIV` persists USB_ENABLED = 0x022B (everything
+    // supported minus PIV, 0x10). The parsed mask must have PIV cleared, the rest set.
+    let conf = [TAG_USB_ENABLED, 0x02, 0x02, 0x2B];
+    let mask = enabled_from_conf(&conf);
+    assert_eq!(mask, 0x022B);
+    assert!(!cap_enabled(mask, CAP_PIV));
+    assert!(cap_enabled(mask, CAP_FIDO2));
+    assert!(cap_enabled(mask, CAP_OPENPGP));
+}
+
+#[test]
+fn enabled_from_conf_defaults_to_all_supported() {
+    // No blob, or one without a USB_ENABLED tag → everything supported is enabled.
+    assert_eq!(enabled_from_conf(&[]), SUPPORTED_CAPS);
+    assert_eq!(enabled_from_conf(&[0x0C, 0x00]), SUPPORTED_CAPS);
+}
+
+#[test]
+fn enabled_from_conf_clamps_to_supported() {
+    // A mask wider than the firmware implements is clamped, mirroring READ CONFIG,
+    // so a disabled applet can never be re-enabled into an unimplemented capability.
+    let conf = [TAG_USB_ENABLED, 0x02, 0x3A, 0x3B];
+    assert_eq!(enabled_from_conf(&conf), 0x3A3B & SUPPORTED_CAPS);
+}
+
+#[test]
+fn enabled_from_conf_stops_on_malformed_length() {
+    // A length running past the blob stops the walk (→ default), never slicing OOB.
+    let conf = [TAG_USB_ENABLED, 0x05, 0x02];
+    assert_eq!(enabled_from_conf(&conf), SUPPORTED_CAPS);
+}
+
+#[test]
+fn cap_enabled_treats_zero_as_always_on() {
+    // Management/vendor/rescue map to cap 0 — the re-enable path is never gated off.
+    assert!(cap_enabled(0, 0));
+    assert!(cap_enabled(CAP_FIDO2, 0));
+    assert!(!cap_enabled(0, CAP_PIV));
+    assert!(cap_enabled(CAP_PIV, CAP_PIV));
+}
+
+#[test]
+fn read_enabled_caps_roundtrips_via_flash() {
+    let mut fs = fs();
+    assert_eq!(read_enabled_caps(&mut fs), SUPPORTED_CAPS); // absent → default
+    persist_dev_conf(&mut fs, &[TAG_USB_ENABLED, 0x02, 0x02, 0x2B]).unwrap();
+    assert_eq!(read_enabled_caps(&mut fs), 0x022B); // "disable PIV" round-trips
+}
+
+#[test]
+fn persist_dev_conf_sets_dirty_latch() {
+    // The firmware reloads its cached enabled mask when this fires. Only this test
+    // reads the latch, so a concurrent sibling's persist (also a set) can't flip the
+    // assert; the negative "take clears it" is left out to stay race-free.
+    let mut fs = fs();
+    let _ = take_dev_conf_dirty();
+    persist_dev_conf(&mut fs, &[TAG_USB_ENABLED, 0x02, 0x02, 0x2B]).unwrap();
+    assert!(
+        take_dev_conf_dirty(),
+        "a successful config write sets the latch"
+    );
+}
+
 #[cfg(not(feature = "strict-config"))]
 #[test]
 fn device_reset_signals_the_firmware_on_presence() {

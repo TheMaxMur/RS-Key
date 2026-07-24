@@ -215,6 +215,142 @@ fn assertion_with_pin_sets_uv_flag() {
     assert_eq!(ad[32] & FLAG_UV, FLAG_UV, "UV flag must be set");
 }
 
+// GHSA-wqjm-653g-hgw3: a getAssertion that asserts user presence must run
+// clearPinUvAuthTokenPermissionsExceptLbw (CTAP 2.1 §6.2.2 / §6.5.5.7). A token
+// armed with ga|acfg|lbw keeps only lbw after the touch, so acfg can't ride the
+// assertion into a no-touch authenticatorConfig.
+#[test]
+fn assertion_up_true_spends_token_permissions_except_lbw() {
+    let (mut fs, mut rng) = setup();
+    let mut state = crate::FidoState::new();
+    let mut out = [0u8; 1024];
+    let cred_id = {
+        let mut presence = crate::AlwaysConfirm;
+        let mut ctx = Ctx {
+            presence: &mut presence,
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 10,
+        };
+        let n = make_credential(&mut ctx, &mc_request(false), &mut out).unwrap();
+        parse_mc(&out[..n]).0
+    };
+    let token = arm_pin(&mut fs, &mut state);
+    state.paut.permissions = PERM_GA | crate::state::PERM_ACFG | crate::state::PERM_LBW;
+    let mut param = [0u8; 32];
+    let plen = rsk_crypto::pinproto::authenticate(PinProto::Two, &token, &CDH, &mut param).unwrap();
+    let req = ga_request_pin(&cred_id, &param[..plen], 2); // `up` defaults to true
+    let mut o = [0u8; 1024];
+    {
+        let mut presence = crate::AlwaysConfirm;
+        let mut ctx = Ctx {
+            presence: &mut presence,
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 20,
+        };
+        get_assertion(&mut ctx, &req, &mut o).unwrap();
+    }
+    assert_eq!(
+        state.paut.permissions,
+        crate::state::PERM_LBW,
+        "only largeBlobWrite survives a UP-gated getAssertion"
+    );
+    assert!(
+        !state.user_verified(),
+        "the §6.5.5.7 triad also clears the token's user-verified flag"
+    );
+}
+
+// The nuance the fix must preserve: an up:false pre-flight (silent credential
+// discovery) tests no presence, so it must NOT spend the token — else the real
+// up:true assertion that follows on the same token loses its permission. Keyed on
+// the raw `up`, so an unconditional clear would fail here even on the default build.
+#[test]
+fn assertion_up_false_preflight_keeps_token_permissions() {
+    let (mut fs, mut rng) = setup();
+    let mut state = crate::FidoState::new();
+    let mut out = [0u8; 1024];
+    let cred_id = {
+        let mut presence = crate::AlwaysConfirm;
+        let mut ctx = Ctx {
+            presence: &mut presence,
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 10,
+        };
+        let n = make_credential(&mut ctx, &mc_request(false), &mut out).unwrap();
+        parse_mc(&out[..n]).0
+    };
+    let _token = arm_pin(&mut fs, &mut state);
+    state.paut.permissions = PERM_GA | crate::state::PERM_ACFG;
+    let req = ga_request_up(&cred_id, false); // up:false, no pinUvAuthParam
+    let mut o = [0u8; 1024];
+    {
+        let mut presence = crate::AlwaysConfirm;
+        let mut ctx = Ctx {
+            presence: &mut presence,
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 20,
+        };
+        get_assertion(&mut ctx, &req, &mut o).unwrap();
+    }
+    assert_eq!(
+        state.paut.permissions,
+        PERM_GA | crate::state::PERM_ACFG,
+        "an up:false pre-flight must not spend the token"
+    );
+}
+
+// GHSA-wqjm follow-up: the getAssertion NO_CREDENTIALS branch also takes a real
+// "Sign in?" anti-oracle touch, so it must spend the token like the success path —
+// a no-match ceremony must not leave an acfg token usable without a fresh touch.
+#[test]
+fn assertion_no_match_spends_token_permissions_except_lbw() {
+    let (mut fs, mut rng) = setup();
+    let mut state = crate::FidoState::new();
+    let token = arm_pin(&mut fs, &mut state);
+    state.paut.permissions = PERM_GA | crate::state::PERM_ACFG | crate::state::PERM_LBW;
+    let mut param = [0u8; 32];
+    let plen = rsk_crypto::pinproto::authenticate(PinProto::Two, &token, &CDH, &mut param).unwrap();
+    // up:true (default) with an allowList entry that resolves to no credential → the
+    // no-match branch polls presence, then returns NoCredentials.
+    let bogus = [0x77u8; 42];
+    let req = ga_request_pin(&bogus, &param[..plen], 2);
+    let mut o = [0u8; 1024];
+    let err = {
+        let mut presence = crate::AlwaysConfirm;
+        let mut ctx = Ctx {
+            presence: &mut presence,
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 20,
+        };
+        get_assertion(&mut ctx, &req, &mut o).unwrap_err()
+    };
+    assert_eq!(err, CtapError::NoCredentials);
+    assert_eq!(
+        state.paut.permissions,
+        crate::state::PERM_LBW,
+        "the no-match branch spends the token too"
+    );
+    assert!(
+        !state.user_verified(),
+        "no-match branch also clears the UV flag"
+    );
+}
+
 #[test]
 fn unscoped_pin_token_binds_rpid_on_first_getassertion() {
     // A GA-capable token minted without an rpId (legacy getPinToken) must bind

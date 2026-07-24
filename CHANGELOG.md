@@ -13,6 +13,92 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-07-24
+
+### Changed
+
+- **The default build's CCID ATR no longer impersonates a YubiKey.** The card's
+  answer-to-reset was the YubiKey 5's ATR on every build; it is now gated on the
+  effective USB VID, exactly like the iManufacturer and OpenPGP AID. A Yubico
+  identity build (`VIDPID=Yubikey5`, or a PicoForge-repointed VID) keeps the
+  YubiKey ATR for `ykman` / `ykmd` compatibility; the default RS-Key build
+  presents an ATR with the same T=1 card capabilities but a `RS-Key`
+  historical-byte label. On Windows a default build is therefore no longer bound
+  to Yubico's `ykmd` minidriver by the "YubiKey Smart Card" ATR entry — PIV falls
+  to the inbox `msclmd` (which recognises the card by its PIV AID). **bcdDevice →
+  0x084F.**
+
+- **`ykman config usb --disable`/`--enable` now actually disables applications.**
+  The enabled-applications mask (`USB_ENABLED` in the Management DeviceConfig) used
+  to be reporting-only — a "disabled" app kept working. It is now **enforced**: a
+  disabled application's applet stops answering — PIV/OpenPGP/OATH/OTP return `6A82`
+  on CCID SELECT, FIDO2 (CBOR) and U2F (MSG) are refused over CTAPHID, and the OTP
+  keyboard goes inert (no typed tickets, no challenge-response). It takes effect
+  live (next command, no replug) and is **reversible**: the Management applet, the
+  FIDO vendor `CONFIG_WRITE`, and the OTP-HID identify/config slots are never gated,
+  so any one transport can re-enable. On the default build the admin write stays
+  ungated for ykman parity, so a hostile host can toggle applications — a reversible
+  DoS, documented in docs/threat-model.md; `--features strict-config` gates the
+  write on operator presence. **bcdDevice → 0x084A.**
+
+### Fixed
+
+- **OATH `CALCULATE ALL` no longer breaks the Yubico Authenticator (regression of the
+  unreleased issue-#44 SELECT fix).** YKOATH `CALCULATE ALL` reuses instruction byte
+  `0xA4` — the same as `SELECT` — as `00 A4 00 01 …`. The first cut of the
+  master-file-`SELECT`→`6D00` rule matched on `INS 0xA4` + `P1=0x00` and so shadowed
+  `CALCULATE ALL`, returning `6D00`; the Yubico Authenticator (which refreshes codes
+  with `CALCULATE ALL`) then failed and spun, re-connecting in a loop (the LED blinked
+  hard). The rule now keys on `P2=0x0C` (`SELECT`, no response data), which
+  `CALCULATE ALL` (`P2=0x01`) does not use. **bcdDevice → 0x0850.**
+
+- **Smart card: the master-file `SELECT` (`00 A4 00 0C …`) now answers `6D00`, the way
+  a YubiKey does.** GnuPG's `scdaemon` probes a card with `SELECT 3F00` and only when
+  that fails with a card error does it recognise a YubiKey and read the real serial
+  from the management applet. RS-Key answered `6A88`, so `scdaemon` skipped that step:
+  Kleopatra / `gpg --card-status` showed a raw serial (`0006 47537774`) instead of the
+  device serial and did not surface the PIV application alongside OpenPGP. The applet
+  dispatcher now returns `6D00` for the master-file `SELECT` (`A4 P1=0x00 P2=0x0C`) —
+  RS-Key is applet-only and has no master file — so the whole YubiKey code path in
+  `scdaemon` runs. Found via a live differential against a real YubiKey (issue #44).
+  **bcdDevice → 0x084E.**
+
+- **FIDO: `makeCredential` no longer answers `excludeList` without a touch.** An
+  `excludeList` hit returned `CTAP2_ERR_CREDENTIAL_EXCLUDED` instantly, before any
+  user-presence gesture, so a host holding a candidate credential id could silently
+  probe whether it is registered on the inserted key (an rpId-bound existence
+  oracle). CTAP 2.1 §6.1.2 requires the presence gesture before disclosing the
+  match; RS-Key already did this on the `getAssertion` no-match path and now does it
+  here too, spending the pinUvAuthToken on that touch. **bcdDevice → 0x084D.**
+
+- **FIDO: a pinUvAuthToken no longer keeps its permissions across a touch.**
+  After a user-presence-gated `makeCredential` or `getAssertion`, CTAP 2.1 §6.5.5.7
+  requires clearing the token's user-present / user-verified flags and every
+  permission except `largeBlobWrite`. RS-Key only refreshed the token's inactivity
+  timer, so a token minted with `mc|ga|acfg` could register or authenticate with one
+  touch and then run `authenticatorConfig` (`toggleAlwaysUv`,
+  `enableEnterpriseAttestation`) with **no second touch**. RS-Key now runs the full
+  §6.5.5.7 triad at every place a `makeCredential` / `getAssertion` tests presence —
+  including the `getAssertion` no-match (`NO_CREDENTIALS`) branch, which takes a real
+  anti-oracle touch. (`makeCredential`'s `up` is implicit; `getAssertion` keys on the
+  raw `up`, so a silent `up:false` pre-flight still does not consume the token.)
+  Authenticated (needs a valid PIN/UV token); reported by @cresseelia
+  (GHSA-wqjm-653g-hgw3). **bcdDevice → 0x084C.**
+
+- **`ykman otp swap` now works.** The OTP applet's SWAP (slot `0x06`) accepted only
+  an empty body or RS-Key's `[a,b]` 4-slot-offset extension, but ykman/yubikit send
+  the standard swap as a bare 6-byte access code (no offset bytes). RS-Key rejected
+  that frame as `WRONG_LENGTH`, so the host saw `Failed to write` / `No data`; it now
+  swaps slots 1↔2 and honours the code. Found by a full OTP-HID differential against
+  a real YubiKey — every other OTP-HID command already matched. **bcdDevice → 0x084B.**
+- **`ykman config usb` no longer fails with `CommandRejectedError: No data` over the
+  OTP keyboard transport.** ykman/yubikit confirm an OTP-HID config write by the
+  status frame's program-sequence byte advancing; `SET_DEVICE_INFO` (and the other
+  OTP-HID admin writes) persisted the config but never bumped that counter — so on a
+  host without PC/SC, where ykman falls back from CCID to the OTP-HID transport, the
+  write was reported rejected even though it took. They now advance the sequence like
+  a slot configure. **bcdDevice → 0x084A.**
+
 ## [0.4.0] - 2026-07-22
 
 ### Security
@@ -2180,7 +2266,8 @@ family that keeps the "enterprise" features in the open tree.
   signature of it, and a CycloneDX SBOM. See
   [docs/releases.md](docs/releases.md) to verify a download.
 
-[Unreleased]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/TheMaxMur/RS-Key/compare/v0.3.10...v0.4.0
 [0.3.10]: https://github.com/TheMaxMur/RS-Key/compare/v0.3.9...v0.3.10
 [0.3.9]: https://github.com/TheMaxMur/RS-Key/compare/v0.3.8...v0.3.9

@@ -474,6 +474,12 @@ fn make_credential_inner<S: Storage, R: Rng>(
     // (a UV-required credProtect credential is invisible without UV — §12.1).
     for &id in &req.exclude[..req.exclude_len] {
         if exclude_hit(ctx.fs, seed, rp_id_hash, id, uv) {
+            // §6.1.2 requires a user-presence gesture BEFORE disclosing the match, so
+            // the device isn't a silent credential-existence oracle (matches the
+            // getAssertion no-match poll and a real YubiKey). `up` is implicit; spend
+            // the token on that touch too, so acfg can't ride it (GHSA-wqjm class).
+            ctx.require_presence(crate::Confirm::titled("Use this key?"))?;
+            ctx.state.consume_after_user_presence();
             return Err(CtapError::CredentialExcluded);
         }
     }
@@ -560,6 +566,11 @@ fn make_credential_inner<S: Storage, R: Rng>(
         req.rp_id.as_bytes(),
         req.user_name.as_bytes(),
     ))?;
+
+    // Spend the pinUvAuthToken now the presence test passed (CTAP 2.1 §6.5.5.7
+    // triad; GHSA-wqjm-653g-hgw3). makeCredential's `up` is implicitly true; on the
+    // no-PIN path no token is in use so this is a no-op.
+    ctx.state.consume_after_user_presence();
 
     // authData = rpIdHash | flags | counter | aaguid | credIdLen | credId | COSEpubkey | ext.
     // Worst case (ML-DSA-65): AUTH_DATA_HEADER(55) + CRED_BOX_MAX(748) +

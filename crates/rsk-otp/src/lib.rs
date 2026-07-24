@@ -174,6 +174,27 @@ const YUBICO_CHARSET: &[u8; 45] = b"cbdefghijklnrtuvCBDEFGHIJKLNRTUV0123456789!\
 #[cfg(not(feature = "strict-config"))]
 const SCANMAP_LEN: usize = 45;
 
+/// Whether a keyboard-HID slot P1 is an OTP *function* — programming a slot
+/// (configure/update/swap) or a challenge-response — as opposed to an
+/// identify/config slot (GET SERIAL, READ/WRITE CONFIG, status, admin). When the
+/// OTP application is disabled via `ykman config usb`, the firmware takes the
+/// former inert while keeping the latter live, so the host can still read the
+/// DeviceInfo and re-enable OTP.
+pub fn is_function_slot(slot_id: u8) -> bool {
+    matches!(
+        slot_id,
+        P1_CONFIG_SLOT1
+            | P1_CONFIG_SLOT2
+            | P1_UPDATE_SLOT1
+            | P1_UPDATE_SLOT2
+            | P1_SWAP
+            | P1_CHAL_OTP_SLOT1
+            | P1_CHAL_OTP_SLOT2
+            | P1_CHAL_HMAC_SLOT1
+            | P1_CHAL_HMAC_SLOT2
+    )
+}
+
 /// "Wrong data" in this protocol is reported as `0x6700` (wrong length).
 const SW_WRONG_DATA: Sw = Sw::WRONG_LENGTH;
 
@@ -474,25 +495,32 @@ impl<'a> OtpApplet<'a> {
     }
 
     /// P1 = 0x06: swap the two slots. Body layouts: empty = slots 1↔2, no code;
-    /// `[a,b]` = slots (1+a)↔(2+b); `[a,b,code0..code5]` = the same pair with a
-    /// 6-byte access code. Swapping moves/deletes stored configs, so — like
-    /// cmd_configure/cmd_update/delete (docs/guides/otp.md) — a programmed slot is
-    /// only touched when the presented code matches its stored access code; an
-    /// unprotected slot's all-zero code is satisfied by the default, so a plain
-    /// `ykman otp swap` of unprotected slots is unchanged. Out-of-range offsets
-    /// are rejected so a swap can never orphan a slot outside the 4-slot range.
+    /// `[code0..code5]` (6 bytes) = slots 1↔2 with an access code — the frame
+    /// `ykman`/yubikit actually send for `otp swap`; `[a,b]` = slots (1+a)↔(2+b);
+    /// `[a,b,code0..code5]` = that pair with a 6-byte access code. Swapping
+    /// moves/deletes stored configs, so — like cmd_configure/cmd_update/delete
+    /// (docs/guides/otp.md) — a programmed slot is only touched when the presented
+    /// code matches its stored access code; an unprotected slot's all-zero code is
+    /// satisfied by the default, so a plain `ykman otp swap` of unprotected slots
+    /// is unchanged. Out-of-range offsets are rejected so a swap can never orphan a
+    /// slot outside the 4-slot range.
     fn cmd_swap<S: Storage>(&mut self, apdu: &Apdu, fs: &mut Fs<S>, res: &mut ResBuf) -> Sw {
         let (mut fid1, mut fid2) = (EF_OTP_SLOT1, EF_OTP_SLOT2);
         let mut code = [0u8; ACC_CODE_SIZE];
-        if apdu.nc > 0 {
-            if apdu.nc != 2 && apdu.nc != 2 + ACC_CODE_SIZE {
-                return Sw::WRONG_LENGTH;
-            }
+        if apdu.nc == ACC_CODE_SIZE {
+            // The standard `ykman otp swap` frame: a bare 6-byte access code, no
+            // slot-offset bytes → swap the default slots 1↔2 with it. Missing this
+            // arm rejected the real swap as WRONG_LENGTH (ykman: "Failed to write").
+            code.copy_from_slice(&apdu.data[..ACC_CODE_SIZE]);
+        } else if apdu.nc == 2 || apdu.nc == 2 + ACC_CODE_SIZE {
+            // RS-Key's 4-slot extension: [a,b] offsets, optionally + a 6-byte code.
             fid1 += apdu.data[0] as u16;
             fid2 += apdu.data[1] as u16;
             if apdu.nc == 2 + ACC_CODE_SIZE {
                 code.copy_from_slice(&apdu.data[2..2 + ACC_CODE_SIZE]);
             }
+        } else if apdu.nc != 0 {
+            return Sw::WRONG_LENGTH;
         }
         if fid1 > EF_OTP_SLOT_LAST || fid2 > EF_OTP_SLOT_LAST {
             return Sw::INCORRECT_P1P2;
@@ -688,7 +716,14 @@ impl<'a> OtpApplet<'a> {
             return Sw::INCORRECT_PARAMS;
         }
         match rsk_mgmt::persist_dev_conf(fs, &data[1..1 + len]) {
-            Ok(()) => Sw::OK,
+            Ok(()) => {
+                // ykman/yubikit confirm an OTP-transport write by the program-
+                // sequence byte in the status frame advancing (`_is_sequence_updated`),
+                // not by any response body. Bump it like a slot configure/update/swap
+                // or `ykman config usb` fails with `CommandRejectedError: No data`.
+                self.config_seq = self.config_seq.wrapping_add(1);
+                Sw::OK
+            }
             Err(rsk_mgmt::DevConfError::TooLong) => Sw::INCORRECT_PARAMS,
             Err(rsk_mgmt::DevConfError::Store) => Sw::MEMORY_FAILURE,
         }
@@ -702,6 +737,7 @@ impl<'a> OtpApplet<'a> {
         let n = apdu.data.len().min(EF_OTP_DEVCFG_MAX);
         if n != 0 {
             let _ = fs.put(EF_OTP_DEVCFG, &apdu.data[..n]);
+            self.config_seq = self.config_seq.wrapping_add(1); // pgmSeq bump (see cmd_set_device_info)
         }
         Sw::OK
     }
@@ -715,6 +751,7 @@ impl<'a> OtpApplet<'a> {
         if n != 0 {
             let fid = if slot2 { EF_OTP_NDEF2 } else { EF_OTP_NDEF1 };
             let _ = fs.put(fid, &apdu.data[..n]);
+            self.config_seq = self.config_seq.wrapping_add(1); // pgmSeq bump (see cmd_set_device_info)
         }
         Sw::OK
     }
@@ -729,6 +766,7 @@ impl<'a> OtpApplet<'a> {
             return Sw::OK;
         }
         let _ = fs.put(EF_OTP_SCANMAP, &apdu.data[..SCANMAP_LEN]);
+        self.config_seq = self.config_seq.wrapping_add(1); // pgmSeq bump (see cmd_set_device_info)
         Sw::OK
     }
 

@@ -30,6 +30,20 @@ const RESP_CAP: usize = 2038;
 const IDX_OPENPGP: usize = 1;
 const IDX_PIV: usize = 5;
 
+/// The YubiKey capability bit that gates each applet, in registration order
+/// `[vendor, openpgp, management, oath, otp, piv, rescue]`. `0` = always
+/// available: management (the re-enable path), vendor and rescue (recovery) must
+/// never be gated off, or `ykman config usb --disable` would be irreversible.
+const APPLET_CAPS: [u16; 7] = [
+    0,
+    rsk_mgmt::CAP_OPENPGP,
+    0,
+    rsk_mgmt::CAP_OATH,
+    rsk_mgmt::CAP_OTP,
+    rsk_mgmt::CAP_PIV,
+    0,
+];
+
 /// YubiKey Management vendor commands carried over CTAPHID (logical, i.e.
 /// `TYPE_INIT` already stripped by the transport). READ CONFIG (`0x42`) is what
 /// `ykman` / Yubico Authenticator read to identify the key over the FIDO
@@ -53,6 +67,10 @@ pub struct CcidApplets<'a> {
     otp: OtpApplet<'a>,
     piv: PivApplet<'a>,
     rescue: RescueApplet<'a>,
+    /// Cached enabled-applications mask from `EF_DEV_CONF`; reloaded when a config
+    /// write sets the dirty latch. Gates CCID SELECT, the OTP keyboard interface
+    /// and (via the worker) the FIDO2/U2F transports.
+    enabled_caps: u16,
     resp: [u8; RESP_CAP],
 }
 
@@ -109,8 +127,35 @@ impl<'a> CcidApplets<'a> {
                 kv_total,
                 crate::flash_storage::FLASH_SIZE as u32,
             ),
+            enabled_caps: rsk_mgmt::read_enabled_caps(&mut fs.borrow_mut()),
             resp: [0; RESP_CAP],
         }
+    }
+
+    /// Reload the cached enabled-applications mask from flash — called after a
+    /// config write flips [`rsk_mgmt::take_dev_conf_dirty`], so the next gated
+    /// command sees the new set. Returns the reloaded mask.
+    pub fn refresh_enabled(&mut self) -> u16 {
+        self.enabled_caps = rsk_mgmt::read_enabled_caps(&mut self.fs.borrow_mut());
+        self.enabled_caps
+    }
+
+    /// Whether the applet/transport guarded by capability bit `cap` is enabled.
+    /// The worker consults this to gate the FIDO2 (CBOR) and U2F (MSG) transports.
+    pub fn caps_enabled(&self, cap: u16) -> bool {
+        rsk_mgmt::cap_enabled(self.enabled_caps, cap)
+    }
+
+    /// The `Dispatcher::set_enabled` index-mask derived from the current cap mask:
+    /// bit `i` set → applet `i` (in `APPLET_CAPS` order) is selectable.
+    fn applet_enable_mask(&self) -> u32 {
+        let mut mask = 0u32;
+        for (i, &cap) in APPLET_CAPS.iter().enumerate() {
+            if rsk_mgmt::cap_enabled(self.enabled_caps, cap) {
+                mask |= 1 << i;
+            }
+        }
+        mask
     }
 
     /// Serve a YubiKey Management vendor command received over the CTAPHID
@@ -203,6 +248,10 @@ impl<'a> CcidApplets<'a> {
             self.disp.clear_chaining();
             return &self.resp[..n];
         }
+        // A disabled application's applet is invisible: SELECT (and any command to
+        // it) returns FILE_NOT_FOUND, so `ykman config usb --disable X` really
+        // removes X over CCID, not just from the DeviceInfo report.
+        self.disp.set_enabled(self.applet_enable_mask());
         let (sw, n) = {
             let mut res = ResBuf::new(&mut self.resp[..RESP_CAP - 2]);
             let mut applets: [&mut dyn Applet<Store>; 7] = [
@@ -233,6 +282,13 @@ impl<'a> CcidApplets<'a> {
         slot_id: u8,
         payload: &[u8; 64],
     ) -> ([u8; 64], usize, [u8; 8]) {
+        // OTP disabled: the function slots (program/update/swap/challenge-response)
+        // go inert, but the identify/config slots (serial, READ/WRITE CONFIG,
+        // status) stay live so the host can still read DeviceInfo and re-enable OTP.
+        if !self.caps_enabled(rsk_mgmt::CAP_OTP) && rsk_otp::is_function_slot(slot_id) {
+            let status = self.otp.hid_status_frame(&mut self.fs.borrow_mut());
+            return ([0u8; 64], 0, status);
+        }
         let mut body = [0u8; 64];
         let n = {
             let mut res = ResBuf::new(&mut body);
@@ -270,6 +326,9 @@ impl<'a> CcidApplets<'a> {
         slot: u8,
         ts_secs: u32,
     ) -> Option<([u8; rsk_otp::ticket::MAX_TICKET], usize, bool)> {
+        if !self.caps_enabled(rsk_mgmt::CAP_OTP) {
+            return None; // OTP disabled — a button press types nothing.
+        }
         let mut rnd = [0u8; 2];
         {
             let mut r = self.rng.borrow_mut();
@@ -290,7 +349,9 @@ impl<'a> CcidApplets<'a> {
     /// dispatch. The search runs on BOTH cores ([`crate::core1`]) and blocks this
     /// thread-executor task; the CCID transport streams time-extensions meanwhile.
     fn try_rsa_keygen(&mut self, apdu: &[u8]) -> Option<usize> {
-        if self.disp.current() != Some(IDX_OPENPGP) {
+        // The cap check closes the contrived window where OpenPGP was selected and
+        // then disabled — the fast path bypasses the dispatcher's own gate.
+        if self.disp.current() != Some(IDX_OPENPGP) || !self.caps_enabled(rsk_mgmt::CAP_OPENPGP) {
             return None;
         }
         let p = Apdu::parse(apdu).ok()?;
@@ -337,7 +398,7 @@ impl<'a> CcidApplets<'a> {
     /// the CCID transport can stream time-extensions. Validation errors fall
     /// through to normal dispatch for the right status word.
     fn try_piv_rsa_keygen(&mut self, apdu: &[u8]) -> Option<usize> {
-        if self.disp.current() != Some(IDX_PIV) {
+        if self.disp.current() != Some(IDX_PIV) || !self.caps_enabled(rsk_mgmt::CAP_PIV) {
             return None;
         }
         let p = Apdu::parse(apdu).ok()?;

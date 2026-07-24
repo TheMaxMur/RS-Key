@@ -41,7 +41,7 @@ use static_cell::StaticCell;
 
 use rsk_crypto::Device;
 use rsk_fs::Fs;
-use rsk_usb::ccid::{ATR_FIDO, Ccid};
+use rsk_usb::ccid::{ATR_RSKEY, ATR_YUBIKEY, Ccid};
 use rsk_usb::ctaphid::{CtapHid, FIDO_REPORT_DESCRIPTOR};
 
 mod ccid_handler;
@@ -497,7 +497,7 @@ async fn main(spawner: Spawner) {
     config.max_power = 100;
     config.max_packet_size_0 = 64;
     // bcdDevice build counter; also surfaced on the trusted-display Firmware screen.
-    let device_release: u16 = 0x0849;
+    let device_release: u16 = 0x0850;
     config.device_release = device_release;
 
     let mut builder = Builder::new(
@@ -536,8 +536,16 @@ async fn main(spawner: Spawner) {
     } else {
         0x00
     };
+    // Present the YubiKey ATR only when the effective VID is Yubico's, mirroring
+    // the iManufacturer / OpenPGP AID: a default (non-Yubico) build must not
+    // impersonate a YubiKey on the wire — it carries the "RS-Key" ATR instead.
+    let card_atr: &'static [u8] = if usb_vid == YUBICO_VID {
+        ATR_YUBIKEY
+    } else {
+        ATR_RSKEY
+    };
     let ccid = (usb_itf & rsk_rescue::phy::USB_ITF_CCID != 0)
-        .then(|| Ccid::new(&mut builder, ClientCcid, ATR_FIDO, ccid_pin_support));
+        .then(|| Ccid::new(&mut builder, ClientCcid, card_atr, ccid_pin_support));
 
     let kbd = (usb_itf & rsk_rescue::phy::USB_ITF_KB != 0).then(|| {
         HidWriter::<_, 8>::new(

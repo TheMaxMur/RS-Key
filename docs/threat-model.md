@@ -33,15 +33,21 @@ bulk stream, ISO-7816 APDUs, CTAP2 CBOR. Defenses:
   every byte the host sends. Touch requirements bound the rate.
 - **Device config is UNGATED on the default build.** The shipped default is the
   full-ykman/YubiKey-compatible admin surface: a hostile USB host can silently
-  rewrite the reported DeviceInfo / enabled-applications / USB identity — over
-  CCID Management `WRITE CONFIG`, the FIDO vendor `CONFIG_WRITE`, and the CTAPHID
+  rewrite the DeviceInfo / enabled-applications / USB identity — over CCID
+  Management `WRITE CONFIG`, the FIDO vendor `CONFIG_WRITE`, and the CTAPHID
   (`0x43`) and OTP-HID (`0x15`) transport writes — with **no** touch or PIN, and
-  can trigger a device-wide factory reset (that one keeps a presence gate). This
-  is cosmetic: the config/identity is never proof a device is genuine (attestation
-  is — see §3). If you need config writes gated on the operator, build/flash
-  **`firmware-strict-config`**, which restores the presence/PIN gates and refuses
-  the ungated transport writes ([build.md](build.md)). It is not the runtime flash
-  flag `EF_HARDENED`.
+  can trigger a device-wide factory reset (that one keeps a presence gate). The
+  USB *identity* (serial, strings) is cosmetic — never proof a device is genuine,
+  attestation is (§3). The **enabled-applications mask is enforced**, though: a
+  disabled application's applet stops answering (PIV/OpenPGP/OATH/OTP over CCID,
+  FIDO2/U2F over CTAPHID, the OTP keyboard), so a hostile host can turn one off.
+  That is a **reversible denial-of-service**, not a confidentiality or integrity
+  break — the Management applet, the FIDO vendor command, and the OTP-HID
+  identify/config slots are never gated, so any single transport can re-enable it,
+  and no secret is exposed. If you need config writes gated on the operator,
+  build/flash **`firmware-strict-config`**, which restores the presence/PIN gates
+  and refuses the ungated transport writes ([build.md](build.md)). It is not the
+  runtime flash flag `EF_HARDENED`.
 - **The residual gap is *intent*. The trusted-display flavor closes it.** Because
   a standard key attests presence and possession, a malicious page can silently
   drive an authorized key over WebUSB to phish a real sign-in ([demonstrated

@@ -19,17 +19,20 @@ pub const MANAGEMENT_AID: &[u8] = &[0xA0, 0x00, 0x00, 0x05, 0x27, 0x47, 0x11, 0x
 /// all agree.
 pub const VERSION: (u8, u8, u8) = rsk_sdk::FIRMWARE_VERSION;
 
-// Capability bits.
-const CAP_OTP: u16 = 0x01;
-const CAP_U2F: u16 = 0x02;
-const CAP_OPENPGP: u16 = 0x08;
-const CAP_OATH: u16 = 0x20;
-const CAP_FIDO2: u16 = 0x200;
-const CAP_PIV: u16 = 0x10;
+// Capability bits (YubiKey `CAPABILITY.*`) — the USB_ENABLED bitmask vocabulary,
+// also the applet-gate keys the firmware maps each applet to.
+pub const CAP_OTP: u16 = 0x01;
+pub const CAP_U2F: u16 = 0x02;
+pub const CAP_OPENPGP: u16 = 0x08;
+pub const CAP_OATH: u16 = 0x20;
+pub const CAP_FIDO2: u16 = 0x200;
+pub const CAP_PIV: u16 = 0x10;
 
 /// Capabilities this firmware actually implements. Reporting only what exists
-/// keeps Yubico Authenticator from showing tabs that would error on SELECT.
-const SUPPORTED_CAPS: u16 = CAP_FIDO2 | CAP_U2F | CAP_OPENPGP | CAP_OATH | CAP_OTP | CAP_PIV;
+/// keeps Yubico Authenticator from showing tabs that would error on SELECT; it is
+/// also the ceiling a host-written USB_ENABLED is clamped to and the factory
+/// default enabled set.
+pub const SUPPORTED_CAPS: u16 = CAP_FIDO2 | CAP_U2F | CAP_OPENPGP | CAP_OATH | CAP_OTP | CAP_PIV;
 
 // DeviceInfo TLV tags.
 const TAG_USB_SUPPORTED: u8 = 0x01;
@@ -191,7 +194,59 @@ pub fn persist_dev_conf<S: Storage>(fs: &mut Fs<S>, blob: &[u8]) -> Result<(), D
     if blob.len() > EF_DEV_CONF_MAX {
         return Err(DevConfError::TooLong);
     }
-    fs.put(EF_DEV_CONF, blob).map_err(|_| DevConfError::Store)
+    fs.put(EF_DEV_CONF, blob).map_err(|_| DevConfError::Store)?;
+    // The enabled-applications set changed; the firmware reloads its cached mask
+    // (which gates applet dispatch) before the next command it guards.
+    DEV_CONF_DIRTY.store(true, core::sync::atomic::Ordering::Relaxed);
+    Ok(())
+}
+
+/// Set by [`persist_dev_conf`] on any successful write, drained by the firmware to
+/// know when to reload its cached enabled-capability mask. Same swap-to-consume
+/// latch as the device-reset request; enforcement is build-agnostic (a
+/// `strict-config` build still honours a persisted config), so this is ungated.
+static DEV_CONF_DIRTY: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+/// Take (and clear) the "enabled-applications config changed" latch.
+pub fn take_dev_conf_dirty() -> bool {
+    DEV_CONF_DIRTY.swap(false, core::sync::atomic::Ordering::Relaxed)
+}
+
+/// The enabled-applications mask from a persisted `EF_DEV_CONF` TLV blob — the
+/// `USB_ENABLED` (`0x03`) tag, clamped to [`SUPPORTED_CAPS`]. A blob without that
+/// tag, or none persisted at all, is the factory default: everything supported is
+/// enabled. Walks short-form TLVs like [`clamp_usb_enabled`]; a malformed length
+/// stops the walk (→ default), never slicing out of bounds.
+pub fn enabled_from_conf(conf: &[u8]) -> u16 {
+    let mut i = 0;
+    while i + 2 <= conf.len() {
+        let len = conf[i + 1] as usize;
+        if i + 2 + len > conf.len() {
+            break;
+        }
+        if conf[i] == TAG_USB_ENABLED && len == 2 {
+            return u16::from_be_bytes([conf[i + 2], conf[i + 3]]) & SUPPORTED_CAPS;
+        }
+        i += 2 + len;
+    }
+    SUPPORTED_CAPS
+}
+
+/// Read `EF_DEV_CONF` and return its enabled-applications mask ([`enabled_from_conf`]).
+/// The firmware caches this and re-reads it when [`take_dev_conf_dirty`] fires.
+pub fn read_enabled_caps<S: Storage>(fs: &mut Fs<S>) -> u16 {
+    let mut conf = [0u8; EF_DEV_CONF_MAX];
+    match fs.read(EF_DEV_CONF, &mut conf) {
+        Some(full) if full > 0 => enabled_from_conf(&conf[..full.min(conf.len())]),
+        _ => SUPPORTED_CAPS,
+    }
+}
+
+/// Whether an applet guarded by capability bit `cap` is enabled under `mask`.
+/// `cap == 0` marks an always-available applet (management, vendor, rescue) — the
+/// re-enable path must never be gated off, or a disable becomes irreversible.
+pub fn cap_enabled(mask: u16, cap: u16) -> bool {
+    cap == 0 || mask & cap != 0
 }
 
 impl<'a> ManagementApplet<'a> {

@@ -172,26 +172,27 @@ chip-id bytes than the reported 8-digit value, so the two aren't byte-identical.
 ## Disabling the keyboard interface
 
 If the extra keyboard is unwanted (some KVMs or login screens dislike a button
-that types), the obvious move is `ykman config usb --disable otp`. But on this
-firmware that does **not** actually remove the keyboard:
+that types), `ykman config usb --disable otp` now genuinely turns OTP off:
 
 ```sh
-ykman config usb --disable otp        # flips the reported OTP capability bit only
-ykman config usb --list               # what ykman thinks is on
+ykman config usb --disable otp        # disables the OTP application (enforced)
+ykman config usb --list               # confirm what is on
+ykman config usb --enable otp         # reversible — turns it back on
 ```
 
-`ykman config usb` writes the Yubico management capability blob (`EF_DEV_CONF`),
-which is just the set of bits `ykman` reports back. Whether the keyboard HID
-interface actually enumerates is decided at boot by a separate interface mask in
-the rescue `phy` record (`EF_PHY` / `USB_ITF_KB`), and nothing translates a
-capability-bit change into that mask. So after `--disable otp` the keyboard
-keeps enumerating across reboots. `ykman` merely *reports* OTP as disabled.
+The write persists to the Yubico management capability blob (`EF_DEV_CONF`) and
+the firmware **enforces** it live (no replug): a button press then types
+nothing, and Yubico / HMAC challenge-response is refused on both the keyboard
+frame protocol and the CCID OTP applet.
 
-To genuinely drop the keyboard interface you have to clear the `USB_ITF_KB` bit
-in the rescue `phy` mask via the rescue applet. Stock `ykman` can't do it. If
-typing is the problem and you don't need that path, leaving the slots empty (or
-behind an access code) avoids accidental presses without touching the interface
-set.
+One caveat: the keyboard **USB interface still enumerates**. Whether the HID
+interface is present at all is decided at boot by a separate mask in the rescue
+`phy` record (`EF_PHY` / `USB_ITF_KB`), which a capability-bit change does not
+touch — so the OS still sees an (now inert) keyboard. To drop the interface
+itself, clear the `USB_ITF_KB` bit in the rescue `phy` mask via the rescue
+applet (stock `ykman` can't do it). If accidental typing was the only worry,
+`--disable otp` — or leaving the slots empty / behind an access code — already
+stops the presses.
 
 ## Troubleshooting
 

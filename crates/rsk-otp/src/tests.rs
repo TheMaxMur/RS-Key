@@ -466,6 +466,58 @@ fn swap_moves_configs_between_slots() {
 }
 
 #[test]
+fn swap_accepts_bare_ykman_access_code_frame() {
+    // ykman/yubikit send `otp swap` as a BARE 6-byte access code (no slot-offset
+    // bytes). RS-Key rejected that nc=6 frame as WRONG_LENGTH, so the host saw
+    // "Failed to write". It must now swap slots 1<->2 and honour the code.
+    let mut fs = new_fs();
+    let presence = RefCell::new(AlwaysConfirm);
+    let rng = RefCell::new(CountRng(7));
+    let mut app = OtpApplet::new(SERIAL, SERIAL_HASH, None, &rng, &presence);
+    let key20 = [0x44; 20];
+    configure(
+        &mut app,
+        &mut fs,
+        0x01,
+        0,
+        &chalresp_config(&key20, &[0; 6], 0),
+        &[0; 6],
+    );
+
+    // The exact yubikit frame: a bare all-zero 6-byte code, no offsets.
+    let (sw, body) = run(&mut app, &mut fs, &otp_apdu(0x06, 0, &[0u8; 6]));
+    assert_eq!(sw, Sw::OK);
+    assert_eq!(body[4], CONFIG2_VALID); // moved slot 1 -> slot 2
+    let chal = [0x11; 64];
+    let (_, resp) = run(&mut app, &mut fs, &otp_apdu(0x38, 0, &chal));
+    assert_eq!(resp, hmac_sha1(&key20, &chal)); // the config genuinely moved
+}
+
+#[test]
+fn swap_bare_code_is_matched_not_ignored() {
+    // The bare-6-byte path still gates a protected slot (not a blanket accept):
+    // a wrong code is refused, the exact code allows the swap.
+    let mut fs = new_fs();
+    let presence = RefCell::new(AlwaysConfirm);
+    let rng = RefCell::new(CountRng(7));
+    let mut app = OtpApplet::new(SERIAL, SERIAL_HASH, None, &rng, &presence);
+    let acc = [9, 8, 7, 6, 5, 4];
+    configure(
+        &mut app,
+        &mut fs,
+        0x01,
+        0,
+        &chalresp_config(&[0x55; 20], &acc, 0),
+        &[0; 6],
+    );
+    assert_eq!(
+        run(&mut app, &mut fs, &otp_apdu(0x06, 0, &[1u8; 6])).0,
+        Sw::SECURITY_STATUS_NOT_SATISFIED
+    );
+    assert_eq!(run(&mut app, &mut fs, &otp_apdu(0x06, 0, &acc)).0, Sw::OK);
+}
+
+#[test]
 fn swap_refuses_protected_slot_without_access_code() {
     // run-5 (HIGH): SLOT_SWAP used to move/delete an access-code-protected slot
     // with no code — unlike configure/update — so an unauthenticated host could
@@ -635,6 +687,47 @@ fn hid_frame_set_device_info_round_trips_to_config() {
             .windows(4)
             .any(|w| w == [0x03, 0x02, 0x02, 0x02]),
         "0x13 GET CONFIG must echo the persisted USB_ENABLED"
+    );
+}
+
+#[cfg(not(feature = "strict-config"))]
+#[test]
+fn hid_frame_set_device_info_bumps_program_sequence() {
+    // ykman/yubikit confirm an OTP-transport config write by the program-sequence
+    // byte in the status frame advancing (`_is_sequence_updated`), not by a response
+    // body. Before the fix `ykman config usb` failed with CommandRejectedError("No
+    // data") because SET_DEVICE_INFO left the sequence unchanged. A real (non-empty)
+    // write must advance it exactly like a slot configure.
+    let mut fs = new_fs();
+    let presence = RefCell::new(AlwaysConfirm);
+    let rng = RefCell::new(CountRng(7));
+    let mut app = OtpApplet::new(SERIAL, SERIAL_HASH, None, &rng, &presence);
+    let seq_before = app.hid_status_frame(&mut fs)[4];
+
+    // DeviceConfig.get_bytes() for `config usb --disable PIV`: [len=4][03 02 02 2B].
+    let mut payload = [0u8; hid::PAYLOAD_SIZE];
+    payload[..5].copy_from_slice(&[0x04, 0x03, 0x02, 0x02, 0x2B]);
+    let mut out = [0u8; 64];
+    let mut res = ResBuf::new(&mut out);
+    assert_eq!(app.process_hid(0x15, &payload, &mut fs, &mut res), Sw::OK);
+    assert_eq!(
+        app.hid_status_frame(&mut fs)[4],
+        seq_before.wrapping_add(1),
+        "SET_DEVICE_INFO must advance pgmSeq so ykman sees the write"
+    );
+
+    // An empty (no-op) write must NOT bump — yubikit's benign "No data" is correct
+    // there, and a spurious bump would report a phantom config change.
+    let seq_after = app.hid_status_frame(&mut fs)[4];
+    let mut r2 = ResBuf::new(&mut out);
+    assert_eq!(
+        app.process_hid(0x15, &[0u8; hid::PAYLOAD_SIZE], &mut fs, &mut r2),
+        Sw::OK
+    );
+    assert_eq!(
+        app.hid_status_frame(&mut fs)[4],
+        seq_after,
+        "empty write is a no-op"
     );
 }
 

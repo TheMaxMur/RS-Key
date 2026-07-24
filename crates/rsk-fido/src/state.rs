@@ -362,6 +362,20 @@ impl FidoState {
         }
     }
 
+    /// The CTAP 2.1 §6.5.5.7 post-user-presence triad — `clearUserPresentFlag()`,
+    /// `clearUserVerifiedFlag()`, `clearPinUvAuthTokenPermissionsExceptLbw()` — run
+    /// once a makeCredential / getAssertion user-presence test succeeds. Spends the
+    /// in-use token down to largeBlobWrite and drops its UP/UV flags so a follow-on
+    /// authenticatorConfig can't ride the touch (GHSA-wqjm-653g-hgw3). The token
+    /// stays `in_use` (lbw is deliberately retained); it retires on its usage timer.
+    pub fn consume_after_user_presence(&mut self) {
+        if self.paut.in_use {
+            self.paut.permissions &= PERM_LBW;
+            self.paut.user_present = false;
+            self.paut.user_verified = false;
+        }
+    }
+
     /// `stopUsingPinUvAuthToken` — drop the in-use state, permissions, and
     /// presence/rpId binding. The token bytes stay put; `in_use == false` and
     /// zero permissions make every downstream check fail closed.
