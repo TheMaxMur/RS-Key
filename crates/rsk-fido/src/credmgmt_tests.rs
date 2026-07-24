@@ -1256,7 +1256,11 @@ fn enum_largeblobkey(resp: &[u8]) -> Option<std::vec::Vec<u8>> {
 fn update_preserves_signing_key_end_to_end() {
     let (mut fs, mut rng) = setup();
     let (id, x, y) = register(&mut fs, &mut rng, "example.com", &[1, 1], "alice");
-    assert_eq!(id[8], 2, "new resident credential carries the v3 marker");
+    assert_ne!(
+        &id[4..8],
+        b"\xf1\xd0\x02\x03",
+        "new resident id is prefix-free v4"
+    );
     let rp_hash = sha256(b"example.com");
 
     // Before the update, getAssertion already signs under the registered key.

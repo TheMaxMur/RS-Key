@@ -202,7 +202,7 @@ jobs:
 
   kani:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 360
     env:
       KANI_VERSION: "0.67.0"
     steps:

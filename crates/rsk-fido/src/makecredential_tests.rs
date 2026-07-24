@@ -370,10 +370,11 @@ fn non_resident_make_credential_self_attestation() {
     let req = build_request(false);
     let (resp, _fs) = run(&req);
     let auth_data = verify_response(&resp, &[0xCD; 32]);
-    // Non-resident: credId in authData is the full box (starts with proto f1d00202).
+    // Non-resident: credId in authData is the full (prefix-free) box — no cleartext
+    // f1d00202 marker, so it can't be fingerprinted as an RS-Key credential.
     let cred_len = u16::from_be_bytes([auth_data[53], auth_data[54]]) as usize;
     assert!(cred_len > 42);
-    assert_eq!(&auth_data[55..59], b"\xf1\xd0\x02\x02");
+    assert_ne!(&auth_data[55..59], b"\xf1\xd0\x02\x02");
 }
 
 #[test]
@@ -381,10 +382,11 @@ fn resident_make_credential_stores_and_returns_resident_id() {
     let req = build_request(true);
     let (resp, mut fs) = run(&req);
     let auth_data = verify_response(&resp, &[0xCD; 32]);
-    // Resident: credId in authData is the 42-byte resident id (proto f1d00203).
+    // Resident: credId in authData is the 42-byte (prefix-free v4) resident id —
+    // no cleartext f1d00203 marker, so passkeys look random like a YubiKey's.
     let cred_len = u16::from_be_bytes([auth_data[53], auth_data[54]]) as usize;
     assert_eq!(cred_len, 42);
-    assert_eq!(&auth_data[59..63], b"\xf1\xd0\x02\x03");
+    assert_ne!(&auth_data[59..63], b"\xf1\xd0\x02\x03");
     // The credential was persisted.
     assert!(fs.has_data(crate::consts::EF_CRED));
     assert!(fs.has_data(crate::consts::EF_RP));

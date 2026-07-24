@@ -13,6 +13,26 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-07-25
+
+### Changed
+
+- **FIDO2 credential IDs are now fingerprint-free — they look random, like a
+  YubiKey's.** Both credential-ID formats used to carry a fixed cleartext prefix a
+  relying party (or a flash dump) could recognise: non-resident boxes led with
+  `f1d00202`, and resident (passkey) ids led with a 10-byte header
+  (`HMAC(serial)[..4] ‖ f1d00203 ‖ version ‖ 00`) whose first four bytes were
+  **device-specific and identical across every passkey on the device** — a
+  cross-RP device-correlation handle. New credentials carry neither marker: a
+  non-resident box is `iv ‖ ciphertext ‖ tag ‖ silent-tag` (its key comes from a
+  fixed internal label, not an on-wire byte) and a resident id is 42
+  pseudo-random per-credential bytes. **Backward-compatible:** already-registered
+  credentials keep working — the authenticator still opens the legacy
+  `f1d00202` / `f1d00203` formats (the AEAD tag and a length-based allowList
+  lookup tell the framings apart), so no re-registration is required. The change
+  is forward-only: ids issued before the upgrade stay as they were until a site
+  is re-registered. **bcdDevice → 0x0851.**
+
 ## [0.4.1] - 2026-07-24
 
 ### Changed
@@ -2266,7 +2286,8 @@ family that keeps the "enterprise" features in the open tree.
   signature of it, and a CycloneDX SBOM. See
   [docs/releases.md](docs/releases.md) to verify a download.
 
-[Unreleased]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.2...HEAD
+[0.4.2]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/TheMaxMur/RS-Key/compare/v0.3.10...v0.4.0
 [0.3.10]: https://github.com/TheMaxMur/RS-Key/compare/v0.3.9...v0.3.10

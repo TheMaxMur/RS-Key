@@ -3,12 +3,19 @@
 
 //! Credential IDs. A CTAP2 credential ID is a self-contained ChaCha20-Poly1305
 //! box: a CBOR map of the credential's metadata, encrypted under a key derived
-//! from the device seed, with the rpId hash as AEAD associated data. Layout
-//! (proto 0x02):
+//! from the device seed, with the rpId hash as AEAD associated data. Layout:
 //!
 //! ```text
-//! proto(4 = f1d00202) ‖ iv(12) ‖ ciphertext ‖ poly1305_tag(16) ‖ silent_tag(16)
+//! iv(12) ‖ ciphertext ‖ poly1305_tag(16) ‖ silent_tag(16)
 //! ```
+//!
+//! There is no cleartext prefix: the box is indistinguishable from random, so a
+//! credential id carries no device- or model-fingerprint an RP could link on
+//! (WebAuthn unlinkability — a YubiKey's ids look random for the same reason).
+//! The encryption key comes from a fixed internal `CRED_PROTO` label, never from
+//! an on-wire byte. [`verify_decrypt`] still opens the legacy `f1d00202`-prefixed
+//! boxes relying parties registered before this format — the poly1305 tag tells
+//! the framings apart, so old credentials keep working across the upgrade.
 //!
 //! The silent tag binds the box to this device + rp without decrypting it.
 //! Resident credentials additionally derive a 42-byte "resident id" that is what
@@ -45,10 +52,12 @@ const PROTO_LEN: usize = 4;
 const IV_LEN: usize = 12;
 const TAG_LEN: usize = 16;
 const SILENT_TAG_LEN: usize = 16;
-/// Header before the ciphertext: proto + iv.
+/// Legacy header before the ciphertext on a prefixed box: proto + iv.
 const HEAD_LEN: usize = PROTO_LEN + IV_LEN; // 16
-/// Bytes around the ciphertext for proto 0x02: head + poly tag + silent tag.
+/// Bytes wrapping the ciphertext on a legacy proto-0x02 box: head + poly + silent.
 const WRAP_LEN_22: usize = HEAD_LEN + TAG_LEN + SILENT_TAG_LEN; // 48
+/// Bytes wrapping the ciphertext on a current (prefix-free) box: iv + poly + silent.
+const WRAP_LEN: usize = IV_LEN + TAG_LEN + SILENT_TAG_LEN; // 44
 
 // --- Sealed-field maxima. makeCredential enforces the first three (over-max
 // input → InvalidLength) and truncates the names, so the box ceiling below is a
@@ -113,28 +122,24 @@ pub(crate) const NICK_BOX_MAX: usize = IV_LEN + RP_NICK_MAX_LEN + TAG_LEN;
 
 /// Resident-id length.
 pub const CRED_RESIDENT_LEN: usize = 42;
-const CRED_RESIDENT_HEADER_LEN: usize = 10;
 
-/// Offset of the resident-id format marker — a reserved header byte that sits
-/// OUTSIDE the `[10..42]` HMAC chain [`derive_resident`] fills, so it carries a
-/// version tag the RP treats as opaque without perturbing the id's entropy.
-/// It selects the key-derivation input (box vs. stable resident id) for the
-/// credential's signing / hmac-secret / largeBlobKey keys — see
-/// [`resident_key_input`].
+/// Offset of the LEGACY resident-id version marker (v1–v3) — a header byte at
+/// `[8]`, behind the `f1d00203` marker at `[4..8]`. Current v4 ids are prefix-free
+/// and carry no marker; this offset is still read to key legacy ids off the box
+/// (v1) vs. the stable id (v2/v3) and to size their record trailer (v3). See
+/// [`resident_keys_off_id`] / [`resident_has_trailer`].
 const RESIDENT_VERSION_IDX: usize = 8;
-/// v2 marker: the signing / hmac-secret / largeBlobKey keys derive from the
-/// STABLE resident id, so they survive an updateUserInformation reseal (CTAP2.1
-/// §6.8). Older stored credentials carry the implicit v1 marker (0) and keep
-/// deriving from the box, so an already-provisioned device stays byte-for-byte
-/// compatible across the upgrade.
+/// Legacy v2 marker: the signing / hmac-secret / largeBlobKey keys derive from
+/// the STABLE resident id, so they survive an updateUserInformation reseal
+/// (CTAP2.1 §6.8). Legacy v1 credentials (implicit marker 0) key off the box; v4
+/// ids (no marker) also key off the stable id. Already-provisioned devices stay
+/// byte-for-byte compatible across the upgrade.
 const RESIDENT_VERSION_V2: u8 = 1;
-/// v3 marker: v2 key-derivation semantics PLUS a length-prefixed cached public
-/// key in the EF_CRED record (see [`compose_cred_record`]), so credential
-/// enumeration emits the stored point instead of recomputing `d·G` per call —
-/// the dominant per-credential cost on this MCU's software EC. Every newly
-/// created resident credential is v3; [`resident_key_input`] treats v2 and v3
-/// identically (stable-id derivation), so the id the RP stores stays opaque and
-/// v1/v2 records already on a device keep working (they derive on the fly).
+/// Legacy v3 marker: v2 key-derivation semantics PLUS a length-prefixed cached
+/// public key in the EF_CRED record (see [`compose_cred_record`]), so enumeration
+/// emits the stored point instead of recomputing `d·G` per call — the dominant
+/// per-credential cost on this MCU's software EC. v4 records carry the same
+/// trailer; legacy v1/v2 records without it keep deriving the point on the fly.
 const RESIDENT_VERSION_V3: u8 = 2;
 
 /// Credential extensions sealed into the box. `minPinLength` is not stored —
@@ -226,7 +231,10 @@ fn silent_tag(dev: &Device, prefix: &[u8], rp_id_hash: &[u8; 32]) -> [u8; SILENT
     tag
 }
 
-/// Does this box carry the resident proto marker?
+/// Does this id carry the legacy `f1d00203` resident marker at `[4..8]`? Only
+/// v1–v3 ids do; a current v4 resident id is prefix-free (see [`derive_resident`]),
+/// so this drives the v1/v2/v3-vs-v4 format dispatch, not the allowList routing —
+/// which is length-based ([`CRED_RESIDENT_LEN`]) so it catches both.
 pub fn is_resident(data: &[u8]) -> bool {
     data.len() >= PROTO_LEN + 4 && &data[4..8] == CRED_PROTO_RESIDENT
 }
@@ -241,26 +249,29 @@ pub fn credential_create(
     iv: &[u8; IV_LEN],
     out: &mut [u8],
 ) -> Result<usize> {
-    if out.len() < WRAP_LEN_22 {
+    if out.len() < WRAP_LEN {
         return Err(Error::NoMemory);
     }
-    // Encode the inner CBOR straight into the ciphertext slot (out[16..]).
+    // Encode the inner CBOR straight into the ciphertext slot (out[12..], right
+    // after the iv — no cleartext prefix).
     let body_end = out.len() - TAG_LEN - SILENT_TAG_LEN;
     let rs = {
-        let mut enc = Encoder::new(Cursor::new(&mut out[HEAD_LEN..body_end]));
+        let mut enc = Encoder::new(Cursor::new(&mut out[IV_LEN..body_end]));
         encode_body(&mut enc, input).map_err(|_| Error::NoMemory)?;
         enc.writer().position()
     };
 
+    // The key label is a fixed internal constant, decoupled from the wire bytes,
+    // so the box need not carry it. `verify_decrypt` re-derives from the same
+    // label for the prefix-free trial.
     let mut key = derive_chacha_key(seed, CRED_PROTO);
-    let tag = chacha20poly1305_encrypt(&key, iv, rp_id_hash, &mut out[HEAD_LEN..HEAD_LEN + rs]);
+    let tag = chacha20poly1305_encrypt(&key, iv, rp_id_hash, &mut out[IV_LEN..IV_LEN + rs]);
     key.zeroize();
 
-    out[..PROTO_LEN].copy_from_slice(CRED_PROTO);
-    out[PROTO_LEN..HEAD_LEN].copy_from_slice(iv);
-    out[HEAD_LEN + rs..HEAD_LEN + rs + TAG_LEN].copy_from_slice(&tag);
+    out[..IV_LEN].copy_from_slice(iv);
+    out[IV_LEN + rs..IV_LEN + rs + TAG_LEN].copy_from_slice(&tag);
 
-    let prefix_len = HEAD_LEN + rs + TAG_LEN;
+    let prefix_len = IV_LEN + rs + TAG_LEN;
     let st = silent_tag(dev, &out[..prefix_len], rp_id_hash);
     out[prefix_len..prefix_len + SILENT_TAG_LEN].copy_from_slice(&st);
     Ok(prefix_len + SILENT_TAG_LEN)
@@ -328,41 +339,99 @@ fn encode_body<W: minicbor::encode::Write>(
     Ok(())
 }
 
-/// Decrypt the box in place. `cred_id` is a caller-owned mutable copy; on
-/// success its `[16..16+pt_len]` holds the plaintext. Returns the plaintext length.
-fn verify_decrypt(seed: &[u8; 32], cred_id: &mut [u8], rp_id_hash: &[u8; 32]) -> Option<usize> {
-    let len = cred_id.len();
-    if len < HEAD_LEN + TAG_LEN {
+/// Try one candidate framing. The iv sits at `orig[iv_off..iv_off+IV_LEN]`, the
+/// ciphertext right after it, and `trailing` bytes follow the ciphertext (the
+/// poly1305 tag, plus a silent tag for the 32-byte case). Copies `orig` into
+/// `scratch`, decrypts in place under `key_label`, and on an authentic tag leaves
+/// the plaintext at `scratch[iv_off+IV_LEN..][..pt_len]`, returning `pt_len`.
+fn try_format(
+    seed: &[u8; 32],
+    orig: &[u8],
+    rp_id_hash: &[u8; 32],
+    scratch: &mut [u8],
+    iv_off: usize,
+    key_label: &[u8],
+    trailing: usize,
+) -> Option<usize> {
+    let len = orig.len();
+    let ct_off = iv_off + IV_LEN;
+    if len < ct_off + trailing || len > scratch.len() {
         return None;
     }
-    let is22 = &cred_id[..PROTO_LEN] == CRED_PROTO;
-    let wrap = if is22 {
-        WRAP_LEN_22
-    } else {
-        HEAD_LEN + TAG_LEN
-    };
-    if len < wrap {
-        return None;
-    }
-    let ct_len = len - wrap;
-    let mut proto = [0u8; PROTO_LEN];
-    proto.copy_from_slice(&cred_id[..PROTO_LEN]);
+    let ct_len = len - ct_off - trailing;
+    scratch[..len].copy_from_slice(orig);
     let mut iv = [0u8; IV_LEN];
-    iv.copy_from_slice(&cred_id[PROTO_LEN..HEAD_LEN]);
+    iv.copy_from_slice(&scratch[iv_off..ct_off]);
     let mut tag = [0u8; TAG_LEN];
-    tag.copy_from_slice(&cred_id[HEAD_LEN + ct_len..HEAD_LEN + ct_len + TAG_LEN]);
-
-    let mut key = derive_chacha_key(seed, &proto);
+    tag.copy_from_slice(&scratch[ct_off + ct_len..ct_off + ct_len + TAG_LEN]);
+    let mut key = derive_chacha_key(seed, key_label);
     let res = chacha20poly1305_decrypt(
         &key,
         &iv,
         rp_id_hash,
-        &mut cred_id[HEAD_LEN..HEAD_LEN + ct_len],
+        &mut scratch[ct_off..ct_off + ct_len],
         &tag,
     );
     key.zeroize();
     res.ok()?;
     Some(ct_len)
+}
+
+/// Decrypt `cred_id` into `scratch`, trying the current prefix-free framing first
+/// and the legacy prefixed framings as a fallback. On success returns
+/// `(ciphertext_offset, plaintext_len)` — the plaintext sits at
+/// `scratch[offset..offset+len]`. The poly1305 tag decides which framing is
+/// authentic, so an IV that happens to begin with `f1d00202` is still resolved
+/// correctly; a wrongly-framed trial garbles `scratch`, which the next trial's
+/// copy overwrites.
+fn verify_decrypt(
+    seed: &[u8; 32],
+    cred_id: &[u8],
+    rp_id_hash: &[u8; 32],
+    scratch: &mut [u8],
+) -> Option<(usize, usize)> {
+    // Current format: iv ‖ ct ‖ poly ‖ silent, key from the fixed CRED_PROTO
+    // label, no on-wire prefix.
+    if let Some(pt) = try_format(
+        seed,
+        cred_id,
+        rp_id_hash,
+        scratch,
+        0,
+        CRED_PROTO,
+        TAG_LEN + SILENT_TAG_LEN,
+    ) {
+        return Some((IV_LEN, pt));
+    }
+    if cred_id.len() < PROTO_LEN {
+        return None;
+    }
+    if &cred_id[..PROTO_LEN] == CRED_PROTO {
+        // Legacy proto-0x02: f1d00202 ‖ iv ‖ ct ‖ poly ‖ silent.
+        if let Some(pt) = try_format(
+            seed,
+            cred_id,
+            rp_id_hash,
+            scratch,
+            PROTO_LEN,
+            CRED_PROTO,
+            TAG_LEN + SILENT_TAG_LEN,
+        ) {
+            return Some((HEAD_LEN, pt));
+        }
+    } else if let Some(pt) = try_format(
+        seed,
+        cred_id,
+        rp_id_hash,
+        scratch,
+        PROTO_LEN,
+        &cred_id[..PROTO_LEN],
+        TAG_LEN,
+    ) {
+        // Even older: proto ‖ iv ‖ ct ‖ poly (no silent tag), key from the proto.
+        return Some((HEAD_LEN, pt));
+    }
+    None
 }
 
 /// Verify and parse a box into a [`Credential`] borrowing `scratch` (which
@@ -373,13 +442,11 @@ pub fn credential_load<'a>(
     rp_id_hash: &[u8; 32],
     scratch: &'a mut [u8],
 ) -> Option<Credential<'a>> {
-    let n = cred_id.len();
-    if n > scratch.len() {
+    if cred_id.len() > scratch.len() {
         return None;
     }
-    scratch[..n].copy_from_slice(cred_id);
-    if let Some(pt_len) = verify_decrypt(seed, &mut scratch[..n], rp_id_hash) {
-        return parse_body(&scratch[HEAD_LEN..HEAD_LEN + pt_len]);
+    if let Some((off, pt_len)) = verify_decrypt(seed, cred_id, rp_id_hash, scratch) {
+        return parse_body(&scratch[off..off + pt_len]);
     }
     // U2F fallback: a 64-byte path‖tag handle that verifies against this rp
     // loads as a minimal P-256 credential with no sealed body.
@@ -449,31 +516,47 @@ fn parse_body(cbor: &[u8]) -> Option<Credential<'_>> {
     Some(cred)
 }
 
-/// The 42-byte resident id returned to the RP for a resident credential.
-/// Header = `serial-derived(4) ‖ proto23(4) ‖ version(1) ‖ 00`, then a 32-byte
-/// HMAC chain over the box. The version byte ([`RESIDENT_VERSION_IDX`]) is not
-/// part of the chain (which spans `[10..42]`), so setting it leaves the id's
-/// entropy — and every already-stored v1/v2 id's `[10..42]` — unchanged. New
-/// resident credentials are stamped v3 so their keys derive from this stable id
-/// (see [`resident_key_input`]) AND their record carries a cached public key; it
-/// is written only at create time and never re-derived for a lookup, so the bump
-/// cannot strand older stored ids.
+/// The 42-byte resident id returned to the RP for a resident credential — the
+/// authenticator's lookup key for the box it keeps in flash.
+///
+/// v4 (current): 42 pseudo-random bytes, an HMAC of the box keyed by the device
+/// serial. It carries no device- or model-fingerprint — every byte depends on
+/// the box, whose random IV makes each id unique — so two ids from one device
+/// share nothing an RP could link on, exactly as a YubiKey's random ids don't
+/// (WebAuthn unlinkability). Legacy v1–v3 ids instead led with a
+/// `serial-derived(4) ‖ f1d00203(4) ‖ version ‖ 00` header; those stay stored
+/// byte-for-byte and keep deriving via the old scheme, and the two formats are
+/// told apart by that `f1d00203` marker — which v4 guarantees it never carries,
+/// so a v4 id is never mis-read as legacy and mis-keyed off the box.
+///
+/// Called ONLY at create time; the result is stored and read back verbatim on
+/// every lookup, so changing this scheme cannot strand already-issued ids.
 pub fn derive_resident(cred_id: &[u8], dev: &Device) -> [u8; CRED_RESIDENT_LEN] {
     let mut outk = [0u8; CRED_RESIDENT_LEN];
-    let h0 = hmac_sha256(&[0u8; 32], dev.serial_id);
-    outk[..32].copy_from_slice(&h0);
-    outk[4..8].copy_from_slice(CRED_PROTO_RESIDENT);
-    outk[RESIDENT_VERSION_IDX] = RESIDENT_VERSION_V3;
-    outk[9] = 0;
-
-    let mut cred_idr = [0u8; 32];
-    cred_idr.copy_from_slice(&outk[CRED_RESIDENT_HEADER_LEN..]);
-    cred_idr = hmac_sha256(&cred_idr, b"SLIP-0022");
-    cred_idr = hmac_sha256(&cred_idr, &cred_id[..PROTO_LEN]);
-    cred_idr = hmac_sha256(&cred_idr, b"resident");
-    cred_idr = hmac_sha256(&cred_idr, cred_id);
-    outk[CRED_RESIDENT_HEADER_LEN..].copy_from_slice(&cred_idr);
+    let a = hmac_sha256(dev.serial_id, cred_id);
+    let b = hmac_sha256(&a, b"resident-id");
+    outk[..32].copy_from_slice(&a);
+    outk[32..].copy_from_slice(&b[..CRED_RESIDENT_LEN - 32]);
+    if &outk[4..8] == CRED_PROTO_RESIDENT {
+        outk[4] ^= 0x01; // never collide with the legacy marker (2⁻³²)
+    }
     outk
+}
+
+/// Whether the credential keys off its stable resident id — legacy v2/v3 (marker
+/// [`RESIDENT_VERSION_V2`]+), or any v4 (no legacy marker) — rather than the box
+/// (legacy v1 only). A v4 id never carries the [`is_resident`] marker, so it is
+/// never mistaken for v1 and keyed off the box.
+fn resident_keys_off_id(rid: &[u8]) -> bool {
+    rid.len() == CRED_RESIDENT_LEN
+        && (!is_resident(rid) || rid[RESIDENT_VERSION_IDX] >= RESIDENT_VERSION_V2)
+}
+
+/// Whether the stored record carries the length-prefixed cached-pubkey trailer —
+/// legacy v3, or any v4. `rid` is the record's 42-byte resident-id field.
+fn resident_has_trailer(rid: &[u8]) -> bool {
+    rid.len() == CRED_RESIDENT_LEN
+        && (!is_resident(rid) || rid[RESIDENT_VERSION_IDX] == RESIDENT_VERSION_V3)
 }
 
 /// The 64-byte cred_random (`CredRandomWithUV ‖ CredRandomWithoutUV`) for the
@@ -503,13 +586,13 @@ pub fn derive_large_blob_key(seed: &[u8; 32], cred_id: &[u8]) -> [u8; 32] {
 /// The key-derivation input for a credential's signing key ([`fido_load_key`]),
 /// hmac-secret ([`derive_hmac_key`]) and largeBlobKey ([`derive_large_blob_key`]).
 ///
-/// A **v2 or v3 resident** credential (its stored `resident_id` carries a marker
-/// `>= `[`RESIDENT_VERSION_V2`]) keys off that STABLE id, so the keys survive an
-/// updateUserInformation reseal — which draws a fresh IV and thus a new box
-/// ([`crate::credmgmt`], CTAP2.1 §6.8). Every other case keys off the box exactly
-/// as before: a **v1** resident credential (older, marker 0) so the RP's stored
-/// pubkey still verifies, and a **non-resident** credential (`resident_id` is
-/// `None`) which has no stable id and cannot be resealed anyway.
+/// A **v2/v3/v4 resident** credential ([`resident_keys_off_id`]) keys off its
+/// STABLE resident id, so the keys survive an updateUserInformation reseal —
+/// which draws a fresh IV and thus a new box ([`crate::credmgmt`], CTAP2.1 §6.8).
+/// Every other case keys off the box exactly as before: a **v1** resident
+/// credential (older, marker 0) so the RP's stored pubkey still verifies, and a
+/// **non-resident** credential (`resident_id` is `None`) which has no stable id
+/// and cannot be resealed anyway.
 ///
 /// Callers MUST route ALL THREE derivations through this so the pubkey issued at
 /// makeCredential and the key used at every assertion / enumeration path agree —
@@ -519,21 +602,16 @@ pub(crate) fn resident_key_input<'a>(
     resident_id: Option<&'a [u8]>,
 ) -> &'a [u8] {
     match resident_id {
-        Some(rid)
-            if rid.len() == CRED_RESIDENT_LEN
-                && rid[RESIDENT_VERSION_IDX] >= RESIDENT_VERSION_V2 =>
-        {
-            rid
-        }
+        Some(rid) if resident_keys_off_id(rid) => rid,
         _ => cred_box,
     }
 }
 
 /// A resident record is `rp_id_hash(32) ‖ resident_id(42) ‖ [pubkey trailer] ‖
-/// full_cred_id`. The trailer (`pubkey_len(1) ‖ pubkey`) is present only for a v3
+/// full_cred_id`. The trailer (`pubkey_len(1) ‖ pubkey`) is present for a v3 or v4
 /// resident id and is read/written through [`cred_record_box`] /
-/// [`cred_record_pubkey`] / [`compose_cred_record`]; v1/v2 records have the box
-/// directly at `RECORD_PREFIX`.
+/// [`cred_record_pubkey`] / [`compose_cred_record`]; legacy v1/v2 records have the
+/// box directly at `RECORD_PREFIX`.
 pub const RECORD_PREFIX: usize = 32 + CRED_RESIDENT_LEN;
 
 /// Largest cached public point a v3 record can carry: an uncompressed P-521
@@ -554,7 +632,7 @@ const _: () = assert!(RECORD_PREFIX + 1 + CRED_PUBKEY_MAX + CRED_BOX_MAX <= CRED
 /// is clamped to the record end, so the box then fails to decrypt and the
 /// credential is skipped rather than mis-sliced.
 fn cred_box_offset(rec: &[u8]) -> usize {
-    if rec.len() > RECORD_PREFIX && rec[32 + RESIDENT_VERSION_IDX] == RESIDENT_VERSION_V3 {
+    if rec.len() > RECORD_PREFIX && resident_has_trailer(&rec[32..RECORD_PREFIX]) {
         (RECORD_PREFIX + 1 + rec[RECORD_PREFIX] as usize).min(rec.len())
     } else {
         RECORD_PREFIX
@@ -572,7 +650,7 @@ pub(crate) fn cred_record_box(rec: &[u8]) -> &[u8] {
 /// The cached public point stored in a v3 record, or `None` for a v1/v2 record
 /// or a v3 record with an empty (uncacheable-curve) trailer.
 pub(crate) fn cred_record_pubkey(rec: &[u8]) -> Option<&[u8]> {
-    if rec.len() > RECORD_PREFIX && rec[32 + RESIDENT_VERSION_IDX] == RESIDENT_VERSION_V3 {
+    if rec.len() > RECORD_PREFIX && resident_has_trailer(&rec[32..RECORD_PREFIX]) {
         let len = rec[RECORD_PREFIX] as usize;
         if len == 0 {
             return None;
@@ -598,8 +676,8 @@ pub(crate) fn compose_cred_record(
     if resident_id.len() != CRED_RESIDENT_LEN || pubkey.len() > CRED_PUBKEY_MAX {
         return None;
     }
-    let v3 = resident_id[RESIDENT_VERSION_IDX] == RESIDENT_VERSION_V3;
-    let trailer = if v3 { 1 + pubkey.len() } else { 0 };
+    let has_trailer = resident_has_trailer(resident_id);
+    let trailer = if has_trailer { 1 + pubkey.len() } else { 0 };
     let total = RECORD_PREFIX + trailer + cred_box.len();
     if total > out.len() {
         return None;
@@ -607,7 +685,7 @@ pub(crate) fn compose_cred_record(
     out[..32].copy_from_slice(rp_id_hash);
     out[32..RECORD_PREFIX].copy_from_slice(resident_id);
     let mut p = RECORD_PREFIX;
-    if v3 {
+    if has_trailer {
         out[p] = pubkey.len() as u8;
         p += 1;
         out[p..p + pubkey.len()].copy_from_slice(pubkey);
