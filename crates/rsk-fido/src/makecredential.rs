@@ -8,13 +8,15 @@
 //! packed **self-attestation** (no x5c) so the conformance tool can verify it.
 //! Resident keys (rk) are stored; non-resident credentials carry the full box in
 //! authData. A configured PIN requires a verified `pinUvAuthParam`
-//! ([`enforce_pin`]), which sets the `uv` flag. Request extensions are sealed
-//! into the box and echoed in the authData extension output (ED flag);
-//! excludeList is credProtect-aware. Enterprise attestation (request field
-//! 0x0A): level 2 emits a full attestation signed by the device key with its
-//! x5c cert and the `ep` response flag; level 1 is accepted but stays
-//! self-attestation.
+//! ([`enforce_pin`]), which sets the `uv` flag — except for a non-discoverable
+//! credential, which `makeCredUvNotRqd` lets through on presence alone. Request
+//! extensions are sealed into the box and echoed in the authData extension
+//! output (ED flag); excludeList is credProtect-aware. Enterprise attestation
+//! (request field 0x0A): level 2 emits a full attestation signed by the device
+//! key with its x5c cert and the `ep` response flag; level 1 is accepted but
+//! stays self-attestation.
 
+use minicbor::encode::Write;
 use minicbor::encode::write::Cursor;
 use minicbor::{Decoder, Encoder};
 use zeroize::Zeroize;
@@ -26,13 +28,13 @@ use rsk_fs::{Fs, Storage};
 
 use crate::cbordec::{cbor, def_arr, def_map};
 use crate::cert;
+use crate::clientpin::{UvOutcome, builtin_uv_enabled, builtin_uv_step};
 use crate::consts::{
     AAGUID, ALG_ED25519, ALG_EDDSA, ALG_ES256, ALG_ES256K, ALG_ES384, ALG_ES512, ALG_ESP256,
     ALG_ESP384, ALG_ESP512, ALG_MLDSA44, ALG_MLDSA65, CRED_PROT_UV_REQUIRED, CURVE_ED25519,
     CURVE_MLDSA44, CURVE_MLDSA65, CURVE_P256, CURVE_P256K1, CURVE_P384, CURVE_P521, EF_ATT_CHAIN,
     EF_EA_ENABLED, EF_EE_DEV, EF_MINPINLEN, EF_PIN, FLAG_AT, FLAG_ED, FLAG_UP, FLAG_UV,
     MAX_CREDBLOB_LENGTH, MAX_CREDENTIAL_COUNT_IN_LIST, MAX_MIN_PIN_RPIDS, MAX_RESIDENT_CREDENTIALS,
-    PREFER_PQC,
 };
 use crate::credential::{
     CRED_BOX_MAX, CRED_PUBKEY_MAX, CRED_REC_MAX, CRED_RESIDENT_LEN, CredExt, CredInput, Credential,
@@ -85,16 +87,6 @@ fn alg_to_curve(alg: i64) -> Option<(i64, u8)> {
         ALG_MLDSA44 => Some((ALG_MLDSA44, CURVE_MLDSA44)),
         ALG_MLDSA65 => Some((ALG_MLDSA65, CURVE_MLDSA65)),
         _ => None,
-    }
-}
-
-/// PQC-preference rank for the `pubKeyCredParams` selection under `PREFER_PQC`:
-/// ML-DSA-65 outranks ML-DSA-44, which outranks the classical schemes.
-fn alg_rank(alg: i64) -> u8 {
-    match alg {
-        ALG_MLDSA65 => 2,
-        ALG_MLDSA44 => 1,
-        _ => 0,
     }
 }
 
@@ -219,7 +211,8 @@ fn parse_user_entity<'a>(d: &mut Decoder<'a>, req: &mut Request<'a>) -> Result<(
 }
 
 /// Parse `pubKeyCredParams` (request key 4), selecting the first supported
-/// algorithm — under PREFER_PQC a later ML-DSA-44 entry overrides a classic pick.
+/// algorithm — §6.1.2 step 4: the platform's list order IS its preference order,
+/// and every element is still validated after one is chosen.
 fn parse_pubkey_params(d: &mut Decoder<'_>, req: &mut Request<'_>) -> Result<(), CtapError> {
     let a = def_arr(d)?;
     for _ in 0..a {
@@ -245,13 +238,11 @@ fn parse_pubkey_params(d: &mut Decoder<'_>, req: &mut Request<'_>) -> Result<(),
             return Err(CtapError::InvalidCbor);
         }
         if ty == "public-key"
+            && req.sel_alg == 0
             && let Some((ca, cv)) = alg_to_curve(alg)
         {
-            let upgrade = PREFER_PQC && alg_rank(ca) > alg_rank(req.sel_alg);
-            if req.sel_alg == 0 || upgrade {
-                req.sel_alg = ca;
-                req.sel_curve = cv as i64;
-            }
+            req.sel_alg = ca;
+            req.sel_curve = cv as i64;
         }
     }
     Ok(())
@@ -351,10 +342,20 @@ pub fn make_credential<S: Storage, R: Rng>(
     if req.sel_alg == 0 {
         return Err(CtapError::UnsupportedAlgorithm);
     }
-    // makeCredential forbids built-in "uv" (no on-device UV) and an explicit
-    // up=false; up is implicitly true, and an explicit up=true is accepted
-    // (conformance MakeCredential Req-6: P-3 up=true succeeds, F-1 up=false fails).
-    if req.uv || req.up == Some(false) {
+    // §6.1.2 step 5: "pinUvAuthParam and the 'uv' option are processed as mutually
+    // exclusive with pinUvAuthParam taking precedence" — a token request that also
+    // carries uv:true is NOT an error, the option is simply treated as false.
+    if req.pin_uv_auth_param.is_some() {
+        req.uv = false;
+    }
+    // up is implicitly true, and an explicit up=true is accepted (conformance
+    // MakeCredential Req-6: P-3 up=true succeeds, F-1 up=false fails). `uv` is an
+    // error only when there is no built-in user verification method, or it is not
+    // presently configured — on a screenless build, always.
+    if req.up == Some(false) {
+        return Err(CtapError::InvalidOption);
+    }
+    if req.uv && !builtin_uv_enabled(ctx) {
         return Err(CtapError::InvalidOption);
     }
     // largeBlobKey may not be requested as false and requires a resident key.
@@ -392,10 +393,10 @@ pub fn make_credential<S: Storage, R: Rng>(
     }
 
     let rp_id_hash = sha256(req.rp_id.as_bytes());
-    let uv = enforce_pin(ctx, &req, &rp_id_hash)?;
+    let verified = enforce_pin(ctx, &req, &rp_id_hash)?;
 
     let mut seed = ctx.load_keydev().ok_or(CtapError::Other)?;
-    let result = make_credential_inner(ctx, &req, &rp_id_hash, &seed, uv, out);
+    let result = make_credential_inner(ctx, &req, &rp_id_hash, &seed, verified, out);
     seed.zeroize();
     result
 }
@@ -414,13 +415,13 @@ fn rp_eligible_for_vendor_ea(rp_id: &str) -> bool {
     false
 }
 
-/// CTAP2.1 PIN/UV enforcement (§8.1/§11.1): verifies a `pinUvAuthParam`
-/// against the token and reports whether to set the `uv` flag.
+/// CTAP2.1 PIN/UV enforcement (§6.1.2 steps 6–11): verifies a `pinUvAuthParam`
+/// against the token, or runs built-in UV, and reports what the response carries.
 fn enforce_pin<S: Storage, R: Rng>(
     ctx: &mut Ctx<S, R>,
     req: &Request,
     rp_id_hash: &[u8; 32],
-) -> Result<bool, CtapError> {
+) -> Result<UvOutcome, CtapError> {
     let pin_set = ctx.fs.has_data(EF_PIN);
     match req.pin_uv_auth_param {
         // Zero-length probe: a selection gesture — wait for a touch, then report
@@ -453,12 +454,29 @@ fn enforce_pin<S: Storage, R: Rng>(
                 ctx.state.paut.rp_id_hash = *rp_id_hash;
                 ctx.state.paut.has_rp_id = true;
             }
-            Ok(true)
+            Ok(UvOutcome::TOKEN)
         }
-        // §8.1: a configured PIN must be exercised. alwaysUv additionally forces
-        // user verification even when no PIN is set (CTAP 2.1 alwaysUv).
-        None if pin_set || crate::config::always_uv_enabled(ctx.fs) => Err(CtapError::PuatRequired),
-        None => Ok(false),
+        None => {
+            let always_uv = crate::config::always_uv_enabled(ctx.fs);
+            // §6.1.2 step 6.3: with alwaysUv on and a configured pad, a token-less
+            // request is UPGRADED to built-in UV rather than refused. Step 11.2 then
+            // runs the ceremony for either route.
+            if req.uv || (always_uv && builtin_uv_enabled(ctx)) {
+                return builtin_uv_step(ctx);
+            }
+            // alwaysUv without a way to verify (§6.1.2 steps 6.2/6.4): clientPin is
+            // always an advertised option ID here, so the code is PUAT_REQUIRED.
+            if always_uv {
+                return Err(CtapError::PuatRequired);
+            }
+            // makeCredUvNotRqd (§6.1.2 steps 7/10): with a PIN configured a
+            // DISCOVERABLE credential still needs a token; a non-discoverable one is
+            // created on user presence alone, `uv` clear (issue #51).
+            if pin_set && req.rk {
+                return Err(CtapError::PuatRequired);
+            }
+            Ok(UvOutcome::NONE)
+        }
     }
 }
 
@@ -467,18 +485,25 @@ fn make_credential_inner<S: Storage, R: Rng>(
     req: &Request,
     rp_id_hash: &[u8; 32],
     seed: &[u8; 32],
-    uv: bool,
+    verified: UvOutcome,
     out: &mut [u8],
 ) -> CtapResult {
+    let uv = verified.uv;
     // excludeList: refuse if any listed credential is already ours and visible
     // (a UV-required credProtect credential is invisible without UV — §12.1).
     for &id in &req.exclude[..req.exclude_len] {
         if exclude_hit(ctx.fs, seed, rp_id_hash, id, uv) {
-            // §6.1.2 requires a user-presence gesture BEFORE disclosing the match, so
-            // the device isn't a silent credential-existence oracle (matches the
-            // getAssertion no-match poll and a real YubiKey). `up` is implicit; spend
-            // the token on that touch too, so acfg can't ride it (GHSA-wqjm class).
-            ctx.require_presence(crate::Confirm::titled("Use this key?"))?;
+            // §6.1.2 step 12 requires a user-presence gesture BEFORE disclosing the
+            // match, so the device isn't a silent credential-existence oracle
+            // (matches the getAssertion no-match poll and a real YubiKey) — unless
+            // built-in UV already provided it, and step 12 then terminates without
+            // waiting. No `needs_confirm` here: this card is title-only, so unlike
+            // the registration card below it names nothing a display would owe the
+            // user. `up` is implicit; spend the token on that touch too, so acfg
+            // can't ride it (GHSA-wqjm class).
+            if !verified.up_collected {
+                ctx.require_presence(crate::Confirm::titled("Use this key?"))?;
+            }
             ctx.state.consume_after_user_presence();
             return Err(CtapError::CredentialExcluded);
         }
@@ -561,11 +586,16 @@ fn make_credential_inner<S: Storage, R: Rng>(
     // returned early, so it never reaches here. No button → instant. A
     // CTAPHID_CANCEL during the wait surfaces as KEEPALIVE_CANCEL.
     // The trusted screen (display build) names the relying party being registered;
-    // the `Register` kind picks the "Save new passkey?" layout.
-    ctx.require_presence(crate::Confirm::register(
-        req.rp_id.as_bytes(),
-        req.user_name.as_bytes(),
-    ))?;
+    // the `Register` kind picks the "Save new passkey?" layout. §6.1.2 step 13: a
+    // built-in UV ceremony IS the evidence of user interaction, so it sets `up`
+    // without asking a second time — except where that card is the only screen
+    // naming the rp being registered ([`needs_confirm`]).
+    if verified.needs_confirm(ctx.presence.shows_confirm()) {
+        ctx.require_presence(crate::Confirm::register(
+            req.rp_id.as_bytes(),
+            req.user_name.as_bytes(),
+        ))?;
+    }
 
     // Spend the pinUvAuthToken now the presence test passed (CTAP 2.1 §6.5.5.7
     // triad; GHSA-wqjm-653g-hgw3). makeCredential's `up` is implicitly true; on the
@@ -652,50 +682,21 @@ fn make_credential_inner<S: Storage, R: Rng>(
         None
     };
 
-    // Response: { 1: fmt, 2: authData, 3: attStmt [, 4: ep] [, 5: largeBlobKey] }.
-    // Default: fmt "none" with an empty attStmt. Otherwise fmt "packed": attStmt
-    // = { alg, sig } for self-attestation, + x5c for any basic_full / enterprise
-    // attestation. `ep` (field 4) only when EA was actually performed.
-    let resp_len = {
-        let mut enc = Encoder::new(Cursor::new(&mut *out));
-        enc.map(3 + u64::from(ea_performed) + u64::from(large_blob_key.is_some()))
-            .and_then(|e| {
-                e.u8(1)?
-                    .str(if none_attestation { "none" } else { "packed" })
-            })
-            .and_then(|e| e.u8(2)?.bytes(&ad[..ad_len]))
-            .and_then(|e| e.u8(3))
-            .map_err(|_| CtapError::Other)?;
-        if none_attestation {
-            enc.map(0).map_err(|_| CtapError::Other)?;
-        } else {
-            enc.map(2 + u64::from(full_attestation))
-                .and_then(|e| e.str("alg")?.i64(att_alg))
-                .and_then(|e| e.str("sig")?.bytes(&att.sig[..sig_len]))
-                .map_err(|_| CtapError::Other)?;
-            if full_attestation {
-                enc.str("x5c")
-                    .and_then(|e| e.array(u64::from(certs)))
-                    .map_err(|_| CtapError::Other)?;
-                for i in 0..certs {
-                    let c =
-                        cert::att_chain_cert(&att.chain[..chain_len], i).ok_or(CtapError::Other)?;
-                    enc.bytes(c).map_err(|_| CtapError::Other)?;
-                }
-            }
-        }
-        if ea_performed {
-            enc.u8(4)
-                .and_then(|e| e.bool(true)) // ep: enterprise attestation used
-                .map_err(|_| CtapError::Other)?;
-        }
-        if let Some(lbk) = large_blob_key {
-            enc.u8(5)
-                .and_then(|e| e.bytes(&lbk))
-                .map_err(|_| CtapError::Other)?;
-        }
-        enc.writer().position()
-    };
+    let resp_len = encode_mc_response(
+        out,
+        &ad[..ad_len],
+        &att,
+        AttShape {
+            alg: att_alg,
+            sig_len,
+            chain_len,
+            certs,
+            none: none_attestation,
+            full: full_attestation,
+            ea_performed,
+        },
+        large_blob_key,
+    )?;
 
     if req.rk
         && credential_store(
@@ -714,6 +715,78 @@ fn make_credential_inner<S: Storage, R: Rng>(
     }
     journal::append(ctx, journal::EV_MAKE_CRED, 0, &rp_id_hash[..8]);
     Ok(resp_len)
+}
+
+/// What shape the attestation statement takes, so the response encoder does not
+/// have to re-derive it: the lengths [`make_attestation`] returned plus the three
+/// decisions made before it ran.
+struct AttShape {
+    alg: i64,
+    sig_len: usize,
+    chain_len: usize,
+    certs: u8,
+    /// `fmt:"none"` with an empty attStmt — the shipping default.
+    none: bool,
+    /// basic_full / enterprise: the statement carries an x5c chain.
+    full: bool,
+    /// Enterprise attestation was actually performed, so `ep` (field 4) is set.
+    ea_performed: bool,
+}
+
+/// Encode the makeCredential response:
+/// `{1: fmt, 2: authData, 3: attStmt [, 4: ep] [, 5: largeBlobKey]}`.
+///
+/// Default: `fmt:"none"` with an empty attStmt. Otherwise `fmt:"packed"`, where
+/// attStmt is `{alg, sig}` for self-attestation plus `x5c` for any basic_full or
+/// enterprise attestation. `ep` appears only when EA was actually performed.
+fn encode_mc_response(
+    out: &mut [u8],
+    ad: &[u8],
+    att: &AttBufs,
+    shape: AttShape,
+    large_blob_key: Option<[u8; 32]>,
+) -> CtapResult {
+    let mut enc = Encoder::new(Cursor::new(out));
+    enc.map(3 + u64::from(shape.ea_performed) + u64::from(large_blob_key.is_some()))
+        .and_then(|e| e.u8(1)?.str(if shape.none { "none" } else { "packed" }))
+        .and_then(|e| e.u8(2)?.bytes(ad))
+        .and_then(|e| e.u8(3))
+        .map_err(|_| CtapError::Other)?;
+    if shape.none {
+        enc.map(0).map_err(|_| CtapError::Other)?;
+    } else {
+        enc.map(2 + u64::from(shape.full))
+            .and_then(|e| e.str("alg")?.i64(shape.alg))
+            .and_then(|e| e.str("sig")?.bytes(&att.sig[..shape.sig_len]))
+            .map_err(|_| CtapError::Other)?;
+        if shape.full {
+            encode_x5c(&mut enc, &att.chain[..shape.chain_len], shape.certs)?;
+        }
+    }
+    if shape.ea_performed {
+        enc.u8(4)
+            .and_then(|e| e.bool(true)) // ep: enterprise attestation used
+            .map_err(|_| CtapError::Other)?;
+    }
+    if let Some(lbk) = large_blob_key {
+        enc.u8(5)
+            .and_then(|e| e.bytes(&lbk))
+            .map_err(|_| CtapError::Other)?;
+    }
+    Ok(enc.writer().position())
+}
+
+/// The `x5c` array of the packed attestation statement, sliced out of the stored
+/// chain record one DER cert at a time.
+fn encode_x5c<W: Write>(enc: &mut Encoder<W>, chain: &[u8], certs: u8) -> Result<(), CtapError> {
+    enc.str("x5c")
+        .and_then(|e| e.array(u64::from(certs)))
+        .map_err(|_| CtapError::Other)?;
+    for i in 0..certs {
+        let c = cert::att_chain_cert(chain, i).ok_or(CtapError::Other)?;
+        enc.bytes(c).map_err(|_| CtapError::Other)?;
+    }
+    Ok(())
 }
 
 /// Output buffers for [`make_attestation`]: the raw signature and the packed x5c
@@ -853,9 +926,10 @@ fn encode_mc_extensions<S: Storage>(
     let mut enc = Encoder::new(Cursor::new(out));
     enc.map(l).map_err(|_| CtapError::Other)?;
     if blob_present {
-        // The flag reports whether the blob was short enough to seal.
+        // The flag reports whether the blob was short enough to seal — inclusive of
+        // the advertised maxCredBlobLength, matching `CredExt::cred_blob_ok`.
         enc.str("credBlob")
-            .and_then(|e| e.bool(req.ext_cred_blob.len() < MAX_CREDBLOB_LENGTH))
+            .and_then(|e| e.bool(req.ext_cred_blob.len() <= MAX_CREDBLOB_LENGTH))
             .map_err(|_| CtapError::Other)?;
     }
     if req.ext_cred_protect != 0 {

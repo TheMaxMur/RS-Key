@@ -27,6 +27,18 @@ impl UserPresence for Decline {
     }
 }
 
+/// Confirms every prompt and counts them — lets a test prove a command asks for
+/// two *separately named* ceremonies rather than one.
+struct CountingPresence {
+    calls: usize,
+}
+impl UserPresence for CountingPresence {
+    fn request(&mut self, _confirm: crate::Confirm<'_>) -> Presence {
+        self.calls += 1;
+        Presence::Confirmed
+    }
+}
+
 fn dev() -> Device<'static> {
     Device {
         serial_hash: &[0xAB; 32],
@@ -393,6 +405,46 @@ fn att_import_state_clear_roundtrip() {
         ),
         Err(CtapError::InvalidParameter)
     );
+}
+
+#[test]
+fn att_import_without_pin_demands_the_named_confirmation() {
+    // A PIN-less device waives `gate`'s PIN half, and MSE is ungated — so the whole
+    // attestation identity used to move on one unlabelled touch. The extra ceremony
+    // names it, and declining that alone refuses the import.
+    let (mut fs, mut rng, mut st) = setup();
+    let host = handshake(&mut fs, &mut rng, &mut st);
+    let blob = wrap32(&host, &[0x21u8; 32]);
+    let chain: &[u8] = &[0x30, 0x03, 1, 2, 3];
+    let mut req = [0u8; 256];
+    let n = att_import_req(&mut req, &blob, chain);
+    let mut out = [0u8; 128];
+    assert_eq!(
+        call(
+            &mut fs,
+            &mut rng,
+            &mut st,
+            &mut Decline,
+            &req[..n],
+            &mut out
+        ),
+        Err(CtapError::OperationDenied)
+    );
+    assert!(crate::seed::load_att_key(&dev(), &mut fs).is_none());
+
+    // Confirmed, it is two prompts: the named handover, then `gate`'s own.
+    let mut counting = CountingPresence { calls: 0 };
+    call(
+        &mut fs,
+        &mut rng,
+        &mut st,
+        &mut counting,
+        &req[..n],
+        &mut out,
+    )
+    .unwrap();
+    assert_eq!(counting.calls, 2);
+    assert!(crate::seed::load_att_key(&dev(), &mut fs).is_some());
 }
 
 // Off the fips profile only: fips refuses export outright (see `fips_backup_export_refused`).
@@ -1351,15 +1403,19 @@ fn config_read_returns_the_phy_record_ungated() {
     )
     .unwrap();
 
-    // Response {1: blob}; the blob parses back to the record just written.
+    // Response {1: blob, 2: effective}; the blob parses back to the record just
+    // written. Key 2 is empty here — the EFFECTIVE_PHY static is seeded only at
+    // firmware boot, never in a host test.
     let mut d = Decoder::new(&rout[..r]);
-    assert_eq!(d.map().unwrap(), Some(1));
+    assert_eq!(d.map().unwrap(), Some(2));
     assert_eq!(d.u8().unwrap(), 1);
     let got = d.bytes().unwrap();
     assert_eq!(
         rsk_rescue::phy::PhyData::parse(got).presence_timeout,
         Some(30)
     );
+    assert_eq!(d.u8().unwrap(), 2);
+    assert_eq!(d.map().unwrap(), Some(0));
 }
 
 #[test]
@@ -1491,4 +1547,271 @@ fn audit_config_rejects_unknown_target() {
     );
     // The rejected op changed nothing: journalling stays OFF by default.
     assert!(!crate::journal::is_enabled(&mut fs));
+}
+
+/// The journal window and chain head, as `rsk audit verify` recomputes them from an
+/// export: `(start, seq_next, head)`. An eviction moves `start`; a coalesced repeat
+/// moves only the head, since it rewrites the newest entry in place.
+fn journal_state(fs: &mut Fs<RamStorage>) -> (u32, u32, [u8; 32]) {
+    let (head, m) = crate::journal::chain_head(&dev(), fs);
+    (m.start, m.seq_next, head)
+}
+
+#[test]
+fn idempotent_config_write_appends_no_journal_entry() {
+    // CONFIG_WRITE is ungated on the default build and is the only journalled event
+    // a silent host can drive on demand, so a replay that changes nothing must not
+    // touch the journal at all — not a ring slot, not even a repeat count.
+    let (mut fs, mut rng, mut st) = setup();
+    fs.put(crate::consts::EF_AUDIT_ENABLED, &[1]).unwrap();
+    let mut out = [0u8; 16];
+    let mut req = [0u8; 96];
+    let n = config_write_req(CONFIG_TARGET_DEV_CONF, DEV_CONF_BLOB, false, &mut req);
+
+    call(
+        &mut fs,
+        &mut rng,
+        &mut st,
+        &mut AlwaysConfirm,
+        &req[..n],
+        &mut out,
+    )
+    .unwrap();
+    let before = journal_state(&mut fs);
+    assert!(before.1 >= 2, "EV_BOOT + EV_CONFIG_WRITE"); // the first write is real
+
+    for _ in 0..4 {
+        assert_eq!(
+            call(
+                &mut fs,
+                &mut rng,
+                &mut st,
+                &mut AlwaysConfirm,
+                &req[..n],
+                &mut out
+            ),
+            Ok(0)
+        );
+    }
+    assert_eq!(journal_state(&mut fs), before, "a replay changes nothing");
+
+    // A blob that really changes the record is persisted and recorded — folded into
+    // the same entry (a run of config writes costs one slot), so the head moves
+    // while the window stays put.
+    const CHANGED: &[u8] = &[0x03, 0x02, 0x02, 0x01];
+    let n = config_write_req(CONFIG_TARGET_DEV_CONF, CHANGED, false, &mut req);
+    call(
+        &mut fs,
+        &mut rng,
+        &mut st,
+        &mut AlwaysConfirm,
+        &req[..n],
+        &mut out,
+    )
+    .unwrap();
+    let after = journal_state(&mut fs);
+    assert!(dev_conf_readback(&mut fs).ends_with(CHANGED));
+    assert_eq!((after.0, after.1), (before.0, before.1), "no slot spent");
+    assert_ne!(after.2, before.2, "but the write is recorded");
+}
+
+#[test]
+fn config_write_flood_cannot_evict_the_audit_ring() {
+    // The audit finding, verbatim: ~130 unauthenticated CONFIG_WRITEs flush the
+    // 128-slot ring. Every write here really changes its record (alternating blob),
+    // and the targets alternate too, so neither a byte-equality check nor a
+    // same-target rule would stop it. The run must cost exactly one slot.
+    let (mut fs, mut rng, mut st) = setup();
+    let mut out = [0u8; 32];
+
+    // Turn the log on through the gated vendor command: EV_BOOT + EV_AUDIT_CFG are
+    // the prior evidence the flood must not push out.
+    let mut req = [0u8; 128];
+    let n = audit_config_req(1, &mut req);
+    call(
+        &mut fs,
+        &mut rng,
+        &mut st,
+        &mut AlwaysConfirm,
+        &req[..n],
+        &mut out,
+    )
+    .unwrap();
+    assert_eq!(journal_state(&mut fs).1, 2);
+
+    let mut led = [0u8; rsk_led::CONF_LEN];
+    let mut blob = [0u8; rsk_rescue::phy::PHY_MAX_SIZE];
+    for i in 0..200u8 {
+        led[0] = i;
+        let n = config_write_req(CONFIG_TARGET_LED, &led, false, &mut req);
+        call(
+            &mut fs,
+            &mut rng,
+            &mut st,
+            &mut AlwaysConfirm,
+            &req[..n],
+            &mut out,
+        )
+        .unwrap();
+
+        let phy = rsk_rescue::phy::PhyData {
+            presence_timeout: Some(i + 1),
+            ..Default::default()
+        };
+        let blen = phy.serialize(&mut blob).unwrap();
+        let n = config_write_req(CONFIG_TARGET_PHY, &blob[..blen], false, &mut req);
+        call(
+            &mut fs,
+            &mut rng,
+            &mut st,
+            &mut AlwaysConfirm,
+            &req[..n],
+            &mut out,
+        )
+        .unwrap();
+    }
+
+    // 400 writes, three slots: the enable and the boot that preceded them survive.
+    let (start, seq_next, _) = journal_state(&mut fs);
+    assert_eq!((start, seq_next), (0, 3), "the flood evicted nothing");
+    let mut seen = std::vec::Vec::new();
+    crate::journal::for_each_event(&dev(), &mut fs, |e| {
+        seen.push(e.event);
+        true
+    });
+    assert_eq!(
+        seen,
+        std::vec![
+            crate::journal::EV_CONFIG_WRITE,
+            crate::journal::EV_AUDIT_CFG,
+            crate::journal::EV_BOOT
+        ]
+    );
+    // The writes themselves still landed — coalescing is a journal rule, not a
+    // write filter.
+    let mut cur = [0u8; rsk_led::CONF_LEN];
+    assert_eq!(fs.read(EF_LED_CONF, &mut cur), Some(rsk_led::CONF_LEN));
+    assert_eq!(cur, led);
+    assert_eq!(
+        rsk_rescue::phy::load(&mut fs).unwrap().presence_timeout,
+        Some(200)
+    );
+}
+
+#[test]
+fn phy_config_write_repairs_an_unreadable_record() {
+    // The no-op check must compare against a record that actually loaded: an absent
+    // or unreadable EF_PHY reads as `None`, and a host writing the default values to
+    // repair it would otherwise be answered `Ok` with nothing stored.
+    let (mut fs, mut rng, mut st) = setup();
+    let mut blob = [0u8; rsk_rescue::phy::PHY_MAX_SIZE];
+    let blen = rsk_rescue::phy::PhyData::default()
+        .serialize(&mut blob)
+        .unwrap();
+    let mut req = [0u8; 128];
+    let n = config_write_req(CONFIG_TARGET_PHY, &blob[..blen], false, &mut req);
+    let mut out = [0u8; 16];
+    assert_eq!(
+        call(
+            &mut fs,
+            &mut rng,
+            &mut st,
+            &mut AlwaysConfirm,
+            &req[..n],
+            &mut out
+        ),
+        Ok(0)
+    );
+    assert!(rsk_rescue::phy::load(&mut fs).is_some(), "record written");
+}
+
+#[test]
+fn idempotent_phy_and_led_config_writes_append_no_journal_entry() {
+    // The same replay test for the other two targets. PHY compares the *merge*
+    // result (that is what lands), so a partial record that overlays to no change
+    // counts as a replay; the reboot latch is skipped with it — a re-enumeration
+    // applies a changed USB identity, and it is a free host-driven reboot otherwise.
+    let (mut fs, mut rng, mut st) = setup();
+    fs.put(crate::consts::EF_AUDIT_ENABLED, &[1]).unwrap();
+    let mut out = [0u8; 16];
+
+    let phy = rsk_rescue::phy::PhyData {
+        presence_timeout: Some(45),
+        ..Default::default()
+    };
+    let mut blob = [0u8; rsk_rescue::phy::PHY_MAX_SIZE];
+    let blen = phy.serialize(&mut blob).unwrap();
+    let mut req = [0u8; 128];
+    let n = config_write_req(CONFIG_TARGET_PHY, &blob[..blen], false, &mut req);
+    call(
+        &mut fs,
+        &mut rng,
+        &mut st,
+        &mut AlwaysConfirm,
+        &req[..n],
+        &mut out,
+    )
+    .unwrap();
+    let before = journal_state(&mut fs);
+    call(
+        &mut fs,
+        &mut rng,
+        &mut st,
+        &mut AlwaysConfirm,
+        &req[..n],
+        &mut out,
+    )
+    .unwrap();
+    assert_eq!(journal_state(&mut fs), before);
+    assert_eq!(
+        rsk_rescue::phy::load(&mut fs).unwrap().presence_timeout,
+        Some(45)
+    );
+
+    let mut led = [0u8; rsk_led::CONF_LEN];
+    for (i, b) in led.iter_mut().enumerate() {
+        *b = i as u8 + 1;
+    }
+    let mut req = [0u8; 96];
+    let n = config_write_req(CONFIG_TARGET_LED, &led, false, &mut req);
+    call(
+        &mut fs,
+        &mut rng,
+        &mut st,
+        &mut AlwaysConfirm,
+        &req[..n],
+        &mut out,
+    )
+    .unwrap();
+    let before = journal_state(&mut fs);
+    call(
+        &mut fs,
+        &mut rng,
+        &mut st,
+        &mut AlwaysConfirm,
+        &req[..n],
+        &mut out,
+    )
+    .unwrap();
+    assert_eq!(journal_state(&mut fs), before);
+
+    // A changed LED block is still written and recorded — into the entry the run
+    // already owns, so the head moves and the window does not.
+    led[0] ^= 0xFF;
+    let n = config_write_req(CONFIG_TARGET_LED, &led, false, &mut req);
+    call(
+        &mut fs,
+        &mut rng,
+        &mut st,
+        &mut AlwaysConfirm,
+        &req[..n],
+        &mut out,
+    )
+    .unwrap();
+    let after = journal_state(&mut fs);
+    assert_eq!((after.0, after.1), (before.0, before.1));
+    assert_ne!(after.2, before.2);
+    let mut cur = [0u8; rsk_led::CONF_LEN];
+    assert_eq!(fs.read(EF_LED_CONF, &mut cur), Some(rsk_led::CONF_LEN));
+    assert_eq!(cur, led);
 }

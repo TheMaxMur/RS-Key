@@ -270,6 +270,38 @@ fn resident_id_is_random_and_carries_no_fingerprint() {
     assert_ne!(&r1[..4], &old_header[..4]);
     // Two credentials on the SAME device share no fixed prefix — like a YubiKey's.
     assert_ne!(&r1[..10], &r2[..10]);
+    // ...and share nothing ANYWHERE, not just in the prefix this test used to check.
+    assert!(
+        r1.iter().zip(r2.iter()).filter(|(a, b)| a == b).count() < CRED_RESIDENT_LEN / 2,
+        "two ids from one device must not correlate"
+    );
+
+    // run-26: no byte may be recomputable from the others. The previous scheme set
+    // id[32..42] = HMAC(id[0..32], "resident-id")[..10] — keyed by the *published*
+    // half — so any RP holding an id could verify that relation offline and
+    // fingerprint the model. Every byte must be keyed by a secret the RP never sees.
+    for id in [&r1, &r2] {
+        let head: [u8; 32] = id[..32].try_into().unwrap();
+        let derived = hmac_sha256(&head, b"resident-id");
+        assert_ne!(
+            &id[32..],
+            &derived[..CRED_RESIDENT_LEN - 32],
+            "the tail must not be a public function of the head"
+        );
+    }
+}
+
+/// The id must change if the device secret does — otherwise it is keyed by
+/// something an attacker could supply, not by the device.
+#[test]
+fn resident_id_is_bound_to_the_device_secret() {
+    let mut other = dev();
+    other.serial_id = &[0x99u8; 8];
+    let same_box = [0x55u8; 80];
+    assert_ne!(
+        derive_resident(&same_box, &dev()),
+        derive_resident(&same_box, &other)
+    );
 }
 
 #[test]

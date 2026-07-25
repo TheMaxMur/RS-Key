@@ -213,6 +213,26 @@ nix develop -c python tests/75_seed_backup.py --pin <your PIN>
 - Tests that reboot the device do it hands-free over CCID and wait for
   re-enumeration; tests are idempotent where the applet allows it and say so
   in their docstring when they are destructive (resets).
+- **A factory reset needs you at the desk.** On a screenless build the firmware
+  honours `authenticatorReset` only within 10 s of a USB attach, and a warm reboot
+  does not reopen that window ([protocol.md](protocol.md)). So the eleven suites
+  that reset (`22`–`27`, `60`, `61`, `63`–`65`) prompt for a physical
+  unplug/replug and send the reset the moment the key re-enumerates. The prompt
+  lives in `tests/replug.py`, shared by both transports (`reset` for the
+  raw-CTAPHID scripts, `reset_fido2` for the python-fido2 ones); its docstring is
+  the reference. On a trusted-display build the prompt is redundant — that build
+  is exempt from the window.
+- `tests/27_reset_window.py` exercises the window itself: reset immediately after
+  the replug (expects `CTAP2_OK`), then again past 10 s (expects
+  `0x30 NOT_ALLOWED`). It needs the `no-touch`, non-`display` image and it wipes
+  FIDO state.
+- `tests/28_ctap_spec_alignment.py` covers the CTAP 2.1 spec-alignment surface the
+  per-command suites do not reach: CTAPHID channel allocation and `CTAPHID_LOCK`,
+  the `uv`/`pinUvAuthParam` precedence rule, `makeCredUvNotRqd`, the largeBlobs
+  parameter validation, `setMinPINLength` overflow, the rpId-scoped
+  `credentialManagement` token, and the U2F gate under `alwaysUv`. It neither resets
+  nor replugs, but it does need `--pin`, and it toggles `alwaysUv` on and back off —
+  so start it with `alwaysUv` off, which it checks.
 - The FIDO PIN is never guessed: destructive PIN tests take `--pin`
   explicitly.
 

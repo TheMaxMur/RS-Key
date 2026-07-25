@@ -207,3 +207,51 @@ fn normalize_leaves_compliant_or_non_yubikey_names_untouched() {
     let n = normalize_usb_product(b"RS-Key Security Key", &mut out);
     assert_eq!(&out[..n], b"RS-Key Security Key");
 }
+
+/// A descriptor longer than `USB_STR_MAX` code units panics embassy-usb during
+/// enumeration and bricks the device, so nothing may exceed it — including the
+/// paths that *grow* a name (the YubiKey token) or come straight off the wire.
+#[test]
+fn normalize_never_exceeds_the_descriptor_ceiling() {
+    let mut out = [0u8; 64];
+
+    // The token is preserved by truncating the NAME, not by dropping the token:
+    // dropping it re-opens the ykman YK4_ crash this function exists to prevent.
+    let n = normalize_usb_product(b"Yubico YubiKey 5 NFC", &mut out);
+    assert_eq!(&out[..n], b"Yubico YubiKey 5 OTP+FIDO+CCID");
+    assert_eq!(n, USB_STR_MAX);
+
+    // A name at the storage cap (32) with no token still clamps to the ceiling.
+    let n = normalize_usb_product(&[b'A'; 32], &mut out);
+    assert_eq!(n, USB_STR_MAX);
+
+    // Exactly at the ceiling is fine; one over is not.
+    let n = normalize_usb_product(&[b'A'; USB_STR_MAX], &mut out);
+    assert_eq!(n, USB_STR_MAX);
+    let n = normalize_usb_product(&[b'A'; USB_STR_MAX + 1], &mut out);
+    assert_eq!(n, USB_STR_MAX);
+}
+
+/// Truncation counts UTF-16 code units (what the descriptor encodes) and cuts on a
+/// char boundary, so the result is always valid UTF-8 the boot path can render.
+#[test]
+fn clamp_counts_code_units_and_cuts_on_a_char_boundary() {
+    let mut out = [0u8; 64];
+
+    // 15 × 'é' = 15 code units, 30 bytes — under the ceiling, kept whole.
+    let s = "é".repeat(15);
+    let n = clamp_usb_string(s.as_bytes(), &mut out);
+    assert_eq!(core::str::from_utf8(&out[..n]).unwrap(), s);
+
+    // 31 × 'é' = 31 code units: one over, so the last char is dropped whole.
+    let s = "é".repeat(31);
+    let n = clamp_usb_string(s.as_bytes(), &mut out);
+    let got = core::str::from_utf8(&out[..n]).expect("cut on a char boundary");
+    assert_eq!(got.chars().count(), USB_STR_MAX);
+
+    // An emoji is a surrogate pair — 2 code units — so 16 of them exceed 30.
+    let s = "🔑".repeat(16);
+    let n = clamp_usb_string(s.as_bytes(), &mut out);
+    let got = core::str::from_utf8(&out[..n]).expect("cut on a char boundary");
+    assert_eq!(got.encode_utf16().count(), USB_STR_MAX);
+}

@@ -62,22 +62,23 @@ const fn max_leds() -> usize {
     acc
 }
 
-/// Status indices — also the index into [`TIMING`]/[`DEFAULT_COLOR`], the
-/// per-status atomics, and the `EF_LED_CONF` layout.
-pub const STATUS_IDLE: u8 = 0;
-pub const STATUS_PROCESSING: u8 = 1;
-/// Only set from the (gated) touch-wait path.
-#[cfg_attr(feature = "no-touch", allow(dead_code))]
-pub const STATUS_TOUCH: u8 = 2;
-pub const STATUS_BOOT: u8 = 3;
-const N_STATUS: usize = 4;
+/// Status indices and the per-status factory look — single-sourced in the codec,
+/// which enforces the touch-indicator policy on every decode
+/// ([`rsk_led::LedConfig::enforce_touch_invariants`]). Re-exported so the rest of
+/// the firmware keeps naming them `led::STATUS_TOUCH` & co.
+pub use rsk_led::{
+    DEFAULT_BRIGHTNESS, DEFAULT_COLOR, DEFAULT_EFFECT, DEFAULT_SPEED, STATUS_BOOT, STATUS_IDLE,
+    STATUS_PROCESSING, STATUS_TOUCH,
+};
 
-// Color codes; 0 = off.
-const COLOR_RED: u8 = 1;
-const COLOR_GREEN: u8 = 2;
-#[allow(dead_code)]
-const COLOR_BLUE: u8 = 3;
-const COLOR_YELLOW: u8 = 4;
+/// The palette and effect ids only the render half names (`LED_KIND=none` has none).
+#[cfg(not(led_kind = "none"))]
+pub use rsk_led::{
+    COLOR_BLUE, COLOR_GREEN, COLOR_RED, COLOR_YELLOW, EFFECT_BOUNCE, EFFECT_FLOW, EFFECT_SPARKLE,
+    EFFECT_VAPOR,
+};
+
+const N_STATUS: usize = 4;
 
 /// Fixed blink timing per status `(on_ms, off_ms)` — only color and brightness
 /// are configurable. Indexed by the `STATUS_*` constants.
@@ -88,39 +89,6 @@ const TIMING: [(u64, u64); N_STATUS] = [
     (1000, 100), // Touch
     (500, 500),  // Boot
 ];
-/// Default color per status (indexed by the `STATUS_*` constants).
-const DEFAULT_COLOR: [u8; N_STATUS] = [COLOR_GREEN, COLOR_GREEN, COLOR_YELLOW, COLOR_RED];
-/// Default channel max (a gentle 16/255).
-const DEFAULT_BRIGHTNESS: u8 = 16;
-
-// ------------------------------------------------------------------
-// Effect identifiers and per-status defaults
-// ------------------------------------------------------------------
-
-/// Built-in effect identifiers — stored in `EF_LED_CONF` as the `effect` byte
-/// per status. `EFFECT_LEGACY` reproduces the original Blinker on/off behaviour.
-#[allow(dead_code)]
-pub const EFFECT_LEGACY: u8 = 0;
-pub const EFFECT_VAPOR: u8 = 1; // breathing (all LEDs pulse together)
-pub const EFFECT_BOUNCE: u8 = 2; // smooth bounce with half-step interpolation
-pub const EFFECT_FLOW: u8 = 3; // comet of the status colour with a dimming trail
-pub const EFFECT_SPARKLE: u8 = 4; // per-LED twinkle in the status colour
-
-/// Default effect per status (used when the stored effect is 0 / legacy,
-/// and as the initial value before any `rsk led` command).
-const DEFAULT_EFFECT: [u8; N_STATUS] = [
-    EFFECT_VAPOR,   // IDLE
-    EFFECT_FLOW,    // PROCESSING
-    EFFECT_BOUNCE,  // TOUCH
-    EFFECT_SPARKLE, // BOOT
-];
-
-/// Speed value meaning "use the effect's built-in default speed".
-pub const SPEED_DEFAULT: u8 = 0;
-
-/// Default speed per status (all use built-in defaults).
-const DEFAULT_SPEED: [u8; N_STATUS] = [SPEED_DEFAULT; N_STATUS];
-
 /// `EF_LED_CONF` byte layout: `[steady, (effect, color, brightness, speed) × N_STATUS]`.
 pub const CONF_LEN: usize = 1 + 4 * N_STATUS;
 
@@ -196,18 +164,52 @@ pub fn status() -> u8 {
     LED_STATUS.load(Ordering::Relaxed)
 }
 
+/// Read-modify-write the live config through the codec. Every writer goes through
+/// here, so the touch indicator keeps its floor and stays distinguishable from the
+/// other statuses whichever transport asked — a `SET LED` setter as much as a
+/// decoded block ([`rsk_led::LedConfig::enforce_touch_invariants`]).
+fn update_config(f: impl FnOnce(&mut rsk_led::LedConfig)) {
+    let mut cfg = snapshot();
+    f(&mut cfg);
+    cfg.enforce_touch_invariants();
+    LED_STEADY.store(cfg.steady, Ordering::Relaxed);
+    for (i, s) in cfg.status.iter().enumerate() {
+        STATUS_EFFECT[i].store(s.effect, Ordering::Relaxed);
+        STATUS_COLOR[i].store(s.color, Ordering::Relaxed);
+        STATUS_BRIGHTNESS[i].store(s.brightness, Ordering::Relaxed);
+        STATUS_SPEED[i].store(s.speed, Ordering::Relaxed);
+    }
+}
+
+/// The live atomics as a [`rsk_led::LedConfig`].
+fn snapshot() -> rsk_led::LedConfig {
+    let mut cfg = rsk_led::LedConfig {
+        steady: LED_STEADY.load(Ordering::Relaxed),
+        ..Default::default()
+    };
+    for (i, s) in cfg.status.iter_mut().enumerate() {
+        s.effect = STATUS_EFFECT[i].load(Ordering::Relaxed);
+        s.color = STATUS_COLOR[i].load(Ordering::Relaxed);
+        s.brightness = STATUS_BRIGHTNESS[i].load(Ordering::Relaxed);
+        s.speed = STATUS_SPEED[i].load(Ordering::Relaxed);
+    }
+    cfg
+}
+
 /// Override one status's color (0–7) and brightness (0–255, 0 = off); used by the
 /// vendor SET LED command.
 pub fn set_status_config(idx: u8, color: u8, brightness: u8) {
     let i = (idx as usize).min(N_STATUS - 1);
-    STATUS_COLOR[i].store(color & 0x7, Ordering::Relaxed);
-    STATUS_BRIGHTNESS[i].store(brightness, Ordering::Relaxed);
+    update_config(|cfg| {
+        cfg.status[i].color = color & 0x7;
+        cfg.status[i].brightness = brightness;
+    });
 }
 
 /// Override one status's effect.
 pub fn set_status_effect(idx: u8, effect: u8) {
     let i = (idx as usize).min(N_STATUS - 1);
-    STATUS_EFFECT[i].store(effect, Ordering::Relaxed);
+    update_config(|cfg| cfg.status[i].effect = effect);
 }
 
 /// Override one status's effect speed (0 = use the effect's built-in default).
@@ -215,7 +217,7 @@ pub fn set_status_effect(idx: u8, effect: u8) {
 /// effect byte leaves a previously-set custom speed untouched.
 pub fn set_status_speed(idx: u8, speed: u8) {
     let i = (idx as usize).min(N_STATUS - 1);
-    STATUS_SPEED[i].store(speed, Ordering::Relaxed);
+    update_config(|cfg| cfg.status[i].speed = speed);
 }
 
 /// Toggle the global no-blink (solid) mode.
@@ -235,50 +237,25 @@ pub fn set_rg_swap(on: bool) {
 /// max (PicoForge's global brightness), applied before `EF_LED_CONF` can override.
 #[cfg(not(led_kind = "none"))]
 pub fn set_all_brightness(b: u8) {
-    for slot in &STATUS_BRIGHTNESS {
-        slot.store(b, Ordering::Relaxed);
-    }
+    update_config(|cfg| {
+        for s in cfg.status.iter_mut() {
+            s.brightness = b;
+        }
+    });
 }
 
 /// The full config as the persisted/`GET LED` block `[steady, (effect, color, br, speed) × N]`.
 pub fn config_block() -> [u8; CONF_LEN] {
-    let mut cfg = rsk_led::LedConfig {
-        steady: LED_STEADY.load(Ordering::Relaxed),
-        ..Default::default()
-    };
-    for (i, s) in cfg.status.iter_mut().enumerate() {
-        s.effect = STATUS_EFFECT[i].load(Ordering::Relaxed);
-        s.color = STATUS_COLOR[i].load(Ordering::Relaxed);
-        s.brightness = STATUS_BRIGHTNESS[i].load(Ordering::Relaxed);
-        s.speed = STATUS_SPEED[i].load(Ordering::Relaxed);
-    }
-    cfg.encode()
+    snapshot().encode()
 }
 
 /// Apply a config block (boot from flash / SET LED). The wire-format decode —
 /// including the older 13/9/2-byte layouts an upgrade may still have in flash —
-/// lives in [`rsk_led::LedConfig::apply_block`] (host-unit-tested). We snapshot
-/// the live atomics first so a short block preserves whatever fields it doesn't
-/// carry, overlay the block, then write the result back to the atomics.
+/// lives in [`rsk_led::LedConfig::apply_block`] (host-unit-tested). The live
+/// atomics are the base, so a short block preserves whatever fields it doesn't
+/// carry.
 pub fn load_block(b: &[u8]) {
-    let mut cfg = rsk_led::LedConfig {
-        steady: LED_STEADY.load(Ordering::Relaxed),
-        ..Default::default()
-    };
-    for (i, s) in cfg.status.iter_mut().enumerate() {
-        s.effect = STATUS_EFFECT[i].load(Ordering::Relaxed);
-        s.color = STATUS_COLOR[i].load(Ordering::Relaxed);
-        s.brightness = STATUS_BRIGHTNESS[i].load(Ordering::Relaxed);
-        s.speed = STATUS_SPEED[i].load(Ordering::Relaxed);
-    }
-    cfg.apply_block(b);
-    LED_STEADY.store(cfg.steady, Ordering::Relaxed);
-    for (i, s) in cfg.status.iter().enumerate() {
-        STATUS_EFFECT[i].store(s.effect, Ordering::Relaxed);
-        STATUS_COLOR[i].store(s.color, Ordering::Relaxed);
-        STATUS_BRIGHTNESS[i].store(s.brightness, Ordering::Relaxed);
-        STATUS_SPEED[i].store(s.speed, Ordering::Relaxed);
-    }
+    update_config(|cfg| cfg.apply_block(b));
 }
 
 /// Map a status colour code (0–7) at channel max `b` to an RGB triple.

@@ -13,7 +13,7 @@
 use core::future::Future;
 
 use embassy_futures::select::{Either, Either3, select, select3};
-use embassy_time::Timer;
+use embassy_time::{Instant, Timer};
 use embassy_usb::class::hid::{HidReader, HidWriter};
 use embassy_usb::driver::Driver;
 
@@ -41,6 +41,7 @@ const CTAPHID_VENDOR_FIRST: u8 = TYPE_INIT | 0x40;
 
 // Low-level CTAP1 error codes.
 const ERR_INVALID_CMD: u8 = 0x01;
+const ERR_INVALID_PAR: u8 = 0x02;
 const ERR_INVALID_LEN: u8 = 0x03;
 const ERR_INVALID_SEQ: u8 = 0x04;
 const ERR_MSG_TIMEOUT: u8 = 0x05;
@@ -104,8 +105,65 @@ const VERSION_MAJOR: u8 = rsk_sdk::FIRMWARE_VERSION.0;
 const VERSION_MINOR: u8 = rsk_sdk::FIRMWARE_VERSION.1;
 const VERSION_BUILD: u8 = rsk_sdk::FIRMWARE_VERSION.2;
 
-// The single fixed channel id handed out by CTAPHID_INIT.
-const ALLOCATED_CID: u32 = 0x0100_0000;
+// The first channel id CTAPHID_INIT hands out; each further allocation takes the
+// next one (§11.2.9.1.3 wants a *unique* CID per requesting application).
+const FIRST_CID: u32 = 0x0100_0000;
+
+/// Hands out unique channel ids. §11.2.9.1.3: an INIT on the broadcast CID "requests
+/// the device to allocate a unique 32-bit channel identifier (CID) that can be used
+/// by the requesting application during its lifetime" — sharing one id between two
+/// applications lets either one resynchronise the other's channel.
+struct CidAllocator(u32);
+
+impl CidAllocator {
+    const fn new() -> Self {
+        Self(FIRST_CID)
+    }
+
+    /// The next free id, skipping the two reserved values (0 and the broadcast CID)
+    /// as the counter wraps.
+    fn next(&mut self) -> u32 {
+        let cid = self.0;
+        self.0 = match self.0.wrapping_add(1) {
+            0 | CID_BROADCAST => FIRST_CID,
+            n => n,
+        };
+        cid
+    }
+}
+
+/// The `CTAPHID_LOCK` state: an exclusive claim on the device by one channel until
+/// `until_ms`. §11.2.9.2.2 — "as long as the lock is active, any other channel trying
+/// to send a message will fail"; the lock time is bounded so a crashed application
+/// cannot hold the device forever.
+#[derive(Default)]
+struct ChannelLock {
+    cid: u32,
+    until_ms: u64,
+}
+
+/// The largest lock a platform may ask for, in seconds (§11.2.9.2.2).
+const LOCK_MAX_SECONDS: u8 = 10;
+
+impl ChannelLock {
+    /// Take (`seconds > 0`) or release (`seconds == 0`) the lock for `cid`. A release
+    /// by anyone but the owner is ignored — it is not theirs to give up.
+    fn arm(&mut self, cid: u32, seconds: u8, now_ms: u64) {
+        if seconds == 0 {
+            if self.cid == cid {
+                self.until_ms = 0;
+            }
+            return;
+        }
+        self.cid = cid;
+        self.until_ms = now_ms + u64::from(seconds) * 1000;
+    }
+
+    /// Whether `cid` must be turned away because another channel holds the lock.
+    fn blocks(&self, cid: u32, now_ms: u64) -> bool {
+        now_ms < self.until_ms && self.cid != cid
+    }
+}
 
 // 16-byte device UUID returned by CTAPHID_UUID ("rs-key" + version).
 // TODO: derive from chip serial.
@@ -394,6 +452,10 @@ pub struct CtapHid<'d, D: Driver<'d>, H: MsgHandler> {
     /// The aborted command returns `CTAP2_ERR_KEEPALIVE_CANCEL`. A `|| {}` stand-in
     /// (no button → instant confirmation) makes it a no-op.
     request_cancel: fn(),
+    /// Source of the unique CIDs `CTAPHID_INIT` hands out.
+    cids: CidAllocator,
+    /// The current `CTAPHID_LOCK` holder, if any.
+    lock: ChannelLock,
 }
 
 impl<'d, D: Driver<'d>, H: MsgHandler> CtapHid<'d, D, H> {
@@ -412,6 +474,8 @@ impl<'d, D: Driver<'d>, H: MsgHandler> CtapHid<'d, D, H> {
             scratch: [0; CTAP_MAX_MESSAGE],
             up_pending,
             request_cancel,
+            cids: CidAllocator::new(),
+            lock: ChannelLock::default(),
         }
     }
 
@@ -456,6 +520,14 @@ impl<'d, D: Driver<'d>, H: MsgHandler> CtapHid<'d, D, H> {
             Outcome::Error(cid, code) => {
                 write_message(&mut self.writer, cid, CTAPHID_ERROR, &[code]).await;
             }
+            // §11.2.9.2.2: while another channel holds the lock, "any other channel
+            // trying to send a message will fail". Allocating a channel is not
+            // sending a message, so a broadcast INIT still gets through.
+            Outcome::Message(cid, cmd)
+                if cmd != CTAPHID_INIT && self.lock.blocks(cid, Instant::now().as_millis()) =>
+            {
+                write_message(&mut self.writer, cid, CTAPHID_ERROR, &[ERR_CHANNEL_BUSY]).await;
+            }
             Outcome::Message(cid, cmd) => self.dispatch(cid, cmd).await,
         }
     }
@@ -471,7 +543,15 @@ impl<'d, D: Driver<'d>, H: MsgHandler> CtapHid<'d, D, H> {
                 let mut resp = [0u8; 17];
                 let k = nonce.len().min(8);
                 resp[..k].copy_from_slice(&nonce[..k]);
-                resp[8..12].copy_from_slice(&ALLOCATED_CID.to_le_bytes());
+                // §11.2.9.1.3: on the broadcast CID this allocates a fresh channel;
+                // on an already-allocated one it only resynchronises that channel,
+                // and the response names the CID it arrived on.
+                let assigned = if cid == CID_BROADCAST {
+                    self.cids.next()
+                } else {
+                    cid
+                };
+                resp[8..12].copy_from_slice(&assigned.to_le_bytes());
                 resp[12] = CTAPHID_IF_VERSION;
                 resp[13] = VERSION_MAJOR;
                 resp[14] = VERSION_MINOR;
@@ -486,8 +566,21 @@ impl<'d, D: Driver<'d>, H: MsgHandler> CtapHid<'d, D, H> {
                 write_message(&mut self.writer, cid, CTAPHID_WINK, &[]).await;
             }
             CTAPHID_LOCK => {
-                // Accept and ignore the lock for now.
-                write_message(&mut self.writer, cid, CTAPHID_LOCK, &[]).await;
+                // §11.2.9.2.2: BCNT 1, a lock time of 0..10 seconds, 0 releasing it.
+                match self.asm.message() {
+                    [secs] if *secs <= LOCK_MAX_SECONDS => {
+                        self.lock.arm(cid, *secs, Instant::now().as_millis());
+                        write_message(&mut self.writer, cid, CTAPHID_LOCK, &[]).await;
+                    }
+                    [_] => {
+                        write_message(&mut self.writer, cid, CTAPHID_ERROR, &[ERR_INVALID_PAR])
+                            .await;
+                    }
+                    _ => {
+                        write_message(&mut self.writer, cid, CTAPHID_ERROR, &[ERR_INVALID_LEN])
+                            .await;
+                    }
+                }
             }
             CTAPHID_VERSION => {
                 write_message(
@@ -544,6 +637,7 @@ impl<'d, D: Driver<'d>, H: MsgHandler> CtapHid<'d, D, H> {
             scratch,
             up_pending,
             request_cancel,
+            ..
         } = self;
         let up_pending = *up_pending;
         let request_cancel = *request_cancel;

@@ -999,6 +999,62 @@ fn set_pin_rejected_while_access_code_locked() {
     assert!(!fs.has_data(EF_OTP_PIN), "no OTP-PIN minted while locked");
 }
 
+/// run-26: the sibling of the case above — planting the PIN *before* any access
+/// code exists. `select()` sets validated = !code_set, so on a factory-state applet
+/// `validated` is vacuously true and SET PIN was otherwise unauthenticated. The PIN
+/// then survived the owner setting an access code and unlocked the store through
+/// VERIFY PIN, invisibly. Two halves: the plant needs the operator, and installing
+/// a new access code drops any PIN minted without it.
+#[test]
+fn otp_pin_cannot_be_planted_before_an_access_code_exists() {
+    let mut fs = new_fs();
+    let rng = RefCell::new(CountRng(7));
+
+    // A code-less applet: minting the unlock secret now requires a touch.
+    let decline = RefCell::new(StubPresence(Presence::Timeout, 0));
+    let mut app = OathApplet::new(SERIAL, [0x22; 32], None, &rng, &decline);
+    select(&mut app, &mut fs);
+    let (sw, _) = run(
+        &mut app,
+        &mut fs,
+        &apdu(INS_SET_PIN, 0, 0, &tlv(TAG_PASSWORD, b"0000")),
+    );
+    assert_eq!(sw, Sw::SECURITY_STATUS_NOT_SATISFIED);
+    assert!(!fs.has_data(EF_OTP_PIN), "declined touch mints nothing");
+
+    // With the operator present it is allowed (the nitropy first-set flow).
+    let touch = RefCell::new(AlwaysConfirm);
+    let mut app = OathApplet::new(SERIAL, [0x22; 32], None, &rng, &touch);
+    select(&mut app, &mut fs);
+    let (sw, _) = run(
+        &mut app,
+        &mut fs,
+        &apdu(INS_SET_PIN, 0, 0, &tlv(TAG_PASSWORD, b"0000")),
+    );
+    assert_eq!(sw, Sw::OK);
+    assert!(fs.has_data(EF_OTP_PIN));
+
+    // The owner now protects the applet: the pre-existing PIN must not remain as a
+    // second unlock path for the store this code is being set to guard.
+    lock_with_code(&mut app, &mut fs);
+    assert!(
+        !fs.has_data(EF_OTP_PIN),
+        "installing an access code drops an OTP-PIN minted without it"
+    );
+
+    // And the applet really is closed: a fresh SELECT needs VALIDATE, and the old
+    // PIN no longer opens it.
+    select(&mut app, &mut fs);
+    let (sw, _) = run(&mut app, &mut fs, &apdu(INS_LIST, 0, 0, &[]));
+    assert_eq!(sw, Sw::SECURITY_STATUS_NOT_SATISFIED);
+    let (sw, _) = run(
+        &mut app,
+        &mut fs,
+        &apdu(INS_VERIFY_PIN, 0, 0, &tlv(TAG_PASSWORD, b"0000")),
+    );
+    assert_ne!(sw, Sw::OK, "the dropped PIN must not unlock the store");
+}
+
 #[test]
 fn change_pin_locks_out_at_floor_and_recovers_only_via_reset() {
     // run-3 #2 + run-6: CHANGE PIN decrements the retry counter on a wrong old-PIN,

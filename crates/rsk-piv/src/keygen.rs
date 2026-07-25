@@ -201,6 +201,15 @@ pub(crate) fn meta_add_slot<S: Storage>(fs: &mut Fs<S>, fid: u16, rec: &[u8]) ->
         .map_err(|_| Sw::MEMORY_FAILURE)
 }
 
+/// Drop a slot's meta record just before an IMPORT commits its key.
+///
+/// Power-cut ordering: a tear then leaves the previous key with no origin record,
+/// which [`attest`] refuses at its `meta_find`, rather than the imported key
+/// paired with the previous key's `ORIGIN_GENERATED` — which it would certify.
+pub(crate) fn drop_slot_meta<S: Storage>(fs: &mut Fs<S>, fid: u16) -> Result<(), Sw> {
+    fs.meta_delete(fid).map_err(|_| Sw::MEMORY_FAILURE)
+}
+
 /// The EC / Ed25519 / X25519 arm of GENERATE; RSA goes through
 /// [`crate::PivApplet::rsa_generate_finish`] (the firmware runs the dual-core
 /// prime search, CCID keepalives flowing meanwhile) or the blocking fallback
@@ -414,6 +423,7 @@ fn import_rsa<S: Storage>(
     if key.size() != want {
         return Err(WRONG_DATA);
     }
+    drop_slot_meta(fs, key_fid(slot).get())?;
     seal::store_rsa_key(dev, fs, rng, key_fid(slot), &key)
 }
 
@@ -446,6 +456,7 @@ fn import_ec<S: Storage>(
     if key.public_point(&mut pt).is_err() {
         return Err(WRONG_DATA);
     }
+    drop_slot_meta(fs, key_fid(slot).get())?;
     seal::store_ec_key(dev, fs, rng, key_fid(slot), &key)
 }
 
@@ -492,6 +503,7 @@ fn import_edwards<S: Storage>(
     let Some(key) = key else {
         return Err(WRONG_DATA);
     };
+    drop_slot_meta(fs, key_fid(slot).get())?;
     seal::store_ec_key(dev, fs, rng, key_fid(slot), &key)
 }
 

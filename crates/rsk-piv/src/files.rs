@@ -270,32 +270,64 @@ pub fn scan_files<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng) -
     Ok(())
 }
 
+/// The fids a PIV factory reset owns: keys/PINs + data objects
+/// (`0xD100..=0xD2FF`) and the per-slot pubkey cache (`0xD4xx`). `0xD3xx` is
+/// FIDO's, so it is deliberately not in the range.
+pub(crate) fn is_piv_fid(fid: u16) -> bool {
+    (0xD100..=0xD2FF).contains(&fid) || (0xD400..=0xD4FF).contains(&fid)
+}
+
+/// Progress backstop for the [`wipe_piv`] sweep: every batched `force_delete`
+/// clears one *distinct* live fid and [`is_piv_fid`] spans 768 of them, so needing
+/// more deletes than that means the backend keeps re-yielding what it removed.
+const RESET_MAX_DELETES: u32 = 768;
+
 /// Factory-reset the applet: delete every PIV file and meta record
-/// (`0xD100..=0xD2FF`), then re-create the defaults. Scoped to the PIV fid
-/// range — the other applets' data must survive a PIV reset.
+/// ([`is_piv_fid`]), then re-create the defaults. Scoped to the PIV fid range —
+/// the other applets' data must survive a PIV reset.
 pub fn reset_files<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng) -> Result<(), Sw> {
-    // Sweep in bounded batches until no PIV fid remains (a single pass could
-    // overflow the scratch list — up to ~60 files exist after heavy use). The
-    // sweep count is capped so a persistently failing delete cannot spin.
-    for _ in 0..8 {
+    let wiped = wipe_piv(fs);
+    // Re-provision even when the sweep failed: it deletes the PIN/PUK/retry files
+    // first, and an applet left without them answers 6A88 to every later RESET
+    // (no retry counters to read) instead of the honest failure below.
+    let ensured = scan_files(dev, fs, rng);
+    wiped.and(ensured)
+}
+
+/// Delete every live PIV file and meta record. Batched because `for_each_key`
+/// cannot delete mid-iteration, and DE-DUPED because it yields one entry per
+/// stored *version*: a batch of superseded copies is not a batch of distinct fids.
+fn wipe_piv<S: Storage>(fs: &mut Fs<S>) -> Result<(), Sw> {
+    let mut deleted = 0u32;
+    loop {
         let mut fids = [0u16; 32];
         let mut n = 0;
-        fs.for_each_key(&mut |fid| {
-            // PIV fid range: keys/PINs + objects (0xD100..=0xD2FF) and the per-slot
-            // pubkey cache (0xD4xx). 0xD3xx is FIDO's, so it is deliberately skipped.
-            let piv = (0xD100..=0xD2FF).contains(&fid) || (0xD400..=0xD4FF).contains(&fid);
-            if piv && n < fids.len() {
+        let complete = fs.for_each_key(&mut |fid| {
+            if is_piv_fid(fid) && n < fids.len() && !fids[..n].contains(&fid) {
                 fids[n] = fid;
                 n += 1;
             }
         });
         if n == 0 {
-            break;
+            // A truncated walk (flash read fault) can hide a live fid, so an empty
+            // batch only proves the range is clear when the enumeration completed.
+            return if complete {
+                Ok(())
+            } else {
+                Err(Sw::MEMORY_FAILURE)
+            };
+        }
+        // Liveness measured as PROGRESS, not as a pass count: each pass deletes
+        // `n` distinct fids, so a converging sweep can never exceed the budget.
+        deleted += n as u32;
+        if deleted > RESET_MAX_DELETES {
+            return Err(Sw::MEMORY_FAILURE);
         }
         for &fid in &fids[..n] {
-            let _ = fs.delete(fid);
-            let _ = fs.meta_delete(fid);
+            // force_delete (unconditional, and it drops the meta record itself):
+            // `delete` skips a false-absent file that `for_each_key` keeps
+            // yielding, so the sweep would spin instead of converging.
+            fs.force_delete(fid).map_err(|_| Sw::MEMORY_FAILURE)?;
         }
     }
-    scan_files(dev, fs, rng)
 }

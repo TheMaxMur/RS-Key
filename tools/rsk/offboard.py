@@ -9,20 +9,29 @@ DEVK-derived P-256 attestation key over the post-wipe journal window. The
 saved JSON report is a cryptographic receipt: THIS device (fingerprint) was
 factory-reset (the signed window contains the RESET event).
 
+The receipt is split along the trust boundary. `attested` holds what the device
+signed plus the inputs needed to redo the two checks that give it meaning (the
+head folds from the recorded window, and that window holds RESET);
+`host_observations` holds the steps, serial and timestamp, which the device
+never attests — the journal has no event type for PIV, OATH, OpenPGP or OTP.
+`rsk offboard --verify <receipt.json>` redoes all of it offline, no device.
+
 Deliberately PIN-free: every wipe path is reachable without knowing any
 credential (block-then-reset for PIV/OpenPGP, the spec's resetting paths for
 OATH/OTP, touch-gated reset for FIDO), so a key that comes back with unknown
 PINs can still be offboarded. Needs the CCID interface, a typed confirmation,
-and up to three touches.
+a replug (CTAP 2.1 §6.6, see `_fido_reset`), and up to three touches.
 """
 import json
 import os
 import sys
+import time
 from datetime import datetime
 
 from . import ccid, ctaphid, openpgp
-from .audit import (AUDIT_CHECKPOINT, EVENTS, ENTRY_LEN, EVT_RESET, _fingerprint,
-                    _fold, read_journal, verify_checkpoint)
+from .audit import (AUDIT_CHECKPOINT, EVENTS, ENTRY_LEN, EVT_RESET, _audit_state,
+                    _fingerprint, _fold, read_journal, verify_checkpoint,
+                    verify_signature)
 from .backup import ERR_NOT_ALLOWED, _gated, _vendor, mse_handshake
 from .common import confirm, connect_fido, die
 from .fido import ATT_CLEAR, ATT_STATE
@@ -36,10 +45,34 @@ OTP_CONFIG_SIZE, OTP_ACC_CODE_SIZE = 52, 6
 PIV_INS_VERIFY, PIV_INS_RESET_RETRY, PIV_INS_RESET = 0x20, 0x2C, 0xFB
 CTAP_RESET = 0x07
 
+# CTAP 2.1 §6.6: a screenless key honors authenticatorReset only this soon after
+# power-up (mirrors RESET_WINDOW_MS in crates/rsk-fido/src/consts.rs). How long
+# the operator gets for each half of the replug, and the enumeration poll rate.
+RESET_WINDOW_S = 10
+REPLUG_TIMEOUT_S = 60
+REPLUG_POLL_S = 0.2
+
+# v1 was flat and dropped the epoch, so its window could not be re-folded against
+# the signed head; --verify refuses it rather than pretend to check it.
+RECEIPT_VERSION = 2
+
+# `notes` reason codes — a consumer branches on these, never on the wording.
+NOTE_NO_DEVK = "no-devk"
+NOTE_CHECKPOINT_FAILED = "checkpoint-failed"
+NOTE_HEAD_MISMATCH = "head-mismatch"
+NOTE_NO_RESET_EVENT = "no-reset-event"
+NOTE_NO_SESSION = "no-session"
+
 
 def register(sub):
     p = sub.add_parser("offboard", help="guided full wipe + signed receipt (DESTRUCTIVE)")
     p.add_argument("--report", help="receipt path (default offboard-<serial>-<time>.json)")
+    p.add_argument("--verify", metavar="RECEIPT",
+                   help="re-check a saved receipt offline (no device) instead of wiping")
+    p.add_argument("--expect-key",
+                   help="with --verify: 16-hex fingerprint or full hex SEC1 pubkey")
+    p.add_argument("--no-receipt", action="store_true",
+                   help="wipe only: no journal preflight, no checkpoint touch, no receipt file")
     p.set_defaults(func=run)
 
 
@@ -106,6 +139,53 @@ def _wipe_openpgp():
         return False, f"failed: {e}"
 
 
+def _await_replug():
+    """Block until the FIDO device disappears and comes back, then open a fresh
+    CTAPHID session on it. Returns (dev, cid), or (None, None) if either half
+    times out — the operator walked away, and the caller still owes a receipt."""
+    deadline = time.monotonic() + REPLUG_TIMEOUT_S
+    while ctaphid.find() is not None:
+        if time.monotonic() > deadline:
+            return None, None
+        time.sleep(REPLUG_POLL_S)
+    print("unplugged — plug it back in…", file=sys.stderr)
+    deadline = time.monotonic() + REPLUG_TIMEOUT_S
+    while time.monotonic() < deadline:
+        info = ctaphid.find()
+        if info:
+            dev = ctaphid.hid.device()
+            try:
+                dev.open_path(info["path"])
+                return dev, ctaphid.ctaphid_init(dev)
+            except OSError:
+                dev.close()  # enumerated, HID interface not ready yet
+        time.sleep(REPLUG_POLL_S)
+    return None, None
+
+
+def _fido_reset(dev, cid):
+    """authenticatorReset, replugging into the power-up window when the device
+    refuses: CTAP 2.1 §6.6 accepts a reset only within RESET_WINDOW_S of power-up
+    on a key with no screen, and a warm reboot does not reopen it. A key that
+    shows what the touch approves is exempt, so it never reaches the prompt.
+
+    Returns (dev, cid, ok, detail) — dev is None when the key never came back."""
+    print("\nFIDO factory reset — touch the device (BOOTSEL)…", file=sys.stderr)
+    st = ctaphid.send_cbor(dev, cid, bytes([CTAP_RESET]))[0]
+    if st == ERR_NOT_ALLOWED:
+        dev.close()
+        print(f"\nthe key refuses a reset this long after power-up (CTAP 2.1 §6.6):"
+              f"\nUNPLUG it now and plug it straight back in — it must be the only"
+              f"\nFIDO key attached, and the reset lands within {RESET_WINDOW_S}s of"
+              f"\npower-up. Waiting up to {REPLUG_TIMEOUT_S}s…", file=sys.stderr)
+        dev, cid = _await_replug()
+        if dev is None:
+            return None, None, False, "aborted: the key was not replugged in time"
+        print("FIDO factory reset — touch the device (BOOTSEL)…", file=sys.stderr)
+        st = ctaphid.send_cbor(dev, cid, bytes([CTAP_RESET]))[0]
+    return dev, cid, st == 0, "ok" if st == 0 else f"failed: {st:#x}"
+
+
 def _journal_entries(entries):
     out = []
     for off in range(0, len(entries), ENTRY_LEN):
@@ -117,16 +197,104 @@ def _journal_entries(entries):
     return out
 
 
+def _window_defect(epoch, entries, head):
+    """Why a signed window fails to certify a wipe, as (code, detail), or None
+    when it certifies: the signed head must fold from the recorded window, and
+    that window must hold the RESET event."""
+    if head != _fold(epoch, entries):
+        return NOTE_HEAD_MISMATCH, "signed head differs from the recorded window — TAMPER"
+    if not any(entries[off + 8] == EVT_RESET for off in range(0, len(entries), ENTRY_LEN)):
+        return NOTE_NO_RESET_EVENT, "signed window does not contain the RESET event"
+    return None
+
+
+def _require_journalling():
+    """Refuse before the wipe when the journal is not recording: journalling is
+    opt-in and OFF by default, and after the wipe there is no way to produce the
+    RESET event the receipt certifies — and nothing to retry."""
+    dev, cid = connect_fido()
+    try:
+        on = _audit_state(dev, cid)
+    finally:
+        dev.close()
+    if not on:
+        die("audit journalling is OFF on this device, so the wipe cannot be "
+            "attested — enable it first (rsk audit enable), or re-run with "
+            "--no-receipt to wipe without a signed receipt")
+
+
+def _receipt(dev, cid, serial, steps):
+    """Build the receipt: the journal window (which holds the RESET event), then a
+    checkpoint signing that window's head against a fresh challenge. Returns
+    (report, defect) — the defect is why it fails to certify the wipe, or None.
+
+    A dead session still yields a report: the CCID applets are already wiped, and
+    an irreversible step must never end without an artifact."""
+    epoch = entries = challenge = b""
+    st, m = None, None
+    if dev is not None:
+        _, _, epoch, entries = read_journal(dev, cid, None)
+        challenge = os.urandom(16)
+        print("signing the wipe receipt — touch the device (BOOTSEL)…", file=sys.stderr)
+        st, m = _vendor(dev, cid,
+                        _gated(AUDIT_CHECKPOINT, {1: challenge}, dev, cid, None))
+    report = {"receipt_version": RECEIPT_VERSION, "signed": False,
+              "reset_attested": False, "notes": [],
+              "host_observations": {
+                  "device": serial,
+                  "timestamp": datetime.now().astimezone().isoformat(timespec="seconds"),
+                  "steps": steps,
+                  "journal_window": _journal_entries(entries)}}
+    if dev is None:
+        defect = (NOTE_NO_SESSION,
+                  "no FIDO session to sign with — receipt is UNSIGNED")
+    elif st == ERR_NOT_ALLOWED:
+        defect = (NOTE_NO_DEVK, "no OTP DEVK provisioned — receipt is UNSIGNED")
+    elif st != 0:
+        defect = (NOTE_CHECKPOINT_FAILED,
+                  f"checkpoint failed ({st:#x}) — receipt is UNSIGNED")
+    else:
+        # The device is untrusted: validate every field before use so a
+        # malformed checkpoint fails closed instead of raising a traceback.
+        head, seq, sig, pubkey = verify_checkpoint(
+            m, challenge, "do not trust this device",
+            "receipt SIGNATURE INVALID — do not trust this device")
+        # epoch and entries are what bind the signature to the window shown
+        # above; persist them or no later --verify can redo the fold and the
+        # RESET scan, and the receipt asserts a wipe nothing can re-check.
+        report["signed"] = True
+        report["attested"] = {"signed_head": head.hex(), "seq": seq,
+                              "signature": sig.hex(),
+                              "attestation_pubkey": pubkey.hex(),
+                              "fingerprint": _fingerprint(pubkey),
+                              "challenge": challenge.hex(),
+                              "epoch": epoch.hex(), "entries": entries.hex()}
+        defect = _window_defect(epoch, entries, head)
+        report["reset_attested"] = defect is None
+    if defect:
+        # Recorded, never fatal: the wipe already happened, so losing the file
+        # would leave the operator with nothing at all.
+        report["notes"].append({"code": defect[0], "detail": defect[1]})
+        print(f"warning: {defect[1]}", file=sys.stderr)
+    return report, defect
+
+
 def run(args):
+    if args.verify:
+        return verify(args)
+
     serial, conn = _serial()
     hid_info = ctaphid.find()
     if not hid_info:
         die("no FIDO HID device — offboard needs both interfaces")
+    if not args.no_receipt:
+        _require_journalling()
 
     print(f"device serial : {serial}")
     print("\nThis wipes EVERYTHING on the key: OTP slots, OATH credentials, PIV")
     print("keys, OpenPGP keys, the FIDO seed and all passkeys, PINs, the org")
     print("attestation — and finishes with a signed wipe receipt.")
+    print("A screenless key will ask to be replugged before the FIDO reset.")
     confirm(f"OFFBOARD {serial}")
 
     steps, failed = {}, {}
@@ -149,64 +317,95 @@ def run(args):
     print("wiping OpenPGP…")
     record("openpgp", *_wipe_openpgp())
 
+    # A failure here is recorded, not fatal: the CCID applets are already wiped,
+    # so the run must still reach the receipt that says what was destroyed.
     dev, cid = connect_fido()
-    print("\nFIDO factory reset — touch the device (BOOTSEL)…", file=sys.stderr)
-    r = ctaphid.send_cbor(dev, cid, bytes([CTAP_RESET]))
-    if r[0] != 0:
-        die(f"FIDO reset failed: {r[0]:#x} — nothing signed; re-run rsk offboard"
-            " (the CCID wipes are idempotent)")
-    steps["fido_reset"] = "ok"
+    dev, cid, ok, detail = _fido_reset(dev, cid)
+    record("fido_reset", ok, detail)
 
-    st, m = _vendor(dev, cid, {1: ATT_STATE})
-    if st == 0 and m.get(1):
-        mse_handshake(dev, cid)
-        print("removing the org attestation — touch the device (BOOTSEL)…", file=sys.stderr)
-        st, _ = _vendor(dev, cid, _gated(ATT_CLEAR, None, dev, cid, None))
-        record("org_attestation", st == 0, "cleared" if st == 0 else f"clear failed: {st:#x}")
+    if dev is None:
+        record("org_attestation", False, "not attempted — no FIDO session")
     else:
-        steps["org_attestation"] = "none"
+        st, m = _vendor(dev, cid, {1: ATT_STATE})
+        if st == 0 and m.get(1):
+            mse_handshake(dev, cid)
+            print("removing the org attestation — touch the device (BOOTSEL)…", file=sys.stderr)
+            st, _ = _vendor(dev, cid, _gated(ATT_CLEAR, None, dev, cid, None))
+            record("org_attestation", st == 0,
+                   "cleared" if st == 0 else f"clear failed: {st:#x}")
+        else:
+            steps["org_attestation"] = "none"
 
-    # The receipt: journal window (holds the RESET event), then a checkpoint
-    # signing that window's head against a fresh challenge.
-    start, seq_next, epoch, entries = read_journal(dev, cid, None)
-    window = _journal_entries(entries)
-    challenge = os.urandom(16)
-    print("signing the wipe receipt — touch the device (BOOTSEL)…", file=sys.stderr)
-    st, m = _vendor(dev, cid,
-                    _gated(AUDIT_CHECKPOINT, {1: challenge}, dev, cid, None))
-    report = {"device": serial,
-              "timestamp": datetime.now().astimezone().isoformat(timespec="seconds"),
-              "steps": steps, "journal_window": window, "signed": False}
-    if st == ERR_NOT_ALLOWED:
-        print("warning: no OTP DEVK provisioned — receipt is UNSIGNED", file=sys.stderr)
-    elif st != 0:
-        print(f"warning: checkpoint failed ({st:#x}) — receipt is UNSIGNED", file=sys.stderr)
+    report, defect, path = None, None, None
+    if args.no_receipt:
+        print("\nno receipt (--no-receipt) — this wipe leaves no signed record")
     else:
-        # The device is untrusted: validate every field before use so a
-        # malformed checkpoint fails closed instead of raising a traceback.
-        head, seq, sig, pubkey = verify_checkpoint(
-            m, challenge, "do not trust this device",
-            "receipt SIGNATURE INVALID — do not trust this device")
-        # Bind the signature to the window the receipt shows: recompute the head
-        # locally and require it match the signed head (as `rsk audit` does),
-        # then require the RESET event actually be present in that bound window.
-        if head != _fold(epoch, entries):
-            die("signed head differs from the exported window — TAMPER")
-        if not any(entries[off + 8] == EVT_RESET for off in range(0, len(entries), ENTRY_LEN)):
-            die("signed window does not contain the RESET event — refusing to certify")
-        report.update({"signed": True, "challenge": challenge.hex(),
-                       "signed_head": head.hex(), "seq": seq, "signature": sig.hex(),
-                       "attestation_pubkey": pubkey.hex(),
-                       "fingerprint": _fingerprint(pubkey)})
-
-    path = args.report or f"offboard-{serial}-{datetime.now():%Y%m%d-%H%M%S}.json"
-    with open(path, "w") as f:
-        json.dump(report, f, indent=2)
-
-    print(f"\nreceipt : {path}")
-    if report["signed"]:
-        print(f"identity: fingerprint {report['fingerprint']} — match it against"
-              " your inventory record")
+        report, defect = _receipt(dev, cid, serial, steps)
+        path = args.report or f"offboard-{serial}-{datetime.now():%Y%m%d-%H%M%S}.json"
+        with open(path, "w") as f:
+            json.dump(report, f, indent=2)
+        print(f"\nreceipt : {path}")
+    if report and report["signed"]:
+        fp = report["attested"]["fingerprint"]
+        print(f"identity: fingerprint {fp} — match it against your inventory record")
+        print(f"re-check: rsk offboard --verify {path} --expect-key <ENROLLED-FP>")
+        print("          <ENROLLED-FP> is the fingerprint recorded when the key was "
+              "enrolled;\n          pinning the one above checks the receipt against "
+              "itself and proves nothing")
     if failed:
-        die(f"offboard finished WITH FAILURES: {failed} — receipt saved")
+        die(f"offboard finished WITH FAILURES: {failed} — "
+            f"{'receipt saved; ' if path else ''}re-run rsk offboard "
+            "(every wipe step is idempotent)")
+    if report and report["signed"] and not report["reset_attested"]:
+        die(f"wipe NOT attested ({defect[0]}) — receipt saved")
     print("device offboarded ✓ — all applets at factory state")
+
+
+def verify(args):
+    """Offline re-check of a saved receipt: redo the fold binding and the RESET
+    scan `run` did in memory, then the signature. No device, no network."""
+    try:
+        with open(args.verify) as f:
+            rep = json.load(f)
+    except (OSError, ValueError) as e:
+        die(f"cannot read the receipt: {e}")
+    if not isinstance(rep, dict) or rep.get("receipt_version") != RECEIPT_VERSION:
+        die(f"not a v{RECEIPT_VERSION} receipt — earlier receipts do not record the "
+            "epoch, so their window cannot be bound to the signature")
+    if not rep.get("signed"):
+        # Never echo the file's own strings back: a receipt is untrusted input,
+        # and `notes` would carry a forger's terminal escapes to the auditor.
+        die("receipt is UNSIGNED — nothing to verify; read its `notes` for why")
+    a = rep.get("attested") or {}
+    try:
+        head = bytes.fromhex(a["signed_head"])
+        epoch = bytes.fromhex(a["epoch"])
+        entries = bytes.fromhex(a["entries"])
+        challenge = bytes.fromhex(a["challenge"])
+        sig = bytes.fromhex(a["signature"])
+        pubkey = bytes.fromhex(a["attestation_pubkey"])
+        seq = int(a["seq"])
+    except (KeyError, TypeError, ValueError) as e:
+        die(f"malformed receipt: {e}")
+    if len(entries) % ENTRY_LEN:
+        die("malformed receipt: the recorded window is not whole journal entries")
+
+    verify_signature(head, seq, sig, pubkey, challenge,
+                     "do not trust this receipt",
+                     "receipt SIGNATURE INVALID — do not trust this receipt")
+    defect = _window_defect(epoch, entries, head)
+    if defect:
+        die(f"{defect[1]} — this receipt does not certify a wipe")
+
+    fp = _fingerprint(pubkey)
+    print(f"fingerprint : {fp}")
+    print(f"att key     : {pubkey.hex()}")
+    if args.expect_key:
+        if args.expect_key.lower().strip() not in (fp, pubkey.hex()):
+            die("attestation key MISMATCH — this is NOT the enrolled device")
+        print("verdict     : FIDO applet reset, signed by the enrolled key ✓")
+    else:
+        print("verdict     : signature and RESET event OK — the key is NOT "
+              "pinned, so this does not prove which device it was")
+    print("note        : the OTP/OATH/PIV/OpenPGP steps are host observations, "
+          "never attested by the device")

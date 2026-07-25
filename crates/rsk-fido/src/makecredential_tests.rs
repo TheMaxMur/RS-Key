@@ -1196,13 +1196,69 @@ fn excluded_makecredential_confirms_then_spends_token() {
 }
 
 #[test]
-fn make_credential_requires_pin_when_set() {
+fn make_credential_requires_pin_for_a_discoverable_credential() {
     let mut fs = Fs::new(RamStorage::new());
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     let mut state = crate::FidoState::new();
     arm_pin(&mut fs, &mut state);
-    // A PIN is set but the request carries no pinUvAuthParam → PUAT_REQUIRED.
+    // A PIN is set and `rk` is true, but the request carries no pinUvAuthParam →
+    // PUAT_REQUIRED. makeCredUvNotRqd (§6.1.2 step 7) does NOT cover a
+    // discoverable credential.
+    let mut out = [0u8; 256];
+    let mut presence = crate::AlwaysConfirm;
+    let mut ctx = Ctx {
+        presence: &mut presence,
+        dev: dev(),
+        fs: &mut fs,
+        rng: &mut rng,
+        state: &mut state,
+        now_ms: 0,
+    };
+    assert_eq!(
+        make_credential(&mut ctx, &build_request(true), &mut out),
+        Err(CtapError::PuatRequired)
+    );
+}
+
+#[test]
+fn make_cred_uv_not_rqd_creates_non_discoverable_on_presence_alone() {
+    let mut fs = Fs::new(RamStorage::new());
+    let mut rng = SeqRng(1);
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+    let mut state = crate::FidoState::new();
+    arm_pin(&mut fs, &mut state);
+    // §6.1.2 step 10 (issue #51): a PIN is set, the credential is
+    // non-discoverable and no pinUvAuthParam is supplied → the credential is
+    // created on user presence alone, with `uv` clear.
+    let cdh = [0xCDu8; 32];
+    let mut out = [0u8; 1024];
+    let len = {
+        let mut presence = crate::AlwaysConfirm;
+        let mut ctx = Ctx {
+            presence: &mut presence,
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 0,
+        };
+        make_credential(&mut ctx, &build_request(false), &mut out).unwrap()
+    };
+    let auth_data = verify_response(&out[..len], &cdh);
+    assert_eq!(auth_data[32] & FLAG_UV, 0, "UV flag must stay clear");
+}
+
+#[test]
+fn always_uv_overrides_make_cred_uv_not_rqd() {
+    let mut fs = Fs::new(RamStorage::new());
+    let mut rng = SeqRng(1);
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+    let mut state = crate::FidoState::new();
+    arm_pin(&mut fs, &mut state);
+    // §6.1.2 step 6: alwaysUv makes makeCredUvNotRqd false, so even the
+    // non-discoverable request above is refused without a token.
+    fs.put(EF_ALWAYS_UV, &[1]).unwrap();
     let mut out = [0u8; 256];
     let mut presence = crate::AlwaysConfirm;
     let mut ctx = Ctx {
@@ -1217,6 +1273,219 @@ fn make_credential_requires_pin_when_set() {
         make_credential(&mut ctx, &build_request(false), &mut out),
         Err(CtapError::PuatRequired)
     );
+}
+
+/// A built-in-UV presence backend (the trusted-display pad): reports `options.uv`
+/// available, "types" a fixed PIN, and counts the separate presence gestures the
+/// ceremony asks for on top of that.
+struct UvPad {
+    digits: &'static [u8],
+    /// Overrides the entry, to exercise the Deny branch.
+    outcome: Option<crate::PinEntry>,
+    touches: usize,
+}
+impl UvPad {
+    fn typing() -> Self {
+        Self {
+            digits: b"1234",
+            outcome: None,
+            touches: 0,
+        }
+    }
+    fn ending(outcome: crate::PinEntry) -> Self {
+        Self {
+            digits: &[],
+            outcome: Some(outcome),
+            touches: 0,
+        }
+    }
+}
+impl crate::UserPresence for UvPad {
+    fn request(&mut self, _c: crate::Confirm<'_>) -> crate::Presence {
+        self.touches += 1;
+        crate::Presence::Confirmed
+    }
+    fn uv_available(&self) -> bool {
+        true
+    }
+    fn collect_pin(&mut self, _min: usize, out: &mut [u8]) -> crate::PinEntry {
+        if let Some(o) = self.outcome {
+            return o;
+        }
+        out[..self.digits.len()].copy_from_slice(self.digits);
+        crate::PinEntry::Entered(self.digits.len())
+    }
+}
+
+/// A makeCredential request carrying `options: {uv: true}` (plus `rk` when asked),
+/// optionally with a pinUvAuthParam.
+fn build_request_uv(rk: bool, param: Option<(&[u8], u64)>) -> std::vec::Vec<u8> {
+    let mut buf = [0u8; 512];
+    let n = {
+        let mut e = Encoder::new(Cursor::new(&mut buf[..]));
+        e.map(if param.is_some() { 7 } else { 5 }).unwrap();
+        e.u8(1).unwrap().bytes(&[0xCDu8; 32]).unwrap();
+        e.u8(2).unwrap().map(1).unwrap();
+        e.str("id").unwrap().str("example.com").unwrap();
+        e.u8(3).unwrap().map(2).unwrap();
+        e.str("id").unwrap().bytes(&[1, 2, 3, 4]).unwrap();
+        e.str("name").unwrap().str("alice").unwrap();
+        e.u8(4).unwrap().array(1).unwrap().map(2).unwrap();
+        e.str("alg").unwrap().i64(ALG_ES256).unwrap();
+        e.str("type").unwrap().str("public-key").unwrap();
+        e.u8(7).unwrap().map(1 + u64::from(rk)).unwrap();
+        if rk {
+            e.str("rk").unwrap().bool(true).unwrap();
+        }
+        e.str("uv").unwrap().bool(true).unwrap();
+        if let Some((p, proto)) = param {
+            e.u8(8).unwrap().bytes(p).unwrap();
+            e.u8(9).unwrap().u64(proto).unwrap();
+        }
+        e.writer().position()
+    };
+    buf[..n].to_vec()
+}
+
+#[test]
+fn uv_option_with_pin_uv_auth_param_is_not_an_error() {
+    let mut fs = Fs::new(RamStorage::new());
+    let mut rng = SeqRng(1);
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+    let mut state = crate::FidoState::new();
+    let token = arm_pin(&mut fs, &mut state);
+    // §6.1.2 step 5: pinUvAuthParam takes precedence and the "uv" option is treated
+    // as false — the pair is NOT CTAP2_ERR_INVALID_OPTION. python-fido2 sends it.
+    let cdh = [0xCDu8; 32];
+    let mut param = [0u8; 32];
+    let plen = rsk_crypto::pinproto::authenticate(PinProto::Two, &token, &cdh, &mut param).unwrap();
+    let req = build_request_uv(false, Some((&param[..plen], 2)));
+    let mut out = [0u8; 1024];
+    let len = {
+        let mut presence = crate::AlwaysConfirm;
+        let mut ctx = Ctx {
+            presence: &mut presence,
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 1000,
+        };
+        make_credential(&mut ctx, &req, &mut out).unwrap()
+    };
+    let auth_data = verify_response(&out[..len], &cdh);
+    assert_eq!(auth_data[32] & FLAG_UV, FLAG_UV, "the token still sets UV");
+}
+
+#[test]
+fn uv_option_without_builtin_uv_is_invalid_option() {
+    let mut fs = Fs::new(RamStorage::new());
+    let mut rng = SeqRng(1);
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+    let mut state = crate::FidoState::new();
+    arm_pin(&mut fs, &mut state);
+    // §6.1.2 step 5: a screenless build has no built-in user verification method,
+    // so a token-less uv:true IS CTAP2_ERR_INVALID_OPTION.
+    let mut out = [0u8; 256];
+    let mut presence = crate::AlwaysConfirm;
+    let mut ctx = Ctx {
+        presence: &mut presence,
+        dev: dev(),
+        fs: &mut fs,
+        rng: &mut rng,
+        state: &mut state,
+        now_ms: 0,
+    };
+    assert_eq!(
+        make_credential(&mut ctx, &build_request_uv(false, None), &mut out),
+        Err(CtapError::InvalidOption)
+    );
+}
+
+#[test]
+fn uv_option_runs_builtin_uv_and_supplies_user_presence() {
+    let mut fs = Fs::new(RamStorage::new());
+    let mut rng = SeqRng(1);
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+    crate::clientpin::store_local_pin(&dev(), &mut fs, b"1234").unwrap();
+    let mut state = crate::FidoState::new();
+    // §6.1.2 step 11.2: with the pad configured, uv:true is honored — the PIN is
+    // typed on the device and never crosses the host. Step 13: that ceremony IS the
+    // evidence of user interaction, so no second touch is requested.
+    let cdh = [0xCDu8; 32];
+    let mut out = [0u8; 1024];
+    let mut pad = UvPad::typing();
+    let len = {
+        let mut ctx = Ctx {
+            presence: &mut pad,
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 0,
+        };
+        make_credential(&mut ctx, &build_request_uv(true, None), &mut out).unwrap()
+    };
+    let auth_data = verify_response(&out[..len], &cdh);
+    assert_eq!(auth_data[32] & FLAG_UV, FLAG_UV, "built-in UV sets UV");
+    assert_eq!(
+        pad.touches, 0,
+        "built-in UV must not ask for a second touch"
+    );
+}
+
+#[test]
+fn builtin_uv_decline_is_operation_denied() {
+    let mut fs = Fs::new(RamStorage::new());
+    let mut rng = SeqRng(1);
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+    crate::clientpin::store_local_pin(&dev(), &mut fs, b"1234").unwrap();
+    let mut state = crate::FidoState::new();
+    // The one deliberate divergence from §6.1.2 step 11.2's error ladder: a Deny on
+    // the pad stays OPERATION_DENIED. PUAT_REQUIRED would send the platform off to
+    // collect the same PIN over USB, undoing the refusal the user just made.
+    let mut out = [0u8; 256];
+    let mut pad = UvPad::ending(crate::PinEntry::Declined);
+    let mut ctx = Ctx {
+        presence: &mut pad,
+        dev: dev(),
+        fs: &mut fs,
+        rng: &mut rng,
+        state: &mut state,
+        now_ms: 0,
+    };
+    assert_eq!(
+        make_credential(&mut ctx, &build_request_uv(false, None), &mut out),
+        Err(CtapError::OperationDenied)
+    );
+}
+
+#[test]
+fn always_uv_upgrades_a_tokenless_request_to_builtin_uv() {
+    let mut fs = Fs::new(RamStorage::new());
+    let mut rng = SeqRng(1);
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+    crate::clientpin::store_local_pin(&dev(), &mut fs, b"1234").unwrap();
+    fs.put(EF_ALWAYS_UV, &[1]).unwrap();
+    let mut state = crate::FidoState::new();
+    // §6.1.2 step 6.3: alwaysUv treats the "uv" option as true when the pad is
+    // configured, so the request is verified rather than refused with 0x36.
+    let cdh = [0xCDu8; 32];
+    let mut out = [0u8; 1024];
+    let mut pad = UvPad::typing();
+    let len = {
+        let mut ctx = Ctx {
+            presence: &mut pad,
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 0,
+        };
+        make_credential(&mut ctx, &build_request(false), &mut out).unwrap()
+    };
+    let auth_data = verify_response(&out[..len], &cdh);
+    assert_eq!(auth_data[32] & FLAG_UV, FLAG_UV);
 }
 
 #[test]
@@ -1340,17 +1609,17 @@ fn selected_alg(algs: &[i64]) -> Result<i64, CtapError> {
 }
 
 #[test]
-fn pqc_priority_selection() {
+fn first_supported_alg_wins() {
     use crate::consts::{ALG_MLDSA44, ALG_MLDSA65, ALG_MLDSA87};
-    // PREFER_PQC: an ML-DSA set wins even when listed after a classic alg —
-    // and, trivially, when listed first.
-    assert_eq!(selected_alg(&[ALG_ES256, ALG_MLDSA44]), Ok(ALG_MLDSA44));
+    // §6.1.2 step 4: the chosen algorithm is the FIRST supported element of
+    // pubKeyCredParams — the platform's order is its preference order, so an
+    // ML-DSA entry listed after a classic one does NOT override it.
+    assert_eq!(selected_alg(&[ALG_ES256, ALG_MLDSA44]), Ok(ALG_ES256));
     assert_eq!(selected_alg(&[ALG_MLDSA44, ALG_ES256]), Ok(ALG_MLDSA44));
-    assert_eq!(selected_alg(&[ALG_ES256, ALG_MLDSA65]), Ok(ALG_MLDSA65));
-    // ML-DSA-65 outranks ML-DSA-44 regardless of list order.
-    assert_eq!(selected_alg(&[ALG_MLDSA44, ALG_MLDSA65]), Ok(ALG_MLDSA65));
+    assert_eq!(selected_alg(&[ALG_ES256, ALG_MLDSA65]), Ok(ALG_ES256));
+    // …including between the two ML-DSA sets.
+    assert_eq!(selected_alg(&[ALG_MLDSA44, ALG_MLDSA65]), Ok(ALG_MLDSA44));
     assert_eq!(selected_alg(&[ALG_MLDSA65, ALG_MLDSA44]), Ok(ALG_MLDSA65));
-    // No PQC offered → the first supported entry.
     assert_eq!(selected_alg(&[ALG_ES256]), Ok(ALG_ES256));
     assert_eq!(
         selected_alg(&[crate::consts::ALG_ES384, ALG_ES256]),
@@ -1581,5 +1850,79 @@ fn vendor_ea_eligibility() {
     assert_eq!(
         rp_eligible_for_vendor_ea("enterprisetest.certinfra.fidoalliance.org"),
         cfg!(feature = "ea-conformance-rpid")
+    );
+}
+
+/// A trusted-display backend: it collects a PIN on its own pad **and** paints the
+/// ceremony, recording what each `Confirm` named.
+struct DisplayPad {
+    touches: usize,
+    last_title: &'static str,
+    last_primary: std::vec::Vec<u8>,
+    last_secondary: std::vec::Vec<u8>,
+}
+impl DisplayPad {
+    fn new() -> Self {
+        Self {
+            touches: 0,
+            last_title: "",
+            last_primary: std::vec::Vec::new(),
+            last_secondary: std::vec::Vec::new(),
+        }
+    }
+}
+impl crate::UserPresence for DisplayPad {
+    fn request(&mut self, c: crate::Confirm<'_>) -> crate::Presence {
+        self.touches += 1;
+        self.last_title = c.title;
+        self.last_primary = c.primary.to_vec();
+        self.last_secondary = c.secondary.to_vec();
+        crate::Presence::Confirmed
+    }
+    fn shows_confirm(&self) -> bool {
+        true
+    }
+    fn uv_available(&self) -> bool {
+        true
+    }
+    fn collect_pin(&mut self, _min: usize, out: &mut [u8]) -> crate::PinEntry {
+        out[..4].copy_from_slice(b"1234");
+        crate::PinEntry::Entered(4)
+    }
+}
+
+#[test]
+fn builtin_uv_still_names_the_registration_on_a_display() {
+    // Audit run-28 F1, the makeCredential half. §6.1.2 step 13 excuses the second
+    // *gesture*, not the disclosure: the "Save new passkey?" card is the only screen
+    // that names the rp and account being enrolled, and the PIN pad structurally
+    // cannot (`collect_pin` takes no `Confirm`). Without it a host could trade one
+    // context-free PIN entry for a credential at an rp of its choosing.
+    let mut fs = Fs::new(RamStorage::new());
+    let mut rng = SeqRng(1);
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+    crate::clientpin::store_local_pin(&dev(), &mut fs, b"1234").unwrap();
+    let mut state = crate::FidoState::new();
+    let cdh = [0xCDu8; 32];
+    let mut out = [0u8; 1024];
+    let mut pad = DisplayPad::new();
+    let len = {
+        let mut ctx = Ctx {
+            presence: &mut pad,
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 0,
+        };
+        make_credential(&mut ctx, &build_request_uv(true, None), &mut out).unwrap()
+    };
+    let auth_data = verify_response(&out[..len], &cdh);
+    assert_eq!(auth_data[32] & FLAG_UV, FLAG_UV);
+    assert_eq!(pad.touches, 1, "the naming card is painted exactly once");
+    assert_eq!(pad.last_title, "Register key?");
+    assert_eq!(
+        pad.last_primary, b"example.com",
+        "the card carries the rp being registered"
     );
 }

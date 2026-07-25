@@ -43,7 +43,8 @@ mechanics in [Build options](build.md)):
   ML-DSA-65 (−49) and ML-DSA-44 (−48) appear in the getInfo `algorithms` list. It
   is off by default because released Firefox aborts the entire getInfo parse on an
   unknown COSE id. makeCredential negotiates −49 / −48 from the request's
-  `pubKeyCredParams` regardless (−49 outranks −48 under the PQC-priority policy).
+  `pubKeyCredParams` regardless — the RP lists the one it wants first, since the
+  first supported entry is selected (CTAP 2.1 §6.1.2).
   −49 / −50 (ML-DSA-65 / 87) are recognised but have no enabled backend.
 - `fips-profile` is a locked policy, **not** a FIPS validation. See the
   [FIPS-style profile](guides/fips.md) guide.

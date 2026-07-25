@@ -97,6 +97,43 @@ pub const PHY_MAX_SIZE: usize = (2 + 4)
 
 const PRODUCT_CAP: usize = 32;
 
+/// The USB string-descriptor ceiling, in UTF-16 code units.
+///
+/// embassy-usb encodes every string descriptor into the 64-byte control buffer
+/// under `assert!(pos + 2 < buf.len())`, starting at `pos = 2` and stepping by 2 —
+/// so the 31st code unit panics. That panic fires during enumeration, before any
+/// command can be served, and `panic_halt` spins in the USB interrupt: no host
+/// path (factory reset, rescue wipe) can reach the device afterwards, and a
+/// firmware reflash does not clear the record. Every string that reaches
+/// `UsbConfig` MUST be clamped to this.
+pub const USB_STR_MAX: usize = 30;
+
+/// Byte length of the longest prefix of `s` that fits both `max_units` UTF-16 code
+/// units and `max_bytes` bytes, cut on a char boundary.
+fn clamped_len(s: &[u8], max_units: usize, max_bytes: usize) -> usize {
+    let Ok(t) = core::str::from_utf8(s) else {
+        // Not UTF-8. Unreachable from `Product::as_str`, but the API takes bytes;
+        // a byte cap may split a char, and the caller falls back to its default.
+        return s.len().min(max_bytes);
+    };
+    let mut units = 0usize;
+    for (i, c) in t.char_indices() {
+        if units + c.len_utf16() > max_units || i + c.len_utf8() > max_bytes {
+            return i;
+        }
+        units += c.len_utf16();
+    }
+    t.len()
+}
+
+/// Copy `s` into `out`, truncated on a char boundary to [`USB_STR_MAX`] code
+/// units. Returns the byte length written.
+pub fn clamp_usb_string(s: &[u8], out: &mut [u8]) -> usize {
+    let n = clamped_len(s, USB_STR_MAX, out.len());
+    out[..n].copy_from_slice(&s[..n]);
+    n
+}
+
 /// The USB product string: raw bytes as stored on the wire, NUL excluded.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Product {
@@ -350,17 +387,22 @@ fn contains_ci(hay: &[u8], needle: &[u8]) -> bool {
 /// the non-existent enum key `YK4_` → `KeyError('YK4_')` aborts the whole card scan.
 /// When `name` looks like a YubiKey (contains `yubikey`, any case) but lacks the
 /// `CCID` token, append `YK_TOKEN_SUFFIX`; otherwise copy verbatim. Writes into
-/// `out`, returns the length written (falls back to a plain copy if it would not fit).
+/// `out`, returns the length written.
+///
+/// The result is always clamped to [`USB_STR_MAX`] code units. When the token
+/// would not otherwise fit, the *name* is truncated to make room rather than the
+/// token being dropped: dropping it re-opens the ykman crash above, while
+/// overrunning the descriptor limit bricks enumeration outright.
 pub fn normalize_usb_product(name: &[u8], out: &mut [u8]) -> usize {
-    if contains_ci(name, b"yubikey")
-        && !contains(name, b"CCID")
-        && name.len() + YK_TOKEN_SUFFIX.len() <= out.len()
-    {
-        out[..name.len()].copy_from_slice(name);
-        out[name.len()..name.len() + YK_TOKEN_SUFFIX.len()].copy_from_slice(YK_TOKEN_SUFFIX);
-        return name.len() + YK_TOKEN_SUFFIX.len();
+    let cap = out.len().min(USB_STR_MAX);
+    if contains_ci(name, b"yubikey") && !contains(name, b"CCID") {
+        let room = cap.saturating_sub(YK_TOKEN_SUFFIX.len());
+        let n = clamped_len(name, room, room);
+        out[..n].copy_from_slice(&name[..n]);
+        out[n..n + YK_TOKEN_SUFFIX.len()].copy_from_slice(YK_TOKEN_SUFFIX);
+        return n + YK_TOKEN_SUFFIX.len();
     }
-    let n = name.len().min(out.len());
+    let n = clamped_len(name, USB_STR_MAX, cap);
     out[..n].copy_from_slice(&name[..n]);
     n
 }

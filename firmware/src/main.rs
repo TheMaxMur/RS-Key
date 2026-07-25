@@ -53,8 +53,10 @@ mod handler;
 mod led;
 mod otp_kbd;
 mod otp_keys;
+mod pin_lock;
 mod presence;
 mod rescue_platform;
+mod usb_attach;
 mod vendor;
 mod worker;
 
@@ -118,6 +120,15 @@ const USB_PRODUCT: &str = env!("PK_USB_PRODUCT");
 const YUBICO_VID: u16 = 0x1050;
 const YUBICO_MANUFACTURER: &str = "Yubico";
 const YUBICO_PRODUCT: &str = "YubiKey RSK OTP+FIDO+CCID";
+
+// A string descriptor longer than `USB_STR_MAX` code units panics embassy-usb at
+// enumeration, and nothing recovers it in software — so catch a bad build-time
+// override here rather than on the bench. Byte length is the conservative proxy:
+// non-ASCII costs at least as many bytes as code units.
+const _: () = assert!(USB_MANUFACTURER.len() <= rsk_rescue::phy::USB_STR_MAX);
+const _: () = assert!(USB_PRODUCT.len() <= rsk_rescue::phy::USB_STR_MAX);
+const _: () = assert!(YUBICO_MANUFACTURER.len() <= rsk_rescue::phy::USB_STR_MAX);
+const _: () = assert!(YUBICO_PRODUCT.len() <= rsk_rescue::phy::USB_STR_MAX);
 
 /// OpenPGP AID manufacturer id for an effective USB VID: the Yubico id when the
 /// key presents the Yubico VID (so hosts show the same vendor as a real YubiKey),
@@ -386,10 +397,11 @@ async fn main(spawner: Spawner) {
             phy_product = core::str::from_utf8(&buf[..n]).ok();
         }
         if let Some(s) = phy.usb_manufacturer.as_ref().and_then(|m| m.as_str()) {
-            let sb = s.as_bytes(); // Product caps at 32 bytes, so it always fits 64
+            // Clamp to the descriptor ceiling, not the buffer: the binding limit is
+            // the 64-byte USB control buffer (USB_STR_MAX code units), not this cell.
             let buf = PHY_MANUFACTURER.init([0; 64]);
-            buf[..sb.len()].copy_from_slice(sb);
-            phy_manufacturer = core::str::from_utf8(&buf[..sb.len()]).ok();
+            let n = rsk_rescue::phy::clamp_usb_string(s.as_bytes(), buf);
+            phy_manufacturer = core::str::from_utf8(&buf[..n]).ok();
         }
         usb_itf = rsk_rescue::phy::effective_usb_itf(phy);
         // Touch-wait timeout (phy tag 0x08, seconds; 0/absent = default).
@@ -497,7 +509,7 @@ async fn main(spawner: Spawner) {
     config.max_power = 100;
     config.max_packet_size_0 = 64;
     // bcdDevice build counter; also surfaced on the trusted-display Firmware screen.
-    let device_release: u16 = 0x0851;
+    let device_release: u16 = 0x0858;
     config.device_release = device_release;
 
     let mut builder = Builder::new(
@@ -569,6 +581,9 @@ async fn main(spawner: Spawner) {
 
     // Attach to the host (pull-up) and immediately start servicing it: no blocking
     // work between `build()` and the `usb_task` spawn (see the init note above).
+    // Everything above is boot work no host could have used, so the CTAP 2.1 §6.6
+    // reset window starts here rather than at the time driver's zero.
+    usb_attach::mark();
     let usb = builder.build();
     let ctap = hid.map(|h| {
         let (reader, writer) = h.split();
@@ -672,6 +687,19 @@ async fn main(spawner: Spawner) {
             Some(d @ 1..=3) => d,
             _ => BUILD_DRIVER,
         };
+        // Publish the boot-resolved phy values so CONFIG_READ can show the host
+        // the effective LED pin/driver + touch timeout, not a bare "default". A
+        // headless `led_kind="none"` build compiles this whole block out, leaving
+        // CONFIG_READ's effective map empty.
+        // The floor `set_timeout_secs` applies has to show up here too, or a record
+        // storing 5 would advertise a 5 s window the device never actually waits.
+        let effective_timeout_secs = phy
+            .as_ref()
+            .and_then(|p| p.presence_timeout)
+            .filter(|&t| t != 0)
+            .map(|t| t.max(presence::MIN_TIMEOUT_SECS))
+            .unwrap_or(30);
+        rsk_fido::config::set_effective_phy(led_gpio, led_driver, effective_timeout_secs);
 
         match led_driver {
             1 => {

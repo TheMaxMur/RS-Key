@@ -97,7 +97,12 @@ fn write_info<W: Write>(
     // U2F_V2 (CTAP1) drops off while alwaysUv is on: §7.2.4 disables the CTAP1/U2F
     // interface (`process_u2f` refuses REGISTER/AUTHENTICATE), so getInfo must stop
     // claiming it. The conformance run is alwaysUv-off, so the list stays all five.
-    let u2f = !always_uv;
+    // The same clause carves out the one case where it survives — "unless the
+    // CTAP1/U2F authenticator is protected by a built-in user verification method",
+    // i.e. a configured PIN pad, which `process_u2f` then runs on every REGISTER /
+    // AUTHENTICATE. Capability alone is not enough: with no PIN set there is nothing
+    // to verify against, so U2F goes away as on any screenless build.
+    let u2f = !always_uv || (builtin_uv && pin_set);
     enc.u8(0x01)?.array(4 + u64::from(u2f))?;
     if u2f {
         enc.str("U2F_V2")?;
@@ -125,8 +130,9 @@ fn write_info<W: Write>(
     // (enterprise attestation) sorts first among the 2-char keys; "uv" (built-in
     // user verification) sorts right after "up" (0x75 0x76 > 0x75 0x70) and is
     // present only when the build can collect a PIN on its own UI (the trusted
-    // display); "alwaysUv" sorts first among the 8-char keys (before "credMgmt").
-    enc.u8(0x04)?.map(10 + u64::from(builtin_uv))?;
+    // display); "alwaysUv" sorts first among the 8-char keys (before "credMgmt");
+    // "makeCredUvNotRqd" is the longest key, so it sorts last.
+    enc.u8(0x04)?.map(11 + u64::from(builtin_uv))?;
     enc.str("ep")?.bool(ea_enabled)?;
     enc.str("rk")?.bool(true)?;
     enc.str("up")?.bool(true)?;
@@ -142,6 +148,15 @@ fn write_info<W: Write>(
     enc.str("largeBlobs")?.bool(true)?;
     enc.str("pinUvAuthToken")?.bool(true)?;
     enc.str("setMinPINLength")?.bool(true)?;
+    // makeCredUvNotRqd (§6.1.2 steps 7/10): a NON-discoverable credential may be
+    // created with user presence only even while a PIN is set — what a real
+    // YubiKey does, and what `userVerification: "discouraged"` relying parties
+    // need (issue #51). Discoverable credentials still force UV, and so does
+    // alwaysUv — which §6.4 requires the *advertisement* to reflect: "If the
+    // alwaysUv option ID is present and true the authenticator MUST set the value
+    // of makeCredUvNotRqd to false." §6.11.2 makes clearing it a step of
+    // toggleAlwaysUv, which this device advertises (0x1F below).
+    enc.str("makeCredUvNotRqd")?.bool(!always_uv)?;
 
     // 0x05 maxMsgSize
     enc.u8(0x05)?.u64(MAX_MSG_SIZE)?;

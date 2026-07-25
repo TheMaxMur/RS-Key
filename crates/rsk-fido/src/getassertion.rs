@@ -17,6 +17,7 @@ use rsk_crypto::sha256;
 use rsk_fs::Storage;
 
 use crate::cbordec::{cbor, def_arr, def_map};
+use crate::clientpin::{UvOutcome, builtin_uv_enabled, builtin_uv_step};
 use crate::consts::{
     CRED_PROT_UV_OPTIONAL_WITH_LIST, CRED_PROT_UV_REQUIRED, CURVE_P256, EF_CRED, EF_PIN, FLAG_ED,
     FLAG_UP, FLAG_UV, MAX_CREDENTIAL_COUNT_IN_LIST, MAX_RESIDENT_CREDENTIALS,
@@ -279,11 +280,19 @@ pub fn get_assertion<S: Storage, R: Rng>(
     data: &[u8],
     out: &mut [u8],
 ) -> CtapResult {
-    let req = parse(data)?;
+    let mut req = parse(data)?;
     if req.rp_id.is_empty() || req.client_data_hash.len() != 32 {
         return Err(CtapError::MissingParameter);
     }
-    if req.uv {
+    // §6.2.2 step 4: "pinUvAuthParam and the 'uv' option are processed as mutually
+    // exclusive with pinUvAuthParam taking precedence" — uv:true alongside a token
+    // is not an error, the option is simply treated as false. Otherwise `uv` is an
+    // error only when there is no built-in user verification method, or it is not
+    // presently configured — on a screenless build, always.
+    if req.pin_uv_auth_param.is_some() {
+        req.uv = false;
+    }
+    if req.uv && !builtin_uv_enabled(ctx) {
         return Err(CtapError::InvalidOption);
     }
     if req.rk_option {
@@ -300,10 +309,14 @@ pub fn get_assertion<S: Storage, R: Rng>(
     }
 
     let rp_id_hash = sha256(req.rp_id.as_bytes());
-    let uv = enforce_pin(ctx, &req, &rp_id_hash)?;
+    let verified = enforce_pin(ctx, &req, &rp_id_hash)?;
+    // §6.2.2 step 8: a built-in UV ceremony IS the evidence of user interaction, so
+    // the response asserts presence. Normalising `up` here carries that through the
+    // UP flag and the getNextAssertion legs; the poll itself is skipped below.
+    req.up |= verified.up_collected;
 
     let mut seed = ctx.load_keydev().ok_or(CtapError::Other)?;
-    let result = get_assertion_inner(ctx, &req, &rp_id_hash, &seed, uv, out);
+    let result = get_assertion_inner(ctx, &req, &rp_id_hash, &seed, verified, out);
     seed.zeroize();
     if result.is_ok() {
         journal::append(ctx, journal::EV_GET_ASSERT, 0, &rp_id_hash[..8]);
@@ -326,14 +339,14 @@ fn want_up(req: &Request) -> bool {
     cfg!(feature = "strict-up") || req.up
 }
 
-/// CTAP2.1 PIN/UV enforcement (§6.1): verifies a `pinUvAuthParam` against the
-/// token and reports whether to set the `uv` flag.
+/// CTAP2.1 PIN/UV enforcement (§6.2.2 steps 5–6): verifies a `pinUvAuthParam`
+/// against the token, or runs built-in UV, and reports what the response carries.
 /// Unlike makeCredential, an absent param is allowed (the assertion just lacks UV).
 fn enforce_pin<S: Storage, R: Rng>(
     ctx: &mut Ctx<S, R>,
     req: &Request,
     rp_id_hash: &[u8; 32],
-) -> Result<bool, CtapError> {
+) -> Result<UvOutcome, CtapError> {
     match req.pin_uv_auth_param {
         // Zero-length probe (selection gesture): touch, then report PIN state.
         // With no button configured this confirms instantly. CTAP 2.1 §6.2.2 step 1
@@ -366,18 +379,30 @@ fn enforce_pin<S: Storage, R: Rng>(
                 ctx.state.paut.rp_id_hash = *rp_id_hash;
                 ctx.state.paut.has_rp_id = true;
             }
-            Ok(true)
+            Ok(UvOutcome::TOKEN)
         }
         // alwaysUv forces UV only for an assertion that asserts presence; the
         // platform's silent up:false pre-flight (credential discovery, e.g.
-        // ssh-sk) is exempt — CTAP 2.1 §6.2.2 step 5 guards the PUAT_REQUIRED
-        // path on the `up` option being present and true. Without the exemption
-        // the probe fails and OpenSSH reports "device not found". Key this on the
-        // raw `up`, NOT want_up: strict-up adds a button poll on the probe (below)
-        // but must not turn the probe into a PUAT_REQUIRED refusal — that re-broke
-        // ssh-sk whenever always-uv and strict-up combined (issue #34 follow-up).
-        None if req.up && crate::config::always_uv_enabled(ctx.fs) => Err(CtapError::PuatRequired),
-        None => Ok(false),
+        // ssh-sk) is exempt — CTAP 2.1 §6.2.2 step 5 guards this whole block on
+        // the `up` option being present and true. Without the exemption the probe
+        // fails and OpenSSH reports "device not found". Key this on the raw `up`,
+        // NOT want_up: strict-up adds a button poll on the probe (below) but must
+        // not turn the probe into a refusal — that re-broke ssh-sk whenever
+        // always-uv and strict-up combined (issue #34 follow-up).
+        None => {
+            let always_uv = req.up && crate::config::always_uv_enabled(ctx.fs);
+            // §6.2.2 steps 5.4 / 6.2: an explicit uv:true, or alwaysUv with a
+            // configured pad, runs built-in UV instead of refusing the request.
+            if req.uv || (always_uv && builtin_uv_enabled(ctx)) {
+                return builtin_uv_step(ctx);
+            }
+            // §6.2.2 steps 5.1/5.5: clientPin is always an advertised option ID
+            // here, so the code is PUAT_REQUIRED.
+            if always_uv {
+                return Err(CtapError::PuatRequired);
+            }
+            Ok(UvOutcome::NONE)
+        }
     }
 }
 
@@ -562,13 +587,17 @@ fn get_assertion_inner<S: Storage, R: Rng>(
     req: &Request,
     rp_id_hash: &[u8; 32],
     seed: &[u8; 32],
-    uv: bool,
+    verified: UvOutcome,
     out: &mut [u8],
 ) -> CtapResult {
+    let uv = verified.uv;
     // Presence POLL decision: honor `up:false` (the silent pre-flight) unless
     // `strict-up` forces a touch. The emitted UP flag follows raw `up` (below), NOT
     // this — so a polled up:false probe stays inert (UP=0), preserving alwaysUv.
-    let want_up = want_up(req);
+    // §6.2.2 step 8 skips the poll once built-in UV has run — but only where the
+    // skipped screen carried nothing: on a backend that paints the ceremony, the card
+    // below is the only thing that names the rp, and the PIN pad cannot ([`needs_confirm`]).
+    let want_up = want_up(req) && verified.needs_confirm(ctx.presence.shows_confirm());
     let mut best = Best::new();
     resolve_credential(ctx, req, rp_id_hash, seed, uv, &mut best);
 
@@ -872,6 +901,9 @@ pub fn get_next_assertion<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, out: &mut [u8
     seed.zeroize();
     let resp_len = result?;
 
+    // §6.3 "Reset the timer": the 30-second budget is per leg, not for the whole
+    // walk — a platform drawing an account picker must not run out of it halfway.
+    ctx.state.gna.started_ms = ctx.now_ms;
     ctx.state.gna.counter += 1;
     if ctx.state.gna.counter >= ctx.state.gna.total {
         ctx.state.gna.reset();

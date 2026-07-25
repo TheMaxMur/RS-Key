@@ -31,6 +31,32 @@ use crate::state::{PERM_ACFG, puat_subcommand_msg};
 use crate::vendor::open_channel_key;
 use crate::{Ctx, Rng};
 
+use core::sync::atomic::{AtomicU32, Ordering};
+
+/// Boot-resolved phy values (build defaults or phy overrides) so CONFIG_READ can
+/// report the *effective* LED pin / driver and touch timeout — values that live
+/// in the firmware image, not the stored record — instead of leaving the host to
+/// render a bare "firmware default". Packed LE `[led_gpio, led_driver,
+/// presence_timeout_secs, flag]`; `flag` bit 0 marks it populated (a headless
+/// `led_kind="none"` build never seeds it).
+static EFFECTIVE_PHY: AtomicU32 = AtomicU32::new(0);
+
+/// Record the boot-resolved phy values for CONFIG_READ. Call once at boot, after
+/// the LED backend has resolved its effective pin/driver.
+pub fn set_effective_phy(led_gpio: u8, led_driver: u8, presence_timeout_secs: u8) {
+    EFFECTIVE_PHY.store(
+        u32::from_le_bytes([led_gpio, led_driver, presence_timeout_secs, 1]),
+        Ordering::Relaxed,
+    );
+}
+
+/// The boot-resolved `(led_gpio, led_driver, presence_timeout_secs)`, or `None`
+/// if never seeded.
+pub(crate) fn effective_phy() -> Option<(u8, u8, u8)> {
+    let b = EFFECTIVE_PHY.load(Ordering::Relaxed).to_le_bytes();
+    (b[3] & 1 != 0).then_some((b[0], b[1], b[2]))
+}
+
 struct Req<'a> {
     subcommand: u64,
     raw_subpara: &'a [u8],
@@ -40,6 +66,10 @@ struct Req<'a> {
     force_change: bool,
     rp_ids: [&'a str; MAX_MIN_PIN_RPIDS],
     rp_ids_len: usize,
+    /// The list did not fit `MAX_MIN_PIN_RPIDS`. Reported as `KEY_STORE_FULL` by
+    /// `set_min_pin_length` (CTAP 2.1 §6.11), not silently truncated — and only
+    /// after the pinUvAuthParam check, so it is not an unauthenticated probe.
+    rp_ids_overflow: bool,
     /// Vendor (0xFF) subCommandParams: `{1: vendorCommandId, 2: byte param,
     /// 3: int param}`. The soft-lock ids use the byte param; the PicoForge
     /// physical-config ids use the integer param.
@@ -59,6 +89,7 @@ fn parse(data: &[u8]) -> Result<Req<'_>, CtapError> {
         force_change: false,
         rp_ids: [""; MAX_MIN_PIN_RPIDS],
         rp_ids_len: 0,
+        rp_ids_overflow: false,
         vendor_id: 0,
         vendor_param: &[],
         vendor_param_int: 0,
@@ -122,6 +153,8 @@ fn parse_min_pin_sub<'a>(d: &mut Decoder<'a>, req: &mut Req<'a>, sk: u64) -> Res
                 if req.rp_ids_len < MAX_MIN_PIN_RPIDS {
                     req.rp_ids[req.rp_ids_len] = id;
                     req.rp_ids_len += 1;
+                } else {
+                    req.rp_ids_overflow = true;
                 }
             }
         }
@@ -183,6 +216,7 @@ pub fn authenticator_config<S: Storage, R: Rng>(
             Ok(0)
         }
         CONFIG_TOGGLE_ALWAYS_UV => toggle_always_uv(ctx),
+        CONFIG_SET_MIN_PIN if req.rp_ids_overflow => Err(CtapError::KeyStoreFull),
         CONFIG_SET_MIN_PIN => set_min_pin_length(
             ctx,
             req.new_min_pin,
@@ -220,7 +254,7 @@ fn set_phy<S: Storage, R: Rng>(
     let mut p = phy::load(ctx.fs).unwrap_or_default();
     f(&mut p);
     phy::save(ctx.fs, &p).map_err(|_| CtapError::Other)?;
-    journal::append(ctx, journal::EV_CONFIG_WRITE, CONFIG_TARGET_PHY as u8, &[]);
+    journal::append_config_write(ctx, CONFIG_TARGET_PHY as u8);
     Ok(0)
 }
 

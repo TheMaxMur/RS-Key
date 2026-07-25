@@ -58,11 +58,21 @@ const DEFAULT_TIMEOUT_MS: u32 = 30_000;
 /// `PRESENCE_TIMEOUT` tag (PicoForge `0x08`, seconds). Read live by the wait.
 pub(crate) static PRESENCE_TIMEOUT_MS: AtomicU32 = AtomicU32::new(DEFAULT_TIMEOUT_MS);
 
+/// Shortest touch-wait window a stored timeout may impose, matching the on-device
+/// settings menu's own floor (`rsk_ui::TIMEOUT_CHOICES`). The phy record is
+/// host-writable through the ungated `CONFIG_WRITE`, and a consent window short
+/// enough to expire mid-press turns a single hold into two grants.
+pub(crate) const MIN_TIMEOUT_SECS: u8 = 10;
+#[cfg(feature = "display")]
+const _: () = assert!(MIN_TIMEOUT_SECS as u16 == rsk_ui::TIMEOUT_CHOICES[0]);
+
 /// Override the touch-wait timeout from the phy record — value in **seconds**,
 /// matching PicoForge's tag `0x08`. `0` (or an absent tag) keeps the
-/// built-in 30 s default. Call once at boot, before any applet runs.
+/// built-in 30 s default; anything below [`MIN_TIMEOUT_SECS`] is raised to it.
+/// Call once at boot, before any applet runs.
 pub fn set_timeout_secs(secs: u8) {
     if secs != 0 {
+        let secs = secs.max(MIN_TIMEOUT_SECS);
         PRESENCE_TIMEOUT_MS.store(secs as u32 * 1000, Ordering::Relaxed);
     }
 }
@@ -90,6 +100,11 @@ enum Outcome {
 pub struct ButtonPresence {
     #[cfg_attr(feature = "no-touch", allow(dead_code))]
     button: Button,
+    /// The button was still down when the last wait returned, so that press is
+    /// spent: consent is per-operation, and the level-triggered wait would
+    /// otherwise hand the same hold to the next queued request.
+    #[cfg_attr(feature = "no-touch", allow(dead_code))]
+    spent: bool,
 }
 
 /// The presence source: the BOOTSEL hardware button, or a GPIO button (the bool is
@@ -118,6 +133,7 @@ impl ButtonPresence {
     pub fn new_bootsel(bootsel: Peri<'static, BOOTSEL>) -> Self {
         Self {
             button: Button::Bootsel(bootsel),
+            spent: false,
         }
     }
 
@@ -139,6 +155,7 @@ impl ButtonPresence {
         let input = Input::new(any, pull);
         Self {
             button: Button::Gpio(input, active_high),
+            spent: false,
         }
     }
 
@@ -184,7 +201,13 @@ impl ButtonPresence {
         // the timeout it times out.
         let result = loop {
             if self.pressed() {
-                break Outcome::Confirmed;
+                // A press the previous ceremony already consumed is not consent for
+                // this one; it stays spent until the finger actually lifts.
+                if !self.spent {
+                    break Outcome::Confirmed;
+                }
+            } else {
+                self.spent = false;
             }
             if CANCEL_REQUESTED.load(Ordering::Relaxed) {
                 break Outcome::Cancelled;
@@ -205,6 +228,9 @@ impl ButtonPresence {
                 block_for(Duration::from_millis(POLL_MS));
             }
         }
+        // The debounce is bounded, so it can give up with the finger still down;
+        // whatever the outcome, a button that never released carries no new consent.
+        self.spent = self.pressed();
         UP_PENDING.store(false, Ordering::Relaxed);
         // Clear any cancel that raced in (e.g. just after a confirm) so it can't
         // leak into the next request's wait.

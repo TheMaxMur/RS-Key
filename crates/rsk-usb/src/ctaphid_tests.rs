@@ -429,3 +429,46 @@ fn write_frames_writes_every_frame_when_host_drains() {
         "every frame written when the host keeps draining"
     );
 }
+
+/// §11.2.9.1.3: each broadcast INIT allocates a *unique* channel — two applications
+/// sharing an id would let either resynchronise the other's transaction. The counter
+/// steps over the two reserved values as it wraps.
+#[test]
+fn cid_allocator_hands_out_unique_ids() {
+    let mut a = CidAllocator::new();
+    let first = a.next();
+    let second = a.next();
+    assert_ne!(first, second);
+    assert_eq!(second, first + 1);
+
+    // Wrapping skips 0 and the broadcast id.
+    let mut a = CidAllocator(u32::MAX - 1);
+    assert_eq!(a.next(), u32::MAX - 1);
+    assert_eq!(a.next(), FIRST_CID, "0xffffffff is the broadcast CID");
+    let mut a = CidAllocator(CID_BROADCAST);
+    a.next();
+    assert_eq!(a.next(), FIRST_CID, "0 is not a valid CID either");
+}
+
+/// §11.2.9.2.2: while a channel holds the lock, other channels are turned away; the
+/// lock expires on its own so a crashed application cannot hold the device, and only
+/// its owner can hand it back early.
+#[test]
+fn channel_lock_excludes_other_channels_until_it_expires() {
+    let mut lock = ChannelLock::default();
+    let (mine, theirs) = (0x0100_0000, 0x0100_0001);
+    assert!(!lock.blocks(theirs, 0), "no lock, no exclusion");
+
+    lock.arm(mine, 2, 1_000);
+    assert!(lock.blocks(theirs, 1_500));
+    assert!(!lock.blocks(mine, 1_500), "the owner is never blocked");
+    // Two seconds on: expired.
+    assert!(!lock.blocks(theirs, 3_000));
+
+    // A release by a non-owner is not theirs to give.
+    lock.arm(mine, 10, 10_000);
+    lock.arm(theirs, 0, 10_100);
+    assert!(lock.blocks(theirs, 10_200), "only the owner may release");
+    lock.arm(mine, 0, 10_300);
+    assert!(!lock.blocks(theirs, 10_400));
+}

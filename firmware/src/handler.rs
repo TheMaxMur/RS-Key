@@ -9,7 +9,6 @@ use core::cell::RefCell;
 
 use embassy_rp::peripherals::TRNG;
 use embassy_rp::trng::Trng;
-use embassy_time::Instant;
 
 use rsk_crypto::{Device, HmacDrbg};
 use rsk_fs::Fs;
@@ -150,6 +149,13 @@ impl<'a> AppletHandler<'a> {
         // The OTP DEVK signs audit-journal checkpoints (rsk_fido::journal); it
         // rides in FidoState so the pure FIDO logic stays caller-supplied.
         let mut fido_state = rsk_fido::FidoState::new();
+        // Restore the clientPIN soft lock if the last boot was a warm reset: the
+        // canary survives `sys_reset` but not a real power cycle, which is the
+        // distinction CTAP 2.1 §6.5.5.6 draws. The same canary reports the warm
+        // boot itself, which §6.6's reset window keys on.
+        let boot = crate::pin_lock::restore_and_arm();
+        fido_state.restore_pin_lock(boot.lock);
+        fido_state.warm_boot = boot.warm;
         fido_state.devk = devk;
         // Generate the clientPIN ephemeral key-agreement key at power-up (CTAP 2.1
         // §6.5.5.7), not lazily on the first clientPIN — so the first PIN entry
@@ -208,7 +214,7 @@ impl AppletHandler<'_> {
                     serial_id: &self.serial_id,
                     otp_key: self.otp_key.as_ref(),
                 };
-                let now_ms = Instant::now().as_millis();
+                let now_ms = crate::usb_attach::elapsed_ms();
                 let (sw, n) = {
                     let mut fsb = self.fs.borrow_mut();
                     let mut rngb = self.rng.borrow_mut();
@@ -246,7 +252,9 @@ impl AppletHandler<'_> {
             serial_id: &self.serial_id,
             otp_key: self.otp_key.as_ref(),
         };
-        let now_ms = Instant::now().as_millis();
+        // Since the USB attach, not since power-up: the §6.6 reset window a host has
+        // to hit is measured from the moment the device could answer at all.
+        let now_ms = crate::usb_attach::elapsed_ms();
         let n = {
             let mut fsb = self.fs.borrow_mut();
             let mut rngb = self.rng.borrow_mut();
@@ -261,6 +269,12 @@ impl AppletHandler<'_> {
             };
             rsk_fido::process_cbor(&mut ctx, data, &mut self.resp)
         };
+        // Persist the clientPIN soft lock across a warm reboot. It is RAM-only, and a
+        // host can request `SCB::sys_reset` ungated (vendor 0x1F P1=0, the rescue
+        // twin, or the phy config-write auto-reboot) — which cleared it and let host
+        // malware burn the whole retry budget unattended, the exact thing CTAP 2.1
+        // §6.5.5.6's power-cycle requirement exists to prevent.
+        crate::pin_lock::set(self.fido_state.pin_lock());
         // A vendor (0x41) CONFIG_WRITE with the LED target persists EF_LED_CONF,
         // but the LED atomics live here in the firmware — reload the block after
         // any 0x41 command to apply it live, matching the CCID SET_LED. 0x41 is

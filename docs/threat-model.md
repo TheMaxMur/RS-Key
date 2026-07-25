@@ -68,6 +68,13 @@ bulk stream, ISO-7816 APDUs, CTAP2 CBOR. Defenses:
   the chip id) does not reproduce the sealing key. Without the burn, the
   sealing key derives from on-chip state an attacker with full flash + chip
   access could reconstruct. The burn is what makes at-rest real.
+- **The seals give confidentiality, not authenticity.** Records written before
+  the burn are keyed from the public chip serial alone, and those pre-OTP arms
+  stay readable afterwards so a provisioned device keeps working across the
+  upgrade. So an attacker who can *write* flash (BOOTSEL) can forge a record
+  that opens under one, and the boot migration then re-seals it under the fused
+  root. Reading the flash still tells them nothing. Closing this needs a
+  fuse-rooted latch on the migration window; audit run-27 #8 has the analysis.
 - **Soft-lock** ([guides/soft-lock.md](guides/soft-lock.md)): optionally, the
   seed at rest is additionally wrapped with ChaCha20-Poly1305 under a 32-byte
   key only you hold (BIP-39/SLIP-39 words). A stolen device (even running

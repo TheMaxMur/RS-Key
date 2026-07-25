@@ -13,6 +13,502 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-07-26
+
+### Fixed
+
+A second pass over the CTAP 2.1 text, this time across `authenticatorLargeBlobs`,
+`authenticatorClientPIN`, `authenticatorCredentialManagement`, `authenticatorReset`,
+CTAPHID and the CTAP1/U2F interface. bcdDevice → `0x0857`.
+
+Two of these change who may do what, and are called out first:
+
+- **A key with no PIN can now write the large-blob array.** §6.10.2 gates the write
+  on the authenticator being "protected by some form of user verification or the
+  alwaysUv option ID is present and true", and its note spells out the converse — an
+  unconfigured key writes without one. RS-Key demanded a `pinUvAuthParam`
+  unconditionally, so `authenticatorLargeBlobs` was simply unusable before a PIN was
+  set. Array entries stay AEAD-sealed under their per-credential `largeBlobKey`, so an
+  unverified write can destroy but never read. Set a PIN (or turn on `alwaysUv`) and
+  the token requirement returns.
+
+- **A `display` build now asks on screen before issuing a `pinUvAuthToken`.** All
+  three token subcommands (`getPinToken`, and both `…WithPermissions`) carry the same
+  step: "If the authenticator has a display, request user consent for the requested
+  permissions." RS-Key minted the token straight off the PIN check, so malware holding
+  the PIN could take an `acfg` token with nothing shown. The prompt lands *before* the
+  PIN is verified, so declining costs no retry. Screenless builds are unaffected —
+  they have no display to ask on, and their button is not polled.
+
+The rest are status codes and bounds:
+
+- **`authenticatorLargeBlobs` reads are validated.** A `get` larger than
+  `maxFragmentLength` is `CTAP1_ERR_INVALID_LENGTH` instead of a silent clamp, and a
+  `get` carrying `length`, `pinUvAuthParam` or `pinUvAuthProtocol` is
+  `CTAP1_ERR_INVALID_PARAMETER`. A 17-byte array no longer skips the trailing-hash
+  check — §6.10.2 grants the minimum length no exemption.
+- **`setPIN` on a device that already has one answers `CTAP2_ERR_PIN_AUTH_INVALID`**
+  (§6.5.5.5), not `CTAP2_ERR_NOT_ALLOWED`.
+- **The minimum PIN length is counted in Unicode code points**, as getInfo `0x0D`
+  defines it, not UTF-8 bytes. Measuring bytes let a two-character CJK PIN clear a
+  floor of four. The stored `PINCodePointLength` follows the same unit, which is what
+  `setMinPINLength` compares its new floor against.
+- **A forced PIN change can no longer be satisfied by the same PIN** (§6.5.5.6): the
+  flag survives and the operation is a policy violation.
+- **Built-in UV speaks its own status dialect** (§6.5.5.7.3): an unconfigured method
+  is `CTAP2_ERR_NOT_ALLOWED` and an exhausted budget `CTAP2_ERR_UV_BLOCKED`, where the
+  host-PIN path reports PIN_NOT_SET / PIN_BLOCKED for the same states. The `acfg`
+  permission is refused over that subcommand, since it is gated by a `uvAcfg` option
+  this device does not advertise — `authnrCfg`, which gates it on the host-PIN path,
+  is a different option.
+- **An rpId-scoped `cm` token may manage its own relying party's credentials.**
+  §6.8.5/6.8.6 match the token's permissions RP ID against *the credential's* rp;
+  RS-Key rejected every scoped token outright, so `deleteCredential` and
+  `updateUserInformation` were unreachable with one. Another rp's credential — and an
+  id that matches nothing — both answer `PIN_AUTH_INVALID`, so the code never reveals
+  who owns an id.
+- **`authenticatorGetNextAssertion` resets its timer on every leg** (§6.3), so the
+  30-second budget covers the gap between calls rather than the whole walk. A platform
+  drawing an account picker over many passkeys no longer runs out partway through.
+- **`authenticatorReset` distinguishes a refusal from a timeout** (§6.6):
+  `CTAP2_ERR_OPERATION_DENIED` when the user declines ("the platform SHOULD NOT
+  repeat"), `CTAP2_ERR_USER_ACTION_TIMEOUT` when nothing happens.
+- **A credBlob of exactly `maxCredBlobLength` is stored.** The bound was exclusive
+  while getInfo advertised 128, so the advertised maximum was refused and reported
+  back as `credBlob: false`.
+- **CTAPHID hands out a unique channel id per `CTAPHID_INIT`** (§11.2.9.1.3) instead
+  of one fixed value shared by every application, and an INIT on an already-allocated
+  channel echoes that channel rather than renaming it. Two concurrent clients — a
+  browser and an `ssh-agent`, say — no longer resynchronise each other's transactions.
+- **`CTAPHID_LOCK` actually locks.** It was acknowledged and ignored, so a host that
+  took the lock believed it had exclusivity it never got. The claim now holds for the
+  requested 1–10 seconds, other channels get `ERR_CHANNEL_BUSY`, and only the owner
+  can release it early.
+- **U2F under `alwaysUv` returns `SW_COMMAND_NOT_ALLOWED`** as §7.2.4 requires. The
+  old `SW_CONDITIONS_NOT_SATISFIED` is the "touch me again" code, which left clients
+  retrying an interface that was switched off.
+- **…and on a `display` build with a PIN, U2F is no longer switched off at all.**
+  The same clause disables CTAP1/U2F "unless the CTAP1/U2F authenticator is protected
+  by a built-in user verification method", which a configured PIN pad is. RS-Key took
+  the blanket branch. Now, on such a build, `U2F_V2` stays in the advertised versions
+  and every REGISTER / AUTHENTICATE runs the pad — the PIN authorizes the operation
+  instead of a bare touch, so U2F is no longer a presence-only way around alwaysUv.
+  A wrong PIN refuses with `SW_CONDITIONS_NOT_SATISFIED`, and the
+  don't-enforce-user-presence control byte can skip the touch but not the
+  verification. Capability alone does not qualify: with no PIN set there is nothing
+  to verify against, so the interface goes away exactly as on a screenless key.
+
+The earlier pass over §6.1.2 / §6.2.2 / §6.11, from the same reading:
+
+- **`options: {uv: true}` alongside a `pinUvAuthParam` is no longer rejected.**
+  §6.1.2 step 5 (and §6.2.2 step 4) are explicit: "If the pinUvAuthParam is
+  present, let the 'uv' option be treated as being present with the value false" —
+  the two are mutually exclusive with the parameter taking precedence. RS-Key
+  instead answered `CTAP2_ERR_INVALID_OPTION` (`0x2C`) to the combination, which
+  python-fido2 and other platforms do send when user verification is required.
+  The option is now normalised away, and it is an error only when the request
+  carries no token *and* the build has no configured built-in user verification
+  method — on a screenless key, still always.
+
+- **A `display` build now honors the `uv` option it advertises.** getInfo
+  advertises `options.uv` on a trusted-display key, but `makeCredential` /
+  `getAssertion` refused `uv: true` outright — advertising a capability and then
+  rejecting every request that used it. `uv: true` now runs `performBuiltInUv` on
+  the panel's PIN pad (§6.1.2 step 11.2, §6.2.2 step 6.2), and that entry counts
+  as the ceremony's evidence of user interaction (§6.1.2 step 13, §6.2.2 step 8), so
+  the *response* sets `up` without a second gesture being required. The panel still
+  paints the Approve / Deny card, because it is the only screen that names the relying
+  party — see the Security section. With `alwaysUv` on, a token-less
+  request is likewise upgraded to built-in UV instead of being refused with
+  `PUAT_REQUIRED` (§6.1.2 step 6.3, §6.2.2 step 5.4). Screenless builds are
+  unaffected — they have no built-in UV method, so every branch is unreachable.
+
+  One deliberate divergence inside that path: **an explicit Deny on the PIN pad
+  answers `CTAP2_ERR_OPERATION_DENIED`**, where the spec's error ladder would fold
+  it into `PUAT_REQUIRED` (the ladder checks `clientPin` before it reaches its own
+  `OPERATION_DENIED` branch). `PUAT_REQUIRED` tells the platform to collect the
+  same PIN over USB, which would turn the trusted display's refusal into the very
+  prompt the user just declined — the panel's veto has to be final. Every other
+  outcome of the ceremony follows the ladder exactly: a wrong PIN or an exhausted
+  budget is `PUAT_REQUIRED`, a timeout is `USER_ACTION_TIMEOUT`.
+
+- **`pubKeyCredParams` again picks the platform's first supported algorithm.**
+  The build preferred ML-DSA whenever an RP offered it, even listed after a
+  classic algorithm — a deliberate deviation so a PQC rollout would not need the
+  RP to reorder its list. §6.1.2 step 4 is unambiguous ("…and no algorithm has yet
+  been chosen by this loop"), so the list order is the RP's preference order again
+  and the override is gone. An RP that wants ML-DSA lists `-49` / `-48` first;
+  both remain fully supported and negotiable.
+
+- **`setMinPINLength` with more RP IDs than fit answers `CTAP2_ERR_KEY_STORE_FULL`.**
+  A `minPinLengthRPIDs` list longer than `maxRPIDsForSetMinPINLength` (8) was
+  silently truncated, so an administrator authorising ten RPs got eight and no
+  indication. §6.11 specifies the code for exactly this, and nothing is written
+  now when the list does not fit. The check runs after the `pinUvAuthParam`
+  verification, so it is not an unauthenticated probe.
+
+### Added
+
+- **`makeCredUvNotRqd`: a PIN no longer blocks `userVerification: "discouraged"`
+  registrations (issue #51).** With a PIN configured, RS-Key demanded a
+  `pinUvAuthParam` for *every* `authenticatorMakeCredential` and answered
+  `CTAP2_ERR_PUAT_REQUIRED` (`0x36`) without one. A relying party that asks for
+  `userVerification: "discouraged"` (a plain second-factor key — addy.io, and the
+  same shape on WebAuthn.io) never sends that parameter, so Safari looped: prompt
+  for the PIN, mint a token, resend without it, get `0x36` again, and the final
+  touch did nothing. RS-Key now advertises the CTAP 2.1 `makeCredUvNotRqd` option
+  in `authenticatorGetInfo` and creates a **non-discoverable** credential on user
+  presence alone, with the `uv` flag clear — the behaviour of a real YubiKey.
+  Discoverable credentials (passkeys, `rk: true`) still require a verified
+  `pinUvAuthParam` (§6.1.2 step 7), and `alwaysUv` still forces user verification
+  for everything (§6.1.2 step 6), so `ykman fido config toggle-always-uv` — or the
+  `always-uv` build — restores PIN-on-every-registration. bcdDevice → `0x0855`.
+
+- **`CONFIG_READ` now reports the effective LED pin / driver and touch timeout.**
+  The FIDO `0x41` `CONFIG_READ` PHY response gains an optional `2:` map of the
+  boot-resolved values (build defaults or overrides) keyed by phy tag — LED GPIO
+  (`4`), LED driver (`12`), presence timeout (`8`) — so a host config UI can show
+  the real values instead of a bare "firmware default" for a record with no
+  override. Display-only; the `1:` blob stays the raw override record for
+  read-modify-write, and older/headless behaviour is unchanged. bcdDevice → `0x0852`.
+
+### Security
+
+Findings from the 28th internal security audit, which read only the CTAP
+spec-alignment pass above. Three of twelve candidates survived adversarial
+validation. bcdDevice → `0x0858`.
+
+- **A `display` build stopped naming the relying party once built-in UV ran
+  (MEDIUM).** §6.1.2 step 13 / §6.2.2 step 8 let a PIN typed on the pad stand in for
+  the presence gesture, and the pass used that to skip the whole ceremony. But
+  `UserPresence::collect_pin` carries no `Confirm`, and `PinPad.title` is a trusted
+  firmware-supplied `&'static str` by construction, so the pad can never name a
+  relying party. A host could therefore send `options: {uv: true}` with no
+  `pinUvAuthParam`, get a bare PIN prompt painted, and turn one context-free entry
+  into a `UP=1 | UV=1` assertion — or a resident credential — for an rp the user was
+  never shown. The spec excuses the second *gesture*, not the disclosure: the
+  Approve / Deny card is painted again whenever the backend paints ceremonies at
+  all. Screenless builds never reached this path and are unchanged. The same applies
+  to U2F under §7.2.4's built-in-UV exception, where "Register key?" and "Sign in?"
+  had collapsed into one unlabelled prompt — there the card comes first, so the
+  operation is named before the PIN is typed. The PIN pad now also waits for the
+  finger to lift before its first poll, like every other modal: the touch controller
+  reports a level, and the Allow button overlaps the pad's bottom key row, so a
+  still-held finger would have typed a stray digit and burned a PIN retry.
+- **`makeCredUvNotRqd` was advertised while `alwaysUv` was on.** §6.4: "If the
+  alwaysUv option ID is present and true the authenticator MUST set the value of
+  makeCredUvNotRqd to false", and §6.11.2 makes clearing it a step of
+  `toggleAlwaysUv` — which this device advertises. `authenticatorMakeCredential`
+  already refused such requests, so the device failed closed; only the
+  advertisement lied, which re-created the issue-#51 client retry loop for
+  `always-uv` users. The conformance run is alwaysUv-off, so it did not catch this.
+- **A completed large-blob transfer left its accumulator armed.** `write_fragment`
+  did not clear `expected_length` / `expected_next_offset` after committing, so a
+  seven-byte follow-up (`{2: h'', 3: <total>}`) re-entered the commit branch and
+  re-ran the full flash write — unauthenticated on a key with no PIN, where §6.10.2
+  correctly requires no token. Repeated, that churns the credential partition. A
+  completed transfer is now terminal: the next write starts a fresh array at offset
+  0, as the reference implementation does.
+
+Findings from the 26th internal security audit. bcdDevice → `0x0853`.
+
+- **A phy USB string longer than the descriptor limit bricked the device
+  (HIGH).** `CONFIG_WRITE`/`CONFIG_TARGET_PHY` is ungated by default and stored a
+  product/manufacturer string with no length bound. embassy-usb encodes string
+  descriptors into the 64-byte control buffer under an `assert!`, so from the 31st
+  UTF-16 code unit the USB stack panicked *during enumeration* — before any command
+  could be served, with `panic_halt` spinning in the USB interrupt. No host path
+  (factory reset, rescue wipe) could reach the device and a firmware reflash did not
+  clear the record, so recovery meant a full flash erase, destroying the seed and
+  every credential. It also fired from ordinary input: the ykman-compatibility
+  suffix (` OTP+FIDO+CCID`, 14 bytes) pushed any 17-byte YubiKey-style name over the
+  edge, well inside the `≤32` that `rsk hw` advertised. Every string is now clamped
+  to 30 code units on a char boundary; the suffix is preserved by truncating the
+  *name* instead of dropping the token, build-time overrides are checked at compile
+  time, and `rsk hw` rejects what would be truncated. **A device already bricked
+  this way now boots again after a firmware update** — the record is clamped on
+  read.
+- **The "permanent" OpenPGP touch policy could be switched off.** UIF value `02`
+  is defined as not changeable by `PUT DATA` (OpenPGP 3.4 §4.4.3.6), but the DOs
+  went through the generic writer, so a caller with PW3 — which already satisfies
+  the PSO:CDS access condition — could lower it to `00` and sign with no press,
+  silently. `PUT DATA` on a permanent UIF now answers `6985`, and undefined flag
+  values are rejected instead of stored and echoed back. Only `TERMINATE DF` clears
+  it, as the spec intends.
+- **An OATH OTP-PIN planted before an access code existed survived it.** `SELECT`
+  sets `validated = !code_set`, so on a factory-state applet `validated` is
+  vacuously true and `SET PIN` was effectively unauthenticated; `VERIFY PIN` sets
+  the same flag as `VALIDATE`, so the planted PIN remained a second, invisible
+  unlock path *through* the access code the owner set afterwards, removable only by
+  a reset that destroys every credential. Minting the PIN on a code-less applet now
+  requires the operator, and installing an access code drops any PIN minted without
+  it (re-mint it from a validated session).
+- **A CCID card reset no longer leaves a verified PIN behind.** `IccPowerOff`/
+  `IccPowerOn` only flipped a status byte and never reached the applet layer, so
+  after `SCardDisconnect(SCARD_RESET_CARD)` — the host's primitive for forcing
+  re-authentication — the previously selected applet stayed current with PIV
+  `has_pin` / OpenPGP `has_pw1-3` / OATH `validated` intact, and a second local
+  process could sign, decrypt or read OATH codes without ever authenticating.
+  Contrary to OpenPGP 3.4 (VERIFY) and NIST SP 800-73pt2-5 §2.3. A power transition
+  now deselects the current applet and clears its security status plus any buffered
+  chain / pending response, and OpenPGP and OATH gained the `deselect` their own
+  docs already promised.
+- **The touch indicator can no longer be silenced or disguised.** On a build
+  without the trusted display the LED is the only sign the key is awaiting consent,
+  and the CCID `SET LED` had no gate at all — not even under `strict-config`, which
+  gates its FIDO twin. The touch state is now clamped to a minimum brightness and a
+  visible colour on every write path, and `SET LED` is presence-gated under
+  `strict-config` so the vendor AID cannot bypass it.
+- **Resident credential IDs are genuinely fingerprint-free now.** The v4 id set
+  its last 10 bytes to `HMAC(id[0..32], "resident-id")` — keyed by the half already
+  published to the relying party — so any RP holding an id could recompute the
+  relation offline and identify the authenticator model, which is exactly the
+  correlation handle the format was rewritten to remove. All 42 bytes are now keyed
+  by the device secret. Forward-only: existing credentials keep working unchanged.
+- **The clientPIN soft lock survives a warm reboot.** CTAP 2.1 §6.5.5.6 requires a
+  power cycle after three failed PIN attempts, so a host cannot burn the retry
+  budget unattended — but the flag was RAM-only and a host can request a warm reset
+  ungated, clearing it. Two reboots then exhausted all eight attempts in seconds and
+  permanently blocked the applet. The lock is now recorded in a watchdog scratch
+  register, which survives `sys_reset` but not a real power cycle.
+- **An OATH-HOTP slot no longer answers challenge-response.** `CFG_CHAL_HMAC` is a
+  two-bit mask but was tested for any bit, and `TKT_OATH_HOTP` shares a bit with
+  `TKT_CHAL_RESP` — so a slot from `ykman otp hotp --digits 8` entered the HMAC arm
+  and, carrying no `CFG_CHAL_BTN_TRIG`, answered with **no button press**, turning a
+  press-gated HOTP seed into a free chosen-message MAC oracle. Both arms now match
+  the full mask, and such a slot is reported to `ykman` as a touch slot as it should
+  have been.
+- **One press no longer authorizes two operations over OTP-HID.** The OTP-HID
+  dispatch did not clear the click-gesture state the way every other dispatch does,
+  so the release edge of a press already consumed for a touch-gated
+  challenge-response was counted as a click and typed a ticket as well — a static
+  password in slot 1 in full.
+- **`authenticatorLargeBlobs` no longer halts the device.** The length ceiling was
+  checked on a 32-bit-truncated value while the floor was checked on the raw `u64`,
+  so a length ≥ 2³² with small low bits passed both, stored a value below the
+  minimum, and underflowed a slice bound at commit — panicking with `panic_halt`,
+  which took every applet down until a physical replug. The length is now narrowed
+  once and bounded on both ends.
+- **Seed-moving vendor commands state what they do.** `BACKUP_LOAD` re-keys the
+  device, making every existing credential undecryptable, but the PIN half of its
+  gate is waived when no PIN is set — leaving it on one touch under a generic
+  prompt. It now takes an explicit "Replace device seed?" confirmation in that
+  state. `BACKUP_FINALIZE`, which irreversibly closes seed export and the on-device
+  recovery-phrase reveal, took no request parameter at all and so could not be
+  PIN-gated even in principle; it now carries the PIN gate and says
+  "Seal backup permanently?" instead of "Finish backup?".
+- **The trusted display waits for your finger to lift.** `confirm_wait` and
+  `run_add_passkey` were the only modals that did not debounce, and the touch
+  controller reports a level rather than an edge — so one continuous press could
+  approve two consecutive ceremonies (two OpenPGP signatures, two OATH codes), and
+  the single-tap passkey card could be approved in the same frame it was painted,
+  too fast to read.
+
+Findings from the 27th internal security audit. Most of the run re-examined the
+run-26 fixes, and three of them turned out to guard one path out of several.
+bcdDevice → `0x0854`; host tooling → `tools/rsk` 0.3.20.
+
+- **A PIV factory reset now finishes the job (HIGH).** The sweep ran eight batches
+  of 32 — a hard 256-file budget with no completion check — and then reported
+  `9000` regardless. `PUT DATA` exposes 240 host-writable data objects, so anyone
+  holding the management key (the public default on an unprovisioned card) could
+  push a provisioned card past that budget: the reset then deleted the PIN files
+  and stopped, `scan_files` re-seeded the default PIN `123456`, and the previous
+  owner's private keys kept both their sealed scalar and their policy record, so
+  `GENERAL AUTHENTICATE` still signed. `rsk offboard` signed a receipt certifying
+  the wipe. The sweep now runs to convergence like the FIDO and OpenPGP wipes: it
+  budgets *distinct deletes*, not passes, because the log-structured flash yields
+  one entry per superseded version and a batch of 32 entries can be three files; it
+  refuses to call a range clear when the enumeration was cut short by a read fault;
+  and it re-creates the PIN/PUK/retry files even when it fails, since a card left
+  without them answered `6A88` to every later `RESET` instead of the honest error.
+  A sweep that cannot converge answers `6581` instead of claiming success.
+- **The clientPIN retry budget can no longer be burned by a rebooting host
+  (HIGH).** run-26 persisted the soft-lock *flag* across a warm reset but not the
+  mismatch counter that arms it. A host that stopped at two wrong PINs never armed
+  the lock, took the ungated warm reboot, and started a fresh batch — while the
+  flash retry counter, decremented before the comparison, kept falling. Four rounds
+  spent all eight attempts in seconds, with no user interaction, and permanently
+  blocked the applet; the only recovery destroys every passkey and the seed. The
+  counter now travels with the flag in the watchdog scratch register, so the
+  power-cycle CTAP 2.1 §6.5.5.6 demands is a real one.
+- **One button hold no longer authorises two operations (HIGH).** The wait broke on
+  the button *level*, and its release debounce was bounded by the same presence
+  timeout as the wait itself, so it could return "confirmed" with the finger still
+  down. Requests are serialised, so a second one queued behind entered the wait
+  milliseconds later and consumed the same unbroken press — a full `getAssertion`,
+  an OpenPGP UIF signature or a PIV touch-policy signature the user never approved.
+  A press is now spent once a ceremony returns and stays spent until the finger
+  actually lifts. The phy record's presence timeout (tag `0x08`) was also
+  host-settable to 1 s through the ungated `CONFIG_WRITE`, which made the window
+  trivial to open; it is now clamped to **≥ 10 s**, the floor the device's own
+  settings menu already offered.
+- **`authenticatorReset` now takes a fresh power-up.** CTAP 2.1 §6.6 lets an
+  authenticator with no display refuse a reset that does not follow one, and the
+  keys people compare this one against do. RS-Key did not: destroying the seed,
+  every passkey and the PIN was one ungated CTAP command plus a touch, at any point
+  in a session — and on a screenless build the touch prompt says nothing about what
+  it approves, so the press could be collected under cover of an ordinary sign-in.
+  A reset more than **10 seconds** after the device attached now answers
+  `0x30 CTAP2_ERR_NOT_ALLOWED` before the prompt. The window is measured from the USB
+  attach rather than from power-on: boot spends seconds on the TRNG seed, the seal
+  migrations and the one-shot at-rest hardening lap, which would have closed the
+  window before the first command could arrive on exactly the devices whose owners
+  most need the reset. A warm reset *closes* the window instead of reopening it,
+  since a host can request one ungated. Trusted-display builds stay exempt — their
+  prompt names the operation. Practical effect: `ykman fido reset` and the browser
+  "reset security key" flows now need the key replugged first, and `rsk offboard`
+  detects the refusal and walks the operator through the replug.
+- **A reserved U2F control byte no longer signs.** U2F Raw Message Formats §7.2
+  assigns AUTHENTICATE exactly three P1 values — check-only `07`, enforce
+  user presence `03`, don't-enforce `08` — and anything else fell through to the
+  don't-enforce path. The device signed the challenge with no touch *and* with the
+  user-presence bit clear, so nothing in the assertion recorded that no human was
+  there: a silent signing oracle over every registered app id for any process that
+  could open the HID interface. Reserved values now answer `6A86`, and the
+  `strict-up` build — which promises a touch on every assertion — rejects `08` as
+  well.
+- **Installing an org attestation key says what it replaces.** `ATT_IMPORT` hands
+  the device the identity every later U2F registration signs with, and its gate
+  waives the PIN half when no PIN is set — the same waiver run-26 fixed for
+  `BACKUP_LOAD` — leaving the handover on one generic "Import attestation key?"
+  touch. On a device with no PIN it now takes a distinct "Replace attestation
+  identity?" confirmation first.
+- **Rotating the PIV management key now revokes its PIN escrow.** `PRINTED`
+  discloses the live `9B` key when ADMIN DATA carries the "PIN-protected" flag —
+  but that object is written verbatim by any management-authenticated host through
+  `PUT DATA` on `5FFF00`, and nothing cleared the flag on rotation. So the flag
+  could be planted on a key that was never escrowed, and the owner's obvious
+  remediation (rotate to a strong key) handed that new key to whoever held the PIN.
+  `SET MANAGEMENT KEY` now clears the flag once the new key and its metadata are
+  stored, so a rotation that fails part-way leaves the flag describing the key that
+  is still there rather than stranding an owner whose only access was `PRINTED`. A
+  host that wants escrow re-writes ADMIN DATA afterwards, which is what `ykman piv
+  access change-management-key --protect` already does.
+- **A torn PIV key import no longer attests as generated on-device.** `IMPORT`
+  committed the sealed private key first and the origin record last, so a write
+  failure at the wrong moment left an attacker-supplied key in a slot still marked
+  `ORIGIN_GENERATED` — and `ATTESTATION` takes no PIN and no management gate, so
+  the device's own F9 key would certify a software-held key as hardware-backed and
+  non-exportable. The slot's metadata is now dropped *before* the key is written
+  (`MOVE KEY` too), so a torn import fails closed: the slot reads as absent until
+  it is re-provisioned.
+- **An empty new admin PIN no longer wedges the OpenPGP applet.** `CHANGE
+  REFERENCE DATA` carved the old PIN out with an off-by-one bound, so an APDU whose
+  `Lc` equalled the stored PW3 length authenticated and then stored an *empty* new
+  PW3. From then on every `VERIFY` answered `6A88` before the retry counter moved,
+  and `TERMINATE DF` — allowed only with PW3 verified or blocked — was refused
+  forever, leaving a device-wide factory reset as the only escape. The card now
+  enforces its own reference lengths: PW1 ≥ 6, PW3 and the Reset Code ≥ 8, all
+  ≤ 127, answering `6700`. A PIN accepted by an older firmware keeps verifying.
+- **The touch indicator's guarantee now holds on every write path.** run-26 clamped
+  the awaiting-touch LED, but the clamp sat in the CCID `SET LED` handler only. The
+  FIDO `CONFIG_WRITE` LED target (ungated by default, and what `rsk led --transport
+  fido` uses), the effect/speed setters, the phy boot-brightness default and the
+  boot reload all reached the same pixels unclamped — so the commit's own
+  documented behaviour was false for its own CLI flag. The floor moved into the
+  `EF_LED_CONF` codec, so every decode enforces it, and it now covers the two
+  bypasses the brightness check missed: a `speed` of 1 rendered an all-black
+  breathing frame while brightness read compliant, and setting *idle* to the touch
+  look made the two states pixel-identical. The touch **colour** is now reserved —
+  any other status configured in it is reset to its own factory look, whatever its
+  effect, brightness or speed. Keying that on the whole quad would not have held:
+  one unit of brightness or speed is byte-unequal and eye-identical, steady mode
+  ignores the effect byte outright, and on a one-LED board every effect renders the
+  same solid frame.
+- **The `rsk offboard` receipt can be re-checked offline.** The two checks that
+  gave the receipt meaning — the signed head folding from the recorded window, and
+  that window containing the `RESET` event — ran in memory and against data the
+  saved JSON then dropped, so no later reader could redo them. A departing device
+  holder could capture a genuine signature block from an *unwiped* key and
+  hand-write a receipt for a wipe that never happened. The receipt is now split
+  along the trust boundary — `attested` (what the device signed, plus the epoch and
+  raw window needed to re-derive it) and `host_observations` (serial, timestamp,
+  per-step results, decoded window, none of it attested) — and `rsk offboard
+  --verify <receipt.json> [--expect-key …]` redoes the fold, the `RESET` scan and
+  the signature with no device present. **Breaking for anything parsing the old
+  flat shape**; `--verify` refuses a v1 receipt rather than pretend to check it.
+- **The display's add-passkey card no longer approves a still-held finger.** The
+  run-26 release-debounce gives up with the finger down once the presence timeout
+  expires, and this card evaluated its single-tap *Allow* before the timeout check —
+  so two back-to-back registrations could register the second silently. The
+  timeout is now tested first, and the release wait carries a floor of its own so a
+  host-shortened presence timeout cannot reduce it to nothing. (`confirm_wait` was
+  already immune: its 800 ms hold outlasts the check.)
+- **A blocked OpenPGP PIN no longer derives or writes flash before refusing.**
+  `check_pin` derived the verifier, compared, retried against the legacy key-base
+  arm and could run a two-write migration, and only then consulted the retry-block
+  floor. The status word was `6983` either way, but the work was not: on a device in
+  the narrow pre-migration state, a correct guess took measurably longer than a
+  wrong one against an already-blocked reference. The floor is now checked first,
+  as every sibling applet already does.
+- **An abandoned credential-management enumeration no longer outlives its token.**
+  The `getNextRP` / `getNextCredential` walkers carry no `pinUvAuthParam` of their
+  own (CTAP 2.1 §6.8) — they inherit the *Begin* call's authorisation — but nothing
+  invalidated the cursor when that token stopped being usable. A credential manager
+  that opened an enumeration and closed its dialog left the remainder drainable by
+  any unauthenticated caller for the rest of the power cycle: each RP, and per
+  credential the user id, name, credential id, public key and `largeBlobKey` (which
+  then decrypts that credential's large blob through the unauthenticated read). The
+  cursor now dies with the token.
+- **`rsk offboard` checks the journal before it wipes, and always writes the
+  receipt.** Audit journalling is opt-in and off by default, so on a stock device
+  the post-wipe window was empty, the `RESET` scan failed, and the tool exited
+  before saving anything — every applet destroyed, no record, and re-running could
+  not help. It now probes the journal state *before* the confirmation prompt and
+  refuses with a pointer to `rsk audit enable` or the new `--no-receipt` opt-out.
+  Post-wipe problems are recorded as `notes` entries and the file is written
+  unconditionally; the exit code still reports the failure. `--no-receipt` means
+  what it says — no preflight, no checkpoint touch, no file — and the re-check hint
+  printed at the end now points at the fingerprint recorded when the key was
+  enrolled, not at the receipt's own, which would check the receipt against itself.
+- **An unauthenticated host can no longer flush the audit journal.**
+  `CONFIG_WRITE` is ungated on the default build and is the only journalled event a
+  silent host can drive on demand, so 128 of them evicted every other entry — boots,
+  resets, PIN lockouts, seed moves — from the 128-slot ring. Skipping the entry for
+  a byte-identical replay was no defence: alternating a single brightness byte
+  really changes the record every time. A *run* of config writes now costs one slot.
+  The newest entry keeps its sequence number, timestamp and opening target and
+  counts the rest in its detail (`repeats(2 LE) ‖ targets(1)`, a `1 << target` mask
+  of every record the run touched), so `seq_next` never advances and nothing is
+  evicted; a run never folds across a power cycle, which would have swallowed the
+  `BOOT` entry between them. `rsk audit log` prints the entry as `300× write
+  (phy+led)` instead of raw hex. One thing for anything re-checking a chain: a
+  coalesce moves the head *without* advancing `seq_next`, so the same `seq_next`
+  with a different head is now legitimate rather than a tamper signal. Separately,
+  a phy `CONFIG_WRITE` on a device whose `EF_PHY` is absent or unreadable was
+  answered `Ok` with nothing stored — the no-op check could not tell "no record"
+  from "a record equal to the defaults" — so a host writing the defaults to repair
+  it got silence. It now takes the write.
+- **`rsk audit verify` no longer calls an unpinned run "journal authentic".** The
+  verifying key comes from the same device response being checked, so without
+  `--expect-key` the check proves self-consistency and nothing about *which* device
+  signed. The verdict now says so, and `--expect-key` accepts the 16-hex fingerprint
+  as well as the full SEC1 point, matching the fingerprint the tool tells you to
+  record.
+- **The release workflow no longer interpolates the tag into a shell command.**
+  `release-build.yml` substituted the raw tag input into a `run:` block inside the
+  SLSA signing job, and `git check-ref-format` accepts `$(…)`, backticks, `;` and
+  `|`. A credential with `Contents: write` but without the `workflow` scope can
+  create a tag while being rejected on any workflow-file edit, so tag creation was a
+  way into the job holding the release signing identity. The tag is passed through
+  `env:` and validated for shape and character set before use. CI-only; no runtime
+  effect.
+
+Two of the run's findings were assessed and **not** fixed in code, so they are
+written down rather than closed. The at-rest seals authenticate nothing against
+someone who can *write* flash over BOOTSEL: the pre-OTP key base derives from the
+public chip serial and stays readable after the burn (that is what keeps an
+already-provisioned device working across the upgrade), so a planted record opens
+under it and the boot migration re-seals it under the fused root. Closing that
+needs a fuse-rooted latch on the migration window, which makes `lock-page58`
+load-bearing for boot correctness — the threat model and the limitations page now
+say so. And the config-write coalescing above bounds the ring flood to one slot per
+power cycle, not to none: a phy write latches a reboot, so a host willing to
+re-enumerate the device can still spend two slots per cycle. Each cycle is a full
+USB re-enumeration and plainly visible, and gating the write (`--features
+strict-config`) remains the complete answer.
+
 ## [0.4.2] - 2026-07-25
 
 ### Changed
@@ -2286,7 +2782,8 @@ family that keeps the "enterprise" features in the open tree.
   signature of it, and a CycloneDX SBOM. See
   [docs/releases.md](docs/releases.md) to verify a download.
 
-[Unreleased]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.2...HEAD
+[Unreleased]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.3...HEAD
+[0.4.3]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/TheMaxMur/RS-Key/compare/v0.3.10...v0.4.0

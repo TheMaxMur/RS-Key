@@ -21,13 +21,16 @@ the getInfo advertisement on the device:
                                 largeBlobKey response field (0x07)
 
 The minPinLength extension and the PIN-gated config path are covered by the host
-tests. Self-contained; resets at the start.
+tests. Self-contained; resets at the start and before step 6, and asks for a
+replug at each one — CTAP 2.1 §6.6 accepts a reset only just after power-up (see
+replug.py).
 """
 import hashlib
 import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import replug  # noqa: E402
 from ctaphid import (  # noqa: E402
     CTAPHID_INIT,
     Protocol2,
@@ -78,8 +81,7 @@ def main():
         print(f"getInfo: extensions={exts}, maxCredBlobLength={m[0x0F]}")
 
         # 2. reset.
-        rs = send_cbor(dev, cid, bytes([0x07]))
-        assert rs[0] == 0x00, f"reset status {rs[0]:#x}"
+        dev, cid = replug.reset(dev, "step 2's reset")
 
         cdh = hashlib.sha256(b"rs-key test").digest()
 
@@ -122,8 +124,7 @@ def main():
         print("getAssertion (discovery): NO_CREDENTIALS — credProtect=2 hidden without UV")
 
         # 6. Fresh credential opting into hmac-secret + largeBlobKey.
-        rs = send_cbor(dev, cid, bytes([0x07]))
-        assert rs[0] == 0x00, f"reset status {rs[0]:#x}"
+        dev, cid = replug.reset(dev, "step 6's reset")
         mc = send_cbor(dev, cid, bytes([0x01]) + enc({
             1: cdh,
             2: {"id": RP_ID},

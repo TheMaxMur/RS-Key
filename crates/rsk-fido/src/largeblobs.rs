@@ -5,7 +5,9 @@
 //! EF_LARGEBLOB. `get` reads a fragment at an offset; `set` accumulates
 //! fragments across commands and commits only once the whole array (length
 //! fixed by the first fragment, trailing 16 bytes = left half of
-//! SHA-256(body)) has arrived and verified.
+//! SHA-256(body)) has arrived and verified. A write needs a verified
+//! `pinUvAuthParam` only once the device is protected — a PIN is configured, or
+//! alwaysUv is on (§6.10.2).
 
 use minicbor::encode::write::Cursor;
 use minicbor::encode::{Error, Write};
@@ -17,7 +19,7 @@ use rsk_crypto::sha256;
 
 use crate::cbordec::{cbor, def_map};
 use crate::consts::{
-    CTAP_LARGE_BLOBS, EF_LARGEBLOB, LARGEBLOB_MIN, MAX_FRAGMENT_LENGTH, MAX_LARGE_BLOB_SIZE,
+    CTAP_LARGE_BLOBS, EF_LARGEBLOB, EF_PIN, LARGEBLOB_MIN, MAX_FRAGMENT_LENGTH, MAX_LARGE_BLOB_SIZE,
 };
 use crate::error::{CtapError, CtapResult};
 use crate::state::PERM_LBW;
@@ -29,8 +31,10 @@ struct Req<'a> {
     set: Option<&'a [u8]>,               // 0x02 — fragment to write
     offset: u64,                         // 0x03 — UINT64_MAX sentinel = absent
     length: u64,                         // 0x04 — total array length (first fragment)
+    length_present: bool,                // whether 0x04 was supplied (a `get` forbids it)
     pin_uv_auth_param: Option<&'a [u8]>, // 0x05
     proto: u64,                          // 0x06
+    proto_present: bool,                 // whether 0x06 was supplied (a `get` forbids it)
 }
 
 fn parse(data: &[u8]) -> Result<Req<'_>, CtapError> {
@@ -41,8 +45,10 @@ fn parse(data: &[u8]) -> Result<Req<'_>, CtapError> {
         set: None,
         offset: u64::MAX,
         length: 0,
+        length_present: false,
         pin_uv_auth_param: None,
         proto: 0,
+        proto_present: false,
     };
     let n = def_map(&mut d)?;
     // Keys must be strictly ascending; unlike authenticatorConfig, key 1 is not
@@ -63,9 +69,15 @@ fn parse(data: &[u8]) -> Result<Req<'_>, CtapError> {
             }
             0x02 => req.set = Some(cbor(d.bytes())?),
             0x03 => req.offset = cbor(d.u64())?,
-            0x04 => req.length = cbor(d.u64())?,
+            0x04 => {
+                req.length = cbor(d.u64())?;
+                req.length_present = true;
+            }
             0x05 => req.pin_uv_auth_param = Some(cbor(d.bytes())?),
-            0x06 => req.proto = cbor(d.u64())?,
+            0x06 => {
+                req.proto = cbor(d.u64())?;
+                req.proto_present = true;
+            }
             _ => cbor(d.skip())?,
         }
     }
@@ -98,8 +110,13 @@ pub fn large_blobs<S: Storage, R: Rng>(
 }
 
 fn read_fragment<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req, out: &mut [u8]) -> CtapResult {
-    if req.length != 0 {
+    // §6.10.2: a read carries neither `length` nor the pinUvAuthParam pair, and may
+    // not ask for more than one fragment's worth.
+    if req.length_present || req.pin_uv_auth_param.is_some() || req.proto_present {
         return Err(CtapError::InvalidParameter);
+    }
+    if req.get > MAX_FRAGMENT_LENGTH as u64 {
+        return Err(CtapError::InvalidLength);
     }
     let mut blob = [0u8; MAX_LARGE_BLOB_SIZE];
     let size = ctx
@@ -132,41 +149,54 @@ fn write_fragment<S: Storage, R: Rng>(
     if set.len() > MAX_FRAGMENT_LENGTH {
         return Err(CtapError::InvalidLength);
     }
-    let offset = req.offset as usize;
+    // `usize` is 32-bit on the firmware target, so narrow BEFORE bounding: checking
+    // the ceiling on a truncated length while checking the floor on the raw u64 let
+    // a length ≥ 2^32 with small low bits pass both and store a value under
+    // LARGEBLOB_MIN, which then underflowed `total - 16` at the commit below.
+    let offset = usize::try_from(req.offset).map_err(|_| CtapError::InvalidParameter)?;
     if offset == 0 {
-        if req.length == 0 {
+        let length = usize::try_from(req.length).map_err(|_| CtapError::LargeBlobStorageFull)?;
+        if length == 0 {
             return Err(CtapError::InvalidParameter);
         }
-        if req.length as usize > MAX_LARGE_BLOB_SIZE {
+        if length > MAX_LARGE_BLOB_SIZE {
             return Err(CtapError::LargeBlobStorageFull);
         }
-        if req.length < LARGEBLOB_MIN as u64 {
+        if length < LARGEBLOB_MIN {
             return Err(CtapError::InvalidParameter);
         }
-        ctx.state.lba.expected_length = req.length as usize;
+        ctx.state.lba.expected_length = length;
         ctx.state.lba.expected_next_offset = 0;
-    } else if req.length != 0 {
+    } else if req.length_present {
         return Err(CtapError::InvalidParameter);
     }
     if offset != ctx.state.lba.expected_next_offset {
         return Err(CtapError::InvalidSeq);
     }
 
-    // pinUvAuthParam MAC over 0xff×32 ‖ 0x0c ‖ 0x00 ‖ offset_le(4) ‖ sha256(set).
-    let param = req.pin_uv_auth_param.ok_or(CtapError::PuatRequired)?;
-    if req.proto == 0 {
-        return Err(CtapError::MissingParameter);
+    // §6.10.2 gates the write on "the authenticator is protected by some form of user
+    // verification or the alwaysUv option ID is present and true" — the spec's own note
+    // spells out the converse: an array CAN be written without user verification while
+    // no PIN is configured. Entries stay AEAD-sealed under their largeBlobKey, so an
+    // unverified write can destroy but never read.
+    if ctx.fs.has_data(EF_PIN) || crate::config::always_uv_enabled(ctx.fs) {
+        // pinUvAuthParam MAC over 0xff×32 ‖ 0x0c ‖ 0x00 ‖ offset_le(4) ‖ sha256(set).
+        let param = req.pin_uv_auth_param.ok_or(CtapError::PuatRequired)?;
+        if req.proto == 0 {
+            return Err(CtapError::MissingParameter);
+        }
+        let proto = PinProto::from_u64(req.proto).ok_or(CtapError::InvalidParameter)?;
+        let mut vd = [0u8; 70];
+        vd[..32].fill(0xff);
+        vd[32] = CTAP_LARGE_BLOBS;
+        vd[34..38].copy_from_slice(&(offset as u32).to_le_bytes());
+        vd[38..70].copy_from_slice(&sha256(set));
+        if !ctx.state.verify_token(proto, &vd, param) || ctx.state.paut.permissions & PERM_LBW == 0
+        {
+            return Err(CtapError::PinAuthInvalid);
+        }
+        ctx.state.mark_token_used(ctx.now_ms);
     }
-    let proto = PinProto::from_u64(req.proto).ok_or(CtapError::InvalidParameter)?;
-    let mut vd = [0u8; 70];
-    vd[..32].fill(0xff);
-    vd[32] = CTAP_LARGE_BLOBS;
-    vd[34..38].copy_from_slice(&(offset as u32).to_le_bytes());
-    vd[38..70].copy_from_slice(&sha256(set));
-    if !ctx.state.verify_token(proto, &vd, param) || ctx.state.paut.permissions & PERM_LBW == 0 {
-        return Err(CtapError::PinAuthInvalid);
-    }
-    ctx.state.mark_token_used(ctx.now_ms);
 
     if offset + set.len() > ctx.state.lba.expected_length {
         return Err(CtapError::InvalidParameter);
@@ -180,15 +210,21 @@ fn write_fragment<S: Storage, R: Rng>(
 
     if ctx.state.lba.expected_next_offset == ctx.state.lba.expected_length {
         let total = ctx.state.lba.expected_length;
-        // The platform appends left16(SHA-256(body)) as an integrity tag; verify
-        // it (skipped for the 17-byte empty-array minimum, body = 1 byte).
+        // The platform appends left16(SHA-256(body)) as an integrity tag; §6.10.2 has
+        // no exemption, and the LARGEBLOB_MIN floor above keeps the body non-empty.
         let sha = sha256(&ctx.state.lba.temp[..total - 16]);
-        if total > LARGEBLOB_MIN && sha[..16] != ctx.state.lba.temp[total - 16..total] {
+        if sha[..16] != ctx.state.lba.temp[total - 16..total] {
             return Err(CtapError::IntegrityFailure);
         }
         ctx.fs
             .put(EF_LARGEBLOB, &ctx.state.lba.temp[..total])
             .map_err(|_| CtapError::Other)?;
+        // A completed transfer is terminal: the next write starts a fresh array at
+        // offset 0. Leaving the accumulator armed let a zero-length fragment at
+        // `total` re-enter this branch and re-run the flash write — unauthenticated
+        // on a PIN-less key, since the token check above is skipped there.
+        ctx.state.lba.expected_length = 0;
+        ctx.state.lba.expected_next_offset = 0;
     }
     Ok(0)
 }

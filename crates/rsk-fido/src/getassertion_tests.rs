@@ -653,6 +653,200 @@ fn register_then_login_non_resident() {
     assert_eq!(verify_assertion(&ga, &x, &y), 3);
 }
 
+/// A built-in-UV presence backend (the trusted-display pad): reports `options.uv`
+/// available, "types" a fixed PIN, and counts the separate presence gestures the
+/// ceremony asks for on top of that.
+struct UvPad {
+    /// Overrides the entry, to exercise the Deny branch.
+    outcome: Option<crate::PinEntry>,
+    touches: usize,
+}
+impl UvPad {
+    fn typing() -> Self {
+        Self {
+            outcome: None,
+            touches: 0,
+        }
+    }
+    fn ending(outcome: crate::PinEntry) -> Self {
+        Self {
+            outcome: Some(outcome),
+            touches: 0,
+        }
+    }
+}
+impl crate::UserPresence for UvPad {
+    fn request(&mut self, _c: crate::Confirm<'_>) -> crate::Presence {
+        self.touches += 1;
+        crate::Presence::Confirmed
+    }
+    fn uv_available(&self) -> bool {
+        true
+    }
+    fn collect_pin(&mut self, _min: usize, out: &mut [u8]) -> crate::PinEntry {
+        if let Some(o) = self.outcome {
+            return o;
+        }
+        out[..4].copy_from_slice(b"1234");
+        crate::PinEntry::Entered(4)
+    }
+}
+
+/// A getAssertion for `allow` carrying `options: {uv: true}`, optionally with a
+/// pinUvAuthParam.
+fn ga_request_uv(allow: &[u8], param: Option<(&[u8], u64)>) -> std::vec::Vec<u8> {
+    let mut buf = [0u8; 512];
+    let n = {
+        let mut e = Encoder::new(Cursor::new(&mut buf[..]));
+        e.map(if param.is_some() { 6 } else { 4 }).unwrap();
+        e.u8(1).unwrap().str("example.com").unwrap();
+        e.u8(2).unwrap().bytes(&CDH).unwrap();
+        e.u8(3).unwrap().array(1).unwrap().map(2).unwrap();
+        e.str("type").unwrap().str("public-key").unwrap();
+        e.str("id").unwrap().bytes(allow).unwrap();
+        e.u8(5).unwrap().map(1).unwrap();
+        e.str("uv").unwrap().bool(true).unwrap();
+        if let Some((p, proto)) = param {
+            e.u8(6).unwrap().bytes(p).unwrap();
+            e.u8(7).unwrap().u64(proto).unwrap();
+        }
+        e.writer().position()
+    };
+    buf[..n].to_vec()
+}
+
+#[test]
+fn uv_option_with_pin_uv_auth_param_is_not_an_error() {
+    let (mut fs, mut rng) = setup();
+    let cred_id = register_non_resident(&mut fs, &mut rng);
+    let mut state = crate::FidoState::new();
+    let token = arm_pin(&mut fs, &mut state);
+    // §6.2.2 step 4: pinUvAuthParam takes precedence and the "uv" option is treated
+    // as false — the pair is NOT CTAP2_ERR_INVALID_OPTION.
+    let mut param = [0u8; 32];
+    let plen = rsk_crypto::pinproto::authenticate(PinProto::Two, &token, &CDH, &mut param).unwrap();
+    let mut out = [0u8; 1024];
+    let mut presence = crate::AlwaysConfirm;
+    let mut ctx = Ctx {
+        presence: &mut presence,
+        dev: dev(),
+        fs: &mut fs,
+        rng: &mut rng,
+        state: &mut state,
+        now_ms: 0,
+    };
+    let req = ga_request_uv(&cred_id, Some((&param[..plen], 2)));
+    let n = get_assertion(&mut ctx, &req, &mut out).unwrap();
+    let ad = assertion_auth_data(&out[..n]);
+    assert_eq!(ad[32] & FLAG_UV, FLAG_UV, "the token still sets UV");
+}
+
+#[test]
+fn uv_option_without_builtin_uv_is_invalid_option() {
+    let (mut fs, mut rng) = setup();
+    let cred_id = register_non_resident(&mut fs, &mut rng);
+    let mut state = crate::FidoState::new();
+    arm_pin(&mut fs, &mut state);
+    // §6.2.2 step 4: a screenless build has no built-in user verification method,
+    // so a token-less uv:true IS CTAP2_ERR_INVALID_OPTION.
+    let mut out = [0u8; 1024];
+    let mut presence = crate::AlwaysConfirm;
+    let mut ctx = Ctx {
+        presence: &mut presence,
+        dev: dev(),
+        fs: &mut fs,
+        rng: &mut rng,
+        state: &mut state,
+        now_ms: 0,
+    };
+    assert_eq!(
+        get_assertion(&mut ctx, &ga_request_uv(&cred_id, None), &mut out),
+        Err(CtapError::InvalidOption)
+    );
+}
+
+#[test]
+fn uv_option_runs_builtin_uv_and_supplies_user_presence() {
+    let (mut fs, mut rng) = setup();
+    let cred_id = register_non_resident(&mut fs, &mut rng);
+    crate::clientpin::store_local_pin(&dev(), &mut fs, b"1234").unwrap();
+    let mut state = crate::FidoState::new();
+    // §6.2.2 step 6.2: with the pad configured, uv:true is honored — the PIN is
+    // typed on the device. Step 8: that ceremony IS the evidence of user
+    // interaction, so UP is set without asking for a second touch.
+    let mut out = [0u8; 1024];
+    let mut pad = UvPad::typing();
+    let n = {
+        let mut ctx = Ctx {
+            presence: &mut pad,
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 0,
+        };
+        get_assertion(&mut ctx, &ga_request_uv(&cred_id, None), &mut out).unwrap()
+    };
+    let ad = assertion_auth_data(&out[..n]);
+    assert_eq!(ad[32] & FLAG_UV, FLAG_UV, "built-in UV sets UV");
+    assert_eq!(ad[32] & FLAG_UP, FLAG_UP, "…and asserts presence");
+    assert_eq!(
+        pad.touches, 0,
+        "built-in UV must not ask for a second touch"
+    );
+}
+
+#[test]
+fn builtin_uv_decline_is_operation_denied() {
+    let (mut fs, mut rng) = setup();
+    let cred_id = register_non_resident(&mut fs, &mut rng);
+    crate::clientpin::store_local_pin(&dev(), &mut fs, b"1234").unwrap();
+    let mut state = crate::FidoState::new();
+    // The one deliberate divergence from §6.2.2 step 6.2's error ladder: a Deny on
+    // the pad stays OPERATION_DENIED. PUAT_REQUIRED would send the platform off to
+    // collect the same PIN over USB, undoing the refusal the user just made.
+    let mut out = [0u8; 1024];
+    let mut pad = UvPad::ending(crate::PinEntry::Declined);
+    let mut ctx = Ctx {
+        presence: &mut pad,
+        dev: dev(),
+        fs: &mut fs,
+        rng: &mut rng,
+        state: &mut state,
+        now_ms: 0,
+    };
+    assert_eq!(
+        get_assertion(&mut ctx, &ga_request_uv(&cred_id, None), &mut out),
+        Err(CtapError::OperationDenied)
+    );
+}
+
+#[test]
+fn always_uv_upgrades_a_tokenless_request_to_builtin_uv() {
+    let (mut fs, mut rng) = setup();
+    let cred_id = register_non_resident(&mut fs, &mut rng);
+    crate::clientpin::store_local_pin(&dev(), &mut fs, b"1234").unwrap();
+    fs.put(EF_ALWAYS_UV, &[1]).unwrap();
+    let mut state = crate::FidoState::new();
+    // §6.2.2 step 5.4: alwaysUv treats the "uv" option as true when the pad is
+    // configured, so the request is verified rather than refused with 0x36.
+    let mut out = [0u8; 1024];
+    let mut pad = UvPad::typing();
+    let n = {
+        let mut ctx = Ctx {
+            presence: &mut pad,
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 0,
+        };
+        get_assertion(&mut ctx, &ga_request(Some(&cred_id)), &mut out).unwrap()
+    };
+    let ad = assertion_auth_data(&out[..n]);
+    assert_eq!(ad[32] & FLAG_UV, FLAG_UV);
+}
+
 #[test]
 fn always_uv_requires_user_verification() {
     let (mut fs, mut rng) = setup();
@@ -1598,6 +1792,101 @@ fn get_next_assertion_walks_resident_credentials() {
     );
 }
 
+/// §6.3 "Reset the timer": the 30-second budget covers the gap between consecutive
+/// calls, not the whole walk. A platform drawing an account picker over three
+/// credentials must not run out of it partway through.
+#[test]
+fn get_next_assertion_timer_is_per_leg() {
+    let (mut fs, mut rng) = setup();
+    let mut state = crate::FidoState::new();
+    for (uid, t) in [
+        (&[1u8, 1, 1, 1][..], 10u64),
+        (&[2u8, 2, 2, 2][..], 20),
+        (&[3u8, 3, 3, 3][..], 30),
+    ] {
+        let mut out = [0u8; 1024];
+        let mut presence = crate::AlwaysConfirm;
+        let mut ctx = Ctx {
+            presence: &mut presence,
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: t,
+        };
+        make_credential(&mut ctx, &mc_request_user(uid), &mut out).unwrap();
+    }
+
+    let mut leg = |now_ms: u64, first: bool| {
+        let mut out = [0u8; 1024];
+        let mut presence = crate::AlwaysConfirm;
+        let mut ctx = Ctx {
+            presence: &mut presence,
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms,
+        };
+        if first {
+            get_assertion(&mut ctx, &ga_request(None), &mut out).map(|_| ())
+        } else {
+            get_next_assertion(&mut ctx, &mut out).map(|_| ())
+        }
+    };
+    assert_eq!(leg(100, true), Ok(()));
+    // 25 s later: inside the window measured from the getAssertion.
+    assert_eq!(leg(25_100, false), Ok(()));
+    // Another 25 s: 50 s since the getAssertion, but only 25 s since the last leg.
+    assert_eq!(leg(50_100, false), Ok(()));
+}
+
+/// …and a genuine gap still expires the walk.
+#[test]
+fn get_next_assertion_expires_after_a_quiet_thirty_seconds() {
+    let (mut fs, mut rng) = setup();
+    let mut state = crate::FidoState::new();
+    for (uid, t) in [(&[1u8, 1, 1, 1][..], 10u64), (&[2u8, 2, 2, 2][..], 20)] {
+        let mut out = [0u8; 1024];
+        let mut presence = crate::AlwaysConfirm;
+        let mut ctx = Ctx {
+            presence: &mut presence,
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: t,
+        };
+        make_credential(&mut ctx, &mc_request_user(uid), &mut out).unwrap();
+    }
+    let mut out = [0u8; 1024];
+    {
+        let mut presence = crate::AlwaysConfirm;
+        let mut ctx = Ctx {
+            presence: &mut presence,
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 100,
+        };
+        get_assertion(&mut ctx, &ga_request(None), &mut out).unwrap();
+    }
+    let mut presence = crate::AlwaysConfirm;
+    let mut ctx = Ctx {
+        presence: &mut presence,
+        dev: dev(),
+        fs: &mut fs,
+        rng: &mut rng,
+        state: &mut state,
+        now_ms: 30_101,
+    };
+    assert_eq!(
+        get_next_assertion(&mut ctx, &mut out),
+        Err(CtapError::NotAllowed)
+    );
+}
+
 #[test]
 fn get_next_assertion_uses_per_credential_counter() {
     // The getNextAssertion path must advance the walked credential's OWN counter
@@ -1993,6 +2282,64 @@ fn credblob_echoed_in_assertion() {
     assert_eq!(d.map().unwrap().unwrap(), 1);
     assert_eq!(d.str().unwrap(), "credBlob");
     assert_eq!(d.bytes().unwrap(), &[0x11, 0x22, 0x33]);
+}
+
+/// getInfo advertises `maxCredBlobLength`, and §12.2 has the platform send anything
+/// up to and including it — so exactly that many bytes must round-trip. One byte more
+/// is refused, and makeCredential says so with `credBlob: false`.
+#[test]
+fn credblob_at_the_advertised_maximum_round_trips() {
+    let (mut fs, mut rng) = setup();
+    let blob = [0x7Eu8; crate::consts::MAX_CREDBLOB_LENGTH];
+    let mc = run_mc(&mut fs, &mut rng, &mc_request_credblob(&blob));
+    let (resident_id, x, y) = parse_mc(&mc);
+
+    let mut out = [0u8; 1024];
+    let n = {
+        let mut state = crate::FidoState::new();
+        let mut presence = crate::AlwaysConfirm;
+        let mut ctx = Ctx {
+            presence: &mut presence,
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 20,
+        };
+        get_assertion(&mut ctx, &ga_request_credblob(&resident_id), &mut out).unwrap()
+    };
+    verify_assertion(&out[..n], &x, &y);
+    let ad = assertion_auth_data(&out[..n]);
+    let mut d = Decoder::new(&ad[37..]);
+    assert_eq!(d.map().unwrap().unwrap(), 1);
+    assert_eq!(d.str().unwrap(), "credBlob");
+    assert_eq!(d.bytes().unwrap(), &blob[..]);
+
+    // One byte over the advertised maximum: not stored, and reported as such.
+    let over = [0x7Eu8; crate::consts::MAX_CREDBLOB_LENGTH + 1];
+    let mc = run_mc(&mut fs, &mut rng, &mc_request_credblob(&over));
+    let (resident_id, ..) = parse_mc(&mc);
+    let n = {
+        let mut state = crate::FidoState::new();
+        let mut presence = crate::AlwaysConfirm;
+        let mut ctx = Ctx {
+            presence: &mut presence,
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 30,
+        };
+        get_assertion(&mut ctx, &ga_request_credblob(&resident_id), &mut out).unwrap()
+    };
+    let ad = assertion_auth_data(&out[..n]);
+    let mut d = Decoder::new(&ad[37..]);
+    d.map().unwrap();
+    assert_eq!(d.str().unwrap(), "credBlob");
+    assert!(
+        d.bytes().unwrap().is_empty(),
+        "an over-long blob is not kept"
+    );
 }
 
 // A resident makeCredential request that opts into largeBlobKey (+ hmac-secret).
@@ -3345,5 +3692,75 @@ fn getnextassertion_hmac_secret_keys_off_resident_id() {
     assert_ne!(
         dec1, dec2,
         "distinct credentials → distinct hmac-secret outputs"
+    );
+}
+
+/// A trusted-display backend: it collects a PIN on its own pad **and** paints the
+/// ceremony, recording what each `Confirm` named.
+struct DisplayPad {
+    touches: usize,
+    last_title: &'static str,
+    last_primary: std::vec::Vec<u8>,
+}
+impl DisplayPad {
+    fn new() -> Self {
+        Self {
+            touches: 0,
+            last_title: "",
+            last_primary: std::vec::Vec::new(),
+        }
+    }
+}
+impl crate::UserPresence for DisplayPad {
+    fn request(&mut self, c: crate::Confirm<'_>) -> crate::Presence {
+        self.touches += 1;
+        self.last_title = c.title;
+        self.last_primary = c.primary.to_vec();
+        crate::Presence::Confirmed
+    }
+    fn shows_confirm(&self) -> bool {
+        true
+    }
+    fn uv_available(&self) -> bool {
+        true
+    }
+    fn collect_pin(&mut self, _min: usize, out: &mut [u8]) -> crate::PinEntry {
+        out[..4].copy_from_slice(b"1234");
+        crate::PinEntry::Entered(4)
+    }
+}
+
+#[test]
+fn builtin_uv_still_names_the_rp_on_a_display() {
+    // Audit run-28 F1. §6.2.2 step 8 lets the pad entry stand in for the *gesture*,
+    // and the build used it to skip the whole ceremony — but `collect_pin` carries no
+    // `Confirm` and `PinPad.title` is trusted `&'static str` by construction, so the
+    // pad can never name a relying party. Skipping the card therefore traded one
+    // context-free PIN entry for an assertion over an rp the user never saw. On a
+    // backend that paints ceremonies the card must survive; the flags are unchanged.
+    let (mut fs, mut rng) = setup();
+    let cred_id = register_non_resident(&mut fs, &mut rng);
+    crate::clientpin::store_local_pin(&dev(), &mut fs, b"1234").unwrap();
+    let mut state = crate::FidoState::new();
+    let mut out = [0u8; 1024];
+    let mut pad = DisplayPad::new();
+    let n = {
+        let mut ctx = Ctx {
+            presence: &mut pad,
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 0,
+        };
+        get_assertion(&mut ctx, &ga_request_uv(&cred_id, None), &mut out).unwrap()
+    };
+    let ad = assertion_auth_data(&out[..n]);
+    assert_eq!(ad[32] & (FLAG_UP | FLAG_UV), FLAG_UP | FLAG_UV);
+    assert_eq!(pad.touches, 1, "the naming card is painted exactly once");
+    assert_eq!(pad.last_title, "Sign in?");
+    assert_eq!(
+        pad.last_primary, b"example.com",
+        "the card carries the rp the assertion is for"
     );
 }

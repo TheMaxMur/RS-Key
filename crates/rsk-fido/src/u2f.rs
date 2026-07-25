@@ -14,7 +14,7 @@ use rsk_sdk::sw::Sw;
 
 use crate::consts::{
     CRED_PROT_UV_REQUIRED, CTAP_AUTHENTICATE, CTAP_REGISTER, CTAP_VERSION, EF_ATT_CHAIN, EF_EE_DEV,
-    U2F_AUTH_CHECK_ONLY, U2F_AUTH_ENFORCE, U2F_AUTH_FLAG_TUP, U2F_REGISTER_ID,
+    U2F_AUTH_CHECK_ONLY, U2F_AUTH_ENFORCE, U2F_AUTH_FLAG_TUP, U2F_AUTH_NO_ENFORCE, U2F_REGISTER_ID,
 };
 use crate::credential::{CRED_REC_MAX, credential_load};
 use crate::ec::{MAX_DER_SIG, P256Key};
@@ -34,14 +34,13 @@ pub fn process_u2f<S: Storage, R: Rng>(
         return (Sw::CLA_NOT_SUPPORTED, 0);
     }
     match apdu.ins {
-        // CTAP 2.1 §7.2.4: while alwaysUv is enabled the CTAP1/U2F interface is
-        // disabled. U2F performs only user *presence*, never verification, so
-        // honoring register/authenticate would mint and use credentials on a bare
-        // touch — bypassing the always-require-UV guarantee the CTAP2 side enforces
-        // (matching how a YubiKey drops U2F under alwaysUv). VERSION, a capability
-        // query that touches no credential, stays live.
-        CTAP_REGISTER | CTAP_AUTHENTICATE if crate::config::always_uv_enabled(ctx.fs) => {
-            (Sw::CONDITIONS_NOT_SATISFIED, 0)
+        // §7.2.4: alwaysUv disables the CTAP1/U2F interface, so register and
+        // authenticate fail immediately with the status word that clause names —
+        // SW_COMMAND_NOT_ALLOWED, not the "test-of-user-presence required" code,
+        // which would have the client retry a switched-off interface forever.
+        // VERSION, a capability query that touches no credential, stays live.
+        CTAP_REGISTER | CTAP_AUTHENTICATE if u2f_gate(ctx) == U2fGate::Disabled => {
+            (Sw::COMMAND_NOT_ALLOWED, 0)
         }
         CTAP_REGISTER => cmd_register(ctx, apdu, out),
         CTAP_AUTHENTICATE => cmd_authenticate(ctx, apdu, out),
@@ -53,6 +52,52 @@ pub fn process_u2f<S: Storage, R: Rng>(
     }
 }
 
+/// What a U2F operation owes the user before it may run — CTAP 2.1 §7.2.4.
+#[derive(PartialEq, Eq, Clone, Copy)]
+enum U2fGate {
+    /// alwaysUv is off: plain user presence, the classic U2F contract.
+    Presence,
+    /// alwaysUv is on and a built-in user verification method is configured. §7.2.4
+    /// keeps the interface alive in exactly this case — "unless the CTAP1/U2F
+    /// authenticator is protected by a built-in user verification method" — so every
+    /// operation runs that method instead of a bare touch, and U2F stops being a
+    /// presence-only way around the always-require-UV guarantee.
+    BuiltinUv,
+    /// alwaysUv is on with nothing to verify against: the interface is disabled, and
+    /// getInfo drops `U2F_V2` to match.
+    Disabled,
+}
+
+fn u2f_gate<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>) -> U2fGate {
+    if !crate::config::always_uv_enabled(ctx.fs) {
+        U2fGate::Presence
+    } else if crate::clientpin::builtin_uv_enabled(ctx) {
+        U2fGate::BuiltinUv
+    } else {
+        U2fGate::Disabled
+    }
+}
+
+/// Collect whatever [`U2fGate`] demands. A refusal — declined touch, wrong PIN,
+/// cancelled pad — is SW_CONDITIONS_NOT_SATISFIED either way: U2F's only "interact
+/// and try again" status, and the one a client knows how to act on.
+///
+/// Under `BuiltinUv` the pad replaces the touch, not the screen: a backend that paints
+/// `confirm` still shows it, so REGISTER and AUTHENTICATE stay distinguishable to the
+/// user instead of collapsing into one unlabelled PIN prompt (audit run-28). The card
+/// comes first, so the operation is named before the PIN is typed.
+fn u2f_interaction<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, confirm: crate::Confirm<'_>) -> bool {
+    match u2f_gate(ctx) {
+        U2fGate::BuiltinUv => {
+            let owes_card =
+                crate::clientpin::UvOutcome::BUILTIN.needs_confirm(ctx.presence.shows_confirm());
+            (!owes_card || ctx.check_user_presence(confirm))
+                && crate::clientpin::builtin_uv_step(ctx).is_ok()
+        }
+        _ => ctx.check_user_presence(confirm),
+    }
+}
+
 fn cmd_register<S: Storage, R: Rng>(
     ctx: &mut Ctx<S, R>,
     apdu: &Apdu,
@@ -61,8 +106,9 @@ fn cmd_register<S: Storage, R: Rng>(
     if apdu.nc != 64 {
         return (Sw::WRONG_LENGTH, 0);
     }
-    // U2F register requires a physical touch; no button → instant.
-    if !ctx.check_user_presence(crate::Confirm::titled("Register key?")) {
+    // U2F register requires a physical touch; no button → instant. Under §7.2.4's
+    // built-in-UV exception the PIN pad stands in for it.
+    if !u2f_interaction(ctx, crate::Confirm::titled("Register key?")) {
         return (Sw::CONDITIONS_NOT_SATISFIED, 0);
     }
     // U2F register request is challenge(32) ‖ application(32). The key handle
@@ -171,6 +217,16 @@ fn cmd_authenticate<S: Storage, R: Rng>(
     apdu: &Apdu,
     out: &mut [u8],
 ) -> (Sw, usize) {
+    // U2F Raw Message Formats §7.2 assigns exactly three control bytes; a reserved
+    // one used to reach the signature with neither a touch nor the TUP flag — a
+    // silent signing oracle for any host that sent an unassigned P1.
+    let tup = match apdu.p1 {
+        U2F_AUTH_CHECK_ONLY | U2F_AUTH_ENFORCE => true,
+        // `strict-up` promises a touch on every assertion and `want_up`
+        // (getassertion.rs) only reaches CTAP2, so that build drops don't-enforce.
+        U2F_AUTH_NO_ENFORCE if !cfg!(feature = "strict-up") => false,
+        _ => return (Sw::INCORRECT_P1P2, 0),
+    };
     // chal(32) ‖ appId(32) ‖ khLen(1) ‖ keyHandle
     if apdu.nc < 32 + 32 + 1 + 1 {
         return (Sw::INCORRECT_PARAMS, 0);
@@ -236,9 +292,15 @@ fn cmd_authenticate<S: Storage, R: Rng>(
         return (Sw::CONDITIONS_NOT_SATISFIED, 0);
     }
 
-    // Enforce-user-presence (P1=0x03) requires a touch, now that the handle is
-    // known valid; don't-enforce (0x08) signs without one. No button → instant.
-    if apdu.p1 == U2F_AUTH_ENFORCE && !ctx.check_user_presence(crate::Confirm::titled("Sign in?")) {
+    // Everything that still signs owes a touch, now that the handle is known valid;
+    // only the explicit don't-enforce byte is exempt, so `tup` gates the touch and
+    // the TUP flag together. No button → instant. The one thing don't-enforce cannot
+    // opt out of is §7.2.4's built-in UV: that verification is the entire reason the
+    // interface is still reachable under alwaysUv, so skipping it would hand back
+    // exactly the presence-free signature the clause exists to prevent. The emitted
+    // TUP flag still follows the raw `tup`, so the wire meaning is unchanged.
+    let owes = tup || u2f_gate(ctx) == U2fGate::BuiltinUv;
+    if owes && !u2f_interaction(ctx, crate::Confirm::titled("Sign in?")) {
         scalar.zeroize();
         return (Sw::CONDITIONS_NOT_SATISFIED, 0);
     }
@@ -249,11 +311,7 @@ fn cmd_authenticate<S: Storage, R: Rng>(
         None => return (Sw::EXEC_ERROR, 0),
     };
 
-    let flags = if apdu.p1 == U2F_AUTH_ENFORCE {
-        U2F_AUTH_FLAG_TUP
-    } else {
-        0
-    };
+    let flags = if tup { U2F_AUTH_FLAG_TUP } else { 0 };
     let ctr = get_sign_counter(ctx.fs);
 
     // sign base: appId ‖ flags ‖ counter(BE) ‖ chal

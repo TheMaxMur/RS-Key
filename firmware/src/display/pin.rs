@@ -237,6 +237,13 @@ impl Ui {
             &Screen::Pin(PinPad::with_caption(entered, title, caption).expecting(expected)),
         );
         self.shown = None; // force the status loop to repaint once we release it
+        // The CST328 reports a level, not an edge, so a finger still down from whatever
+        // preceded this pad reads as a keypress on the very first poll — and the Allow
+        // button overlaps the bottom key row, so it types a stray `0` and burns a PIN
+        // retry. Every other modal waits for release for the same reason; this one had
+        // nothing in front of it until a consent card (clientPIN 0x06) and a U2F naming
+        // card were put there (audit run-28).
+        self.touch.wait_release_ceremony(start, timeout);
         // A title too wide for the band (e.g. "OpenPGP Sign PIN") scrolls as a marquee so
         // it can't slide under the back chevron; a short one stays centred and static.
         let scroll_title = rsk_ui::pin_title_overflows(title);

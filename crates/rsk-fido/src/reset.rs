@@ -3,7 +3,8 @@
 
 //! `authenticatorReset`: wipe all FIDO flash state and the in-RAM PIN/UV
 //! session, then regenerate the device seed / counter / attestation cert. A
-//! physical touch gates the wipe; the spec's optional power-on window is not enforced.
+//! physical touch gates the wipe, inside the CTAP 2.1 §6.6 power-up window
+//! ([`RESET_WINDOW_MS`]) on a build whose presence backend shows no prompt.
 
 use rsk_fs::Storage;
 
@@ -11,6 +12,7 @@ use crate::consts::{
     EF_ALWAYS_UV, EF_ATT_CHAIN, EF_ATT_KEY, EF_AUTHTOKEN, EF_BACKUP_SEALED, EF_COUNTER, EF_CRED,
     EF_CRED_CTR, EF_DEVICE_PIN, EF_EA_ENABLED, EF_EE_DEV, EF_KEY_DEV, EF_KEY_DEV_ENC, EF_LARGEBLOB,
     EF_MINPINLEN, EF_PAUTHTOKEN, EF_PIN, EF_RP, EF_RPNICK, MAX_RESIDENT_CREDENTIALS,
+    RESET_WINDOW_MS,
 };
 use crate::error::{CtapError, CtapResult};
 use crate::journal;
@@ -22,10 +24,20 @@ use crate::{Ctx, Rng};
 /// key: `EF_KEY_DEV_ENC` is wiped with everything else and a fresh seed is
 /// generated (the old identity is gone — that is the design).
 pub fn reset<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>) -> CtapResult {
-    // A factory reset requires a physical touch; both a timeout and a cancel
-    // abort it before anything is wiped.
-    if !ctx.check_user_presence(crate::Confirm::titled("Erase everything?")) {
-        return Err(CtapError::UserActionTimeout);
+    if !ctx.presence.shows_confirm() && !in_reset_window(ctx) {
+        return Err(CtapError::NotAllowed);
+    }
+    // A factory reset requires a physical touch, and §6.6 distinguishes the ways it
+    // can fail: an explicit refusal is OPERATION_DENIED ("the platform SHOULD NOT
+    // repeat"), a silent timeout is USER_ACTION_TIMEOUT ("the platform MAY repeat").
+    match ctx
+        .presence
+        .request(crate::Confirm::titled("Erase everything?"))
+    {
+        crate::Presence::Confirmed => {}
+        crate::Presence::Declined => return Err(CtapError::OperationDenied),
+        crate::Presence::Timeout => return Err(CtapError::UserActionTimeout),
+        crate::Presence::Cancelled => return Err(CtapError::KeepAliveCancel),
     }
     // Drop every FIDO file, then regenerate the seed. The flash `Fs` is shared
     // with the OpenPGP applet, so delete only live, FIDO-owned keys
@@ -57,6 +69,14 @@ pub fn reset<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>) -> CtapResult {
     journal::fold_and_scrub(ctx);
     journal::append(ctx, journal::EV_RESET, 0, &[]);
     Ok(0)
+}
+
+/// CTAP 2.1 §6.6: a reset is honored only within [`RESET_WINDOW_MS`] of power-up,
+/// so wiping a key takes a deliberate replug. A warm boot *closes* the window
+/// rather than opening one — `sys_reset` is host-requestable ungated, so a window
+/// the host can restart at will is no window at all.
+fn in_reset_window<S: Storage, R: Rng>(ctx: &Ctx<S, R>) -> bool {
+    !ctx.state.warm_boot && ctx.now_ms <= RESET_WINDOW_MS
 }
 
 /// Whether `fid` is cleared by `authenticatorReset` — every FIDO-owned flash file plus

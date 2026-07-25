@@ -100,11 +100,11 @@ fn get_info_fields() {
     assert_eq!(d.bytes().unwrap(), &AAGUID);
 
     // 0x04 options — ep, rk, up, alwaysUv, credMgmt, authnrCfg, clientPin (PIN
-    // set → true), largeBlobs, pinUvAuthToken, setMinPINLength (canonical:
-    // length then bytewise; "ep" first among 2-char keys, "alwaysUv" first
-    // among 8-char keys).
+    // set → true), largeBlobs, pinUvAuthToken, setMinPINLength, makeCredUvNotRqd
+    // (canonical: length then bytewise; "ep" first among 2-char keys, "alwaysUv"
+    // first among 8-char keys, the 16-char key last).
     assert_eq!(d.u8().unwrap(), 0x04);
-    assert_eq!(d.map().unwrap().unwrap(), 10);
+    assert_eq!(d.map().unwrap().unwrap(), 11);
     assert_eq!(d.str().unwrap(), "ep");
     assert!(!d.bool().unwrap()); // ea_enabled = false in this call
     assert_eq!(d.str().unwrap(), "rk");
@@ -124,6 +124,8 @@ fn get_info_fields() {
     assert_eq!(d.str().unwrap(), "pinUvAuthToken");
     assert!(d.bool().unwrap());
     assert_eq!(d.str().unwrap(), "setMinPINLength");
+    assert!(d.bool().unwrap());
+    assert_eq!(d.str().unwrap(), "makeCredUvNotRqd");
     assert!(d.bool().unwrap());
 
     // 0x05 maxMsgSize
@@ -253,14 +255,14 @@ fn option_pairs(builtin_uv: bool, pin_set: bool) -> std::vec::Vec<(std::string::
 /// PIN is configured. A screenless key omits it entirely.
 #[test]
 fn uv_option_present_only_with_builtin_uv() {
-    // Screenless: no "uv" key, 10 options.
+    // Screenless: no "uv" key, 11 options.
     let plain = option_pairs(false, true);
-    assert_eq!(plain.len(), 10);
+    assert_eq!(plain.len(), 11);
     assert!(!plain.iter().any(|(k, _)| k == "uv"));
 
     // Display build, PIN set: "uv" = true, immediately after "up".
     let ready = option_pairs(true, true);
-    assert_eq!(ready.len(), 11);
+    assert_eq!(ready.len(), 12);
     let up = ready.iter().position(|(k, _)| k == "up").unwrap();
     assert_eq!(ready[up + 1].0, "uv", "uv must sort right after up");
     assert!(ready[up + 1].1, "uv = true once a PIN is configured");
@@ -396,10 +398,68 @@ fn u2f_v2_dropped_when_always_uv() {
 }
 
 #[test]
+fn u2f_v2_survives_always_uv_behind_a_configured_pad() {
+    // The other half of §7.2.4: the interface is disabled "unless the CTAP1/U2F
+    // authenticator is protected by a built-in user verification method", so a
+    // display build with a PIN keeps U2F_V2 — `process_u2f` then runs the pad on
+    // every operation. A pad with no PIN yet protects nothing, so U2F still goes.
+    let cases: [(bool, bool, bool); 4] = [
+        // (builtin_uv, pin_set, U2F_V2 advertised under alwaysUv)
+        (true, true, true),
+        (true, false, false),
+        (false, true, false),
+        (false, false, false),
+    ];
+    for (builtin_uv, pin_set, want_u2f) in cases {
+        let mut buf = [0u8; 512];
+        let n = get_info(pin_set, 4, false, false, true, builtin_uv, 256, &mut buf).unwrap();
+        let mut d = Decoder::new(&buf[..n]);
+        d.map().unwrap();
+        assert_eq!(d.u8().unwrap(), 0x01);
+        let nv = d.array().unwrap().unwrap();
+        assert_eq!(nv as usize, 4 + usize::from(want_u2f));
+        if want_u2f {
+            assert_eq!(d.str().unwrap(), "U2F_V2");
+        }
+        assert_eq!(d.str().unwrap(), "FIDO_2_0");
+    }
+}
+
+#[test]
 fn get_info_buffer_too_small() {
     let mut tiny = [0u8; 8];
     assert_eq!(
         get_info(false, 4, false, false, false, false, 256, &mut tiny),
         Err(CtapError::Other)
     );
+}
+
+#[test]
+fn make_cred_uv_not_rqd_is_cleared_by_always_uv() {
+    // Audit run-28 F2. §6.4, the alwaysUv row: "If the alwaysUv option ID is
+    // present and true the authenticator MUST set the value of makeCredUvNotRqd
+    // to false." §6.11.2 makes clearing it a step of toggleAlwaysUv, which this
+    // device advertises. `enforce_pin` already refuses (fails closed) — this is
+    // the advertisement catching up, so a platform stops sending the request.
+    for always_uv in [false, true] {
+        let mut buf = [0u8; 512];
+        let n = get_info(true, 4, false, false, always_uv, false, 256, &mut buf).unwrap();
+        let mut d = Decoder::new(&buf[..n]);
+        d.map().unwrap();
+        for _ in 0..3 {
+            // skip versions/extensions/aaguid (keys 0x01..0x03)
+            d.u8().unwrap();
+            d.skip().unwrap();
+        }
+        assert_eq!(d.u8().unwrap(), 0x04);
+        let opts = d.map().unwrap().unwrap();
+        assert_eq!(opts, 11, "no built-in UV on this build");
+        // makeCredUvNotRqd is the longest key, so canonical order puts it last.
+        for _ in 0..opts - 1 {
+            d.str().unwrap();
+            d.bool().unwrap();
+        }
+        assert_eq!(d.str().unwrap(), "makeCredUvNotRqd");
+        assert_eq!(d.bool().unwrap(), !always_uv);
+    }
 }

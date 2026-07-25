@@ -139,7 +139,9 @@ ordering matters:
 Unrecoverable by design. The way forward is a FIDO factory reset, which
 deletes the locked blob and generates a fresh identity (`ykman fido reset`,
 which needs the opt-in `VIDPID=Yubikey5` build, or any WebAuthn "reset security
-key" UI on the default build; see [fido2.md](fido2.md)). Your
+key" UI on the default build). Replug the key first: a screenless build accepts
+the reset only within ten seconds of a power-up (see
+[fido2.md](fido2.md#factory-reset)). Your
 [seed backup](seed-backup.md), if you made one *before* locking, still
 restores the old identity afterwards. Without it the old credentials
 (`ssh ed25519-sk` keys, U2F registrations) are gone.

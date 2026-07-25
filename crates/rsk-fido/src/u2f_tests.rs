@@ -135,15 +135,228 @@ fn u2f_disabled_when_always_uv() {
         now_ms: 0,
     };
     let mut out = [0u8; 1024];
+    // §7.2.4 names the code: "MUST immediately fail and return
+    // SW_COMMAND_NOT_ALLOWED". SW_CONDITIONS_NOT_SATISFIED would read as
+    // "touch me again" and leave the client retrying a disabled interface.
     assert_eq!(
         process_u2f(&mut ctx, &reg, &mut out).0,
-        Sw::CONDITIONS_NOT_SATISFIED,
+        Sw::COMMAND_NOT_ALLOWED,
         "U2F register must be refused under alwaysUv"
     );
     assert_eq!(
         process_u2f(&mut ctx, &auth, &mut out).0,
-        Sw::CONDITIONS_NOT_SATISFIED,
+        Sw::COMMAND_NOT_ALLOWED,
         "U2F authenticate must be refused under alwaysUv"
+    );
+}
+
+/// A trusted-display backend: it has a screen, a configured PIN pad, and types
+/// `digits` on it. Counts the touches asked for on top of the PIN entry.
+struct UvPad {
+    digits: &'static [u8],
+    touches: usize,
+}
+impl crate::UserPresence for UvPad {
+    fn request(&mut self, _c: crate::Confirm<'_>) -> crate::Presence {
+        self.touches += 1;
+        crate::Presence::Confirmed
+    }
+    fn shows_confirm(&self) -> bool {
+        true
+    }
+    fn uv_available(&self) -> bool {
+        true
+    }
+    fn collect_pin(&mut self, _min: usize, out: &mut [u8]) -> crate::PinEntry {
+        out[..self.digits.len()].copy_from_slice(self.digits);
+        crate::PinEntry::Entered(self.digits.len())
+    }
+}
+
+/// §7.2.4 disables CTAP1/U2F under alwaysUv "unless the CTAP1/U2F authenticator is
+/// protected by a built-in user verification method". With a configured PIN pad that
+/// exception applies: register and authenticate keep working, but every one of them
+/// runs the pad — the PIN, not a bare touch, is what authorizes them. A wrong PIN
+/// refuses the operation. The pad replaces the *touch*, not the *screen*: a backend
+/// that paints `Confirm` still names the operation first, so "Register key?" and
+/// "Sign in?" stay distinguishable instead of collapsing into one unlabelled PIN
+/// prompt (audit run-28).
+#[test]
+fn u2f_survives_always_uv_behind_builtin_uv() {
+    let mut fs = Fs::new(RamStorage::new());
+    let mut rng = SeqRng(1);
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+    crate::clientpin::store_local_pin(&dev(), &mut fs, b"1234").unwrap();
+    fs.put(EF_ALWAYS_UV, &[1]).unwrap();
+
+    let mut reg_data = std::vec::Vec::new();
+    reg_data.extend_from_slice(&CHAL);
+    reg_data.extend_from_slice(&APP);
+    let reg_bytes = ext_apdu(CTAP_REGISTER, 0, &reg_data);
+    let reg = Apdu::parse(&reg_bytes).unwrap();
+
+    let mut out = [0u8; 1024];
+    let mut pad = UvPad {
+        digits: b"1234",
+        touches: 0,
+    };
+    let (sw, n) = {
+        let mut state = crate::FidoState::new();
+        let mut ctx = Ctx {
+            presence: &mut pad,
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 0,
+        };
+        process_u2f(&mut ctx, &reg, &mut out)
+    };
+    assert_eq!(sw, Sw::OK, "U2F stays alive behind a configured PIN pad");
+    assert!(n > 64);
+    assert_eq!(
+        pad.touches, 1,
+        "one naming card, then the pad — not a second bare touch"
+    );
+
+    // The registered handle then authenticates through the same pad…
+    let key_handle = out[67..67 + KEY_HANDLE_LEN].to_vec();
+    let mut auth_data = std::vec::Vec::new();
+    auth_data.extend_from_slice(&CHAL);
+    auth_data.extend_from_slice(&APP);
+    auth_data.push(KEY_HANDLE_LEN as u8);
+    auth_data.extend_from_slice(&key_handle);
+    let auth_bytes = ext_apdu(CTAP_AUTHENTICATE, U2F_AUTH_ENFORCE, &auth_data);
+    let auth = Apdu::parse(&auth_bytes).unwrap();
+    let sw = {
+        let mut state = crate::FidoState::new();
+        let mut ctx = Ctx {
+            presence: &mut pad,
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 0,
+        };
+        process_u2f(&mut ctx, &auth, &mut out).0
+    };
+    assert_eq!(sw, Sw::OK);
+    assert_eq!(pad.touches, 2, "authenticate names its operation too");
+
+    // …and a wrong PIN refuses it.
+    let mut wrong = UvPad {
+        digits: b"9999",
+        touches: 0,
+    };
+    let sw = {
+        let mut state = crate::FidoState::new();
+        let mut ctx = Ctx {
+            presence: &mut wrong,
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 0,
+        };
+        process_u2f(&mut ctx, &auth, &mut out).0
+    };
+    assert_eq!(sw, Sw::CONDITIONS_NOT_SATISFIED);
+}
+
+/// The exception is about a *configured* method, not a capability: a display build
+/// with no PIN yet has nothing to verify against, so U2F is disabled as anywhere else.
+#[test]
+fn u2f_disabled_under_always_uv_when_the_pad_has_no_pin() {
+    let mut fs = Fs::new(RamStorage::new());
+    let mut rng = SeqRng(1);
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+    fs.put(EF_ALWAYS_UV, &[1]).unwrap();
+
+    let mut reg_data = std::vec::Vec::new();
+    reg_data.extend_from_slice(&CHAL);
+    reg_data.extend_from_slice(&APP);
+    let reg_bytes = ext_apdu(CTAP_REGISTER, 0, &reg_data);
+    let reg = Apdu::parse(&reg_bytes).unwrap();
+    let mut out = [0u8; 1024];
+    let mut pad = UvPad {
+        digits: b"1234",
+        touches: 0,
+    };
+    let mut state = crate::FidoState::new();
+    let mut ctx = Ctx {
+        presence: &mut pad,
+        dev: dev(),
+        fs: &mut fs,
+        rng: &mut rng,
+        state: &mut state,
+        now_ms: 0,
+    };
+    assert_eq!(
+        process_u2f(&mut ctx, &reg, &mut out).0,
+        Sw::COMMAND_NOT_ALLOWED
+    );
+}
+
+/// Don't-enforce-user-presence (P1 = 0x08) may skip the touch, but not the built-in
+/// UV that keeps the interface reachable under alwaysUv — otherwise it would hand
+/// back exactly the un-verified signature §7.2.4 exists to prevent.
+#[test]
+fn u2f_dont_enforce_still_runs_builtin_uv() {
+    let mut fs = Fs::new(RamStorage::new());
+    let mut rng = SeqRng(1);
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+    crate::clientpin::store_local_pin(&dev(), &mut fs, b"1234").unwrap();
+
+    // Register first (alwaysUv still off, so this is a plain touch).
+    let mut reg_data = std::vec::Vec::new();
+    reg_data.extend_from_slice(&CHAL);
+    reg_data.extend_from_slice(&APP);
+    let reg_bytes = ext_apdu(CTAP_REGISTER, 0, &reg_data);
+    let reg = Apdu::parse(&reg_bytes).unwrap();
+    let mut out = [0u8; 1024];
+    let n = {
+        let mut state = crate::FidoState::new();
+        let mut presence = crate::AlwaysConfirm;
+        let mut ctx = Ctx {
+            presence: &mut presence,
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 0,
+        };
+        let (sw, n) = process_u2f(&mut ctx, &reg, &mut out);
+        assert_eq!(sw, Sw::OK);
+        n
+    };
+    assert!(n > 64);
+    let key_handle = out[67..67 + KEY_HANDLE_LEN].to_vec();
+
+    fs.put(EF_ALWAYS_UV, &[1]).unwrap();
+    let mut auth_data = std::vec::Vec::new();
+    auth_data.extend_from_slice(&CHAL);
+    auth_data.extend_from_slice(&APP);
+    auth_data.push(KEY_HANDLE_LEN as u8);
+    auth_data.extend_from_slice(&key_handle);
+    let auth_bytes = ext_apdu(CTAP_AUTHENTICATE, U2F_AUTH_NO_ENFORCE, &auth_data);
+    let auth = Apdu::parse(&auth_bytes).unwrap();
+    let mut wrong = UvPad {
+        digits: b"9999",
+        touches: 0,
+    };
+    let mut state = crate::FidoState::new();
+    let mut ctx = Ctx {
+        presence: &mut wrong,
+        dev: dev(),
+        fs: &mut fs,
+        rng: &mut rng,
+        state: &mut state,
+        now_ms: 0,
+    };
+    assert_eq!(
+        process_u2f(&mut ctx, &auth, &mut out).0,
+        Sw::CONDITIONS_NOT_SATISFIED,
+        "don't-enforce cannot opt out of the built-in UV"
     );
 }
 
@@ -344,6 +557,100 @@ fn enforce_auth_rejects_unknown_handle_without_touch() {
         presence.calls, 0,
         "an unknown handle must be rejected without requesting a touch"
     );
+}
+
+#[test]
+fn authenticate_p1_matrix() {
+    // U2F Raw Message Formats §7.2 assigns 0x03 / 0x07 / 0x08 and nothing else. A
+    // reserved control byte used to skip the touch, clear the TUP flag and sign
+    // anyway — a silent signing oracle; it must be INCORRECT_P1P2 instead.
+    let mut fs = Fs::new(RamStorage::new());
+    let mut rng = SeqRng(11);
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+
+    let mut data = std::vec::Vec::new();
+    data.extend_from_slice(&CHAL);
+    data.extend_from_slice(&APP);
+    let reg_bytes = ext_apdu(CTAP_REGISTER, 0, &data);
+    let mut out = [0u8; 1024];
+    let kh = {
+        let reg = Apdu::parse(&reg_bytes).unwrap();
+        let mut state = crate::FidoState::new();
+        let mut presence = crate::AlwaysConfirm;
+        let mut ctx = Ctx {
+            presence: &mut presence,
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 0,
+        };
+        assert_eq!(process_u2f(&mut ctx, &reg, &mut out).0, Sw::OK);
+        out[67..67 + KEY_HANDLE_LEN].to_vec()
+    };
+    let mut ad = std::vec::Vec::new();
+    ad.extend_from_slice(&CHAL);
+    ad.extend_from_slice(&APP);
+    ad.push(KEY_HANDLE_LEN as u8);
+    ad.extend_from_slice(&kh);
+
+    // `strict-up` promises a touch on every assertion, so don't-enforce is not an
+    // accepted control byte there — `want_up` (getassertion.rs) only covers CTAP2.
+    let no_enforce = if cfg!(feature = "strict-up") {
+        (U2F_AUTH_NO_ENFORCE, Sw::INCORRECT_P1P2, false, false)
+    } else {
+        (U2F_AUTH_NO_ENFORCE, Sw::OK, true, false)
+    };
+    // (P1, status word, produces a signature, demands a touch)
+    let cases = [
+        (0x00, Sw::INCORRECT_P1P2, false, false),
+        (0x01, Sw::INCORRECT_P1P2, false, false),
+        (0x02, Sw::INCORRECT_P1P2, false, false),
+        (U2F_AUTH_ENFORCE, Sw::OK, true, true),
+        (0x04, Sw::INCORRECT_P1P2, false, false),
+        (
+            U2F_AUTH_CHECK_ONLY,
+            Sw::CONDITIONS_NOT_SATISFIED,
+            false,
+            false,
+        ),
+        no_enforce,
+        (0x42, Sw::INCORRECT_P1P2, false, false),
+        (0xFF, Sw::INCORRECT_P1P2, false, false),
+    ];
+
+    for (p1, want_sw, signs, touches) in cases {
+        let bytes = ext_apdu(CTAP_AUTHENTICATE, p1, &ad);
+        let apdu = Apdu::parse(&bytes).unwrap();
+        let mut o = [0u8; 256];
+        let mut state = crate::FidoState::new();
+        let mut presence = CountingPresence {
+            verdict: crate::Presence::Confirmed,
+            calls: 0,
+        };
+        let (sw, n) = {
+            let mut ctx = Ctx {
+                presence: &mut presence,
+                dev: dev(),
+                fs: &mut fs,
+                rng: &mut rng,
+                state: &mut state,
+                now_ms: 0,
+            };
+            process_u2f(&mut ctx, &apdu, &mut o)
+        };
+        assert_eq!(sw, want_sw, "P1 {p1:#04x} status word");
+        assert_eq!(n > 0, signs, "P1 {p1:#04x} signature");
+        assert_eq!(presence.calls, usize::from(touches), "P1 {p1:#04x} touch");
+        if signs {
+            // The TUP flag must report the touch that actually happened.
+            assert_eq!(
+                o[0] & U2F_AUTH_FLAG_TUP != 0,
+                touches,
+                "P1 {p1:#04x} TUP flag"
+            );
+        }
+    }
 }
 
 #[test]

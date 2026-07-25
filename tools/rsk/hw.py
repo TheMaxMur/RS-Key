@@ -42,11 +42,22 @@ TAG_LED_DRIVER = 0x0C
 TAG_LED_ORDER = 0x0D  # RS-Key vendor tag (PicoForge skips it as unknown)
 TAG_LED_NUM = 0x0E  # RS-Key vendor tag: addressable LED count
 TAG_PRESENCE_TIMEOUT = 0x08  # touch-wait timeout (seconds); PicoForge compatible
+# Firmware floor for the touch window (presence::MIN_TIMEOUT_SECS): anything lower
+# is raised on the device, so writing it would misreport the real window.
+MIN_TOUCH_TIMEOUT = 10
 TAG_USB_PRODUCT = 0x09  # iProduct string (NUL-terminated); PicoForge compatible
 TAG_USB_MANUFACTURER = 0x0F  # RS-Key vendor tag: iManufacturer string (NUL-terminated)
 
-# Firmware caps the phy product / manufacturer string at 32 bytes (rsk-rescue Product).
-USB_STR_MAX = 32
+# The phy record stores up to 32 bytes, but a USB string descriptor is built into a
+# 64-byte control buffer that admits only 30 UTF-16 code units — past that the device
+# panics during enumeration. The firmware clamps, so an over-long string is truncated
+# rather than fatal; reject it here so the truncation is never a surprise.
+USB_STR_MAX = 30
+
+# A product name containing "yubikey" without a "CCID" token gets " OTP+FIDO+CCID"
+# appended by the firmware (it stops ykman crashing on Windows), which eats into the
+# budget above — the firmware truncates the name to make room.
+YK_TOKEN_SUFFIX_LEN = len(" OTP+FIDO+CCID")
 
 # Driver numbering follows PicoForge's LedDriverType.
 DRIVERS = {"gpio": 1, "pimoroni": 2, "ws2812": 3}
@@ -86,20 +97,22 @@ def register(sub):
     p.add_argument(
         "--touch-timeout",
         type=int,
-        metavar="1-255",
-        help="touch-wait timeout in seconds (PicoForge compatible; firmware default 30)",
+        metavar="10-255",
+        help="touch-wait timeout in seconds (PicoForge compatible; firmware default 30, floor 10)",
     )
     p.add_argument(
         "--manufacturer",
         metavar="STR",
-        help="USB iManufacturer string (≤32 bytes), overriding the build/VID-derived "
+        help="USB iManufacturer string (≤30 bytes), overriding the build/VID-derived "
         "default. A Yubico VID already fills in 'Yubico' on its own; set this to pick "
         "your own brand or opt out of the Yubico identity.",
     )
     p.add_argument(
         "--product",
         metavar="STR",
-        help="USB iProduct string (≤32 bytes), overriding the build/VID-derived default",
+        help="USB iProduct string (≤30 bytes), overriding the build/VID-derived default. "
+        "A name containing 'yubikey' without a 'CCID' token gains ' OTP+FIDO+CCID' on "
+        "the device, and is truncated to fit — keep it ≤16 bytes to survive intact.",
     )
     p.add_argument(
         "--get", action="store_true", help="read the current phy config and exit"
@@ -229,12 +242,24 @@ def _apply_args(tlvs, args):
             raise SystemExit("--led-num must be 1–255")
         _upsert(tlvs, TAG_LED_NUM, args.led_num)
     if args.touch_timeout is not None:
-        if not 1 <= args.touch_timeout <= 255:
-            raise SystemExit("--touch-timeout must be 1–255 (seconds)")
+        # The firmware raises anything below 10 s to 10 s (a window short enough to
+        # expire mid-press turns one hold into two grants), so reject it here
+        # instead of writing a record the device will not honour.
+        if not MIN_TOUCH_TIMEOUT <= args.touch_timeout <= 255:
+            raise SystemExit(f"--touch-timeout must be {MIN_TOUCH_TIMEOUT}–255 (seconds)")
         _upsert(tlvs, TAG_PRESENCE_TIMEOUT, args.touch_timeout)
     if args.manufacturer is not None:
         _upsert_str(tlvs, TAG_USB_MANUFACTURER, args.manufacturer)
     if args.product is not None:
+        raw = args.product.encode("utf-8")
+        if b"yubikey" in raw.lower() and b"CCID" not in raw:
+            room = USB_STR_MAX - YK_TOKEN_SUFFIX_LEN
+            if len(raw) > room:
+                print(
+                    f"note: the device appends ' OTP+FIDO+CCID' to a YubiKey-style "
+                    f"name, so this will be truncated to {room} bytes "
+                    f"({args.product[:room]!r})"
+                )
         _upsert_str(tlvs, TAG_USB_PRODUCT, args.product)
 
 

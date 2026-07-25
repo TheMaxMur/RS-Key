@@ -86,6 +86,15 @@ covers the security boundary. This page covers feature and hardware gaps.
   A2. The firmware is A4-compatible and A4 is recommended. *Status: never. These
   are silicon properties, not firmware ones; closing them fully is what a
   dedicated secure element is for.*
+- **The at-rest seals are not authenticated against a flash writer.** They keep a
+  flash *dump* from yielding key material, which is what the OTP burn buys. They
+  do not stop someone who can *write* flash over BOOTSEL from planting a record:
+  the pre-OTP key base derives from the public chip serial, and those arms stay
+  readable after the burn so an already-provisioned device survives the upgrade.
+  The boot migration then re-seals the planted record under the fused root.
+  *Status: needs a fuse-rooted latch that closes the migration window once the
+  device is provisioned; the analysis is audit run-27 #8, the decision is the
+  maintainer's because it makes `lock-page58` load-bearing for boot correctness.*
 - **XIP TOCTOU residual**: secure boot verifies the image in external QSPI
   flash, then executes from it. Nothing binds the bytes that were hashed to the
   bytes later fetched, so hardware interposing on the QSPI bus can serve the

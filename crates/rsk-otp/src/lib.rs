@@ -133,6 +133,25 @@ const CFG_CHAL_YUBICO: u8 = 0x20;
 const CFG_CHAL_HMAC: u8 = 0x22;
 /// Generate 8-digit HOTP rather than 6 (`OATH_HOTP8`).
 pub(crate) const CFG_OATH_HOTP8: u8 = 0x02;
+
+/// Whether a programmed slot answers host challenges rather than typing a ticket
+/// on a button press.
+///
+/// `TKT_OATH_HOTP` and `TKT_CHAL_RESP` are the SAME bit in Yubico's layout, so the
+/// ticket flag alone cannot tell the two apart — the cfgFlags mode bits decide, and
+/// `CFG_CHAL_HMAC` is a two-bit value for exactly that reason. An OATH-HOTP slot
+/// carries `CFG_OATH_HOTP8` without `CFG_CHAL_YUBICO`, so it is a typing slot.
+fn is_chal_resp_slot(tkt: u8, cfg: u8) -> bool {
+    tkt & TKT_CHAL_RESP != 0
+        && (cfg & CFG_CHAL_HMAC == CFG_CHAL_HMAC
+            || (cfg & CFG_CHAL_YUBICO != 0 && cfg & CFG_OATH_HOTP8 == 0))
+}
+
+/// Whether the slot demands a press: a typing slot always does, a
+/// challenge-response slot only when it was programmed with `CFG_CHAL_BTN_TRIG`.
+fn slot_needs_touch(tkt: u8, cfg: u8) -> bool {
+    !is_chal_resp_slot(tkt, cfg) || cfg & CFG_CHAL_BTN_TRIG != 0
+}
 const CFGFLAG_UPDATE_MASK: u8 = 0x0C; // PACING_10MS | PACING_20MS
 
 /// Yubico OTP use-counter ceiling — the counter is 15-bit, high bit reserved.
@@ -332,17 +351,13 @@ impl<'a> OtpApplet<'a> {
         let mut slot = [0u8; SLOT_SIZE];
         if self.read_slot_m(fs, EF_OTP_SLOT1, &mut slot).is_some() {
             opts |= CONFIG1_VALID;
-            if slot[OFF_TKT_FLAGS] & TKT_CHAL_RESP == 0
-                || slot[OFF_CFG_FLAGS] & CFG_CHAL_BTN_TRIG != 0
-            {
+            if slot_needs_touch(slot[OFF_TKT_FLAGS], slot[OFF_CFG_FLAGS]) {
                 opts |= CONFIG1_TOUCH;
             }
         }
         if self.read_slot_m(fs, EF_OTP_SLOT2, &mut slot).is_some() {
             opts |= CONFIG2_VALID;
-            if slot[OFF_TKT_FLAGS] & TKT_CHAL_RESP == 0
-                || slot[OFF_CFG_FLAGS] & CFG_CHAL_BTN_TRIG != 0
-            {
+            if slot_needs_touch(slot[OFF_TKT_FLAGS], slot[OFF_CFG_FLAGS]) {
                 opts |= CONFIG2_TOUCH;
             }
         }
@@ -611,7 +626,7 @@ impl<'a> OtpApplet<'a> {
         }
         let tkt = slot[OFF_TKT_FLAGS];
         let cfg = slot[OFF_CFG_FLAGS];
-        if tkt & TKT_CHAL_RESP == 0 {
+        if !is_chal_resp_slot(tkt, cfg) {
             return SW_WRONG_DATA;
         }
         if cfg & CFG_CHAL_BTN_TRIG != 0
@@ -625,7 +640,13 @@ impl<'a> OtpApplet<'a> {
         }
         let data = &apdu.data[..apdu.nc];
         if apdu.p1 == P1_CHAL_HMAC_SLOT1 || apdu.p1 == P1_CHAL_HMAC_SLOT2 {
-            if cfg & CFG_CHAL_HMAC == 0 {
+            // CFG_CHAL_HMAC is a TWO-bit mask (CHAL_YUBICO | 0x02) — Yubico decides
+            // the mode with both bits because TKT_OATH_HOTP and TKT_CHAL_RESP are
+            // the same bit and the check above cannot separate them. An any-bit test
+            // let CFG_OATH_HOTP8 (0x02) alone enter this arm, so an OATH-HOTP slot —
+            // which never carries CFG_CHAL_BTN_TRIG — answered HMAC challenges over
+            // its HOTP seed with no touch. Match the whole mask.
+            if cfg & CFG_CHAL_HMAC != CFG_CHAL_HMAC {
                 return SW_WRONG_DATA;
             }
             if data.len() < hid::PAYLOAD_SIZE {
@@ -646,7 +667,10 @@ impl<'a> OtpApplet<'a> {
             }
             res.extend(&hmac_sha1(&key, &data[..chal_len]));
         } else {
-            if cfg & CFG_CHAL_YUBICO == 0 {
+            // Mirror of the mask above: an OATH-HOTP slot sets 0x02 without
+            // CHAL_YUBICO's 0x20, but a chal-resp slot in HMAC mode sets both — so
+            // the Yubico arm must reject anything carrying the HMAC discriminator.
+            if cfg & CFG_CHAL_YUBICO == 0 || cfg & CFG_OATH_HOTP8 != 0 {
                 return SW_WRONG_DATA;
             }
             if data.len() < 6 {

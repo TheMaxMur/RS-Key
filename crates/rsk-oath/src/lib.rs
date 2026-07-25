@@ -361,6 +361,11 @@ impl<'a> OathApplet<'a> {
         if !seal::seal_put(&dev, fs, &mut *self.rng.borrow_mut(), EF_OATH_CODE, key) {
             return Sw::MEMORY_FAILURE;
         }
+        // Installing a new access code drops any OTP-PIN: VERIFY PIN sets the same
+        // `validated` flag as VALIDATE, so a PIN minted while the applet was open
+        // would survive as a second, invisible unlock path for the store the owner
+        // is protecting right now. Re-mint it from a session that knows this code.
+        let _ = fs.delete(EF_OTP_PIN);
         self.validated = false;
         Sw::OK
     }
@@ -885,9 +890,21 @@ impl<'a> OathApplet<'a> {
     fn cmd_set_otp_pin<S: Storage>(&mut self, apdu: &Apdu, fs: &mut Fs<S>) -> Sw {
         // Setting the OTP-PIN mints an unlock secret; a locked (access-code)
         // applet must be validated first, else an unauthenticated host could
-        // create the very PIN that unlocks the store. On a no-access-code applet
-        // select() leaves validated=true so the nitropy first-set flow still works.
+        // create the very PIN that unlocks the store.
         if !self.validated {
+            return Sw::SECURITY_STATUS_NOT_SATISFIED;
+        }
+        // On a code-less applet select() leaves validated=true unconditionally, so
+        // it proves nothing and this command is otherwise unauthenticated: a host
+        // could plant a PIN on a factory-state key and unlock the store later,
+        // through the access code the owner sets afterwards. Require the operator.
+        if !fs.has_key(EF_OATH_CODE)
+            && self
+                .presence
+                .borrow_mut()
+                .request(Confirm::titled("Set OATH PIN?"))
+                != Presence::Confirmed
+        {
             return Sw::SECURITY_STATUS_NOT_SATISFIED;
         }
         if fs.has_data(EF_OTP_PIN) {
@@ -996,6 +1013,14 @@ impl<'a> OathApplet<'a> {
 impl<S: Storage> Applet<Fs<S>> for OathApplet<'_> {
     fn aid(&self) -> &'static [u8] {
         OATH_AID
+    }
+
+    /// Drop the VALIDATE result on deselect / card reset, so a later session must
+    /// present the access code again rather than inheriting an unlocked store.
+    /// `select` recomputes `validated` from whether a code is set.
+    fn deselect(&mut self, _fs: &mut Fs<S>) {
+        self.validated = false;
+        self.chain = Chain::None;
     }
 
     /// SELECT response: version + device id, plus a fresh challenge (and its

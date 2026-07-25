@@ -182,7 +182,7 @@ pub fn vendor<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, data: &[u8], out: &mut [u
         VENDOR_MSE => mse(ctx, &req, out),
         VENDOR_BACKUP_EXPORT => backup_export(ctx, &req, out),
         VENDOR_BACKUP_LOAD => backup_load(ctx, &req),
-        VENDOR_BACKUP_FINALIZE => backup_finalize(ctx),
+        VENDOR_BACKUP_FINALIZE => backup_finalize(ctx, &req),
         VENDOR_BACKUP_STATE => backup_state(ctx, out),
         VENDOR_UNLOCK => unlock(ctx, &req),
         VENDOR_AUDIT_READ => audit_read(ctx, &req, out),
@@ -210,8 +210,28 @@ fn config_read<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req, out: &mut [u8
                 .read(phy::EF_PHY, &mut buf)
                 .unwrap_or(0)
                 .min(buf.len());
+            // Key 1: the raw stored record (overrides only) for read-modify-write.
+            // Key 2: the boot-resolved *effective* LED pin (tag 4) / driver (tag
+            // 12) / touch timeout (tag 8), keyed by phy tag, so a host can show the
+            // real values a bare record omits. Absent (empty map) on a headless
+            // build; older hosts ignore the extra key.
+            let eff = crate::config::effective_phy();
             encode(out, |e| {
-                e.map(1)?.u8(1)?.bytes(&buf[..n])?;
+                e.map(2)?.u8(1)?.bytes(&buf[..n])?.u8(2)?;
+                match eff {
+                    Some((gpio, driver, timeout)) => {
+                        e.map(3)?
+                            .u8(4)?
+                            .u8(gpio)?
+                            .u8(12)?
+                            .u8(driver)?
+                            .u8(8)?
+                            .u8(timeout)?;
+                    }
+                    None => {
+                        e.map(0)?;
+                    }
+                }
                 Ok(())
             })
         }
@@ -237,6 +257,11 @@ fn config_read<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req, out: &mut [u8
 /// AND a physical touch: a *stronger* gate than the CCID path's presence-only,
 /// because CTAPHID is reachable by any unprivileged host process. No MSE channel
 /// — the config blobs are not secret, only their authorship must be proven.
+///
+/// A write that changes nothing is answered `Ok` without touching flash or the
+/// journal, and a run of writes that do change something costs one ring entry, not
+/// one each ([`journal::append_config_write`]): this is the only journalled event a
+/// silent host can drive on demand, and 128 of them would evict the whole ring.
 fn config_write<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> CtapResult {
     // DEFAULT build: ungated device-config write (full YubiKey/ykman parity).
     // `strict-config` restores the PIN (PERM_ACFG) + touch gate — a stronger gate
@@ -250,15 +275,29 @@ fn config_write<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> CtapResul
         }
     }
     match req.target {
-        CONFIG_TARGET_DEV_CONF => persist_dev_conf(ctx.fs, req.blob).map_err(|e| match e {
-            DevConfError::TooLong => CtapError::InvalidLength,
-            DevConfError::Store => CtapError::Other,
-        })?,
+        CONFIG_TARGET_DEV_CONF => {
+            if rsk_mgmt::dev_conf_unchanged(ctx.fs, req.blob) {
+                return Ok(0);
+            }
+            persist_dev_conf(ctx.fs, req.blob).map_err(|e| match e {
+                DevConfError::TooLong => CtapError::InvalidLength,
+                DevConfError::Store => CtapError::Other,
+            })?
+        }
         // The phy record (VID/PID, USB interfaces, LED, presence-timeout) — a
         // read-modify-write merge (the same `merge_save` the CCID rescue WRITE 0x1C
         // uses), so a host that sends only the fields it changed cannot wipe the
         // rest. Takes effect on the next boot (main reads EF_PHY), like the CCID path.
         CONFIG_TARGET_PHY => {
+            // The merge is what lands, so compare *that* against the stored record.
+            // A no-op replay skips the reboot latch too: the re-enumeration exists to
+            // apply a changed USB identity, and it is a free host-driven reboot.
+            // Only a record that actually loaded can be unchanged — an absent or
+            // unreadable EF_PHY must take the write, or a host sending the default
+            // values to repair it would be answered `Ok` with nothing stored.
+            if phy::load(ctx.fs).is_some_and(|cur| cur.overlay(req.blob) == cur) {
+                return Ok(0);
+            }
             phy::merge_save(ctx.fs, req.blob).map_err(|_| CtapError::Other)?;
             PHY_WRITTEN.store(true, Ordering::Relaxed);
         }
@@ -269,13 +308,18 @@ fn config_write<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> CtapResul
             if req.blob.len() < LED_CONF_LEN {
                 return Err(CtapError::InvalidLength);
             }
+            let want = &req.blob[..LED_CONF_LEN];
+            let mut cur = [0u8; LED_CONF_LEN];
+            if ctx.fs.read(EF_LED_CONF, &mut cur) == Some(LED_CONF_LEN) && &cur[..] == want {
+                return Ok(0);
+            }
             ctx.fs
-                .put(EF_LED_CONF, &req.blob[..LED_CONF_LEN])
+                .put(EF_LED_CONF, want)
                 .map_err(|_| CtapError::Other)?;
         }
         _ => return Err(CtapError::InvalidParameter),
     }
-    journal::append(ctx, journal::EV_CONFIG_WRITE, req.target as u8, &[]);
+    journal::append_config_write(ctx, req.target as u8);
     Ok(0)
 }
 
@@ -288,6 +332,14 @@ fn config_write<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> CtapResul
 fn att_import<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> CtapResult {
     let mut packed = [0u8; cert::ATT_CHAIN_REC_MAX];
     let plen = cert::att_chain_pack(req.chain, &mut packed).ok_or(CtapError::InvalidParameter)?;
+    // An import replaces the attestation identity every U2F REGISTER signs with, and
+    // `gate` waives its PIN half when no PIN is set — leaving the whole handover on
+    // one unlabelled touch. Name it explicitly when there is no PIN to authorise it.
+    if !ctx.fs.has_data(EF_PIN)
+        && !ctx.check_user_presence(crate::Confirm::titled("Replace attestation identity?"))
+    {
+        return Err(CtapError::OperationDenied);
+    }
     gate(ctx, req, "Import attestation key?")?;
     let mut scalar = open_channel_key(ctx, req.blob)?;
     if P256Key::from_scalar(&scalar).is_none() {
@@ -659,6 +711,17 @@ fn backup_load<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> CtapResult
     if lock_engaged(ctx.fs) {
         return Err(CtapError::NotAllowed);
     }
+    // A LOAD re-keys the device: every existing credential box, RP record and
+    // nickname is sealed under the seed, so installing a new one silently makes
+    // them all undecryptable. `gate` waives its PIN half when no PIN is set (the
+    // state a fresh or just-reset key is in), which left the whole operation on a
+    // single touch under a generic prompt — so name the destruction explicitly
+    // when there is no PIN to authorise it.
+    if !ctx.fs.has_data(EF_PIN)
+        && !ctx.check_user_presence(crate::Confirm::titled("Replace device seed?"))
+    {
+        return Err(CtapError::OperationDenied);
+    }
     gate(ctx, req, "Restore seed from host?")?;
     let mut nonce = [0u8; 12];
     nonce.copy_from_slice(&req.blob[..12]);
@@ -691,8 +754,14 @@ fn backup_load<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> CtapResult
 }
 
 /// `BACKUP_FINALIZE`: seal the one-time export window (a reset reopens it).
-fn backup_finalize<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>) -> CtapResult {
-    if !ctx.check_user_presence(crate::Confirm::titled("Finish backup?")) {
+fn backup_finalize<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> CtapResult {
+    // Sealing is irreversible short of a reset that destroys the device identity:
+    // it closes seed export and, on the display build, the on-device recovery-phrase
+    // reveal. Carry the PIN half of the gate when a PIN exists — the MSE half is
+    // deliberately NOT required, since both shipped host tools send FINALIZE with
+    // no MSE handshake — and say what the touch actually authorises.
+    pin_gate(ctx, req)?;
+    if !ctx.check_user_presence(crate::Confirm::titled("Seal backup permanently?")) {
         return Err(CtapError::OperationDenied);
     }
     ctx.fs

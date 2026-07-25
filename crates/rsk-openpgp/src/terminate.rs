@@ -12,6 +12,7 @@ use rsk_sdk::{Apdu, Sw};
 use crate::Rng;
 use crate::consts::*;
 use crate::init::scan_files;
+use crate::pin::verifier_unusable;
 
 /// Whether `fid` is an OpenPGP-owned flash file. The OpenPGP data-object tag space
 /// (`0x00xx`/`0x01xx`/`0x5fxx`/`0x7fxx`) contains no FIDO files, so those are tested
@@ -71,8 +72,10 @@ pub fn terminate_df<S: Storage>(
         Some(n) => n,
         None => return Sw::REFERENCE_NOT_FOUND,
     };
-    // The live PW3 retry counter (`pin_wrong_retry` decrements it).
-    if !has_pw3 && n > PW3_RETRY_IDX && pw[PW3_RETRY_IDX] > 0 {
+    // The live PW3 retry counter (`pin_wrong_retry` decrements it). A verifier that
+    // can never be verified can never be decremented to blocked either, so count it
+    // as blocked — else a card carrying one has no way back at all.
+    if !has_pw3 && !verifier_unusable(fs, EF_PW3) && n > PW3_RETRY_IDX && pw[PW3_RETRY_IDX] > 0 {
         return Sw::SECURITY_STATUS_NOT_SATISFIED;
     }
     if apdu.nc != 0 {

@@ -45,6 +45,18 @@ fn seeded_fs() -> Fs<RamStorage> {
     fs
 }
 
+/// `seeded_fs` plus a configured PIN — the state in which §6.10.2 requires a
+/// verified pinUvAuthParam on every write.
+fn seeded_fs_with_pin() -> Fs<RamStorage> {
+    let mut fs = seeded_fs();
+    let mut pin_file = [0u8; 35];
+    pin_file[0] = 8; // retries
+    pin_file[1] = 4; // length
+    pin_file[2] = 1; // format
+    fs.put(EF_PIN, &pin_file).unwrap();
+    fs
+}
+
 fn run(fs: &mut Fs<RamStorage>, state: &mut FidoState, req: &[u8], out: &mut [u8]) -> CtapResult {
     let mut rng = SeqRng(1);
     let mut presence = crate::AlwaysConfirm;
@@ -230,7 +242,7 @@ fn set_integrity_failure_rejected() {
 
 #[test]
 fn set_bad_mac_rejected() {
-    let mut fs = seeded_fs();
+    let mut fs = seeded_fs_with_pin();
     let mut state = armed(PERM_LBW);
     let mut out = [0u8; 64];
     let blob = valid_blob(&[0x33; 30]);
@@ -244,7 +256,7 @@ fn set_bad_mac_rejected() {
 
 #[test]
 fn set_without_lbw_permission_rejected() {
-    let mut fs = seeded_fs();
+    let mut fs = seeded_fs_with_pin();
     // A correctly-MACed request but the token lacks largeBlobWrite.
     let mut state = armed(crate::state::PERM_MC);
     let mut out = [0u8; 64];
@@ -254,6 +266,128 @@ fn set_without_lbw_permission_rejected() {
         run(&mut fs, &mut state, &req, &mut out),
         Err(CtapError::PinAuthInvalid)
     );
+}
+
+#[test]
+fn set_without_a_pin_needs_no_token() {
+    // §6.10.2 gates the write on being "protected by some form of user verification
+    // or the alwaysUv option ID is present and true"; the spec's note is explicit that
+    // an array can be written without user verification while no PIN is configured.
+    let mut fs = seeded_fs();
+    let mut state = FidoState::new(); // no token in use at all
+    let mut out = [0u8; 64];
+    let blob = valid_blob(&[0x55; 40]);
+    // MAC'd under a token nobody holds — irrelevant, the branch is skipped.
+    let req = set_request(0, Some(blob.len() as u64), &blob, &[0x11; 32]);
+    assert_eq!(run(&mut fs, &mut state, &req, &mut out), Ok(0));
+    let mut stored = [0u8; 256];
+    let sn = fs.read(EF_LARGEBLOB, &mut stored).unwrap();
+    assert_eq!(&stored[..sn], &blob[..]);
+}
+
+#[test]
+fn set_without_a_pin_still_needs_a_token_under_always_uv() {
+    // The other half of the same condition: alwaysUv re-arms the requirement even
+    // with no PIN configured.
+    let mut fs = seeded_fs();
+    fs.put(crate::consts::EF_ALWAYS_UV, &[1]).unwrap();
+    let mut state = FidoState::new();
+    let mut out = [0u8; 64];
+    let blob = valid_blob(&[0x66; 40]);
+    // A write carrying no pinUvAuthParam/protocol pair at all (keys 5 and 6 absent).
+    let req = {
+        let mut buf = [0u8; 1100];
+        let n = {
+            let mut e = Encoder::new(Cursor::new(&mut buf[..]));
+            e.map(3).unwrap();
+            e.u8(0x02).unwrap().bytes(&blob).unwrap();
+            e.u8(0x03).unwrap().u64(0).unwrap();
+            e.u8(0x04).unwrap().u64(blob.len() as u64).unwrap();
+            e.writer().position()
+        };
+        buf[..n].to_vec()
+    };
+    assert_eq!(
+        run(&mut fs, &mut state, &req, &mut out),
+        Err(CtapError::PuatRequired)
+    );
+}
+
+#[test]
+fn get_rejects_write_only_parameters() {
+    let mut fs = seeded_fs();
+    let mut state = armed(PERM_LBW);
+    let mut out = [0u8; 128];
+    // §6.10.2: on a `get`, `length` and the pinUvAuthParam pair are all
+    // CTAP1_ERR_INVALID_PARAMETER — including a length of zero, which is present.
+    let with_len = {
+        let mut buf = [0u8; 32];
+        let n = {
+            let mut e = Encoder::new(Cursor::new(&mut buf[..]));
+            e.map(3).unwrap();
+            e.u8(0x01).unwrap().u64(10).unwrap();
+            e.u8(0x03).unwrap().u64(0).unwrap();
+            e.u8(0x04).unwrap().u64(0).unwrap();
+            e.writer().position()
+        };
+        buf[..n].to_vec()
+    };
+    assert_eq!(
+        run(&mut fs, &mut state, &with_len, &mut out),
+        Err(CtapError::InvalidParameter)
+    );
+    let with_param = {
+        let mut buf = [0u8; 64];
+        let n = {
+            let mut e = Encoder::new(Cursor::new(&mut buf[..]));
+            e.map(4).unwrap();
+            e.u8(0x01).unwrap().u64(10).unwrap();
+            e.u8(0x03).unwrap().u64(0).unwrap();
+            e.u8(0x05).unwrap().bytes(&[0u8; 32]).unwrap();
+            e.u8(0x06).unwrap().u8(2).unwrap();
+            e.writer().position()
+        };
+        buf[..n].to_vec()
+    };
+    assert_eq!(
+        run(&mut fs, &mut state, &with_param, &mut out),
+        Err(CtapError::InvalidParameter)
+    );
+}
+
+#[test]
+fn get_over_max_fragment_length_rejected() {
+    let mut fs = seeded_fs();
+    let mut state = FidoState::new();
+    let mut out = [0u8; 128];
+    // §6.10.2: "If the value of get is greater than maxFragmentLength, return
+    // CTAP1_ERR_INVALID_LENGTH" — not a silent clamp.
+    let req = get_request(MAX_FRAGMENT_LENGTH as u64 + 1, 0);
+    assert_eq!(
+        run(&mut fs, &mut state, &req, &mut out),
+        Err(CtapError::InvalidLength)
+    );
+    // Exactly maxFragmentLength is fine.
+    let req = get_request(MAX_FRAGMENT_LENGTH as u64, 0);
+    assert!(run(&mut fs, &mut state, &req, &mut out).is_ok());
+}
+
+#[test]
+fn set_minimum_length_array_is_hash_checked() {
+    let mut fs = seeded_fs();
+    let mut state = armed(PERM_LBW);
+    let mut out = [0u8; 64];
+    // The 17-byte floor gets no exemption from the trailing-hash check.
+    let mut bad = LARGEBLOB_INITIAL.to_vec();
+    bad[16] ^= 0xff;
+    let req = set_request(0, Some(bad.len() as u64), &bad, &TOKEN);
+    assert_eq!(
+        run(&mut fs, &mut state, &req, &mut out),
+        Err(CtapError::IntegrityFailure)
+    );
+    // The genuine initial array still writes.
+    let req = set_request(0, Some(17), &LARGEBLOB_INITIAL, &TOKEN);
+    assert_eq!(run(&mut fs, &mut state, &req, &mut out), Ok(0));
 }
 
 #[test]
@@ -330,5 +464,62 @@ fn max_u64_key_rejected_not_overflow() {
     assert_eq!(
         run(&mut fs, &mut state, &req, &mut out),
         Err(CtapError::InvalidCbor)
+    );
+}
+
+#[test]
+fn a_completed_transfer_disarms_the_accumulator() {
+    // Audit run-28 F3: the commit branch used to leave `expected_length` and
+    // `expected_next_offset` at the finished array's total, so a zero-length
+    // fragment at that offset satisfied every check and re-ran the flash write —
+    // seven bytes on the wire, and unauthenticated on a PIN-less key. A completed
+    // transfer is terminal: the next write must start a fresh array at offset 0.
+    let mut fs = seeded_fs();
+    let mut state = FidoState::new();
+    let mut out = [0u8; 64];
+    let blob = valid_blob(&[0x77; 40]);
+    let total = blob.len() as u64;
+    let req = set_request(0, Some(total), &blob, &[0x11; 32]);
+    assert_eq!(run(&mut fs, &mut state, &req, &mut out), Ok(0));
+
+    // {2: h'', 3: total} — the re-commit. It must not reach the `put` again.
+    let replay = set_request(total, None, &[], &[0x11; 32]);
+    assert_eq!(
+        run(&mut fs, &mut state, &replay, &mut out),
+        Err(CtapError::InvalidSeq)
+    );
+    assert_eq!(state.lba.expected_length, 0);
+    assert_eq!(state.lba.expected_next_offset, 0);
+
+    // The stored array is untouched, and a fresh transfer still works.
+    let mut stored = [0u8; 256];
+    let sn = fs.read(EF_LARGEBLOB, &mut stored).unwrap();
+    assert_eq!(&stored[..sn], &blob[..]);
+    let next = valid_blob(&[0x99; 24]);
+    let req = set_request(0, Some(next.len() as u64), &next, &[0x11; 32]);
+    assert_eq!(run(&mut fs, &mut state, &req, &mut out), Ok(0));
+    let sn = fs.read(EF_LARGEBLOB, &mut stored).unwrap();
+    assert_eq!(&stored[..sn], &next[..]);
+}
+
+#[test]
+fn a_multi_fragment_transfer_disarms_the_accumulator() {
+    // Same invariant across the fragmented path, where the commit happens on the
+    // last fragment rather than the first.
+    let mut fs = seeded_fs_with_pin();
+    let mut state = armed(PERM_LBW);
+    let mut out = [0u8; 64];
+    let blob = valid_blob(&[0x33; 60]);
+    let total = blob.len() as u64;
+    let req = set_request(0, Some(total), &blob[..40], &TOKEN);
+    assert_eq!(run(&mut fs, &mut state, &req, &mut out), Ok(0));
+    let req = set_request(40, None, &blob[40..], &TOKEN);
+    assert_eq!(run(&mut fs, &mut state, &req, &mut out), Ok(0));
+    assert_eq!(state.lba.expected_length, 0);
+
+    let replay = set_request(total, None, &[], &TOKEN);
+    assert_eq!(
+        run(&mut fs, &mut state, &replay, &mut out),
+        Err(CtapError::InvalidSeq)
     );
 }

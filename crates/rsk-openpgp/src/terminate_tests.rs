@@ -116,6 +116,22 @@ fn terminate_allowed_without_pw3_when_admin_blocked() {
 }
 
 #[test]
+fn terminate_allowed_when_the_admin_verifier_is_unusable() {
+    let mut fs = seeded();
+    // A card carrying the pre-fix zero-length PW3 verifier: check_pin refuses it
+    // before the retry decrement, so its counter never reaches 0 and the applet
+    // would otherwise have no way back.
+    let mut rec = [0u8; 64];
+    let n = fs.read(EF_PW3, &mut rec).unwrap();
+    rec[0] = 0;
+    fs.put(EF_PW3, &rec[..n]).unwrap();
+    assert_eq!(
+        terminate_df(&dev(), &mut fs, &mut CountRng(0), false, &apdu()),
+        Sw::OK
+    );
+}
+
+#[test]
 fn terminate_rejects_p1p2_and_data() {
     let mut fs = seeded();
     let mut bad = apdu();

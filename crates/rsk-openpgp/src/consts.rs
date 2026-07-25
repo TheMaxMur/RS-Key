@@ -122,6 +122,12 @@ pub const EF_UIF_SIG: u16 = 0x00d6; // S — user-interaction flag (touch)
 pub const EF_UIF_DEC: u16 = 0x00d7; // S
 pub const EF_UIF_AUT: u16 = 0x00d8; // S
 
+/// UIF flag byte "permanently enabled" (OpenPGP 3.4, D6/D7/D8 DO table): once
+/// stored, PUT DATA may not change it — only a factory reset (TERMINATE DF, which
+/// re-seeds `UIF_DEFAULT`) clears it. This is the only touch setting that holds
+/// against a caller who already has PW3.
+pub(crate) const UIF_PERMANENT: u8 = 0x02;
+
 /// The touch-policy (UIF) DO for the private-key slot actually being used.
 /// MANAGE SECURITY ENVIRONMENT can cross-wire the DEC/AUT slot references, so
 /// the touch check must follow the repointed slot (`sess.pk_dec`/`sess.pk_aut`)
@@ -224,3 +230,9 @@ pub const PW3_RETRY_IDX: usize = pw_retry_idx(EF_PW3);
 /// Default user PIN `123456`, admin PIN `12345678` (the OpenPGP defaults).
 pub const PW1_DEFAULT: &[u8] = &[0x31, 0x32, 0x33, 0x34, 0x35, 0x36];
 pub const PW3_DEFAULT: &[u8] = &[0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38];
+/// Reference-value length limits (OpenPGP 3.4 §4.2): PW1 at least 6, PW3 and the
+/// resetting code at least 8. The maximum is the one DO C4 advertises — it is
+/// `PW_STATUS_DEFAULT`'s max-length byte, so the card cannot refuse what it offers.
+pub const PW1_MIN_LEN: usize = 6;
+pub const PW3_MIN_LEN: usize = 8;
+pub const PIN_MAX_LEN: usize = 127;

@@ -29,19 +29,56 @@ the log is real. Use `log` for a quick glance, `verify` when the answer matters.
 | `LOCK_ENGAGE` / `LOCK_RELEASE` | [soft-lock](soft-lock.md) engage/release |
 | `BACKUP_EXPORT` / `BACKUP_LOAD` / `BACKUP_FINALIZE` | [seed-backup](seed-backup.md) lifecycle |
 | `ATT_IMPORT` / `ATT_CLEAR` | [org attestation](attestation.md) provisioning |
+| `CFG_ALWAYS_UV` | alwaysUv toggled; no aux/detail (flag-only) |
+| `CONFIG_WRITE` | a device-config write over the FIDO vendor channel. aux = the target that opened the entry (`0` dev-conf, `1` phy, `2` led); detail = `repeats(2 LE) ‖ targets(1)` (see below) |
+| `AUDIT_CFG` | journalling itself: aux `1` = turned on, `0` = turned off (that entry is the last one written, so the trail shows when it stopped) |
 | `CHECKPOINT` | every signed checkpoint is itself logged |
 
 Each entry is a fixed 20 bytes:
 `seq(4) ‖ uptime_ms(4) ‖ event(1) ‖ aux(1) ‖ detail(8) ‖ rsvd(2)`. There is
-**no wall clock** on the device. Entries carry the boot-relative uptime. Every
-power cycle opens with a `BOOT` entry, and the sequence number gives total
+**no wall clock** on the device. `uptime_ms` counts from the moment the key
+*attached to USB*, not from power-on — boot spends seconds before that on TRNG
+seeding and flash migrations, and none of it is time a host could have used.
+Every power cycle opens with a `BOOT` entry, and the sequence number gives total
 order. Wall-clock attribution is the host's job (e.g. record when you ran
 `rsk audit verify`).
 
-The `detail` field only ever carries the **first 8 bytes of the rpIdHash**, not
-RP names, user handles, or credential IDs. That is deliberate: the log answers
-"how was this key used and how often" without revealing *which sites*. See
-[gating](#gating) below.
+For the FIDO operations — `MAKE_CREDENTIAL`, `GET_ASSERTION`, `U2F_REGISTER`,
+`U2F_AUTH` — the `detail` field carries the **first 8 bytes of the rpIdHash** and
+nothing else: no RP names, user handles, or credential IDs. That is deliberate:
+the log answers "how was this key used and how often" without revealing *which
+sites*. See [gating](#gating) below. Other events use `detail` for their own small
+payload (`CFG_MIN_PIN`'s forceChangePin flag, `CONFIG_WRITE`'s run counters); none
+of them records a site.
+
+### Config writes cost one slot per run
+
+The journal is append-only with one bounded exception. `CONFIG_WRITE` is
+[ungated on the default build](../protocol.md) and is the only event a silent
+host can drive on demand, so 128 of them would otherwise evict every other entry
+from the 128-slot window. Instead a *run* of config writes folds into a single
+entry: it keeps the `seq` and the timestamp of the **first** write of the run,
+and its detail counts the rest — `repeats(2 LE) ‖ targets(1)`, where `targets` is
+a `1 << target` mask of every record the run touched. `rsk audit log` renders it:
+
+```text
+   seq      uptime  event              aux  detail
+   201       8.2s  CONFIG_WRITE         1  300× write (phy+led)
+```
+
+Two consequences worth knowing:
+
+- **A run never folds across a power cycle**, so the `BOOT` entry between two runs
+  is never swallowed.
+- **A fold moves the chain head without advancing `seq_next`.** Seeing the same
+  `seq_next` with a different head is legitimate, not a tamper signal; `verify`
+  re-folds the exported window and still matches.
+
+This bounds the flood, it does not remove it: a phy write latches a reboot, so a
+host willing to make the key re-enumerate can still spend two slots per cycle
+(a fresh `BOOT` plus a fresh run). Each cycle is a visible re-enumeration, and
+building `--features strict-config` — which puts the write behind a touch and a
+PIN token — is the complete answer.
 
 A `log` run prints a header, the chain state, then the window:
 
@@ -86,15 +123,19 @@ and checks that the signed head matches the refold. The challenge is what makes
 the verdict fresh. A replayed old checkpoint signs a stale challenge and fails.
 
 A successful `verify` prints the window, the head, and the attestation key with
-a short fingerprint:
+a short fingerprint. The verdict depends on whether you pinned the key:
 
 ```text
 chain   : OK — head a93b…
 sig     : OK — checkpoint over seq_next=201, fresh challenge
 att key : 04a1b2…   (65-byte SEC1)
           fingerprint 9c4e7f12ab… — record this; pin later runs with --expect-key
-verdict : journal authentic ✓
+verdict : chain + signature OK — the key is NOT pinned, so this does not prove
+          which device signed it
 ```
+
+With `--expect-key` the last line becomes
+`journal authentic ✓ (signed by the pinned key)`.
 
 Meta updates are ordered so that a power cut at any point loses at most the
 newest event and never produces a false tamper verdict: when the ring is full
@@ -109,17 +150,22 @@ provisioning, then pass it back on every later run:
 ```sh
 rsk audit verify                         # first run: copy the printed "att key" hex
 rsk audit verify --expect-key 04a1b2…    # afterwards: fail loudly on any mismatch
+rsk audit verify --expect-key 9c4e7f12ab…   # the short fingerprint works too
 ```
 
 A mismatch means the public key changed, which can only happen if the DEVK
 changed. That means you are talking to a **different device**, or a clone that
-was flashed without burning the same OTP. The hex is the full 65-byte SEC1
-point (`04 ‖ x ‖ y`), lower-case. The comparison is exact. Stash it in your
+was flashed without burning the same OTP. `--expect-key` takes either the full
+65-byte SEC1 point (`04 ‖ x ‖ y`) or the 16-hex fingerprint, lower-case, and the
+comparison is exact. The full key is the stronger pin. Stash it in your
 provisioning record alongside the device serial.
 
-`--expect-key` is your defence against a swapped device. The signature check
-already proves the log was signed by *some* DEVK-bound key. Pinning proves it
-was *your* DEVK-bound key.
+**Without a pin, `verify` proves nothing about identity.** The public key it
+checks against arrives in the same response it is checking, so an unpinned run
+establishes only that the journal is internally consistent and self-signed — a
+counterfeit signing with a key of its own passes it. The device refuses to sign
+without an OTP DEVK, but a host cannot tell a DEVK-derived key from any other
+P-256 point. Pinning is what turns "some key" into "*your* device".
 
 ## Reset semantics (privacy by design)
 
@@ -187,5 +233,6 @@ Two honest limits worth stating:
   covers them) but not read them back. `verify` regularly if you want a
   per-event record. The host transcript is your archive, the device is not.
 - **There is no wall clock.** The device cannot tell you *when* in calendar
-  time something happened, only the order and the boot-relative uptime. Pair the
-  `seq` and `BOOT` markers with your own host-side timestamps.
+  time something happened, only the order and the milliseconds since that power
+  cycle's USB attach. Pair the `seq` and `BOOT` markers with your own host-side
+  timestamps.

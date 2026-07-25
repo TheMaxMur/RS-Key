@@ -47,6 +47,18 @@ The applet accepts AES-128/192/256 management keys; under the FIPS-style build
 it refuses to *set* a new 3DES key, though an existing 3DES key still
 authenticates so a reflashed device can migrate itself to AES.
 
+> **PIN protection is per key and does not survive a rotation.** Setting a new
+> management key clears the protected flag, so the new key is not PIN-readable
+> unless you opt in again — `ykman piv access change-management-key --protect`
+> re-writes the flag as part of the same operation, so nothing changes for the
+> command above. It matters if you rotate with anything else (a raw `SET
+> MANAGEMENT KEY` APDU, `yubico-piv-tool`): the card then holds a key only the
+> hex string opens, and `ykman piv info` reports it as not protected. Rotating
+> away from a protected key is also how you revoke that PIN-only access. The flag
+> is cleared only once the new key is stored, so a rotation that fails part-way
+> leaves the escrow describing the key that is still on the card — you are never
+> left holding a `PRINTED`-only key the card no longer admits to escrowing.
+
 **On the panel (trusted-display builds).** The PIV PIN and PUK can be changed
 (and a blocked PIN unblocked with the PUK) on the device, no host needed:
 Settings → Security → **PIV PIN** → *Change PIN* / *Change PUK* / *Unblock PIN*.
@@ -197,6 +209,13 @@ Attestation only works for **generated** keys; an imported key returns
 attestation (org-provisioned enterprise attestation) see
 [attestation.md](attestation.md).
 
+An **interrupted** `keys import` or `keys move` fails closed: the target slot's
+metadata is dropped before the new key is written, so a power cut between the two
+leaves a slot that reads as empty (`GET METADATA` → `6A88`) rather than one whose
+key and its recorded provenance disagree. Re-run the import; the slot works again
+once it completes. That ordering is what keeps attestation honest — it can never
+certify an imported key as generated on-device.
+
 ## Move and delete keys
 
 `ykman piv` 5.7 can move a key (with its certificate and metadata) between
@@ -266,6 +285,21 @@ The reset is **only accepted once both the PIN and the PUK are blocked**;
 `ykman` blocks them for you first. To wipe *every* applet at once (PIV included),
 use `rsk offboard`, which blocks PIN+PUK then resets PIV as part of a full-device
 wipe with a signed receipt (see [fleet.md](fleet.md#offboarding)).
+
+`9000` from the reset means **every** PIV file is gone — private keys, public-key
+caches, certificates, the data objects a host wrote through `PUT DATA`, and the
+PIN/PUK files, which are then re-seeded to the factory defaults. The sweep runs
+until the enumeration comes back empty rather than for a fixed number of passes,
+and its safety budget counts files actually deleted, so neither a card stuffed
+with `PUT DATA` objects nor one whose flash holds many superseded copies of them
+can outrun it.
+
+If the flash refuses a delete — or reports an enumeration it could not finish, so
+"nothing left" cannot be proven — the command answers `6581` (`MEMORY_FAILURE`)
+instead of claiming a wipe it did not complete. Treat that as "the card is still
+provisioned" and retry: a failed reset still re-creates the PIN, PUK and
+retry-counter files it deleted first, so the next attempt behaves like the first
+one instead of answering `6A88` for the rest of the power cycle.
 
 There is no `rsk piv` command group: PIV is provisioned entirely through
 `ykman piv` / `yubico-piv-tool` / PKCS#11, with `rsk` only involved for a

@@ -21,8 +21,12 @@ default board it is skipped and the getAssertion signature carries the check.
 
 Flash the no-touch build built `--features advertise-pqc` first.
 """
+import os
 import secrets
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import replug  # noqa: E402
 
 from cryptography.hazmat.primitives.asymmetric import mldsa
 from fido2.client import DefaultClientDataCollector, Fido2Client
@@ -55,19 +59,20 @@ def main():
     # Default build advertises neither PQC set; advertise-pqc leads with -49, -48.
     assert algs in ([-7, -35, -36, -8], [-49, -48, -7, -35, -36, -8]), f"algorithms: {algs}"
     print(f"getInfo algorithms: {algs}")
-    Ctap2(dev).reset()  # idempotent clean slate
+    dev = replug.reset_fido2(dev, "the clean-slate reset")  # idempotent
 
     client = Fido2Client(dev, client_data_collector=DefaultClientDataCollector(ORIGIN))
 
-    # Register, offering ES256 first — the PQC-priority policy must pick -49.
+    # Register with -49 first: CTAP 2.1 §6.1.2 step 4 selects the FIRST supported
+    # entry of pubKeyCredParams, so the RP's order is what picks ML-DSA-65.
     reg = client.make_credential(
         PublicKeyCredentialCreationOptions(
             rp=PublicKeyCredentialRpEntity(id=RP_ID, name="Example"),
             user=PublicKeyCredentialUserEntity(id=b"\x01\x02\x03\x04", name="pqc65"),
             challenge=secrets.token_bytes(32),
             pub_key_cred_params=[
-                PublicKeyCredentialParameters(type=PK, alg=-7),
                 PublicKeyCredentialParameters(type=PK, alg=-49),
+                PublicKeyCredentialParameters(type=PK, alg=-7),
             ],
             authenticator_selection=AuthenticatorSelectionCriteria(
                 user_verification=UserVerificationRequirement.DISCOURAGED

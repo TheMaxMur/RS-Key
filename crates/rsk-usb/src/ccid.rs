@@ -156,6 +156,19 @@ pub trait ApduHandler {
             error: 0,
         }
     }
+
+    /// Return the card to a clean, unauthenticated state: deselect the current
+    /// applet and drop its security status, plus any buffered chain / pending
+    /// response.
+    ///
+    /// Called on an ICC power transition. `SCardDisconnect(SCARD_RESET_CARD)` is the
+    /// host's primitive for forcing re-authentication — middleware uses it exactly so
+    /// the next consumer must present the PIN again — and OpenPGP 3.4 (VERIFY) and
+    /// NIST SP 800-73pt2-5 §2.3 both require a reset to clear the security status and
+    /// return to the default application. Without this the previously selected applet
+    /// stayed current with `has_pin`/`has_pw2`/`validated` intact, so a second local
+    /// process inherited a verified session it never authenticated for.
+    async fn reset_card(&mut self) {}
 }
 
 /// Outcome of [`ApduHandler::handle_secure`]. The transport frames it as an
@@ -320,6 +333,12 @@ impl<'d, D: Driver<'d>, H: ApduHandler> Ccid<'d, D, H> {
                     } else if let Some((a, b)) = secure_apdu(&self.rx[..total]) {
                         self.run_secure(a, b).await;
                     } else {
+                        // A power transition is the host asking for a clean card;
+                        // clear the applet security status before answering, so the
+                        // ATR it gets back really does describe a fresh session.
+                        if matches!(self.rx.first(), Some(&CCID_POWER_ON | &CCID_POWER_OFF)) {
+                            self.handler.reset_card().await;
+                        }
                         let n = process_message(
                             &self.rx[..total],
                             self.atr,

@@ -201,6 +201,19 @@ pub fn persist_dev_conf<S: Storage>(fs: &mut Fs<S>, blob: &[u8]) -> Result<(), D
     Ok(())
 }
 
+/// Whether `EF_DEV_CONF` already holds exactly `blob`, so a WRITE CONFIG carrying
+/// it would change nothing. `EF_DEV_CONF` is private to this crate, so the FIDO
+/// vendor `CONFIG_WRITE` asks here: it skips the flash write *and* its audit-journal
+/// entry on an idempotent replay, which a silent host could otherwise use to evict
+/// the whole ring.
+pub fn dev_conf_unchanged<S: Storage>(fs: &mut Fs<S>, blob: &[u8]) -> bool {
+    let mut cur = [0u8; EF_DEV_CONF_MAX];
+    // `read` reports the value's *full* stored length, which an over-length record
+    // from an older build can push past `cur` — compare only when it fits.
+    matches!(fs.read(EF_DEV_CONF, &mut cur),
+        Some(n) if n == blob.len() && n <= cur.len() && cur[..n] == *blob)
+}
+
 /// Set by [`persist_dev_conf`] on any successful write, drained by the firmware to
 /// know when to reload its cached enabled-capability mask. Same swap-to-consume
 /// latch as the device-reset request; enforcement is build-agnostic (a

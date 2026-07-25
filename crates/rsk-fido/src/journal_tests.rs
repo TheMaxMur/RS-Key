@@ -126,6 +126,99 @@ fn fold_and_scrub_keeps_chain_and_deletes_details() {
     assert_eq!(head, reference_head(&reference));
 }
 
+/// The `CONFIG_TARGET_*` ids the coalescing tests drive (`crate::consts`).
+const T_PHY: u8 = 1;
+const T_LED: u8 = 2;
+
+#[test]
+fn config_write_run_costs_one_slot_and_evicts_nothing() {
+    // The audit finding: an ungated host drives EV_CONFIG_WRITE on demand, and 128
+    // appends flush the ring. Alternating targets must not split the run either.
+    let mut fs = Fs::new(RamStorage::new());
+    let mut state = FidoState::new();
+    run_ctx(&mut fs, &mut state, |ctx| {
+        append(ctx, EV_PIN_SET, 0, &[]); // the evidence a flood must not evict
+        for i in 0..300 {
+            append_config_write(ctx, if i % 2 == 0 { T_LED } else { T_PHY });
+        }
+    });
+
+    let (_, m) = chain_head(&dev(), &mut fs);
+    assert_eq!(m.start, 0, "nothing evicted");
+    assert_eq!(m.seq_next, 3, "BOOT + PIN_SET + one coalesced config write");
+    let mut e = [0u8; ENTRY_LEN];
+    read_slot(&mut fs, 2, &mut e).unwrap();
+    assert_eq!(e[8], EV_CONFIG_WRITE);
+    assert_eq!(e[9], T_LED, "aux keeps the target that opened the run");
+    assert_eq!(
+        u16::from_le_bytes([e[CW_REPEATS_AT], e[CW_REPEATS_AT + 1]]),
+        299,
+        "the 299 further writes are still counted"
+    );
+    assert_eq!(e[CW_TARGETS_AT], 0b110, "both targets recorded (PHY | LED)");
+
+    // Any other event freezes the entry: the next run starts a fresh slot.
+    run_ctx(&mut fs, &mut state, |ctx| {
+        append(ctx, EV_PIN_CHANGE, 0, &[]);
+        append_config_write(ctx, T_LED);
+    });
+    let (_, m) = chain_head(&dev(), &mut fs);
+    assert_eq!(m.seq_next, 5);
+    read_slot(&mut fs, 2, &mut e).unwrap();
+    assert_eq!(
+        u16::from_le_bytes([e[CW_REPEATS_AT], e[CW_REPEATS_AT + 1]]),
+        299,
+        "the frozen entry is not touched again"
+    );
+}
+
+#[test]
+fn config_write_does_not_coalesce_across_a_power_cycle() {
+    // Coalescing onto the previous cycle's entry would swallow this cycle's EV_BOOT
+    // and hide the reboot — the ordering the whole journal rests on.
+    let mut fs = Fs::new(RamStorage::new());
+    let mut state = FidoState::new();
+    run_ctx(&mut fs, &mut state, |ctx| append_config_write(ctx, T_LED));
+    state.audit_boot_logged = false; // power cycle
+    run_ctx(&mut fs, &mut state, |ctx| append_config_write(ctx, T_LED));
+
+    let (_, m) = chain_head(&dev(), &mut fs);
+    assert_eq!(m.seq_next, 4); // BOOT, CONFIG_WRITE, BOOT, CONFIG_WRITE
+    let mut e = [0u8; ENTRY_LEN];
+    read_slot(&mut fs, 2, &mut e).unwrap();
+    assert_eq!(e[8], EV_BOOT);
+}
+
+#[test]
+fn config_write_coalesce_is_noop_when_off() {
+    // Journalling off must write no flash at all — including no repeat bump on the
+    // entry a still-live ring kept from when it was on.
+    let mut fs = Fs::new(RamStorage::new());
+    let mut state = FidoState::new();
+    run_ctx(&mut fs, &mut state, |ctx| append_config_write(ctx, T_LED));
+    set_enabled(&mut fs, false).unwrap();
+    {
+        let mut rng = SeqRng(1);
+        let mut presence = AlwaysConfirm;
+        let mut ctx = Ctx {
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 12345,
+            presence: &mut presence,
+        };
+        append_config_write(&mut ctx, T_LED);
+    }
+
+    let mut e = [0u8; ENTRY_LEN];
+    read_slot(&mut fs, 1, &mut e).unwrap();
+    assert_eq!(
+        u16::from_le_bytes([e[CW_REPEATS_AT], e[CW_REPEATS_AT + 1]]),
+        0
+    );
+}
+
 #[test]
 fn append_is_noop_when_off() {
     // Opt-in: with EF_AUDIT_ENABLED absent (the shipped default), append writes

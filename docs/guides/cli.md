@@ -77,7 +77,7 @@ The Nix shell stays the primary, reproducible path (it also carries `picotool`,
 | `openpgp` | OpenPGP applet utilities (e.g. `reset` to factory PINs) | [OpenPGP card](openpgp.md) |
 | `reboot` | reboot to the app or to BOOTSEL, over CCID | — |
 | `audit` | read + cryptographically verify the tamper-evident journal | [Audit journal](audit.md) |
-| `offboard` | guided full wipe + signed receipt **(destructive)** | [Fleet tooling](fleet.md) |
+| `offboard` | guided full wipe + signed receipt; prompts for a replug **(destructive)** | [Fleet tooling](fleet.md) |
 
 > Note the two distinct "OTP"s: **`rsk otp`** burns the device's at-rest master
 > key into RP2350 one-time-programmable fuses (a production ritual). The
@@ -127,6 +127,14 @@ commands include `backup export`/`restore`/`finalize`, `audit verify`,
 `clear`. Read-only commands (`status`, `inventory list`, `*/status`) need no
 touch. `audit log` needs one only on a device with no PIN (the PIN token gates
 it otherwise).
+
+**One press approves one operation.** Consent is per-operation, so a press is
+spent the moment the ceremony it approved returns. Holding the button through a
+second prompt does nothing: lift your finger and press again. This matters
+because requests from every transport are serialised, so a browser, `gpg` and
+`ykman` can queue behind each other — without the rule, one long hold would
+approve whatever ran next. The touch window is 30 seconds by default and never
+shorter than 10, even if the device config asks for less.
 
 ### Machine-readable output
 

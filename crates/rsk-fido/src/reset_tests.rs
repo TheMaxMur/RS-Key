@@ -3,7 +3,7 @@
 
 use super::*;
 use crate::FidoState;
-use crate::consts::{EF_CRED, EF_LARGEBLOB, EF_PIN};
+use crate::consts::{EF_CRED, EF_LARGEBLOB, EF_PIN, RESET_WINDOW_MS};
 use crate::seed::{bump_sign_counter, get_sign_counter, load_keydev};
 use rsk_crypto::Device;
 use rsk_fs::Fs;
@@ -127,6 +127,132 @@ fn reset_aborts_without_touch() {
     assert_eq!(r, Err(CtapError::UserActionTimeout));
     // A declined touch wipes nothing.
     assert!(fs.has_data(EF_PIN));
+}
+
+/// §6.6 splits the two ways the gesture can fail: an explicit refusal is
+/// OPERATION_DENIED ("the platform SHOULD NOT repeat the command"), a silent timeout
+/// is USER_ACTION_TIMEOUT ("the platform MAY repeat"). Either way nothing is wiped.
+#[test]
+fn reset_decline_is_denied_not_timed_out() {
+    for (presence, want) in [
+        (crate::Presence::Declined, CtapError::OperationDenied),
+        (crate::Presence::Timeout, CtapError::UserActionTimeout),
+        (crate::Presence::Cancelled, CtapError::KeepAliveCancel),
+    ] {
+        let mut fs = Fs::new(RamStorage::new());
+        let mut rng = SeqRng(1);
+        ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+        fs.put(EF_PIN, &[8, 4, 1, 0, 0]).unwrap();
+        let mut state = FidoState::new();
+        let r = {
+            let mut p = Fixed(presence);
+            let mut ctx = Ctx {
+                presence: &mut p,
+                dev: dev(),
+                fs: &mut fs,
+                rng: &mut rng,
+                state: &mut state,
+                now_ms: 0,
+            };
+            reset(&mut ctx)
+        };
+        assert_eq!(r, Err(want));
+        assert!(fs.has_data(EF_PIN));
+    }
+}
+
+/// A presence backend that paints the [`crate::Confirm`] — the trusted display,
+/// which CTAP 2.1 §6.6 exempts from the power-up window.
+struct Displayed;
+impl crate::UserPresence for Displayed {
+    fn request(&mut self, _confirm: crate::Confirm<'_>) -> crate::Presence {
+        crate::Presence::Confirmed
+    }
+    fn shows_confirm(&self) -> bool {
+        true
+    }
+}
+
+/// Counts touch requests, so a test can prove the window refuses *before* raising
+/// the "Erase everything?" ceremony.
+struct CountingPresence {
+    calls: usize,
+}
+impl crate::UserPresence for CountingPresence {
+    fn request(&mut self, _confirm: crate::Confirm<'_>) -> crate::Presence {
+        self.calls += 1;
+        crate::Presence::Confirmed
+    }
+}
+
+/// Reset a provisioned store at `now_ms`; returns the result and whether `EF_PIN`
+/// survived (a refused reset must wipe nothing).
+fn reset_at(
+    now_ms: u64,
+    warm_boot: bool,
+    presence: &mut dyn crate::UserPresence,
+) -> (CtapResult, bool) {
+    let mut fs = Fs::new(RamStorage::new());
+    let mut rng = SeqRng(1);
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+    fs.put(EF_PIN, &[8, 4, 1, 0, 0]).unwrap();
+    let mut state = FidoState::new();
+    state.warm_boot = warm_boot;
+    let r = {
+        let mut ctx = Ctx {
+            presence,
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms,
+        };
+        reset(&mut ctx)
+    };
+    (r, fs.has_data(EF_PIN))
+}
+
+#[test]
+fn reset_window_is_measured_from_power_up() {
+    // CTAP 2.1 §6.6: honored just inside the window, refused past it.
+    assert_eq!(
+        reset_at(RESET_WINDOW_MS - 1, false, &mut crate::AlwaysConfirm).0,
+        Ok(0)
+    );
+    let (r, kept) = reset_at(RESET_WINDOW_MS + 1, false, &mut crate::AlwaysConfirm);
+    assert_eq!(r, Err(CtapError::NotAllowed));
+    assert!(kept, "a late reset must wipe nothing");
+}
+
+#[test]
+fn a_warm_boot_closes_the_reset_window() {
+    // `sys_reset` is host-requestable ungated, so the restarted uptime must not
+    // hand a silent host a fresh window — not even at now_ms = 0.
+    let (r, kept) = reset_at(0, true, &mut crate::AlwaysConfirm);
+    assert_eq!(r, Err(CtapError::NotAllowed));
+    assert!(kept);
+}
+
+#[test]
+fn a_display_backend_is_exempt_from_the_reset_window() {
+    // §6.6 conditions the window on an authenticator with no display: this one
+    // paints "Erase everything?", so the touch already names what it approves.
+    assert_eq!(
+        reset_at(RESET_WINDOW_MS * 100, true, &mut Displayed).0,
+        Ok(0)
+    );
+}
+
+#[test]
+fn a_late_reset_is_refused_before_the_touch() {
+    let mut p = CountingPresence { calls: 0 };
+    let (r, kept) = reset_at(RESET_WINDOW_MS + 1, false, &mut p);
+    assert_eq!(r, Err(CtapError::NotAllowed));
+    assert_eq!(
+        p.calls, 0,
+        "an out-of-window host must not raise the ceremony"
+    );
+    assert!(kept);
 }
 
 #[test]

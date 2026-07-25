@@ -28,9 +28,9 @@ pub const FEATURE_MNGMNT: &[u8] = &[0x81, 0x01, 0x20];
 /// (`put_reset_code`), so `RESET RETRY P1=0` cannot run against a default RC.
 pub const PW_STATUS_DEFAULT: &[u8] = &[
     0x01,
-    127,
-    127,
-    127,
+    PIN_MAX_LEN as u8,
+    PIN_MAX_LEN as u8,
+    PIN_MAX_LEN as u8,
     PW_RETRIES_DEFAULT,
     0,
     PW_RETRIES_DEFAULT,

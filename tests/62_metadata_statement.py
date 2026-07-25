@@ -62,7 +62,9 @@ REQUIRED = [
 ]
 # Fields whose value tracks device state, not model identity.
 STATEFUL = {"forcePINChange", "minPINLength", "remainingDiscoverableCredentials"}
-STATEFUL_OPTIONS = {"ep", "clientPin"}
+# `makeCredUvNotRqd` tracks alwaysUv (CTAP 2.1 §6.4 requires it false while alwaysUv
+# is on), so like `alwaysUv` itself it is device state, not a statement property.
+STATEFUL_OPTIONS = {"ep", "clientPin", "makeCredUvNotRqd"}
 
 
 def firmware_aaguid_bytes():

@@ -154,9 +154,12 @@ pub struct CredExt<'a> {
 }
 
 impl CredExt<'_> {
-    /// Whether this credBlob is short enough to seal (`< MAX_CREDBLOB_LENGTH`).
+    /// Whether this credBlob is short enough to seal. The bound is inclusive: getInfo
+    /// advertises `maxCredBlobLength`, and §12.2 has the platform send anything up to
+    /// and including it, so refusing exactly that length would make the advertisement
+    /// a lie.
     fn cred_blob_ok(&self) -> bool {
-        !self.cred_blob.is_empty() && self.cred_blob.len() < MAX_CREDBLOB_LENGTH
+        !self.cred_blob.is_empty() && self.cred_blob.len() <= MAX_CREDBLOB_LENGTH
     }
 
     /// Number of entries the box's field-0x07 sub-map would carry.
@@ -520,23 +523,29 @@ fn parse_body(cbor: &[u8]) -> Option<Credential<'_>> {
 /// authenticator's lookup key for the box it keeps in flash.
 ///
 /// v4 (current): 42 pseudo-random bytes, an HMAC of the box keyed by the device
-/// serial. It carries no device- or model-fingerprint — every byte depends on
-/// the box, whose random IV makes each id unique — so two ids from one device
-/// share nothing an RP could link on, exactly as a YubiKey's random ids don't
+/// serial. It carries no device- or model-fingerprint — every byte is keyed by a
+/// secret the RP never sees, and the box's random IV makes each id unique — so
+/// two ids from one device share nothing an RP could link on, and no byte of an
+/// id can be recomputed from the rest, exactly as a YubiKey's random ids can't
 /// (WebAuthn unlinkability). Legacy v1–v3 ids instead led with a
 /// `serial-derived(4) ‖ f1d00203(4) ‖ version ‖ 00` header; those stay stored
 /// byte-for-byte and keep deriving via the old scheme, and the two formats are
 /// told apart by that `f1d00203` marker — which v4 guarantees it never carries,
 /// so a v4 id is never mis-read as legacy and mis-keyed off the box.
 ///
-/// Called ONLY at create time; the result is stored and read back verbatim on
-/// every lookup, so changing this scheme cannot strand already-issued ids.
+/// Called only at create time (twice: once for authData, once by
+/// `credential_store`, so it must stay deterministic); the result is stored and
+/// read back verbatim on every lookup, so changing this scheme cannot strand
+/// already-issued ids — the change is forward-only.
 pub fn derive_resident(cred_id: &[u8], dev: &Device) -> [u8; CRED_RESIDENT_LEN] {
     let mut outk = [0u8; CRED_RESIDENT_LEN];
-    let a = hmac_sha256(dev.serial_id, cred_id);
-    let b = hmac_sha256(&a, b"resident-id");
-    outk[..32].copy_from_slice(&a);
-    outk[32..].copy_from_slice(&b[..CRED_RESIDENT_LEN - 32]);
+    // Every byte is keyed by the device serial. Deriving the tail from the head
+    // instead — `HMAC(a, "resident-id")` with `a` the published first 32 bytes —
+    // made 10 of the 42 bytes a public function of the other 32, i.e. exactly the
+    // model fingerprint this format exists to remove: any RP holding an id could
+    // recompute the relation offline and identify the authenticator.
+    let full = hmac_sha512(dev.serial_id, cred_id);
+    outk.copy_from_slice(&full[..CRED_RESIDENT_LEN]);
     if &outk[4..8] == CRED_PROTO_RESIDENT {
         outk[4] ^= 0x01; // never collide with the legacy marker (2⁻³²)
     }

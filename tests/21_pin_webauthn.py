@@ -11,6 +11,8 @@ Proves CTAP2.1 PIN/UV enforcement end-to-end on the device:
   2. clientPIN          -> setPIN + getPinToken (reuses the clientPIN platform side)
   3. makeCredential     -> with a pinUvAuthParam; authData carries the UV flag
   4. getAssertion       -> with a pinUvAuthParam; authData carries the UV flag
+  5. makeCredential     -> no pinUvAuthParam: refused for rk, allowed without it
+                           (makeCredUvNotRqd), and then the UV flag stays clear
 
 The pinUvAuthParam is HMAC-SHA256(pinUvAuthToken, clientDataHash) (protocol two).
 A clean device is assumed (flash rsk-wipe first); a second run reuses the PIN.
@@ -71,7 +73,9 @@ def main():
         padded = PIN + b"\x00" * (64 - len(PIN))
         npe = proto.encrypt(padded)
         sp = client_pin(dev, cid, {1: 2, 2: 3, 3: proto.cose(), 4: proto.authenticate(npe), 5: npe})
-        assert sp[0] in (0x00, 0x30), f"setPIN status {sp[0]:#x}"
+        # 0x33 = PIN_AUTH_INVALID, what CTAP 2.1 §6.5.5.5 returns when a PIN is
+        # already set (changePIN is the only way to replace one).
+        assert sp[0] in (0x00, 0x33), f"setPIN status {sp[0]:#x}"
         ph = hashlib.sha256(PIN).digest()[:16]
         tk = client_pin(dev, cid, {1: 2, 2: 5, 3: proto.cose(), 6: proto.encrypt(ph)})
         assert tk[0] == 0x00, f"getPinToken status {tk[0]:#x}"
@@ -122,15 +126,30 @@ def main():
         assert 5 not in mn, "getNextAssertion must omit numberOfCredentials"
         print("getNextAssertion: next credential, UV set")
 
-        # Sanity: makeCredential without a pinUvAuthParam is refused (PUAT_REQUIRED).
+        # 6. A DISCOVERABLE makeCredential without a pinUvAuthParam is refused
+        # (PUAT_REQUIRED): makeCredUvNotRqd (§6.1.2 step 7) does not cover rk.
         mc2 = send_cbor(dev, cid, bytes([0x01]) + enc({
             1: cdh,
             2: {"id": RP_ID},
             3: {"id": b"\xCC\xCC\xCC\xCC", "name": "u"},
             4: [{"alg": -7, "type": "public-key"}],
+            7: {"rk": True},
         }))
         assert mc2[0] == 0x36, f"expected PUAT_REQUIRED (0x36), got {mc2[0]:#x}"
-        print("makeCredential without PIN -> PUAT_REQUIRED (0x36)")
+        print("resident makeCredential without PIN -> PUAT_REQUIRED (0x36)")
+
+        # 7. The same request WITHOUT rk succeeds on presence alone, UV clear
+        # (§6.1.2 step 10, makeCredUvNotRqd — issue #51).
+        mc3 = send_cbor(dev, cid, bytes([0x01]) + enc({
+            1: cdh,
+            2: {"id": RP_ID},
+            3: {"id": b"\xDD\xDD\xDD\xDD", "name": "u"},
+            4: [{"alg": -7, "type": "public-key"}],
+        }))
+        assert mc3[0] == 0x00, f"makeCredential (non-resident) status {mc3[0]:#x}"
+        ad3 = decode(mc3[1:])[2]
+        assert ad3[32] & AT_FLAG and not ad3[32] & UV_FLAG, f"flags {ad3[32]:#x}"
+        print("non-resident makeCredential without PIN -> OK, UV clear")
 
         print("\nPASS")
     finally:

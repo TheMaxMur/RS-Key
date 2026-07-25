@@ -76,6 +76,12 @@ operation and the **real relying party**, and waits for a deliberate action:
   screen (shield + relying party + a hold-to-approve button). **Deny** refuses
   with `OPERATION_DENIED`.
 
+Every prompt waits for the previous finger to lift before it will accept a tap,
+and a prompt that runs out of time is denied rather than approved — a finger
+resting on *Save* when the window expires cancels the registration, it does not
+confirm it. The release wait has a floor of its own, so shortening the presence
+timeout in the device config cannot shrink it away.
+
 Because the device only knows the relying-party *string* (and its hash), it
 shows that string verbatim, never a host-supplied brand logo. A relying-party id
 too long for the box is **clipped with a truncation marker**, and the clip keeps
@@ -98,15 +104,40 @@ PUK**, or the OpenPGP PINs), so the independent PINs are never confused. The
 New / Confirm / current step rides in the caption beneath. The PIN never leaves
 the device.
 
-This backs three things:
+Whichever way the PIN arrives — typed on the pad or sent by the host — the panel asks
+before a `pinUvAuthToken` is issued (CTAP 2.1 §6.5.5.7 requires the consent on any
+authenticator with a display). Declining ends the operation with `OPERATION_DENIED`
+and costs no PIN retry, since the question comes before the PIN is checked. So
+`ykman fido` and anything else needing a token waits on a tap here.
+
+This backs four things:
 
 - **Built-in user verification.** getInfo advertises `options.uv`. A PIN typed on
   the pad mints a `pinUvAuthToken` via `clientPIN` (`getPinUvAuthTokenUsingUvWithPermissions`),
-  checked against the same `EF_PIN` the host `clientPIN` path uses.
+  checked against the same `EF_PIN` the host `clientPIN` path uses. A platform can
+  also skip the token: `makeCredential` / `getAssertion` carrying `options: {uv:
+  true}` collect the PIN on the pad directly (CTAP 2.1 §6.1.2 step 11.2), and that
+  entry counts as the ceremony's user presence, so the response sets `up` without
+  the spec requiring a second gesture. The panel still asks: pad first, then the
+  Approve / Deny card, because that card is the only screen naming the relying
+  party — the pad carries a trusted, firmware-supplied title and never
+  relying-party text.
+  With `alwaysUv` on, a request that brings no `pinUvAuthParam` takes the same
+  route instead of being refused with `PUAT_REQUIRED`. Declining on the pad ends
+  the operation with `OPERATION_DENIED` — deliberately, since the code CTAP would
+  have the device send instead (`PUAT_REQUIRED`) asks the host to prompt for the
+  same PIN, which would make the refusal meaningless. A wrong PIN still falls back
+  to the host path.
 - **CCID secure PIN entry (pinpad).** A display build advertises `bPINSupport`
   and handles `PC_to_RDR_Secure`, so GnuPG (OpenPGP PW1/PW3) and OpenSC (PIV PIN)
   collect the PIN on the trusted screen. The PIN never crosses USB in pinpad
   mode. Details and host-driver caveats: [protocol.md §1.3](../protocol.md).
+- **U2F under alwaysUv.** A screenless key has to switch CTAP1/U2F off once
+  `alwaysUv` is on, since a touch proves no verification. A pad with a PIN set is the
+  exception CTAP 2.1 §7.2.4 allows, so U2F keeps working here — each register and
+  authenticate names itself on screen (*Register key?* / *Sign in?*) and then collects
+  the PIN on the panel. Turning `alwaysUv` on before setting a PIN still disables it;
+  there would be nothing to verify against.
 - **First-run onboarding.** A fresh, PIN-less device offers a *Set a PIN?* screen
   at first run. Declining is remembered (a flag in `EF_DISPLAY`) so the offer
   isn't repeated until a factory reset.
@@ -182,6 +213,12 @@ Grouped into three domains, plus the journal / backup / reset actions:
 - **Factory reset**: erases every applet's data (FIDO, PIV, OpenPGP, OATH),
   scrubs the flash, and reboots to a blank device (gated by the device PIN, then
   a hold). Only the org attestation and the fused OTP / secure-boot state survive.
+
+A display build is also exempt from the [power-up window](fido2.md#factory-reset)
+that makes a screenless key refuse a host `authenticatorReset` more than ten
+seconds after it was plugged in. That window exists to stop a wipe being approved
+by a press collected under some other pretext; here the panel names the operation,
+so a host reset is accepted whenever you confirm it on screen — no replug.
 
 ## Security model
 

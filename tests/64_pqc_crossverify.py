@@ -6,7 +6,8 @@
 independent implementations: dilithium-py (pure Python), OpenSSL (via pyca
 `cryptography` >= 44), and — implicitly — the device's own `rsk-mldsa`. Proves
 the real device output interoperates with the wider ecosystem, not just our
-host tests.
+host tests. Asks for a replug before its clean-slate reset — CTAP 2.1 §6.6
+accepts a reset only just after power-up (see replug.py).
 
     nix develop -c python tests/64_pqc_crossverify.py
 
@@ -24,6 +25,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import replug  # noqa: E402
 from ctaphid import decode, enc, find, read, send_cbor, write  # noqa: E402
 
 try:
@@ -79,8 +81,7 @@ def main():
     try:
         write(dev, b"\xff\xff\xff\xff" + bytes([CTAPHID_INIT, 0, 8]) + bytes(range(8)))
         cid = read(dev)[15:19]
-        status, _ = ctap(dev, cid, 0x07)  # reset
-        assert status == 0x00, f"reset status {status:#x}"
+        dev, cid = replug.reset(dev, "the clean-slate reset")
 
         for label, alg, dil, pyca_cls, pk_len, sig_len in SETS:
             req = {

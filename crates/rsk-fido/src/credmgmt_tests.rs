@@ -274,6 +274,37 @@ fn enumerate_rps_walks_then_not_allowed() {
     );
 }
 
+#[test]
+fn dropping_the_token_strands_a_walk_in_progress() {
+    // The Next walkers carry no pinUvAuthParam of their own (CTAP 2.1 §6.8) — they
+    // inherit the Begin's authorization, so retiring that token must end the walk
+    // rather than let it keep enumerating the store.
+    let (mut fs, mut rng) = setup();
+    register(&mut fs, &mut rng, "example.com", &[1, 1], "a");
+    register(&mut fs, &mut rng, "other.com", &[2, 2], "b");
+    let mut out = [0u8; 256];
+
+    for drop_token in [0, 1] {
+        let mut state = armed(PERM_CM);
+        run(
+            &mut fs,
+            &mut state,
+            &cm_request(0x02, None, &TOKEN),
+            &mut out,
+        )
+        .unwrap();
+        if drop_token == 0 {
+            state.stop_using_token();
+        } else {
+            state.reset_pin_uv_auth_token(&mut SeqRng(9));
+        }
+        assert_eq!(
+            run(&mut fs, &mut state, &cm_next(0x03), &mut out),
+            Err(CtapError::NotAllowed)
+        );
+    }
+}
+
 fn parse_rp(resp: &[u8], begin: bool) -> (std::string::String, [u8; 32], Option<u8>) {
     let mut d = Decoder::new(resp);
     let fields = d.map().unwrap().unwrap();
@@ -566,6 +597,61 @@ fn enumerate_credentials_requires_rpidhash() {
         ),
         Err(CtapError::MissingParameter)
     );
+}
+
+/// §6.8.5/6.8.6: an rpId-scoped `cm` token may delete or rename credentials of *that*
+/// rp — the token's permissions RP ID is matched against the credential's rp, not
+/// required to be absent. Another rp's credential, and an id that matches nothing,
+/// both come back PIN_AUTH_INVALID so the code never reveals who owns an id.
+#[test]
+fn rp_scoped_token_manages_only_its_own_credentials() {
+    let (mut fs, mut rng) = setup();
+    let (mine, ..) = register(&mut fs, &mut rng, "example.com", &[1, 1], "alice");
+    let (theirs, ..) = register(&mut fs, &mut rng, "other.com", &[3, 3], "carol");
+    let mut state = armed(PERM_CM);
+    state.paut.rp_id_hash = sha256(b"example.com");
+    state.paut.has_rp_id = true;
+    let mut out = [0u8; 256];
+
+    // Another rp's credential: refused, and still there afterwards.
+    assert_eq!(
+        run(
+            &mut fs,
+            &mut state,
+            &cm_request(0x06, Some(&subpara_cred(&theirs)), &TOKEN),
+            &mut out,
+        ),
+        Err(CtapError::PinAuthInvalid)
+    );
+    // An id nobody owns: the same code, not NO_CREDENTIALS.
+    assert_eq!(
+        run(
+            &mut fs,
+            &mut state,
+            &cm_request(
+                0x06,
+                Some(&subpara_cred(&[0xAB; CRED_RESIDENT_LEN])),
+                &TOKEN
+            ),
+            &mut out,
+        ),
+        Err(CtapError::PinAuthInvalid)
+    );
+    // Its own: allowed.
+    assert_eq!(
+        run(
+            &mut fs,
+            &mut state,
+            &cm_request(0x06, Some(&subpara_cred(&mine)), &TOKEN),
+            &mut out,
+        ),
+        Ok(0)
+    );
+    assert!(rp_present(
+        &mut fs,
+        &mut armed(PERM_CM),
+        &sha256(b"other.com")
+    ));
 }
 
 #[test]
