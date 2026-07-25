@@ -433,3 +433,33 @@ fn get_info_buffer_too_small() {
         Err(CtapError::Other)
     );
 }
+
+#[test]
+fn make_cred_uv_not_rqd_is_cleared_by_always_uv() {
+    // Audit run-28 F2. §6.4, the alwaysUv row: "If the alwaysUv option ID is
+    // present and true the authenticator MUST set the value of makeCredUvNotRqd
+    // to false." §6.11.2 makes clearing it a step of toggleAlwaysUv, which this
+    // device advertises. `enforce_pin` already refuses (fails closed) — this is
+    // the advertisement catching up, so a platform stops sending the request.
+    for always_uv in [false, true] {
+        let mut buf = [0u8; 512];
+        let n = get_info(true, 4, false, false, always_uv, false, 256, &mut buf).unwrap();
+        let mut d = Decoder::new(&buf[..n]);
+        d.map().unwrap();
+        for _ in 0..3 {
+            // skip versions/extensions/aaguid (keys 0x01..0x03)
+            d.u8().unwrap();
+            d.skip().unwrap();
+        }
+        assert_eq!(d.u8().unwrap(), 0x04);
+        let opts = d.map().unwrap().unwrap();
+        assert_eq!(opts, 11, "no built-in UV on this build");
+        // makeCredUvNotRqd is the longest key, so canonical order puts it last.
+        for _ in 0..opts - 1 {
+            d.str().unwrap();
+            d.bool().unwrap();
+        }
+        assert_eq!(d.str().unwrap(), "makeCredUvNotRqd");
+        assert_eq!(d.bool().unwrap(), !always_uv);
+    }
+}

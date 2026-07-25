@@ -151,8 +151,12 @@ fn write_info<W: Write>(
     // makeCredUvNotRqd (§6.1.2 steps 7/10): a NON-discoverable credential may be
     // created with user presence only even while a PIN is set — what a real
     // YubiKey does, and what `userVerification: "discouraged"` relying parties
-    // need (issue #51). Discoverable credentials and alwaysUv still force UV.
-    enc.str("makeCredUvNotRqd")?.bool(true)?;
+    // need (issue #51). Discoverable credentials still force UV, and so does
+    // alwaysUv — which §6.4 requires the *advertisement* to reflect: "If the
+    // alwaysUv option ID is present and true the authenticator MUST set the value
+    // of makeCredUvNotRqd to false." §6.11.2 makes clearing it a step of
+    // toggleAlwaysUv, which this device advertises (0x1F below).
+    enc.str("makeCredUvNotRqd")?.bool(!always_uv)?;
 
     // 0x05 maxMsgSize
     enc.u8(0x05)?.u64(MAX_MSG_SIZE)?;

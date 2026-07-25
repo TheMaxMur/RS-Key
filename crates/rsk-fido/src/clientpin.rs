@@ -472,6 +472,18 @@ impl UvOutcome {
         uv: true,
         up_collected: true,
     };
+
+    /// Whether the ceremony still owes its `Confirm` screen. Built-in UV supplies the
+    /// *gesture* (§6.1.2 step 13 / §6.2.2 step 8), but on a backend that paints what it
+    /// is asking about it cannot supply the *disclosure*: `collect_pin` takes no
+    /// `Confirm`, and `PinPad.title` is trusted `&'static str` by construction, so the
+    /// pad can never name a relying party. Skipping the card there would let a host
+    /// trade one context-free PIN entry for an assertion over an rp the user never saw
+    /// (audit run-28). The spec permits the second screen — it only excuses the second
+    /// *gesture* — so paint it whenever the backend has one.
+    pub fn needs_confirm(self, shows_confirm: bool) -> bool {
+        !self.up_collected || shows_confirm
+    }
 }
 
 /// Run [`builtin_uv`] as the ceremonies' UV step (§6.1.2 step 11.2, §6.2.2 step

@@ -113,8 +113,10 @@ The earlier pass over §6.1.2 / §6.2.2 / §6.11, from the same reading:
   `getAssertion` refused `uv: true` outright — advertising a capability and then
   rejecting every request that used it. `uv: true` now runs `performBuiltInUv` on
   the panel's PIN pad (§6.1.2 step 11.2, §6.2.2 step 6.2), and that entry counts
-  as the ceremony's evidence of user interaction (§6.1.2 step 13, §6.2.2 step 8),
-  so the panel asks once rather than twice. With `alwaysUv` on, a token-less
+  as the ceremony's evidence of user interaction (§6.1.2 step 13, §6.2.2 step 8), so
+  the *response* sets `up` without a second gesture being required. The panel still
+  paints the Approve / Deny card, because it is the only screen that names the relying
+  party — see the Security section. With `alwaysUv` on, a token-less
   request is likewise upgraded to built-in UV instead of being refused with
   `PUAT_REQUIRED` (§6.1.2 step 6.3, §6.2.2 step 5.4). Screenless builds are
   unaffected — they have no built-in UV method, so every branch is unreachable.
@@ -169,6 +171,42 @@ The earlier pass over §6.1.2 / §6.2.2 / §6.11, from the same reading:
   read-modify-write, and older/headless behaviour is unchanged. bcdDevice → `0x0852`.
 
 ### Security
+
+Findings from the 28th internal security audit, which read only the CTAP
+spec-alignment pass above. Three of twelve candidates survived adversarial
+validation. bcdDevice → `0x0858`.
+
+- **A `display` build stopped naming the relying party once built-in UV ran
+  (MEDIUM).** §6.1.2 step 13 / §6.2.2 step 8 let a PIN typed on the pad stand in for
+  the presence gesture, and the pass used that to skip the whole ceremony. But
+  `UserPresence::collect_pin` carries no `Confirm`, and `PinPad.title` is a trusted
+  firmware-supplied `&'static str` by construction, so the pad can never name a
+  relying party. A host could therefore send `options: {uv: true}` with no
+  `pinUvAuthParam`, get a bare PIN prompt painted, and turn one context-free entry
+  into a `UP=1 | UV=1` assertion — or a resident credential — for an rp the user was
+  never shown. The spec excuses the second *gesture*, not the disclosure: the
+  Approve / Deny card is painted again whenever the backend paints ceremonies at
+  all. Screenless builds never reached this path and are unchanged. The same applies
+  to U2F under §7.2.4's built-in-UV exception, where "Register key?" and "Sign in?"
+  had collapsed into one unlabelled prompt — there the card comes first, so the
+  operation is named before the PIN is typed. The PIN pad now also waits for the
+  finger to lift before its first poll, like every other modal: the touch controller
+  reports a level, and the Allow button overlaps the pad's bottom key row, so a
+  still-held finger would have typed a stray digit and burned a PIN retry.
+- **`makeCredUvNotRqd` was advertised while `alwaysUv` was on.** §6.4: "If the
+  alwaysUv option ID is present and true the authenticator MUST set the value of
+  makeCredUvNotRqd to false", and §6.11.2 makes clearing it a step of
+  `toggleAlwaysUv` — which this device advertises. `authenticatorMakeCredential`
+  already refused such requests, so the device failed closed; only the
+  advertisement lied, which re-created the issue-#51 client retry loop for
+  `always-uv` users. The conformance run is alwaysUv-off, so it did not catch this.
+- **A completed large-blob transfer left its accumulator armed.** `write_fragment`
+  did not clear `expected_length` / `expected_next_offset` after committing, so a
+  seven-byte follow-up (`{2: h'', 3: <total>}`) re-entered the commit branch and
+  re-ran the full flash write — unauthenticated on a key with no PIN, where §6.10.2
+  correctly requires no token. Repeated, that churns the credential partition. A
+  completed transfer is now terminal: the next write starts a fresh array at offset
+  0, as the reference implementation does.
 
 Findings from the 26th internal security audit. bcdDevice → `0x0853`.
 

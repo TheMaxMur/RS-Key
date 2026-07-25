@@ -177,7 +177,10 @@ impl crate::UserPresence for UvPad {
 /// protected by a built-in user verification method". With a configured PIN pad that
 /// exception applies: register and authenticate keep working, but every one of them
 /// runs the pad — the PIN, not a bare touch, is what authorizes them. A wrong PIN
-/// refuses the operation.
+/// refuses the operation. The pad replaces the *touch*, not the *screen*: a backend
+/// that paints `Confirm` still names the operation first, so "Register key?" and
+/// "Sign in?" stay distinguishable instead of collapsing into one unlabelled PIN
+/// prompt (audit run-28).
 #[test]
 fn u2f_survives_always_uv_behind_builtin_uv() {
     let mut fs = Fs::new(RamStorage::new());
@@ -211,7 +214,10 @@ fn u2f_survives_always_uv_behind_builtin_uv() {
     };
     assert_eq!(sw, Sw::OK, "U2F stays alive behind a configured PIN pad");
     assert!(n > 64);
-    assert_eq!(pad.touches, 0, "the pad entry replaces the touch");
+    assert_eq!(
+        pad.touches, 1,
+        "one naming card, then the pad — not a second bare touch"
+    );
 
     // The registered handle then authenticates through the same pad…
     let key_handle = out[67..67 + KEY_HANDLE_LEN].to_vec();
@@ -235,6 +241,7 @@ fn u2f_survives_always_uv_behind_builtin_uv() {
         process_u2f(&mut ctx, &auth, &mut out).0
     };
     assert_eq!(sw, Sw::OK);
+    assert_eq!(pad.touches, 2, "authenticate names its operation too");
 
     // …and a wrong PIN refuses it.
     let mut wrong = UvPad {

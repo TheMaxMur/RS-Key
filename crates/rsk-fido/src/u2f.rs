@@ -81,9 +81,19 @@ fn u2f_gate<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>) -> U2fGate {
 /// Collect whatever [`U2fGate`] demands. A refusal — declined touch, wrong PIN,
 /// cancelled pad — is SW_CONDITIONS_NOT_SATISFIED either way: U2F's only "interact
 /// and try again" status, and the one a client knows how to act on.
+///
+/// Under `BuiltinUv` the pad replaces the touch, not the screen: a backend that paints
+/// `confirm` still shows it, so REGISTER and AUTHENTICATE stay distinguishable to the
+/// user instead of collapsing into one unlabelled PIN prompt (audit run-28). The card
+/// comes first, so the operation is named before the PIN is typed.
 fn u2f_interaction<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, confirm: crate::Confirm<'_>) -> bool {
     match u2f_gate(ctx) {
-        U2fGate::BuiltinUv => crate::clientpin::builtin_uv_step(ctx).is_ok(),
+        U2fGate::BuiltinUv => {
+            let owes_card =
+                crate::clientpin::UvOutcome::BUILTIN.needs_confirm(ctx.presence.shows_confirm());
+            (!owes_card || ctx.check_user_presence(confirm))
+                && crate::clientpin::builtin_uv_step(ctx).is_ok()
+        }
         _ => ctx.check_user_presence(confirm),
     }
 }

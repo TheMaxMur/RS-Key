@@ -594,8 +594,10 @@ fn get_assertion_inner<S: Storage, R: Rng>(
     // Presence POLL decision: honor `up:false` (the silent pre-flight) unless
     // `strict-up` forces a touch. The emitted UP flag follows raw `up` (below), NOT
     // this — so a polled up:false probe stays inert (UP=0), preserving alwaysUv.
-    // §6.2.2 step 8 skips the poll outright once built-in UV has run.
-    let want_up = want_up(req) && !verified.up_collected;
+    // §6.2.2 step 8 skips the poll once built-in UV has run — but only where the
+    // skipped screen carried nothing: on a backend that paints the ceremony, the card
+    // below is the only thing that names the rp, and the PIN pad cannot ([`needs_confirm`]).
+    let want_up = want_up(req) && verified.needs_confirm(ctx.presence.shows_confirm());
     let mut best = Best::new();
     resolve_credential(ctx, req, rp_id_hash, seed, uv, &mut best);
 

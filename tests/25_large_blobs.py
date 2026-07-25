@@ -13,6 +13,8 @@ Exercises the large-blob store on the device:
   3. setPIN + getPinUvAuthTokenUsingPinWithPermissions(largeBlobWrite)
   4. set (single fragment)    -> commits; get reads the same bytes back
   5. set (two fragments)      -> the accumulator assembles + commits; get matches
+  5b. set (re-commit at end)  -> CTAP1_ERR_INVALID_SEQ (0x04): a finished transfer
+                                 disarms the accumulator
   6. set (bad MAC)            -> CTAP2_ERR_PIN_AUTH_INVALID (0x33)
   7. set (corrupt integrity)  -> CTAP2_ERR_INTEGRITY_FAILURE (0x3D)
   8. get (offset past end)    -> CTAP1_ERR_INVALID_PARAMETER (0x02)
@@ -142,6 +144,15 @@ def main():
         got = lb_get(dev, cid, 1024, 0)
         assert got == big, f"multi-fragment readback len {len(got)}"
         print(f"set/get (two fragments, {len(big)}B): assembled OK")
+
+        # 5b. A completed transfer is terminal (audit run-28). The accumulator used to
+        # stay armed at the finished total, so a zero-length fragment at that offset
+        # re-entered the commit and re-ran the flash write — seven bytes on the wire,
+        # and ungated on a key with no PIN.
+        replay = lb_set(dev, cid, token, len(big), b"")
+        assert replay[0] == 0x04, f"re-commit status {replay[0]:#x}, want 0x04"
+        assert lb_get(dev, cid, 1024, 0) == big, "array changed on a rejected re-commit"
+        print("set (re-commit at end offset) -> INVALID_SEQ (0x04)")
 
         # 6. A bad MAC is rejected.
         bad = send_cbor(

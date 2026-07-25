@@ -466,3 +466,60 @@ fn max_u64_key_rejected_not_overflow() {
         Err(CtapError::InvalidCbor)
     );
 }
+
+#[test]
+fn a_completed_transfer_disarms_the_accumulator() {
+    // Audit run-28 F3: the commit branch used to leave `expected_length` and
+    // `expected_next_offset` at the finished array's total, so a zero-length
+    // fragment at that offset satisfied every check and re-ran the flash write —
+    // seven bytes on the wire, and unauthenticated on a PIN-less key. A completed
+    // transfer is terminal: the next write must start a fresh array at offset 0.
+    let mut fs = seeded_fs();
+    let mut state = FidoState::new();
+    let mut out = [0u8; 64];
+    let blob = valid_blob(&[0x77; 40]);
+    let total = blob.len() as u64;
+    let req = set_request(0, Some(total), &blob, &[0x11; 32]);
+    assert_eq!(run(&mut fs, &mut state, &req, &mut out), Ok(0));
+
+    // {2: h'', 3: total} — the re-commit. It must not reach the `put` again.
+    let replay = set_request(total, None, &[], &[0x11; 32]);
+    assert_eq!(
+        run(&mut fs, &mut state, &replay, &mut out),
+        Err(CtapError::InvalidSeq)
+    );
+    assert_eq!(state.lba.expected_length, 0);
+    assert_eq!(state.lba.expected_next_offset, 0);
+
+    // The stored array is untouched, and a fresh transfer still works.
+    let mut stored = [0u8; 256];
+    let sn = fs.read(EF_LARGEBLOB, &mut stored).unwrap();
+    assert_eq!(&stored[..sn], &blob[..]);
+    let next = valid_blob(&[0x99; 24]);
+    let req = set_request(0, Some(next.len() as u64), &next, &[0x11; 32]);
+    assert_eq!(run(&mut fs, &mut state, &req, &mut out), Ok(0));
+    let sn = fs.read(EF_LARGEBLOB, &mut stored).unwrap();
+    assert_eq!(&stored[..sn], &next[..]);
+}
+
+#[test]
+fn a_multi_fragment_transfer_disarms_the_accumulator() {
+    // Same invariant across the fragmented path, where the commit happens on the
+    // last fragment rather than the first.
+    let mut fs = seeded_fs_with_pin();
+    let mut state = armed(PERM_LBW);
+    let mut out = [0u8; 64];
+    let blob = valid_blob(&[0x33; 60]);
+    let total = blob.len() as u64;
+    let req = set_request(0, Some(total), &blob[..40], &TOKEN);
+    assert_eq!(run(&mut fs, &mut state, &req, &mut out), Ok(0));
+    let req = set_request(40, None, &blob[40..], &TOKEN);
+    assert_eq!(run(&mut fs, &mut state, &req, &mut out), Ok(0));
+    assert_eq!(state.lba.expected_length, 0);
+
+    let replay = set_request(total, None, &[], &TOKEN);
+    assert_eq!(
+        run(&mut fs, &mut state, &replay, &mut out),
+        Err(CtapError::InvalidSeq)
+    );
+}

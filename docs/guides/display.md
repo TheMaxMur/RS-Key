@@ -117,7 +117,11 @@ This backs four things:
   checked against the same `EF_PIN` the host `clientPIN` path uses. A platform can
   also skip the token: `makeCredential` / `getAssertion` carrying `options: {uv:
   true}` collect the PIN on the pad directly (CTAP 2.1 §6.1.2 step 11.2), and that
-  entry counts as the ceremony's user presence, so the panel asks once, not twice.
+  entry counts as the ceremony's user presence, so the response sets `up` without
+  the spec requiring a second gesture. The panel still asks: pad first, then the
+  Approve / Deny card, because that card is the only screen naming the relying
+  party — the pad carries a trusted, firmware-supplied title and never
+  relying-party text.
   With `alwaysUv` on, a request that brings no `pinUvAuthParam` takes the same
   route instead of being refused with `PUAT_REQUIRED`. Declining on the pad ends
   the operation with `OPERATION_DENIED` — deliberately, since the code CTAP would
@@ -131,8 +135,9 @@ This backs four things:
 - **U2F under alwaysUv.** A screenless key has to switch CTAP1/U2F off once
   `alwaysUv` is on, since a touch proves no verification. A pad with a PIN set is the
   exception CTAP 2.1 §7.2.4 allows, so U2F keeps working here — each register and
-  authenticate collects the PIN on the panel. Turning `alwaysUv` on before setting a
-  PIN still disables it; there would be nothing to verify against.
+  authenticate names itself on screen (*Register key?* / *Sign in?*) and then collects
+  the PIN on the panel. Turning `alwaysUv` on before setting a PIN still disables it;
+  there would be nothing to verify against.
 - **First-run onboarding.** A fresh, PIN-less device offers a *Set a PIN?* screen
   at first run. Declining is remembered (a flag in `EF_DISPLAY`) so the offer
   isn't repeated until a factory reset.

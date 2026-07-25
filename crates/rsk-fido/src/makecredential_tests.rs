@@ -1852,3 +1852,77 @@ fn vendor_ea_eligibility() {
         cfg!(feature = "ea-conformance-rpid")
     );
 }
+
+/// A trusted-display backend: it collects a PIN on its own pad **and** paints the
+/// ceremony, recording what each `Confirm` named.
+struct DisplayPad {
+    touches: usize,
+    last_title: &'static str,
+    last_primary: std::vec::Vec<u8>,
+    last_secondary: std::vec::Vec<u8>,
+}
+impl DisplayPad {
+    fn new() -> Self {
+        Self {
+            touches: 0,
+            last_title: "",
+            last_primary: std::vec::Vec::new(),
+            last_secondary: std::vec::Vec::new(),
+        }
+    }
+}
+impl crate::UserPresence for DisplayPad {
+    fn request(&mut self, c: crate::Confirm<'_>) -> crate::Presence {
+        self.touches += 1;
+        self.last_title = c.title;
+        self.last_primary = c.primary.to_vec();
+        self.last_secondary = c.secondary.to_vec();
+        crate::Presence::Confirmed
+    }
+    fn shows_confirm(&self) -> bool {
+        true
+    }
+    fn uv_available(&self) -> bool {
+        true
+    }
+    fn collect_pin(&mut self, _min: usize, out: &mut [u8]) -> crate::PinEntry {
+        out[..4].copy_from_slice(b"1234");
+        crate::PinEntry::Entered(4)
+    }
+}
+
+#[test]
+fn builtin_uv_still_names_the_registration_on_a_display() {
+    // Audit run-28 F1, the makeCredential half. §6.1.2 step 13 excuses the second
+    // *gesture*, not the disclosure: the "Save new passkey?" card is the only screen
+    // that names the rp and account being enrolled, and the PIN pad structurally
+    // cannot (`collect_pin` takes no `Confirm`). Without it a host could trade one
+    // context-free PIN entry for a credential at an rp of its choosing.
+    let mut fs = Fs::new(RamStorage::new());
+    let mut rng = SeqRng(1);
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+    crate::clientpin::store_local_pin(&dev(), &mut fs, b"1234").unwrap();
+    let mut state = crate::FidoState::new();
+    let cdh = [0xCDu8; 32];
+    let mut out = [0u8; 1024];
+    let mut pad = DisplayPad::new();
+    let len = {
+        let mut ctx = Ctx {
+            presence: &mut pad,
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 0,
+        };
+        make_credential(&mut ctx, &build_request_uv(true, None), &mut out).unwrap()
+    };
+    let auth_data = verify_response(&out[..len], &cdh);
+    assert_eq!(auth_data[32] & FLAG_UV, FLAG_UV);
+    assert_eq!(pad.touches, 1, "the naming card is painted exactly once");
+    assert_eq!(pad.last_title, "Register key?");
+    assert_eq!(
+        pad.last_primary, b"example.com",
+        "the card carries the rp being registered"
+    );
+}

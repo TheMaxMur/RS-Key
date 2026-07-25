@@ -495,8 +495,11 @@ fn make_credential_inner<S: Storage, R: Rng>(
             // §6.1.2 step 12 requires a user-presence gesture BEFORE disclosing the
             // match, so the device isn't a silent credential-existence oracle
             // (matches the getAssertion no-match poll and a real YubiKey) — unless
-            // built-in UV already provided it. `up` is implicit; spend the token on
-            // that touch too, so acfg can't ride it (GHSA-wqjm class).
+            // built-in UV already provided it, and step 12 then terminates without
+            // waiting. No `needs_confirm` here: this card is title-only, so unlike
+            // the registration card below it names nothing a display would owe the
+            // user. `up` is implicit; spend the token on that touch too, so acfg
+            // can't ride it (GHSA-wqjm class).
             if !verified.up_collected {
                 ctx.require_presence(crate::Confirm::titled("Use this key?"))?;
             }
@@ -584,8 +587,9 @@ fn make_credential_inner<S: Storage, R: Rng>(
     // The trusted screen (display build) names the relying party being registered;
     // the `Register` kind picks the "Save new passkey?" layout. §6.1.2 step 13: a
     // built-in UV ceremony IS the evidence of user interaction, so it sets `up`
-    // without asking a second time.
-    if !verified.up_collected {
+    // without asking a second time — except where that card is the only screen
+    // naming the rp being registered ([`needs_confirm`]).
+    if verified.needs_confirm(ctx.presence.shows_confirm()) {
         ctx.require_presence(crate::Confirm::register(
             req.rp_id.as_bytes(),
             req.user_name.as_bytes(),

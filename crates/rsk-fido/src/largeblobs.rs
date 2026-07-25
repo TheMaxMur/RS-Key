@@ -219,6 +219,12 @@ fn write_fragment<S: Storage, R: Rng>(
         ctx.fs
             .put(EF_LARGEBLOB, &ctx.state.lba.temp[..total])
             .map_err(|_| CtapError::Other)?;
+        // A completed transfer is terminal: the next write starts a fresh array at
+        // offset 0. Leaving the accumulator armed let a zero-length fragment at
+        // `total` re-enter this branch and re-run the flash write — unauthenticated
+        // on a PIN-less key, since the token check above is skipped there.
+        ctx.state.lba.expected_length = 0;
+        ctx.state.lba.expected_next_offset = 0;
     }
     Ok(0)
 }

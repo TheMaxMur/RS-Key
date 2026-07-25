@@ -3694,3 +3694,73 @@ fn getnextassertion_hmac_secret_keys_off_resident_id() {
         "distinct credentials → distinct hmac-secret outputs"
     );
 }
+
+/// A trusted-display backend: it collects a PIN on its own pad **and** paints the
+/// ceremony, recording what each `Confirm` named.
+struct DisplayPad {
+    touches: usize,
+    last_title: &'static str,
+    last_primary: std::vec::Vec<u8>,
+}
+impl DisplayPad {
+    fn new() -> Self {
+        Self {
+            touches: 0,
+            last_title: "",
+            last_primary: std::vec::Vec::new(),
+        }
+    }
+}
+impl crate::UserPresence for DisplayPad {
+    fn request(&mut self, c: crate::Confirm<'_>) -> crate::Presence {
+        self.touches += 1;
+        self.last_title = c.title;
+        self.last_primary = c.primary.to_vec();
+        crate::Presence::Confirmed
+    }
+    fn shows_confirm(&self) -> bool {
+        true
+    }
+    fn uv_available(&self) -> bool {
+        true
+    }
+    fn collect_pin(&mut self, _min: usize, out: &mut [u8]) -> crate::PinEntry {
+        out[..4].copy_from_slice(b"1234");
+        crate::PinEntry::Entered(4)
+    }
+}
+
+#[test]
+fn builtin_uv_still_names_the_rp_on_a_display() {
+    // Audit run-28 F1. §6.2.2 step 8 lets the pad entry stand in for the *gesture*,
+    // and the build used it to skip the whole ceremony — but `collect_pin` carries no
+    // `Confirm` and `PinPad.title` is trusted `&'static str` by construction, so the
+    // pad can never name a relying party. Skipping the card therefore traded one
+    // context-free PIN entry for an assertion over an rp the user never saw. On a
+    // backend that paints ceremonies the card must survive; the flags are unchanged.
+    let (mut fs, mut rng) = setup();
+    let cred_id = register_non_resident(&mut fs, &mut rng);
+    crate::clientpin::store_local_pin(&dev(), &mut fs, b"1234").unwrap();
+    let mut state = crate::FidoState::new();
+    let mut out = [0u8; 1024];
+    let mut pad = DisplayPad::new();
+    let n = {
+        let mut ctx = Ctx {
+            presence: &mut pad,
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 0,
+        };
+        get_assertion(&mut ctx, &ga_request_uv(&cred_id, None), &mut out).unwrap()
+    };
+    let ad = assertion_auth_data(&out[..n]);
+    assert_eq!(ad[32] & (FLAG_UP | FLAG_UV), FLAG_UP | FLAG_UV);
+    assert_eq!(pad.touches, 1, "the naming card is painted exactly once");
+    assert_eq!(pad.last_title, "Sign in?");
+    assert_eq!(
+        pad.last_primary, b"example.com",
+        "the card carries the rp the assertion is for"
+    );
+}
