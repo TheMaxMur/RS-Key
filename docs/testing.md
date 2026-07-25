@@ -226,6 +226,13 @@ nix develop -c python tests/75_seed_backup.py --pin <your PIN>
   the replug (expects `CTAP2_OK`), then again past 10 s (expects
   `0x30 NOT_ALLOWED`). It needs the `no-touch`, non-`display` image and it wipes
   FIDO state.
+- `tests/28_ctap_spec_alignment.py` covers the CTAP 2.1 spec-alignment surface the
+  per-command suites do not reach: CTAPHID channel allocation and `CTAPHID_LOCK`,
+  the `uv`/`pinUvAuthParam` precedence rule, `makeCredUvNotRqd`, the largeBlobs
+  parameter validation, `setMinPINLength` overflow, the rpId-scoped
+  `credentialManagement` token, and the U2F gate under `alwaysUv`. It neither resets
+  nor replugs, but it does need `--pin`, and it toggles `alwaysUv` on and back off —
+  so start it with `alwaysUv` off, which it checks.
 - The FIDO PIN is never guessed: destructive PIN tests take `--pin`
   explicitly.
 
