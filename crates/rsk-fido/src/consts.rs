@@ -123,12 +123,6 @@ pub const ALG_MLDSA87: i64 = -50;
 /// COSE key type AKP (Algorithm Key Pair) — ML-DSA public keys: `{1:7, 3:alg, -1:pub}`.
 pub const KTY_AKP: u8 = 7;
 
-/// Prefer ML-DSA-44 whenever the platform offers it in `pubKeyCredParams`, even
-/// listed after a classic alg — a deliberate deviation from CTAP's "first
-/// supported" rule so an RP rolling out PQC need not reorder its preference
-/// list for the classic-only installed base.
-pub const PREFER_PQC: bool = true;
-
 // FIDO curve identifiers, used inside COSE keys.
 pub const CURVE_P256: u8 = 1;
 pub const CURVE_P384: u8 = 2;

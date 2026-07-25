@@ -15,11 +15,11 @@ advertise-pqc` so getInfo advertises -49.
                                      CTAP 2.1 §6.6 — see replug.py)
   2. getInfo                      -> advertise-pqc build: -49 leads, then -48;
                                      maxMsgSize 7609
-  3. makeCredential [-7, -49]     -> ML-DSA-65 preferred over the classic entry:
+  3. makeCredential [-49, -7]     -> the first supported entry is selected:
                                      AKP COSE key {1:7, 3:-49, -1:pub(1952)}; the
                                      packed self-attestation (3309-byte sig)
                                      verifies under dilithium-py ML_DSA_65
-  4. makeCredential [-48, -49]    -> -49 outranks -48 (higher PQC rank)
+  4. makeCredential [-49, -48]    -> list order decides between the ML-DSA sets
   5. getAssertion (allowList)     -> assertion verifies; sign counter grows
   6. rk -7 then rk [-7,-49], same rp/user -> the resident slot upgrades to
                                      ML-DSA-65; discovery asserts with it
@@ -114,16 +114,17 @@ def main():
             print("getInfo: classic algorithms only (default build); -49 still negotiable")
         assert gi[5] == 7609, f"maxMsgSize {gi[5]}, want 7609"
 
-        # 3. PQC-preferred registration: -49 wins despite -7 listed first.
-        (cred_id, alg, pk, auth_data, att), dt_mc = make_credential(dev, cid, [-7, -49])
-        assert alg == -49, f"selected alg {alg}, want -49 (PQC priority)"
+        # 3. ML-DSA-65 registration. CTAP 2.1 §6.1.2 step 4 picks the FIRST
+        # supported entry, so -49 must lead the list to be selected.
+        (cred_id, alg, pk, auth_data, att), dt_mc = make_credential(dev, cid, [-49, -7])
+        assert alg == -49, f"selected alg {alg}, want -49 (first supported)"
         assert len(pk) == PK_LEN, f"pk len {len(pk)}, want {PK_LEN}"
         assert att["alg"] == -49 and len(att["sig"]) == SIG_LEN, "attStmt shape"
         assert ML_DSA_65.verify(pk, auth_data + CDH, att["sig"]), "attestation sig"
 
-        # 4. -49 outranks -48 regardless of list order.
-        (_, alg2, _, _, _), _ = make_credential(dev, cid, [-48, -49])
-        assert alg2 == -49, f"-49 must outrank -48, got {alg2}"
+        # 4. The same rule decides between the two ML-DSA sets.
+        (_, alg2, _, _, _), _ = make_credential(dev, cid, [-49, -48])
+        assert alg2 == -49, f"-49 listed first must win, got {alg2}"
 
         # 5. Assertion under the step-3 credential; counter must grow.
         ad1, sig1, dt_ga = get_assertion(dev, cid, cred_id)
@@ -138,14 +139,14 @@ def main():
         # 6. Classic -> PQC resident upgrade for one rp/user.
         uid = b"\x65\x65"
         make_credential(dev, cid, [-7], uid=uid, rk=True)
-        (_, alg, pk2, _, _), _ = make_credential(dev, cid, [-7, -49], uid=uid, rk=True)
+        (_, alg, pk2, _, _), _ = make_credential(dev, cid, [-49, -7], uid=uid, rk=True)
         assert alg == -49
         ad3, sig3, _ = get_assertion(dev, cid)  # discovery, no allowList
         assert len(sig3) == SIG_LEN, "upgraded resident credential signs ML-DSA-65"
         assert ML_DSA_65.verify(pk2, ad3 + CDH, sig3), "post-upgrade assertion sig"
 
         print(f"makeCredential(-49): {dt_mc:.2f}s, getAssertion: {dt_ga:.2f}s")
-        print("PASS (ML-DSA-65 register+login verified, PQC priority over -48, resident upgrade)")
+        print("PASS (ML-DSA-65 register+login verified, first-supported selection, resident upgrade)")
     finally:
         dev.close()
 

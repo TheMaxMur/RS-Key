@@ -1340,17 +1340,17 @@ fn selected_alg(algs: &[i64]) -> Result<i64, CtapError> {
 }
 
 #[test]
-fn pqc_priority_selection() {
+fn first_supported_alg_wins() {
     use crate::consts::{ALG_MLDSA44, ALG_MLDSA65, ALG_MLDSA87};
-    // PREFER_PQC: an ML-DSA set wins even when listed after a classic alg —
-    // and, trivially, when listed first.
-    assert_eq!(selected_alg(&[ALG_ES256, ALG_MLDSA44]), Ok(ALG_MLDSA44));
+    // §6.1.2 step 4: the chosen algorithm is the FIRST supported element of
+    // pubKeyCredParams — the platform's order is its preference order, so an
+    // ML-DSA entry listed after a classic one does NOT override it.
+    assert_eq!(selected_alg(&[ALG_ES256, ALG_MLDSA44]), Ok(ALG_ES256));
     assert_eq!(selected_alg(&[ALG_MLDSA44, ALG_ES256]), Ok(ALG_MLDSA44));
-    assert_eq!(selected_alg(&[ALG_ES256, ALG_MLDSA65]), Ok(ALG_MLDSA65));
-    // ML-DSA-65 outranks ML-DSA-44 regardless of list order.
-    assert_eq!(selected_alg(&[ALG_MLDSA44, ALG_MLDSA65]), Ok(ALG_MLDSA65));
+    assert_eq!(selected_alg(&[ALG_ES256, ALG_MLDSA65]), Ok(ALG_ES256));
+    // …including between the two ML-DSA sets.
+    assert_eq!(selected_alg(&[ALG_MLDSA44, ALG_MLDSA65]), Ok(ALG_MLDSA44));
     assert_eq!(selected_alg(&[ALG_MLDSA65, ALG_MLDSA44]), Ok(ALG_MLDSA65));
-    // No PQC offered → the first supported entry.
     assert_eq!(selected_alg(&[ALG_ES256]), Ok(ALG_ES256));
     assert_eq!(
         selected_alg(&[crate::consts::ALG_ES384, ALG_ES256]),

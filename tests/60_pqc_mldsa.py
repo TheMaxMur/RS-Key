@@ -15,7 +15,7 @@ Flash the no-touch build (firmware-test.uf2) — this tool cannot press the butt
   2. getInfo                      -> default build: -48 NOT advertised (Firefox
                                      strict-parser compat); advertise-pqc build:
                                      -48 leads; maxMsgSize 7609 either way
-  3. makeCredential [-7, -48]     -> PQC preferred over the earlier classic entry:
+  3. makeCredential [-48, -7]     -> the first supported entry is selected:
                                      AKP COSE key {1:7, 3:-48, -1:pub(1312)}; under
                                      a --features fido-conformance build the packed
                                      self-attestation (2420-byte sig) verifies under
@@ -119,9 +119,10 @@ def main():
             print("getInfo: classic algorithms only (Firefox-safe default build)")
         assert gi[5] == 7609, f"maxMsgSize {gi[5]}, want 7609"
 
-        # 3. PQC-preferred registration: -48 wins despite -7 listed first.
-        (cred_id, alg, pk, auth_data, fmt, att), dt_mc = make_credential(dev, cid, [-7, -48])
-        assert alg == -48, f"selected alg {alg}, want -48 (PQC priority)"
+        # 3. ML-DSA-44 registration. CTAP 2.1 §6.1.2 step 4 picks the FIRST
+        # supported entry, so -48 must lead the list to be selected.
+        (cred_id, alg, pk, auth_data, fmt, att), dt_mc = make_credential(dev, cid, [-48, -7])
+        assert alg == -48, f"selected alg {alg}, want -48 (first supported)"
         assert len(pk) == PK_LEN
         if fmt == "none":
             assert att == {}, f"fmt=none must carry an empty attStmt, got {att!r}"
@@ -145,14 +146,14 @@ def main():
         # 5. Classic -> PQC resident upgrade for one rp/user.
         uid = b"\x42\x42"
         make_credential(dev, cid, [-7], uid=uid, rk=True)
-        (_, alg, pk2, _, _, _), _ = make_credential(dev, cid, [-7, -48], uid=uid, rk=True)
+        (_, alg, pk2, _, _, _), _ = make_credential(dev, cid, [-48, -7], uid=uid, rk=True)
         assert alg == -48
         ad3, sig3, _ = get_assertion(dev, cid)  # discovery, no allowList
         assert len(sig3) == SIG_LEN, "upgraded resident credential signs ML-DSA"
         assert ML_DSA_44.verify(pk2, ad3 + CDH, sig3), "post-upgrade assertion sig"
 
         print(f"makeCredential(-48): {dt_mc:.2f}s, getAssertion: {dt_ga:.2f}s")
-        print("PASS (ML-DSA-44 register+login verified, PQC priority, resident upgrade)")
+        print("PASS (ML-DSA-44 register+login verified, resident upgrade)")
     finally:
         dev.close()
 

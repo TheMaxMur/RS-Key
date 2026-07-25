@@ -140,10 +140,10 @@ supported algorithm a site offers, so put your preferred curve first in the list
 ## Post-quantum credentials
 
 The device implements **ML-DSA-44** (FIPS 204, COSE `-48`) and **ML-DSA-65**
-(COSE `-49`) makeCredential / getAssertion. By deliberate exception it
-*prefers* a PQC scheme whenever a site lists one, even after a classic
-algorithm. ML-DSA-65 outranks ML-DSA-44. Nothing mainstream requests them yet. A
-client that does (e.g. a `python-fido2` script offering `-49`) gets a PQC
+(COSE `-49`) makeCredential / getAssertion. They obey the same first-supported
+rule as everything else, so a site that wants one lists it **before** its classic
+fallback. Nothing mainstream requests them yet. A client that does (e.g. a
+`python-fido2` script offering `-49`) gets a PQC
 credential today. Both are backed by the in-tree, stack-optimized `rsk-mldsa`
 implementation, which streams the FIPS 204 matrix A on the fly so ML-DSA-65's
 larger keys still fit the RP2350 stack.

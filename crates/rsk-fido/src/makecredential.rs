@@ -32,7 +32,6 @@ use crate::consts::{
     CURVE_MLDSA44, CURVE_MLDSA65, CURVE_P256, CURVE_P256K1, CURVE_P384, CURVE_P521, EF_ATT_CHAIN,
     EF_EA_ENABLED, EF_EE_DEV, EF_MINPINLEN, EF_PIN, FLAG_AT, FLAG_ED, FLAG_UP, FLAG_UV,
     MAX_CREDBLOB_LENGTH, MAX_CREDENTIAL_COUNT_IN_LIST, MAX_MIN_PIN_RPIDS, MAX_RESIDENT_CREDENTIALS,
-    PREFER_PQC,
 };
 use crate::credential::{
     CRED_BOX_MAX, CRED_PUBKEY_MAX, CRED_REC_MAX, CRED_RESIDENT_LEN, CredExt, CredInput, Credential,
@@ -85,16 +84,6 @@ fn alg_to_curve(alg: i64) -> Option<(i64, u8)> {
         ALG_MLDSA44 => Some((ALG_MLDSA44, CURVE_MLDSA44)),
         ALG_MLDSA65 => Some((ALG_MLDSA65, CURVE_MLDSA65)),
         _ => None,
-    }
-}
-
-/// PQC-preference rank for the `pubKeyCredParams` selection under `PREFER_PQC`:
-/// ML-DSA-65 outranks ML-DSA-44, which outranks the classical schemes.
-fn alg_rank(alg: i64) -> u8 {
-    match alg {
-        ALG_MLDSA65 => 2,
-        ALG_MLDSA44 => 1,
-        _ => 0,
     }
 }
 
@@ -219,7 +208,8 @@ fn parse_user_entity<'a>(d: &mut Decoder<'a>, req: &mut Request<'a>) -> Result<(
 }
 
 /// Parse `pubKeyCredParams` (request key 4), selecting the first supported
-/// algorithm — under PREFER_PQC a later ML-DSA-44 entry overrides a classic pick.
+/// algorithm — §6.1.2 step 4: the platform's list order IS its preference order,
+/// and every element is still validated after one is chosen.
 fn parse_pubkey_params(d: &mut Decoder<'_>, req: &mut Request<'_>) -> Result<(), CtapError> {
     let a = def_arr(d)?;
     for _ in 0..a {
@@ -245,13 +235,11 @@ fn parse_pubkey_params(d: &mut Decoder<'_>, req: &mut Request<'_>) -> Result<(),
             return Err(CtapError::InvalidCbor);
         }
         if ty == "public-key"
+            && req.sel_alg == 0
             && let Some((ca, cv)) = alg_to_curve(alg)
         {
-            let upgrade = PREFER_PQC && alg_rank(ca) > alg_rank(req.sel_alg);
-            if req.sel_alg == 0 || upgrade {
-                req.sel_alg = ca;
-                req.sel_curve = cv as i64;
-            }
+            req.sel_alg = ca;
+            req.sel_curve = cv as i64;
         }
     }
     Ok(())

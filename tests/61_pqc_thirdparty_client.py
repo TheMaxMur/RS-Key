@@ -69,15 +69,16 @@ def main():
 
     client = Fido2Client(dev, client_data_collector=DefaultClientDataCollector(ORIGIN))
 
-    # Register, offering ES256 first — the PQC-priority policy must pick -48.
+    # Register with -48 first: CTAP 2.1 §6.1.2 step 4 selects the FIRST supported
+    # entry of pubKeyCredParams, so the RP's order is what picks ML-DSA-44.
     reg = client.make_credential(
         PublicKeyCredentialCreationOptions(
             rp=PublicKeyCredentialRpEntity(id=RP_ID, name="Example"),
             user=PublicKeyCredentialUserEntity(id=b"\x01\x02\x03\x04", name="pqc"),
             challenge=secrets.token_bytes(32),
             pub_key_cred_params=[
-                PublicKeyCredentialParameters(type=PK, alg=-7),
                 PublicKeyCredentialParameters(type=PK, alg=-48),
+                PublicKeyCredentialParameters(type=PK, alg=-7),
             ],
             # No PIN is set after the reset; the 2.2 client refuses the default
             # "preferred" UV when nothing can satisfy it (browsers just skip).
