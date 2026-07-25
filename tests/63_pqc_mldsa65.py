@@ -11,7 +11,8 @@ dilithium-py; use the .venv-fido python or `pip install dilithium-py`). Flash th
 no-touch build (this tool cannot press the button) built `--features
 advertise-pqc` so getInfo advertises -49.
 
-  1. reset                        -> clean slate (idempotent)
+  1. reset                        -> clean slate (idempotent; asks for a replug,
+                                     CTAP 2.1 §6.6 — see replug.py)
   2. getInfo                      -> advertise-pqc build: -49 leads, then -48;
                                      maxMsgSize 7609
   3. makeCredential [-7, -49]     -> ML-DSA-65 preferred over the classic entry:
@@ -28,6 +29,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import replug  # noqa: E402
 from ctaphid import decode, enc, find, read, send_cbor, write  # noqa: E402
 
 try:
@@ -95,9 +97,8 @@ def main():
         write(dev, b"\xff\xff\xff\xff" + bytes([CTAPHID_INIT, 0, 8]) + bytes(range(8)))
         cid = read(dev)[15:19]
 
-        # 1. reset for idempotency.
-        status, _ = ctap(dev, cid, 0x07)
-        assert status == 0x00, f"reset status {status:#x}"
+        # 1. reset for idempotency (needs a replug: CTAP 2.1 §6.6).
+        dev, cid = replug.reset(dev, "step 1's reset")
 
         # 2. getInfo: the advertise-pqc build advertises both ML-DSA sets, -49
         # (ML-DSA-65) before -48. The classic default build advertises neither;

@@ -17,8 +17,9 @@ Exercises the large-blob store on the device:
   7. set (corrupt integrity)  -> CTAP2_ERR_INTEGRITY_FAILURE (0x3D)
   8. get (offset past end)    -> CTAP1_ERR_INVALID_PARAMETER (0x02)
 
-Self-contained: resets at the start. Needs `cryptography` (in the devshell) for
-the PIN/UV-auth protocol-two key agreement + token HMAC.
+Self-contained: resets at the start, asking for a replug first — CTAP 2.1 §6.6
+accepts a reset only just after power-up (see replug.py). Needs `cryptography` (in
+the devshell) for the PIN/UV-auth protocol-two key agreement + token HMAC.
 """
 import hashlib
 import os
@@ -27,6 +28,7 @@ import sys
 from cryptography.hazmat.primitives import hashes, hmac as chmac
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import replug  # noqa: E402
 from ctaphid import (  # noqa: E402
     CTAPHID_INIT,
     Protocol2,
@@ -101,8 +103,7 @@ def main():
         cid = read(dev)[15:19]
 
         # 1. Clean slate, then confirm getInfo advertises large blobs.
-        rst = send_cbor(dev, cid, bytes([0x07]))
-        assert rst[0] == 0x00, f"reset status {rst[0]:#x}"
+        dev, cid = replug.reset(dev, "step 1's clean slate")
         gi = decode(send_cbor(dev, cid, bytes([0x04]))[1:])
         assert gi[4].get("largeBlobs") is True, "options.largeBlobs not advertised"
         assert gi.get(0x0B) == 2048, f"maxSerializedLargeBlobArray = {gi.get(0x0B)}, want 2048"

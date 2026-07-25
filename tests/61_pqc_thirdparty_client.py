@@ -22,10 +22,15 @@ default board it is skipped and the getAssertion signature carries the check.
     /tmp/fido2-latest/bin/pip install fido2 cryptography
     /tmp/fido2-latest/bin/python tests/61_pqc_thirdparty_client.py
 
-Flash the no-touch build (firmware-test.uf2) first.
+Flash the no-touch build (firmware-test.uf2) first. Asks for a replug before its
+reset — CTAP 2.1 §6.6 accepts one only just after power-up (see replug.py).
 """
+import os
 import secrets
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import replug  # noqa: E402
 
 from cryptography.hazmat.primitives.asymmetric import mldsa
 from fido2.client import DefaultClientDataCollector, Fido2Client
@@ -60,7 +65,7 @@ def main():
     algs = [a["alg"] for a in info.algorithms]
     assert algs in ([-7, -35, -36, -8], [-49, -48, -7, -35, -36, -8]), f"unexpected algorithms: {algs}"
     print(f"getInfo algorithms: {algs}")
-    Ctap2(dev).reset()  # idempotent clean slate, like the raw PQC tool
+    dev = replug.reset_fido2(dev, "the clean-slate reset")  # idempotent
 
     client = Fido2Client(dev, client_data_collector=DefaultClientDataCollector(ORIGIN))
 

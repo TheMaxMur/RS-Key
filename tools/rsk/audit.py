@@ -15,9 +15,12 @@ device signs the chain head with an ECDSA P-256 key derived from the OTP DEVK
           challenge; checks the chain and the
           signature                                 (touch; --pin if a PIN is set)
 
-`verify --expect-key` additionally pins the attestation public key (hex,
-65-byte SEC1) — record it once at provisioning time, then any later mismatch
-means you are talking to a different (or cloned-without-OTP) device.
+`verify --expect-key` additionally pins the attestation identity (the 16-hex
+fingerprint or the full 65-byte SEC1 public key, either form) — record it once
+at provisioning time, then any later mismatch means you are talking to a
+different (or cloned-without-OTP) device. Without a pin the verifying key comes
+from the same response being checked, so an unpinned run establishes only that
+the journal is internally consistent and self-signed.
 """
 import hashlib
 import os
@@ -31,6 +34,8 @@ ENTRY_LEN = 20
 CKPT_TAG = b"RSK-AUDIT-CKPT-v1"
 
 EVT_RESET = 0x04  # firmware journal.rs EV_RESET
+EVT_CONFIG_WRITE = 0x15  # firmware journal.rs EV_CONFIG_WRITE
+CONFIG_TARGETS = {0: "dev-conf", 1: "phy", 2: "led"}
 
 EVENTS = {
     0x01: "BOOT",
@@ -68,7 +73,8 @@ def register(sub):
 
     v = g.add_parser("verify", help="log + DEVK-signed chain checkpoint (touch)")
     add_pin_arg(v)
-    v.add_argument("--expect-key", help="pin the attestation pubkey (hex SEC1, from a prior verify)")
+    v.add_argument("--expect-key",
+                   help="expected identity: 16-hex fingerprint or full hex SEC1 pubkey")
     v.set_defaults(func=cmd_verify)
 
     st = g.add_parser("status", help="show whether journalling is on (no touch)")
@@ -94,13 +100,10 @@ def _fingerprint(pubkey):
     return hashlib.sha256(pubkey).hexdigest()[:16]
 
 
-def verify_checkpoint(m, challenge, distrust, badsig):
-    """Validate the DEVK checkpoint map `m` over `challenge`; die()s fail-closed.
-    Returns (head, seq, sig, pubkey)."""
-    if not all(k in m for k in (1, 2, 3, 4)):
-        die(f"malformed checkpoint response — {distrust}")
-    head, seq, sig, pubkey = m[1], m[2], m[3], m[4]
-
+def verify_signature(head, seq, sig, pubkey, challenge, distrust, badsig):
+    """ECDSA-verify a checkpoint signature over CKPT_TAG ‖ head ‖ seq ‖ challenge;
+    die()s fail-closed. Split out so a saved receipt can be re-checked offline,
+    with no device and no CBOR map (`rsk offboard --verify`)."""
     from cryptography.exceptions import InvalidSignature
     from cryptography.hazmat.primitives import hashes
     from cryptography.hazmat.primitives.asymmetric import ec
@@ -114,6 +117,15 @@ def verify_checkpoint(m, challenge, distrust, badsig):
         vk.verify(sig, msg, ec.ECDSA(hashes.SHA256()))
     except InvalidSignature:
         die(badsig)
+
+
+def verify_checkpoint(m, challenge, distrust, badsig):
+    """Validate the DEVK checkpoint map `m` over `challenge`; die()s fail-closed.
+    Returns (head, seq, sig, pubkey)."""
+    if not all(k in m for k in (1, 2, 3, 4)):
+        die(f"malformed checkpoint response — {distrust}")
+    head, seq, sig, pubkey = m[1], m[2], m[3], m[4]
+    verify_signature(head, seq, sig, pubkey, challenge, distrust, badsig)
     return head, seq, sig, pubkey
 
 
@@ -133,6 +145,18 @@ def read_journal(dev, cid, pin):
     return start, seq_next, epoch, entries
 
 
+def _detail(e):
+    """The detail column of one entry. The device coalesces a run of config writes
+    into a single ring slot (an ungated host must not be able to flush the ring), so
+    a CONFIG_WRITE detail is `repeats(2 LE) ‖ targets(1)`: how many writes the entry
+    stands for and which records they touched."""
+    if e[8] != EVT_CONFIG_WRITE:
+        return e[10:18].hex()
+    n = int.from_bytes(e[10:12], "little") + 1
+    hit = "+".join(t for bit, t in CONFIG_TARGETS.items() if e[12] & (1 << bit))
+    return f"{n}× write ({hit or 'unknown'})"
+
+
 def print_entries(entries):
     print(f"{'seq':>6}  {'uptime':>10}  {'event':<18} aux  detail")
     for off in range(0, len(entries), ENTRY_LEN):
@@ -140,8 +164,7 @@ def print_entries(entries):
         seq = int.from_bytes(e[0:4], "little")
         t_ms = int.from_bytes(e[4:8], "little")
         name = EVENTS.get(e[8], f"0x{e[8]:02x}")
-        detail = e[10:18].hex()
-        print(f"{seq:>6}  {t_ms / 1000:>9.1f}s  {name:<18} {e[9]:>3}  {detail}")
+        print(f"{seq:>6}  {t_ms / 1000:>9.1f}s  {name:<18} {e[9]:>3}  {_detail(e)}")
 
 
 def cmd_log(args):
@@ -212,13 +235,20 @@ def cmd_verify(args):
     if head_signed != head_local:
         die("signed head differs from the exported window — the journal changed "
             "between read and checkpoint; rerun, and if it persists: TAMPER")
-    if args.expect_key and pubkey.hex() != args.expect_key.lower():
+    fp = _fingerprint(pubkey)
+    if args.expect_key and args.expect_key.lower().strip() not in (fp, pubkey.hex()):
         die("attestation key MISMATCH — this is not the enrolled device")
 
-    fp = _fingerprint(pubkey)
     print_entries(entries)
     print(f"\nchain   : OK — head {head_local.hex()}")
     print(f"sig     : OK — checkpoint over seq_next={seq_signed}, fresh challenge")
     print(f"att key : {pubkey.hex()}")
     print(f"          fingerprint {fp} — record this; pin later runs with --expect-key")
-    print("verdict : journal authentic ✓")
+    if args.expect_key:
+        print("verdict : journal authentic ✓ (signed by the pinned key)")
+    else:
+        # The verifying key came out of the very response being checked, so an
+        # unpinned run proves self-consistency, never identity. Same caveat as
+        # `rsk inventory verify`.
+        print("verdict : chain + signature OK — the key is NOT pinned, so this "
+              "does not prove which device signed it")

@@ -10,7 +10,8 @@ Needs `hidapi` + `dilithium-py` (both in the .venv-fido python; the nix devshell
 python has neither dilithium-py nor a recent-enough cryptography ML-DSA backend).
 Flash the no-touch build (firmware-test.uf2) — this tool cannot press the button.
 
-  1. reset                        -> clean slate (idempotent)
+  1. reset                        -> clean slate (idempotent; asks for a replug,
+                                     CTAP 2.1 §6.6 — see replug.py)
   2. getInfo                      -> default build: -48 NOT advertised (Firefox
                                      strict-parser compat); advertise-pqc build:
                                      -48 leads; maxMsgSize 7609 either way
@@ -29,6 +30,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import replug  # noqa: E402
 from ctaphid import decode, enc, find, read, send_cbor, write  # noqa: E402
 
 try:
@@ -96,9 +98,8 @@ def main():
         write(dev, b"\xff\xff\xff\xff" + bytes([CTAPHID_INIT, 0, 8]) + bytes(range(8)))
         cid = read(dev)[15:19]
 
-        # 1. reset for idempotency.
-        status, _ = ctap(dev, cid, 0x07)
-        assert status == 0x00, f"reset status {status:#x}"
+        # 1. reset for idempotency (needs a replug: CTAP 2.1 §6.6).
+        dev, cid = replug.reset(dev, "step 1's reset")
 
         # 2. getInfo: the default build must NOT advertise -48 (shipped Firefoxes
         # hard-fail the whole getInfo on an unknown COSE id); the advertise-pqc

@@ -13,13 +13,15 @@
   4. reset                             -> wipes the PIN (getInfo clientPin -> false)
 
 Self-contained: sets a PIN, then resets it, so it leaves the device clean and is
-idempotent. Needs `cryptography` (in the devshell).
+idempotent. Needs `cryptography` (in the devshell). Asks for a replug before each
+reset — CTAP 2.1 §6.6 accepts one only just after power-up (see replug.py).
 """
 import hashlib
 import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import replug  # noqa: E402
 from ctaphid import (  # noqa: E402
     CTAPHID_INIT,
     Protocol2,
@@ -74,8 +76,7 @@ def main():
         print("selection: OK")
 
         # Clean slate: a prior run may have left a PIN, so reset before setting ours.
-        clr = send_cbor(dev, cid, bytes([0x07]))
-        assert clr[0] == 0x00, f"reset status {clr[0]:#x}"
+        dev, cid = replug.reset(dev, "the clean-slate reset")
 
         # 2. clientPIN: key agreement, setPIN, getPinUvAuthToken with acfg permission.
         ka = client_pin(dev, cid, {1: 2, 2: 2})
@@ -101,8 +102,7 @@ def main():
         print("config: setMinPINLength(8) OK, lower->0x37, no-param->0x36")
 
         # 4. authenticatorReset wipes the PIN.
-        rst = send_cbor(dev, cid, bytes([0x07]))
-        assert rst[0] == 0x00, f"reset status {rst[0]:#x}"
+        dev, cid = replug.reset(dev, "step 4's reset")
         gi = send_cbor(dev, cid, bytes([0x04]))
         assert gi[0] == 0x00
         assert decode(gi[1:])[4]["clientPin"] is False, "PIN survived reset"

@@ -42,6 +42,9 @@ TAG_LED_DRIVER = 0x0C
 TAG_LED_ORDER = 0x0D  # RS-Key vendor tag (PicoForge skips it as unknown)
 TAG_LED_NUM = 0x0E  # RS-Key vendor tag: addressable LED count
 TAG_PRESENCE_TIMEOUT = 0x08  # touch-wait timeout (seconds); PicoForge compatible
+# Firmware floor for the touch window (presence::MIN_TIMEOUT_SECS): anything lower
+# is raised on the device, so writing it would misreport the real window.
+MIN_TOUCH_TIMEOUT = 10
 TAG_USB_PRODUCT = 0x09  # iProduct string (NUL-terminated); PicoForge compatible
 TAG_USB_MANUFACTURER = 0x0F  # RS-Key vendor tag: iManufacturer string (NUL-terminated)
 
@@ -94,8 +97,8 @@ def register(sub):
     p.add_argument(
         "--touch-timeout",
         type=int,
-        metavar="1-255",
-        help="touch-wait timeout in seconds (PicoForge compatible; firmware default 30)",
+        metavar="10-255",
+        help="touch-wait timeout in seconds (PicoForge compatible; firmware default 30, floor 10)",
     )
     p.add_argument(
         "--manufacturer",
@@ -239,8 +242,11 @@ def _apply_args(tlvs, args):
             raise SystemExit("--led-num must be 1–255")
         _upsert(tlvs, TAG_LED_NUM, args.led_num)
     if args.touch_timeout is not None:
-        if not 1 <= args.touch_timeout <= 255:
-            raise SystemExit("--touch-timeout must be 1–255 (seconds)")
+        # The firmware raises anything below 10 s to 10 s (a window short enough to
+        # expire mid-press turns one hold into two grants), so reject it here
+        # instead of writing a record the device will not honour.
+        if not MIN_TOUCH_TIMEOUT <= args.touch_timeout <= 255:
+            raise SystemExit(f"--touch-timeout must be {MIN_TOUCH_TIMEOUT}–255 (seconds)")
         _upsert(tlvs, TAG_PRESENCE_TIMEOUT, args.touch_timeout)
     if args.manufacturer is not None:
         _upsert_str(tlvs, TAG_USB_MANUFACTURER, args.manufacturer)

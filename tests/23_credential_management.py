@@ -19,12 +19,15 @@ Exercises every credentialManagement subcommand on the device:
 The credMgmt pinUvAuthParam is HMAC-SHA256(token, subcommand ‖ rawSubCommandParams)
 for 0x04/0x06/0x07 and HMAC-SHA256(token, subcommand) for 0x01/0x02 (protocol two).
 Self-contained and idempotent: resets at start and end. Needs `cryptography`.
+Each reset asks for a replug — CTAP 2.1 §6.6 accepts one only just after power-up
+(see replug.py).
 """
 import hashlib
 import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import replug  # noqa: E402
 from ctaphid import (  # noqa: E402
     CTAPHID_INIT,
     Protocol2,
@@ -89,7 +92,7 @@ def main():
 
         # 2. Clean slate, then a PIN. The key agreement is reused for every token
         # fetch below.
-        assert send_cbor(dev, cid, bytes([0x07]))[0] == 0x00, "reset failed"
+        dev, cid = replug.reset(dev, "step 2's clean slate")
         ka = client_pin(dev, cid, {1: 2, 2: 2})
         cose = decode(ka[1:])[1]
         proto = Protocol2(cose[-2], cose[-3])
@@ -198,7 +201,7 @@ def main():
         print("updateUserInformation: name -> 'bob2'")
 
         # Clean up.
-        assert send_cbor(dev, cid, bytes([0x07]))[0] == 0x00, "final reset failed"
+        dev, cid = replug.reset(dev, "the clean-up reset")
 
         print("\nPASS")
     finally:

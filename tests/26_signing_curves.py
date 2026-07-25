@@ -18,9 +18,10 @@ ES256K (-47) is implemented but intentionally NOT advertised (the FIDO conforman
 tool cannot verify a secp256k1 self-attestation). makeCredential still negotiates
 ES256K from a request, so the per-curve loop exercises it all the same.
 
-A no-PIN device is assumed (resets at the start). Needs `cryptography`. Uses a
-generous response timeout because the pure-Rust P-384/P-521 arithmetic is slow
-on the RP2350.
+A no-PIN device is assumed (resets at the start, after a replug — CTAP 2.1 §6.6
+accepts a reset only just after power-up, see replug.py). Needs `cryptography`.
+Uses a generous response timeout because the pure-Rust P-384/P-521 arithmetic is
+slow on the RP2350.
 """
 import os
 import sys
@@ -31,6 +32,7 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec, ed25519
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import replug  # noqa: E402
 from ctaphid import (  # noqa: E402
     CTAPHID_CBOR,
     CTAPHID_INIT,
@@ -123,8 +125,7 @@ def main():
         write(dev, b"\xff\xff\xff\xff" + bytes([CTAPHID_INIT, 0, 8]) + bytes(range(8)))
         cid = read(dev)[15:19]
 
-        rst = send_cbor_t(dev, cid, bytes([0x07]))
-        assert rst[0] == 0x00, f"reset status {rst[0]:#x}"
+        dev, cid = replug.reset(dev, "the clean-slate reset")
         gi = decode(send_cbor_t(dev, cid, bytes([0x04]))[1:])
         algs = {a["alg"] for a in gi[0x0A]}
         # ES256/384/512 and EdDSA (-8) are advertised; ES256K (-47) is implemented
