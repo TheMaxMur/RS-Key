@@ -562,7 +562,7 @@ Keys 3/4 are present only when a PIN is set (see gating).
 | `0A` | ATT_CLEAR | — | — | MSE + touch + PIN-token |
 | `0B` | ATT_STATE | — | `{1: present, 2: sha256(chain)?}` | **ungated** |
 | `0C` | CONFIG_WRITE | `{1: target(uint), 2: blob(bstr)}` — target `0`=DEV_CONF, `1`=PHY, `2`=LED | — | **ungated by default**; touch + PIN-token under `strict-config`; no MSE |
-| `0D` | CONFIG_READ | `{1: target(uint)}` — target `1`=PHY, `2`=LED | `{1: blob(bstr)}` | **ungated** |
+| `0D` | CONFIG_READ | `{1: target(uint)}` — target `1`=PHY, `2`=LED | `{1: blob(bstr)[, 2: {phy_tag: uint}]}` | **ungated** |
 | `0E` | AUDIT_CONFIG | `{1: op(uint)}` — `0`=disable, `1`=enable, `2`=status | `{1: enabled(bool)}` | set: PIN-token + touch; status (`2`): **ungated** |
 
 > ### Device configuration over FIDO (`CONFIG_WRITE 0x0C`)
@@ -584,6 +584,13 @@ Keys 3/4 are present only when a PIN is set (see gating).
 > the `acfg` permission (the MAC below): a **stronger** gate than the CCID path's
 > presence-only, because CTAPHID is reachable by any unprivileged host process.
 > The write lands in the same `EF_DEV_CONF`, so a later CCID READ CONFIG echoes it.
+>
+> **`CONFIG_READ 0x0D` PHY key 2 (RS-Key `0x0852`+):** the PHY read also returns an
+> optional `2:` map of the boot-*effective* values a host can't otherwise know —
+> keyed by phy tag: `4` = LED GPIO pin, `12` = LED driver, `8` = presence timeout
+> (seconds) — resolved to the build default when the record has no override. It is
+> display-only (the `1:` blob stays the raw override record for read-modify-write);
+> absent (empty map) on a headless `led_kind="none"` build, and older hosts ignore it.
 
 > ### ⚠️ Seed export hands out a normally non-exportable key
 > `BACKUP_EXPORT (0x02)` returns the device's 32-byte master seed (encrypted over

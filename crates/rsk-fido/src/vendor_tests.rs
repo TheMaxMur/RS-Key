@@ -1351,15 +1351,19 @@ fn config_read_returns_the_phy_record_ungated() {
     )
     .unwrap();
 
-    // Response {1: blob}; the blob parses back to the record just written.
+    // Response {1: blob, 2: effective}; the blob parses back to the record just
+    // written. Key 2 is empty here — the EFFECTIVE_PHY static is seeded only at
+    // firmware boot, never in a host test.
     let mut d = Decoder::new(&rout[..r]);
-    assert_eq!(d.map().unwrap(), Some(1));
+    assert_eq!(d.map().unwrap(), Some(2));
     assert_eq!(d.u8().unwrap(), 1);
     let got = d.bytes().unwrap();
     assert_eq!(
         rsk_rescue::phy::PhyData::parse(got).presence_timeout,
         Some(30)
     );
+    assert_eq!(d.u8().unwrap(), 2);
+    assert_eq!(d.map().unwrap(), Some(0));
 }
 
 #[test]

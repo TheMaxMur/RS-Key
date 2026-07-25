@@ -497,7 +497,7 @@ async fn main(spawner: Spawner) {
     config.max_power = 100;
     config.max_packet_size_0 = 64;
     // bcdDevice build counter; also surfaced on the trusted-display Firmware screen.
-    let device_release: u16 = 0x0851;
+    let device_release: u16 = 0x0852;
     config.device_release = device_release;
 
     let mut builder = Builder::new(
@@ -672,6 +672,16 @@ async fn main(spawner: Spawner) {
             Some(d @ 1..=3) => d,
             _ => BUILD_DRIVER,
         };
+        // Publish the boot-resolved phy values so CONFIG_READ can show the host
+        // the effective LED pin/driver + touch timeout, not a bare "default". A
+        // headless `led_kind="none"` build compiles this whole block out, leaving
+        // CONFIG_READ's effective map empty.
+        let effective_timeout_secs = phy
+            .as_ref()
+            .and_then(|p| p.presence_timeout)
+            .filter(|&t| t != 0)
+            .unwrap_or(30);
+        rsk_fido::config::set_effective_phy(led_gpio, led_driver, effective_timeout_secs);
 
         match led_driver {
             1 => {

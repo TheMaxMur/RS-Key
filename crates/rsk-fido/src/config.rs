@@ -31,6 +31,32 @@ use crate::state::{PERM_ACFG, puat_subcommand_msg};
 use crate::vendor::open_channel_key;
 use crate::{Ctx, Rng};
 
+use core::sync::atomic::{AtomicU32, Ordering};
+
+/// Boot-resolved phy values (build defaults or phy overrides) so CONFIG_READ can
+/// report the *effective* LED pin / driver and touch timeout — values that live
+/// in the firmware image, not the stored record — instead of leaving the host to
+/// render a bare "firmware default". Packed LE `[led_gpio, led_driver,
+/// presence_timeout_secs, flag]`; `flag` bit 0 marks it populated (a headless
+/// `led_kind="none"` build never seeds it).
+static EFFECTIVE_PHY: AtomicU32 = AtomicU32::new(0);
+
+/// Record the boot-resolved phy values for CONFIG_READ. Call once at boot, after
+/// the LED backend has resolved its effective pin/driver.
+pub fn set_effective_phy(led_gpio: u8, led_driver: u8, presence_timeout_secs: u8) {
+    EFFECTIVE_PHY.store(
+        u32::from_le_bytes([led_gpio, led_driver, presence_timeout_secs, 1]),
+        Ordering::Relaxed,
+    );
+}
+
+/// The boot-resolved `(led_gpio, led_driver, presence_timeout_secs)`, or `None`
+/// if never seeded.
+pub(crate) fn effective_phy() -> Option<(u8, u8, u8)> {
+    let b = EFFECTIVE_PHY.load(Ordering::Relaxed).to_le_bytes();
+    (b[3] & 1 != 0).then_some((b[0], b[1], b[2]))
+}
+
 struct Req<'a> {
     subcommand: u64,
     raw_subpara: &'a [u8],

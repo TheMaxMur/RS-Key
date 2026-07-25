@@ -210,8 +210,28 @@ fn config_read<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req, out: &mut [u8
                 .read(phy::EF_PHY, &mut buf)
                 .unwrap_or(0)
                 .min(buf.len());
+            // Key 1: the raw stored record (overrides only) for read-modify-write.
+            // Key 2: the boot-resolved *effective* LED pin (tag 4) / driver (tag
+            // 12) / touch timeout (tag 8), keyed by phy tag, so a host can show the
+            // real values a bare record omits. Absent (empty map) on a headless
+            // build; older hosts ignore the extra key.
+            let eff = crate::config::effective_phy();
             encode(out, |e| {
-                e.map(1)?.u8(1)?.bytes(&buf[..n])?;
+                e.map(2)?.u8(1)?.bytes(&buf[..n])?.u8(2)?;
+                match eff {
+                    Some((gpio, driver, timeout)) => {
+                        e.map(3)?
+                            .u8(4)?
+                            .u8(gpio)?
+                            .u8(12)?
+                            .u8(driver)?
+                            .u8(8)?
+                            .u8(timeout)?;
+                    }
+                    None => {
+                        e.map(0)?;
+                    }
+                }
                 Ok(())
             })
         }

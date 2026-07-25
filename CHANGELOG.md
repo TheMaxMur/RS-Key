@@ -13,6 +13,16 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+### Added
+
+- **`CONFIG_READ` now reports the effective LED pin / driver and touch timeout.**
+  The FIDO `0x41` `CONFIG_READ` PHY response gains an optional `2:` map of the
+  boot-resolved values (build defaults or overrides) keyed by phy tag — LED GPIO
+  (`4`), LED driver (`12`), presence timeout (`8`) — so a host config UI can show
+  the real values instead of a bare "firmware default" for a record with no
+  override. Display-only; the `1:` blob stays the raw override record for
+  read-modify-write, and older/headless behaviour is unchanged. bcdDevice → `0x0852`.
+
 ## [0.4.2] - 2026-07-25
 
 ### Changed
