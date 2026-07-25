@@ -162,6 +162,17 @@ pub fn check_pin<S: Storage>(
     p2: u8,
     data: &[u8],
 ) -> Sw {
+    // The retry-block floor comes first, as PIV `check_ref` and FIDO `clientpin` do:
+    // deriving — and worse, migrating — ahead of it made a blocked reference do two
+    // flash writes for the correct value and none for a wrong one, an oracle.
+    let mut pw = [0u8; 8];
+    if let Some(n) = fs.read(EF_PW_PRIV, &mut pw) {
+        let n = n.min(pw.len());
+        let idx = pw_retry_idx(fid);
+        if idx < n && pw[idx] == 0 {
+            return Sw::PIN_BLOCKED;
+        }
+    }
     let mut rec = [0u8; 64];
     let size = match fs.read(fid, &mut rec) {
         Some(n) if n >= 3 && rec[0] != 0 => n,
@@ -260,7 +271,7 @@ fn migrate_pin_kbase<S: Storage>(
             r.map_err(|_| Sw::EXEC_ERROR)?;
         }
     }
-    put_verifier(dev, fs, fid, pin)
+    store_verifier(dev, fs, fid, pin)
 }
 
 /// Decrypt the random DEK into `out` (48 bytes = IV(16)|key(32)) using the
@@ -356,8 +367,49 @@ pub fn verify<S: Storage>(
     if authed { Sw::OK } else { Sw::retries(retries) }
 }
 
-/// Write a verifier record `[len, 0x01, verifier(32)]` for `pin`.
+/// Length limits for a *new* reference value ([`PW1_MIN_LEN`] / [`PW3_MIN_LEN`] /
+/// [`PIN_MAX_LEN`]). A path that re-seals the DEK before storing the verifier must
+/// call this itself, else [`put_verifier`]'s refusal leaves the DEK sealed under a
+/// value whose verifier was never written.
+fn check_pin_len(fid: u16, len: usize) -> Result<(), Sw> {
+    let min = if fid == EF_PW1 {
+        PW1_MIN_LEN
+    } else {
+        PW3_MIN_LEN
+    };
+    if len < min || len > PIN_MAX_LEN {
+        return Err(Sw::WRONG_LENGTH);
+    }
+    Ok(())
+}
+
+/// Whether `fid`'s stored verifier is one [`check_pin`] can never accept — too
+/// short for the record shape, or carrying a zero length byte. Such a reference can
+/// never be decremented to blocked either, so TERMINATE DF counts it as blocked.
+pub(crate) fn verifier_unusable<S: Storage>(fs: &mut Fs<S>, fid: u16) -> bool {
+    let mut rec = [0u8; 3];
+    matches!(fs.read(fid, &mut rec), Some(n) if n < 3 || rec[0] == 0)
+}
+
+/// Write a verifier record `[len, 0x01, verifier(32)]` for `pin`, refusing a
+/// length the applet could not work with afterwards.
 pub(crate) fn put_verifier<S: Storage>(
+    dev: &Device,
+    fs: &mut Fs<S>,
+    fid: u16,
+    pin: &[u8],
+) -> Result<(), Sw> {
+    // A zero-length verifier is unrecoverable: check_pin's `rec[0] != 0` shape test
+    // short-circuits before pin_wrong_retry, so the reference can neither be
+    // verified nor blocked, and terminate.rs' escape hatch is refused forever.
+    check_pin_len(fid, pin.len())?;
+    store_verifier(dev, fs, fid, pin)
+}
+
+/// Store the verifier record without the length check — for re-storing a reference
+/// that already exists (the kbase migration), where a value an earlier firmware
+/// accepted must keep working.
+fn store_verifier<S: Storage>(
     dev: &Device,
     fs: &mut Fs<S>,
     fid: u16,
@@ -496,6 +548,7 @@ pub fn reset_retry<S: Storage>(
             return sw;
         }
         let result = (|| {
+            check_pin_len(EF_PW1, new_pin.len())?;
             sess.session_pw1 = rewrap_dek(dev, fs, rng, EF_DEK_PW1, new_pin, &dek)?;
             put_verifier(dev, fs, EF_PW1, new_pin)?;
             pin_reset_retries(fs, EF_PW1, true)
@@ -518,6 +571,7 @@ pub fn reset_retry<S: Storage>(
         return sw;
     }
     let result = (|| {
+        check_pin_len(EF_PW1, new_pin.len())?;
         let session = rewrap_dek(dev, fs, rng, EF_DEK_PW1, new_pin, &dek)?;
         sess.session_pw1 = session;
         put_verifier(dev, fs, EF_PW1, new_pin)?;

@@ -199,6 +199,99 @@ fn verify_change_pin_end_to_end_via_process() {
 }
 
 #[test]
+fn change_pin_rejects_an_empty_new_pw3() {
+    // With Lc == |PW3| the whole body is the old PIN and the new one is empty. The
+    // zero-length verifier that used to store could be neither verified nor
+    // decremented to blocked, wedging the applet and its TERMINATE DF way out.
+    let rng = RefCell::new(CountRng(0));
+    let mut fs = make_fs();
+    let presence = RefCell::new(crate::AlwaysConfirm);
+    let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
+    let mut c = vec![0x00, consts::INS_CHANGE_PIN, 0x00, consts::PW3_MODE83];
+    c.push(consts::PW3_DEFAULT.len() as u8);
+    c.extend_from_slice(consts::PW3_DEFAULT);
+    assert_eq!(run(&mut app, &mut fs, &c).1, Sw::WRONG_LENGTH);
+
+    // A fresh session: PW3 still gates TERMINATE DF, still verifies, and the
+    // factory reset still runs.
+    let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
+    let term = [0x00, consts::INS_TERMINATE_DF, 0x00, 0x00];
+    assert_eq!(
+        run(&mut app, &mut fs, &term).1,
+        Sw::SECURITY_STATUS_NOT_SATISFIED
+    );
+    verify_pin(&mut app, &mut fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
+    assert_eq!(run(&mut app, &mut fs, &term).1, Sw::OK);
+}
+
+#[test]
+fn change_pin_enforces_the_reference_length_limits() {
+    // OpenPGP 3.4 §4.2: PW1 at least 6 bytes, capped by the maximum DO C4 advertises.
+    let rng = RefCell::new(CountRng(0));
+    let mut fs = make_fs();
+    let presence = RefCell::new(crate::AlwaysConfirm);
+    let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
+    for new in [b"12345".as_slice(), &[0x39u8; consts::PIN_MAX_LEN + 1]] {
+        let body = [consts::PW1_DEFAULT, new].concat();
+        let mut c = vec![0x00, consts::INS_CHANGE_PIN, 0x00, consts::PW1_MODE81];
+        c.push(body.len() as u8);
+        c.extend_from_slice(&body);
+        assert_eq!(run(&mut app, &mut fs, &c).1, Sw::WRONG_LENGTH);
+    }
+    // Nothing was written: the old PW1 still verifies.
+    verify_pin(&mut app, &mut fs, consts::PW1_MODE81, consts::PW1_DEFAULT);
+}
+
+#[test]
+fn a_blocked_pw3_neither_migrates_nor_writes() {
+    // `make_fs` seeds the verifiers on the pre-OTP arm, so an applet holding the
+    // MKEK takes check_pin's kbase-migration fallback. On a blocked reference it
+    // must do nothing at all — the migration's flash writes are a PIN oracle.
+    let rng = RefCell::new(CountRng(0));
+    let mut fs = make_fs();
+    let presence = RefCell::new(crate::AlwaysConfirm);
+    let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, Some([0x66; 32]), &rng, &presence);
+    let mut wrong = vec![0x00, consts::INS_VERIFY, 0x00, consts::PW3_MODE83, 0x08];
+    wrong.extend_from_slice(b"99999999");
+    for _ in 0..3 {
+        run(&mut app, &mut fs, &wrong);
+    }
+    let mut before = [0u8; 64];
+    let n = fs.read(consts::EF_PW3, &mut before).expect("PW3 verifier");
+
+    let mut v = vec![0x00, consts::INS_VERIFY, 0x00, consts::PW3_MODE83];
+    v.push(consts::PW3_DEFAULT.len() as u8);
+    v.extend_from_slice(consts::PW3_DEFAULT);
+    assert_eq!(run(&mut app, &mut fs, &v).1, Sw::PIN_BLOCKED);
+    let mut after = [0u8; 64];
+    assert_eq!(fs.read(consts::EF_PW3, &mut after), Some(n));
+    assert_eq!(before[..n], after[..n], "blocked PW3 migrated its verifier");
+}
+
+#[test]
+fn an_unblocked_legacy_verifier_still_migrates() {
+    // The block floor must not disable the lazy kbase migration: with retries left,
+    // the correct PIN on the pre-OTP arm verifies and is re-stored under the OTP
+    // generation, which is what the next session checks against.
+    let rng = RefCell::new(CountRng(0));
+    let mut fs = make_fs();
+    let presence = RefCell::new(crate::AlwaysConfirm);
+    let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, Some([0x66; 32]), &rng, &presence);
+    let mut before = [0u8; 64];
+    let n = fs.read(consts::EF_PW3, &mut before).expect("PW3 verifier");
+    verify_pin(&mut app, &mut fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
+    let mut after = [0u8; 64];
+    assert_eq!(fs.read(consts::EF_PW3, &mut after), Some(n));
+    assert_ne!(
+        before[..n],
+        after[..n],
+        "verifier stayed on the pre-OTP arm"
+    );
+    let mut app2 = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, Some([0x66; 32]), &rng, &presence);
+    verify_pin(&mut app2, &mut fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
+}
+
+#[test]
 fn put_data_denied_without_auth() {
     let rng = RefCell::new(CountRng(0));
     let mut fs = make_fs();
