@@ -11,6 +11,8 @@ Proves CTAP2.1 PIN/UV enforcement end-to-end on the device:
   2. clientPIN          -> setPIN + getPinToken (reuses the clientPIN platform side)
   3. makeCredential     -> with a pinUvAuthParam; authData carries the UV flag
   4. getAssertion       -> with a pinUvAuthParam; authData carries the UV flag
+  5. makeCredential     -> no pinUvAuthParam: refused for rk, allowed without it
+                           (makeCredUvNotRqd), and then the UV flag stays clear
 
 The pinUvAuthParam is HMAC-SHA256(pinUvAuthToken, clientDataHash) (protocol two).
 A clean device is assumed (flash rsk-wipe first); a second run reuses the PIN.
@@ -122,15 +124,30 @@ def main():
         assert 5 not in mn, "getNextAssertion must omit numberOfCredentials"
         print("getNextAssertion: next credential, UV set")
 
-        # Sanity: makeCredential without a pinUvAuthParam is refused (PUAT_REQUIRED).
+        # 6. A DISCOVERABLE makeCredential without a pinUvAuthParam is refused
+        # (PUAT_REQUIRED): makeCredUvNotRqd (§6.1.2 step 7) does not cover rk.
         mc2 = send_cbor(dev, cid, bytes([0x01]) + enc({
             1: cdh,
             2: {"id": RP_ID},
             3: {"id": b"\xCC\xCC\xCC\xCC", "name": "u"},
             4: [{"alg": -7, "type": "public-key"}],
+            7: {"rk": True},
         }))
         assert mc2[0] == 0x36, f"expected PUAT_REQUIRED (0x36), got {mc2[0]:#x}"
-        print("makeCredential without PIN -> PUAT_REQUIRED (0x36)")
+        print("resident makeCredential without PIN -> PUAT_REQUIRED (0x36)")
+
+        # 7. The same request WITHOUT rk succeeds on presence alone, UV clear
+        # (§6.1.2 step 10, makeCredUvNotRqd — issue #51).
+        mc3 = send_cbor(dev, cid, bytes([0x01]) + enc({
+            1: cdh,
+            2: {"id": RP_ID},
+            3: {"id": b"\xDD\xDD\xDD\xDD", "name": "u"},
+            4: [{"alg": -7, "type": "public-key"}],
+        }))
+        assert mc3[0] == 0x00, f"makeCredential (non-resident) status {mc3[0]:#x}"
+        ad3 = decode(mc3[1:])[2]
+        assert ad3[32] & AT_FLAG and not ad3[32] & UV_FLAG, f"flags {ad3[32]:#x}"
+        print("non-resident makeCredential without PIN -> OK, UV clear")
 
         print("\nPASS")
     finally:

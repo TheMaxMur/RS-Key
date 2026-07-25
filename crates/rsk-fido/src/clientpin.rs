@@ -29,7 +29,7 @@ use crate::cose::cose_key_ecdh;
 use crate::error::{CtapError, CtapResult};
 use crate::journal;
 use crate::seed::migrate_keydev_pin;
-use crate::state::{PERM_BE, PERM_GA, PERM_MC, PERM_PCMR};
+use crate::state::{PERM_ACFG, PERM_BE, PERM_GA, PERM_MC, PERM_PCMR};
 use crate::{Ctx, PinEntry, Rng};
 
 pub(crate) const PIN_FILE_LEN: usize = 35; // retries(1) + len(1) + format(1) + verifier(32)
@@ -168,8 +168,10 @@ fn get_key_agreement<S: Storage, R: Rng>(
 fn set_pin<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req, out: &mut [u8]) -> CtapResult {
     let _ = out;
     let proto = require_pin_inputs(req, true, false)?;
+    // §6.5.5.5: "If a PIN has already been set, authenticator returns
+    // CTAP2_ERR_PIN_AUTH_INVALID error" — changePIN is the only way to replace one.
     if ctx.fs.has_data(EF_PIN) {
-        return Err(CtapError::NotAllowed);
+        return Err(CtapError::PinAuthInvalid);
     }
     let new_pin_enc = req.new_pin_enc.unwrap();
     let want = PADDED_PIN_LEN + proto.iv_overhead();
@@ -262,6 +264,18 @@ fn change_pin<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req, out: &mut [u8]
     if dec.is_err() {
         return Err(CtapError::PinAuthInvalid);
     }
+    // §6.5.5.6: under a pending forced change the new PIN must actually differ —
+    // otherwise re-entering the old one would clear the flag and satisfy nothing.
+    if force_change_pending(ctx) {
+        let pin_len = padded
+            .iter()
+            .position(|&b| b == 0)
+            .unwrap_or(PADDED_PIN_LEN);
+        if pin_verifier_matches(ctx, &padded[..pin_len]) {
+            padded.zeroize();
+            return Err(CtapError::PinPolicyViolation);
+        }
+    }
     let res = store_new_pin(ctx, &padded);
     padded.zeroize();
     res?;
@@ -300,6 +314,12 @@ fn get_pin_token<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req, out: &mut [
     }
     let mut shared = [0u8; 64];
     let slen = derive_shared(ctx, req, proto, &mut shared)?;
+    // §6.5.5.7.1/.2 place the display's consent between the key agreement and the
+    // PIN check, so a decline costs no retry.
+    if let Err(e) = consent_for_permissions(ctx) {
+        shared.zeroize();
+        return Err(e);
+    }
     let secret = &shared[..slen];
 
     let mut pin_hash = [0u8; PADDED_PIN_LEN];
@@ -396,27 +416,23 @@ fn get_uv_token<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req, out: &mut [u
     if req.permissions == 0 {
         return Err(CtapError::InvalidParameter);
     }
-    if permissions & PERM_BE != 0 {
+    // §6.5.5.7.3 maps each permission to its own option ID on this path: `be` needs
+    // uvBioEnroll and `acfg` needs **uvAcfg** — neither of which this device
+    // advertises, so both are unauthorized here even though `authnrCfg` (which gates
+    // acfg on the host-PIN path, 0x09) is true.
+    if permissions & (PERM_BE | PERM_ACFG) != 0 {
         return Err(CtapError::UnauthorizedPermission);
     }
     if permissions & PERM_PCMR != 0 && permissions != PERM_PCMR {
         return Err(CtapError::UnauthorizedPermission);
     }
-    // Built-in UV verifies the same EF_PIN as clientPIN and shares its retry budget.
-    pin_set_and_unblocked(ctx)?;
-    if ctx.state.needs_power_cycle {
-        return Err(CtapError::UvBlocked);
-    }
-
-    // The interactive step: collect the PIN on the device and verify it locally. A
-    // short entry (below minPINLength) is refused by the pad without a verify, so it
-    // can't burn a retry; an actual mismatch does, exactly like a host PIN.
-    let min = min_pin_length(ctx.fs) as usize;
-    let mut pin = [0u8; PADDED_PIN_LEN];
-    let entry = ctx.presence.collect_pin(min, &mut pin);
-    let verified = perform_builtin_uv(ctx, entry, &pin);
-    pin.zeroize();
-    verified?;
+    // Readiness first, then consent, then the pad — the order §6.5.5.7.3 lists them
+    // in, so a device with no PIN answers NOT_ALLOWED without painting a screen.
+    // `builtin_uv` re-checks readiness for its other caller (makeCredential /
+    // getAssertion), which reaches it without passing through here.
+    builtin_uv_ready(ctx)?;
+    consent_for_permissions(ctx)?;
+    builtin_uv(ctx)?;
 
     // A pending forced PIN change still blocks token issuance (changePIN first).
     if force_change_pending(ctx) {
@@ -428,6 +444,109 @@ fn get_uv_token<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req, out: &mut [u
     let res = issue_token(ctx, proto, &shared[..slen], permissions, req.rp_id, out);
     shared.zeroize();
     res
+}
+
+/// The outcome of the CTAP 2.1 §6.1.2 / §6.2.2 user-verification step: whether the
+/// response carries the `uv` flag, and whether the built-in UV ceremony already
+/// supplied evidence of user interaction — §6.1.2 step 13 / §6.2.2 step 8 then set
+/// `up` without asking for a second gesture.
+#[derive(Clone, Copy)]
+pub(crate) struct UvOutcome {
+    pub uv: bool,
+    pub up_collected: bool,
+}
+
+impl UvOutcome {
+    /// No user verification was performed.
+    pub const NONE: Self = Self {
+        uv: false,
+        up_collected: false,
+    };
+    /// A `pinUvAuthParam` verified against the pinUvAuthToken.
+    pub const TOKEN: Self = Self {
+        uv: true,
+        up_collected: false,
+    };
+    /// Built-in UV ran on the device's own pad.
+    pub const BUILTIN: Self = Self {
+        uv: true,
+        up_collected: true,
+    };
+}
+
+/// Run [`builtin_uv`] as the ceremonies' UV step (§6.1.2 step 11.2, §6.2.2 step
+/// 6.2) and map its outcome. The spec's error ladder collapses here: `clientPin`
+/// is true whenever the pad is configured (built-in UV verifies the same EF_PIN),
+/// so every remaining failure — a wrong PIN, an exhausted budget — is
+/// PUAT_REQUIRED. A CTAPHID_CANCEL keeps its transport-level code.
+///
+/// ONE deliberate divergence: an explicit Deny on the pad ([`PinEntry::Declined`],
+/// the only source of `OperationDenied` here) keeps that code instead of becoming
+/// PUAT_REQUIRED. The ladder would tell the platform to collect the PIN over USB
+/// instead, turning the trusted display's refusal into a prompt the user just
+/// declined — the panel's veto has to be final, or it is not a veto.
+pub(crate) fn builtin_uv_step<S: Storage, R: Rng>(
+    ctx: &mut Ctx<S, R>,
+) -> Result<UvOutcome, CtapError> {
+    match builtin_uv(ctx) {
+        Ok(()) => Ok(UvOutcome::BUILTIN),
+        Err(
+            e @ (CtapError::UserActionTimeout
+            | CtapError::KeepAliveCancel
+            | CtapError::OperationDenied),
+        ) => Err(e),
+        Err(_) => Err(CtapError::PuatRequired),
+    }
+}
+
+/// Whether built-in UV can run at all, in the dialect §6.5.5.7.3 uses: a method that
+/// is supported but not configured is `NOT_ALLOWED`, and an exhausted budget is
+/// `UV_BLOCKED` — where the host-PIN path reports PIN_NOT_SET / PIN_BLOCKED for the
+/// very same states. Built-in UV shares EF_PIN and its counter with clientPIN.
+fn builtin_uv_ready<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>) -> Result<(), CtapError> {
+    if !ctx.fs.has_data(EF_PIN) {
+        return Err(CtapError::NotAllowed);
+    }
+    if pin_retries(ctx) == 0 || ctx.state.needs_power_cycle {
+        return Err(CtapError::UvBlocked);
+    }
+    Ok(())
+}
+
+/// §6.5.5.7: "If the authenticator has a display, request user consent for the
+/// requested permissions. If this is not approved, return CTAP2_ERR_OPERATION_DENIED."
+/// Gated on `shows_confirm` — the same "has a display" test `authenticatorReset` uses
+/// for its §6.6 exemption — so a screenless build never polls its button here.
+fn consent_for_permissions<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>) -> Result<(), CtapError> {
+    if ctx.presence.shows_confirm()
+        && !ctx.check_user_presence(crate::Confirm::titled("Allow host access?"))
+    {
+        return Err(CtapError::OperationDenied);
+    }
+    Ok(())
+}
+
+/// The `uv` option ID (CTAP 2.1 §6.4): the backend has a PIN pad of its own AND a
+/// PIN is configured, i.e. built-in user verification is both capable and
+/// "presently configured". `false` on every screenless build.
+pub(crate) fn builtin_uv_enabled<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>) -> bool {
+    ctx.presence.uv_available() && ctx.fs.has_data(EF_PIN)
+}
+
+/// `performBuiltInUv(internalRetry = true)` — the spec's built-in user
+/// verification ceremony, shared by clientPIN 0x06 and the makeCredential /
+/// getAssertion `uv` option (§6.1.2 step 11.2, §6.2.2 step 6.2). Built-in UV
+/// verifies the same EF_PIN as clientPIN and shares its retry budget. A short
+/// entry (below minPINLength) is refused by the pad without a verify, so it can't
+/// burn a retry; an actual mismatch does, exactly like a host PIN.
+fn builtin_uv<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>) -> Result<(), CtapError> {
+    builtin_uv_ready(ctx)?;
+    let min = min_pin_length(ctx.fs) as usize;
+    let mut pin = [0u8; PADDED_PIN_LEN];
+    let entry = ctx.presence.collect_pin(min, &mut pin);
+    let verified = perform_builtin_uv(ctx, entry, &pin);
+    pin.zeroize();
+    verified
 }
 
 /// Verify a PIN entered via built-in UV against EF_PIN, mapping the entry outcome
@@ -616,15 +735,41 @@ fn write_pin_verifier<S: Storage>(
     dev: &Device,
     fs: &mut Fs<S>,
     pin: &[u8],
+    code_points: usize,
 ) -> Result<(), CtapError> {
     let mut dhash = sha256(pin);
     let mut pin_data = [0u8; PIN_FILE_LEN];
     pin_data[0] = MAX_PIN_RETRIES;
-    pin_data[1] = pin.len() as u8;
+    // PINCodePointLength (§6.5.5.5) — what `setMinPINLength` compares its new floor
+    // against, so it must be code points like the floor itself.
+    pin_data[1] = code_points as u8;
     pin_data[2] = 1; // verifier format 1
     pin_data[3..].copy_from_slice(&dev.pin_derive_verifier(&dhash[..16]));
     dhash.zeroize();
     fs.put(fid, &pin_data).map_err(|_| CtapError::Other)
+}
+
+/// Whether `pin` is the PIN currently stored in EF_PIN. Unlike
+/// [`spend_and_verify_pin_hash`] this costs no retry and has no session side effects —
+/// it exists only for §6.5.5.6's "the new PIN must differ" check, where a match is a
+/// policy violation rather than an authentication attempt.
+fn pin_verifier_matches<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, pin: &[u8]) -> bool {
+    let mut pin_data = [0u8; PIN_FILE_LEN];
+    if ctx.fs.read(EF_PIN, &mut pin_data) != Some(PIN_FILE_LEN) {
+        return false;
+    }
+    let mut dhash = sha256(pin);
+    let cand = ctx.dev.pin_derive_verifier(&dhash[..16]);
+    dhash.zeroize();
+    pinproto_ct_eq(&cand, &pin_data[3..PIN_FILE_LEN])
+}
+
+/// The PIN's length in Unicode code points — the unit `minPINLength` (getInfo 0x0D)
+/// and `PINCodePointLength` are defined in. `None` when the bytes are not UTF-8, so
+/// the caller can refuse rather than fall back to a byte count that over-measures
+/// every non-ASCII PIN.
+fn pin_code_points(pin: &[u8]) -> Option<usize> {
+    Some(core::str::from_utf8(pin).ok()?.chars().count())
 }
 
 /// A trivially guessable PIN — a single repeated code point (`000000`) or a ±1 run
@@ -651,15 +796,19 @@ fn store_new_pin<S: Storage, R: Rng>(
         .iter()
         .position(|&b| b == 0)
         .unwrap_or(PADDED_PIN_LEN);
-    let min_pin = min_pin_length(ctx.fs);
-    if (pin_len as u8) < min_pin {
+    // minPINLength is counted in Unicode code points (getInfo 0x0D), not UTF-8 bytes:
+    // measuring bytes lets a 2-character CJK PIN clear a floor of 4. A PIN that is not
+    // UTF-8 cannot be counted at all — refused under §6.5.5.5's "arbitrary, additional
+    // constraints" allowance.
+    let cps = pin_code_points(&padded[..pin_len]).ok_or(CtapError::PinPolicyViolation)?;
+    if cps < min_pin_length(ctx.fs) as usize {
         return Err(CtapError::PinPolicyViolation);
     }
     #[cfg(any(feature = "strong-pin", feature = "fips-profile"))]
     if pin_is_trivial(&padded[..pin_len]) {
         return Err(CtapError::PinPolicyViolation);
     }
-    write_pin_verifier(EF_PIN, &ctx.dev, ctx.fs, &padded[..pin_len])?;
+    write_pin_verifier(EF_PIN, &ctx.dev, ctx.fs, &padded[..pin_len], cps)?;
     ctx.state.needs_power_cycle = false;
     Ok(())
 }
@@ -881,7 +1030,10 @@ pub fn store_local_pin<S: Storage>(
     pin: &[u8],
 ) -> Result<(), SetPinError> {
     let min = min_pin_length(fs);
-    if (pin.len() as u8) < min {
+    // Counted in code points, like the host path — the pad types ASCII digits today,
+    // but the floor is defined that way and the two must not drift apart.
+    let cps = pin_code_points(pin).ok_or(SetPinError::TooShort { min })?;
+    if (cps as u8) < min {
         return Err(SetPinError::TooShort { min });
     }
     if pin.len() > MAX_PIN_LENGTH {
@@ -889,7 +1041,7 @@ pub fn store_local_pin<S: Storage>(
             max: MAX_PIN_LENGTH as u8,
         });
     }
-    write_pin_verifier(EF_PIN, dev, fs, pin).map_err(|_| SetPinError::Storage)?;
+    write_pin_verifier(EF_PIN, dev, fs, pin, cps).map_err(|_| SetPinError::Storage)?;
     // The new PIN meets the policy, so drop any pending forced-change marker. The PIN is
     // already stored, so a flash hiccup here is benign (a stale flag only re-prompts a
     // change on the host) — don't fail the set over it.
@@ -907,7 +1059,10 @@ pub fn store_device_pin<S: Storage>(
     fs: &mut Fs<S>,
     pin: &[u8],
 ) -> Result<(), SetPinError> {
-    if (pin.len() as u8) < MIN_PIN_LENGTH {
+    let cps = pin_code_points(pin).ok_or(SetPinError::TooShort {
+        min: MIN_PIN_LENGTH,
+    })?;
+    if (cps as u8) < MIN_PIN_LENGTH {
         return Err(SetPinError::TooShort {
             min: MIN_PIN_LENGTH,
         });
@@ -917,7 +1072,7 @@ pub fn store_device_pin<S: Storage>(
             max: MAX_PIN_LENGTH as u8,
         });
     }
-    write_pin_verifier(EF_DEVICE_PIN, dev, fs, pin).map_err(|_| SetPinError::Storage)
+    write_pin_verifier(EF_DEVICE_PIN, dev, fs, pin, cps).map_err(|_| SetPinError::Storage)
 }
 
 fn encode<F>(out: &mut [u8], f: F) -> Result<usize, CtapError>

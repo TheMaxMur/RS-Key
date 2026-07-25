@@ -177,8 +177,6 @@ RULES = [
     ("fido.getinfo.options.alwaysUv",
      ExpectDiff(r"(?i)(false|<missing>)", r"(?i)true",
                 "RS-Key always-uv build; reconcile with `ykman fido config toggle-always-uv` for parity")),
-    ("fido.getinfo.options.makeCredUvNotRqd",
-     ExpectDiff(None, r"(?i)(<missing>|false)", "real YubiKey advertises makeCredUvNotRqd; RS-Key does not")),
     ("fido.getinfo.options.bioEnroll", ExpectDiff(None, r"(?i)<missing>", "no bio on either 5-series / RS-Key")),
     ("fido.getinfo.options.uvBioEnroll", ExpectDiff(None, r"(?i)<missing>", "no bio on RS-Key")),
     ("fido.getinfo.options.credentialMgmtPreview",

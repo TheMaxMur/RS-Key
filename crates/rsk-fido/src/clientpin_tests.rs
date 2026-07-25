@@ -80,6 +80,10 @@ impl crate::UserPresence for UvPad {
     fn request(&mut self, _c: crate::Confirm<'_>) -> crate::Presence {
         crate::Presence::Confirmed
     }
+    // A PIN pad implies a screen, so this backend also answers the §6.5.5.7 consent.
+    fn shows_confirm(&self) -> bool {
+        true
+    }
     fn uv_available(&self) -> bool {
         true
     }
@@ -93,6 +97,24 @@ impl crate::UserPresence for UvPad {
         let n = self.digits.len().min(out.len());
         out[..n].copy_from_slice(&self.digits[..n]);
         PinEntry::Entered(n)
+    }
+}
+
+/// A display whose user refuses the §6.5.5.7 consent screen. Its pad panics: the
+/// refusal must end the operation before any PIN is collected.
+struct DenyConsent;
+impl crate::UserPresence for DenyConsent {
+    fn request(&mut self, _c: crate::Confirm<'_>) -> crate::Presence {
+        crate::Presence::Declined
+    }
+    fn shows_confirm(&self) -> bool {
+        true
+    }
+    fn uv_available(&self) -> bool {
+        true
+    }
+    fn collect_pin(&mut self, _min: usize, _out: &mut [u8]) -> PinEntry {
+        unreachable!("consent is refused before the pad is reached")
     }
 }
 
@@ -369,6 +391,75 @@ fn set_pin_over_max_length_is_policy_violation() {
         run(&mut fs, &mut rng, &mut state, &req, &mut out),
         Err(CtapError::PinPolicyViolation)
     );
+}
+
+/// §6.5.5.5 measures the PIN against minPINLength in **Unicode code points**
+/// (getInfo 0x0D), not UTF-8 bytes — otherwise a 2-character CJK PIN clears a floor
+/// of 4 on byte count alone. The stored PINCodePointLength follows the same unit,
+/// since `setMinPINLength` compares its new floor against it.
+#[test]
+fn pin_length_is_measured_in_code_points() {
+    let (mut fs, mut rng) = setup();
+    let mut state = FidoState::new();
+    fs.put(EF_MINPINLEN, &[4, 0]).unwrap();
+    let plat = key_agreement(&mut fs, &mut rng, &mut state, PinProto::Two, 2);
+    let mut out = [0u8; 256];
+    // "密码" — 2 code points, 6 bytes.
+    assert_eq!(
+        run(
+            &mut fs,
+            &mut rng,
+            &mut state,
+            &plat.set_pin_req("密码".as_bytes()),
+            &mut out
+        ),
+        Err(CtapError::PinPolicyViolation)
+    );
+    // "тест" — 4 code points, 8 bytes.
+    run(
+        &mut fs,
+        &mut rng,
+        &mut state,
+        &plat.set_pin_req("тест".as_bytes()),
+        &mut out,
+    )
+    .unwrap();
+    let mut pf = [0u8; PIN_FILE_LEN];
+    assert_eq!(fs.read(EF_PIN, &mut pf), Some(PIN_FILE_LEN));
+    assert_eq!(pf[1], 4, "PINCodePointLength, not the 8-byte encoding");
+}
+
+/// §6.5.5.6: while a forced PIN change is pending, re-entering the same PIN does not
+/// satisfy it — the flag survives and the operation is a policy violation.
+#[test]
+fn force_change_refuses_the_same_pin() {
+    let (mut fs, mut rng, mut state, plat) = setup_with_pin(b"1234");
+    fs.put(EF_MINPINLEN, &[4, 1]).unwrap(); // forceChangePin set
+    let mut out = [0u8; 256];
+    assert_eq!(
+        run(
+            &mut fs,
+            &mut rng,
+            &mut state,
+            &plat.change_pin_req(b"1234", b"1234"),
+            &mut out
+        ),
+        Err(CtapError::PinPolicyViolation)
+    );
+    let mut mp = [0u8; 2];
+    assert_eq!(fs.read(EF_MINPINLEN, &mut mp), Some(2));
+    assert_eq!(mp[1], 1, "the forced-change flag must survive");
+    // A genuinely different PIN satisfies the policy and clears the flag.
+    run(
+        &mut fs,
+        &mut rng,
+        &mut state,
+        &plat.change_pin_req(b"1234", b"4321"),
+        &mut out,
+    )
+    .unwrap();
+    assert_eq!(fs.read(EF_MINPINLEN, &mut mp), Some(2));
+    assert_eq!(mp[1], 0);
 }
 
 /// Set a PIN host-side, returning everything wired for a built-in-UV test.
@@ -655,6 +746,106 @@ fn builtin_uv_wrong_pin_is_uv_invalid_and_burns_a_retry() {
         Err(CtapError::UvInvalid)
     );
     assert_eq!(ef_pin_retries(&mut fs), MAX_PIN_RETRIES - 1);
+}
+
+/// §6.5.5.7.3: `acfg` on the built-in-UV path is gated by the **uvAcfg** option ID,
+/// which this device does not advertise — even though `authnrCfg` (which gates the
+/// same permission on the host-PIN path, 0x09) is true.
+#[test]
+fn builtin_uv_token_refuses_acfg_permission() {
+    let (mut fs, mut rng, mut state, plat) = setup_with_pin(b"1234");
+    let mut out = [0u8; 256];
+    let mut pad = UvPad::typing(b"1234");
+    assert_eq!(
+        run_with(
+            &mut pad,
+            &mut fs,
+            &mut rng,
+            &mut state,
+            &plat.get_uv_token_req(crate::state::PERM_ACFG as u64),
+            &mut out,
+        ),
+        Err(CtapError::UnauthorizedPermission)
+    );
+    // The same permission over the host-PIN path (0x09) is allowed.
+    let n = run_with(
+        &mut pad,
+        &mut fs,
+        &mut rng,
+        &mut state,
+        &plat.get_token_perms_req(b"1234", crate::state::PERM_ACFG as u64),
+        &mut out,
+    )
+    .unwrap();
+    assert!(n > 0);
+}
+
+/// §6.5.5.7.3: a supported-but-unconfigured built-in UV method is NOT_ALLOWED, not
+/// the host path's PIN_NOT_SET.
+#[test]
+fn builtin_uv_token_without_a_pin_is_not_allowed() {
+    let (mut fs, mut rng) = setup();
+    let mut state = FidoState::new();
+    let plat = key_agreement(&mut fs, &mut rng, &mut state, PinProto::Two, 2);
+    let mut out = [0u8; 256];
+    let mut pad = UvPad::typing(b"1234");
+    assert_eq!(
+        run_with(
+            &mut pad,
+            &mut fs,
+            &mut rng,
+            &mut state,
+            &plat.get_uv_token_req(PERM_GA as u64),
+            &mut out,
+        ),
+        Err(CtapError::NotAllowed)
+    );
+}
+
+/// §6.5.5.7: on a device with a display the token is only minted after the user
+/// approves the requested permissions on screen — and a refusal costs no retry,
+/// since it lands before the PIN is checked at all.
+#[test]
+fn token_needs_on_screen_consent_on_a_display() {
+    let (mut fs, mut rng, mut state, plat) = setup_with_pin(b"1234");
+    let mut out = [0u8; 256];
+    // Host-supplied PIN (0x09).
+    assert_eq!(
+        run_with(
+            &mut DenyConsent,
+            &mut fs,
+            &mut rng,
+            &mut state,
+            &plat.get_token_perms_req(b"1234", PERM_GA as u64),
+            &mut out,
+        ),
+        Err(CtapError::OperationDenied)
+    );
+    assert_eq!(ef_pin_retries(&mut fs), MAX_PIN_RETRIES);
+    // Built-in UV (0x06) — the pad is never even reached (DenyConsent panics there).
+    assert_eq!(
+        run_with(
+            &mut DenyConsent,
+            &mut fs,
+            &mut rng,
+            &mut state,
+            &plat.get_uv_token_req(PERM_GA as u64),
+            &mut out,
+        ),
+        Err(CtapError::OperationDenied)
+    );
+    assert_eq!(ef_pin_retries(&mut fs), MAX_PIN_RETRIES);
+    // A screenless build asks nothing and still mints the token.
+    assert!(
+        run(
+            &mut fs,
+            &mut rng,
+            &mut state,
+            &plat.get_token_perms_req(b"1234", PERM_GA as u64),
+            &mut out,
+        )
+        .is_ok()
+    );
 }
 
 /// Tapping Cancel on the pad is a deliberate decline (OPERATION_DENIED) and,
@@ -1090,7 +1281,8 @@ fn set_pin_rejects_short_pin_and_double_set() {
         ),
         Err(CtapError::PinPolicyViolation)
     );
-    // A valid set, then a second set is NotAllowed.
+    // A valid set, then a second set — §6.5.5.5: "If a PIN has already been set,
+    // authenticator returns CTAP2_ERR_PIN_AUTH_INVALID error."
     run(
         &mut fs,
         &mut rng,
@@ -1107,7 +1299,7 @@ fn set_pin_rejects_short_pin_and_double_set() {
             &plat.set_pin_req(b"4321"),
             &mut out
         ),
-        Err(CtapError::NotAllowed)
+        Err(CtapError::PinAuthInvalid)
     );
 }
 

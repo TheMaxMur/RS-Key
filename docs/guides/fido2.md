@@ -63,9 +63,15 @@ and has to run within ten seconds of a replug (see [Factory
 reset](#factory-reset)). `rsk fido set-pin` asks for the current PIN when changing,
 the new one twice, and prints the resulting `clientPin` state.
 
-Once a PIN is set, makeCredential refuses to run without it (CTAP
+Once a PIN is set, registering a **passkey** refuses to run without it (CTAP
 `PUAT_REQUIRED`, `0x36`). The browser collects the PIN and retries. That is
 expected, not a fault.
+
+Registering a plain second-factor credential (non-discoverable, what a site asks
+for with `userVerification: "discouraged"`) needs only a touch, PIN or no PIN —
+the CTAP 2.1 `makeCredUvNotRqd` option, as on a YubiKey. Sites that want the PIN
+on every registration ask for UV, and `ykman fido config toggle-always-uv` (or
+the `always-uv` build) forces it device-wide.
 
 ## Passkeys (resident / discoverable credentials)
 
@@ -207,9 +213,10 @@ refuses does it prompt for the replug and retry.
 
 - **"device not eligible / already registered"**. Expected: the site sent an
   exclude-list matching a credential already on the device.
-- **"PIN required" / repeated PIN prompts at registration**. A PIN is set, so
-  makeCredential needs it (`PUAT_REQUIRED 0x36`). Enter it. If you have
-  forgotten it, only a [reset](#factory-reset) clears it — replug first.
+- **"PIN required" / repeated PIN prompts at registration**. A PIN is set and the
+  site is registering a passkey, so makeCredential needs it (`PUAT_REQUIRED
+  0x36`). Enter it. If you have forgotten it, only a [reset](#factory-reset)
+  clears it — replug first.
 - **The reset fails immediately with `CTAP2_ERR_NOT_ALLOWED` (`0x30`)**, without
   ever asking for a touch. The key was plugged in more than ten seconds ago.
   Unplug it, plug it back in, re-run. A `rsk reboot` does not count: only a real

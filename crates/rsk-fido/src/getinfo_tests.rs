@@ -100,11 +100,11 @@ fn get_info_fields() {
     assert_eq!(d.bytes().unwrap(), &AAGUID);
 
     // 0x04 options — ep, rk, up, alwaysUv, credMgmt, authnrCfg, clientPin (PIN
-    // set → true), largeBlobs, pinUvAuthToken, setMinPINLength (canonical:
-    // length then bytewise; "ep" first among 2-char keys, "alwaysUv" first
-    // among 8-char keys).
+    // set → true), largeBlobs, pinUvAuthToken, setMinPINLength, makeCredUvNotRqd
+    // (canonical: length then bytewise; "ep" first among 2-char keys, "alwaysUv"
+    // first among 8-char keys, the 16-char key last).
     assert_eq!(d.u8().unwrap(), 0x04);
-    assert_eq!(d.map().unwrap().unwrap(), 10);
+    assert_eq!(d.map().unwrap().unwrap(), 11);
     assert_eq!(d.str().unwrap(), "ep");
     assert!(!d.bool().unwrap()); // ea_enabled = false in this call
     assert_eq!(d.str().unwrap(), "rk");
@@ -124,6 +124,8 @@ fn get_info_fields() {
     assert_eq!(d.str().unwrap(), "pinUvAuthToken");
     assert!(d.bool().unwrap());
     assert_eq!(d.str().unwrap(), "setMinPINLength");
+    assert!(d.bool().unwrap());
+    assert_eq!(d.str().unwrap(), "makeCredUvNotRqd");
     assert!(d.bool().unwrap());
 
     // 0x05 maxMsgSize
@@ -253,14 +255,14 @@ fn option_pairs(builtin_uv: bool, pin_set: bool) -> std::vec::Vec<(std::string::
 /// PIN is configured. A screenless key omits it entirely.
 #[test]
 fn uv_option_present_only_with_builtin_uv() {
-    // Screenless: no "uv" key, 10 options.
+    // Screenless: no "uv" key, 11 options.
     let plain = option_pairs(false, true);
-    assert_eq!(plain.len(), 10);
+    assert_eq!(plain.len(), 11);
     assert!(!plain.iter().any(|(k, _)| k == "uv"));
 
     // Display build, PIN set: "uv" = true, immediately after "up".
     let ready = option_pairs(true, true);
-    assert_eq!(ready.len(), 11);
+    assert_eq!(ready.len(), 12);
     let up = ready.iter().position(|(k, _)| k == "up").unwrap();
     assert_eq!(ready[up + 1].0, "uv", "uv must sort right after up");
     assert!(ready[up + 1].1, "uv = true once a PIN is configured");

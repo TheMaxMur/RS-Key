@@ -68,7 +68,8 @@
       "clientPin": false,
       "largeBlobs": true,
       "pinUvAuthToken": true,
-      "setMinPINLength": true
+      "setMinPINLength": true,
+      "makeCredUvNotRqd": true
     },
     "maxMsgSize": 7609,
     "pinUvAuthProtocols": [

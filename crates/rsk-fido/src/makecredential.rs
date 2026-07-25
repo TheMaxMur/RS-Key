@@ -8,12 +8,13 @@
 //! packed **self-attestation** (no x5c) so the conformance tool can verify it.
 //! Resident keys (rk) are stored; non-resident credentials carry the full box in
 //! authData. A configured PIN requires a verified `pinUvAuthParam`
-//! ([`enforce_pin`]), which sets the `uv` flag. Request extensions are sealed
-//! into the box and echoed in the authData extension output (ED flag);
-//! excludeList is credProtect-aware. Enterprise attestation (request field
-//! 0x0A): level 2 emits a full attestation signed by the device key with its
-//! x5c cert and the `ep` response flag; level 1 is accepted but stays
-//! self-attestation.
+//! ([`enforce_pin`]), which sets the `uv` flag — except for a non-discoverable
+//! credential, which `makeCredUvNotRqd` lets through on presence alone. Request
+//! extensions are sealed into the box and echoed in the authData extension
+//! output (ED flag); excludeList is credProtect-aware. Enterprise attestation
+//! (request field 0x0A): level 2 emits a full attestation signed by the device
+//! key with its x5c cert and the `ep` response flag; level 1 is accepted but
+//! stays self-attestation.
 
 use minicbor::encode::write::Cursor;
 use minicbor::{Decoder, Encoder};
@@ -26,6 +27,7 @@ use rsk_fs::{Fs, Storage};
 
 use crate::cbordec::{cbor, def_arr, def_map};
 use crate::cert;
+use crate::clientpin::{UvOutcome, builtin_uv_enabled, builtin_uv_step};
 use crate::consts::{
     AAGUID, ALG_ED25519, ALG_EDDSA, ALG_ES256, ALG_ES256K, ALG_ES384, ALG_ES512, ALG_ESP256,
     ALG_ESP384, ALG_ESP512, ALG_MLDSA44, ALG_MLDSA65, CRED_PROT_UV_REQUIRED, CURVE_ED25519,
@@ -339,10 +341,20 @@ pub fn make_credential<S: Storage, R: Rng>(
     if req.sel_alg == 0 {
         return Err(CtapError::UnsupportedAlgorithm);
     }
-    // makeCredential forbids built-in "uv" (no on-device UV) and an explicit
-    // up=false; up is implicitly true, and an explicit up=true is accepted
-    // (conformance MakeCredential Req-6: P-3 up=true succeeds, F-1 up=false fails).
-    if req.uv || req.up == Some(false) {
+    // §6.1.2 step 5: "pinUvAuthParam and the 'uv' option are processed as mutually
+    // exclusive with pinUvAuthParam taking precedence" — a token request that also
+    // carries uv:true is NOT an error, the option is simply treated as false.
+    if req.pin_uv_auth_param.is_some() {
+        req.uv = false;
+    }
+    // up is implicitly true, and an explicit up=true is accepted (conformance
+    // MakeCredential Req-6: P-3 up=true succeeds, F-1 up=false fails). `uv` is an
+    // error only when there is no built-in user verification method, or it is not
+    // presently configured — on a screenless build, always.
+    if req.up == Some(false) {
+        return Err(CtapError::InvalidOption);
+    }
+    if req.uv && !builtin_uv_enabled(ctx) {
         return Err(CtapError::InvalidOption);
     }
     // largeBlobKey may not be requested as false and requires a resident key.
@@ -380,10 +392,10 @@ pub fn make_credential<S: Storage, R: Rng>(
     }
 
     let rp_id_hash = sha256(req.rp_id.as_bytes());
-    let uv = enforce_pin(ctx, &req, &rp_id_hash)?;
+    let verified = enforce_pin(ctx, &req, &rp_id_hash)?;
 
     let mut seed = ctx.load_keydev().ok_or(CtapError::Other)?;
-    let result = make_credential_inner(ctx, &req, &rp_id_hash, &seed, uv, out);
+    let result = make_credential_inner(ctx, &req, &rp_id_hash, &seed, verified, out);
     seed.zeroize();
     result
 }
@@ -402,13 +414,13 @@ fn rp_eligible_for_vendor_ea(rp_id: &str) -> bool {
     false
 }
 
-/// CTAP2.1 PIN/UV enforcement (§8.1/§11.1): verifies a `pinUvAuthParam`
-/// against the token and reports whether to set the `uv` flag.
+/// CTAP2.1 PIN/UV enforcement (§6.1.2 steps 6–11): verifies a `pinUvAuthParam`
+/// against the token, or runs built-in UV, and reports what the response carries.
 fn enforce_pin<S: Storage, R: Rng>(
     ctx: &mut Ctx<S, R>,
     req: &Request,
     rp_id_hash: &[u8; 32],
-) -> Result<bool, CtapError> {
+) -> Result<UvOutcome, CtapError> {
     let pin_set = ctx.fs.has_data(EF_PIN);
     match req.pin_uv_auth_param {
         // Zero-length probe: a selection gesture — wait for a touch, then report
@@ -441,12 +453,29 @@ fn enforce_pin<S: Storage, R: Rng>(
                 ctx.state.paut.rp_id_hash = *rp_id_hash;
                 ctx.state.paut.has_rp_id = true;
             }
-            Ok(true)
+            Ok(UvOutcome::TOKEN)
         }
-        // §8.1: a configured PIN must be exercised. alwaysUv additionally forces
-        // user verification even when no PIN is set (CTAP 2.1 alwaysUv).
-        None if pin_set || crate::config::always_uv_enabled(ctx.fs) => Err(CtapError::PuatRequired),
-        None => Ok(false),
+        None => {
+            let always_uv = crate::config::always_uv_enabled(ctx.fs);
+            // §6.1.2 step 6.3: with alwaysUv on and a configured pad, a token-less
+            // request is UPGRADED to built-in UV rather than refused. Step 11.2 then
+            // runs the ceremony for either route.
+            if req.uv || (always_uv && builtin_uv_enabled(ctx)) {
+                return builtin_uv_step(ctx);
+            }
+            // alwaysUv without a way to verify (§6.1.2 steps 6.2/6.4): clientPin is
+            // always an advertised option ID here, so the code is PUAT_REQUIRED.
+            if always_uv {
+                return Err(CtapError::PuatRequired);
+            }
+            // makeCredUvNotRqd (§6.1.2 steps 7/10): with a PIN configured a
+            // DISCOVERABLE credential still needs a token; a non-discoverable one is
+            // created on user presence alone, `uv` clear (issue #51).
+            if pin_set && req.rk {
+                return Err(CtapError::PuatRequired);
+            }
+            Ok(UvOutcome::NONE)
+        }
     }
 }
 
@@ -455,18 +484,22 @@ fn make_credential_inner<S: Storage, R: Rng>(
     req: &Request,
     rp_id_hash: &[u8; 32],
     seed: &[u8; 32],
-    uv: bool,
+    verified: UvOutcome,
     out: &mut [u8],
 ) -> CtapResult {
+    let uv = verified.uv;
     // excludeList: refuse if any listed credential is already ours and visible
     // (a UV-required credProtect credential is invisible without UV — §12.1).
     for &id in &req.exclude[..req.exclude_len] {
         if exclude_hit(ctx.fs, seed, rp_id_hash, id, uv) {
-            // §6.1.2 requires a user-presence gesture BEFORE disclosing the match, so
-            // the device isn't a silent credential-existence oracle (matches the
-            // getAssertion no-match poll and a real YubiKey). `up` is implicit; spend
-            // the token on that touch too, so acfg can't ride it (GHSA-wqjm class).
-            ctx.require_presence(crate::Confirm::titled("Use this key?"))?;
+            // §6.1.2 step 12 requires a user-presence gesture BEFORE disclosing the
+            // match, so the device isn't a silent credential-existence oracle
+            // (matches the getAssertion no-match poll and a real YubiKey) — unless
+            // built-in UV already provided it. `up` is implicit; spend the token on
+            // that touch too, so acfg can't ride it (GHSA-wqjm class).
+            if !verified.up_collected {
+                ctx.require_presence(crate::Confirm::titled("Use this key?"))?;
+            }
             ctx.state.consume_after_user_presence();
             return Err(CtapError::CredentialExcluded);
         }
@@ -549,11 +582,15 @@ fn make_credential_inner<S: Storage, R: Rng>(
     // returned early, so it never reaches here. No button → instant. A
     // CTAPHID_CANCEL during the wait surfaces as KEEPALIVE_CANCEL.
     // The trusted screen (display build) names the relying party being registered;
-    // the `Register` kind picks the "Save new passkey?" layout.
-    ctx.require_presence(crate::Confirm::register(
-        req.rp_id.as_bytes(),
-        req.user_name.as_bytes(),
-    ))?;
+    // the `Register` kind picks the "Save new passkey?" layout. §6.1.2 step 13: a
+    // built-in UV ceremony IS the evidence of user interaction, so it sets `up`
+    // without asking a second time.
+    if !verified.up_collected {
+        ctx.require_presence(crate::Confirm::register(
+            req.rp_id.as_bytes(),
+            req.user_name.as_bytes(),
+        ))?;
+    }
 
     // Spend the pinUvAuthToken now the presence test passed (CTAP 2.1 §6.5.5.7
     // triad; GHSA-wqjm-653g-hgw3). makeCredential's `up` is implicitly true; on the
