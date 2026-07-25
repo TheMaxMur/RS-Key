@@ -398,6 +398,34 @@ fn u2f_v2_dropped_when_always_uv() {
 }
 
 #[test]
+fn u2f_v2_survives_always_uv_behind_a_configured_pad() {
+    // The other half of §7.2.4: the interface is disabled "unless the CTAP1/U2F
+    // authenticator is protected by a built-in user verification method", so a
+    // display build with a PIN keeps U2F_V2 — `process_u2f` then runs the pad on
+    // every operation. A pad with no PIN yet protects nothing, so U2F still goes.
+    let cases: [(bool, bool, bool); 4] = [
+        // (builtin_uv, pin_set, U2F_V2 advertised under alwaysUv)
+        (true, true, true),
+        (true, false, false),
+        (false, true, false),
+        (false, false, false),
+    ];
+    for (builtin_uv, pin_set, want_u2f) in cases {
+        let mut buf = [0u8; 512];
+        let n = get_info(pin_set, 4, false, false, true, builtin_uv, 256, &mut buf).unwrap();
+        let mut d = Decoder::new(&buf[..n]);
+        d.map().unwrap();
+        assert_eq!(d.u8().unwrap(), 0x01);
+        let nv = d.array().unwrap().unwrap();
+        assert_eq!(nv as usize, 4 + usize::from(want_u2f));
+        if want_u2f {
+            assert_eq!(d.str().unwrap(), "U2F_V2");
+        }
+        assert_eq!(d.str().unwrap(), "FIDO_2_0");
+    }
+}
+
+#[test]
 fn get_info_buffer_too_small() {
     let mut tiny = [0u8; 8];
     assert_eq!(

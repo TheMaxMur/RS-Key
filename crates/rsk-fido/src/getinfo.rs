@@ -97,7 +97,12 @@ fn write_info<W: Write>(
     // U2F_V2 (CTAP1) drops off while alwaysUv is on: §7.2.4 disables the CTAP1/U2F
     // interface (`process_u2f` refuses REGISTER/AUTHENTICATE), so getInfo must stop
     // claiming it. The conformance run is alwaysUv-off, so the list stays all five.
-    let u2f = !always_uv;
+    // The same clause carves out the one case where it survives — "unless the
+    // CTAP1/U2F authenticator is protected by a built-in user verification method",
+    // i.e. a configured PIN pad, which `process_u2f` then runs on every REGISTER /
+    // AUTHENTICATE. Capability alone is not enough: with no PIN set there is nothing
+    // to verify against, so U2F goes away as on any screenless build.
+    let u2f = !always_uv || (builtin_uv && pin_set);
     enc.u8(0x01)?.array(4 + u64::from(u2f))?;
     if u2f {
         enc.str("U2F_V2")?;
