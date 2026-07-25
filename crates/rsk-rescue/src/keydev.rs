@@ -4,11 +4,13 @@
 //! The rescue device key: a secp256k1 keypair for device attestation. A
 //! provisioned OTP DEVK is the scalar itself; otherwise the key lives sealed in
 //! flash (`EF_DEVCERT_KEY`), minted on first use. The seal is AES-256-GCM
-//! (`[fmt] ‖ nonce ‖ ct ‖ tag`) under a key HKDF-derived from `derive_kbase`: an
-//! authenticated blob with a random nonce, so a pre-secure-boot flash-writer can
-//! neither forge nor silently corrupt it. Older AES-256-CBC records (fixed
-//! serial-hash IV, no MAC) still load and are re-sealed as GCM by
-//! [`migrate_kbase`] at boot.
+//! (`[fmt] ‖ nonce ‖ ct ‖ tag`) under a key HKDF-derived from `derive_kbase`.
+//! Older AES-256-CBC records (fixed serial-hash IV, no MAC) still load and are
+//! re-sealed as GCM by [`migrate_kbase`] at boot.
+//!
+//! The seal gives confidentiality, not authenticity: the pre-OTP arm keys off the
+//! public chip serial alone, so a flash-writer can forge a record that opens under
+//! it even after the MKEK burn (audit run-27 #8).
 
 use k256::ecdsa::signature::hazmat::PrehashSigner;
 use k256::ecdsa::{Signature, SigningKey};
