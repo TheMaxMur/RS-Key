@@ -346,6 +346,54 @@ fn uif_blocks_pso_sign_without_touch() {
     assert_eq!(&c[..n], &[0, 0, 0], "counter must not advance when blocked");
 }
 
+/// UIF `02` is "permanently enabled" (OpenPGP 3.4 §4.4.3.6): PUT DATA may not lower
+/// it, so a caller holding PW3 alone — which already satisfies the PSO:CDS ACL —
+/// cannot turn a signature into a touchless one. Only a factory reset clears it.
+#[test]
+fn permanent_uif_cannot_be_revoked_with_pw3() {
+    let rng = RefCell::new(CountRng(7));
+    let mut fs = make_fs();
+    let presence = RefCell::new(Fixed(crate::Presence::Timeout));
+    let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
+    verify_pin(&mut app, &mut fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
+
+    // Arm the permanent policy through the ordinary PUT DATA path.
+    assert_eq!(put(&mut app, &mut fs, 0x00, 0xD6, &[0x02, 0x20]), Sw::OK);
+
+    // Lowering it is refused, and the stored value is untouched.
+    assert_eq!(
+        put(&mut app, &mut fs, 0x00, 0xD6, &[0x00, 0x20]),
+        Sw::CONDITIONS_NOT_SATISFIED
+    );
+    assert_eq!(
+        put(&mut app, &mut fs, 0x00, 0xD6, &[0x01, 0x20]),
+        Sw::CONDITIONS_NOT_SATISFIED
+    );
+    assert_eq!(
+        put(&mut app, &mut fs, 0x00, 0xD6, &[]),
+        Sw::CONDITIONS_NOT_SATISFIED
+    );
+    let mut cur = [0u8; 2];
+    let n = fs.read(consts::EF_UIF_SIG, &mut cur).unwrap();
+    assert_eq!(&cur[..n], &[0x02, 0x20]);
+
+    // Re-writing the same permanent value stays idempotent, and undefined flag
+    // values are rejected rather than stored and echoed back as meaningful.
+    assert_eq!(put(&mut app, &mut fs, 0x00, 0xD6, &[0x02, 0x20]), Sw::OK);
+    assert_eq!(
+        put(&mut app, &mut fs, 0x00, 0xD7, &[0x03, 0x20]),
+        consts::WRONG_DATA
+    );
+    assert_eq!(
+        put(&mut app, &mut fs, 0x00, 0xD7, &[0x01]),
+        consts::WRONG_DATA
+    );
+
+    // A non-permanent policy is still freely revocable (the documented on/off flow).
+    assert_eq!(put(&mut app, &mut fs, 0x00, 0xD8, &[0x01, 0x20]), Sw::OK);
+    assert_eq!(put(&mut app, &mut fs, 0x00, 0xD8, &[0x00, 0x20]), Sw::OK);
+}
+
 #[test]
 fn uif_on_with_touch_signs() {
     let rng = RefCell::new(CountRng(7));

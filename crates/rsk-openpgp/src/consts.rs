@@ -122,6 +122,12 @@ pub const EF_UIF_SIG: u16 = 0x00d6; // S — user-interaction flag (touch)
 pub const EF_UIF_DEC: u16 = 0x00d7; // S
 pub const EF_UIF_AUT: u16 = 0x00d8; // S
 
+/// UIF flag byte "permanently enabled" (OpenPGP 3.4, D6/D7/D8 DO table): once
+/// stored, PUT DATA may not change it — only a factory reset (TERMINATE DF, which
+/// re-seeds `UIF_DEFAULT`) clears it. This is the only touch setting that holds
+/// against a caller who already has PW3.
+pub(crate) const UIF_PERMANENT: u8 = 0x02;
+
 /// The touch-policy (UIF) DO for the private-key slot actually being used.
 /// MANAGE SECURITY ENVIRONMENT can cross-wire the DEC/AUT slot references, so
 /// the touch check must follow the repointed slot (`sess.pk_dec`/`sess.pk_aut`)

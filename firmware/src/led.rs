@@ -196,11 +196,27 @@ pub fn status() -> u8 {
     LED_STATUS.load(Ordering::Relaxed)
 }
 
+/// The floor the awaiting-touch indicator is held to. Every other status may be
+/// dimmed to nothing, but this one is the only signal a non-display build gives
+/// that the key is waiting for consent: a host able to zero it can make the
+/// waiting state look exactly like idle and harvest an unrelated press.
+const TOUCH_MIN_BRIGHTNESS: u8 = 8;
+
 /// Override one status's color (0–7) and brightness (0–255, 0 = off); used by the
-/// vendor SET LED command.
+/// vendor SET LED command. `STATUS_TOUCH` is floored — see
+/// [`TOUCH_MIN_BRIGHTNESS`].
 pub fn set_status_config(idx: u8, color: u8, brightness: u8) {
     let i = (idx as usize).min(N_STATUS - 1);
-    STATUS_COLOR[i].store(color & 0x7, Ordering::Relaxed);
+    let color = color & 0x7;
+    let (color, brightness) = if i == STATUS_TOUCH as usize {
+        (
+            if color == 0 { DEFAULT_COLOR[i] } else { color },
+            brightness.max(TOUCH_MIN_BRIGHTNESS),
+        )
+    } else {
+        (color, brightness)
+    };
+    STATUS_COLOR[i].store(color, Ordering::Relaxed);
     STATUS_BRIGHTNESS[i].store(brightness, Ordering::Relaxed);
 }
 

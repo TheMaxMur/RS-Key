@@ -587,3 +587,89 @@ fn opt_out_applet_is_never_chained() {
     );
     assert_eq!(sw, Sw::INS_NOT_SUPPORTED);
 }
+
+/// An applet with a PIN-like security status, to prove a card reset clears it.
+struct Verifiable {
+    verified: bool,
+}
+impl Applet<()> for Verifiable {
+    fn aid(&self) -> &'static [u8] {
+        &[0xA0, 0x00, 0x00, 0x03, 0x08]
+    }
+    fn select(&mut self, _reselect: bool, _ctx: &mut (), _res: &mut ResBuf) -> Sw {
+        self.verified = false;
+        Sw::OK
+    }
+    fn deselect(&mut self, _ctx: &mut ()) {
+        self.verified = false;
+    }
+    fn process(&mut self, apdu: &Apdu, _ctx: &mut (), _res: &mut ResBuf) -> Sw {
+        match apdu.ins {
+            // VERIFY: set the security status.
+            0x20 => {
+                self.verified = true;
+                Sw::OK
+            }
+            // A privileged operation, allowed only while verified.
+            0x87 if self.verified => Sw::OK,
+            0x87 => Sw::SECURITY_STATUS_NOT_SATISFIED,
+            _ => Sw::INS_NOT_SUPPORTED,
+        }
+    }
+}
+
+/// run-26: an ICC power transition must clear the applet's security status, not
+/// just the selection. `SCardDisconnect(SCARD_RESET_CARD)` is how a host forces
+/// re-authentication, and OpenPGP 3.4 (VERIFY) plus NIST SP 800-73pt2-5 §2.3 both
+/// require a reset to drop the verified PIN and return to the default application —
+/// otherwise the next process to connect inherits an unlocked card.
+#[test]
+fn reset_card_clears_selection_and_security_status() {
+    let mut piv = Verifiable { verified: false };
+    let mut applets: [&mut dyn Applet<()>; 1] = [&mut piv];
+    let mut disp = Dispatcher::new();
+    let mut out = [0u8; 64];
+
+    let aid = [0xA0, 0x00, 0x00, 0x03, 0x08];
+    let mut select = vec![0x00, 0xA4, 0x04, 0x00, aid.len() as u8];
+    select.extend_from_slice(&aid);
+
+    // Select, verify, and confirm the privileged command is allowed.
+    let mut res = ResBuf::new(&mut out);
+    assert_eq!(
+        disp.process(&select, &mut applets, &mut (), &mut res),
+        Sw::OK
+    );
+    let mut res = ResBuf::new(&mut out);
+    assert_eq!(
+        disp.process(&[0x00, 0x20, 0, 0], &mut applets, &mut (), &mut res),
+        Sw::OK
+    );
+    let mut res = ResBuf::new(&mut out);
+    assert_eq!(
+        disp.process(&[0x00, 0x87, 0, 0], &mut applets, &mut (), &mut res),
+        Sw::OK
+    );
+
+    // The power transition.
+    disp.reset_card(&mut applets, &mut ());
+
+    // No applet is current, so the command does not even reach it...
+    let mut res = ResBuf::new(&mut out);
+    assert_eq!(
+        disp.process(&[0x00, 0x87, 0, 0], &mut applets, &mut (), &mut res),
+        Sw::FILE_NOT_FOUND
+    );
+    // ...and re-selecting without verifying is refused: the status really is gone,
+    // which `clear_selection` alone would not have achieved.
+    let mut res = ResBuf::new(&mut out);
+    assert_eq!(
+        disp.process(&select, &mut applets, &mut (), &mut res),
+        Sw::OK
+    );
+    let mut res = ResBuf::new(&mut out);
+    assert_eq!(
+        disp.process(&[0x00, 0x87, 0, 0], &mut applets, &mut (), &mut res),
+        Sw::SECURITY_STATUS_NOT_SATISFIED
+    );
+}

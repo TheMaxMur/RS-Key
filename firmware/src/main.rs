@@ -53,6 +53,7 @@ mod handler;
 mod led;
 mod otp_kbd;
 mod otp_keys;
+mod pin_lock;
 mod presence;
 mod rescue_platform;
 mod vendor;
@@ -118,6 +119,15 @@ const USB_PRODUCT: &str = env!("PK_USB_PRODUCT");
 const YUBICO_VID: u16 = 0x1050;
 const YUBICO_MANUFACTURER: &str = "Yubico";
 const YUBICO_PRODUCT: &str = "YubiKey RSK OTP+FIDO+CCID";
+
+// A string descriptor longer than `USB_STR_MAX` code units panics embassy-usb at
+// enumeration, and nothing recovers it in software — so catch a bad build-time
+// override here rather than on the bench. Byte length is the conservative proxy:
+// non-ASCII costs at least as many bytes as code units.
+const _: () = assert!(USB_MANUFACTURER.len() <= rsk_rescue::phy::USB_STR_MAX);
+const _: () = assert!(USB_PRODUCT.len() <= rsk_rescue::phy::USB_STR_MAX);
+const _: () = assert!(YUBICO_MANUFACTURER.len() <= rsk_rescue::phy::USB_STR_MAX);
+const _: () = assert!(YUBICO_PRODUCT.len() <= rsk_rescue::phy::USB_STR_MAX);
 
 /// OpenPGP AID manufacturer id for an effective USB VID: the Yubico id when the
 /// key presents the Yubico VID (so hosts show the same vendor as a real YubiKey),
@@ -386,10 +396,11 @@ async fn main(spawner: Spawner) {
             phy_product = core::str::from_utf8(&buf[..n]).ok();
         }
         if let Some(s) = phy.usb_manufacturer.as_ref().and_then(|m| m.as_str()) {
-            let sb = s.as_bytes(); // Product caps at 32 bytes, so it always fits 64
+            // Clamp to the descriptor ceiling, not the buffer: the binding limit is
+            // the 64-byte USB control buffer (USB_STR_MAX code units), not this cell.
             let buf = PHY_MANUFACTURER.init([0; 64]);
-            buf[..sb.len()].copy_from_slice(sb);
-            phy_manufacturer = core::str::from_utf8(&buf[..sb.len()]).ok();
+            let n = rsk_rescue::phy::clamp_usb_string(s.as_bytes(), buf);
+            phy_manufacturer = core::str::from_utf8(&buf[..n]).ok();
         }
         usb_itf = rsk_rescue::phy::effective_usb_itf(phy);
         // Touch-wait timeout (phy tag 0x08, seconds; 0/absent = default).
@@ -497,7 +508,7 @@ async fn main(spawner: Spawner) {
     config.max_power = 100;
     config.max_packet_size_0 = 64;
     // bcdDevice build counter; also surfaced on the trusted-display Firmware screen.
-    let device_release: u16 = 0x0852;
+    let device_release: u16 = 0x0853;
     config.device_release = device_release;
 
     let mut builder = Builder::new(

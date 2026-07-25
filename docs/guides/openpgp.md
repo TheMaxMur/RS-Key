@@ -187,10 +187,17 @@ still cannot sign or decrypt without physical access.
 ```sh
 gpg/card> admin
 gpg/card> uif 1 on          # 1 sig · 2 enc · 3 auth   (off to disable)
+gpg/card> uif 1 permanent   # irreversible: only a factory reset clears it
 ```
 
 UIF is per-slot, so you can require a touch for signing but not decryption, or
 any mix. On a board with no button configured the check is a no-op.
+
+`on` is revocable with the admin PIN, so it protects against a stolen *user* PIN,
+not a stolen admin PIN. `permanent` (the card's UIF value `02`) cannot be lowered
+by any command — `PUT DATA` answers `6985` — so a host that learns PW3 still
+cannot turn your signatures touchless. Clearing it takes `TERMINATE DF` +
+`ACTIVATE FILE`, which wipes the applet. Set it only when you mean it.
 
 ## AES encryption (PSO)
 

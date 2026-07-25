@@ -132,18 +132,23 @@ fn write_fragment<S: Storage, R: Rng>(
     if set.len() > MAX_FRAGMENT_LENGTH {
         return Err(CtapError::InvalidLength);
     }
-    let offset = req.offset as usize;
+    // `usize` is 32-bit on the firmware target, so narrow BEFORE bounding: checking
+    // the ceiling on a truncated length while checking the floor on the raw u64 let
+    // a length ≥ 2^32 with small low bits pass both and store a value under
+    // LARGEBLOB_MIN, which then underflowed `total - 16` at the commit below.
+    let offset = usize::try_from(req.offset).map_err(|_| CtapError::InvalidParameter)?;
     if offset == 0 {
-        if req.length == 0 {
+        let length = usize::try_from(req.length).map_err(|_| CtapError::LargeBlobStorageFull)?;
+        if length == 0 {
             return Err(CtapError::InvalidParameter);
         }
-        if req.length as usize > MAX_LARGE_BLOB_SIZE {
+        if length > MAX_LARGE_BLOB_SIZE {
             return Err(CtapError::LargeBlobStorageFull);
         }
-        if req.length < LARGEBLOB_MIN as u64 {
+        if length < LARGEBLOB_MIN {
             return Err(CtapError::InvalidParameter);
         }
-        ctx.state.lba.expected_length = req.length as usize;
+        ctx.state.lba.expected_length = length;
         ctx.state.lba.expected_next_offset = 0;
     } else if req.length != 0 {
         return Err(CtapError::InvalidParameter);
@@ -182,7 +187,7 @@ fn write_fragment<S: Storage, R: Rng>(
         let total = ctx.state.lba.expected_length;
         // The platform appends left16(SHA-256(body)) as an integrity tag; verify
         // it (skipped for the 17-byte empty-array minimum, body = 1 byte).
-        let sha = sha256(&ctx.state.lba.temp[..total - 16]);
+        let sha = sha256(&ctx.state.lba.temp[..total.saturating_sub(16)]);
         if total > LARGEBLOB_MIN && sha[..16] != ctx.state.lba.temp[total - 16..total] {
             return Err(CtapError::IntegrityFailure);
         }

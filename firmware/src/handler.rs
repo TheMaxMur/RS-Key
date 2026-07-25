@@ -150,6 +150,10 @@ impl<'a> AppletHandler<'a> {
         // The OTP DEVK signs audit-journal checkpoints (rsk_fido::journal); it
         // rides in FidoState so the pure FIDO logic stays caller-supplied.
         let mut fido_state = rsk_fido::FidoState::new();
+        // Restore the clientPIN soft lock if the last boot was a warm reset: the
+        // canary survives `sys_reset` but not a real power cycle, which is the
+        // distinction CTAP 2.1 §6.5.5.6 draws.
+        fido_state.needs_power_cycle = crate::pin_lock::engaged();
         fido_state.devk = devk;
         // Generate the clientPIN ephemeral key-agreement key at power-up (CTAP 2.1
         // §6.5.5.7), not lazily on the first clientPIN — so the first PIN entry
@@ -261,6 +265,12 @@ impl AppletHandler<'_> {
             };
             rsk_fido::process_cbor(&mut ctx, data, &mut self.resp)
         };
+        // Persist the clientPIN soft lock across a warm reboot. The flag is RAM-only,
+        // and a host can request `SCB::sys_reset` ungated (vendor 0x1F P1=0, the
+        // rescue twin, or the phy config-write auto-reboot) — which cleared it and
+        // let host malware burn the whole retry budget unattended, the exact thing
+        // CTAP 2.1 §6.5.5.6's power-cycle requirement exists to prevent.
+        crate::pin_lock::set(self.fido_state.needs_power_cycle);
         // A vendor (0x41) CONFIG_WRITE with the LED target persists EF_LED_CONF,
         // but the LED atomics live here in the firmware — reload the block after
         // any 0x41 command to apply it live, matching the CCID SET_LED. 0x41 is

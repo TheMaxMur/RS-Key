@@ -283,6 +283,14 @@ impl<S: Storage> Applet<Fs<S>> for OpenpgpApplet<'_> {
         consts::OPENPGP_AID
     }
 
+    /// OpenPGP 3.4 (VERIFY): a verified PW stays valid only "up to a RESET of the
+    /// card, a SELECT to a different DF or an internal resetting". Both of the first
+    /// two land here, and the `Session` doc already promises zeroization on
+    /// deselect — without this the PW1/PW2/PW3 state simply outlived them.
+    fn deselect(&mut self, _fs: &mut Fs<S>) {
+        self.reset_session();
+    }
+
     /// `gpg`/`scdaemon` read GET DATA with a short `Le` (256) and follow `61xx`
     /// with GET RESPONSE; the application-related-data `6E` template exceeds 256
     /// bytes once keys exist, so opt into the dispatcher's response chaining.

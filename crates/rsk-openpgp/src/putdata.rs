@@ -36,6 +36,26 @@ pub fn put_data<S: Storage>(fs: &mut Fs<S>, sess: &Session, fid: u16, data: &[u8
         return Sw::SECURITY_STATUS_NOT_SATISFIED;
     }
 
+    // OpenPGP 3.4 §4.4.3.6 and the D6/D7/D8 DO table: UIF value 02 is "permanently
+    // enabled … not changeable with PUT DATA", clearable only by a factory reset
+    // (TERMINATE DF re-seeds UIF_DEFAULT). It is the one touch setting that is meant
+    // to survive an admin-PIN compromise, so the generic writer must not lower it.
+    if matches!(fid, EF_UIF_SIG | EF_UIF_DEC | EF_UIF_AUT) {
+        let mut cur = [0u8; 2];
+        if let Some(n) = fs.read(target, &mut cur)
+            && n >= 1
+            && cur[0] == UIF_PERMANENT
+            && data.first() != Some(&UIF_PERMANENT)
+        {
+            return Sw::CONDITIONS_NOT_SATISFIED;
+        }
+        // Reject undefined flag values and a wrong general-feature-management byte
+        // rather than storing something the card would echo back as meaningful.
+        if !data.is_empty() && (data.len() != 2 || data[0] > UIF_PERMANENT) {
+            return WRONG_DATA;
+        }
+    }
+
     if data.is_empty() {
         let _ = fs.delete(target);
     } else if fs.put(target, data).is_err() {

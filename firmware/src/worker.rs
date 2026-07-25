@@ -43,6 +43,10 @@ enum Kind {
     /// A CTAPHID vendor command (YubiKey Management read) — `Exchange::vcmd` holds
     /// the logical command number.
     Vendor,
+    /// An ICC power transition: drop the CCID applet selection and its security
+    /// status. Carries no payload and returns none — the dispatcher state it clears
+    /// lives on the worker, which is why it needs a round-trip at all.
+    ResetCard,
 }
 
 /// The shared request/response buffer the transport fills and the worker drains.
@@ -210,6 +214,10 @@ impl ApduHandler for ClientCcid {
     }
     async fn handle_secure(&mut self, data: &[u8], out: &mut [u8]) -> SecureResult {
         roundtrip_secure(data, out).await
+    }
+    async fn reset_card(&mut self) {
+        let mut sink = [0u8; 2];
+        roundtrip(Kind::ResetCard, &[], &mut sink).await;
     }
 }
 
@@ -413,6 +421,10 @@ impl<'a> Worker<'a> {
                         self.ctap.handle_msg(&req[..*req_len])
                     }
                     Kind::Apdu => self.ccid.handle_apdu(&req[..*req_len]),
+                    Kind::ResetCard => {
+                        self.ccid.reset_card();
+                        &[]
+                    }
                     Kind::Vendor => {
                         *vendor_ok = true;
                         match self.ccid.ctap_mgmt(*vcmd, &req[..*req_len]) {
@@ -438,13 +450,20 @@ impl<'a> Worker<'a> {
             self.ctap.scrub();
             self.ccid.scrub();
         }
-        // A dispatch may have consumed a button press for touch confirmation;
-        // forget any pending click so it isn't mistaken for a typed-ticket gesture.
+        self.forget_pending_click();
+        crate::led::set_status(crate::led::STATUS_IDLE);
+        DONE.signal(());
+    }
+
+    /// A dispatch may have consumed a button press for touch confirmation; forget
+    /// any pending click so it isn't mistaken for a typed-ticket gesture.
+    ///
+    /// Every dispatch arm must call this — but NOT `button_tick`, whose whole job is
+    /// to accumulate the gesture across the click window.
+    fn forget_pending_click(&mut self) {
         self.btn_state = false;
         self.btn_count = 0;
         self.btn_time = 0;
-        crate::led::set_status(crate::led::STATUS_IDLE);
-        DONE.signal(());
     }
 
     /// Handle a CCID `PC_to_RDR_Secure` (pinpad VERIFY). Parse the request, collect
@@ -541,6 +560,10 @@ impl<'a> Worker<'a> {
         let (body, n, status) = self.ccid.handle_otp_hid(slot, &payload);
         otp_kbd::finish_response(status, &body[..n]);
         self.ccid.scrub();
+        // This path runs the CFG_CHAL_BTN_TRIG touch wait too, and `ButtonPresence`
+        // confirms on an already-held button — so without this the release edge of
+        // the press just consumed is counted as a click and types a ticket as well.
+        self.forget_pending_click();
         crate::led::set_status(crate::led::STATUS_IDLE);
     }
 

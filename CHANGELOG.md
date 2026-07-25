@@ -23,6 +23,102 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   override. Display-only; the `1:` blob stays the raw override record for
   read-modify-write, and older/headless behaviour is unchanged. bcdDevice → `0x0852`.
 
+### Security
+
+Findings from the 26th internal security audit. bcdDevice → `0x0853`.
+
+- **A phy USB string longer than the descriptor limit bricked the device
+  (HIGH).** `CONFIG_WRITE`/`CONFIG_TARGET_PHY` is ungated by default and stored a
+  product/manufacturer string with no length bound. embassy-usb encodes string
+  descriptors into the 64-byte control buffer under an `assert!`, so from the 31st
+  UTF-16 code unit the USB stack panicked *during enumeration* — before any command
+  could be served, with `panic_halt` spinning in the USB interrupt. No host path
+  (factory reset, rescue wipe) could reach the device and a firmware reflash did not
+  clear the record, so recovery meant a full flash erase, destroying the seed and
+  every credential. It also fired from ordinary input: the ykman-compatibility
+  suffix (` OTP+FIDO+CCID`, 14 bytes) pushed any 17-byte YubiKey-style name over the
+  edge, well inside the `≤32` that `rsk hw` advertised. Every string is now clamped
+  to 30 code units on a char boundary; the suffix is preserved by truncating the
+  *name* instead of dropping the token, build-time overrides are checked at compile
+  time, and `rsk hw` rejects what would be truncated. **A device already bricked
+  this way now boots again after a firmware update** — the record is clamped on
+  read.
+- **The "permanent" OpenPGP touch policy could be switched off.** UIF value `02`
+  is defined as not changeable by `PUT DATA` (OpenPGP 3.4 §4.4.3.6), but the DOs
+  went through the generic writer, so a caller with PW3 — which already satisfies
+  the PSO:CDS access condition — could lower it to `00` and sign with no press,
+  silently. `PUT DATA` on a permanent UIF now answers `6985`, and undefined flag
+  values are rejected instead of stored and echoed back. Only `TERMINATE DF` clears
+  it, as the spec intends.
+- **An OATH OTP-PIN planted before an access code existed survived it.** `SELECT`
+  sets `validated = !code_set`, so on a factory-state applet `validated` is
+  vacuously true and `SET PIN` was effectively unauthenticated; `VERIFY PIN` sets
+  the same flag as `VALIDATE`, so the planted PIN remained a second, invisible
+  unlock path *through* the access code the owner set afterwards, removable only by
+  a reset that destroys every credential. Minting the PIN on a code-less applet now
+  requires the operator, and installing an access code drops any PIN minted without
+  it (re-mint it from a validated session).
+- **A CCID card reset no longer leaves a verified PIN behind.** `IccPowerOff`/
+  `IccPowerOn` only flipped a status byte and never reached the applet layer, so
+  after `SCardDisconnect(SCARD_RESET_CARD)` — the host's primitive for forcing
+  re-authentication — the previously selected applet stayed current with PIV
+  `has_pin` / OpenPGP `has_pw1-3` / OATH `validated` intact, and a second local
+  process could sign, decrypt or read OATH codes without ever authenticating.
+  Contrary to OpenPGP 3.4 (VERIFY) and NIST SP 800-73pt2-5 §2.3. A power transition
+  now deselects the current applet and clears its security status plus any buffered
+  chain / pending response, and OpenPGP and OATH gained the `deselect` their own
+  docs already promised.
+- **The touch indicator can no longer be silenced or disguised.** On a build
+  without the trusted display the LED is the only sign the key is awaiting consent,
+  and the CCID `SET LED` had no gate at all — not even under `strict-config`, which
+  gates its FIDO twin. The touch state is now clamped to a minimum brightness and a
+  visible colour on every write path, and `SET LED` is presence-gated under
+  `strict-config` so the vendor AID cannot bypass it.
+- **Resident credential IDs are genuinely fingerprint-free now.** The v4 id set
+  its last 10 bytes to `HMAC(id[0..32], "resident-id")` — keyed by the half already
+  published to the relying party — so any RP holding an id could recompute the
+  relation offline and identify the authenticator model, which is exactly the
+  correlation handle the format was rewritten to remove. All 42 bytes are now keyed
+  by the device secret. Forward-only: existing credentials keep working unchanged.
+- **The clientPIN soft lock survives a warm reboot.** CTAP 2.1 §6.5.5.6 requires a
+  power cycle after three failed PIN attempts, so a host cannot burn the retry
+  budget unattended — but the flag was RAM-only and a host can request a warm reset
+  ungated, clearing it. Two reboots then exhausted all eight attempts in seconds and
+  permanently blocked the applet. The lock is now recorded in a watchdog scratch
+  register, which survives `sys_reset` but not a real power cycle.
+- **An OATH-HOTP slot no longer answers challenge-response.** `CFG_CHAL_HMAC` is a
+  two-bit mask but was tested for any bit, and `TKT_OATH_HOTP` shares a bit with
+  `TKT_CHAL_RESP` — so a slot from `ykman otp hotp --digits 8` entered the HMAC arm
+  and, carrying no `CFG_CHAL_BTN_TRIG`, answered with **no button press**, turning a
+  press-gated HOTP seed into a free chosen-message MAC oracle. Both arms now match
+  the full mask, and such a slot is reported to `ykman` as a touch slot as it should
+  have been.
+- **One press no longer authorizes two operations over OTP-HID.** The OTP-HID
+  dispatch did not clear the click-gesture state the way every other dispatch does,
+  so the release edge of a press already consumed for a touch-gated
+  challenge-response was counted as a click and typed a ticket as well — a static
+  password in slot 1 in full.
+- **`authenticatorLargeBlobs` no longer halts the device.** The length ceiling was
+  checked on a 32-bit-truncated value while the floor was checked on the raw `u64`,
+  so a length ≥ 2³² with small low bits passed both, stored a value below the
+  minimum, and underflowed a slice bound at commit — panicking with `panic_halt`,
+  which took every applet down until a physical replug. The length is now narrowed
+  once and bounded on both ends.
+- **Seed-moving vendor commands state what they do.** `BACKUP_LOAD` re-keys the
+  device, making every existing credential undecryptable, but the PIN half of its
+  gate is waived when no PIN is set — leaving it on one touch under a generic
+  prompt. It now takes an explicit "Replace device seed?" confirmation in that
+  state. `BACKUP_FINALIZE`, which irreversibly closes seed export and the on-device
+  recovery-phrase reveal, took no request parameter at all and so could not be
+  PIN-gated even in principle; it now carries the PIN gate and says
+  "Seal backup permanently?" instead of "Finish backup?".
+- **The trusted display waits for your finger to lift.** `confirm_wait` and
+  `run_add_passkey` were the only modals that did not debounce, and the touch
+  controller reports a level rather than an edge — so one continuous press could
+  approve two consecutive ceremonies (two OpenPGP signatures, two OATH codes), and
+  the single-tap passkey card could be approved in the same frame it was painted,
+  too fast to read.
+
 ## [0.4.2] - 2026-07-25
 
 ### Changed

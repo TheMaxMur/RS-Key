@@ -96,6 +96,12 @@ rsk led --status idle --brightness 64          # 0–255; 0 = that state goes da
 rsk led --status idle --color blue --brightness 64
 ```
 
+> **`touch` cannot be switched off.** On a build without the trusted display the
+> touch state is the only signal that the key is waiting for your consent, so it is
+> held to a minimum brightness and a visible colour. You can restyle it — colour,
+> effect, speed, brighter — but `--brightness 0` / `--color off` on
+> `--status touch` is clamped, not obeyed. Every other state still goes fully dark.
+
 ### Effect & speed
 
 Each state's effect and animation speed are configurable the same way:
@@ -130,7 +136,7 @@ steady toggle, use `rsk led`.
 |---|---|
 | `--status` | `idle`, `processing`, `touch`, `boot` (default `idle`) |
 | `--color` | `off`, `red`, `green`, `blue`, `yellow`, `magenta`, `cyan`, `white` |
-| `--brightness` | `0`–`255` per channel (`0` = off) |
+| `--brightness` | `0`–`255` per channel (`0` = off, except `--status touch`, see below) |
 | `--effect` | `legacy`, `vapor`, `bounce`, `flow`, `sparkle` |
 | `--speed` | `0`–`255` (`0` = effect's built-in default) |
 | `--steady` | solid colour, no blinking, **global**, affects every state |

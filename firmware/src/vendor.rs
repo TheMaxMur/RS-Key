@@ -127,6 +127,20 @@ impl<S: Storage> Applet<Fs<S>> for VendorApplet<'_> {
                 Sw::OK
             }
             INS_SET_LED => {
+                // On a build without the trusted display the LED is the only signal
+                // that the key is waiting for a touch, so a host that can rewrite it
+                // can make "awaiting consent" look identical to idle. `strict-config`
+                // gates the FIDO twin of this write (CONFIG_TARGET_LED); gate this
+                // one too, or the CCID vendor AID simply bypasses that.
+                #[cfg(feature = "strict-config")]
+                if self
+                    .presence
+                    .borrow_mut()
+                    .request(Confirm::titled("Change LED?"))
+                    != Presence::Confirmed
+                {
+                    return Sw::SECURITY_STATUS_NOT_SATISFIED;
+                }
                 // One status (P2 bits 5:4) gets P1 brightness + P2 color; the
                 // steady bit is global. Optional data bytes set effect and speed.
                 let status = (apdu.p2 >> 4) & 0x3;

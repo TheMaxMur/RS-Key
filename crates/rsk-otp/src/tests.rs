@@ -295,6 +295,53 @@ fn hmac_chalresp_full_64() {
     assert_eq!(body, hmac_sha1(&key20, &chal));
 }
 
+/// run-26: `CFG_CHAL_HMAC` is a two-bit mask (`CHAL_YUBICO | 0x02`) and was tested
+/// for ANY bit. `ykman otp hotp --digits 8` sets `CFG_OATH_HOTP8` = 0x02, and
+/// `TKT_OATH_HOTP` is the same bit as `TKT_CHAL_RESP`, so such a slot entered the
+/// HMAC arm — and, carrying no `CFG_CHAL_BTN_TRIG`, answered with no press at all,
+/// turning a button-gated HOTP seed into a free chosen-message MAC oracle.
+#[test]
+fn oath_hotp_slot_is_not_a_challenge_response_oracle() {
+    let mut fs = new_fs();
+    // Panics if presence is ever requested: proves the absence of a touch request
+    // is not what makes this pass.
+    let presence = RefCell::new(AlwaysConfirm);
+    let rng = RefCell::new(CountRng(7));
+    let mut app = OtpApplet::new(SERIAL, SERIAL_HASH, None, &rng, &presence);
+
+    // Exactly what `ykman otp hotp --digits 8` programs: OATH-HOTP ticket flags,
+    // cfgFlags carrying only the 8-digit bit — no CHAL_YUBICO, no BTN_TRIG.
+    let key20 = [0x0B; 20];
+    let mut uid = [0u8; 6];
+    uid[..4].copy_from_slice(&key20[16..]);
+    let mut aes = [0u8; 16];
+    aes.copy_from_slice(&key20[..16]);
+    let cfgd = build_config(&[], &uid, &aes, &[0; 6], 0, TKT_OATH_HOTP, CFG_OATH_HOTP8);
+    let (sw, body) = configure(&mut app, &mut fs, 0x01, 0, &cfgd, &[0; 6]);
+    assert_eq!(sw, Sw::OK);
+    // The slot really is programmed — otherwise the rejections below would pass
+    // for the wrong reason — and ykman sees it as a touch slot, because it types
+    // its code on a press rather than answering the host.
+    assert_eq!(body[4], CONFIG1_VALID | CONFIG1_TOUCH);
+
+    // Neither challenge-response function may serve it.
+    let chal = [0x5A; 64];
+    let (sw, _) = run(&mut app, &mut fs, &otp_apdu(0x30, 0, &chal)); // HMAC
+    assert_eq!(sw, SW_WRONG_DATA, "HMAC arm must reject an OATH-HOTP slot");
+    let (sw, _) = run(&mut app, &mut fs, &otp_apdu(0x20, 0, &chal)); // Yubico
+    assert_eq!(
+        sw, SW_WRONG_DATA,
+        "Yubico arm must reject an OATH-HOTP slot"
+    );
+
+    // A real HMAC chal-resp slot (both mask bits) still works.
+    let cfgd = chalresp_config(&key20, &[0; 6], 0);
+    configure(&mut app, &mut fs, 0x03, 0, &cfgd, &[0; 6]);
+    let (sw, body) = run(&mut app, &mut fs, &otp_apdu(0x38, 0, &chal));
+    assert_eq!(sw, Sw::OK);
+    assert_eq!(body, hmac_sha1(&key20, &chal));
+}
+
 #[test]
 fn hmac_chalresp_lt64_trims_padding() {
     let mut fs = new_fs();

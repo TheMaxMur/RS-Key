@@ -494,6 +494,14 @@ per device status), persisted in flash and applied immediately. Source:
 `INS 12` (CORE1_STATS) and `INS 13` (KEYGEN_BENCH) exist only in debug/bench
 builds and are not part of the stable surface.
 
+**SET LED `0x10` gating:** ungated by default (like the rest of the config surface),
+**user-presence-gated under `strict-config`** — the FIDO twin
+(`CONFIG_WRITE`/`CONFIG_TARGET_LED`) is gated there too, so the vendor AID cannot be
+used to bypass it. The **touch** status is additionally clamped to a minimum
+brightness and a visible colour on every path: it is the only consent signal on a
+build without the trusted display, so it can be restyled but never silenced or made
+to look like idle.
+
 **SET LED `0x10` P2 layout:** bits `[2:0]` = color, bit `3` (`0x08`) = steady
 (solid, no blink, a **global** toggle), bits `[5:4]` = status. P1 = per-channel
 brightness. The command data field is optional: `data[0]` sets the status's
@@ -552,8 +560,8 @@ Keys 3/4 are present only when a PIN is set (see gating).
 |---|---|---|---|---|
 | `01` | MSE | `{1: COSE_Key, 2: mlkem_ek?}` | `{1: COSE_Key, 2: ct?}` | none (establishes channel) |
 | `02` | BACKUP_EXPORT | — | `{1: blob(60)}` | MSE + touch + PIN-token; refused if sealed |
-| `03` | BACKUP_LOAD | `{1: blob(60)}` | — | MSE + touch + PIN-token; refused if soft-locked |
-| `04` | BACKUP_FINALIZE | — | — | touch |
+| `03` | BACKUP_LOAD | `{1: blob(60)}` | — | MSE + touch + PIN-token; refused if soft-locked. With **no PIN set** it additionally takes a distinct "Replace device seed?" confirmation — the PIN-token half is waived in that state, and a LOAD re-keys every existing credential |
+| `04` | BACKUP_FINALIZE | — | — | touch + PIN-token when a PIN is set (no MSE) |
 | `05` | BACKUP_STATE | — | `{1: sealed, 2: has_seed, 3: locked, 4: unlocked}` | **ungated** |
 | `06` | UNLOCK | `{1: blob(60)}` | — | MSE (the lock key *is* the auth) |
 | `07` | AUDIT_READ | — | journal window | PIN-token; **touch** if no PIN |

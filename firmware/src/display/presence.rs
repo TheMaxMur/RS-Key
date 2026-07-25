@@ -79,6 +79,11 @@ impl TouchPresence {
             note_activity();
             let _ = rsk_ui::render(&mut u.panel, &Screen::Confirm(prompt));
             u.shown = None; // force the status loop to repaint once we release it
+            // Debounce: the CST328 reports a level, not an edge, so a finger still
+            // down from a previous ceremony would start filling this hold on the
+            // first poll — one press approving two ceremonies. Every other modal
+            // waits for release for the same reason; so does the button build.
+            u.touch.wait_release(start, timeout);
             // Deny is a single tap; Approve is a deliberate hold that fills the button
             // as it builds (an accidental brush can't approve). The base button was
             // painted by the `render(Screen::Confirm)` above; the fill then grows in
@@ -154,6 +159,10 @@ impl TouchPresence {
             note_activity();
             let _ = rsk_ui::render_add_passkey(&mut u.panel, &rp, &account);
             u.shown = None;
+            // Save is a single tap and this loop polls before any delay, so without
+            // a release wait a finger already down approves the card in the same
+            // frame it is painted — too fast to read. See confirm_wait above.
+            u.touch.wait_release(start, timeout);
             loop {
                 // The power button sleeps (and auto-locks) from the registration card too,
                 // abandoning it (→ Cancelled) like a lifted finger that times out.

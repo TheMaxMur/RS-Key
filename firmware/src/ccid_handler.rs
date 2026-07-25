@@ -230,6 +230,23 @@ impl<'a> CcidApplets<'a> {
         self.disp.clear_pending();
     }
 
+    /// Drop the selected applet's security status on an ICC power transition, so a
+    /// `SCardDisconnect(SCARD_RESET_CARD)` really does force re-authentication
+    /// instead of leaving a verified PIN for whoever connects next.
+    pub fn reset_card(&mut self) {
+        let mut applets: [&mut dyn Applet<Store>; 7] = [
+            &mut self.vendor,
+            &mut self.openpgp,
+            &mut self.management,
+            &mut self.oath,
+            &mut self.otp,
+            &mut self.piv,
+            &mut self.rescue,
+        ];
+        let mut fsb = self.fs.borrow_mut();
+        self.disp.reset_card(&mut applets, &mut *fsb);
+    }
+
     /// Dispatch one CCID APDU synchronously, returning the response APDU (body +
     /// SW1 SW2). On-card RSA keygen is run to completion inline (see module docs);
     /// everything else goes straight to the applet dispatcher.

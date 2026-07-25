@@ -169,6 +169,24 @@ impl Dispatcher {
         self.current = None;
     }
 
+    /// Return the card to a clean state after an ICC reset: deselect the current
+    /// applet — so it drops its security status, which [`clear_selection`] alone
+    /// does not — and discard any buffered chain or pending response.
+    ///
+    /// `clear_selection` exists for CTAPHID_INIT, where only the *selection* is
+    /// stale. A power transition is stronger: OpenPGP 3.4 (VERIFY) and NIST
+    /// SP 800-73pt2-5 §2.3 both require a reset to clear the applet's verified PIN
+    /// state and return to the default application.
+    pub fn reset_card<C>(&mut self, applets: &mut [&mut dyn Applet<C>], ctx: &mut C) {
+        if let Some(i) = self.current.take()
+            && let Some(applet) = applets.get_mut(i)
+        {
+            applet.deselect(ctx);
+        }
+        self.clear_pending();
+        self.clear_chaining();
+    }
+
     /// Process one raw command APDU against `applets` (in registration order),
     /// threading the shared `ctx` into the dispatched applet, writing the
     /// response body into `res` and returning the status word.

@@ -182,7 +182,7 @@ pub fn vendor<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, data: &[u8], out: &mut [u
         VENDOR_MSE => mse(ctx, &req, out),
         VENDOR_BACKUP_EXPORT => backup_export(ctx, &req, out),
         VENDOR_BACKUP_LOAD => backup_load(ctx, &req),
-        VENDOR_BACKUP_FINALIZE => backup_finalize(ctx),
+        VENDOR_BACKUP_FINALIZE => backup_finalize(ctx, &req),
         VENDOR_BACKUP_STATE => backup_state(ctx, out),
         VENDOR_UNLOCK => unlock(ctx, &req),
         VENDOR_AUDIT_READ => audit_read(ctx, &req, out),
@@ -679,6 +679,17 @@ fn backup_load<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> CtapResult
     if lock_engaged(ctx.fs) {
         return Err(CtapError::NotAllowed);
     }
+    // A LOAD re-keys the device: every existing credential box, RP record and
+    // nickname is sealed under the seed, so installing a new one silently makes
+    // them all undecryptable. `gate` waives its PIN half when no PIN is set (the
+    // state a fresh or just-reset key is in), which left the whole operation on a
+    // single touch under a generic prompt — so name the destruction explicitly
+    // when there is no PIN to authorise it.
+    if !ctx.fs.has_data(EF_PIN)
+        && !ctx.check_user_presence(crate::Confirm::titled("Replace device seed?"))
+    {
+        return Err(CtapError::OperationDenied);
+    }
     gate(ctx, req, "Restore seed from host?")?;
     let mut nonce = [0u8; 12];
     nonce.copy_from_slice(&req.blob[..12]);
@@ -711,8 +722,14 @@ fn backup_load<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> CtapResult
 }
 
 /// `BACKUP_FINALIZE`: seal the one-time export window (a reset reopens it).
-fn backup_finalize<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>) -> CtapResult {
-    if !ctx.check_user_presence(crate::Confirm::titled("Finish backup?")) {
+fn backup_finalize<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> CtapResult {
+    // Sealing is irreversible short of a reset that destroys the device identity:
+    // it closes seed export and, on the display build, the on-device recovery-phrase
+    // reveal. Carry the PIN half of the gate when a PIN exists — the MSE half is
+    // deliberately NOT required, since both shipped host tools send FINALIZE with
+    // no MSE handshake — and say what the touch actually authorises.
+    pin_gate(ctx, req)?;
+    if !ctx.check_user_presence(crate::Confirm::titled("Seal backup permanently?")) {
         return Err(CtapError::OperationDenied);
     }
     ctx.fs
