@@ -16,6 +16,7 @@
 //! key with its x5c cert and the `ep` response flag; level 1 is accepted but
 //! stays self-attestation.
 
+use minicbor::encode::Write;
 use minicbor::encode::write::Cursor;
 use minicbor::{Decoder, Encoder};
 use zeroize::Zeroize;
@@ -681,50 +682,21 @@ fn make_credential_inner<S: Storage, R: Rng>(
         None
     };
 
-    // Response: { 1: fmt, 2: authData, 3: attStmt [, 4: ep] [, 5: largeBlobKey] }.
-    // Default: fmt "none" with an empty attStmt. Otherwise fmt "packed": attStmt
-    // = { alg, sig } for self-attestation, + x5c for any basic_full / enterprise
-    // attestation. `ep` (field 4) only when EA was actually performed.
-    let resp_len = {
-        let mut enc = Encoder::new(Cursor::new(&mut *out));
-        enc.map(3 + u64::from(ea_performed) + u64::from(large_blob_key.is_some()))
-            .and_then(|e| {
-                e.u8(1)?
-                    .str(if none_attestation { "none" } else { "packed" })
-            })
-            .and_then(|e| e.u8(2)?.bytes(&ad[..ad_len]))
-            .and_then(|e| e.u8(3))
-            .map_err(|_| CtapError::Other)?;
-        if none_attestation {
-            enc.map(0).map_err(|_| CtapError::Other)?;
-        } else {
-            enc.map(2 + u64::from(full_attestation))
-                .and_then(|e| e.str("alg")?.i64(att_alg))
-                .and_then(|e| e.str("sig")?.bytes(&att.sig[..sig_len]))
-                .map_err(|_| CtapError::Other)?;
-            if full_attestation {
-                enc.str("x5c")
-                    .and_then(|e| e.array(u64::from(certs)))
-                    .map_err(|_| CtapError::Other)?;
-                for i in 0..certs {
-                    let c =
-                        cert::att_chain_cert(&att.chain[..chain_len], i).ok_or(CtapError::Other)?;
-                    enc.bytes(c).map_err(|_| CtapError::Other)?;
-                }
-            }
-        }
-        if ea_performed {
-            enc.u8(4)
-                .and_then(|e| e.bool(true)) // ep: enterprise attestation used
-                .map_err(|_| CtapError::Other)?;
-        }
-        if let Some(lbk) = large_blob_key {
-            enc.u8(5)
-                .and_then(|e| e.bytes(&lbk))
-                .map_err(|_| CtapError::Other)?;
-        }
-        enc.writer().position()
-    };
+    let resp_len = encode_mc_response(
+        out,
+        &ad[..ad_len],
+        &att,
+        AttShape {
+            alg: att_alg,
+            sig_len,
+            chain_len,
+            certs,
+            none: none_attestation,
+            full: full_attestation,
+            ea_performed,
+        },
+        large_blob_key,
+    )?;
 
     if req.rk
         && credential_store(
@@ -743,6 +715,78 @@ fn make_credential_inner<S: Storage, R: Rng>(
     }
     journal::append(ctx, journal::EV_MAKE_CRED, 0, &rp_id_hash[..8]);
     Ok(resp_len)
+}
+
+/// What shape the attestation statement takes, so the response encoder does not
+/// have to re-derive it: the lengths [`make_attestation`] returned plus the three
+/// decisions made before it ran.
+struct AttShape {
+    alg: i64,
+    sig_len: usize,
+    chain_len: usize,
+    certs: u8,
+    /// `fmt:"none"` with an empty attStmt — the shipping default.
+    none: bool,
+    /// basic_full / enterprise: the statement carries an x5c chain.
+    full: bool,
+    /// Enterprise attestation was actually performed, so `ep` (field 4) is set.
+    ea_performed: bool,
+}
+
+/// Encode the makeCredential response:
+/// `{1: fmt, 2: authData, 3: attStmt [, 4: ep] [, 5: largeBlobKey]}`.
+///
+/// Default: `fmt:"none"` with an empty attStmt. Otherwise `fmt:"packed"`, where
+/// attStmt is `{alg, sig}` for self-attestation plus `x5c` for any basic_full or
+/// enterprise attestation. `ep` appears only when EA was actually performed.
+fn encode_mc_response(
+    out: &mut [u8],
+    ad: &[u8],
+    att: &AttBufs,
+    shape: AttShape,
+    large_blob_key: Option<[u8; 32]>,
+) -> CtapResult {
+    let mut enc = Encoder::new(Cursor::new(out));
+    enc.map(3 + u64::from(shape.ea_performed) + u64::from(large_blob_key.is_some()))
+        .and_then(|e| e.u8(1)?.str(if shape.none { "none" } else { "packed" }))
+        .and_then(|e| e.u8(2)?.bytes(ad))
+        .and_then(|e| e.u8(3))
+        .map_err(|_| CtapError::Other)?;
+    if shape.none {
+        enc.map(0).map_err(|_| CtapError::Other)?;
+    } else {
+        enc.map(2 + u64::from(shape.full))
+            .and_then(|e| e.str("alg")?.i64(shape.alg))
+            .and_then(|e| e.str("sig")?.bytes(&att.sig[..shape.sig_len]))
+            .map_err(|_| CtapError::Other)?;
+        if shape.full {
+            encode_x5c(&mut enc, &att.chain[..shape.chain_len], shape.certs)?;
+        }
+    }
+    if shape.ea_performed {
+        enc.u8(4)
+            .and_then(|e| e.bool(true)) // ep: enterprise attestation used
+            .map_err(|_| CtapError::Other)?;
+    }
+    if let Some(lbk) = large_blob_key {
+        enc.u8(5)
+            .and_then(|e| e.bytes(&lbk))
+            .map_err(|_| CtapError::Other)?;
+    }
+    Ok(enc.writer().position())
+}
+
+/// The `x5c` array of the packed attestation statement, sliced out of the stored
+/// chain record one DER cert at a time.
+fn encode_x5c<W: Write>(enc: &mut Encoder<W>, chain: &[u8], certs: u8) -> Result<(), CtapError> {
+    enc.str("x5c")
+        .and_then(|e| e.array(u64::from(certs)))
+        .map_err(|_| CtapError::Other)?;
+    for i in 0..certs {
+        let c = cert::att_chain_cert(chain, i).ok_or(CtapError::Other)?;
+        enc.bytes(c).map_err(|_| CtapError::Other)?;
+    }
+    Ok(())
 }
 
 /// Output buffers for [`make_attestation`]: the raw signature and the packed x5c
