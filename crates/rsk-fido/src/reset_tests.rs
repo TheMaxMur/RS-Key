@@ -129,6 +129,38 @@ fn reset_aborts_without_touch() {
     assert!(fs.has_data(EF_PIN));
 }
 
+/// §6.6 splits the two ways the gesture can fail: an explicit refusal is
+/// OPERATION_DENIED ("the platform SHOULD NOT repeat the command"), a silent timeout
+/// is USER_ACTION_TIMEOUT ("the platform MAY repeat"). Either way nothing is wiped.
+#[test]
+fn reset_decline_is_denied_not_timed_out() {
+    for (presence, want) in [
+        (crate::Presence::Declined, CtapError::OperationDenied),
+        (crate::Presence::Timeout, CtapError::UserActionTimeout),
+        (crate::Presence::Cancelled, CtapError::KeepAliveCancel),
+    ] {
+        let mut fs = Fs::new(RamStorage::new());
+        let mut rng = SeqRng(1);
+        ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+        fs.put(EF_PIN, &[8, 4, 1, 0, 0]).unwrap();
+        let mut state = FidoState::new();
+        let r = {
+            let mut p = Fixed(presence);
+            let mut ctx = Ctx {
+                presence: &mut p,
+                dev: dev(),
+                fs: &mut fs,
+                rng: &mut rng,
+                state: &mut state,
+                now_ms: 0,
+            };
+            reset(&mut ctx)
+        };
+        assert_eq!(r, Err(want));
+        assert!(fs.has_data(EF_PIN));
+    }
+}
+
 /// A presence backend that paints the [`crate::Confirm`] — the trusted display,
 /// which CTAP 2.1 §6.6 exempts from the power-up window.
 struct Displayed;

@@ -154,9 +154,12 @@ pub struct CredExt<'a> {
 }
 
 impl CredExt<'_> {
-    /// Whether this credBlob is short enough to seal (`< MAX_CREDBLOB_LENGTH`).
+    /// Whether this credBlob is short enough to seal. The bound is inclusive: getInfo
+    /// advertises `maxCredBlobLength`, and §12.2 has the platform send anything up to
+    /// and including it, so refusing exactly that length would make the advertisement
+    /// a lie.
     fn cred_blob_ok(&self) -> bool {
-        !self.cred_blob.is_empty() && self.cred_blob.len() < MAX_CREDBLOB_LENGTH
+        !self.cred_blob.is_empty() && self.cred_blob.len() <= MAX_CREDBLOB_LENGTH
     }
 
     /// Number of entries the box's field-0x07 sub-map would carry.

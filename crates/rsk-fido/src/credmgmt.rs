@@ -195,20 +195,31 @@ pub fn cred_mgmt<S: Storage, R: Rng>(
             authorize_cm(ctx.state, proto, payload, param, Some(&rp_id_hash), now)?;
             enumerate_creds(ctx, true, &rp_id_hash, out)
         }
+        // 0x06/0x07 name a credential rather than an rp, so §6.8.5/6.8.6 match the
+        // token's permissions RP ID against *the credential's* rp: locate first, then
+        // finish the authorization, then act.
         CM_DELETE_CREDENTIAL => {
             let cred_id = req.cred_id.ok_or(CtapError::MissingParameter)?;
             let mut pbuf = [0u8; 1 + MAX_RAW_SUBPARA];
             let payload = payload_with_subpara(CM_DELETE_CREDENTIAL, req.raw_subpara, &mut pbuf)?;
-            authorize_cm(ctx.state, proto, payload, param, None, now)?;
-            delete_credential(ctx, cred_id)
+            verify_cm_token(ctx.state, proto, payload, param)?;
+            let found = find_resident(ctx.fs, cred_id);
+            check_rp_binding(ctx.state, found.as_ref().map(|(_, h)| h))?;
+            ctx.state.mark_token_used(now);
+            let (slot, rp_id_hash) = found.ok_or(CtapError::NoCredentials)?;
+            delete_credential(ctx, slot, &rp_id_hash)
         }
         CM_UPDATE_USER_INFO => {
             let cred_id = req.cred_id.ok_or(CtapError::MissingParameter)?;
             let user_id = req.user_id.ok_or(CtapError::MissingParameter)?;
             let mut pbuf = [0u8; 1 + MAX_RAW_SUBPARA];
             let payload = payload_with_subpara(CM_UPDATE_USER_INFO, req.raw_subpara, &mut pbuf)?;
-            authorize_cm(ctx.state, proto, payload, param, None, now)?;
-            update_user(ctx, cred_id, user_id, req.user_name, req.user_display_name)
+            verify_cm_token(ctx.state, proto, payload, param)?;
+            let found = find_resident(ctx.fs, cred_id);
+            check_rp_binding(ctx.state, found.as_ref().map(|(_, h)| h))?;
+            ctx.state.mark_token_used(now);
+            let (slot, _) = found.ok_or(CtapError::NoCredentials)?;
+            update_user(ctx, slot, user_id, req.user_name, req.user_display_name)
         }
         _ => Err(CtapError::InvalidParameter),
     }
@@ -225,19 +236,41 @@ fn authorize_cm(
     rp_id_hash: Option<&[u8; 32]>,
     now_ms: u64,
 ) -> Result<(), CtapError> {
+    verify_cm_token(state, proto, payload, param)?;
+    check_rp_binding(state, rp_id_hash)?;
+    state.mark_token_used(now_ms);
+    Ok(())
+}
+
+/// The half of [`authorize_cm`] that needs no credential: the pinUvAuthParam over
+/// `payload` and the `cm` permission. Split out for deleteCredential /
+/// updateUserInformation, whose rpId check can only run once the target credential
+/// has been located.
+fn verify_cm_token(
+    state: &mut FidoState,
+    proto: PinProto,
+    payload: &[u8],
+    param: &[u8],
+) -> Result<(), CtapError> {
     if !state.verify_token(proto, payload, param) || state.paut.permissions & PERM_CM == 0 {
         return Err(CtapError::PinAuthInvalid);
     }
-    // An rpId-bound token may only manage that rp (0x01/0x02/0x06/0x07 carry no
-    // rpId, so a bound token is rejected outright).
-    if state.paut.has_rp_id {
-        match rp_id_hash {
-            Some(h) if state.paut.rp_id_hash == *h => {}
-            _ => return Err(CtapError::PinAuthInvalid),
-        }
-    }
-    state.mark_token_used(now_ms);
     Ok(())
+}
+
+/// An rpId-scoped token may only manage that rp. `None` means the subcommand names no
+/// rp at all (0x01/0x02), which a scoped token may not use; for 0x06/0x07 it also
+/// stands for "no such credential", where a scoped token is told PIN_AUTH_INVALID
+/// rather than NO_CREDENTIALS — otherwise the code would reveal whether some other
+/// rp owns the id it was handed.
+fn check_rp_binding(state: &FidoState, rp_id_hash: Option<&[u8; 32]>) -> Result<(), CtapError> {
+    if !state.paut.has_rp_id {
+        return Ok(());
+    }
+    match rp_id_hash {
+        Some(h) if state.paut.rp_id_hash == *h => Ok(()),
+        _ => Err(CtapError::PinAuthInvalid),
+    }
 }
 
 /// Build `subcommand ‖ raw_subpara` for the MAC payload.
@@ -558,34 +591,45 @@ fn enumerate_creds_response(
     Ok(enc.writer().position())
 }
 
-/// 0x06 deleteCredential: remove the EF_CRED record with this resident id and
-/// decrement (or delete) its EF_RP record. Replies with only the status byte.
-fn delete_credential<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, cred_id: &[u8]) -> CtapResult {
+/// Locate the resident credential carrying this 42-byte stored id: its EF_CRED slot
+/// and the rp it belongs to. The rp hash is what §6.8.5/6.8.6 compare an rpId-scoped
+/// pinUvAuthToken against, so the lookup precedes the authorization decision.
+fn find_resident<S: Storage>(fs: &mut Fs<S>, cred_id: &[u8]) -> Option<(u16, [u8; 32])> {
     if cred_id.len() != CRED_RESIDENT_LEN {
-        return Err(CtapError::NoCredentials);
+        return None;
     }
     let mut buf = [0u8; CRED_REC_MAX];
     let mut occupied = [false; MAX_RESIDENT_CREDENTIALS as usize];
-    slot_map(ctx.fs, EF_CRED, &mut occupied);
+    slot_map(fs, EF_CRED, &mut occupied);
     for i in 0..MAX_RESIDENT_CREDENTIALS {
         if !occupied[i as usize] {
             continue;
         }
-        let Some(n) = ctx.fs.read(EF_CRED + i, &mut buf) else {
+        let Some(n) = fs.read(EF_CRED + i, &mut buf) else {
             continue;
         };
         let n = n.min(buf.len());
         if n >= RECORD_PREFIX && buf[32..RECORD_PREFIX] == *cred_id {
             let mut rp_id_hash = [0u8; 32];
             rp_id_hash.copy_from_slice(&buf[..32]);
-            ctx.fs
-                .delete(EF_CRED + i)
-                .map_err(|_| CtapError::NotAllowed)?;
-            decrement_rp(ctx.fs, &rp_id_hash)?;
-            return Ok(0);
+            return Some((i, rp_id_hash));
         }
     }
-    Err(CtapError::NoCredentials)
+    None
+}
+
+/// 0x06 deleteCredential: drop the located EF_CRED record and decrement (or delete)
+/// its EF_RP record. Replies with only the status byte.
+fn delete_credential<S: Storage, R: Rng>(
+    ctx: &mut Ctx<S, R>,
+    slot: u16,
+    rp_id_hash: &[u8; 32],
+) -> CtapResult {
+    ctx.fs
+        .delete(EF_CRED + slot)
+        .map_err(|_| CtapError::NotAllowed)?;
+    decrement_rp(ctx.fs, rp_id_hash)?;
+    Ok(0)
 }
 
 /// Decrement the `EF_RP` count for `rp_id_hash`, deleting the record when it hits
@@ -634,41 +678,28 @@ pub(crate) fn decrement_rp<S: Storage>(
 /// across the reseal; see [`reseal_user`].
 fn update_user<S: Storage, R: Rng>(
     ctx: &mut Ctx<S, R>,
-    cred_id: &[u8],
+    slot: u16,
     user_id: &[u8],
     user_name: &str,
     user_display_name: &str,
 ) -> CtapResult {
-    if cred_id.len() != CRED_RESIDENT_LEN {
-        return Err(CtapError::NoCredentials);
-    }
     let mut buf = [0u8; CRED_REC_MAX];
-    let mut occupied = [false; MAX_RESIDENT_CREDENTIALS as usize];
-    slot_map(ctx.fs, EF_CRED, &mut occupied);
-    for i in 0..MAX_RESIDENT_CREDENTIALS {
-        if !occupied[i as usize] {
-            continue;
-        }
-        let Some(n) = ctx.fs.read(EF_CRED + i, &mut buf) else {
-            continue;
-        };
-        let n = n.min(buf.len());
-        if n >= RECORD_PREFIX && buf[32..RECORD_PREFIX] == *cred_id {
-            let mut seed = ctx.load_keydev().ok_or(CtapError::NotAllowed)?;
-            let r = reseal_user(
-                ctx,
-                i,
-                &buf[..n],
-                user_id,
-                user_name,
-                user_display_name,
-                &seed,
-            );
-            seed.zeroize();
-            return r;
-        }
-    }
-    Err(CtapError::NoCredentials)
+    let Some(n) = ctx.fs.read(EF_CRED + slot, &mut buf) else {
+        return Err(CtapError::NoCredentials);
+    };
+    let n = n.min(buf.len());
+    let mut seed = ctx.load_keydev().ok_or(CtapError::NotAllowed)?;
+    let r = reseal_user(
+        ctx,
+        slot,
+        &buf[..n],
+        user_id,
+        user_name,
+        user_display_name,
+        &seed,
+    );
+    seed.zeroize();
+    r
 }
 
 /// Reseal a resident credential with new user name / display name, PRESERVING

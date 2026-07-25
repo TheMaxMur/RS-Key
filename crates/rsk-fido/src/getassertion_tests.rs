@@ -1792,6 +1792,101 @@ fn get_next_assertion_walks_resident_credentials() {
     );
 }
 
+/// §6.3 "Reset the timer": the 30-second budget covers the gap between consecutive
+/// calls, not the whole walk. A platform drawing an account picker over three
+/// credentials must not run out of it partway through.
+#[test]
+fn get_next_assertion_timer_is_per_leg() {
+    let (mut fs, mut rng) = setup();
+    let mut state = crate::FidoState::new();
+    for (uid, t) in [
+        (&[1u8, 1, 1, 1][..], 10u64),
+        (&[2u8, 2, 2, 2][..], 20),
+        (&[3u8, 3, 3, 3][..], 30),
+    ] {
+        let mut out = [0u8; 1024];
+        let mut presence = crate::AlwaysConfirm;
+        let mut ctx = Ctx {
+            presence: &mut presence,
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: t,
+        };
+        make_credential(&mut ctx, &mc_request_user(uid), &mut out).unwrap();
+    }
+
+    let mut leg = |now_ms: u64, first: bool| {
+        let mut out = [0u8; 1024];
+        let mut presence = crate::AlwaysConfirm;
+        let mut ctx = Ctx {
+            presence: &mut presence,
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms,
+        };
+        if first {
+            get_assertion(&mut ctx, &ga_request(None), &mut out).map(|_| ())
+        } else {
+            get_next_assertion(&mut ctx, &mut out).map(|_| ())
+        }
+    };
+    assert_eq!(leg(100, true), Ok(()));
+    // 25 s later: inside the window measured from the getAssertion.
+    assert_eq!(leg(25_100, false), Ok(()));
+    // Another 25 s: 50 s since the getAssertion, but only 25 s since the last leg.
+    assert_eq!(leg(50_100, false), Ok(()));
+}
+
+/// …and a genuine gap still expires the walk.
+#[test]
+fn get_next_assertion_expires_after_a_quiet_thirty_seconds() {
+    let (mut fs, mut rng) = setup();
+    let mut state = crate::FidoState::new();
+    for (uid, t) in [(&[1u8, 1, 1, 1][..], 10u64), (&[2u8, 2, 2, 2][..], 20)] {
+        let mut out = [0u8; 1024];
+        let mut presence = crate::AlwaysConfirm;
+        let mut ctx = Ctx {
+            presence: &mut presence,
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: t,
+        };
+        make_credential(&mut ctx, &mc_request_user(uid), &mut out).unwrap();
+    }
+    let mut out = [0u8; 1024];
+    {
+        let mut presence = crate::AlwaysConfirm;
+        let mut ctx = Ctx {
+            presence: &mut presence,
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 100,
+        };
+        get_assertion(&mut ctx, &ga_request(None), &mut out).unwrap();
+    }
+    let mut presence = crate::AlwaysConfirm;
+    let mut ctx = Ctx {
+        presence: &mut presence,
+        dev: dev(),
+        fs: &mut fs,
+        rng: &mut rng,
+        state: &mut state,
+        now_ms: 30_101,
+    };
+    assert_eq!(
+        get_next_assertion(&mut ctx, &mut out),
+        Err(CtapError::NotAllowed)
+    );
+}
+
 #[test]
 fn get_next_assertion_uses_per_credential_counter() {
     // The getNextAssertion path must advance the walked credential's OWN counter
@@ -2187,6 +2282,64 @@ fn credblob_echoed_in_assertion() {
     assert_eq!(d.map().unwrap().unwrap(), 1);
     assert_eq!(d.str().unwrap(), "credBlob");
     assert_eq!(d.bytes().unwrap(), &[0x11, 0x22, 0x33]);
+}
+
+/// getInfo advertises `maxCredBlobLength`, and §12.2 has the platform send anything
+/// up to and including it — so exactly that many bytes must round-trip. One byte more
+/// is refused, and makeCredential says so with `credBlob: false`.
+#[test]
+fn credblob_at_the_advertised_maximum_round_trips() {
+    let (mut fs, mut rng) = setup();
+    let blob = [0x7Eu8; crate::consts::MAX_CREDBLOB_LENGTH];
+    let mc = run_mc(&mut fs, &mut rng, &mc_request_credblob(&blob));
+    let (resident_id, x, y) = parse_mc(&mc);
+
+    let mut out = [0u8; 1024];
+    let n = {
+        let mut state = crate::FidoState::new();
+        let mut presence = crate::AlwaysConfirm;
+        let mut ctx = Ctx {
+            presence: &mut presence,
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 20,
+        };
+        get_assertion(&mut ctx, &ga_request_credblob(&resident_id), &mut out).unwrap()
+    };
+    verify_assertion(&out[..n], &x, &y);
+    let ad = assertion_auth_data(&out[..n]);
+    let mut d = Decoder::new(&ad[37..]);
+    assert_eq!(d.map().unwrap().unwrap(), 1);
+    assert_eq!(d.str().unwrap(), "credBlob");
+    assert_eq!(d.bytes().unwrap(), &blob[..]);
+
+    // One byte over the advertised maximum: not stored, and reported as such.
+    let over = [0x7Eu8; crate::consts::MAX_CREDBLOB_LENGTH + 1];
+    let mc = run_mc(&mut fs, &mut rng, &mc_request_credblob(&over));
+    let (resident_id, ..) = parse_mc(&mc);
+    let n = {
+        let mut state = crate::FidoState::new();
+        let mut presence = crate::AlwaysConfirm;
+        let mut ctx = Ctx {
+            presence: &mut presence,
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 30,
+        };
+        get_assertion(&mut ctx, &ga_request_credblob(&resident_id), &mut out).unwrap()
+    };
+    let ad = assertion_auth_data(&out[..n]);
+    let mut d = Decoder::new(&ad[37..]);
+    d.map().unwrap();
+    assert_eq!(d.str().unwrap(), "credBlob");
+    assert!(
+        d.bytes().unwrap().is_empty(),
+        "an over-long blob is not kept"
+    );
 }
 
 // A resident makeCredential request that opts into largeBlobKey (+ hmac-secret).

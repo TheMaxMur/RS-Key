@@ -599,6 +599,61 @@ fn enumerate_credentials_requires_rpidhash() {
     );
 }
 
+/// §6.8.5/6.8.6: an rpId-scoped `cm` token may delete or rename credentials of *that*
+/// rp — the token's permissions RP ID is matched against the credential's rp, not
+/// required to be absent. Another rp's credential, and an id that matches nothing,
+/// both come back PIN_AUTH_INVALID so the code never reveals who owns an id.
+#[test]
+fn rp_scoped_token_manages_only_its_own_credentials() {
+    let (mut fs, mut rng) = setup();
+    let (mine, ..) = register(&mut fs, &mut rng, "example.com", &[1, 1], "alice");
+    let (theirs, ..) = register(&mut fs, &mut rng, "other.com", &[3, 3], "carol");
+    let mut state = armed(PERM_CM);
+    state.paut.rp_id_hash = sha256(b"example.com");
+    state.paut.has_rp_id = true;
+    let mut out = [0u8; 256];
+
+    // Another rp's credential: refused, and still there afterwards.
+    assert_eq!(
+        run(
+            &mut fs,
+            &mut state,
+            &cm_request(0x06, Some(&subpara_cred(&theirs)), &TOKEN),
+            &mut out,
+        ),
+        Err(CtapError::PinAuthInvalid)
+    );
+    // An id nobody owns: the same code, not NO_CREDENTIALS.
+    assert_eq!(
+        run(
+            &mut fs,
+            &mut state,
+            &cm_request(
+                0x06,
+                Some(&subpara_cred(&[0xAB; CRED_RESIDENT_LEN])),
+                &TOKEN
+            ),
+            &mut out,
+        ),
+        Err(CtapError::PinAuthInvalid)
+    );
+    // Its own: allowed.
+    assert_eq!(
+        run(
+            &mut fs,
+            &mut state,
+            &cm_request(0x06, Some(&subpara_cred(&mine)), &TOKEN),
+            &mut out,
+        ),
+        Ok(0)
+    );
+    assert!(rp_present(
+        &mut fs,
+        &mut armed(PERM_CM),
+        &sha256(b"other.com")
+    ));
+}
+
 #[test]
 fn delete_credential_drops_count_and_rp() {
     let (mut fs, mut rng) = setup();

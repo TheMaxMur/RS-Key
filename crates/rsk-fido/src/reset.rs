@@ -27,10 +27,17 @@ pub fn reset<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>) -> CtapResult {
     if !ctx.presence.shows_confirm() && !in_reset_window(ctx) {
         return Err(CtapError::NotAllowed);
     }
-    // A factory reset requires a physical touch; both a timeout and a cancel
-    // abort it before anything is wiped.
-    if !ctx.check_user_presence(crate::Confirm::titled("Erase everything?")) {
-        return Err(CtapError::UserActionTimeout);
+    // A factory reset requires a physical touch, and §6.6 distinguishes the ways it
+    // can fail: an explicit refusal is OPERATION_DENIED ("the platform SHOULD NOT
+    // repeat"), a silent timeout is USER_ACTION_TIMEOUT ("the platform MAY repeat").
+    match ctx
+        .presence
+        .request(crate::Confirm::titled("Erase everything?"))
+    {
+        crate::Presence::Confirmed => {}
+        crate::Presence::Declined => return Err(CtapError::OperationDenied),
+        crate::Presence::Timeout => return Err(CtapError::UserActionTimeout),
+        crate::Presence::Cancelled => return Err(CtapError::KeepAliveCancel),
     }
     // Drop every FIDO file, then regenerate the seed. The flash `Fs` is shared
     // with the OpenPGP applet, so delete only live, FIDO-owned keys

@@ -899,6 +899,9 @@ pub fn get_next_assertion<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, out: &mut [u8
     seed.zeroize();
     let resp_len = result?;
 
+    // §6.3 "Reset the timer": the 30-second budget is per leg, not for the whole
+    // walk — a platform drawing an account picker must not run out of it halfway.
+    ctx.state.gna.started_ms = ctx.now_ms;
     ctx.state.gna.counter += 1;
     if ctx.state.gna.counter >= ctx.state.gna.total {
         ctx.state.gna.reset();

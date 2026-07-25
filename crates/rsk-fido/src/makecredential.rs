@@ -878,9 +878,10 @@ fn encode_mc_extensions<S: Storage>(
     let mut enc = Encoder::new(Cursor::new(out));
     enc.map(l).map_err(|_| CtapError::Other)?;
     if blob_present {
-        // The flag reports whether the blob was short enough to seal.
+        // The flag reports whether the blob was short enough to seal — inclusive of
+        // the advertised maxCredBlobLength, matching `CredExt::cred_blob_ok`.
         enc.str("credBlob")
-            .and_then(|e| e.bool(req.ext_cred_blob.len() < MAX_CREDBLOB_LENGTH))
+            .and_then(|e| e.bool(req.ext_cred_blob.len() <= MAX_CREDBLOB_LENGTH))
             .map_err(|_| CtapError::Other)?;
     }
     if req.ext_cred_protect != 0 {
