@@ -218,6 +218,33 @@ fn set_min_pin_stores_rpid_hashes() {
 }
 
 #[test]
+fn set_min_pin_rpid_list_over_capacity_is_key_store_full() {
+    let mut fs = Fs::new(RamStorage::new());
+    let mut state = armed(PERM_ACFG);
+    // §6.11: "If the authenticator cannot store or add the minPinLengthRPIDs, it
+    // returns CTAP2_ERR_KEY_STORE_FULL" — the list is not silently truncated to
+    // maxRPIDsForSetMinPINLength, and nothing is written.
+    let ids: std::vec::Vec<&str> = std::vec![
+        "a.example",
+        "b.example",
+        "c.example",
+        "d.example",
+        "e.example",
+        "f.example",
+        "g.example",
+        "h.example",
+        "i.example",
+    ];
+    let req = config_request(0x03, &subpara_min_pin_rpids(6, &ids), &TOKEN);
+    assert_eq!(
+        run_fs(&mut fs, &mut state, &req),
+        Err(CtapError::KeyStoreFull)
+    );
+    let mut buf = [0u8; 2];
+    assert_eq!(fs.read(EF_MINPINLEN, &mut buf), None);
+}
+
+#[test]
 fn set_min_pin_cannot_be_lowered() {
     let mut fs = Fs::new(RamStorage::new());
     let mut state = armed(PERM_ACFG);

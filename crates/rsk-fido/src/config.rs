@@ -66,6 +66,10 @@ struct Req<'a> {
     force_change: bool,
     rp_ids: [&'a str; MAX_MIN_PIN_RPIDS],
     rp_ids_len: usize,
+    /// The list did not fit `MAX_MIN_PIN_RPIDS`. Reported as `KEY_STORE_FULL` by
+    /// `set_min_pin_length` (CTAP 2.1 §6.11), not silently truncated — and only
+    /// after the pinUvAuthParam check, so it is not an unauthenticated probe.
+    rp_ids_overflow: bool,
     /// Vendor (0xFF) subCommandParams: `{1: vendorCommandId, 2: byte param,
     /// 3: int param}`. The soft-lock ids use the byte param; the PicoForge
     /// physical-config ids use the integer param.
@@ -85,6 +89,7 @@ fn parse(data: &[u8]) -> Result<Req<'_>, CtapError> {
         force_change: false,
         rp_ids: [""; MAX_MIN_PIN_RPIDS],
         rp_ids_len: 0,
+        rp_ids_overflow: false,
         vendor_id: 0,
         vendor_param: &[],
         vendor_param_int: 0,
@@ -148,6 +153,8 @@ fn parse_min_pin_sub<'a>(d: &mut Decoder<'a>, req: &mut Req<'a>, sk: u64) -> Res
                 if req.rp_ids_len < MAX_MIN_PIN_RPIDS {
                     req.rp_ids[req.rp_ids_len] = id;
                     req.rp_ids_len += 1;
+                } else {
+                    req.rp_ids_overflow = true;
                 }
             }
         }
@@ -209,6 +216,7 @@ pub fn authenticator_config<S: Storage, R: Rng>(
             Ok(0)
         }
         CONFIG_TOGGLE_ALWAYS_UV => toggle_always_uv(ctx),
+        CONFIG_SET_MIN_PIN if req.rp_ids_overflow => Err(CtapError::KeyStoreFull),
         CONFIG_SET_MIN_PIN => set_min_pin_length(
             ctx,
             req.new_min_pin,
