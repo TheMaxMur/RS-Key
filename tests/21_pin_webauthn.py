@@ -73,7 +73,9 @@ def main():
         padded = PIN + b"\x00" * (64 - len(PIN))
         npe = proto.encrypt(padded)
         sp = client_pin(dev, cid, {1: 2, 2: 3, 3: proto.cose(), 4: proto.authenticate(npe), 5: npe})
-        assert sp[0] in (0x00, 0x30), f"setPIN status {sp[0]:#x}"
+        # 0x33 = PIN_AUTH_INVALID, what CTAP 2.1 §6.5.5.5 returns when a PIN is
+        # already set (changePIN is the only way to replace one).
+        assert sp[0] in (0x00, 0x33), f"setPIN status {sp[0]:#x}"
         ph = hashlib.sha256(PIN).digest()[:16]
         tk = client_pin(dev, cid, {1: 2, 2: 5, 3: proto.cose(), 6: proto.encrypt(ph)})
         assert tk[0] == 0x00, f"getPinToken status {tk[0]:#x}"
