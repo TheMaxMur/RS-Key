@@ -79,10 +79,26 @@ jobs:
 
       - name: resolve tag
         id: tag
+        env:
+          # Through the environment, never `${{ }}` inside the run block: the
+          # runner substitutes the literal text before bash parses it, so quoting
+          # does not stop `$(…)` or a backtick — and git accepts both in a tag.
+          TAG: ${{ inputs.tag }}
         run: |
-          tag="${{ inputs.tag }}"
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+          # Every later step consumes the outputs below, so this is the one gate.
+          # `case` (not grep, which is line-oriented and would pass a tag whose
+          # FIRST line is well-formed) against the shape, then the charset.
+          case "$TAG" in
+            v[0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "refusing: tag is not vMAJOR.MINOR.PATCH" >&2; exit 1 ;;
+          esac
+          case "$TAG" in
+            *[!0-9A-Za-z.+-]*)
+              echo "refusing: tag has characters not allowed in a release tag" >&2
+              exit 1 ;;
+          esac
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
 
       - name: build the 14 reproducible firmware flavors
         run: |
