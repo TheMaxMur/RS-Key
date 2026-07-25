@@ -13,6 +13,8 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-07-26
+
 ### Fixed
 
 A second pass over the CTAP 2.1 text, this time across `authenticatorLargeBlobs`,
@@ -2780,7 +2782,8 @@ family that keeps the "enterprise" features in the open tree.
   signature of it, and a CycloneDX SBOM. See
   [docs/releases.md](docs/releases.md) to verify a download.
 
-[Unreleased]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.2...HEAD
+[Unreleased]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.3...HEAD
+[0.4.3]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/TheMaxMur/RS-Key/compare/v0.3.10...v0.4.0
