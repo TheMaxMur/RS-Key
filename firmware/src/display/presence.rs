@@ -83,7 +83,7 @@ impl TouchPresence {
             // down from a previous ceremony would start filling this hold on the
             // first poll — one press approving two ceremonies. Every other modal
             // waits for release for the same reason; so does the button build.
-            u.touch.wait_release(start, timeout);
+            u.touch.wait_release_ceremony(start, timeout);
             // Deny is a single tap; Approve is a deliberate hold that fills the button
             // as it builds (an accidental brush can't approve). The base button was
             // painted by the `render(Screen::Confirm)` above; the fill then grows in
@@ -162,8 +162,14 @@ impl TouchPresence {
             // Save is a single tap and this loop polls before any delay, so without
             // a release wait a finger already down approves the card in the same
             // frame it is painted — too fast to read. See confirm_wait above.
-            u.touch.wait_release(start, timeout);
+            u.touch.wait_release_ceremony(start, timeout);
             loop {
+                // Save is a single tap, so the deadline must be tested BEFORE the read:
+                // an expired ceremony that still sees a finger on ALLOW_RECT would read
+                // the leftover press as a fresh approval (`confirm_wait`'s hold can't).
+                if start.elapsed() >= timeout {
+                    break Outcome::Timeout;
+                }
                 // The power button sleeps (and auto-locks) from the registration card too,
                 // abandoning it (→ Cancelled) like a lifted finger that times out.
                 if u.sleep_button_pressed() {
@@ -176,9 +182,6 @@ impl TouchPresence {
                 }
                 if CANCEL_REQUESTED.load(Ordering::Relaxed) {
                     break Outcome::Cancelled;
-                }
-                if start.elapsed() >= timeout {
-                    break Outcome::Timeout;
                 }
                 block_for(Duration::from_millis(TOUCH_POLL_MS));
             }
@@ -257,6 +260,12 @@ impl rsk_fido::UserPresence for TouchPresence {
             Outcome::Timeout => rsk_fido::Presence::Timeout,
             Outcome::Cancelled => rsk_fido::Presence::Cancelled,
         }
+    }
+
+    // Every ceremony paints the `Confirm` it is asking about, so a tap approves that
+    // operation and no other — the CTAP 2.1 §6.6 exemption from the reset window.
+    fn shows_confirm(&self) -> bool {
+        true
     }
 
     // The trusted display has an on-screen PIN pad, so built-in UV is available and

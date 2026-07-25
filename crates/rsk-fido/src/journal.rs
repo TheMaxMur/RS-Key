@@ -12,6 +12,10 @@
 //! is committed *before* the slot is reused, so a power cut anywhere loses at
 //! most the newest event and never produces a false tamper verdict.
 //!
+//! Entries are append-only with one bounded exception: a run of `EV_CONFIG_WRITE`
+//! — the one event an ungated host can drive on demand — is counted inside the
+//! newest entry instead of appending ([`append_config_write`]).
+//!
 //! The chain head is `fold(epoch, window entries)`. A checkpoint signs
 //! `"RSK-AUDIT-CKPT-v1" ‖ head ‖ seq_next ‖ challenge` with an ECDSA P-256 key
 //! derived (HKDF) from the OTP DEVK — the reset-stable device attestation
@@ -59,13 +63,22 @@ pub const EV_CHECKPOINT: u8 = 0x11;
 pub const EV_ATT_IMPORT: u8 = 0x12;
 pub const EV_ATT_CLEAR: u8 = 0x13;
 pub const EV_CFG_ALWAYS_UV: u8 = 0x14;
-pub const EV_CONFIG_WRITE: u8 = 0x15; // device-config write over the FIDO vendor channel
+/// Device-config write over the FIDO vendor channel. `aux` = the target that opened
+/// the entry; the detail counts the writes coalesced into it ([`append_config_write`]).
+pub const EV_CONFIG_WRITE: u8 = 0x15;
 /// aux: 1 = journalling turned on, 0 = turned off (the off entry is the last one
 /// written, recorded before the flag flips, so the trail shows when it stopped).
 pub const EV_AUDIT_CFG: u8 = 0x16;
 
 /// Entry: `seq(4 LE) ‖ uptime_ms(4 LE) ‖ event(1) ‖ aux(1) ‖ detail(8) ‖ rsvd(2)`.
 pub const ENTRY_LEN: usize = 20;
+const DETAIL_AT: usize = 10;
+const DETAIL_LEN: usize = 8;
+/// [`EV_CONFIG_WRITE`] detail: `repeats(2 LE) ‖ targets(1)` — how many further
+/// config writes were folded into the entry, and a `1 << target` mask of every
+/// record the run touched.
+const CW_REPEATS_AT: usize = DETAIL_AT;
+const CW_TARGETS_AT: usize = DETAIL_AT + 2;
 const META_LEN: usize = 1 + 4 + 4 + 32;
 const META_VER: u8 = 1;
 const GENESIS_TAG: &[u8] = b"RSK-AUDIT-GENESIS-v1";
@@ -148,8 +161,8 @@ fn build_entry(seq: u32, now_ms: u64, ev: u8, aux: u8, detail: &[u8]) -> [u8; EN
     e[4..8].copy_from_slice(&(now_ms.min(u32::MAX as u64) as u32).to_le_bytes());
     e[8] = ev;
     e[9] = aux;
-    let n = detail.len().min(8);
-    e[10..10 + n].copy_from_slice(&detail[..n]);
+    let n = detail.len().min(DETAIL_LEN);
+    e[DETAIL_AT..DETAIL_AT + n].copy_from_slice(&detail[..n]);
     e
 }
 
@@ -182,6 +195,54 @@ pub fn append<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, ev: u8, aux: u8, detail: 
         let _ = raw_append(ctx, EV_BOOT, 0, &[]);
     }
     let _ = raw_append(ctx, ev, aux, detail);
+}
+
+/// Append a device-config write, coalescing a *run* of them into one ring entry.
+///
+/// [`EV_CONFIG_WRITE`] is the only journalled event a silent host can drive on
+/// demand — the write is ungated on the default build — so 128 of them would evict
+/// every other event from the 128-slot ring. A run therefore costs a single slot:
+/// the entry keeps its `seq`, opening target and timestamp, and counts the rest in
+/// its detail. `seq_next`, `start` and the epoch never move, so a coalesce evicts
+/// nothing and the host-side fold over the exported window still reproduces the
+/// head. Strictly this event class: every other one is behind a PIN, a touch or a
+/// credential, and each of those is distinct evidence worth its own slot.
+pub fn append_config_write<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, target: u8) {
+    if !is_enabled(ctx.fs) {
+        return; // off: write no flash at all, not even a bump of a stale entry
+    }
+    // Never coalesce across a power cycle — that would swallow this cycle's EV_BOOT.
+    if ctx.state.audit_boot_logged && coalesce_config_write(ctx, target) {
+        return;
+    }
+    append(ctx, EV_CONFIG_WRITE, target, &[0, 0, target_bit(target)]);
+}
+
+/// The `targets` mask bit of a config-write target. The `CONFIG_TARGET_*` ids are
+/// 0..2; anything else is unreachable (`config_write` rejects unknown targets) and
+/// collapses onto the top bit rather than shifting out of range.
+fn target_bit(target: u8) -> u8 {
+    1u8.checked_shl(target as u32).unwrap_or(0x80)
+}
+
+/// Fold one more config write into the newest ring entry when that entry is itself
+/// an [`EV_CONFIG_WRITE`]: bump its saturating repeat count and OR in the target
+/// bit. `false` when there is no such entry — or its slot could not be rewritten —
+/// leaving the caller to append a fresh one.
+fn coalesce_config_write<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, target: u8) -> bool {
+    let m = load_meta(&ctx.dev, ctx.fs);
+    if m.seq_next == m.start {
+        return false;
+    }
+    let seq = m.seq_next.wrapping_sub(1);
+    let mut e = [0u8; ENTRY_LEN];
+    if read_slot(ctx.fs, seq, &mut e).is_none() || e[8] != EV_CONFIG_WRITE {
+        return false;
+    }
+    let repeats = u16::from_le_bytes([e[CW_REPEATS_AT], e[CW_REPEATS_AT + 1]]).saturating_add(1);
+    e[CW_REPEATS_AT..CW_REPEATS_AT + 2].copy_from_slice(&repeats.to_le_bytes());
+    e[CW_TARGETS_AT] |= target_bit(target);
+    ctx.fs.put(slot_fid(seq), &e).is_ok()
 }
 
 fn raw_append<S: Storage, R: Rng>(

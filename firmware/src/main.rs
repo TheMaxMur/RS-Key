@@ -56,6 +56,7 @@ mod otp_keys;
 mod pin_lock;
 mod presence;
 mod rescue_platform;
+mod usb_attach;
 mod vendor;
 mod worker;
 
@@ -580,6 +581,9 @@ async fn main(spawner: Spawner) {
 
     // Attach to the host (pull-up) and immediately start servicing it: no blocking
     // work between `build()` and the `usb_task` spawn (see the init note above).
+    // Everything above is boot work no host could have used, so the CTAP 2.1 §6.6
+    // reset window starts here rather than at the time driver's zero.
+    usb_attach::mark();
     let usb = builder.build();
     let ctap = hid.map(|h| {
         let (reader, writer) = h.split();
@@ -687,10 +691,13 @@ async fn main(spawner: Spawner) {
         // the effective LED pin/driver + touch timeout, not a bare "default". A
         // headless `led_kind="none"` build compiles this whole block out, leaving
         // CONFIG_READ's effective map empty.
+        // The floor `set_timeout_secs` applies has to show up here too, or a record
+        // storing 5 would advertise a 5 s window the device never actually waits.
         let effective_timeout_secs = phy
             .as_ref()
             .and_then(|p| p.presence_timeout)
             .filter(|&t| t != 0)
+            .map(|t| t.max(presence::MIN_TIMEOUT_SECS))
             .unwrap_or(30);
         rsk_fido::config::set_effective_phy(led_gpio, led_driver, effective_timeout_secs);
 

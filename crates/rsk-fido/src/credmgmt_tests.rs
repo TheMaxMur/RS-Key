@@ -274,6 +274,37 @@ fn enumerate_rps_walks_then_not_allowed() {
     );
 }
 
+#[test]
+fn dropping_the_token_strands_a_walk_in_progress() {
+    // The Next walkers carry no pinUvAuthParam of their own (CTAP 2.1 §6.8) — they
+    // inherit the Begin's authorization, so retiring that token must end the walk
+    // rather than let it keep enumerating the store.
+    let (mut fs, mut rng) = setup();
+    register(&mut fs, &mut rng, "example.com", &[1, 1], "a");
+    register(&mut fs, &mut rng, "other.com", &[2, 2], "b");
+    let mut out = [0u8; 256];
+
+    for drop_token in [0, 1] {
+        let mut state = armed(PERM_CM);
+        run(
+            &mut fs,
+            &mut state,
+            &cm_request(0x02, None, &TOKEN),
+            &mut out,
+        )
+        .unwrap();
+        if drop_token == 0 {
+            state.stop_using_token();
+        } else {
+            state.reset_pin_uv_auth_token(&mut SeqRng(9));
+        }
+        assert_eq!(
+            run(&mut fs, &mut state, &cm_next(0x03), &mut out),
+            Err(CtapError::NotAllowed)
+        );
+    }
+}
+
 fn parse_rp(resp: &[u8], begin: bool) -> (std::string::String, [u8; 32], Option<u8>) {
     let mut d = Decoder::new(resp);
     let fields = d.map().unwrap().unwrap();

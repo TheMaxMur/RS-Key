@@ -1038,9 +1038,9 @@ impl Ui {
 
     /// Snapshot the most recent journal events for the audit log, newest first. Each
     /// `EV_*` code maps to its display [`rsk_ui::AuditKind`], and an entry from the
-    /// **current** power cycle also carries how long ago it happened — the journal's
-    /// uptime is the same monotonic clock as `Instant::now()` but resets each boot, so a
-    /// boot entry marks the session boundary and older rows show no time (no wall clock).
+    /// **current** power cycle also carries how long ago it happened — the journal
+    /// stamps [`crate::usb_attach::elapsed_ms`], which resets each boot, so a boot
+    /// entry marks the session boundary and older rows show no time (no wall clock).
     /// Borrow-safe like [`Self::load_rps`] (the worker is parked while this modal runs).
     fn load_events(&self, rows: &mut [AuditRow], page: u16) -> (usize, u16) {
         let dev = self.keys.device();
@@ -1048,7 +1048,7 @@ impl Ui {
         // stored `uptime_ms` to `u32::MAX`, so after ~49.7 days of continuous uptime both
         // sides saturate together and a just-logged event still reads "now" rather than a
         // delta measured from the saturation point.
-        let now_ms = Instant::now().as_millis().min(u32::MAX as u64);
+        let now_ms = crate::usb_attach::elapsed_ms().min(u32::MAX as u64);
         let offset = page as usize * rsk_ui::PK_ROWS_MAX;
         let mut store = self.fs.borrow_mut();
         let mut idx = 0usize;

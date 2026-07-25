@@ -14,7 +14,7 @@ use rsk_sdk::sw::Sw;
 
 use crate::consts::{
     CRED_PROT_UV_REQUIRED, CTAP_AUTHENTICATE, CTAP_REGISTER, CTAP_VERSION, EF_ATT_CHAIN, EF_EE_DEV,
-    U2F_AUTH_CHECK_ONLY, U2F_AUTH_ENFORCE, U2F_AUTH_FLAG_TUP, U2F_REGISTER_ID,
+    U2F_AUTH_CHECK_ONLY, U2F_AUTH_ENFORCE, U2F_AUTH_FLAG_TUP, U2F_AUTH_NO_ENFORCE, U2F_REGISTER_ID,
 };
 use crate::credential::{CRED_REC_MAX, credential_load};
 use crate::ec::{MAX_DER_SIG, P256Key};
@@ -171,6 +171,16 @@ fn cmd_authenticate<S: Storage, R: Rng>(
     apdu: &Apdu,
     out: &mut [u8],
 ) -> (Sw, usize) {
+    // U2F Raw Message Formats §7.2 assigns exactly three control bytes; a reserved
+    // one used to reach the signature with neither a touch nor the TUP flag — a
+    // silent signing oracle for any host that sent an unassigned P1.
+    let tup = match apdu.p1 {
+        U2F_AUTH_CHECK_ONLY | U2F_AUTH_ENFORCE => true,
+        // `strict-up` promises a touch on every assertion and `want_up`
+        // (getassertion.rs) only reaches CTAP2, so that build drops don't-enforce.
+        U2F_AUTH_NO_ENFORCE if !cfg!(feature = "strict-up") => false,
+        _ => return (Sw::INCORRECT_P1P2, 0),
+    };
     // chal(32) ‖ appId(32) ‖ khLen(1) ‖ keyHandle
     if apdu.nc < 32 + 32 + 1 + 1 {
         return (Sw::INCORRECT_PARAMS, 0);
@@ -236,9 +246,10 @@ fn cmd_authenticate<S: Storage, R: Rng>(
         return (Sw::CONDITIONS_NOT_SATISFIED, 0);
     }
 
-    // Enforce-user-presence (P1=0x03) requires a touch, now that the handle is
-    // known valid; don't-enforce (0x08) signs without one. No button → instant.
-    if apdu.p1 == U2F_AUTH_ENFORCE && !ctx.check_user_presence(crate::Confirm::titled("Sign in?")) {
+    // Everything that still signs owes a touch, now that the handle is known valid;
+    // only the explicit don't-enforce byte is exempt, so `tup` gates the touch and
+    // the TUP flag together. No button → instant.
+    if tup && !ctx.check_user_presence(crate::Confirm::titled("Sign in?")) {
         scalar.zeroize();
         return (Sw::CONDITIONS_NOT_SATISFIED, 0);
     }
@@ -249,11 +260,7 @@ fn cmd_authenticate<S: Storage, R: Rng>(
         None => return (Sw::EXEC_ERROR, 0),
     };
 
-    let flags = if apdu.p1 == U2F_AUTH_ENFORCE {
-        U2F_AUTH_FLAG_TUP
-    } else {
-        0
-    };
+    let flags = if tup { U2F_AUTH_FLAG_TUP } else { 0 };
     let ctr = get_sign_counter(ctx.fs);
 
     // sign base: appId ‖ flags ‖ counter(BE) ‖ chal

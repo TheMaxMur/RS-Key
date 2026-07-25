@@ -143,6 +143,20 @@ impl CredMgmtState {
             rp_index_valid: false,
         }
     }
+
+    /// Drop the enumerate cursor back to its fail-closed start (`rp_counter >
+    /// rp_total`), so a *Next* answers `NotAllowed` until the next authorized
+    /// *Begin*. The slot→rpId-prefix cache stays: it is a `write_gen`-guarded perf
+    /// index, holds no authorization, and never leaves the device.
+    fn reset(&mut self) {
+        self.rp_counter = 1;
+        self.rp_total = 0;
+        self.cred_counter = 1;
+        self.cred_total = 0;
+        self.rp_id_hash = [0; 32];
+        self.rp_next_slot = 0;
+        self.cred_next_slot = 0;
+    }
 }
 
 /// Multi-fragment `authenticatorLargeBlobs` write buffer. The platform sends
@@ -198,6 +212,20 @@ impl PinUvAuthToken {
     }
 }
 
+/// The clientPIN soft lock as the firmware persists it across a warm reset: the
+/// engaged flag *and* the mismatch batch that arms it. They move as one — carrying
+/// the flag alone let a host stop at two mismatches and reboot to restart the
+/// batch, spending the whole flash retry budget with no power cycle (CTAP 2.1
+/// §6.5.5.6).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub struct PinLock {
+    /// clientPIN is locked until the authenticator is really power-cycled.
+    pub engaged: bool,
+    /// Consecutive wrong PINs this power cycle; the lock arms at
+    /// [`PIN_MISMATCH_LIMIT`].
+    pub mismatches: u8,
+}
+
 /// All clientPIN state that must survive between CBOR commands within one power
 /// cycle.
 pub struct FidoState {
@@ -212,8 +240,10 @@ pub struct FidoState {
     /// The persistent (PCMR) token. RAM-resident; not persisted across reboots.
     pub ppaut_token: [u8; 32],
     pub ppaut_permissions: u8,
-    pub needs_power_cycle: bool,
-    pub new_pin_mismatches: u8,
+    // Not `pub`: the firmware must move the pair through [`FidoState::pin_lock`] /
+    // [`FidoState::restore_pin_lock`], never one half of it.
+    pub(crate) needs_power_cycle: bool,
+    pub(crate) new_pin_mismatches: u8,
     /// `getNextAssertion` carry-over.
     pub gna: AssertionState,
     /// `credentialManagement` enumerate carry-over.
@@ -239,6 +269,12 @@ pub struct FidoState {
     /// Whether this power cycle's `EV_BOOT` journal entry has been written
     /// ([`crate::journal`]). Survives [`Self::reset`] — the cycle did not end.
     pub audit_boot_logged: bool,
+    /// This power cycle started from a **warm** reset (`sys_reset`), not a power-on
+    /// reset — set by the firmware from a register a power-on reset clears. The
+    /// host can request a warm reset ungated, so anything that keys on "just powered
+    /// up" (the CTAP 2.1 §6.6 reset window) must refuse to trust the restarted
+    /// uptime. Power-cycle fact, not session state: survives [`Self::reset`].
+    pub warm_boot: bool,
 }
 
 impl Default for FidoState {
@@ -267,6 +303,7 @@ impl FidoState {
             keydev_dec: None,
             devk: None,
             audit_boot_logged: false,
+            warm_boot: false,
         }
     }
 
@@ -279,15 +316,33 @@ impl FidoState {
     }
 
     /// Clear all session state after a reset (the `Drop` impl zeroizes the old
-    /// token / session key / ephemeral scalar). The DEVK and the journal's
-    /// boot-entry flag are device/power-cycle facts, not session state — they
-    /// carry across.
+    /// token / session key / ephemeral scalar). The DEVK, the journal's boot-entry
+    /// flag and the warm-boot origin are device/power-cycle facts, not session
+    /// state — they carry across.
     pub fn reset(&mut self) {
         let devk = self.devk;
         let audit_boot_logged = self.audit_boot_logged;
+        let warm_boot = self.warm_boot;
         *self = Self::new();
         self.devk = devk;
         self.audit_boot_logged = audit_boot_logged;
+        self.warm_boot = warm_boot;
+    }
+
+    /// The clientPIN soft lock to persist across a warm reset (see [`PinLock`]).
+    pub fn pin_lock(&self) -> PinLock {
+        PinLock {
+            engaged: self.needs_power_cycle,
+            mismatches: self.new_pin_mismatches,
+        }
+    }
+
+    /// Restore a [`pin_lock`](Self::pin_lock) taken before a warm reset. Run once at
+    /// boot, any time after [`Self::new`]: nothing else writes these fields at
+    /// start-up, and [`Self::ensure_initialized`] leaves them alone.
+    pub fn restore_pin_lock(&mut self, lock: PinLock) {
+        self.needs_power_cycle = lock.engaged;
+        self.new_pin_mismatches = lock.mismatches;
     }
 
     /// `initialize`: on the first clientPIN command, generate the ephemeral ECDH
@@ -324,8 +379,10 @@ impl FidoState {
         self.ephemeral_set.then_some(self.ephemeral_pub)
     }
 
-    /// `resetPinUvAuthToken`: new random token, cleared permissions / flags.
+    /// `resetPinUvAuthToken`: new random token, cleared permissions / flags. The
+    /// credMgmt cursor goes with it, like [`Self::stop_using_token`].
     pub fn reset_pin_uv_auth_token(&mut self, rng: &mut impl Rng) {
+        self.cm.reset();
         rng.fill(&mut self.paut.token);
         self.paut.permissions = 0;
         self.paut.in_use = false;
@@ -396,6 +453,10 @@ impl FidoState {
         self.paut.rp_id_hash = [0; 32];
         self.paut.user_present = false;
         self.paut.user_verified = false;
+        // The credMgmt *Next* walkers carry no pinUvAuthParam of their own (CTAP 2.1
+        // §6.8 exempts them) — they inherit the *Begin* call's authorization, so the
+        // cursor must die with the token that granted it.
+        self.cm.reset();
     }
 
     /// Expire an in-use token once its usage timer has run out (CTAP 2.1
@@ -452,3 +513,7 @@ impl Drop for FidoState {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "state_tests.rs"]
+mod tests;

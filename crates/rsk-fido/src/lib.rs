@@ -94,6 +94,15 @@ pub trait UserPresence {
     /// on-screen Approve/Deny prompt; the BOOTSEL-button backend ignores it.
     fn request(&mut self, confirm: Confirm<'_>) -> Presence;
 
+    /// Whether this backend actually shows the [`Confirm`] to the user, so a touch
+    /// carries *which* operation it approves. The BOOTSEL button discards the title
+    /// and raises the same indication for every ceremony; only the trusted display
+    /// overrides this. CTAP 2.1 §6.6 exempts exactly such an authenticator from the
+    /// `authenticatorReset` power-up window ([`reset`](crate::reset::reset)).
+    fn shows_confirm(&self) -> bool {
+        false
+    }
+
     /// Whether this backend can collect built-in user verification — a PIN entered
     /// on the authenticator's own UI, so it never reaches the host. Only the
     /// trusted-display backend overrides this; the BOOTSEL button and the host-test

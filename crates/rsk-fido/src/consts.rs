@@ -295,6 +295,10 @@ pub const EF_LARGEBLOB: u16 = 0x1101; // serialized large-blob array
 
 /// PIN retry budget.
 pub const MAX_PIN_RETRIES: u8 = 8;
+/// Consecutive wrong PINs allowed per power cycle before clientPIN soft-locks and
+/// demands a real power cycle (CTAP 2.1 §6.5.5.6). The batch is the whole point of
+/// the rule, so it must survive a warm reset — see [`crate::state::PinLock`].
+pub const PIN_MISMATCH_LIMIT: u8 = 3;
 /// Default minimum PIN length when no policy is set.
 #[cfg(not(any(feature = "fips-profile", feature = "strong-pin")))]
 pub const MIN_PIN_LENGTH: u8 = 4;
@@ -311,8 +315,15 @@ pub const PUAT_INITIAL_USAGE_LIMIT_MS: u64 = 30_000;
 /// it cannot linger for the whole power cycle.
 pub const PUAT_MAX_USAGE_PERIOD_MS: u64 = 600_000;
 
+/// `authenticatorReset` power-up window (CTAP 2.1 §6.6): an authenticator with no
+/// display honors a reset only this long after power-up, so the wipe takes a
+/// deliberate replug. Measured from a *power-on* reset — see
+/// [`FidoState::warm_boot`](crate::FidoState#structfield.warm_boot).
+pub const RESET_WINDOW_MS: u64 = 10_000;
+
 // U2F authenticate control byte (P1) and flags.
 pub const U2F_AUTH_ENFORCE: u8 = 0x03; // enforce user presence and sign
 pub const U2F_AUTH_CHECK_ONLY: u8 = 0x07; // is this key handle ours?
+pub const U2F_AUTH_NO_ENFORCE: u8 = 0x08; // don't enforce user presence and sign
 pub const U2F_AUTH_FLAG_TUP: u8 = 0x01; // test-of-user-presence bit
 pub const U2F_REGISTER_ID: u8 = 0x05; // registration response leading byte

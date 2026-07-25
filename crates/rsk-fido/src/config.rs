@@ -246,7 +246,7 @@ fn set_phy<S: Storage, R: Rng>(
     let mut p = phy::load(ctx.fs).unwrap_or_default();
     f(&mut p);
     phy::save(ctx.fs, &p).map_err(|_| CtapError::Other)?;
-    journal::append(ctx, journal::EV_CONFIG_WRITE, CONFIG_TARGET_PHY as u8, &[]);
+    journal::append_config_write(ctx, CONFIG_TARGET_PHY as u8);
     Ok(0)
 }
 

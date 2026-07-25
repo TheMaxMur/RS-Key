@@ -347,6 +347,100 @@ fn enforce_auth_rejects_unknown_handle_without_touch() {
 }
 
 #[test]
+fn authenticate_p1_matrix() {
+    // U2F Raw Message Formats §7.2 assigns 0x03 / 0x07 / 0x08 and nothing else. A
+    // reserved control byte used to skip the touch, clear the TUP flag and sign
+    // anyway — a silent signing oracle; it must be INCORRECT_P1P2 instead.
+    let mut fs = Fs::new(RamStorage::new());
+    let mut rng = SeqRng(11);
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+
+    let mut data = std::vec::Vec::new();
+    data.extend_from_slice(&CHAL);
+    data.extend_from_slice(&APP);
+    let reg_bytes = ext_apdu(CTAP_REGISTER, 0, &data);
+    let mut out = [0u8; 1024];
+    let kh = {
+        let reg = Apdu::parse(&reg_bytes).unwrap();
+        let mut state = crate::FidoState::new();
+        let mut presence = crate::AlwaysConfirm;
+        let mut ctx = Ctx {
+            presence: &mut presence,
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 0,
+        };
+        assert_eq!(process_u2f(&mut ctx, &reg, &mut out).0, Sw::OK);
+        out[67..67 + KEY_HANDLE_LEN].to_vec()
+    };
+    let mut ad = std::vec::Vec::new();
+    ad.extend_from_slice(&CHAL);
+    ad.extend_from_slice(&APP);
+    ad.push(KEY_HANDLE_LEN as u8);
+    ad.extend_from_slice(&kh);
+
+    // `strict-up` promises a touch on every assertion, so don't-enforce is not an
+    // accepted control byte there — `want_up` (getassertion.rs) only covers CTAP2.
+    let no_enforce = if cfg!(feature = "strict-up") {
+        (U2F_AUTH_NO_ENFORCE, Sw::INCORRECT_P1P2, false, false)
+    } else {
+        (U2F_AUTH_NO_ENFORCE, Sw::OK, true, false)
+    };
+    // (P1, status word, produces a signature, demands a touch)
+    let cases = [
+        (0x00, Sw::INCORRECT_P1P2, false, false),
+        (0x01, Sw::INCORRECT_P1P2, false, false),
+        (0x02, Sw::INCORRECT_P1P2, false, false),
+        (U2F_AUTH_ENFORCE, Sw::OK, true, true),
+        (0x04, Sw::INCORRECT_P1P2, false, false),
+        (
+            U2F_AUTH_CHECK_ONLY,
+            Sw::CONDITIONS_NOT_SATISFIED,
+            false,
+            false,
+        ),
+        no_enforce,
+        (0x42, Sw::INCORRECT_P1P2, false, false),
+        (0xFF, Sw::INCORRECT_P1P2, false, false),
+    ];
+
+    for (p1, want_sw, signs, touches) in cases {
+        let bytes = ext_apdu(CTAP_AUTHENTICATE, p1, &ad);
+        let apdu = Apdu::parse(&bytes).unwrap();
+        let mut o = [0u8; 256];
+        let mut state = crate::FidoState::new();
+        let mut presence = CountingPresence {
+            verdict: crate::Presence::Confirmed,
+            calls: 0,
+        };
+        let (sw, n) = {
+            let mut ctx = Ctx {
+                presence: &mut presence,
+                dev: dev(),
+                fs: &mut fs,
+                rng: &mut rng,
+                state: &mut state,
+                now_ms: 0,
+            };
+            process_u2f(&mut ctx, &apdu, &mut o)
+        };
+        assert_eq!(sw, want_sw, "P1 {p1:#04x} status word");
+        assert_eq!(n > 0, signs, "P1 {p1:#04x} signature");
+        assert_eq!(presence.calls, usize::from(touches), "P1 {p1:#04x} touch");
+        if signs {
+            // The TUP flag must report the touch that actually happened.
+            assert_eq!(
+                o[0] & U2F_AUTH_FLAG_TUP != 0,
+                touches,
+                "P1 {p1:#04x} TUP flag"
+            );
+        }
+    }
+}
+
+#[test]
 fn version() {
     let mut fs = Fs::new(RamStorage::new());
     let mut rng = SeqRng(3);

@@ -23,7 +23,7 @@ use rsk_fs::{Fs, Storage};
 use crate::cbordec::{cbor, def_map};
 use crate::consts::{
     CP_GET_PIN_TOKEN, CP_GET_PIN_UV_TOKEN_USING_PIN, EF_DEVICE_PIN, EF_MINPINLEN, EF_PIN,
-    MAX_MIN_PIN_RPIDS, MAX_PIN_RETRIES, MIN_PIN_LENGTH,
+    MAX_MIN_PIN_RPIDS, MAX_PIN_RETRIES, MIN_PIN_LENGTH, PIN_MISMATCH_LIMIT,
 };
 use crate::cose::cose_key_ecdh;
 use crate::error::{CtapError, CtapResult};
@@ -587,7 +587,7 @@ fn spend_and_verify_pin_hash<S: Storage, R: Rng>(
             return Err(CtapError::PinBlocked);
         }
         ctx.state.new_pin_mismatches += 1;
-        if ctx.state.new_pin_mismatches >= 3 {
+        if ctx.state.new_pin_mismatches >= PIN_MISMATCH_LIMIT {
             ctx.state.needs_power_cycle = true;
             journal::append(ctx, journal::EV_PIN_LOCKOUT, 1, &[]);
             return Err(CtapError::PinAuthBlocked);
