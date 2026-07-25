@@ -51,9 +51,16 @@ After 3 wrong attempts in a single power cycle the device returns
 `PIN_AUTH_BLOCKED` (`0x34`) and refuses more PIN entry until you unplug and
 re-insert it. The 8-attempt budget is the across-power-cycle hard limit.
 
+"Power cycle" means a real one. Both the block and the count of wrong attempts
+that arms it are held in a register a warm reset preserves and only a power-on
+reset clears, so a host that reboots the device — which it can do without any
+credential — cannot restart the batch and walk through the 8-attempt budget
+unattended.
+
 The retry counter resets on a correct PIN. There is no PUK or admin override:
-once it is locked, the only way back is `ykman fido reset`, which wipes
-everything (below). `rsk fido set-pin` asks for the current PIN when changing,
+once it is locked, the only way back is `ykman fido reset`, which wipes everything
+and has to run within ten seconds of a replug (see [Factory
+reset](#factory-reset)). `rsk fido set-pin` asks for the current PIN when changing,
 the new one twice, and prints the resulting `clientPin` state.
 
 Once a PIN is set, makeCredential refuses to run without it (CTAP
@@ -177,9 +184,24 @@ a fresh identity and signature counter. The OpenPGP / PIV / OATH
 applets are untouched: each applet's reset wipes only its own files, and a FIDO
 reset deliberately steps around them even where the file ids interleave.
 
-The wipe is gated by a physical touch. The familiar "reset only within 10 s of
-plug-in" anti-accidental-reset gate is enforced client-side by `ykman` and the
-browser, not by the firmware itself.
+**Replug the key first.** The wipe is gated by a physical touch *and* by the
+CTAP 2.1 §6.6 power-up window: the firmware accepts `authenticatorReset` only
+within **10 seconds** of the key attaching to USB. Later than that it answers
+`CTAP2_ERR_NOT_ALLOWED` (`0x30`) straight away, before asking for the touch, and
+the host tool reports the reset as failed. So the flow is: unplug, plug back in,
+run the reset, touch within ten seconds.
+
+Two details that catch people out:
+
+- **A software reboot does not reopen the window** — it closes it. A host can ask
+  the device to reboot without any credential (`rsk reboot`, a phy config write),
+  so a window a host could restart at will would be no protection. Pull the key out.
+- **Trusted-display builds are exempt.** There the prompt names the operation on
+  screen, so the window is not what stands between you and an accidental wipe; the
+  reset works whenever you confirm it on the panel.
+
+`rsk offboard` handles this for you: it sends the reset, and only if the device
+refuses does it prompt for the replug and retry.
 
 ## Troubleshooting
 
@@ -187,7 +209,11 @@ browser, not by the firmware itself.
   exclude-list matching a credential already on the device.
 - **"PIN required" / repeated PIN prompts at registration**. A PIN is set, so
   makeCredential needs it (`PUAT_REQUIRED 0x36`). Enter it. If you have
-  forgotten it, only a reset clears it.
+  forgotten it, only a [reset](#factory-reset) clears it — replug first.
+- **The reset fails immediately with `CTAP2_ERR_NOT_ALLOWED` (`0x30`)**, without
+  ever asking for a touch. The key was plugged in more than ten seconds ago.
+  Unplug it, plug it back in, re-run. A `rsk reboot` does not count: only a real
+  power cycle opens the window.
 - **A site demands UV but you have no PIN**. Set one (`rsk fido set-pin`); UV on
   this device means the FIDO PIN.
 - **"no space" / store-full at registration**. 256 resident passkeys is the cap

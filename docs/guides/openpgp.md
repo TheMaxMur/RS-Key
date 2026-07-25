@@ -20,17 +20,19 @@ YubiKey" ([build.md](../build.md)).
 
 | | Default | Length | Unlocks |
 |---|---|---|---|
-| User PIN (PW1) | `123456` | ≥ 6 | signing, decryption, authentication |
-| Admin PIN (PW3) | `12345678` | ≥ 8 | key import/generation, card settings |
-| Reset Code (RC) | `12345678` (= PW3) | — | unblocking PW1 without PW3 |
+| User PIN (PW1) | `123456` | 6–127 | signing, decryption, authentication |
+| Admin PIN (PW3) | `12345678` | 8–127 | key import/generation, card settings |
+| Reset Code (RC) | unset | 8–127 | unblocking PW1 without PW3 |
 
-The `≥ 6` / `≥ 8` minima are gpg's own policy, not a card limit. The firmware
-only refuses a new PIN that is *shorter than the old one*. Its hard maximum is
-127 bytes.
+The card enforces those lengths itself: a `CHANGE REFERENCE DATA` or `RESET
+RETRY COUNTER` carrying a new value outside the range is refused with `6700`,
+whatever the host's own policy is. gpg applies the same `≥ 6` / `≥ 8` minima
+before it ever reaches the card. A shorter reference stored by an older firmware
+keeps verifying; only new ones are checked.
 
-A fresh card seeds the Reset Code to the same value as the admin PIN
-(`12345678`), so it is functional out of the box. Set your own with `passwd`
-option 4 (below) so it isn't just a copy of PW3.
+A fresh card has **no** Reset Code. It stays deactivated until an admin sets one
+(`passwd` option 4, below), so `RESET RETRY COUNTER` in its RC form cannot run
+against a known default.
 
 Each PIN has its **own retry counter**, default **3**. A correct entry resets
 that PIN's counter. A wrong one decrements it. `gpg --card-status` prints them
@@ -237,7 +239,10 @@ rsk openpgp reset      # or: gpg --card-edit → admin → factory-reset
 reset code) and **nothing else**. FIDO / PIV / OATH / OTP survive (the
 TERMINATE is scoped to the OpenPGP FIDs). This is also the only way out of a
 PW3 that you have blocked: a blocked admin PIN cannot be unblocked, only reset
-away, along with the keys it protected.
+away, along with the keys it protected. It also works when the admin verifier
+itself is unusable — a card provisioned by an older firmware with an empty PW3
+could otherwise neither verify nor terminate, leaving a device-wide factory reset
+as the only escape.
 
 It is destructive but idempotent, so it is the clean way to clear non-default
 PINs a prior gpg session left behind (which otherwise block the test suite at

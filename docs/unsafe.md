@@ -7,11 +7,11 @@ contained. Adding a new `unsafe` requires updating this page. (Safe Rust rules
 out memory-corruption bugs in this code. It is not a security audit; see the
 [threat model](threat-model.md).)
 
-**Runtime sites: 11.** Six in the firmware proper (`main.rs` + `presence.rs`):
-the interrupt-handler pair (2), the `Send` impl, the heap init, and the two
-GPIO-pin `steal`s (the presence button + the LED power-enable rail). Two for the
-per-core prime sieves, one in the RSA assembly FFI, two in the standalone
-flash-wipe tool.
+**Runtime sites: 15.** Eight in the firmware proper (`main.rs` + `presence.rs`):
+the interrupt-handler pair (2), the `Send` impl, the heap init, and the four
+GPIO-pin `steal`s (the presence button, the LED power-enable rail, the nuisance
+USR LED, and the display build's wake button). Two for the per-core prime sieves,
+three in the RSA assembly FFI, two in the standalone flash-wipe tool.
 
 ```mermaid
 flowchart TB
@@ -19,13 +19,13 @@ flowchart TB
       a["interrupt executor (×2)"]
       b["Send for SendUsb"]
       c["heap init"]
-      d["GPIO pin steal ×2 (presence, LED power)"]
+      d["GPIO pin steal ×4 (presence, LED power, USR LED, display wake)"]
     end
     subgraph kg["firmware/src/core1.rs"]
       e["per-core prime sieves (×2)"]
     end
     subgraph asm["rsk-rsa-asm"]
-      f["modexp FFI"]
+      f["modexp / sign_crt / modexp_pub FFI (×3)"]
     end
     subgraph wipe["rsk-wipe"]
       g["raw flash erase/program (×2)"]
@@ -81,34 +81,38 @@ static buffer used by nothing else.
 *Safe alternative:* none; every embedded allocator initializes this way.
 *Containment:* one call, before any allocation can happen.
 
-### 5. GPIO pin type-erasure (presence button + LED power rail + USR-LED-off, ×3)
+### 5–8. GPIO pin type-erasure (presence button, LED power rail, USR-LED-off, display wake, ×4)
 
 ```rust
 let any = unsafe { AnyPin::steal(pin) };
 ```
 
-Three build-configurable GPIOs are chosen by *number* at build time rather than as
+Four build-configurable GPIOs are chosen by *number* at build time rather than as
 a concrete `PIN_n` type, so each must be converted to embassy's type-erased
 `AnyPin`: the optional `PRESENCE_PIN=<gpio>` presence button
 (`ButtonPresence::new_gpio`, `presence.rs`), the optional `LED_POWER_PIN`
-enable pin driven high to power a gated LED rail (the LED block in `main.rs`), and
+enable pin driven high to power a gated LED rail (the LED block in `main.rs`),
 the optional `USR_LED_PIN` driven to a nuisance onboard LED's OFF level and held
-(the boot block in `main.rs`). `AnyPin::steal` is `unsafe` because the caller must
+(the boot block in `main.rs`), and — display builds only — the optional
+`WAKE_PIN` button that wakes the panel from display sleep (the panel block in
+`main.rs`). `AnyPin::steal` is `unsafe` because the caller must
 guarantee unique ownership of that hardware pin — a `match` over `p.PIN_0..=PIN_29`
 (as the LED *data* pin uses) is impossible here, since it would double-move the
 peripheral set the LED block already claims.
 *Safe alternative:* none for a runtime/number-selected GPIO; the safe
 constructors require a statically known pin type.
 *Containment:* each is gated by pin-range validation and the single-owner
-invariant from `main` — none of the presence pin, the LED-power pin, nor the
-USR-LED pin is ever handed to another driver, and compile-time `assert!`s reject a
+invariant from `main` — none of the presence pin, the LED-power pin, the
+USR-LED pin, nor the wake pin is ever handed to another driver, and compile-time
+`assert!`s reject a
 build that collides `LED_POWER_PIN` or `USR_LED_PIN` with the LED data pin or a GPIO
 `PRESENCE_PIN` (and refuse `USR_LED_PIN` outright on a display build, whose panel
-owns those pads), as an LED/presence collision already panics at boot.
+owns those pads) or a `WAKE_PIN` in the LCD/touch range (`10..=18`),
+as an LED/presence collision already panics at boot.
 
 ## Firmware dual-core keygen (`firmware/src/core1.rs`)
 
-### 6–7. The per-core prime sieves
+### 9–10. The per-core prime sieves
 
 ```rust
 static mut CORE0_SIEVE: IncrementalSieve = IncrementalSieve::new();
@@ -137,23 +141,26 @@ a composite through to the strong-MR/Lucas test, which still rejects it.
 
 ## RSA assembly FFI (`crates/rsk-rsa-asm/src/lib.rs`)
 
-### 8. The modexp call
+### 11–13. The modexp / CRT-sign calls
 
 On-card RSA key generation needs hundreds of modular exponentiations over
 1024–2048-bit candidates. The pure-Rust path was ~7× too slow on the
-Cortex-M33 (minutes per key, CCID timeouts). The crate wraps one vendored
-C+ARM-assembly routine behind a single `unsafe` FFI call with fully owned,
+Cortex-M33 (minutes per key, CCID timeouts). The crate wraps the vendored
+C+ARM-assembly routines behind three `unsafe` FFI calls — `modexp_priv`
+(keygen), `sign_crt` (the CRT private-key operation) and `modexp_pub` (the
+public-exponent side of blinding and the fault check) — each with fully owned,
 length-checked buffers on both sides.
 *Safe alternative:* tried (num-bigint). Functionally correct, unusably slow.
-*Containment:* the call is KAT-gated: a power-on known-answer self-test must
-pass or key generation refuses to run, so a miscompiled/corrupt routine
-fails closed. Inputs/outputs are fixed-size stack buffers zeroized after
-use. On the host the crate substitutes a pure-Rust fallback, so all host
-tests exercise the same API safely.
+*Containment:* both ends fail closed. Key generation is KAT-gated — a power-on
+known-answer self-test must pass or it refuses to run — and every signature is
+Bellcore-fault-checked (`out^e == base`) by the caller, so a miscompiled or
+corrupt routine cannot emit one. Inputs/outputs are fixed-size stack buffers
+zeroized after use. On the host the crate substitutes a pure-Rust fallback, so
+all host tests exercise the same API safely.
 
 ## Flash wiper (`rsk-wipe/src/main.rs`)
 
-### 9–10. Raw flash erase/program in a critical section
+### 14–15. Raw flash erase/program in a critical section
 
 The wiper's entire job is to erase the flash the firmware lives on, from a
 RAM-resident image. It calls the ROM flash-erase/program routines inside

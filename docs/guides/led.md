@@ -96,11 +96,46 @@ rsk led --status idle --brightness 64          # 0–255; 0 = that state goes da
 rsk led --status idle --color blue --brightness 64
 ```
 
-> **`touch` cannot be switched off.** On a build without the trusted display the
-> touch state is the only signal that the key is waiting for your consent, so it is
-> held to a minimum brightness and a visible colour. You can restyle it — colour,
-> effect, speed, brighter — but `--brightness 0` / `--color off` on
-> `--status touch` is clamped, not obeyed. Every other state still goes fully dark.
+> **`touch` cannot be switched off, and its colour is reserved.** On a build
+> without the trusted display the touch state is the only signal that the key is
+> waiting for your consent. You can restyle it — colour, effect, speed, brighter —
+> but the firmware normalizes four things on every write, whatever transport it came
+> in on (`rsk led`, `rsk led --transport fido`, or a boot reload of the stored
+> record):
+>
+> - `--color off` on `--status touch` becomes the default yellow.
+> - `--brightness 0` on `--status touch` is raised to `8`.
+> - `--speed 1` is raised to `2`. At `1` the breathing effect renders an all-black
+>   frame every tick while the brightness byte still reads fine.
+> - **no other state may wear the touch state's colour.** One that does is reset to
+>   its own factory look, whatever its effect, brightness or speed. The rule keys on
+>   colour alone because a brightness or speed one unit off is identical to the eye,
+>   and the effect is no signal at all in `--steady` mode or on a one-LED board.
+>
+> Every other state still goes fully dark on `--brightness 0`. `rsk led --get`
+> shows what the device is actually rendering, so read it back after a write that
+> hits one of these rules.
+
+There is one case where `touch` gives way instead. If the state wearing the touch
+colour has that colour as its *own* factory colour, resetting it would not resolve
+the clash, so `touch` reverts to its factory look (yellow, bounce). Only `boot`
+(red) and `idle`/`processing` (green) can trigger that:
+
+```sh
+rsk led --status touch --color red      # sticks — unless boot is red
+rsk led --status touch --color green    # sticks — unless idle or processing is green
+rsk led --status boot  --color blue     # …then a red touch is legitimate and kept
+```
+
+**What this does not promise.** Two states in *different* colours can still be
+hard to tell apart. On a single-colour (`gpio`) build hue collapses to lit or
+unlit; red, green and yellow are mutually confusable under red-green colour
+blindness; and on a one-LED board `bounce`, `flow` and steady mode all render the
+same solid frame. What separates the states there is the per-state blink timing
+(touch 1000/100 ms vs idle 500/500 ms), which no host write can change — but
+`--steady` suppresses blinking altogether, so on a single-colour build it leaves
+nothing to distinguish them. If the consent signal has to be unambiguous, use a
+[trusted-display](display.md) build, which names the operation on screen.
 
 ### Effect & speed
 
@@ -136,9 +171,9 @@ steady toggle, use `rsk led`.
 |---|---|
 | `--status` | `idle`, `processing`, `touch`, `boot` (default `idle`) |
 | `--color` | `off`, `red`, `green`, `blue`, `yellow`, `magenta`, `cyan`, `white` |
-| `--brightness` | `0`–`255` per channel (`0` = off, except `--status touch`, see below) |
+| `--brightness` | `0`–`255` per channel (`0` = off, except `--status touch`, see above) |
 | `--effect` | `legacy`, `vapor`, `bounce`, `flow`, `sparkle` |
-| `--speed` | `0`–`255` (`0` = effect's built-in default) |
+| `--speed` | `0`–`255` (`0` = effect's built-in default; `1` is raised to `2` on `--status touch`) |
 | `--steady` | solid colour, no blinking, **global**, affects every state |
 | `--blink` | the opposite: restore blinking |
 
@@ -163,6 +198,11 @@ applies on the next boot, so re-plug the device. Colours (`rsk led`) apply live:
 rsk hw  --transport fido --touch-timeout 45   # wiring; approve with a touch
 rsk led --transport fido --status idle --color blue   # colours, applied live
 ```
+
+`--touch-timeout` has a floor of **10 seconds**. A shorter window can expire
+while your finger is still on the button, and the next queued request would then
+inherit that same press as its consent. `rsk hw` refuses anything below 10, and
+the firmware raises it anyway if some other host writes the record directly.
 
 ### Reset to defaults
 
@@ -190,6 +230,13 @@ so your settings survive a power cycle but not an OpenPGP/FIDO factory reset
 (those don't touch this file). The `led.rs` module keeps per-status atomics
 that the render task reads live. SET LED updates them immediately, then
 persists the full block to flash.
+
+The touch rules above live in the block codec (`crates/rsk-led`), not in any one
+command handler, so they apply wherever a block is decoded: the CCID setter, the
+FIDO `CONFIG_WRITE` LED target, and the boot reload. The CCID path persists the
+normalized block; a FIDO `CONFIG_WRITE` stores your bytes as sent and normalizes
+them on the way to the pixels, so `CONFIG_READ` can echo a record the device is
+not rendering. `rsk led --get` (`GET LED`) always reports the rendered values.
 
 For the wiring half (`rsk hw`), see the [phy record spec](../protocol.md). It
 writes to `EF_PHY` via the rescue applet and applies at next boot.

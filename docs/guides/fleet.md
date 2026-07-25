@@ -149,8 +149,10 @@ rsk inventory verify | sed -n 's/^\(serial\|fingerprint\) *: //p'
 ## Offboarding
 
 ```sh
-rsk offboard                       # guided, typed confirmation, ~3 touches
+rsk offboard                       # guided, typed confirmation, a replug, ~3 touches
 rsk offboard --report ret-42.json  # choose the receipt path
+rsk offboard --no-receipt          # wipe only — no preflight, no receipt file
+rsk offboard --verify ret-42.json  # re-check a saved receipt, no device
 ```
 
 Decommissions a returned key: wipes the OTP slots, OATH credentials, PIV
@@ -161,6 +163,35 @@ as a JSON receipt. It needs **both interfaces** (CCID for the applet wipes,
 FIDO HID for the reset and the signature). If either is missing it refuses
 before touching anything.
 
+**The receipt needs the audit journal, which is off by default.** The `RESET`
+event that makes the receipt mean anything is a journal entry, so on a device
+where [journalling](audit.md) was never enabled there is nothing to sign — and
+after the wipe there is no way back. `rsk offboard` therefore probes the journal
+state *before* the confirmation prompt and refuses, pointing at `rsk audit
+enable`. Enable it at provisioning time, or pass `--no-receipt` to wipe with no
+attestation at all — that flag skips the preflight, the checkpoint touch and the
+receipt file, so the run leaves no record of any kind.
+
+**The wipe is interrupted once, on purpose.** The FIDO reset is only accepted
+within ten seconds of a power-up ([fido2.md](fido2.md#factory-reset)), and by the
+time the four CCID applets are wiped the key has been plugged in for far longer. So
+`rsk offboard` sends the reset, and when the device refuses it prints an
+unplug/replug prompt and retries in the fresh window:
+
+```text
+the key refuses a reset this long after power-up (CTAP 2.1 §6.6):
+UNPLUG it now and plug it straight back in — it must be the only
+FIDO key attached, and the reset lands within 10s of
+power-up. Waiting up to 60s…
+```
+
+Plug the same key back in and nothing else: the tool takes the first FIDO device
+it finds, and the USB serial is a constant, so it cannot tell two RS-Keys apart.
+With a second key attached the wait simply times out and the run aborts cleanly
+rather than resetting the wrong device. A trusted-display key never sees the
+prompt — it is exempt from the window — and neither does firmware older than
+`0x0854`.
+
 The order is fixed and each step reports its own result:
 
 | Step | What it does | Records on success |
@@ -169,7 +200,7 @@ The order is fixed and each step reports its own result:
 | OATH | sends the OATH RESET command | `ok` |
 | PIV | exhausts PIN + PUK retry counters with two distinct wrong values, then factory RESET | `ok` |
 | OpenPGP | `rsk openpgp reset` (TERMINATE + ACTIVATE) | `ok` |
-| FIDO | CTAP `authenticatorReset` — **touch** | `ok` |
+| FIDO | CTAP `authenticatorReset` — **replug, then touch** | `ok` |
 | org attestation | clears the chain if one was installed — **touch** | `cleared` / `none` |
 | receipt | signs a checkpoint over the post-wipe journal — **touch** | signed |
 
@@ -180,34 +211,68 @@ retry counter. The reset then always succeeds regardless of the original
 credentials.
 
 The receipt is a cryptographic statement that **this** device (attestation
-fingerprint) was factory-reset (the signed window contains the `RESET` event):
+fingerprint) had its FIDO applet factory-reset (the signed window contains the
+`RESET` event). It is split along that trust boundary: `attested` is what the
+device signed plus the inputs needed to re-derive it, `host_observations` is
+what the tool saw and the device never vouched for.
 
 ```json
 {
-  "device": "37bebfdca282523b",
-  "timestamp": "2026-06-13T14:22:09-04:00",
-  "steps": {"otp": "ok", "oath": "ok", "piv": "ok", "openpgp": "ok",
-            "fido_reset": "ok", "org_attestation": "cleared"},
-  "journal_window": [{"seq": 412, "event": "RESET", "...": "..."}],
+  "receipt_version": 2,
   "signed": true,
-  "challenge": "…", "signed_head": "…", "seq": 414,
-  "signature": "…", "attestation_pubkey": "04…",
-  "fingerprint": "66573f74ca06359a"
+  "reset_attested": true,
+  "notes": [],
+  "attested": {
+    "signed_head": "…", "seq": 414, "signature": "…",
+    "attestation_pubkey": "04…", "fingerprint": "66573f74ca06359a",
+    "challenge": "…", "epoch": "…", "entries": "…"
+  },
+  "host_observations": {
+    "device": "37bebfdca282523b",
+    "timestamp": "2026-06-13T14:22:09-04:00",
+    "steps": {"otp": "ok", "oath": "ok", "piv": "ok", "openpgp": "ok",
+              "fido_reset": "ok", "org_attestation": "cleared"},
+    "journal_window": [{"seq": 412, "event": "RESET", "...": "..."}]
+  }
 }
 ```
 
-The default receipt path is `offboard-<serial>-<YYYYMMDD-HHMMSS>.json` in the
-working directory. `--report` overrides it. The file is always written, even
-on a partial failure. A failed step leaves its error string in `steps`, the
-report still saves, and `rsk offboard` then exits non-zero so a script notices.
+`attested.epoch` and `attested.entries` are the raw journal window the signature
+covers. Without them a reader can check the signature but cannot tie it to any
+particular window, so the `RESET` claim would rest on a decoded list anyone could
+hand-edit. Receipts written before this format (`receipt_version` absent) dropped
+them, which is why `--verify` refuses those outright rather than pretending to
+check them.
 
-To re-check a receipt offline, verify `signature` (ECDSA P-256, SHA-256) over
-`"RSK-AUDIT-CKPT-v1" ‖ signed_head ‖ seq (LE32) ‖ challenge` with
-`attestation_pubkey`, and match `fingerprint` against your inventory record:
+The default receipt path is `offboard-<serial>-<YYYYMMDD-HHMMSS>.json` in the
+working directory. `--report` overrides it. The file is always written, even on a
+partial failure or when a post-wipe check fails: a failed step leaves its error
+string in `steps`, a failed check appends a `{"code", "detail"}` entry to `notes`
+and clears `reset_attested`, the report still saves, and `rsk offboard` then exits
+non-zero so a script notices.
+
+### Re-checking a receipt
 
 ```sh
-jq -r '"\(.fingerprint)\t\([.steps[]] | join(" "))"' ret-42.json
+rsk offboard --verify ret-42.json --expect-key <fingerprint-from-enrollment>
 ```
+
+Offline, no device: it re-folds `entries` from `epoch`, requires the result to
+equal the signed head, requires that bound window to contain the `RESET` event,
+then checks the ECDSA P-256 signature over
+`"RSK-AUDIT-CKPT-v1" ‖ signed_head ‖ seq (LE32) ‖ challenge`. `--expect-key`
+takes the 16-hex fingerprint or the full SEC1 point; without it the run still
+verifies the chain and the signature but says so — the key comes from the receipt
+itself, so an unpinned check cannot tell you *which* device signed.
+
+**Pin the fingerprint you recorded at enrollment**, from your inventory record —
+not the one printed in the receipt you are checking. Pinning a receipt's own
+`attested.fingerprint` compares it against itself and proves nothing. `rsk
+offboard` says as much when it prints the re-check line at the end of a wipe.
+
+The `steps` are host observations. The journal has no event type for PIV, OATH,
+OpenPGP or OTP, so four of the five wipe steps are not attestable in principle;
+only the FIDO reset is. `--verify` prints that caveat on every run.
 
 ### Why it needs no PIN
 
@@ -222,21 +287,33 @@ device's own OTP DEVK. A wipe tool cannot forge it.
 ### Footguns and partial wipes
 
 - **OTP slots protected by an access code** are the one exception. They
-  refuse the PIN-free delete (`SW 6982`), and the receipt's `steps.otp`
+  refuse the PIN-free delete (`SW 6982`), and the receipt's
+  `host_observations.steps.otp`
   records exactly which slots stayed (e.g. `slots [2] protected by access
   codes — NOT wiped`). A follow-up `rsk offboard` after recovering the code,
   or a full [`rsk-wipe`](https://github.com/TheMaxMur/RS-Key/blob/main/rsk-wipe/README.md)
   flash nuke, covers that case.
-- **The CCID wipes are idempotent.** If the FIDO reset fails the tool stops
-  before signing anything (`nothing signed`). Just re-run `rsk offboard`; the
-  applet wipes already done are harmless to repeat.
+- **The CCID wipes are idempotent.** A failed FIDO reset is recorded in `steps`
+  and the run still writes the receipt for what *was* destroyed, then exits
+  non-zero. Re-run `rsk offboard`; the applet wipes already done are harmless to
+  repeat.
+- **`no-session` in `notes`** means the key was never replugged (or never came
+  back) within the timeout, so there was no FIDO session left to sign with. The
+  receipt is written anyway, unsigned, with the CCID steps that did complete and
+  `fido_reset` recording the abort — the applets are gone either way, and an
+  irreversible step must not end with no artifact. Re-run to finish the FIDO half.
 - **Unsigned receipt.** On a board with no OTP DEVK the wipes still happen but
   the checkpoint is refused (`0x30`). The report saves with `"signed": false`
-  and a warning. That is expected on dev boards, not a fault.
-- **`signed window does not contain the RESET event`** in the report means the
-  journal ring had already evicted the `RESET` past the export window before
-  the checkpoint. Rare, but it weakens the receipt's claim; re-running gives a
-  clean window.
+  and a `no-devk` note. That is expected on dev boards, not a fault.
+- **`no-reset-event` in `notes`** means the signed window did not contain the
+  `RESET`, so the receipt does not certify a wipe (`reset_attested` is false and
+  the command exits non-zero). The wipe still happened and re-running cannot
+  produce the missing event. The usual cause is journalling being off, which the
+  preflight now catches before anything is destroyed; the other is the journal
+  ring having evicted the `RESET` past the export window.
+- **`head-mismatch` in `notes`** means the signed head did not fold from the
+  window the device exported. Treat that as tampering or a broken device, not as
+  a retryable error.
 
 ## See also
 

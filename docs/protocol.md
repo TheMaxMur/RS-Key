@@ -170,7 +170,7 @@ surface returns:
 | `0x02` | INVALID_PARAMETER | malformed param / bad key / wrong blob length |
 | `0x14` | MISSING_PARAMETER | required field absent (e.g. blob/`pinUvAuthParam`) |
 | `0x27` | OPERATION_DENIED | touch declined / timed out |
-| `0x30` | NOT_ALLOWED | precondition unmet (no MSE channel, sealed, soft-locked) |
+| `0x30` | NOT_ALLOWED | precondition unmet (no MSE channel, sealed, soft-locked, or an `authenticatorReset` outside the §5.1 power-up window) |
 | `0x33` | PIN_AUTH_INVALID | `pinUvAuthParam` MAC or `acfg` permission wrong |
 | `0x36` | PUAT_REQUIRED | a PIN is set but no `pinUvAuthToken` was supplied |
 | `0x39` | REQUEST_TOO_LARGE | `subCommandParams` over the limit |
@@ -279,6 +279,47 @@ needs only the identifiers above. RS-Key implements:
 
 The only RS-Key-specific bytes a config tool needs are §6 (Management config),
 §7 (Rescue), §8 (Vendor/LED) and §9 (CTAPHID `0x41`).
+
+### 5.1 Where a standard command answers differently
+
+Two places where a host that works against other authenticators sees a status
+byte it may not expect. Both are spec-permitted strictness, not extensions.
+
+**`authenticatorReset` has a power-up window.** CTAP 2.1 §6.6 lets an
+authenticator with no display refuse a reset that does not follow a fresh
+power-up. RS-Key does: more than **10 s** after the device attached, command
+`0x07` answers `0x30 CTAP2_ERR_NOT_ALLOWED` *before* the touch prompt, so a host
+waiting on a press gets an immediate refusal instead. Four properties a host
+implementation has to plan for:
+
+- **The origin is the USB attach**, not power-on. Boot spends seconds before the
+  bus pull-up goes up (TRNG seeding, seal migrations, the one-shot at-rest
+  hardening lap), and none of it is time a host could have used.
+- **A warm reset closes the window, it does not reopen one.** The vendor REBOOT
+  (§8 `INS 1F` P1=0), its rescue twin, and the auto-reboot after a phy
+  `CONFIG_WRITE` are all host-requestable without a credential, so a window a host
+  can restart at will would be no window at all. Only a real power cycle opens one.
+- **Trusted-display builds are exempt.** Their prompt names the operation on
+  screen, which is what the window substitutes for; a reset is accepted at any
+  time there and still needs the on-screen confirmation.
+- **The touch is unchanged.** Inside the window the reset still requires user
+  presence, and a decline or timeout answers `0x27 OPERATION_DENIED`.
+
+Practically: prompt the user to replug, then send the reset. `rsk offboard` does
+exactly that — it sends the reset, and only on `0x30` prints the unplug/replug
+prompt and retries in the new window (`tools/rsk/offboard.py`), so it stays
+correct against a display build and against pre-`0x0854` firmware, which both
+accept the first attempt.
+
+**U2F AUTHENTICATE rejects a reserved P1.** U2F Raw Message Formats §7.2 assigns
+three control bytes; RS-Key accepts exactly those and answers `6A86`
+(`INCORRECT_P1P2`) to anything else, before parsing the request body.
+
+| P1 | Name | Behaviour |
+|---|---|---|
+| `03` | enforce-user-presence-and-sign | touch required; TUP flag set in the response |
+| `07` | check-only | valid handle → `6985`, unknown handle → `6A80`; never touches |
+| `08` | don't-enforce-user-presence-and-sign | signs with no touch, TUP flag clear; **rejected with `6A86` under `--features strict-up`**, which promises a touch on every assertion |
 
 ---
 
@@ -448,7 +489,7 @@ zero/empty TLV. (A host may still do a full read-modify-write for clarity.)
 | `04` | LED_GPIO | 1 | data-pin GPIO `0..=29` |
 | `05` | LED_BRIGHTNESS | 1 | global channel max `0..=255` |
 | `06` | OPTS | 2 | flags (BE16): `WCID 0x1`, `DIMM 0x2`, `DISABLE_POWER_RESET 0x4`, `LED_STEADY 0x8` |
-| `08` | PRESENCE_TIMEOUT | 1 | touch-wait timeout in **seconds** (`0`/absent ⇒ firmware default 30 s). Matches PicoForge `PresenceTimeout`. |
+| `08` | PRESENCE_TIMEOUT | 1 | touch-wait timeout in **seconds** (`0`/absent ⇒ firmware default 30 s; a non-zero value below `10` is raised to `10`). Matches PicoForge `PresenceTimeout`. |
 | `09` | USB_PRODUCT | 1..33 | product string + trailing `NUL` (length **includes** the NUL) |
 | `0A` | ENABLED_CURVES | 4 | FIDO curve bitmask (BE32) |
 | `0B` | ENABLED_USB_ITF | 1 | interface mask: `CCID 0x1`, `WCID 0x2`, `HID 0x4`, `KB 0x8`, `LWIP 0x10` |
@@ -467,6 +508,13 @@ Notes for a host implementation:
   binary carries a compile-time `MAX_LEDS` ceiling and drives the first LED_NUM of
   it). The rest, including `0x08` (PRESENCE_TIMEOUT) and `0x0D` (LED_ORDER), is
   shared with PicoForge.
+- **`PRESENCE_TIMEOUT` has a floor.** The record is host-writable and the touch
+  wait reads it live, so a one-second window could expire in the middle of a press
+  and let the next queued request inherit that same hold. The firmware raises any
+  non-zero value below **10 seconds**. The floor is applied at boot, on the way to
+  the wait. The stored record keeps the value as written, so a read-modify-write
+  round-trip is lossless; `CONFIG_READ`'s effective map (§9) reports the floored
+  value, because that is the window the device actually waits.
 - **`ENABLED_USB_ITF`**: absent ⇒ ALL. A mask that would disable every interface
   the firmware actually builds (`CCID | HID | KB`) is rejected and falls back to
   ALL. Otherwise CCID would vanish and the rescue applet that could fix it would
@@ -497,10 +545,49 @@ builds and are not part of the stable surface.
 **SET LED `0x10` gating:** ungated by default (like the rest of the config surface),
 **user-presence-gated under `strict-config`** — the FIDO twin
 (`CONFIG_WRITE`/`CONFIG_TARGET_LED`) is gated there too, so the vendor AID cannot be
-used to bypass it. The **touch** status is additionally clamped to a minimum
-brightness and a visible colour on every path: it is the only consent signal on a
-build without the trusted display, so it can be restyled but never silenced or made
-to look like idle.
+used to bypass it.
+
+**Touch-status normalization.** The awaiting-touch indicator is the only consent
+signal on a build without the trusted display, so the `EF_LED_CONF` codec — not any
+one command handler — normalizes it on **every** decode: the vendor `SET LED`, the
+FIDO `CONFIG_WRITE` LED target (§9), and the boot reload of the stored record
+alike. Four rules, in that order:
+
+- `color 0` (off) on the touch status becomes the default touch colour (yellow).
+- its `brightness` is raised to `8`.
+- a non-zero `speed` is raised to `2` (`speed 1` makes the breathing effect render
+  an all-black frame every tick while the brightness byte still reads compliant).
+- **the touch colour is the touch status's alone.** Any other status configured in
+  that colour is reset to its own factory look — whatever its effect, brightness or
+  speed. Uniqueness deliberately keys on colour rather than on the whole
+  `(effect, color, brightness, speed)` quad: brightness and speed are continuous
+  bytes, so a one-unit nudge is byte-unequal and eye-identical; steady mode renders
+  a solid frame for every effect; and on a one-LED board `bounce` and `flow` both
+  collapse to the same solid frame, so the effect byte carries no signal there.
+
+**The give-way case.** If the status wearing the touch colour has that colour as
+its *factory* colour, resetting it would not resolve the clash, so the **touch**
+status reverts to its factory look (bounce / yellow) instead. Only `boot` (red) and
+`idle`/`processing` (green) can trigger this. A red touch status therefore sticks
+only while `boot` is not red, and a green one only while neither `idle` nor
+`processing` is green. Yellow is nobody else's factory colour, which is what makes
+the fallback converge: enforcing twice is enforcing once.
+
+**What this does not guarantee.** Two statuses in *different* colours can still be
+hard to tell apart. The `gpio` backend has no hue at all — the indicator is lit or
+unlit; red, green and yellow are mutually confusable under red-green colour
+blindness; and on a one-LED board the effect adds nothing. What separates the
+states there is the per-status blink *timing* (touch 1000/100 ms vs idle
+500/500 ms), which is compile-time fixed and cannot be reconfigured — but the
+global steady toggle suppresses blinking altogether, and on a single-colour backend
+that leaves nothing at all to tell the states apart. A build with the trusted
+display remains the strong answer for consent signalling.
+
+So **the bytes you write are not always the bytes that render.** `SET LED 0x10`
+normalizes before it persists, and `GET LED 0x11` always returns what is actually
+showing. The FIDO `CONFIG_WRITE` LED target (§9) stores the block you sent
+verbatim and `CONFIG_READ` echoes that, so after a `CONFIG_WRITE` read back with
+`GET LED` to see the rendered values.
 
 **SET LED `0x10` P2 layout:** bits `[2:0]` = color, bit `3` (`0x08`) = steady
 (solid, no blink, a **global** toggle), bits `[5:4]` = status. P1 = per-channel
@@ -566,10 +653,10 @@ Keys 3/4 are present only when a PIN is set (see gating).
 | `06` | UNLOCK | `{1: blob(60)}` | — | MSE (the lock key *is* the auth) |
 | `07` | AUDIT_READ | — | journal window | PIN-token; **touch** if no PIN |
 | `08` | AUDIT_CHECKPOINT | `{1: nonce ≤32}` | DEVK signature over chain head ‖ nonce | PIN-token + touch |
-| `09` | ATT_IMPORT | `{1: blob(60), 2: DER chain}` | — | MSE + touch + PIN-token |
+| `09` | ATT_IMPORT | `{1: blob(60), 2: DER chain}` | — | MSE + touch + PIN-token. With **no PIN set** it additionally takes a distinct "Replace attestation identity?" confirmation — the PIN-token half is waived in that state, and an import replaces the identity every later U2F REGISTER signs with |
 | `0A` | ATT_CLEAR | — | — | MSE + touch + PIN-token |
 | `0B` | ATT_STATE | — | `{1: present, 2: sha256(chain)?}` | **ungated** |
-| `0C` | CONFIG_WRITE | `{1: target(uint), 2: blob(bstr)}` — target `0`=DEV_CONF, `1`=PHY, `2`=LED | — | **ungated by default**; touch + PIN-token under `strict-config`; no MSE |
+| `0C` | CONFIG_WRITE | `{1: target(uint), 2: blob(bstr)}` — target `0`=DEV_CONF, `1`=PHY, `2`=LED | — | **ungated by default**; touch + PIN-token under `strict-config`; no MSE. A write that changes nothing is a no-op: no flash write, no journal entry, and for PHY no reboot latch |
 | `0D` | CONFIG_READ | `{1: target(uint)}` — target `1`=PHY, `2`=LED | `{1: blob(bstr)[, 2: {phy_tag: uint}]}` | **ungated** |
 | `0E` | AUDIT_CONFIG | `{1: op(uint)}` — `0`=disable, `1`=enable, `2`=status | `{1: enabled(bool)}` | set: PIN-token + touch; status (`2`): **ungated** |
 
@@ -585,18 +672,42 @@ Keys 3/4 are present only when a PIN is set (see gating).
 > (`EF_LED_CONF`, §8, `CONF_LEN` bytes), persisted and then applied **live** by the
 > firmware, which reloads the block after a `0x41` command (the LED atomics are
 > firmware-side; `CONFIG_READ 0x02` returns the current block, seeded with the build
-> defaults on first boot, so a host can read-modify-write it). No MSE channel. The
-> config is not secret. **On the default build this write is ungated** (full ykman
-> parity — any USB host process can rewrite it). Building `--features strict-config`
+> defaults on first boot, so a host can read-modify-write it — **verbatim**, so it
+> can differ from what renders once §8's touch normalization applies). No MSE
+> channel. The config is not secret. **On the default build this write is ungated**
+> (full ykman parity — any USB host process can rewrite it). Building `--features strict-config`
 > gates it on a physical touch **and**, when a PIN is set, a `pinUvAuthToken` with
 > the `acfg` permission (the MAC below): a **stronger** gate than the CCID path's
 > presence-only, because CTAPHID is reachable by any unprivileged host process.
 > The write lands in the same `EF_DEV_CONF`, so a later CCID READ CONFIG echoes it.
 >
+> **Replays and the audit journal.** A write whose result equals what is already
+> stored returns `0x00` and does nothing at all — no flash write, no journal entry,
+> and for `PHY` no auto-reboot latch. The comparison is against the *merged*
+> record for `PHY`, so a partial blob that changes nothing is also a no-op; an
+> absent or unreadable `EF_PHY` is never "unchanged", so a host writing the default
+> values to repair one is not answered `0x00` with nothing stored.
+>
+> A write that *does* change something is journalled, and a **run** of them costs a
+> single ring entry. `CONFIG_WRITE` is the only journalled event an ungated host can
+> drive on demand, so appending one per call would let it evict the 128-entry window;
+> instead, when the newest entry is already a config write the device folds into it.
+> The entry keeps its `seq`, its timestamp (the *first* write of the run) and its
+> `aux` (the target that opened it), and its `detail` becomes
+> `repeats(2 LE) ‖ targets(1)` — the number of further writes absorbed (saturating)
+> and a `1 << target` mask of every record the run touched. A run never folds across
+> a power cycle, so the `BOOT` entry between two runs is never swallowed. For a host
+> re-checking the chain: a fold changes the head **without** advancing `seq_next`, so
+> the same `seq_next` with a different head is legitimate and is not a tamper signal
+> (`start`, `seq_next` and the epoch are untouched, so the window still folds to the
+> head exactly as before).
+>
 > **`CONFIG_READ 0x0D` PHY key 2 (RS-Key `0x0852`+):** the PHY read also returns an
 > optional `2:` map of the boot-*effective* values a host can't otherwise know —
 > keyed by phy tag: `4` = LED GPIO pin, `12` = LED driver, `8` = presence timeout
-> (seconds) — resolved to the build default when the record has no override. It is
+> (seconds) — resolved to the build default when the record has no override. Tag
+> `8` reports the window the wait actually uses, i.e. with the 10 s floor of §7.1
+> already applied. It is
 > display-only (the `1:` blob stays the raw override record for read-modify-write);
 > absent (empty map) on a headless `led_kind="none"` build, and older hosts ignore it.
 

@@ -135,7 +135,11 @@ token like every subcommand parameter.
 
 Import (`0x09`) and clear (`0x0A`) are gated exactly like a seed move:
 **channel + PIN (when one is set) + physical touch**. On this board the touch
-is the BOOTSEL button ([build.md](../build.md)). `status` (`0x0B`) is ungated;
+is the BOOTSEL button ([build.md](../build.md)). On a device with **no** PIN the
+import asks for a second, named confirmation first ("Replace attestation
+identity?"): the PIN half of the gate is waived in that state, and one generic
+touch should not hand over the identity every later U2F registration signs with.
+`status` (`0x0B`) is ungated;
 the chain it returns is public. Both mutations land in the
 [audit journal](audit.md) (`ATT_IMPORT` / `ATT_CLEAR`), and so does an
 `enableEnterpriseAttestation` (`CFG_EA`).

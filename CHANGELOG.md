@@ -119,6 +119,211 @@ Findings from the 26th internal security audit. bcdDevice → `0x0853`.
   the single-tap passkey card could be approved in the same frame it was painted,
   too fast to read.
 
+Findings from the 27th internal security audit. Most of the run re-examined the
+run-26 fixes, and three of them turned out to guard one path out of several.
+bcdDevice → `0x0854`; host tooling → `tools/rsk` 0.3.20.
+
+- **A PIV factory reset now finishes the job (HIGH).** The sweep ran eight batches
+  of 32 — a hard 256-file budget with no completion check — and then reported
+  `9000` regardless. `PUT DATA` exposes 240 host-writable data objects, so anyone
+  holding the management key (the public default on an unprovisioned card) could
+  push a provisioned card past that budget: the reset then deleted the PIN files
+  and stopped, `scan_files` re-seeded the default PIN `123456`, and the previous
+  owner's private keys kept both their sealed scalar and their policy record, so
+  `GENERAL AUTHENTICATE` still signed. `rsk offboard` signed a receipt certifying
+  the wipe. The sweep now runs to convergence like the FIDO and OpenPGP wipes: it
+  budgets *distinct deletes*, not passes, because the log-structured flash yields
+  one entry per superseded version and a batch of 32 entries can be three files; it
+  refuses to call a range clear when the enumeration was cut short by a read fault;
+  and it re-creates the PIN/PUK/retry files even when it fails, since a card left
+  without them answered `6A88` to every later `RESET` instead of the honest error.
+  A sweep that cannot converge answers `6581` instead of claiming success.
+- **The clientPIN retry budget can no longer be burned by a rebooting host
+  (HIGH).** run-26 persisted the soft-lock *flag* across a warm reset but not the
+  mismatch counter that arms it. A host that stopped at two wrong PINs never armed
+  the lock, took the ungated warm reboot, and started a fresh batch — while the
+  flash retry counter, decremented before the comparison, kept falling. Four rounds
+  spent all eight attempts in seconds, with no user interaction, and permanently
+  blocked the applet; the only recovery destroys every passkey and the seed. The
+  counter now travels with the flag in the watchdog scratch register, so the
+  power-cycle CTAP 2.1 §6.5.5.6 demands is a real one.
+- **One button hold no longer authorises two operations (HIGH).** The wait broke on
+  the button *level*, and its release debounce was bounded by the same presence
+  timeout as the wait itself, so it could return "confirmed" with the finger still
+  down. Requests are serialised, so a second one queued behind entered the wait
+  milliseconds later and consumed the same unbroken press — a full `getAssertion`,
+  an OpenPGP UIF signature or a PIV touch-policy signature the user never approved.
+  A press is now spent once a ceremony returns and stays spent until the finger
+  actually lifts. The phy record's presence timeout (tag `0x08`) was also
+  host-settable to 1 s through the ungated `CONFIG_WRITE`, which made the window
+  trivial to open; it is now clamped to **≥ 10 s**, the floor the device's own
+  settings menu already offered.
+- **`authenticatorReset` now takes a fresh power-up.** CTAP 2.1 §6.6 lets an
+  authenticator with no display refuse a reset that does not follow one, and the
+  keys people compare this one against do. RS-Key did not: destroying the seed,
+  every passkey and the PIN was one ungated CTAP command plus a touch, at any point
+  in a session — and on a screenless build the touch prompt says nothing about what
+  it approves, so the press could be collected under cover of an ordinary sign-in.
+  A reset more than **10 seconds** after the device attached now answers
+  `0x30 CTAP2_ERR_NOT_ALLOWED` before the prompt. The window is measured from the USB
+  attach rather than from power-on: boot spends seconds on the TRNG seed, the seal
+  migrations and the one-shot at-rest hardening lap, which would have closed the
+  window before the first command could arrive on exactly the devices whose owners
+  most need the reset. A warm reset *closes* the window instead of reopening it,
+  since a host can request one ungated. Trusted-display builds stay exempt — their
+  prompt names the operation. Practical effect: `ykman fido reset` and the browser
+  "reset security key" flows now need the key replugged first, and `rsk offboard`
+  detects the refusal and walks the operator through the replug.
+- **A reserved U2F control byte no longer signs.** U2F Raw Message Formats §7.2
+  assigns AUTHENTICATE exactly three P1 values — check-only `07`, enforce
+  user presence `03`, don't-enforce `08` — and anything else fell through to the
+  don't-enforce path. The device signed the challenge with no touch *and* with the
+  user-presence bit clear, so nothing in the assertion recorded that no human was
+  there: a silent signing oracle over every registered app id for any process that
+  could open the HID interface. Reserved values now answer `6A86`, and the
+  `strict-up` build — which promises a touch on every assertion — rejects `08` as
+  well.
+- **Installing an org attestation key says what it replaces.** `ATT_IMPORT` hands
+  the device the identity every later U2F registration signs with, and its gate
+  waives the PIN half when no PIN is set — the same waiver run-26 fixed for
+  `BACKUP_LOAD` — leaving the handover on one generic "Import attestation key?"
+  touch. On a device with no PIN it now takes a distinct "Replace attestation
+  identity?" confirmation first.
+- **Rotating the PIV management key now revokes its PIN escrow.** `PRINTED`
+  discloses the live `9B` key when ADMIN DATA carries the "PIN-protected" flag —
+  but that object is written verbatim by any management-authenticated host through
+  `PUT DATA` on `5FFF00`, and nothing cleared the flag on rotation. So the flag
+  could be planted on a key that was never escrowed, and the owner's obvious
+  remediation (rotate to a strong key) handed that new key to whoever held the PIN.
+  `SET MANAGEMENT KEY` now clears the flag once the new key and its metadata are
+  stored, so a rotation that fails part-way leaves the flag describing the key that
+  is still there rather than stranding an owner whose only access was `PRINTED`. A
+  host that wants escrow re-writes ADMIN DATA afterwards, which is what `ykman piv
+  access change-management-key --protect` already does.
+- **A torn PIV key import no longer attests as generated on-device.** `IMPORT`
+  committed the sealed private key first and the origin record last, so a write
+  failure at the wrong moment left an attacker-supplied key in a slot still marked
+  `ORIGIN_GENERATED` — and `ATTESTATION` takes no PIN and no management gate, so
+  the device's own F9 key would certify a software-held key as hardware-backed and
+  non-exportable. The slot's metadata is now dropped *before* the key is written
+  (`MOVE KEY` too), so a torn import fails closed: the slot reads as absent until
+  it is re-provisioned.
+- **An empty new admin PIN no longer wedges the OpenPGP applet.** `CHANGE
+  REFERENCE DATA` carved the old PIN out with an off-by-one bound, so an APDU whose
+  `Lc` equalled the stored PW3 length authenticated and then stored an *empty* new
+  PW3. From then on every `VERIFY` answered `6A88` before the retry counter moved,
+  and `TERMINATE DF` — allowed only with PW3 verified or blocked — was refused
+  forever, leaving a device-wide factory reset as the only escape. The card now
+  enforces its own reference lengths: PW1 ≥ 6, PW3 and the Reset Code ≥ 8, all
+  ≤ 127, answering `6700`. A PIN accepted by an older firmware keeps verifying.
+- **The touch indicator's guarantee now holds on every write path.** run-26 clamped
+  the awaiting-touch LED, but the clamp sat in the CCID `SET LED` handler only. The
+  FIDO `CONFIG_WRITE` LED target (ungated by default, and what `rsk led --transport
+  fido` uses), the effect/speed setters, the phy boot-brightness default and the
+  boot reload all reached the same pixels unclamped — so the commit's own
+  documented behaviour was false for its own CLI flag. The floor moved into the
+  `EF_LED_CONF` codec, so every decode enforces it, and it now covers the two
+  bypasses the brightness check missed: a `speed` of 1 rendered an all-black
+  breathing frame while brightness read compliant, and setting *idle* to the touch
+  look made the two states pixel-identical. The touch **colour** is now reserved —
+  any other status configured in it is reset to its own factory look, whatever its
+  effect, brightness or speed. Keying that on the whole quad would not have held:
+  one unit of brightness or speed is byte-unequal and eye-identical, steady mode
+  ignores the effect byte outright, and on a one-LED board every effect renders the
+  same solid frame.
+- **The `rsk offboard` receipt can be re-checked offline.** The two checks that
+  gave the receipt meaning — the signed head folding from the recorded window, and
+  that window containing the `RESET` event — ran in memory and against data the
+  saved JSON then dropped, so no later reader could redo them. A departing device
+  holder could capture a genuine signature block from an *unwiped* key and
+  hand-write a receipt for a wipe that never happened. The receipt is now split
+  along the trust boundary — `attested` (what the device signed, plus the epoch and
+  raw window needed to re-derive it) and `host_observations` (serial, timestamp,
+  per-step results, decoded window, none of it attested) — and `rsk offboard
+  --verify <receipt.json> [--expect-key …]` redoes the fold, the `RESET` scan and
+  the signature with no device present. **Breaking for anything parsing the old
+  flat shape**; `--verify` refuses a v1 receipt rather than pretend to check it.
+- **The display's add-passkey card no longer approves a still-held finger.** The
+  run-26 release-debounce gives up with the finger down once the presence timeout
+  expires, and this card evaluated its single-tap *Allow* before the timeout check —
+  so two back-to-back registrations could register the second silently. The
+  timeout is now tested first, and the release wait carries a floor of its own so a
+  host-shortened presence timeout cannot reduce it to nothing. (`confirm_wait` was
+  already immune: its 800 ms hold outlasts the check.)
+- **A blocked OpenPGP PIN no longer derives or writes flash before refusing.**
+  `check_pin` derived the verifier, compared, retried against the legacy key-base
+  arm and could run a two-write migration, and only then consulted the retry-block
+  floor. The status word was `6983` either way, but the work was not: on a device in
+  the narrow pre-migration state, a correct guess took measurably longer than a
+  wrong one against an already-blocked reference. The floor is now checked first,
+  as every sibling applet already does.
+- **An abandoned credential-management enumeration no longer outlives its token.**
+  The `getNextRP` / `getNextCredential` walkers carry no `pinUvAuthParam` of their
+  own (CTAP 2.1 §6.8) — they inherit the *Begin* call's authorisation — but nothing
+  invalidated the cursor when that token stopped being usable. A credential manager
+  that opened an enumeration and closed its dialog left the remainder drainable by
+  any unauthenticated caller for the rest of the power cycle: each RP, and per
+  credential the user id, name, credential id, public key and `largeBlobKey` (which
+  then decrypts that credential's large blob through the unauthenticated read). The
+  cursor now dies with the token.
+- **`rsk offboard` checks the journal before it wipes, and always writes the
+  receipt.** Audit journalling is opt-in and off by default, so on a stock device
+  the post-wipe window was empty, the `RESET` scan failed, and the tool exited
+  before saving anything — every applet destroyed, no record, and re-running could
+  not help. It now probes the journal state *before* the confirmation prompt and
+  refuses with a pointer to `rsk audit enable` or the new `--no-receipt` opt-out.
+  Post-wipe problems are recorded as `notes` entries and the file is written
+  unconditionally; the exit code still reports the failure. `--no-receipt` means
+  what it says — no preflight, no checkpoint touch, no file — and the re-check hint
+  printed at the end now points at the fingerprint recorded when the key was
+  enrolled, not at the receipt's own, which would check the receipt against itself.
+- **An unauthenticated host can no longer flush the audit journal.**
+  `CONFIG_WRITE` is ungated on the default build and is the only journalled event a
+  silent host can drive on demand, so 128 of them evicted every other entry — boots,
+  resets, PIN lockouts, seed moves — from the 128-slot ring. Skipping the entry for
+  a byte-identical replay was no defence: alternating a single brightness byte
+  really changes the record every time. A *run* of config writes now costs one slot.
+  The newest entry keeps its sequence number, timestamp and opening target and
+  counts the rest in its detail (`repeats(2 LE) ‖ targets(1)`, a `1 << target` mask
+  of every record the run touched), so `seq_next` never advances and nothing is
+  evicted; a run never folds across a power cycle, which would have swallowed the
+  `BOOT` entry between them. `rsk audit log` prints the entry as `300× write
+  (phy+led)` instead of raw hex. One thing for anything re-checking a chain: a
+  coalesce moves the head *without* advancing `seq_next`, so the same `seq_next`
+  with a different head is now legitimate rather than a tamper signal. Separately,
+  a phy `CONFIG_WRITE` on a device whose `EF_PHY` is absent or unreadable was
+  answered `Ok` with nothing stored — the no-op check could not tell "no record"
+  from "a record equal to the defaults" — so a host writing the defaults to repair
+  it got silence. It now takes the write.
+- **`rsk audit verify` no longer calls an unpinned run "journal authentic".** The
+  verifying key comes from the same device response being checked, so without
+  `--expect-key` the check proves self-consistency and nothing about *which* device
+  signed. The verdict now says so, and `--expect-key` accepts the 16-hex fingerprint
+  as well as the full SEC1 point, matching the fingerprint the tool tells you to
+  record.
+- **The release workflow no longer interpolates the tag into a shell command.**
+  `release-build.yml` substituted the raw tag input into a `run:` block inside the
+  SLSA signing job, and `git check-ref-format` accepts `$(…)`, backticks, `;` and
+  `|`. A credential with `Contents: write` but without the `workflow` scope can
+  create a tag while being rejected on any workflow-file edit, so tag creation was a
+  way into the job holding the release signing identity. The tag is passed through
+  `env:` and validated for shape and character set before use. CI-only; no runtime
+  effect.
+
+Two of the run's findings were assessed and **not** fixed in code, so they are
+written down rather than closed. The at-rest seals authenticate nothing against
+someone who can *write* flash over BOOTSEL: the pre-OTP key base derives from the
+public chip serial and stays readable after the burn (that is what keeps an
+already-provisioned device working across the upgrade), so a planted record opens
+under it and the boot migration re-seals it under the fused root. Closing that
+needs a fuse-rooted latch on the migration window, which makes `lock-page58`
+load-bearing for boot correctness — the threat model and the limitations page now
+say so. And the config-write coalescing above bounds the ring flood to one slot per
+power cycle, not to none: a phy write latches a reboot, so a host willing to
+re-enumerate the device can still spend two slots per cycle. Each cycle is a full
+USB re-enumeration and plainly visible, and gating the write (`--features
+strict-config`) remains the complete answer.
+
 ## [0.4.2] - 2026-07-25
 
 ### Changed

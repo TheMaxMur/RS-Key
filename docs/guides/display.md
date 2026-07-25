@@ -76,6 +76,12 @@ operation and the **real relying party**, and waits for a deliberate action:
   screen (shield + relying party + a hold-to-approve button). **Deny** refuses
   with `OPERATION_DENIED`.
 
+Every prompt waits for the previous finger to lift before it will accept a tap,
+and a prompt that runs out of time is denied rather than approved — a finger
+resting on *Save* when the window expires cancels the registration, it does not
+confirm it. The release wait has a floor of its own, so shortening the presence
+timeout in the device config cannot shrink it away.
+
 Because the device only knows the relying-party *string* (and its hash), it
 shows that string verbatim, never a host-supplied brand logo. A relying-party id
 too long for the box is **clipped with a truncation marker**, and the clip keeps
@@ -182,6 +188,12 @@ Grouped into three domains, plus the journal / backup / reset actions:
 - **Factory reset**: erases every applet's data (FIDO, PIV, OpenPGP, OATH),
   scrubs the flash, and reboots to a blank device (gated by the device PIN, then
   a hold). Only the org attestation and the fused OTP / secure-boot state survive.
+
+A display build is also exempt from the [power-up window](fido2.md#factory-reset)
+that makes a screenless key refuse a host `authenticatorReset` more than ten
+seconds after it was plugged in. That window exists to stop a wipe being approved
+by a press collected under some other pretext; here the panel names the operation,
+so a host reset is accepted whenever you confirm it on screen — no replug.
 
 ## Security model
 
