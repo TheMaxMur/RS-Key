@@ -485,6 +485,11 @@ impl PivApplet<'_> {
         }
         let mut rng = self.rng.borrow_mut();
         if files::reset_files(dev, fs, &mut *rng).is_err() {
+            // A half-swept card may have lost the files SELECT's fast path assumes
+            // are there, so re-arm the provisioning instead of trusting it — a
+            // retried RESET must not answer 6A88 for the rest of the power cycle.
+            self.sess.reset();
+            self.files_ensured = false;
             return Sw::MEMORY_FAILURE;
         }
         self.sess.reset();
@@ -857,6 +862,12 @@ impl PivApplet<'_> {
         {
             return Sw::MEMORY_FAILURE;
         }
+        // Revoke the one-key escrow LAST, mirroring `protect_mgm_key`'s ordering:
+        // clearing the flag before its key is really replaced would strand a
+        // PRINTED-only owner whenever the seal write fails. ykman re-sets it.
+        if let Err(sw) = mgm_clear_protected(fs) {
+            return sw;
+        }
         Sw::OK
     }
 
@@ -890,6 +901,13 @@ impl PivApplet<'_> {
         };
         let (cert_from, cert_to) = (cert_fid_for_slot(from), cert_fid_for_slot(to));
         if to != 0xFF {
+            // Same power-cut ordering as IMPORT: the destination's own origin
+            // record goes before its new key, so a tear can never leave the moved
+            // key wearing the destination's provenance.
+            if let Err(sw) = keygen::drop_slot_meta(fs, key_fid(to).get()) {
+                blob.zeroize();
+                return sw;
+            }
             if fs
                 .put_key(key_fid(to), Sealed::wrap(&blob[..blob_n]))
                 .is_err()
@@ -913,16 +931,11 @@ impl PivApplet<'_> {
             // The point is carried to the destination best-effort — kept when
             // EF_META has room, else dropped to the head alone (see meta_add_slot).
             let mut meta = [0u8; 4 + MAX_EC_POINT];
-            match fs.meta_find(key_fid(from).get(), &mut meta) {
-                Some(n) => {
-                    let n = n.min(meta.len());
-                    if let Err(e) = keygen::meta_add_slot(fs, key_fid(to).get(), &meta[..n]) {
-                        blob.zeroize();
-                        return e;
-                    }
-                }
-                None => {
-                    let _ = fs.meta_delete(key_fid(to).get());
+            if let Some(n) = fs.meta_find(key_fid(from).get(), &mut meta) {
+                let n = n.min(meta.len());
+                if let Err(e) = keygen::meta_add_slot(fs, key_fid(to).get(), &meta[..n]) {
+                    blob.zeroize();
+                    return e;
                 }
             }
         }
@@ -1161,6 +1174,25 @@ fn mgm_is_protected<S: Storage>(fs: &mut Fs<S>) -> bool {
     )
 }
 
+/// Revoke the PIN-readable escrow: clear the ADMIN-DATA `0x02` flag, carrying
+/// the rest of the record forward ([`pivman_set_protected`] with the bit off).
+/// A record without the flag is left untouched, so a host's PivmanData is only
+/// rewritten when there is an escrow to revoke.
+fn mgm_clear_protected<S: Storage>(fs: &mut Fs<S>) -> Result<(), Sw> {
+    if !mgm_is_protected(fs) {
+        return Ok(());
+    }
+    // Sized as in `mgm_is_protected`: a real ykman record (flags + salt + timestamp).
+    let mut prior = [0u8; 64];
+    let Some(n) = fs.read(EF_PIVMAN_DATA, &mut prior) else {
+        return Ok(());
+    };
+    let mut admin = [0u8; PIVMAN_MAX];
+    let len = pivman_rebuild(&prior[..n.min(prior.len())], false, &mut admin);
+    fs.put(EF_PIVMAN_DATA, &admin[..len])
+        .map_err(|_| Sw::MEMORY_FAILURE)
+}
+
 /// Replace the PIV management key with a fresh random AES-256 key and mark it
 /// PIN-protected (the ykman `--protect` model): the key is sealed in the 0x9B
 /// auth slot and the ADMIN-DATA flag is set, so a host reads it back from the
@@ -1215,18 +1247,24 @@ pub fn protect_mgm_key<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn R
     Sw::OK
 }
 
-/// Rebuild the PivmanData (ADMIN DATA) record for the PIN-protected-mgmt state
-/// from an arbitrary `prior` record, writing the encoded object into `out` and
-/// returning its length. The MGM_PROTECTED flag is forced on; any other flag bits
-/// and the PIN-change timestamp (`0x83`) in `prior` are carried forward; the
-/// derived-key salt (`0x82`) is deliberately dropped.
+/// Rebuild the PivmanData (ADMIN DATA) record with the MGM_PROTECTED flag forced
+/// on. See [`pivman_rebuild`].
+pub(crate) fn pivman_set_protected(prior: &[u8], out: &mut [u8; PIVMAN_MAX]) -> usize {
+    pivman_rebuild(prior, true, out)
+}
+
+/// Rebuild the PivmanData (ADMIN DATA) record for the given PIN-protected-mgmt
+/// state from an arbitrary `prior` record, writing the encoded object into `out`
+/// and returning its length. The MGM_PROTECTED flag is forced to `protected`; any
+/// other flag bits and the PIN-change timestamp (`0x83`) in `prior` are carried
+/// forward; the derived-key salt (`0x82`) is deliberately dropped.
 ///
 /// Dropping the salt mirrors ykman's `--protect`: once the management key is a
 /// fresh random device-sealed key it is no longer derived from PIN+salt, so a
 /// left-over salt would only mislead a host into the derivation path. A malformed
 /// `prior` contributes nothing (flags default to 0, no timestamp) and never
-/// panics — the record is always a well-formed `80 { 81 .. }`, protected.
-pub(crate) fn pivman_set_protected(prior: &[u8], out: &mut [u8; PIVMAN_MAX]) -> usize {
+/// panics — the record is always a well-formed `80 { 81 .. }`.
+fn pivman_rebuild(prior: &[u8], protected: bool, out: &mut [u8; PIVMAN_MAX]) -> usize {
     // Parse the prior record's inner TLV run, if it is a `80 <len> { .. }`.
     let inner = if prior.len() >= 2 && prior[0] == PIVMAN_TAG {
         let l = (prior[1] as usize).min(prior.len() - 2);
@@ -1234,10 +1272,14 @@ pub(crate) fn pivman_set_protected(prior: &[u8], out: &mut [u8; PIVMAN_MAX]) -> 
     } else {
         &[][..]
     };
-    let flags = find_tag(inner, PIVMAN_FLAGS_TAG as u16)
+    let prior_flags = find_tag(inner, PIVMAN_FLAGS_TAG as u16)
         .and_then(|f| f.first().copied())
-        .unwrap_or(0)
-        | PIVMAN_FLAG_MGM_PROTECTED;
+        .unwrap_or(0);
+    let flags = if protected {
+        prior_flags | PIVMAN_FLAG_MGM_PROTECTED
+    } else {
+        prior_flags & !PIVMAN_FLAG_MGM_PROTECTED
+    };
     let ts = find_tag(inner, PIVMAN_TS_TAG as u16)
         .map(|t| &t[..t.len().min(PIVMAN_TS_MAX)])
         .unwrap_or(&[]);

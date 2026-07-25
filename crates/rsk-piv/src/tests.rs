@@ -3,6 +3,11 @@
 
 use super::*;
 use rsk_fs::storage::ram::RamStorage;
+use rsk_openpgp::keys::{Curve, PrivKey};
+
+use std::cell::Cell;
+use std::collections::HashMap;
+use std::rc::Rc;
 
 use p256::ecdsa::signature::hazmat::PrehashVerifier;
 use sha2::Digest;
@@ -30,7 +35,7 @@ fn new_fs() -> Fs<RamStorage> {
     fs
 }
 
-fn select(app: &mut PivApplet, fs: &mut Fs<RamStorage>) -> Vec<u8> {
+fn select<S: Storage>(app: &mut PivApplet, fs: &mut Fs<S>) -> Vec<u8> {
     let mut out = [0u8; 256];
     let mut res = ResBuf::new(&mut out);
     let sw = Applet::select(app, false, fs, &mut res);
@@ -52,9 +57,9 @@ fn apdu_bytes(ins: u8, p1: u8, p2: u8, data: &[u8]) -> Vec<u8> {
     raw
 }
 
-fn run(
+fn run<S: Storage>(
     app: &mut PivApplet,
-    fs: &mut Fs<RamStorage>,
+    fs: &mut Fs<S>,
     ins: u8,
     p1: u8,
     p2: u8,
@@ -69,7 +74,7 @@ fn run(
 }
 
 /// Mutual-auth against the default AES-192 management key.
-fn auth_mgm(app: &mut PivApplet, fs: &mut Fs<RamStorage>) {
+fn auth_mgm<S: Storage>(app: &mut PivApplet, fs: &mut Fs<S>) {
     let (sw, wit) = run(
         app,
         fs,
@@ -96,7 +101,7 @@ fn auth_mgm(app: &mut PivApplet, fs: &mut Fs<RamStorage>) {
     assert_eq!(&resp[4..20], &expect);
 }
 
-fn verify_pin(app: &mut PivApplet, fs: &mut Fs<RamStorage>) {
+fn verify_pin<S: Storage>(app: &mut PivApplet, fs: &mut Fs<S>) {
     let (sw, _) = run(app, fs, INS_VERIFY, 0, 0x80, &DEFAULT_PIN);
     assert_eq!(sw, Sw::OK);
 }
@@ -626,6 +631,144 @@ fn protect_mgm_preserves_timestamp_and_flags_drops_salt() {
         &[PIVMAN_FLAG_MGM_PROTECTED]
     );
     assert!(find_tag(inner2, PIVMAN_TS_TAG as u16).is_none());
+}
+
+/// The escrow is an opt-in for ONE key: a host-planted ADMIN-DATA flag must not
+/// survive SET MANAGEMENT KEY, so the rotated key is not PIN-readable from
+/// PRINTED. The rest of the record (the PIN-change timestamp) survives.
+#[test]
+fn set_mgmkey_revokes_the_pin_protected_escrow() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    let get = |id: [u8; 3]| [0x5C, 0x03, id[0], id[1], id[2]];
+    const PRINTED: [u8; 3] = [0x5F, 0xC1, 0x09];
+    const ADMIN: [u8; 3] = [0x5F, 0xFF, 0x00];
+
+    // Plant the flag the way a host does: PUT DATA on the ADMIN DATA object.
+    let mut plant = vec![TAG_DATA_PATH, 0x03, 0x5F, 0xFF, 0x00, TAG_DATA_OBJECT, 0x0B];
+    plant.extend_from_slice(&[PIVMAN_TAG, 0x09]);
+    plant.extend_from_slice(&[PIVMAN_FLAGS_TAG, 0x01, PIVMAN_FLAG_MGM_PROTECTED]);
+    plant.extend_from_slice(&[PIVMAN_TS_TAG, 0x04, 0xDE, 0xAD, 0xBE, 0xEF]);
+    let (sw, _) = run(&mut app, &mut fs, INS_PUT_DATA, 0x3F, 0xFF, &plant);
+    assert_eq!(sw, Sw::OK);
+    verify_pin(&mut app, &mut fs);
+    let (sw, _) = run(&mut app, &mut fs, INS_GET_DATA, 0x3F, 0xFF, &get(PRINTED));
+    assert_eq!(
+        sw,
+        Sw::OK,
+        "the planted flag discloses the key it was set for"
+    );
+
+    // Rotate the management key (ykman `change-management-key`, no --protect).
+    let new_key = [0x5Au8; 24];
+    let mut set_key = vec![ALGO_AES192, SLOT_CARDMGM, new_key.len() as u8];
+    set_key.extend_from_slice(&new_key);
+    let (sw, _) = run(&mut app, &mut fs, INS_SET_MGMKEY, 0xFF, 0xFF, &set_key);
+    assert_eq!(sw, Sw::OK);
+
+    // The rotated key is NOT disclosed: the flag went with the key it escrowed.
+    assert!(!mgm_is_protected(&mut fs));
+    let (sw, printed) = run(&mut app, &mut fs, INS_GET_DATA, 0x3F, 0xFF, &get(PRINTED));
+    assert_eq!(sw, Sw::FILE_NOT_FOUND);
+    assert!(printed.is_empty());
+    let (sw, admin) = run(&mut app, &mut fs, INS_GET_DATA, 0x3F, 0xFF, &get(ADMIN));
+    assert_eq!(sw, Sw::OK);
+    let inner = find_tag(
+        find_tag(&admin, TAG_DATA_OBJECT as u16).unwrap(),
+        PIVMAN_TAG as u16,
+    )
+    .unwrap();
+    assert_eq!(find_tag(inner, PIVMAN_FLAGS_TAG as u16).unwrap(), &[0x00]);
+    assert_eq!(
+        find_tag(inner, PIVMAN_TS_TAG as u16).unwrap(),
+        &[0xDE, 0xAD, 0xBE, 0xEF]
+    );
+
+    // Opting back in still works: the host re-sets the flag for the new key.
+    let (sw, _) = run(&mut app, &mut fs, INS_PUT_DATA, 0x3F, 0xFF, &plant);
+    assert_eq!(sw, Sw::OK);
+    let (sw, printed) = run(&mut app, &mut fs, INS_GET_DATA, 0x3F, 0xFF, &get(PRINTED));
+    assert_eq!(sw, Sw::OK);
+    assert_eq!(&printed[6..6 + new_key.len()], &new_key);
+}
+
+/// `Storage` that refuses to write one fid — a flash failure landing exactly on
+/// SET MANAGEMENT KEY's seal write. The target is shared with the test so it can
+/// be armed after the setup writes have landed.
+struct RefuseWrite {
+    inner: RamStorage,
+    refuse: Rc<Cell<Option<u16>>>,
+}
+
+impl Storage for RefuseWrite {
+    fn read(&mut self, fid: u16, buf: &mut [u8]) -> Option<usize> {
+        self.inner.read(fid, buf)
+    }
+    fn write(&mut self, fid: u16, data: &[u8]) -> rsk_sdk::error::Result<()> {
+        if self.refuse.get() == Some(fid) {
+            return Err(rsk_sdk::error::Error::MemoryFatal);
+        }
+        self.inner.write(fid, data)
+    }
+    fn remove(&mut self, fid: u16) -> rsk_sdk::error::Result<()> {
+        self.inner.remove(fid)
+    }
+    fn size(&mut self, fid: u16) -> Option<usize> {
+        self.inner.size(fid)
+    }
+    fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) -> bool {
+        self.inner.for_each_key(f)
+    }
+}
+
+/// SET MANAGEMENT KEY torn by a failed seal write: the escrow flag must still
+/// describe the key that is STILL in 0x9B. Revoking it first would lock an owner
+/// who only ever knew the key through PRINTED out of PIV administration, with a
+/// status word that says nothing about it.
+#[test]
+fn failed_set_mgmkey_keeps_the_escrow_for_the_unchanged_key() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let refuse = Rc::new(Cell::new(None));
+    let mut fs = Fs::new(RefuseWrite {
+        inner: RamStorage::new(),
+        refuse: Rc::clone(&refuse),
+    });
+    fs.scan();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    verify_pin(&mut app, &mut fs);
+
+    // Escrow the current (default) key the way ykman `--protect` does.
+    let mut plant = vec![TAG_DATA_PATH, 0x03, 0x5F, 0xFF, 0x00, TAG_DATA_OBJECT, 0x05];
+    plant.extend_from_slice(&[PIVMAN_TAG, 0x03]);
+    plant.extend_from_slice(&[PIVMAN_FLAGS_TAG, 0x01, PIVMAN_FLAG_MGM_PROTECTED]);
+    let (sw, _) = run(&mut app, &mut fs, INS_PUT_DATA, 0x3F, 0xFF, &plant);
+    assert_eq!(sw, Sw::OK);
+    let printed_id = [0x5C, 0x03, 0x5F, 0xC1, 0x09];
+    let (sw, printed) = run(&mut app, &mut fs, INS_GET_DATA, 0x3F, 0xFF, &printed_id);
+    assert_eq!(sw, Sw::OK);
+    assert_eq!(&printed[6..6 + DEFAULT_MGM.len()], &DEFAULT_MGM);
+
+    // Rotate the key with the flash write of the sealed key failing.
+    refuse.set(Some(key_fid(SLOT_CARDMGM).get()));
+    let new_key = [0x5Au8; 24];
+    let mut set_key = vec![ALGO_AES192, SLOT_CARDMGM, new_key.len() as u8];
+    set_key.extend_from_slice(&new_key);
+    let (sw, _) = run(&mut app, &mut fs, INS_SET_MGMKEY, 0xFF, 0xFF, &set_key);
+    assert_eq!(sw, Sw::MEMORY_FAILURE);
+
+    // The old key is untouched — and still reachable through the escrow.
+    refuse.set(None);
+    assert!(mgm_is_protected(&mut fs));
+    let (sw, printed) = run(&mut app, &mut fs, INS_GET_DATA, 0x3F, 0xFF, &printed_id);
+    assert_eq!(sw, Sw::OK, "a failed rotation must not revoke the escrow");
+    assert_eq!(&printed[6..6 + DEFAULT_MGM.len()], &DEFAULT_MGM);
 }
 
 /// Host stand-in for the `pivman_set_protected` Kani proof: an LCG-mutated
@@ -2319,6 +2462,361 @@ fn set_retries_and_reset_card() {
     assert_eq!(find_tag(&md, 0x05).unwrap(), &[1]);
 }
 
+/// Every live PIV fid, in the range [`files::reset_files`] sweeps (de-duped: a
+/// backend yields one entry per stored version).
+fn piv_fids<S: Storage>(fs: &mut Fs<S>) -> Vec<u16> {
+    let mut fids = Vec::new();
+    fs.for_each_key(&mut |fid| {
+        if files::is_piv_fid(fid) && !fids.contains(&fid) {
+            fids.push(fid);
+        }
+    });
+    fids.sort_unstable();
+    fids
+}
+
+/// A host can stuff far more PIV files than one sweep batch holds (240 data
+/// objects are writable through PUT DATA alone). RESET must converge over ALL of
+/// them: a capped sweep left key slots live behind the re-seeded default PIN.
+#[test]
+fn reset_sweeps_more_files_than_one_batch() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    verify_pin(&mut app, &mut fs);
+
+    // Every host-writable data object: 5FC100..5FC1EF (5FC109 is the virtual
+    // PRINTED object, never stored) plus the ADMIN DATA object 5FFF00.
+    let put = |id: [u8; 3]| {
+        [
+            TAG_DATA_PATH,
+            3,
+            id[0],
+            id[1],
+            id[2],
+            TAG_DATA_OBJECT,
+            1,
+            0x41,
+        ]
+    };
+    for low in 0x00..=0xEFu8 {
+        let (sw, _) = run(
+            &mut app,
+            &mut fs,
+            INS_PUT_DATA,
+            0x3F,
+            0xFF,
+            &put([0x5F, 0xC1, low]),
+        );
+        assert_eq!(sw, Sw::OK);
+    }
+    let (sw, _) = run(
+        &mut app,
+        &mut fs,
+        INS_PUT_DATA,
+        0x3F,
+        0xFF,
+        &put([0x5F, 0xFF, 0x00]),
+    );
+    assert_eq!(sw, Sw::OK);
+    // Plus key slots, each adding its sealed key and its cached public point.
+    for slot in [0x9A, 0x9C, 0x9D, 0x9E, 0x82, 0x83, 0x84, 0x85] {
+        let (sw, _) = run(
+            &mut app,
+            &mut fs,
+            INS_ASYM_KEYGEN,
+            0,
+            slot,
+            &gen_template(ALGO_ECCP256),
+        );
+        assert_eq!(sw, Sw::OK);
+    }
+    assert!(
+        piv_fids(&mut fs).len() > 256,
+        "the fill must exceed the old 8x32 sweep budget"
+    );
+
+    // Block both references, then RESET.
+    let wrong = [0x39u8; 8];
+    for _ in 0..3 {
+        let _ = run(&mut app, &mut fs, INS_VERIFY, 0, 0x80, &wrong);
+    }
+    let mut bad_unblock = wrong.to_vec();
+    bad_unblock.extend_from_slice(&wrong);
+    for _ in 0..3 {
+        let _ = run(&mut app, &mut fs, INS_RESET_RETRY, 0, 0x80, &bad_unblock);
+    }
+    let (sw, _) = run(&mut app, &mut fs, INS_RESET, 0, 0, &[]);
+    assert_eq!(sw, Sw::OK);
+
+    // Only the factory files remain — no data object and no key slot but 9B/F9.
+    let mut factory = vec![
+        EF_PIN,
+        EF_PUK,
+        EF_RETRIES,
+        key_fid(SLOT_CARDMGM).get(),
+        key_fid(SLOT_ATTESTATION).get(),
+        pubkey_fid(SLOT_ATTESTATION),
+        EF_ATTESTATION_CERT,
+    ];
+    factory.sort_unstable();
+    assert_eq!(piv_fids(&mut fs), factory);
+    let (sw, _) = run(&mut app, &mut fs, INS_GET_METADATA, 0, 0x9A, &[]);
+    assert_eq!(sw, Sw::REFERENCE_NOT_FOUND);
+}
+
+/// `Storage` whose `remove` reports success without deleting anything — a backend
+/// the sweep can never converge over. RESET must then fail rather than report a
+/// factory state it did not reach.
+struct StubbornStorage(RamStorage);
+
+impl Storage for StubbornStorage {
+    fn read(&mut self, fid: u16, buf: &mut [u8]) -> Option<usize> {
+        self.0.read(fid, buf)
+    }
+    fn write(&mut self, fid: u16, data: &[u8]) -> rsk_sdk::error::Result<()> {
+        self.0.write(fid, data)
+    }
+    fn remove(&mut self, _fid: u16) -> rsk_sdk::error::Result<()> {
+        Ok(())
+    }
+    fn size(&mut self, fid: u16) -> Option<usize> {
+        self.0.size(fid)
+    }
+    fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) -> bool {
+        self.0.for_each_key(f)
+    }
+}
+
+#[test]
+fn reset_reports_failure_when_the_sweep_cannot_converge() {
+    let dev = Device {
+        serial_hash: &HASH,
+        serial_id: &SERIAL,
+        otp_key: None,
+    };
+    let mut fs = Fs::new(StubbornStorage(RamStorage::new()));
+    fs.scan();
+    fs.put(data_object_fid(0x01).unwrap(), &[0x41]).unwrap();
+    assert_eq!(
+        reset_files(&dev, &mut fs, &mut TestRng(3)),
+        Err(Sw::MEMORY_FAILURE)
+    );
+}
+
+/// A failed sweep must not leave the applet without the files it just deleted:
+/// the PIN/PUK/retry files go first, and a card missing them answers 6A88 (no
+/// retry counters) to every later RESET instead of the honest 6581.
+#[test]
+fn failed_reset_reprovisions_instead_of_wedging_the_applet() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = Fs::new(StubbornStorage(RamStorage::new()));
+    fs.scan();
+    select(&mut app, &mut fs);
+    let wrong = [0x39u8; 8];
+    for _ in 0..3 {
+        let _ = run(&mut app, &mut fs, INS_VERIFY, 0, 0x80, &wrong);
+    }
+    let mut bad_unblock = wrong.to_vec();
+    bad_unblock.extend_from_slice(&wrong);
+    for _ in 0..3 {
+        let _ = run(&mut app, &mut fs, INS_RESET_RETRY, 0, 0x80, &bad_unblock);
+    }
+    let (sw, _) = run(&mut app, &mut fs, INS_RESET, 0, 0, &[]);
+    assert_eq!(sw, Sw::MEMORY_FAILURE);
+
+    // Still a working card: the defaults are back, so RESET reports the real
+    // precondition (references not blocked) and the default PIN verifies again.
+    let (sw, _) = run(&mut app, &mut fs, INS_RESET, 0, 0, &[]);
+    assert_eq!(
+        sw,
+        Sw::INCORRECT_PARAMS,
+        "a failed RESET must not wedge on 6A88"
+    );
+    let (sw, _) = run(&mut app, &mut fs, INS_VERIFY, 0, 0x80, &DEFAULT_PIN);
+    assert_eq!(sw, Sw::OK);
+    assert!(
+        !app.files_ensured,
+        "SELECT must re-provision after a failed sweep"
+    );
+}
+
+/// `Storage` modelling the log-structured backend's *versions*: an overwrite
+/// supersedes rather than replaces, so `for_each_key` yields a fid once per
+/// stored version until reclaim (`sequential-storage`'s `fetch_all_items`).
+#[derive(Default)]
+struct VersionedStorage {
+    inner: RamStorage,
+    versions: HashMap<u16, usize>,
+}
+
+impl Storage for VersionedStorage {
+    fn read(&mut self, fid: u16, buf: &mut [u8]) -> Option<usize> {
+        self.inner.read(fid, buf)
+    }
+    fn write(&mut self, fid: u16, data: &[u8]) -> rsk_sdk::error::Result<()> {
+        self.inner.write(fid, data)?;
+        *self.versions.entry(fid).or_default() += 1;
+        Ok(())
+    }
+    fn remove(&mut self, fid: u16) -> rsk_sdk::error::Result<()> {
+        self.versions.remove(&fid);
+        self.inner.remove(fid)
+    }
+    fn size(&mut self, fid: u16) -> Option<usize> {
+        self.inner.size(fid)
+    }
+    fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) -> bool {
+        for (&fid, &versions) in &self.versions {
+            for _ in 0..versions {
+                f(fid);
+            }
+        }
+        true
+    }
+}
+
+/// The sweep's convergence budget must measure DELETED FILES, not passes: a host
+/// that rewrites each of the 240 data objects ten times leaves ~2400 enumerated
+/// versions over ~250 distinct fids, so a batch of 32 yields can carry a single
+/// file. RESET must still reach the factory state instead of failing with keys
+/// live and the PIN files already gone.
+#[test]
+fn reset_converges_over_multi_version_stuffing() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = Fs::new(VersionedStorage::default());
+    fs.scan();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+
+    let put = |id: [u8; 3]| {
+        [
+            TAG_DATA_PATH,
+            3,
+            id[0],
+            id[1],
+            id[2],
+            TAG_DATA_OBJECT,
+            1,
+            0x41,
+        ]
+    };
+    // 5FC109 is the virtual PRINTED object (acknowledged, never stored), so the
+    // 240 objects that do land are 5FC100..5FC1EF minus it, plus ADMIN DATA.
+    for _ in 0..10 {
+        for low in 0x00..=0xEFu8 {
+            let (sw, _) = run(
+                &mut app,
+                &mut fs,
+                INS_PUT_DATA,
+                0x3F,
+                0xFF,
+                &put([0x5F, 0xC1, low]),
+            );
+            assert_eq!(sw, Sw::OK);
+        }
+        let (sw, _) = run(
+            &mut app,
+            &mut fs,
+            INS_PUT_DATA,
+            0x3F,
+            0xFF,
+            &put([0x5F, 0xFF, 0x00]),
+        );
+        assert_eq!(sw, Sw::OK);
+    }
+    let mut yields = 0usize;
+    fs.for_each_key(&mut |fid| {
+        if files::is_piv_fid(fid) {
+            yields += 1;
+        }
+    });
+    let distinct = piv_fids(&mut fs).len();
+    assert!(yields > 2400, "the fill must supersede, not replace");
+    assert!(
+        yields > distinct * 8,
+        "the stuffing must starve an un-de-duped batch"
+    );
+
+    // Block both references, then RESET.
+    let wrong = [0x39u8; 8];
+    for _ in 0..3 {
+        let _ = run(&mut app, &mut fs, INS_VERIFY, 0, 0x80, &wrong);
+    }
+    let mut bad_unblock = wrong.to_vec();
+    bad_unblock.extend_from_slice(&wrong);
+    for _ in 0..3 {
+        let _ = run(&mut app, &mut fs, INS_RESET_RETRY, 0, 0x80, &bad_unblock);
+    }
+    let (sw, _) = run(&mut app, &mut fs, INS_RESET, 0, 0, &[]);
+    assert_eq!(sw, Sw::OK);
+
+    // Only the factory files remain, and the default PIN is usable again.
+    let mut factory = vec![
+        EF_PIN,
+        EF_PUK,
+        EF_RETRIES,
+        key_fid(SLOT_CARDMGM).get(),
+        key_fid(SLOT_ATTESTATION).get(),
+        pubkey_fid(SLOT_ATTESTATION),
+        EF_ATTESTATION_CERT,
+    ];
+    factory.sort_unstable();
+    assert_eq!(piv_fids(&mut fs), factory);
+    let (sw, _) = run(&mut app, &mut fs, INS_VERIFY, 0, 0x80, &DEFAULT_PIN);
+    assert_eq!(sw, Sw::OK);
+}
+
+/// `Storage` whose enumeration is truncated by a flash read fault: it yields
+/// nothing and reports the walk incomplete, while the files are still there.
+struct TruncatedWalk(RamStorage);
+
+impl Storage for TruncatedWalk {
+    fn read(&mut self, fid: u16, buf: &mut [u8]) -> Option<usize> {
+        self.0.read(fid, buf)
+    }
+    fn write(&mut self, fid: u16, data: &[u8]) -> rsk_sdk::error::Result<()> {
+        self.0.write(fid, data)
+    }
+    fn remove(&mut self, fid: u16) -> rsk_sdk::error::Result<()> {
+        self.0.remove(fid)
+    }
+    fn size(&mut self, fid: u16) -> Option<usize> {
+        self.0.size(fid)
+    }
+    fn for_each_key(&mut self, _f: &mut dyn FnMut(u16)) -> bool {
+        false
+    }
+}
+
+/// An un-yielded fid is not an absent fid: a truncated walk must fail the reset
+/// rather than report a factory state it only failed to look at.
+#[test]
+fn reset_fails_when_the_enumeration_is_truncated() {
+    let dev = Device {
+        serial_hash: &HASH,
+        serial_id: &SERIAL,
+        otp_key: None,
+    };
+    let mut fs = Fs::new(TruncatedWalk(RamStorage::new()));
+    fs.scan();
+    let obj = data_object_fid(0x01).unwrap();
+    fs.put(obj, &[0x41]).unwrap();
+    assert_eq!(
+        reset_files(&dev, &mut fs, &mut TestRng(3)),
+        Err(Sw::MEMORY_FAILURE)
+    );
+    let mut buf = [0u8; 4];
+    assert_eq!(fs.read(obj, &mut buf), Some(1), "the file was never swept");
+}
+
 #[test]
 fn set_retries_requires_pin_not_just_mgmt() {
     let rng = RefCell::new(TestRng(7));
@@ -2395,6 +2893,110 @@ fn keys_at_rest_are_sealed() {
     let n = fs.read_key(key_fid(0x9D), &mut blob).unwrap();
     assert!(n > 32);
     assert!(!blob[..n].windows(32).any(|w| w == scalar));
+}
+
+/// `Storage` that eats EF_META writes once the budget runs out — a power cut with
+/// the sealed key already on flash. The budget is shared with the test so the tear
+/// can be armed after the setup writes have landed.
+struct TornMeta {
+    inner: RamStorage,
+    meta_writes_left: Rc<Cell<usize>>,
+}
+
+impl Storage for TornMeta {
+    fn read(&mut self, fid: u16, buf: &mut [u8]) -> Option<usize> {
+        self.inner.read(fid, buf)
+    }
+    fn write(&mut self, fid: u16, data: &[u8]) -> rsk_sdk::error::Result<()> {
+        if fid == rsk_fs::EF_META {
+            let left = self.meta_writes_left.get();
+            if left == 0 {
+                return Err(rsk_sdk::error::Error::MemoryFatal);
+            }
+            self.meta_writes_left.set(left - 1);
+        }
+        self.inner.write(fid, data)
+    }
+    fn remove(&mut self, fid: u16) -> rsk_sdk::error::Result<()> {
+        self.inner.remove(fid)
+    }
+    fn size(&mut self, fid: u16) -> Option<usize> {
+        self.inner.size(fid)
+    }
+    fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) -> bool {
+        self.inner.for_each_key(f)
+    }
+}
+
+/// IMPORT torn by a power cut between the sealed key and its origin record: the
+/// slot must be left with NO record, so ATTESTATION (which is neither PIN- nor
+/// management-gated) refuses instead of certifying the imported key as generated.
+#[test]
+fn torn_import_leaves_no_attestable_origin() {
+    let dev = Device {
+        serial_hash: &HASH,
+        serial_id: &SERIAL,
+        otp_key: None,
+    };
+    let budget = Rc::new(Cell::new(usize::MAX));
+    let mut fs = Fs::new(TornMeta {
+        inner: RamStorage::new(),
+        meta_writes_left: Rc::clone(&budget),
+    });
+    fs.scan();
+    let mut rng = TestRng(7);
+    scan_files(&dev, &mut fs, &mut rng).unwrap();
+    let req = keygen::GenReq {
+        algo: ALGO_ECCP256,
+        pin_policy: None,
+        touch_policy: None,
+    };
+    let mut out = [0u8; 2048];
+    let mut res = ResBuf::new(&mut out);
+    assert_eq!(
+        keygen::generate_ec(&dev, &mut fs, &mut rng, 0x9A, &req, &mut res),
+        Sw::OK
+    );
+    let mut res = ResBuf::new(&mut out);
+    assert_eq!(
+        keygen::attest(&dev, &mut fs, &mut rng, 0x9A, [0; 4], &mut res),
+        Sw::OK,
+        "the generated slot attests before the import"
+    );
+
+    // One EF_META write left: enough for the origin-record drop that has to
+    // precede the key, not for the record that follows it. A build that does not
+    // drop first spends the budget on the wrong write and lands elsewhere.
+    budget.set(1);
+    let scalar = [0x33u8; 32];
+    let mut imp = vec![0x06, 32];
+    imp.extend_from_slice(&scalar);
+    let sess = Session {
+        has_mgm: true,
+        ..Default::default()
+    };
+    assert_eq!(
+        keygen::import(&sess, &dev, &mut fs, &mut rng, ALGO_ECCP256, 0x9A, &imp),
+        Sw::MEMORY_FAILURE
+    );
+
+    // The imported key IS live — this is the state the ordering has to survive.
+    let live = seal::load_ec_key(&dev, &mut fs, key_fid(0x9A)).unwrap();
+    let imported = PrivKey::from_scalar(Curve::P256, &scalar).unwrap();
+    let (mut live_pt, mut imported_pt) = ([0u8; MAX_EC_POINT], [0u8; MAX_EC_POINT]);
+    let ln = live.public_point(&mut live_pt).unwrap();
+    let inl = imported.public_point(&mut imported_pt).unwrap();
+    assert_eq!(&live_pt[..ln], &imported_pt[..inl]);
+
+    // No origin record survived, so attestation fails closed.
+    let mut meta = [0u8; 8];
+    assert!(fs.meta_find(key_fid(0x9A).get(), &mut meta).is_none());
+    let mut res = ResBuf::new(&mut out);
+    assert_eq!(
+        keygen::attest(&dev, &mut fs, &mut rng, 0x9A, [0; 4], &mut res),
+        Sw::REFERENCE_NOT_FOUND,
+        "an imported key must never inherit the slot's ORIGIN_GENERATED"
+    );
 }
 
 #[test]

@@ -205,8 +205,17 @@ impl<S: Storage> Fs<S> {
     /// Use this instead of probing a fixed FID range with `read`: a `read` of an
     /// *absent* key rescans the whole flash, so probing 256 slots is O(256·items)
     /// while one `for_each_key` pass is O(items).
-    pub fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) {
-        self.storage.for_each_key(f);
+    ///
+    /// A FID can be yielded MORE THAN ONCE — the log-structured backend walks
+    /// stored items, and an overwritten file keeps one item per superseded version
+    /// until reclaim — so a caller that counts or batches FIDs must de-dup (`scan`
+    /// below does).
+    ///
+    /// Returns [`Storage::for_each_key`]'s completeness flag: `false` means a read
+    /// fault truncated the walk, so an un-yielded FID is NOT evidence of absence —
+    /// a wipe sweep must then fail rather than report its range clear.
+    pub fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) -> bool {
+        self.storage.for_each_key(f)
     }
 
     /// Fill `out[i]` with whether `base + i` is known present, read straight from
