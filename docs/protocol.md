@@ -84,6 +84,11 @@ continuation frames: `CID(4) | SEQ(1) | data[:59]`. `CTAPHID_INIT = 0x86`,
 `CTAPHID_CBOR = 0x90`, `CTAPHID_KEEPALIVE = 0xBB`. A CTAP2 message is
 `command_byte | CBOR_payload`. Reference: `tools/rsk/ctaphid.py`.
 
+Take the channel id from the `CTAPHID_INIT` response and use that one: every INIT on
+the broadcast CID allocates a fresh id, so an id hardcoded or cached across sessions
+will not be yours. `CTAPHID_LOCK` is honoured for the 1–10 seconds it asks for, and
+other channels get `ERR_CHANNEL_BUSY` meanwhile.
+
 ![CTAPHID framing: a 64-byte init frame (CID, CMD, BCNT-hi/lo header then 57 payload bytes) and a continuation frame (CID, SEQ header then 59 payload bytes)](images/ctaphid-frame.svg)
 
 ### 1.3 CCID secure PIN entry (pinpad) — **display builds only**
@@ -262,7 +267,8 @@ needs only the identifiers above. RS-Key implements:
 
 - **FIDO2 / CTAP 2.1**: getInfo, makeCredential, getAssertion, getNextAssertion,
   clientPIN, reset, selection, credentialManagement, authenticatorConfig,
-  largeBlobs. `maxMsgSize` = `7609`. Supported COSE algorithms:
+  largeBlobs (writable without a `pinUvAuthParam` until a PIN is set or `alwaysUv` is
+  on, per §6.10.2). `maxMsgSize` = `7609`. Supported COSE algorithms:
   ES256 `-7`, ES384 `-35`, ES512 `-36`, ES256K `-47`, EdDSA `-8`,
   ML-DSA-44 `-48`, ML-DSA-65 `-49` (both negotiable via `pubKeyCredParams`;
   advertised in getInfo only under the `advertise-pqc` build). ML-DSA-87 `-50`

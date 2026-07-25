@@ -42,7 +42,7 @@ site requests user verification (UV) for. Rules from the firmware:
 
 | | Value |
 |---|---|
-| Length | 4–63 characters (6–63 on the `fips-profile` build) |
+| Length | 4–63 characters (6–63 on the `fips-profile` build), counted in Unicode code points — `密码` is two, not six |
 | Per-power-cycle | 3 wrong attempts → `PIN_AUTH_BLOCKED` (`0x34`), re-plug to retry |
 | Retry budget | 8 wrong attempts (across power cycles) |
 | On exhaustion | PIN locks **until a factory reset**, no separate unblock |

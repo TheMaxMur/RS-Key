@@ -13,7 +13,152 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+### Fixed
+
+A second pass over the CTAP 2.1 text, this time across `authenticatorLargeBlobs`,
+`authenticatorClientPIN`, `authenticatorCredentialManagement`, `authenticatorReset`,
+CTAPHID and the CTAP1/U2F interface. bcdDevice → `0x0857`.
+
+Two of these change who may do what, and are called out first:
+
+- **A key with no PIN can now write the large-blob array.** §6.10.2 gates the write
+  on the authenticator being "protected by some form of user verification or the
+  alwaysUv option ID is present and true", and its note spells out the converse — an
+  unconfigured key writes without one. RS-Key demanded a `pinUvAuthParam`
+  unconditionally, so `authenticatorLargeBlobs` was simply unusable before a PIN was
+  set. Array entries stay AEAD-sealed under their per-credential `largeBlobKey`, so an
+  unverified write can destroy but never read. Set a PIN (or turn on `alwaysUv`) and
+  the token requirement returns.
+
+- **A `display` build now asks on screen before issuing a `pinUvAuthToken`.** All
+  three token subcommands (`getPinToken`, and both `…WithPermissions`) carry the same
+  step: "If the authenticator has a display, request user consent for the requested
+  permissions." RS-Key minted the token straight off the PIN check, so malware holding
+  the PIN could take an `acfg` token with nothing shown. The prompt lands *before* the
+  PIN is verified, so declining costs no retry. Screenless builds are unaffected —
+  they have no display to ask on, and their button is not polled.
+
+The rest are status codes and bounds:
+
+- **`authenticatorLargeBlobs` reads are validated.** A `get` larger than
+  `maxFragmentLength` is `CTAP1_ERR_INVALID_LENGTH` instead of a silent clamp, and a
+  `get` carrying `length`, `pinUvAuthParam` or `pinUvAuthProtocol` is
+  `CTAP1_ERR_INVALID_PARAMETER`. A 17-byte array no longer skips the trailing-hash
+  check — §6.10.2 grants the minimum length no exemption.
+- **`setPIN` on a device that already has one answers `CTAP2_ERR_PIN_AUTH_INVALID`**
+  (§6.5.5.5), not `CTAP2_ERR_NOT_ALLOWED`.
+- **The minimum PIN length is counted in Unicode code points**, as getInfo `0x0D`
+  defines it, not UTF-8 bytes. Measuring bytes let a two-character CJK PIN clear a
+  floor of four. The stored `PINCodePointLength` follows the same unit, which is what
+  `setMinPINLength` compares its new floor against.
+- **A forced PIN change can no longer be satisfied by the same PIN** (§6.5.5.6): the
+  flag survives and the operation is a policy violation.
+- **Built-in UV speaks its own status dialect** (§6.5.5.7.3): an unconfigured method
+  is `CTAP2_ERR_NOT_ALLOWED` and an exhausted budget `CTAP2_ERR_UV_BLOCKED`, where the
+  host-PIN path reports PIN_NOT_SET / PIN_BLOCKED for the same states. The `acfg`
+  permission is refused over that subcommand, since it is gated by a `uvAcfg` option
+  this device does not advertise — `authnrCfg`, which gates it on the host-PIN path,
+  is a different option.
+- **An rpId-scoped `cm` token may manage its own relying party's credentials.**
+  §6.8.5/6.8.6 match the token's permissions RP ID against *the credential's* rp;
+  RS-Key rejected every scoped token outright, so `deleteCredential` and
+  `updateUserInformation` were unreachable with one. Another rp's credential — and an
+  id that matches nothing — both answer `PIN_AUTH_INVALID`, so the code never reveals
+  who owns an id.
+- **`authenticatorGetNextAssertion` resets its timer on every leg** (§6.3), so the
+  30-second budget covers the gap between calls rather than the whole walk. A platform
+  drawing an account picker over many passkeys no longer runs out partway through.
+- **`authenticatorReset` distinguishes a refusal from a timeout** (§6.6):
+  `CTAP2_ERR_OPERATION_DENIED` when the user declines ("the platform SHOULD NOT
+  repeat"), `CTAP2_ERR_USER_ACTION_TIMEOUT` when nothing happens.
+- **A credBlob of exactly `maxCredBlobLength` is stored.** The bound was exclusive
+  while getInfo advertised 128, so the advertised maximum was refused and reported
+  back as `credBlob: false`.
+- **CTAPHID hands out a unique channel id per `CTAPHID_INIT`** (§11.2.9.1.3) instead
+  of one fixed value shared by every application, and an INIT on an already-allocated
+  channel echoes that channel rather than renaming it. Two concurrent clients — a
+  browser and an `ssh-agent`, say — no longer resynchronise each other's transactions.
+- **`CTAPHID_LOCK` actually locks.** It was acknowledged and ignored, so a host that
+  took the lock believed it had exclusivity it never got. The claim now holds for the
+  requested 1–10 seconds, other channels get `ERR_CHANNEL_BUSY`, and only the owner
+  can release it early.
+- **U2F under `alwaysUv` returns `SW_COMMAND_NOT_ALLOWED`** as §7.2.4 requires. The
+  old `SW_CONDITIONS_NOT_SATISFIED` is the "touch me again" code, which left clients
+  retrying an interface that was switched off.
+- **…and on a `display` build with a PIN, U2F is no longer switched off at all.**
+  The same clause disables CTAP1/U2F "unless the CTAP1/U2F authenticator is protected
+  by a built-in user verification method", which a configured PIN pad is. RS-Key took
+  the blanket branch. Now, on such a build, `U2F_V2` stays in the advertised versions
+  and every REGISTER / AUTHENTICATE runs the pad — the PIN authorizes the operation
+  instead of a bare touch, so U2F is no longer a presence-only way around alwaysUv.
+  A wrong PIN refuses with `SW_CONDITIONS_NOT_SATISFIED`, and the
+  don't-enforce-user-presence control byte can skip the touch but not the
+  verification. Capability alone does not qualify: with no PIN set there is nothing
+  to verify against, so the interface goes away exactly as on a screenless key.
+
+The earlier pass over §6.1.2 / §6.2.2 / §6.11, from the same reading:
+
+- **`options: {uv: true}` alongside a `pinUvAuthParam` is no longer rejected.**
+  §6.1.2 step 5 (and §6.2.2 step 4) are explicit: "If the pinUvAuthParam is
+  present, let the 'uv' option be treated as being present with the value false" —
+  the two are mutually exclusive with the parameter taking precedence. RS-Key
+  instead answered `CTAP2_ERR_INVALID_OPTION` (`0x2C`) to the combination, which
+  python-fido2 and other platforms do send when user verification is required.
+  The option is now normalised away, and it is an error only when the request
+  carries no token *and* the build has no configured built-in user verification
+  method — on a screenless key, still always.
+
+- **A `display` build now honors the `uv` option it advertises.** getInfo
+  advertises `options.uv` on a trusted-display key, but `makeCredential` /
+  `getAssertion` refused `uv: true` outright — advertising a capability and then
+  rejecting every request that used it. `uv: true` now runs `performBuiltInUv` on
+  the panel's PIN pad (§6.1.2 step 11.2, §6.2.2 step 6.2), and that entry counts
+  as the ceremony's evidence of user interaction (§6.1.2 step 13, §6.2.2 step 8),
+  so the panel asks once rather than twice. With `alwaysUv` on, a token-less
+  request is likewise upgraded to built-in UV instead of being refused with
+  `PUAT_REQUIRED` (§6.1.2 step 6.3, §6.2.2 step 5.4). Screenless builds are
+  unaffected — they have no built-in UV method, so every branch is unreachable.
+
+  One deliberate divergence inside that path: **an explicit Deny on the PIN pad
+  answers `CTAP2_ERR_OPERATION_DENIED`**, where the spec's error ladder would fold
+  it into `PUAT_REQUIRED` (the ladder checks `clientPin` before it reaches its own
+  `OPERATION_DENIED` branch). `PUAT_REQUIRED` tells the platform to collect the
+  same PIN over USB, which would turn the trusted display's refusal into the very
+  prompt the user just declined — the panel's veto has to be final. Every other
+  outcome of the ceremony follows the ladder exactly: a wrong PIN or an exhausted
+  budget is `PUAT_REQUIRED`, a timeout is `USER_ACTION_TIMEOUT`.
+
+- **`pubKeyCredParams` again picks the platform's first supported algorithm.**
+  The build preferred ML-DSA whenever an RP offered it, even listed after a
+  classic algorithm — a deliberate deviation so a PQC rollout would not need the
+  RP to reorder its list. §6.1.2 step 4 is unambiguous ("…and no algorithm has yet
+  been chosen by this loop"), so the list order is the RP's preference order again
+  and the override is gone. An RP that wants ML-DSA lists `-49` / `-48` first;
+  both remain fully supported and negotiable.
+
+- **`setMinPINLength` with more RP IDs than fit answers `CTAP2_ERR_KEY_STORE_FULL`.**
+  A `minPinLengthRPIDs` list longer than `maxRPIDsForSetMinPINLength` (8) was
+  silently truncated, so an administrator authorising ten RPs got eight and no
+  indication. §6.11 specifies the code for exactly this, and nothing is written
+  now when the list does not fit. The check runs after the `pinUvAuthParam`
+  verification, so it is not an unauthenticated probe.
+
 ### Added
+
+- **`makeCredUvNotRqd`: a PIN no longer blocks `userVerification: "discouraged"`
+  registrations (issue #51).** With a PIN configured, RS-Key demanded a
+  `pinUvAuthParam` for *every* `authenticatorMakeCredential` and answered
+  `CTAP2_ERR_PUAT_REQUIRED` (`0x36`) without one. A relying party that asks for
+  `userVerification: "discouraged"` (a plain second-factor key — addy.io, and the
+  same shape on WebAuthn.io) never sends that parameter, so Safari looped: prompt
+  for the PIN, mint a token, resend without it, get `0x36` again, and the final
+  touch did nothing. RS-Key now advertises the CTAP 2.1 `makeCredUvNotRqd` option
+  in `authenticatorGetInfo` and creates a **non-discoverable** credential on user
+  presence alone, with the `uv` flag clear — the behaviour of a real YubiKey.
+  Discoverable credentials (passkeys, `rk: true`) still require a verified
+  `pinUvAuthParam` (§6.1.2 step 7), and `alwaysUv` still forces user verification
+  for everything (§6.1.2 step 6), so `ykman fido config toggle-always-uv` — or the
+  `always-uv` build — restores PIN-on-every-registration. bcdDevice → `0x0855`.
 
 - **`CONFIG_READ` now reports the effective LED pin / driver and touch timeout.**
   The FIDO `0x41` `CONFIG_READ` PHY response gains an optional `2:` map of the

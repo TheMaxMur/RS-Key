@@ -104,15 +104,35 @@ PUK**, or the OpenPGP PINs), so the independent PINs are never confused. The
 New / Confirm / current step rides in the caption beneath. The PIN never leaves
 the device.
 
-This backs three things:
+Whichever way the PIN arrives — typed on the pad or sent by the host — the panel asks
+before a `pinUvAuthToken` is issued (CTAP 2.1 §6.5.5.7 requires the consent on any
+authenticator with a display). Declining ends the operation with `OPERATION_DENIED`
+and costs no PIN retry, since the question comes before the PIN is checked. So
+`ykman fido` and anything else needing a token waits on a tap here.
+
+This backs four things:
 
 - **Built-in user verification.** getInfo advertises `options.uv`. A PIN typed on
   the pad mints a `pinUvAuthToken` via `clientPIN` (`getPinUvAuthTokenUsingUvWithPermissions`),
-  checked against the same `EF_PIN` the host `clientPIN` path uses.
+  checked against the same `EF_PIN` the host `clientPIN` path uses. A platform can
+  also skip the token: `makeCredential` / `getAssertion` carrying `options: {uv:
+  true}` collect the PIN on the pad directly (CTAP 2.1 §6.1.2 step 11.2), and that
+  entry counts as the ceremony's user presence, so the panel asks once, not twice.
+  With `alwaysUv` on, a request that brings no `pinUvAuthParam` takes the same
+  route instead of being refused with `PUAT_REQUIRED`. Declining on the pad ends
+  the operation with `OPERATION_DENIED` — deliberately, since the code CTAP would
+  have the device send instead (`PUAT_REQUIRED`) asks the host to prompt for the
+  same PIN, which would make the refusal meaningless. A wrong PIN still falls back
+  to the host path.
 - **CCID secure PIN entry (pinpad).** A display build advertises `bPINSupport`
   and handles `PC_to_RDR_Secure`, so GnuPG (OpenPGP PW1/PW3) and OpenSC (PIV PIN)
   collect the PIN on the trusted screen. The PIN never crosses USB in pinpad
   mode. Details and host-driver caveats: [protocol.md §1.3](../protocol.md).
+- **U2F under alwaysUv.** A screenless key has to switch CTAP1/U2F off once
+  `alwaysUv` is on, since a touch proves no verification. A pad with a PIN set is the
+  exception CTAP 2.1 §7.2.4 allows, so U2F keeps working here — each register and
+  authenticate collects the PIN on the panel. Turning `alwaysUv` on before setting a
+  PIN still disables it; there would be nothing to verify against.
 - **First-run onboarding.** A fresh, PIN-less device offers a *Set a PIN?* screen
   at first run. Declining is remembered (a flag in `EF_DISPLAY`) so the offer
   isn't repeated until a factory reset.
