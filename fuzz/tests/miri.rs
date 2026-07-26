@@ -465,7 +465,7 @@ fn miri_fido_cred_ext() {
             assert_eq!(c.ext.hmac_secret, flags & 0x10 != 0);
             assert_eq!(c.ext.large_blob_key, flags & 0x20 != 0);
             assert_eq!(c.ext.third_party_payment, flags & 0x40 != 0);
-            if !blob.is_empty() && blob.len() < MAX_CREDBLOB_LENGTH {
+            if !blob.is_empty() && blob.len() <= MAX_CREDBLOB_LENGTH {
                 assert_eq!(c.ext.cred_blob, blob);
             } else {
                 assert!(c.ext.cred_blob.is_empty());
