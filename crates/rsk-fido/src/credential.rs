@@ -36,8 +36,8 @@ use crate::consts::{
     RP_NICK_MAX_LEN,
 };
 
-// `MAX_CREDBLOB_LENGTH` (128) over-bounds the sealable credBlob (`< 128`), a
-// harmless 1-byte slack in `CRED_BOX_MAX`.
+// `MAX_CREDBLOB_LENGTH` (128) bounds the sealable credBlob inclusively, so the
+// `CRED_BOX_MAX` term below sizes it exactly — no slack left to absorb a raise.
 use crate::keyderiv::{KEY_HANDLE_LEN, verify_key};
 
 const CRED_PROTO: &[u8; 4] = b"\xf1\xd0\x02\x02";
