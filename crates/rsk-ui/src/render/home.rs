@@ -94,8 +94,7 @@ pub fn render_status_arc<D: DrawTarget<Color = Rgb565>>(
     angle_deg: i32,
 ) -> Result<(), D::Error> {
     let (track, mark) = status_ring(kind);
-    let center = EgPoint::new(MIDX, STATUS_RING_CY);
-    Circle::with_center(center, STATUS_RING_D)
+    Circle::with_center(EgPoint::new(MIDX, STATUS_RING_CY), STATUS_RING_D)
         .into_styled(
             PrimitiveStyleBuilder::new()
                 .stroke_color(track)
@@ -104,7 +103,7 @@ pub fn render_status_arc<D: DrawTarget<Color = Rgb565>>(
         )
         .draw(t)?;
     Arc::with_center(
-        center,
+        EgPoint::new(MIDX, STATUS_RING_CY),
         STATUS_RING_D,
         Angle::from_degrees(angle_deg as f32),
         Angle::from_degrees(270.0),

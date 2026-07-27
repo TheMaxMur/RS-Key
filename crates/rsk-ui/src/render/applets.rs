@@ -3,6 +3,7 @@
 
 //! Applet hub screens: the OpenPGP / PIV / OATH overviews, details, and keygen flows.
 
+use super::components;
 use super::*;
 
 // --- Applet hub (OpenPGP / PIV / OATH) --------------------------------------
@@ -204,16 +205,18 @@ where
             ),
         ),
     ];
-    group_card(t, PK_LIST_TOP, rows.len() as u16)?;
+    components::list::group_card(t, PK_LIST_TOP, rows.len() as u16)?;
     for (i, (g, name, trailing)) in rows.into_iter().enumerate() {
-        row_body(
+        components::list::row(
             t,
-            crate::row_rect(PK_LIST_TOP, i as u16),
+            PK_LIST_TOP,
+            i as u16,
             g,
             name,
             Some((trailing, MUTED)),
             true,
             true,
+            false,
         )?;
     }
     render_nav(t, NavTab::Apps)
@@ -232,7 +235,7 @@ where
     const NAMES: [&str; 3] = ["Signature", "Encryption", "Authentication"];
     const GLYPHS: [Glyph; 3] = [Glyph::Edit, Glyph::Lock, Glyph::Shield];
     // Three key slots + a card-holder row (its name as the trailing value).
-    group_card(t, PK_LIST_TOP, OPENPGP_ROWS)?;
+    components::list::group_card(t, PK_LIST_TOP, OPENPGP_ROWS)?;
     for (i, slot) in v.slots.iter().enumerate() {
         let trailing = if slot.present {
             (slot.algo.as_str(), MUTED)
@@ -241,14 +244,16 @@ where
         };
         // Every slot drills into its own detail (an empty slot's screen explains its
         // role), so every row gets the chevron.
-        row_body(
+        components::list::row(
             t,
-            crate::row_rect(PK_LIST_TOP, i as u16),
+            PK_LIST_TOP,
+            i as u16,
             GLYPHS[i],
             NAMES[i],
             Some(trailing),
             true,
             true,
+            false,
         )?;
     }
     let ch_trailing = if v.cardholder_name.as_str().is_empty() {
@@ -256,14 +261,16 @@ where
     } else {
         (v.cardholder_name.as_str(), MUTED)
     };
-    row_body(
+    components::list::row(
         t,
-        crate::row_rect(PK_LIST_TOP, 3),
+        PK_LIST_TOP,
+        3,
         Glyph::User,
         "Card holder",
         Some(ch_trailing),
         true,
         true,
+        false,
     )?;
     let cy = NAV_TOP as i32 - 10;
     let mut sbuf = [0u8; 16];
@@ -394,7 +401,7 @@ where
     title_bar_wide(t, "PIV", theme::ACCENT, true)?;
     const NAMES: [&str; 4] = ["Authentication", "Signature", "Key Management", "Card Auth"];
     // Four primary slots + a "Retired & F9" row (its populated count as the trailing value).
-    group_card(t, PK_LIST_TOP, PIV_ROWS)?;
+    components::list::group_card(t, PK_LIST_TOP, PIV_ROWS)?;
     for (i, slot) in v.slots.iter().enumerate() {
         let trailing = if slot.present {
             (slot.algo.as_str(), MUTED)
@@ -405,25 +412,29 @@ where
         };
         // Every slot drills into its own detail (an empty slot's screen explains its
         // role), so every row gets the chevron.
-        row_body(
+        components::list::row(
             t,
-            crate::row_rect(PK_LIST_TOP, i as u16),
+            PK_LIST_TOP,
+            i as u16,
             Glyph::Cpu,
             NAMES[i],
             Some(trailing),
             true,
             true,
+            false,
         )?;
     }
     let mut eb = [0u8; 5];
-    row_body(
+    components::list::row(
         t,
-        crate::row_rect(PK_LIST_TOP, 4),
+        PK_LIST_TOP,
+        4,
         Glyph::Apps,
         "Retired & F9",
         Some((fmt_u16(v.extra as u16, &mut eb), MUTED)),
         true,
         true,
+        false,
     )?;
     let cy = NAV_TOP as i32 - 10;
     let mut a = [0u8; 12];
@@ -524,19 +535,21 @@ where
             MUTED,
         )?;
     } else {
-        group_card(t, PK_LIST_TOP, rows.len() as u16)?;
+        components::list::group_card(t, PK_LIST_TOP, rows.len() as u16)?;
         for (i, r) in rows.iter().enumerate() {
             let icon = if r.touch { Glyph::Lock } else { Glyph::Clock };
             let kind = if r.hotp { "HOTP" } else { "TOTP" };
             // Each row drills into the credential's detail (algorithm / digits / period).
-            row_body(
+            components::list::row(
                 t,
-                crate::row_rect(PK_LIST_TOP, i as u16),
+                PK_LIST_TOP,
+                i as u16,
                 icon,
                 r.name.as_str(),
                 Some((kind, MUTED)),
                 true,
                 true,
+                false,
             )?;
         }
         if page_count(total) > 1 {
@@ -696,14 +709,23 @@ where
             "Manage retired keys with ykman.",
         );
     }
-    group_card(t, PK_LIST_TOP, rows.len() as u16)?;
+    components::list::group_card(t, PK_LIST_TOP, rows.len() as u16)?;
     let mut tb = [0u8; 12];
     for (i, r) in rows.iter().enumerate() {
-        let rect = crate::row_rect(PK_LIST_TOP, i as u16);
         if r.generate {
             // No algorithm badge: the action now offers EC / Ed25519 / X25519 / RSA, picked on
             // the next screen — any single-algo label here (it used to read "EC") would mislead.
-            row_body(t, rect, Glyph::Key, "Generate key", None, true, true)?;
+            components::list::row(
+                t,
+                PK_LIST_TOP,
+                i as u16,
+                Glyph::Key,
+                "Generate key",
+                None,
+                true,
+                true,
+                false,
+            )?;
             continue;
         }
         let (icon, label) = if r.slot == 0xF9 {
@@ -718,7 +740,17 @@ where
         } else {
             ("—", theme::CAPTION)
         };
-        row_body(t, rect, icon, label, Some(trailing), true, true)?;
+        components::list::row(
+            t,
+            PK_LIST_TOP,
+            i as u16,
+            icon,
+            label,
+            Some(trailing),
+            true,
+            true,
+            false,
+        )?;
     }
     if page_count(total) > 1 {
         render_pager(t, page, page_count(total))?;
@@ -746,51 +778,61 @@ where
         Role::Body,
         theme::MUTED,
     )?;
-    group_card(t, PIV_KEYGEN_PICK_TOP, PIV_KEYGEN_PICK_ROWS)?;
-    row_body(
+    components::list::group_card(t, PIV_KEYGEN_PICK_TOP, PIV_KEYGEN_PICK_ROWS)?;
+    components::list::row(
         t,
-        crate::row_rect(PIV_KEYGEN_PICK_TOP, 0),
+        PIV_KEYGEN_PICK_TOP,
+        0,
         Glyph::Cpu,
         "NIST P-256",
         Some(("fast", theme::CAPTION)),
         true,
         true,
+        false,
     )?;
-    row_body(
+    components::list::row(
         t,
-        crate::row_rect(PIV_KEYGEN_PICK_TOP, 1),
+        PIV_KEYGEN_PICK_TOP,
+        1,
         Glyph::Cpu,
         "NIST P-384",
         Some(("stronger", theme::CAPTION)),
         true,
         true,
+        false,
     )?;
-    row_body(
+    components::list::row(
         t,
-        crate::row_rect(PIV_KEYGEN_PICK_TOP, 2),
+        PIV_KEYGEN_PICK_TOP,
+        2,
         Glyph::Cpu,
         "Ed25519",
         Some(("EdDSA", theme::CAPTION)),
         true,
         true,
+        false,
     )?;
-    row_body(
+    components::list::row(
         t,
-        crate::row_rect(PIV_KEYGEN_PICK_TOP, 3),
+        PIV_KEYGEN_PICK_TOP,
+        3,
         Glyph::Cpu,
         "X25519",
         Some(("ECDH", theme::CAPTION)),
         true,
         true,
+        false,
     )?;
-    row_body(
+    components::list::row(
         t,
-        crate::row_rect(PIV_KEYGEN_PICK_TOP, 4),
+        PIV_KEYGEN_PICK_TOP,
+        4,
         Glyph::Cpu,
         "RSA",
         Some(("2048-4096", theme::CAPTION)),
         true,
         true,
+        false,
     )?;
     text_left(
         t,
@@ -819,33 +861,39 @@ where
         Role::Body,
         theme::MUTED,
     )?;
-    group_card(t, PIV_KEYGEN_PICK_TOP, PIV_RSA_PICK_ROWS)?;
-    row_body(
+    components::list::group_card(t, PIV_KEYGEN_PICK_TOP, PIV_RSA_PICK_ROWS)?;
+    components::list::row(
         t,
-        crate::row_rect(PIV_KEYGEN_PICK_TOP, 0),
+        PIV_KEYGEN_PICK_TOP,
+        0,
         Glyph::Cpu,
         "RSA 2048",
         Some(("slow", theme::CAPTION)),
         true,
         true,
+        false,
     )?;
-    row_body(
+    components::list::row(
         t,
-        crate::row_rect(PIV_KEYGEN_PICK_TOP, 1),
+        PIV_KEYGEN_PICK_TOP,
+        1,
         Glyph::Cpu,
         "RSA 3072",
         Some(("slower", theme::CAPTION)),
         true,
         true,
+        false,
     )?;
-    row_body(
+    components::list::row(
         t,
-        crate::row_rect(PIV_KEYGEN_PICK_TOP, 2),
+        PIV_KEYGEN_PICK_TOP,
+        2,
         Glyph::Cpu,
         "RSA 4096",
         Some(("slowest", theme::CAPTION)),
         true,
         true,
+        false,
     )?;
     text_left(
         t,
@@ -867,46 +915,54 @@ where
     t.clear(BG)?;
     status_bar(t)?;
     title_bar_wide(t, "PIV PIN", theme::ACCENT, true)?;
-    group_card(t, PIV_KEYGEN_PICK_TOP, PIV_PIN_MENU_ROWS)?;
-    row_body(
+    components::list::group_card(t, PIV_KEYGEN_PICK_TOP, PIV_PIN_MENU_ROWS)?;
+    components::list::row(
         t,
-        crate::row_rect(PIV_KEYGEN_PICK_TOP, 0),
+        PIV_KEYGEN_PICK_TOP,
+        0,
         Glyph::Lock,
         "Change PIN",
         None,
         true,
         true,
+        false,
     )?;
-    row_body(
+    components::list::row(
         t,
-        crate::row_rect(PIV_KEYGEN_PICK_TOP, 1),
+        PIV_KEYGEN_PICK_TOP,
+        1,
         Glyph::Key,
         "Change PUK",
         None,
         true,
         true,
+        false,
     )?;
-    row_body(
+    components::list::row(
         t,
-        crate::row_rect(PIV_KEYGEN_PICK_TOP, 2),
+        PIV_KEYGEN_PICK_TOP,
+        2,
         Glyph::Lifebuoy,
         "Unblock PIN",
         Some(("with PUK", theme::CAPTION)),
         true,
         true,
+        false,
     )?;
     // No trailing caption: a right-aligned hint here is laid out first and the label is
     // clipped to what's left, and "Protect mgmt key" is wide enough that any meaningful
     // caption ("random, PIN-unlocked" was 159 px) ellipsised the label to nothing. The
     // random / PIN-unlocked consequence is stated in full on the confirm screen instead.
-    row_body(
+    components::list::row(
         t,
-        crate::row_rect(PIV_KEYGEN_PICK_TOP, 3),
+        PIV_KEYGEN_PICK_TOP,
+        3,
         Glyph::Shield,
         "Protect mgmt key",
         None,
         true,
         true,
+        false,
     )?;
     text_left(
         t,
