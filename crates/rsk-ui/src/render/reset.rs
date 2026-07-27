@@ -27,9 +27,7 @@ where
     // ceremony — danger red, not the amber of a recoverable caution.
     const DIA: u32 = 58;
     let circle_top = 46;
-    Circle::new(EgPoint::new(MIDX - DIA as i32 / 2, circle_top), DIA)
-        .into_styled(PrimitiveStyle::with_fill(theme::DANGER_BG))
-        .draw(t)?;
+    crate::aa::filled_circle(t, EgPoint::new(MIDX - DIA as i32 / 2, circle_top), DIA, theme::DANGER_BG)?;
     let cyc = circle_top + DIA as i32 / 2;
     glyph::draw(
         t,
@@ -74,9 +72,7 @@ fn erase_item<D: DrawTarget<Color = Rgb565>>(
     label: &str,
 ) -> Result<(), D::Error> {
     const X: i32 = 60;
-    Circle::new(EgPoint::new(X, cy - 3), 6)
-        .into_styled(PrimitiveStyle::with_fill(theme::DANGER))
-        .draw(t)?;
+    crate::aa::filled_circle(t, EgPoint::new(X, cy - 3), 6, theme::DANGER)?;
     text_left(
         t,
         label,
@@ -132,9 +128,7 @@ where
     t.clear(BG)?;
     const DIA: u32 = 70;
     let circle_top = 84;
-    Circle::new(EgPoint::new(MIDX - DIA as i32 / 2, circle_top), DIA)
-        .into_styled(PrimitiveStyle::with_fill(theme::DANGER_BG))
-        .draw(t)?;
+    crate::aa::filled_circle(t, EgPoint::new(MIDX - DIA as i32 / 2, circle_top), DIA, theme::DANGER_BG)?;
     let cyc = circle_top + DIA as i32 / 2;
     glyph::draw(
         t,
@@ -264,12 +258,7 @@ where
     .into_styled(PrimitiveStyle::with_fill(BG))
     .draw(t)?;
     let dia = (SUCCESS_DIA * scale_pct as u32 / 100).max(4);
-    Circle::new(
-        EgPoint::new(MIDX - dia as i32 / 2, SUCCESS_CY - dia as i32 / 2),
-        dia,
-    )
-    .into_styled(PrimitiveStyle::with_fill(fill))
-    .draw(t)?;
+    crate::aa::filled_circle(t, EgPoint::new(MIDX - dia as i32 / 2, SUCCESS_CY - dia as i32 / 2), dia, fill)?;
     let gs = (dia * 48 / 100).max(10) as u16;
     glyph::draw(
         t,
