@@ -44,11 +44,38 @@ fn reset_byte_clears_state() {
 }
 
 #[test]
-fn out_of_range_sequence_ignored() {
+fn dummy_write_aborts_like_a_reset() {
+    // `0x8f` — a write whose sequence is out of range — is the host's documented
+    // "force update or abort" (ykpers sends it to cancel a challenge waiting for a
+    // touch, and again to reset the read mode after collecting a response).
     let mut rx = FrameRx::new();
-    let mut bad = [0u8; REPORT_SIZE];
-    bad[REPORT_DATA] = FLAG_WRITE | 0x0A; // seq 10
-    assert_eq!(rx.feed(&bad), RxOutcome::None);
+    let mut dummy = [0u8; REPORT_SIZE];
+    dummy[REPORT_DATA] = FLAG_WRITE | 0x0F;
+    assert_eq!(rx.feed(&dummy), RxOutcome::Reset);
+}
+
+#[test]
+fn a_frame_interrupted_by_a_dummy_write_is_abandoned() {
+    // The abort must not leave half a frame behind for the next transfer to
+    // inherit: what follows it parses on its own or not at all.
+    let payload = [0x5Au8; PAYLOAD_SIZE];
+    let reports = split_frame(&payload, 0x30);
+    let mut rx = FrameRx::new();
+    for r in &reports[..5] {
+        rx.feed(r);
+    }
+    let mut dummy = [0u8; REPORT_SIZE];
+    dummy[REPORT_DATA] = FLAG_WRITE | 0x0F;
+    assert_eq!(rx.feed(&dummy), RxOutcome::Reset);
+    // Resuming mid-frame yields nothing; a frame sent from its start still lands.
+    assert_eq!(rx.feed(&reports[9]), RxOutcome::BadCrc);
+    for r in &reports[..9] {
+        assert_eq!(rx.feed(r), RxOutcome::None);
+    }
+    assert!(matches!(
+        rx.feed(&reports[9]),
+        RxOutcome::Frame { slot: 0x30, .. }
+    ));
 }
 
 #[test]

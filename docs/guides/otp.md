@@ -117,6 +117,24 @@ The keyboard interface answers the same protocol, so tools written for YubiKeys
 ("YubiKey challenge-response" in KeePassXC, `ykchalresp`, the `pam_yubico`
 HMAC mode) work unchanged.
 
+Those tools are the `ykpers`/`ykcore` family, and on Linux they talk to the key
+over raw libusb rather than through the kernel HID stack. That path has two
+requirements a stock YubiKey satisfies implicitly:
+
+- **A Yubico VID.** KeePassXC filters on Yubico's (and OnlyKey's) vendor id and
+  a fixed PID list, so a default `0x1209` build is invisible to it — build the
+  firmware with `VIDPID=Yubikey5` (see [build.md](../build.md)).
+- **libusb access to the device.** Install Yubico's udev rules
+  (`69-yubikey.rules` / `70-yubikey.rules`, packaged as `yubikey-personalization`
+  on most distributions); without them libusb cannot open the device at all.
+
+`ykman otp calculate` is not affected by either — it goes through hidraw.
+
+Since bcdDevice `0x085A` the frame protocol also answers on the FIDO interface,
+the way a YubiKey does, so a tool that addresses OTP by interface index finds it
+whatever the enabled interface set looks like. Turning the keyboard interface off
+in the phy record still takes it away from both.
+
 Two challenge-response modes exist:
 
 - **HMAC-SHA1** is the common one. Variable-length challenges (`HMAC_LT64`) are
@@ -208,6 +226,17 @@ stops the presses.
   the OTP applet.
 - **Slots 3/4 don't show in `ykman otp info`** → expected. `ykman otp` only
   enumerates 1 and 2.
+- **KeePassXC on Linux says `Hardware key USB error: Pipe error`, or
+  `ykchalresp` fails while `ykman otp calculate` works** → firmware older than
+  bcdDevice `0x0859` enumerated the FIDO interface first, and these tools address
+  the OTP interface as interface 0 unconditionally. Update the firmware. If the
+  key isn't listed at all, check the VID and udev requirements
+  [above](#challenge-response-from-software).
+- **A `--touch` slot works from `ykman` but not from KeePassXC, and afterwards
+  even `ykinfo` fails for half a minute** → firmware older than bcdDevice
+  `0x085B` stayed in the touch wait once a host had probed the slot and moved on,
+  and answered "would block" to every command until it timed out. Update the
+  firmware. A non-touch slot never hit this.
 
 ## Notes and limits
 
