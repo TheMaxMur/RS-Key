@@ -557,7 +557,11 @@ impl<'a> Worker<'a> {
         };
         self.refresh_caps_if_dirty();
         crate::led::set_status(crate::led::STATUS_PROCESSING);
+        // Scope any touch wait this command starts to the OTP transport, so a host
+        // that aborts it cannot also abandon a FIDO ceremony on the same button.
+        crate::presence::set_otp_scope(true);
         let (body, n, status) = self.ccid.handle_otp_hid(slot, &payload);
+        crate::presence::set_otp_scope(false);
         otp_kbd::finish_response(status, &body[..n]);
         self.ccid.scrub();
         // This path runs the CFG_CHAL_BTN_TRIG touch wait too, and `ButtonPresence`

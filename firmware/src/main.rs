@@ -34,7 +34,7 @@ use embassy_rp::usb::{Driver as UsbDriver, InterruptHandler as UsbIrq};
 use embassy_time::Timer;
 use embassy_usb::class::hid::{
     Config as HidConfig, HidBootProtocol, HidReaderWriter, HidSubclass, HidWriter,
-    State as HidState,
+    RequestHandler as HidRequestHandler, State as HidState,
 };
 use embassy_usb::{Builder, Config as UsbConfig, UsbDevice};
 use static_cell::StaticCell;
@@ -271,7 +271,10 @@ static MSOS_DESC: StaticCell<[u8; 64]> = StaticCell::new();
 static CONTROL_BUF: StaticCell<[u8; 64]> = StaticCell::new();
 static HID_STATE: StaticCell<HidState> = StaticCell::new();
 static KBD_STATE: StaticCell<HidState> = StaticCell::new();
-static OTP_HID_HANDLER: StaticCell<otp_kbd::OtpHidHandler> = StaticCell::new();
+// One handler instance per HID interface serving the OTP frame protocol; both
+// marshal the same `otp_kbd` frame state, as a YubiKey's one OTP application does.
+static OTP_HID_HANDLER_KBD: StaticCell<otp_kbd::OtpHidHandler> = StaticCell::new();
+static OTP_HID_HANDLER_FIDO: StaticCell<otp_kbd::OtpHidHandler> = StaticCell::new();
 static USB_HANDLER: StaticCell<led::StatusHandler> = StaticCell::new();
 // Holds the LED power-enable `Output` for the device's lifetime; dropping it would
 // release the pad and let the gated LED rail fall (see the LED block below).
@@ -509,7 +512,7 @@ async fn main(spawner: Spawner) {
     config.max_power = 100;
     config.max_packet_size_0 = 64;
     // bcdDevice build counter; also surfaced on the trusted-display Firmware screen.
-    let device_release: u16 = 0x0858;
+    let device_release: u16 = 0x085B;
     config.device_release = device_release;
 
     let mut builder = Builder::new(
@@ -521,13 +524,37 @@ async fn main(spawner: Spawner) {
         CONTROL_BUF.init([0; 64]),
     );
 
+    // The keyboard (OTP) interface is built FIRST so it lands on interface 0 like a
+    // stock YubiKey: the libusb backend ykpers/ykcore ships — KeePassXC, ykchalresp,
+    // pam_yubico — claims interface 0 and sends the OTP frame reports there blind.
+    let otp_enabled = usb_itf & rsk_rescue::phy::USB_ITF_KB != 0;
+    let kbd = otp_enabled.then(|| {
+        HidWriter::<_, 8>::new(
+            &mut builder,
+            KBD_STATE.init(HidState::new()),
+            HidConfig {
+                report_descriptor: otp_kbd::KEYBOARD_REPORT_DESCRIPTOR,
+                request_handler: Some(OTP_HID_HANDLER_KBD.init(otp_kbd::OtpHidHandler)),
+                poll_ms: 10,
+                max_packet_size: 8,
+                hid_subclass: HidSubclass::No,
+                hid_boot_protocol: HidBootProtocol::None,
+            },
+        )
+    });
+
+    // A 5.7.4 YubiKey answers the OTP frame protocol on its FIDO interface too —
+    // measured, and its FIDO report descriptor stays the CTAP-exact one that declares
+    // no feature report. Match that: it is what saves a host addressing OTP by index.
+    let fido_otp: Option<&'static mut dyn HidRequestHandler> = otp_enabled
+        .then(|| OTP_HID_HANDLER_FIDO.init(otp_kbd::OtpHidHandler) as &mut dyn HidRequestHandler);
     let hid = (usb_itf & rsk_rescue::phy::USB_ITF_HID != 0).then(|| {
         HidReaderWriter::<_, 64, 64>::new(
             &mut builder,
             HID_STATE.init(HidState::new()),
             HidConfig {
                 report_descriptor: FIDO_REPORT_DESCRIPTOR,
-                request_handler: None,
+                request_handler: fido_otp,
                 // 1 ms HID interval: a credMgmt/getAssertion response is several
                 // 64-byte IN frames; at 5 ms/frame that framing dominated once the
                 // per-call flash scan was removed. Full-speed floor is 1 ms.
@@ -558,21 +585,6 @@ async fn main(spawner: Spawner) {
     };
     let ccid = (usb_itf & rsk_rescue::phy::USB_ITF_CCID != 0)
         .then(|| Ccid::new(&mut builder, ClientCcid, card_atr, ccid_pin_support));
-
-    let kbd = (usb_itf & rsk_rescue::phy::USB_ITF_KB != 0).then(|| {
-        HidWriter::<_, 8>::new(
-            &mut builder,
-            KBD_STATE.init(HidState::new()),
-            HidConfig {
-                report_descriptor: otp_kbd::KEYBOARD_REPORT_DESCRIPTOR,
-                request_handler: Some(OTP_HID_HANDLER.init(otp_kbd::OtpHidHandler)),
-                poll_ms: 10,
-                max_packet_size: 8,
-                hid_subclass: HidSubclass::No,
-                hid_boot_protocol: HidBootProtocol::None,
-            },
-        )
-    });
 
     // Go green (idle) the moment the host configures us, not on the first applet
     // command — a healthy, enumerated key with no PC/SC client talking to it would

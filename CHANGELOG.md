@@ -13,6 +13,52 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+## [0.4.4] - 2026-07-27
+
+### Fixed
+
+- **Challenge-response reaches KeePassXC, `ykchalresp` and `pam_yubico` on Linux
+  again.** Those tools share the `ykpers`/`ykcore` libusb backend, which claims USB
+  interface 0 and pushes the OTP frame reports at it without reading a descriptor
+  first. RS-Key enumerated the FIDO HID interface there, and that interface serves
+  no HID feature reports, so every transfer stalled: the host reported a USB "Pipe
+  error" and listed no hardware key
+  ([#55](https://github.com/TheMaxMur/RS-Key/issues/55)). The interfaces now
+  enumerate in the stock YubiKey order — keyboard/OTP, FIDO HID, CCID — so the
+  reports land on the OTP interface as they do on a real key. Windows and macOS
+  were never affected: their `ykcore` backends find the interface through the OS
+  HID stack. Nothing changed on the wire, and hosts re-enumerate the device once
+  after the upgrade. KeePassXC also filters on Yubico's vendor id, so it still
+  needs a `VIDPID=Yubikey5` build and Yubico's udev rules — see
+  [guides/otp.md](guides/otp.md#challenge-response-from-software).
+  Verified end-to-end on Linux against `ykchalresp`, `ykinfo` and
+  `keepassxc-cli` 2.7.11, with a real YubiKey as the control.
+  **bcdDevice → `0x0859`.**
+- **The OTP frame protocol now answers on the FIDO interface as well.** Measuring
+  the fix above showed a 5.7.4 YubiKey serving the OTP status frame on its FIDO
+  interface too, while keeping the CTAP-exact report descriptor that declares no
+  feature report — so a host that pokes interface 0 blind finds OTP whatever the
+  order happens to be. RS-Key stalled there. It now answers on both HID
+  interfaces, marshalling one frame state machine, and the FIDO report descriptor
+  is unchanged. Disabling the keyboard interface in the phy record still removes
+  the protocol from both, so `ykman config usb --disable OTP` keeps its meaning.
+  **bcdDevice → `0x085A`.**
+- **A touch-gated challenge-response slot no longer wedges the OTP transport.**
+  Field report: challenge-response worked without `--touch` and failed with it,
+  while a YubiKey was fine. A host that meets a slot waiting for its button press
+  ends that wait one of two ways, and RS-Key honoured neither: it sends the dummy
+  write `0x8f` (ykpers `yk_force_key_update`, also its way of resetting the read
+  mode after collecting a response), which the frame decoder dropped as an
+  out-of-range sequence; or it simply sends the next command, which a YubiKey lets
+  supersede the challenge. So the key stayed in the touch wait and answered
+  "would block" to *everything* for the next 30 seconds — measured against a real
+  YubiKey, which recovers instantly. Since KeePassXC probes every slot before
+  unlocking, one touch slot was enough to make the whole key look broken. Both
+  paths now end the wait, scoped to the OTP transport so an abort there cannot
+  abandon a FIDO ceremony on the same button. The press itself was never the
+  problem — traced on hardware, a press has always produced its HMAC.
+  **bcdDevice → `0x085B`.**
+
 ## [0.4.3] - 2026-07-26
 
 ### Fixed
@@ -2782,7 +2828,8 @@ family that keeps the "enterprise" features in the open tree.
   signature of it, and a CycloneDX SBOM. See
   [docs/releases.md](docs/releases.md) to verify a download.
 
-[Unreleased]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.3...HEAD
+[Unreleased]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.4...HEAD
+[0.4.4]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.3...v0.4.4
 [0.4.3]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.0...v0.4.1
