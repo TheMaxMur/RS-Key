@@ -11,23 +11,20 @@ use super::*;
 /// default PIN `123456` is six). The applet stores up to eight; `rsk_piv::pad_pin` pads the
 /// rest to the 8-byte `0xFF` wire form so a host VERIFY (which always pads) matches.
 const PIV_PIN_MIN: usize = 6;
-/// Rename caret blink half-period: the caret toggles on/off every this many ms (~1s full
-/// cycle, the design's `steps(1)` 1s blink).
+/// Rename caret blink half-period (unused with T9 — pending char replaces caret blink).
+#[allow(dead_code)]
 const CARET_BLINK_MS: u64 = 500;
 
 impl Ui {
-    /// The rename screen: edit a relying party's device-local nickname with the character
-    /// wheel and persist it via [`rsk_fido::passkeys::set_rp_nickname`] — which seals the
-    /// label at rest and never touches the credential box, so the passkey keeps working.
-    /// Returns the committed nickname (empty = cleared) only when the store actually
-    /// persisted it, or `None` on cancel (back chevron / power-button sleep / a queued host
-    /// command / inactivity) *and* on a failed store (so the caller keeps the prior title
-    /// rather than showing an unsaved rename). Pre-filled with
-    /// the current nickname (empty if none); the wheel cycles `RENAME_CHARSET`, `+` appends
-    /// the candidate, `⌫` deletes, and the buffer is capped at `RP_NICK_MAX_LEN`.
+    /// The rename screen: edit a relying party's device-local nickname with a T9
+    /// phone-style keypad. Each key 1-9 cycles through its letter group on repeated
+    /// presses; pressing a different key (or waiting [`T9_COMMIT_MS`]) commits the
+    /// pending character. Backspace deletes, Save persists via
+    /// [`rsk_fido::passkeys::set_rp_nickname`]. Returns the committed nickname on
+    /// success, `None` on cancel / sleep / timeout / failed store.
     pub(super) fn run_rename(&mut self, current: &Label, hash: &[u8; 32]) -> Option<Label> {
         let idle_limit = Duration::from_millis(MENU_INACTIVITY_MS);
-        let charset = rsk_ui::RENAME_CHARSET;
+        let groups = rsk_ui::T9_GROUPS;
         let mut buf = [0u8; rsk_fido::passkeys::RP_NICK_MAX_LEN];
         let mut len = 0usize;
         for &b in current.as_str().as_bytes() {
@@ -36,40 +33,93 @@ impl Ui {
                 len += 1;
             }
         }
-        let mut cand = 0usize;
+
+        // T9 state
+        let mut pending: Option<u8> = None; // char being cycled (not yet committed)
+        let mut active_group: Option<usize> = None; // which T9 group is active
+        let mut cycle_at: usize = 0; // position within the active group
+        let mut last_t9_press = Instant::now();
+        /// Auto-commit the pending character after this long without a same-key press.
+        const T9_COMMIT_MS: u64 = 800;
+
         let val = |buf: &[u8], len: usize| -> Label { Label::clamp(&buf[..len]) };
-        let _ = rsk_ui::render_rename(&mut self.panel, val(&buf, len).as_str(), charset[cand]);
+
+        // Initial full-frame paint.
+        let _ = rsk_ui::render_rename(
+            &mut self.panel,
+            val(&buf, len).as_str(),
+            pending,
+            active_group,
+        );
         self.shown = None;
         self.touch.wait_release(Instant::now(), idle_limit);
 
         let mut last = Instant::now();
-        // Blink the field caret: a full render leaves it on, then it toggles every
-        // `CARET_BLINK_MS` via the in-place [`render_rename_caret`].
-        let mut caret_on = true;
-        let mut blink_at = Instant::now();
+        let mut prev_active = active_group;
         loop {
             if self.sleep_button_pressed() {
                 return None;
             }
+
+            // Auto-commit pending char after T9 timeout
+            if pending.is_some()
+                && active_group.is_some()
+                && last_t9_press.elapsed() >= Duration::from_millis(T9_COMMIT_MS)
+            {
+                if len < buf.len() {
+                    buf[len] = pending.unwrap();
+                    len += 1;
+                }
+                pending = None;
+                active_group = None;
+                let _ =
+                    rsk_ui::render_rename_field(&mut self.panel, val(&buf, len).as_str(), pending);
+                if prev_active != active_group {
+                    let _ = rsk_ui::render_rename_keys(&mut self.panel, active_group);
+                    prev_active = active_group;
+                }
+                self.shown = None;
+            }
+
             if let Some(p) = self.touch.read() {
                 last = Instant::now();
                 if rsk_ui::hit_title_back(p) {
-                    return None; // cancel — no change persisted
+                    return None;
                 }
                 if let Some(k) = rsk_ui::hit_rename(p) {
                     match k {
-                        rsk_ui::RenameKey::Up => cand = (cand + 1) % charset.len(),
-                        rsk_ui::RenameKey::Down => {
-                            cand = (cand + charset.len() - 1) % charset.len()
+                        rsk_ui::RenameKey::Char(gi) => {
+                            let group = groups[gi];
+                            if active_group == Some(gi) {
+                                cycle_at = (cycle_at + 1) % group.len();
+                            } else {
+                                if let Some(ch) = pending {
+                                    if len < buf.len() {
+                                        buf[len] = ch;
+                                        len += 1;
+                                    }
+                                }
+                                active_group = Some(gi);
+                                cycle_at = 0;
+                            }
+                            pending = Some(group[cycle_at]);
+                            last_t9_press = Instant::now();
                         }
-                        rsk_ui::RenameKey::Insert => {
-                            if len < buf.len() {
-                                buf[len] = charset[cand];
-                                len += 1;
+                        rsk_ui::RenameKey::Backspace => {
+                            if pending.is_some() {
+                                pending = None;
+                                active_group = None;
+                            } else {
+                                len = len.saturating_sub(1);
                             }
                         }
-                        rsk_ui::RenameKey::Backspace => len = len.saturating_sub(1),
                         rsk_ui::RenameKey::Save => {
+                            if let Some(ch) = pending {
+                                if len < buf.len() {
+                                    buf[len] = ch;
+                                    len += 1;
+                                }
+                            }
                             let committed = val(&buf, len);
                             let dev = self.keys.device();
                             let saved = rsk_fido::passkeys::set_rp_nickname(
@@ -78,32 +128,25 @@ impl Ui {
                                 hash,
                                 committed.as_str(),
                             );
-                            // Only report the new title if it actually persisted — on a
-                            // failed store (no seed / full flash / RP vanished) keep the
-                            // prior title so the screen never claims an unsaved rename.
                             return saved.then_some(committed);
                         }
                     }
-                    let _ = rsk_ui::render_rename(
+                    // Partial updates: field always, keys only if active group changed.
+                    let _ = rsk_ui::render_rename_field(
                         &mut self.panel,
                         val(&buf, len).as_str(),
-                        charset[cand],
+                        pending,
                     );
+                    if prev_active != active_group {
+                        let _ = rsk_ui::render_rename_keys(&mut self.panel, active_group);
+                        prev_active = active_group;
+                    }
                     self.shown = None;
-                    // A fresh frame draws the caret on — restart the blink from there.
-                    caret_on = true;
-                    blink_at = Instant::now();
                     self.touch.wait_release(last, idle_limit);
                     last = Instant::now();
                     continue;
                 }
                 self.touch.wait_release(last, idle_limit);
-            }
-            if blink_at.elapsed() >= Duration::from_millis(CARET_BLINK_MS) {
-                caret_on = !caret_on;
-                let v = val(&buf, len);
-                let _ = rsk_ui::render_rename_caret(&mut self.panel, v.as_str(), caret_on);
-                blink_at = Instant::now();
             }
             if crate::worker::host_request_pending() || last.elapsed() >= idle_limit {
                 return None;

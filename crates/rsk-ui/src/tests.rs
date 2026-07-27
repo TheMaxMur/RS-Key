@@ -491,12 +491,15 @@ fn rp_row_shows_nickname_over_rpid() {
 #[test]
 fn rename_key_centres_hit_their_keys() {
     let c = |r: Rect| Point::new(r.x + r.w / 2, r.y + r.h / 2);
-    assert_eq!(hit_rename(c(RN_UP_RECT)), Some(RenameKey::Up));
-    assert_eq!(hit_rename(c(RN_DOWN_RECT)), Some(RenameKey::Down));
-    assert_eq!(hit_rename(c(RN_BKSP_RECT)), Some(RenameKey::Backspace));
-    assert_eq!(hit_rename(c(RN_INS_RECT)), Some(RenameKey::Insert));
-    assert_eq!(hit_rename(c(RN_SAVE_RECT)), Some(RenameKey::Save));
-    // The field area (above the wheel) is not a wheel key.
+    // T9 char keys (0,0)=1, (0,1)=2, (2,2)=9, (3,1)=0
+    assert_eq!(hit_rename(c(t9_key_rect(0, 0))), Some(RenameKey::Char(0)));
+    assert_eq!(hit_rename(c(t9_key_rect(0, 1))), Some(RenameKey::Char(1)));
+    assert_eq!(hit_rename(c(t9_key_rect(2, 2))), Some(RenameKey::Char(8)));
+    assert_eq!(hit_rename(c(t9_key_rect(3, 1))), Some(RenameKey::Char(9)));
+    // Backspace (3, 0) and Save (3, 2)
+    assert_eq!(hit_rename(c(t9_key_rect(3, 0))), Some(RenameKey::Backspace));
+    assert_eq!(hit_rename(c(t9_key_rect(3, 2))), Some(RenameKey::Save));
+    // The field area (above the keypad) is not a key.
     assert_eq!(hit_rename(c(RN_FIELD_RECT)), None);
 }
 
@@ -510,11 +513,19 @@ fn title_edit_and_back_are_disjoint() {
 }
 
 #[test]
-fn rename_charset_is_printable_and_cycles() {
-    assert!(!RENAME_CHARSET.is_empty());
-    assert!(RENAME_CHARSET.iter().all(|&b| (0x20..=0x7E).contains(&b)));
-    // Distinct entries (no accidental dup that would stall the wheel on a value).
-    for (i, &a) in RENAME_CHARSET.iter().enumerate() {
-        assert!(!RENAME_CHARSET[i + 1..].contains(&a), "duplicate {a:?}");
+fn t9_groups_are_printable_and_have_distinct_chars() {
+    for (gi, group) in T9_GROUPS.iter().enumerate() {
+        assert!(!group.is_empty(), "T9 group {gi} is empty");
+        assert!(
+            group.iter().all(|&b| (0x20..=0x7E).contains(&b)),
+            "non-printable in group {gi}"
+        );
+        // No duplicate chars within a group
+        for (i, &a) in group.iter().enumerate() {
+            assert!(
+                !group[i + 1..].contains(&a),
+                "duplicate {a:?} in group {gi}"
+            );
+        }
     }
 }

@@ -2,6 +2,7 @@
 // Copyright (C) 2026 RS-Key contributors
 
 use super::ceremony::centered_clipped;
+use super::components;
 use super::home::HOME_CARD_TOP;
 use super::*;
 use crate::{HomeView, PANEL_H, SuccessKind};
@@ -542,43 +543,34 @@ fn applet_detail_screens_fit_and_clip_max_values() {
 #[test]
 fn rename_screen_paints_wheel_and_save() {
     let mut d = Rec::new();
-    render_rename(&mut d, "work", b'a').unwrap();
+    render_rename(&mut d, "work", Some(b'a'), Some(1)).unwrap();
     assert!(!d.oob, "rename drew outside the panel");
     assert!(d.drew_anything());
-    // The back chevron cancels; the Save button is the primary fill — both in their
-    // hit rects.
+    // The back chevron cancels.
     assert!(has_color(&d, crate::TITLE_BACK_RECT, theme::ACCENT));
-    assert!(
-        has_color(&d, crate::RN_SAVE_RECT, theme::ACCENT_FILL),
-        "Save button missing from its hit rect"
-    );
-    // Each wheel control paints something in its own tap target.
-    for r in [
-        crate::RN_UP_RECT,
-        crate::RN_DOWN_RECT,
-        crate::RN_BKSP_RECT,
-        crate::RN_INS_RECT,
-    ] {
-        assert!(d.any_non_bg_in(r), "wheel key {r:?} painted nothing");
+    // Each T9 key paints something in its own tap target (including the Save key).
+    for row in 0..4u16 {
+        for col in 0..3u16 {
+            let r = crate::t9_key_rect(row, col);
+            assert!(d.any_non_bg_in(r), "T9 key ({row},{col}) painted nothing");
+        }
     }
 }
 
 #[test]
-fn rename_space_candidate_stays_in_panel() {
-    // The space candidate takes a different (underline) draw path — still in-bounds,
-    // and an empty value (caret at the field start) must not spill either.
+fn rename_space_pending_stays_in_panel() {
+    // Pending space char takes the underline draw path — still in-bounds.
     let mut d = Rec::new();
-    render_rename(&mut d, "", b' ').unwrap();
+    render_rename(&mut d, "", Some(b' '), None).unwrap();
     assert!(!d.oob, "rename(space) drew outside the panel");
     assert!(d.drew_anything());
 }
 
 #[test]
 fn rename_long_value_is_clipped_to_the_field() {
-    // A value far wider than the field must not paint past the panel (it is clipped).
     let long = "abcdefghijklmnopqrstuvwx";
     let mut d = Rec::new();
-    render_rename(&mut d, long, b'z').unwrap();
+    render_rename(&mut d, long, Some(b'z'), None).unwrap();
     assert!(!d.oob, "rename(long) drew outside the panel");
 }
 
@@ -1453,7 +1445,8 @@ fn header_row_and_nav_draw_within_bounds() {
     let mut d = Rec::new();
     render_header(&mut d, "Settings", true, Some(Glyph::Shield)).unwrap();
     let r = crate::row_rect(40, 0);
-    render_row(&mut d, r, Glyph::Lock, "PIN", Some(("OK", theme::OK)), true).unwrap();
+    components::rect_card(&mut d, r).unwrap();
+    components::rect_row(&mut d, r, Glyph::Lock, "PIN", Some(("OK", theme::OK)), true).unwrap();
     render_nav(&mut d, NavTab::Settings).unwrap();
     assert!(!d.oob, "design-system widgets drew outside the panel");
     // The list-row card fills its rect (sampled on the flat top span).
@@ -1467,7 +1460,8 @@ fn long_row_label_is_clipped_clear_of_the_trailing_value() {
     let r = crate::row_rect(40, 0);
     let txt = "4 accounts";
     let mut d = Rec::new();
-    render_row(
+    components::rect_card(&mut d, r).unwrap();
+    components::rect_row(
         &mut d,
         r,
         Glyph::Globe,

@@ -162,18 +162,19 @@ fn pager_clear_of_rows_and_nav() {
 }
 
 /// On the rename screen no tap maps to two wheel keys, and a wheel tap never also
-/// hits the back chevron (cancel) — so committing, editing, and cancelling can't be
-/// confused for one another.
+/// T9 keypad keys + back chevron are pairwise disjoint — no tap can be ambiguous.
 #[kani::proof]
 fn rename_keys_are_unambiguous() {
     let p = Point::new(kani::any(), kani::any());
-    let hits = [
-        RN_UP_RECT.contains(p),
-        RN_DOWN_RECT.contains(p),
-        RN_BKSP_RECT.contains(p),
-        RN_INS_RECT.contains(p),
-        RN_SAVE_RECT.contains(p),
-    ];
-    assert!(hits.iter().filter(|&&b| b).count() <= 1);
+    // Check all 12 keypad keys are disjoint
+    let mut hits = 0u32;
+    for row in 0..4u16 {
+        for col in 0..3u16 {
+            if t9_key_rect(row, col).contains(p) {
+                hits += 1;
+            }
+        }
+    }
+    assert!(hits <= 1);
     assert!(!(hit_rename(p).is_some() && hit_title_back(p)));
 }
