@@ -48,6 +48,34 @@ how ykman/yubikit confirm it (a write that left the sequence unchanged reports
 `CommandRejectedError: No data`, which is what blocked `ykman config usb` over
 this transport before). The frame codec itself is otherwise out of scope here.
 
+The interfaces are presented in the stock YubiKey order — **keyboard/OTP, FIDO
+HID, CCID** — because some hosts address the OTP interface by index instead of
+by descriptor: the libusb backend `ykpers`/`ykcore` ships (KeePassXC,
+`ykchalresp`, `pam_yubico`) claims interface 0 and sends the OTP frame reports
+there whatever the descriptors say. An interface switched off in
+`ENABLED_USB_ITF` (§7) is omitted and the rest keep that relative order, so a
+host that assumes a fixed index only holds where the same interface set is
+enabled.
+
+For the same reason the OTP frame protocol answers a HID feature GET/SET_REPORT
+on **both** HID interfaces — the keyboard one and the FIDO one — which is what a
+5.7.4 YubiKey does. The FIDO report descriptor stays the CTAP-exact one and
+declares no feature report (again as on a YubiKey), so a host reading descriptors
+sees no change; the interrupt endpoints carry CTAPHID and nothing else. Reaching
+the frames there needs a deliberate feature transfer — measured working both from
+raw libusb and through macOS IOKit. Both interfaces marshal one frame state
+machine, so the two are alternative doors to the same OTP application, not
+independent sessions. Disabling the keyboard interface in `ENABLED_USB_ITF`
+removes the protocol from both.
+
+A slot programmed to require a touch answers its challenge only after a button
+press, and reports the wait in the status byte (`0x20`) meanwhile. Two things end
+that wait early, both matching a YubiKey: the host's **dummy write** — a report
+whose sequence byte is out of range, `0x8f`, which also resets the read mode after
+a response — and **any new frame**, which supersedes the pending challenge. A host
+that does neither waits out the touch timeout (§7 `PRESENCE_TIMEOUT`), during
+which the transport reports only that it is waiting.
+
 ### 1.1 CCID APDU framing
 
 Standard ISO-7816 short APDUs. SELECT is always `00 A4 04 00 Lc <AID> 00`; the

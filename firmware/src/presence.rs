@@ -52,6 +52,28 @@ pub fn request_cancel() {
     CANCEL_REQUESTED.store(true, Ordering::Release);
 }
 
+/// Set while the worker runs an OTP frame command, so [`cancel_otp_wait`] can only
+/// end that transport's ceremony — never a FIDO or OpenPGP one waiting on the same
+/// button.
+static OTP_WAIT_SCOPE: AtomicBool = AtomicBool::new(false);
+
+/// Mark (or unmark) the OTP frame command the worker is running.
+pub fn set_otp_scope(active: bool) {
+    OTP_WAIT_SCOPE.store(active, Ordering::Relaxed);
+}
+
+/// End an OTP touch wait because the host moved on: it sent the dummy write that
+/// aborts (`0x8f`), or a new frame — a YubiKey lets either supersede the wait, and
+/// without that every later command reads "would block" until the wait times out.
+pub fn cancel_otp_wait() {
+    if OTP_WAIT_SCOPE.load(Ordering::Relaxed) {
+        CANCEL_REQUESTED.store(true, Ordering::Relaxed);
+        // The wait is over as of this decision; stop advertising it right away so
+        // the host's next status poll cannot read a stale "waiting for touch".
+        UP_PENDING.store(false, Ordering::Relaxed);
+    }
+}
+
 /// Built-in touch-wait timeout (ms) used when the phy record carries none.
 const DEFAULT_TIMEOUT_MS: u32 = 30_000;
 /// Touch-wait timeout in ms, seeded at boot from the phy record's
