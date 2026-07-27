@@ -93,11 +93,11 @@ impl Ui {
                             if active_group == Some(gi) {
                                 cycle_at = (cycle_at + 1) % group.len();
                             } else {
-                                if let Some(ch) = pending {
-                                    if len < buf.len() {
-                                        buf[len] = ch;
-                                        len += 1;
-                                    }
+                                if let Some(ch) = pending
+                                    && len < buf.len()
+                                {
+                                    buf[len] = ch;
+                                    len += 1;
                                 }
                                 active_group = Some(gi);
                                 cycle_at = 0;
@@ -114,11 +114,11 @@ impl Ui {
                             }
                         }
                         rsk_ui::RenameKey::Save => {
-                            if let Some(ch) = pending {
-                                if len < buf.len() {
-                                    buf[len] = ch;
-                                    len += 1;
-                                }
+                            if let Some(ch) = pending
+                                && len < buf.len()
+                            {
+                                buf[len] = ch;
+                                len += 1;
                             }
                             let committed = val(&buf, len);
                             let dev = self.keys.device();
