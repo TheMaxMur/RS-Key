@@ -232,6 +232,11 @@ stops the presses.
   the OTP interface as interface 0 unconditionally. Update the firmware. If the
   key isn't listed at all, check the VID and udev requirements
   [above](#challenge-response-from-software).
+- **A `--touch` slot works from `ykman` but not from KeePassXC, and afterwards
+  even `ykinfo` fails for half a minute** → firmware older than bcdDevice
+  `0x085B` stayed in the touch wait once a host had probed the slot and moved on,
+  and answered "would block" to every command until it timed out. Update the
+  firmware. A non-touch slot never hit this.
 
 ## Notes and limits
 

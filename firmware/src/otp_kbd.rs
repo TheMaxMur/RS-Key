@@ -133,6 +133,9 @@ impl RequestHandler for OtpHidHandler {
             let mut h = c.borrow_mut();
             match h.rx.feed(&report) {
                 RxOutcome::Frame { slot, payload } => {
+                    // The host moved on to another command: a YubiKey lets that
+                    // supersede a challenge still waiting for its touch.
+                    crate::presence::cancel_otp_wait();
                     h.req_slot = slot;
                     h.req_payload = payload;
                     h.req_ready = true;
@@ -140,6 +143,7 @@ impl RequestHandler for OtpHidHandler {
                     OTP_REQ.signal(());
                 }
                 RxOutcome::Reset => {
+                    crate::presence::cancel_otp_wait();
                     h.tx = FrameTx::new();
                     h.state = State::Idle;
                 }
@@ -198,7 +202,11 @@ pub fn finish_response(status: [u8; REPORT_SIZE], body: &[u8]) {
         h.status = status;
         if body.is_empty() {
             h.tx = FrameTx::new();
-            h.state = State::Idle;
+            // A frame that arrived while this command ran is already queued — stay
+            // in `Processing` for it rather than flashing idle at the host.
+            if !h.req_ready {
+                h.state = State::Idle;
+            }
         } else {
             h.tx.load(body);
             h.state = State::Responding;

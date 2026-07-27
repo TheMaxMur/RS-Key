@@ -77,7 +77,11 @@ impl FrameRx {
         }
         let seq = (flag & SEQ_MASK) as usize;
         if seq > 9 {
-            return RxOutcome::None;
+            // A write with an out-of-range sequence is the host's dummy write
+            // (`0x8f`, ykpers `yk_force_key_update`): abort what is in flight and
+            // reset the read mode. Dropping it strands the host mid-transfer.
+            self.buf = [0; FRAME_SIZE];
+            return RxOutcome::Reset;
         }
         if seq == 0 {
             self.buf = [0; FRAME_SIZE];

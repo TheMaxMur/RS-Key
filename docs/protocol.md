@@ -68,6 +68,14 @@ machine, so the two are alternative doors to the same OTP application, not
 independent sessions. Disabling the keyboard interface in `ENABLED_USB_ITF`
 removes the protocol from both.
 
+A slot programmed to require a touch answers its challenge only after a button
+press, and reports the wait in the status byte (`0x20`) meanwhile. Two things end
+that wait early, both matching a YubiKey: the host's **dummy write** — a report
+whose sequence byte is out of range, `0x8f`, which also resets the read mode after
+a response — and **any new frame**, which supersedes the pending challenge. A host
+that does neither waits out the touch timeout (§7 `PRESENCE_TIMEOUT`), during
+which the transport reports only that it is waiting.
+
 ### 1.1 CCID APDU framing
 
 Standard ISO-7816 short APDUs. SELECT is always `00 A4 04 00 Lc <AID> 00`; the

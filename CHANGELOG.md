@@ -41,6 +41,21 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   is unchanged. Disabling the keyboard interface in the phy record still removes
   the protocol from both, so `ykman config usb --disable OTP` keeps its meaning.
   **bcdDevice → `0x085A`.**
+- **A touch-gated challenge-response slot no longer wedges the OTP transport.**
+  Field report: challenge-response worked without `--touch` and failed with it,
+  while a YubiKey was fine. A host that meets a slot waiting for its button press
+  ends that wait one of two ways, and RS-Key honoured neither: it sends the dummy
+  write `0x8f` (ykpers `yk_force_key_update`, also its way of resetting the read
+  mode after collecting a response), which the frame decoder dropped as an
+  out-of-range sequence; or it simply sends the next command, which a YubiKey lets
+  supersede the challenge. So the key stayed in the touch wait and answered
+  "would block" to *everything* for the next 30 seconds — measured against a real
+  YubiKey, which recovers instantly. Since KeePassXC probes every slot before
+  unlocking, one touch slot was enough to make the whole key look broken. Both
+  paths now end the wait, scoped to the OTP transport so an abort there cannot
+  abandon a FIDO ceremony on the same button. The press itself was never the
+  problem — traced on hardware, a press has always produced its HMAC.
+  **bcdDevice → `0x085B`.**
 
 ## [0.4.3] - 2026-07-26
 
