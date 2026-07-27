@@ -57,6 +57,17 @@ there whatever the descriptors say. An interface switched off in
 host that assumes a fixed index only holds where the same interface set is
 enabled.
 
+For the same reason the OTP frame protocol answers a HID feature GET/SET_REPORT
+on **both** HID interfaces — the keyboard one and the FIDO one — which is what a
+5.7.4 YubiKey does. The FIDO report descriptor stays the CTAP-exact one and
+declares no feature report (again as on a YubiKey), so a host reading descriptors
+sees no change; the interrupt endpoints carry CTAPHID and nothing else. Reaching
+the frames there needs a deliberate feature transfer — measured working both from
+raw libusb and through macOS IOKit. Both interfaces marshal one frame state
+machine, so the two are alternative doors to the same OTP application, not
+independent sessions. Disabling the keyboard interface in `ENABLED_USB_ITF`
+removes the protocol from both.
+
 ### 1.1 CCID APDU framing
 
 Standard ISO-7816 short APDUs. SELECT is always `00 A4 04 00 Lc <AID> 00`; the

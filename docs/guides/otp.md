@@ -130,6 +130,11 @@ requirements a stock YubiKey satisfies implicitly:
 
 `ykman otp calculate` is not affected by either — it goes through hidraw.
 
+Since bcdDevice `0x085A` the frame protocol also answers on the FIDO interface,
+the way a YubiKey does, so a tool that addresses OTP by interface index finds it
+whatever the enabled interface set looks like. Turning the keyboard interface off
+in the phy record still takes it away from both.
+
 Two challenge-response modes exist:
 
 - **HMAC-SHA1** is the common one. Variable-length challenges (`HMAC_LT64`) are

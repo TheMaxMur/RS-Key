@@ -32,6 +32,15 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   Verified end-to-end on Linux against `ykchalresp`, `ykinfo` and
   `keepassxc-cli` 2.7.11, with a real YubiKey as the control.
   **bcdDevice → `0x0859`.**
+- **The OTP frame protocol now answers on the FIDO interface as well.** Measuring
+  the fix above showed a 5.7.4 YubiKey serving the OTP status frame on its FIDO
+  interface too, while keeping the CTAP-exact report descriptor that declares no
+  feature report — so a host that pokes interface 0 blind finds OTP whatever the
+  order happens to be. RS-Key stalled there. It now answers on both HID
+  interfaces, marshalling one frame state machine, and the FIDO report descriptor
+  is unchanged. Disabling the keyboard interface in the phy record still removes
+  the protocol from both, so `ykman config usb --disable OTP` keeps its meaning.
+  **bcdDevice → `0x085A`.**
 
 ## [0.4.3] - 2026-07-26
 
