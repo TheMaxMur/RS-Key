@@ -509,7 +509,7 @@ async fn main(spawner: Spawner) {
     config.max_power = 100;
     config.max_packet_size_0 = 64;
     // bcdDevice build counter; also surfaced on the trusted-display Firmware screen.
-    let device_release: u16 = 0x0858;
+    let device_release: u16 = 0x0859;
     config.device_release = device_release;
 
     let mut builder = Builder::new(
@@ -520,6 +520,24 @@ async fn main(spawner: Spawner) {
         MSOS_DESC.init([0; 64]),
         CONTROL_BUF.init([0; 64]),
     );
+
+    // The keyboard (OTP) interface is built FIRST so it lands on interface 0 like a
+    // stock YubiKey: the libusb backend ykpers/ykcore ships — KeePassXC, ykchalresp,
+    // pam_yubico — claims interface 0 and sends the OTP frame reports there blind.
+    let kbd = (usb_itf & rsk_rescue::phy::USB_ITF_KB != 0).then(|| {
+        HidWriter::<_, 8>::new(
+            &mut builder,
+            KBD_STATE.init(HidState::new()),
+            HidConfig {
+                report_descriptor: otp_kbd::KEYBOARD_REPORT_DESCRIPTOR,
+                request_handler: Some(OTP_HID_HANDLER.init(otp_kbd::OtpHidHandler)),
+                poll_ms: 10,
+                max_packet_size: 8,
+                hid_subclass: HidSubclass::No,
+                hid_boot_protocol: HidBootProtocol::None,
+            },
+        )
+    });
 
     let hid = (usb_itf & rsk_rescue::phy::USB_ITF_HID != 0).then(|| {
         HidReaderWriter::<_, 64, 64>::new(
@@ -558,21 +576,6 @@ async fn main(spawner: Spawner) {
     };
     let ccid = (usb_itf & rsk_rescue::phy::USB_ITF_CCID != 0)
         .then(|| Ccid::new(&mut builder, ClientCcid, card_atr, ccid_pin_support));
-
-    let kbd = (usb_itf & rsk_rescue::phy::USB_ITF_KB != 0).then(|| {
-        HidWriter::<_, 8>::new(
-            &mut builder,
-            KBD_STATE.init(HidState::new()),
-            HidConfig {
-                report_descriptor: otp_kbd::KEYBOARD_REPORT_DESCRIPTOR,
-                request_handler: Some(OTP_HID_HANDLER.init(otp_kbd::OtpHidHandler)),
-                poll_ms: 10,
-                max_packet_size: 8,
-                hid_subclass: HidSubclass::No,
-                hid_boot_protocol: HidBootProtocol::None,
-            },
-        )
-    });
 
     // Go green (idle) the moment the host configures us, not on the first applet
     // command — a healthy, enumerated key with no PC/SC client talking to it would

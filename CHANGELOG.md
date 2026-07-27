@@ -13,6 +13,26 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+### Fixed
+
+- **Challenge-response reaches KeePassXC, `ykchalresp` and `pam_yubico` on Linux
+  again.** Those tools share the `ykpers`/`ykcore` libusb backend, which claims USB
+  interface 0 and pushes the OTP frame reports at it without reading a descriptor
+  first. RS-Key enumerated the FIDO HID interface there, and that interface serves
+  no HID feature reports, so every transfer stalled: the host reported a USB "Pipe
+  error" and listed no hardware key
+  ([#55](https://github.com/TheMaxMur/RS-Key/issues/55)). The interfaces now
+  enumerate in the stock YubiKey order — keyboard/OTP, FIDO HID, CCID — so the
+  reports land on the OTP interface as they do on a real key. Windows and macOS
+  were never affected: their `ykcore` backends find the interface through the OS
+  HID stack. Nothing changed on the wire, and hosts re-enumerate the device once
+  after the upgrade. KeePassXC also filters on Yubico's vendor id, so it still
+  needs a `VIDPID=Yubikey5` build and Yubico's udev rules — see
+  [guides/otp.md](guides/otp.md#challenge-response-from-software).
+  Verified end-to-end on Linux against `ykchalresp`, `ykinfo` and
+  `keepassxc-cli` 2.7.11, with a real YubiKey as the control.
+  **bcdDevice → `0x0859`.**
+
 ## [0.4.3] - 2026-07-26
 
 ### Fixed
