@@ -6,6 +6,7 @@
 //! multiplier, and the WS2812 LED pin, and bakes them in as `PK_*` env vars /
 //! `cfg`s that `main.rs` reads with `env!` / `#[cfg]`.
 use std::env;
+use std::fs;
 use std::fs::File;
 use std::io::Write;
 use std::path::PathBuf;
@@ -31,8 +32,225 @@ const KVCNT_LEN: u32 = 128 * 1024;
 /// split here with a fix hint instead of leaving a cryptic linker overflow.
 const MIN_CODE: u32 = 1024 * 1024;
 
+// --- Board config (BOARD=<name> -> firmware/boards/<name>.toml) ---
+struct BoardConfig {
+    vidpid: Option<String>,
+    usb_vid: Option<u16>,
+    usb_pid: Option<u16>,
+    usb_manufacturer: Option<String>,
+    usb_product: Option<String>,
+    led_kind: Option<String>,
+    led_pin: Option<u8>,
+    led_order: Option<String>,
+    led_power_pin: Option<u8>,
+    max_leds: Option<u32>,
+    presence_source: Option<String>,
+    presence_pin: Option<u8>,
+    presence_active_high: Option<bool>,
+    usr_led_pin: Option<u8>,
+    usr_led_active_high: Option<bool>,
+    flash_size_mb: Option<u32>,
+    kvmain_kb: Option<u32>,
+    // display
+    display_spi_freq_hz: Option<u32>,
+    display_cs: Option<u8>,
+    display_dc: Option<u8>,
+    display_rst: Option<u8>,
+    display_bl_pin: Option<u8>,
+    display_bl_pwm_slice: Option<u8>,
+    display_bl_pwm_channel: Option<u8>,
+    display_tp_rst: Option<u8>,
+    display_wake_pin: Option<u8>,
+    display_wake_active_high: Option<bool>,
+    display_i2c_freq_hz: Option<u32>,
+    display_invert_colors: Option<bool>,
+    display_color_order: Option<String>,
+}
+
+fn read_board() -> Option<BoardConfig> {
+    let name = env::var("BOARD").ok()?;
+    let path = format!("boards/{name}.toml");
+    let raw =
+        fs::read_to_string(&path).unwrap_or_else(|_| panic!("BOARD={name:?}: cannot read {path}"));
+    println!("cargo:rerun-if-changed={path}");
+    Some(parse_toml(&raw))
+}
+
+fn parse_toml(raw: &str) -> BoardConfig {
+    let mut c = BoardConfig {
+        vidpid: None,
+        usb_vid: None,
+        usb_pid: None,
+        usb_manufacturer: None,
+        usb_product: None,
+        led_kind: None,
+        led_pin: None,
+        led_order: None,
+        led_power_pin: None,
+        max_leds: None,
+        presence_source: None,
+        presence_pin: None,
+        presence_active_high: None,
+        usr_led_pin: None,
+        usr_led_active_high: None,
+        flash_size_mb: None,
+        kvmain_kb: None,
+        display_spi_freq_hz: None,
+        display_cs: None,
+        display_dc: None,
+        display_rst: None,
+        display_bl_pin: None,
+        display_bl_pwm_slice: None,
+        display_bl_pwm_channel: None,
+        display_tp_rst: None,
+        display_wake_pin: None,
+        display_wake_active_high: None,
+        display_i2c_freq_hz: None,
+        display_invert_colors: None,
+        display_color_order: None,
+    };
+    let mut sec = "";
+    fn u(s: &str) -> &str {
+        s.trim().trim_matches('"')
+    }
+    fn u8(s: &str) -> u8 {
+        u32(s) as u8
+    }
+    fn u32(s: &str) -> u32 {
+        let clean: String = u(s).chars().filter(|c| *c != '_').collect();
+        u32::from_str_radix(
+            clean.trim_start_matches("0x"),
+            if clean.starts_with("0x") { 16 } else { 10 },
+        )
+        .unwrap_or_else(|_| panic!("bad u32: {}", s))
+    }
+    fn b(s: &str) -> bool {
+        matches!(u(s), "true" | "1")
+    }
+    for line in raw.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if let Some(s) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
+            sec = s.trim();
+            continue;
+        }
+        let Some((k, v)) = line.split_once('=') else {
+            continue;
+        };
+        let (k, v) = (k.trim(), v.trim());
+        match (sec, k) {
+            ("usb", "vidpid") => c.vidpid = Some(u(v).to_string()),
+            ("usb", "vid") => c.usb_vid = Some(u32(v) as u16),
+            ("usb", "pid") => c.usb_pid = Some(u32(v) as u16),
+            ("usb", "manufacturer") => c.usb_manufacturer = Some(u(v).to_string()),
+            ("usb", "product") => c.usb_product = Some(u(v).to_string()),
+            ("led", "kind") => c.led_kind = Some(u(v).to_string()),
+            ("led", "pin") => c.led_pin = Some(u8(v)),
+            ("led", "order") => c.led_order = Some(u(v).to_string()),
+            ("led", "power_pin") => c.led_power_pin = Some(u8(v)),
+            ("led", "max_leds") => c.max_leds = Some(u32(v)),
+            ("presence", "source") => c.presence_source = Some(u(v).to_string()),
+            ("presence", "pin") => c.presence_pin = Some(u8(v)),
+            ("presence", "active_high") => c.presence_active_high = Some(b(v)),
+            ("usr_led", "pin") => c.usr_led_pin = Some(u8(v)),
+            ("usr_led", "active_high") => c.usr_led_active_high = Some(b(v)),
+            ("flash", "size_mb") => c.flash_size_mb = Some(u32(v)),
+            ("flash", "kvmain_kb") => c.kvmain_kb = Some(u32(v)),
+            ("display", "spi_freq_hz") => c.display_spi_freq_hz = Some(u32(v)),
+            ("display", "cs") => c.display_cs = Some(u8(v)),
+            ("display", "dc") => c.display_dc = Some(u8(v)),
+            ("display", "rst") => c.display_rst = Some(u8(v)),
+            ("display", "bl_pin") => c.display_bl_pin = Some(u8(v)),
+            ("display", "bl_pwm_slice") => c.display_bl_pwm_slice = Some(u8(v)),
+            ("display", "bl_pwm_channel") => {
+                let ch = u(v);
+                c.display_bl_pwm_channel = Some(match ch {
+                    "A" | "a" | "0" => 0,
+                    "B" | "b" | "1" => 1,
+                    _ => panic!("bl_pwm_channel: {ch}"),
+                });
+            }
+            ("display", "tp_rst") => c.display_tp_rst = Some(u8(v)),
+            ("display", "wake_pin") => c.display_wake_pin = Some(u8(v)),
+            ("display", "wake_active_high") => c.display_wake_active_high = Some(b(v)),
+            ("display", "i2c_freq_hz") => c.display_i2c_freq_hz = Some(u32(v)),
+            ("display", "invert_colors") => c.display_invert_colors = Some(b(v)),
+            ("display", "color_order") => c.display_color_order = Some(u(v).to_string()),
+            _ => {}
+        }
+    }
+    c
+}
+
 fn main() {
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
+    println!("cargo:rerun-if-env-changed=BOARD");
+    let board = read_board();
+    if let Some(ref b) = board {
+        let set = |k: &str, v: &str| {
+            if env::var(k).is_err() {
+                unsafe { env::set_var(k, v) }
+            }
+        };
+        if let Some(ref v) = b.vidpid {
+            set("VIDPID", v);
+        }
+        if let Some(v) = b.usb_vid {
+            set("USB_VID", &v.to_string());
+        }
+        if let Some(v) = b.usb_pid {
+            set("USB_PID", &v.to_string());
+        }
+        if let Some(ref v) = b.usb_manufacturer {
+            set("USB_MANUFACTURER", v);
+        }
+        if let Some(ref v) = b.usb_product {
+            set("USB_PRODUCT", v);
+        }
+        if let Some(ref v) = b.led_kind {
+            set("LED_KIND", v);
+        }
+        if let Some(v) = b.led_pin {
+            set("LED_PIN", &v.to_string());
+        }
+        if let Some(ref v) = b.led_order {
+            set("LED_ORDER", v);
+        }
+        if let Some(v) = b.led_power_pin {
+            set("LED_POWER_PIN", &v.to_string());
+        }
+        if let Some(v) = b.max_leds {
+            set("MAX_LEDS", &v.to_string());
+        }
+        if b.presence_source.as_deref() == Some("gpio") {
+            if let Some(v) = b.presence_pin {
+                set("PRESENCE_PIN", &v.to_string());
+            }
+            if let Some(v) = b.presence_active_high {
+                set("PRESENCE_ACTIVE_HIGH", if v { "1" } else { "0" });
+            }
+        }
+        if let Some(v) = b.usr_led_pin {
+            set("USR_LED_PIN", &v.to_string());
+        }
+        if let Some(v) = b.usr_led_active_high {
+            set("USR_LED_ACTIVE_HIGH", if v { "1" } else { "0" });
+        }
+        if let Some(v) = b.flash_size_mb {
+            set("FLASH_SIZE", &format!("{}M", v));
+        }
+        if let Some(v) = b.kvmain_kb {
+            set("KVMAIN", &format!("{}K", v));
+        }
+        if let Some(v) = b.display_wake_pin {
+            set("WAKE_PIN", &v.to_string());
+        }
+        if let Some(v) = b.display_wake_active_high {
+            set("WAKE_ACTIVE_HIGH", if v { "1" } else { "0" });
+        }
+    }
 
     // memory.x: the checked-in script is the default 4 MB / 1408K-KVMAIN layout;
     // for any other FLASH_SIZE or KVMAIN we splice a recomputed MEMORY block
@@ -178,6 +396,71 @@ fn main() {
     // Bake fake OTP keys into the image instead of reading the fuses — exercises
     // the kbase migration + boot path without an irreversible OTP write.
     // TEST BUILDS ONLY; never set for a shipped image.
+    // Display pin defaults (board config or env var or hardcoded).
+    macro_rules! disp {
+        ($key:expr, $val:expr) => {
+            if env::var($key).is_err() {
+                println!("cargo:rustc-env={}={}", $key, $val);
+            }
+        };
+    }
+    let b = board.as_ref();
+    let b2 = b.and_then(|b| b.display_cs.map(|_| b));
+    disp!(
+        "PK_DISPLAY_SPI_FREQ_HZ",
+        b2.and_then(|b| b.display_spi_freq_hz).unwrap_or(62_500_000)
+    );
+    disp!("PK_DISPLAY_CS", b2.and_then(|b| b.display_cs).unwrap_or(13));
+    disp!("PK_DISPLAY_DC", b2.and_then(|b| b.display_dc).unwrap_or(14));
+    disp!(
+        "PK_DISPLAY_RST",
+        b2.and_then(|b| b.display_rst).unwrap_or(15)
+    );
+    disp!(
+        "PK_DISPLAY_BL_PIN",
+        b2.and_then(|b| b.display_bl_pin).unwrap_or(16)
+    );
+    disp!(
+        "PK_DISPLAY_BL_PWM_SLICE",
+        b2.and_then(|b| b.display_bl_pwm_slice).unwrap_or(0)
+    );
+    disp!(
+        "PK_DISPLAY_BL_PWM_CHANNEL",
+        b2.and_then(|b| b.display_bl_pwm_channel).unwrap_or(0)
+    );
+    disp!(
+        "PK_DISPLAY_TP_RST",
+        b2.and_then(|b| b.display_tp_rst).unwrap_or(17)
+    );
+    disp!(
+        "PK_DISPLAY_I2C_FREQ_HZ",
+        b2.and_then(|b| b.display_i2c_freq_hz).unwrap_or(400_000)
+    );
+    {
+        let v = if b2.and_then(|b| b.display_invert_colors).unwrap_or(true) {
+            "1"
+        } else {
+            "0"
+        };
+        if env::var("PK_DISPLAY_INVERT_COLORS").is_err() {
+            println!("cargo:rustc-env=PK_DISPLAY_INVERT_COLORS={}", v);
+        }
+    }
+    {
+        let v = if b2
+            .and_then(|b| b.display_color_order.as_deref())
+            .unwrap_or("rgb")
+            == "bgr"
+        {
+            "1"
+        } else {
+            "0"
+        };
+        if env::var("PK_DISPLAY_COLOR_ORDER").is_err() {
+            println!("cargo:rustc-env=PK_DISPLAY_COLOR_ORDER={}", v);
+        }
+    }
+
     for (env_var, baked) in [("FAKE_MKEK", "PK_FAKE_MKEK"), ("FAKE_DEVK", "PK_FAKE_DEVK")] {
         if let Some(hex) = resolve_fake_key(env_var) {
             println!("cargo:rustc-env={baked}={hex}");

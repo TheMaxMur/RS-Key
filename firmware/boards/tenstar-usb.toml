@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 RS-Key contributors
+#
+# TenStar RP2350-USB — WS2812B-standard LED (GRB byte order),
+# GPIO button for presence. No display.
+
+[usb]
+vidpid = "RSKey"
+
+[led]
+kind = "ws2812"
+pin = 16
+order = "grb"
+
+[presence]
+source = "gpio"
+pin = 15
+active_high = false
+
+[flash]
+size_mb = 4
+kvmain_kb = 1408

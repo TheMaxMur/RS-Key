@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 RS-Key contributors
+#
+# Waveshare RP2350-Touch-LCD-2.8 — the trusted-display build.
+# ST7789 240×320 panel over SPI1, CST328 touch over I2C1.
+# Backlight PWM on GPIO16, touch RST on GPIO17.
+# No addressable LED (LED_KIND=none); the panel is the indicator.
+
+[usb]
+vidpid = "RSKey"
+
+[led]
+kind = "none"
+
+[presence]
+source = "bootsel"
+
+[flash]
+size_mb = 4
+kvmain_kb = 1408
+
+[display]
+# ST7789 over SPI1 at up-to-62.5 MHz; drop to 40 if the flex cable misbehaves.
+spi_freq_hz = 62_500_000
+# GPIOs for the panel control lines.
+cs = 13
+dc = 14
+rst = 15
+# Backlight PWM: GPIO16, PWM slice 0 channel A.
+bl_pin = 16
+bl_pwm_slice = 0
+bl_pwm_channel = "A"
+# CST328 touch controller over I2C1.
+tp_rst = 17
+# Wake button: GPIO25 (the board's BAT_PWR / KEY_BAT button).
+wake_pin = 25
+wake_active_high = false

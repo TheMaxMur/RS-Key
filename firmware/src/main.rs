@@ -84,7 +84,7 @@ use embedded_alloc::LlffHeap as Heap;
 #[global_allocator]
 static HEAP: Heap = Heap::empty();
 
-const HEAP_SIZE: usize = 128 * 1024;
+const HEAP_SIZE: usize = 64 * 1024;
 
 #[unsafe(link_section = ".start_block")]
 #[used]
@@ -213,6 +213,30 @@ const _: () = assert!(
     !BUILD_WAKE_ENABLED || BUILD_WAKE_PIN < 10 || BUILD_WAKE_PIN > 18,
     "WAKE_PIN collides with an LCD/touch GPIO (10..=18) owned by the display build"
 );
+// Display GPIOs — defaults for the Waveshare RP2350-Touch-LCD-2.8.
+// Override via BOARD=<name> or individual PK_DISPLAY_* env vars.
+#[cfg(feature = "display")]
+const BUILD_DISPLAY_SPI_FREQ_HZ: u32 = env_u32(env!("PK_DISPLAY_SPI_FREQ_HZ"));
+#[cfg(feature = "display")]
+const BUILD_DISPLAY_CS: u8 = env_u16(env!("PK_DISPLAY_CS")) as u8;
+#[cfg(feature = "display")]
+const BUILD_DISPLAY_DC: u8 = env_u16(env!("PK_DISPLAY_DC")) as u8;
+#[cfg(feature = "display")]
+const BUILD_DISPLAY_RST: u8 = env_u16(env!("PK_DISPLAY_RST")) as u8;
+#[cfg(feature = "display")]
+const BUILD_DISPLAY_BL_PIN: u8 = env_u16(env!("PK_DISPLAY_BL_PIN")) as u8;
+#[cfg(feature = "display")]
+const BUILD_DISPLAY_BL_PWM_SLICE: u8 = env_u16(env!("PK_DISPLAY_BL_PWM_SLICE")) as u8;
+#[cfg(feature = "display")]
+const BUILD_DISPLAY_BL_PWM_CHANNEL: u8 = env_u16(env!("PK_DISPLAY_BL_PWM_CHANNEL")) as u8;
+#[cfg(feature = "display")]
+const BUILD_DISPLAY_TP_RST: u8 = env_u16(env!("PK_DISPLAY_TP_RST")) as u8;
+#[cfg(feature = "display")]
+const BUILD_DISPLAY_I2C_FREQ_HZ: u32 = env_u32(env!("PK_DISPLAY_I2C_FREQ_HZ"));
+#[cfg(feature = "display")]
+pub(crate) const BUILD_DISPLAY_INVERT_COLORS: bool = env_u16(env!("PK_DISPLAY_INVERT_COLORS")) != 0;
+#[cfg(feature = "display")]
+pub(crate) const BUILD_DISPLAY_COLOR_ORDER: u8 = env_u16(env!("PK_DISPLAY_COLOR_ORDER")) as u8;
 
 // Optional nuisance user/status LED to hold OFF at boot (`USR_LED_PIN`): a plain
 // GPIO some boards wire to an onboard LED that lights by default (the Seeed XIAO
@@ -280,11 +304,19 @@ static LED_PWR: StaticCell<embassy_rp::gpio::Output<'static>> = StaticCell::new(
 // Holds the USR-LED-off `Output` for the device's lifetime; dropping it would
 // release the pad and let a pulled nuisance LED light again (see the boot block).
 static USR_LED: StaticCell<embassy_rp::gpio::Output<'static>> = StaticCell::new();
+// SAFETY INVARIANT: `FS`, `FLASH_CELL`, `RNG_CELL`, `PRESENCE`, and `RESCUE_PLATFORM`
+// live behind `RefCell` and are ONLY ever accessed from the thread executor (the
+// worker and its synchronous applet dispatch). The interrupt executor (USB tasks)
+// never touches them — cross-executor data uses `embassy_sync::Mutex` (see
+// `EXCHANGE` in worker.rs). Within the thread executor, `borrow_mut()` never spans
+// an `.await`: flash ops resolve immediately via `block_on`, and all dispatch is
+// synchronous. Clippy's `await_holding_refcell_ref` lint catches regressions.
 static FS: StaticCell<RefCell<Store>> = StaticCell::new();
 static FLASH_CELL: StaticCell<RefCell<flash_storage::AsyncFlash>> = StaticCell::new();
 static RNG_CELL: StaticCell<RefCell<FidoRng>> = StaticCell::new();
 static PRESENCE: StaticCell<RefCell<presence::Presence>> = StaticCell::new();
 static RESCUE_PLATFORM: StaticCell<RefCell<rescue_platform::RescuePlatform>> = StaticCell::new();
+// Same RefCell invariant as FS/RNG above — thread-executor only.
 // Sized for a 32-byte phy product plus the appended YubiKey interface-token
 // suffix (`normalize_usb_product`), so a masquerade name is never truncated.
 static PHY_PRODUCT: StaticCell<[u8; 64]> = StaticCell::new();
@@ -298,7 +330,9 @@ const DISPLAY_BUF_LEN: usize = 4096;
 #[cfg(feature = "display")]
 static DISPLAY_BUF: StaticCell<[u8; DISPLAY_BUF_LEN]> = StaticCell::new();
 /// The trusted-display panel + touch, shared by `status_task` (ambient status) and
-/// the `TouchPresence` backend (the confirm prompt) on the thread executor.
+/// the `TouchPresence` backend (the confirm prompt). Both run on the THREAD executor;
+/// `TouchPresence::request` is synchronous, so they never race. Same RefCell
+/// invariant as FS/RNG above — borrows never span `.await`.
 #[cfg(feature = "display")]
 static UI: StaticCell<RefCell<display::Ui>> = StaticCell::new();
 
@@ -827,39 +861,68 @@ async fn main(spawner: Spawner) {
         // The ST7789 tops out at 62.5 MHz; running there (vs the 40 MHz bringup value)
         // cuts a full-frame repaint ~35% for snappier screen transitions. If the panel's
         // flex cable ever shows tearing/garbling, drop back toward 40 MHz.
-        spi_cfg.frequency = 62_500_000;
+        spi_cfg.frequency = BUILD_DISPLAY_SPI_FREQ_HZ;
         let spi = Spi::new_blocking(p.SPI1, p.PIN_10, p.PIN_11, p.PIN_12, spi_cfg);
 
         let mut i2c_cfg = I2cConfig::default();
-        i2c_cfg.frequency = 400_000;
+        i2c_cfg.frequency = BUILD_DISPLAY_I2C_FREQ_HZ;
         let i2c = I2c::new_blocking(p.I2C1, p.PIN_7, p.PIN_6, i2c_cfg);
 
-        let cs = Output::new(p.PIN_13, Level::High);
-        let dc = Output::new(p.PIN_14, Level::Low);
-        let rst = Output::new(p.PIN_15, Level::High);
+        let cs = Output::new(
+            unsafe { embassy_rp::gpio::AnyPin::steal(BUILD_DISPLAY_CS) },
+            Level::High,
+        );
+        let dc = Output::new(
+            unsafe { embassy_rp::gpio::AnyPin::steal(BUILD_DISPLAY_DC) },
+            Level::Low,
+        );
+        let rst = Output::new(
+            unsafe { embassy_rp::gpio::AnyPin::steal(BUILD_DISPLAY_RST) },
+            Level::High,
+        );
         // Display-sleep wake button (default the BAT_PWR / KEY_BAT button on GPIO25).
         // Active-low with an internal pull-up by default (`WAKE_ACTIVE_HIGH` flips it);
         // `WAKE_PIN=none` leaves it unwired so only a touch wakes. Stealing the pin is
         // sound: it is never handed to another driver, and a compile-time assert rejects
         // a `WAKE_PIN` in the LCD/touch range.
         let wake_btn = if BUILD_WAKE_ENABLED {
-            use embassy_rp::gpio::{AnyPin, Input, Pull};
+            use embassy_rp::gpio::{Input, Pull};
             let pull = if BUILD_WAKE_ACTIVE_HIGH {
                 Pull::Down
             } else {
                 Pull::Up
             };
             Some((
-                Input::new(unsafe { AnyPin::steal(BUILD_WAKE_PIN) }, pull),
+                Input::new(
+                    unsafe { embassy_rp::gpio::AnyPin::steal(BUILD_WAKE_PIN) },
+                    pull,
+                ),
                 BUILD_WAKE_ACTIVE_HIGH,
             ))
         } else {
             None
         };
-        // Backlight on GPIO16 as PWM (slice 0, channel A) at zero duty — dark until
-        // `Ui::build` raises it to full after the first render (no white flash).
-        let bl = Pwm::new_output_a(p.PWM_SLICE0, p.PIN_16, display::backlight_cfg(0));
-        let tp_rst = Output::new(p.PIN_17, Level::High);
+        // Backlight PWM — pin, slice, and channel from the board config.
+        let bl = {
+            let cfg = display::backlight_cfg(0);
+            match (
+                BUILD_DISPLAY_BL_PIN,
+                BUILD_DISPLAY_BL_PWM_SLICE,
+                BUILD_DISPLAY_BL_PWM_CHANNEL,
+            ) {
+                (16, 0, 0) => Pwm::new_output_a(p.PWM_SLICE0, p.PIN_16, cfg),
+                (17, 0, 1) => Pwm::new_output_b(p.PWM_SLICE0, p.PIN_17, cfg),
+                (18, 1, 0) => Pwm::new_output_a(p.PWM_SLICE1, p.PIN_18, cfg),
+                (19, 1, 1) => Pwm::new_output_b(p.PWM_SLICE1, p.PIN_19, cfg),
+                (20, 2, 0) => Pwm::new_output_a(p.PWM_SLICE2, p.PIN_20, cfg),
+                (21, 2, 1) => Pwm::new_output_b(p.PWM_SLICE2, p.PIN_21, cfg),
+                _ => panic!("unsupported backlight PWM config"),
+            }
+        };
+        let tp_rst = Output::new(
+            unsafe { embassy_rp::gpio::AnyPin::steal(BUILD_DISPLAY_TP_RST) },
+            Level::High,
+        );
 
         let buf = DISPLAY_BUF.init([0u8; DISPLAY_BUF_LEN]);
         let panel = display::PanelHw {
