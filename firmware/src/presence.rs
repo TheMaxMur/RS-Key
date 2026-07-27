@@ -42,14 +42,14 @@ pub(crate) static CANCEL_REQUESTED: AtomicBool = AtomicBool::new(false);
 /// The CTAPHID keepalive hook passed to `CtapHid::new`: is a touch being awaited?
 /// Always `false` on the `no-touch` build, so the status stays `PROCESSING`.
 pub fn up_pending() -> bool {
-    UP_PENDING.load(Ordering::Relaxed)
+    UP_PENDING.load(Ordering::Acquire)
 }
 
 /// The CTAPHID cancel hook passed to `CtapHid::new`: request that an in-flight
 /// touch wait be abandoned. Just sets the flag the wait polls (a no-op on the
 /// no-button build, where `request` confirms instantly and never waits).
 pub fn request_cancel() {
-    CANCEL_REQUESTED.store(true, Ordering::Relaxed);
+    CANCEL_REQUESTED.store(true, Ordering::Release);
 }
 
 /// Built-in touch-wait timeout (ms) used when the phy record carries none.
@@ -194,7 +194,7 @@ impl ButtonPresence {
         // Drop any cancel left from an earlier (already-finished) request so this
         // wait starts clean.
         CANCEL_REQUESTED.store(false, Ordering::Relaxed);
-        UP_PENDING.store(true, Ordering::Relaxed);
+        UP_PENDING.store(true, Ordering::Release);
         let start = Instant::now();
         let timeout = Duration::from_millis(PRESENCE_TIMEOUT_MS.load(Ordering::Relaxed) as u64);
         // Wait for a press; a CTAPHID_CANCEL aborts it, and with neither before
@@ -209,7 +209,7 @@ impl ButtonPresence {
             } else {
                 self.spent = false;
             }
-            if CANCEL_REQUESTED.load(Ordering::Relaxed) {
+            if CANCEL_REQUESTED.load(Ordering::Acquire) {
                 break Outcome::Cancelled;
             }
             if start.elapsed() >= timeout {
@@ -231,7 +231,7 @@ impl ButtonPresence {
         // The debounce is bounded, so it can give up with the finger still down;
         // whatever the outcome, a button that never released carries no new consent.
         self.spent = self.pressed();
-        UP_PENDING.store(false, Ordering::Relaxed);
+        UP_PENDING.store(false, Ordering::Release);
         // Clear any cancel that raced in (e.g. just after a confirm) so it can't
         // leak into the next request's wait.
         CANCEL_REQUESTED.store(false, Ordering::Relaxed);

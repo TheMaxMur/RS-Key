@@ -28,8 +28,8 @@ enum Outcome {
 fn ceremony_begin() -> u8 {
     let saved = led::status();
     led::set_status(led::STATUS_TOUCH);
-    CANCEL_REQUESTED.store(false, Ordering::Relaxed);
-    UP_PENDING.store(true, Ordering::Relaxed);
+    CANCEL_REQUESTED.store(false, Ordering::Release);
+    UP_PENDING.store(true, Ordering::Release);
     saved
 }
 
@@ -37,8 +37,8 @@ fn ceremony_begin() -> u8 {
 /// (so a hand-off to a following modal — pad, approve hold — doesn't flash idle), note
 /// activity so a long ceremony doesn't immediately sleep, and restore the LED.
 fn ceremony_end(saved_led: u8) {
-    UP_PENDING.store(false, Ordering::Relaxed);
-    CANCEL_REQUESTED.store(false, Ordering::Relaxed);
+    UP_PENDING.store(false, Ordering::Release);
+    CANCEL_REQUESTED.store(false, Ordering::Release);
     AMBIENT_QUIET_UNTIL_MS.store(
         (Instant::now().as_millis() as u32).wrapping_add(AMBIENT_QUIET_MS),
         Ordering::Relaxed,
@@ -130,7 +130,7 @@ impl TouchPresence {
                         }
                     }
                 }
-                if CANCEL_REQUESTED.load(Ordering::Relaxed) {
+                if CANCEL_REQUESTED.load(Ordering::Acquire) {
                     break Outcome::Cancelled;
                 }
                 if start.elapsed() >= timeout {
@@ -180,7 +180,7 @@ impl TouchPresence {
                     Some(Button::Deny) => break Outcome::Declined,
                     None => {}
                 }
-                if CANCEL_REQUESTED.load(Ordering::Relaxed) {
+                if CANCEL_REQUESTED.load(Ordering::Acquire) {
                     break Outcome::Cancelled;
                 }
                 block_for(Duration::from_millis(TOUCH_POLL_MS));

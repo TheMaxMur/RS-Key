@@ -198,7 +198,7 @@ impl MsgHandler for ClientCtap {
         roundtrip(Kind::Msg, data, out).await
     }
     fn reset_app_selection(&mut self) {
-        MSG_DESELECT.store(true, core::sync::atomic::Ordering::Relaxed);
+        MSG_DESELECT.store(true, core::sync::atomic::Ordering::Release);
     }
     async fn handle_vendor(&mut self, cmd: u8, data: &[u8], out: &mut [u8]) -> Option<usize> {
         roundtrip_vendor(cmd, data, out).await
@@ -415,7 +415,7 @@ impl<'a> Worker<'a> {
                     Kind::Msg => {
                         // A CTAPHID_INIT since the last MSG drops the applet
                         // selection so U2F isn't hijacked by a sticky vendor SELECT.
-                        if MSG_DESELECT.swap(false, core::sync::atomic::Ordering::Relaxed) {
+                        if MSG_DESELECT.swap(false, core::sync::atomic::Ordering::AcqRel) {
                             self.ctap.deselect_msg();
                         }
                         self.ctap.handle_msg(&req[..*req_len])

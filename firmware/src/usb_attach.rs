@@ -28,7 +28,7 @@ static ATTACH_MS: AtomicU32 = AtomicU32::new(0);
 
 /// Stamp the origin. Call once, immediately before the USB pull-up is asserted.
 pub fn mark() {
-    ATTACH_MS.store(Instant::now().as_millis() as u32, Ordering::Relaxed);
+    ATTACH_MS.store(Instant::now().as_millis() as u32, Ordering::Release);
 }
 
 /// Milliseconds since the attach — the clock the FIDO layer gets as `Ctx::now_ms`,
@@ -36,5 +36,5 @@ pub fn mark() {
 pub fn elapsed_ms() -> u64 {
     Instant::now()
         .as_millis()
-        .saturating_sub(ATTACH_MS.load(Ordering::Relaxed) as u64)
+        .saturating_sub(ATTACH_MS.load(Ordering::Acquire) as u64)
 }

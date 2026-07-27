@@ -218,8 +218,8 @@ impl Ui {
     ) -> rsk_fido::PinEntry {
         let saved = led::status();
         led::set_status(led::STATUS_TOUCH);
-        CANCEL_REQUESTED.store(false, Ordering::Relaxed);
-        UP_PENDING.store(true, Ordering::Relaxed);
+        CANCEL_REQUESTED.store(false, Ordering::Release);
+        UP_PENDING.store(true, Ordering::Release);
 
         let start = Instant::now();
         let timeout = Duration::from_millis(PRESENCE_TIMEOUT_MS.load(Ordering::Relaxed) as u64);
@@ -308,7 +308,7 @@ impl Ui {
                 reveal = false;
                 let _ = rsk_ui::render_pin_dots(&mut self.panel, entered, expected, None);
             }
-            if CANCEL_REQUESTED.load(Ordering::Relaxed) {
+            if CANCEL_REQUESTED.load(Ordering::Acquire) {
                 break rsk_fido::PinEntry::Cancelled;
             }
             // A local gate must not starve the parked worker: abandon the moment a host
@@ -323,8 +323,8 @@ impl Ui {
             block_for(Duration::from_millis(TOUCH_POLL_MS));
         };
 
-        UP_PENDING.store(false, Ordering::Relaxed);
-        CANCEL_REQUESTED.store(false, Ordering::Relaxed);
+        UP_PENDING.store(false, Ordering::Release);
+        CANCEL_REQUESTED.store(false, Ordering::Release);
         AMBIENT_QUIET_UNTIL_MS.store(
             (Instant::now().as_millis() as u32).wrapping_add(AMBIENT_QUIET_MS),
             Ordering::Relaxed,
