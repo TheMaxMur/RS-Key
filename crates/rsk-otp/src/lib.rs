@@ -485,8 +485,14 @@ impl<'a> OtpApplet<'a> {
             ) {
                 return Sw::SECURITY_STATUS_NOT_SATISFIED;
             }
-            let mut merged = [0u8; CONFIG_SIZE];
-            merged.copy_from_slice(&data[..CONFIG_SIZE]);
+            let mut merged = [0u8; SLOT_SIZE];
+            merged[..CONFIG_SIZE].copy_from_slice(&data[..CONFIG_SIZE]);
+            // The 8-byte tail is the Yubico-OTP use counter / HOTP moving factor:
+            // non-volatile anti-replay state that must only ever advance. Carry it
+            // forward — only a full re-CONFIGURE resets it, exactly as on a YubiKey.
+            // (A CONFIG_SIZE `merged` here truncated it, silently rolling the counter
+            // back on the next read — audit run-30.)
+            merged[CONFIG_SIZE..].copy_from_slice(&stored[CONFIG_SIZE..]);
             // Keep the secret material and fixed part; merge only the
             // updateable flag bits.
             merged[..OFF_ACC_CODE].copy_from_slice(&stored[..OFF_ACC_CODE]);

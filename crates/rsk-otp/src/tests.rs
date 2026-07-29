@@ -485,6 +485,52 @@ fn update_merges_flag_masks_only() {
 }
 
 #[test]
+fn update_preserves_use_counter_tail() {
+    // audit run-30: SLOT_UPDATE built a 52-byte (CONFIG_SIZE) record, dropping the
+    // 8-byte tail — so the Yubico-OTP use counter / HOTP moving factor silently
+    // rolled back on the next read, re-emitting already-consumed OTPs. The update
+    // must carry the tail forward; only a full CONFIGURE resets it.
+    let mut fs = new_fs();
+    let presence = RefCell::new(AlwaysConfirm);
+    let rng = RefCell::new(CountRng(7));
+    let mut app = OtpApplet::new(SERIAL, SERIAL_HASH, None, &rng, &presence);
+    let dev = Device {
+        serial_hash: &SERIAL_HASH,
+        serial_id: &SERIAL,
+        otp_key: None,
+    };
+    let mut bump_rng = CountRng(9);
+
+    // A plain Yubico-OTP typed slot (tkt = cfg = 0) — the kind power_up_bump advances.
+    let cfg = build_config(b"public", &[1; 6], &[2; 16], &[0; 6], 0, 0, 0);
+    assert_eq!(
+        configure(&mut app, &mut fs, 0x01, 0, &cfg, &[0; 6]).0,
+        Sw::OK
+    );
+
+    // Advance the use counter across three "power cycles".
+    for _ in 0..3 {
+        power_up_bump(&dev, &mut fs, &mut bump_rng);
+    }
+    let mut buf = [0u8; SLOT_SIZE];
+    let n = read_slot(&dev, &mut fs, EF_OTP_SLOT1, &mut buf).unwrap();
+    assert_eq!(n, SLOT_SIZE);
+    let before = u16::from_be_bytes([buf[CONFIG_SIZE], buf[CONFIG_SIZE + 1]]);
+    assert_eq!(before, 3);
+
+    // A routine SLOT_UPDATE (e.g. changing pacing bits) must not touch the counter.
+    let upd = build_config(b"public", &[1; 6], &[2; 16], &[0; 6], 0, 0, 0xFF);
+    let mut d = upd.to_vec();
+    d.extend_from_slice(&[0; 6]);
+    assert_eq!(run(&mut app, &mut fs, &otp_apdu(0x04, 0, &d)).0, Sw::OK);
+
+    let n = read_slot(&dev, &mut fs, EF_OTP_SLOT1, &mut buf).unwrap();
+    assert_eq!(n, SLOT_SIZE, "update truncated the slot record");
+    let after = u16::from_be_bytes([buf[CONFIG_SIZE], buf[CONFIG_SIZE + 1]]);
+    assert_eq!(after, before, "update rolled the use counter back");
+}
+
+#[test]
 fn swap_moves_configs_between_slots() {
     let mut fs = new_fs();
     let presence = RefCell::new(AlwaysConfirm);
