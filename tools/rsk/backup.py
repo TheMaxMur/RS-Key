@@ -72,7 +72,7 @@ def register(sub):
     r.add_argument("--mnemonic", help="BIP-39 phrase (else read from stdin)")
     r.set_defaults(func=cmd_restore)
     f = g.add_parser("finalize", help="seal the one-time export window")
-    f.add_argument("--pin", help="(accepted for symmetry; finalize needs only touch)")
+    f.add_argument("--pin", help="FIDO2 PIN (needed when the device has a PIN set)")
     f.set_defaults(func=cmd_finalize)
     g.add_parser("status", help="print {sealed, has_seed}").set_defaults(func=cmd_status)
 
@@ -253,8 +253,9 @@ def cmd_restore(args):
 
 def cmd_finalize(args):
     dev, cid = connect_fido()
+    pin = resolve_pin(args, has_pin=device_has_pin(dev, cid))
     print("touch the device (BOOTSEL) to seal the export window…", file=sys.stderr)
-    st, _ = _vendor(dev, cid, {1: FINALIZE})
+    st, _ = _vendor(dev, cid, _gated(FINALIZE, None, dev, cid, pin))
     if st != 0:
         die(f"finalize failed: {st:#x}")
     print("export window sealed ✓ (a factory reset reopens it)")
