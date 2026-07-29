@@ -57,16 +57,14 @@ there whatever the descriptors say. An interface switched off in
 host that assumes a fixed index only holds where the same interface set is
 enabled.
 
-For the same reason the OTP frame protocol answers a HID feature GET/SET_REPORT
-on **both** HID interfaces — the keyboard one and the FIDO one — which is what a
-5.7.4 YubiKey does. The FIDO report descriptor stays the CTAP-exact one and
-declares no feature report (again as on a YubiKey), so a host reading descriptors
-sees no change; the interrupt endpoints carry CTAPHID and nothing else. Reaching
-the frames there needs a deliberate feature transfer — measured working both from
-raw libusb and through macOS IOKit. Both interfaces marshal one frame state
-machine, so the two are alternative doors to the same OTP application, not
-independent sessions. Disabling the keyboard interface in `ENABLED_USB_ITF`
-removes the protocol from both.
+The OTP frame protocol answers a HID feature GET/SET_REPORT on the **keyboard
+interface only**. The keyboard interface being first (index 0) is what those
+index-addressing hosts need; serving the frames on the FIDO interface too was
+tried but reverted (audit run-30) — it gained no host that the keyboard interface
+does not already serve, and on macOS it removed a real privilege boundary (IOKit
+gates a keyboard-usage HID nub behind Input Monitoring while the `0xF1D0` FIDO nub
+opens to any console-user process). The FIDO interrupt endpoints carry CTAPHID and
+nothing else, and its report descriptor declares no feature report.
 
 A slot programmed to require a touch answers its challenge only after a button
 press, and reports the wait in the status byte (`0x20`) meanwhile. Two things end
@@ -395,8 +393,12 @@ Response = one **leading overall-length byte**, then concatenated `TAG LEN VALUE
 
 When no host config has been written, the device returns the **defaults**:
 `USB_ENABLED` = all-supported, `DEVICE_FLAGS = 80`, `CONFIG_LOCK = 00`. Once
-WRITE CONFIG has stored a blob, READ CONFIG echoes that blob verbatim after the
-fixed `USB_SUPPORTED/SERIAL/FORM_FACTOR/VERSION` prefix.
+WRITE CONFIG has stored a blob, READ CONFIG echoes that blob after the fixed
+`USB_SUPPORTED/SERIAL/FORM_FACTOR/VERSION` prefix, then always appends
+`CONFIG_LOCK = 00`. The config-lock tags (`0A` set-code, `0B` unlock) are **write-
+only on real hardware**; RS-Key does not implement the lock, so it strips them on
+write and never stores or echoes a lock code (audit run-30) — `0A` on read is
+always the 1-byte `00`.
 
 **Capability bits** (`USB_SUPPORTED` / `USB_ENABLED`):
 

@@ -13,6 +13,52 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+### Security
+
+Audit run-30 fixes (bcdDevice `0x085D`, `rsk` 0.3.21, `rsk-tui` 0.3.2):
+
+- **The OTP frame protocol is served on the keyboard interface only again.** It
+  had also been answered on the FIDO HID interface to match a YubiKey; on macOS
+  that removed a privilege boundary — IOKit gates a keyboard-usage HID nub behind
+  Input Monitoring while the `0xF1D0` FIDO nub opens to any console-user process,
+  so slot programming and challenge-response became reachable unprompted. The
+  keyboard interface is already index 0 (what index-addressing hosts need), so the
+  FIDO door gained nothing and is removed.
+- **`rsk openpgp reset` no longer risks destroying an unrelated OpenPGP card.** It
+  now checks the SELECT status (refusing a card with no OpenPGP application) and
+  takes the typed confirmation the docs already promised, and `find_reader` fails
+  with a clear error instead of silently grabbing the first PC/SC reader when no
+  RS-Key is present.
+- **A slot UPDATE no longer resets the Yubico-OTP use counter / OATH-HOTP moving
+  factor.** It built a 52-byte record, dropping the 8-byte counter tail, so a
+  routine `ykman otp settings` silently rolled the anti-replay counter back. The
+  tail is now carried forward; only a full re-CONFIGURE resets it.
+- **A YubiKey config-lock code is no longer stored or disclosed.** RS-Key does not
+  implement the lock, but WRITE CONFIG kept the 16-byte code and READ CONFIG
+  echoed it in cleartext to any unauthenticated host. The lock tags are now
+  stripped on write, and READ CONFIG always reports the lock unset (as hardware
+  does).
+- **`rsk offboard` always writes a receipt now.** A missed touch (or a malformed
+  device) on the post-wipe journal read used to abort before the receipt was
+  written, leaving an irreversible wipe with no artifact; the failure now degrades
+  to a note in a written receipt.
+- **`rsk backup status` sanitizes device output.** The `sealed`/`has_seed` values
+  from the device are coerced to booleans, so a hostile device can no longer inject
+  terminal escapes during the seed-backup ceremony.
+- **`rsk-tui` no longer prints "identity verified ✓" for an unpinned device.** The
+  verifying key comes from the same response being checked, so a self-signed
+  counterfeit passed; the verdict now states only that the signature is
+  self-consistent and points at `rsk inventory verify --expect-key`, matching the
+  CLI.
+- **The host tools bound CTAPHID response reassembly by wall clock.** A device
+  trickling one small continuation frame per timeout could hang `rsk` or freeze
+  the TUI for hours; both now enforce the same 120 s deadline the keepalive loop
+  uses.
+- **The release workflow refuses a tag that is not an ancestor of `main`** as
+  defence in depth. The primary control against a leaked write token laundering
+  unreviewed code into a signed release is a repository tag ruleset restricting
+  who may create `refs/tags/v*` — configure that in the repo settings.
+
 ### Fixed
 
 - **A touch-gated challenge no longer looks like a timeout the moment the button
