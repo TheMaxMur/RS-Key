@@ -11,9 +11,6 @@ use super::*;
 /// default PIN `123456` is six). The applet stores up to eight; `rsk_piv::pad_pin` pads the
 /// rest to the 8-byte `0xFF` wire form so a host VERIFY (which always pads) matches.
 const PIV_PIN_MIN: usize = 6;
-/// Rename caret blink half-period (unused with T9 — pending char replaces caret blink).
-#[allow(dead_code)]
-const CARET_BLINK_MS: u64 = 500;
 
 impl Ui {
     /// The rename screen: edit a relying party's device-local nickname with a T9

@@ -54,6 +54,12 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   so overriding `PK_DISPLAY_CS` etc. without touching `BOARD` reused the cached
   build and shipped a firmware with stale pins.
 
+### Removed
+
+- Dead code from the UI redesign: `aa::filled_rounded_rect` (~64 lines, never
+  called), and the `CARET_BLINK_MS` const left behind with `#[allow(dead_code)]`
+  after the rename pad switched from a caret blink to a T9 pending-char.
+
 ### Security
 
 - `docs/unsafe.md` records the four new `AnyPin::steal` sites (display
