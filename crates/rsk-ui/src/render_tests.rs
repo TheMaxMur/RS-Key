@@ -1824,3 +1824,44 @@ fn hold_fill_grows_left_to_right_with_a_flat_edge() {
     let w = r.w / 2; // num/den = 5/10
     assert_eq!(d.at(r.x + w - 3, r.y + 2), wash);
 }
+
+/// Regression: `render_pin_dots` must clear the "+" overflow marker and the 10th
+/// dot when `entered` drops. The old per-dot clear was centred on each circle, so
+/// it left the "+" (drawn at x 184) and dot 10's right tail behind on a delete —
+/// a shortened PIN still read as long.
+#[test]
+fn pin_dots_clear_strip_erases_overflow_and_tenth_dot_on_delete() {
+    use crate::render_pin_dots;
+    // ENTRY_* are private to render/pin.rs; mirror them here so the edge test does
+    // not force a wider re-export. Keep in sync with render/pin.rs.
+    const ENTRY_X0: u16 = 24;
+    const ENTRY_MAX_SHOWN: u16 = 10;
+    const ENTRY_STEP: u16 = 16;
+
+    // Dot i is a 12×12 circle at top-left (24 + i·16, 54). The "+" overflow marker
+    // draws to the right of the last dot (x 184..). Use boxes, not point probes, so
+    // the test does not pin a glyph baseline.
+    let dot10 = Rect::new(ENTRY_X0 + 9 * ENTRY_STEP, 54, 12, 12); // i = 9, the 10th dot.
+    let plus = Rect::new(ENTRY_X0 + ENTRY_MAX_SHOWN * ENTRY_STEP, 48, 20, 24);
+
+    // 11 entered → both the 10th dot and the "+" paint; drop to 9 → both erase.
+    let mut d = Rec::new();
+    render_pin_dots(&mut d, 11, 8, None).unwrap();
+    assert!(
+        d.any_non_bg_in(dot10),
+        "setup: the 10th dot should paint before delete"
+    );
+    assert!(
+        d.any_non_bg_in(plus),
+        "setup: the '+' overflow marker should paint before delete"
+    );
+    render_pin_dots(&mut d, 9, 8, None).unwrap();
+    assert!(
+        !d.any_non_bg_in(dot10),
+        "10th dot not erased on delete — stale tail reads as a longer PIN"
+    );
+    assert!(
+        !d.any_non_bg_in(plus),
+        "stale '+' marker left after delete — shortened PIN still read as long"
+    );
+}

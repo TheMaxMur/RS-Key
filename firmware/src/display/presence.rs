@@ -28,7 +28,7 @@ enum Outcome {
 fn ceremony_begin() -> u8 {
     let saved = led::status();
     led::set_status(led::STATUS_TOUCH);
-    CANCEL_REQUESTED.store(false, Ordering::Release);
+    CANCEL_REQUESTED.store(false, Ordering::Relaxed);
     UP_PENDING.store(true, Ordering::Release);
     saved
 }
@@ -38,7 +38,7 @@ fn ceremony_begin() -> u8 {
 /// activity so a long ceremony doesn't immediately sleep, and restore the LED.
 fn ceremony_end(saved_led: u8) {
     UP_PENDING.store(false, Ordering::Release);
-    CANCEL_REQUESTED.store(false, Ordering::Release);
+    CANCEL_REQUESTED.store(false, Ordering::Relaxed);
     AMBIENT_QUIET_UNTIL_MS.store(
         (Instant::now().as_millis() as u32).wrapping_add(AMBIENT_QUIET_MS),
         Ordering::Relaxed,

@@ -461,6 +461,21 @@ fn main() {
         }
     }
 
+    // Display knobs flow from `board.toml`/env var into PK_DISPLAY_*; any change
+    // lets `env!("PK_DISPLAY_*")` go stale and bake the wrong pins into the
+    // firmware image — re-rustc on any of them.
+    println!("cargo:rerun-if-env-changed=PK_DISPLAY_SPI_FREQ_HZ");
+    println!("cargo:rerun-if-env-changed=PK_DISPLAY_CS");
+    println!("cargo:rerun-if-env-changed=PK_DISPLAY_DC");
+    println!("cargo:rerun-if-env-changed=PK_DISPLAY_RST");
+    println!("cargo:rerun-if-env-changed=PK_DISPLAY_BL_PIN");
+    println!("cargo:rerun-if-env-changed=PK_DISPLAY_BL_PWM_SLICE");
+    println!("cargo:rerun-if-env-changed=PK_DISPLAY_BL_PWM_CHANNEL");
+    println!("cargo:rerun-if-env-changed=PK_DISPLAY_TP_RST");
+    println!("cargo:rerun-if-env-changed=PK_DISPLAY_I2C_FREQ_HZ");
+    println!("cargo:rerun-if-env-changed=PK_DISPLAY_INVERT_COLORS");
+    println!("cargo:rerun-if-env-changed=PK_DISPLAY_COLOR_ORDER");
+
     for (env_var, baked) in [("FAKE_MKEK", "PK_FAKE_MKEK"), ("FAKE_DEVK", "PK_FAKE_DEVK")] {
         if let Some(hex) = resolve_fake_key(env_var) {
             println!("cargo:rustc-env={baked}={hex}");

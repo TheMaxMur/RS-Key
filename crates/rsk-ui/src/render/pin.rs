@@ -262,8 +262,9 @@ fn masked_entry<D: DrawTarget<Color = Rgb565>>(
     Ok(())
 }
 
-/// Repaint only the masked-entry dots (and eye toggle), clearing each dot position
-/// individually instead of the entire 240-pixel strip — no visible flicker.
+/// Repaint the masked dots (and eye toggle): clear one strip over the entry band
+/// — every dot position plus the "+" overflow slot to its right — then redraw.
+/// A per-dot clear missed the "+" and dot 10's right tail, so a delete mis-read.
 pub fn render_pin_dots<D>(
     target: &mut D,
     entered: usize,
@@ -273,16 +274,15 @@ pub fn render_pin_dots<D>(
 where
     D: DrawTarget<Color = Rgb565>,
 {
-    // Clear ALL possible dot positions (not just max(expected, entered) —
-    // a delete from 8 to 7 must erase the 8th dot).
-    for i in 0..ENTRY_MAX_SHOWN {
-        let x = ENTRY_X0 + i as i32 * ENTRY_STEP - ENTRY_DIA as i32 / 2 - 2;
-        let y = ENTRY_CY - ENTRY_DIA as i32 / 2 - 2;
-        Rectangle::new(EgPoint::new(x, y), Size::new(ENTRY_DIA + 4, ENTRY_DIA + 4))
-            .into_styled(PrimitiveStyle::with_fill(BG))
-            .draw(target)?;
-    }
-    // Re-draw the dots
+    Rectangle::new(
+        EgPoint::new(ENTRY_X0 - 2, ENTRY_CY - ENTRY_DIA as i32 / 2 - 2),
+        Size::new(
+            (ENTRY_MAX_SHOWN as u32 + 1) * ENTRY_STEP as u32 + 4,
+            ENTRY_DIA + 4,
+        ),
+    )
+    .into_styled(PrimitiveStyle::with_fill(BG))
+    .draw(target)?;
     masked_entry(target, entered, expected, reveal)
 }
 

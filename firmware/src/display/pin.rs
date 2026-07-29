@@ -261,7 +261,7 @@ impl Ui {
     ) -> rsk_fido::PinEntry {
         let saved = led::status();
         led::set_status(led::STATUS_TOUCH);
-        CANCEL_REQUESTED.store(false, Ordering::Release);
+        CANCEL_REQUESTED.store(false, Ordering::Relaxed);
         UP_PENDING.store(true, Ordering::Release);
 
         let start = Instant::now();
@@ -367,7 +367,7 @@ impl Ui {
         };
 
         UP_PENDING.store(false, Ordering::Release);
-        CANCEL_REQUESTED.store(false, Ordering::Release);
+        CANCEL_REQUESTED.store(false, Ordering::Relaxed);
         AMBIENT_QUIET_UNTIL_MS.store(
             (Instant::now().as_millis() as u32).wrapping_add(AMBIENT_QUIET_MS),
             Ordering::Relaxed,

@@ -1165,6 +1165,13 @@ pub const T9_GROUPS: &[&[u8]] = &[
     b"0 ",    // key (3,1)
 ];
 
+// hit_rename returns Char(0..=9), so the index-based groups[] access in
+// run_rename is sound only while T9_GROUPS holds exactly 10 entries.
+const _: () = assert!(
+    T9_GROUPS.len() == 10,
+    "hit_rename assumes T9_GROUPS.len() == 10; out-of-range => panic on device"
+);
+
 /// Labels shown on the T9 keypad keys: (digit, letters).
 pub const T9_KEY_LABELS: &[(&str, &str)] = &[
     ("1", ".-_"),

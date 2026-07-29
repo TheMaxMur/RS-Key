@@ -84,7 +84,7 @@ use embedded_alloc::LlffHeap as Heap;
 #[global_allocator]
 static HEAP: Heap = Heap::empty();
 
-const HEAP_SIZE: usize = 64 * 1024;
+const HEAP_SIZE: usize = 128 * 1024;
 
 #[unsafe(link_section = ".start_block")]
 #[used]
@@ -237,6 +237,102 @@ const BUILD_DISPLAY_I2C_FREQ_HZ: u32 = env_u32(env!("PK_DISPLAY_I2C_FREQ_HZ"));
 pub(crate) const BUILD_DISPLAY_INVERT_COLORS: bool = env_u16(env!("PK_DISPLAY_INVERT_COLORS")) != 0;
 #[cfg(feature = "display")]
 pub(crate) const BUILD_DISPLAY_COLOR_ORDER: u8 = env_u16(env!("PK_DISPLAY_COLOR_ORDER")) as u8;
+
+// Display control GPIOs are board-configurable and claimed via AnyPin::steal
+// (CS/DC/RST/TP_RST) or Pwm::new_output_* (BL); SPI1 10/11/12 + I2C1 6/7 stay in
+// Peripherals. Reject a pad owned by two drivers at compile time (no runtime guard).
+#[cfg(feature = "display")]
+const _: () = {
+    const DISPLAY_CTLS: &[u8] = &[
+        BUILD_DISPLAY_CS,
+        BUILD_DISPLAY_DC,
+        BUILD_DISPLAY_RST,
+        BUILD_DISPLAY_TP_RST,
+        BUILD_DISPLAY_BL_PIN,
+    ];
+    // Pins the panel's hard-wired SPI1 (10/11/12) and I2C1 (6/7) already own.
+    const HW_PINS: &[u8] = &[10, 11, 12, 6, 7];
+
+    const fn contains(hay: &[u8], needle: u8) -> bool {
+        let mut i = 0;
+        while i < hay.len() {
+            if hay[i] == needle {
+                return true;
+            }
+            i += 1;
+        }
+        false
+    }
+
+    let mut i = 0;
+    while i < DISPLAY_CTLS.len() {
+        let mut j = i + 1;
+        while j < DISPLAY_CTLS.len() {
+            assert!(DISPLAY_CTLS[i] != DISPLAY_CTLS[j], "duplicate panel GPIO");
+            j += 1;
+        }
+        i += 1;
+    }
+
+    let mut i = 0;
+    while i < DISPLAY_CTLS.len() {
+        assert!(
+            !contains(HW_PINS, DISPLAY_CTLS[i]),
+            "panel control GPIO overlaps hard-wired SPI1/I2C1 pin 6/7/10/11/12"
+        );
+        i += 1;
+    }
+
+    if BUILD_WAKE_ENABLED {
+        let mut i = 0;
+        while i < DISPLAY_CTLS.len() {
+            assert!(
+                DISPLAY_CTLS[i] != BUILD_WAKE_PIN,
+                "panel control GPIO overlaps WAKE_PIN"
+            );
+            i += 1;
+        }
+    }
+
+    #[cfg(not(led_kind = "none"))]
+    {
+        let mut i = 0;
+        while i < DISPLAY_CTLS.len() {
+            assert!(
+                DISPLAY_CTLS[i] != BUILD_LED_PIN,
+                "panel control GPIO overlaps LED_PIN"
+            );
+            i += 1;
+        }
+        if BUILD_LED_POWER_ENABLED {
+            let mut i = 0;
+            while i < DISPLAY_CTLS.len() {
+                assert!(
+                    DISPLAY_CTLS[i] != BUILD_LED_POWER_PIN,
+                    "panel control GPIO overlaps LED_POWER_PIN"
+                );
+                i += 1;
+            }
+        }
+    }
+};
+
+// Backlight PWM: the only valid (pin, slice, channel) combos on the RP2350.
+// Build.rs bakes the values; catch an unsupported combo at compile time so the
+// runtime `_ => unreachable!(...)` arm below is reachable only on a typo'd build.
+#[cfg(feature = "display")]
+const _: () = assert!(
+    matches!(
+        (
+            BUILD_DISPLAY_BL_PIN,
+            BUILD_DISPLAY_BL_PWM_SLICE,
+            BUILD_DISPLAY_BL_PWM_CHANNEL
+        ),
+        (16, 0, 0) | (17, 0, 1) | (18, 1, 0) | (19, 1, 1) | (20, 2, 0) | (21, 2, 1)
+    ),
+    "unsupported backlight PWM config (BL_PIN, SLICE, CHANNEL) — \
+     see the Pwm::new_output_* match in main.rs for the supported set"
+);
 
 // Optional nuisance user/status LED to hold OFF at boot (`USR_LED_PIN`): a plain
 // GPIO some boards wire to an onboard LED that lights by default (the Seeed XIAO
@@ -546,7 +642,7 @@ async fn main(spawner: Spawner) {
     config.max_power = 100;
     config.max_packet_size_0 = 64;
     // bcdDevice build counter; also surfaced on the trusted-display Firmware screen.
-    let device_release: u16 = 0x085B;
+    let device_release: u16 = 0x085C;
     config.device_release = device_release;
 
     let mut builder = Builder::new(
@@ -928,7 +1024,11 @@ async fn main(spawner: Spawner) {
                 (19, 1, 1) => Pwm::new_output_b(p.PWM_SLICE1, p.PIN_19, cfg),
                 (20, 2, 0) => Pwm::new_output_a(p.PWM_SLICE2, p.PIN_20, cfg),
                 (21, 2, 1) => Pwm::new_output_b(p.PWM_SLICE2, p.PIN_21, cfg),
-                _ => panic!("unsupported backlight PWM config"),
+                _ => {
+                    // Guarded by the const assert below — unreachable at runtime,
+                    // kept so the match stays exhaustive over (pin, slice, channel).
+                    unreachable!("unsupported backlight PWM config")
+                }
             }
         };
         let tp_rst = Output::new(

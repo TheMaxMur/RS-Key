@@ -13,6 +13,68 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+### Fixed
+
+- **The PIN-entry band no longer leaves a stale "+" overflow marker and the right
+  half of the 10th dot behind when the user deletes from a long PIN back to ≤10
+  digits** (`render_pin_dots`). The repaint cleared one small rectangle per dot,
+  centred on each circle, but `masked_entry` draws dots top-left-aligned — so the
+  clear was off by `ENTRY_DIA/2` and missed the "+" at x 184 plus dot 10's right
+  tail (x 176..180). Deleting 11 → 10 left the "+" on screen for the rest of the
+  session, lying that the PIN was still long, and 10 → 9 left a one-pixel stub.
+  The repaint now clears one strip over the whole entry band (every dot position
+  plus the overflow slot to its right) before redrawing. Covered by a host test
+  in `rsk-ui`.
+
+### Changed
+
+- **`bcdDevice` bumped to `0x085C`.** The UI redesign (anti-aliased dots, the T9
+  phone keypad rename, the PIN-pad rewrite, the component system) was merged but a
+  merge-conflict resolution collapsed the `0x0859` bump back to `0x085B`, so
+  firmware behaviour changed while the version stayed flat. Restores the
+  per-behaviour-change bump the project policy requires.
+- **OpenPGP RSA heap restored to 128 KiB.** It was halved to 64 KiB inside the
+  per-board-config commit without a callout; on `embedded_alloc` a failed
+  allocation aborts (`handle_alloc_error` → panic → watchdog reset), so a long
+  PIN-pad-less RSA-4096 keygen/CRT mid-operation could reset the device. Back to
+  the v0.4.4 value until a separate justification for the smaller size is on
+  record.
+- **Display control GPIOs are now checked for collisions at compile time.** The
+  four new `AnyPin::steal` sites for `CS`/`DC`/`RST`/`TP_RST` were added by number
+  with no compile-time guard beyond `WAKE_PIN` vs the `10..=18` range, so a board
+  config could aim `cs` at the same pad as `WAKE_PIN`, `LED_PIN`, the hard-wired
+  SPI1 (`PIN_10/11/12`) / I2C1 (`PIN_6/7`) lines, or another control line, and
+  silently drive one pad from two owners. A `const _: () = assert!(...)` now
+  rejects all of those at build time. The backlight PWM `(pin, slice, channel)`
+  combo likewise had no compile-time guard and panicked at boot on an unsupported
+  board (a runtime panic on fully constant operands); it too is now a `const`
+  assert, and the runtime match arm is `unreachable!`.
+- **`firmware/build.rs` re-rustc's when any of the 11 `PK_DISPLAY_*` env vars
+  change.** They were the only env knobs missing a `cargo:rerun-if-env-changed`,
+  so overriding `PK_DISPLAY_CS` etc. without touching `BOARD` reused the cached
+  build and shipped a firmware with stale pins.
+
+### Security
+
+- `docs/unsafe.md` records the four new `AnyPin::steal` sites (display
+  `CS`/`DC`/`RST`/`TP_RST`) and the `firmware/build.rs` `env::set_var` site,
+  restoring the runtime-site count from 15 to 19 and matching the new
+  collision-assert containment in the prose.
+
+### Internal
+
+- Cross-executor `Ordering` consistency: the `CANCEL_REQUESTED.store(false, …)`
+  false-clears in `display/pin.rs` and `display/presence.rs` are `Relaxed` (no
+  publication occurs from a `false` store — the publication is the subsequent
+  `true`/`Release` store), matching the same false-clears already in
+  `firmware/src/presence.rs`.
+- **Test changed.** `t9_groups_are_printable_and_have_distinct_chars` checked
+  for duplicate characters *within* each group (where the old
+  `rename_charset_is_printable_and_cycles` checked the whole charset). A
+  `const _: () = assert!(T9_GROUPS.len() == 10)` now pins the relationship
+  `hit_rename` (`Char(0..=9)`) expects, so a future edit that drops a group fails
+  the build instead of panicking on device at `groups[gi]`.
+
 ## [0.4.4] - 2026-07-27
 
 ### Fixed
