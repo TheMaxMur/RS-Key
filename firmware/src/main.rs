@@ -34,7 +34,7 @@ use embassy_rp::usb::{Driver as UsbDriver, InterruptHandler as UsbIrq};
 use embassy_time::Timer;
 use embassy_usb::class::hid::{
     Config as HidConfig, HidBootProtocol, HidReaderWriter, HidSubclass, HidWriter,
-    RequestHandler as HidRequestHandler, State as HidState,
+    State as HidState,
 };
 use embassy_usb::{Builder, Config as UsbConfig, UsbDevice};
 use static_cell::StaticCell;
@@ -271,10 +271,11 @@ static MSOS_DESC: StaticCell<[u8; 64]> = StaticCell::new();
 static CONTROL_BUF: StaticCell<[u8; 64]> = StaticCell::new();
 static HID_STATE: StaticCell<HidState> = StaticCell::new();
 static KBD_STATE: StaticCell<HidState> = StaticCell::new();
-// One handler instance per HID interface serving the OTP frame protocol; both
-// marshal the same `otp_kbd` frame state, as a YubiKey's one OTP application does.
+// The OTP frame protocol is served on the keyboard interface only. macOS gates a
+// Generic Desktop/Keyboard HID nub behind Input Monitoring while the 0xF1D0 FIDO nub
+// opens unprompted, so answering OTP on the FIDO interface would hand slot programming
+// and challenge-response to any unprivileged console-user process (audit run-30).
 static OTP_HID_HANDLER_KBD: StaticCell<otp_kbd::OtpHidHandler> = StaticCell::new();
-static OTP_HID_HANDLER_FIDO: StaticCell<otp_kbd::OtpHidHandler> = StaticCell::new();
 static USB_HANDLER: StaticCell<led::StatusHandler> = StaticCell::new();
 // Holds the LED power-enable `Output` for the device's lifetime; dropping it would
 // release the pad and let the gated LED rail fall (see the LED block below).
@@ -512,7 +513,7 @@ async fn main(spawner: Spawner) {
     config.max_power = 100;
     config.max_packet_size_0 = 64;
     // bcdDevice build counter; also surfaced on the trusted-display Firmware screen.
-    let device_release: u16 = 0x085C;
+    let device_release: u16 = 0x085D;
     config.device_release = device_release;
 
     let mut builder = Builder::new(
@@ -543,18 +544,18 @@ async fn main(spawner: Spawner) {
         )
     });
 
-    // A 5.7.4 YubiKey answers the OTP frame protocol on its FIDO interface too —
-    // measured, and its FIDO report descriptor stays the CTAP-exact one that declares
-    // no feature report. Match that: it is what saves a host addressing OTP by index.
-    let fido_otp: Option<&'static mut dyn HidRequestHandler> = otp_enabled
-        .then(|| OTP_HID_HANDLER_FIDO.init(otp_kbd::OtpHidHandler) as &mut dyn HidRequestHandler);
+    // The keyboard interface (built above, always index 0 when present) is what
+    // ykpers/ykcore's libusb backend addresses for OTP — the interface reorder is what
+    // fixed issue #55. Serving the frame protocol on the FIDO interface too gains no
+    // host that needs it and only removes the macOS Input Monitoring gate (see
+    // OTP_HID_HANDLER_KBD), so keep this interface CTAP-only (audit run-30).
     let hid = (usb_itf & rsk_rescue::phy::USB_ITF_HID != 0).then(|| {
         HidReaderWriter::<_, 64, 64>::new(
             &mut builder,
             HID_STATE.init(HidState::new()),
             HidConfig {
                 report_descriptor: FIDO_REPORT_DESCRIPTOR,
-                request_handler: fido_otp,
+                request_handler: None,
                 // 1 ms HID interval: a credMgmt/getAssertion response is several
                 // 64-byte IN frames; at 5 ms/frame that framing dominated once the
                 // per-call flash scan was removed. Full-speed floor is 1 ms.
