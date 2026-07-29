@@ -11,8 +11,6 @@ use embedded_graphics::{
     prelude::{Drawable, RgbColor},
 };
 
-use crate::theme;
-
 const FP: u32 = 16;
 const FP_ONE: i64 = 1 << FP;
 const FP_HALF: i64 = FP_ONE / 2;
@@ -24,12 +22,15 @@ const ALPHA: [u8; 32] = [
 ];
 
 /// Anti-aliased filled circle. Takes top-left and diameter (same API as
-/// embedded-graphics `Circle::new`), so call sites stay unchanged.
+/// embedded-graphics `Circle::new`), plus the colour behind the circle, so the
+/// AA fringe blends to the right surface — not always `theme::BG` (a circle over
+/// a card must blend to the card, else it gets a global-BG halo).
 pub fn filled_circle<D: DrawTarget<Color = Rgb565>>(
     t: &mut D,
     top_left: EgPoint,
     diameter: u32,
     fill: Rgb565,
+    bg: Rgb565,
 ) -> Result<(), D::Error> {
     let cx = top_left.x + diameter as i32 / 2;
     let cy = top_left.y + diameter as i32 / 2;
@@ -58,7 +59,7 @@ pub fn filled_circle<D: DrawTarget<Color = Rgb565>>(
             } else {
                 let frac = (d2 - r_inner_sq) as u64 * 32 / (r_outer_sq - r_inner_sq) as u64;
                 let a = ALPHA[frac.min(31) as usize];
-                blend(fill, theme::BG, a)
+                blend(fill, bg, a)
             };
 
             Pixel(EgPoint::new(px, py), color).draw(t)?;

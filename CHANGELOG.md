@@ -76,10 +76,34 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   `firmware/src/presence.rs`.
 - **Test changed.** `t9_groups_are_printable_and_have_distinct_chars` checked
   for duplicate characters *within* each group (where the old
-  `rename_charset_is_printable_and_cycles` checked the whole charset). A
-  `const _: () = assert!(T9_GROUPS.len() == 10)` now pins the relationship
-  `hit_rename` (`Char(0..=9)`) expects, so a future edit that drops a group fails
-  the build instead of panicking on device at `groups[gi]`.
+  `rename_charset_is_printable_and_cycles` checked the whole charset). The test
+  now also rejects a character appearing in *two* groups — a T9 char must belong
+  to exactly one, else `active_group`/`cycle_at` on the rename screen is
+  ambiguous. (`const _: () = assert!(T9_GROUPS.len() == 10)` pins the
+  relationship `hit_rename` (`Char(0..=9)`) expects, so dropping a group fails
+  the build instead of panicking on device at `groups[gi]`.)
+- The AA fringe in `aa::filled_circle` now blends to a caller-passed `bg`
+  colour instead of the hardcoded `theme::BG` — truthful blending against
+  the surface the circle is drawn over, so a future AA circle on a card or
+  other non-`BG` region won't get a global-background halo. Existing call
+  sites (boot splash, reset warning, PIN-pad dots, success circle) pass
+  `theme::BG`, so the rendered output is byte-equivalent.
+- `firmware/build.rs` strips a trailing `# ...` comment from a TOML value
+  before parsing it (handling the `"`-quoted case, since a quoted value may
+  legitimately contain `#`). Previously `pin = 13 # GPIO for chip-select`
+  read as `13 # …` and panicked `parse_toml`'s `u32` helper; today's four
+  board configs are clean of inline comments, so this is a trap removed
+  for future edits, not a current-data fix.
+- `firmware/build.rs` renames the board-config display slice from `b2` to
+  `disp_cfg` and documents that `display_cs` is the semantic gate pin
+  (a `[display]` section without `cs` is dropped, and the knobs fall back
+  to the Waveshare defaults). It was previously a one-line clever `and_then`
+  with no note explaining why.
+- `masked_entry`'s `total` reverts to the v0.4.4 one-liner
+  `(expected as usize).max(entered).min(ENTRY_MAX_SHOWN)` — the UI redesign
+  rewrote it as an `if/else` with the same result and a cosier comment
+  ("no leftover outlines on delete") describing a change that didn't happen;
+  the original is shorter and says exactly what it does.
 
 ## [0.4.4] - 2026-07-27
 

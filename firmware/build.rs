@@ -110,6 +110,20 @@ fn parse_toml(raw: &str) -> BoardConfig {
         display_color_order: None,
     };
     let mut sec = "";
+    fn strip_comment(s: &str) -> &str {
+        // Strip a trailing `# ...` from a value, outside a quoted string.
+        // (TOML's comment char everywhere except inside a "..."; the boards
+        // never quote values with `#` inside, so a simple state toggle is enough.)
+        let mut in_q = false;
+        for (i, &b) in s.as_bytes().iter().enumerate() {
+            match b {
+                b'"' => in_q = !in_q,
+                b'#' if !in_q => return s[..i].trim_end(),
+                _ => {}
+            }
+        }
+        s
+    }
     fn u(s: &str) -> &str {
         s.trim().trim_matches('"')
     }
@@ -139,7 +153,7 @@ fn parse_toml(raw: &str) -> BoardConfig {
         let Some((k, v)) = line.split_once('=') else {
             continue;
         };
-        let (k, v) = (k.trim(), v.trim());
+        let (k, v) = (k.trim(), strip_comment(v).trim());
         match (sec, k) {
             ("usb", "vidpid") => c.vidpid = Some(u(v).to_string()),
             ("usb", "vid") => c.usb_vid = Some(u32(v) as u16),
@@ -405,39 +419,56 @@ fn main() {
         };
     }
     let b = board.as_ref();
-    let b2 = b.and_then(|b| b.display_cs.map(|_| b));
+    // A board config only counts as a display board once it sets `display_cs` —
+    // the chip-select is the semantic gate pin, so a `[display]` section it
+    // under-specifies is dropped here. The knobs below then fall back to the
+    // Waveshare RP2350-Touch-LCD defaults.
+    let disp_cfg = b.and_then(|b| b.display_cs.map(|_| b));
     disp!(
         "PK_DISPLAY_SPI_FREQ_HZ",
-        b2.and_then(|b| b.display_spi_freq_hz).unwrap_or(62_500_000)
+        disp_cfg
+            .and_then(|b| b.display_spi_freq_hz)
+            .unwrap_or(62_500_000)
     );
-    disp!("PK_DISPLAY_CS", b2.and_then(|b| b.display_cs).unwrap_or(13));
-    disp!("PK_DISPLAY_DC", b2.and_then(|b| b.display_dc).unwrap_or(14));
+    disp!(
+        "PK_DISPLAY_CS",
+        disp_cfg.and_then(|b| b.display_cs).unwrap_or(13)
+    );
+    disp!(
+        "PK_DISPLAY_DC",
+        disp_cfg.and_then(|b| b.display_dc).unwrap_or(14)
+    );
     disp!(
         "PK_DISPLAY_RST",
-        b2.and_then(|b| b.display_rst).unwrap_or(15)
+        disp_cfg.and_then(|b| b.display_rst).unwrap_or(15)
     );
     disp!(
         "PK_DISPLAY_BL_PIN",
-        b2.and_then(|b| b.display_bl_pin).unwrap_or(16)
+        disp_cfg.and_then(|b| b.display_bl_pin).unwrap_or(16)
     );
     disp!(
         "PK_DISPLAY_BL_PWM_SLICE",
-        b2.and_then(|b| b.display_bl_pwm_slice).unwrap_or(0)
+        disp_cfg.and_then(|b| b.display_bl_pwm_slice).unwrap_or(0)
     );
     disp!(
         "PK_DISPLAY_BL_PWM_CHANNEL",
-        b2.and_then(|b| b.display_bl_pwm_channel).unwrap_or(0)
+        disp_cfg.and_then(|b| b.display_bl_pwm_channel).unwrap_or(0)
     );
     disp!(
         "PK_DISPLAY_TP_RST",
-        b2.and_then(|b| b.display_tp_rst).unwrap_or(17)
+        disp_cfg.and_then(|b| b.display_tp_rst).unwrap_or(17)
     );
     disp!(
         "PK_DISPLAY_I2C_FREQ_HZ",
-        b2.and_then(|b| b.display_i2c_freq_hz).unwrap_or(400_000)
+        disp_cfg
+            .and_then(|b| b.display_i2c_freq_hz)
+            .unwrap_or(400_000)
     );
     {
-        let v = if b2.and_then(|b| b.display_invert_colors).unwrap_or(true) {
+        let v = if disp_cfg
+            .and_then(|b| b.display_invert_colors)
+            .unwrap_or(true)
+        {
             "1"
         } else {
             "0"
@@ -447,7 +478,7 @@ fn main() {
         }
     }
     {
-        let v = if b2
+        let v = if disp_cfg
             .and_then(|b| b.display_color_order.as_deref())
             .unwrap_or("rgb")
             == "bgr"

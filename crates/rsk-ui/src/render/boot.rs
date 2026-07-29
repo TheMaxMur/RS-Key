@@ -13,7 +13,13 @@ pub(super) fn locked<D: DrawTarget<Color = Rgb565>>(t: &mut D) -> Result<(), D::
     const DIA: u32 = 70;
     let cx = MIDX;
     let circle_top = 96;
-    crate::aa::filled_circle(t, EgPoint::new(cx - DIA as i32 / 2, circle_top), DIA, theme::SURFACE)?;
+    crate::aa::filled_circle(
+        t,
+        EgPoint::new(cx - DIA as i32 / 2, circle_top),
+        DIA,
+        theme::SURFACE,
+        theme::BG,
+    )?;
     let cyc = circle_top + DIA as i32 / 2;
     glyph::draw(
         t,
@@ -85,7 +91,13 @@ pub(super) fn onboard<D: DrawTarget<Color = Rgb565>>(t: &mut D) -> Result<(), D:
     const DIA: u32 = 64;
     let cx = MIDX;
     let circle_top = 36;
-    crate::aa::filled_circle(t, EgPoint::new(cx - DIA as i32 / 2, circle_top), DIA, theme::SURFACE)?;
+    crate::aa::filled_circle(
+        t,
+        EgPoint::new(cx - DIA as i32 / 2, circle_top),
+        DIA,
+        theme::SURFACE,
+        theme::BG,
+    )?;
     let cyc = circle_top + DIA as i32 / 2;
     glyph::draw(
         t,

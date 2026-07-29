@@ -227,20 +227,16 @@ fn masked_entry<D: DrawTarget<Color = Rgb565>>(
         )?;
         return Ok(());
     }
-    // Show outline dots only while below the expected minimum. Once reached,
-    // only the entered count matters (no leftover outlines on delete).
-    let total = if entered >= expected as usize {
-        entered.min(ENTRY_MAX_SHOWN)
-    } else {
-        (expected as usize).min(ENTRY_MAX_SHOWN)
-    };
+    // Outline dots only while below the expected minimum; once reached, the
+    // entered count drives the row.
+    let total = (expected as usize).max(entered).min(ENTRY_MAX_SHOWN);
     for i in 0..total {
         let at = EgPoint::new(
             ENTRY_X0 + i as i32 * ENTRY_STEP,
             ENTRY_CY - ENTRY_DIA as i32 / 2,
         );
         if i < entered {
-            crate::aa::filled_circle(t, at, ENTRY_DIA, theme::ACCENT)?;
+            crate::aa::filled_circle(t, at, ENTRY_DIA, theme::ACCENT, theme::BG)?;
         } else {
             Circle::new(at, ENTRY_DIA)
                 .into_styled(PrimitiveStyle::with_stroke(theme::CAPTION, 1))

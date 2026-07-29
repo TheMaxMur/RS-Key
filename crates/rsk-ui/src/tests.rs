@@ -514,18 +514,21 @@ fn title_edit_and_back_are_disjoint() {
 
 #[test]
 fn t9_groups_are_printable_and_have_distinct_chars() {
+    // A T9 char must belong to exactly one group — a duplicate across groups
+    // would make `active_group` / `cycle_at` ambiguous on the rename screen.
+    let mut seen: [bool; 128] = [false; 128];
     for (gi, group) in T9_GROUPS.iter().enumerate() {
         assert!(!group.is_empty(), "T9 group {gi} is empty");
         assert!(
             group.iter().all(|&b| (0x20..=0x7E).contains(&b)),
             "non-printable in group {gi}"
         );
-        // No duplicate chars within a group
-        for (i, &a) in group.iter().enumerate() {
+        for &a in group.iter() {
             assert!(
-                !group[i + 1..].contains(&a),
-                "duplicate {a:?} in group {gi}"
+                !seen[a as usize],
+                "duplicate {a:?} appears in two T9 groups"
             );
+            seen[a as usize] = true;
         }
     }
 }
