@@ -123,10 +123,50 @@ fn write_then_read_config_roundtrips() {
     let (sw, body) = process(&mut app, &mut fs, &[0x00, INS_READ_CONFIG, 0, 0, 0x00]);
     assert_eq!(sw, Sw::OK);
     let tlv = &body[1..];
-    // The stored blob is echoed verbatim after the fixed prefix.
+    // The stored blob is echoed after the fixed prefix.
     assert_eq!(tlv_get(tlv, TAG_USB_ENABLED), Some(&[0x02, 0x02][..]));
-    // The default DEVICE_FLAGS/CONFIG_LOCK tail is gone (replaced by the blob).
-    assert_eq!(tlv_get(tlv, TAG_CONFIG_LOCK), None);
+    // The lock is always reported unset (real hardware reports 0x0A as a 1-byte
+    // boolean on read; we do not implement the lock — audit run-30).
+    assert_eq!(tlv_get(tlv, TAG_CONFIG_LOCK), Some(&[0x00][..]));
+}
+
+#[test]
+fn config_lock_code_is_stripped_and_not_echoed() {
+    // ykman `config set-lock-code` sends a 16-byte code under tag 0x0A. We do not
+    // implement the lock, and READ CONFIG echoes to any unauthenticated host over
+    // three transports, so the code must never be stored or returned — otherwise a
+    // secret the user typed leaks in cleartext (audit run-30).
+    let presence = RefCell::new(AlwaysConfirm);
+    let mut app = ManagementApplet::new([0; 8], &presence);
+    let mut fs = fs();
+    // 0A 10 <16-byte code>, then a USB_ENABLED tag, as a fuller write might carry.
+    let mut blob = std::vec![TAG_CONFIG_LOCK, 0x10];
+    blob.extend_from_slice(&[0xAB; 16]);
+    blob.extend_from_slice(&[TAG_USB_ENABLED, 0x02, 0x02, 0x02]);
+    let mut cmd = std::vec![
+        0x00,
+        INS_WRITE_CONFIG,
+        0,
+        0,
+        (blob.len() + 1) as u8,
+        blob.len() as u8
+    ];
+    cmd.extend_from_slice(&blob);
+    let (sw, _) = process(&mut app, &mut fs, &cmd);
+    assert_eq!(sw, Sw::OK);
+
+    // Nothing carrying the code is retained in flash.
+    let mut stored = [0u8; EF_DEV_CONF_MAX];
+    let n = fs.read(EF_DEV_CONF, &mut stored).unwrap_or(0);
+    assert!(!stored[..n].windows(16).any(|w| w == [0xAB; 16]));
+
+    let (sw, body) = process(&mut app, &mut fs, &[0x00, INS_READ_CONFIG, 0, 0, 0x00]);
+    assert_eq!(sw, Sw::OK);
+    let tlv = &body[1..];
+    // The USB_ENABLED tag survives; the lock reads back unset; the raw code is gone.
+    assert_eq!(tlv_get(tlv, TAG_USB_ENABLED), Some(&[0x02, 0x02][..]));
+    assert_eq!(tlv_get(tlv, TAG_CONFIG_LOCK), Some(&[0x00][..]));
+    assert!(!body.windows(16).any(|w| w == [0xAB; 16]));
 }
 
 #[test]

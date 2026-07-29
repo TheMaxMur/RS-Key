@@ -42,6 +42,7 @@ const TAG_FORM_FACTOR: u8 = 0x04;
 const TAG_VERSION: u8 = 0x05;
 const TAG_DEVICE_FLAGS: u8 = 0x08;
 const TAG_CONFIG_LOCK: u8 = 0x0A;
+const TAG_CONFIG_UNLOCK: u8 = 0x0B;
 
 const FLAG_EJECT: u8 = 0x80;
 const FORM_FACTOR_USB_A_KEYCHAIN: u8 = 0x01;
@@ -144,17 +145,26 @@ pub fn config_tlv<S: Storage>(serial: &[u8; 4], fs: &mut Fs<S>, res: &mut ResBuf
     let mut conf = [0u8; EF_DEV_CONF_MAX];
     match fs.read(EF_DEV_CONF, &mut conf) {
         Some(full) if full > 0 => {
-            // A host wrote an enabled-applications config — echo it back. Two
-            // clamps: (1) `Storage::read` reports the value's *full* length even
+            // A host wrote an enabled-applications config — echo it back. Three
+            // steps: (1) `Storage::read` reports the value's *full* length even
             // when it exceeds the buffer, so bound `len` before slicing — WRITE
             // CONFIG caps new writes, but a blob from an older build or corrupt
             // flash could be over-length and must not slice past `conf`/`buf`;
-            // (2) mask any USB_ENABLED bits down to what this firmware actually
-            // supports, so READ CONFIG never reports enabled ⊄ supported.
-            let len = full.min(conf.len()).min(buf.len().saturating_sub(n));
-            buf[n..n + len].copy_from_slice(&conf[..len]);
-            clamp_usb_enabled(&mut buf[n..n + len]);
-            n += len;
+            // (2) strip any config-lock tag before echoing — we do not enforce the
+            // lock and must never hand a user-entered 16-byte code to an
+            // unauthenticated reader (audit run-30); (3) mask USB_ENABLED down to
+            // what this firmware supports, so READ CONFIG never reports enabled ⊄
+            // supported.
+            let len = full.min(conf.len());
+            let mut echoed = [0u8; EF_DEV_CONF_MAX];
+            let elen =
+                strip_config_lock(&conf[..len], &mut echoed).min(buf.len().saturating_sub(n));
+            buf[n..n + elen].copy_from_slice(&echoed[..elen]);
+            clamp_usb_enabled(&mut buf[n..n + elen]);
+            n += elen;
+            // The stored blob never carries a lock tag; report it unset on read, as
+            // real hardware does.
+            push_tlv(&mut buf, &mut n, TAG_CONFIG_LOCK, &[0x00]);
         }
         _ => {
             // Defaults: everything supported is enabled, removable, unlocked.
@@ -194,11 +204,47 @@ pub fn persist_dev_conf<S: Storage>(fs: &mut Fs<S>, blob: &[u8]) -> Result<(), D
     if blob.len() > EF_DEV_CONF_MAX {
         return Err(DevConfError::TooLong);
     }
-    fs.put(EF_DEV_CONF, blob).map_err(|_| DevConfError::Store)?;
+    // Never retain the config-lock tags (see `strip_config_lock`): we do not enforce
+    // the lock, and READ CONFIG echoes this blob to any unauthenticated host, so a
+    // 16-byte 0x0A would sit unsealed in flash and be disclosed (audit run-30).
+    let mut stripped = [0u8; EF_DEV_CONF_MAX];
+    let n = strip_config_lock(blob, &mut stripped);
+    fs.put(EF_DEV_CONF, &stripped[..n])
+        .map_err(|_| DevConfError::Store)?;
     // The enabled-applications set changed; the firmware reloads its cached mask
     // (which gates applet dispatch) before the next command it guards.
     DEV_CONF_DIRTY.store(true, core::sync::atomic::Ordering::Relaxed);
     Ok(())
+}
+
+/// Copy `blob` minus any CONFIG_LOCK (0x0A) / UNLOCK (0x0B) TLV entry into `out`,
+/// returning the stripped length. We do not implement the config lock, and READ
+/// CONFIG echoes this blob verbatim to any unauthenticated host over three transports,
+/// so retaining a 16-byte lock code would hand back a secret the user typed — real
+/// hardware treats 0x0A as write-only. If the TLV does not parse cleanly the blob is
+/// copied unchanged, so a config we do not understand is never corrupted (an attacker's
+/// own malformed write is readable by them regardless). `out` must be at least
+/// `blob.len()` bytes.
+fn strip_config_lock(blob: &[u8], out: &mut [u8]) -> usize {
+    let mut i = 0;
+    let mut n = 0;
+    while i < blob.len() {
+        let Some(&len) = blob.get(i + 1) else {
+            out[..blob.len()].copy_from_slice(blob);
+            return blob.len();
+        };
+        let end = i + 2 + len as usize;
+        if end > blob.len() {
+            out[..blob.len()].copy_from_slice(blob);
+            return blob.len();
+        }
+        if blob[i] != TAG_CONFIG_LOCK && blob[i] != TAG_CONFIG_UNLOCK {
+            out[n..n + (end - i)].copy_from_slice(&blob[i..end]);
+            n += end - i;
+        }
+        i = end;
+    }
+    n
 }
 
 /// Whether `EF_DEV_CONF` already holds exactly `blob`, so a WRITE CONFIG carrying
@@ -207,11 +253,19 @@ pub fn persist_dev_conf<S: Storage>(fs: &mut Fs<S>, blob: &[u8]) -> Result<(), D
 /// entry on an idempotent replay, which a silent host could otherwise use to evict
 /// the whole ring.
 pub fn dev_conf_unchanged<S: Storage>(fs: &mut Fs<S>, blob: &[u8]) -> bool {
+    if blob.len() > EF_DEV_CONF_MAX {
+        return false;
+    }
+    // Compare against the stripped form we would actually store, so an idempotent
+    // replay of a blob that still carries 0x0A/0x0B is still recognised as unchanged
+    // (otherwise every replay would churn flash and the audit ring — audit run-30).
+    let mut stripped = [0u8; EF_DEV_CONF_MAX];
+    let n = strip_config_lock(blob, &mut stripped);
     let mut cur = [0u8; EF_DEV_CONF_MAX];
     // `read` reports the value's *full* stored length, which an over-length record
     // from an older build can push past `cur` — compare only when it fits.
     matches!(fs.read(EF_DEV_CONF, &mut cur),
-        Some(n) if n == blob.len() && n <= cur.len() && cur[..n] == *blob)
+        Some(m) if m == n && m <= cur.len() && cur[..m] == stripped[..n])
 }
 
 /// Set by [`persist_dev_conf`] on any successful write, drained by the firmware to
