@@ -38,7 +38,16 @@ def find_reader(substr=None):
         sys.exit("no PC/SC readers — is the device flashed and the CCID driver bound?")
     if substr is not None:
         return next((r for r in rs if substr in str(r)), rs[0])
-    return next((r for r in rs if _is_rsk(str(r))), rs[0])
+    # No rs[0] fallback: a destructive command (e.g. `rsk openpgp reset`) must never
+    # land on someone else's card just because the RS-Key's CCID interface is
+    # unplugged, disabled, or rebranded via `rsk hw --product` (audit run-30).
+    hit = next((r for r in rs if _is_rsk(str(r))), None)
+    if hit is None:
+        sys.exit(
+            "no RS-Key PC/SC reader found — check the device is plugged in, CCID is "
+            f"enabled, and the product string still matches. Readers seen: {[str(r) for r in rs]}"
+        )
+    return hit
 
 
 def connect(substr=None):
