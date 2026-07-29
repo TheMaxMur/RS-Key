@@ -213,8 +213,13 @@ def cmd_status(args):
     st, m = _vendor(dev, cid, {1: STATE})
     if st != 0:
         die(f"status failed: {st:#x}")
-    print(f"sealed   : {m[1]}")
-    print(f"has_seed : {m[2]}")
+    if not isinstance(m, dict):
+        die("malformed status response")
+    # Coerce to bool so a spoofed string value can't reach the terminal raw — the
+    # device is untrusted, and this output is what the operator reads to confirm the
+    # anti-exfiltration seal engaged (audit run-30).
+    print(f"sealed   : {bool(m.get(1))}")
+    print(f"has_seed : {bool(m.get(2))}")
 
 
 def cmd_export(args):

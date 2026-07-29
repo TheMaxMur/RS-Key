@@ -293,6 +293,14 @@ fn send_cbor(dev: &hidapi::HidDevice, cid: [u8; 4], payload: &[u8], ms: i32) -> 
     let bcnt = ((r[5] as usize) << 8) | r[6] as usize;
     let mut data = r[7..(7 + bcnt).min(r.len())].to_vec();
     while data.len() < bcnt {
+        // Bound the wall clock as well as the byte budget: a device trickling one
+        // 6-byte frame per HID timeout makes progress every iteration, so the guard
+        // below never fires — it would otherwise freeze the synchronous TUI event loop
+        // for hours (audit run-30). An empty result is how the keepalive path signals
+        // failure to callers.
+        if std::time::Instant::now() > deadline {
+            return Vec::new();
+        }
         let c = hid_read(dev, ms);
         if c.len() < 6 {
             break;
@@ -1042,10 +1050,13 @@ fn fold(epoch: &[u8], entries: &[u8]) -> Vec<u8> {
     h
 }
 
-/// Challenge-response identity proof (vendor AUDIT_CHECKPOINT): the device signs
-/// a fresh challenge with its DEVK-derived P-256 attestation key. We verify the
-/// ECDSA signature locally — a genuine cryptographic check, not a display of
-/// device-asserted bytes. Touch-gated; PIN if one is set.
+/// Challenge-response signature check (vendor AUDIT_CHECKPOINT): the device signs a
+/// fresh challenge with its DEVK-derived P-256 attestation key. The verifying key
+/// arrives in the same response, so a valid signature proves only that the responder
+/// holds the key it advertises — NOT which device it is. The verdict withholds any
+/// identity claim and points at the pinning CLI, matching inventory.py / audit.py; a
+/// self-signed counterfeit must not read as "verified" (audit run-30). Touch-gated;
+/// PIN if one is set.
 pub fn verify_identity(pin: Option<&str>) -> Result<(String, String), String> {
     let dev = hid_open().ok_or("no FIDO device")?;
     let cid = ctaphid_init(&dev).ok_or("CTAPHID init failed")?;
@@ -1111,12 +1122,14 @@ pub fn verify_identity(pin: Option<&str>) -> Result<(String, String), String> {
         .map(|b| format!("{b:02x}"))
         .collect();
     let body = format!(
-        "identity verified ✓  (ECDSA P-256 signature over a fresh challenge)\n\n\
+        "signature OK — the device signed a fresh challenge with the key it advertises.\n\
+         the key is NOT pinned, so this does not prove which device signed it.\n\n\
          fingerprint : {fp}\n\
          att key     : {}\n\
          chain head  : {}\n\
          seq         : {seq}\n\n\
-         Record the fingerprint; pin future checks with `rsk inventory verify --expect-key`.",
+         Pin this fingerprint with `rsk inventory verify --expect-key {fp}` so a swapped\n\
+         or counterfeit board fails the check instead of quietly verifying.",
         hex(&pubkey),
         hex(&head),
     );

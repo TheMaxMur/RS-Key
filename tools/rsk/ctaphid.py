@@ -184,6 +184,11 @@ def send_cbor(dev, cid, payload):
     bcnt = (r[5] << 8) | r[6]
     data = bytearray(r[7:7 + bcnt])
     while len(data) < bcnt:
+        # Bound the wall clock, not just the byte budget: a device trickling one 6-byte
+        # frame per HID timeout makes progress every iteration, so the guards below never
+        # fire — it would otherwise hold us for hours (audit run-30).
+        if time.monotonic() > deadline:
+            raise IOError("device stalled mid-response — CTAPHID reassembly deadline exceeded")
         c = read(dev)
         # A hostile/broken device can announce a large BCNT and then stop sending
         # continuation frames; read() returns b"" on the HID timeout, so bail rather
