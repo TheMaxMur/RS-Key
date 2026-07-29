@@ -16,7 +16,9 @@ use embassy_sync::signal::Signal;
 use embassy_usb::class::hid::{HidWriter, ReportId, RequestHandler};
 use embassy_usb::control::OutResponse;
 
-use rsk_otp::hid::{FrameRx, FrameTx, PAYLOAD_SIZE, REPORT_SIZE, RxOutcome, status_frame};
+use rsk_otp::hid::{
+    FrameRx, FrameTx, PAYLOAD_SIZE, ProcessingStatus, REPORT_SIZE, RxOutcome, status_frame,
+};
 
 use crate::Drv;
 use crate::presence::up_pending;
@@ -86,6 +88,8 @@ struct OtpHid {
     rx: FrameRx,
     tx: FrameTx,
     state: State,
+    /// Status byte served while `state` is [`State::Processing`].
+    processing: ProcessingStatus,
     /// Cached idle status frame (refreshed by the worker after each command).
     status: [u8; REPORT_SIZE],
     req_slot: u8,
@@ -99,6 +103,7 @@ impl OtpHid {
             rx: FrameRx::new(),
             tx: FrameTx::new(),
             state: State::Idle,
+            processing: ProcessingStatus::new(),
             // Plausible pre-boot status (version, no slots); the worker overwrites
             // it with the real record before the host ever reads it.
             status: [0, 5, 7, 4, 0, 0, 0, 0],
@@ -139,6 +144,7 @@ impl RequestHandler for OtpHidHandler {
                     h.req_slot = slot;
                     h.req_payload = payload;
                     h.req_ready = true;
+                    h.processing.reset();
                     h.state = State::Processing;
                     OTP_REQ.signal(());
                 }
@@ -168,9 +174,9 @@ impl RequestHandler for OtpHidHandler {
                     }
                 }
                 State::Processing => {
-                    // Non-zero, non-pending status keeps the host polling; 0x20
-                    // tells it a touch is awaited (a CHAL_BTN_TRIG slot).
-                    out[REPORT_SIZE - 1] = if up_pending() { 0x20 } else { 0x10 };
+                    // Latched: the press must not flip the byte back before the
+                    // response, or the host reads that as a touch timeout.
+                    out[REPORT_SIZE - 1] = h.processing.poll(up_pending());
                 }
                 State::Idle => out = h.status,
             }

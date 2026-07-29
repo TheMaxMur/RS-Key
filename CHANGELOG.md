@@ -13,6 +13,24 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+### Fixed
+
+- **A touch-gated challenge no longer looks like a timeout the moment the button
+  is pressed.** While a command ran, the keyboard transport picked its status
+  byte from the live presence flag — `0x20` while a touch was awaited, `0x10`
+  otherwise. But that flag drops as soon as the press is collected, and the
+  response only appears once the HMAC has been computed, so every touch-gated
+  challenge served a short `0x10` window in between: measured at 9 ms against
+  Windows and 11 ms against macOS. ykpers' blocking read
+  (`yk_wait_for_key_status`, which KeePassXC vendors) arms itself on `0x20` and
+  then reads *any* byte carrying neither the pending nor the waiting bit as "the
+  key timed out waiting for the user" — so a host polling inside that window
+  abandoned a challenge the key had already answered. A YubiKey never shows it:
+  it reports the wait, plus a seconds countdown, right up to the response. The
+  wait now latches for the rest of the command, so only the response — or the
+  idle status frame after a real timeout — replaces it, which leaves an expired
+  wait ending exactly as promptly as before. **bcdDevice → `0x085C`.**
+
 ## [0.4.4] - 2026-07-27
 
 ### Fixed

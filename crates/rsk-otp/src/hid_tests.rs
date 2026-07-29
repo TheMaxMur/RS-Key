@@ -107,3 +107,61 @@ fn status_frame_layout() {
     let s = status_frame([5, 7, 4, 3, 0x01, 0, 0]);
     assert_eq!(s, [0, 5, 7, 4, 3, 0x01, 0, 0]);
 }
+
+/// ykpers `yk_wait_for_key_status` reading a blocking challenge: it returns on
+/// the response-pending bit, arms itself on the touch-wait bit, and once armed
+/// takes any byte carrying neither as "the key timed out waiting for the user".
+fn ykpers_abandons_challenge(statuses: &[u8]) -> bool {
+    let mut armed = false;
+    for &s in statuses {
+        if s & FLAG_RESP_PENDING == FLAG_RESP_PENDING {
+            return false;
+        }
+        if s & FLAG_TIMEOUT_WAIT == FLAG_TIMEOUT_WAIT {
+            armed = true;
+        } else if armed {
+            return true;
+        }
+    }
+    false
+}
+
+#[test]
+fn a_satisfied_touch_never_reads_as_a_timeout() {
+    let mut st = ProcessingStatus::new();
+    // The worker has not requested presence yet, then the wait goes up, then the
+    // press lands and the HMAC is computed before `finish_response` — the window
+    // measured at 9 ms on Windows and 11 ms on macOS.
+    let mut polled: Vec<u8> = (0..2).map(|_| st.poll(false)).collect();
+    polled.extend((0..4).map(|_| st.poll(true)));
+    polled.extend((0..3).map(|_| st.poll(false)));
+    assert_eq!(
+        polled,
+        [0x10, 0x10, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20]
+    );
+    assert!(!ykpers_abandons_challenge(&polled));
+
+    // The response replacing the status is what ends the wait.
+    polled.push(FLAG_RESP_PENDING);
+    assert!(!ykpers_abandons_challenge(&polled));
+}
+
+#[test]
+fn an_expired_touch_wait_still_ends_promptly() {
+    let mut st = ProcessingStatus::new();
+    let mut polled: Vec<u8> = (0..3).map(|_| st.poll(true)).collect();
+    polled.extend((0..2).map(|_| st.poll(false)));
+    // The timeout drops the transport back to `Idle`, whose cached status frame
+    // carries neither bit — that is what tells the host to give up, not a flicker
+    // mid-command.
+    polled.push(status_frame([5, 7, 4, 1, 0x0F, 0, 0])[REPORT_DATA]);
+    assert!(ykpers_abandons_challenge(&polled));
+}
+
+#[test]
+fn each_command_starts_with_a_fresh_wait() {
+    let mut st = ProcessingStatus::new();
+    assert_eq!(st.poll(true), 0x20);
+    st.reset();
+    assert_eq!(st.poll(false), 0x10);
+}

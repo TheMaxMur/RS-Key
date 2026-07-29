@@ -76,6 +76,12 @@ a response — and **any new frame**, which supersedes the pending challenge. A 
 that does neither waits out the touch timeout (§7 `PRESENCE_TIMEOUT`), during
 which the transport reports only that it is waiting.
 
+Once announced, `0x20` holds for the rest of the command — the press itself does
+not clear it, only the response frame or the idle status frame does. ykpers reads
+a byte carrying neither the pending nor the waiting bit as a touch timeout, so a
+device that dropped the wait between the press and its answer would lose
+challenges it had in fact completed.
+
 ### 1.1 CCID APDU framing
 
 Standard ISO-7816 short APDUs. SELECT is always `00 A4 04 00 Lc <AID> 00`; the
