@@ -115,12 +115,18 @@ truncated or guessed response can't brute-force its way in one byte at a time.
 
 Footguns:
 
-- The password gates **listing and computing** codes over CCID, not the
-  secrets at rest. OATH blobs sit in **plaintext flash**. Unlike PIV and
-  OpenPGP keys, they are not individually sealed. This password protects the
-  live applet, not a flash image; at-rest confidentiality for OATH rests only
-  on the RP2350 device-level protections (secure boot / BOOTSEL lockout, see
-  [threat-model.md](../threat-model.md)), not on per-credential sealing.
+- The password gates **listing and computing** codes over CCID. At rest the
+  secrets are protected separately: every credential record — name, secret,
+  HOTP counter — and the access password's own validation key are individually
+  AES-256-GCM-sealed before they reach flash, under the device key `kbase`
+  (accounts enrolled before that landed are re-sealed on the next boot). The
+  password is not part of the sealing key, deliberately: codes have to compute
+  without a separate at-rest unlock, exactly like PIV slot keys. So the seal is
+  **device-bound, not password-bound**. Once the OTP master key is burned a
+  flash dump on its own no longer yields your secrets
+  ([threat-model.md](../threat-model.md)); what it never buys is protection from
+  something that can drive *this* chip's firmware — that is what the access
+  password and `--touch` are for.
 - There is **no recovery** for a forgotten access password short of
   `ykman oath reset`, which wipes every account with it.
 - `--touch` per account and the access password are independent hardenings.
@@ -144,9 +150,9 @@ wipe the whole key instead, see `rsk offboard`.
 
 ## Notes
 
-- Secrets live in device flash (in plaintext: OATH blobs are not individually
-  sealed, unlike PIV/OpenPGP). Codes are computed on-card, so the secret never
-  returns to the host after `add`.
+- Secrets live in device flash, each record sealed to this chip (see the
+  footgun above). Codes are computed on-card, so the secret never returns to
+  the host after `add`.
 - OATH accounts are **not** covered by the [seed backup](seed-backup.md) and
   do not come back on a [backup key](backup-key.md): they are sealed to *this*
   chip, not derived from the FIDO seed. Keep your `otpauth://` URIs/QRs
