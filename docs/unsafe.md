@@ -7,10 +7,11 @@ contained. Adding a new `unsafe` requires updating this page. (Safe Rust rules
 out memory-corruption bugs in this code. It is not a security audit; see the
 [threat model](threat-model.md).)
 
-**Runtime sites: 15.** Eight in the firmware proper (`main.rs` + `presence.rs`):
-the interrupt-handler pair (2), the `Send` impl, the heap init, and the four
+**Runtime sites: 19.** Twelve in the firmware proper (`main.rs` + `presence.rs`):
+the interrupt-handler pair (2), the `Send` impl, the heap init, and the eight
 GPIO-pin `steal`s (the presence button, the LED power-enable rail, the nuisance
-USR LED, and the display build's wake button). Two for the per-core prime sieves,
+USR LED, the display build's wake button, and — display builds only — the panel's
+CS/DC/RST/TP_RST control lines). Two for the per-core prime sieves,
 three in the RSA assembly FFI, two in the standalone flash-wipe tool.
 
 ```mermaid
@@ -19,7 +20,7 @@ flowchart TB
       a["interrupt executor (×2)"]
       b["Send for SendUsb"]
       c["heap init"]
-      d["GPIO pin steal ×4 (presence, LED power, USR LED, display wake)"]
+      d["GPIO pin steal ×8 (presence, LED power, USR LED, display wake + CS/DC/RST/TP_RST)"]
     end
     subgraph kg["firmware/src/core1.rs"]
       e["per-core prime sieves (×2)"]
@@ -74,28 +75,29 @@ executor and embassy keeps the trait object `!Send`.
 unsafe { HEAP.init(core::ptr::addr_of_mut!(HEAP_MEM) as usize, HEAP_SIZE) }
 ```
 
-A 64 KiB heap exists solely for the `rsa` crate's big integers (the only
+A 128 KiB heap exists solely for the `rsa` crate's big integers (the only
 allocating dependency). `init`'s contract (call once, with exclusive access
 to the region) is met: it runs once at the top of `main`, on a dedicated
 static buffer used by nothing else.
 *Safe alternative:* none; every embedded allocator initializes this way.
 *Containment:* one call, before any allocation can happen.
 
-### 5–8. GPIO pin type-erasure (presence button, LED power rail, USR-LED-off, display wake, ×4)
+### 5–12. GPIO pin type-erasure (presence button, LED power rail, USR-LED-off, display wake + control pins, ×8)
 
 ```rust
 let any = unsafe { AnyPin::steal(pin) };
 ```
 
-Four build-configurable GPIOs are chosen by *number* at build time rather than as
+Eight build-configurable GPIOs are chosen by *number* at build time rather than as
 a concrete `PIN_n` type, so each must be converted to embassy's type-erased
 `AnyPin`: the optional `PRESENCE_PIN=<gpio>` presence button
 (`ButtonPresence::new_gpio`, `presence.rs`), the optional `LED_POWER_PIN`
 enable pin driven high to power a gated LED rail (the LED block in `main.rs`),
 the optional `USR_LED_PIN` driven to a nuisance onboard LED's OFF level and held
 (the boot block in `main.rs`), and — display builds only — the optional
-`WAKE_PIN` button that wakes the panel from display sleep (the panel block in
-`main.rs`). `AnyPin::steal` is `unsafe` because the caller must
+`WAKE_PIN` button that wakes the panel from display sleep **plus the panel's
+CS/DC/RST/TP_RST control lines**, all by board-config number, in the panel block
+of `main.rs`. `AnyPin::steal` is `unsafe` because the caller must
 guarantee unique ownership of that hardware pin — a `match` over `p.PIN_0..=PIN_29`
 (as the LED *data* pin uses) is impossible here, since it would double-move the
 peripheral set the LED block already claims.
@@ -103,12 +105,15 @@ peripheral set the LED block already claims.
 constructors require a statically known pin type.
 *Containment:* each is gated by pin-range validation and the single-owner
 invariant from `main` — none of the presence pin, the LED-power pin, the
-USR-LED pin, nor the wake pin is ever handed to another driver, and compile-time
-`assert!`s reject a
+USR-LED pin, the wake pin, nor the four panel control pins is ever handed to
+another driver, and compile-time `assert!`s reject a
 build that collides `LED_POWER_PIN` or `USR_LED_PIN` with the LED data pin or a GPIO
 `PRESENCE_PIN` (and refuse `USR_LED_PIN` outright on a display build, whose panel
-owns those pads) or a `WAKE_PIN` in the LCD/touch range (`10..=18`),
-as an LED/presence collision already panics at boot.
+owns those pads), rejects a `WAKE_PIN` in the LCD/touch range (`10..=18`),
+**and rejects any of CS/DC/RST/TP_RST/BL colliding with each other, with the
+hard-wired SPI1 (PIN_10/11/12) or I2C1 (PIN_6/7) lines, an enabled `WAKE_PIN`,
+or `LED_PIN`/`LED_POWER_PIN` when their LED driver is built** — a collision
+silently drives one pad from two owners at runtime, so it is checked at build time.
 
 ## Firmware dual-core keygen (`firmware/src/core1.rs`)
 
@@ -176,6 +181,10 @@ never ships inside the firmware.
 - `crates/rsk-rsa-asm/build.rs`: `unsafe { env::set_var(...) }` forces the
   ARM cross-compiler for the vendored C. Build scripts are single-threaded at
   that point (the call is host-side, never in the image).
+- `firmware/build.rs`: `unsafe { env::set_var(k, v) }` copies the selected
+  board-config file's values (`BOARD=<name>`) back into the env before the
+  build reads them. Same single-threaded host-side build-script context; never
+  reaches the firmware image.
 - Edition-2024 *declarations*: `#[unsafe(link_section = ".start_block")]` on
   the two bootrom image-definition statics and `unsafe extern "C"` on the
   linker-symbol/FFI declaration blocks. These mark declarations the compiler

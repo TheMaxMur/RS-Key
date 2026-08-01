@@ -3,6 +3,7 @@
 
 //! Passkey screens: the RP list, service detail, rename, and the delete confirm.
 
+use super::components;
 use super::*;
 
 /// The Passkeys tab: header, one row per relying party (generic globe + sanitized
@@ -33,25 +34,22 @@ where
             MUTED,
         )?;
     } else {
-        group_card(t, PK_LIST_TOP, rows.len() as u16)?;
+        components::list::group_card(t, PK_LIST_TOP, rows.len() as u16)?;
         for (i, r) in rows.iter().enumerate() {
-            let mut buf = [0u8; 16];
-            let unit = if r.accounts == 1 {
-                "account"
+            let mut buf = [0u8; 5];
+            let trailing = if r.accounts > 1 {
+                Some((fmt_u16(r.accounts as u16, &mut buf), MUTED))
             } else {
-                "accounts"
+                None
             };
-            let trailing = fmt_count(r.accounts as u16, unit, &mut buf);
             let name = r.shown();
-            // When the row shows the attacker-chosen rpId (no device-local nickname), keep the
-            // registrable-domain suffix (head-ellipsis) so a padded look-alike can't hide the
-            // real domain on the review list; a user-set nickname keeps the head like any label.
-            row_body_side(
+            components::list::row(
                 t,
-                crate::row_rect(PK_LIST_TOP, i as u16),
+                PK_LIST_TOP,
+                i as u16,
                 service_glyph(name),
                 name,
-                Some((trailing, MUTED)),
+                trailing,
                 true,
                 true,
                 r.nick.is_empty(),
@@ -89,40 +87,58 @@ where
     } else {
         title_bar(t, title.as_str(), theme::ACCENT, true)?;
     }
-    glyph_centered(t, Glyph::Edit, TITLE_EDIT_RECT, 18, theme::ACCENT)?;
-    group_card(t, PK_LIST_TOP, accounts.len() as u16)?;
+    // Pencil icon: drawn right-aligned inside its hit rect, with a 4 px inset
+    // from the right edge so the glyph doesn't touch the panel border.
+    let er = TITLE_EDIT_RECT;
+    glyph::draw(
+        t,
+        Glyph::Edit,
+        Point::new(er.x + er.w - 18 - 4, er.y + er.h / 2 - 9),
+        18,
+        theme::ACCENT,
+    )?;
+    components::list::group_card(t, PK_LIST_TOP, accounts.len() as u16)?;
     for (i, a) in accounts.iter().enumerate() {
         let trailing = if a.protected {
             Some(("UV", theme::ACCENT))
         } else {
             None
         };
-        row_body(
+        components::list::row(
             t,
-            crate::row_rect(PK_LIST_TOP, i as u16),
+            PK_LIST_TOP,
+            i as u16,
             Glyph::Key,
             a.name.as_str(),
             trailing,
             false,
             true,
+            false,
         )?;
     }
     list_tail(t, page, total, "account", "accounts")?;
     render_nav(t, NavTab::Passkeys)
 }
 
-/// The rename screen: a character-wheel editor for a relying party's device-local
-/// nickname. Status + title chrome (the back chevron cancels), a `NICKNAME` caption, the
-/// value field with a caret, then the wheel — a backspace key on the left, the ▲ / big
-/// candidate / ▼ centre column, and an insert (`+`) key on the right — over a full-width
-/// Save button. `value` is the current buffer; `candidate` the wheel's current byte
-/// (`b' '` shows as an underscore so a space is visible). The firmware blinks the caret by
-/// repainting [`render_rename_caret`] on a timer.
-pub fn render_rename<D>(t: &mut D, value: &str, candidate: u8) -> Result<(), D::Error>
+/// The rename screen: a T9 phone-style keypad for editing a device-local nickname.
+/// Full-frame paint with clear — call once when entering the screen.
+pub fn render_rename<D>(
+    t: &mut D,
+    value: &str,
+    pending: Option<u8>,
+    active_group: Option<usize>,
+) -> Result<(), D::Error>
 where
     D: DrawTarget<Color = Rgb565>,
 {
     t.clear(BG)?;
+    render_rename_chrome(t)?;
+    render_rename_field(t, value, pending)?;
+    render_rename_keys(t, active_group)
+}
+
+/// Status + title bar + caption (static chrome).
+fn render_rename_chrome<D: DrawTarget<Color = Rgb565>>(t: &mut D) -> Result<(), D::Error> {
     status_bar(t)?;
     title_bar(t, "Rename", theme::ACCENT, true)?;
     text_left(
@@ -131,9 +147,30 @@ where
         EgPoint::new(14, RN_FIELD_RECT.y as i32 - 10),
         Role::Mono,
         theme::CAPTION,
-    )?;
+    )
+}
 
-    // The value field: a bordered surface holding the text and a static caret.
+/// Repaint just the text field: committed `value` + optional `pending` char (underlined).
+/// Clears the field area to BG first so shorter text erases longer prior text.
+pub fn render_rename_field<D: DrawTarget<Color = Rgb565>>(
+    t: &mut D,
+    value: &str,
+    pending: Option<u8>,
+) -> Result<(), D::Error> {
+    // Clear the field area + a few px margin
+    let clear = Rect::new(
+        RN_FIELD_RECT.x.saturating_sub(4),
+        RN_FIELD_RECT.y.saturating_sub(4),
+        RN_FIELD_RECT.w + 8,
+        RN_FIELD_RECT.h + 8,
+    );
+    Rectangle::new(
+        EgPoint::new(clear.x as i32, clear.y as i32),
+        Size::new(clear.w as u32, clear.h as u32),
+    )
+    .into_styled(PrimitiveStyle::with_fill(BG))
+    .draw(t)?;
+
     let field = RN_FIELD_RECT;
     RoundedRectangle::with_equal_corners(eg_rect(field), Size::new(8, 8))
         .into_styled(PrimitiveStyle::with_fill(theme::SURFACE))
@@ -164,95 +201,86 @@ where
         inner,
     )?;
     let text_w = font::width(value, Role::Body).unwrap_or(0) as i32;
-    let caret_x = (inner.x as i32 + text_w).min(field.x as i32 + field.w as i32 - 6);
-    Line::new(
-        EgPoint::new(caret_x, field.y as i32 + 7),
-        EgPoint::new(caret_x, field.y as i32 + field.h as i32 - 7),
-    )
-    .into_styled(PrimitiveStyle::with_stroke(theme::ACCENT, 1))
-    .draw(t)?;
+    let cursor_x = (inner.x as i32 + text_w).min(field.x as i32 + field.w as i32 - 12);
 
-    // The wheel: up / down arrows around the big candidate character.
-    key_surface(t, RN_UP_RECT, KEY_FILL, true)?;
-    wheel_arrow(t, RN_UP_RECT, true, theme::ACCENT)?;
-    key_surface(t, RN_DOWN_RECT, KEY_FILL, true)?;
-    wheel_arrow(t, RN_DOWN_RECT, false, theme::ACCENT)?;
-    let cy = (RN_UP_RECT.y + RN_UP_RECT.h + RN_DOWN_RECT.y) as i32 / 2;
-    if candidate == b' ' {
-        // A space candidate: a short underline so the wheel isn't blank.
+    if let Some(ch) = pending {
+        let b = [ch];
+        let ps = core::str::from_utf8(&b).unwrap_or("?");
+        let pw = font::width(ps, Role::Body).unwrap_or(0) as i32;
+        let px = cursor_x + 4;
+        text_left(t, ps, EgPoint::new(px, baseline), Role::Body, theme::ACCENT)?;
         Line::new(
-            EgPoint::new(MIDX - 10, cy + 9),
-            EgPoint::new(MIDX + 10, cy + 9),
+            EgPoint::new(px, baseline + 4),
+            EgPoint::new(px + pw, baseline + 4),
         )
-        .into_styled(PrimitiveStyle::with_stroke(FG, 2))
+        .into_styled(PrimitiveStyle::with_stroke(theme::ACCENT, 2))
         .draw(t)?;
     } else {
-        let b = [candidate];
-        let s = core::str::from_utf8(&b).unwrap_or("?");
-        text(t, s, EgPoint::new(MIDX, cy), Role::Ready, FG)?;
+        Line::new(
+            EgPoint::new(cursor_x, field.y as i32 + 7),
+            EgPoint::new(cursor_x, field.y as i32 + field.h as i32 - 7),
+        )
+        .into_styled(PrimitiveStyle::with_stroke(theme::ACCENT, 1))
+        .draw(t)?;
     }
-
-    // Backspace (left) and insert-candidate (right).
-    key_surface(t, RN_BKSP_RECT, theme::KEY_DARK, true)?;
-    glyph_centered(t, Glyph::Backspace, RN_BKSP_RECT, 22, MUTED)?;
-    key_surface(t, RN_INS_RECT, KEY_FILL, true)?;
-    let ic = center(RN_INS_RECT);
-    Line::new(EgPoint::new(ic.x - 9, ic.y), EgPoint::new(ic.x + 9, ic.y))
-        .into_styled(PrimitiveStyle::with_stroke(theme::ACCENT, 2))
-        .draw(t)?;
-    Line::new(EgPoint::new(ic.x, ic.y - 9), EgPoint::new(ic.x, ic.y + 9))
-        .into_styled(PrimitiveStyle::with_stroke(theme::ACCENT, 2))
-        .draw(t)?;
-
-    button(t, RN_SAVE_RECT, "Save", ALLOW_FILL)
+    Ok(())
 }
 
-/// Repaint just the rename field's caret — drawn in accent when `on`, erased to the field
-/// surface when `off`, so the firmware can blink it on a timer without redrawing the
-/// screen. The caret sits at the end of `value` (clamped inside the field), matching
-/// [`render_rename`]'s static caret exactly.
-pub fn render_rename_caret<D: DrawTarget<Color = Rgb565>>(
+/// Repaint just the T9 keypad (when `active_group` changes).
+/// Paints every key — the keypad is 12 small rects, repainting all of them
+/// is still much cheaper than a full-frame redraw.
+pub fn render_rename_keys<D: DrawTarget<Color = Rgb565>>(
     t: &mut D,
-    value: &str,
-    on: bool,
+    active_group: Option<usize>,
 ) -> Result<(), D::Error> {
-    let field = RN_FIELD_RECT;
-    let text_w = font::width(value, Role::Body).unwrap_or(0) as i32;
-    let caret_x = (field.x as i32 + 10 + text_w).min(field.x as i32 + field.w as i32 - 6);
-    let color = if on { theme::ACCENT } else { theme::SURFACE };
-    Line::new(
-        EgPoint::new(caret_x, field.y as i32 + 7),
-        EgPoint::new(caret_x, field.y as i32 + field.h as i32 - 7),
-    )
-    .into_styled(PrimitiveStyle::with_stroke(color, 1))
-    .draw(t)
-}
-
-/// A filled wheel arrow (▲ when `up`, else ▼) centred in `r`.
-fn wheel_arrow<D: DrawTarget<Color = Rgb565>>(
-    t: &mut D,
-    r: Rect,
-    up: bool,
-    color: Rgb565,
-) -> Result<(), D::Error> {
-    let cx = (r.x + r.w / 2) as i32;
-    let cy = (r.y + r.h / 2) as i32;
-    let (apex, left, right) = if up {
-        (
-            EgPoint::new(cx, cy - 8),
-            EgPoint::new(cx - 9, cy + 6),
-            EgPoint::new(cx + 9, cy + 6),
-        )
-    } else {
-        (
-            EgPoint::new(cx, cy + 8),
-            EgPoint::new(cx - 9, cy - 6),
-            EgPoint::new(cx + 9, cy - 6),
-        )
-    };
-    Triangle::new(apex, left, right)
-        .into_styled(PrimitiveStyle::with_fill(color))
-        .draw(t)
+    for row in 0..4u16 {
+        for col in 0..3u16 {
+            let r = t9_key_rect(row, col);
+            match (row, col) {
+                (3, 0) => {
+                    key_surface(t, r, theme::KEY_DARK, true)?;
+                    glyph_centered(t, Glyph::Backspace, r, 20, MUTED)?;
+                }
+                (3, 2) => {
+                    RoundedRectangle::with_equal_corners(
+                        eg_rect(r),
+                        Size::new(KEY_RADIUS, KEY_RADIUS),
+                    )
+                    .into_styled(PrimitiveStyle::with_fill(ALLOW_FILL))
+                    .draw(t)?;
+                    text(t, "Save", center(r), Role::Strong, FG)?;
+                }
+                _ => {
+                    let idx = if row < 3 { (row * 3 + col) as usize } else { 9 };
+                    let is_active = active_group == Some(idx);
+                    let fill = if is_active {
+                        theme::ACCENT_FILL
+                    } else {
+                        KEY_FILL
+                    };
+                    key_surface(t, r, fill, !is_active)?;
+                    let color = if is_active { FG } else { theme::TEXT };
+                    let (digit, letters) = T9_KEY_LABELS[idx];
+                    let cx = r.x as i32 + r.w as i32 / 2;
+                    text(
+                        t,
+                        digit,
+                        EgPoint::new(cx, r.y as i32 + 14),
+                        Role::Strong,
+                        color,
+                    )?;
+                    text(
+                        t,
+                        letters,
+                        EgPoint::new(cx, r.y as i32 + 32),
+                        Role::MonoSmall,
+                        color,
+                    )?;
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// The trusted Confirm-Delete screen for a resident passkey: the back (cancel)

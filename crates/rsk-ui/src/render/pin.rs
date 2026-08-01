@@ -227,18 +227,21 @@ fn masked_entry<D: DrawTarget<Color = Rgb565>>(
         )?;
         return Ok(());
     }
+    // Outline dots only while below the expected minimum; once reached, the
+    // entered count drives the row.
     let total = (expected as usize).max(entered).min(ENTRY_MAX_SHOWN);
     for i in 0..total {
         let at = EgPoint::new(
             ENTRY_X0 + i as i32 * ENTRY_STEP,
             ENTRY_CY - ENTRY_DIA as i32 / 2,
         );
-        let style = if i < entered {
-            PrimitiveStyle::with_fill(theme::ACCENT)
+        if i < entered {
+            crate::aa::filled_circle(t, at, ENTRY_DIA, theme::ACCENT, theme::BG)?;
         } else {
-            PrimitiveStyle::with_stroke(theme::CAPTION, 1)
-        };
-        Circle::new(at, ENTRY_DIA).into_styled(style).draw(t)?;
+            Circle::new(at, ENTRY_DIA)
+                .into_styled(PrimitiveStyle::with_stroke(theme::CAPTION, 1))
+                .draw(t)?;
+        }
     }
     // A PIN longer than the row marks the extra digits with a "+", so the dot count never
     // reads as the whole PIN (the full PIN is still entered and verified).
@@ -255,18 +258,9 @@ fn masked_entry<D: DrawTarget<Color = Rgb565>>(
     Ok(())
 }
 
-/// Top and height of the masked-entry band — the strip [`render_pin_dots`] repaints
-/// on its own. Must cover the dot row (centre y 60, dia 12) and the eye toggle.
-const PIN_ENTRY_TOP: i32 = 44;
-const PIN_ENTRY_H: u32 = 32;
-
-/// Repaint **only** the masked-entry band (clear the strip, redraw the dots/digits and the
-/// eye), leaving the static keys untouched. The pad is painted in full once via
-/// `render(&Screen::Pin(..))`; each keystroke — and each reveal toggle — then calls this,
-/// so a change is a tiny partial update with no full-screen clear (no flicker), unlike
-/// repainting the whole 240×320 frame per tap. `reveal` matches [`masked_entry`]: `None`
-/// shows masked dots, `Some(digits)` the typed digits (passed transiently by the firmware
-/// when the user taps the eye — never stored here).
+/// Repaint the masked dots (and eye toggle): clear one strip over the entry band
+/// — every dot position plus the "+" overflow slot to its right — then redraw.
+/// A per-dot clear missed the "+" and dot 10's right tail, so a delete mis-read.
 pub fn render_pin_dots<D>(
     target: &mut D,
     entered: usize,
@@ -277,8 +271,11 @@ where
     D: DrawTarget<Color = Rgb565>,
 {
     Rectangle::new(
-        EgPoint::new(0, PIN_ENTRY_TOP),
-        Size::new(PANEL_W as u32, PIN_ENTRY_H),
+        EgPoint::new(ENTRY_X0 - 2, ENTRY_CY - ENTRY_DIA as i32 / 2 - 2),
+        Size::new(
+            (ENTRY_MAX_SHOWN as u32 + 1) * ENTRY_STEP as u32 + 4,
+            ENTRY_DIA + 4,
+        ),
     )
     .into_styled(PrimitiveStyle::with_fill(BG))
     .draw(target)?;

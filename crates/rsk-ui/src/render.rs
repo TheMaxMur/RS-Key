@@ -17,7 +17,7 @@ use embedded_graphics::{
     pixelcolor::Rgb565,
     primitives::{
         Arc, Circle, Line, Primitive, PrimitiveStyle, PrimitiveStyleBuilder, Rectangle,
-        RoundedRectangle, StrokeAlignment, Triangle,
+        RoundedRectangle, StrokeAlignment,
     },
 };
 
@@ -29,11 +29,10 @@ use crate::{
     PANEL_H, PANEL_W, PICK_CONTINUE_RECT, PICK_N_MINUS_RECT, PICK_N_PLUS_RECT, PICK_T_MINUS_RECT,
     PICK_T_PLUS_RECT, PIN_CANCEL_RECT, PIN_COLS, PIN_EYE_RECT, PIN_ROWS, PIV_KEYGEN_PICK_ROWS,
     PIV_KEYGEN_PICK_TOP, PIV_PIN_MENU_ROWS, PIV_ROWS, PIV_RSA_PICK_ROWS, PK_BACK_RECT, PK_LIST_TOP,
-    PinCaption, PinKey, PinPad, Point, RN_BKSP_RECT, RN_DOWN_RECT, RN_FIELD_RECT, RN_INS_RECT,
-    RN_SAVE_RECT, RN_UP_RECT, Rect, RevealKind, RpRow, STATUS_BAR_H, Screen, SettingsPage,
-    SettingsView, StatusKind, SuccessKind, TITLE_BACK_RECT, TITLE_BAR_H, TITLE_EDIT_RECT, font,
-    font::Role, glyph, hex_u16, hex_u64, nav_tab_rect, page_count, pin_grid_key, pin_key_rect,
-    settings_row_rect, theme,
+    PinCaption, PinKey, PinPad, Point, RN_FIELD_RECT, Rect, RevealKind, RpRow, STATUS_BAR_H,
+    Screen, SettingsPage, SettingsView, StatusKind, SuccessKind, T9_KEY_LABELS, TITLE_BACK_RECT,
+    TITLE_BAR_H, TITLE_EDIT_RECT, font, font::Role, glyph, hex_u16, hex_u64, nav_tab_rect,
+    page_count, pin_grid_key, pin_key_rect, settings_row_rect, t9_key_rect, theme,
 };
 use crate::{
     AppsView, CardholderView, OathDetailView, OathRow, OpenpgpView, PgpKeyView, PivExtraRow,
@@ -45,6 +44,7 @@ mod audit;
 mod backup;
 mod boot;
 mod ceremony;
+mod components;
 mod home;
 mod passkeys;
 mod pin;
@@ -66,7 +66,8 @@ pub use boot::render_locked_breathe;
 pub use ceremony::render_add_passkey;
 pub use home::{STATUS_ARC_START, render_status_arc};
 pub use passkeys::{
-    render_confirm_delete, render_passkeys_list, render_rename, render_rename_caret, render_service,
+    render_confirm_delete, render_passkeys_list, render_rename, render_rename_field,
+    render_rename_keys, render_service,
 };
 pub use pin::{PIN_TITLE_BAND, pin_title_overflows, render_pin_dots, render_pin_title};
 pub use reset::{
@@ -659,26 +660,10 @@ fn card<D: DrawTarget<Color = Rgb565>>(
         .draw(t)
 }
 
-/// One standalone list row: its own [`card`] plus the [`row_body`] content. The geometry is
-/// the caller's `rect` (from `row_rect`), so paint and [`crate::hit_list`] share it. A
-/// grouped list paints one [`group_card`] then calls [`row_body`] per row instead, so the
-/// rows read as a single panel rather than a stack of separate pills.
-pub fn render_row<D: DrawTarget<Color = Rgb565>>(
-    t: &mut D,
-    rect: Rect,
-    icon: Glyph,
-    label: &str,
-    trailing: Option<(&str, Rgb565)>,
-    chevron: bool,
-) -> Result<(), D::Error> {
-    card(t, rect, theme::ROW_BG, theme::BORDER_CARD)?;
-    row_body(t, rect, icon, label, trailing, chevron, false)
-}
-
 /// The content of one list row — a leading glyph (on a service `chip` when set), the label,
 /// an optional trailing coloured status/value, and an optional drill-in chevron — *without*
-/// the card behind it. [`render_row`] adds the card for a standalone row; [`group_card`]
-/// backs a whole grouped list, then each row's content is drawn with this.
+/// the card behind it. [`group_card`] backs a whole grouped list, then each row's content
+/// is drawn with this.
 fn row_body<D: DrawTarget<Color = Rgb565>>(
     t: &mut D,
     rect: Rect,
@@ -688,28 +673,7 @@ fn row_body<D: DrawTarget<Color = Rgb565>>(
     chevron: bool,
     chip: bool,
 ) -> Result<(), D::Error> {
-    // Default: keep the head (tail-ellipsis) — the label is static or a user-chosen name.
-    row_body_side(t, rect, icon, label, trailing, chevron, chip, false)
-}
-
-/// [`row_body`] with an explicit ellipsis side: `domain = true` keeps the registrable-domain
-/// **suffix** (head-ellipsis) for an attacker-chosen relying-party id, so a padded look-alike
-/// can't hide the real domain behind the cut on the passkey list. Every other row keeps the
-/// head like [`row_body`].
-#[allow(clippy::too_many_arguments)]
-fn row_body_side<D: DrawTarget<Color = Rgb565>>(
-    t: &mut D,
-    rect: Rect,
-    icon: Glyph,
-    label: &str,
-    trailing: Option<(&str, Rgb565)>,
-    chevron: bool,
-    chip: bool,
-    domain: bool,
-) -> Result<(), D::Error> {
     let cy = rect.y as i32 + rect.h as i32 / 2;
-    // A service row carries the design's icon chip — a small rounded tile behind the glyph;
-    // status / settings rows draw the glyph bare. The label x is unchanged either way.
     let gx = if chip {
         RoundedRectangle::with_equal_corners(
             eg_rect(Rect::new(rect.x + 3, (cy - 11) as u16, 22, 22)),
@@ -722,8 +686,6 @@ fn row_body_side<D: DrawTarget<Color = Rgb565>>(
         rect.x + 8
     };
     glyph::draw(t, icon, Point::new(gx, (cy - 7) as u16), 14, theme::GREY)?;
-    // Lay the trailing block (chevron, then the value flush against it) first, tracking
-    // the leftmost x it occupies — the label is then clipped to end before it.
     let mut right_x = rect.x as i32 + rect.w as i32 - 8;
     if chevron {
         right_x -= 12;
@@ -738,9 +700,6 @@ fn row_body_side<D: DrawTarget<Color = Rgb565>>(
     let label_x = rect.x as i32 + 28;
     let label_right = if let Some((txt, col)) = trailing {
         let tx = right_x - 4;
-        // The trailing value can be host-controlled (e.g. the OpenPGP cardholder
-        // name) — clip it to the row so a long string can't overrun left across the
-        // icon and off the panel edge. Short static values are unaffected.
         let tclip = Rect::new(label_x as u16, rect.y, (tx - label_x).max(0) as u16, rect.h);
         font::right(
             &mut t.clipped(&eg_rect(tclip)),
@@ -760,11 +719,7 @@ fn row_body_side<D: DrawTarget<Color = Rgb565>>(
         rect.h,
     );
     let at = EgPoint::new(label_x, cy);
-    if domain {
-        text_right_ellipsized(t, label, at, Role::Body, theme::TEXT, clip, false)
-    } else {
-        text_left_ellipsized(t, label, at, Role::Body, theme::TEXT, clip, false)
-    }
+    text_left_ellipsized(t, label, at, Role::Body, theme::TEXT, clip, false)
 }
 
 /// Paint one grouped surface behind list rows `0..n` (each at `row_rect(y0, i)`), with a
