@@ -3,6 +3,7 @@
 
 //! Settings screens: the menu pages, adjust controls, and the firmware update flow.
 
+use super::components;
 use super::*;
 
 // --- Settings menu ---------------------------------------------------------
@@ -34,10 +35,12 @@ fn settings_root<D: DrawTarget<Color = Rgb565>>(t: &mut D, version: u16) -> Resu
     status_bar(t)?;
     title_bar(t, "Settings", theme::ACCENT, false)?;
     // Display drills into the brightness / sleep / touch-timeout panel knobs.
-    render_row(t, settings_row_rect(0), Glyph::Sun, "Display", None, true)?;
+    components::rect_card(t, settings_row_rect(0))?;
+    components::rect_row(t, settings_row_rect(0), Glyph::Sun, "Display", None, true)?;
     // Security drills into the Set/Change PIN + Audit / Backup + Factory reset sub-page,
     // keeping the destructive reset one tap deeper.
-    render_row(
+    components::rect_card(t, settings_row_rect(1))?;
+    components::rect_row(
         t,
         settings_row_rect(1),
         Glyph::Shield,
@@ -49,7 +52,8 @@ fn settings_root<D: DrawTarget<Color = Rgb565>>(t: &mut D, version: u16) -> Resu
     // reboot-to-update-over-USB screen.
     let mut vbuf = [b'0', b'x', 0, 0, 0, 0];
     vbuf[2..].copy_from_slice(&hex_u16(version));
-    render_row(
+    components::rect_card(t, settings_row_rect(2))?;
+    components::rect_row(
         t,
         settings_row_rect(2),
         Glyph::Cpu,
@@ -68,7 +72,8 @@ fn settings_display<D: DrawTarget<Color = Rgb565>>(t: &mut D) -> Result<(), D::E
     title_bar(t, "Display", theme::ACCENT, true)?;
     // Row order must match [`crate::display_row_entry`] — paint and tap-dispatch share
     // `settings_row_rect(i)`.
-    render_row(
+    components::rect_card(t, settings_row_rect(0))?;
+    components::rect_row(
         t,
         settings_row_rect(0),
         Glyph::Sun,
@@ -76,7 +81,8 @@ fn settings_display<D: DrawTarget<Color = Rgb565>>(t: &mut D) -> Result<(), D::E
         None,
         true,
     )?;
-    render_row(
+    components::rect_card(t, settings_row_rect(1))?;
+    components::rect_row(
         t,
         settings_row_rect(1),
         Glyph::Moon,
@@ -84,7 +90,8 @@ fn settings_display<D: DrawTarget<Color = Rgb565>>(t: &mut D) -> Result<(), D::E
         None,
         true,
     )?;
-    render_row(
+    components::rect_card(t, settings_row_rect(2))?;
+    components::rect_row(
         t,
         settings_row_rect(2),
         Glyph::Clock,
@@ -109,7 +116,8 @@ fn settings_security<D: DrawTarget<Color = Rgb565>>(
     // share `settings_row_rect(i)` but not a single table, so the danger Factory reset stays
     // last on both. Two independent PINs: the device PIN (lock glyph) gates the on-device UI;
     // the FIDO clientPIN (key glyph) is WebAuthn's. Each row sets or changes only its own.
-    render_row(
+    components::rect_card(t, settings_row_rect(0))?;
+    components::rect_row(
         t,
         settings_row_rect(0),
         Glyph::Lock,
@@ -121,7 +129,8 @@ fn settings_security<D: DrawTarget<Color = Rgb565>>(
         None,
         true,
     )?;
-    render_row(
+    components::rect_card(t, settings_row_rect(1))?;
+    components::rect_row(
         t,
         settings_row_rect(1),
         Glyph::Key,
@@ -135,8 +144,10 @@ fn settings_security<D: DrawTarget<Color = Rgb565>>(
     )?;
     // The PIV applet's own PIN/PUK — a drill-in to its sub-menu ([`render_piv_pin_menu`]),
     // grouped with the other two credential PINs above the audit/backup/reset rows.
-    render_row(t, settings_row_rect(2), Glyph::Lock, "PIV PIN", None, true)?;
-    render_row(
+    components::rect_card(t, settings_row_rect(2))?;
+    components::rect_row(t, settings_row_rect(2), Glyph::Lock, "PIV PIN", None, true)?;
+    components::rect_card(t, settings_row_rect(3))?;
+    components::rect_row(
         t,
         settings_row_rect(3),
         Glyph::Clock,
@@ -147,7 +158,8 @@ fn settings_security<D: DrawTarget<Color = Rgb565>>(
     // The row shows the cheap export-*window* bit only ("Sealed" / "Review"); the full
     // 4-way state (no-seed / restore-only / sealed / review) lives on the Backup page, which
     // also reads `has_seed` + the build profile. The row deliberately skips that extra lookup.
-    render_row(
+    components::rect_card(t, settings_row_rect(4))?;
+    components::rect_row(
         t,
         settings_row_rect(4),
         Glyph::Lifebuoy,
@@ -162,15 +174,26 @@ fn settings_security<D: DrawTarget<Color = Rgb565>>(
     danger_row(t, settings_row_rect(5), "Factory reset")
 }
 
-/// A destructive option row: the [`render_row`] card, but red-tinted (the [`theme::DANGER_BG`]
-/// fill and [`theme::DANGER_BORDER`] edge) with a warning glyph, label, and drill-in chevron
-/// all in the decline colour — so a destructive action stands out from the neutral rows.
+/// A destructive option row: a red-tinted rounded card with a warning glyph, label,
+/// and drill-in chevron — so a destructive action stands out from the neutral rows.
 fn danger_row<D: DrawTarget<Color = Rgb565>>(
     t: &mut D,
     rect: Rect,
     label: &str,
 ) -> Result<(), D::Error> {
-    card(t, rect, theme::DANGER_BG, theme::DANGER_BORDER)?;
+    let r = components::CARD_RADIUS;
+    RoundedRectangle::with_equal_corners(eg_rect(rect), Size::new(r, r))
+        .into_styled(PrimitiveStyle::with_fill(theme::DANGER_BG))
+        .draw(t)?;
+    RoundedRectangle::with_equal_corners(eg_rect(rect), Size::new(r, r))
+        .into_styled(
+            PrimitiveStyleBuilder::new()
+                .stroke_color(theme::DANGER_BORDER)
+                .stroke_width(1)
+                .stroke_alignment(StrokeAlignment::Inside)
+                .build(),
+        )
+        .draw(t)?;
     let cy = rect.y as i32 + rect.h as i32 / 2;
     glyph::draw(
         t,

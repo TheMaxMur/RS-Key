@@ -58,6 +58,53 @@ Audit run-30 fixes (bcdDevice `0x085D`, `rsk` 0.3.21, `rsk-tui` 0.3.2):
   defence in depth. The primary control against a leaked write token laundering
   unreviewed code into a signed release is a repository tag ruleset restricting
   who may create `refs/tags/v*` — configure that in the repo settings.
+- `docs/unsafe.md` records the four new `AnyPin::steal` sites (display
+  `CS`/`DC`/`RST`/`TP_RST`) and the `firmware/build.rs` `env::set_var` site,
+  restoring the runtime-site count from 15 to 19 and matching the new
+  collision-assert containment in the prose.
+
+### Added
+
+- **Per-board build configuration: `BOARD=<name>` picks `firmware/boards/<name>.toml`**
+  instead of setting the LED / presence / flash / display env vars one by one.
+  Ships with `waveshare-one`, `waveshare-touch-lcd`, `tenstar-usb`, and
+  `seeed-xiao`. The individual env vars still work and still win over the board
+  file, so existing build recipes are unaffected. The display's SPI1
+  (`PIN_10/11/12`) and I2C1 (`PIN_6/7`) lines stay hard-wired; only the control
+  GPIOs (`cs`/`dc`/`rst`/`tp_rst`/backlight), bus frequencies, colour inversion,
+  and colour order are per-board.
+- **Trusted-display UI redesign** (`--features display`): anti-aliased circles for
+  the boot, reset, and PIN-entry dots; a shared component system (`card`,
+  `rect_card`, `list::group_card`, `list::row`) behind the Passkeys, Audit,
+  Applets, and Settings screens; and a unified 10 px gap between the title bar and
+  the content on every screen. The passkey rename screen replaces the up/down
+  character wheel with a **T9 phone-style keypad** — a repeated press cycles the
+  key's letter group, a different key or an 800 ms pause commits, and the field
+  and keypad repaint in place instead of clearing the frame.
+
+### Changed
+
+- **`bcdDevice` bumped to `0x085E`** for the UI redesign and the per-board
+  configuration system.
+- **OpenPGP RSA heap restored to 128 KiB.** It was halved to 64 KiB inside the
+  per-board-config commit without a callout; on `embedded_alloc` a failed
+  allocation aborts (`handle_alloc_error` → panic → watchdog reset), so a long
+  RSA-4096 keygen/CRT mid-operation could reset the device. Back to the v0.4.4
+  value until a separate justification for the smaller size is on record.
+- **Display control GPIOs are now checked for collisions at compile time.** The
+  four new `AnyPin::steal` sites for `CS`/`DC`/`RST`/`TP_RST` were added by number
+  with no compile-time guard beyond `WAKE_PIN` vs the `10..=18` range, so a board
+  config could aim `cs` at the same pad as `WAKE_PIN`, `LED_PIN`, the hard-wired
+  SPI1 (`PIN_10/11/12`) / I2C1 (`PIN_6/7`) lines, or another control line, and
+  silently drive one pad from two owners. A `const _: () = assert!(...)` now
+  rejects all of those at build time. The backlight PWM `(pin, slice, channel)`
+  combo likewise had no compile-time guard and panicked at boot on an unsupported
+  board (a runtime panic on fully constant operands); it too is now a `const`
+  assert, and the runtime match arm is `unreachable!`.
+- **`firmware/build.rs` re-rustc's when any of the 11 `PK_DISPLAY_*` env vars
+  change.** They were the only env knobs missing a `cargo:rerun-if-env-changed`,
+  so overriding `PK_DISPLAY_CS` etc. without touching `BOARD` reused the cached
+  build and shipped a firmware with stale pins.
 
 ### Fixed
 
@@ -76,6 +123,60 @@ Audit run-30 fixes (bcdDevice `0x085D`, `rsk` 0.3.21, `rsk-tui` 0.3.2):
   wait now latches for the rest of the command, so only the response — or the
   idle status frame after a real timeout — replaces it, which leaves an expired
   wait ending exactly as promptly as before. **bcdDevice → `0x085C`.**
+- **The PIN-entry band no longer leaves a stale "+" overflow marker and the right
+  half of the 10th dot behind when the user deletes from a long PIN back to ≤10
+  digits** (`render_pin_dots`). The repaint cleared one small rectangle per dot,
+  centred on each circle, but `masked_entry` draws dots top-left-aligned — so the
+  clear was off by `ENTRY_DIA/2` and missed the "+" at x 184 plus dot 10's right
+  tail (x 176..180). Deleting 11 → 10 left the "+" on screen for the rest of the
+  session, lying that the PIN was still long, and 10 → 9 left a one-pixel stub.
+  The repaint now clears one strip over the whole entry band (every dot position
+  plus the overflow slot to its right) before redrawing. Covered by a host test
+  in `rsk-ui`.
+
+### Removed
+
+- Dead code from the UI redesign: `aa::filled_rounded_rect` (~64 lines, never
+  called), and the `CARET_BLINK_MS` const left behind with `#[allow(dead_code)]`
+  after the rename pad switched from a caret blink to a T9 pending-char.
+
+### Internal
+
+- Cross-executor `Ordering` consistency: the `CANCEL_REQUESTED.store(false, …)`
+  false-clears in `display/pin.rs` and `display/presence.rs` are `Relaxed` (no
+  publication occurs from a `false` store — the publication is the subsequent
+  `true`/`Release` store), matching the same false-clears already in
+  `firmware/src/presence.rs`.
+- **Test changed.** `t9_groups_are_printable_and_have_distinct_chars` checked
+  for duplicate characters *within* each group (where the old
+  `rename_charset_is_printable_and_cycles` checked the whole charset). The test
+  now also rejects a character appearing in *two* groups — a T9 char must belong
+  to exactly one, else `active_group`/`cycle_at` on the rename screen is
+  ambiguous. (`const _: () = assert!(T9_GROUPS.len() == 10)` pins the
+  relationship `hit_rename` (`Char(0..=9)`) expects, so dropping a group fails
+  the build instead of panicking on device at `groups[gi]`.)
+- The AA fringe in `aa::filled_circle` now blends to a caller-passed `bg`
+  colour instead of the hardcoded `theme::BG` — truthful blending against
+  the surface the circle is drawn over, so a future AA circle on a card or
+  other non-`BG` region won't get a global-background halo. Existing call
+  sites (boot splash, reset warning, PIN-pad dots, success circle) pass
+  `theme::BG`, so the rendered output is byte-equivalent.
+- `firmware/build.rs` strips a trailing `# ...` comment from a TOML value
+  before parsing it (handling the `"`-quoted case, since a quoted value may
+  legitimately contain `#`). Previously `pin = 13 # GPIO for chip-select`
+  read as `13 # …` and panicked `parse_toml`'s `u32` helper; today's four
+  board configs are clean of inline comments, so this is a trap removed
+  for future edits, not a current-data fix.
+- `firmware/build.rs` renames the board-config display slice from `b2` to
+  `disp_cfg` and documents that `display_cs` is the semantic gate pin
+  (a `[display]` section without `cs` is dropped, and the knobs fall back
+  to the Waveshare defaults). It was previously a one-line clever `and_then`
+  with no note explaining why.
+- `masked_entry`'s `total` reverts to the v0.4.4 one-liner
+  `(expected as usize).max(entered).min(ENTRY_MAX_SHOWN)` — the UI redesign
+  rewrote it as an `if/else` with the same result and a cosier comment
+  ("no leftover outlines on delete") describing a change that didn't happen;
+  the original is shorter and says exactly what it does.
 
 ## [0.4.4] - 2026-07-27
 

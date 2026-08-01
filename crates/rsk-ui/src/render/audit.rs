@@ -3,6 +3,7 @@
 
 //! The read-only audit-log screen.
 
+use super::components;
 use super::*;
 
 /// The read-only on-device audit log (Settings → Security → Audit log): the most recent
@@ -34,7 +35,7 @@ where
             MUTED,
         )?;
     } else {
-        group_card(t, PK_LIST_TOP, rows.len() as u16)?;
+        components::list::group_card(t, PK_LIST_TOP, rows.len() as u16)?;
         for (i, r) in rows.iter().enumerate() {
             audit_body(t, crate::row_rect(PK_LIST_TOP, i as u16), r)?;
         }

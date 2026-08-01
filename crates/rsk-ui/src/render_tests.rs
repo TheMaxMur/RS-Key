@@ -2,6 +2,7 @@
 // Copyright (C) 2026 RS-Key contributors
 
 use super::ceremony::centered_clipped;
+use super::components;
 use super::home::HOME_CARD_TOP;
 use super::*;
 use crate::{HomeView, PANEL_H, SuccessKind};
@@ -542,43 +543,34 @@ fn applet_detail_screens_fit_and_clip_max_values() {
 #[test]
 fn rename_screen_paints_wheel_and_save() {
     let mut d = Rec::new();
-    render_rename(&mut d, "work", b'a').unwrap();
+    render_rename(&mut d, "work", Some(b'a'), Some(1)).unwrap();
     assert!(!d.oob, "rename drew outside the panel");
     assert!(d.drew_anything());
-    // The back chevron cancels; the Save button is the primary fill — both in their
-    // hit rects.
+    // The back chevron cancels.
     assert!(has_color(&d, crate::TITLE_BACK_RECT, theme::ACCENT));
-    assert!(
-        has_color(&d, crate::RN_SAVE_RECT, theme::ACCENT_FILL),
-        "Save button missing from its hit rect"
-    );
-    // Each wheel control paints something in its own tap target.
-    for r in [
-        crate::RN_UP_RECT,
-        crate::RN_DOWN_RECT,
-        crate::RN_BKSP_RECT,
-        crate::RN_INS_RECT,
-    ] {
-        assert!(d.any_non_bg_in(r), "wheel key {r:?} painted nothing");
+    // Each T9 key paints something in its own tap target (including the Save key).
+    for row in 0..4u16 {
+        for col in 0..3u16 {
+            let r = crate::t9_key_rect(row, col);
+            assert!(d.any_non_bg_in(r), "T9 key ({row},{col}) painted nothing");
+        }
     }
 }
 
 #[test]
-fn rename_space_candidate_stays_in_panel() {
-    // The space candidate takes a different (underline) draw path — still in-bounds,
-    // and an empty value (caret at the field start) must not spill either.
+fn rename_space_pending_stays_in_panel() {
+    // Pending space char takes the underline draw path — still in-bounds.
     let mut d = Rec::new();
-    render_rename(&mut d, "", b' ').unwrap();
+    render_rename(&mut d, "", Some(b' '), None).unwrap();
     assert!(!d.oob, "rename(space) drew outside the panel");
     assert!(d.drew_anything());
 }
 
 #[test]
 fn rename_long_value_is_clipped_to_the_field() {
-    // A value far wider than the field must not paint past the panel (it is clipped).
     let long = "abcdefghijklmnopqrstuvwx";
     let mut d = Rec::new();
-    render_rename(&mut d, long, b'z').unwrap();
+    render_rename(&mut d, long, Some(b'z'), None).unwrap();
     assert!(!d.oob, "rename(long) drew outside the panel");
 }
 
@@ -1453,7 +1445,8 @@ fn header_row_and_nav_draw_within_bounds() {
     let mut d = Rec::new();
     render_header(&mut d, "Settings", true, Some(Glyph::Shield)).unwrap();
     let r = crate::row_rect(40, 0);
-    render_row(&mut d, r, Glyph::Lock, "PIN", Some(("OK", theme::OK)), true).unwrap();
+    components::rect_card(&mut d, r).unwrap();
+    components::rect_row(&mut d, r, Glyph::Lock, "PIN", Some(("OK", theme::OK)), true).unwrap();
     render_nav(&mut d, NavTab::Settings).unwrap();
     assert!(!d.oob, "design-system widgets drew outside the panel");
     // The list-row card fills its rect (sampled on the flat top span).
@@ -1467,7 +1460,8 @@ fn long_row_label_is_clipped_clear_of_the_trailing_value() {
     let r = crate::row_rect(40, 0);
     let txt = "4 accounts";
     let mut d = Rec::new();
-    render_row(
+    components::rect_card(&mut d, r).unwrap();
+    components::rect_row(
         &mut d,
         r,
         Glyph::Globe,
@@ -1829,4 +1823,45 @@ fn hold_fill_grows_left_to_right_with_a_flat_edge() {
     render_hold_fill(&mut d, r, "Hold", 0, 5, 10, theme::APPROVE).unwrap();
     let w = r.w / 2; // num/den = 5/10
     assert_eq!(d.at(r.x + w - 3, r.y + 2), wash);
+}
+
+/// Regression: `render_pin_dots` must clear the "+" overflow marker and the 10th
+/// dot when `entered` drops. The old per-dot clear was centred on each circle, so
+/// it left the "+" (drawn at x 184) and dot 10's right tail behind on a delete —
+/// a shortened PIN still read as long.
+#[test]
+fn pin_dots_clear_strip_erases_overflow_and_tenth_dot_on_delete() {
+    use crate::render_pin_dots;
+    // ENTRY_* are private to render/pin.rs; mirror them here so the edge test does
+    // not force a wider re-export. Keep in sync with render/pin.rs.
+    const ENTRY_X0: u16 = 24;
+    const ENTRY_MAX_SHOWN: u16 = 10;
+    const ENTRY_STEP: u16 = 16;
+
+    // Dot i is a 12×12 circle at top-left (24 + i·16, 54). The "+" overflow marker
+    // draws to the right of the last dot (x 184..). Use boxes, not point probes, so
+    // the test does not pin a glyph baseline.
+    let dot10 = Rect::new(ENTRY_X0 + 9 * ENTRY_STEP, 54, 12, 12); // i = 9, the 10th dot.
+    let plus = Rect::new(ENTRY_X0 + ENTRY_MAX_SHOWN * ENTRY_STEP, 48, 20, 24);
+
+    // 11 entered → both the 10th dot and the "+" paint; drop to 9 → both erase.
+    let mut d = Rec::new();
+    render_pin_dots(&mut d, 11, 8, None).unwrap();
+    assert!(
+        d.any_non_bg_in(dot10),
+        "setup: the 10th dot should paint before delete"
+    );
+    assert!(
+        d.any_non_bg_in(plus),
+        "setup: the '+' overflow marker should paint before delete"
+    );
+    render_pin_dots(&mut d, 9, 8, None).unwrap();
+    assert!(
+        !d.any_non_bg_in(dot10),
+        "10th dot not erased on delete — stale tail reads as a longer PIN"
+    );
+    assert!(
+        !d.any_non_bg_in(plus),
+        "stale '+' marker left after delete — shortened PIN still read as long"
+    );
 }

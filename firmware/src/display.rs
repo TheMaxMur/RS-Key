@@ -47,7 +47,7 @@ use zeroize::Zeroize;
 
 use mipidsi::interface::SpiInterface;
 use mipidsi::models::ST7789;
-use mipidsi::options::ColorInversion;
+use mipidsi::options::{ColorInversion, ColorOrder};
 use mipidsi::{Builder, Display};
 use rsk_crypto::Device;
 use rsk_sdk::Confirm;
@@ -366,12 +366,21 @@ impl Ui {
         let spi_dev = ExclusiveDevice::new(spi, cs, Delay).unwrap();
         let di = SpiInterface::new(spi_dev, dc, buf);
 
-        // ST7789 native 240×320 portrait, matching rsk-ui's geometry. The IPS module
-        // needs `Inverted` (HW-verified on bringup).
+        // ST7789 240x320 portrait. Inversion and color order from board config.
+        let invert = if crate::BUILD_DISPLAY_INVERT_COLORS {
+            ColorInversion::Inverted
+        } else {
+            ColorInversion::Normal
+        };
+        let color_order = match crate::BUILD_DISPLAY_COLOR_ORDER {
+            1 => ColorOrder::Bgr,
+            _ => ColorOrder::Rgb,
+        };
         let mut delay = Delay;
         let mut panel = Builder::new(ST7789, di)
             .display_size(rsk_ui::PANEL_W, rsk_ui::PANEL_H)
-            .invert_colors(ColorInversion::Inverted)
+            .invert_colors(invert)
+            .color_order(color_order)
             .reset_pin(rst)
             .init(&mut delay)
             .unwrap();
