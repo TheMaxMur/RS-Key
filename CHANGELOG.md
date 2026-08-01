@@ -108,6 +108,13 @@ Audit run-30 fixes (bcdDevice `0x085D`, `rsk` 0.3.21, `rsk-tui` 0.3.2):
 
 ### Fixed
 
+- **`rsk backup finalize` works on a device with a PIN set** (`rsk` 0.3.22). It
+  sent the vendor command with no pinUvAuthToken, so `pin_gate` answered
+  `CTAP2_ERR_PUAT_REQUIRED` (0x36) and the one-time export window could not be
+  sealed once `clientPin` was enabled; it now takes the same `_gated()` path
+  `rsk backup export` already used
+  ([#59](https://github.com/TheMaxMur/RS-Key/issues/59), thanks
+  [@lockedmutex](https://github.com/lockedmutex)).
 - **A touch-gated challenge no longer looks like a timeout the moment the button
   is pressed.** While a command ran, the keyboard transport picked its status
   byte from the live presence flag — `0x20` while a touch was awaited, `0x10`
