@@ -13,6 +13,8 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+## [0.4.5] - 2026-08-03
+
 ### Security
 
 Audit run-31 fixes (bcdDevice `0x085F`, `rsk` 0.3.23, `rsk-tui` 0.3.3):
@@ -3130,7 +3132,8 @@ family that keeps the "enterprise" features in the open tree.
   signature of it, and a CycloneDX SBOM. See
   [docs/releases.md](docs/releases.md) to verify a download.
 
-[Unreleased]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.4...HEAD
+[Unreleased]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.5...HEAD
+[0.4.5]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.4...v0.4.5
 [0.4.4]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.3...v0.4.4
 [0.4.3]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.1...v0.4.2
