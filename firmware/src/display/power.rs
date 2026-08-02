@@ -77,6 +77,25 @@ impl Ui {
         self.sleep();
     }
 
+    /// Re-arm the on-device lock without blanking, for the auto-lock deadline that runs
+    /// independently of display sleep. Sleep is a display setting the user may switch
+    /// off; the lock is a security control, so it must not be switchable off with it —
+    /// nor postponable by a host, which is why its deadline counts from the last *local*
+    /// interaction. No-op without a device PIN (nothing to unlock with).
+    pub(super) fn lock_now(&mut self) -> bool {
+        if self.locked {
+            return false;
+        }
+        let pin_set = match self.fs.try_borrow_mut() {
+            Ok(mut fs) => rsk_fido::passkeys::device_pin_is_set(&mut fs),
+            Err(_) => self.home_pin_set,
+        };
+        if pin_set {
+            self.locked = true;
+        }
+        pin_set
+    }
+
     /// Block until the wake button is released (bounded), so a single press toggles
     /// sleep exactly once rather than oscillating while the button is held down.
     pub(super) fn wait_wake_release(&self) {

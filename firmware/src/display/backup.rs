@@ -348,11 +348,18 @@ impl Ui {
         let _ = core::hint::black_box(&words);
     }
 
-    /// Seal the backup window on-device (Settings → Security → Backup → Seal backup): a
-    /// deliberate hold, then write the seal marker so the seed can no longer be shown or
-    /// exported until a factory reset. Exposes no secret, so a hold (not the PIN) gates it;
-    /// Settings access is already device-PIN-locked.
+    /// Seal the backup window on-device (Settings → Security → Backup → Seal backup): the
+    /// device PIN, then a deliberate hold, then write the seal marker so the seed can no
+    /// longer be shown or exported until a factory reset. The PIN gate is not about
+    /// exposing a secret — it is about the change being *irreversible*, the same rule
+    /// [`Ui::run_delete`] and [`Ui::run_factory_reset`] follow. Relying on "Settings is
+    /// already locked" would be wrong twice over: the button only renders when a device
+    /// PIN exists, and the host equivalent (`BACKUP_FINALIZE`) carries its own PIN gate.
     fn run_seal_backup(&mut self) {
+        if !self.local_pin_gate(PinScope::Device) {
+            self.end_modal();
+            return;
+        }
         let idle_limit = Duration::from_millis(MENU_INACTIVITY_MS);
         self.touch.wait_release(Instant::now(), idle_limit);
         let _ = rsk_ui::render_seal_confirm(&mut self.panel);

@@ -165,6 +165,13 @@ impl Ui {
     /// so the ambient loop must park (on `reboot_pending`) and hand the executor over to it.
     pub(super) fn run_firmware(&mut self) -> bool {
         use rsk_rescue::Platform as _;
+        // BOOTSEL is the entry point for a raw flash dump / reflash (issue #37), so the
+        // hold alone is too weak a gate — take the device PIN first, like every other
+        // irreversible panel action.
+        if !self.local_pin_gate(PinScope::Device) {
+            self.end_modal();
+            return false;
+        }
         let idle_limit = Duration::from_millis(MENU_INACTIVITY_MS);
         self.touch.wait_release(Instant::now(), idle_limit);
         // A pure OTP read (no flash / no shared borrow) — true only on a fused, secure-boot
@@ -351,10 +358,22 @@ impl Ui {
             if CANCEL_REQUESTED.load(Ordering::Acquire) {
                 break rsk_fido::PinEntry::Cancelled;
             }
-            // A local gate must not starve the parked worker: abandon the moment a host
-            // command queues (no host awaits this PIN). The host built-in-UV path keeps
+            // A local gate must not starve the parked worker: abandon once a host command
+            // queues (no host awaits this PIN). The host built-in-UV path keeps
             // `yield_to_host=false` and blocks to the timeout (the host awaits it).
-            if yield_to_host && crate::worker::host_request_pending() {
+            //
+            // But yield with a floor, and never mid-entry. `REQ` stays signalled until the
+            // worker drains it, and the worker cannot run while this loop busy-waits — so
+            // without a floor one queued command latches the yield and the pad closes on
+            // its very first poll, every time. A host that repeats any ungated command
+            // would then hold the owner's unlock pad shut for as long as it likes, which
+            // is the one thing the out-of-band channel must not allow. The host is being
+            // sent CTAPHID keepalives throughout, so a bounded wait costs it nothing.
+            if yield_to_host
+                && entered == 0
+                && start.elapsed() >= Duration::from_millis(UI_YIELD_FLOOR_MS)
+                && crate::worker::host_request_pending()
+            {
                 break rsk_fido::PinEntry::Cancelled;
             }
             if start.elapsed() >= timeout {
@@ -503,7 +522,8 @@ impl Ui {
         let idle_limit = Duration::from_millis(MENU_INACTIVITY_MS);
         let mut hold_start: Option<Instant> = None;
         let mut last_num: u16 = 0;
-        let mut last = Instant::now();
+        let opened = Instant::now();
+        let mut last = opened;
         loop {
             // The power button sleeps (and auto-locks) mid-hold; nothing has committed yet,
             // so this abandons the confirm exactly like a lifted finger.
@@ -542,8 +562,16 @@ impl Ui {
                 last_num = 0;
             }
             // A queued host command aborts the (uncommitted) confirm so the worker can
-            // run; nothing commits unless the hold actually completes.
-            if crate::worker::host_request_pending() || last.elapsed() >= idle_limit {
+            // run; nothing commits unless the hold actually completes. Yield with the
+            // same floor the PIN pad uses, and never mid-hold: `REQ` latches until the
+            // worker drains it, so otherwise a host repeating any ungated command could
+            // make every hold on the device un-completable.
+            let mid_hold = hold_start.is_some();
+            if (!mid_hold
+                && opened.elapsed() >= Duration::from_millis(UI_YIELD_FLOOR_MS)
+                && crate::worker::host_request_pending())
+                || last.elapsed() >= idle_limit
+            {
                 return false; // timeout / yield
             }
             block_for(Duration::from_millis(TOUCH_POLL_MS));
