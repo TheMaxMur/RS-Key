@@ -81,30 +81,57 @@ pub fn terminate_df<S: Storage>(
     if apdu.nc != 0 {
         return Sw::WRONG_LENGTH;
     }
-    wipe_openpgp(fs);
+    // A sweep that could not prove it cleared the range must not report success — the
+    // host would file the card as factory-reset over surviving private-key records.
+    if let Err(sw) = wipe_openpgp(fs) {
+        return sw;
+    }
     if scan_files(dev, fs, rng).is_err() {
         return Sw::MEMORY_FAILURE;
     }
     Sw::OK
 }
 
+/// Largest number of deletions a single TERMINATE sweep may perform before it is
+/// treated as non-converging. The applet's whole fid range is far smaller; this only
+/// bounds a pathological store (mirrors PIV's `RESET_MAX_DELETES`).
+const WIPE_MAX_DELETES: u32 = 512;
+
 /// Delete every live OpenPGP file. Batched because `for_each_key` cannot delete
-/// mid-iteration; each round deletes ≥1 key, so it converges (mirrors the FIDO reset).
-fn wipe_openpgp<S: Storage>(fs: &mut Fs<S>) {
+/// mid-iteration; each round deletes ≥1 key, so it converges (mirrors the FIDO and
+/// PIV resets — including their two hardening rules, which this sweep predates:
+/// `force_delete` rather than `delete`, and an incomplete enumeration must fail
+/// rather than read as "the range is clear").
+fn wipe_openpgp<S: Storage>(fs: &mut Fs<S>) -> Result<(), Sw> {
+    let mut deleted = 0u32;
     loop {
         let mut keys = [0u16; 64];
         let mut k = 0usize;
-        fs.for_each_key(&mut |fid| {
-            if is_openpgp_fid(fid) && k < keys.len() {
+        let complete = fs.for_each_key(&mut |fid| {
+            if is_openpgp_fid(fid) && k < keys.len() && !keys[..k].contains(&fid) {
                 keys[k] = fid;
                 k += 1;
             }
         });
         if k == 0 {
-            break;
+            // A truncated walk (flash read fault) can hide a live fid, so an empty
+            // batch only proves the range is clear when the enumeration completed —
+            // otherwise TERMINATE would answer 9000 over surviving key material.
+            return if complete {
+                Ok(())
+            } else {
+                Err(Sw::MEMORY_FAILURE)
+            };
+        }
+        // Progress, not pass count: each pass deletes `k` distinct fids.
+        deleted += k as u32;
+        if deleted > WIPE_MAX_DELETES {
+            return Err(Sw::MEMORY_FAILURE);
         }
         for &fid in &keys[..k] {
-            let _ = fs.delete(fid);
+            // force_delete: `delete` skips a false-absent file that `for_each_key`
+            // keeps yielding, so the sweep would spin instead of converging.
+            fs.force_delete(fid).map_err(|_| Sw::MEMORY_FAILURE)?;
         }
     }
 }
