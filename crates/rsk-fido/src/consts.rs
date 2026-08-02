@@ -250,13 +250,10 @@ pub const EF_EA_ENABLED: u16 = 0xCE12;
 /// off. Do NOT probe with `has_data` (a present `[0]` would read as on). Persists
 /// until authenticatorReset (flash, CTAP 2.1).
 pub const EF_ALWAYS_UV: u16 = 0xCE13;
-/// Set (`[1]`) once the post-OTP-provisioning at-rest hardening pass has run:
-/// the seal migrations re-key secrets from the chip-serial root to the OTP root
-/// and the log-structured store keeps the superseded chip-serial copies until
-/// compaction, so a one-shot [`Fs::compact`](rsk_fs::Fs::compact) scrubs them.
-/// This marker gates that lap to the first OTP boot and makes it crash-safe
-/// (absent ⇒ re-run; the lap is idempotent). See `boot`/`main` wiring.
-pub const EF_HARDENED: u16 = 0xCE14;
+/// The at-rest hardening marker. Defined in `rsk-fs` (every applet that lazily
+/// re-keys a pre-OTP record must be able to re-arm the scrub); re-exported here
+/// because the boot wiring and the FIDO reset scope both name it.
+pub use rsk_fs::EF_HARDENED;
 /// Trusted-display **device PIN** — gates the on-device UI (unlock, delete, factory
 /// reset), independent of the FIDO clientPIN (`EF_PIN`). Same record format
 /// `[retries, len, format, verifier(32)]`, device-sealed. Wiped by `authenticatorReset`
