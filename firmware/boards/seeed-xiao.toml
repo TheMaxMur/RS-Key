@@ -10,8 +10,8 @@ vidpid = "RSKey"
 
 [led]
 kind = "ws2812"
-pin = 16
-order = "rgb"
+pin = 22
+order = "grb"
 power_pin = 23
 
 [presence]

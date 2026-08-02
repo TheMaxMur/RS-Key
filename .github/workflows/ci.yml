@@ -110,6 +110,21 @@ jobs:
           - name: 16mb
             args: ""
             env: "FLASH_SIZE=16M"
+          # One row per shipped board file. Nothing else in the tree builds a
+          # `BOARD=`, so without these a wrong pin or flash size in a TOML — the
+          # values a user gets by following the CHANGELOG — reaches them uncaught.
+          - name: board-waveshare-one
+            args: ""
+            env: "BOARD=waveshare-one"
+          - name: board-tenstar-usb
+            args: ""
+            env: "BOARD=tenstar-usb"
+          - name: board-seeed-xiao
+            args: ""
+            env: "BOARD=seeed-xiao"
+          - name: board-waveshare-touch-lcd
+            args: "--features display"
+            env: "BOARD=waveshare-touch-lcd"
           # The strict admin-write posture (historical default). The permissive
           # default is what every other row builds; smoke-build this so the
           # strict-gated code keeps compiling.

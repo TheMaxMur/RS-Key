@@ -9,7 +9,7 @@ vidpid = "RSKey"
 
 [led]
 kind = "ws2812"
-pin = 16
+pin = 22
 order = "grb"
 
 [presence]
@@ -18,5 +18,5 @@ pin = 15
 active_high = false
 
 [flash]
-size_mb = 4
+size_mb = 16
 kvmain_kb = 1408

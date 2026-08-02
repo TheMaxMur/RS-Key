@@ -128,7 +128,13 @@ fn parse_toml(raw: &str) -> BoardConfig {
         s.trim().trim_matches('"')
     }
     fn u8(s: &str) -> u8 {
-        u32(s) as u8
+        // Reject, never truncate: `as u8` would wrap a typo like `pin = 258` down to a
+        // *plausible* pin (2) before any resolver's `assert!(v <= 29)` could see it, and
+        // a value >= 128 aliases into a real GPIO through embassy's bit-7-banked
+        // `AnyPin` — so a nonsense number would silently drive the wrong pad.
+        u32(s)
+            .try_into()
+            .unwrap_or_else(|_| panic!("value out of range for a byte-sized board key: {s}"))
     }
     fn u32(s: &str) -> u32 {
         let clean: String = u(s).chars().filter(|c| *c != '_').collect();
@@ -139,7 +145,17 @@ fn parse_toml(raw: &str) -> BoardConfig {
         .unwrap_or_else(|_| panic!("bad u32: {}", s))
     }
     fn b(s: &str) -> bool {
-        matches!(u(s), "true" | "1")
+        // Mirror the env-var resolvers (`resolve_*_active_high`) exactly, and panic on
+        // anything else. Silently reading an unrecognised spelling as `false` is the
+        // dangerous shape: `active_high = yes` — a spelling those resolvers document as
+        // *true* — would ship the opposite presence polarity, and a pad that then reads
+        // permanently asserted confirms the first ceremony of every power cycle with no
+        // human action. A board file is build-time input; failing loudly is free.
+        match u(s).to_ascii_lowercase().as_str() {
+            "true" | "1" | "yes" | "on" => true,
+            "false" | "0" | "no" | "off" => false,
+            other => panic!("bad boolean in board file: {other:?}"),
+        }
     }
     for line in raw.lines() {
         let line = line.trim();
@@ -198,6 +214,11 @@ fn parse_toml(raw: &str) -> BoardConfig {
     c
 }
 
+/// Highest GPIO an RP2350A exposes. Every pin a board file or env var can name is
+/// bounded by it; `rp-pac`'s own accessor only asserts the RP2350B's 48, so an
+/// out-of-range pin would otherwise reach a register with no pad behind it.
+const MAX_GPIO: u8 = 29;
+
 fn main() {
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
     println!("cargo:rerun-if-env-changed=BOARD");
@@ -238,7 +259,15 @@ fn main() {
         if let Some(v) = b.max_leds {
             set("MAX_LEDS", &v.to_string());
         }
-        if b.presence_source.as_deref() == Some("gpio") {
+        // Case-insensitive, like every env resolver: a `source = "GPIO"` that silently
+        // dropped the whole block (pin and polarity with it) would fall back to BOOTSEL
+        // on a board that has no BOOTSEL button wired for presence.
+        if b.presence_source
+            .as_deref()
+            .map(str::to_ascii_lowercase)
+            .as_deref()
+            == Some("gpio")
+        {
             if let Some(v) = b.presence_pin {
                 set("PRESENCE_PIN", &v.to_string());
             }
@@ -418,6 +447,23 @@ fn main() {
             }
         };
     }
+    // Same range check the LED / presence / wake resolvers apply. The compile-time
+    // collision block in `main.rs` only tests pins against *each other* and against the
+    // hard-wired buses, so without this an out-of-range control pin reaches
+    // `AnyPin::steal` and drives whatever pad it aliases onto.
+    macro_rules! disp_pin {
+        ($key:expr, $val:expr) => {{
+            let v: u8 = $val;
+            assert!(
+                v <= MAX_GPIO,
+                "{} must be a GPIO 0..={}: {}",
+                $key,
+                MAX_GPIO,
+                v
+            );
+            disp!($key, v);
+        }};
+    }
     let b = board.as_ref();
     // A board config only counts as a display board once it sets `display_cs` —
     // the chip-select is the semantic gate pin, so a `[display]` section it
@@ -430,19 +476,19 @@ fn main() {
             .and_then(|b| b.display_spi_freq_hz)
             .unwrap_or(62_500_000)
     );
-    disp!(
+    disp_pin!(
         "PK_DISPLAY_CS",
         disp_cfg.and_then(|b| b.display_cs).unwrap_or(13)
     );
-    disp!(
+    disp_pin!(
         "PK_DISPLAY_DC",
         disp_cfg.and_then(|b| b.display_dc).unwrap_or(14)
     );
-    disp!(
+    disp_pin!(
         "PK_DISPLAY_RST",
         disp_cfg.and_then(|b| b.display_rst).unwrap_or(15)
     );
-    disp!(
+    disp_pin!(
         "PK_DISPLAY_BL_PIN",
         disp_cfg.and_then(|b| b.display_bl_pin).unwrap_or(16)
     );
@@ -454,7 +500,7 @@ fn main() {
         "PK_DISPLAY_BL_PWM_CHANNEL",
         disp_cfg.and_then(|b| b.display_bl_pwm_channel).unwrap_or(0)
     );
-    disp!(
+    disp_pin!(
         "PK_DISPLAY_TP_RST",
         disp_cfg.and_then(|b| b.display_tp_rst).unwrap_or(17)
     );
@@ -634,7 +680,10 @@ fn resolve_led_pin() -> u8 {
         .trim()
         .parse::<u8>()
         .unwrap_or_else(|_| panic!("LED_PIN={raw:?} must be a GPIO number 0..=29"));
-    assert!(v <= 29, "LED_PIN={v} out of range 0..=29 (RP2350A GPIOs)");
+    assert!(
+        v <= MAX_GPIO,
+        "LED_PIN={v} out of range 0..={MAX_GPIO} (RP2350A GPIOs)"
+    );
     v
 }
 
@@ -653,7 +702,7 @@ fn resolve_led_power_pin() -> (bool, u8) {
         .parse::<u8>()
         .unwrap_or_else(|_| panic!("LED_POWER_PIN={raw:?} must be `none` or a GPIO number 0..=29"));
     assert!(
-        pin <= 29,
+        pin <= MAX_GPIO,
         "LED_POWER_PIN={pin} out of range 0..=29 (RP2350A GPIOs)"
     );
     (true, pin)
@@ -675,7 +724,7 @@ fn resolve_usr_led_pin() -> (bool, u8) {
         .parse::<u8>()
         .unwrap_or_else(|_| panic!("USR_LED_PIN={raw:?} must be `none` or a GPIO number 0..=29"));
     assert!(
-        pin <= 29,
+        pin <= MAX_GPIO,
         "USR_LED_PIN={pin} out of range 0..=29 (RP2350A GPIOs)"
     );
     (true, pin)
@@ -705,7 +754,7 @@ fn resolve_presence_pin() -> (bool, u8) {
         panic!("PRESENCE_PIN={raw:?} must be `bootsel` or a GPIO number 0..=29")
     });
     assert!(
-        pin <= 29,
+        pin <= MAX_GPIO,
         "PRESENCE_PIN={pin} out of range 0..=29 (RP2350A GPIOs)"
     );
     (true, pin)
@@ -740,7 +789,7 @@ fn resolve_wake_pin() -> (bool, u8) {
         .parse::<u8>()
         .unwrap_or_else(|_| panic!("WAKE_PIN={raw:?} must be `none` or a GPIO number 0..=29"));
     assert!(
-        pin <= 29,
+        pin <= MAX_GPIO,
         "WAKE_PIN={pin} out of range 0..=29 (RP2350A GPIOs)"
     );
     (true, pin)

@@ -16,7 +16,7 @@ kind = "none"
 source = "bootsel"
 
 [flash]
-size_mb = 4
+size_mb = 16
 kvmain_kb = 1408
 
 [display]
