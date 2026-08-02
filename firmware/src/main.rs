@@ -613,7 +613,14 @@ async fn main(spawner: Spawner) {
         }
     }
     vendor::load_led_config(&mut fs);
-    rsk_otp::power_up_bump(&dev, &mut fs, &mut rng);
+    // Only a real power cycle advances the Yubico-OTP use counter. A host-requested
+    // warm reset (the ungated vendor `INS_REBOOT` P1=0) re-runs `main`, so bumping
+    // unconditionally would let an unprivileged host walk the 15-bit counter to its
+    // ceiling — where it saturates while the RAM session counter restarts at 0, so the
+    // key re-emits (useCtr, sessionCtr) pairs a validation server rejects as replays.
+    if !pin_lock::was_warm_boot() {
+        rsk_otp::power_up_bump(&dev, &mut fs, &mut rng);
+    }
 
     let fs_ref = FS.init(RefCell::new(fs));
     let rng_ref = RNG_CELL.init(RefCell::new(rng));
@@ -643,7 +650,7 @@ async fn main(spawner: Spawner) {
     config.max_power = 100;
     config.max_packet_size_0 = 64;
     // bcdDevice build counter; also surfaced on the trusted-display Firmware screen.
-    let device_release: u16 = 0x085E;
+    let device_release: u16 = 0x085F;
     config.device_release = device_release;
 
     let mut builder = Builder::new(
