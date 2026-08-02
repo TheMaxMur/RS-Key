@@ -277,6 +277,23 @@ impl rsk_fido::UserPresence for TouchPresence {
     fn collect_pin(&mut self, min_len: usize, out: &mut [u8]) -> rsk_fido::PinEntry {
         self.collect_pin_impl(min_len, out)
     }
+
+    fn collect_device_pin(&mut self, min_len: usize, out: &mut [u8]) -> rsk_fido::PinEntry {
+        // Name the *device* PIN, not the clientPIN: this pad stands in for the vendor
+        // gate on a device whose only PIN is the one onboarding set, and a mislabelled
+        // pad is the reported cause of the PIN confusion behind a factory reset. Blocks
+        // to the presence timeout like every other host-awaited pad (`yield_to_host`
+        // false) — the host's vendor command is in flight waiting on this exact PIN.
+        let expected = min_len.min(u8::MAX as usize) as u8;
+        self.ui.borrow_mut().collect_pin(
+            PinScope::Device.pin_title(),
+            None,
+            min_len,
+            expected,
+            out,
+            false,
+        )
+    }
 }
 
 impl rsk_openpgp::UserPresence for TouchPresence {
