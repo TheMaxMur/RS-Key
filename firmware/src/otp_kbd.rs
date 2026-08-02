@@ -15,6 +15,7 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
 use embassy_usb::class::hid::{HidWriter, ReportId, RequestHandler};
 use embassy_usb::control::OutResponse;
+use zeroize::Zeroize;
 
 use rsk_otp::hid::{
     FrameRx, FrameTx, PAYLOAD_SIZE, ProcessingStatus, REPORT_SIZE, RxOutcome, status_frame,
@@ -192,11 +193,35 @@ pub fn take_request() -> Option<(u8, [u8; PAYLOAD_SIZE])> {
         let mut h = c.borrow_mut();
         if h.req_ready {
             h.req_ready = false;
-            Some((h.req_slot, h.req_payload))
+            let req = (h.req_slot, h.req_payload);
+            // A slot-configure frame carries the AES key, the private UID and the
+            // presented access code; don't leave them in the static once the worker
+            // holds its own copy. Same rule the CTAP/CCID exchange buffers follow.
+            h.req_payload.zeroize();
+            Some(req)
         } else {
             None
         }
     })
+}
+
+/// Wipe every OTP-transport buffer that can hold slot secrets: the reassembly frame,
+/// the taken request, and any ticket still queued for typing. Called before dropping to
+/// the BOOTSEL bootloader, alongside the CTAP/CCID/DRBG scrubs — a reflash must not be
+/// able to recover them from RAM.
+pub fn scrub() {
+    OTP_HID.lock(|c| {
+        let mut h = c.borrow_mut();
+        h.rx.scrub();
+        h.req_payload.zeroize();
+        h.req_slot = 0;
+    });
+    TYPE_Q.lock(|c| {
+        let mut q = c.borrow_mut();
+        q.buf.zeroize();
+        q.len = 0;
+        q.pos = 0;
+    });
 }
 
 /// Store a command's result: refresh the cached status frame and, if `body` is
@@ -275,8 +300,12 @@ fn pop_char() -> Option<(u8, bool)> {
     TYPE_Q.lock(|c| {
         let mut q = c.borrow_mut();
         if q.pos < q.len {
-            let b = q.buf[q.pos];
-            q.pos += 1;
+            let pos = q.pos;
+            let b = q.buf[pos];
+            // Consume destructively: a static-password ticket *is* the secret, so a
+            // drained queue must not keep it readable in the static.
+            q.buf[pos] = 0;
+            q.pos = pos + 1;
             Some((b, q.encode))
         } else {
             None

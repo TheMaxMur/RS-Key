@@ -623,6 +623,10 @@ impl<'a> Worker<'a> {
         self.ctap.scrub_secrets();
         self.ccid.scrub();
         self.rng.borrow_mut().scrub();
+        // The keyboard transport's statics are outside the per-dispatch buffers: the
+        // frame reassembly buffer, the taken request and a queued ticket can each hold
+        // a slot's AES key, private UID, access code or static password.
+        otp_kbd::scrub();
         if mode == 2 {
             embassy_rp::rom_data::reset_to_usb_boot(0, 0);
         } else {
