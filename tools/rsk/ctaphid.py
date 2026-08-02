@@ -117,17 +117,28 @@ def decode(b):
 
 
 def find():
+    """The single FIDO HID device, or None. Prefer `find_all` when it matters which
+    device is acted on — this returns the first match and cannot tell you there were
+    others."""
+    found = find_all()
+    return found[0] if found else None
+
+
+def find_all():
+    """Every attached FIDO HID device, in enumeration order.
+
+    Destructive and identity-bearing commands must resolve exactly one: the CCID half
+    of the tooling picks its device by *reader name*, so with two authenticators
+    attached a bare first-match here silently pairs one device's applets with another
+    device's FIDO identity (audit run-31)."""
     devices = hid.enumerate()
-    for d in devices:
-        if d.get("usage_page") == FIDO_USAGE_PAGE:
-            return d
+    found = [d for d in devices if d.get("usage_page") == FIDO_USAGE_PAGE]
+    if found:
+        return found
     # hidapi left usage_page unset (0/None) — read each such device's report
     # descriptor and match the FIDO usage-page item directly, rather than guessing
     # by VID/PID (RS-Key ships several presets, so no fixed pair to key off).
-    for d in devices:
-        if not d.get("usage_page") and _declares_fido(d.get("path")):
-            return d
-    return None
+    return [d for d in devices if not d.get("usage_page") and _declares_fido(d.get("path"))]
 
 
 def _declares_fido(path):

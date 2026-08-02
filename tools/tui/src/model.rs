@@ -111,6 +111,10 @@ pub struct Identity {
     pub bcd_device: Option<u16>,
     pub aaguid: Option<String>,
     pub product: Option<String>,
+    /// More than one FIDO HID device is attached, so the HID-sourced half of this
+    /// identity (and every action, which re-opens the device) may belong to a
+    /// different key than the CCID-sourced serial beside it.
+    pub hid_ambiguous: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -311,7 +315,11 @@ impl DeviceSnapshot {
             return "no device detected".into();
         }
         let mut parts = Vec::new();
-        if let Some(s) = &self.identity.serial {
+        if self.identity.hid_ambiguous {
+            // Say so first and drop the serial: a header that pairs one key's serial
+            // with another key's firmware is worse than no header at all.
+            parts.push("MULTIPLE FIDO DEVICES — identity ambiguous".into());
+        } else if let Some(s) = &self.identity.serial {
             parts.push(format!("serial {}", &s[..s.len().min(12)]));
         }
         if let Some(fw) = &self.identity.firmware {

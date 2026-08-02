@@ -213,7 +213,7 @@ def _require_journalling():
     """Refuse before the wipe when the journal is not recording: journalling is
     opt-in and OFF by default, and after the wipe there is no way to produce the
     RESET event the receipt certifies — and nothing to retry."""
-    dev, cid = connect_fido()
+    dev, cid = connect_fido(exclusive=True)
     try:
         on = _audit_state(dev, cid)
     finally:
@@ -347,7 +347,7 @@ def run(args):
 
     # A failure here is recorded, not fatal: the CCID applets are already wiped,
     # so the run must still reach the receipt that says what was destroyed.
-    dev, cid = connect_fido()
+    dev, cid = connect_fido(exclusive=True)
     dev, cid, ok, detail = _fido_reset(dev, cid)
     record("fido_reset", ok, detail)
 

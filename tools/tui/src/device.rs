@@ -217,6 +217,18 @@ impl DeviceProvider for HardwareProvider {
 // FIDO CTAPHID (hidapi)
 // ===========================================================================
 
+/// How many FIDO HID devices are attached. More than one means this dashboard cannot
+/// know that the device it acts on is the one whose CCID serial it shows.
+fn hid_device_count() -> usize {
+    match hidapi::HidApi::new() {
+        Ok(api) => api
+            .device_list()
+            .filter(|d| d.usage_page() == FIDO_USAGE_PAGE)
+            .count(),
+        Err(_) => 0,
+    }
+}
+
 /// Open the FIDO HID device, also returning its bcdDevice + product string.
 fn hid_open_info() -> Option<(hidapi::HidDevice, u16, Option<String>)> {
     let api = hidapi::HidApi::new().ok()?;
@@ -469,6 +481,12 @@ fn read_fido(snap: &mut DeviceSnapshot) {
     snap.fido.present = true;
     snap.identity.bcd_device = Some(bcd);
     snap.identity.product = product;
+    // The header merges HID-sourced and CCID-sourced identity into one line, and every
+    // action re-opens the HID device independently. With more than one authenticator
+    // attached that line would vouch for a device the action may not be talking to —
+    // during a seed export, that is the difference between a real recovery phrase and
+    // a forged one. Flag it rather than presenting a confident identity.
+    snap.identity.hid_ambiguous = hid_device_count() > 1;
 
     let Some(cid) = ctaphid_init(&dev) else {
         snap.transport.hid = Link::Error;
@@ -572,7 +590,14 @@ fn read_ccid(snap: &mut DeviceSnapshot) {
         return;
     }
     snap.transport.pcsc = Link::Present;
-    let target = rs_key_reader(&readers);
+    let target = match rs_key_reader(&readers) {
+        Ok(t) => t,
+        Err(e) => {
+            snap.transport.ccid = Link::Absent;
+            snap.transport.note = Some(e);
+            return;
+        }
+    };
     let card = match ctx.connect(target, ShareMode::Shared, Protocols::ANY) {
         Ok(c) => c,
         Err(e) => {
@@ -748,7 +773,11 @@ fn read_piv_meta(c: &mut Ccid) -> Option<PivInfo> {
 const READER_TOKEN_DEFAULT: &str = "RS-Key";
 const READER_TOKEN_INTEROP: &str = "RSK";
 
-fn rs_key_reader<'a>(readers: &[&'a std::ffi::CStr]) -> &'a std::ffi::CStr {
+fn rs_key_reader<'a>(readers: &[&'a std::ffi::CStr]) -> Result<&'a std::ffi::CStr, String> {
+    // No first-reader fallback: with the RS-Key's CCID interface absent (unplugged, or
+    // `ykman config usb --disable CCID`) any other card in a reader would be selected —
+    // and this dashboard SELECTs five applets on it every refresh and then renders its
+    // PIN retry counters as the RS-Key's. `tools/rsk/ccid.py` dropped the same fallback.
     readers
         .iter()
         .find(|r| {
@@ -756,7 +785,10 @@ fn rs_key_reader<'a>(readers: &[&'a std::ffi::CStr]) -> &'a std::ffi::CStr {
             n.contains(READER_TOKEN_DEFAULT) || n.contains(READER_TOKEN_INTEROP)
         })
         .copied()
-        .unwrap_or(readers[0])
+        .ok_or_else(|| {
+            let names: Vec<String> = readers.iter().map(|r| r.to_string_lossy().into()).collect();
+            format!("no RS-Key reader found (readers: {})", names.join(", "))
+        })
 }
 
 struct Ccid {
@@ -775,7 +807,7 @@ impl Ccid {
         if readers.is_empty() {
             return Err("no PC/SC readers".into());
         }
-        let target = rs_key_reader(&readers);
+        let target = rs_key_reader(&readers)?;
         let card = ctx
             .connect(target, ShareMode::Shared, Protocols::ANY)
             .map_err(|e| format!("connect (reader busy?): {e}"))?;
@@ -951,7 +983,16 @@ pub fn led_cycle_idle() -> Result<String, String> {
 pub fn reboot(bootsel: bool) -> Result<String, String> {
     let mut c = Ccid::open()?;
     c.select(VENDOR_AID)?;
-    let _ = c.apdu(&[0x00, 0x1F, if bootsel { 0x01 } else { 0x00 }, 0x00, 0x00]);
+    // The device gates reboot-to-BOOTSEL behind an on-screen confirm and answers 6985
+    // when it is declined or times out. Discarding the status word reported a refused
+    // security gate as a green success (`tools/rsk/reboot.py` gets this right).
+    let (_, s1, s2) = c.apdu(&[0x00, 0x1F, if bootsel { 0x01 } else { 0x00 }, 0x00, 0x00])?;
+    if (s1, s2) == (0x69, 0x85) {
+        return Err("reboot declined on the device".into());
+    }
+    if (s1, s2) != (0x90, 0x00) {
+        return Err(format!("reboot refused ({s1:02x}{s2:02x})"));
+    }
     Ok(format!(
         "reboot → {} sent",
         if bootsel { "BOOTSEL" } else { "app" }
@@ -997,11 +1038,16 @@ pub fn audit_read(pin: Option<&str>) -> Result<(String, String), String> {
         Some(Value::Bytes(b)) => b.clone(),
         _ => return Err("no entries".into()),
     };
-    // Treat the device as untrusted: a length that is not a whole number of
-    // entries would make the fixed-stride display slice run past the end and
-    // panic (matches the Python client's rejection at audit.py).
-    if entries.len() % AUDIT_ENTRY_LEN != 0 {
-        return Err("malformed audit journal (length not a multiple of entry size)".into());
+    // Treat the device as untrusted: a length that is not a whole number of entries
+    // would make the fixed-stride display slice run past the end and panic — and a
+    // *short* export would let a device present 1 of N events as a complete window
+    // while the tamper surface reports nothing. Both checks, matching audit.py.
+    if seq_next < start {
+        return Err("malformed audit journal (window runs backwards)".into());
+    }
+    let want = (seq_next - start) as usize * AUDIT_ENTRY_LEN;
+    if entries.len() % AUDIT_ENTRY_LEN != 0 || entries.len() != want {
+        return Err("export length does not match the window — corrupt journal?".into());
     }
 
     let head = fold(&epoch, &entries);
@@ -1468,6 +1514,7 @@ impl DeviceProvider for MockProvider {
                 bcd_device: Some(0x0759),
                 aaguid: Some("9c5e0fd2c2c34c2fa1d6e3b7a0c41122".into()),
                 product: Some("RS-Key Security Key (demo)".into()),
+                hid_ambiguous: false,
             },
             fido: FidoState {
                 present: true,

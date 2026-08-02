@@ -146,13 +146,23 @@ def picotool(*args, check=True):
     return r
 
 
-def connect_fido():
-    """Open the FIDO HID device and run CTAPHID INIT; returns (dev, cid)."""
+def connect_fido(exclusive=False):
+    """Open the FIDO HID device and run CTAPHID INIT; returns (dev, cid).
+
+    `exclusive` refuses to guess when more than one authenticator is attached. Pass it
+    from anything destructive or identity-bearing: the CCID half of the tooling picks
+    its device by reader name, so a first-match here would let one device's serial be
+    confirmed while another device's FIDO identity is the one acted on."""
     from . import ctaphid
 
-    info = ctaphid.find()
-    if not info:
+    found = ctaphid.find_all()
+    if not found:
         die("no FIDO HID device found (usage page 0xF1D0)")
+    if exclusive and len(found) > 1:
+        die(
+            f"{len(found)} FIDO HID devices attached — this command needs exactly one, "
+            "so it cannot act on the wrong device; unplug the others and retry"
+        )
     dev = ctaphid.hid.device()
-    dev.open_path(info["path"])
+    dev.open_path(found[0]["path"])
     return dev, ctaphid.ctaphid_init(dev)
