@@ -116,7 +116,38 @@ Audit run-31 fixes (bcdDevice `0x085F`, `rsk` 0.3.23, `rsk-tui` 0.3.3):
   GPIO through embassy's bit-7-banked `AnyPin`. Board-file booleans now accept the same
   spellings the env resolvers do (`yes`/`on`) and panic on anything else, rather than
   silently reading as `false`; `presence.source` is matched case-insensitively.
-
+- **`rsk backup finalize` works on a device with a PIN set** (`rsk` 0.3.22). It
+  sent the vendor command with no pinUvAuthToken, so `pin_gate` answered
+  `CTAP2_ERR_PUAT_REQUIRED` (0x36) and the one-time export window could not be
+  sealed once `clientPin` was enabled; it now takes the same `_gated()` path
+  `rsk backup export` already used
+  ([#59](https://github.com/TheMaxMur/RS-Key/issues/59), thanks
+  [@lockedmutex](https://github.com/lockedmutex)).
+- **A touch-gated challenge no longer looks like a timeout the moment the button
+  is pressed.** While a command ran, the keyboard transport picked its status
+  byte from the live presence flag — `0x20` while a touch was awaited, `0x10`
+  otherwise. But that flag drops as soon as the press is collected, and the
+  response only appears once the HMAC has been computed, so every touch-gated
+  challenge served a short `0x10` window in between: measured at 9 ms against
+  Windows and 11 ms against macOS. ykpers' blocking read
+  (`yk_wait_for_key_status`, which KeePassXC vendors) arms itself on `0x20` and
+  then reads *any* byte carrying neither the pending nor the waiting bit as "the
+  key timed out waiting for the user" — so a host polling inside that window
+  abandoned a challenge the key had already answered. A YubiKey never shows it:
+  it reports the wait, plus a seconds countdown, right up to the response. The
+  wait now latches for the rest of the command, so only the response — or the
+  idle status frame after a real timeout — replaces it, which leaves an expired
+  wait ending exactly as promptly as before. **bcdDevice → `0x085C`.**
+- **The PIN-entry band no longer leaves a stale "+" overflow marker and the right
+  half of the 10th dot behind when the user deletes from a long PIN back to ≤10
+  digits** (`render_pin_dots`). The repaint cleared one small rectangle per dot,
+  centred on each circle, but `masked_entry` draws dots top-left-aligned — so the
+  clear was off by `ENTRY_DIA/2` and missed the "+" at x 184 plus dot 10's right
+  tail (x 176..180). Deleting 11 → 10 left the "+" on screen for the rest of the
+  session, lying that the PIN was still long, and 10 → 9 left a one-pixel stub.
+  The repaint now clears one strip over the whole entry band (every dot position
+  plus the overflow slot to its right) before redrawing. Covered by a host test
+  in `rsk-ui`.
 
 Audit run-30 fixes (bcdDevice `0x085D`, `rsk` 0.3.21, `rsk-tui` 0.3.2):
 
@@ -208,41 +239,6 @@ Audit run-30 fixes (bcdDevice `0x085D`, `rsk` 0.3.21, `rsk-tui` 0.3.2):
   change.** They were the only env knobs missing a `cargo:rerun-if-env-changed`,
   so overriding `PK_DISPLAY_CS` etc. without touching `BOARD` reused the cached
   build and shipped a firmware with stale pins.
-
-### Fixed
-
-- **`rsk backup finalize` works on a device with a PIN set** (`rsk` 0.3.22). It
-  sent the vendor command with no pinUvAuthToken, so `pin_gate` answered
-  `CTAP2_ERR_PUAT_REQUIRED` (0x36) and the one-time export window could not be
-  sealed once `clientPin` was enabled; it now takes the same `_gated()` path
-  `rsk backup export` already used
-  ([#59](https://github.com/TheMaxMur/RS-Key/issues/59), thanks
-  [@lockedmutex](https://github.com/lockedmutex)).
-- **A touch-gated challenge no longer looks like a timeout the moment the button
-  is pressed.** While a command ran, the keyboard transport picked its status
-  byte from the live presence flag — `0x20` while a touch was awaited, `0x10`
-  otherwise. But that flag drops as soon as the press is collected, and the
-  response only appears once the HMAC has been computed, so every touch-gated
-  challenge served a short `0x10` window in between: measured at 9 ms against
-  Windows and 11 ms against macOS. ykpers' blocking read
-  (`yk_wait_for_key_status`, which KeePassXC vendors) arms itself on `0x20` and
-  then reads *any* byte carrying neither the pending nor the waiting bit as "the
-  key timed out waiting for the user" — so a host polling inside that window
-  abandoned a challenge the key had already answered. A YubiKey never shows it:
-  it reports the wait, plus a seconds countdown, right up to the response. The
-  wait now latches for the rest of the command, so only the response — or the
-  idle status frame after a real timeout — replaces it, which leaves an expired
-  wait ending exactly as promptly as before. **bcdDevice → `0x085C`.**
-- **The PIN-entry band no longer leaves a stale "+" overflow marker and the right
-  half of the 10th dot behind when the user deletes from a long PIN back to ≤10
-  digits** (`render_pin_dots`). The repaint cleared one small rectangle per dot,
-  centred on each circle, but `masked_entry` draws dots top-left-aligned — so the
-  clear was off by `ENTRY_DIA/2` and missed the "+" at x 184 plus dot 10's right
-  tail (x 176..180). Deleting 11 → 10 left the "+" on screen for the rest of the
-  session, lying that the PIN was still long, and 10 → 9 left a one-pixel stub.
-  The repaint now clears one strip over the whole entry band (every dot position
-  plus the overflow slot to its right) before redrawing. Covered by a host test
-  in `rsk-ui`.
 
 ### Removed
 
