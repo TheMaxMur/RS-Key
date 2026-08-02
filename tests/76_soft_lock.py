@@ -30,6 +30,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tools"))
+from _device import find_reader  # noqa: E402
 from ctaphid import Protocol2, client_pin, ctaphid_init, decode, enc, find, send_cbor  # noqa: E402
 from rsk import lock as lk  # noqa: E402
 
@@ -59,8 +60,7 @@ def open_fido(timeout=25.0):
 
 
 def warm_reboot():
-    from smartcard.System import readers
-    target = next((r for r in readers() if ("RSK" in str(r) or "RS-Key" in str(r))), None)
+    target = find_reader(require_marker=True)
     if target is None:
         sys.exit("FAIL: no RSK CCID reader for the reboot step")
     conn = target.createConnection()

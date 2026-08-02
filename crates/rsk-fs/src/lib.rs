@@ -18,6 +18,28 @@ pub use sealed::{KeyFid, Sealed};
 pub use storage::Storage;
 
 /// The metadata side-store EF.
+/// Set (`[1]`) once the post-OTP-provisioning at-rest hardening pass has run: the seal
+/// migrations re-key secrets from the chip-serial root to the OTP root, and this
+/// log-structured store keeps the superseded chip-serial copies until compaction, so a
+/// one-shot [`Fs::compact`] scrubs them. The marker gates that lap to the first OTP boot
+/// and makes it crash-safe (absent ⇒ re-run; the lap is idempotent).
+///
+/// Lives here, not in an applet, because **any** applet that lazily re-keys a pre-OTP
+/// record after the lap has already run must clear it ([`request_rescrub`]) — otherwise
+/// its superseded chip-serial-rooted copy stays readable in a flash dump forever.
+pub const EF_HARDENED: u16 = 0xCE14;
+
+/// Re-arm the one-shot at-rest scrub: clear [`EF_HARDENED`] so the next boot runs the
+/// compaction lap again. Call from any lazy migration that re-keys a record off the
+/// pre-OTP (chip-serial) root *after* the lap has already run — the migration is an
+/// append, so the pre-OTP copy it supersedes stays readable in a flash dump until a lap
+/// reclaims its page, and without this the lap never runs again. Deferring to the next
+/// boot is deliberate: the lap is a multi-second stall that must not land inside a host
+/// command, and it is idempotent, so an interrupted one simply re-runs.
+pub fn request_rescrub<S: Storage>(fs: &mut Fs<S>) {
+    let _ = fs.delete(EF_HARDENED);
+}
+
 pub const EF_META: u16 = 0xE010;
 
 /// Max number of dynamic (runtime-created) files — the shared budget across ALL

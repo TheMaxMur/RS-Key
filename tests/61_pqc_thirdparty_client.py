@@ -31,11 +31,11 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import replug  # noqa: E402
+from _device import find_fido2  # noqa: E402
 
 from cryptography.hazmat.primitives.asymmetric import mldsa
 from fido2.client import DefaultClientDataCollector, Fido2Client
 from fido2.ctap2 import Ctap2
-from fido2.hid import CtapHidDevice
 from fido2.webauthn import (
     AuthenticatorSelectionCriteria,
     PublicKeyCredentialCreationOptions,
@@ -54,7 +54,7 @@ PK = PublicKeyCredentialType.PUBLIC_KEY
 
 
 def main():
-    dev = next(CtapHidDevice.list_devices(), None)
+    dev = find_fido2()
     if dev is None:
         sys.exit("No FIDO HID device found — is the board plugged in?")
 

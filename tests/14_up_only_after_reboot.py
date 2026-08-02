@@ -27,6 +27,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _device import find_reader  # noqa: E402
 from ctaphid import (  # noqa: E402
     Protocol2,
     client_pin,
@@ -113,9 +114,7 @@ def get_pin_token(dev, cid, pin):
 
 
 def warm_reboot():
-    from smartcard.System import readers
-    rs = readers()
-    target = next((r for r in rs if ("RSK" in str(r) or "RS-Key" in str(r))), None)
+    target = find_reader(require_marker=True)
     if target is None:
         sys.exit("FAIL: no RSK CCID reader for the reboot step")
     conn = target.createConnection()

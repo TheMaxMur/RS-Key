@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 RS-Key contributors
+#
+# Waveshare RP2350-One — the default, standard key.
+# WS2812 addressable RGB LED on GPIO16, BOOTSEL button for presence.
+# No display.
+
+[usb]
+vidpid = "RSKey"
+# 0x1209:0x0001 — this project's own pid.codes identity
+
+[led]
+kind = "ws2812"
+pin = 16
+order = "rgb"
+
+[presence]
+source = "bootsel"
+
+[flash]
+size_mb = 4
+kvmain_kb = 1408

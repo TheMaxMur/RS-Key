@@ -29,10 +29,10 @@ expose `FEATURE_VERIFY_PIN_DIRECT`, fall back to the gpg path above. See
 `docs/protocol.md` §1.3.
 """
 import argparse
+import os
 import sys
 
 try:
-    from smartcard.System import readers
     from smartcard.util import toHexString
     from smartcard.pcsc.PCSCPart10 import (
         getFeatureRequest,
@@ -41,6 +41,9 @@ try:
     )
 except ImportError:
     sys.exit("missing dependency: pip install pyscard")
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _device import find_reader  # noqa: E402
 
 OPENPGP_AID = [0xD2, 0x76, 0x00, 0x01, 0x24, 0x01]
 PIV_AID = [0xA0, 0x00, 0x00, 0x03, 0x08, 0x00, 0x00, 0x10, 0x00, 0x01, 0x00]
@@ -84,10 +87,10 @@ def main():
         aid, template = PIV_AID, [0x00, 0x20, 0x00, 0x80]  # VERIFY PIV PIN
         label = "PIV PIN"
 
-    rs = readers()
-    if not rs:
+    target = find_reader()
+    if not target:
         sys.exit("no PC/SC reader — is the device plugged in?")
-    conn = rs[0].createConnection()
+    conn = target.createConnection()
     conn.connect()
 
     sw1, sw2 = conn.transmit(select(aid))[1:]

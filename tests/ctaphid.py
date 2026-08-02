@@ -5,13 +5,16 @@
 """Shared CTAPHID + CTAP2 clientPIN helpers for the device test suite: raw
 CTAPHID transport (INIT / CBOR with fragmentation), a canonical CBOR codec,
 and PIN/UV-auth protocol two (`Protocol2`). Needs `hidapi` + `cryptography`.
+
+Which device those helpers talk to is `_device.find`, re-exported here for the
+suites that already import their transport from this module.
 """
 import os
 import sys
 import time
 
 try:
-    import hid
+    import hid  # also re-exported: the suites open their device with `ctaphid.hid`
 except ImportError:
     sys.exit("missing dependency: pip install hidapi")
 
@@ -20,16 +23,13 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
+from _device import find, find_all  # noqa: F401  (re-exported for the suites)
+
 REPORT_LEN = 64
 CTAPHID_INIT = 0x86
 CTAPHID_CBOR = 0x90
 CTAPHID_KEEPALIVE = 0xBB  # device-still-processing status frame
 CTAP_CLIENT_PIN = 0x06  # CTAP2 authenticatorClientPIN (naming mirrors tools/rsk/ctaphid.py)
-FIDO_USAGE_PAGE = 0xF1D0  # FIDO HID usage page (CTAPHID spec)
-# HID report-descriptor item for Usage Page 0xF1D0 — matches a FIDO device when hidapi
-# leaves `usage_page` unset (some Linux builds report 0), keeping detection
-# VID/PID-agnostic (mirrors tools/rsk/ctaphid.py).
-FIDO_USAGE_PAGE_ITEM = b"\x06\xd0\xf1"
 # Bound the keepalive wait and CBOR recursion so a broken/hostile device cannot hang or
 # crash the test runner (mirrors tools/rsk/ctaphid.py).
 KEEPALIVE_DEADLINE_S = 120
@@ -110,36 +110,6 @@ def _dec(b, i, depth=0):
 
 def decode(b):
     return _dec(b, 0)[0]
-
-
-def find():
-    devices = hid.enumerate()
-    for d in devices:
-        if d.get("usage_page") == FIDO_USAGE_PAGE:
-            return d
-    # hidapi left usage_page unset (0/None) — read each such device's report
-    # descriptor and match the FIDO usage-page item directly, rather than guessing
-    # by VID/PID (RS-Key ships several presets, so no fixed pair to key off).
-    for d in devices:
-        if not d.get("usage_page") and _declares_fido(d.get("path")):
-            return d
-    return None
-
-
-def _declares_fido(path):
-    """Open `path` and report whether its HID report descriptor names the FIDO
-    usage page. Passive read; any hidapi error means "treat as non-FIDO, skip"."""
-    if not path:
-        return False
-    dev = hid.device()
-    try:
-        dev.open_path(path)
-        desc = bytes(dev.get_report_descriptor())
-    except (OSError, ValueError, TypeError, AttributeError):
-        return False
-    finally:
-        dev.close()
-    return FIDO_USAGE_PAGE_ITEM in desc
 
 
 def write(dev, payload):

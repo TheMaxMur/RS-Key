@@ -30,6 +30,12 @@ fn algo_id<S: Storage>(fs: &mut Fs<S>, algo_fid: u16, buf: &mut [u8; 16]) -> u8 
     }
 }
 
+/// Is the card configured "PW1 valid for ONE signature" (gpg's `forcesig`)? That is
+/// `EF_PW_PRIV[0] == 0`; a missing record reads as not-forced, matching the default.
+fn forcesig<S: Storage>(fs: &mut Fs<S>) -> bool {
+    let mut pw = [0u8; 8];
+    fs.read(EF_PW_PRIV, &mut pw).is_some() && pw[0] == 0
+}
 /// PERFORM SECURITY OPERATION (INS 0x2A).
 pub fn pso<S: Storage>(
     dev: &Device,
@@ -75,7 +81,14 @@ fn try_pso<S: Storage>(
 
     let (algo_fid, pk_fid) = match (p1, p2) {
         (0x9E, 0x9A) => {
-            if !sess.has_pw3 && !sess.has_pw1 {
+            // OpenPGP Card 3.4 §7.2.10 gives PSO:CDS the access condition PW1 (No. 81);
+            // PW3 is accepted here for parity with the cards in the field. But when the
+            // card is configured "PW1 valid for ONE signature" (`EF_PW_PRIV[0] == 0`,
+            // gpg's `forcesig`), PW3 must not stand in: `inc_sig_count` can only clear
+            // PW1, so a single admin-PIN entry would otherwise authorise unlimited
+            // signatures — silently, since the user's own PW1 keeps working.
+            let pw1_only = forcesig(fs);
+            if !sess.has_pw1 && (pw1_only || !sess.has_pw3) {
                 return Err(Sw::SECURITY_STATUS_NOT_SATISFIED);
             }
             (EF_ALGO_PRIV1, EF_PK_SIG)

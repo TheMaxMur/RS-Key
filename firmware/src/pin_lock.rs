@@ -53,6 +53,13 @@ pub fn set(lock: PinLock) {
     rp_pac::WATCHDOG.scratch2().write_value(encode(lock));
 }
 
+/// Was this a warm reset, without consuming the tag? [`restore_and_arm`] must run
+/// exactly once, so anything that needs the cold/warm distinction *before* the CTAP
+/// handler is built (the Yubico-OTP power-up bump) peeks here instead.
+pub fn was_warm_boot() -> bool {
+    decode(rp_pac::WATCHDOG.scratch2().read()).warm
+}
+
 /// Read what the last reset left, then re-arm the tag for this power cycle so the
 /// *next* reset is recognised as warm even if no clientPIN command ever ran. Call
 /// once at boot: a second call would report its own arming as a warm reset.

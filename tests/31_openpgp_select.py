@@ -13,13 +13,16 @@ then read the data objects `gpg --card-status` reads — full AID (4F),
 historical bytes (5F52), PW status (C4), application related data (6E).
 Needs pyscard + a running PC/SC daemon (built in on macOS).
 """
+import os
 import sys
 
 try:
-    from smartcard.System import readers
     from smartcard.util import toHexString
 except ImportError:
     sys.exit("missing dependency: pip install pyscard")
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _device import find_reader, fw_version  # noqa: E402
 
 OPENPGP_AID = [0xD2, 0x76, 0x00, 0x01, 0x24, 0x01]
 SELECT = [0x00, 0xA4, 0x04, 0x00, len(OPENPGP_AID)] + OPENPGP_AID + [0x00]
@@ -38,7 +41,10 @@ HISTORICAL_BYTES = [0x00, 0x31, 0x84, 0x73, 0x80, 0x01, 0xC0, 0x05, 0x90, 0x00]
 # (set via PUT DATA C4), so only the fixed tail is asserted: the three max PIN
 # lengths (127) and the three retry counters (3).
 PW_STATUS_FIXED = [127, 127, 127, 3, 3, 3]
-PIPGP_VERSION = [0x04, 0x06, 0x00]
+# The vendor VERSION command (INS 0xF1) answers with the device firmware version
+# (`rsk_sdk::FIRMWARE_VERSION`), as a real YubiKey does — its OpenPGP "Application
+# version" is its firmware version. Not the OpenPGP card version (3.4).
+EXPECTED_FW_VERSION = list(fw_version())
 
 
 def fail(msg):
@@ -74,13 +80,9 @@ def expect_ok(conn, apdu, what):
 
 
 def main():
-    rs = readers()
-    print("readers:", [str(r) for r in rs])
-    if not rs:
+    target = find_reader()
+    if not target:
         fail("no PC/SC readers — is the device flashed and the CCID driver bound?")
-
-    target = next((r for r in rs if ("RSK" in str(r) or "RS-Key" in str(r))), rs[0])
-    print("using:", target)
 
     conn = target.createConnection()
     conn.connect()
@@ -119,8 +121,9 @@ def main():
         fail("6E composite does not contain the AID")
 
     ver = expect_ok(conn, VERSION, "VERSION (F1)")
-    if ver != PIPGP_VERSION:
-        fail(f"version mismatch: {toHexString(ver)} != {toHexString(PIPGP_VERSION)}")
+    if ver != EXPECTED_FW_VERSION:
+        fail(f"version mismatch: {toHexString(ver)} != {toHexString(EXPECTED_FW_VERSION)} "
+             f"(an image built FW_VERSION=X.Y.Z needs the same value in the environment)")
 
     print("PASS")
     return 0

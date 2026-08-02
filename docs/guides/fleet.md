@@ -185,12 +185,12 @@ FIDO key attached, and the reset lands within 10s of
 power-up. Waiting up to 60s…
 ```
 
-Plug the same key back in and nothing else: the tool takes the first FIDO device
-it finds, and the USB serial is a constant, so it cannot tell two RS-Keys apart.
-With a second key attached the wait simply times out and the run aborts cleanly
-rather than resetting the wrong device. A trusted-display key never sees the
-prompt — it is exempt from the window — and neither does firmware older than
-`0x0854`.
+Plug the same key back in and nothing else. `rsk offboard` refuses to start with
+more than one FIDO device attached, because the USB serial is a constant and it
+cannot tell two RS-Keys apart: the applet wipes go to the card it picked by reader
+name, and the FIDO reset would go to whichever HID device enumerated first. A
+trusted-display key never sees the replug prompt — it is exempt from the window —
+and neither does firmware older than `0x0854`.
 
 The order is fixed and each step reports its own result:
 

@@ -198,7 +198,7 @@ impl MsgHandler for ClientCtap {
         roundtrip(Kind::Msg, data, out).await
     }
     fn reset_app_selection(&mut self) {
-        MSG_DESELECT.store(true, core::sync::atomic::Ordering::Relaxed);
+        MSG_DESELECT.store(true, core::sync::atomic::Ordering::Release);
     }
     async fn handle_vendor(&mut self, cmd: u8, data: &[u8], out: &mut [u8]) -> Option<usize> {
         roundtrip_vendor(cmd, data, out).await
@@ -383,6 +383,13 @@ impl<'a> Worker<'a> {
         crate::led::set_status(crate::led::STATUS_PROCESSING);
         {
             let mut ex = EXCHANGE.lock().await;
+            // Scope any touch wait this dispatch starts to the transport that asked
+            // for it: a cancel must only end its own transport's ceremony, and the
+            // FIDO keepalive must not advertise somebody else's pending touch.
+            crate::presence::set_wait_scope(match ex.kind {
+                Kind::Cbor | Kind::Msg | Kind::Vendor => crate::presence::SCOPE_FIDO,
+                Kind::Apdu | Kind::Secure | Kind::ResetCard => crate::presence::SCOPE_CCID,
+            });
             // A CCID pinpad VERIFY collects the PIN on the screen and runs the
             // VERIFY itself, so it needs both `self.presence` and `self.ccid`; keep
             // it out of the borrow-the-whole-Exchange match below.
@@ -415,7 +422,7 @@ impl<'a> Worker<'a> {
                     Kind::Msg => {
                         // A CTAPHID_INIT since the last MSG drops the applet
                         // selection so U2F isn't hijacked by a sticky vendor SELECT.
-                        if MSG_DESELECT.swap(false, core::sync::atomic::Ordering::Relaxed) {
+                        if MSG_DESELECT.swap(false, core::sync::atomic::Ordering::AcqRel) {
                             self.ctap.deselect_msg();
                         }
                         self.ctap.handle_msg(&req[..*req_len])
@@ -450,6 +457,9 @@ impl<'a> Worker<'a> {
             self.ctap.scrub();
             self.ccid.scrub();
         }
+        // Nothing is in flight again: a wait started from here on is an on-panel
+        // flow, which no host may cancel.
+        crate::presence::set_wait_scope(crate::presence::SCOPE_NONE);
         self.forget_pending_click();
         crate::led::set_status(crate::led::STATUS_IDLE);
         DONE.signal(());
@@ -559,9 +569,9 @@ impl<'a> Worker<'a> {
         crate::led::set_status(crate::led::STATUS_PROCESSING);
         // Scope any touch wait this command starts to the OTP transport, so a host
         // that aborts it cannot also abandon a FIDO ceremony on the same button.
-        crate::presence::set_otp_scope(true);
+        crate::presence::set_wait_scope(crate::presence::SCOPE_OTP);
         let (body, n, status) = self.ccid.handle_otp_hid(slot, &payload);
-        crate::presence::set_otp_scope(false);
+        crate::presence::set_wait_scope(crate::presence::SCOPE_NONE);
         otp_kbd::finish_response(status, &body[..n]);
         self.ccid.scrub();
         // This path runs the CFG_CHAL_BTN_TRIG touch wait too, and `ButtonPresence`
@@ -613,6 +623,10 @@ impl<'a> Worker<'a> {
         self.ctap.scrub_secrets();
         self.ccid.scrub();
         self.rng.borrow_mut().scrub();
+        // The keyboard transport's statics are outside the per-dispatch buffers: the
+        // frame reassembly buffer, the taken request and a queued ticket can each hold
+        // a slot's AES key, private UID, access code or static password.
+        otp_kbd::scrub();
         if mode == 2 {
             embassy_rp::rom_data::reset_to_usb_boot(0, 0);
         } else {

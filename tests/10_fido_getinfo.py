@@ -10,6 +10,7 @@ Sends a CTAP2 getInfo (command 0x04) and decodes the response, checking
 versions (U2F_V2 + FIDO_2_0), the AAGUID, options (rk/up), ES256 in
 algorithms, and the firmware version. Carries its own tiny CBOR reader.
 """
+import os
 import sys
 
 try:
@@ -17,8 +18,9 @@ try:
 except ImportError:
     sys.exit("missing dependency: pip install hidapi")
 
-FIDO_USAGE_PAGE = 0xF1D0
-FIDO_USAGE_PAGE_ITEM = b"\x06\xd0\xf1"  # Usage Page (0xF1D0) item in a HID report descriptor
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _device import find, fw_version  # noqa: E402
+
 REPORT_LEN = 64
 CTAPHID_INIT = 0x86
 CTAPHID_CBOR = 0x90
@@ -27,36 +29,10 @@ AAGUID = bytes(
     [0x24, 0x79, 0xC7, 0xBF, 0x6B, 0x30, 0x56, 0x83,
      0x9E, 0xC8, 0x0E, 0x81, 0x71, 0xA9, 0x18, 0xB7]
 )
-# getInfo firmwareVersion (field 0x0E): YubiKey 5.7.4 = (5<<16)|(7<<8)|4,
-# also reported by the management applet.
-FIRMWARE_VERSION = 0x050704
-
-
-def find():
-    devices = hid.enumerate()
-    for d in devices:
-        if d.get("usage_page") == FIDO_USAGE_PAGE:
-            return d
-    # hidapi may leave usage_page unset on Linux (libusb/older hidraw); confirm the
-    # FIDO usage page from the report descriptor instead (mirrors tools/rsk/ctaphid.py).
-    for d in devices:
-        if not d.get("usage_page") and _declares_fido(d.get("path")):
-            return d
-    return None
-
-
-def _declares_fido(path):
-    if not path:
-        return False
-    dev = hid.device()
-    try:
-        dev.open_path(path)
-        desc = bytes(dev.get_report_descriptor())
-    except (OSError, ValueError, TypeError, AttributeError):
-        return False
-    finally:
-        dev.close()
-    return FIDO_USAGE_PAGE_ITEM in desc
+# getInfo firmwareVersion (field 0x0E) packs the version the management applet also
+# reports: the default 5.7.4 = (5<<16)|(7<<8)|4.
+_MAJOR, _MINOR, _PATCH = fw_version()
+FIRMWARE_VERSION = (_MAJOR << 16) | (_MINOR << 8) | _PATCH
 
 
 def write(dev, payload):

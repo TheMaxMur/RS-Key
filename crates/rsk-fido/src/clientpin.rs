@@ -33,7 +33,7 @@ use crate::state::{PERM_ACFG, PERM_BE, PERM_GA, PERM_MC, PERM_PCMR};
 use crate::{Ctx, PinEntry, Rng};
 
 pub(crate) const PIN_FILE_LEN: usize = 35; // retries(1) + len(1) + format(1) + verifier(32)
-const PADDED_PIN_LEN: usize = 64;
+pub(crate) const PADDED_PIN_LEN: usize = 64;
 /// The longest PIN the host clientPIN path can represent: CTAP pads the PIN into a
 /// 64-byte buffer that must keep a trailing zero, so 63 bytes is the ceiling (the host
 /// rejects a 64th non-zero byte). The device-local set enforces the same cap so a PIN

@@ -59,10 +59,10 @@ bulk stream, ISO-7816 APDUs, CTAP2 CBOR. Defenses:
 
 ### 2. A thief with the powered-off device (at-rest)
 
-- All key material is sealed in flash: FIDO seed and PIV keys under
-  AES-256-CBC/GCM keyed by a device key (`kbase` = HKDF of the chip serial
-  and the OTP master key once provisioned), OpenPGP keys under the
-  PIN-wrapped DEK chain.
+- All key material is sealed in flash: FIDO seed, PIV keys and OATH records
+  (secrets plus the access-code key) under AES-256-CBC/GCM keyed by a device key
+  (`kbase` = HKDF of the chip serial and the OTP master key once provisioned),
+  OpenPGP keys under the PIN-wrapped DEK chain.
 - **OTP master key** ([production.md](production.md) stage 1): with the MKEK
   fused and page-58 hard-locked, a flash dump (even with BOOTSEL access and
   the chip id) does not reproduce the sealing key. Without the burn, the

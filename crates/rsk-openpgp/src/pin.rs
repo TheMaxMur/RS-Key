@@ -271,7 +271,14 @@ fn migrate_pin_kbase<S: Storage>(
             r.map_err(|_| Sw::EXEC_ERROR)?;
         }
     }
-    store_verifier(dev, fs, fid, pin)
+    store_verifier(dev, fs, fid, pin)?;
+    // This migration is lazy — it runs on the first VERIFY, long after the boot-time
+    // at-rest scrub latched. Both writes above are appends, so the pre-OTP DEK copy and
+    // the pre-OTP verifier are now superseded but still readable in a flash dump, and
+    // both are rooted in the *public* chip serial (so the verifier is brute-forceable
+    // offline). Re-arm the scrub so the next boot reclaims their pages.
+    rsk_fs::request_rescrub(fs);
+    Ok(())
 }
 
 /// Decrypt the random DEK into `out` (48 bytes = IV(16)|key(32)) using the

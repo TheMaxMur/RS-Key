@@ -44,6 +44,17 @@ fn status_to_kind(s: u8) -> StatusKind {
     }
 }
 
+/// Deadline for the on-device auto-lock. It follows the display-sleep setting so the two
+/// stay intuitive, but "Off" (`0`) disables blanking only — a security control must not be
+/// switchable off from a display page, so the lock falls back to the built-in default.
+fn lock_after_ms(sleep_ms: u32) -> u32 {
+    if sleep_ms == 0 {
+        super::DEFAULT_SLEEP_MS
+    } else {
+        sleep_ms
+    }
+}
+
 /// Apply a pager tap to the current page, clamped to `0..page_count(total)` — a Prev on
 /// page 0 or a Next on the last page is a harmless no-op (the arrow is drawn dimmed).
 pub(super) fn paged(page: u16, total: u16, k: rsk_ui::PagerKey) -> u16 {
@@ -81,7 +92,7 @@ pub(super) fn audit_kind(ev: u8) -> rsk_ui::AuditKind {
 #[embassy_executor::task]
 pub async fn status_task(ui: &'static RefCell<Ui>) {
     Timer::after_millis(600).await; // let the boot splash linger
-    note_activity(); // the fresh boot counts as activity, so the sleep clock starts now
+    note_local_activity(); // the fresh boot counts as activity, so the sleep clock starts now
     // Prime the Home status-card cache once before the first idle paint (boot has settled
     // the flash; the worker is parked here while this task runs, so the borrow is safe).
     ui.borrow_mut().refresh_home_stats();
@@ -112,7 +123,7 @@ pub async fn status_task(ui: &'static RefCell<Ui>) {
                 // (wait for release) so it isn't read as a tap / an instant re-sleep.
                 if u.touch.read().is_some() || u.wake_pressed() {
                     u.wake();
-                    note_activity();
+                    note_local_activity();
                     // Wake to the Locked screen if the device locked on sleep, or the
                     // onboarding screen on a fresh PIN-less device; the wake gesture only
                     // wakes (it isn't read as the unlock/onboard tap — that comes after
@@ -183,21 +194,28 @@ pub async fn status_task(ui: &'static RefCell<Ui>) {
                         }
                         _ => {}
                     }
-                    if kind == StatusKind::Idle {
+                    // Input and the auto-lock must not depend on the USB configuration
+                    // state. `kind` is a *display* concern (which glyph to paint), and it
+                    // sits at `Boot` until a host completes SET_CONFIGURATION — so gating
+                    // touch on `Idle` left the panel animating but deaf on charger or
+                    // battery power. Processing/Touch stay excluded because a dispatch or
+                    // ceremony owns the executor then anyway.
+                    if matches!(kind, StatusKind::Idle | StatusKind::Boot) {
                         if u.wake_pressed() {
                             // The wake button doubles as a manual "sleep now" while awake
                             // (also locks, like any sleep, when a PIN is set).
+                            note_local_activity();
                             u.enter_sleep();
                             u.wait_wake_release();
                         } else if let Some(p) = u.touch.read() {
-                            note_activity();
+                            note_local_activity();
                             if u.locked {
                                 // Locked: any tap opens the unlock pad. Repaint the result
                                 // at once — Home if the correct PIN dropped the lock, else
                                 // the Locked screen — so the pad's last frame never lingers
                                 // through collect_pin's ambient-quiet window.
                                 u.run_unlock();
-                                note_activity();
+                                note_local_activity();
                                 // The power button can sleep from the unlock pad; the panel is
                                 // then blanked, so leave the repaint to the wake path.
                                 if !u.asleep {
@@ -224,7 +242,7 @@ pub async fn status_task(ui: &'static RefCell<Ui>) {
                                 // `run_onboarding` refreshes the Home cache on whichever branch
                                 // resolves the prompt, so the cached stats are current here.
                                 u.run_onboarding(p);
-                                note_activity();
+                                note_local_activity();
                                 // Setting a PIN here runs the pad, which the power button can
                                 // sleep from; skip the repaint when it did (panel blanked).
                                 if !u.asleep {
@@ -257,7 +275,7 @@ pub async fn status_task(ui: &'static RefCell<Ui>) {
                                         NavTab::Apps => u.run_apps(),
                                     };
                                 }
-                                note_activity(); // a browse session just ended — restart clock
+                                note_local_activity(); // a browse session just ended — restart clock
                                 // The power button can sleep from inside a tab modal; the panel
                                 // is then blanked (and locked if a PIN is set), so leave the
                                 // repaint to status_task's wake path and paint here only awake.
@@ -288,10 +306,10 @@ pub async fn status_task(ui: &'static RefCell<Ui>) {
                             }
                         } else {
                             // Idle this tick (no tap, no button): blank once past the
-                            // (runtime) sleep timeout — `0` disables sleep. Auto-lock rides
-                            // on sleep (enter_sleep). Re-read the clock: a tab/menu modal *above*
-                            // can run for many seconds, so the top-of-loop `now` would be
-                            // stale and underflow against the freshly-bumped activity stamp.
+                            // (runtime) sleep timeout — `0` disables sleep. Re-read the
+                            // clock: a tab/menu modal *above* can run for many seconds, so
+                            // the top-of-loop `now` would be stale and underflow against the
+                            // freshly-bumped activity stamp.
                             let now = Instant::now().as_millis() as u32;
                             let sleep_ms = SLEEP_TIMEOUT_MS.load(Ordering::Relaxed);
                             if sleep_ms != 0
@@ -299,6 +317,18 @@ pub async fn status_task(ui: &'static RefCell<Ui>) {
                                     >= sleep_ms
                             {
                                 u.enter_sleep();
+                            } else if now.wrapping_sub(LAST_LOCAL_MS.load(Ordering::Relaxed))
+                                >= lock_after_ms(sleep_ms)
+                                && u.lock_now()
+                            {
+                                // The auto-lock runs on its own deadline, counted from the
+                                // last *local* interaction, so neither a host ceremony loop
+                                // nor "Display sleep: Off" can hold the panel unlocked. It
+                                // only re-arms the lock — blanking stays the sleep setting's
+                                // business — so repaint the Locked screen now.
+                                let screen = Screen::Locked;
+                                let _ = rsk_ui::render(&mut u.panel, &screen);
+                                u.shown = Some(screen);
                             }
                         }
                     }

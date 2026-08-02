@@ -47,7 +47,7 @@ use zeroize::Zeroize;
 
 use mipidsi::interface::SpiInterface;
 use mipidsi::models::ST7789;
-use mipidsi::options::ColorInversion;
+use mipidsi::options::{ColorInversion, ColorOrder};
 use mipidsi::{Builder, Display};
 use rsk_crypto::Device;
 use rsk_sdk::Confirm;
@@ -105,6 +105,14 @@ const AMBIENT_QUIET_MS: u32 = 400;
 /// host wait for it.
 const MENU_INACTIVITY_MS: u64 = 60_000;
 
+/// Minimum time an on-device modal that yields to the host stays open before a queued
+/// host command may close it. `REQ` latches until the worker drains it, and the worker
+/// cannot run while a modal busy-waits, so without a floor a single queued command shuts
+/// the modal on its first poll — and a host repeating any ungated command (getInfo will
+/// do) could keep the owner's unlock pad shut indefinitely. The host is receiving
+/// keepalives throughout, so a couple of seconds costs it nothing.
+const UI_YIELD_FLOOR_MS: u64 = 2_500;
+
 /// How long the user must hold the on-screen approve button before it confirms — long
 /// enough that an accidental brush can't approve, short enough to feel responsive. The
 /// button fills as the hold builds, and lifting the finger early resets it.
@@ -141,9 +149,23 @@ static SLEEP_TIMEOUT_MS: AtomicU32 = AtomicU32::new(DEFAULT_SLEEP_MS);
 /// the display-sleep countdown is measured from here. Bumped by [`note_activity`].
 static LAST_ACTIVITY_MS: AtomicU32 = AtomicU32::new(0);
 
+/// ms-since-boot of the last **local** interaction — a touch or the wake button. The
+/// auto-lock measures from here, never from [`LAST_ACTIVITY_MS`]: a host ceremony must
+/// keep the backlight awake (a long approve prompt must not blank mid-read) but must
+/// not postpone the lock, or a loop of ungated presence requests holds the panel
+/// unlocked for the whole plugged-in session.
+static LAST_LOCAL_MS: AtomicU32 = AtomicU32::new(0);
+
 /// Mark "the user (or host) just did something", resetting the display-sleep countdown.
 fn note_activity() {
     LAST_ACTIVITY_MS.store(Instant::now().as_millis() as u32, Ordering::Relaxed);
+}
+
+/// Mark a *local* interaction: resets both the sleep countdown and the auto-lock one.
+fn note_local_activity() {
+    let now = Instant::now().as_millis() as u32;
+    LAST_ACTIVITY_MS.store(now, Ordering::Relaxed);
+    LAST_LOCAL_MS.store(now, Ordering::Relaxed);
 }
 
 /// Device identity shown read-only on the settings Firmware screen + its list row.
@@ -366,12 +388,21 @@ impl Ui {
         let spi_dev = ExclusiveDevice::new(spi, cs, Delay).unwrap();
         let di = SpiInterface::new(spi_dev, dc, buf);
 
-        // ST7789 native 240×320 portrait, matching rsk-ui's geometry. The IPS module
-        // needs `Inverted` (HW-verified on bringup).
+        // ST7789 240x320 portrait. Inversion and color order from board config.
+        let invert = if crate::BUILD_DISPLAY_INVERT_COLORS {
+            ColorInversion::Inverted
+        } else {
+            ColorInversion::Normal
+        };
+        let color_order = match crate::BUILD_DISPLAY_COLOR_ORDER {
+            1 => ColorOrder::Bgr,
+            _ => ColorOrder::Rgb,
+        };
         let mut delay = Delay;
         let mut panel = Builder::new(ST7789, di)
             .display_size(rsk_ui::PANEL_W, rsk_ui::PANEL_H)
-            .invert_colors(ColorInversion::Inverted)
+            .invert_colors(invert)
+            .color_order(color_order)
             .reset_pin(rst)
             .init(&mut delay)
             .unwrap();

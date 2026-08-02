@@ -120,6 +120,16 @@ pub trait UserPresence {
     fn collect_pin(&mut self, _min_len: usize, _out: &mut [u8]) -> PinEntry {
         PinEntry::Unsupported
     }
+
+    /// Collect the authenticator's **own** device PIN — the one a trusted-display
+    /// build's onboarding sets, not the clientPIN — on the device's own UI. Separate
+    /// from [`collect_pin`](Self::collect_pin) because the screen must name which PIN
+    /// it is asking for: a pad captioned "FIDO PIN" that verifies the device PIN is
+    /// exactly the kind of lie the trusted display exists to prevent. Used by the
+    /// vendor gate when no clientPIN is set (see `vendor::pin_gate`).
+    fn collect_device_pin(&mut self, _min_len: usize, _out: &mut [u8]) -> PinEntry {
+        PinEntry::Unsupported
+    }
 }
 
 /// A [`UserPresence`] that confirms instantly — the no-button default and the

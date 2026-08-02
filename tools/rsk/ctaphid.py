@@ -117,17 +117,28 @@ def decode(b):
 
 
 def find():
+    """The single FIDO HID device, or None. Prefer `find_all` when it matters which
+    device is acted on — this returns the first match and cannot tell you there were
+    others."""
+    found = find_all()
+    return found[0] if found else None
+
+
+def find_all():
+    """Every attached FIDO HID device, in enumeration order.
+
+    Destructive and identity-bearing commands must resolve exactly one: the CCID half
+    of the tooling picks its device by *reader name*, so with two authenticators
+    attached a bare first-match here silently pairs one device's applets with another
+    device's FIDO identity (audit run-31)."""
     devices = hid.enumerate()
-    for d in devices:
-        if d.get("usage_page") == FIDO_USAGE_PAGE:
-            return d
+    found = [d for d in devices if d.get("usage_page") == FIDO_USAGE_PAGE]
+    if found:
+        return found
     # hidapi left usage_page unset (0/None) — read each such device's report
     # descriptor and match the FIDO usage-page item directly, rather than guessing
     # by VID/PID (RS-Key ships several presets, so no fixed pair to key off).
-    for d in devices:
-        if not d.get("usage_page") and _declares_fido(d.get("path")):
-            return d
-    return None
+    return [d for d in devices if not d.get("usage_page") and _declares_fido(d.get("path"))]
 
 
 def _declares_fido(path):
@@ -184,6 +195,11 @@ def send_cbor(dev, cid, payload):
     bcnt = (r[5] << 8) | r[6]
     data = bytearray(r[7:7 + bcnt])
     while len(data) < bcnt:
+        # Bound the wall clock, not just the byte budget: a device trickling one 6-byte
+        # frame per HID timeout makes progress every iteration, so the guards below never
+        # fire — it would otherwise hold us for hours (audit run-30).
+        if time.monotonic() > deadline:
+            raise IOError("device stalled mid-response — CTAPHID reassembly deadline exceeded")
         c = read(dev)
         # A hostile/broken device can announce a large BCNT and then stop sending
         # continuation frames; read() returns b"" on the HID timeout, so bail rather

@@ -16,6 +16,7 @@
 
 #![cfg_attr(not(test), no_std)]
 
+pub mod aa;
 pub mod font;
 pub mod glyph;
 pub mod render;
@@ -32,9 +33,10 @@ pub use render::{
     render_pin_blocked, render_pin_dots, render_pin_title, render_piv, render_piv_extra,
     render_piv_keygen_confirm, render_piv_keygen_pick, render_piv_keygen_rsa_pick,
     render_piv_keygen_working, render_piv_pin_menu, render_piv_protect_confirm, render_piv_slot,
-    render_rebooting, render_rename, render_rename_caret, render_reveal_warning,
-    render_seal_confirm, render_seed_phrase, render_service, render_share_picker,
-    render_slip39_share, render_status_arc, render_success, render_success_circle,
+    render_rebooting, render_rename, render_rename_field, render_rename_keys,
+    render_reveal_warning, render_seal_confirm, render_seed_phrase, render_service,
+    render_share_picker, render_slip39_share, render_status_arc, render_success,
+    render_success_circle,
 };
 pub use settings_store::{CONF_LEN as DISPLAY_CONF_LEN, DisplayConfig};
 
@@ -624,7 +626,7 @@ const ROW_X: u16 = 13;
 const ROW_W: u16 = PANEL_W - 2 * ROW_X;
 const ROW_H: u16 = 36;
 const ROW_GAP: u16 = 6;
-const ROW_Y0: u16 = CONTENT_TOP + 14;
+const ROW_Y0: u16 = CONTENT_TOP + CONTENT_GAP;
 /// Number of Root list rows (Display / Security / Firmware).
 pub const SETTINGS_ROWS: u16 = 3;
 
@@ -855,6 +857,8 @@ pub const STATUS_BAR_H: u16 = 24;
 pub const TITLE_BAR_H: u16 = 30;
 /// Top of a tab screen's content, below both chrome strips.
 pub const CONTENT_TOP: u16 = STATUS_BAR_H + TITLE_BAR_H;
+/// Uniform gap between the title bar and the first content row (list, settings, etc.).
+pub const CONTENT_GAP: u16 = 10;
 
 /// The title-bar back affordance (a pushed screen's "return to parent" chevron), in the
 /// title bar below the status bar. Distinct from [`PK_BACK_RECT`] — the chrome-less
@@ -886,7 +890,7 @@ const _: () = {
 };
 
 /// Bottom navigation-bar height.
-pub const NAV_H: u16 = 38;
+pub const NAV_H: u16 = 36;
 /// Top edge of the bottom nav bar.
 pub const NAV_TOP: u16 = PANEL_H - NAV_H;
 
@@ -937,9 +941,9 @@ pub fn hit_nav(p: Point) -> Option<NavTab> {
 }
 
 /// List-row height (a lifted card holding icon + label + trailing + chevron).
-pub const LIST_ROW_H: u16 = 30;
-const LIST_ROW_GAP: u16 = 6;
-const LIST_ROW_X: u16 = 13;
+pub const LIST_ROW_H: u16 = 34;
+const LIST_ROW_GAP: u16 = 2;
+const LIST_ROW_X: u16 = 8;
 /// List-row width, inset from both panel edges.
 pub const LIST_ROW_W: u16 = PANEL_W - 2 * LIST_ROW_X;
 
@@ -1022,7 +1026,7 @@ pub struct HomeView {
 pub const PK_ROWS_MAX: usize = 5;
 /// Top of the first passkey row — below the status + title bars, clear of the nav bar
 /// and footer.
-pub const PK_LIST_TOP: u16 = CONTENT_TOP + 4;
+pub const PK_LIST_TOP: u16 = CONTENT_TOP + CONTENT_GAP;
 
 /// One relying-party row on the Passkeys list: a sanitized rpId, an optional device-local
 /// nickname ([`render_passkeys_list`] shows it instead of the rpId when set), and how many
@@ -1144,75 +1148,114 @@ pub fn hit_del_hold(p: Point) -> bool {
     DEL_HOLD_RECT.contains(p)
 }
 
-// --- Rename (set a device-local RP nickname via a character wheel) ----------
+// --- Rename (set a device-local RP nickname via a T9 phone-style keypad) -----
 
-/// The character set the rename wheel cycles through: lowercase, digits, and a few
-/// punctuation marks plus a trailing space. A deliberately small printable-ASCII
-/// alphabet — the stored nickname is sanitized by [`Label`] regardless, but cycling a
-/// known set keeps the wheel legible and the entry predictable.
-pub const RENAME_CHARSET: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789-_. ";
+/// T9 key groups: each press cycles to the next character in the group.
+/// Order: digit first, then letters, then symbols (like old phone keypads).
+pub const T9_GROUPS: &[&[u8]] = &[
+    b"1.-_",  // key (0,0)
+    b"2abc",  // key (0,1)
+    b"3def",  // key (0,2)
+    b"4ghi",  // key (1,0)
+    b"5jkl",  // key (1,1)
+    b"6mno",  // key (1,2)
+    b"7pqrs", // key (2,0)
+    b"8tuv",  // key (2,1)
+    b"9wxyz", // key (2,2)
+    b"0 ",    // key (3,1)
+];
 
-/// A key on the rename character wheel.
+// hit_rename returns Char(0..=9), so the index-based groups[] access in
+// run_rename is sound only while T9_GROUPS holds exactly 10 entries.
+const _: () = assert!(
+    T9_GROUPS.len() == 10,
+    "hit_rename assumes T9_GROUPS.len() == 10; out-of-range => panic on device"
+);
+
+/// Labels shown on the T9 keypad keys: (digit, letters).
+pub const T9_KEY_LABELS: &[(&str, &str)] = &[
+    ("1", ".-_"),
+    ("2", "ABC"),
+    ("3", "DEF"),
+    ("4", "GHI"),
+    ("5", "JKL"),
+    ("6", "MNO"),
+    ("7", "PQRS"),
+    ("8", "TUV"),
+    ("9", "WXYZ"),
+    ("0", "\u{2423}"),
+];
+
+/// A key on the T9 rename keypad.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum RenameKey {
-    /// Cycle the candidate character up (next in [`RENAME_CHARSET`]).
-    Up,
-    /// Cycle the candidate character down (previous).
-    Down,
-    /// Append the current candidate to the nickname.
-    Insert,
-    /// Delete the last character of the nickname.
+    /// A character-group key (index into [`T9_GROUPS`]).
+    Char(usize),
+    /// Delete the last character.
     Backspace,
     /// Commit the nickname.
     Save,
 }
 
-/// The nickname value field (shows the current text + a caret).
-pub const RN_FIELD_RECT: Rect = Rect::new(12, CONTENT_TOP + 22, 216, 34);
-/// Cycle-up button (top of the centre column).
-pub const RN_UP_RECT: Rect = Rect::new(94, 122, 52, 36);
-/// Cycle-down button (bottom of the centre column).
-pub const RN_DOWN_RECT: Rect = Rect::new(94, 196, 52, 36);
-/// Backspace key (left of the wheel).
-pub const RN_BKSP_RECT: Rect = Rect::new(16, 160, 56, 56);
-/// Insert key (right of the wheel) — appends the candidate.
-pub const RN_INS_RECT: Rect = Rect::new(168, 160, 56, 56);
-/// The full-width **Save** button, in the shared bottom button band.
-pub const RN_SAVE_RECT: Rect = Rect::new(BTN_SIDE, BTN_BAND_TOP, PANEL_W - 2 * BTN_SIDE, BTN_H);
+/// T9 keypad grid dimensions.
+const T9_COLS: u16 = 3;
+const T9_ROWS: u16 = 4;
+const T9_KEY_W: u16 = 70;
+const T9_KEY_H: u16 = 40;
+const T9_GAP_X: u16 = 4;
+const T9_GAP_Y: u16 = 4;
+const T9_LEFT: u16 = (PANEL_W - T9_COLS * T9_KEY_W - (T9_COLS - 1) * T9_GAP_X) / 2;
+pub const T9_TOP: u16 = 116;
 
-/// Which rename-wheel key, if any, a tap at `p` selects. The rects are disjoint by
-/// construction (proven below), so at most one matches; the title-bar back chevron
-/// (handled separately) cancels.
-pub fn hit_rename(p: Point) -> Option<RenameKey> {
-    if RN_UP_RECT.contains(p) {
-        Some(RenameKey::Up)
-    } else if RN_DOWN_RECT.contains(p) {
-        Some(RenameKey::Down)
-    } else if RN_BKSP_RECT.contains(p) {
-        Some(RenameKey::Backspace)
-    } else if RN_INS_RECT.contains(p) {
-        Some(RenameKey::Insert)
-    } else if RN_SAVE_RECT.contains(p) {
-        Some(RenameKey::Save)
-    } else {
-        None
-    }
+/// The rect of the T9 key at (row, col).
+pub const fn t9_key_rect(row: u16, col: u16) -> Rect {
+    Rect::new(
+        T9_LEFT + col * (T9_KEY_W + T9_GAP_X),
+        T9_TOP + row * (T9_KEY_H + T9_GAP_Y),
+        T9_KEY_W,
+        T9_KEY_H,
+    )
 }
 
-// Compile-time: every wheel control is on-panel, the field clears the status/title
-// chrome, the wheel sits above the Save band, and the five tap targets are pairwise
-// disjoint (so no tap is ambiguous). The centre column (Up/Down) is separated from the
-// side keys (Backspace/Insert) by x; Up/Down/Save are separated from each other by y.
+/// Which T9 key, if any, a tap at `p` selects.
+pub fn hit_rename(p: Point) -> Option<RenameKey> {
+    let mut row = 0;
+    while row < T9_ROWS {
+        let mut col = 0;
+        while col < T9_COLS {
+            if t9_key_rect(row, col).contains(p) {
+                return Some(match (row, col) {
+                    (3, 0) => RenameKey::Backspace,
+                    (3, 2) => RenameKey::Save,
+                    _ => {
+                        let idx = if row < 3 {
+                            (row * T9_COLS + col) as usize
+                        } else {
+                            9 // (3, 1) = 0/space group
+                        };
+                        RenameKey::Char(idx)
+                    }
+                });
+            }
+            col += 1;
+        }
+        row += 1;
+    }
+    None
+}
+
+/// The nickname value field (shows the current text + pending char).
+pub const RN_FIELD_RECT: Rect = Rect::new(12, CONTENT_TOP + 22, 216, 34);
+
+// Compile-time: the T9 keypad fits between the text field and the panel bottom,
+// all keys are on-panel, and the grid has real gaps.
 const _: () = {
     assert!(RN_FIELD_RECT.y >= CONTENT_TOP);
-    assert!(RN_UP_RECT.y > RN_FIELD_RECT.y + RN_FIELD_RECT.h);
-    assert!(RN_UP_RECT.y + RN_UP_RECT.h <= RN_DOWN_RECT.y); // Up above Down
-    assert!(RN_DOWN_RECT.y + RN_DOWN_RECT.h <= RN_SAVE_RECT.y); // wheel above Save
-    assert!(RN_SAVE_RECT.y + RN_SAVE_RECT.h <= PANEL_H);
-    // Side keys are clear of the centre column by x.
-    assert!(RN_BKSP_RECT.x + RN_BKSP_RECT.w <= RN_UP_RECT.x);
-    assert!(RN_UP_RECT.x + RN_UP_RECT.w <= RN_INS_RECT.x);
-    assert!(RN_INS_RECT.x + RN_INS_RECT.w <= PANEL_W);
+    assert!(RN_FIELD_RECT.y + RN_FIELD_RECT.h + 6 <= T9_TOP); // field clear of keypad
+    let last = t9_key_rect(T9_ROWS - 1, T9_COLS - 1);
+    assert!(last.y + last.h <= PANEL_H); // keypad on panel
+    assert!(T9_LEFT > 0 && T9_KEY_W > 0 && T9_GAP_X > 0 && T9_GAP_Y > 0);
+    assert!(T9_LEFT + T9_COLS * T9_KEY_W + (T9_COLS - 1) * T9_GAP_X <= PANEL_W);
 };
 
 // --- Success screens (the design's "pop" confirmation moments) --------------

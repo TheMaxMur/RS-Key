@@ -62,6 +62,7 @@ NOTE_CHECKPOINT_FAILED = "checkpoint-failed"
 NOTE_HEAD_MISMATCH = "head-mismatch"
 NOTE_NO_RESET_EVENT = "no-reset-event"
 NOTE_NO_SESSION = "no-session"
+NOTE_JOURNAL_UNREAD = "journal-unread"
 
 
 def register(sub):
@@ -212,7 +213,7 @@ def _require_journalling():
     """Refuse before the wipe when the journal is not recording: journalling is
     opt-in and OFF by default, and after the wipe there is no way to produce the
     RESET event the receipt certifies — and nothing to retry."""
-    dev, cid = connect_fido()
+    dev, cid = connect_fido(exclusive=True)
     try:
         on = _audit_state(dev, cid)
     finally:
@@ -232,12 +233,25 @@ def _receipt(dev, cid, serial, steps):
     an irreversible step must never end without an artifact."""
     epoch = entries = challenge = b""
     st, m = None, None
+    session_defect = None
     if dev is not None:
-        _, _, epoch, entries = read_journal(dev, cid, None)
-        challenge = os.urandom(16)
-        print("signing the wipe receipt — touch the device (BOOTSEL)…", file=sys.stderr)
-        st, m = _vendor(dev, cid,
-                        _gated(AUDIT_CHECKPOINT, {1: challenge}, dev, cid, None))
+        # The wipe already happened; a touch timeout or a malformed AUDIT_READ /
+        # checkpoint must degrade to a note in a written receipt, never abort before
+        # open() below (audit run-30). read_journal die()s on a missed touch — exactly
+        # the post-reset state (no PIN → touch-gated) — and _vendor can raise on a
+        # dying device.
+        try:
+            _, _, epoch, entries = read_journal(dev, cid, None)
+            challenge = os.urandom(16)
+            print("signing the wipe receipt — touch the device (BOOTSEL)…", file=sys.stderr)
+            st, m = _vendor(dev, cid,
+                            _gated(AUDIT_CHECKPOINT, {1: challenge}, dev, cid, None))
+        except SystemExit as e:
+            session_defect = (NOTE_JOURNAL_UNREAD,
+                              f"could not read the journal to certify the wipe: {e}")
+        except Exception as e:  # noqa: BLE001 — a hostile/dying device must not lose the receipt
+            session_defect = (NOTE_JOURNAL_UNREAD,
+                              f"malformed device response while certifying the wipe: {e!r}")
     report = {"receipt_version": RECEIPT_VERSION, "signed": False,
               "reset_attested": False, "notes": [],
               "host_observations": {
@@ -248,29 +262,43 @@ def _receipt(dev, cid, serial, steps):
     if dev is None:
         defect = (NOTE_NO_SESSION,
                   "no FIDO session to sign with — receipt is UNSIGNED")
+    elif session_defect is not None:
+        defect = session_defect
     elif st == ERR_NOT_ALLOWED:
         defect = (NOTE_NO_DEVK, "no OTP DEVK provisioned — receipt is UNSIGNED")
     elif st != 0:
         defect = (NOTE_CHECKPOINT_FAILED,
                   f"checkpoint failed ({st:#x}) — receipt is UNSIGNED")
     else:
-        # The device is untrusted: validate every field before use so a
-        # malformed checkpoint fails closed instead of raising a traceback.
-        head, seq, sig, pubkey = verify_checkpoint(
-            m, challenge, "do not trust this device",
-            "receipt SIGNATURE INVALID — do not trust this device")
-        # epoch and entries are what bind the signature to the window shown
-        # above; persist them or no later --verify can redo the fold and the
-        # RESET scan, and the receipt asserts a wipe nothing can re-check.
-        report["signed"] = True
-        report["attested"] = {"signed_head": head.hex(), "seq": seq,
-                              "signature": sig.hex(),
-                              "attestation_pubkey": pubkey.hex(),
-                              "fingerprint": _fingerprint(pubkey),
-                              "challenge": challenge.hex(),
-                              "epoch": epoch.hex(), "entries": entries.hex()}
-        defect = _window_defect(epoch, entries, head)
-        report["reset_attested"] = defect is None
+        # The device is untrusted: validate every field before use so a malformed
+        # checkpoint fails closed with a note instead of aborting the whole receipt.
+        try:
+            head, seq, sig, pubkey = verify_checkpoint(
+                m, challenge, "do not trust this device",
+                "receipt SIGNATURE INVALID — do not trust this device")
+        except SystemExit as e:
+            defect = (NOTE_CHECKPOINT_FAILED,
+                      f"checkpoint rejected ({e}) — receipt is UNSIGNED")
+        except Exception as e:  # noqa: BLE001 — a None/malformed checkpoint must not lose the receipt
+            # verify_checkpoint indexes the response map (`1 in m` etc.) and calls
+            # vk.verify(sig): a device answering st=0 with an empty/malformed body
+            # (m is None, or a non-bytes sig) raises TypeError, not SystemExit, which
+            # would otherwise abort before the receipt is written.
+            defect = (NOTE_CHECKPOINT_FAILED,
+                      f"malformed checkpoint response ({e!r}) — receipt is UNSIGNED")
+        else:
+            # epoch and entries are what bind the signature to the window shown
+            # above; persist them or no later --verify can redo the fold and the
+            # RESET scan, and the receipt asserts a wipe nothing can re-check.
+            report["signed"] = True
+            report["attested"] = {"signed_head": head.hex(), "seq": seq,
+                                  "signature": sig.hex(),
+                                  "attestation_pubkey": pubkey.hex(),
+                                  "fingerprint": _fingerprint(pubkey),
+                                  "challenge": challenge.hex(),
+                                  "epoch": epoch.hex(), "entries": entries.hex()}
+            defect = _window_defect(epoch, entries, head)
+            report["reset_attested"] = defect is None
     if defect:
         # Recorded, never fatal: the wipe already happened, so losing the file
         # would leave the operator with nothing at all.
@@ -319,7 +347,7 @@ def run(args):
 
     # A failure here is recorded, not fatal: the CCID applets are already wiped,
     # so the run must still reach the receipt that says what was destroyed.
-    dev, cid = connect_fido()
+    dev, cid = connect_fido(exclusive=True)
     dev, cid, ok, detail = _fido_reset(dev, cid)
     record("fido_reset", ok, detail)
 

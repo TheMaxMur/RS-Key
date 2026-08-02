@@ -136,7 +136,13 @@ impl Ui {
                 }
                 if rsk_ui::hit_title_edit(p) {
                     // The pencil: rename this RP's device-local nickname, then repaint with
-                    // the (possibly changed) title. The credential box is untouched.
+                    // the (possibly changed) title. The credential box is untouched. Gated
+                    // by the device PIN like every other on-device write — the nickname is
+                    // what the browse screens show in place of the rpId, so an
+                    // unauthenticated relabel would be a lie told by the trusted display.
+                    if !self.local_pin_gate(PinScope::Device) {
+                        return ServiceResult::Back;
+                    }
                     if let Some(new_nick) = self.run_rename(&nick, hash) {
                         nick = new_nick;
                     }
@@ -184,7 +190,11 @@ impl Ui {
                     continue;
                 }
                 if let Some(i) = rsk_ui::hit_list(p, rsk_ui::PK_LIST_TOP, n as u16) {
-                    self.run_delete(&title(&nick), &accts[i as usize].name, fids[i as usize]);
+                    // The destructive card names the real relying party, never the
+                    // device-local nickname: a nickname is free text, so confirming a
+                    // delete against it would let a relabel aim the owner's own
+                    // PIN-gated ceremony at the wrong credential.
+                    self.run_delete(rp_id, &accts[i as usize].name, fids[i as usize]);
                     if self.asleep {
                         return ServiceResult::Leave(None); // slept via the power button
                     }

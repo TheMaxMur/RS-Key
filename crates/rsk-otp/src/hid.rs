@@ -5,6 +5,8 @@
 //! ‖ slot ‖ CRC ‖ pad) carried 7 payload bytes per 8-byte FEATURE report, written
 //! via SET_REPORT and polled via GET_REPORT — the transport `ykman otp` speaks.
 
+use zeroize::Zeroize;
+
 use crate::crc16;
 
 /// HID feature-report size.
@@ -22,6 +24,11 @@ const FRAME_CRC_OFF: usize = PAYLOAD_SIZE + 1;
 const FLAG_WRITE: u8 = 0x80;
 /// Device→host flag: a response frame is pending / present.
 const FLAG_RESP_PENDING: u8 = 0x40;
+/// Device→host flag: the running command is waiting for its button press.
+const FLAG_TIMEOUT_WAIT: u8 = 0x20;
+/// Device→host status while a command runs with no touch outstanding: non-zero
+/// and non-pending, so the host keeps polling.
+const STATUS_PROCESSING: u8 = 0x10;
 /// Host→device sentinel byte that resets the transfer state.
 const FLAG_RESET: u8 = 0xFF;
 const SEQ_MASK: u8 = 0x1F;
@@ -69,7 +76,7 @@ impl FrameRx {
     pub fn feed(&mut self, report: &[u8; REPORT_SIZE]) -> RxOutcome {
         let flag = report[REPORT_DATA];
         if flag == FLAG_RESET {
-            self.buf = [0; FRAME_SIZE];
+            self.scrub();
             return RxOutcome::Reset;
         }
         if flag & FLAG_WRITE == 0 {
@@ -80,11 +87,11 @@ impl FrameRx {
             // A write with an out-of-range sequence is the host's dummy write
             // (`0x8f`, ykpers `yk_force_key_update`): abort what is in flight and
             // reset the read mode. Dropping it strands the host mid-transfer.
-            self.buf = [0; FRAME_SIZE];
+            self.scrub();
             return RxOutcome::Reset;
         }
         if seq == 0 {
-            self.buf = [0; FRAME_SIZE];
+            self.scrub();
         }
         self.buf[seq * REPORT_DATA..seq * REPORT_DATA + REPORT_DATA]
             .copy_from_slice(&report[..REPORT_DATA]);
@@ -94,14 +101,23 @@ impl FrameRx {
         // Final slice: validate the frame CRC (plain CRC-16 over the payload).
         let want = u16::from_le_bytes([self.buf[FRAME_CRC_OFF], self.buf[FRAME_CRC_OFF + 1]]);
         if crc16(&self.buf[..PAYLOAD_SIZE]) != want {
+            self.scrub();
             return RxOutcome::BadCrc;
         }
         let mut payload = [0u8; PAYLOAD_SIZE];
         payload.copy_from_slice(&self.buf[..PAYLOAD_SIZE]);
-        RxOutcome::Frame {
-            slot: self.buf[PAYLOAD_SIZE],
-            payload,
-        }
+        let slot = self.buf[PAYLOAD_SIZE];
+        // The caller owns the bytes now. A slot-configure frame holds the AES key,
+        // the private UID and the presented access code, and nothing else clears
+        // this buffer until some later frame happens to reuse it — so wipe it here.
+        self.scrub();
+        RxOutcome::Frame { slot, payload }
+    }
+
+    /// Wipe the reassembly buffer. Called after a frame is handed off, on an abort,
+    /// and before the device drops to the bootloader.
+    pub fn scrub(&mut self) {
+        self.buf.zeroize();
     }
 }
 
@@ -173,6 +189,45 @@ impl FrameTx {
             true
         } else {
             false
+        }
+    }
+}
+
+/// The status byte a host sees while the command it wrote is still running.
+///
+/// Once the device has announced a touch wait, ykpers' blocking read
+/// (`yk_wait_for_key_status`) takes any later byte that is neither
+/// response-pending nor still-waiting as a timeout and abandons the challenge. So
+/// the wait latches for the rest of the command: the press itself must not flip
+/// the byte back, only the response — or the idle status frame — replaces it.
+pub struct ProcessingStatus {
+    waiting: bool,
+}
+
+impl Default for ProcessingStatus {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ProcessingStatus {
+    pub const fn new() -> Self {
+        Self { waiting: false }
+    }
+
+    /// Start a fresh command: nothing announced to the host yet.
+    pub fn reset(&mut self) {
+        self.waiting = false;
+    }
+
+    /// One host poll while the command runs; `touch_pending` is the live presence
+    /// flag.
+    pub fn poll(&mut self, touch_pending: bool) -> u8 {
+        self.waiting |= touch_pending;
+        if self.waiting {
+            FLAG_TIMEOUT_WAIT
+        } else {
+            STATUS_PROCESSING
         }
     }
 }

@@ -11,6 +11,7 @@ needed) then drives the spec-compliant blocked-PIN TERMINATE (0xE6) + ACTIVATE
 OpenPGP TERMINATE is scoped to OpenPGP FIDs). DESTRUCTIVE for OpenPGP; idempotent.
 """
 from . import ccid
+from .common import confirm
 
 OPENPGP_AID = [0xD2, 0x76, 0x00, 0x01, 0x24, 0x01]
 INS_VERIFY, INS_ACTIVATE, INS_TERMINATE = 0x20, 0x44, 0xE6
@@ -34,7 +35,19 @@ def register(sub):
 
 def reset(args):
     conn = ccid.connect()
-    ccid.select(conn, OPENPGP_AID)
+    # The card must actually carry an OpenPGP application before we block its PINs and
+    # TERMINATE it: find_reader can only pick an RS-Key now, but a wrong applet (or a
+    # future caller) must fail closed rather than destroy an unrelated card (audit run-30).
+    _, s1, s2 = ccid.select(conn, OPENPGP_AID)
+    if (s1, s2) != ccid.SW_OK:
+        raise SystemExit(
+            f"no OpenPGP application on the selected card ({s1:02X}{s2:02X}) — refusing to reset"
+        )
+    # Typed confirmation on the interactive path (promised in docs/guides/cli.md).
+    # offboard drives us with args=None mid-ceremony after its own OFFBOARD prompt;
+    # prompting again there would raise EOFError on non-TTY stdin and lose its receipt.
+    if args is not None:
+        confirm("OPENPGP RESET")
     # Block both PINs (each VERIFY decrements the retry counter; at 0 it blocks).
     for mode in (MODE_PW3, MODE_PW1):
         for _ in range(5):

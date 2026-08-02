@@ -639,6 +639,15 @@ fn gate<S: Storage, R: Rng>(
 /// The PIN half of [`gate`], shared with the audit subcommands: when a PIN is
 /// configured, require a pinUvAuthToken with the `acfg` permission over
 /// `0xff×32 ‖ 0x41 ‖ subcommand ‖ rawSubCommandParams`.
+///
+/// "A PIN is configured" means either PIN the device has. A trusted-display build's
+/// first-run onboarding sets the **device** PIN — often the only PIN such a user ever
+/// sets — and that same PIN gates the on-device reveal of the very seed these
+/// subcommands move. Keying solely on `EF_PIN` would waive the gate on a device the
+/// user (and the Home card) consider PIN-protected, so a moment of physical access
+/// could export the master seed on one touch. There is no clientPIN token to verify in
+/// that case, so the second factor is collected where it belongs: on the device's own
+/// pad, out of the host's reach.
 fn pin_gate<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> Result<(), CtapError> {
     if ctx.fs.has_data(EF_PIN) {
         let param = req.pin_uv_auth_param.ok_or(CtapError::PuatRequired)?;
@@ -655,8 +664,48 @@ fn pin_gate<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> Result<(), Ct
             return Err(CtapError::PinAuthInvalid);
         }
         ctx.state.mark_token_used(ctx.now_ms);
+        return Ok(());
+    }
+    if crate::clientpin::device_pin_is_set(ctx.fs) && ctx.presence.uv_available() {
+        return device_pin_gate(ctx);
     }
     Ok(())
+}
+
+/// Verify the on-device (display) PIN on the device's own pad. Used only when no
+/// clientPIN exists — see [`pin_gate`]. Mirrors built-in UV's outcome mapping: a
+/// non-entry (declined / timeout / cancel) returns before the verify, so it never
+/// spends a retry; only a real mismatch does.
+fn device_pin_gate<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>) -> Result<(), CtapError> {
+    let min = crate::consts::MIN_PIN_LENGTH as usize;
+    let mut pin = [0u8; crate::clientpin::PADDED_PIN_LEN];
+    let entry = ctx.presence.collect_device_pin(min, &mut pin);
+    let len = match entry {
+        crate::PinEntry::Entered(len) => len.min(pin.len()),
+        crate::PinEntry::Declined => {
+            pin.zeroize();
+            return Err(CtapError::OperationDenied);
+        }
+        crate::PinEntry::Timeout => {
+            pin.zeroize();
+            return Err(CtapError::UserActionTimeout);
+        }
+        crate::PinEntry::Cancelled => {
+            pin.zeroize();
+            return Err(CtapError::KeepAliveCancel);
+        }
+        crate::PinEntry::Unsupported => {
+            pin.zeroize();
+            return Err(CtapError::UnsupportedOption);
+        }
+    };
+    let res = crate::clientpin::spend_and_verify_device_pin(&ctx.dev, ctx.fs, &pin[..len]);
+    pin.zeroize();
+    match res {
+        crate::clientpin::LocalPin::Ok => Ok(()),
+        crate::clientpin::LocalPin::Wrong { .. } => Err(CtapError::PinInvalid),
+        crate::clientpin::LocalPin::Blocked => Err(CtapError::PinBlocked),
+    }
 }
 
 /// `BACKUP_EXPORT`: encrypt the 32-byte seed under the MSE channel and return it.
@@ -829,7 +878,9 @@ pub fn backup_status<S: Storage>(fs: &mut rsk_fs::Fs<S>) -> BackupStatus {
 /// mirroring host [`BACKUP_FINALIZE`](backup_finalize) without the `Ctx` / journal:
 /// write the `EF_BACKUP_SEALED` marker so the seed can no longer be exported **or**
 /// shown as a recovery phrase until a factory reset reopens the window. The display
-/// task gates this behind the device PIN and a deliberate hold.
+/// task gates this behind the device PIN and a deliberate hold — the same rule its
+/// other irreversible actions follow, because sealing cannot be undone without a
+/// factory reset that destroys the seed it protects.
 pub fn mark_backup_sealed<S: Storage>(fs: &mut rsk_fs::Fs<S>) -> bool {
     fs.put(EF_BACKUP_SEALED, &[1]).is_ok()
 }

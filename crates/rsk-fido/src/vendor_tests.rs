@@ -1109,8 +1109,9 @@ fn ensure_seed_does_not_regenerate_under_lock() {
 
 // ---- CONFIG_WRITE (0x0C): device config over the FIDO vendor channel ----
 
-/// A small, opaque device-config TLV (READ CONFIG echoes it verbatim, so its
-/// bytes are the suffix of the DeviceInfo TLV — see [`dev_conf_readback`]).
+/// A small, opaque device-config TLV. READ CONFIG echoes it (minus any config-lock
+/// tag) and then appends the unset CONFIG_LOCK, so its bytes appear in the body of
+/// the DeviceInfo TLV — see [`dev_conf_readback`] / [`dev_conf_contains`].
 const DEV_CONF_BLOB: &[u8] = &[0x03, 0x02, 0x02, 0x00];
 
 /// Build a `VENDOR_CONFIG_WRITE` request `{1: subcmd, 2: {1: target, 2: blob}
@@ -1168,6 +1169,13 @@ fn dev_conf_readback(fs: &mut Fs<RamStorage>) -> std::vec::Vec<u8> {
     res.as_slice().to_vec()
 }
 
+/// Whether the READ CONFIG TLV carries `blob` anywhere in its body. The persisted
+/// blob is no longer the TLV suffix — READ CONFIG now always reports CONFIG_LOCK
+/// unset after it (audit run-30) — so match a window, not the tail.
+fn dev_conf_contains(fs: &mut Fs<RamStorage>, blob: &[u8]) -> bool {
+    dev_conf_readback(fs).windows(blob.len()).any(|w| w == blob)
+}
+
 #[test]
 fn config_write_persists_dev_conf_visible_to_ccid() {
     let (mut fs, mut rng, mut st) = setup();
@@ -1187,7 +1195,7 @@ fn config_write_persists_dev_conf_visible_to_ccid() {
         Ok(0)
     );
     // The FIDO write is visible to the CCID READ CONFIG path — one shared EF.
-    assert!(dev_conf_readback(&mut fs).ends_with(DEV_CONF_BLOB));
+    assert!(dev_conf_contains(&mut fs, DEV_CONF_BLOB));
 }
 
 #[cfg(feature = "strict-config")]
@@ -1208,7 +1216,7 @@ fn config_write_requires_touch() {
         ),
         Err(CtapError::OperationDenied)
     );
-    assert!(!dev_conf_readback(&mut fs).ends_with(DEV_CONF_BLOB)); // declined → nothing persisted
+    assert!(!dev_conf_contains(&mut fs, DEV_CONF_BLOB)); // declined → nothing persisted
 }
 
 #[test]
@@ -1293,7 +1301,7 @@ fn config_write_default_ungated_persists_without_touch_or_token() {
         ),
         Ok(0)
     );
-    assert!(dev_conf_readback(&mut fs).ends_with(DEV_CONF_BLOB));
+    assert!(dev_conf_contains(&mut fs, DEV_CONF_BLOB));
 }
 
 #[test]
@@ -1315,7 +1323,7 @@ fn config_write_with_pin_and_token_succeeds() {
         ),
         Ok(0)
     );
-    assert!(dev_conf_readback(&mut fs).ends_with(DEV_CONF_BLOB));
+    assert!(dev_conf_contains(&mut fs, DEV_CONF_BLOB));
 }
 
 #[test]
@@ -1610,7 +1618,7 @@ fn idempotent_config_write_appends_no_journal_entry() {
     )
     .unwrap();
     let after = journal_state(&mut fs);
-    assert!(dev_conf_readback(&mut fs).ends_with(CHANGED));
+    assert!(dev_conf_contains(&mut fs, CHANGED));
     assert_eq!((after.0, after.1), (before.0, before.1), "no slot spent");
     assert_ne!(after.2, before.2, "but the write is recorded");
 }

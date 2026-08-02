@@ -22,14 +22,17 @@ Physically, slots 3/4 are typed by three / four BOOTSEL clicks.
 """
 import hashlib
 import hmac as hmac_mod
+import os
 import struct
 import sys
 
 try:
-    from smartcard.System import readers
     from smartcard.util import toHexString
 except ImportError:
     sys.exit("missing dependency: pip install pyscard")
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _device import find_reader  # noqa: E402
 
 OTP_AID = [0xA0, 0x00, 0x00, 0x05, 0x27, 0x20, 0x01]
 CONFIG_SIZE = 52
@@ -64,12 +67,9 @@ def hmac_config(key20):
 
 
 def main():
-    rs = readers()
-    print("readers:", [str(r) for r in rs])
-    if not rs:
+    target = find_reader()
+    if not target:
         fail("no PC/SC readers — is the device flashed and the CCID driver bound?")
-    target = next((r for r in rs if ("RSK" in str(r) or "RS-Key" in str(r))), rs[0])
-    print("using:", target)
     conn = target.createConnection()
     conn.connect()
 

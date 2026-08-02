@@ -15,11 +15,14 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
 use embassy_usb::class::hid::{HidWriter, ReportId, RequestHandler};
 use embassy_usb::control::OutResponse;
+use zeroize::Zeroize;
 
-use rsk_otp::hid::{FrameRx, FrameTx, PAYLOAD_SIZE, REPORT_SIZE, RxOutcome, status_frame};
+use rsk_otp::hid::{
+    FrameRx, FrameTx, PAYLOAD_SIZE, ProcessingStatus, REPORT_SIZE, RxOutcome, status_frame,
+};
 
 use crate::Drv;
-use crate::presence::up_pending;
+use crate::presence::otp_up_pending;
 
 type Cs = CriticalSectionRawMutex;
 
@@ -86,6 +89,8 @@ struct OtpHid {
     rx: FrameRx,
     tx: FrameTx,
     state: State,
+    /// Status byte served while `state` is [`State::Processing`].
+    processing: ProcessingStatus,
     /// Cached idle status frame (refreshed by the worker after each command).
     status: [u8; REPORT_SIZE],
     req_slot: u8,
@@ -99,6 +104,7 @@ impl OtpHid {
             rx: FrameRx::new(),
             tx: FrameTx::new(),
             state: State::Idle,
+            processing: ProcessingStatus::new(),
             // Plausible pre-boot status (version, no slots); the worker overwrites
             // it with the real record before the host ever reads it.
             status: [0, 5, 7, 4, 0, 0, 0, 0],
@@ -139,6 +145,7 @@ impl RequestHandler for OtpHidHandler {
                     h.req_slot = slot;
                     h.req_payload = payload;
                     h.req_ready = true;
+                    h.processing.reset();
                     h.state = State::Processing;
                     OTP_REQ.signal(());
                 }
@@ -168,9 +175,9 @@ impl RequestHandler for OtpHidHandler {
                     }
                 }
                 State::Processing => {
-                    // Non-zero, non-pending status keeps the host polling; 0x20
-                    // tells it a touch is awaited (a CHAL_BTN_TRIG slot).
-                    out[REPORT_SIZE - 1] = if up_pending() { 0x20 } else { 0x10 };
+                    // Latched: the press must not flip the byte back before the
+                    // response, or the host reads that as a touch timeout.
+                    out[REPORT_SIZE - 1] = h.processing.poll(otp_up_pending());
                 }
                 State::Idle => out = h.status,
             }
@@ -186,11 +193,35 @@ pub fn take_request() -> Option<(u8, [u8; PAYLOAD_SIZE])> {
         let mut h = c.borrow_mut();
         if h.req_ready {
             h.req_ready = false;
-            Some((h.req_slot, h.req_payload))
+            let req = (h.req_slot, h.req_payload);
+            // A slot-configure frame carries the AES key, the private UID and the
+            // presented access code; don't leave them in the static once the worker
+            // holds its own copy. Same rule the CTAP/CCID exchange buffers follow.
+            h.req_payload.zeroize();
+            Some(req)
         } else {
             None
         }
     })
+}
+
+/// Wipe every OTP-transport buffer that can hold slot secrets: the reassembly frame,
+/// the taken request, and any ticket still queued for typing. Called before dropping to
+/// the BOOTSEL bootloader, alongside the CTAP/CCID/DRBG scrubs — a reflash must not be
+/// able to recover them from RAM.
+pub fn scrub() {
+    OTP_HID.lock(|c| {
+        let mut h = c.borrow_mut();
+        h.rx.scrub();
+        h.req_payload.zeroize();
+        h.req_slot = 0;
+    });
+    TYPE_Q.lock(|c| {
+        let mut q = c.borrow_mut();
+        q.buf.zeroize();
+        q.len = 0;
+        q.pos = 0;
+    });
 }
 
 /// Store a command's result: refresh the cached status frame and, if `body` is
@@ -269,8 +300,12 @@ fn pop_char() -> Option<(u8, bool)> {
     TYPE_Q.lock(|c| {
         let mut q = c.borrow_mut();
         if q.pos < q.len {
-            let b = q.buf[q.pos];
-            q.pos += 1;
+            let pos = q.pos;
+            let b = q.buf[pos];
+            // Consume destructively: a static-password ticket *is* the secret, so a
+            // drained queue must not keep it readable in the static.
+            q.buf[pos] = 0;
+            q.pos = pos + 1;
             Some((b, q.encode))
         } else {
             None

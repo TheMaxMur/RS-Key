@@ -188,7 +188,11 @@ def cmd_list(args):
 # --- verify -------------------------------------------------------------------
 
 def cmd_verify(args):
-    dev, cid = connect_fido()
+    # The printed serial and the printed fingerprint must come from the same physical
+    # device: `docs/guides/fleet.md` tells the operator to record them together as the
+    # enrollment anchor, and `--expect-key` checks only the fingerprint afterwards. The
+    # two halves are resolved by different transports, so refuse to guess.
+    dev, cid = connect_fido(exclusive=True)
     pin = resolve_pin(args, has_pin=device_has_pin(dev, cid))
     challenge = os.urandom(16)
     print("touch the device (BOOTSEL) to sign the challenge…", file=sys.stderr)
@@ -208,6 +212,10 @@ def cmd_verify(args):
     serials = [r["serial"] for r in _ccid_records() if r.get("serial")]
     if len(serials) == 1:
         print(f"serial      : {serials[0]}")
+    elif serials:
+        # More than one card answered: nothing here proves which of them owns the
+        # attestation key that just signed, so print no serial rather than a wrong one.
+        print(f"serial      : (ambiguous — {len(serials)} cards attached)")
     print(f"fingerprint : {fp}")
     print(f"att key     : {pubkey.hex()}")
 

@@ -15,13 +15,16 @@ persisted counter — the same applet tests/01 drives over CTAPHID_MSG.
 
 Needs pyscard and a running PC/SC daemon (built in on macOS).
 """
+import os
 import sys
 
 try:
-    from smartcard.System import readers
     from smartcard.util import toHexString
 except ImportError:
     sys.exit("missing dependency: pip install pyscard")
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _device import find_reader  # noqa: E402
 
 # The FIDO ATR the firmware answers with (without its leading length byte).
 ATR_FIDO = [
@@ -41,13 +44,9 @@ def fail(msg):
 
 
 def main():
-    rs = readers()
-    print("readers:", [str(r) for r in rs])
-    if not rs:
+    target = find_reader()
+    if not target:
         fail("no PC/SC readers — is the device flashed and the CCID driver bound?")
-
-    target = next((r for r in rs if ("RSK" in str(r) or "RS-Key" in str(r))), rs[0])
-    print("using:", target)
 
     conn = target.createConnection()
     conn.connect()

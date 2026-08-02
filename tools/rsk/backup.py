@@ -213,8 +213,13 @@ def cmd_status(args):
     st, m = _vendor(dev, cid, {1: STATE})
     if st != 0:
         die(f"status failed: {st:#x}")
-    print(f"sealed   : {m[1]}")
-    print(f"has_seed : {m[2]}")
+    if not isinstance(m, dict):
+        die("malformed status response")
+    # Coerce to bool so a spoofed string value can't reach the terminal raw — the
+    # device is untrusted, and this output is what the operator reads to confirm the
+    # anti-exfiltration seal engaged (audit run-30).
+    print(f"sealed   : {bool(m.get(1))}")
+    print(f"has_seed : {bool(m.get(2))}")
 
 
 def cmd_export(args):
@@ -229,8 +234,11 @@ def cmd_export(args):
         print(f"\n[{label}]\n{mn}")
     if args.scheme == "slip39":
         print(f"\n(any {args.threshold} of {args.shares} shares reconstruct the seed)")
-    print(f"\nAfter recording it, seal the window:  rsk backup finalize"
-          + (f" --pin {args.pin}" if args.pin else ""))
+    # Never echo the PIN here: this block is the one the user was just told to write
+    # down / screenshot, and the export is gated on touch *plus* the PIN — printing it
+    # beside the mnemonic collapses both factors into a single capturable artifact.
+    print("\nAfter recording it, seal the window:  rsk backup finalize"
+          + (" (pass your PIN again)" if args.pin else ""))
 
 
 def cmd_restore(args):
@@ -244,7 +252,7 @@ def cmd_restore(args):
         seed = from_slip39(lines)
     if len(seed) != 32:
         die(f"reconstructed secret is {len(seed)} bytes, expected 32")
-    dev, cid = connect_fido()
+    dev, cid = connect_fido(exclusive=True)
     pin = resolve_pin(args, has_pin=device_has_pin(dev, cid))
     print("touch the device (BOOTSEL) to authorise the restore…", file=sys.stderr)
     write_seed(dev, cid, pin, seed)
@@ -252,7 +260,7 @@ def cmd_restore(args):
 
 
 def cmd_finalize(args):
-    dev, cid = connect_fido()
+    dev, cid = connect_fido(exclusive=True)
     pin = resolve_pin(args, has_pin=device_has_pin(dev, cid))
     print("touch the device (BOOTSEL) to seal the export window…", file=sys.stderr)
     st, _ = _vendor(dev, cid, _gated(FINALIZE, None, dev, cid, pin))

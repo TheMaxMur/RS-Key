@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 RS-Key contributors
+#
+# Seeed XIAO RP2350 — WS2812 LED powered via GP23 (power-enable gate),
+# active-low USR LED on GP25 driven off at boot, BOOTSEL presence.
+# 2 MB flash; shrink KVMAIN to leave room for code.
+
+[usb]
+vidpid = "RSKey"
+
+[led]
+kind = "ws2812"
+pin = 22
+order = "grb"
+power_pin = 23
+
+[presence]
+source = "bootsel"
+
+[flash]
+size_mb = 2
+kvmain_kb = 896
+
+# Nuisance onboard USR LED — drive off at boot.
+[usr_led]
+pin = 25
+active_high = false

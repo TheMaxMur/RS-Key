@@ -19,29 +19,27 @@ Run from the venv with pyscard:
     nix develop -c python tests/51_secure_reboot.py
     …                                                            tests/51_secure_reboot.py --bootsel
 """
+import os
 import sys
 import time
 
 try:
-    from smartcard.System import readers
     from smartcard.CardConnection import CardConnection
 except ImportError:
     sys.exit("missing dependency: pip install pyscard")
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _device import find_reader  # noqa: E402
 
 VENDOR_AID = [0xF0, 0x00, 0x00, 0x00, 0x01]
 MGMT_AID = [0xA0, 0x00, 0x00, 0x05, 0x27, 0x47, 0x11, 0x17]
 INS_REBOOT = 0x1F
 
 
-def rsk_reader():
-    for r in readers():
-        if ("RSK" in str(r) or "RS-Key" in str(r)):
-            return r
-    return None
-
-
 def connect():
-    r = rsk_reader()
+    # Marker required: the re-enumeration poll below asks "is the board back?", and
+    # MGMT_AID is Yubico's own management AID — a real YubiKey answers it 9000.
+    r = find_reader(require_marker=True)
     if r is None:
         return None
     conn = r.createConnection()

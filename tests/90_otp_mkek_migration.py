@@ -38,11 +38,6 @@ import os
 import sys
 
 try:
-    from smartcard.System import readers
-except ImportError:
-    sys.exit("missing dependency: pip install pyscard")
-
-try:
     from cryptography.hazmat.primitives.asymmetric import ec
     from cryptography.hazmat.primitives.asymmetric.utils import (
         Prehashed, encode_dss_signature)
@@ -51,6 +46,9 @@ try:
         Encoding, PublicFormat)
 except ImportError:
     sys.exit("missing dependency: pip install cryptography")
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _device import find_reader  # noqa: E402
 
 RESCUE_AID = [0xA0, 0x58, 0x3F, 0xC1, 0x9B, 0x7E, 0x4F, 0x21]
 PIV_AID = [0xA0, 0x00, 0x00, 0x03, 0x08, 0x00, 0x00, 0x10, 0x00, 0x01, 0x00]
@@ -96,10 +94,11 @@ def fail(msg):
 
 
 def connect():
-    rs = [r for r in readers() if ("RSK" in str(r) or "RS-Key" in str(r))]
-    if not rs:
+    # Marker required: this migrates the OTP kbase, so it must not run on a stranger.
+    target = find_reader(require_marker=True)
+    if not target:
         fail("no RSK reader (device plugged in? pcscd up? scdaemon holding it?)")
-    conn = rs[0].createConnection()
+    conn = target.createConnection()
     conn.connect()
     return conn
 
