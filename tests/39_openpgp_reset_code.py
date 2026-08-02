@@ -19,13 +19,16 @@ Exercises the reset-code (RC) <-> DEK wiring:
 WARNING: changes the user PIN (PW1) and the reset code; the test restores PW1 to the
 default (123456) at the end. PW3 must still be the default (12345678). Re-runnable.
 """
+import os
 import sys
 
 try:
-    from smartcard.System import readers
     from smartcard.util import toHexString
 except ImportError:
     sys.exit("missing dependency: pip install pyscard")
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _device import find_reader  # noqa: E402
 
 OPENPGP_AID = [0xD2, 0x76, 0x00, 0x01, 0x24, 0x01]
 SELECT = [0x00, 0xA4, 0x04, 0x00, len(OPENPGP_AID)] + OPENPGP_AID + [0x00]
@@ -62,12 +65,9 @@ def fail(msg):
 
 
 def main():
-    rs = readers()
-    print("readers:", [str(r) for r in rs])
-    if not rs:
+    target = find_reader()
+    if not target:
         fail("no PC/SC readers — is the device flashed and the CCID driver bound?")
-    target = next((r for r in rs if ("RSK" in str(r) or "RS-Key" in str(r))), rs[0])
-    print("using:", target)
     conn = target.createConnection()
     conn.connect()
 

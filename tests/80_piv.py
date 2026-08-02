@@ -28,7 +28,6 @@ import os
 import sys
 
 try:
-    from smartcard.System import readers
     from smartcard.Exceptions import NoCardException
 except ImportError:
     sys.exit("missing dependency: pip install pyscard")
@@ -39,6 +38,9 @@ try:
     from cryptography.x509 import load_der_x509_certificate
 except ImportError:
     sys.exit("missing dependency: pip install cryptography")
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _device import find_reader  # noqa: E402
 
 PIV_AID = [0xA0, 0x00, 0x00, 0x03, 0x08, 0x00, 0x00, 0x10, 0x00, 0x01, 0x00]
 
@@ -293,19 +295,16 @@ def block_and_reset(piv):
 
 def main():
     do_rsa = "--rsa" in sys.argv
-    rlist = readers()
-    conn = None
-    for r in rlist:
-        if ("RSK" in str(r) or "RS-Key" in str(r)) or "Yubico" in str(r) or "PIV" in str(r):
-            try:
-                c = r.createConnection()
-                c.connect()
-                conn = c
-                break
-            except NoCardException:
-                continue
-    if conn is None:
-        fail("no RSK/Yubico CCID reader found (gpgconf --kill scdaemon if held)")
+    # Marker required: this blocks both PIN references and factory-RESETs the applet,
+    # and the old matcher also accepted "Yubico"/"PIV" — i.e. a real YubiKey's PIV.
+    target = find_reader(require_marker=True)
+    if target is None:
+        fail("no RSK CCID reader found (gpgconf --kill scdaemon if held)")
+    try:
+        conn = target.createConnection()
+        conn.connect()
+    except NoCardException:
+        fail(f"{target} has no card powered on")
 
     piv = Piv(conn)
     piv.select()

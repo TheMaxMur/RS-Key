@@ -11,12 +11,16 @@ in the allowList. Checks the assertion structure (credential id echoed, rpIdHash
 UP flag, signature present) and that the counter strictly increments.
 """
 import hashlib
+import os
 import sys
 
 try:
     import hid
 except ImportError:
     sys.exit("missing dependency: pip install hidapi")
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _device import find  # noqa: E402
 
 REPORT_LEN = 64
 CTAPHID_INIT = 0x86
@@ -88,36 +92,6 @@ def _dec(b, i):
 
 def decode(b):
     return _dec(b, 0)[0]
-
-
-FIDO_USAGE_PAGE_ITEM = b"\x06\xd0\xf1"  # Usage Page (0xF1D0) item in a HID report descriptor
-
-
-def find():
-    devices = hid.enumerate()
-    for d in devices:
-        if d.get("usage_page") == 0xF1D0:
-            return d
-    # hidapi may leave usage_page unset on Linux (libusb/older hidraw); confirm the
-    # FIDO usage page from the report descriptor instead (mirrors tools/rsk/ctaphid.py).
-    for d in devices:
-        if not d.get("usage_page") and _declares_fido(d.get("path")):
-            return d
-    return None
-
-
-def _declares_fido(path):
-    if not path:
-        return False
-    dev = hid.device()
-    try:
-        dev.open_path(path)
-        desc = bytes(dev.get_report_descriptor())
-    except (OSError, ValueError, TypeError, AttributeError):
-        return False
-    finally:
-        dev.close()
-    return FIDO_USAGE_PAGE_ITEM in desc
 
 
 def write(dev, payload):

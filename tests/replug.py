@@ -94,13 +94,13 @@ def reset_fido2(dev=None, why="this authenticatorReset"):
     """`reset` for the suites driven through python-fido2. Those run in a bare fido2
     venv with no hidapi, so this path enumerates with python-fido2 and never imports
     ctaphid. Closes `dev` and returns the fresh CtapHidDevice."""
+    from _device import find_fido2
     from fido2.ctap import CtapError
     from fido2.ctap2 import Ctap2
-    from fido2.hid import CtapHidDevice
 
     def probe():
         try:
-            return next(CtapHidDevice.list_devices(), None)
+            return find_fido2()
         except OSError:
             return None  # enumerated but not ready for reports yet
 

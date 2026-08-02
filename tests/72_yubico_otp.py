@@ -19,17 +19,17 @@ pyscard + cryptography:
 """
 import hashlib
 import hmac as hmac_mod
+import os
 import struct
 import sys
 
 try:
-    from smartcard.System import readers
-except ImportError:
-    sys.exit("missing dependency: pip install pyscard")
-try:
     from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 except ImportError:
     sys.exit("missing dependency: pip install cryptography")
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _device import find_reader  # noqa: E402
 
 OTP_AID = [0xA0, 0x00, 0x00, 0x05, 0x27, 0x20, 0x01]
 MGMT_AID = [0xA0, 0x00, 0x00, 0x05, 0x27, 0x47, 0x11, 0x17]
@@ -116,12 +116,9 @@ class Otp:
 
 
 def main():
-    rs = readers()
-    print("readers:", [str(r) for r in rs])
-    if not rs:
+    target = find_reader()
+    if not target:
         fail("no PC/SC readers — is the device flashed and the CCID driver bound?")
-    target = next((r for r in rs if ("RSK" in str(r) or "RS-Key" in str(r))), rs[0])
-    print("using:", target)
     conn = target.createConnection()
     conn.connect()
     otp = Otp(conn)

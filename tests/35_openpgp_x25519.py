@@ -19,10 +19,10 @@ little-endian shared secret. All values are < 255 bytes, so plain short APDUs.
 
 PW3 (admin, default "12345678"); re-runnable. rsk-wipe first if PINs were changed.
 """
+import os
 import sys
 
 try:
-    from smartcard.System import readers
     from smartcard.util import toHexString
 except ImportError:
     sys.exit("missing dependency: pip install pyscard")
@@ -32,6 +32,9 @@ try:
     from cryptography.hazmat.primitives import serialization
 except ImportError:
     sys.exit("missing dependency: pip install cryptography")
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _device import find_reader  # noqa: E402
 
 OPENPGP_AID = [0xD2, 0x76, 0x00, 0x01, 0x24, 0x01]
 SELECT = [0x00, 0xA4, 0x04, 0x00, len(OPENPGP_AID)] + OPENPGP_AID + [0x00]
@@ -80,12 +83,9 @@ def fail(msg):
 
 
 def main():
-    rs = readers()
-    print("readers:", [str(r) for r in rs])
-    if not rs:
+    target = find_reader()
+    if not target:
         fail("no PC/SC readers — is the device flashed and the CCID driver bound?")
-    target = next((r for r in rs if ("RSK" in str(r) or "RS-Key" in str(r))), rs[0])
-    print("using:", target)
 
     conn = target.createConnection()
     conn.connect()

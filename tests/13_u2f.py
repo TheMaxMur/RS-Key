@@ -11,6 +11,7 @@ returned key handle, checking response structure and counter increment. The
 registration signature is verified under the attestation cert's public key.
 """
 import hashlib
+import os
 import sys
 
 try:
@@ -22,42 +23,15 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.x509 import load_der_x509_certificate
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _device import find  # noqa: E402
+
 REPORT_LEN = 64
 CTAPHID_INIT = 0x86
 CTAPHID_MSG = 0x83
 
 APP_ID = hashlib.sha256(b"https://example.com").digest()
 CHAL = hashlib.sha256(b"rs-key u2f challenge").digest()
-
-
-FIDO_USAGE_PAGE_ITEM = b"\x06\xd0\xf1"  # Usage Page (0xF1D0) item in a HID report descriptor
-
-
-def find():
-    devices = hid.enumerate()
-    for d in devices:
-        if d.get("usage_page") == 0xF1D0:
-            return d
-    # hidapi may leave usage_page unset on Linux (libusb/older hidraw); confirm the
-    # FIDO usage page from the report descriptor instead (mirrors tools/rsk/ctaphid.py).
-    for d in devices:
-        if not d.get("usage_page") and _declares_fido(d.get("path")):
-            return d
-    return None
-
-
-def _declares_fido(path):
-    if not path:
-        return False
-    dev = hid.device()
-    try:
-        dev.open_path(path)
-        desc = bytes(dev.get_report_descriptor())
-    except (OSError, ValueError, TypeError, AttributeError):
-        return False
-    finally:
-        dev.close()
-    return FIDO_USAGE_PAGE_ITEM in desc
 
 
 def write(dev, payload):

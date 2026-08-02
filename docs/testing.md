@@ -207,6 +207,22 @@ nix develop -c python tests/75_seed_backup.py --pin <your PIN>
 
 - Most need the **no-touch build** (`--features no-touch`): they cannot
   press the button. If the board runs secure boot, sign the test build too.
+- **One key attached, or name the one you mean.** A board built `VIDPID=Yubikey5`
+  answers on the same `1050:0407` as a real YubiKey, so a first match over the HID
+  enumeration can run the suite against the wrong device and report its answers as
+  your failures. `tests/_device.py` breaks the tie on the `RSK` marker, in the HID
+  product string and in the PC/SC reader name alike, and stops the run instead of
+  guessing when that is not enough. Name a target with `RSK_TEST_SERIAL=rs-key-0001`
+  (or `RSK_TEST_PATH`, when two boards answer to the same serial), and over CCID with
+  `RSK_TEST_READER=<part of the reader name>`; every run prints the device it picked.
+- **The destructive and reboot-polling suites want that marker.** `80` and `90`
+  rewrite the card, and `14`, `51` and `76` ask "is the board back yet?" of a reader
+  a real YubiKey would answer just as well (`51` probes Yubico's own management AID).
+  Those five refuse an unmarked reader rather than accept a lone stranger, so a build
+  whose `USB_PRODUCT` drops the marker has to name its reader with `RSK_TEST_READER`.
+- Version assertions follow `FW_VERSION` (default 5.7.4, [build.md](build.md)). An
+  image built with an override needs the same value in the test environment:
+  `FW_VERSION=1.4.0 python tests/31_openpgp_select.py`.
 - Numbering: `0x` transport smoke, `1x` FIDO basics, `2x` FIDO full,
   `3x/4x/5x` OpenPGP, `6x` PQC, `7x` management/OATH/OTP/backup/lock,
   `8x` PIV/rescue, `9x` OTP-fuse migration.

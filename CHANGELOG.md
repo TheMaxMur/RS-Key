@@ -149,6 +149,35 @@ Audit run-30 fixes (bcdDevice `0x085D`, `rsk` 0.3.21, `rsk-tui` 0.3.2):
 
 ### Internal
 
+- **The on-device tests no longer guess which key they are talking to.** Every
+  `tests/*.py` script picked the first FIDO HID device the OS listed, so with a real
+  YubiKey attached next to a board built `VIDPID=Yubikey5` (both `1050:0407`), tests
+  `10` and `15` ran against the *YubiKey* and reported its aaguid, its `alwaysUv` and
+  its `6700` as RS-Key failures. Selection now lives in one place, `tests/_device.py`:
+  the `RSK` marker breaks a tie, `RSK_TEST_SERIAL` / `RSK_TEST_PATH` name a target
+  explicitly, and an unresolved choice stops the run instead of picking one. The
+  seven copied `find()` helpers and `ctaphid.find` route through it, as do the
+  python-fido2 suites (`61`, `65`) and `replug.reset_fido2` — that last one sent
+  `authenticatorReset` to whatever it found first. Same bug class as the audit run-31
+  fix in `tools/rsk` (`ctaphid.find_all`, `connect_fido(exclusive=True)`).
+- **The CCID half of that, over PC/SC.** The reader pick was copy-pasted into 24
+  scripts. Eighteen matched the `RSK` marker in the reader name but fell back to
+  `rs[0]`, so a build with `USB_PRODUCT` overridden drove whatever reader the OS listed
+  first — next to a real YubiKey, the YubiKey, which enumerates ahead of the board on
+  the maintainer's machine. `53` took `rs[0]` with no match at all, `90` took the first
+  of the marker-matched, and `80_piv.py` matched `"Yubico"` and `"PIV"` too, aiming a
+  suite that blocks both PIN references and factory-RESETs the applet at a real
+  YubiKey's PIV. All 24 now call `_device.find_reader()`, with `RSK_TEST_READER` as the
+  pin. Five pass `require_marker=True`, so an unmarked reader reads as "not attached"
+  rather than as the board: the destructive `80` and `90`, and the reboot pollers `14`,
+  `51` and `76`, where "is the board back yet?" was answerable by a stranger — `51`
+  probes `A0 00 00 05 27 47 11 17`, Yubico's own management AID, and a real YubiKey
+  answers it `9000`.
+- **Test fixed.** `31_openpgp_select.py` asserted the OpenPGP `VERSION` (INS `0xF1`)
+  reply was `04 06 00` and so failed against any default build, which answers with
+  the device firmware version (`05 07 04`). The expectation now derives from
+  `FW_VERSION` like the firmware does, as does `10_fido_getinfo.py`'s
+  `firmwareVersion` check, which had the default packed in by hand.
 - Cross-executor `Ordering` consistency: the `CANCEL_REQUESTED.store(false, …)`
   false-clears in `display/pin.rs` and `display/presence.rs` are `Relaxed` (no
   publication occurs from a `false` store — the publication is the subsequent
