@@ -21,7 +21,7 @@ use rsk_otp::hid::{
 };
 
 use crate::Drv;
-use crate::presence::up_pending;
+use crate::presence::otp_up_pending;
 
 type Cs = CriticalSectionRawMutex;
 
@@ -176,7 +176,7 @@ impl RequestHandler for OtpHidHandler {
                 State::Processing => {
                     // Latched: the press must not flip the byte back before the
                     // response, or the host reads that as a touch timeout.
-                    out[REPORT_SIZE - 1] = h.processing.poll(up_pending());
+                    out[REPORT_SIZE - 1] = h.processing.poll(otp_up_pending());
                 }
                 State::Idle => out = h.status,
             }

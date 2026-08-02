@@ -13,7 +13,7 @@
 //! touchscreen ([`crate::display::TouchPresence`]) instead, so this whole module is
 //! compiled out there.
 
-use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 
 #[cfg(not(feature = "display"))]
 use embassy_rp::Peri;
@@ -39,34 +39,67 @@ pub(crate) static UP_PENDING: AtomicBool = AtomicBool::new(false);
 /// (transport sets, worker reads), mirroring `UP_PENDING` in the other direction.
 pub(crate) static CANCEL_REQUESTED: AtomicBool = AtomicBool::new(false);
 
-/// The CTAPHID keepalive hook passed to `CtapHid::new`: is a touch being awaited?
-/// Always `false` on the `no-touch` build, so the status stays `PROCESSING`.
+/// Which transport owns the presence wait the worker is running. Every cancel and
+/// every "a touch is pending" advertisement is scoped to it, because one button
+/// serves all of them: without this an unprivileged FIDO-HID process could
+/// `CTAPHID_CANCEL` a CCID (OpenPGP/PIV/OATH) or keyboard-frame (Yubico-OTP)
+/// ceremony — and on a button build inherit the user's descending finger onto its
+/// own request, since a fresh wait starts with `spent == false`. CTAP 2.1 §11.2.9.1.4
+/// scopes a cancel to its own channel.
+static WAIT_SCOPE: AtomicU8 = AtomicU8::new(SCOPE_NONE);
+
+/// No host request in flight: an on-panel (local) flow owns the button.
+pub const SCOPE_NONE: u8 = 0;
+/// CTAPHID — CTAP2 (CBOR), U2F (MSG) and the Management vendor commands.
+pub const SCOPE_FIDO: u8 = 1;
+/// CCID — every applet APDU, including the pinpad VERIFY.
+pub const SCOPE_CCID: u8 = 2;
+/// The keyboard interface's Yubico-OTP frame protocol.
+pub const SCOPE_OTP: u8 = 3;
+
+/// Mark which transport the worker is dispatching for. Set around every dispatch,
+/// `SCOPE_NONE` between them so an on-panel ceremony is nobody's to cancel.
+pub fn set_wait_scope(scope: u8) {
+    WAIT_SCOPE.store(scope, Ordering::Release);
+}
+
+/// Is a touch pending *for `scope`*? Both hooks below need the conjunction, never
+/// the bare flag.
+fn pending_for(scope: u8) -> bool {
+    UP_PENDING.load(Ordering::Acquire) && WAIT_SCOPE.load(Ordering::Acquire) == scope
+}
+
+/// The CTAPHID keepalive hook passed to `CtapHid::new`: is a touch being awaited
+/// *for this transport*? Always `false` on the `no-touch` build, so the status
+/// stays `PROCESSING`. Scoping it also closes a cross-transport oracle — an
+/// unscoped `UPNEEDED` told a parked FIDO request that a human was about to touch
+/// the key for somebody else's operation — and keeps the transport from arming the
+/// frame reader that turns a cancel into a cross-transport abort.
 pub fn up_pending() -> bool {
-    UP_PENDING.load(Ordering::Acquire)
+    pending_for(SCOPE_FIDO)
+}
+
+/// The keyboard-interface status-frame hook: is *its* touch pending? Reported in
+/// the OTP status byte so a host polling for a touch-gated challenge-response sees
+/// the wait (issue #55).
+pub fn otp_up_pending() -> bool {
+    pending_for(SCOPE_OTP)
 }
 
 /// The CTAPHID cancel hook passed to `CtapHid::new`: request that an in-flight
-/// touch wait be abandoned. Just sets the flag the wait polls (a no-op on the
-/// no-button build, where `request` confirms instantly and never waits).
+/// touch wait be abandoned. Only ever ends a FIDO ceremony — the wait it aborts
+/// must be the one the cancelling channel owns.
 pub fn request_cancel() {
-    CANCEL_REQUESTED.store(true, Ordering::Release);
-}
-
-/// Set while the worker runs an OTP frame command, so [`cancel_otp_wait`] can only
-/// end that transport's ceremony — never a FIDO or OpenPGP one waiting on the same
-/// button.
-static OTP_WAIT_SCOPE: AtomicBool = AtomicBool::new(false);
-
-/// Mark (or unmark) the OTP frame command the worker is running.
-pub fn set_otp_scope(active: bool) {
-    OTP_WAIT_SCOPE.store(active, Ordering::Relaxed);
+    if WAIT_SCOPE.load(Ordering::Acquire) == SCOPE_FIDO {
+        CANCEL_REQUESTED.store(true, Ordering::Release);
+    }
 }
 
 /// End an OTP touch wait because the host moved on: it sent the dummy write that
 /// aborts (`0x8f`), or a new frame — a YubiKey lets either supersede the wait, and
 /// without that every later command reads "would block" until the wait times out.
 pub fn cancel_otp_wait() {
-    if OTP_WAIT_SCOPE.load(Ordering::Relaxed) {
+    if WAIT_SCOPE.load(Ordering::Acquire) == SCOPE_OTP {
         CANCEL_REQUESTED.store(true, Ordering::Relaxed);
         // The wait is over as of this decision; stop advertising it right away so
         // the host's next status poll cannot read a stale "waiting for touch".
