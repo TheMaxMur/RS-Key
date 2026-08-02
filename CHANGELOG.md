@@ -15,6 +15,107 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Security
 
+Audit run-31 fixes (bcdDevice `0x085F`, `rsk` 0.3.23, `rsk-tui` 0.3.3):
+
+- **A cancel can no longer end another transport's touch ceremony.**
+  `CANCEL_REQUESTED` was one global flag, so an unprivileged process holding only
+  the FIDO HID nub could `CTAPHID_CANCEL` an OpenPGP, PIV, OATH or Yubico-OTP
+  ceremony — `WORKER_LOCK` does not serialize the two, because a parked FIDO
+  request acquires it *inside* the future the keepalive loop is already driving.
+  On a screenless build the next ceremony then started with `spent == false`, so
+  the user's descending finger could confirm the attacker's `makeCredential` /
+  `getAssertion` instead. The single flag becomes a typed `WAIT_SCOPE` set around
+  every dispatch; `request_cancel` honours it exactly as `cancel_otp_wait` already
+  did, and the keepalive advertises `UPNEEDED` only for the channel that owns the
+  wait (which also closes a cross-transport "a touch is imminent" oracle).
+- **The trusted display's device PIN is a first-class credential on the host path.**
+  The FIDO vendor gate keyed solely on the clientPIN, so a display build whose owner
+  completed the panel's own onboarding — device PIN set, no clientPIN — exported its
+  master seed on one touch, and a panel lock did not stand in the way (a host
+  ceremony paints over it). `pin_gate` now falls back to a device-PIN entry on the
+  device's own pad, covering `BACKUP_EXPORT`, `BACKUP_LOAD`, `ATT_IMPORT`,
+  `ATT_CLEAR` and the audit subcommands.
+- **The on-device auto-lock has its own deadline.** It rode on the display-sleep
+  timer, which every host ceremony refreshed — including the ungated
+  `authenticatorSelection` — so a loop of them held the panel unlocked for the whole
+  plugged-in session. The lock now counts from the last *local* interaction, and it
+  re-arms without blanking, so "Display sleep: Off" no longer switches a security
+  control off with it.
+- **Seal backup and Firmware → reboot-to-BOOTSEL take the device PIN**, like every
+  other irreversible panel action. Sealing cannot be undone except by a factory
+  reset that destroys the seed it protects, and BOOTSEL is the entry point for the
+  issue-#37 flash-rollback.
+- **The passkey rename is device-PIN gated, and the delete card names the real
+  relying party.** A nickname replaces the rpId on the browse screens, so an
+  unauthenticated relabel could aim the owner's own PIN-gated delete at the wrong
+  credential.
+- **A host can no longer hold the on-device UI shut.** Modals abandoned themselves
+  the instant a host command queued, with no floor — and because `REQ` latches until
+  the worker drains it, one repeated ungated command kept the unlock pad closing on
+  its first poll. Entry and hold modals now keep a short guaranteed slice and never
+  yield mid-entry or mid-hold.
+- **Touch, the wake button and the auto-lock no longer depend on USB being
+  configured.** They sat behind the LED status, which stays at `Boot` until a host
+  completes `SET_CONFIGURATION`, so on charger or battery power the panel animated
+  but ignored every touch.
+- **The at-rest scrub is re-armed by the lazy OpenPGP migration.** The one-shot
+  compaction lap latched at boot, but the OpenPGP DEK chain and its verifiers migrate
+  off the pre-OTP key base on the *first PIN verify* — appends, leaving the superseded
+  chip-serial-rooted copies readable in a flash dump forever. That contradicted the
+  threat model's "a flash dump cannot brute-force the PIN offline": the pre-OTP root
+  derives from the public chip serial. `EF_HARDENED` moves to `rsk-fs` and the
+  migration clears it, so the next boot scrubs.
+- **A host-requested warm reboot no longer advances the Yubico-OTP use counter.**
+  `power_up_bump` ran on every `main`, so ~32768 ungated warm reboots saturated the
+  15-bit counter while the RAM session counter restarted at 0 — leaving the key
+  re-emitting `(useCtr, sessionCtr)` pairs a validation server rejects as replays.
+- **The OTP keyboard transport zeroizes its buffers** (frame reassembly, the taken
+  request, the type queue) and joins the pre-BOOTSEL scrub. They could hold a slot's
+  AES key, private UID, access code or static password.
+- **`forcesig` holds on OpenPGP PSO:CDS.** PW3 is still accepted for parity, but not
+  when the card is configured "PW1 valid for one signature" — only PW1 can be cleared
+  per signature, so an admin-PIN entry would otherwise have authorised unlimited
+  signatures silently.
+- **`TERMINATE DF` fails instead of reporting a wipe it could not prove.**
+  `wipe_openpgp` used `delete` (which skips a false-absent file `for_each_key` keeps
+  yielding, so the sweep could spin) and discarded the enumeration's completeness
+  flag. It now matches the FIDO and PIV sweeps: `force_delete`, a delete budget, and
+  `MEMORY_FAILURE` on a truncated walk.
+- **`rsk offboard`, `rsk inventory verify` and `rsk backup restore/finalize` refuse
+  to guess between two attached keys.** The PC/SC half picks its device by reader
+  name and the HID half took the first match, so offboard could confirm one device's
+  serial and factory-reset another's FIDO identity, and `inventory verify` could bind
+  a serial to a different device's attestation key — the enrollment anchor
+  `docs/guides/fleet.md` tells operators to record. `ctaphid.find_all` is new;
+  `connect_fido(exclusive=True)` gates the destructive callers.
+- **`rsk backup export` no longer prints the PIN beside the mnemonic.** The export is
+  gated on touch *plus* the PIN; echoing it into the block the user was just told to
+  record collapsed both factors into one artifact.
+- **`rsk-tui`: no first-reader fallback, a real reboot status word, and the audit
+  window cross-check.** With CCID absent the cockpit connected to whatever card was
+  in a reader — SELECTing five applets on it every 5 s and rendering its PIN counters
+  as the RS-Key's. `reboot` reported a declined on-screen gate as success. `audit_read`
+  kept only the modulo check under a comment claiming parity with `audit.py`, so a
+  device could present 1 of N events as a complete window. The header also refuses to
+  vouch for an identity when more than one FIDO device is attached.
+
+### Fixed
+
+- **Board files: flash size and LED pins.** `waveshare-touch-lcd` and `tenstar-usb`
+  declared `size_mb = 4` where every other reference (nix, CI, the docs, the flash-map
+  diagram) builds them at 16M — a 12 MiB shift of the key store, which reads as an
+  empty device and boots a display build unlocked. `tenstar-usb` and `seeed-xiao`
+  pointed the WS2812 at GP16 (the Waveshare One's pin) instead of the hardware-verified
+  GP22, leaving the consent indicator dark. Each shipped board file is now smoke-built
+  in CI, and `BOARD=` is documented in `docs/build.md`.
+- **`build.rs` rejects instead of truncating.** `u8()` wrapped an out-of-range pin into
+  a plausible one *before* the resolvers' range asserts could see it, and the four
+  display control pins had no range check at all — a value ≥ 128 aliases onto a real
+  GPIO through embassy's bit-7-banked `AnyPin`. Board-file booleans now accept the same
+  spellings the env resolvers do (`yes`/`on`) and panic on anything else, rather than
+  silently reading as `false`; `presence.source` is matched case-insensitively.
+
+
 Audit run-30 fixes (bcdDevice `0x085D`, `rsk` 0.3.21, `rsk-tui` 0.3.2):
 
 - **The OTP frame protocol is served on the keyboard interface only again.** It
