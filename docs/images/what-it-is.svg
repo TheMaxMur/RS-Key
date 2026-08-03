@@ -1,0 +1,78 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 RS-Key contributors -->
+<svg viewBox="0 0 900 320" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="ttl dsc" font-family="'Segoe UI', system-ui, -apple-system, sans-serif">
+  <title id="ttl">What RS-Key is</title>
+  <desc id="dsc">Three columns. Left: any RP2350 board, from about five dollars, such as a Pico 2, a Waveshare stick or a Seeed XIAO. An arrow labelled "flash one .uf2" leads to the middle: RS-Key, open-source firmware written in Rust. A second arrow labelled USB leads to what the board then does: passkey and WebAuthn logins, ssh and git signing, an OpenPGP card for gpg, a PIV smart card, and TOTP or HOTP codes. RS-Key is firmware, not a product for sale and not a mod for an existing key.</desc>
+  <defs>
+    <style>
+      .hd{font-size:11px;font-weight:700;fill:#948A7F;letter-spacing:1.2px}
+      .big{font-size:15px;font-weight:700;fill:#2B2723}
+      .sub{font-size:11.5px;fill:#6B645C}
+      .dim{font-size:11px;fill:#948A7F}
+      .brand{font-size:26px;font-weight:700;fill:#fff}
+      .bsub{font-size:12.5px;fill:#F6DCCE}
+      .bmono{font-size:11px;fill:#EFC4AB;font-family:'SF Mono','Roboto Mono',ui-monospace,monospace}
+      .chip{font-size:12.5px;fill:#2B2723}
+      .arw{font-size:11.5px;font-weight:700;fill:#5A534B}
+      .foot{font-size:10.5px;fill:#ADA398}
+    </style>
+  </defs>
+  <rect x="6" y="6" width="888" height="308" rx="16" fill="#FBFAF8" stroke="#E4DED5" stroke-width="1.5"/>
+
+  <text class="hd" x="36" y="44">A BOARD YOU BUY</text>
+  <text class="hd" x="350" y="44">THIS REPOSITORY</text>
+  <text class="hd" x="640" y="44">WHAT IT THEN DOES</text>
+
+  <!-- left: the board -->
+  <rect x="36" y="62" width="200" height="160" rx="12" fill="#fff" stroke="#E4DED5" stroke-width="1.5"/>
+  <rect x="66" y="104" width="22" height="18" rx="2" fill="#ADA398"/>
+  <rect x="86" y="96" width="100" height="34" rx="6" fill="#3E3A36"/>
+  <circle cx="170" cy="113" r="4" fill="#2F7E75"/>
+  <rect x="98" y="106" width="30" height="14" rx="3" fill="#5A534B"/>
+  <text class="big" x="136" y="164" text-anchor="middle">Any RP2350 board</text>
+  <text class="sub" x="136" y="184" text-anchor="middle">Pico 2 · Waveshare · XIAO</text>
+  <text class="dim" x="136" y="203" text-anchor="middle">from about $5, plus a USB cable</text>
+
+  <!-- arrow 1 -->
+  <text class="arw" x="296" y="124" text-anchor="middle">flash one .uf2</text>
+  <line x1="248" y1="142" x2="328" y2="142" stroke="#D9D2C8" stroke-width="6"/>
+  <path d="M326 131 L344 142 L326 153 z" fill="#A9764F"/>
+  <text class="dim" x="296" y="170" text-anchor="middle">drag and drop</text>
+
+  <!-- middle: the firmware -->
+  <rect x="350" y="62" width="200" height="160" rx="12" fill="#C0562B"/>
+  <text class="brand" x="450" y="124" text-anchor="middle">RS-Key</text>
+  <text class="bsub" x="450" y="148" text-anchor="middle">open-source firmware</text>
+  <text class="bmono" x="450" y="182" text-anchor="middle">Rust · no_std · AGPL-3.0</text>
+
+  <!-- arrow 2 -->
+  <text class="arw" x="595" y="124" text-anchor="middle">USB</text>
+  <line x1="562" y1="142" x2="618" y2="142" stroke="#D9D2C8" stroke-width="6"/>
+  <path d="M616 131 L634 142 L616 153 z" fill="#A9764F"/>
+
+  <!-- right: the capabilities -->
+  <g fill="#fff" stroke="#E4DED5" stroke-width="1.5">
+    <rect x="640" y="62"  width="224" height="26" rx="8"/>
+    <rect x="640" y="94"  width="224" height="26" rx="8"/>
+    <rect x="640" y="126" width="224" height="26" rx="8"/>
+    <rect x="640" y="158" width="224" height="26" rx="8"/>
+    <rect x="640" y="190" width="224" height="26" rx="8"/>
+  </g>
+  <g fill="#2F7E75">
+    <circle cx="659" cy="75"  r="4"/>
+    <circle cx="659" cy="107" r="4"/>
+    <circle cx="659" cy="139" r="4"/>
+    <circle cx="659" cy="171" r="4"/>
+    <circle cx="659" cy="203" r="4"/>
+  </g>
+  <text class="chip" x="675" y="79">Passkey / WebAuthn logins</text>
+  <text class="chip" x="675" y="111">ssh and git signing</text>
+  <text class="chip" x="675" y="143">OpenPGP card for gpg</text>
+  <text class="chip" x="675" y="175">PIV smart card</text>
+  <text class="chip" x="675" y="207">TOTP / HOTP codes</text>
+
+  <line x1="36" y1="252" x2="864" y2="252" stroke="#EFEAE3" stroke-width="1.5"/>
+  <text class="foot" x="36" y="274">Firmware, not a product for sale, and not a mod for an existing key.</text>
+  <text class="foot" x="36" y="292">Experimental: no external audit, and the RP2350 is not a secure element. Read the threat model first.</text>
+  <text class="foot" x="864" y="274" text-anchor="end">github.com/TheMaxMur/RS-Key</text>
+</svg>
