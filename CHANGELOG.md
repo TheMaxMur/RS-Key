@@ -13,6 +13,24 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+### Changed
+
+- **The README and the docs landing page say what RS-Key is before they say how
+  it works.** Both now open with one line ("an open-source hardware passkey"),
+  a three-row what-this-is / what-you-need / what-you-get table, and a figure
+  ([`docs/images/what-it-is.svg`](docs/images/what-it-is.svg)): board, plus this
+  firmware, equals passkey logins, `ssh` and `git` signing, an OpenPGP card, PIV
+  and TOTP. A first-time reader could previously not tell whether the project
+  was a device for sale, a mod for an existing key, or firmware. The board photo
+  that made it read as a shop moves down to Hardware, and the CI badges move to
+  Development setup.
+- **The quick start starts from a released `.uf2`, not from a toolchain.**
+  Downloading `rs-key-<version>-default.uf2` and dropping it on the board is the
+  documented path in both `README.md` and [quickstart.md](docs/quickstart.md);
+  building it yourself is the alternative behind a fold. The README gained a
+  four-row "which image for my board" table pointing at
+  [releases.md](docs/releases.md).
+
 ## [0.4.5] - 2026-08-03
 
 ### Security

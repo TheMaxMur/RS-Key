@@ -3,13 +3,17 @@
 
 # RS-Key
 
-RS-Key (RSK) is open-source security-key firmware for the Raspberry Pi RP2350.
-It turns an RP2350 board into a USB authenticator: FIDO2/WebAuthn/U2F,
-OpenPGP card, PIV, OATH, Yubico-style OTP. It ships the host-side tooling to
-drive and provision it.
+**An open-source hardware passkey.** Flash one file onto a Raspberry Pi RP2350
+board and it becomes a USB security key: passkey logins in the browser, `ssh`
+and `git` signing, GPG, PIV, and TOTP codes.
 
-Written in Rust (`no_std`, [embassy](https://embassy.dev)). For development,
-research, and controlled experiments.
+| | |
+|---|---|
+| **What this is** | Firmware. A `.uf2` file you drop onto a board. Nothing here is for sale. |
+| **What you need** | Any RP2350 board (from about $5) and a USB cable. No soldering, no programmer, no toolchain. |
+| **What you get** | A USB authenticator your browser, `ssh`, `gpg` and `ykman` already know how to talk to. |
+
+![What RS-Key is: any RP2350 board, plus this firmware, gives you passkey and WebAuthn logins, ssh and git signing, an OpenPGP card for gpg, a PIV smart card, and TOTP codes](images/what-it-is.svg)
 
 > **This project is experimental.** It has had no external security audit. The
 > RP2350 is not a secure element. A stolen board is only as strong as the
@@ -18,16 +22,16 @@ research, and controlled experiments.
 > [threat model](threat-model.md) and [limitations](limitations.md) before
 > trusting it with anything real.
 
-```mermaid
-flowchart TD
-    user["You"] --> tools["Host tools<br/>browser · ssh · gpg · ykman · rsk"]
-    tools -->|USB| dev["RS-Key firmware (applets)"]
-    dev --> hw["RP2350 board<br/>flash · TRNG · OTP"]
-```
+Written in Rust (`no_std`, [embassy](https://embassy.dev)). Under the hood it is
+FIDO2/WebAuthn/U2F, an OpenPGP card, PIV, OATH and Yubico-style OTP, plus the
+host-side tooling to drive and provision all of it.
 
 ## Start here
 
-- **[Quick start](quickstart.md)**: build, flash, set a PIN, enroll something
+- **[Quick start](quickstart.md)**: flash a released image, set a PIN, enroll
+  something. No toolchain needed; the images are on the
+  [releases page](https://github.com/TheMaxMur/RS-Key/releases/latest) and
+  [releases.md](releases.md) says which one to take
 - **[Hardware](hardware.md)**: supported boards and the knobs for them
 - **[Build options](build.md)**: every compile-time flag and environment knob
 - **[Using the device](guides/fido2.md)**: per-feature guides for FIDO2, SSH,

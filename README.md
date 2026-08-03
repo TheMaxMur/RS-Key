@@ -4,23 +4,17 @@
 [![deep-checks](https://github.com/TheMaxMur/RS-Key/actions/workflows/deep-checks.yml/badge.svg)](https://github.com/TheMaxMur/RS-Key/actions/workflows/deep-checks.yml)
 [![docs](https://github.com/TheMaxMur/RS-Key/actions/workflows/pages.yml/badge.svg)](https://themaxmur.github.io/RS-Key/)
 
-<table align="center">
-  <tr>
-    <td align="center" valign="top"><img src="assets/hero-boards.jpg" height="440" alt="Three RS-Key boards on a blueprint background: a bare RP2350 USB stick, the trusted-display variant showing its Home &quot;Ready&quot; screen (USB connected, Device PIN set, 2 passkeys), and a Waveshare RP2350-One"></td>
-    <td align="center" valign="top"><img src="assets/webauthn-demo.gif" height="440" alt="Registering a passkey on webauthn.io with the trusted-display build: the device screen shows a Device PIN pad, then an Approve / Save-passkey prompt, and the browser confirms you are logged in — the PIN and the approval both happen on the device's own screen"></td>
-  </tr>
-  <tr>
-    <td align="center"><sub>Three boards, one firmware — stick · trusted display · RP2350-One</sub></td>
-    <td align="center"><sub>Registering a passkey — the PIN &amp; Approve/Deny happen on the device's own screen</sub></td>
-  </tr>
-</table>
+**An open-source hardware passkey.** Flash one file onto a Raspberry Pi
+**RP2350** board and it becomes a USB security key: passkey logins in the
+browser, `ssh` and `git` signing, GPG, PIV, and TOTP codes.
 
-RS-Key (RSK, *Raspberry Security Key* — also a nod to its being written in Rust)
-is open-source security-key firmware for the Raspberry Pi **RP2350**. It makes an
-RP2350 board behave like a USB authenticator and ships the host tooling to drive
-it. It is written in Rust (`no_std`, [embassy](https://embassy.dev)) and is meant
-for development, research, and controlled experiments — **not** as a drop-in
-replacement for an audited commercial key.
+| | |
+|---|---|
+| **What this is** | Firmware. A `.uf2` file you drop onto a board. Nothing here is for sale. |
+| **What you need** | Any RP2350 board (from about $5) and a USB cable. No soldering, no programmer, no toolchain. |
+| **What you get** | A USB authenticator your browser, `ssh`, `gpg` and `ykman` already know how to talk to. |
+
+![What RS-Key is: any RP2350 board, plus this firmware, gives you passkey and WebAuthn logins, ssh and git signing, an OpenPGP card for gpg, a PIV smart card, and TOTP codes](docs/images/what-it-is.svg)
 
 > **This project is experimental.** It has had no external security audit, the
 > RP2350 is not a secure element, and a stolen board is only as strong as the
@@ -29,22 +23,40 @@ replacement for an audited commercial key.
 > [threat model](docs/threat-model.md) and [limitations](docs/limitations.md)
 > before trusting it with anything real.
 
-## Documentation
+## Quick start
 
-The docs live in [docs/](docs/) and are published as a site:
-**<https://themaxmur.github.io/RS-Key/>**.
+From a fresh board to a passkey login. Nothing to build.
 
-| | |
+1. Download the newest **`rs-key-<version>-default.uf2`** from the
+   [releases page](https://github.com/TheMaxMur/RS-Key/releases/latest).
+2. Hold the board's **BOOT** button while you plug it in. A drive named
+   `RP2350` appears.
+3. Copy the `.uf2` onto that drive. The board reboots as a security key.
+4. Go to [webauthn.io](https://webauthn.io) and register a passkey. The browser
+   walks you through setting a PIN the first time, then asks for a touch: press
+   the **BOOT** button.
+
+Which file to take:
+
+| Your board | Image |
 |---|---|
-| [Quick start](docs/quickstart.md) | flash, enroll, first login |
-| [Hardware](docs/hardware.md) | supported boards and build knobs |
-| [Build options](docs/build.md) | every flag: VID/PID presets, version, touch, PQC, FIPS profile |
-| [Production setup](docs/production.md) | OTP fuses + secure boot, step by step (**irreversible**) |
-| [Feature guides](docs/guides/) | FIDO2, SSH, OpenPGP, PIV, OATH, OTP, backup, soft-lock, LED, audit, … |
-| [Threat model](docs/threat-model.md) · [Limitations](docs/limitations.md) | what it protects against, and what it does not |
-| [Architecture](docs/architecture.md) · [`unsafe` audit](docs/unsafe.md) | how it's built; every `unsafe` site |
-| [Testing](docs/testing.md) · [Interop](docs/interop.md) | host tests, fuzzing; real-tool results |
-| [Linux setup](docs/linux.md) · [Motivation](docs/motivation.md) | pcscd/udev/polkit; why this exists |
+| Most RP2350 boards, 4 MB flash | `default` |
+| 2 MB flash (Seeed XIAO RP2350, Waveshare RP2350-Zero-CM) | `2mb` |
+| 16 MB flash (TenStar RP2350-USB) | `16mb` |
+| Waveshare RP2350-Touch-LCD-2.8 | `display` |
+
+The other ten images are behaviour variants (post-quantum algorithms, the FIPS
+profile, `alwaysUv`, PIN hardening). Full table, plus how to verify the cosign
+signature and reproduce the build yourself: [docs/releases.md](docs/releases.md).
+
+The longer walkthrough, with the PIN, `ssh` and `gpg` steps, is
+[docs/quickstart.md](docs/quickstart.md). On Linux the smart-card half needs a
+little host setup first: [docs/linux.md](docs/linux.md).
+
+<p align="center">
+  <img src="assets/webauthn-demo.gif" width="240" alt="Registering a passkey on webauthn.io with the trusted-display build: the device screen shows a Device PIN pad, then an Approve / Save-passkey prompt, and the browser confirms you are logged in. The PIN and the approval both happen on the device's own screen"><br>
+  <sub>Step 4 on the <code>display</code> image: the PIN and the Approve/Deny happen on the device's own screen</sub>
+</p>
 
 ## What it supports
 
@@ -98,16 +110,41 @@ Any RP2350 board with USB. Developed and tested on the **Waveshare RP2350-One**
 size, LED pin, or presence-button GPIO is a one-line build knob. Details:
 [docs/hardware.md](docs/hardware.md).
 
-## Quick start
+<p align="center">
+  <img src="assets/hero-boards.jpg" width="330" alt="Three RS-Key boards on a blueprint background: a bare RP2350 USB stick, the trusted-display variant showing its Home &quot;Ready&quot; screen (USB connected, Device PIN set, 2 passkeys), and a Waveshare RP2350-One"><br>
+  <sub>Three boards, one firmware: stick · trusted display · RP2350-One</sub>
+</p>
+
+## Documentation
+
+The docs live in [docs/](docs/) and are published as a site:
+**<https://themaxmur.github.io/RS-Key/>**.
+
+| | |
+|---|---|
+| [Quick start](docs/quickstart.md) | flash, enroll, first login |
+| [Hardware](docs/hardware.md) | supported boards and build knobs |
+| [Build options](docs/build.md) | every flag: VID/PID presets, version, touch, PQC, FIPS profile |
+| [Production setup](docs/production.md) | OTP fuses + secure boot, step by step (**irreversible**) |
+| [Feature guides](docs/guides/) | FIDO2, SSH, OpenPGP, PIV, OATH, OTP, backup, soft-lock, LED, audit, … |
+| [Threat model](docs/threat-model.md) · [Limitations](docs/limitations.md) | what it protects against, and what it does not |
+| [Architecture](docs/architecture.md) · [`unsafe` audit](docs/unsafe.md) | how it's built; every `unsafe` site |
+| [Testing](docs/testing.md) · [Interop](docs/interop.md) | host tests, fuzzing; real-tool results |
+| [Linux setup](docs/linux.md) · [Motivation](docs/motivation.md) | pcscd/udev/polkit; why this exists |
+
+## Build it yourself
+
+The release images are reproducible, so you can rebuild any of them bit for bit
+([docs/releases.md](docs/releases.md)). To build your own:
 
 ```sh
 git clone https://github.com/TheMaxMur/RS-Key && cd RS-Key
-nix develop                       # toolchain, picotool, host tools — everything
+nix develop                       # toolchain, picotool, host tools, everything
 
 cargo build --release -p firmware
 picotool uf2 convert target/thumbv8m.main-none-eabihf/release/firmware -t elf firmware.uf2
 
-# hold BOOTSEL, plug the board in, then flash — either way:
+# hold BOOTSEL, plug the board in, then flash, either way:
 cp firmware.uf2 /Volumes/RP2350/                    # macOS drag-and-drop; Linux: the mounted RP2350 volume
 picotool load -v firmware.uf2 && picotool reboot    # more robust; verifies the write (use if cp flakes)
 ```
@@ -115,12 +152,12 @@ picotool load -v firmware.uf2 && picotool reboot    # more robust; verifies the 
 Re-plug the board and it enumerates as a composite USB authenticator. The default
 build requires a **physical touch** (the BOOTSEL button) for FIDO operations;
 build with `--features no-touch` for a no-touch build (the automated test
-suites need it). Full walkthrough: [docs/quickstart.md](docs/quickstart.md).
-On Linux, the CCID half needs a little host setup: [docs/linux.md](docs/linux.md).
+suites need it). Every compile-time knob, including the flash size, LED pin and
+USB identity, is in [docs/build.md](docs/build.md).
 
 ## Development setup
 
-`nix develop` is the whole setup — Rust with the `thumbv8m.main-none-eabihf`
+`nix develop` is the whole setup: Rust with the `thumbv8m.main-none-eabihf`
 target, `picotool`, the Python host stack, and the security tooling. One command
 is the merge gate, and CI runs exactly the same script:
 
@@ -197,3 +234,6 @@ the AGPL-3.0-**only** [pico-keys](https://github.com/polhenarejos) firmware
 family (pico-fido / pico-openpgp / pico-keys-sdk) by Pol Henarejos; the upstream
 grant is version-3-only, so RS-Key inherits it and so must forks. Not affiliated
 with or endorsed by Yubico, Nitrokey, or Raspberry Pi. See [motivation](docs/motivation.md).
+
+<sub>The name: **R**aspberry **S**ecurity **Key**, and a nod to Rust. Nothing to
+do with RSA. The crates and the CLI shorten it to `rsk`.</sub>

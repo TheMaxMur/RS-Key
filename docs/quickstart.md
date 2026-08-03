@@ -8,8 +8,7 @@ From zero to a working security key in about ten minutes.
 
 ```mermaid
 flowchart TD
-    a["nix develop · cargo build"] --> b["firmware.uf2"]
-    b --> c["hold BOOT, plug in"]
+    a["download rs-key-&lt;version&gt;-default.uf2<br/>(or build it yourself)"] --> c["hold BOOT, plug in"]
     c --> d["flash: drag-and-drop or picotool load"]
     d --> e["board reboots, enumerates over USB"]
     e --> f["set PIN, enroll a passkey / ssh key"]
@@ -19,12 +18,28 @@ flowchart TD
 
 - An RP2350 board (tested: Waveshare RP2350-One; any RP2350 with USB works)
 - A USB cable
-- [Nix](https://nixos.org/download/) with flakes enabled (the dev shell provides
-  everything: toolchain, `picotool`, host tools). Without Nix:
-  rustup + `rustup target add thumbv8m.main-none-eabihf` + picotool ≥ 2.0,
-  and the Python deps from `flake.nix` for the host tools.
 
-## 1. Build
+That is the whole list. You only need a toolchain if you want to build the
+firmware yourself instead of downloading it.
+
+## 1. Get the firmware
+
+Download the newest `rs-key-<version>-default.uf2` from the
+[releases page](https://github.com/TheMaxMur/RS-Key/releases/latest). Take
+`2mb`, `16mb` or `display` instead if that is your board;
+[releases.md](releases.md) has the table of all fourteen images, the cosign
+signature check, and the reproducibility check.
+
+Every published image is a **touch build**: FIDO operations (registering,
+logging in) require a press of the presence button, BOOTSEL by default.
+
+<details>
+<summary>Or build it yourself</summary>
+
+You need [Nix](https://nixos.org/download/) with flakes enabled; the dev shell
+provides the toolchain, `picotool` and the host tools. Without Nix: rustup +
+`rustup target add thumbv8m.main-none-eabihf` + picotool ≥ 2.0, and the Python
+deps from `flake.nix`.
 
 ```sh
 nix develop                                  # first run downloads the toolchain
@@ -32,17 +47,18 @@ cargo build --release -p firmware
 picotool uf2 convert target/thumbv8m.main-none-eabihf/release/firmware -t elf firmware.uf2
 ```
 
-This is the **touch build**: FIDO operations (registering, logging in) require
-a press of the presence button (BOOTSEL by default; set `PRESENCE_PIN=<gpio>` for
-a dedicated GPIO button). For a no-touch build (needed by the automated test
-suites, or if your board is hard to reach) add `--features no-touch`. All build knobs:
-[build.md](build.md).
+Set `PRESENCE_PIN=<gpio>` for a dedicated presence button instead of BOOTSEL.
+For a no-touch build (needed by the automated test suites, or if your board is
+hard to reach) add `--features no-touch`. All build knobs: [build.md](build.md).
+
+</details>
 
 ## 2. Flash
 
 1. Hold the **BOOT** button while plugging the board in (or hold BOOT, tap
    RESET). A mass-storage drive named `RP2350` appears.
-2. Flash it, either way:
+2. Flash it, either way (`firmware.uf2` here is whichever `.uf2` you got in
+   step 1):
    - **Drag-and-drop:** `cp firmware.uf2 /Volumes/RP2350/` (macOS) or copy it to
      the mounted drive on Linux.
    - **picotool (more reliable: it verifies and skips the mass-storage layer):**
@@ -62,7 +78,7 @@ suites, or if your board is hard to reach) add `--features no-touch`. All build 
    Authenticator auto-recognize it, build the opt-in `VIDPID=Yubikey5`
    flavor; see [build.md](build.md).)
 
-Check it:
+Check it (optional, needs the host tools from the dev shell or `tools/`):
 
 ```sh
 rsk status        # FIDO getInfo + secure-boot + backup state, over USB
@@ -78,6 +94,9 @@ place.
 ```sh
 rsk fido set-pin
 ```
+
+Without the host tools, your browser does the same job: it offers to set a PIN
+the first time you register a passkey.
 
 Browsers and `ssh-keygen` will prompt for it when enrolling. 8 wrong attempts
 lock the PIN until a reset. Standard security-key behaviour.

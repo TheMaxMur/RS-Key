@@ -19,6 +19,7 @@ the mdBook site.
 
 | File | What | Source |
 |---|---|---|
+| `what-it-is.svg` | Landing figure: board + this firmware = what it then does | original — from `README.md` / `index.md` |
 | `flash-map.svg` | RP2350-One 4 MB flash address map | original — from `firmware/memory.x` / `flash_storage.rs` |
 | `flash-map-sizes.svg` | 4 MB vs 16 MB layout (how `FLASH_SIZE` scales it) | original — from `firmware/build.rs` |
 | `ctaphid-frame.svg` | CTAPHID 64-byte init + continuation frame layout | original — from `protocol.md` §1.2 / `tools/rsk/ctaphid.py` |
