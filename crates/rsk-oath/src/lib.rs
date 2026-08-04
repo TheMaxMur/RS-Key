@@ -374,13 +374,15 @@ impl<'a> OathApplet<'a> {
         if apdu.p1 != 0xDE || apdu.p2 != 0xAD {
             return Sw::INCORRECT_P1P2;
         }
-        let mut fids = [0u16; MAX_OATH_CRED as usize];
-        let n = present_creds(fs, &mut fids);
-        for &fid in &fids[..n] {
-            let _ = fs.delete(fid);
+        // Prove the wipe rather than assume it. `present_creds` reads the in-RAM
+        // present bitmap, which a boot scan truncated by a read fault leaves
+        // *undecided* — so a live credential was skipped and the host still got
+        // `9000` over a store that kept its TOTP secrets, the access code and the
+        // OTP-PIN. PIV, OpenPGP and FIDO reset all enumerate through `for_each_key`,
+        // honour its `complete` flag and propagate; this was the outlier (run-33).
+        if let Err(sw) = wipe_oath(fs) {
+            return sw;
         }
-        let _ = fs.delete_key(EF_OATH_CODE);
-        let _ = fs.delete(EF_OTP_PIN);
         self.validated = true;
         Sw::OK
     }
@@ -1154,6 +1156,51 @@ fn present_creds<S: Storage>(fs: &mut Fs<S>, out: &mut [u16; MAX_OATH_CRED as us
         }
     }
     n
+}
+
+/// Whether `fid` belongs to this applet: the 255 credential slots, the access-code
+/// key and the OTP-PIN. Scoped so an OATH reset never touches another applet.
+fn is_oath_fid(fid: u16) -> bool {
+    (EF_OATH_CRED..=EF_OATH_CODE.get()).contains(&fid) || fid == EF_OTP_PIN
+}
+
+/// Progress backstop for [`wipe_oath`]: every batched `force_delete` clears one
+/// *distinct* live fid and [`is_oath_fid`] spans 257 of them, so needing more
+/// deletes than that means the backend keeps re-yielding what it removed.
+const RESET_MAX_DELETES: u32 = 257;
+
+/// Delete every live OATH record, and say so only when the sweep provably
+/// completed. Mirrors `rsk_piv::files::wipe_piv`: batched because `for_each_key`
+/// cannot delete mid-iteration, de-duped because it yields one entry per stored
+/// *version*, and `force_delete` so a present-cache false-absent cannot loop.
+fn wipe_oath<S: Storage>(fs: &mut Fs<S>) -> Result<(), Sw> {
+    let mut deleted = 0u32;
+    loop {
+        let mut fids = [0u16; 32];
+        let mut n = 0;
+        let complete = fs.for_each_key(&mut |fid| {
+            if is_oath_fid(fid) && n < fids.len() && !fids[..n].contains(&fid) {
+                fids[n] = fid;
+                n += 1;
+            }
+        });
+        if n == 0 {
+            // A truncated walk (flash read fault) can hide a live fid, so an empty
+            // batch only proves the range is clear when the enumeration completed.
+            return if complete {
+                Ok(())
+            } else {
+                Err(Sw::MEMORY_FAILURE)
+            };
+        }
+        deleted += n as u32;
+        if deleted > RESET_MAX_DELETES {
+            return Err(Sw::MEMORY_FAILURE);
+        }
+        for &fid in &fids[..n] {
+            fs.force_delete(fid).map_err(|_| Sw::MEMORY_FAILURE)?;
+        }
+    }
 }
 
 /// One stored credential's public metadata, unsealed for the trusted display.

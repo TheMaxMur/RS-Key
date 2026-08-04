@@ -374,8 +374,16 @@ fn att_clear<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> CtapResult {
         return Err(CtapError::OperationDenied);
     }
     gate(ctx, req, "Clear attestation key?")?;
-    let _ = ctx.fs.delete_key(EF_ATT_KEY);
-    let _ = ctx.fs.delete(EF_ATT_CHAIN);
+    // Prove both deletes, key first. Discarding them reported "org attestation
+    // removed" over a half-done erase: with the key surviving and the chain gone,
+    // `u2f::cmd_register` still takes the org branch and then fails the chain read,
+    // so U2F REGISTER answered 6F00 on every later call — the same key-without-chain
+    // state `att_import`'s ordering exists to prevent. Key first keeps the surviving
+    // combination the harmless one (a chain with no key falls back cleanly).
+    ctx.fs
+        .delete_key(EF_ATT_KEY)
+        .map_err(|_| CtapError::Other)?;
+    ctx.fs.delete(EF_ATT_CHAIN).map_err(|_| CtapError::Other)?;
     journal::append(ctx, journal::EV_ATT_CLEAR, 0, &[]);
     Ok(0)
 }

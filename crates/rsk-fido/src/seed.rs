@@ -73,7 +73,14 @@ pub const LOCK_BLOB_LEN: usize = 12 + 32 + 16;
 
 /// Whether the soft lock is engaged (the wrapped blob is what's on flash).
 pub fn lock_engaged<S: Storage>(fs: &mut Fs<S>) -> bool {
-    fs.has_key(EF_KEY_DEV_ENC)
+    // Both halves, not just the sealed copy. `aut_enable` writes `EF_KEY_DEV_ENC`
+    // and *then* deletes the plaintext `EF_KEY_DEV`; a power cut between the two
+    // left both records, and testing only the sealed one reported `locked: true`
+    // while `load_keydev` still read the surviving plaintext — so every FIDO
+    // operation worked and BACKUP_EXPORT still handed out the seed without the lock
+    // key. Reading the torn state as *unlocked* is the truth, and it lets
+    // `rsk lock enable` simply be retried (audit run-33).
+    fs.has_key(EF_KEY_DEV_ENC) && !fs.has_key(EF_KEY_DEV)
 }
 
 /// Wrap the seed value under a host-supplied 32-byte lock key (AUT_ENABLE).
