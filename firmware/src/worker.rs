@@ -52,6 +52,10 @@ enum Kind {
 /// The shared request/response buffer the transport fills and the worker drains.
 struct Exchange {
     kind: Kind,
+    /// CTAPHID channel the request arrived on (`Cbor` only); 0 for the transports
+    /// with no channel concept. Cross-message FIDO state that another channel must
+    /// not be able to hijack — the seed-backup MSE key — binds to it.
+    cid: u32,
     /// Logical vendor command number when `kind == Vendor`.
     vcmd: u8,
     /// Worker → transport: whether the vendor command was supported (`Vendor` only).
@@ -69,6 +73,7 @@ type Cs = CriticalSectionRawMutex;
 
 static EXCHANGE: Mutex<Cs, Exchange> = Mutex::new(Exchange {
     kind: Kind::Cbor,
+    cid: 0,
     vcmd: 0,
     vendor_ok: false,
     sec_status: 0,
@@ -105,12 +110,13 @@ pub(crate) fn host_request_pending() -> bool {
 /// return the length. The caller (a transport on the high-priority executor) wraps
 /// the `DONE.wait()` in a keepalive `select`, so keepalives keep flowing while the
 /// worker is blocked in synchronous crypto / flash.
-async fn roundtrip(kind: Kind, data: &[u8], out: &mut [u8]) -> usize {
+async fn roundtrip(kind: Kind, cid: u32, data: &[u8], out: &mut [u8]) -> usize {
     let _serialize = WORKER_LOCK.lock().await;
     {
         let mut ex = EXCHANGE.lock().await;
         let n = data.len().min(REQ_CAP);
         ex.kind = kind;
+        ex.cid = cid;
         ex.req_len = n;
         ex.req[..n].copy_from_slice(&data[..n]);
     }
@@ -191,11 +197,11 @@ async fn roundtrip_secure(data: &[u8], out: &mut [u8]) -> SecureResult {
 pub struct ClientCtap;
 
 impl MsgHandler for ClientCtap {
-    async fn handle_cbor(&mut self, data: &[u8], out: &mut [u8]) -> usize {
-        roundtrip(Kind::Cbor, data, out).await
+    async fn handle_cbor(&mut self, cid: u32, data: &[u8], out: &mut [u8]) -> usize {
+        roundtrip(Kind::Cbor, cid, data, out).await
     }
     async fn handle_msg(&mut self, data: &[u8], out: &mut [u8]) -> usize {
-        roundtrip(Kind::Msg, data, out).await
+        roundtrip(Kind::Msg, 0, data, out).await
     }
     fn reset_app_selection(&mut self) {
         MSG_DESELECT.store(true, core::sync::atomic::Ordering::Release);
@@ -210,14 +216,14 @@ pub struct ClientCcid;
 
 impl ApduHandler for ClientCcid {
     async fn handle_apdu(&mut self, apdu: &[u8], out: &mut [u8]) -> usize {
-        roundtrip(Kind::Apdu, apdu, out).await
+        roundtrip(Kind::Apdu, 0, apdu, out).await
     }
     async fn handle_secure(&mut self, data: &[u8], out: &mut [u8]) -> SecureResult {
         roundtrip_secure(data, out).await
     }
     async fn reset_card(&mut self) {
         let mut sink = [0u8; 2];
-        roundtrip(Kind::ResetCard, &[], &mut sink).await;
+        roundtrip(Kind::ResetCard, 0, &[], &mut sink).await;
     }
 }
 
@@ -408,6 +414,7 @@ impl<'a> Worker<'a> {
                 let u2f_denied = rsk_sdk::Sw::CONDITIONS_NOT_SATISFIED.to_bytes();
                 let Exchange {
                     kind,
+                    cid,
                     vcmd,
                     vendor_ok,
                     req_len,
@@ -418,7 +425,7 @@ impl<'a> Worker<'a> {
                 } = &mut *ex;
                 let r: &[u8] = match *kind {
                     Kind::Cbor if !fido2_on => &cbor_denied,
-                    Kind::Cbor => self.ctap.handle_cbor(&req[..*req_len]),
+                    Kind::Cbor => self.ctap.handle_cbor(*cid, &req[..*req_len]),
                     Kind::Msg if !u2f_on => &u2f_denied,
                     Kind::Msg => {
                         // A CTAPHID_INIT since the last MSG drops the applet

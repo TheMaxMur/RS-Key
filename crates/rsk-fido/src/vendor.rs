@@ -495,7 +495,7 @@ pub(crate) fn open_channel_key<S: Storage, R: Rng>(
 /// the 256-bit lock key *is* the authorization, and this runs on every
 /// power-up of a locked device.
 fn unlock<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> CtapResult {
-    if !ctx.state.mse_active {
+    if !ctx.state.mse_ready() {
         return Err(CtapError::NotAllowed);
     }
     let mut lock_key = open_channel_key(ctx, req.blob)?;
@@ -582,6 +582,11 @@ fn mse<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req, out: &mut [u8]) -> Ct
     ctx.state.mse_key = key;
     ctx.state.mse_pub = dev_pub;
     ctx.state.mse_active = true;
+    // Own the channel to the CID that ran the handshake: a re-key from another
+    // CTAPHID channel between a tool's MSE and its BACKUP_EXPORT must not silently
+    // redirect the seed. Overwriting freely (rather than refusing a live channel)
+    // keeps a squatter from denying the owner a handshake.
+    ctx.state.mse_cid = ctx.state.channel;
     key.zeroize();
 
     encode(out, |e| {
@@ -644,7 +649,7 @@ fn gate<S: Storage, R: Rng>(
     req: &Req,
     title: &'static str,
 ) -> Result<(), CtapError> {
-    if !ctx.state.mse_active {
+    if !ctx.state.mse_ready() {
         return Err(CtapError::NotAllowed);
     }
     pin_gate(ctx, req)?;

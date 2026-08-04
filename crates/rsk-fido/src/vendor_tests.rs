@@ -484,6 +484,48 @@ fn mse_then_export_roundtrips_seed() {
     assert_eq!(buf, seed);
 }
 
+// Audit run-33: `MSE` and `BACKUP_EXPORT` are separate CTAPHID transactions, so a
+// second process on its own CID can re-key the channel in between and have the
+// device encrypt the master seed under *its* key. The channel binding must make the
+// export refuse rather than misaddress the seed.
+#[cfg(not(feature = "fips-profile"))]
+#[test]
+fn export_refused_after_another_channel_rekeys_the_mse() {
+    let (mut fs, mut rng, mut st) = setup();
+
+    // The victim's tool runs its handshake on channel 1.
+    st.channel = 1;
+    let host = handshake(&mut fs, &mut rng, &mut st);
+
+    // An interloper on channel 2 runs its own handshake — allowed (refusing it
+    // would hand a squatter a denial-of-service), but it takes the channel with it.
+    st.channel = 2;
+    let _theirs = handshake(&mut fs, &mut rng, &mut st);
+    assert_eq!(st.mse_cid, 2);
+
+    // The victim's export, still on channel 1, must now fail closed.
+    st.channel = 1;
+    let mut req = [0u8; 32];
+    let n = one_byte_req(&mut req, VENDOR_BACKUP_EXPORT);
+    let mut out = [0u8; 128];
+    let err = call(
+        &mut fs,
+        &mut rng,
+        &mut st,
+        &mut AlwaysConfirm,
+        &req[..n],
+        &mut out,
+    )
+    .unwrap_err();
+    assert_eq!(err, CtapError::NotAllowed);
+
+    // And the interloper cannot spend the victim's touch either: its own export is
+    // gated the same way, so the seed never leaves under `host.key`.
+    let mut buf = [0u8; 32];
+    assert_ne!(st.mse_key, host.key);
+    buf.zeroize();
+}
+
 // Off the fips profile only: fips refuses export outright (see `fips_backup_export_refused`).
 #[cfg(not(feature = "fips-profile"))]
 #[test]

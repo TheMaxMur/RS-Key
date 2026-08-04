@@ -246,12 +246,16 @@ impl AppletHandler<'_> {
         &self.resp[..n + 2]
     }
 
-    pub fn handle_cbor(&mut self, data: &[u8]) -> &[u8] {
+    pub fn handle_cbor(&mut self, cid: u32, data: &[u8]) -> &[u8] {
         let dev = Device {
             serial_hash: &self.serial_hash,
             serial_id: &self.serial_id,
             otp_key: self.otp_key.as_ref(),
         };
+        // Which CTAPHID channel is asking. Cross-message state a second process on
+        // its own channel must not be able to ride — the seed-backup MSE key —
+        // binds to this (see `FidoState::mse_ready`).
+        self.fido_state.channel = cid;
         // Since the USB attach, not since power-up: the §6.6 reset window a host has
         // to hit is measured from the moment the device could answer at all.
         let now_ms = crate::usb_attach::elapsed_ms();

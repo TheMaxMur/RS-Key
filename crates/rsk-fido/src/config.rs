@@ -309,7 +309,7 @@ fn aut_enable<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, param: &[u8]) -> CtapResu
     if !ctx.fs.has_key(EF_KEY_DEV) {
         return Err(CtapError::NotAllowed); // already locked, or no seed at all
     }
-    if !ctx.state.mse_active {
+    if !ctx.state.mse_ready() {
         return Err(CtapError::NotAllowed);
     }
     let mut lock_key = open_channel_key(ctx, param)?;

@@ -257,6 +257,13 @@ pub struct FidoState {
     /// ChaCha20-Poly1305 channel key and the device ephemeral public key (the
     /// AEAD AAD). RAM-only; the key is zeroized on `Drop` and a reset.
     pub mse_active: bool,
+    /// The channel [`Self::channel`] held when that handshake ran. `mse_active`
+    /// alone is not enough: `MSE` and `BACKUP_EXPORT` are separate CTAPHID
+    /// transactions, so the worker lock does not span them, and a second process
+    /// on its own CID can re-key the channel in between — the export would then
+    /// encrypt the master seed under the interloper's key. Binding the channel
+    /// makes that refuse instead. Checked through [`Self::mse_ready`].
+    pub mse_cid: u32,
     pub mse_key: [u8; 32],
     pub mse_pub: [u8; 65],
     /// Soft-lock: the seed decrypted by a vendor `UNLOCK`. RAM-only — held until
@@ -275,6 +282,11 @@ pub struct FidoState {
     /// up" (the CTAP 2.1 §6.6 reset window) must refuse to trust the restarted
     /// uptime. Power-cycle fact, not session state: survives [`Self::reset`].
     pub warm_boot: bool,
+    /// Transport channel of the request being dispatched — the CTAPHID CID, or 0
+    /// for a transport with no channel concept. A property of the in-flight
+    /// request like `Ctx::now_ms`, stamped by the firmware before each dispatch;
+    /// survives [`Self::reset`] because the request outlives the state it clears.
+    pub channel: u32,
 }
 
 impl Default for FidoState {
@@ -298,13 +310,22 @@ impl FidoState {
             cm: CredMgmtState::new(),
             lba: LargeBlobState::new(),
             mse_active: false,
+            mse_cid: 0,
             mse_key: [0; 32],
             mse_pub: [0; 65],
             keydev_dec: None,
             devk: None,
             audit_boot_logged: false,
             warm_boot: false,
+            channel: 0,
         }
+    }
+
+    /// Whether the seed-backup channel is live **and** owned by the channel this
+    /// request arrived on. Every consumer of `mse_key`/`mse_pub` gates on this,
+    /// never on `mse_active` alone.
+    pub fn mse_ready(&self) -> bool {
+        self.mse_active && self.mse_cid == self.channel
     }
 
     /// Drop the unlocked seed copy (disable / reset), zeroizing it first.
@@ -318,15 +339,17 @@ impl FidoState {
     /// Clear all session state after a reset (the `Drop` impl zeroizes the old
     /// token / session key / ephemeral scalar). The DEVK, the journal's boot-entry
     /// flag and the warm-boot origin are device/power-cycle facts, not session
-    /// state — they carry across.
+    /// state — they carry across, as does the in-flight request's channel.
     pub fn reset(&mut self) {
         let devk = self.devk;
         let audit_boot_logged = self.audit_boot_logged;
         let warm_boot = self.warm_boot;
+        let channel = self.channel;
         *self = Self::new();
         self.devk = devk;
         self.audit_boot_logged = audit_boot_logged;
         self.warm_boot = warm_boot;
+        self.channel = channel;
     }
 
     /// The clientPIN soft lock to persist across a warm reset (see [`PinLock`]).
