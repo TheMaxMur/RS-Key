@@ -23,7 +23,11 @@ const N_SMALL: usize = 1280;
 /// before the (relatively) expensive strong-MR modexp. How many of them a given
 /// candidate is actually divided by is [`sieve_count`] of its length — the
 /// larger the prime, the dearer that modexp, so the deeper it pays to sieve.
-const SMALL_PRIMES: [u32; N_SMALL] = build_small_primes();
+///
+/// In SRAM on the device — see [`IncrementalSieve::step`] for why. `.data` costs
+/// the RAM but not the flash (the image still carries the initializer).
+#[cfg_attr(target_os = "none", unsafe(link_section = ".data.small_primes"))]
+static SMALL_PRIMES: [u32; N_SMALL] = build_small_primes();
 
 /// How many small primes to trial-divide a candidate of `cand_len` bytes by.
 ///
@@ -170,6 +174,19 @@ impl IncrementalSieve {
     /// `Some(true)` — passes the small-prime sieve (no factor); `Some(false)` —
     /// composite; `None` — the window ended (top bits would overflow, or the
     /// step cap was hit): reseed before stepping again.
+    ///
+    /// **Code and table both live in SRAM on the device.** This runs for every
+    /// candidate the search draws — hundreds to thousands per prime — and walks
+    /// [`sieve_count`] table entries each time (1.8 KB at RSA-2048, 5 KB at
+    /// RSA-4096). Left in XIP flash the loop and its table compete with each
+    /// other and with whatever else the image put nearby for the small XIP
+    /// cache, which makes keygen time a function of unrelated commits: v0.4.5
+    /// and 0x0864 differ by 1.36× on RSA-2048 (medians 9.7 s vs 13.2 s, three
+    /// and four batches of 12, no overlap) with this search byte-identical
+    /// between them. The modexp was moved to SRAM for the same reason; the
+    /// sieve was the half left behind.
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".data.sieve_step"))]
+    #[inline(never)]
     pub fn step(&mut self) -> Option<bool> {
         if !self.seeded {
             return None;

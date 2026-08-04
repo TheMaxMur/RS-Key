@@ -122,6 +122,17 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Changed
 
+- **The small-prime sieve runs from SRAM, recovering 1.36× on RSA keygen.** The
+  asm modexp was moved out of XIP flash long ago; the sieve loop that feeds it
+  was not, and it runs for *every* candidate while walking a 1.8 KB prime table
+  (5 KB at RSA-4096). From flash, loop and table evicted each other from the
+  small XIP cache, and which of them won came down to where the linker put
+  things — so 1708 bytes of unrelated image growth between v0.4.5 and `0x0864`
+  cost 1.36× on RSA-2048 (medians 9.7 s → 12.7 s, three and four batches of 12,
+  no overlap). Holding both in `.data` restores 9.7 s and takes the linker out
+  of the loop. Moving only the table made it *worse* (13.8 s): the binding
+  constraint was the instruction side. Costs 5.3 KB of SRAM, no flash. Measured
+  on a Waveshare RP2350-Zero; firmware `bcdDevice` `0x0864` → `0x0865`.
 - **The RSA keygen timings are labelled with the board they came from.** The PIV
   guide promised 4–6 s for RSA-2048 flat; that figure is the reference board's.
   Measured on a Waveshare RP2350-Zero the median is ~10 s (n=12) — the modexp
