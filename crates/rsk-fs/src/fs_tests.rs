@@ -423,10 +423,25 @@ fn meta_roundtrip() {
 #[test]
 fn meta_find_oversized_does_not_panic() {
     let mut fs = fs();
-    let big = [0u8; 2048]; // > META_MAX (1024): must clamp, not slice out of range
+    // > META_MAX (1024): must clamp, not slice out of range. Sized at the store's
+    // own ceiling, which `put` now enforces.
+    let big = [0u8; crate::MAX_VALUE_BYTES];
     fs.put(crate::EF_META, &big).unwrap();
     let mut out = [0u8; 32];
     assert_eq!(fs.meta_find(0xAAAA, &mut out), None);
+}
+
+/// The backend's per-value ceiling is enforced at the `Fs::put` chokepoint, so an
+/// applet cannot pick a cap the store cannot honour (audit run-32).
+#[test]
+fn put_rejects_past_the_backend_ceiling() {
+    let mut fs = fs();
+    assert!(fs.put(0xCF10, &[0u8; crate::MAX_VALUE_BYTES]).is_ok());
+    assert_eq!(
+        fs.put(0xCF11, &[0u8; crate::MAX_VALUE_BYTES + 1]),
+        Err(rsk_sdk::error::Error::WrongLength)
+    );
+    assert!(!fs.has_data(0xCF11));
 }
 
 #[test]
@@ -522,4 +537,45 @@ fn meta_delete_of_absent_record_does_not_rewrite() {
         "deleting a meta-less FID must not rewrite EF_META (only the setup write)"
     );
     assert_eq!(st.remove_calls, 0, "absent delete must not hit the backend");
+}
+
+/// A `Storage` whose enumeration faults immediately: it yields nothing and reports
+/// the walk as truncated, while the keys are still live and readable. This is the
+/// interrupted-page-erase shape (`sequential-storage` `find_first_page` →
+/// `Error::Corrupted`, which `fetch_all_items` propagates before its auto-repair).
+struct TruncatedScan(RamStorage);
+impl Storage for TruncatedScan {
+    fn read(&mut self, fid: u16, buf: &mut [u8]) -> Option<usize> {
+        self.0.read(fid, buf)
+    }
+    fn write(&mut self, fid: u16, data: &[u8]) -> Result<()> {
+        self.0.write(fid, data)
+    }
+    fn remove(&mut self, fid: u16) -> Result<()> {
+        self.0.remove(fid)
+    }
+    fn size(&mut self, fid: u16) -> Option<usize> {
+        self.0.size(fid)
+    }
+    fn for_each_key(&mut self, _f: &mut dyn FnMut(u16)) -> bool {
+        false
+    }
+}
+
+/// A wipe must fail rather than report a range clear it never enumerated — the
+/// rule PIV and OpenPGP already enforce. Without it a truncated walk deletes
+/// nothing and still answers success, and the trusted display paints "RS-Key
+/// erased" over live credentials (audit run-32).
+#[test]
+fn factory_wipe_fails_on_a_truncated_enumeration() {
+    let mut st = TruncatedScan(RamStorage::new());
+    st.0.write(0xCF20, b"credential").unwrap();
+    let mut fs = Fs::new(st);
+    assert_eq!(fs.factory_wipe(|_| false), Err(Error::MemoryFatal));
+    let mut out = [0u8; 16];
+    assert_eq!(
+        fs.read(0xCF20, &mut out),
+        Some(10),
+        "the key the wipe never saw is still live"
+    );
 }

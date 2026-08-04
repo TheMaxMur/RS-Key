@@ -272,13 +272,19 @@ impl<S: Storage> Fs<S> {
         loop {
             let mut batch = [0u16; 64];
             let mut n = 0usize;
-            self.storage.for_each_key(&mut |fid| {
+            let complete = self.storage.for_each_key(&mut |fid| {
                 if !preserve(fid) && n < batch.len() {
                     batch[n] = fid;
                     n += 1;
                 }
             });
             if n == 0 {
+                // An un-yielded FID is only evidence of absence when the walk
+                // finished; a truncated one must fail rather than report the
+                // range clear (the rule PIV and OpenPGP already enforce).
+                if !complete {
+                    return Err(Error::MemoryFatal);
+                }
                 break;
             }
             for &fid in &batch[..n] {
@@ -295,6 +301,10 @@ impl<S: Storage> Fs<S> {
 
     /// Store file contents, registering a dynamic file if new.
     pub fn put(&mut self, fid: u16, data: &[u8]) -> Result<()> {
+        // Reject past the backend's own ceiling here, so no applet has to know it.
+        if data.len() > S::MAX_VALUE {
+            return Err(Error::WrongLength);
+        }
         // A new dynamic file that would overflow the set is rejected *before* the
         // flash write: registering only after committing would strand the value
         // on flash — readable yet unregistered — and leave `scan` to re-drop it

@@ -74,11 +74,48 @@ fn cert_meets_packed_x5c_certificate_requirements() {
     assert_eq!(&cert[4 + TBS_LEN - 16..4 + TBS_LEN], &AAGUID);
 
     // A device provisioned before this template is detected and rebuilt.
-    assert!(matches_template(cert));
-    assert!(!matches_template(&cert[..4 + TBS_LEN - 20]));
+    assert!(matches_template(cert, &key));
+    assert!(!matches_template(&cert[..4 + TBS_LEN - 20], &key));
     let mut stale = out;
     stale[4 + TBS_LEN - 1] ^= 0xFF; // AAGUID no longer this build's
-    assert!(!matches_template(&stale[..n]));
+    assert!(!matches_template(&stale[..n], &key));
+}
+
+/// The freshness check is a key binding, not just a shape check: a cert built over
+/// a superseded seed must be rebuilt, or every attestation ships a leaf that does
+/// not certify the key that signed it.
+#[test]
+fn template_check_binds_the_certified_key() {
+    let old = P256Key::from_scalar(&[0x55; 32]).unwrap();
+    let new = P256Key::from_scalar(&[0x66; 32]).unwrap();
+    let mut out = [0u8; 512];
+    let n = build_attestation_cert(&old, &[0x11; 16], &mut out).unwrap();
+    assert!(matches_template(&out[..n], &old));
+    assert!(!matches_template(&out[..n], &new));
+}
+
+/// X.690 §8.3.2: the fixed-width INTEGER cannot shorten, so a leading 0x00 with a
+/// clear high bit in the next octet is non-minimal and strict parsers (Go
+/// crypto/x509, OpenSSL, rust-asn1) reject the whole certificate.
+#[test]
+fn non_minimal_serial_is_refused_and_never_accepted_as_fresh() {
+    let key = P256Key::from_scalar(&[0x77; 32]).unwrap();
+    let mut out = [0u8; 512];
+    let mut serial = [0x11u8; 16];
+    serial[0] = 0x00;
+    serial[1] = 0x7F; // 00 7F… — the rejected shape
+    assert!(build_attestation_cert(&key, &serial, &mut out).is_none());
+    serial[1] = 0x80; // 00 80… — minimal, the leading zero is load-bearing
+    let n = build_attestation_cert(&key, &serial, &mut out).unwrap();
+    assert!(matches_template(&out[..n], &key));
+
+    // A device that already drew a bad serial self-heals: splice one in and the
+    // freshness check must reject it.
+    let good = build_attestation_cert(&key, &[0x11; 16], &mut out).unwrap();
+    let mut bad = out;
+    bad[SERIAL_OFF] = 0x00;
+    bad[SERIAL_OFF + 1] = 0x7F;
+    assert!(!matches_template(&bad[..good], &key));
 }
 
 #[test]

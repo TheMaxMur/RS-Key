@@ -409,26 +409,47 @@ pub fn ensure_seed<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut impl Rng)
     if !fs.has_data(EF_LARGEBLOB) {
         fs.put(EF_LARGEBLOB, &LARGEBLOB_INITIAL)?;
     }
-    // Rebuilt, not merely created: a device provisioned before the WebAuthn §8.2.1
-    // subject/extension template carries a cert that RP libraries now reject, and
-    // packed attestation presents it on every makeCredential.
-    let mut buf = [0u8; 512];
-    let stale = match fs.read(EF_EE_DEV, &mut buf) {
-        Some(n) => !cert_matches_template(&buf[..n.min(buf.len())]),
-        None => true,
-    };
-    if stale && !locked {
-        // Self-signed attestation cert over the device key (the seed scalar).
+    if !locked {
         let mut seed = load_keydev(dev, fs).ok_or(Error::ExecError)?;
-        let key = P256Key::from_scalar(&seed).ok_or(Error::ExecError)?;
+        let r = rebuild_att_cert(fs, rng, &seed);
         seed.zeroize();
-        let mut serial = [0u8; 16];
-        rng.fill(&mut serial);
-        serial[0] &= 0x7F; // keep the INTEGER positive (no leading 0x00 needed)
-        let n = build_attestation_cert(&key, &serial, &mut buf).ok_or(Error::ExecError)?;
-        fs.put(EF_EE_DEV, &buf[..n])?;
+        r?;
     }
     Ok(())
+}
+
+/// Rebuild `EF_EE_DEV` if it does not both match the current template and certify
+/// `seed`'s public key. Split out of [`ensure_seed`] so the one moment a
+/// soft-locked device has its seed in hand — a successful vendor UNLOCK — can run
+/// it too; that device is otherwise stuck serving a pre-§8.2.1 leaf forever
+/// (audit run-32).
+pub fn rebuild_att_cert<S: Storage>(
+    fs: &mut Fs<S>,
+    rng: &mut impl Rng,
+    seed: &[u8; 32],
+) -> Result<()> {
+    let key = P256Key::from_scalar(seed).ok_or(Error::ExecError)?;
+    let mut buf = [0u8; 512];
+    let fresh = match fs.read(EF_EE_DEV, &mut buf) {
+        Some(n) => cert_matches_template(&buf[..n.min(buf.len())], &key),
+        None => false,
+    };
+    if fresh {
+        return Ok(());
+    }
+    let mut serial = [0u8; 16];
+    // 0x01..=0x7F: positive AND minimally encoded. The template's INTEGER is
+    // fixed-width, so a leading 0x00 cannot be dropped and X.690 §8.3.2 makes the
+    // whole certificate unparseable to strict RPs.
+    loop {
+        rng.fill(&mut serial);
+        serial[0] &= 0x7F;
+        if serial[0] != 0x00 {
+            break;
+        }
+    }
+    let n = build_attestation_cert(&key, &serial, &mut buf).ok_or(Error::ExecError)?;
+    fs.put(EF_EE_DEV, &buf[..n])
 }
 
 /// The global signature counter, stored little-endian.

@@ -46,13 +46,18 @@ pub fn reset<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>) -> CtapResult {
     loop {
         let mut keys = [0u16; 64];
         let mut n = 0usize;
-        ctx.fs.for_each_key(&mut |fid| {
+        let complete = ctx.fs.for_each_key(&mut |fid| {
             if is_fido_fid(fid) && n < keys.len() {
                 keys[n] = fid;
                 n += 1;
             }
         });
         if n == 0 {
+            // An un-yielded FID is only evidence of absence when the walk finished;
+            // a truncated one must fail rather than report the range clear.
+            if !complete {
+                return Err(CtapError::Other);
+            }
             break;
         }
         for &fid in &keys[..n] {

@@ -72,7 +72,7 @@ pub use passkeys::{
 pub use pin::{PIN_TITLE_BAND, pin_title_overflows, render_pin_dots, render_pin_title};
 pub use reset::{
     render_confirm_factory_reset, render_erasing, render_pin_blocked, render_success,
-    render_success_circle,
+    render_success_circle, render_wipe_failed,
 };
 pub use settings::{render_firmware, render_rebooting};
 

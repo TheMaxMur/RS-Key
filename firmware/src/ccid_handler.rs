@@ -211,12 +211,15 @@ impl<'a> CcidApplets<'a> {
     /// like the trusted-display factory-reset flow (`rsk_fido::survives_factory_reset`).
     /// The next boot re-provisions a fresh seed. Called by the worker after a
     /// Management RESET's SW_OK, then a reboot. DEFAULT build only.
+    ///
+    /// Returns whether the wipe actually completed: a truncated enumeration or a
+    /// failed remove must not be laundered into a reboot that looks like success.
     #[cfg(not(feature = "strict-config"))]
-    pub fn factory_wipe(&mut self) {
-        let _ = self
-            .fs
+    pub fn factory_wipe(&mut self) -> bool {
+        self.fs
             .borrow_mut()
-            .factory_wipe(rsk_fido::survives_factory_reset);
+            .factory_wipe(rsk_fido::survives_factory_reset)
+            .is_ok()
     }
 
     /// Drop any in-flight incoming command chain and held response remainder. Called

@@ -56,19 +56,68 @@ const SPKI_PREFIX: &[u8] = &[
 /// TBSCertificate length (header `30 82 01 8D` + 397 content bytes).
 const TBS_LEN: usize = 401;
 
-/// Does `cert` come from the current template? Devices provisioned before the
-/// §8.2.1 subject/extension rework carry a shorter TBS, and a build-time AAGUID
-/// override leaves the extension stale; either way the cert is rebuilt.
-pub fn matches_template(cert: &[u8]) -> bool {
-    cert.len() > 4 + TBS_LEN
-        && cert[4..8] == [0x30, 0x82, 0x01, 0x8D]
-        && cert[4 + TBS_LEN - 16..4 + TBS_LEN] == AAGUID
+/// Offset of the 16-byte serial in the DER, past the cert and TBS headers and
+/// `VERSION ‖ 02 10`.
+pub(crate) const SERIAL_OFF: usize = 4 + 4 + VERSION.len() + 2;
+/// Offset of the 65-byte uncompressed SPKI point (`04 ‖ x ‖ y`). Anchored to the
+/// tail like the AAGUID check, so a change to any earlier field cannot silently
+/// slide it.
+const SPKI_POINT_OFF: usize = 4 + TBS_LEN - EXT_PREFIX.len() - AAGUID.len() - 65;
+
+const _: () = assert!(
+    SPKI_POINT_OFF
+        == 4 + 4
+            + VERSION.len()
+            + 2
+            + 16
+            + SIG_ALG.len()
+            + NAME.len()
+            + VALIDITY.len()
+            + NAME.len()
+            + SPKI_PREFIX.len()
+);
+
+/// Is `serial` a minimally-encoded DER INTEGER body? X.690 §8.3.2 forbids a
+/// leading `0x00` followed by a byte with its high bit clear, and strict parsers
+/// (Go `crypto/x509`, OpenSSL, rust-asn1) reject the certificate outright.
+fn serial_minimal(serial: &[u8; 16]) -> bool {
+    serial[0] != 0x00 || serial[1] >= 0x80
+}
+
+/// Does `cert` come from the current template **and** certify `key`? Devices
+/// provisioned before the §8.2.1 subject/extension rework carry a shorter TBS, a
+/// build-time AAGUID override leaves the extension stale, a non-minimal serial
+/// makes it unparseable, and a torn seed replacement leaves it certifying a
+/// superseded key; every one of those must be rebuilt (audit run-32).
+pub fn matches_template(cert: &[u8], key: &P256Key) -> bool {
+    if cert.len() <= 4 + TBS_LEN
+        || cert[4..8] != [0x30, 0x82, 0x01, 0x8D]
+        || cert[4 + TBS_LEN - 16..4 + TBS_LEN] != AAGUID
+    {
+        return false;
+    }
+    let mut serial = [0u8; 16];
+    serial.copy_from_slice(&cert[SERIAL_OFF..SERIAL_OFF + 16]);
+    if !serial_minimal(&serial) {
+        return false;
+    }
+    // The freshness check has to be a key binding, not just a shape check: a cert
+    // that does not certify the key that signs is silently rejected by every RP.
+    let (x, y) = key.public_xy();
+    cert[SPKI_POINT_OFF] == 0x04
+        && cert[SPKI_POINT_OFF + 1..SPKI_POINT_OFF + 33] == x
+        && cert[SPKI_POINT_OFF + 33..SPKI_POINT_OFF + 65] == y
 }
 
 /// Build the self-signed attestation certificate for `key` into `out`; returns its
-/// DER length. `serial` is 16 random bytes (the caller clears the top bit to keep
-/// the INTEGER positive). `out` should hold ≥ 512 bytes.
+/// DER length. `serial` is 16 random bytes whose leading octet the caller
+/// constrains to `0x01..=0x7F` — positive *and* minimally encoded, since the
+/// template's INTEGER is fixed-width and cannot shorten. `out` should hold ≥ 512
+/// bytes.
 pub fn build_attestation_cert(key: &P256Key, serial: &[u8; 16], out: &mut [u8]) -> Option<usize> {
+    if !serial_minimal(serial) || serial[0] & 0x80 != 0 {
+        return None;
+    }
     let (x, y) = key.public_xy();
 
     // --- TBSCertificate (fixed TBS_LEN bytes) ---
@@ -120,11 +169,17 @@ pub fn build_attestation_cert(key: &P256Key, serial: &[u8; 16], out: &mut [u8]) 
 // ---- org attestation chain (EF_ATT_CHAIN) ----
 
 /// Caps for an org-provisioned attestation chain (vendor ATT_IMPORT).
-pub(crate) const ATT_CHAIN_MAX: usize = 2048;
+///
+/// Derived from the store's own per-value ceiling, not picked: the packed record
+/// is what lands in flash, so a cap chosen independently lets an in-spec import
+/// fail at the write and strand a key with no chain (audit run-32).
 pub(crate) const ATT_CHAIN_MAX_CERTS: usize = 4;
+pub(crate) const ATT_CHAIN_MAX: usize = rsk_fs::MAX_VALUE_BYTES - 1 - 2 * ATT_CHAIN_MAX_CERTS;
 
 /// Max packed `EF_ATT_CHAIN` record: `count(1) ‖ (len(2 LE) ‖ der)*`.
 pub(crate) const ATT_CHAIN_REC_MAX: usize = ATT_CHAIN_MAX + 1 + 2 * ATT_CHAIN_MAX_CERTS;
+
+const _: () = assert!(ATT_CHAIN_REC_MAX <= rsk_fs::MAX_VALUE_BYTES);
 
 /// Total length of the DER TLV at the head of `b` (SEQUENCE tag), or `None`.
 fn der_seq_len(b: &[u8]) -> Option<usize> {

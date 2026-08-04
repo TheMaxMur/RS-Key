@@ -400,8 +400,21 @@ impl Ui {
     /// clientPIN's `EF_PIN`); a host `authenticatorReset` clears both.
     pub(super) fn show_pin_blocked(&mut self) {
         let _ = rsk_ui::render_pin_blocked(&mut self.panel);
+        self.hold_notice();
+    }
+
+    /// After a factory wipe that could not prove it emptied the store, show "Erase
+    /// failed" instead of the success pop and do NOT reboot — coming up fresh is
+    /// exactly what would make a half-erased device read as factory-clean.
+    pub(super) fn show_wipe_failed(&mut self) {
+        let _ = rsk_ui::render_wipe_failed(&mut self.panel);
+        self.hold_notice();
+    }
+
+    /// Hold a controlless notice until a tap, the power button, a queued host command
+    /// or ~5 s, letting the tap that opened it lift first.
+    fn hold_notice(&mut self) {
         self.shown = None;
-        // Let the final wrong-PIN tap lift, then hold the notice, dismissable by a fresh tap.
         let start = Instant::now();
         self.touch
             .wait_release(start, Duration::from_millis(MENU_INACTIVITY_MS));
@@ -605,10 +618,16 @@ impl Ui {
             // wipe everything but the attestation and reboot into a fresh device. The
             // reboot clears RAM and re-seeds at boot, so no rng/state is needed here.
             let _ = rsk_ui::render_erasing(&mut self.panel);
-            let _ = self
+            let wiped = self
                 .fs
                 .borrow_mut()
-                .factory_wipe(rsk_fido::survives_factory_reset);
+                .factory_wipe(rsk_fido::survives_factory_reset)
+                .is_ok();
+            if !wiped {
+                self.show_wipe_failed();
+                self.end_modal();
+                return;
+            }
             // Confirm the wipe on the trusted screen before the reboot re-provisions a
             // fresh device (the grey rotate pop reads as "erased / restarting").
             self.show_success(SuccessKind::Wiped, Some(SUCCESS_POP_MS));

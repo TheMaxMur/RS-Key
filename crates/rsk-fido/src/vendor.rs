@@ -346,18 +346,32 @@ fn att_import<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> CtapResult 
         scalar.zeroize();
         return Err(CtapError::InvalidParameter);
     }
+    // Chain first: the key is a fixed-size sealed record, so it is the write far
+    // less likely to fail. Reversed, a failing chain write leaves the new key
+    // paired with the old chain — every U2F REGISTER then attests under a leaf
+    // that does not certify it (audit run-32).
+    let chain = ctx.fs.put(EF_ATT_CHAIN, &packed[..plen]);
+    if chain.is_err() {
+        scalar.zeroize();
+        return Err(CtapError::Other);
+    }
     let r = store_att_key(&ctx.dev, ctx.fs, &scalar);
     scalar.zeroize();
     r.map_err(|_| CtapError::Other)?;
-    ctx.fs
-        .put(EF_ATT_CHAIN, &packed[..plen])
-        .map_err(|_| CtapError::Other)?;
     journal::append(ctx, journal::EV_ATT_IMPORT, 0, &[]);
     Ok(0)
 }
 
-/// `ATT_CLEAR`: drop the org attestation (same gate as the import).
+/// `ATT_CLEAR`: drop the org attestation (same gate as the import, including its
+/// named touch when no PIN can authorise the handover).
 fn att_clear<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> CtapResult {
+    // The identity this destroys survives a factory reset and only the org's HSM
+    // can restore it, so it gets the same explicit prompt the import gained.
+    if !ctx.fs.has_data(EF_PIN)
+        && !ctx.check_user_presence(crate::Confirm::titled("Erase attestation identity?"))
+    {
+        return Err(CtapError::OperationDenied);
+    }
     gate(ctx, req, "Clear attestation key?")?;
     let _ = ctx.fs.delete_key(EF_ATT_KEY);
     let _ = ctx.fs.delete(EF_ATT_CHAIN);
@@ -497,6 +511,10 @@ fn unlock<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> CtapResult {
         Some(seed) => {
             ctx.state.clear_keydev_dec();
             ctx.state.keydev_dec = Some(seed);
+            // The one moment a locked device can migrate its attestation cert:
+            // `ensure_seed` skips the rebuild while locked, and best-effort is
+            // right here — a failed rebuild must not deny the unlock.
+            let _ = crate::seed::rebuild_att_cert(ctx.fs, ctx.rng, &seed);
             Ok(0)
         }
         None => Err(CtapError::InvalidParameter),
@@ -793,10 +811,16 @@ fn backup_load<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> CtapResult
         seed.zeroize();
         return Err(CtapError::InvalidParameter);
     }
+    // Drop the old cert BEFORE the new seed commits, and propagate the failure: a
+    // tear the other way round leaves a certificate over the superseded key that
+    // `matches_template` would once have accepted forever (audit run-32).
+    if ctx.fs.delete(EF_EE_DEV).is_err() {
+        seed.zeroize();
+        return Err(CtapError::Other);
+    }
     let res = encrypt_keydev_f1(&ctx.dev, ctx.fs, &seed);
     seed.zeroize();
     res.map_err(|_| CtapError::Other)?;
-    let _ = ctx.fs.delete(EF_EE_DEV);
     ensure_seed(&ctx.dev, ctx.fs, ctx.rng).map_err(|_| CtapError::Other)?;
     journal::append(ctx, journal::EV_BACKUP_LOAD, 0, &[]);
     Ok(0)

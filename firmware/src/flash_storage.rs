@@ -29,6 +29,10 @@ pub const FLASH_SIZE: usize = crate::env_u32(env!("PK_FLASH_SIZE")) as usize;
 /// Scratch for one map op; must fit the largest stored key+value (EF_META ≤ 1 KiB).
 const KV_BUF: usize = 2048;
 
+// The 2-byte FID shares the scratch with the value, so the per-value ceiling the
+// `Storage` trait publishes is exactly two under it.
+const _: () = assert!(rsk_fs::MAX_VALUE_BYTES == KV_BUF - 2);
+
 /// Flash erase-sector size (RP2350 QSPI), = one `sequential-storage` page.
 const SECTOR: usize = 4096;
 
@@ -194,6 +198,7 @@ impl FlashStorage {
 // sequential-storage is async-only; the blocking flash is wrapped in BlockingAsync,
 // whose futures are ready on first poll, so block_on drives them synchronously.
 impl Storage for FlashStorage {
+    const MAX_VALUE: usize = rsk_fs::MAX_VALUE_BYTES;
     fn read(&mut self, fid: u16, buf: &mut [u8]) -> Option<usize> {
         let value = if is_counter_fid(fid) {
             block_on(self.counter.fetch_item::<&[u8]>(&mut self.buf, &fid)).ok()??

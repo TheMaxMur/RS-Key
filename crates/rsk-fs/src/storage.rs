@@ -8,6 +8,12 @@ use rsk_sdk::error::Result;
 
 /// A persistent map from 16-bit file id to a byte value.
 pub trait Storage {
+    /// Largest value this backend can store for one FID. A log-structured backend
+    /// serialises key+value through one scratch buffer, so the real ceiling is
+    /// smaller than the buffer and was previously an unstated property of it —
+    /// callers that picked their own cap could exceed it (audit run-32). Defaults
+    /// to the device backend's, so a host test hits the same rejection.
+    const MAX_VALUE: usize = crate::MAX_VALUE_BYTES;
     /// Copy the value for `fid` into `buf` (truncated to `buf.len()`), returning
     /// the value's full length, or `None` if `fid` is absent.
     fn read(&mut self, fid: u16, buf: &mut [u8]) -> Option<usize>;

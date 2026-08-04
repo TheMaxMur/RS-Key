@@ -347,9 +347,10 @@ impl<'a> Worker<'a> {
                     // A Management factory reset (DEFAULT build) likewise runs after
                     // its SW_OK: wipe all flash but the attestation, then reboot to
                     // re-provision a fresh seed.
+                    // Reboot only on a completed wipe: coming up fresh after a failed
+                    // one is what makes a half-erased device look factory-clean.
                     #[cfg(not(feature = "strict-config"))]
-                    if rsk_mgmt::take_device_reset() {
-                        self.ccid.factory_wipe();
+                    if rsk_mgmt::take_device_reset() && self.ccid.factory_wipe() {
                         self.reboot(1).await;
                     }
                 }
