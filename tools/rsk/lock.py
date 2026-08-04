@@ -134,7 +134,7 @@ def cmd_status(args):
 
 
 def cmd_enable(args):
-    dev, cid = connect_fido()
+    dev, cid = connect_fido(exclusive=True)
     s = _state(dev, cid)
     if s["locked"]:
         die("already locked")
@@ -190,14 +190,14 @@ After enabling:
 
 
 def cmd_unlock(args):
-    dev, cid = connect_fido()
+    dev, cid = connect_fido(exclusive=True)
     key = _read_lock_key(args)
     _unlock(dev, cid, key)
     print("unlocked ✓ — FIDO operations work until power-off")
 
 
 def cmd_disable(args):
-    dev, cid = connect_fido()
+    dev, cid = connect_fido(exclusive=True)
     s = _state(dev, cid)
     if not s["locked"]:
         die("not locked")

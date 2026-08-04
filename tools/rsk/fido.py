@@ -87,6 +87,15 @@ def set_pin(args):
     print("clientPin now:", _ctap().info.options.get("clientPin"))
 
 
+def _count(meta, key):
+    """A device-reported count, or "?" when the device did not send an integer.
+    Never interpolate the raw CBOR value: a counterfeit authenticator returning a
+    text string would put terminal escapes straight into the operator's terminal
+    (the class fixed for rpId/user name in run-12, unswept here until run-33)."""
+    v = meta.get(key)
+    return v if isinstance(v, int) else "?"
+
+
 def list_passkeys(args):
     ctap = _ctap()
     print("credMgmt:", ctap.info.options.get("credMgmt"),
@@ -101,8 +110,12 @@ def list_passkeys(args):
         die_ctap_pin_error(e, cp)
     cm = CM(ctap, cp.protocol, token)
     meta = cm.get_metadata()
-    existing = meta[CM.RESULT.EXISTING_CRED_COUNT]
-    remaining = meta[CM.RESULT.MAX_REMAINING_COUNT]
+    # Coerce: `get_metadata` hands back whatever CBOR the device sent, and a
+    # counterfeit one returning a text string here reached the terminal verbatim —
+    # six lines above the sanitize() the rpId and user name already get. An
+    # `== 0` guard also never fires for a str, so the walk below ran regardless.
+    existing = _count(meta, CM.RESULT.EXISTING_CRED_COUNT)
+    remaining = _count(meta, CM.RESULT.MAX_REMAINING_COUNT)
     print(f"\ndiscoverable credentials: {existing}  (free slots: {remaining})")
     if existing == 0:
         print("  → none. An SSH `-O resident` key would show here.")
@@ -156,7 +169,7 @@ def att_import(args):
     scalar, chain = _att_scalar(args.key), _att_chain(args.chain)
     if len(chain) > 2048:
         die(f"chain too large ({len(chain)} B, max 2048)")
-    dev, cid = connect_fido()
+    dev, cid = connect_fido(exclusive=True)
     pin = resolve_pin(args, has_pin=device_has_pin(dev, cid))
     key, aad = mse_handshake(dev, cid)
     nonce = os.urandom(12)
@@ -173,7 +186,7 @@ def att_clear(args):
     from .backup import _die_pin_required, _gated, _vendor, mse_handshake
     from .common import connect_fido
 
-    dev, cid = connect_fido()
+    dev, cid = connect_fido(exclusive=True)
     pin = resolve_pin(args, has_pin=device_has_pin(dev, cid))
     mse_handshake(dev, cid)
     print("touch the device (BOOTSEL) to remove the attestation…", file=sys.stderr)

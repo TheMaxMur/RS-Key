@@ -69,8 +69,12 @@ def _receipt(entries, *, key=None, head=None, epoch=EPOCH):
 
 
 def _wiped():
-    """What a real post-wipe window looks like: a boot, then the RESET."""
-    return _entry(412, EVT_BOOT) + _entry(413, EVT_RESET)
+    """What a real post-wipe window looks like. `authenticatorReset` calls
+    `journal::fold_and_scrub` — collapsing the whole window, boot entry included,
+    into the epoch — and only THEN appends the RESET, so a completed wipe leaves
+    RESET as entry 0. Modelling a leading BOOT here is what made the stale-RESET
+    hole invisible: it implied a RESET anywhere in the window was normal."""
+    return _entry(413, EVT_RESET)
 
 
 def _verify(tmp_path, rep, expect_key=None):
@@ -119,7 +123,28 @@ def test_decoded_window_alone_cannot_claim_a_reset(tmp_path, capsys):
         {"seq": 413, "uptime_ms": 0, "event": "RESET", "aux": 0, "detail": ""})
     with pytest.raises(SystemExit):
         _verify(tmp_path, rep)
-    assert "does not contain the RESET event" in capsys.readouterr().err
+    assert "does not OPEN with the RESET event" in capsys.readouterr().err
+
+
+def test_failed_reset_cannot_certify_off_a_previous_runs_event(tmp_path, capsys):
+    # Audit run-33. A FIDO reset that fails with the session alive (any status but
+    # ERR_NOT_ALLOWED — a missed touch, a timeout) leaves the PREVIOUS window and its
+    # RESET untouched, because the firmware folds and appends only on success. The
+    # receipt is still written and signed for real, so every cryptographic check
+    # passes; only the host's own observation contradicts it. Both the live run and
+    # `--verify` must refuse rather than bless a device whose seed is still there.
+    rep = _receipt(_wiped())
+    rep["host_observations"]["steps"]["fido_reset"] = "failed: 0x27"
+    with pytest.raises(SystemExit):
+        _verify(tmp_path, rep)
+    assert "did not succeed in this run" in capsys.readouterr().err
+
+    # And a receipt that never claimed the wipe cannot be verified into one.
+    rep = _receipt(_wiped())
+    rep["reset_attested"] = False
+    with pytest.raises(SystemExit):
+        _verify(tmp_path, rep)
+    assert "does not claim reset_attested" in capsys.readouterr().err
 
 
 def test_signature_over_another_head_is_rejected(tmp_path, capsys):

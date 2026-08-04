@@ -142,7 +142,10 @@ def picotool(*args, check=True):
     """Run picotool (in the dev shell); die on failure unless check=False."""
     r = subprocess.run(["picotool", *args], capture_output=True, text=True)
     if check and r.returncode != 0:
-        die(f"picotool {' '.join(args)}\n{r.stdout}{r.stderr}")
+        # picotool echoes the target's own BINARY_INFO strings, so this output is
+        # device-controlled: sanitize it like every other printed device value
+        # (the sibling `otp.py` already uses !r for the same reason).
+        die(f"picotool {' '.join(args)}\n{sanitize(r.stdout)}{sanitize(r.stderr)}")
     return r
 
 

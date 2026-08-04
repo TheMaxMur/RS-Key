@@ -63,6 +63,7 @@ NOTE_HEAD_MISMATCH = "head-mismatch"
 NOTE_NO_RESET_EVENT = "no-reset-event"
 NOTE_NO_SESSION = "no-session"
 NOTE_JOURNAL_UNREAD = "journal-unread"
+NOTE_RESET_NOT_THIS_RUN = "reset-not-this-run"
 
 
 def register(sub):
@@ -198,14 +199,28 @@ def _journal_entries(entries):
     return out
 
 
-def _window_defect(epoch, entries, head):
+def _window_defect(epoch, entries, head, steps=None):
     """Why a signed window fails to certify a wipe, as (code, detail), or None
-    when it certifies: the signed head must fold from the recorded window, and
-    that window must hold the RESET event."""
+    when it certifies: the signed head must fold from the recorded window, that
+    window must OPEN with the RESET event, and — when the host's own observations
+    are available — this run must be the one that produced it.
+
+    The position matters. A successful authenticatorReset folds the window away and
+    *then* appends RESET, so a genuine one is always entry 0. Accepting a RESET
+    anywhere let a run whose reset FAILED certify itself off a previous run's event:
+    the failed reset leaves the old window (and its RESET) untouched, so every
+    cryptographic check passed over a device whose seed and passkeys were still
+    there. Neither test binds the event to *this* invocation on its own, so the
+    host's `fido_reset` step is cross-checked too (audit run-33)."""
     if head != _fold(epoch, entries):
         return NOTE_HEAD_MISMATCH, "signed head differs from the recorded window — TAMPER"
-    if not any(entries[off + 8] == EVT_RESET for off in range(0, len(entries), ENTRY_LEN)):
-        return NOTE_NO_RESET_EVENT, "signed window does not contain the RESET event"
+    if len(entries) < ENTRY_LEN or entries[8] != EVT_RESET:
+        return NOTE_NO_RESET_EVENT, ("signed window does not OPEN with the RESET event — "
+                                     "it does not record a reset completed in this window")
+    if steps is not None and steps.get("fido_reset") != "ok":
+        return NOTE_RESET_NOT_THIS_RUN, (
+            f"the FIDO reset did not succeed in this run (fido_reset="
+            f"{steps.get('fido_reset')!r}) — the RESET in the window is a previous one")
     return None
 
 
@@ -297,7 +312,7 @@ def _receipt(dev, cid, serial, steps):
                                   "fingerprint": _fingerprint(pubkey),
                                   "challenge": challenge.hex(),
                                   "epoch": epoch.hex(), "entries": entries.hex()}
-            defect = _window_defect(epoch, entries, head)
+            defect = _window_defect(epoch, entries, head, steps)
             report["reset_attested"] = defect is None
     if defect:
         # Recorded, never fatal: the wipe already happened, so losing the file
@@ -421,9 +436,16 @@ def verify(args):
     verify_signature(head, seq, sig, pubkey, challenge,
                      "do not trust this receipt",
                      "receipt SIGNATURE INVALID — do not trust this receipt")
-    defect = _window_defect(epoch, entries, head)
+    # Cross-check the receipt's own host observations. `verify` used to read only
+    # the `attested` block, so a receipt whose recorded `fido_reset` said "failed"
+    # still printed the clean verdict — every cryptographic check passing over a
+    # contradiction sitting in the same file (audit run-33).
+    steps = rep.get("host_observations", {}).get("steps")
+    defect = _window_defect(epoch, entries, head, steps if isinstance(steps, dict) else None)
     if defect:
         die(f"{defect[1]} — this receipt does not certify a wipe")
+    if not rep.get("reset_attested"):
+        die("the receipt does not claim reset_attested — it does not certify a wipe")
 
     fp = _fingerprint(pubkey)
     print(f"fingerprint : {fp}")

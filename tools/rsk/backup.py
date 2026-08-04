@@ -223,7 +223,7 @@ def cmd_status(args):
 
 
 def cmd_export(args):
-    dev, cid = connect_fido()
+    dev, cid = connect_fido(exclusive=True)
     pin = resolve_pin(args, has_pin=device_has_pin(dev, cid))
     print("touch the device (BOOTSEL) to authorise the export…", file=sys.stderr)
     seed = read_seed(dev, cid, pin)
