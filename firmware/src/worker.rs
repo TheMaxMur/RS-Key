@@ -635,6 +635,9 @@ impl<'a> Worker<'a> {
         // frame reassembly buffer, the taken request and a queued ticket can each hold
         // a slot's AES key, private UID, access code or static password.
         otp_kbd::scrub();
+        // Core1's mailbox and sieves keep an RSA prime and the keygen DRBG seed from
+        // the last on-card keygen — factors of a live modulus, in plain SRAM.
+        crate::core1::scrub();
         if mode == 2 {
             embassy_rp::rom_data::reset_to_usb_boot(0, 0);
         } else {

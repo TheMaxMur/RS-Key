@@ -147,11 +147,71 @@ pub fn spawn(core1: Peri<'static, CORE1>) {
 }
 
 /// Scrub and drop any primes still sitting in the mailbox.
+///
+/// Zeroize *through* the slot, never after moving out of it: `Option::take()`
+/// copies the payload to a local and writes back only the `None` discriminant, so
+/// wiping the local leaves a full RSA prime resident in this static — which
+/// `worker::reboot`'s BOOTSEL drop does not clear either (audit run-33).
 fn scrub_found(mb: &mut Mailbox) {
     for slot in &mut mb.found {
-        if let Some(mut f) = slot.take() {
+        if let Some(f) = slot.as_mut() {
             f.le.zeroize();
         }
+        *slot = None;
+    }
+}
+
+/// Zeroize the job's DRBG seed through the slot, then drop it. Same hazard as
+/// [`scrub_found`]: the seed replays core1's entire candidate stream.
+fn scrub_job(mb: &mut Mailbox) {
+    if let Some(j) = mb.job.as_mut() {
+        j.seed.zeroize();
+    }
+    mb.job = None;
+}
+
+/// Move the posted job out, wiping the copy the slot keeps. Copy the fields by
+/// value first, *then* zeroize through the `&mut` — a `take()` followed by a
+/// zeroed write-back would be a dead store the optimiser is free to drop.
+fn take_job(mb: &mut Mailbox) -> Option<Job> {
+    let j = mb.job.as_mut()?;
+    let out = Job {
+        half_bytes: j.half_bytes,
+        seed: j.seed,
+    };
+    j.seed.zeroize();
+    mb.job = None;
+    Some(out)
+}
+
+/// Move one found prime out, wiping the copy the slot keeps (see [`take_job`]).
+fn take_found(slot: &mut Option<Found>) -> Option<Found> {
+    let f = slot.as_mut()?;
+    let out = Found {
+        le: f.le,
+        len: f.len,
+    };
+    f.le.zeroize();
+    *slot = None;
+    Some(out)
+}
+
+/// Wipe every secret core1 leaves in SRAM: the mailbox (primes in transit and the
+/// keygen DRBG seed) and both sieves' last candidate — which *is* the prime that
+/// was found, since `scrub()` otherwise only runs when the next search starts.
+/// Called before dropping to BOOTSEL, where main SRAM survives the reset.
+pub fn scrub() {
+    MAILBOX.lock(|mb| {
+        let mb = &mut mb.borrow_mut();
+        scrub_found(mb);
+        scrub_job(mb);
+    });
+    // SAFETY: same contract as the sieve accesses in `search`/`run_rsa_search` —
+    // core0 touches these only with core1 parked or wound down, and the reboot path
+    // runs after the worker's last dispatch.
+    unsafe {
+        (*core::ptr::addr_of_mut!(CORE0_SIEVE)).scrub();
+        (*core::ptr::addr_of_mut!(CORE1_SIEVE)).scrub();
     }
 }
 
@@ -179,7 +239,7 @@ fn core1_main() -> ! {
         // in `run_rsa_search` relies on never observing "job taken, BUSY not
         // yet visible".
         let job = MAILBOX.lock(|mb| {
-            let job = mb.borrow_mut().job.take();
+            let job = take_job(&mut mb.borrow_mut());
             if job.is_some() {
                 BUSY.store(true, Ordering::Relaxed);
                 JOB_PENDING.store(false, Ordering::Relaxed);
@@ -336,8 +396,9 @@ pub fn run_rsa_search_progress(
         // keygen would corrupt the modulus. Leave it for the wind-down scrub.
         let mut batch = if engaged {
             MAILBOX.lock(|mb| {
-                let mut mb = mb.borrow_mut();
-                [mb.found[0].take(), mb.found[1].take()]
+                let mb = &mut mb.borrow_mut();
+                let [a, b] = &mut mb.found;
+                [take_found(a), take_found(b)]
             })
         } else {
             [None, None]
@@ -380,9 +441,7 @@ pub fn run_rsa_search_progress(
     // next job's entry gate (the BUSY wait above) keeps the mailbox exclusive.
     MAILBOX.lock(|mb| {
         let mut mb = mb.borrow_mut();
-        if let Some(mut j) = mb.job.take() {
-            j.seed.zeroize();
-        }
+        scrub_job(&mut mb);
         JOB_PENDING.store(false, Ordering::Relaxed);
         scrub_found(&mut mb);
     });
