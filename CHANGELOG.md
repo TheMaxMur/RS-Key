@@ -13,6 +13,71 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+### Security
+
+- **`getAssertion` no longer serves the `hmac-secret` extension on an `up:false`
+  probe.** CTAP 2.1 §12.5 requires `CTAP2_ERR_UNSUPPORTED_OPTION` for that
+  combination; RS-Key computed the extension 59 lines before the presence gate
+  that `up:false` skips, so any local process that could open CTAPHID read the
+  credential's PRF output — the key-derivation input behind
+  `systemd-cryptenroll --fido2-device`, `age-plugin-fido2-hmac` and the WebAuthn
+  PRF extension — with no touch and no PIN. The `always-uv` build was bypassed
+  identically, since its refusal was gated on `req.up`. The credential's own
+  signing key was never exposed: assertions still require touch for `up:true`,
+  and the ssh-sk silent pre-flight (which carries no `hmac-secret`) is unchanged.
+- **A factory wipe that cannot prove it emptied the store now fails instead of
+  reporting success.** `Fs::factory_wipe` and the FIDO `authenticatorReset`
+  sweep discarded `for_each_key`'s completeness flag, and both `factory_wipe`
+  callers discarded its `Result` — so an interrupted page erase, which makes the
+  enumeration yield zero keys, deleted nothing and still answered
+  `CTAP1_ERR_SUCCESS` while the trusted display painted "RS-Key erased". PIV and
+  OpenPGP already enforced this rule; the FIDO sweep is now the third. The
+  display shows a new "Erase failed" notice and does not reboot, and the CCID
+  Management reset reboots only on a completed wipe.
+- **`rsk secure-boot lock` derives its `KEY_INVALID` mask from the board's live
+  state.** It burned a hard-coded `0xE`, which is only correct when the live key
+  sits in slot 0. On a board that had rotated to slot 1 but not yet revoked
+  slot 0, that permanently revoked the key the board was booting on and restored
+  the abandoned one as the only trusted key — then printed "secure boot LOCKED".
+  It now revokes every slot the bootrom does not already trust, refuses when two
+  slots are trusted (run `revoke` first) or none is, and `cmd_enable` refuses to
+  fuse enforcement onto a board with no valid, non-revoked key.
+- **The attestation certificate is rebuilt whenever it stops certifying the live
+  key.** `matches_template` checked only the TBS length and the trailing AAGUID,
+  so a torn `BACKUP_LOAD` or `authenticatorReset` left a certificate over the
+  superseded seed and every packed attestation and U2F registration shipped an
+  `x5c` leaf that did not certify the signing key. The check now binds the
+  SubjectPublicKeyInfo point, `BACKUP_LOAD` drops the old certificate before the
+  new seed commits, and a soft-locked device migrates its pre-§8.2.1 certificate
+  on the next vendor `UNLOCK` instead of never.
+- **The attestation serial is drawn minimally encoded.** Clearing only the sign
+  bit left `serial[0] == 0x00` reachable, and the template's INTEGER is
+  fixed-width, so roughly 1 device in 256 shipped an `x5c` leaf that X.690 §8.3.2
+  makes unparseable — rejected outright by Go `crypto/x509`, OpenSSL and
+  rust-asn1, permanently. The leading octet is now `0x01..=0x7F`, and the
+  freshness check rejects a non-minimal serial so affected devices self-heal.
+- **Vendor `ATT_CLEAR` asks for a named touch on a PIN-less device**, like
+  `ATT_IMPORT` and `BACKUP_LOAD` already did. Erasing an org attestation identity
+  that survives a factory reset sat behind one unlabelled press.
+- **`ATT_IMPORT` writes the chain before the key and can no longer exceed the
+  store's ceiling.** The 2048-byte cap was picked independently of the flash
+  backend's real 2046-byte per-value limit, so an in-spec chain failed at the
+  write after the key had already committed, leaving U2F REGISTER answering
+  `0x6400` forever. The ceiling is now a `Storage::MAX_VALUE` constant enforced
+  in `Fs::put`, and both `ATT_CHAIN_MAX` and `maxSerializedLargeBlobArray` derive
+  from it.
+- **`rsk otp burn` no longer leaves the MKEK and DEVK on disk.** The two OTP
+  roots and their per-row complements were written to `$TMPDIR` unlinked but
+  never overwritten, contradicting the documented "generates, verifies, and
+  forgets the keys". They are now created `0600`/`O_EXCL` in a RAM-backed
+  directory where one exists, and overwritten before unlink.
+- **The irreversible OTP fuse commands refuse to guess which card they burn.**
+  `ccid.find_reader` gained an `exclusive` mode — the run-30 hardening had closed
+  only the no-match case, so a second attached key or a planted CCID gadget still
+  won the first-match race. `rsk otp lock-page58`, `rsk otp rollback-require`,
+  `rsk openpgp reset` and `rsk offboard` now use it, and the two fuse commands
+  confirm against the device's chip serial instead of a static token.
+
 ### Changed
 
 - **`makeCredential` now ships packed *basic* attestation, fixing `-sk`
