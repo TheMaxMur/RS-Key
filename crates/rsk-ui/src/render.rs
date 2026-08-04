@@ -588,6 +588,27 @@ fn title_bar_wide<D: DrawTarget<Color = Rgb565>>(
     title_bar_to(t, title, color, back, PANEL_W - 13, false, false)
 }
 
+/// [`title_bar_wide`] for a title the *host* chose (an OATH credential name), so a
+/// value already clipped to `LABEL_MAX` carries its marker here too — same reason
+/// the passkey screens pass `Label::truncated`: this is where the owner audits what
+/// is stored, and a padded look-alike must not read as whole.
+fn title_bar_wide_label<D: DrawTarget<Color = Rgb565>>(
+    t: &mut D,
+    title: &Label,
+    color: Rgb565,
+    back: bool,
+) -> Result<(), D::Error> {
+    title_bar_to(
+        t,
+        title.as_str(),
+        color,
+        back,
+        PANEL_W - 13,
+        false,
+        title.truncated,
+    )
+}
+
 /// Shared title-bar paint: an optional back chevron, then the title clipped to end at
 /// `right` (a single px past which nothing paints), so paint and the back hit-test agree.
 /// `domain` keeps the suffix (head-ellipsis) for an attacker-chosen relying-party id; the

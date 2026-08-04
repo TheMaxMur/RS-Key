@@ -97,10 +97,12 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   host request (or a wake press) could silently consume a fresh device's one-time
   device-PIN offer. Ambient screens now arm only after the panel is seen
   untouched.
-- **Passkey list rows keep their truncation marker and their label.** A
+- **Passkey and OATH list rows keep their truncation marker and their label.** A
   byte-clamped rpId rendered as if whole on the list and the service title (only
   the ceremony card marked it), and a long trailing value drove the label's clip
-  to zero, erasing the row's device-owned caption with no marker at all.
+  to zero, erasing the row's device-owned caption with no marker at all. An OATH
+  credential label is host-chosen the same way, and its list is likewise where
+  the owner audits what is stored, so it is marked too.
 - **`rsk offboard` receipts are bound to the run that produced them.** A FIDO
   reset that failed with the session alive left the previous window — and its
   RESET — intact, so the receipt was signed for real, claimed `reset_attested`,

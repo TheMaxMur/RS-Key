@@ -555,7 +555,9 @@ where
                 true,
                 true,
                 false,
-                false,
+                // Host-chosen, like an rpId: a name already clipped to LABEL_MAX
+                // must show it here rather than pass for a complete one.
+                r.name.truncated,
             )?;
         }
         if page_count(total) > 1 {
@@ -583,7 +585,7 @@ where
 {
     t.clear(BG)?;
     status_bar(t)?;
-    title_bar_wide(t, v.name.as_str(), theme::ACCENT, true)?;
+    title_bar_wide_label(t, &v.name, theme::ACCENT, true)?;
     let purpose = if v.hotp {
         "Counter-based \u{00B7} HOTP"
     } else {
