@@ -281,6 +281,7 @@ fn config_write<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> CtapResul
             }
             persist_dev_conf(ctx.fs, req.blob).map_err(|e| match e {
                 DevConfError::TooLong => CtapError::InvalidLength,
+                DevConfError::BadTlv => CtapError::InvalidParameter,
                 DevConfError::Store => CtapError::Other,
             })?
         }

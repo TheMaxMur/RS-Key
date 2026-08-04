@@ -754,7 +754,9 @@ impl<'a> OtpApplet<'a> {
                 self.config_seq = self.config_seq.wrapping_add(1);
                 Sw::OK
             }
-            Err(rsk_mgmt::DevConfError::TooLong) => Sw::INCORRECT_PARAMS,
+            Err(rsk_mgmt::DevConfError::TooLong | rsk_mgmt::DevConfError::BadTlv) => {
+                Sw::INCORRECT_PARAMS
+            }
             Err(rsk_mgmt::DevConfError::Store) => Sw::MEMORY_FAILURE,
         }
     }

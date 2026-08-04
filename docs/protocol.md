@@ -427,8 +427,16 @@ always reversible. Building `--features strict-config` gates the *write* on
 operator presence; the enforcement of a persisted mask is the same on both
 builds.
 
-> WRITE CONFIG refuses an inner blob > 64 bytes (`6A80`) so a malformed config
-> can't wedge later reads. **On the default build the write is ungated** (full
+> WRITE CONFIG validates the inner blob (`6A80` otherwise): it must be well-formed
+> TLV, carry only tags a host may write (`03`, `06`, `07`, `08`, `0A`, `0B`, `0C`,
+> `0E`, `17` — ykman's `DeviceConfig` set), and fit the smallest transport's
+> response buffer. The device-owned identity tags (`01` supported, `02` serial,
+> `04` form factor, `05` version) are emitted by the card and refused on write:
+> READ CONFIG echoes the stored blob *after* them, and host parsers take the last
+> occurrence, so a stored duplicate would override the real identity and a
+> malformed one would make the whole DeviceInfo unparseable — permanently, since
+> this record survives `authenticatorReset`. **On the default build the write is
+> ungated** (full
 > ykman parity — any USB host can rewrite the reported config, matching a stock
 > YubiKey with no config-lock code). Building `--features strict-config` restores
 > an **on-device user-presence confirmation** (Approve on the trusted-display

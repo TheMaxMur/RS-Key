@@ -250,6 +250,94 @@ fn read_config_survives_oversized_stored_blob() {
     assert_eq!(body[0] as usize, body.len() - 1);
 }
 
+// Audit run-33. `ykman`'s `Tlv.parse_dict` is last-wins, so a stored duplicate of a
+// device-owned tag would beat the authentic one this function emits first, and a
+// malformed one (a 1-byte VERSION) makes `DeviceInfo.parse` raise — which hides the
+// device from ykman for good, since EF_DEV_CONF survives authenticatorReset.
+#[test]
+fn write_config_refuses_device_owned_and_malformed_tags() {
+    let presence = RefCell::new(AlwaysConfirm);
+    let mut fs = fs();
+
+    // Each of these is a well-formed TLV that a host must not be able to store.
+    for blob in [
+        &[TAG_VERSION, 0x01, 0x00][..],         // the ykman-wedging one
+        &[TAG_VERSION, 0x03, 0x05, 0x07, 0x04], // a *valid-looking* forged version
+        &[TAG_SERIAL, 0x04, 0x00, 0xBC, 0x61, 0x4E],
+        &[TAG_USB_SUPPORTED, 0x02, 0xFF, 0xFF],
+        &[TAG_FORM_FACTOR, 0x01, 0x81],
+        &[0x03, 0x02, 0x02, 0x3B, 0xEE, 0x01, 0x00], // trailing unknown tag 0xEE
+        &[0x03, 0x05, 0x02],                         // length overruns the blob
+    ] {
+        let mut app = ManagementApplet::new([0; 8], &presence);
+        let mut cmd = std::vec![
+            0x00,
+            INS_WRITE_CONFIG,
+            0,
+            0,
+            (blob.len() + 1) as u8,
+            blob.len() as u8
+        ];
+        cmd.extend_from_slice(blob);
+        let (sw, _) = process(&mut app, &mut fs, &cmd);
+        assert_eq!(sw, Sw::INCORRECT_PARAMS, "accepted {blob:02x?}");
+        assert!(fs.read(EF_DEV_CONF, &mut [0u8; 8]).is_none());
+    }
+
+    // The DeviceInfo response therefore carries each device-owned tag exactly once,
+    // so first-match and last-match parsers agree on the identity.
+    let mut app = ManagementApplet::new([0; 8], &presence);
+    let (sw, body) = process(&mut app, &mut fs, &[0x00, INS_READ_CONFIG, 0, 0, 0x00]);
+    assert_eq!(sw, Sw::OK);
+    for tag in [TAG_USB_SUPPORTED, TAG_SERIAL, TAG_FORM_FACTOR, TAG_VERSION] {
+        assert_eq!(tlv_count(&body[1..], tag), 1, "tag {tag:#04x} not unique");
+    }
+}
+
+// Audit run-33: `ResBuf::extend` writes *nothing* on overflow, so a stored blob that
+// fit the writer's cap but not the smallest transport's 64-byte response turned READ
+// CONFIG into an empty `9000` forever. The writer cap is now derived from that
+// consumer, and the echo is clamped against the caller's buffer too.
+#[test]
+fn read_config_body_fits_the_smallest_transport_buffer() {
+    let mut fs = fs();
+    // Model an over-length blob from an older build (the writer refuses it now).
+    fs.put(EF_DEV_CONF, &[0x03, 0x02, 0x02, 0x3B]).unwrap();
+    let mut body = [0u8; MIN_CONFIG_RES_CAP];
+    let mut res = ResBuf::new(&mut body);
+    assert_eq!(config_tlv(&[0; 4], &mut fs, &mut res), Sw::OK);
+    assert!(!res.as_slice().is_empty(), "empty body reported as success");
+    assert_eq!(res.as_slice()[0] as usize, res.len() - 1);
+
+    // A maximum-size stored blob still fits — that is what the cap is derived for.
+    let mut blob = std::vec![0x08, (EF_DEV_CONF_MAX - 2) as u8];
+    blob.extend_from_slice(&std::vec![0u8; EF_DEV_CONF_MAX - 2]);
+    assert_eq!(blob.len(), EF_DEV_CONF_MAX);
+    fs.put(EF_DEV_CONF, &blob).unwrap();
+    let mut body = [0u8; MIN_CONFIG_RES_CAP];
+    let mut res = ResBuf::new(&mut body);
+    assert_eq!(config_tlv(&[0; 4], &mut fs, &mut res), Sw::OK);
+    assert!(!res.as_slice().is_empty());
+    assert_eq!(res.as_slice()[0] as usize, res.len() - 1);
+}
+
+/// How many times `tag` appears in a TLV blob.
+fn tlv_count(blob: &[u8], tag: u8) -> usize {
+    let mut i = 0;
+    let mut n = 0;
+    while i + 2 <= blob.len() {
+        let l = blob[i + 1] as usize;
+        if i + 2 + l > blob.len() {
+            break;
+        }
+        if blob[i] == tag {
+            n += 1;
+        }
+        i += 2 + l;
+    }
+    n
+}
+
 #[test]
 fn config_tlv_clamps_a_lying_over_read() {
     // The Storage::read contract returns the value's *full* length while the

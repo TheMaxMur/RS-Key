@@ -43,6 +43,37 @@ const TAG_VERSION: u8 = 0x05;
 const TAG_DEVICE_FLAGS: u8 = 0x08;
 const TAG_CONFIG_LOCK: u8 = 0x0A;
 const TAG_CONFIG_UNLOCK: u8 = 0x0B;
+// The rest of ykman's writable DeviceConfig set (`DeviceConfig.get_bytes`). We do
+// not act on these, but a host may legitimately send them, so they round-trip.
+const TAG_AUTO_EJECT_TIMEOUT: u8 = 0x06;
+const TAG_CHALRESP_TIMEOUT: u8 = 0x07;
+const TAG_REBOOT: u8 = 0x0C;
+const TAG_NFC_ENABLED: u8 = 0x0E;
+const TAG_NFC_RESTRICTED: u8 = 0x17;
+
+/// Whether a host may write this DeviceInfo tag. The complement — `USB_SUPPORTED`,
+/// `SERIAL`, `FORM_FACTOR`, `VERSION` — is device-owned and emitted by
+/// [`config_tlv`] itself; storing a host copy would append a *second* instance
+/// after the authentic one, and `ykman`'s `Tlv.parse_dict` is last-wins, so the
+/// host value would win. A malformed one (e.g. a 1-byte `VERSION`) makes
+/// `DeviceInfo.parse` raise, which hides the device from `ykman` for good —
+/// `EF_DEV_CONF` survives `authenticatorReset` and no first-party tool rewrites it
+/// (audit run-33). Refusing the write is what keeps that unreachable; real
+/// hardware has no path to a self-inflicted unparseable DeviceInfo either.
+fn writable_tag(tag: u8) -> bool {
+    matches!(
+        tag,
+        TAG_USB_ENABLED
+            | TAG_AUTO_EJECT_TIMEOUT
+            | TAG_CHALRESP_TIMEOUT
+            | TAG_DEVICE_FLAGS
+            | TAG_CONFIG_LOCK
+            | TAG_CONFIG_UNLOCK
+            | TAG_REBOOT
+            | TAG_NFC_ENABLED
+            | TAG_NFC_RESTRICTED
+    )
+}
 
 const FLAG_EJECT: u8 = 0x80;
 const FORM_FACTOR_USB_A_KEYCHAIN: u8 = 0x01;
@@ -73,10 +104,24 @@ pub fn take_device_reset() -> bool {
 /// OpenPGP reset scopes, so the capability config is sticky.
 const EF_DEV_CONF: u16 = 0x1122;
 
-/// Bytes of `EF_DEV_CONF` that READ CONFIG can echo back — the size of the fixed
-/// buffer it reads into. WRITE CONFIG refuses to persist more (a host config is
-/// a handful of small TLVs), so a read can never slice past the buffer.
-const EF_DEV_CONF_MAX: usize = 64;
+/// Bytes of `EF_DEV_CONF` that READ CONFIG can echo back. Derived from the
+/// *smallest* response buffer any transport gives us — the OTP-HID frame's 64
+/// bytes — minus the fixed part of the DeviceInfo TLV, so a stored blob can never
+/// be one a consumer must silently drop. Sizing the writer against its own scratch
+/// instead is what let a 43-byte config wedge OTP-HID READ CONFIG into an empty
+/// success response, persistently (audit run-33).
+const EF_DEV_CONF_MAX: usize = MIN_CONFIG_RES_CAP - CONFIG_TLV_FIXED;
+
+/// Smallest `ResBuf` a READ CONFIG response is built into (the OTP-HID transport).
+const MIN_CONFIG_RES_CAP: usize = 64;
+
+/// The device-owned part of every READ CONFIG response: the overall length byte,
+/// `USB_SUPPORTED` + `SERIAL` + `FORM_FACTOR` + `VERSION`, and the trailing
+/// `CONFIG_LOCK`. Each `push_tlv` costs 2 bytes of header plus its value.
+const CONFIG_TLV_FIXED: usize = 1 + (2 + 2) + (2 + 4) + (2 + 1) + (2 + 3) + CONFIG_LOCK_TLV_LEN;
+
+/// The trailing `CONFIG_LOCK` entry `config_tlv` always appends after the echo.
+const CONFIG_LOCK_TLV_LEN: usize = 2 + 1;
 
 /// Outcome of a user-presence request for a privileged management operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -157,8 +202,16 @@ pub fn config_tlv<S: Storage>(serial: &[u8; 4], fs: &mut Fs<S>, res: &mut ResBuf
             // supported.
             let len = full.min(conf.len());
             let mut echoed = [0u8; EF_DEV_CONF_MAX];
-            let elen =
-                strip_config_lock(&conf[..len], &mut echoed).min(buf.len().saturating_sub(n));
+            // Bound the echo by the caller's buffer as well as ours: `ResBuf::extend`
+            // writes *nothing* on overflow, so an echo that fits `buf` but not the
+            // transport's response would turn READ CONFIG into an empty `9000`
+            // forever. `EF_DEV_CONF_MAX` makes that unreachable for anything this
+            // firmware stored; the clamp covers a blob from an older build.
+            let room = res
+                .capacity()
+                .saturating_sub(n + CONFIG_LOCK_TLV_LEN)
+                .min(buf.len().saturating_sub(n + CONFIG_LOCK_TLV_LEN));
+            let elen = strip_config_lock(&conf[..len], &mut echoed).min(room);
             buf[n..n + elen].copy_from_slice(&echoed[..elen]);
             clamp_usb_enabled(&mut buf[n..n + elen]);
             n += elen;
@@ -180,7 +233,11 @@ pub fn config_tlv<S: Storage>(serial: &[u8; 4], fs: &mut Fs<S>, res: &mut ResBuf
     }
 
     buf[0] = (n - 1) as u8;
-    res.extend(&buf[..n]);
+    if !res.extend(&buf[..n]) {
+        // Unreachable given the clamp above, but never answer OK over a body the
+        // buffer silently dropped — an empty success is what the host parses.
+        return Sw::EXEC_ERROR;
+    }
     Sw::OK
 }
 
@@ -191,6 +248,10 @@ pub enum DevConfError {
     /// Over `EF_DEV_CONF_MAX` — refused so READ CONFIG can never slice past its
     /// fixed buffer (an over-length blob in flash is a sticky DoS).
     TooLong,
+    /// Not well-formed TLV, or it carries a tag the device owns (see
+    /// [`writable_tag`]). Refused so a host cannot forge an identity field or
+    /// store a blob that makes the DeviceInfo response unparseable.
+    BadTlv,
     /// The flash write failed.
     Store,
 }
@@ -203,6 +264,9 @@ pub enum DevConfError {
 pub fn persist_dev_conf<S: Storage>(fs: &mut Fs<S>, blob: &[u8]) -> Result<(), DevConfError> {
     if blob.len() > EF_DEV_CONF_MAX {
         return Err(DevConfError::TooLong);
+    }
+    if !well_formed_writable(blob) {
+        return Err(DevConfError::BadTlv);
     }
     // Never retain the config-lock tags (see `strip_config_lock`): we do not enforce
     // the lock, and READ CONFIG echoes this blob to any unauthenticated host, so a
@@ -225,6 +289,27 @@ pub fn persist_dev_conf<S: Storage>(fs: &mut Fs<S>, blob: &[u8]) -> Result<(), D
 /// copied unchanged, so a config we do not understand is never corrupted (an attacker's
 /// own malformed write is readable by them regardless). `out` must be at least
 /// `blob.len()` bytes.
+/// Whether `blob` is a clean run of TLV entries whose every tag a host may write.
+/// Empty is fine (it clears the record). Rejecting here rather than sanitizing on
+/// read keeps one definition of "what a host may store" and means READ CONFIG can
+/// go on echoing the stored bytes verbatim.
+fn well_formed_writable(blob: &[u8]) -> bool {
+    let mut i = 0;
+    while i < blob.len() {
+        let Some(&len) = blob.get(i + 1) else {
+            return false; // truncated header
+        };
+        let Some(end) = i.checked_add(2).and_then(|h| h.checked_add(len as usize)) else {
+            return false;
+        };
+        if end > blob.len() || !writable_tag(blob[i]) {
+            return false;
+        }
+        i = end;
+    }
+    true
+}
+
 fn strip_config_lock(blob: &[u8], out: &mut [u8]) -> usize {
     let mut i = 0;
     let mut n = 0;
@@ -363,7 +448,7 @@ impl<'a> ManagementApplet<'a> {
         }
         match persist_dev_conf(fs, &apdu.data[1..apdu.nc]) {
             Ok(()) => Sw::OK,
-            Err(DevConfError::TooLong) => Sw::INCORRECT_PARAMS,
+            Err(DevConfError::TooLong | DevConfError::BadTlv) => Sw::INCORRECT_PARAMS,
             Err(DevConfError::Store) => Sw::MEMORY_FAILURE,
         }
     }
