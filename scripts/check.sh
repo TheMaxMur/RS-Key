@@ -69,9 +69,13 @@ run "check (fuzz)"             cargo check --manifest-path fuzz/Cargo.toml --tes
 run "test (host)"              cargo test -p rsk-sdk -p rsk-fs -p rsk-usb -p rsk-crypto -p rsk-fido -p rsk-openpgp -p rsk-rsa-asm -p rsk-sha512 -p rsk-ec -p rsk-mldsa -p rsk-mgmt -p rsk-oath -p rsk-otp -p rsk-piv -p rsk-rescue -p rsk-led -p rsk-ui -p rsk-bip39 -p rsk-slip39 -p rsk-bench --target "$HOST"
 # The PQC-advertisement opt-in changes the getInfo shape — test both forms.
 run "test (advertise-pqc)"     cargo test -p rsk-fido --features advertise-pqc --target "$HOST" getinfo
-# fido-conformance suppresses the default EdDSA (-8) advertisement — verify that
-# path too (the shipping/default build advertises -8; this drops it for the tool).
-run "test (fido-conformance)"  cargo test -p rsk-fido --features fido-conformance --target "$HOST" getinfo
+# fido-conformance suppresses the default EdDSA (-8) advertisement (the
+# shipping/default build advertises -8; this drops it for the tool) and implies
+# `strict-up`, which drops the U2F don't-enforce control byte. Run the WHOLE suite,
+# not a name filter: the build for this permutation happens either way, so the extra
+# cost is seconds, and a `getinfo`-only filter left a stale U2F expectation failing
+# here unnoticed. This is also the only gate coverage `strict-up` gets.
+run "test (fido-conformance)"  cargo test -p rsk-fido --features fido-conformance --target "$HOST"
 # The FIPS-style profile changes algorithm menus / PIN floor / export policy;
 # run its tests (name-filtered: the regular fixtures assume the 4-char PIN
 # floor) and type-check the locked firmware image.
