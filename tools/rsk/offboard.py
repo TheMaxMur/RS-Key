@@ -79,7 +79,7 @@ def register(sub):
 
 def _serial():
     """The device serial (RP2350 OTP chip id) from the rescue applet."""
-    conn = ccid.connect()
+    conn = ccid.connect(exclusive=True)
     serial = rescue_serial(*ccid.select(conn, RESCUE_AID))
     if serial is None:
         die("rescue applet did not answer — cannot identify the device")

@@ -10,7 +10,7 @@ the only bricking step is the single SECURE_BOOT_ENABLE bit:
   load-key  A: bootkey fingerprint + KEY_VALID (slot 0 by default). non-enforcing
   harden    B: DEBUG_DISABLE + GLITCH_DETECTOR_ENABLE/SENS=3.   non-enforcing
   enable    C: SECURE_BOOT_ENABLE = 1.                          the brick bit
-  lock      D: KEY_INVALID=0xE + PAGE1/PAGE2 bootloader-read-only.
+  lock      D: revoke every untrusted key slot + PAGE1/PAGE2 bootloader-read-only.
 
 RP2350 has four boot-key slots (BOOTKEY0..3); the bootrom boots an image whose
 public key matches ANY valid, non-revoked slot. That is what makes rotation
@@ -43,7 +43,6 @@ CRIT1_ROW, BOOT_FLAGS1_ROW, BOOTKEY0_0_ROW = 0x40, 0x4B, 0x80
 # 16-row ECC block holding the SHA-256 fingerprint of one signing public key.
 N_KEY_SLOTS, BOOTKEY_STRIDE = 4, 0x10
 PAGE1_LOCK1_ROW, PAGE2_LOCK1_ROW = 0xF83, 0xF85
-KEY_INVALID_UNUSED = 0xE
 # Anti-rollback: BOOT_FLAGS0 bit 11 + the 48-bit DEFAULT_BOOT_VERSION
 # thermometer. All RBIT-3 (three consecutive row copies, bitwise majority).
 BOOT_FLAGS0_ROW, BOOT_VERSION0_ROW, BOOT_VERSION1_ROW = 0x48, 0x4E, 0x51
@@ -138,6 +137,20 @@ def _revoke_leaves_valid(key_valid, key_invalid, slot):
     return key_valid & ~(key_invalid | (1 << slot)) & 0xF
 
 
+def _trusted_slots(key_valid, key_invalid):
+    """The mask the bootrom trusts: KEY_VALID set AND KEY_INVALID clear."""
+    return key_valid & ~key_invalid & 0xF
+
+
+def _lock_invalid_mask(key_valid, key_invalid):
+    """KEY_INVALID for `lock`: revoke every slot the bootrom does not already
+    trust. A superset of the current KEY_INVALID, so the antifuse write never
+    asks picotool to clear a bit. Hard-coding 0xE instead assumed the live key
+    sits in slot 0 and, after a rotation, revoked the key the board was actually
+    booting on (audit run-32)."""
+    return ~_trusted_slots(key_valid, key_invalid) & 0xF
+
+
 def pages_locked(s):
     """Key/flag pages bootloader-read-only (after `lock`) ⇒ BOOTSEL can't write keys.
     Only LOCK_BL (bits 4-5 of each RBIT-3 byte, mask 0x303030) blocks bootloader
@@ -172,7 +185,9 @@ def read_state():
 
 
 def print_state(s):
-    locked = (s["secure_boot_enable"] and s["key_invalid"] == KEY_INVALID_UNUSED
+    # The lock's own evidence is the fused key pages, not a particular KEY_INVALID
+    # value — that depends on which slot the board boots from.
+    locked = (s["secure_boot_enable"] and pages_locked(s)
               and s["debug_disable"] and s["glitch_enable"] and s["glitch_sens"] == 3)
     slotmap = "  ".join(
         f"[{n}]{'K' if s['slots_present'][n] else '.'}"
@@ -323,6 +338,11 @@ def cmd_enable(args):
     s = read_state()
     if not s["bootkey0_present"]:
         die("no bootkey — run `load-key`/`harden` first.")
+    # RP2350's own KEY_VALID doc: enabling enforcement without a valid key renders
+    # the device unbootable. A fingerprint alone is not enough (audit run-32).
+    if _trusted_slots(s["key_valid"], s["key_invalid"]) == 0:
+        die("refusing: no slot is both KEY_VALID and non-revoked — enabling "
+            "enforcement now would leave the board unable to validate any image.")
     if s["secure_boot_enable"]:
         die("SECURE_BOOT_ENABLE already set.")
     print("Stage C — SECURE_BOOT_ENABLE = 1. THE IRREVERSIBLE ENFORCEMENT BIT.")
@@ -339,18 +359,34 @@ def cmd_enable(args):
 
 def cmd_lock(args):
     require_bootsel()
-    if not read_state()["secure_boot_enable"]:
+    s = read_state()
+    if not s["secure_boot_enable"]:
         die("SECURE_BOOT_ENABLE not set — run `enable` and verify it first.")
-    print("Stage D — KEY_INVALID=0xE (revoke 3 unused slots) + PAGE1/PAGE2 read-only:")
+    # Which slot the board actually boots on decides the mask; `lock` used to burn a
+    # constant and silently revoke a rotated-to key (audit run-32).
+    trusted = _trusted_slots(s["key_valid"], s["key_invalid"])
+    if trusted == 0:
+        die("refusing: no slot is both KEY_VALID and non-revoked — the board would "
+            "not boot any image after the lock. Provision a key first.")
+    if trusted & (trusted - 1):
+        keep = [n for n in range(N_KEY_SLOTS) if trusted & (1 << n)]
+        die(f"refusing: slots {keep} are both trusted, so `lock` cannot tell which one "
+            "to keep. Run `revoke <old slot>` first (it carries the last-valid-key guard).")
+    invalid = _lock_invalid_mask(s["key_valid"], s["key_invalid"])
+    keep = trusted.bit_length() - 1
+    print(f"Stage D — KEY_INVALID={invalid:#x} (revoke every slot but {keep}) "
+          "+ PAGE1/PAGE2 read-only:")
     print("This forecloses key rotation (no free slot left). Skip it to keep a rotation slot.")
     confirm("LOCK-SECURE-BOOT") if not args.dry_run else None
-    _set(["set", "OTP_DATA_BOOT_FLAGS1.KEY_INVALID", f"{KEY_INVALID_UNUSED:#x}"], args.dry_run)
+    _set(["set", "OTP_DATA_BOOT_FLAGS1.KEY_INVALID", f"{invalid:#x}"], args.dry_run)
     _set(["set", "-r", "OTP_DATA_PAGE1_LOCK1", f"{PAGE_LOCK_BL_RO:#x}"], args.dry_run)
     _set(["set", "-r", "OTP_DATA_PAGE2_LOCK1", f"{PAGE_LOCK_BL_RO:#x}"], args.dry_run)
     if not args.dry_run:
         s = read_state()
-        if s["key_invalid"] != KEY_INVALID_UNUSED:
+        if s["key_invalid"] != invalid:
             die("verify failed: KEY_INVALID did not take")
+        if _trusted_slots(s["key_valid"], s["key_invalid"]) == 0:
+            die("verify failed: no trusted boot key survived the lock")
         print_state(s)
     print("\nDONE. Every future reflash must be a `picotool seal --sign`-ed UF2. Back up the key.")
     print("Optional next: anti-rollback — seal with `--rollback`, then `rsk otp rollback-require`")

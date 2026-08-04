@@ -25,7 +25,7 @@ import tempfile
 
 from . import ccid
 from .common import confirm, die, picotool
-from .status import RESCUE_AID, rescue_read
+from .status import RESCUE_AID, rescue_read, rescue_serial
 
 DEVK_ROW, MKEK_ROW, KEY_ROWS, CHAFF_OFFSET = 0xE80, 0xE90, 16, 0x20
 LOCK1_ROW, LOCK_VALUE = 0xFF5, 0x3C3C3C
@@ -102,23 +102,46 @@ def burn(args):
 
     print("This PERMANENTLY burns the MKEK + DEVK into OTP page 58. No undo.")
     confirm("BURN-OTP-PAGE58")
-    with tempfile.TemporaryDirectory() as td:
-        def burn_key(row, key, name):
+    with tempfile.TemporaryDirectory(dir=_scratch_dir()) as td:
+        def write_scratch(name, data):
+            """picotool takes a path, so the key has to touch a filesystem. Create it
+            0600 and O_EXCL, overwrite before unlink, and prefer the RAM-backed dir —
+            the docs promise the host keeps no copy (audit run-32)."""
             p = os.path.join(td, name + ".bin")  # picotool dispatches by extension
-            with open(p, "wb") as f:
-                f.write(key)
-            picotool("otp", "load", "-e", "-s", f"{row:#x}", p)
+            fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, "wb") as f:
+                f.write(data)
+            return p
+
+        def shred(p):
+            with open(p, "r+b") as f:
+                n = f.seek(0, os.SEEK_END)
+                f.seek(0)
+                f.write(b"\x00" * n)
+                f.flush()
+                os.fsync(f.fileno())
+            os.unlink(p)
+
+        def burn_key(row, key, name):
+            p = write_scratch(name, key)
+            try:
+                picotool("otp", "load", "-e", "-s", f"{row:#x}", p)
+            finally:
+                shred(p)
             print(f"{name} @ {row:#x} written + verified ✓")
 
         burn_key(DEVK_ROW, devk, "devk")
         burn_key(MKEK_ROW, mkek, "mkek")
         for base, name in ((DEVK_ROW, "devk_chaff"), (MKEK_ROW, "mkek_chaff")):
             raw = [(_read_raw_row(base + i) or 0) ^ 0xFFFFFF for i in range(KEY_ROWS)]
-            p = os.path.join(td, name + ".bin")
-            with open(p, "wb") as f:
-                for v in raw:
-                    f.write(v.to_bytes(3, "little") + b"\x00")
-            picotool("otp", "load", "-r", "-s", f"{base + CHAFF_OFFSET:#x}", p)
+            # The chaff is the per-row complement of the key just burned, so it is
+            # key-equivalent and gets the same handling.
+            blob = b"".join(v.to_bytes(3, "little") + b"\x00" for v in raw)
+            p = write_scratch(name, blob)
+            try:
+                picotool("otp", "load", "-r", "-s", f"{base + CHAFF_OFFSET:#x}", p)
+            finally:
+                shred(p)
             print(f"{name} @ {base + CHAFF_OFFSET:#x} written ✓")
         lock = picotool("otp", "set", "-r", f"{LOCK1_ROW:#x}", f"{LOCK_VALUE:#x}", check=False)
     locked = lock.returncode == 0 and _read_raw_row(MKEK_ROW) is None
@@ -135,17 +158,39 @@ def burn(args):
     )
 
 
-def lock_page58(args):
-    conn = ccid.connect()
-    _, s1, s2 = ccid.select(conn, RESCUE_AID)
+def _scratch_dir():
+    """A RAM-backed parent for the key scratch files, or None for the default.
+
+    Overwrite-then-unlink does not reliably erase on a copy-on-write filesystem
+    (APFS, btrfs, ZFS) or behind an SSD's wear levelling, so never landing the
+    plaintext on non-volatile storage is the step that actually closes the
+    channel. Linux gives us `/dev/shm`; macOS has no tmpfs, so there the shred
+    below is the whole mitigation.
+    """
+    shm = "/dev/shm"
+    return shm if os.path.isdir(shm) and os.access(shm, os.W_OK) else None
+
+
+def _select_rescue(conn):
+    """SELECT the rescue applet and return the chip serial it answers with. The
+    serial names the device an irreversible fuse burn is about to hit, so the
+    operator confirms against it rather than against a static token (audit run-32)."""
+    d, s1, s2 = ccid.select(conn, RESCUE_AID)
     if (s1, s2) != ccid.SW_OK:
         die(f"SELECT rescue AID failed: {s1:02X}{s2:02X} (firmware too old?)")
-    print("rescue applet selected ✓")
+    serial = rescue_serial(d, s1, s2)
+    print(f"rescue applet selected ✓  device {serial or 'serial unavailable'}")
+    return serial
+
+
+def lock_page58(args):
+    conn = ccid.connect(exclusive=True)
+    serial = _select_rescue(conn)
     if args.dry_run:
         print("dry-run: would send OTP_LOCK (80 1B 58 00 06 'LOCK58' 00)")
         return
     print("This PERMANENTLY locks OTP page 58 away from BOOTSEL / non-secure. No undo.")
-    confirm("LOCK-PAGE58")
+    confirm(serial or "LOCK-PAGE58")
     _, s1, s2 = ccid.transmit(conn, LOCK_APDU)
     print(f"OTP_LOCK → SW {s1:02X}{s2:02X}: {LOCK_SW.get((s1, s2), 'unknown status')}")
     if (s1, s2) != ccid.SW_OK:
@@ -154,11 +199,8 @@ def lock_page58(args):
 
 
 def rollback_require(args):
-    conn = ccid.connect()
-    _, s1, s2 = ccid.select(conn, RESCUE_AID)
-    if (s1, s2) != ccid.SW_OK:
-        die(f"SELECT rescue AID failed: {s1:02X}{s2:02X} (firmware too old?)")
-    print("rescue applet selected ✓")
+    conn = ccid.connect(exclusive=True)
+    serial = _select_rescue(conn)
     d, s1, s2 = rescue_read(conn, 0x06)
     if (s1, s2) != ccid.SW_OK or len(d) < 3:
         die(f"anti-rollback state read failed: SW {s1:02X}{s2:02X} — firmware too old?")
@@ -175,7 +217,7 @@ def rollback_require(args):
     print("version — including every UF2 sealed before this feature (the old")
     print("firmware-signed.uf2, an unsealed-era rsk-wipe). Re-seal those with")
     print("`--rollback` first. See docs/production.md, \"Anti-rollback\". No undo.")
-    confirm("ROLLBACK-REQUIRED")
+    confirm(serial or "ROLLBACK-REQUIRED")
     _, s1, s2 = ccid.transmit(conn, ROLLBACK_APDU)
     print(f"OTP_LOCK → SW {s1:02X}{s2:02X}: {ROLLBACK_SW.get((s1, s2), 'unknown status')}")
     if (s1, s2) != ccid.SW_OK:

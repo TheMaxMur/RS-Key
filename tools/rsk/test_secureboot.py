@@ -76,3 +76,26 @@ def test_pages_locked():
     assert sb.pages_locked({"page1_lock": 0x040404, "page2_lock": None}) is False
     # LOCK_NS on one page but LOCK_BL on the other ⇒ still locked (LOCK_BL wins).
     assert sb.pages_locked({"page1_lock": 0x040404, "page2_lock": p}) is True
+
+
+# --- `lock` derives its KEY_INVALID mask from live state (audit run-32) --------
+
+def test_lock_mask_is_a_superset_of_the_current_key_invalid():
+    """picotool refuses any OTP write that would clear a bit, so a mask that is not
+    a superset aborts the whole lock. Exhaustive over the 256 (valid, invalid)
+    pairs."""
+    for kv in range(16):
+        for ki in range(16):
+            m = sb._lock_invalid_mask(kv, ki)
+            assert m & ki == ki, f"{m:#x} would clear a fused bit from {ki:#x}"
+
+
+def test_lock_mask_keeps_the_slot_the_board_actually_boots():
+    # Classic slot-0 board: unchanged from the old hard-coded constant.
+    assert sb._lock_invalid_mask(0b0001, 0b0000) == 0xE
+    # Rotated to slot 1, old slot not yet revoked: the old constant revoked slot 1,
+    # the key the board boots on. The derived mask keeps whichever slot is trusted.
+    assert sb._lock_invalid_mask(0b0011, 0b0001) == 0b1101
+    assert sb._trusted_slots(0b0011, 0b0001) == 0b0010
+    # Both slots trusted is ambiguous — cmd_lock refuses rather than guessing.
+    assert sb._trusted_slots(0b0011, 0b0000) == 0b0011

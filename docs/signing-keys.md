@@ -161,8 +161,11 @@ The RP2350 has **four** boot-key slots, each holding one fingerprint, plus
 - The bootrom accepts an image whose public key matches **any valid,
   non-revoked** slot.
 - The `lock` stage ([production.md](production.md#2c-burn-staged)) sets
-  `KEY_INVALID` on the three unused slots. Maximum hardening, but it also
-  removes any room to add a key later.
+  `KEY_INVALID` on every slot the bootrom does not already trust, keeping the one
+  the board actually boots from. Maximum hardening, but it also removes any room
+  to add a key later. On a board mid-rotation — a new key provisioned but the old
+  slot not yet revoked — two slots are trusted and `lock` refuses rather than
+  guess: run `revoke <old slot>` first.
 - **Reserving a slot vs. full lock-down is a decision you make at provisioning
   time.** It is the same trade-off as the anti-rollback escape valve, laid out
   in [anti-rollback.md](anti-rollback.md#a-decision-you-must-make-before-the-ceiling).
