@@ -51,6 +51,12 @@ run "clippy (host tests)"      cargo clippy -p rsk-sdk -p rsk-fs -p rsk-usb -p r
 # until Dependabot flagged a transitive advisory from the GitHub side.
 run "fmt (tui)"                cargo fmt --manifest-path tools/tui/Cargo.toml --check
 run "clippy (tui)"             cargo clippy --manifest-path tools/tui/Cargo.toml --target "$HOST" --all-targets -- -D warnings
+# …and its tests, which nothing ran either. The suites that guard the host tools'
+# irreversible paths — the typed confirmations, the refuse-to-guess device binding,
+# the "revoking would leave no valid key" brick guard — were unenforced, so those
+# checks could be deleted with every test still green (audit run-33 proved it by
+# mutation). Both host suites belong in the same gate as the firmware's.
+run "test (tui)"               cargo test --manifest-path tools/tui/Cargo.toml --target "$HOST"
 # fuzz/ is also its own (nightly) workspace. rustfmt needs no toolchain, so the
 # stable gate can format-check it here; building/clippy stay in the .#fuzz shell
 # (deep-checks CI). Format fuzz/ with this same stable rustfmt — not the .#fuzz
@@ -124,6 +130,11 @@ run "display code absent from default image" sh -c '
 # The test build: no BOOTSEL presence, so the automated suites don't hang on a touch.
 run "build firmware (test, --features no-touch)" cargo build --release -p firmware --features no-touch
 run "build rsk-wipe (release)" cargo build --release -p rsk-wipe
+# rsk-wipe bakes its erase length in at build time, and it is the signed recovery
+# hatch: build it for the largest supported board too, so a change that stops
+# `BOARD` reaching it (which once left a 16 MB board's whole KV store intact behind
+# a "successful" wipe) fails here rather than in the field.
+run "build rsk-wipe (16 MB board)" env BOARD=tenstar-usb cargo build --release -p rsk-wipe
 run "flake.lock in sync"       lock_in_sync
 # RUSTSEC-2023-0071: rsa Marvin timing side-channel — no fixed release; it is the
 # OpenPGP RSA backend, mitigated by blinding. Justification in deny.toml.
@@ -135,6 +146,7 @@ run "cargo-deny"               cargo deny check
 # a new, unreviewed crate enters the tree. --locked uses the committed
 # supply-chain/imports.lock (offline, no fetch). See docs/supply-chain.md.
 run "cargo-vet (supply-chain)" cargo vet --locked
+run "pytest (tools/rsk)"       python -m pytest tools/rsk -q
 run "gitleaks (tree)"          gitleaks detect --redact --no-banner
 
 echo
