@@ -298,6 +298,64 @@ fn write_config_refuses_device_owned_and_malformed_tags() {
 // fit the writer's cap but not the smallest transport's 64-byte response turned READ
 // CONFIG into an empty `9000` forever. The writer cap is now derived from that
 // consumer, and the echo is clamped against the caller's buffer too.
+// A `ykman config set-lock-code` sends the old UNLOCK and the new CONFIG_LOCK in
+// one request — 16 bytes each, neither of which is stored. Bounding the *request*
+// against the stored-blob cap would refuse that legitimate write, so the cap
+// applies to the stripped result.
+#[test]
+fn set_lock_code_sized_request_is_accepted() {
+    let presence = RefCell::new(AlwaysConfirm);
+    let mut app = ManagementApplet::new([0; 8], &presence);
+    let mut fs = fs();
+    let mut blob = std::vec![TAG_CONFIG_UNLOCK, 0x10];
+    blob.extend_from_slice(&[0x11; 16]);
+    blob.push(TAG_CONFIG_LOCK);
+    blob.push(0x10);
+    blob.extend_from_slice(&[0x22; 16]);
+    // …alongside the rest of ykman's writable set, which is what makes the request
+    // exceed the stored cap while the config it actually stores stays tiny.
+    blob.extend_from_slice(&[TAG_USB_ENABLED, 0x02, 0x02, 0x3B]);
+    blob.extend_from_slice(&[TAG_AUTO_EJECT_TIMEOUT, 0x02, 0x00, 0x00]);
+    blob.extend_from_slice(&[TAG_CHALRESP_TIMEOUT, 0x01, 0x0F]);
+    blob.extend_from_slice(&[TAG_DEVICE_FLAGS, 0x01, 0x00]);
+    blob.extend_from_slice(&[TAG_NFC_ENABLED, 0x02, 0x00, 0x00]);
+    blob.extend_from_slice(&[TAG_NFC_RESTRICTED, 0x01, 0x00]);
+    blob.extend_from_slice(&[TAG_REBOOT, 0x00]);
+    assert!(
+        blob.len() > EF_DEV_CONF_MAX,
+        "the point is a request over the stored cap"
+    );
+    let mut cmd = std::vec![
+        0x00,
+        INS_WRITE_CONFIG,
+        0,
+        0,
+        (blob.len() + 1) as u8,
+        blob.len() as u8
+    ];
+    cmd.extend_from_slice(&blob);
+    let (sw, _) = process(&mut app, &mut fs, &cmd);
+    assert_eq!(
+        sw,
+        Sw::OK,
+        "a legitimate set-lock-code write must not be refused"
+    );
+    // Only the enabled mask survives; neither 16-byte code reaches flash.
+    let mut stored = [0u8; EF_DEV_CONF_MAX];
+    let n = fs.read(EF_DEV_CONF, &mut stored).unwrap();
+    assert!(n <= EF_DEV_CONF_MAX);
+    assert!(
+        !stored[..n]
+            .windows(16)
+            .any(|w| w == [0x11; 16] || w == [0x22; 16]),
+        "neither lock code may reach flash"
+    );
+    assert_eq!(
+        tlv_get(&stored[..n], TAG_USB_ENABLED),
+        Some(&[0x02, 0x3B][..])
+    );
+}
+
 #[test]
 fn read_config_body_fits_the_smallest_transport_buffer() {
     let mut fs = fs();

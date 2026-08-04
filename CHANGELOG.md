@@ -27,15 +27,21 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   interloper's handshake still succeeds (refusing it would hand a squatter a
   denial of service) but the owner's export then fails closed instead of
   misaddressing the seed. No wire change.
-- **Core 1's keygen scrub wiped a copy, not the mailbox.** `Option::take()`
-  moves the payload out and writes back only the discriminant, so `zeroize()`
-  cleared a local while a full 256-byte RSA prime — and the DRBG seed that
-  replays the whole candidate stream — stayed resident in the shared static.
+- **Core 1's keygen scrub wiped a copy, not the mailbox.** `Option::take()` moves
+  the payload out and writes back only the discriminant, so `zeroize()` cleared a
+  local while a full 256-byte RSA prime — and the 48-byte DRBG seed that replays
+  core1's entire candidate stream — stayed resident in the shared static.
   `worker::reboot`'s BOOTSEL drop scrubbed CTAP, CCID, the DRBG and the OTP
   keyboard but not core1, and the RP2350 bootrom does not clear main SRAM, so a
   `picotool save` after the presence-gated reboot recovered a factor of any key
   generated that power cycle. Zeroizing now goes *through* the slot, the two
-  move-out paths copy before wiping, and `core1::scrub()` joins the reboot list.
+  paths that must genuinely move the payload out copy the fields first and wipe
+  the original in place, and `core1::scrub()` joins the reboot list. Each core
+  additionally scrubs its **own** sieve when its search ends — the last candidate
+  there *is* the prime that was found, and it would otherwise sit until the next
+  job reseeds. That scrub stays on the owning core: `STOP` does not wait for
+  core1, so issuing it from core0 would alias a live `&mut` across cores.
+
 - **`rsk-wipe` builds for the board again.** Its erase length is baked in at
   build time and `BOARD` never reached its build script, so the documented
   `BOARD=<16 MB board>` build produced a 4 MB wiper — and because the KV store

@@ -112,6 +112,13 @@ const EF_DEV_CONF: u16 = 0x1122;
 /// success response, persistently (audit run-33).
 const EF_DEV_CONF_MAX: usize = MIN_CONFIG_RES_CAP - CONFIG_TLV_FIXED;
 
+/// Largest WRITE CONFIG request accepted, before the lock tags are stripped. A
+/// request may legitimately be larger than what it stores — `set-lock-code` sends
+/// a 16-byte UNLOCK *and* a 16-byte CONFIG_LOCK, neither of which is kept — so the
+/// request bound is the transport's own limit and [`EF_DEV_CONF_MAX`] is applied
+/// to the stripped result.
+const DEV_CONF_WRITE_MAX: usize = 128;
+
 /// Smallest `ResBuf` a READ CONFIG response is built into (the OTP-HID transport).
 const MIN_CONFIG_RES_CAP: usize = 64;
 
@@ -262,7 +269,7 @@ pub enum DevConfError {
 /// the enabled-applications TLV *without* any transport length prefix; the caller
 /// applies its own auth gate (CCID presence, FIDO PIN + touch) before this.
 pub fn persist_dev_conf<S: Storage>(fs: &mut Fs<S>, blob: &[u8]) -> Result<(), DevConfError> {
-    if blob.len() > EF_DEV_CONF_MAX {
+    if blob.len() > DEV_CONF_WRITE_MAX {
         return Err(DevConfError::TooLong);
     }
     if !well_formed_writable(blob) {
@@ -271,8 +278,15 @@ pub fn persist_dev_conf<S: Storage>(fs: &mut Fs<S>, blob: &[u8]) -> Result<(), D
     // Never retain the config-lock tags (see `strip_config_lock`): we do not enforce
     // the lock, and READ CONFIG echoes this blob to any unauthenticated host, so a
     // 16-byte 0x0A would sit unsealed in flash and be disclosed (audit run-30).
-    let mut stripped = [0u8; EF_DEV_CONF_MAX];
+    let mut stripped = [0u8; DEV_CONF_WRITE_MAX];
     let n = strip_config_lock(blob, &mut stripped);
+    // Bound what is actually STORED, not what was sent: the two lock tags carry
+    // 16-byte codes that never reach flash, and `ykman config set-lock-code` sends
+    // both the old and the new one at once — 59 bytes of request for at most 23
+    // bytes of config. Measuring the request would refuse that legitimate write.
+    if n > EF_DEV_CONF_MAX {
+        return Err(DevConfError::TooLong);
+    }
     fs.put(EF_DEV_CONF, &stripped[..n])
         .map_err(|_| DevConfError::Store)?;
     // The enabled-applications set changed; the firmware reloads its cached mask
@@ -338,13 +352,14 @@ fn strip_config_lock(blob: &[u8], out: &mut [u8]) -> usize {
 /// entry on an idempotent replay, which a silent host could otherwise use to evict
 /// the whole ring.
 pub fn dev_conf_unchanged<S: Storage>(fs: &mut Fs<S>, blob: &[u8]) -> bool {
-    if blob.len() > EF_DEV_CONF_MAX {
+    // Request-side bound: this takes the blob as sent, lock tags included.
+    if blob.len() > DEV_CONF_WRITE_MAX {
         return false;
     }
     // Compare against the stripped form we would actually store, so an idempotent
     // replay of a blob that still carries 0x0A/0x0B is still recognised as unchanged
     // (otherwise every replay would churn flash and the audit ring — audit run-30).
-    let mut stripped = [0u8; EF_DEV_CONF_MAX];
+    let mut stripped = [0u8; DEV_CONF_WRITE_MAX];
     let n = strip_config_lock(blob, &mut stripped);
     let mut cur = [0u8; EF_DEV_CONF_MAX];
     // `read` reports the value's *full* stored length, which an over-length record
@@ -429,11 +444,11 @@ impl<'a> ManagementApplet<'a> {
         if apdu.nc == 0 || apdu.data[0] as usize != apdu.nc - 1 {
             return Sw::INCORRECT_PARAMS;
         }
-        // READ CONFIG echoes this blob back through a fixed `EF_DEV_CONF_MAX`
-        // buffer; refuse to persist more than fits so a read can never slice out
-        // of bounds (an over-length blob would otherwise be a sticky DoS — it
-        // lives in flash and crashes every DeviceInfo query until wiped).
-        if apdu.nc - 1 > EF_DEV_CONF_MAX {
+        // Request-side bound only. What actually reaches flash is bounded by
+        // `persist_dev_conf` against `EF_DEV_CONF_MAX` *after* the lock tags are
+        // stripped, so a legitimate `set-lock-code` (two 16-byte codes in one
+        // request, neither stored) is not refused for the size of its request.
+        if apdu.nc - 1 > DEV_CONF_WRITE_MAX {
             return Sw::INCORRECT_PARAMS;
         }
         // Rewriting the reported DeviceInfo is a privileged, sticky change. Under

@@ -196,23 +196,21 @@ fn take_found(slot: &mut Option<Found>) -> Option<Found> {
     Some(out)
 }
 
-/// Wipe every secret core1 leaves in SRAM: the mailbox (primes in transit and the
-/// keygen DRBG seed) and both sieves' last candidate — which *is* the prime that
-/// was found, since `scrub()` otherwise only runs when the next search starts.
-/// Called before dropping to BOOTSEL, where main SRAM survives the reset.
+/// Wipe the primes in transit and the keygen DRBG seed from the mailbox, before
+/// dropping to BOOTSEL where main SRAM survives the reset.
+///
+/// The mailbox only. The two sieves are single-core-exclusive by construction, and
+/// `STOP` does not wait for core1 — it can still be inside `try_candidate_le` when
+/// `run_rsa_search` returns — so reaching into `CORE1_SIEVE` from core0 here would
+/// alias a live `&mut` across cores. Each core scrubs its own sieve at the end of
+/// its own search instead, which also closes that residue window immediately
+/// rather than only at reboot.
 pub fn scrub() {
     MAILBOX.lock(|mb| {
         let mb = &mut mb.borrow_mut();
         scrub_found(mb);
         scrub_job(mb);
     });
-    // SAFETY: same contract as the sieve accesses in `search`/`run_rsa_search` —
-    // core0 touches these only with core1 parked or wound down, and the reboot path
-    // runs after the worker's last dispatch.
-    unsafe {
-        (*core::ptr::addr_of_mut!(CORE0_SIEVE)).scrub();
-        (*core::ptr::addr_of_mut!(CORE1_SIEVE)).scrub();
-    }
 }
 
 // --------------------------------------------------------------- core1 side --
@@ -228,6 +226,11 @@ fn core1_main() -> ! {
             // in the found slots is OUR late post — scrub it (once per edge).
             if STOP.load(Ordering::Acquire) && !stop_scrubbed {
                 MAILBOX.lock(|mb| scrub_found(&mut mb.borrow_mut()));
+                // …and our own sieve: its last candidate IS the prime we just
+                // delivered, and it would otherwise sit here until the next
+                // search reseeds. SAFETY: unchanged ownership — CORE1_SIEVE is
+                // touched only from core1, and the search that used it has ended.
+                unsafe { (*core::ptr::addr_of_mut!(CORE1_SIEVE)).scrub() };
                 stop_scrubbed = true;
             }
             cortex_m::asm::wfe();
@@ -445,6 +448,10 @@ pub fn run_rsa_search_progress(
         JOB_PENDING.store(false, Ordering::Relaxed);
         scrub_found(&mut mb);
     });
+    // Our own sieve holds the last candidate — the prime this key was built
+    // from. `sieve` is the same `&mut` the loop above used, so this stays inside
+    // core0's exclusive borrow.
+    sieve.scrub();
     STOP.store(true, Ordering::Release);
     cortex_m::asm::sev();
     outcome.flatten()

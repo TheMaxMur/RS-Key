@@ -207,7 +207,7 @@ surface returns:
 | `0x02` | INVALID_PARAMETER | malformed param / bad key / wrong blob length |
 | `0x14` | MISSING_PARAMETER | required field absent (e.g. blob/`pinUvAuthParam`) |
 | `0x27` | OPERATION_DENIED | touch declined / timed out |
-| `0x30` | NOT_ALLOWED | precondition unmet (no MSE channel, sealed, soft-locked, or an `authenticatorReset` outside the §5.1 power-up window) |
+| `0x30` | NOT_ALLOWED | precondition unmet (no MSE channel **or one owned by another CTAPHID channel** (§9.1), sealed, soft-locked, or an `authenticatorReset` outside the §5.1 power-up window) |
 | `0x33` | PIN_AUTH_INVALID | `pinUvAuthParam` MAC or `acfg` permission wrong |
 | `0x36` | PUAT_REQUIRED | a PIN is set but no `pinUvAuthToken` was supplied |
 | `0x39` | REQUEST_TOO_LARGE | `subCommandParams` over the limit |
@@ -788,6 +788,17 @@ Establishes an encrypted channel for the seed-moving subcommands.
 **Blob format** (the 60-byte `blob` in EXPORT/LOAD/UNLOCK/ATT_IMPORT):
 `nonce(12) ‖ ciphertext(32) ‖ tag(16)`, ChaCha20-Poly1305 under the channel key
 with **AAD = `dev_pub` (65 bytes)**.
+
+> **Channel lifetime — run MSE and the subcommand it protects on the SAME CTAPHID
+> channel.** The device holds one channel key per power cycle and binds it to the
+> CID that established it; a subcommand arriving on a different CID answers `0x30`
+> NOT_ALLOWED. A later MSE from another channel still succeeds (so a second process
+> cannot deny you a handshake) but takes ownership, and the previous owner must
+> re-handshake. Without this, any co-resident process could re-key the channel
+> between your MSE and your BACKUP_EXPORT and receive the master seed instead of
+> you. A client that opens a fresh CTAPHID channel per user action must therefore
+> do the handshake inside the same action as the subcommand, not once per session.
+> Unchanged on the wire; behaviour since bcdDevice `0x0862`.
 
 ### 9.2 PIN gating
 

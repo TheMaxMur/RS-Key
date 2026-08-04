@@ -1264,7 +1264,7 @@ fn config_write_requires_touch() {
 #[test]
 fn config_write_rejects_oversized_blob() {
     let (mut fs, mut rng, mut st) = setup();
-    let big = [0u8; 100]; // > EF_DEV_CONF_MAX (64)
+    let big = [0u8; 200]; // > DEV_CONF_WRITE_MAX (128)
     let mut req = [0u8; 320];
     let n = config_write_req(CONFIG_TARGET_DEV_CONF, &big, false, &mut req);
     let mut out = [0u8; 16];
