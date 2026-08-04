@@ -210,7 +210,10 @@ def _stub_run(monkeypatch, statuses=(0x00,), entries=None):
     for step in ("_wipe_otp", "_wipe_oath", "_wipe_piv"):
         monkeypatch.setattr(offboard, step, lambda conn: (True, "ok"))
     monkeypatch.setattr(offboard, "_wipe_openpgp", lambda: (True, "ok"))
-    monkeypatch.setattr(offboard, "connect_fido", lambda: (_Handle(), b"cid0"))
+    # **kw so the stub survives a signature change in the real connect_fido (it
+    # gained `exclusive=`, which silently rotted these five tests — nothing runs
+    # this suite in the gate).
+    monkeypatch.setattr(offboard, "connect_fido", lambda **kw: (_Handle(), b"cid0"))
 
     def send_cbor(dev, cid, payload):
         assert payload == bytes([offboard.CTAP_RESET])
