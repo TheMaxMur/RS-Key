@@ -11,6 +11,13 @@ from getpass import getpass
 
 from .common import add_pin_arg, device_has_pin, die, die_ctap_pin_error, resolve_pin, sanitize
 
+#: Largest attestation chain the device stores — `rsk_fido::cert::ATT_CHAIN_MAX`,
+#: i.e. `rsk_fs::MAX_VALUE_BYTES - 1 - 2 * ATT_CHAIN_MAX_CERTS` = 2046 − 1 − 8. It
+#: used to be a flat 2048; when the ceiling moved to what a flash record actually
+#: holds, this pre-flight check kept the old number, so a chain in the 11-byte gap
+#: passed here and was refused by the device as a bare CTAP error.
+ATT_CHAIN_MAX = 2037
+
 try:
     from fido2.ctap import CtapError
     from fido2.hid import CtapHidDevice
@@ -167,8 +174,8 @@ def att_import(args):
     from .common import connect_fido
 
     scalar, chain = _att_scalar(args.key), _att_chain(args.chain)
-    if len(chain) > 2048:
-        die(f"chain too large ({len(chain)} B, max 2048)")
+    if len(chain) > ATT_CHAIN_MAX:
+        die(f"chain too large ({len(chain)} B, max {ATT_CHAIN_MAX})")
     dev, cid = connect_fido(exclusive=True)
     pin = resolve_pin(args, has_pin=device_has_pin(dev, cid))
     key, aad = mse_handshake(dev, cid)

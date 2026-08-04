@@ -122,6 +122,14 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Changed
 
+- **`rsk fido attest import` checks the chain against the size the device
+  actually stores** (`rsk` 0.3.26). Its pre-flight bound was a flat 2048; the
+  device's `ATT_CHAIN_MAX` had since moved to what one flash record holds
+  (`MAX_VALUE_BYTES - 1 - 2 * ATT_CHAIN_MAX_CERTS` = 2037), so a chain in the
+  11-byte gap passed the host's own check and came back as a bare CTAP error
+  instead of the message written for it. Found by running the new
+  `scripts/impact.py` over everything since v0.4.5 — the constant moved, and the
+  host copy of it did not.
 - **The pre-commit hook reports what a redefinition leaves unread.** Changing a
   constant's *value* fails nothing on its own — it still type-checks, and a test
   written against the old meaning still passes — so a green gate says nothing
