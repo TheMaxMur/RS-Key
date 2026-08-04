@@ -15,6 +15,104 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Security
 
+- **The seed-backup MSE channel is now bound to the CTAPHID channel that
+  established it.** `MSE` and `BACKUP_EXPORT` are separate transactions, so the
+  worker lock does not span them, and the CID never reached the FIDO layer at
+  all — a second local process could re-key `mse_key` in the gap and have the
+  device encrypt the **32-byte master seed** under a key it held, while the
+  owner's own `rsk backup export` prompt and touch looked entirely normal. The
+  pinUvAuth MAC did not help: `BACKUP_EXPORT` carries no subCommandParams, so it
+  covers a constant. `FidoState` now records the channel each handshake ran on
+  and `mse_ready()` gates every consumer (`gate`, `unlock`, `aut_enable`); an
+  interloper's handshake still succeeds (refusing it would hand a squatter a
+  denial of service) but the owner's export then fails closed instead of
+  misaddressing the seed. No wire change.
+- **Core 1's keygen scrub wiped a copy, not the mailbox.** `Option::take()`
+  moves the payload out and writes back only the discriminant, so `zeroize()`
+  cleared a local while a full 256-byte RSA prime — and the DRBG seed that
+  replays the whole candidate stream — stayed resident in the shared static.
+  `worker::reboot`'s BOOTSEL drop scrubbed CTAP, CCID, the DRBG and the OTP
+  keyboard but not core1, and the RP2350 bootrom does not clear main SRAM, so a
+  `picotool save` after the presence-gated reboot recovered a factor of any key
+  generated that power cycle. Zeroizing now goes *through* the slot, the two
+  move-out paths copy before wiping, and `core1::scrub()` joins the reboot list.
+- **`rsk-wipe` builds for the board again.** Its erase length is baked in at
+  build time and `BOARD` never reached its build script, so the documented
+  `BOARD=<16 MB board>` build produced a 4 MB wiper — and because the KV store
+  sits at the *top* of flash, that erased the code and left every sealed secret
+  intact while the LED still signalled success. It now resolves `[flash] size_mb`
+  from the same board file the firmware reads, and the gate builds a 16 MB
+  variant so the knob cannot silently stop propagating again.
+- **WRITE CONFIG only accepts tags a host may write.** The stored blob was echoed
+  verbatim after the authentic DeviceInfo tags, and `ykman` parses last-wins, so
+  a 3-byte `05 01 00` made `DeviceInfo.parse` raise and the device vanished from
+  `ykman list` for good — `EF_DEV_CONF` survives `authenticatorReset`, no
+  first-party tool rewrites it, and `strict-config` did not help either. Writes
+  are now validated as well-formed TLV over ykman's writable tag set, and
+  `EF_DEV_CONF_MAX` is derived from the *smallest* transport response buffer, so
+  a stored config can no longer be one a consumer must silently drop (which had
+  wedged OTP-HID READ CONFIG into an empty success response).
+- **OpenPGP `PUT DATA` refuses the signature counter and unadvertised algorithm
+  attributes.** DO `0x93` is WRITE = *Never* in OpenPGP 3.4 — it is the card's
+  only evidence the key was used while its owner was away, and deleting it was
+  additionally a post-crypto DoS, since `inc_sig_count` runs after PSO:CDS has
+  already signed. C1/C2/C3 now accept only what DO `0xFA` advertises, from one
+  shared definition: `nbits` previously went straight from the wire into
+  `RsaKeygen`, so an admin PIN could set rsa512 and the key the *owner* generated
+  later was factorable.
+- **A corrupt OpenPGP key record is rejected instead of silently re-sealed.**
+  `aes_decrypt_cfb_256` cannot fail, so any AES-GCM authentication failure was
+  reinterpreted as "this must be a pre-GCM record", the garbage plaintext was
+  accepted as a key, and the loaders wrote it back **over the original
+  ciphertext**. The legacy fallback is now gated on the record being a legal
+  pre-GCM width, which is provably disjoint from every GCM width.
+- **A torn soft-lock enable no longer reports a lock that is not there.**
+  `aut_enable` writes the sealed copy then deletes the plaintext; a power cut
+  between the two left both, and `lock_engaged` tested only the sealed one — so
+  `rsk lock status` said `locked: true` while every FIDO operation still worked
+  and `BACKUP_EXPORT` still handed out the seed without the lock key. It now
+  requires the plaintext to be gone, which also lets `rsk lock enable` be retried.
+- **OATH `RESET` and FIDO `ATT_CLEAR` prove their deletes.** OATH enumerated only
+  the in-RAM present bitmap and discarded every result, so a boot scan truncated
+  by a read fault left credentials, the access code and the OTP-PIN behind a
+  `9000`; it now sweeps through `for_each_key` and honours its completeness flag
+  like its PIV/OpenPGP/FIDO siblings. `ATT_CLEAR` discarded both deletes, and a
+  surviving key with a deleted chain wedges U2F REGISTER at `6F00` forever.
+- **The trusted display no longer judges a touch that began before the screen.**
+  The panel reports level, not edges, so a finger still down when an ambient
+  screen appeared was read as a tap on it — and `ONBOARD_SKIP_RECT` covers the
+  exact coordinates of a ceremony's Deny/Allow band, so the hold approving a
+  host request (or a wake press) could silently consume a fresh device's one-time
+  device-PIN offer. Ambient screens now arm only after the panel is seen
+  untouched.
+- **Passkey list rows keep their truncation marker and their label.** A
+  byte-clamped rpId rendered as if whole on the list and the service title (only
+  the ceremony card marked it), and a long trailing value drove the label's clip
+  to zero, erasing the row's device-owned caption with no marker at all.
+- **`rsk offboard` receipts are bound to the run that produced them.** A FIDO
+  reset that failed with the session alive left the previous window — and its
+  RESET — intact, so the receipt was signed for real, claimed `reset_attested`,
+  and `rsk offboard --verify` printed the clean verdict over a device whose seed
+  and passkeys were still there. The RESET must now open the window (a real reset
+  folds first, then appends) and both paths cross-check the run's own
+  `fido_reset` observation.
+- **The `exclusive` device-binding sweep is complete.** `rsk backup export`,
+  `rsk lock enable/disable/unlock`, `rsk fido attestation import/clear` and
+  `rsk hw` still took the first attached authenticator — `backup export` printing
+  another key's master seed with no serial to tell them apart. The TUI got the
+  same treatment: its irreversible actions and its CCID reader lookup now refuse
+  to guess instead of merely flagging the ambiguity in a header.
+- **`rsk fido list-passkeys` sanitizes the credential counts** it prints, and the
+  `picotool` failure path sanitizes the target's own strings — the last two
+  unswept sites of the counterfeit-device terminal-injection class.
+
+### Changed
+
+- **The gate runs the host test suites.** `tools/rsk`'s pytest suite and
+  `tools/tui`'s tests ran in no gate and no CI workflow, so the checks guarding
+  the irreversible host commands could be deleted with every test still green.
+  Both now run in `scripts/check.sh`, alongside a 16 MB `rsk-wipe` build.
+
 - **`getAssertion` no longer serves the `hmac-secret` extension on an `up:false`
   probe.** CTAP 2.1 §12.5 requires `CTAP2_ERR_UNSUPPORTED_OPTION` for that
   combination; RS-Key computed the extension 59 lines before the presence gate
