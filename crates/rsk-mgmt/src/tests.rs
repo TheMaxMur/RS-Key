@@ -379,6 +379,20 @@ fn read_config_body_fits_the_smallest_transport_buffer() {
     assert_eq!(res.as_slice()[0] as usize, res.len() - 1);
 }
 
+/// Whether every byte of `blob` belongs to a complete TLV entry — what
+/// `ykman`'s `Tlv.parse_dict` demands of a DeviceInfo body before it will parse at
+/// all. A body with a half entry at the end hides the device from the tool for good.
+fn tlv_whole(blob: &[u8]) -> bool {
+    let mut i = 0;
+    while i < blob.len() {
+        let Some(&l) = blob.get(i + 1) else {
+            return false;
+        };
+        i += 2 + l as usize;
+    }
+    i == blob.len()
+}
+
 /// How many times `tag` appears in a TLV blob.
 fn tlv_count(blob: &[u8], tag: u8) -> usize {
     let mut i = 0;
@@ -433,6 +447,41 @@ fn config_tlv_clamps_a_lying_over_read() {
     assert_eq!(config_tlv(&[0u8; 4], &mut fs, &mut res), Sw::OK);
     let body = res.as_slice();
     assert_eq!(body[0] as usize, body.len() - 1);
+    // …and the clamp must not leave a half entry behind. 0xAB claims a 171-byte
+    // value, so every echoed byte is the head of an entry that does not fit:
+    // emitting any of it is the unparseable DeviceInfo the whole cap exists to
+    // prevent, and the length byte agreeing does not make it parse.
+    assert!(tlv_whole(&body[1..]), "body carries a truncated TLV entry");
+}
+
+#[test]
+fn read_config_echoes_only_whole_entries_of_a_legacy_over_length_blob() {
+    // Builds before `EF_DEV_CONF_MAX` shrank to what a response can carry stored up
+    // to 64 bytes, and `EF_DEV_CONF` survives `authenticatorReset` — so an upgraded
+    // device still holds one. Reading it through the smaller cap sliced it mid-entry
+    // and produced exactly the DeviceInfo `ykman` refuses to parse.
+    let mut fs = fs();
+    // 12-byte entries, so the 42-byte cap falls *inside* one, then the capability
+    // mask past it — the two things a narrowed read window each get wrong.
+    let mut blob = std::vec![];
+    while blob.len() + 4 < EF_DEV_CONF_READ_MAX {
+        blob.push(TAG_DEVICE_FLAGS);
+        blob.push(10);
+        blob.extend_from_slice(&[0u8; 10]);
+    }
+    blob.extend_from_slice(&[TAG_USB_ENABLED, 2, 0x00, 0x3B]);
+    assert!(blob.len() > EF_DEV_CONF_MAX && blob.len() <= EF_DEV_CONF_READ_MAX);
+    fs.put(EF_DEV_CONF, &blob).unwrap();
+
+    let mut body = [0u8; MIN_CONFIG_RES_CAP];
+    let mut res = ResBuf::new(&mut body);
+    assert_eq!(config_tlv(&[0; 4], &mut fs, &mut res), Sw::OK);
+    let body = res.as_slice();
+    assert_eq!(body[0] as usize, body.len() - 1);
+    assert!(tlv_whole(&body[1..]), "body carries a truncated TLV entry");
+    // The capability mask is read through the same widened window, or an applet the
+    // owner disabled quietly comes back on the first boot after the upgrade.
+    assert_eq!(read_enabled_caps(&mut fs), 0x3B & SUPPORTED_CAPS);
 }
 
 #[test]

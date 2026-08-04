@@ -122,6 +122,14 @@ const DEV_CONF_WRITE_MAX: usize = 128;
 /// Smallest `ResBuf` a READ CONFIG response is built into (the OTP-HID transport).
 const MIN_CONFIG_RES_CAP: usize = 64;
 
+/// How much of `EF_DEV_CONF` a read reaches for. Larger than [`EF_DEV_CONF_MAX`],
+/// which bounds only *new* writes: builds before that cap stored up to this much,
+/// and the record survives `authenticatorReset`, so an upgraded device must still
+/// be read whole. Reading through the smaller cap would slice such a blob
+/// mid-entry and hand the host the unparseable DeviceInfo the cap exists to
+/// prevent.
+const EF_DEV_CONF_READ_MAX: usize = 64;
+
 /// The device-owned part of every READ CONFIG response: the overall length byte,
 /// `USB_SUPPORTED` + `SERIAL` + `FORM_FACTOR` + `VERSION`, and the trailing
 /// `CONFIG_LOCK`. Each `push_tlv` costs 2 bytes of header plus its value.
@@ -194,7 +202,7 @@ pub fn config_tlv<S: Storage>(serial: &[u8; 4], fs: &mut Fs<S>, res: &mut ResBuf
     let (maj, min, patch) = VERSION;
     push_tlv(&mut buf, &mut n, TAG_VERSION, &[maj, min, patch]);
 
-    let mut conf = [0u8; EF_DEV_CONF_MAX];
+    let mut conf = [0u8; EF_DEV_CONF_READ_MAX];
     match fs.read(EF_DEV_CONF, &mut conf) {
         Some(full) if full > 0 => {
             // A host wrote an enabled-applications config — echo it back. Three
@@ -208,17 +216,22 @@ pub fn config_tlv<S: Storage>(serial: &[u8; 4], fs: &mut Fs<S>, res: &mut ResBuf
             // what this firmware supports, so READ CONFIG never reports enabled ⊄
             // supported.
             let len = full.min(conf.len());
-            let mut echoed = [0u8; EF_DEV_CONF_MAX];
+            let mut echoed = [0u8; EF_DEV_CONF_READ_MAX];
             // Bound the echo by the caller's buffer as well as ours: `ResBuf::extend`
             // writes *nothing* on overflow, so an echo that fits `buf` but not the
             // transport's response would turn READ CONFIG into an empty `9000`
             // forever. `EF_DEV_CONF_MAX` makes that unreachable for anything this
             // firmware stored; the clamp covers a blob from an older build.
-            let room = res
-                .capacity()
+            let taken = res.capacity().saturating_sub(res.len());
+            let room = taken
                 .saturating_sub(n + CONFIG_LOCK_TLV_LEN)
                 .min(buf.len().saturating_sub(n + CONFIG_LOCK_TLV_LEN));
-            let elen = strip_config_lock(&conf[..len], &mut echoed).min(room);
+            let stripped = strip_config_lock(&conf[..len], &mut echoed).min(room);
+            // …and to whole entries. Every bound above is a byte count, so any of
+            // them can land inside a TLV; emitting the head of one is precisely the
+            // unparseable DeviceInfo this response must never produce. Only a record
+            // an older build stored (or corrupt flash) can reach the cut.
+            let elen = whole_tlvs(&echoed[..stripped]);
             buf[n..n + elen].copy_from_slice(&echoed[..elen]);
             clamp_usb_enabled(&mut buf[n..n + elen]);
             n += elen;
@@ -324,6 +337,22 @@ fn well_formed_writable(blob: &[u8]) -> bool {
     true
 }
 
+/// Length of the leading run of complete TLV entries in `blob` — how much of a
+/// stored record READ CONFIG may echo. Unlike [`well_formed_writable`] this judges
+/// only the framing, never the tags: the bytes are already on flash, and dropping
+/// a half entry is the whole point.
+fn whole_tlvs(blob: &[u8]) -> usize {
+    let mut i = 0;
+    while i + 2 <= blob.len() {
+        let end = i + 2 + blob[i + 1] as usize;
+        if end > blob.len() {
+            break;
+        }
+        i = end;
+    }
+    i
+}
+
 fn strip_config_lock(blob: &[u8], out: &mut [u8]) -> usize {
     let mut i = 0;
     let mut n = 0;
@@ -402,7 +431,9 @@ pub fn enabled_from_conf(conf: &[u8]) -> u16 {
 /// Read `EF_DEV_CONF` and return its enabled-applications mask ([`enabled_from_conf`]).
 /// The firmware caches this and re-reads it when [`take_dev_conf_dirty`] fires.
 pub fn read_enabled_caps<S: Storage>(fs: &mut Fs<S>) -> u16 {
-    let mut conf = [0u8; EF_DEV_CONF_MAX];
+    // The read width, not the write cap: a pre-cap build's larger record must still
+    // be scanned whole, or a disabled applet silently comes back after the upgrade.
+    let mut conf = [0u8; EF_DEV_CONF_READ_MAX];
     match fs.read(EF_DEV_CONF, &mut conf) {
         Some(full) if full > 0 => enabled_from_conf(&conf[..full.min(conf.len())]),
         _ => SUPPORTED_CAPS,

@@ -57,7 +57,13 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   are now validated as well-formed TLV over ykman's writable tag set, and
   `EF_DEV_CONF_MAX` is derived from the *smallest* transport response buffer, so
   a stored config can no longer be one a consumer must silently drop (which had
-  wedged OTP-HID READ CONFIG into an empty success response).
+  wedged OTP-HID READ CONFIG into an empty success response). That cap bounds
+  only new writes: reads keep the old 64-byte window, because a build before it
+  stored up to that much and the record survives `authenticatorReset` — reading
+  such a device through the smaller cap would slice its config mid-entry (the
+  same unparseable DeviceInfo) and lose a capability mask past the cut,
+  re-enabling an applet its owner had disabled. Whatever bound applies, the echo
+  now stops on a TLV boundary.
 - **OpenPGP `PUT DATA` refuses the signature counter and unadvertised algorithm
   attributes.** DO `0x93` is WRITE = *Never* in OpenPGP 3.4 — it is the card's
   only evidence the key was used while its owner was away, and deleting it was
