@@ -122,6 +122,15 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Changed
 
+- **The pre-commit hook reports what a redefinition leaves unread.** Changing a
+  constant's *value* fails nothing on its own — it still type-checks, and a test
+  written against the old meaning still passes — so a green gate says nothing
+  about the sites nobody opened. `scripts/impact.py` lists, for every
+  `const`/`static` value and every Python constant or `def` signature the change
+  rewrote, the use sites outside that change; the hook prints it and never fails
+  the commit, because it cannot decide whether a site is still correct. Written
+  after a narrowed `EF_DEV_CONF_MAX` sized two readers as well as the writer it
+  was narrowed for.
 - **The gate runs the host test suites.** `tools/rsk`'s pytest suite and
   `tools/tui`'s tests ran in no gate and no CI workflow, so the checks guarding
   the irreversible host commands could be deleted with every test still green.

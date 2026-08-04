@@ -16,3 +16,9 @@ gitleaks protect --staged --redact --no-banner
 # Formatting + lint gate on the workspace (libs + firmware, no test targets).
 cargo fmt --all --check
 cargo clippy --workspace -- -D warnings
+
+# Advisory, never fatal: which users of a redefined constant this commit leaves
+# unread. Nothing above can catch that class — the value still type-checks and a
+# test written for the old one still passes — so it is reported, not judged, at
+# the moment the change is being called done.
+python3 "$(git rev-parse --show-toplevel)/scripts/impact.py" || true
