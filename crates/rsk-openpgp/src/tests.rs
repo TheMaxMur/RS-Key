@@ -402,6 +402,90 @@ fn import_p256_then_pso_sign_verifies() {
     assert_eq!(&c[..n], &[0, 0, 1]);
 }
 
+// Audit run-33. OpenPGP 3.4's DO access table makes the DS-Counter WRITE = *Never*:
+// it is the card's only evidence that the key was used while its owner was away, so
+// the admin PIN must not roll it back. Deleting it was also a post-crypto DoS —
+// `inc_sig_count` runs after PSO:CDS has already signed, so every later signature
+// burned the private-key op and returned 6A88 until the next boot.
+#[test]
+fn put_data_refuses_to_write_the_signature_counter() {
+    let rng = RefCell::new(CountRng(7));
+    let mut fs = make_fs();
+    let presence = RefCell::new(crate::AlwaysConfirm);
+    let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
+    verify_pin(&mut app, &mut fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
+    put(&mut app, &mut fs, 0x00, 0xC1, ATTR_P256);
+
+    // Sign once so the counter is non-zero and provably not merely absent.
+    let scalar = [0x11u8; 32];
+    assert_eq!(run(&mut app, &mut fs, &ec_import(0xB6, &scalar)).1, Sw::OK);
+    verify_pin(&mut app, &mut fs, consts::PW1_MODE81, consts::PW1_DEFAULT);
+    let digest = [0x42u8; 32];
+    let mut a = vec![0x00, consts::INS_PSO, 0x9E, 0x9A, digest.len() as u8];
+    a.extend_from_slice(&digest);
+    assert_eq!(run(&mut app, &mut fs, &a).1, Sw::OK);
+
+    // Neither a rewrite nor a delete is allowed, even with PW3.
+    for data in [&[0u8, 0, 0][..], &[]] {
+        assert_eq!(
+            put(&mut app, &mut fs, 0x00, 0x93, data),
+            Sw::CONDITIONS_NOT_SATISFIED
+        );
+    }
+    let mut c = [0u8; 3];
+    let n = fs.read(consts::EF_SIG_COUNT, &mut c).unwrap();
+    assert_eq!(
+        &c[..n],
+        &[0, 0, 1],
+        "counter must survive the write attempt"
+    );
+}
+
+// Audit run-33. `nbits` went straight from the wire into `RsaKeygen`, which took any
+// 32-byte multiple — so PW3 could set rsa512 and the key the *owner* generated
+// afterwards was factorable, while GET DATA C1 reported whatever was written. Only
+// what DO 0xFA advertises may be stored.
+#[test]
+fn put_data_refuses_an_unadvertised_algorithm_attribute() {
+    let rng = RefCell::new(CountRng(7));
+    let mut fs = make_fs();
+    let presence = RefCell::new(crate::AlwaysConfirm);
+    let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
+    verify_pin(&mut app, &mut fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
+
+    for attr in [
+        &[0x01u8, 0x02, 0x00, 0x00, 0x20, 0x00][..], // RSA-512: factorable
+        &[0x01, 0x06, 0x00, 0x00, 0x20, 0x00],       // RSA-1536: never advertised
+        &[0x01, 0x10, 0x0F, 0x00, 0x20, 0x00],       // 4111 bits → really RSA-4096
+        &[0x13, 0x2B, 0x81, 0x04, 0x00, 0x21],       // an OID we do not implement
+    ] {
+        assert_eq!(
+            put(&mut app, &mut fs, 0x00, 0xC1, attr),
+            crate::consts::WRONG_DATA,
+            "accepted {attr:02x?}"
+        );
+    }
+
+    // Every advertised attribute still writes, and clearing back to the default works.
+    assert_eq!(put(&mut app, &mut fs, 0x00, 0xC1, ATTR_P256), Sw::OK);
+    assert_eq!(
+        put(
+            &mut app,
+            &mut fs,
+            0x00,
+            0xC1,
+            &[0x01, 0x08, 0x00, 0x00, 0x20, 0x00]
+        ),
+        Sw::OK,
+        "rsa2k is advertised"
+    );
+    assert_eq!(put(&mut app, &mut fs, 0x00, 0xC1, &[]), Sw::OK);
+    // ECDH/ECDSA over one OID name the same curve, and MSE can repoint DECIPHER at
+    // the AUT slot, so the operation byte must not narrow what a slot accepts.
+    assert_eq!(put(&mut app, &mut fs, 0x00, 0xC3, ATTR_P256_ECDH), Sw::OK);
+    assert_eq!(put(&mut app, &mut fs, 0x00, 0xC2, ATTR_P256), Sw::OK);
+}
+
 struct Fixed(crate::Presence);
 impl crate::UserPresence for Fixed {
     fn request(&mut self, _confirm: crate::Confirm<'_>) -> crate::Presence {
@@ -1183,14 +1267,16 @@ fn generate_rsa_sig_sign_verifies() {
     let presence = RefCell::new(crate::AlwaysConfirm);
     let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
     verify_pin(&mut app, &mut fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
-    // RSA-512 (small — the host prime search runs in the unoptimised test build).
-    let attr = [0x01u8, 0x02, 0x00, 0x00, 0x20, 0x00];
+    // RSA-1024, the smallest size the card advertises in DO 0xFA. (Audit run-33:
+    // C1/C2/C3 now only accept an advertised attribute, so the old RSA-512 this
+    // used for speed is refused — which is the point of that gate.)
+    let attr = [0x01u8, 0x04, 0x00, 0x00, 0x20, 0x00];
     assert_eq!(put(&mut app, &mut fs, 0x00, 0xC1, &attr), Sw::OK);
 
     let (do_, sw) = keygen(&mut app, &mut fs, 0x80, 0xB6);
     assert_eq!(sw, Sw::OK);
     let (n, e) = rsa_n_e(&do_);
-    assert_eq!(n.len(), 64); // RSA-512 modulus
+    assert_eq!(n.len(), 128); // RSA-1024 modulus
     let pk = rsa::RsaPublicKey::new(
         rsa::BigUint::from_bytes_be(&n),
         rsa::BigUint::from_bytes_be(&e),
@@ -1204,7 +1290,7 @@ fn generate_rsa_sig_sign_verifies() {
     a.extend_from_slice(&di);
     let (sig, sw) = run(&mut app, &mut fs, &a);
     assert_eq!(sw, Sw::OK);
-    assert_eq!(sig.len(), 64);
+    assert_eq!(sig.len(), 128);
     pk.verify(rsa::Pkcs1v15Sign::new_unprefixed(), &di, &sig)
         .unwrap();
 }
@@ -1219,7 +1305,7 @@ fn rsa_keepalive_generate_path_produces_signable_key() {
     let presence = RefCell::new(crate::AlwaysConfirm);
     let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
     verify_pin(&mut app, &mut fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
-    let attr = [0x01u8, 0x02, 0x00, 0x00, 0x20, 0x00]; // RSA-512
+    let attr = [0x01u8, 0x04, 0x00, 0x00, 0x20, 0x00]; // RSA-1024 (smallest advertised)
     assert_eq!(put(&mut app, &mut fs, 0x00, 0xC1, &attr), Sw::OK);
 
     let gen_apdu = [0x00, consts::INS_KEYPAIR_GEN, 0x80, 0x00, 0x02, 0xB6, 0x00];
@@ -1243,7 +1329,7 @@ fn rsa_keepalive_generate_path_produces_signable_key() {
     let (n, sw) = app.rsa_generate_finish(&mut fs, &mut *rng.borrow_mut(), fid, &key, &mut out);
     assert_eq!(sw, Sw::OK);
     let (modn, e) = rsa_n_e(&out[..n]);
-    assert_eq!(modn.len(), 64); // RSA-512 modulus
+    assert_eq!(modn.len(), 128); // RSA-1024 modulus
     let pk = rsa::RsaPublicKey::new(
         rsa::BigUint::from_bytes_be(&modn),
         rsa::BigUint::from_bytes_be(&e),

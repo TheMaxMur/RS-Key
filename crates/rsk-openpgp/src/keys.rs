@@ -101,14 +101,25 @@ fn seal_with(
 }
 
 /// Unseal a `blob` under the split DEK halves into `out`; returns
-/// `(plaintext_len, was_legacy)`. Tries the GCM format, falling back to the
-/// legacy fixed-IV CFB decrypt on an auth failure. Pure over the key material.
+/// `(plaintext_len, was_legacy)`. Tries the GCM format, falling back to the legacy
+/// fixed-IV CFB decrypt only when `is_legacy_len` says the record is the width a
+/// pre-GCM record for this slot would have. Pure over the key material.
+///
+/// The predicate is what makes the fallback safe. `aes_decrypt_cfb_256` takes a
+/// fixed-size key and IV, so it *cannot* fail: without a shape test, any GCM
+/// authentication failure — a wrong DEK after a torn TERMINATE, tampering, a flash
+/// bit-flip — was silently reinterpreted as "this must be a legacy record", the
+/// garbage plaintext was accepted as a key, and the callers below re-sealed it
+/// **over the original ciphertext**. A legacy record is bare ciphertext of the
+/// plaintext, a GCM one is that plus [`DEK_SEAL_OVERHEAD`], so the two widths are
+/// disjoint for every slot and the shape decides unambiguously (audit run-33).
 fn unseal_with(
     key: &[u8; 32],
     nonce_key: &[u8; IV_SIZE],
     serial_hash: &[u8],
     blob: &[u8],
     out: &mut [u8],
+    is_legacy_len: fn(usize) -> bool,
 ) -> Result<(usize, bool), Sw> {
     if blob.len() >= DEK_NONCE_LEN + DEK_TAG_LEN {
         let pt_len = blob.len() - DEK_NONCE_LEN - DEK_TAG_LEN;
@@ -124,12 +135,37 @@ fn unseal_with(
         }
     }
     // Legacy fixed-IV CFB record (bare ciphertext, no nonce/tag).
+    if !is_legacy_len(blob.len()) {
+        // A record of GCM shape whose tag did not verify: an authentication
+        // failure, not a legacy record. Fail closed rather than hand back an
+        // unauthenticated decrypt the caller would re-seal over the original.
+        return Err(Sw::SECURITY_STATUS_NOT_SATISFIED);
+    }
     if out.len() < blob.len() {
         return Err(Sw::WRONG_LENGTH);
     }
     out[..blob.len()].copy_from_slice(blob);
     aes_decrypt_cfb_256(key, nonce_key, &mut out[..blob.len()]).map_err(|_| Sw::EXEC_ERROR)?;
     Ok((blob.len(), true))
+}
+
+/// Legal widths of a pre-GCM **EC** record: the curve-id byte plus a scalar —
+/// 32 (P-256/K-256/bp256/Ed25519/X25519), 48 (P-384/bp384) or 66 (P-521), the
+/// largest of which is [`MAX_EC_KDATA`].
+fn legacy_ec_len(n: usize) -> bool {
+    matches!(n, 33 | 49 | 67)
+}
+
+/// Legal widths of a pre-GCM **AES** record: one raw AES key.
+fn legacy_aes_len(n: usize) -> bool {
+    matches!(n, 16 | 24 | 32)
+}
+
+/// Legal widths of a pre-GCM **RSA** record: `P‖Q`, or the five CRT fields, for a
+/// half that [`rsa_crt::parse_rsa_blob`] would accept (32..=256, a multiple of 32).
+fn legacy_rsa_len(n: usize) -> bool {
+    let half_ok = |h: usize| (32..=256).contains(&h) && h.is_multiple_of(32);
+    (n.is_multiple_of(2) && half_ok(n / 2)) || (n.is_multiple_of(5) && half_ok(n / 5))
 }
 
 /// Load the DEK and split it into the GCM key (`dek[16..48]`) and the nonce-PRF
@@ -166,15 +202,18 @@ fn dek_seal<S: Storage>(
 }
 
 /// Unseal a DEK `blob` into `out`; returns `(plaintext_len, was_legacy)`.
+/// `is_legacy_len` names the widths a pre-GCM record for this slot could have —
+/// see [`unseal_with`] for why the fallback must not be shape-blind.
 fn dek_unseal<S: Storage>(
     dev: &Device,
     fs: &mut Fs<S>,
     sess: &Session,
     blob: &[u8],
     out: &mut [u8],
+    is_legacy_len: fn(usize) -> bool,
 ) -> Result<(usize, bool), Sw> {
     let (mut key, mut nk) = load_dek_keys(dev, fs, sess)?;
-    let r = unseal_with(&key, &nk, dev.serial_hash, blob, out);
+    let r = unseal_with(&key, &nk, dev.serial_hash, blob, out, is_legacy_len);
     key.zeroize();
     nk.zeroize();
     r
@@ -821,7 +860,7 @@ pub fn load_ec_key<S: Storage>(
     let n = n.min(blob.len());
     let mut kdata = [0u8; MAX_EC_KDATA];
     let r = (|| {
-        let (pt, legacy) = dek_unseal(dev, fs, sess, &blob[..n], &mut kdata)?;
+        let (pt, legacy) = dek_unseal(dev, fs, sess, &blob[..n], &mut kdata, legacy_ec_len)?;
         if pt < 2 {
             return Err(WRONG_DATA);
         }
@@ -900,7 +939,7 @@ pub fn load_aes_key<S: Storage>(
         .ok_or(Sw::REFERENCE_NOT_FOUND)?;
     let bn = bn.min(blob.len());
     let mut kdata = [0u8; 32];
-    let (n, legacy) = match dek_unseal(dev, fs, sess, &blob[..bn], &mut kdata) {
+    let (n, legacy) = match dek_unseal(dev, fs, sess, &blob[..bn], &mut kdata, legacy_aes_len) {
         Ok(v) => v,
         Err(e) => {
             blob.zeroize();
@@ -1253,7 +1292,7 @@ pub fn load_rsa_key<S: Storage>(
     let bn = bn.min(blob.len());
     let mut kdata = [0u8; MAX_RSA_KDATA];
     let res = (|| {
-        let (n, legacy) = dek_unseal(dev, fs, sess, &blob[..bn], &mut kdata)?;
+        let (n, legacy) = dek_unseal(dev, fs, sess, &blob[..bn], &mut kdata, legacy_rsa_len)?;
         let (half, _) = rsa_crt::parse_rsa_blob(&kdata[..n]).map_err(|_| WRONG_DATA)?;
         let p = BigUint::from_bytes_be(&kdata[..half]);
         let q = BigUint::from_bytes_be(&kdata[half..2 * half]);
@@ -1283,7 +1322,7 @@ pub fn load_rsa_crt<S: Storage>(
     let bn = fs.read_key(fid, &mut blob).ok_or(Sw::REFERENCE_NOT_FOUND)?;
     let bn = bn.min(blob.len());
     let mut kdata = [0u8; MAX_RSA_KDATA];
-    let unsealed = dek_unseal(dev, fs, sess, &blob[..bn], &mut kdata);
+    let unsealed = dek_unseal(dev, fs, sess, &blob[..bn], &mut kdata, legacy_rsa_len);
     blob.zeroize();
     let (n, legacy) = match unsealed {
         Ok(v) => v,

@@ -20,6 +20,14 @@ pub fn put_data<S: Storage>(fs: &mut Fs<S>, sess: &Session, fid: u16, data: &[u8
         // Routed away by the dispatch (put_reset_code / put_pw_status); rejected
         // here so a direct call cannot write them as raw DOs.
         EF_RESET_CODE | EF_PW_STATUS => return Sw::CONDITIONS_NOT_SATISFIED,
+        // OpenPGP 3.4, "Access conditions for Data Objects": the DS-Counter is
+        // WRITE = *Never*, reset only internally by generating or importing a new
+        // signature key. It is the card's only evidence that the key was used while
+        // its owner was away, so the admin PIN — the credential the evidence exists
+        // to hold to account — must not roll it back. Deleting it was also a
+        // post-crypto DoS: `inc_sig_count` runs *after* PSO:CDS has signed, so every
+        // signature burned the private-key op and then returned 6A88 until reboot.
+        EF_SIG_COUNT => return Sw::CONDITIONS_NOT_SATISFIED,
         // Algorithm attributes write to the private storage read back by `dobj`.
         EF_ALGO_SIG | EF_ALGO_DEC | EF_ALGO_AUT => algo_tag_to_priv(fid),
         f if matches!(source(f), DoSource::Flash) => f,
@@ -34,6 +42,18 @@ pub fn put_data<S: Storage>(fs: &mut Fs<S>, sess: &Session, fid: u16, data: &[u8
     };
     if !authorized {
         return Sw::SECURITY_STATUS_NOT_SATISFIED;
+    }
+
+    // Only the algorithms DO 0xFA advertises. Unvalidated, `nbits` came straight off
+    // the wire into `RsaKeygen`, which took any 32-byte multiple — so PW3 could set
+    // rsa512 and the key the *owner* generated afterwards was factorable, while
+    // GET DATA C1 reported whatever was written. An empty value clears back to the
+    // rsa2k default (`dobj::emit_algoinfo`).
+    if matches!(fid, EF_ALGO_SIG | EF_ALGO_DEC | EF_ALGO_AUT)
+        && !data.is_empty()
+        && !crate::dobj::advertised_algo(fid, data)
+    {
+        return WRONG_DATA;
     }
 
     // OpenPGP 3.4 §4.4.3.6 and the D6/D7/D8 DO table: UIF value 02 is "permanently

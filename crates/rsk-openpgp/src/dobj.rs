@@ -38,6 +38,70 @@ pub(crate) const ATTR_ED25519: &[u8] = &[
 ];
 const ATTR_ED448: &[u8] = &[4, ALGO_EDDSA, 0x2b, 0x65, 0x71];
 
+// The algorithms each slot supports. `emit_algoinfo` publishes these in DO `0xFA`
+// and `putdata` accepts nothing else into C1/C2/C3 — one definition, so the card
+// can never generate a key it does not advertise (OpenPGP 3.4 §4.4.3.9: "a card
+// should reject unsupported values in the DO"). Without the check, `nbits` came
+// straight off the wire and `RsaKeygen::usable` took any 32-byte multiple, so a
+// PW3 holder could set 512 and have the *owner* generate a factorable key later.
+pub(crate) const ALGO_SIG_SUPPORTED: &[&[u8]] = &[
+    ATTR_RSA1K,
+    ATTR_RSA2K,
+    ATTR_RSA3K,
+    ATTR_RSA4K,
+    ATTR_P256K1,
+    ATTR_P256R1,
+    ATTR_P384R1,
+    ATTR_P521R1,
+    ATTR_BP256R1,
+    ATTR_BP384R1,
+    ATTR_ED25519,
+    ATTR_ED448,
+];
+pub(crate) const ALGO_DEC_SUPPORTED: &[&[u8]] = &[
+    ATTR_RSA1K,
+    ATTR_RSA2K,
+    ATTR_RSA3K,
+    ATTR_RSA4K,
+    ATTR_P256K1,
+    ATTR_P256R1,
+    ATTR_P384R1,
+    ATTR_P521R1,
+    ATTR_BP256R1,
+    ATTR_BP384R1,
+    ATTR_CV25519,
+    ATTR_X448,
+];
+pub(crate) const ALGO_AUT_SUPPORTED: &[&[u8]] = ALGO_SIG_SUPPORTED;
+
+/// Whether `data` is an algorithm attribute this card advertises for `fid`
+/// (C1/C2/C3). `data` is the DO *value*; the templates carry a leading TLV length
+/// byte, so compare against `attr[1..]` — after the same ECDSA→ECDH rewrite
+/// [`emit_algo`] applies to the DEC list, so what we accept is exactly what DO
+/// `0xFA` published.
+pub(crate) fn advertised_algo(fid: u16, data: &[u8]) -> bool {
+    let set = match fid {
+        EF_ALGO_SIG => ALGO_SIG_SUPPORTED,
+        EF_ALGO_DEC => ALGO_DEC_SUPPORTED,
+        EF_ALGO_AUT => ALGO_AUT_SUPPORTED,
+        _ => return false,
+    };
+    set.iter().any(|a| {
+        let val = &a[1..a[0] as usize + 1];
+        match (val.split_first(), data.split_first()) {
+            // ECDSA (0x13) and ECDH (0x12) over the same OID name the same curve —
+            // which one a slot carries depends on how the key is used, and MSE can
+            // repoint DECIPHER at the AUT slot. Match on the OID and treat the two
+            // ids as interchangeable, exactly as `curve_from_attr` does; the point
+            // of this gate is the *curve/size*, not the operation byte.
+            (Some((&(ALGO_ECDSA | ALGO_ECDH), lhs)), Some((&(ALGO_ECDSA | ALGO_ECDH), rhs))) => {
+                lhs == rhs
+            }
+            _ => val == data,
+        }
+    })
+}
+
 /// Builds DO responses into a caller buffer, reading sub-DOs from `fs`.
 pub struct DoWriter<'a, S: Storage> {
     out: &'a mut [u8],
@@ -331,55 +395,13 @@ impl<'a, S: Storage> DoWriter<'a, S> {
             self.push(0x82);
             let lp = self.pos;
             self.pos += 2;
-            const SIG: &[&[u8]] = &[
-                ATTR_RSA1K,
-                ATTR_RSA2K,
-                ATTR_RSA3K,
-                ATTR_RSA4K,
-                ATTR_P256K1,
-                ATTR_P256R1,
-                ATTR_P384R1,
-                ATTR_P521R1,
-                ATTR_BP256R1,
-                ATTR_BP384R1,
-                ATTR_ED25519,
-                ATTR_ED448,
-            ];
-            const DEC: &[&[u8]] = &[
-                ATTR_RSA1K,
-                ATTR_RSA2K,
-                ATTR_RSA3K,
-                ATTR_RSA4K,
-                ATTR_P256K1,
-                ATTR_P256R1,
-                ATTR_P384R1,
-                ATTR_P521R1,
-                ATTR_BP256R1,
-                ATTR_BP384R1,
-                ATTR_CV25519,
-                ATTR_X448,
-            ];
-            const AUT: &[&[u8]] = &[
-                ATTR_RSA1K,
-                ATTR_RSA2K,
-                ATTR_RSA3K,
-                ATTR_RSA4K,
-                ATTR_P256K1,
-                ATTR_P256R1,
-                ATTR_P384R1,
-                ATTR_P521R1,
-                ATTR_BP256R1,
-                ATTR_BP384R1,
-                ATTR_ED25519,
-                ATTR_ED448,
-            ];
-            for a in SIG {
+            for a in ALGO_SIG_SUPPORTED {
                 self.emit_algo(a, EF_ALGO_SIG);
             }
-            for a in DEC {
+            for a in ALGO_DEC_SUPPORTED {
                 self.emit_algo(a, EF_ALGO_DEC);
             }
-            for a in AUT {
+            for a in ALGO_AUT_SUPPORTED {
                 self.emit_algo(a, EF_ALGO_AUT);
             }
             let lpdif = self.pos - lp - 2;
