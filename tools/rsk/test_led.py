@@ -21,9 +21,22 @@ class _Args:
             speed=None,
             steady=False,
             blink=False,
+            get=False,
         )
         d.update(kw)
         self.__dict__.update(d)
+
+
+def test_writes_decides_the_exclusive_connect():
+    # `_writes` is what makes a configuring run refuse to guess between two
+    # attached keys while a read still takes the first match. Nothing else
+    # enforces that split, so deleting the predicate would otherwise stay green.
+    assert not led._writes(_Args())  # no change asked for
+    assert not led._writes(_Args(get=True))
+    assert led._writes(_Args(color="red"))
+    assert led._writes(_Args(steady=True))
+    # --get wins over a set argument: the command shows, so it does not write.
+    assert not led._writes(_Args(color="red", get=True))
 
 
 def test_apply_block_touches_only_the_addressed_status():

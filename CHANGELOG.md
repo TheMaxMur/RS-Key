@@ -122,6 +122,16 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Changed
 
+- **`rsk audit enable|disable` and a writing `rsk led` no longer guess which key
+  they configure** (`rsk` 0.3.26). The refuse-to-guess sweep drew its line at
+  *irreversible*, which left these two writes taking the first match: `audit
+  disable` is the switch on the tamper-evident log, so landing it on the wrong
+  attached key leaves the operator believing they silenced the other one. `rsk
+  audit verify` joins them: it reads, but what it prints is a device-signed
+  checkpoint, so answered by the wrong key it is one key's assurance under
+  another's name. `rsk led --get`, `audit log` and the other status readers still
+  take the first match — reading is what `rsk status` and `rsk inventory` are
+  for, and they are multi-device aware.
 - **`rsk fido attest import` checks the chain against the size the device
   actually stores** (`rsk` 0.3.26). Its pre-flight bound was a flat 2048; the
   device's `ATT_CHAIN_MAX` had since moved to what one flash record holds
