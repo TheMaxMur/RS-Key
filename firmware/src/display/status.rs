@@ -179,6 +179,11 @@ pub async fn status_task(ui: &'static RefCell<Ui>) {
                     if u.shown != Some(screen) {
                         let _ = rsk_ui::render(&mut u.panel, &screen);
                         u.shown = Some(screen);
+                        // A screen that just appeared has not been touched yet.
+                        // Disarm so a contact already on the panel — the wake press,
+                        // or the finger still down from the approval hold a host
+                        // ceremony just ended — cannot be read as a tap on it.
+                        u.touch_armed = false;
                     }
                     // Liveness: pulse a small region over the (already-painted) frame — the
                     // spinner arc while busy, the breathe hint while locked. Both redraw in
@@ -207,7 +212,7 @@ pub async fn status_task(ui: &'static RefCell<Ui>) {
                             note_local_activity();
                             u.enter_sleep();
                             u.wait_wake_release();
-                        } else if let Some(p) = u.touch.read() {
+                        } else if let Some(p) = u.armed_touch() {
                             note_local_activity();
                             if u.locked {
                                 // Locked: any tap opens the unlock pad. Repaint the result

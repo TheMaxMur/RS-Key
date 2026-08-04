@@ -309,6 +309,16 @@ pub struct Ui {
     tp_rst: Output<'static>,
     /// What is currently on screen, so the status loop only repaints on a change.
     shown: Option<Screen>,
+    /// Whether the panel has been seen *untouched* since the current ambient screen
+    /// was painted, so the next contact is a deliberate tap on what is now shown.
+    /// The CST328 reports level, not edges: without this, a finger still down when a
+    /// screen appears is read as a tap on it the same tick. That let the 800 ms hold
+    /// approving a host ceremony — or a wake press held past the bounded release
+    /// wait — land on `Screen::Onboard`, whose full-width "Continue without PIN"
+    /// button covers the exact coordinates of the ceremony's Deny/Allow band, and
+    /// silently consume a fresh device's one-time PIN offer (audit run-33). Every
+    /// modal flow already debounces on *entry*; this is the ambient screens' end.
+    touch_armed: bool,
     /// Read-only identity shown on the settings Firmware screen.
     info: DeviceInfo,
     /// Current backlight level (`1..=BRIGHTNESS_LEVELS`), edited from the menu.
@@ -451,6 +461,7 @@ impl Ui {
             bl,
             tp_rst,
             shown: None,
+            touch_armed: false,
             info,
             brightness,
             asleep: false,

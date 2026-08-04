@@ -549,6 +549,7 @@ pub fn title_bar<D: DrawTarget<Color = Rgb565>>(
         back,
         TITLE_EDIT_RECT.x.saturating_sub(4),
         false,
+        false,
     )
 }
 
@@ -558,17 +559,20 @@ pub fn title_bar<D: DrawTarget<Color = Rgb565>>(
 /// Same right-edge as [`title_bar`] (reserves the [`render_service`] edit pencil).
 pub fn title_bar_domain<D: DrawTarget<Color = Rgb565>>(
     t: &mut D,
-    title: &str,
+    title: &Label,
     color: Rgb565,
     back: bool,
 ) -> Result<(), D::Error> {
     title_bar_to(
         t,
-        title,
+        title.as_str(),
         color,
         back,
         TITLE_EDIT_RECT.x.saturating_sub(4),
         true,
+        // An rpId clipped to LABEL_MAX must carry its marker on the detail screen
+        // too, not only on the ceremony card (audit run-33).
+        title.truncated,
     )
 }
 
@@ -581,7 +585,7 @@ fn title_bar_wide<D: DrawTarget<Color = Rgb565>>(
     color: Rgb565,
     back: bool,
 ) -> Result<(), D::Error> {
-    title_bar_to(t, title, color, back, PANEL_W - 13, false)
+    title_bar_to(t, title, color, back, PANEL_W - 13, false, false)
 }
 
 /// Shared title-bar paint: an optional back chevron, then the title clipped to end at
@@ -595,6 +599,7 @@ fn title_bar_to<D: DrawTarget<Color = Rgb565>>(
     back: bool,
     right: u16,
     domain: bool,
+    marked: bool,
 ) -> Result<(), D::Error> {
     let cy = STATUS_BAR_H as i32 + TITLE_BAR_H as i32 / 2;
     let tx = if back {
@@ -611,9 +616,9 @@ fn title_bar_to<D: DrawTarget<Color = Rgb565>>(
     );
     let at = EgPoint::new(tx, cy);
     if domain {
-        text_right_ellipsized(t, title, at, Role::Heading, color, clip, false)
+        text_right_ellipsized(t, title, at, Role::Heading, color, clip, marked)
     } else {
-        text_left_ellipsized(t, title, at, Role::Heading, color, clip, false)
+        text_left_ellipsized(t, title, at, Role::Heading, color, clip, marked)
     }
 }
 

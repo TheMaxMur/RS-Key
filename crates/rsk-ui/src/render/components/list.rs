@@ -72,7 +72,9 @@ pub fn group_card<D: DrawTarget<Color = Rgb565>>(
 /// Draw the content of one list row at `crate::row_rect(y0, i)`, above the grouped-card
 /// surface. `chip` wraps the leading glyph in a rounded tile (for relying-party rows);
 /// `domain` keeps the registrable-domain suffix visible (head-ellipsis) for attacker-chosen
-/// rpIds.
+/// rpIds. `marked` forces the ellipsis even when what remains happens to fit — pass
+/// [`Label::truncated`](crate::Label::truncated) so a value already clipped to
+/// `LABEL_MAX` bytes cannot present itself as whole.
 #[allow(clippy::too_many_arguments)]
 pub fn row<D: DrawTarget<Color = Rgb565>>(
     t: &mut D,
@@ -84,6 +86,7 @@ pub fn row<D: DrawTarget<Color = Rgb565>>(
     chevron: bool,
     chip: bool,
     domain: bool,
+    marked: bool,
 ) -> Result<(), D::Error> {
     let rect = crate::row_rect(y0, i);
     let cy = rect.y as i32 + rect.h as i32 / 2;
@@ -117,7 +120,14 @@ pub fn row<D: DrawTarget<Color = Rgb565>>(
     let label_x = rect.x as i32 + 28;
     let label_right = if let Some((txt, col)) = trailing {
         let tx = right_x - 4;
-        let tclip = Rect::new(label_x as u16, rect.y, (tx - label_x).max(0) as u16, rect.h);
+        // Keep the label a floor. The trailing is laid out first, so subtracting its
+        // full width drove the label clip to zero and the row's *device-owned* label
+        // vanished with no marker — a long value (an OpenPGP card-holder name) simply
+        // erased the caption beside it. Cap the trailing at half the row and
+        // ellipsize it, so both sides always read as themselves (audit run-33).
+        let tmax = (rect.w as i32 / 2).max(0);
+        let tleft = (tx - tmax).max(label_x);
+        let tclip = Rect::new(tleft as u16, rect.y, (tx - tleft).max(0) as u16, rect.h);
         font::right(
             &mut t.clipped(&eg_rect(tclip)),
             txt,
@@ -125,7 +135,8 @@ pub fn row<D: DrawTarget<Color = Rgb565>>(
             font::Role::Body,
             col,
         )?;
-        tx - font::width(txt, font::Role::Body).unwrap_or(0) as i32 - TRAILING_GAP
+        let tw = (font::width(txt, font::Role::Body).unwrap_or(0) as i32).min(tx - tleft);
+        tx - tw - TRAILING_GAP
     } else {
         right_x - TRAILING_GAP
     };
@@ -137,8 +148,8 @@ pub fn row<D: DrawTarget<Color = Rgb565>>(
     );
     let at = EgPoint::new(label_x, cy);
     if domain {
-        text_right_ellipsized(t, label, at, font::Role::Body, theme::TEXT, clip, false)
+        text_right_ellipsized(t, label, at, font::Role::Body, theme::TEXT, clip, marked)
     } else {
-        text_left_ellipsized(t, label, at, font::Role::Body, theme::TEXT, clip, false)
+        text_left_ellipsized(t, label, at, font::Role::Body, theme::TEXT, clip, marked)
     }
 }

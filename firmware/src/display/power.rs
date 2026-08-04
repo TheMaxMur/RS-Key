@@ -43,6 +43,22 @@ impl Ui {
         self.shown = None;
     }
 
+    /// One non-blocking touch sample that only reports a contact the user began on
+    /// the screen now showing. The panel reports level, not edges, so a finger still
+    /// down when an ambient screen is painted would otherwise be judged as a tap on
+    /// it — see [`Ui::touch_armed`]. Seeing the panel untouched arms the next tap.
+    pub(super) fn armed_touch(&mut self) -> Option<rsk_ui::Point> {
+        match self.touch.read() {
+            None => {
+                self.touch_armed = true;
+                None
+            }
+            Some(p) if self.touch_armed => Some(p),
+            // Still the contact that predates this screen: ignore, stay disarmed.
+            Some(_) => None,
+        }
+    }
+
     /// One non-blocking sample of the wake button (if wired), honouring its polarity.
     pub(super) fn wake_pressed(&self) -> bool {
         match &self.wake_btn {

@@ -217,6 +217,7 @@ where
             true,
             true,
             false,
+            false,
         )?;
     }
     render_nav(t, NavTab::Apps)
@@ -254,6 +255,7 @@ where
             true,
             true,
             false,
+            false,
         )?;
     }
     let ch_trailing = if v.cardholder_name.as_str().is_empty() {
@@ -270,6 +272,7 @@ where
         Some(ch_trailing),
         true,
         true,
+        false,
         false,
     )?;
     let cy = NAV_TOP as i32 - 10;
@@ -422,6 +425,7 @@ where
             true,
             true,
             false,
+            false,
         )?;
     }
     let mut eb = [0u8; 5];
@@ -434,6 +438,7 @@ where
         Some((fmt_u16(v.extra as u16, &mut eb), MUTED)),
         true,
         true,
+        false,
         false,
     )?;
     let cy = NAV_TOP as i32 - 10;
@@ -549,6 +554,7 @@ where
                 Some((kind, MUTED)),
                 true,
                 true,
+                false,
                 false,
             )?;
         }
@@ -725,6 +731,7 @@ where
                 true,
                 true,
                 false,
+                false,
             )?;
             continue;
         }
@@ -749,6 +756,7 @@ where
             Some(trailing),
             true,
             true,
+            false,
             false,
         )?;
     }
@@ -789,6 +797,7 @@ where
         true,
         true,
         false,
+        false,
     )?;
     components::list::row(
         t,
@@ -799,6 +808,7 @@ where
         Some(("stronger", theme::CAPTION)),
         true,
         true,
+        false,
         false,
     )?;
     components::list::row(
@@ -811,6 +821,7 @@ where
         true,
         true,
         false,
+        false,
     )?;
     components::list::row(
         t,
@@ -822,6 +833,7 @@ where
         true,
         true,
         false,
+        false,
     )?;
     components::list::row(
         t,
@@ -832,6 +844,7 @@ where
         Some(("2048-4096", theme::CAPTION)),
         true,
         true,
+        false,
         false,
     )?;
     text_left(
@@ -872,6 +885,7 @@ where
         true,
         true,
         false,
+        false,
     )?;
     components::list::row(
         t,
@@ -883,6 +897,7 @@ where
         true,
         true,
         false,
+        false,
     )?;
     components::list::row(
         t,
@@ -893,6 +908,7 @@ where
         Some(("slowest", theme::CAPTION)),
         true,
         true,
+        false,
         false,
     )?;
     text_left(
@@ -926,6 +942,7 @@ where
         true,
         true,
         false,
+        false,
     )?;
     components::list::row(
         t,
@@ -937,6 +954,7 @@ where
         true,
         true,
         false,
+        false,
     )?;
     components::list::row(
         t,
@@ -947,6 +965,7 @@ where
         Some(("with PUK", theme::CAPTION)),
         true,
         true,
+        false,
         false,
     )?;
     // No trailing caption: a right-aligned hint here is laid out first and the label is
@@ -962,6 +981,7 @@ where
         None,
         true,
         true,
+        false,
         false,
     )?;
     text_left(
