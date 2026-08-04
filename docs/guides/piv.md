@@ -140,10 +140,11 @@ ykman piv certificates import 9a issued.pem
 
 On-card generation means the private key never existed off-device and cannot be
 exported or backed up. Losing the card loses the key (that is the point). RSA
-generation is slow on this hardware (RSA-2048 takes roughly 4–6 s, and the prime
-search is random so run-to-run times vary; the device streams CCID keepalives so
-the connection stays alive; it is not a hang). See [limitations.md](../limitations.md)
-for the measured dual-core figures. EC generation is instant.
+generation is slow on this hardware (RSA-2048 takes 4–6 s on the reference board
+and about twice that on others, and the prime search is random so run-to-run
+times vary; the device streams CCID keepalives so the connection stays alive; it
+is not a hang). See [limitations.md](../limitations.md) for the measured
+dual-core figures and which board they are from. EC generation is instant.
 
 ## Or import an existing key
 
@@ -318,6 +319,7 @@ whole-device offboard.
   was **imported**, not generated; attestation is generated-keys-only.
 - `change-management-key` rejects 3DES on the FIPS-style build → expected; set an
   AES-128/192/256 key instead.
-- RSA-2048 generate takes a few seconds (≈ 4–6 s, occasionally longer since the
-  prime search is random) → that's the prime search on this hardware, not a hang;
-  the device keeps the CCID connection alive with keepalives.
+- RSA-2048 generate takes a few seconds (≈ 4–6 s on the reference board, ≈ 10 s
+  on other boards, occasionally longer since the prime search is random) →
+  that's the prime search on this hardware, not a hang; the device keeps the
+  CCID connection alive with keepalives.

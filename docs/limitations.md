@@ -30,6 +30,13 @@ covers the security boundary. This page covers feature and hardware gaps.
   that count varies, not because the silicon does. Per candidate the throughput
   is ~6.9 ms across both cores.
 
+  **These are reference-board numbers and do not carry to every board.** The
+  modexp hot path runs from SRAM, but the small-prime sieve — which rejects most
+  candidates and therefore sets the per-candidate average — runs from XIP flash,
+  so the module's flash part shows up in the total. A Waveshare RP2350-Zero
+  measures RSA-2048 at a median of ~10 s (n=12) where the reference board does
+  4–6 s. Budget for the board you ship, not for this table.
+
   The lever is *fewer candidates reaching the modexp*: a deeper small-prime
   sieve. (The Baillie–PSW that confirms a survivor, asm strong Miller–Rabin
   plus a software Lucas test, runs only a handful of times per keygen, so it

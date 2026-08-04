@@ -122,6 +122,12 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Changed
 
+- **The RSA keygen timings are labelled with the board they came from.** The PIV
+  guide promised 4–6 s for RSA-2048 flat; that figure is the reference board's.
+  Measured on a Waveshare RP2350-Zero the median is ~10 s (n=12) — the modexp
+  runs from SRAM but the small-prime sieve, which rejects most candidates, runs
+  from XIP flash, so the module's flash part lands in the total. Someone on
+  another board was being told their key was twice too slow.
 - **`rsk audit enable|disable` and a writing `rsk led` no longer guess which key
   they configure** (`rsk` 0.3.26). The refuse-to-guess sweep drew its line at
   *irreversible*, which left these two writes taking the first match: `audit
