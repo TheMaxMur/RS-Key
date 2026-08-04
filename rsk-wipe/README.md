@@ -8,12 +8,16 @@ It wipes the whole device so `rs-key` flash-persistence behaviour can be
 verified from a blank slate between firmware tests. On run it:
 
 1. **white strobe ×8** — the SRAM image is alive (see *Reading the LED*),
-2. erases the whole target flash — `FLASH_SIZE` bytes, **default 4 MB** — via the
+2. erases the whole target flash — `FLASH_SIZE` bytes — via the
    bootrom sequence (`connect_internal_flash` → `flash_exit_xip` →
    `flash_range_erase` → `flash_flush_cache` → `flash_enter_cmd_xip`) — **solid
-   blue** while erasing. On a board larger than 4 MB (e.g. the 16 MiB display
-   board) build with the matching size or sealed secrets above 4 MB survive:
-   `FLASH_SIZE=16M cargo build --release -p rsk-wipe`,
+   blue** while erasing. The size comes from `BOARD`'s `[flash] size_mb` (the same
+   board file the firmware reads), `FLASH_SIZE` overrides it, and **4 MB is only
+   the fallback when neither is set**. Build it the way you built the firmware:
+   `BOARD=waveshare-touch-lcd cargo build --release -p rsk-wipe`. Getting this
+   wrong is silent and total — the KV store sits at the *top* of flash, so an
+   under-sized wipe erases the code, leaves every sealed secret, and still blinks
+   green,
 3. writes a `"NUKE"` eyecatcher into page 0 (so picotool can spot a wiped device),
 4. **green ×3** — the sequence completed,
 5. reboots to BOOTSEL (`reset_to_usb_boot`) so the `RP2350` drive reappears.
