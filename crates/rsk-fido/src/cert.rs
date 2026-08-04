@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 RS-Key contributors
 
-//! Minimal allocation-free DER encoder for the U2F attestation certificate, a
-//! self-signed P-256 X.509 v3 cert. Every field except the 65-byte subject
-//! public key, the 16-byte serial and the signature is fixed, so the
-//! TBSCertificate is a constant-length template (206 content bytes).
+//! Minimal allocation-free DER encoder for the device attestation certificate, a
+//! self-signed P-256 X.509 v3 cert. It is the `x5c` leaf of every packed
+//! attestation and the certificate a U2F registration carries. Every field except
+//! the 65-byte subject public key, the 16-byte serial and the signature is fixed,
+//! so the TBSCertificate is a constant-length template (397 content bytes).
 
+use crate::consts::AAGUID;
 use crate::ec::{MAX_DER_SIG, P256Key};
 
 // [0] EXPLICIT version v3 (INTEGER 2).
@@ -14,10 +16,29 @@ const VERSION: &[u8] = &[0xA0, 0x03, 0x02, 0x01, 0x02];
 const SIG_ALG: &[u8] = &[
     0x30, 0x0A, 0x06, 0x08, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x04, 0x03, 0x02,
 ];
-// Name = SEQUENCE{ SET{ SEQ{ CN(2.5.4.3), UTF8String "RSK FIDO2" } } }.
+// Name = SEQUENCE{ C, O, OU, CN }. WebAuthn §8.2.1 requires all four on a packed
+// x5c leaf, with OU the literal "Authenticator Attestation" and C a two-character
+// ISO 3166 code; RP libraries reject the registration outright when one is absent.
+// `XX` is the user-assigned code — RS-Key has no incorporating country.
 const NAME: &[u8] = &[
-    0x30, 0x14, 0x31, 0x12, 0x30, 0x10, 0x06, 0x03, 0x55, 0x04, 0x03, 0x0C, 0x09, b'R', b'S', b'K',
-    b' ', b'F', b'I', b'D', b'O', b'2',
+    0x30, 0x59, // SEQUENCE, 89 content bytes
+    0x31, 0x0B, 0x30, 0x09, 0x06, 0x03, 0x55, 0x04, 0x06, 0x13, 0x02, b'X', b'X', // C
+    0x31, 0x0F, 0x30, 0x0D, 0x06, 0x03, 0x55, 0x04, 0x0A, 0x0C, 0x06, // O
+    b'R', b'S', b'-', b'K', b'e', b'y', //
+    0x31, 0x22, 0x30, 0x20, 0x06, 0x03, 0x55, 0x04, 0x0B, 0x0C, 0x19, // OU
+    b'A', b'u', b't', b'h', b'e', b'n', b't', b'i', b'c', b'a', b't', b'o', b'r', b' ', //
+    b'A', b't', b't', b'e', b's', b't', b'a', b't', b'i', b'o', b'n', //
+    0x31, 0x15, 0x30, 0x13, 0x06, 0x03, 0x55, 0x04, 0x03, 0x0C, 0x0C, // CN
+    b'R', b'S', b'-', b'K', b'e', b'y', b' ', b'F', b'I', b'D', b'O', b'2',
+];
+// Extensions [3]: basicConstraints (critical, cA absent = false) and
+// id-fido-gen-ce-aaguid (1.3.6.1.4.1.45724.1.1.4), which carries the AAGUID that
+// follows this prefix and must equal the one in authData (§8.2.1).
+const EXT_PREFIX: &[u8] = &[
+    0xA3, 0x33, 0x30, 0x31, // [3] EXPLICIT { SEQUENCE, 49 content bytes }
+    0x30, 0x0C, 0x06, 0x03, 0x55, 0x1D, 0x13, 0x01, 0x01, 0xFF, 0x04, 0x02, 0x30, 0x00, 0x30, 0x21,
+    0x06, 0x0B, 0x2B, 0x06, 0x01, 0x04, 0x01, 0x82, 0xE5, 0x1C, 0x01, 0x01, 0x04, 0x04, 0x12, 0x04,
+    0x10,
 ];
 // Validity = SEQUENCE{ GeneralizedTime notBefore, notAfter }.
 const VALIDITY: &[u8] = &[
@@ -32,23 +53,32 @@ const SPKI_PREFIX: &[u8] = &[
     0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07, 0x03, 0x42, 0x00,
 ];
 
-/// TBSCertificate length (header `30 81 CE` + 206 content bytes).
-const TBS_LEN: usize = 209;
+/// TBSCertificate length (header `30 82 01 8D` + 397 content bytes).
+const TBS_LEN: usize = 401;
+
+/// Does `cert` come from the current template? Devices provisioned before the
+/// §8.2.1 subject/extension rework carry a shorter TBS, and a build-time AAGUID
+/// override leaves the extension stale; either way the cert is rebuilt.
+pub fn matches_template(cert: &[u8]) -> bool {
+    cert.len() > 4 + TBS_LEN
+        && cert[4..8] == [0x30, 0x82, 0x01, 0x8D]
+        && cert[4 + TBS_LEN - 16..4 + TBS_LEN] == AAGUID
+}
 
 /// Build the self-signed attestation certificate for `key` into `out`; returns its
 /// DER length. `serial` is 16 random bytes (the caller clears the top bit to keep
-/// the INTEGER positive). `out` should hold ≥ 384 bytes.
+/// the INTEGER positive). `out` should hold ≥ 512 bytes.
 pub fn build_attestation_cert(key: &P256Key, serial: &[u8; 16], out: &mut [u8]) -> Option<usize> {
     let (x, y) = key.public_xy();
 
-    // --- TBSCertificate (fixed 209 bytes) ---
+    // --- TBSCertificate (fixed TBS_LEN bytes) ---
     let mut tbs = [0u8; TBS_LEN];
     let mut p = 0;
     let put = |dst: &mut [u8; TBS_LEN], pos: &mut usize, b: &[u8]| {
         dst[*pos..*pos + b.len()].copy_from_slice(b);
         *pos += b.len();
     };
-    put(&mut tbs, &mut p, &[0x30, 0x81, 0xCE]); // SEQUENCE, 206 content bytes
+    put(&mut tbs, &mut p, &[0x30, 0x82, 0x01, 0x8D]); // SEQUENCE, 397 content bytes
     put(&mut tbs, &mut p, VERSION);
     put(&mut tbs, &mut p, &[0x02, 0x10]); // INTEGER, 16 bytes
     put(&mut tbs, &mut p, serial);
@@ -60,6 +90,8 @@ pub fn build_attestation_cert(key: &P256Key, serial: &[u8; 16], out: &mut [u8]) 
     put(&mut tbs, &mut p, &[0x04]); // uncompressed point marker
     put(&mut tbs, &mut p, &x);
     put(&mut tbs, &mut p, &y);
+    put(&mut tbs, &mut p, EXT_PREFIX);
+    put(&mut tbs, &mut p, &AAGUID);
     debug_assert_eq!(p, TBS_LEN);
 
     // --- sign the TBS, assemble the Certificate ---

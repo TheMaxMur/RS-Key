@@ -7,15 +7,18 @@
     nix develop -c python tests/11_fido_makecredential.py
 
 Registers a resident ES256 credential and checks the makeCredential response
-(status, fmt, authData fields, attStmt). Shipping firmware returns fmt="none"
-with an empty attStmt by default; a `--features fido-conformance` build returns
-fmt="packed" self-attestation whose ECDSA signature this test then verifies (the
-signature maths is also unit-tested — this confirms a well-formed response over
-real USB). The self-attestation check is therefore conditional on fmt.
+(status, fmt, authData fields, attStmt). Every credential ships packed basic
+attestation, so the statement is ES256 with the device certificate as its x5c
+leaf; this verifies that signature under the leaf's public key (the signature
+maths is also unit-tested — this confirms a well-formed response over real USB).
 """
 import hashlib
 import os
 import sys
+
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import ec
 
 try:
     import hid
@@ -159,7 +162,7 @@ def main():
         assert resp[0] == 0x00, f"makeCredential status {resp[0]:#x}"
         m = decode(resp[1:])
         fmt = m[1]
-        assert fmt in ("none", "packed"), f"fmt={fmt!r}"
+        assert fmt == "packed", f"fmt={fmt!r}"
 
         ad = m[2]
         assert ad[:32] == hashlib.sha256(RP_ID.encode()).digest(), "rpIdHash mismatch"
@@ -170,15 +173,17 @@ def main():
         cose = decode(ad[55 + cred_len:])
         assert cose[1] == 2 and cose[3] == -7, f"COSE key {cose}"
 
+        # Packed basic attestation: {alg, sig, x5c}, ES256 by the device key.
         att = m[3]
-        if fmt == "none":
-            assert att == {}, f"fmt=none must carry an empty attStmt, got {att!r}"
-            print("SKIP: self-attestation verify needs a --features fido-conformance "
-                  "firmware (shipping firmware sends fmt=none)")
-            print(f"makeCredential ok: fmt=none credId={cred_len}B attStmt={{}}")
-        else:  # packed self-attestation
-            assert att["alg"] == -7 and isinstance(att["sig"], bytes), f"attStmt {att}"
-            print(f"makeCredential ok: fmt=packed credId={cred_len}B sig={len(att['sig'])}B")
+        assert att["alg"] == -7 and isinstance(att["sig"], bytes), f"attStmt {att}"
+        assert len(att["x5c"]) == 1, f"x5c carries one cert, got {len(att['x5c'])}"
+        leaf = x509.load_der_x509_certificate(att["x5c"][0])
+        subject = leaf.subject.rfc4514_string()
+        assert "OU=Authenticator Attestation" in subject, subject
+        leaf.public_key().verify(att["sig"], ad + client_data_hash,
+                                 ec.ECDSA(hashes.SHA256()))
+        print(f"makeCredential ok: fmt=packed credId={cred_len}B "
+              f"sig={len(att['sig'])}B x5c={len(att['x5c'][0])}B verified under {subject}")
         print("\nPASS")
     finally:
         dev.close()

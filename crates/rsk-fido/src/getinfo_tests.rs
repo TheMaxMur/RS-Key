@@ -205,17 +205,11 @@ fn get_info_fields() {
     assert_eq!(d.u8().unwrap(), 0x14);
     assert_eq!(d.u16().unwrap(), 200);
 
-    // 0x16 attestationFormats: default ["none", "packed"], `fido-conformance`
-    // ["packed"] (it emits packed self-attestation).
+    // 0x16 attestationFormats: only ["packed"] — every credential carries basic
+    // attestation with the device x5c.
     assert_eq!(d.u8().unwrap(), 0x16);
-    if cfg!(feature = "fido-conformance") {
-        assert_eq!(d.array().unwrap().unwrap(), 1);
-        assert_eq!(d.str().unwrap(), "packed");
-    } else {
-        assert_eq!(d.array().unwrap().unwrap(), 2);
-        assert_eq!(d.str().unwrap(), "none");
-        assert_eq!(d.str().unwrap(), "packed");
-    }
+    assert_eq!(d.array().unwrap().unwrap(), 1);
+    assert_eq!(d.str().unwrap(), "packed");
 
     // 0x1D maxPINLength
     assert_eq!(d.u8().unwrap(), 0x1D);

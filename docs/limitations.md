@@ -139,6 +139,14 @@ covers the security boundary. This page covers feature and hardware gaps.
   FIDO2/WebAuthn, `ssh -sk`, `gpg`/OpenPGP, OpenSC/PKCS#11 and the project's
   own `rsk`/`rsk-tui` tools are identity-independent and work on the default
   build.
+- **The attestation certificate is per-device, so it identifies the key.** Every
+  `makeCredential` carries packed basic attestation whose `x5c` leaf is this
+  board's own certificate ([guides/attestation.md](guides/attestation.md)), and
+  it is the same certificate for every relying party. A batch certificate shared
+  across devices would avoid that, but it would have to ship inside open-source
+  firmware, where anyone could extract it. Browsers hide the leaf unless a site
+  asks for `attestation: "direct"`; native CTAP clients such as `ssh-keygen` see
+  it. A factory reset regenerates the seed and with it the certificate.
 - **OpenPGP secure messaging** is not implemented (rarely used by clients;
   PINs gate everything in practice).
 - **One physical button on the base build.** Touch = the BOOTSEL button, and

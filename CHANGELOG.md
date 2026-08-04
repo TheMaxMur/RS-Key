@@ -15,6 +15,38 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Changed
 
+- **`makeCredential` now ships packed *basic* attestation, fixing `-sk`
+  enrollment on OpenSSH below 10.0.** The statement is an ES256 signature by the
+  device key with the device certificate as its `x5c` leaf, whatever algorithm
+  the credential itself uses. The previous `fmt:"none"` default (v0.3.5, for
+  issue #26) turned out to break every OpenSSH from 8.2 through 9.9: they hand
+  any credential without a certificate to libfido2's `fido_cred_verify_self()`,
+  which rejects an empty statement with `FIDO_ERR_INVALID_ARGUMENT`, so
+  enrollment aborted with "Key enrollment failed: invalid format" — the same
+  message issue #26 reported, now on Debian 12, Ubuntu 24.04 and RHEL 9 instead
+  of one Windows box. Confirmed on hardware, same board and command back to
+  back: OpenSSH 9.9p2 failed, 10.4p1 enrolled. Basic attestation also keeps the
+  credential's algorithm out of the verify path, which is what made the Ed25519
+  self-attestation fragile in the first place. The cost is that the leaf is a
+  per-device identifier ([limitations.md](docs/limitations.md)). Firmware
+  `bcdDevice` `0x085F` → `0x0860`.
+- **The attestation certificate now meets WebAuthn §8.2.1.** A packed `x5c` leaf
+  must carry Subject-C/O/OU/CN with OU exactly `Authenticator Attestation`, plus
+  `basicConstraints` with CA false; RP libraries such as SimpleWebAuthn and
+  webauthn4j reject the registration outright when one is missing, and the
+  U2F-era certificate had only a CN and no extensions. The template is now
+  `C=XX, O=RS-Key, OU=Authenticator Attestation, CN=RS-Key FIDO2` with
+  `basicConstraints` and `id-fido-gen-ce-aaguid` (1.3.6.1.4.1.45724.1.1.4)
+  carrying the AAGUID. A device provisioned before this rebuilds `EF_EE_DEV` on
+  the next boot; the U2F registration certificate changes with it.
+- **The issue-#26 explanation is corrected.** OpenSSH did not gain
+  `fido_cred_verify_self` in 10.0, as the 0.3.5 entry claimed. It has called it
+  since 8.2; what 10.0 added (`d3a7ff7ce`) is the `fmt != "none"` bypass around
+  it. What breaks the Ed25519 self-attestation on Windows is still not directly
+  observed, but every other link was ruled out: the signature passes
+  `verify_strict`, the emitted COSE key matches libfido2's own dump byte for
+  byte, and LibreSSL 4.2.0 (the version Win32-OpenSSH 10.0p2 vendors) verifies
+  Ed25519 correctly through libfido2's exact call sequence.
 - **The README and the docs landing page say what RS-Key is before they say how
   it works.** Both now open with one line ("an open-source hardware passkey"),
   a three-row what-this-is / what-you-need / what-you-get table, and a figure
@@ -1754,12 +1786,11 @@ strict-config`) remains the complete answer.
 - **`makeCredential` now ships `fmt:"none"` attestation by default**, fixing
   `ssh-keygen -t ed25519-sk` enrollment on Windows / OpenSSH 10.0p2 (issue #26).
   RS-Key previously returned packed **self**-attestation, so an Ed25519 credential
-  carried an Ed25519 self-attestation signature. OpenSSH 10.0 added
-  `fido_cred_verify_self`, and the Windows WebAuthn API does not round-trip that
-  EdDSA signature faithfully, so the verify failed with `FIDO_ERR_INVALID_SIG` and
-  the enroll aborted with "Key enrollment failed: invalid format" (ES256 self-att
-  round-trips fine, so `ecdsa-sk` worked; a genuine YubiKey uses basic ES256 x5c
-  attestation and never hits the path). Self-attestation conveys no trust beyond
+  carried an Ed25519 self-attestation signature. libfido2's
+  `fido_cred_verify_self` rejected it with `FIDO_ERR_INVALID_SIG` on the reporter's
+  Windows box, so the enroll aborted with "Key enrollment failed: invalid format"
+  (ES256 self-att verified fine on the same path, so `ecdsa-sk` worked; a genuine
+  YubiKey uses basic ES256 x5c attestation and never reaches that verify). Self-attestation conveys no trust beyond
   "none" (WebAuthn §6.5.2), so shipping "none" loses nothing and is more private.
   An explicitly-requested **enterprise** attestation still emits its full x5c
   statement, and the `fido-conformance` profile keeps packed self-attestation (its

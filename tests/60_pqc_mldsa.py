@@ -16,11 +16,9 @@ Flash the no-touch build (firmware-test.uf2) — this tool cannot press the butt
                                      strict-parser compat); advertise-pqc build:
                                      -48 leads; maxMsgSize 7609 either way
   3. makeCredential [-48, -7]     -> the first supported entry is selected:
-                                     AKP COSE key {1:7, 3:-48, -1:pub(1312)}; under
-                                     a --features fido-conformance build the packed
-                                     self-attestation (2420-byte sig) verifies under
-                                     dilithium-py (shipping firmware sends fmt=none,
-                                     empty attStmt — the attStmt check is skipped)
+                                     AKP COSE key {1:7, 3:-48, -1:pub(1312)}; the
+                                     attestation stays packed/ES256 by the device
+                                     key whatever the credential algorithm is
   4. getAssertion (allowList)     -> assertion verifies; sign counter grows
   5. rk -7 then rk [-7,-48], same rp/user -> the resident slot upgrades to
                                      ML-DSA-44; discovery asserts with it
@@ -124,14 +122,10 @@ def main():
         (cred_id, alg, pk, auth_data, fmt, att), dt_mc = make_credential(dev, cid, [-48, -7])
         assert alg == -48, f"selected alg {alg}, want -48 (first supported)"
         assert len(pk) == PK_LEN
-        if fmt == "none":
-            assert att == {}, f"fmt=none must carry an empty attStmt, got {att!r}"
-            print("SKIP: self-attestation verify needs a --features fido-conformance "
-                  "firmware (shipping firmware sends fmt=none)")
-        else:  # packed self-attestation
-            assert att["alg"] == -48
-            assert len(att["sig"]) == SIG_LEN
-            assert ML_DSA_44.verify(pk, auth_data + CDH, att["sig"]), "attestation sig"
+        # Basic attestation is ES256 by the device key whatever the credential
+        # algorithm is, so a PQC credential leaves the statement unchanged.
+        assert fmt == "packed", f"fmt={fmt!r}"
+        assert att["alg"] == -7 and att["x5c"], f"attStmt {att}"
 
         # 4. Assertion under the same credential; counter must grow.
         ad1, sig1, dt_ga = get_assertion(dev, cid, cred_id)

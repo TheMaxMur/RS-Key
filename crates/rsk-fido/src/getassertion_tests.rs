@@ -24,13 +24,8 @@ impl Rng for SeqRng {
 
 const CDH: [u8; 32] = [0xCD; 32];
 
-// makeCredential ships `fmt:"none"` by default and `fmt:"packed"` under
-// `fido-conformance` (or for an enterprise attestation).
-const ATT_FMT: &str = if cfg!(feature = "fido-conformance") {
-    "packed"
-} else {
-    "none"
-};
+// Every makeCredential ships packed basic attestation with the device x5c.
+const ATT_FMT: &str = "packed";
 
 fn dev() -> Device<'static> {
     Device {
@@ -3005,49 +3000,35 @@ fn parse_mc_akp(resp: &[u8]) -> (std::vec::Vec<u8>, i64, std::vec::Vec<u8>) {
     (cred_id, alg, pk)
 }
 
-// Pull the packed attStmt `(alg, sig)` and authData out of a makeCredential
-// response.
-fn mc_att(resp: &[u8]) -> (i64, std::vec::Vec<u8>, std::vec::Vec<u8>) {
-    let mut d = Decoder::new(resp);
-    let fields = d.map().unwrap().unwrap();
-    let (mut alg, mut sig, mut ad) = (0i64, std::vec::Vec::new(), std::vec::Vec::new());
-    for _ in 0..fields {
-        match d.u8().unwrap() {
-            2 => ad = d.bytes().unwrap().to_vec(),
-            3 => {
-                assert_eq!(d.map().unwrap().unwrap(), 2);
-                assert_eq!(d.str().unwrap(), "alg");
-                alg = d.i64().unwrap();
-                assert_eq!(d.str().unwrap(), "sig");
-                sig = d.bytes().unwrap().to_vec();
-            }
-            _ => d.skip().unwrap(),
-        }
-    }
-    (alg, sig, ad)
-}
-
-// Assert the default-profile makeCredential shape: fmt "none" (field 1) with an
-// empty attStmt map (field 3).
-fn assert_none_att_stmt(resp: &[u8]) {
+// Assert the makeCredential attestation shape: fmt "packed" (field 1) with a
+// three-entry `{alg, sig, x5c}` statement (field 3), whatever the credential
+// algorithm is.
+fn assert_basic_att_stmt(resp: &[u8]) {
     let mut d = Decoder::new(resp);
     let fields = d.map().unwrap().unwrap();
     let mut saw_fmt = false;
-    let mut saw_empty_stmt = false;
+    let mut saw_stmt = false;
     for _ in 0..fields {
         match d.u8().unwrap() {
             1 => {
-                assert_eq!(d.str().unwrap(), "none");
+                assert_eq!(d.str().unwrap(), ATT_FMT);
                 saw_fmt = true;
             }
             3 => {
-                assert_eq!(d.map().unwrap().unwrap(), 0, "default attStmt is empty");
-                saw_empty_stmt = true;
+                assert_eq!(
+                    d.map().unwrap().unwrap(),
+                    3,
+                    "attStmt carries alg, sig and x5c"
+                );
+                d.skip().unwrap();
+                assert_eq!(d.i64().unwrap(), ALG_ES256, "attestation alg is ES256");
+                saw_stmt = true;
+                break;
             }
             _ => d.skip().unwrap(),
         }
     }
-    assert!(saw_fmt && saw_empty_stmt);
+    assert!(saw_fmt && saw_stmt);
 }
 
 fn mldsa_verify(pk: &[u8], msg: &[u8], sig: &[u8]) -> bool {
@@ -3069,20 +3050,9 @@ fn mldsa44_register_then_login_verifies() {
     let (cred_id, alg, pk) = parse_mc_akp(&mc);
     assert_eq!(alg, ALG_MLDSA44);
     assert_eq!(pk.len(), rsk_crypto::MLDSA44_PK_LEN);
-    // Default ships fmt "none" with an empty attStmt; only the conformance
-    // profile emits (and lets us verify) the packed self-attestation.
-    if cfg!(feature = "fido-conformance") {
-        let (att_alg, att_sig, ad) = mc_att(&mc);
-        assert_eq!(att_alg, ALG_MLDSA44);
-        let mut signed = ad;
-        signed.extend_from_slice(&CDH);
-        assert!(
-            mldsa_verify(&pk, &signed, &att_sig),
-            "ML-DSA-44 self-attestation verifies"
-        );
-    } else {
-        assert_none_att_stmt(&mc);
-    }
+    // The attestation is ES256 by the device key whatever the credential algorithm
+    // is, so a post-quantum credential changes nothing about the statement.
+    assert_basic_att_stmt(&mc);
 
     // Login with the returned credential id; the assertion signature must
     // verify under the same key.
@@ -3120,20 +3090,9 @@ fn mldsa65_register_then_login_verifies() {
     let (cred_id, alg, pk) = parse_mc_akp(&mc);
     assert_eq!(alg, ALG_MLDSA65);
     assert_eq!(pk.len(), rsk_crypto::MLDSA65_PK_LEN);
-    // Default ships fmt "none" with an empty attStmt; only the conformance
-    // profile emits (and lets us verify) the packed self-attestation.
-    if cfg!(feature = "fido-conformance") {
-        let (att_alg, att_sig, ad) = mc_att(&mc);
-        assert_eq!(att_alg, ALG_MLDSA65);
-        let mut signed = ad;
-        signed.extend_from_slice(&CDH);
-        assert!(
-            mldsa65_verify(&pk, &signed, &att_sig),
-            "ML-DSA-65 self-attestation verifies"
-        );
-    } else {
-        assert_none_att_stmt(&mc);
-    }
+    // The attestation is ES256 by the device key whatever the credential algorithm
+    // is, so a post-quantum credential changes nothing about the statement.
+    assert_basic_att_stmt(&mc);
 
     // Login with the returned credential id; the assertion signature must
     // verify under the same key.

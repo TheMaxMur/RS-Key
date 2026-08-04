@@ -20,7 +20,7 @@
     "cose"
   ],
   "attestationTypes": [
-    "basic_surrogate"
+    "basic_full"
   ],
   "userVerificationDetails": [
     [ { "userVerificationMethod": "presence_internal" } ],
@@ -92,7 +92,7 @@
     "transports": ["usb"],
     "maxRPIDsForSetMinPINLength": 8,
     "remainingDiscoverableCredentials": 256,
-    "attestationFormats": ["none", "packed"],
+    "attestationFormats": ["packed"],
     "maxPINLength": 63,
     "authenticatorConfigCommands": [1, 2, 3]
   }

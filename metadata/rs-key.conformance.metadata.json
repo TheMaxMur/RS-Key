@@ -19,7 +19,7 @@
     "cose"
   ],
   "attestationTypes": [
-    "basic_surrogate"
+    "basic_full"
   ],
   "userVerificationDetails": [
     [ { "userVerificationMethod": "presence_internal" } ],

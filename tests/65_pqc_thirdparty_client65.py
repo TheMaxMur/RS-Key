@@ -11,9 +11,9 @@ ML-DSA via pyca/cryptography (>= 48). Only this glue file is ours.
 python-fido2 2.2 has no ML-DSA CoseKey yet — the credential public key parses as
 a raw COSE map, so the AKP `pub` (-1) bytes are handed to OpenSSL directly.
 
-Shipping firmware returns fmt="none" with an empty attStmt, so the packed
-self-attestation verify only runs on a `--features fido-conformance` build; on a
-default board it is skipped and the getAssertion signature carries the check.
+The attestation is packed **basic** attestation, ES256 by the device key, so the
+ML-DSA credential key never signs it; the getAssertion signature carries the
+post-quantum check.
 
     python3 -m venv /tmp/fido2v
     /tmp/fido2v/bin/pip install fido2 cryptography
@@ -86,17 +86,14 @@ def main():
     pub = mldsa.MLDSA65PublicKey.from_public_bytes(bytes(cose[-1]))
     assert len(bytes(cose[-1])) == 1952, "ML-DSA-65 pk length"
 
-    if att.fmt == "none" or not att.att_stmt:
-        print("SKIP: self-attestation verify needs a --features fido-conformance "
-              "firmware (shipping firmware sends fmt=none)")
-        print(f"registration: AKP key parsed by python-fido2 "
-              f"(credId {len(cred_data.credential_id)}B, fmt=none)")
-    else:
-        assert att.att_stmt["alg"] == -49, f"attStmt alg {att.att_stmt['alg']}"
-        assert len(att.att_stmt["sig"]) == 3309, "ML-DSA-65 sig length"
-        pub.verify(att.att_stmt["sig"], bytes(att.auth_data) + reg.response.client_data.hash)
-        print(f"registration: AKP key parsed by python-fido2, attestation verified by OpenSSL "
-              f"(credId {len(cred_data.credential_id)}B, sig {len(att.att_stmt['sig'])}B)")
+    # Packed basic attestation: the statement is ES256 by the device key, so the AKP
+    # credential key signs the assertion below but never the attestation.
+    assert att.fmt == "packed", f"fmt={att.fmt!r}"
+    assert att.att_stmt["alg"] == -7, f"attStmt alg {att.att_stmt['alg']}"
+    assert len(att.att_stmt["x5c"]) == 1, "x5c carries one certificate"
+    print(f"registration: AKP key parsed by python-fido2 "
+          f"(credId {len(cred_data.credential_id)}B, fmt=packed, "
+          f"att sig {len(att.att_stmt['sig'])}B)")
 
     # Authenticate with the returned credential; verify under the same key.
     sel = client.get_assertion(

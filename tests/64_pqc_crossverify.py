@@ -15,10 +15,9 @@ Needs `hidapi` + `dilithium-py` + `cryptography` >= 44 (OpenSSL >= 3.5 backend
 for ML-DSA); all three are in the nix devshell python. Flash the no-touch build
 built `--features advertise-pqc`.
 
-Shipping firmware returns fmt="none" with an empty attStmt, so the attestation
-cross-verify only runs on a `--features fido-conformance` build (packed
-self-attestation); on a default board it is skipped and the assertion signature
-carries the cross-verify (including the tamper negative control).
+The attestation is packed **basic** attestation, ES256 by the device key, so it
+carries no ML-DSA signature to cross-verify; the assertion signature carries the
+cross-verify, including the tamper negative control.
 """
 import os
 import sys
@@ -94,15 +93,10 @@ def main():
             assert status == 0x00, f"{label} makeCredential {status:#x}"
             cred_id, got_alg, pk, ad, fmt, att = parse_mc(resp)
             assert got_alg == alg and len(pk) == pk_len
-            # Shipping firmware sends fmt=none (empty attStmt); packed self-attestation
-            # (with a device-signed attStmt) needs a --features fido-conformance build.
-            have_att = fmt != "none"
-            if have_att:
-                assert len(att["sig"]) == sig_len
-            else:
-                assert att == {}, f"{label} fmt=none must carry an empty attStmt, got {att!r}"
-                print(f"{label} SKIP: self-attestation verify needs a --features "
-                      "fido-conformance firmware (shipping firmware sends fmt=none)")
+            # Packed basic attestation is ES256 by the device key, so there is no
+            # ML-DSA signature in the statement to cross-verify — only the assertion.
+            assert fmt == "packed", f"{label} fmt={fmt!r}"
+            assert att["alg"] == -7 and att["x5c"], f"{label} attStmt {att}"
 
             # getAssertion under the same credential.
             status, ga = ctap(dev, cid, 0x02, {1: req[2]["id"], 2: CDH,
@@ -111,8 +105,6 @@ def main():
             ga_ad, ga_sig = ga[2], ga[3]
 
             checks = [("assertion", ga_ad + CDH, ga_sig)]
-            if have_att:
-                checks.insert(0, ("attestation", ad + CDH, att["sig"]))
             for what, msg, sig in checks:
                 dpy = dil.verify(pk, msg, sig)
                 ossl = openssl_verify(pyca_cls, pk, msg, sig)
@@ -121,9 +113,9 @@ def main():
                 assert dpy, f"{label} {what}: dilithium-py rejected a valid device signature"
                 assert ossl, f"{label} {what}: OpenSSL rejected a valid device signature"
 
-            # Negative control: a one-bit flip must be rejected by BOTH. When there
-            # is no attStmt (fmt=none), tamper the assertion signature instead.
-            good_ad, good_sig = (ad, att["sig"]) if have_att else (ga_ad, ga_sig)
+            # Negative control: a one-bit flip in the assertion signature must be
+            # rejected by BOTH verifiers.
+            good_ad, good_sig = ga_ad, ga_sig
             bad = bytearray(good_sig)
             bad[100] ^= 0x01
             assert not dil.verify(pk, good_ad + CDH, bytes(bad)), f"{label} dilithium-py accepted a tampered sig"

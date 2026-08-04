@@ -36,7 +36,7 @@ use rsk_fs::{Fs, KeyFid, Sealed, Storage};
 use rsk_sdk::error::{Error, Result};
 
 use crate::Rng;
-use crate::cert::build_attestation_cert;
+use crate::cert::{build_attestation_cert, matches_template as cert_matches_template};
 use crate::consts::{
     EF_ATT_KEY, EF_COUNTER, EF_CRED_CTR, EF_EE_DEV, EF_KEY_DEV, EF_KEY_DEV_ENC, EF_LARGEBLOB,
     LARGEBLOB_INITIAL, MAX_RESIDENT_CREDENTIALS,
@@ -409,7 +409,15 @@ pub fn ensure_seed<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut impl Rng)
     if !fs.has_data(EF_LARGEBLOB) {
         fs.put(EF_LARGEBLOB, &LARGEBLOB_INITIAL)?;
     }
-    if !fs.has_data(EF_EE_DEV) && !locked {
+    // Rebuilt, not merely created: a device provisioned before the WebAuthn §8.2.1
+    // subject/extension template carries a cert that RP libraries now reject, and
+    // packed attestation presents it on every makeCredential.
+    let mut buf = [0u8; 512];
+    let stale = match fs.read(EF_EE_DEV, &mut buf) {
+        Some(n) => !cert_matches_template(&buf[..n.min(buf.len())]),
+        None => true,
+    };
+    if stale && !locked {
         // Self-signed attestation cert over the device key (the seed scalar).
         let mut seed = load_keydev(dev, fs).ok_or(Error::ExecError)?;
         let key = P256Key::from_scalar(&seed).ok_or(Error::ExecError)?;
@@ -417,7 +425,6 @@ pub fn ensure_seed<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut impl Rng)
         let mut serial = [0u8; 16];
         rng.fill(&mut serial);
         serial[0] &= 0x7F; // keep the INTEGER positive (no leading 0x00 needed)
-        let mut buf = [0u8; 512];
         let n = build_attestation_cert(&key, &serial, &mut buf).ok_or(Error::ExecError)?;
         fs.put(EF_EE_DEV, &buf[..n])?;
     }
