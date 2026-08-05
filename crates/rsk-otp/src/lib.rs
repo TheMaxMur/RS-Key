@@ -204,7 +204,7 @@ pub fn is_function_slot(slot_id: u8) -> bool {
     // with the rest when the OTP application is disabled (audit run-34 #22). Under
     // `strict-config` it is unhandled anyway and falls to the bare-OK swallow.
     #[cfg(not(feature = "strict-config"))]
-    if slot_id == P1_SCAN_MAP {
+    if matches!(slot_id, P1_SCAN_MAP | P1_NDEF1 | P1_NDEF2) {
         return true;
     }
     matches!(
@@ -787,11 +787,23 @@ impl<'a> OtpApplet<'a> {
     #[cfg(not(feature = "strict-config"))]
     fn cmd_ndef<S: Storage>(&mut self, apdu: &Apdu, fs: &mut Fs<S>, slot2: bool) -> Sw {
         let n = apdu.data.len().min(EF_OTP_NDEF_MAX);
-        if n != 0 {
-            let fid = if slot2 { EF_OTP_NDEF2 } else { EF_OTP_NDEF1 };
-            let _ = fs.put(fid, &apdu.data[..n]);
-            self.config_seq = self.config_seq.wrapping_add(1); // pgmSeq bump (see cmd_set_device_info)
+        if n == 0 {
+            return Sw::OK;
         }
+        // Same gate as SCAN_MAP, and for the same reason (audit run-34 #22, swept to
+        // this sibling by run-35): yubikit puts the access code after the payload,
+        // and a device-global write must satisfy EVERY programmed slot's code — it
+        // is otherwise only as protected as the least-protected slot.
+        let mut code = [0u8; ACC_CODE_SIZE];
+        if apdu.data.len() >= n + ACC_CODE_SIZE {
+            code.copy_from_slice(&apdu.data[n..n + ACC_CODE_SIZE]);
+        }
+        if !self.code_clears_every_slot(fs, &code) {
+            return Sw::SECURITY_STATUS_NOT_SATISFIED;
+        }
+        let fid = if slot2 { EF_OTP_NDEF2 } else { EF_OTP_NDEF1 };
+        let _ = fs.put(fid, &apdu.data[..n]);
+        self.config_seq = self.config_seq.wrapping_add(1); // pgmSeq bump (see cmd_set_device_info)
         Sw::OK
     }
 

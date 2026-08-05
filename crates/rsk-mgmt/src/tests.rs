@@ -784,3 +784,50 @@ fn read_config_never_echoes_a_record_its_own_writer_would_refuse() {
         );
     }
 }
+
+/// Audit run-35: a DeviceConfig write is a delta, not a replacement.
+///
+/// `ykman config set-lock-code` sends only the 0x0A lock TLV. Stripping it left an
+/// empty blob, storing that wholesale left an EMPTY record, and `read_enabled_caps`
+/// reads empty as "no record" and returns SUPPORTED_CAPS — so the owner's
+/// `ykman config usb --disable` was silently undone by an unrelated command that
+/// reported success.
+#[test]
+fn a_partial_write_config_keeps_the_fields_it_does_not_mention() {
+    let mut fs: Fs<RamStorage> = Fs::new(RamStorage::new());
+
+    // The owner disables everything but FIDO2/U2F.
+    persist_dev_conf(&mut fs, &[TAG_USB_ENABLED, 2, 0x02, 0x02]).unwrap();
+    let hardened = read_enabled_caps(&mut fs);
+    assert_ne!(
+        hardened, SUPPORTED_CAPS,
+        "precondition: caps really narrowed"
+    );
+
+    // …then sets a lock code, which sends the 0x0A TLV and nothing else.
+    let mut lock = vec![TAG_CONFIG_LOCK, 16];
+    lock.extend_from_slice(&[0xAB; 16]);
+    persist_dev_conf(&mut fs, &lock).unwrap();
+
+    assert_eq!(
+        read_enabled_caps(&mut fs),
+        hardened,
+        "a lock-code write re-enabled applications the owner disabled"
+    );
+}
+
+/// The same rule in the other direction: a write that DOES carry a field replaces
+/// that field, and leaves the others alone.
+#[test]
+fn a_write_config_replaces_only_the_tags_it_carries() {
+    let mut fs: Fs<RamStorage> = Fs::new(RamStorage::new());
+    persist_dev_conf(&mut fs, &[TAG_USB_ENABLED, 2, 0x02, 0x02]).unwrap();
+    persist_dev_conf(&mut fs, &[TAG_USB_ENABLED, 2, 0x00, 0x3B]).unwrap();
+    let mut buf = [0u8; 64];
+    let n = fs.read(EF_DEV_CONF, &mut buf).unwrap();
+    assert_eq!(
+        &buf[..n],
+        &[TAG_USB_ENABLED, 2, 0x00, 0x3B],
+        "a restated tag must win, and must not be duplicated"
+    );
+}

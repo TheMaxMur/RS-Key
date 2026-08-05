@@ -317,15 +317,89 @@ pub fn persist_dev_conf<S: Storage>(fs: &mut Fs<S>, blob: &[u8]) -> Result<(), D
     // 16-byte codes that never reach flash, and `ykman config set-lock-code` sends
     // both the old and the new one at once — 59 bytes of request for at most 23
     // bytes of config. Measuring the request would refuse that legitimate write.
-    if n > EF_DEV_CONF_MAX {
+    // MERGE onto the stored record; do not replace it. ykman sends only the fields
+    // it is changing — `config set-lock-code` sends the 0x0A TLV and nothing else,
+    // which strips to zero bytes here. Storing that verbatim left an EMPTY record,
+    // and `read_enabled_caps` reads empty as "no record" and returns
+    // SUPPORTED_CAPS, so a lock-code write silently re-enabled every application
+    // the owner had disabled (audit run-35).
+    let mut merged = [0u8; EF_DEV_CONF_READ_MAX];
+    let m = overlay_dev_conf(fs, &stripped[..n], &mut merged)?;
+    if m > EF_DEV_CONF_MAX {
         return Err(DevConfError::TooLong);
     }
-    fs.put(EF_DEV_CONF, &stripped[..n])
+    fs.put(EF_DEV_CONF, &merged[..m])
         .map_err(|_| DevConfError::Store)?;
     // The enabled-applications set changed; the firmware reloads its cached mask
     // (which gates applet dispatch) before the next command it guards.
     DEV_CONF_DIRTY.store(true, core::sync::atomic::Ordering::Relaxed);
     Ok(())
+}
+
+/// Overlay the TLV entries `incoming` carries onto the stored `EF_DEV_CONF`,
+/// writing the result into `out` and returning its length.
+///
+/// A DeviceConfig write is a *delta*: real hardware merges it, and every ykman
+/// command that touches one field sends that field alone. Replacing the record
+/// wholesale therefore discards every setting the request did not mention.
+/// Entries the request repeats win; the rest are kept in their stored order, so a
+/// no-op write is byte-stable and `dev_conf_unchanged` still short-circuits it.
+fn overlay_dev_conf<S: Storage>(
+    fs: &mut Fs<S>,
+    incoming: &[u8],
+    out: &mut [u8],
+) -> Result<usize, DevConfError> {
+    let mut stored = [0u8; EF_DEV_CONF_READ_MAX];
+    let stored_n = fs
+        .read(EF_DEV_CONF, &mut stored)
+        .map(|n| n.min(EF_DEV_CONF_READ_MAX))
+        .unwrap_or(0);
+    // A stored record an older build may have written is only merged onto when it
+    // parses; otherwise the incoming blob replaces it, which is what the previous
+    // behaviour did for every input and is still the safe answer for a record we
+    // cannot read.
+    let stored = &stored[..whole_tlvs(&stored[..stored_n])];
+
+    let mut n = 0usize;
+    let mut push = |src: &[u8], out: &mut [u8]| -> Result<(), DevConfError> {
+        if n + src.len() > out.len() {
+            return Err(DevConfError::TooLong);
+        }
+        out[n..n + src.len()].copy_from_slice(src);
+        n += src.len();
+        Ok(())
+    };
+    // Stored entries first, minus any tag the request restates.
+    let mut i = 0;
+    while i + 1 < stored.len() {
+        let len = stored[i + 1] as usize;
+        let end = i + 2 + len;
+        if end > stored.len() {
+            break;
+        }
+        if !has_tag(incoming, stored[i]) {
+            push(&stored[i..end], out)?;
+        }
+        i = end;
+    }
+    push(incoming, out)?;
+    Ok(n)
+}
+
+/// Whether a well-formed TLV run carries an entry with `tag`.
+fn has_tag(blob: &[u8], tag: u8) -> bool {
+    let mut i = 0;
+    while i + 1 < blob.len() {
+        let end = i + 2 + blob[i + 1] as usize;
+        if end > blob.len() {
+            return false;
+        }
+        if blob[i] == tag {
+            return true;
+        }
+        i = end;
+    }
+    false
 }
 
 /// Copy `blob` minus any CONFIG_LOCK (0x0A) / UNLOCK (0x0B) TLV entry into `out`,
