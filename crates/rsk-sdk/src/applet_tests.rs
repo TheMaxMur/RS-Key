@@ -673,3 +673,71 @@ fn reset_card_clears_selection_and_security_status() {
         Sw::SECURITY_STATUS_NOT_SATISFIED
     );
 }
+
+/// A SELECT terminates a live incoming chain instead of finishing it.
+///
+/// `chaining` is sticky, has no timeout and survives across PC/SC connections, so
+/// one `CLA 0x10` APDU left by any process made the *next* process's opening
+/// SELECT the chain terminator: the SELECT silently did not happen, and the victim
+/// went on operating against whatever applet was already current — with PIV's
+/// per-operation touch prompt naming the injector's data (audit run-34 #26).
+#[test]
+fn a_select_terminates_a_dangling_chain_instead_of_finishing_it() {
+    let mut echo = Echo { selected: false };
+    let mut applets: [&mut dyn Applet<()>; 1] = [&mut echo];
+    let mut disp = Dispatcher::new();
+    let mut out = [0u8; 64];
+    let mut res = ResBuf::new(&mut out);
+
+    let mut sel = vec![0x00, 0xA4, 0x04, 0x00, 0x08];
+    sel.extend_from_slice(&[0xA0, 0x00, 0x00, 0x06, 0x47, 0x2F, 0x00, 0x01]);
+    assert_eq!(disp.process(&sel, &mut applets, &mut (), &mut res), Sw::OK);
+
+    // An attacker leaves a chain segment dangling…
+    assert_eq!(
+        disp.process(
+            &[0x10, 0x10, 0, 0, 0x02, 0xAA, 0xBB],
+            &mut applets,
+            &mut (),
+            &mut res
+        ),
+        Sw::OK
+    );
+    // …and the victim's opening SELECT must be a SELECT, not the terminator.
+    assert_eq!(disp.process(&sel, &mut applets, &mut (), &mut res), Sw::OK);
+    assert!(
+        !res.as_slice().starts_with(&[0xAA, 0xBB]),
+        "the SELECT was swallowed as a chain terminator"
+    );
+    // The dangling segments are gone, so the next command carries only its own data.
+    assert_eq!(
+        disp.process(
+            &[0x00, 0x10, 0, 0, 0x01, 0xEE],
+            &mut applets,
+            &mut (),
+            &mut res
+        ),
+        Sw::OK
+    );
+    assert_eq!(res.as_slice(), &[0xEE], "stale segments prepended");
+}
+
+/// …and INS `0xA4` alone must NOT count as a SELECT: it is also YKOATH's
+/// CALCULATE ALL (P1 `0x00`), so matching on the instruction byte would break
+/// OATH — the reason this predicate tests the whole shape.
+#[test]
+fn is_select_matches_the_shape_not_the_instruction() {
+    let sel = |p1, p2| {
+        let raw = [0x00u8, 0xA4, p1, p2, 0x01, 0xAA];
+        is_select(&Apdu::parse(&raw).unwrap())
+    };
+    assert!(sel(0x04, 0x00));
+    assert!(sel(0x04, 0x04));
+    // YKOATH CALCULATE ALL, and SELECT-by-path/FID variants no applet answers.
+    assert!(!sel(0x00, 0x01));
+    assert!(!sel(0x00, 0x00));
+    assert!(!sel(0x04, 0x0C));
+    // A different instruction entirely.
+    let raw = [0x00u8, 0x10, 0x04, 0x00, 0x01, 0xAA];
+    assert!(!is_select(&Apdu::parse(&raw).unwrap()));
+}

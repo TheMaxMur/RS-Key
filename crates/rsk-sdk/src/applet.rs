@@ -103,6 +103,14 @@ const fn bytes_remaining(left: usize) -> Sw {
 /// Routes APDUs to applets: SELECT-by-AID, command chaining (CLA bit 0x10),
 /// outgoing response chaining (`61xx` / GET RESPONSE), and dispatch to the
 /// current applet.
+/// A well-formed SELECT-by-AID.
+///
+/// Matched by *shape*, never by INS alone: `0xA4` is also YKOATH's CALCULATE ALL
+/// (P1 `0x00`), so a blanket intercept on the instruction byte would break OATH.
+fn is_select(apdu: &Apdu) -> bool {
+    apdu.ins == 0xA4 && apdu.p1 == 0x04 && (apdu.p2 == 0x00 || apdu.p2 == 0x04)
+}
+
 pub struct Dispatcher {
     current: Option<usize>,
     chaining: bool,
@@ -228,10 +236,23 @@ impl Dispatcher {
             self.chaining = true;
             return Sw::OK;
         }
+        // A SELECT is never a chain continuation, so it terminates one instead of
+        // finishing it. `chaining` is sticky, has no timeout and survives across
+        // PC/SC connections, so a single `CLA 0x10` APDU made the *next* process's
+        // opening SELECT the terminator: that SELECT silently did not happen and
+        // the victim went on operating against the attacker's applet, with PIV's
+        // per-operation touch prompt naming the injector's data (audit run-34 #26).
+        // The old code asserted "SELECT is never chained" in a comment and enforced
+        // nothing.
+        if self.chaining && is_select(&apdu) {
+            self.chain[..self.chain_len].zeroize();
+            self.chain_len = 0;
+            self.chaining = false;
+        }
+
         // A non-chained APDU after chaining segments is the final one: append its
         // data and dispatch the reassembled command (needed by OpenPGP RSA IMPORT,
-        // whose extended header list exceeds 255 bytes). Chained commands always
-        // target the current applet — SELECT is never chained.
+        // whose extended header list exceeds 255 bytes).
         if self.chaining {
             if self.chain_len + apdu.nc > self.chain.len() {
                 self.chain[..self.chain_len].zeroize();
@@ -266,7 +287,7 @@ impl Dispatcher {
 
         // SELECT by AID. A disabled applet is skipped, so its AID matches nothing
         // (→ FILE_NOT_FOUND) just as if it were never registered.
-        if apdu.ins == 0xA4 && apdu.p1 == 0x04 && (apdu.p2 == 0x00 || apdu.p2 == 0x04) {
+        if is_select(&apdu) {
             let found = applets.iter().enumerate().position(|(i, app)| {
                 let aid = app.aid();
                 self.selectable(i) && apdu.data.len() >= aid.len() && &apdu.data[..aid.len()] == aid
