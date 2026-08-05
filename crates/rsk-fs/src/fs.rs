@@ -268,27 +268,41 @@ impl<S: Storage> Fs<S> {
     /// (there are no absent probes to skip). Keys are taken in bounded batches: the
     /// enumerator can't run while the store mutates, so each pass collects a batch,
     /// removes it, and re-enumerates until only the preserved keys remain.
-    pub fn factory_wipe(&mut self, preserve: impl Fn(u16) -> bool) -> Result<()> {
-        loop {
-            let mut batch = [0u16; 64];
-            let mut n = 0usize;
-            let complete = self.storage.for_each_key(&mut |fid| {
-                if !preserve(fid) && n < batch.len() {
-                    batch[n] = fid;
-                    n += 1;
+    /// `last` names the records that *gate* the applets — PIN and PUK verifiers,
+    /// retry counters, the `alwaysUv` latch. They are removed in a second phase,
+    /// after everything else is provably gone, because the applets re-provision
+    /// them at their factory defaults on the next boot: a single sweep can reach
+    /// them first (`for_each_key` yields in flash-ring order, not FID order) and a
+    /// power cut there would re-seed a published PIN over key material that is
+    /// still live and, for PIV, not PIN-bound at rest. Same rule as `wipe_piv` and
+    /// `wipe_oath` — this path bypasses both, so it has to carry it itself.
+    pub fn factory_wipe(
+        &mut self,
+        preserve: impl Fn(u16) -> bool,
+        last: impl Fn(u16) -> bool,
+    ) -> Result<()> {
+        for gates in [false, true] {
+            loop {
+                let mut batch = [0u16; 64];
+                let mut n = 0usize;
+                let complete = self.storage.for_each_key(&mut |fid| {
+                    if !preserve(fid) && last(fid) == gates && n < batch.len() {
+                        batch[n] = fid;
+                        n += 1;
+                    }
+                });
+                if n == 0 {
+                    // An un-yielded FID is only evidence of absence when the walk
+                    // finished; a truncated one must fail rather than report the
+                    // range clear (the rule PIV and OpenPGP already enforce).
+                    if !complete {
+                        return Err(Error::MemoryFatal);
+                    }
+                    break;
                 }
-            });
-            if n == 0 {
-                // An un-yielded FID is only evidence of absence when the walk
-                // finished; a truncated one must fail rather than report the
-                // range clear (the rule PIV and OpenPGP already enforce).
-                if !complete {
-                    return Err(Error::MemoryFatal);
+                for &fid in &batch[..n] {
+                    self.storage.remove(fid)?;
                 }
-                break;
-            }
-            for &fid in &batch[..n] {
-                self.storage.remove(fid)?;
             }
         }
         // The caches described the now-erased store; reset them so any reuse before

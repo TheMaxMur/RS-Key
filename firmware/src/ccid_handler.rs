@@ -74,6 +74,27 @@ pub struct CcidApplets<'a> {
     resp: [u8; RESP_CAP],
 }
 
+/// The records every applet re-provisions at its factory defaults, passed to
+/// [`rsk_fs::Fs::factory_wipe`] so they are removed only after everything else is
+/// provably gone. A device-wide wipe bypasses each applet's own two-phase sweep,
+/// so it has to carry the same rule: a prefix that took a PIN verifier first and
+/// then lost power would let the next boot re-seed a published default over key
+/// material that is still live (PIV's slot keys are not PIN-bound at rest).
+/// OpenPGP's are included for uniformity — its DEK chain already makes a restored
+/// default PW1 useless — but PIV's and FIDO's are load-bearing.
+#[cfg(any(not(feature = "strict-config"), feature = "display"))]
+pub(crate) fn gates_wiped_last(fid: u16) -> bool {
+    rsk_fido::is_fido_gate_fid(fid)
+        || rsk_piv::files::is_piv_gate_fid(fid)
+        || matches!(
+            fid,
+            rsk_openpgp::consts::EF_PW1
+                | rsk_openpgp::consts::EF_RC
+                | rsk_openpgp::consts::EF_PW3
+                | rsk_openpgp::consts::EF_PW_PRIV
+        )
+}
+
 impl<'a> CcidApplets<'a> {
     /// `serial_id` is the device chip id (its BCD-encoded 8-digit serial goes into
     /// the OpenPGP full AID); `rng` is the hardware TRNG shared with the CTAPHID handler.
@@ -218,7 +239,7 @@ impl<'a> CcidApplets<'a> {
     pub fn factory_wipe(&mut self) -> bool {
         self.fs
             .borrow_mut()
-            .factory_wipe(rsk_fido::survives_factory_reset)
+            .factory_wipe(rsk_fido::survives_factory_reset, gates_wiped_last)
             .is_ok()
     }
 

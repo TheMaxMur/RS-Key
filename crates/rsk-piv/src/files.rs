@@ -280,9 +280,26 @@ pub(crate) fn is_piv_fid(fid: u16) -> bool {
     (0xD100..=0xD2FF).contains(&fid) || (0xD400..=0xD4FF).contains(&fid)
 }
 
-/// Progress backstop for the [`wipe_piv`] sweep: every batched `force_delete`
-/// clears one *distinct* live fid and [`is_piv_fid`] spans 768 of them, so needing
-/// more deletes than that means the backend keeps re-yielding what it removed.
+/// The records that *gate* the applet: the PIN and PUK verifiers and their retry
+/// state. Public because the device-wide `Fs::factory_wipe` bypasses [`wipe_piv`]
+/// and needs the same rule. [`wipe_piv`] deletes these last — `scan_files` re-creates them at the
+/// factory defaults, and PIV slot keys are sealed device-rooted rather than
+/// PIN-bound, so a sweep that took them first and then lost power would re-seed a
+/// published PIN over live key material.
+pub fn is_piv_gate_fid(fid: u16) -> bool {
+    matches!(fid, EF_PIN | EF_PUK | EF_RETRIES)
+}
+
+/// Everything else a PIV factory reset owns — slot keys, data objects, the pubkey
+/// cache. Deleted first, so every prefix of the wipe leaves the keys behind a gate.
+fn is_piv_secret_fid(fid: u16) -> bool {
+    is_piv_fid(fid) && !is_piv_gate_fid(fid)
+}
+
+/// Progress backstop for one [`sweep`] phase: every batched `force_delete` clears
+/// one *distinct* live fid and [`is_piv_fid`] spans 768 of them, so needing more
+/// deletes than that means the backend keeps re-yielding what it removed. Bounds
+/// each phase separately, which is strictly tighter than the old single sweep.
 const RESET_MAX_DELETES: u32 = 768;
 
 /// Factory-reset the applet: delete every PIV file and meta record
@@ -290,23 +307,37 @@ const RESET_MAX_DELETES: u32 = 768;
 /// the other applets' data must survive a PIV reset.
 pub fn reset_files<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng) -> Result<(), Sw> {
     let wiped = wipe_piv(fs);
-    // Re-provision even when the sweep failed: it deletes the PIN/PUK/retry files
-    // first, and an applet left without them answers 6A88 to every later RESET
-    // (no retry counters to read) instead of the honest failure below.
+    // Re-provision even when the sweep failed: an applet left without the retry
+    // counters answers 6A88 to every later RESET instead of the honest failure
+    // below. Safe now that the gate records go last — a failed sweep that never
+    // reached them leaves the owner's PIN in place, not a default one.
     let ensured = scan_files(dev, fs, rng);
     wiped.and(ensured)
 }
 
-/// Delete every live PIV file and meta record. Batched because `for_each_key`
-/// cannot delete mid-iteration, and DE-DUPED because it yields one entry per
-/// stored *version*: a batch of superseded copies is not a batch of distinct fids.
+/// Delete every live PIV file and meta record.
+///
+/// Two phases, and the order carries the security property (the rule `wipe_oath`
+/// states, which this function is the sibling of): `for_each_key` yields in
+/// flash-ring order, not FID order, so one combined sweep can reach the PIN before
+/// the keys — and a power cut there lets `scan_files` re-seed the factory PIN over
+/// slot keys that are still live and, unlike OpenPGP's, not PIN-bound at rest.
 fn wipe_piv<S: Storage>(fs: &mut Fs<S>) -> Result<(), Sw> {
+    sweep(fs, is_piv_secret_fid)?;
+    sweep(fs, is_piv_gate_fid)
+}
+
+/// One phase of [`wipe_piv`]: delete every live fid matching `pred`. Batched
+/// because `for_each_key` cannot delete mid-iteration, and DE-DUPED because it
+/// yields one entry per stored *version*: a batch of superseded copies is not a
+/// batch of distinct fids.
+fn sweep<S: Storage>(fs: &mut Fs<S>, pred: fn(u16) -> bool) -> Result<(), Sw> {
     let mut deleted = 0u32;
     loop {
         let mut fids = [0u16; 32];
         let mut n = 0;
         let complete = fs.for_each_key(&mut |fid| {
-            if is_piv_fid(fid) && n < fids.len() && !fids[..n].contains(&fid) {
+            if pred(fid) && n < fids.len() && !fids[..n].contains(&fid) {
                 fids[n] = fid;
                 n += 1;
             }

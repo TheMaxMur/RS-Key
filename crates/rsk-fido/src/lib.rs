@@ -39,7 +39,7 @@ pub mod u2f;
 pub mod vendor;
 
 pub use error::{CTAP2_OK, CtapError, CtapResult};
-pub use reset::survives_factory_reset;
+pub use reset::{is_fido_gate_fid, survives_factory_reset};
 
 use rsk_crypto::Device;
 use rsk_fs::{Fs, Storage};

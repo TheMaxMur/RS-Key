@@ -2608,8 +2608,9 @@ fn reset_reports_failure_when_the_sweep_cannot_converge() {
 }
 
 /// A failed sweep must not leave the applet without the files it just deleted:
-/// the PIN/PUK/retry files go first, and a card missing them answers 6A88 (no
-/// retry counters) to every later RESET instead of the honest 6581.
+/// a card missing the retry counters answers 6A88 to every later RESET instead of
+/// the honest 6581. (The PIN/PUK/retry files now go *last* — see
+/// `a_torn_reset_never_leaves_a_key_behind_the_default_pin`.)
 #[test]
 fn failed_reset_reprovisions_instead_of_wedging_the_applet() {
     let rng = RefCell::new(TestRng(7));
@@ -2630,16 +2631,24 @@ fn failed_reset_reprovisions_instead_of_wedging_the_applet() {
     let (sw, _) = run(&mut app, &mut fs, INS_RESET, 0, 0, &[]);
     assert_eq!(sw, Sw::MEMORY_FAILURE);
 
-    // Still a working card: the defaults are back, so RESET reports the real
-    // precondition (references not blocked) and the default PIN verifies again.
+    // Not wedged: the retry file is still there, so a second RESET answers the
+    // honest 6581 rather than 6A88 (no retry counters to read).
     let (sw, _) = run(&mut app, &mut fs, INS_RESET, 0, 0, &[]);
     assert_eq!(
         sw,
-        Sw::INCORRECT_PARAMS,
-        "a failed RESET must not wedge on 6A88"
+        Sw::MEMORY_FAILURE,
+        "a failed RESET must fail honestly, not wedge on 6A88"
     );
+    // And the card is left exactly as the failed RESET found it. Deleting the gate
+    // records last (audit run-35) means a sweep that never got past phase 1 has not
+    // touched them — so the references stay blocked instead of being handed back a
+    // fresh 3/3 budget, which is what the old ordering did on every failed RESET.
     let (sw, _) = run(&mut app, &mut fs, INS_VERIFY, 0, 0x80, &DEFAULT_PIN);
-    assert_eq!(sw, Sw::OK);
+    assert_eq!(
+        sw,
+        Sw::PIN_BLOCKED,
+        "a failed RESET must not refill the retries"
+    );
     assert!(
         !app.files_ensured,
         "SELECT must re-provision after a failed sweep"
@@ -3398,4 +3407,120 @@ fn the_management_key_algorithm_is_enforced_at_use() {
         &[0x7C, 0x02, 0x81, 0x00],
     );
     assert_eq!(sw, Sw::OK);
+}
+
+/// `Storage` that enumerates in INSERTION order — the flash ring's oldest-first
+/// yield, which `RamStorage`'s `HashMap` does not model — and whose `remove`
+/// starts failing after `budget` deletions, standing in for a power cut mid-wipe.
+#[derive(Clone)]
+struct TearAfter {
+    items: Vec<(u16, Vec<u8>)>,
+    budget: usize,
+}
+
+impl Storage for TearAfter {
+    fn read(&mut self, fid: u16, buf: &mut [u8]) -> Option<usize> {
+        let v = &self.items.iter().find(|(k, _)| *k == fid)?.1;
+        let n = v.len().min(buf.len());
+        buf[..n].copy_from_slice(&v[..n]);
+        Some(v.len())
+    }
+    fn write(&mut self, fid: u16, data: &[u8]) -> rsk_sdk::error::Result<()> {
+        match self.items.iter_mut().find(|(k, _)| *k == fid) {
+            Some(e) => e.1 = data.to_vec(),
+            None => self.items.push((fid, data.to_vec())),
+        }
+        Ok(())
+    }
+    fn remove(&mut self, fid: u16) -> rsk_sdk::error::Result<()> {
+        if self.budget == 0 {
+            return Err(rsk_sdk::error::Error::MemoryFatal);
+        }
+        self.budget -= 1;
+        self.items.retain(|(k, _)| *k != fid);
+        Ok(())
+    }
+    fn size(&mut self, fid: u16) -> Option<usize> {
+        self.items
+            .iter()
+            .find(|(k, _)| *k == fid)
+            .map(|(_, v)| v.len())
+    }
+    fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) -> bool {
+        for (k, _) in &self.items {
+            f(*k);
+        }
+        true
+    }
+}
+
+/// Audit run-35: a PIV RESET interrupted part-way must never leave a slot key
+/// live behind the re-provisioned factory PIN.
+///
+/// `wipe_piv` sweeps in flash-ring order, `scan_files` re-creates any absent
+/// credential file at its factory default, and PIV slot keys are sealed
+/// device-rooted rather than PIN-bound — so a single combined sweep that reached
+/// `EF_PIN` before the keys and then lost power handed the owner's keys to
+/// whoever holds the card, behind PIN 123456. The invariant asserted here is the
+/// ordering one, not an end state: for EVERY tear point, a surviving key implies a
+/// surviving owner PIN.
+#[test]
+fn a_torn_reset_never_leaves_a_key_behind_the_default_pin() {
+    let dev = Device {
+        serial_hash: &HASH,
+        serial_id: &SERIAL,
+        otp_key: None,
+    };
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+
+    // Provision a card the way an owner would: a key in 9A and a PIN of their own.
+    let mut fs = Fs::new(TearAfter {
+        items: Vec::new(),
+        budget: usize::MAX,
+    });
+    fs.scan();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    verify_pin(&mut app, &mut fs);
+    let owner_pin = [0x39u8, 0x38, 0x37, 0x36, 0x35, 0x34, 0xFF, 0xFF];
+    let mut chg = DEFAULT_PIN.to_vec();
+    chg.extend_from_slice(&owner_pin);
+    let (sw, _) = run(&mut app, &mut fs, INS_CHANGE_PIN, 0, 0x80, &chg);
+    assert_eq!(sw, Sw::OK, "owner sets their own PIN");
+    let tmpl = [0xAC, 0x03, 0x80, 0x01, ALGO_ECCP256];
+    let (sw, _) = run(&mut app, &mut fs, INS_ASYM_KEYGEN, 0, 0x9A, &tmpl);
+    assert_eq!(sw, Sw::OK, "owner generates a key in 9A");
+
+    let mut owner_rec = [0u8; 64];
+    let owner_n = fs.read(files::EF_PIN, &mut owner_rec).unwrap();
+    let base: TearAfter = fs.into_storage();
+    let live = base.items.len();
+
+    let mut saw_survivor = false;
+    for budget in 0..live {
+        let mut fs = Fs::new(TearAfter {
+            budget,
+            ..base.clone()
+        });
+        fs.scan();
+        let _ = reset_files(&dev, &mut fs, &mut TestRng(3));
+
+        if !fs.has_key(files::key_fid(SLOT_AUTHENTICATION)) {
+            continue;
+        }
+        saw_survivor = true;
+        let mut now = [0u8; 64];
+        let n = fs.read(files::EF_PIN, &mut now).unwrap_or(0);
+        assert_eq!(
+            (&now[..n], n),
+            (&owner_rec[..owner_n], owner_n),
+            "tear at {budget} left the 9A key live behind a re-provisioned PIN"
+        );
+    }
+    assert!(
+        saw_survivor,
+        "vacuous: no tear point left a key behind, so nothing was proved"
+    );
 }
