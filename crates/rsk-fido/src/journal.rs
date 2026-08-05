@@ -192,9 +192,9 @@ pub fn append<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, ev: u8, aux: u8, detail: 
     }
     if !ctx.state.audit_boot_logged {
         ctx.state.audit_boot_logged = true;
-        let _ = raw_append(ctx, EV_BOOT, 0, &[]);
+        let _ = raw_append(&ctx.dev, ctx.fs, ctx.now_ms, EV_BOOT, 0, &[]);
     }
-    let _ = raw_append(ctx, ev, aux, detail);
+    let _ = raw_append(&ctx.dev, ctx.fs, ctx.now_ms, ev, aux, detail);
 }
 
 /// Append a device-config write, coalescing a *run* of them into one ring entry.
@@ -245,27 +245,46 @@ fn coalesce_config_write<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, target: u8) ->
     ctx.fs.put(slot_fid(seq), &e).is_ok()
 }
 
-fn raw_append<S: Storage, R: Rng>(
-    ctx: &mut Ctx<S, R>,
+fn raw_append<S: Storage>(
+    dev: &Device,
+    fs: &mut Fs<S>,
+    now_ms: u64,
     ev: u8,
     aux: u8,
     detail: &[u8],
 ) -> Result<(), ()> {
-    let mut m = load_meta(&ctx.dev, ctx.fs);
+    let mut m = load_meta(dev, fs);
     if m.seq_next.wrapping_sub(m.start) >= AUDIT_RING_SLOTS {
         // Full: fold the oldest entry into the epoch and commit that *before*
         // its slot is reused — see the module docs for the power-cut argument.
         let mut e = [0u8; ENTRY_LEN];
-        if read_slot(ctx.fs, m.start, &mut e).is_some() {
+        if read_slot(fs, m.start, &mut e).is_some() {
             m.epoch = chain(&m.epoch, &e);
         }
         m.start = m.start.wrapping_add(1);
-        put_meta(ctx.fs, &m)?;
+        put_meta(fs, &m)?;
     }
-    let entry = build_entry(m.seq_next, ctx.now_ms, ev, aux, detail);
-    ctx.fs.put(slot_fid(m.seq_next), &entry).map_err(|_| ())?;
+    let entry = build_entry(m.seq_next, now_ms, ev, aux, detail);
+    fs.put(slot_fid(m.seq_next), &entry).map_err(|_| ())?;
     m.seq_next = m.seq_next.wrapping_add(1);
-    put_meta(ctx.fs, &m)
+    put_meta(fs, &m)
+}
+
+/// Append one event from a caller that is not a CTAP dispatch — the trusted
+/// panel, which holds the device identity and the flash but no [`Ctx`].
+///
+/// The panel's own actions were absent from the log the panel itself renders as
+/// its evidence surface: no `journal::append` existed anywhere under
+/// `firmware/src/display`, so an on-screen seed reveal or PIN change left no
+/// trace while their USB equivalents were logged (audit run-34 #17). Same opt-in
+/// gate and same best-effort contract as [`append`]. It cannot open the cycle
+/// with [`EV_BOOT`] — that latch lives on `FidoState`, which the panel does not
+/// have — so a power cycle whose first event is local starts at that event.
+pub fn append_local<S: Storage>(dev: &Device, fs: &mut Fs<S>, now_ms: u64, ev: u8, aux: u8) {
+    if !is_enabled(fs) {
+        return;
+    }
+    let _ = raw_append(dev, fs, now_ms, ev, aux, &[]);
 }
 
 /// Fold the whole window into the epoch and delete the entry slots: aggregate

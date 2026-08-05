@@ -630,8 +630,17 @@ impl Ui {
             }
             // Confirm the wipe on the trusted screen before the reboot re-provisions a
             // fresh device (the grey rotate pop reads as "erased / restarting").
+            self.journal_local(rsk_fido::journal::EV_RESET);
             self.show_success(SuccessKind::Wiped, Some(SUCCESS_POP_MS));
-            cortex_m::peripheral::SCB::sys_reset();
+            // Queue it for the worker rather than resetting the chip here. A direct
+            // `SCB::sys_reset` skipped `Worker::reboot`'s scrub — the DRBG, the OTP
+            // keyboard's frame buffers and core1's mailbox all stayed resident
+            // through a reset the user asked for precisely to leave nothing behind
+            // (audit run-34 #16). The ambient loop parks on `reboot_pending` and
+            // yields, so the worker runs on the next tick.
+            crate::vendor::request_reboot(false);
+            self.end_modal();
+            return;
         }
         self.end_modal();
     }
@@ -716,13 +725,26 @@ impl Ui {
                         // stale `false` would skip the auto-lock. A store failure only makes
                         // this over-lock, which unlock-with-no-PIN harmlessly drops.
                         self.home_pin_set = true;
+                        self.journal_local(rsk_fido::journal::EV_PIN_SET);
                     }
                     PinScope::Fido => {
-                        let _ = rsk_fido::passkeys::store_local_pin(
+                        if rsk_fido::passkeys::store_local_pin(
                             &dev,
                             &mut self.fs.borrow_mut(),
                             &new[..n1],
-                        );
+                        )
+                        .is_ok()
+                        {
+                            // Revoke live pinUvAuthTokens. `FidoState` lives in the
+                            // worker and outlives every dispatch, and the token is
+                            // random RAM state rather than a PIN derivative — so
+                            // without this a host holding a `PERM_CM` token minted
+                            // under the old PIN goes on deleting resident credentials
+                            // (no touch) for up to ten more minutes, right after the
+                            // owner did the one thing they believe revokes it.
+                            crate::handler::note_local_pin_changed();
+                            self.journal_local(rsk_fido::journal::EV_PIN_CHANGE);
+                        }
                     }
                 }
                 break;

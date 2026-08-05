@@ -532,6 +532,20 @@ impl Ui {
     /// tab hand-off renders the new tab directly, so neither needs the ambient-quiet
     /// window (that is only for the pad → confirm gap, set in `confirm_wait` /
     /// `collect_pin`). So this just clears the last-shown marker.
+    /// Record a panel-originated action in the on-device audit journal.
+    ///
+    /// The panel renders the journal as its evidence surface, yet nothing under
+    /// `display/` ever wrote to it: an on-screen seed reveal, seal or PIN change
+    /// left no entry while every one of their USB equivalents was logged (audit
+    /// run-34 #17). Journalling is opt-in and off by default, which caps the
+    /// impact but does not remove it — the gap silently omitted the device's
+    /// highest-value actions from the log of a user who deliberately turned it on.
+    fn journal_local(&self, ev: u8) {
+        let dev = self.keys.device();
+        let now = crate::usb_attach::elapsed_ms();
+        rsk_fido::journal::append_local(&dev, &mut self.fs.borrow_mut(), now, ev, 0);
+    }
+
     fn end_modal(&mut self) {
         self.shown = None;
     }
