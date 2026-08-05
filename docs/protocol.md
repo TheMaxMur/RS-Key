@@ -207,7 +207,7 @@ surface returns:
 | `0x02` | INVALID_PARAMETER | malformed param / bad key / wrong blob length |
 | `0x14` | MISSING_PARAMETER | required field absent (e.g. blob/`pinUvAuthParam`) |
 | `0x27` | OPERATION_DENIED | touch declined / timed out |
-| `0x30` | NOT_ALLOWED | precondition unmet (no MSE channel **or one owned by another CTAPHID channel** (§9.1), sealed, soft-locked, or an `authenticatorReset` outside the §5.1 power-up window) |
+| `0x30` | NOT_ALLOWED | precondition unmet (no MSE channel, one already spent or owned by another CTAPHID channel, an `MSE` while one is live (§9.1), sealed, soft-locked, or an `authenticatorReset` outside the §5.1 power-up window) |
 | `0x33` | PIN_AUTH_INVALID | `pinUvAuthParam` MAC or `acfg` permission wrong |
 | `0x36` | PUAT_REQUIRED | a PIN is set but no `pinUvAuthToken` was supplied |
 | `0x39` | REQUEST_TOO_LARGE | `subCommandParams` over the limit |
@@ -395,7 +395,14 @@ When no host config has been written, the device returns the **defaults**:
 `USB_ENABLED` = all-supported, `DEVICE_FLAGS = 80`, `CONFIG_LOCK = 00`. Once
 WRITE CONFIG has stored a blob, READ CONFIG echoes that blob after the fixed
 `USB_SUPPORTED/SERIAL/FORM_FACTOR/VERSION` prefix, then always appends
-`CONFIG_LOCK = 00`. The config-lock tags (`0A` set-code, `0B` unlock) are **write-
+`CONFIG_LOCK = 00`.
+
+A stored blob is echoed **only if it still satisfies the WRITE CONFIG rules** —
+each tag at most once, `USB_ENABLED` exactly two bytes. One that does not (a record
+an older, laxer build accepted) is not echoed verbatim; the response instead
+carries a synthesised `USB_ENABLED` equal to the mask the device actually enforces.
+So READ CONFIG is always parseable and never contradicts enforcement, whatever is
+in flash (audit run-34 #25). The config-lock tags (`0A` set-code, `0B` unlock) are **write-
 only on real hardware**; RS-Key does not implement the lock, so it strips them on
 write and never stores or echoes a lock code (audit run-30) — `0A` on read is
 always the 1-byte `00`.
@@ -789,15 +796,27 @@ Establishes an encrypted channel for the seed-moving subcommands.
 `nonce(12) ‖ ciphertext(32) ‖ tag(16)`, ChaCha20-Poly1305 under the channel key
 with **AAD = `dev_pub` (65 bytes)**.
 
-> **Channel lifetime — run MSE and the subcommand it protects on the SAME CTAPHID
-> channel.** The device holds one channel key per power cycle and binds it to the
-> CID that established it; a subcommand arriving on a different CID answers `0x30`
-> NOT_ALLOWED. A later MSE from another channel still succeeds (so a second process
-> cannot deny you a handshake) but takes ownership, and the previous owner must
-> re-handshake. Without this, any co-resident process could re-key the channel
-> between your MSE and your BACKUP_EXPORT and receive the master seed instead of
-> you. A client that opens a fresh CTAPHID channel per user action must therefore
-> do the handshake inside the same action as the subcommand, not once per session.
+> **Channel lifetime — the channel is ONE-SHOT: handshake, then immediately run the
+> one subcommand it protects.** (RS-Key `0x0866`+.) The device holds one channel key
+> per power cycle. Every gated consumer (`BACKUP_EXPORT`, `BACKUP_LOAD`, `UNLOCK`,
+> `ATT_IMPORT`, `ATT_CLEAR`, `authenticatorConfig` `AUT_ENABLE`) **spends** it, whatever
+> the outcome — a declined touch or a failed decrypt spends it too — and a second `MSE`
+> while one is live answers `0x30` NOT_ALLOWED **and drops the channel**, so both
+> parties must re-handshake.
+>
+> This is the boundary, not the CID check below it. A CTAPHID channel id is a routing
+> label the sender writes into its own frame header (CTAP 2.1 §11.2.5), so an
+> interloper forges the victim's CID rather than using its own, and comparing `mse_cid`
+> to the request's channel compares the attacker's bytes against themselves. Refusing
+> the re-key is what stops a co-resident process re-keying between your `MSE` and your
+> `BACKUP_EXPORT` and receiving the master seed instead of you. The cost is that such a
+> process can *deny* you a handshake; it can never redirect one.
+>
+> **For clients:** run `MSE` immediately before each subcommand, on the same CTAPHID
+> channel (a subcommand arriving on a different CID still answers `0x30`), and never
+> cache a channel across two operations. If a handshake answers `0x30`, a previous
+> run died between its `MSE` and its subcommand — the refusal has now cleared it, so
+> **retry once**; a second `0x30` means another process is squatting.
 > Unchanged on the wire; behaviour since bcdDevice `0x0862`.
 
 ### 9.2 PIN gating

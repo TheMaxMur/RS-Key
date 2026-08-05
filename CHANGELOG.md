@@ -15,112 +15,216 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Security
 
-- **The seed-backup MSE channel is now bound to the CTAPHID channel that
-  established it.** `MSE` and `BACKUP_EXPORT` are separate transactions, so the
-  worker lock does not span them, and the CID never reached the FIDO layer at
-  all — a second local process could re-key `mse_key` in the gap and have the
-  device encrypt the **32-byte master seed** under a key it held, while the
-  owner's own `rsk backup export` prompt and touch looked entirely normal. The
-  pinUvAuth MAC did not help: `BACKUP_EXPORT` carries no subCommandParams, so it
-  covers a constant. `FidoState` now records the channel each handshake ran on
-  and `mse_ready()` gates every consumer (`gate`, `unlock`, `aut_enable`); an
-  interloper's handshake still succeeds (refusing it would hand a squatter a
-  denial of service) but the owner's export then fails closed instead of
-  misaddressing the seed. No wire change.
+Two audit runs' findings land here. Full write-ups are in the commits; the
+one-line rule for each is below.
+
+- **The seed-backup MSE channel is one-shot.** Binding it to the CTAPHID channel
+  id (added below) was not a boundary — an interloper forges the victim's cid, and
+  `mse_ready()` compared the attacker's bytes with themselves, so the device still
+  encrypted the 32-byte master seed to a co-resident process under the owner's
+  genuine PIN and touch. A second `MSE` while one is live now refuses *and* drops
+  the channel, and every gated consumer spends it: a squatter can deny a handshake,
+  never redirect one. No wire change; the channel's **lifetime** changes, so
+  handshake immediately before each subcommand and retry once on `0x30`.
+- **A torn OATH `RESET` could strip the access code while the credentials
+  survived.** The batched sweep deleted in flash-ring order, so on a device whose
+  code predates its credentials the lock went first; cut power there and an
+  unauthenticated `LIST` / `CALCULATE ALL` returned labels, live TOTP codes and the
+  password-safe fields. Two phases now: credentials to provable emptiness, then the
+  lock records. (Seeds never leave — `CALCULATE ALL` withholds HOTP and touch
+  credentials, `GET CREDENTIAL` never returns `TAG_KEY`.)
+- **`WRITE CONFIG` accepted records the device and a host read differently.** No
+  tag-uniqueness and no `USB_ENABLED` length check, against a ykman parser that is
+  last-wins and any-length. A 1-byte value made the owner's own `config usb
+  --enable PIV` disable five applets; a 4-byte one escaped the clamp and was
+  self-perpetuating, so every later `ykman config usb` reported success and changed
+  nothing, permanently. Each tag once, `USB_ENABLED` exactly two bytes.
+- **A stored device-config record is validated on read, not only on write.** One a
+  laxer build accepted survived the upgrade and kept being echoed verbatim — which
+  hid the device from ykman for good — while enforcement skipped the same value.
+  READ CONFIG now synthesises its echo from the mask actually enforced, so the two
+  can no longer disagree. `dev_conf_unchanged` moved to the read bound with them.
+- **OpenPGP algorithm attributes were validated on write only**, and the floor
+  under the read sites is an assembly alignment constraint (any 32-byte multiple).
+  Every released build through v0.4.5 accepts `PUT DATA C1 = rsa512` from PW3 —
+  a factory card's PW3 is the spec default — and the attribute survives the
+  upgrade, so the *owner's* next `GENERATE` mints a factorable key. Checked where
+  the key is made now.
+- **`GET DATA C1` answered a corrupted attribute for `rsa1024`** (`00 00 20 00`):
+  a stored attribute was emitted bare on a standalone read while `get_data` decides
+  whether to strip a header by *sniffing* one. `gpg --card-status` read a non-
+  attribute while `GENERATE` made a 1024-bit key. Found by differential against a
+  real YubiKey; 36/36 attributes round-trip on hardware.
+- **OpenPGP `VERIFY` derived its verifier file from an unvalidated P2.** The bit
+  test let 64 values through, and `0x1000 | p2` reaches internal FIDs of other
+  applets, FIDO's `EF_PIN` included — held back only by a one-byte length
+  coincidence in another crate. The three defined modes are enumerated now.
+- **A failed OpenPGP EC `IMPORT` destroyed the key it failed to replace**: the
+  sealed key was committed before the scalar was validated. Point derived first.
+- **PIV metadata now matches what PIV enforces.** `DEFAULT` and undefined policy
+  bytes reached flash, and both gates tested for the values that *require* a
+  prompt — so anything unrecognised meant "no gate" while the screen said
+  "Default". Only `NEVER` skips a gate now, and undefined values are refused at the
+  write. The management key's declared algorithm is also read at use: 3DES and
+  AES-192 are both 24 bytes, so an AES-192 key completed a full 3DES mutual
+  authentication.
+- **`keyCertSign` is asserted only on a CA.** Every certificate the device emits
+  carried it with `basicConstraints cA=FALSE` — an RFC 5280 §4.2.1.3 MUST
+  violation on the object an auditor reads to decide what a key is for.
+- **`SET SCAN MAP` is gated on the access code it can silence.** The map is global
+  and decides the scancodes a slot emits, so an all-zero one suppressed a protected
+  slot's OTP and an all-`0x28` one made it type Enters — without ever presenting
+  that slot's code. It also counts as a function slot, so `ykman config usb
+  --disable OTP` takes it inert with the rest.
+- **A SELECT terminates a command chain instead of finishing it.** `chaining` is
+  sticky, untimed and survives across PC/SC connections, so one `CLA 0x10` APDU
+  made the next process's opening SELECT the terminator: its selection silently did
+  not happen, and PIV's per-operation touch prompt then authorised the injector's
+  data. Matched by shape — `0xA4` is also YKOATH CALCULATE ALL.
+- **The CTAPHID_MSG applet selection is scoped to its channel.** It was one global
+  for all of them, and U2F has no SELECT of its own, so another process's SELECT of
+  the vendor AID collided the victim's `REGISTER`/`AUTHENTICATE` with vendor
+  instructions.
+- **An on-panel FIDO PIN change revokes live `pinUvAuthToken`s.** `FidoState` lives
+  in the worker and outlives every dispatch, and the token is random RAM state, not
+  a PIN derivative — so a process holding a `PERM_CM` token kept deleting resident
+  credentials (no touch) for up to ten more minutes, right after the owner did the
+  one thing they believe revokes host access.
+- **The on-panel factory reset goes through the worker's reboot**, not
+  `SCB::sys_reset` — which skipped the scrub of the DRBG, the OTP keyboard buffers
+  and core1's mailbox on a reset asked for precisely to leave nothing behind.
+- **The panel writes to the audit journal.** Nothing under `display/` ever did,
+  while the panel renders that journal as its evidence surface: an on-screen seed
+  reveal, seal or PIN change left no entry although every USB equivalent is logged.
+- **A host can no longer postpone the on-device auto-lock.** Its deadline was only
+  evaluated inside the ambient-quiet window, which every ceremony exit pushes 400 ms
+  forward, so an unauthenticated `authenticatorSelection` loop starved it and
+  display sleep both.
+- **The panel's touch latch survives a host's repaints.** It disarmed on *every*
+  repaint and `Screen::Home` carries the LED status, which the host drives around
+  each dispatch — so a plain CTAP loop discarded every tap. Only a change of surface
+  disarms. The sleep→wake path, which assigned `shown` directly and never disarmed
+  at all, is covered too: a finger held to wake a dark panel came back as a
+  deliberate tap on the screen painted under it.
+- **A hostile device can no longer author or hide rows in the TUI status panel.**
+  `Wrap { trim: true }` put a wrapped continuation at column 0, indistinguishable
+  from a row, and the extra lines pushed security verdicts off a pane with no
+  scrollbar and no keys bound to it. One row is one line, clipped with a marker;
+  overflow is counted.
+- **The pinUvAuthToken gets a fresh IV** (CTAP 2.1 §6.5.7). Mostly masked by a
+  per-issuance random token — except on the `PERM_PCMR` branch, whose token is
+  filled once per power cycle, so repeated issuances were byte-identical.
+- **`largeBlobs` bounds its read offset in the wire's own width.** Narrowing the
+  `u64` first meant `2^32 + 5` read from 5 on the device.
+- **`ATT_CLEAR` uses `force_delete`**, like its siblings: `Fs::delete` no-ops on a
+  present-cache false-absent and still returns `Ok`, reporting a clean erase over a
+  surviving key.
+- **The OTP keyboard's response buffer is scrubbed before BOOTSEL.** `FrameTx::buf`
+  held the last response — for slots `0x30`/`0x38` a 20-byte HMAC-SHA1
+  challenge-response, which with a fixed challenge *is* the credential.
+- **`core1::scrub` waits for core1 to reach its own sieve scrub** before the drop
+  to BOOTSEL, instead of leaving the last candidate window resident.
+- **A clipped cardholder value shows that it was clipped.** The reader cut at
+  exactly the panel's label width, so the truncation marker could never fire.
+- **`AUT_DISABLE` names the irreversible operation** it asks a touch for, instead
+  of prompting "Unlock device?".
+- **Host tooling: `rsk fido set-pin` no longer writes through a third, uncounted
+  device selector** (and reads its confirmation back from the device it wrote);
+  `rsk offboard` binds exclusively *before* any applet is wiped and at the replug;
+  `rsk led --get` no longer writes; `rsk offboard --verify` treats a deleted
+  `host_observations.steps` as a malformed receipt rather than "no cross-check
+  available" — that one `del` laundered a signed receipt of a **failed** reset into
+  a clean verdict with no forgery.
+- **`rsk-wipe` requires a board.** The 4 MiB fallback let a build naming neither
+  knob link and produce an under-sized wiper, which erases the code, leaves every
+  sealed secret and still blinks green. Its LED pin and colour order come from
+  `BOARD` too — GPIO16 is unwired on two boards and the panel backlight on a third,
+  so a *successful* wipe could read as a failed one.
+- **The gate's three named checks can now fail.** Running the host suites was
+  necessary and not sufficient: the typed confirmations, the refuse-to-guess device
+  binding and the brick guards were asserted at their helpers and at no caller, so
+  43 of 61 mutations were silent — including removing `exclusive=True` from all 19
+  call sites at once. They are asserted at the callers now, each verified to fail
+  against the mutation it exists to catch.
+- **`scripts/impact.py` sees multi-line definitions and says when it cannot parse.**
+  It needed the definition's own line on both diff sides, so a value-only edit to
+  any of the tree's 340 multi-line definitions reported nothing and exited 0
+  (reproduced on the PIV default management key: 21 unread sites). It was also
+  silenced entirely by `diff.noprefix` / `diff.mnemonicPrefix`, exit 0 either way.
+
+The following landed in the same wave, before the fixes above:
+
 - **Core 1's keygen scrub wiped a copy, not the mailbox.** `Option::take()` moves
   the payload out and writes back only the discriminant, so `zeroize()` cleared a
   local while a full 256-byte RSA prime — and the 48-byte DRBG seed that replays
-  core1's entire candidate stream — stayed resident in the shared static.
-  `worker::reboot`'s BOOTSEL drop scrubbed CTAP, CCID, the DRBG and the OTP
-  keyboard but not core1, and the RP2350 bootrom does not clear main SRAM, so a
-  `picotool save` after the presence-gated reboot recovered a factor of any key
-  generated that power cycle. Zeroizing now goes *through* the slot, the two
-  paths that must genuinely move the payload out copy the fields first and wipe
-  the original in place, and `core1::scrub()` joins the reboot list. Each core
-  additionally scrubs its **own** sieve when its search ends — the last candidate
-  there *is* the prime that was found, and it would otherwise sit until the next
-  job reseeds. That scrub stays on the owning core: `STOP` does not wait for
-  core1, so issuing it from core0 would alias a live `&mut` across cores.
-
-- **`rsk-wipe` builds for the board again.** Its erase length is baked in at
-  build time and `BOARD` never reached its build script, so the documented
-  `BOARD=<16 MB board>` build produced a 4 MB wiper — and because the KV store
-  sits at the *top* of flash, that erased the code and left every sealed secret
-  intact while the LED still signalled success. It now resolves `[flash] size_mb`
-  from the same board file the firmware reads, and the gate builds a 16 MB
-  variant so the knob cannot silently stop propagating again.
-- **WRITE CONFIG only accepts tags a host may write.** The stored blob was echoed
-  verbatim after the authentic DeviceInfo tags, and `ykman` parses last-wins, so
-  a 3-byte `05 01 00` made `DeviceInfo.parse` raise and the device vanished from
-  `ykman list` for good — `EF_DEV_CONF` survives `authenticatorReset`, no
-  first-party tool rewrites it, and `strict-config` did not help either. Writes
-  are now validated as well-formed TLV over ykman's writable tag set, and
-  `EF_DEV_CONF_MAX` is derived from the *smallest* transport response buffer, so
-  a stored config can no longer be one a consumer must silently drop (which had
-  wedged OTP-HID READ CONFIG into an empty success response). That cap bounds
-  only new writes: reads keep the old 64-byte window, because a build before it
-  stored up to that much and the record survives `authenticatorReset` — reading
-  such a device through the smaller cap would slice its config mid-entry (the
-  same unparseable DeviceInfo) and lose a capability mask past the cut,
-  re-enabling an applet its owner had disabled. Whatever bound applies, the echo
-  now stops on a TLV boundary.
+  core1's entire candidate stream — stayed in the shared static, and `core1` was
+  not on `worker::reboot`'s scrub list at all. Zeroizing goes *through* the slot
+  now, and each core scrubs its own sieve when its search ends.
+- **`rsk-wipe` builds for the board again.** `BOARD` never reached its build
+  script, so the documented 16 MB build produced a 4 MB wiper — and the KV store
+  sits at the *top* of flash, so that erased the code and left every sealed secret.
 - **OpenPGP `PUT DATA` refuses the signature counter and unadvertised algorithm
-  attributes.** DO `0x93` is WRITE = *Never* in OpenPGP 3.4 — it is the card's
-  only evidence the key was used while its owner was away, and deleting it was
-  additionally a post-crypto DoS, since `inc_sig_count` runs after PSO:CDS has
-  already signed. C1/C2/C3 now accept only what DO `0xFA` advertises, from one
-  shared definition: `nbits` previously went straight from the wire into
-  `RsaKeygen`, so an admin PIN could set rsa512 and the key the *owner* generated
-  later was factorable.
-- **A corrupt OpenPGP key record is rejected instead of silently re-sealed.**
-  `aes_decrypt_cfb_256` cannot fail, so any AES-GCM authentication failure was
-  reinterpreted as "this must be a pre-GCM record", the garbage plaintext was
-  accepted as a key, and the loaders wrote it back **over the original
-  ciphertext**. The legacy fallback is now gated on the record being a legal
-  pre-GCM width, which is provably disjoint from every GCM width.
-- **A torn soft-lock enable no longer reports a lock that is not there.**
-  `aut_enable` writes the sealed copy then deletes the plaintext; a power cut
-  between the two left both, and `lock_engaged` tested only the sealed one — so
-  `rsk lock status` said `locked: true` while every FIDO operation still worked
-  and `BACKUP_EXPORT` still handed out the seed without the lock key. It now
-  requires the plaintext to be gone, which also lets `rsk lock enable` be retried.
-- **OATH `RESET` and FIDO `ATT_CLEAR` prove their deletes.** OATH enumerated only
-  the in-RAM present bitmap and discarded every result, so a boot scan truncated
-  by a read fault left credentials, the access code and the OTP-PIN behind a
-  `9000`; it now sweeps through `for_each_key` and honours its completeness flag
-  like its PIV/OpenPGP/FIDO siblings. `ATT_CLEAR` discarded both deletes, and a
-  surviving key with a deleted chain wedges U2F REGISTER at `6F00` forever.
-- **The trusted display no longer judges a touch that began before the screen.**
-  The panel reports level, not edges, so a finger still down when an ambient
-  screen appeared was read as a tap on it — and `ONBOARD_SKIP_RECT` covers the
-  exact coordinates of a ceremony's Deny/Allow band, so the hold approving a
-  host request (or a wake press) could silently consume a fresh device's one-time
-  device-PIN offer. Ambient screens now arm only after the panel is seen
-  untouched.
-- **Passkey and OATH list rows keep their truncation marker and their label.** A
-  byte-clamped rpId rendered as if whole on the list and the service title (only
-  the ceremony card marked it), and a long trailing value drove the label's clip
-  to zero, erasing the row's device-owned caption with no marker at all. An OATH
-  credential label is host-chosen the same way, and its list is likewise where
-  the owner audits what is stored, so it is marked too.
-- **`rsk offboard` receipts are bound to the run that produced them.** A FIDO
-  reset that failed with the session alive left the previous window — and its
-  RESET — intact, so the receipt was signed for real, claimed `reset_attested`,
-  and `rsk offboard --verify` printed the clean verdict over a device whose seed
-  and passkeys were still there. The RESET must now open the window (a real reset
-  folds first, then appends) and both paths cross-check the run's own
-  `fido_reset` observation.
-- **The `exclusive` device-binding sweep is complete.** `rsk backup export`,
-  `rsk lock enable/disable/unlock`, `rsk fido attestation import/clear` and
-  `rsk hw` still took the first attached authenticator — `backup export` printing
-  another key's master seed with no serial to tell them apart. The TUI got the
-  same treatment: its irreversible actions and its CCID reader lookup now refuse
-  to guess instead of merely flagging the ambiguity in a header.
+  attributes**, a corrupt key record is rejected rather than silently re-sealed,
+  and a torn soft-lock enable no longer reports a lock that is not there.
+- **OATH `RESET` and FIDO `ATT_CLEAR` prove their deletes** instead of reporting
+  success over a truncated enumeration.
+- **The trusted display judges only a touch that began on the screen now showing**,
+  and passkey/OATH list rows keep their truncation marker and their label.
+- **`rsk offboard` receipts are bound to the run that produced them**, and the
+  `exclusive` device-binding sweep covers every irreversible host command.
 - **`rsk fido list-passkeys` sanitizes the credential counts** it prints, and the
-  `picotool` failure path sanitizes the target's own strings — the last two
-  unswept sites of the counterfeit-device terminal-injection class.
+  `picotool` failure path sanitizes the target's own strings — the last two unswept
+  sites of the counterfeit-device terminal-injection class.
 
 ### Changed
+
+- **`makeCredential` now ships packed *basic* attestation, fixing `-sk`
+  enrollment on OpenSSH below 10.0.** The statement is an ES256 signature by the
+  device key with the device certificate as its `x5c` leaf, whatever algorithm
+  the credential itself uses. The previous `fmt:"none"` default (v0.3.5, for
+  issue #26) turned out to break every OpenSSH from 8.2 through 9.9: they hand
+  any credential without a certificate to libfido2's `fido_cred_verify_self()`,
+  which rejects an empty statement with `FIDO_ERR_INVALID_ARGUMENT`, so
+  enrollment aborted with "Key enrollment failed: invalid format" — the same
+  message issue #26 reported, now on Debian 12, Ubuntu 24.04 and RHEL 9 instead
+  of one Windows box. Confirmed on hardware, same board and command back to
+  back: OpenSSH 9.9p2 failed, 10.4p1 enrolled. Basic attestation also keeps the
+  credential's algorithm out of the verify path, which is what made the Ed25519
+  self-attestation fragile in the first place. The cost is that the leaf is a
+  per-device identifier ([limitations.md](docs/limitations.md)). Firmware
+  `bcdDevice` `0x085F` → `0x0860`.
+- **The attestation certificate now meets WebAuthn §8.2.1.** A packed `x5c` leaf
+  must carry Subject-C/O/OU/CN with OU exactly `Authenticator Attestation`, plus
+  `basicConstraints` with CA false; RP libraries such as SimpleWebAuthn and
+  webauthn4j reject the registration outright when one is missing, and the
+  U2F-era certificate had only a CN and no extensions. The template is now
+  `C=XX, O=RS-Key, OU=Authenticator Attestation, CN=RS-Key FIDO2` with
+  `basicConstraints` and `id-fido-gen-ce-aaguid` (1.3.6.1.4.1.45724.1.1.4)
+  carrying the AAGUID. A device provisioned before this rebuilds `EF_EE_DEV` on
+  the next boot; the U2F registration certificate changes with it.
+- **The issue-#26 explanation is corrected.** OpenSSH did not gain
+  `fido_cred_verify_self` in 10.0, as the 0.3.5 entry claimed. It has called it
+  since 8.2; what 10.0 added (`d3a7ff7ce`) is the `fmt != "none"` bypass around
+  it. What breaks the Ed25519 self-attestation on Windows is still not directly
+  observed, but every other link was ruled out: the signature passes
+  `verify_strict`, the emitted COSE key matches libfido2's own dump byte for
+  byte, and LibreSSL 4.2.0 (the version Win32-OpenSSH 10.0p2 vendors) verifies
+  Ed25519 correctly through libfido2's exact call sequence.
+- **The README and the docs landing page say what RS-Key is before they say how
+  it works.** Both now open with one line ("an open-source hardware passkey"),
+  a three-row what-this-is / what-you-need / what-you-get table, and a figure
+  ([`docs/images/what-it-is.svg`](docs/images/what-it-is.svg)): board, plus this
+  firmware, equals passkey logins, `ssh` and `git` signing, an OpenPGP card, PIV
+  and TOTP. A first-time reader could previously not tell whether the project
+  was a device for sale, a mod for an existing key, or firmware. The board photo
+  that made it read as a shop moves down to Hardware, and the CI badges move to
+  Development setup.
+- **The quick start starts from a released `.uf2`, not from a toolchain.**
+  Downloading `rs-key-<version>-default.uf2` and dropping it on the board is the
+  documented path in both `README.md` and [quickstart.md](docs/quickstart.md);
+  building it yourself is the alternative behind a fold. The README gained a
+  four-row "which image for my board" table pointing at
+  [releases.md](docs/releases.md).
 
 - **The small-prime sieve runs from SRAM, recovering 1.36× on RSA keygen.** The
   asm modexp was moved out of XIP flash long ago; the sieve loop that feeds it
@@ -233,56 +337,6 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   won the first-match race. `rsk otp lock-page58`, `rsk otp rollback-require`,
   `rsk openpgp reset` and `rsk offboard` now use it, and the two fuse commands
   confirm against the device's chip serial instead of a static token.
-
-### Changed
-
-- **`makeCredential` now ships packed *basic* attestation, fixing `-sk`
-  enrollment on OpenSSH below 10.0.** The statement is an ES256 signature by the
-  device key with the device certificate as its `x5c` leaf, whatever algorithm
-  the credential itself uses. The previous `fmt:"none"` default (v0.3.5, for
-  issue #26) turned out to break every OpenSSH from 8.2 through 9.9: they hand
-  any credential without a certificate to libfido2's `fido_cred_verify_self()`,
-  which rejects an empty statement with `FIDO_ERR_INVALID_ARGUMENT`, so
-  enrollment aborted with "Key enrollment failed: invalid format" — the same
-  message issue #26 reported, now on Debian 12, Ubuntu 24.04 and RHEL 9 instead
-  of one Windows box. Confirmed on hardware, same board and command back to
-  back: OpenSSH 9.9p2 failed, 10.4p1 enrolled. Basic attestation also keeps the
-  credential's algorithm out of the verify path, which is what made the Ed25519
-  self-attestation fragile in the first place. The cost is that the leaf is a
-  per-device identifier ([limitations.md](docs/limitations.md)). Firmware
-  `bcdDevice` `0x085F` → `0x0860`.
-- **The attestation certificate now meets WebAuthn §8.2.1.** A packed `x5c` leaf
-  must carry Subject-C/O/OU/CN with OU exactly `Authenticator Attestation`, plus
-  `basicConstraints` with CA false; RP libraries such as SimpleWebAuthn and
-  webauthn4j reject the registration outright when one is missing, and the
-  U2F-era certificate had only a CN and no extensions. The template is now
-  `C=XX, O=RS-Key, OU=Authenticator Attestation, CN=RS-Key FIDO2` with
-  `basicConstraints` and `id-fido-gen-ce-aaguid` (1.3.6.1.4.1.45724.1.1.4)
-  carrying the AAGUID. A device provisioned before this rebuilds `EF_EE_DEV` on
-  the next boot; the U2F registration certificate changes with it.
-- **The issue-#26 explanation is corrected.** OpenSSH did not gain
-  `fido_cred_verify_self` in 10.0, as the 0.3.5 entry claimed. It has called it
-  since 8.2; what 10.0 added (`d3a7ff7ce`) is the `fmt != "none"` bypass around
-  it. What breaks the Ed25519 self-attestation on Windows is still not directly
-  observed, but every other link was ruled out: the signature passes
-  `verify_strict`, the emitted COSE key matches libfido2's own dump byte for
-  byte, and LibreSSL 4.2.0 (the version Win32-OpenSSH 10.0p2 vendors) verifies
-  Ed25519 correctly through libfido2's exact call sequence.
-- **The README and the docs landing page say what RS-Key is before they say how
-  it works.** Both now open with one line ("an open-source hardware passkey"),
-  a three-row what-this-is / what-you-need / what-you-get table, and a figure
-  ([`docs/images/what-it-is.svg`](docs/images/what-it-is.svg)): board, plus this
-  firmware, equals passkey logins, `ssh` and `git` signing, an OpenPGP card, PIV
-  and TOTP. A first-time reader could previously not tell whether the project
-  was a device for sale, a mod for an existing key, or firmware. The board photo
-  that made it read as a shop moves down to Hardware, and the CI badges move to
-  Development setup.
-- **The quick start starts from a released `.uf2`, not from a toolchain.**
-  Downloading `rs-key-<version>-default.uf2` and dropping it on the board is the
-  documented path in both `README.md` and [quickstart.md](docs/quickstart.md);
-  building it yourself is the alternative behind a fold. The README gained a
-  four-row "which image for my board" table pointing at
-  [releases.md](docs/releases.md).
 
 ## [0.4.5] - 2026-08-03
 
