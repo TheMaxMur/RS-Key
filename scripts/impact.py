@@ -27,9 +27,14 @@ Prints nothing when every use site is inside the change. Always exits 0 — it
 reports, it does not judge.
 """
 
+import pathlib
 import re
 import subprocess
 import sys
+
+# How far back a changed line will look for the definition it sits inside. Bounds
+# the scan; no definition in this tree spans anything close to it.
+MAX_DEF_LINES = 200
 
 # A definition line, per language. Group `name` is what gets searched for.
 RUST_DEF = re.compile(
@@ -59,39 +64,168 @@ def defined(line, path):
 
 
 def parse(diff):
-    """-> (touched lines per file, {name: defining file}).
+    """-> (added lines per file, deletion anchors per file, {name: text set} removed,
+    ditto added, {name: file}).
 
-    A name counts as *redefined* only when it appears on both a removed and an
-    added definition line: added-only is new (nothing uses it yet) and
-    removed-only is a deletion, which every consumer's compiler already refuses.
-    The two lines must also *differ*: rewriting the block around a definition
-    re-emits its unchanged line on both sides, and a definition that reads the
-    same still means the same.
+    The `+++` line is read as a header only between a `diff --git` and that file's
+    first hunk. Matching it anywhere let a line of *content* beginning `++ b/`
+    render as a header and retarget the parser, hiding the real use sites behind an
+    authoritative-looking partial report (audit run-34 #34).
+
+    A pure deletion adds no post-side line, so it is anchored on the line it
+    followed: dropping an element from a constant is a value change too, and the
+    anchor is what carries it to `enclosing_def`. Anchors do not count as reviewed —
+    nobody read the line above a deletion by deleting below it.
     """
-    touched, gone, born, where = {}, {}, {}, {}
-    path = None
+    touched, cut, gone, born, where = {}, {}, {}, {}, {}
+    path, in_header = None, False
     for line in diff.splitlines():
-        if line.startswith("+++ b/"):
-            path = line[6:]
+        if line.startswith("diff --git "):
+            path, in_header = None, True
+            continue
+        if in_header and line.startswith("+++ "):
+            # The prefix is forced to `b/` at the git call, so `diff.noprefix` and
+            # `diff.mnemonicPrefix` cannot silence this.
+            path = line[6:] if line.startswith("+++ b/") else line[4:]
             touched.setdefault(path, set())
+            cut.setdefault(path, set())
             continue
         if line.startswith("@@"):
+            in_header = False
             m = HUNK.match(line)
             if m and path:
                 start = int(m.group("start"))
                 count = int(m.group("count") or 1)
                 touched[path].update(range(start, start + count))
+                if count == 0:
+                    cut[path].add(start)
             continue
-        if not path or line.startswith(("---", "diff ", "index ")):
+        if not path or in_header:
             continue
         side = gone if line.startswith("-") else born if line.startswith("+") else None
         if side is None or not (name := defined(line[1:], path)):
             continue
         side.setdefault(name, set()).add(line[1:].strip())
         where.setdefault(name, path)
-    return touched, {
-        n: where[n] for n in gone.keys() & born.keys() if gone[n] != born[n]
-    }
+    return touched, cut, gone, born, where
+
+
+def bracket_delta(line, path):
+    """`line`'s bracket balance, skipping strings and the trailing comment.
+
+    A `//`-commented `)` used to close a definition's span early, which drops the
+    lines after it — and a dropped line is a use site nobody is told to read, the
+    exact failure this file exists to prevent. Rust `'` is left alone (it is a
+    lifetime far more often than a char literal).
+    """
+    quotes = '"' if path.endswith(".rs") else "\"'"
+    comment = "//" if path.endswith(".rs") else "#"
+    delta, quote, i = 0, None, 0
+    while i < len(line):
+        ch = line[i]
+        if quote:
+            if ch == "\\":
+                i += 2
+                continue
+            if ch == quote:
+                quote = None
+        elif ch in quotes:
+            quote = ch
+        elif line.startswith(comment, i):
+            break
+        elif ch in "([{":
+            delta += 1
+        elif ch in ")]}":
+            delta -= 1
+        i += 1
+    return delta
+
+
+def statement_end(lines, start, path):
+    """Last line index of the definition statement opening at `lines[start]`.
+
+    Bracket depth, so an unbalanced bracket inside a docstring can still overshoot
+    — which reports a use site that did not need reading, the harmless direction.
+    """
+    depth = 0
+    for i in range(start, min(len(lines), start + MAX_DEF_LINES)):
+        depth += bracket_delta(lines[i], path)
+        if depth > 0:
+            continue
+        if not path.endswith(".rs") or ";" in lines[i] or i > start:
+            return i
+    return start
+
+
+def enclosing_def(lines, idx, path, *, below=False):
+    """The definition whose statement spans `lines[idx]`, or None.
+
+    A value-only edit to a multi-line definition changes no line the regexes can
+    match, so `parse` saw nothing and the tool exited 0 — silently, for 340 of the
+    tree's definitions, disproportionately the protocol-shaped ones (run-34 #33).
+    Reproduced on `DEFAULT_MGM`, the PIV default management key: 21 unread sites.
+
+    `below` asks whether the statement continues *past* `idx` — what a deletion
+    anchor needs, since the removed lines sat after the anchor rather than on it.
+    """
+    if not 0 <= idx < len(lines):
+        return None
+    for start in range(idx, max(-1, idx - MAX_DEF_LINES), -1):
+        if name := defined(lines[start], path):
+            end = statement_end(lines, start, path)
+            return name if (end > idx if below else end >= idx) else None
+    return None
+
+
+def post_lines(path, post, cache):
+    """The file as the change leaves it — the side the hunk headers count lines in.
+
+    `post` is the git object prefix for that side (`":"` = the index, `"<rev>:"` =
+    a revision) or None for the worktree. Reading the worktree for a *staged* diff
+    would size the search by lines nobody staged."""
+    if path in cache:
+        return cache[path]
+    try:
+        text = (
+            pathlib.Path(path).read_text(errors="replace")
+            if post is None
+            else git("show", f"{post}{path}")
+        )
+    except (OSError, subprocess.CalledProcessError):
+        text = ""
+    cache[path] = text.splitlines()
+    return cache[path]
+
+
+def redefinitions(touched, cut, gone, born, where, post):
+    """{name: defining file} for every definition this change altered in place.
+
+    Added-only is new (nothing uses it yet) and removed-only is a deletion, which
+    every consumer's compiler already refuses. A definition line re-emitted
+    identically on both sides is a block rewrite around it, not a change to it.
+    """
+    fresh = born.keys() - gone.keys()
+    out = {n: where[n] for n in gone.keys() & born.keys() if gone[n] != born[n]}
+    cache = {}
+    for path in touched.keys() | cut.keys():
+        lines = post_lines(path, post, cache)
+        added, anchors = touched.get(path, set()), cut.get(path, set())
+        for num in added | anchors:
+            below = num not in added
+            name = enclosing_def(lines, num - 1, path, below=below)
+            if not name or name in fresh or name in out:
+                continue
+            # The definition's own line, unchanged on both sides: a rewrite around
+            # it, already excluded above. An anchor is not a written line, so the
+            # test does not apply to it.
+            if (
+                not below
+                and defined(lines[num - 1], path) == name
+                and gone.get(name) == born.get(name)
+            ):
+                continue
+            out[name] = where.get(name, path)
+    return out
 
 
 def is_def(text, path, name):
@@ -116,14 +250,28 @@ def uses(name):
 
 def main():
     rng = sys.argv[1] if len(sys.argv) > 1 else None
+    # Force the a/ b/ prefixes: `diff.noprefix` and `diff.mnemonicPrefix` are common
+    # personal settings, and either one used to make every diff parse as empty —
+    # exit 0, indistinguishable from "nothing to report" (audit run-34 #34).
+    fmt = ("-U0", "--src-prefix=a/", "--dst-prefix=b/")
     if rng:
-        diff = git("diff", "-U0", rng)
+        # `A..B` / `A...B` compare two revisions; a bare `A` compares it to the
+        # worktree. `post` names the side the hunk line numbers belong to.
+        diff = git("diff", *fmt, rng)
+        post = f"{rng.rsplit('..', 1)[-1] or 'HEAD'}:" if ".." in rng else None
+    elif staged := git("diff", *fmt, "--cached"):
+        diff, post = staged, ":"
     else:
-        diff = git("diff", "-U0", "--cached") or git("diff", "-U0")
+        diff, post = git("diff", *fmt), None
     if not diff.strip():
         return 0
 
-    touched, redefined = parse(diff)
+    touched, cut, gone, born, where = parse(diff)
+    if not touched:
+        print("impact.py: could not parse the diff — reporting nothing is NOT a "
+              "clean result here; check `git config diff.*`", file=sys.stderr)
+        return 0
+    redefined = redefinitions(touched, cut, gone, born, where, post)
     report = []
     for name, path in sorted(redefined.items()):
         unread = [
