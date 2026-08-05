@@ -200,6 +200,13 @@ const SCANMAP_LEN: usize = 45;
 /// former inert while keeping the latter live, so the host can still read the
 /// DeviceInfo and re-enable OTP.
 pub fn is_function_slot(slot_id: u8) -> bool {
+    // SCAN_MAP is functional too — it decides what a slot types — so it goes inert
+    // with the rest when the OTP application is disabled (audit run-34 #22). Under
+    // `strict-config` it is unhandled anyway and falls to the bare-OK swallow.
+    #[cfg(not(feature = "strict-config"))]
+    if slot_id == P1_SCAN_MAP {
+        return true;
+    }
     matches!(
         slot_id,
         P1_CONFIG_SLOT1
@@ -789,17 +796,50 @@ impl<'a> OtpApplet<'a> {
     }
 
     /// SCAN_MAP (`0x12`): store the 45-byte custom HID-scancode table (yubikit
-    /// `write_scan_map` puts it at the head of the frame; a trailing access code
-    /// is ignored). `button_ticket` then remaps typed output through it. Absent
-    /// under `strict-config`. (Exact HID framing is HW-unverified.)
+    /// `write_scan_map` puts it at the head of the frame, followed by the access
+    /// code). `button_ticket` then remaps typed output through it. Absent under
+    /// `strict-config`. (Exact HID framing is HW-unverified.)
+    ///
+    /// Gated like the slot writes: the map is global, so an all-zero one silences a
+    /// protected slot's OTP and an all-`0x28` one makes it type Enters — changing
+    /// what that slot emits without ever presenting its code (audit run-34 #22).
     #[cfg(not(feature = "strict-config"))]
     fn cmd_scan_map<S: Storage>(&mut self, apdu: &Apdu, fs: &mut Fs<S>) -> Sw {
-        if apdu.data.len() < SCANMAP_LEN {
+        let data = apdu.data;
+        if data.len() < SCANMAP_LEN {
             return Sw::OK;
         }
-        let _ = fs.put(EF_OTP_SCANMAP, &apdu.data[..SCANMAP_LEN]);
+        let mut code = [0u8; ACC_CODE_SIZE];
+        if data.len() >= SCANMAP_LEN + ACC_CODE_SIZE {
+            code.copy_from_slice(&data[SCANMAP_LEN..SCANMAP_LEN + ACC_CODE_SIZE]);
+        }
+        if !self.code_clears_every_slot(fs, &code) {
+            return Sw::SECURITY_STATUS_NOT_SATISFIED;
+        }
+        let _ = fs.put(EF_OTP_SCANMAP, &data[..SCANMAP_LEN]);
         self.config_seq = self.config_seq.wrapping_add(1); // pgmSeq bump (see cmd_set_device_info)
         Sw::OK
+    }
+
+    /// Whether `code` satisfies *every* programmed slot's access code — the gate a
+    /// device-global write needs, since it is otherwise only as protected as the
+    /// least-protected slot. An unprotected slot's stored code is all-zero, so a
+    /// plain `ykman otp set-scan-map` on an unprotected key is unchanged.
+    #[cfg(not(feature = "strict-config"))]
+    fn code_clears_every_slot<S: Storage>(
+        &self,
+        fs: &mut Fs<S>,
+        code: &[u8; ACC_CODE_SIZE],
+    ) -> bool {
+        for i in 0..SLOT_COUNT as u16 {
+            let mut rec = [0u8; SLOT_SIZE];
+            if self.read_slot_m(fs, EF_OTP_SLOT1 + i, &mut rec).is_some()
+                && !ct_eq(code, &rec[OFF_ACC_CODE..OFF_ACC_CODE + ACC_CODE_SIZE])
+            {
+                return false;
+            }
+        }
+        true
     }
 
     /// If a complete custom scan map is stored AND every byte of `buf` (the typed
