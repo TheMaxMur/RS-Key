@@ -98,6 +98,11 @@ pub fn get_data<S: Storage>(
     // EF_GFM (7F74) is a constructed DO whose value is itself the sub-DO 81 01 20;
     // read standalone that value is one primitive TLV, but it must NOT be unwrapped
     // — a real YubiKey returns the whole 81 01 20, and clients expect the sub-DO.
+    // This strip is only sound because `build` always emits a real tag+length for a
+    // primitive DO: it decides by *sniffing*, so a bare value that happens to parse
+    // as one TLV loses two bytes. `emit_algoinfo` used to emit C1/C2/C3 bare when
+    // read standalone, which is how `rsa1024` (`01 04 00 00 20 00` — length 4, four
+    // bytes left) came back as `00 00 20 00`.
     if !matches!(src, DoSource::Flash) && fid != EF_GFM && data_len > 0 && out[0] & 0x20 == 0 {
         let dec = outer_tlv_header(&out[..data_len]);
         if dec > 0 {

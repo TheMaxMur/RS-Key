@@ -409,20 +409,24 @@ impl<'a, S: Storage> DoWriter<'a, S> {
             self.out[lp + 1] = (lpdif & 0xff) as u8;
             lpdif + 4
         } else {
-            // C1/C2/C3: the stored algorithm attributes, or rsa2k by default.
+            // C1/C2/C3: the stored algorithm attributes, or rsa2k by default. The
+            // tag+length goes on unconditionally, exactly as the default arm's
+            // `emit_algo` does: `get_data` strips a primitive DO's header for a
+            // standalone read by *sniffing* one, so a value emitted bare here loses
+            // two bytes whenever it happens to parse as a single TLV. `rsa1024`
+            // (`01 04 00 00 20 00`) is precisely that shape, so the card answered
+            // `00 00 20 00` to GET DATA C1 while GENERATE still read the stored six
+            // bytes and made a 1024-bit key. Found by differential against a real
+            // YubiKey while verifying audit run-34.
             let priv_fid = algo_tag_to_priv(fid);
             if !self.fs.has_data(priv_fid) {
                 self.emit_algo(ATTR_RSA2K, fid)
             } else {
                 let len = self.fs.size(priv_fid).unwrap_or(0);
-                let mut d = 0;
-                if self.pos > 0 {
-                    self.push((fid & 0xff) as u8);
-                    self.push((len & 0xff) as u8);
-                    d += 2;
-                }
+                self.push((fid & 0xff) as u8);
+                self.push((len & 0xff) as u8);
                 self.read_flash(priv_fid);
-                d + len
+                2 + len
             }
         }
     }
