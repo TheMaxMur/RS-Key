@@ -1042,6 +1042,10 @@ fn check_ref<S: Storage>(dev: &Device, fs: &mut Fs<S>, fid: u16, retry: usize, p
         if put_pin_verifier(dev, fs, fid, pin).is_err() {
             return Sw::MEMORY_FAILURE;
         }
+        // Re-arm the one-shot at-rest lap: the superseded verifier is keyed under
+        // the pre-OTP arm, which the public chip serial alone derives (rsk-fs
+        // `EF_HARDENED` invariant; audit run-35).
+        rsk_fs::request_rescrub(fs);
         matched = true;
     }
     if matched {

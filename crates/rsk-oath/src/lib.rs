@@ -1007,6 +1007,10 @@ impl<'a> OathApplet<'a> {
         // Success: reset the counter and (lazily) upgrade a legacy record to the
         // OTP-rooted v1 verifier. The OTP PIN doubles as VALIDATE (nitropy flow).
         let _ = fs.put(EF_OTP_PIN, &self.otp_pin_record_v1(pw));
+        // The record just superseded may have been keyed under the pre-OTP arm,
+        // which the public chip serial derives. Re-arm the one-shot at-rest lap
+        // (rsk-fs `EF_HARDENED` invariant; audit run-35).
+        rsk_fs::request_rescrub(fs);
         self.validated = true;
         Sw::OK
     }

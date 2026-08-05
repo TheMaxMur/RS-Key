@@ -705,6 +705,7 @@ fn spend_and_verify_pin_hash<S: Storage, R: Rng>(
 
     let cand = ctx.dev.pin_derive_verifier(pin_hash);
     let mut matched = pinproto_ct_eq(&cand, &pin_data[3..PIN_FILE_LEN]);
+    let mut migrated = false;
     if !matched && ctx.dev.otp_key.is_some() {
         // Kbase-migration fallback: a verifier stored before the OTP key was
         // provisioned. A match under the pre-OTP arm is the correct PIN — the
@@ -714,6 +715,7 @@ fn spend_and_verify_pin_hash<S: Storage, R: Rng>(
         if pinproto_ct_eq(&cand_old, &pin_data[3..PIN_FILE_LEN]) {
             pin_data[3..PIN_FILE_LEN].copy_from_slice(&cand);
             matched = true;
+            migrated = true;
         }
     }
     if !matched {
@@ -741,6 +743,14 @@ fn spend_and_verify_pin_hash<S: Storage, R: Rng>(
     ctx.fs
         .put(EF_PIN, &pin_data)
         .map_err(|_| CtapError::Other)?;
+    // The record we just superseded was keyed under the pre-OTP arm, i.e. under
+    // HKDF("NO-OTP", serial_hash) — derivable from the public chip serial. The
+    // one-shot at-rest lap has already run by now, so re-arm it or that copy stays
+    // in the flash ring as an offline dictionary target (rsk-fs `EF_HARDENED`
+    // invariant; audit run-35 found four of five lazy re-keys skipping this).
+    if migrated {
+        rsk_fs::request_rescrub(ctx.fs);
+    }
     Ok(())
 }
 
@@ -995,12 +1005,14 @@ fn spend_and_verify_pin_at<S: Storage>(
     let mut pin_hash = sha256(pin);
     let cand = dev.pin_derive_verifier(&pin_hash[..16]);
     let mut matched = pinproto_ct_eq(&cand, &pin_data[3..PIN_FILE_LEN]);
+    let mut migrated = false;
     if !matched && dev.otp_key.is_some() {
         // Pre-OTP verifier fallback, identical to `spend_and_verify_pin_hash`.
         let cand_old = dev.without_otp().pin_derive_verifier(&pin_hash[..16]);
         if pinproto_ct_eq(&cand_old, &pin_data[3..PIN_FILE_LEN]) {
             pin_data[3..PIN_FILE_LEN].copy_from_slice(&cand);
             matched = true;
+            migrated = true;
         }
     }
     if !matched {
@@ -1017,9 +1029,9 @@ fn spend_and_verify_pin_at<S: Storage>(
     // openable now) before resetting the counter; the device PIN has no seed to migrate.
     // Fail closed if a required flash write fails.
     if migrate_seed {
-        let migrated = migrate_keydev_pin(dev, fs, &pin_hash[..16]).is_ok();
+        let seed_ok = migrate_keydev_pin(dev, fs, &pin_hash[..16]).is_ok();
         pin_hash.zeroize();
-        if !migrated {
+        if !seed_ok {
             return LocalPin::Blocked;
         }
     } else {
@@ -1028,6 +1040,11 @@ fn spend_and_verify_pin_at<S: Storage>(
     pin_data[0] = MAX_PIN_RETRIES;
     if fs.put(fid, &pin_data).is_err() {
         return LocalPin::Blocked;
+    }
+    // See `spend_and_verify_pin_hash`: the superseded pre-OTP verifier is derivable
+    // from the public chip serial, and the one-shot at-rest lap has already run.
+    if migrated {
+        rsk_fs::request_rescrub(fs);
     }
     LocalPin::Ok
 }
