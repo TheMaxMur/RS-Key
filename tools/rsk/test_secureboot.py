@@ -1,12 +1,20 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 RS-Key contributors
 
-"""Unit tests for the pure logic in rsk.secureboot (no device, no picotool).
+"""Unit tests for rsk.secureboot (no device, no picotool).
 
 Run from tools/:  python -m pytest rsk/test_secureboot.py
 The slot-row math, json re-targeting, free-slot picking, and the revoke
 "don't orphan the last key" guard are the brick-risk decisions — pin them here.
+
+The second half drives the four stage commands against a synthetic OTP state.
+Pinning only the helpers left every guard deletable with the suite green: the
+three `die("refusing: …")` brick guards and all four typed confirmations could be
+removed without a red test (audit run-34 #9). A guard is only guarded once
+something asserts that the command reaches it and writes nothing past it.
 """
+import types
+
 import pytest
 
 from rsk import secureboot as sb
@@ -99,3 +107,127 @@ def test_lock_mask_keeps_the_slot_the_board_actually_boots():
     assert sb._trusted_slots(0b0011, 0b0001) == 0b0010
     # Both slots trusted is ambiguous — cmd_lock refuses rather than guessing.
     assert sb._trusted_slots(0b0011, 0b0000) == 0b0011
+
+
+# --- the stage commands, driven against a synthetic OTP state -----------------
+
+def _state(**kw):
+    """A read_state() reply. Defaults describe a board mid-ritual: one key
+    provisioned and valid, hardened, enforcement not yet enabled, pages open."""
+    valid = kw.pop("key_valid", 0b0001)
+    s = {"secure_boot_enable": False, "debug_disable": True, "glitch_enable": True,
+         "glitch_sens": 3, "key_valid": valid, "key_invalid": 0,
+         "slots_present": [bool(valid & (1 << n)) for n in range(sb.N_KEY_SLOTS)],
+         "page1_lock": None, "page2_lock": None,
+         "rollback_required": False, "boot_version": 0}
+    s.update(kw)
+    s.setdefault("bootkey0_present", s["slots_present"][0])
+    return s
+
+
+def _stage(monkeypatch, state, typed=None, after=None):
+    """Run a stage command against `state`, recording every fuse write. `after` is
+    what the post-write verify re-read sees. `typed` is what the operator enters at
+    the confirmation — `confirm` itself runs for real, because stubbing it is what
+    hid the missing coverage in the first place."""
+    writes = []
+    reads = iter([state, after if after is not None else state])
+    monkeypatch.setattr(sb, "require_bootsel", lambda: None)
+    monkeypatch.setattr(sb, "read_state", lambda: next(reads, state))
+    monkeypatch.setattr(sb, "print_state", lambda s: None)
+    monkeypatch.setattr(sb, "_set", lambda a, dry: writes.append(tuple(a)))
+    monkeypatch.setattr("builtins.input", lambda prompt="": typed)
+    return writes
+
+
+def _args(**kw):
+    return types.SimpleNamespace(**{"dry_run": False, **kw})
+
+
+def test_revoke_refuses_to_orphan_the_last_valid_key(monkeypatch, capsys):
+    # Only slot 0 is valid: revoking it leaves the board unable to validate any
+    # image. The refusal must land before the typed prompt, not after it.
+    writes = _stage(monkeypatch, _state(key_valid=0b0001), typed="REVOKE-BOOTKEY")
+    with pytest.raises(SystemExit):
+        sb.cmd_revoke(_args(slot=0))
+    assert writes == []
+    assert "would leave NO valid" in capsys.readouterr().err
+
+
+def test_revoke_writes_nothing_when_the_confirmation_is_wrong(monkeypatch):
+    writes = _stage(monkeypatch, _state(key_valid=0b0011), typed="yes")
+    with pytest.raises(SystemExit):
+        sb.cmd_revoke(_args(slot=0))
+    assert writes == []
+
+
+def test_revoke_burns_key_invalid_once_confirmed(monkeypatch):
+    writes = _stage(monkeypatch, _state(key_valid=0b0011), typed="REVOKE-BOOTKEY",
+                    after=_state(key_valid=0b0011, key_invalid=0b0001))
+    sb.cmd_revoke(_args(slot=0))
+    assert writes == [("set", "OTP_DATA_BOOT_FLAGS1.KEY_INVALID", "0x1")]
+
+
+def test_harden_writes_nothing_when_the_confirmation_is_wrong(monkeypatch):
+    writes = _stage(monkeypatch, _state(), typed="HARDEN")
+    with pytest.raises(SystemExit):
+        sb.cmd_harden(_args())
+    assert writes == []
+
+
+def test_enable_refuses_when_no_slot_is_trusted(monkeypatch, capsys):
+    # Enforcement with every slot revoked bricks the board — RP2350's KEY_VALID
+    # doc, and audit run-32's finding. A fingerprint alone is not enough.
+    writes = _stage(monkeypatch, _state(key_valid=0b0001, key_invalid=0b0001),
+                    typed="ENABLE-SECURE-BOOT")
+    with pytest.raises(SystemExit):
+        sb.cmd_enable(_args())
+    assert writes == []
+    assert "no slot is both KEY_VALID and non-revoked" in capsys.readouterr().err
+
+
+def test_enable_writes_nothing_when_the_confirmation_is_wrong(monkeypatch):
+    writes = _stage(monkeypatch, _state(), typed="ENABLE")
+    with pytest.raises(SystemExit):
+        sb.cmd_enable(_args())
+    assert writes == []
+
+
+def test_lock_refuses_when_no_slot_is_trusted(monkeypatch, capsys):
+    writes = _stage(monkeypatch, _state(secure_boot_enable=True, key_valid=0b0001,
+                                        key_invalid=0b0001), typed="LOCK-SECURE-BOOT")
+    with pytest.raises(SystemExit):
+        sb.cmd_lock(_args())
+    assert writes == []
+    assert "would" in capsys.readouterr().err
+
+
+def test_lock_refuses_while_two_slots_are_trusted(monkeypatch, capsys):
+    # Ambiguous: `lock` cannot tell which key the board boots on, so it must send
+    # the operator to `revoke` (which carries the last-valid-key guard) instead.
+    writes = _stage(monkeypatch, _state(secure_boot_enable=True, key_valid=0b0011),
+                    typed="LOCK-SECURE-BOOT")
+    with pytest.raises(SystemExit):
+        sb.cmd_lock(_args())
+    assert writes == []
+    assert "both trusted" in capsys.readouterr().err
+
+
+def test_lock_writes_nothing_when_the_confirmation_is_wrong(monkeypatch):
+    writes = _stage(monkeypatch, _state(secure_boot_enable=True), typed="LOCK")
+    with pytest.raises(SystemExit):
+        sb.cmd_lock(_args())
+    assert writes == []
+
+
+def test_lock_burns_the_derived_mask_and_both_page_locks(monkeypatch):
+    writes = _stage(
+        monkeypatch, _state(secure_boot_enable=True, key_valid=0b0011, key_invalid=0b0001),
+        typed="LOCK-SECURE-BOOT",
+        after=_state(secure_boot_enable=True, key_valid=0b0011, key_invalid=0b1101))
+    sb.cmd_lock(_args())
+    assert writes == [
+        ("set", "OTP_DATA_BOOT_FLAGS1.KEY_INVALID", "0xd"),
+        ("set", "-r", "OTP_DATA_PAGE1_LOCK1", f"{sb.PAGE_LOCK_BL_RO:#x}"),
+        ("set", "-r", "OTP_DATA_PAGE2_LOCK1", f"{sb.PAGE_LOCK_BL_RO:#x}"),
+    ]
