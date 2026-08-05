@@ -12,12 +12,12 @@ verified from a blank slate between firmware tests. On run it:
    bootrom sequence (`connect_internal_flash` → `flash_exit_xip` →
    `flash_range_erase` → `flash_flush_cache` → `flash_enter_cmd_xip`) — **solid
    blue** while erasing. The size comes from `BOARD`'s `[flash] size_mb` (the same
-   board file the firmware reads), `FLASH_SIZE` overrides it, and **4 MB is only
-   the fallback when neither is set**. Build it the way you built the firmware:
-   `BOARD=waveshare-touch-lcd cargo build --release -p rsk-wipe`. Getting this
-   wrong is silent and total — the KV store sits at the *top* of flash, so an
-   under-sized wipe erases the code, leaves every sealed secret, and still blinks
-   green,
+   board file the firmware reads) or from `FLASH_SIZE`, and **there is no default —
+   a build that names neither does not link**. Getting it wrong is silent and
+   total: the KV store sits at the *top* of flash, so an under-sized wipe erases
+   the code, leaves every sealed secret, and still blinks green. Build it the way
+   you built the firmware:
+   `BOARD=waveshare-touch-lcd cargo build --release -p rsk-wipe`,
 3. writes a `"NUKE"` eyecatcher into page 0 (so picotool can spot a wiped device),
 4. **green ×3** — the sequence completed,
 5. reboots to BOOTSEL (`reset_to_usb_boot`) so the `RP2350` drive reappears.
@@ -28,8 +28,13 @@ normal second-stage XIP setup never ran.
 
 ## Reading the LED
 
-The WS2812 is GPIO16. The startup **white strobe** is the key diagnostic — no
-flashed firmware blinks white, so:
+The WS2812 pin and colour order come from `BOARD`'s `[led]` block (`LED_PIN` /
+`LED_ORDER` override), so the wiper signals on the same LED the firmware uses. A
+board with `kind = "none"` — the display build — drives nothing at all; its GPIO16
+is the panel backlight, so read the outcome functionally there rather than by eye.
+
+The startup **white strobe** is the key diagnostic — no flashed firmware blinks
+white, so:
 
 | You see | Meaning |
 |---------|---------|
@@ -57,8 +62,12 @@ from there, leaving flash free to be wiped.
 
 Built as its own workspace target (own `memory.x`):
 
+`BOARD` is required — it fixes both the erase length and the LED pin/colour order,
+so a wiper built for the wrong board can erase too little *and* signal on a GPIO
+that is the display backlight.
+
 ```sh
-nix develop -c cargo build --release -p rsk-wipe
+nix develop -c env BOARD=waveshare-one cargo build --release -p rsk-wipe
 nix develop -c picotool uf2 convert \
   target/thumbv8m.main-none-eabihf/release/rsk-wipe -t elf rsk-wipe.uf2
 
