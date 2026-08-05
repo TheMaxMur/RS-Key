@@ -195,11 +195,20 @@ fn try_import<S: Storage>(
                 None => return Err(WRONG_DATA),
             };
             let key = PrivKey::from_scalar(curve, scalar).ok_or(WRONG_DATA)?;
-            store_ec_key(dev, fs, sess, fid, &key)?;
 
-            // Derive + store the public-key DO into EF_PB_* (slot FID + 3).
+            // Derive the public point BEFORE committing the key. `pad` bounds only
+            // the length, so a zero or out-of-range scalar reaches this far and is
+            // first rejected here — storing first meant a *failed* import destroyed
+            // the previous private key while EF_PB_*, DO 0xDE and the signature
+            // counter went on describing it, and the host saw only an error. The
+            // sibling applet orders it this way for the same reason
+            // (`rsk_piv::keygen`).
             let mut point = [0u8; MAX_EC_POINT];
             let plen = key.public_point(&mut point)?;
+
+            store_ec_key(dev, fs, sess, fid, &key)?;
+
+            // Store the public-key DO into EF_PB_* (slot FID + 3).
             let mut pub_do = [0u8; 8 + MAX_EC_POINT];
             let don = make_ec_pubkey_do(&point[..plen], &mut pub_do);
             fs.put(slot_pub_fid(fid), &pub_do[..don])

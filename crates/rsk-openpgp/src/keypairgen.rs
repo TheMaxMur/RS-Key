@@ -57,6 +57,41 @@ pub fn keypair_gen<S: Storage>(
     }
 }
 
+/// The slot's algorithm attribute, refused unless DO `0xFA` advertises it.
+///
+/// `put_data` gates the *writer*, but a value stored by a build that predates that
+/// gate survives a firmware upgrade untouched — `EF_ALGO_PRIV*` is `DoSource::Internal`
+/// with no default and no migration, and only TERMINATE DF clears it. The floor
+/// underneath, `RsaKeygen::usable`, is an assembly alignment constraint (any 32-byte
+/// multiple, i.e. 512 bits), not a policy one. So the check has to run here, where the
+/// value is used, or the *owner's* next GENERATE mints the factorable key the writer
+/// gate exists to prevent.
+///
+/// Clamps to the buffer: `Storage::read` reports the DO's full stored length and PUT
+/// DATA caps nothing, so an over-long C1/C2/C3 must not slice OOB = brick.
+fn read_advertised_algo<'a, S: Storage>(
+    fs: &mut Fs<S>,
+    fid: KeyFid,
+    buf: &'a mut [u8; 16],
+) -> Result<&'a [u8], Sw> {
+    let priv_fid = slot_algo_fid(fid);
+    // `advertised_algo` keys off the public C1/C2/C3 tag; `slot_algo_fid` gives the
+    // private companion EF (`algo_tag_to_priv` = `0x1000 | tag`), so undo that or
+    // every lookup falls through to the `_ => false` arm and refuses valid keys.
+    let tag = priv_fid & !0x1000;
+    match fs.read(priv_fid, buf) {
+        Some(n) if n > 0 => {
+            let algo = &buf[..n.min(buf.len())];
+            if crate::dobj::advertised_algo(tag, algo) {
+                Ok(algo)
+            } else {
+                Err(WRONG_DATA)
+            }
+        }
+        _ => Ok(DEFAULT_ALGO),
+    }
+}
+
 /// `P1 = 0x80`: generate the key pair, seal it, store + return its public-key DO.
 fn generate<S: Storage>(
     dev: &Device,
@@ -70,10 +105,7 @@ fn generate<S: Storage>(
     // Clamp to the buffer: `Storage::read` reports the DO's full stored length and
     // PUT DATA caps nothing, so an over-long C1/C2/C3 must not slice OOB = brick.
     let mut algo_buf = [0u8; 16];
-    let algo: &[u8] = match fs.read(slot_algo_fid(fid), &mut algo_buf) {
-        Some(n) if n > 0 => &algo_buf[..n.min(algo_buf.len())],
-        _ => DEFAULT_ALGO,
-    };
+    let algo = read_advertised_algo(fs, fid, &mut algo_buf)?;
 
     let n = match algo[0] {
         ALGO_RSA => {
@@ -189,11 +221,7 @@ pub fn rsa_generate_params<S: Storage>(
     }
     let fid = data.first().and_then(|&t| crt_slot(t)).ok_or(WRONG_DATA)?;
     let mut algo_buf = [0u8; 16];
-    let algo: &[u8] = match fs.read(slot_algo_fid(fid), &mut algo_buf) {
-        // Clamp: full stored length may exceed the buffer (see `generate`).
-        Some(n) if n > 0 => &algo_buf[..n.min(algo_buf.len())],
-        _ => DEFAULT_ALGO,
-    };
+    let algo = read_advertised_algo(fs, fid, &mut algo_buf)?;
     if algo[0] != ALGO_RSA {
         return Ok(None); // EC generate — synchronous path handles it
     }
