@@ -124,10 +124,15 @@ fn read_fragment<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req, out: &mut [
         .read(EF_LARGEBLOB, &mut blob)
         .unwrap_or(0)
         .min(blob.len());
-    let offset = req.offset as usize;
-    if offset > size {
+    // Bound in `u64`, *then* narrow. `usize` is 32-bit on the device, so the old
+    // `req.offset as usize` truncated before the check and `2^32 + 5` read from 5 —
+    // §6.10.2 makes an offset past the stored length `CTAP1_ERR_INVALID_PARAMETER`,
+    // not a wrapped read. Comparing first also makes the rule target-independent, so
+    // a 64-bit host test sees exactly what the device does (audit run-34 #38).
+    if req.offset > size as u64 {
         return Err(CtapError::InvalidParameter);
     }
+    let offset = req.offset as usize;
     let take = core::cmp::min(req.get as usize, size - offset);
     let mut enc = Encoder::new(Cursor::new(out));
     write_get(&mut enc, &blob[offset..offset + take]).map_err(|_| CtapError::Other)?;

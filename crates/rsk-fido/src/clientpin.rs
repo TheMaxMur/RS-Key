@@ -393,7 +393,14 @@ fn issue_token<S: Storage, R: Rng>(
     };
 
     let mut token_enc = [0u8; 32 + 16];
-    let enc_len = pinproto::encrypt(proto, secret, &[0u8; 16], &pdata, &mut token_enc)
+    // A random IV, as CTAP 2.1 §6.5.7 requires and the `hmac-secret` sibling
+    // already did. The hard-coded zero was mostly masked because the token is
+    // freshly random per issuance — but not on the `PERM_PCMR` branch, whose token
+    // is filled once per power cycle, so repeated issuances under one shared secret
+    // encrypted identically and were linkable on the wire (audit run-34 #37).
+    let mut iv = [0u8; 16];
+    ctx.rng.fill(&mut iv);
+    let enc_len = pinproto::encrypt(proto, secret, &iv, &pdata, &mut token_enc)
         .map_err(|_| CtapError::Other)?;
     ctx.state.needs_power_cycle = false;
     let len = encode(out, |e| {
@@ -1030,9 +1037,12 @@ fn spend_and_verify_pin_at<S: Storage>(
 /// device-sealed, format 1, with a fresh retry budget — so the host afterwards sees a
 /// clientPIN exactly as if it had been set over USB. It enforces both `minPINLength` and
 /// the host-representable [`MAX_PIN_LENGTH`] ceiling (so a panel-set PIN stays usable over
-/// USB) but, mirroring [`spend_and_verify_local_pin`], deliberately omits the CTAP-session
-/// side effects (token regeneration, the journal) that need a `Ctx` the display task
-/// does not hold and are meaningless with no host session. The CALLER verifies the
+/// USB). It does NOT itself revoke outstanding pinUvAuthTokens or journal the change —
+/// both need state the display task does not hold. Revocation is not optional, though:
+/// `FidoState` lives in the worker and outlives every dispatch, so a token minted under
+/// the old PIN would keep `PERM_CM` authority (and `deleteCredential` takes no touch) for
+/// up to `PUAT_MAX_USAGE_PERIOD_MS` after the owner believes they locked the host out. The
+/// firmware caller MUST signal it — see `firmware::display::note_local_pin_changed`. The CALLER verifies the
 /// *current* PIN first when one is set (so a change still proves knowledge of the old
 /// PIN) and zeroizes `pin`. A pending forced-PIN-change flag is cleared best-effort
 /// since a satisfied new PIN meets the policy.
