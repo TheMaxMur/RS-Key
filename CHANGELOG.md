@@ -15,6 +15,52 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Security
 
+- **PIV factory RESET is two-phase.** The single sweep deleted the PIN/PUK/retry
+  files and the slot keys in flash-ring order, so a RESET interrupted between them
+  let the next SELECT re-provision the factory PIN over key material that was still
+  live and, unlike OpenPGP's, not PIN-bound at rest. Keys go first now; the same
+  ordering was swept into `authenticatorReset` and the device-wide `factory_wipe`,
+  which both bypassed the per-applet rule. A failed RESET also no longer hands back
+  a fresh 3/3 retry budget.
+- **A failed registration no longer leaves an unreachable passkey.** `credential_store`
+  committed the credential before its RP record, so a store that filled — or a power
+  cut between the two writes — left a working discoverable credential that neither
+  `credentialManagement` nor the trusted display could list or delete. The RP record
+  is written first, and a 256-credential RP is refused rather than silently
+  saturating its count.
+- **The at-rest scrub is re-armed by every lazy pre-OTP re-key**, not just OpenPGP's.
+  The FIDO clientPIN, the trusted-display device PIN, PIV and OATH all superseded a
+  verifier keyed under the public chip serial without clearing `EF_HARDENED`, leaving
+  it in the flash ring after the OTP burn — the one step whose purpose is to make
+  at-rest protection real.
+- **A dangling command chain no longer prefixes another process's APDU.** Only the
+  header that opened a chain may close it (ISO 7816-4 §5.1.1.1, `6883`); previously
+  a single `CLA 0x10` segment made any later command the terminator, so a victim's
+  PIV `GENERAL AUTHENTICATE` signed injected data under their own touch. SELECT keeps
+  its escape hatch so a stranded chain cannot wedge the next process.
+- **A host can no longer close the trusted display's menus.** The 2.5 s yield floor
+  written for exactly this attack was applied at 2 of 26 modal exit polls, so a
+  process looping the ungated `authenticatorGetInfo` shut every screen as the owner
+  opened it. All 24 now use the floored form.
+- **`WRITE CONFIG` merges instead of replacing.** ykman sends only the fields it
+  changes, so `ykman config set-lock-code` — which sends the lock TLV alone — stored
+  an empty record and silently re-enabled every application the owner had disabled.
+- **NDEF writes are gated on the access code**, like SET SCAN MAP: the fix that
+  closed that gap did not reach its sibling, leaving an ungated device-global write.
+- The CTAPHID MSG channel-scoping check is no longer skipped: it sat in the right
+  operand of a `||` whose left side every `CTAPHID_INIT` sets, so an attacker could
+  leave the vendor AID selected under a victim's channel and deny them U2F.
+- An on-panel factory reset now exits its menu, so nothing re-creates the display
+  record after the wipe — `pin_declined` was surviving the reset and the next owner
+  was never offered device-PIN onboarding.
+- `rsk-tui` clips device strings by display column rather than character count, so a
+  wide-character value can no longer push its truncation marker off-screen, and the
+  restore path wipes the master seed on every error path rather than only on success.
+- Recorded in the threat model: a WebAuthn large-blob key is obtainable with no user
+  interaction. CTAP 2.1 §12.3 imposes no UP/UV precondition (unlike §12.5 for
+  `hmac-secret`), so this is conformant behaviour, and §6.10 ties that data's
+  confidentiality to the credential's `credProtect` policy.
+
 Two audit runs' findings land here. Full write-ups are in the commits; the
 one-line rule for each is below.
 

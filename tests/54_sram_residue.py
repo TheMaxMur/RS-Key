@@ -344,8 +344,24 @@ def check_readable(secs, syms, args):
 
     if not any(got):
         print("\nRESULT: flash reads back, SRAM does not.")
+        # Decide on the WHOLE dump, not on this window. `.data` sits at the RAM
+        # origin, so any mechanism that clears only the low kilobytes — a loader
+        # workspace, a staging buffer, a partial scrub — zeroes exactly what the
+        # verdict is read from while leaving the stack and the 128 KiB keygen heap
+        # untouched, which is where the secrets in question actually live. Those
+        # regions are the whole point (audit run-35).
+        nz = sum(1 for b in sram if b)
+        print(f"  whole dump: {len(sram)} B, {nz} non-zero, {len(set(sram))} distinct")
+        if len(sram) != SRAM_END - SRAM_START:
+            inconclusive(f"short dump: {len(sram)} of {SRAM_END - SRAM_START} bytes, "
+                         "so regions the verdict covers were never read.")
+        if nz:
+            inconclusive("the .data window is zero but the dump is not — a partial "
+                         "clear cannot license a verdict about the stack or the heap. "
+                         "Scan the live regions before concluding anything.")
         if writeback_reads_back(args):
-            settled("main SRAM does not survive the drop to BOOTSEL. picoboot serves "
+            settled("main SRAM does not survive the drop to BOOTSEL — every byte of "
+                    "the dump is zero, not just the control window. picoboot serves "
                     "SRAM faithfully, so those zeros are the memory itself and nothing "
                     "is recoverable from RAM this way. Note what it is NOT evidence "
                     "of: the platform cleared it, not worker::reboot's scrub, and the "
