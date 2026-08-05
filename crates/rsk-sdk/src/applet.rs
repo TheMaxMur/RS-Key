@@ -114,6 +114,10 @@ fn is_select(apdu: &Apdu) -> bool {
 pub struct Dispatcher {
     current: Option<usize>,
     chaining: bool,
+    /// `(CLA & !0x10, INS, P1, P2)` of the command that opened the live chain.
+    /// Only that header may close it (ISO 7816-4 §5.1.1.1); anything else is
+    /// refused with `6883` rather than absorbed as the final segment.
+    chain_hdr: (u8, u8, u8, u8),
     chain: [u8; CHAIN_BUF_SIZE],
     chain_len: usize,
     /// Outgoing response chaining: when an opted-in applet's body exceeds the
@@ -140,6 +144,7 @@ impl Dispatcher {
         Dispatcher {
             current: None,
             chaining: false,
+            chain_hdr: (0, 0, 0, 0),
             chain: [0u8; CHAIN_BUF_SIZE],
             chain_len: 0,
             pending: [0u8; RESP_CHAIN_CAP],
@@ -223,6 +228,10 @@ impl Dispatcher {
         if apdu.is_chaining() {
             if !self.chaining {
                 self.chain_len = 0;
+                // Remember whose chain this is. ISO 7816-4 §5.1.1.1 makes only the
+                // opener's own command able to close it, and without that the chain
+                // is a cross-process injection primitive — see the refusal below.
+                self.chain_hdr = (apdu.cla & !0x10, apdu.ins, apdu.p1, apdu.p2);
             }
             if self.chain_len + apdu.nc >= self.chain.len() {
                 // The accumulated segments may already hold key material.
@@ -236,18 +245,29 @@ impl Dispatcher {
             self.chaining = true;
             return Sw::OK;
         }
-        // A SELECT is never a chain continuation, so it terminates one instead of
-        // finishing it. `chaining` is sticky, has no timeout and survives across
-        // PC/SC connections, so a single `CLA 0x10` APDU made the *next* process's
-        // opening SELECT the terminator: that SELECT silently did not happen and
-        // the victim went on operating against the attacker's applet, with PIV's
-        // per-operation touch prompt naming the injector's data (audit run-34 #26).
-        // The old code asserted "SELECT is never chained" in a comment and enforced
-        // nothing.
-        if self.chaining && is_select(&apdu) {
+        // ISO 7816-4 §5.1.1.1: an APDU that does not continue an open chain is an
+        // error ("last command of the chain expected"), not the chain's final
+        // segment. `chaining` is sticky, has no timeout and survives across PC/SC
+        // connections, so absorbing it let one `CLA 0x10` APDU prefix the NEXT
+        // process's command — the victim's own GENERAL AUTHENTICATE then signed the
+        // injector's data under the victim's touch (audit run-34 #26). Fixing that
+        // for SELECT alone left every other instruction absorbing it (run-35), so
+        // the terminator is matched against the header that opened the chain: the
+        // legitimate final segment has bit 0x10 clear but the same CLA/INS/P1/P2,
+        // which is exactly what OpenPGP's RSA IMPORT sends.
+        if self.chaining && (apdu.cla & !0x10, apdu.ins, apdu.p1, apdu.p2) != self.chain_hdr {
+            let select = is_select(&apdu);
             self.chain[..self.chain_len].zeroize();
             self.chain_len = 0;
             self.chaining = false;
+            // A SELECT is the one non-continuation that is *also* the client's way
+            // out: it can never be a chain segment, and refusing it would make a
+            // stranded chain wedge the next process's opening command. Drop the
+            // chain and let it run (audit run-34 #26). Everything else is refused,
+            // because absorbing it is what let one process prefix another's command.
+            if !select {
+                return Sw::LAST_CHAIN_EXPECTED;
+            }
         }
 
         // A non-chained APDU after chaining segments is the final one: append its
