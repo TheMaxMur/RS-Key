@@ -52,6 +52,9 @@ pub const PINPOLICY_DEFAULT: u8 = 0;
 pub const PINPOLICY_NEVER: u8 = 1;
 pub const PINPOLICY_ONCE: u8 = 2;
 pub const PINPOLICY_ALWAYS: u8 = 3;
+/// `0` means "the card's default" on both axes; it is resolved at store time by
+/// [`crate::keygen::resolved_policies`] and never persisted.
+pub const TOUCHPOLICY_DEFAULT: u8 = 0;
 pub const TOUCHPOLICY_NEVER: u8 = 1;
 pub const TOUCHPOLICY_ALWAYS: u8 = 2;
 pub const TOUCHPOLICY_CACHED: u8 = 3;

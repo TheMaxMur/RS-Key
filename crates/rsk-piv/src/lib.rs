@@ -195,7 +195,7 @@ impl<'a> PivApplet<'a> {
         }
         let req = keygen::parse_gen_template(data).ok()?;
         let nbits = keygen::rsa_size_from_algo(req.algo)? * 8;
-        let pol = keygen::resolved_policies(p2, req.pin_policy, req.touch_policy);
+        let pol = keygen::resolved_policies(p2, req.pin_policy, req.touch_policy).ok()?;
         Some((p2, nbits, pol))
     }
 

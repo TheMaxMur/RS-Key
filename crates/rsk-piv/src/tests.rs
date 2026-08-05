@@ -3253,3 +3253,149 @@ fn pivman_printed_codec_property_fuzz() {
         }
     }
 }
+
+/// RFC 5280 §4.2.1.3: "If the keyCertSign bit is asserted, then the cA bit in the
+/// basic constraints extension MUST also be asserted." Every certificate the device
+/// emits asserted keyCertSign, leaves included, while their basicConstraints says
+/// `cA=FALSE` — a self-contradiction on the object an auditor reads to decide what
+/// the key is for (audit run-34 #36). The two must track each other, so assert the
+/// pair on every cert this test can reach rather than one of them in isolation.
+#[test]
+fn key_cert_sign_is_asserted_only_on_a_ca() {
+    use x509_parser::extensions::ParsedExtension;
+
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    verify_pin(&mut app, &mut fs);
+    let (sw, _) = run(
+        &mut app,
+        &mut fs,
+        INS_ASYM_KEYGEN,
+        0,
+        0x9A,
+        &gen_template(ALGO_ECCP256),
+    );
+    assert_eq!(sw, Sw::OK);
+
+    // The attestation leaf (cA=FALSE) and the F9 self-signed CA it chains to.
+    let (sw, leaf) = run(&mut app, &mut fs, INS_ATTESTATION, 0x9A, 0, &[]);
+    assert_eq!(sw, Sw::OK);
+    let (sw, f9) = run(
+        &mut app,
+        &mut fs,
+        INS_GET_DATA,
+        0x3F,
+        0xFF,
+        &[0x5C, 0x03, 0x5F, 0xFF, 0x01],
+    );
+    assert_eq!(sw, Sw::OK);
+    let f9der = find_tag(find_tag(&f9, 0x53).unwrap(), 0x70).expect("F9 cert object");
+
+    for (label, der) in [("attestation leaf", &leaf[..]), ("F9 self-cert", f9der)] {
+        let (_, c) = x509_parser::parse_x509_certificate(der).unwrap();
+        let is_ca = c.basic_constraints().unwrap().is_some_and(|bc| bc.value.ca);
+        let ku = c
+            .extensions()
+            .iter()
+            .find_map(|e| match e.parsed_extension() {
+                ParsedExtension::KeyUsage(k) => Some(k),
+                _ => None,
+            })
+            .expect("keyUsage extension");
+        assert!(ku.digital_signature(), "{label}: no digitalSignature");
+        assert_eq!(
+            ku.key_cert_sign(),
+            is_ca,
+            "{label}: keyCertSign={} but cA={is_ca} — RFC 5280 §4.2.1.3",
+            ku.key_cert_sign()
+        );
+    }
+}
+
+/// Policy bytes: `DEFAULT` and undefined values must not reach flash, and both
+/// gates must fail closed on whatever is already there. Only the length of the
+/// management key was checked at use, so an AES-192 key answered a full 3DES
+/// mutual auth (audit run-34 #18/#19).
+#[test]
+fn policy_bytes_are_resolved_and_undefined_ones_refused() {
+    use crate::keygen::resolved_policies;
+
+    // An explicit DEFAULT resolves exactly like an absent tag…
+    assert_eq!(
+        resolved_policies(0x9A, Some(PINPOLICY_DEFAULT), Some(TOUCHPOLICY_DEFAULT)),
+        resolved_policies(0x9A, None, None)
+    );
+    assert_eq!(
+        resolved_policies(SLOT_SIGNATURE, Some(PINPOLICY_DEFAULT), None).unwrap()[0],
+        PINPOLICY_ALWAYS
+    );
+    // …and nothing undefined is ever stored.
+    for bad in [4u8, 0x42, 0xFF] {
+        assert!(
+            resolved_policies(0x9A, Some(bad), None).is_err(),
+            "pin {bad}"
+        );
+        assert!(
+            resolved_policies(0x9A, None, Some(bad)).is_err(),
+            "touch {bad}"
+        );
+    }
+    // Every stored value round-trips.
+    for p in [PINPOLICY_NEVER, PINPOLICY_ONCE, PINPOLICY_ALWAYS] {
+        for t in [TOUCHPOLICY_NEVER, TOUCHPOLICY_ALWAYS, TOUCHPOLICY_CACHED] {
+            assert_eq!(resolved_policies(0x9A, Some(p), Some(t)).unwrap(), [p, t]);
+        }
+    }
+}
+
+#[test]
+fn generate_refuses_an_undefined_policy_byte() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    verify_pin(&mut app, &mut fs);
+    // AC { 80 01 <algo> · AB 01 42 } — an undefined touch policy.
+    let tmpl = [0xAC, 0x06, 0x80, 0x01, ALGO_ECCP256, 0xAB, 0x01, 0x42];
+    let (sw, _) = run(&mut app, &mut fs, INS_ASYM_KEYGEN, 0, 0x9A, &tmpl);
+    assert_eq!(
+        sw, WRONG_DATA,
+        "an undefined touch policy must not be stored"
+    );
+}
+
+#[test]
+fn the_management_key_algorithm_is_enforced_at_use() {
+    // The factory 9B key is AES-192; 3DES shares its 24-byte length, so only the
+    // *declared* algorithm separates them.
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    let (sw, _) = run(
+        &mut app,
+        &mut fs,
+        INS_AUTHENTICATE,
+        ALGO_3DES,
+        0x9B,
+        &[0x7C, 0x02, 0x81, 0x00],
+    );
+    assert_eq!(sw, Sw::INCORRECT_PARAMS, "3DES against an AES-192 key");
+    // …and the real algorithm still works.
+    let (sw, _) = run(
+        &mut app,
+        &mut fs,
+        INS_AUTHENTICATE,
+        ALGO_AES192,
+        0x9B,
+        &[0x7C, 0x02, 0x81, 0x00],
+    );
+    assert_eq!(sw, Sw::OK);
+}
