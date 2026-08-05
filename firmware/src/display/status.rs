@@ -44,6 +44,28 @@ fn status_to_kind(s: u8) -> StatusKind {
     }
 }
 
+/// Whether a repaint puts a *different surface* under the finger, or only redraws
+/// the status glyph on the one already there. Only the former may disarm: the host
+/// drives `led::status()` around every dispatch, so counting that as a new screen
+/// let a plain CTAP loop disarm the panel on every tick and swallow every tap
+/// (audit run-34 #14). A tap on Home means the same thing whatever the glyph says.
+fn same_surface(prev: Option<Screen>, next: Screen) -> bool {
+    match (prev, next) {
+        (Some(Screen::Home(a)), Screen::Home(b)) => {
+            // Destructured, so a new `HomeView` field has to be classified here
+            // rather than silently joining the ignored half.
+            let HomeView {
+                status: _,
+                pin_set,
+                passkeys,
+            } = a;
+            pin_set == b.pin_set && passkeys == b.passkeys
+        }
+        (Some(a), b) => a == b,
+        (None, _) => false,
+    }
+}
+
 /// Deadline for the on-device auto-lock. It follows the display-sleep setting so the two
 /// stay intuitive, but "Off" (`0`) disables blanking only — a security control must not be
 /// switchable off from a display page, so the lock falls back to the built-in default.
@@ -144,6 +166,15 @@ pub async fn status_task(ui: &'static RefCell<Ui>) {
                     };
                     let _ = rsk_ui::render(&mut u.panel, &screen);
                     u.shown = Some(screen);
+                    // Nothing has been touched on this frame yet. The release wait
+                    // below is bounded, so a finger held through it returns with the
+                    // contact still down — and since `screen` is unchanged on the next
+                    // tick there is no repaint to disarm, so `armed_touch` would hand
+                    // the wake press to the freshly painted screen as a deliberate tap
+                    // (on a fresh device: "Continue without PIN"). `wait_wake_release`
+                    // does not cover it — it polls the wake *button*, which a
+                    // touch-wake never pressed.
+                    u.touch_armed = false;
                     u.touch
                         .wait_release(Instant::now(), Duration::from_millis(1000));
                     u.wait_wake_release();
@@ -153,6 +184,7 @@ pub async fn status_task(ui: &'static RefCell<Ui>) {
                 // status screen never flickers between the pad and the confirm prompt.
                 let quiet_over =
                     now.wrapping_sub(AMBIENT_QUIET_UNTIL_MS.load(Ordering::Relaxed)) as i32 >= 0;
+                let mut local_input = false;
                 if quiet_over {
                     let kind = status_to_kind(led::status());
                     // Working / awaiting-touch is activity — never sleep mid-operation.
@@ -177,13 +209,16 @@ pub async fn status_task(ui: &'static RefCell<Ui>) {
                         })
                     };
                     if u.shown != Some(screen) {
+                        let new_surface = !same_surface(u.shown, screen);
                         let _ = rsk_ui::render(&mut u.panel, &screen);
                         u.shown = Some(screen);
                         // A screen that just appeared has not been touched yet.
                         // Disarm so a contact already on the panel — the wake press,
                         // or the finger still down from the approval hold a host
                         // ceremony just ended — cannot be read as a tap on it.
-                        u.touch_armed = false;
+                        if new_surface {
+                            u.touch_armed = false;
+                        }
                     }
                     // Liveness: pulse a small region over the (already-painted) frame — the
                     // spinner arc while busy, the breathe hint while locked. Both redraw in
@@ -209,10 +244,12 @@ pub async fn status_task(ui: &'static RefCell<Ui>) {
                         if u.wake_pressed() {
                             // The wake button doubles as a manual "sleep now" while awake
                             // (also locks, like any sleep, when a PIN is set).
+                            local_input = true;
                             note_local_activity();
                             u.enter_sleep();
                             u.wait_wake_release();
                         } else if let Some(p) = u.armed_touch() {
+                            local_input = true;
                             note_local_activity();
                             if u.locked {
                                 // Locked: any tap opens the unlock pad. Repaint the result
@@ -309,33 +346,40 @@ pub async fn status_task(ui: &'static RefCell<Ui>) {
                                     }
                                 }
                             }
-                        } else {
-                            // Idle this tick (no tap, no button): blank once past the
-                            // (runtime) sleep timeout — `0` disables sleep. Re-read the
-                            // clock: a tab/menu modal *above* can run for many seconds, so
-                            // the top-of-loop `now` would be stale and underflow against the
-                            // freshly-bumped activity stamp.
-                            let now = Instant::now().as_millis() as u32;
-                            let sleep_ms = SLEEP_TIMEOUT_MS.load(Ordering::Relaxed);
-                            if sleep_ms != 0
-                                && now.wrapping_sub(LAST_ACTIVITY_MS.load(Ordering::Relaxed))
-                                    >= sleep_ms
-                            {
-                                u.enter_sleep();
-                            } else if now.wrapping_sub(LAST_LOCAL_MS.load(Ordering::Relaxed))
-                                >= lock_after_ms(sleep_ms)
-                                && u.lock_now()
-                            {
-                                // The auto-lock runs on its own deadline, counted from the
-                                // last *local* interaction, so neither a host ceremony loop
-                                // nor "Display sleep: Off" can hold the panel unlocked. It
-                                // only re-arms the lock — blanking stays the sleep setting's
-                                // business — so repaint the Locked screen now.
-                                let screen = Screen::Locked;
-                                let _ = rsk_ui::render(&mut u.panel, &screen);
-                                u.shown = Some(screen);
-                            }
                         }
+                    }
+                }
+                // Sleep and auto-lock are evaluated OUTSIDE the ambient-quiet window
+                // and outside the `kind` gate. They used to sit inside both, and
+                // `ceremony_end` pushes the quiet window 400 ms forward on *every*
+                // ceremony exit — so an unauthenticated `authenticatorSelection` loop
+                // postponed the auto-lock indefinitely, which `power.rs` explicitly
+                // promises a host cannot do (audit run-34 #15). Quiet is a repaint
+                // concern; a security deadline is not one a host may hold off.
+                //
+                // Still skipped when this tick handled a gesture: those paths bump the
+                // activity stamps themselves and may already have slept or locked.
+                if !local_input && !u.asleep {
+                    // Re-read the clock: a tab/menu modal above can run for many
+                    // seconds, so the top-of-loop `now` would be stale and underflow
+                    // against the freshly-bumped activity stamp.
+                    let now = Instant::now().as_millis() as u32;
+                    let sleep_ms = SLEEP_TIMEOUT_MS.load(Ordering::Relaxed);
+                    if sleep_ms != 0
+                        && now.wrapping_sub(LAST_ACTIVITY_MS.load(Ordering::Relaxed)) >= sleep_ms
+                    {
+                        u.enter_sleep();
+                    } else if now.wrapping_sub(LAST_LOCAL_MS.load(Ordering::Relaxed))
+                        >= lock_after_ms(sleep_ms)
+                        && u.lock_now()
+                    {
+                        // Counted from the last *local* interaction, so neither a host
+                        // ceremony loop nor "Display sleep: Off" holds the panel
+                        // unlocked. It only re-arms the lock — blanking stays the sleep
+                        // setting's business — so repaint the Locked screen now.
+                        let screen = Screen::Locked;
+                        let _ = rsk_ui::render(&mut u.panel, &screen);
+                        u.shown = Some(screen);
                     }
                 }
             }
