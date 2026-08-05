@@ -249,16 +249,27 @@ nix develop -c python tests/75_seed_backup.py --pin <your PIN>
   `credentialManagement` token, and the U2F gate under `alwaysUv`. It neither resets
   nor replugs, but it does need `--pin`, and it toggles `alwaysUv` on and back off —
   so start it with `alwaysUv` off, which it checks.
-- `tests/54_sram_residue.py` measures what the reboot scrub is *for*: it generates
-  an RSA key on-card, drops the board to BOOTSEL through the presence-gated reboot,
-  dumps main SRAM with `picotool save -r` and looks for a factor of the modulus.
-  It carries its own device-side control — a random marker sent in a `PUT DATA`
-  login DO, which the scrub does not target — and reports **INCONCLUSIVE** rather
-  than "clean" when the dump is degenerate or the marker is missing. Run it on the
-  build without the scrub (`--expect present`) before trusting an `absent` result:
-  a single `absent` run cannot tell a working scrub from a dump that read nothing,
-  which is how audit run-34 #3 found a "HW-VERIFIED" claim resting on 520 KiB of
-  zeros. It leaves the board in BOOTSEL, so reflash afterwards.
+- `tests/54_sram_residue.py` measures what the reboot scrub is *for*, in two steps.
+  `control` asks whether this board's SRAM can be read back at all: it drops to
+  BOOTSEL through the presence-gated reboot, reads a window of `.text` (which both
+  proves `picotool save -r` works and pins the ELF to the image actually running),
+  then checks main SRAM for the RAM-resident asm and `SMALL_PRIMES` table that live
+  in `.data` — known byte-for-byte from the file, so the control is *a priori* and
+  needs no key. `residue` then generates an RSA key on-card and hunts a factor of
+  its modulus, reported per region (the main stack between `_stack_end` and
+  `_stack_start`, core1's stack, `.bss`, `.data`) with a zero assertion on each
+  static the reboot claims to scrub. Neither reports "clean" from a dump that
+  proves nothing: an all-zero read is equally consistent with a working scrub, with
+  the platform clearing SRAM, and with picoboot refusing to serve it. The last two
+  are separated by writing a pattern through picoboot and reading it back, so the
+  exit code says which — `0` as expected, `1` expectation or setup failed, `2`
+  INCONCLUSIVE, `3` settled without the scan. Run `residue` on a build *without*
+  the scrub (`--expect present`) before trusting an `absent` result; a lone
+  `absent` run is how audit run-34 #3 found a "HW-VERIFIED" claim resting on
+  520 KiB of zeros. Measured 2026-08-05 on RP2350 A4 (secure boot off): the
+  platform clears main SRAM across the drop, so there is nothing to recover.
+  Both subcommands leave the board in BOOTSEL, so reflash afterwards, and
+  `residue` overwrites the OpenPGP signature key.
 - The FIDO PIN is never guessed: destructive PIN tests take `--pin`
   explicitly.
 

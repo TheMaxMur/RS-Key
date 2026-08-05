@@ -278,6 +278,18 @@ residuals: `Copy` temporaries inside RustCrypto curve arithmetic, digest
 internals, and heap temporaries inside the `rsa` crate. Short-lived,
 library-internal, not wipeable without forking the crates.
 
+The reboot to BOOTSEL is presence-gated but takes no PIN, so "one touch, then
+dump RAM" is a real attacker move. `worker::reboot` wipes the live key material
+before dropping, and the stack — which carries the deepest secrets, RSA primes
+and EC scalars — is *not* wiped. That is deliberate, and measured rather than
+assumed: on RP2350 A4 the platform clears main SRAM across the drop. All 520 KiB
+read back as zeros while a pattern written through picoboot read straight back,
+so the zeros are the memory and not a refused read
+([`tests/54_sram_residue.py`](https://github.com/TheMaxMur/RS-Key/blob/main/tests/54_sram_residue.py),
+2026-08-05, secure boot off). This is a property of the silicon revision and boot
+configuration, so it is re-measured when either moves; the explicit wipes stay as
+depth in case a future one keeps SRAM.
+
 ## Supply chain & process
 
 - `cargo audit` + `cargo deny` (advisories, license allow-list, source

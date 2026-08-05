@@ -639,6 +639,11 @@ impl<'a> Worker<'a> {
     /// drops to the BOOTSEL bootloader so a reflash can't recover those secrets
     /// from RAM; `mode` 1 is a warm reboot. Flash-at-rest secrets are out of
     /// scope for this path.
+    ///
+    /// The stack is deliberately not scrubbed. `tests/54_sram_residue.py` measured
+    /// the premise on RP2350 A4: after the drop, all 520 KiB of SRAM read as zeros
+    /// while a pattern written through picoboot read straight back, so the platform
+    /// clears it and there is nothing there to reach.
     async fn reboot(&mut self, mode: u8) -> ! {
         embassy_time::Timer::after(Duration::from_millis(200)).await;
         self.ctap.scrub_secrets();

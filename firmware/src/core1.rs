@@ -197,9 +197,10 @@ fn take_found(slot: &mut Option<Found>) -> Option<Found> {
 }
 
 /// Wipe the primes in transit and the keygen DRBG seed from the mailbox, before
-/// dropping to BOOTSEL. Whether main SRAM survives that reset is **unmeasured** —
-/// the bootrom source says it is not cleared, but no dump in this repo has shown a
-/// device value in it (audit run-34 #3); `tests/54_sram_residue.py` settles it.
+/// dropping to BOOTSEL. Measured 2026-08-05 on RP2350 A4 with secure boot off
+/// (`tests/54_sram_residue.py`): main SRAM reads back all zeros after that drop,
+/// so this is depth against a silicon revision that stops clearing it, not the
+/// only thing between a live prime and a reflash.
 ///
 /// The mailbox, plus a bounded wait for core1 to finish scrubbing its own sieve.
 ///
