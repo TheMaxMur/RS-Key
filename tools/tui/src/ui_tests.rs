@@ -221,3 +221,25 @@ fn rows_that_do_not_fit_are_counted_not_dropped() {
     // A zero-height pane must not panic or underflow.
     assert_eq!(overflow_marked(lines, 0).len(), 10);
 }
+
+/// Audit run-35: the clipping marker has to be placed in the unit ratatui renders
+/// in. Measuring `chars()` under-counted every double-width grapheme by half, so a
+/// device-supplied fullwidth string was cut at the pane edge with its "…" pushed
+/// off-screen — the marker suppressed exactly when it matters.
+#[test]
+fn clip_to_width_measures_display_columns_not_chars() {
+    // 30 fullwidth characters = 60 display columns, but only 30 `chars()`.
+    let wide: String = "Ｘ".repeat(30);
+    let line = Line::from(vec![Span::raw(wide)]);
+    let out = clip_to_width(vec![line], 20);
+    let w: usize = out[0].spans.iter().map(|s| s.width()).sum();
+    assert!(
+        w <= 20,
+        "clipped line is {w} display columns wide, pane has 20"
+    );
+    let text: String = out[0].spans.iter().map(|s| s.content.as_ref()).collect();
+    assert!(
+        text.ends_with('…'),
+        "the truncation marker must survive inside the pane, got {text:?}"
+    );
+}

@@ -1484,11 +1484,17 @@ pub fn export_selftest(pin: Option<&str>) -> Result<String, String> {
 /// Restore the seed from a 24-word BIP-39 phrase.
 pub fn backup_restore(phrase: &str, pin: Option<&str>) -> Result<String, String> {
     let m = bip39::Mnemonic::parse(phrase.trim()).map_err(|e| format!("invalid phrase: {e}"))?;
-    let (entropy, len) = m.to_entropy_array();
+    let (mut entropy, len) = m.to_entropy_array();
     if len != 32 {
+        entropy.zeroize();
         return Err("phrase must encode 32 bytes (24 words)".into());
     }
-    let mut seed = entropy[..32].to_vec();
+    // Wipe on drop, not on the success path: each of the four device-side steps
+    // below returns early, and every one of them used to leave the plaintext master
+    // seed in freed heap memory. `to_entropy_array` hands back a plain [u8; 33],
+    // so that copy needs clearing too (audit run-35).
+    let seed = Zeroizing::new(entropy[..32].to_vec());
+    entropy.zeroize();
 
     let dev = hid_open_exclusive()?;
     let cid = ctaphid_init(&dev).ok_or("CTAPHID init failed")?;
@@ -1498,7 +1504,6 @@ pub fn backup_restore(phrase: &str, pin: Option<&str>) -> Result<String, String>
     OsRng.fill_bytes(&mut nonce);
     let mut blob = nonce.to_vec();
     blob.extend_from_slice(&chacha_encrypt(&key, &nonce, &aad, &seed));
-    seed.zeroize();
 
     let subpara = Value::Map(vec![(iv(1), Value::Bytes(blob))]);
     let raw_subpara = cbor(&subpara);

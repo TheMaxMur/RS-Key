@@ -206,7 +206,20 @@ fn clip_to_width(lines: Vec<Line<'static>>, width: u16) -> Vec<Line<'static>> {
                     spans.push(span);
                     continue;
                 }
-                let head: String = span.content.chars().take(w - 1 - used).collect();
+                // Take by accumulated DISPLAY width, not by character count: a
+                // double-width grapheme costs two columns, so `take(n)` chars
+                // rendered up to 2n and pushed the marker off the pane.
+                let budget = w - 1 - used;
+                let mut head = String::new();
+                let mut cols = 0usize;
+                for c in span.content.chars() {
+                    let cw = Span::raw(c.to_string()).width();
+                    if cols + cw > budget {
+                        break;
+                    }
+                    cols += cw;
+                    head.push(c);
+                }
                 spans.push(Span::styled(head, span.style));
                 spans.push(Span::styled("…", dim()));
                 break;
@@ -216,8 +229,15 @@ fn clip_to_width(lines: Vec<Line<'static>>, width: u16) -> Vec<Line<'static>> {
         .collect()
 }
 
+/// Width in DISPLAY COLUMNS, which is the unit ratatui's truncator measures in.
+/// Counting `chars()` under-counts every double-width grapheme by half, so a
+/// device-supplied CJK/fullwidth string was cut at the pane edge with its "…"
+/// pushed off-screen — suppressing the very marker this clipping exists to show
+/// (audit run-35). `Span::width` is `UnicodeWidthStr::width`, reachable through the
+/// existing prelude import; ratatui's renderer adds one column per halfwidth
+/// dakuten/handakuten on top, so the two agree except on that class.
 fn span_len(s: &Span<'_>) -> usize {
-    s.content.chars().count()
+    s.width()
 }
 
 /// Replace the last visible line with a count when the section does not fit.
