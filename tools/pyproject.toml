@@ -23,7 +23,7 @@ dynamic = ["version"]
 # test-only extras like pytest/dilithium live under [optional-dependencies]).
 dependencies = [
   "hidapi>=0.14",         # CTAPHID transport (`import hid`)
-  "cryptography>=49.0.0",     # P-256 ECDH/AES/HMAC (clientPIN + MSE); >=46 adds hybrid ML-KEM-768
+  "cryptography>=50.0.0",     # P-256 ECDH/AES/HMAC (clientPIN + MSE); >=46 adds hybrid ML-KEM-768
   "pyscard>=2.0",         # PC/SC for the CCID applets (PIV / OATH / rescue)
   "fido2>=1.1",           # `rsk fido` set-pin / list-passkeys
   "mnemonic>=0.21",       # BIP-39 seed rendering
