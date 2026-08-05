@@ -1158,15 +1158,21 @@ fn present_creds<S: Storage>(fs: &mut Fs<S>, out: &mut [u16; MAX_OATH_CRED as us
     n
 }
 
-/// Whether `fid` belongs to this applet: the 255 credential slots, the access-code
-/// key and the OTP-PIN. Scoped so an OATH reset never touches another applet.
-fn is_oath_fid(fid: u16) -> bool {
-    (EF_OATH_CRED..=EF_OATH_CODE.get()).contains(&fid) || fid == EF_OTP_PIN
+/// The 255 credential slots — everything the access code exists to protect.
+fn is_oath_cred_fid(fid: u16) -> bool {
+    (EF_OATH_CRED..EF_OATH_CODE.get()).contains(&fid)
 }
 
-/// Progress backstop for [`wipe_oath`]: every batched `force_delete` clears one
-/// *distinct* live fid and [`is_oath_fid`] spans 257 of them, so needing more
-/// deletes than that means the backend keeps re-yielding what it removed.
+/// The two records that gate access: the access-code key and the OTP-PIN. Kept
+/// separate from [`is_oath_cred_fid`] so [`wipe_oath`] can delete them last.
+fn is_oath_lock_fid(fid: u16) -> bool {
+    fid == EF_OATH_CODE.get() || fid == EF_OTP_PIN
+}
+
+/// Progress backstop for [`sweep`]: every batched `force_delete` clears one
+/// *distinct* live fid and the two predicates span 257 of them between them, so
+/// needing more deletes than that means the backend keeps re-yielding what it
+/// removed.
 const RESET_MAX_DELETES: u32 = 257;
 
 /// Delete every live OATH record, and say so only when the sweep provably
@@ -1174,12 +1180,25 @@ const RESET_MAX_DELETES: u32 = 257;
 /// cannot delete mid-iteration, de-duped because it yields one entry per stored
 /// *version*, and `force_delete` so a present-cache false-absent cannot loop.
 fn wipe_oath<S: Storage>(fs: &mut Fs<S>) -> Result<(), Sw> {
+    // Two phases, and the order carries the security property. `for_each_key`
+    // yields in flash-ring (write) order, not FID order, so one combined sweep can
+    // reach the access code before the credentials — and a power cut there leaves
+    // the credentials live behind no lock at all, since `select` derives
+    // `validated` from `!code_set`. Credentials first, proven empty, then the
+    // unlock records.
+    sweep(fs, is_oath_cred_fid)?;
+    sweep(fs, is_oath_lock_fid)
+}
+
+/// One phase of [`wipe_oath`]: delete every live fid matching `pred`, reporting
+/// success only when the enumeration provably completed over an empty range.
+fn sweep<S: Storage>(fs: &mut Fs<S>, pred: fn(u16) -> bool) -> Result<(), Sw> {
     let mut deleted = 0u32;
     loop {
         let mut fids = [0u16; 32];
         let mut n = 0;
         let complete = fs.for_each_key(&mut |fid| {
-            if is_oath_fid(fid) && n < fids.len() && !fids[..n].contains(&fid) {
+            if pred(fid) && n < fids.len() && !fids[..n].contains(&fid) {
                 fids[n] = fid;
                 n += 1;
             }
