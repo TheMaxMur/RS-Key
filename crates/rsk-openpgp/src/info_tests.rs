@@ -104,10 +104,21 @@ fn cardholder_fields_read_back_and_truncate() {
     assert_eq!(ch.url(), b"https://keys.example.org/alice");
     assert_eq!(ch.lang(), b"en");
 
-    // A field longer than the cap is truncated, never overflowed.
+    // A field longer than the cap is truncated, never overflowed — and the reader
+    // hands back one byte MORE than the panel label keeps, so `Label::clamp` can
+    // still see that it was cut. Reading exactly the label width made the marker
+    // unreachable and a cut value rendered as complete (audit run-34 #39).
     let long = [b'x'; CH_FIELD_MAX + 20];
     fs.put(EF_CH_NAME, &long).unwrap();
     assert_eq!(read_cardholder(&mut fs).name().len(), CH_FIELD_MAX);
+    // The boundary that matters: a value one over the label width must survive the
+    // read intact, or nothing downstream can tell it apart from a complete one.
+    let over = [b'y'; 49];
+    fs.put(EF_CH_NAME, &over).unwrap();
+    assert_eq!(read_cardholder(&mut fs).name().len(), 49);
+    let exact = [b'z'; 48];
+    fs.put(EF_CH_NAME, &exact).unwrap();
+    assert_eq!(read_cardholder(&mut fs).name().len(), 48);
 }
 
 #[test]

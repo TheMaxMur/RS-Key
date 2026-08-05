@@ -7,6 +7,11 @@ use super::gates::PinScope;
 use super::status::{KEYGEN_SPIN_MS, audit_kind, paged};
 use super::*;
 
+/// The cardholder reader must hand the panel one byte MORE than a `Label` keeps,
+/// or `Label::clamp` can never set `truncated` and a cut value reads as complete
+/// (audit run-34 #39). Only this crate sees both constants, so it holds the rule.
+const _: () = assert!(rsk_openpgp::info::CH_FIELD_MAX == rsk_ui::LABEL_MAX + 1);
+
 /// Outcome of the per-RP service-detail screen: return to the Passkeys list, or leave
 /// the tab to another nav destination (`None` = the idle Home screen).
 enum ServiceResult {
