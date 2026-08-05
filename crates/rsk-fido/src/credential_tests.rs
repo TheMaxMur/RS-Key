@@ -569,3 +569,84 @@ fn remaining_rk_clamps_by_shared_file_budget() {
     assert_eq!(fs.free_dynamic(), 40);
     assert_eq!(remaining_rk(&mut fs, 0), 20);
 }
+
+/// `Storage` whose `write` starts failing after `budget` successes — a store that
+/// fills, or a power cut, part-way through a non-transactional registration.
+#[derive(Clone, Default)]
+struct FailWriteAfter {
+    inner: RamStorage,
+    budget: usize,
+}
+
+impl rsk_fs::Storage for FailWriteAfter {
+    fn read(&mut self, fid: u16, buf: &mut [u8]) -> Option<usize> {
+        self.inner.read(fid, buf)
+    }
+    fn write(&mut self, fid: u16, data: &[u8]) -> rsk_sdk::error::Result<()> {
+        if self.budget == 0 {
+            return Err(rsk_sdk::error::Error::NoMemory);
+        }
+        self.budget -= 1;
+        self.inner.write(fid, data)
+    }
+    fn remove(&mut self, fid: u16) -> rsk_sdk::error::Result<()> {
+        self.inner.remove(fid)
+    }
+    fn size(&mut self, fid: u16) -> Option<usize> {
+        self.inner.size(fid)
+    }
+    fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) -> bool {
+        self.inner.for_each_key(f)
+    }
+}
+
+/// Audit run-35: a registration that fails part-way must never leave a credential
+/// record without its EF_RP entry.
+///
+/// `credential_store` is three sequential flash writes and reports failure of the
+/// last as failure of the whole. With EF_CRED committed first, a failure at the
+/// EF_RP write left a live discoverable passkey that `enumerateRPs` and the
+/// trusted-display Passkeys view — both EF_RP walks — can neither list nor delete,
+/// while `getAssertion` (an EF_CRED scan) authenticates with it. The dedup makes it
+/// permanent. Asserted for EVERY failure point, not just the one that reproduces.
+#[test]
+fn a_failed_registration_never_leaves_a_credential_without_its_rp() {
+    let d = dev();
+    let rp_hash = sha256(b"example.com");
+    let mut out = [0u8; 512];
+    let len = credential_create(&SEED, &d, &input(), &rp_hash, &IV, &mut out).unwrap();
+
+    let mut saw_partial = false;
+    for budget in 0..6 {
+        let mut fs: Fs<FailWriteAfter> = Fs::new(FailWriteAfter {
+            inner: RamStorage::new(),
+            budget,
+        });
+        let r = credential_store(
+            &SEED,
+            &d,
+            &mut fs,
+            &out[..len],
+            &rp_hash,
+            "example.com",
+            &[0xDE, 0xAD, 0xBE, 0xEF],
+            &[],
+        );
+        if r.is_ok() {
+            continue;
+        }
+        saw_partial = true;
+        // The invariant: a stored credential implies a stored RP entry for it.
+        if fs.has_data(EF_CRED) {
+            assert!(
+                fs.has_data(EF_RP),
+                "write budget {budget} left a credential with no EF_RP record — \
+                 invisible to every enumeration and revocation surface"
+            );
+        }
+    }
+    assert!(
+        saw_partial,
+        "vacuous: no write budget produced a partial registration"
+    );
+}

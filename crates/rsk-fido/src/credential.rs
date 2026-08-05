@@ -800,17 +800,30 @@ pub fn credential_store<S: Storage>(
     let resident = derive_resident(cred_id, dev);
     let total = compose_cred_record(rp_id_hash, &resident, pubkey, cred_id, &mut rec)
         .ok_or(Error::NoMemory)?;
-    fs.put(EF_CRED + slot, &rec[..total])?;
+
+    // Order so that any truncation of this non-transactional sequence leaves an RP
+    // entry without a credential — invisible but harmless, and reclaimed by the next
+    // `decrement_rp` — never a credential without an RP entry. The latter is a live
+    // discoverable passkey that `enumerateRPs` and the trusted-display Passkeys view
+    // both walk EF_RP to find, so neither can list or delete it, while `getAssertion`
+    // (which scans EF_CRED) authenticates with it happily. The dedup below sets
+    // `new_record = false` on any later registration of the same (rp, user), so that
+    // state never self-heals (audit run-35).
+    if new_record {
+        bump_rp(fs, seed, rp_id_hash, rp_id)?;
+    }
+    if let Err(e) = fs.put(EF_CRED + slot, &rec[..total]) {
+        if new_record {
+            let _ = crate::credmgmt::decrement_rp(fs, rp_id_hash);
+        }
+        return Err(e);
+    }
 
     // A freshly created (or re-registered) credential restarts its per-credential
     // signature counter: makeCredential reported signCount 0, so the next
     // operation reports 1. This also clears any stale entry a prior occupant of a
     // reused slot may have left in the packed EF_CRED_CTR file.
     crate::seed::set_cred_sign_counter(fs, slot, 1)?;
-
-    if new_record {
-        bump_rp(fs, seed, rp_id_hash, rp_id)?;
-    }
     Ok(())
 }
 
@@ -841,8 +854,14 @@ fn bump_rp<S: Storage>(
             && rec[1..RP_PREFIX] == *rp_id_hash
         {
             // Existing rp: bump the count, re-storing the boxed tail verbatim.
+            // Refuse rather than saturate: the count is a u8 while
+            // `MAX_RESIDENT_CREDENTIALS` is 256, so a 256th credential for one rp
+            // used to record 255 — and `decrement_rp` then deleted the EF_RP record
+            // one delete early, with a credential still live and unreachable from
+            // every enumeration surface (audit run-35).
             let n = n.min(rec.len());
-            rec[0] = rec[0].saturating_add(1);
+            let bumped = rec[0].checked_add(1).ok_or(Error::NoMemory)?;
+            rec[0] = bumped;
             return fs.put(fid, &rec[..n]);
         }
     }
