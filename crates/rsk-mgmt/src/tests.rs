@@ -669,3 +669,118 @@ fn device_reset_signals_the_firmware_on_presence() {
     );
     assert!(!take_device_reset(), "take clears the flag");
 }
+
+/// A stored record must never let the device and a host parser disagree about the
+/// enabled mask. Duplicates split first-wins (this device) from last-wins (ykman's
+/// `Tlv.parse_dict`), and a width other than two escapes both `enabled_from_conf`
+/// and `clamp_usb_enabled` — the second permanently, since ykman then computes its
+/// own writes from the unclamped value and re-emits a width the device ignores.
+#[test]
+fn write_config_refuses_a_record_two_parsers_would_read_differently() {
+    // Length 1: the device ignores it, a host reads enabled = 0.
+    assert!(!well_formed_writable(&[TAG_USB_ENABLED, 1, 0x00]));
+    // Length 4: escapes the "enabled ⊆ supported" clamp.
+    assert!(!well_formed_writable(&[
+        TAG_USB_ENABLED,
+        4,
+        0xFF,
+        0xFF,
+        0xFF,
+        0xFF
+    ]));
+    // Duplicate tag: first-wins vs last-wins.
+    assert!(!well_formed_writable(&[
+        TAG_USB_ENABLED,
+        2,
+        0x02,
+        0x3B,
+        TAG_USB_ENABLED,
+        2,
+        0x00,
+        0x00
+    ]));
+    // What a real YubiKey sends still passes, including two distinct tags.
+    assert!(well_formed_writable(&[TAG_USB_ENABLED, 2, 0x02, 0x3B]));
+    assert!(well_formed_writable(&[
+        TAG_USB_ENABLED,
+        2,
+        0x02,
+        0x3B,
+        TAG_DEVICE_FLAGS,
+        1,
+        0x00
+    ]));
+    assert!(well_formed_writable(&[]));
+}
+
+/// `dev_conf_unchanged` is the third reader of `EF_DEV_CONF`, and it was still
+/// sized by the *write* cap while the other two moved to the read bound. A record
+/// between the two limits — one an older, wider-writing build left behind — never
+/// fitted its buffer, so every idempotent replay of it read as "changed" and
+/// churned flash plus the audit ring, which is precisely what the function exists
+/// to prevent (audit run-34 #35). Sweep the whole span, not one width.
+#[test]
+fn dev_conf_unchanged_recognises_a_record_wider_than_the_write_cap() {
+    for len in [
+        4usize,
+        EF_DEV_CONF_MAX,
+        EF_DEV_CONF_MAX + 1,
+        EF_DEV_CONF_READ_MAX,
+    ] {
+        let mut fs = fs();
+        // A well-formed TLV run of exactly `len` bytes: 0x03 0x02 <2 bytes>, padded
+        // out with a repeated device-flags tag so the framing stays walkable.
+        let mut blob = std::vec![TAG_USB_ENABLED, 0x02, 0x02, 0x3B];
+        while blob.len() + 3 <= len {
+            blob.extend_from_slice(&[TAG_DEVICE_FLAGS, 0x01, 0x00]);
+        }
+        while blob.len() < len {
+            blob.push(0x00);
+        }
+        fs.put(EF_DEV_CONF, &blob).unwrap();
+        assert!(
+            dev_conf_unchanged(&mut fs, &blob),
+            "a stored {len}-byte record must be recognised as already present"
+        );
+    }
+}
+
+/// A record an older build accepted must never be echoed as authoritative
+/// DeviceInfo. `well_formed_writable` only ever guarded the *write*, so a 1-byte
+/// `USB_ENABLED` stored by a pre-`9171ccf` build survived the upgrade and went on
+/// being echoed verbatim — which is how one permanently hid the device from ykman,
+/// while `enabled_from_conf` skipped the same value and enforced the default: one
+/// record, two answers (audit run-34 #25). The echo is now synthesised from the
+/// mask actually enforced, so it is always parseable and always agrees.
+#[test]
+fn read_config_never_echoes_a_record_its_own_writer_would_refuse() {
+    for poisoned in [
+        std::vec![TAG_USB_ENABLED, 0x01, 0x00], // 1-byte value
+        std::vec![TAG_USB_ENABLED, 0x04, 0xFF, 0xFF, 0xFF, 0xFF], // 4-byte value
+        std::vec![
+            TAG_USB_ENABLED,
+            0x02,
+            0x00,
+            0x3B,
+            TAG_USB_ENABLED,
+            0x02,
+            0x00,
+            0x00
+        ],
+    ] {
+        let mut fs = fs();
+        fs.put(EF_DEV_CONF, &poisoned).unwrap();
+        let mut body = [0u8; MIN_CONFIG_RES_CAP];
+        let mut res = ResBuf::new(&mut body);
+        assert_eq!(config_tlv(&[0; 4], &mut fs, &mut res), Sw::OK);
+        let body = res.as_slice();
+        assert_eq!(body[0] as usize, body.len() - 1, "{poisoned:02x?}");
+        assert!(tlv_whole(&body[1..]), "unparseable echo of {poisoned:02x?}");
+        // The echo reports exactly what the device enforces.
+        assert_eq!(
+            enabled_from_conf(&body[1..]),
+            read_enabled_caps(&mut fs),
+            "echo and enforcement disagree over {poisoned:02x?}"
+        );
+    }
+}

@@ -203,7 +203,21 @@ pub fn config_tlv<S: Storage>(serial: &[u8; 4], fs: &mut Fs<S>, res: &mut ResBuf
     push_tlv(&mut buf, &mut n, TAG_VERSION, &[maj, min, patch]);
 
     let mut conf = [0u8; EF_DEV_CONF_READ_MAX];
-    match fs.read(EF_DEV_CONF, &mut conf) {
+    // A stored record is validated on READ, not only on write. `well_formed_writable`
+    // has only ever guarded the write path, so a record a **pre-`9171ccf` build**
+    // accepted — a 1-byte `USB_ENABLED`, a duplicate tag — survived the upgrade and
+    // kept being echoed, which is how one permanently hid the device from ykman
+    // (audit run-34 #25). An unusable record falls back to the factory default: the
+    // host then sees "everything supported is enabled", which is exactly what
+    // `enabled_from_conf` enforces for a record it cannot read either, so the two
+    // sides agree instead of diverging.
+    let stored = match fs.read(EF_DEV_CONF, &mut conf) {
+        Some(full) if full > 0 && full <= conf.len() && well_formed_writable(&conf[..full]) => {
+            Some(full)
+        }
+        _ => None,
+    };
+    match stored {
         Some(full) if full > 0 => {
             // A host wrote an enabled-applications config — echo it back. Three
             // steps: (1) `Storage::read` reports the value's *full* length even
@@ -240,12 +254,18 @@ pub fn config_tlv<S: Storage>(serial: &[u8; 4], fs: &mut Fs<S>, res: &mut ResBuf
             push_tlv(&mut buf, &mut n, TAG_CONFIG_LOCK, &[0x00]);
         }
         _ => {
-            // Defaults: everything supported is enabled, removable, unlocked.
+            // No record, or one this firmware's writer would refuse. Either way the
+            // echo is synthesised from the mask actually enforced — never the raw
+            // bytes. A record a pre-`9171ccf` build accepted (a 1-byte USB_ENABLED)
+            // used to be echoed verbatim and permanently hid the device from ykman,
+            // while `enabled_from_conf` ignored the same value and enforced the
+            // default: report and enforcement disagreed on one record (run-34 #25).
+            // Normalising leaves them one answer, always parseable.
             push_tlv(
                 &mut buf,
                 &mut n,
                 TAG_USB_ENABLED,
-                &SUPPORTED_CAPS.to_be_bytes(),
+                &read_enabled_caps(fs).to_be_bytes(),
             );
             push_tlv(&mut buf, &mut n, TAG_DEVICE_FLAGS, &[FLAG_EJECT]);
             push_tlv(&mut buf, &mut n, TAG_CONFIG_LOCK, &[0x00]);
@@ -322,6 +342,8 @@ pub fn persist_dev_conf<S: Storage>(fs: &mut Fs<S>, blob: &[u8]) -> Result<(), D
 /// go on echoing the stored bytes verbatim.
 fn well_formed_writable(blob: &[u8]) -> bool {
     let mut i = 0;
+    let mut seen = [0u8; 16];
+    let mut seen_n = 0;
     while i < blob.len() {
         let Some(&len) = blob.get(i + 1) else {
             return false; // truncated header
@@ -329,7 +351,26 @@ fn well_formed_writable(blob: &[u8]) -> bool {
         let Some(end) = i.checked_add(2).and_then(|h| h.checked_add(len as usize)) else {
             return false;
         };
-        if end > blob.len() || !writable_tag(blob[i]) {
+        let tag = blob[i];
+        if end > blob.len() || !writable_tag(tag) {
+            return false;
+        }
+        // One entry per tag. A real YubiKey emits each exactly once; a duplicate
+        // makes this device (first-wins, `enabled_from_conf`) and ykman (last-wins,
+        // `Tlv.parse_dict`) disagree about what was just stored.
+        if seen[..seen_n].contains(&tag) {
+            return false;
+        }
+        if seen_n == seen.len() {
+            return false; // more distinct tags than the writable set has
+        }
+        seen[seen_n] = tag;
+        seen_n += 1;
+        // `enabled_from_conf` and `clamp_usb_enabled` both act only on a two-byte
+        // value, so any other width would store a mask the device silently ignores
+        // while a host parser reads it — including one wide enough to escape the
+        // "enabled ⊆ supported" clamp entirely.
+        if tag == TAG_USB_ENABLED && len != 2 {
             return false;
         }
         i = end;
@@ -390,7 +431,12 @@ pub fn dev_conf_unchanged<S: Storage>(fs: &mut Fs<S>, blob: &[u8]) -> bool {
     // (otherwise every replay would churn flash and the audit ring — audit run-30).
     let mut stripped = [0u8; DEV_CONF_WRITE_MAX];
     let n = strip_config_lock(blob, &mut stripped);
-    let mut cur = [0u8; EF_DEV_CONF_MAX];
+    // Sized by the READ bound, like the other two readers. `EF_DEV_CONF_MAX` is the
+    // *write* cap; sizing a reader by it meant a legacy record between the two
+    // limits never fitted, so every replay of it looked "changed" and churned flash
+    // plus the audit ring — the very thing this function exists to prevent, and the
+    // third finding from this same compiler-blind class (audit run-34 #35).
+    let mut cur = [0u8; EF_DEV_CONF_READ_MAX];
     // `read` reports the value's *full* stored length, which an over-length record
     // from an older build can push past `cur` — compare only when it fits.
     matches!(fs.read(EF_DEV_CONF, &mut cur),
@@ -438,6 +484,11 @@ pub fn read_enabled_caps<S: Storage>(fs: &mut Fs<S>) -> u16 {
         Some(full) if full > 0 => enabled_from_conf(&conf[..full.min(conf.len())]),
         _ => SUPPORTED_CAPS,
     }
+    // Deliberately NOT gated on `well_formed_writable`, unlike the echo: this walk
+    // is already defensive (a `USB_ENABLED` that is not exactly two bytes is
+    // skipped, and an unreadable record yields the default), and refusing to honour
+    // a record it cannot *fully* validate would silently re-enable applets the owner
+    // disabled. The echo is normalised to this answer instead (audit run-34 #25).
 }
 
 /// Whether an applet guarded by capability bit `cap` is enabled under `mask`.
