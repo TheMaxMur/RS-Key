@@ -249,6 +249,16 @@ nix develop -c python tests/75_seed_backup.py --pin <your PIN>
   `credentialManagement` token, and the U2F gate under `alwaysUv`. It neither resets
   nor replugs, but it does need `--pin`, and it toggles `alwaysUv` on and back off —
   so start it with `alwaysUv` off, which it checks.
+- `tests/54_sram_residue.py` measures what the reboot scrub is *for*: it generates
+  an RSA key on-card, drops the board to BOOTSEL through the presence-gated reboot,
+  dumps main SRAM with `picotool save -r` and looks for a factor of the modulus.
+  It carries its own device-side control — a random marker sent in a `PUT DATA`
+  login DO, which the scrub does not target — and reports **INCONCLUSIVE** rather
+  than "clean" when the dump is degenerate or the marker is missing. Run it on the
+  build without the scrub (`--expect present`) before trusting an `absent` result:
+  a single `absent` run cannot tell a working scrub from a dump that read nothing,
+  which is how audit run-34 #3 found a "HW-VERIFIED" claim resting on 520 KiB of
+  zeros. It leaves the board in BOOTSEL, so reflash afterwards.
 - The FIDO PIN is never guessed: destructive PIN tests take `--pin`
   explicitly.
 
