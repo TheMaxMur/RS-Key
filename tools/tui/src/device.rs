@@ -257,14 +257,20 @@ fn hid_open() -> Option<hidapi::HidDevice> {
 /// `connect_fido(exclusive=True)`, and touch-gating binds the ceremony, not the
 /// device it lands on (audit run-33).
 fn hid_open_exclusive() -> Result<hidapi::HidDevice, String> {
-    let n = hid_device_count();
+    refuse_ambiguous(hid_device_count())?;
+    hid_open().ok_or_else(|| "no FIDO device".into())
+}
+
+/// The refusal itself, split from the open so it is testable without a device —
+/// all it depends on is a count.
+fn refuse_ambiguous(n: usize) -> Result<(), String> {
     if n > 1 {
         return Err(format!(
             "{n} FIDO devices attached — unplug all but the intended one; \
              this action is irreversible and must not guess"
         ));
     }
-    hid_open().ok_or_else(|| "no FIDO device".into())
+    Ok(())
 }
 
 fn hid_write(dev: &hidapi::HidDevice, frame: &[u8]) {

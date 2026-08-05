@@ -138,8 +138,14 @@ fn panel(f: &mut Frame, app: &App, theme: Theme, area: Rect) {
     let menu_h = (menu.len() as u16 + 2).min(inner.height.saturating_sub(3));
     let split = Layout::vertical([Constraint::Min(3), Constraint::Length(menu_h)]).split(inner);
 
+    // No wrap: a wrapped continuation starts at column 0, exactly where a genuine
+    // row starts, so a long device-supplied value could paint a row of its own —
+    // and the extra lines pushed the rows below it off the pane, which has no
+    // scrollbar and no keys bound to it (audit run-34 #10). One row, one line;
+    // what does not fit is marked, in the line and in the count.
+    let lines = clip_to_width(section_status_lines(app, theme), split[0].width);
     f.render_widget(
-        Paragraph::new(section_status_lines(app, theme)).wrap(Wrap { trim: true }),
+        Paragraph::new(overflow_marked(lines, split[0].height)),
         split[0],
     );
 
@@ -176,6 +182,60 @@ fn panel(f: &mut Frame, app: &App, theme: Theme, area: Rect) {
 }
 
 // ---- per-section status content ----
+
+/// Cut every line to the pane width, marking what was dropped. The values on
+/// these rows are device-supplied (USB descriptor strings, getInfo fields, PC/SC
+/// reader names); the terminal would clip them anyway, so the marker is what
+/// tells the reader a value they are judging the device by is not all of it.
+fn clip_to_width(lines: Vec<Line<'static>>, width: u16) -> Vec<Line<'static>> {
+    let w = width as usize;
+    if w == 0 {
+        return lines;
+    }
+    lines
+        .into_iter()
+        .map(|line| {
+            if line.spans.iter().map(span_len).sum::<usize>() <= w {
+                return line;
+            }
+            let (mut used, mut spans) = (0usize, Vec::new());
+            for span in line.spans {
+                let len = span_len(&span);
+                if used + len < w {
+                    used += len;
+                    spans.push(span);
+                    continue;
+                }
+                let head: String = span.content.chars().take(w - 1 - used).collect();
+                spans.push(Span::styled(head, span.style));
+                spans.push(Span::styled("…", dim()));
+                break;
+            }
+            Line::from(spans)
+        })
+        .collect()
+}
+
+fn span_len(s: &Span<'_>) -> usize {
+    s.content.chars().count()
+}
+
+/// Replace the last visible line with a count when the section does not fit.
+/// Cut rows are unreachable — the pane has no scroll state and `input.rs` binds
+/// ↑↓/jk to the action list — so silently dropping them reads as "that is all".
+fn overflow_marked(mut lines: Vec<Line<'static>>, height: u16) -> Vec<Line<'static>> {
+    let h = height as usize;
+    if h == 0 || lines.len() <= h {
+        return lines;
+    }
+    let hidden = lines.len() - (h - 1);
+    lines.truncate(h - 1);
+    lines.push(Line::from(Span::styled(
+        format!(" … {hidden} more row(s) — enlarge the terminal"),
+        dim(),
+    )));
+    lines
+}
 
 fn row(theme: Theme, h: Health, key: &str, value: impl Into<String>) -> Line<'static> {
     let vstyle = match h {
