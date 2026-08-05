@@ -44,18 +44,24 @@ firmware_size_budget() {
 }
 
 run "fmt"                      cargo fmt --all --check
-run "clippy (embedded)"        cargo clippy --workspace -- -D warnings
+# `BOARD` because `rsk-wipe`'s build script refuses to guess a flash size (see
+# the rsk-wipe steps below); `waveshare-one` is the reference board, whose
+# values are the same defaults every other knob falls back to.
+run "clippy (embedded)"        env BOARD=waveshare-one cargo clippy --workspace -- -D warnings
 run "clippy (host tests)"      cargo clippy -p rsk-sdk -p rsk-fs -p rsk-usb -p rsk-crypto -p rsk-fido -p rsk-openpgp -p rsk-rsa-asm -p rsk-sha512 -p rsk-ec -p rsk-mldsa -p rsk-mgmt -p rsk-oath -p rsk-otp -p rsk-piv -p rsk-rescue -p rsk-led -p rsk-ui -p rsk-bip39 -p rsk-slip39 -p rsk-bench --target "$HOST" --all-targets -- -D warnings
 # tools/tui is its own workspace (host-only), so the --all/--workspace runs
 # above never see it — gate it explicitly. Its lockfile was scanned by nobody
 # until Dependabot flagged a transitive advisory from the GitHub side.
 run "fmt (tui)"                cargo fmt --manifest-path tools/tui/Cargo.toml --check
 run "clippy (tui)"             cargo clippy --manifest-path tools/tui/Cargo.toml --target "$HOST" --all-targets -- -D warnings
-# …and its tests, which nothing ran either. The suites that guard the host tools'
-# irreversible paths — the typed confirmations, the refuse-to-guess device binding,
-# the "revoking would leave no valid key" brick guard — were unenforced, so those
-# checks could be deleted with every test still green (audit run-33 proved it by
-# mutation). Both host suites belong in the same gate as the firmware's.
+# …and its tests, which nothing ran either. Both host suites belong in the same
+# gate as the firmware's. Gating them was necessary and not sufficient: the three
+# checks named as the reason — the typed confirmations, the refuse-to-guess device
+# binding, the "revoking would leave no valid key" brick guard — were asserted at
+# their helpers and at no caller, so all three stayed deletable with every test
+# green (audit run-34 #9 proved it by mutation). They are asserted at the callers
+# now: `rsk/test_refuse_to_guess.py`, `rsk/test_secureboot.py`'s stage commands,
+# and `device_tests.rs`'s `every_hid_open_site_is_classified`.
 run "test (tui)"               cargo test --manifest-path tools/tui/Cargo.toml --target "$HOST"
 # fuzz/ is also its own (nightly) workspace. rustfmt needs no toolchain, so the
 # stable gate can format-check it here; building/clippy stay in the .#fuzz shell
@@ -129,12 +135,24 @@ run "display code absent from default image" sh -c '
   fi'
 # The test build: no BOOTSEL presence, so the automated suites don't hang on a touch.
 run "build firmware (test, --features no-touch)" cargo build --release -p firmware --features no-touch
-run "build rsk-wipe (release)" cargo build --release -p rsk-wipe
-# rsk-wipe bakes its erase length in at build time, and it is the signed recovery
-# hatch: build it for the largest supported board too, so a change that stops
+# rsk-wipe bakes its erase length AND its LED wiring in at build time, and it is
+# the signed recovery hatch: build it for every board, so a change that stops
 # `BOARD` reaching it (which once left a 16 MB board's whole KV store intact behind
 # a "successful" wipe) fails here rather than in the field.
-run "build rsk-wipe (16 MB board)" env BOARD=tenstar-usb cargo build --release -p rsk-wipe
+for board in firmware/boards/*.toml; do
+  b=$(basename "$board" .toml)
+  run "build rsk-wipe ($b)" env BOARD="$b" cargo build --release -p rsk-wipe
+done
+# …and the step above only means something because a build that names NO board
+# refuses to link. It used to fall back to 4 MB and exit 0, so the gate passed
+# whether or not `BOARD` was reaching the wiper at all (audit run-34 #30/#31).
+run "rsk-wipe refuses an unknown flash size" sh -c '
+  if out=$(env -u BOARD -u FLASH_SIZE cargo build --release -p rsk-wipe 2>&1); then
+    echo "FAIL: rsk-wipe linked without BOARD or FLASH_SIZE — it guessed its erase length"; exit 1
+  fi
+  printf "%s\n" "$out" | grep -q "needs the target flash size" || {
+    echo "FAIL: rsk-wipe failed for the wrong reason:"; printf "%s\n" "$out" | tail -5; exit 1
+  }'
 run "flake.lock in sync"       lock_in_sync
 # RUSTSEC-2023-0071: rsa Marvin timing side-channel — no fixed release; it is the
 # OpenPGP RSA backend, mitigated by blinding. Justification in deny.toml.
