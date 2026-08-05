@@ -53,20 +53,32 @@ def register(sub):
         func=att_status)
 
 
-def _ctap():
+def _ctap(exclusive=False):
+    """Open the device through python-fido2's own enumeration.
+
+    `exclusive` refuses to guess between two attached authenticators, the same
+    rule `common.connect_fido` applies. It matters more here, not less: this is a
+    *third* selector — on macOS the order comes from `IOHIDManagerCopyDevices`, a
+    CFSet whose order Apple leaves unspecified — so a PIN write could land on one
+    key while the confirmation is read back from the other (audit run-34 #13)."""
     if CtapHidDevice is None:
         die("missing dependency: python-fido2 (run `rsk` from `nix develop`)")
-    dev = next(CtapHidDevice.list_devices(), None)
-    if dev is None:
+    found = list(CtapHidDevice.list_devices())
+    if not found:
         die("no FIDO HID device found")
-    ctap = Ctap2(dev)
+    if exclusive and len(found) > 1:
+        die(
+            f"{len(found)} FIDO HID devices attached — this command needs exactly one, "
+            "so it cannot act on the wrong device; unplug the others and retry"
+        )
+    ctap = Ctap2(found[0])
     if "FIDO_2_0" not in ctap.info.versions:
         die("device does not advertise FIDO2")
     return ctap
 
 
 def set_pin(args):
-    ctap = _ctap()
+    ctap = _ctap(exclusive=True)
     has_pin = ctap.info.options.get("clientPin")
     if has_pin is None:
         die("device does not support clientPin")
@@ -91,7 +103,9 @@ def set_pin(args):
         except CtapError as e:
             die_ctap_pin_error(e, cp)
         print("FIDO2 PIN set.")
-    print("clientPin now:", _ctap().info.options.get("clientPin"))
+    # Re-read from the device just written, not from a fresh enumeration: the
+    # second one could answer from the other key and print its state as this one's.
+    print("clientPin now:", ctap.get_info().options.get("clientPin"))
 
 
 def _count(meta, key):

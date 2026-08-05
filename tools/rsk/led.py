@@ -162,7 +162,11 @@ def _writes(args):
 def _run_ccid(args):
     conn = ccid.connect(exclusive=_writes(args))
     ccid.select(conn, ccid.VENDOR_AID)
-    if _changing(args):
+    # Gate the write on `_writes`, not `_changing`: with `--get` alongside a set
+    # flag the FIDO path returns before writing, and this one used to send the
+    # SET LED APDU anyway — a persistent write to a first-match device on a command
+    # the user asked to *read*. The predicate exists precisely to tell the two apart.
+    if _writes(args):
         block = _get_block(conn)
         st = STATUSES[args.status]
         off = _status_offset(st)

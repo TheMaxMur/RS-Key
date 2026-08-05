@@ -146,18 +146,28 @@ def _await_replug():
     CTAPHID session on it. Returns (dev, cid), or (None, None) if either half
     times out — the operator walked away, and the caller still owes a receipt."""
     deadline = time.monotonic() + REPLUG_TIMEOUT_S
-    while ctaphid.find() is not None:
+    while ctaphid.find_all():
         if time.monotonic() > deadline:
             return None, None
         time.sleep(REPLUG_POLL_S)
     print("unplugged — plug it back in…", file=sys.stderr)
     deadline = time.monotonic() + REPLUG_TIMEOUT_S
+    warned = False
     while time.monotonic() < deadline:
-        info = ctaphid.find()
-        if info:
+        found = ctaphid.find_all()
+        # The operator was told this must be the only key attached; enforce it
+        # rather than binding the first match. This is the one moment the bus is
+        # deliberately changing, so a second key appearing here is exactly when a
+        # first-match would land the reset on the wrong device (run-34 #29).
+        if len(found) > 1:
+            if not warned:
+                print(f"{len(found)} FIDO devices attached — unplug all but the one "
+                      "being offboarded; waiting…", file=sys.stderr)
+                warned = True
+        elif found:
             dev = ctaphid.hid.device()
             try:
-                dev.open_path(info["path"])
+                dev.open_path(found[0]["path"])
                 return dev, ctaphid.ctaphid_init(dev)
             except OSError:
                 dev.close()  # enumerated, HID interface not ready yet
@@ -327,9 +337,17 @@ def run(args):
         return verify(args)
 
     serial, conn = _serial()
-    hid_info = ctaphid.find()
-    if not hid_info:
+    # Resolve the FIDO half exclusively HERE, before anything is destroyed. The
+    # only other exclusive bind is inside `_require_journalling`, which
+    # `--no-receipt` skips — so that flavour used to wipe OTP, OATH, PIV and
+    # OpenPGP and only then discover it could not tell the keys apart (run-34 #29).
+    hid_found = ctaphid.find_all()
+    if not hid_found:
         die("no FIDO HID device — offboard needs both interfaces")
+    if len(hid_found) > 1:
+        die(f"{len(hid_found)} FIDO HID devices attached — offboard destroys a "
+            "specific key, so it must not guess; unplug the others and retry")
+    hid_info = hid_found[0]
     if not args.no_receipt:
         _require_journalling()
 
@@ -441,7 +459,15 @@ def verify(args):
     # still printed the clean verdict — every cryptographic check passing over a
     # contradiction sitting in the same file (audit run-33).
     steps = rep.get("host_observations", {}).get("steps")
-    defect = _window_defect(epoch, entries, head, steps if isinstance(steps, dict) else None)
+    # A legitimate v2 receipt ALWAYS writes this (see `_receipt`), so its absence
+    # means the file was edited or truncated — which is exactly what the freshness
+    # cross-check exists to catch. Passing None here would skip that check instead,
+    # letting a `del host_observations.steps` launder a failed reset into a clean
+    # verdict against the genuine enrolled key, signature untouched (run-34).
+    if not isinstance(steps, dict):
+        die("malformed receipt: host_observations.steps is missing — "
+            "this receipt cannot be checked against the run that produced it")
+    defect = _window_defect(epoch, entries, head, steps)
     if defect:
         die(f"{defect[1]} — this receipt does not certify a wipe")
     if not rep.get("reset_attested"):

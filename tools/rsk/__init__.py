@@ -8,4 +8,4 @@ backup, secure-boot provisioning, OTP-MKEK burn/lock, FIDO management, LED confi
 OpenPGP reset, and hands-free reboot. Run from `nix develop` (the flake provides
 `rsk` on PATH and all Python deps) or as `python -m rsk`.
 """
-__version__ = "0.3.26"
+__version__ = "0.3.28"
