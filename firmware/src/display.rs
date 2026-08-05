@@ -111,7 +111,7 @@ const MENU_INACTIVITY_MS: u64 = 60_000;
 /// the modal on its first poll — and a host repeating any ungated command (getInfo will
 /// do) could keep the owner's unlock pad shut indefinitely. The host is receiving
 /// keepalives throughout, so a couple of seconds costs it nothing.
-const UI_YIELD_FLOOR_MS: u64 = 2_500;
+pub(crate) const UI_YIELD_FLOOR_MS: u64 = 2_500;
 
 /// How long the user must hold the on-screen approve button before it confirms — long
 /// enough that an accidental brush can't approve, short enough to feel responsive. The

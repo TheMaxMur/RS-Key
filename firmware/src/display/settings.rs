@@ -152,10 +152,15 @@ impl Ui {
                                     self.run_backup();
                                     last = Instant::now();
                                 }
-                                // A confirmed reset reboots and never returns; on cancel,
-                                // fall back to this page (repaint below) with a fresh timeout.
+                                // A confirmed reset queues the reboot and returns `true`
+                                // — break out so nothing runs between the wipe and the
+                                // reset (`persist_settings` below would otherwise
+                                // re-create EF_DISPLAY, carrying `pin_declined` across
+                                // the factory reset). A cancel falls back to this page.
                                 Some(SecurityEntry::FactoryReset) => {
-                                    self.run_factory_reset();
+                                    if self.run_factory_reset() {
+                                        break None;
+                                    }
                                     last = Instant::now();
                                 }
                                 None => repaint = false,
@@ -203,7 +208,7 @@ impl Ui {
             }
             // A host command is queued — yield to the parked worker at once, rather
             // than making it wait out the (now generous) inactivity bound.
-            if crate::worker::host_request_pending() || last.elapsed() >= idle_limit {
+            if crate::worker::host_request_pending_after(last) || last.elapsed() >= idle_limit {
                 break None;
             }
             block_for(Duration::from_millis(TOUCH_POLL_MS));

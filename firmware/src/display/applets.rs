@@ -92,7 +92,7 @@ impl Ui {
             }
             // Yield to the parked worker the instant a host command arrives, so
             // browsing never starves it — the timeout is only the walked-away backstop.
-            if crate::worker::host_request_pending() || last.elapsed() >= idle_limit {
+            if crate::worker::host_request_pending_after(last) || last.elapsed() >= idle_limit {
                 break None;
             }
             block_for(Duration::from_millis(TOUCH_POLL_MS));
@@ -234,7 +234,7 @@ impl Ui {
             }
             // Same yield as the list: a pending host command takes priority over an
             // open read-only detail.
-            if crate::worker::host_request_pending() || last.elapsed() >= idle_limit {
+            if crate::worker::host_request_pending_after(last) || last.elapsed() >= idle_limit {
                 return ServiceResult::Leave(None);
             }
             block_for(Duration::from_millis(TOUCH_POLL_MS));
@@ -306,7 +306,7 @@ impl Ui {
                 }
                 self.touch.wait_release(last, idle_limit);
             }
-            if crate::worker::host_request_pending() || last.elapsed() >= idle_limit {
+            if crate::worker::host_request_pending_after(last) || last.elapsed() >= idle_limit {
                 break None;
             }
             block_for(Duration::from_millis(TOUCH_POLL_MS));
@@ -415,7 +415,7 @@ impl Ui {
                 }
                 self.touch.wait_release(last, idle_limit);
             }
-            if crate::worker::host_request_pending() || last.elapsed() >= idle_limit {
+            if crate::worker::host_request_pending_after(last) || last.elapsed() >= idle_limit {
                 break None;
             }
             block_for(Duration::from_millis(TOUCH_POLL_MS));
@@ -445,7 +445,7 @@ impl Ui {
                 }
                 self.touch.wait_release(last, idle_limit);
             }
-            if crate::worker::host_request_pending() || last.elapsed() >= idle_limit {
+            if crate::worker::host_request_pending_after(last) || last.elapsed() >= idle_limit {
                 break;
             }
             block_for(Duration::from_millis(TOUCH_POLL_MS));
@@ -474,7 +474,7 @@ impl Ui {
                 }
                 self.touch.wait_release(last, idle_limit);
             }
-            if crate::worker::host_request_pending() || last.elapsed() >= idle_limit {
+            if crate::worker::host_request_pending_after(last) || last.elapsed() >= idle_limit {
                 break;
             }
             block_for(Duration::from_millis(TOUCH_POLL_MS));
@@ -570,7 +570,7 @@ impl Ui {
                 }
                 self.touch.wait_release(last, idle_limit);
             }
-            if crate::worker::host_request_pending() || last.elapsed() >= idle_limit {
+            if crate::worker::host_request_pending_after(last) || last.elapsed() >= idle_limit {
                 break None;
             }
             block_for(Duration::from_millis(TOUCH_POLL_MS));
@@ -600,7 +600,7 @@ impl Ui {
                 }
                 self.touch.wait_release(last, idle_limit);
             }
-            if crate::worker::host_request_pending() || last.elapsed() >= idle_limit {
+            if crate::worker::host_request_pending_after(last) || last.elapsed() >= idle_limit {
                 break;
             }
             block_for(Duration::from_millis(TOUCH_POLL_MS));
@@ -699,7 +699,7 @@ impl Ui {
                 }
                 self.touch.wait_release(last, idle_limit);
             }
-            if crate::worker::host_request_pending() || last.elapsed() >= idle_limit {
+            if crate::worker::host_request_pending_after(last) || last.elapsed() >= idle_limit {
                 break;
             }
             block_for(Duration::from_millis(TOUCH_POLL_MS));
@@ -755,7 +755,7 @@ impl Ui {
                     }
                     self.touch.wait_release(last, idle_limit);
                 }
-                if crate::worker::host_request_pending() || last.elapsed() >= idle_limit {
+                if crate::worker::host_request_pending_after(last) || last.elapsed() >= idle_limit {
                     return;
                 }
                 block_for(Duration::from_millis(TOUCH_POLL_MS));
@@ -788,7 +788,7 @@ impl Ui {
                     }
                     self.touch.wait_release(last, idle_limit);
                 }
-                if crate::worker::host_request_pending() || last.elapsed() >= idle_limit {
+                if crate::worker::host_request_pending_after(last) || last.elapsed() >= idle_limit {
                     return;
                 }
                 block_for(Duration::from_millis(TOUCH_POLL_MS));
@@ -953,7 +953,7 @@ impl Ui {
                 }
                 self.touch.wait_release(last, idle_limit);
             }
-            if crate::worker::host_request_pending() || last.elapsed() >= idle_limit {
+            if crate::worker::host_request_pending_after(last) || last.elapsed() >= idle_limit {
                 break None;
             }
             block_for(Duration::from_millis(TOUCH_POLL_MS));
@@ -1006,7 +1006,7 @@ impl Ui {
                 }
                 self.touch.wait_release(last, idle_limit);
             }
-            if crate::worker::host_request_pending() || last.elapsed() >= idle_limit {
+            if crate::worker::host_request_pending_after(last) || last.elapsed() >= idle_limit {
                 break;
             }
             block_for(Duration::from_millis(TOUCH_POLL_MS));
@@ -1132,7 +1132,7 @@ impl Ui {
                 }
                 self.touch.wait_release(last, idle_limit);
             }
-            if crate::worker::host_request_pending() || last.elapsed() >= idle_limit {
+            if crate::worker::host_request_pending_after(last) || last.elapsed() >= idle_limit {
                 return;
             }
             block_for(Duration::from_millis(TOUCH_POLL_MS));

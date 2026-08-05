@@ -145,7 +145,7 @@ impl Ui {
                 }
                 self.touch.wait_release(last, idle_limit);
             }
-            if crate::worker::host_request_pending() || last.elapsed() >= idle_limit {
+            if crate::worker::host_request_pending_after(last) || last.elapsed() >= idle_limit {
                 return None;
             }
             block_for(Duration::from_millis(TOUCH_POLL_MS));
@@ -429,7 +429,7 @@ impl Ui {
                 self.touch.wait_release(t0, show);
                 break;
             }
-            if crate::worker::host_request_pending() || t0.elapsed() >= show {
+            if crate::worker::host_request_pending_after(t0) || t0.elapsed() >= show {
                 break;
             }
             block_for(Duration::from_millis(TOUCH_POLL_MS));
@@ -483,7 +483,9 @@ impl Ui {
                         }
                         last = Instant::now();
                     }
-                    if crate::worker::host_request_pending() || last.elapsed() >= idle_limit {
+                    if crate::worker::host_request_pending_after(last)
+                        || last.elapsed() >= idle_limit
+                    {
                         break;
                     }
                     block_for(Duration::from_millis(TOUCH_POLL_MS));
@@ -597,16 +599,22 @@ impl Ui {
     /// chevron, a slid-off finger, or the inactivity timeout all abandon it without a
     /// write. On a completed hold it shows the wiping notice, erases all flash but the
     /// org attestation ([`rsk_fido::survives_factory_reset`]), and reboots — the next
-    /// boot re-provisions a fresh seed, so the device returns blank. Diverges (resets)
-    /// on confirm; returns only when cancelled.
-    pub(super) fn run_factory_reset(&mut self) {
+    /// boot re-provisions a fresh seed, so the device returns blank.
+    ///
+    /// Returns `true` once a reboot is queued, so the caller exits the menu — the
+    /// same contract `run_firmware` carries, and for the same reason: this used to
+    /// diverge into `SCB::sys_reset`, and once it started merely *queueing* the
+    /// reboot (audit run-34 #16) anything the caller ran afterwards could re-create
+    /// a record the wipe had just erased (audit run-35: `persist_settings` carried
+    /// `pin_declined` across the reset).
+    pub(super) fn run_factory_reset(&mut self) -> bool {
         let idle_limit = Duration::from_millis(MENU_INACTIVITY_MS);
         // Let the Settings-row tap's finger lift before the next touch is read.
         self.touch.wait_release(Instant::now(), idle_limit);
         // PIN gate first (when set) so the pad doesn't flash the confirm screen behind it;
         // no PIN returns at once and the confirm screen below is shown directly.
         if !self.local_pin_gate(PinScope::Device) {
-            return; // no PIN set is fine; a wrong PIN or decline aborts — nothing erased
+            return false; // no PIN set is fine; a wrong PIN or decline aborts — nothing erased
         }
         // The destructive-action screen, then a deliberate hold to commit.
         let _ = rsk_ui::render_confirm_factory_reset(&mut self.panel);
@@ -621,12 +629,15 @@ impl Ui {
             let wiped = self
                 .fs
                 .borrow_mut()
-                .factory_wipe(rsk_fido::survives_factory_reset)
+                .factory_wipe(
+                    rsk_fido::survives_factory_reset,
+                    crate::ccid_handler::gates_wiped_last,
+                )
                 .is_ok();
             if !wiped {
                 self.show_wipe_failed();
                 self.end_modal();
-                return;
+                return false;
             }
             // Confirm the wipe on the trusted screen before the reboot re-provisions a
             // fresh device (the grey rotate pop reads as "erased / restarting").
@@ -640,9 +651,10 @@ impl Ui {
             // yields, so the worker runs on the next tick.
             crate::vendor::request_reboot(false);
             self.end_modal();
-            return;
+            return true;
         }
         self.end_modal();
+        false
     }
 
     /// The on-device Set / Change PIN flow for `target` (Settings → Security → Device/FIDO
@@ -795,7 +807,7 @@ impl Ui {
                     }
                     self.touch.wait_release(last, idle);
                 }
-                if crate::worker::host_request_pending() || last.elapsed() >= idle {
+                if crate::worker::host_request_pending_after(last) || last.elapsed() >= idle {
                     return;
                 }
                 block_for(Duration::from_millis(TOUCH_POLL_MS));

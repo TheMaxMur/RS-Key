@@ -77,7 +77,7 @@ impl Ui {
                     }
                     self.touch.wait_release(last, idle_limit);
                 }
-                if crate::worker::host_request_pending() || last.elapsed() >= idle_limit {
+                if crate::worker::host_request_pending_after(last) || last.elapsed() >= idle_limit {
                     return;
                 }
                 block_for(Duration::from_millis(TOUCH_POLL_MS));
@@ -124,7 +124,7 @@ impl Ui {
                     }
                     self.touch.wait_release(last, idle_limit);
                 }
-                if crate::worker::host_request_pending() || last.elapsed() >= idle_limit {
+                if crate::worker::host_request_pending_after(last) || last.elapsed() >= idle_limit {
                     return;
                 }
                 block_for(Duration::from_millis(TOUCH_POLL_MS));
@@ -200,7 +200,7 @@ impl Ui {
             }
             // A queued host command or the idle timeout exits + wipes — the master secret must
             // never linger on a walked-away panel.
-            if crate::worker::host_request_pending() || last.elapsed() >= idle_limit {
+            if crate::worker::host_request_pending_after(last) || last.elapsed() >= idle_limit {
                 break;
             }
             block_for(Duration::from_millis(TOUCH_POLL_MS));
@@ -247,7 +247,7 @@ impl Ui {
                     }
                     self.touch.wait_release(last, idle_limit);
                 }
-                if crate::worker::host_request_pending() || last.elapsed() >= idle_limit {
+                if crate::worker::host_request_pending_after(last) || last.elapsed() >= idle_limit {
                     return;
                 }
                 block_for(Duration::from_millis(TOUCH_POLL_MS));
@@ -341,7 +341,7 @@ impl Ui {
                     }
                     self.touch.wait_release(last, idle_limit);
                 }
-                if crate::worker::host_request_pending() || last.elapsed() >= idle_limit {
+                if crate::worker::host_request_pending_after(last) || last.elapsed() >= idle_limit {
                     break 'paged;
                 }
                 block_for(Duration::from_millis(TOUCH_POLL_MS));

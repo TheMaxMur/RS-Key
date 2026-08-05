@@ -106,6 +106,20 @@ pub(crate) fn host_request_pending() -> bool {
     REQ.signaled()
 }
 
+/// [`host_request_pending`], but only once the UI has been idle for
+/// [`crate::display::UI_YIELD_FLOOR_MS`] — pass the modal's last-touch instant.
+///
+/// The floor is the whole point and every modal exit poll must use this form. A
+/// bare `host_request_pending()` lets a host close the screen on its FIRST poll,
+/// so an unprivileged process looping an ungated `authenticatorGetInfo` denies the
+/// owner the entire on-device browse and menu layer (audit run-35). The floor was
+/// written for exactly that and had been applied at 2 of 26 sites.
+#[cfg(feature = "display")]
+pub(crate) fn host_request_pending_after(since: embassy_time::Instant) -> bool {
+    REQ.signaled()
+        && since.elapsed() >= embassy_time::Duration::from_millis(crate::display::UI_YIELD_FLOOR_MS)
+}
+
 /// Hand `data` to the worker as `kind`, await its response, copy it into `out`,
 /// return the length. The caller (a transport on the high-priority executor) wraps
 /// the `DONE.wait()` in a keepalive `select`, so keepalives keep flowing while the
@@ -441,9 +455,15 @@ impl<'a> Worker<'a> {
                         // own, so another process's SELECT of the vendor AID used to
                         // send the victim's REGISTER/AUTHENTICATE to `INS_INCREMENT`
                         // / `INS_GET` instead (audit run-34 #27).
-                        if MSG_DESELECT.swap(false, core::sync::atomic::Ordering::AcqRel)
-                            || self.last_msg_cid.replace(*cid) != Some(*cid)
-                        {
+                        // Both operands must run: `replace` is the ONLY thing that
+                        // records which channel this MSG arrived on, and `||` skipped
+                        // it whenever MSG_DESELECT was already set — which every
+                        // CTAPHID_INIT sets, including the attacker's own. That left
+                        // `last_msg_cid` holding the victim's channel and voided the
+                        // scoping entirely (audit run-35).
+                        let forced = MSG_DESELECT.swap(false, core::sync::atomic::Ordering::AcqRel);
+                        let changed = self.last_msg_cid.replace(*cid) != Some(*cid);
+                        if forced || changed {
                             self.ctap.deselect_msg();
                         }
                         self.ctap.handle_msg(&req[..*req_len])
