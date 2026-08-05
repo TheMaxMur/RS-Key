@@ -125,6 +125,12 @@ jobs:
           - name: board-waveshare-touch-lcd
             args: "--features display"
             env: "BOARD=waveshare-touch-lcd"
+          - name: board-abrobot-4m
+            args: ""
+            env: "BOARD=abrobot-4m"
+          - name: board-abrobot-16m
+            args: ""
+            env: "BOARD=abrobot-16m"
           # The strict admin-write posture (historical default). The permissive
           # default is what every other row builds; smoke-build this so the
           # strict-gated code keeps compiling.

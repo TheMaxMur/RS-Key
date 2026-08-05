@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 RS-Key contributors
+#
+# ABrobot RP2350-4M — a development board featuring 4 WS2812 LEDs,
+# 4MB Flash, and three push-button switches (BOOTSEL, RESET, and USER).
+# WS2812 addressable GRB LEDs on GPIO16; USER button on GPIO23.
+# No built-in display.
+
+[usb]
+vidpid = "RSKey"
+# 0x1209:0x0001 — this project's own pid.codes identity
+
+[led]
+kind = "ws2812"
+pin = 16
+order = "grb"
+max_leds = 4
+
+[presence]
+source = "gpio"
+pin = 23
+active_high = false
+
+[flash]
+size_mb = 4
+kvmain_kb = 1408
