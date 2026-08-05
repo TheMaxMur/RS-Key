@@ -224,7 +224,14 @@ pub fn authenticator_config<S: Storage, R: Rng>(
             &req.rp_ids[..req.rp_ids_len],
         ),
         CONFIG_VENDOR => match req.vendor_id {
-            CONFIG_AUT_ENABLE => aut_enable(ctx, req.vendor_param),
+            CONFIG_AUT_ENABLE => {
+                // The seed-backup channel is one-shot; spend it whatever the
+                // outcome. See `FidoState::mse_active` and `vendor::consumes_mse`,
+                // which does the same for the `0x41` consumers.
+                let res = aut_enable(ctx, req.vendor_param);
+                ctx.state.clear_mse();
+                res
+            }
             CONFIG_AUT_DISABLE => aut_disable(ctx),
             // PicoForge physical config over FIDO → the phy record. Gated by the
             // acfg pinUvAuthToken already verified above (no touch — matching
@@ -335,9 +342,18 @@ fn aut_enable<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, param: &[u8]) -> CtapResu
     }
 }
 
-/// `AUT_DISABLE`: release the soft lock. Requires the seed unlocked this power
-/// cycle (proof of the lock key); writes it back kbase-sealed and deletes the
-/// wrapped blob.
+/// `AUT_DISABLE`: release the soft lock permanently — writes the seed back
+/// kbase-sealed and deletes the wrapped blob, so the device stops needing an
+/// unlock at all.
+///
+/// The gate is that the seed was unlocked this power cycle, which proves *someone*
+/// presented the lock key. It does not prove it was this caller: unlike
+/// [`FidoState::mse_cid`] two fields above it, `keydev_dec` carries no channel,
+/// token or timer and lives until power-off (audit run-34 #28). That is accepted —
+/// the lock key **is** the authorisation, and an attacker positioned to abuse the
+/// window already meets `BACKUP_EXPORT`'s prerequisites, which hand over the seed
+/// itself. What the finding does close is the consent: the prompt named "Unlock",
+/// the reversible operation, for a touch that authorises the irreversible one.
 fn aut_disable<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>) -> CtapResult {
     if !lock_engaged(ctx.fs) {
         return Err(CtapError::NotAllowed);
@@ -345,9 +361,9 @@ fn aut_disable<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>) -> CtapResult {
     if ctx.state.keydev_dec.is_none() {
         return Err(CtapError::PinAuthInvalid);
     }
-    if !ctx.check_user_presence(crate::Confirm::titled("Unlock device?")) {
-        return Err(CtapError::OperationDenied);
-    }
+    // `require_presence`, so a platform `CTAPHID_CANCEL` reports itself as one
+    // instead of being flattened into "the user declined".
+    ctx.require_presence(crate::Confirm::titled("Remove device lock?"))?;
     let mut seed = ctx.state.keydev_dec.unwrap();
     let r = encrypt_keydev_f1(&ctx.dev, ctx.fs, &seed);
     seed.zeroize();

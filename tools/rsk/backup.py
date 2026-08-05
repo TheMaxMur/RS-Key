@@ -112,6 +112,12 @@ def mse_handshake(dev, cid):
         subpara[2] = kem.public_key().public_bytes_raw()  # 1184-byte ek
 
     st, m = _vendor(dev, cid, {1: VENDOR_MSE, 2: subpara})
+    if st == ERR_NOT_ALLOWED:
+        # The channel is one-shot and the device refuses to re-key a live one, so a
+        # run that died between its handshake and its gated command leaves one
+        # behind. The refusal drops it, so a single retry gets a fresh channel;
+        # anything past that is a squatter, not a stale channel.
+        st, m = _vendor(dev, cid, {1: VENDOR_MSE, 2: subpara})
     if st != 0:
         die(f"MSE failed: status {st:#x}")
     dx, dy = m[1][-2], m[1][-3]

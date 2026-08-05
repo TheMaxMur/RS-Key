@@ -176,23 +176,48 @@ where
     Ok(enc.writer().position())
 }
 
+/// Whether a subcommand spends the seed-backup channel. Every one of these reads
+/// `mse_key`/`mse_pub` behind [`FidoState::mse_ready`], so the channel must not
+/// survive the call — see [`FidoState::mse_active`] for why it is one-shot.
+/// `AUT_ENABLE`'s twin lives in [`crate::config`], which clears it there.
+const fn consumes_mse(subcommand: u64) -> bool {
+    matches!(
+        subcommand,
+        VENDOR_BACKUP_EXPORT
+            | VENDOR_BACKUP_LOAD
+            | VENDOR_UNLOCK
+            | VENDOR_ATT_IMPORT
+            | VENDOR_ATT_CLEAR
+    )
+}
+
 pub fn vendor<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, data: &[u8], out: &mut [u8]) -> CtapResult {
     let req = parse(data)?;
+    let res = dispatch(ctx, &req, out);
+    // Spend the channel on the way out, whatever the outcome: a refused touch or a
+    // failed decrypt must not leave it live for the next caller to pick up.
+    if consumes_mse(req.subcommand) {
+        ctx.state.clear_mse();
+    }
+    res
+}
+
+fn dispatch<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req, out: &mut [u8]) -> CtapResult {
     match req.subcommand {
-        VENDOR_MSE => mse(ctx, &req, out),
-        VENDOR_BACKUP_EXPORT => backup_export(ctx, &req, out),
-        VENDOR_BACKUP_LOAD => backup_load(ctx, &req),
-        VENDOR_BACKUP_FINALIZE => backup_finalize(ctx, &req),
+        VENDOR_MSE => mse(ctx, req, out),
+        VENDOR_BACKUP_EXPORT => backup_export(ctx, req, out),
+        VENDOR_BACKUP_LOAD => backup_load(ctx, req),
+        VENDOR_BACKUP_FINALIZE => backup_finalize(ctx, req),
         VENDOR_BACKUP_STATE => backup_state(ctx, out),
-        VENDOR_UNLOCK => unlock(ctx, &req),
-        VENDOR_AUDIT_READ => audit_read(ctx, &req, out),
-        VENDOR_AUDIT_CHECKPOINT => audit_checkpoint(ctx, &req, out),
-        VENDOR_AUDIT_CONFIG => audit_config(ctx, &req, out),
-        VENDOR_ATT_IMPORT => att_import(ctx, &req),
-        VENDOR_ATT_CLEAR => att_clear(ctx, &req),
+        VENDOR_UNLOCK => unlock(ctx, req),
+        VENDOR_AUDIT_READ => audit_read(ctx, req, out),
+        VENDOR_AUDIT_CHECKPOINT => audit_checkpoint(ctx, req, out),
+        VENDOR_AUDIT_CONFIG => audit_config(ctx, req, out),
+        VENDOR_ATT_IMPORT => att_import(ctx, req),
+        VENDOR_ATT_CLEAR => att_clear(ctx, req),
         VENDOR_ATT_STATE => att_state(ctx, out),
-        VENDOR_CONFIG_WRITE => config_write(ctx, &req),
-        VENDOR_CONFIG_READ => config_read(ctx, &req, out),
+        VENDOR_CONFIG_WRITE => config_write(ctx, req),
+        VENDOR_CONFIG_READ => config_read(ctx, req, out),
         _ => Err(CtapError::InvalidParameter),
     }
 }
@@ -380,10 +405,16 @@ fn att_clear<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> CtapResult {
     // so U2F REGISTER answered 6F00 on every later call — the same key-without-chain
     // state `att_import`'s ordering exists to prevent. Key first keeps the surviving
     // combination the harmless one (a chain with no key falls back cleanly).
+    // `force_delete`, not `delete`: the latter no-ops the backend on a present-cache
+    // false-absent and still returns Ok, so exactly the torn state this ordering
+    // reasons about could report a clean erase over a surviving key. The sibling
+    // sweeps (`reset`, `wipe_oath`) already use it for the same reason.
     ctx.fs
-        .delete_key(EF_ATT_KEY)
+        .force_delete(EF_ATT_KEY.get())
         .map_err(|_| CtapError::Other)?;
-    ctx.fs.delete(EF_ATT_CHAIN).map_err(|_| CtapError::Other)?;
+    ctx.fs
+        .force_delete(EF_ATT_CHAIN)
+        .map_err(|_| CtapError::Other)?;
     journal::append(ctx, journal::EV_ATT_CLEAR, 0, &[]);
     Ok(0)
 }
@@ -548,6 +579,14 @@ const MSE_PQ_SALT: &[u8] = b"RSK-MSE-PQ-v1";
 /// since recovering it needs *both* P-256 and ML-KEM-768 broken. A host that
 /// sends no key 2 gets the classical channel, byte-for-byte unchanged.
 fn mse<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req, out: &mut [u8]) -> CtapResult {
+    // Never re-key a live channel. `mse_cid` cannot tell the owner from a second
+    // process forging that CID in its own frame header, so overwriting would let
+    // the interloper's key be the one the owner's export encrypts under. Drop the
+    // channel and refuse: a squatter can deny a handshake, never redirect one.
+    if ctx.state.mse_active {
+        ctx.state.clear_mse();
+        return Err(CtapError::NotAllowed);
+    }
     if req.kax.is_empty() || req.kay.is_empty() {
         return Err(CtapError::MissingParameter);
     }
@@ -591,10 +630,7 @@ fn mse<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req, out: &mut [u8]) -> Ct
     ctx.state.mse_key = key;
     ctx.state.mse_pub = dev_pub;
     ctx.state.mse_active = true;
-    // Own the channel to the CID that ran the handshake: a re-key from another
-    // CTAPHID channel between a tool's MSE and its BACKUP_EXPORT must not silently
-    // redirect the seed. Overwriting freely (rather than refusing a live channel)
-    // keeps a squatter from denying the owner a handshake.
+    // Defence in depth on top of the one-shot rule above; see `FidoState::mse_cid`.
     ctx.state.mse_cid = ctx.state.channel;
     key.zeroize();
 

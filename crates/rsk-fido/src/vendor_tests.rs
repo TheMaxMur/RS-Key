@@ -365,7 +365,9 @@ fn att_import_state_clear_roundtrip() {
     assert_eq!(d.u8().unwrap(), 1);
     assert!(d.bool().unwrap());
 
-    // CLEAR drops both and STATE flips back.
+    // CLEAR drops both and STATE flips back. Its own handshake: IMPORT above spent
+    // the channel.
+    handshake(&mut fs, &mut rng, &mut st);
     let n = one_byte_req(&mut req, VENDOR_ATT_CLEAR);
     call(
         &mut fs,
@@ -432,7 +434,12 @@ fn att_import_without_pin_demands_the_named_confirmation() {
     );
     assert!(crate::seed::load_att_key(&dev(), &mut fs).is_none());
 
-    // Confirmed, it is two prompts: the named handover, then `gate`'s own.
+    // Confirmed, it is two prompts: the named handover, then `gate`'s own. The
+    // declined attempt above spent the channel, so re-handshake — and re-wrap the
+    // blob, since the new channel derives a different key.
+    let host = handshake(&mut fs, &mut rng, &mut st);
+    let blob = wrap32(&host, &[0x21u8; 32]);
+    let n = att_import_req(&mut req, &blob, chain);
     let mut counting = CountingPresence { calls: 0 };
     call(
         &mut fs,
@@ -491,39 +498,99 @@ fn mse_then_export_roundtrips_seed() {
 #[cfg(not(feature = "fips-profile"))]
 #[test]
 fn export_refused_after_another_channel_rekeys_the_mse() {
+    // A CTAPHID channel id is written by the sender into its own frame header, so
+    // an interloper forges the victim's CID rather than using its own — binding to
+    // `mse_cid` alone would compare the attacker's bytes against themselves. What
+    // holds is that the channel is one-shot: the re-key is refused and the channel
+    // dropped, so the export can never encrypt under the interloper's key.
+    for interloper_cid in [1u32, 2] {
+        let (mut fs, mut rng, mut st) = setup();
+
+        // The victim's tool runs its handshake on channel 1.
+        st.channel = 1;
+        let host = handshake(&mut fs, &mut rng, &mut st);
+        let victim_key = st.mse_key;
+        assert_eq!(victim_key, host.key);
+
+        // The interloper re-keys — on its own CID, or forging the victim's.
+        st.channel = interloper_cid;
+        let mut req = [0u8; 200];
+        let their_scalar = [0x7Eu8; 32];
+        let (hx, hy) = P256Key::from_scalar(&their_scalar).unwrap().public_xy();
+        let n = build_mse(&mut req, &hx, &hy);
+        let mut out = [0u8; 200];
+        assert_eq!(
+            call(
+                &mut fs,
+                &mut rng,
+                &mut st,
+                &mut AlwaysConfirm,
+                &req[..n],
+                &mut out
+            ),
+            Err(CtapError::NotAllowed),
+            "a live channel must never be re-keyed (interloper cid {interloper_cid})"
+        );
+        // Refused *and* dropped: neither party can spend it.
+        assert!(!st.mse_active);
+        assert_ne!(st.mse_key, victim_key);
+
+        // The victim's export, still on channel 1, now fails closed rather than
+        // encrypting the seed to whoever re-keyed.
+        st.channel = 1;
+        let n = one_byte_req(&mut req, VENDOR_BACKUP_EXPORT);
+        assert_eq!(
+            call(
+                &mut fs,
+                &mut rng,
+                &mut st,
+                &mut AlwaysConfirm,
+                &req[..n],
+                &mut out
+            ),
+            Err(CtapError::NotAllowed)
+        );
+    }
+}
+
+#[test]
+fn a_gated_subcommand_spends_the_mse_channel() {
+    // One handshake, one gated use: without this an interloper that squats the
+    // channel after a legitimate consumer would inherit a live key.
     let (mut fs, mut rng, mut st) = setup();
+    handshake(&mut fs, &mut rng, &mut st);
+    assert!(st.mse_active);
 
-    // The victim's tool runs its handshake on channel 1.
-    st.channel = 1;
-    let host = handshake(&mut fs, &mut rng, &mut st);
-
-    // An interloper on channel 2 runs its own handshake — allowed (refusing it
-    // would hand a squatter a denial-of-service), but it takes the channel with it.
-    st.channel = 2;
-    let _theirs = handshake(&mut fs, &mut rng, &mut st);
-    assert_eq!(st.mse_cid, 2);
-
-    // The victim's export, still on channel 1, must now fail closed.
-    st.channel = 1;
     let mut req = [0u8; 32];
     let n = one_byte_req(&mut req, VENDOR_BACKUP_EXPORT);
     let mut out = [0u8; 128];
-    let err = call(
+    let _ = call(
         &mut fs,
         &mut rng,
         &mut st,
         &mut AlwaysConfirm,
         &req[..n],
         &mut out,
-    )
-    .unwrap_err();
-    assert_eq!(err, CtapError::NotAllowed);
+    );
+    assert!(!st.mse_active, "the consumer must spend the channel");
+    assert_eq!(st.mse_key, [0u8; 32]);
 
-    // And the interloper cannot spend the victim's touch either: its own export is
-    // gated the same way, so the seed never leaves under `host.key`.
-    let mut buf = [0u8; 32];
-    assert_ne!(st.mse_key, host.key);
-    buf.zeroize();
+    // A declined touch spends it too — a failed ceremony must not leave the
+    // channel live for the next caller to pick up.
+    handshake(&mut fs, &mut rng, &mut st);
+    assert!(st.mse_active);
+    assert_eq!(
+        call(
+            &mut fs,
+            &mut rng,
+            &mut st,
+            &mut Decline,
+            &req[..n],
+            &mut out
+        ),
+        Err(CtapError::OperationDenied)
+    );
+    assert!(!st.mse_active);
 }
 
 // Off the fips profile only: fips refuses export outright (see `fips_backup_export_refused`).
@@ -944,6 +1011,9 @@ fn locked_setup() -> (Fs<RamStorage>, SeqRng, FidoState, Host, [u8; 32]) {
     let mut req = [0u8; 192];
     let n = config_vendor_req(crate::consts::CONFIG_AUT_ENABLE, Some(&blob), &mut req);
     run_config(&mut fs, &mut rng, &mut st, &mut AlwaysConfirm, &req[..n]).unwrap();
+    // AUT_ENABLE spends the channel (it is one-shot), so hand callers a fresh one
+    // — every one of them goes on to run another gated subcommand.
+    let host = handshake(&mut fs, &mut rng, &mut st);
     (fs, rng, st, host, seed)
 }
 
@@ -1096,6 +1166,8 @@ fn backup_load_refused_while_locked() {
 fn backup_export_serves_the_unlocked_ram_copy() {
     let (mut fs, mut rng, mut st, host, seed) = locked_setup();
     run_unlock(&mut fs, &mut rng, &mut st, &LOCK_KEY, &host, 0x26).unwrap();
+    // UNLOCK spent that channel; the export needs its own.
+    let host = handshake(&mut fs, &mut rng, &mut st);
     let mut req = [0u8; 32];
     let n = one_byte_req(&mut req, VENDOR_BACKUP_EXPORT);
     let mut out = [0u8; 128];

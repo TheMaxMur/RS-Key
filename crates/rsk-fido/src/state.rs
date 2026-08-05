@@ -256,13 +256,19 @@ pub struct FidoState {
     /// `mse_active` is set and `mse_key`/`mse_pub` hold the derived
     /// ChaCha20-Poly1305 channel key and the device ephemeral public key (the
     /// AEAD AAD). RAM-only; the key is zeroized on `Drop` and a reset.
+    ///
+    /// **One-shot.** `MSE` and its consumer are separate CTAPHID transactions, so
+    /// the worker lock does not span them, and the channel id cannot identify the
+    /// party in between. A second `MSE` while this is set therefore refuses *and*
+    /// drops the channel, and every gated consumer spends it — so an interloper
+    /// can deny a handshake but can never redirect one. Fail closed both ways.
     pub mse_active: bool,
-    /// The channel [`Self::channel`] held when that handshake ran. `mse_active`
-    /// alone is not enough: `MSE` and `BACKUP_EXPORT` are separate CTAPHID
-    /// transactions, so the worker lock does not span them, and a second process
-    /// on its own CID can re-key the channel in between — the export would then
-    /// encrypt the master seed under the interloper's key. Binding the channel
-    /// makes that refuse instead. Checked through [`Self::mse_ready`].
+    /// The channel [`Self::channel`] held when that handshake ran — defence in
+    /// depth only, **not** the boundary. A CTAPHID channel id is a routing label
+    /// the sender writes into its own frame header (CTAP 2.1 §11.2.5), so it
+    /// cannot tell the owner from an interloper forging it; what actually keeps
+    /// the seed from being encrypted to a second process is that the channel is
+    /// one-shot ([`Self::mse_active`]). Checked through [`Self::mse_ready`].
     pub mse_cid: u32,
     pub mse_key: [u8; 32],
     pub mse_pub: [u8; 65],
@@ -326,6 +332,17 @@ impl FidoState {
     /// never on `mse_active` alone.
     pub fn mse_ready(&self) -> bool {
         self.mse_active && self.mse_cid == self.channel
+    }
+
+    /// Spend or drop the seed-backup channel, zeroizing the key.
+    ///
+    /// Called after every gated consumer (whatever its outcome) and on a refused
+    /// re-key, so a channel is usable exactly once by the party that established it.
+    pub fn clear_mse(&mut self) {
+        self.mse_active = false;
+        self.mse_cid = 0;
+        self.mse_key.zeroize();
+        self.mse_pub = [0; 65];
     }
 
     /// Drop the unlocked seed copy (disable / reset), zeroizing it first.
