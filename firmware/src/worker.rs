@@ -200,8 +200,8 @@ impl MsgHandler for ClientCtap {
     async fn handle_cbor(&mut self, cid: u32, data: &[u8], out: &mut [u8]) -> usize {
         roundtrip(Kind::Cbor, cid, data, out).await
     }
-    async fn handle_msg(&mut self, data: &[u8], out: &mut [u8]) -> usize {
-        roundtrip(Kind::Msg, 0, data, out).await
+    async fn handle_msg(&mut self, cid: u32, data: &[u8], out: &mut [u8]) -> usize {
+        roundtrip(Kind::Msg, cid, data, out).await
     }
     fn reset_app_selection(&mut self) {
         MSG_DESELECT.store(true, core::sync::atomic::Ordering::Release);
@@ -265,6 +265,11 @@ pub struct Worker<'a> {
     btn_state: bool,
     btn_count: u8,
     btn_time: u64,
+    /// CTAPHID channel the last `Kind::Msg` arrived on. The MSG applet selection is
+    /// one global for every channel and U2F has no SELECT of its own, so a change
+    /// of channel drops it — otherwise another process's SELECT of the vendor AID
+    /// silently redirected the victim's REGISTER/AUTHENTICATE (audit run-34 #27).
+    last_msg_cid: Option<u32>,
 }
 
 /// Button-watcher poll cadence; also the idle tick that lets the
@@ -324,6 +329,7 @@ impl<'a> Worker<'a> {
             btn_state: false,
             btn_count: 0,
             btn_time: 0,
+            last_msg_cid: None,
         }
     }
 
@@ -430,7 +436,14 @@ impl<'a> Worker<'a> {
                     Kind::Msg => {
                         // A CTAPHID_INIT since the last MSG drops the applet
                         // selection so U2F isn't hijacked by a sticky vendor SELECT.
-                        if MSG_DESELECT.swap(false, core::sync::atomic::Ordering::AcqRel) {
+                        // So does a change of channel: the selection is one global
+                        // for every CTAPHID channel, and U2F has no SELECT of its
+                        // own, so another process's SELECT of the vendor AID used to
+                        // send the victim's REGISTER/AUTHENTICATE to `INS_INCREMENT`
+                        // / `INS_GET` instead (audit run-34 #27).
+                        if MSG_DESELECT.swap(false, core::sync::atomic::Ordering::AcqRel)
+                            || self.last_msg_cid.replace(*cid) != Some(*cid)
+                        {
                             self.ctap.deselect_msg();
                         }
                         self.ctap.handle_msg(&req[..*req_len])
@@ -635,8 +648,12 @@ impl<'a> Worker<'a> {
         // frame reassembly buffer, the taken request and a queued ticket can each hold
         // a slot's AES key, private UID, access code or static password.
         otp_kbd::scrub();
-        // Core1's mailbox and sieves keep an RSA prime and the keygen DRBG seed from
-        // the last on-card keygen — factors of a live modulus, in plain SRAM.
+        // Core1's mailbox keeps an RSA prime and the keygen DRBG seed from the last
+        // on-card keygen — factors of a live modulus, in plain SRAM. The sieves are
+        // scrubbed by their owning core (issuing that from core0 would alias a live
+        // `&mut` across cores); `scrub` now waits, bounded, for core1 to reach that
+        // point. A core1 that never answers is faulted — which is what latches
+        // `DEGRADED` — and its window stays resident (audit run-34 #23).
         crate::core1::scrub();
         if mode == 2 {
             embassy_rp::rom_data::reset_to_usb_boot(0, 0);

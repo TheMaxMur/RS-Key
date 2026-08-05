@@ -202,8 +202,11 @@ pub const FIDO_REPORT_DESCRIPTOR: &[u8] = &[
 #[allow(async_fn_in_trait)] // crate-internal, single-threaded executor — no Send bound needed
 pub trait MsgHandler {
     /// Handle a U2F (ISO-7816) command APDU, writing the response APDU (body +
-    /// SW1 SW2) into `out`; returns its length.
-    async fn handle_msg(&mut self, apdu: &[u8], out: &mut [u8]) -> usize;
+    /// SW1 SW2) into `out`; returns its length. `cid` is the channel it arrived on:
+    /// the MSG applet selection is cross-message state, and U2F has no SELECT of
+    /// its own, so a selection made on one channel must not decide where another
+    /// channel's REGISTER lands (audit run-34 #27).
+    async fn handle_msg(&mut self, cid: u32, apdu: &[u8], out: &mut [u8]) -> usize;
 
     /// Handle a CTAP2 CBOR message (`command_byte ‖ params`), writing the response
     /// (status byte + optional CBOR) into `out`; returns its length. `cid` is the
@@ -654,7 +657,7 @@ impl<'d, D: Driver<'d>, H: MsgHandler> CtapHid<'d, D, H> {
                 if is_cbor {
                     handler.handle_cbor(cid, data, scratch).await
                 } else {
-                    handler.handle_msg(data, scratch).await
+                    handler.handle_msg(cid, data, scratch).await
                 }
             });
             loop {

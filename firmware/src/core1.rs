@@ -197,21 +197,45 @@ fn take_found(slot: &mut Option<Found>) -> Option<Found> {
 }
 
 /// Wipe the primes in transit and the keygen DRBG seed from the mailbox, before
-/// dropping to BOOTSEL where main SRAM survives the reset.
+/// dropping to BOOTSEL. Whether main SRAM survives that reset is **unmeasured** —
+/// the bootrom source says it is not cleared, but no dump in this repo has shown a
+/// device value in it (audit run-34 #3); `tests/54_sram_residue.py` settles it.
 ///
-/// The mailbox only. The two sieves are single-core-exclusive by construction, and
-/// `STOP` does not wait for core1 — it can still be inside `try_candidate_le` when
-/// `run_rsa_search` returns — so reaching into `CORE1_SIEVE` from core0 here would
-/// alias a live `&mut` across cores. Each core scrubs its own sieve at the end of
-/// its own search instead, which also closes that residue window immediately
-/// rather than only at reboot.
+/// The mailbox, plus a bounded wait for core1 to finish scrubbing its own sieve.
+///
+/// `CORE1_SIEVE` is not touched from here: `STOP` does not wait for core1 — it can
+/// still be inside `try_candidate_le` — so writing it from core0 would alias a live
+/// `&mut` across cores. Each core scrubs its own sieve on its own STOP edge, which
+/// also closes the window immediately rather than only at reboot. But `scrub` used
+/// to return without giving core1 a chance to *reach* that edge, so a reboot issued
+/// while a search was live dropped to BOOTSEL with the last window — up to
+/// `SIEVE_WINDOW` candidates, one of which is the prime that was found — still
+/// resident (audit run-34 #23).
+///
+/// A core1 that never answers is faulted, and that is exactly what latches
+/// `DEGRADED`; its sieve stays resident and cannot be cleared soundly from here.
 pub fn scrub() {
     MAILBOX.lock(|mb| {
         let mb = &mut mb.borrow_mut();
         scrub_found(mb);
         scrub_job(mb);
     });
+    // Ask core1 to wind down, then wait for it to go idle. Bounded: the caller is
+    // on the reboot path and must not hang if core1 is wedged.
+    STOP.store(true, Ordering::Release);
+    cortex_m::asm::sev();
+    for _ in 0..SCRUB_WAIT_ITERS {
+        if !BUSY.load(Ordering::Acquire) {
+            break;
+        }
+        cortex_m::asm::nop();
+    }
 }
+
+/// Spin budget for [`scrub`]'s wait on core1. A candidate test is microseconds and
+/// the reboot path already sleeps ~200 ms for the USB flush, so this is generous
+/// for the live case and still bounded for a wedged one.
+const SCRUB_WAIT_ITERS: u32 = 2_000_000;
 
 // --------------------------------------------------------------- core1 side --
 
