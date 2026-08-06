@@ -1923,3 +1923,43 @@ fn builtin_uv_still_names_the_registration_on_a_display() {
         "the card carries the rp being registered"
     );
 }
+
+/// Audit run-36: `font::width` measures glyph INK, so trailing whitespace paints
+/// nothing — "bank.com " renders pixel-identically to "bank.com" on the trusted
+/// display's sign-in, passkey-list and delete screens while hashing to a wholly
+/// different relying party. An all-whitespace id is worse: it passes every
+/// length-based emptiness check, so the ceremony paints a blank relying-party line
+/// with the attacker's `user.name` as the only text under the globe. No browser can
+/// send either (WebAuthn requires a valid domain string, and U+0020 is a forbidden
+/// host code point), so refuse it here rather than paint it.
+#[test]
+fn an_rp_id_carrying_whitespace_is_refused() {
+    for id in [
+        "bank.com ",
+        " bank.com",
+        "bank .com",
+        "        ",
+        "bank.com\t",
+    ] {
+        let mut buf = [0u8; 256];
+        let n = {
+            let mut e = Encoder::new(Cursor::new(&mut buf[..]));
+            e.map(4).unwrap();
+            e.u8(1).unwrap().bytes(&[0xCDu8; 32]).unwrap();
+            e.u8(2).unwrap().map(1).unwrap();
+            e.str("id").unwrap().str(id).unwrap();
+            e.u8(3).unwrap().map(1).unwrap();
+            e.str("id").unwrap().bytes(&[1, 2, 3, 4]).unwrap();
+            good_params(&mut e);
+            e.writer().position()
+        };
+        assert_eq!(
+            run_err(&buf[..n]),
+            CtapError::InvalidParameter,
+            "rp.id {id:?} was accepted"
+        );
+    }
+    // An ordinary domain is untouched.
+    let (resp, _) = run(&mc_build(4, good_params));
+    assert!(!resp.is_empty(), "a plain rpId must still register");
+}

@@ -1905,3 +1905,37 @@ fn pin_dots_clear_strip_erases_overflow_and_tenth_dot_on_delete() {
         "stale '+' marker left after delete — shortened PIN still read as long"
     );
 }
+
+/// Audit run-36: `rsk_openpgp::info` returns `CH_FIELD_MAX = LABEL_MAX + 1` bytes for
+/// the sole purpose of letting `Label::clamp` set `truncated`, and
+/// `firmware/src/display/applets.rs` static-asserts that relationship — then this
+/// screen passed `force_mark: false` and threw the flag away. A 48-byte clip of a
+/// longer, narrow-glyph value fits the 212 px box, so the fast path painted it with
+/// no ellipsis and it read as the whole thing: the registrable domain on screen was
+/// not the one stored. Assert the panel actually differs.
+#[test]
+fn a_truncated_cardholder_value_paints_its_marker() {
+    let narrow = Label::clamp(&[b'i'; 48]); // 48 bytes, fits the box, NOT truncated
+    let mut clipped = Label::clamp(&[b'i'; 64]); // clipped at the cap
+    assert!(clipped.truncated, "the fixture must actually be truncated");
+    clipped.truncated = true;
+
+    let view = |f: Label| CardholderView {
+        name: Label::clamp(b"Alice"),
+        login: Label::clamp(b"alice"),
+        url: f,
+        lang: Label::clamp(b"en"),
+        any: true,
+    };
+
+    let mut whole = Rec::new();
+    render_openpgp_cardholder(&mut whole, &view(narrow)).unwrap();
+    let mut cut = Rec::new();
+    render_openpgp_cardholder(&mut cut, &view(clipped)).unwrap();
+
+    assert!(
+        whole.px != cut.px,
+        "a clipped cardholder value painted identically to a whole one"
+    );
+    assert!(!cut.oob, "the marker drew outside the panel");
+}

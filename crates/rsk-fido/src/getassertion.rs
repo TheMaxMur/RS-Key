@@ -284,6 +284,12 @@ pub fn get_assertion<S: Storage, R: Rng>(
     if req.rp_id.is_empty() || req.client_data_hash.len() != 32 {
         return Err(CtapError::MissingParameter);
     }
+    // Same rule as `make_credential`: whitespace paints no ink on the trusted
+    // display, so it cannot be allowed to reach a ceremony (audit run-36). No
+    // credential can exist under such an id once registration refuses it either.
+    if req.rp_id.bytes().any(|b| b.is_ascii_whitespace()) {
+        return Err(CtapError::InvalidParameter);
+    }
     // §6.2.2 step 4: "pinUvAuthParam and the 'uv' option are processed as mutually
     // exclusive with pinUvAuthParam taking precedence" — uv:true alongside a token
     // is not an error, the option is simply treated as false. Otherwise `uv` is an

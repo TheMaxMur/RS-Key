@@ -665,19 +665,24 @@ where
     // Stacked caption + value blocks. Every value is clipped/ellipsized to the panel width,
     // so a long name / login / URL can never overrun the column or draw off-panel (the
     // cardholder fields are free-form and may be near the 48-byte label cap).
-    let fields = [
-        ("NAME", v.name.as_str()),
-        ("LOGIN", v.login.as_str()),
-        ("URL", v.url.as_str()),
-        ("LANGUAGE", v.lang.as_str()),
+    // The array carries the `Label`, not its `&str`: `rsk_openpgp`'s reader returns
+    // CH_FIELD_MAX = LABEL_MAX + 1 bytes for the sole purpose of letting `Label::clamp`
+    // set `truncated`, and this screen threw the flag away — so a 48-byte clip of a
+    // longer value painted with no ellipsis and read as the whole thing, which is
+    // exactly what audit run-34 #39 widened the reader to prevent (audit run-36).
+    let fields: [(&str, &Label); 4] = [
+        ("NAME", &v.name),
+        ("LOGIN", &v.login),
+        ("URL", &v.url),
+        ("LANGUAGE", &v.lang),
     ];
     let mut y = CONTENT_TOP as i32 + 38;
     for (cap, val) in fields {
         text_left(t, cap, EgPoint::new(14, y), Role::Mono, theme::CAPTION)?;
-        let (shown, color) = if val.is_empty() {
-            ("Not set", theme::MUTED)
+        let (shown, color, marked) = if val.is_empty() {
+            ("Not set", theme::MUTED, false)
         } else {
-            (val, theme::TEXT_2)
+            (val.as_str(), theme::TEXT_2, val.truncated)
         };
         text_left_ellipsized(
             t,
@@ -686,7 +691,7 @@ where
             Role::Body,
             color,
             Rect::new(14, (y + 8) as u16, PANEL_W - 28, 24),
-            false,
+            marked,
         )?;
         y += 46;
     }

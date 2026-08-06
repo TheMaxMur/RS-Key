@@ -332,6 +332,17 @@ pub fn make_credential<S: Storage, R: Rng>(
     if req.rp_id.len() > RP_ID_MAX || req.user_id.len() > USER_ID_MAX {
         return Err(CtapError::InvalidLength);
     }
+    // No valid WebAuthn rpId contains whitespace — the spec requires a valid domain
+    // string, and U+0020 is a forbidden host code point, so no browser can send one.
+    // The trusted display is why it matters: `font::width` measures ink, so trailing
+    // spaces paint NOTHING, and "bank.com " renders pixel-identically to "bank.com"
+    // on the sign-in, passkey-list and delete screens while hashing to a different
+    // relying party entirely. An all-whitespace id also passes the length-based
+    // emptiness checks here and in `Label::is_empty`, so the ceremony paints a blank
+    // relying-party line with the attacker's `user.name` beneath it (audit run-36).
+    if req.rp_id.bytes().any(|b| b.is_ascii_whitespace()) {
+        return Err(CtapError::InvalidParameter);
+    }
     // CTAP 2.1 §6.1.2: overlong user.name / user.displayName are truncated,
     // not an error.
     req.user_name = truncate_utf8(req.user_name, USER_NAME_MAX);
