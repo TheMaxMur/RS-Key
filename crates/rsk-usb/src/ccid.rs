@@ -67,6 +67,11 @@ const WTX_INTERVAL_MS: u64 = 200;
 /// reads each response promptly, so a gap this long means the host is gone.
 use crate::TX_TIMEOUT_MS;
 
+/// Abandon an in-progress bulk-OUT accumulation if the next packet is this late.
+/// Same value and same reason as CTAPHID's reassembly timeout: a partial message
+/// left in the buffer is spliced onto whatever the next host sends.
+const RX_TIMEOUT_MS: u64 = 500;
+
 const HEADER: usize = 10;
 /// `dwMaxCCIDMessageLength` from the class descriptor.
 pub const MAX_CCID_MSG: usize = 2048;
@@ -358,8 +363,14 @@ impl<'d, D: Driver<'d>, H: ApduHandler> Ccid<'d, D, H> {
                     }
                 }
                 None => {
-                    // Bad framing: reply "6F 00" (wrong length) and resync.
-                    put_header(&mut self.tx, CCID_DATA_BLOCK_RET, 2, 0, self.status);
+                    // Bad framing: reply "6F 00" (wrong length) and resync. Echo the
+                    // sequence we are answering — every `read_message` bail-out has
+                    // already accumulated past the header, so `rx[6]` is the real
+                    // `bSeq`. Hardcoding 0 meant a host that validates it (libccid
+                    // does, on the power/status/params responses) discarded the one
+                    // reply whose whole job is to resynchronise (audit run-36).
+                    let seq = self.rx[6];
+                    put_header(&mut self.tx, CCID_DATA_BLOCK_RET, 2, seq, self.status);
                     self.tx[HEADER] = 0x6F;
                     self.tx[HEADER + 1] = 0x00;
                     let _ = select(
@@ -486,10 +497,45 @@ impl<'d, D: Driver<'d>, H: ApduHandler> Ccid<'d, D, H> {
     async fn read_message(&mut self) -> Option<usize> {
         let mut w = 0usize;
         loop {
-            let n = match self.read_ep.read(&mut self.rx[w..]).await {
+            // An in-progress message is bounded; an idle transport is not. Without
+            // the bound, an interrupted multi-packet write (a bus reset inside a key
+            // or certificate import — this class advertises extended APDUs and a
+            // 2048-byte message, so those are up to 32 packets) left its prefix here
+            // forever, and the next host's first packet was appended to it and
+            // misparsed: one stale `0x6F` in front of an `IccPowerOn` makes the
+            // transport wait for 98 bytes nobody will send while the host waits for
+            // its ATR. The CTAPHID sibling has carried `RX_TIMEOUT_MS` for exactly
+            // this since it was written, and this crate's own Cargo.toml cites an
+            // "RX-path receive-timeout" as why it depends on embassy-time — a
+            // guarantee only that transport actually provided (audit run-36).
+            let r = if w == 0 {
+                self.read_ep.read(&mut self.rx[..]).await
+            } else {
+                match select(
+                    self.read_ep.read(&mut self.rx[w..]),
+                    Timer::after_millis(RX_TIMEOUT_MS),
+                )
+                .await
+                {
+                    Either::First(r) => r,
+                    // Abandon the partial message rather than let it prefix the next
+                    // one. The host sees its own transfer time out, which is what it
+                    // is already waiting on.
+                    Either::Second(_) => {
+                        w = 0;
+                        continue;
+                    }
+                }
+            };
+            let n = match r {
                 Ok(n) => n,
                 Err(EndpointError::BufferOverflow) => return None,
-                Err(_) => continue, // disabled/reset: keep waiting
+                // An endpoint error means the previous transfer is gone; keeping the
+                // prefix would splice it onto whatever arrives next.
+                Err(_) => {
+                    w = 0;
+                    continue;
+                }
             };
             w += n;
             if w >= HEADER {
