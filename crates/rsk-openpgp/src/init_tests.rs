@@ -90,6 +90,54 @@ fn dek_decrypts_under_default_pin() {
     assert_eq!(dek, dek3);
 }
 
+/// The record firmware 0x07F7..=0x0852 wrote: no RC verifier, but a live RC
+/// error counter (index 5).
+const PW_STATUS_LEGACY: &[u8] = &[0x01, 127, 127, 127, 3, 3, 3];
+
+fn rc_counter<S: rsk_fs::Storage>(fs: &mut Fs<S>) -> u8 {
+    let mut pw = [0u8; 7];
+    fs.read(EF_PW_PRIV, &mut pw).unwrap();
+    pw[pw_retry_idx(EF_RC)]
+}
+
+#[test]
+fn legacy_rc_counter_is_zeroed_when_no_reset_code_exists() {
+    let mut fs = fresh();
+    fs.put(EF_PW_PRIV, PW_STATUS_LEGACY).unwrap();
+    scan_files(&dev(), &mut fs, &mut CountRng(0)).unwrap();
+
+    assert!(!fs.has_data(EF_RC), "no RC was ever set on this card");
+    assert_eq!(
+        rc_counter(&mut fs),
+        0,
+        "DO C4 must not advertise an absent RC"
+    );
+}
+
+#[test]
+fn a_real_reset_code_keeps_its_retry_counter() {
+    let mut fs = fresh();
+    let d = dev();
+    fs.put(EF_PW_PRIV, PW_STATUS_LEGACY).unwrap();
+    put_pin_verifier(&mut fs, &d, EF_RC, b"87654321").unwrap();
+    scan_files(&d, &mut fs, &mut CountRng(0)).unwrap();
+
+    assert!(fs.has_data(EF_RC), "an admin-set RC survives init");
+    assert_eq!(rc_counter(&mut fs), 3);
+}
+
+#[test]
+fn the_default_reset_code_is_deleted_and_its_counter_cleared() {
+    let mut fs = fresh();
+    let d = dev();
+    fs.put(EF_PW_PRIV, PW_STATUS_LEGACY).unwrap();
+    put_pin_verifier(&mut fs, &d, EF_RC, PW3_DEFAULT).unwrap();
+    scan_files(&d, &mut fs, &mut CountRng(0)).unwrap();
+
+    assert!(!fs.has_data(EF_RC), "the 0x07F6-era backdoor RC is removed");
+    assert_eq!(rc_counter(&mut fs), 0);
+}
+
 #[test]
 fn is_idempotent() {
     let mut fs = fresh();

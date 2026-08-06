@@ -281,6 +281,17 @@ The following landed in the same wave, before the fixes above:
   `picotool` failure path sanitizes the target's own strings — the last two unswept
   sites of the counterfeit-device terminal-injection class.
 
+### Fixed
+
+- **The OpenPGP card no longer advertises a resetting code it does not have.**
+  OpenPGP Card 3.4 §4.3.4 reads DO `C4`'s RC error counter as 0 while no resetting
+  code is set, and firmware 0x07F7..=0x0852 stopped seeding an RC verifier but kept
+  writing a live counter into the PW-status record — which `init` only writes when
+  it is absent, so a card provisioned in that window reported "Reset code tries
+  remaining: 3" to `gpg` and `ykman` for the rest of its life. Never exploitable:
+  `RESET RETRY P1=0` gates on the verifier's presence and answered `6A88`
+  regardless. Found by diffing a real YubiKey, which reports 0.
+
 ### Changed
 
 - **`makeCredential` now ships packed *basic* attestation, fixing `-sk`
