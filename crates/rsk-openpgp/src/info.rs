@@ -171,9 +171,14 @@ pub fn read_info<S: Storage>(fs: &mut Fs<S>) -> OpenpgpInfo {
     }
 }
 
-/// Cap on each cardholder string surfaced to the display, matching the UI label
-/// width — longer values are truncated at read time.
-pub const CH_FIELD_MAX: usize = 48;
+/// Cap on each cardholder string surfaced to the display.
+///
+/// One byte wider than the panel's `rsk_ui::LABEL_MAX` (48), deliberately:
+/// `Label::clamp` decides `truncated` by *seeing* more bytes than it can keep, so
+/// a reader that cut at exactly the label width made that marker unreachable —
+/// a cardholder value cut here rendered as though it were the whole thing
+/// (audit run-34 #39). The firmware asserts the two stay one apart.
+pub const CH_FIELD_MAX: usize = 49;
 
 /// The card's public cardholder data objects, all plaintext (no PIN / DEK): the
 /// cardholder name (`5B`), login data (`5E`), a URL (`5F50`) and the language

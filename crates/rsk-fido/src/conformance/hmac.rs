@@ -155,6 +155,30 @@ fn ga_hmac(ecdh: &Ecdh, salt: &[u8]) -> Vec<u8> {
     buf[..n].to_vec()
 }
 
+/// [`ga_hmac`] plus `{5: {"up": false}}` — the silent pre-flight shape.
+fn ga_hmac_up_false(ecdh: &Ecdh, salt: &[u8]) -> Vec<u8> {
+    let salt_enc = ecdh.enc(salt);
+    let salt_auth = ecdh.mac(&salt_enc);
+    let mut buf = [0u8; 256];
+    let n = {
+        let mut e = Encoder::new(Cursor::new(&mut buf[..]));
+        e.map(4).unwrap();
+        e.u8(1).unwrap().str(RP_ID).unwrap();
+        e.u8(2).unwrap().bytes(&CDH).unwrap();
+        e.u8(4).unwrap().map(1).unwrap();
+        e.str("hmac-secret").unwrap().map(4).unwrap();
+        e.u8(1).unwrap();
+        cose_key_ecdh(&mut e, &ecdh.x, &ecdh.y).unwrap();
+        e.u8(2).unwrap().bytes(&salt_enc).unwrap();
+        e.u8(3).unwrap().bytes(&salt_auth).unwrap();
+        e.u8(4).unwrap().u64(2).unwrap();
+        e.u8(5).unwrap().map(1).unwrap();
+        e.str("up").unwrap().bool(false).unwrap();
+        e.writer().position()
+    };
+    buf[..n].to_vec()
+}
+
 /// The (still-encrypted) hmac-secret output from a getAssertion authData.
 fn hmac_output(body: &[u8]) -> Vec<u8> {
     let mut d = field_at(body, 2).expect("authData (0x02) present");
@@ -205,4 +229,24 @@ fn hmac_secret_is_deterministic_per_salt() {
         &a.send(CTAP_GET_ASSERTION, &ga_hmac(&ecdh, &salt2)).body,
     ));
     assert_ne!(out1, other, "a different salt yields a different output");
+}
+
+/// CTAP 2.1 §12.5: "If 'up' is set to false, authenticator returns
+/// CTAP2_ERR_UNSUPPORTED_OPTION." The `up:false` probe skips the presence gate, so
+/// serving the extension there hands out per-credential PRF material with no touch
+/// and no PIN — and does so on the always-uv build too (audit run-32).
+#[test]
+fn hmac_secret_is_refused_on_an_up_false_probe() {
+    let mut a = Authr::fresh();
+    assert_ok(&a.send(CTAP_MAKE_CREDENTIAL, &mc_hmac()));
+    let ecdh = Ecdh::establish(&mut a);
+    // The same request minus the option still works, so this is the option's doing.
+    assert_ok(&a.send(CTAP_GET_ASSERTION, &ga_hmac(&ecdh, &SALT)));
+    let g = a.send(CTAP_GET_ASSERTION, &ga_hmac_up_false(&ecdh, &SALT));
+    assert_eq!(
+        g.status,
+        crate::error::CtapError::UnsupportedOption as u8,
+        "hmac-secret must be refused with 0x2b on an up:false request"
+    );
+    assert!(g.body.is_empty(), "a refused probe returns no assertion");
 }

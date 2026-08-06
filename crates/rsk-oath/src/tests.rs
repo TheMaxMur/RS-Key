@@ -1624,3 +1624,128 @@ fn list_and_calc_all_paginate_the_full_store() {
     assert_eq!(sw, Sw::OK);
     assert!(body.is_empty(), "abandoned page must not resume");
 }
+
+/// A backend that stops accepting removals after `budget` of them, and yields keys
+/// newest-first — standing in for the flash ring's write order, which is what
+/// `for_each_key` really gives (not FID order).
+struct TornStorage {
+    inner: RamStorage,
+    budget: usize,
+    order: Vec<u16>,
+}
+
+impl TornStorage {
+    fn new(budget: usize) -> Self {
+        Self {
+            inner: RamStorage::new(),
+            budget,
+            order: Vec::new(),
+        }
+    }
+}
+
+impl Storage for TornStorage {
+    fn read(&mut self, fid: u16, buf: &mut [u8]) -> Option<usize> {
+        self.inner.read(fid, buf)
+    }
+    fn write(&mut self, fid: u16, data: &[u8]) -> rsk_sdk::error::Result<()> {
+        if !self.order.contains(&fid) {
+            self.order.push(fid);
+        }
+        self.inner.write(fid, data)
+    }
+    fn remove(&mut self, fid: u16) -> rsk_sdk::error::Result<()> {
+        if self.budget == 0 {
+            return Err(rsk_sdk::error::Error::MemoryFatal);
+        }
+        self.budget -= 1;
+        self.order.retain(|&f| f != fid);
+        self.inner.remove(fid)
+    }
+    fn size(&mut self, fid: u16) -> Option<usize> {
+        self.inner.size(fid)
+    }
+    fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) -> bool {
+        // Write order, oldest first — the access code was set before the
+        // credentials here, so a single-phase sweep would reach it first.
+        for fid in self.order.clone() {
+            f(fid);
+        }
+        true
+    }
+}
+
+fn torn_fs(budget: usize) -> Fs<TornStorage> {
+    let mut fs = Fs::new(TornStorage::new(budget));
+    fs.scan();
+    fs
+}
+
+/// The access code must outlive every credential it protects. `for_each_key`
+/// yields in write order, so a one-phase sweep deletes whatever the ring reaches
+/// first; a power cut there would leave the store readable with no code at all,
+/// since `select` derives `validated` from `!code_set`.
+#[test]
+fn a_torn_reset_never_strips_the_access_code_first() {
+    // Access code written first, so it sits earliest in the ring.
+    let mut fs = torn_fs(2);
+    fs.put(EF_OATH_CODE.get(), &[0xAB; 20]).unwrap();
+    for i in 0..5u16 {
+        fs.put(EF_OATH_CRED + i, &[0x11; 24]).unwrap();
+    }
+
+    // The sweep runs out of removals partway through the credentials.
+    assert_eq!(wipe_oath(&mut fs), Err(Sw::MEMORY_FAILURE));
+
+    // It must have spent them on credentials, never on the code.
+    assert!(
+        fs.has_data(EF_OATH_CODE.get()),
+        "a partial wipe left the credentials unprotected"
+    );
+    let left = (0..5u16).filter(|i| fs.has_data(EF_OATH_CRED + i)).count();
+    assert_eq!(left, 3, "the two removals went to credentials");
+}
+
+/// Audit run-36: `wipe_oath` carries the two-phase rule, but the device-wide
+/// `Fs::factory_wipe` bypasses it entirely and takes its phase-2 set from the
+/// firmware's union — which could not name this predicate while it was private, so
+/// OATH was left out of it and a torn device reset served every surviving
+/// credential with no access code at all. The predicate is `pub` for that caller;
+/// assert it actually buys the ordering property on that path, for every prefix.
+#[test]
+fn the_exported_lock_predicate_protects_the_device_wide_wipe() {
+    for budget in 0..8usize {
+        // Access code first, so it sits earliest in the ring — the order a
+        // single-phase sweep would delete it in.
+        let mut fs = torn_fs(budget);
+        fs.put(EF_OATH_CODE.get(), &[0xAB; 20]).unwrap();
+        fs.put(EF_OTP_PIN, &[0x01; 34]).unwrap();
+        for i in 0..5u16 {
+            fs.put(EF_OATH_CRED + i, &[0x11; 24]).unwrap();
+        }
+
+        let _ = fs.factory_wipe(|_| false, is_oath_lock_fid);
+
+        if (0..5u16).any(|i| fs.has_data(EF_OATH_CRED + i)) {
+            assert!(
+                fs.has_data(EF_OATH_CODE.get()),
+                "budget {budget}: credentials outlived the access code, so the next \
+                 SELECT would derive `validated` from its absence and serve them"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_completed_reset_clears_credentials_and_the_code() {
+    let mut fs = torn_fs(usize::MAX);
+    fs.put(EF_OATH_CODE.get(), &[0xAB; 20]).unwrap();
+    fs.put(EF_OTP_PIN, &[0x01; 34]).unwrap();
+    for i in 0..5u16 {
+        fs.put(EF_OATH_CRED + i, &[0x11; 24]).unwrap();
+    }
+    assert_eq!(wipe_oath(&mut fs), Ok(()));
+    assert!(!fs.has_data(EF_OATH_CODE.get()));
+    assert!(!fs.has_data(EF_OTP_PIN));
+    assert!((0..5u16).all(|i| !fs.has_data(EF_OATH_CRED + i)));
+}

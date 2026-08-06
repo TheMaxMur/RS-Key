@@ -36,7 +36,7 @@ pub use render::{
     render_rebooting, render_rename, render_rename_field, render_rename_keys,
     render_reveal_warning, render_seal_confirm, render_seed_phrase, render_service,
     render_share_picker, render_slip39_share, render_status_arc, render_success,
-    render_success_circle,
+    render_success_circle, render_wipe_failed,
 };
 pub use settings_store::{CONF_LEN as DISPLAY_CONF_LEN, DisplayConfig};
 

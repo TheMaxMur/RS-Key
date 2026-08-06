@@ -30,6 +30,19 @@ covers the security boundary. This page covers feature and hardware gaps.
   that count varies, not because the silicon does. Per candidate the throughput
   is ~6.9 ms across both cores.
 
+  **These are reference-board numbers and do not carry to every board.** A
+  Waveshare RP2350-Zero measures RSA-2048 at a median of ~9.7 s where the
+  reference board does 4–6 s. Budget for the board you ship, not for this table.
+
+  Both halves of the hot path — the asm modexp, and the small-prime sieve loop
+  with its prime table — are held in SRAM rather than run from XIP flash. That
+  is not a micro-optimization: while the sieve was still in flash it and the
+  surrounding code evicted each other from the small XIP cache, and *which* of
+  them won depended on where the linker happened to put things, so an unrelated
+  1.7 KB of image growth moved RSA-2048 keygen by 1.36× (9.7 s → 12.7 s, three
+  and four batches of 12, no overlap between them). Keep new hot loops out of
+  XIP if you want a timing that survives the next commit.
+
   The lever is *fewer candidates reaching the modexp*: a deeper small-prime
   sieve. (The Baillie–PSW that confirms a survivor, asm strong Miller–Rabin
   plus a software Lucas test, runs only a handful of times per keygen, so it
@@ -139,6 +152,14 @@ covers the security boundary. This page covers feature and hardware gaps.
   FIDO2/WebAuthn, `ssh -sk`, `gpg`/OpenPGP, OpenSC/PKCS#11 and the project's
   own `rsk`/`rsk-tui` tools are identity-independent and work on the default
   build.
+- **The attestation certificate is per-device, so it identifies the key.** Every
+  `makeCredential` carries packed basic attestation whose `x5c` leaf is this
+  board's own certificate ([guides/attestation.md](guides/attestation.md)), and
+  it is the same certificate for every relying party. A batch certificate shared
+  across devices would avoid that, but it would have to ship inside open-source
+  firmware, where anyone could extract it. Browsers hide the leaf unless a site
+  asks for `attestation: "direct"`; native CTAP clients such as `ssh-keygen` see
+  it. A factory reset regenerates the seed and with it the certificate.
 - **OpenPGP secure messaging** is not implemented (rarely used by clients;
   PINs gate everything in practice).
 - **One physical button on the base build.** Touch = the BOOTSEL button, and

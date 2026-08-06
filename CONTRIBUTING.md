@@ -34,7 +34,10 @@ target, picotool, gitleaks, cargo-audit/deny, the Python stack for `rsk` and
 the device tests. Entering the shell also symlinks the repo's pre-commit hook
 (gitleaks + fmt + clippy on the staged diff) into `.git/hooks` — commits from
 outside the shell will fail on the hook, which is mildly annoying and entirely
-intentional.
+intentional. The hook closes by printing `scripts/impact.py`: for a constant
+whose *value* changed, the users the commit leaves unread. It never fails the
+commit — it cannot decide whether a site is still correct, only that nobody
+looked.
 
 No Nix? `rust-toolchain.toml` pins the toolchain, target and components for
 rustup, and you're on your own for picotool, gitleaks and the Python

@@ -144,7 +144,7 @@ fn factory_wipe_erases_all_but_preserved() {
     fs.put(0xC000, b"ctr").unwrap(); // a counter
     fs.put(0xAAAA, b"keep").unwrap(); // stands in for the preserved attestation
 
-    fs.factory_wipe(|fid| fid == 0xAAAA).unwrap();
+    fs.factory_wipe(|fid| fid == 0xAAAA, |_| false).unwrap();
 
     let mut buf = [0u8; 8];
     // Everything not preserved is gone — including the dynamic-file registration.
@@ -161,7 +161,7 @@ fn factory_wipe_with_nothing_to_keep_empties_the_store() {
     let mut fs = fs();
     fs.put(0xCF01, b"a").unwrap();
     fs.put(0xCF02, b"b").unwrap();
-    fs.factory_wipe(|_| false).unwrap();
+    fs.factory_wipe(|_| false, |_| false).unwrap();
     let mut seen = 0;
     fs.for_each_key(&mut |_| seen += 1);
     assert_eq!(seen, 0);
@@ -423,10 +423,25 @@ fn meta_roundtrip() {
 #[test]
 fn meta_find_oversized_does_not_panic() {
     let mut fs = fs();
-    let big = [0u8; 2048]; // > META_MAX (1024): must clamp, not slice out of range
+    // > META_MAX (1024): must clamp, not slice out of range. Sized at the store's
+    // own ceiling, which `put` now enforces.
+    let big = [0u8; crate::MAX_VALUE_BYTES];
     fs.put(crate::EF_META, &big).unwrap();
     let mut out = [0u8; 32];
     assert_eq!(fs.meta_find(0xAAAA, &mut out), None);
+}
+
+/// The backend's per-value ceiling is enforced at the `Fs::put` chokepoint, so an
+/// applet cannot pick a cap the store cannot honour (audit run-32).
+#[test]
+fn put_rejects_past_the_backend_ceiling() {
+    let mut fs = fs();
+    assert!(fs.put(0xCF10, &[0u8; crate::MAX_VALUE_BYTES]).is_ok());
+    assert_eq!(
+        fs.put(0xCF11, &[0u8; crate::MAX_VALUE_BYTES + 1]),
+        Err(rsk_sdk::error::Error::WrongLength)
+    );
+    assert!(!fs.has_data(0xCF11));
 }
 
 #[test]
@@ -522,4 +537,202 @@ fn meta_delete_of_absent_record_does_not_rewrite() {
         "deleting a meta-less FID must not rewrite EF_META (only the setup write)"
     );
     assert_eq!(st.remove_calls, 0, "absent delete must not hit the backend");
+}
+
+/// A `Storage` whose enumeration faults immediately: it yields nothing and reports
+/// the walk as truncated, while the keys are still live and readable. This is the
+/// interrupted-page-erase shape (`sequential-storage` `find_first_page` →
+/// `Error::Corrupted`, which `fetch_all_items` propagates before its auto-repair).
+struct TruncatedScan(RamStorage);
+impl Storage for TruncatedScan {
+    fn read(&mut self, fid: u16, buf: &mut [u8]) -> Option<usize> {
+        self.0.read(fid, buf)
+    }
+    fn write(&mut self, fid: u16, data: &[u8]) -> Result<()> {
+        self.0.write(fid, data)
+    }
+    fn remove(&mut self, fid: u16) -> Result<()> {
+        self.0.remove(fid)
+    }
+    fn size(&mut self, fid: u16) -> Option<usize> {
+        self.0.size(fid)
+    }
+    fn for_each_key(&mut self, _f: &mut dyn FnMut(u16)) -> bool {
+        false
+    }
+}
+
+/// A wipe must fail rather than report a range clear it never enumerated — the
+/// rule PIV and OpenPGP already enforce. Without it a truncated walk deletes
+/// nothing and still answers success, and the trusted display paints "RS-Key
+/// erased" over live credentials (audit run-32).
+#[test]
+fn factory_wipe_fails_on_a_truncated_enumeration() {
+    let mut st = TruncatedScan(RamStorage::new());
+    st.0.write(0xCF20, b"credential").unwrap();
+    let mut fs = Fs::new(st);
+    assert_eq!(
+        fs.factory_wipe(|_| false, |_| false),
+        Err(Error::MemoryFatal)
+    );
+    let mut out = [0u8; 16];
+    assert_eq!(
+        fs.read(0xCF20, &mut out),
+        Some(10),
+        "the key the wipe never saw is still live"
+    );
+}
+
+/// Audit run-35: the device-wide wipe bypasses every applet's own two-phase sweep,
+/// so it has to carry the rule itself — the records that gate an applet (PIN
+/// verifiers, retry counters) go only after everything else is provably gone.
+#[test]
+fn factory_wipe_removes_the_gate_records_last() {
+    let mut fs = Fs::new(RamStorage::new());
+    fs.scan();
+    for fid in [0x1000u16, 0x1001, 0x1002] {
+        fs.put(fid, &[0xAA]).unwrap();
+    }
+    fs.put(0xD180, &[0xBB]).unwrap(); // the "gate" record
+
+    // A store that stops removing part-way: every prefix must leave the gate intact
+    // while any secret is still present.
+    for budget in 0..4usize {
+        let mut fs = Fs::new(CountedRemove {
+            inner: RamStorage::new(),
+            budget,
+        });
+        fs.scan();
+        for fid in [0x1000u16, 0x1001, 0x1002] {
+            fs.put(fid, &[0xAA]).unwrap();
+        }
+        fs.put(0xD180, &[0xBB]).unwrap();
+        let _ = fs.factory_wipe(|_| false, |fid| fid == 0xD180);
+        let secrets_left = [0x1000u16, 0x1001, 0x1002].iter().any(|&f| fs.has_data(f));
+        if secrets_left {
+            assert!(
+                fs.has_data(0xD180),
+                "remove budget {budget} dropped the gate record while a secret was live"
+            );
+        }
+    }
+}
+
+/// `Storage` whose `remove` starts failing after `budget` successes.
+struct CountedRemove {
+    inner: RamStorage,
+    budget: usize,
+}
+
+impl Storage for CountedRemove {
+    fn read(&mut self, fid: u16, buf: &mut [u8]) -> Option<usize> {
+        self.inner.read(fid, buf)
+    }
+    fn write(&mut self, fid: u16, data: &[u8]) -> Result<()> {
+        self.inner.write(fid, data)
+    }
+    fn remove(&mut self, fid: u16) -> Result<()> {
+        if self.budget == 0 {
+            return Err(Error::MemoryFatal);
+        }
+        self.budget -= 1;
+        self.inner.remove(fid)
+    }
+    fn size(&mut self, fid: u16) -> Option<usize> {
+        self.inner.size(fid)
+    }
+    fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) -> bool {
+        self.inner.for_each_key(f)
+    }
+}
+
+/// `Storage` whose first `remaining` reads/sizes FAIL rather than finding the key
+/// absent — the two are indistinguishable through an `Option` return, which is the
+/// whole point.
+struct FailFirstRead {
+    inner: RamStorage,
+    remaining: usize,
+    err: bool,
+}
+
+impl Storage for FailFirstRead {
+    fn read(&mut self, fid: u16, buf: &mut [u8]) -> Option<usize> {
+        if self.remaining > 0 {
+            self.remaining -= 1;
+            self.err = true;
+            return None;
+        }
+        self.err = false;
+        self.inner.read(fid, buf)
+    }
+    fn write(&mut self, fid: u16, data: &[u8]) -> Result<()> {
+        self.inner.write(fid, data)
+    }
+    fn remove(&mut self, fid: u16) -> Result<()> {
+        self.inner.remove(fid)
+    }
+    fn size(&mut self, fid: u16) -> Option<usize> {
+        if self.remaining > 0 {
+            self.remaining -= 1;
+            self.err = true;
+            return None;
+        }
+        self.err = false;
+        self.inner.size(fid)
+    }
+    fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) -> bool {
+        self.inner.for_each_key(f)
+    }
+    fn last_error(&self) -> bool {
+        self.err
+    }
+}
+
+/// Audit run-36: a backend read that FAILED is not a key that is absent, but
+/// `Storage::read`/`size` collapse both into `None` — and `Fs` memoises the answer
+/// with the DECIDED bit, so one transient fault would answer "absent" for the rest
+/// of the boot without touching flash again. `clientpin::set_pin` has exactly one
+/// guard, `if has_data(EF_PIN)`, so a poisoned absence lets an unauthenticated host
+/// install its own PIN over the owner's. Only a definitive answer may be cached.
+#[test]
+fn a_failed_read_is_never_memoised_as_an_absence() {
+    let mut ram = RamStorage::new();
+    ram.write(0x1080, b"the owner's PIN verifier").unwrap();
+    // No `scan()`: that decides every enumerated key up front, which is exactly the
+    // path this test must avoid.
+    let mut fs = Fs::new(FailFirstRead {
+        inner: ram,
+        remaining: 1,
+        err: false,
+    });
+
+    assert!(!fs.has_data(0x1080), "the faulting probe cannot see it");
+    assert!(
+        fs.has_data(0x1080),
+        "a transient backend fault became a permanent absence"
+    );
+}
+
+/// Audit run-36: `Storage::compact` writes its scrub filler straight through the
+/// backend, never through `Fs`, so `Fs::scan` counted it as a dynamic file — and the
+/// dynamic set is sized at exactly `MAX_DYNAMIC_FILES`, with the over-cap push
+/// discarded by a `let _ =` whose `debug_assert!` is compiled out of the release
+/// image. At the cap plus a leftover filler one live key silently lost its
+/// registration and every later `put` to it returned `NoMemory`.
+#[test]
+fn the_scrub_filler_never_costs_a_dynamic_slot() {
+    let mut ram = RamStorage::new();
+    for i in 0..MAX_DYNAMIC_FILES as u16 {
+        ram.write(0x2000 + i, &[0xAA]).unwrap();
+    }
+    // What a failed or power-cut compaction lap leaves behind.
+    ram.write(EF_SCRUB_FILLER, &[0xA5; 8]).unwrap();
+
+    let mut fs = Fs::new(ram);
+    fs.scan();
+
+    for i in 0..MAX_DYNAMIC_FILES as u16 {
+        fs.put(0x2000 + i, &[0xBB])
+            .unwrap_or_else(|_| panic!("{:#06x} lost its registration to the filler", 0x2000 + i));
+    }
 }

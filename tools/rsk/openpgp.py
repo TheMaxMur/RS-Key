@@ -34,7 +34,7 @@ def register(sub):
 
 
 def reset(args):
-    conn = ccid.connect()
+    conn = ccid.connect(exclusive=True)
     # The card must actually carry an OpenPGP application before we block its PINs and
     # TERMINATE it: find_reader can only pick an RS-Key now, but a wrong applet (or a
     # future caller) must fail closed rather than destroy an unrelated card (audit run-30).

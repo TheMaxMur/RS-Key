@@ -43,6 +43,22 @@ impl Ui {
         self.shown = None;
     }
 
+    /// One non-blocking touch sample that only reports a contact the user began on
+    /// the screen now showing. The panel reports level, not edges, so a finger still
+    /// down when an ambient screen is painted would otherwise be judged as a tap on
+    /// it — see [`Ui::touch_armed`]. Seeing the panel untouched arms the next tap.
+    pub(super) fn armed_touch(&mut self) -> Option<rsk_ui::Point> {
+        match self.touch.read() {
+            None => {
+                self.touch_armed = true;
+                None
+            }
+            Some(p) if self.touch_armed => Some(p),
+            // Still the contact that predates this screen: ignore, stay disarmed.
+            Some(_) => None,
+        }
+    }
+
     /// One non-blocking sample of the wake button (if wired), honouring its polarity.
     pub(super) fn wake_pressed(&self) -> bool {
         match &self.wake_btn {
@@ -81,7 +97,11 @@ impl Ui {
     /// independently of display sleep. Sleep is a display setting the user may switch
     /// off; the lock is a security control, so it must not be switchable off with it —
     /// nor postponable by a host, which is why its deadline counts from the last *local*
-    /// interaction. No-op without a device PIN (nothing to unlock with).
+    /// interaction. That second half was not true until run-34 #15: the deadline was
+    /// only *evaluated* inside the ambient-quiet window, which every ceremony exit
+    /// pushes 400 ms forward, so a loop of unauthenticated `authenticatorSelection`
+    /// starved it. `status_task` now evaluates it outside that window.
+    /// No-op without a device PIN (nothing to unlock with).
     pub(super) fn lock_now(&mut self) -> bool {
         if self.locked {
             return false;

@@ -194,7 +194,10 @@ def cmd_status(args):
 def _audit_set(args, target, verb):
     # OFF by default: journalling is opt-in, so nothing is written to the key's
     # flash until it is turned on here (and it stops the moment it is turned off).
-    dev, cid = connect_fido()
+    # Exclusive: this is the switch on the tamper-evident log, and landing it on a
+    # guessed key leaves the operator believing they silenced (or armed) the other
+    # one. The reads in this module still take the first match.
+    dev, cid = connect_fido(exclusive=True)
     pin = resolve_pin(args, has_pin=device_has_pin(dev, cid))
     print("touch the device (BOOTSEL) to confirm…", file=sys.stderr)
     st, m = _vendor(dev, cid, _gated(AUDIT_CONFIG, {1: target}, dev, cid, pin))
@@ -214,7 +217,12 @@ def cmd_disable(args):
 
 
 def cmd_verify(args):
-    dev, cid = connect_fido()
+    # Exclusive despite reading nothing back but a verdict: the checkpoint is
+    # signed by the device's attestation key, so this prints "the journal is
+    # intact" *about a particular key*. Answered by whichever one the tool
+    # happened to open, it is the wrong key's assurance under the right key's
+    # name — the same reason the TUI's `verify_identity` refuses to guess.
+    dev, cid = connect_fido(exclusive=True)
     pin = resolve_pin(args, has_pin=device_has_pin(dev, cid))
     start, seq_next, epoch, entries = read_journal(dev, cid, pin)
     head_local = _fold(epoch, entries)

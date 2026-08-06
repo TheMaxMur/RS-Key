@@ -63,6 +63,7 @@ NOTE_HEAD_MISMATCH = "head-mismatch"
 NOTE_NO_RESET_EVENT = "no-reset-event"
 NOTE_NO_SESSION = "no-session"
 NOTE_JOURNAL_UNREAD = "journal-unread"
+NOTE_RESET_NOT_THIS_RUN = "reset-not-this-run"
 
 
 def register(sub):
@@ -79,7 +80,7 @@ def register(sub):
 
 def _serial():
     """The device serial (RP2350 OTP chip id) from the rescue applet."""
-    conn = ccid.connect()
+    conn = ccid.connect(exclusive=True)
     serial = rescue_serial(*ccid.select(conn, RESCUE_AID))
     if serial is None:
         die("rescue applet did not answer — cannot identify the device")
@@ -145,18 +146,28 @@ def _await_replug():
     CTAPHID session on it. Returns (dev, cid), or (None, None) if either half
     times out — the operator walked away, and the caller still owes a receipt."""
     deadline = time.monotonic() + REPLUG_TIMEOUT_S
-    while ctaphid.find() is not None:
+    while ctaphid.find_all():
         if time.monotonic() > deadline:
             return None, None
         time.sleep(REPLUG_POLL_S)
     print("unplugged — plug it back in…", file=sys.stderr)
     deadline = time.monotonic() + REPLUG_TIMEOUT_S
+    warned = False
     while time.monotonic() < deadline:
-        info = ctaphid.find()
-        if info:
+        found = ctaphid.find_all()
+        # The operator was told this must be the only key attached; enforce it
+        # rather than binding the first match. This is the one moment the bus is
+        # deliberately changing, so a second key appearing here is exactly when a
+        # first-match would land the reset on the wrong device (run-34 #29).
+        if len(found) > 1:
+            if not warned:
+                print(f"{len(found)} FIDO devices attached — unplug all but the one "
+                      "being offboarded; waiting…", file=sys.stderr)
+                warned = True
+        elif found:
             dev = ctaphid.hid.device()
             try:
-                dev.open_path(info["path"])
+                dev.open_path(found[0]["path"])
                 return dev, ctaphid.ctaphid_init(dev)
             except OSError:
                 dev.close()  # enumerated, HID interface not ready yet
@@ -198,14 +209,28 @@ def _journal_entries(entries):
     return out
 
 
-def _window_defect(epoch, entries, head):
+def _window_defect(epoch, entries, head, steps=None):
     """Why a signed window fails to certify a wipe, as (code, detail), or None
-    when it certifies: the signed head must fold from the recorded window, and
-    that window must hold the RESET event."""
+    when it certifies: the signed head must fold from the recorded window, that
+    window must OPEN with the RESET event, and — when the host's own observations
+    are available — this run must be the one that produced it.
+
+    The position matters. A successful authenticatorReset folds the window away and
+    *then* appends RESET, so a genuine one is always entry 0. Accepting a RESET
+    anywhere let a run whose reset FAILED certify itself off a previous run's event:
+    the failed reset leaves the old window (and its RESET) untouched, so every
+    cryptographic check passed over a device whose seed and passkeys were still
+    there. Neither test binds the event to *this* invocation on its own, so the
+    host's `fido_reset` step is cross-checked too (audit run-33)."""
     if head != _fold(epoch, entries):
         return NOTE_HEAD_MISMATCH, "signed head differs from the recorded window — TAMPER"
-    if not any(entries[off + 8] == EVT_RESET for off in range(0, len(entries), ENTRY_LEN)):
-        return NOTE_NO_RESET_EVENT, "signed window does not contain the RESET event"
+    if len(entries) < ENTRY_LEN or entries[8] != EVT_RESET:
+        return NOTE_NO_RESET_EVENT, ("signed window does not OPEN with the RESET event — "
+                                     "it does not record a reset completed in this window")
+    if steps is not None and steps.get("fido_reset") != "ok":
+        return NOTE_RESET_NOT_THIS_RUN, (
+            f"the FIDO reset did not succeed in this run (fido_reset="
+            f"{steps.get('fido_reset')!r}) — the RESET in the window is a previous one")
     return None
 
 
@@ -297,7 +322,7 @@ def _receipt(dev, cid, serial, steps):
                                   "fingerprint": _fingerprint(pubkey),
                                   "challenge": challenge.hex(),
                                   "epoch": epoch.hex(), "entries": entries.hex()}
-            defect = _window_defect(epoch, entries, head)
+            defect = _window_defect(epoch, entries, head, steps)
             report["reset_attested"] = defect is None
     if defect:
         # Recorded, never fatal: the wipe already happened, so losing the file
@@ -312,9 +337,17 @@ def run(args):
         return verify(args)
 
     serial, conn = _serial()
-    hid_info = ctaphid.find()
-    if not hid_info:
+    # Resolve the FIDO half exclusively HERE, before anything is destroyed. The
+    # only other exclusive bind is inside `_require_journalling`, which
+    # `--no-receipt` skips — so that flavour used to wipe OTP, OATH, PIV and
+    # OpenPGP and only then discover it could not tell the keys apart (run-34 #29).
+    hid_found = ctaphid.find_all()
+    if not hid_found:
         die("no FIDO HID device — offboard needs both interfaces")
+    if len(hid_found) > 1:
+        die(f"{len(hid_found)} FIDO HID devices attached — offboard destroys a "
+            "specific key, so it must not guess; unplug the others and retry")
+    hid_info = hid_found[0]
     if not args.no_receipt:
         _require_journalling()
 
@@ -421,9 +454,24 @@ def verify(args):
     verify_signature(head, seq, sig, pubkey, challenge,
                      "do not trust this receipt",
                      "receipt SIGNATURE INVALID — do not trust this receipt")
-    defect = _window_defect(epoch, entries, head)
+    # Cross-check the receipt's own host observations. `verify` used to read only
+    # the `attested` block, so a receipt whose recorded `fido_reset` said "failed"
+    # still printed the clean verdict — every cryptographic check passing over a
+    # contradiction sitting in the same file (audit run-33).
+    steps = rep.get("host_observations", {}).get("steps")
+    # A legitimate v2 receipt ALWAYS writes this (see `_receipt`), so its absence
+    # means the file was edited or truncated — which is exactly what the freshness
+    # cross-check exists to catch. Passing None here would skip that check instead,
+    # letting a `del host_observations.steps` launder a failed reset into a clean
+    # verdict against the genuine enrolled key, signature untouched (run-34).
+    if not isinstance(steps, dict):
+        die("malformed receipt: host_observations.steps is missing — "
+            "this receipt cannot be checked against the run that produced it")
+    defect = _window_defect(epoch, entries, head, steps)
     if defect:
         die(f"{defect[1]} — this receipt does not certify a wipe")
+    if not rep.get("reset_attested"):
+        die("the receipt does not claim reset_attested — it does not certify a wipe")
 
     fp = _fingerprint(pubkey)
     print(f"fingerprint : {fp}")

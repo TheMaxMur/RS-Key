@@ -207,7 +207,7 @@ surface returns:
 | `0x02` | INVALID_PARAMETER | malformed param / bad key / wrong blob length |
 | `0x14` | MISSING_PARAMETER | required field absent (e.g. blob/`pinUvAuthParam`) |
 | `0x27` | OPERATION_DENIED | touch declined / timed out |
-| `0x30` | NOT_ALLOWED | precondition unmet (no MSE channel, sealed, soft-locked, or an `authenticatorReset` outside the §5.1 power-up window) |
+| `0x30` | NOT_ALLOWED | precondition unmet (no MSE channel, one already spent or owned by another CTAPHID channel, an `MSE` while one is live (§9.1), sealed, soft-locked, or an `authenticatorReset` outside the §5.1 power-up window) |
 | `0x33` | PIN_AUTH_INVALID | `pinUvAuthParam` MAC or `acfg` permission wrong |
 | `0x36` | PUAT_REQUIRED | a PIN is set but no `pinUvAuthToken` was supplied |
 | `0x39` | REQUEST_TOO_LARGE | `subCommandParams` over the limit |
@@ -395,7 +395,14 @@ When no host config has been written, the device returns the **defaults**:
 `USB_ENABLED` = all-supported, `DEVICE_FLAGS = 80`, `CONFIG_LOCK = 00`. Once
 WRITE CONFIG has stored a blob, READ CONFIG echoes that blob after the fixed
 `USB_SUPPORTED/SERIAL/FORM_FACTOR/VERSION` prefix, then always appends
-`CONFIG_LOCK = 00`. The config-lock tags (`0A` set-code, `0B` unlock) are **write-
+`CONFIG_LOCK = 00`.
+
+A stored blob is echoed **only if it still satisfies the WRITE CONFIG rules** —
+each tag at most once, `USB_ENABLED` exactly two bytes. One that does not (a record
+an older, laxer build accepted) is not echoed verbatim; the response instead
+carries a synthesised `USB_ENABLED` equal to the mask the device actually enforces.
+So READ CONFIG is always parseable and never contradicts enforcement, whatever is
+in flash (audit run-34 #25). The config-lock tags (`0A` set-code, `0B` unlock) are **write-
 only on real hardware**; RS-Key does not implement the lock, so it strips them on
 write and never stores or echoes a lock code (audit run-30) — `0A` on read is
 always the 1-byte `00`.
@@ -427,8 +434,16 @@ always reversible. Building `--features strict-config` gates the *write* on
 operator presence; the enforcement of a persisted mask is the same on both
 builds.
 
-> WRITE CONFIG refuses an inner blob > 64 bytes (`6A80`) so a malformed config
-> can't wedge later reads. **On the default build the write is ungated** (full
+> WRITE CONFIG validates the inner blob (`6A80` otherwise): it must be well-formed
+> TLV, carry only tags a host may write (`03`, `06`, `07`, `08`, `0A`, `0B`, `0C`,
+> `0E`, `17` — ykman's `DeviceConfig` set), and fit the smallest transport's
+> response buffer. The device-owned identity tags (`01` supported, `02` serial,
+> `04` form factor, `05` version) are emitted by the card and refused on write:
+> READ CONFIG echoes the stored blob *after* them, and host parsers take the last
+> occurrence, so a stored duplicate would override the real identity and a
+> malformed one would make the whole DeviceInfo unparseable — permanently, since
+> this record survives `authenticatorReset`. **On the default build the write is
+> ungated** (full
 > ykman parity — any USB host can rewrite the reported config, matching a stock
 > YubiKey with no config-lock code). Building `--features strict-config` restores
 > an **on-device user-presence confirmation** (Approve on the trusted-display
@@ -780,6 +795,29 @@ Establishes an encrypted channel for the seed-moving subcommands.
 **Blob format** (the 60-byte `blob` in EXPORT/LOAD/UNLOCK/ATT_IMPORT):
 `nonce(12) ‖ ciphertext(32) ‖ tag(16)`, ChaCha20-Poly1305 under the channel key
 with **AAD = `dev_pub` (65 bytes)**.
+
+> **Channel lifetime — the channel is ONE-SHOT: handshake, then immediately run the
+> one subcommand it protects.** (RS-Key `0x0866`+.) The device holds one channel key
+> per power cycle. Every gated consumer (`BACKUP_EXPORT`, `BACKUP_LOAD`, `UNLOCK`,
+> `ATT_IMPORT`, `ATT_CLEAR`, `authenticatorConfig` `AUT_ENABLE`) **spends** it, whatever
+> the outcome — a declined touch or a failed decrypt spends it too — and a second `MSE`
+> while one is live answers `0x30` NOT_ALLOWED **and drops the channel**, so both
+> parties must re-handshake.
+>
+> This is the boundary, not the CID check below it. A CTAPHID channel id is a routing
+> label the sender writes into its own frame header (CTAP 2.1 §11.2.5), so an
+> interloper forges the victim's CID rather than using its own, and comparing `mse_cid`
+> to the request's channel compares the attacker's bytes against themselves. Refusing
+> the re-key is what stops a co-resident process re-keying between your `MSE` and your
+> `BACKUP_EXPORT` and receiving the master seed instead of you. The cost is that such a
+> process can *deny* you a handshake; it can never redirect one.
+>
+> **For clients:** run `MSE` immediately before each subcommand, on the same CTAPHID
+> channel (a subcommand arriving on a different CID still answers `0x30`), and never
+> cache a channel across two operations. If a handshake answers `0x30`, a previous
+> run died between its `MSE` and its subcommand — the refusal has now cleared it, so
+> **retry once**; a second `0x30` means another process is squatting.
+> Unchanged on the wire; behaviour since bcdDevice `0x0862`.
 
 ### 9.2 PIN gating
 

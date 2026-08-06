@@ -145,7 +145,7 @@ impl Ui {
                 }
                 self.touch.wait_release(last, idle_limit);
             }
-            if crate::worker::host_request_pending() || last.elapsed() >= idle_limit {
+            if crate::worker::host_request_pending_after(last) || last.elapsed() >= idle_limit {
                 return None;
             }
             block_for(Duration::from_millis(TOUCH_POLL_MS));
@@ -400,8 +400,21 @@ impl Ui {
     /// clientPIN's `EF_PIN`); a host `authenticatorReset` clears both.
     pub(super) fn show_pin_blocked(&mut self) {
         let _ = rsk_ui::render_pin_blocked(&mut self.panel);
+        self.hold_notice();
+    }
+
+    /// After a factory wipe that could not prove it emptied the store, show "Erase
+    /// failed" instead of the success pop and do NOT reboot — coming up fresh is
+    /// exactly what would make a half-erased device read as factory-clean.
+    pub(super) fn show_wipe_failed(&mut self) {
+        let _ = rsk_ui::render_wipe_failed(&mut self.panel);
+        self.hold_notice();
+    }
+
+    /// Hold a controlless notice until a tap, the power button, a queued host command
+    /// or ~5 s, letting the tap that opened it lift first.
+    fn hold_notice(&mut self) {
         self.shown = None;
-        // Let the final wrong-PIN tap lift, then hold the notice, dismissable by a fresh tap.
         let start = Instant::now();
         self.touch
             .wait_release(start, Duration::from_millis(MENU_INACTIVITY_MS));
@@ -416,7 +429,7 @@ impl Ui {
                 self.touch.wait_release(t0, show);
                 break;
             }
-            if crate::worker::host_request_pending() || t0.elapsed() >= show {
+            if crate::worker::host_request_pending_after(t0) || t0.elapsed() >= show {
                 break;
             }
             block_for(Duration::from_millis(TOUCH_POLL_MS));
@@ -470,7 +483,9 @@ impl Ui {
                         }
                         last = Instant::now();
                     }
-                    if crate::worker::host_request_pending() || last.elapsed() >= idle_limit {
+                    if crate::worker::host_request_pending_after(last)
+                        || last.elapsed() >= idle_limit
+                    {
                         break;
                     }
                     block_for(Duration::from_millis(TOUCH_POLL_MS));
@@ -584,16 +599,22 @@ impl Ui {
     /// chevron, a slid-off finger, or the inactivity timeout all abandon it without a
     /// write. On a completed hold it shows the wiping notice, erases all flash but the
     /// org attestation ([`rsk_fido::survives_factory_reset`]), and reboots — the next
-    /// boot re-provisions a fresh seed, so the device returns blank. Diverges (resets)
-    /// on confirm; returns only when cancelled.
-    pub(super) fn run_factory_reset(&mut self) {
+    /// boot re-provisions a fresh seed, so the device returns blank.
+    ///
+    /// Returns `true` once a reboot is queued, so the caller exits the menu — the
+    /// same contract `run_firmware` carries, and for the same reason: this used to
+    /// diverge into `SCB::sys_reset`, and once it started merely *queueing* the
+    /// reboot (audit run-34 #16) anything the caller ran afterwards could re-create
+    /// a record the wipe had just erased (audit run-35: `persist_settings` carried
+    /// `pin_declined` across the reset).
+    pub(super) fn run_factory_reset(&mut self) -> bool {
         let idle_limit = Duration::from_millis(MENU_INACTIVITY_MS);
         // Let the Settings-row tap's finger lift before the next touch is read.
         self.touch.wait_release(Instant::now(), idle_limit);
         // PIN gate first (when set) so the pad doesn't flash the confirm screen behind it;
         // no PIN returns at once and the confirm screen below is shown directly.
         if !self.local_pin_gate(PinScope::Device) {
-            return; // no PIN set is fine; a wrong PIN or decline aborts — nothing erased
+            return false; // no PIN set is fine; a wrong PIN or decline aborts — nothing erased
         }
         // The destructive-action screen, then a deliberate hold to commit.
         let _ = rsk_ui::render_confirm_factory_reset(&mut self.panel);
@@ -605,16 +626,35 @@ impl Ui {
             // wipe everything but the attestation and reboot into a fresh device. The
             // reboot clears RAM and re-seeds at boot, so no rng/state is needed here.
             let _ = rsk_ui::render_erasing(&mut self.panel);
-            let _ = self
+            let wiped = self
                 .fs
                 .borrow_mut()
-                .factory_wipe(rsk_fido::survives_factory_reset);
+                .factory_wipe(
+                    rsk_fido::survives_factory_reset,
+                    crate::ccid_handler::gates_wiped_last,
+                )
+                .is_ok();
+            if !wiped {
+                self.show_wipe_failed();
+                self.end_modal();
+                return false;
+            }
             // Confirm the wipe on the trusted screen before the reboot re-provisions a
             // fresh device (the grey rotate pop reads as "erased / restarting").
+            self.journal_local(rsk_fido::journal::EV_RESET);
             self.show_success(SuccessKind::Wiped, Some(SUCCESS_POP_MS));
-            cortex_m::peripheral::SCB::sys_reset();
+            // Queue it for the worker rather than resetting the chip here. A direct
+            // `SCB::sys_reset` skipped `Worker::reboot`'s scrub — the DRBG, the OTP
+            // keyboard's frame buffers and core1's mailbox all stayed resident
+            // through a reset the user asked for precisely to leave nothing behind
+            // (audit run-34 #16). The ambient loop parks on `reboot_pending` and
+            // yields, so the worker runs on the next tick.
+            crate::vendor::request_reboot(false);
+            self.end_modal();
+            return true;
         }
         self.end_modal();
+        false
     }
 
     /// The on-device Set / Change PIN flow for `target` (Settings → Security → Device/FIDO
@@ -697,13 +737,26 @@ impl Ui {
                         // stale `false` would skip the auto-lock. A store failure only makes
                         // this over-lock, which unlock-with-no-PIN harmlessly drops.
                         self.home_pin_set = true;
+                        self.journal_local(rsk_fido::journal::EV_PIN_SET);
                     }
                     PinScope::Fido => {
-                        let _ = rsk_fido::passkeys::store_local_pin(
+                        if rsk_fido::passkeys::store_local_pin(
                             &dev,
                             &mut self.fs.borrow_mut(),
                             &new[..n1],
-                        );
+                        )
+                        .is_ok()
+                        {
+                            // Revoke live pinUvAuthTokens. `FidoState` lives in the
+                            // worker and outlives every dispatch, and the token is
+                            // random RAM state rather than a PIN derivative — so
+                            // without this a host holding a `PERM_CM` token minted
+                            // under the old PIN goes on deleting resident credentials
+                            // (no touch) for up to ten more minutes, right after the
+                            // owner did the one thing they believe revokes it.
+                            crate::handler::note_local_pin_changed();
+                            self.journal_local(rsk_fido::journal::EV_PIN_CHANGE);
+                        }
                     }
                 }
                 break;
@@ -754,7 +807,7 @@ impl Ui {
                     }
                     self.touch.wait_release(last, idle);
                 }
-                if crate::worker::host_request_pending() || last.elapsed() >= idle {
+                if crate::worker::host_request_pending_after(last) || last.elapsed() >= idle {
                     return;
                 }
                 block_for(Duration::from_millis(TOUCH_POLL_MS));

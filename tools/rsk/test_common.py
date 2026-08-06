@@ -1,19 +1,25 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 RS-Key contributors
 
-"""Unit tests for rsk.common.resolve_pin — the one PIN-entry chokepoint.
+"""Unit tests for rsk.common — the PIN-entry, confirmation and connect chokepoints.
 
 Run from tools/:  python -m pytest rsk/test_common.py
 Every gated command routes its PIN through resolve_pin, so the precedence
 (flag > prompt), the PIN-free skip, and the required/non-TTY guards are the
 behaviour the whole CLI's consistency rests on — pin them here. No device.
+`confirm` and `connect_fido`'s refusal are the other two: which commands call
+them is asserted in test_refuse_to_guess.py, what they do is asserted here.
 """
 import argparse
+import sys
 import types
 
-import pytest
+# connect_fido imports rsk.ctaphid, which sys.exits at import without hidapi.
+sys.modules.setdefault("hid", types.ModuleType("hid"))
 
-from rsk import common
+import pytest  # noqa: E402
+
+from rsk import common  # noqa: E402
 
 
 def _args(pin=None):
@@ -236,3 +242,82 @@ def test_die_ctap_pin_error_hostile_string_retries_not_printed(capsys):
     err = capsys.readouterr().err
     assert err.strip() == "error: wrong PIN"
     assert "\x1b" not in err
+
+
+# --- confirm: the typed gate in front of every irreversible write -------------
+# secure-boot revoke/harden/enable/lock, `otp lock-page58`, `openpgp reset` and
+# `offboard` all funnel through here. Making the body a no-op left the whole
+# suite green (audit run-34 #9), so pin the accept and the refuse.
+
+def _typed(monkeypatch, text):
+    monkeypatch.setattr("builtins.input", lambda prompt="": text)
+
+
+def test_confirm_accepts_the_exact_token(monkeypatch):
+    _typed(monkeypatch, "REVOKE-BOOTKEY")
+    common.confirm("REVOKE-BOOTKEY")  # returns; anything else must raise
+
+
+def test_confirm_tolerates_surrounding_whitespace(monkeypatch):
+    _typed(monkeypatch, "  LOCK-SECURE-BOOT \n")
+    common.confirm("LOCK-SECURE-BOOT")
+
+
+@pytest.mark.parametrize("typed", ["", "y", "yes", "revoke-bootkey", "REVOKE-BOOTKEY!",
+                                   "REVOKE", "REVOKE-BOOTKEY REVOKE-BOOTKEY"])
+def test_confirm_refuses_anything_but_the_token(monkeypatch, typed, capsys):
+    _typed(monkeypatch, typed)
+    with pytest.raises(SystemExit):
+        common.confirm("REVOKE-BOOTKEY")
+    assert "confirmation mismatch" in capsys.readouterr().err
+
+
+def test_confirm_shows_the_token_it_wants(monkeypatch, capsys):
+    _typed(monkeypatch, "ENABLE-SECURE-BOOT")
+    common.confirm("ENABLE-SECURE-BOOT")
+    out = capsys.readouterr().out
+    assert "irreversible" in out and "ENABLE-SECURE-BOOT" in out
+
+
+# --- connect_fido: refuse to guess between two attached keys ------------------
+# The CCID half of this is test_ccid_select.py; this is the HID half.
+
+def _found(monkeypatch, n):
+    from rsk import ctaphid
+
+    class _Dev:
+        def open_path(self, path):
+            pass
+
+    monkeypatch.setattr(ctaphid, "find_all", lambda: [{"path": f"p{i}".encode()}
+                                                      for i in range(n)])
+    monkeypatch.setattr(ctaphid, "hid", types.SimpleNamespace(device=_Dev))
+    monkeypatch.setattr(ctaphid, "ctaphid_init", lambda dev: b"cid0")
+
+
+def test_connect_fido_refuses_two_devices_when_exclusive(monkeypatch, capsys):
+    _found(monkeypatch, 2)
+    with pytest.raises(SystemExit):
+        common.connect_fido(exclusive=True)
+    assert "cannot act on the wrong device" in capsys.readouterr().err
+
+
+def test_connect_fido_still_guesses_for_the_read_only_callers(monkeypatch):
+    # `rsk status` and friends stay non-exclusive: refusing there would be a
+    # regression for anyone with two keys plugged in.
+    _found(monkeypatch, 2)
+    _, cid = common.connect_fido()
+    assert cid == b"cid0"
+
+
+def test_connect_fido_with_one_device_is_unaffected(monkeypatch):
+    _found(monkeypatch, 1)
+    _, cid = common.connect_fido(exclusive=True)
+    assert cid == b"cid0"
+
+
+def test_connect_fido_with_no_device_refuses(monkeypatch, capsys):
+    _found(monkeypatch, 0)
+    with pytest.raises(SystemExit):
+        common.connect_fido()
+    assert "no FIDO HID device" in capsys.readouterr().err

@@ -123,6 +123,7 @@ pub fn scan_files<S: Storage>(
         put(fs, EF_PW_RETRIES, PW_RETRIES_INIT)?;
     }
     neutralize_default_reset_code(dev, fs)?;
+    settle_rc_retry_counter(fs)?;
     Ok(())
 }
 
@@ -130,9 +131,10 @@ pub fn scan_files<S: Storage>(
 /// public admin default "12345678" with an active retry counter, making
 /// `RESET RETRY P1=0` an unauthenticated PW1-reset backdoor. Neutralise any
 /// already-provisioned card still carrying that default RC — delete the RC
-/// verifier and its DEK copy and zero the RC retry counter — restoring the spec's
-/// "reset code deactivated until PUT DATA 0xD3" state. A real admin-set RC (a
-/// different verifier) is left untouched.
+/// verifier and its DEK copy — restoring the spec's "reset code deactivated
+/// until PUT DATA 0xD3" state. A real admin-set RC (a different verifier) is
+/// left untouched. The retry counter is not zeroed here: `settle_rc_retry_counter`
+/// owns that byte for every card, including the ones this function cannot reach.
 fn neutralize_default_reset_code<S: Storage>(dev: &Device, fs: &mut Fs<S>) -> Result<(), Error> {
     let mut rec = [0u8; 64];
     // RC verifier record is [len, 0x01, verifier(32)].
@@ -148,13 +150,27 @@ fn neutralize_default_reset_code<S: Storage>(dev: &Device, fs: &mut Fs<S>) -> Re
     }
     let _ = fs.delete(EF_RC);
     let _ = fs.delete_key(EF_DEK_RC);
+    Ok(())
+}
+
+/// Hold DO C4's RC error counter to 0 while no resetting code exists (OpenPGP
+/// Card 3.4 §4.3.4). Firmware 0x07F7..=0x0852 stopped seeding an RC verifier but
+/// still wrote a live RC counter into `EF_PW_PRIV`, and init only writes that
+/// record when it is absent — so those cards advertise a reset code they do not
+/// have, and `neutralize_default_reset_code` never sees them (it keys on an RC
+/// that is already gone). Idempotent: the flash write happens only on repair.
+fn settle_rc_retry_counter<S: Storage>(fs: &mut Fs<S>) -> Result<(), Error> {
+    if fs.has_data(EF_RC) {
+        return Ok(());
+    }
     let mut pw = [0u8; 8];
-    if let Some(pn) = fs.read(EF_PW_PRIV, &mut pw) {
-        let idx = pw_retry_idx(EF_RC);
-        if idx < pn {
-            pw[idx] = 0;
-            let _ = fs.put(EF_PW_PRIV, &pw[..pn]);
-        }
+    let Some(n) = fs.read(EF_PW_PRIV, &mut pw) else {
+        return Ok(());
+    };
+    let idx = pw_retry_idx(EF_RC);
+    if idx < n && pw[idx] != 0 {
+        pw[idx] = 0;
+        put(fs, EF_PW_PRIV, &pw[..n])?;
     }
     Ok(())
 }

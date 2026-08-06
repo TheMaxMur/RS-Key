@@ -236,15 +236,10 @@ fn write_info<W: Write>(
     // slots (capacity minus the occupied EF_CRED slots), supplied by the caller.
     enc.u8(0x14)?.u16(remaining_rk)?;
 
-    // 0x16 attestationFormats — the attestation statement formats we emit. Default
-    // ships "none" (makeCredential self-attestation conveys no trust beyond it and a
-    // packed EdDSA self-attestation breaks Windows/OpenSSH `ed25519-sk` enroll —
-    // issue #26) and still emits "packed" for an enterprise attestation; the
-    // fido-conformance profile emits packed self-attestation (its MakeCredential
-    // tests verify it). Keep in sync with the metadata statements.
-    #[cfg(not(feature = "fido-conformance"))]
-    enc.u8(0x16)?.array(2)?.str("none")?.str("packed")?;
-    #[cfg(feature = "fido-conformance")]
+    // 0x16 attestationFormats — the attestation statement formats we emit. Only
+    // "packed": makeCredential always carries basic attestation with the device x5c,
+    // and an enterprise request swaps in the org chain. Keep in sync with the
+    // metadata statements.
     enc.u8(0x16)?.array(1)?.str("packed")?;
 
     // 0x1D maxPINLength — max PIN length in Unicode code points. The PIN is padded

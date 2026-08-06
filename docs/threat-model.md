@@ -278,6 +278,29 @@ residuals: `Copy` temporaries inside RustCrypto curve arithmetic, digest
 internals, and heap temporaries inside the `rsa` crate. Short-lived,
 library-internal, not wipeable without forking the crates.
 
+A WebAuthn **large-blob key is obtainable without user interaction**. CTAP 2.1
+§12.3 puts no UP/UV precondition on the `largeBlobKey` extension output — unlike
+§12.5, which mandates refusing `hmac-secret` on a silent `up:false` probe — and
+§6.2.2 step 5 scopes `alwaysUv` to requests where `up` is present and true. RS-Key
+implements both as written, so a host process can obtain a credential's large-blob
+key, and the ungated `authenticatorLargeBlobs get` alongside it, with no touch and
+no PIN, on a device with `alwaysUv` enabled. Per §6.10 the confidentiality of that
+data is a function of the credential's protection policy, so a relying party that
+needs it gated should set `credProtect` accordingly. Deviating unilaterally would
+fail conformance; the asymmetry belongs upstream.
+
+The reboot to BOOTSEL is presence-gated but takes no PIN, so "one touch, then
+dump RAM" is a real attacker move. `worker::reboot` wipes the live key material
+before dropping, and the stack — which carries the deepest secrets, RSA primes
+and EC scalars — is *not* wiped. That is deliberate, and measured rather than
+assumed: on RP2350 A4 the platform clears main SRAM across the drop. All 520 KiB
+read back as zeros while a pattern written through picoboot read straight back,
+so the zeros are the memory and not a refused read
+([`tests/54_sram_residue.py`](https://github.com/TheMaxMur/RS-Key/blob/main/tests/54_sram_residue.py),
+2026-08-05, secure boot off). This is a property of the silicon revision and boot
+configuration, so it is re-measured when either moves; the explicit wipes stay as
+depth in case a future one keeps SRAM.
+
 ## Supply chain & process
 
 - `cargo audit` + `cargo deny` (advisories, license allow-list, source

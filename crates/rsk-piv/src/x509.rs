@@ -309,7 +309,10 @@ fn extensions(
     // DER order: [Yubico…,] BC, SKI, AKI, KU — written backward.
     {
         // keyUsage, critical: a key-agreement key (X25519) advertises keyAgreement
-        // (bit 4); a signing key advertises digitalSignature | keyCertSign.
+        // (bit 4); a signing key advertises digitalSignature, and keyCertSign only
+        // when it really is a CA. RFC 5280 §4.2.1.3 makes that conditional a MUST —
+        // "if keyCertSign is asserted, cA MUST also be asserted" — and it was on
+        // every leaf, whose basicConstraints says `cA=FALSE` (audit run-34 #36).
         let m = w.mark();
         let ku: &[u8] = if matches!(
             p.spki,
@@ -318,9 +321,11 @@ fn extensions(
                 ..
             }
         ) {
-            &[0x03, 0x02, 0x03, 0x08]
+            &[0x03, 0x02, 0x03, 0x08] // keyAgreement
+        } else if p.ca_pathlen.is_some() {
+            &[0x03, 0x02, 0x02, 0x84] // digitalSignature | keyCertSign
         } else {
-            &[0x03, 0x02, 0x02, 0x84]
+            &[0x03, 0x02, 0x07, 0x80] // digitalSignature
         };
         w.raw(ku)?;
         finish_ext(w, OID_KEY_USAGE, true, m)?;

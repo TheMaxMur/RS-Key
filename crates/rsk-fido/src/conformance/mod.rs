@@ -288,6 +288,45 @@ fn verify_p256(x: &[u8], y: &[u8], msg: &[u8], der_sig: &[u8]) {
         .expect("P-256 signature verifies under the given public key");
 }
 
+/// The `(alg, sig, x5c leaf)` of a packed basic attestation statement (key 3),
+/// asserting the canonical `{alg, sig, x5c}` shape and a single-cert chain.
+pub(crate) fn packed_att_stmt(body: &[u8]) -> (i64, Vec<u8>, Vec<u8>) {
+    let mut d = field_at(body, 3).expect("attStmt (0x03) present");
+    assert_eq!(
+        d.map().unwrap().unwrap(),
+        3,
+        "basic-attestation attStmt is {{alg, sig, x5c}}"
+    );
+    assert_eq!(d.str().unwrap(), "alg");
+    let alg = d.i64().unwrap();
+    assert_eq!(d.str().unwrap(), "sig");
+    let sig = d.bytes().unwrap().to_vec();
+    assert_eq!(d.str().unwrap(), "x5c");
+    assert_eq!(
+        d.array().unwrap().unwrap(),
+        1,
+        "the device chain is one self-signed cert"
+    );
+    (alg, sig, d.bytes().unwrap().to_vec())
+}
+
+/// The uncompressed P-256 point `(x, y)` out of a certificate's
+/// SubjectPublicKeyInfo — the key an RP verifies a packed x5c attestation under.
+pub(crate) fn att_leaf_pubkey(cert: &[u8]) -> ([u8; 32], [u8; 32]) {
+    // BIT STRING, 66 bytes, 0 unused bits, uncompressed point marker.
+    const SPKI_TAIL: [u8; 4] = [0x03, 0x42, 0x00, 0x04];
+    let off = cert
+        .windows(SPKI_TAIL.len())
+        .position(|w| w == SPKI_TAIL)
+        .expect("SPKI point in the leaf")
+        + SPKI_TAIL.len();
+    let mut x = [0u8; 32];
+    let mut y = [0u8; 32];
+    x.copy_from_slice(&cert[off..off + 32]);
+    y.copy_from_slice(&cert[off + 32..off + 64]);
+    (x, y)
+}
+
 /// The credential COSE public key `(x, y)` embedded in a makeCredential authData
 /// (`{1:2, 3:alg, -1:crv, -2:x, -3:y}` after the attested-credential-data header).
 fn credential_pubkey(ad: &[u8]) -> ([u8; 32], [u8; 32]) {

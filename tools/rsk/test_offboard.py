@@ -69,8 +69,12 @@ def _receipt(entries, *, key=None, head=None, epoch=EPOCH):
 
 
 def _wiped():
-    """What a real post-wipe window looks like: a boot, then the RESET."""
-    return _entry(412, EVT_BOOT) + _entry(413, EVT_RESET)
+    """What a real post-wipe window looks like. `authenticatorReset` calls
+    `journal::fold_and_scrub` — collapsing the whole window, boot entry included,
+    into the epoch — and only THEN appends the RESET, so a completed wipe leaves
+    RESET as entry 0. Modelling a leading BOOT here is what made the stale-RESET
+    hole invisible: it implied a RESET anywhere in the window was normal."""
+    return _entry(413, EVT_RESET)
 
 
 def _verify(tmp_path, rep, expect_key=None):
@@ -119,7 +123,28 @@ def test_decoded_window_alone_cannot_claim_a_reset(tmp_path, capsys):
         {"seq": 413, "uptime_ms": 0, "event": "RESET", "aux": 0, "detail": ""})
     with pytest.raises(SystemExit):
         _verify(tmp_path, rep)
-    assert "does not contain the RESET event" in capsys.readouterr().err
+    assert "does not OPEN with the RESET event" in capsys.readouterr().err
+
+
+def test_failed_reset_cannot_certify_off_a_previous_runs_event(tmp_path, capsys):
+    # Audit run-33. A FIDO reset that fails with the session alive (any status but
+    # ERR_NOT_ALLOWED — a missed touch, a timeout) leaves the PREVIOUS window and its
+    # RESET untouched, because the firmware folds and appends only on success. The
+    # receipt is still written and signed for real, so every cryptographic check
+    # passes; only the host's own observation contradicts it. Both the live run and
+    # `--verify` must refuse rather than bless a device whose seed is still there.
+    rep = _receipt(_wiped())
+    rep["host_observations"]["steps"]["fido_reset"] = "failed: 0x27"
+    with pytest.raises(SystemExit):
+        _verify(tmp_path, rep)
+    assert "did not succeed in this run" in capsys.readouterr().err
+
+    # And a receipt that never claimed the wipe cannot be verified into one.
+    rep = _receipt(_wiped())
+    rep["reset_attested"] = False
+    with pytest.raises(SystemExit):
+        _verify(tmp_path, rep)
+    assert "does not claim reset_attested" in capsys.readouterr().err
 
 
 def test_signature_over_another_head_is_rejected(tmp_path, capsys):
@@ -139,7 +164,24 @@ def test_v1_receipt_is_refused(tmp_path, capsys):
            **{k: v for k, v in rep["attested"].items() if k != "epoch"}}
     with pytest.raises(SystemExit):
         _verify(tmp_path, rep)
-    assert "receipt" in capsys.readouterr().err
+    # Assert the version guard's own message. `"receipt" in stderr` also matched the
+    # unrelated KeyError this file used to raise with the guard deleted, so the test
+    # passed either way (audit run-34 #9).
+    assert f"not a v{offboard.RECEIPT_VERSION} receipt" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("version", [None, 1, offboard.RECEIPT_VERSION + 1, "2"])
+def test_only_the_current_receipt_version_is_accepted(tmp_path, capsys, version):
+    # A future version may bind fields this build does not check, so refuse both
+    # directions rather than verifying a document under the wrong rules.
+    rep = _receipt(_wiped())
+    if version is None:
+        del rep["receipt_version"]
+    else:
+        rep["receipt_version"] = version
+    with pytest.raises(SystemExit):
+        _verify(tmp_path, rep)
+    assert f"not a v{offboard.RECEIPT_VERSION} receipt" in capsys.readouterr().err
 
 
 def test_unsigned_receipt_is_refused(tmp_path, capsys):
@@ -199,18 +241,26 @@ def _args(tmp_path, **kw):
 def _stub_run(monkeypatch, statuses=(0x00,), entries=None):
     """Stub every device call `run` makes. `statuses` is the CTAP status per
     authenticatorReset attempt (the last one repeats). Returns the call log."""
-    log = {"vendor": [], "journal": 0, "resets": 0}
+    log = {"vendor": [], "journal": 0, "resets": 0, "binds": []}
     entries = _wiped() if entries is None else entries
     key = ec.generate_private_key(ec.SECP256R1())
 
     monkeypatch.setattr(offboard, "_serial", lambda: ("cafebabe12345678", _Conn()))
     monkeypatch.setattr(offboard.ctaphid, "find", lambda: {"path": b"hid"})
+    monkeypatch.setattr(offboard.ctaphid, "find_all", lambda: [{"path": b"hid"}])
     monkeypatch.setattr(offboard, "_require_journalling", lambda: None)
     monkeypatch.setattr(offboard, "confirm", lambda token: None)
     for step in ("_wipe_otp", "_wipe_oath", "_wipe_piv"):
         monkeypatch.setattr(offboard, step, lambda conn: (True, "ok"))
     monkeypatch.setattr(offboard, "_wipe_openpgp", lambda: (True, "ok"))
-    monkeypatch.setattr(offboard, "connect_fido", lambda: (_Handle(), b"cid0"))
+    # Record `exclusive` instead of swallowing it into **kw. The old stub absorbed
+    # the argument, so the wipe could have bound whichever key answered first and
+    # these tests would still have passed (audit run-34 #9).
+    def connect_fido(exclusive=False):
+        log["binds"].append(exclusive)
+        return _Handle(), b"cid0"
+
+    monkeypatch.setattr(offboard, "connect_fido", connect_fido)
 
     def send_cbor(dev, cid, payload):
         assert payload == bytes([offboard.CTAP_RESET])
@@ -248,6 +298,8 @@ def test_reset_accepted_first_try_needs_no_replug(tmp_path, monkeypatch, capsys)
     offboard.run(_args(tmp_path))
     rep = json.loads((tmp_path / "receipt.json").read_text())
     assert log["resets"] == 1
+    # The wipe is irreversible, so every bind it makes must refuse to guess.
+    assert log["binds"] == [True]
     assert rep["signed"] and rep["reset_attested"]
     assert "device offboarded" in capsys.readouterr().out
 
@@ -307,7 +359,8 @@ def test_recheck_hint_does_not_pin_the_receipt_against_itself(tmp_path, monkeypa
 
 def test_await_replug_opens_only_the_key_that_came_back(monkeypatch):
     seen = [{"path": b"old"}, None, {"path": b"new"}]
-    monkeypatch.setattr(offboard.ctaphid, "find", lambda: seen.pop(0))
+    monkeypatch.setattr(offboard.ctaphid, "find_all",
+                        lambda: [x for x in [seen.pop(0)] if x])
     monkeypatch.setattr(offboard.time, "sleep", lambda s: None)
     monkeypatch.setattr(offboard.ctaphid, "ctaphid_init", lambda dev: b"cid9",
                         raising=False)
@@ -325,13 +378,13 @@ def test_await_replug_opens_only_the_key_that_came_back(monkeypatch):
 
 def test_await_replug_aborts_when_the_key_stays_put(monkeypatch):
     monkeypatch.setattr(offboard, "REPLUG_TIMEOUT_S", -1)
-    monkeypatch.setattr(offboard.ctaphid, "find", lambda: {"path": b"old"})
+    monkeypatch.setattr(offboard.ctaphid, "find_all", lambda: [{"path": b"old"}])
     monkeypatch.setattr(offboard.time, "sleep", lambda s: None)
     assert offboard._await_replug() == (None, None)
 
 
 def test_await_replug_aborts_when_the_key_never_returns(monkeypatch):
     monkeypatch.setattr(offboard, "REPLUG_TIMEOUT_S", -1)
-    monkeypatch.setattr(offboard.ctaphid, "find", lambda: None)
+    monkeypatch.setattr(offboard.ctaphid, "find_all", lambda: [])
     monkeypatch.setattr(offboard.time, "sleep", lambda s: None)
     assert offboard._await_replug() == (None, None)

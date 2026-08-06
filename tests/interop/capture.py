@@ -17,8 +17,11 @@ never has it), while ykman cells target by `--device <serial>`. Capture each:
     python tests/interop/capture.py --label rsk  --serial <rsk-serial> --out rsk.json
 
 An **identity guard** refuses to write a snapshot whose device doesn't match the
-`--label`: the FIDO AAGUID must be RS-Key's own iff `--label rsk`. This makes a
-mislabeled snapshot — the worst failure mode of a two-device diff — impossible.
+`--label`: the FIDO AAGUID must be RS-Key's own iff `--label rsk`. It vouches for
+the *device*, not for each cell: a cell whose tool takes no device selector (`gpg`,
+`pkcs11-tool`) has to pin and then verify its own target, or it quietly records
+whichever card scdaemon and OpenSC happened to pick — the worst failure mode of a
+two-device diff, because a differing row then reads as a match.
 
 Environment (macOS 27): run under the nix dev-shell python for the `hid`/`pyscard`
 transports, but shell out to **Homebrew** `ykman`/`fido2-token`/`gpg`/`pkcs11-tool`
@@ -311,17 +314,61 @@ def c_ykman_oath_list(serial):
     return cell(parsed={"oath.count": len(names), "oath.names": names}, raw=out, transport="ccid")
 
 
-def c_gpg_card():
-    gpg = _bin("gpg")
-    if not gpg:
-        return cell(status="skip", transport="ccid", detail="gpg not on PATH")
-    gpgconf = _bin("gpgconf")
-    if gpgconf:
-        run([gpgconf, "--kill", "scdaemon"])  # release the reader from any prior holder
-    rc, out = run([gpg, "--card-status"], timeout=30)
+def _openpgp_aid(gpg_card, serial):
+    """The AID of the inserted card whose Yubico serial is `serial`, or None.
+
+    `gpg --card-status` has no device selector and scdaemon serves exactly one card,
+    so with both keys plugged it answers for whichever it picked — for both labels.
+    `gpg-card list --cards` enumerates all of them, and the AID
+    `D276000124010000 | manufacturer(4) | serial(8, BCD) | 0000` names the one we want."""
+    rc, out = run([gpg_card, "--", "list", "--cards"], timeout=30)
+    if rc != 0:
+        return None
+    want = f"{int(serial):08d}"
+    for line in out.splitlines():
+        parts = line.split()
+        aid = parts[-1] if parts else ""
+        if len(aid) == 32 and aid[20:28] == want:
+            return aid
+    return None
+
+
+def c_gpg_card(serial):
+    gpg_card = _bin("gpg-card")
+    if not gpg_card:
+        return cell(status="skip", transport="ccid", detail="gpg-card not on PATH")
+    _kill_scdaemon()  # release the reader from any prior holder
+    aid = _openpgp_aid(gpg_card, serial)
+    if not aid:
+        return cell(status="error", transport="ccid",
+                    detail=f"`gpg-card list --cards` lists no card with serial {serial}")
+    rc, out = run([gpg_card, "--", "list", aid], timeout=30)
     if rc != 0:
         return cell(status="error", transport="ccid", raw=out[:400])
-    return cell(parsed=nz.kv_lines(out, "openpgp.gpg"), raw=out, transport="ccid")
+    parsed = nz.kv_lines(out, "openpgp.gpg")
+    got = parsed.get("openpgp.gpg.serial_number", "")
+    if got != aid:
+        return cell(status="error", transport="ccid", raw=out[:400],
+                    detail=f"gpg-card answered for {got or '?'}, asked for {aid}")
+    return cell(parsed=parsed, raw=out, transport="ccid")
+
+
+def _opensc_slot_block(text, description):
+    """Just the `Slot N (…): <description>` stanza of a `pkcs11-tool -L` dump.
+
+    `-L` ignores `--slot-description` and lists every reader, and `kv_lines` is
+    last-write-wins — so an unsliced dump hands the other key's token metadata to
+    both labels. Only `-O` honours the pin, so the slot list is sliced by hand."""
+    out, keep = [], False
+    for line in text.splitlines():
+        if line.startswith("Slot "):
+            keep = line.split(":", 1)[-1].strip() == description
+            # `Slot 1 (0x4)` slugs to a key naming the host's enumeration order, so
+            # the two snapshots would compare fields that don't exist on each other.
+            line = f"Slot description: {description}"
+        if keep:
+            out.append(line)
+    return "\n".join(out)
 
 
 def c_opensc(label):
@@ -334,13 +381,25 @@ def c_opensc(label):
                             "/usr/lib/opensc-pkcs11.so") if os.path.exists(p)), None)
     if not mod:
         return cell(status="skip", transport="ccid", detail="opensc-pkcs11.so not found")
-    gpgconf = _bin("gpgconf")
-    if gpgconf:
-        run([gpgconf, "--kill", "scdaemon"])
-    rc, out = run([pk, "--module", mod, "-L", "-O"], timeout=30)
+    reader = ccid_reader(label)
+    if reader is None:
+        return cell(status="skip", transport="ccid", detail="no matching PC/SC reader")
+    _kill_scdaemon()
+    rc, slots = run([pk, "--module", mod, "-L"], timeout=30)
     if rc != 0:
-        return cell(status="error", transport="ccid", raw=out[:400], detail="pkcs11-tool rc!=0")
-    return cell(parsed=nz.kv_lines(out, "pkcs11"), raw=out, transport="ccid")
+        return cell(status="error", transport="ccid", raw=slots[:400], detail="pkcs11-tool -L rc!=0")
+    block = _opensc_slot_block(slots, str(reader))
+    if not block:
+        return cell(status="error", transport="ccid", raw=slots[:400],
+                    detail=f"no PKCS#11 slot for reader {reader}")
+    rc, objs = run([pk, "--module", mod, "--slot-description", str(reader), "-O"], timeout=30)
+    if rc != 0:
+        return cell(status="error", transport="ccid", raw=objs[:400], detail="pkcs11-tool -O rc!=0")
+    # The object dump gets its own namespace: it is whatever PIV certificates each
+    # key happens to carry, not a property of the firmware under test.
+    parsed = nz.kv_lines(block, "pkcs11")
+    parsed.update(nz.kv_lines(objs, "pkcs11.obj"))
+    return cell(parsed=parsed, raw=f"{block}\n{objs}", transport="ccid")
 
 
 def _kill_scdaemon():
@@ -373,7 +432,7 @@ def capture(label, serial):
     cells["ykman_oath_info"] = _ykman_cell(serial, ["oath", "info"], "oath")
     cells["ykman_oath_list"] = c_ykman_oath_list(serial)
     cells["ykman_otp"] = _ykman_cell(serial, ["otp", "info"], "otp")
-    cells["gpg_card"] = c_gpg_card()
+    cells["gpg_card"] = c_gpg_card(serial)
     cells["opensc"] = c_opensc(label)
     meta = {
         "label": label,

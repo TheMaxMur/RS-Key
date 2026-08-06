@@ -36,7 +36,7 @@ use rsk_fs::{Fs, KeyFid, Sealed, Storage};
 use rsk_sdk::error::{Error, Result};
 
 use crate::Rng;
-use crate::cert::build_attestation_cert;
+use crate::cert::{build_attestation_cert, matches_template as cert_matches_template};
 use crate::consts::{
     EF_ATT_KEY, EF_COUNTER, EF_CRED_CTR, EF_EE_DEV, EF_KEY_DEV, EF_KEY_DEV_ENC, EF_LARGEBLOB,
     LARGEBLOB_INITIAL, MAX_RESIDENT_CREDENTIALS,
@@ -73,7 +73,14 @@ pub const LOCK_BLOB_LEN: usize = 12 + 32 + 16;
 
 /// Whether the soft lock is engaged (the wrapped blob is what's on flash).
 pub fn lock_engaged<S: Storage>(fs: &mut Fs<S>) -> bool {
-    fs.has_key(EF_KEY_DEV_ENC)
+    // Both halves, not just the sealed copy. `aut_enable` writes `EF_KEY_DEV_ENC`
+    // and *then* deletes the plaintext `EF_KEY_DEV`; a power cut between the two
+    // left both records, and testing only the sealed one reported `locked: true`
+    // while `load_keydev` still read the surviving plaintext — so every FIDO
+    // operation worked and BACKUP_EXPORT still handed out the seed without the lock
+    // key. Reading the torn state as *unlocked* is the truth, and it lets
+    // `rsk lock enable` simply be retried (audit run-33).
+    fs.has_key(EF_KEY_DEV_ENC) && !fs.has_key(EF_KEY_DEV)
 }
 
 /// Wrap the seed value under a host-supplied 32-byte lock key (AUT_ENABLE).
@@ -409,19 +416,47 @@ pub fn ensure_seed<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut impl Rng)
     if !fs.has_data(EF_LARGEBLOB) {
         fs.put(EF_LARGEBLOB, &LARGEBLOB_INITIAL)?;
     }
-    if !fs.has_data(EF_EE_DEV) && !locked {
-        // Self-signed attestation cert over the device key (the seed scalar).
+    if !locked {
         let mut seed = load_keydev(dev, fs).ok_or(Error::ExecError)?;
-        let key = P256Key::from_scalar(&seed).ok_or(Error::ExecError)?;
+        let r = rebuild_att_cert(fs, rng, &seed);
         seed.zeroize();
-        let mut serial = [0u8; 16];
-        rng.fill(&mut serial);
-        serial[0] &= 0x7F; // keep the INTEGER positive (no leading 0x00 needed)
-        let mut buf = [0u8; 512];
-        let n = build_attestation_cert(&key, &serial, &mut buf).ok_or(Error::ExecError)?;
-        fs.put(EF_EE_DEV, &buf[..n])?;
+        r?;
     }
     Ok(())
+}
+
+/// Rebuild `EF_EE_DEV` if it does not both match the current template and certify
+/// `seed`'s public key. Split out of [`ensure_seed`] so the one moment a
+/// soft-locked device has its seed in hand — a successful vendor UNLOCK — can run
+/// it too; that device is otherwise stuck serving a pre-§8.2.1 leaf forever
+/// (audit run-32).
+pub fn rebuild_att_cert<S: Storage>(
+    fs: &mut Fs<S>,
+    rng: &mut impl Rng,
+    seed: &[u8; 32],
+) -> Result<()> {
+    let key = P256Key::from_scalar(seed).ok_or(Error::ExecError)?;
+    let mut buf = [0u8; 512];
+    let fresh = match fs.read(EF_EE_DEV, &mut buf) {
+        Some(n) => cert_matches_template(&buf[..n.min(buf.len())], &key),
+        None => false,
+    };
+    if fresh {
+        return Ok(());
+    }
+    let mut serial = [0u8; 16];
+    // 0x01..=0x7F: positive AND minimally encoded. The template's INTEGER is
+    // fixed-width, so a leading 0x00 cannot be dropped and X.690 §8.3.2 makes the
+    // whole certificate unparseable to strict RPs.
+    loop {
+        rng.fill(&mut serial);
+        serial[0] &= 0x7F;
+        if serial[0] != 0x00 {
+            break;
+        }
+    }
+    let n = build_attestation_cert(&key, &serial, &mut buf).ok_or(Error::ExecError)?;
+    fs.put(EF_EE_DEV, &buf[..n])
 }
 
 /// The global signature counter, stored little-endian.

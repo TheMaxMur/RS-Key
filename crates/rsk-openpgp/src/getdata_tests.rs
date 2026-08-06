@@ -191,3 +191,34 @@ fn oversized_algo_attr_truncates_without_panic() {
         "returned length clamped to the output buffer"
     );
 }
+
+/// Every attribute the card advertises must survive PUT DATA → GET DATA byte for
+/// byte. `rsa1024` did not: `emit_algoinfo` wrote the stored value bare, and
+/// `get_data`'s primitive-DO strip sniffs for a header rather than being told
+/// there is one — `01 04 00 00 20 00` parses as a length-4 TLV, so the card
+/// answered `00 00 20 00` while GENERATE still made a 1024-bit key. Swept by
+/// class: one case per advertised attribute, so the next value of that shape
+/// cannot slip through either.
+#[test]
+fn every_advertised_algo_attribute_round_trips() {
+    use crate::dobj::{ALGO_AUT_SUPPORTED, ALGO_DEC_SUPPORTED, ALGO_SIG_SUPPORTED};
+
+    for (fid, set) in [
+        (EF_ALGO_SIG, ALGO_SIG_SUPPORTED),
+        (EF_ALGO_DEC, ALGO_DEC_SUPPORTED),
+        (EF_ALGO_AUT, ALGO_AUT_SUPPORTED),
+    ] {
+        for attr in set {
+            // The templates carry a leading TLV length byte; the DO value is the rest.
+            let value = &attr[1..];
+            let mut fs = fs();
+            fs.put(crate::consts::algo_tag_to_priv(fid), value).unwrap();
+            let a = aid();
+            let mut out = [0u8; 64];
+            let mut cur = None;
+            let (n, sw) = get_data(fid, false, false, &mut fs, &a, &mut cur, &mut out);
+            assert_eq!(sw, Sw::OK, "{fid:#06x} {value:02x?}");
+            assert_eq!(&out[..n], value, "{fid:#06x} attribute did not round-trip");
+        }
+    }
+}

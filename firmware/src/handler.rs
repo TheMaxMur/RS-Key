@@ -19,6 +19,24 @@ use zeroize::Zeroize;
 use crate::flash_storage::FlashStorage;
 use crate::vendor::VendorApplet;
 
+/// Raised when the trusted display commits a new clientPIN; consumed by the next
+/// CBOR dispatch to revoke outstanding pinUvAuthTokens.
+///
+/// Cross-task because the display holds only `Fs` while `FidoState` lives here in
+/// the worker's handler. Same shape as `worker::MSG_DESELECT`: set on one task,
+/// swapped by the other, and the panel flow cannot overlap a dispatch (both run on
+/// the single thread executor), so a token outlives the change by nothing. Only a
+/// `display` build has an on-device pad to re-key a PIN from.
+#[cfg(feature = "display")]
+static LOCAL_PIN_CHANGED: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
+/// Signal that the on-device pad just re-keyed the clientPIN.
+#[cfg(feature = "display")]
+pub fn note_local_pin_changed() {
+    LOCAL_PIN_CHANGED.store(true, core::sync::atomic::Ordering::Release);
+}
+
 /// The applet-dispatch context (the flash file system).
 pub type Store = Fs<FlashStorage>;
 
@@ -246,12 +264,28 @@ impl AppletHandler<'_> {
         &self.resp[..n + 2]
     }
 
-    pub fn handle_cbor(&mut self, data: &[u8]) -> &[u8] {
+    pub fn handle_cbor(&mut self, cid: u32, data: &[u8]) -> &[u8] {
+        // The trusted display re-keyed the clientPIN since the last command: end
+        // every session credential the old PIN authorized, before this one can use
+        // it. Set on the display task, consumed here — `FidoState` is ours, not its.
+        #[cfg(feature = "display")]
+        if LOCAL_PIN_CHANGED.swap(false, core::sync::atomic::Ordering::AcqRel) {
+            let mut rngb = self.rng.borrow_mut();
+            self.fido_state.reset_pin_uv_auth_token(&mut *rngb);
+            self.fido_state.reset_persistent_token(&mut *rngb);
+            // The host path also clears `needs_power_cycle` here; that field is
+            // crate-private and leaving the RAM soft lock armed only fails closed
+            // (host clientPIN stays blocked until a replug), so it stays as it is.
+        }
         let dev = Device {
             serial_hash: &self.serial_hash,
             serial_id: &self.serial_id,
             otp_key: self.otp_key.as_ref(),
         };
+        // Which CTAPHID channel is asking. Cross-message state a second process on
+        // its own channel must not be able to ride — the seed-backup MSE key —
+        // binds to this (see `FidoState::mse_ready`).
+        self.fido_state.channel = cid;
         // Since the USB attach, not since power-up: the §6.6 reset window a host has
         // to hit is measured from the moment the device could answer at all.
         let now_ms = crate::usb_attach::elapsed_ms();

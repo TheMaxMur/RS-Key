@@ -74,6 +74,42 @@ pub struct CcidApplets<'a> {
     resp: [u8; RESP_CAP],
 }
 
+/// The records that *gate* each applet, passed to [`rsk_fs::Fs::factory_wipe`] so
+/// they are removed only after everything else is provably gone. A device-wide wipe
+/// bypasses each applet's own two-phase sweep, so it has to carry the same rule: a
+/// prefix that took a gate record first and then lost power leaves the applet's
+/// secrets reachable — either behind a *published* credential the next boot
+/// re-provisions (PIV's PIN/PUK/retries and its 0x9B management key, whose slot keys
+/// are not PIN-bound at rest; FIDO's PIN and `alwaysUv` latch) or, for OATH, behind
+/// no credential at all, since its `select` derives `validated` from the absence of
+/// the access code. OpenPGP's PW verifiers are uniformity — its DEK chain already
+/// makes a restored default PW1 useless — but its UIF flags and every other arm are
+/// load-bearing.
+///
+/// `EF_DEV_CONF` is deliberately **not** here, though its absence also resolves to a
+/// published default ("every supported application enabled"). It gates which applets
+/// are reachable, not whether a surviving secret is protected: for FIDO, PIV, OATH
+/// and OpenPGP the applet's own credential gate is in this set, so re-enabling one
+/// buys nothing. That argument does **not** cover OTP — its slot records are phase 1
+/// with no gate of their own, and a surviving static-password or HOTP slot emits on
+/// touch alone once `CAP_OTP` is back. What decides it is the other half: the record
+/// is host-writable ungated on the default build, so deferring it denies an attacker
+/// nothing they cannot simply write back.
+///
+/// **This must stay a plain fold over the applets' own exported predicates.** The one
+/// arm that was ever open-coded here is the one that went missing: OATH's
+/// `is_oath_lock_fid` was private, so it could not be named from this crate and was
+/// simply left out, and a torn device reset then served every surviving TOTP secret
+/// unauthenticated (audit run-36). A new applet adds its predicate to its own crate
+/// and one line here; `scripts/gate_union.py` fails the gate when it does not.
+#[cfg(any(not(feature = "strict-config"), feature = "display"))]
+pub(crate) fn gates_wiped_last(fid: u16) -> bool {
+    rsk_fido::is_fido_gate_fid(fid)
+        || rsk_piv::files::is_piv_gate_fid(fid)
+        || rsk_oath::is_oath_lock_fid(fid)
+        || rsk_openpgp::terminate::is_openpgp_gate_fid(fid)
+}
+
 impl<'a> CcidApplets<'a> {
     /// `serial_id` is the device chip id (its BCD-encoded 8-digit serial goes into
     /// the OpenPGP full AID); `rng` is the hardware TRNG shared with the CTAPHID handler.
@@ -211,12 +247,36 @@ impl<'a> CcidApplets<'a> {
     /// like the trusted-display factory-reset flow (`rsk_fido::survives_factory_reset`).
     /// The next boot re-provisions a fresh seed. Called by the worker after a
     /// Management RESET's SW_OK, then a reboot. DEFAULT build only.
+    ///
+    /// Returns whether the wipe actually completed: a truncated enumeration or a
+    /// failed remove must not be laundered into a reboot that looks like success.
     #[cfg(not(feature = "strict-config"))]
-    pub fn factory_wipe(&mut self) {
-        let _ = self
-            .fs
+    pub fn factory_wipe(&mut self) -> bool {
+        self.fs
             .borrow_mut()
-            .factory_wipe(rsk_fido::survives_factory_reset);
+            .factory_wipe(rsk_fido::survives_factory_reset, gates_wiped_last)
+            .is_ok()
+    }
+
+    /// Whether the applet that owns PIN reference `p2` is the one currently SELECTED
+    /// and enabled.
+    ///
+    /// The CCID pinpad path had no gate at all: a bare `PC_to_RDR_Secure` painted the
+    /// trusted display's PIN pad for up to 30 s with nothing selected and even with
+    /// the target applet disabled by `ykman config usb --disable` — the capability
+    /// check ran later, on the VERIFY, so it stopped the authentication and not the
+    /// screen (audit run-36). Refusing here means the panel is never painted for a
+    /// credential the host has not addressed.
+    #[cfg(feature = "display")]
+    pub fn pin_ref_ready(&self, p2: u8) -> bool {
+        let idx = match p2 {
+            rsk_openpgp::consts::PW1_MODE81
+            | rsk_openpgp::consts::PW1_MODE82
+            | rsk_openpgp::consts::PW3_MODE83 => IDX_OPENPGP,
+            rsk_usb::secure_pin::PIV_PIN_P2 => IDX_PIV,
+            _ => return false,
+        };
+        self.disp.current() == Some(idx) && self.caps_enabled(APPLET_CAPS[idx])
     }
 
     /// Drop any in-flight incoming command chain and held response remainder. Called

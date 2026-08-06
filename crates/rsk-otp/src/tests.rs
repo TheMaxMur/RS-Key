@@ -1012,3 +1012,81 @@ fn ndef_and_device_config_accept_and_store() {
     assert!(fs.has_data(EF_OTP_NDEF2));
     assert!(fs.has_data(EF_OTP_DEVCFG));
 }
+
+#[cfg(not(feature = "strict-config"))]
+#[test]
+fn scan_map_refuses_to_retarget_a_protected_slot() {
+    // run-34 #22: the scan map decides what a slot TYPES — an all-zero map silences
+    // a protected slot's OTP, an all-0x28 one makes it type Enters — so it is gated
+    // like the slot writes it can neutralise.
+    let mut fs = new_fs();
+    let presence = RefCell::new(AlwaysConfirm);
+    let rng = RefCell::new(CountRng(7));
+    let mut app = OtpApplet::new(SERIAL, SERIAL_HASH, None, &rng, &presence);
+    let acc = [1, 2, 3, 4, 5, 6];
+    let cfg = build_config(&[0, 1, 2, 3, 4, 5], &[1; 6], &[2; 16], &acc, 0, 0, 0);
+    assert_eq!(
+        configure(&mut app, &mut fs, 0x01, 0, &cfg, &[0; 6]).0,
+        Sw::OK
+    );
+
+    let write = |app: &mut OtpApplet, fs: &mut Fs<RamStorage>, code: Option<&[u8; 6]>, fill| {
+        let mut payload = [0u8; hid::PAYLOAD_SIZE];
+        payload[..SCANMAP_LEN].fill(fill);
+        if let Some(c) = code {
+            payload[SCANMAP_LEN..SCANMAP_LEN + 6].copy_from_slice(c);
+        }
+        let mut o = [0u8; 64];
+        let mut res = ResBuf::new(&mut o);
+        app.process_hid(0x12, &payload, fs, &mut res)
+    };
+
+    // No code, and the wrong code, are both refused — and nothing is stored.
+    assert_eq!(
+        write(&mut app, &mut fs, None, 0x40),
+        Sw::SECURITY_STATUS_NOT_SATISFIED
+    );
+    assert_eq!(
+        write(&mut app, &mut fs, Some(&[9; 6]), 0x40),
+        Sw::SECURITY_STATUS_NOT_SATISFIED
+    );
+    let mut map = [0u8; SCANMAP_LEN];
+    assert!(
+        fs.read(EF_OTP_SCANMAP, &mut map).is_none(),
+        "map was stored"
+    );
+
+    // The slot's own code writes it.
+    assert_eq!(write(&mut app, &mut fs, Some(&acc), 0x40), Sw::OK);
+    assert_eq!(fs.read(EF_OTP_SCANMAP, &mut map), Some(SCANMAP_LEN));
+    assert!(map.iter().all(|&b| b == 0x40));
+}
+
+#[cfg(not(feature = "strict-config"))]
+#[test]
+fn scan_map_on_an_unprotected_key_is_unchanged() {
+    // The compatibility half: with no code set anywhere, a plain
+    // `ykman otp set-scan-map` (45 bytes, no trailing code) still succeeds.
+    let mut fs = new_fs();
+    let presence = RefCell::new(AlwaysConfirm);
+    let rng = RefCell::new(CountRng(7));
+    let mut app = OtpApplet::new(SERIAL, SERIAL_HASH, None, &rng, &presence);
+    let cfg = build_config(&[0, 1, 2, 3, 4, 5], &[1; 6], &[2; 16], &[0; 6], 0, 0, 0);
+    assert_eq!(
+        configure(&mut app, &mut fs, 0x01, 0, &cfg, &[0; 6]).0,
+        Sw::OK
+    );
+    let mut payload = [0u8; hid::PAYLOAD_SIZE];
+    payload[..SCANMAP_LEN].fill(0x41);
+    let mut o = [0u8; 64];
+    let mut res = ResBuf::new(&mut o);
+    assert_eq!(app.process_hid(0x12, &payload, &mut fs, &mut res), Sw::OK);
+}
+
+#[cfg(not(feature = "strict-config"))]
+#[test]
+fn scan_map_is_a_function_slot() {
+    // …so `ykman config usb --disable OTP` takes it inert with the rest, instead of
+    // leaving a live write to what the (disabled) slots would type.
+    assert!(is_function_slot(P1_SCAN_MAP));
+}

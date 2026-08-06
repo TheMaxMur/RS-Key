@@ -245,6 +245,34 @@ fn hid_open() -> Option<hidapi::HidDevice> {
     hid_open_info().map(|(d, _, _)| d)
 }
 
+/// Open the FIDO HID device for an **action**, refusing to guess when more than one
+/// authenticator is attached.
+///
+/// `hid_open_info` takes the first match and `rs_key_reader` independently takes the
+/// first matching reader, so with two keys plugged in one dashboard could drive two
+/// different devices — `BackupExport` labelling another key's seed as this one's,
+/// `BackupFinalize` irreversibly sealing whichever answered. The snapshot may still
+/// present a best-effort view (it flags `hid_ambiguous`), but an irreversible write
+/// must not proceed on a guess: `tools/rsk` already refuses these outright via
+/// `connect_fido(exclusive=True)`, and touch-gating binds the ceremony, not the
+/// device it lands on (audit run-33).
+fn hid_open_exclusive() -> Result<hidapi::HidDevice, String> {
+    refuse_ambiguous(hid_device_count())?;
+    hid_open().ok_or_else(|| "no FIDO device".into())
+}
+
+/// The refusal itself, split from the open so it is testable without a device —
+/// all it depends on is a count.
+fn refuse_ambiguous(n: usize) -> Result<(), String> {
+    if n > 1 {
+        return Err(format!(
+            "{n} FIDO devices attached — unplug all but the intended one; \
+             this action is irreversible and must not guess"
+        ));
+    }
+    Ok(())
+}
+
 fn hid_write(dev: &hidapi::HidDevice, frame: &[u8]) {
     let mut buf = [0u8; REPORT_LEN + 1];
     let n = frame.len().min(REPORT_LEN);
@@ -778,17 +806,32 @@ fn rs_key_reader<'a>(readers: &[&'a std::ffi::CStr]) -> Result<&'a std::ffi::CSt
     // `ykman config usb --disable CCID`) any other card in a reader would be selected —
     // and this dashboard SELECTs five applets on it every refresh and then renders its
     // PIN retry counters as the RS-Key's. `tools/rsk/ccid.py` dropped the same fallback.
-    readers
+    // …and no first-of-several either: two attached keys present two matching
+    // readers, so `reboot`'s BOOTSEL drop could land on the other one while the HID
+    // side of the same screen talks to this one. The CLI refuses the same way
+    // (`ccid.connect(exclusive=True)`) — audit run-33.
+    let matching: Vec<&std::ffi::CStr> = readers
         .iter()
-        .find(|r| {
+        .filter(|r| {
             let n = r.to_string_lossy();
             n.contains(READER_TOKEN_DEFAULT) || n.contains(READER_TOKEN_INTEROP)
         })
         .copied()
-        .ok_or_else(|| {
+        .collect();
+    match matching.as_slice() {
+        [one] => Ok(one),
+        [] => {
             let names: Vec<String> = readers.iter().map(|r| r.to_string_lossy().into()).collect();
-            format!("no RS-Key reader found (readers: {})", names.join(", "))
-        })
+            Err(format!(
+                "no RS-Key reader found (readers: {})",
+                names.join(", ")
+            ))
+        }
+        many => Err(format!(
+            "{} RS-Key readers found — unplug all but the intended device",
+            many.len()
+        )),
+    }
 }
 
 struct Ccid {
@@ -1104,7 +1147,7 @@ fn fold(epoch: &[u8], entries: &[u8]) -> Vec<u8> {
 /// self-signed counterfeit must not read as "verified" (audit run-30). Touch-gated;
 /// PIN if one is set.
 pub fn verify_identity(pin: Option<&str>) -> Result<(String, String), String> {
-    let dev = hid_open().ok_or("no FIDO device")?;
+    let dev = hid_open_exclusive()?;
     let cid = ctaphid_init(&dev).ok_or("CTAPHID init failed")?;
     let token = pin.map(|p| acfg_token(&dev, cid, p)).transpose()?;
 
@@ -1323,7 +1366,7 @@ pub fn cred_count(pin: Option<&str>) -> Result<(u16, u16), String> {
 /// 32-byte seed. Shared by the BIP-39 and SLIP-39 export paths; the returned
 /// buffer zeroizes on drop.
 fn fetch_backup_seed(pin: Option<&str>) -> Result<Zeroizing<Vec<u8>>, String> {
-    let dev = hid_open().ok_or("no FIDO device")?;
+    let dev = hid_open_exclusive()?;
     let cid = ctaphid_init(&dev).ok_or("CTAPHID init failed")?;
     let token = pin.map(|p| acfg_token(&dev, cid, p)).transpose()?;
     let (key, aad) = mse(&dev, cid)?;
@@ -1397,7 +1440,7 @@ fn slip39_body(secret: &[u8; 32], threshold: u8, count: u8) -> Result<String, St
 /// Seal the one-time backup export window (vendor BACKUP_FINALIZE, subcmd 4).
 /// Touch-gated, no PIN; a factory reset reopens it. Irreversible otherwise.
 pub fn backup_finalize() -> Result<String, String> {
-    let dev = hid_open().ok_or("no FIDO device")?;
+    let dev = hid_open_exclusive()?;
     let cid = ctaphid_init(&dev).ok_or("CTAPHID init failed")?;
     let (st, _) = vendor(
         &dev,
@@ -1428,10 +1471,15 @@ fn seed_fp(words: &str) -> Result<String, String> {
 /// seed: export, restore the SAME phrase back (identity-preserving), re-export,
 /// and confirm the fingerprint is stable. Needs the no-touch build.
 pub fn export_selftest(pin: Option<&str>) -> Result<String, String> {
-    let words = backup_export(pin)?;
+    // Both phrases are the device master seed in plain text and neither is needed
+    // past its fingerprint, so wrap them: `backup_restore` was fixed one commit
+    // earlier to wipe its own copy while its only caller handed it an unwiped one,
+    // and every `?` below is an early return that dropped them into freed heap
+    // (audit run-36).
+    let words = Zeroizing::new(backup_export(pin)?);
     let fp1 = seed_fp(&words)?;
     backup_restore(&words, pin)?;
-    let fp2 = seed_fp(&backup_export(pin)?)?;
+    let fp2 = seed_fp(&Zeroizing::new(backup_export(pin)?))?;
     if fp1 != fp2 {
         return Err(format!("round-trip fp mismatch {fp1} != {fp2}"));
     }
@@ -1441,13 +1489,19 @@ pub fn export_selftest(pin: Option<&str>) -> Result<String, String> {
 /// Restore the seed from a 24-word BIP-39 phrase.
 pub fn backup_restore(phrase: &str, pin: Option<&str>) -> Result<String, String> {
     let m = bip39::Mnemonic::parse(phrase.trim()).map_err(|e| format!("invalid phrase: {e}"))?;
-    let (entropy, len) = m.to_entropy_array();
+    let (mut entropy, len) = m.to_entropy_array();
     if len != 32 {
+        entropy.zeroize();
         return Err("phrase must encode 32 bytes (24 words)".into());
     }
-    let mut seed = entropy[..32].to_vec();
+    // Wipe on drop, not on the success path: each of the four device-side steps
+    // below returns early, and every one of them used to leave the plaintext master
+    // seed in freed heap memory. `to_entropy_array` hands back a plain [u8; 33],
+    // so that copy needs clearing too (audit run-35).
+    let seed = Zeroizing::new(entropy[..32].to_vec());
+    entropy.zeroize();
 
-    let dev = hid_open().ok_or("no FIDO device")?;
+    let dev = hid_open_exclusive()?;
     let cid = ctaphid_init(&dev).ok_or("CTAPHID init failed")?;
     let token = pin.map(|p| acfg_token(&dev, cid, p)).transpose()?;
     let (key, aad) = mse(&dev, cid)?;
@@ -1455,7 +1509,6 @@ pub fn backup_restore(phrase: &str, pin: Option<&str>) -> Result<String, String>
     OsRng.fill_bytes(&mut nonce);
     let mut blob = nonce.to_vec();
     blob.extend_from_slice(&chacha_encrypt(&key, &nonce, &aad, &seed));
-    seed.zeroize();
 
     let subpara = Value::Map(vec![(iv(1), Value::Bytes(blob))]);
     let raw_subpara = cbor(&subpara);

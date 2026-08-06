@@ -169,14 +169,23 @@ RULES = [
      ExpectDiff(None, r"16", "RS-Key allows 16 vs real 8")),
     ("fido.getinfo.maxCredentialIdLength", ExpectDiff(None, None, "credential-id box length differs")),
     ("fido.getinfo.maxSerializedLargeBlobArray",
-     ExpectDiff(None, r"2048", "RS-Key 2048 vs real 1024")),
+     ExpectDiff(None, r"2046",
+                "RS-Key advertises its store's true per-value ceiling, rsk_fs::MAX_VALUE_BYTES")),
     ("fido.getinfo.maxCredBlobLength", ExpectDiff(None, r"128", "RS-Key 128 vs real 32")),
     ("fido.getinfo.maxRPIDsForSetMinPINLength", ExpectDiff(None, None, "RS-Key 8 vs real 1")),
 
     # ── FIDO getInfo option skew (build-config), each side pinned ──────────
+    # alwaysUv is a runtime toggle on BOTH keys (`ykman fido config
+    # toggle-always-uv`), so neither side can be pinned without the rule going
+    # stale the next time someone flips it — and makeCredUvNotRqd just mirrors it
+    # (CTAP 2.1 §6.4: alwaysUv true ⇒ makeCredUvNotRqd false).
     ("fido.getinfo.options.alwaysUv",
-     ExpectDiff(r"(?i)(false|<missing>)", r"(?i)true",
-                "RS-Key always-uv build; reconcile with `ykman fido config toggle-always-uv` for parity")),
+     ExpectDiff(None, None, "alwaysUv is runtime-toggleable on both keys (and a build knob here)")),
+    ("fido.getinfo.options.makeCredUvNotRqd",
+     ExpectDiff(None, None, "mirrors alwaysUv, which is runtime-toggleable on both keys")),
+    ("fido.getinfo.minPINLength",
+     ExpectDiff(None, r"^[46]$",
+                "RS-Key's PIN floor is a build knob (strong-pin / fips-profile raise CTAP's 4 to 6)")),
     ("fido.getinfo.options.bioEnroll", ExpectDiff(None, r"(?i)<missing>", "no bio on either 5-series / RS-Key")),
     ("fido.getinfo.options.uvBioEnroll", ExpectDiff(None, r"(?i)<missing>", "no bio on RS-Key")),
     ("fido.getinfo.options.credentialMgmtPreview",
@@ -205,6 +214,13 @@ RULES = [
     ("piv.not_before", Ignore("attestation/CHUID certificate validity date")),
     ("piv.not_after", Ignore("attestation/CHUID certificate validity date")),
     ("piv.serial", Ignore("attestation certificate serial — random per device")),
+    # `ykman piv info` renders a slot only once something is loaded into it, so
+    # these describe what each key was provisioned with, not what it can do.
+    ("piv.issuer_dn", Ignore("provisioned slot contents, not a firmware property")),
+    ("piv.subject_dn", Ignore("provisioned slot contents, not a firmware property")),
+    ("piv.private_key_type", Ignore("provisioned slot contents, not a firmware property")),
+    ("piv.public_key_type", Ignore("provisioned slot contents, not a firmware property")),
+    ("openpgp.touch_policy", Ignore("per-key UIF, rendered only for a slot that holds a key")),
 
     # ── extra getInfo fields RS-Key advertises that the reference lacks ────
     # (the reverse — real has a field rsk lacks — fails the real-side pin below
@@ -232,6 +248,23 @@ RULES = [
     # ── OpenPGP / OATH / OTP prose from ykman ─────────────────────────────
     ("openpgp.application_version",
      ExpectDiff(None, r"4\.6", "RS-Key OpenPGP app version is pico-openpgp 4.6.x; a real key tracks firmware")),
+
+    # ── gpg-card / OpenSC views of the same two cards ─────────────────────
+    ("openpgp.gpg.serial_number", Ignore("the OpenPGP AID embeds the chip-derived serial")),
+    ("openpgp.gpg.displayed_s_n", Ignore("the OpenPGP AID embeds the chip-derived serial")),
+    ("openpgp.gpg.reader", ExpectDiff(None, None, "PC/SC reader name differs")),
+    ("openpgp.gpg.signature_counter", Tolerance("live PSO:CDS counter")),
+    ("openpgp.gpg.signature_key", Ignore("independent keygen — key fingerprint or [none]")),
+    ("openpgp.gpg.encryption_key", Ignore("independent keygen — key fingerprint or [none]")),
+    ("openpgp.gpg.authentication_key", Ignore("independent keygen — key fingerprint or [none]")),
+    # `-O` lists every object and kv_lines is last-write-wins, so these fields name
+    # whichever object each key happens to end on — not a surface a diff can pin.
+    # The comparable OpenSC view is the slot/token block, left compared below.
+    ("pkcs11.obj.*", Ignore("flattened PKCS#11 object dump — provisioning-dependent and order-dependent")),
+    ("pkcs11.slot_description", ExpectDiff(None, None, "PC/SC reader name differs")),
+    ("pkcs11.serial_num", Ignore("OpenSC derives the token serial from the random CHUID GUID")),
+    ("pkcs11.uri", Ignore("embeds the token serial")),
+    ("pkcs11.token_label", Ignore("OpenSC labels the token from the provisioned 9A certificate")),
 
     # ── ykman-rendered mirrors (the precise raw cells are authoritative) ───
     ("ykman.info.device_type",

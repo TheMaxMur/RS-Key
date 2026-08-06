@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 RS-Key contributors
 
-//! `authenticatorMakeCredential`: ships `fmt:"none"` by default — self-attestation
-//! conveys no trust beyond "none" (WebAuthn §6.5.2) and a packed EdDSA self-
-//! attestation is mishandled by the Windows WebAuthn API, breaking `ed25519-sk`
-//! enrollment on OpenSSH 10 (issue #26). The `fido-conformance` profile emits
-//! packed **self-attestation** (no x5c) so the conformance tool can verify it.
+//! `authenticatorMakeCredential`: every credential ships packed **basic**
+//! attestation — ES256 over authData ‖ clientDataHash by the device key, with the
+//! per-device cert as the x5c leaf. Self-attestation and `fmt:"none"` were both
+//! tried and both break clients: an empty statement is rejected by OpenSSH < 10.0
+//! and a packed EdDSA self-attestation fails on Windows/WinHello (issue #26).
 //! Resident keys (rk) are stored; non-resident credentials carry the full box in
 //! authData. A configured PIN requires a verified `pinUvAuthParam`
 //! ([`enforce_pin`]), which sets the `uv` flag — except for a non-discoverable
@@ -332,6 +332,17 @@ pub fn make_credential<S: Storage, R: Rng>(
     if req.rp_id.len() > RP_ID_MAX || req.user_id.len() > USER_ID_MAX {
         return Err(CtapError::InvalidLength);
     }
+    // No valid WebAuthn rpId contains whitespace — the spec requires a valid domain
+    // string, and U+0020 is a forbidden host code point, so no browser can send one.
+    // The trusted display is why it matters: `font::width` measures ink, so trailing
+    // spaces paint NOTHING, and "bank.com " renders pixel-identically to "bank.com"
+    // on the sign-in, passkey-list and delete screens while hashing to a different
+    // relying party entirely. An all-whitespace id also passes the length-based
+    // emptiness checks here and in `Label::is_empty`, so the ceremony paints a blank
+    // relying-party line with the attacker's `user.name` beneath it (audit run-36).
+    if req.rp_id.bytes().any(|b| b.is_ascii_whitespace()) {
+        return Err(CtapError::InvalidParameter);
+    }
     // CTAP 2.1 §6.1.2: overlong user.name / user.displayName are truncated,
     // not an error.
     req.user_name = truncate_utf8(req.user_name, USER_NAME_MAX);
@@ -651,29 +662,15 @@ fn make_credential_inner<S: Storage, R: Rng>(
     // cert and no `ep` (CTAP2.1 §6.1.3, conformance Enterprise-Attestation F-6).
     let ea_performed = req.enterprise_attestation == 2
         || (req.enterprise_attestation == 1 && rp_eligible_for_vendor_ea(req.rp_id));
-    let full_attestation = req.enterprise_attestation > 0;
-    // Ship `fmt:"none"` by default: self-attestation conveys no trust beyond "none"
-    // (WebAuthn §6.5.2), and a packed EdDSA self-attestation is mishandled by the
-    // Windows WebAuthn API — it fails OpenSSH 10.0's fido_cred_verify_self and breaks
-    // `ssh-keygen -t ed25519-sk` enrollment (issue #26). An explicitly-requested
-    // enterprise attestation still emits its full x5c statement; the `fido-conformance`
-    // profile keeps packed self-attestation (the conformance MakeCredential tests
-    // cryptographically verify it).
-    let none_attestation = !full_attestation && cfg!(not(feature = "fido-conformance"));
+    // Every credential ships packed **basic** attestation: the device key signs and
+    // the x5c leaf is its cert. Both alternatives break clients — an empty
+    // `fmt:"none"` statement is rejected by OpenSSH < 10.0, which verifies any
+    // x5c-less credential unconditionally, and a packed EdDSA self-attestation fails
+    // on Windows/WinHello (issue #26). Basic attestation signs with ES256 whatever
+    // the credential algorithm is, so neither path is reached.
     let mut att = AttBufs::new();
-    let (att_alg, sig_len, chain_len, certs) = if none_attestation {
-        (0, 0, 0, 0)
-    } else {
-        make_attestation(
-            ctx,
-            seed,
-            &key,
-            &ad[..ad_len + 32],
-            ea_performed,
-            full_attestation,
-            &mut att,
-        )?
-    };
+    let (sig_len, chain_len, certs) =
+        make_attestation(ctx, seed, &ad[..ad_len + 32], ea_performed, &mut att)?;
 
     // largeBlobKey response field (0x05) — resident credentials only.
     let large_blob_key = if req.ext_large_blob_key == Some(true) && req.rk {
@@ -687,12 +684,9 @@ fn make_credential_inner<S: Storage, R: Rng>(
         &ad[..ad_len],
         &att,
         AttShape {
-            alg: att_alg,
             sig_len,
             chain_len,
             certs,
-            none: none_attestation,
-            full: full_attestation,
             ea_performed,
         },
         large_blob_key,
@@ -718,17 +712,12 @@ fn make_credential_inner<S: Storage, R: Rng>(
 }
 
 /// What shape the attestation statement takes, so the response encoder does not
-/// have to re-derive it: the lengths [`make_attestation`] returned plus the three
-/// decisions made before it ran.
+/// have to re-derive it: the lengths [`make_attestation`] returned plus whether
+/// enterprise attestation was performed.
 struct AttShape {
-    alg: i64,
     sig_len: usize,
     chain_len: usize,
     certs: u8,
-    /// `fmt:"none"` with an empty attStmt — the shipping default.
-    none: bool,
-    /// basic_full / enterprise: the statement carries an x5c chain.
-    full: bool,
     /// Enterprise attestation was actually performed, so `ep` (field 4) is set.
     ea_performed: bool,
 }
@@ -736,9 +725,10 @@ struct AttShape {
 /// Encode the makeCredential response:
 /// `{1: fmt, 2: authData, 3: attStmt [, 4: ep] [, 5: largeBlobKey]}`.
 ///
-/// Default: `fmt:"none"` with an empty attStmt. Otherwise `fmt:"packed"`, where
-/// attStmt is `{alg, sig}` for self-attestation plus `x5c` for any basic_full or
-/// enterprise attestation. `ep` appears only when EA was actually performed.
+/// `fmt` is always `"packed"` and attStmt is always `{alg, sig, x5c}` — basic
+/// attestation with the device cert, or the org chain when EA was performed. The
+/// three keys are already in CTAP2 canonical order. `ep` appears only when EA was
+/// actually performed.
 fn encode_mc_response(
     out: &mut [u8],
     ad: &[u8],
@@ -748,21 +738,15 @@ fn encode_mc_response(
 ) -> CtapResult {
     let mut enc = Encoder::new(Cursor::new(out));
     enc.map(3 + u64::from(shape.ea_performed) + u64::from(large_blob_key.is_some()))
-        .and_then(|e| e.u8(1)?.str(if shape.none { "none" } else { "packed" }))
+        .and_then(|e| e.u8(1)?.str("packed"))
         .and_then(|e| e.u8(2)?.bytes(ad))
         .and_then(|e| e.u8(3))
         .map_err(|_| CtapError::Other)?;
-    if shape.none {
-        enc.map(0).map_err(|_| CtapError::Other)?;
-    } else {
-        enc.map(2 + u64::from(shape.full))
-            .and_then(|e| e.str("alg")?.i64(shape.alg))
-            .and_then(|e| e.str("sig")?.bytes(&att.sig[..shape.sig_len]))
-            .map_err(|_| CtapError::Other)?;
-        if shape.full {
-            encode_x5c(&mut enc, &att.chain[..shape.chain_len], shape.certs)?;
-        }
-    }
+    enc.map(3)
+        .and_then(|e| e.str("alg")?.i64(ALG_ES256))
+        .and_then(|e| e.str("sig")?.bytes(&att.sig[..shape.sig_len]))
+        .map_err(|_| CtapError::Other)?;
+    encode_x5c(&mut enc, &att.chain[..shape.chain_len], shape.certs)?;
     if shape.ea_performed {
         enc.u8(4)
             .and_then(|e| e.bool(true)) // ep: enterprise attestation used
@@ -806,25 +790,18 @@ impl AttBufs {
 }
 
 /// Sign `signed` (authData ‖ clientDataHash) into `att` and shape the attestation
-/// statement. Self-attestation (the default, `full` = false) signs with the
-/// credential key. A `full` attestation is basic/enterprise (x5c): with the org
-/// attestation key present it signs with that key + the EF_ATT_CHAIN chain;
-/// otherwise with the device key (the seed scalar) + its self-signed EF_EE_DEV
-/// cert (the pair U2F register uses). Returns `(alg, sig_len, chain_len,
-/// cert_count)`; the chain fields are 0 for self-attestation.
+/// statement — always basic or enterprise, so always ES256 with an x5c chain. When
+/// enterprise attestation was performed and an org key is installed it signs with
+/// that key + the EF_ATT_CHAIN chain; otherwise with the device key (the seed
+/// scalar) + its self-signed EF_EE_DEV cert (the pair U2F register uses). Returns
+/// `(sig_len, chain_len, cert_count)`.
 fn make_attestation<S: Storage, R: Rng>(
     ctx: &mut Ctx<S, R>,
     seed: &[u8; 32],
-    key: &CredKey,
     signed: &[u8],
     ea_performed: bool,
-    full: bool,
     att: &mut AttBufs,
-) -> Result<(i64, usize, usize, u8), CtapError> {
-    if !full {
-        let sl = key.sign(signed, ctx.rng, &mut att.sig);
-        return Ok((key.alg(), sl, 0, 0));
-    }
+) -> Result<(usize, usize, u8), CtapError> {
     let org_key = if ea_performed {
         load_att_key(&ctx.dev, ctx.fs)
     } else {
@@ -842,21 +819,23 @@ fn make_attestation<S: Storage, R: Rng>(
             .filter(|&n| cert::att_chain_count(&att.chain[..n]) > 0)
             .ok_or(CtapError::Other)?;
         let count = cert::att_chain_count(&att.chain[..cl]);
-        Ok((ALG_ES256, sl, cl, count))
+        Ok((sl, cl, count))
     } else {
         let device_key = P256Key::from_scalar(seed).ok_or(CtapError::Other)?;
         let sl = device_key.sign_der(signed, &mut att.sig);
-        let mut one = [0u8; 512];
-        let cl = match ctx.fs.read(EF_EE_DEV, &mut one) {
-            Some(n) if n > 0 => n.min(one.len()),
+        // Read straight into the chain buffer past its 3-byte header — this runs on
+        // every makeCredential now, so a 512-byte scratch cert would be stack the
+        // ML-DSA paths cannot spare.
+        let room = att.chain.len() - 3;
+        let cl = match ctx.fs.read(EF_EE_DEV, &mut att.chain[3..]) {
+            Some(n) if n > 0 => n.min(room),
             _ => return Err(CtapError::Other),
         };
         // Wrap the single self-signed cert in the packed-chain layout so the
         // x5c encode has one shape.
         att.chain[0] = 1;
         att.chain[1..3].copy_from_slice(&(cl as u16).to_le_bytes());
-        att.chain[3..3 + cl].copy_from_slice(&one[..cl]);
-        Ok((ALG_ES256, sl, 3 + cl, 1))
+        Ok((sl, 3 + cl, 1))
     }
 }
 

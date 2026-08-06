@@ -172,6 +172,55 @@ where
     )
 }
 
+/// The "Erase failed" notice, shown when a factory wipe could not prove it emptied
+/// the store — a truncated enumeration or a failed remove. It replaces the success
+/// pop, because the one thing the owner must not be told is that a wipe they are
+/// about to act on succeeded. Same shape and dwell as [`render_pin_blocked`].
+pub fn render_wipe_failed<D>(t: &mut D) -> Result<(), D::Error>
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    t.clear(BG)?;
+    const DIA: u32 = 70;
+    let circle_top = 84;
+    crate::aa::filled_circle(
+        t,
+        EgPoint::new(MIDX - DIA as i32 / 2, circle_top),
+        DIA,
+        theme::DANGER_BG,
+        theme::BG,
+    )?;
+    let cyc = circle_top + DIA as i32 / 2;
+    glyph::draw(
+        t,
+        Glyph::Warn,
+        Point::new((MIDX - 17) as u16, (cyc - 17) as u16),
+        34,
+        theme::DANGER,
+    )?;
+    text(
+        t,
+        "Erase failed",
+        EgPoint::new(MIDX, 188),
+        Role::Heading,
+        theme::DANGER,
+    )?;
+    text(
+        t,
+        "The store was not proven",
+        EgPoint::new(MIDX, 216),
+        Role::Body,
+        MUTED,
+    )?;
+    text(
+        t,
+        "empty. Data may remain.",
+        EgPoint::new(MIDX, 236),
+        Role::Body,
+        MUTED,
+    )
+}
+
 // --- Success screens -------------------------------------------------------
 
 /// Centre of the success "pop" circle.

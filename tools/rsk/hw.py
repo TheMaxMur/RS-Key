@@ -271,7 +271,8 @@ def run(args):
 
 
 def _run_ccid(args):
-    conn = ccid.connect()
+    # Writes EF_PHY — the USB identity — so it must not guess a device either.
+    conn = ccid.connect(exclusive=True)
     _, s1, s2 = ccid.select(conn, RESCUE_AID)
     if (s1, s2) != ccid.SW_OK:
         raise SystemExit(
@@ -330,7 +331,7 @@ def _run_fido(args):
     """The pcscd-free path: read-modify-write EF_PHY over CTAPHID (CONFIG_READ +
     the PIN/touch-gated CONFIG_WRITE). Applies on the next boot — no reboot verb
     here, so the user re-plugs to apply."""
-    dev, cid = connect_fido()
+    dev, cid = connect_fido(exclusive=True)
     tlvs = _read_phy_fido(dev, cid)
     if args.get or not _would_set(args):
         _show(tlvs)

@@ -19,7 +19,37 @@ fn over_long_algo_do_does_not_panic() {
     fs.put(EF_ALGO_PRIV1, &algo).unwrap();
     let mut sess = Session::new();
     sess.has_pw3 = true; // GENERATE is a PW3 op; reach the algo read past the gate
-    // Must not panic; the clamped 16-byte prefix still parses as RSA-2048.
+    // Must not panic. It is also refused rather than clamped: DO 0xFA advertises no
+    // 48-byte attribute, and acting on a 16-byte prefix of a value the card reports
+    // in full is how a slot ends up holding a key its own attribute misdescribes.
+    assert_eq!(
+        rsa_generate_params(&mut fs, &sess, 0x80, 0x00, &[0xB6, 0x00]),
+        Err(WRONG_DATA)
+    );
+}
+
+#[test]
+fn generate_refuses_an_unadvertised_stored_algorithm_attribute() {
+    // Builds predating the `put_data` gate accepted any C1/C2/C3 under PW3, and
+    // `EF_ALGO_PRIV*` is `DoSource::Internal` — no default, no migration — so the
+    // value survives the upgrade and it is the *owner's* next GENERATE that mints
+    // the weak key. `RsaKeygen::usable` is an asm alignment constraint (any 32-byte
+    // multiple = a 512-bit floor), so the refusal has to happen here.
+    let mut fs = Fs::new(RamStorage::new());
+    fs.scan();
+    // rsa512, as a pre-gate build would have stored it.
+    fs.put(EF_ALGO_PRIV1, &[ALGO_RSA, 0x02, 0x00, 0x00, 0x20, 0x00])
+        .unwrap();
+    let mut sess = Session::new();
+    sess.has_pw3 = true;
+    assert_eq!(
+        rsa_generate_params(&mut fs, &sess, 0x80, 0x00, &[0xB6, 0x00]),
+        Err(WRONG_DATA)
+    );
+
+    // An advertised size is still generated normally.
+    fs.put(EF_ALGO_PRIV1, &[ALGO_RSA, 0x08, 0x00, 0x00, 0x20, 0x00])
+        .unwrap();
     assert_eq!(
         rsa_generate_params(&mut fs, &sess, 0x80, 0x00, &[0xB6, 0x00]),
         Ok(Some((EF_PK_SIG, 2048)))

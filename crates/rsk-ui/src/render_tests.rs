@@ -421,6 +421,46 @@ fn centered_clipped_marks_a_truncated_fitting_label() {
 }
 
 #[test]
+fn oath_screens_mark_a_truncated_credential_name() {
+    // Audit run-33 marked the passkey screens but stopped there. An OATH credential
+    // label is host-chosen too, and its list is likewise where the owner audits what
+    // is stored — so a name already clipped to LABEL_MAX must not present itself as
+    // whole just because the clipped prefix happens to fit the row.
+    let plain = Label::clamp(b"acme");
+    let mut marked = plain;
+    marked.truncated = true;
+
+    let row_of = |name: Label| OathRow {
+        name,
+        hotp: false,
+        touch: false,
+    };
+    let mut list_plain = Rec::new();
+    render_oath(&mut list_plain, &[row_of(plain)], 0, 1).unwrap();
+    let mut list_marked = Rec::new();
+    render_oath(&mut list_marked, &[row_of(marked)], 0, 1).unwrap();
+    let row = crate::row_rect(PK_LIST_TOP, 0);
+    assert!(
+        (0..PANEL_W)
+            .any(|x| (row.y..row.y + row.h).any(|y| list_plain.at(x, y) != list_marked.at(x, y))),
+        "a clipped OATH name must render with its truncation marker in the list"
+    );
+
+    let view_of = |name: Label| OathDetailView {
+        name,
+        ..Default::default()
+    };
+    let mut det_plain = Rec::new();
+    render_oath_cred(&mut det_plain, &view_of(plain)).unwrap();
+    let mut det_marked = Rec::new();
+    render_oath_cred(&mut det_marked, &view_of(marked)).unwrap();
+    assert!(
+        (0..PANEL_W).any(|x| (24..48).any(|y| det_plain.at(x, y) != det_marked.at(x, y))),
+        "a clipped OATH name must render with its truncation marker in the detail title"
+    );
+}
+
+#[test]
 fn right_ellipsized_keeps_the_suffix_unlike_left() {
     // A domain wider than the clip: the head-ellipsis (right) variant keeps the
     // registrable-domain suffix while the tail-ellipsis (left) variant keeps the
@@ -1864,4 +1904,38 @@ fn pin_dots_clear_strip_erases_overflow_and_tenth_dot_on_delete() {
         !d.any_non_bg_in(plus),
         "stale '+' marker left after delete — shortened PIN still read as long"
     );
+}
+
+/// Audit run-36: `rsk_openpgp::info` returns `CH_FIELD_MAX = LABEL_MAX + 1` bytes for
+/// the sole purpose of letting `Label::clamp` set `truncated`, and
+/// `firmware/src/display/applets.rs` static-asserts that relationship — then this
+/// screen passed `force_mark: false` and threw the flag away. A 48-byte clip of a
+/// longer, narrow-glyph value fits the 212 px box, so the fast path painted it with
+/// no ellipsis and it read as the whole thing: the registrable domain on screen was
+/// not the one stored. Assert the panel actually differs.
+#[test]
+fn a_truncated_cardholder_value_paints_its_marker() {
+    let narrow = Label::clamp(&[b'i'; 48]); // 48 bytes, fits the box, NOT truncated
+    let mut clipped = Label::clamp(&[b'i'; 64]); // clipped at the cap
+    assert!(clipped.truncated, "the fixture must actually be truncated");
+    clipped.truncated = true;
+
+    let view = |f: Label| CardholderView {
+        name: Label::clamp(b"Alice"),
+        login: Label::clamp(b"alice"),
+        url: f,
+        lang: Label::clamp(b"en"),
+        any: true,
+    };
+
+    let mut whole = Rec::new();
+    render_openpgp_cardholder(&mut whole, &view(narrow)).unwrap();
+    let mut cut = Rec::new();
+    render_openpgp_cardholder(&mut cut, &view(clipped)).unwrap();
+
+    assert!(
+        whole.px != cut.px,
+        "a clipped cardholder value painted identically to a whole one"
+    );
+    assert!(!cut.oob, "the marker drew outside the panel");
 }

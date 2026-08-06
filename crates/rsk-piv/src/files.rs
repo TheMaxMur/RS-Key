@@ -52,6 +52,9 @@ pub const PINPOLICY_DEFAULT: u8 = 0;
 pub const PINPOLICY_NEVER: u8 = 1;
 pub const PINPOLICY_ONCE: u8 = 2;
 pub const PINPOLICY_ALWAYS: u8 = 3;
+/// `0` means "the card's default" on both axes; it is resolved at store time by
+/// [`crate::keygen::resolved_policies`] and never persisted.
+pub const TOUCHPOLICY_DEFAULT: u8 = 0;
 pub const TOUCHPOLICY_NEVER: u8 = 1;
 pub const TOUCHPOLICY_ALWAYS: u8 = 2;
 pub const TOUCHPOLICY_CACHED: u8 = 3;
@@ -226,19 +229,62 @@ pub fn scan_files<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng) -
         fs.put(EF_RETRIES, &[d, d, d, d])
             .map_err(|_| Sw::MEMORY_FAILURE)?;
     }
-    if !fs.has_key(key_fid(SLOT_CARDMGM)) {
+    let minted_mgm = !fs.has_key(key_fid(SLOT_CARDMGM));
+    if minted_mgm {
         let mut key = DEFAULT_MGM;
         let r = seal::seal_put(dev, fs, rng, key_fid(SLOT_CARDMGM), &key);
         key.zeroize();
         r?;
-        // Real YubiKey 5 ships the management key touch-OFF; we follow that
-        // (admin provisioning isn't touch-gated) while still enforcing it if a
-        // host raises it via SET MGM KEY. Slot keys keep their ALWAYS default.
-        fs.meta_add(
-            key_fid(SLOT_CARDMGM).get(),
-            &[ALGO_AES192, PINPOLICY_ALWAYS, TOUCHPOLICY_NEVER],
-        )
-        .map_err(|_| Sw::MEMORY_FAILURE)?;
+    }
+    // The key and its meta head are written as a pair but not deleted as one, so
+    // BOTH directions need repairing. The key is a phase-2 gate
+    // ([`is_piv_gate_fid`]) while EF_META — one record shared by every applet —
+    // goes in phase 1 of the device-wide wipe, so a tear between them leaves a live
+    // key whose `meta_find` fails and `general_authenticate` answers
+    // REFERENCE_NOT_FOUND for good. The other direction is `force_delete`, which
+    // drops the key even when its own `meta_delete` failed (`let _ =`): a stale
+    // AES-256 head left over a re-minted 24-byte DEFAULT_MGM wedges the slot on the
+    // length compare, and RESET runs this very path, so nothing would clear it. The
+    // mint arm is therefore an unconditional rewrite — `meta_add` replaces.
+    let have_meta = {
+        let mut meta = [0u8; 8];
+        fs.meta_find(key_fid(SLOT_CARDMGM).get(), &mut meta)
+            .is_some()
+    };
+    if minted_mgm || !have_meta {
+        let head = if minted_mgm {
+            // A card we just provisioned takes the YubiKey 5 defaults: AES-192, touch
+            // OFF (admin provisioning isn't touch-gated), still enforced if a host
+            // raises it via SET MGM KEY. Slot keys keep their ALWAYS default.
+            Some((ALGO_AES192, TOUCHPOLICY_NEVER))
+        } else {
+            // A key that SURVIVED without its head must not be handed those: its
+            // algorithm is recoverable from the sealed length, its touch policy is
+            // not, so take the restrictive one rather than silently dropping a gate
+            // the owner raised — and never claim AES-192 over a 16- or 32-byte key,
+            // which would wedge the slot on `meta[0] != algo` instead of repairing it.
+            let mut key = [0u8; 32];
+            let n = seal::seal_read(dev, fs, key_fid(SLOT_CARDMGM), &mut key);
+            key.zeroize();
+            match n {
+                Ok(16) => Some((ALGO_AES128, TOUCHPOLICY_ALWAYS)),
+                Ok(24) => Some((ALGO_AES192, TOUCHPOLICY_ALWAYS)),
+                Ok(32) => Some((ALGO_AES256, TOUCHPOLICY_ALWAYS)),
+                // Unreadable: GENERAL AUTHENTICATE reads the key through the same
+                // seal, so slot 9B is already dead. Leaving the head absent fails
+                // just that slot closed; erroring here fails the whole SELECT
+                // (`PivApplet::select` maps a `scan_files` error to MEMORY_FAILURE),
+                // taking certificate reads, GET DATA and RESET down with it.
+                _ => None,
+            }
+        };
+        if let Some((algo, touch)) = head {
+            fs.meta_add(
+                key_fid(SLOT_CARDMGM).get(),
+                &[algo, PINPOLICY_ALWAYS, touch],
+            )
+            .map_err(|_| Sw::MEMORY_FAILURE)?;
+        }
     }
     if !fs.has_key(key_fid(SLOT_ATTESTATION)) {
         let key = PrivKey::generate(Curve::P384, rng).ok_or(Sw::EXEC_ERROR)?;
@@ -277,9 +323,30 @@ pub(crate) fn is_piv_fid(fid: u16) -> bool {
     (0xD100..=0xD2FF).contains(&fid) || (0xD400..=0xD4FF).contains(&fid)
 }
 
-/// Progress backstop for the [`wipe_piv`] sweep: every batched `force_delete`
-/// clears one *distinct* live fid and [`is_piv_fid`] spans 768 of them, so needing
-/// more deletes than that means the backend keeps re-yielding what it removed.
+/// The records that *gate* the applet: the PIN and PUK verifiers, their retry
+/// state, and the 0x9B management key. Public because the device-wide
+/// `Fs::factory_wipe` bypasses [`wipe_piv`] and needs the same rule. [`wipe_piv`]
+/// deletes these last — `scan_files` re-creates every one of them at a *published*
+/// default, and PIV slot keys are sealed device-rooted rather than PIN-bound, so a
+/// sweep that took one first and then lost power would re-seed a published
+/// credential over live key material. 0x9B is a gate for the same reason the PIN
+/// is: it is what IMPORT KEY, GENERATE, PUT DATA, MOVE KEY and SET MGM KEY check,
+/// and `scan_files` re-seeds it to [`DEFAULT_MGM`] (audit run-36).
+pub fn is_piv_gate_fid(fid: u16) -> bool {
+    matches!(fid, EF_PIN | EF_PUK | EF_RETRIES) || fid == key_fid(SLOT_CARDMGM).get()
+}
+
+/// Everything else a PIV factory reset owns — the slot keys other than 0x9B, data
+/// objects, the pubkey cache. Deleted first, so every prefix of the wipe leaves the
+/// keys behind a gate.
+fn is_piv_secret_fid(fid: u16) -> bool {
+    is_piv_fid(fid) && !is_piv_gate_fid(fid)
+}
+
+/// Progress backstop for one [`sweep`] phase: every batched `force_delete` clears
+/// one *distinct* live fid and [`is_piv_fid`] spans 768 of them, so needing more
+/// deletes than that means the backend keeps re-yielding what it removed. Bounds
+/// each phase separately, which is strictly tighter than the old single sweep.
 const RESET_MAX_DELETES: u32 = 768;
 
 /// Factory-reset the applet: delete every PIV file and meta record
@@ -287,23 +354,37 @@ const RESET_MAX_DELETES: u32 = 768;
 /// the other applets' data must survive a PIV reset.
 pub fn reset_files<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng) -> Result<(), Sw> {
     let wiped = wipe_piv(fs);
-    // Re-provision even when the sweep failed: it deletes the PIN/PUK/retry files
-    // first, and an applet left without them answers 6A88 to every later RESET
-    // (no retry counters to read) instead of the honest failure below.
+    // Re-provision even when the sweep failed: an applet left without the retry
+    // counters answers 6A88 to every later RESET instead of the honest failure
+    // below. Safe now that the gate records go last — a failed sweep that never
+    // reached them leaves the owner's PIN in place, not a default one.
     let ensured = scan_files(dev, fs, rng);
     wiped.and(ensured)
 }
 
-/// Delete every live PIV file and meta record. Batched because `for_each_key`
-/// cannot delete mid-iteration, and DE-DUPED because it yields one entry per
-/// stored *version*: a batch of superseded copies is not a batch of distinct fids.
+/// Delete every live PIV file and meta record.
+///
+/// Two phases, and the order carries the security property (the rule `wipe_oath`
+/// states, which this function is the sibling of): `for_each_key` yields in
+/// flash-ring order, not FID order, so one combined sweep can reach the PIN before
+/// the keys — and a power cut there lets `scan_files` re-seed the factory PIN over
+/// slot keys that are still live and, unlike OpenPGP's, not PIN-bound at rest.
 fn wipe_piv<S: Storage>(fs: &mut Fs<S>) -> Result<(), Sw> {
+    sweep(fs, is_piv_secret_fid)?;
+    sweep(fs, is_piv_gate_fid)
+}
+
+/// One phase of [`wipe_piv`]: delete every live fid matching `pred`. Batched
+/// because `for_each_key` cannot delete mid-iteration, and DE-DUPED because it
+/// yields one entry per stored *version*: a batch of superseded copies is not a
+/// batch of distinct fids.
+fn sweep<S: Storage>(fs: &mut Fs<S>, pred: fn(u16) -> bool) -> Result<(), Sw> {
     let mut deleted = 0u32;
     loop {
         let mut fids = [0u16; 32];
         let mut n = 0;
         let complete = fs.for_each_key(&mut |fid| {
-            if is_piv_fid(fid) && n < fids.len() && !fids[..n].contains(&fid) {
+            if pred(fid) && n < fids.len() && !fids[..n].contains(&fid) {
                 fids[n] = fid;
                 n += 1;
             }

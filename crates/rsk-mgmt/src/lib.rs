@@ -43,6 +43,37 @@ const TAG_VERSION: u8 = 0x05;
 const TAG_DEVICE_FLAGS: u8 = 0x08;
 const TAG_CONFIG_LOCK: u8 = 0x0A;
 const TAG_CONFIG_UNLOCK: u8 = 0x0B;
+// The rest of ykman's writable DeviceConfig set (`DeviceConfig.get_bytes`). We do
+// not act on these, but a host may legitimately send them, so they round-trip.
+const TAG_AUTO_EJECT_TIMEOUT: u8 = 0x06;
+const TAG_CHALRESP_TIMEOUT: u8 = 0x07;
+const TAG_REBOOT: u8 = 0x0C;
+const TAG_NFC_ENABLED: u8 = 0x0E;
+const TAG_NFC_RESTRICTED: u8 = 0x17;
+
+/// Whether a host may write this DeviceInfo tag. The complement — `USB_SUPPORTED`,
+/// `SERIAL`, `FORM_FACTOR`, `VERSION` — is device-owned and emitted by
+/// [`config_tlv`] itself; storing a host copy would append a *second* instance
+/// after the authentic one, and `ykman`'s `Tlv.parse_dict` is last-wins, so the
+/// host value would win. A malformed one (e.g. a 1-byte `VERSION`) makes
+/// `DeviceInfo.parse` raise, which hides the device from `ykman` for good —
+/// `EF_DEV_CONF` survives `authenticatorReset` and no first-party tool rewrites it
+/// (audit run-33). Refusing the write is what keeps that unreachable; real
+/// hardware has no path to a self-inflicted unparseable DeviceInfo either.
+fn writable_tag(tag: u8) -> bool {
+    matches!(
+        tag,
+        TAG_USB_ENABLED
+            | TAG_AUTO_EJECT_TIMEOUT
+            | TAG_CHALRESP_TIMEOUT
+            | TAG_DEVICE_FLAGS
+            | TAG_CONFIG_LOCK
+            | TAG_CONFIG_UNLOCK
+            | TAG_REBOOT
+            | TAG_NFC_ENABLED
+            | TAG_NFC_RESTRICTED
+    )
+}
 
 const FLAG_EJECT: u8 = 0x80;
 const FORM_FACTOR_USB_A_KEYCHAIN: u8 = 0x01;
@@ -73,10 +104,39 @@ pub fn take_device_reset() -> bool {
 /// OpenPGP reset scopes, so the capability config is sticky.
 const EF_DEV_CONF: u16 = 0x1122;
 
-/// Bytes of `EF_DEV_CONF` that READ CONFIG can echo back — the size of the fixed
-/// buffer it reads into. WRITE CONFIG refuses to persist more (a host config is
-/// a handful of small TLVs), so a read can never slice past the buffer.
-const EF_DEV_CONF_MAX: usize = 64;
+/// Bytes of `EF_DEV_CONF` that READ CONFIG can echo back. Derived from the
+/// *smallest* response buffer any transport gives us — the OTP-HID frame's 64
+/// bytes — minus the fixed part of the DeviceInfo TLV, so a stored blob can never
+/// be one a consumer must silently drop. Sizing the writer against its own scratch
+/// instead is what let a 43-byte config wedge OTP-HID READ CONFIG into an empty
+/// success response, persistently (audit run-33).
+const EF_DEV_CONF_MAX: usize = MIN_CONFIG_RES_CAP - CONFIG_TLV_FIXED;
+
+/// Largest WRITE CONFIG request accepted, before the lock tags are stripped. A
+/// request may legitimately be larger than what it stores — `set-lock-code` sends
+/// a 16-byte UNLOCK *and* a 16-byte CONFIG_LOCK, neither of which is kept — so the
+/// request bound is the transport's own limit and [`EF_DEV_CONF_MAX`] is applied
+/// to the stripped result.
+const DEV_CONF_WRITE_MAX: usize = 128;
+
+/// Smallest `ResBuf` a READ CONFIG response is built into (the OTP-HID transport).
+const MIN_CONFIG_RES_CAP: usize = 64;
+
+/// How much of `EF_DEV_CONF` a read reaches for. Larger than [`EF_DEV_CONF_MAX`],
+/// which bounds only *new* writes: builds before that cap stored up to this much,
+/// and the record survives `authenticatorReset`, so an upgraded device must still
+/// be read whole. Reading through the smaller cap would slice such a blob
+/// mid-entry and hand the host the unparseable DeviceInfo the cap exists to
+/// prevent.
+const EF_DEV_CONF_READ_MAX: usize = 64;
+
+/// The device-owned part of every READ CONFIG response: the overall length byte,
+/// `USB_SUPPORTED` + `SERIAL` + `FORM_FACTOR` + `VERSION`, and the trailing
+/// `CONFIG_LOCK`. Each `push_tlv` costs 2 bytes of header plus its value.
+const CONFIG_TLV_FIXED: usize = 1 + (2 + 2) + (2 + 4) + (2 + 1) + (2 + 3) + CONFIG_LOCK_TLV_LEN;
+
+/// The trailing `CONFIG_LOCK` entry `config_tlv` always appends after the echo.
+const CONFIG_LOCK_TLV_LEN: usize = 2 + 1;
 
 /// Outcome of a user-presence request for a privileged management operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -142,8 +202,22 @@ pub fn config_tlv<S: Storage>(serial: &[u8; 4], fs: &mut Fs<S>, res: &mut ResBuf
     let (maj, min, patch) = VERSION;
     push_tlv(&mut buf, &mut n, TAG_VERSION, &[maj, min, patch]);
 
-    let mut conf = [0u8; EF_DEV_CONF_MAX];
-    match fs.read(EF_DEV_CONF, &mut conf) {
+    let mut conf = [0u8; EF_DEV_CONF_READ_MAX];
+    // A stored record is validated on READ, not only on write. `well_formed_writable`
+    // has only ever guarded the write path, so a record a **pre-`9171ccf` build**
+    // accepted — a 1-byte `USB_ENABLED`, a duplicate tag — survived the upgrade and
+    // kept being echoed, which is how one permanently hid the device from ykman
+    // (audit run-34 #25). An unusable record falls back to the factory default: the
+    // host then sees "everything supported is enabled", which is exactly what
+    // `enabled_from_conf` enforces for a record it cannot read either, so the two
+    // sides agree instead of diverging.
+    let stored = match fs.read(EF_DEV_CONF, &mut conf) {
+        Some(full) if full > 0 && full <= conf.len() && well_formed_writable(&conf[..full]) => {
+            Some(full)
+        }
+        _ => None,
+    };
+    match stored {
         Some(full) if full > 0 => {
             // A host wrote an enabled-applications config — echo it back. Three
             // steps: (1) `Storage::read` reports the value's *full* length even
@@ -156,9 +230,22 @@ pub fn config_tlv<S: Storage>(serial: &[u8; 4], fs: &mut Fs<S>, res: &mut ResBuf
             // what this firmware supports, so READ CONFIG never reports enabled ⊄
             // supported.
             let len = full.min(conf.len());
-            let mut echoed = [0u8; EF_DEV_CONF_MAX];
-            let elen =
-                strip_config_lock(&conf[..len], &mut echoed).min(buf.len().saturating_sub(n));
+            let mut echoed = [0u8; EF_DEV_CONF_READ_MAX];
+            // Bound the echo by the caller's buffer as well as ours: `ResBuf::extend`
+            // writes *nothing* on overflow, so an echo that fits `buf` but not the
+            // transport's response would turn READ CONFIG into an empty `9000`
+            // forever. `EF_DEV_CONF_MAX` makes that unreachable for anything this
+            // firmware stored; the clamp covers a blob from an older build.
+            let taken = res.capacity().saturating_sub(res.len());
+            let room = taken
+                .saturating_sub(n + CONFIG_LOCK_TLV_LEN)
+                .min(buf.len().saturating_sub(n + CONFIG_LOCK_TLV_LEN));
+            let stripped = strip_config_lock(&conf[..len], &mut echoed).min(room);
+            // …and to whole entries. Every bound above is a byte count, so any of
+            // them can land inside a TLV; emitting the head of one is precisely the
+            // unparseable DeviceInfo this response must never produce. Only a record
+            // an older build stored (or corrupt flash) can reach the cut.
+            let elen = whole_tlvs(&echoed[..stripped]);
             buf[n..n + elen].copy_from_slice(&echoed[..elen]);
             clamp_usb_enabled(&mut buf[n..n + elen]);
             n += elen;
@@ -167,12 +254,18 @@ pub fn config_tlv<S: Storage>(serial: &[u8; 4], fs: &mut Fs<S>, res: &mut ResBuf
             push_tlv(&mut buf, &mut n, TAG_CONFIG_LOCK, &[0x00]);
         }
         _ => {
-            // Defaults: everything supported is enabled, removable, unlocked.
+            // No record, or one this firmware's writer would refuse. Either way the
+            // echo is synthesised from the mask actually enforced — never the raw
+            // bytes. A record a pre-`9171ccf` build accepted (a 1-byte USB_ENABLED)
+            // used to be echoed verbatim and permanently hid the device from ykman,
+            // while `enabled_from_conf` ignored the same value and enforced the
+            // default: report and enforcement disagreed on one record (run-34 #25).
+            // Normalising leaves them one answer, always parseable.
             push_tlv(
                 &mut buf,
                 &mut n,
                 TAG_USB_ENABLED,
-                &SUPPORTED_CAPS.to_be_bytes(),
+                &read_enabled_caps(fs).to_be_bytes(),
             );
             push_tlv(&mut buf, &mut n, TAG_DEVICE_FLAGS, &[FLAG_EJECT]);
             push_tlv(&mut buf, &mut n, TAG_CONFIG_LOCK, &[0x00]);
@@ -180,7 +273,11 @@ pub fn config_tlv<S: Storage>(serial: &[u8; 4], fs: &mut Fs<S>, res: &mut ResBuf
     }
 
     buf[0] = (n - 1) as u8;
-    res.extend(&buf[..n]);
+    if !res.extend(&buf[..n]) {
+        // Unreachable given the clamp above, but never answer OK over a body the
+        // buffer silently dropped — an empty success is what the host parses.
+        return Sw::EXEC_ERROR;
+    }
     Sw::OK
 }
 
@@ -191,6 +288,10 @@ pub enum DevConfError {
     /// Over `EF_DEV_CONF_MAX` — refused so READ CONFIG can never slice past its
     /// fixed buffer (an over-length blob in flash is a sticky DoS).
     TooLong,
+    /// Not well-formed TLV, or it carries a tag the device owns (see
+    /// [`writable_tag`]). Refused so a host cannot forge an identity field or
+    /// store a blob that makes the DeviceInfo response unparseable.
+    BadTlv,
     /// The flash write failed.
     Store,
 }
@@ -201,20 +302,156 @@ pub enum DevConfError {
 /// the enabled-applications TLV *without* any transport length prefix; the caller
 /// applies its own auth gate (CCID presence, FIDO PIN + touch) before this.
 pub fn persist_dev_conf<S: Storage>(fs: &mut Fs<S>, blob: &[u8]) -> Result<(), DevConfError> {
-    if blob.len() > EF_DEV_CONF_MAX {
+    if blob.len() > DEV_CONF_WRITE_MAX {
         return Err(DevConfError::TooLong);
+    }
+    if !well_formed_writable(blob) {
+        return Err(DevConfError::BadTlv);
     }
     // Never retain the config-lock tags (see `strip_config_lock`): we do not enforce
     // the lock, and READ CONFIG echoes this blob to any unauthenticated host, so a
     // 16-byte 0x0A would sit unsealed in flash and be disclosed (audit run-30).
-    let mut stripped = [0u8; EF_DEV_CONF_MAX];
+    let mut stripped = [0u8; DEV_CONF_WRITE_MAX];
     let n = strip_config_lock(blob, &mut stripped);
-    fs.put(EF_DEV_CONF, &stripped[..n])
+    // Bound what is actually STORED, not what was sent: the two lock tags carry
+    // 16-byte codes that never reach flash, and `ykman config set-lock-code` sends
+    // both the old and the new one at once — 59 bytes of request for at most 23
+    // bytes of config. Measuring the request would refuse that legitimate write.
+    // MERGE onto the stored record; do not replace it. ykman sends only the fields
+    // it is changing — `config set-lock-code` sends the 0x0A TLV and nothing else,
+    // which strips to zero bytes here. Storing that verbatim left an EMPTY record,
+    // and `read_enabled_caps` reads empty as "no record" and returns
+    // SUPPORTED_CAPS, so a lock-code write silently re-enabled every application
+    // the owner had disabled (audit run-35).
+    let mut merged = [0u8; EF_DEV_CONF_READ_MAX];
+    let m = merged_dev_conf(fs, &stripped[..n], &mut merged)?;
+    if m > EF_DEV_CONF_MAX {
+        return Err(DevConfError::TooLong);
+    }
+    // An idempotent write costs no flash and no audit-journal entry. Folded in here
+    // rather than left to the caller: only one of the four call sites ever ran the
+    // check, and after the merge landed it could not recognise a partial replay at
+    // all, which is the only shape ykman sends (audit run-36).
+    if stored_matches(fs, &merged[..m]) {
+        return Ok(());
+    }
+    fs.put(EF_DEV_CONF, &merged[..m])
         .map_err(|_| DevConfError::Store)?;
     // The enabled-applications set changed; the firmware reloads its cached mask
     // (which gates applet dispatch) before the next command it guards.
     DEV_CONF_DIRTY.store(true, core::sync::atomic::Ordering::Relaxed);
     Ok(())
+}
+
+/// The record a write of `incoming` (already lock-stripped) would store: the merge
+/// onto what is on flash, trimmed to the cap. One definition, so the writer and
+/// [`dev_conf_unchanged`] can never disagree about what "unchanged" means.
+fn merged_dev_conf<S: Storage>(
+    fs: &mut Fs<S>,
+    incoming: &[u8],
+    out: &mut [u8],
+) -> Result<usize, DevConfError> {
+    let m = overlay_dev_conf(fs, incoming, out)?;
+    Ok(trim_to_cap(out, m, incoming.len()))
+}
+
+/// Drop whole stored entries from the front of a merged record until it fits
+/// [`EF_DEV_CONF_MAX`], never touching the trailing `keep` bytes the request itself
+/// contributed.
+///
+/// [`overlay_dev_conf`] emits the stored, un-restated entries first and appends the
+/// request last, so trimming the front evicts the oldest stored fields and always
+/// leaves the owner's own write intact. Without it, stored bytes could veto a write:
+/// released firmware bounded writes at [`EF_DEV_CONF_READ_MAX`] with no shape
+/// validation, so a field device may carry a record the write cap refuses, and one
+/// ungated oversized entry could deny the owner their config surface for good
+/// (audit run-36).
+fn trim_to_cap(merged: &mut [u8], mut m: usize, keep: usize) -> usize {
+    while m > EF_DEV_CONF_MAX && m > keep {
+        let Some(&len) = merged.get(1) else { break };
+        let entry = 2 + len as usize;
+        if entry > m - keep {
+            break;
+        }
+        merged.copy_within(entry..m, 0);
+        m -= entry;
+    }
+    m
+}
+
+/// Whether `EF_DEV_CONF` already holds exactly `want`.
+fn stored_matches<S: Storage>(fs: &mut Fs<S>, want: &[u8]) -> bool {
+    let mut cur = [0u8; EF_DEV_CONF_READ_MAX];
+    // `read` reports the value's *full* stored length, which an over-length record
+    // from an older build can push past `cur` — compare only when it fits.
+    matches!(fs.read(EF_DEV_CONF, &mut cur),
+        Some(c) if c == want.len() && c <= cur.len() && cur[..c] == *want)
+}
+
+/// Overlay the TLV entries `incoming` carries onto the stored `EF_DEV_CONF`,
+/// writing the result into `out` and returning its length.
+///
+/// A DeviceConfig write is a *delta*: real hardware merges it, and every ykman
+/// command that touches one field sends that field alone. Replacing the record
+/// wholesale therefore discards every setting the request did not mention.
+/// Entries the request repeats win; the rest are kept in their stored order, so a
+/// no-op write is byte-stable and `dev_conf_unchanged` still short-circuits it.
+fn overlay_dev_conf<S: Storage>(
+    fs: &mut Fs<S>,
+    incoming: &[u8],
+    out: &mut [u8],
+) -> Result<usize, DevConfError> {
+    let mut stored = [0u8; EF_DEV_CONF_READ_MAX];
+    let stored_n = fs
+        .read(EF_DEV_CONF, &mut stored)
+        .map(|n| n.min(EF_DEV_CONF_READ_MAX))
+        .unwrap_or(0);
+    // A stored record an older build may have written is only merged onto when it
+    // parses; otherwise the incoming blob replaces it, which is what the previous
+    // behaviour did for every input and is still the safe answer for a record we
+    // cannot read.
+    let stored = &stored[..whole_tlvs(&stored[..stored_n])];
+
+    let mut n = 0usize;
+    let mut push = |src: &[u8], out: &mut [u8]| -> Result<(), DevConfError> {
+        if n + src.len() > out.len() {
+            return Err(DevConfError::TooLong);
+        }
+        out[n..n + src.len()].copy_from_slice(src);
+        n += src.len();
+        Ok(())
+    };
+    // Stored entries first, minus any tag the request restates.
+    let mut i = 0;
+    while i + 1 < stored.len() {
+        let len = stored[i + 1] as usize;
+        let end = i + 2 + len;
+        if end > stored.len() {
+            break;
+        }
+        if !has_tag(incoming, stored[i]) {
+            push(&stored[i..end], out)?;
+        }
+        i = end;
+    }
+    push(incoming, out)?;
+    Ok(n)
+}
+
+/// Whether a well-formed TLV run carries an entry with `tag`.
+fn has_tag(blob: &[u8], tag: u8) -> bool {
+    let mut i = 0;
+    while i + 1 < blob.len() {
+        let end = i + 2 + blob[i + 1] as usize;
+        if end > blob.len() {
+            return false;
+        }
+        if blob[i] == tag {
+            return true;
+        }
+        i = end;
+    }
+    false
 }
 
 /// Copy `blob` minus any CONFIG_LOCK (0x0A) / UNLOCK (0x0B) TLV entry into `out`,
@@ -225,6 +462,87 @@ pub fn persist_dev_conf<S: Storage>(fs: &mut Fs<S>, blob: &[u8]) -> Result<(), D
 /// copied unchanged, so a config we do not understand is never corrupted (an attacker's
 /// own malformed write is readable by them regardless). `out` must be at least
 /// `blob.len()` bytes.
+/// Whether `blob` is a clean run of TLV entries whose every tag a host may write.
+/// Empty is fine (it clears the record). Rejecting here rather than sanitizing on
+/// read keeps one definition of "what a host may store" and means READ CONFIG can
+/// go on echoing the stored bytes verbatim.
+fn well_formed_writable(blob: &[u8]) -> bool {
+    let mut i = 0;
+    let mut seen = [0u8; 16];
+    let mut seen_n = 0;
+    while i < blob.len() {
+        let Some(&len) = blob.get(i + 1) else {
+            return false; // truncated header
+        };
+        let Some(end) = i.checked_add(2).and_then(|h| h.checked_add(len as usize)) else {
+            return false;
+        };
+        let tag = blob[i];
+        if end > blob.len() || !writable_tag(tag) {
+            return false;
+        }
+        // One entry per tag. A real YubiKey emits each exactly once; a duplicate
+        // makes this device (first-wins, `enabled_from_conf`) and ykman (last-wins,
+        // `Tlv.parse_dict`) disagree about what was just stored.
+        if seen[..seen_n].contains(&tag) {
+            return false;
+        }
+        if seen_n == seen.len() {
+            return false; // more distinct tags than the writable set has
+        }
+        seen[seen_n] = tag;
+        seen_n += 1;
+        // `enabled_from_conf` and `clamp_usb_enabled` both act only on a two-byte
+        // value, so any other width would store a mask the device silently ignores
+        // while a host parser reads it — including one wide enough to escape the
+        // "enabled ⊆ supported" clamp entirely.
+        if tag == TAG_USB_ENABLED && len != 2 {
+            return false;
+        }
+        // Every other writable tag gets a width bound too. Only `USB_ENABLED` had
+        // one, so an ungated 38-byte `AUTO_EJECT_TIMEOUT` stored fine and then made
+        // every later *partial* write — the only shape ykman sends — exceed the
+        // post-merge cap, denying the owner their own config surface for good
+        // (audit run-36). These are the widths ykman can actually express.
+        if max_value_len(tag).is_some_and(|max| len as usize > max) {
+            return false;
+        }
+        i = end;
+    }
+    true
+}
+
+/// The widest value ykman can put in each writable tag, or `None` where no bound
+/// applies (the two lock tags carry 16-byte codes, and `strip_config_lock` drops
+/// them before storage either way). `USB_ENABLED` keeps its own EXACT-width rule at
+/// the call site: relaxing it to a maximum would let a stored `03 00` be echoed by
+/// `config_tlv` while `enabled_from_conf` ignores it, reintroducing the
+/// report-vs-enforcement divergence of audit run-34 #25.
+fn max_value_len(tag: u8) -> Option<usize> {
+    match tag {
+        TAG_NFC_ENABLED | TAG_AUTO_EJECT_TIMEOUT | TAG_CHALRESP_TIMEOUT => Some(2),
+        TAG_DEVICE_FLAGS | TAG_NFC_RESTRICTED => Some(1),
+        TAG_REBOOT => Some(0),
+        _ => None,
+    }
+}
+
+/// Length of the leading run of complete TLV entries in `blob` — how much of a
+/// stored record READ CONFIG may echo. Unlike [`well_formed_writable`] this judges
+/// only the framing, never the tags: the bytes are already on flash, and dropping
+/// a half entry is the whole point.
+fn whole_tlvs(blob: &[u8]) -> usize {
+    let mut i = 0;
+    while i + 2 <= blob.len() {
+        let end = i + 2 + blob[i + 1] as usize;
+        if end > blob.len() {
+            break;
+        }
+        i = end;
+    }
+    i
+}
+
 fn strip_config_lock(blob: &[u8], out: &mut [u8]) -> usize {
     let mut i = 0;
     let mut n = 0;
@@ -253,19 +571,32 @@ fn strip_config_lock(blob: &[u8], out: &mut [u8]) -> usize {
 /// entry on an idempotent replay, which a silent host could otherwise use to evict
 /// the whole ring.
 pub fn dev_conf_unchanged<S: Storage>(fs: &mut Fs<S>, blob: &[u8]) -> bool {
-    if blob.len() > EF_DEV_CONF_MAX {
+    // Request-side bound: this takes the blob as sent, lock tags included.
+    if blob.len() > DEV_CONF_WRITE_MAX {
         return false;
     }
+    // Deliberately NOT gated on `well_formed_writable`: a legacy record an older,
+    // laxer build stored (duplicate tags and all) must still be recognised when it
+    // is replayed verbatim, or every replay churns flash and the audit ring — the
+    // run-34 #35 property this function carries.
     // Compare against the stripped form we would actually store, so an idempotent
     // replay of a blob that still carries 0x0A/0x0B is still recognised as unchanged
     // (otherwise every replay would churn flash and the audit ring — audit run-30).
-    let mut stripped = [0u8; EF_DEV_CONF_MAX];
+    let mut stripped = [0u8; DEV_CONF_WRITE_MAX];
     let n = strip_config_lock(blob, &mut stripped);
-    let mut cur = [0u8; EF_DEV_CONF_MAX];
-    // `read` reports the value's *full* stored length, which an over-length record
-    // from an older build can push past `cur` — compare only when it fits.
-    matches!(fs.read(EF_DEV_CONF, &mut cur),
-        Some(m) if m == n && m <= cur.len() && cur[..m] == stripped[..n])
+    // Compare what the write would actually STORE, not the request. The writer
+    // merges onto the stored record, so a partial blob — the only shape ykman sends
+    // — is never byte-equal to the whole record, and comparing the request meant
+    // this short-circuit could not fire at all after the merge landed (audit
+    // run-36). Sized by the READ bound, like the other readers: `EF_DEV_CONF_MAX` is
+    // the *write* cap, and sizing a reader by it meant a legacy record between the
+    // two limits never fitted, so every replay of it looked "changed" and churned
+    // flash plus the audit ring (audit run-34 #35).
+    let mut merged = [0u8; EF_DEV_CONF_READ_MAX];
+    let Ok(m) = merged_dev_conf(fs, &stripped[..n], &mut merged) else {
+        return false;
+    };
+    stored_matches(fs, &merged[..m])
 }
 
 /// Set by [`persist_dev_conf`] on any successful write, drained by the firmware to
@@ -302,11 +633,18 @@ pub fn enabled_from_conf(conf: &[u8]) -> u16 {
 /// Read `EF_DEV_CONF` and return its enabled-applications mask ([`enabled_from_conf`]).
 /// The firmware caches this and re-reads it when [`take_dev_conf_dirty`] fires.
 pub fn read_enabled_caps<S: Storage>(fs: &mut Fs<S>) -> u16 {
-    let mut conf = [0u8; EF_DEV_CONF_MAX];
+    // The read width, not the write cap: a pre-cap build's larger record must still
+    // be scanned whole, or a disabled applet silently comes back after the upgrade.
+    let mut conf = [0u8; EF_DEV_CONF_READ_MAX];
     match fs.read(EF_DEV_CONF, &mut conf) {
         Some(full) if full > 0 => enabled_from_conf(&conf[..full.min(conf.len())]),
         _ => SUPPORTED_CAPS,
     }
+    // Deliberately NOT gated on `well_formed_writable`, unlike the echo: this walk
+    // is already defensive (a `USB_ENABLED` that is not exactly two bytes is
+    // skipped, and an unreadable record yields the default), and refusing to honour
+    // a record it cannot *fully* validate would silently re-enable applets the owner
+    // disabled. The echo is normalised to this answer instead (audit run-34 #25).
 }
 
 /// Whether an applet guarded by capability bit `cap` is enabled under `mask`.
@@ -344,11 +682,11 @@ impl<'a> ManagementApplet<'a> {
         if apdu.nc == 0 || apdu.data[0] as usize != apdu.nc - 1 {
             return Sw::INCORRECT_PARAMS;
         }
-        // READ CONFIG echoes this blob back through a fixed `EF_DEV_CONF_MAX`
-        // buffer; refuse to persist more than fits so a read can never slice out
-        // of bounds (an over-length blob would otherwise be a sticky DoS — it
-        // lives in flash and crashes every DeviceInfo query until wiped).
-        if apdu.nc - 1 > EF_DEV_CONF_MAX {
+        // Request-side bound only. What actually reaches flash is bounded by
+        // `persist_dev_conf` against `EF_DEV_CONF_MAX` *after* the lock tags are
+        // stripped, so a legitimate `set-lock-code` (two 16-byte codes in one
+        // request, neither stored) is not refused for the size of its request.
+        if apdu.nc - 1 > DEV_CONF_WRITE_MAX {
             return Sw::INCORRECT_PARAMS;
         }
         // Rewriting the reported DeviceInfo is a privileged, sticky change. Under
@@ -363,7 +701,7 @@ impl<'a> ManagementApplet<'a> {
         }
         match persist_dev_conf(fs, &apdu.data[1..apdu.nc]) {
             Ok(()) => Sw::OK,
-            Err(DevConfError::TooLong) => Sw::INCORRECT_PARAMS,
+            Err(DevConfError::TooLong | DevConfError::BadTlv) => Sw::INCORRECT_PARAMS,
             Err(DevConfError::Store) => Sw::MEMORY_FAILURE,
         }
     }

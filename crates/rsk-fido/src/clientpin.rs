@@ -393,7 +393,14 @@ fn issue_token<S: Storage, R: Rng>(
     };
 
     let mut token_enc = [0u8; 32 + 16];
-    let enc_len = pinproto::encrypt(proto, secret, &[0u8; 16], &pdata, &mut token_enc)
+    // A random IV, as CTAP 2.1 §6.5.7 requires and the `hmac-secret` sibling
+    // already did. The hard-coded zero was mostly masked because the token is
+    // freshly random per issuance — but not on the `PERM_PCMR` branch, whose token
+    // is filled once per power cycle, so repeated issuances under one shared secret
+    // encrypted identically and were linkable on the wire (audit run-34 #37).
+    let mut iv = [0u8; 16];
+    ctx.rng.fill(&mut iv);
+    let enc_len = pinproto::encrypt(proto, secret, &iv, &pdata, &mut token_enc)
         .map_err(|_| CtapError::Other)?;
     ctx.state.needs_power_cycle = false;
     let len = encode(out, |e| {
@@ -698,6 +705,7 @@ fn spend_and_verify_pin_hash<S: Storage, R: Rng>(
 
     let cand = ctx.dev.pin_derive_verifier(pin_hash);
     let mut matched = pinproto_ct_eq(&cand, &pin_data[3..PIN_FILE_LEN]);
+    let mut migrated = false;
     if !matched && ctx.dev.otp_key.is_some() {
         // Kbase-migration fallback: a verifier stored before the OTP key was
         // provisioned. A match under the pre-OTP arm is the correct PIN — the
@@ -707,6 +715,7 @@ fn spend_and_verify_pin_hash<S: Storage, R: Rng>(
         if pinproto_ct_eq(&cand_old, &pin_data[3..PIN_FILE_LEN]) {
             pin_data[3..PIN_FILE_LEN].copy_from_slice(&cand);
             matched = true;
+            migrated = true;
         }
     }
     if !matched {
@@ -734,6 +743,14 @@ fn spend_and_verify_pin_hash<S: Storage, R: Rng>(
     ctx.fs
         .put(EF_PIN, &pin_data)
         .map_err(|_| CtapError::Other)?;
+    // The record we just superseded was keyed under the pre-OTP arm, i.e. under
+    // HKDF("NO-OTP", serial_hash) — derivable from the public chip serial. The
+    // one-shot at-rest lap has already run by now, so re-arm it or that copy stays
+    // in the flash ring as an offline dictionary target (rsk-fs `EF_HARDENED`
+    // invariant; audit run-35 found four of five lazy re-keys skipping this).
+    if migrated {
+        rsk_fs::request_rescrub(ctx.fs);
+    }
     Ok(())
 }
 
@@ -988,12 +1005,14 @@ fn spend_and_verify_pin_at<S: Storage>(
     let mut pin_hash = sha256(pin);
     let cand = dev.pin_derive_verifier(&pin_hash[..16]);
     let mut matched = pinproto_ct_eq(&cand, &pin_data[3..PIN_FILE_LEN]);
+    let mut migrated = false;
     if !matched && dev.otp_key.is_some() {
         // Pre-OTP verifier fallback, identical to `spend_and_verify_pin_hash`.
         let cand_old = dev.without_otp().pin_derive_verifier(&pin_hash[..16]);
         if pinproto_ct_eq(&cand_old, &pin_data[3..PIN_FILE_LEN]) {
             pin_data[3..PIN_FILE_LEN].copy_from_slice(&cand);
             matched = true;
+            migrated = true;
         }
     }
     if !matched {
@@ -1010,9 +1029,9 @@ fn spend_and_verify_pin_at<S: Storage>(
     // openable now) before resetting the counter; the device PIN has no seed to migrate.
     // Fail closed if a required flash write fails.
     if migrate_seed {
-        let migrated = migrate_keydev_pin(dev, fs, &pin_hash[..16]).is_ok();
+        let seed_ok = migrate_keydev_pin(dev, fs, &pin_hash[..16]).is_ok();
         pin_hash.zeroize();
-        if !migrated {
+        if !seed_ok {
             return LocalPin::Blocked;
         }
     } else {
@@ -1022,6 +1041,11 @@ fn spend_and_verify_pin_at<S: Storage>(
     if fs.put(fid, &pin_data).is_err() {
         return LocalPin::Blocked;
     }
+    // See `spend_and_verify_pin_hash`: the superseded pre-OTP verifier is derivable
+    // from the public chip serial, and the one-shot at-rest lap has already run.
+    if migrated {
+        rsk_fs::request_rescrub(fs);
+    }
     LocalPin::Ok
 }
 
@@ -1030,9 +1054,12 @@ fn spend_and_verify_pin_at<S: Storage>(
 /// device-sealed, format 1, with a fresh retry budget — so the host afterwards sees a
 /// clientPIN exactly as if it had been set over USB. It enforces both `minPINLength` and
 /// the host-representable [`MAX_PIN_LENGTH`] ceiling (so a panel-set PIN stays usable over
-/// USB) but, mirroring [`spend_and_verify_local_pin`], deliberately omits the CTAP-session
-/// side effects (token regeneration, the journal) that need a `Ctx` the display task
-/// does not hold and are meaningless with no host session. The CALLER verifies the
+/// USB). It does NOT itself revoke outstanding pinUvAuthTokens or journal the change —
+/// both need state the display task does not hold. Revocation is not optional, though:
+/// `FidoState` lives in the worker and outlives every dispatch, so a token minted under
+/// the old PIN would keep `PERM_CM` authority (and `deleteCredential` takes no touch) for
+/// up to `PUAT_MAX_USAGE_PERIOD_MS` after the owner believes they locked the host out. The
+/// firmware caller MUST signal it — see `firmware::display::note_local_pin_changed`. The CALLER verifies the
 /// *current* PIN first when one is set (so a change still proves knowledge of the old
 /// PIN) and zeroizes `pin`. A pending forced-PIN-change flag is cleared best-effort
 /// since a satisfied new PIN meets the policy.

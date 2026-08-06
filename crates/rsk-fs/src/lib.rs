@@ -42,6 +42,23 @@ pub fn request_rescrub<S: Storage>(fs: &mut Fs<S>) {
 
 pub const EF_META: u16 = 0xE010;
 
+/// The scrub filler a [`Storage::compact`] lap writes to push superseded payloads
+/// off the medium. It is a backend-internal key, not a file — but `compact` writes
+/// it straight through the backend, never through [`Fs`], so `Fs::scan` would count
+/// it as a dynamic file. At the [`MAX_DYNAMIC_FILES`] cap plus a filler left behind
+/// by a failed or power-cut lap, that silently cost one live key its registration
+/// and every later `put` to it returned `NoMemory` (audit run-36). Defined here so
+/// the backend and `scan` share one definition of what to skip.
+pub const EF_SCRUB_FILLER: u16 = 0xCEFE;
+
+/// Largest value one FID may hold, and the value every [`Storage`] backend
+/// declares as `MAX_VALUE`. The device backend serialises the 2-byte key and the
+/// value through one 2048-byte scratch buffer, so the real ceiling is 2 bytes
+/// under it. [`Fs::put`] enforces it, so no applet has to know the number — a cap
+/// picked independently is how ATT_IMPORT came to accept records the store could
+/// not hold (audit run-32).
+pub const MAX_VALUE_BYTES: usize = 2046;
+
 /// Max number of dynamic (runtime-created) files — the shared budget across ALL
 /// applets (each FIDO cred, each PIV key + cert, each OATH cred, each OpenPGP DO, …).
 /// Sized to the union of every applet's own logical cap so one applet can't starve

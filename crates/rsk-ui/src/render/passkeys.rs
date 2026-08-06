@@ -53,6 +53,15 @@ where
                 true,
                 true,
                 r.nick.is_empty(),
+                // An rpId already clipped to LABEL_MAX must still show its marker
+                // here, not just on the ceremony card — this list is where the owner
+                // audits what is stored, so a padded look-alike must not read as
+                // whole (audit run-33).
+                if r.nick.is_empty() {
+                    r.id.truncated
+                } else {
+                    r.nick.truncated
+                },
             )?;
         }
         list_tail(t, page, total, "item", "items")?;
@@ -83,7 +92,7 @@ where
     // it is the rpId, head-ellipsize so the registrable-domain suffix stays visible (matches
     // the list row and the Confirm-Delete card).
     if title_is_rp {
-        title_bar_domain(t, title.as_str(), theme::ACCENT, true)?;
+        title_bar_domain(t, title, theme::ACCENT, true)?;
     } else {
         title_bar(t, title.as_str(), theme::ACCENT, true)?;
     }
@@ -114,6 +123,7 @@ where
             false,
             true,
             false,
+            a.name.truncated,
         )?;
     }
     list_tail(t, page, total, "account", "accounts")?;

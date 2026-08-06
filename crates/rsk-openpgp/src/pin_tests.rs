@@ -652,3 +652,29 @@ fn put_reset_code_requires_pw3() {
     );
     assert_ne!(sw, Sw::OK);
 }
+
+/// VERIFY's P2 selects the verifier EF as `0x1000 | p2`, so it decides which
+/// *file* the wrong-PIN path decrements and rewrites. The old filter was the bit
+/// test `(p2 & 0x60) != 0`, which let 64 values through — internal FIDs belonging
+/// to other applets among them, FIDO's `EF_PIN` included. Only a one-byte length
+/// coincidence kept that from being a live cross-applet primitive, and that
+/// constant is owned by a different crate (audit run-34 #21). Enumerate the three
+/// defined modes, the way `change_pin` already did.
+#[test]
+fn verify_refuses_every_undefined_p2() {
+    let d = dev();
+    let mut fs = setup();
+    let mut rng = CountRng(0);
+    for p2 in 0u16..=0xFF {
+        let p2 = p2 as u8;
+        if matches!(p2, PW1_MODE81 | PW1_MODE82 | PW3_MODE83) {
+            continue;
+        }
+        let mut sess = Session::new();
+        assert_eq!(
+            verify(&d, &mut fs, &mut sess, &mut rng, 0x00, p2, b"123456"),
+            Sw::WRONG_P1P2,
+            "P2={p2:#04x} must be refused before it names a file"
+        );
+    }
+}

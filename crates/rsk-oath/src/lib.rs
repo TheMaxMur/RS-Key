@@ -374,13 +374,15 @@ impl<'a> OathApplet<'a> {
         if apdu.p1 != 0xDE || apdu.p2 != 0xAD {
             return Sw::INCORRECT_P1P2;
         }
-        let mut fids = [0u16; MAX_OATH_CRED as usize];
-        let n = present_creds(fs, &mut fids);
-        for &fid in &fids[..n] {
-            let _ = fs.delete(fid);
+        // Prove the wipe rather than assume it. `present_creds` reads the in-RAM
+        // present bitmap, which a boot scan truncated by a read fault leaves
+        // *undecided* — so a live credential was skipped and the host still got
+        // `9000` over a store that kept its TOTP secrets, the access code and the
+        // OTP-PIN. PIV, OpenPGP and FIDO reset all enumerate through `for_each_key`,
+        // honour its `complete` flag and propagate; this was the outlier (run-33).
+        if let Err(sw) = wipe_oath(fs) {
+            return sw;
         }
-        let _ = fs.delete_key(EF_OATH_CODE);
-        let _ = fs.delete(EF_OTP_PIN);
         self.validated = true;
         Sw::OK
     }
@@ -1005,6 +1007,10 @@ impl<'a> OathApplet<'a> {
         // Success: reset the counter and (lazily) upgrade a legacy record to the
         // OTP-rooted v1 verifier. The OTP PIN doubles as VALIDATE (nitropy flow).
         let _ = fs.put(EF_OTP_PIN, &self.otp_pin_record_v1(pw));
+        // The record just superseded may have been keyed under the pre-OTP arm,
+        // which the public chip serial derives. Re-arm the one-shot at-rest lap
+        // (rsk-fs `EF_HARDENED` invariant; audit run-35).
+        rsk_fs::request_rescrub(fs);
         self.validated = true;
         Sw::OK
     }
@@ -1154,6 +1160,78 @@ fn present_creds<S: Storage>(fs: &mut Fs<S>, out: &mut [u16; MAX_OATH_CRED as us
         }
     }
     n
+}
+
+/// The 255 credential slots — everything the access code exists to protect.
+fn is_oath_cred_fid(fid: u16) -> bool {
+    (EF_OATH_CRED..EF_OATH_CODE.get()).contains(&fid)
+}
+
+/// The two records that gate access: the access-code key and the OTP-PIN. Kept
+/// separate from [`is_oath_cred_fid`] so [`wipe_oath`] can delete them last.
+///
+/// Public because the device-wide `Fs::factory_wipe` bypasses [`wipe_oath`] and
+/// needs the same rule — it was private for a release, so the firmware could not
+/// name it and a torn device reset left the credentials live with no lock at all
+/// (audit run-36). OATH's failure mode is the sharper one of the family: its
+/// siblings re-provision a *published* credential over surviving secrets, while a
+/// missing `EF_OATH_CODE` is no credential at all, because `select` derives
+/// `validated` from `!code_set`.
+pub fn is_oath_lock_fid(fid: u16) -> bool {
+    fid == EF_OATH_CODE.get() || fid == EF_OTP_PIN
+}
+
+/// Progress backstop for [`sweep`]: every batched `force_delete` clears one
+/// *distinct* live fid and the two predicates span 257 of them between them, so
+/// needing more deletes than that means the backend keeps re-yielding what it
+/// removed.
+const RESET_MAX_DELETES: u32 = 257;
+
+/// Delete every live OATH record, and say so only when the sweep provably
+/// completed. Mirrors `rsk_piv::files::wipe_piv`: batched because `for_each_key`
+/// cannot delete mid-iteration, de-duped because it yields one entry per stored
+/// *version*, and `force_delete` so a present-cache false-absent cannot loop.
+fn wipe_oath<S: Storage>(fs: &mut Fs<S>) -> Result<(), Sw> {
+    // Two phases, and the order carries the security property. `for_each_key`
+    // yields in flash-ring (write) order, not FID order, so one combined sweep can
+    // reach the access code before the credentials — and a power cut there leaves
+    // the credentials live behind no lock at all, since `select` derives
+    // `validated` from `!code_set`. Credentials first, proven empty, then the
+    // unlock records.
+    sweep(fs, is_oath_cred_fid)?;
+    sweep(fs, is_oath_lock_fid)
+}
+
+/// One phase of [`wipe_oath`]: delete every live fid matching `pred`, reporting
+/// success only when the enumeration provably completed over an empty range.
+fn sweep<S: Storage>(fs: &mut Fs<S>, pred: fn(u16) -> bool) -> Result<(), Sw> {
+    let mut deleted = 0u32;
+    loop {
+        let mut fids = [0u16; 32];
+        let mut n = 0;
+        let complete = fs.for_each_key(&mut |fid| {
+            if pred(fid) && n < fids.len() && !fids[..n].contains(&fid) {
+                fids[n] = fid;
+                n += 1;
+            }
+        });
+        if n == 0 {
+            // A truncated walk (flash read fault) can hide a live fid, so an empty
+            // batch only proves the range is clear when the enumeration completed.
+            return if complete {
+                Ok(())
+            } else {
+                Err(Sw::MEMORY_FAILURE)
+            };
+        }
+        deleted += n as u32;
+        if deleted > RESET_MAX_DELETES {
+            return Err(Sw::MEMORY_FAILURE);
+        }
+        for &fid in &fids[..n] {
+            fs.force_delete(fid).map_err(|_| Sw::MEMORY_FAILURE)?;
+        }
+    }
 }
 
 /// One stored credential's public metadata, unsealed for the trusted display.

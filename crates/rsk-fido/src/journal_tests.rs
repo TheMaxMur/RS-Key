@@ -64,7 +64,7 @@ fn append_wrap_folds_and_head_matches_reference() {
     run_ctx(&mut fs, &mut state, |ctx| {
         for i in 0..200u32 {
             let detail = i.to_le_bytes();
-            raw_append(ctx, EV_GET_ASSERT, 0, &detail).unwrap();
+            raw_append(&ctx.dev, ctx.fs, ctx.now_ms, EV_GET_ASSERT, 0, &detail).unwrap();
             reference.push(build_entry(i, ctx.now_ms, EV_GET_ASSERT, 0, &detail));
         }
     });
@@ -99,7 +99,15 @@ fn fold_and_scrub_keeps_chain_and_deletes_details() {
     let mut reference = std::vec::Vec::new();
     run_ctx(&mut fs, &mut state, |ctx| {
         for i in 0..5u32 {
-            raw_append(ctx, EV_GET_ASSERT, 0, &i.to_le_bytes()).unwrap();
+            raw_append(
+                &ctx.dev,
+                ctx.fs,
+                ctx.now_ms,
+                EV_GET_ASSERT,
+                0,
+                &i.to_le_bytes(),
+            )
+            .unwrap();
             reference.push(build_entry(
                 i,
                 ctx.now_ms,
@@ -119,7 +127,7 @@ fn fold_and_scrub_keeps_chain_and_deletes_details() {
 
     // The chain continues seamlessly after the scrub.
     run_ctx(&mut fs, &mut state, |ctx| {
-        raw_append(ctx, EV_RESET, 0, &[]).unwrap();
+        raw_append(&ctx.dev, ctx.fs, ctx.now_ms, EV_RESET, 0, &[]).unwrap();
         reference.push(build_entry(5, ctx.now_ms, EV_RESET, 0, &[]));
     });
     let (head, _) = chain_head(&dev(), &mut fs);

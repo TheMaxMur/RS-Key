@@ -176,23 +176,48 @@ where
     Ok(enc.writer().position())
 }
 
+/// Whether a subcommand spends the seed-backup channel. Every one of these reads
+/// `mse_key`/`mse_pub` behind [`FidoState::mse_ready`], so the channel must not
+/// survive the call — see [`FidoState::mse_active`] for why it is one-shot.
+/// `AUT_ENABLE`'s twin lives in [`crate::config`], which clears it there.
+const fn consumes_mse(subcommand: u64) -> bool {
+    matches!(
+        subcommand,
+        VENDOR_BACKUP_EXPORT
+            | VENDOR_BACKUP_LOAD
+            | VENDOR_UNLOCK
+            | VENDOR_ATT_IMPORT
+            | VENDOR_ATT_CLEAR
+    )
+}
+
 pub fn vendor<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, data: &[u8], out: &mut [u8]) -> CtapResult {
     let req = parse(data)?;
+    let res = dispatch(ctx, &req, out);
+    // Spend the channel on the way out, whatever the outcome: a refused touch or a
+    // failed decrypt must not leave it live for the next caller to pick up.
+    if consumes_mse(req.subcommand) {
+        ctx.state.clear_mse();
+    }
+    res
+}
+
+fn dispatch<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req, out: &mut [u8]) -> CtapResult {
     match req.subcommand {
-        VENDOR_MSE => mse(ctx, &req, out),
-        VENDOR_BACKUP_EXPORT => backup_export(ctx, &req, out),
-        VENDOR_BACKUP_LOAD => backup_load(ctx, &req),
-        VENDOR_BACKUP_FINALIZE => backup_finalize(ctx, &req),
+        VENDOR_MSE => mse(ctx, req, out),
+        VENDOR_BACKUP_EXPORT => backup_export(ctx, req, out),
+        VENDOR_BACKUP_LOAD => backup_load(ctx, req),
+        VENDOR_BACKUP_FINALIZE => backup_finalize(ctx, req),
         VENDOR_BACKUP_STATE => backup_state(ctx, out),
-        VENDOR_UNLOCK => unlock(ctx, &req),
-        VENDOR_AUDIT_READ => audit_read(ctx, &req, out),
-        VENDOR_AUDIT_CHECKPOINT => audit_checkpoint(ctx, &req, out),
-        VENDOR_AUDIT_CONFIG => audit_config(ctx, &req, out),
-        VENDOR_ATT_IMPORT => att_import(ctx, &req),
-        VENDOR_ATT_CLEAR => att_clear(ctx, &req),
+        VENDOR_UNLOCK => unlock(ctx, req),
+        VENDOR_AUDIT_READ => audit_read(ctx, req, out),
+        VENDOR_AUDIT_CHECKPOINT => audit_checkpoint(ctx, req, out),
+        VENDOR_AUDIT_CONFIG => audit_config(ctx, req, out),
+        VENDOR_ATT_IMPORT => att_import(ctx, req),
+        VENDOR_ATT_CLEAR => att_clear(ctx, req),
         VENDOR_ATT_STATE => att_state(ctx, out),
-        VENDOR_CONFIG_WRITE => config_write(ctx, &req),
-        VENDOR_CONFIG_READ => config_read(ctx, &req, out),
+        VENDOR_CONFIG_WRITE => config_write(ctx, req),
+        VENDOR_CONFIG_READ => config_read(ctx, req, out),
         _ => Err(CtapError::InvalidParameter),
     }
 }
@@ -281,6 +306,7 @@ fn config_write<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> CtapResul
             }
             persist_dev_conf(ctx.fs, req.blob).map_err(|e| match e {
                 DevConfError::TooLong => CtapError::InvalidLength,
+                DevConfError::BadTlv => CtapError::InvalidParameter,
                 DevConfError::Store => CtapError::Other,
             })?
         }
@@ -346,21 +372,49 @@ fn att_import<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> CtapResult 
         scalar.zeroize();
         return Err(CtapError::InvalidParameter);
     }
+    // Chain first: the key is a fixed-size sealed record, so it is the write far
+    // less likely to fail. Reversed, a failing chain write leaves the new key
+    // paired with the old chain — every U2F REGISTER then attests under a leaf
+    // that does not certify it (audit run-32).
+    let chain = ctx.fs.put(EF_ATT_CHAIN, &packed[..plen]);
+    if chain.is_err() {
+        scalar.zeroize();
+        return Err(CtapError::Other);
+    }
     let r = store_att_key(&ctx.dev, ctx.fs, &scalar);
     scalar.zeroize();
     r.map_err(|_| CtapError::Other)?;
-    ctx.fs
-        .put(EF_ATT_CHAIN, &packed[..plen])
-        .map_err(|_| CtapError::Other)?;
     journal::append(ctx, journal::EV_ATT_IMPORT, 0, &[]);
     Ok(0)
 }
 
-/// `ATT_CLEAR`: drop the org attestation (same gate as the import).
+/// `ATT_CLEAR`: drop the org attestation (same gate as the import, including its
+/// named touch when no PIN can authorise the handover).
 fn att_clear<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> CtapResult {
+    // The identity this destroys survives a factory reset and only the org's HSM
+    // can restore it, so it gets the same explicit prompt the import gained.
+    if !ctx.fs.has_data(EF_PIN)
+        && !ctx.check_user_presence(crate::Confirm::titled("Erase attestation identity?"))
+    {
+        return Err(CtapError::OperationDenied);
+    }
     gate(ctx, req, "Clear attestation key?")?;
-    let _ = ctx.fs.delete_key(EF_ATT_KEY);
-    let _ = ctx.fs.delete(EF_ATT_CHAIN);
+    // Prove both deletes, key first. Discarding them reported "org attestation
+    // removed" over a half-done erase: with the key surviving and the chain gone,
+    // `u2f::cmd_register` still takes the org branch and then fails the chain read,
+    // so U2F REGISTER answered 6F00 on every later call — the same key-without-chain
+    // state `att_import`'s ordering exists to prevent. Key first keeps the surviving
+    // combination the harmless one (a chain with no key falls back cleanly).
+    // `force_delete`, not `delete`: the latter no-ops the backend on a present-cache
+    // false-absent and still returns Ok, so exactly the torn state this ordering
+    // reasons about could report a clean erase over a surviving key. The sibling
+    // sweeps (`reset`, `wipe_oath`) already use it for the same reason.
+    ctx.fs
+        .force_delete(EF_ATT_KEY.get())
+        .map_err(|_| CtapError::Other)?;
+    ctx.fs
+        .force_delete(EF_ATT_CHAIN)
+        .map_err(|_| CtapError::Other)?;
     journal::append(ctx, journal::EV_ATT_CLEAR, 0, &[]);
     Ok(0)
 }
@@ -481,7 +535,7 @@ pub(crate) fn open_channel_key<S: Storage, R: Rng>(
 /// the 256-bit lock key *is* the authorization, and this runs on every
 /// power-up of a locked device.
 fn unlock<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> CtapResult {
-    if !ctx.state.mse_active {
+    if !ctx.state.mse_ready() {
         return Err(CtapError::NotAllowed);
     }
     let mut lock_key = open_channel_key(ctx, req.blob)?;
@@ -497,6 +551,10 @@ fn unlock<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> CtapResult {
         Some(seed) => {
             ctx.state.clear_keydev_dec();
             ctx.state.keydev_dec = Some(seed);
+            // The one moment a locked device can migrate its attestation cert:
+            // `ensure_seed` skips the rebuild while locked, and best-effort is
+            // right here — a failed rebuild must not deny the unlock.
+            let _ = crate::seed::rebuild_att_cert(ctx.fs, ctx.rng, &seed);
             Ok(0)
         }
         None => Err(CtapError::InvalidParameter),
@@ -521,6 +579,14 @@ const MSE_PQ_SALT: &[u8] = b"RSK-MSE-PQ-v1";
 /// since recovering it needs *both* P-256 and ML-KEM-768 broken. A host that
 /// sends no key 2 gets the classical channel, byte-for-byte unchanged.
 fn mse<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req, out: &mut [u8]) -> CtapResult {
+    // Never re-key a live channel. `mse_cid` cannot tell the owner from a second
+    // process forging that CID in its own frame header, so overwriting would let
+    // the interloper's key be the one the owner's export encrypts under. Drop the
+    // channel and refuse: a squatter can deny a handshake, never redirect one.
+    if ctx.state.mse_active {
+        ctx.state.clear_mse();
+        return Err(CtapError::NotAllowed);
+    }
     if req.kax.is_empty() || req.kay.is_empty() {
         return Err(CtapError::MissingParameter);
     }
@@ -564,6 +630,8 @@ fn mse<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req, out: &mut [u8]) -> Ct
     ctx.state.mse_key = key;
     ctx.state.mse_pub = dev_pub;
     ctx.state.mse_active = true;
+    // Defence in depth on top of the one-shot rule above; see `FidoState::mse_cid`.
+    ctx.state.mse_cid = ctx.state.channel;
     key.zeroize();
 
     encode(out, |e| {
@@ -626,7 +694,7 @@ fn gate<S: Storage, R: Rng>(
     req: &Req,
     title: &'static str,
 ) -> Result<(), CtapError> {
-    if !ctx.state.mse_active {
+    if !ctx.state.mse_ready() {
         return Err(CtapError::NotAllowed);
     }
     pin_gate(ctx, req)?;
@@ -793,10 +861,16 @@ fn backup_load<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> CtapResult
         seed.zeroize();
         return Err(CtapError::InvalidParameter);
     }
+    // Drop the old cert BEFORE the new seed commits, and propagate the failure: a
+    // tear the other way round leaves a certificate over the superseded key that
+    // `matches_template` would once have accepted forever (audit run-32).
+    if ctx.fs.delete(EF_EE_DEV).is_err() {
+        seed.zeroize();
+        return Err(CtapError::Other);
+    }
     let res = encrypt_keydev_f1(&ctx.dev, ctx.fs, &seed);
     seed.zeroize();
     res.map_err(|_| CtapError::Other)?;
-    let _ = ctx.fs.delete(EF_EE_DEV);
     ensure_seed(&ctx.dev, ctx.fs, ctx.rng).map_err(|_| CtapError::Other)?;
     journal::append(ctx, journal::EV_BACKUP_LOAD, 0, &[]);
     Ok(0)

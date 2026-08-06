@@ -66,6 +66,9 @@ impl Sw {
     pub const CORRECT_LENGTH_00: Sw = Sw::new(0x6C, 0x00);
     pub const INS_NOT_SUPPORTED: Sw = Sw::new(0x6D, 0x00);
     pub const CLA_NOT_SUPPORTED: Sw = Sw::new(0x6E, 0x00);
+    /// ISO 7816-4 §5.1.1.1 — "last command of the chain expected": an APDU arrived
+    /// that neither continues nor legitimately closes the open command chain.
+    pub const LAST_CHAIN_EXPECTED: Sw = Sw::new(0x68, 0x83);
     pub const UNKNOWN: Sw = Sw::new(0x6F, 0x00);
     pub const OK: Sw = Sw::new(0x90, 0x00);
 }

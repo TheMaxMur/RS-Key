@@ -299,7 +299,8 @@ fn u2f_disabled_under_always_uv_when_the_pad_has_no_pin() {
 
 /// Don't-enforce-user-presence (P1 = 0x08) may skip the touch, but not the built-in
 /// UV that keeps the interface reachable under alwaysUv — otherwise it would hand
-/// back exactly the un-verified signature §7.2.4 exists to prevent.
+/// back exactly the un-verified signature §7.2.4 exists to prevent. A `strict-up`
+/// build has no don't-enforce to begin with, so it refuses the control byte.
 #[test]
 fn u2f_dont_enforce_still_runs_builtin_uv() {
     let mut fs = Fs::new(RamStorage::new());
@@ -353,9 +354,17 @@ fn u2f_dont_enforce_still_runs_builtin_uv() {
         state: &mut state,
         now_ms: 0,
     };
+    // `strict-up` does not accept don't-enforce at all (see `authenticate_p1_matrix`),
+    // so it refuses the control byte before any UV runs. Either way the request
+    // cannot reach a signature without verification.
+    let want = if cfg!(feature = "strict-up") {
+        Sw::INCORRECT_P1P2
+    } else {
+        Sw::CONDITIONS_NOT_SATISFIED
+    };
     assert_eq!(
         process_u2f(&mut ctx, &auth, &mut out).0,
-        Sw::CONDITIONS_NOT_SATISFIED,
+        want,
         "don't-enforce cannot opt out of the built-in UV"
     );
 }

@@ -63,6 +63,43 @@ fn openpgp_fids_classified_disjoint_from_fido() {
     }
 }
 
+/// The device-wide `Fs::factory_wipe` defers each applet's gate records to a second
+/// phase, and it can only defer what the applet exports. The set has to be exactly
+/// the PW records `scan_files` re-seeds, and every one of them has to be a fid this
+/// applet actually owns — a gate arm naming someone else's fid would defer a record
+/// another applet's phase-1 sweep already accounts for (audit run-36).
+#[test]
+fn the_gate_set_is_the_pw_records_and_all_are_openpgp_owned() {
+    for fid in [
+        EF_PW1,
+        EF_RC,
+        EF_PW3,
+        EF_PW_PRIV,
+        EF_PW_RETRIES,
+        // The UIF flags are `scan_files`-re-seeded to touch-OFF, so they gate a key
+        // a surviving DEK can still open — the OpenPGP analog of FIDO's alwaysUv.
+        EF_UIF_SIG,
+        EF_UIF_DEC,
+        EF_UIF_AUT,
+    ] {
+        assert!(is_openpgp_gate_fid(fid), "{fid:#06x} gates the applet");
+        assert!(
+            is_openpgp_fid(fid),
+            "{fid:#06x} is deferred but not OpenPGP-owned"
+        );
+    }
+    // FIDO's EF_PIN (0x1080) interleaves with OpenPGP PW1 (0x1081) in the 0x10xx
+    // region; the gate set must not reach across into it.
+    assert!(!is_openpgp_gate_fid(0x1080));
+    // Secrets, not gates: deferring these would invert the rule.
+    for fid in [EF_PK_SIG.get(), EF_DEK, EF_LOGIN_DATA] {
+        assert!(
+            !is_openpgp_gate_fid(fid),
+            "{fid:#06x} is a secret, not a gate"
+        );
+    }
+}
+
 #[test]
 fn terminate_wipes_openpgp_and_reseeds() {
     let mut fs = seeded();

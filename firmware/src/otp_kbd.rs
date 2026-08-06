@@ -213,6 +213,11 @@ pub fn scrub() {
     OTP_HID.lock(|c| {
         let mut h = c.borrow_mut();
         h.rx.scrub();
+        // The TX buffer still holds the last response body — for slots 0x30/0x38
+        // that is a 20-byte HMAC-SHA1 challenge-response, which with a fixed
+        // challenge (yubikey-luks) IS the credential. `FrameTx::next` streams
+        // without clearing, so nothing else wipes it.
+        h.tx = rsk_otp::hid::FrameTx::new();
         h.req_payload.zeroize();
         h.req_slot = 0;
     });

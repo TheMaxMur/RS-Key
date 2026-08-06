@@ -21,13 +21,8 @@ impl Rng for SeqRng {
     }
 }
 
-// makeCredential ships `fmt:"none"` by default and `fmt:"packed"` under
-// `fido-conformance` (or for an enterprise attestation).
-const ATT_FMT: &str = if cfg!(feature = "fido-conformance") {
-    "packed"
-} else {
-    "none"
-};
+// Every makeCredential ships packed basic attestation with the device x5c.
+const ATT_FMT: &str = "packed";
 
 fn build_request(rk: bool) -> std::vec::Vec<u8> {
     let mut buf = [0u8; 512];
@@ -326,16 +321,15 @@ fn verify_response(resp: &[u8], client_data_hash: &[u8; 32]) -> std::vec::Vec<u8
     // AT + UP always set; UV may also be set when a pinUvAuthParam was verified.
     assert_eq!(auth_data[32] & (FLAG_AT | FLAG_UP), FLAG_AT | FLAG_UP);
 
-    if !cfg!(feature = "fido-conformance") {
-        assert_eq!(d.map().unwrap().unwrap(), 0, "default attStmt is empty");
-        return auth_data;
-    }
-
-    assert_eq!(d.map().unwrap().unwrap(), 2);
+    // Basic attestation: {alg, sig, x5c}, ES256 by the device key.
+    assert_eq!(d.map().unwrap().unwrap(), 3);
     assert_eq!(d.str().unwrap(), "alg");
     assert_eq!(d.i64().unwrap(), ALG_ES256);
     assert_eq!(d.str().unwrap(), "sig");
     let sig = d.bytes().unwrap().to_vec();
+    assert_eq!(d.str().unwrap(), "x5c");
+    assert_eq!(d.array().unwrap().unwrap(), 1);
+    let leaf = d.bytes().unwrap().to_vec();
 
     let cred_len = u16::from_be_bytes([auth_data[37 + 16], auth_data[38 + 16]]) as usize;
     let cose_off = 39 + 16 + cred_len;
@@ -350,11 +344,14 @@ fn verify_response(resp: &[u8], client_data_hash: &[u8; 32]) -> std::vec::Vec<u8
     assert_eq!(cd.i8().unwrap(), -1);
     assert_eq!(cd.u8().unwrap(), 1);
     assert_eq!(cd.i8().unwrap(), -2);
-    let x = cd.bytes().unwrap().to_vec();
+    assert_eq!(cd.bytes().unwrap().len(), 32, "credential x coordinate");
     assert_eq!(cd.i8().unwrap(), -3);
-    let y = cd.bytes().unwrap().to_vec();
+    assert_eq!(cd.bytes().unwrap().len(), 32, "credential y coordinate");
 
-    let pt = Sec1Point::from_bytes(&crate::ec::sec1_uncompressed(x, y)).unwrap();
+    // That COSE key is the *credential* key; basic attestation is signed by the
+    // device key, so it verifies under the x5c leaf instead.
+    let (ax, ay) = crate::conformance::att_leaf_pubkey(&leaf);
+    let pt = Sec1Point::from_bytes(&crate::ec::sec1_uncompressed(ax, ay)).unwrap();
     let vk = VerifyingKey::from_sec1_point(&pt).unwrap();
     let mut signed = auth_data.clone();
     signed.extend_from_slice(client_data_hash);
@@ -1925,4 +1922,44 @@ fn builtin_uv_still_names_the_registration_on_a_display() {
         pad.last_primary, b"example.com",
         "the card carries the rp being registered"
     );
+}
+
+/// Audit run-36: `font::width` measures glyph INK, so trailing whitespace paints
+/// nothing — "bank.com " renders pixel-identically to "bank.com" on the trusted
+/// display's sign-in, passkey-list and delete screens while hashing to a wholly
+/// different relying party. An all-whitespace id is worse: it passes every
+/// length-based emptiness check, so the ceremony paints a blank relying-party line
+/// with the attacker's `user.name` as the only text under the globe. No browser can
+/// send either (WebAuthn requires a valid domain string, and U+0020 is a forbidden
+/// host code point), so refuse it here rather than paint it.
+#[test]
+fn an_rp_id_carrying_whitespace_is_refused() {
+    for id in [
+        "bank.com ",
+        " bank.com",
+        "bank .com",
+        "        ",
+        "bank.com\t",
+    ] {
+        let mut buf = [0u8; 256];
+        let n = {
+            let mut e = Encoder::new(Cursor::new(&mut buf[..]));
+            e.map(4).unwrap();
+            e.u8(1).unwrap().bytes(&[0xCDu8; 32]).unwrap();
+            e.u8(2).unwrap().map(1).unwrap();
+            e.str("id").unwrap().str(id).unwrap();
+            e.u8(3).unwrap().map(1).unwrap();
+            e.str("id").unwrap().bytes(&[1, 2, 3, 4]).unwrap();
+            good_params(&mut e);
+            e.writer().position()
+        };
+        assert_eq!(
+            run_err(&buf[..n]),
+            CtapError::InvalidParameter,
+            "rp.id {id:?} was accepted"
+        );
+    }
+    // An ordinary domain is untouched.
+    let (resp, _) = run(&mc_build(4, good_params));
+    assert!(!resp.is_empty(), "a plain rpId must still register");
 }

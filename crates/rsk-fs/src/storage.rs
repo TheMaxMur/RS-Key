@@ -8,6 +8,12 @@ use rsk_sdk::error::Result;
 
 /// A persistent map from 16-bit file id to a byte value.
 pub trait Storage {
+    /// Largest value this backend can store for one FID. A log-structured backend
+    /// serialises key+value through one scratch buffer, so the real ceiling is
+    /// smaller than the buffer and was previously an unstated property of it —
+    /// callers that picked their own cap could exceed it (audit run-32). Defaults
+    /// to the device backend's, so a host test hits the same rejection.
+    const MAX_VALUE: usize = crate::MAX_VALUE_BYTES;
     /// Copy the value for `fid` into `buf` (truncated to `buf.len()`), returning
     /// the value's full length, or `None` if `fid` is absent.
     fn read(&mut self, fid: u16, buf: &mut [u8]) -> Option<usize>;
@@ -20,6 +26,21 @@ pub trait Storage {
     /// Whether `fid` has a stored value.
     fn exists(&mut self, fid: u16) -> bool {
         self.size(fid).is_some()
+    }
+    /// Whether the most recent [`read`](Self::read) / [`size`](Self::size) FAILED,
+    /// rather than finding the key absent.
+    ///
+    /// Both return `None` for either outcome, and [`Fs`](crate::Fs) memoises the
+    /// answer as a *decided* fact — so without this a transient backend fault
+    /// becomes a permanent "file absent" for the rest of the boot, and every gate
+    /// that reads `has_data` opens: `clientpin::set_pin` is guarded by
+    /// `if has_data(EF_PIN)` alone, so a poisoned absence lets an unauthenticated
+    /// host install its own PIN over the owner's (audit run-36).
+    ///
+    /// Defaults to `false` — a backend that cannot fail (the test RAM map) never
+    /// needs to say so, and an implementor that forgets is no worse than before.
+    fn last_error(&self) -> bool {
+        false
     }
     /// Invoke `f` once per stored key (used to rebuild the dynamic-file set and to
     /// probe credential slots without a per-slot `read` of every absent FID).

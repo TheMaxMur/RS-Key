@@ -147,13 +147,96 @@ pub fn spawn(core1: Peri<'static, CORE1>) {
 }
 
 /// Scrub and drop any primes still sitting in the mailbox.
+///
+/// Zeroize *through* the slot, never after moving out of it: `Option::take()`
+/// copies the payload to a local and writes back only the `None` discriminant, so
+/// wiping the local leaves a full RSA prime resident in this static — which
+/// `worker::reboot`'s BOOTSEL drop does not clear either (audit run-33).
 fn scrub_found(mb: &mut Mailbox) {
     for slot in &mut mb.found {
-        if let Some(mut f) = slot.take() {
+        if let Some(f) = slot.as_mut() {
             f.le.zeroize();
         }
+        *slot = None;
     }
 }
+
+/// Zeroize the job's DRBG seed through the slot, then drop it. Same hazard as
+/// [`scrub_found`]: the seed replays core1's entire candidate stream.
+fn scrub_job(mb: &mut Mailbox) {
+    if let Some(j) = mb.job.as_mut() {
+        j.seed.zeroize();
+    }
+    mb.job = None;
+}
+
+/// Move the posted job out, wiping the copy the slot keeps. Copy the fields by
+/// value first, *then* zeroize through the `&mut` — a `take()` followed by a
+/// zeroed write-back would be a dead store the optimiser is free to drop.
+fn take_job(mb: &mut Mailbox) -> Option<Job> {
+    let j = mb.job.as_mut()?;
+    let out = Job {
+        half_bytes: j.half_bytes,
+        seed: j.seed,
+    };
+    j.seed.zeroize();
+    mb.job = None;
+    Some(out)
+}
+
+/// Move one found prime out, wiping the copy the slot keeps (see [`take_job`]).
+fn take_found(slot: &mut Option<Found>) -> Option<Found> {
+    let f = slot.as_mut()?;
+    let out = Found {
+        le: f.le,
+        len: f.len,
+    };
+    f.le.zeroize();
+    *slot = None;
+    Some(out)
+}
+
+/// Wipe the primes in transit and the keygen DRBG seed from the mailbox, before
+/// dropping to BOOTSEL. Measured 2026-08-05 on RP2350 A4 with secure boot off
+/// (`tests/54_sram_residue.py`): main SRAM reads back all zeros after that drop,
+/// so this is depth against a silicon revision that stops clearing it, not the
+/// only thing between a live prime and a reflash.
+///
+/// The mailbox, plus a bounded wait for core1 to finish scrubbing its own sieve.
+///
+/// `CORE1_SIEVE` is not touched from here: `STOP` does not wait for core1 — it can
+/// still be inside `try_candidate_le` — so writing it from core0 would alias a live
+/// `&mut` across cores. Each core scrubs its own sieve on its own STOP edge, which
+/// also closes the window immediately rather than only at reboot. But `scrub` used
+/// to return without giving core1 a chance to *reach* that edge, so a reboot issued
+/// while a search was live dropped to BOOTSEL with the last window — up to
+/// `SIEVE_WINDOW` candidates, one of which is the prime that was found — still
+/// resident (audit run-34 #23).
+///
+/// A core1 that never answers is faulted, and that is exactly what latches
+/// `DEGRADED`; its sieve stays resident and cannot be cleared soundly from here.
+pub fn scrub() {
+    MAILBOX.lock(|mb| {
+        let mb = &mut mb.borrow_mut();
+        scrub_found(mb);
+        scrub_job(mb);
+    });
+    // Ask core1 to wind down, then wait for it to go idle. Bounded: the caller is
+    // on the reboot path and must not hang if core1 is wedged.
+    STOP.store(true, Ordering::Release);
+    cortex_m::asm::sev();
+    for _ in 0..SCRUB_WAIT_ITERS {
+        if !BUSY.load(Ordering::Acquire) {
+            break;
+        }
+        cortex_m::asm::nop();
+    }
+}
+
+/// Spin budget for [`scrub`]'s wait on core1. A candidate test is microseconds and
+/// the reboot path already sleeps ~200 ms for the USB flush, so this is generous
+/// for the live case and still bounded for a wedged one.
+const SCRUB_WAIT_ITERS: u32 = 2_000_000;
 
 // --------------------------------------------------------------- core1 side --
 
@@ -168,6 +251,11 @@ fn core1_main() -> ! {
             // in the found slots is OUR late post — scrub it (once per edge).
             if STOP.load(Ordering::Acquire) && !stop_scrubbed {
                 MAILBOX.lock(|mb| scrub_found(&mut mb.borrow_mut()));
+                // …and our own sieve: its last candidate IS the prime we just
+                // delivered, and it would otherwise sit here until the next
+                // search reseeds. SAFETY: unchanged ownership — CORE1_SIEVE is
+                // touched only from core1, and the search that used it has ended.
+                unsafe { (*core::ptr::addr_of_mut!(CORE1_SIEVE)).scrub() };
                 stop_scrubbed = true;
             }
             cortex_m::asm::wfe();
@@ -179,7 +267,7 @@ fn core1_main() -> ! {
         // in `run_rsa_search` relies on never observing "job taken, BUSY not
         // yet visible".
         let job = MAILBOX.lock(|mb| {
-            let job = mb.borrow_mut().job.take();
+            let job = take_job(&mut mb.borrow_mut());
             if job.is_some() {
                 BUSY.store(true, Ordering::Relaxed);
                 JOB_PENDING.store(false, Ordering::Relaxed);
@@ -336,8 +424,9 @@ pub fn run_rsa_search_progress(
         // keygen would corrupt the modulus. Leave it for the wind-down scrub.
         let mut batch = if engaged {
             MAILBOX.lock(|mb| {
-                let mut mb = mb.borrow_mut();
-                [mb.found[0].take(), mb.found[1].take()]
+                let mb = &mut mb.borrow_mut();
+                let [a, b] = &mut mb.found;
+                [take_found(a), take_found(b)]
             })
         } else {
             [None, None]
@@ -380,12 +469,14 @@ pub fn run_rsa_search_progress(
     // next job's entry gate (the BUSY wait above) keeps the mailbox exclusive.
     MAILBOX.lock(|mb| {
         let mut mb = mb.borrow_mut();
-        if let Some(mut j) = mb.job.take() {
-            j.seed.zeroize();
-        }
+        scrub_job(&mut mb);
         JOB_PENDING.store(false, Ordering::Relaxed);
         scrub_found(&mut mb);
     });
+    // Our own sieve holds the last candidate — the prime this key was built
+    // from. `sieve` is the same `&mut` the loop above used, so this stays inside
+    // core0's exclusive borrow.
+    sieve.scrub();
     STOP.store(true, Ordering::Release);
     cortex_m::asm::sev();
     outcome.flatten()

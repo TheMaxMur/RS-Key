@@ -63,6 +63,28 @@ const fn parse_dec(s: &str) -> usize {
     }
     n
 }
+/// Board LED wiring, baked in by `build.rs` from the same `BOARD` / `LED_*` knobs
+/// the firmware reads. `PK_LED_RGB` is 1 for an RGB-order strip, 0 for GRB.
+const LED_PIN: u8 = parse_dec(env!("PK_LED_PIN")) as u8;
+const LED_RGB: bool = parse_dec(env!("PK_LED_RGB")) != 0;
+const LED_PRESENT: bool = !str_eq(env!("PK_LED_KIND"), "none");
+
+/// Compile-time string equality (`==` on `&str` is not const).
+const fn str_eq(a: &str, b: &str) -> bool {
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut i = 0;
+    while i < a.len() {
+        if a[i] != b[i] {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
+
 /// One flash programming page.
 const PAGE_SIZE: usize = 256;
 /// 64 KiB block erase (pico-sdk `FLASH_BLOCK_SIZE` / `FLASH_BLOCK_ERASE_CMD`).
@@ -82,21 +104,63 @@ const GREEN: RGB8 = RGB8 { r: 0, g: 16, b: 0 };
 async fn main(_spawner: Spawner) {
     let p = embassy_rp::init(Default::default());
 
-    // LED first, so "the RAM image is running" can be signalled before flash.
+    // LED first, so "the RAM image is running" can be signalled before flash. Pin
+    // and colour order come from the same `BOARD`/`LED_*` knobs the firmware reads:
+    // a hard-coded GPIO16 was dark on the boards that wire the LED elsewhere, and
+    // on the display board it would drive the panel backlight (run-34 #31).
     let Pio {
         mut common, sm0, ..
     } = Pio::new(p.PIO0, Irqs);
     let program = PioWs2812Program::new(&mut common);
-    // `Rgb` wire order: this board's WS2812 swaps R/G under the embassy GRB
-    // default, so the success blink would show red instead of green.
-    let mut ws: PioWs2812<'_, _, 0, 1, Rgb> =
-        PioWs2812::with_color_order(&mut common, sm0, p.DMA_CH0, Irqs, p.PIN_16, &program);
+    macro_rules! ws2812_pin {
+        ($pin:expr) => {
+            PioWs2812::with_color_order(&mut common, sm0, p.DMA_CH0, Irqs, $pin, &program)
+        };
+    }
+    // The wire order stays `Rgb` and `wire()` swaps the bytes instead, so one type
+    // covers both boards — the same trick the firmware's `led::set_rg_swap` uses.
+    let mut ws: Option<PioWs2812<'_, _, 0, 1, Rgb>> = if LED_PRESENT {
+        Some(match LED_PIN {
+            0 => ws2812_pin!(p.PIN_0),
+            1 => ws2812_pin!(p.PIN_1),
+            2 => ws2812_pin!(p.PIN_2),
+            3 => ws2812_pin!(p.PIN_3),
+            4 => ws2812_pin!(p.PIN_4),
+            5 => ws2812_pin!(p.PIN_5),
+            6 => ws2812_pin!(p.PIN_6),
+            7 => ws2812_pin!(p.PIN_7),
+            8 => ws2812_pin!(p.PIN_8),
+            9 => ws2812_pin!(p.PIN_9),
+            10 => ws2812_pin!(p.PIN_10),
+            11 => ws2812_pin!(p.PIN_11),
+            12 => ws2812_pin!(p.PIN_12),
+            13 => ws2812_pin!(p.PIN_13),
+            14 => ws2812_pin!(p.PIN_14),
+            15 => ws2812_pin!(p.PIN_15),
+            16 => ws2812_pin!(p.PIN_16),
+            17 => ws2812_pin!(p.PIN_17),
+            18 => ws2812_pin!(p.PIN_18),
+            19 => ws2812_pin!(p.PIN_19),
+            20 => ws2812_pin!(p.PIN_20),
+            21 => ws2812_pin!(p.PIN_21),
+            22 => ws2812_pin!(p.PIN_22),
+            23 => ws2812_pin!(p.PIN_23),
+            24 => ws2812_pin!(p.PIN_24),
+            25 => ws2812_pin!(p.PIN_25),
+            26 => ws2812_pin!(p.PIN_26),
+            27 => ws2812_pin!(p.PIN_27),
+            28 => ws2812_pin!(p.PIN_28),
+            _ => ws2812_pin!(p.PIN_29),
+        })
+    } else {
+        None
+    };
 
     // "RAM image is running" — a fast white strobe, unlike any flashed firmware.
     blink(&mut ws, WHITE, 8, 50).await;
 
     // Solid blue for the (multi-second) full erase + eyecatcher write.
-    ws.write(&[BLUE]).await;
+    solid(&mut ws, BLUE).await;
     flash_erase_all();
     let mut page = [0u8; PAGE_SIZE];
     page[..4].copy_from_slice(b"NUKE");
@@ -135,17 +199,43 @@ fn flash_program(off: u32, data: &[u8]) {
     });
 }
 
+/// The bytes to put on the wire for `c`. The PIO driver is pinned to `Rgb`, so a
+/// GRB-order board gets its red and green swapped here instead of at the type
+/// level — one binary shape for both, exactly as the firmware does it.
+const fn wire(c: RGB8) -> RGB8 {
+    if LED_RGB {
+        c
+    } else {
+        RGB8 {
+            r: c.g,
+            g: c.r,
+            b: c.b,
+        }
+    }
+}
+
+/// Hold `color`. A `LED_KIND=none` board has no addressable LED, and its GPIO16 is
+/// the panel backlight, so there is nothing to drive and nothing to guess.
+async fn solid<P: Instance, const S: usize, const N: usize, ORDER: RgbColorOrder>(
+    ws: &mut Option<PioWs2812<'_, P, S, N, ORDER>>,
+    color: RGB8,
+) {
+    if let Some(ws) = ws {
+        ws.write(&[wire(color); N]).await;
+    }
+}
+
 /// Blink `color` `times` times, `ms` on / `ms` off.
 async fn blink<P: Instance, const S: usize, const N: usize, ORDER: RgbColorOrder>(
-    ws: &mut PioWs2812<'_, P, S, N, ORDER>,
+    ws: &mut Option<PioWs2812<'_, P, S, N, ORDER>>,
     color: RGB8,
     times: usize,
     ms: u64,
 ) {
     for _ in 0..times {
-        ws.write(&[color; N]).await;
+        solid(ws, color).await;
         Timer::after_millis(ms).await;
-        ws.write(&[OFF; N]).await;
+        solid(ws, OFF).await;
         Timer::after_millis(ms).await;
     }
 }

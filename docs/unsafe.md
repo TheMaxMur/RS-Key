@@ -123,8 +123,9 @@ silently drives one pad from two owners at runtime, so it is checked at build ti
 static mut CORE0_SIEVE: IncrementalSieve = IncrementalSieve::new();
 static mut CORE1_SIEVE: IncrementalSieve = IncrementalSieve::new();
 // …
-let sieve = unsafe { &mut *core::ptr::addr_of_mut!(CORE1_SIEVE) }; // core1
-let sieve = unsafe { &mut *core::ptr::addr_of_mut!(CORE0_SIEVE) }; // core0
+let sieve = unsafe { &mut *core::ptr::addr_of_mut!(CORE1_SIEVE) }; // core1, in `search`
+unsafe { (*core::ptr::addr_of_mut!(CORE1_SIEVE)).scrub() };        // core1, on the STOP edge
+let sieve = unsafe { &mut *core::ptr::addr_of_mut!(CORE0_SIEVE) }; // core0, in `run_rsa_search`
 ```
 
 The dual-core keygen runs one running small-prime sieve per core (each ~5 KiB
@@ -134,13 +135,17 @@ bignum frames, so they are `static`). Each is **single-core-exclusive**:
 `CORE1_SIEVE` only inside `search` (core1), and the two cores never touch the
 same sieve. So the `&mut` never aliases and there is no cross-core race.
 Each keygen calls `scrub()` through the reference before use, forcing a fresh
-window and wiping any prime left from the previous job.
+window; each core also scrubs its **own** sieve when its search ends, so the last
+candidate — which *is* the prime that was found — does not sit here until the next
+job. That end-of-search scrub deliberately stays on the owning core: `STOP` does
+not wait for core1, so a scrub issued from core0 (e.g. on the reboot path) would
+alias a live `&mut` while core1 is still inside `try_candidate_le`.
 *Safe alternative:* none that is free. A `Mutex`/`critical-section` cell would
 add a lock on a provably-uncontended access, and the sieve is reused across
 jobs so it cannot be a stack local. (Edition-2024 forbids implicit `&mut` to a
 `static mut`, hence the explicit `addr_of_mut!`.)
-*Containment:* two call sites, one per core; the partition (which core touches
-which sieve) is structural, and the data is non-secret (small-prime residues of
+*Containment:* three call sites — two on core1 (search, end-of-search scrub), one
+on core0; the partition (which core touches which sieve) is structural, and the data is non-secret (small-prime residues of
 a candidate, scrubbed at the top of every keygen). A wrong residue can only let
 a composite through to the strong-MR/Lucas test, which still rejects it.
 

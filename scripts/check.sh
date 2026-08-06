@@ -44,13 +44,25 @@ firmware_size_budget() {
 }
 
 run "fmt"                      cargo fmt --all --check
-run "clippy (embedded)"        cargo clippy --workspace -- -D warnings
+# `BOARD` because `rsk-wipe`'s build script refuses to guess a flash size (see
+# the rsk-wipe steps below); `waveshare-one` is the reference board, whose
+# values are the same defaults every other knob falls back to.
+run "clippy (embedded)"        env BOARD=waveshare-one cargo clippy --workspace -- -D warnings
 run "clippy (host tests)"      cargo clippy -p rsk-sdk -p rsk-fs -p rsk-usb -p rsk-crypto -p rsk-fido -p rsk-openpgp -p rsk-rsa-asm -p rsk-sha512 -p rsk-ec -p rsk-mldsa -p rsk-mgmt -p rsk-oath -p rsk-otp -p rsk-piv -p rsk-rescue -p rsk-led -p rsk-ui -p rsk-bip39 -p rsk-slip39 -p rsk-bench --target "$HOST" --all-targets -- -D warnings
 # tools/tui is its own workspace (host-only), so the --all/--workspace runs
 # above never see it — gate it explicitly. Its lockfile was scanned by nobody
 # until Dependabot flagged a transitive advisory from the GitHub side.
 run "fmt (tui)"                cargo fmt --manifest-path tools/tui/Cargo.toml --check
 run "clippy (tui)"             cargo clippy --manifest-path tools/tui/Cargo.toml --target "$HOST" --all-targets -- -D warnings
+# …and its tests, which nothing ran either. Both host suites belong in the same
+# gate as the firmware's. Gating them was necessary and not sufficient: the three
+# checks named as the reason — the typed confirmations, the refuse-to-guess device
+# binding, the "revoking would leave no valid key" brick guard — were asserted at
+# their helpers and at no caller, so all three stayed deletable with every test
+# green (audit run-34 #9 proved it by mutation). They are asserted at the callers
+# now: `rsk/test_refuse_to_guess.py`, `rsk/test_secureboot.py`'s stage commands,
+# and `device_tests.rs`'s `every_hid_open_site_is_classified`.
+run "test (tui)"               cargo test --manifest-path tools/tui/Cargo.toml --target "$HOST"
 # fuzz/ is also its own (nightly) workspace. rustfmt needs no toolchain, so the
 # stable gate can format-check it here; building/clippy stay in the .#fuzz shell
 # (deep-checks CI). Format fuzz/ with this same stable rustfmt — not the .#fuzz
@@ -69,9 +81,13 @@ run "check (fuzz)"             cargo check --manifest-path fuzz/Cargo.toml --tes
 run "test (host)"              cargo test -p rsk-sdk -p rsk-fs -p rsk-usb -p rsk-crypto -p rsk-fido -p rsk-openpgp -p rsk-rsa-asm -p rsk-sha512 -p rsk-ec -p rsk-mldsa -p rsk-mgmt -p rsk-oath -p rsk-otp -p rsk-piv -p rsk-rescue -p rsk-led -p rsk-ui -p rsk-bip39 -p rsk-slip39 -p rsk-bench --target "$HOST"
 # The PQC-advertisement opt-in changes the getInfo shape — test both forms.
 run "test (advertise-pqc)"     cargo test -p rsk-fido --features advertise-pqc --target "$HOST" getinfo
-# fido-conformance suppresses the default EdDSA (-8) advertisement — verify that
-# path too (the shipping/default build advertises -8; this drops it for the tool).
-run "test (fido-conformance)"  cargo test -p rsk-fido --features fido-conformance --target "$HOST" getinfo
+# fido-conformance suppresses the default EdDSA (-8) advertisement (the
+# shipping/default build advertises -8; this drops it for the tool) and implies
+# `strict-up`, which drops the U2F don't-enforce control byte. Run the WHOLE suite,
+# not a name filter: the build for this permutation happens either way, so the extra
+# cost is seconds, and a `getinfo`-only filter left a stale U2F expectation failing
+# here unnoticed. This is also the only gate coverage `strict-up` gets.
+run "test (fido-conformance)"  cargo test -p rsk-fido --features fido-conformance --target "$HOST"
 # The FIPS-style profile changes algorithm menus / PIN floor / export policy;
 # run its tests (name-filtered: the regular fixtures assume the 4-char PIN
 # floor) and type-check the locked firmware image.
@@ -119,7 +135,24 @@ run "display code absent from default image" sh -c '
   fi'
 # The test build: no BOOTSEL presence, so the automated suites don't hang on a touch.
 run "build firmware (test, --features no-touch)" cargo build --release -p firmware --features no-touch
-run "build rsk-wipe (release)" cargo build --release -p rsk-wipe
+# rsk-wipe bakes its erase length AND its LED wiring in at build time, and it is
+# the signed recovery hatch: build it for every board, so a change that stops
+# `BOARD` reaching it (which once left a 16 MB board's whole KV store intact behind
+# a "successful" wipe) fails here rather than in the field.
+for board in firmware/boards/*.toml; do
+  b=$(basename "$board" .toml)
+  run "build rsk-wipe ($b)" env BOARD="$b" cargo build --release -p rsk-wipe
+done
+# …and the step above only means something because a build that names NO board
+# refuses to link. It used to fall back to 4 MB and exit 0, so the gate passed
+# whether or not `BOARD` was reaching the wiper at all (audit run-34 #30/#31).
+run "rsk-wipe refuses an unknown flash size" sh -c '
+  if out=$(env -u BOARD -u FLASH_SIZE cargo build --release -p rsk-wipe 2>&1); then
+    echo "FAIL: rsk-wipe linked without BOARD or FLASH_SIZE — it guessed its erase length"; exit 1
+  fi
+  printf "%s\n" "$out" | grep -q "needs the target flash size" || {
+    echo "FAIL: rsk-wipe failed for the wrong reason:"; printf "%s\n" "$out" | tail -5; exit 1
+  }'
 run "flake.lock in sync"       lock_in_sync
 # RUSTSEC-2023-0071: rsa Marvin timing side-channel — no fixed release; it is the
 # OpenPGP RSA backend, mitigated by blinding. Justification in deny.toml.
@@ -131,6 +164,15 @@ run "cargo-deny"               cargo deny check
 # a new, unreviewed crate enters the tree. --locked uses the committed
 # supply-chain/imports.lock (offline, no fetch). See docs/supply-chain.md.
 run "cargo-vet (supply-chain)" cargo vet --locked
+# The device-wide wipe's phase-2 set is a hand-maintained union across four crates
+# and nothing in the type system notices a missing arm. OATH's was absent for a
+# release (audit run-36); this is the check that would have caught it.
+run "gate-union (device wipe)" python scripts/gate_union.py
+run "pytest (tools/rsk)"       python -m pytest tools/rsk -q
+# The interop allow-list is the only thing that tells an expected RS-Key/YubiKey
+# divergence from a fidelity gap, and it goes stale silently — a firmware change
+# moved maxSerializedLargeBlobArray and nobody noticed until the next two-key run.
+run "pytest (tests/interop)"   python -m pytest tests/interop -q
 run "gitleaks (tree)"          gitleaks detect --redact --no-banner
 
 echo

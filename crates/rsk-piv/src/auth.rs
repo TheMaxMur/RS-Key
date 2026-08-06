@@ -37,13 +37,18 @@ enum Dir {
 /// strict); a non-confirmation fails the operation. `NEVER`/`DEFAULT`/`AUTO`
 /// pass through.
 fn check_touch(policy: u8, presence: &mut dyn UserPresence) -> Result<(), Sw> {
-    if matches!(policy, TOUCHPOLICY_ALWAYS | TOUCHPOLICY_CACHED) {
-        match presence.request(rsk_sdk::Confirm::titled("Use PIV key?")) {
-            Presence::Confirmed => Ok(()),
-            _ => Err(Sw::SECURITY_STATUS_NOT_SATISFIED),
-        }
-    } else {
-        Ok(())
+    // `NEVER` is the only value that skips the prompt. Listing the values that
+    // *require* one instead made every other byte — an explicit `DEFAULT`, or a
+    // record an older build stored verbatim — mean "no touch", while `info`
+    // rendered it "Default" and the attestation extension carried it as written
+    // (audit run-34 #18). New keys can no longer hold such a byte; this is the
+    // read side of the same invariant, so a legacy one is not a hole either.
+    if policy == TOUCHPOLICY_NEVER {
+        return Ok(());
+    }
+    match presence.request(rsk_sdk::Confirm::titled("Use PIV key?")) {
+        Presence::Confirmed => Ok(()),
+        _ => Err(Sw::SECURITY_STATUS_NOT_SATISFIED),
     }
 }
 
@@ -322,6 +327,16 @@ pub(crate) fn general_authenticate<S: Storage>(
             return Sw::REFERENCE_NOT_FOUND;
         }
     }
+    // The management key's *declared* algorithm must be the one being used. Only
+    // its stored length was checked, and 3DES and AES-192 are both 24 bytes — so an
+    // AES-192 key completed a full 3DES mutual authentication, the one algorithm
+    // `fips-profile` provisioning refuses (audit run-34 #19).
+    // `INCORRECT_PARAMS`, the same status the `chal_algo` binding below answers, so
+    // one class of "this key is not that algorithm" has one status word.
+    if key_ref == SLOT_CARDMGM && meta[0] != algo {
+        mgm_key.zeroize();
+        return Sw::INCORRECT_PARAMS;
+    }
     let mut pinpol = meta[1];
     if pinpol == PINPOLICY_DEFAULT {
         pinpol = if key_ref == SLOT_SIGNATURE {
@@ -330,8 +345,10 @@ pub(crate) fn general_authenticate<S: Storage>(
             PINPOLICY_ONCE
         };
     }
-    if (pinpol == PINPOLICY_ALWAYS || pinpol == PINPOLICY_ONCE) && is_key(key_ref) && !sess.has_pin
-    {
+    // `NEVER` is the only value that skips the PIN — the same fail-closed rule as
+    // `check_touch`. Naming the two values that *require* one let an unrecognised
+    // byte mean "no PIN" (audit run-34 #18).
+    if pinpol != PINPOLICY_NEVER && is_key(key_ref) && !sess.has_pin {
         mgm_key.zeroize();
         return Sw::SECURITY_STATUS_NOT_SATISFIED;
     }

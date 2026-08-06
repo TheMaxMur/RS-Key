@@ -191,6 +191,17 @@ flash layout, and device identity.
   `uvx --from tools/`, which caches the built env regardless of the version
   (`uv cache clean` busts it if you must).
 - **A new `unsafe` site** → [docs/unsafe.md](docs/unsafe.md).
+- **The meaning of something shared** — a constant's value, an invariant, an
+  ownership rule, a signature → **read every other user of it before calling the
+  change done**, and ask of each whether it still holds. Nothing fails on its
+  own here: the value still type-checks, and a test written against the old
+  meaning still passes, so a green gate proves nothing about the sites you did
+  not open. For a persisted record, also ask what an *older build* could have
+  written there. `scripts/impact.py` lists the unreviewed users for the
+  compiler-blind cases (a Rust `const`/`static` value, a Python constant or
+  `def` signature) and the pre-commit hook prints it; the rest is on you — a
+  narrowed `EF_DEV_CONF_MAX` sized two readers as well as the writer it was
+  narrowed for, and only the writer got looked at.
 - **Anything protocol-visible** → a test at the level it's visible: a host test
   if the logic is host-testable, a `tests/*.py` script if only the USB stack
   exercises it.

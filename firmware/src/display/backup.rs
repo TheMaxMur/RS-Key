@@ -77,7 +77,7 @@ impl Ui {
                     }
                     self.touch.wait_release(last, idle_limit);
                 }
-                if crate::worker::host_request_pending() || last.elapsed() >= idle_limit {
+                if crate::worker::host_request_pending_after(last) || last.elapsed() >= idle_limit {
                     return;
                 }
                 block_for(Duration::from_millis(TOUCH_POLL_MS));
@@ -124,7 +124,7 @@ impl Ui {
                     }
                     self.touch.wait_release(last, idle_limit);
                 }
-                if crate::worker::host_request_pending() || last.elapsed() >= idle_limit {
+                if crate::worker::host_request_pending_after(last) || last.elapsed() >= idle_limit {
                     return;
                 }
                 block_for(Duration::from_millis(TOUCH_POLL_MS));
@@ -162,6 +162,10 @@ impl Ui {
             None => return, // no seed / soft-locked — nothing to show
         };
         seed_opt.zeroize();
+        // The seed left the device's own keeping — the same event `BACKUP_EXPORT`
+        // records over USB, and the higher-value half of the pair, since nothing on
+        // the host can attest that it happened (audit run-34 #17).
+        self.journal_local(rsk_fido::journal::EV_BACKUP_EXPORT);
         let mut words: [&str; rsk_bip39::WORD_COUNT] = [""; rsk_bip39::WORD_COUNT];
         for (w, &i) in words.iter_mut().zip(indices.iter()) {
             *w = rsk_bip39::word(i);
@@ -196,7 +200,7 @@ impl Ui {
             }
             // A queued host command or the idle timeout exits + wipes — the master secret must
             // never linger on a walked-away panel.
-            if crate::worker::host_request_pending() || last.elapsed() >= idle_limit {
+            if crate::worker::host_request_pending_after(last) || last.elapsed() >= idle_limit {
                 break;
             }
             block_for(Duration::from_millis(TOUCH_POLL_MS));
@@ -243,7 +247,7 @@ impl Ui {
                     }
                     self.touch.wait_release(last, idle_limit);
                 }
-                if crate::worker::host_request_pending() || last.elapsed() >= idle_limit {
+                if crate::worker::host_request_pending_after(last) || last.elapsed() >= idle_limit {
                     return;
                 }
                 block_for(Duration::from_millis(TOUCH_POLL_MS));
@@ -281,6 +285,7 @@ impl Ui {
         };
         seed_opt.zeroize();
         if ok {
+            self.journal_local(rsk_fido::journal::EV_BACKUP_EXPORT);
             self.show_shares(&shares, total);
         }
         shares.zeroize();
@@ -336,7 +341,7 @@ impl Ui {
                     }
                     self.touch.wait_release(last, idle_limit);
                 }
-                if crate::worker::host_request_pending() || last.elapsed() >= idle_limit {
+                if crate::worker::host_request_pending_after(last) || last.elapsed() >= idle_limit {
                     break 'paged;
                 }
                 block_for(Duration::from_millis(TOUCH_POLL_MS));
@@ -367,6 +372,7 @@ impl Ui {
         self.touch.wait_release(Instant::now(), idle_limit);
         if self.hold_to_confirm("Hold to seal", rsk_ui::theme::DANGER_FILL) {
             let _ = rsk_fido::passkeys::mark_backup_sealed(&mut self.fs.borrow_mut());
+            self.journal_local(rsk_fido::journal::EV_BACKUP_FINALIZE);
         }
         self.end_modal();
     }

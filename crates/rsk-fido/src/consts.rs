@@ -201,8 +201,10 @@ pub const MAX_CREDENTIAL_COUNT_IN_LIST: u64 = 16;
 pub const MAX_RAW_SUBPARA: usize = 384;
 
 /// Max serialized large-blob array stored; also the getInfo
-/// `maxSerializedLargeBlobArray` (0x0B).
-pub const MAX_LARGE_BLOB_SIZE: usize = 2048;
+/// `maxSerializedLargeBlobArray` (0x0B). Bounded by the store's per-value ceiling
+/// so the advertised number is one the device can actually commit — the sibling
+/// of the ATT_IMPORT cap mismatch (audit run-32).
+pub const MAX_LARGE_BLOB_SIZE: usize = rsk_fs::MAX_VALUE_BYTES;
 /// Max bytes per `authenticatorLargeBlobs` fragment.
 pub const MAX_FRAGMENT_LENGTH: usize = MAX_MSG_SIZE as usize - 64;
 /// Initial serialized large-blob array: the empty CBOR array `0x80` followed

@@ -31,7 +31,7 @@ def _is_rsk(name):
     return any(tok in name for tok in RSK_READER_TOKENS)
 
 
-def find_reader(substr=None):
+def find_reader(substr=None, exclusive=False):
     _require()
     rs = readers()
     if not rs:
@@ -41,17 +41,26 @@ def find_reader(substr=None):
     # No rs[0] fallback: a destructive command (e.g. `rsk openpgp reset`) must never
     # land on someone else's card just because the RS-Key's CCID interface is
     # unplugged, disabled, or rebranded via `rsk hw --product` (audit run-30).
-    hit = next((r for r in rs if _is_rsk(str(r))), None)
-    if hit is None:
+    hits = [r for r in rs if _is_rsk(str(r))]
+    if not hits:
         sys.exit(
             "no RS-Key PC/SC reader found — check the device is plugged in, CCID is "
             f"enabled, and the product string still matches. Readers seen: {[str(r) for r in rs]}"
         )
-    return hit
+    # …and no first-match guess either, for the irreversible commands: the name is a
+    # substring test over a host-settable USB string, so a second key left in app
+    # mode — or a planted gadget — silently wins the race (audit run-32). Mirrors
+    # common.connect_fido(exclusive=True).
+    if exclusive and len(hits) > 1:
+        sys.exit(
+            "more than one RS-Key CCID reader attached; unplug the others so an "
+            f"irreversible command cannot land on the wrong one: {[str(r) for r in hits]}"
+        )
+    return hits[0]
 
 
-def connect(substr=None):
-    conn = find_reader(substr).createConnection()
+def connect(substr=None, exclusive=False):
+    conn = find_reader(substr, exclusive).createConnection()
     conn.connect()
     return conn
 

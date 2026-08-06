@@ -152,10 +152,21 @@ def run(args):
         _run_ccid(args)
 
 
+def _writes(args):
+    """Whether this invocation will persist a block, so it must not land on a
+    guessed device. A read may still take the first match — `rsk status` and
+    `rsk inventory` are the multi-device-aware views and deliberately do."""
+    return _changing(args) and not args.get
+
+
 def _run_ccid(args):
-    conn = ccid.connect()
+    conn = ccid.connect(exclusive=_writes(args))
     ccid.select(conn, ccid.VENDOR_AID)
-    if _changing(args):
+    # Gate the write on `_writes`, not `_changing`: with `--get` alongside a set
+    # flag the FIDO path returns before writing, and this one used to send the
+    # SET LED APDU anyway — a persistent write to a first-match device on a command
+    # the user asked to *read*. The predicate exists precisely to tell the two apart.
+    if _writes(args):
         block = _get_block(conn)
         st = STATUSES[args.status]
         off = _status_offset(st)
@@ -225,7 +236,7 @@ def _read_block_fido(dev, cid):
 def _run_fido(args):
     """The pcscd-free path: read-modify-write EF_LED_CONF over CTAPHID (CONFIG_READ
     + the PIN/touch-gated CONFIG_WRITE). The firmware applies it live."""
-    dev, cid = connect_fido()
+    dev, cid = connect_fido(exclusive=_writes(args))
     block = _read_block_fido(dev, cid)
     if args.get or not _changing(args):
         _show_block(block)

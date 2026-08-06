@@ -13,8 +13,10 @@ Part A (host-only, always runs):
   * required MDS3 statement fields present;
   * `aaguid` (dashed) == the firmware `AAGUID` const in rsk-fido/consts.rs
     == the dashless `authenticatorGetInfo.aaguid`;
-  * surrogate-only invariant: attestationTypes == ["basic_surrogate"] implies
-    attestationRootCertificates == [];
+  * attestation-root invariant: attestationTypes == ["basic_surrogate"] implies
+    attestationRootCertificates == []; RS-Key declares ["basic_full"] and also
+    lists no root, because its x5c leaf is a per-device self-signed certificate
+    with no shareable root to publish;
   * `authenticationAlgorithms` (FIDO Registry strings) map exactly onto the
     classic COSE ids in `authenticatorGetInfo.algorithms`;
   * `authenticatorVersion` == `authenticatorGetInfo.firmwareVersion`.
@@ -99,7 +101,8 @@ def part_a(stmt):
     if gi_bytes != fw_bytes:
         fails.append(f"authenticatorGetInfo.aaguid {gi_bytes.hex()} != const {fw_bytes.hex()}")
 
-    # surrogate-only invariant
+    # surrogate-only invariant (basic_full stays rootless here on purpose: the
+    # x5c leaf is per-device and self-signed)
     if stmt.get("attestationTypes") == ["basic_surrogate"]:
         if stmt.get("attestationRootCertificates") != []:
             fails.append("basic_surrogate requires an empty attestationRootCertificates")

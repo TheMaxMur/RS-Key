@@ -11,6 +11,13 @@ from getpass import getpass
 
 from .common import add_pin_arg, device_has_pin, die, die_ctap_pin_error, resolve_pin, sanitize
 
+#: Largest attestation chain the device stores — `rsk_fido::cert::ATT_CHAIN_MAX`,
+#: i.e. `rsk_fs::MAX_VALUE_BYTES - 1 - 2 * ATT_CHAIN_MAX_CERTS` = 2046 − 1 − 8. It
+#: used to be a flat 2048; when the ceiling moved to what a flash record actually
+#: holds, this pre-flight check kept the old number, so a chain in the 11-byte gap
+#: passed here and was refused by the device as a bare CTAP error.
+ATT_CHAIN_MAX = 2037
+
 try:
     from fido2.ctap import CtapError
     from fido2.hid import CtapHidDevice
@@ -46,20 +53,32 @@ def register(sub):
         func=att_status)
 
 
-def _ctap():
+def _ctap(exclusive=False):
+    """Open the device through python-fido2's own enumeration.
+
+    `exclusive` refuses to guess between two attached authenticators, the same
+    rule `common.connect_fido` applies. It matters more here, not less: this is a
+    *third* selector — on macOS the order comes from `IOHIDManagerCopyDevices`, a
+    CFSet whose order Apple leaves unspecified — so a PIN write could land on one
+    key while the confirmation is read back from the other (audit run-34 #13)."""
     if CtapHidDevice is None:
         die("missing dependency: python-fido2 (run `rsk` from `nix develop`)")
-    dev = next(CtapHidDevice.list_devices(), None)
-    if dev is None:
+    found = list(CtapHidDevice.list_devices())
+    if not found:
         die("no FIDO HID device found")
-    ctap = Ctap2(dev)
+    if exclusive and len(found) > 1:
+        die(
+            f"{len(found)} FIDO HID devices attached — this command needs exactly one, "
+            "so it cannot act on the wrong device; unplug the others and retry"
+        )
+    ctap = Ctap2(found[0])
     if "FIDO_2_0" not in ctap.info.versions:
         die("device does not advertise FIDO2")
     return ctap
 
 
 def set_pin(args):
-    ctap = _ctap()
+    ctap = _ctap(exclusive=True)
     has_pin = ctap.info.options.get("clientPin")
     if has_pin is None:
         die("device does not support clientPin")
@@ -84,7 +103,18 @@ def set_pin(args):
         except CtapError as e:
             die_ctap_pin_error(e, cp)
         print("FIDO2 PIN set.")
-    print("clientPin now:", _ctap().info.options.get("clientPin"))
+    # Re-read from the device just written, not from a fresh enumeration: the
+    # second one could answer from the other key and print its state as this one's.
+    print("clientPin now:", ctap.get_info().options.get("clientPin"))
+
+
+def _count(meta, key):
+    """A device-reported count, or "?" when the device did not send an integer.
+    Never interpolate the raw CBOR value: a counterfeit authenticator returning a
+    text string would put terminal escapes straight into the operator's terminal
+    (the class fixed for rpId/user name in run-12, unswept here until run-33)."""
+    v = meta.get(key)
+    return v if isinstance(v, int) else "?"
 
 
 def list_passkeys(args):
@@ -101,8 +131,12 @@ def list_passkeys(args):
         die_ctap_pin_error(e, cp)
     cm = CM(ctap, cp.protocol, token)
     meta = cm.get_metadata()
-    existing = meta[CM.RESULT.EXISTING_CRED_COUNT]
-    remaining = meta[CM.RESULT.MAX_REMAINING_COUNT]
+    # Coerce: `get_metadata` hands back whatever CBOR the device sent, and a
+    # counterfeit one returning a text string here reached the terminal verbatim —
+    # six lines above the sanitize() the rpId and user name already get. An
+    # `== 0` guard also never fires for a str, so the walk below ran regardless.
+    existing = _count(meta, CM.RESULT.EXISTING_CRED_COUNT)
+    remaining = _count(meta, CM.RESULT.MAX_REMAINING_COUNT)
     print(f"\ndiscoverable credentials: {existing}  (free slots: {remaining})")
     if existing == 0:
         print("  → none. An SSH `-O resident` key would show here.")
@@ -154,9 +188,9 @@ def att_import(args):
     from .common import connect_fido
 
     scalar, chain = _att_scalar(args.key), _att_chain(args.chain)
-    if len(chain) > 2048:
-        die(f"chain too large ({len(chain)} B, max 2048)")
-    dev, cid = connect_fido()
+    if len(chain) > ATT_CHAIN_MAX:
+        die(f"chain too large ({len(chain)} B, max {ATT_CHAIN_MAX})")
+    dev, cid = connect_fido(exclusive=True)
     pin = resolve_pin(args, has_pin=device_has_pin(dev, cid))
     key, aad = mse_handshake(dev, cid)
     nonce = os.urandom(12)
@@ -173,7 +207,7 @@ def att_clear(args):
     from .backup import _die_pin_required, _gated, _vendor, mse_handshake
     from .common import connect_fido
 
-    dev, cid = connect_fido()
+    dev, cid = connect_fido(exclusive=True)
     pin = resolve_pin(args, has_pin=device_has_pin(dev, cid))
     mse_handshake(dev, cid)
     print("touch the device (BOOTSEL) to remove the attestation…", file=sys.stderr)

@@ -202,12 +202,18 @@ pub const FIDO_REPORT_DESCRIPTOR: &[u8] = &[
 #[allow(async_fn_in_trait)] // crate-internal, single-threaded executor — no Send bound needed
 pub trait MsgHandler {
     /// Handle a U2F (ISO-7816) command APDU, writing the response APDU (body +
-    /// SW1 SW2) into `out`; returns its length.
-    async fn handle_msg(&mut self, apdu: &[u8], out: &mut [u8]) -> usize;
+    /// SW1 SW2) into `out`; returns its length. `cid` is the channel it arrived on:
+    /// the MSG applet selection is cross-message state, and U2F has no SELECT of
+    /// its own, so a selection made on one channel must not decide where another
+    /// channel's REGISTER lands (audit run-34 #27).
+    async fn handle_msg(&mut self, cid: u32, apdu: &[u8], out: &mut [u8]) -> usize;
 
     /// Handle a CTAP2 CBOR message (`command_byte ‖ params`), writing the response
-    /// (status byte + optional CBOR) into `out`; returns its length.
-    async fn handle_cbor(&mut self, data: &[u8], out: &mut [u8]) -> usize;
+    /// (status byte + optional CBOR) into `out`; returns its length. `cid` is the
+    /// channel the message arrived on — cross-message state that must not be
+    /// usable by a second process on its own channel (the seed-backup MSE key)
+    /// binds to it.
+    async fn handle_cbor(&mut self, cid: u32, data: &[u8], out: &mut [u8]) -> usize;
 
     /// Handle a vendor-specific CTAPHID command — `cmd` is the *logical* command
     /// number (the `TYPE_INIT` bit already stripped). Used for the YubiKey
@@ -649,9 +655,9 @@ impl<'d, D: Driver<'d>, H: MsgHandler> CtapHid<'d, D, H> {
         let n = {
             let mut fut = core::pin::pin!(async {
                 if is_cbor {
-                    handler.handle_cbor(data, scratch).await
+                    handler.handle_cbor(cid, data, scratch).await
                 } else {
-                    handler.handle_msg(data, scratch).await
+                    handler.handle_msg(cid, data, scratch).await
                 }
             });
             loop {

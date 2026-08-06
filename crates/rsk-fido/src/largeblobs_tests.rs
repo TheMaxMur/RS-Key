@@ -523,3 +523,24 @@ fn a_multi_fragment_transfer_disarms_the_accumulator() {
         Err(CtapError::InvalidSeq)
     );
 }
+
+/// §6.10.2: an offset past the stored blob is `CTAP1_ERR_INVALID_PARAMETER`.
+///
+/// **This test cannot fail against the defect it documents**, and saying so is the
+/// point: `usize` is 64-bit here and 32-bit on the device, so the old
+/// `req.offset as usize` truncated `2^32 + 5` to 5 only on the target (audit
+/// run-34 #38). What the fix buys is that the comparison now happens in the wire's
+/// own width, so host and device agree — and this pins the bound either way.
+#[test]
+fn a_read_offset_beyond_usize_is_refused_not_wrapped() {
+    let mut fs = seeded_fs();
+    let mut state = FidoState::new();
+    let mut out = [0u8; 512];
+    for off in [1u64 << 32, (1u64 << 32) + 5, u64::MAX] {
+        assert_eq!(
+            run(&mut fs, &mut state, &get_request(1, off), &mut out),
+            Err(CtapError::InvalidParameter),
+            "offset {off} must be refused, not truncated"
+        );
+    }
+}

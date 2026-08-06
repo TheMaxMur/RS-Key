@@ -342,7 +342,13 @@ pub fn verify<S: Storage>(
         }
         return Sw::OK;
     }
-    if p1 != 0x00 || (p2 & 0x60) != 0x00 {
+    // Enumerate the three defined modes, the way `change_pin` already does. The
+    // bit filter `(p2 & 0x60) != 0` let 64 values through, and `pw_fid` turns each
+    // into `0x1000 | p2` — internal FIDs belonging to other applets, FIDO's `EF_PIN`
+    // among them. Only a one-byte coincidence (`check_pin` wants exactly 34 bytes,
+    // `PIN_FILE_LEN` is 35) kept that from being a live cross-applet primitive, and
+    // that constant is owned by a different crate (audit run-34 #21).
+    if p1 != 0x00 || !matches!(p2, PW1_MODE81 | PW1_MODE82 | PW3_MODE83) {
         return Sw::WRONG_P1P2;
     }
     let mut fid = pw_fid(p2);

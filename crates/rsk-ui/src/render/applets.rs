@@ -217,6 +217,7 @@ where
             true,
             true,
             false,
+            false,
         )?;
     }
     render_nav(t, NavTab::Apps)
@@ -254,6 +255,7 @@ where
             true,
             true,
             false,
+            false,
         )?;
     }
     let ch_trailing = if v.cardholder_name.as_str().is_empty() {
@@ -270,6 +272,7 @@ where
         Some(ch_trailing),
         true,
         true,
+        false,
         false,
     )?;
     let cy = NAV_TOP as i32 - 10;
@@ -422,6 +425,7 @@ where
             true,
             true,
             false,
+            false,
         )?;
     }
     let mut eb = [0u8; 5];
@@ -434,6 +438,7 @@ where
         Some((fmt_u16(v.extra as u16, &mut eb), MUTED)),
         true,
         true,
+        false,
         false,
     )?;
     let cy = NAV_TOP as i32 - 10;
@@ -550,6 +555,9 @@ where
                 true,
                 true,
                 false,
+                // Host-chosen, like an rpId: a name already clipped to LABEL_MAX
+                // must show it here rather than pass for a complete one.
+                r.name.truncated,
             )?;
         }
         if page_count(total) > 1 {
@@ -577,7 +585,7 @@ where
 {
     t.clear(BG)?;
     status_bar(t)?;
-    title_bar_wide(t, v.name.as_str(), theme::ACCENT, true)?;
+    title_bar_wide_label(t, &v.name, theme::ACCENT, true)?;
     let purpose = if v.hotp {
         "Counter-based \u{00B7} HOTP"
     } else {
@@ -657,19 +665,24 @@ where
     // Stacked caption + value blocks. Every value is clipped/ellipsized to the panel width,
     // so a long name / login / URL can never overrun the column or draw off-panel (the
     // cardholder fields are free-form and may be near the 48-byte label cap).
-    let fields = [
-        ("NAME", v.name.as_str()),
-        ("LOGIN", v.login.as_str()),
-        ("URL", v.url.as_str()),
-        ("LANGUAGE", v.lang.as_str()),
+    // The array carries the `Label`, not its `&str`: `rsk_openpgp`'s reader returns
+    // CH_FIELD_MAX = LABEL_MAX + 1 bytes for the sole purpose of letting `Label::clamp`
+    // set `truncated`, and this screen threw the flag away — so a 48-byte clip of a
+    // longer value painted with no ellipsis and read as the whole thing, which is
+    // exactly what audit run-34 #39 widened the reader to prevent (audit run-36).
+    let fields: [(&str, &Label); 4] = [
+        ("NAME", &v.name),
+        ("LOGIN", &v.login),
+        ("URL", &v.url),
+        ("LANGUAGE", &v.lang),
     ];
     let mut y = CONTENT_TOP as i32 + 38;
     for (cap, val) in fields {
         text_left(t, cap, EgPoint::new(14, y), Role::Mono, theme::CAPTION)?;
-        let (shown, color) = if val.is_empty() {
-            ("Not set", theme::MUTED)
+        let (shown, color, marked) = if val.is_empty() {
+            ("Not set", theme::MUTED, false)
         } else {
-            (val, theme::TEXT_2)
+            (val.as_str(), theme::TEXT_2, val.truncated)
         };
         text_left_ellipsized(
             t,
@@ -678,7 +691,7 @@ where
             Role::Body,
             color,
             Rect::new(14, (y + 8) as u16, PANEL_W - 28, 24),
-            false,
+            marked,
         )?;
         y += 46;
     }
@@ -725,6 +738,7 @@ where
                 true,
                 true,
                 false,
+                false,
             )?;
             continue;
         }
@@ -749,6 +763,7 @@ where
             Some(trailing),
             true,
             true,
+            false,
             false,
         )?;
     }
@@ -789,6 +804,7 @@ where
         true,
         true,
         false,
+        false,
     )?;
     components::list::row(
         t,
@@ -799,6 +815,7 @@ where
         Some(("stronger", theme::CAPTION)),
         true,
         true,
+        false,
         false,
     )?;
     components::list::row(
@@ -811,6 +828,7 @@ where
         true,
         true,
         false,
+        false,
     )?;
     components::list::row(
         t,
@@ -822,6 +840,7 @@ where
         true,
         true,
         false,
+        false,
     )?;
     components::list::row(
         t,
@@ -832,6 +851,7 @@ where
         Some(("2048-4096", theme::CAPTION)),
         true,
         true,
+        false,
         false,
     )?;
     text_left(
@@ -872,6 +892,7 @@ where
         true,
         true,
         false,
+        false,
     )?;
     components::list::row(
         t,
@@ -883,6 +904,7 @@ where
         true,
         true,
         false,
+        false,
     )?;
     components::list::row(
         t,
@@ -893,6 +915,7 @@ where
         Some(("slowest", theme::CAPTION)),
         true,
         true,
+        false,
         false,
     )?;
     text_left(
@@ -926,6 +949,7 @@ where
         true,
         true,
         false,
+        false,
     )?;
     components::list::row(
         t,
@@ -937,6 +961,7 @@ where
         true,
         true,
         false,
+        false,
     )?;
     components::list::row(
         t,
@@ -947,6 +972,7 @@ where
         Some(("with PUK", theme::CAPTION)),
         true,
         true,
+        false,
         false,
     )?;
     // No trailing caption: a right-aligned hint here is laid out first and the label is
@@ -962,6 +988,7 @@ where
         None,
         true,
         true,
+        false,
         false,
     )?;
     text_left(

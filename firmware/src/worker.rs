@@ -52,6 +52,10 @@ enum Kind {
 /// The shared request/response buffer the transport fills and the worker drains.
 struct Exchange {
     kind: Kind,
+    /// CTAPHID channel the request arrived on (`Cbor` only); 0 for the transports
+    /// with no channel concept. Cross-message FIDO state that another channel must
+    /// not be able to hijack — the seed-backup MSE key — binds to it.
+    cid: u32,
     /// Logical vendor command number when `kind == Vendor`.
     vcmd: u8,
     /// Worker → transport: whether the vendor command was supported (`Vendor` only).
@@ -69,6 +73,7 @@ type Cs = CriticalSectionRawMutex;
 
 static EXCHANGE: Mutex<Cs, Exchange> = Mutex::new(Exchange {
     kind: Kind::Cbor,
+    cid: 0,
     vcmd: 0,
     vendor_ok: false,
     sec_status: 0,
@@ -101,16 +106,31 @@ pub(crate) fn host_request_pending() -> bool {
     REQ.signaled()
 }
 
+/// [`host_request_pending`], but only once the UI has been idle for
+/// [`crate::display::UI_YIELD_FLOOR_MS`] — pass the modal's last-touch instant.
+///
+/// The floor is the whole point and every modal exit poll must use this form. A
+/// bare `host_request_pending()` lets a host close the screen on its FIRST poll,
+/// so an unprivileged process looping an ungated `authenticatorGetInfo` denies the
+/// owner the entire on-device browse and menu layer (audit run-35). The floor was
+/// written for exactly that and had been applied at 2 of 26 sites.
+#[cfg(feature = "display")]
+pub(crate) fn host_request_pending_after(since: embassy_time::Instant) -> bool {
+    REQ.signaled()
+        && since.elapsed() >= embassy_time::Duration::from_millis(crate::display::UI_YIELD_FLOOR_MS)
+}
+
 /// Hand `data` to the worker as `kind`, await its response, copy it into `out`,
 /// return the length. The caller (a transport on the high-priority executor) wraps
 /// the `DONE.wait()` in a keepalive `select`, so keepalives keep flowing while the
 /// worker is blocked in synchronous crypto / flash.
-async fn roundtrip(kind: Kind, data: &[u8], out: &mut [u8]) -> usize {
+async fn roundtrip(kind: Kind, cid: u32, data: &[u8], out: &mut [u8]) -> usize {
     let _serialize = WORKER_LOCK.lock().await;
     {
         let mut ex = EXCHANGE.lock().await;
         let n = data.len().min(REQ_CAP);
         ex.kind = kind;
+        ex.cid = cid;
         ex.req_len = n;
         ex.req[..n].copy_from_slice(&data[..n]);
     }
@@ -191,11 +211,11 @@ async fn roundtrip_secure(data: &[u8], out: &mut [u8]) -> SecureResult {
 pub struct ClientCtap;
 
 impl MsgHandler for ClientCtap {
-    async fn handle_cbor(&mut self, data: &[u8], out: &mut [u8]) -> usize {
-        roundtrip(Kind::Cbor, data, out).await
+    async fn handle_cbor(&mut self, cid: u32, data: &[u8], out: &mut [u8]) -> usize {
+        roundtrip(Kind::Cbor, cid, data, out).await
     }
-    async fn handle_msg(&mut self, data: &[u8], out: &mut [u8]) -> usize {
-        roundtrip(Kind::Msg, data, out).await
+    async fn handle_msg(&mut self, cid: u32, data: &[u8], out: &mut [u8]) -> usize {
+        roundtrip(Kind::Msg, cid, data, out).await
     }
     fn reset_app_selection(&mut self) {
         MSG_DESELECT.store(true, core::sync::atomic::Ordering::Release);
@@ -210,14 +230,14 @@ pub struct ClientCcid;
 
 impl ApduHandler for ClientCcid {
     async fn handle_apdu(&mut self, apdu: &[u8], out: &mut [u8]) -> usize {
-        roundtrip(Kind::Apdu, apdu, out).await
+        roundtrip(Kind::Apdu, 0, apdu, out).await
     }
     async fn handle_secure(&mut self, data: &[u8], out: &mut [u8]) -> SecureResult {
         roundtrip_secure(data, out).await
     }
     async fn reset_card(&mut self) {
         let mut sink = [0u8; 2];
-        roundtrip(Kind::ResetCard, &[], &mut sink).await;
+        roundtrip(Kind::ResetCard, 0, &[], &mut sink).await;
     }
 }
 
@@ -227,17 +247,17 @@ impl ApduHandler for ClientCcid {
 /// shortest PIN a user could have set, so the pad can't lock out a valid PIN; the
 /// applet enforces its own real minimum and reports a wrong/blocked status word.
 #[cfg(feature = "display")]
-fn secure_pin_meta(template: &[u8]) -> (&'static str, usize) {
-    let title = match template.get(3).copied() {
-        Some(rsk_openpgp::consts::PW1_MODE81) => "OpenPGP Sign PIN",
-        Some(rsk_openpgp::consts::PW1_MODE82) => "OpenPGP PIN",
-        Some(rsk_openpgp::consts::PW3_MODE83) => "OpenPGP Admin PIN",
-        Some(rsk_usb::secure_pin::PIV_PIN_P2) => {
-            crate::display::piv_ref_title(rsk_piv::PinRef::Pin)
-        }
-        _ => "Enter PIN",
+fn secure_pin_meta(p2: u8) -> Option<(&'static str, usize)> {
+    // No generic "Enter PIN" fallback: a reference no applet here implements gets
+    // refused rather than painted under a label that names nothing (audit run-36).
+    let title = match p2 {
+        rsk_openpgp::consts::PW1_MODE81 => "OpenPGP Sign PIN",
+        rsk_openpgp::consts::PW1_MODE82 => "OpenPGP PIN",
+        rsk_openpgp::consts::PW3_MODE83 => "OpenPGP Admin PIN",
+        rsk_usb::secure_pin::PIV_PIN_P2 => crate::display::piv_ref_title(rsk_piv::PinRef::Pin),
+        _ => return None,
     };
-    (title, 6)
+    Some((title, 6))
 }
 
 /// The compute worker (low-priority thread executor): owns the applet layer and
@@ -259,6 +279,11 @@ pub struct Worker<'a> {
     btn_state: bool,
     btn_count: u8,
     btn_time: u64,
+    /// CTAPHID channel the last `Kind::Msg` arrived on. The MSG applet selection is
+    /// one global for every channel and U2F has no SELECT of its own, so a change
+    /// of channel drops it — otherwise another process's SELECT of the vendor AID
+    /// silently redirected the victim's REGISTER/AUTHENTICATE (audit run-34 #27).
+    last_msg_cid: Option<u32>,
 }
 
 /// Button-watcher poll cadence; also the idle tick that lets the
@@ -318,6 +343,7 @@ impl<'a> Worker<'a> {
             btn_state: false,
             btn_count: 0,
             btn_time: 0,
+            last_msg_cid: None,
         }
     }
 
@@ -347,9 +373,10 @@ impl<'a> Worker<'a> {
                     // A Management factory reset (DEFAULT build) likewise runs after
                     // its SW_OK: wipe all flash but the attestation, then reboot to
                     // re-provision a fresh seed.
+                    // Reboot only on a completed wipe: coming up fresh after a failed
+                    // one is what makes a half-erased device look factory-clean.
                     #[cfg(not(feature = "strict-config"))]
-                    if rsk_mgmt::take_device_reset() {
-                        self.ccid.factory_wipe();
+                    if rsk_mgmt::take_device_reset() && self.ccid.factory_wipe() {
                         self.reboot(1).await;
                     }
                 }
@@ -407,6 +434,7 @@ impl<'a> Worker<'a> {
                 let u2f_denied = rsk_sdk::Sw::CONDITIONS_NOT_SATISFIED.to_bytes();
                 let Exchange {
                     kind,
+                    cid,
                     vcmd,
                     vendor_ok,
                     req_len,
@@ -417,12 +445,25 @@ impl<'a> Worker<'a> {
                 } = &mut *ex;
                 let r: &[u8] = match *kind {
                     Kind::Cbor if !fido2_on => &cbor_denied,
-                    Kind::Cbor => self.ctap.handle_cbor(&req[..*req_len]),
+                    Kind::Cbor => self.ctap.handle_cbor(*cid, &req[..*req_len]),
                     Kind::Msg if !u2f_on => &u2f_denied,
                     Kind::Msg => {
                         // A CTAPHID_INIT since the last MSG drops the applet
                         // selection so U2F isn't hijacked by a sticky vendor SELECT.
-                        if MSG_DESELECT.swap(false, core::sync::atomic::Ordering::AcqRel) {
+                        // So does a change of channel: the selection is one global
+                        // for every CTAPHID channel, and U2F has no SELECT of its
+                        // own, so another process's SELECT of the vendor AID used to
+                        // send the victim's REGISTER/AUTHENTICATE to `INS_INCREMENT`
+                        // / `INS_GET` instead (audit run-34 #27).
+                        // Both operands must run: `replace` is the ONLY thing that
+                        // records which channel this MSG arrived on, and `||` skipped
+                        // it whenever MSG_DESELECT was already set — which every
+                        // CTAPHID_INIT sets, including the attacker's own. That left
+                        // `last_msg_cid` holding the victim's channel and voided the
+                        // scoping entirely (audit run-35).
+                        let forced = MSG_DESELECT.swap(false, core::sync::atomic::Ordering::AcqRel);
+                        let changed = self.last_msg_cid.replace(*cid) != Some(*cid);
+                        if forced || changed {
                             self.ctap.deselect_msg();
                         }
                         self.ctap.handle_msg(&req[..*req_len])
@@ -490,6 +531,7 @@ impl<'a> Worker<'a> {
     /// so it is borrow-disjoint from `self.ccid`/`fs`.
     #[cfg(feature = "display")]
     fn handle_secure_req(&mut self, ex: &mut Exchange) {
+        use rsk_fido::UserPresence as _;
         use rsk_usb::ccid::{SECURE_ERR_CANCELLED, SECURE_ERR_TIMEOUT, SECURE_STATUS_FAILED};
         let failed = |ex: &mut Exchange, err: u8| {
             ex.resp_len = 0;
@@ -504,7 +546,29 @@ impl<'a> Worker<'a> {
         if req.operation != 0x00 {
             return failed(ex, 0);
         }
-        let (title, min_len) = secure_pin_meta(req.apdu_template);
+        // The pad is a trusted-display ceremony, so it gets the contract the rest of
+        // them have. Its direct twin — clientPIN built-in UV, the other way a host
+        // makes this panel paint a PIN pad — runs a readiness check that refuses
+        // WITHOUT painting and then an explicit "Allow host access?" hold, and audit
+        // run-28 already ruled a bare host-raised prompt a defect. This path had
+        // neither: any local PC/SC client could raise "OpenPGP Admin PIN" at a moment
+        // of its choosing, and OpenPGP's UIF default is touch-off, so a typed PW3 was
+        // spendable from the attacker's own session with no further prompt.
+        let p2 = req.apdu_template.get(3).copied().unwrap_or(0);
+        if !self.ccid.pin_ref_ready(p2) {
+            return failed(ex, 0);
+        }
+        let Some((title, min_len)) = secure_pin_meta(p2) else {
+            return failed(ex, 0);
+        };
+        if !matches!(
+            self.presence
+                .borrow_mut()
+                .request(rsk_fido::Confirm::titled("Allow host PIN entry?")),
+            rsk_fido::Presence::Confirmed
+        ) {
+            return failed(ex, SECURE_ERR_CANCELLED);
+        }
         let mut pin = [0u8; rsk_usb::secure_pin::MAX_PIN];
         let entry = self
             .presence
@@ -618,6 +682,11 @@ impl<'a> Worker<'a> {
     /// drops to the BOOTSEL bootloader so a reflash can't recover those secrets
     /// from RAM; `mode` 1 is a warm reboot. Flash-at-rest secrets are out of
     /// scope for this path.
+    ///
+    /// The stack is deliberately not scrubbed. `tests/54_sram_residue.py` measured
+    /// the premise on RP2350 A4: after the drop, all 520 KiB of SRAM read as zeros
+    /// while a pattern written through picoboot read straight back, so the platform
+    /// clears it and there is nothing there to reach.
     async fn reboot(&mut self, mode: u8) -> ! {
         embassy_time::Timer::after(Duration::from_millis(200)).await;
         self.ctap.scrub_secrets();
@@ -627,6 +696,13 @@ impl<'a> Worker<'a> {
         // frame reassembly buffer, the taken request and a queued ticket can each hold
         // a slot's AES key, private UID, access code or static password.
         otp_kbd::scrub();
+        // Core1's mailbox keeps an RSA prime and the keygen DRBG seed from the last
+        // on-card keygen — factors of a live modulus, in plain SRAM. The sieves are
+        // scrubbed by their owning core (issuing that from core0 would alias a live
+        // `&mut` across cores); `scrub` now waits, bounded, for core1 to reach that
+        // point. A core1 that never answers is faulted — which is what latches
+        // `DEGRADED` — and its window stays resident (audit run-34 #23).
+        crate::core1::scrub();
         if mode == 2 {
             embassy_rp::rom_data::reset_to_usb_boot(0, 0);
         } else {

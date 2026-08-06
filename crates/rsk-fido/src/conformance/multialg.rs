@@ -5,13 +5,13 @@
 //! envelope (`process_cbor`). For each COSE algorithm the authenticator supports
 //! by default (ES256/384/512, EdDSA) this registers a credential, then logs in
 //! with it, and cryptographically verifies both signatures a conformance tool
-//! checks: the packed self-attestation (CTAP 2.1 §6.1, over authData ‖ CDH) and
-//! the assertion (§6.2). It also asserts the per-curve COSE public-key shape
+//! checks: the packed attestation under its x5c leaf (CTAP 2.1 §6.1, over
+//! authData ‖ CDH) and the assertion under the credential key (§6.2). It also asserts the per-curve COSE public-key shape
 //! (kty/crv/coordinate width). The sibling `ec_tests.rs`/`getassertion_tests.rs`
 //! prove the curves at the module and command-fn level; this proves them across
 //! the full dispatcher, the surface a host actually observes.
 
-use super::{Authr, assert_ok, field_at, int_map_keys};
+use super::{Authr, assert_ok, field_at, int_map_keys, packed_att_stmt};
 use crate::consts::{
     ALG_EDDSA, ALG_ES256, ALG_ES384, ALG_ES512, CTAP_GET_ASSERTION, CTAP_MAKE_CREDENTIAL,
     CURVE_ED25519, CURVE_P256, CURVE_P384, CURVE_P521, FLAG_AT, FLAG_UP,
@@ -131,31 +131,30 @@ fn cred_id_of(ad: &[u8]) -> Vec<u8> {
     ad[55..55 + cred_len].to_vec()
 }
 
-/// The `(alg, sig)` of a packed self-attestation statement (key 3), asserting the
-/// canonical `{alg, sig}` shape (no x5c chain for self-attestation).
-fn att_stmt(body: &[u8]) -> (i64, Vec<u8>) {
-    let mut d = field_at(body, 3).expect("attStmt (0x03) present");
-    assert_eq!(
-        d.map().unwrap().unwrap(),
-        2,
-        "self-attestation attStmt is {{alg, sig}}"
-    );
-    assert_eq!(d.str().unwrap(), "alg");
-    let alg = d.i64().unwrap();
-    assert_eq!(d.str().unwrap(), "sig");
-    (alg, d.bytes().unwrap().to_vec())
+/// The x5c leaf's public key as a [`CoseKey`], so [`verifies`] can check the
+/// attestation the same way it checks an assertion.
+fn cert_pubkey(cert: &[u8]) -> CoseKey {
+    let (x, y) = super::att_leaf_pubkey(cert);
+    CoseKey::Ec2 {
+        x: x.to_vec(),
+        y: y.to_vec(),
+    }
 }
 
-/// Assert the default-profile makeCredential shape: fmt "none" (field 1) with an
-/// empty attStmt map (field 3).
-fn assert_none_att_stmt(body: &[u8], name: &str) {
+/// Assert and verify the attestation every credential algorithm gets: fmt "packed"
+/// with an ES256 statement that verifies under the x5c leaf, whatever the
+/// credential's own algorithm is. That independence is what keeps a credential
+/// algorithm out of the attestation verify path (issue #26).
+fn verify_basic_attestation(body: &[u8], ad: &[u8], name: &str) {
     let mut f = field_at(body, 1).expect("fmt (0x01) present");
-    assert_eq!(f.str().unwrap(), "none", "{name}: default fmt is none");
-    let mut s = field_at(body, 3).expect("attStmt (0x03) present");
-    assert_eq!(
-        s.map().unwrap().unwrap(),
-        0,
-        "{name}: default attStmt is empty"
+    assert_eq!(f.str().unwrap(), "packed", "{name}: fmt is packed");
+    let (att_alg, att_sig, leaf) = packed_att_stmt(body);
+    assert_eq!(att_alg, ALG_ES256, "{name}: attestation alg is ES256");
+    let mut signed = ad.to_vec();
+    signed.extend_from_slice(&CDH);
+    assert!(
+        verifies(ALG_ES256, &cert_pubkey(&leaf), &signed, &att_sig),
+        "{name}: attestation signature must verify under the x5c leaf"
     );
 }
 
@@ -264,26 +263,7 @@ fn create_and_assert(spec: &AlgSpec) {
     );
     let ad = authdata(&mc.body);
     let key = cose_key(spec, &ad);
-    // Default ships fmt "none" with an empty attStmt; only the conformance
-    // profile emits (and lets us verify) the packed self-attestation.
-    if cfg!(feature = "fido-conformance") {
-        let (att_alg, att_sig) = att_stmt(&mc.body);
-        assert_eq!(
-            att_alg, spec.alg,
-            "{}: attStmt alg must match the credential key",
-            spec.name
-        );
-        // Packed self-attestation signs authData ‖ clientDataHash with the new key.
-        let mut att_signed = ad.clone();
-        att_signed.extend_from_slice(&CDH);
-        assert!(
-            verifies(spec.alg, &key, &att_signed, &att_sig),
-            "{}: packed self-attestation signature must verify",
-            spec.name
-        );
-    } else {
-        assert_none_att_stmt(&mc.body, spec.name);
-    }
+    verify_basic_attestation(&mc.body, &ad, spec.name);
 
     let cred_id = cred_id_of(&ad);
     let ga = a.send(CTAP_GET_ASSERTION, &ga_request(&cred_id));
@@ -336,27 +316,21 @@ fn eddsa_create_and_assert() {
 fn tampered_authdata_fails_for_every_algorithm() {
     // A verification harness that never rejects would let every positive test
     // pass vacuously. Flipping the UP bit in the signed authData must break the
-    // self-attestation for each algorithm, proving the signature binds authData.
-    // Only the conformance profile emits a self-attestation to tamper with; the
-    // default profile has an empty attStmt, so assert that shape instead.
+    // attestation for each algorithm, proving the signature binds authData.
     for spec in [&ES256, &ES384, &ES512, &EDDSA] {
         let mut a = Authr::fresh();
         let mc = a.send(CTAP_MAKE_CREDENTIAL, &mc_request(spec.alg));
         assert_ok(&mc);
         let ad = authdata(&mc.body);
-        let key = cose_key(spec, &ad);
-        if cfg!(feature = "fido-conformance") {
-            let (_, att_sig) = att_stmt(&mc.body);
-            let mut tampered = ad.clone();
-            tampered[32] ^= FLAG_UP;
-            tampered.extend_from_slice(&CDH);
-            assert!(
-                !verifies(spec.alg, &key, &tampered, &att_sig),
-                "{}: signature must not verify over mutated authData",
-                spec.name
-            );
-        } else {
-            assert_none_att_stmt(&mc.body, spec.name);
-        }
+        verify_basic_attestation(&mc.body, &ad, spec.name);
+        let (_, att_sig, leaf) = packed_att_stmt(&mc.body);
+        let mut tampered = ad.clone();
+        tampered[32] ^= FLAG_UP;
+        tampered.extend_from_slice(&CDH);
+        assert!(
+            !verifies(ALG_ES256, &cert_pubkey(&leaf), &tampered, &att_sig),
+            "{}: signature must not verify over mutated authData",
+            spec.name
+        );
     }
 }

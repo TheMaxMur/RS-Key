@@ -111,3 +111,60 @@ fn chain_get_response_bounds_a_hostile_oversized_stream() {
     let r = chain_get_response(|_apdu| Ok((vec![0xAA; 255], 0x61, 0xFF)), 0x00, 0x6E);
     assert!(r.is_err(), "unbounded data stream must be rejected");
 }
+
+// --- device binding: which actions refuse to guess ----------------------------
+// `tools/rsk`'s half of this is test_refuse_to_guess.py. Deleting the refusal
+// here left the TUI suite green (audit run-34 #9), so pin the decision and the
+// call sites that reach it.
+
+#[test]
+fn one_device_or_none_is_not_ambiguous() {
+    assert!(refuse_ambiguous(0).is_ok());
+    assert!(refuse_ambiguous(1).is_ok());
+}
+
+#[test]
+fn two_devices_refuse_and_say_how_many() {
+    let e = refuse_ambiguous(2).unwrap_err();
+    assert!(e.starts_with("2 FIDO devices attached"), "{e}");
+    assert!(e.contains("must not guess"), "{e}");
+    assert!(
+        refuse_ambiguous(7)
+            .unwrap_err()
+            .starts_with("7 FIDO devices")
+    );
+}
+
+#[test]
+fn every_hid_open_site_is_classified() {
+    // `hid_open()` takes the first match, `hid_open_exclusive()` refuses to.
+    // Which action gets which is the security decision, so it is pinned here
+    // rather than left to whoever adds the next one.
+    const SRC: &str = include_str!("device.rs");
+    let mut sites = Vec::new();
+    let mut current = "";
+    for line in SRC.lines() {
+        let t = line.trim_start();
+        let is_signature = t.starts_with("fn ") || t.starts_with("pub fn ");
+        if is_signature {
+            let rest = t.trim_start_matches("pub ").trim_start_matches("fn ");
+            current = rest.split(['(', '<']).next().unwrap_or("");
+        } else if line.contains("hid_open_exclusive()") {
+            sites.push((current, "exclusive"));
+        } else if line.contains("hid_open()") {
+            sites.push((current, "first-match"));
+        }
+    }
+    assert_eq!(
+        sites,
+        vec![
+            ("hid_open_exclusive", "first-match"), // the open behind the refusal
+            ("audit_read", "first-match"),
+            ("verify_identity", "exclusive"),
+            ("cred_count", "first-match"),
+            ("fetch_backup_seed", "exclusive"),
+            ("backup_finalize", "exclusive"),
+            ("backup_restore", "exclusive"),
+        ]
+    );
+}

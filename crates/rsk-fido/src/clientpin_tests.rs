@@ -1589,3 +1589,39 @@ fn ephemeral_public_is_cached_and_matches_a_fresh_derive() {
     assert_eq!(cached2, public_xy(state.ephemeral_scalar()).unwrap());
     assert_ne!(cached2, cached);
 }
+
+/// CTAP 2.1 §6.5.7 wants a fresh IV on the encrypted token, and protocol two puts
+/// it in the clear at the head of the ciphertext. The IV was hard-coded to zero,
+/// which the freshly-random token mostly masked — except on the `PERM_PCMR`
+/// branch, whose token is filled once per power cycle, so two issuances under one
+/// shared secret were byte-identical and linkable (audit run-34 #37).
+#[test]
+fn each_pin_token_carries_a_fresh_iv() {
+    let (mut fs, mut rng, mut state, plat) = setup_with_pin(b"1234");
+    let mut ivs = std::vec::Vec::new();
+    for _ in 0..4 {
+        let mut out = [0u8; 256];
+        let n = run(
+            &mut fs,
+            &mut rng,
+            &mut state,
+            &plat.get_token_req(b"1234"),
+            &mut out,
+        )
+        .unwrap();
+        // {2: <iv ‖ ct>} — the first 16 bytes of the value are protocol two's IV.
+        let mut d = Decoder::new(&out[..n]);
+        assert_eq!(d.map().unwrap().unwrap(), 1);
+        assert_eq!(d.u8().unwrap(), 2);
+        let enc = d.bytes().unwrap();
+        assert!(enc.len() >= 16 + 32, "short token ciphertext");
+        ivs.push(enc[..16].to_vec());
+    }
+    assert!(ivs.iter().all(|iv| iv != &[0u8; 16]), "zero IV: {ivs:02x?}");
+    for i in 1..ivs.len() {
+        assert!(
+            !ivs[..i].contains(&ivs[i]),
+            "IV repeated across issuances: {ivs:02x?}"
+        );
+    }
+}

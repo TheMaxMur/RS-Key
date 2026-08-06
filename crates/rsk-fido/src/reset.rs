@@ -43,17 +43,45 @@ pub fn reset<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>) -> CtapResult {
     // with the OpenPGP applet, so delete only live, FIDO-owned keys
     // ([`is_fido_fid`]) — a blind 0..256 EF_CRED/EF_RP sweep would write a
     // tombstone per absent slot, filling the partition and slowing the flash GC.
+    //
+    // Two phases, for the reason `rsk_piv::files::wipe_piv` and `wipe_oath` state:
+    // `for_each_key` yields in flash-ring order, not FID order, so one combined
+    // sweep can reach `EF_PIN` before the credentials — and a power cut there
+    // leaves the owner's passkeys live with the PIN and `alwaysUv` gone, i.e.
+    // assertable on a touch alone. Secrets first (the seed leads, so a surviving
+    // credential record is cryptographically dead), gates last.
+    sweep(ctx, |fid| is_fido_fid(fid) && !is_fido_gate_fid(fid))?;
+    sweep(ctx, is_fido_gate_fid)?;
+    ctx.state.reset();
+    ensure_seed(&ctx.dev, ctx.fs, ctx.rng).map_err(|_| CtapError::Other)?;
+    // Privacy: fold the journal window into the epoch (per-event details are
+    // scrubbed, aggregate history stays attested), then record the reset.
+    journal::fold_and_scrub(ctx);
+    journal::append(ctx, journal::EV_RESET, 0, &[]);
+    Ok(0)
+}
+
+/// One phase of the reset sweep: delete every live FIDO-owned fid matching `pred`,
+/// reporting success only when the enumeration provably completed over an empty
+/// range. Batched because `for_each_key` cannot delete mid-iteration.
+fn sweep<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, pred: fn(u16) -> bool) -> Result<(), CtapError> {
     loop {
         let mut keys = [0u16; 64];
         let mut n = 0usize;
-        ctx.fs.for_each_key(&mut |fid| {
-            if is_fido_fid(fid) && n < keys.len() {
+        let complete = ctx.fs.for_each_key(&mut |fid| {
+            if pred(fid) && n < keys.len() {
                 keys[n] = fid;
                 n += 1;
             }
         });
         if n == 0 {
-            break;
+            // An un-yielded FID is only evidence of absence when the walk finished;
+            // a truncated one must fail rather than report the range clear.
+            return if complete {
+                Ok(())
+            } else {
+                Err(CtapError::Other)
+            };
         }
         for &fid in &keys[..n] {
             // force_delete (unconditional), not delete: a false-absent key would be
@@ -62,13 +90,30 @@ pub fn reset<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>) -> CtapResult {
             ctx.fs.force_delete(fid).map_err(|_| CtapError::Other)?;
         }
     }
-    ctx.state.reset();
-    ensure_seed(&ctx.dev, ctx.fs, ctx.rng).map_err(|_| CtapError::Other)?;
-    // Privacy: fold the journal window into the epoch (per-event details are
-    // scrubbed, aggregate history stays attested), then record the reset.
-    journal::fold_and_scrub(ctx);
-    journal::append(ctx, journal::EV_RESET, 0, &[]);
-    Ok(0)
+}
+
+/// The FIDO records that *gate* the applet rather than being the secret itself.
+/// Deleted last by [`reset`], so no prefix of the wipe can leave live passkeys
+/// with their PIN and `alwaysUv` requirement already removed. Public because the
+/// device-wide `Fs::factory_wipe` bypasses this function and needs the same rule.
+///
+/// `EF_BACKUP_SEALED` is a gate of the same shape as OATH's access code: it is
+/// never re-provisioned, its *absence* is the permissive state, and what it gates
+/// is the master seed itself — the one-time `BACKUP_EXPORT` window and, on a
+/// display build, the on-device recovery-phrase reveal. It sat in the same phase as
+/// `EF_KEY_DEV`, so a torn wipe could take the marker first and re-open a window the
+/// owner had closed over a seed that was still live (audit run-36 class sweep).
+pub fn is_fido_gate_fid(fid: u16) -> bool {
+    matches!(
+        fid,
+        EF_PIN
+            | EF_DEVICE_PIN
+            | EF_ALWAYS_UV
+            | EF_MINPINLEN
+            | EF_AUTHTOKEN
+            | EF_PAUTHTOKEN
+            | EF_BACKUP_SEALED
+    )
 }
 
 /// CTAP 2.1 §6.6: a reset is honored only within [`RESET_WINDOW_MS`] of power-up,
@@ -81,7 +126,9 @@ fn in_reset_window<S: Storage, R: Rng>(ctx: &Ctx<S, R>) -> bool {
 
 /// Whether `fid` is cleared by `authenticatorReset` — every FIDO-owned flash file plus
 /// the trusted-display device PIN. Never the OpenPGP applet's files (0x1081-0x10d6 /
-/// 0x00xx / 0x5fxx / 0x1f2x) or the vendor counter (0xCC01). FIDO and OpenPGP interleave
+/// 0x00xx / 0x5fxx / 0x1f2x — and note 0x10a0 inside that span is OATH's `EF_OTP_PIN`,
+/// not OpenPGP's, so the band is not contiguously one applet's) or the vendor counter
+/// (0xCC01). FIDO and OpenPGP interleave
 /// in the 0x10xx range (FIDO `EF_PIN` 0x1080 vs OpenPGP PW1 0x1081), so this is an
 /// explicit set plus the resident-credential ranges, not a range test.
 fn is_fido_fid(fid: u16) -> bool {

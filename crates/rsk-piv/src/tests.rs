@@ -2608,8 +2608,9 @@ fn reset_reports_failure_when_the_sweep_cannot_converge() {
 }
 
 /// A failed sweep must not leave the applet without the files it just deleted:
-/// the PIN/PUK/retry files go first, and a card missing them answers 6A88 (no
-/// retry counters) to every later RESET instead of the honest 6581.
+/// a card missing the retry counters answers 6A88 to every later RESET instead of
+/// the honest 6581. (The PIN/PUK/retry files now go *last* — see
+/// `a_torn_reset_never_leaves_a_key_behind_the_default_pin`.)
 #[test]
 fn failed_reset_reprovisions_instead_of_wedging_the_applet() {
     let rng = RefCell::new(TestRng(7));
@@ -2630,16 +2631,24 @@ fn failed_reset_reprovisions_instead_of_wedging_the_applet() {
     let (sw, _) = run(&mut app, &mut fs, INS_RESET, 0, 0, &[]);
     assert_eq!(sw, Sw::MEMORY_FAILURE);
 
-    // Still a working card: the defaults are back, so RESET reports the real
-    // precondition (references not blocked) and the default PIN verifies again.
+    // Not wedged: the retry file is still there, so a second RESET answers the
+    // honest 6581 rather than 6A88 (no retry counters to read).
     let (sw, _) = run(&mut app, &mut fs, INS_RESET, 0, 0, &[]);
     assert_eq!(
         sw,
-        Sw::INCORRECT_PARAMS,
-        "a failed RESET must not wedge on 6A88"
+        Sw::MEMORY_FAILURE,
+        "a failed RESET must fail honestly, not wedge on 6A88"
     );
+    // And the card is left exactly as the failed RESET found it. Deleting the gate
+    // records last (audit run-35) means a sweep that never got past phase 1 has not
+    // touched them — so the references stay blocked instead of being handed back a
+    // fresh 3/3 budget, which is what the old ordering did on every failed RESET.
     let (sw, _) = run(&mut app, &mut fs, INS_VERIFY, 0, 0x80, &DEFAULT_PIN);
-    assert_eq!(sw, Sw::OK);
+    assert_eq!(
+        sw,
+        Sw::PIN_BLOCKED,
+        "a failed RESET must not refill the retries"
+    );
     assert!(
         !app.files_ensured,
         "SELECT must re-provision after a failed sweep"
@@ -3251,5 +3260,531 @@ fn pivman_printed_codec_property_fuzz() {
         } else {
             assert_eq!(sw_pin, Sw::FILE_NOT_FOUND);
         }
+    }
+}
+
+/// RFC 5280 §4.2.1.3: "If the keyCertSign bit is asserted, then the cA bit in the
+/// basic constraints extension MUST also be asserted." Every certificate the device
+/// emits asserted keyCertSign, leaves included, while their basicConstraints says
+/// `cA=FALSE` — a self-contradiction on the object an auditor reads to decide what
+/// the key is for (audit run-34 #36). The two must track each other, so assert the
+/// pair on every cert this test can reach rather than one of them in isolation.
+#[test]
+fn key_cert_sign_is_asserted_only_on_a_ca() {
+    use x509_parser::extensions::ParsedExtension;
+
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    verify_pin(&mut app, &mut fs);
+    let (sw, _) = run(
+        &mut app,
+        &mut fs,
+        INS_ASYM_KEYGEN,
+        0,
+        0x9A,
+        &gen_template(ALGO_ECCP256),
+    );
+    assert_eq!(sw, Sw::OK);
+
+    // The attestation leaf (cA=FALSE) and the F9 self-signed CA it chains to.
+    let (sw, leaf) = run(&mut app, &mut fs, INS_ATTESTATION, 0x9A, 0, &[]);
+    assert_eq!(sw, Sw::OK);
+    let (sw, f9) = run(
+        &mut app,
+        &mut fs,
+        INS_GET_DATA,
+        0x3F,
+        0xFF,
+        &[0x5C, 0x03, 0x5F, 0xFF, 0x01],
+    );
+    assert_eq!(sw, Sw::OK);
+    let f9der = find_tag(find_tag(&f9, 0x53).unwrap(), 0x70).expect("F9 cert object");
+
+    for (label, der) in [("attestation leaf", &leaf[..]), ("F9 self-cert", f9der)] {
+        let (_, c) = x509_parser::parse_x509_certificate(der).unwrap();
+        let is_ca = c.basic_constraints().unwrap().is_some_and(|bc| bc.value.ca);
+        let ku = c
+            .extensions()
+            .iter()
+            .find_map(|e| match e.parsed_extension() {
+                ParsedExtension::KeyUsage(k) => Some(k),
+                _ => None,
+            })
+            .expect("keyUsage extension");
+        assert!(ku.digital_signature(), "{label}: no digitalSignature");
+        assert_eq!(
+            ku.key_cert_sign(),
+            is_ca,
+            "{label}: keyCertSign={} but cA={is_ca} — RFC 5280 §4.2.1.3",
+            ku.key_cert_sign()
+        );
+    }
+}
+
+/// Policy bytes: `DEFAULT` and undefined values must not reach flash, and both
+/// gates must fail closed on whatever is already there. Only the length of the
+/// management key was checked at use, so an AES-192 key answered a full 3DES
+/// mutual auth (audit run-34 #18/#19).
+#[test]
+fn policy_bytes_are_resolved_and_undefined_ones_refused() {
+    use crate::keygen::resolved_policies;
+
+    // An explicit DEFAULT resolves exactly like an absent tag…
+    assert_eq!(
+        resolved_policies(0x9A, Some(PINPOLICY_DEFAULT), Some(TOUCHPOLICY_DEFAULT)),
+        resolved_policies(0x9A, None, None)
+    );
+    assert_eq!(
+        resolved_policies(SLOT_SIGNATURE, Some(PINPOLICY_DEFAULT), None).unwrap()[0],
+        PINPOLICY_ALWAYS
+    );
+    // …and nothing undefined is ever stored.
+    for bad in [4u8, 0x42, 0xFF] {
+        assert!(
+            resolved_policies(0x9A, Some(bad), None).is_err(),
+            "pin {bad}"
+        );
+        assert!(
+            resolved_policies(0x9A, None, Some(bad)).is_err(),
+            "touch {bad}"
+        );
+    }
+    // Every stored value round-trips.
+    for p in [PINPOLICY_NEVER, PINPOLICY_ONCE, PINPOLICY_ALWAYS] {
+        for t in [TOUCHPOLICY_NEVER, TOUCHPOLICY_ALWAYS, TOUCHPOLICY_CACHED] {
+            assert_eq!(resolved_policies(0x9A, Some(p), Some(t)).unwrap(), [p, t]);
+        }
+    }
+}
+
+#[test]
+fn generate_refuses_an_undefined_policy_byte() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    verify_pin(&mut app, &mut fs);
+    // AC { 80 01 <algo> · AB 01 42 } — an undefined touch policy.
+    let tmpl = [0xAC, 0x06, 0x80, 0x01, ALGO_ECCP256, 0xAB, 0x01, 0x42];
+    let (sw, _) = run(&mut app, &mut fs, INS_ASYM_KEYGEN, 0, 0x9A, &tmpl);
+    assert_eq!(
+        sw, WRONG_DATA,
+        "an undefined touch policy must not be stored"
+    );
+}
+
+#[test]
+fn the_management_key_algorithm_is_enforced_at_use() {
+    // The factory 9B key is AES-192; 3DES shares its 24-byte length, so only the
+    // *declared* algorithm separates them.
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    let (sw, _) = run(
+        &mut app,
+        &mut fs,
+        INS_AUTHENTICATE,
+        ALGO_3DES,
+        0x9B,
+        &[0x7C, 0x02, 0x81, 0x00],
+    );
+    assert_eq!(sw, Sw::INCORRECT_PARAMS, "3DES against an AES-192 key");
+    // …and the real algorithm still works.
+    let (sw, _) = run(
+        &mut app,
+        &mut fs,
+        INS_AUTHENTICATE,
+        ALGO_AES192,
+        0x9B,
+        &[0x7C, 0x02, 0x81, 0x00],
+    );
+    assert_eq!(sw, Sw::OK);
+}
+
+/// `Storage` that enumerates in INSERTION order — the flash ring's oldest-first
+/// yield, which `RamStorage`'s `HashMap` does not model — and whose `remove`
+/// starts failing after `budget` deletions, standing in for a power cut mid-wipe.
+#[derive(Clone)]
+struct TearAfter {
+    items: Vec<(u16, Vec<u8>)>,
+    budget: usize,
+}
+
+impl Storage for TearAfter {
+    fn read(&mut self, fid: u16, buf: &mut [u8]) -> Option<usize> {
+        let v = &self.items.iter().find(|(k, _)| *k == fid)?.1;
+        let n = v.len().min(buf.len());
+        buf[..n].copy_from_slice(&v[..n]);
+        Some(v.len())
+    }
+    fn write(&mut self, fid: u16, data: &[u8]) -> rsk_sdk::error::Result<()> {
+        match self.items.iter_mut().find(|(k, _)| *k == fid) {
+            Some(e) => e.1 = data.to_vec(),
+            None => self.items.push((fid, data.to_vec())),
+        }
+        Ok(())
+    }
+    fn remove(&mut self, fid: u16) -> rsk_sdk::error::Result<()> {
+        if self.budget == 0 {
+            return Err(rsk_sdk::error::Error::MemoryFatal);
+        }
+        self.budget -= 1;
+        self.items.retain(|(k, _)| *k != fid);
+        Ok(())
+    }
+    fn size(&mut self, fid: u16) -> Option<usize> {
+        self.items
+            .iter()
+            .find(|(k, _)| *k == fid)
+            .map(|(_, v)| v.len())
+    }
+    fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) -> bool {
+        for (k, _) in &self.items {
+            f(*k);
+        }
+        true
+    }
+}
+
+/// Audit run-35: a PIV RESET interrupted part-way must never leave a slot key
+/// live behind the re-provisioned factory PIN.
+///
+/// `wipe_piv` sweeps in flash-ring order, `scan_files` re-creates any absent
+/// credential file at its factory default, and PIV slot keys are sealed
+/// device-rooted rather than PIN-bound — so a single combined sweep that reached
+/// `EF_PIN` before the keys and then lost power handed the owner's keys to
+/// whoever holds the card, behind PIN 123456. The invariant asserted here is the
+/// ordering one, not an end state: for EVERY tear point, a surviving key implies a
+/// surviving owner PIN.
+#[test]
+fn a_torn_reset_never_leaves_a_key_behind_the_default_pin() {
+    let dev = Device {
+        serial_hash: &HASH,
+        serial_id: &SERIAL,
+        otp_key: None,
+    };
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+
+    // Provision a card the way an owner would: a key in 9A and a PIN of their own.
+    let mut fs = Fs::new(TearAfter {
+        items: Vec::new(),
+        budget: usize::MAX,
+    });
+    fs.scan();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    verify_pin(&mut app, &mut fs);
+    let owner_pin = [0x39u8, 0x38, 0x37, 0x36, 0x35, 0x34, 0xFF, 0xFF];
+    let mut chg = DEFAULT_PIN.to_vec();
+    chg.extend_from_slice(&owner_pin);
+    let (sw, _) = run(&mut app, &mut fs, INS_CHANGE_PIN, 0, 0x80, &chg);
+    assert_eq!(sw, Sw::OK, "owner sets their own PIN");
+    let tmpl = [0xAC, 0x03, 0x80, 0x01, ALGO_ECCP256];
+    let (sw, _) = run(&mut app, &mut fs, INS_ASYM_KEYGEN, 0, 0x9A, &tmpl);
+    assert_eq!(sw, Sw::OK, "owner generates a key in 9A");
+
+    let mut owner_rec = [0u8; 64];
+    let owner_n = fs.read(files::EF_PIN, &mut owner_rec).unwrap();
+    let base: TearAfter = fs.into_storage();
+    let live = base.items.len();
+
+    let mut saw_survivor = false;
+    for budget in 0..live {
+        let mut fs = Fs::new(TearAfter {
+            budget,
+            ..base.clone()
+        });
+        fs.scan();
+        let _ = reset_files(&dev, &mut fs, &mut TestRng(3));
+
+        if !fs.has_key(files::key_fid(SLOT_AUTHENTICATION)) {
+            continue;
+        }
+        saw_survivor = true;
+        let mut now = [0u8; 64];
+        let n = fs.read(files::EF_PIN, &mut now).unwrap_or(0);
+        assert_eq!(
+            (&now[..n], n),
+            (&owner_rec[..owner_n], owner_n),
+            "tear at {budget} left the 9A key live behind a re-provisioned PIN"
+        );
+    }
+    assert!(
+        saw_survivor,
+        "vacuous: no tear point left a key behind, so nothing was proved"
+    );
+}
+
+/// Audit run-36: the two-phase split classified only the PIN, PUK and retry
+/// counters as gates — but `scan_files` re-provisions the 9B management key at the
+/// *published* `DEFAULT_MGM` too, so it gates the applet exactly as they do. A
+/// sweep that took it first and then lost power handed PIV administrative
+/// authority (IMPORT, GENERATE, PUT DATA, MOVE KEY) to whoever holds the card,
+/// over slot keys that are still live. Same invariant as
+/// `a_torn_reset_never_leaves_a_key_behind_the_default_pin`, on the other gate:
+/// for EVERY tear point, a surviving key implies a surviving owner management key.
+#[test]
+fn a_torn_reset_never_leaves_a_key_behind_the_default_mgm() {
+    let dev = Device {
+        serial_hash: &HASH,
+        serial_id: &SERIAL,
+        otp_key: None,
+    };
+    let rng = RefCell::new(TestRng(11));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+
+    // Provision the way `ykman piv` does: rotate the management key away from the
+    // published default FIRST, then generate the slot key it protects.
+    let mut fs = Fs::new(TearAfter {
+        items: Vec::new(),
+        budget: usize::MAX,
+    });
+    fs.scan();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    let owner_key = [0x5Au8; 24];
+    let mut set_key = vec![ALGO_AES192, SLOT_CARDMGM, owner_key.len() as u8];
+    set_key.extend_from_slice(&owner_key);
+    let (sw, _) = run(&mut app, &mut fs, INS_SET_MGMKEY, 0xFF, 0xFF, &set_key);
+    assert_eq!(sw, Sw::OK, "owner rotates the management key");
+    let tmpl = [0xAC, 0x03, 0x80, 0x01, ALGO_ECCP256];
+    let (sw, _) = run(&mut app, &mut fs, INS_ASYM_KEYGEN, 0, 0x9A, &tmpl);
+    assert_eq!(sw, Sw::OK, "owner generates a key in 9A");
+
+    // The owner's sealed 9B record. A re-provisioned DEFAULT_MGM is sealed with a
+    // fresh nonce, so byte equality is what separates "the owner's key survived"
+    // from "the published default was re-seeded over it".
+    let mgm_fid = files::key_fid(SLOT_CARDMGM).get();
+    let mut owner_rec = [0u8; 128];
+    let owner_n = fs.read(mgm_fid, &mut owner_rec).unwrap();
+    let base: TearAfter = fs.into_storage();
+    let live = base.items.len();
+
+    let mut saw_survivor = false;
+    for budget in 0..live {
+        let mut fs = Fs::new(TearAfter {
+            budget,
+            ..base.clone()
+        });
+        fs.scan();
+        let _ = reset_files(&dev, &mut fs, &mut TestRng(3));
+
+        if !fs.has_key(files::key_fid(SLOT_AUTHENTICATION)) {
+            continue;
+        }
+        saw_survivor = true;
+        let mut now = [0u8; 128];
+        let n = fs.read(mgm_fid, &mut now).unwrap_or(0);
+        assert_eq!(
+            (&now[..n], n),
+            (&owner_rec[..owner_n], owner_n),
+            "tear at {budget} left the 9A key live behind a re-provisioned DEFAULT_MGM"
+        );
+    }
+    assert!(
+        saw_survivor,
+        "vacuous: no tear point left a key behind, so nothing was proved"
+    );
+}
+
+/// The 9B key and its metadata are provisioned as a pair, but only the *key* is a
+/// phase-2 gate — `EF_META` is one record shared by every applet and the
+/// device-wide wipe takes it in phase 1. `scan_files` must therefore repair a
+/// surviving key's missing metadata, or PIV administration is wedged: `meta_find`
+/// failing makes `GENERAL AUTHENTICATE` answer `REFERENCE_NOT_FOUND` forever,
+/// and the key-absent guard means nothing ever re-adds it.
+#[test]
+fn scan_files_repairs_the_mgm_metadata_when_only_it_is_missing() {
+    let dev = Device {
+        serial_hash: &HASH,
+        serial_id: &SERIAL,
+        otp_key: None,
+    };
+    let mut fs = Fs::new(RamStorage::new());
+    fs.scan();
+    scan_files(&dev, &mut fs, &mut TestRng(5)).unwrap();
+    let mgm_fid = files::key_fid(SLOT_CARDMGM).get();
+    let mut before = [0u8; 128];
+    let before_n = fs.read(mgm_fid, &mut before).unwrap();
+
+    // The state a torn device-wide wipe leaves: the key live, its metadata gone.
+    fs.meta_delete(mgm_fid).unwrap();
+    let mut meta = [0u8; 8];
+    assert!(fs.meta_find(mgm_fid, &mut meta).is_none());
+
+    scan_files(&dev, &mut fs, &mut TestRng(6)).unwrap();
+
+    let n = fs.meta_find(mgm_fid, &mut meta).unwrap_or(0);
+    assert!(n >= 3, "the metadata the auth path reads was not repaired");
+    assert_eq!(meta[0], ALGO_AES192, "repaired with the wrong algorithm");
+    // The surviving key's touch policy is NOT recoverable, so the repair must take
+    // the restrictive one. Handing it the fresh-card default would silently drop a
+    // gate the owner raised via SET MGM KEY.
+    assert_eq!(
+        meta[2], TOUCHPOLICY_ALWAYS,
+        "a repaired policy must fail safe, not default to touch-OFF"
+    );
+    let mut after = [0u8; 128];
+    let after_n = fs.read(mgm_fid, &mut after).unwrap();
+    assert_eq!(
+        (&after[..after_n], after_n),
+        (&before[..before_n], before_n),
+        "repairing the metadata must not re-seed the key"
+    );
+}
+
+/// Audit run-36: `generate_ec` wrote the certificate, the sealed key and the pubkey
+/// cache and only THEN resolved the requested policies, so a request carrying a
+/// policy byte this firmware does not implement — Yubico defines PIN policy 0x04/0x05
+/// for Bio match — answered 6A80 with the slot's previous key and certificate already
+/// destroyed, and the new key governed by the OLD key's metadata. A refused command
+/// must leave the slot exactly as it found it. Its two sibling generate paths
+/// (`generate_rsa_blocking`, the firmware RSA fast path) already validate first.
+#[test]
+fn a_refused_generate_leaves_the_slot_untouched() {
+    let rng = RefCell::new(TestRng(21));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = Fs::new(RamStorage::new());
+    fs.scan();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+
+    // A key with an explicit NEVER/NEVER policy.
+    let ok = [
+        0xAC,
+        0x09,
+        0x80,
+        0x01,
+        ALGO_ECCP256,
+        0xAA,
+        0x01,
+        PINPOLICY_NEVER,
+        0xAB,
+        0x01,
+        TOUCHPOLICY_NEVER,
+    ];
+    let (sw, _) = run(&mut app, &mut fs, INS_ASYM_KEYGEN, 0, 0x9A, &ok);
+    assert_eq!(sw, Sw::OK);
+    let mut before = [0u8; 128];
+    let before_n = fs
+        .read(files::pubkey_fid(SLOT_AUTHENTICATION), &mut before)
+        .unwrap();
+
+    // Same slot, a touch-policy byte this firmware does not implement.
+    let bad = [
+        0xAC,
+        0x09,
+        0x80,
+        0x01,
+        ALGO_ECCP256,
+        0xAA,
+        0x01,
+        PINPOLICY_ALWAYS,
+        0xAB,
+        0x01,
+        0x09,
+    ];
+    let (sw, _) = run(&mut app, &mut fs, INS_ASYM_KEYGEN, 0, 0x9A, &bad);
+    assert_ne!(sw, Sw::OK, "an undefined policy byte must be refused");
+
+    let mut after = [0u8; 128];
+    let after_n = fs
+        .read(files::pubkey_fid(SLOT_AUTHENTICATION), &mut after)
+        .unwrap_or(0);
+    assert_eq!(
+        (&after[..after_n], after_n),
+        (&before[..before_n], before_n),
+        "the refused GENERATE replaced the slot's key anyway"
+    );
+}
+
+/// The other tear direction: `Fs::force_delete` swallows a failed `meta_delete`
+/// (`let _ =`) and removes the key anyway, so the head can outlive the key it
+/// describes. Minting `DEFAULT_MGM` under a stale AES-256 head wedges the slot on
+/// `mgm_len != want` in `general_authenticate` — and RESET runs this same path, so
+/// nothing would ever clear it. The mint arm must rewrite the head unconditionally.
+#[test]
+fn scan_files_rewrites_a_stale_mgm_head_when_the_key_is_re_minted() {
+    let dev = Device {
+        serial_hash: &HASH,
+        serial_id: &SERIAL,
+        otp_key: None,
+    };
+    let mgm = files::key_fid(SLOT_CARDMGM);
+    let mut fs = Fs::new(RamStorage::new());
+    fs.scan();
+    scan_files(&dev, &mut fs, &mut TestRng(5)).unwrap();
+    // The owner ran SET MGM KEY with an AES-256 key, so the head records AES-256.
+    fs.meta_add(
+        mgm.get(),
+        &[ALGO_AES256, PINPOLICY_ALWAYS, TOUCHPOLICY_ALWAYS],
+    )
+    .unwrap();
+
+    // The key goes, the head survives.
+    let mut st = fs.into_storage();
+    st.remove(mgm.get()).unwrap();
+    let mut fs = Fs::new(st);
+    fs.scan();
+
+    scan_files(&dev, &mut fs, &mut TestRng(6)).unwrap();
+
+    let mut meta = [0u8; 8];
+    let n = fs.meta_find(mgm.get(), &mut meta).unwrap_or(0);
+    assert!(n >= 3, "no head at all after the re-mint");
+    assert_eq!(
+        meta[0], ALGO_AES192,
+        "a re-minted 24-byte DEFAULT_MGM kept a stale AES-256 head, so every mutual \
+         auth refuses on the length compare and RESET cannot clear it"
+    );
+}
+
+/// The repair must read the surviving key's algorithm rather than assume the
+/// fresh-card one: claiming AES-192 over a 16- or 32-byte key makes
+/// `general_authenticate` refuse on `meta[0] != algo` (crates/rsk-piv/src/auth.rs),
+/// so a "repair" that hardcodes it wedges the very slot it exists to unwedge.
+#[test]
+fn the_mgm_metadata_repair_reads_the_surviving_keys_algorithm() {
+    let dev = Device {
+        serial_hash: &HASH,
+        serial_id: &SERIAL,
+        otp_key: None,
+    };
+    let mgm_fid = files::key_fid(SLOT_CARDMGM);
+    for (key, want) in [
+        (vec![0x11u8; 16], ALGO_AES128),
+        (vec![0x22u8; 32], ALGO_AES256),
+    ] {
+        let mut fs = Fs::new(RamStorage::new());
+        fs.scan();
+        scan_files(&dev, &mut fs, &mut TestRng(5)).unwrap();
+        // The owner's key, of a width the fresh-card default does not have.
+        seal::seal_put(&dev, &mut fs, &mut TestRng(8), mgm_fid, &key).unwrap();
+        fs.meta_delete(mgm_fid.get()).unwrap();
+
+        scan_files(&dev, &mut fs, &mut TestRng(9)).unwrap();
+
+        let mut meta = [0u8; 8];
+        let n = fs.meta_find(mgm_fid.get(), &mut meta).unwrap_or(0);
+        assert!(n >= 3, "metadata not repaired for a {}-byte key", key.len());
+        assert_eq!(
+            meta[0],
+            want,
+            "a {}-byte key was repaired as {:#04x}, which refuses every auth",
+            key.len(),
+            meta[0]
+        );
     }
 }
