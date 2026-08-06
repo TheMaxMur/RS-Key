@@ -74,25 +74,40 @@ pub struct CcidApplets<'a> {
     resp: [u8; RESP_CAP],
 }
 
-/// The records every applet re-provisions at its factory defaults, passed to
-/// [`rsk_fs::Fs::factory_wipe`] so they are removed only after everything else is
-/// provably gone. A device-wide wipe bypasses each applet's own two-phase sweep,
-/// so it has to carry the same rule: a prefix that took a PIN verifier first and
-/// then lost power would let the next boot re-seed a published default over key
-/// material that is still live (PIV's slot keys are not PIN-bound at rest).
-/// OpenPGP's are included for uniformity — its DEK chain already makes a restored
-/// default PW1 useless — but PIV's and FIDO's are load-bearing.
+/// The records that *gate* each applet, passed to [`rsk_fs::Fs::factory_wipe`] so
+/// they are removed only after everything else is provably gone. A device-wide wipe
+/// bypasses each applet's own two-phase sweep, so it has to carry the same rule: a
+/// prefix that took a gate record first and then lost power leaves the applet's
+/// secrets reachable — either behind a *published* credential the next boot
+/// re-provisions (PIV's PIN/PUK/retries and its 0x9B management key, whose slot keys
+/// are not PIN-bound at rest; FIDO's PIN and `alwaysUv` latch) or, for OATH, behind
+/// no credential at all, since its `select` derives `validated` from the absence of
+/// the access code. OpenPGP's PW verifiers are uniformity — its DEK chain already
+/// makes a restored default PW1 useless — but its UIF flags and every other arm are
+/// load-bearing.
+///
+/// `EF_DEV_CONF` is deliberately **not** here, though its absence also resolves to a
+/// published default ("every supported application enabled"). It gates which applets
+/// are reachable, not whether a surviving secret is protected: for FIDO, PIV, OATH
+/// and OpenPGP the applet's own credential gate is in this set, so re-enabling one
+/// buys nothing. That argument does **not** cover OTP — its slot records are phase 1
+/// with no gate of their own, and a surviving static-password or HOTP slot emits on
+/// touch alone once `CAP_OTP` is back. What decides it is the other half: the record
+/// is host-writable ungated on the default build, so deferring it denies an attacker
+/// nothing they cannot simply write back.
+///
+/// **This must stay a plain fold over the applets' own exported predicates.** The one
+/// arm that was ever open-coded here is the one that went missing: OATH's
+/// `is_oath_lock_fid` was private, so it could not be named from this crate and was
+/// simply left out, and a torn device reset then served every surviving TOTP secret
+/// unauthenticated (audit run-36). A new applet adds its predicate to its own crate
+/// and one line here; `scripts/gate_union.py` fails the gate when it does not.
 #[cfg(any(not(feature = "strict-config"), feature = "display"))]
 pub(crate) fn gates_wiped_last(fid: u16) -> bool {
     rsk_fido::is_fido_gate_fid(fid)
         || rsk_piv::files::is_piv_gate_fid(fid)
-        || matches!(
-            fid,
-            rsk_openpgp::consts::EF_PW1
-                | rsk_openpgp::consts::EF_RC
-                | rsk_openpgp::consts::EF_PW3
-                | rsk_openpgp::consts::EF_PW_PRIV
-        )
+        || rsk_oath::is_oath_lock_fid(fid)
+        || rsk_openpgp::terminate::is_openpgp_gate_fid(fid)
 }
 
 impl<'a> CcidApplets<'a> {

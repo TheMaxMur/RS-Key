@@ -294,3 +294,160 @@ fn reset_wipes_false_absent_credential_without_looping() {
     // And it still fully re-provisions afterwards.
     assert!(load_keydev(&dev(), &mut fs).is_some());
 }
+
+/// Audit run-36 class sweep: `is_fido_gate_fid` is the set `reset` defers to its
+/// second phase *and* the set the device-wide `Fs::factory_wipe` inherits, so a
+/// record that gates the applet but is missing from it gets deleted ahead of the
+/// secrets it protects.
+///
+/// `EF_BACKUP_SEALED` is the one that was missing. It is never re-provisioned — its
+/// *absence* is the permissive state, like OATH's access code — and what it gates is
+/// the master seed: the one-time `BACKUP_EXPORT` window and, on a display build, the
+/// on-device recovery-phrase reveal. It sat in the same phase as `EF_KEY_DEV`, so a
+/// torn wipe could take the marker first and re-open a window the owner had closed
+/// over a seed that was still live.
+#[test]
+fn the_gate_set_defers_every_record_whose_absence_is_permissive() {
+    use crate::consts::{
+        EF_ALWAYS_UV, EF_AUTHTOKEN, EF_BACKUP_SEALED, EF_DEVICE_PIN, EF_KEY_DEV, EF_MINPINLEN,
+        EF_PAUTHTOKEN,
+    };
+    for fid in [
+        EF_PIN,
+        EF_DEVICE_PIN,
+        EF_ALWAYS_UV,
+        EF_MINPINLEN,
+        EF_AUTHTOKEN,
+        EF_PAUTHTOKEN,
+        EF_BACKUP_SEALED,
+    ] {
+        assert!(is_fido_gate_fid(fid), "{fid:#06x} gates the applet");
+        assert!(
+            is_fido_fid(fid),
+            "{fid:#06x} is deferred but not FIDO-owned, so no sweep would take it"
+        );
+    }
+    // The secrets themselves must stay in phase 1 — deferring the seed would invert
+    // the rule and delete the gate first.
+    for fid in [EF_KEY_DEV.get(), EF_CRED, EF_LARGEBLOB] {
+        assert!(!is_fido_gate_fid(fid), "{fid:#06x} is a secret, not a gate");
+    }
+}
+
+/// `Storage` that enumerates in INSERTION order — the flash ring's oldest-first
+/// yield, which `RamStorage`'s `HashMap` does not model — and whose `remove` starts
+/// failing after `budget` deletions, standing in for a power cut mid-wipe. Mirrors
+/// `rsk_piv`'s `TearAfter`; ring order is the whole point of a two-phase sweep, so a
+/// `HashMap`-backed harness cannot test one.
+#[derive(Clone)]
+struct TearAfter {
+    items: Vec<(u16, Vec<u8>)>,
+    budget: usize,
+}
+
+impl rsk_fs::Storage for TearAfter {
+    fn read(&mut self, fid: u16, buf: &mut [u8]) -> Option<usize> {
+        let v = &self.items.iter().find(|(k, _)| *k == fid)?.1;
+        let n = v.len().min(buf.len());
+        buf[..n].copy_from_slice(&v[..n]);
+        Some(v.len())
+    }
+    fn write(&mut self, fid: u16, data: &[u8]) -> rsk_sdk::error::Result<()> {
+        match self.items.iter_mut().find(|(k, _)| *k == fid) {
+            Some(e) => e.1 = data.to_vec(),
+            None => self.items.push((fid, data.to_vec())),
+        }
+        Ok(())
+    }
+    fn remove(&mut self, fid: u16) -> rsk_sdk::error::Result<()> {
+        if self.budget == 0 {
+            return Err(rsk_sdk::error::Error::MemoryFatal);
+        }
+        self.budget -= 1;
+        self.items.retain(|(k, _)| *k != fid);
+        Ok(())
+    }
+    fn size(&mut self, fid: u16) -> Option<usize> {
+        self.items
+            .iter()
+            .find(|(k, _)| *k == fid)
+            .map(|(_, v)| v.len())
+    }
+    fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) -> bool {
+        for (k, _) in &self.items {
+            f(*k);
+        }
+        true
+    }
+}
+
+/// The ordering `is_fido_gate_fid` buys, asserted on `reset` itself — the phase of
+/// the run-35 class fix that shipped with no test at all. For every tear point, a
+/// surviving *owner's* seed implies a surviving backup-sealed marker: otherwise the
+/// next `BACKUP_EXPORT` hands out a master seed the owner had already sealed away.
+///
+/// The marker is written before the seed here, which is the order that matters and
+/// is reachable in the field: `sequential-storage` re-appends a live item at the ring
+/// head on page GC, and `migrate_keydev_pin` re-seals `EF_KEY_DEV` on a PIN verify —
+/// either moves the seed *behind* a marker written when the owner first backed up.
+#[test]
+fn a_torn_reset_never_unseals_a_surviving_seed() {
+    use crate::consts::{EF_BACKUP_SEALED, EF_KEY_DEV};
+
+    let mut owner_seed = [0u8; 128];
+    let owner_n;
+    let base = {
+        let mut fs = Fs::new(TearAfter {
+            items: Vec::new(),
+            budget: usize::MAX,
+        });
+        fs.scan();
+        // Marker first, so it is the oldest entry in the ring.
+        fs.put(EF_BACKUP_SEALED, &[1]).unwrap();
+        let mut rng = SeqRng(9);
+        ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+        fs.put(EF_CRED, &[0u8; 100]).unwrap();
+        owner_n = fs.read(EF_KEY_DEV.get(), &mut owner_seed).unwrap();
+        fs.into_storage()
+    };
+    let live = base.items.len();
+
+    let mut saw_survivor = false;
+    for budget in 0..live {
+        let mut fs = Fs::new(TearAfter {
+            budget,
+            ..base.clone()
+        });
+        fs.scan();
+        let mut rng = SeqRng(3);
+        let mut state = FidoState::new();
+        {
+            let mut presence = crate::AlwaysConfirm;
+            let mut ctx = Ctx {
+                presence: &mut presence,
+                dev: dev(),
+                fs: &mut fs,
+                rng: &mut rng,
+                state: &mut state,
+                now_ms: 0,
+            };
+            let _ = reset(&mut ctx);
+        }
+        // "Live" is not "survived": a completed reset re-provisions a FRESH seed, and
+        // sealing that one would be wrong. Only the owner's own record counts.
+        let mut now = [0u8; 128];
+        let n = fs.read(EF_KEY_DEV.get(), &mut now).unwrap_or(0);
+        if (&now[..n], n) != (&owner_seed[..owner_n], owner_n) {
+            continue;
+        }
+        saw_survivor = true;
+        assert!(
+            fs.has_data(EF_BACKUP_SEALED),
+            "tear at {budget} left the owner's seed live with the export window re-opened"
+        );
+    }
+    assert!(
+        saw_survivor,
+        "vacuous: no tear point left the owner's seed behind, so nothing was proved"
+    );
+}

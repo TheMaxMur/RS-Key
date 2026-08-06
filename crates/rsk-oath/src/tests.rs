@@ -1706,6 +1706,36 @@ fn a_torn_reset_never_strips_the_access_code_first() {
     assert_eq!(left, 3, "the two removals went to credentials");
 }
 
+/// Audit run-36: `wipe_oath` carries the two-phase rule, but the device-wide
+/// `Fs::factory_wipe` bypasses it entirely and takes its phase-2 set from the
+/// firmware's union — which could not name this predicate while it was private, so
+/// OATH was left out of it and a torn device reset served every surviving
+/// credential with no access code at all. The predicate is `pub` for that caller;
+/// assert it actually buys the ordering property on that path, for every prefix.
+#[test]
+fn the_exported_lock_predicate_protects_the_device_wide_wipe() {
+    for budget in 0..8usize {
+        // Access code first, so it sits earliest in the ring — the order a
+        // single-phase sweep would delete it in.
+        let mut fs = torn_fs(budget);
+        fs.put(EF_OATH_CODE.get(), &[0xAB; 20]).unwrap();
+        fs.put(EF_OTP_PIN, &[0x01; 34]).unwrap();
+        for i in 0..5u16 {
+            fs.put(EF_OATH_CRED + i, &[0x11; 24]).unwrap();
+        }
+
+        let _ = fs.factory_wipe(|_| false, is_oath_lock_fid);
+
+        if (0..5u16).any(|i| fs.has_data(EF_OATH_CRED + i)) {
+            assert!(
+                fs.has_data(EF_OATH_CODE.get()),
+                "budget {budget}: credentials outlived the access code, so the next \
+                 SELECT would derive `validated` from its absence and serve them"
+            );
+        }
+    }
+}
+
 #[test]
 fn a_completed_reset_clears_credentials_and_the_code() {
     let mut fs = torn_fs(usize::MAX);

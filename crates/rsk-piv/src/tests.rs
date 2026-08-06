@@ -3524,3 +3524,201 @@ fn a_torn_reset_never_leaves_a_key_behind_the_default_pin() {
         "vacuous: no tear point left a key behind, so nothing was proved"
     );
 }
+
+/// Audit run-36: the two-phase split classified only the PIN, PUK and retry
+/// counters as gates — but `scan_files` re-provisions the 9B management key at the
+/// *published* `DEFAULT_MGM` too, so it gates the applet exactly as they do. A
+/// sweep that took it first and then lost power handed PIV administrative
+/// authority (IMPORT, GENERATE, PUT DATA, MOVE KEY) to whoever holds the card,
+/// over slot keys that are still live. Same invariant as
+/// `a_torn_reset_never_leaves_a_key_behind_the_default_pin`, on the other gate:
+/// for EVERY tear point, a surviving key implies a surviving owner management key.
+#[test]
+fn a_torn_reset_never_leaves_a_key_behind_the_default_mgm() {
+    let dev = Device {
+        serial_hash: &HASH,
+        serial_id: &SERIAL,
+        otp_key: None,
+    };
+    let rng = RefCell::new(TestRng(11));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+
+    // Provision the way `ykman piv` does: rotate the management key away from the
+    // published default FIRST, then generate the slot key it protects.
+    let mut fs = Fs::new(TearAfter {
+        items: Vec::new(),
+        budget: usize::MAX,
+    });
+    fs.scan();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    let owner_key = [0x5Au8; 24];
+    let mut set_key = vec![ALGO_AES192, SLOT_CARDMGM, owner_key.len() as u8];
+    set_key.extend_from_slice(&owner_key);
+    let (sw, _) = run(&mut app, &mut fs, INS_SET_MGMKEY, 0xFF, 0xFF, &set_key);
+    assert_eq!(sw, Sw::OK, "owner rotates the management key");
+    let tmpl = [0xAC, 0x03, 0x80, 0x01, ALGO_ECCP256];
+    let (sw, _) = run(&mut app, &mut fs, INS_ASYM_KEYGEN, 0, 0x9A, &tmpl);
+    assert_eq!(sw, Sw::OK, "owner generates a key in 9A");
+
+    // The owner's sealed 9B record. A re-provisioned DEFAULT_MGM is sealed with a
+    // fresh nonce, so byte equality is what separates "the owner's key survived"
+    // from "the published default was re-seeded over it".
+    let mgm_fid = files::key_fid(SLOT_CARDMGM).get();
+    let mut owner_rec = [0u8; 128];
+    let owner_n = fs.read(mgm_fid, &mut owner_rec).unwrap();
+    let base: TearAfter = fs.into_storage();
+    let live = base.items.len();
+
+    let mut saw_survivor = false;
+    for budget in 0..live {
+        let mut fs = Fs::new(TearAfter {
+            budget,
+            ..base.clone()
+        });
+        fs.scan();
+        let _ = reset_files(&dev, &mut fs, &mut TestRng(3));
+
+        if !fs.has_key(files::key_fid(SLOT_AUTHENTICATION)) {
+            continue;
+        }
+        saw_survivor = true;
+        let mut now = [0u8; 128];
+        let n = fs.read(mgm_fid, &mut now).unwrap_or(0);
+        assert_eq!(
+            (&now[..n], n),
+            (&owner_rec[..owner_n], owner_n),
+            "tear at {budget} left the 9A key live behind a re-provisioned DEFAULT_MGM"
+        );
+    }
+    assert!(
+        saw_survivor,
+        "vacuous: no tear point left a key behind, so nothing was proved"
+    );
+}
+
+/// The 9B key and its metadata are provisioned as a pair, but only the *key* is a
+/// phase-2 gate — `EF_META` is one record shared by every applet and the
+/// device-wide wipe takes it in phase 1. `scan_files` must therefore repair a
+/// surviving key's missing metadata, or PIV administration is wedged: `meta_find`
+/// failing makes `GENERAL AUTHENTICATE` answer `REFERENCE_NOT_FOUND` forever,
+/// and the key-absent guard means nothing ever re-adds it.
+#[test]
+fn scan_files_repairs_the_mgm_metadata_when_only_it_is_missing() {
+    let dev = Device {
+        serial_hash: &HASH,
+        serial_id: &SERIAL,
+        otp_key: None,
+    };
+    let mut fs = Fs::new(RamStorage::new());
+    fs.scan();
+    scan_files(&dev, &mut fs, &mut TestRng(5)).unwrap();
+    let mgm_fid = files::key_fid(SLOT_CARDMGM).get();
+    let mut before = [0u8; 128];
+    let before_n = fs.read(mgm_fid, &mut before).unwrap();
+
+    // The state a torn device-wide wipe leaves: the key live, its metadata gone.
+    fs.meta_delete(mgm_fid).unwrap();
+    let mut meta = [0u8; 8];
+    assert!(fs.meta_find(mgm_fid, &mut meta).is_none());
+
+    scan_files(&dev, &mut fs, &mut TestRng(6)).unwrap();
+
+    let n = fs.meta_find(mgm_fid, &mut meta).unwrap_or(0);
+    assert!(n >= 3, "the metadata the auth path reads was not repaired");
+    assert_eq!(meta[0], ALGO_AES192, "repaired with the wrong algorithm");
+    // The surviving key's touch policy is NOT recoverable, so the repair must take
+    // the restrictive one. Handing it the fresh-card default would silently drop a
+    // gate the owner raised via SET MGM KEY.
+    assert_eq!(
+        meta[2], TOUCHPOLICY_ALWAYS,
+        "a repaired policy must fail safe, not default to touch-OFF"
+    );
+    let mut after = [0u8; 128];
+    let after_n = fs.read(mgm_fid, &mut after).unwrap();
+    assert_eq!(
+        (&after[..after_n], after_n),
+        (&before[..before_n], before_n),
+        "repairing the metadata must not re-seed the key"
+    );
+}
+
+/// The other tear direction: `Fs::force_delete` swallows a failed `meta_delete`
+/// (`let _ =`) and removes the key anyway, so the head can outlive the key it
+/// describes. Minting `DEFAULT_MGM` under a stale AES-256 head wedges the slot on
+/// `mgm_len != want` in `general_authenticate` — and RESET runs this same path, so
+/// nothing would ever clear it. The mint arm must rewrite the head unconditionally.
+#[test]
+fn scan_files_rewrites_a_stale_mgm_head_when_the_key_is_re_minted() {
+    let dev = Device {
+        serial_hash: &HASH,
+        serial_id: &SERIAL,
+        otp_key: None,
+    };
+    let mgm = files::key_fid(SLOT_CARDMGM);
+    let mut fs = Fs::new(RamStorage::new());
+    fs.scan();
+    scan_files(&dev, &mut fs, &mut TestRng(5)).unwrap();
+    // The owner ran SET MGM KEY with an AES-256 key, so the head records AES-256.
+    fs.meta_add(
+        mgm.get(),
+        &[ALGO_AES256, PINPOLICY_ALWAYS, TOUCHPOLICY_ALWAYS],
+    )
+    .unwrap();
+
+    // The key goes, the head survives.
+    let mut st = fs.into_storage();
+    st.remove(mgm.get()).unwrap();
+    let mut fs = Fs::new(st);
+    fs.scan();
+
+    scan_files(&dev, &mut fs, &mut TestRng(6)).unwrap();
+
+    let mut meta = [0u8; 8];
+    let n = fs.meta_find(mgm.get(), &mut meta).unwrap_or(0);
+    assert!(n >= 3, "no head at all after the re-mint");
+    assert_eq!(
+        meta[0], ALGO_AES192,
+        "a re-minted 24-byte DEFAULT_MGM kept a stale AES-256 head, so every mutual \
+         auth refuses on the length compare and RESET cannot clear it"
+    );
+}
+
+/// The repair must read the surviving key's algorithm rather than assume the
+/// fresh-card one: claiming AES-192 over a 16- or 32-byte key makes
+/// `general_authenticate` refuse on `meta[0] != algo` (crates/rsk-piv/src/auth.rs),
+/// so a "repair" that hardcodes it wedges the very slot it exists to unwedge.
+#[test]
+fn the_mgm_metadata_repair_reads_the_surviving_keys_algorithm() {
+    let dev = Device {
+        serial_hash: &HASH,
+        serial_id: &SERIAL,
+        otp_key: None,
+    };
+    let mgm_fid = files::key_fid(SLOT_CARDMGM);
+    for (key, want) in [
+        (vec![0x11u8; 16], ALGO_AES128),
+        (vec![0x22u8; 32], ALGO_AES256),
+    ] {
+        let mut fs = Fs::new(RamStorage::new());
+        fs.scan();
+        scan_files(&dev, &mut fs, &mut TestRng(5)).unwrap();
+        // The owner's key, of a width the fresh-card default does not have.
+        seal::seal_put(&dev, &mut fs, &mut TestRng(8), mgm_fid, &key).unwrap();
+        fs.meta_delete(mgm_fid.get()).unwrap();
+
+        scan_files(&dev, &mut fs, &mut TestRng(9)).unwrap();
+
+        let mut meta = [0u8; 8];
+        let n = fs.meta_find(mgm_fid.get(), &mut meta).unwrap_or(0);
+        assert!(n >= 3, "metadata not repaired for a {}-byte key", key.len());
+        assert_eq!(
+            meta[0],
+            want,
+            "a {}-byte key was repaired as {:#04x}, which refuses every auth",
+            key.len(),
+            meta[0]
+        );
+    }
+}

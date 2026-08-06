@@ -269,13 +269,21 @@ impl<S: Storage> Fs<S> {
     /// enumerator can't run while the store mutates, so each pass collects a batch,
     /// removes it, and re-enumerates until only the preserved keys remain.
     /// `last` names the records that *gate* the applets — PIN and PUK verifiers,
-    /// retry counters, the `alwaysUv` latch. They are removed in a second phase,
-    /// after everything else is provably gone, because the applets re-provision
-    /// them at their factory defaults on the next boot: a single sweep can reach
-    /// them first (`for_each_key` yields in flash-ring order, not FID order) and a
-    /// power cut there would re-seed a published PIN over key material that is
-    /// still live and, for PIV, not PIN-bound at rest. Same rule as `wipe_piv` and
-    /// `wipe_oath` — this path bypasses both, so it has to carry it itself.
+    /// retry counters, management keys, the `alwaysUv` latch, access codes. They are
+    /// removed in a second phase, after everything else is provably gone, because a
+    /// single sweep can reach them first (`for_each_key` yields in flash-ring order,
+    /// not FID order) and a power cut there leaves the applet's secrets reachable:
+    /// the next boot either re-provisions a *published* credential over key material
+    /// that is still live and, for PIV, not PIN-bound at rest — or, for OATH, leaves
+    /// no credential at all, its `select` reading an absent access code as unlocked.
+    ///
+    /// This is the same rule all four applet sweeps carry — `rsk_fido`'s `reset`,
+    /// `wipe_piv`, `wipe_oath` and `wipe_openpgp` — and this path bypasses every one
+    /// of them, so it has to carry it itself and the caller has to supply a `last`
+    /// that is genuinely the union of theirs. Saying it here is not enforcing it:
+    /// `wipe_oath`'s half was missing from the firmware's union for a release
+    /// (audit run-36), which is why each applet now exports its own predicate rather
+    /// than having its fids open-coded at the call site.
     pub fn factory_wipe(
         &mut self,
         preserve: impl Fn(u16) -> bool,

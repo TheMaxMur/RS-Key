@@ -229,19 +229,62 @@ pub fn scan_files<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng) -
         fs.put(EF_RETRIES, &[d, d, d, d])
             .map_err(|_| Sw::MEMORY_FAILURE)?;
     }
-    if !fs.has_key(key_fid(SLOT_CARDMGM)) {
+    let minted_mgm = !fs.has_key(key_fid(SLOT_CARDMGM));
+    if minted_mgm {
         let mut key = DEFAULT_MGM;
         let r = seal::seal_put(dev, fs, rng, key_fid(SLOT_CARDMGM), &key);
         key.zeroize();
         r?;
-        // Real YubiKey 5 ships the management key touch-OFF; we follow that
-        // (admin provisioning isn't touch-gated) while still enforcing it if a
-        // host raises it via SET MGM KEY. Slot keys keep their ALWAYS default.
-        fs.meta_add(
-            key_fid(SLOT_CARDMGM).get(),
-            &[ALGO_AES192, PINPOLICY_ALWAYS, TOUCHPOLICY_NEVER],
-        )
-        .map_err(|_| Sw::MEMORY_FAILURE)?;
+    }
+    // The key and its meta head are written as a pair but not deleted as one, so
+    // BOTH directions need repairing. The key is a phase-2 gate
+    // ([`is_piv_gate_fid`]) while EF_META — one record shared by every applet —
+    // goes in phase 1 of the device-wide wipe, so a tear between them leaves a live
+    // key whose `meta_find` fails and `general_authenticate` answers
+    // REFERENCE_NOT_FOUND for good. The other direction is `force_delete`, which
+    // drops the key even when its own `meta_delete` failed (`let _ =`): a stale
+    // AES-256 head left over a re-minted 24-byte DEFAULT_MGM wedges the slot on the
+    // length compare, and RESET runs this very path, so nothing would clear it. The
+    // mint arm is therefore an unconditional rewrite — `meta_add` replaces.
+    let have_meta = {
+        let mut meta = [0u8; 8];
+        fs.meta_find(key_fid(SLOT_CARDMGM).get(), &mut meta)
+            .is_some()
+    };
+    if minted_mgm || !have_meta {
+        let head = if minted_mgm {
+            // A card we just provisioned takes the YubiKey 5 defaults: AES-192, touch
+            // OFF (admin provisioning isn't touch-gated), still enforced if a host
+            // raises it via SET MGM KEY. Slot keys keep their ALWAYS default.
+            Some((ALGO_AES192, TOUCHPOLICY_NEVER))
+        } else {
+            // A key that SURVIVED without its head must not be handed those: its
+            // algorithm is recoverable from the sealed length, its touch policy is
+            // not, so take the restrictive one rather than silently dropping a gate
+            // the owner raised — and never claim AES-192 over a 16- or 32-byte key,
+            // which would wedge the slot on `meta[0] != algo` instead of repairing it.
+            let mut key = [0u8; 32];
+            let n = seal::seal_read(dev, fs, key_fid(SLOT_CARDMGM), &mut key);
+            key.zeroize();
+            match n {
+                Ok(16) => Some((ALGO_AES128, TOUCHPOLICY_ALWAYS)),
+                Ok(24) => Some((ALGO_AES192, TOUCHPOLICY_ALWAYS)),
+                Ok(32) => Some((ALGO_AES256, TOUCHPOLICY_ALWAYS)),
+                // Unreadable: GENERAL AUTHENTICATE reads the key through the same
+                // seal, so slot 9B is already dead. Leaving the head absent fails
+                // just that slot closed; erroring here fails the whole SELECT
+                // (`PivApplet::select` maps a `scan_files` error to MEMORY_FAILURE),
+                // taking certificate reads, GET DATA and RESET down with it.
+                _ => None,
+            }
+        };
+        if let Some((algo, touch)) = head {
+            fs.meta_add(
+                key_fid(SLOT_CARDMGM).get(),
+                &[algo, PINPOLICY_ALWAYS, touch],
+            )
+            .map_err(|_| Sw::MEMORY_FAILURE)?;
+        }
     }
     if !fs.has_key(key_fid(SLOT_ATTESTATION)) {
         let key = PrivKey::generate(Curve::P384, rng).ok_or(Sw::EXEC_ERROR)?;
@@ -280,18 +323,22 @@ pub(crate) fn is_piv_fid(fid: u16) -> bool {
     (0xD100..=0xD2FF).contains(&fid) || (0xD400..=0xD4FF).contains(&fid)
 }
 
-/// The records that *gate* the applet: the PIN and PUK verifiers and their retry
-/// state. Public because the device-wide `Fs::factory_wipe` bypasses [`wipe_piv`]
-/// and needs the same rule. [`wipe_piv`] deletes these last — `scan_files` re-creates them at the
-/// factory defaults, and PIV slot keys are sealed device-rooted rather than
-/// PIN-bound, so a sweep that took them first and then lost power would re-seed a
-/// published PIN over live key material.
+/// The records that *gate* the applet: the PIN and PUK verifiers, their retry
+/// state, and the 0x9B management key. Public because the device-wide
+/// `Fs::factory_wipe` bypasses [`wipe_piv`] and needs the same rule. [`wipe_piv`]
+/// deletes these last — `scan_files` re-creates every one of them at a *published*
+/// default, and PIV slot keys are sealed device-rooted rather than PIN-bound, so a
+/// sweep that took one first and then lost power would re-seed a published
+/// credential over live key material. 0x9B is a gate for the same reason the PIN
+/// is: it is what IMPORT KEY, GENERATE, PUT DATA, MOVE KEY and SET MGM KEY check,
+/// and `scan_files` re-seeds it to [`DEFAULT_MGM`] (audit run-36).
 pub fn is_piv_gate_fid(fid: u16) -> bool {
-    matches!(fid, EF_PIN | EF_PUK | EF_RETRIES)
+    matches!(fid, EF_PIN | EF_PUK | EF_RETRIES) || fid == key_fid(SLOT_CARDMGM).get()
 }
 
-/// Everything else a PIV factory reset owns — slot keys, data objects, the pubkey
-/// cache. Deleted first, so every prefix of the wipe leaves the keys behind a gate.
+/// Everything else a PIV factory reset owns — the slot keys other than 0x9B, data
+/// objects, the pubkey cache. Deleted first, so every prefix of the wipe leaves the
+/// keys behind a gate.
 fn is_piv_secret_fid(fid: u16) -> bool {
     is_piv_fid(fid) && !is_piv_gate_fid(fid)
 }

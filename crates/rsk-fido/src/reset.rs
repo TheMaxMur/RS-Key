@@ -96,10 +96,23 @@ fn sweep<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, pred: fn(u16) -> bool) -> Resu
 /// Deleted last by [`reset`], so no prefix of the wipe can leave live passkeys
 /// with their PIN and `alwaysUv` requirement already removed. Public because the
 /// device-wide `Fs::factory_wipe` bypasses this function and needs the same rule.
+///
+/// `EF_BACKUP_SEALED` is a gate of the same shape as OATH's access code: it is
+/// never re-provisioned, its *absence* is the permissive state, and what it gates
+/// is the master seed itself — the one-time `BACKUP_EXPORT` window and, on a
+/// display build, the on-device recovery-phrase reveal. It sat in the same phase as
+/// `EF_KEY_DEV`, so a torn wipe could take the marker first and re-open a window the
+/// owner had closed over a seed that was still live (audit run-36 class sweep).
 pub fn is_fido_gate_fid(fid: u16) -> bool {
     matches!(
         fid,
-        EF_PIN | EF_DEVICE_PIN | EF_ALWAYS_UV | EF_MINPINLEN | EF_AUTHTOKEN | EF_PAUTHTOKEN
+        EF_PIN
+            | EF_DEVICE_PIN
+            | EF_ALWAYS_UV
+            | EF_MINPINLEN
+            | EF_AUTHTOKEN
+            | EF_PAUTHTOKEN
+            | EF_BACKUP_SEALED
     )
 }
 
@@ -113,7 +126,9 @@ fn in_reset_window<S: Storage, R: Rng>(ctx: &Ctx<S, R>) -> bool {
 
 /// Whether `fid` is cleared by `authenticatorReset` — every FIDO-owned flash file plus
 /// the trusted-display device PIN. Never the OpenPGP applet's files (0x1081-0x10d6 /
-/// 0x00xx / 0x5fxx / 0x1f2x) or the vendor counter (0xCC01). FIDO and OpenPGP interleave
+/// 0x00xx / 0x5fxx / 0x1f2x — and note 0x10a0 inside that span is OATH's `EF_OTP_PIN`,
+/// not OpenPGP's, so the band is not contiguously one applet's) or the vendor counter
+/// (0xCC01). FIDO and OpenPGP interleave
 /// in the 0x10xx range (FIDO `EF_PIN` 0x1080 vs OpenPGP PW1 0x1081), so this is an
 /// explicit set plus the resident-credential ranges, not a range test.
 fn is_fido_fid(fid: u16) -> bool {

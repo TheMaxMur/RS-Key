@@ -92,6 +92,26 @@ pub fn terminate_df<S: Storage>(
     Sw::OK
 }
 
+/// The records that *gate* the applet: the three PW verifiers, the retry/status
+/// records they share, and the three UIF (touch) flags. Exists for the device-wide
+/// `Fs::factory_wipe`, which must remove every applet's gate records only after
+/// everything else is provably gone. It lives here rather than open-coded in the
+/// firmware so the applet that owns the knowledge owns the list (audit run-36: the
+/// list nobody could name from outside its crate was the one that got forgotten).
+///
+/// [`wipe_openpgp`] itself is deliberately single-phase, and that stays justified
+/// for the *verifiers*: unlike PIV's, OpenPGP's private keys are sealed under a
+/// PIN-derived DEK, so a re-seeded default PW1 opens nothing that survived the same
+/// tear. It is **not** justified for the UIF flags, which [`scan_files`] re-seeds
+/// to touch-OFF and which gate a key the surviving DEK can still open — so those
+/// are deferred here too, and the applet-local sweep inherits the same set.
+pub fn is_openpgp_gate_fid(fid: u16) -> bool {
+    matches!(
+        fid,
+        EF_PW1 | EF_RC | EF_PW3 | EF_PW_PRIV | EF_PW_RETRIES | EF_UIF_SIG | EF_UIF_DEC | EF_UIF_AUT
+    )
+}
+
 /// Largest number of deletions a single TERMINATE sweep may perform before it is
 /// treated as non-converging. The applet's whole fid range is far smaller; this only
 /// bounds a pathological store (mirrors PIV's `RESET_MAX_DELETES`).
@@ -103,37 +123,48 @@ const WIPE_MAX_DELETES: u32 = 512;
 /// `force_delete` rather than `delete`, and an incomplete enumeration must fail
 /// rather than read as "the range is clear").
 fn wipe_openpgp<S: Storage>(fs: &mut Fs<S>) -> Result<(), Sw> {
+    // Two phases, the rule the three sibling sweeps carry: `for_each_key` yields in
+    // flash-ring order, not FID order, so one combined sweep can reach a gate record
+    // before the secrets it protects. The PW verifiers do not need it — the DEK chain
+    // makes a restored default PW1 useless — but the UIF flags do: `scan_files`
+    // re-seeds them to touch-OFF over a private key a surviving DEK can still open.
     let mut deleted = 0u32;
-    loop {
-        let mut keys = [0u16; 64];
-        let mut k = 0usize;
-        let complete = fs.for_each_key(&mut |fid| {
-            if is_openpgp_fid(fid) && k < keys.len() && !keys[..k].contains(&fid) {
-                keys[k] = fid;
-                k += 1;
+    for gates in [false, true] {
+        loop {
+            let mut keys = [0u16; 64];
+            let mut k = 0usize;
+            let complete = fs.for_each_key(&mut |fid| {
+                if is_openpgp_fid(fid)
+                    && is_openpgp_gate_fid(fid) == gates
+                    && k < keys.len()
+                    && !keys[..k].contains(&fid)
+                {
+                    keys[k] = fid;
+                    k += 1;
+                }
+            });
+            if k == 0 {
+                // A truncated walk (flash read fault) can hide a live fid, so an empty
+                // batch only proves the range is clear when the enumeration completed —
+                // otherwise TERMINATE would answer 9000 over surviving key material.
+                if !complete {
+                    return Err(Sw::MEMORY_FAILURE);
+                }
+                break;
             }
-        });
-        if k == 0 {
-            // A truncated walk (flash read fault) can hide a live fid, so an empty
-            // batch only proves the range is clear when the enumeration completed —
-            // otherwise TERMINATE would answer 9000 over surviving key material.
-            return if complete {
-                Ok(())
-            } else {
-                Err(Sw::MEMORY_FAILURE)
-            };
-        }
-        // Progress, not pass count: each pass deletes `k` distinct fids.
-        deleted += k as u32;
-        if deleted > WIPE_MAX_DELETES {
-            return Err(Sw::MEMORY_FAILURE);
-        }
-        for &fid in &keys[..k] {
-            // force_delete: `delete` skips a false-absent file that `for_each_key`
-            // keeps yielding, so the sweep would spin instead of converging.
-            fs.force_delete(fid).map_err(|_| Sw::MEMORY_FAILURE)?;
+            // Progress, not pass count: each pass deletes `k` distinct fids.
+            deleted += k as u32;
+            if deleted > WIPE_MAX_DELETES {
+                return Err(Sw::MEMORY_FAILURE);
+            }
+            for &fid in &keys[..k] {
+                // force_delete: `delete` skips a false-absent file that `for_each_key`
+                // keeps yielding, so the sweep would spin instead of converging.
+                fs.force_delete(fid).map_err(|_| Sw::MEMORY_FAILURE)?;
+            }
         }
     }
+    Ok(())
 }
 
 #[cfg(test)]

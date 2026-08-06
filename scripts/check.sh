@@ -164,6 +164,10 @@ run "cargo-deny"               cargo deny check
 # a new, unreviewed crate enters the tree. --locked uses the committed
 # supply-chain/imports.lock (offline, no fetch). See docs/supply-chain.md.
 run "cargo-vet (supply-chain)" cargo vet --locked
+# The device-wide wipe's phase-2 set is a hand-maintained union across four crates
+# and nothing in the type system notices a missing arm. OATH's was absent for a
+# release (audit run-36); this is the check that would have caught it.
+run "gate-union (device wipe)" python scripts/gate_union.py
 run "pytest (tools/rsk)"       python -m pytest tools/rsk -q
 run "gitleaks (tree)"          gitleaks detect --redact --no-banner
 
