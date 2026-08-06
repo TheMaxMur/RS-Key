@@ -13,6 +13,8 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+## [0.4.6] - 2026-08-06
+
 ### Security
 
 - **An rpId carrying whitespace is refused.** `font::width` measures glyph ink, so
@@ -292,16 +294,6 @@ The following landed in the same wave, before the fixes above:
   `RESET RETRY P1=0` gates on the verifier's presence and answered `6A88`
   regardless. Found by diffing a real YubiKey, which reports 0.
 
-### Internal
-
-- **The two-device interop harness can no longer mislabel a snapshot.** `gpg
-  --card-status` and `pkcs11-tool -L -O` take no device selector, so with both keys
-  plugged they recorded whichever card scdaemon and OpenSC picked — for *both*
-  labels — which is how a differing `openpgp.gpg.*` row could read as a match. The
-  gpg cell now selects the card by its AID through `gpg-card` and the OpenSC cell
-  pins `--slot-description` to the labelled reader, and both refuse the cell rather
-  than record another device's answer.
-
 ### Changed
 
 - **`makeCredential` now ships packed *basic* attestation, fixing `-sk`
@@ -463,6 +455,16 @@ The following landed in the same wave, before the fixes above:
   won the first-match race. `rsk otp lock-page58`, `rsk otp rollback-require`,
   `rsk openpgp reset` and `rsk offboard` now use it, and the two fuse commands
   confirm against the device's chip serial instead of a static token.
+
+### Internal
+
+- **The two-device interop harness can no longer mislabel a snapshot.** `gpg
+  --card-status` and `pkcs11-tool -L -O` take no device selector, so with both keys
+  plugged they recorded whichever card scdaemon and OpenSC picked — for *both*
+  labels — which is how a differing `openpgp.gpg.*` row could read as a match. The
+  gpg cell now selects the card by its AID through `gpg-card` and the OpenSC cell
+  pins `--slot-description` to the labelled reader, and both refuse the cell rather
+  than record another device's answer.
 
 ## [0.4.5] - 2026-08-03
 
@@ -3578,7 +3580,8 @@ family that keeps the "enterprise" features in the open tree.
   signature of it, and a CycloneDX SBOM. See
   [docs/releases.md](docs/releases.md) to verify a download.
 
-[Unreleased]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.5...HEAD
+[Unreleased]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.6...HEAD
+[0.4.6]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.5...v0.4.6
 [0.4.5]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.4...v0.4.5
 [0.4.4]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.3...v0.4.4
 [0.4.3]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.2...v0.4.3
