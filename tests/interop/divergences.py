@@ -233,6 +233,23 @@ RULES = [
     ("openpgp.application_version",
      ExpectDiff(None, r"4\.6", "RS-Key OpenPGP app version is pico-openpgp 4.6.x; a real key tracks firmware")),
 
+    # ── gpg-card / OpenSC views of the same two cards ─────────────────────
+    ("openpgp.gpg.serial_number", Ignore("the OpenPGP AID embeds the chip-derived serial")),
+    ("openpgp.gpg.displayed_s_n", Ignore("the OpenPGP AID embeds the chip-derived serial")),
+    ("openpgp.gpg.reader", ExpectDiff(None, None, "PC/SC reader name differs")),
+    ("openpgp.gpg.signature_counter", Tolerance("live PSO:CDS counter")),
+    ("openpgp.gpg.signature_key", Ignore("independent keygen — key fingerprint or [none]")),
+    ("openpgp.gpg.encryption_key", Ignore("independent keygen — key fingerprint or [none]")),
+    ("openpgp.gpg.authentication_key", Ignore("independent keygen — key fingerprint or [none]")),
+    # `-O` lists every object and kv_lines is last-write-wins, so these fields name
+    # whichever object each key happens to end on — not a surface a diff can pin.
+    # The comparable OpenSC view is the slot/token block, left compared below.
+    ("pkcs11.obj.*", Ignore("flattened PKCS#11 object dump — provisioning-dependent and order-dependent")),
+    ("pkcs11.slot_description", ExpectDiff(None, None, "PC/SC reader name differs")),
+    ("pkcs11.serial_num", Ignore("OpenSC derives the token serial from the random CHUID GUID")),
+    ("pkcs11.uri", Ignore("embeds the token serial")),
+    ("pkcs11.token_label", Ignore("OpenSC labels the token from the provisioned 9A certificate")),
+
     # ── ykman-rendered mirrors (the precise raw cells are authoritative) ───
     ("ykman.info.device_type",
      ExpectDiff(None, None, "RS-Key reports model 'YubiKey 5A'; the reference is a '5C NFC'")),

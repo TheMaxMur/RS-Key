@@ -292,6 +292,16 @@ The following landed in the same wave, before the fixes above:
   `RESET RETRY P1=0` gates on the verifier's presence and answered `6A88`
   regardless. Found by diffing a real YubiKey, which reports 0.
 
+### Internal
+
+- **The two-device interop harness can no longer mislabel a snapshot.** `gpg
+  --card-status` and `pkcs11-tool -L -O` take no device selector, so with both keys
+  plugged they recorded whichever card scdaemon and OpenSC picked — for *both*
+  labels — which is how a differing `openpgp.gpg.*` row could read as a match. The
+  gpg cell now selects the card by its AID through `gpg-card` and the OpenSC cell
+  pins `--slot-description` to the labelled reader, and both refuse the cell rather
+  than record another device's answer.
+
 ### Changed
 
 - **`makeCredential` now ships packed *basic* attestation, fixing `-sk`
