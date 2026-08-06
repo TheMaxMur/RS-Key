@@ -247,17 +247,17 @@ impl ApduHandler for ClientCcid {
 /// shortest PIN a user could have set, so the pad can't lock out a valid PIN; the
 /// applet enforces its own real minimum and reports a wrong/blocked status word.
 #[cfg(feature = "display")]
-fn secure_pin_meta(template: &[u8]) -> (&'static str, usize) {
-    let title = match template.get(3).copied() {
-        Some(rsk_openpgp::consts::PW1_MODE81) => "OpenPGP Sign PIN",
-        Some(rsk_openpgp::consts::PW1_MODE82) => "OpenPGP PIN",
-        Some(rsk_openpgp::consts::PW3_MODE83) => "OpenPGP Admin PIN",
-        Some(rsk_usb::secure_pin::PIV_PIN_P2) => {
-            crate::display::piv_ref_title(rsk_piv::PinRef::Pin)
-        }
-        _ => "Enter PIN",
+fn secure_pin_meta(p2: u8) -> Option<(&'static str, usize)> {
+    // No generic "Enter PIN" fallback: a reference no applet here implements gets
+    // refused rather than painted under a label that names nothing (audit run-36).
+    let title = match p2 {
+        rsk_openpgp::consts::PW1_MODE81 => "OpenPGP Sign PIN",
+        rsk_openpgp::consts::PW1_MODE82 => "OpenPGP PIN",
+        rsk_openpgp::consts::PW3_MODE83 => "OpenPGP Admin PIN",
+        rsk_usb::secure_pin::PIV_PIN_P2 => crate::display::piv_ref_title(rsk_piv::PinRef::Pin),
+        _ => return None,
     };
-    (title, 6)
+    Some((title, 6))
 }
 
 /// The compute worker (low-priority thread executor): owns the applet layer and
@@ -531,6 +531,7 @@ impl<'a> Worker<'a> {
     /// so it is borrow-disjoint from `self.ccid`/`fs`.
     #[cfg(feature = "display")]
     fn handle_secure_req(&mut self, ex: &mut Exchange) {
+        use rsk_fido::UserPresence as _;
         use rsk_usb::ccid::{SECURE_ERR_CANCELLED, SECURE_ERR_TIMEOUT, SECURE_STATUS_FAILED};
         let failed = |ex: &mut Exchange, err: u8| {
             ex.resp_len = 0;
@@ -545,7 +546,29 @@ impl<'a> Worker<'a> {
         if req.operation != 0x00 {
             return failed(ex, 0);
         }
-        let (title, min_len) = secure_pin_meta(req.apdu_template);
+        // The pad is a trusted-display ceremony, so it gets the contract the rest of
+        // them have. Its direct twin — clientPIN built-in UV, the other way a host
+        // makes this panel paint a PIN pad — runs a readiness check that refuses
+        // WITHOUT painting and then an explicit "Allow host access?" hold, and audit
+        // run-28 already ruled a bare host-raised prompt a defect. This path had
+        // neither: any local PC/SC client could raise "OpenPGP Admin PIN" at a moment
+        // of its choosing, and OpenPGP's UIF default is touch-off, so a typed PW3 was
+        // spendable from the attacker's own session with no further prompt.
+        let p2 = req.apdu_template.get(3).copied().unwrap_or(0);
+        if !self.ccid.pin_ref_ready(p2) {
+            return failed(ex, 0);
+        }
+        let Some((title, min_len)) = secure_pin_meta(p2) else {
+            return failed(ex, 0);
+        };
+        if !matches!(
+            self.presence
+                .borrow_mut()
+                .request(rsk_fido::Confirm::titled("Allow host PIN entry?")),
+            rsk_fido::Presence::Confirmed
+        ) {
+            return failed(ex, SECURE_ERR_CANCELLED);
+        }
         let mut pin = [0u8; rsk_usb::secure_pin::MAX_PIN];
         let entry = self
             .presence

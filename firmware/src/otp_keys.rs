@@ -71,7 +71,24 @@ pub fn read_page58_lock() -> Option<u32> {
 /// has confirmed the row is blank and the keys are provisioned. IRREVERSIBLE.
 /// Returns whether the bootrom write succeeded.
 pub fn apply_page58_lock() -> bool {
+    if faked_keys() {
+        return false;
+    }
     otp::write_raw_word(PAGE58_LOCK1_ROW, PAGE58_LOCK_VALUE).is_ok()
+}
+
+/// Whether this image carries a baked test key instead of reading OTP.
+///
+/// The rescue applet's precondition for both irreversible burns is
+/// `Device.otp_key`, which [`read_keys`] populates from `PK_FAKE_MKEK` **without
+/// touching OTP** — so on a test image the guard whose whole job is to say "the real
+/// fuses are already written" is forged, and the page-58 lock could be burned on a
+/// board whose page 58 is blank. That is unrecoverable: `rsk otp burn`'s preflight
+/// then dies on the unreadable row and the board can never be provisioned, leaving it
+/// forever on the chip-serial-derivable pre-OTP key arm (audit run-36). `docs/build.md`
+/// already promises a fake-key image writes no fuses; this makes that true.
+fn faked_keys() -> bool {
+    option_env!("PK_FAKE_MKEK").is_some() || option_env!("PK_FAKE_DEVK").is_some()
 }
 
 /// Raw RBIT-3 copies of the anti-rollback rows (BOOT_FLAGS0 + the two
@@ -100,6 +117,9 @@ pub fn read_rollback_raw() -> Option<RollbackRaw> {
 /// bit are fixed constants here, so this call can only ever set that one flag;
 /// it is reached only through the rescue applet's triple guard. IRREVERSIBLE.
 pub fn apply_rollback_required() -> bool {
+    if faked_keys() {
+        return false;
+    }
     for i in 0..3 {
         let row = BOOT_FLAGS0_ROW + i;
         match otp::read_raw_word(row) {

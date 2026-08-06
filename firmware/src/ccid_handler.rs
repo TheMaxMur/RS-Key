@@ -258,6 +258,27 @@ impl<'a> CcidApplets<'a> {
             .is_ok()
     }
 
+    /// Whether the applet that owns PIN reference `p2` is the one currently SELECTED
+    /// and enabled.
+    ///
+    /// The CCID pinpad path had no gate at all: a bare `PC_to_RDR_Secure` painted the
+    /// trusted display's PIN pad for up to 30 s with nothing selected and even with
+    /// the target applet disabled by `ykman config usb --disable` — the capability
+    /// check ran later, on the VERIFY, so it stopped the authentication and not the
+    /// screen (audit run-36). Refusing here means the panel is never painted for a
+    /// credential the host has not addressed.
+    #[cfg(feature = "display")]
+    pub fn pin_ref_ready(&self, p2: u8) -> bool {
+        let idx = match p2 {
+            rsk_openpgp::consts::PW1_MODE81
+            | rsk_openpgp::consts::PW1_MODE82
+            | rsk_openpgp::consts::PW3_MODE83 => IDX_OPENPGP,
+            rsk_usb::secure_pin::PIV_PIN_P2 => IDX_PIV,
+            _ => return false,
+        };
+        self.disp.current() == Some(idx) && self.caps_enabled(APPLET_CAPS[idx])
+    }
+
     /// Drop any in-flight incoming command chain and held response remainder. Called
     /// before the out-of-band secure-PIN VERIFY dispatch so a host-initiated chaining
     /// latch cannot absorb the on-pad PIN as a chain segment (defence-in-depth beside
