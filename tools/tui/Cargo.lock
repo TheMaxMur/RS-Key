@@ -122,6 +122,7 @@ dependencies = [
  "bitcoin_hashes",
  "serde",
  "unicode-normalization",
+ "zeroize",
 ]
 
 [[package]]
@@ -1933,7 +1934,7 @@ dependencies = [
 
 [[package]]
 name = "rsk-tui"
-version = "0.3.6"
+version = "0.3.7"
 dependencies = [
  "aes",
  "bip39",

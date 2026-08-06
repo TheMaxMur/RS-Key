@@ -1471,10 +1471,15 @@ fn seed_fp(words: &str) -> Result<String, String> {
 /// seed: export, restore the SAME phrase back (identity-preserving), re-export,
 /// and confirm the fingerprint is stable. Needs the no-touch build.
 pub fn export_selftest(pin: Option<&str>) -> Result<String, String> {
-    let words = backup_export(pin)?;
+    // Both phrases are the device master seed in plain text and neither is needed
+    // past its fingerprint, so wrap them: `backup_restore` was fixed one commit
+    // earlier to wipe its own copy while its only caller handed it an unwiped one,
+    // and every `?` below is an early return that dropped them into freed heap
+    // (audit run-36).
+    let words = Zeroizing::new(backup_export(pin)?);
     let fp1 = seed_fp(&words)?;
     backup_restore(&words, pin)?;
-    let fp2 = seed_fp(&backup_export(pin)?)?;
+    let fp2 = seed_fp(&Zeroizing::new(backup_export(pin)?))?;
     if fp1 != fp2 {
         return Err(format!("round-trip fp mismatch {fp1} != {fp2}"));
     }

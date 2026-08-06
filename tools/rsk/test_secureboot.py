@@ -231,3 +231,54 @@ def test_lock_burns_the_derived_mask_and_both_page_locks(monkeypatch):
         ("set", "-r", "OTP_DATA_PAGE1_LOCK1", f"{sb.PAGE_LOCK_BL_RO:#x}"),
         ("set", "-r", "OTP_DATA_PAGE2_LOCK1", f"{sb.PAGE_LOCK_BL_RO:#x}"),
     ]
+
+
+def test_load_key_refuses_a_revoked_slot(monkeypatch, tmp_path):
+    """KEY_INVALID supersedes KEY_VALID in the bootrom, so a revoked-but-empty slot
+    is not a free slot: burning there spends one of four one-way slots on a key that
+    will never be trusted, while the tool prints "confirm it boots". `cmd_rotate` and
+    `_next_free_slot` check all three bits; `_provision_slot` checked two, and the
+    refusal must land before the typed prompt (audit run-36)."""
+    seal = tmp_path / "otp.json"
+    seal.write_text(
+        '{"bootkey0": %s, "boot_flags1": {"key_valid": 1}, "crit1": {}}' % list(range(32))
+    )
+    # Slot 1 holds no key and is not KEY_VALID — but it was revoked.
+    state = _state(key_valid=0b0001, key_invalid=0b0010)
+    writes = _stage(monkeypatch, state)
+
+    # Reaching the typed prompt at all means the guard did not fire — assert the
+    # refusal lands BEFORE it, not merely that something eventually raised.
+    def never(prompt=""):
+        raise AssertionError("reached the LOAD-BOOTKEY prompt on a revoked slot")
+
+    monkeypatch.setattr("builtins.input", never)
+    with pytest.raises(SystemExit):
+        sb._provision_slot(str(seal), 1, False, stage_label="load-key")
+    assert writes == [], "a revoked slot was burned anyway"
+
+
+def test_require_bootsel_refuses_more_than_one_device(monkeypatch):
+    """`picotool info` succeeds with several devices attached while every OTP command
+    below is single-target and fails — so all the reads returned nothing and a
+    hardened, LOCKED board printed as virgin. Refuse to guess (audit run-36)."""
+    monkeypatch.setattr(
+        sb, "picotool",
+        lambda *a, **k: types.SimpleNamespace(
+            returncode=0,
+            stdout="Multiple RP-series devices in BOOTSEL mode found:\n RP2350\n RP2350\n",
+        ),
+    )
+    with pytest.raises(SystemExit):
+        sb.require_bootsel()
+
+
+def test_raw_row_read_failure_is_fatal_not_blank(monkeypatch):
+    """An unreadable row is not a blank row: coercing `None` with `or 0` made every
+    guard in this file decide on state it had never read (audit run-36)."""
+    monkeypatch.setattr(
+        sb, "picotool",
+        lambda *a, **k: types.SimpleNamespace(returncode=1, stdout="", stderr=""),
+    )
+    with pytest.raises(SystemExit):
+        sb._raw(0x40)

@@ -2,7 +2,7 @@
 # table below detaches it from the parent so it builds for the host, not thumbv8m).
 [package]
 name = "rsk-tui"
-version = "0.3.6"
+version = "0.3.7"
 license = "AGPL-3.0-only"
 edition = "2024"
 description = "rs-key device dashboard — a self-contained ratatui cockpit"
@@ -28,7 +28,11 @@ aes = "0.8"
 cbc = "0.1"
 cipher = { version = "0.4", features = ["block-padding"] }
 chacha20poly1305 = "0.10"
-bip39 = "2"
+# `zeroize` so a parsed `Mnemonic` — a word-index array that fully determines the
+# 32-byte master seed — is wiped on drop. Without it the seed survived in freed
+# stack on the export path too, so wrapping the Strings alone closed the site and
+# not the class (audit run-36).
+bip39 = { version = "2", features = ["zeroize"] }
 rand_core = { version = "0.6", features = ["getrandom"] }
 zeroize = "1"
 # SLIP-39 share encoding for seed export — the in-tree crate, so the shares the

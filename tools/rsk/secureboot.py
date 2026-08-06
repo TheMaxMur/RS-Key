@@ -81,14 +81,29 @@ def require_bootsel():
     r = picotool("info", check=False)
     if r.returncode != 0 or "RP2350" not in r.stdout:
         die("no RP-series device in BOOTSEL mode (reboot first: `rsk reboot bootsel`)")
+    # `picotool info` is the one command that iterates EVERY match and still
+    # succeeds; every OTP command below is single-target and fails. Without this
+    # the reads all failed, `_raw` reported blank, and a hardened, secure-boot
+    # LOCKED board printed as virgin (audit run-36). Refuse to guess, the same
+    # rule `connect_fido(exclusive=True)` applies to the CCID/HID side.
+    if "Multiple RP-series devices" in r.stdout:
+        die("more than one RP-series device in BOOTSEL mode — unplug the others; "
+            "this tool will not guess which one to read or burn")
 
 
 def _raw(row):
+    # An unreadable row is NOT a blank row. Every caller coerced `None` with
+    # `or 0`, so a failed read looked like an unprovisioned fuse: `status` printed
+    # a fully hardened, LOCKED board as untouched, and `load-key` reached its typed
+    # confirmation on state the tool had never read (audit run-36). Die on both
+    # failure modes, as the sibling `otp.py:_read_raw_row` already does.
     r = picotool("otp", "get", "-r", "-n", f"{row:#x}", check=False)
     if r.returncode != 0:
-        return None
+        die(f"row {row:#x} unreadable — is exactly one RP2350 in BOOTSEL mode?")
     m = re.search(r"VALUE\s+(0x[0-9a-fA-F]+)", r.stdout)
-    return int(m.group(1), 16) & 0xFFFFFF if m else None
+    if m is None:
+        die(f"row {row:#x} unparseable — picotool output format changed?")
+    return int(m.group(1), 16) & 0xFFFFFF
 
 
 def _majority3(row):
@@ -225,8 +240,13 @@ def _provision_slot(otp_json, slot, dry, *, stage_label):
     if pages_locked(s):
         die("key pages are bootloader-locked (full `lock` was run) — BOOTSEL can no "
             "longer write boot keys. Rotation needs a board that reserved a free slot.")
-    if s["slots_present"][slot] or (s["key_valid"] & (1 << slot)):
-        die(f"slot {slot} already holds a key / is KEY_VALID — pick a free slot.")
+    # KEY_INVALID too: it supersedes KEY_VALID in the bootrom, so burning here
+    # spends one of four one-way slots on a key that will never be trusted, while
+    # the tool prints "confirm it boots". `cmd_rotate` and `_next_free_slot` both
+    # check all three; this site checked two (audit run-36).
+    bit = 1 << slot
+    if s["slots_present"][slot] or (s["key_valid"] & bit) or (s["key_invalid"] & bit):
+        die(f"slot {slot} is not free (holds a key / is KEY_VALID / revoked) — pick another.")
     with open(otp_json) as f:
         data = json.load(f)
     new_valid = (s["key_valid"] | (1 << slot)) & 0xF
