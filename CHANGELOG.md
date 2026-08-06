@@ -294,6 +294,15 @@ The following landed in the same wave, before the fixes above:
   `RESET RETRY P1=0` gates on the verifier's presence and answered `6A88`
   regardless. Found by diffing a real YubiKey, which reports 0.
 
+### Added
+
+- **Two more board presets: `BOARD=abrobot-4m` and `BOARD=abrobot-16m`.** The
+  ABrobot RP2350 development boards carry four WS2812 LEDs on GPIO16 and a
+  dedicated USER button on GPIO23, so presence comes from that button (active
+  low) instead of BOOTSEL. Both are smoke-built in CI like the other shipped
+  board files. Thanks to @Curious-r
+  ([#64](https://github.com/TheMaxMur/RS-Key/pull/64)).
+
 ### Changed
 
 - **`makeCredential` now ships packed *basic* attestation, fixing `-sk`
