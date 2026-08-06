@@ -15,6 +15,65 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Security
 
+- **An rpId carrying whitespace is refused.** `font::width` measures glyph ink, so
+  trailing spaces paint nothing: `bank.com ` rendered pixel-identically to `bank.com`
+  on the trusted display's sign-in, passkey-list and delete screens while hashing to a
+  different relying party, and an all-whitespace id passed every length-based
+  emptiness check and painted a ceremony naming no relying party at all. No browser
+  can send either — WebAuthn requires a valid domain string.
+- **The CCID pinpad no longer paints on a bare host request.** Any local PC/SC client
+  could raise the trusted display's PIN pad titled "OpenPGP Admin PIN" for 30 s, with
+  nothing selected and even with the applet disabled, and a typed PW3 was spendable
+  from the attacker's own session because OpenPGP's touch default is off. It now
+  refuses *without painting* unless the addressed applet is selected and enabled, and
+  asks for the same deliberate hold the clientPIN built-in-UV path does.
+- **A refused PIV `GENERATE` no longer destroys the slot.** The certificate, key and
+  public-point cache were written before the requested PIN/touch policy was validated,
+  so a request carrying a policy byte this firmware does not implement — Yubico's Bio
+  policies, say — answered `6A80` with the previous key already gone and the new one
+  governed by the old key's metadata.
+- **A failed flash read is no longer cached as "file absent".** `Storage::read`/`size`
+  collapse "absent" and "the read failed" into `None`, and the present-cache recorded
+  that as a decided fact for the rest of the boot — which would have opened every gate
+  that reads `has_data`, `clientpin::set_pin` among them.
+- **`WRITE CONFIG` values are width-bounded and the cap can no longer wedge the
+  owner.** Only `USB_ENABLED` was bounded, so one unauthenticated 40-byte entry made
+  every later partial write — the only shape ykman sends — exceed the post-merge cap,
+  and the owner could never enable or disable an application again. The merge now
+  evicts its oldest un-restated entries instead of refusing, so already-shipped
+  oversized records cannot veto a write either, and the idempotent-replay
+  short-circuit compares the merge rather than the request.
+- **Both irreversible OTP burns refuse on a fake-key image.** `PK_FAKE_MKEK` populates
+  the in-RAM key without reading OTP, forging the one guard that says "the real fuses
+  are already written" — so the page-58 lock could be burned on a blank board, after
+  which it can never be provisioned. `docs/build.md` already promised a fake-key image
+  writes no fuses.
+- **The CCID receive path abandons an interrupted message.** It had no timeout and
+  never reset its accumulator, so a bus reset inside a multi-packet import left a
+  prefix that was spliced onto the next host's message and misparsed — the CTAPHID
+  sibling in the same crate has carried exactly this guard since it was written. The
+  bad-framing reply also echoes the sequence it is answering instead of `0`.
+- **`rsk secure-boot` treats an unreadable OTP row as fatal**, not as a blank one: with
+  a second RP-series board in BOOTSEL every read failed and a hardened, secure-boot
+  *locked* unit printed as virgin, while `load-key` reached its typed confirmation on
+  state the tool had never read. It also refuses more than one device, and no longer
+  burns into a revoked slot.
+- **Every applet's gate records are now deferred to the second phase of a wipe** —
+  five were missing. `for_each_key` yields in flash-ring order, so a factory reset
+  interrupted in its first phase could delete a gate ahead of the secrets it
+  protects: the next SELECT derived OATH's `validated` from the absent access code
+  and served every surviving TOTP credential with no authentication; `scan_files`
+  re-seeded the published default PIV management key over slot keys that were still
+  live; a deleted `EF_BACKUP_SEALED` re-opened the one-time master-seed export window
+  over a seed that survived; and OpenPGP's UIF flags and retry counters were re-seeded
+  to touch-OFF and a full budget over a key its surviving DEK could still open.
+  `is_oath_lock_fid` was private, so the firmware could not name it at all — every
+  applet now exports its own gate predicate, the union is a plain fold over them, and
+  `scripts/gate_union.py` fails the gate when an applet is missing from it. OpenPGP's
+  own TERMINATE DF sweep became two-phase for the same reason, and `scan_files`
+  repairs a surviving management key's metadata — reading its algorithm from the
+  sealed key and failing safe on touch policy, since `EF_META` is shared with every
+  other applet and goes in the first phase.
 - **PIV factory RESET is two-phase.** The single sweep deleted the PIN/PUK/retry
   files and the slot keys in flash-ring order, so a RESET interrupted between them
   let the next SELECT re-provision the factory PIN over key material that was still
