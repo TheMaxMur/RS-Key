@@ -169,6 +169,10 @@ run "cargo-vet (supply-chain)" cargo vet --locked
 # release (audit run-36); this is the check that would have caught it.
 run "gate-union (device wipe)" python scripts/gate_union.py
 run "pytest (tools/rsk)"       python -m pytest tools/rsk -q
+# The interop allow-list is the only thing that tells an expected RS-Key/YubiKey
+# divergence from a fidelity gap, and it goes stale silently — a firmware change
+# moved maxSerializedLargeBlobArray and nobody noticed until the next two-key run.
+run "pytest (tests/interop)"   python -m pytest tests/interop -q
 run "gitleaks (tree)"          gitleaks detect --redact --no-banner
 
 echo
