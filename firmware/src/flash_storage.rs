@@ -59,7 +59,10 @@ const COUNTER_PAGES: usize = COUNTER_LEN / SECTOR; // 32
 /// Routed to main (not a counter FID), it never reaches `Fs` and is removed at
 /// the end of the lap — pick a slot no protocol uses (the FIDO 0xCExx fixed-file
 /// block tops out at `EF_DEVICE_PIN` 0xCE20; creds start at 0xCF00, so 0xCEFE is free).
-const SCRUB_FILLER_FID: u16 = 0xCEFE;
+/// Shared with `rsk_fs`, which must skip it in `Fs::scan`: `compact` writes it
+/// straight through the backend, so counting it as a dynamic file cost a live key
+/// its registration at the cap (audit run-36).
+const SCRUB_FILLER_FID: u16 = rsk_fs::EF_SCRUB_FILLER;
 /// One throwaway record's payload during the scrub lap. Larger ⇒ fewer
 /// `store_item` calls; must fit `KV_BUF` alongside the 2-byte key.
 const SCRUB_FILLER: [u8; 1024] = [0xA5; 1024];
@@ -149,6 +152,11 @@ pub struct FlashStorage {
     main: MapStorage<u16, SharedFlash, MainCache>,
     counter: MapStorage<u16, SharedFlash, CounterCache>,
     buf: [u8; KV_BUF],
+    /// Whether the last `read`/`size` FAILED rather than finding the key absent —
+    /// `Storage::last_error`. Both collapse into `None`, and `Fs` caches the second
+    /// as a decided absence, so without this a transient fault opened every gate
+    /// that reads `has_data` for the rest of the boot (audit run-36).
+    last_err: bool,
 }
 
 /// Route the hot per-operation counters to the dedicated counter partition so their
@@ -191,6 +199,7 @@ impl FlashStorage {
                 ),
             ),
             buf: [0; KV_BUF],
+            last_err: false,
         }
     }
 }
@@ -200,11 +209,15 @@ impl FlashStorage {
 impl Storage for FlashStorage {
     const MAX_VALUE: usize = rsk_fs::MAX_VALUE_BYTES;
     fn read(&mut self, fid: u16, buf: &mut [u8]) -> Option<usize> {
-        let value = if is_counter_fid(fid) {
-            block_on(self.counter.fetch_item::<&[u8]>(&mut self.buf, &fid)).ok()??
+        let fetched = if is_counter_fid(fid) {
+            block_on(self.counter.fetch_item::<&[u8]>(&mut self.buf, &fid))
         } else {
-            block_on(self.main.fetch_item::<&[u8]>(&mut self.buf, &fid)).ok()??
+            block_on(self.main.fetch_item::<&[u8]>(&mut self.buf, &fid))
         };
+        // Distinguish "absent" from "the read failed" for `Fs`, which memoises the
+        // first as a decided fact — see `Storage::last_error`.
+        self.last_err = fetched.is_err();
+        let value = fetched.ok()??;
         let n = value.len().min(buf.len());
         buf[..n].copy_from_slice(&value[..n]);
         Some(value.len())
@@ -229,12 +242,18 @@ impl Storage for FlashStorage {
     }
 
     fn size(&mut self, fid: u16) -> Option<usize> {
-        let value = if is_counter_fid(fid) {
-            block_on(self.counter.fetch_item::<&[u8]>(&mut self.buf, &fid)).ok()??
+        let fetched = if is_counter_fid(fid) {
+            block_on(self.counter.fetch_item::<&[u8]>(&mut self.buf, &fid))
         } else {
-            block_on(self.main.fetch_item::<&[u8]>(&mut self.buf, &fid)).ok()??
+            block_on(self.main.fetch_item::<&[u8]>(&mut self.buf, &fid))
         };
+        self.last_err = fetched.is_err();
+        let value = fetched.ok()??;
         Some(value.len())
+    }
+
+    fn last_error(&self) -> bool {
+        self.last_err
     }
 
     fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) -> bool {
@@ -269,19 +288,29 @@ impl Storage for FlashStorage {
     /// a valid state and re-runs on the next boot.
     fn compact(&mut self) -> Result<()> {
         let writes = (MAIN_LEN + SECTOR).div_ceil(SCRUB_FILLER.len());
+        let mut lap = Ok(());
         for i in 0..writes {
             let mut v = SCRUB_FILLER;
             v[0] = i as u8; // distinct payloads (defensive; store always appends)
-            block_on(self.main.store_item::<&[u8]>(
+            if block_on(self.main.store_item::<&[u8]>(
                 &mut self.buf,
                 &SCRUB_FILLER_FID,
                 &v.as_slice(),
             ))
-            .map_err(|_| Error::MemoryFatal)?;
+            .is_err()
+            {
+                lap = Err(Error::MemoryFatal);
+                break;
+            }
         }
+        // Remove the filler on the FAILURE path too, not just the success one. An
+        // early return left a live 1024-byte record behind, and `Fs::scan` counted
+        // it against the dynamic-file budget until the next completed lap cleaned it
+        // up (audit run-36); `is_fido_fid` does not cover it, so `authenticatorReset`
+        // never would.
         block_on(self.main.remove_item(&mut self.buf, &SCRUB_FILLER_FID))
             .map_err(|_| Error::MemoryFatal)?;
-        Ok(())
+        lap
     }
 }
 

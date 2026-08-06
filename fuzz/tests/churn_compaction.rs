@@ -47,7 +47,7 @@ type Store = MapStorage<u16, SharedMock, Cache>;
 
 // The churn parameters mirror `firmware/src/flash_storage.rs` exactly; only the
 // partition length differs (scaled to the test ring).
-const SCRUB_FILLER_FID: u16 = 0xCEFE;
+const SCRUB_FILLER_FID: u16 = rsk_fs::EF_SCRUB_FILLER;
 const SCRUB_FILLER: [u8; 1024] = [0xA5; 1024];
 
 #[derive(Clone)]

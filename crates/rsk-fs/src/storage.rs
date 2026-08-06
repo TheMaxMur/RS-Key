@@ -27,6 +27,21 @@ pub trait Storage {
     fn exists(&mut self, fid: u16) -> bool {
         self.size(fid).is_some()
     }
+    /// Whether the most recent [`read`](Self::read) / [`size`](Self::size) FAILED,
+    /// rather than finding the key absent.
+    ///
+    /// Both return `None` for either outcome, and [`Fs`](crate::Fs) memoises the
+    /// answer as a *decided* fact — so without this a transient backend fault
+    /// becomes a permanent "file absent" for the rest of the boot, and every gate
+    /// that reads `has_data` opens: `clientpin::set_pin` is guarded by
+    /// `if has_data(EF_PIN)` alone, so a poisoned absence lets an unauthenticated
+    /// host install its own PIN over the owner's (audit run-36).
+    ///
+    /// Defaults to `false` — a backend that cannot fail (the test RAM map) never
+    /// needs to say so, and an implementor that forgets is no worse than before.
+    fn last_error(&self) -> bool {
+        false
+    }
     /// Invoke `f` once per stored key (used to rebuild the dynamic-file set and to
     /// probe credential slots without a per-slot `read` of every absent FID).
     /// Returns `true` iff the enumeration ran to completion — every live key was

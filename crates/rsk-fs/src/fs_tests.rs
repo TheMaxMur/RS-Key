@@ -645,3 +645,94 @@ impl Storage for CountedRemove {
         self.inner.for_each_key(f)
     }
 }
+
+/// `Storage` whose first `remaining` reads/sizes FAIL rather than finding the key
+/// absent — the two are indistinguishable through an `Option` return, which is the
+/// whole point.
+struct FailFirstRead {
+    inner: RamStorage,
+    remaining: usize,
+    err: bool,
+}
+
+impl Storage for FailFirstRead {
+    fn read(&mut self, fid: u16, buf: &mut [u8]) -> Option<usize> {
+        if self.remaining > 0 {
+            self.remaining -= 1;
+            self.err = true;
+            return None;
+        }
+        self.err = false;
+        self.inner.read(fid, buf)
+    }
+    fn write(&mut self, fid: u16, data: &[u8]) -> Result<()> {
+        self.inner.write(fid, data)
+    }
+    fn remove(&mut self, fid: u16) -> Result<()> {
+        self.inner.remove(fid)
+    }
+    fn size(&mut self, fid: u16) -> Option<usize> {
+        if self.remaining > 0 {
+            self.remaining -= 1;
+            self.err = true;
+            return None;
+        }
+        self.err = false;
+        self.inner.size(fid)
+    }
+    fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) -> bool {
+        self.inner.for_each_key(f)
+    }
+    fn last_error(&self) -> bool {
+        self.err
+    }
+}
+
+/// Audit run-36: a backend read that FAILED is not a key that is absent, but
+/// `Storage::read`/`size` collapse both into `None` — and `Fs` memoises the answer
+/// with the DECIDED bit, so one transient fault would answer "absent" for the rest
+/// of the boot without touching flash again. `clientpin::set_pin` has exactly one
+/// guard, `if has_data(EF_PIN)`, so a poisoned absence lets an unauthenticated host
+/// install its own PIN over the owner's. Only a definitive answer may be cached.
+#[test]
+fn a_failed_read_is_never_memoised_as_an_absence() {
+    let mut ram = RamStorage::new();
+    ram.write(0x1080, b"the owner's PIN verifier").unwrap();
+    // No `scan()`: that decides every enumerated key up front, which is exactly the
+    // path this test must avoid.
+    let mut fs = Fs::new(FailFirstRead {
+        inner: ram,
+        remaining: 1,
+        err: false,
+    });
+
+    assert!(!fs.has_data(0x1080), "the faulting probe cannot see it");
+    assert!(
+        fs.has_data(0x1080),
+        "a transient backend fault became a permanent absence"
+    );
+}
+
+/// Audit run-36: `Storage::compact` writes its scrub filler straight through the
+/// backend, never through `Fs`, so `Fs::scan` counted it as a dynamic file — and the
+/// dynamic set is sized at exactly `MAX_DYNAMIC_FILES`, with the over-cap push
+/// discarded by a `let _ =` whose `debug_assert!` is compiled out of the release
+/// image. At the cap plus a leftover filler one live key silently lost its
+/// registration and every later `put` to it returned `NoMemory`.
+#[test]
+fn the_scrub_filler_never_costs_a_dynamic_slot() {
+    let mut ram = RamStorage::new();
+    for i in 0..MAX_DYNAMIC_FILES as u16 {
+        ram.write(0x2000 + i, &[0xAA]).unwrap();
+    }
+    // What a failed or power-cut compaction lap leaves behind.
+    ram.write(EF_SCRUB_FILLER, &[0xA5; 8]).unwrap();
+
+    let mut fs = Fs::new(ram);
+    fs.scan();
+
+    for i in 0..MAX_DYNAMIC_FILES as u16 {
+        fs.put(0x2000 + i, &[0xBB])
+            .unwrap_or_else(|_| panic!("{:#06x} lost its registration to the filler", 0x2000 + i));
+    }
+}

@@ -8,7 +8,7 @@ use rsk_sdk::error::{Error, Result};
 
 use crate::sealed::{KeyFid, Sealed};
 use crate::storage::Storage;
-use crate::{EF_META, MAX_DYNAMIC_FILES};
+use crate::{EF_META, EF_SCRUB_FILLER, MAX_DYNAMIC_FILES};
 
 /// Max size of the meta side-store blob.
 const META_MAX: usize = 1024;
@@ -55,12 +55,20 @@ pub struct Fs<S: Storage> {
     /// cache stale. In-RAM only (resets to 0 each boot); `u32` never realistically
     /// wraps between two reads of a mutation-free session.
     write_gen: u32,
+    /// Set by [`scan`](Self::scan) when the backend held more dynamic-eligible keys
+    /// than [`MAX_DYNAMIC_FILES`], so at least one live key lost its registration and
+    /// every later `put` to it will answer [`Error::NoMemory`]. Only reachable via a
+    /// key written outside `Fs` (`put` refuses a new file past the cap), which is why
+    /// it was a `debug_assert!` — compiled out of the release image, where the drop
+    /// then went entirely unrecorded (audit run-36).
+    over_cap: bool,
 }
 
 impl<S: Storage> Fs<S> {
     pub fn new(storage: S) -> Self {
         Fs {
             storage,
+            over_cap: false,
             dynamic: Vec::new(),
             present: [0u8; FID_PRESENT_BYTES],
             decided: [0u8; FID_PRESENT_BYTES],
@@ -124,6 +132,19 @@ impl<S: Storage> Fs<S> {
 
     /// Mark `fid` known absent (sets the authority bit, clears present).
     #[inline]
+    /// [`record`](Self::record), but only when the backend actually answered.
+    ///
+    /// `Storage::read`/`size` return `None` both for "absent" and for "the read
+    /// failed", and `record` sets the DECIDED bit — so caching a fault turns one
+    /// transient error into a permanent "file absent" for the rest of the boot,
+    /// opening every gate that reads `has_data` (audit run-36). An undecided FID is
+    /// simply re-probed next time, which is the pre-cache behaviour.
+    fn record_unless_faulted(&mut self, fid: u16, present: bool) {
+        if !self.storage.last_error() {
+            self.record(fid, present);
+        }
+    }
+
     fn mark_absent(&mut self, fid: u16) {
         let (i, m) = ((fid >> 3) as usize, 1u8 << (fid & 7));
         self.present[i] &= !m;
@@ -141,21 +162,29 @@ impl<S: Storage> Fs<S> {
         dynamic.clear();
         present.fill(0);
         decided.fill(0);
+        let mut over_cap = false;
         let complete = self.storage.for_each_key(&mut |fid| {
             // Every enumerated key — dynamic or EF_META — is confirmed present.
             let (i, m) = ((fid >> 3) as usize, 1u8 << (fid & 7));
             present[i] |= m;
             decided[i] |= m;
-            if fid == EF_META {
+            // Neither is a file: EF_META is the shared metadata record, and the
+            // scrub filler is written by `Storage::compact` straight through the
+            // backend. Counting the filler as a dynamic file is what cost a live key
+            // its registration at the cap (audit run-36).
+            if fid == EF_META || fid == EF_SCRUB_FILLER {
                 return;
             }
-            if !dynamic.contains(&fid) {
-                // `put` rejects a dynamic file past the cap before it reaches
-                // flash, so the store can never hold more than fit here.
-                debug_assert!(!dynamic.is_full(), "dynamic overflow on rescan");
-                let _ = dynamic.push(fid);
+            if !dynamic.contains(&fid) && dynamic.push(fid).is_err() {
+                // `put` refuses a NEW dynamic file past the cap, so the only way to
+                // get here is a key the backend holds that never went through `put`.
+                // Record it rather than discarding it silently — the drop costs the
+                // key every future write, and a `debug_assert!` is compiled out of
+                // the release image where that matters.
+                over_cap = true;
             }
         });
+        self.over_cap = over_cap;
         // A COMPLETE enumeration yielded every live key: the backend's forward ring
         // walk is a page-superset of `fetch_item`'s, and page reclaim erases a source
         // only after forwarding its items, so no torn power cut can hide a committed
@@ -177,7 +206,7 @@ impl<S: Storage> Fs<S> {
         // Present or unknown: the backend (reliable per-key `fetch_item`) is the
         // source of truth; cache what it says so the next probe is O(1).
         let r = self.storage.read(fid, buf);
-        self.record(fid, r.is_some());
+        self.record_unless_faulted(fid, r.is_some());
         r
     }
 
@@ -187,7 +216,7 @@ impl<S: Storage> Fs<S> {
             return None;
         }
         let r = self.storage.size(fid);
-        self.record(fid, r.is_some());
+        self.record_unless_faulted(fid, r.is_some());
         r
     }
 
@@ -197,7 +226,7 @@ impl<S: Storage> Fs<S> {
             return false; // confirmed absent — skip the backend's full scan
         }
         let r = self.storage.size(fid);
-        self.record(fid, r.is_some());
+        self.record_unless_faulted(fid, r.is_some());
         r.is_some_and(|n| n > 0)
     }
 
@@ -434,7 +463,7 @@ impl<S: Storage> Fs<S> {
         }
         let mut scratch = [0u8; META_MAX];
         let read = self.storage.read(EF_META, &mut scratch);
-        self.record(EF_META, read.is_some());
+        self.record_unless_faulted(EF_META, read.is_some());
         let n = read?.min(scratch.len());
         let blob = &scratch[..n];
         let mut i = 0;
@@ -476,10 +505,14 @@ impl<S: Storage> Fs<S> {
         let n = if self.known_absent(EF_META) {
             0
         } else {
-            self.storage
-                .read(EF_META, &mut scratch)
-                .unwrap_or(0)
-                .min(scratch.len())
+            let r = self.storage.read(EF_META, &mut scratch);
+            // A FAILED read must not read as "no blob": rebuilding from an empty
+            // scratch would drop every other applet's metadata on this write. Same
+            // rule as the present-cache — only a definitive answer may be acted on.
+            if r.is_none() && self.storage.last_error() {
+                return Err(Error::MemoryFatal);
+            }
+            r.unwrap_or(0).min(scratch.len())
         };
         let mut out = [0u8; META_MAX];
         // Cap the rebuild at META_MAX - reserve so the write leaves `reserve`
@@ -499,6 +532,9 @@ impl<S: Storage> Fs<S> {
         let mut scratch = [0u8; META_MAX];
         let n = match self.storage.read(EF_META, &mut scratch) {
             Some(n) => n.min(scratch.len()),
+            // Absent means there is nothing to drop; a FAILED read means we do not
+            // know, and caching that as absence would orphan every stored head.
+            None if self.storage.last_error() => return Err(Error::MemoryFatal),
             None => {
                 self.mark_absent(EF_META);
                 return Ok(());
