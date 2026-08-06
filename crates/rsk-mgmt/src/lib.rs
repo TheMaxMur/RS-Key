@@ -324,9 +324,16 @@ pub fn persist_dev_conf<S: Storage>(fs: &mut Fs<S>, blob: &[u8]) -> Result<(), D
     // SUPPORTED_CAPS, so a lock-code write silently re-enabled every application
     // the owner had disabled (audit run-35).
     let mut merged = [0u8; EF_DEV_CONF_READ_MAX];
-    let m = overlay_dev_conf(fs, &stripped[..n], &mut merged)?;
+    let m = merged_dev_conf(fs, &stripped[..n], &mut merged)?;
     if m > EF_DEV_CONF_MAX {
         return Err(DevConfError::TooLong);
+    }
+    // An idempotent write costs no flash and no audit-journal entry. Folded in here
+    // rather than left to the caller: only one of the four call sites ever ran the
+    // check, and after the merge landed it could not recognise a partial replay at
+    // all, which is the only shape ykman sends (audit run-36).
+    if stored_matches(fs, &merged[..m]) {
+        return Ok(());
     }
     fs.put(EF_DEV_CONF, &merged[..m])
         .map_err(|_| DevConfError::Store)?;
@@ -334,6 +341,51 @@ pub fn persist_dev_conf<S: Storage>(fs: &mut Fs<S>, blob: &[u8]) -> Result<(), D
     // (which gates applet dispatch) before the next command it guards.
     DEV_CONF_DIRTY.store(true, core::sync::atomic::Ordering::Relaxed);
     Ok(())
+}
+
+/// The record a write of `incoming` (already lock-stripped) would store: the merge
+/// onto what is on flash, trimmed to the cap. One definition, so the writer and
+/// [`dev_conf_unchanged`] can never disagree about what "unchanged" means.
+fn merged_dev_conf<S: Storage>(
+    fs: &mut Fs<S>,
+    incoming: &[u8],
+    out: &mut [u8],
+) -> Result<usize, DevConfError> {
+    let m = overlay_dev_conf(fs, incoming, out)?;
+    Ok(trim_to_cap(out, m, incoming.len()))
+}
+
+/// Drop whole stored entries from the front of a merged record until it fits
+/// [`EF_DEV_CONF_MAX`], never touching the trailing `keep` bytes the request itself
+/// contributed.
+///
+/// [`overlay_dev_conf`] emits the stored, un-restated entries first and appends the
+/// request last, so trimming the front evicts the oldest stored fields and always
+/// leaves the owner's own write intact. Without it, stored bytes could veto a write:
+/// released firmware bounded writes at [`EF_DEV_CONF_READ_MAX`] with no shape
+/// validation, so a field device may carry a record the write cap refuses, and one
+/// ungated oversized entry could deny the owner their config surface for good
+/// (audit run-36).
+fn trim_to_cap(merged: &mut [u8], mut m: usize, keep: usize) -> usize {
+    while m > EF_DEV_CONF_MAX && m > keep {
+        let Some(&len) = merged.get(1) else { break };
+        let entry = 2 + len as usize;
+        if entry > m - keep {
+            break;
+        }
+        merged.copy_within(entry..m, 0);
+        m -= entry;
+    }
+    m
+}
+
+/// Whether `EF_DEV_CONF` already holds exactly `want`.
+fn stored_matches<S: Storage>(fs: &mut Fs<S>, want: &[u8]) -> bool {
+    let mut cur = [0u8; EF_DEV_CONF_READ_MAX];
+    // `read` reports the value's *full* stored length, which an over-length record
+    // from an older build can push past `cur` — compare only when it fits.
+    matches!(fs.read(EF_DEV_CONF, &mut cur),
+        Some(c) if c == want.len() && c <= cur.len() && cur[..c] == *want)
 }
 
 /// Overlay the TLV entries `incoming` carries onto the stored `EF_DEV_CONF`,
@@ -447,9 +499,32 @@ fn well_formed_writable(blob: &[u8]) -> bool {
         if tag == TAG_USB_ENABLED && len != 2 {
             return false;
         }
+        // Every other writable tag gets a width bound too. Only `USB_ENABLED` had
+        // one, so an ungated 38-byte `AUTO_EJECT_TIMEOUT` stored fine and then made
+        // every later *partial* write — the only shape ykman sends — exceed the
+        // post-merge cap, denying the owner their own config surface for good
+        // (audit run-36). These are the widths ykman can actually express.
+        if max_value_len(tag).is_some_and(|max| len as usize > max) {
+            return false;
+        }
         i = end;
     }
     true
+}
+
+/// The widest value ykman can put in each writable tag, or `None` where no bound
+/// applies (the two lock tags carry 16-byte codes, and `strip_config_lock` drops
+/// them before storage either way). `USB_ENABLED` keeps its own EXACT-width rule at
+/// the call site: relaxing it to a maximum would let a stored `03 00` be echoed by
+/// `config_tlv` while `enabled_from_conf` ignores it, reintroducing the
+/// report-vs-enforcement divergence of audit run-34 #25.
+fn max_value_len(tag: u8) -> Option<usize> {
+    match tag {
+        TAG_NFC_ENABLED | TAG_AUTO_EJECT_TIMEOUT | TAG_CHALRESP_TIMEOUT => Some(2),
+        TAG_DEVICE_FLAGS | TAG_NFC_RESTRICTED => Some(1),
+        TAG_REBOOT => Some(0),
+        _ => None,
+    }
 }
 
 /// Length of the leading run of complete TLV entries in `blob` — how much of a
@@ -500,21 +575,28 @@ pub fn dev_conf_unchanged<S: Storage>(fs: &mut Fs<S>, blob: &[u8]) -> bool {
     if blob.len() > DEV_CONF_WRITE_MAX {
         return false;
     }
+    // Deliberately NOT gated on `well_formed_writable`: a legacy record an older,
+    // laxer build stored (duplicate tags and all) must still be recognised when it
+    // is replayed verbatim, or every replay churns flash and the audit ring — the
+    // run-34 #35 property this function carries.
     // Compare against the stripped form we would actually store, so an idempotent
     // replay of a blob that still carries 0x0A/0x0B is still recognised as unchanged
     // (otherwise every replay would churn flash and the audit ring — audit run-30).
     let mut stripped = [0u8; DEV_CONF_WRITE_MAX];
     let n = strip_config_lock(blob, &mut stripped);
-    // Sized by the READ bound, like the other two readers. `EF_DEV_CONF_MAX` is the
-    // *write* cap; sizing a reader by it meant a legacy record between the two
-    // limits never fitted, so every replay of it looked "changed" and churned flash
-    // plus the audit ring — the very thing this function exists to prevent, and the
-    // third finding from this same compiler-blind class (audit run-34 #35).
-    let mut cur = [0u8; EF_DEV_CONF_READ_MAX];
-    // `read` reports the value's *full* stored length, which an over-length record
-    // from an older build can push past `cur` — compare only when it fits.
-    matches!(fs.read(EF_DEV_CONF, &mut cur),
-        Some(m) if m == n && m <= cur.len() && cur[..m] == stripped[..n])
+    // Compare what the write would actually STORE, not the request. The writer
+    // merges onto the stored record, so a partial blob — the only shape ykman sends
+    // — is never byte-equal to the whole record, and comparing the request meant
+    // this short-circuit could not fire at all after the merge landed (audit
+    // run-36). Sized by the READ bound, like the other readers: `EF_DEV_CONF_MAX` is
+    // the *write* cap, and sizing a reader by it meant a legacy record between the
+    // two limits never fitted, so every replay of it looked "changed" and churned
+    // flash plus the audit ring (audit run-34 #35).
+    let mut merged = [0u8; EF_DEV_CONF_READ_MAX];
+    let Ok(m) = merged_dev_conf(fs, &stripped[..n], &mut merged) else {
+        return false;
+    };
+    stored_matches(fs, &merged[..m])
 }
 
 /// Set by [`persist_dev_conf`] on any successful write, drained by the firmware to

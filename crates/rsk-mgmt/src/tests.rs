@@ -831,3 +831,61 @@ fn a_write_config_replaces_only_the_tags_it_carries() {
         "a restated tag must win, and must not be duplicated"
     );
 }
+
+/// Audit run-36: only `USB_ENABLED` had its value width bounded, so an
+/// unauthenticated 40-byte `AUTO_EJECT_TIMEOUT` stored fine and then made every
+/// later *partial* write — which is the only kind ykman sends — exceed the 42-byte
+/// post-merge cap. The owner could never enable or disable an application again.
+/// ykman can express at most two bytes for this tag, so bound it.
+#[test]
+fn an_oversized_config_entry_is_refused_so_it_cannot_wedge_the_owner() {
+    let mut fs: Fs<RamStorage> = Fs::new(RamStorage::new());
+    let mut bloat = vec![TAG_AUTO_EJECT_TIMEOUT, 38];
+    bloat.extend(core::iter::repeat_n(0u8, 38));
+    assert!(
+        persist_dev_conf(&mut fs, &bloat).is_err(),
+        "a 38-byte value for a 2-byte tag must be refused, not stored"
+    );
+    // And the owner's own write still lands.
+    persist_dev_conf(&mut fs, &[TAG_USB_ENABLED, 2, 0x02, 0x1B]).unwrap();
+}
+
+/// The same lockout with no attacker at all: released firmware bounded writes at
+/// 64 bytes with no shape validation, so a field device may already carry a record
+/// the 42-byte post-merge cap refuses. Stored bytes must never veto the owner's
+/// write — the merge evicts the oldest un-restated entries instead of refusing.
+#[test]
+fn a_legacy_oversized_record_cannot_veto_the_owners_write() {
+    let mut fs: Fs<RamStorage> = Fs::new(RamStorage::new());
+    let mut legacy = vec![TAG_AUTO_EJECT_TIMEOUT, 42];
+    legacy.extend(core::iter::repeat_n(0u8, 42));
+    fs.put(EF_DEV_CONF, &legacy).unwrap();
+
+    persist_dev_conf(&mut fs, &[TAG_USB_ENABLED, 2, 0x00, 0x01]).unwrap();
+
+    assert_eq!(
+        read_enabled_caps(&mut fs),
+        0x0001,
+        "the owner's write did not take effect"
+    );
+}
+
+/// `dev_conf_unchanged` exists so an idempotent replay costs no flash write and no
+/// audit-journal entry. It compared the REQUEST against the whole stored record
+/// while the writer stores a MERGE, so after `e7de26f` a partial blob — the only
+/// kind ykman sends — could never match and every replay churned flash.
+#[test]
+fn an_idempotent_partial_write_is_recognised_as_unchanged() {
+    let mut fs: Fs<RamStorage> = Fs::new(RamStorage::new());
+    persist_dev_conf(&mut fs, &[TAG_DEVICE_FLAGS, 1, 0x80]).unwrap();
+    persist_dev_conf(&mut fs, &[TAG_USB_ENABLED, 2, 0x02, 0x1B]).unwrap();
+
+    assert!(
+        dev_conf_unchanged(&mut fs, &[TAG_USB_ENABLED, 2, 0x02, 0x1B]),
+        "a replay whose merge is byte-identical still read as changed"
+    );
+    assert!(
+        !dev_conf_unchanged(&mut fs, &[TAG_USB_ENABLED, 2, 0x00, 0x01]),
+        "a genuine change must still be seen as a change"
+    );
+}
