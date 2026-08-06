@@ -244,6 +244,15 @@ pub(crate) fn generate_ec<S: Storage>(
     let Some(curve) = curve_for_algo(req.algo) else {
         return WRONG_DATA;
     };
+    // Resolve BEFORE the first write, as `generate_rsa_blocking` and the firmware's
+    // RSA fast path already do. Resolving after meant a request this firmware
+    // refuses — a host sending Yubico's Bio PIN policies 0x04/0x05, say — answered
+    // 6A80 with the slot's previous key and certificate already replaced, and the new
+    // key left governed by the OLD key's metadata (audit run-36).
+    let pol = match resolved_policies(slot, req.pin_policy, req.touch_policy) {
+        Ok(p) => p,
+        Err(sw) => return sw,
+    };
     let Some(key) = PrivKey::generate(curve, rng) else {
         return Sw::EXEC_ERROR;
     };
@@ -262,10 +271,6 @@ pub(crate) fn generate_ec<S: Storage>(
     // any slot count — the shared EF_META cache fills after ~10 EC slots and the
     // rest would recompute d·G. Best-effort: on failure GET METADATA derives it.
     let _ = fs.put(pubkey_fid(slot), &point[..plen]);
-    let pol = match resolved_policies(slot, req.pin_policy, req.touch_policy) {
-        Ok(p) => p,
-        Err(sw) => return sw,
-    };
     let mut mbuf = [0u8; 4 + MAX_EC_POINT];
     let mlen = ec_slot_meta(req.algo, pol, ORIGIN_GENERATED, &point[..plen], &mut mbuf);
     if let Err(e) = meta_add_slot(fs, key_fid(slot).get(), &mbuf[..mlen]) {

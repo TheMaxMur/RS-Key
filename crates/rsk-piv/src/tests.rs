@@ -3644,6 +3644,72 @@ fn scan_files_repairs_the_mgm_metadata_when_only_it_is_missing() {
     );
 }
 
+/// Audit run-36: `generate_ec` wrote the certificate, the sealed key and the pubkey
+/// cache and only THEN resolved the requested policies, so a request carrying a
+/// policy byte this firmware does not implement — Yubico defines PIN policy 0x04/0x05
+/// for Bio match — answered 6A80 with the slot's previous key and certificate already
+/// destroyed, and the new key governed by the OLD key's metadata. A refused command
+/// must leave the slot exactly as it found it. Its two sibling generate paths
+/// (`generate_rsa_blocking`, the firmware RSA fast path) already validate first.
+#[test]
+fn a_refused_generate_leaves_the_slot_untouched() {
+    let rng = RefCell::new(TestRng(21));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = Fs::new(RamStorage::new());
+    fs.scan();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+
+    // A key with an explicit NEVER/NEVER policy.
+    let ok = [
+        0xAC,
+        0x09,
+        0x80,
+        0x01,
+        ALGO_ECCP256,
+        0xAA,
+        0x01,
+        PINPOLICY_NEVER,
+        0xAB,
+        0x01,
+        TOUCHPOLICY_NEVER,
+    ];
+    let (sw, _) = run(&mut app, &mut fs, INS_ASYM_KEYGEN, 0, 0x9A, &ok);
+    assert_eq!(sw, Sw::OK);
+    let mut before = [0u8; 128];
+    let before_n = fs
+        .read(files::pubkey_fid(SLOT_AUTHENTICATION), &mut before)
+        .unwrap();
+
+    // Same slot, a touch-policy byte this firmware does not implement.
+    let bad = [
+        0xAC,
+        0x09,
+        0x80,
+        0x01,
+        ALGO_ECCP256,
+        0xAA,
+        0x01,
+        PINPOLICY_ALWAYS,
+        0xAB,
+        0x01,
+        0x09,
+    ];
+    let (sw, _) = run(&mut app, &mut fs, INS_ASYM_KEYGEN, 0, 0x9A, &bad);
+    assert_ne!(sw, Sw::OK, "an undefined policy byte must be refused");
+
+    let mut after = [0u8; 128];
+    let after_n = fs
+        .read(files::pubkey_fid(SLOT_AUTHENTICATION), &mut after)
+        .unwrap_or(0);
+    assert_eq!(
+        (&after[..after_n], after_n),
+        (&before[..before_n], before_n),
+        "the refused GENERATE replaced the slot's key anyway"
+    );
+}
+
 /// The other tear direction: `Fs::force_delete` swallows a failed `meta_delete`
 /// (`let _ =`) and removes the key anyway, so the head can outlive the key it
 /// describes. Minting `DEFAULT_MGM` under a stale AES-256 head wedges the slot on
