@@ -115,7 +115,7 @@ enabling enforcement yet:
 # seal once to produce the otp.json (also see production.md, stage 2b):
 picotool seal --sign --hash firmware.uf2 firmware-signed.uf2 \
     ~/.rs-key-secrets/secure_boot_key.pem ~/.rs-key-secrets/otp_secureboot.json \
-    --major 1 --minor 0
+    --major 1 --minor 0 --rollback 1
 rsk secure-boot status                          # bootkey present: False
 rsk secure-boot load-key ~/.rs-key-secrets/otp_secureboot.json   # fuses slot 0
 ```
@@ -138,7 +138,7 @@ straight after:
 # touches disk; openssl prompts for the passphrase:
 ( umask 077; openssl ec -in ~/.rs-key-secrets/secure_boot_key.pem -out /tmp/sk.pem )
 picotool seal --sign --hash firmware.uf2 firmware-signed.uf2 \
-    /tmp/sk.pem ~/.rs-key-secrets/otp_secureboot.json --major 1 --minor 0
+    /tmp/sk.pem ~/.rs-key-secrets/otp_secureboot.json --major 1 --minor 0 --rollback 1
 rm -P /tmp/sk.pem        # overwrite + delete (Linux: shred -u /tmp/sk.pem)
 # BOOTSEL, then:
 picotool load -v firmware-signed.uf2 && picotool reboot   # or drag it onto the RP2350 drive
@@ -210,7 +210,7 @@ before you revoke `K1`. It never revokes for you while only one key is proven.
 |---|---|
 | Lost the key **before** `load-key` | No harm. Regenerate. Nothing is fused yet. |
 | Lost it **after** `load-key`, **before** `enable` | Enforcement is still off, so the board boots unsigned images and keeps working, but slot 0 is now fused to a key you don't have. Provision a *different* slot for a new key, or treat the board as not worth securing. |
-| Lost it **after** `enable` | The key itself is unrecoverable, and the current signed image **keeps booting forever**. After a full `lock`, the unused slots are revoked and the key pages are locked, so you can **never flash new firmware**: a new board. If instead you **reserved a free slot**, you can still provision a *new* key into it and flash again (the bootrom never asks for the old key): `rsk secure-boot load-key --slot <free>` does it, no hand-rolled `picotool` needed. |
+| Lost it **after** `enable` | The key itself is unrecoverable, and the current signed image **keeps booting forever**. After a full `lock`, the unused slots are revoked and the key pages are locked, so you can **never flash new firmware**: a new board. If instead you **reserved a free slot**, you can still provision a *new* key into it and flash again (the bootrom never asks for the old key): `rsk secure-boot load-key --slot <free> <new-otp.json>` does it, no hand-rolled `picotool` needed. |
 | Key **compromised** (someone else has it) | [Rotate](#5-rotate-a-key) to a new key and revoke the old (needs a reserved slot), or move to a new board. The old key can sign images your board still trusts until it is revoked. |
 | Replacing the board | Provision the new chip with a **new** key; restore your FIDO identity with `rsk backup restore`. See [anti-rollback.md](anti-rollback.md#moving-to-a-new-board). |
 

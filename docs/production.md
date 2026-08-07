@@ -43,6 +43,29 @@ flowchart TD
     s2b -. "a correctly-signed UF2 can always be re-flashed over BOOTSEL" .-> rec["BOOTSEL recovery"]
 ```
 
+## Every command on this page, in order
+
+The CLI groups by **fuse family** — `rsk otp` owns the OTP master key and the
+rollback flag, `rsk secure-boot` owns the boot-key and enforcement fuses — while
+this page groups by **goal**. The two cuts cross, which is why `rsk otp` shows up
+in stage 1 and again in stage 3. Nothing is out of order; they are different
+axes. The stages themselves are independent and usable alone, and this is the
+order to run them in if you are doing all three.
+
+| # | Command | Stage | What it writes | Undo |
+|---|---|---|---|---|
+| 1 | `rsk otp burn` | 1 | random MKEK + DEVK into OTP page 58 | **never** |
+| 2 | `rsk otp lock-page58` | 1 | the page-58 read lock | **never** |
+| 3 | `picotool seal --sign …` | 2b | nothing — host-only, and it produces the `otp.json` step 4 needs | re-run it |
+| 4 | `rsk secure-boot load-key <otp.json>` | 2c | boot-key fingerprint + `KEY_VALID` | **never** |
+| 5 | `rsk secure-boot harden` | 2c | `DEBUG_DISABLE` + glitch detectors | **never** |
+| 6 | `rsk secure-boot enable` | 2c | `SECURE_BOOT_ENABLE` — **the brick bit** | **never** |
+| 7 | `rsk secure-boot lock` | 2c | revokes unused key slots, locks the fuse pages | **never** |
+| 8 | `rsk otp rollback-require` | 3 | `ROLLBACK_REQUIRED` | **never** |
+
+`rsk secure-boot status` reads the whole fuse state and is safe at any point.
+Every burning command takes `--dry-run` and a typed confirmation.
+
 ## Before you start
 
 - **Make a seed backup first** if you haven't:
@@ -137,6 +160,9 @@ chmod 600 secure_boot_key.pem
 # BACK IT UP somewhere that survives this machine.
 ```
 
+That is the whole of what you create by hand. The `otp_secureboot.json` the next
+step passes around is produced *by* `seal`, not written here — see 2b.
+
 This key is the root of trust for the board's whole life. Treat it like the most
 important secret you have here: if you lose it after `enable`, you can never
 flash new firmware to that board (the running image keeps booting). It is also
@@ -149,19 +175,58 @@ board**, rotation, and recovery.
 ### 2b. Sign and prove a signed image boots (before any fuse)
 
 ```sh
+# 1. an image to sign. The partition table has to be in it BEFORE sealing, or
+#    the signature does not cover the fence (build.md#the-partition-table).
+cargo build --release -p firmware
+scripts/pt.sh target/thumbv8m.main-none-eabihf/release/firmware firmware-pt.elf
+picotool uf2 convert firmware-pt.elf -t elf firmware.uf2
+#    (or a single `nix build .#firmware`, whose result/firmware.uf2 already has it)
+
+# 2. sign it. otp_secureboot.json does NOT exist yet: you pick the path, and
+#    `seal` creates the file there. It is the artifact stage 2c fuses.
 picotool seal --sign --hash firmware.uf2 firmware-signed.uf2 \
     ~/.rs-key-secrets/secure_boot_key.pem ~/.rs-key-secrets/otp_secureboot.json \
     --major 1 --minor 0 --rollback 1
-picotool info firmware-signed.uf2        # must say "signature: verified"
-# BOOTSEL, then flash + confirm the device works:
+picotool info firmware-signed.uf2              # must say "signature: verified"
+ls -l ~/.rs-key-secrets/otp_secureboot.json    # seal wrote this; 2c needs it
+
+# 3. BOOTSEL, then flash + confirm the device works:
 picotool load -v firmware-signed.uf2 && picotool reboot   # or drag it onto the RP2350 drive
 ```
 
-The arguments:
+#### What `otp_secureboot.json` is for
+
+The one part of this page with no obvious purpose until you see both ends of it.
+
+The bootrom's check is: *does `SHA-256(the public key inside this image)` equal a
+fingerprint fused in OTP?* So that fingerprint has to get into the fuses. But
+signing happens **on your host, with a private key that must never go near the
+device**, while fusing happens **against the board** — two separate operations,
+possibly on different machines and months apart. Nothing in the signed image can
+carry the value across: the device is exactly what you don't trust yet.
+
+That file is the courier, and its whole job:
+
+| | |
+|---|---|
+| Written by | `picotool seal` (2b) — it derives the fingerprint from your `.pem` |
+| Read by | `rsk secure-boot load-key <that file>` (2c) — burns it into a boot-key slot |
+| Contains | `bootkey0` (the 32-byte fingerprint) + `key_valid` + `secure_boot_enable` |
+| Touched by anything else | no |
+
+**You do not back it up, and losing it costs nothing.** It is a pure function of
+your signing key — sealing *any* image with the same `.pem` regenerates it
+byte-for-byte, and `--major` / `--minor` / `--rollback` do not change a byte of
+it. It holds no private material, so it is not a secret either. The `.pem` is the
+thing to protect; this is a derived artifact you can recreate in one command.
+
+It *is* per-key, so with one key per board (recommended —
+[signing-keys.md](signing-keys.md)) keep each next to the `.pem` that produced
+it, under names you can tell apart.
+
+The other arguments:
 
 - `secure_boot_key.pem`: your signing key. It signs the image.
-- `otp_secureboot.json`: `seal` writes the **boot-key fingerprint** here. You
-  fuse it into OTP with `load-key` below.
 - `--major` / `--minor`: an **image version** (`major.minor`) stamped into the
   RP2350 boot metadata. It is a plain version label, distinct from the firmware
   version RS-Key reports (`5.7.x`, [build.md](build.md)) and from the rollback
@@ -176,10 +241,6 @@ The arguments:
 `picotool info firmware-signed.uf2` must report `signature: verified`. The
 firmware's image definition is already secure-boot compatible. The sealed UF2
 carries the signature block.
-
-`firmware.uf2` above must already carry the partition table — the two commands
-that produce it are in [the flash workflow](#the-new-flash-workflow-forever)
-below, and `nix build .#firmware` applies it for you.
 
 Sealing also covers the image's **partition table**, the fence that keeps the USB
 bootloader out of the KV store ([build.md](build.md#the-partition-table)). That is
@@ -200,7 +261,7 @@ bit:
 
 ```sh
 rsk secure-boot status      # read the current fuse state any time
-rsk secure-boot load-key    # 1. boot-key fingerprint + KEY_VALID   (non-enforcing)
+rsk secure-boot load-key ~/.rs-key-secrets/otp_secureboot.json   # 1. boot-key fingerprint + KEY_VALID (non-enforcing)
 rsk secure-boot harden      # 2. DEBUG_DISABLE + glitch detectors   (non-enforcing)
 rsk secure-boot enable      # 3. SECURE_BOOT_ENABLE = 1  ← the brick bit
 rsk secure-boot lock        # 4. revoke unused key slots + lock the fuse pages

@@ -78,6 +78,42 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **Three seal recipes produced an image that would not boot on a provisioned board.**
+  production.md states the rule — every `picotool seal` carries `--rollback <your floor>`,
+  and a versionless sealed image is refused fail-closed — while signing-keys.md (twice) and
+  build.md showed `--major 1 --minor 0` and stopped. Exactly the pages a reader reaches
+  *after* enabling anti-rollback. All three now carry it.
+- **`otp_secureboot.json` now has a reason, not just a description.** Four pages named the
+  file; none said why it exists. It is the courier for one number: the bootrom compares
+  `SHA-256(public key in the image)` against a fused fingerprint, signing happens on the host
+  with a key that must never reach the device, and fusing happens against the board — so
+  something has to carry the fingerprint between two operations that may be months and
+  machines apart. 2b now says that, with a table of who writes it, who reads it, and what is
+  inside, plus the fact nobody had established: it is a pure function of the signing key
+  (`--major`/`--minor`/`--rollback` do not change a byte), so losing it costs one command and
+  it never needs backing up. The `.pem` is the thing to protect.
+- **`production.md` opens with every command it will run, in order.** The CLI groups by fuse
+  family and the page groups by goal, so `rsk otp` appears in stage 1 and again in stage 3 —
+  which reads as disorder until someone says the two axes cross. The table names each
+  command, its stage, what it writes and whether it can be undone (seven of the eight: never).
+- **`production.md` stage 2b asked you to sign an image you had not built yet.** The build
+  recipe lived below stage 2c, so a first pass through the page hit `picotool seal
+  firmware.uf2` with no such file and no `otp_secureboot.json` — and nothing said where
+  either comes from. 2b is now self-contained: build, embed the partition table, convert,
+  seal, with the `otp.json` named as something `seal` creates at a path you choose.
+- **`architecture.md` understated the file budget by 5×** — `MAX_DYNAMIC_FILES` has been
+  1280 since the capacity work, not 256, in the section that reasons about how full a key
+  can get.
+- **Two documented `rsk secure-boot` commands could not run, and the file they revolve
+  around was never explained.** `otp.json` is a required positional, so production.md's burn
+  ritual (`rsk secure-boot load-key` with nothing after it) and signing-keys.md's key-loss
+  row both exited 2 — the latter six lines below the same file spelling the command
+  correctly. The file itself was named four times and defined nowhere: it is an **output**
+  of `picotool seal`, carrying the SHA-256 fingerprint of your signing key plus the two burn
+  flags, not a secret and not something you write by hand. production.md now says that where
+  you first meet it. A new gate test (`tools/rsk/test_docs_commands.py`) parses every `rsk …`
+  line inside a docs shell block against the real CLI parser, so a command nobody can run
+  cannot ship again; prose mentions stay out of scope, fenced blocks do not.
 - **Linux: the CCID driver's reader list, and why the applets go missing without an error.**
   `pcscd` cannot bind a reader the **ccid** driver never claimed, and that driver claims only
   USB ids present in its own list — which the default `0x1209:0x0001` identity is not. FIDO

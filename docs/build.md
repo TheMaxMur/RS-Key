@@ -213,7 +213,7 @@ Two caveats:
   ```sh
   picotool seal --sign --hash result/firmware.uf2 firmware-signed.uf2 \
       ~/.rs-key-secrets/secure_boot_key.pem ~/.rs-key-secrets/otp_secureboot.json \
-      --major 1 --minor 0
+      --major 1 --minor 0 --rollback 1
   ```
   The `.pem` is your signing key, the `.json` is where `seal` writes the
   boot-key fingerprint, and `--major`/`--minor` stamp an **image version** into
