@@ -113,7 +113,10 @@ let
     pkgs.stdenv.mkDerivation (
       {
         pname = name;
-        version = "5.7.4";
+        # Follow the `fwVersion` knob rather than restating the default: a build
+        # with `fwVersion = "2.0.0"` used to still call itself 5.7.4, which reads
+        # as a pinned version and sent someone looking for it in the flake (#66).
+        version = if fwVersion == null then "5.7.4" else fwVersion;
         src = firmwareSrc;
         inherit cargoDeps;
         nativeBuildInputs = [

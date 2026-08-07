@@ -78,6 +78,27 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **Linux: the CCID driver's reader list, and why the applets go missing without an error.**
+  `pcscd` cannot bind a reader the **ccid** driver never claimed, and that driver claims only
+  USB ids present in its own list — which the default `0x1209:0x0001` identity is not. FIDO
+  keeps working while OpenPGP, PIV, OATH and Yubico-OTP simply look absent, and no udev or
+  polkit change touches it, because those govern access to a reader that was skipped
+  ([#67](https://github.com/TheMaxMur/RS-Key/issues/67) — the third report of this same root
+  cause). [linux.md](docs/linux.md) now says so before the setup steps, gives both workarounds,
+  and explains why the fix is not simply upstream: `0x1209:0x0001` is pid.codes' shared
+  *prototype* id, so listing it in the ccid driver would bind every unrelated prototype using
+  it. A dedicated VID/PID is pending and the submission waits on it.
+- **`versioning.md` advertised the wrong `versions` and a stale `bcdDevice`.** It listed
+  getInfo `versions` as only `U2F_V2` + `FIDO_2_0` (missing `FIDO_2_1` and `FIDO_2_3`) and
+  pinned a `bcdDevice` literal hundreds of builds old. It also never answered the question
+  people arrive with ([#66](https://github.com/TheMaxMur/RS-Key/issues/66)) — *which build is
+  on this device* — which `5.7.4` cannot, being a compatibility constant identical across
+  every build of every release. The page now names `bcdDevice` as the build identity, shows
+  how to read it, and notes that a plain `nix build` image carries no version in the file at
+  all.
+- **A `nix build` with `fwVersion` set no longer calls itself `5.7.4`.** The derivation's
+  `version` was a literal that ignored the knob, which reads as a version pinned in the flake
+  ([#66](https://github.com/TheMaxMur/RS-Key/issues/66)).
 - **An over-long `allowList` or `excludeList` is refused, not truncated.** Both
   parsers dropped every credential descriptor past `maxCredentialCountInList` (16)
   and carried on as if the list had ended there, instead of returning
