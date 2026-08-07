@@ -51,7 +51,7 @@ let
     nativeBuildInputs = [ pkgs.pkg-config ];
     buildInputs = lib.optionals pkgs.stdenv.isLinux [
       pkgs.pcsclite
-      pkgs.systemd # libudev (hidapi's hidraw backend)
+      pkgs.udev 
     ];
     meta = {
       description = "RS-Key device dashboard — a self-contained ratatui cockpit";
