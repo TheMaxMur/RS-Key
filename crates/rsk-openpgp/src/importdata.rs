@@ -65,7 +65,7 @@ pub fn import_data<S: Storage>(
 pub fn parse_ehl_head(data: &[u8]) -> Result<(KeyFid, usize), Sw> {
     let mut pos = 0usize;
     // 4D extended-header-list tag + its (ignored) length.
-    if *data.first().ok_or(WRONG_DATA)? != 0x4D {
+    if *data.first().ok_or(WRONG_DATA)? != (EF_EXT_HEADER & 0xff) as u8 {
         return Err(WRONG_DATA);
     }
     pos += 1;

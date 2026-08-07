@@ -231,6 +231,29 @@ pub trait MsgHandler {
     /// sticky selection silently routes U2F REGISTER/AUTHENTICATE/VERSION to the
     /// vendor applet (→ `0x6D00`). Default: no-op.
     fn reset_app_selection(&mut self) {}
+
+    /// Whether this build has something to identify itself *with* — an LED, a
+    /// panel. It gates the `CAPABILITY_WINK` bit ([`init_capabilities`]), because
+    /// §11.2.9.2.1 defines that bit as "implements CTAPHID_WINK" and the command
+    /// as producing "some visual or audible identification". Default: no, so a
+    /// build that forgets to override this under-claims rather than lies.
+    fn can_wink(&self) -> bool {
+        false
+    }
+
+    /// Perform that identification — "a short burst of flashes". Must return
+    /// promptly: the reply is written straight after, and the burst belongs to
+    /// whatever renders it. Default: no-op, paired with `can_wink` = false.
+    fn wink(&mut self) {}
+}
+
+/// The capability byte for an `INIT` reply. WINK is claimed only when the handler
+/// has an indicator to flash: an invisible wink is worse than an unset bit,
+/// because the host offers the command precisely to tell two identical-looking
+/// keys apart, and a silent success tells the user the wrong key is the right one.
+/// `NMSG` stays clear — CTAPHID_MSG (U2F) is implemented.
+fn init_capabilities(can_wink: bool) -> u8 {
+    CAPFLAG_CBOR | if can_wink { CAPFLAG_WINK } else { 0 }
 }
 
 /// What the transport should do after [`Reassembler::feed`] consumes a frame.
@@ -562,13 +585,14 @@ impl<'d, D: Driver<'d>, H: MsgHandler> CtapHid<'d, D, H> {
                 resp[13] = VERSION_MAJOR;
                 resp[14] = VERSION_MINOR;
                 resp[15] = VERSION_BUILD;
-                resp[16] = CAPFLAG_WINK | CAPFLAG_CBOR;
+                resp[16] = init_capabilities(self.handler.can_wink());
                 write_message(&mut self.writer, cid, CTAPHID_INIT, &resp).await;
             }
             CTAPHID_PING | CTAPHID_SYNC => {
                 write_message(&mut self.writer, cid, cmd, self.asm.message()).await;
             }
             CTAPHID_WINK => {
+                self.handler.wink();
                 write_message(&mut self.writer, cid, CTAPHID_WINK, &[]).await;
             }
             CTAPHID_LOCK => {

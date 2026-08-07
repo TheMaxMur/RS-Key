@@ -281,7 +281,6 @@ pub const EF_RPNICK: u16 = 0xD300;
 /// Longest device-local RP nickname (bytes) the trusted display stores + accepts.
 pub const RP_NICK_MAX_LEN: usize = 24;
 pub const EF_PIN: u16 = 0x1080; // PIN: [retries, len, format, verifier(32)]
-pub const EF_AUTHTOKEN: u16 = 0x1090; // pinUvAuthToken seed
 /// The **persistent** pinUvAuthToken (CTAP 2.2 §6.5.2.2): a bearer secret the
 /// platform keeps across power cycles, so it is kbase-sealed like the seed. Its
 /// *presence* is the `pcmr` grant — written at the first pcmr issuance, dropped

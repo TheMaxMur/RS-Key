@@ -165,6 +165,22 @@ rsk led --blink                                # back to the blink patterns
 the palette, plus "Read LED state". For per-state colour, brightness, or the
 steady toggle, use `rsk led`.
 
+### Identify (CTAPHID wink)
+
+A host can ask the key to point at itself — `fido2-token -W <device>`, or any
+tool that sends `CTAPHID_WINK` — which is how you tell two identical keys apart
+when both are plugged in. The indicator answers with four fast blinks over about
+half a second in the **touch** colour, then goes back to whatever it was showing.
+
+The burst deliberately overrides the configured effect *and* `--steady`: the
+command is only useful if the key visibly flashes. It also uses the touch
+colour because that is the one state `rsk led` keeps above a visibility floor,
+so a key dimmed everywhere else still answers something you can see.
+
+A build with no indicator (`LED_KIND=none`, which includes the display build)
+does not advertise the wink capability at all, rather than accepting the command
+and doing nothing.
+
 ### Selectors and values
 
 | Flag | Values |

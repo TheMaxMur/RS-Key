@@ -223,6 +223,18 @@ impl MsgHandler for ClientCtap {
     async fn handle_vendor(&mut self, cmd: u8, data: &[u8], out: &mut [u8]) -> Option<usize> {
         roundtrip_vendor(cmd, data, out).await
     }
+    /// Only a build with an indicator claims WINK; a `LED_KIND=none` board (and the
+    /// display build, which the panel forces to that) has nothing to flash, so it
+    /// leaves the bit clear rather than answering an invisible wink.
+    fn can_wink(&self) -> bool {
+        cfg!(not(led_kind = "none"))
+    }
+    /// Straight to the LED atomics — the burst is rendered by the blink task on the
+    /// high-priority executor, so this never parks the transport.
+    fn wink(&mut self) {
+        #[cfg(not(led_kind = "none"))]
+        crate::led::wink();
+    }
 }
 
 /// CCID client handler (high-priority executor) — forwards to the worker.

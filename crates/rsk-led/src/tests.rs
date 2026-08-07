@@ -379,3 +379,23 @@ fn clamp_leds_saturates_to_ceiling() {
     assert_eq!(clamp_leds(99, 8), 8); // the brick-fix invariant: no panic, saturate
     assert_eq!(clamp_leds(0, 8), 0);
 }
+
+/// The wink burst must actually *flash*: it starts lit, alternates on a fixed
+/// half-period, and fits the advertised number of blinks. A burst that came out
+/// solid (or one phase long) would answer CTAPHID_WINK invisibly — the failure the
+/// capability bit is supposed to rule out.
+#[test]
+fn wink_alternates_and_starts_lit() {
+    assert!(wink_lit(WINK_MS), "a wink starts lit");
+    let phases = WINK_MS / WINK_HALF_MS;
+    assert_eq!(phases, 8, "600/75 = four on/off blinks");
+    for p in 0..phases {
+        // Sample the middle of each half-period, walking the burst down to 0.
+        let ms_left = WINK_MS - p * WINK_HALF_MS - WINK_HALF_MS / 2;
+        assert_eq!(
+            wink_lit(ms_left),
+            p % 2 == 0,
+            "phase {p} (ms_left={ms_left}) must alternate"
+        );
+    }
+}

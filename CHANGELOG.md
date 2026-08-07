@@ -15,6 +15,17 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Added
 
+- **`CTAPHID_WINK` actually winks.** Every `INIT` reply set `CAPABILITY_WINK`, which
+  §11.2.9.2.1 defines as "implements CTAPHID_WINK", and the handler then answered the
+  command with an empty frame and no visible action — so `fido2-token -W` and every
+  "which key is this?" flow reported success while nothing happened, in exactly the
+  situation the command exists for (two identical keys on one host). The indicator now
+  answers with four fast blinks over ~0.6 s in the touch colour, overriding the
+  configured effect and `--steady` — a wink that a display setting can render invisible
+  is the same bug again. It also outranks nothing else: the ambient status resumes
+  where it was. A build with no indicator (`LED_KIND=none`, which the display build
+  forces) now leaves the capability bit **clear** instead of claiming it.
+
 - **`perCredMgmtRO` and a real persistent pinUvAuthToken (CTAP 2.2 §6.5.2.2).** The
   `pcmr` permission was half-wired: clientPIN accepted it and handed out a token, but
   `credentialManagement` never verified against that token, so it authorized nothing —
@@ -43,6 +54,12 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   read grant.** The wipe's last phase can drop `EF_PIN` and lose power before
   `EF_PAUTHTOKEN`; `setPIN` now clears the persistent token first, so the holder of a
   pre-reset `pcmr` grant cannot enumerate the credentials created after it.
+- **Two reserved-but-unwired definitions are gone.** `EF_AUTHTOKEN` (0x1090,
+  "pinUvAuthToken seed") was never written or read by any build — the session token is
+  RAM-only by design, since §6.5.6 regenerates it at power-on — yet it sat in both
+  `authenticatorReset` sweep predicates claiming there was something there to wipe. And
+  the OpenPGP extended-header tag was compared as a bare `0x4D` literal beside an
+  `EF_EXT_HEADER` constant nothing used.
 
 ## [0.4.6] - 2026-08-06
 

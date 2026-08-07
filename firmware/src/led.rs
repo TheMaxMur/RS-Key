@@ -13,6 +13,8 @@
 //! single-colour LED: hue collapsed to lit/unlit, brightness via software PWM),
 //! `pimoroni` (3-pin PWM RGB), or `none` (no indicator).
 
+#[cfg(not(led_kind = "none"))]
+use core::sync::atomic::AtomicU32;
 use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 #[cfg(not(led_kind = "none"))]
@@ -93,6 +95,11 @@ const TIMING: [(u64, u64); N_STATUS] = [
 pub const CONF_LEN: usize = 1 + 4 * N_STATUS;
 
 static LED_STATUS: AtomicU8 = AtomicU8::new(STATUS_BOOT);
+/// Deadline of a running `CTAPHID_WINK` burst, in `Instant::as_millis()` truncated
+/// to 32 bits (the M33 has no 64-bit atomics). 0 = never winked. Wrapping is
+/// handled by [`wink_colour`], not avoided here.
+#[cfg(not(led_kind = "none"))]
+static WINK_END_MS: AtomicU32 = AtomicU32::new(0);
 /// When set, the blink task ignores the on/off phases and shows the current
 /// status color solidly — the status still recolors the LED, it just stops
 /// blinking. Off by default.
@@ -162,6 +169,46 @@ pub fn set_status(idx: u8) {
 #[cfg_attr(feature = "no-touch", allow(dead_code))]
 pub fn status() -> u8 {
     LED_STATUS.load(Ordering::Relaxed)
+}
+
+/// `CTAPHID_WINK` (§11.2.9.2.1): start the identification burst. Fire-and-forget —
+/// every render backend polls [`wink_colour`], so the transport answers the frame
+/// at once instead of holding the channel shut for the flashes. Only compiled
+/// where there is an indicator; `MsgHandler::can_wink` keeps the capability bit
+/// off on the builds this is absent from.
+#[cfg(not(led_kind = "none"))]
+pub fn wink() {
+    let end = Instant::now().as_millis() as u32 + rsk_led::WINK_MS;
+    WINK_END_MS.store(end, Ordering::Relaxed);
+}
+
+/// The colour a running wink burst wants shown, or `None` when none is running.
+/// It outranks the status, the configured effect *and* `steady`: the command's
+/// only job is that the key visibly flashes, so a config that renders everything
+/// solid must not swallow it.
+///
+/// The deadline is a wrapping millisecond counter, so "is it still running" is
+/// `deadline - now` read as an unsigned distance: anything past the end wraps to a
+/// huge value and reads as expired, which also covers the 49-day rollover.
+#[cfg(not(led_kind = "none"))]
+fn wink_colour() -> Option<RGB8> {
+    let end = WINK_END_MS.load(Ordering::Relaxed);
+    let left = end.wrapping_sub(Instant::now().as_millis() as u32);
+    if end == 0 || left == 0 || left > rsk_led::WINK_MS {
+        return None;
+    }
+    let s = STATUS_TOUCH as usize;
+    Some(if rsk_led::wink_lit(left) {
+        // The touch colour: the one the config codec keeps above a visibility floor
+        // ([`rsk_led::LedConfig::enforce_touch_invariants`]), so a host that dimmed
+        // the other statuses to nothing still gets a wink it can see.
+        color_rgb(
+            STATUS_COLOR[s].load(Ordering::Relaxed),
+            STATUS_BRIGHTNESS[s].load(Ordering::Relaxed),
+        )
+    } else {
+        RGB8::default()
+    })
 }
 
 /// Read-modify-write the live config through the codec. Every writer goes through
@@ -296,6 +343,11 @@ impl Blinker {
     }
 
     fn tick(&mut self) -> RGB8 {
+        // A wink pre-empts the ambient status for its half-second; the phase state
+        // below is left untouched, so the status blink resumes where it was.
+        if let Some(c) = wink_colour() {
+            return c;
+        }
         let s = (LED_STATUS.load(Ordering::Relaxed) as usize).min(N_STATUS - 1);
         let (on_ms, off_ms) = TIMING[s];
         let now = Instant::now();
@@ -539,7 +591,9 @@ pub async fn ws2812_task(mut ws2812: PioWs2812<'static, PIO0, 0, MAX_LEDS, Ws281
         // Steady mode shows the status colour solidly. The animated effects
         // otherwise ignore LED_STEADY (only the legacy on/off renderer reads it),
         // so honour it here for every effect — PicoForge's "Steady" writes it.
-        let buf = if LED_STEADY.load(Ordering::Relaxed) {
+        let buf = if let Some(c) = wink_colour() {
+            broadcast_frame(c)
+        } else if LED_STEADY.load(Ordering::Relaxed) {
             steady_frame(s)
         } else {
             dispatch(s, tick, &mut on_phase, &mut phase_end)
@@ -561,10 +615,15 @@ pub async fn ws2812_task(mut ws2812: PioWs2812<'static, PIO0, 0, MAX_LEDS, Ws281
 /// no animation. Every effect defers to this when `LED_STEADY` is set.
 #[cfg(not(led_kind = "none"))]
 fn steady_frame(s: usize) -> [RGB8; MAX_LEDS] {
-    let c = color_rgb(
+    broadcast_frame(color_rgb(
         STATUS_COLOR[s].load(Ordering::Relaxed),
         STATUS_BRIGHTNESS[s].load(Ordering::Relaxed),
-    );
+    ))
+}
+
+/// `c` across the runtime LEDs, the rest of the buffer dark.
+#[cfg(not(led_kind = "none"))]
+fn broadcast_frame(c: RGB8) -> [RGB8; MAX_LEDS] {
     let n = runtime_leds() as usize;
     let mut buf = [RGB8::default(); MAX_LEDS];
     for led in buf[..n].iter_mut() {

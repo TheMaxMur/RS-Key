@@ -57,6 +57,23 @@ pub const EFFECT_SPARKLE: u8 = 4; // per-LED twinkle in the status colour
 /// Speed value meaning "use the effect's built-in default speed".
 pub const SPEED_DEFAULT: u8 = 0;
 
+/// `CTAPHID_WINK` burst length and half-period, in milliseconds. CTAP §11.2.9.2.1
+/// asks for "a short burst of flashes"; 600/75 is four blinks in 0.6 s — fast
+/// enough that nobody mistakes it for one of the four statuses, short enough that
+/// it cannot mask a touch prompt arriving right behind it.
+pub const WINK_MS: u32 = 600;
+pub const WINK_HALF_MS: u32 = 75;
+
+/// Whether the wink LED is lit with `ms_left` of the burst still to run
+/// (`ms_left <= WINK_MS`; the caller's deadline guard enforces that). The caller
+/// keeps only a deadline — the one form that survives the millisecond counter
+/// wrapping — so the phase is taken from the elapsed half-periods, which is what
+/// makes the burst *start* lit rather than with a pause.
+pub const fn wink_lit(ms_left: u32) -> bool {
+    let elapsed = WINK_MS.saturating_sub(ms_left);
+    (elapsed / WINK_HALF_MS).is_multiple_of(2)
+}
+
 /// Default effect per status (indexed by the `STATUS_*` constants).
 pub const DEFAULT_EFFECT: [u8; N_STATUS] = [
     EFFECT_VAPOR,   // IDLE
