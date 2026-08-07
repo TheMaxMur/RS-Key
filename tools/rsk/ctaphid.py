@@ -169,10 +169,19 @@ def read(dev):
 
 def ctaphid_init(dev):
     """CTAPHID INIT with a random nonce; returns the 4-byte channel id."""
+    return ctaphid_init_caps(dev)[0]
+
+
+def ctaphid_init_caps(dev):
+    """CTAPHID INIT; returns `(channel id, capability byte)`.
+
+    The capability byte is the last of the 17 payload bytes. `rsk identify` reads
+    it: bit 0 (WINK) is the device saying it has an indicator to flash, so a build
+    without one is reported rather than sent a command it answers invisibly."""
     write(dev, b"\xff\xff\xff\xff" + bytes([CTAPHID_INIT, 0, 8]) + os.urandom(8))
     r = read(dev)
     assert r[4] == CTAPHID_INIT
-    return bytes(r[15:19])
+    return bytes(r[15:19]), r[23]
 
 
 def send_cbor(dev, cid, payload):

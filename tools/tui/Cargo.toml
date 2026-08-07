@@ -2,7 +2,7 @@
 # table below detaches it from the parent so it builds for the host, not thumbv8m).
 [package]
 name = "rsk-tui"
-version = "0.3.7"
+version = "0.3.8"
 license = "AGPL-3.0-only"
 edition = "2024"
 description = "rs-key device dashboard — a self-contained ratatui cockpit"

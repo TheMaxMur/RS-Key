@@ -15,6 +15,13 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Added
 
+- **`rsk identify` and a TUI "Identify this key" action.** Nothing in the first-party
+  tooling could drive the wink that now works, so it was useful only to whoever wrote
+  their own script. The CLI is the one command that does *not* refuse to guess between
+  attached authenticators — telling them apart is the whole job — so it walks every one
+  in turn and names it; a device whose INIT leaves `CAPABILITY_WINK` clear is reported
+  rather than winked. The TUI action takes the first match like its other reads, so it
+  points at the device the dashboard is actually showing.
 - **`CTAPHID_WINK` actually winks.** Every `INIT` reply set `CAPABILITY_WINK`, which
   §11.2.9.2.1 defines as "implements CTAPHID_WINK", and the handler then answered the
   command with an empty frame and no visible action — so `fido2-token -W` and every

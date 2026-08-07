@@ -53,6 +53,7 @@ field shows `CCID unavailable` rather than a fabricated value.
 | `--demo`, `--mock` | interactive cockpit against a **simulated** device, no hardware needed |
 | `--once`        | print the gathered status once (human-readable) and exit       |
 | `--json`        | one-shot machine-readable status (JSON) and exit               |
+| `--identify`    | blink this key's indicator and exit (the Overview action, scripted) |
 | `--selftest [PIN]` | native backup export/restore round-trip (needs a no-touch build) |
 | `-h`, `--help`  | usage                                                          |
 

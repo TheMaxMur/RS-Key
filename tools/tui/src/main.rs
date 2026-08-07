@@ -12,6 +12,7 @@
 //!     rsk-tui            # interactive cockpit
 //!     rsk-tui --demo     # same UI, simulated device (no hardware)
 //!     rsk-tui --once     # print the gathered status once and exit
+//!     rsk-tui --identify # blink the indicator so you can tell this key apart
 //!     rsk-tui --json     # one-shot machine-readable status
 //!     rsk-tui --selftest # native backup round-trip self-test (no-touch build)
 
@@ -55,6 +56,20 @@ fn main() -> io::Result<()> {
             Ok(s) => println!("export selftest OK: {s}"),
             Err(e) => {
                 eprintln!("export selftest FAILED: {e}");
+                std::process::exit(1);
+            }
+        }
+        return Ok(());
+    }
+
+    // Non-interactive twin of the Overview action. `rsk identify` is the usual
+    // route, but the Python CLI needs hidapi, and on hosts where that cannot open a
+    // FIDO device this is the only first-party way to make a key point at itself.
+    if has("--identify") {
+        match device::identify() {
+            Ok(s) => println!("{s}"),
+            Err(e) => {
+                eprintln!("identify failed: {e}");
                 std::process::exit(1);
             }
         }
@@ -141,6 +156,7 @@ fn print_help() {
          --demo,--mock interactive cockpit against a simulated device (no hardware)\n  \
          --once        print the gathered status once and exit\n  \
          --json        one-shot machine-readable status (JSON) and exit\n  \
+         --identify    blink this key's indicator and exit (CTAPHID wink)\n  \
          --selftest    native backup export/restore round-trip (no-touch build)\n  \
          -h, --help    this help\n\n\
          In the cockpit: Tab/arrows switch sections, j/k move, Enter runs,\n  \

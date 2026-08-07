@@ -709,6 +709,7 @@ impl Section {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Action {
     Refresh,
+    Identify,
     CredCount,
     LedGet,
     LedCycle,
@@ -727,6 +728,7 @@ impl Action {
     pub fn label(self) -> &'static str {
         match self {
             Action::Refresh => "Refresh status",
+            Action::Identify => "Identify this key (wink)",
             Action::CredCount => "FIDO · count resident passkeys",
             Action::LedGet => "LED · read state",
             Action::LedCycle => "LED · cycle idle color",
@@ -743,7 +745,7 @@ impl Action {
 
     pub fn section(self) -> Section {
         match self {
-            Action::Refresh | Action::Verify => Section::Overview,
+            Action::Refresh | Action::Verify | Action::Identify => Section::Overview,
             Action::CredCount => Section::Fido,
             Action::LedGet | Action::LedCycle => Section::Led,
             Action::BackupExport
@@ -756,8 +758,9 @@ impl Action {
     }
 
     /// The whole catalog, for the `/` search palette.
-    pub const ALL: [Action; 12] = [
+    pub const ALL: [Action; 13] = [
         Action::Refresh,
+        Action::Identify,
         Action::Verify,
         Action::CredCount,
         Action::LedGet,

@@ -167,10 +167,18 @@ steady toggle, use `rsk led`.
 
 ### Identify (CTAPHID wink)
 
-A host can ask the key to point at itself — `fido2-token -W <device>`, or any
-tool that sends `CTAPHID_WINK` — which is how you tell two identical keys apart
-when both are plugged in. The indicator answers with four fast blinks over about
-half a second in the **touch** colour, then goes back to whatever it was showing.
+A host can ask the key to point at itself — `CTAPHID_WINK` — which is how you tell
+two identical keys apart when both are plugged in. The indicator answers with four
+fast blinks over about half a second in the **touch** colour, then goes back to
+whatever it was showing.
+
+```sh
+rsk identify              # wink every attached key in turn, naming each
+rsk identify --repeat 3   # three bursts each, if you looked away
+```
+
+`rsk-tui` has the same thing as "Identify this key" in Overview — that one winks
+the device the dashboard is showing, rather than walking them all.
 
 The burst deliberately overrides the configured effect *and* `--steady`: the
 command is only useful if the key visibly flashes. It also uses the touch

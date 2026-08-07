@@ -35,6 +35,9 @@ use crate::model::*;
 
 const REPORT_LEN: usize = 64;
 const CTAPHID_INIT: u8 = 0x86;
+const CTAPHID_WINK: u8 = 0x88;
+/// INIT capability bit 0: the device implements CTAPHID_WINK (CTAP §11.2.9.2.1).
+const CAPFLAG_WINK: u8 = 0x01;
 const CTAPHID_CBOR: u8 = 0x90;
 const CTAPHID_KEEPALIVE: u8 = 0xBB; // device-still-processing status frame
 /// Ceiling on the keepalive wait: a hostile device can stream keepalives forever (each read
@@ -149,6 +152,10 @@ impl DeviceProvider for HardwareProvider {
         match action {
             // Refresh is handled by the caller (it just re-snapshots).
             Action::Refresh => ActionResult::Ok("status refreshed".into()),
+            Action::Identify => match identify() {
+                Ok(s) => ActionResult::Ok(s),
+                Err(e) => ActionResult::Failed(format!("identify failed: {e}")),
+            },
             Action::CredCount => match cred_count(pin) {
                 Ok((existing, remaining)) => ActionResult::Ok(format!(
                     "{existing} resident passkey{} · ~{remaining} slot{} free",
@@ -289,14 +296,22 @@ fn hid_read(dev: &hidapi::HidDevice, ms: i32) -> Vec<u8> {
 }
 
 fn ctaphid_init(dev: &hidapi::HidDevice) -> Option<[u8; 4]> {
+    ctaphid_init_caps(dev).map(|(cid, _)| cid)
+}
+
+/// CTAPHID INIT returning the channel id *and* the capability byte (payload byte
+/// 17, frame offset 23). `identify` reads it: bit 0 (WINK) is the device saying it
+/// has an indicator, so a build without one is reported instead of being sent a
+/// command it would answer invisibly.
+fn ctaphid_init_caps(dev: &hidapi::HidDevice) -> Option<([u8; 4], u8)> {
     let mut f = vec![0xff, 0xff, 0xff, 0xff, CTAPHID_INIT, 0, 8];
     f.extend_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8]);
     hid_write(dev, &f);
     let r = hid_read(dev, READ_TIMEOUT_MS);
-    if r.len() < 19 || r[4] != CTAPHID_INIT {
+    if r.len() < 24 || r[4] != CTAPHID_INIT {
         return None;
     }
-    Some([r[15], r[16], r[17], r[18]])
+    Some(([r[15], r[16], r[17], r[18]], r[23]))
 }
 
 /// Send a CTAP2 CBOR command and return the raw response (status byte + payload).
@@ -1023,6 +1038,26 @@ pub fn led_cycle_idle() -> Result<String, String> {
     Ok(format!("idle color → {}", COLORS[next]))
 }
 
+/// `CTAPHID_WINK` — blink the indicator so the operator can tell this key from
+/// another one on the same host. No PIN, no touch: it reveals nothing and changes
+/// nothing. A device that leaves `CAPABILITY_WINK` clear is saying it has no
+/// indicator, so it is reported rather than sent the command.
+pub fn identify() -> Result<String, String> {
+    let dev = hid_open().ok_or("no FIDO HID device found")?;
+    let (cid, caps) = ctaphid_init_caps(&dev).ok_or("CTAPHID INIT failed")?;
+    if caps & CAPFLAG_WINK == 0 {
+        return Err("this build has no indicator to wink with".into());
+    }
+    let mut f = cid.to_vec();
+    f.extend_from_slice(&[CTAPHID_WINK, 0, 0]);
+    hid_write(&dev, &f);
+    let r = hid_read(&dev, READ_TIMEOUT_MS);
+    if r.len() < 5 || r[4] != CTAPHID_WINK {
+        return Err("the device refused CTAPHID_WINK".into());
+    }
+    Ok("winking — watch the indicator".into())
+}
+
 pub fn reboot(bootsel: bool) -> Result<String, String> {
     let mut c = Ccid::open()?;
     c.select(VENDOR_AID)?;
@@ -1641,6 +1676,7 @@ impl DeviceProvider for MockProvider {
     fn run(&mut self, action: Action, _input: &ActionInput) -> ActionResult {
         match action {
             Action::Refresh => ActionResult::Ok("status refreshed".into()),
+            Action::Identify => ActionResult::Ok("[demo] winking — watch the indicator".into()),
             Action::CredCount => {
                 ActionResult::Ok("[demo] 12 resident passkeys · ~120 slots free".into())
             }
