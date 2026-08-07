@@ -198,6 +198,7 @@ run "cargo-vet (supply-chain)" cargo vet --locked
 # and nothing in the type system notices a missing arm. OATH's was absent for a
 # release (audit run-36); this is the check that would have caught it.
 run "gate-union (device wipe)" python scripts/gate_union.py
+run "docs constants match code" python scripts/docs_constants.py
 run "pytest (tools/rsk)"       python -m pytest tools/rsk -q
 # The interop allow-list is the only thing that tells an expected RS-Key/YubiKey
 # divergence from a fidelity gap, and it goes stale silently — a firmware change

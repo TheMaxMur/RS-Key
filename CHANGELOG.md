@@ -83,6 +83,13 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   and a versionless sealed image is refused fail-closed — while signing-keys.md (twice) and
   build.md showed `--major 1 --minor 0` and stopped. Exactly the pages a reader reaches
   *after* enabling anti-rollback. All three now carry it.
+- **The gate compares documented constants against the code.** A number copied into prose
+  rots silently — the constant moves, everything still compiles, every test still passes, and
+  the docs go on asserting the old value. `architecture.md` spent the whole capacity-work era
+  claiming `MAX_DYNAMIC_FILES` was 256 against a real 1280. `scripts/docs_constants.py` now
+  fails the gate on any value the docs state next to a constant's name that the code no longer
+  assigns to it. Narrow by construction — 5 pairs, because the docs rarely state a value that
+  way — and it fails if that count drops, so it cannot start passing vacuously.
 - **`otp_secureboot.json` now has a reason, not just a description.** Four pages named the
   file; none said why it exists. It is the courier for one number: the bootrom compares
   `SHA-256(public key in the image)` against a fused fingerprint, signing happens on the host
