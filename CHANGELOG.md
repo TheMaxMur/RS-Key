@@ -52,6 +52,23 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **An over-long `allowList` or `excludeList` is refused, not truncated.** Both
+  parsers dropped every credential descriptor past `maxCredentialCountInList` (16)
+  and carried on as if the list had ended there, instead of returning
+  `CTAP2_ERR_LIMIT_EXCEEDED` so the platform splits it. On getAssertion that answers
+  `NO_CREDENTIALS` for a credential the device holds — invisible whenever the match
+  happens to sit in the retained head. On makeCredential it silently forfeits
+  re-registration protection: padding the `excludeList` past 16 hid the registered
+  credential and minted a duplicate, where a YubiKey returns
+  `CTAP2_ERR_CREDENTIAL_EXCLUDED`.
+- **A credential descriptor whose `type` is not `public-key` is ignored.** Both
+  parsers read the field only to check it was present and then matched on the `id`
+  regardless, so a descriptor naming a credential kind this device cannot assert was
+  treated as one of ours. Foreign descriptors are now skipped — while still counting
+  towards the ceiling, so they cannot buy room past it — and an `allowList` left with
+  no usable descriptor keeps scoping the request: it fails with `NO_CREDENTIALS`
+  rather than falling through to resident discovery and answering with some other
+  credential.
 - **getInfo no longer advertises `FIDO_2_2`.** CTAP 2.2 never defined that version
   string and CTAP 2.3 §6.4 says it outright: "MUST not be present in versions member".
   The 2.2 surface is discovered through option IDs and getInfo members instead.

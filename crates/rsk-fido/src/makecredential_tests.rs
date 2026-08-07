@@ -1963,3 +1963,111 @@ fn an_rp_id_carrying_whitespace_is_refused() {
     let (resp, _) = run(&mc_build(4, good_params));
     assert!(!resp.is_empty(), "a plain rpId must still register");
 }
+
+/// A makeCredential whose excludeList is `entries`, each a `(type, id)` descriptor.
+fn mc_build_exclude(entries: &[(&str, &[u8])]) -> std::vec::Vec<u8> {
+    let mut buf = [0u8; 8192];
+    let n = {
+        let mut e = Encoder::new(Cursor::new(&mut buf[..]));
+        e.map(5).unwrap();
+        e.u8(1).unwrap().bytes(&[0xCDu8; 32]).unwrap();
+        e.u8(2).unwrap().map(1).unwrap();
+        e.str("id").unwrap().str("example.com").unwrap();
+        e.u8(3).unwrap().map(1).unwrap();
+        e.str("id").unwrap().bytes(&[1, 2, 3, 4]).unwrap();
+        good_params(&mut e);
+        e.u8(5).unwrap().array(entries.len() as u64).unwrap();
+        for (ty, id) in entries {
+            e.map(2).unwrap();
+            e.str("id").unwrap().bytes(id).unwrap();
+            e.str("type").unwrap().str(ty).unwrap();
+        }
+        e.writer().position()
+    };
+    buf[..n].to_vec()
+}
+
+// The excludeList is the re-registration guard, so truncating it is worse than
+// refusing it: padding the list past maxCredentialCountInList would hide the
+// already-registered credential and mint a duplicate. The declining button proves
+// the refusal happens at parse time, before any touch is spent.
+#[test]
+fn exclude_list_over_max_is_limit_exceeded() {
+    let mut fs = Fs::new(RamStorage::new());
+    let mut rng = SeqRng(1);
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+    let mut state = crate::FidoState::new();
+    let cred_id = register_and_get_cred_id(&mut fs, &mut rng, &mut state);
+    let filler = [0xEEu8; 32];
+
+    let mut entries = [("public-key", &filler[..]); MAX_EXCLUDE + 1];
+    entries[MAX_EXCLUDE] = ("public-key", &cred_id[..]);
+
+    let mut out = [0u8; 1024];
+    let mut presence = Decline;
+    let mut ctx = Ctx {
+        presence: &mut presence,
+        dev: dev(),
+        fs: &mut fs,
+        rng: &mut rng,
+        state: &mut state,
+        now_ms: 1000,
+    };
+    assert_eq!(
+        make_credential(&mut ctx, &mc_build_exclude(&entries), &mut out),
+        Err(CtapError::LimitExceeded),
+        "an oversized excludeList is refused; truncating it would create a duplicate"
+    );
+}
+
+// The boundary still excludes, so the ceiling is `>` and not `>=` — and a
+// foreign-typed descriptor is ignored rather than matched, which is what lets the
+// registration through.
+#[test]
+fn exclude_list_at_max_excludes_and_foreign_types_do_not() {
+    let mut fs = Fs::new(RamStorage::new());
+    let mut rng = SeqRng(1);
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+    let mut state = crate::FidoState::new();
+    let cred_id = register_and_get_cred_id(&mut fs, &mut rng, &mut state);
+    let filler = [0xEEu8; 32];
+
+    let mut entries = [("public-key", &filler[..]); MAX_EXCLUDE];
+    entries[MAX_EXCLUDE - 1] = ("public-key", &cred_id[..]);
+    let mut out = [0u8; 1024];
+    {
+        let mut presence = crate::AlwaysConfirm;
+        let mut ctx = Ctx {
+            presence: &mut presence,
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 1000,
+        };
+        assert_eq!(
+            make_credential(&mut ctx, &mc_build_exclude(&entries), &mut out),
+            Err(CtapError::CredentialExcluded),
+            "exactly maxCredentialCountInList entries must still exclude"
+        );
+    }
+
+    let mut presence = crate::AlwaysConfirm;
+    let mut ctx = Ctx {
+        presence: &mut presence,
+        dev: dev(),
+        fs: &mut fs,
+        rng: &mut rng,
+        state: &mut state,
+        now_ms: 1000,
+    };
+    assert!(
+        make_credential(
+            &mut ctx,
+            &mc_build_exclude(&[("not-a-key", &cred_id[..])]),
+            &mut out
+        )
+        .is_ok(),
+        "a foreign-typed descriptor names no credential this device can assert"
+    );
+}

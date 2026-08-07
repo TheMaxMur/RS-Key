@@ -193,6 +193,10 @@ pub const MAX_MSG_SIZE: u64 = 7609;
 /// mints (a non-resident box) — and therefore the largest it will assert.
 pub const MAX_CRED_ID_LENGTH: u64 = crate::credential::CRED_BOX_MAX as u64;
 pub const MAX_CREDENTIAL_COUNT_IN_LIST: u64 = 16;
+/// The only `PublicKeyCredentialType` WebAuthn defines. A credential descriptor
+/// carrying anything else is a type this device cannot assert, so the allowList
+/// and excludeList parsers drop it rather than match on its id.
+pub const PUBLIC_KEY_TYPE: &str = "public-key";
 
 // pinUvAuthParam MAC covers subCommand ‖ subCommandParams; cap on the raw bytes
 // (vendor.rs deliberately overrides with its own larger cap). A maximal legal

@@ -2,7 +2,7 @@
 // Copyright (C) 2026 RS-Key contributors
 
 //! `authenticatorGetAssertion`: resolve the credential from the allowList
-//! (resident-id lookup or a non-resident box) or, if the allowList is empty, by
+//! (resident-id lookup or a non-resident box) or, if the allowList is absent, by
 //! scanning resident credentials for the rp; sign authData ‖ clientDataHash
 //! with the credential key. A verified `pinUvAuthParam` sets the `uv` flag
 //! ([`enforce_pin`]); credProtect visibility is enforced in [`Best::consider`].
@@ -16,7 +16,7 @@ use zeroize::Zeroize;
 use rsk_crypto::sha256;
 use rsk_fs::Storage;
 
-use crate::cbordec::{cbor, def_arr, def_map};
+use crate::cbordec::{cbor, def_map, parse_credential_descriptors};
 use crate::clientpin::{UvOutcome, builtin_uv_enabled, builtin_uv_step};
 use crate::consts::{
     CRED_PROT_UV_OPTIONAL_WITH_LIST, CRED_PROT_UV_REQUIRED, CURVE_P256, EF_CRED, EF_PIN, FLAG_ED,
@@ -50,6 +50,11 @@ struct Request<'a> {
     client_data_hash: &'a [u8],
     allow: [&'a [u8]; MAX_ALLOW],
     allow_len: usize,
+    /// Whether key 3 was sent at all. Distinct from `allow_len > 0`: a list that
+    /// is present but yields no usable descriptor still scopes the request, so it
+    /// must fail with NoCredentials rather than fall through to resident
+    /// discovery and answer with some other credential.
+    allow_present: bool,
     rk_option: bool,
     uv: bool,
     /// The `up` option (default true). `up:false` is the platform's silent
@@ -72,6 +77,7 @@ fn parse(data: &[u8]) -> Result<Request<'_>, CtapError> {
         client_data_hash: &[],
         allow: [&[]; MAX_ALLOW],
         allow_len: 0,
+        allow_present: false,
         rk_option: false,
         uv: false,
         up: true,
@@ -97,7 +103,10 @@ fn parse(data: &[u8]) -> Result<Request<'_>, CtapError> {
         match key {
             1 => req.rp_id = cbor(d.str())?,
             2 => req.client_data_hash = cbor(d.bytes())?,
-            3 => parse_allow_list(&mut d, &mut req)?,
+            3 => {
+                req.allow_present = true;
+                req.allow_len = parse_credential_descriptors(&mut d, &mut req.allow)?;
+            }
             5 => parse_options(&mut d, &mut req)?,
             4 => parse_extensions(&mut d, &mut req)?,
             6 => req.pin_uv_auth_param = Some(cbor(d.bytes())?),
@@ -106,39 +115,6 @@ fn parse(data: &[u8]) -> Result<Request<'_>, CtapError> {
         }
     }
     Ok(req)
-}
-
-/// Parse the `allowList` (request key 3) into `req.allow` (capped at MAX_ALLOW).
-fn parse_allow_list<'a>(d: &mut Decoder<'a>, req: &mut Request<'a>) -> Result<(), CtapError> {
-    let a = def_arr(d)?;
-    for _ in 0..a {
-        let m = def_map(d)?;
-        let mut id: &[u8] = &[];
-        let (mut id_present, mut type_present) = (false, false);
-        for _ in 0..m {
-            match cbor(d.str())? {
-                "id" => {
-                    id = cbor(d.bytes())?;
-                    id_present = true;
-                }
-                // Read "type" as text so a byte-string yields CborUnexpectedType.
-                "type" => {
-                    let _: &str = cbor(d.str())?;
-                    type_present = true;
-                }
-                _ => cbor(d.skip())?,
-            }
-        }
-        // A credential descriptor needs both "type" and "id".
-        if !type_present || !id_present {
-            return Err(CtapError::MissingParameter);
-        }
-        if req.allow_len < MAX_ALLOW {
-            req.allow[req.allow_len] = id;
-            req.allow_len += 1;
-        }
-    }
-    Ok(())
 }
 
 /// Parse the getAssertion `extensions` map (request key 4) into `req`.
@@ -419,7 +395,7 @@ fn enforce_pin<S: Storage, R: Rng>(
 }
 
 /// Populate `best` with the newest visible credential for this rp — from the
-/// allowList (resident-id lookup or a non-resident box) or, if it is empty, by
+/// allowList (resident-id lookup or a non-resident box) or, if it is absent, by
 /// scanning resident credentials. On a multi-credential resident discovery, arm
 /// getNextAssertion (newest first) so it can return the rest one at a time.
 #[allow(clippy::too_many_arguments)]
@@ -431,7 +407,7 @@ fn resolve_credential<S: Storage, R: Rng>(
     uv: bool,
     best: &mut Best,
 ) {
-    if req.allow_len > 0 {
+    if req.allow_present {
         resolve_from_allowlist(ctx, req, rp_id_hash, seed, uv, best);
     } else {
         resolve_by_discovery(ctx, req, rp_id_hash, seed, uv, best);
@@ -489,7 +465,7 @@ fn resolve_from_allowlist<S: Storage, R: Rng>(
     }
 }
 
-/// Resident discovery (empty allowList): fold every stored credential for this rp
+/// Resident discovery (no allowList): fold every stored credential for this rp
 /// into `best`, and — when more than one matches — arm getNextAssertion with the
 /// sorted EF_CRED slots so the rest can be walked one at a time.
 fn resolve_by_discovery<S: Storage, R: Rng>(
