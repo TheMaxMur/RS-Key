@@ -318,7 +318,7 @@ fn the_gate_set_defers_every_record_whose_absence_is_permissive() {
         EF_ALWAYS_UV,
         EF_MINPINLEN,
         EF_AUTHTOKEN,
-        EF_PAUTHTOKEN,
+        EF_PAUTHTOKEN.get(),
         EF_BACKUP_SEALED,
     ] {
         assert!(is_fido_gate_fid(fid), "{fid:#06x} gates the applet");

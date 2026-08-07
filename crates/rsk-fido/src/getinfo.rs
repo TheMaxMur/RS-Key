@@ -88,11 +88,15 @@ fn write_info<W: Write>(
     // 0x01 versions — advertise the full backward-compatible superset up to
     // FIDO_2_3 (the implemented surface: credMgmt, largeBlobs, credProtect,
     // minPINLength, hmac-secret-mc, thirdPartyPayment, authnrCfg,
-    // pinUvAuthToken). CTAP minor versions add only, never break, so a 2.3
-    // device IS also a 2.0/2.1/2.2 device. The non-deprecated FIDO conformance
-    // CTAP2.3 module is the target (it requires `FIDO_2_3`); the deprecated 2.0
-    // module size-checks ES512 at 64 bytes (a stale bug — P-521 is 66) and omits
-    // hmac-secret-mc, both fixed in 2.1+/2.3.
+    // pinUvAuthToken, perCredMgmtRO). CTAP minor versions add only, never break,
+    // so a 2.3 device IS also a 2.0/2.1/2.2 device. The non-deprecated FIDO
+    // conformance CTAP2.3 module is the target (it requires `FIDO_2_3`); the
+    // deprecated 2.0 module size-checks ES512 at 64 bytes (a stale bug — P-521 is
+    // 66) and omits hmac-secret-mc, both fixed in 2.1+/2.3.
+    //
+    // There is deliberately no `FIDO_2_2`: CTAP 2.2 never defined that string, and
+    // CTAP 2.3 §6.4 spells it out — "MUST not be present in versions member". The
+    // 2.2 surface is advertised through its option IDs and getInfo members instead.
     //
     // U2F_V2 (CTAP1) drops off while alwaysUv is on: §7.2.4 disables the CTAP1/U2F
     // interface (`process_u2f` refuses REGISTER/AUTHENTICATE), so getInfo must stop
@@ -103,14 +107,11 @@ fn write_info<W: Write>(
     // AUTHENTICATE. Capability alone is not enough: with no PIN set there is nothing
     // to verify against, so U2F goes away as on any screenless build.
     let u2f = !always_uv || (builtin_uv && pin_set);
-    enc.u8(0x01)?.array(4 + u64::from(u2f))?;
+    enc.u8(0x01)?.array(3 + u64::from(u2f))?;
     if u2f {
         enc.str("U2F_V2")?;
     }
-    enc.str("FIDO_2_0")?
-        .str("FIDO_2_1")?
-        .str("FIDO_2_2")?
-        .str("FIDO_2_3")?;
+    enc.str("FIDO_2_0")?.str("FIDO_2_1")?.str("FIDO_2_3")?;
 
     // 0x02 extensions
     enc.u8(0x02)?
@@ -131,8 +132,9 @@ fn write_info<W: Write>(
     // user verification) sorts right after "up" (0x75 0x76 > 0x75 0x70) and is
     // present only when the build can collect a PIN on its own UI (the trusted
     // display); "alwaysUv" sorts first among the 8-char keys (before "credMgmt");
-    // "makeCredUvNotRqd" is the longest key, so it sorts last.
-    enc.u8(0x04)?.map(11 + u64::from(builtin_uv))?;
+    // "perCredMgmtRO" (13) lands between "largeBlobs" (10) and "pinUvAuthToken"
+    // (14); "makeCredUvNotRqd" is the longest key, so it sorts last.
+    enc.u8(0x04)?.map(12 + u64::from(builtin_uv))?;
     enc.str("ep")?.bool(ea_enabled)?;
     enc.str("rk")?.bool(true)?;
     enc.str("up")?.bool(true)?;
@@ -146,6 +148,10 @@ fn write_info<W: Write>(
     enc.str("authnrCfg")?.bool(true)?;
     enc.str("clientPin")?.bool(pin_set)?;
     enc.str("largeBlobs")?.bool(true)?;
+    // perCredMgmtRO (CTAP 2.2 §6.4): the `pcmr` permission may be requested, which
+    // hands the platform the persistent pinUvAuthToken for read-only credential
+    // management. Without this key §6.5.5.7.2/.3 require refusing `pcmr` outright.
+    enc.str("perCredMgmtRO")?.bool(true)?;
     enc.str("pinUvAuthToken")?.bool(true)?;
     enc.str("setMinPINLength")?.bool(true)?;
     // makeCredUvNotRqd (§6.1.2 steps 7/10): a NON-discoverable credential may be

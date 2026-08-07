@@ -13,6 +13,37 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+### Added
+
+- **`perCredMgmtRO` and a real persistent pinUvAuthToken (CTAP 2.2 §6.5.2.2).** The
+  `pcmr` permission was half-wired: clientPIN accepted it and handed out a token, but
+  `credentialManagement` never verified against that token, so it authorized nothing —
+  and getInfo did not advertise `options.perCredMgmtRO`, which §6.5.5.7.2/.3 make the
+  precondition for requesting `pcmr` at all. Both halves are now real. getCredsMetadata,
+  enumerateRPsBegin and enumerateCredentialsBegin verify the persistent token first and
+  fall back to the session token (§6.8.2/.3/.4); deleteCredential and
+  updateUserInformation still refuse it, because the permission is read-only. The token
+  itself lives in `EF_PAUTHTOKEN`, sealed under the device key like the seed, so it
+  outlives the power cycle — the point of "persistent": a platform can refresh a
+  credential list across replugs without re-prompting for the PIN. Its record's
+  presence *is* the grant, so `resetPersistentPinUvAuthToken` is a deletion, which
+  `changePIN`, a `setMinPINLength` that forces a PIN change, and `authenticatorReset`
+  all perform. It was previously RAM-only and, on a device whose PIN had been *set* but
+  never *changed*, was never seeded at all — 32 zero bytes, which would have become a
+  known token the moment anything verified against it.
+
+### Fixed
+
+- **getInfo no longer advertises `FIDO_2_2`.** CTAP 2.2 never defined that version
+  string and CTAP 2.3 §6.4 says it outright: "MUST not be present in versions member".
+  The 2.2 surface is discovered through option IDs and getInfo members instead.
+  `versions` is now `U2F_V2, FIDO_2_0, FIDO_2_1, FIDO_2_3`, and both metadata
+  statements match.
+- **A PIN established over a torn `authenticatorReset` cannot inherit an old
+  read grant.** The wipe's last phase can drop `EF_PIN` and lose power before
+  `EF_PAUTHTOKEN`; `setPIN` now clears the persistent token first, so the holder of a
+  pre-reset `pcmr` grant cannot enumerate the credentials created after it.
+
 ## [0.4.6] - 2026-08-06
 
 ### Security

@@ -270,9 +270,17 @@ impl AppletHandler<'_> {
         // it. Set on the display task, consumed here — `FidoState` is ours, not its.
         #[cfg(feature = "display")]
         if LOCAL_PIN_CHANGED.swap(false, core::sync::atomic::Ordering::AcqRel) {
-            let mut rngb = self.rng.borrow_mut();
-            self.fido_state.reset_pin_uv_auth_token(&mut *rngb);
-            self.fido_state.reset_persistent_token(&mut *rngb);
+            {
+                let mut rngb = self.rng.borrow_mut();
+                self.fido_state.reset_pin_uv_auth_token(&mut *rngb);
+            }
+            // §6.5.5.6 step 15 also calls resetPersistentPinUvAuthToken, and the
+            // `pcmr` grant is a flash record now, so revoking it is a delete. On a
+            // flash error re-arm the flag rather than swallow it: the grant is still
+            // live, and the next command retries.
+            if rsk_fido::seed::clear_ppuat(&mut *self.fs.borrow_mut()).is_err() {
+                LOCAL_PIN_CHANGED.store(true, core::sync::atomic::Ordering::Release);
+            }
             // The host path also clears `needs_power_cycle` here; that field is
             // crate-private and leaving the RAM soft lock armed only fails closed
             // (host clientPIN stays blocked until a replug), so it stays as it is.

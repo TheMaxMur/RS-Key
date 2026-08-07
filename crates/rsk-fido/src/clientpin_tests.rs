@@ -1625,3 +1625,79 @@ fn each_pin_token_carries_a_fresh_iv() {
         );
     }
 }
+
+/// CTAP 2.2 §6.5.5.7.2 step 14: a `pcmr` request is answered with the *persistent*
+/// token and stops there. It is minted at the grant — never the all-zero default a
+/// RAM-only token had before any changePIN — and, being flash-backed, the same
+/// bytes come back after a power cycle, which is the whole point of `pcmr`: the
+/// platform keeps read access to credential metadata across replugs.
+#[test]
+fn pcmr_issues_a_persistent_token_that_survives_a_power_cycle() {
+    let (mut fs, mut rng, mut state, plat) = setup_with_pin(b"1234");
+    let mut out = [0u8; 256];
+    let n = run(
+        &mut fs,
+        &mut rng,
+        &mut state,
+        &plat.get_token_perms_req(b"1234", PERM_PCMR as u64),
+        &mut out,
+    )
+    .unwrap();
+    let ppuat = plat.decrypt_token(&out[..n]);
+    assert_ne!(ppuat, [0u8; 32], "the persistent token must be random");
+    assert!(
+        !state.paut.in_use,
+        "the pcmr branch returns before beginUsingPinUvAuthToken"
+    );
+
+    // A fresh FidoState is a power cycle: RAM state is gone, the token is not.
+    let mut rebooted = FidoState::new();
+    let plat2 = key_agreement(&mut fs, &mut rng, &mut rebooted, PinProto::Two, 2);
+    let n = run(
+        &mut fs,
+        &mut rng,
+        &mut rebooted,
+        &plat2.get_token_perms_req(b"1234", PERM_PCMR as u64),
+        &mut out,
+    )
+    .unwrap();
+    assert_eq!(plat2.decrypt_token(&out[..n]), ppuat);
+}
+
+/// §6.5.5.6 step 15 calls resetPersistentPinUvAuthToken — "all persistent
+/// permissions are cleared on pin change" — so the old holder's grant dies with
+/// the old PIN and the next grant mints different bytes.
+#[test]
+fn change_pin_revokes_the_persistent_token() {
+    let (mut fs, mut rng, mut state, plat) = setup_with_pin(b"1234");
+    let mut out = [0u8; 256];
+    let n = run(
+        &mut fs,
+        &mut rng,
+        &mut state,
+        &plat.get_token_perms_req(b"1234", PERM_PCMR as u64),
+        &mut out,
+    )
+    .unwrap();
+    let before = plat.decrypt_token(&out[..n]);
+
+    run(
+        &mut fs,
+        &mut rng,
+        &mut state,
+        &plat.change_pin_req(b"1234", b"5678"),
+        &mut out,
+    )
+    .unwrap();
+
+    let plat2 = key_agreement(&mut fs, &mut rng, &mut state, PinProto::Two, 2);
+    let n = run(
+        &mut fs,
+        &mut rng,
+        &mut state,
+        &plat2.get_token_perms_req(b"5678", PERM_PCMR as u64),
+        &mut out,
+    )
+    .unwrap();
+    assert_ne!(plat2.decrypt_token(&out[..n]), before);
+}

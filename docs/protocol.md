@@ -297,10 +297,17 @@ Sources: `crates/rsk-fido/src/consts.rs`,
 These follow public specifications; a tool that already speaks YubiKey/FIDO2
 needs only the identifiers above. RS-Key implements:
 
-- **FIDO2 / CTAP 2.1**: getInfo, makeCredential, getAssertion, getNextAssertion,
-  clientPIN, reset, selection, credentialManagement, authenticatorConfig,
+- **FIDO2 / CTAP 2.1** (`versions` advertises up to `FIDO_2_3`; never `FIDO_2_2`,
+  which CTAP 2.3 §6.4 says was never defined): getInfo, makeCredential,
+  getAssertion, getNextAssertion, clientPIN, reset, selection,
+  credentialManagement, authenticatorConfig,
   largeBlobs (writable without a `pinUvAuthParam` until a PIN is set or `alwaysUv` is
-  on, per §6.10.2). `maxMsgSize` = `7609`. Supported COSE algorithms:
+  on, per §6.10.2). `options.perCredMgmtRO` is true, so a tool may request the
+  `pcmr` permission (`0x40`, alone) and get the **persistent** pinUvAuthToken: it
+  drives getCredsMetadata / enumerateRPs / enumerateCredentials, never the two
+  writers, and survives replugs until a PIN change or a reset — a credential list
+  can be refreshed without re-prompting for the PIN. `maxMsgSize` = `7609`.
+  Supported COSE algorithms:
   ES256 `-7`, ES384 `-35`, ES512 `-36`, ES256K `-47`, EdDSA `-8`,
   ML-DSA-44 `-48`, ML-DSA-65 `-49` (both negotiable via `pubKeyCredParams`;
   advertised in getInfo only under the `advertise-pqc` build). ML-DSA-87 `-50`

@@ -44,7 +44,6 @@
       "U2F_V2",
       "FIDO_2_0",
       "FIDO_2_1",
-      "FIDO_2_2",
       "FIDO_2_3"
     ],
     "extensions": [
@@ -66,6 +65,7 @@
       "authnrCfg": true,
       "clientPin": false,
       "largeBlobs": true,
+      "perCredMgmtRO": true,
       "pinUvAuthToken": true,
       "setMinPINLength": true,
       "makeCredUvNotRqd": true

@@ -415,7 +415,7 @@ fn set_min_pin_length<S: Storage, R: Rng>(
     }
     if force {
         ctx.state.reset_pin_uv_auth_token(ctx.rng);
-        ctx.state.reset_persistent_token(ctx.rng);
+        crate::seed::clear_ppuat(ctx.fs).map_err(|_| CtapError::Other)?;
     }
     // EF_MINPINLEN = [minPINLength, forceChangePin, sha256(rpId)…]; the rp hash
     // list authorises those RPs to read minPINLength via the makeCredential

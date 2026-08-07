@@ -148,7 +148,7 @@ divergences:
 |---|---|---|---|
 | `ccid.atr` | `3bfd13…5900` | *same* | RS-Key reproduces the YubiKey ATR byte-for-byte (a `MATCH`, not a diff) |
 | `fido.getinfo.aaguid` | (Yubico's model AAGUID) | `2479c7bf-…` | RS-Key self-assigns its AAGUID, deliberately not Yubico's |
-| `fido.getinfo.versions` | `…FIDO_2_1_PRE` | `…FIDO_2_2, FIDO_2_3` | RS-Key targets the final specs; drops the legacy `_PRE` |
+| `fido.getinfo.versions` | `…FIDO_2_1_PRE` | `…FIDO_2_3` | RS-Key targets the final specs; drops the legacy `_PRE` (and never claims `FIDO_2_2` — CTAP 2.3 §6.4 forbids that string) |
 | `fido.getinfo.algorithms` / `extensions` | ES256/EdDSA/… | superset | RS-Key adds ES384/512 (+ML-DSA, credBlob, thirdPartyPayment) |
 | `fido.getinfo.maxMsgSize` etc. | 1536 | 7609 | RS-Key's buffers/capacities are larger |
 | `fido.getinfo.transports` | `nfc, usb` | `usb` | RS-Key is USB-only, no NFC |

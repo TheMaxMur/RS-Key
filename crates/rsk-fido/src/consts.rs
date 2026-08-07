@@ -282,7 +282,11 @@ pub const EF_RPNICK: u16 = 0xD300;
 pub const RP_NICK_MAX_LEN: usize = 24;
 pub const EF_PIN: u16 = 0x1080; // PIN: [retries, len, format, verifier(32)]
 pub const EF_AUTHTOKEN: u16 = 0x1090; // pinUvAuthToken seed
-pub const EF_PAUTHTOKEN: u16 = 0x1091; // persistent pinUvAuthToken seed
+/// The **persistent** pinUvAuthToken (CTAP 2.2 §6.5.2.2): a bearer secret the
+/// platform keeps across power cycles, so it is kbase-sealed like the seed. Its
+/// *presence* is the `pcmr` grant — written at the first pcmr issuance, dropped
+/// wherever the spec calls `resetPersistentPinUvAuthToken` (§6.5.4).
+pub const EF_PAUTHTOKEN: KeyFid = KeyFid::new(0x1091);
 pub const EF_MINPINLEN: u16 = 0x1100; // minimum PIN length policy
 pub const EF_LARGEBLOB: u16 = 0x1101; // serialized large-blob array
 

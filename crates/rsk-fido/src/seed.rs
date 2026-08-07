@@ -39,7 +39,7 @@ use crate::Rng;
 use crate::cert::{build_attestation_cert, matches_template as cert_matches_template};
 use crate::consts::{
     EF_ATT_KEY, EF_COUNTER, EF_CRED_CTR, EF_EE_DEV, EF_KEY_DEV, EF_KEY_DEV_ENC, EF_LARGEBLOB,
-    LARGEBLOB_INITIAL, MAX_RESIDENT_CREDENTIALS,
+    EF_PAUTHTOKEN, LARGEBLOB_INITIAL, MAX_RESIDENT_CREDENTIALS,
 };
 use crate::ec::P256Key;
 
@@ -274,6 +274,41 @@ pub fn load_att_key<S: Storage>(dev: &Device, fs: &mut Fs<S>) -> Option<[u8; 32]
 
 pub fn store_att_key<S: Storage>(dev: &Device, fs: &mut Fs<S>, key: &[u8; 32]) -> Result<()> {
     put_sealed32(dev, fs, EF_ATT_KEY, key)
+}
+
+/// The persistent pinUvAuthToken (CTAP 2.2 §6.5.2.2), sealed exactly like the
+/// seed. `None` means no platform holds a `pcmr` grant: the record's absence *is*
+/// the empty permission set, since the token is minted only when the permission
+/// is granted and dropped whenever it is cleared.
+pub fn load_ppuat<S: Storage>(dev: &Device, fs: &mut Fs<S>) -> Option<[u8; 32]> {
+    get_sealed32(dev, fs, EF_PAUTHTOKEN)
+}
+
+/// [`load_ppuat`], minting and persisting a fresh token when none exists — the
+/// `pcmr` half of §6.5.5.7.2/.3. Unlike the session token it outlives the power
+/// cycle, so it must reach flash before it reaches the platform.
+pub fn ensure_ppuat<S: Storage>(
+    dev: &Device,
+    fs: &mut Fs<S>,
+    rng: &mut impl Rng,
+) -> Result<[u8; 32]> {
+    if let Some(tok) = load_ppuat(dev, fs) {
+        return Ok(tok);
+    }
+    let mut tok = [0u8; 32];
+    rng.fill(&mut tok);
+    let r = put_sealed32(dev, fs, EF_PAUTHTOKEN, &tok);
+    if r.is_err() {
+        tok.zeroize();
+    }
+    r.map(|()| tok)
+}
+
+/// `resetPersistentPinUvAuthToken` (§6.5.4): drop the token, which clears its
+/// permissions with it. `force_delete`, not `delete` — this revokes a capability,
+/// so a false-absent present bit must not leave the record live in the backend.
+pub fn clear_ppuat<S: Storage>(fs: &mut Fs<S>) -> Result<()> {
+    fs.force_delete(EF_PAUTHTOKEN.get())
 }
 
 /// Read and unseal a 32-byte value from any supported at-rest form (read-both).

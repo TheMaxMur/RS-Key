@@ -6,7 +6,9 @@
 //! deleteCredential (0x06) and updateUserInformation (0x07). Every subcommand
 //! except the `Next` walkers is gated on a `pinUvAuthParam` carrying the `cm`
 //! permission; the MAC covers the subcommand byte for 0x01/0x02 and
-//! `subcommand ‖ <raw subCommandParams>` for 0x04/0x06/0x07.
+//! `subcommand ‖ <raw subCommandParams>` for 0x04/0x06/0x07. The three read
+//! subcommands additionally accept the persistent token's `pcmr` grant
+//! (CTAP 2.2 §6.8.2/.3/.4); the two writers never do.
 //! enumerateCredentials emits the core 0x06–0x09 plus the extension fields
 //! 0x0A credProtect / 0x0B largeBlobKey (derived) / 0x0C thirdPartyPayment.
 
@@ -14,7 +16,7 @@ use minicbor::encode::write::Cursor;
 use minicbor::{Decoder, Encoder};
 use zeroize::Zeroize;
 
-use rsk_crypto::pinproto::PinProto;
+use rsk_crypto::pinproto::{self, PinProto};
 use rsk_fs::{Fs, Storage};
 
 use crate::cbordec::{cbor, def_arr, def_map};
@@ -32,6 +34,7 @@ use crate::credential::{
 use crate::ec::{CredKey, cached_point_len, cose_public_from_point};
 use crate::error::{CtapError, CtapResult};
 use crate::keyderiv::fido_load_key;
+use crate::seed::load_ppuat;
 use crate::state::{FidoState, PERM_CM};
 use crate::{Ctx, Rng};
 
@@ -157,29 +160,14 @@ pub fn cred_mgmt<S: Storage, R: Rng>(
         return Err(CtapError::InvalidParameter);
     }
     let proto = PinProto::from_u64(req.proto).ok_or(CtapError::InvalidParameter)?;
-    let now = ctx.now_ms;
 
     match req.subcommand {
         CM_GET_CREDS_METADATA => {
-            authorize_cm(
-                ctx.state,
-                proto,
-                &[CM_GET_CREDS_METADATA as u8],
-                param,
-                None,
-                now,
-            )?;
+            authorize_cm(ctx, proto, &[CM_GET_CREDS_METADATA as u8], param, None)?;
             creds_metadata(ctx, out)
         }
         CM_ENUMERATE_RPS_BEGIN => {
-            authorize_cm(
-                ctx.state,
-                proto,
-                &[CM_ENUMERATE_RPS_BEGIN as u8],
-                param,
-                None,
-                now,
-            )?;
+            authorize_cm(ctx, proto, &[CM_ENUMERATE_RPS_BEGIN as u8], param, None)?;
             enumerate_rps(ctx, true, out)
         }
         CM_ENUMERATE_CREDS_BEGIN => {
@@ -192,7 +180,7 @@ pub fn cred_mgmt<S: Storage, R: Rng>(
             let mut pbuf = [0u8; 1 + MAX_RAW_SUBPARA];
             let payload =
                 payload_with_subpara(CM_ENUMERATE_CREDS_BEGIN, req.raw_subpara, &mut pbuf)?;
-            authorize_cm(ctx.state, proto, payload, param, Some(&rp_id_hash), now)?;
+            authorize_cm(ctx, proto, payload, param, Some(&rp_id_hash))?;
             enumerate_creds(ctx, true, &rp_id_hash, out)
         }
         // 0x06/0x07 name a credential rather than an rp, so §6.8.5/6.8.6 match the
@@ -205,7 +193,7 @@ pub fn cred_mgmt<S: Storage, R: Rng>(
             verify_cm_token(ctx.state, proto, payload, param)?;
             let found = find_resident(ctx.fs, cred_id);
             check_rp_binding(ctx.state, found.as_ref().map(|(_, h)| h))?;
-            ctx.state.mark_token_used(now);
+            ctx.state.mark_token_used(ctx.now_ms);
             let (slot, rp_id_hash) = found.ok_or(CtapError::NoCredentials)?;
             delete_credential(ctx, slot, &rp_id_hash)
         }
@@ -217,7 +205,7 @@ pub fn cred_mgmt<S: Storage, R: Rng>(
             verify_cm_token(ctx.state, proto, payload, param)?;
             let found = find_resident(ctx.fs, cred_id);
             check_rp_binding(ctx.state, found.as_ref().map(|(_, h)| h))?;
-            ctx.state.mark_token_used(now);
+            ctx.state.mark_token_used(ctx.now_ms);
             let (slot, _) = found.ok_or(CtapError::NoCredentials)?;
             update_user(ctx, slot, user_id, req.user_name, req.user_display_name)
         }
@@ -225,21 +213,42 @@ pub fn cred_mgmt<S: Storage, R: Rng>(
     }
 }
 
-/// Verify the pinUvAuthParam over `payload`, check the `cm` permission and rpId
-/// binding, and on success refresh the token's rolling usage window. Named
-/// `authorize` (not `verify`) because that refresh mutates the usage timer.
-fn authorize_cm(
-    state: &mut FidoState,
+/// Authorize one of the three **read** subcommands: §6.8.2/.3/.4 try the
+/// persistent token first and fall back to the session token, which must then
+/// carry `cm` and match the rpId binding. Named `authorize` (not `verify`) because
+/// the fallback refreshes the session token's rolling usage window.
+fn authorize_cm<S: Storage, R: Rng>(
+    ctx: &mut Ctx<S, R>,
     proto: PinProto,
     payload: &[u8],
     param: &[u8],
     rp_id_hash: Option<&[u8; 32]>,
-    now_ms: u64,
 ) -> Result<(), CtapError> {
-    verify_cm_token(state, proto, payload, param)?;
-    check_rp_binding(state, rp_id_hash)?;
-    state.mark_token_used(now_ms);
+    if authorized_by_ppuat(ctx, proto, payload, param) {
+        return Ok(());
+    }
+    verify_cm_token(ctx.state, proto, payload, param)?;
+    check_rp_binding(ctx.state, rp_id_hash)?;
+    ctx.state.mark_token_used(ctx.now_ms);
     Ok(())
+}
+
+/// Whether the MAC was made with the persistent token (CTAP 2.2 §6.8.2 step 4).
+/// A holder of it *is* the `pcmr` grant — the record exists only while the
+/// permission does — and a persistent token carries no rpId binding and no usage
+/// timer, so it authorizes on its own. Absent record: no grant, no match.
+fn authorized_by_ppuat<S: Storage, R: Rng>(
+    ctx: &mut Ctx<S, R>,
+    proto: PinProto,
+    payload: &[u8],
+    param: &[u8],
+) -> bool {
+    let Some(mut tok) = load_ppuat(&ctx.dev, ctx.fs) else {
+        return false;
+    };
+    let ok = pinproto::verify(proto, &tok, payload, param);
+    tok.zeroize();
+    ok
 }
 
 /// The half of [`authorize_cm`] that needs no credential: the pinUvAuthParam over

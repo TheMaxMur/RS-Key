@@ -28,7 +28,7 @@ use crate::consts::{
 use crate::cose::cose_key_ecdh;
 use crate::error::{CtapError, CtapResult};
 use crate::journal;
-use crate::seed::migrate_keydev_pin;
+use crate::seed::{clear_ppuat, ensure_ppuat, migrate_keydev_pin};
 use crate::state::{PERM_ACFG, PERM_BE, PERM_GA, PERM_MC, PERM_PCMR};
 use crate::{Ctx, PinEntry, Rng};
 
@@ -199,6 +199,11 @@ fn set_pin<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req, out: &mut [u8]) -
     if dec.is_err() {
         return Err(CtapError::PinAuthInvalid);
     }
+    // No PIN was set, so no `pcmr` grant can be outstanding — except after a torn
+    // `authenticatorReset`, whose last phase can drop EF_PIN and lose power before
+    // EF_PAUTHTOKEN. Establishing a PIN over that leftover would hand the old
+    // holder read access to the credentials created next.
+    clear_ppuat(ctx.fs).map_err(|_| CtapError::Other)?;
     let res = store_new_pin(ctx, &padded);
     padded.zeroize();
     res?;
@@ -276,6 +281,11 @@ fn change_pin<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req, out: &mut [u8]
             return Err(CtapError::PinPolicyViolation);
         }
     }
+    // §6.5.5.6 step 15 calls resetPersistentPinUvAuthToken. Revoke *before* the new
+    // verifier lands: a power cut the other way round would leave the old holder's
+    // `pcmr` grant live against a PIN they no longer know. A rejected change then
+    // costs a re-fetch, which is the cheap direction.
+    clear_ppuat(ctx.fs).map_err(|_| CtapError::Other)?;
     let res = store_new_pin(ctx, &padded);
     padded.zeroize();
     res?;
@@ -283,7 +293,6 @@ fn change_pin<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req, out: &mut [u8]
     // pending forced-PIN-change policy.
     clear_force_change(ctx.fs)?;
     ctx.state.reset_pin_uv_auth_token(ctx.rng);
-    ctx.state.reset_persistent_token(ctx.rng);
     ctx.state.needs_power_cycle = false;
     journal::append(ctx, journal::EV_PIN_CHANGE, 0, &[]);
     Ok(0)
@@ -375,9 +384,12 @@ fn issue_token<S: Storage, R: Rng>(
     rp_id: Option<&str>,
     out: &mut [u8],
 ) -> CtapResult {
-    let pdata = if permissions & PERM_PCMR != 0 {
-        ctx.state.ppaut_permissions = PERM_PCMR;
-        ctx.state.ppaut_token
+    // §6.5.5.7.2/.3 step 14: a `pcmr` request is answered with the persistent token
+    // and stops there — it neither mints nor begins using a session token. Minting
+    // it here *is* the permission assignment: the record exists only while some
+    // platform holds the grant (`EF_PAUTHTOKEN`).
+    let mut pdata = if permissions & PERM_PCMR != 0 {
+        ensure_ppuat(&ctx.dev, ctx.fs, ctx.rng).map_err(|_| CtapError::Other)?
     } else {
         ctx.state.reset_pin_uv_auth_token(ctx.rng);
         ctx.state.begin_using_token(false, ctx.now_ms);
@@ -396,12 +408,13 @@ fn issue_token<S: Storage, R: Rng>(
     // A random IV, as CTAP 2.1 §6.5.7 requires and the `hmac-secret` sibling
     // already did. The hard-coded zero was mostly masked because the token is
     // freshly random per issuance — but not on the `PERM_PCMR` branch, whose token
-    // is filled once per power cycle, so repeated issuances under one shared secret
+    // outlives the power cycle, so repeated issuances under one shared secret
     // encrypted identically and were linkable on the wire (audit run-34 #37).
     let mut iv = [0u8; 16];
     ctx.rng.fill(&mut iv);
-    let enc_len = pinproto::encrypt(proto, secret, &iv, &pdata, &mut token_enc)
-        .map_err(|_| CtapError::Other)?;
+    let enc = pinproto::encrypt(proto, secret, &iv, &pdata, &mut token_enc);
+    pdata.zeroize();
+    let enc_len = enc.map_err(|_| CtapError::Other)?;
     ctx.state.needs_power_cycle = false;
     let len = encode(out, |e| {
         e.map(1)?.u8(2)?.bytes(&token_enc[..enc_len])?;
@@ -1058,8 +1071,10 @@ fn spend_and_verify_pin_at<S: Storage>(
 /// both need state the display task does not hold. Revocation is not optional, though:
 /// `FidoState` lives in the worker and outlives every dispatch, so a token minted under
 /// the old PIN would keep `PERM_CM` authority (and `deleteCredential` takes no touch) for
-/// up to `PUAT_MAX_USAGE_PERIOD_MS` after the owner believes they locked the host out. The
-/// firmware caller MUST signal it — see `firmware::display::note_local_pin_changed`. The CALLER verifies the
+/// up to `PUAT_MAX_USAGE_PERIOD_MS` after the owner believes they locked the host out —
+/// and an outstanding `pcmr` grant ([`crate::seed::clear_ppuat`]) has no such deadline at
+/// all. The firmware caller MUST signal both — see `firmware::display::note_local_pin_changed`.
+/// The CALLER verifies the
 /// *current* PIN first when one is set (so a change still proves knowledge of the old
 /// PIN) and zeroizes `pin`. A pending forced-PIN-change flag is cleared best-effort
 /// since a satisfied new PIN meets the policy.

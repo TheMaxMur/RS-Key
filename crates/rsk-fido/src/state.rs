@@ -237,9 +237,6 @@ pub struct FidoState {
     /// getKeyAgreement returns — so no zeroize.
     ephemeral_pub: ([u8; 32], [u8; 32]),
     pub paut: PinUvAuthToken,
-    /// The persistent (PCMR) token. RAM-resident; not persisted across reboots.
-    pub ppaut_token: [u8; 32],
-    pub ppaut_permissions: u8,
     // Not `pub`: the firmware must move the pair through [`FidoState::pin_lock`] /
     // [`FidoState::restore_pin_lock`], never one half of it.
     pub(crate) needs_power_cycle: bool,
@@ -308,8 +305,6 @@ impl FidoState {
             ephemeral_set: false,
             ephemeral_pub: ([0; 32], [0; 32]),
             paut: PinUvAuthToken::new(),
-            ppaut_token: [0; 32],
-            ppaut_permissions: 0,
             needs_power_cycle: false,
             new_pin_mismatches: 0,
             gna: AssertionState::new(),
@@ -434,12 +429,6 @@ impl FidoState {
         self.paut.last_used_ms = 0;
     }
 
-    /// `resetPersistentPinUvAuthToken`.
-    pub fn reset_persistent_token(&mut self, rng: &mut impl Rng) {
-        rng.fill(&mut self.ppaut_token);
-        self.ppaut_permissions = 0;
-    }
-
     /// `beginUsingPinUvAuthToken` — marks the token in use and starts its usage
     /// timer at `now_ms` (CTAP 2.1 §6.5.5.7).
     pub fn begin_using_token(&mut self, user_is_present: bool, now_ms: u64) {
@@ -543,7 +532,6 @@ impl Drop for FidoState {
     fn drop(&mut self) {
         self.ephemeral.zeroize();
         self.paut.token.zeroize();
-        self.ppaut_token.zeroize();
         self.mse_key.zeroize();
         if let Some(k) = self.keydev_dec.as_mut() {
             k.zeroize();
