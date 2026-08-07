@@ -142,7 +142,8 @@ git clone https://github.com/TheMaxMur/RS-Key && cd RS-Key
 nix develop                       # toolchain, picotool, host tools, everything
 
 cargo build --release -p firmware
-picotool uf2 convert target/thumbv8m.main-none-eabihf/release/firmware -t elf firmware.uf2
+scripts/pt.sh target/thumbv8m.main-none-eabihf/release/firmware firmware-pt.elf   # fence the key's storage off the bootloader
+picotool uf2 convert firmware-pt.elf -t elf firmware.uf2
 
 # hold BOOTSEL, plug the board in, then flash, either way:
 cp firmware.uf2 /Volumes/RP2350/                    # macOS drag-and-drop; Linux: the mounted RP2350 volume

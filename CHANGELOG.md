@@ -13,6 +13,32 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+### Security
+
+- **The KV store is fenced off from the USB bootloader.** An attacker with brief physical
+  access could `picotool save` the whole flash, guess PINs until the retry counter locked,
+  then `picotool load` the snapshot back to reset it — unlimited offline guessing, against
+  every applet's counter at once ([#37](https://github.com/TheMaxMur/RS-Key/issues/37),
+  reported by Token2). The shipped image now embeds an RP2350 partition table that denies
+  the bootloader read *and* write over `__kvmain_start..__kvcnt_end`, so both halves answer
+  `permission failure` from the bootrom while the running firmware keeps `secure: rw`.
+  `scripts/pt.sh` derives the fence from the ELF's own linker symbols rather than restating
+  the layout, so it cannot drift from the store on any `FLASH_SIZE`/`KVMAIN`/`BOARD`, and
+  `check.sh` asserts the emitted table back against those symbols. Upstream leaves the
+  bootloader `r` here; RS-Key denies the dump too, because before the OTP burn the at-rest
+  seal root derives from on-chip state alone.
+- **Read that as "the attack now needs a reflash first", not "rollback fixed".** The
+  firmware partition has to stay bootloader-writable or updates could not exist, so on a
+  board without secure boot an attacker flashes an image carrying a permissive table and is
+  back where they started. Sealing is what makes the fence hold — the signature covers the
+  table, and a byte flipped anywhere in it fails both hash and signature. It is worth doing
+  because this is the one snapshot/restore gap secure boot did *not* close by itself:
+  secure boot verifies executable images, and writing the data region is not execution, so
+  a fully provisioned board was still snapshot/restore-able until now. One consequence
+  worth planning for: any image you signed earlier carries no table and re-opens the fence,
+  which is an ordinary downgrade and wants a rollback floor above your pre-table builds
+  ([threat-model.md](docs/threat-model.md), [production.md](docs/production.md)).
+
 ### Added
 
 - **`rsk identify` and a TUI "Identify this key" action.** Nothing in the first-party

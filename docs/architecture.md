@@ -113,6 +113,14 @@ mirrors, PIV `0xD1xx/0xD2xx`, OTP slots `0xBBxx`, phy/rescue `0xE0xx`) and a
 reset wipes exactly its own predicate, never a range shared with another
 applet.
 
+Both regions sit behind one RP2350 **partition table** entry carried in the
+shipped image: the USB bootloader is denied read and write over
+`__kvmain_start..__kvcnt_end`, while secure code — the running firmware,
+`rsk-wipe`, the rescue applet — keeps `rw`. The table is derived from those
+linker symbols rather than restated, so it follows `FLASH_SIZE`/`KVMAIN` on its
+own ([build.md](build.md#the-partition-table)). What it is and is not worth:
+[threat-model.md](threat-model.md#flash-snapshot-rollback-the-pin-counter-reset).
+
 Key sealing at rest: `kbase = HKDF(serial_hash, otp_master_key)` keys
 AES-CBC for the FIDO seed (tagged formats: plain vs OTP-rooted generation)
 and AES-GCM for PIV keys. OpenPGP keys sit under the PIN-wrapped DEK chain.

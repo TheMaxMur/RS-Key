@@ -509,6 +509,16 @@ firmware predates the rescue applet.
 > `1F/01` (BOOTSEL) drops the device into the bootloader for reflashing; also
 > confirm.
 
+> ### In BOOTSEL, the KV store is fenced off
+> Since `bcdDevice 0x0871` the image carries an RP2350 partition table: the
+> bootloader is denied read **and** write over the KV store, so `picotool save`,
+> `load` and `erase` across that range answer `permission failure`. A tool that
+> offers "back up / restore the device's flash" must expect that and must not
+> present the failure as a device fault. Whole-image flashing is unaffected — the
+> firmware partition stays bootloader-writable. Rationale, and why this is not a
+> substitute for secure boot:
+> [threat-model.md](threat-model.md#flash-snapshot-rollback-the-pin-counter-reset).
+
 > ### User-presence gate (runtime)
 > The runtime-reachable privileged commands require an **on-device user-presence
 > confirmation** (a button touch, or an Approve on the trusted-display build)

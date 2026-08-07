@@ -9,6 +9,12 @@ exploitable bug, your *previous* signed image becomes a hole: an attacker with
 the device drags your old, signed UF2 over BOOTSEL and attacks the bug you
 already fixed. Anti-rollback closes that downgrade path.
 
+**Scope: this page is about rolling back the *image*.** Rolling back the *data* —
+snapshotting flash over BOOTSEL and restoring it later to reset a wrong-PIN counter — is a
+separate attack with separate defenses, in
+[threat-model.md](threat-model.md#flash-snapshot-rollback-the-pin-counter-reset). Neither
+mechanism sees the other's rollback.
+
 This page is the model and every case. The operational steps to turn it on are
 in [production.md, stage 3](production.md#stage-3--anti-rollback-optional); the
 fuses it touches are in [otp-fuses.md](otp-fuses.md). It is **optional**. Until
@@ -211,7 +217,11 @@ there is nowhere to rotate to. So this is a genuine trade-off, made up front:
 > chip has the same ceiling (48 versions + 4 keys). There is no software trick
 > around it: a software rollback counter in the firmware would be weaker. It
 > runs *after* the bootrom already booted the (possibly vulnerable) image, and
-> its store would live in flash, which the same attacker can rewrite.
+> its store would live in flash — which the same attacker can rewrite, by first
+> flashing a partition table that permits it
+> ([threat-model.md](threat-model.md#flash-snapshot-rollback-the-pin-counter-reset):
+> the table we ship fences BOOTSEL out, and only secure boot stops it being
+> replaced).
 
 **Prevention beats cure.** 48 *genuine* downgrade-exploitable fixes on a single
 chip is beyond even commercial keys over a decade. If you are approaching the

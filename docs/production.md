@@ -177,6 +177,21 @@ The arguments:
 firmware's image definition is already secure-boot compatible. The sealed UF2
 carries the signature block.
 
+`firmware.uf2` above must already carry the partition table — the two commands
+that produce it are in [the flash workflow](#the-new-flash-workflow-forever)
+below, and `nix build .#firmware` applies it for you.
+
+Sealing also covers the image's **partition table**, the fence that keeps the USB
+bootloader out of the KV store ([build.md](build.md#the-partition-table)). That is
+the whole reason the fence is worth anything: on an unsigned board an attacker
+simply flashes an image carrying a permissive table, while a sealed table cannot
+be replaced without this key. It closes the one snapshot/restore gap secure boot
+does not close by itself — writing the data region is not code execution
+([threat-model.md](threat-model.md#flash-snapshot-rollback-the-pin-counter-reset)).
+Prove it, don't assume it: `picotool info -a firmware-signed.uf2` must show the
+store partition as `NSBOOT(-)`, and a byte flipped anywhere in the table must turn
+`hash: verified` into `hash: incorrect`.
+
 ### 2c. Burn, staged
 
 `rsk secure-boot` splits provisioning so every irreversible write is proven
@@ -210,13 +225,22 @@ Re-drag the signed one to recover.
 
 ```sh
 cargo build --release -p firmware
-picotool uf2 convert target/thumbv8m.main-none-eabihf/release/firmware -t elf firmware.uf2
+scripts/pt.sh target/thumbv8m.main-none-eabihf/release/firmware firmware-pt.elf
+picotool uf2 convert firmware-pt.elf -t elf firmware.uf2
 picotool seal --sign --hash firmware.uf2 firmware-signed.uf2 \
     ~/.rs-key-secrets/secure_boot_key.pem ~/.rs-key-secrets/otp_secureboot.json \
     --major 1 --minor 0 --rollback 1
 # BOOTSEL (hands-free: rsk reboot bootsel), then:
 picotool load -v firmware-signed.uf2 && picotool reboot   # or drag it onto the RP2350 drive
 ```
+
+**The `pt.sh` line is not optional here, and its position is the point.** It
+embeds the partition table that fences the KV store off from the bootloader
+([build.md](build.md#the-partition-table)); `cargo build` alone never produces
+one. Running it *before* `seal` is what puts the table under the signature —
+which is the only thing that stops an attacker flashing a permissive table of
+their own. Seal a table-less image and you have signed away the fence without
+any error telling you so.
 
 The `--rollback` value is your board's current floor (see
 [anti-rollback.md](anti-rollback.md)). `1` is the usual starting value.
@@ -279,6 +303,7 @@ moving to a new board lives in [anti-rollback.md](anti-rollback.md).
 | Image sealed below your rollback floor | Refused at boot → BOOTSEL. Re-seal at ≥ your floor. |
 | Image sealed *above* your floor by accident | It boots and **burns the thermometer up to it**, spending budget irreversibly. Seal at exactly your floor unless you mean to raise it. |
 | `rsk-wipe` won't boot after enabling anti-rollback | Re-seal it at your current floor — the recovery image must carry a version too. |
+| `picotool save`/`load`/`erase` over the store answers `permission failure` | Expected: the partition table denies the bootloader there ([build.md](build.md#the-partition-table)). Erase from the running side instead — `rsk-wipe` and the rescue applet execute as secure code, which the table leaves `rw`. |
 | 48-step rollback budget exhausted | Key rotation, or a new board — see [anti-rollback.md](anti-rollback.md#when-the-48-budget-is-exhausted--the-ladder). |
 | Page 58 read fails after `lock-page58` | That's the lock working — only secure firmware can read the keys now. |
 | Replacing the board entirely | Provision the new chip with a **new** signing key; restore your FIDO identity with `rsk backup restore`. Resident passkeys / OpenPGP / PIV don't migrate — see [anti-rollback.md](anti-rollback.md#moving-to-a-new-board). |
@@ -302,3 +327,10 @@ moving to a new board lives in [anti-rollback.md](anti-rollback.md).
 - A host compromised while the device is plugged in can drive normal
   operations (as with any security key). See
   [threat-model.md](threat-model.md).
+- **An older signed image of yours re-opens the store fence.** The partition
+  table travels *inside* the image, so anything you signed before `0x0871` carries
+  none, and flashing it makes the KV store bootloader-writable again — the
+  snapshot/restore rollback is back. This is an ordinary downgrade attack, so the
+  version axis is what answers it: raise your rollback floor past your pre-table
+  builds ([anti-rollback.md](anti-rollback.md)). Until you do, the fence is worth
+  exactly as much as your oldest signed artifact.
