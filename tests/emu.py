@@ -36,14 +36,26 @@ DEFAULT_CCID_ADDR = "127.0.0.1:7800"
 ENV_ADDR = "RSK_EMU"
 ENV_CCID_ADDR = "RSK_EMU_CCID"
 
-# The emulator's card-socket opcodes.
-OP_XFR = 0x00
-OP_POWER_ON = 0x01
-OP_POWER_OFF = 0x02
-# "Unplug and plug back in": the suites that reset need the CTAP 2.1 §6.6
-# power-up window, which only a real power cycle reopens; `replug.py` asks an
-# operator for it, so the shim answers on their behalf — see `_patch_replug`.
+# The emulator's card-socket opcodes: a whole CCID message, or the power cycle
+# CCID has no message for. The suites that reset need the CTAP 2.1 §6.6 power-up
+# window, which only a real power cycle reopens; `replug.py` asks an operator for
+# it, so the shim answers on their behalf — see `_patch_replug`.
+OP_CCID = 0x00
 OP_REPLUG = 0x03
+
+# CCID message types and the header layout (CCID 1.1 §6). The shim builds the
+# same messages a PC/SC driver puts on the bulk-OUT endpoint, so the emulator's
+# framing is exercised rather than bypassed.
+CCID_POWER_ON = 0x62
+CCID_POWER_OFF = 0x63
+CCID_XFR_BLOCK = 0x6F
+CCID_DATA_BLOCK_RET = 0x80
+CCID_SLOT_STATUS_RET = 0x81
+CCID_HEADER = 10
+# bmCommandStatus (bStatus bits 7:6) == 01 — "time extension requested": the card
+# is still working, and the answer is the message after it.
+CCID_STATUS_MASK = 0xC0
+CCID_STATUS_TIMEEXT = 0x80
 
 # An on-card RSA-4096 keygen is the slowest thing the card socket ever answers.
 CARD_TIMEOUT_S = 300
@@ -93,10 +105,8 @@ def _addr(env=ENV_ADDR, default=DEFAULT_ADDR):
     return (host or "127.0.0.1", int(port))
 
 
-def _card_request(sock, op, payload=b""):
-    """One card-socket exchange: `op | len:u32be | payload` out, `len:u32be |
-    payload` back."""
-    sock.sendall(bytes([op]) + len(payload).to_bytes(4, "big") + bytes(payload))
+def _recv_frame(sock):
+    """One `len:u32be | payload` response off the card socket."""
     return _recv_exact(sock, int.from_bytes(_recv_exact(sock, 4), "big"))
 
 
@@ -116,7 +126,8 @@ def _replug():
     reset window rather than on a connection error."""
     try:
         with socket.create_connection(_addr(ENV_CCID_ADDR, DEFAULT_CCID_ADDR), timeout=5) as s:
-            _card_request(s, OP_REPLUG)
+            s.sendall(bytes([OP_REPLUG]) + (0).to_bytes(4, "big"))
+            _recv_frame(s)
     except OSError as e:
         print(f"emu: could not replug ({e}) — the reset window will stay shut")
 
@@ -208,14 +219,17 @@ class CardConnection:
 
 
 class EmuCard:
-    """The subset of a pyscard `CardConnection` the suites use, over the card
-    socket. Connecting powers the card on, which resets the selected applet's
-    security status — the same thing a `SCardConnect` after a disconnect does, so
-    a suite that verifies a PIN and reconnects loses it here too."""
+    """The subset of a pyscard `CardConnection` the suites use — and the CCID
+    driver underneath it, since the socket carries whole CCID messages.
+
+    Connecting powers the card on, which resets the selected applet's security
+    status: the same thing a `SCardConnect` after a disconnect does, so a suite
+    that verifies a PIN and reconnects loses it here too."""
 
     def __init__(self):
         self.sock = None
         self.atr = []
+        self.seq = 0
 
     def connect(self, protocol=None, mode=None, disposition=None):
         try:
@@ -224,7 +238,7 @@ class EmuCard:
             )
         except OSError as e:
             raise NoCardException(message=f"emulator card socket: {e}") from e
-        self.atr = list(_card_request(self.sock, OP_POWER_ON))
+        self.atr = list(self._exchange(CCID_POWER_ON))
 
     def getATR(self):
         return self.atr
@@ -232,7 +246,7 @@ class EmuCard:
     def transmit(self, apdu, protocol=None):
         if self.sock is None:
             raise CardConnectionException("transmit on a card that is not connected")
-        resp = _card_request(self.sock, OP_XFR, bytes(apdu))
+        resp = self._exchange(CCID_XFR_BLOCK, bytes(apdu))
         if len(resp) < 2:
             raise CardConnectionException(f"response shorter than a status word: {resp.hex()}")
         return list(resp[:-2]), resp[-2], resp[-1]
@@ -241,11 +255,39 @@ class EmuCard:
         if self.sock is None:
             return
         try:
-            _card_request(self.sock, OP_POWER_OFF)
+            self._exchange(CCID_POWER_OFF)
         except OSError:
             pass  # the emulator went away; the handle is being dropped anyway
         self.sock.close()
         self.sock = None
+
+    def _exchange(self, msg_type, payload=b""):
+        """Send one `PC_to_RDR` and return the answering message's body, stepping
+        over the time extensions a slow command (on-card RSA keygen) streams
+        first. Checks what a driver checks — the echoed sequence and the reply
+        type — because a client that accepts any framing tests none of it."""
+        self.seq = (self.seq + 1) & 0xFF
+        header = bytes([msg_type]) + len(payload).to_bytes(4, "little") + bytes(
+            [0x00, self.seq, 0x00, 0x00, 0x00]
+        )
+        self.sock.sendall(
+            bytes([OP_CCID])
+            + (CCID_HEADER + len(payload)).to_bytes(4, "big")
+            + header
+            + payload
+        )
+        while True:
+            resp = _recv_frame(self.sock)
+            if len(resp) < CCID_HEADER:
+                raise CardConnectionException(f"short CCID response: {resp.hex()}")
+            if resp[6] != self.seq:
+                raise CardConnectionException(f"bSeq {resp[6]} answering {self.seq}")
+            if resp[0] == CCID_DATA_BLOCK_RET and resp[7] & CCID_STATUS_MASK == CCID_STATUS_TIMEEXT:
+                continue
+            dw = int.from_bytes(resp[1:5], "little")
+            if len(resp) < CCID_HEADER + dw:
+                raise CardConnectionException(f"dwLength {dw} over {len(resp)} bytes")
+            return resp[CCID_HEADER:CCID_HEADER + dw]
 
 
 class EmuReader:

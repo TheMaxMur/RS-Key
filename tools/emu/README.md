@@ -62,17 +62,21 @@ that the emulator grew the capability.
 **CTAPHID** — the stream carries 64-byte HID reports, both directions, exactly
 as the USB interface would. A client is a `send(64)` / `recv(64)` shim away.
 
-**Card** — one length-prefixed APDU at a time:
+**Card** — one CCID message at a time:
 
 ```text
 request   op:u8 | len:u32 BE | payload
 response         len:u32 BE | payload
 ```
 
-`op` is `00` transmit, `01` power on (answers the ATR), `02` power off,
-`03` replug (a power cycle: RAM state is dropped and the CTAP 2.1 §6.6 reset
-window reopens). Requests carry APDUs, not CCID blocks — a PC/SC client hands
-the reader an APDU, so the emulator starts where `SCardTransmit` does.
+`op` is `00` for a CCID message and `03` for a replug (a power cycle: RAM state
+is dropped and the CTAP 2.1 §6.6 reset window reopens — CCID has no message for
+that, because a power cycle is not a card reset). The payload of a `00` is a
+whole `PC_to_RDR` message, header and all, and the answer is a whole `RDR_to_PC`:
+the same bytes a PC/SC driver puts on the bulk endpoints, so `rsk_usb::ccid` runs
+here rather than being bypassed. One request may draw several responses, as a
+bulk-IN stream does — a slow `XfrBlock` gets `bStatus = 0x80` time extensions
+before its DataBlock, and a client is expected to step over them.
 
 ## What it does not emulate
 
@@ -85,8 +89,10 @@ serial — is recognisable as emulator-made.
 - **Flash semantics**: the store overwrites in place. It is not
   `sequential-storage`, so there are no log-structured remnants and no torn
   writes — power-cut behaviour still has to be proved on hardware.
-- **USB**: enumeration, interface order, the CCID block layer, the OTP keyboard
-  interface, and the LED.
+- **USB**: enumeration, interface order, the OTP keyboard interface, and the LED.
+  The CCID *block* layer does run — the socket carries whole CCID messages — but
+  its packetisation does not: a socket delivers a message whole, where the device
+  accumulates it off 64-byte bulk-OUT transfers with a receive timeout.
 - **The firmware's own wiring**: `firmware/src/{main,worker,handler,ccid_handler,
   presence,led}.rs` are not shared with the emulator — `src/device.rs` is a
   second implementation of that glue. A bug that lives there will not show up

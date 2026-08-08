@@ -24,8 +24,8 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   `sequential-storage`. Its device identity is deliberately its own, so
   emulator-made material is recognisable as such. See
   [docs/testing.md](docs/testing.md) and `tools/emu/README.md`.
-- The CTAPHID command and error constants in `rsk-usb` are public, so the
-  emulator's transport names the same values instead of redeclaring them.
+- The CTAPHID and CCID message vocabularies in `rsk-usb` are public, so the
+  emulator's transports name the same values instead of redeclaring them.
 - `scripts/docs_constants.py` now checks the constants copied into `tests/*.py`
   and `metadata/*.json`, not only those quoted in `docs/`, and resolves one
   `const A = B;` indirection — which is where the large-blob value below hid.
