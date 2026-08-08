@@ -263,6 +263,87 @@ pub fn encode_ret_unlink(seqnum: u32, status: i32) -> [u8; CMD_HEADER_LEN] {
     b
 }
 
+/// What the op phase decided: the bytes to write back, and whether the socket now
+/// belongs to the command phase.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpReply {
+    pub bytes: Vec<u8>,
+    /// The client imported our device; every byte after this is URBs.
+    pub attached: bool,
+}
+
+/// The busid this emulator answers to. One device, one bus, so it is fixed —
+/// `usbip attach -r <host> -b rsk-emu`.
+pub const BUSID: &str = "rsk-emu";
+
+/// Answer one op-phase request.
+///
+/// Kept a pure function over buffers so the framing — which is the whole of what
+/// can go wrong before a single URB flows — is testable without a socket or a
+/// kernel. The caller owns the stream; this owns the protocol.
+pub fn handle_op_request(req: &[u8], dev: &UsbDeviceInfo, ifaces: &[[u8; 3]]) -> Option<OpReply> {
+    let h = OpHeader::parse(req)?;
+    // A version mismatch is answered, not ignored: the client prints the status
+    // and gives up, which is a far better failure than a hung attach.
+    let bad_version = h.version != VERSION;
+    let body = &req[OP_HEADER_LEN..];
+    match h.code {
+        OP_REQ_DEVLIST => {
+            let mut out = OpHeader {
+                version: VERSION,
+                code: OP_REP_DEVLIST,
+                status: u32::from(bad_version),
+            }
+            .encode()
+            .to_vec();
+            if bad_version {
+                return Some(OpReply {
+                    bytes: out,
+                    attached: false,
+                });
+            }
+            out.extend_from_slice(&1u32.to_be_bytes()); // exactly one device
+            out.extend_from_slice(&dev.encode());
+            for i in ifaces {
+                out.extend_from_slice(&encode_interface(i[0], i[1], i[2]));
+            }
+            Some(OpReply {
+                bytes: out,
+                attached: false,
+            })
+        }
+        OP_REQ_IMPORT => {
+            // An import naming a busid we do not have is a refusal, not a
+            // silently-substituted device.
+            let ours = !bad_version && parse_import_busid(body) == Some(BUSID);
+            let mut out = OpHeader {
+                version: VERSION,
+                code: OP_REP_IMPORT,
+                status: u32::from(!ours),
+            }
+            .encode()
+            .to_vec();
+            if ours {
+                out.extend_from_slice(&dev.encode());
+            }
+            Some(OpReply {
+                bytes: out,
+                attached: ours,
+            })
+        }
+        _ => None,
+    }
+}
+
+/// How many more bytes the caller must read for `req` to be a whole op request.
+/// The op phase is not length-prefixed, so the framing is per-code.
+pub fn op_body_len(code: u16) -> usize {
+    match code {
+        OP_REQ_IMPORT => BUSID_LEN,
+        _ => 0,
+    }
+}
+
 #[cfg(test)]
 #[path = "usbip_tests.rs"]
 mod tests;

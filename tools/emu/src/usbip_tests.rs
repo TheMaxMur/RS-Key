@@ -204,3 +204,83 @@ fn ret_unlink_reports_econnreset() {
     assert_eq!(&b[0..4], &RET_UNLINK.to_be_bytes());
     assert_eq!(i32::from_be_bytes([b[20], b[21], b[22], b[23]]), -104);
 }
+
+fn ifaces() -> Vec<[u8; 3]> {
+    // kbd/OTP, FIDO, CCID — the order issue #55 was about.
+    vec![[0x03, 0x01, 0x01], [0x03, 0x00, 0x00], [0x0b, 0x00, 0x00]]
+}
+
+fn op_req(code: u16, body: &[u8]) -> Vec<u8> {
+    let mut v = OpHeader {
+        version: VERSION,
+        code,
+        status: 0,
+    }
+    .encode()
+    .to_vec();
+    v.extend_from_slice(body);
+    v
+}
+
+#[test]
+fn devlist_reports_one_device_and_its_interfaces() {
+    let r = handle_op_request(&op_req(OP_REQ_DEVLIST, &[]), &dev(), &ifaces()).unwrap();
+    assert!(!r.attached, "a listing must not attach anything");
+    let h = OpHeader::parse(&r.bytes).unwrap();
+    assert_eq!(h.code, OP_REP_DEVLIST);
+    assert_eq!(h.status, 0);
+    assert_eq!(&r.bytes[8..12], &1u32.to_be_bytes());
+    assert_eq!(r.bytes.len(), 12 + USB_DEVICE_LEN + 3 * USB_INTERFACE_LEN);
+    // The interface order is the wire's, and it is the thing issue #55 turned on.
+    let base = 12 + USB_DEVICE_LEN;
+    assert_eq!(r.bytes[base], 0x03);
+    assert_eq!(r.bytes[base + USB_INTERFACE_LEN], 0x03);
+    assert_eq!(r.bytes[base + 2 * USB_INTERFACE_LEN], 0x0b);
+}
+
+#[test]
+fn import_of_our_busid_attaches() {
+    let mut body = [0u8; BUSID_LEN];
+    body[..BUSID.len()].copy_from_slice(BUSID.as_bytes());
+    let r = handle_op_request(&op_req(OP_REQ_IMPORT, &body), &dev(), &ifaces()).unwrap();
+    assert!(r.attached);
+    assert_eq!(OpHeader::parse(&r.bytes).unwrap().status, 0);
+    assert_eq!(r.bytes.len(), OP_HEADER_LEN + USB_DEVICE_LEN);
+}
+
+/// A busid we do not have must be refused outright — answering with our device
+/// anyway would attach the wrong thing under a name the client asked for.
+#[test]
+fn import_of_a_foreign_busid_is_refused() {
+    let mut body = [0u8; BUSID_LEN];
+    body[..3].copy_from_slice(b"9-9");
+    let r = handle_op_request(&op_req(OP_REQ_IMPORT, &body), &dev(), &ifaces()).unwrap();
+    assert!(!r.attached);
+    assert_ne!(OpHeader::parse(&r.bytes).unwrap().status, 0);
+    assert_eq!(r.bytes.len(), OP_HEADER_LEN, "a refusal carries no device");
+}
+
+/// A version mismatch is answered with a status, not ignored: the client prints
+/// it and gives up, which beats a hung attach.
+#[test]
+fn a_version_mismatch_is_answered() {
+    let mut req = op_req(OP_REQ_DEVLIST, &[]);
+    req[0..2].copy_from_slice(&0x0102u16.to_be_bytes());
+    let r = handle_op_request(&req, &dev(), &ifaces()).unwrap();
+    assert_ne!(OpHeader::parse(&r.bytes).unwrap().status, 0);
+    assert_eq!(r.bytes.len(), OP_HEADER_LEN);
+    assert!(!r.attached);
+}
+
+#[test]
+fn an_unknown_op_code_is_refused() {
+    assert!(handle_op_request(&op_req(0x8099, &[]), &dev(), &ifaces()).is_none());
+}
+
+/// The op phase is not length-prefixed, so the caller needs to know how much
+/// body to read before it can dispatch.
+#[test]
+fn op_body_len_frames_each_code() {
+    assert_eq!(op_body_len(OP_REQ_IMPORT), BUSID_LEN);
+    assert_eq!(op_body_len(OP_REQ_DEVLIST), 0);
+}
