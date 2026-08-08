@@ -53,6 +53,11 @@ def rust_constants():
     matching either is accepted, since the docs rarely say which crate."""
     index = {}
     for src in sorted(ROOT.glob("crates/*/src/**/*.rs")) + sorted(ROOT.glob("firmware/src/**/*.rs")):
+        # Test files hold their own copies of these values as fixtures, and a name
+        # defined in two places accepts either — so a stale literal in a `_tests.rs`
+        # goes on vouching for a doc after the real constant moved (audit run-37).
+        if src.name.endswith("_tests.rs") or src.name in ("tests.rs", "kani.rs"):
+            continue
         for name, raw in RUST_CONST.findall(src.read_text()):
             raw = raw.replace("_", "")
             index.setdefault(name, set()).add(int(raw, 16) if raw.startswith("0x") else int(raw))
