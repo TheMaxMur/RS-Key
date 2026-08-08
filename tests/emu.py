@@ -64,15 +64,23 @@ CARD_TIMEOUT_S = 300
 # a sweep can count skips apart from both passes and failures.
 EXIT_SKIP = 77
 
+# Suites that need the Yubico card identity — the emulator has it, but only when
+# started `--yubico`. Skipped by *asking the card* rather than by a fixed entry
+# below: the identity is a runtime choice, and a hardcoded skip would go on
+# refusing a run that would have passed.
+NEEDS_YUBICO = {"30_ccid_transport": "asserts the Yubico ATR — start the emulator with --yubico"}
+# The Yubico ATR's first two bytes (`rsk_usb::ccid::ATR_YUBIKEY`); the RS-Key one
+# differs from byte 1 on.
+ATR_YUBICO_PREFIX = bytes([0x3B, 0xFD])
+
 # What the emulator has nothing to answer with, and why. Each of these fails on
 # the emulator for a reason that is not a defect, so it is refused before it
 # starts. Removing an entry is a claim that the emulator grew the capability.
 UNSUPPORTED = {
     # The emulator carries the vendor applet (`crates/rsk-vendor`), so its
-    # counter, its warm reboot and the U2F/SELECT routing all run. What it has no
-    # hardware for is the ATR of a Yubico-identity build, the LED, the second
-    # core's counters and the drop to BOOTSEL.
-    "30_ccid_transport": "asserts the ATR of a Yubico-identity build",
+    # counter, its warm reboot and the U2F/SELECT routing all run — and `--yubico`
+    # gives it the Yubico card identity `30` checks. What it has no hardware for is
+    # the LED, the second core's counters and the drop to BOOTSEL.
     "51_secure_reboot": "reboots to BOOTSEL; there is no bootloader to fall into",
     # Below the applet layer: the emulator serves reports and APDUs, not USB.
     "02_usb_interfaces": "reads the USB descriptors; the emulator has no USB",
@@ -386,6 +394,19 @@ def _patch_replug():
     replug.wait_back = wait_back
 
 
+def _card_identity():
+    """The ATR the emulator is serving, or `None` when the card socket is not
+    there to ask."""
+    try:
+        card = EmuCard()
+        card.connect()
+        atr = bytes(card.getATR())
+        card.disconnect()
+        return atr
+    except Exception:
+        return None
+
+
 def main():
     if len(sys.argv) < 2:
         sys.exit(f"usage: {sys.argv[0]} <test script> [args…]")
@@ -394,6 +415,11 @@ def main():
     if name in UNSUPPORTED:
         print(f"SKIP: {name} — {UNSUPPORTED[name]}. Run it against a board.")
         sys.exit(EXIT_SKIP)
+    if name in NEEDS_YUBICO:
+        atr = _card_identity()
+        if atr is None or not atr.startswith(ATR_YUBICO_PREFIX):
+            print(f"SKIP: {name} — {NEEDS_YUBICO[name]}.")
+            sys.exit(EXIT_SKIP)
     install()
     sys.argv = sys.argv[1:]
     # The suites add their own directory to sys.path for `_device`; do it here

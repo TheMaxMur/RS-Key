@@ -55,6 +55,8 @@ usage: rsk-emu [options]
   --store <path>      persist the file system here (default: memory only)
   --touch             ask for every user presence on the terminal
   --trace             log every command and its status
+  --yubico            present the Yubico card identity (ATR + OpenPGP AID
+                      manufacturer), as a build carrying the Yubico VID does
   --seed <hex>        seed the DRBG deterministically — every key becomes
                       predictable; for reproducible tests only
   --serial <16 hex>   device serial (default RSKEMU\\x00\\x01)
@@ -73,6 +75,7 @@ fn main() {
         kv_total: KV_TOTAL,
         flash_size: FLASH_SIZE,
         trace: false,
+        yubico: false,
     };
 
     let mut args = std::env::args().skip(1);
@@ -92,6 +95,7 @@ fn main() {
             "--store" => cfg.store = Some(value("--store").into()),
             "--touch" => cfg.touch = true,
             "--trace" => cfg.trace = true,
+            "--yubico" => cfg.yubico = true,
             "--seed" => cfg.seed = Some(parse_hex(&value("--seed"), None)),
             "--serial" => {
                 let raw = parse_hex(&value("--serial"), Some(8));
@@ -141,8 +145,18 @@ fn main() {
     if ccid_port != 0 {
         let listener = bind(&host, ccid_port, "ccid");
         let jobs = jobs_tx.clone();
-        eprintln!("emu: APDUs on {host}:{ccid_port} (op | len:u32be | payload)");
-        std::thread::spawn(move || ccid::listen(listener, jobs));
+        // The same rule the firmware applies to its effective VID: a default build
+        // must not answer with a YubiKey's ATR, and a Yubico-identity one must.
+        let atr: &'static [u8] = if cfg.yubico {
+            rsk_usb::ccid::ATR_YUBIKEY
+        } else {
+            rsk_usb::ccid::ATR_RSKEY
+        };
+        eprintln!(
+            "emu: CCID messages on {host}:{ccid_port} ({} identity)",
+            if cfg.yubico { "Yubico" } else { "RS-Key" }
+        );
+        std::thread::spawn(move || ccid::listen(listener, jobs, atr));
     }
     // The device thread's loop ends when every sender is gone; this one would
     // keep it alive for ever.

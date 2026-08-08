@@ -34,10 +34,17 @@ use crate::rng::EmuRng;
 use crate::signals::Signals;
 use crate::store::FileStore;
 
-/// The OpenPGP AID's manufacturer field. The firmware swaps in Yubico's when it
-/// presents the Yubico USB identity; the emulator never does, so it keeps the
-/// unmanaged id the applet defaults to.
-const OPENPGP_MFR: u16 = rsk_openpgp::consts::OPGP_MFR_UNMANAGED;
+/// The OpenPGP AID's manufacturer field, chosen by the same rule the firmware
+/// applies to its effective VID (`openpgp_mfr_for`): the Yubico identity is a
+/// whole identity, not just an ATR, and a half-applied one would answer as two
+/// different cards depending on which DO you read.
+fn openpgp_mfr(yubico: bool) -> u16 {
+    if yubico {
+        rsk_openpgp::consts::OPGP_MFR_YUBICO
+    } else {
+        rsk_openpgp::consts::OPGP_MFR_UNMANAGED
+    }
+}
 
 /// What the vendor applet can reach here. The counter is portable and runs; the
 /// LED, the second core and the timing benches are hardware this has none of, so
@@ -92,6 +99,9 @@ pub struct Config {
     pub kv_total: u32,
     pub flash_size: u32,
     pub trace: bool,
+    /// Present the Yubico card identity — the ATR and the OpenPGP AID's
+    /// manufacturer — as a build carrying the Yubico VID does.
+    pub yubico: bool,
 }
 
 /// One unit of work for the device thread.
@@ -219,7 +229,7 @@ pub fn run(
         devk,
         cfg.kv_total,
         cfg.flash_size,
-        OPENPGP_MFR,
+        openpgp_mfr(cfg.yubico),
     );
 
     // Time is measured from the USB *attach*, not from process start: the CTAP 2.1

@@ -30,9 +30,9 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use rsk_usb::ccid::{
-    ATR_RSKEY, CCID_DATA_BLOCK_RET, CCID_POWER_OFF, CCID_POWER_ON, HEADER, MAX_CCID_MSG,
-    SECURE_STATUS_FAILED, STATUS_INACTIVE, STATUS_TIMEEXT, WTX_INTERVAL_MS, process_message,
-    put_header, secure_apdu, xfr_apdu,
+    CCID_DATA_BLOCK_RET, CCID_POWER_OFF, CCID_POWER_ON, HEADER, MAX_CCID_MSG, SECURE_STATUS_FAILED,
+    STATUS_INACTIVE, STATUS_TIMEEXT, WTX_INTERVAL_MS, process_message, put_header, secure_apdu,
+    xfr_apdu,
 };
 
 use crate::device::{Job, Req};
@@ -48,7 +48,7 @@ const OP_REPLUG: u8 = 0x03;
 /// exceed the class descriptor's `dwMaxCCIDMessageLength`.
 const MAX_REQUEST: usize = MAX_CCID_MSG;
 
-pub fn serve(mut stream: TcpStream, jobs: mpsc::Sender<Req>) -> io::Result<()> {
+pub fn serve(mut stream: TcpStream, jobs: mpsc::Sender<Req>, atr: &'static [u8]) -> io::Result<()> {
     // Slot status is transport state — a field of `Ccid` on the device, so one
     // per connection here, a connection being one host's handle on the card.
     let mut status = STATUS_INACTIVE;
@@ -76,7 +76,7 @@ pub fn serve(mut stream: TcpStream, jobs: mpsc::Sender<Req>) -> io::Result<()> {
                 status = STATUS_INACTIVE; // the card comes back unpowered
                 send(&mut stream, &[])?;
             }
-            OP_CCID => serve_message(&mut stream, &jobs, &msg, &mut status, &mut out)?,
+            OP_CCID => serve_message(&mut stream, &jobs, &msg, atr, &mut status, &mut out)?,
             _ => return Err(io::Error::other(format!("unknown opcode {op:#04x}"))),
         }
     }
@@ -85,10 +85,12 @@ pub fn serve(mut stream: TcpStream, jobs: mpsc::Sender<Req>) -> io::Result<()> {
 /// Answer one CCID message, mirroring `Ccid::run`'s arms: `XfrBlock` and `Secure`
 /// go to the device, a power transition resets the card first, everything else is
 /// [`process_message`]'s to answer, and bad framing gets the `6F 00` resync.
+#[allow(clippy::too_many_arguments)] // one call site; every argument is state it needs
 fn serve_message(
     stream: &mut TcpStream,
     jobs: &mpsc::Sender<Req>,
     msg: &[u8],
+    atr: &[u8],
     status: &mut u8,
     out: &mut [u8],
 ) -> io::Result<()> {
@@ -125,7 +127,7 @@ fn serve_message(
     if matches!(msg.first(), Some(&CCID_POWER_ON | &CCID_POWER_OFF)) {
         run(jobs, Job::ResetCard)?;
     }
-    let n = process_message(msg, ATR_RSKEY, status, out);
+    let n = process_message(msg, atr, status, out);
     if n > 0 {
         send(stream, &out[..n])
     } else {
@@ -195,12 +197,12 @@ fn send(stream: &mut TcpStream, payload: &[u8]) -> io::Result<()> {
 }
 
 /// Accept forever, one thread per client.
-pub fn listen(listener: std::net::TcpListener, jobs: mpsc::Sender<Req>) {
+pub fn listen(listener: std::net::TcpListener, jobs: mpsc::Sender<Req>, atr: &'static [u8]) {
     for stream in listener.incoming() {
         let Ok(stream) = stream else { continue };
         let jobs = jobs.clone();
         std::thread::spawn(move || {
-            if let Err(e) = serve(stream, jobs) {
+            if let Err(e) = serve(stream, jobs, atr) {
                 eprintln!("emu: ccid client: {e}");
             }
         });
