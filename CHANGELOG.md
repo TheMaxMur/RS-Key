@@ -222,8 +222,21 @@ several sites of a rule the codebase had already decided once and swept incomple
   them tolerate is invisible at that layer — the same shape as the `ykman openpgp
   info` GET DATA `6E` bug, which every protocol test passed.
   [testing.md](docs/testing.md) says as much where it explains the layer.
+- **`rsk status --json` reports the chip serial** (`rsk` 0.3.32), the field
+  `rsk-tui --once` already showed, so a script that tells two attached keys apart
+  no longer needs the TUI. It comes from the rescue SELECT response, so it is
+  `null` wherever the CCID interface is unavailable — on Linux that is the ccid
+  reader list above, not a device fault. Thanks to @mannp
+  ([#69](https://github.com/TheMaxMur/RS-Key/pull/69)).
 
 ### Fixed
+
+- **The packaged `rsk-tui` found no device on Linux.** `nix run .#rsk-tui` built
+  against `pkgs.systemd`, which no longer carries `libudev.so.1` in `lib/`, so
+  hidapi's hidraw backend lost the library at *runtime* — the build succeeded and
+  the dashboard then saw nothing plugged in. It links `pkgs.udev`
+  (systemd-minimal-libs) instead, where the library actually lives. Thanks to
+  @mannp ([#68](https://github.com/TheMaxMur/RS-Key/pull/68)).
 
 - **Three seal recipes produced an image that would not boot on a provisioned board.**
   production.md states the rule — every `picotool seal` carries `--rollback <your floor>`,

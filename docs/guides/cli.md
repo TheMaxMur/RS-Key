@@ -147,7 +147,7 @@ shorter than 10, even if the device config asks for less.
 can pipe to `jq`. Everything else is human-formatted text.
 
 ```sh
-rsk status --json | jq '.secure_boot, .fido.clientPin'
+rsk status --json | jq '.serial, .secure_boot, .fido.clientPin'
 rsk inventory list --json        # one JSON object per connected key, per line
 ```
 
