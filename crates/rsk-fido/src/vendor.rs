@@ -363,7 +363,7 @@ fn att_import<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> CtapResult 
     // `gate` waives its PIN half when no PIN is set — leaving the whole handover on
     // one unlabelled touch. Name it explicitly when there is no PIN to authorise it.
     if !ctx.fs.has_data(EF_PIN)
-        && !ctx.check_user_presence(crate::Confirm::titled("Replace attestation identity?"))
+        && !ctx.check_user_presence(crate::Confirm::titled("Replace this identity?"))
     {
         return Err(CtapError::OperationDenied);
     }
@@ -395,7 +395,7 @@ fn att_clear<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> CtapResult {
     // The identity this destroys survives a factory reset and only the org's HSM
     // can restore it, so it gets the same explicit prompt the import gained.
     if !ctx.fs.has_data(EF_PIN)
-        && !ctx.check_user_presence(crate::Confirm::titled("Erase attestation identity?"))
+        && !ctx.check_user_presence(crate::Confirm::titled("Erase this identity?"))
     {
         return Err(CtapError::OperationDenied);
     }
@@ -793,7 +793,7 @@ fn backup_export<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req, out: &mut [
     }
     // Name the operation explicitly: this hands the master seed to the host. A generic
     // prompt here would let a host phish the approval for a full identity export.
-    gate(ctx, req, "Export secret seed to host?")?;
+    gate(ctx, req, "Export secret seed?")?;
     let mut seed = ctx.load_keydev().ok_or(CtapError::NotAllowed)?;
     let mut nonce = [0u8; 12];
     ctx.rng.fill(&mut nonce);
@@ -840,7 +840,7 @@ fn backup_load<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> CtapResult
     {
         return Err(CtapError::OperationDenied);
     }
-    gate(ctx, req, "Restore seed from host?")?;
+    gate(ctx, req, "Load seed from host?")?;
     let mut nonce = [0u8; 12];
     nonce.copy_from_slice(&req.blob[..12]);
     let mut tag = [0u8; 16];
@@ -885,7 +885,7 @@ fn backup_finalize<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> CtapRe
     // deliberately NOT required, since both shipped host tools send FINALIZE with
     // no MSE handshake — and say what the touch actually authorises.
     pin_gate(ctx, req)?;
-    if !ctx.check_user_presence(crate::Confirm::titled("Seal backup permanently?")) {
+    if !ctx.check_user_presence(crate::Confirm::titled("Seal backup forever?")) {
         return Err(CtapError::OperationDenied);
     }
     ctx.fs

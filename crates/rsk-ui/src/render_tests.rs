@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 RS-Key contributors
 
-use super::ceremony::centered_clipped;
+use super::ceremony::{CEREMONY_TITLE_BAND, CEREMONY_TITLE_ROLE, centered_clipped};
 use super::components;
 use super::home::HOME_CARD_TOP;
 use super::*;
@@ -867,6 +867,147 @@ fn confirm_with_empty_rp_stays_on_panel() {
     let mut d = Rec::new();
     render(&mut d, &Screen::Confirm(p)).unwrap();
     assert!(!d.oob, "empty-rp confirm drew outside the panel");
+}
+
+/// Every trusted-consent title the firmware can raise, from the `Confirm::titled` /
+/// `Confirm::new` / `Confirm::register` call sites plus the two that pass their title
+/// indirectly (`rsk-fido`'s vendor `gate`, `rsk-openpgp`'s UIF match).
+/// [`ceremony_title_census_is_complete`] fails if a direct call site grows one that is
+/// not listed here.
+const CEREMONY_TITLES: &[&str] = &[
+    "Allow host PIN entry?",
+    "Allow host access?",
+    "Always list passkeys?",
+    "Attestation sign?",
+    "Authenticate?",
+    "Challenge-response?",
+    "Change LED?",
+    "Change audit logging?",
+    "Clear attestation key?",
+    "Confirm?",
+    "Decrypt data?",
+    "Erase everything?",
+    "Erase this identity?",
+    "Export secret seed?",
+    "Factory reset device?",
+    "Import attestation key?",
+    "Load seed from host?",
+    "Lock OTP page 58?",
+    "Lock device?",
+    "Read audit log?",
+    "Reboot to BOOTSEL?",
+    "Register key?",
+    "Remove device lock?",
+    "Replace device seed?",
+    "Replace this identity?",
+    "Require anti-rollback?",
+    "Seal backup forever?",
+    "Set OATH PIN?",
+    "Show OATH code?",
+    "Sign audit log?",
+    "Sign data?",
+    "Sign in?",
+    "Use PIV key?",
+    "Use this key?",
+    "Verify OATH code?",
+    "Write device cert?",
+    "Write device config?",
+];
+
+/// Titles still wider than [`CEREMONY_TITLE_BAND`]. Empty, and it must stay that way:
+/// on a title-only prompt the title is the whole of what the owner is approving, and an
+/// ellipsized sentence is two shortenings away from reading as another prompt. A ratchet
+/// — shorten a title and drop it from here; never add to it.
+const CEREMONY_TITLES_TOO_WIDE: &[&str] = &[];
+
+#[test]
+fn ceremony_titles_fit_the_title_band() {
+    for t in CEREMONY_TITLES {
+        let w = font::width(t, CEREMONY_TITLE_ROLE).expect("consent titles are ASCII");
+        assert_eq!(
+            w > CEREMONY_TITLE_BAND.w as u32,
+            CEREMONY_TITLES_TOO_WIDE.contains(t),
+            "{t:?} measures {w}px against the {}px band",
+            CEREMONY_TITLE_BAND.w
+        );
+    }
+    // A reworded title must not leave its old spelling behind on the pending list.
+    for t in CEREMONY_TITLES_TOO_WIDE {
+        assert!(
+            CEREMONY_TITLES.contains(t),
+            "{t:?} is no longer a consent title"
+        );
+    }
+}
+
+/// The census is hand-maintained, so guard the way it fails silently: a consent title
+/// added anywhere under `crates/` or `firmware/` that nobody lists above would never be
+/// measured. Titles reached through a helper (`gate`, the UIF match) are not literals at
+/// the call site and stay hand-listed.
+#[test]
+fn ceremony_title_census_is_complete() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .canonicalize()
+        .expect("workspace root");
+    let mut found = std::vec::Vec::new();
+    for dir in ["crates", "firmware/src"] {
+        scan_confirm_titles(&root.join(dir), &mut found);
+    }
+    // Both trees must actually have been walked, or the loop below passes on nothing.
+    for anchor in ["Lock OTP page 58?", "Change LED?"] {
+        assert!(found.iter().any(|t| t == anchor), "scan missed {anchor:?}");
+    }
+    for t in &found {
+        assert!(
+            CEREMONY_TITLES.contains(&t.as_str()),
+            "consent title {t:?} is missing from CEREMONY_TITLES"
+        );
+    }
+}
+
+/// Collect the string-literal title argument of every `Confirm::titled(` / `Confirm::new(`
+/// under `dir`, recursively. Test and proof siblings are skipped: their titles are
+/// fixtures, not screens the firmware can raise.
+fn scan_confirm_titles(dir: &std::path::Path, out: &mut std::vec::Vec<std::string::String>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for e in entries.flatten() {
+        let path = e.path();
+        let name = e.file_name();
+        let name = name.to_string_lossy();
+        if path.is_dir() {
+            scan_confirm_titles(&path, out);
+            continue;
+        }
+        if !name.ends_with(".rs") || name.ends_with("_tests.rs") || name.ends_with("_kani.rs") {
+            continue;
+        }
+        let src = std::fs::read_to_string(&path).unwrap_or_default();
+        for anchor in ["Confirm::titled(", "Confirm::new("] {
+            for (i, m) in src.match_indices(anchor) {
+                // The title may sit on the next line (rustfmt wraps the 3-arg form).
+                let tail = src[i + m.len()..].trim_start();
+                if let Some(rest) = tail.strip_prefix('"')
+                    && let Some(end) = rest.find('"')
+                {
+                    out.push(rest[..end].into());
+                }
+            }
+        }
+    }
+}
+
+/// A title too wide for its band must be ellipsized inside the panel, never painted
+/// past the edge — the ellipsis backstop under [`CEREMONY_TITLES_TOO_WIDE`].
+#[test]
+fn confirm_keeps_a_wide_title_on_panel() {
+    for t in CEREMONY_TITLES_TOO_WIDE {
+        let mut d = Rec::new();
+        render(&mut d, &Screen::Confirm(ConfirmPrompt::new(t, b"", b""))).unwrap();
+        assert!(!d.oob, "{t:?} painted outside the panel");
+    }
 }
 
 /// Add-passkey reuses the same band: Cancel in `DENY_RECT`, Save filled in

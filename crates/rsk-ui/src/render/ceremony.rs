@@ -13,6 +13,20 @@ const CEREMONY_ICON_X: i32 = 13;
 const CEREMONY_TITLE_X: i32 = CEREMONY_ICON_X + 18 + 8;
 /// Vertical centre of the title row (matches [`title_bar`]).
 const CEREMONY_TITLE_CY: i32 = STATUS_BAR_H as i32 + TITLE_BAR_H as i32 / 2;
+/// The consent title's face. Smaller than the [`Role::Heading`] the other titles use:
+/// most consent titles are sentences, and at Heading two thirds of them did not fit
+/// [`CEREMONY_TITLE_BAND`]. Shared with the width test so the two cannot drift.
+pub(super) const CEREMONY_TITLE_ROLE: Role = Role::BodyStrong;
+/// The band the consent title is painted into: from the title origin to the panel's
+/// right inset, the height of the title row. A title wider than this is ellipsized —
+/// but on a [`ConfirmPrompt`] with no relying-party text the title is the *only* text
+/// on screen, so the census test keeps that backstop from ever firing.
+pub(super) const CEREMONY_TITLE_BAND: Rect = Rect::new(
+    CEREMONY_TITLE_X as u16,
+    STATUS_BAR_H,
+    (PANEL_W - 13) - CEREMONY_TITLE_X as u16,
+    TITLE_BAR_H,
+);
 /// The service header sits just under the chrome; the info / caution plate below it.
 const CEREMONY_HEAD_TOP: i32 = CONTENT_TOP as i32 + 6;
 const CEREMONY_PLATE_TOP: i32 = CONTENT_TOP as i32 + 54;
@@ -213,12 +227,17 @@ pub(super) fn confirm<D: DrawTarget<Color = Rgb565>>(
         18,
         theme::ACCENT,
     )?;
-    text_left(
+    // Clipped like every other label on this screen: an over-wide title used to paint
+    // past the panel edge, and on a title-only prompt (`Confirm::titled`, e.g. the OTP
+    // fuse burns) the cut sentence is the whole of what the owner is approving.
+    text_left_ellipsized(
         t,
         p.title,
         EgPoint::new(CEREMONY_TITLE_X, CEREMONY_TITLE_CY),
-        Role::Heading,
+        CEREMONY_TITLE_ROLE,
         theme::TEXT,
+        CEREMONY_TITLE_BAND,
+        false,
     )?;
     // Relying-party header, only when the request carries rp text (generic confirms
     // such as an OpenPGP signature may not).

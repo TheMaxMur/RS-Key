@@ -740,7 +740,7 @@ impl<'a> ManagementApplet<'a> {
     /// footgun. The firmware does the flash wipe + reboot after this SW_OK.
     #[cfg(not(feature = "strict-config"))]
     fn request_device_reset(&mut self) -> Sw {
-        if !self.require_presence(Confirm::titled("Factory reset the device?")) {
+        if !self.require_presence(Confirm::titled("Factory reset device?")) {
             return Sw::CONDITIONS_NOT_SATISFIED;
         }
         DEVICE_RESET.store(true, core::sync::atomic::Ordering::Relaxed);
