@@ -42,6 +42,8 @@ CRIT1_ROW, BOOT_FLAGS1_ROW, BOOTKEY0_0_ROW = 0x40, 0x4B, 0x80
 # Four boot-key slots: BOOTKEY{n}_0 = 0x80 + n*0x10 (0x80/0x90/0xa0/0xb0), each a
 # 16-row ECC block holding the SHA-256 fingerprint of one signing public key.
 N_KEY_SLOTS, BOOTKEY_STRIDE = 4, 0x10
+# The fingerprint is that SHA-256: 32 bytes, two data bytes per ECC row.
+BOOTKEY_FP_LEN = 32
 PAGE1_LOCK1_ROW, PAGE2_LOCK1_ROW = 0xF83, 0xF85
 # Anti-rollback: BOOT_FLAGS0 bit 11 + the 48-bit DEFAULT_BOOT_VERSION
 # thermometer. All RBIT-3 (three consecutive row copies, bitwise majority).
@@ -135,6 +137,13 @@ def _build_slot_json(seal_data, slot, new_key_valid):
     fp = seal_data.get("bootkey0")
     if fp is None:
         die("otp.json is missing bootkey0 — not a `picotool seal` otp.json?")
+    # picotool accepts any bootkey whose length divides the block and *replicates*
+    # it across all 16 rows, so a truncated file burns a one-way slot with a
+    # fingerprint matching no key. Cheap guard; the read-back verify is the real one.
+    if not (isinstance(fp, list) and len(fp) == BOOTKEY_FP_LEN
+            and all(isinstance(b, int) and 0 <= b <= 0xFF for b in fp)):
+        die(f"otp.json bootkey0 is not {BOOTKEY_FP_LEN} bytes 0..255 — refusing to "
+            "burn a fingerprint that cannot be a SHA-256 hash")
     return {f"bootkey{slot}": fp, "boot_flags1": {"key_valid": new_key_valid}}
 
 
@@ -178,9 +187,19 @@ def pages_locked(s):
 # --- device state -------------------------------------------------------------
 
 def slot_present(n):
-    """True if slot n's fingerprint rows are written (first 2 ECC rows non-zero)."""
+    """True if slot n's fingerprint rows are written (first 2 ECC rows non-zero).
+    Presence only — never a verify: `_provision_slot` compares `read_bootkey`."""
     base = slot_key_row(n)
     return any((_raw(base + i) or 0) for i in range(2))
+
+
+def read_bootkey(n):
+    """The 32-byte fingerprint burned into slot n, as the bootrom reads it.
+    `_raw` yields 24 bits per row — the low 16 are the data, the third byte is the
+    ECC parity — so mask each row and concatenate them little-endian."""
+    base = slot_key_row(n)
+    return b"".join((_raw(base + i) & 0xFFFF).to_bytes(2, "little")
+                    for i in range(BOOTKEY_FP_LEN // 2))
 
 
 def read_state():
@@ -261,9 +280,18 @@ def _provision_slot(otp_json, slot, dry, *, stage_label):
         print("   picotool otp load", p)
         if not dry:
             picotool("otp", "load", p)
+            # A non-zero test passes on ANY garbage burn — including picotool
+            # replicating a short bootkey across all 16 rows — and this is the last
+            # checkable step before `enable` makes the board refuse what it cannot
+            # validate. Compare the rows against what was asked for (audit run-37).
+            want = bytes(out[f"bootkey{slot}"])
+            burned = read_bootkey(slot)
+            if burned != want:
+                die(f"verify failed: slot {slot} reads back {burned.hex()}, "
+                    f"expected {want.hex()} — do NOT enable enforcement on this board")
             s = read_state()
-            if not s["slots_present"][slot] or not (s["key_valid"] & (1 << slot)):
-                die(f"verify failed: slot {slot} fingerprint / KEY_VALID did not take")
+            if not (s["key_valid"] & (1 << slot)):
+                die(f"verify failed: KEY_VALID for slot {slot} did not take")
             print_state(s)
     return s
 

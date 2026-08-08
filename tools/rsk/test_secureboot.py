@@ -52,6 +52,16 @@ def test_build_slot_json_missing_fingerprint_dies():
         sb._build_slot_json({"boot_flags1": {}}, 0, 1)
 
 
+@pytest.mark.parametrize("fp", [[0xAA, 0xBB], list(range(31)), list(range(64)),
+                                [0] * 31 + [256], "0" * 64, {"0": 1}])
+def test_build_slot_json_refuses_a_fingerprint_that_is_not_32_bytes(fp):
+    """picotool takes any bootkey whose length divides the 16-row block and
+    replicates it: `[0xAA, 0xBB]` burns 0xbbaa into all sixteen rows, and the
+    two-int list is the one malformed shape nothing else here rejected."""
+    with pytest.raises(SystemExit):
+        sb._build_slot_json({"bootkey0": fp}, 0, 1)
+
+
 def test_next_free_slot_skips_present_valid_revoked():
     # slot 0 present+valid, slot 2 revoked -> first free is slot 1
     s = {"slots_present": [True, False, False, False], "key_valid": 0b0001, "key_invalid": 0b0100}
@@ -256,6 +266,57 @@ def test_load_key_refuses_a_revoked_slot(monkeypatch, tmp_path):
     with pytest.raises(SystemExit):
         sb._provision_slot(str(seal), 1, False, stage_label="load-key")
     assert writes == [], "a revoked slot was burned anyway"
+
+
+# --- the post-burn verify compares the fingerprint, not "non-zero" (run-37) ----
+
+ECC_PARITY = 0x22 << 16  #: `_raw` returns 24 bits; the third byte is ECC, not data.
+
+
+def _rows(fp):
+    """What `_raw` reports for a slot holding `fp`: two data bytes per ECC row."""
+    return [int.from_bytes(fp[i:i + 2], "little") | ECC_PARITY
+            for i in range(0, len(fp), 2)]
+
+
+def test_read_bootkey_masks_the_ecc_parity_and_concatenates_the_rows(monkeypatch):
+    fp = bytes(range(32))
+    monkeypatch.setattr(sb, "_raw", lambda row: _rows(fp)[row - sb.slot_key_row(1)])
+    assert sb.read_bootkey(1) == fp
+
+
+def _provision(monkeypatch, tmp_path, rows, fp=bytes(range(32))):
+    """Drive `_provision_slot` into free slot 0 with `rows` as the post-burn
+    read-back. Returns the picotool argv list (empty ⇒ nothing was burned)."""
+    seal = tmp_path / "otp.json"
+    seal.write_text('{"bootkey0": %s, "boot_flags1": {"key_valid": 1}}' % list(fp))
+    _stage(monkeypatch, _state(key_valid=0), typed="LOAD-BOOTKEY",
+           after=_state(key_valid=0b0001))
+    calls = []
+    monkeypatch.setattr(sb, "picotool", lambda *a, **k: calls.append(a))
+    monkeypatch.setattr(sb, "_raw", lambda row: rows[row - sb.slot_key_row(0)])
+    return calls
+
+
+def test_provision_accepts_a_burn_that_reads_back_as_the_fingerprint(monkeypatch, tmp_path):
+    fp = bytes(range(32))
+    calls = _provision(monkeypatch, tmp_path, _rows(fp), fp)
+    sb._provision_slot(str(tmp_path / "otp.json"), 0, False, stage_label="load-key")
+    assert [c[:2] for c in calls] == [("otp", "load")]
+
+
+def test_provision_rejects_a_burn_that_is_not_the_fingerprint(monkeypatch, tmp_path, capsys):
+    """The OTP write is irreversible, so the verify is the only thing standing
+    between a wrong burn and `enable` — which trusts any slot that is present and
+    KEY_VALID. Both hold here; only the fingerprint disagrees (audit run-37)."""
+    fp = bytes(range(32))
+    # picotool's replication of a 2-byte bootkey: 0xbbaa in all sixteen rows. Every
+    # row is non-zero and KEY_VALID took, so the old presence test passed.
+    _provision(monkeypatch, tmp_path, [0xBBAA | ECC_PARITY] * 16, fp)
+    with pytest.raises(SystemExit):
+        sb._provision_slot(str(tmp_path / "otp.json"), 0, False, stage_label="load-key")
+    err = capsys.readouterr().err
+    assert "reads back" in err and "do NOT enable enforcement" in err
 
 
 def test_require_bootsel_refuses_more_than_one_device(monkeypatch):
