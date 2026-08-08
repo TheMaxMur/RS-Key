@@ -300,19 +300,21 @@ opcode, so no test file changes and neither hidapi nor pyscard need be installed
 python-fido2, or hardware, and `tools/emu/README.md` lists which is which. The
 store underneath is the device's own (`crates/rsk-store`) over a mock NOR flash
 with the board's geometry, so the suites run against a log-structured ring that
-migrates and reclaims — not a map that overwrites in place. A
-harness that cannot tell "does not apply here" from "broken" hides the second
-one, which is the whole reason those fourteen are named rather than left to fail
-somewhere in the middle. `--touch` prompts for every presence on the terminal (and
-prints what a trusted display would have shown); `--trace` logs each command and
-its status.
+migrates and reclaims — not a map that overwrites in place. A harness that cannot
+tell "does not apply here" from "broken" hides the second one, which is the whole
+reason the refused suites are named rather than left to fail somewhere in the
+middle. `--touch` prompts for every presence on the terminal (and prints what a
+trusted display would have shown); `--trace` logs each command and its status.
 
 What it buys is the run these suites otherwise never get: they are hand-run
 against a flashed board, so nothing catches a *test* that has rotted. What it
-cannot stand in for is anything below the applet layer — the emulator has no
-secure boot, no OTP, no fuses, no USB stack, and its store overwrites in place
-rather than through `sequential-storage`, so power-cut and enumeration behaviour
-are unproven by it. `firmware/`'s own wiring is not shared either
+cannot stand in for is the hardware under the applet layer — no secure boot, no
+OTP, no fuses, no USB stack, so enumeration and interface order are unproven by
+it, and the flash is a mock: the log structure and the `--power-cut` injector are
+real, the medium's wear and partial-erase physics are not. The applet wiring
+*is* shared (`crates/rsk-device`), so a routing or gating bug does show up here;
+what is still written twice is the worker's sequencing and the board's own
+`firmware/src/{main,worker,presence,led}.rs`
 ([tools/emu/README.md](https://github.com/TheMaxMur/RS-Key/tree/main/tools/emu)
 lists the gaps). A green emulator run is a protocol result, not a device result.
 

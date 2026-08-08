@@ -20,16 +20,15 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   hand-run against a flashed board, and therefore never run in CI — work with no
   hardware attached (`python tests/emu.py tests/11_fido_makecredential.py`). It
   is a development tool, not a key: no secure boot, no OTP, no fuses, no USB
-  stack, and a store that overwrites in place instead of through
-  `sequential-storage`. Its device identity is deliberately its own, so
-  emulator-made material is recognisable as such. See
-  [docs/testing.md](docs/testing.md) and `tools/emu/README.md`.
+  stack. Its device identity is deliberately its own, so emulator-made material
+  is recognisable as such. See [docs/testing.md](docs/testing.md) and
+  `tools/emu/README.md`.
 - The CTAPHID and CCID message vocabularies in `rsk-usb` are public, so the
   emulator's transports name the same values instead of redeclaring them.
 - `scripts/docs_constants.py` now checks the constants copied into `tests/*.py`
   and `metadata/*.json`, not only those quoted in `docs/`, and resolves one
   `const A = B;` indirection — which is where the large-blob value below hid.
-  61 copies checked, up from 5.
+  66 copies checked, up from 5; the gate prints the live count on every run.
 
 - **The applet wiring moved into `crates/rsk-device`.** `firmware/src/handler.rs`
   and `ccid_handler.rs` were the last of the device that no test could reach and
@@ -50,8 +49,26 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   same status words (a build without an LED answers `INS_NOT_SUPPORTED` exactly
   as the unmatched instruction did before). No `bcdDevice` bump — nothing the
   device does over the wire changed.
+- **The flash backend moved into `crates/rsk-store`.** The two
+  `sequential-storage` partitions, the counter-FID routing and the scrub lap
+  lived only in `firmware/src/flash_storage.rs`, so nothing that is not a board
+  could run them: the `power_cut` fuzz target tortured a hand-written mirror, and
+  the emulator had no log-structured store at all. Both now drive the shipped
+  backend — the emulator over `sequential-storage`'s mock NOR flash with the
+  device's geometry, with `--power-cut <n>` arming the injector. The firmware
+  keeps what is the board's: the shared flash peripheral and its cache sizes.
+  Behaviour unchanged; no `bcdDevice` bump.
 
 ### Fixed
+
+- **The `power_cut` fuzz target was tearing a mirror of the store, not the
+  store.** The re-implementation it drove had drifted three ways, each load-bearing
+  for what the target claims to prove: no `last_error`, so it could not see
+  "absent" being confused with "the read failed" (the audit run-36 class); no
+  `compact`, so the scrub lap that destroys superseded secrets was never fuzzed;
+  and `EF_CRED_CTR` (0xC001) routed to the main partition where the device routes
+  it to the counter one, tearing the store's busiest key in the wrong place. It
+  now drives `rsk_store::SeqStorage` directly.
 
 - **The published metadata statements said `maxSerializedLargeBlobArray` was
   2048.** The value moved to 2046 on 2026-08-04, when `MAX_LARGE_BLOB_SIZE`

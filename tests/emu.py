@@ -17,12 +17,12 @@ What this cannot stand in for: anything that needs the USB stack itself
 (enumeration, interface order, the CCID packetisation), the arms of the vendor
 applet that drive hardware (the LED, the second core, the benches, the drop to
 BOOTSEL), and every hardware property the emulator has none of (secure boot, OTP,
-power cuts). A green run here is a protocol result, not a device result.
+fuses). A green run here is a protocol result, not a device result.
 
 The suites in [`UNSUPPORTED`] are refused up front with their reason and exit 77,
 rather than being allowed to fail somewhere in the middle. A harness that cannot
-tell "does not apply here" from "broken" makes the second one invisible, and
-these fourteen would otherwise be re-diagnosed by every person who runs a sweep.
+tell "does not apply here" from "broken" makes the second one invisible, and each
+of them would otherwise be re-diagnosed by every person who runs a sweep.
 """
 import os
 import runpy
