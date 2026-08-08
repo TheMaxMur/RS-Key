@@ -40,9 +40,38 @@ def label(info):
 
 
 def wink(dev, cid):
-    """Send one CTAPHID_WINK and report whether the device answered it."""
+    """Send one CTAPHID_WINK and report whether the device answered it.
+    A device that answers nothing returns an empty read on the timeout, so the
+    reply is bounds-checked rather than indexed."""
     ctaphid.write(dev, cid + bytes([CTAPHID_WINK, 0, 0]))
-    return ctaphid.read(dev)[4] == CTAPHID_WINK
+    r = ctaphid.read(dev)
+    return len(r) > 4 and r[4] == CTAPHID_WINK
+
+
+def _identify_one(tag, info, repeat):
+    """Wink one enumerated device; report why not and return False if it cannot be.
+    Every failure here is per-device — this command exists to walk *all* of them, so
+    one key that is busy, silent or refuses must not end the walk for the rest."""
+    dev = ctaphid.hid.device()
+    try:
+        dev.open_path(info["path"])
+        cid, caps = ctaphid.ctaphid_init_caps(dev)
+        if not caps & CAPFLAG_WINK:
+            print(f"{tag} — no indicator (does not advertise wink)")
+            return False
+        for n in range(repeat):
+            if not wink(dev, cid):
+                print(f"{tag} — refused CTAPHID_WINK")
+                return False
+            if n + 1 < repeat:
+                time.sleep(GAP_S)
+    except (OSError, ValueError) as e:
+        print(f"{tag} — unreachable ({e})")
+        return False
+    finally:
+        dev.close()
+    print(f"{tag} — winking now 👀")
+    return True
 
 
 def run(args):
@@ -53,22 +82,9 @@ def run(args):
         die("no FIDO HID device found (usage page 0xF1D0)")
     winked = 0
     for i, info in enumerate(found):
-        dev = ctaphid.hid.device()
-        dev.open_path(info["path"])
-        try:
-            cid, caps = ctaphid.ctaphid_init_caps(dev)
-            if not caps & CAPFLAG_WINK:
-                print(f"{i + 1}. {label(info)} — no indicator (does not advertise wink)")
-                continue
-            for n in range(args.repeat):
-                if not wink(dev, cid):
-                    die(f"{label(info)} refused CTAPHID_WINK")
-                if n + 1 < args.repeat:
-                    time.sleep(GAP_S)
-            winked += 1
-            print(f"{i + 1}. {label(info)} — winking now 👀")
-        finally:
-            dev.close()
+        if not _identify_one(f"{i + 1}. {label(info)}", info, args.repeat):
+            continue
+        winked += 1
         if i + 1 < len(found):
             time.sleep(GAP_S)
     if not winked:

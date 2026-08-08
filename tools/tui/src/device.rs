@@ -304,11 +304,16 @@ fn ctaphid_init(dev: &hidapi::HidDevice) -> Option<[u8; 4]> {
 /// has an indicator, so a build without one is reported instead of being sent a
 /// command it would answer invisibly.
 fn ctaphid_init_caps(dev: &hidapi::HidDevice) -> Option<([u8; 4], u8)> {
+    // The broadcast channel is shared, so the echoed nonce is the only thing that
+    // says this reply answers OUR request rather than another client's INIT — and a
+    // constant one cannot be checked at all (CTAP 2.1 §11.2.9.1.3, audit run-37).
+    let mut nonce = [0u8; 8];
+    OsRng.fill_bytes(&mut nonce);
     let mut f = vec![0xff, 0xff, 0xff, 0xff, CTAPHID_INIT, 0, 8];
-    f.extend_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8]);
+    f.extend_from_slice(&nonce);
     hid_write(dev, &f);
     let r = hid_read(dev, READ_TIMEOUT_MS);
-    if r.len() < 24 || r[4] != CTAPHID_INIT {
+    if r.len() < 24 || r[4] != CTAPHID_INIT || r[7..15] != nonce {
         return None;
     }
     Some(([r[15], r[16], r[17], r[18]], r[23]))
