@@ -31,5 +31,12 @@ rsk-rescue = { path = "../../crates/rsk-rescue" }
 rsk-vendor = { path = "../../crates/rsk-vendor" }
 # The applet wiring — the same one the firmware runs, not a copy of it.
 rsk-device = { path = "../../crates/rsk-device" }
+# The device's own store backend, over sequential-storage's mock NOR flash — the
+# `_test` feature is what carries that mock, and it is the reason the emulator can
+# have log-structured storage instead of a map that overwrites in place.
+rsk-store = { path = "../../crates/rsk-store" }
+sequential-storage = { version = "8", features = ["_test"] }
+embedded-storage-async = "0.4"
+embassy-futures = { git = "https://github.com/embassy-rs/embassy", branch = "main" }
 
 [workspace]

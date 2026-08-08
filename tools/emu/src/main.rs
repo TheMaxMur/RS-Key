@@ -57,6 +57,8 @@ usage: rsk-emu [options]
   --trace             log every command and its status
   --yubico            present the Yubico card identity (ATR + OpenPGP AID
                       manufacturer), as a build carrying the Yubico VID does
+  --power-cut <n>     cut the flash's power after n bytes of writes; every op
+                      after that fails, as it does on a chip that lost its supply
   --seed <hex>        seed the DRBG deterministically — every key becomes
                       predictable; for reproducible tests only
   --serial <16 hex>   device serial (default RSKEMU\\x00\\x01)
@@ -76,6 +78,7 @@ fn main() {
         flash_size: FLASH_SIZE,
         trace: false,
         yubico: false,
+        power_cut: None,
     };
 
     let mut args = std::env::args().skip(1);
@@ -96,6 +99,7 @@ fn main() {
             "--touch" => cfg.touch = true,
             "--trace" => cfg.trace = true,
             "--yubico" => cfg.yubico = true,
+            "--power-cut" => cfg.power_cut = Some(parse_u32(&value("--power-cut"))),
             "--seed" => cfg.seed = Some(parse_hex(&value("--seed"), None)),
             "--serial" => {
                 let raw = parse_hex(&value("--serial"), Some(8));
@@ -180,6 +184,11 @@ fn listen_hid(listener: TcpListener, shared: Arc<hid::Shared>) {
 fn bind(host: &str, port: u16, what: &str) -> TcpListener {
     TcpListener::bind((host, port))
         .unwrap_or_else(|e| die(&format!("cannot bind the {what} port {host}:{port}: {e}")))
+}
+
+fn parse_u32(s: &str) -> u32 {
+    s.parse()
+        .unwrap_or_else(|_| die(&format!("not a byte count: {s:?}")))
 }
 
 fn parse_port(s: &str) -> u16 {

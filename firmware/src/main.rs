@@ -70,7 +70,7 @@ compile_error!(
      display` — the `firmware-display` nix flavor sets this for you"
 );
 
-use flash_storage::{FLASH_SIZE, FlashStorage};
+use flash_storage::FLASH_SIZE;
 use handler::{FidoRng, Store};
 #[cfg(not(feature = "display"))]
 use presence::ButtonPresence;
@@ -508,7 +508,7 @@ async fn main(spawner: Spawner) {
 
     let flash = Flash::<_, Blocking, FLASH_SIZE>::new_blocking(p.FLASH);
     let flash_cell = FLASH_CELL.init(RefCell::new(flash_storage::wrap_flash(flash)));
-    let storage = FlashStorage::new(flash_cell, kvmain_range(), kvcnt_range());
+    let storage = flash_storage::new_storage(flash_cell, kvmain_range(), kvcnt_range());
     let mut fs = Fs::new(storage);
     fs.scan(); // recover dynamic files (counter, resident creds) from flash
 

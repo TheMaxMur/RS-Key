@@ -35,6 +35,8 @@ rsk-vendor = { workspace = true }
 # The applet wiring itself — which applets exist, what gates each, how a message
 # reaches one. Shared with `tools/emu`; this crate supplies its `Hooks`.
 rsk-device = { workspace = true }
+# The store backend; this crate supplies the flash handle and the cache sizes.
+rsk-store = { workspace = true }
 rsk-led = { workspace = true }
 # The trusted-display UI model (screens, untrusted-string sanitizing, button
 # hit-testing) + its ST7789 panel driver stack. All optional — pulled in only by

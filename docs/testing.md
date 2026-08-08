@@ -42,7 +42,7 @@ Green check.sh is the bar for every commit.
 ```sh
 nix develop -c cargo test -p rsk-sdk -p rsk-fs -p rsk-usb -p rsk-crypto \
     -p rsk-fido -p rsk-openpgp -p rsk-rsa-asm -p rsk-mgmt -p rsk-oath \
-    -p rsk-otp -p rsk-piv -p rsk-rescue -p rsk-vendor -p rsk-device --target aarch64-apple-darwin
+    -p rsk-otp -p rsk-piv -p rsk-rescue -p rsk-vendor -p rsk-device -p rsk-store --target aarch64-apple-darwin
 ```
 
 (`HOST_TARGET` env overrides the triple in `check.sh`.) Crypto tests pin
@@ -295,7 +295,10 @@ the target script and points the power-cycle helper at the emulator's replug
 opcode, so no test file changes and neither hidapi nor pyscard need be installed.
 **43 of the 52 suites pass**, FIDO and card alike (two want `--pin`, one wants
 `--yubico`); the other 9 are refused by name with their reason and exit 77 — they need raw USB,
-python-fido2, or hardware, and `tools/emu/README.md` lists which is which. A
+python-fido2, or hardware, and `tools/emu/README.md` lists which is which. The
+store underneath is the device's own (`crates/rsk-store`) over a mock NOR flash
+with the board's geometry, so the suites run against a log-structured ring that
+migrates and reclaims — not a map that overwrites in place. A
 harness that cannot tell "does not apply here" from "broken" hides the second
 one, which is the whole reason those fourteen are named rather than left to fail
 somewhere in the middle. `--touch` prompts for every presence on the terminal (and

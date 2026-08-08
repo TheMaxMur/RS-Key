@@ -18,13 +18,14 @@ cargo run --manifest-path tools/emu/Cargo.toml --target "$HOST" -- --store ./my.
   --host <addr>       bind address (default 127.0.0.1)
   --fido-port <n>     CTAPHID port, 0 disables (default 7799)
   --ccid-port <n>     APDU/card port, 0 disables (default 7800)
-  --store <path>      persist the file system here (default: memory only)
+  --store <path>      the flash image to mount (default: a blank chip, memory only)
   --touch             ask for every user presence on the terminal
   --trace             log every command and its status
   --seed <hex>        seed the DRBG deterministically (predictable keys)
   --serial <16 hex>   device serial
   --yubico            present the Yubico card identity (ATR + OpenPGP AID
                       manufacturer), as a build carrying the Yubico VID does
+  --power-cut <n>     cut the flash's power after n bytes of writes
 ```
 
 ## Running the on-device suites against it
@@ -89,9 +90,14 @@ serial — is recognisable as emulator-made.
 
 - **Hardware**: secure boot, OTP fuses, the anti-rollback epoch, the partition
   table, glitch detectors, side channels, the TRNG.
-- **Flash semantics**: the store overwrites in place. It is not
-  `sequential-storage`, so there are no log-structured remnants and no torn
-  writes — power-cut behaviour still has to be proved on hardware.
+- **Flash semantics**: these are real now. The store is the device's
+  (`crates/rsk-store`) over `sequential-storage`'s mock NOR flash with the
+  device's geometry — 4 KiB sectors, 1408 KiB main + 128 KiB counter — so writes
+  clear bits and never set them, a page is erased before it is rewritten, and the
+  ring migrates and reclaims where the board's does. `--power-cut <n>` arms the
+  mock's own injector. What is still standing in for hardware is the medium
+  itself: no wear, no partial-erase physics, and the write-once *tracking* resets
+  across a restart (the bits do not — they are in the image).
 - **The vendor AID's hardware arms**: the applet itself runs (`crates/rsk-vendor`
   — the counter, the U2F/SELECT routing, the warm reboot), but SET/GET LED, the
   second core's statistics, the measurement benches and the drop to BOOTSEL all

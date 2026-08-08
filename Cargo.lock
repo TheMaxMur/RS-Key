@@ -1120,6 +1120,7 @@ dependencies = [
  "rsk-rsa-asm",
  "rsk-sdk",
  "rsk-slip39",
+ "rsk-store",
  "rsk-ui",
  "rsk-usb",
  "rsk-vendor",
@@ -2373,6 +2374,17 @@ version = "0.1.0"
 dependencies = [
  "rsk-crypto",
  "zeroize",
+]
+
+[[package]]
+name = "rsk-store"
+version = "0.1.0"
+dependencies = [
+ "embassy-futures",
+ "embedded-storage-async",
+ "rsk-fs",
+ "rsk-sdk",
+ "sequential-storage",
 ]
 
 [[package]]

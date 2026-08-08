@@ -32,7 +32,7 @@ use crate::platform::EmuPlatform;
 use crate::presence::EmuPresence;
 use crate::rng::EmuRng;
 use crate::signals::Signals;
-use crate::store::FileStore;
+use crate::store::EmuStore;
 
 /// The OpenPGP AID's manufacturer field, chosen by the same rule the firmware
 /// applies to its effective VID (`openpgp_mfr_for`): the Yubico identity is a
@@ -74,7 +74,7 @@ pub struct EmuHooks {
     warm: bool,
 }
 
-impl Hooks<FileStore> for EmuHooks {
+impl Hooks<EmuStore> for EmuHooks {
     /// The phy record was rewritten. A real key re-enumerates under its new USB
     /// identity here; this one can only say so.
     fn request_reboot(&mut self) {
@@ -102,6 +102,9 @@ pub struct Config {
     /// Present the Yubico card identity — the ATR and the OpenPGP AID's
     /// manufacturer — as a build carrying the Yubico VID does.
     pub yubico: bool,
+    /// Cut the power after this many bytes of flash writes — `MockFlashBase`'s
+    /// own injector, the same one the `power_cut` fuzz target arms.
+    pub power_cut: Option<u32>,
 }
 
 /// One unit of work for the device thread.
@@ -140,15 +143,13 @@ pub fn run(
     signals: Arc<Signals>,
     lines: Option<Receiver<String>>,
 ) {
-    let store = match FileStore::open(cfg.store.clone()) {
+    let store = match crate::store::open(cfg.store.clone(), cfg.power_cut) {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("emu: cannot open store: {e}");
+            eprintln!("emu: cannot mount the flash image: {e}");
             return;
         }
     };
-    let records = store.len();
-
     let fs = RefCell::new(Fs::new(store));
     let rng = RefCell::new(match &cfg.seed {
         Some(s) => EmuRng::from_seed(s),
@@ -237,10 +238,7 @@ pub fn run(
     // answer at all, so a replug has to restart it (`usb_attach::elapsed_ms`).
     let mut attach = Instant::now();
 
-    eprintln!(
-        "emu: device ready — serial {}, {records} record(s) in the store",
-        hex(&serial_id)
-    );
+    eprintln!("emu: device ready — serial {}", hex(&serial_id));
 
     while let Ok(req) = jobs.recv() {
         let now_ms = attach.elapsed().as_millis() as u64;
