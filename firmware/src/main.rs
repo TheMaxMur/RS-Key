@@ -650,7 +650,7 @@ async fn main(spawner: Spawner) {
     config.max_power = 100;
     config.max_packet_size_0 = 64;
     // bcdDevice build counter; also surfaced on the trusted-display Firmware screen.
-    let device_release: u16 = 0x0871;
+    let device_release: u16 = 0x0872;
     config.device_release = device_release;
 
     let mut builder = Builder::new(
@@ -821,15 +821,16 @@ async fn main(spawner: Spawner) {
             let any = unsafe { embassy_rp::gpio::AnyPin::steal(BUILD_LED_POWER_PIN) };
             LED_PWR.init(Output::new(any, Level::High));
         }
-        // PHY led_gpio overrides the build LED_PIN; an out-of-range pin is ignored,
-        // and a host-written pin that collides with the GPIO presence pin is dropped
-        // (they would fight over one pin) so it falls back to the build default rather
-        // than bricking the boot into a panic loop.
+        // PHY led_gpio overrides the build LED_PIN; out of range, or aimed at a pad
+        // another driver already owns, falls back to the build default rather than
+        // two owners of one pad (the const asserts above only bind BUILD_LED_PIN).
         let led_gpio = phy
             .as_ref()
             .and_then(|p| p.led_gpio)
             .filter(|&g| g <= 29)
             .filter(|&g| !(BUILD_PRESENCE_IS_GPIO && g == BUILD_PRESENCE_PIN))
+            .filter(|&g| !(BUILD_LED_POWER_ENABLED && g == BUILD_LED_POWER_PIN))
+            .filter(|&g| !(BUILD_USR_LED_ENABLED && g == BUILD_USR_LED_PIN))
             .unwrap_or(BUILD_LED_PIN);
         // PHY led_driver (1=gpio, 2=pimoroni, 3=ws2812) overrides the build kind;
         // anything else (unset, or the N/A esp32 value) keeps the build default.

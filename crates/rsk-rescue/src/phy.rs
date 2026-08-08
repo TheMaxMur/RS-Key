@@ -30,8 +30,8 @@ const TAG_ENABLED_CURVES: u8 = 0xA;
 const TAG_ENABLED_USB_ITF: u8 = 0xB;
 const TAG_LED_DRIVER: u8 = 0xC;
 // RS-Key vendor tag: WS2812 wire byte order — 0 = rgb (passthrough), 1 = grb
-// (red/green swapped). A host that omits it on a write no longer loses it: the
-// phy write is a merge (see `merge_save`), so untouched/unknown tags survive.
+// (red/green swapped). A host that omits it on a write no longer loses it:
+// `merge_save` re-emits every tag this parser knows — one it does not, it drops.
 const TAG_LED_ORDER: u8 = 0xD;
 // RS-Key vendor tag: number of physically-connected addressable LEDs.
 // 0 = unset (use the build's MAX_LEDS default).
@@ -163,6 +163,21 @@ impl Product {
     }
 }
 
+/// The value a product / manufacturer string TLV carries: `Some(None)` is the
+/// explicit clear (an empty value), and `None` means malformed — a length the
+/// `1..=33` arm admits but [`Product`] rejects, i.e. 33 bytes with no terminating
+/// NUL. `overlay` leaves the stored string alone for that: clearing a name the host
+/// never asked to change is a silent loss, not the merge the write claims to be.
+///
+/// The TLV length counts a trailing NUL; the string also stops at an embedded one.
+fn parse_string_tlv(v: &[u8]) -> Option<Option<Product>> {
+    let s = &v[..v.iter().position(|&b| b == 0).unwrap_or(v.len())];
+    if s.is_empty() {
+        return Some(None);
+    }
+    Product::new(s).map(Some)
+}
+
 /// The parsed phy record; absent TLVs are `None`. `opts` has no presence
 /// flag — absent means 0.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -230,14 +245,14 @@ impl PhyData {
                 (TAG_OPTS, 2) => phy.opts = u16::from_be_bytes([v[0], v[1]]),
                 (TAG_PRESENCE_TIMEOUT, 1) => phy.presence_timeout = Some(v[0]),
                 (TAG_USB_PRODUCT, 1..=33) => {
-                    // Length includes a trailing NUL; the string also stops at
-                    // an embedded NUL.
-                    let s = &v[..v.iter().position(|&b| b == 0).unwrap_or(tlen)];
-                    phy.usb_product = Product::new(s);
+                    if let Some(p) = parse_string_tlv(v) {
+                        phy.usb_product = p;
+                    }
                 }
                 (TAG_USB_MANUFACTURER, 1..=33) => {
-                    let s = &v[..v.iter().position(|&b| b == 0).unwrap_or(tlen)];
-                    phy.usb_manufacturer = Product::new(s);
+                    if let Some(m) = parse_string_tlv(v) {
+                        phy.usb_manufacturer = m;
+                    }
                 }
                 (TAG_ENABLED_CURVES, 4) => {
                     phy.enabled_curves = Some(u32::from_be_bytes([v[0], v[1], v[2], v[3]]));
@@ -347,9 +362,11 @@ pub fn save<S: Storage>(fs: &mut Fs<S>, phy: &PhyData) -> rsk_sdk::error::Result
 /// present in `data` onto the stored record, then save. The durability-safe write
 /// shared by the FIDO `CONFIG_WRITE` and CCID `WRITE 0x1C` paths — a host tool that
 /// sends only the fields it changed (as PicoForge does) can no longer wipe the
-/// VID/PID, product, LED order/count or any tag it omitted. A tag is cleared only
-/// by an explicit zero/empty TLV; `rsk` and PicoForge upsert full records, so
-/// nothing regresses. (This closes picoforge#102 / RS-Key#33 on the firmware side.)
+/// VID/PID, product, LED order/count or any *known* tag it omitted — a tag this
+/// parser does not know is not re-emitted either, so that one does not survive.
+/// A tag is cleared only by an explicit zero/empty TLV; `rsk` and PicoForge upsert
+/// full records, so nothing regresses. (This closes picoforge#102 / RS-Key#33 on
+/// the firmware side.)
 pub fn merge_save<S: Storage>(fs: &mut Fs<S>, data: &[u8]) -> rsk_sdk::error::Result<()> {
     let merged = load(fs).unwrap_or_default().overlay(data);
     save(fs, &merged)
@@ -392,11 +409,17 @@ fn contains_ci(hay: &[u8], needle: &[u8]) -> bool {
 /// The result is always clamped to [`USB_STR_MAX`] code units. When the token
 /// would not otherwise fit, the *name* is truncated to make room rather than the
 /// token being dropped: dropping it re-opens the ykman crash above, while
-/// overrunning the descriptor limit bricks enumeration outright.
+/// overrunning the descriptor limit bricks enumeration outright. An `out` too
+/// small for even the bare token gets nothing written, and `0` back.
 pub fn normalize_usb_product(name: &[u8], out: &mut [u8]) -> usize {
     let cap = out.len().min(USB_STR_MAX);
     if contains_ci(name, b"yubikey") && !contains(name, b"CCID") {
-        let room = cap.saturating_sub(YK_TOKEN_SUFFIX.len());
+        // Too small to hold the token means there is no safe answer to give: a
+        // truncated masquerade name without it is the ykman crash this exists to
+        // prevent, so write nothing and leave the caller on its default.
+        let Some(room) = cap.checked_sub(YK_TOKEN_SUFFIX.len()) else {
+            return 0;
+        };
         let n = clamped_len(name, room, room);
         out[..n].copy_from_slice(&name[..n]);
         out[n..n + YK_TOKEN_SUFFIX.len()].copy_from_slice(YK_TOKEN_SUFFIX);
