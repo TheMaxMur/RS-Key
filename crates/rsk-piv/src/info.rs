@@ -181,18 +181,25 @@ pub fn extra_count<S: Storage>(fs: &mut Fs<S>) -> u8 {
     read_extra(fs, &mut out) as u8
 }
 
-/// The lowest-numbered retired slot (82–95) that holds no key, or `None` when all
-/// twenty are taken — the target for the on-device generate action.
+/// The lowest-numbered retired slot (82–95) holding neither a key nor a certificate,
+/// or `None` when all twenty are taken — the target for the on-device generate action.
+/// The predicate is [`read_extra`]'s (`present || cert`) on purpose: keying off the key
+/// alone offered a slot whose certificate the generate would then overwrite, on a screen
+/// that promises it erases nothing.
 pub fn next_free_retired<S: Storage>(fs: &mut Fs<S>) -> Option<u8> {
-    (SLOT_RETIRED_FIRST..=SLOT_RETIRED_LAST).find(|&slot| !fs.has_key(key_fid(slot)))
+    (SLOT_RETIRED_FIRST..=SLOT_RETIRED_LAST).find(|&slot| {
+        !fs.has_key(key_fid(slot)) && !cert_fid_for_slot(slot).is_some_and(|f| fs.has_data(f))
+    })
 }
 
 /// Generate an instant (EC / Ed25519 / X25519) key on-device into an empty retired slot.
 /// Physical presence at the trusted display authorises it (no management-key auth, unlike
-/// the host GENERATE), and it is restricted to retired slots that hold no key — so it can
-/// only *add* a key, never overwrite one. Writes the sealed key, a self-signed certificate
-/// (none for X25519) and the metadata, so the slot then looks exactly like a host-generated
-/// one. RSA goes through [`store_retired_rsa`] (its prime search runs in the firmware).
+/// the host GENERATE), and it is restricted to retired slots that hold no key. The slot
+/// comes from [`next_free_retired`], which also skips a slot holding only a certificate —
+/// this call would replace that certificate with the self-signed one it writes. Writes the
+/// sealed key, that certificate (none for X25519) and the metadata, so the slot then looks
+/// exactly like a host-generated one. RSA goes through [`store_retired_rsa`] (its prime
+/// search runs in the firmware).
 pub fn generate_slot_key<S: Storage>(
     dev: &Device,
     fs: &mut Fs<S>,

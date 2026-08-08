@@ -97,6 +97,21 @@ fn next_free_retired_skips_taken_slots() {
     assert_eq!(next_free_retired(&mut fs), Some(0x83));
 }
 
+/// A slot holding only a certificate is populated to [`read_extra`], so the picker must
+/// skip it too — offering it would have the generate overwrite that certificate under a
+/// screen promising it adds to an empty slot.
+#[test]
+fn next_free_retired_skips_a_cert_without_a_key() {
+    let mut fs = fs();
+    fs.put(
+        cert_fid_for_slot(0x82).unwrap(),
+        &[0x30, 0x03, 0x01, 0x02, 0x03],
+    )
+    .unwrap();
+    assert!(!read_slot(&mut fs, 0x82).present);
+    assert_eq!(next_free_retired(&mut fs), Some(0x83));
+}
+
 /// Deterministic LCG randomness — enough for an EC keygen in a host test.
 struct TestRng(u64);
 impl Rng for TestRng {

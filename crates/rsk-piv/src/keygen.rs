@@ -354,11 +354,19 @@ pub(crate) fn generate_rsa_blocking<S: Storage>(
     finish_rsa(dev, fs, rng, slot, req.algo, pol, &key, res)
 }
 
+/// Is `slot` a retired slot with neither a key nor a certificate object?
+///
+/// Both halves matter: the panel's own picker skips a slot holding only a certificate,
+/// and the generate below overwrites that certificate if it is handed one anyway.
+fn retired_slot_is_free<S: Storage>(fs: &mut Fs<S>, slot: u8) -> bool {
+    !fs.has_key(key_fid(slot)) && !cert_fid_for_slot(slot).is_some_and(|f| fs.has_data(f))
+}
+
 /// On-device EC / EdDSA key generation into an empty retired slot (82–95), driven by
 /// the trusted display. There is no management-key auth — physical presence at the panel
-/// is the authorisation — so it is deliberately fenced to retired slots that hold no
-/// key: it can only *add* a key, never overwrite one (the four primary slots and F9
-/// stay USB-managed). EC P-256/P-384, Ed25519 and X25519 only — these are instant; RSA
+/// is the authorisation — so it is deliberately fenced to retired slots that hold
+/// neither a key nor a certificate: it can only fill an empty slot, never overwrite one
+/// (the four primary slots and F9 stay USB-managed). EC P-256/P-384, Ed25519 and X25519 only — these are instant; RSA
 /// runs its slow dual-core prime search in the firmware and persists via
 /// [`store_retired_rsa`]. Stores the sealed key, the self-signed cert (none for X25519,
 /// which can't self-sign) and the metadata, the same writes the host GENERATE makes, so
@@ -373,8 +381,8 @@ pub(crate) fn generate_retired_ec<S: Storage>(
     if !is_retired(slot) {
         return Err(Sw::INCORRECT_P1P2);
     }
-    // Never clobber a key on-device: overwriting a retired slot needs USB + mgmt-key.
-    if fs.has_key(key_fid(slot)) {
+    // Never clobber a key or a cert on-device: overwriting a retired slot needs USB + mgmt-key.
+    if !retired_slot_is_free(fs, slot) {
         return Err(Sw::SECURITY_STATUS_NOT_SATISFIED);
     }
     let curve = curve_for_algo(algo).ok_or(WRONG_DATA)?;
@@ -394,8 +402,8 @@ pub(crate) fn generate_retired_ec<S: Storage>(
 /// Persist a display-generated RSA key into an empty retired slot — the RSA companion
 /// to [`generate_retired_ec`]. The slow prime search runs in the firmware (dual-core,
 /// off this function), so this only writes the result: the self-signed cert, the sealed
-/// key and the metadata, with the same empty-retired-slot fence (it can only *add* a
-/// key, never overwrite one; the four primary slots and F9 stay USB-managed).
+/// key and the metadata, with the same empty-retired-slot fence (it can only fill an
+/// empty slot, never overwrite one; the four primary slots and F9 stay USB-managed).
 pub(crate) fn store_retired_rsa<S: Storage>(
     dev: &Device,
     fs: &mut Fs<S>,
@@ -406,7 +414,7 @@ pub(crate) fn store_retired_rsa<S: Storage>(
     if !is_retired(slot) {
         return Err(Sw::INCORRECT_P1P2);
     }
-    if fs.has_key(key_fid(slot)) {
+    if !retired_slot_is_free(fs, slot) {
         return Err(Sw::SECURITY_STATUS_NOT_SATISFIED);
     }
     let algo = rsa_algo_from_size(key.size()).ok_or(Sw::EXEC_ERROR)?;
