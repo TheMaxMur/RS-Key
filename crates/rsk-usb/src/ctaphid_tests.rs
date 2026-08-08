@@ -436,18 +436,18 @@ fn write_frames_writes_every_frame_when_host_drains() {
 #[test]
 fn cid_allocator_hands_out_unique_ids() {
     let mut a = CidAllocator::new();
-    let first = a.next();
-    let second = a.next();
+    let first = a.allocate();
+    let second = a.allocate();
     assert_ne!(first, second);
     assert_eq!(second, first + 1);
 
     // Wrapping skips 0 and the broadcast id.
     let mut a = CidAllocator(u32::MAX - 1);
-    assert_eq!(a.next(), u32::MAX - 1);
-    assert_eq!(a.next(), FIRST_CID, "0xffffffff is the broadcast CID");
+    assert_eq!(a.allocate(), u32::MAX - 1);
+    assert_eq!(a.allocate(), FIRST_CID, "0xffffffff is the broadcast CID");
     let mut a = CidAllocator(CID_BROADCAST);
-    a.next();
-    assert_eq!(a.next(), FIRST_CID, "0 is not a valid CID either");
+    a.allocate();
+    assert_eq!(a.allocate(), FIRST_CID, "0 is not a valid CID either");
 }
 
 /// §11.2.9.2.2: while a channel holds the lock, other channels are turned away; the
