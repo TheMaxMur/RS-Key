@@ -22,7 +22,7 @@ use embedded_graphics::geometry::{Dimensions, Point as EgPoint, Size};
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::Rectangle;
-use embedded_graphics_simulator::sdl2::MouseButton;
+use embedded_graphics_simulator::sdl2::{Keycode, MouseButton};
 use embedded_graphics_simulator::{
     OutputSettingsBuilder, SimulatorDisplay, SimulatorEvent, Window,
 };
@@ -94,23 +94,60 @@ pub struct Touch {
     held: Option<EgPoint>,
     /// The window's close button was used; the caller ends the process.
     quit: Rc<Cell<bool>>,
+    /// The backlight the flow has asked for. There is no lamp to dim, so the
+    /// pixels are scaled by it on the way to the window instead — otherwise the
+    /// brightness setting is a number that changes nothing you can see, and
+    /// display sleep looks identical to a black screen.
+    duty: Rc<Cell<u16>>,
+    /// The wake button, held. A board has a real one (BAT_PWR); here it is the
+    /// space bar, so the "power button sleeps from any screen" behaviour is
+    /// reachable at all.
+    wake: Rc<Cell<bool>>,
 }
 
 impl Touch {
-    fn new(panel: Panel, quit: Rc<Cell<bool>>) -> Self {
+    fn new(panel: Panel, quit: Rc<Cell<bool>>, duty: Rc<Cell<u16>>, wake: Rc<Cell<bool>>) -> Self {
         let out = OutputSettingsBuilder::new().scale(SCALE).build();
         Self {
             win: Window::new("RS-Key", &out),
             panel,
             held: None,
             quit,
+            duty,
+            wake,
         }
+    }
+
+    /// Push the panel to the window, scaled by the backlight.
+    fn present(&mut self) {
+        let duty = self.duty.get();
+        if duty >= rsk_display::BL_TOP {
+            self.win.update(&self.panel.0.borrow());
+            return;
+        }
+        let src = self.panel.0.borrow();
+        let mut dim: SimulatorDisplay<Rgb565> =
+            SimulatorDisplay::new(Size::new(rsk_ui::PANEL_W as u32, rsk_ui::PANEL_H as u32));
+        let scale = |v: u8, bits: u8| -> u8 {
+            let max = (1u32 << bits) - 1;
+            ((v as u32 * duty as u32) / rsk_display::BL_TOP as u32).min(max) as u8
+        };
+        for y in 0..rsk_ui::PANEL_H as i32 {
+            for x in 0..rsk_ui::PANEL_W as i32 {
+                let p = EgPoint::new(x, y);
+                let c = src.get_pixel(p);
+                let d = Rgb565::new(scale(c.r(), 5), scale(c.g(), 6), scale(c.b(), 5));
+                let _ = dim.draw_iter([Pixel(p, d)]);
+            }
+        }
+        drop(src);
+        self.win.update(&dim);
     }
 }
 
 impl rsk_display::TouchPad for Touch {
     fn read(&mut self) -> Option<rsk_ui::Point> {
-        self.win.update(&self.panel.0.borrow());
+        self.present();
         for ev in self.win.events() {
             match ev {
                 SimulatorEvent::MouseButtonDown {
@@ -127,6 +164,14 @@ impl rsk_display::TouchPad for Touch {
                     mouse_btn: MouseButton::Left,
                     ..
                 } => self.held = None,
+                SimulatorEvent::KeyDown {
+                    keycode: Keycode::Space,
+                    ..
+                } => self.wake.set(true),
+                SimulatorEvent::KeyUp {
+                    keycode: Keycode::Space,
+                    ..
+                } => self.wake.set(false),
                 SimulatorEvent::Quit => self.quit.set(true),
                 _ => {}
             }
@@ -146,6 +191,9 @@ impl rsk_display::TouchPad for Touch {
 /// state here, because the flow reads back what it writes.
 #[derive(Default)]
 pub struct EmuDisplayHooks {
+    /// Shared with [`Touch`], which is what actually applies it.
+    duty: Rc<Cell<u16>>,
+    wake: Rc<Cell<bool>>,
     led: Cell<u8>,
     up_pending: Cell<bool>,
     cancel: Cell<bool>,
@@ -156,8 +204,10 @@ pub struct EmuDisplayHooks {
 }
 
 impl EmuDisplayHooks {
-    fn new() -> Self {
+    fn new(duty: Rc<Cell<u16>>, wake: Rc<Cell<bool>>) -> Self {
         Self {
+            duty,
+            wake,
             timeout_ms: Cell::new(30_000),
             started: Some(std::time::Instant::now()),
             ..Default::default()
@@ -166,6 +216,12 @@ impl EmuDisplayHooks {
 }
 
 impl rsk_display::Hooks for EmuDisplayHooks {
+    fn set_backlight(&mut self, duty: u16) {
+        self.duty.set(duty);
+    }
+    fn wake_pressed(&self) -> bool {
+        self.wake.get()
+    }
     fn led_status(&self) -> u8 {
         self.led.get()
     }
@@ -208,6 +264,8 @@ impl rsk_display::Hooks for EmuDisplayHooks {
 pub fn open() -> (Panel, Touch, EmuDisplayHooks, Rc<Cell<bool>>) {
     let panel = Panel::new();
     let quit = Rc::new(Cell::new(false));
-    let touch = Touch::new(panel.clone(), quit.clone());
-    (panel, touch, EmuDisplayHooks::new(), quit)
+    let duty = Rc::new(Cell::new(rsk_display::BL_TOP));
+    let wake = Rc::new(Cell::new(false));
+    let touch = Touch::new(panel.clone(), quit.clone(), duty.clone(), wake.clone());
+    (panel, touch, EmuDisplayHooks::new(duty, wake), quit)
 }
