@@ -226,12 +226,21 @@ impl Dispatcher {
 
         // Command chaining: accumulate and acknowledge.
         if apdu.is_chaining() {
+            let hdr = (apdu.cla & !0x10, apdu.ins, apdu.p1, apdu.p2);
             if !self.chaining {
                 self.chain_len = 0;
                 // Remember whose chain this is. ISO 7816-4 §5.1.1.1 makes only the
                 // opener's own command able to close it, and without that the chain
                 // is a cross-process injection primitive — see the refusal below.
-                self.chain_hdr = (apdu.cla & !0x10, apdu.ins, apdu.p1, apdu.p2);
+                self.chain_hdr = hdr;
+            } else if hdr != self.chain_hdr {
+                // Only the terminator was ever bound to the opener, so a second
+                // process could splice its own segments into a live chain and have
+                // the opener's own final APDU dispatch them (audit run-37).
+                self.chain[..self.chain_len].zeroize();
+                self.chain_len = 0;
+                self.chaining = false;
+                return Sw::LAST_CHAIN_EXPECTED;
             }
             if self.chain_len + apdu.nc >= self.chain.len() {
                 // The accumulated segments may already hold key material.
@@ -255,16 +264,22 @@ impl Dispatcher {
         // the terminator is matched against the header that opened the chain: the
         // legitimate final segment has bit 0x10 clear but the same CLA/INS/P1/P2,
         // which is exactly what OpenPGP's RSA IMPORT sends.
-        if self.chaining && (apdu.cla & !0x10, apdu.ins, apdu.p1, apdu.p2) != self.chain_hdr {
-            let select = is_select(&apdu);
+        //
+        // A SELECT is judged FIRST, not only on a mismatch: it is the client's way
+        // out and can never be a chain segment, and `10 A4 04 00` masks to every
+        // SELECT-by-AID's own header, so a mismatch-only test let one stranded
+        // segment swallow the next client's SELECT — leaving the previous applet
+        // selected and still PIN-verified (audit run-37).
+        let select = is_select(&apdu);
+        if self.chaining
+            && (select || (apdu.cla & !0x10, apdu.ins, apdu.p1, apdu.p2) != self.chain_hdr)
+        {
             self.chain[..self.chain_len].zeroize();
             self.chain_len = 0;
             self.chaining = false;
-            // A SELECT is the one non-continuation that is *also* the client's way
-            // out: it can never be a chain segment, and refusing it would make a
-            // stranded chain wedge the next process's opening command. Drop the
-            // chain and let it run (audit run-34 #26). Everything else is refused,
-            // because absorbing it is what let one process prefix another's command.
+            // Dropping the chain and letting the SELECT run is the carve-out from
+            // audit run-34 #26; everything else is refused, because absorbing it is
+            // what let one process prefix another's command.
             if !select {
                 return Sw::LAST_CHAIN_EXPECTED;
             }
@@ -307,7 +322,7 @@ impl Dispatcher {
 
         // SELECT by AID. A disabled applet is skipped, so its AID matches nothing
         // (→ FILE_NOT_FOUND) just as if it were never registered.
-        if is_select(&apdu) {
+        if select {
             let found = applets.iter().enumerate().position(|(i, app)| {
                 let aid = app.aid();
                 self.selectable(i) && apdu.data.len() >= aid.len() && &apdu.data[..aid.len()] == aid
