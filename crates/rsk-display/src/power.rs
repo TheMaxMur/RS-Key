@@ -9,13 +9,19 @@ use super::*;
 /// the 8-shade ramp cycles in ~2.4s (the design's breathe period).
 pub(super) const BREATHE_TICKS: u32 = 3;
 
-impl Ui {
+impl<'a, P, T, H, S, R> Ui<'a, P, T, H, S, R>
+where
+    P: DrawTarget<Color = Rgb565>,
+    T: TouchPad,
+    H: Hooks,
+    S: rsk_fs::Storage,
+    R: rsk_device::Rng,
+{
     /// Apply a brightness level (`1..=BRIGHTNESS_LEVELS`) to the backlight PWM and
     /// remember it for the menu's gauge.
     pub(super) fn set_brightness(&mut self, level: u8) {
         self.brightness = level.clamp(1, BRIGHTNESS_LEVELS);
-        self.bl
-            .set_config(&backlight_cfg(level_duty(self.brightness)));
+        self.hooks.set_backlight(level_duty(self.brightness));
     }
 
     /// Blank the panel after the inactivity timeout: backlight off, then clear the
@@ -25,7 +31,7 @@ impl Ui {
         if self.asleep {
             return;
         }
-        self.bl.set_config(&backlight_cfg(0));
+        self.hooks.set_backlight(0);
         let _ = self.panel.clear(Rgb565::BLACK);
         self.shown = None;
         self.asleep = true;
@@ -37,8 +43,7 @@ impl Ui {
         if !self.asleep {
             return;
         }
-        self.bl
-            .set_config(&backlight_cfg(level_duty(self.brightness)));
+        self.hooks.set_backlight(level_duty(self.brightness));
         self.asleep = false;
         self.shown = None;
     }
@@ -61,16 +66,7 @@ impl Ui {
 
     /// One non-blocking sample of the wake button (if wired), honouring its polarity.
     pub(super) fn wake_pressed(&self) -> bool {
-        match &self.wake_btn {
-            Some((btn, active_high)) => {
-                if *active_high {
-                    btn.is_high()
-                } else {
-                    btn.is_low()
-                }
-            }
-            None => false,
-        }
+        self.hooks.wake_pressed()
     }
 
     /// Enter display sleep, additionally locking the on-device UI when a device PIN is

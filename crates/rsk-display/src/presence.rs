@@ -9,8 +9,15 @@ use super::*;
 /// The on-screen presence backend — the `display` build's
 /// [`crate::presence::Presence`]. Holds the shared [`Ui`]; renders a trusted
 /// Approve/Deny prompt and block-waits a tap.
-pub struct TouchPresence {
-    ui: &'static RefCell<Ui>,
+pub struct TouchPresence<'a, P, T, H, S, R>
+where
+    P: DrawTarget<Color = Rgb565>,
+    T: TouchPad,
+    H: Hooks,
+    S: rsk_fs::Storage,
+    R: rsk_device::Rng,
+{
+    ui: &'a RefCell<Ui<'a, P, T, H, S, R>>,
 }
 
 /// Outcome of a confirm wait. Unlike the BOOTSEL button, the screen has a real
@@ -22,33 +29,51 @@ enum Outcome {
     Cancelled,
 }
 
-/// Common entry for a touch ceremony: switch the LED to the touch indicator, drop any
-/// stale cancel left from an earlier wait, and arm `UP_PENDING` so the CTAPHID
-/// keepalive reports `UPNEEDED`. Returns the LED status [`ceremony_end`] restores.
-fn ceremony_begin() -> u8 {
-    let saved = led::status();
-    led::set_status(led::STATUS_TOUCH);
-    CANCEL_REQUESTED.store(false, Ordering::Relaxed);
-    UP_PENDING.store(true, Ordering::Release);
-    saved
+impl<'a, P, T, H, S, R> Ui<'a, P, T, H, S, R>
+where
+    P: DrawTarget<Color = Rgb565>,
+    T: TouchPad,
+    H: Hooks,
+    S: rsk_fs::Storage,
+    R: rsk_device::Rng,
+{
+    /// Common entry for a touch ceremony: switch the LED to the touch indicator,
+    /// drop any stale cancel left from an earlier wait, and arm the up-pending flag
+    /// so the CTAPHID keepalive reports `UPNEEDED`. Returns the LED status
+    /// [`Ui::ceremony_end`] restores.
+    fn ceremony_begin(&mut self) -> u8 {
+        let saved = self.hooks.led_status();
+        self.hooks.set_led_status(rsk_led::STATUS_TOUCH);
+        self.hooks.set_cancel_requested(false);
+        self.hooks.set_up_pending(true);
+        saved
+    }
+
+    /// Common exit: clear the presence flags, briefly hold the ambient status
+    /// screen back (so a hand-off to a following modal — pad, approve hold —
+    /// doesn't flash idle), note activity so a long ceremony doesn't immediately
+    /// sleep, and restore the LED.
+    fn ceremony_end(&mut self, saved_led: u8) {
+        self.hooks.set_up_pending(false);
+        self.hooks.set_cancel_requested(false);
+        AMBIENT_QUIET_UNTIL_MS.store(
+            (Instant::now().as_millis() as u32).wrapping_add(AMBIENT_QUIET_MS),
+            Ordering::Relaxed,
+        );
+        note_activity();
+        self.hooks.set_led_status(saved_led);
+    }
 }
 
-/// Common exit: clear the presence flags, briefly hold the ambient status screen back
-/// (so a hand-off to a following modal — pad, approve hold — doesn't flash idle), note
-/// activity so a long ceremony doesn't immediately sleep, and restore the LED.
-fn ceremony_end(saved_led: u8) {
-    UP_PENDING.store(false, Ordering::Release);
-    CANCEL_REQUESTED.store(false, Ordering::Relaxed);
-    AMBIENT_QUIET_UNTIL_MS.store(
-        (Instant::now().as_millis() as u32).wrapping_add(AMBIENT_QUIET_MS),
-        Ordering::Relaxed,
-    );
-    note_activity();
-    led::set_status(saved_led);
-}
-
-impl TouchPresence {
-    pub fn new(ui: &'static RefCell<Ui>) -> Self {
+impl<'a, P, T, H, S, R> TouchPresence<'a, P, T, H, S, R>
+where
+    P: DrawTarget<Color = Rgb565>,
+    T: TouchPad,
+    H: Hooks,
+    S: rsk_fs::Storage,
+    R: rsk_device::Rng,
+{
+    pub fn new(ui: &'a RefCell<Ui<'a, P, T, H, S, R>>) -> Self {
         Self { ui }
     }
 
@@ -64,11 +89,11 @@ impl TouchPresence {
     /// `CANCEL_REQUESTED` each iteration — the same cross-executor contract the
     /// BOOTSEL wait honours.
     fn confirm_wait(&mut self, confirm: Confirm<'_>) -> Outcome {
-        let saved = ceremony_begin();
+        let saved = self.ui.borrow_mut().ceremony_begin();
 
         let prompt = ConfirmPrompt::new(confirm.title, confirm.primary, confirm.secondary);
         let start = Instant::now();
-        let timeout = Duration::from_millis(PRESENCE_TIMEOUT_MS.load(Ordering::Relaxed) as u64);
+        let timeout = Duration::from_millis(self.ui.borrow().hooks.presence_timeout_ms() as u64);
         let outcome = {
             // Held across the whole wait. The wait is synchronous, so the status
             // loop can't run (let alone borrow) until we return the panel.
@@ -130,7 +155,7 @@ impl TouchPresence {
                         }
                     }
                 }
-                if CANCEL_REQUESTED.load(Ordering::Acquire) {
+                if u.hooks.cancel_requested() {
                     break Outcome::Cancelled;
                 }
                 if start.elapsed() >= timeout {
@@ -140,7 +165,7 @@ impl TouchPresence {
             }
         };
 
-        ceremony_end(saved);
+        self.ui.borrow_mut().ceremony_end(saved);
         outcome
     }
 
@@ -150,9 +175,9 @@ impl TouchPresence {
     fn run_add_passkey(&mut self, confirm: Confirm<'_>) -> Outcome {
         let rp = Label::clamp_domain(confirm.primary);
         let account = Label::clamp(confirm.secondary);
-        let saved = ceremony_begin();
+        let saved = self.ui.borrow_mut().ceremony_begin();
         let start = Instant::now();
-        let timeout = Duration::from_millis(PRESENCE_TIMEOUT_MS.load(Ordering::Relaxed) as u64);
+        let timeout = Duration::from_millis(self.ui.borrow().hooks.presence_timeout_ms() as u64);
         let outcome = {
             let mut u = self.ui.borrow_mut();
             u.wake();
@@ -180,13 +205,13 @@ impl TouchPresence {
                     Some(Button::Deny) => break Outcome::Declined,
                     None => {}
                 }
-                if CANCEL_REQUESTED.load(Ordering::Acquire) {
+                if u.hooks.cancel_requested() {
                     break Outcome::Cancelled;
                 }
                 block_for(Duration::from_millis(TOUCH_POLL_MS));
             }
         };
-        ceremony_end(saved);
+        self.ui.borrow_mut().ceremony_end(saved);
         outcome
     }
 
@@ -234,7 +259,14 @@ impl TouchPresence {
     }
 }
 
-impl rsk_fido::UserPresence for TouchPresence {
+impl<'a, P, T, H, S, R> rsk_fido::UserPresence for TouchPresence<'a, P, T, H, S, R>
+where
+    P: DrawTarget<Color = Rgb565>,
+    T: TouchPad,
+    H: Hooks,
+    S: rsk_fs::Storage,
+    R: rsk_device::Rng,
+{
     fn request(&mut self, confirm: rsk_fido::Confirm<'_>) -> rsk_fido::Presence {
         // The design's incoming ceremony, picked by the request kind:
         //  - Register (makeCredential) → "Save new passkey?" card (Cancel/Save tap)
@@ -296,7 +328,14 @@ impl rsk_fido::UserPresence for TouchPresence {
     }
 }
 
-impl rsk_openpgp::UserPresence for TouchPresence {
+impl<'a, P, T, H, S, R> rsk_openpgp::UserPresence for TouchPresence<'a, P, T, H, S, R>
+where
+    P: DrawTarget<Color = Rgb565>,
+    T: TouchPad,
+    H: Hooks,
+    S: rsk_fs::Storage,
+    R: rsk_device::Rng,
+{
     fn request(&mut self, confirm: rsk_openpgp::Confirm<'_>) -> rsk_openpgp::Presence {
         match self.confirm_wait(confirm) {
             Outcome::Confirmed => rsk_openpgp::Presence::Confirmed,
@@ -307,7 +346,14 @@ impl rsk_openpgp::UserPresence for TouchPresence {
     }
 }
 
-impl rsk_otp::UserPresence for TouchPresence {
+impl<'a, P, T, H, S, R> rsk_otp::UserPresence for TouchPresence<'a, P, T, H, S, R>
+where
+    P: DrawTarget<Color = Rgb565>,
+    T: TouchPad,
+    H: Hooks,
+    S: rsk_fs::Storage,
+    R: rsk_device::Rng,
+{
     fn request(&mut self, confirm: rsk_otp::Confirm<'_>) -> rsk_otp::Presence {
         match self.confirm_wait(confirm) {
             Outcome::Confirmed => rsk_otp::Presence::Confirmed,
@@ -317,7 +363,14 @@ impl rsk_otp::UserPresence for TouchPresence {
     }
 }
 
-impl rsk_oath::UserPresence for TouchPresence {
+impl<'a, P, T, H, S, R> rsk_oath::UserPresence for TouchPresence<'a, P, T, H, S, R>
+where
+    P: DrawTarget<Color = Rgb565>,
+    T: TouchPad,
+    H: Hooks,
+    S: rsk_fs::Storage,
+    R: rsk_device::Rng,
+{
     fn request(&mut self, confirm: rsk_oath::Confirm<'_>) -> rsk_oath::Presence {
         match self.confirm_wait(confirm) {
             Outcome::Confirmed => rsk_oath::Presence::Confirmed,
@@ -327,7 +380,14 @@ impl rsk_oath::UserPresence for TouchPresence {
     }
 }
 
-impl rsk_rescue::UserPresence for TouchPresence {
+impl<'a, P, T, H, S, R> rsk_rescue::UserPresence for TouchPresence<'a, P, T, H, S, R>
+where
+    P: DrawTarget<Color = Rgb565>,
+    T: TouchPad,
+    H: Hooks,
+    S: rsk_fs::Storage,
+    R: rsk_device::Rng,
+{
     fn request(&mut self, confirm: rsk_rescue::Confirm<'_>) -> rsk_rescue::Presence {
         match self.confirm_wait(confirm) {
             Outcome::Confirmed => rsk_rescue::Presence::Confirmed,
@@ -337,7 +397,14 @@ impl rsk_rescue::UserPresence for TouchPresence {
     }
 }
 
-impl rsk_vendor::UserPresence for TouchPresence {
+impl<'a, P, T, H, S, R> rsk_vendor::UserPresence for TouchPresence<'a, P, T, H, S, R>
+where
+    P: DrawTarget<Color = Rgb565>,
+    T: TouchPad,
+    H: Hooks,
+    S: rsk_fs::Storage,
+    R: rsk_device::Rng,
+{
     fn request(&mut self, confirm: rsk_vendor::Confirm<'_>) -> rsk_vendor::Presence {
         match self.confirm_wait(confirm) {
             Outcome::Confirmed => rsk_vendor::Presence::Confirmed,
@@ -347,7 +414,14 @@ impl rsk_vendor::UserPresence for TouchPresence {
     }
 }
 
-impl rsk_mgmt::UserPresence for TouchPresence {
+impl<'a, P, T, H, S, R> rsk_mgmt::UserPresence for TouchPresence<'a, P, T, H, S, R>
+where
+    P: DrawTarget<Color = Rgb565>,
+    T: TouchPad,
+    H: Hooks,
+    S: rsk_fs::Storage,
+    R: rsk_device::Rng,
+{
     fn request(&mut self, confirm: rsk_mgmt::Confirm<'_>) -> rsk_mgmt::Presence {
         match self.confirm_wait(confirm) {
             Outcome::Confirmed => rsk_mgmt::Presence::Confirmed,

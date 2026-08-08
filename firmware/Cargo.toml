@@ -44,6 +44,8 @@ rsk-led = { workspace = true }
 # it. mipidsi drives the panel; embedded-hal-bus wraps embassy-rp's SPI bus as the
 # `SpiDevice` mipidsi wants; embedded-graphics is the shared `DrawTarget` vocabulary.
 rsk-ui = { workspace = true, optional = true }
+# The trusted display's flow; the board's panel/touch/hooks are in `display.rs`.
+rsk-display = { workspace = true, optional = true }
 # On-device BIP-39 encode for the recovery-phrase reveal — display-only, so the seed→words
 # conversion (and its wordlist) never reaches the standard key.
 rsk-bip39 = { workspace = true, optional = true }
@@ -102,11 +104,11 @@ advertise-pqc = ["rsk-fido/advertise-pqc"]
 # Opt-in: `cargo build --release -p firmware --features fips-profile` bakes the
 # locked algorithm policy into the image — and secure boot seals it there.
 # What it locks: docs/guides/fips.md. A profile, not a FIPS validation.
-fips-profile = ["rsk-fido/fips-profile", "rsk-piv/fips-profile"]
+fips-profile = ["rsk-fido/fips-profile", "rsk-piv/fips-profile", "rsk-display?/fips-profile"]
 # Raise the FIDO clientPIN floor to six code points and refuse trivially guessable
 # PINs (see rsk-fido's feature docs). A narrow PIN-hardening knob, orthogonal to
 # `fips-profile`. OFF by default. Build `--features strong-pin`.
-strong-pin = ["rsk-fido/strong-pin"]
+strong-pin = ["rsk-fido/strong-pin", "rsk-display?/strong-pin"]
 # Keygen microbenchmark vendor command (INS 0x13). Debug/measurement only —
 # never ship it: it exposes a timing oracle over the primality primitives.
 keygen-bench = []
@@ -150,7 +152,7 @@ always-uv = ["rsk-fido/always-uv"]
 # identity with no operator confirmation) — see docs/threat-model.md. NOT the
 # runtime flash flag EF_HARDENED. Build the strict image `--features
 # strict-config`; ship it as the `firmware-strict-config` release flavor.
-strict-config = ["rsk-mgmt/strict-config", "rsk-fido/strict-config", "rsk-otp/strict-config", "rsk-vendor/strict-config", "rsk-device/strict-config"]
+strict-config = ["rsk-mgmt/strict-config", "rsk-fido/strict-config", "rsk-otp/strict-config", "rsk-vendor/strict-config", "rsk-device/strict-config", "rsk-display?/strict-config"]
 # Trusted-display build for a screen+touch board (Waveshare RP2350-Touch-LCD-2.8):
 # on-screen Approve/Deny showing the relying party, on-device PIN entry, lock, and
 # settings. OFF by default and entirely `dep:`-gated, so a standard key without a
@@ -159,7 +161,7 @@ strict-config = ["rsk-mgmt/strict-config", "rsk-fido/strict-config", "rsk-otp/st
 # display flavor with `LED_KIND=none FLASH_SIZE=16M cargo build --release -p
 # firmware --features display` (the panel is the status indicator, so there is no
 # addressable LED, which also frees GPIO16 for the backlight).
-display = ["rsk-device/display", "dep:rsk-ui", "dep:rsk-bip39", "dep:rsk-slip39", "dep:mipidsi", "dep:embedded-graphics", "dep:embedded-hal-bus"]
+display = ["rsk-device/display", "dep:rsk-display", "dep:rsk-ui", "dep:rsk-bip39", "dep:rsk-slip39", "dep:mipidsi", "dep:embedded-graphics", "dep:embedded-hal-bus"]
 
 [[bin]]
 name = "firmware"

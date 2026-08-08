@@ -1108,6 +1108,7 @@ dependencies = [
  "rsk-bip39",
  "rsk-crypto",
  "rsk-device",
+ "rsk-display",
  "rsk-fido",
  "rsk-fs",
  "rsk-led",
@@ -2197,6 +2198,31 @@ dependencies = [
  "rsk-rescue",
  "rsk-sdk",
  "rsk-usb",
+ "rsk-vendor",
+ "zeroize",
+]
+
+[[package]]
+name = "rsk-display"
+version = "0.1.0"
+dependencies = [
+ "embassy-time",
+ "embedded-graphics",
+ "rsk-bip39",
+ "rsk-crypto",
+ "rsk-device",
+ "rsk-fido",
+ "rsk-fs",
+ "rsk-led",
+ "rsk-mgmt",
+ "rsk-oath",
+ "rsk-openpgp",
+ "rsk-otp",
+ "rsk-piv",
+ "rsk-rescue",
+ "rsk-sdk",
+ "rsk-slip39",
+ "rsk-ui",
  "rsk-vendor",
  "zeroize",
 ]

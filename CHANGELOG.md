@@ -58,6 +58,16 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   device's geometry, with `--power-cut <n>` arming the injector. The firmware
   keeps what is the board's: the shared flash peripheral and its cache sizes.
   Behaviour unchanged; no `bcdDevice` bump.
+- **The trusted display's flow moved into `crates/rsk-display`.** `rsk-ui` already
+  held *what to draw*, host-tested and Kani-proved; the layer that decides *which
+  screen when* — the PIN pad's state machine, the browse modals, the Approve/Deny
+  wait that is the anti-phishing guarantee — lived in `firmware/`, so the only
+  thing that could run it was a flashed board with a panel soldered on. The panel
+  and the touch controller are now type parameters (a `DrawTarget<Color = Rgb565>`
+  and a `TouchPad`), and the verbs that are genuinely the board's — backlight, wake
+  button, the LED a ceremony borrows, the firmware globals it coordinates through —
+  sit behind a `Hooks` trait whose defaults are exact no-ops. Behaviour and wire
+  surface unchanged; no `bcdDevice` bump.
 
 ### Fixed
 

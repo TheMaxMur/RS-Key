@@ -422,3 +422,26 @@ impl rsk_mgmt::UserPresence for ButtonPresence {
         }
     }
 }
+
+// Accessors for the trusted display, which reaches these through
+// `rsk_display::Hooks` rather than naming the statics across a crate boundary.
+#[cfg(feature = "display")]
+pub fn set_up_pending(pending: bool) {
+    UP_PENDING.store(pending, Ordering::Release);
+}
+#[cfg(feature = "display")]
+pub fn set_cancel_requested(requested: bool) {
+    CANCEL_REQUESTED.store(requested, Ordering::Relaxed);
+}
+#[cfg(feature = "display")]
+pub fn cancel_requested() -> bool {
+    CANCEL_REQUESTED.load(Ordering::Acquire)
+}
+#[cfg(feature = "display")]
+pub fn presence_timeout_ms() -> u32 {
+    PRESENCE_TIMEOUT_MS.load(Ordering::Relaxed)
+}
+#[cfg(feature = "display")]
+pub fn set_presence_timeout_ms(ms: u32) {
+    PRESENCE_TIMEOUT_MS.store(ms, Ordering::Relaxed);
+}

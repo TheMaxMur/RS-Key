@@ -16,7 +16,14 @@ use super::*;
 /// writes (see [`rsk_ui::DisplayConfig`]).
 pub(super) const EF_DISPLAY: u16 = 0xE030;
 
-impl Ui {
+impl<'a, P, T, H, S, R> Ui<'a, P, T, H, S, R>
+where
+    P: DrawTarget<Color = Rgb565>,
+    T: TouchPad,
+    H: Hooks,
+    S: rsk_fs::Storage,
+    R: rsk_device::Rng,
+{
     /// Paint a settings page, snapshotting the live brightness/timeout/identity into
     /// the view. Clears `shown` so the ambient loop repaints once the menu releases
     /// the panel.
@@ -35,7 +42,7 @@ impl Ui {
         let view = SettingsView {
             page,
             brightness: self.brightness,
-            timeout_secs: (PRESENCE_TIMEOUT_MS.load(Ordering::Relaxed) / 1000) as u16,
+            timeout_secs: (self.hooks.presence_timeout_ms() / 1000) as u16,
             sleep_secs: (SLEEP_TIMEOUT_MS.load(Ordering::Relaxed) / 1000) as u16,
             version: self.info.version,
             chipid: self.info.chipid,
@@ -182,8 +189,12 @@ impl Ui {
                         None => repaint = false,
                     },
                     SettingsPage::Timeout => match rsk_ui::hit_adjust(p) {
-                        Some(AdjustKey::Minus) => presence_dirty |= adjust_timeout(-1),
-                        Some(AdjustKey::Plus) => presence_dirty |= adjust_timeout(1),
+                        Some(AdjustKey::Minus) => {
+                            presence_dirty |= adjust_timeout(&mut self.hooks, -1)
+                        }
+                        Some(AdjustKey::Plus) => {
+                            presence_dirty |= adjust_timeout(&mut self.hooks, 1)
+                        }
                         Some(AdjustKey::Back) => page = SettingsPage::Display,
                         None => repaint = false,
                     },
@@ -208,7 +219,7 @@ impl Ui {
             }
             // A host command is queued — yield to the parked worker at once, rather
             // than making it wait out the (now generous) inactivity bound.
-            if crate::worker::host_request_pending_after(last) || last.elapsed() >= idle_limit {
+            if self.hooks.host_request_pending_after(last) || last.elapsed() >= idle_limit {
                 break None;
             }
             block_for(Duration::from_millis(TOUCH_POLL_MS));
@@ -234,7 +245,7 @@ impl Ui {
             self.save_display_config();
         }
         if save_presence {
-            let secs = (PRESENCE_TIMEOUT_MS.load(Ordering::Relaxed) / 1000) as u8;
+            let secs = (self.hooks.presence_timeout_ms() / 1000) as u8;
             let mut fs = self.fs.borrow_mut();
             let mut phy = rsk_rescue::phy::load(&mut fs).unwrap_or_default();
             phy.presence_timeout = Some(secs);

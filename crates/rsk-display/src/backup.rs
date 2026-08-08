@@ -11,7 +11,14 @@ use super::*;
 /// digits lit for the whole presence timeout.
 pub(super) const REVEAL_MASK_MS: u64 = 4_000;
 
-impl Ui {
+impl<'a, P, T, H, S, R> Ui<'a, P, T, H, S, R>
+where
+    P: DrawTarget<Color = Rgb565>,
+    T: TouchPad,
+    H: Hooks,
+    S: rsk_fs::Storage,
+    R: rsk_device::Rng,
+{
     /// The read-only on-device backup status (Settings → Security → Backup): snapshot the
     /// seed-backup flags and show them until the back chevron, the power button (sleeps +
     /// locks), a queued host command, or the inactivity timeout. Synchronous like the other
@@ -77,7 +84,7 @@ impl Ui {
                     }
                     self.touch.wait_release(last, idle_limit);
                 }
-                if crate::worker::host_request_pending_after(last) || last.elapsed() >= idle_limit {
+                if self.hooks.host_request_pending_after(last) || last.elapsed() >= idle_limit {
                     return;
                 }
                 block_for(Duration::from_millis(TOUCH_POLL_MS));
@@ -124,7 +131,7 @@ impl Ui {
                     }
                     self.touch.wait_release(last, idle_limit);
                 }
-                if crate::worker::host_request_pending_after(last) || last.elapsed() >= idle_limit {
+                if self.hooks.host_request_pending_after(last) || last.elapsed() >= idle_limit {
                     return;
                 }
                 block_for(Duration::from_millis(TOUCH_POLL_MS));
@@ -200,7 +207,7 @@ impl Ui {
             }
             // A queued host command or the idle timeout exits + wipes — the master secret must
             // never linger on a walked-away panel.
-            if crate::worker::host_request_pending_after(last) || last.elapsed() >= idle_limit {
+            if self.hooks.host_request_pending_after(last) || last.elapsed() >= idle_limit {
                 break;
             }
             block_for(Duration::from_millis(TOUCH_POLL_MS));
@@ -247,7 +254,7 @@ impl Ui {
                     }
                     self.touch.wait_release(last, idle_limit);
                 }
-                if crate::worker::host_request_pending_after(last) || last.elapsed() >= idle_limit {
+                if self.hooks.host_request_pending_after(last) || last.elapsed() >= idle_limit {
                     return;
                 }
                 block_for(Duration::from_millis(TOUCH_POLL_MS));
@@ -341,7 +348,7 @@ impl Ui {
                     }
                     self.touch.wait_release(last, idle_limit);
                 }
-                if crate::worker::host_request_pending_after(last) || last.elapsed() >= idle_limit {
+                if self.hooks.host_request_pending_after(last) || last.elapsed() >= idle_limit {
                     break 'paged;
                 }
                 block_for(Duration::from_millis(TOUCH_POLL_MS));

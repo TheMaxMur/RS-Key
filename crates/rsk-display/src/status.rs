@@ -17,10 +17,10 @@ pub(super) const KEYGEN_SPIN_MS: u64 = 100;
 /// survives a reboot (the same tag `rsk hw --touch-timeout` and boot both read).
 /// Returns whether the value actually changed, so a no-op tap at a clamp boundary
 /// doesn't mark the session dirty (and thus doesn't trigger a redundant flash write).
-pub(super) fn adjust_timeout(delta: i8) -> bool {
-    let cur = (PRESENCE_TIMEOUT_MS.load(Ordering::Relaxed) / 1000) as u16;
+pub(super) fn adjust_timeout<H: Hooks>(hooks: &mut H, delta: i8) -> bool {
+    let cur = (hooks.presence_timeout_ms() / 1000) as u16;
     let next = rsk_ui::step_timeout(cur, delta);
-    PRESENCE_TIMEOUT_MS.store(next as u32 * 1000, Ordering::Relaxed);
+    hooks.set_presence_timeout_ms(next as u32 * 1000);
     next != cur
 }
 
@@ -37,16 +37,16 @@ pub(super) fn adjust_sleep(delta: i8) -> bool {
 /// so the panel shows the same idle/working/touch state the LED would.
 fn status_to_kind(s: u8) -> StatusKind {
     match s {
-        led::STATUS_IDLE => StatusKind::Idle,
-        led::STATUS_PROCESSING => StatusKind::Processing,
-        led::STATUS_TOUCH => StatusKind::Touch,
+        rsk_led::STATUS_IDLE => StatusKind::Idle,
+        rsk_led::STATUS_PROCESSING => StatusKind::Processing,
+        rsk_led::STATUS_TOUCH => StatusKind::Touch,
         _ => StatusKind::Boot,
     }
 }
 
 /// Whether a repaint puts a *different surface* under the finger, or only redraws
 /// the status glyph on the one already there. Only the former may disarm: the host
-/// drives `led::status()` around every dispatch, so counting that as a new screen
+/// drives `u.hooks.led_status()` around every dispatch, so counting that as a new screen
 /// let a plain CTAP loop disarm the panel on every tick and swallow every tap
 /// (audit run-34 #14). A tap on Home means the same thing whatever the glyph says.
 fn same_surface(prev: Option<Screen>, next: Screen) -> bool {
@@ -111,8 +111,14 @@ pub(super) fn audit_kind(ev: u8) -> rsk_ui::AuditKind {
 /// [`TouchPresence`] (which holds the same [`Ui`]); a synchronous confirm occupies
 /// this executor, so this loop never runs mid-confirm and the two never collide on
 /// the panel (the `try_borrow_mut` is belt-and-suspenders).
-#[embassy_executor::task]
-pub async fn status_task(ui: &'static RefCell<Ui>) {
+pub async fn status_loop<'a, P, T, H, S, R>(ui: &RefCell<Ui<'a, P, T, H, S, R>>)
+where
+    P: DrawTarget<Color = Rgb565>,
+    T: TouchPad,
+    H: Hooks,
+    S: rsk_fs::Storage,
+    R: rsk_device::Rng,
+{
     Timer::after_millis(600).await; // let the boot splash linger
     note_local_activity(); // the fresh boot counts as activity, so the sleep clock starts now
     // Prime the Home status-card cache once before the first idle paint (boot has settled
@@ -130,7 +136,7 @@ pub async fn status_task(ui: &'static RefCell<Ui>) {
         // so the worker (same thread-mode executor) gets scheduled to scrub the live secrets
         // and reset to BOOTSEL on its next tick. Parking here — before any repaint — keeps the
         // "Rebooting" notice on screen instead of flashing Home over it.
-        if crate::vendor::reboot_pending() {
+        if ui.borrow().hooks.reboot_pending() {
             Timer::after_millis(10).await;
             continue;
         }
@@ -159,7 +165,7 @@ pub async fn status_task(ui: &'static RefCell<Ui>) {
                         // while the panel was dark, so refresh the card before painting.
                         u.refresh_home_stats();
                         Screen::Home(HomeView {
-                            status: status_to_kind(led::status()),
+                            status: status_to_kind(u.hooks.led_status()),
                             pin_set: u.home_pin_set,
                             passkeys: u.home_passkeys,
                         })
@@ -186,7 +192,7 @@ pub async fn status_task(ui: &'static RefCell<Ui>) {
                     now.wrapping_sub(AMBIENT_QUIET_UNTIL_MS.load(Ordering::Relaxed)) as i32 >= 0;
                 let mut local_input = false;
                 if quiet_over {
-                    let kind = status_to_kind(led::status());
+                    let kind = status_to_kind(u.hooks.led_status());
                     // Working / awaiting-touch is activity — never sleep mid-operation.
                     if kind != StatusKind::Idle {
                         note_activity();
@@ -268,7 +274,7 @@ pub async fn status_task(ui: &'static RefCell<Ui>) {
                                         // changed the count, so refresh before painting Home.
                                         u.refresh_home_stats();
                                         Screen::Home(HomeView {
-                                            status: status_to_kind(led::status()),
+                                            status: status_to_kind(u.hooks.led_status()),
                                             pin_set: u.home_pin_set,
                                             passkeys: u.home_passkeys,
                                         })
@@ -292,7 +298,7 @@ pub async fn status_task(ui: &'static RefCell<Ui>) {
                                         Screen::Onboard
                                     } else {
                                         Screen::Home(HomeView {
-                                            status: status_to_kind(led::status()),
+                                            status: status_to_kind(u.hooks.led_status()),
                                             pin_set: u.home_pin_set,
                                             passkeys: u.home_passkeys,
                                         })
@@ -329,7 +335,7 @@ pub async fn status_task(ui: &'static RefCell<Ui>) {
                                         let screen = Screen::Locked;
                                         let _ = rsk_ui::render(&mut u.panel, &screen);
                                         u.shown = Some(screen);
-                                    } else if opened_tab && !crate::worker::host_request_pending() {
+                                    } else if opened_tab && !u.hooks.host_request_pending() {
                                         // Closing a tab back to idle repaints Home now (not next
                                         // poll) so it feels instant. Skip if a host command is
                                         // queued — the worker paints next (no stale flash). The
@@ -337,7 +343,7 @@ pub async fn status_task(ui: &'static RefCell<Ui>) {
                                         // PIN, so refresh the card facts first.
                                         u.refresh_home_stats();
                                         let screen = Screen::Home(HomeView {
-                                            status: status_to_kind(led::status()),
+                                            status: status_to_kind(u.hooks.led_status()),
                                             pin_set: u.home_pin_set,
                                             passkeys: u.home_passkeys,
                                         });

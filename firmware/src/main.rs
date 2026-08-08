@@ -1074,7 +1074,7 @@ async fn main(spawner: Spawner) {
         // `status_task` and the `TouchPresence` backend can hold it (a shared
         // reference is `Copy`; the `RefCell` provides the interior mutability). The
         // panel also shares the worker's `fs_ref` to enumerate resident credentials.
-        let ui: &'static RefCell<display::Ui> = UI.init(RefCell::new(display::Ui::build(
+        let ui: &'static RefCell<display::Ui> = UI.init(RefCell::new(display::build(
             panel, touch, info, fs_ref, keys, rng_ref, wake_btn,
         )));
         spawner.spawn(display::status_task(ui).unwrap());

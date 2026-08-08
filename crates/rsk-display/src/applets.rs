@@ -19,7 +19,14 @@ enum ServiceResult {
     Leave(Option<NavTab>),
 }
 
-impl Ui {
+impl<'a, P, T, H, S, R> Ui<'a, P, T, H, S, R>
+where
+    P: DrawTarget<Color = Rgb565>,
+    T: TouchPad,
+    H: Hooks,
+    S: rsk_fs::Storage,
+    R: rsk_device::Rng,
+{
     /// The Passkeys tab — list resident relying parties (read-only), with a drill-in to
     /// each RP's accounts. Enumerates from the shared flash store on entry (the worker is
     /// parked while this synchronous loop runs, so the borrow is safe). Returns the next
@@ -92,7 +99,7 @@ impl Ui {
             }
             // Yield to the parked worker the instant a host command arrives, so
             // browsing never starves it — the timeout is only the walked-away backstop.
-            if crate::worker::host_request_pending_after(last) || last.elapsed() >= idle_limit {
+            if self.hooks.host_request_pending_after(last) || last.elapsed() >= idle_limit {
                 break None;
             }
             block_for(Duration::from_millis(TOUCH_POLL_MS));
@@ -234,7 +241,7 @@ impl Ui {
             }
             // Same yield as the list: a pending host command takes priority over an
             // open read-only detail.
-            if crate::worker::host_request_pending_after(last) || last.elapsed() >= idle_limit {
+            if self.hooks.host_request_pending_after(last) || last.elapsed() >= idle_limit {
                 return ServiceResult::Leave(None);
             }
             block_for(Duration::from_millis(TOUCH_POLL_MS));
@@ -306,7 +313,7 @@ impl Ui {
                 }
                 self.touch.wait_release(last, idle_limit);
             }
-            if crate::worker::host_request_pending_after(last) || last.elapsed() >= idle_limit {
+            if self.hooks.host_request_pending_after(last) || last.elapsed() >= idle_limit {
                 break None;
             }
             block_for(Duration::from_millis(TOUCH_POLL_MS));
@@ -415,7 +422,7 @@ impl Ui {
                 }
                 self.touch.wait_release(last, idle_limit);
             }
-            if crate::worker::host_request_pending_after(last) || last.elapsed() >= idle_limit {
+            if self.hooks.host_request_pending_after(last) || last.elapsed() >= idle_limit {
                 break None;
             }
             block_for(Duration::from_millis(TOUCH_POLL_MS));
@@ -445,7 +452,7 @@ impl Ui {
                 }
                 self.touch.wait_release(last, idle_limit);
             }
-            if crate::worker::host_request_pending_after(last) || last.elapsed() >= idle_limit {
+            if self.hooks.host_request_pending_after(last) || last.elapsed() >= idle_limit {
                 break;
             }
             block_for(Duration::from_millis(TOUCH_POLL_MS));
@@ -474,7 +481,7 @@ impl Ui {
                 }
                 self.touch.wait_release(last, idle_limit);
             }
-            if crate::worker::host_request_pending_after(last) || last.elapsed() >= idle_limit {
+            if self.hooks.host_request_pending_after(last) || last.elapsed() >= idle_limit {
                 break;
             }
             block_for(Duration::from_millis(TOUCH_POLL_MS));
@@ -570,7 +577,7 @@ impl Ui {
                 }
                 self.touch.wait_release(last, idle_limit);
             }
-            if crate::worker::host_request_pending_after(last) || last.elapsed() >= idle_limit {
+            if self.hooks.host_request_pending_after(last) || last.elapsed() >= idle_limit {
                 break None;
             }
             block_for(Duration::from_millis(TOUCH_POLL_MS));
@@ -600,7 +607,7 @@ impl Ui {
                 }
                 self.touch.wait_release(last, idle_limit);
             }
-            if crate::worker::host_request_pending_after(last) || last.elapsed() >= idle_limit {
+            if self.hooks.host_request_pending_after(last) || last.elapsed() >= idle_limit {
                 break;
             }
             block_for(Duration::from_millis(TOUCH_POLL_MS));
@@ -699,7 +706,7 @@ impl Ui {
                 }
                 self.touch.wait_release(last, idle_limit);
             }
-            if crate::worker::host_request_pending_after(last) || last.elapsed() >= idle_limit {
+            if self.hooks.host_request_pending_after(last) || last.elapsed() >= idle_limit {
                 break;
             }
             block_for(Duration::from_millis(TOUCH_POLL_MS));
@@ -755,7 +762,7 @@ impl Ui {
                     }
                     self.touch.wait_release(last, idle_limit);
                 }
-                if crate::worker::host_request_pending_after(last) || last.elapsed() >= idle_limit {
+                if self.hooks.host_request_pending_after(last) || last.elapsed() >= idle_limit {
                     return;
                 }
                 block_for(Duration::from_millis(TOUCH_POLL_MS));
@@ -788,7 +795,7 @@ impl Ui {
                     }
                     self.touch.wait_release(last, idle_limit);
                 }
-                if crate::worker::host_request_pending_after(last) || last.elapsed() >= idle_limit {
+                if self.hooks.host_request_pending_after(last) || last.elapsed() >= idle_limit {
                     return;
                 }
                 block_for(Duration::from_millis(TOUCH_POLL_MS));
@@ -831,6 +838,7 @@ impl Ui {
                 let panel = &mut self.panel;
                 let mut spin = rsk_ui::STATUS_ARC_START;
                 let mut last_paint = Instant::now();
+                let hooks = &mut self.hooks;
                 let mut tick = || {
                     if last_paint.elapsed() >= Duration::from_millis(KEYGEN_SPIN_MS) {
                         spin = spin.wrapping_add(SPIN_STEP_DEG);
@@ -838,7 +846,7 @@ impl Ui {
                         last_paint = Instant::now();
                     }
                 };
-                crate::core1::run_rsa_search_progress(nbits, &mut *rng, &mut tick)
+                hooks.rsa_search_progress(nbits, &mut *rng, &mut tick)
             };
             match key {
                 Some(key) => {
@@ -953,7 +961,7 @@ impl Ui {
                 }
                 self.touch.wait_release(last, idle_limit);
             }
-            if crate::worker::host_request_pending_after(last) || last.elapsed() >= idle_limit {
+            if self.hooks.host_request_pending_after(last) || last.elapsed() >= idle_limit {
                 break None;
             }
             block_for(Duration::from_millis(TOUCH_POLL_MS));
@@ -1006,7 +1014,7 @@ impl Ui {
                 }
                 self.touch.wait_release(last, idle_limit);
             }
-            if crate::worker::host_request_pending_after(last) || last.elapsed() >= idle_limit {
+            if self.hooks.host_request_pending_after(last) || last.elapsed() >= idle_limit {
                 break;
             }
             block_for(Duration::from_millis(TOUCH_POLL_MS));
@@ -1063,7 +1071,7 @@ impl Ui {
         // stored `uptime_ms` to `u32::MAX`, so after ~49.7 days of continuous uptime both
         // sides saturate together and a just-logged event still reads "now" rather than a
         // delta measured from the saturation point.
-        let now_ms = crate::usb_attach::elapsed_ms().min(u32::MAX as u64);
+        let now_ms = self.hooks.attach_elapsed_ms().min(u32::MAX as u64);
         let offset = page as usize * rsk_ui::PK_ROWS_MAX;
         let mut store = self.fs.borrow_mut();
         let mut idx = 0usize;
@@ -1140,7 +1148,7 @@ impl Ui {
                 }
                 self.touch.wait_release(last, idle_limit);
             }
-            if crate::worker::host_request_pending_after(last) || last.elapsed() >= idle_limit {
+            if self.hooks.host_request_pending_after(last) || last.elapsed() >= idle_limit {
                 return;
             }
             block_for(Duration::from_millis(TOUCH_POLL_MS));

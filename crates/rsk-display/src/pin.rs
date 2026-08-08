@@ -12,7 +12,14 @@ use super::*;
 /// rest to the 8-byte `0xFF` wire form so a host VERIFY (which always pads) matches.
 const PIV_PIN_MIN: usize = 6;
 
-impl Ui {
+impl<'a, P, T, H, S, R> Ui<'a, P, T, H, S, R>
+where
+    P: DrawTarget<Color = Rgb565>,
+    T: TouchPad,
+    H: Hooks,
+    S: rsk_fs::Storage,
+    R: rsk_device::Rng,
+{
     /// The rename screen: edit a relying party's device-local nickname with a T9
     /// phone-style keypad. Each key 1-9 cycles through its letter group on repeated
     /// presses; pressing a different key (or waiting [`T9_COMMIT_MS`]) commits the
@@ -145,7 +152,7 @@ impl Ui {
                 }
                 self.touch.wait_release(last, idle_limit);
             }
-            if crate::worker::host_request_pending_after(last) || last.elapsed() >= idle_limit {
+            if self.hooks.host_request_pending_after(last) || last.elapsed() >= idle_limit {
                 return None;
             }
             block_for(Duration::from_millis(TOUCH_POLL_MS));
@@ -164,7 +171,6 @@ impl Ui {
     /// worker shares this thread-mode executor and only runs once this busy-waiting UI yields,
     /// so the ambient loop must park (on `reboot_pending`) and hand the executor over to it.
     pub(super) fn run_firmware(&mut self) -> bool {
-        use rsk_rescue::Platform as _;
         // BOOTSEL is the entry point for a raw flash dump / reflash (issue #37), so the
         // hold alone is too weak a gate — take the device PIN first, like every other
         // irreversible panel action.
@@ -176,9 +182,7 @@ impl Ui {
         self.touch.wait_release(Instant::now(), idle_limit);
         // A pure OTP read (no flash / no shared borrow) — true only on a fused, secure-boot
         // device, where the boot ROM actually verifies the image signature on next boot.
-        let secure_boot = crate::rescue_platform::RescuePlatform
-            .secure_boot_status()
-            .enabled;
+        let secure_boot = self.hooks.secure_boot_enabled();
         let _ = rsk_ui::render_firmware(
             &mut self.panel,
             self.info.version,
@@ -189,7 +193,7 @@ impl Ui {
         self.touch.wait_release(Instant::now(), idle_limit);
         if self.hold_to_confirm("Verify & install", rsk_ui::theme::ACCENT_FILL) {
             let _ = rsk_ui::render_rebooting(&mut self.panel);
-            crate::vendor::request_reboot(true);
+            self.hooks.request_reboot(true);
             return true;
         }
         self.end_modal();
@@ -263,13 +267,13 @@ impl Ui {
         out: &mut [u8],
         yield_to_host: bool,
     ) -> rsk_fido::PinEntry {
-        let saved = led::status();
-        led::set_status(led::STATUS_TOUCH);
-        CANCEL_REQUESTED.store(false, Ordering::Relaxed);
-        UP_PENDING.store(true, Ordering::Release);
+        let saved = self.hooks.led_status();
+        self.hooks.set_led_status(rsk_led::STATUS_TOUCH);
+        self.hooks.set_cancel_requested(false);
+        self.hooks.set_up_pending(true);
 
         let start = Instant::now();
-        let timeout = Duration::from_millis(PRESENCE_TIMEOUT_MS.load(Ordering::Relaxed) as u64);
+        let timeout = Duration::from_millis(self.hooks.presence_timeout_ms() as u64);
         let mut entered = 0usize;
         // The entry starts masked; the eye toggle flips this. `last_input` tracks the last
         // key so a revealed PIN can auto re-mask after a short idle.
@@ -355,7 +359,7 @@ impl Ui {
                 reveal = false;
                 let _ = rsk_ui::render_pin_dots(&mut self.panel, entered, expected, None);
             }
-            if CANCEL_REQUESTED.load(Ordering::Acquire) {
+            if self.hooks.cancel_requested() {
                 break rsk_fido::PinEntry::Cancelled;
             }
             // A local gate must not starve the parked worker: abandon once a host command
@@ -372,7 +376,7 @@ impl Ui {
             if yield_to_host
                 && entered == 0
                 && start.elapsed() >= Duration::from_millis(UI_YIELD_FLOOR_MS)
-                && crate::worker::host_request_pending()
+                && self.hooks.host_request_pending()
             {
                 break rsk_fido::PinEntry::Cancelled;
             }
@@ -382,14 +386,14 @@ impl Ui {
             block_for(Duration::from_millis(TOUCH_POLL_MS));
         };
 
-        UP_PENDING.store(false, Ordering::Release);
-        CANCEL_REQUESTED.store(false, Ordering::Relaxed);
+        self.hooks.set_up_pending(false);
+        self.hooks.set_cancel_requested(false);
         AMBIENT_QUIET_UNTIL_MS.store(
             (Instant::now().as_millis() as u32).wrapping_add(AMBIENT_QUIET_MS),
             Ordering::Relaxed,
         );
         note_activity(); // a long ceremony shouldn't immediately fall asleep on return
-        led::set_status(saved);
+        self.hooks.set_led_status(saved);
         outcome
     }
 
@@ -429,7 +433,7 @@ impl Ui {
                 self.touch.wait_release(t0, show);
                 break;
             }
-            if crate::worker::host_request_pending_after(t0) || t0.elapsed() >= show {
+            if self.hooks.host_request_pending_after(t0) || t0.elapsed() >= show {
                 break;
             }
             block_for(Duration::from_millis(TOUCH_POLL_MS));
@@ -483,9 +487,7 @@ impl Ui {
                         }
                         last = Instant::now();
                     }
-                    if crate::worker::host_request_pending_after(last)
-                        || last.elapsed() >= idle_limit
-                    {
+                    if self.hooks.host_request_pending_after(last) || last.elapsed() >= idle_limit {
                         break;
                     }
                     block_for(Duration::from_millis(TOUCH_POLL_MS));
@@ -584,7 +586,7 @@ impl Ui {
             let mid_hold = hold_start.is_some();
             if (!mid_hold
                 && opened.elapsed() >= Duration::from_millis(UI_YIELD_FLOOR_MS)
-                && crate::worker::host_request_pending())
+                && self.hooks.host_request_pending())
                 || last.elapsed() >= idle_limit
             {
                 return false; // timeout / yield
@@ -649,7 +651,7 @@ impl Ui {
             // through a reset the user asked for precisely to leave nothing behind
             // (audit run-34 #16). The ambient loop parks on `reboot_pending` and
             // yields, so the worker runs on the next tick.
-            crate::vendor::request_reboot(false);
+            self.hooks.request_reboot(false);
             self.end_modal();
             return true;
         }
@@ -754,7 +756,7 @@ impl Ui {
                             // under the old PIN goes on deleting resident credentials
                             // (no touch) for up to ten more minutes, right after the
                             // owner did the one thing they believe revokes it.
-                            crate::handler::note_local_pin_changed();
+                            self.hooks.note_local_pin_changed();
                             self.journal_local(rsk_fido::journal::EV_PIN_CHANGE);
                         }
                     }
@@ -807,7 +809,7 @@ impl Ui {
                     }
                     self.touch.wait_release(last, idle);
                 }
-                if crate::worker::host_request_pending_after(last) || last.elapsed() >= idle {
+                if self.hooks.host_request_pending_after(last) || last.elapsed() >= idle {
                     return;
                 }
                 block_for(Duration::from_millis(TOUCH_POLL_MS));
