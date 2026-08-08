@@ -176,27 +176,35 @@ pub fn status() -> u8 {
 /// at once instead of holding the channel shut for the flashes. Only compiled
 /// where there is an indicator; `MsgHandler::can_wink` keeps the capability bit
 /// off on the builds this is absent from.
+///
+/// A burst already in flight is left to finish ([`rsk_led::wink_arm`]) — extending
+/// one is what would let an ungated host hold the reserved touch colour solid.
 #[cfg(not(led_kind = "none"))]
 pub fn wink() {
-    let end = Instant::now().as_millis() as u32 + rsk_led::WINK_MS;
+    let now = Instant::now().as_millis() as u32;
+    let end = rsk_led::wink_arm(WINK_END_MS.load(Ordering::Relaxed), now);
     WINK_END_MS.store(end, Ordering::Relaxed);
 }
 
 /// The colour a running wink burst wants shown, or `None` when none is running.
-/// It outranks the status, the configured effect *and* `steady`: the command's
-/// only job is that the key visibly flashes, so a config that renders everything
-/// solid must not swallow it.
-///
-/// The deadline is a wrapping millisecond counter, so "is it still running" is
-/// `deadline - now` read as an unsigned distance: anything past the end wraps to a
-/// huge value and reads as expired, which also covers the 49-day rollover.
+/// It outranks the configured effect *and* `steady` — the command's only job is
+/// that the key visibly flashes, so a config that renders everything solid must
+/// not swallow it — but never an awaiting-touch status, whose colour it borrows.
+/// Liveness (including the 49-day counter rollover) is [`rsk_led::wink_running`].
 #[cfg(not(led_kind = "none"))]
 fn wink_colour() -> Option<RGB8> {
+    let now = Instant::now().as_millis() as u32;
     let end = WINK_END_MS.load(Ordering::Relaxed);
-    let left = end.wrapping_sub(Instant::now().as_millis() as u32);
-    if end == 0 || left == 0 || left > rsk_led::WINK_MS {
+    if !rsk_led::wink_running(end, now) {
         return None;
     }
+    // A live consent prompt outranks the burst: the wink wears the touch colour, so
+    // letting it paint over a touch wait would hand a host the prompt's own
+    // indicator to drive.
+    if LED_STATUS.load(Ordering::Relaxed) == STATUS_TOUCH {
+        return None;
+    }
+    let left = end.wrapping_sub(now);
     let s = STATUS_TOUCH as usize;
     Some(if rsk_led::wink_lit(left) {
         // The touch colour: the one the config codec keeps above a visibility floor
@@ -343,8 +351,8 @@ impl Blinker {
     }
 
     fn tick(&mut self) -> RGB8 {
-        // A wink pre-empts the ambient status for its half-second; the phase state
-        // below is left untouched, so the status blink resumes where it was.
+        // A wink pre-empts every ambient status but the touch prompt; the phase
+        // state below is left untouched, so the status blink resumes where it was.
         if let Some(c) = wink_colour() {
             return c;
         }

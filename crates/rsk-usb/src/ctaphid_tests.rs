@@ -490,3 +490,52 @@ fn wink_is_claimed_only_where_something_can_flash() {
     // 0x08 is CAPABILITY_NMSG ("does NOT implement CTAPHID_MSG") — we do.
     assert_eq!(init_capabilities(true) & 0x08, 0);
 }
+
+/// A handler that records whether the transport asked it to flash. `can_wink`
+/// false is what a `LED_KIND=none` build (every display build) reports.
+struct WinkSpy {
+    can_wink: bool,
+    winked: bool,
+}
+
+impl MsgHandler for WinkSpy {
+    async fn handle_msg(&mut self, _cid: u32, _apdu: &[u8], _out: &mut [u8]) -> usize {
+        0
+    }
+    async fn handle_cbor(&mut self, _cid: u32, _data: &[u8], _out: &mut [u8]) -> usize {
+        0
+    }
+    fn can_wink(&self) -> bool {
+        self.can_wink
+    }
+    fn wink(&mut self) {
+        self.winked = true;
+    }
+}
+
+/// The capability byte and the command must agree. A build that leaves
+/// `CAPFLAG_WINK` clear used to answer `CTAPHID_WINK` with an empty success frame
+/// anyway — the same device saying "I have no indicator" and "yes, I winked", which
+/// points a user with two keys attached at whichever one answered first.
+#[test]
+fn wink_is_refused_where_the_capability_bit_is_clear() {
+    let mut headless = WinkSpy {
+        can_wink: false,
+        winked: false,
+    };
+    assert_eq!(
+        perform_wink(&mut headless),
+        (CTAPHID_ERROR, &[ERR_INVALID_CMD] as &[u8])
+    );
+    assert!(
+        !headless.winked,
+        "nothing to flash, so nothing was asked to"
+    );
+
+    let mut lit = WinkSpy {
+        can_wink: true,
+        winked: false,
+    };
+    assert_eq!(perform_wink(&mut lit), (CTAPHID_WINK, &[] as &[u8]));
+    assert!(lit.winked, "a build with an indicator still flashes it");
+}

@@ -74,6 +74,30 @@ pub const fn wink_lit(ms_left: u32) -> bool {
     (elapsed / WINK_HALF_MS).is_multiple_of(2)
 }
 
+/// Whether the burst whose deadline is `end` is still running at `now_ms`; `0` is
+/// the never-winked sentinel. A deadline is the one form that survives the
+/// millisecond counter wrapping, so liveness is `end - now` read as an unsigned
+/// distance: past the end it wraps to a huge value and reads as expired, which is
+/// also what covers the 49-day rollover.
+pub const fn wink_running(end: u32, now_ms: u32) -> bool {
+    let left = end.wrapping_sub(now_ms);
+    end != 0 && left != 0 && left <= WINK_MS
+}
+
+/// The deadline a `CTAPHID_WINK` arriving at `now_ms` leaves behind, given the
+/// current one. §11.2.9.2.1 asks for *a* burst, so one already running is left
+/// alone: an ungated host re-arming faster than [`WINK_HALF_MS`] would otherwise
+/// never let it reach a dark half-period, holding the reserved touch colour solid
+/// — forging the consent indicator [`LedConfig::enforce_touch_invariants`] exists
+/// to keep unforgeable.
+pub const fn wink_arm(end: u32, now_ms: u32) -> u32 {
+    if wink_running(end, now_ms) {
+        end
+    } else {
+        now_ms.wrapping_add(WINK_MS)
+    }
+}
+
 /// Default effect per status (indexed by the `STATUS_*` constants).
 pub const DEFAULT_EFFECT: [u8; N_STATUS] = [
     EFFECT_VAPOR,   // IDLE
