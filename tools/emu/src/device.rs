@@ -96,6 +96,8 @@ pub struct Config {
     pub touch: bool,
     /// Serve the trusted display in a window; presence becomes an on-screen hold.
     pub display: bool,
+    /// Serve USB/IP on this address, so a Linux host sees a real USB device.
+    pub usbip: Option<String>,
     pub seed: Option<Vec<u8>>,
     pub serial: [u8; 8],
     pub kv_total: u32,

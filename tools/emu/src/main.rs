@@ -58,6 +58,8 @@ usage: rsk-emu [options]
   --touch             ask for every user presence on the terminal
   --display           open the trusted display in a window; presence is an
                       on-screen hold, exactly as on a screen board
+  --usbip [addr]      serve USB/IP (default 127.0.0.1:3240) so a Linux host can
+                      attach the emulator as a REAL USB device
   --trace             log every command and its status
   --yubico            present the Yubico card identity (ATR + OpenPGP AID
                       manufacturer), as a build carrying the Yubico VID does
@@ -77,6 +79,7 @@ fn main() {
         store: None,
         touch: false,
         display: false,
+        usbip: None,
         seed: None,
         serial: DEFAULT_SERIAL,
         kv_total: KV_TOTAL,
@@ -103,6 +106,12 @@ fn main() {
             "--store" => cfg.store = Some(value("--store").into()),
             "--touch" => cfg.touch = true,
             "--display" => cfg.display = true,
+            "--usbip" => {
+                cfg.usbip = Some(match args.next() {
+                    Some(a) if !a.starts_with("--") => a,
+                    _ => format!("127.0.0.1:{}", usbip::PORT),
+                })
+            }
             "--trace" => cfg.trace = true,
             "--yubico" => cfg.yubico = true,
             "--power-cut" => cfg.power_cut = Some(parse_u32(&value("--power-cut"))),
@@ -171,6 +180,17 @@ fn main() {
     // The device thread's loop ends when every sender is gone; this one would
     // keep it alive for ever.
     drop(jobs_tx);
+
+    if let Some(addr) = cfg.usbip.clone() {
+        // Its own thread: the listener blocks on accept, while the device thread
+        // keeps serving the sockets it already has.
+        std::thread::spawn(move || {
+            let mut sink = usbip::StallAll;
+            if let Err(e) = usbip::listen(&addr, &mut sink) {
+                eprintln!("emu: cannot serve USB/IP on {addr}: {e}");
+            }
+        });
+    }
 
     device::run(cfg, jobs_rx, signals, lines);
 }

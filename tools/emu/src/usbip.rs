@@ -432,6 +432,123 @@ pub fn serve_attached<S: Read + Write>(
     }
 }
 
+/// The port `vhci_hcd`'s userspace expects a USB/IP server on.
+pub const PORT: u16 = 3240;
+
+/// Serve one client from its first byte to its last: the op phase, then — if it
+/// imported us — the URB loop.
+///
+/// Split from [`serve_attached`] because they are different protocols on one
+/// socket, and from the listener because a connection's lifetime is the useful
+/// unit: a client that lists and leaves is normal, and so is one that attaches
+/// and stays for hours.
+pub fn serve_connection<S: Read + Write>(
+    sock: &mut S,
+    dev: &UsbDeviceInfo,
+    ifaces: &[[u8; 3]],
+    sink: &mut dyn UrbSink,
+) -> std::io::Result<()> {
+    loop {
+        let mut head = [0u8; OP_HEADER_LEN];
+        if sock.read_exact(&mut head).is_err() {
+            return Ok(()); // the client hung up between requests
+        }
+        let Some(h) = OpHeader::parse(&head) else {
+            return Ok(());
+        };
+        // The op phase has no length prefix, so the code says how much follows.
+        let mut req = head.to_vec();
+        let n = op_body_len(h.code);
+        if n > 0 {
+            let mut body = vec![0u8; n];
+            sock.read_exact(&mut body)?;
+            req.extend_from_slice(&body);
+        }
+        let Some(reply) = handle_op_request(&req, dev, ifaces) else {
+            return Ok(()); // unknown code: the stream is no longer framable
+        };
+        sock.write_all(&reply.bytes)?;
+        if reply.attached {
+            // Everything after an import is URBs, on this same socket.
+            return serve_attached(sock, sink);
+        }
+    }
+}
+
+/// The device this emulator presents. The descriptor values are the ones the
+/// firmware's USB layer declares; the kernel reads them before it ever issues a
+/// GET_DESCRIPTOR, to size its own model of the device.
+pub fn device_info() -> UsbDeviceInfo {
+    UsbDeviceInfo {
+        path: "/sys/devices/rsk-emu/usb1/1-1",
+        busid: "rsk-emu",
+        busnum: 1,
+        devnum: 1,
+        speed: 2, // full speed, like the RP2350
+        id_vendor: 0x1209,
+        id_product: 0x000d,
+        bcd_device: 0x0874,
+        device_class: 0,
+        device_subclass: 0,
+        device_protocol: 0,
+        configuration_value: 1,
+        num_configurations: 1,
+        num_interfaces: 3,
+    }
+}
+
+/// The interface list, in the order the device presents them: keyboard/OTP,
+/// FIDO, CCID. The ORDER is the point — issue #55 was a host going blind when it
+/// changed — and it is the first thing this transport makes observable.
+pub const INTERFACES: [[u8; 3]; 3] = [
+    [0x03, 0x01, 0x01], // HID, boot, keyboard — OTP
+    [0x03, 0x00, 0x00], // HID — FIDO
+    [0x0b, 0x00, 0x00], // smart card — CCID
+];
+
+/// Accept USB/IP clients forever, one at a time. A second client while one holds
+/// the device is refused by being dropped: there is one device here, and letting
+/// two hosts import it would give both a half-working one.
+pub fn listen(addr: &str, sink: &mut dyn UrbSink) -> std::io::Result<()> {
+    let l = std::net::TcpListener::bind(addr)?;
+    eprintln!("emu: USB/IP on {addr} (attach: usbip attach -r <host> -b {BUSID})");
+    for stream in l.incoming() {
+        let mut s = match stream {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        let _ = s.set_nodelay(true);
+        if let Err(e) = serve_connection(&mut s, &device_info(), &INTERFACES, sink) {
+            eprintln!("emu: USB/IP client dropped: {e}");
+        }
+    }
+    Ok(())
+}
+
+/// A sink with no USB stack behind it: every URB halts.
+///
+/// This is what the transport serves until the `embassy_usb::driver::Driver`
+/// impl lands. A host attaching to it gets a device that enumerates as far as
+/// asking for a descriptor and then fails — which is the honest state, and is
+/// enough to exercise every byte of the framing against a real kernel.
+#[derive(Default)]
+pub struct StallAll;
+
+impl UrbSink for StallAll {
+    fn control(&mut self, _setup: [u8; 8], _out: &[u8], _reply: &mut [u8]) -> Result<usize, Stall> {
+        Err(Stall)
+    }
+    fn transfer(
+        &mut self,
+        _ep: u32,
+        _dir: u32,
+        _out: &[u8],
+        _reply: &mut [u8],
+    ) -> Result<usize, Stall> {
+        Err(Stall)
+    }
+}
+
 use std::io::{Read, Write};
 
 #[cfg(test)]

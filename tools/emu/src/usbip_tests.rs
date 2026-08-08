@@ -430,3 +430,69 @@ fn ep0_routes_to_control_with_its_setup() {
     run(submit_bytes(DIR_IN, 0, 18, setup).to_vec(), &mut sink);
     assert_eq!(sink.seen, vec![(0, setup.to_vec())]);
 }
+
+fn conn(script: Vec<u8>, sink: &mut Echo) -> Vec<u8> {
+    let mut p = Pipe {
+        input: std::io::Cursor::new(script),
+        out: Vec::new(),
+    };
+    serve_connection(&mut p, &dev(), &ifaces(), sink).unwrap();
+    p.out
+}
+
+/// A client may list and leave without importing; that is the `usbip list -r`
+/// case and must not be mistaken for an attach.
+#[test]
+fn a_listing_client_is_served_and_released() {
+    let mut sink = Echo {
+        seen: vec![],
+        reply: vec![],
+        stall: false,
+    };
+    let out = conn(op_req(OP_REQ_DEVLIST, &[]), &mut sink);
+    assert_eq!(out.len(), 12 + USB_DEVICE_LEN + 3 * USB_INTERFACE_LEN);
+    assert!(sink.seen.is_empty(), "a listing must reach no endpoint");
+}
+
+/// Two op requests on one connection: a list, then an import. The second is only
+/// framed correctly if the first read exactly its own (empty) body.
+#[test]
+fn a_list_then_import_stays_framed() {
+    let mut busid = [0u8; BUSID_LEN];
+    busid[..BUSID.len()].copy_from_slice(BUSID.as_bytes());
+    let mut script = op_req(OP_REQ_DEVLIST, &[]);
+    script.extend_from_slice(&op_req(OP_REQ_IMPORT, &busid));
+    // …and one URB after the import, to prove the phase actually switched.
+    script.extend_from_slice(&submit_bytes(DIR_IN, 129, 2, [0; 8]));
+    let mut sink = Echo {
+        seen: vec![],
+        reply: vec![0x5A, 0x5B],
+        stall: false,
+    };
+    let out = conn(script, &mut sink);
+    assert_eq!(sink.seen, vec![(129, vec![])], "the URB reached the sink");
+    assert!(out.ends_with(&[0x5A, 0x5B]));
+}
+
+/// A refused import leaves the connection in the op phase, not attached — the
+/// next bytes are another op request, not URBs.
+#[test]
+fn a_refused_import_does_not_switch_phase() {
+    let mut busid = [0u8; BUSID_LEN];
+    busid[..3].copy_from_slice(b"9-9");
+    let mut script = op_req(OP_REQ_IMPORT, &busid);
+    script.extend_from_slice(&op_req(OP_REQ_DEVLIST, &[]));
+    let mut sink = Echo {
+        seen: vec![],
+        reply: vec![],
+        stall: false,
+    };
+    let out = conn(script, &mut sink);
+    assert!(sink.seen.is_empty());
+    // The refusal, then a full devlist reply — so the second request was read as
+    // an op request and not as a URB header.
+    assert_eq!(
+        out.len(),
+        OP_HEADER_LEN + 12 + USB_DEVICE_LEN + 3 * USB_INTERFACE_LEN
+    );
+}
