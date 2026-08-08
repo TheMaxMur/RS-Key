@@ -10,9 +10,13 @@ verification, fleet inventory, offboarding. It talks to the device directly:
 CTAPHID over hidapi for the FIDO interface, and the CCID applets over PC/SC.
 
 It is the canonical interface. The [terminal cockpit (`rsk-tui`)](tui.md) is a
-read-mostly companion that points you back here for anything irreversible. Most
-other guides in this section assume `rsk` is on your `PATH` and show the exact
-`rsk <group> …` command for the task.
+read-mostly companion that points you back here for anything irreversible, and
+[PicoForge](https://github.com/librekeys/picoforge) is a third-party desktop GUI
+over the same device-config surface ([protocol.md
+§11](../protocol.md#11-integration-notes-for-picoforge)) for anyone who would
+rather click than type — it is not part of this repo. Most other guides in this
+section assume `rsk` is on your `PATH` and show the exact `rsk <group> …` command
+for the task.
 
 ```mermaid
 flowchart LR

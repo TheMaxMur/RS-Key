@@ -204,6 +204,25 @@ several sites of a rule the codebase had already decided once and swept incomple
   [discussion #58](https://github.com/TheMaxMur/RS-Key/discussions/58);
   [linux.md](docs/linux.md) has the wiring for both routes.
 
+- **The docs name the two third-party host tools, and the quick start shows one.**
+  Nothing in the setup path mentioned that a flashed key can be configured from a GUI
+  at all: [PicoForge](https://github.com/librekeys/picoforge) appeared only in the
+  host-tools section, below the build instructions, where someone who just flashed a
+  board never reaches. It is now in both quick starts and in the `rsk` guide beside
+  the CLI and the TUI, with a screenshot of the Device Overview page. The screenshot
+  is deliberately a *freshly flashed default* board — `1209:0001`, no PIN yet, boot
+  mode `Development` — so it matches what the reader is looking at rather than a
+  provisioned key or the `VIDPID=Yubikey5` flavor.
+- **[Telesma](https://github.com/go-ctap/app) is tracked in the interop matrix as
+  `⏳ untested`** — the first row to use a mark [interop.md](docs/interop.md) has had
+  in its legend from the start. It is a desktop CTAP workbench over
+  [`go-ctap/ctap`](https://github.com/go-ctap/ctap), an independent CTAP 2.0–2.3
+  client stack, and that is the reason it is worth a row: every FIDO cell in that
+  matrix reads the device through libfido2 or python-fido2, so a divergence both of
+  them tolerate is invisible at that layer — the same shape as the `ykman openpgp
+  info` GET DATA `6E` bug, which every protocol test passed.
+  [testing.md](docs/testing.md) says as much where it explains the layer.
+
 ### Fixed
 
 - **Three seal recipes produced an image that would not boot on a provisioned board.**
