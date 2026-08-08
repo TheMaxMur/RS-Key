@@ -328,7 +328,14 @@ fn cmd_authenticate<S: Storage, R: Rng>(
     out[1..5].copy_from_slice(&ctr.to_be_bytes());
     out[5..5 + sl].copy_from_slice(&sig[..sl]);
     let _ = bump_sign_counter(ctx.fs);
-    journal::append(ctx, journal::EV_U2F_AUTH, 0, &app[..8]);
+    // `owes` is whether this AUTHENTICATE actually collected a gesture: without one
+    // (P1 = don't-enforce, alwaysUv off) it is ungated and drivable on demand, so a run
+    // of those costs one ring entry rather than one each — see `journal::append_run`.
+    if owes {
+        journal::append(ctx, journal::EV_U2F_AUTH, 0, &app[..8]);
+    } else {
+        journal::append_run(ctx, journal::EV_U2F_AUTH, 0, &app[..8]);
+    }
     (Sw::OK, 5 + sl)
 }
 

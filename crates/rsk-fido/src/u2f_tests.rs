@@ -712,3 +712,59 @@ fn bad_cla_and_ins() {
         Sw::INS_NOT_SUPPORTED
     );
 }
+
+/// Don't-enforce AUTHENTICATE signs with no gesture at all on the default build, so an
+/// unbudgeted journal entry per call let a host holding one key handle evict the whole
+/// 128-slot audit window (audit run-37). A run of them now costs one entry; an enforced
+/// authenticate still earns its own.
+#[cfg(not(feature = "strict-up"))]
+#[test]
+fn no_enforce_authenticate_cannot_flush_the_audit_journal() {
+    let mut fs = Fs::new(RamStorage::new());
+    let mut rng = SeqRng(1);
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+    let mut out = [0u8; 1024];
+    let mut state = crate::FidoState::new();
+    let mut presence = crate::AlwaysConfirm;
+    let mut ctx = Ctx {
+        presence: &mut presence,
+        dev: dev(),
+        fs: &mut fs,
+        rng: &mut rng,
+        state: &mut state,
+        now_ms: 0,
+    };
+
+    let mut reg_data = std::vec::Vec::new();
+    reg_data.extend_from_slice(&CHAL);
+    reg_data.extend_from_slice(&APP);
+    let reg_bytes = ext_apdu(CTAP_REGISTER, 0, &reg_data);
+    let reg = Apdu::parse(&reg_bytes).unwrap();
+    let (sw, n) = process_u2f(&mut ctx, &reg, &mut out);
+    assert_eq!(sw, Sw::OK);
+    assert!(n > 64);
+    let key_handle = out[67..67 + KEY_HANDLE_LEN].to_vec();
+
+    let mut auth_data = std::vec::Vec::new();
+    auth_data.extend_from_slice(&CHAL);
+    auth_data.extend_from_slice(&APP);
+    auth_data.push(KEY_HANDLE_LEN as u8);
+    auth_data.extend_from_slice(&key_handle);
+    let silent_bytes = ext_apdu(CTAP_AUTHENTICATE, U2F_AUTH_NO_ENFORCE, &auth_data);
+    let silent = Apdu::parse(&silent_bytes).unwrap();
+    let touched_bytes = ext_apdu(CTAP_AUTHENTICATE, U2F_AUTH_ENFORCE, &auth_data);
+    let touched = Apdu::parse(&touched_bytes).unwrap();
+
+    // Journalling starts after the registration, so the window is exactly the flood.
+    crate::journal::set_enabled(ctx.fs, true).unwrap();
+    crate::journal::append(&mut ctx, crate::journal::EV_PIN_LOCKOUT, 0, &[]);
+    for _ in 0..crate::consts::AUDIT_RING_SLOTS + 2 {
+        assert_eq!(process_u2f(&mut ctx, &silent, &mut out).0, Sw::OK);
+    }
+    assert_eq!(process_u2f(&mut ctx, &touched, &mut out).0, Sw::OK);
+
+    let (_, m) = crate::journal::chain_head(&dev(), &mut fs);
+    assert_eq!(m.start, 0, "nothing evicted from the window");
+    // BOOT, PIN_LOCKOUT, the coalesced silent run, the touched authenticate.
+    assert_eq!(m.seq_next, 4);
+}

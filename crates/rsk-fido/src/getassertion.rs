@@ -307,7 +307,14 @@ pub fn get_assertion<S: Storage, R: Rng>(
     let result = get_assertion_inner(ctx, &req, &rp_id_hash, &seed, verified, out);
     seed.zeroize();
     if result.is_ok() {
-        journal::append(ctx, journal::EV_GET_ASSERT, 0, &rp_id_hash[..8]);
+        // A slot is earned by the gesture: the silent `up:false` pre-flight is ungated
+        // and drivable on demand, so a run of those costs one entry rather than one
+        // each ([`journal::append_run`]) and cannot flush the evidence window.
+        if want_up(&req) {
+            journal::append(ctx, journal::EV_GET_ASSERT, 0, &rp_id_hash[..8]);
+        } else {
+            journal::append_run(ctx, journal::EV_GET_ASSERT, 0, &rp_id_hash[..8]);
+        }
     } else {
         // getNextAssertion performs no presence check of its own — it may only
         // continue a getAssertion whose presence gate SUCCEEDED (CTAP 2.1 §6.3).

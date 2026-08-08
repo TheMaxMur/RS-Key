@@ -582,6 +582,51 @@ fn up_false_preflight_is_silent_and_clears_up_flag() {
     );
 }
 
+/// The silent pre-flight is ungated, so an unbudgeted entry per call let a host holding
+/// any credential evict the whole 128-slot audit window — and with it the record of
+/// whatever it had just done (audit run-37). A run of them now costs one entry; an
+/// assertion that collected a gesture still earns its own.
+#[cfg(not(feature = "strict-up"))]
+#[test]
+fn silent_assertions_cannot_flush_the_audit_journal() {
+    let (mut fs, mut rng) = setup();
+    let cred_id = register_non_resident(&mut fs, &mut rng);
+    crate::journal::set_enabled(&mut fs, true).unwrap();
+    let silent = ga_request_up(&cred_id, false);
+    let gestured = ga_request_up(&cred_id, true);
+
+    let mut out = [0u8; 1024];
+    {
+        let mut state = crate::FidoState::new();
+        let mut presence = crate::AlwaysConfirm;
+        let mut ctx = Ctx {
+            presence: &mut presence,
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 20,
+        };
+        // The evidence the flood is meant to displace.
+        crate::journal::append(&mut ctx, crate::journal::EV_BACKUP_EXPORT, 0, &[]);
+        for _ in 0..crate::consts::AUDIT_RING_SLOTS + 2 {
+            get_assertion(&mut ctx, &silent, &mut out).unwrap();
+        }
+        get_assertion(&mut ctx, &gestured, &mut out).unwrap();
+    }
+
+    let (_, m) = crate::journal::chain_head(&dev(), &mut fs);
+    assert_eq!(m.start, 0, "nothing evicted from the window");
+    // BOOT, BACKUP_EXPORT, the coalesced silent run, the gestured assertion.
+    assert_eq!(m.seq_next, 4);
+    let mut seen = std::vec::Vec::new();
+    crate::journal::for_each_event(&dev(), &mut fs, |e| {
+        seen.push(e.event);
+        true
+    });
+    assert!(seen.contains(&crate::journal::EV_BACKUP_EXPORT));
+}
+
 // strict-up build: even up:false polls the button, so a declined touch denies
 // the assertion (the opt-in two-touch behavior).
 #[cfg(feature = "strict-up")]

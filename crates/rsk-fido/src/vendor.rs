@@ -285,8 +285,9 @@ fn config_read<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req, out: &mut [u8
 ///
 /// A write that changes nothing is answered `Ok` without touching flash or the
 /// journal, and a run of writes that do change something costs one ring entry, not
-/// one each ([`journal::append_config_write`]): this is the only journalled event a
-/// silent host can drive on demand, and 128 of them would evict the whole ring.
+/// one each ([`journal::append_config_write`]): a silent host can drive this write on
+/// demand, and 128 of them would otherwise evict the whole ring. The same rule covers
+/// the other two such events ([`journal::append_run`]).
 fn config_write<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> CtapResult {
     // DEFAULT build: ungated device-config write (full YubiKey/ykman parity).
     // `strict-config` restores the PIN (PERM_ACFG) + touch gate — a stronger gate
