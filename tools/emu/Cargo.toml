@@ -1,0 +1,32 @@
+# Standalone host emulator — NOT part of the firmware workspace (the empty
+# [workspace] table below detaches it from the parent so it builds for the host,
+# not thumbv8m).
+[package]
+name = "rsk-emu"
+version = "0.1.0"
+license = "AGPL-3.0-only"
+edition = "2024"
+description = "rs-key software emulator — the applet stack on a socket, no hardware"
+
+[[bin]]
+name = "rsk-emu"
+path = "src/main.rs"
+
+# Only the in-tree crates: the emulator is the same applet code the firmware
+# runs, wired to a socket instead of USB. No external dependency joins an
+# authenticator's build for a dev tool — randomness comes from `/dev/urandom`
+# and the CLI is parsed by hand.
+[dependencies]
+rsk-sdk = { path = "../../crates/rsk-sdk" }
+rsk-fs = { path = "../../crates/rsk-fs" }
+rsk-usb = { path = "../../crates/rsk-usb" }
+rsk-crypto = { path = "../../crates/rsk-crypto" }
+rsk-fido = { path = "../../crates/rsk-fido" }
+rsk-openpgp = { path = "../../crates/rsk-openpgp" }
+rsk-mgmt = { path = "../../crates/rsk-mgmt" }
+rsk-oath = { path = "../../crates/rsk-oath" }
+rsk-otp = { path = "../../crates/rsk-otp" }
+rsk-piv = { path = "../../crates/rsk-piv" }
+rsk-rescue = { path = "../../crates/rsk-rescue" }
+
+[workspace]

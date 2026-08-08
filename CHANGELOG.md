@@ -13,6 +13,20 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+### Added
+
+- **A software emulator, `tools/emu`.** The applet crates run on the host and
+  serve CTAPHID and APDUs over TCP, so the `tests/*.py` suites — until now
+  hand-run against a flashed board, and therefore never run in CI — work with no
+  hardware attached (`python tests/emu.py tests/11_fido_makecredential.py`). It
+  is a development tool, not a key: no secure boot, no OTP, no fuses, no USB
+  stack, and a store that overwrites in place instead of through
+  `sequential-storage`. Its device identity is deliberately its own, so
+  emulator-made material is recognisable as such. See
+  [docs/testing.md](docs/testing.md) and `tools/emu/README.md`.
+- The CTAPHID command and error constants in `rsk-usb` are public, so the
+  emulator's transport names the same values instead of redeclaring them.
+
 ## [0.4.8] - 2026-08-08
 
 Everything in 0.4.7 below, plus the fix for the reason it never shipped: the

@@ -279,6 +279,32 @@ test corpus and the Gnuk/OpenPGP card suite (see
 vendored, or run them from their upstream checkouts). Running an upstream
 corpus shows conformance on the cases it covers; it is not a security audit.
 
+## Without a board — the emulator
+
+`tools/emu` runs the applet crates on the host and serves CTAPHID and APDUs over
+TCP, so the suites above can run with no hardware attached:
+
+```sh
+nix develop -c cargo run --manifest-path tools/emu/Cargo.toml \
+  --target "$HOST" -- --store ./emu.store
+nix develop -c python tests/emu.py tests/11_fido_makecredential.py
+```
+
+`tests/emu.py` puts a fake `hid` module in front of the target script and points
+the power-cycle helper at the emulator's replug opcode, so no test file changes
+and hidapi need not be installed. `--touch` prompts for every presence on the
+terminal (and prints what a trusted display would have shown); `--trace` logs
+each command and its status.
+
+What it buys is the run these suites otherwise never get: they are hand-run
+against a flashed board, so nothing catches a *test* that has rotted. What it
+cannot stand in for is anything below the applet layer — the emulator has no
+secure boot, no OTP, no fuses, no USB stack, and its store overwrites in place
+rather than through `sequential-storage`, so power-cut and enumeration behaviour
+are unproven by it. `firmware/`'s own wiring is not shared either
+([tools/emu/README.md](https://github.com/TheMaxMur/RS-Key/tree/main/tools/emu)
+lists the gaps). A green emulator run is a protocol result, not a device result.
+
 ## Latency harness
 
 Timing a crypto primitive from the host is noisy. On the RP2350 the hot working

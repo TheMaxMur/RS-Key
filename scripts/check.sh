@@ -92,6 +92,12 @@ run "clippy (tui)"             cargo clippy --manifest-path tools/tui/Cargo.toml
 # now: `rsk/test_refuse_to_guess.py`, `rsk/test_secureboot.py`'s stage commands,
 # and `device_tests.rs`'s `every_hid_open_site_is_classified`.
 run "test (tui)"               cargo test --manifest-path tools/tui/Cargo.toml --target "$HOST"
+# tools/emu is the third host-only workspace (the software emulator) — same
+# reason it is gated here: nothing in the --workspace runs above can see it, and
+# an emulator that stops compiling is found when someone tries to run the
+# protocol suites without a board, which is exactly when they have no board.
+run "fmt (emu)"                cargo fmt --manifest-path tools/emu/Cargo.toml --check
+run "clippy (emu)"             cargo clippy --manifest-path tools/emu/Cargo.toml --target "$HOST" --all-targets -- -D warnings
 # fuzz/ is also its own (nightly) workspace. rustfmt needs no toolchain, so the
 # stable gate can format-check it here; building/clippy stay in the .#fuzz shell
 # (deep-checks CI). Format fuzz/ with this same stable rustfmt — not the .#fuzz
@@ -194,6 +200,9 @@ run "flake.lock in sync"       lock_in_sync
 # OpenPGP RSA backend, mitigated by blinding. Justification in deny.toml.
 run "cargo-audit (SCA)"        cargo audit --ignore RUSTSEC-2023-0071
 run "cargo-audit (tui SCA)"    cargo audit --file tools/tui/Cargo.lock
+# Same RUSTSEC-2023-0071 carve-out as the workspace run above: the emulator pulls
+# the OpenPGP applet, and with it `rsa`.
+run "cargo-audit (emu SCA)"    cargo audit --file tools/emu/Cargo.lock --ignore RUSTSEC-2023-0071
 run "cargo-deny"               cargo deny check
 # Supply-chain provenance-of-review: every dependency must be covered by an
 # imported audit (mozilla/google/isrg/zcash) or a recorded exemption. Fails when
