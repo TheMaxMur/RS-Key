@@ -26,6 +26,10 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   [docs/testing.md](docs/testing.md) and `tools/emu/README.md`.
 - The CTAPHID command and error constants in `rsk-usb` are public, so the
   emulator's transport names the same values instead of redeclaring them.
+- `scripts/docs_constants.py` now checks the constants copied into `tests/*.py`
+  and `metadata/*.json`, not only those quoted in `docs/`, and resolves one
+  `const A = B;` indirection — which is where the large-blob value below hid.
+  61 copies checked, up from 5.
 
 ### Fixed
 
