@@ -52,7 +52,7 @@ def test_versions_superset_allows_u2f_drop_but_flags_real_gap():
     allowed = dv.classify(
         "fido.getinfo.versions",
         ["U2F_V2", "FIDO_2_0", "FIDO_2_1"],
-        ["FIDO_2_0", "FIDO_2_1", "FIDO_2_2", "FIDO_2_3"],
+        ["FIDO_2_0", "FIDO_2_1", "FIDO_2_3"],
     )
     assert allowed["bucket"] == dv.ALLOWED  # U2F_V2 drop is excluded
     gap = dv.classify(

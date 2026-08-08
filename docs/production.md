@@ -43,6 +43,29 @@ flowchart TD
     s2b -. "a correctly-signed UF2 can always be re-flashed over BOOTSEL" .-> rec["BOOTSEL recovery"]
 ```
 
+## Every command on this page, in order
+
+The CLI groups by **fuse family** — `rsk otp` owns the OTP master key and the
+rollback flag, `rsk secure-boot` owns the boot-key and enforcement fuses — while
+this page groups by **goal**. The two cuts cross, which is why `rsk otp` shows up
+in stage 1 and again in stage 3. Nothing is out of order; they are different
+axes. The stages themselves are independent and usable alone, and this is the
+order to run them in if you are doing all three.
+
+| # | Command | Stage | What it writes | Undo |
+|---|---|---|---|---|
+| 1 | `rsk otp burn` | 1 | random MKEK + DEVK into OTP page 58 | **never** |
+| 2 | `rsk otp lock-page58` | 1 | the page-58 read lock | **never** |
+| 3 | `picotool seal --sign …` | 2b | nothing — host-only, and it produces the `otp.json` step 4 needs | re-run it |
+| 4 | `rsk secure-boot load-key <otp.json>` | 2c | boot-key fingerprint + `KEY_VALID` | **never** |
+| 5 | `rsk secure-boot harden` | 2c | `DEBUG_DISABLE` + glitch detectors | **never** |
+| 6 | `rsk secure-boot enable` | 2c | `SECURE_BOOT_ENABLE` — **the brick bit** | **never** |
+| 7 | `rsk secure-boot lock` | 2c | revokes unused key slots, locks the fuse pages | **never** |
+| 8 | `rsk otp rollback-require` | 3 | `ROLLBACK_REQUIRED` | **never** |
+
+`rsk secure-boot status` reads the whole fuse state and is safe at any point.
+Every burning command takes `--dry-run` and a typed confirmation.
+
 ## Before you start
 
 - **Make a seed backup first** if you haven't:
@@ -137,6 +160,9 @@ chmod 600 secure_boot_key.pem
 # BACK IT UP somewhere that survives this machine.
 ```
 
+That is the whole of what you create by hand. The `otp_secureboot.json` the next
+step passes around is produced *by* `seal`, not written here — see 2b.
+
 This key is the root of trust for the board's whole life. Treat it like the most
 important secret you have here: if you lose it after `enable`, you can never
 flash new firmware to that board (the running image keeps booting). It is also
@@ -149,19 +175,59 @@ board**, rotation, and recovery.
 ### 2b. Sign and prove a signed image boots (before any fuse)
 
 ```sh
+# 1. an image to sign. The partition table has to be in it BEFORE sealing, or
+#    the signature does not cover the fence (build.md#the-partition-table).
+cargo build --release -p firmware
+scripts/pt.sh target/thumbv8m.main-none-eabihf/release/firmware firmware-pt.elf
+picotool uf2 convert firmware-pt.elf -t elf firmware.uf2
+#    (or a single `nix build .#firmware`, whose result/firmware.uf2 already has it)
+
+# 2. sign it. otp_secureboot.json does NOT exist yet: you pick the path, and
+#    `seal` creates the file there. It is the artifact stage 2c fuses.
 picotool seal --sign --hash firmware.uf2 firmware-signed.uf2 \
     ~/.rs-key-secrets/secure_boot_key.pem ~/.rs-key-secrets/otp_secureboot.json \
     --major 1 --minor 0 --rollback 1
-picotool info firmware-signed.uf2        # must say "signature: verified"
-# BOOTSEL, then flash + confirm the device works:
+picotool info firmware-signed.uf2              # must say "signature: verified"
+ls -l ~/.rs-key-secrets/otp_secureboot.json    # seal wrote this; 2c needs it
+
+# 3. BOOTSEL, then flash + confirm the device works:
 picotool load -v firmware-signed.uf2 && picotool reboot   # or drag it onto the RP2350 drive
 ```
 
-The arguments:
+#### What `otp_secureboot.json` is for
+
+The one part of this page with no obvious purpose until you see both ends of it.
+
+The bootrom's check is: *does `SHA-256(the public key inside this image)` equal a
+fingerprint fused in OTP?* So that fingerprint has to get into the fuses. But
+signing happens **on your host, with a private key that must never go near the
+device**, while fusing happens **against the board** — two separate operations,
+possibly on different machines and months apart. Nothing in the signed image can
+carry the value across: the device is exactly what you don't trust yet.
+
+That file is the courier, and its whole job:
+
+| | |
+|---|---|
+| Written by | `picotool seal` (2b) — it derives the fingerprint from your `.pem` |
+| Read by | `rsk secure-boot load-key <that file>` (2c) — burns it into a boot-key slot |
+| Contains | `bootkey0` (the 32-byte fingerprint, length-checked before the burn) + `key_valid` + `secure_boot_enable` |
+| Verified after the burn | `load-key` reads the slot back and compares it to the fingerprint it wrote — a mismatch fails with `verify failed: slot N reads back …` rather than leaving an unusable slot marked valid |
+| Touched by anything else | no |
+
+**You do not back it up, and losing it costs nothing.** It is a pure function of
+your signing key — sealing *any* image with the same `.pem` regenerates it
+byte-for-byte, and `--major` / `--minor` / `--rollback` do not change a byte of
+it. It holds no private material, so it is not a secret either. The `.pem` is the
+thing to protect; this is a derived artifact you can recreate in one command.
+
+It *is* per-key, so with one key per board (recommended —
+[signing-keys.md](signing-keys.md)) keep each next to the `.pem` that produced
+it, under names you can tell apart.
+
+The other arguments:
 
 - `secure_boot_key.pem`: your signing key. It signs the image.
-- `otp_secureboot.json`: `seal` writes the **boot-key fingerprint** here. You
-  fuse it into OTP with `load-key` below.
 - `--major` / `--minor`: an **image version** (`major.minor`) stamped into the
   RP2350 boot metadata. It is a plain version label, distinct from the firmware
   version RS-Key reports (`5.7.x`, [build.md](build.md)) and from the rollback
@@ -177,6 +243,17 @@ The arguments:
 firmware's image definition is already secure-boot compatible. The sealed UF2
 carries the signature block.
 
+Sealing also covers the image's **partition table**, the fence that keeps the USB
+bootloader out of the KV store ([build.md](build.md#the-partition-table)). That is
+the whole reason the fence is worth anything: on an unsigned board an attacker
+simply flashes an image carrying a permissive table, while a sealed table cannot
+be replaced without this key. It closes the one snapshot/restore gap secure boot
+does not close by itself — writing the data region is not code execution
+([threat-model.md](threat-model.md#flash-snapshot-rollback-the-pin-counter-reset)).
+Prove it, don't assume it: `picotool info -a firmware-signed.uf2` must show the
+store partition as `NSBOOT(-)`, and a byte flipped anywhere in the table must turn
+`hash: verified` into `hash: incorrect`.
+
 ### 2c. Burn, staged
 
 `rsk secure-boot` splits provisioning so every irreversible write is proven
@@ -185,7 +262,7 @@ bit:
 
 ```sh
 rsk secure-boot status      # read the current fuse state any time
-rsk secure-boot load-key    # 1. boot-key fingerprint + KEY_VALID   (non-enforcing)
+rsk secure-boot load-key ~/.rs-key-secrets/otp_secureboot.json   # 1. boot-key fingerprint + KEY_VALID (non-enforcing)
 rsk secure-boot harden      # 2. DEBUG_DISABLE + glitch detectors   (non-enforcing)
 rsk secure-boot enable      # 3. SECURE_BOOT_ENABLE = 1  ← the brick bit
 rsk secure-boot lock        # 4. revoke unused key slots + lock the fuse pages
@@ -210,13 +287,22 @@ Re-drag the signed one to recover.
 
 ```sh
 cargo build --release -p firmware
-picotool uf2 convert target/thumbv8m.main-none-eabihf/release/firmware -t elf firmware.uf2
+scripts/pt.sh target/thumbv8m.main-none-eabihf/release/firmware firmware-pt.elf
+picotool uf2 convert firmware-pt.elf -t elf firmware.uf2
 picotool seal --sign --hash firmware.uf2 firmware-signed.uf2 \
     ~/.rs-key-secrets/secure_boot_key.pem ~/.rs-key-secrets/otp_secureboot.json \
     --major 1 --minor 0 --rollback 1
 # BOOTSEL (hands-free: rsk reboot bootsel), then:
 picotool load -v firmware-signed.uf2 && picotool reboot   # or drag it onto the RP2350 drive
 ```
+
+**The `pt.sh` line is not optional here, and its position is the point.** It
+embeds the partition table that fences the KV store off from the bootloader
+([build.md](build.md#the-partition-table)); `cargo build` alone never produces
+one. Running it *before* `seal` is what puts the table under the signature —
+which is the only thing that stops an attacker flashing a permissive table of
+their own. Seal a table-less image and you have signed away the fence without
+any error telling you so.
 
 The `--rollback` value is your board's current floor (see
 [anti-rollback.md](anti-rollback.md)). `1` is the usual starting value.
@@ -279,6 +365,7 @@ moving to a new board lives in [anti-rollback.md](anti-rollback.md).
 | Image sealed below your rollback floor | Refused at boot → BOOTSEL. Re-seal at ≥ your floor. |
 | Image sealed *above* your floor by accident | It boots and **burns the thermometer up to it**, spending budget irreversibly. Seal at exactly your floor unless you mean to raise it. |
 | `rsk-wipe` won't boot after enabling anti-rollback | Re-seal it at your current floor — the recovery image must carry a version too. |
+| `picotool save`/`load`/`erase` over the store answers `permission failure` | Expected: the partition table denies the bootloader there ([build.md](build.md#the-partition-table)). Erase from the running side instead — `rsk-wipe` and the rescue applet execute as secure code, which the table leaves `rw`. |
 | 48-step rollback budget exhausted | Key rotation, or a new board — see [anti-rollback.md](anti-rollback.md#when-the-48-budget-is-exhausted--the-ladder). |
 | Page 58 read fails after `lock-page58` | That's the lock working — only secure firmware can read the keys now. |
 | Replacing the board entirely | Provision the new chip with a **new** signing key; restore your FIDO identity with `rsk backup restore`. Resident passkeys / OpenPGP / PIV don't migrate — see [anti-rollback.md](anti-rollback.md#moving-to-a-new-board). |
@@ -302,3 +389,10 @@ moving to a new board lives in [anti-rollback.md](anti-rollback.md).
 - A host compromised while the device is plugged in can drive normal
   operations (as with any security key). See
   [threat-model.md](threat-model.md).
+- **An older signed image of yours re-opens the store fence.** The partition
+  table travels *inside* the image, so anything you signed before `0x0871` carries
+  none, and flashing it makes the KV store bootloader-writable again — the
+  snapshot/restore rollback is back. This is an ordinary downgrade attack, so the
+  version axis is what answers it: raise your rollback floor past your pre-table
+  builds ([anti-rollback.md](anti-rollback.md)). Until you do, the fence is worth
+  exactly as much as your oldest signed artifact.

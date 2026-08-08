@@ -169,10 +169,25 @@ def read(dev):
 
 def ctaphid_init(dev):
     """CTAPHID INIT with a random nonce; returns the 4-byte channel id."""
-    write(dev, b"\xff\xff\xff\xff" + bytes([CTAPHID_INIT, 0, 8]) + os.urandom(8))
+    return ctaphid_init_caps(dev)[0]
+
+
+def ctaphid_init_caps(dev):
+    """CTAPHID INIT; returns `(channel id, capability byte)`.
+
+    The capability byte is the last of the 17 payload bytes. `rsk identify` reads
+    it: bit 0 (WINK) is the device saying it has an indicator to flash, so a build
+    without one is reported rather than sent a command it answers invisibly."""
+    nonce = os.urandom(8)
+    write(dev, b"\xff\xff\xff\xff" + bytes([CTAPHID_INIT, 0, 8]) + nonce)
     r = read(dev)
-    assert r[4] == CTAPHID_INIT
-    return bytes(r[15:19])
+    # The broadcast channel is shared, so the echoed nonce is the only thing that
+    # says this reply answers OUR request rather than another client's — otherwise
+    # we adopt someone else's channel id (CTAP 2.1 §11.2.9.1.3). A silent device
+    # returns b"" on the timeout, which `r[23]` indexed straight past the end.
+    if len(r) < 24 or r[4] != CTAPHID_INIT or r[7:15] != nonce:
+        raise IOError("CTAPHID INIT: no reply carrying our nonce")
+    return bytes(r[15:19]), r[23]
 
 
 def send_cbor(dev, cid, payload):

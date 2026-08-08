@@ -77,11 +77,12 @@ fn get_info_fields() {
     // 0x01 versions
     assert_eq!(d.u8().unwrap(), 0x01);
     let nv = d.array().unwrap().unwrap();
-    assert_eq!(nv, 5);
+    // No FIDO_2_2 — CTAP 2.3 §6.4: the string was never defined and "MUST not be
+    // present in versions member".
+    assert_eq!(nv, 4);
     assert_eq!(d.str().unwrap(), "U2F_V2");
     assert_eq!(d.str().unwrap(), "FIDO_2_0");
     assert_eq!(d.str().unwrap(), "FIDO_2_1");
-    assert_eq!(d.str().unwrap(), "FIDO_2_2");
     assert_eq!(d.str().unwrap(), "FIDO_2_3");
 
     // 0x02 extensions
@@ -100,11 +101,11 @@ fn get_info_fields() {
     assert_eq!(d.bytes().unwrap(), &AAGUID);
 
     // 0x04 options — ep, rk, up, alwaysUv, credMgmt, authnrCfg, clientPin (PIN
-    // set → true), largeBlobs, pinUvAuthToken, setMinPINLength, makeCredUvNotRqd
-    // (canonical: length then bytewise; "ep" first among 2-char keys, "alwaysUv"
-    // first among 8-char keys, the 16-char key last).
+    // set → true), largeBlobs, perCredMgmtRO, pinUvAuthToken, setMinPINLength,
+    // makeCredUvNotRqd (canonical: length then bytewise; "ep" first among 2-char
+    // keys, "alwaysUv" first among 8-char keys, the 16-char key last).
     assert_eq!(d.u8().unwrap(), 0x04);
-    assert_eq!(d.map().unwrap().unwrap(), 11);
+    assert_eq!(d.map().unwrap().unwrap(), 12);
     assert_eq!(d.str().unwrap(), "ep");
     assert!(!d.bool().unwrap()); // ea_enabled = false in this call
     assert_eq!(d.str().unwrap(), "rk");
@@ -120,6 +121,8 @@ fn get_info_fields() {
     assert_eq!(d.str().unwrap(), "clientPin");
     assert!(d.bool().unwrap());
     assert_eq!(d.str().unwrap(), "largeBlobs");
+    assert!(d.bool().unwrap());
+    assert_eq!(d.str().unwrap(), "perCredMgmtRO");
     assert!(d.bool().unwrap());
     assert_eq!(d.str().unwrap(), "pinUvAuthToken");
     assert!(d.bool().unwrap());
@@ -249,14 +252,14 @@ fn option_pairs(builtin_uv: bool, pin_set: bool) -> std::vec::Vec<(std::string::
 /// PIN is configured. A screenless key omits it entirely.
 #[test]
 fn uv_option_present_only_with_builtin_uv() {
-    // Screenless: no "uv" key, 11 options.
+    // Screenless: no "uv" key, 12 options.
     let plain = option_pairs(false, true);
-    assert_eq!(plain.len(), 11);
+    assert_eq!(plain.len(), 12);
     assert!(!plain.iter().any(|(k, _)| k == "uv"));
 
     // Display build, PIN set: "uv" = true, immediately after "up".
     let ready = option_pairs(true, true);
-    assert_eq!(ready.len(), 12);
+    assert_eq!(ready.len(), 13);
     let up = ready.iter().position(|(k, _)| k == "up").unwrap();
     assert_eq!(ready[up + 1].0, "uv", "uv must sort right after up");
     assert!(ready[up + 1].1, "uv = true once a PIN is configured");
@@ -371,11 +374,8 @@ fn u2f_v2_dropped_when_always_uv() {
     // §7.2.4: alwaysUv disables the CTAP1/U2F interface, so getInfo must not keep
     // advertising U2F_V2 while it is on; the CTAP2 versions are unaffected.
     let cases: [(bool, &[&str]); 2] = [
-        (
-            false,
-            &["U2F_V2", "FIDO_2_0", "FIDO_2_1", "FIDO_2_2", "FIDO_2_3"],
-        ),
-        (true, &["FIDO_2_0", "FIDO_2_1", "FIDO_2_2", "FIDO_2_3"]),
+        (false, &["U2F_V2", "FIDO_2_0", "FIDO_2_1", "FIDO_2_3"]),
+        (true, &["FIDO_2_0", "FIDO_2_1", "FIDO_2_3"]),
     ];
     for (always_uv, want) in cases {
         let mut buf = [0u8; 512];
@@ -411,7 +411,7 @@ fn u2f_v2_survives_always_uv_behind_a_configured_pad() {
         d.map().unwrap();
         assert_eq!(d.u8().unwrap(), 0x01);
         let nv = d.array().unwrap().unwrap();
-        assert_eq!(nv as usize, 4 + usize::from(want_u2f));
+        assert_eq!(nv as usize, 3 + usize::from(want_u2f));
         if want_u2f {
             assert_eq!(d.str().unwrap(), "U2F_V2");
         }
@@ -447,7 +447,7 @@ fn make_cred_uv_not_rqd_is_cleared_by_always_uv() {
         }
         assert_eq!(d.u8().unwrap(), 0x04);
         let opts = d.map().unwrap().unwrap();
-        assert_eq!(opts, 11, "no built-in UV on this build");
+        assert_eq!(opts, 12, "no built-in UV on this build");
         // makeCredUvNotRqd is the longest key, so canonical order puts it last.
         for _ in 0..opts - 1 {
             d.str().unwrap();

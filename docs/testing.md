@@ -360,6 +360,12 @@ the full matrix (including the GUI/ceremony cells) lives in
 wrapper bug was caught: every protocol test passed, only the real ykman
 parser rejected the reply.
 
+For the same reason, the matrix carries an untested row for
+[Telesma](https://github.com/go-ctap/app) and its `go-ctap/ctap` client stack:
+every FIDO cell above reads the device through libfido2 or python-fido2, so a
+divergence both of them tolerate is invisible here. It is the cheapest available
+third reader of our CTAP replies, and the only one that claims 2.3.
+
 ## CI parity
 
 `check.sh` is plain bash over the Nix dev shell. A CI job is

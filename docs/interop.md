@@ -89,6 +89,7 @@ accordingly:
 | `fido2-token -L` / `-I` (libfido2) | enumeration + getInfo | no-touch | `tests/interop/run.py` | ✅ `0759` |
 | `fido2-cred` / `fido2-assert` (libfido2) | make credential / get assertion | touch | manual (`fido2-cred -M` ‖ `fido2-assert -G`) | ✅ `0759` (touch ×2, assertion verified `2026-06-13`) |
 | python-fido2 (Yubico) | full CTAP2 flows | **no-touch** build | `pytest third_party/pico-fido-tests/pico-fido` | ⚠️ `075A` — 191 passed / 4 failed / 9 errored; [all test-side, not firmware defects](#suite-triage) |
+| [Telesma](https://github.com/go-ctap/app) (`go-ctap/ctap`) | inspect + manage over a CTAP client stack that is neither libfido2 nor python-fido2, and claims 2.0–**2.3** | touch | manual (desktop app) | ⏳ untested |
 | Chrome WebAuthn | register + authenticate | touch | [webauthn.io](https://webauthn.io) (manual) | ✅ user-attested (macOS/Linux/Win, `2026-06-13`) |
 | Firefox WebAuthn | register + authenticate | touch | [webauthn.io](https://webauthn.io) (manual) | ✅ user-attested (macOS/Linux/Win, `2026-06-13`) |
 | Safari WebAuthn | register + authenticate | touch | [webauthn.io](https://webauthn.io) (manual) | ✅ user-attested (`2026-06-13`) |
@@ -148,7 +149,7 @@ divergences:
 |---|---|---|---|
 | `ccid.atr` | `3bfd13…5900` | *same* | RS-Key reproduces the YubiKey ATR byte-for-byte (a `MATCH`, not a diff) |
 | `fido.getinfo.aaguid` | (Yubico's model AAGUID) | `2479c7bf-…` | RS-Key self-assigns its AAGUID, deliberately not Yubico's |
-| `fido.getinfo.versions` | `…FIDO_2_1_PRE` | `…FIDO_2_2, FIDO_2_3` | RS-Key targets the final specs; drops the legacy `_PRE` |
+| `fido.getinfo.versions` | `…FIDO_2_1_PRE` | `…FIDO_2_3` | RS-Key targets the final specs; drops the legacy `_PRE` (and never claims `FIDO_2_2` — CTAP 2.3 §6.4 forbids that string) |
 | `fido.getinfo.algorithms` / `extensions` | ES256/EdDSA/… | superset | RS-Key adds ES384/512 (+ML-DSA, credBlob, thirdPartyPayment) |
 | `fido.getinfo.maxMsgSize` etc. | 1536 | 7609 | RS-Key's buffers/capacities are larger |
 | `fido.getinfo.transports` | `nfc, usb` | `usb` | RS-Key is USB-only, no NFC |

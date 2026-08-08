@@ -261,7 +261,9 @@ impl App {
     /// confirmation flow.
     pub fn begin_action(&mut self, action: Action) -> Flow {
         match action {
-            Action::Refresh | Action::LedGet | Action::LedCycle => Flow::Run(action),
+            Action::Refresh | Action::Identify | Action::LedGet | Action::LedCycle => {
+                Flow::Run(action)
+            }
             Action::Verify => self.gate_pin(Action::Verify),
             Action::CredCount => self.gate_pin(Action::CredCount),
             Action::AuditRead => self.gate_pin(Action::AuditRead),
@@ -526,6 +528,11 @@ fn menu_for(section: Section, snap: &DeviceSnapshot) -> Vec<MenuItem> {
     match section {
         Section::Overview => vec![
             run("Refresh status", "re-read all channels", Action::Refresh),
+            run(
+                "Identify this key",
+                "blink the indicator · no PIN",
+                Action::Identify,
+            ),
             run(
                 "Verify device identity",
                 "signed challenge · touch",

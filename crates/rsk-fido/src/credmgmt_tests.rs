@@ -5,7 +5,7 @@ use super::*;
 use crate::FidoState;
 use crate::consts::ALG_ES256;
 use crate::makecredential::make_credential;
-use crate::seed::ensure_seed;
+use crate::seed::{clear_ppuat, ensure_ppuat, ensure_seed};
 use minicbor::Encoder;
 use minicbor::encode::write::Cursor;
 use rsk_crypto::{Device, pinproto, sha256};
@@ -1651,4 +1651,83 @@ fn enumerate_credentials_reads_are_linear_not_quadratic() {
          expected ~O(N), quadratic (pre-index) would be ~{}",
         N * N
     );
+}
+
+/// CTAP 2.2 §6.8.2/.3/.4: the three read subcommands verify the persistent token
+/// before the session one, so a platform holding a `pcmr` grant enumerates with no
+/// session token at all — here from a freshly booted `FidoState`, which is what
+/// makes the grant worth persisting.
+#[test]
+fn persistent_token_authorizes_the_reads_after_a_power_cycle() {
+    let (mut fs, mut rng) = setup();
+    register(&mut fs, &mut rng, "example.com", &[1, 1], "a");
+    let ppuat = ensure_ppuat(&dev(), &mut fs, &mut rng).unwrap();
+    let rp_hash = sha256(b"example.com");
+    let subpara = subpara_rpidhash(&rp_hash);
+
+    let mut state = FidoState::new();
+    let mut out = [0u8; 512];
+    for (subcmd, sp) in [
+        (0x01u8, None),
+        (0x02, None),
+        (0x04, Some(subpara.as_slice())),
+    ] {
+        assert!(
+            run(
+                &mut fs,
+                &mut state,
+                &cm_request(subcmd, sp, &ppuat),
+                &mut out
+            )
+            .is_ok(),
+            "subcommand {subcmd:#04x} must accept the persistent token"
+        );
+    }
+    assert_eq!(state.paut.permissions, 0, "no session token was involved");
+}
+
+/// The permission is *read* only (§6.5.5.7 permissions table): deleteCredential and
+/// updateUserInformation never consult the persistent token, so the same MAC that
+/// just enumerated is rejected here.
+#[test]
+fn persistent_token_is_refused_by_the_writers() {
+    let (mut fs, mut rng) = setup();
+    let (cred_id, ..) = register(&mut fs, &mut rng, "example.com", &[1, 1], "a");
+    let ppuat = ensure_ppuat(&dev(), &mut fs, &mut rng).unwrap();
+    let del = subpara_cred(&cred_id);
+    let upd = subpara_update(&cred_id, &[1, 1], "a", "A");
+
+    let mut state = FidoState::new();
+    let mut out = [0u8; 512];
+    for (subcmd, sp) in [(0x06u8, &del), (0x07, &upd)] {
+        assert_eq!(
+            run(
+                &mut fs,
+                &mut state,
+                &cm_request(subcmd, Some(sp), &ppuat),
+                &mut out
+            ),
+            Err(CtapError::PinAuthInvalid),
+            "subcommand {subcmd:#04x} must not accept the persistent token"
+        );
+    }
+}
+
+/// `resetPersistentPinUvAuthToken` (§6.5.4) revokes by deletion: the record's
+/// absence is the empty permission set, so the old token stops verifying and the
+/// next grant is different bytes.
+#[test]
+fn clearing_the_persistent_token_revokes_the_grant() {
+    let (mut fs, mut rng) = setup();
+    register(&mut fs, &mut rng, "example.com", &[1, 1], "a");
+    let old = ensure_ppuat(&dev(), &mut fs, &mut rng).unwrap();
+    clear_ppuat(&mut fs).unwrap();
+
+    let mut state = FidoState::new();
+    let mut out = [0u8; 512];
+    assert_eq!(
+        run(&mut fs, &mut state, &cm_request(0x02, None, &old), &mut out),
+        Err(CtapError::PinAuthInvalid)
+    );
+    assert_ne!(ensure_ppuat(&dev(), &mut fs, &mut rng).unwrap(), old);
 }

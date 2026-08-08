@@ -154,7 +154,11 @@ CONTRIBUTING.md → "Code".
 - **`check.sh` leaves the *no-touch* test image** at
   `target/.../release/firmware`. Anything meant to be flashed must be rebuilt
   with `cargo build --release -p firmware` first — flag this if your change
-  affects which image is produced.
+  affects which image is produced. A bare `cargo build` also carries **no
+  partition table** (it is applied after linking), so a key flashed straight from
+  that ELF has an unfenced KV store: run `scripts/pt.sh <elf> <out>` over it
+  first, or build with `nix build .#firmware`, which does it for you
+  ([docs/build.md](docs/build.md#the-partition-table)).
 
 ## Layout
 

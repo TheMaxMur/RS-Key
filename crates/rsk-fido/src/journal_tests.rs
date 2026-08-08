@@ -227,6 +227,87 @@ fn config_write_coalesce_is_noop_when_off() {
     );
 }
 
+/// The class rule, not the site rule: a silent `up:false` assertion is as ungated as a
+/// config write, so a run of them must cost one slot too. Alternating two rpIds is the
+/// case a fold that only inspects the newest entry gets wrong — it appends 128 times and
+/// the marker is gone (audit run-37).
+#[test]
+fn silent_run_costs_one_slot_when_details_alternate() {
+    let mut fs = Fs::new(RamStorage::new());
+    let mut state = FidoState::new();
+    run_ctx(&mut fs, &mut state, |ctx| {
+        append(ctx, EV_BACKUP_EXPORT, 0, &[]); // the evidence a flood must not evict
+        for i in 0..300 {
+            let rp = if i % 2 == 0 { [0xAA; 8] } else { [0xBB; 8] };
+            append_run(ctx, EV_GET_ASSERT, 0, &rp);
+        }
+    });
+
+    let (_, m) = chain_head(&dev(), &mut fs);
+    assert_eq!(m.start, 0, "nothing evicted");
+    assert_eq!(m.seq_next, 3, "BOOT + BACKUP_EXPORT + one coalesced run");
+    let mut e = [0u8; ENTRY_LEN];
+    read_slot(&mut fs, 1, &mut e).unwrap();
+    assert_eq!(e[8], EV_BACKUP_EXPORT, "the marker keeps its slot");
+    read_slot(&mut fs, 2, &mut e).unwrap();
+    assert_eq!(e[8], EV_GET_ASSERT);
+    assert_eq!(
+        e[DETAIL_AT..DETAIL_AT + 8],
+        [0xAA; 8],
+        "the entry names the rp that opened the run"
+    );
+    assert_eq!(
+        u16::from_le_bytes([e[RUN_REPEATS_AT], e[RUN_REPEATS_AT + 1]]),
+        299
+    );
+}
+
+/// The two ungated classes interleaved: each folds into its own entry, so neither can
+/// be used to break the other's run and flush the window between them.
+#[test]
+fn interleaved_ungated_events_do_not_flush_the_ring() {
+    let mut fs = Fs::new(RamStorage::new());
+    let mut state = FidoState::new();
+    run_ctx(&mut fs, &mut state, |ctx| {
+        append(ctx, EV_PIN_LOCKOUT, 0, &[]);
+        for _ in 0..200 {
+            append_run(ctx, EV_GET_ASSERT, 0, &[1; 8]);
+            append_config_write(ctx, T_LED);
+            append_run(ctx, EV_U2F_AUTH, 0, &[2; 8]);
+        }
+    });
+
+    let (_, m) = chain_head(&dev(), &mut fs);
+    assert_eq!(m.start, 0, "nothing evicted");
+    // BOOT + PIN_LOCKOUT + one slot per ungated class. CONFIG_WRITE only folds into
+    // the newest entry, so the two run entries opening ahead of it cost it one restart.
+    assert_eq!(m.seq_next, 6);
+    let mut e = [0u8; ENTRY_LEN];
+    read_slot(&mut fs, 1, &mut e).unwrap();
+    assert_eq!(e[8], EV_PIN_LOCKOUT, "the marker survives the flood");
+}
+
+/// Coalescing onto the previous cycle's entry would swallow this cycle's EV_BOOT and
+/// hide the reboot — the same guard [`append_config_write`] carries.
+#[test]
+fn append_run_does_not_coalesce_across_a_power_cycle() {
+    let mut fs = Fs::new(RamStorage::new());
+    let mut state = FidoState::new();
+    run_ctx(&mut fs, &mut state, |ctx| {
+        append_run(ctx, EV_GET_ASSERT, 0, &[7; 8])
+    });
+    state.audit_boot_logged = false; // power cycle
+    run_ctx(&mut fs, &mut state, |ctx| {
+        append_run(ctx, EV_GET_ASSERT, 0, &[7; 8])
+    });
+
+    let (_, m) = chain_head(&dev(), &mut fs);
+    assert_eq!(m.seq_next, 4); // BOOT, GET_ASSERT, BOOT, GET_ASSERT
+    let mut e = [0u8; ENTRY_LEN];
+    read_slot(&mut fs, 2, &mut e).unwrap();
+    assert_eq!(e[8], EV_BOOT);
+}
+
 #[test]
 fn append_is_noop_when_off() {
     // Opt-in: with EF_AUDIT_ENABLED absent (the shipped default), append writes
@@ -247,6 +328,7 @@ fn append_is_noop_when_off() {
         assert!(!is_enabled(ctx.fs));
         append(&mut ctx, EV_MAKE_CRED, 0, &[0xAA; 8]);
         append(&mut ctx, EV_GET_ASSERT, 0, &[0xBB; 8]);
+        append_run(&mut ctx, EV_GET_ASSERT, 0, &[0xBB; 8]);
     }
 
     let (head, m) = chain_head(&dev(), &mut fs);

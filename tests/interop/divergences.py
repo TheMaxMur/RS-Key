@@ -190,11 +190,16 @@ RULES = [
     ("fido.getinfo.options.uvBioEnroll", ExpectDiff(None, r"(?i)<missing>", "no bio on RS-Key")),
     ("fido.getinfo.options.credentialMgmtPreview",
      ExpectDiff(None, None, "legacy preview option — presence differs by firmware era")),
+    ("fido.getinfo.options.perCredMgmtRO",
+     ExpectDiff(None, r"^True$",
+                "CTAP 2.2 pcmr: RS-Key hands out a persistent read-only credential-management "
+                "token; whether a 5-series firmware does depends on its era")),
 
     # ── set-valued fields ─────────────────────────────────────────────────
     ("fido.getinfo.versions",
      Superset("RS-Key drops U2F_V2 under alwaysUv (CTAP 2.1 §7.2.4) and the legacy FIDO_2_1_PRE, "
-              "and adds FIDO_2_2/2_3", exclude={"U2F_V2", "FIDO_2_1_PRE"})),
+              "and adds FIDO_2_3 (never FIDO_2_2 — CTAP 2.3 §6.4 forbids that string)",
+              exclude={"U2F_V2", "FIDO_2_1_PRE"})),
     ("fido.getinfo.extensions", Superset("RS-Key extension set is a superset")),
     ("fido.getinfo.algorithms", Superset("RS-Key advertises a superset (ES384/512/256K, +ML-DSA)")),
     ("fido.getinfo.attestationFormats", Superset("attestation-format set; order-insensitive")),

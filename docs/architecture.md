@@ -113,6 +113,14 @@ mirrors, PIV `0xD1xx/0xD2xx`, OTP slots `0xBBxx`, phy/rescue `0xE0xx`) and a
 reset wipes exactly its own predicate, never a range shared with another
 applet.
 
+Both regions sit behind one RP2350 **partition table** entry carried in the
+shipped image: the USB bootloader is denied read and write over
+`__kvmain_start..__kvcnt_end`, while secure code — the running firmware,
+`rsk-wipe`, the rescue applet — keeps `rw`. The table is derived from those
+linker symbols rather than restated, so it follows `FLASH_SIZE`/`KVMAIN` on its
+own ([build.md](build.md#the-partition-table)). What it is and is not worth:
+[threat-model.md](threat-model.md#flash-snapshot-rollback-the-pin-counter-reset).
+
 Key sealing at rest: `kbase = HKDF(serial_hash, otp_master_key)` keys
 AES-CBC for the FIDO seed (tagged formats: plain vs OTP-rooted generation)
 and AES-GCM for PIV keys. OpenPGP keys sit under the PIN-wrapped DEK chain.
@@ -145,10 +153,11 @@ The KV store is 1.5 MB by default whatever the `FLASH_SIZE`, so a larger flash o
 grows the code region, most of which no firmware writes ([build.md](build.md)). That
 is deliberate. (A 2 MB board is the one exception: it shrinks the main partition via
 `KVMAIN` to leave room for code — still far more than a key ever fills.) A security key's maximum *logical* state is small and hard-capped:
-`MAX_RESIDENT_CREDENTIALS` (256 passkeys), `MAX_DYNAMIC_FILES` (256 files across
-all applets), `MAX_OATH_CRED` (255), plus a handful of OpenPGP/PIV slots. So a
-fully provisioned device fills only a few hundred KB, well under the 1408 KB main
-partition. Growing the store to "fill" a 16 MB board would buy nothing usable: it
+`MAX_RESIDENT_CREDENTIALS` (256 passkeys), `MAX_DYNAMIC_FILES` (1280 files, one
+budget shared by every applet), `MAX_OATH_CRED` (255), plus a handful of
+OpenPGP/PIV slots. The passkeys dominate the bytes — a file-count ceiling is not
+a size ceiling — so a fully provisioned device fills only a few hundred KB, well
+under the 1408 KB main partition. Growing the store to "fill" a 16 MB board would buy nothing usable: it
 lengthens the `sequential-storage` scan behind every cold boot and absent-key
 probe (the present cache exists to dodge exactly that full-partition ~0.2 s cost),
 and forces the logical caps (and the RAM/stack buffers sized to them) up for

@@ -9,8 +9,8 @@
 use rsk_fs::Storage;
 
 use crate::consts::{
-    EF_ALWAYS_UV, EF_ATT_CHAIN, EF_ATT_KEY, EF_AUTHTOKEN, EF_BACKUP_SEALED, EF_COUNTER, EF_CRED,
-    EF_CRED_CTR, EF_DEVICE_PIN, EF_EA_ENABLED, EF_EE_DEV, EF_KEY_DEV, EF_KEY_DEV_ENC, EF_LARGEBLOB,
+    EF_ALWAYS_UV, EF_ATT_CHAIN, EF_ATT_KEY, EF_BACKUP_SEALED, EF_COUNTER, EF_CRED, EF_CRED_CTR,
+    EF_DEVICE_PIN, EF_EA_ENABLED, EF_EE_DEV, EF_KEY_DEV, EF_KEY_DEV_ENC, EF_LARGEBLOB,
     EF_MINPINLEN, EF_PAUTHTOKEN, EF_PIN, EF_RP, EF_RPNICK, MAX_RESIDENT_CREDENTIALS,
     RESET_WINDOW_MS,
 };
@@ -104,16 +104,13 @@ fn sweep<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, pred: fn(u16) -> bool) -> Resu
 /// `EF_KEY_DEV`, so a torn wipe could take the marker first and re-open a window the
 /// owner had closed over a seed that was still live (audit run-36 class sweep).
 pub fn is_fido_gate_fid(fid: u16) -> bool {
-    matches!(
-        fid,
-        EF_PIN
-            | EF_DEVICE_PIN
-            | EF_ALWAYS_UV
-            | EF_MINPINLEN
-            | EF_AUTHTOKEN
-            | EF_PAUTHTOKEN
-            | EF_BACKUP_SEALED
-    )
+    // EF_PAUTHTOKEN is a `KeyFid` (the sealed persistent pinUvAuthToken), so it
+    // can't sit in the `u16` match arm — compare its raw FID explicitly.
+    fid == EF_PAUTHTOKEN.get()
+        || matches!(
+            fid,
+            EF_PIN | EF_DEVICE_PIN | EF_ALWAYS_UV | EF_MINPINLEN | EF_BACKUP_SEALED
+        )
 }
 
 /// CTAP 2.1 §6.6: a reset is honored only within [`RESET_WINDOW_MS`] of power-up,
@@ -132,10 +129,11 @@ fn in_reset_window<S: Storage, R: Rng>(ctx: &Ctx<S, R>) -> bool {
 /// in the 0x10xx range (FIDO `EF_PIN` 0x1080 vs OpenPGP PW1 0x1081), so this is an
 /// explicit set plus the resident-credential ranges, not a range test.
 fn is_fido_fid(fid: u16) -> bool {
-    // EF_KEY_DEV / EF_KEY_DEV_ENC are `KeyFid`s (sealed seed slots), so they
-    // can't sit in the `u16` match arm — compare their raw FIDs explicitly.
+    // EF_KEY_DEV / EF_KEY_DEV_ENC / EF_PAUTHTOKEN are `KeyFid`s (sealed slots), so
+    // they can't sit in the `u16` match arm — compare their raw FIDs explicitly.
     fid == EF_KEY_DEV.get()
         || fid == EF_KEY_DEV_ENC.get()
+        || fid == EF_PAUTHTOKEN.get()
         || matches!(
             fid,
             EF_BACKUP_SEALED
@@ -143,8 +141,6 @@ fn is_fido_fid(fid: u16) -> bool {
                 | EF_COUNTER
                 | EF_CRED_CTR
                 | EF_PIN
-                | EF_AUTHTOKEN
-                | EF_PAUTHTOKEN
                 | EF_MINPINLEN
                 | EF_LARGEBLOB
                 | EF_EA_ENABLED

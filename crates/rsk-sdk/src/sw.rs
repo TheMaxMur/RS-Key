@@ -7,6 +7,11 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Sw(pub u16);
 
+/// Largest remaining-attempt count `63Cx` can carry — SW2's low nibble. A retry
+/// total above this needs admin auth to set, so the clamp is display honesty
+/// rather than a gate; a YubiKey reports the same ceiling.
+const RETRIES_REPORTED_MAX: u8 = 0x0F;
+
 impl Sw {
     #[inline]
     pub const fn new(sw1: u8, sw2: u8) -> Self {
@@ -30,9 +35,16 @@ impl Sw {
         [self.sw1(), self.sw2()]
     }
 
-    /// ISO 7816-4 `63Cx` — verification failed, `x` retries remaining.
+    /// ISO 7816-4 `63Cx` — verification failed, `x` retries remaining, saturating
+    /// at [`RETRIES_REPORTED_MAX`]. Unclamped, `left` past the nibble sets stray
+    /// SW2 bits and `0x40` collides with `63C0`, which every host reads as blocked.
     #[inline]
     pub const fn retries(left: u8) -> Self {
+        let left = if left > RETRIES_REPORTED_MAX {
+            RETRIES_REPORTED_MAX
+        } else {
+            left
+        };
         Sw::new(0x63, 0xC0 | left)
     }
 
@@ -72,3 +84,7 @@ impl Sw {
     pub const UNKNOWN: Sw = Sw::new(0x6F, 0x00);
     pub const OK: Sw = Sw::new(0x90, 0x00);
 }
+
+#[cfg(test)]
+#[path = "sw_tests.rs"]
+mod tests;

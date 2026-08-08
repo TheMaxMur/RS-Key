@@ -159,6 +159,11 @@ fn every_hid_open_site_is_classified() {
         sites,
         vec![
             ("hid_open_exclusive", "first-match"), // the open behind the refusal
+            // Identify deliberately takes the first match: it must point at the very
+            // device this TUI is displaying, and every read here (snapshot, audit,
+            // cred_count) resolves the same way. Refusing on two attached keys would
+            // disable the one action whose job is telling two attached keys apart.
+            ("identify", "first-match"),
             ("audit_read", "first-match"),
             ("verify_identity", "exclusive"),
             ("cred_count", "first-match"),

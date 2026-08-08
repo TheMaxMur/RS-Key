@@ -51,7 +51,10 @@ let
     nativeBuildInputs = [ pkgs.pkg-config ];
     buildInputs = lib.optionals pkgs.stdenv.isLinux [
       pkgs.pcsclite
-      pkgs.udev 
+      # libudev (hidapi's hidraw backend) — `udev` is systemd-minimal-libs, which
+      # keeps libudev.so.1 in lib/; `systemd` does not, so it linked but lost the
+      # library at runtime.
+      pkgs.udev
     ];
     meta = {
       description = "RS-Key device dashboard — a self-contained ratatui cockpit";

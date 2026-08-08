@@ -44,8 +44,14 @@ deps from `flake.nix`.
 ```sh
 nix develop                                  # first run downloads the toolchain
 cargo build --release -p firmware
-picotool uf2 convert target/thumbv8m.main-none-eabihf/release/firmware -t elf firmware.uf2
+scripts/pt.sh target/thumbv8m.main-none-eabihf/release/firmware firmware-pt.elf
+picotool uf2 convert firmware-pt.elf -t elf firmware.uf2
 ```
+
+`pt.sh` embeds the partition table that keeps the USB bootloader out of the key's
+storage — `cargo build` cannot, since it is added after linking
+([build.md](build.md#the-partition-table)). `nix build .#firmware` does it for
+you.
 
 Set `PRESENCE_PIN=<gpio>` for a dedicated presence button instead of BOOTSEL.
 For a no-touch build (needed by the automated test suites, or if your board is
@@ -88,6 +94,23 @@ ykman info        # needs the opt-in VIDPID=Yubikey5 build: YubiKey 5A, firmware
 On Linux, the CCID half (OpenPGP/PIV/OATH) needs `pcscd` + a polkit rule
 first. See [linux.md](linux.md). FIDO works as soon as the udev rules are in
 place.
+
+Or from a GUI, with no terminal at all:
+**[PicoForge](https://github.com/librekeys/picoforge)** (third-party, from the
+librekeys project) shows the same state on one screen — identity and firmware
+build, FIDO2 info, storage use, LED settings, boot mode — with sections for
+passkeys, PIV, OpenPGP, OTP slots, the audit journal, backup, soft-lock and
+attestation. It writes the same `phy` record `rsk hw` writes, over the interface
+documented in
+[protocol.md §11](protocol.md#11-integration-notes-for-picoforge). It is not part
+of this repo and ships on its own schedule.
+
+![PicoForge on its Device Overview page, reading a freshly flashed RS-Key: a sidebar of sections (Home, Passkeys, Accounts, Slots, PIV, OpenPGP, Audit, Backup, Lock, Attestation, Configuration, Security, Offboard) and four cards — Device Information (serial number, firmware "RS-Key build 0x0872", VID:PID 1209:0001, manufacturer and product name "RS-Key Security Key", storage 2 of 1536 KB, 4 MB flash chip), FIDO2 Information (AAGUID, U2F_V2 and FIDO 2.0 / 2.1 / 2.3, PIN "Not Set", resident keys supported, minimum PIN length 4, 256 remaining credentials), LED Configuration (GPIO 16, 30 s presence touch timeout) and Security Status (boot mode Development, debug enabled, secure lock pending)](images/picoforge-overview.png)
+
+That is a board straight out of step 2, so the screen reads the way yours will:
+the identity is the default `1209:0001`, no PIN is set yet (that is step 3), and
+the boot mode is still `Development`. [production.md](production.md) is what turns
+the last one into a locked-down key — irreversibly, so read it first.
 
 ## 3. Set a PIN (recommended)
 

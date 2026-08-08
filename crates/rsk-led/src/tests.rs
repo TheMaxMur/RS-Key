@@ -379,3 +379,76 @@ fn clamp_leds_saturates_to_ceiling() {
     assert_eq!(clamp_leds(99, 8), 8); // the brick-fix invariant: no panic, saturate
     assert_eq!(clamp_leds(0, 8), 0);
 }
+
+/// The wink burst must actually *flash*: it starts lit, alternates on a fixed
+/// half-period, and fits the advertised number of blinks. A burst that came out
+/// solid (or one phase long) would answer CTAPHID_WINK invisibly — the failure the
+/// capability bit is supposed to rule out.
+#[test]
+fn wink_alternates_and_starts_lit() {
+    assert!(wink_lit(WINK_MS), "a wink starts lit");
+    let phases = WINK_MS / WINK_HALF_MS;
+    assert_eq!(phases, 8, "600/75 = four on/off blinks");
+    for p in 0..phases {
+        // Sample the middle of each half-period, walking the burst down to 0.
+        let ms_left = WINK_MS - p * WINK_HALF_MS - WINK_HALF_MS / 2;
+        assert_eq!(
+            wink_lit(ms_left),
+            p % 2 == 0,
+            "phase {p} (ms_left={ms_left}) must alternate"
+        );
+    }
+}
+
+/// The whole point of answering the frame at once is that a lone wink starts
+/// flashing immediately — an arm that deferred to the next phase boundary would
+/// leave the key dark for up to a half-period after the host asked.
+#[test]
+fn a_lone_wink_arms_and_lights_at_once() {
+    let end = wink_arm(0, 1_000);
+    assert_eq!(end, 1_000 + WINK_MS);
+    assert!(wink_running(end, 1_000));
+    assert!(wink_lit(end - 1_000), "the burst starts on its lit phase");
+}
+
+/// §11.2.9.2.1 asks for *a* burst. A running one is never extended, so the burst
+/// ends `WINK_MS` after the *first* arm however many CTAPHID_WINK frames land in
+/// between.
+#[test]
+fn a_running_wink_is_never_extended() {
+    let end = wink_arm(0, 1_000);
+    for now in 1_000..1_000 + WINK_MS {
+        assert_eq!(wink_arm(end, now), end, "re-armed at {now}");
+    }
+    // The instant it expires, a fresh burst is allowed again.
+    assert_eq!(wink_arm(end, end), end + WINK_MS);
+}
+
+/// The attack the bound exists for: an unprivileged host flooding CTAPHID_WINK
+/// faster than the blink half-period used to re-arm the deadline every time, so the
+/// burst never reached a dark phase and the reserved awaiting-touch colour sat solid
+/// for as long as the flood lasted — a forged consent prompt. No cadence may now
+/// produce a lit run longer than one half-period.
+#[test]
+fn flooding_wink_cannot_hold_the_indicator_lit() {
+    // 70/74/75 ms are the measured cadences that used to pin it solid; 1 ms is the
+    // fastest a 64-byte report can arrive on a `poll_ms:1` interface.
+    for cadence in [1u32, 10, 70, 74, 75, 76, 601] {
+        let (mut end, mut run, mut longest) = (0u32, 0u32, 0u32);
+        for now in 0..10 * WINK_MS {
+            if now.is_multiple_of(cadence) {
+                end = wink_arm(end, now);
+            }
+            run = if wink_running(end, now) && wink_lit(end.wrapping_sub(now)) {
+                run + 1
+            } else {
+                0
+            };
+            longest = longest.max(run);
+        }
+        assert!(
+            longest <= WINK_HALF_MS,
+            "a {cadence} ms flood held the touch colour lit for {longest} ms"
+        );
+    }
+}

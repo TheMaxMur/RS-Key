@@ -231,6 +231,42 @@ pub trait MsgHandler {
     /// sticky selection silently routes U2F REGISTER/AUTHENTICATE/VERSION to the
     /// vendor applet (→ `0x6D00`). Default: no-op.
     fn reset_app_selection(&mut self) {}
+
+    /// Whether this build has something to identify itself *with* — an LED, a
+    /// panel. It gates the `CAPABILITY_WINK` bit ([`init_capabilities`]), because
+    /// §11.2.9.2.1 defines that bit as "implements CTAPHID_WINK" and the command
+    /// as producing "some visual or audible identification". Default: no, so a
+    /// build that forgets to override this under-claims rather than lies.
+    fn can_wink(&self) -> bool {
+        false
+    }
+
+    /// Perform that identification — "a short burst of flashes". Must return
+    /// promptly: the reply is written straight after, and the burst belongs to
+    /// whatever renders it. Default: no-op, paired with `can_wink` = false.
+    fn wink(&mut self) {}
+}
+
+/// The capability byte for an `INIT` reply. WINK is claimed only when the handler
+/// has an indicator to flash: an invisible wink is worse than an unset bit,
+/// because the host offers the command precisely to tell two identical-looking
+/// keys apart, and a silent success tells the user the wrong key is the right one.
+/// `NMSG` stays clear — CTAPHID_MSG (U2F) is implemented.
+fn init_capabilities(can_wink: bool) -> u8 {
+    CAPFLAG_CBOR | if can_wink { CAPFLAG_WINK } else { 0 }
+}
+
+/// Run the identification burst where there is something to run it on, and report
+/// the reply the caller must frame. §11.2.9.2.1 defines `CAPFLAG_WINK` as
+/// "implements CTAPHID_WINK", so a build that leaves the bit clear
+/// ([`init_capabilities`]) refuses the command: answering an empty success frame
+/// would have the same device say "I have no indicator" and "yes, I winked".
+fn perform_wink<H: MsgHandler>(handler: &mut H) -> (u8, &'static [u8]) {
+    if !handler.can_wink() {
+        return (CTAPHID_ERROR, &[ERR_INVALID_CMD]);
+    }
+    handler.wink();
+    (CTAPHID_WINK, &[])
 }
 
 /// What the transport should do after [`Reassembler::feed`] consumes a frame.
@@ -562,14 +598,15 @@ impl<'d, D: Driver<'d>, H: MsgHandler> CtapHid<'d, D, H> {
                 resp[13] = VERSION_MAJOR;
                 resp[14] = VERSION_MINOR;
                 resp[15] = VERSION_BUILD;
-                resp[16] = CAPFLAG_WINK | CAPFLAG_CBOR;
+                resp[16] = init_capabilities(self.handler.can_wink());
                 write_message(&mut self.writer, cid, CTAPHID_INIT, &resp).await;
             }
             CTAPHID_PING | CTAPHID_SYNC => {
                 write_message(&mut self.writer, cid, cmd, self.asm.message()).await;
             }
             CTAPHID_WINK => {
-                write_message(&mut self.writer, cid, CTAPHID_WINK, &[]).await;
+                let (rsp, body) = perform_wink(&mut self.handler);
+                write_message(&mut self.writer, cid, rsp, body).await;
             }
             CTAPHID_LOCK => {
                 // §11.2.9.2.2: BCNT 1, a lock time of 0..10 seconds, 0 releasing it.
@@ -714,9 +751,11 @@ impl<'d, D: Driver<'d>, H: MsgHandler> CtapHid<'d, D, H> {
 
     /// Serve a vendor CTAPHID command through the handler (the worker, which owns
     /// flash). Mirrors [`Self::run_with_keepalive`]'s field split; vendor commands
-    /// are quick flash reads, so no keepalive is streamed. The handler sees the
-    /// logical command number (`TYPE_INIT` stripped); on success we reply with the
-    /// original command byte, otherwise `CTAPHID_ERROR(ERR_INVALID_CMD)`.
+    /// are quick flash reads and none of them is presence-gated, so no keepalive is
+    /// streamed — one that ever gains a touch gate belongs in `run_with_keepalive`,
+    /// which is also where CTAPHID_CANCEL is observed. The handler sees the logical
+    /// command number (`TYPE_INIT` stripped); on success we reply with the original
+    /// command byte, otherwise `CTAPHID_ERROR(ERR_INVALID_CMD)`.
     async fn run_vendor(&mut self, cid: u32, cmd: u8) {
         let Self {
             handler,
@@ -727,9 +766,16 @@ impl<'d, D: Driver<'d>, H: MsgHandler> CtapHid<'d, D, H> {
         } = self;
         let data = asm.message();
         match handler.handle_vendor(cmd & !TYPE_INIT, data, scratch).await {
-            Some(n) => write_message(writer, cid, cmd, &scratch[..n]).await,
+            Some(n) => {
+                write_message(writer, cid, cmd, &scratch[..n]).await;
+                // Same discipline as `run_with_keepalive`: neither the request nor
+                // the response stays resident past the frame that carried it.
+                use zeroize::Zeroize;
+                scratch[..n].zeroize();
+            }
             None => write_message(writer, cid, CTAPHID_ERROR, &[ERR_INVALID_CMD]).await,
         }
+        asm.scrub();
     }
 }
 

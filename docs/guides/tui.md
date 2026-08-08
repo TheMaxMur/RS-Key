@@ -53,6 +53,7 @@ field shows `CCID unavailable` rather than a fabricated value.
 | `--demo`, `--mock` | interactive cockpit against a **simulated** device, no hardware needed |
 | `--once`        | print the gathered status once (human-readable) and exit       |
 | `--json`        | one-shot machine-readable status (JSON) and exit               |
+| `--identify`    | blink this key's indicator and exit (the Overview action, scripted) |
 | `--selftest [PIN]` | native backup export/restore round-trip (needs a no-touch build) |
 | `-h`, `--help`  | usage                                                          |
 
@@ -76,6 +77,11 @@ end-to-end: export a seed, re-derive its fingerprint, restore it, confirm the
 fingerprint is stable, all without revealing the seed. It needs a **no-touch
 firmware build** (the touch build would block waiting for a button press), and
 takes the FIDO2 PIN as an optional positional argument if one is set.
+
+It talks to real hardware, so it refuses two invocations that would otherwise
+mislead: a flag where the PIN should be (`--selftest --demo` would have sent the
+literal string `--demo` as the PIN, spending a real retry), and `--demo` in any
+position (it does not apply — there is no simulated round-trip).
 
 A non-interactive snapshot of the simulated device (`rsk-tui --once --demo`)
 gives a sense of what the cockpit reads:

@@ -24,7 +24,7 @@ const NONCE_LEN: usize = 12;
 const TAG_LEN: usize = 16;
 /// Largest sealed plaintext: a full credential blob.
 const MAX_PLAIN: usize = CRED_MAX;
-const MAX_BLOB: usize = NONCE_LEN + MAX_PLAIN + TAG_LEN;
+pub(crate) const MAX_BLOB: usize = NONCE_LEN + MAX_PLAIN + TAG_LEN;
 
 const INFO_OATH_KEYS: &[u8] = b"OATH/KEYS";
 

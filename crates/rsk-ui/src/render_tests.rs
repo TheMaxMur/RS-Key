@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 RS-Key contributors
 
-use super::ceremony::centered_clipped;
+use super::ceremony::{CEREMONY_TITLE_BAND, CEREMONY_TITLE_ROLE, centered_clipped};
 use super::components;
 use super::home::HOME_CARD_TOP;
 use super::*;
@@ -869,6 +869,147 @@ fn confirm_with_empty_rp_stays_on_panel() {
     assert!(!d.oob, "empty-rp confirm drew outside the panel");
 }
 
+/// Every trusted-consent title the firmware can raise, from the `Confirm::titled` /
+/// `Confirm::new` / `Confirm::register` call sites plus the two that pass their title
+/// indirectly (`rsk-fido`'s vendor `gate`, `rsk-openpgp`'s UIF match).
+/// [`ceremony_title_census_is_complete`] fails if a direct call site grows one that is
+/// not listed here.
+const CEREMONY_TITLES: &[&str] = &[
+    "Allow host PIN entry?",
+    "Allow host access?",
+    "Always list passkeys?",
+    "Attestation sign?",
+    "Authenticate?",
+    "Challenge-response?",
+    "Change LED?",
+    "Change audit logging?",
+    "Clear attestation key?",
+    "Confirm?",
+    "Decrypt data?",
+    "Erase everything?",
+    "Erase this identity?",
+    "Export secret seed?",
+    "Factory reset device?",
+    "Import attestation key?",
+    "Load seed from host?",
+    "Lock OTP page 58?",
+    "Lock device?",
+    "Read audit log?",
+    "Reboot to BOOTSEL?",
+    "Register key?",
+    "Remove device lock?",
+    "Replace device seed?",
+    "Replace this identity?",
+    "Require anti-rollback?",
+    "Seal backup forever?",
+    "Set OATH PIN?",
+    "Show OATH code?",
+    "Sign audit log?",
+    "Sign data?",
+    "Sign in?",
+    "Use PIV key?",
+    "Use this key?",
+    "Verify OATH code?",
+    "Write device cert?",
+    "Write device config?",
+];
+
+/// Titles still wider than [`CEREMONY_TITLE_BAND`]. Empty, and it must stay that way:
+/// on a title-only prompt the title is the whole of what the owner is approving, and an
+/// ellipsized sentence is two shortenings away from reading as another prompt. A ratchet
+/// — shorten a title and drop it from here; never add to it.
+const CEREMONY_TITLES_TOO_WIDE: &[&str] = &[];
+
+#[test]
+fn ceremony_titles_fit_the_title_band() {
+    for t in CEREMONY_TITLES {
+        let w = font::width(t, CEREMONY_TITLE_ROLE).expect("consent titles are ASCII");
+        assert_eq!(
+            w > CEREMONY_TITLE_BAND.w as u32,
+            CEREMONY_TITLES_TOO_WIDE.contains(t),
+            "{t:?} measures {w}px against the {}px band",
+            CEREMONY_TITLE_BAND.w
+        );
+    }
+    // A reworded title must not leave its old spelling behind on the pending list.
+    for t in CEREMONY_TITLES_TOO_WIDE {
+        assert!(
+            CEREMONY_TITLES.contains(t),
+            "{t:?} is no longer a consent title"
+        );
+    }
+}
+
+/// The census is hand-maintained, so guard the way it fails silently: a consent title
+/// added anywhere under `crates/` or `firmware/` that nobody lists above would never be
+/// measured. Titles reached through a helper (`gate`, the UIF match) are not literals at
+/// the call site and stay hand-listed.
+#[test]
+fn ceremony_title_census_is_complete() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .canonicalize()
+        .expect("workspace root");
+    let mut found = std::vec::Vec::new();
+    for dir in ["crates", "firmware/src"] {
+        scan_confirm_titles(&root.join(dir), &mut found);
+    }
+    // Both trees must actually have been walked, or the loop below passes on nothing.
+    for anchor in ["Lock OTP page 58?", "Change LED?"] {
+        assert!(found.iter().any(|t| t == anchor), "scan missed {anchor:?}");
+    }
+    for t in &found {
+        assert!(
+            CEREMONY_TITLES.contains(&t.as_str()),
+            "consent title {t:?} is missing from CEREMONY_TITLES"
+        );
+    }
+}
+
+/// Collect the string-literal title argument of every `Confirm::titled(` / `Confirm::new(`
+/// under `dir`, recursively. Test and proof siblings are skipped: their titles are
+/// fixtures, not screens the firmware can raise.
+fn scan_confirm_titles(dir: &std::path::Path, out: &mut std::vec::Vec<std::string::String>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for e in entries.flatten() {
+        let path = e.path();
+        let name = e.file_name();
+        let name = name.to_string_lossy();
+        if path.is_dir() {
+            scan_confirm_titles(&path, out);
+            continue;
+        }
+        if !name.ends_with(".rs") || name.ends_with("_tests.rs") || name.ends_with("_kani.rs") {
+            continue;
+        }
+        let src = std::fs::read_to_string(&path).unwrap_or_default();
+        for anchor in ["Confirm::titled(", "Confirm::new("] {
+            for (i, m) in src.match_indices(anchor) {
+                // The title may sit on the next line (rustfmt wraps the 3-arg form).
+                let tail = src[i + m.len()..].trim_start();
+                if let Some(rest) = tail.strip_prefix('"')
+                    && let Some(end) = rest.find('"')
+                {
+                    out.push(rest[..end].into());
+                }
+            }
+        }
+    }
+}
+
+/// A title too wide for its band must be ellipsized inside the panel, never painted
+/// past the edge — the ellipsis backstop under [`CEREMONY_TITLES_TOO_WIDE`].
+#[test]
+fn confirm_keeps_a_wide_title_on_panel() {
+    for t in CEREMONY_TITLES_TOO_WIDE {
+        let mut d = Rec::new();
+        render(&mut d, &Screen::Confirm(ConfirmPrompt::new(t, b"", b""))).unwrap();
+        assert!(!d.oob, "{t:?} painted outside the panel");
+    }
+}
+
 /// Add-passkey reuses the same band: Cancel in `DENY_RECT`, Save filled in
 /// `ALLOW_RECT`.
 #[test]
@@ -1316,7 +1457,7 @@ fn audit_log_paints_rows_with_kind_coloured_dots() {
         },
     ];
     let mut d = Rec::new();
-    render_audit_log(&mut d, &rows, 0, 3).unwrap();
+    render_audit_log(&mut d, &rows, 0, 3, true).unwrap();
     assert!(!d.oob, "audit log drew outside the panel");
     // Each row's status dot is painted in its kind colour, inside its row rect.
     for (i, c) in [theme::SUCCESS, theme::ACCENT, theme::DANGER]
@@ -1333,13 +1474,53 @@ fn audit_log_paints_rows_with_kind_coloured_dots() {
 #[test]
 fn audit_log_empty_shows_placeholder_and_no_rows() {
     let mut d = Rec::new();
-    render_audit_log(&mut d, &[], 0, 0).unwrap();
+    render_audit_log(&mut d, &[], 0, 0, true).unwrap();
     assert!(!d.oob, "empty audit log drew outside the panel");
     assert!(d.drew_anything(), "empty audit log drew nothing");
     // No row card is painted when there are no events.
     assert!(
         !d.any_non_bg_in(crate::row_rect(crate::PK_LIST_TOP, 0)),
         "empty audit log painted a row card"
+    );
+}
+
+/// Whether `d` painted exactly `s`, in `role`/`color`, centred on `cy` — a pixel-exact
+/// check against a reference frame, so a test can pin *wording* and not merely that
+/// something was drawn.
+fn shows_centered(d: &Rec, s: &str, cy: i32, role: Role, color: Rgb565) -> bool {
+    let mut want = Rec::new();
+    font::centered(&mut want, s, EgPoint::new(MIDX, cy), role, color).unwrap();
+    ((cy - 12) as u16..(cy + 12) as u16).all(|y| (0..PANEL_W).all(|x| d.at(x, y) == want.at(x, y)))
+}
+
+/// The empty screen must not say "No activity yet" on a device that was never watching:
+/// journalling is off by default, so the two states have to read differently — the
+/// distinction between "I saw nothing" and "I was not looking".
+#[test]
+fn audit_log_empty_wording_tracks_the_logging_flag() {
+    let mut on = Rec::new();
+    render_audit_log(&mut on, &[], 0, 0, true).unwrap();
+    assert!(
+        shows_centered(&on, "No activity yet", 160, Role::Body, MUTED),
+        "an enabled, idle journal must read as no activity"
+    );
+
+    let mut off = Rec::new();
+    render_audit_log(&mut off, &[], 0, 0, false).unwrap();
+    assert!(!off.oob, "logging-off audit log drew outside the panel");
+    assert!(
+        shows_centered(&off, "Logging is off", 160, Role::Body, theme::WARN),
+        "a device that was never recording must say so, in WARN"
+    );
+    assert!(
+        shows_centered(
+            &off,
+            "Nothing is being recorded",
+            184,
+            Role::MonoSmall,
+            theme::CAPTION
+        ),
+        "the logging-off caption is missing"
     );
 }
 
@@ -1351,7 +1532,7 @@ fn multi_page_list_shows_pager_in_its_hit_rects() {
         secs_ago: Some(60),
     }; crate::PK_ROWS_MAX];
     let mut d = Rec::new();
-    render_audit_log(&mut d, &rows, 1, 13).unwrap();
+    render_audit_log(&mut d, &rows, 1, 13, true).unwrap();
     assert!(!d.oob, "paged audit log drew outside the panel");
     assert!(
         has_color(&d, crate::PAGER_PREV_RECT, theme::ACCENT),
@@ -1371,7 +1552,7 @@ fn pager_dims_the_unavailable_end_arrow() {
     }; crate::PK_ROWS_MAX];
     // First page of 3: prev is dimmed, next is active.
     let mut d = Rec::new();
-    render_audit_log(&mut d, &rows, 0, 13).unwrap();
+    render_audit_log(&mut d, &rows, 0, 13, true).unwrap();
     assert!(
         has_color(&d, crate::PAGER_PREV_RECT, theme::CAPTION),
         "prev not dimmed on the first page"
@@ -1382,7 +1563,7 @@ fn pager_dims_the_unavailable_end_arrow() {
     );
     // Last page (2 of 3): next is dimmed.
     let mut d2 = Rec::new();
-    render_audit_log(&mut d2, &rows[..3], 2, 13).unwrap();
+    render_audit_log(&mut d2, &rows[..3], 2, 13, true).unwrap();
     assert!(
         has_color(&d2, crate::PAGER_NEXT_RECT, theme::CAPTION),
         "next not dimmed on the last page"
@@ -1396,7 +1577,7 @@ fn single_page_list_shows_footer_not_pager() {
         secs_ago: Some(60),
     }; 3];
     let mut d = Rec::new();
-    render_audit_log(&mut d, &rows, 0, 3).unwrap();
+    render_audit_log(&mut d, &rows, 0, 3, true).unwrap();
     // One page → no pager: the prev-arrow region (left, clear of the right-aligned
     // item-count footer) stays background.
     assert!(

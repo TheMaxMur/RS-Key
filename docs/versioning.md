@@ -19,12 +19,41 @@ the USB `bcdDevice`.
 
 | Surface | Advertised version | Spec implemented |
 |---|---|---|
-| FIDO / CTAPHID | getInfo `versions` = `U2F_V2`, `FIDO_2_0`; device version `5.7.4` | CTAP2 (FIDO2) + CTAP1 (U2F) |
+| FIDO / CTAPHID | getInfo `versions` = `U2F_V2`, `FIDO_2_0`, `FIDO_2_1`, `FIDO_2_3`; device version `5.7.4` | CTAP2 (FIDO2) + CTAP1 (U2F) |
 | OpenPGP card | `3.4` | OpenPGP Smart Card Application 3.4 |
 | PIV | `5.7.4` | NIST SP 800-73-4 (command subset) |
 | OATH | SELECT version `5.7.4` | YKOATH (Yubico OATH over CCID), AID `A0 00 00 05 27 21 01` |
 | Management | `DeviceInfo` version `5.7.4` | YubiKey Management over the FIDO / CCID transports |
-| USB `bcdDevice` | `0x075E` | internal build counter — bumped on every behaviour change, **not** a protocol version |
+| USB `bcdDevice` | a four-digit hex counter (current value: the top of [the changelog](https://github.com/TheMaxMur/RS-Key/blob/main/CHANGELOG.md)) | internal build counter — bumped on every behaviour change, **not** a protocol version |
+
+`U2F_V2` drops out of `versions` on a build with `alwaysUv` enabled (CTAP 2.1
+§7.2.4 disables U2F there). `FIDO_2_2` is deliberately absent: CTAP 2.3 §6.4 says
+that string "MUST not be present", and the 2.2 surface is discovered through
+option ids and getInfo members instead.
+
+## Which build is on this device?
+
+Not the firmware version — `5.7.4` is a **compatibility constant**, identical on
+every build of every release, so it answers "what will Yubico tooling unlock",
+never "what is flashed here". The build identity is the **`bcdDevice`** counter:
+
+```sh
+rsk-tui --once          # prints "bcdDevice 0x…" alongside the applet state
+lsusb -v -d 1209:0001 | grep bcdDevice          # Linux
+ioreg -p IOUSB -l | grep -i bcdDevice           # macOS
+```
+
+Map that value to a release through the [changelog](https://github.com/TheMaxMur/RS-Key/blob/main/CHANGELOG.md);
+each entry names the counter it shipped at. A host tool that shows `bcdDevice`
+and calls it "the version" is reading the right field — it is the only number
+that changes between builds.
+
+**The image file itself carries no version.** `nix build` output is unsigned and
+unstamped, so nothing distinguishes two `.uf2`s but their bytes. If you need a
+version readable from the file, `picotool seal --major/--minor` stamps one into
+the RP2350 boot metadata that `picotool info` reads back without flashing
+([production.md](production.md)); that is part of the signing path, not the plain
+build.
 
 ## Algorithms, by build knob
 

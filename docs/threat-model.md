@@ -156,9 +156,26 @@ versions the firmware *image*, not the flash *data*, so it is blind to the swap 
 fix is a monotonic counter in tamper-resistant NVM that the firmware checks on boot — exactly
 what a secure element has and the RP2350 lacks. Its OTP is write-once antifuse (a few dozen
 one-way bits for the board's whole life), so it cannot back a retry counter that must reset to
-eight on every correct PIN. We cannot close the rollback itself on this silicon; we raise its
-cost:
+eight on every correct PIN. We cannot close the rollback itself on this silicon; we fence the
+store and raise the cost of getting past the fence:
 
+- **Partition table** (always on since `0x0871`). The shipped image embeds an RP2350
+  partition table that fences the KV store off from the USB bootloader. `picotool save` and
+  `picotool load` over that range answer `permission failure` — enforced by the bootrom, not
+  by us — while the running firmware keeps `secure: rw` and full access to its own data. The
+  snapshot/restore above no longer works as written.
+
+  **What that is worth depends on secure boot.** The table sits inside the signed image, so
+  where secure boot is on it cannot be swapped without your signing key: a byte flipped
+  anywhere in the table fails the image hash *and* the signature. Where it is off, the fence
+  is friction rather than a barrier — the firmware partition has to stay bootloader-writable
+  or updates would not work at all, so an attacker flashes an image carrying a permissive
+  table and is back where they started. Read this as "the attack now needs a reflash first,
+  and secure boot is what denies the reflash", not as "rollback fixed".
+
+  It is worth doing precisely because this is the one gap secure boot does **not** close by
+  itself: secure boot verifies *executable* images, and writing the data region is not
+  execution. Until this change a fully provisioned board was still snapshot/restore-able.
 - **OTP-seeded PIN verifier** (always on after the OTP burn). The stored verifier is
   `HKDF(serial_hash, HMAC(kbase, pin))`, with `kbase` rooted in the fused OTP master key
   ([production.md](production.md) stage 1). A flash dump does not contain that key, so it

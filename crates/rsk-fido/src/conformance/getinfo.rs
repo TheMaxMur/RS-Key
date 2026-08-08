@@ -36,7 +36,7 @@ fn getinfo_versions_and_aaguid() {
     let mut d = field_at(&r.body, 0x01).expect("versions (0x01) present");
     let n = d.array().unwrap().expect("versions is a definite array");
     assert!(n >= 1, "versions must be non-empty");
-    let known = ["U2F_V2", "FIDO_2_0", "FIDO_2_1", "FIDO_2_2", "FIDO_2_3"];
+    let known = ["U2F_V2", "FIDO_2_0", "FIDO_2_1", "FIDO_2_1_PRE", "FIDO_2_3"];
     let mut vers = Vec::new();
     for _ in 0..n {
         vers.push(d.str().unwrap().to_string());
@@ -47,6 +47,9 @@ fn getinfo_versions_and_aaguid() {
     // The CTAP2 baseline and the FIDO_2_1 surface must both be advertised.
     assert!(vers.iter().any(|v| v == "FIDO_2_0"));
     assert!(vers.iter().any(|v| v == "FIDO_2_1"));
+    // CTAP 2.3 §6.4: "FIDO_2_2" was never defined and MUST NOT appear. `known`
+    // above would already reject it; this names the rule at the point it applies.
+    assert!(!vers.iter().any(|v| v == "FIDO_2_2"));
 
     let mut d = field_at(&r.body, 0x03).expect("aaguid (0x03) present");
     let aaguid = d.bytes().unwrap();

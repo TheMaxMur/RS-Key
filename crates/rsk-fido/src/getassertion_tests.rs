@@ -582,6 +582,51 @@ fn up_false_preflight_is_silent_and_clears_up_flag() {
     );
 }
 
+/// The silent pre-flight is ungated, so an unbudgeted entry per call let a host holding
+/// any credential evict the whole 128-slot audit window — and with it the record of
+/// whatever it had just done (audit run-37). A run of them now costs one entry; an
+/// assertion that collected a gesture still earns its own.
+#[cfg(not(feature = "strict-up"))]
+#[test]
+fn silent_assertions_cannot_flush_the_audit_journal() {
+    let (mut fs, mut rng) = setup();
+    let cred_id = register_non_resident(&mut fs, &mut rng);
+    crate::journal::set_enabled(&mut fs, true).unwrap();
+    let silent = ga_request_up(&cred_id, false);
+    let gestured = ga_request_up(&cred_id, true);
+
+    let mut out = [0u8; 1024];
+    {
+        let mut state = crate::FidoState::new();
+        let mut presence = crate::AlwaysConfirm;
+        let mut ctx = Ctx {
+            presence: &mut presence,
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 20,
+        };
+        // The evidence the flood is meant to displace.
+        crate::journal::append(&mut ctx, crate::journal::EV_BACKUP_EXPORT, 0, &[]);
+        for _ in 0..crate::consts::AUDIT_RING_SLOTS + 2 {
+            get_assertion(&mut ctx, &silent, &mut out).unwrap();
+        }
+        get_assertion(&mut ctx, &gestured, &mut out).unwrap();
+    }
+
+    let (_, m) = crate::journal::chain_head(&dev(), &mut fs);
+    assert_eq!(m.start, 0, "nothing evicted from the window");
+    // BOOT, BACKUP_EXPORT, the coalesced silent run, the gestured assertion.
+    assert_eq!(m.seq_next, 4);
+    let mut seen = std::vec::Vec::new();
+    crate::journal::for_each_event(&dev(), &mut fs, |e| {
+        seen.push(e.event);
+        true
+    });
+    assert!(seen.contains(&crate::journal::EV_BACKUP_EXPORT));
+}
+
 // strict-up build: even up:false polls the button, so a declined touch denies
 // the assertion (the opt-in two-touch behavior).
 #[cfg(feature = "strict-up")]
@@ -3721,5 +3766,103 @@ fn builtin_uv_still_names_the_rp_on_a_display() {
     assert_eq!(
         pad.last_primary, b"example.com",
         "the card carries the rp the assertion is for"
+    );
+}
+
+/// A getAssertion whose allowList is `entries`, each a `(type, id)` descriptor.
+fn ga_request_list(entries: &[(&str, &[u8])]) -> std::vec::Vec<u8> {
+    let mut buf = [0u8; 8192];
+    let n = {
+        let mut e = Encoder::new(Cursor::new(&mut buf[..]));
+        e.map(3).unwrap();
+        e.u8(1).unwrap().str("example.com").unwrap();
+        e.u8(2).unwrap().bytes(&CDH).unwrap();
+        e.u8(3).unwrap().array(entries.len() as u64).unwrap();
+        for (ty, id) in entries {
+            e.map(2).unwrap();
+            e.str("type").unwrap().str(ty).unwrap();
+            e.str("id").unwrap().bytes(id).unwrap();
+        }
+        e.writer().position()
+    };
+    buf[..n].to_vec()
+}
+
+// getInfo 0x07 advertises maxCredentialCountInList; an allowList longer than that
+// is CTAP2_ERR_LIMIT_EXCEEDED so the platform knows to split it. Truncating instead
+// answers "no such credential" for a credential this device holds — and the failure
+// is invisible whenever the match happens to land in the retained head, which is
+// why both orderings are asserted here.
+#[test]
+fn allow_list_over_max_is_limit_exceeded() {
+    let (mut fs, mut rng) = setup();
+    let cred_id = register_non_resident(&mut fs, &mut rng);
+    let filler = [0xEEu8; 32];
+
+    let mut entries = [("public-key", &filler[..]); MAX_ALLOW + 1];
+    entries[MAX_ALLOW] = ("public-key", &cred_id[..]);
+    assert_eq!(
+        run_ga(&mut fs, &mut rng, &ga_request_list(&entries)),
+        Err(CtapError::LimitExceeded),
+        "an oversized allowList is refused, not silently truncated"
+    );
+
+    // Same list, target first: a truncating parser would answer this one and hide
+    // the bug behind the ordering.
+    entries[MAX_ALLOW] = ("public-key", &filler[..]);
+    entries[0] = ("public-key", &cred_id[..]);
+    assert_eq!(
+        run_ga(&mut fs, &mut rng, &ga_request_list(&entries)),
+        Err(CtapError::LimitExceeded),
+        "the ceiling is on the list, not on where the match sits"
+    );
+
+    // The boundary itself still works, so the check is `>` and not `>=`.
+    let mut ok = [("public-key", &filler[..]); MAX_ALLOW];
+    ok[MAX_ALLOW - 1] = ("public-key", &cred_id[..]);
+    assert!(
+        run_ga(&mut fs, &mut rng, &ga_request_list(&ok)).is_ok(),
+        "exactly maxCredentialCountInList entries must still assert"
+    );
+}
+
+// A descriptor whose type is not "public-key" names a credential kind this device
+// cannot assert, so it must not be matched on its id — and a list left with no
+// usable descriptor still scopes the request: it fails, rather than falling
+// through to resident discovery and answering with some other credential.
+#[test]
+fn foreign_type_in_allow_list_neither_matches_nor_falls_through() {
+    let (mut fs, mut rng) = setup();
+    let cred_id = register_non_resident(&mut fs, &mut rng);
+
+    // A resident credential for the same rp exists, so a fall-through to discovery
+    // would have something to answer with.
+    {
+        let mut out = [0u8; 1024];
+        let mut state = crate::FidoState::new();
+        let mut presence = crate::AlwaysConfirm;
+        let mut ctx = Ctx {
+            presence: &mut presence,
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 10,
+        };
+        make_credential(&mut ctx, &mc_request(true), &mut out).unwrap();
+    }
+    assert!(
+        run_ga(&mut fs, &mut rng, &ga_request(None)).is_ok(),
+        "control: with no allowList, discovery does answer"
+    );
+
+    assert_eq!(
+        run_ga(
+            &mut fs,
+            &mut rng,
+            &ga_request_list(&[("not-a-key", &cred_id)])
+        ),
+        Err(CtapError::NoCredentials),
+        "a foreign-typed descriptor must not match on its id"
     );
 }

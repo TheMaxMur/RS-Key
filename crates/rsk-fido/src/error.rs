@@ -18,6 +18,7 @@ pub enum CtapError {
     CborUnexpectedType = 0x11,     // CTAP2_ERR_CBOR_UNEXPECTED_TYPE
     InvalidCbor = 0x12,            // CTAP2_ERR_INVALID_CBOR
     MissingParameter = 0x14,       // CTAP2_ERR_MISSING_PARAMETER
+    LimitExceeded = 0x15,          // CTAP2_ERR_LIMIT_EXCEEDED
     LargeBlobStorageFull = 0x18,   // CTAP2_ERR_LARGE_BLOB_STORAGE_FULL
     CredentialExcluded = 0x19,     // CTAP2_ERR_CREDENTIAL_EXCLUDED
     Processing = 0x21,             // CTAP2_ERR_PROCESSING

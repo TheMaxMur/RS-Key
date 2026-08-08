@@ -12,9 +12,11 @@
 //! is committed *before* the slot is reused, so a power cut anywhere loses at
 //! most the newest event and never produces a false tamper verdict.
 //!
-//! Entries are append-only with one bounded exception: a run of `EV_CONFIG_WRITE`
-//! — the one event an ungated host can drive on demand — is counted inside the
-//! newest entry instead of appending ([`append_config_write`]).
+//! Entries are append-only with one bounded exception: a run of the events an
+//! ungated host can drive on demand — a device-config write, a silent (`up:false`)
+//! assertion, a don't-enforce U2F authenticate — is counted inside an entry the
+//! window already holds instead of appending ([`append_config_write`],
+//! [`append_run`]).
 //!
 //! The chain head is `fold(epoch, window entries)`. A checkpoint signs
 //! `"RSK-AUDIT-CKPT-v1" ‖ head ‖ seq_next ‖ challenge` with an ECDSA P-256 key
@@ -70,7 +72,7 @@ pub const EV_CONFIG_WRITE: u8 = 0x15;
 /// written, recorded before the flag flips, so the trail shows when it stopped).
 pub const EV_AUDIT_CFG: u8 = 0x16;
 
-/// Entry: `seq(4 LE) ‖ uptime_ms(4 LE) ‖ event(1) ‖ aux(1) ‖ detail(8) ‖ rsvd(2)`.
+/// Entry: `seq(4 LE) ‖ uptime_ms(4 LE) ‖ event(1) ‖ aux(1) ‖ detail(8) ‖ repeats(2 LE)`.
 pub const ENTRY_LEN: usize = 20;
 const DETAIL_AT: usize = 10;
 const DETAIL_LEN: usize = 8;
@@ -79,6 +81,10 @@ const DETAIL_LEN: usize = 8;
 /// record the run touched.
 const CW_REPEATS_AT: usize = DETAIL_AT;
 const CW_TARGETS_AT: usize = DETAIL_AT + 2;
+/// [`append_run`]'s repeat count, in the trailing two bytes every event leaves free.
+/// [`EV_CONFIG_WRITE`] keeps its own count inside the detail instead: that layout
+/// predates this one and is already on the wire (`AUDIT_READ`, `rsk audit log`).
+const RUN_REPEATS_AT: usize = ENTRY_LEN - 2;
 const META_LEN: usize = 1 + 4 + 4 + 32;
 const META_VER: u8 = 1;
 const GENESIS_TAG: &[u8] = b"RSK-AUDIT-GENESIS-v1";
@@ -199,14 +205,15 @@ pub fn append<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, ev: u8, aux: u8, detail: 
 
 /// Append a device-config write, coalescing a *run* of them into one ring entry.
 ///
-/// [`EV_CONFIG_WRITE`] is the only journalled event a silent host can drive on
+/// [`EV_CONFIG_WRITE`] is one of the journalled events a silent host can drive on
 /// demand — the write is ungated on the default build — so 128 of them would evict
 /// every other event from the 128-slot ring. A run therefore costs a single slot:
 /// the entry keeps its `seq`, opening target and timestamp, and counts the rest in
 /// its detail. `seq_next`, `start` and the epoch never move, so a coalesce evicts
 /// nothing and the host-side fold over the exported window still reproduces the
-/// head. Strictly this event class: every other one is behind a PIN, a touch or a
-/// credential, and each of those is distinct evidence worth its own slot.
+/// head. Its own event class only: [`append_run`] carries the other two, and every
+/// remaining event is behind a PIN or a gesture, which is distinct evidence worth
+/// its own slot.
 pub fn append_config_write<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, target: u8) {
     if !is_enabled(ctx.fs) {
         return; // off: write no flash at all, not even a bump of a stale entry
@@ -239,10 +246,53 @@ fn coalesce_config_write<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, target: u8) ->
     if read_slot(ctx.fs, seq, &mut e).is_none() || e[8] != EV_CONFIG_WRITE {
         return false;
     }
-    let repeats = u16::from_le_bytes([e[CW_REPEATS_AT], e[CW_REPEATS_AT + 1]]).saturating_add(1);
-    e[CW_REPEATS_AT..CW_REPEATS_AT + 2].copy_from_slice(&repeats.to_le_bytes());
+    bump_repeats(&mut e, CW_REPEATS_AT);
     e[CW_TARGETS_AT] |= target_bit(target);
     ctx.fs.put(slot_fid(seq), &e).is_ok()
+}
+
+/// Append an event a silent host can drive on demand, coalescing repeats into a ring
+/// entry the window already holds — the same bounded exception [`append_config_write`]
+/// makes for its own event, and the same guarantees: `seq_next`, `start` and the epoch
+/// never move, so nothing is evicted and the exported window still folds to the head.
+///
+/// It scans the whole window rather than only the newest entry, because a fold that
+/// looks at the newest alone is broken by interleaving two events that both take this
+/// path — 128 alternating appends still flush the ring (audit run-37). The surviving
+/// entry keeps its `seq`, timestamp and the detail of the *first* occurrence, so a run
+/// over several relying parties is one entry naming one of them.
+pub fn append_run<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, ev: u8, aux: u8, detail: &[u8]) {
+    if !is_enabled(ctx.fs) {
+        return; // off: write no flash at all, not even a bump of a stale entry
+    }
+    // Never coalesce across a power cycle — that would swallow this cycle's EV_BOOT.
+    if ctx.state.audit_boot_logged && coalesce_run(ctx, ev) {
+        return;
+    }
+    append(ctx, ev, aux, detail);
+}
+
+/// Fold one more occurrence of `ev` into the newest live-window entry carrying it.
+/// `false` when the window holds none — or its slot could not be rewritten — leaving
+/// the caller to append a fresh one.
+fn coalesce_run<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, ev: u8) -> bool {
+    let m = load_meta(&ctx.dev, ctx.fs);
+    let mut e = [0u8; ENTRY_LEN];
+    let mut seq = m.seq_next;
+    while seq != m.start {
+        seq = seq.wrapping_sub(1);
+        if read_slot(ctx.fs, seq, &mut e).is_some() && e[8] == ev {
+            bump_repeats(&mut e, RUN_REPEATS_AT);
+            return ctx.fs.put(slot_fid(seq), &e).is_ok();
+        }
+    }
+    false
+}
+
+/// Bump a saturating little-endian `u16` repeat counter at `at` inside an entry.
+fn bump_repeats(e: &mut [u8; ENTRY_LEN], at: usize) {
+    let n = u16::from_le_bytes([e[at], e[at + 1]]).saturating_add(1);
+    e[at..at + 2].copy_from_slice(&n.to_le_bytes());
 }
 
 fn raw_append<S: Storage>(

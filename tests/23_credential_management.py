@@ -15,6 +15,7 @@ Exercises every credentialManagement subcommand on the device:
   6. enumerateCredentials Begin/Next (example.com) -> 2 creds, then -> NOT_ALLOWED
   7. deleteCredential (0x06)       -> metadata drops to 2
   8. updateUserInformation (0x07)  -> the remaining cred's name changes
+  9. pcmr token (CTAP 2.2)         -> reads OK, writers refuse it, survives a replug
 
 The credMgmt pinUvAuthParam is HMAC-SHA256(token, subcommand ‖ rawSubCommandParams)
 for 0x04/0x06/0x07 and HMAC-SHA256(token, subcommand) for 0x01/0x02 (protocol two).
@@ -25,6 +26,7 @@ Each reset asks for a replug — CTAP 2.1 §6.6 accepts one only just after powe
 import hashlib
 import os
 import sys
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import replug  # noqa: E402
@@ -44,6 +46,7 @@ from cryptography.hazmat.primitives import hashes, hmac as chmac  # noqa: E402
 PIN = b"12345678"
 PERM_MC = 0x01  # makeCredential
 PERM_CM = 0x04  # credentialManagement
+PERM_PCMR = 0x40  # persistent credential management, read-only (CTAP 2.2)
 CM = 0x0A  # CTAP_CREDENTIAL_MGMT
 RP1, RP2 = "example.com", "other.com"
 
@@ -144,8 +147,8 @@ def main():
         token = get_token(PERM_CM)
         print("clientPIN: token with cm permission")
 
-        def metadata():
-            r = send_cbor(dev, cid, bytes([CM]) + cm_request(0x01, None, token))
+        def metadata(tok=None):
+            r = send_cbor(dev, cid, bytes([CM]) + cm_request(0x01, None, tok or token))
             assert r[0] == 0x00, f"getCredsMetadata status {r[0]:#x}"
             return decode(r[1:])[1]
 
@@ -202,8 +205,43 @@ def main():
         assert m[9] == 1 and m[6]["name"] == "bob2", f"update not reflected: {m[6]}"
         print("updateUserInformation: name -> 'bob2'")
 
-        # Clean up.
-        dev, cid = replug.reset(dev, "the clean-up reset")
+        # 9. pcmr (CTAP 2.2 §6.8.2/.3/.4): the persistent token is a read-only
+        # credential-management grant — it drives the three readers, both writers
+        # refuse it, and it outlives the power cycle. The last leg is the whole
+        # point of "persistent" and only real hardware can show it.
+        assert decode(gi[1:])[4].get("perCredMgmtRO") is True, "options.perCredMgmtRO absent"
+        pcmr = get_token(PERM_PCMR)
+        assert pcmr != token, "pcmr must not hand back a session token"
+        assert metadata(pcmr) == 2, "getCredsMetadata under pcmr"
+        r = send_cbor(dev, cid, bytes([CM]) + cm_request(0x02, None, pcmr))
+        assert r[0] == 0x00, f"enumerateRPsBegin under pcmr: {r[0]:#x}"
+        r = send_cbor(dev, cid, bytes([CM]) + cm_request(0x04, enc({1: rp1_hash}), pcmr))
+        assert r[0] == 0x00, f"enumerateCredentialsBegin under pcmr: {r[0]:#x}"
+        r = send_cbor(dev, cid, bytes([CM]) + cm_request(0x06, enc({2: cred_desc(keep_id)}), pcmr))
+        assert r[0] == 0x33, f"deleteCredential under pcmr wanted PIN_AUTH_INVALID, got {r[0]:#x}"
+        print("pcmr: 3 reads OK, deleteCredential -> PIN_AUTH_INVALID")
+
+        # The clean-up power cycle does double duty: it proves the grant survives a
+        # replug (no clientPIN exchange in between — the key agreement died with the
+        # power), and it opens the §6.6 window the clean-up reset needs.
+        dev.close()
+        print("\n👉 UNPLUG the key, then plug it straight back in — the pcmr token must "
+              "survive the power cycle, and the clean-up reset needs the §6.6 window.")
+        replug.wait_gone()
+        dev, cid, seen = replug.wait_back()
+        r = send_cbor(dev, cid, bytes([CM]) + cm_request(0x02, None, pcmr))
+        assert r[0] == 0x00, f"the pcmr token died on the power cycle: {r[0]:#x}"
+        print("pcmr: still enumerates after a real power cycle")
+
+        # Clean up — and authenticatorReset resets the persistent PUAT state (§6.6),
+        # so the same token must stop verifying. An un-revoked one would reach the
+        # empty store and answer NO_CREDENTIALS (0x2e) instead.
+        r = send_cbor(dev, cid, bytes([0x07]))
+        assert r[0] == 0x00, (f"clean-up reset {time.time() - seen:.1f}s after attach: {r[0]:#x} "
+                              "(0x30 = past the window, just rerun)")
+        r = send_cbor(dev, cid, bytes([CM]) + cm_request(0x02, None, pcmr))
+        assert r[0] == 0x33, f"reset must revoke the pcmr grant, got {r[0]:#x}"
+        print("reset: the pcmr grant is revoked")
 
         print("\nPASS")
     finally:

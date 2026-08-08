@@ -150,3 +150,20 @@ fn is_idempotent() {
     fs.read(EF_DEK_PW1.get(), &mut second);
     assert_eq!(first, second);
 }
+
+#[test]
+fn an_overlong_pw_status_record_cannot_panic_the_rc_settle() {
+    // Same clamp as `pin::check_pin`: `Fs::read` reports the stored length, and an
+    // unclamped `&pw[..n]` here would panic on the pre-USB boot path.
+    let mut fs = fresh();
+    let mut overlong = PW_STATUS_LEGACY.to_vec();
+    overlong.resize(16, 0xAA);
+    fs.put(EF_PW_PRIV, &overlong).unwrap();
+
+    settle_rc_retry_counter(&mut fs).unwrap();
+    assert_eq!(
+        rc_counter(&mut fs),
+        0,
+        "DO C4 must not advertise an absent RC"
+    );
+}

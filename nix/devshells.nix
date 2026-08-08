@@ -64,7 +64,15 @@
       # The dev-shell `rsk-tui` is a bare `cargo run` (no nix RPATH), so its
       # DT_NEEDED libudev/libpcsclite must be on the loader path at run time —
       # pkg-config only satisfies them at build time.
-      export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath ([ pkgs.libgcrypt ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.systemd pkgs.pcsclite ])}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+      export LD_LIBRARY_PATH="${
+        pkgs.lib.makeLibraryPath (
+          [ pkgs.libgcrypt ]
+          ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
+            pkgs.systemd
+            pkgs.pcsclite
+          ]
+        )
+      }''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
       # Install repo git hooks (idempotent; symlinked so edits take effect).
       if [ -d .git ] && [ -f scripts/hooks/pre-commit ]; then
@@ -78,7 +86,8 @@
       echo
       echo "Build:  cargo build --release -p firmware   # pick the target crate"
       echo "  (or:  nix build .#firmware                 # hermetic → result/firmware.uf2)"
-      echo "UF2:    picotool uf2 convert target/${target}/release/firmware -t elf firmware.uf2"
+      echo "PT:     scripts/pt.sh target/${target}/release/firmware fw-pt.elf   # fence the KV store"
+      echo "UF2:    picotool uf2 convert fw-pt.elf -t elf firmware.uf2"
       echo "Flash:  hold BOOTSEL, plug in the RP2350, drag firmware.uf2 to the RP2350 drive"
       echo "Check:  ./scripts/check.sh        # fmt + clippy + test + audit + deny + gitleaks"
       echo "Fuzz:   nix develop .#fuzz -c cargo fuzz run <target>"

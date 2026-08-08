@@ -53,6 +53,20 @@ The longer walkthrough, with the PIN, `ssh` and `gpg` steps, is
 [docs/quickstart.md](docs/quickstart.md). On Linux the smart-card half needs a
 little host setup first: [docs/linux.md](docs/linux.md).
 
+Once it is flashed you can configure it from a GUI instead of a terminal:
+**[PicoForge](https://github.com/librekeys/picoforge)** (third-party, from the
+librekeys project) reads the device's state and writes the same config surface the
+`rsk` CLI does — see [Host tools](#host-tools).
+
+<p align="center">
+  <img src="docs/images/picoforge-overview.png" width="720" alt="PicoForge on its Device Overview page, reading a freshly flashed RS-Key: a sidebar of sections (Home, Passkeys, Accounts, Slots, PIV, OpenPGP, Audit, Backup, Lock, Attestation, Configuration, Security, Offboard) and four cards — Device Information (serial number, firmware RS-Key build 0x0872, VID:PID 1209:0001, product name RS-Key Security Key, storage 2 of 1536 KB, 4 MB flash chip), FIDO2 Information (AAGUID, U2F_V2 and FIDO 2.0 / 2.1 / 2.3, PIN Not Set, resident keys supported, 256 remaining credentials), LED Configuration (GPIO 16, 30 s presence touch timeout) and Security Status (boot mode Development, debug enabled, secure lock pending)"><br>
+  <sub>A board straight out of step 3, in PicoForge: the default <code>1209:0001</code> identity, no PIN yet, boot mode still <code>Development</code></sub>
+</p>
+
+The demo below runs on a board with a screen. A plain RP2350 board behaves the
+same way, with two differences: the host asks for the PIN instead of the device,
+and you confirm with the physical button instead of an on-screen one.
+
 <p align="center">
   <img src="assets/webauthn-demo.gif" width="240" alt="Registering a passkey on webauthn.io with the trusted-display build: the device screen shows a Device PIN pad, then an Approve / Save-passkey prompt, and the browser confirms you are logged in. The PIN and the approval both happen on the device's own screen"><br>
   <sub>Step 4 on the <code>display</code> image: the PIN and the Approve/Deny happen on the device's own screen</sub>
@@ -142,7 +156,8 @@ git clone https://github.com/TheMaxMur/RS-Key && cd RS-Key
 nix develop                       # toolchain, picotool, host tools, everything
 
 cargo build --release -p firmware
-picotool uf2 convert target/thumbv8m.main-none-eabihf/release/firmware -t elf firmware.uf2
+scripts/pt.sh target/thumbv8m.main-none-eabihf/release/firmware firmware-pt.elf   # fence the key's storage off the bootloader
+picotool uf2 convert firmware-pt.elf -t elf firmware.uf2
 
 # hold BOOTSEL, plug the board in, then flash, either way:
 cp firmware.uf2 /Volumes/RP2350/                    # macOS drag-and-drop; Linux: the mounted RP2350 volume
@@ -211,6 +226,15 @@ Third-party: **[PicoForge](https://github.com/librekeys/picoforge)** (from the
 librekeys project) is a desktop GUI that configures an RS-Key over the same `phy`
 record `rsk hw` writes — see the
 [host protocol](docs/protocol.md#11-integration-notes-for-picoforge).
+
+Also third-party, and a developer tool rather than a setup one:
+**[Telesma](https://github.com/go-ctap/app)** is a desktop workbench for
+inspecting and managing a local FIDO2/CTAP authenticator, built on
+[`go-ctap/ctap`](https://github.com/go-ctap/ctap) — an independent CTAP 2.0–2.3
+client stack, which is what makes it interesting here: a second opinion on what
+this firmware answers, from a parser that is not libfido2 or python-fido2. It has
+not been run against RS-Key yet; it is `⏳` in the
+[interop matrix](docs/interop.md#fido2--webauthn--u2f).
 
 ## Limitations (short list)
 

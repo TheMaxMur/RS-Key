@@ -28,11 +28,12 @@ from cryptography.hazmat.primitives.serialization import (Encoding,  # noqa: E40
 from rsk import audit  # noqa: E402
 
 
-def _entry(event, aux=0, detail=b""):
+def _entry(event, aux=0, detail=b"", folded=0):
     e = bytearray(audit.ENTRY_LEN)
     e[8] = event
     e[9] = aux
     e[10:10 + len(detail)] = detail
+    e[audit.RUN_REPEATS_AT:] = folded.to_bytes(2, "little")
     return bytes(e)
 
 
@@ -50,6 +51,21 @@ def test_detail_counts_a_coalesced_run_over_several_targets():
 def test_detail_of_other_events_stays_raw_hex():
     e = _entry(audit.EVT_RESET, detail=bytes([0xAA, 0xBB]))
     assert audit._detail(e) == "aabb000000000000"
+
+
+def test_detail_shows_a_coalesced_run_of_a_non_config_event():
+    # The silent (`up:false`) assertion and the don't-enforce U2F authenticate are
+    # ungated, so the device folds a run of either into one entry — keeping the FIRST
+    # occurrence's rpIdHash and counting the rest in bytes 18-19. Rendering only the
+    # detail showed 4000 silent probes as one.
+    e = _entry(0x03, detail=bytes([0xAA] * 8), folded=3999)
+    assert audit._detail(e) == "aaaaaaaaaaaaaaaa ×4000"
+
+
+def test_a_zero_repeat_field_is_a_single_occurrence():
+    # Bytes 18-19 were reserved and always zero before the device coalesced these,
+    # so an older build's entries must still read as one event, not "×1".
+    assert audit._detail(_entry(0x03, detail=bytes([0xAA] * 8))) == "aaaaaaaaaaaaaaaa"
 
 
 # --- `rsk audit verify`: the chain and the identity ---------------------------

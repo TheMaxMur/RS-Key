@@ -15,9 +15,9 @@
 
   # The per-system pieces live in nix/: firmware.nix (the `nix build` packages +
   # the mkFirmware builder), host-tools.nix (the Python + rsk/rsk-tui commands),
-  # devshells.nix (the dev + fuzz shells), and checks.nix (`nix flake check`).
-  # This file just wires the shared context (pkgs, the cross target, the
-  # toolchains) into them.
+  # devshells.nix (the dev + fuzz shells), checks.nix (`nix flake check`), and
+  # ccid.nix (the host-side CCID driver package + overlay). This file just wires
+  # the shared context (pkgs, the cross target, the toolchains) into them.
   outputs =
     {
       self,
@@ -52,7 +52,12 @@
         };
       in
       {
-        packages = firmware.packages // apps'.packages;
+        packages =
+          firmware.packages
+          // apps'.packages
+          // {
+            ccid-rs-key = import ./nix/ccid.nix { inherit pkgs; };
+          };
         inherit (firmware) lib;
         apps = apps'.apps;
 
@@ -87,5 +92,18 @@
           inherit (firmware) firmwareSrc cargoDeps;
         };
       }
-    );
+    )
+    // {
+      # System-independent, so it sits outside eachDefaultSystem. Applying it
+      # (`nixpkgs.overlays = [ rs-key.overlays.ccid-rs-key ]`) is the whole fix on
+      # NixOS: the pcscd module's plugin list is `[ pkgs.ccid ]`, so replacing that
+      # attribute is enough. Overriding `prev.ccid`, not `final.ccid` — the latter
+      # is the attribute being defined here. Without the overlay, point
+      # services.pcscd.plugins at packages.<system>.ccid-rs-key with lib.mkForce:
+      # the module assigns its own `[ pkgs.ccid ]`, and two ccid bundles collide in
+      # the plugin buildEnv it maps them through (docs/linux.md).
+      overlays.ccid-rs-key = _final: prev: {
+        ccid = import ./nix/ccid.nix { pkgs = prev; };
+      };
+    };
 }

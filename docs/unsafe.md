@@ -106,7 +106,11 @@ constructors require a statically known pin type.
 *Containment:* each is gated by pin-range validation and the single-owner
 invariant from `main` — none of the presence pin, the LED-power pin, the
 USR-LED pin, the wake pin, nor the four panel control pins is ever handed to
-another driver, and compile-time `assert!`s reject a
+another driver. Two checks hold that jointly: the LED *data* pin is resolved at
+runtime from the host-writable phy record, and the filter chain in `main` drops a
+value that names the presence pin, `LED_POWER_PIN` or `USR_LED_PIN` back to the
+build default — so a host cannot aim the data pin at a pad another driver owns.
+On top of that, compile-time `assert!`s reject a
 build that collides `LED_POWER_PIN` or `USR_LED_PIN` with the LED data pin or a GPIO
 `PRESENCE_PIN` (and refuse `USR_LED_PIN` outright on a display build, whose panel
 owns those pads), rejects a `WAKE_PIN` in the LCD/touch range (`10..=18`),

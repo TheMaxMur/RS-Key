@@ -57,6 +57,47 @@ pub const EFFECT_SPARKLE: u8 = 4; // per-LED twinkle in the status colour
 /// Speed value meaning "use the effect's built-in default speed".
 pub const SPEED_DEFAULT: u8 = 0;
 
+/// `CTAPHID_WINK` burst length and half-period, in milliseconds. CTAP §11.2.9.2.1
+/// asks for "a short burst of flashes"; 600/75 is four blinks in 0.6 s — fast
+/// enough that nobody mistakes it for one of the four statuses, short enough that
+/// it cannot mask a touch prompt arriving right behind it.
+pub const WINK_MS: u32 = 600;
+pub const WINK_HALF_MS: u32 = 75;
+
+/// Whether the wink LED is lit with `ms_left` of the burst still to run
+/// (`ms_left <= WINK_MS`; the caller's deadline guard enforces that). The caller
+/// keeps only a deadline — the one form that survives the millisecond counter
+/// wrapping — so the phase is taken from the elapsed half-periods, which is what
+/// makes the burst *start* lit rather than with a pause.
+pub const fn wink_lit(ms_left: u32) -> bool {
+    let elapsed = WINK_MS.saturating_sub(ms_left);
+    (elapsed / WINK_HALF_MS).is_multiple_of(2)
+}
+
+/// Whether the burst whose deadline is `end` is still running at `now_ms`; `0` is
+/// the never-winked sentinel. A deadline is the one form that survives the
+/// millisecond counter wrapping, so liveness is `end - now` read as an unsigned
+/// distance: past the end it wraps to a huge value and reads as expired, which is
+/// also what covers the 49-day rollover.
+pub const fn wink_running(end: u32, now_ms: u32) -> bool {
+    let left = end.wrapping_sub(now_ms);
+    end != 0 && left != 0 && left <= WINK_MS
+}
+
+/// The deadline a `CTAPHID_WINK` arriving at `now_ms` leaves behind, given the
+/// current one. §11.2.9.2.1 asks for *a* burst, so one already running is left
+/// alone: an ungated host re-arming faster than [`WINK_HALF_MS`] would otherwise
+/// never let it reach a dark half-period, holding the reserved touch colour solid
+/// — forging the consent indicator [`LedConfig::enforce_touch_invariants`] exists
+/// to keep unforgeable.
+pub const fn wink_arm(end: u32, now_ms: u32) -> u32 {
+    if wink_running(end, now_ms) {
+        end
+    } else {
+        now_ms.wrapping_add(WINK_MS)
+    }
+}
+
 /// Default effect per status (indexed by the `STATUS_*` constants).
 pub const DEFAULT_EFFECT: [u8; N_STATUS] = [
     EFFECT_VAPOR,   // IDLE

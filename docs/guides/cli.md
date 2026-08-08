@@ -10,9 +10,13 @@ verification, fleet inventory, offboarding. It talks to the device directly:
 CTAPHID over hidapi for the FIDO interface, and the CCID applets over PC/SC.
 
 It is the canonical interface. The [terminal cockpit (`rsk-tui`)](tui.md) is a
-read-mostly companion that points you back here for anything irreversible. Most
-other guides in this section assume `rsk` is on your `PATH` and show the exact
-`rsk <group> …` command for the task.
+read-mostly companion that points you back here for anything irreversible, and
+[PicoForge](https://github.com/librekeys/picoforge) is a third-party desktop GUI
+over the same device-config surface ([protocol.md
+§11](../protocol.md#11-integration-notes-for-picoforge)) for anyone who would
+rather click than type — it is not part of this repo. Most other guides in this
+section assume `rsk` is on your `PATH` and show the exact `rsk <group> …` command
+for the task.
 
 ```mermaid
 flowchart LR
@@ -67,6 +71,7 @@ The Nix shell stays the primary, reproducible path (it also carries `picotool`,
 |---|---|---|
 | `status` | one-shot device overview (FIDO getInfo + secure-boot + backup) | [quickstart](../quickstart.md) |
 | `inventory` | fleet enumeration (`list`) + identity proof (`verify`) | [Fleet tooling](fleet.md) |
+| `identify` | blink a key's indicator so you can tell it from the others plugged in | [LED](led.md#identify-ctaphid-wink) |
 | `backup` | wallet-style seed export / restore / finalize (BIP-39, SLIP-39) | [Seed backup](seed-backup.md) |
 | `pair` | guided primary + backup (two independent keys) enrollment | [Backup key](backup-key.md) |
 | `lock` | at-rest soft-lock of the FIDO seed (`enable`/`unlock`/`disable`) | [Soft-lock](soft-lock.md) |
@@ -142,7 +147,7 @@ shorter than 10, even if the device config asks for less.
 can pipe to `jq`. Everything else is human-formatted text.
 
 ```sh
-rsk status --json | jq '.secure_boot, .fido.clientPin'
+rsk status --json | jq '.serial, .secure_boot, .fido.clientPin'
 rsk inventory list --json        # one JSON object per connected key, per line
 ```
 

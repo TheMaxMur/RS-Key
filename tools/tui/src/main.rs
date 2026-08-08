@@ -9,11 +9,12 @@
 //! token + BIP-39, all in Rust). The SLIP-39 export and the picotool/BOOTSEL
 //! fuse rituals stay in the `rsk` CLI.
 //!
-//!     rsk-tui            # interactive cockpit
-//!     rsk-tui --demo     # same UI, simulated device (no hardware)
-//!     rsk-tui --once     # print the gathered status once and exit
-//!     rsk-tui --json     # one-shot machine-readable status
-//!     rsk-tui --selftest # native backup round-trip self-test (no-touch build)
+//!     rsk-tui                  # interactive cockpit
+//!     rsk-tui --demo           # same UI, simulated device (no hardware)
+//!     rsk-tui --once           # print the gathered status once and exit
+//!     rsk-tui --identify       # blink the indicator so you can tell this key apart
+//!     rsk-tui --json           # one-shot machine-readable status
+//!     rsk-tui --selftest [PIN] # native backup round-trip self-test (no-touch build)
 
 mod actions;
 mod app;
@@ -51,10 +52,31 @@ fn main() -> io::Result<()> {
     }
 
     if let Some(i) = args.iter().position(|a| a == "--selftest") {
-        match device::export_selftest(args.get(i + 1).map(String::as_str)) {
+        let pin = match selftest_pin(&args, i) {
+            Ok(p) => p,
+            Err(msg) => {
+                eprintln!("rsk-tui: {msg}\ntry `rsk-tui --help`");
+                std::process::exit(2);
+            }
+        };
+        match device::export_selftest(pin) {
             Ok(s) => println!("export selftest OK: {s}"),
             Err(e) => {
                 eprintln!("export selftest FAILED: {e}");
+                std::process::exit(1);
+            }
+        }
+        return Ok(());
+    }
+
+    // Non-interactive twin of the Overview action. `rsk identify` is the usual
+    // route, but the Python CLI needs hidapi, and on hosts where that cannot open a
+    // FIDO device this is the only first-party way to make a key point at itself.
+    if has("--identify") {
+        match device::identify() {
+            Ok(s) => println!("{s}"),
+            Err(e) => {
+                eprintln!("identify failed: {e}");
                 std::process::exit(1);
             }
         }
@@ -92,6 +114,22 @@ fn main() -> io::Result<()> {
     let res = run(&mut term, app);
     restore_terminal();
     res
+}
+
+/// Resolve `--selftest`'s optional PIN positional, or the usage message to refuse
+/// with. Split out of `main` so both refusals are testable without a device — this
+/// path sends whatever it is handed to the key as a clientPIN, and the device
+/// decrements the retry counter before comparing, so a typo here costs a real
+/// attempt and three consecutive ones need a physical power cycle to clear.
+fn selftest_pin(args: &[String], i: usize) -> Result<Option<&str>, &'static str> {
+    if args.iter().any(|a| a == "--demo" || a == "--mock") {
+        // Ignoring it ran a real master-seed export and restore against the key.
+        return Err("--selftest runs against real hardware; --demo cannot simulate it");
+    }
+    match args.get(i + 1).map(String::as_str) {
+        Some(a) if a.starts_with('-') => Err("--selftest [PIN]: that is a flag, not a PIN"),
+        pin => Ok(pin),
+    }
 }
 
 fn restore_terminal() {
@@ -137,12 +175,13 @@ fn print_help() {
          USAGE:\n  \
          rsk-tui [FLAGS]\n\n\
          FLAGS:\n  \
-         (none)        interactive cockpit\n  \
-         --demo,--mock interactive cockpit against a simulated device (no hardware)\n  \
-         --once        print the gathered status once and exit\n  \
-         --json        one-shot machine-readable status (JSON) and exit\n  \
-         --selftest    native backup export/restore round-trip (no-touch build)\n  \
-         -h, --help    this help\n\n\
+         (none)            interactive cockpit\n  \
+         --demo,--mock     interactive cockpit against a simulated device (no hardware)\n  \
+         --once            print the gathered status once and exit\n  \
+         --json            one-shot machine-readable status (JSON) and exit\n  \
+         --identify        blink this key's indicator and exit (CTAPHID wink)\n  \
+         --selftest [PIN]  native backup export/restore round-trip (no-touch build)\n  \
+         -h, --help        this help\n\n\
          In the cockpit: Tab/arrows switch sections, j/k move, Enter runs,\n  \
          r refreshes, / searches, ? shows help, q quits."
     );

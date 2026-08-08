@@ -1104,8 +1104,15 @@ impl Ui {
     pub(super) fn run_auditlog(&mut self) {
         let mut rows = [AuditRow::default(); rsk_ui::PK_ROWS_MAX];
         let mut page: u16 = 0;
+        // Journalling is opt-in and an empty page looks identical either way, so read the
+        // marker `journal::is_enabled` keys off and let the screen tell an idle journal
+        // from one that was never running. Fixed here: only the host can toggle it.
+        let logging = self
+            .fs
+            .borrow_mut()
+            .has_data(rsk_fido::consts::EF_AUDIT_ENABLED);
         let (mut n, mut total) = self.load_events(&mut rows, page);
-        let _ = rsk_ui::render_audit_log(&mut self.panel, &rows[..n], page, total);
+        let _ = rsk_ui::render_audit_log(&mut self.panel, &rows[..n], page, total, logging);
         self.shown = None;
         let idle_limit = Duration::from_millis(MENU_INACTIVITY_MS);
         self.touch.wait_release(Instant::now(), idle_limit);
@@ -1124,7 +1131,8 @@ impl Ui {
                     let r = self.load_events(&mut rows, page);
                     n = r.0;
                     total = r.1;
-                    let _ = rsk_ui::render_audit_log(&mut self.panel, &rows[..n], page, total);
+                    let _ =
+                        rsk_ui::render_audit_log(&mut self.panel, &rows[..n], page, total, logging);
                     self.shown = None;
                     self.touch.wait_release(last, idle_limit);
                     last = Instant::now();

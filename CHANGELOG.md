@@ -13,6 +13,330 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+## [0.4.7] - 2026-08-08
+
+### Security
+
+Audit run-37 found no MEDIUM or above. What follows is the LOW tail, grouped by the class
+each defect belongs to rather than by the site that surfaced it — several were one of
+several sites of a rule the codebase had already decided once and swept incompletely.
+
+- **OATH's boot re-seal lap no longer destroys a record it cannot authenticate.** Six
+  at-rest migrations run before the USB pull-up, and five leave a record that opens under
+  neither key arm alone — PIV's comment says re-sealing garbage "would only destroy
+  evidence", OTP's says such a slot must be "skipped rather than truncated and
+  mis-resealed". OATH re-sealed unconditionally, through a buffer sized for plaintext
+  (`CRED_MAX`) rather than for a sealed blob (`seal::MAX_BLOB`), so past that ceiling the
+  GCM tag was discarded before the re-wrap and every credential and the access code were
+  lost for good — permanently, because a later boot with the right key authenticates the
+  outer wrapper and stops touching it. The scratch is now sized correctly and the lap
+  requires positive structural evidence of legacy plaintext (a credential opens with
+  `TAG_NAME` and carries `TAG_KEY`, which every pre-seal `cmd_put` guaranteed) before it
+  will re-seal. Not attacker-reachable — no host can plant an unsealable record — but a
+  wrong MKEK, a chip-serial change or a page-58 misconfiguration all reach it. A residual
+  is named in the code: `EF_OATH_CODE`'s plaintext has no structure to check.
+- **A PIN change on the device's own pad now revokes the persistent `pcmr` grant.**
+  `EF_PAUTHTOKEN` is a flash record whose *presence* is a credential-directory read grant.
+  Three of four PIN paths cleared it; the trusted display's own change signalled revocation
+  through a RAM flag consumed only by the next CBOR dispatch — so a host that sent the
+  ungated warm reboot as a plain APDU, or simply waited for an unplug, kept a grant minted
+  under the old PIN for ever. The revocation moved down into `write_pin_verifier`, the one
+  function in the crate that writes an `EF_PIN` verifier, so a future PIN path inherits it
+  by construction instead of by review.
+- **Three journalled events an ungated host can drive now coalesce, not one.** The
+  defence existed and covered `CONFIG_WRITE` alone; a `getAssertion` carrying `up:false`
+  and a U2F `AUTHENTICATE` with `P1=0x08` both take the spec-mandated silent path and
+  appended unbudgeted, so 128 of either evicted the whole evidence window. The fold scans
+  the window rather than only the newest entry — folding into the newest is defeated by
+  interleaving two classes — and counts repeats in the entry's previously reserved
+  trailing two bytes. Four comments asserting `CONFIG_WRITE` was the only such event are
+  corrected.
+- **A stranded chain segment can no longer swallow the next SELECT.** `chain_hdr` was
+  consulted only at the terminator, and the SELECT escape hatch fired only on a header
+  *mismatch* — so a segment sent as `10 A4 04 00`, whose masked header equals every
+  SELECT-by-AID's, absorbed a co-resident process's SELECT and left the previous applet
+  selected with its verified-PIN latch intact. A SELECT is now judged before the header
+  comparison, and the accumulation branch is bound to its opener too.
+- **`CTAPHID_WINK` can no longer forge the awaiting-touch indicator.** Re-arming reset the
+  deadline unconditionally, so one 64-byte report every 70 ms held the reserved touch
+  colour solid for ever — on the default single-LED board, pixel-identical to a real
+  consent prompt, from any unprivileged process, with FIDO2 and U2F disabled and nothing
+  written to the journal. A burst now always ends `WINK_MS` after the *first* arm, and a
+  wink arriving during a touch wait shows the real prompt instead. The re-arm rule lives in
+  `rsk-led` with a Kani proof rather than in the firmware.
+- **`CTAPHID_WINK` on a build with no indicator now answers `ERR_INVALID_CMD`.** It left
+  `CAPABILITY_WINK` clear and then reported a successful wink anyway — the device saying
+  both "I have no indicator" and "yes, I winked". `docs/guides/led.md` already described
+  the correct behaviour; the code did not.
+- **`ykman config set-lock-code` no longer discards the enabled-applications policy.**
+  `trim_to_cap`, added last cycle to stop stored bytes vetoing a write, evicted entries
+  from the front by position and never looked at the tag — so on an over-cap legacy record
+  the first thing dropped was `USB_ENABLED`, whose absence resolves to *everything
+  enabled*. The eviction is tag-aware now, and the companion defect is fixed in the same
+  pass: the merge buffer is sized for the overflow case, so `overlay_dev_conf` can no
+  longer answer `TooLong` before the trim gets a chance.
+- **The host-writable LED pin can no longer steal a pad another driver owns.** The
+  effective data pin is resolved from the phy record at boot and was filtered only against
+  the GPIO range and the presence pin, so on a board with an LED-power or USR-LED pin a
+  host could point it at either — falsifying a containment precondition `docs/unsafe.md`
+  states for eleven `AnyPin::steal` sites.
+- **`rsk secure-boot load-key` verifies the burn it made.** The post-burn check tested
+  that the first two ECC rows were non-zero, which passes on any garbage — including
+  picotool's replication of a two-byte `bootkey0` across all sixteen rows, the one
+  malformed shape the tool's own type gates let through. It now reads the slot back and
+  compares it to the fingerprint it wrote, and refuses a `bootkey0` that is not 32 bytes.
+  Without this, enforcement could be enabled on a board whose only trusted fingerprint
+  matched no signing key.
+- **`gate_union.py` now catches the defect it was written for.** Run the shipped script
+  against the tree containing last cycle's OATH bug and it exited 0: its regex required
+  `pub`, and that predicate was private. It now matches private and crate-private
+  predicates, scans `firmware/src/` too, and asserts a roster of applet crates so a missing
+  arm is loud instead of invisible.
+- **The most destructive host command's two-key refusal has a driven test.** `offboard`'s
+  replug guard could be deleted with all 280 tests green, because the refuse-to-guess
+  inventory classifies by callee name and the guard's AST is identical with and without it.
+  Raw `hid.device()` opens are now inventoried with written rationale, and the guard itself
+  is exercised with two devices attached.
+- **Hardening, swept as classes:** every `EF_PW_PRIV` retry-counter write clamps its slice
+  (five sites, one idiom — unreachable today, but a panic there bricks the device before
+  USB comes up); `Sw::retries` clamps its argument so a large retry total cannot collide
+  with `63C0` "blocked"; the vendor CTAPHID path scrubs its scratch like its sibling; both
+  host tools verify the CTAPHID INIT nonce echo and bound-check the response; `rsk identify`
+  reports a refusing device instead of aborting the walk; and `docs_constants.py` stops
+  scanning test files, where a stale literal masked a moved constant.
+
+### Changed
+
+- **Consent titles are shorter and can no longer run off the panel.** The ceremony title
+  was the one label on that screen painted unclipped, so 23 of 36 were cut mid-word —
+  including both irreversible OTP fuse burns, where the title is the *only* text on the
+  card. Six were reworded and the rest now fit outright; a test measures every consent
+  title against the band, so a future long one fails the gate instead of being cut on
+  glass. A `pcmr` token request also gets its own title now: it grants a permanent
+  directory-read capability behind what was the same card as a ten-minute session token.
+- **The audit screen distinguishes "nothing happened" from "I was not watching."** With
+  journalling off — the default — it said "No activity yet", which is a claim about the
+  world the device never made.
+- **The on-panel PIV generate no longer promises more than it delivers.** It said "Does
+  not erase anything" while overwriting the retired slot's certificate; the picker and the
+  sink now both skip a slot holding one, and the caption says what the fence covers.
+- **`rsk-tui --selftest` refuses a flag where the PIN should be.** `--selftest --demo` sent
+  the literal string `--demo` to the device as a clientPIN, spending a real retry, and
+  `--demo --selftest` silently ignored `--demo` and ran a real seed export. Both are
+  refused, and `--help` now shows the `[PIN]` positional the guide already documented.
+- **`rsk audit log` and the offboard receipt render a coalesced run's count.**
+
+- **The KV store is fenced off from the USB bootloader.** An attacker with brief physical
+  access could `picotool save` the whole flash, guess PINs until the retry counter locked,
+  then `picotool load` the snapshot back to reset it — unlimited offline guessing, against
+  every applet's counter at once ([#37](https://github.com/TheMaxMur/RS-Key/issues/37),
+  reported by Token2). The shipped image now embeds an RP2350 partition table that denies
+  the bootloader read *and* write over `__kvmain_start..__kvcnt_end`, so both halves answer
+  `permission failure` from the bootrom while the running firmware keeps `secure: rw`.
+  `scripts/pt.sh` derives the fence from the ELF's own linker symbols rather than restating
+  the layout, so it cannot drift from the store on any `FLASH_SIZE`/`KVMAIN`/`BOARD`, and
+  `check.sh` asserts the emitted table back against those symbols. Upstream leaves the
+  bootloader `r` here; RS-Key denies the dump too, because before the OTP burn the at-rest
+  seal root derives from on-chip state alone.
+- **Read that as "the attack now needs a reflash first", not "rollback fixed".** The
+  firmware partition has to stay bootloader-writable or updates could not exist, so on a
+  board without secure boot an attacker flashes an image carrying a permissive table and is
+  back where they started. Sealing is what makes the fence hold — the signature covers the
+  table, and a byte flipped anywhere in it fails both hash and signature. It is worth doing
+  because this is the one snapshot/restore gap secure boot did *not* close by itself:
+  secure boot verifies executable images, and writing the data region is not execution, so
+  a fully provisioned board was still snapshot/restore-able until now. One consequence
+  worth planning for: any image you signed earlier carries no table and re-opens the fence,
+  which is an ordinary downgrade and wants a rollback floor above your pre-table builds
+  ([threat-model.md](docs/threat-model.md), [production.md](docs/production.md)).
+
+### Added
+
+- **`rsk identify` and a TUI "Identify this key" action.** Nothing in the first-party
+  tooling could drive the wink that now works, so it was useful only to whoever wrote
+  their own script. The CLI is the one command that does *not* refuse to guess between
+  attached authenticators — telling them apart is the whole job — so it walks every one
+  in turn and names it; a device whose INIT leaves `CAPABILITY_WINK` clear is reported
+  rather than winked. The TUI action takes the first match like its other reads, so it
+  points at the device the dashboard is actually showing.
+- **`CTAPHID_WINK` actually winks.** Every `INIT` reply set `CAPABILITY_WINK`, which
+  §11.2.9.2.1 defines as "implements CTAPHID_WINK", and the handler then answered the
+  command with an empty frame and no visible action — so `fido2-token -W` and every
+  "which key is this?" flow reported success while nothing happened, in exactly the
+  situation the command exists for (two identical keys on one host). The indicator now
+  answers with four fast blinks over ~0.6 s in the touch colour, overriding the
+  configured effect and `--steady` — a wink that a display setting can render invisible
+  is the same bug again. It also outranks nothing else: the ambient status resumes
+  where it was. A build with no indicator (`LED_KIND=none`, which the display build
+  forces) now leaves the capability bit **clear** instead of claiming it.
+
+- **`perCredMgmtRO` and a real persistent pinUvAuthToken (CTAP 2.2 §6.5.2.2).** The
+  `pcmr` permission was half-wired: clientPIN accepted it and handed out a token, but
+  `credentialManagement` never verified against that token, so it authorized nothing —
+  and getInfo did not advertise `options.perCredMgmtRO`, which §6.5.5.7.2/.3 make the
+  precondition for requesting `pcmr` at all. Both halves are now real. getCredsMetadata,
+  enumerateRPsBegin and enumerateCredentialsBegin verify the persistent token first and
+  fall back to the session token (§6.8.2/.3/.4); deleteCredential and
+  updateUserInformation still refuse it, because the permission is read-only. The token
+  itself lives in `EF_PAUTHTOKEN`, sealed under the device key like the seed, so it
+  outlives the power cycle — the point of "persistent": a platform can refresh a
+  credential list across replugs without re-prompting for the PIN. Its record's
+  presence *is* the grant, so `resetPersistentPinUvAuthToken` is a deletion, which
+  `changePIN`, a `setMinPINLength` that forces a PIN change, and `authenticatorReset`
+  all perform. It was previously RAM-only and, on a device whose PIN had been *set* but
+  never *changed*, was never seeded at all — 32 zero bytes, which would have become a
+  known token the moment anything verified against it.
+
+- **A ccid driver that knows the default identity: `overlays.ccid-rs-key` and
+  `packages.<system>.ccid-rs-key`.** `pcscd` does not drive readers — the **ccid**
+  driver does, and it binds only the USB ids in its own `supported_readers.txt`, so
+  on the default identity (`0x1209:0x0001`) the CCID interface was skipped
+  *silently*: FIDO kept working while OpenPGP, PIV, OATH and Yubico-OTP looked
+  absent rather than broken, and no udev or polkit rule helps with a reader the
+  driver never claimed. Documenting it (0.4.6) told people what to patch by hand;
+  this does the patching. The overlay replaces `pkgs.ccid` — exactly what the NixOS
+  `pcscd` module puts in its plugin list — with the same driver plus one reader
+  entry, verified additive at build time: 629 entries become 630, none removed, no
+  other bundle key touched. It stays *ours* rather than an upstream submission
+  because `0x1209:0x0001` is pid.codes' shared **prototype** id, and listing it in
+  the ccid project would bind every unrelated prototype using it; the build fails
+  loudly if a future ccid restructures the list out from under the edit. The
+  `VIDPID=Yubikey5` build still needs none of this — `0x1050:0x0407` is listed
+  already. Reported in [#67](https://github.com/TheMaxMur/RS-Key/issues/67) and
+  [discussion #58](https://github.com/TheMaxMur/RS-Key/discussions/58);
+  [linux.md](docs/linux.md) has the wiring for both routes.
+
+- **The docs name the two third-party host tools, and the quick start shows one.**
+  Nothing in the setup path mentioned that a flashed key can be configured from a GUI
+  at all: [PicoForge](https://github.com/librekeys/picoforge) appeared only in the
+  host-tools section, below the build instructions, where someone who just flashed a
+  board never reaches. It is now in both quick starts and in the `rsk` guide beside
+  the CLI and the TUI, with a screenshot of the Device Overview page. The screenshot
+  is deliberately a *freshly flashed default* board — `1209:0001`, no PIN yet, boot
+  mode `Development` — so it matches what the reader is looking at rather than a
+  provisioned key or the `VIDPID=Yubikey5` flavor.
+- **[Telesma](https://github.com/go-ctap/app) is tracked in the interop matrix as
+  `⏳ untested`** — the first row to use a mark [interop.md](docs/interop.md) has had
+  in its legend from the start. It is a desktop CTAP workbench over
+  [`go-ctap/ctap`](https://github.com/go-ctap/ctap), an independent CTAP 2.0–2.3
+  client stack, and that is the reason it is worth a row: every FIDO cell in that
+  matrix reads the device through libfido2 or python-fido2, so a divergence both of
+  them tolerate is invisible at that layer — the same shape as the `ykman openpgp
+  info` GET DATA `6E` bug, which every protocol test passed.
+  [testing.md](docs/testing.md) says as much where it explains the layer.
+- **`rsk status --json` reports the chip serial** (`rsk` 0.3.32), the field
+  `rsk-tui --once` already showed, so a script that tells two attached keys apart
+  no longer needs the TUI. It comes from the rescue SELECT response, so it is
+  `null` wherever the CCID interface is unavailable — on Linux that is the ccid
+  reader list above, not a device fault. Thanks to @mannp
+  ([#69](https://github.com/TheMaxMur/RS-Key/pull/69)).
+
+### Fixed
+
+- **The packaged `rsk-tui` found no device on Linux.** `nix run .#rsk-tui` built
+  against `pkgs.systemd`, which no longer carries `libudev.so.1` in `lib/`, so
+  hidapi's hidraw backend lost the library at *runtime* — the build succeeded and
+  the dashboard then saw nothing plugged in. It links `pkgs.udev`
+  (systemd-minimal-libs) instead, where the library actually lives. Thanks to
+  @mannp ([#68](https://github.com/TheMaxMur/RS-Key/pull/68)).
+
+- **Three seal recipes produced an image that would not boot on a provisioned board.**
+  production.md states the rule — every `picotool seal` carries `--rollback <your floor>`,
+  and a versionless sealed image is refused fail-closed — while signing-keys.md (twice) and
+  build.md showed `--major 1 --minor 0` and stopped. Exactly the pages a reader reaches
+  *after* enabling anti-rollback. All three now carry it.
+- **The gate compares documented constants against the code.** A number copied into prose
+  rots silently — the constant moves, everything still compiles, every test still passes, and
+  the docs go on asserting the old value. `architecture.md` spent the whole capacity-work era
+  claiming `MAX_DYNAMIC_FILES` was 256 against a real 1280. `scripts/docs_constants.py` now
+  fails the gate on any value the docs state next to a constant's name that the code no longer
+  assigns to it. Narrow by construction — 5 pairs, because the docs rarely state a value that
+  way — and it fails if that count drops, so it cannot start passing vacuously.
+- **`otp_secureboot.json` now has a reason, not just a description.** Four pages named the
+  file; none said why it exists. It is the courier for one number: the bootrom compares
+  `SHA-256(public key in the image)` against a fused fingerprint, signing happens on the host
+  with a key that must never reach the device, and fusing happens against the board — so
+  something has to carry the fingerprint between two operations that may be months and
+  machines apart. 2b now says that, with a table of who writes it, who reads it, and what is
+  inside, plus the fact nobody had established: it is a pure function of the signing key
+  (`--major`/`--minor`/`--rollback` do not change a byte), so losing it costs one command and
+  it never needs backing up. The `.pem` is the thing to protect.
+- **`production.md` opens with every command it will run, in order.** The CLI groups by fuse
+  family and the page groups by goal, so `rsk otp` appears in stage 1 and again in stage 3 —
+  which reads as disorder until someone says the two axes cross. The table names each
+  command, its stage, what it writes and whether it can be undone (seven of the eight: never).
+- **`production.md` stage 2b asked you to sign an image you had not built yet.** The build
+  recipe lived below stage 2c, so a first pass through the page hit `picotool seal
+  firmware.uf2` with no such file and no `otp_secureboot.json` — and nothing said where
+  either comes from. 2b is now self-contained: build, embed the partition table, convert,
+  seal, with the `otp.json` named as something `seal` creates at a path you choose.
+- **`architecture.md` understated the file budget by 5×** — `MAX_DYNAMIC_FILES` has been
+  1280 since the capacity work, not 256, in the section that reasons about how full a key
+  can get.
+- **Two documented `rsk secure-boot` commands could not run, and the file they revolve
+  around was never explained.** `otp.json` is a required positional, so production.md's burn
+  ritual (`rsk secure-boot load-key` with nothing after it) and signing-keys.md's key-loss
+  row both exited 2 — the latter six lines below the same file spelling the command
+  correctly. The file itself was named four times and defined nowhere: it is an **output**
+  of `picotool seal`, carrying the SHA-256 fingerprint of your signing key plus the two burn
+  flags, not a secret and not something you write by hand. production.md now says that where
+  you first meet it. A new gate test (`tools/rsk/test_docs_commands.py`) parses every `rsk …`
+  line inside a docs shell block against the real CLI parser, so a command nobody can run
+  cannot ship again; prose mentions stay out of scope, fenced blocks do not.
+- **Linux: the CCID driver's reader list, and why the applets go missing without an error.**
+  `pcscd` cannot bind a reader the **ccid** driver never claimed, and that driver claims only
+  USB ids present in its own list — which the default `0x1209:0x0001` identity is not. FIDO
+  keeps working while OpenPGP, PIV, OATH and Yubico-OTP simply look absent, and no udev or
+  polkit change touches it, because those govern access to a reader that was skipped
+  ([#67](https://github.com/TheMaxMur/RS-Key/issues/67) — the third report of this same root
+  cause). [linux.md](docs/linux.md) now says so before the setup steps, gives both workarounds,
+  and explains why the fix is not simply upstream: `0x1209:0x0001` is pid.codes' shared
+  *prototype* id, so listing it in the ccid driver would bind every unrelated prototype using
+  it. A dedicated VID/PID is pending and the submission waits on it.
+- **`versioning.md` advertised the wrong `versions` and a stale `bcdDevice`.** It listed
+  getInfo `versions` as only `U2F_V2` + `FIDO_2_0` (missing `FIDO_2_1` and `FIDO_2_3`) and
+  pinned a `bcdDevice` literal hundreds of builds old. It also never answered the question
+  people arrive with ([#66](https://github.com/TheMaxMur/RS-Key/issues/66)) — *which build is
+  on this device* — which `5.7.4` cannot, being a compatibility constant identical across
+  every build of every release. The page now names `bcdDevice` as the build identity, shows
+  how to read it, and notes that a plain `nix build` image carries no version in the file at
+  all.
+- **A `nix build` with `fwVersion` set no longer calls itself `5.7.4`.** The derivation's
+  `version` was a literal that ignored the knob, which reads as a version pinned in the flake
+  ([#66](https://github.com/TheMaxMur/RS-Key/issues/66)).
+- **An over-long `allowList` or `excludeList` is refused, not truncated.** Both
+  parsers dropped every credential descriptor past `maxCredentialCountInList` (16)
+  and carried on as if the list had ended there, instead of returning
+  `CTAP2_ERR_LIMIT_EXCEEDED` so the platform splits it. On getAssertion that answers
+  `NO_CREDENTIALS` for a credential the device holds — invisible whenever the match
+  happens to sit in the retained head. On makeCredential it silently forfeits
+  re-registration protection: padding the `excludeList` past 16 hid the registered
+  credential and minted a duplicate, where a YubiKey returns
+  `CTAP2_ERR_CREDENTIAL_EXCLUDED`.
+- **A credential descriptor whose `type` is not `public-key` is ignored.** Both
+  parsers read the field only to check it was present and then matched on the `id`
+  regardless, so a descriptor naming a credential kind this device cannot assert was
+  treated as one of ours. Foreign descriptors are now skipped — while still counting
+  towards the ceiling, so they cannot buy room past it — and an `allowList` left with
+  no usable descriptor keeps scoping the request: it fails with `NO_CREDENTIALS`
+  rather than falling through to resident discovery and answering with some other
+  credential.
+- **getInfo no longer advertises `FIDO_2_2`.** CTAP 2.2 never defined that version
+  string and CTAP 2.3 §6.4 says it outright: "MUST not be present in versions member".
+  The 2.2 surface is discovered through option IDs and getInfo members instead.
+  `versions` is now `U2F_V2, FIDO_2_0, FIDO_2_1, FIDO_2_3`, and both metadata
+  statements match.
+- **A PIN established over a torn `authenticatorReset` cannot inherit an old
+  read grant.** The wipe's last phase can drop `EF_PIN` and lose power before
+  `EF_PAUTHTOKEN`; `setPIN` now clears the persistent token first, so the holder of a
+  pre-reset `pcmr` grant cannot enumerate the credentials created after it.
+- **Two reserved-but-unwired definitions are gone.** `EF_AUTHTOKEN` (0x1090,
+  "pinUvAuthToken seed") was never written or read by any build — the session token is
+  RAM-only by design, since §6.5.6 regenerates it at power-on — yet it sat in both
+  `authenticatorReset` sweep predicates claiming there was something there to wipe. And
+  the OpenPGP extended-header tag was compared as a bare `0x4D` literal beside an
+  `EF_EXT_HEADER` constant nothing used.
+
 ## [0.4.6] - 2026-08-06
 
 ### Security
@@ -3589,7 +3913,8 @@ family that keeps the "enterprise" features in the open tree.
   signature of it, and a CycloneDX SBOM. See
   [docs/releases.md](docs/releases.md) to verify a download.
 
-[Unreleased]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.6...HEAD
+[Unreleased]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.7...HEAD
+[0.4.7]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.6...v0.4.7
 [0.4.6]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.5...v0.4.6
 [0.4.5]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.4...v0.4.5
 [0.4.4]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.3...v0.4.4

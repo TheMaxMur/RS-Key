@@ -61,6 +61,19 @@ fn every_block_length_holds_the_invariant() {
     }
 }
 
+/// `CTAPHID_WINK` is ungated, so the bound on a burst is the only thing between a
+/// flooding host and the reserved touch colour held solid. Prove the arm cannot
+/// extend a live burst over every (deadline, now) pair — the wrapping millisecond
+/// counter is exactly where a loop test stops covering.
+#[kani::proof]
+fn wink_arm_never_extends_a_running_burst() {
+    let end: u32 = kani::any();
+    let now: u32 = kani::any();
+    if wink_running(end, now) {
+        assert_eq!(wink_arm(end, now), end);
+    }
+}
+
 /// Enforcement is a fixpoint — the round-trip proof rests on it.
 #[kani::proof]
 fn enforce_touch_invariants_is_idempotent() {

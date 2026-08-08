@@ -588,6 +588,60 @@ fn opt_out_applet_is_never_chained() {
     assert_eq!(sw, Sw::INS_NOT_SUPPORTED);
 }
 
+/// The held GET RESPONSE tail carries no owner, and needs none: every APDU that is
+/// not a GET RESPONSE with bytes outstanding — a SELECT included — drops it before
+/// anything is dispatched, so one applet's response can never be drained after a
+/// switch to another. Pinned because the binding here is temporal, and a reader
+/// looking for an owner field will not find one.
+#[test]
+fn a_select_drops_a_held_response_tail() {
+    let mut chunk = Chunky {
+        body_len: 269,
+        chain: true,
+    };
+    let mut echo = Echo { selected: false };
+    let mut applets: [&mut dyn Applet<()>; 2] = [&mut chunk, &mut echo];
+    let mut disp = Dispatcher::new();
+    let mut out = [0u8; 512];
+    let mut res = ResBuf::new(&mut out);
+
+    select_chunky(&mut disp, &mut applets, &mut res);
+    // A body over the short Le leaves 13 bytes held for GET RESPONSE.
+    assert_eq!(
+        disp.process(
+            &[0x00, 0xCA, 0x00, 0x00, 0x00],
+            &mut applets,
+            &mut (),
+            &mut res
+        ),
+        Sw::new(0x61, 0x0D)
+    );
+
+    let sel_echo = [
+        0x00, 0xA4, 0x04, 0x00, 0x08, 0xA0, 0x00, 0x00, 0x06, 0x47, 0x2F, 0x00, 0x01,
+    ];
+    assert_eq!(
+        disp.process(&sel_echo, &mut applets, &mut (), &mut res),
+        Sw::OK
+    );
+
+    // The tail is gone, so GET RESPONSE reaches the newly selected applet — which
+    // has no such instruction — instead of serving the previous applet's bytes.
+    assert_eq!(
+        disp.process(
+            &[0x00, 0xC0, 0x00, 0x00, 0x00],
+            &mut applets,
+            &mut (),
+            &mut res
+        ),
+        Sw::INS_NOT_SUPPORTED
+    );
+    assert!(
+        res.is_empty(),
+        "a previous applet's response tail survived a SELECT"
+    );
+}
+
 /// An applet with a PIN-like security status, to prove a card reset clears it.
 struct Verifiable {
     verified: bool,
@@ -613,6 +667,10 @@ impl Applet<()> for Verifiable {
             // A privileged operation, allowed only while verified.
             0x87 if self.verified => Sw::OK,
             0x87 => Sw::SECURITY_STATUS_NOT_SATISFIED,
+            // A SELECT that reaches `process` instead of the dispatcher, answered
+            // the way OpenPGP's `cmd_select` does: prefix-match, so a buffer that
+            // merely *starts* with this AID is accepted (audit run-37).
+            0xA4 if apdu.data.starts_with(self.aid()) => Sw::OK,
             _ => Sw::INS_NOT_SUPPORTED,
         }
     }
@@ -838,5 +896,125 @@ fn the_openers_own_final_segment_still_completes_the_chain() {
         res2.as_slice(),
         &[0xAA, 0xBB, 0xCC],
         "chain reassembly broke"
+    );
+}
+
+/// Audit run-37: the SELECT carve-out fired only on a header MISMATCH, and
+/// `10 A4 04 00` masks to exactly the header every SELECT-by-AID carries — the one
+/// header an attacker would pick. The victim's SELECT was absorbed as that chain's
+/// final segment and dispatched to the still-current applet, which prefix-matched
+/// its own AID at offset 0 and answered 9000 with its PIN latch intact, so the
+/// SELECT away silently did not happen.
+#[test]
+fn a_stranded_select_header_chain_does_not_swallow_the_next_select() {
+    let mut piv = Verifiable { verified: false };
+    let mut echo = Echo { selected: false };
+    let mut disp = Dispatcher::new();
+    let mut out = [0u8; 64];
+
+    let sel_piv = [0x00, 0xA4, 0x04, 0x00, 0x05, 0xA0, 0x00, 0x00, 0x03, 0x08];
+    let sel_echo = [
+        0x00, 0xA4, 0x04, 0x00, 0x08, 0xA0, 0x00, 0x00, 0x06, 0x47, 0x2F, 0x00, 0x01,
+    ];
+    {
+        let mut applets: [&mut dyn Applet<()>; 2] = [&mut piv, &mut echo];
+        let mut res = ResBuf::new(&mut out);
+
+        // The victim selects an applet and verifies its PIN.
+        assert_eq!(
+            disp.process(&sel_piv, &mut applets, &mut (), &mut res),
+            Sw::OK
+        );
+        assert_eq!(
+            disp.process(&[0x00, 0x20, 0, 0], &mut applets, &mut (), &mut res),
+            Sw::OK
+        );
+
+        // The attacker strands one segment carrying the current applet's own AID.
+        assert_eq!(
+            disp.process(
+                &[0x10, 0xA4, 0x04, 0x00, 0x05, 0xA0, 0x00, 0x00, 0x03, 0x08],
+                &mut applets,
+                &mut (),
+                &mut res
+            ),
+            Sw::OK
+        );
+
+        // The victim's next SELECT must select, not terminate the chain.
+        assert_eq!(
+            disp.process(&sel_echo, &mut applets, &mut (), &mut res),
+            Sw::OK
+        );
+        assert_eq!(
+            disp.current(),
+            Some(1),
+            "the SELECT was swallowed as a chain terminator"
+        );
+    }
+    assert!(
+        echo.selected,
+        "the victim's SELECT never reached its applet"
+    );
+    assert!(
+        !piv.verified,
+        "the previous applet kept its verified PIN across a SELECT away"
+    );
+}
+
+/// …and the segments are bound to the opener too, not only the terminator. Without
+/// that, a second process splices its own data into a live chain and the victim's
+/// own final APDU dispatches the concatenation — the run-34 #26 primitive, reached
+/// from the other end.
+#[test]
+fn a_mid_chain_header_change_drops_the_chain() {
+    let mut echo = Echo { selected: false };
+    let mut applets: [&mut dyn Applet<()>; 1] = [&mut echo];
+    let mut disp = Dispatcher::new();
+    let mut out = [0u8; 64];
+    let mut res = ResBuf::new(&mut out);
+
+    let mut sel = vec![0x00, 0xA4, 0x04, 0x00, 0x08];
+    sel.extend_from_slice(&[0xA0, 0x00, 0x00, 0x06, 0x47, 0x2F, 0x00, 0x01]);
+    assert_eq!(disp.process(&sel, &mut applets, &mut (), &mut res), Sw::OK);
+
+    // The victim opens a chain…
+    assert_eq!(
+        disp.process(
+            &[0x10, 0x10, 0x22, 0x33, 0x02, 0xAA, 0xBB],
+            &mut applets,
+            &mut (),
+            &mut res
+        ),
+        Sw::OK
+    );
+    // …and a segment with a different header must not join it.
+    assert_eq!(
+        disp.process(
+            &[0x10, 0x10, 0x44, 0x55, 0x02, 0xCC, 0xDD],
+            &mut applets,
+            &mut (),
+            &mut res
+        ),
+        Sw::LAST_CHAIN_EXPECTED,
+        "a foreign segment was spliced into a live chain"
+    );
+    // The chain is gone, so the victim's own terminator is now a plain command
+    // carrying only its own data.
+    let mut out2 = [0u8; 64];
+    let mut res2 = ResBuf::new(&mut out2);
+    assert_eq!(
+        disp.process(
+            &[0x00, 0x10, 0x22, 0x33, 0x01, 0xEE],
+            &mut applets,
+            &mut (),
+            &mut res2
+        ),
+        Sw::OK
+    );
+    assert_eq!(
+        res2.as_slice(),
+        &[0xEE],
+        "the injected segments survived into the victim's command"
     );
 }

@@ -678,3 +678,22 @@ fn verify_refuses_every_undefined_p2() {
         );
     }
 }
+
+#[test]
+fn an_overlong_pw_status_record_cannot_panic_the_retry_writers() {
+    // EF_PW_PRIV is Internal-only and has been 7 bytes in every revision, so this
+    // is hardening, not a live bug: `Fs::read` reports the record's stored length,
+    // and an unclamped `&pw[..n]` write-back would panic a panic-halt image.
+    let mut fs = setup();
+    let mut overlong = crate::files::PW_STATUS_DEFAULT.to_vec();
+    overlong.resize(16, 0xAA);
+    fs.put(EF_PW_PRIV, &overlong).unwrap();
+
+    assert_eq!(pin_wrong_retry(&mut fs, EF_PW1), Ok(PW_RETRIES_DEFAULT - 1));
+    assert_eq!(pin_reset_retries(&mut fs, EF_PW1, false), Ok(()));
+    assert_eq!(set_pin_retry_counter(&mut fs, EF_RC, 0), Ok(()));
+
+    let mut pw = [0u8; 8];
+    let n = fs.read(EF_PW_PRIV, &mut pw).unwrap();
+    assert_eq!((n, pw[PW1_RETRY_IDX], pw[pw_retry_idx(EF_RC)]), (8, 3, 0));
+}

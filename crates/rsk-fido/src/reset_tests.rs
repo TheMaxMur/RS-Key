@@ -309,16 +309,14 @@ fn reset_wipes_false_absent_credential_without_looping() {
 #[test]
 fn the_gate_set_defers_every_record_whose_absence_is_permissive() {
     use crate::consts::{
-        EF_ALWAYS_UV, EF_AUTHTOKEN, EF_BACKUP_SEALED, EF_DEVICE_PIN, EF_KEY_DEV, EF_MINPINLEN,
-        EF_PAUTHTOKEN,
+        EF_ALWAYS_UV, EF_BACKUP_SEALED, EF_DEVICE_PIN, EF_KEY_DEV, EF_MINPINLEN, EF_PAUTHTOKEN,
     };
     for fid in [
         EF_PIN,
         EF_DEVICE_PIN,
         EF_ALWAYS_UV,
         EF_MINPINLEN,
-        EF_AUTHTOKEN,
-        EF_PAUTHTOKEN,
+        EF_PAUTHTOKEN.get(),
         EF_BACKUP_SEALED,
     ] {
         assert!(is_fido_gate_fid(fid), "{fid:#06x} gates the applet");

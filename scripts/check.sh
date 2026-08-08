@@ -43,6 +43,35 @@ firmware_size_budget() {
   fi
 }
 
+# `scripts/pt.sh` fences the KV store off from the USB bootloader. A table whose
+# bounds drift from the store is worse than no table at all: the image still
+# links, still boots, and the gate still passes, but the running firmware loses
+# writes to its own flash. So assert the emitted table against the ELF's own
+# symbols — not against pt.sh's arithmetic, which is the thing under test.
+partition_table_fences_the_store() {
+  local elf="target/thumbv8m.main-none-eabihf/release/firmware"
+  local out line want got
+  out=$(mktemp -d)/pt.elf
+  scripts/pt.sh "$elf" "$out"
+  want="$(arm-none-eabi-nm "$elf" | awk '$3 == "__kvmain_start" { print $1 }')"
+  want="$want->$(arm-none-eabi-nm "$elf" | awk '$3 == "__kvcnt_end" { print $1 }')"
+  for p in "0:NSBOOT(rw)" "1:NSBOOT(-)"; do
+    line=$(picotool info -a "$out" | grep -E "^ +partition ${p%%:*} ") || {
+      echo "FAIL: no partition ${p%%:*} in the emitted table" >&2; exit 1
+    }
+    grep -q -- "${p#*:}" <<<"$line" || {
+      echo "FAIL: partition ${p%%:*} is not ${p#*:}: $line" >&2; exit 1
+    }
+  done
+  got=$(picotool info -a "$out" | grep -E '^ +partition 1 ' | grep -oE '[0-9a-f]{8}->[0-9a-f]{8}')
+  if [ "$got" != "$want" ]; then
+    echo "FAIL: the store partition is $got but __kvmain_start..__kvcnt_end is $want." >&2
+    echo "      A table that misses the store locks the firmware out of its own data." >&2
+    exit 1
+  fi
+  echo "store partition $got, NSBOOT denied; firmware partition writable"
+}
+
 run "fmt"                      cargo fmt --all --check
 # `BOARD` because `rsk-wipe`'s build script refuses to guess a flash size (see
 # the rsk-wipe steps below); `waveshare-one` is the reference board, whose
@@ -119,6 +148,7 @@ run "clippy (display firmware)" env LED_KIND=none cargo clippy -p firmware --fea
 run "clippy (display strong-pin)" env LED_KIND=none cargo clippy -p firmware --features display,strong-pin -- -D warnings
 run "build firmware (release)" cargo build --release -p firmware
 run "firmware size budget"     firmware_size_budget
+run "partition table fences the store" partition_table_fences_the_store
 # The trusted-display flavor must keep building from the same tree. Built
 # `LED_KIND=none` (the panel replaces the addressable LED and its backlight uses
 # GPIO16 — the compile_error guard in main.rs enforces this), and before the
@@ -168,6 +198,7 @@ run "cargo-vet (supply-chain)" cargo vet --locked
 # and nothing in the type system notices a missing arm. OATH's was absent for a
 # release (audit run-36); this is the check that would have caught it.
 run "gate-union (device wipe)" python scripts/gate_union.py
+run "docs constants match code" python scripts/docs_constants.py
 run "pytest (tools/rsk)"       python -m pytest tools/rsk -q
 # The interop allow-list is the only thing that tells an expected RS-Key/YubiKey
 # divergence from a fidelity gap, and it goes stale silently — a firmware change

@@ -88,6 +88,40 @@ fn product_string_stops_at_nul_and_caps_at_32() {
     assert!(Product::new(b"").is_none());
 }
 
+/// `overlay` is a merge, so a TLV the parser cannot make a `Product` of must leave
+/// the stored string where it is. A 33-byte NUL-free value passes the length arm
+/// but not `Product::new`, and used to fall through to `None` — clearing a name the
+/// host never asked to change. An empty value is still the explicit clear.
+#[test]
+fn a_malformed_string_tlv_leaves_the_stored_one_alone() {
+    let stored = PhyData {
+        usb_product: Product::new(b"RSK Custom"),
+        usb_manufacturer: Product::new(b"RS-Key"),
+        ..Default::default()
+    };
+
+    // 33 bytes, no terminating NUL: admitted by `1..=33`, rejected by `Product`.
+    let mut tlv = [b'x'; 35];
+    (tlv[0], tlv[1]) = (TAG_USB_PRODUCT, 33);
+    assert_eq!(stored.overlay(&tlv).usb_product, stored.usb_product);
+    tlv[0] = TAG_USB_MANUFACTURER;
+    assert_eq!(
+        stored.overlay(&tlv).usb_manufacturer,
+        stored.usb_manufacturer
+    );
+
+    // A bare NUL is the explicit clear, and still clears.
+    assert_eq!(
+        stored.overlay(&[TAG_USB_PRODUCT, 1, 0]).usb_product,
+        None,
+        "an empty value is how a host asks for the default back"
+    );
+    // 32 bytes + NUL is the longest well-formed value, and still applies.
+    let mut ok = [b'y'; 35];
+    (ok[0], ok[1], ok[34]) = (TAG_USB_PRODUCT, 33, 0);
+    assert_eq!(stored.overlay(&ok).usb_product, Product::new(&[b'y'; 32]));
+}
+
 #[test]
 fn usb_manufacturer_roundtrips_and_survives_partial_write() {
     let phy = PhyData {
@@ -230,6 +264,28 @@ fn normalize_never_exceeds_the_descriptor_ceiling() {
     assert_eq!(n, USB_STR_MAX);
     let n = normalize_usb_product(&[b'A'; USB_STR_MAX + 1], &mut out);
     assert_eq!(n, USB_STR_MAX);
+}
+
+/// The token write is unconditional, so an `out` shorter than the token used to
+/// index past its end and panic. This is a `pub` fn on the boot path of a crate
+/// whose point is host-callable purity: every buffer size has to have an answer,
+/// and for one with no room for a safe name that answer is "nothing".
+#[test]
+fn normalize_writes_nothing_into_a_buffer_too_small_for_the_token() {
+    for len in 0..YK_TOKEN_SUFFIX.len() {
+        let mut out = [0xFFu8; 16];
+        assert_eq!(normalize_usb_product(b"Yubico YubiKey", &mut out[..len]), 0);
+        assert!(out[..len].iter().all(|&b| b == 0xFF), "len={len}");
+    }
+    // One byte more than the bare token fits the token plus a single name byte.
+    let mut out = [0u8; 15];
+    let n = normalize_usb_product(b"Yubico YubiKey", &mut out);
+    assert_eq!(&out[..n], b"Y OTP+FIDO+CCID");
+
+    // A non-masquerade name has no token to fit, so a short buffer just truncates.
+    let mut out = [0u8; 4];
+    let n = normalize_usb_product(b"RS-Key Security Key", &mut out);
+    assert_eq!(&out[..n], b"RS-K");
 }
 
 /// Truncation counts UTF-16 code units (what the descriptor encodes) and cuts on a

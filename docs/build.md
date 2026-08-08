@@ -7,14 +7,20 @@ Every knob is compile-time. Set environment variables and cargo features at
 ```sh
 # the general shape
 nix develop -c env KNOB=value cargo build --release -p firmware [--features ...]
-picotool uf2 convert target/thumbv8m.main-none-eabihf/release/firmware -t elf firmware.uf2
+nix develop -c scripts/pt.sh target/thumbv8m.main-none-eabihf/release/firmware firmware-pt.elf
+picotool uf2 convert firmware-pt.elf -t elf firmware.uf2
 ```
+
+The middle step embeds the [partition table](#the-partition-table); skip it and
+the key ships with its storage exposed to the bootloader. `nix build .#firmware`
+folds all three together.
 
 ```mermaid
 flowchart TD
     knobs["env knobs + cargo features"] --> build["cargo build (or nix build)"]
     build --> elf["firmware.elf"]
-    elf --> conv["picotool uf2 convert"]
+    elf --> pt["scripts/pt.sh<br/>embed partition table"]
+    pt --> conv["picotool uf2 convert"]
     conv --> uf2["firmware.uf2"]
     uf2 --> flash["BOOTSEL flash"]
     uf2 -. "secure boot only" .-> seal["picotool seal --sign<br/>signing key (host-only)"]
@@ -105,6 +111,34 @@ hugs the current image, so a runaway dependency (a whole extra EC curve is
 Lower `FIRMWARE_FLASH_BUDGET_KIB` when the image shrinks; raise it in the same
 commit when a real feature legitimately grows it.
 
+## The partition table
+
+The shipped image carries an RP2350 partition table that fences the KV store off
+from the USB bootloader: `picotool save` and `picotool load` over the store answer
+`permission failure`, while the running firmware keeps full access to it. It is a
+defence-in-depth layer against the BOOTSEL snapshot/restore rollback, and it is a
+real barrier only where secure boot is on — read
+[threat-model.md](threat-model.md#flash-snapshot-rollback-the-pin-counter-reset)
+before quoting it as protection.
+
+`scripts/pt.sh` reads the fence out of the built ELF's own `__kvmain_start` /
+`__kvcnt_end` symbols — the same ones `flash_storage.rs` uses to find the store —
+so it follows `FLASH_SIZE` / `KVMAIN` / `BOARD` with no second copy of the layout
+to keep in step. `check.sh` asserts the emitted table back against those symbols,
+because a table that misses the store still links, still boots, and then loses the
+firmware's writes at runtime.
+
+> ⚠️ **A bare `cargo build` does not produce it.** The table is added after
+> linking, so `target/…/release/firmware` carries none and a key flashed straight
+> from that ELF is unfenced. `nix build .#firmware` applies it; for a local cargo
+> build, apply it yourself:
+>
+> ```sh
+> cargo build --release -p firmware
+> scripts/pt.sh target/thumbv8m.main-none-eabihf/release/firmware firmware-pt.elf
+> picotool load firmware-pt.elf -t elf
+> ```
+
 ## Examples
 
 ```sh
@@ -179,7 +213,7 @@ Two caveats:
   ```sh
   picotool seal --sign --hash result/firmware.uf2 firmware-signed.uf2 \
       ~/.rs-key-secrets/secure_boot_key.pem ~/.rs-key-secrets/otp_secureboot.json \
-      --major 1 --minor 0
+      --major 1 --minor 0 --rollback 1
   ```
   The `.pem` is your signing key, the `.json` is where `seal` writes the
   boot-key fingerprint, and `--major`/`--minor` stamp an **image version** into

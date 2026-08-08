@@ -26,7 +26,7 @@ use rsk_crypto::pinproto::PinProto;
 use rsk_crypto::sha256;
 use rsk_fs::{Fs, Storage};
 
-use crate::cbordec::{cbor, def_arr, def_map};
+use crate::cbordec::{cbor, def_arr, def_map, parse_credential_descriptors};
 use crate::cert;
 use crate::clientpin::{UvOutcome, builtin_uv_enabled, builtin_uv_step};
 use crate::consts::{
@@ -166,7 +166,7 @@ fn parse(data: &[u8]) -> Result<Request<'_>, CtapError> {
             2 => parse_rp_entity(&mut d, &mut req)?,
             3 => parse_user_entity(&mut d, &mut req)?,
             4 => parse_pubkey_params(&mut d, &mut req)?,
-            5 => parse_exclude_list(&mut d, &mut req)?,
+            5 => req.exclude_len = parse_credential_descriptors(&mut d, &mut req.exclude)?,
             6 => parse_extensions(&mut d, &mut req)?,
             7 => parse_options(&mut d, &mut req)?,
             8 => req.pin_uv_auth_param = Some(cbor(d.bytes())?),
@@ -243,39 +243,6 @@ fn parse_pubkey_params(d: &mut Decoder<'_>, req: &mut Request<'_>) -> Result<(),
         {
             req.sel_alg = ca;
             req.sel_curve = cv as i64;
-        }
-    }
-    Ok(())
-}
-
-/// Parse `excludeList` (request key 5) into `req.exclude` (capped at MAX_EXCLUDE).
-fn parse_exclude_list<'a>(d: &mut Decoder<'a>, req: &mut Request<'a>) -> Result<(), CtapError> {
-    let a = def_arr(d)?;
-    for _ in 0..a {
-        let m = def_map(d)?;
-        let mut id: &[u8] = &[];
-        let (mut id_present, mut type_present) = (false, false);
-        for _ in 0..m {
-            match cbor(d.str())? {
-                "id" => {
-                    id = cbor(d.bytes())?;
-                    id_present = true;
-                }
-                // Read "type" as text so a byte-string yields CborUnexpectedType.
-                "type" => {
-                    let _: &str = cbor(d.str())?;
-                    type_present = true;
-                }
-                _ => cbor(d.skip())?,
-            }
-        }
-        // A credential descriptor needs both "type" and "id".
-        if !type_present || !id_present {
-            return Err(CtapError::MissingParameter);
-        }
-        if req.exclude_len < MAX_EXCLUDE {
-            req.exclude[req.exclude_len] = id;
-            req.exclude_len += 1;
         }
     }
     Ok(())

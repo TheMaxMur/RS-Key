@@ -113,7 +113,10 @@ let
     pkgs.stdenv.mkDerivation (
       {
         pname = name;
-        version = "5.7.4";
+        # Follow the `fwVersion` knob rather than restating the default: a build
+        # with `fwVersion = "2.0.0"` used to still call itself 5.7.4, which reads
+        # as a pinned version and sent someone looking for it in the flake (#66).
+        version = if fwVersion == null then "5.7.4" else fwVersion;
         src = firmwareSrc;
         inherit cargoDeps;
         nativeBuildInputs = [
@@ -142,9 +145,14 @@ let
         installPhase = ''
           runHook preInstall
           mkdir -p "$out"
-          elf="target/${target}/release/firmware"
-          cp "$elf" "$out/${name}.elf"
-          picotool uf2 convert "$elf" -t elf "$out/${name}.uf2"
+          # The partition table is part of the shipped image, so it lands before
+          # either artifact is published: the .elf and the UF2 are both things
+          # people flash, and `picotool seal --sign` hashes whichever one it is
+          # handed. Signing after this covers the table (a byte flipped in it
+          # fails hash *and* signature), which is what turns the fence from
+          # friction into something an attacker can not reflash around.
+          bash scripts/pt.sh "target/${target}/release/firmware" "$out/${name}.elf"
+          picotool uf2 convert "$out/${name}.elf" -t elf "$out/${name}.uf2"
           runHook postInstall
         '';
         doCheck = false;

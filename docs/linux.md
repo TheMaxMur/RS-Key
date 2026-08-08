@@ -19,8 +19,10 @@ flowchart TD
 ```
 
 FIDO generally works after installing the standard yubico udev rules. CCID needs
-the extra two pieces below: a **polkit rule** (so a non-root user, including one
-over SSH, may talk to `pcscd`) and, if you also use GnuPG, **`disable-ccid`** in
+three more pieces: the **CCID driver's reader list** must contain this device's
+USB id at all (next section — on the default identity it does not, and that alone
+hides every applet), a **polkit rule** (so a non-root user, including one over
+SSH, may talk to `pcscd`), and, if you also use GnuPG, **`disable-ccid`** in
 `scdaemon.conf` so `gpg`'s `scdaemon` goes through `pcscd` instead of grabbing
 the raw CCID interface and locking out `ykman`/`pcsc-tools`.
 
@@ -31,6 +33,42 @@ the raw CCID interface and locking out `ykman`/`pcsc-tools`.
 > name, which the default RS-Key build does not present).
 
 Replace `youruser` with your login name throughout.
+
+## The CCID driver's reader list (default identity only)
+
+**Read this first if the applets are missing.** `pcscd` does not drive readers
+itself — the **ccid** driver does, and it binds only USB ids that appear in its
+own reader list (`supported_readers.txt`, compiled into
+`ifd-ccid.bundle/Contents/Info.plist`). The default RS-Key identity
+`0x1209:0x0001` is **not** in that list, so the CCID interface is skipped
+**silently**: FIDO keeps working, `pcsc_scan` shows nothing, and OpenPGP, PIV,
+OATH and Yubico-OTP all look absent rather than broken. No polkit or udev change
+fixes this — those govern access to a reader the driver never claimed.
+
+Why it is not simply fixed upstream: `0x1209:0x0001` is pid.codes' **shared
+prototype id**, not an allocation to this project. Listing it in the ccid driver
+would bind every unrelated prototype using the same id. A dedicated VID/PID is
+pending, and the upstream submission waits on it.
+
+Until then, pick one:
+
+- **Build the interop identity** — `VIDPID=Yubikey5` ([build.md](build.md))
+  presents `0x1050:0x0407`, which is already in the driver's list, and the stock
+  yubico udev rules cover it too. Nothing to patch; this is why the applets work
+  out of the box on that build.
+- **Apply this flake's ccid overlay** ([NixOS](#nixos-declarative)) — the same
+  driver with that one line already in its reader list, and nothing else changed;
+  the build refuses to produce a bundle the id did not reach.
+- **Add the id to your local ccid driver.** Building from source, a one-line
+  addition to `supported_readers.txt` before the build; on an FHS distro,
+  edit `/usr/lib/pcsc/drivers/ifd-ccid.bundle/Contents/Info.plist`, which holds
+  `ifdVendorID`, `ifdProductID` and `ifdFriendlyName` as three **parallel** arrays
+  — add one entry to each, at the same position, or the mapping shifts. Restart
+  `pcscd` and re-plug.
+
+Both routes are user reports rather than something CI covers: the source-patch
+route in [#67](https://github.com/TheMaxMur/RS-Key/issues/67), the `Info.plist`
+route in [discussion #58](https://github.com/TheMaxMur/RS-Key/discussions/58).
 
 ## NixOS (declarative)
 
@@ -79,6 +117,29 @@ Add to your `configuration.nix`:
 ```
 
 `nixos-rebuild switch`, then re-plug the board (or restart `pcscd`).
+
+On the **default identity** that is not yet enough — the ccid driver still has to
+know the id (see above). This flake carries an overlay for it; add the repo as an
+input of your system flake and apply it:
+
+```nix
+# flake.nix: inputs.rs-key.url = "github:TheMaxMur/RS-Key";
+{
+  nixpkgs.overlays = [ inputs.rs-key.overlays.ccid-rs-key ];
+}
+```
+
+The overlay replaces `pkgs.ccid`, which is exactly what the `pcscd` module puts in
+its plugin list, so there is nothing else to set. If you would rather not override
+the attribute for the whole system, name the package instead — with `lib.mkForce`,
+because the module contributes its own `[ pkgs.ccid ]` and two ccid bundles collide
+in the plugin `buildEnv`:
+
+```nix
+services.pcscd.plugins = lib.mkForce [
+  inputs.rs-key.packages.${pkgs.system}.ccid-rs-key
+];
+```
 
 ## Generic Linux (Debian / Ubuntu / Fedora / Arch)
 

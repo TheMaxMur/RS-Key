@@ -29,7 +29,8 @@ import time
 from datetime import datetime
 
 from . import ccid, ctaphid, openpgp
-from .audit import (AUDIT_CHECKPOINT, EVENTS, ENTRY_LEN, EVT_RESET, _audit_state,
+from .audit import (AUDIT_CHECKPOINT, EVENTS, ENTRY_LEN, EVT_RESET, RUN_REPEATS_AT,
+                    _audit_state,
                     _fingerprint, _fold, read_journal, verify_checkpoint,
                     verify_signature)
 from .backup import ERR_NOT_ALLOWED, _gated, _vendor, mse_handshake
@@ -205,7 +206,11 @@ def _journal_entries(entries):
         out.append({"seq": int.from_bytes(e[0:4], "little"),
                     "uptime_ms": int.from_bytes(e[4:8], "little"),
                     "event": EVENTS.get(e[8], f"0x{e[8]:02x}"),
-                    "aux": e[9], "detail": e[10:18].hex()})
+                    "aux": e[9], "detail": e[10:18].hex(),
+                    # A coalesced run is one entry standing for many; a receipt that
+                    # dropped the count would under-report what the window covers.
+                    "occurrences":
+                        int.from_bytes(e[RUN_REPEATS_AT:RUN_REPEATS_AT + 2], "little") + 1})
     return out
 
 

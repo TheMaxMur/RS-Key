@@ -162,7 +162,9 @@ builds the real VERIFY APDU (`00 20 P1 P2 Lc <ASCII PIN>`; PIV pads with `0xFF` 
 `RDR_to_PC_DataBlock` (`0x80`) carrying only the status word:
 
 - **success** → `90 00`, `bStatus = 0`, `bError = 0`.
-- **wrong PIN** → the card's real `63 Cx` (tries left) / `69 83` (blocked),
+- **wrong PIN** → the card's real `63 Cx` (tries left, reported saturated at `x = F`
+  so a larger configured retry total cannot wrap into `63 C0` = blocked) / `69 83`
+  (blocked),
   `bStatus = 0`, `bError = 0` (the command succeeded; the card said wrong).
 - **user cancel** → `bStatus = 0x40` (failed), `bError = 0xEF` → `SCARD_W_CANCELLED_BY_USER`.
 - **pad timeout** → `bStatus = 0x40`, `bError = 0xF0` → `SCARD_E_TIMEOUT`.
@@ -297,10 +299,17 @@ Sources: `crates/rsk-fido/src/consts.rs`,
 These follow public specifications; a tool that already speaks YubiKey/FIDO2
 needs only the identifiers above. RS-Key implements:
 
-- **FIDO2 / CTAP 2.1**: getInfo, makeCredential, getAssertion, getNextAssertion,
-  clientPIN, reset, selection, credentialManagement, authenticatorConfig,
+- **FIDO2 / CTAP 2.1** (`versions` advertises up to `FIDO_2_3`; never `FIDO_2_2`,
+  which CTAP 2.3 §6.4 says was never defined): getInfo, makeCredential,
+  getAssertion, getNextAssertion, clientPIN, reset, selection,
+  credentialManagement, authenticatorConfig,
   largeBlobs (writable without a `pinUvAuthParam` until a PIN is set or `alwaysUv` is
-  on, per §6.10.2). `maxMsgSize` = `7609`. Supported COSE algorithms:
+  on, per §6.10.2). `options.perCredMgmtRO` is true, so a tool may request the
+  `pcmr` permission (`0x40`, alone) and get the **persistent** pinUvAuthToken: it
+  drives getCredsMetadata / enumerateRPs / enumerateCredentials, never the two
+  writers, and survives replugs until a PIN change or a reset — a credential list
+  can be refreshed without re-prompting for the PIN. `maxMsgSize` = `7609`.
+  Supported COSE algorithms:
   ES256 `-7`, ES384 `-35`, ES512 `-36`, ES256K `-47`, EdDSA `-8`,
   ML-DSA-44 `-48`, ML-DSA-65 `-49` (both negotiable via `pubKeyCredParams`;
   advertised in getInfo only under the `advertise-pqc` build). ML-DSA-87 `-50`
@@ -502,6 +511,16 @@ firmware predates the rescue applet.
 > `1F/01` (BOOTSEL) drops the device into the bootloader for reflashing; also
 > confirm.
 
+> ### In BOOTSEL, the KV store is fenced off
+> Since `bcdDevice 0x0871` the image carries an RP2350 partition table: the
+> bootloader is denied read **and** write over the KV store, so `picotool save`,
+> `load` and `erase` across that range answer `permission failure`. A tool that
+> offers "back up / restore the device's flash" must expect that and must not
+> present the failure as a device fault. Whole-image flashing is unaffected — the
+> firmware partition stays bootloader-writable. Rationale, and why this is not a
+> substitute for secure boot:
+> [threat-model.md](threat-model.md#flash-snapshot-rollback-the-pin-counter-reset).
+
 > ### User-presence gate (runtime)
 > The runtime-reachable privileged commands require an **on-device user-presence
 > confirmation** (a button touch, or an Approve on the trusted-display build)
@@ -547,7 +566,7 @@ zero/empty TLV. (A host may still do a full read-modify-write for clarity.)
 | `05` | LED_BRIGHTNESS | 1 | global channel max `0..=255` |
 | `06` | OPTS | 2 | flags (BE16): `WCID 0x1`, `DIMM 0x2`, `DISABLE_POWER_RESET 0x4`, `LED_STEADY 0x8` |
 | `08` | PRESENCE_TIMEOUT | 1 | touch-wait timeout in **seconds** (`0`/absent ⇒ firmware default 30 s; a non-zero value below `10` is raised to `10`). Matches PicoForge `PresenceTimeout`. |
-| `09` | USB_PRODUCT | 1..33 | product string + trailing `NUL` (length **includes** the NUL) |
+| `09` | USB_PRODUCT | 1..33 | product string + trailing `NUL` (length **includes** the NUL). A 33-byte value with no terminating NUL is malformed and leaves the stored string **unchanged**; an empty value is the explicit clear |
 | `0A` | ENABLED_CURVES | 4 | FIDO curve bitmask (BE32) |
 | `0B` | ENABLED_USB_ITF | 1 | interface mask: `CCID 0x1`, `WCID 0x2`, `HID 0x4`, `KB 0x8`, `LWIP 0x10` |
 | `0C` | LED_DRIVER | 1 | `1` = gpio, `2` = pimoroni, `3` = ws2812 (follows PicoForge `LedDriverType`) |
@@ -558,7 +577,10 @@ zero/empty TLV. (A host may still do a full read-modify-write for clarity.)
 Notes for a host implementation:
 - **Read-modify-write.** READ the record, change only your tags, WRITE it back.
   This is exactly what `rsk hw` does (`tools/rsk/hw.py`).
-  Preserve tags you don't recognize.
+  Preserving tags you don't recognize costs you nothing, but note the **device** does
+  not: `merge_save` overlays your blob onto the parsed record and re-serializes only the
+  tags this firmware knows, so a tag it does not recognize is dropped at the first write
+  whatever the host sends.
 - **RS-Key-specific tags** PicoForge skips as unknown: `0x0B` (ENABLED_USB_ITF),
   `0x0E` (LED_NUM) and `0x0F` (USB_MANUFACTURER). RS-Key's own tools preserve them
   across a RMW; LED_NUM sets how many daisy-chained addressable LEDs are lit (the
@@ -710,7 +732,7 @@ Keys 3/4 are present only when a PIN is set (see gating).
 | `06` | UNLOCK | `{1: blob(60)}` | — | MSE (the lock key *is* the auth) |
 | `07` | AUDIT_READ | — | journal window | PIN-token; **touch** if no PIN |
 | `08` | AUDIT_CHECKPOINT | `{1: nonce ≤32}` | DEVK signature over chain head ‖ nonce | PIN-token + touch |
-| `09` | ATT_IMPORT | `{1: blob(60), 2: DER chain}` | — | MSE + touch + PIN-token. With **no PIN set** it additionally takes a distinct "Replace attestation identity?" confirmation — the PIN-token half is waived in that state, and an import replaces the identity every later U2F REGISTER signs with |
+| `09` | ATT_IMPORT | `{1: blob(60), 2: DER chain}` | — | MSE + touch + PIN-token. With **no PIN set** it additionally takes a distinct "Replace this identity?" confirmation — the PIN-token half is waived in that state, and an import replaces the identity every later U2F REGISTER signs with |
 | `0A` | ATT_CLEAR | — | — | MSE + touch + PIN-token |
 | `0B` | ATT_STATE | — | `{1: present, 2: sha256(chain)?}` | **ungated** |
 | `0C` | CONFIG_WRITE | `{1: target(uint), 2: blob(bstr)}` — target `0`=DEV_CONF, `1`=PHY, `2`=LED | — | **ungated by default**; touch + PIN-token under `strict-config`; no MSE. A write that changes nothing is a no-op: no flash write, no journal entry, and for PHY no reboot latch |
@@ -746,15 +768,25 @@ Keys 3/4 are present only when a PIN is set (see gating).
 > values to repair one is not answered `0x00` with nothing stored.
 >
 > A write that *does* change something is journalled, and a **run** of them costs a
-> single ring entry. `CONFIG_WRITE` is the only journalled event an ungated host can
-> drive on demand, so appending one per call would let it evict the 128-entry window;
-> instead, when the newest entry is already a config write the device folds into it.
+> single ring entry. `CONFIG_WRITE` is one of three journalled events an ungated host
+> can drive on demand — the others are a `getAssertion` carrying `up:false` and a U2F
+> `AUTHENTICATE` with `P1=0x08`, both of which take the spec-mandated silent path — so
+> appending one per call would let any of them evict the 128-entry window. All three
+> coalesce. For `CONFIG_WRITE`, when the newest entry is already a config write the
+> device folds into it.
 > The entry keeps its `seq`, its timestamp (the *first* write of the run) and its
 > `aux` (the target that opened it), and its `detail` becomes
 > `repeats(2 LE) ‖ targets(1)` — the number of further writes absorbed (saturating)
 > and a `1 << target` mask of every record the run touched. A run never folds across
-> a power cycle, so the `BOOT` entry between two runs is never swallowed. For a host
-> re-checking the chain: a fold changes the head **without** advancing `seq_next`, so
+> a power cycle, so the `BOOT` entry between two runs is never swallowed.
+>
+> The two silent FIDO events use a **different encoding**: the entry keeps the `detail`
+> of the first occurrence (the rpIdHash shown is the run's first site) and the count of
+> further folded occurrences is a saturating LE `u16` in the entry's **trailing two
+> bytes** — previously reserved and always zero, so an older build's entries decode as a
+> single occurrence. That fold scans the whole window, not just the newest entry, so
+> interleaving two silent classes does not defeat it. A gestured assertion never folds.
+> For a host re-checking the chain: a fold changes the head **without** advancing `seq_next`, so
 > the same `seq_next` with a different head is legitimate and is not a tamper signal
 > (`start`, `seq_next` and the epoch are untouched, so the window still folds to the
 > head exactly as before).

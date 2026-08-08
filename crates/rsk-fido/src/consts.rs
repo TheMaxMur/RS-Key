@@ -193,6 +193,10 @@ pub const MAX_MSG_SIZE: u64 = 7609;
 /// mints (a non-resident box) — and therefore the largest it will assert.
 pub const MAX_CRED_ID_LENGTH: u64 = crate::credential::CRED_BOX_MAX as u64;
 pub const MAX_CREDENTIAL_COUNT_IN_LIST: u64 = 16;
+/// The only `PublicKeyCredentialType` WebAuthn defines. A credential descriptor
+/// carrying anything else is a type this device cannot assert, so the allowList
+/// and excludeList parsers drop it rather than match on its id.
+pub const PUBLIC_KEY_TYPE: &str = "public-key";
 
 // pinUvAuthParam MAC covers subCommand ‖ subCommandParams; cap on the raw bytes
 // (vendor.rs deliberately overrides with its own larger cap). A maximal legal
@@ -281,8 +285,11 @@ pub const EF_RPNICK: u16 = 0xD300;
 /// Longest device-local RP nickname (bytes) the trusted display stores + accepts.
 pub const RP_NICK_MAX_LEN: usize = 24;
 pub const EF_PIN: u16 = 0x1080; // PIN: [retries, len, format, verifier(32)]
-pub const EF_AUTHTOKEN: u16 = 0x1090; // pinUvAuthToken seed
-pub const EF_PAUTHTOKEN: u16 = 0x1091; // persistent pinUvAuthToken seed
+/// The **persistent** pinUvAuthToken (CTAP 2.2 §6.5.2.2): a bearer secret the
+/// platform keeps across power cycles, so it is kbase-sealed like the seed. Its
+/// *presence* is the `pcmr` grant — written at the first pcmr issuance, dropped
+/// wherever the spec calls `resetPersistentPinUvAuthToken` (§6.5.4).
+pub const EF_PAUTHTOKEN: KeyFid = KeyFid::new(0x1091);
 pub const EF_MINPINLEN: u16 = 0x1100; // minimum PIN length policy
 pub const EF_LARGEBLOB: u16 = 0x1101; // serialized large-blob array
 

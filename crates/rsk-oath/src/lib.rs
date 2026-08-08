@@ -1365,7 +1365,10 @@ pub fn migrate_seal<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng)
     let mut fids = [0u16; MAX_OATH_CRED as usize];
     let n = present_creds(fs, &mut fids);
     let mut out = [0u8; CRED_MAX];
-    let mut raw = [0u8; CRED_MAX];
+    // Sized to hold a full sealed blob so a sealed-but-unauthenticating record
+    // reads back at its true length and is skipped rather than truncated and
+    // mis-resealed (mirrors `rsk_otp::migrate_seal`).
+    let mut raw = [0u8; seal::MAX_BLOB];
     for &fid in &fids[..n] {
         reseal_if_plaintext(dev, fs, rng, KeyFid::new(fid), &mut out, &mut raw);
     }
@@ -1377,8 +1380,8 @@ pub fn migrate_seal<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng)
 /// Bring `fid` to a seal under the current kbase arm. No-op if it already
 /// authenticates there. A secret sealed under the pre-OTP (NO-OTP) arm is
 /// recovered and re-sealed under the OTP arm; otherwise the stored bytes are
-/// taken to be legacy plaintext and sealed in place. No-op when the slot is
-/// absent.
+/// sealed in place only if they can still be legacy plaintext
+/// ([`is_legacy_plaintext`]). No-op when the slot is absent.
 fn reseal_if_plaintext<S: Storage>(
     dev: &Device,
     fs: &mut Fs<S>,
@@ -1403,10 +1406,27 @@ fn reseal_if_plaintext<S: Storage>(
         let _ = seal::seal_put(dev, fs, rng, fid, &out[..n]);
         return;
     }
-    if let Some(n) = fs.read_key(fid, raw) {
-        let n = n.min(raw.len());
-        let _ = seal::seal_put(dev, fs, rng, fid, &raw[..n]);
+    if let Some(n) = fs.read_key(fid, raw)
+        && let Some(blob) = raw.get(..n)
+        && is_legacy_plaintext(fid, blob)
+    {
+        let _ = seal::seal_put(dev, fs, rng, fid, blob);
     }
+}
+
+/// Whether the stored bytes at `fid` can still be a pre-seal plaintext record,
+/// rather than a sealed one that authenticated under neither arm. Re-sealing the
+/// latter double-wraps it — and past `CRED_MAX` truncates its GCM tag away —
+/// destroying the secret, which is what `rsk_piv::migrate_kbase` refuses to do.
+/// Every build that wrote plaintext credentials emitted `cmd_put`'s normalised
+/// NAME‖KEY, which ciphertext all but never parses as. RESIDUAL: the SET CODE key
+/// is shapeless bytes, so only the length bound covers `EF_OATH_CODE`.
+fn is_legacy_plaintext(fid: KeyFid, blob: &[u8]) -> bool {
+    if blob.len() > CRED_MAX {
+        return false;
+    }
+    !is_oath_cred_fid(fid.get())
+        || (blob.first() == Some(&TAG_NAME) && find_tag(blob, TAG_KEY as u16).is_some())
 }
 
 /// Lowest unused credential slot for a new PUT, or `None` if all 255 are taken.

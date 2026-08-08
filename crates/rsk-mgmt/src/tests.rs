@@ -889,3 +889,62 @@ fn an_idempotent_partial_write_is_recognised_as_unchanged() {
         "a genuine change must still be seen as a change"
     );
 }
+
+/// Audit run-37: run-36's own `trim_to_cap` evicted whole entries by POSITION and
+/// never looked at the tag. Nothing canonicalises the stored order, so `USB_ENABLED`
+/// leads any record whose writer emitted it first — and it is the one stored entry
+/// this firmware enforces, with an absence that resolves to SUPPORTED_CAPS. Any
+/// request that strips to nothing (`ykman config set-lock-code`, or a WRITE CONFIG
+/// with an empty body) then answered 9000 having discarded the owner's policy.
+#[test]
+fn trimming_an_over_cap_record_never_evicts_the_enabled_applications_policy() {
+    // A record only a pre-cap build could store: over the 42-byte cap, policy first.
+    let mut legacy = vec![TAG_USB_ENABLED, 2];
+    legacy.extend_from_slice(&CAP_OATH.to_be_bytes());
+    legacy.push(TAG_AUTO_EJECT_TIMEOUT);
+    legacy.push(42);
+    legacy.extend(core::iter::repeat_n(0u8, 42));
+    assert!(legacy.len() > EF_DEV_CONF_MAX && legacy.len() <= EF_DEV_CONF_READ_MAX);
+
+    // `set-lock-code` sends a lone 0x0A TLV; both it and an empty body strip to a
+    // zero-length request, which leaves the trim free to evict the whole record.
+    let mut lock = vec![TAG_CONFIG_LOCK, 16];
+    lock.extend_from_slice(&[0xAB; 16]);
+
+    for request in [&lock[..], &[][..]] {
+        let mut fs: Fs<RamStorage> = Fs::new(RamStorage::new());
+        fs.put(EF_DEV_CONF, &legacy).unwrap();
+        assert_eq!(read_enabled_caps(&mut fs), CAP_OATH, "precondition");
+
+        persist_dev_conf(&mut fs, request).unwrap();
+        assert_eq!(
+            read_enabled_caps(&mut fs),
+            CAP_OATH,
+            "the trim dropped the owner's policy, silently re-enabling everything"
+        );
+    }
+}
+
+/// The companion defect in the same commit: `overlay_dev_conf` assembles the merge
+/// in a buffer the caller sizes, and sizing it by the STORED cap made it answer
+/// `TooLong` before `trim_to_cap` could shrink anything. On a full-width legacy
+/// record every write adding a tag the record lacks was refused — the very lockout
+/// the trim was introduced to end.
+#[test]
+fn a_full_width_legacy_record_still_accepts_a_write_that_adds_a_tag() {
+    let mut fs: Fs<RamStorage> = Fs::new(RamStorage::new());
+    let mut legacy = vec![TAG_AUTO_EJECT_TIMEOUT, (EF_DEV_CONF_READ_MAX - 2) as u8];
+    legacy.extend(core::iter::repeat_n(0u8, EF_DEV_CONF_READ_MAX - 2));
+    assert_eq!(legacy.len(), EF_DEV_CONF_READ_MAX);
+    fs.put(EF_DEV_CONF, &legacy).unwrap();
+
+    let mut want = vec![TAG_USB_ENABLED, 2];
+    want.extend_from_slice(&CAP_OTP.to_be_bytes());
+    persist_dev_conf(&mut fs, &want).unwrap();
+
+    assert_eq!(
+        read_enabled_caps(&mut fs),
+        CAP_OTP,
+        "a full-width stored record vetoed the owner's write"
+    );
+}
