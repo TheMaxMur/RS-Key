@@ -1457,7 +1457,7 @@ fn audit_log_paints_rows_with_kind_coloured_dots() {
         },
     ];
     let mut d = Rec::new();
-    render_audit_log(&mut d, &rows, 0, 3).unwrap();
+    render_audit_log(&mut d, &rows, 0, 3, true).unwrap();
     assert!(!d.oob, "audit log drew outside the panel");
     // Each row's status dot is painted in its kind colour, inside its row rect.
     for (i, c) in [theme::SUCCESS, theme::ACCENT, theme::DANGER]
@@ -1474,13 +1474,53 @@ fn audit_log_paints_rows_with_kind_coloured_dots() {
 #[test]
 fn audit_log_empty_shows_placeholder_and_no_rows() {
     let mut d = Rec::new();
-    render_audit_log(&mut d, &[], 0, 0).unwrap();
+    render_audit_log(&mut d, &[], 0, 0, true).unwrap();
     assert!(!d.oob, "empty audit log drew outside the panel");
     assert!(d.drew_anything(), "empty audit log drew nothing");
     // No row card is painted when there are no events.
     assert!(
         !d.any_non_bg_in(crate::row_rect(crate::PK_LIST_TOP, 0)),
         "empty audit log painted a row card"
+    );
+}
+
+/// Whether `d` painted exactly `s`, in `role`/`color`, centred on `cy` — a pixel-exact
+/// check against a reference frame, so a test can pin *wording* and not merely that
+/// something was drawn.
+fn shows_centered(d: &Rec, s: &str, cy: i32, role: Role, color: Rgb565) -> bool {
+    let mut want = Rec::new();
+    font::centered(&mut want, s, EgPoint::new(MIDX, cy), role, color).unwrap();
+    ((cy - 12) as u16..(cy + 12) as u16).all(|y| (0..PANEL_W).all(|x| d.at(x, y) == want.at(x, y)))
+}
+
+/// The empty screen must not say "No activity yet" on a device that was never watching:
+/// journalling is off by default, so the two states have to read differently — the
+/// distinction between "I saw nothing" and "I was not looking".
+#[test]
+fn audit_log_empty_wording_tracks_the_logging_flag() {
+    let mut on = Rec::new();
+    render_audit_log(&mut on, &[], 0, 0, true).unwrap();
+    assert!(
+        shows_centered(&on, "No activity yet", 160, Role::Body, MUTED),
+        "an enabled, idle journal must read as no activity"
+    );
+
+    let mut off = Rec::new();
+    render_audit_log(&mut off, &[], 0, 0, false).unwrap();
+    assert!(!off.oob, "logging-off audit log drew outside the panel");
+    assert!(
+        shows_centered(&off, "Logging is off", 160, Role::Body, theme::WARN),
+        "a device that was never recording must say so, in WARN"
+    );
+    assert!(
+        shows_centered(
+            &off,
+            "Nothing is being recorded",
+            184,
+            Role::MonoSmall,
+            theme::CAPTION
+        ),
+        "the logging-off caption is missing"
     );
 }
 
@@ -1492,7 +1532,7 @@ fn multi_page_list_shows_pager_in_its_hit_rects() {
         secs_ago: Some(60),
     }; crate::PK_ROWS_MAX];
     let mut d = Rec::new();
-    render_audit_log(&mut d, &rows, 1, 13).unwrap();
+    render_audit_log(&mut d, &rows, 1, 13, true).unwrap();
     assert!(!d.oob, "paged audit log drew outside the panel");
     assert!(
         has_color(&d, crate::PAGER_PREV_RECT, theme::ACCENT),
@@ -1512,7 +1552,7 @@ fn pager_dims_the_unavailable_end_arrow() {
     }; crate::PK_ROWS_MAX];
     // First page of 3: prev is dimmed, next is active.
     let mut d = Rec::new();
-    render_audit_log(&mut d, &rows, 0, 13).unwrap();
+    render_audit_log(&mut d, &rows, 0, 13, true).unwrap();
     assert!(
         has_color(&d, crate::PAGER_PREV_RECT, theme::CAPTION),
         "prev not dimmed on the first page"
@@ -1523,7 +1563,7 @@ fn pager_dims_the_unavailable_end_arrow() {
     );
     // Last page (2 of 3): next is dimmed.
     let mut d2 = Rec::new();
-    render_audit_log(&mut d2, &rows[..3], 2, 13).unwrap();
+    render_audit_log(&mut d2, &rows[..3], 2, 13, true).unwrap();
     assert!(
         has_color(&d2, crate::PAGER_NEXT_RECT, theme::CAPTION),
         "next not dimmed on the last page"
@@ -1537,7 +1577,7 @@ fn single_page_list_shows_footer_not_pager() {
         secs_ago: Some(60),
     }; 3];
     let mut d = Rec::new();
-    render_audit_log(&mut d, &rows, 0, 3).unwrap();
+    render_audit_log(&mut d, &rows, 0, 3, true).unwrap();
     // One page → no pager: the prev-arrow region (left, clear of the right-aligned
     // item-count footer) stays background.
     assert!(

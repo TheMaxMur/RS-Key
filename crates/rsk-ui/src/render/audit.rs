@@ -13,11 +13,14 @@ use super::*;
 /// the nav bar (a settings sub-screen, not a tab). `rows` is the current page's slice,
 /// `page` its 0-based index, `total` the live journal depth — so the tail shows the pager
 /// ("page / pages") when the log spans more than one page, else a true "N events" count.
+/// `logging` is the journal's own enabled flag: journalling is opt-in, so an empty page
+/// means something different when nothing was ever being recorded.
 pub fn render_audit_log<D>(
     t: &mut D,
     rows: &[AuditRow],
     page: u16,
     total: u16,
+    logging: bool,
 ) -> Result<(), D::Error>
 where
     D: DrawTarget<Color = Rgb565>,
@@ -26,14 +29,25 @@ where
     status_bar(t)?;
     title_bar(t, "Audit log", theme::ACCENT, true)?;
     if rows.is_empty() {
-        glyph::draw(t, Glyph::Clock, Point::new(MIDX as u16 - 18, 96), 36, MUTED)?;
-        text(
-            t,
-            "No activity yet",
-            EgPoint::new(MIDX, 160),
-            Role::Body,
-            MUTED,
-        )?;
+        // "No activity yet" is a claim about the world, and journalling is off by
+        // default — so only make it when the device was actually watching. An owner
+        // checking for evidence must not read "none was found" as "none exists".
+        let (icon, color, headline) = if logging {
+            (Glyph::Clock, MUTED, "No activity yet")
+        } else {
+            (Glyph::Warn, theme::WARN, "Logging is off")
+        };
+        glyph::draw(t, icon, Point::new(MIDX as u16 - 18, 96), 36, color)?;
+        text(t, headline, EgPoint::new(MIDX, 160), Role::Body, color)?;
+        if !logging {
+            text(
+                t,
+                "Nothing is being recorded",
+                EgPoint::new(MIDX, 184),
+                Role::MonoSmall,
+                theme::CAPTION,
+            )?;
+        }
     } else {
         components::list::group_card(t, PK_LIST_TOP, rows.len() as u16)?;
         for (i, r) in rows.iter().enumerate() {
