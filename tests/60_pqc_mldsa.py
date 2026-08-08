@@ -134,7 +134,10 @@ def main():
         ad2, sig2, _ = get_assertion(dev, cid, cred_id)
         c1 = int.from_bytes(ad1[33:37], "big")
         c2 = int.from_bytes(ad2[33:37], "big")
-        assert c2 > c1, f"sign counter did not grow ({c1} -> {c2})"
+        # Zero, and staying zero: signature counters are per-credential and this
+        # credential is not resident, so there is no on-device state to count in
+        # (same rule as 12_fido_getassertion, which explains it).
+        assert (c1, c2) == (0, 0), f"non-resident credential reported a counter ({c1} -> {c2})"
         assert ML_DSA_44.verify(pk, ad2 + CDH, sig2)
 
         # 5. Classic -> PQC resident upgrade for one rp/user.

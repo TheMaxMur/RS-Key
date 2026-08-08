@@ -27,6 +27,15 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 - The CTAPHID command and error constants in `rsk-usb` are public, so the
   emulator's transport names the same values instead of redeclaring them.
 
+### Fixed
+
+- **The published metadata statements said `maxSerializedLargeBlobArray` was
+  2048.** The value moved to 2046 on 2026-08-04, when `MAX_LARGE_BLOB_SIZE`
+  became `rsk_fs::MAX_VALUE_BYTES` — the store's real per-record ceiling — and
+  both `metadata/rs-key.metadata.json` and its conformance variant kept
+  advertising the old number to whoever reads them. `tests/62_metadata_statement.py`
+  is the check for exactly this drift, and it had not been run since.
+
 ## [0.4.8] - 2026-08-08
 
 Everything in 0.4.7 below, plus the fix for the reason it never shipped: the
