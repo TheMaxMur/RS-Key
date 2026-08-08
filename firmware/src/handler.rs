@@ -17,7 +17,8 @@ use rsk_sdk::{Applet, Dispatcher, ResBuf};
 use zeroize::Zeroize;
 
 use crate::flash_storage::FlashStorage;
-use crate::vendor::VendorApplet;
+use crate::vendor::VendorPlatform;
+use rsk_vendor::VendorApplet;
 
 /// Raised when the trusted display commits a new clientPIN; consumed by the next
 /// CBOR dispatch to end the RAM session token. The flash-backed `pcmr` grant is not
@@ -132,7 +133,7 @@ impl rsk_rescue::Rng for FidoRng {
 pub struct AppletHandler<'a> {
     fs: &'a RefCell<Store>,
     disp: Dispatcher,
-    vendor: VendorApplet<'a>,
+    vendor: VendorApplet<'a, VendorPlatform>,
     /// The hardware TRNG, shared with the CCID/OpenPGP transport through a
     /// `RefCell` (borrowed only for one synchronous dispatch, never across an
     /// `.await`), like the flash `Fs`.
@@ -159,7 +160,7 @@ impl<'a> AppletHandler<'a> {
         presence: &'a RefCell<dyn rsk_fido::UserPresence>,
         // Same physical presence, as the rescue trait, for the vendor applet's
         // gated reboot-to-BOOTSEL (this transport also dispatches the vendor AID).
-        vendor_presence: &'a RefCell<dyn rsk_rescue::UserPresence>,
+        vendor_presence: &'a RefCell<dyn rsk_vendor::UserPresence>,
         serial_id: [u8; 8],
         serial_hash: [u8; 32],
         otp_key: Option<[u8; 32]>,
@@ -184,7 +185,7 @@ impl<'a> AppletHandler<'a> {
         Self {
             fs,
             disp: Dispatcher::new(),
-            vendor: VendorApplet::new(vendor_presence),
+            vendor: VendorApplet::new(VendorPlatform, vendor_presence),
             rng,
             fido_state,
             presence,

@@ -337,6 +337,16 @@ impl rsk_rescue::UserPresence for TouchPresence {
     }
 }
 
+impl rsk_vendor::UserPresence for TouchPresence {
+    fn request(&mut self, confirm: rsk_vendor::Confirm<'_>) -> rsk_vendor::Presence {
+        match self.confirm_wait(confirm) {
+            Outcome::Confirmed => rsk_vendor::Presence::Confirmed,
+            Outcome::Declined => rsk_vendor::Presence::Declined,
+            Outcome::Timeout | Outcome::Cancelled => rsk_vendor::Presence::Timeout,
+        }
+    }
+}
+
 impl rsk_mgmt::UserPresence for TouchPresence {
     fn request(&mut self, confirm: rsk_mgmt::Confirm<'_>) -> rsk_mgmt::Presence {
         match self.confirm_wait(confirm) {

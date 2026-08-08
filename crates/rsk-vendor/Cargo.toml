@@ -1,0 +1,22 @@
+[package]
+name = "rsk-vendor"
+version = "0.1.0"
+license = "AGPL-3.0-only"
+edition = "2024"
+publish = false
+
+[dependencies]
+rsk-sdk = { workspace = true }
+rsk-fs = { workspace = true }
+# The `EF_LED_CONF` block length, so SET/GET LED move the same bytes the codec
+# defines rather than a second opinion about its size.
+rsk-led = { workspace = true }
+
+[dev-dependencies]
+# RamStorage for the host tests (the same backend the sibling applets use).
+rsk-fs = { workspace = true, features = ["test-util"] }
+
+[features]
+# Gate the LED write behind user presence, matching the FIDO twin
+# (CONFIG_TARGET_LED). See firmware's `strict-config`.
+strict-config = []

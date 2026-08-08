@@ -94,6 +94,7 @@ platform libraries. The per-crate detail is in the table. The shape is:
 | `rsk-otp` | Yubico OTP slots ×4: CCID command surface + the keyboard frame protocol and typed-ticket generation |
 | `rsk-mgmt` | the YubiKey management applet (DeviceInfo, interface toggles) served over both CCID and CTAPHID |
 | `rsk-rescue` | recovery/provisioning applet: identity, phy config record, flash info, secure-boot status, attestation key, reboot, the one OTP-lock write |
+| `rsk-vendor` | the vendor AID: the persisted test counter, SET/GET LED, core1 stats, the measurement benches and the reboot request — the hardware behind a `Platform` the firmware fills in |
 | `rsk-rsa-asm` | vendored C/ARM-asm modular exponentiation behind one FFI fn (host build uses a pure-Rust fallback) |
 | `rsk-led` | the `EF_LED_CONF` codec for the status-LED config block, shared by the firmware and the `rsk led` host tool |
 | `rsk-ui` | the trusted-display UI model (operation prompts, untrusted relying-party-string sanitizing, Allow/Deny button geometry); compiled only into the `display` build |

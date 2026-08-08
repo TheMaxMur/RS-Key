@@ -18,7 +18,8 @@ use rsk_rescue::RescueApplet;
 use rsk_sdk::{Apdu, Applet, Dispatcher, ResBuf, Sw};
 
 use crate::handler::{FidoRng, Store};
-use crate::vendor::VendorApplet;
+use crate::vendor::VendorPlatform;
+use rsk_vendor::VendorApplet;
 
 // A CCID XfrBlock frame carries MAX_CCID_MSG (2048) minus the 10-byte CCID
 // header = 2038 payload bytes. The applet response (body + 2-byte SW) must fit
@@ -60,7 +61,7 @@ pub struct CcidApplets<'a> {
     fs: &'a RefCell<Store>,
     rng: &'a RefCell<FidoRng>,
     disp: Dispatcher,
-    vendor: VendorApplet<'a>,
+    vendor: VendorApplet<'a, VendorPlatform>,
     openpgp: OpenpgpApplet<'a>,
     management: ManagementApplet<'a>,
     oath: OathApplet<'a>,
@@ -124,6 +125,7 @@ impl<'a> CcidApplets<'a> {
         otp_presence: &'a RefCell<dyn rsk_otp::UserPresence>,
         oath_presence: &'a RefCell<dyn rsk_oath::UserPresence>,
         rescue_presence: &'a RefCell<dyn rsk_rescue::UserPresence>,
+        vendor_presence: &'a RefCell<dyn rsk_vendor::UserPresence>,
         mgmt_presence: &'a RefCell<dyn rsk_mgmt::UserPresence>,
         platform: &'a RefCell<dyn rsk_rescue::Platform>,
         serial_id: [u8; 8],
@@ -138,8 +140,9 @@ impl<'a> CcidApplets<'a> {
             rng,
             disp: Dispatcher::new(),
             // The vendor reboot-to-BOOTSEL (P1=01) is gated by the same presence
-            // as the rescue applet, closing the cross-AID bypass of that gate.
-            vendor: VendorApplet::new(rescue_presence),
+            // as the rescue applet (one `&RefCell<Presence>` behind two traits),
+            // closing the cross-AID bypass of that gate.
+            vendor: VendorApplet::new(VendorPlatform, vendor_presence),
             openpgp: OpenpgpApplet::new(serial_id, serial_hash, otp_key, rng, presence)
                 .with_manufacturer(openpgp_mfr),
             management: ManagementApplet::new(serial_id, mgmt_presence),

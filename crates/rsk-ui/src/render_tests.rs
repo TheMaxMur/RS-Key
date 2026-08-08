@@ -955,7 +955,10 @@ fn ceremony_title_census_is_complete() {
         scan_confirm_titles(&root.join(dir), &mut found);
     }
     // Both trees must actually have been walked, or the loop below passes on nothing.
-    for anchor in ["Lock OTP page 58?", "Change LED?"] {
+    // The firmware anchor was "Change LED?" until the vendor applet moved into
+    // `crates/rsk-vendor`; with both anchors in one tree the walk over the other
+    // proves nothing, so it follows the code.
+    for anchor in ["Lock OTP page 58?", "Allow host PIN entry?"] {
         assert!(found.iter().any(|t| t == anchor), "scan missed {anchor:?}");
     }
     for t in &found {

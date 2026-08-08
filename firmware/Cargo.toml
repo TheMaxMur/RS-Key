@@ -29,6 +29,9 @@ rsk-oath = { workspace = true }
 rsk-otp = { workspace = true }
 rsk-piv = { workspace = true }
 rsk-rescue = { workspace = true }
+# The vendor AID's applet; this crate supplies its `Platform` (LED atomics, core1
+# counters, the benches, the reset) in `vendor.rs`.
+rsk-vendor = { workspace = true }
 rsk-led = { workspace = true }
 # The trusted-display UI model (screens, untrusted-string sanitizing, button
 # hit-testing) + its ST7789 panel driver stack. All optional — pulled in only by
@@ -142,7 +145,7 @@ always-uv = ["rsk-fido/always-uv"]
 # identity with no operator confirmation) — see docs/threat-model.md. NOT the
 # runtime flash flag EF_HARDENED. Build the strict image `--features
 # strict-config`; ship it as the `firmware-strict-config` release flavor.
-strict-config = ["rsk-mgmt/strict-config", "rsk-fido/strict-config", "rsk-otp/strict-config"]
+strict-config = ["rsk-mgmt/strict-config", "rsk-fido/strict-config", "rsk-otp/strict-config", "rsk-vendor/strict-config"]
 # Trusted-display build for a screen+touch board (Waveshare RP2350-Touch-LCD-2.8):
 # on-screen Approve/Deny showing the relying party, on-device PIN entry, lock, and
 # settings. OFF by default and entirely `dep:`-gated, so a standard key without a

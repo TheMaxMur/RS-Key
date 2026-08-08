@@ -1121,6 +1121,7 @@ dependencies = [
  "rsk-slip39",
  "rsk-ui",
  "rsk-usb",
+ "rsk-vendor",
  "sequential-storage",
  "smart-leds",
  "static_cell",
@@ -2370,6 +2371,15 @@ dependencies = [
  "embassy-usb",
  "rsk-sdk",
  "zeroize",
+]
+
+[[package]]
+name = "rsk-vendor"
+version = "0.1.0"
+dependencies = [
+ "rsk-fs",
+ "rsk-led",
+ "rsk-sdk",
 ]
 
 [[package]]

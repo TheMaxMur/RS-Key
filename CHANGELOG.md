@@ -31,6 +31,16 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   `const A = B;` indirection — which is where the large-blob value below hid.
   61 copies checked, up from 5.
 
+- **The vendor applet moved into `crates/rsk-vendor`.** It was the last applet
+  living in `firmware/`, so it was the only one with no host tests and the only
+  one the emulator could not serve. Its hardware — the LED atomics, the second
+  core's counters, the measurement benches, the reset — now sits behind a
+  `Platform` trait the firmware fills in, and the applet itself is host-tested.
+  Behaviour and wire surface unchanged: the same AID, the same instructions, the
+  same status words (a build without an LED answers `INS_NOT_SUPPORTED` exactly
+  as the unmatched instruction did before). No `bcdDevice` bump — nothing the
+  device does over the wire changed.
+
 ### Fixed
 
 - **The published metadata statements said `maxSerializedLargeBlobArray` was

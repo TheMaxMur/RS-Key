@@ -387,6 +387,25 @@ impl rsk_rescue::UserPresence for ButtonPresence {
 }
 
 #[cfg(not(feature = "display"))]
+impl rsk_vendor::UserPresence for ButtonPresence {
+    fn request(&mut self, _confirm: rsk_vendor::Confirm<'_>) -> rsk_vendor::Presence {
+        #[cfg(not(feature = "no-touch"))]
+        {
+            match self.wait() {
+                Outcome::Confirmed => rsk_vendor::Presence::Confirmed,
+                // Reachable over both transports, but a cancel is a decline here
+                // either way — the reboot gate has nothing to resume.
+                Outcome::Timeout | Outcome::Cancelled => rsk_vendor::Presence::Timeout,
+            }
+        }
+        #[cfg(feature = "no-touch")]
+        {
+            rsk_vendor::Presence::Confirmed
+        }
+    }
+}
+
+#[cfg(not(feature = "display"))]
 impl rsk_mgmt::UserPresence for ButtonPresence {
     fn request(&mut self, _confirm: rsk_mgmt::Confirm<'_>) -> rsk_mgmt::Presence {
         #[cfg(not(feature = "no-touch"))]
