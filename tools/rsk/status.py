@@ -71,13 +71,14 @@ def _secure_boot():
     except (SystemExit, Exception):
         return None
     try:
-        _, s1, s2 = ccid.select(conn, RESCUE_AID)
+        sel, s1, s2 = ccid.select(conn, RESCUE_AID)
         if (s1, s2) != ccid.SW_OK:
             return {"available": False}
+        serial = rescue_serial(sel, s1, s2)
         d, s1, s2 = rescue_read(conn, 0x03)
         if (s1, s2) != ccid.SW_OK or len(d) < 3:
             return {"available": False}
-        out = {"available": True, "enabled": bool(d[0]), "locked": bool(d[1]), "bootkey": d[2]}
+        out = {"available": True, "enabled": bool(d[0]), "locked": bool(d[1]), "bootkey": d[2], "serial": serial}
         d, s1, s2 = rescue_read(conn, 0x06)
         if (s1, s2) == ccid.SW_OK and len(d) >= 3:  # bcdDevice >= 0x074A
             out["rollback"] = {"required": bool(d[0]), "version": d[1], "capacity": d[2]}
@@ -87,7 +88,8 @@ def _secure_boot():
 
 
 def gather():
-    return {"fido": _fido(), "secure_boot": _secure_boot()}
+    sb = _secure_boot()
+    return {"fido": _fido(), "secure_boot": sb, "serial": (sb or {}).get("serial")}
 
 
 def register(sub):
@@ -101,6 +103,8 @@ def run(args):
     if args.json:
         print(json.dumps(s))
         return
+    if s.get("serial"):
+        print(f"serial     : {s['serial']}")
     f = s["fido"]
     if not f.get("present"):
         print("FIDO HID   : not found")
