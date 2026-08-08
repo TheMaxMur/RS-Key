@@ -58,8 +58,9 @@ pub struct SeqStorage<
     counter: MapStorage<u16, F, CC>,
     buf: [u8; KV_BUF],
     /// Bytes one [`Storage::compact`] lap must push through the main ring to
-    /// sweep it, taken from the range rather than a build constant — the mock and
-    /// the device disagree about it by three orders of magnitude.
+    /// sweep it. Taken from the range, not a build constant: the `power_cut`
+    /// fuzz target's ring is 8 pages against the board's 352, and a lap sized for
+    /// the wrong one either misses pages it must scrub or writes 44× too much.
     main_len: usize,
     /// Whether the last `read`/`size` FAILED rather than finding the key absent —
     /// `Storage::last_error`. Both collapse into `None`, and `Fs` caches the second

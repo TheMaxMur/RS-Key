@@ -35,8 +35,17 @@ rsk-device = { path = "../../crates/rsk-device" }
 # `_test` feature is what carries that mock, and it is the reason the emulator can
 # have log-structured storage instead of a map that overwrites in place.
 rsk-store = { path = "../../crates/rsk-store" }
-sequential-storage = { version = "8", features = ["_test"] }
+sequential-storage = { version = "=8.0.0", features = ["_test"] }
 embedded-storage-async = "0.4"
 embassy-futures = { git = "https://github.com/embassy-rs/embassy", branch = "main" }
 
 [workspace]
+
+# Same vendored sequential-storage patch as the root workspace and `fuzz/`. Without
+# it this detached workspace resolved upstream from crates.io, so the suites ran
+# against a DIFFERENT store library than the device: the fork aborts a walk on a
+# genuine read fault where upstream `continue`s past it, and that return value is
+# what `for_each_key` hands `Fs::scan` to decide a key is absent. An emulator that
+# confuses "unreadable" for "absent" passes exactly the case the device fails.
+[patch.crates-io]
+sequential-storage = { path = "../../third_party/sequential-storage" }
