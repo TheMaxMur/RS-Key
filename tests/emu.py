@@ -18,6 +18,11 @@ What this cannot stand in for: anything that needs the USB stack itself
 does not carry (the firmware-local vendor AID: LED, bench, reboot-to-BOOTSEL),
 and every hardware property it has none of (secure boot, OTP, power cuts). A
 green run here is a protocol result, not a device result.
+
+The suites in [`UNSUPPORTED`] are refused up front with their reason and exit 77,
+rather than being allowed to fail somewhere in the middle. A harness that cannot
+tell "does not apply here" from "broken" makes the second one invisible, and
+these fourteen would otherwise be re-diagnosed by every person who runs a sweep.
 """
 import os
 import runpy
@@ -42,6 +47,37 @@ OP_REPLUG = 0x03
 
 # An on-card RSA-4096 keygen is the slowest thing the card socket ever answers.
 CARD_TIMEOUT_S = 300
+
+# Exit code for a suite the emulator cannot serve — the autotools convention, so
+# a sweep can count skips apart from both passes and failures.
+EXIT_SKIP = 77
+
+# What the emulator has nothing to answer with, and why. Each of these fails on
+# the emulator for a reason that is not a defect, so it is refused before it
+# starts. Removing an entry is a claim that the emulator grew the capability.
+UNSUPPORTED = {
+    # The vendor AID (counter, LED, bench, reboot-to-BOOTSEL) is implemented in
+    # `firmware/src/vendor.rs`, not in a crate, and drives hardware the emulator
+    # does not have.
+    "01_flash_persistence": "needs the firmware-local vendor AID",
+    "14_up_only_after_reboot": "needs the firmware-local vendor AID (reboot)",
+    "15_u2f_vendor_msg_isolation": "needs the firmware-local vendor AID",
+    "30_ccid_transport": "needs the firmware-local vendor AID (counter)",
+    "51_secure_reboot": "needs the firmware-local vendor AID (reboot)",
+    "76_soft_lock": "needs the firmware-local vendor AID (reboot)",
+    # Below the applet layer: the emulator serves reports and APDUs, not USB.
+    "02_usb_interfaces": "reads the USB descriptors; the emulator has no USB",
+    "73_otp_keyboard": "drives the OTP keyboard interface over raw USB",
+    "77_otp_touch_wait": "drives the OTP keyboard interface over raw USB",
+    "53_ccid_pinpad": "needs the PC/SC reader's FEATURE_VERIFY_PIN_DIRECT layer",
+    # Faking python-fido2's own transport would leave the suite testing this
+    # shim instead of a third-party client, which is the whole point of it.
+    "61_pqc_thirdparty_client": "driven through python-fido2's HID transport",
+    "65_pqc_thirdparty_client65": "driven through python-fido2's HID transport",
+    # Hardware by definition.
+    "54_sram_residue": "measures SRAM residue on a real chip",
+    "90_otp_mkek_migration": "migrates the OTP MKEK; the emulator has no fuses",
+}
 
 # What the fake enumeration reports. The product string carries an RSK marker so
 # `_device`'s picker accepts it, and says "emulator" so a log never reads as a
@@ -314,8 +350,12 @@ def _patch_replug():
 def main():
     if len(sys.argv) < 2:
         sys.exit(f"usage: {sys.argv[0]} <test script> [args…]")
-    install()
     target = sys.argv[1]
+    name = os.path.basename(target).removesuffix(".py")
+    if name in UNSUPPORTED:
+        print(f"SKIP: {name} — {UNSUPPORTED[name]}. Run it against a board.")
+        sys.exit(EXIT_SKIP)
+    install()
     sys.argv = sys.argv[1:]
     # The suites add their own directory to sys.path for `_device`; do it here
     # too, since the script is run by path.
