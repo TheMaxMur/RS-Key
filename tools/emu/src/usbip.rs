@@ -344,6 +344,96 @@ pub fn op_body_len(code: u16) -> usize {
     }
 }
 
+/// What answers URBs once a client has imported the device.
+///
+/// The seam the USB stack plugs into: everything above is framing, everything
+/// below this is USB. An implementation returns how many bytes it produced, or
+/// `Err(Stall)` — which reaches the host as `-EPIPE`, the same thing a real
+/// endpoint says when it halts.
+pub trait UrbSink {
+    /// A control transfer on endpoint 0. `out` is the OUT data stage (empty for
+    /// an IN request); `reply` takes the IN data stage.
+    fn control(&mut self, setup: [u8; 8], out: &[u8], reply: &mut [u8]) -> Result<usize, Stall>;
+    /// A transfer on any other endpoint.
+    fn transfer(&mut self, ep: u32, dir: u32, out: &[u8], reply: &mut [u8])
+    -> Result<usize, Stall>;
+}
+
+/// The endpoint halted. Reported to the host as `-EPIPE`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Stall;
+
+/// `-EPIPE`, how USB/IP spells a STALL.
+pub const EPIPE: i32 = -32;
+
+/// Serve one imported connection: read a command, answer it, repeat until the
+/// peer goes away.
+///
+/// Every read is exact-length because the stream is not self-describing — the
+/// header says how much payload follows, and a short read here silently shifts
+/// every URB after it.
+pub fn serve_attached<S: Read + Write>(
+    sock: &mut S,
+    sink: &mut dyn UrbSink,
+) -> std::io::Result<()> {
+    let mut hdr = [0u8; CMD_HEADER_LEN];
+    let mut out = vec![0u8; 4096];
+    let mut reply = vec![0u8; 4096];
+    loop {
+        if sock.read_exact(&mut hdr).is_err() {
+            return Ok(()); // the client detached
+        }
+        let Some(cmd) = parse_command(&hdr) else {
+            // Not something we can frame past — the only safe move is to stop.
+            return Ok(());
+        };
+        match cmd {
+            Command::Unlink {
+                seqnum,
+                unlink_seqnum: _,
+            } => {
+                // Nothing is ever in flight: a submit is answered before the next
+                // header is read, so by the time an unlink arrives its URB has
+                // completed. That is `status = 0`, not `-ECONNRESET`.
+                sock.write_all(&encode_ret_unlink(seqnum, 0))?;
+            }
+            Command::Submit(s) => {
+                let n_out = s.out_payload_len();
+                if n_out > out.len() {
+                    out.resize(n_out, 0);
+                }
+                if n_out > 0 {
+                    sock.read_exact(&mut out[..n_out])?;
+                }
+                let want = s.transfer_buffer_length.max(0) as usize;
+                if want > reply.len() {
+                    reply.resize(want, 0);
+                }
+                let r = if s.is_control() {
+                    sink.control(s.setup, &out[..n_out], &mut reply[..want])
+                } else {
+                    sink.transfer(s.ep, s.direction, &out[..n_out], &mut reply[..want])
+                };
+                match r {
+                    Ok(n) => {
+                        let n = n.min(want);
+                        sock.write_all(&encode_ret_submit(s.seqnum, 0, n as i32))?;
+                        // An IN reply carries its data; an OUT one is header-only.
+                        if s.direction == DIR_IN {
+                            sock.write_all(&reply[..n])?;
+                        }
+                    }
+                    Err(Stall) => {
+                        sock.write_all(&encode_ret_submit(s.seqnum, EPIPE, 0))?;
+                    }
+                }
+            }
+        }
+    }
+}
+
+use std::io::{Read, Write};
+
 #[cfg(test)]
 #[path = "usbip_tests.rs"]
 mod tests;

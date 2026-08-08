@@ -284,3 +284,149 @@ fn op_body_len_frames_each_code() {
     assert_eq!(op_body_len(OP_REQ_IMPORT), BUSID_LEN);
     assert_eq!(op_body_len(OP_REQ_DEVLIST), 0);
 }
+
+/// A sink that answers everything with a fixed payload, and records what it saw.
+struct Echo {
+    seen: Vec<(u32, Vec<u8>)>,
+    reply: Vec<u8>,
+    stall: bool,
+}
+
+impl UrbSink for Echo {
+    fn control(&mut self, setup: [u8; 8], out: &[u8], reply: &mut [u8]) -> Result<usize, Stall> {
+        self.seen.push((0, setup.to_vec()));
+        let _ = out;
+        if self.stall {
+            return Err(Stall);
+        }
+        let n = self.reply.len().min(reply.len());
+        reply[..n].copy_from_slice(&self.reply[..n]);
+        Ok(n)
+    }
+    fn transfer(
+        &mut self,
+        ep: u32,
+        _dir: u32,
+        out: &[u8],
+        reply: &mut [u8],
+    ) -> Result<usize, Stall> {
+        self.seen.push((ep, out.to_vec()));
+        if self.stall {
+            return Err(Stall);
+        }
+        let n = self.reply.len().min(reply.len());
+        reply[..n].copy_from_slice(&self.reply[..n]);
+        Ok(n)
+    }
+}
+
+/// A socket stand-in: reads from a script, collects what was written.
+struct Pipe {
+    input: std::io::Cursor<Vec<u8>>,
+    out: Vec<u8>,
+}
+
+impl std::io::Read for Pipe {
+    fn read(&mut self, b: &mut [u8]) -> std::io::Result<usize> {
+        self.input.read(b)
+    }
+}
+impl std::io::Write for Pipe {
+    fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+        self.out.extend_from_slice(b);
+        Ok(b.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+fn run(script: Vec<u8>, sink: &mut Echo) -> Vec<u8> {
+    let mut p = Pipe {
+        input: std::io::Cursor::new(script),
+        out: Vec::new(),
+    };
+    serve_attached(&mut p, sink).unwrap();
+    p.out
+}
+
+/// An IN submit is answered with a header *and* its data; the length in the
+/// header must match the bytes that follow, or the host mis-slices the stream.
+#[test]
+fn an_in_submit_gets_its_data_after_the_header() {
+    let mut sink = Echo {
+        seen: vec![],
+        reply: vec![0xAA, 0xBB, 0xCC],
+        stall: false,
+    };
+    let out = run(submit_bytes(DIR_IN, 129, 8, [0; 8]).to_vec(), &mut sink);
+    assert_eq!(out.len(), CMD_HEADER_LEN + 3);
+    assert_eq!(
+        i32::from_be_bytes([out[24], out[25], out[26], out[27]]),
+        3,
+        "actual_length must match the payload that follows"
+    );
+    assert_eq!(&out[CMD_HEADER_LEN..], &[0xAA, 0xBB, 0xCC]);
+}
+
+/// An OUT submit's payload must be consumed from the stream, and its reply is
+/// header-only — writing data back would desynchronise the host.
+#[test]
+fn an_out_submit_consumes_its_payload_and_replies_bare() {
+    let mut script = submit_bytes(DIR_OUT, 1, 4, [0; 8]).to_vec();
+    script.extend_from_slice(&[1, 2, 3, 4]);
+    let mut sink = Echo {
+        seen: vec![],
+        reply: vec![0x99],
+        stall: false,
+    };
+    let out = run(script, &mut sink);
+    assert_eq!(sink.seen, vec![(1, vec![1, 2, 3, 4])]);
+    assert_eq!(out.len(), CMD_HEADER_LEN, "an OUT reply carries no data");
+}
+
+/// Two URBs back to back: the second is only framed correctly if the first
+/// consumed exactly its own payload.
+#[test]
+fn back_to_back_submits_stay_framed() {
+    let mut script = submit_bytes(DIR_OUT, 1, 2, [0; 8]).to_vec();
+    script.extend_from_slice(&[7, 8]);
+    script.extend_from_slice(&submit_bytes(DIR_OUT, 2, 1, [0; 8]));
+    script.extend_from_slice(&[9]);
+    let mut sink = Echo {
+        seen: vec![],
+        reply: vec![],
+        stall: false,
+    };
+    run(script, &mut sink);
+    assert_eq!(sink.seen, vec![(1, vec![7, 8]), (2, vec![9])]);
+}
+
+#[test]
+fn a_stall_is_reported_as_epipe_with_no_data() {
+    let mut sink = Echo {
+        seen: vec![],
+        reply: vec![0xAA],
+        stall: true,
+    };
+    let out = run(submit_bytes(DIR_IN, 129, 8, [0; 8]).to_vec(), &mut sink);
+    assert_eq!(out.len(), CMD_HEADER_LEN);
+    assert_eq!(
+        i32::from_be_bytes([out[20], out[21], out[22], out[23]]),
+        EPIPE
+    );
+}
+
+/// A control transfer is routed by endpoint, not by guessing from the setup
+/// packet, and the SETUP bytes reach the sink intact.
+#[test]
+fn ep0_routes_to_control_with_its_setup() {
+    let setup = [0x80, 0x06, 0x00, 0x01, 0x00, 0x00, 0x12, 0x00];
+    let mut sink = Echo {
+        seen: vec![],
+        reply: vec![],
+        stall: false,
+    };
+    run(submit_bytes(DIR_IN, 0, 18, setup).to_vec(), &mut sink);
+    assert_eq!(sink.seen, vec![(0, setup.to_vec())]);
+}
