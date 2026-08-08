@@ -91,10 +91,12 @@ multi-step):
   `META_MAX` boundary, and the live key set must equal the model's after any
   prefix of operations.
 - `power_cut` is the torture extension of `fs_ops`: the same op-sequence
-  shadow model, but over the *real* on-device storage stack, a scaled-down
-  mirror of `firmware/src/flash_storage.rs` (the two `sequential-storage`
-  partitions, counter-FID routing, the caches) on a mock NOR flash whose
-  power can be cut after any byte of any write or erase. Once a cut fires, a
+  shadow model, but over the on-device storage stack itself — `rsk-store`,
+  the two `sequential-storage` partitions with their counter-FID routing and
+  caches — on a mock NOR flash whose power can be cut after any byte of any
+  write or erase. It tortured a hand-written mirror of that stack until the
+  backend moved into a crate; the mirror had drifted (no `last_error`, no
+  `compact`, a missing counter FID), which is the argument for not having one. Once a cut fires, a
   dead-latch fails every further mutation (a dead device cannot keep
   writing), the stack is rebuilt with fresh caches over the surviving bytes,
   and the model checks atomicity (the torn op reads as old or new, never

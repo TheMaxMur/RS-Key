@@ -21,6 +21,10 @@ rsk-oath = { path = "../crates/rsk-oath" }
 rsk-otp = { path = "../crates/rsk-otp" }
 rsk-piv = { path = "../crates/rsk-piv" }
 rsk-rescue = { path = "../crates/rsk-rescue" }
+# The store the device runs. `power_cut` used to torture a hand-written mirror of
+# it; a mirror can only be as right as whoever last synced it, and this one had
+# already drifted (no `last_error`, no `compact`, one missing counter FID).
+rsk-store = { path = "../crates/rsk-store" }
 # sha512_diff differential-fuzzes this fast SHA-512/384 against `sha2` below.
 rsk-sha512 = { path = "../crates/rsk-sha512" }
 # rsk-ui is the host-testable trusted-display logic; display_label fuzzes its
