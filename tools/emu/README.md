@@ -104,10 +104,12 @@ serial — is recognisable as emulator-made.
   the pixels come from the same `rsk_ui::render` the ST7789 gets, the flow is the
   same `crates/rsk-display`, and the mouse enters it through the same `TouchPad`
   a finger does — held, not clicked, because a panel reports contact continuously
-  and the 800 ms hold-to-approve is built on that. What is not emulated is the
-  panel itself: no backlight, no wake button, and the ambient status screen does
-  not run yet (it is async and wants interleaving with the socket loop), so the
-  window shows the splash until a ceremony paints over it.
+  and the 800 ms hold-to-approve is built on that. The ambient loop runs too, so
+  the window behaves like a device sitting on the desk: it comes up on its own
+  screen, the tabs and menus answer taps, and a host ceremony paints over them —
+  the panel's loop and the host's share one executor exactly as they do on the
+  board. What is not emulated is the panel hardware: no backlight to dim, no wake
+  button, and no display-sleep blanking to come back from.
 - **The vendor AID's hardware arms**: the applet itself runs (`crates/rsk-vendor`
   — the counter, the U2F/SELECT routing, the warm reboot), but SET/GET LED, the
   second core's statistics, the measurement benches and the drop to BOOTSEL all

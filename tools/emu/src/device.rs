@@ -193,15 +193,26 @@ pub fn run(
         ))));
         let _ = quit;
         let presence = RefCell::new(rsk_display::TouchPresence::new(ui));
-        serve(cfg, jobs, signals, fs, rng, &presence);
+        // The panel's own loop and the host's, on one executor — the same shape
+        // the firmware has, and the reason neither needs a lock: they only ever
+        // interleave where the other is not holding a borrow.
+        embassy_futures::block_on(embassy_futures::select::select(
+            rsk_display::status_loop(ui),
+            serve(cfg, jobs, signals, fs, rng, &presence),
+        ));
     } else {
         let presence = RefCell::new(EmuPresence::new(cfg.touch, lines, signals.clone()));
-        serve(cfg, jobs, signals, fs, rng, &presence);
+        embassy_futures::block_on(serve(cfg, jobs, signals, fs, rng, &presence));
     }
 }
 
 /// Everything downstream of the presence backend, generic over it.
-fn serve<PR: rsk_device::UserPresence + 'static>(
+///
+/// Async, and polling rather than blocking on the channel, so the trusted
+/// display's ambient loop can share this thread the way `status_task` shares the
+/// firmware's thread executor — two futures, one executor, interleaving at each
+/// other's await points.
+async fn serve<PR: rsk_device::UserPresence + 'static>(
     cfg: Config,
     jobs: Receiver<Req>,
     signals: Arc<Signals>,
@@ -287,7 +298,17 @@ fn serve<PR: rsk_device::UserPresence + 'static>(
 
     eprintln!("emu: device ready — serial {}", hex(&serial_id));
 
-    while let Ok(req) = jobs.recv() {
+    loop {
+        let req = match jobs.try_recv() {
+            Ok(req) => req,
+            // Nothing queued: yield, so a display loop selected against this one
+            // gets to run. 1 ms keeps the socket latency invisible.
+            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                embassy_time::Timer::after_millis(1).await;
+                continue;
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => break,
+        };
         let now_ms = attach.elapsed().as_millis() as u64;
         let out = match req.job {
             Job::Cbor { cid, data } => {

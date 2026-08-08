@@ -1595,6 +1595,7 @@ version = "0.1.0"
 dependencies = [
  "embassy-futures",
  "embassy-time",
+ "embassy-time-queue-utils",
  "embedded-graphics",
  "embedded-graphics-simulator",
  "embedded-storage-async",

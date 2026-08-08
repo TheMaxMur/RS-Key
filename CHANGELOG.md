@@ -28,7 +28,9 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   without a tap on a panel naming the true relying party — could until now only be
   seen on a board with a screen soldered to it. It renders on the host, from the
   same `rsk_ui::render` and the same `crates/rsk-display` flow, and a mouse held on
-  the button enters that flow through the same `TouchPad` a finger does.
+  the button enters that flow through the same `TouchPad` a finger does. The
+  ambient loop runs alongside the host's, on one executor, as on the board — so
+  the window is a device you can pick up and use, not just a ceremony viewer.
 - The CTAPHID and CCID message vocabularies in `rsk-usb` are public, so the
   emulator's transports name the same values instead of redeclaring them.
 - `scripts/docs_constants.py` now checks the constants copied into `tests/*.py`

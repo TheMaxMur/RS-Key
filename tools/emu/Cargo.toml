@@ -48,6 +48,9 @@ embedded-graphics-simulator = "0.7"
 # real time driver, which is why the display flow's 231 deadline/debounce sites
 # needed no host-specific handling at all.
 embassy-time = { git = "https://github.com/embassy-rs/embassy", branch = "main", features = ["std"] }
+# Awaiting a `Timer` (the display loop's tick) needs a timer-queue implementation
+# picked; on-target embassy-executor provides one, and off-target this is it.
+embassy-time-queue-utils = { git = "https://github.com/embassy-rs/embassy", branch = "main", features = ["generic-queue-8"] }
 embedded-storage-async = "0.4"
 embassy-futures = { git = "https://github.com/embassy-rs/embassy", branch = "main" }
 
