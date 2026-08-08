@@ -13,6 +13,12 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+## [0.4.8] - 2026-08-08
+
+Everything in 0.4.7 below, plus the fix for the reason it never shipped: the
+`v0.4.7` tag exists, but its release build failed on the 16 MB images and no
+release was ever published for it.
+
 ### Fixed
 
 - **A 16 MB image can carry the storage fence at all.** The partition table that
@@ -3936,7 +3942,8 @@ family that keeps the "enterprise" features in the open tree.
   signature of it, and a CycloneDX SBOM. See
   [docs/releases.md](docs/releases.md) to verify a download.
 
-[Unreleased]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.7...HEAD
+[Unreleased]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.8...HEAD
+[0.4.8]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.7...v0.4.8
 [0.4.7]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.6...v0.4.7
 [0.4.6]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.5...v0.4.6
 [0.4.5]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.4...v0.4.5
