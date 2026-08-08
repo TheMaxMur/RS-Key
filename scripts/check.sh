@@ -149,6 +149,12 @@ run "clippy (display strong-pin)" env LED_KIND=none cargo clippy -p firmware --f
 run "build firmware (release)" cargo build --release -p firmware
 run "firmware size budget"     firmware_size_budget
 run "partition table fences the store" partition_table_fences_the_store
+# The 16 MB geometry is the one that broke: the store used to end at the top of
+# the XIP window, where the bootrom's RP2350-E10 absolute block lives, and
+# `picotool partition create` refuses a table claiming it — a build the release
+# makes (display, 16mb) and the 4 MB gate above never exercised.
+run "build firmware (16M)"     env FLASH_SIZE=16M cargo build --release -p firmware
+run "partition table fences the store (16M)" partition_table_fences_the_store
 # The trusted-display flavor must keep building from the same tree. Built
 # `LED_KIND=none` (the panel replaces the addressable LED and its backlight uses
 # GPIO16 — the compile_error guard in main.rs enforces this), and before the

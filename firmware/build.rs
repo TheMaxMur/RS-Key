@@ -32,6 +32,18 @@ const KVCNT_LEN: u32 = 128 * 1024;
 /// split here with a fix hint instead of leaving a cryptic linker overflow.
 const MIN_CODE: u32 = 1024 * 1024;
 
+/// First byte of the sector holding the RP2350-E10 absolute block (`0x10FFFF00`,
+/// the last 256 bytes of the XIP window). The bootrom's erratum workaround owns
+/// it, and `picotool partition create` refuses a table claiming it — so the store,
+/// which sits at the top of flash, must stop below it (see [`usable_flash`]).
+const E10_ABS_BLOCK_SECTOR: u32 = 0xFFF_000;
+
+/// The highest flash offset the layout may use. Only a 16 MB part reaches the
+/// E10 sector; every smaller flash ends below it and keeps its layout unchanged.
+fn usable_flash(flash_size: u32) -> u32 {
+    flash_size.min(E10_ABS_BLOCK_SECTOR)
+}
+
 // --- Board config (BOARD=<name> -> firmware/boards/<name>.toml) ---
 struct BoardConfig {
     vidpid: Option<String>,
@@ -297,7 +309,7 @@ fn main() {
 
     // memory.x: the checked-in script is the default 4 MB / 1408K-KVMAIN layout;
     // for any other FLASH_SIZE or KVMAIN we splice a recomputed MEMORY block
-    // (code = flash − KVMAIN − KVCNT) into it and keep the rest verbatim.
+    // (code = usable_flash − KVMAIN − KVCNT) into it and keep the rest verbatim.
     let flash_size = resolve_flash_size();
     let kvmain_len = resolve_kvmain_len();
     assert_layout_fits(flash_size, kvmain_len);
@@ -606,12 +618,13 @@ fn resolve_kvmain_len() -> u32 {
 /// linker does, with a message that names the fix. KVCNT is fixed at the top;
 /// KVMAIN and the code region share what is left below it.
 fn assert_layout_fits(flash_size: u32, kvmain_len: u32) {
+    let usable = usable_flash(flash_size);
     let kv = kvmain_len + KVCNT_LEN;
     assert!(
-        flash_size > kv,
+        usable > kv,
         "FLASH_SIZE={flash_size} too small for KVMAIN + KVCNT ({kv} bytes)"
     );
-    let code = flash_size - kv;
+    let code = usable - kv;
     assert!(
         code >= MIN_CODE,
         "this FLASH_SIZE / KVMAIN split leaves only {code} bytes for code (< {MIN_CODE}); \
@@ -642,7 +655,7 @@ fn parse_size(s: &str) -> Option<u32> {
 /// splice it into the template, keeping the rest (KV symbols, SECTIONS) verbatim.
 /// KVCNT stays fixed at the top; KVMAIN sits below it; the code region is the rest.
 fn splice_memory_block(template: &str, flash_size: u32, kvmain_len: u32) -> String {
-    let code = flash_size - kvmain_len - KVCNT_LEN;
+    let code = usable_flash(flash_size) - kvmain_len - KVCNT_LEN;
     let kvmain = 0x1000_0000 + code;
     let kvcnt = kvmain + kvmain_len;
     let block = format!(

@@ -101,6 +101,12 @@ cat > "$tmp/pt.json" <<EOF
 }
 EOF
 
-picotool partition create "$tmp/pt.json" "$out" "$in" -t elf >/dev/null
+# picotool reports its refusals on stdout, so a plain `>/dev/null` turned the one
+# thing worth reading — "the address 10ffff00 cannot be in a partition" — into a
+# bare exit code, and a failing release build printed nothing at all.
+if ! log=$(picotool partition create "$tmp/pt.json" "$out" "$in" -t elf 2>&1); then
+  printf '%s\n' "$log" >&2
+  exit 1
+fi
 printf 'pt.sh: store fenced at 0x%08x..0x%08x (%d KiB), NSBOOT denied\n' \
   "$start" "$end" $((size / 1024)) >&2

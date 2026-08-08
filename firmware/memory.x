@@ -7,7 +7,8 @@
    `.end_block`.
 
    This is the default 4 MB / 1408K-KVMAIN MEMORY block; for any other FLASH_SIZE
-   or KVMAIN, build.rs splices in a recomputed one (code = flash − KVMAIN − KVCNT)
+   or KVMAIN, build.rs splices in a recomputed one (code = usable − KVMAIN − KVCNT,
+   where a 16 MB part stops one sector short of the RP2350-E10 absolute block)
    and keeps everything below it verbatim. KVMAIN is baked as PK_KVMAIN_LEN and read
    back by flash_storage.rs (MAIN_LEN), so build.rs keeps the two in step; KVCNT is
    fixed. Change these defaults here AND in build.rs (DEFAULT_KVMAIN) together. */
