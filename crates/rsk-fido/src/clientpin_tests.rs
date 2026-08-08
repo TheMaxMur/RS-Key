@@ -57,27 +57,32 @@ fn run(
 /// A built-in-UV presence backend for the 0x06/0x07 tests: it reports built-in
 /// UV available and "types" a fixed PIN on the (virtual) pad, honoring the same
 /// min-length gate the real pad enforces. An explicit `outcome` overrides the
-/// entry to exercise the decline / timeout / cancel branches.
+/// entry to exercise the decline / timeout / cancel branches. Every `Confirm`
+/// title it is shown is recorded, so a test can assert what the card *named*.
 struct UvPad {
     digits: std::vec::Vec<u8>,
     outcome: Option<PinEntry>,
+    titles: std::vec::Vec<&'static str>,
 }
 impl UvPad {
     fn typing(pin: &[u8]) -> Self {
         Self {
             digits: pin.to_vec(),
             outcome: None,
+            titles: std::vec::Vec::new(),
         }
     }
     fn ending(outcome: PinEntry) -> Self {
         Self {
             digits: std::vec::Vec::new(),
             outcome: Some(outcome),
+            titles: std::vec::Vec::new(),
         }
     }
 }
 impl crate::UserPresence for UvPad {
-    fn request(&mut self, _c: crate::Confirm<'_>) -> crate::Presence {
+    fn request(&mut self, c: crate::Confirm<'_>) -> crate::Presence {
+        self.titles.push(c.title);
         crate::Presence::Confirmed
     }
     // A PIN pad implies a screen, so this backend also answers the §6.5.5.7 consent.
@@ -1700,4 +1705,96 @@ fn change_pin_revokes_the_persistent_token() {
     )
     .unwrap();
     assert_ne!(plat2.decrypt_token(&out[..n]), before);
+}
+
+/// The on-pad PIN change carries the same step-15 revocation as the host paths. It
+/// used to delegate that to a RAM flag the firmware consumed on the next CBOR
+/// command, so an APDU-only warm reboot (or a plain replug) dropped the signal and
+/// left the pre-change `pcmr` grant reading the credential directory for ever — after
+/// the owner had performed the exact remediation the product tells them to perform
+/// (audit run-37).
+#[test]
+fn local_pin_change_revokes_the_persistent_token() {
+    let (mut fs, mut rng, _state, _plat) = setup_with_pin(b"1234");
+    let before = crate::seed::ensure_ppuat(&dev(), &mut fs, &mut rng).unwrap();
+
+    store_local_pin(&dev(), &mut fs, b"5678").unwrap();
+
+    assert!(
+        crate::seed::load_ppuat(&dev(), &mut fs).is_none(),
+        "a grant minted under the old PIN must not survive the on-pad change"
+    );
+    assert_ne!(
+        crate::seed::ensure_ppuat(&dev(), &mut fs, &mut rng).unwrap(),
+        before
+    );
+}
+
+/// The revocation sits in `write_pin_verifier`, the one function every `EF_PIN`
+/// verifier write in this crate goes through, so a *future* PIN-establishing path
+/// cannot reintroduce run-37's defect by forgetting it. `EF_DEVICE_PIN` is a separate
+/// credential that grants no `pcmr`, so it must revoke nothing.
+#[test]
+fn every_ef_pin_verifier_write_revokes_the_persistent_token() {
+    let (mut fs, mut rng) = setup();
+    let token = crate::seed::ensure_ppuat(&dev(), &mut fs, &mut rng).unwrap();
+
+    write_pin_verifier(EF_DEVICE_PIN, &dev(), &mut fs, b"4321", 4).unwrap();
+    assert_eq!(
+        crate::seed::load_ppuat(&dev(), &mut fs),
+        Some(token),
+        "the device PIN grants nothing, so it revokes nothing"
+    );
+
+    write_pin_verifier(EF_PIN, &dev(), &mut fs, b"1234", 4).unwrap();
+    assert!(crate::seed::load_ppuat(&dev(), &mut fs).is_none());
+}
+
+/// The `pcmr` consent card must name what it grants: a flash record that outlives
+/// every power cycle until a PIN change or a reset. On the built-in-UV path the host
+/// sends no PIN at all, so this screen is the entire disclosure — and it used to be
+/// the same "Allow host access?" the ten-minute `mc|ga` token gets (audit run-37).
+#[test]
+fn pcmr_consent_card_names_the_permission() {
+    let (mut fs, mut rng, mut state, plat) = setup_with_pin(b"1234");
+    let mut out = [0u8; 256];
+    let mut pad = UvPad::typing(b"1234");
+
+    run_with(
+        &mut pad,
+        &mut fs,
+        &mut rng,
+        &mut state,
+        &plat.get_uv_token_req(PERM_GA as u64),
+        &mut out,
+    )
+    .unwrap();
+    run_with(
+        &mut pad,
+        &mut fs,
+        &mut rng,
+        &mut state,
+        &plat.get_uv_token_req(PERM_PCMR as u64),
+        &mut out,
+    )
+    .unwrap();
+
+    assert_eq!(pad.titles.len(), 2);
+    assert_ne!(
+        pad.titles[0], pad.titles[1],
+        "a permanent directory grant must not be approved behind the session card"
+    );
+    assert_eq!(pad.titles[1], "Always list passkeys?");
+    // The same card also covers the host-PIN path (0x09).
+    let mut pad2 = UvPad::typing(b"1234");
+    run_with(
+        &mut pad2,
+        &mut fs,
+        &mut rng,
+        &mut state,
+        &plat.get_token_perms_req(b"1234", PERM_PCMR as u64),
+        &mut out,
+    )
+    .unwrap();
+    assert_eq!(pad2.titles, std::vec!["Always list passkeys?"]);
 }

@@ -20,7 +20,8 @@ use crate::flash_storage::FlashStorage;
 use crate::vendor::VendorApplet;
 
 /// Raised when the trusted display commits a new clientPIN; consumed by the next
-/// CBOR dispatch to revoke outstanding pinUvAuthTokens.
+/// CBOR dispatch to end the RAM session token. The flash-backed `pcmr` grant is not
+/// signalled — `store_local_pin` revokes that where the flash is.
 ///
 /// Cross-task because the display holds only `Fs` while `FidoState` lives here in
 /// the worker's handler. Same shape as `worker::MSG_DESELECT`: set on one task,
@@ -268,19 +269,15 @@ impl AppletHandler<'_> {
         // The trusted display re-keyed the clientPIN since the last command: end
         // every session credential the old PIN authorized, before this one can use
         // it. Set on the display task, consumed here — `FidoState` is ours, not its.
+        //
+        // RAM only. §6.5.5.6 step 15's persistent half used to be signalled through
+        // this same flag, which an APDU-only warm reboot drops before any CBOR command
+        // consumes it — leaving the `pcmr` grant live for ever (audit run-37). It is
+        // now revoked inside the write that installs the new verifier.
         #[cfg(feature = "display")]
         if LOCAL_PIN_CHANGED.swap(false, core::sync::atomic::Ordering::AcqRel) {
-            {
-                let mut rngb = self.rng.borrow_mut();
-                self.fido_state.reset_pin_uv_auth_token(&mut *rngb);
-            }
-            // §6.5.5.6 step 15 also calls resetPersistentPinUvAuthToken, and the
-            // `pcmr` grant is a flash record now, so revoking it is a delete. On a
-            // flash error re-arm the flag rather than swallow it: the grant is still
-            // live, and the next command retries.
-            if rsk_fido::seed::clear_ppuat(&mut *self.fs.borrow_mut()).is_err() {
-                LOCAL_PIN_CHANGED.store(true, core::sync::atomic::Ordering::Release);
-            }
+            let mut rngb = self.rng.borrow_mut();
+            self.fido_state.reset_pin_uv_auth_token(&mut *rngb);
             // The host path also clears `needs_power_cycle` here; that field is
             // crate-private and leaving the RAM soft lock armed only fails closed
             // (host clientPIN stays blocked until a replug), so it stays as it is.

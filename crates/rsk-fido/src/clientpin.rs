@@ -325,7 +325,7 @@ fn get_pin_token<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req, out: &mut [
     let slen = derive_shared(ctx, req, proto, &mut shared)?;
     // §6.5.5.7.1/.2 place the display's consent between the key agreement and the
     // PIN check, so a decline costs no retry.
-    if let Err(e) = consent_for_permissions(ctx) {
+    if let Err(e) = consent_for_permissions(ctx, permissions) {
         shared.zeroize();
         return Err(e);
     }
@@ -451,7 +451,7 @@ fn get_uv_token<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req, out: &mut [u
     // `builtin_uv` re-checks readiness for its other caller (makeCredential /
     // getAssertion), which reaches it without passing through here.
     builtin_uv_ready(ctx)?;
-    consent_for_permissions(ctx)?;
+    consent_for_permissions(ctx, permissions)?;
     builtin_uv(ctx)?;
 
     // A pending forced PIN change still blocks token issuance (changePIN first).
@@ -549,10 +549,22 @@ fn builtin_uv_ready<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>) -> Result<(), CtapE
 /// requested permissions. If this is not approved, return CTAP2_ERR_OPERATION_DENIED."
 /// Gated on `shows_confirm` — the same "has a display" test `authenticatorReset` uses
 /// for its §6.6 exemption — so a screenless build never polls its button here.
-fn consent_for_permissions<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>) -> Result<(), CtapError> {
-    if ctx.presence.shows_confirm()
-        && !ctx.check_user_presence(crate::Confirm::titled("Allow host access?"))
-    {
+///
+/// `pcmr` is named on the card because it is not a session grant: it mints a flash record
+/// that outlives every power cycle until a PIN change or a reset, and on the built-in-UV
+/// path (0x06) the host sends no PIN, so this screen is the whole disclosure. One title
+/// for both would have the user approve it exactly as they approve a ten-minute `mc|ga`
+/// token (audit run-37).
+fn consent_for_permissions<S: Storage, R: Rng>(
+    ctx: &mut Ctx<S, R>,
+    permissions: u8,
+) -> Result<(), CtapError> {
+    let title = if permissions & PERM_PCMR != 0 {
+        "Always list passkeys?"
+    } else {
+        "Allow host access?"
+    };
+    if ctx.presence.shows_confirm() && !ctx.check_user_presence(crate::Confirm::titled(title)) {
         return Err(CtapError::OperationDenied);
     }
     Ok(())
@@ -772,6 +784,12 @@ fn spend_and_verify_pin_hash<S: Storage, R: Rng>(
 /// ([`store_new_pin`]) and the device-local set ([`store_local_pin`]). It enforces no
 /// policy and touches no CTAP session state; the callers do. The seed is not touched —
 /// it stays kbase-only so UP-only operations keep working.
+///
+/// Establishing a clientPIN also runs §6.5.5.6 step 15's `resetPersistentPinUvAuthToken`,
+/// here rather than in each caller: the `pcmr` grant is a flash record that no PIN
+/// derives, so a writer that forgot left it authorizing credential-directory reads for
+/// ever — which is what the on-pad change did (audit run-37). `EF_DEVICE_PIN` is a
+/// different credential and grants nothing, so it revokes nothing.
 fn write_pin_verifier<S: Storage>(
     fid: u16,
     dev: &Device,
@@ -779,6 +797,11 @@ fn write_pin_verifier<S: Storage>(
     pin: &[u8],
     code_points: usize,
 ) -> Result<(), CtapError> {
+    // Before the new verifier lands, never after: a power cut the other way round
+    // leaves the old holder's grant live against a PIN they no longer know.
+    if fid == EF_PIN {
+        clear_ppuat(fs).map_err(|_| CtapError::Other)?;
+    }
     let mut dhash = sha256(pin);
     let mut pin_data = [0u8; PIN_FILE_LEN];
     pin_data[0] = MAX_PIN_RETRIES;
@@ -1067,14 +1090,13 @@ fn spend_and_verify_pin_at<S: Storage>(
 /// device-sealed, format 1, with a fresh retry budget — so the host afterwards sees a
 /// clientPIN exactly as if it had been set over USB. It enforces both `minPINLength` and
 /// the host-representable [`MAX_PIN_LENGTH`] ceiling (so a panel-set PIN stays usable over
-/// USB). It does NOT itself revoke outstanding pinUvAuthTokens or journal the change —
-/// both need state the display task does not hold. Revocation is not optional, though:
-/// `FidoState` lives in the worker and outlives every dispatch, so a token minted under
-/// the old PIN would keep `PERM_CM` authority (and `deleteCredential` takes no touch) for
-/// up to `PUAT_MAX_USAGE_PERIOD_MS` after the owner believes they locked the host out —
-/// and an outstanding `pcmr` grant ([`crate::seed::clear_ppuat`]) has no such deadline at
-/// all. The firmware caller MUST signal both — see `firmware::display::note_local_pin_changed`.
-/// The CALLER verifies the
+/// USB). The flash-backed `pcmr` grant dies with the old PIN inside
+/// [`write_pin_verifier`]. What is left to the caller is the RAM session token: `FidoState`
+/// lives in the worker and outlives every dispatch, so a token minted under the old PIN
+/// would keep `PERM_CM` authority (and `deleteCredential` takes no touch) for up to
+/// `PUAT_MAX_USAGE_PERIOD_MS` after the owner believes they locked the host out. The
+/// firmware caller MUST signal that — see `firmware::display::note_local_pin_changed`. It
+/// does not journal the change either (no [`Ctx`]). The CALLER verifies the
 /// *current* PIN first when one is set (so a change still proves knowledge of the old
 /// PIN) and zeroizes `pin`. A pending forced-PIN-change flag is cleared best-effort
 /// since a satisfied new PIN meets the policy.
