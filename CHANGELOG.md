@@ -15,6 +15,115 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Security
 
+Audit run-37 found no MEDIUM or above. What follows is the LOW tail, grouped by the class
+each defect belongs to rather than by the site that surfaced it — several were one of
+several sites of a rule the codebase had already decided once and swept incompletely.
+
+- **OATH's boot re-seal lap no longer destroys a record it cannot authenticate.** Six
+  at-rest migrations run before the USB pull-up, and five leave a record that opens under
+  neither key arm alone — PIV's comment says re-sealing garbage "would only destroy
+  evidence", OTP's says such a slot must be "skipped rather than truncated and
+  mis-resealed". OATH re-sealed unconditionally, through a buffer sized for plaintext
+  (`CRED_MAX`) rather than for a sealed blob (`seal::MAX_BLOB`), so past that ceiling the
+  GCM tag was discarded before the re-wrap and every credential and the access code were
+  lost for good — permanently, because a later boot with the right key authenticates the
+  outer wrapper and stops touching it. The scratch is now sized correctly and the lap
+  requires positive structural evidence of legacy plaintext (a credential opens with
+  `TAG_NAME` and carries `TAG_KEY`, which every pre-seal `cmd_put` guaranteed) before it
+  will re-seal. Not attacker-reachable — no host can plant an unsealable record — but a
+  wrong MKEK, a chip-serial change or a page-58 misconfiguration all reach it. A residual
+  is named in the code: `EF_OATH_CODE`'s plaintext has no structure to check.
+- **A PIN change on the device's own pad now revokes the persistent `pcmr` grant.**
+  `EF_PAUTHTOKEN` is a flash record whose *presence* is a credential-directory read grant.
+  Three of four PIN paths cleared it; the trusted display's own change signalled revocation
+  through a RAM flag consumed only by the next CBOR dispatch — so a host that sent the
+  ungated warm reboot as a plain APDU, or simply waited for an unplug, kept a grant minted
+  under the old PIN for ever. The revocation moved down into `write_pin_verifier`, the one
+  function in the crate that writes an `EF_PIN` verifier, so a future PIN path inherits it
+  by construction instead of by review.
+- **Three journalled events an ungated host can drive now coalesce, not one.** The
+  defence existed and covered `CONFIG_WRITE` alone; a `getAssertion` carrying `up:false`
+  and a U2F `AUTHENTICATE` with `P1=0x08` both take the spec-mandated silent path and
+  appended unbudgeted, so 128 of either evicted the whole evidence window. The fold scans
+  the window rather than only the newest entry — folding into the newest is defeated by
+  interleaving two classes — and counts repeats in the entry's previously reserved
+  trailing two bytes. Four comments asserting `CONFIG_WRITE` was the only such event are
+  corrected.
+- **A stranded chain segment can no longer swallow the next SELECT.** `chain_hdr` was
+  consulted only at the terminator, and the SELECT escape hatch fired only on a header
+  *mismatch* — so a segment sent as `10 A4 04 00`, whose masked header equals every
+  SELECT-by-AID's, absorbed a co-resident process's SELECT and left the previous applet
+  selected with its verified-PIN latch intact. A SELECT is now judged before the header
+  comparison, and the accumulation branch is bound to its opener too.
+- **`CTAPHID_WINK` can no longer forge the awaiting-touch indicator.** Re-arming reset the
+  deadline unconditionally, so one 64-byte report every 70 ms held the reserved touch
+  colour solid for ever — on the default single-LED board, pixel-identical to a real
+  consent prompt, from any unprivileged process, with FIDO2 and U2F disabled and nothing
+  written to the journal. A burst now always ends `WINK_MS` after the *first* arm, and a
+  wink arriving during a touch wait shows the real prompt instead. The re-arm rule lives in
+  `rsk-led` with a Kani proof rather than in the firmware.
+- **`CTAPHID_WINK` on a build with no indicator now answers `ERR_INVALID_CMD`.** It left
+  `CAPABILITY_WINK` clear and then reported a successful wink anyway — the device saying
+  both "I have no indicator" and "yes, I winked". `docs/guides/led.md` already described
+  the correct behaviour; the code did not.
+- **`ykman config set-lock-code` no longer discards the enabled-applications policy.**
+  `trim_to_cap`, added last cycle to stop stored bytes vetoing a write, evicted entries
+  from the front by position and never looked at the tag — so on an over-cap legacy record
+  the first thing dropped was `USB_ENABLED`, whose absence resolves to *everything
+  enabled*. The eviction is tag-aware now, and the companion defect is fixed in the same
+  pass: the merge buffer is sized for the overflow case, so `overlay_dev_conf` can no
+  longer answer `TooLong` before the trim gets a chance.
+- **The host-writable LED pin can no longer steal a pad another driver owns.** The
+  effective data pin is resolved from the phy record at boot and was filtered only against
+  the GPIO range and the presence pin, so on a board with an LED-power or USR-LED pin a
+  host could point it at either — falsifying a containment precondition `docs/unsafe.md`
+  states for eleven `AnyPin::steal` sites.
+- **`rsk secure-boot load-key` verifies the burn it made.** The post-burn check tested
+  that the first two ECC rows were non-zero, which passes on any garbage — including
+  picotool's replication of a two-byte `bootkey0` across all sixteen rows, the one
+  malformed shape the tool's own type gates let through. It now reads the slot back and
+  compares it to the fingerprint it wrote, and refuses a `bootkey0` that is not 32 bytes.
+  Without this, enforcement could be enabled on a board whose only trusted fingerprint
+  matched no signing key.
+- **`gate_union.py` now catches the defect it was written for.** Run the shipped script
+  against the tree containing last cycle's OATH bug and it exited 0: its regex required
+  `pub`, and that predicate was private. It now matches private and crate-private
+  predicates, scans `firmware/src/` too, and asserts a roster of applet crates so a missing
+  arm is loud instead of invisible.
+- **The most destructive host command's two-key refusal has a driven test.** `offboard`'s
+  replug guard could be deleted with all 280 tests green, because the refuse-to-guess
+  inventory classifies by callee name and the guard's AST is identical with and without it.
+  Raw `hid.device()` opens are now inventoried with written rationale, and the guard itself
+  is exercised with two devices attached.
+- **Hardening, swept as classes:** every `EF_PW_PRIV` retry-counter write clamps its slice
+  (five sites, one idiom — unreachable today, but a panic there bricks the device before
+  USB comes up); `Sw::retries` clamps its argument so a large retry total cannot collide
+  with `63C0` "blocked"; the vendor CTAPHID path scrubs its scratch like its sibling; both
+  host tools verify the CTAPHID INIT nonce echo and bound-check the response; `rsk identify`
+  reports a refusing device instead of aborting the walk; and `docs_constants.py` stops
+  scanning test files, where a stale literal masked a moved constant.
+
+### Changed
+
+- **Consent titles are shorter and can no longer run off the panel.** The ceremony title
+  was the one label on that screen painted unclipped, so 23 of 36 were cut mid-word —
+  including both irreversible OTP fuse burns, where the title is the *only* text on the
+  card. Six were reworded and the rest now fit outright; a test measures every consent
+  title against the band, so a future long one fails the gate instead of being cut on
+  glass. A `pcmr` token request also gets its own title now: it grants a permanent
+  directory-read capability behind what was the same card as a ten-minute session token.
+- **The audit screen distinguishes "nothing happened" from "I was not watching."** With
+  journalling off — the default — it said "No activity yet", which is a claim about the
+  world the device never made.
+- **The on-panel PIV generate no longer promises more than it delivers.** It said "Does
+  not erase anything" while overwriting the retired slot's certificate; the picker and the
+  sink now both skip a slot holding one, and the caption says what the fence covers.
+- **`rsk-tui --selftest` refuses a flag where the PIN should be.** `--selftest --demo` sent
+  the literal string `--demo` to the device as a clientPIN, spending a real retry, and
+  `--demo --selftest` silently ignored `--demo` and ran a real seed export. Both are
+  refused, and `--help` now shows the `[PIN]` positional the guide already documented.
+- **`rsk audit log` and the offboard receipt render a coalesced run's count.**
+
 - **The KV store is fenced off from the USB bootloader.** An attacker with brief physical
   access could `picotool save` the whole flash, guess PINs until the retry counter locked,
   then `picotool load` the snapshot back to reset it — unlimited offline guessing, against

@@ -21,7 +21,7 @@ the log is real. Use `log` for a quick glance, `verify` when the answer matters.
 | event | detail |
 |---|---|
 | `BOOT` | first journal touch of each power cycle |
-| `MAKE_CREDENTIAL` / `GET_ASSERTION` / `U2F_REGISTER` / `U2F_AUTH` | first 8 bytes of the rpIdHash (only *weakly* pseudonymous, see [Gating](#gating)) |
+| `MAKE_CREDENTIAL` / `GET_ASSERTION` / `U2F_REGISTER` / `U2F_AUTH` | first 8 bytes of the rpIdHash (only *weakly* pseudonymous, see [Gating](#gating)). A run of the two *silent* variants folds — see below |
 | `RESET` | factory reset (survives it — see below) |
 | `PIN_SET` / `PIN_CHANGE` / `PIN_LOCKOUT` | lockout aux: 0 = retries exhausted, 1 = per-boot block |
 | `CFG_MIN_PIN` | aux = new minimum; detail[0] = forceChangePin |
@@ -35,7 +35,7 @@ the log is real. Use `log` for a quick glance, `verify` when the answer matters.
 | `CHECKPOINT` | every signed checkpoint is itself logged |
 
 Each entry is a fixed 20 bytes:
-`seq(4) ‖ uptime_ms(4) ‖ event(1) ‖ aux(1) ‖ detail(8) ‖ rsvd(2)`. There is
+`seq(4) ‖ uptime_ms(4) ‖ event(1) ‖ aux(1) ‖ detail(8) ‖ repeats(2 LE)`. There is
 **no wall clock** on the device. `uptime_ms` counts from the moment the key
 *attached to USB*, not from power-on — boot spends seconds before that on TRNG
 seeding and flash migrations, and none of it is time a host could have used.
@@ -51,19 +51,33 @@ sites*. See [gating](#gating) below. Other events use `detail` for their own sma
 payload (`CFG_MIN_PIN`'s forceChangePin flag, `CONFIG_WRITE`'s run counters); none
 of them records a site.
 
-### Config writes cost one slot per run
+### Events a silent host can drive cost one slot per run
 
-The journal is append-only with one bounded exception. `CONFIG_WRITE` is
-[ungated on the default build](../protocol.md) and is the only event a silent
-host can drive on demand, so 128 of them would otherwise evict every other entry
-from the 128-slot window. Instead a *run* of config writes folds into a single
-entry: it keeps the `seq` and the timestamp of the **first** write of the run,
-and its detail counts the rest — `repeats(2 LE) ‖ targets(1)`, where `targets` is
-a `1 << target` mask of every record the run touched. `rsk audit log` renders it:
+The journal is append-only with one bounded exception. Three events can be
+driven on demand with no touch and no PIN, so 128 of any one of them would
+otherwise evict every other entry from the 128-slot window:
+
+- `CONFIG_WRITE`, [ungated on the default build](../protocol.md);
+- `GET_ASSERTION` from a `getAssertion` carrying `up:false` — the spec-mandated
+  silent pre-flight, which needs a credential but no gesture;
+- `U2F_AUTH` from an `AUTHENTICATE` with `P1=0x08` (don't-enforce-user-presence),
+  for the same reason.
+
+Each folds a *run* into a single entry that keeps the `seq` and the timestamp of
+the **first** occurrence. The two shapes differ in where the count lives.
+`CONFIG_WRITE` carries its own inside `detail` — `repeats(2 LE) ‖ targets(1)`,
+where `targets` is a `1 << target` mask of every record the run touched — and
+folds only into the newest entry. The two silent FIDO events instead keep the
+`detail` of the first occurrence (so the rpIdHash shown is the first site of the
+run) and count the rest in the entry's trailing `repeats(2 LE)`, scanning the
+whole window rather than only the newest entry, so interleaving two of them does
+not defeat the fold. A gestured assertion always earns its own slot.
+`rsk audit log` renders both:
 
 ```text
    seq      uptime  event              aux  detail
    201       8.2s  CONFIG_WRITE         1  300× write (phy+led)
+   202       9.1s  GET_ASSERTION        0  a3f1c2...  ×128
 ```
 
 Two consequences worth knowing:

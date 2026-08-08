@@ -185,6 +185,12 @@ command is only useful if the key visibly flashes. It also uses the touch
 colour because that is the one state `rsk led` keeps above a visibility floor,
 so a key dimmed everywhere else still answers something you can see.
 
+Two bounds follow from borrowing that colour. Repeated WINKs do **not** extend a
+burst already running — it always ends 600 ms after the *first* one — and a WINK
+arriving while the key is waiting for a touch shows the real prompt, not the
+burst. Without both, a host could hold the awaiting-touch indicator lit and forge
+the one consent signal a build without the display has.
+
 A build with no indicator (`LED_KIND=none`, which includes the display build)
 does not advertise the wink capability at all, rather than accepting the command
 and doing nothing.

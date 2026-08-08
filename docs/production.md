@@ -211,7 +211,8 @@ That file is the courier, and its whole job:
 |---|---|
 | Written by | `picotool seal` (2b) — it derives the fingerprint from your `.pem` |
 | Read by | `rsk secure-boot load-key <that file>` (2c) — burns it into a boot-key slot |
-| Contains | `bootkey0` (the 32-byte fingerprint) + `key_valid` + `secure_boot_enable` |
+| Contains | `bootkey0` (the 32-byte fingerprint, length-checked before the burn) + `key_valid` + `secure_boot_enable` |
+| Verified after the burn | `load-key` reads the slot back and compares it to the fingerprint it wrote — a mismatch fails with `verify failed: slot N reads back …` rather than leaving an unusable slot marked valid |
 | Touched by anything else | no |
 
 **You do not back it up, and losing it costs nothing.** It is a pure function of
