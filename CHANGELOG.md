@@ -13,6 +13,8 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+## [0.4.7] - 2026-08-08
+
 ### Security
 
 Audit run-37 found no MEDIUM or above. What follows is the LOW tail, grouped by the class
@@ -3911,7 +3913,8 @@ family that keeps the "enterprise" features in the open tree.
   signature of it, and a CycloneDX SBOM. See
   [docs/releases.md](docs/releases.md) to verify a download.
 
-[Unreleased]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.6...HEAD
+[Unreleased]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.7...HEAD
+[0.4.7]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.6...v0.4.7
 [0.4.6]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.5...v0.4.6
 [0.4.5]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.4...v0.4.5
 [0.4.4]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.3...v0.4.4
