@@ -23,6 +23,12 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   stack. Its device identity is deliberately its own, so emulator-made material
   is recognisable as such. See [docs/testing.md](docs/testing.md) and
   `tools/emu/README.md`.
+- **`tools/emu --display` runs the trusted display in a window.** The Approve/Deny
+  ceremony — the screen whose whole promise is that a signature cannot be had
+  without a tap on a panel naming the true relying party — could until now only be
+  seen on a board with a screen soldered to it. It renders on the host, from the
+  same `rsk_ui::render` and the same `crates/rsk-display` flow, and a mouse held on
+  the button enters that flow through the same `TouchPad` a finger does.
 - The CTAPHID and CCID message vocabularies in `rsk-usb` are public, so the
   emulator's transports name the same values instead of redeclaring them.
 - `scripts/docs_constants.py` now checks the constants copied into `tests/*.py`

@@ -5,6 +5,7 @@
 # `rsk`/`rsk-tui` commands) and `fuzz` (nightly for cargo-fuzz).
 {
   pkgs,
+  sdl2,
   target,
   toolchain,
   fuzzToolchain,
@@ -48,17 +49,28 @@
       rskPython
       rskBin
       rskTui
+
+      # The emulator's `--display` window (tools/emu): SDL2 is what
+      # embedded-graphics-simulator opens the panel in, so the trusted-display
+      # flow can be driven with a mouse instead of a soldered CST328.
+      sdl2
     ];
 
     # tools/tui links the host PC/SC and HID stacks. On Linux the pcsc-sys and
     # hidapi build scripts resolve libpcsclite/libudev via pkg-config (the gate
     # clippies the TUI, so CI needs them); darwin uses the system frameworks.
-    buildInputs = pkgs.lib.optionals pkgs.stdenv.isLinux [
+    buildInputs = [
+      sdl2
+    ]
+    ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
       pkgs.pcsclite
       pkgs.systemd # libudev, for the hidapi crate's hidraw backend
     ];
 
     shellHook = ''
+      # rustc does not read buildInputs, so name SDL2's lib dir for the linker —
+      # without it `tools/emu --display` fails with `ld: library 'SDL2' not found`.
+      export LIBRARY_PATH="${pkgs.lib.getLib sdl2}/lib''${LIBRARY_PATH:+:$LIBRARY_PATH}"
       # the Gnuk-derived OpenPGP card suite (third_party/) dlopens libgcrypt
       export DYLD_FALLBACK_LIBRARY_PATH="${pkgs.lib.getLib pkgs.libgcrypt}/lib''${DYLD_FALLBACK_LIBRARY_PATH:+:$DYLD_FALLBACK_LIBRARY_PATH}"
       # The dev-shell `rsk-tui` is a bare `cargo run` (no nix RPATH), so its

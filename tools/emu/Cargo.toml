@@ -36,6 +36,18 @@ rsk-device = { path = "../../crates/rsk-device" }
 # have log-structured storage instead of a map that overwrites in place.
 rsk-store = { path = "../../crates/rsk-store" }
 sequential-storage = { version = "=8.0.0", features = ["_test"] }
+# The trusted display: the same flow the firmware runs, over a window instead of
+# an ST7789. `rsk-ui` draws it, `embedded-graphics-simulator` opens the SDL2
+# panel — and because the renderer is generic over `DrawTarget`, neither of them
+# knows the difference.
+rsk-display = { path = "../../crates/rsk-display" }
+rsk-ui = { path = "../../crates/rsk-ui" }
+embedded-graphics = "0.8"
+embedded-graphics-simulator = "0.7"
+# `std` is the feature that makes `Instant::now()` link off-target: it supplies a
+# real time driver, which is why the display flow's 231 deadline/debounce sites
+# needed no host-specific handling at all.
+embassy-time = { git = "https://github.com/embassy-rs/embassy", branch = "main", features = ["std"] }
 embedded-storage-async = "0.4"
 embassy-futures = { git = "https://github.com/embassy-rs/embassy", branch = "main" }
 

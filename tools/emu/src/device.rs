@@ -94,6 +94,8 @@ impl Hooks<EmuStore> for EmuHooks {
 pub struct Config {
     pub store: Option<PathBuf>,
     pub touch: bool,
+    /// Serve the trusted display in a window; presence becomes an on-screen hold.
+    pub display: bool,
     pub seed: Option<Vec<u8>>,
     pub serial: [u8; 8],
     pub kv_total: u32,
@@ -150,8 +152,13 @@ pub fn run(
             return;
         }
     };
-    let fs = RefCell::new(Fs::new(store));
-    let rng = RefCell::new(match &cfg.seed {
+    // `Box::leak`, not a local: `AppletHandler` requires `PR: 'static`, and the
+    // display's `TouchPresence` borrows the store and the DRBG — so those must
+    // outlive it. `firmware` reaches the same place with `StaticCell`; either way
+    // the process owns them for its whole life.
+    let fs: &'static RefCell<Fs<crate::store::EmuStore>> =
+        Box::leak(Box::new(RefCell::new(Fs::new(store))));
+    let rng: &'static RefCell<EmuRng> = Box::leak(Box::new(RefCell::new(match &cfg.seed {
         Some(s) => EmuRng::from_seed(s),
         None => match EmuRng::from_os() {
             Ok(r) => r,
@@ -160,8 +167,48 @@ pub fn run(
                 return;
             }
         },
-    });
-    let presence = RefCell::new(EmuPresence::new(cfg.touch, lines, signals.clone()));
+    })));
+
+    // The presence backend is the one thing the two builds disagree about, and it
+    // is a *type*, not a value — so the split is here and everything below is
+    // generic over it. With `--display` it is the trusted screen in a window,
+    // driven by the same `rsk_display` flow the board runs.
+    if cfg.display {
+        let (panel, touch, hooks, quit) = crate::display::open();
+        let ui = Box::leak(Box::new(RefCell::new(rsk_display::Ui::new(
+            panel,
+            touch,
+            hooks,
+            rsk_display::DeviceInfo {
+                version: 0x0874,
+                chipid: u64::from_le_bytes(cfg.serial),
+            },
+            fs,
+            rsk_display::DeviceKeys {
+                serial_id: cfg.serial,
+                serial_hash: rsk_crypto::sha256(&cfg.serial),
+                otp_mkek: None,
+            },
+            rng,
+        ))));
+        let _ = quit;
+        let presence = RefCell::new(rsk_display::TouchPresence::new(ui));
+        serve(cfg, jobs, signals, fs, rng, &presence);
+    } else {
+        let presence = RefCell::new(EmuPresence::new(cfg.touch, lines, signals.clone()));
+        serve(cfg, jobs, signals, fs, rng, &presence);
+    }
+}
+
+/// Everything downstream of the presence backend, generic over it.
+fn serve<PR: rsk_device::UserPresence + 'static>(
+    cfg: Config,
+    jobs: Receiver<Req>,
+    signals: Arc<Signals>,
+    fs: &'static RefCell<Fs<crate::store::EmuStore>>,
+    rng: &'static RefCell<EmuRng>,
+    presence: &RefCell<PR>,
+) {
     let platform = RefCell::new(EmuPlatform::new());
 
     let serial_id = cfg.serial;
@@ -207,10 +254,10 @@ pub fn run(
     let vendor_platform = EmuVendorPlatform::default();
     let reboot_requested = vendor_platform.reboot.clone();
     let mut ctap = AppletHandler::new(
-        &fs,
-        &rng,
+        fs,
+        rng,
         &hooks,
-        &presence,
+        presence,
         vendor_platform.clone(),
         serial_id,
         serial_hash,
@@ -218,10 +265,10 @@ pub fn run(
         devk,
     );
     let mut ccid = CcidApplets::new(
-        &fs,
-        &rng,
+        fs,
+        rng,
         &hooks,
-        &presence,
+        presence,
         &platform,
         vendor_platform,
         serial_id,
@@ -302,10 +349,10 @@ pub fn run(
                 ccid.reset_card();
                 hooks.borrow_mut().warm = false;
                 ctap = AppletHandler::new(
-                    &fs,
-                    &rng,
+                    fs,
+                    rng,
                     &hooks,
-                    &presence,
+                    presence,
                     EmuVendorPlatform {
                         reboot: reboot_requested.clone(),
                     },
@@ -341,10 +388,10 @@ pub fn run(
             ccid.reset_card();
             hooks.borrow_mut().warm = true;
             ctap = AppletHandler::new(
-                &fs,
-                &rng,
+                fs,
+                rng,
                 &hooks,
-                &presence,
+                presence,
                 EmuVendorPlatform {
                     reboot: reboot_requested.clone(),
                 },

@@ -15,6 +15,7 @@
 
 mod ccid;
 mod device;
+mod display;
 mod hid;
 mod platform;
 mod presence;
@@ -54,6 +55,8 @@ usage: rsk-emu [options]
   --ccid-port <n>     APDU/card port, 0 disables (default 7800)
   --store <path>      persist the file system here (default: memory only)
   --touch             ask for every user presence on the terminal
+  --display           open the trusted display in a window; presence is an
+                      on-screen hold, exactly as on a screen board
   --trace             log every command and its status
   --yubico            present the Yubico card identity (ATR + OpenPGP AID
                       manufacturer), as a build carrying the Yubico VID does
@@ -72,6 +75,7 @@ fn main() {
     let mut cfg = Config {
         store: None,
         touch: false,
+        display: false,
         seed: None,
         serial: DEFAULT_SERIAL,
         kv_total: KV_TOTAL,
@@ -97,6 +101,7 @@ fn main() {
             "--ccid-port" => ccid_port = parse_port(&value("--ccid-port")),
             "--store" => cfg.store = Some(value("--store").into()),
             "--touch" => cfg.touch = true,
+            "--display" => cfg.display = true,
             "--trace" => cfg.trace = true,
             "--yubico" => cfg.yubico = true,
             "--power-cut" => cfg.power_cut = Some(parse_u32(&value("--power-cut"))),

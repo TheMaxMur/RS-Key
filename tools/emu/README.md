@@ -20,6 +20,8 @@ cargo run --manifest-path tools/emu/Cargo.toml --target "$HOST" -- --store ./my.
   --ccid-port <n>     APDU/card port, 0 disables (default 7800)
   --store <path>      the flash image to mount (default: a blank chip, memory only)
   --touch             ask for every user presence on the terminal
+  --display           open the trusted display in a window (SDL2); presence
+                      becomes an on-screen hold, as on a screen board
   --trace             log every command and its status
   --seed <hex>        seed the DRBG deterministically (predictable keys)
   --serial <16 hex>   device serial
@@ -98,6 +100,14 @@ serial — is recognisable as emulator-made.
   mock's own injector. What is still standing in for hardware is the medium
   itself: no wear, no partial-erase physics, and the write-once *tracking* resets
   across a restart (the bits do not — they are in the image).
+- **The trusted display**: `--display` runs it for real. The window is the panel:
+  the pixels come from the same `rsk_ui::render` the ST7789 gets, the flow is the
+  same `crates/rsk-display`, and the mouse enters it through the same `TouchPad`
+  a finger does — held, not clicked, because a panel reports contact continuously
+  and the 800 ms hold-to-approve is built on that. What is not emulated is the
+  panel itself: no backlight, no wake button, and the ambient status screen does
+  not run yet (it is async and wants interleaving with the socket loop), so the
+  window shows the splash until a ceremony paints over it.
 - **The vendor AID's hardware arms**: the applet itself runs (`crates/rsk-vendor`
   — the counter, the U2F/SELECT routing, the warm reboot), but SET/GET LED, the
   second core's statistics, the measurement benches and the drop to BOOTSEL all

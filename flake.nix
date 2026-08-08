@@ -6,6 +6,13 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    # SDL2 ONLY, and deliberately not the main pin. `tools/emu --display` opens its
+    # window through the Rust `sdl2` crate, whose event enum is SDL2's; unstable now
+    # ships `sdl2-compat` (SDL3 behind an SDL2 API) as `SDL2`, which emits SDL3-era
+    # window events (0x207) the crate aborts on. 24.11 is the last branch carrying
+    # real SDL2, and nothing else is taken from it — the toolchain, every tool and
+    # every build stay on the main pin.
+    nixpkgs-sdl2.url = "github:NixOS/nixpkgs/nixos-24.11";
     flake-utils.url = "github:numtide/flake-utils";
     fenix = {
       url = "github:nix-community/fenix";
@@ -22,6 +29,7 @@
     {
       self,
       nixpkgs,
+      nixpkgs-sdl2,
       flake-utils,
       fenix,
     }:
@@ -29,6 +37,7 @@
       system:
       let
         pkgs = import nixpkgs { inherit system; };
+        sdl2 = (import nixpkgs-sdl2 { inherit system; }).SDL2;
         fx = fenix.packages.${system};
 
         # RP2350 = dual Cortex-M33 -> thumbv8m.main-none-eabihf (hardware float).
@@ -65,6 +74,7 @@
           {
             inherit
               pkgs
+              sdl2
               target
               toolchain
               fuzzToolchain
