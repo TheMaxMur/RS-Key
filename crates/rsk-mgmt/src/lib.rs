@@ -130,6 +130,13 @@ const MIN_CONFIG_RES_CAP: usize = 64;
 /// prevent.
 const EF_DEV_CONF_READ_MAX: usize = 64;
 
+/// Scratch a merge is assembled in before [`trim_to_cap`] shrinks it: a legacy
+/// record (up to [`EF_DEV_CONF_READ_MAX`]) plus everything the request contributes.
+/// Sizing it by the *stored* cap instead is what made [`overlay_dev_conf`] answer
+/// `TooLong` before the trim could run, so a 64-byte legacy record refused every
+/// write that added a tag it did not already carry (audit run-37).
+const DEV_CONF_MERGE_MAX: usize = EF_DEV_CONF_READ_MAX + DEV_CONF_WRITE_MAX;
+
 /// The device-owned part of every READ CONFIG response: the overall length byte,
 /// `USB_SUPPORTED` + `SERIAL` + `FORM_FACTOR` + `VERSION`, and the trailing
 /// `CONFIG_LOCK`. Each `push_tlv` costs 2 bytes of header plus its value.
@@ -323,7 +330,7 @@ pub fn persist_dev_conf<S: Storage>(fs: &mut Fs<S>, blob: &[u8]) -> Result<(), D
     // and `read_enabled_caps` reads empty as "no record" and returns
     // SUPPORTED_CAPS, so a lock-code write silently re-enabled every application
     // the owner had disabled (audit run-35).
-    let mut merged = [0u8; EF_DEV_CONF_READ_MAX];
+    let mut merged = [0u8; DEV_CONF_MERGE_MAX];
     let m = merged_dev_conf(fs, &stripped[..n], &mut merged)?;
     if m > EF_DEV_CONF_MAX {
         return Err(DevConfError::TooLong);
@@ -345,7 +352,8 @@ pub fn persist_dev_conf<S: Storage>(fs: &mut Fs<S>, blob: &[u8]) -> Result<(), D
 
 /// The record a write of `incoming` (already lock-stripped) would store: the merge
 /// onto what is on flash, trimmed to the cap. One definition, so the writer and
-/// [`dev_conf_unchanged`] can never disagree about what "unchanged" means.
+/// [`dev_conf_unchanged`] can never disagree about what "unchanged" means. `out`
+/// must be [`DEV_CONF_MERGE_MAX`] — the merge is over-cap before the trim.
 fn merged_dev_conf<S: Storage>(
     fs: &mut Fs<S>,
     incoming: &[u8],
@@ -357,7 +365,7 @@ fn merged_dev_conf<S: Storage>(
 
 /// Drop whole stored entries from the front of a merged record until it fits
 /// [`EF_DEV_CONF_MAX`], never touching the trailing `keep` bytes the request itself
-/// contributed.
+/// contributed, and never [`TAG_USB_ENABLED`].
 ///
 /// [`overlay_dev_conf`] emits the stored, un-restated entries first and appends the
 /// request last, so trimming the front evicts the oldest stored fields and always
@@ -366,14 +374,34 @@ fn merged_dev_conf<S: Storage>(
 /// validation, so a field device may carry a record the write cap refuses, and one
 /// ungated oversized entry could deny the owner their config surface for good
 /// (audit run-36).
+///
+/// The enabled-applications tag is exempt because nothing canonicalises the stored
+/// order, so it sits at the front of any record whose writer emitted it first — and
+/// it is the one stored entry this firmware enforces, with an absence that resolves
+/// permissively ([`enabled_from_conf`] → [`SUPPORTED_CAPS`]). Evicting it by
+/// position let a lock-code write silently re-enable every disabled application
+/// (audit run-37).
 fn trim_to_cap(merged: &mut [u8], mut m: usize, keep: usize) -> usize {
     while m > EF_DEV_CONF_MAX && m > keep {
-        let Some(&len) = merged.get(1) else { break };
-        let entry = 2 + len as usize;
-        if entry > m - keep {
-            break;
-        }
-        merged.copy_within(entry..m, 0);
+        let stored = m - keep;
+        let mut i = 0;
+        let victim = loop {
+            if i + 2 > stored {
+                break None;
+            }
+            let entry = 2 + merged[i + 1] as usize;
+            if i + entry > stored {
+                break None;
+            }
+            if merged[i] != TAG_USB_ENABLED {
+                break Some((i, entry));
+            }
+            i += entry;
+        };
+        // Only the policy (or a half entry) left to give: refusing the write beats
+        // dropping it, and `persist_dev_conf` turns the over-cap length into 6A80.
+        let Some((at, entry)) = victim else { break };
+        merged.copy_within(at + entry..m, at);
         m -= entry;
     }
     m
@@ -588,11 +616,11 @@ pub fn dev_conf_unchanged<S: Storage>(fs: &mut Fs<S>, blob: &[u8]) -> bool {
     // merges onto the stored record, so a partial blob — the only shape ykman sends
     // — is never byte-equal to the whole record, and comparing the request meant
     // this short-circuit could not fire at all after the merge landed (audit
-    // run-36). Sized by the READ bound, like the other readers: `EF_DEV_CONF_MAX` is
-    // the *write* cap, and sizing a reader by it meant a legacy record between the
-    // two limits never fitted, so every replay of it looked "changed" and churned
+    // run-36). Sized like the writer's own scratch, not by a cap: `EF_DEV_CONF_MAX`
+    // is the *write* limit, and sizing a reader by it meant a legacy record between
+    // the limits never fitted, so every replay of it looked "changed" and churned
     // flash plus the audit ring (audit run-34 #35).
-    let mut merged = [0u8; EF_DEV_CONF_READ_MAX];
+    let mut merged = [0u8; DEV_CONF_MERGE_MAX];
     let Ok(m) = merged_dev_conf(fs, &stripped[..n], &mut merged) else {
         return false;
     };
