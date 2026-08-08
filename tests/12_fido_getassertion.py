@@ -8,7 +8,15 @@
 
 Registers a non-resident ES256 credential, then runs getAssertion twice with it
 in the allowList. Checks the assertion structure (credential id echoed, rpIdHash,
-UP flag, signature present) and that the counter strictly increments.
+UP flag, signature present) and that the signature counter stays 0.
+
+Zero is the answer here, not a placeholder: signature counters are per-credential
+(`EF_CRED_CTR`) so that an RP cannot correlate one credential's use with another's,
+and a non-resident credential keeps no on-device state to count in — `getassertion.rs`
+reports 0 for it and advances nothing. This test asserted a strict increment until
+2026-08-08, three weeks after the counters became per-credential; it was green
+last on the global counter. The increment is covered where the state exists:
+`getassertion_tests.rs` for resident credentials, `13_u2f.py` for U2F.
 """
 import hashlib
 import os
@@ -166,7 +174,7 @@ def main():
         c1, siglen = login()
         c2, _ = login()
         print(f"login ok: sig={siglen}B counter {c1} -> {c2}")
-        assert c2 > c1, f"signature counter did not increment ({c1} -> {c2})"
+        assert (c1, c2) == (0, 0), f"non-resident credential reported a counter ({c1} -> {c2})"
 
         print("\nPASS")
     finally:
