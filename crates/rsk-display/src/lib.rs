@@ -161,6 +161,13 @@ static AMBIENT_QUIET_UNTIL_MS: AtomicU32 = AtomicU32::new(0);
 /// cover the platform's next-command round-trip, short enough to feel immediate.
 const AMBIENT_QUIET_MS: u32 = 400;
 
+/// How long the Settings menu must go without a tap before an edit is written to
+/// flash. Short enough that a change survives the unplug that ends a USB key's
+/// session, long enough that a run of −/+ taps is still one write — brightness and
+/// display-sleep live in the credential partition, whose whole design is that it
+/// fills slowly, so a write per tap would advance its ring toward a cold migration.
+const SETTINGS_PERSIST_QUIET_MS: u64 = 1_500;
+
 /// Auto-close an open on-device tab / menu (Passkeys / Settings / a Confirm-Delete)
 /// after this long *without a tap*, returning to the idle status screen — a privacy
 /// backstop so a walked-away device doesn't leave the passkey list (or a menu) on

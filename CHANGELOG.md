@@ -71,6 +71,16 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **On-panel settings were lost if the key was unplugged with the menu still
+  open.** Brightness, display-sleep and the touch timeout were written to flash
+  only when Settings *closed* — one write per editing session instead of one per
+  −/+ tap, which is what keeps that churn out of the credential partition. But a
+  USB key is unplugged, not shut down, and the settings screen is exactly where
+  someone decides they are done: the change they had already watched take effect
+  silently did not survive. An edit now also flushes once the menu has gone quiet
+  for 1.5 s, so a run of taps is still a single write and the loss window shrinks
+  from "the whole time the menu is open" to a moment. `bcdDevice` `0x0873` →
+  `0x0874`.
 - **The `power_cut` fuzz target was tearing a mirror of the store, not the
   store.** The re-implementation it drove had drifted three ways, each load-bearing
   for what the target claims to prove: no `last_error`, so it could not see

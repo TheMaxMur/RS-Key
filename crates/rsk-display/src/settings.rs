@@ -71,6 +71,7 @@ where
             .wait_release(Instant::now(), Duration::from_millis(MENU_INACTIVITY_MS));
         let mut last = Instant::now();
         let idle_limit = Duration::from_millis(MENU_INACTIVITY_MS);
+        let persist_after = Duration::from_millis(SETTINGS_PERSIST_QUIET_MS);
 
         // Track whether the user actually changed a knob, so the persist on exit is one
         // flash write per editing session (on every exit path), not one per −/+ tap.
@@ -217,6 +218,17 @@ where
                     self.render_settings(page);
                 }
             }
+            // Flush an edit that has settled, instead of waiting for the menu to
+            // close. A USB key is unplugged, not shut down, so "persist on exit"
+            // silently loses a change the user has already watched take effect —
+            // and the settings screen is exactly where they decide they are done.
+            // One quiet moment still coalesces a run of −/+ taps into a single
+            // write, which is what keeps this churn out of the credential pages.
+            if (display_dirty || presence_dirty) && last.elapsed() >= persist_after {
+                self.persist_settings(display_dirty, presence_dirty);
+                display_dirty = false;
+                presence_dirty = false;
+            }
             // A host command is queued — yield to the parked worker at once, rather
             // than making it wait out the (now generous) inactivity bound.
             if self.hooks.host_request_pending_after(last) || last.elapsed() >= idle_limit {
@@ -225,6 +237,8 @@ where
             block_for(Duration::from_millis(TOUCH_POLL_MS));
         };
 
+        // Whatever the debounce above has not already written — an edit made in the
+        // last moment before Back, a tab switch or the power button.
         self.persist_settings(display_dirty, presence_dirty);
         self.end_modal();
         next
