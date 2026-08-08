@@ -911,6 +911,74 @@ fn cred_sealed_before_otp_burn_survives_the_burn() {
     assert!(seal::seal_read(&nootp, &mut fs, fid, &mut buf).is_none());
 }
 
+/// A device whose records were sealed on other silicon: `serial_hash` is the GCM
+/// AAD, so nothing it holds opens under either arm here.
+fn foreign_sealed(fs: &mut Fs<RamStorage>, fid: KeyFid, plain: &[u8]) -> Device<'static> {
+    let dev = Device {
+        serial_hash: &[0x22; 32],
+        serial_id: &SERIAL,
+        otp_key: None,
+    };
+    let foreign = Device {
+        serial_hash: &[0x77; 32],
+        ..dev
+    };
+    assert!(seal::seal_put(&foreign, fs, &mut CountRng(7), fid, plain));
+    let mut buf = [0u8; seal::MAX_BLOB];
+    assert!(seal::seal_read(&dev, fs, fid, &mut buf).is_none());
+    dev
+}
+
+#[test]
+fn cred_that_opens_under_no_arm_survives_the_boot_lap() {
+    // run-37 #1: a record that authenticates under neither arm is not legacy
+    // plaintext. Re-sealing it double-wraps the ciphertext and destroys the
+    // credential, so the lap must leave it byte-identical — as its PIV / OTP /
+    // keydev siblings do.
+    let mut fs = new_fs();
+    let fid = KeyFid::new(EF_OATH_CRED);
+    let mut plain = tlv(TAG_NAME, b"acct");
+    plain.extend(tlv(TAG_KEY, &[0x21, 8]));
+    let dev = foreign_sealed(&mut fs, fid, &plain);
+
+    let mut before = [0u8; seal::MAX_BLOB];
+    let n = fs.read_key(fid, &mut before).unwrap();
+    migrate_seal(&dev, &mut fs, &mut CountRng(1));
+
+    let mut after = [0u8; seal::MAX_BLOB];
+    let m = fs.read_key(fid, &mut after).unwrap();
+    assert_eq!(
+        (m, &after[..m]),
+        (n, &before[..n]),
+        "the lap re-sealed a record it could not open",
+    );
+}
+
+#[test]
+fn oversized_sealed_cred_is_not_truncated_by_the_boot_lap() {
+    // A maximal credential seals to CRED_MAX + 28 bytes. Read through a CRED_MAX
+    // scratch it came back short of its GCM tag, and the lap re-sealed the
+    // truncated ciphertext — an information-theoretic loss.
+    let mut fs = new_fs();
+    let fid = KeyFid::new(EF_OATH_CRED);
+    let dev = foreign_sealed(&mut fs, fid, &[0xA5; CRED_MAX]);
+
+    let mut before = [0u8; seal::MAX_BLOB];
+    assert_eq!(fs.read_key(fid, &mut before), Some(seal::MAX_BLOB));
+    migrate_seal(&dev, &mut fs, &mut CountRng(1));
+
+    let mut after = [0u8; seal::MAX_BLOB];
+    assert_eq!(
+        fs.read_key(fid, &mut after),
+        Some(seal::MAX_BLOB),
+        "the lap truncated a maximal sealed blob",
+    );
+    assert_eq!(
+        after, before,
+        "the lap re-sealed a record it could not open"
+    );
+}
+
 #[test]
 fn otp_pin_set_before_burn_still_verifies_after_burn() {
     // #4 regression: v1 is OTP-rooted, so a PIN set before the OTP burn is
