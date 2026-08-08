@@ -13,6 +13,35 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+## [0.4.8] - 2026-08-08
+
+Everything in 0.4.7 below, plus the fix for the reason it never shipped: the
+`v0.4.7` tag exists, but its release build failed on the 16 MB images and no
+release was ever published for it.
+
+### Fixed
+
+- **A 16 MB image can carry the storage fence at all.** The partition table that
+  arrived in 0.4.7 covered the whole chip, and on a 16 MB part the store's last
+  sector holds `0x10FFFF00` — the absolute block the bootrom's RP2350-E10
+  workaround owns. `picotool partition create` refuses to claim it (and separately
+  requires unpartitioned space to accept the `absolute` family), so `nix build
+  .#firmware-display` failed in the release with no diagnostic: the error goes to
+  stdout, which `pt.sh` sends to `/dev/null`. The 16 MB layout now stops one
+  sector short of the top, leaving that block outside every partition, and `pt.sh`
+  no longer swallows picotool's message. This was never a 4 MB or 2 MB problem —
+  their stores end far below the E10 block, and their layouts are byte-identical
+  to 0.4.7.
+  **Upgrading a provisioned 16 MB key (the `display` and `16mb` flavors, the
+  `abrobot-16m` and `waveshare-touch-lcd` presets) moves its store 4 KB down, so
+  the device comes up factory-empty: export your seed first**
+  ([seed backup](docs/guides/seed-backup.md)). A 4 MB key upgrades in place, as
+  usual.
+- **The gate builds a 16 MB image and fences it.** The partition-table assertion
+  ran on the 4 MB default only, and the display smoke build did not set
+  `FLASH_SIZE=16M` either — so the one geometry with a special case in it was
+  checked by nothing until the release ran.
+
 ## [0.4.7] - 2026-08-08
 
 ### Security
@@ -3913,7 +3942,8 @@ family that keeps the "enterprise" features in the open tree.
   signature of it, and a CycloneDX SBOM. See
   [docs/releases.md](docs/releases.md) to verify a download.
 
-[Unreleased]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.7...HEAD
+[Unreleased]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.8...HEAD
+[0.4.8]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.7...v0.4.8
 [0.4.7]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.6...v0.4.7
 [0.4.6]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.5...v0.4.6
 [0.4.5]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.4...v0.4.5

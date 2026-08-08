@@ -93,6 +93,12 @@ of flash and only the code region grows. A 16 MB board just gets more (unused)
 code headroom. The credential capacity is unchanged (why the flash is mostly
 empty by design: [architecture.md](architecture.md)).
 
+One exception, and only at 16 MB: the store stops a sector short of the top,
+because the bootrom's RP2350-E10 workaround owns the last 256 bytes of the XIP
+window (`0x10FFFF00`) and `picotool partition create` refuses a table that claims
+them — so a 16 MB image could not carry the fence at all. The reserved 4 KB is
+outside every partition, which is where the bootrom needs it.
+
 The KV store is 1.5 MB by default (`KVMAIN` 1408K + `KVCNT` 128K). On a **2 MB**
 board that leaves too little for the ~900K image, so the firmware can't link.
 `KVMAIN` shrinks the main partition to make room: build a 2 MB Seeed XIAO RP2350
