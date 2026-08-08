@@ -1172,6 +1172,7 @@ dependencies = [
  "rsk-rescue",
  "rsk-sdk",
  "rsk-usb",
+ "rsk-vendor",
 ]
 
 [[package]]
@@ -1327,6 +1328,15 @@ dependencies = [
  "embassy-usb",
  "rsk-sdk",
  "zeroize",
+]
+
+[[package]]
+name = "rsk-vendor"
+version = "0.1.0"
+dependencies = [
+ "rsk-fs",
+ "rsk-led",
+ "rsk-sdk",
 ]
 
 [[package]]

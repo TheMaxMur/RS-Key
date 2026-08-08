@@ -42,7 +42,7 @@ Green check.sh is the bar for every commit.
 ```sh
 nix develop -c cargo test -p rsk-sdk -p rsk-fs -p rsk-usb -p rsk-crypto \
     -p rsk-fido -p rsk-openpgp -p rsk-rsa-asm -p rsk-mgmt -p rsk-oath \
-    -p rsk-otp -p rsk-piv -p rsk-rescue --target aarch64-apple-darwin
+    -p rsk-otp -p rsk-piv -p rsk-rescue -p rsk-vendor --target aarch64-apple-darwin
 ```
 
 (`HOST_TARGET` env overrides the triple in `check.sh`.) Crypto tests pin
@@ -293,9 +293,9 @@ nix develop -c python tests/emu.py tests/11_fido_makecredential.py
 `tests/emu.py` puts a fake `hid` module and a fake `smartcard` package in front of
 the target script and points the power-cycle helper at the emulator's replug
 opcode, so no test file changes and neither hidapi nor pyscard need be installed.
-**38 of the 52 suites pass**, FIDO and card alike; the other 14 are refused by
-name with their reason and exit 77 — they need the firmware's own vendor AID, raw
-USB, python-fido2, or hardware, and `tools/emu/README.md` lists which is which. A
+**42 of the 52 suites pass**, FIDO and card alike (two of them want `--pin`); the
+other 10 are refused by name with their reason and exit 77 — they need raw USB,
+python-fido2, or hardware, and `tools/emu/README.md` lists which is which. A
 harness that cannot tell "does not apply here" from "broken" hides the second
 one, which is the whole reason those fourteen are named rather than left to fail
 somewhere in the middle. `--touch` prompts for every presence on the terminal (and

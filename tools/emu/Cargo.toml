@@ -28,5 +28,6 @@ rsk-oath = { path = "../../crates/rsk-oath" }
 rsk-otp = { path = "../../crates/rsk-otp" }
 rsk-piv = { path = "../../crates/rsk-piv" }
 rsk-rescue = { path = "../../crates/rsk-rescue" }
+rsk-vendor = { path = "../../crates/rsk-vendor" }
 
 [workspace]

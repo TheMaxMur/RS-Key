@@ -167,6 +167,16 @@ impl rsk_mgmt::UserPresence for EmuPresence {
     }
 }
 
+impl rsk_vendor::UserPresence for EmuPresence {
+    fn request(&mut self, confirm: rsk_vendor::Confirm<'_>) -> rsk_vendor::Presence {
+        match self.ask(confirm) {
+            Verdict::Confirmed => rsk_vendor::Presence::Confirmed,
+            Verdict::Declined => rsk_vendor::Presence::Declined,
+            Verdict::Timeout | Verdict::Cancelled => rsk_vendor::Presence::Timeout,
+        }
+    }
+}
+
 impl rsk_rescue::UserPresence for EmuPresence {
     fn request(&mut self, confirm: rsk_rescue::Confirm<'_>) -> rsk_rescue::Presence {
         match self.ask(confirm) {

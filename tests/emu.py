@@ -14,10 +14,10 @@ do against hardware, and no test file knows about any of this. Neither hidapi no
 pyscard has to be installed.
 
 What this cannot stand in for: anything that needs the USB stack itself
-(enumeration, interface order, the CCID block layer), the applets the emulator
-does not carry (the firmware-local vendor AID: LED, bench, reboot-to-BOOTSEL),
-and every hardware property it has none of (secure boot, OTP, power cuts). A
-green run here is a protocol result, not a device result.
+(enumeration, interface order, the CCID packetisation), the arms of the vendor
+applet that drive hardware (the LED, the second core, the benches, the drop to
+BOOTSEL), and every hardware property the emulator has none of (secure boot, OTP,
+power cuts). A green run here is a protocol result, not a device result.
 
 The suites in [`UNSUPPORTED`] are refused up front with their reason and exit 77,
 rather than being allowed to fail somewhere in the middle. A harness that cannot
@@ -68,15 +68,12 @@ EXIT_SKIP = 77
 # the emulator for a reason that is not a defect, so it is refused before it
 # starts. Removing an entry is a claim that the emulator grew the capability.
 UNSUPPORTED = {
-    # The vendor AID (counter, LED, bench, reboot-to-BOOTSEL) is implemented in
-    # `firmware/src/vendor.rs`, not in a crate, and drives hardware the emulator
-    # does not have.
-    "01_flash_persistence": "needs the firmware-local vendor AID",
-    "14_up_only_after_reboot": "needs the firmware-local vendor AID (reboot)",
-    "15_u2f_vendor_msg_isolation": "needs the firmware-local vendor AID",
-    "30_ccid_transport": "needs the firmware-local vendor AID (counter)",
-    "51_secure_reboot": "needs the firmware-local vendor AID (reboot)",
-    "76_soft_lock": "needs the firmware-local vendor AID (reboot)",
+    # The emulator carries the vendor applet (`crates/rsk-vendor`), so its
+    # counter, its warm reboot and the U2F/SELECT routing all run. What it has no
+    # hardware for is the ATR of a Yubico-identity build, the LED, the second
+    # core's counters and the drop to BOOTSEL.
+    "30_ccid_transport": "asserts the ATR of a Yubico-identity build",
+    "51_secure_reboot": "reboots to BOOTSEL; there is no bootloader to fall into",
     # Below the applet layer: the emulator serves reports and APDUs, not USB.
     "02_usb_interfaces": "reads the USB descriptors; the emulator has no USB",
     "73_otp_keyboard": "drives the OTP keyboard interface over raw USB",

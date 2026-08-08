@@ -38,14 +38,15 @@ power-cycle helper at the emulator — so the suites run unmodified, and neither
 hidapi nor pyscard need be installed. `RSK_EMU` / `RSK_EMU_CCID` override the
 addresses.
 
-**38 of the 52 suites pass; the other 14 are refused by name, with the reason,
+**42 of the 52 suites pass; the other 10 are refused by name, with the reason,
 before they start** (exit 77 — so a sweep counts skips apart from failures). None
 of them is an unexplained failure:
 
 | Skipped here | Why |
 |---|---|
-| `01`, `14`, `15`, `30`, `51`, `76` | the vendor AID (counter, LED, bench, reboot) lives in `firmware/`, not a crate |
 | `02`, `73`, `77` | raw USB: interface layout, the OTP keyboard, pyusb |
+| `30` | asserts the ATR of a Yubico-identity build |
+| `51` | reboots to BOOTSEL; there is no bootloader to fall into |
 | `53` | the PC/SC `FEATURE_VERIFY_PIN_DIRECT` reader layer |
 | `61`, `65` | driven through python-fido2's own HID transport — faking it would leave the suite testing this shim instead of a third-party client |
 | `54`, `90` | SRAM residue and OTP-fuse migration — hardware by definition |
@@ -53,9 +54,9 @@ of them is an unexplained failure:
 The list lives in `tests/emu.py` (`UNSUPPORTED`); removing an entry is a claim
 that the emulator grew the capability.
 
-`28` takes `--pin` and wants a PIN already set (`21_pin_webauthn` sets `1234`).
-`50` and `52` measure that a touch took time, so they only mean something with
-`--touch` and a human at the keyboard.
+`28` and `76` take `--pin` and want a PIN already set (`21_pin_webauthn` sets
+`1234`). `50` and `52` measure that a touch took time, so they only mean
+something with `--touch` and a human at the keyboard.
 
 ## The wire
 
@@ -89,6 +90,10 @@ serial — is recognisable as emulator-made.
 - **Flash semantics**: the store overwrites in place. It is not
   `sequential-storage`, so there are no log-structured remnants and no torn
   writes — power-cut behaviour still has to be proved on hardware.
+- **The vendor AID's hardware arms**: the applet itself runs (`crates/rsk-vendor`
+  — the counter, the U2F/SELECT routing, the warm reboot), but SET/GET LED, the
+  second core's statistics, the measurement benches and the drop to BOOTSEL all
+  answer `INS_NOT_SUPPORTED`, because there is nothing behind them here.
 - **USB**: enumeration, interface order, the OTP keyboard interface, and the LED.
   The CCID *block* layer does run — the socket carries whole CCID messages — but
   its packetisation does not: a socket delivers a message whole, where the device
