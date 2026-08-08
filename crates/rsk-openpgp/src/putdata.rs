@@ -93,7 +93,7 @@ pub fn put_pw_status<S: Storage>(fs: &mut Fs<S>, sess: &Session, data: &[u8]) ->
     }
     let mut pw = [0u8; 7];
     let n = match fs.read(EF_PW_PRIV, &mut pw) {
-        Some(n) => n,
+        Some(n) => n.min(pw.len()),
         None => return Sw::REFERENCE_NOT_FOUND,
     };
     // Only the leading bytes (flag + 3 max-length bytes) are writable via PUT

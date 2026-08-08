@@ -174,3 +174,19 @@ fn unknown_tag_not_found() {
         Sw::REFERENCE_NOT_FOUND
     );
 }
+
+#[test]
+fn an_overlong_pw_status_record_cannot_panic_put_pw_status() {
+    // Same clamp as `pin::check_pin`: `Fs::read` reports the stored length, so an
+    // EF_PW_PRIV longer than the array would panic the `&pw[..n]` write-back.
+    let (mut fs, mut sess) = setup();
+    admin(&mut fs, &mut sess);
+    let mut overlong = crate::files::PW_STATUS_DEFAULT.to_vec();
+    overlong.resize(16, 0xAA);
+    fs.put(EF_PW_PRIV, &overlong).unwrap();
+
+    assert_eq!(put_pw_status(&mut fs, &sess, &[0x00]), Sw::OK);
+    let mut pw = [0u8; 7];
+    assert_eq!(fs.read(EF_PW_PRIV, &mut pw), Some(7));
+    assert_eq!(&pw[4..7], &[3, 0, 3], "retry counters preserved");
+}

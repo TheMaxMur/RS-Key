@@ -167,6 +167,7 @@ fn settle_rc_retry_counter<S: Storage>(fs: &mut Fs<S>) -> Result<(), Error> {
     let Some(n) = fs.read(EF_PW_PRIV, &mut pw) else {
         return Ok(());
     };
+    let n = n.min(pw.len());
     let idx = pw_retry_idx(EF_RC);
     if idx < n && pw[idx] != 0 {
         pw[idx] = 0;

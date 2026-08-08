@@ -97,7 +97,10 @@ fn ct_eq(a: &[u8], b: &[u8]) -> bool {
 /// tries, or `Err` when blocked.
 fn pin_wrong_retry<S: Storage>(fs: &mut Fs<S>, fid: u16) -> Result<u8, ()> {
     let mut pw = [0u8; 8];
-    let n = fs.read(EF_PW_PRIV, &mut pw).ok_or(())?;
+    // `Fs::read` reports the record's *stored* length, not what it copied, so a
+    // longer record would panic the `&pw[..n]` write-back — and a panic-halt image
+    // never comes back. Clamp at every EF_PW_PRIV site, as `check_pin` does.
+    let n = fs.read(EF_PW_PRIV, &mut pw).ok_or(())?.min(pw.len());
     let idx = pw_retry_idx(fid);
     if idx >= n || pw[idx] == 0 {
         return Err(());
@@ -118,7 +121,8 @@ fn pin_reset_retries<S: Storage>(fs: &mut Fs<S>, fid: u16, force: bool) -> Resul
     let mut pw = [0u8; 8];
     let n = fs
         .read(EF_PW_PRIV, &mut pw)
-        .ok_or(Sw::REFERENCE_NOT_FOUND)?;
+        .ok_or(Sw::REFERENCE_NOT_FOUND)?
+        .min(pw.len());
     let mut retr = [0u8; 8];
     let rn = fs
         .read(EF_PW_RETRIES, &mut retr)
@@ -141,7 +145,8 @@ fn set_pin_retry_counter<S: Storage>(fs: &mut Fs<S>, fid: u16, value: u8) -> Res
     let mut pw = [0u8; 8];
     let n = fs
         .read(EF_PW_PRIV, &mut pw)
-        .ok_or(Sw::REFERENCE_NOT_FOUND)?;
+        .ok_or(Sw::REFERENCE_NOT_FOUND)?
+        .min(pw.len());
     let idx = pw_retry_idx(fid);
     if idx >= n {
         return Err(Sw::MEMORY_FAILURE);
