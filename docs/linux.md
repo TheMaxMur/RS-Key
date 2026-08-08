@@ -56,8 +56,11 @@ Until then, pick one:
   presents `0x1050:0x0407`, which is already in the driver's list, and the stock
   yubico udev rules cover it too. Nothing to patch; this is why the applets work
   out of the box on that build.
-- **Add the id to your local ccid driver.** From source (NixOS and friends), a
-  one-line addition to `supported_readers.txt` before the build; on an FHS distro,
+- **Apply this flake's ccid overlay** ([NixOS](#nixos-declarative)) — the same
+  driver with that one line already in its reader list, and nothing else changed;
+  the build refuses to produce a bundle the id did not reach.
+- **Add the id to your local ccid driver.** Building from source, a one-line
+  addition to `supported_readers.txt` before the build; on an FHS distro,
   edit `/usr/lib/pcsc/drivers/ifd-ccid.bundle/Contents/Info.plist`, which holds
   `ifdVendorID`, `ifdProductID` and `ifdFriendlyName` as three **parallel** arrays
   — add one entry to each, at the same position, or the mapping shifts. Restart
@@ -114,6 +117,29 @@ Add to your `configuration.nix`:
 ```
 
 `nixos-rebuild switch`, then re-plug the board (or restart `pcscd`).
+
+On the **default identity** that is not yet enough — the ccid driver still has to
+know the id (see above). This flake carries an overlay for it; add the repo as an
+input of your system flake and apply it:
+
+```nix
+# flake.nix: inputs.rs-key.url = "github:TheMaxMur/RS-Key";
+{
+  nixpkgs.overlays = [ inputs.rs-key.overlays.ccid-rs-key ];
+}
+```
+
+The overlay replaces `pkgs.ccid`, which is exactly what the `pcscd` module puts in
+its plugin list, so there is nothing else to set. If you would rather not override
+the attribute for the whole system, name the package instead — with `lib.mkForce`,
+because the module contributes its own `[ pkgs.ccid ]` and two ccid bundles collide
+in the plugin `buildEnv`:
+
+```nix
+services.pcscd.plugins = lib.mkForce [
+  inputs.rs-key.packages.${pkgs.system}.ccid-rs-key
+];
+```
 
 ## Generic Linux (Debian / Ubuntu / Fedora / Arch)
 

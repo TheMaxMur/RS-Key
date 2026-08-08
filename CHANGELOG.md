@@ -185,6 +185,25 @@ several sites of a rule the codebase had already decided once and swept incomple
   never *changed*, was never seeded at all — 32 zero bytes, which would have become a
   known token the moment anything verified against it.
 
+- **A ccid driver that knows the default identity: `overlays.ccid-rs-key` and
+  `packages.<system>.ccid-rs-key`.** `pcscd` does not drive readers — the **ccid**
+  driver does, and it binds only the USB ids in its own `supported_readers.txt`, so
+  on the default identity (`0x1209:0x0001`) the CCID interface was skipped
+  *silently*: FIDO kept working while OpenPGP, PIV, OATH and Yubico-OTP looked
+  absent rather than broken, and no udev or polkit rule helps with a reader the
+  driver never claimed. Documenting it (0.4.6) told people what to patch by hand;
+  this does the patching. The overlay replaces `pkgs.ccid` — exactly what the NixOS
+  `pcscd` module puts in its plugin list — with the same driver plus one reader
+  entry, verified additive at build time: 629 entries become 630, none removed, no
+  other bundle key touched. It stays *ours* rather than an upstream submission
+  because `0x1209:0x0001` is pid.codes' shared **prototype** id, and listing it in
+  the ccid project would bind every unrelated prototype using it; the build fails
+  loudly if a future ccid restructures the list out from under the edit. The
+  `VIDPID=Yubikey5` build still needs none of this — `0x1050:0x0407` is listed
+  already. Reported in [#67](https://github.com/TheMaxMur/RS-Key/issues/67) and
+  [discussion #58](https://github.com/TheMaxMur/RS-Key/discussions/58);
+  [linux.md](docs/linux.md) has the wiring for both routes.
+
 ### Fixed
 
 - **Three seal recipes produced an image that would not boot on a provisioned board.**
