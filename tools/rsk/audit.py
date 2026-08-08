@@ -36,6 +36,10 @@ CKPT_TAG = b"RSK-AUDIT-CKPT-v1"
 EVT_RESET = 0x04  # firmware journal.rs EV_RESET
 EVT_CONFIG_WRITE = 0x15  # firmware journal.rs EV_CONFIG_WRITE
 CONFIG_TARGETS = {0: "dev-conf", 1: "phy", 2: "led"}
+#: A coalesced run's repeat count — a saturating LE u16 in the entry's last two
+#: bytes (firmware journal.rs RUN_REPEATS_AT). 0 means a single occurrence, so an
+#: older build's always-zero reserved field decodes as exactly that.
+RUN_REPEATS_AT = ENTRY_LEN - 2
 
 EVENTS = {
     0x01: "BOOT",
@@ -146,12 +150,16 @@ def read_journal(dev, cid, pin):
 
 
 def _detail(e):
-    """The detail column of one entry. The device coalesces a run of config writes
-    into a single ring slot (an ungated host must not be able to flush the ring), so
-    a CONFIG_WRITE detail is `repeats(2 LE) ‖ targets(1)`: how many writes the entry
-    stands for and which records they touched."""
+    """The detail column of one entry. The device coalesces a run of any event an
+    ungated host can drive on demand into a single ring slot (it must not be able to
+    flush the ring): a device-config write, a silent `up:false` GET_ASSERTION, a
+    don't-enforce U2F_AUTH. CONFIG_WRITE counts inside its own detail
+    (`repeats(2 LE) ‖ targets(1)`) — which records the run touched, and how many
+    writes it stands for; the others keep the first occurrence's detail and count in
+    the entry's last two bytes."""
     if e[8] != EVT_CONFIG_WRITE:
-        return e[10:18].hex()
+        folded = int.from_bytes(e[RUN_REPEATS_AT:RUN_REPEATS_AT + 2], "little")
+        return e[10:18].hex() + (f" ×{folded + 1}" if folded else "")
     n = int.from_bytes(e[10:12], "little") + 1
     hit = "+".join(t for bit, t in CONFIG_TARGETS.items() if e[12] & (1 << bit))
     return f"{n}× write ({hit or 'unknown'})"
