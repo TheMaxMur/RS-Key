@@ -22,6 +22,8 @@ cargo run --manifest-path tools/emu/Cargo.toml --target "$HOST" -- --store ./my.
   --touch             ask for every user presence on the terminal
   --display           open the trusted display in a window (SDL2); presence
                       becomes an on-screen hold, as on a screen board
+  --usbip [addr]      serve USB/IP (default 127.0.0.1:3240) so a Linux host can
+                      attach the emulator as a real USB device
   --trace             log every command and its status
   --seed <hex>        seed the DRBG deterministically (predictable keys)
   --serial <16 hex>   device serial
@@ -62,6 +64,30 @@ that the emulator grew the capability.
 otherwise the shim asks the card for its ATR and skips. `28` and `76` take `--pin` and want a PIN already set (`21_pin_webauthn` sets
 `1234`). `50` and `52` measure that a touch took time, so they only mean
 something with `--touch` and a human at the keyboard.
+
+## As a real USB device (`--usbip`)
+
+The sockets above are not something a browser, `ykman` or `gpg` can reach — they
+look for USB. `--usbip` fixes that without any USB hardware: the Linux kernel's
+`vhci_hcd` attaches a TCP peer as a virtual host controller, and USB/IP is
+network-transparent, so the emulator can stay on a Mac while a Linux VM imports
+it.
+
+```bash
+cargo run --manifest-path tools/emu/Cargo.toml --target "$HOST" -- --usbip 0.0.0.0:3240
+# then, on a Linux box that can reach it:
+sudo modprobe vhci-hcd
+sudo usbip list -r <host>              # lists rsk-emu and its three interfaces
+sudo usbip attach -r <host> -b rsk-emu
+```
+
+**Status: the transport is done, the device behind it is not.** Both protocol
+phases are implemented and tested (30 tests), and a real kernel lists the device
+with its interfaces in the right order — which is the `02_usb_interfaces` /
+issue #55 property, and the reason this is worth having. But every URB is
+answered with a STALL, because the seam behind it (`usbip::UrbSink`) has no USB
+stack in it yet; the `embassy_usb::driver::Driver` impl is what fills it. An
+attach therefore succeeds and enumeration then fails.
 
 ## The wire
 
