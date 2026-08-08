@@ -7,17 +7,17 @@
     cargo run --manifest-path tools/emu/Cargo.toml --target "$HOST"   # in one shell
     python tests/emu.py tests/10_fido_getinfo.py                      # in another
 
-It installs a fake `hid` module whose one device is the emulator's CTAPHID
-socket, then runs the target script unchanged — so the suites keep opening the
-device exactly as they do against hardware, and no test file knows about any of
-this. hidapi does not have to be installed.
+It installs a fake `hid` module whose one device is the emulator's CTAPHID socket
+and a fake `smartcard` package whose one reader is its card socket, then runs the
+target script unchanged — so the suites keep opening the device exactly as they
+do against hardware, and no test file knows about any of this. Neither hidapi nor
+pyscard has to be installed.
 
 What this cannot stand in for: anything that needs the USB stack itself
-(interface order, enumeration, the replug and reboot helpers), the CCID suites
-(they go through pyscard — the emulator serves APDUs, but this shim does not
-fake `smartcard` yet), and every hardware property the emulator has none of
-(secure boot, OTP, power cuts). A green run here is a protocol result, not a
-device result.
+(enumeration, interface order, the CCID block layer), the applets the emulator
+does not carry (the firmware-local vendor AID: LED, bench, reboot-to-BOOTSEL),
+and every hardware property it has none of (secure boot, OTP, power cuts). A
+green run here is a protocol result, not a device result.
 """
 import os
 import runpy
@@ -31,11 +31,17 @@ DEFAULT_CCID_ADDR = "127.0.0.1:7800"
 ENV_ADDR = "RSK_EMU"
 ENV_CCID_ADDR = "RSK_EMU_CCID"
 
-# The emulator's card-socket opcode for "unplug and plug back in". The suites
-# that reset need the CTAP 2.1 §6.6 power-up window, which only a real power
-# cycle reopens; `replug.py` asks an operator for it and polls the enumeration,
-# so the shim answers that poll — see `_enumerate`.
+# The emulator's card-socket opcodes.
+OP_XFR = 0x00
+OP_POWER_ON = 0x01
+OP_POWER_OFF = 0x02
+# "Unplug and plug back in": the suites that reset need the CTAP 2.1 §6.6
+# power-up window, which only a real power cycle reopens; `replug.py` asks an
+# operator for it, so the shim answers on their behalf — see `_patch_replug`.
 OP_REPLUG = 0x03
+
+# An on-card RSA-4096 keygen is the slowest thing the card socket ever answers.
+CARD_TIMEOUT_S = 300
 
 # What the fake enumeration reports. The product string carries an RSK marker so
 # `_device`'s picker accepts it, and says "emulator" so a log never reads as a
@@ -51,14 +57,30 @@ def _addr(env=ENV_ADDR, default=DEFAULT_ADDR):
     return (host or "127.0.0.1", int(port))
 
 
+def _card_request(sock, op, payload=b""):
+    """One card-socket exchange: `op | len:u32be | payload` out, `len:u32be |
+    payload` back."""
+    sock.sendall(bytes([op]) + len(payload).to_bytes(4, "big") + bytes(payload))
+    return _recv_exact(sock, int.from_bytes(_recv_exact(sock, 4), "big"))
+
+
+def _recv_exact(sock, n):
+    buf = b""
+    while len(buf) < n:
+        part = sock.recv(n - len(buf))
+        if not part:
+            raise OSError("the emulator closed the card socket")
+        buf += part
+    return buf
+
+
 def _replug():
     """Tell the emulator to power-cycle. Best effort: without the card socket
     (`--ccid-port 0`) there is nothing to ask, and the suite then fails on the
     reset window rather than on a connection error."""
     try:
         with socket.create_connection(_addr(ENV_CCID_ADDR, DEFAULT_CCID_ADDR), timeout=5) as s:
-            s.sendall(bytes([OP_REPLUG]) + (0).to_bytes(4, "big"))
-            s.recv(4)
+            _card_request(s, OP_REPLUG)
     except OSError as e:
         print(f"emu: could not replug ({e}) — the reset window will stay shut")
 
@@ -125,15 +147,139 @@ def _enumerate(vid=0, pid=0):
     ]
 
 
+class SmartcardException(Exception):
+    pass
+
+
+class CardConnectionException(SmartcardException):
+    pass
+
+
+class NoCardException(SmartcardException):
+    def __init__(self, hresult=0, message="no card"):
+        super().__init__(message)
+        self.hresult = hresult
+
+
+class CardConnection:
+    """pyscard's protocol constants; the emulator serves APDUs and has no T=0/T=1
+    layer to select between, so `connect` takes the argument and ignores it."""
+
+    T0_protocol = 0x0001
+    T1_protocol = 0x0002
+    RAW_protocol = 0x0004
+    T15_protocol = 0x0008
+
+
+class EmuCard:
+    """The subset of a pyscard `CardConnection` the suites use, over the card
+    socket. Connecting powers the card on, which resets the selected applet's
+    security status — the same thing a `SCardConnect` after a disconnect does, so
+    a suite that verifies a PIN and reconnects loses it here too."""
+
+    def __init__(self):
+        self.sock = None
+        self.atr = []
+
+    def connect(self, protocol=None, mode=None, disposition=None):
+        try:
+            self.sock = socket.create_connection(
+                _addr(ENV_CCID_ADDR, DEFAULT_CCID_ADDR), timeout=CARD_TIMEOUT_S
+            )
+        except OSError as e:
+            raise NoCardException(message=f"emulator card socket: {e}") from e
+        self.atr = list(_card_request(self.sock, OP_POWER_ON))
+
+    def getATR(self):
+        return self.atr
+
+    def transmit(self, apdu, protocol=None):
+        if self.sock is None:
+            raise CardConnectionException("transmit on a card that is not connected")
+        resp = _card_request(self.sock, OP_XFR, bytes(apdu))
+        if len(resp) < 2:
+            raise CardConnectionException(f"response shorter than a status word: {resp.hex()}")
+        return list(resp[:-2]), resp[-2], resp[-1]
+
+    def disconnect(self):
+        if self.sock is None:
+            return
+        try:
+            _card_request(self.sock, OP_POWER_OFF)
+        except OSError:
+            pass  # the emulator went away; the handle is being dropped anyway
+        self.sock.close()
+        self.sock = None
+
+
+class EmuReader:
+    """One reader, named so `_device.find_reader` sees the RSK marker it looks
+    for and a log never reads as a board that was never plugged in."""
+
+    name = f"{EMU_PRODUCT} 00 00"
+
+    def __str__(self):
+        return self.name
+
+    __repr__ = __str__
+
+    def createConnection(self):
+        return EmuCard()
+
+
+def _readers(groups=None):
+    return [EmuReader()]
+
+
+def _to_hex_string(data=None, format=0):
+    return " ".join(f"{b:02X}" for b in (data or []))
+
+
 def install():
-    """Put the fake `hid` module in place of the real one, and make the
-    power-cycle helper drive the emulator instead of an operator."""
+    """Put the fake `hid` module and `smartcard` package in place of the real
+    ones, and make the power-cycle helper drive the emulator instead of an
+    operator."""
     fake = types.ModuleType("hid")
     fake.device = EmuHid
     fake.enumerate = _enumerate
     sys.modules["hid"] = fake
+    _install_smartcard()
     _patch_replug()
     return fake
+
+
+def _install_smartcard():
+    """A `smartcard` package with the four modules the suites import.
+
+    `smartcard.pcsc.PCSCPart10` is deliberately absent: it is the PC/SC feature
+    layer (`FEATURE_VERIFY_PIN_DIRECT`), which the emulator has nothing behind,
+    and `53_ccid_pinpad.py` already treats its ImportError as "no pinpad here"."""
+    pkg = types.ModuleType("smartcard")
+    pkg.__path__ = []  # a package with no submodules to find on disk
+
+    system = types.ModuleType("smartcard.System")
+    system.readers = _readers
+
+    util = types.ModuleType("smartcard.util")
+    util.toHexString = _to_hex_string
+
+    conn = types.ModuleType("smartcard.CardConnection")
+    conn.CardConnection = CardConnection
+
+    exceptions = types.ModuleType("smartcard.Exceptions")
+    exceptions.SmartcardException = SmartcardException
+    exceptions.CardConnectionException = CardConnectionException
+    exceptions.NoCardException = NoCardException
+
+    sys.modules["smartcard"] = pkg
+    for name, module in (
+        ("System", system),
+        ("util", util),
+        ("CardConnection", conn),
+        ("Exceptions", exceptions),
+    ):
+        sys.modules[f"smartcard.{name}"] = module
+        setattr(pkg, name, module)
 
 
 def _patch_replug():

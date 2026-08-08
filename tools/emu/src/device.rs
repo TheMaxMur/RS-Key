@@ -148,10 +148,22 @@ pub fn run(
     {
         let mut fsb = fs.borrow_mut();
         let mut rngb = rng.borrow_mut();
+        // `main.rs`'s boot block, in its order. The seal migrations are no-ops
+        // without an OTP root, but they are what a device runs and cost nothing
+        // here; `scan_files` is not optional at all — it lays down the OpenPGP
+        // data objects, and without it the applet answers SELECT and then serves
+        // an empty PW-status DO.
+        let _ = rsk_fido::seed::migrate_keydev_boot(&dev(), &mut fsb);
+        rsk_rescue::keydev::migrate_kbase(&dev(), &mut fsb, &mut *rngb);
+        rsk_piv::migrate_kbase(&dev(), &mut fsb, &mut *rngb);
+        rsk_oath::migrate_seal(&dev(), &mut fsb, &mut *rngb);
+        rsk_otp::migrate_seal(&dev(), &mut fsb, &mut *rngb);
+        rsk_fido::credential::migrate_rp_seal(&dev(), &mut fsb);
         if let Err(e) = rsk_fido::seed::ensure_seed(&dev(), &mut fsb, &mut *rngb) {
             eprintln!("emu: cannot provision the device seed: {e:?}");
             return;
         }
+        let _ = rsk_openpgp::scan_files(&dev(), &mut fsb, &mut *rngb);
         fido_state.ensure_initialized(&mut *rngb);
     }
 

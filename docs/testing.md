@@ -290,11 +290,14 @@ nix develop -c cargo run --manifest-path tools/emu/Cargo.toml \
 nix develop -c python tests/emu.py tests/11_fido_makecredential.py
 ```
 
-`tests/emu.py` puts a fake `hid` module in front of the target script and points
-the power-cycle helper at the emulator's replug opcode, so no test file changes
-and hidapi need not be installed. `--touch` prompts for every presence on the
-terminal (and prints what a trusted display would have shown); `--trace` logs
-each command and its status.
+`tests/emu.py` puts a fake `hid` module and a fake `smartcard` package in front of
+the target script and points the power-cycle helper at the emulator's replug
+opcode, so no test file changes and neither hidapi nor pyscard need be installed.
+**38 of the 52 suites pass**, FIDO and card alike; the rest need the firmware's
+own vendor AID, raw USB, python-fido2, or hardware, and `tools/emu/README.md`
+lists which is which. `--touch` prompts for every presence on the terminal (and
+prints what a trusted display would have shown); `--trace` logs each command and
+its status.
 
 What it buys is the run these suites otherwise never get: they are hand-run
 against a flashed board, so nothing catches a *test* that has rotted. What it

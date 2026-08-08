@@ -29,12 +29,29 @@ cargo run --manifest-path tools/emu/Cargo.toml --target "$HOST" -- --store ./my.
 
 ```bash
 python tests/emu.py tests/11_fido_makecredential.py
+python tests/emu.py tests/34_openpgp_rsa.py
 ```
 
-`tests/emu.py` installs a fake `hid` module pointed at the CTAPHID socket and
-redirects the power-cycle helper at the emulator, so the suites run unmodified
-and hidapi need not be installed. `RSK_EMU` / `RSK_EMU_CCID` override the
+`tests/emu.py` installs a fake `hid` module pointed at the CTAPHID socket and a
+fake `smartcard` package pointed at the card socket, and redirects the
+power-cycle helper at the emulator — so the suites run unmodified, and neither
+hidapi nor pyscard need be installed. `RSK_EMU` / `RSK_EMU_CCID` override the
 addresses.
+
+**38 of the 52 suites pass.** Every one that does not is a listed gap, not an
+unexplained failure:
+
+| Not runnable here | Why |
+|---|---|
+| `01`, `14`, `15`, `30`, `51`, `76` | the vendor AID (counter, LED, bench, reboot) lives in `firmware/`, not a crate |
+| `02`, `73`, `77` | raw USB: interface layout, the OTP keyboard, pyusb |
+| `53` | the PC/SC `FEATURE_VERIFY_PIN_DIRECT` reader layer |
+| `61`, `65` | driven through python-fido2, whose transport has no shim yet |
+| `54`, `90` | SRAM residue and OTP-fuse migration — hardware by definition |
+
+`28` and `76` take `--pin`, and want a PIN already set (`21_pin_webauthn` sets
+`1234`). `50` and `52` measure that a touch took time, so they only mean
+something with `--touch` and a human at the keyboard.
 
 ## The wire
 
