@@ -42,7 +42,7 @@ Green check.sh is the bar for every commit.
 ```sh
 nix develop -c cargo test -p rsk-sdk -p rsk-fs -p rsk-usb -p rsk-crypto \
     -p rsk-fido -p rsk-openpgp -p rsk-rsa-asm -p rsk-mgmt -p rsk-oath \
-    -p rsk-otp -p rsk-piv -p rsk-rescue -p rsk-vendor --target aarch64-apple-darwin
+    -p rsk-otp -p rsk-piv -p rsk-rescue -p rsk-vendor -p rsk-device --target aarch64-apple-darwin
 ```
 
 (`HOST_TARGET` env overrides the triple in `check.sh`.) Crypto tests pin

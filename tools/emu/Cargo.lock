@@ -1145,6 +1145,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "rsk-device"
+version = "0.1.0"
+dependencies = [
+ "rsa",
+ "rsk-crypto",
+ "rsk-fido",
+ "rsk-fs",
+ "rsk-mgmt",
+ "rsk-oath",
+ "rsk-openpgp",
+ "rsk-otp",
+ "rsk-piv",
+ "rsk-rescue",
+ "rsk-sdk",
+ "rsk-usb",
+ "rsk-vendor",
+ "zeroize",
+]
+
+[[package]]
 name = "rsk-ec"
 version = "0.1.0"
 dependencies = [
@@ -1162,6 +1182,7 @@ name = "rsk-emu"
 version = "0.1.0"
 dependencies = [
  "rsk-crypto",
+ "rsk-device",
  "rsk-fido",
  "rsk-fs",
  "rsk-mgmt",

@@ -1107,6 +1107,7 @@ dependencies = [
  "rsk-bench",
  "rsk-bip39",
  "rsk-crypto",
+ "rsk-device",
  "rsk-fido",
  "rsk-fs",
  "rsk-led",
@@ -2176,6 +2177,26 @@ dependencies = [
  "rsk-sha512",
  "sha1",
  "sha2 0.10.9",
+ "zeroize",
+]
+
+[[package]]
+name = "rsk-device"
+version = "0.1.0"
+dependencies = [
+ "rsa",
+ "rsk-crypto",
+ "rsk-fido",
+ "rsk-fs",
+ "rsk-mgmt",
+ "rsk-oath",
+ "rsk-openpgp",
+ "rsk-otp",
+ "rsk-piv",
+ "rsk-rescue",
+ "rsk-sdk",
+ "rsk-usb",
+ "rsk-vendor",
  "zeroize",
 ]
 

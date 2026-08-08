@@ -98,9 +98,10 @@ serial — is recognisable as emulator-made.
   The CCID *block* layer does run — the socket carries whole CCID messages — but
   its packetisation does not: a socket delivers a message whole, where the device
   accumulates it off 64-byte bulk-OUT transfers with a receive timeout.
-- **The firmware's own wiring**: `firmware/src/{main,worker,handler,ccid_handler,
-  presence,led}.rs` are not shared with the emulator — `src/device.rs` is a
-  second implementation of that glue. A bug that lives there will not show up
-  here.
+- **The firmware's outer loop**: the applet wiring *is* shared now
+  (`crates/rsk-device`), so a routing or gating bug shows up here. What is still
+  written twice is the worker's sequencing — refresh the capability set when the
+  dirty latch is up, run a queued reboot only after the response is out — and
+  `firmware/src/{main,worker,presence,led}.rs`, which are the board's.
 
 A green run against the emulator is a protocol result, not a device result.

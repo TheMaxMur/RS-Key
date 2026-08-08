@@ -31,6 +31,16 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   `const A = B;` indirection — which is where the large-blob value below hid.
   61 copies checked, up from 5.
 
+- **The applet wiring moved into `crates/rsk-device`.** `firmware/src/handler.rs`
+  and `ccid_handler.rs` were the last of the device that no test could reach and
+  the emulator had to reimplement — and what they hold is exactly the load-bearing
+  part: whether a U2F command can land on the vendor applet, whether a disabled
+  application is really invisible, and which records a device-wide wipe may take
+  first. Both builds now run the same code, and the board's own parts (the LED
+  atomics, the watchdog register carrying the clientPIN soft lock across a warm
+  reset, the dual-core prime search, the display's PIN latch) sit behind a `Hooks`
+  trait whose defaults are exact no-ops. Behaviour and wire surface unchanged; no
+  `bcdDevice` bump.
 - **The vendor applet moved into `crates/rsk-vendor`.** It was the last applet
   living in `firmware/`, so it was the only one with no host tests and the only
   one the emulator could not serve. Its hardware — the LED atomics, the second

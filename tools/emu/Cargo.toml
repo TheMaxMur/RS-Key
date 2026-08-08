@@ -29,5 +29,7 @@ rsk-otp = { path = "../../crates/rsk-otp" }
 rsk-piv = { path = "../../crates/rsk-piv" }
 rsk-rescue = { path = "../../crates/rsk-rescue" }
 rsk-vendor = { path = "../../crates/rsk-vendor" }
+# The applet wiring — the same one the firmware runs, not a copy of it.
+rsk-device = { path = "../../crates/rsk-device" }
 
 [workspace]

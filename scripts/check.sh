@@ -77,7 +77,7 @@ run "fmt"                      cargo fmt --all --check
 # the rsk-wipe steps below); `waveshare-one` is the reference board, whose
 # values are the same defaults every other knob falls back to.
 run "clippy (embedded)"        env BOARD=waveshare-one cargo clippy --workspace -- -D warnings
-run "clippy (host tests)"      cargo clippy -p rsk-sdk -p rsk-fs -p rsk-usb -p rsk-crypto -p rsk-fido -p rsk-openpgp -p rsk-rsa-asm -p rsk-sha512 -p rsk-ec -p rsk-mldsa -p rsk-mgmt -p rsk-oath -p rsk-otp -p rsk-piv -p rsk-rescue -p rsk-vendor -p rsk-led -p rsk-ui -p rsk-bip39 -p rsk-slip39 -p rsk-bench --target "$HOST" --all-targets -- -D warnings
+run "clippy (host tests)"      cargo clippy -p rsk-sdk -p rsk-fs -p rsk-usb -p rsk-crypto -p rsk-fido -p rsk-openpgp -p rsk-rsa-asm -p rsk-sha512 -p rsk-ec -p rsk-mldsa -p rsk-mgmt -p rsk-oath -p rsk-otp -p rsk-piv -p rsk-rescue -p rsk-vendor -p rsk-device -p rsk-led -p rsk-ui -p rsk-bip39 -p rsk-slip39 -p rsk-bench --target "$HOST" --all-targets -- -D warnings
 # tools/tui is its own workspace (host-only), so the --all/--workspace runs
 # above never see it — gate it explicitly. Its lockfile was scanned by nobody
 # until Dependabot flagged a transitive advisory from the GitHub side.
@@ -113,7 +113,7 @@ run "fmt (fuzz)"               cargo fmt --manifest-path fuzz/Cargo.toml --check
 # `--tests` also covers tests/miri.rs, which mirrors the same constructors (its
 # drift went unseen for a wave of unpushed commits until a local miri run).
 run "check (fuzz)"             cargo check --manifest-path fuzz/Cargo.toml --tests --target "$HOST"
-run "test (host)"              cargo test -p rsk-sdk -p rsk-fs -p rsk-usb -p rsk-crypto -p rsk-fido -p rsk-openpgp -p rsk-rsa-asm -p rsk-sha512 -p rsk-ec -p rsk-mldsa -p rsk-mgmt -p rsk-oath -p rsk-otp -p rsk-piv -p rsk-rescue -p rsk-vendor -p rsk-led -p rsk-ui -p rsk-bip39 -p rsk-slip39 -p rsk-bench --target "$HOST"
+run "test (host)"              cargo test -p rsk-sdk -p rsk-fs -p rsk-usb -p rsk-crypto -p rsk-fido -p rsk-openpgp -p rsk-rsa-asm -p rsk-sha512 -p rsk-ec -p rsk-mldsa -p rsk-mgmt -p rsk-oath -p rsk-otp -p rsk-piv -p rsk-rescue -p rsk-vendor -p rsk-device -p rsk-led -p rsk-ui -p rsk-bip39 -p rsk-slip39 -p rsk-bench --target "$HOST"
 # The PQC-advertisement opt-in changes the getInfo shape — test both forms.
 run "test (advertise-pqc)"     cargo test -p rsk-fido --features advertise-pqc --target "$HOST" getinfo
 # fido-conformance suppresses the default EdDSA (-8) advertisement (the
@@ -137,8 +137,8 @@ run "clippy (strong-pin fw)"   cargo clippy -p firmware --features strong-pin --
 # build is the permissive full-YubiKey-compat surface). The default path is what
 # every run above lints/tests; gate the strict path explicitly or it rots.
 run "clippy (strict-config fw)"  cargo clippy -p firmware --features strict-config -- -D warnings
-run "clippy (strict-config host)" cargo clippy -p rsk-mgmt -p rsk-otp -p rsk-fido -p rsk-vendor --features strict-config --target "$HOST" --all-targets -- -D warnings
-run "test (strict-config)"       cargo test -p rsk-mgmt -p rsk-otp -p rsk-fido -p rsk-vendor --features strict-config --target "$HOST"
+run "clippy (strict-config host)" cargo clippy -p rsk-mgmt -p rsk-otp -p rsk-fido -p rsk-vendor -p rsk-device --features strict-config --target "$HOST" --all-targets -- -D warnings
+run "test (strict-config)"       cargo test -p rsk-mgmt -p rsk-otp -p rsk-fido -p rsk-vendor -p rsk-device --features strict-config --target "$HOST"
 # The `bench` latency-harness vendor command (never shipped) is only compiled with
 # its feature on, so gate that build here — otherwise a signature change to the EC /
 # KDF hot paths it times would rot the bench module unseen (keep it compiling). The

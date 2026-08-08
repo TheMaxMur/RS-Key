@@ -631,7 +631,7 @@ impl Ui {
                 .borrow_mut()
                 .factory_wipe(
                     rsk_fido::survives_factory_reset,
-                    crate::ccid_handler::gates_wiped_last,
+                    rsk_device::gates_wiped_last,
                 )
                 .is_ok();
             if !wiped {

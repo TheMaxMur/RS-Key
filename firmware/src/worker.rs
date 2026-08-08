@@ -20,8 +20,7 @@ use zeroize::Zeroize;
 use rsk_usb::ccid::{ApduHandler, SecureResult};
 use rsk_usb::ctaphid::{CTAP_MAX_MESSAGE, MsgHandler};
 
-use crate::ccid_handler::CcidApplets;
-use crate::handler::{AppletHandler, FidoRng, Store};
+use crate::handler::{Ccid, Ctap, DeviceHooks, FidoRng, Store};
 use crate::otp_kbd;
 use crate::presence::Presence;
 
@@ -277,8 +276,8 @@ fn secure_pin_meta(p2: u8) -> Option<(&'static str, usize)> {
 /// one synchronous dispatch), and runs each request to completion while the
 /// high-priority transports stream keepalives.
 pub struct Worker<'a> {
-    ctap: AppletHandler<'a>,
-    ccid: CcidApplets<'a>,
+    ctap: Ctap<'a>,
+    ccid: Ccid<'a>,
     /// The TRNG/DRBG, kept for the secure-reboot wipe (the DRBG state is the one
     /// long-lived RAM secret outside the applet layer).
     rng: &'a RefCell<FidoRng>,
@@ -316,6 +315,7 @@ impl<'a> Worker<'a> {
         rng: &'a RefCell<FidoRng>,
         presence: &'a RefCell<Presence>,
         platform: &'a RefCell<crate::rescue_platform::RescuePlatform>,
+        hooks: &'a RefCell<DeviceHooks>,
         serial_id: [u8; 8],
         serial_hash: [u8; 32],
         otp_key: Option<[u8; 32]>,
@@ -324,31 +324,30 @@ impl<'a> Worker<'a> {
         openpgp_mfr: u16,
     ) -> Self {
         Self {
-            ctap: AppletHandler::new(
+            ctap: Ctap::new(
                 fs,
                 rng,
+                hooks,
                 presence,
-                presence,
+                crate::vendor::VendorPlatform,
                 serial_id,
                 serial_hash,
                 otp_key,
                 devk,
             ),
-            ccid: CcidApplets::new(
+            ccid: Ccid::new(
                 fs,
                 rng,
-                presence,
-                presence,
-                presence,
-                presence,
-                presence,
+                hooks,
                 presence,
                 platform,
+                crate::vendor::VendorPlatform,
                 serial_id,
                 serial_hash,
                 otp_key,
                 devk,
                 kv_total,
+                crate::flash_storage::FLASH_SIZE as u32,
                 openpgp_mfr,
             ),
             rng,
@@ -458,7 +457,11 @@ impl<'a> Worker<'a> {
                 } = &mut *ex;
                 let r: &[u8] = match *kind {
                     Kind::Cbor if !fido2_on => &cbor_denied,
-                    Kind::Cbor => self.ctap.handle_cbor(*cid, &req[..*req_len]),
+                    Kind::Cbor => self.ctap.handle_cbor(
+                        *cid,
+                        &req[..*req_len],
+                        crate::usb_attach::elapsed_ms(),
+                    ),
                     Kind::Msg if !u2f_on => &u2f_denied,
                     Kind::Msg => {
                         // A CTAPHID_INIT since the last MSG drops the applet
@@ -479,7 +482,8 @@ impl<'a> Worker<'a> {
                         if forced || changed {
                             self.ctap.deselect_msg();
                         }
-                        self.ctap.handle_msg(&req[..*req_len])
+                        self.ctap
+                            .handle_msg(&req[..*req_len], crate::usb_attach::elapsed_ms())
                     }
                     Kind::Apdu => self.ccid.handle_apdu(&req[..*req_len]),
                     Kind::ResetCard => {

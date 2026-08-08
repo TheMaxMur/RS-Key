@@ -2,11 +2,13 @@
 // Copyright (C) 2026 RS-Key contributors
 
 //! Bridges CCID `XfrBlock` APDUs to the applet dispatcher; selection state is
-//! independent of the CTAPHID channel. Runs on the worker (thread executor), so
-//! on-card RSA keygen blocks here to completion while the CCID transport, on its
-//! high-priority task, streams T=1 time-extensions.
+//! independent of the CTAPHID channel. On the device this runs on the worker
+//! (thread executor), so on-card RSA keygen blocks here to completion while the
+//! CCID transport, on its high-priority task, streams T=1 time-extensions.
 
 use core::cell::RefCell;
+
+use rsk_fs::{Fs, Storage};
 
 use rsk_mgmt::ManagementApplet;
 use rsk_oath::OathApplet;
@@ -17,9 +19,9 @@ use rsk_piv::PivApplet;
 use rsk_rescue::RescueApplet;
 use rsk_sdk::{Apdu, Applet, Dispatcher, ResBuf, Sw};
 
-use crate::handler::{FidoRng, Store};
-use crate::vendor::VendorPlatform;
 use rsk_vendor::VendorApplet;
+
+use crate::Hooks;
 
 // A CCID XfrBlock frame carries MAX_CCID_MSG (2048) minus the 10-byte CCID
 // header = 2038 payload bytes. The applet response (body + 2-byte SW) must fit
@@ -57,11 +59,12 @@ const CTAP_READ_CONFIG: u8 = 0x42;
 #[cfg(not(feature = "strict-config"))]
 const CTAP_WRITE_CONFIG: u8 = 0x43;
 
-pub struct CcidApplets<'a> {
-    fs: &'a RefCell<Store>,
-    rng: &'a RefCell<FidoRng>,
+pub struct CcidApplets<'a, S: Storage, R: crate::Rng + 'static, VP: rsk_vendor::Platform> {
+    fs: &'a RefCell<Fs<S>>,
+    rng: &'a RefCell<R>,
+    hooks: &'a RefCell<dyn Hooks<S>>,
     disp: Dispatcher,
-    vendor: VendorApplet<'a, VendorPlatform>,
+    vendor: VendorApplet<'a, VP>,
     openpgp: OpenpgpApplet<'a>,
     management: ManagementApplet<'a>,
     oath: OathApplet<'a>,
@@ -104,51 +107,51 @@ pub struct CcidApplets<'a> {
 /// unauthenticated (audit run-36). A new applet adds its predicate to its own crate
 /// and one line here; `scripts/gate_union.py` fails the gate when it does not.
 #[cfg(any(not(feature = "strict-config"), feature = "display"))]
-pub(crate) fn gates_wiped_last(fid: u16) -> bool {
+pub fn gates_wiped_last(fid: u16) -> bool {
     rsk_fido::is_fido_gate_fid(fid)
         || rsk_piv::files::is_piv_gate_fid(fid)
         || rsk_oath::is_oath_lock_fid(fid)
         || rsk_openpgp::terminate::is_openpgp_gate_fid(fid)
 }
 
-impl<'a> CcidApplets<'a> {
+impl<'a, S: Storage, R: crate::Rng + 'static, VP: rsk_vendor::Platform> CcidApplets<'a, S, R, VP> {
     /// `serial_id` is the device chip id (its BCD-encoded 8-digit serial goes into
-    /// the OpenPGP full AID); `rng` is the hardware TRNG shared with the CTAPHID handler.
-    /// The three `presence` params are the same physical presence source (BOOTSEL
-    /// by default, optionally a GPIO button) behind per-applet traits (the
-    /// caller's concrete `&RefCell` coerces to each).
+    /// the OpenPGP full AID); `rng` is the hardware TRNG, shared with the CTAPHID
+    /// handler. `presence` is the one physical presence source (BOOTSEL by
+    /// default, optionally a GPIO button, or the screen): it was five parameters
+    /// of the same `&RefCell` because each applet names its own trait, and the
+    /// caller's concrete type coerces to every one of them here instead.
     #[allow(clippy::too_many_arguments)] // one-time wiring from the worker
-    pub fn new(
-        fs: &'a RefCell<Store>,
-        rng: &'a RefCell<FidoRng>,
-        presence: &'a RefCell<dyn rsk_openpgp::UserPresence>,
-        otp_presence: &'a RefCell<dyn rsk_otp::UserPresence>,
-        oath_presence: &'a RefCell<dyn rsk_oath::UserPresence>,
-        rescue_presence: &'a RefCell<dyn rsk_rescue::UserPresence>,
-        vendor_presence: &'a RefCell<dyn rsk_vendor::UserPresence>,
-        mgmt_presence: &'a RefCell<dyn rsk_mgmt::UserPresence>,
+    pub fn new<PR: crate::UserPresence + 'static>(
+        fs: &'a RefCell<Fs<S>>,
+        rng: &'a RefCell<R>,
+        hooks: &'a RefCell<dyn Hooks<S>>,
+        presence: &'a RefCell<PR>,
         platform: &'a RefCell<dyn rsk_rescue::Platform>,
+        vendor_platform: VP,
         serial_id: [u8; 8],
         serial_hash: [u8; 32],
         otp_key: Option<[u8; 32]>,
         devk: Option<[u8; 32]>,
         kv_total: u32,
+        flash_size: u32,
         openpgp_mfr: u16,
     ) -> Self {
         Self {
             fs,
             rng,
+            hooks,
             disp: Dispatcher::new(),
             // The vendor reboot-to-BOOTSEL (P1=01) is gated by the same presence
             // as the rescue applet (one `&RefCell<Presence>` behind two traits),
             // closing the cross-AID bypass of that gate.
-            vendor: VendorApplet::new(VendorPlatform, vendor_presence),
+            vendor: VendorApplet::new(vendor_platform, presence),
             openpgp: OpenpgpApplet::new(serial_id, serial_hash, otp_key, rng, presence)
                 .with_manufacturer(openpgp_mfr),
-            management: ManagementApplet::new(serial_id, mgmt_presence),
+            management: ManagementApplet::new(serial_id, presence),
             // Touch-flagged OATH credentials gate CALCULATE on the same button.
-            oath: OathApplet::new(serial_id, serial_hash, otp_key, rng, oath_presence),
-            otp: OtpApplet::new(serial_id, serial_hash, otp_key, rng, otp_presence),
+            oath: OathApplet::new(serial_id, serial_hash, otp_key, rng, presence),
+            otp: OtpApplet::new(serial_id, serial_hash, otp_key, rng, presence),
             // PIV reuses the OpenPGP user-presence trait, so the same presence
             // source drives its slot/management touch policies.
             piv: PivApplet::new(serial_id, serial_hash, otp_key, rng, presence),
@@ -162,9 +165,9 @@ impl<'a> CcidApplets<'a> {
                 devk,
                 rng,
                 platform,
-                rescue_presence,
+                presence,
                 kv_total,
-                crate::flash_storage::FLASH_SIZE as u32,
+                flash_size,
             ),
             enabled_caps: rsk_mgmt::read_enabled_caps(&mut fs.borrow_mut()),
             resp: [0; RESP_CAP],
@@ -297,7 +300,7 @@ impl<'a> CcidApplets<'a> {
     /// `SCardDisconnect(SCARD_RESET_CARD)` really does force re-authentication
     /// instead of leaving a verified PIN for whoever connects next.
     pub fn reset_card(&mut self) {
-        let mut applets: [&mut dyn Applet<Store>; 7] = [
+        let mut applets: [&mut dyn Applet<Fs<S>>; 7] = [
             &mut self.vendor,
             &mut self.openpgp,
             &mut self.management,
@@ -334,7 +337,7 @@ impl<'a> CcidApplets<'a> {
         self.disp.set_enabled(self.applet_enable_mask());
         let (sw, n) = {
             let mut res = ResBuf::new(&mut self.resp[..RESP_CAP - 2]);
-            let mut applets: [&mut dyn Applet<Store>; 7] = [
+            let mut applets: [&mut dyn Applet<Fs<S>>; 7] = [
                 &mut self.vendor,
                 &mut self.openpgp,
                 &mut self.management,
@@ -426,8 +429,8 @@ impl<'a> CcidApplets<'a> {
     /// search + key store to completion and return the response length in
     /// `self.resp`. Returns `None` for everything else (incl. EC generate, which
     /// the dispatcher handles inline) so the caller falls through to normal
-    /// dispatch. The search runs on BOTH cores ([`crate::core1`]) and blocks this
-    /// thread-executor task; the CCID transport streams time-extensions meanwhile.
+    /// dispatch. The search is the board's ([`crate::Hooks::rsa_search`]) and
+    /// blocks this task; the CCID transport streams time-extensions meanwhile.
     fn try_rsa_keygen(&mut self, apdu: &[u8]) -> Option<usize> {
         // The cap check closes the contrived window where OpenPGP was selected and
         // then disabled — the fast path bypasses the dispatcher's own gate.
@@ -448,11 +451,13 @@ impl<'a> CcidApplets<'a> {
                 // EC slot (Ok(None)) or an error: let normal dispatch handle/report it.
                 _ => return None,
             };
-        // Both cores search; the worker blocks here while the interrupt
-        // executor streams the CCID time-extensions (and the kbd/LED tasks run).
+        // Both cores search; the worker blocks here while the interrupt executor
+        // streams the CCID time-extensions (and the kbd/LED tasks run). A build
+        // with no accelerator answers `None` and never reaches here — the applet's
+        // own single-core path runs from normal dispatch instead.
         let key = {
             let mut rng = self.rng.borrow_mut();
-            crate::core1::run_rsa_search(nbits, &mut *rng)
+            self.hooks.borrow_mut().rsa_search(nbits, &mut *rng)?
         };
         let Some(key) = key else {
             self.resp[..2].copy_from_slice(&Sw::EXEC_ERROR.to_bytes());
@@ -490,10 +495,11 @@ impl<'a> CcidApplets<'a> {
             self.piv
                 .rsa_generate_params(&mut *fsb, p.p1, p.p2, p.data)?
         };
-        // Same dual-core search as the OpenPGP arm above.
+        // Same search as the OpenPGP arm above, and the same fall-through when
+        // there is no accelerator to run it.
         let key = {
             let mut rng = self.rng.borrow_mut();
-            crate::core1::run_rsa_search(nbits, &mut *rng)
+            self.hooks.borrow_mut().rsa_search(nbits, &mut *rng)?
         };
         let Some(key) = key else {
             self.resp[..2].copy_from_slice(&Sw::EXEC_ERROR.to_bytes());

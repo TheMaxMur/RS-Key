@@ -44,7 +44,6 @@ use rsk_fs::Fs;
 use rsk_usb::ccid::{ATR_RSKEY, ATR_YUBIKEY, Ccid};
 use rsk_usb::ctaphid::{CtapHid, FIDO_REPORT_DESCRIPTOR};
 
-mod ccid_handler;
 mod core1;
 #[cfg(feature = "display")]
 mod display;
@@ -416,6 +415,10 @@ static FLASH_CELL: StaticCell<RefCell<flash_storage::AsyncFlash>> = StaticCell::
 static RNG_CELL: StaticCell<RefCell<FidoRng>> = StaticCell::new();
 static PRESENCE: StaticCell<RefCell<presence::Presence>> = StaticCell::new();
 static RESCUE_PLATFORM: StaticCell<RefCell<rescue_platform::RescuePlatform>> = StaticCell::new();
+/// What `rsk-device` reaches back into this board for (the LED atomics, the soft
+/// lock's watchdog register, the dual-core prime search). Same RefCell invariant
+/// as the cells above: thread-executor only.
+static DEVICE_HOOKS: StaticCell<RefCell<handler::DeviceHooks>> = StaticCell::new();
 // Same RefCell invariant as FS/RNG above — thread-executor only.
 // Sized for a 32-byte phy product plus the appended YubiKey interface-token
 // suffix (`normalize_usb_product`), so a masquerade name is never truncated.
@@ -1094,6 +1097,7 @@ async fn main(spawner: Spawner) {
     #[cfg(feature = "display")]
     let presence_ref = PRESENCE.init(RefCell::new(display::TouchPresence::new(display_ui)));
     let platform_ref = RESCUE_PLATFORM.init(RefCell::new(rescue_platform::RescuePlatform));
+    let hooks_ref = DEVICE_HOOKS.init(RefCell::new(handler::DeviceHooks));
     let (kvm, kvc) = (kvmain_range(), kvcnt_range());
     let kv_total = (kvm.end - kvm.start) + (kvc.end - kvc.start);
     let worker = Worker::new(
@@ -1101,6 +1105,7 @@ async fn main(spawner: Spawner) {
         rng_ref,
         presence_ref,
         platform_ref,
+        hooks_ref,
         serial_id,
         serial_hash,
         otp_mkek,
