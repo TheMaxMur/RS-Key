@@ -202,6 +202,10 @@ run "cargo-audit (SCA)"        cargo audit --ignore RUSTSEC-2023-0071
 run "cargo-audit (tui SCA)"    cargo audit --file tools/tui/Cargo.lock
 # Same RUSTSEC-2023-0071 carve-out as the workspace run above: the emulator pulls
 # the OpenPGP applet, and with it `rsa`.
+# The emulator's own host tests — today the USB/IP codec, whose struct layouts are
+# the Linux kernel's and whose framing rule decides how many bytes come off the
+# socket next; both fail silently on the wire rather than loudly.
+run "test (emu)"               cargo test --manifest-path tools/emu/Cargo.toml --target "$HOST"
 run "cargo-audit (emu SCA)"    cargo audit --file tools/emu/Cargo.lock --ignore RUSTSEC-2023-0071
 run "cargo-deny"               cargo deny check
 # Supply-chain provenance-of-review: every dependency must be covered by an
