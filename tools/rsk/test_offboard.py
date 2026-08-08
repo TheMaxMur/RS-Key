@@ -357,13 +357,9 @@ def test_recheck_hint_does_not_pin_the_receipt_against_itself(tmp_path, monkeypa
     assert f"--expect-key {rep['attested']['fingerprint']}" not in out
 
 
-def test_await_replug_opens_only_the_key_that_came_back(monkeypatch):
-    seen = [{"path": b"old"}, None, {"path": b"new"}]
-    monkeypatch.setattr(offboard.ctaphid, "find_all",
-                        lambda: [x for x in [seen.pop(0)] if x])
-    monkeypatch.setattr(offboard.time, "sleep", lambda s: None)
-    monkeypatch.setattr(offboard.ctaphid, "ctaphid_init", lambda dev: b"cid9",
-                        raising=False)
+def _handles(monkeypatch):
+    """Record every HID handle `_await_replug` opens — an empty list is the proof
+    that it bound nothing."""
     opened = []
 
     def device():
@@ -371,9 +367,64 @@ def test_await_replug_opens_only_the_key_that_came_back(monkeypatch):
         return opened[-1]
 
     monkeypatch.setattr(offboard.ctaphid.hid, "device", device, raising=False)
+    monkeypatch.setattr(offboard.ctaphid, "ctaphid_init", lambda dev: b"cid9",
+                        raising=False)
+    return opened
+
+
+def _enumerations(monkeypatch, *rounds):
+    """Feed `find_all` one result per poll, holding the last one once exhausted."""
+    left = list(rounds)
+    monkeypatch.setattr(offboard.ctaphid, "find_all",
+                        lambda: left.pop(0) if len(left) > 1 else left[0])
+
+
+def _clock(monkeypatch, step=10.0):
+    """A monotonic clock that only moves when the code sleeps, so a timeout path
+    resolves in a few polls instead of wall-clock minutes."""
+    now = [0.0]
+
+    def sleep(_s):
+        now[0] += step
+
+    monkeypatch.setattr(offboard.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(offboard.time, "sleep", sleep)
+
+
+def test_await_replug_opens_only_the_key_that_came_back(monkeypatch):
+    monkeypatch.setattr(offboard.time, "sleep", lambda s: None)
+    opened = _handles(monkeypatch)
+    _enumerations(monkeypatch, [{"path": b"old"}], [], [{"path": b"new"}])
     dev, cid = offboard._await_replug()
     assert (dev.path, cid) == (b"new", b"cid9")
     assert len(opened) == 1  # the pre-replug handle was never opened
+
+
+def test_await_replug_will_not_bind_one_of_two_keys(monkeypatch, capsys):
+    """Audit run-34 #29. The replug window is the one moment the bus is deliberately
+    changing, so a first-match here lands the factory reset on the wrong key. The AST
+    inventory in test_refuse_to_guess.py is byte-identical with and without this
+    guard — deleting it left all 280 tests green, so the refusal has to be driven
+    (audit run-37)."""
+    _clock(monkeypatch)
+    opened = _handles(monkeypatch)
+    _enumerations(monkeypatch, [{"path": b"old"}], [],
+                  [{"path": b"a"}, {"path": b"b"}])
+    assert offboard._await_replug() == (None, None)
+    assert opened == [], "bound a device while two were attached"
+    assert "unplug all but the one" in capsys.readouterr().err
+
+
+def test_await_replug_waits_out_the_second_key_and_binds_the_survivor(monkeypatch):
+    # The refusal is a wait, not an abort: the operator unplugs the stray key and
+    # the reset still lands, on the one device left.
+    _clock(monkeypatch)
+    opened = _handles(monkeypatch)
+    _enumerations(monkeypatch, [{"path": b"old"}], [],
+                  [{"path": b"a"}, {"path": b"b"}], [{"path": b"b"}])
+    dev, cid = offboard._await_replug()
+    assert (dev.path, cid) == (b"b", b"cid9")
+    assert len(opened) == 1
 
 
 def test_await_replug_aborts_when_the_key_stays_put(monkeypatch):

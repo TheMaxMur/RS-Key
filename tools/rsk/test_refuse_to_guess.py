@@ -12,6 +12,11 @@ Two layers, because neither is enough alone. The inventory reads source text, so
 a module that never loads here is still covered — but a correct call site it can
 see may still be unreachable. The driven cases then run real entry points through
 their own argparse wiring and assert the bind each one actually performs.
+
+Both layers key on *how* a device is opened, so `RAW_OPENS` lists the sites that
+use neither helper. Neither can catch a guard being deleted from one of those —
+the parse is identical with and without it — so those live on driven tests in
+their own module (audit run-37).
 """
 import argparse
 import ast
@@ -95,6 +100,23 @@ SITES = {
     ],
 }
 
+#: Every raw `hid.device()` open, as {module: [(enclosing def, why it may)]}.
+#: These reach a device without either connect helper, so the inventory above is
+#: blind to them — which is how `offboard._await_replug`'s hand-rolled two-key
+#: refusal, guarding the tree's most destructive command, stayed deletable with
+#: the whole suite green (audit run-37). Listing a site is not a guard; it is the
+#: record that its exemption was decided, so the next one has to state its case.
+RAW_OPENS = {
+    "common": [("connect_fido", "the open behind the refusal itself")],
+    "ctaphid": [("_declares_fido", "passive report-descriptor probe, no session")],
+    "identify": [("_identify_one",
+                  "walks every key on purpose — telling them apart IS the command")],
+    "inventory": [("_hid_records", "one record per attached key: a report, never a write")],
+    "offboard": [("_await_replug", "guarded by its own two-key refusal, driven by "
+                                   "test_await_replug_will_not_bind_one_of_two_keys")],
+    "status": [("_fido", "first-match read, like its `ccid.connect` sibling above")],
+}
+
 #: The sites above that take the first match, restated so the rule is readable
 #: without diffing the inventory: a read may guess, a write may not.
 GUESSING = {
@@ -105,11 +127,18 @@ GUESSING = {
 }
 
 
+def _is_raw_hid_open(f):
+    """`hid.device()` / `ctaphid.hid.device()` — a device opened with neither helper."""
+    return (isinstance(f, ast.Attribute) and f.attr == "device"
+            and ((isinstance(f.value, ast.Name) and f.value.id == "hid")
+                 or (isinstance(f.value, ast.Attribute) and f.value.attr == "hid")))
+
+
 class _ConnectSites(ast.NodeVisitor):
-    """Collect connect-helper calls with the def they sit in."""
+    """Collect connect-helper calls and raw HID opens with the def they sit in."""
 
     def __init__(self):
-        self.stack, self.sites = [], []
+        self.stack, self.sites, self.opens = [], [], []
 
     def visit_FunctionDef(self, node):
         self.stack.append(node.name)
@@ -125,6 +154,9 @@ class _ConnectSites(ast.NodeVisitor):
         elif (isinstance(f, ast.Attribute) and f.attr == "connect"
               and isinstance(f.value, ast.Name) and f.value.id == "ccid"):
             callee = "ccid.connect"
+        elif _is_raw_hid_open(f):
+            self.opens.append(self.stack[-1] if self.stack else "<module>")
+            return self.generic_visit(node)
         else:
             return self.generic_visit(node)
         kw = next((k for k in node.keywords if k.arg == "exclusive"), None)
@@ -133,24 +165,31 @@ class _ConnectSites(ast.NodeVisitor):
         self.generic_visit(node)
 
 
-def _sites(path):
+def _visit(path):
     v = _ConnectSites()
     v.visit(ast.parse(path.read_text()))
-    return v.sites
+    return v
+
+
+def _modules():
+    for p in sorted(PKG.glob("*.py")):
+        if not p.name.startswith("test_"):
+            yield p.stem, _visit(p)
 
 
 def _inventory():
-    found = {}
-    for p in sorted(PKG.glob("*.py")):
-        if p.name.startswith("test_"):
-            continue
-        if s := _sites(p):
-            found[p.stem] = s
-    return found
+    return {stem: v.sites for stem, v in _modules() if v.sites}
 
 
 def test_every_connect_site_is_classified():
     assert _inventory() == SITES
+
+
+def test_every_raw_hid_open_is_classified():
+    """The connect helpers are not the only way to reach a device, and the sites
+    that bypass them are exactly where a hand-rolled guard hides."""
+    found = {stem: v.opens for stem, v in _modules() if v.opens}
+    assert found == {mod: [fn for fn, _ in sites] for mod, sites in RAW_OPENS.items()}
 
 
 def test_only_the_annotated_reads_take_the_first_match():
