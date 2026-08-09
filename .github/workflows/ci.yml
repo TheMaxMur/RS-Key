@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 RS-Key contributors
 
-# Five jobs:
+# Six jobs:
 #   changes — what this change can possibly affect (`scripts/ci-scope.sh`), so a
 #             documentation edit does not build 24 firmware images. Gating is by
 #             `if:` on the jobs rather than `paths:` on the trigger: a skipped
@@ -19,11 +19,15 @@
 #             strict-up behavior flavors (each with a pqc pair), and the
 #             trusted-display build, each packaged as a downloadable
 #             firmware-<flavor>.uf2 artifact.
-#   knobs   — build smokes for the compile-time env knobs (docs/build.md):
-#             all VIDPID presets, FW_VERSION, XOSC_DELAY_MULT, FAKE_* test
-#             keys, and a check that the default build bakes this project's own
-#             RS-Key identity while the opt-in Yubico flavor bakes Yubico's
-#             (the vendor-mimicking ids are local interop only, never shipped).
+#   knob-builds — build smokes for the compile-time env knobs (docs/build.md),
+#             five parallel rows over `scripts/ci-knobs.sh`: all VIDPID presets,
+#             FW_VERSION, XOSC_DELAY_MULT, FAKE_* test keys, and a check that the
+#             default build bakes this project's own RS-Key identity while the
+#             opt-in Yubico flavor bakes Yubico's (the vendor-mimicking ids are
+#             local interop only, never shipped).
+#   knobs   — the aggregate of those rows, and the name `main`'s ruleset requires.
+#             A required check has to be reported by a fixed name; a matrix
+#             reports one per row.
 
 name: ci
 
@@ -242,7 +246,7 @@ jobs:
           name: firmware-${{ matrix.name }}-${{ github.sha }}
           path: firmware-${{ matrix.name }}.uf2
 
-  knobs:
+  knob-builds:
     needs: changes
     if: needs.changes.outputs.firmware == 'true'
     strategy:
@@ -276,3 +280,27 @@ jobs:
 
       - name: knobs (${{ matrix.group }})
         run: nix develop -c ./scripts/ci-knobs.sh ${{ matrix.group }}
+
+  # The name `knobs` is a required status check on `main`, so it has to be
+  # reported by *something* whatever the matrix above looks like. Splitting the
+  # job renamed its checks to `knobs (<group>)` and left the required context
+  # waiting for a report that would never come — a merge blocked on a check that
+  # no longer exists. An aggregate keeps the contract stable: the matrix can grow,
+  # shrink or be renamed without touching the repository's rules.
+  #
+  # `always()` so it still reports when the matrix was skipped — a skipped job is
+  # a satisfied required check, an absent one is not.
+  knobs:
+    needs: [changes, knob-builds]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: the knob builds all passed (or had nothing to build)
+        env:
+          RESULT: ${{ needs.knob-builds.result }}
+        run: |
+          case "$RESULT" in
+            success | skipped) echo "knob builds: $RESULT" ;;
+            *) echo "knob builds: $RESULT"; exit 1 ;;
+          esac

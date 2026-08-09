@@ -73,12 +73,22 @@
       export LIBRARY_PATH="${pkgs.lib.getLib sdl2}/lib''${LIBRARY_PATH:+:$LIBRARY_PATH}"
       # the Gnuk-derived OpenPGP card suite (third_party/) dlopens libgcrypt
       export DYLD_FALLBACK_LIBRARY_PATH="${pkgs.lib.getLib pkgs.libgcrypt}/lib''${DYLD_FALLBACK_LIBRARY_PATH:+:$DYLD_FALLBACK_LIBRARY_PATH}"
-      # The dev-shell `rsk-tui` is a bare `cargo run` (no nix RPATH), so its
-      # DT_NEEDED libudev/libpcsclite must be on the loader path at run time —
-      # pkg-config only satisfies them at build time.
+      # The dev-shell `rsk-tui` and `rsk-emu` are bare `cargo run`s (no nix
+      # RPATH), so their DT_NEEDED libudev/libpcsclite/libSDL2 must be on the
+      # loader path at run time — `LIBRARY_PATH` above only satisfies the linker.
+      #
+      # SDL2 belongs here even though nothing in CI opens a window: `tools/emu`
+      # links `embedded-graphics-simulator` unconditionally, so EVERY run of the
+      # emulator needs the library present. Whether it is depends on the host —
+      # a NixOS box gave the binary an RPATH into the store and hid this, while a
+      # GitHub runner did not and every emulator suite died on
+      # `libSDL2-2.0.so.0: cannot open shared object file`.
       export LD_LIBRARY_PATH="${
         pkgs.lib.makeLibraryPath (
-          [ pkgs.libgcrypt ]
+          [
+            pkgs.libgcrypt
+            sdl2
+          ]
           ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
             pkgs.systemd
             pkgs.pcsclite
