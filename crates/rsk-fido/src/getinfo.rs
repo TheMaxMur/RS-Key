@@ -254,13 +254,29 @@ fn write_info<W: Write>(
     enc.u8(0x1D)?.u8(crate::clientpin::MAX_PIN_LENGTH as u8)?;
 
     // 0x1F authenticatorConfigCommands — the authenticatorConfig (0x0D) subcommands
-    // we support: enableEnterpriseAttestation (0x01), toggleAlwaysUv (0x02) and
-    // setMinPINLength (0x03). The FIDO conformance AuthenticatorConfig suite requires
-    // this member (its EA-enable test asserts the array contains 0x01, the featureful
-    // profile requires 0x02, and its `before` reads it). A 2-byte CBOR key (31 > 23),
-    // so it sorts after all 1-byte keys → still canonical. Keep in sync with the
-    // metadata statement (`authenticatorGetInfo.authenticatorConfigCommands`).
-    enc.u8(0x1F)?.array(3)?.u8(0x01)?.u8(0x02)?.u8(0x03)?;
+    // we support: enableEnterpriseAttestation (0x01), toggleAlwaysUv (0x02),
+    // setMinPINLength (0x03) and vendorPrototype (0xFF). The FIDO conformance
+    // AuthenticatorConfig suite requires this member (its EA-enable test asserts the
+    // array contains 0x01, the featureful profile requires 0x02, and its `before`
+    // reads it). A 2-byte CBOR key (31 > 23), so it sorts after all 1-byte keys →
+    // still canonical. Keep in sync with the metadata statement
+    // (`authenticatorGetInfo.authenticatorConfigCommands`).
+    //
+    // 0xFF is listed because §6.11.7 says it must be: "authenticatorConfigCommands
+    // MUST contain an array member with the value 0xFF if this subcommand is
+    // supported", and `config.rs` implements it — it is the phy/soft-lock config arm
+    // `docs/protocol.md` §9 publishes for PicoForge. Omitting it told a platform the
+    // arm was absent while the wire spec documented it. Not an obscurity measure
+    // either way: §6.11.7 also says "Vendors MUST NOT count on obscurity of the
+    // vendorCommandId value as any sort of security", and the arm needs an `acfg`
+    // token regardless. 0x15 (vendorPrototypeConfigCommands — *which* vendor command
+    // ids exist) stays unadvertised; that member is optional and a YubiKey hides it.
+    enc.u8(0x1F)?
+        .array(4)?
+        .u8(0x01)?
+        .u8(0x02)?
+        .u8(0x03)?
+        .u8(0xFF)?;
 
     // 0x15 (vendorPrototypeConfigCommands) is never advertised; a real YubiKey
     // hides it too, so the default Yubikey5 VID/PID stays consistent.

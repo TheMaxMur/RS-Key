@@ -234,7 +234,7 @@ Grouped into three domains, plus the journal / backup / reset actions:
   check it isn't doing), and the hold-to-**reboot into BOOTSEL** for an over-USB
   update.
 
-![The trusted display's Firmware screen: the installed build 0x0874 under a chip glyph, "Updates arrive over USB." and an amber warning that updates are NOT verified, the chip serial, and a blue Verify & install button](../images/display-firmware.png)
+![The trusted display's Firmware screen: the installed build 0x0875 under a chip glyph, "Updates arrive over USB." and an amber warning that updates are NOT verified, the chip serial, and a blue Verify & install button](../images/display-firmware.png)
 - **Audit log**: the most recent device-journal events (sign-ins, passkeys
   added, PIN changes, lockouts, resets, power cycles), colour-coded, newest first.
 

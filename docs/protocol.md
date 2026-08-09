@@ -913,7 +913,9 @@ SET     00 10 40 11        # P1=0x40 brightness, P2 = color 1 | status 1<<4 = 0x
 2. **Hardware config over FIDO (no PC/SC) is supported**: PicoForge's legacy
    hardware-config path. Send `authenticatorConfig` (CTAP `0x0D`) with subCommand
    `vendorPrototype` (`0xFF`) and subCommandParams `{1: vendorCommandId(u64),
-   3: value(uint)}`, gated by an `acfg` pinUvAuthToken (no touch). The supported
+   3: value(uint)}`, gated by an `acfg` pinUvAuthToken (no touch). getInfo's
+   `authenticatorConfigCommands` (`0x1F`) lists `0xFF`, so the arm is detectable
+   without probing. The supported
    IDs, the ones PicoForge writes, set the phy record and take effect on the
    next boot: `PhysicalVidPid 0x6fcb19b0cbe3acfa` (value `(vid<<16)|pid`),
    `PhysicalLedGpio 0x7b392a394de9f948`, `PhysicalLedBrightness 0x76a85945985d02fd`,

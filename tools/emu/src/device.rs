@@ -191,7 +191,7 @@ pub fn run(
             touch,
             hooks,
             rsk_display::DeviceInfo {
-                version: 0x0874,
+                version: crate::usbip_stack::BCD_DEVICE,
                 chipid: u64::from_le_bytes(cfg.serial),
             },
             fs,

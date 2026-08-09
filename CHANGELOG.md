@@ -212,6 +212,19 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   advertising the old number to whoever reads them. `tests/62_metadata_statement.py`
   is the check for exactly this drift, and it had not been run since.
 
+- **getInfo hid the `vendorPrototype` config subcommand it implements.**
+  `authenticatorConfigCommands` (`0x1F`) listed `0x01`, `0x02` and `0x03` but not
+  `0xFF`, and CTAP 2.3.1 §6.11.7 is explicit: "authenticatorConfigCommands MUST
+  contain an array member with the value 0xFF if this subcommand is supported".
+  RS-Key does support it — it is the phy/soft-lock configuration arm
+  [docs/protocol.md](docs/protocol.md) §11 publishes for PicoForge — so a client
+  reading the member to decide whether to use it was told the arm was absent while
+  the wire spec documented it. Not obscurity in either direction: the same section
+  says vendors must not count on it, and the arm still needs an `acfg`
+  pinUvAuthToken. `0x15` (`vendorPrototypeConfigCommands`, *which* vendor ids
+  exist) stays unadvertised. Found by the refreshed pico-fido suite.
+  `bcdDevice` `0x0874` → `0x0875`.
+
 ## [0.4.8] - 2026-08-08
 
 Everything in 0.4.7 below, plus the fix for the reason it never shipped: the

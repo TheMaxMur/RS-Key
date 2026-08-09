@@ -76,7 +76,7 @@ const fn identity(yubico: bool) -> (u16, u16, &'static str, &'static str) {
 /// `bcdDevice`, mirroring `firmware/src/main.rs`'s `device_release`. A host reads
 /// it before anything else, so an emulator claiming a build it is not running
 /// lies in the very first descriptor it serves.
-pub const BCD_DEVICE: u16 = 0x0874;
+pub const BCD_DEVICE: u16 = 0x0875;
 
 /// Descriptor scratch, sized as the firmware sizes it.
 const CONFIG_DESC_LEN: usize = 256;

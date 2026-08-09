@@ -92,6 +92,6 @@
     "remainingDiscoverableCredentials": 256,
     "attestationFormats": ["packed"],
     "maxPINLength": 63,
-    "authenticatorConfigCommands": [1, 2, 3]
+    "authenticatorConfigCommands": [1, 2, 3, 255]
   }
 }
