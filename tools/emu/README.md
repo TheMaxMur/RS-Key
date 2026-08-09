@@ -129,6 +129,17 @@ with a real key, for the same reason.
 Needs Linux and root for `vhci_hcd`; the emulator itself can stay on a Mac,
 because USB/IP is network-transparent.
 
+All of that in one command — including the two identities, since `73` wants the
+Yubico one and the rest must not have it — is `scripts/usbip-suites.sh`, which is
+also what CI runs. It boots a guest that owns a `vhci_hcd`
+(`nix build .#usbip-vm`) because a GitHub-hosted runner cannot be one, and keeps
+the emulators outside it on the VM host. It runs `02`, `61`, `65`, `73` and the
+pico-fido conformance suite; **`77` is deliberately not in it.** Armed with
+`ykman otp chalresp --touch` the slot does read as configured, but no wait
+follows — even started `--touch` with nobody to answer — so the suite has nothing
+to watch. Whether that is the presence model or the slot's touch flag is open;
+until someone reads it, running it would gate CI on an undiagnosed condition.
+
 ## The wire
 
 **CTAPHID** — the stream carries 64-byte HID reports, both directions, exactly

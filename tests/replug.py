@@ -13,7 +13,11 @@ paints the operation the touch approves — so there the prompt is merely redund
 
 Two transports, because the suites have two: `reset` for the raw CTAPHID scripts,
 `reset_fido2` for the ones driven through python-fido2.
+
+Against `tools/emu --usbip` the operator is one message on the card socket, so
+`RSK_EMU_CCID` turns the prompt into that message — see [`_emu_power_cycle`].
 """
+import os
 import sys
 import time
 
@@ -23,6 +27,27 @@ CTAP2_OK = 0x00
 RESET_WINDOW_S = 10.0
 REPLUG_TIMEOUT_S = 60.0
 POLL_S = 0.05
+
+
+def _emu_power_cycle(why):
+    """Power-cycle `tools/emu` instead of asking a person, and say so.
+
+    Only ever taken when `RSK_EMU_CCID` is set, which nothing but an emulator
+    answers. It matters for the `--usbip` runs: those drive a device the kernel
+    really enumerated, so the suites keep their real transports — but nobody is
+    standing at the USB port, and the §6.6 window still has to be reopened.
+    Returns False when there is no emulator to ask, so the caller prompts.
+    """
+    if not os.environ.get("RSK_EMU_CCID"):
+        return False
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import emu
+
+    print(f"   power-cycling the emulator for {why} (RSK_EMU_CCID)")
+    emu.power_cycle()
+    # The USB/IP session survives the applet-side replug, so nothing
+    # re-enumerates and the caller's handle stays valid.
+    return True
 
 
 def _prompt(why):
@@ -74,12 +99,22 @@ def reset(dev=None, why="this authenticatorReset"):
     handle dies with the power cycle — and returns the fresh (dev, cid)."""
     from ctaphid import send_cbor
 
-    if dev is not None:
-        dev.close()
-    _prompt(why)
-    wait_gone()
-    print("   unplugged — plug it back in…")
-    dev, cid, seen = wait_back()
+    if _emu_power_cycle(why):
+        from ctaphid import ctaphid_init, find, hid
+
+        if dev is not None:
+            dev.close()
+        info = find()
+        dev = hid.device()
+        dev.open_path(info["path"])
+        cid, seen = ctaphid_init(dev), time.time()
+    else:
+        if dev is not None:
+            dev.close()
+        _prompt(why)
+        wait_gone()
+        print("   unplugged — plug it back in…")
+        dev, cid, seen = wait_back()
     status = send_cbor(dev, cid, bytes([CTAP_RESET]))[0]
     if status != CTAP2_OK:
         dev.close()
@@ -104,12 +139,17 @@ def reset_fido2(dev=None, why="this authenticatorReset"):
         except OSError:
             return None  # enumerated but not ready for reports yet
 
-    if dev is not None:
-        dev.close()
-    _prompt(why)
-    _wait(probe, False, "the key is still enumerated — unplug it when asked")
-    print("   unplugged — plug it back in…")
-    dev = _wait(probe, True, "the FIDO HID device did not come back")
+    if _emu_power_cycle(why):
+        if dev is not None:
+            dev.close()
+        dev = find_fido2()
+    else:
+        if dev is not None:
+            dev.close()
+        _prompt(why)
+        _wait(probe, False, "the key is still enumerated — unplug it when asked")
+        print("   unplugged — plug it back in…")
+        dev = _wait(probe, True, "the FIDO HID device did not come back")
     try:
         Ctap2(dev).reset()
     except CtapError as e:

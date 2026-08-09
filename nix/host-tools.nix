@@ -40,6 +40,7 @@ let
   # The host-side Python for the `rsk` CLI (tools/rsk) + the device tests.
   rskPython = pkgs.python3.withPackages (ps: [
     ps.hidapi # FIDO CTAPHID transport
+    ps.pyusb # raw USB: the descriptor/interface-order suites (02, 77)
     ps.cryptography # P-256 ECDH / AES-CBC / HMAC (clientPIN + MSE backup)
     ps.pyscard # PC/SC for the CCID applets
     ps.mnemonic # BIP-39 seed rendering

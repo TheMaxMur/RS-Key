@@ -66,6 +66,15 @@
           // apps'.packages
           // {
             ccid-rs-key = import ./nix/ccid.nix { inherit pkgs; };
+          }
+          # The guest for the USB-stack suites. Linux only — it exists to own a
+          # `vhci_hcd`, and there is no such thing to own elsewhere.
+          // nixpkgs.lib.optionalAttrs (nixpkgs.lib.hasSuffix "-linux" system) {
+            usbip-vm = import ./nix/usbip-vm.nix {
+              inherit nixpkgs system;
+              inherit (hostTools) rskPython;
+              ccidOverlay = self.overlays.ccid-rs-key;
+            };
           };
         inherit (firmware) lib;
         apps = apps'.apps;

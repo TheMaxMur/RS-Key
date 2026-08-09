@@ -166,6 +166,26 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   sit behind a `Hooks` trait whose defaults are exact no-ops. Behaviour and wire
   surface unchanged; no `bcdDevice` bump.
 
+- **The suites that need a real USB stack now run in CI too, inside a VM.**
+  `02_usb_interfaces`, `61`/`65`, `73`/`77` and the pico-fido conformance suite
+  read USB descriptors or go through python-fido2's and pyscard's own transports,
+  so they want a device the kernel enumerated — `vhci_hcd`, which a GitHub-hosted
+  runner cannot supply: it cannot load a module
+  ([runner-images#7541](https://github.com/actions/runner-images/issues/7541))
+  and has no reliable `/dev/kvm`
+  ([community#8305](https://github.com/orgs/community/discussions/8305)).
+  `scripts/usbip-suites.sh` boots a QEMU guest that does (`nix build .#usbip-vm`)
+  and attaches the emulator to it over the network. The emulator stays *outside*
+  the guest — it is a TCP peer, not a device — which keeps the guest a fixed
+  appliance (kernel, `usbip`, `pcscd`, Python) that no firmware change can
+  invalidate, and keeps its build the same `cargo` one as everywhere else. Two
+  emulators run at once on separate ports, because `73` drives ykman's own
+  `OtpConnection` (which binds Yubico USB ids and nothing else) while the rest
+  must stay on the default identity — the one whose CCID interface a stock driver
+  skips, and the reason `nix/ccid.nix` exists. Everything inside runs on software
+  emulation, so it costs minutes rather than seconds; it runs on every PR and
+  nightly alongside the socket half.
+
 ### Changed
 
 - **CI stopped building 24 firmware images for a documentation edit.** Every pull

@@ -12,9 +12,15 @@
 # in the change that staled it. Gated on `scripts/ci-scope.sh` so an edit that
 # cannot reach the emulator does not boot one.
 #
-# What is NOT here yet is the half that wants real USB — `02`, `61`, `65`, `73`,
-# `77` and the pico-fido conformance suite. Those need `vhci_hcd`, which a
-# GitHub-hosted runner cannot provide.
+# Two halves, because the transport splits them:
+#   sockets — everything the emulator can serve over TCP, on the runner directly.
+#   usb     — `02`, `61`, `65`, `73`, `77` and the pico-fido conformance suite,
+#             which read USB descriptors or go through python-fido2's and
+#             pyscard's own transports. Those need a kernel that enumerated the
+#             device, i.e. `vhci_hcd` — which a GitHub-hosted runner has no way to
+#             provide (no module loading, and no reliable /dev/kvm either). So
+#             they run inside a QEMU guest under software emulation; see
+#             `scripts/usbip-suites.sh`.
 
 name: emulator
 
@@ -100,3 +106,37 @@ jobs:
           # is usually the device saying why, not the suite.
           find /tmp -name '*.log' -newermt '-45 minutes' -path '*/tmp.*' \
             -exec sh -c 'echo "--- $1"; tail -40 "$1"' _ {} \; 2>/dev/null || true
+
+  usb:
+    needs: changes
+    if: needs.changes.outputs.emulator == 'true'
+    runs-on: ubuntu-latest
+    # The guest runs on TCG, so everything inside it is several times slower than
+    # the same suites on metal. The budget is generous on purpose: a timeout here
+    # would read as a device fault.
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+
+      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+        with:
+          # Its own cache key: this job's closure carries a kernel, QEMU and a
+          # whole NixOS, none of which the socket half needs.
+          primary-key: nix-usbip-${{ runner.os }}-${{ hashFiles('flake.lock', 'nix/usbip-vm.nix') }}
+          restore-prefixes-first-match: nix-usbip-${{ runner.os }}-
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            tools/emu/target
+          key: emu-${{ runner.os }}-${{ hashFiles('tools/emu/Cargo.lock', 'flake.lock') }}
+          restore-keys: emu-${{ runner.os }}-
+
+      - name: the suites that need a real USB stack, in a QEMU guest
+        run: nix develop -c ./scripts/usbip-suites.sh
+        env:
+          HOST_TARGET: x86_64-unknown-linux-gnu

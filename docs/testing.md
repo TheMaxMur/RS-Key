@@ -341,11 +341,27 @@ several had.
 PC/SC reader, something a browser can talk to. What enumerates there is the
 device's own stack (the same `embassy_usb::Builder`, the same `rsk-usb`
 transports, over a driver written against URBs), so the descriptors and the
-interface order are the real ones. The three suites this shim refuses for wanting
-raw USB — `02_usb_interfaces`, `73_otp_keyboard`, `77_otp_touch_wait` — run there
-instead, as ordinary hardware suites with nothing faked. Needs Linux and root; the
-emulator itself can stay on a Mac, because USB/IP is network-transparent. See
-`tools/emu/README.md`.
+interface order are the real ones. The suites this shim refuses for wanting raw
+USB — `02_usb_interfaces`, `61`/`65` (python-fido2's own transport),
+`73_otp_keyboard`, `77_otp_touch_wait` — run there instead, as ordinary hardware
+suites with nothing faked, and so does the pico-fido conformance suite. Needs
+Linux and root; the emulator itself can stay on a Mac, because USB/IP is
+network-transparent. See `tools/emu/README.md`.
+
+`scripts/usbip-suites.sh` is that run in one command, and it is what CI calls:
+
+```sh
+nix develop -c ./scripts/usbip-suites.sh   # Linux only
+```
+
+A GitHub-hosted runner cannot supply `vhci_hcd` — it cannot load a module, and
+has no reliable `/dev/kvm` either — so the script boots a QEMU guest that can
+(`nix build .#usbip-vm`, defined in `nix/usbip-vm.nix`) and attaches the
+emulator to it over the network. The emulator itself stays outside the guest:
+it is a TCP peer, not a device, which keeps the guest a fixed appliance —
+kernel, `usbip`, `pcscd`, Python — that a firmware change cannot invalidate.
+There is no KVM, so everything inside runs on software emulation; budget minutes,
+not seconds.
 
 What it buys is the run these suites otherwise never get: they are hand-run
 against a flashed board, so nothing catches a *test* that has rotted. What it
