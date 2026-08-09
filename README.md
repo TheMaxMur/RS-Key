@@ -182,6 +182,26 @@ nix develop -c ./scripts/check.sh   # fmt, clippy, host tests, firmware builds, 
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) and [docs/testing.md](docs/testing.md).
 
+### No board? Run the emulator
+
+`tools/emu` runs the same `crates/rsk-*` applet code a real key runs — FIDO2/U2F,
+PIV, OpenPGP, OATH — over sockets instead of USB, so the protocol test suites
+work with nothing plugged in:
+
+```sh
+nix develop -c ./scripts/emu-suites.sh          # every suite that needs no board
+cargo run --manifest-path tools/emu/Cargo.toml --target "$HOST" -- --display
+```
+
+`--display` opens the trusted screen in a window: the whole flow, not a viewer,
+so the Approve/Deny ceremony can be tried with a mouse. On Linux, `--usbip`
+attaches it to the kernel as a *real* USB device, which is how a browser, `ykman`
+or `gpg` reach it.
+
+It is **not** a security key: no secure boot, no OTP root, no fuses, and the seed
+sits in a file. It emulates behaviour, not the device. See
+[`tools/emu/README.md`](tools/emu/README.md).
+
 ## Production / secure boot (irreversible — read first)
 
 By default the firmware flashes by drag-and-drop and roots its at-rest

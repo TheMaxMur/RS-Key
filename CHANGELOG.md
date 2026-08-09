@@ -55,6 +55,13 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   where the clip keeps `…m.attacker.com` in view instead of the head an attacker
   padded it with.
 
+- **The emulator is described where people look for it.** README, the docs' front
+  page, the quick start and CONTRIBUTING all now say it exists and how to use it
+  for testing — it had been reachable only from `docs/testing.md` and
+  `docs/architecture.md`, which is not where someone with no board goes looking.
+  CONTRIBUTING's on-device bullet also said those suites are run by hand against a
+  board; that stopped being true when CI started running them.
+
 - **CI runs the on-device suites.** `scripts/emu-suites.sh` drives every suite
   that needs no board — `tests/*.py` over the emulator's socket transports, plus
   the vendored OpenPGP card conformance suite — each on a fresh flash image, and

@@ -131,9 +131,17 @@ stage 3.
 
 - **Host**: `cargo test` across the workspace crates — part of the gate, runs
   everywhere, no hardware.
-- **On-device**: `tests/*.py`, run by hand against a board flashed with the
-  **no-touch test build** (otherwise every makeCredential waits for a finger
-  that never comes). See [docs/testing.md](docs/testing.md).
+- **On-device**: `tests/*.py`. Most of them need no board — the emulator
+  (`tools/emu`) runs the same applet crates on a socket, and one command sweeps
+  every suite that does not need real USB:
+
+  ```sh
+  nix develop -c ./scripts/emu-suites.sh
+  ```
+
+  CI runs exactly that, on every PR. Against a board, flash the **no-touch test
+  build** first (otherwise every makeCredential waits for a finger that never
+  comes). See [docs/testing.md](docs/testing.md) and `tools/emu/README.md`.
 - **Fuzzing**: every external-facing parser has a target —
   `nix develop .#fuzz -c cargo fuzz run <target>`. New parser, new target;
   a fuzz target that found nothing is still evidence.
