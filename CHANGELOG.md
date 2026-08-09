@@ -38,6 +38,15 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+## [0.4.9] - 2026-08-09
+
+The emulator release: `tools/emu` runs the applet stack on the host, and with it
+the suites that had been hand-run against a flashed board — including, over
+USB/IP, the ones that need a kernel to have enumerated the device. Both vendored
+upstream conformance suites are refreshed, classified against the specs and now
+gate; one of their new tests found a real getInfo bug. CI runs what a change can
+affect instead of everything.
+
 > ### ⚠️ Upgrading a 16 MB key provisioned before 0.4.8 wipes it
 >
 > **Export your seed first** ([seed backup](docs/guides/seed-backup.md)).
@@ -4251,7 +4260,8 @@ family that keeps the "enterprise" features in the open tree.
   signature of it, and a CycloneDX SBOM. See
   [docs/releases.md](docs/releases.md) to verify a download.
 
-[Unreleased]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.8...HEAD
+[Unreleased]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.9...HEAD
+[0.4.9]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.8...v0.4.9
 [0.4.8]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.7...v0.4.8
 [0.4.7]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.6...v0.4.7
 [0.4.6]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.5...v0.4.6
