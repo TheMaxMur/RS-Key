@@ -18,11 +18,6 @@
 //! is why it can be tested exhaustively on the host; the endpoint plumbing that
 //! sits on top of it is separate.
 
-// The codec is complete and tested; the socket loop that consumes it is the next
-// step, so most of this surface has no caller yet. Scoped to this module so a
-// genuinely unused item elsewhere still fails the gate.
-#![allow(dead_code)]
-
 /// Protocol version, in every op-phase header (`0x0111` = 1.1.1).
 pub const VERSION: u16 = 0x0111;
 
@@ -196,11 +191,6 @@ impl Submit {
         } else {
             0
         }
-    }
-
-    /// Whether this is a control transfer (endpoint 0 always is).
-    pub fn is_control(&self) -> bool {
-        self.ep == 0
     }
 }
 
@@ -578,47 +568,21 @@ pub fn serve_op<S: Read + Write>(
     }
 }
 
-/// The device this emulator presents. The descriptor values are the ones the
-/// firmware's USB layer declares; the kernel reads them before it ever issues a
-/// GET_DESCRIPTOR, to size its own model of the device.
-pub fn device_info() -> UsbDeviceInfo {
-    UsbDeviceInfo {
-        path: "/sys/devices/rsk-emu/usb1/1-1",
-        busid: "rsk-emu",
-        busnum: 1,
-        devnum: 1,
-        speed: 2, // full speed, like the RP2350
-        id_vendor: 0x1209,
-        id_product: 0x000d,
-        bcd_device: 0x0874,
-        device_class: 0,
-        device_subclass: 0,
-        device_protocol: 0,
-        configuration_value: 1,
-        num_configurations: 1,
-        num_interfaces: 3,
-    }
-}
-
-/// The interface list, in the order the device presents them: keyboard/OTP,
-/// FIDO, CCID. The ORDER is the point — issue #55 was a host going blind when it
-/// changed — and it is the first thing this transport makes observable.
-pub const INTERFACES: [[u8; 3]; 3] = [
-    [0x03, 0x01, 0x01], // HID, boot, keyboard — OTP
-    [0x03, 0x00, 0x00], // HID — FIDO
-    [0x0b, 0x00, 0x00], // smart card — CCID
-];
-
 /// Accept USB/IP clients forever, one at a time. A second client while one holds
 /// the device waits its turn: there is one device here, and letting two hosts
 /// import it would give both a half-working one.
-pub fn listen(addr: &str, sink: &mut dyn UrbSink) -> std::io::Result<()> {
+pub fn listen(
+    addr: &str,
+    dev: &UsbDeviceInfo,
+    ifaces: &[[u8; 3]],
+    sink: &mut dyn UrbSink,
+) -> std::io::Result<()> {
     let l = std::net::TcpListener::bind(addr)?;
     eprintln!("emu: USB/IP on {addr} (attach: usbip attach -r <host> -b {BUSID})");
     for stream in l.incoming() {
         let Ok(mut s) = stream else { continue };
         let _ = s.set_nodelay(true);
-        match serve_op(&mut s, &device_info(), &INTERFACES) {
+        match serve_op(&mut s, dev, ifaces) {
             Ok(true) => {}
             Ok(false) => continue,
             Err(e) => {
@@ -647,32 +611,6 @@ pub fn listen(addr: &str, sink: &mut dyn UrbSink) -> std::io::Result<()> {
         eprintln!("emu: USB/IP detached");
     }
     Ok(())
-}
-
-/// A sink with no USB stack behind it: every URB halts.
-///
-/// This is what the transport serves until the `embassy_usb::driver::Driver`
-/// impl lands. A host attaching to it gets a device that enumerates as far as
-/// asking for a descriptor and then fails — which is the honest state, and is
-/// enough to exercise every byte of the framing against a real kernel.
-#[derive(Default)]
-pub struct StallAll(Option<Sender<Ret>>);
-
-impl UrbSink for StallAll {
-    fn attach(&mut self, rets: Sender<Ret>) {
-        self.0 = Some(rets);
-    }
-    fn submit(&mut self, urb: Urb) {
-        if let Some(rets) = &self.0 {
-            let _ = rets.send(Ret::stall(urb.seqnum));
-        }
-    }
-    fn unlink(&mut self, _seqnum: u32) -> bool {
-        false // answered before the host could have asked
-    }
-    fn detach(&mut self) {
-        self.0 = None;
-    }
 }
 
 use std::io::{Read, Write};

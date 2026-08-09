@@ -7,6 +7,7 @@
 
 pub mod ccid;
 pub mod ctaphid;
+pub mod kbd;
 pub mod secure_pin;
 
 /// Abandon an IN-endpoint response when the host stops draining it for this

@@ -48,6 +48,17 @@ impl Signals {
         self.cancel_cid.store(cid, Ordering::Release);
     }
 
+    /// Cancel whatever command is in flight.
+    ///
+    /// `CtapHid`'s cancel hook is a `fn()` and carries no channel, but it is only
+    /// called for a `CTAPHID_CANCEL` whose cid it has already matched against the
+    /// in-flight one — so this is the same scoping the per-channel form gives, and
+    /// with nothing in flight (`active_cid` 0) it cancels nothing.
+    pub fn cancel_active(&self) {
+        self.cancel_cid
+            .store(self.active_cid.load(Ordering::Acquire), Ordering::Release);
+    }
+
     /// Whether the in-flight command has been cancelled by its *own* channel.
     pub fn cancelled(&self) -> bool {
         let active = self.active_cid.load(Ordering::Acquire);

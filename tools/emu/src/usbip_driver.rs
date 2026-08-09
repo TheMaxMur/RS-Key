@@ -23,11 +23,6 @@
 //! its whole mutation inside a single `poll` — so dropping one mid-`select`,
 //! which both `Ccid` and `CtapHid` do, can never leave a URB half-consumed.
 
-// The driver is complete and tested; the `Builder` that stands on it is the next
-// step, so from the binary's point of view nothing here is reached yet. Scoped to
-// this module so a genuinely unused item elsewhere still fails the gate.
-#![allow(dead_code)]
-
 use std::collections::VecDeque;
 use std::future::poll_fn;
 use std::sync::mpsc::Sender;
@@ -43,6 +38,13 @@ use crate::usbip::{Ret, Urb, UrbSink};
 
 /// A USB endpoint number is four bits wide, and 0 is the control pipe.
 const MAX_EP: usize = 16;
+
+/// How many URBs one endpoint may hold before further ones halt.
+///
+/// A host keeps one or two in flight per endpoint; the ceiling is here because
+/// the queue is fed from a socket, and an idle interrupt IN nobody ever writes to
+/// would otherwise grow without bound on a peer that keeps submitting.
+const MAX_QUEUED: usize = 64;
 
 /// One URB in flight on a data endpoint.
 struct Pending {
@@ -151,9 +153,10 @@ impl Shared {
         } else {
             &mut self.ep_out[idx]
         };
-        // An endpoint no descriptor declared, or one the host itself halted, is a
-        // STALL — not a URB queued against a reader that will never come.
-        if ep.max_packet_size == 0 || ep.stalled {
+        // An endpoint no descriptor declared, one the host itself halted, or one
+        // whose queue has run away, is a STALL — not a URB queued against a reader
+        // that will never come.
+        if ep.max_packet_size == 0 || ep.stalled || ep.queue.len() >= MAX_QUEUED {
             self.finish(Ret::stall(seqnum));
             return;
         }

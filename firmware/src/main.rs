@@ -674,7 +674,7 @@ async fn main(spawner: Spawner) {
             &mut builder,
             KBD_STATE.init(HidState::new()),
             HidConfig {
-                report_descriptor: otp_kbd::KEYBOARD_REPORT_DESCRIPTOR,
+                report_descriptor: rsk_usb::kbd::KEYBOARD_REPORT_DESCRIPTOR,
                 request_handler: Some(OTP_HID_HANDLER_KBD.init(otp_kbd::OtpHidHandler)),
                 poll_ms: 10,
                 max_packet_size: 8,

@@ -136,7 +136,6 @@ fn submit_parses() {
     assert_eq!(s.ep, 0);
     assert_eq!(s.transfer_buffer_length, 18);
     assert_eq!(s.setup, setup);
-    assert!(s.is_control());
 }
 
 /// The payload rule decides how many bytes to read off the socket next. Getting

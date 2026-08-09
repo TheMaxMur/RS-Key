@@ -24,6 +24,7 @@ mod signals;
 mod store;
 mod usbip;
 mod usbip_driver;
+mod usbip_stack;
 
 use std::io::BufRead;
 use std::net::TcpListener;
@@ -178,19 +179,21 @@ fn main() {
         );
         std::thread::spawn(move || ccid::listen(listener, jobs, atr));
     }
-    // The device thread's loop ends when every sender is gone; this one would
-    // keep it alive for ever.
+    // The USB stack needs a sender of its own and is started below (after the
+    // last `cfg` read), so its clone is taken here — before the original is
+    // dropped, which is what lets the device thread's loop end when every
+    // transport has gone.
+    let usbip_jobs = jobs_tx.clone();
     drop(jobs_tx);
 
     if let Some(addr) = cfg.usbip.clone() {
-        // Its own thread: the listener blocks on accept, while the device thread
-        // keeps serving the sockets it already has.
-        std::thread::spawn(move || {
-            let mut sink = usbip::StallAll::default();
-            if let Err(e) = usbip::listen(&addr, &mut sink) {
-                eprintln!("emu: cannot serve USB/IP on {addr}: {e}");
-            }
-        });
+        // Its own thread, holding the USB stack's executor: the device thread runs
+        // the applets, this one runs the transports, exactly as the board splits
+        // them across two executors.
+        let jobs = usbip_jobs;
+        let signals = signals.clone();
+        let yubico = cfg.yubico;
+        std::thread::spawn(move || usbip_stack::serve(addr, jobs, signals, yubico));
     }
 
     device::run(cfg, jobs_rx, signals, lines);
