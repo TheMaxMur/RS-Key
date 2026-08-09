@@ -47,6 +47,17 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   the mode that wedged ML-DSA-65 `makeCredential` at `0x082A` — the overflowing
   write landed in `.bss` and the device halted with no diagnostic.
 
+- **Core1's stack has a hardware limit.** Its 16 KiB stack is an array in
+  `.bss`, which `flip-link` cannot help with — that guards core0's stack by
+  moving it to the edge of RAM. Core1 now programs ARMv8-M's `MSPLIM` on entry,
+  so an overflow faults on the stack-pointer decrement rather than writing into
+  the statics below. Measured: with the limit, an 80 KiB overflow on core1
+  leaves the device answering normally; without it, the device passes `getInfo`
+  and two suites and *then* hangs on the first `makeCredential`. The fault is
+  not graceful — `pause_core1` spins waiting for a core that no longer answers,
+  so the next flash write wedges until a replug — but that is the intended
+  trade against a silent write issued while a key is being generated.
+
 ### Added
 
 - The gate asserts a **stack floor** (`FIRMWARE_STACK_FLOOR_KIB`, alongside the

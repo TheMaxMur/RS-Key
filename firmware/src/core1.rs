@@ -143,7 +143,9 @@ pub fn stats() -> [u8; 32] {
 /// from that point embassy-rp's flash driver pauses/resumes core1 around every
 /// erase/program.
 pub fn spawn(core1: Peri<'static, CORE1>) {
-    spawn_core1(core1, CORE1_STACK.init_with(Stack::new), || core1_main());
+    let stack = CORE1_STACK.init_with(Stack::new);
+    let floor = stack.mem.as_ptr() as u32;
+    spawn_core1(core1, stack, move || core1_main(floor));
 }
 
 /// Scrub and drop any primes still sitting in the mailbox.
@@ -241,7 +243,15 @@ const SCRUB_WAIT_ITERS: u32 = 2_000_000;
 // --------------------------------------------------------------- core1 side --
 
 /// Core1 entry: wait for a job, search until satisfied or told to stop, repeat.
-fn core1_main() -> ! {
+fn core1_main(stack_floor: u32) -> ! {
+    // This stack is a plain array in `.bss`, so an overflow lands in whatever the
+    // linker put below it — flip-link only guards core0's, the one at the edge of
+    // RAM. MSPLIM traps the SP decrement itself, so a frame big enough to step
+    // over a guard band cannot slip past.
+    // SAFETY: writes the stack-limit register of the core that owns this stack,
+    // before anything has pushed; the value is that stack's own base.
+    unsafe { cortex_m::register::msplim::write(stack_floor) };
+
     // Whether the late-find scrub already ran for the current STOP edge.
     let mut stop_scrubbed = false;
     loop {
