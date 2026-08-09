@@ -5,6 +5,10 @@ target = "thumbv8m.main-none-eabihf"
 # `cargo run` flashes a board sitting in BOOTSEL over USB (no debug probe needed).
 # Otherwise: build, `picotool uf2 convert`, and drag the .uf2 onto the RP2350 drive.
 runner = "picotool load -u -v -x -t elf"
+# Stack below the statics, so an overflow hits the unmapped page under
+# 0x20000000 and faults instead of silently eating .bss — the failure mode that
+# wedged ML-DSA-65 keygen at 0x082A. Needs `nix develop` (it finds rust-lld).
+linker = "flip-link"
 rustflags = [
   "-C", "link-arg=--nmagic",
   "-C", "link-arg=-Tlink.x",

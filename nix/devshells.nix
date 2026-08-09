@@ -68,6 +68,9 @@
     ];
 
     shellHook = ''
+      # flip-link (the embedded linker in .cargo/config.toml) shells out to
+      # `rust-lld`, which lives inside the rustc sysroot and is not on PATH.
+      export PATH="$(rustc --print sysroot)/lib/rustlib/$(rustc -vV | sed -n 's/^host: //p')/bin:$PATH"
       # rustc does not read buildInputs, so name SDL2's lib dir for the linker —
       # without it `tools/emu --display` fails with `ld: library 'SDL2' not found`.
       export LIBRARY_PATH="${pkgs.lib.getLib sdl2}/lib''${LIBRARY_PATH:+:$LIBRARY_PATH}"

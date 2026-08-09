@@ -38,6 +38,15 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+### Security
+
+- **A stack overflow now faults instead of corrupting RAM.** The firmware links
+  through `flip-link`, which puts the stack below `.data`/`.bss` so running off
+  the end hits unmapped memory under `0x20000000` rather than overwriting the
+  statics next to it. The stack is the same size; the failure is loud. This is
+  the mode that wedged ML-DSA-65 `makeCredential` at `0x082A` — the overflowing
+  write landed in `.bss` and the device halted with no diagnostic.
+
 ### Added
 
 - The gate asserts a **stack floor** (`FIRMWARE_STACK_FLOOR_KIB`, alongside the

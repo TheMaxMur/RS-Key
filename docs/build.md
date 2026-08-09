@@ -121,7 +121,11 @@ RAM has the mirror-image ratchet, `FIRMWARE_STACK_FLOOR_KIB`. Whatever `.data`
 and `.bss` do not take is stack, so a new static costs stack depth — and the
 deepest paths on this chip (ML-DSA-65 keygen, the RSA modexp chain) run close
 enough to the ceiling that it has already wedged a device. The gate reads the
-figure straight out of the ELF and fails under the floor.
+figure straight out of the ELF and fails under the floor. The images link
+through [`flip-link`](https://github.com/knurling-rs/flip-link), which places
+the stack below the statics, so an overflow faults on unmapped memory instead of
+quietly overwriting them; that needs `rust-lld` on `PATH`, which the dev shell
+arranges, so build inside `nix develop`.
 
 ## The partition table
 
