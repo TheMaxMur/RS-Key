@@ -311,7 +311,7 @@ pub fn serve(addr: String, jobs: Sender<Req>, signals: Arc<Signals>, yubico: boo
     // the board's applets sit on a second executor and here they sit on a second
     // thread. `_kbd` is only held: this build types nothing, and an interface
     // nobody drives is still an interface the host must see in the right place.
-    embassy_futures::block_on(embassy_futures::join::join3(
+    crate::park::block_on(embassy_futures::join::join3(
         usb.run(),
         ctap.run(),
         ccid.run(),

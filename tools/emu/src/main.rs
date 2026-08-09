@@ -17,6 +17,7 @@ mod ccid;
 mod device;
 mod display;
 mod hid;
+mod park;
 mod platform;
 mod presence;
 mod rng;

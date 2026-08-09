@@ -101,6 +101,12 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   for 1.5 s, so a run of taps is still a single write and the loss window shrinks
   from "the whole time the menu is open" to a moment. `bcdDevice` `0x0873` →
   `0x0874`.
+- **The emulator pinned two CPU cores while doing nothing.** `embassy_futures::block_on`
+  re-polls in a tight loop and its waker does nothing — correct on a microcontroller
+  with nothing else to do, and 200% of a laptop for a tool meant to be left running
+  while you use the browser talking to it. Everything the emulator awaits registers a
+  real waker, so it now sleeps between them: 201% → 1.3% idle, and the same while a
+  USB/IP host is attached.
 - **The emulator was building against a different embassy than the firmware.**
   `tools/emu` is a detached workspace, so its `branch = "main"` resolved on its own
   clock — two months ahead of the lock the device ships. Harmless while the

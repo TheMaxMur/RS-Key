@@ -198,13 +198,13 @@ pub fn run(
         // The panel's own loop and the host's, on one executor — the same shape
         // the firmware has, and the reason neither needs a lock: they only ever
         // interleave where the other is not holding a borrow.
-        embassy_futures::block_on(embassy_futures::select::select(
+        crate::park::block_on(embassy_futures::select::select(
             rsk_display::status_loop(ui),
             serve(cfg, jobs, signals, fs, rng, &presence),
         ));
     } else {
         let presence = RefCell::new(EmuPresence::new(cfg.touch, lines, signals.clone()));
-        embassy_futures::block_on(serve(cfg, jobs, signals, fs, rng, &presence));
+        crate::park::block_on(serve(cfg, jobs, signals, fs, rng, &presence));
     }
 }
 
