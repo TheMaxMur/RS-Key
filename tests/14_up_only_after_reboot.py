@@ -7,6 +7,9 @@
 Proves that a silent (up=false, no PIN) getAssertion can load the device seed
 in a FRESH boot session — what an SSH `ed25519-sk` login needs after a replug.
 
+Needs an enrolled `ed25519-sk` key (`--ssh-key`, default `~/.ssh/id_ed25519_sk`);
+without one there is no credential to assert against and the suite skips (77).
+
 Sequence (hands-free; uses the enrolled ssh sk key as the credential):
   1. silent assertion        — informational; 0x7F here = blob still legacy
   2. (--pin) getPinToken     — one-time migration of a legacy 0x03/0x13 blob
@@ -139,6 +142,15 @@ def main():
     ap.add_argument("--pin", help="FIDO2 PIN — runs getPinToken before the reboot "
                                   "to migrate a legacy PIN-wrapped seed once")
     args = ap.parse_args()
+
+    # The credential has to have been enrolled by a person (`ssh-keygen -t
+    # ed25519-sk`), so on a machine that has not done that there is nothing to
+    # assert against. Exit 77 — the sweep's skip code — rather than a traceback
+    # that reads as a device fault; the suite passed on the author's laptop and
+    # nowhere else for exactly as long as nobody ran it elsewhere.
+    if not os.path.exists(args.ssh_key):
+        print(f"SKIP: no enrolled sk key at {args.ssh_key} (ssh-keygen -t ed25519-sk)")
+        sys.exit(77)
 
     app, handle = parse_sk_key(args.ssh_key)
     print(f"credential: app={app!r}, handle {len(handle)}B")

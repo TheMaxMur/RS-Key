@@ -21,41 +21,44 @@ pub const HID_RPT_SIZE: usize = 64;
 const INIT_DATA: usize = HID_RPT_SIZE - 7; // 57
 const CONT_DATA: usize = HID_RPT_SIZE - 5; // 59
 
-const CID_BROADCAST: u32 = 0xffff_ffff;
-const TYPE_INIT: u8 = 0x80;
+pub const CID_BROADCAST: u32 = 0xffff_ffff;
+pub const TYPE_INIT: u8 = 0x80;
 
-// Command constants keep the TYPE_INIT bit set.
-const CTAPHID_PING: u8 = TYPE_INIT | 0x01;
-const CTAPHID_MSG: u8 = TYPE_INIT | 0x03;
-const CTAPHID_LOCK: u8 = TYPE_INIT | 0x04;
-const CTAPHID_INIT: u8 = TYPE_INIT | 0x06;
-const CTAPHID_WINK: u8 = TYPE_INIT | 0x08;
-const CTAPHID_CBOR: u8 = TYPE_INIT | 0x10;
-const CTAPHID_CANCEL: u8 = TYPE_INIT | 0x11;
-const CTAPHID_SYNC: u8 = TYPE_INIT | 0x3c;
-const CTAPHID_ERROR: u8 = TYPE_INIT | 0x3f;
-const CTAPHID_VERSION: u8 = TYPE_INIT | 0x61;
-const CTAPHID_UUID: u8 = TYPE_INIT | 0x62;
-const CTAPHID_KEEPALIVE: u8 = TYPE_INIT | 0x3b; // 0xBB
-const CTAPHID_VENDOR_FIRST: u8 = TYPE_INIT | 0x40;
+// Command constants keep the TYPE_INIT bit set. Public because the transport's
+// second implementation — `tools/emu`, which speaks CTAPHID over a socket — has
+// to name the same commands, and a protocol vocabulary defined twice is a
+// vocabulary that drifts.
+pub const CTAPHID_PING: u8 = TYPE_INIT | 0x01;
+pub const CTAPHID_MSG: u8 = TYPE_INIT | 0x03;
+pub const CTAPHID_LOCK: u8 = TYPE_INIT | 0x04;
+pub const CTAPHID_INIT: u8 = TYPE_INIT | 0x06;
+pub const CTAPHID_WINK: u8 = TYPE_INIT | 0x08;
+pub const CTAPHID_CBOR: u8 = TYPE_INIT | 0x10;
+pub const CTAPHID_CANCEL: u8 = TYPE_INIT | 0x11;
+pub const CTAPHID_SYNC: u8 = TYPE_INIT | 0x3c;
+pub const CTAPHID_ERROR: u8 = TYPE_INIT | 0x3f;
+pub const CTAPHID_VERSION: u8 = TYPE_INIT | 0x61;
+pub const CTAPHID_UUID: u8 = TYPE_INIT | 0x62;
+pub const CTAPHID_KEEPALIVE: u8 = TYPE_INIT | 0x3b; // 0xBB
+pub const CTAPHID_VENDOR_FIRST: u8 = TYPE_INIT | 0x40;
 
 // Low-level CTAP1 error codes.
-const ERR_INVALID_CMD: u8 = 0x01;
-const ERR_INVALID_PAR: u8 = 0x02;
-const ERR_INVALID_LEN: u8 = 0x03;
-const ERR_INVALID_SEQ: u8 = 0x04;
-const ERR_MSG_TIMEOUT: u8 = 0x05;
-const ERR_CHANNEL_BUSY: u8 = 0x06;
-const ERR_INVALID_CHANNEL: u8 = 0x0b;
+pub const ERR_INVALID_CMD: u8 = 0x01;
+pub const ERR_INVALID_PAR: u8 = 0x02;
+pub const ERR_INVALID_LEN: u8 = 0x03;
+pub const ERR_INVALID_SEQ: u8 = 0x04;
+pub const ERR_MSG_TIMEOUT: u8 = 0x05;
+pub const ERR_CHANNEL_BUSY: u8 = 0x06;
+pub const ERR_INVALID_CHANNEL: u8 = 0x0b;
 
 // KEEPALIVE status byte: the authenticator is still processing the request.
-const STATUS_PROCESSING: u8 = 0x01;
+pub const STATUS_PROCESSING: u8 = 0x01;
 // KEEPALIVE status byte: waiting for a user-presence touch (clients show "touch
 // your security key"); selected over PROCESSING via the `up_pending` hook.
-const STATUS_UPNEEDED: u8 = 0x02;
+pub const STATUS_UPNEEDED: u8 = 0x02;
 // Stream a KEEPALIVE this often while the worker runs a long synchronous op
 // (slow P-521, flash GC) — well under any host CTAP timeout.
-const KEEPALIVE_MS: u64 = 100;
+pub const KEEPALIVE_MS: u64 = 100;
 
 /// Which keepalive status to stream while a request is in flight, or `None` to
 /// stay silent. U2F (MSG) is fast apart from the touch wait, and U2FHID hosts —
@@ -64,7 +67,7 @@ const KEEPALIVE_MS: u64 = 100;
 /// response's first frame and desync ("sequence out of order"). So for MSG only
 /// ever signal UP-needed; CBOR (CTAP2) keeps `PROCESSING` for its genuinely slow
 /// operations (P-521, resident makeCredential, flash GC).
-fn keepalive_status(is_cbor: bool, up_pending: bool) -> Option<u8> {
+pub fn keepalive_status(is_cbor: bool, up_pending: bool) -> Option<u8> {
     if up_pending {
         Some(STATUS_UPNEEDED)
     } else if is_cbor {
@@ -93,9 +96,9 @@ const RX_TIMEOUT_MS: u64 = 500;
 // gap this long means it is gone.
 use crate::TX_TIMEOUT_MS;
 
-const CTAPHID_IF_VERSION: u8 = 2;
-const CAPFLAG_WINK: u8 = 0x01;
-const CAPFLAG_CBOR: u8 = 0x04;
+pub const CTAPHID_IF_VERSION: u8 = 2;
+pub const CAPFLAG_WINK: u8 = 0x01;
+pub const CAPFLAG_CBOR: u8 = 0x04;
 
 // Device version reported in CTAPHID_INIT / CTAPHID_VERSION — the shared firmware
 // version (default 5.7.4). ykman/yubikit read these three bytes from the INIT
@@ -113,16 +116,22 @@ const FIRST_CID: u32 = 0x0100_0000;
 /// the device to allocate a unique 32-bit channel identifier (CID) that can be used
 /// by the requesting application during its lifetime" — sharing one id between two
 /// applications lets either one resynchronise the other's channel.
-struct CidAllocator(u32);
+pub struct CidAllocator(u32);
+
+impl Default for CidAllocator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl CidAllocator {
-    const fn new() -> Self {
+    pub const fn new() -> Self {
         Self(FIRST_CID)
     }
 
     /// The next free id, skipping the two reserved values (0 and the broadcast CID)
     /// as the counter wraps.
-    fn next(&mut self) -> u32 {
+    pub fn allocate(&mut self) -> u32 {
         let cid = self.0;
         self.0 = match self.0.wrapping_add(1) {
             0 | CID_BROADCAST => FIRST_CID,
@@ -137,18 +146,18 @@ impl CidAllocator {
 /// to send a message will fail"; the lock time is bounded so a crashed application
 /// cannot hold the device forever.
 #[derive(Default)]
-struct ChannelLock {
+pub struct ChannelLock {
     cid: u32,
     until_ms: u64,
 }
 
 /// The largest lock a platform may ask for, in seconds (§11.2.9.2.2).
-const LOCK_MAX_SECONDS: u8 = 10;
+pub const LOCK_MAX_SECONDS: u8 = 10;
 
 impl ChannelLock {
     /// Take (`seconds > 0`) or release (`seconds == 0`) the lock for `cid`. A release
     /// by anyone but the owner is ignored — it is not theirs to give up.
-    fn arm(&mut self, cid: u32, seconds: u8, now_ms: u64) {
+    pub fn arm(&mut self, cid: u32, seconds: u8, now_ms: u64) {
         if seconds == 0 {
             if self.cid == cid {
                 self.until_ms = 0;
@@ -160,14 +169,14 @@ impl ChannelLock {
     }
 
     /// Whether `cid` must be turned away because another channel holds the lock.
-    fn blocks(&self, cid: u32, now_ms: u64) -> bool {
+    pub fn blocks(&self, cid: u32, now_ms: u64) -> bool {
         now_ms < self.until_ms && self.cid != cid
     }
 }
 
 // 16-byte device UUID returned by CTAPHID_UUID ("rs-key" + version).
 // TODO: derive from chip serial.
-const DEVICE_UUID: [u8; 16] = [
+pub const DEVICE_UUID: [u8; 16] = [
     0x72, 0x73, 0x2d, 0x6b, 0x65, 0x79, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
 ];
 
@@ -252,7 +261,7 @@ pub trait MsgHandler {
 /// because the host offers the command precisely to tell two identical-looking
 /// keys apart, and a silent success tells the user the wrong key is the right one.
 /// `NMSG` stays clear — CTAPHID_MSG (U2F) is implemented.
-fn init_capabilities(can_wink: bool) -> u8 {
+pub fn init_capabilities(can_wink: bool) -> u8 {
     CAPFLAG_CBOR | if can_wink { CAPFLAG_WINK } else { 0 }
 }
 
@@ -589,7 +598,7 @@ impl<'d, D: Driver<'d>, H: MsgHandler> CtapHid<'d, D, H> {
                 // on an already-allocated one it only resynchronises that channel,
                 // and the response names the CID it arrived on.
                 let assigned = if cid == CID_BROADCAST {
-                    self.cids.next()
+                    self.cids.allocate()
                 } else {
                     cid
                 };

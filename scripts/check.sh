@@ -21,6 +21,33 @@ lock_in_sync() {
   git diff --exit-code -- flake.lock
 }
 
+# `tools/emu` and `fuzz/` are detached workspaces, so each resolves the embassy
+# git dependency on its own clock: `branch = "main"` in three manifests is three
+# different commits, and nothing says so. The emulator had drifted two months
+# ahead — which, now that it runs the real USB stack, means the descriptors a host
+# enumerates were not the ones the device ships. Same failure as the vendored
+# sequential-storage fork it silently replaced with upstream. One pin, the
+# firmware's; every other lock follows it.
+embassy_revs_match() {
+  local want got lock
+  want=$(grep -oh 'embassy?branch=main#[0-9a-f]\{40\}' Cargo.lock | sort -u)
+  if [ "$(printf '%s' "$want" | grep -c '')" -ne 1 ]; then
+    echo "FAIL: the root Cargo.lock does not pin exactly one embassy rev." >&2
+    exit 1
+  fi
+  for lock in tools/*/Cargo.lock fuzz/Cargo.lock; do
+    got=$(grep -oh 'embassy?branch=main#[0-9a-f]\{40\}' "$lock" | sort -u || true)
+    [ -n "$got" ] || continue
+    if [ "$got" != "$want" ]; then
+      echo "FAIL: $lock is on ${got#*#} but the firmware is on ${want#*#}." >&2
+      echo "      cargo update --manifest-path ${lock%Cargo.lock}Cargo.toml \\" >&2
+      echo "        --precise ${want#*#} \$(grep -o '^name = \"embassy-[a-z-]*\"' $lock | cut -d'\"' -f2)" >&2
+      exit 1
+    fi
+  done
+  echo "every workspace is on embassy ${want#*#}"
+}
+
 # The shipping image must fit the 2560K code region (firmware/memory.x); this
 # ceiling is a *ratchet* well under that hard limit. It hugs the current image
 # (876 KiB) plus a small margin, so a runaway — an accidental fat dependency
@@ -77,7 +104,7 @@ run "fmt"                      cargo fmt --all --check
 # the rsk-wipe steps below); `waveshare-one` is the reference board, whose
 # values are the same defaults every other knob falls back to.
 run "clippy (embedded)"        env BOARD=waveshare-one cargo clippy --workspace -- -D warnings
-run "clippy (host tests)"      cargo clippy -p rsk-sdk -p rsk-fs -p rsk-usb -p rsk-crypto -p rsk-fido -p rsk-openpgp -p rsk-rsa-asm -p rsk-sha512 -p rsk-ec -p rsk-mldsa -p rsk-mgmt -p rsk-oath -p rsk-otp -p rsk-piv -p rsk-rescue -p rsk-led -p rsk-ui -p rsk-bip39 -p rsk-slip39 -p rsk-bench --target "$HOST" --all-targets -- -D warnings
+run "clippy (host tests)"      cargo clippy -p rsk-sdk -p rsk-fs -p rsk-usb -p rsk-crypto -p rsk-fido -p rsk-openpgp -p rsk-rsa-asm -p rsk-sha512 -p rsk-ec -p rsk-mldsa -p rsk-mgmt -p rsk-oath -p rsk-otp -p rsk-piv -p rsk-rescue -p rsk-vendor -p rsk-device -p rsk-store -p rsk-led -p rsk-ui -p rsk-bip39 -p rsk-slip39 -p rsk-bench --target "$HOST" --all-targets -- -D warnings
 # tools/tui is its own workspace (host-only), so the --all/--workspace runs
 # above never see it — gate it explicitly. Its lockfile was scanned by nobody
 # until Dependabot flagged a transitive advisory from the GitHub side.
@@ -92,6 +119,12 @@ run "clippy (tui)"             cargo clippy --manifest-path tools/tui/Cargo.toml
 # now: `rsk/test_refuse_to_guess.py`, `rsk/test_secureboot.py`'s stage commands,
 # and `device_tests.rs`'s `every_hid_open_site_is_classified`.
 run "test (tui)"               cargo test --manifest-path tools/tui/Cargo.toml --target "$HOST"
+# tools/emu is the third host-only workspace (the software emulator) — same
+# reason it is gated here: nothing in the --workspace runs above can see it, and
+# an emulator that stops compiling is found when someone tries to run the
+# protocol suites without a board, which is exactly when they have no board.
+run "fmt (emu)"                cargo fmt --manifest-path tools/emu/Cargo.toml --check
+run "clippy (emu)"             cargo clippy --manifest-path tools/emu/Cargo.toml --target "$HOST" --all-targets -- -D warnings
 # fuzz/ is also its own (nightly) workspace. rustfmt needs no toolchain, so the
 # stable gate can format-check it here; building/clippy stay in the .#fuzz shell
 # (deep-checks CI). Format fuzz/ with this same stable rustfmt — not the .#fuzz
@@ -107,7 +140,7 @@ run "fmt (fuzz)"               cargo fmt --manifest-path fuzz/Cargo.toml --check
 # `--tests` also covers tests/miri.rs, which mirrors the same constructors (its
 # drift went unseen for a wave of unpushed commits until a local miri run).
 run "check (fuzz)"             cargo check --manifest-path fuzz/Cargo.toml --tests --target "$HOST"
-run "test (host)"              cargo test -p rsk-sdk -p rsk-fs -p rsk-usb -p rsk-crypto -p rsk-fido -p rsk-openpgp -p rsk-rsa-asm -p rsk-sha512 -p rsk-ec -p rsk-mldsa -p rsk-mgmt -p rsk-oath -p rsk-otp -p rsk-piv -p rsk-rescue -p rsk-led -p rsk-ui -p rsk-bip39 -p rsk-slip39 -p rsk-bench --target "$HOST"
+run "test (host)"              cargo test -p rsk-sdk -p rsk-fs -p rsk-usb -p rsk-crypto -p rsk-fido -p rsk-openpgp -p rsk-rsa-asm -p rsk-sha512 -p rsk-ec -p rsk-mldsa -p rsk-mgmt -p rsk-oath -p rsk-otp -p rsk-piv -p rsk-rescue -p rsk-vendor -p rsk-device -p rsk-store -p rsk-led -p rsk-ui -p rsk-bip39 -p rsk-slip39 -p rsk-bench --target "$HOST"
 # The PQC-advertisement opt-in changes the getInfo shape — test both forms.
 run "test (advertise-pqc)"     cargo test -p rsk-fido --features advertise-pqc --target "$HOST" getinfo
 # fido-conformance suppresses the default EdDSA (-8) advertisement (the
@@ -131,8 +164,8 @@ run "clippy (strong-pin fw)"   cargo clippy -p firmware --features strong-pin --
 # build is the permissive full-YubiKey-compat surface). The default path is what
 # every run above lints/tests; gate the strict path explicitly or it rots.
 run "clippy (strict-config fw)"  cargo clippy -p firmware --features strict-config -- -D warnings
-run "clippy (strict-config host)" cargo clippy -p rsk-mgmt -p rsk-otp -p rsk-fido --features strict-config --target "$HOST" --all-targets -- -D warnings
-run "test (strict-config)"       cargo test -p rsk-mgmt -p rsk-otp -p rsk-fido --features strict-config --target "$HOST"
+run "clippy (strict-config host)" cargo clippy -p rsk-mgmt -p rsk-otp -p rsk-fido -p rsk-vendor -p rsk-device --features strict-config --target "$HOST" --all-targets -- -D warnings
+run "test (strict-config)"       cargo test -p rsk-mgmt -p rsk-otp -p rsk-fido -p rsk-vendor -p rsk-device --features strict-config --target "$HOST"
 # The `bench` latency-harness vendor command (never shipped) is only compiled with
 # its feature on, so gate that build here — otherwise a signature change to the EC /
 # KDF hot paths it times would rot the bench module unseen (keep it compiling). The
@@ -190,10 +223,18 @@ run "rsk-wipe refuses an unknown flash size" sh -c '
     echo "FAIL: rsk-wipe failed for the wrong reason:"; printf "%s\n" "$out" | tail -5; exit 1
   }'
 run "flake.lock in sync"       lock_in_sync
+run "one embassy for all"      embassy_revs_match
 # RUSTSEC-2023-0071: rsa Marvin timing side-channel — no fixed release; it is the
 # OpenPGP RSA backend, mitigated by blinding. Justification in deny.toml.
 run "cargo-audit (SCA)"        cargo audit --ignore RUSTSEC-2023-0071
 run "cargo-audit (tui SCA)"    cargo audit --file tools/tui/Cargo.lock
+# Same RUSTSEC-2023-0071 carve-out as the workspace run above: the emulator pulls
+# the OpenPGP applet, and with it `rsa`.
+# The emulator's own host tests — today the USB/IP codec, whose struct layouts are
+# the Linux kernel's and whose framing rule decides how many bytes come off the
+# socket next; both fail silently on the wire rather than loudly.
+run "test (emu)"               cargo test --manifest-path tools/emu/Cargo.toml --target "$HOST"
+run "cargo-audit (emu SCA)"    cargo audit --file tools/emu/Cargo.lock --ignore RUSTSEC-2023-0071
 run "cargo-deny"               cargo deny check
 # Supply-chain provenance-of-review: every dependency must be covered by an
 # imported audit (mozilla/google/isrg/zcash) or a recorded exemption. Fails when
@@ -204,6 +245,10 @@ run "cargo-vet (supply-chain)" cargo vet --locked
 # and nothing in the type system notices a missing arm. OATH's was absent for a
 # release (audit run-36); this is the check that would have caught it.
 run "gate-union (device wipe)" python scripts/gate_union.py
+# CI skips jobs on these rules, and a wrong one skips a job silently — the one
+# failure direction nothing else would report.
+run "ci scope rules"           ./scripts/ci-scope.sh --self-test
+run "ci knob groups"           ./scripts/ci-knobs.sh --self-test
 run "docs constants match code" python scripts/docs_constants.py
 run "pytest (tools/rsk)"       python -m pytest tools/rsk -q
 # The interop allow-list is the only thing that tells an expected RS-Key/YubiKey

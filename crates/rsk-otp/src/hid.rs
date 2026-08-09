@@ -240,6 +240,180 @@ pub fn status_frame(status: [u8; 7]) -> [u8; REPORT_SIZE] {
     ]
 }
 
+/// Whether the frame protocol is idle, running a command, or streaming its
+/// response back.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum State {
+    Idle,
+    Processing,
+    Responding,
+}
+
+/// What a host feature report asks of the transport's owner, beyond the state
+/// machine's own bookkeeping.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SetOutcome {
+    /// Mid-frame, or a report that changed nothing actionable.
+    None,
+    /// A complete frame is queued — take it with [`OtpHid::take_request`] and run
+    /// it.
+    Frame,
+    /// The host abandoned the transfer.
+    Reset,
+}
+
+impl SetOutcome {
+    /// Whether this report ends a touch wait the *previous* command started.
+    ///
+    /// A YubiKey lets both the dummy write and the next command supersede a
+    /// challenge still waiting for its press. Honouring neither is what made
+    /// KeePassXC treat the key as broken until `bcdDevice` 0x085B, so it is a
+    /// property of the protocol rather than of either build's presence layer.
+    pub fn ends_touch_wait(self) -> bool {
+        matches!(self, Self::Frame | Self::Reset)
+    }
+}
+
+/// The frame protocol's state machine: what a host's GET/SET_REPORT feature
+/// transfers mean, and what the device answers between them.
+///
+/// Free of the transport it rides and of the presence layer it gates on, so both
+/// builds run this one rather than two readings of it — the firmware behind a
+/// critical-section mutex (its control pipe preempts the worker), the emulator
+/// behind a plain one. What stays outside is the marshalling: report-size checks,
+/// waking whatever runs the command, and cancelling the touch wait
+/// [`SetOutcome::ends_touch_wait`] names.
+pub struct OtpHid {
+    rx: FrameRx,
+    tx: FrameTx,
+    state: State,
+    /// Status byte served while a command runs.
+    processing: ProcessingStatus,
+    /// Cached idle status frame, refreshed after each command.
+    status: [u8; REPORT_SIZE],
+    req_slot: u8,
+    req_payload: [u8; PAYLOAD_SIZE],
+    req_ready: bool,
+}
+
+impl Default for OtpHid {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl OtpHid {
+    pub const fn new() -> Self {
+        Self {
+            rx: FrameRx::new(),
+            tx: FrameTx::new(),
+            state: State::Idle,
+            processing: ProcessingStatus::new(),
+            // Plausible pre-boot status (version, no slots); whoever runs commands
+            // overwrites it with the real record before the host ever reads it.
+            status: [0, 5, 7, 4, 0, 0, 0, 0],
+            req_slot: 0,
+            req_payload: [0; PAYLOAD_SIZE],
+            req_ready: false,
+        }
+    }
+
+    /// One host SET_REPORT. `data` shorter than a report is zero-padded; longer is
+    /// truncated, because the report size is the protocol's and not the host's.
+    pub fn set_report(&mut self, data: &[u8]) -> SetOutcome {
+        let mut report = [0u8; REPORT_SIZE];
+        let n = data.len().min(REPORT_SIZE);
+        report[..n].copy_from_slice(&data[..n]);
+        match self.rx.feed(&report) {
+            RxOutcome::Frame { slot, payload } => {
+                self.req_slot = slot;
+                self.req_payload = payload;
+                self.req_ready = true;
+                self.processing.reset();
+                self.state = State::Processing;
+                SetOutcome::Frame
+            }
+            RxOutcome::Reset => {
+                self.tx = FrameTx::new();
+                self.state = State::Idle;
+                SetOutcome::Reset
+            }
+            RxOutcome::None | RxOutcome::BadCrc => SetOutcome::None,
+        }
+    }
+
+    /// One host GET_REPORT: the next response slice, the running command's status
+    /// byte, or the idle status frame.
+    pub fn get_report(&mut self, out: &mut [u8; REPORT_SIZE], touch_pending: bool) {
+        *out = [0; REPORT_SIZE];
+        match self.state {
+            State::Responding => {
+                if !self.tx.next(out) {
+                    self.state = State::Idle;
+                    *out = self.status;
+                }
+            }
+            State::Processing => {
+                // Latched: the press must not flip the byte back before the
+                // response, or the host reads that as a touch timeout.
+                out[REPORT_SIZE - 1] = self.processing.poll(touch_pending);
+            }
+            State::Idle => *out = self.status,
+        }
+    }
+
+    /// Take the frame waiting to be run, if any.
+    pub fn take_request(&mut self) -> Option<(u8, [u8; PAYLOAD_SIZE])> {
+        if !self.req_ready {
+            return None;
+        }
+        self.req_ready = false;
+        let req = (self.req_slot, self.req_payload);
+        // A slot-configure frame carries the AES key, the private UID and the
+        // presented access code; don't leave them here once the caller holds its
+        // own copy. Same rule the CTAP/CCID exchange buffers follow.
+        self.req_payload.zeroize();
+        Some(req)
+    }
+
+    /// Store a command's result: refresh the cached status frame and, if `body` is
+    /// non-empty, start streaming it (a read command); otherwise go idle so the
+    /// host reads the updated status (a configure/swap that only bumped the
+    /// program sequence).
+    pub fn finish_response(&mut self, status: [u8; REPORT_SIZE], body: &[u8]) {
+        self.status = status;
+        if body.is_empty() {
+            self.tx = FrameTx::new();
+            // A frame that arrived while this command ran is already queued — stay
+            // in `Processing` for it rather than flashing idle at the host.
+            if !self.req_ready {
+                self.state = State::Idle;
+            }
+        } else {
+            self.tx.load(body);
+            self.state = State::Responding;
+        }
+    }
+
+    /// Seed the cached status frame at boot, before any host poll.
+    pub fn set_status(&mut self, status: [u8; REPORT_SIZE]) {
+        self.status = status;
+    }
+
+    /// Wipe every buffer here that can hold slot secrets.
+    ///
+    /// The TX buffer is the one that is easy to miss: for slots `0x30`/`0x38` it
+    /// holds a 20-byte HMAC-SHA1 response, which with a fixed challenge
+    /// (yubikey-luks) *is* the credential, and `FrameTx::next` streams without
+    /// clearing.
+    pub fn scrub(&mut self) {
+        self.rx.scrub();
+        self.tx = FrameTx::new();
+        self.req_payload.zeroize();
+        self.req_slot = 0;
+    }
+}
+
 /// Frame one host command for [`FrameRx`] testing/fuzzing: split a 64-byte
 /// `payload` + `slot` into the 10 sequenced 8-byte reports (with the plain frame
 /// CRC), matching `yubikit.core.otp._format_frame`.

@@ -387,6 +387,25 @@ impl rsk_rescue::UserPresence for ButtonPresence {
 }
 
 #[cfg(not(feature = "display"))]
+impl rsk_vendor::UserPresence for ButtonPresence {
+    fn request(&mut self, _confirm: rsk_vendor::Confirm<'_>) -> rsk_vendor::Presence {
+        #[cfg(not(feature = "no-touch"))]
+        {
+            match self.wait() {
+                Outcome::Confirmed => rsk_vendor::Presence::Confirmed,
+                // Reachable over both transports, but a cancel is a decline here
+                // either way — the reboot gate has nothing to resume.
+                Outcome::Timeout | Outcome::Cancelled => rsk_vendor::Presence::Timeout,
+            }
+        }
+        #[cfg(feature = "no-touch")]
+        {
+            rsk_vendor::Presence::Confirmed
+        }
+    }
+}
+
+#[cfg(not(feature = "display"))]
 impl rsk_mgmt::UserPresence for ButtonPresence {
     fn request(&mut self, _confirm: rsk_mgmt::Confirm<'_>) -> rsk_mgmt::Presence {
         #[cfg(not(feature = "no-touch"))]
@@ -402,4 +421,27 @@ impl rsk_mgmt::UserPresence for ButtonPresence {
             rsk_mgmt::Presence::Confirmed
         }
     }
+}
+
+// Accessors for the trusted display, which reaches these through
+// `rsk_display::Hooks` rather than naming the statics across a crate boundary.
+#[cfg(feature = "display")]
+pub fn set_up_pending(pending: bool) {
+    UP_PENDING.store(pending, Ordering::Release);
+}
+#[cfg(feature = "display")]
+pub fn set_cancel_requested(requested: bool) {
+    CANCEL_REQUESTED.store(requested, Ordering::Relaxed);
+}
+#[cfg(feature = "display")]
+pub fn cancel_requested() -> bool {
+    CANCEL_REQUESTED.load(Ordering::Acquire)
+}
+#[cfg(feature = "display")]
+pub fn presence_timeout_ms() -> u32 {
+    PRESENCE_TIMEOUT_MS.load(Ordering::Relaxed)
+}
+#[cfg(feature = "display")]
+pub fn set_presence_timeout_ms(ms: u32) {
+    PRESENCE_TIMEOUT_MS.store(ms, Ordering::Relaxed);
 }

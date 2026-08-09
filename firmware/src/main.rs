@@ -44,7 +44,6 @@ use rsk_fs::Fs;
 use rsk_usb::ccid::{ATR_RSKEY, ATR_YUBIKEY, Ccid};
 use rsk_usb::ctaphid::{CtapHid, FIDO_REPORT_DESCRIPTOR};
 
-mod ccid_handler;
 mod core1;
 #[cfg(feature = "display")]
 mod display;
@@ -71,7 +70,7 @@ compile_error!(
      display` — the `firmware-display` nix flavor sets this for you"
 );
 
-use flash_storage::{FLASH_SIZE, FlashStorage};
+use flash_storage::FLASH_SIZE;
 use handler::{FidoRng, Store};
 #[cfg(not(feature = "display"))]
 use presence::ButtonPresence;
@@ -416,6 +415,10 @@ static FLASH_CELL: StaticCell<RefCell<flash_storage::AsyncFlash>> = StaticCell::
 static RNG_CELL: StaticCell<RefCell<FidoRng>> = StaticCell::new();
 static PRESENCE: StaticCell<RefCell<presence::Presence>> = StaticCell::new();
 static RESCUE_PLATFORM: StaticCell<RefCell<rescue_platform::RescuePlatform>> = StaticCell::new();
+/// What `rsk-device` reaches back into this board for (the LED atomics, the soft
+/// lock's watchdog register, the dual-core prime search). Same RefCell invariant
+/// as the cells above: thread-executor only.
+static DEVICE_HOOKS: StaticCell<RefCell<handler::DeviceHooks>> = StaticCell::new();
 // Same RefCell invariant as FS/RNG above — thread-executor only.
 // Sized for a 32-byte phy product plus the appended YubiKey interface-token
 // suffix (`normalize_usb_product`), so a masquerade name is never truncated.
@@ -505,7 +508,7 @@ async fn main(spawner: Spawner) {
 
     let flash = Flash::<_, Blocking, FLASH_SIZE>::new_blocking(p.FLASH);
     let flash_cell = FLASH_CELL.init(RefCell::new(flash_storage::wrap_flash(flash)));
-    let storage = FlashStorage::new(flash_cell, kvmain_range(), kvcnt_range());
+    let storage = flash_storage::new_storage(flash_cell, kvmain_range(), kvcnt_range());
     let mut fs = Fs::new(storage);
     fs.scan(); // recover dynamic files (counter, resident creds) from flash
 
@@ -650,7 +653,7 @@ async fn main(spawner: Spawner) {
     config.max_power = 100;
     config.max_packet_size_0 = 64;
     // bcdDevice build counter; also surfaced on the trusted-display Firmware screen.
-    let device_release: u16 = 0x0874;
+    let device_release: u16 = 0x0876;
     config.device_release = device_release;
 
     let mut builder = Builder::new(
@@ -671,7 +674,7 @@ async fn main(spawner: Spawner) {
             &mut builder,
             KBD_STATE.init(HidState::new()),
             HidConfig {
-                report_descriptor: otp_kbd::KEYBOARD_REPORT_DESCRIPTOR,
+                report_descriptor: rsk_usb::kbd::KEYBOARD_REPORT_DESCRIPTOR,
                 request_handler: Some(OTP_HID_HANDLER_KBD.init(otp_kbd::OtpHidHandler)),
                 poll_ms: 10,
                 max_packet_size: 8,
@@ -1071,7 +1074,7 @@ async fn main(spawner: Spawner) {
         // `status_task` and the `TouchPresence` backend can hold it (a shared
         // reference is `Copy`; the `RefCell` provides the interior mutability). The
         // panel also shares the worker's `fs_ref` to enumerate resident credentials.
-        let ui: &'static RefCell<display::Ui> = UI.init(RefCell::new(display::Ui::build(
+        let ui: &'static RefCell<display::Ui> = UI.init(RefCell::new(display::build(
             panel, touch, info, fs_ref, keys, rng_ref, wake_btn,
         )));
         spawner.spawn(display::status_task(ui).unwrap());
@@ -1094,6 +1097,7 @@ async fn main(spawner: Spawner) {
     #[cfg(feature = "display")]
     let presence_ref = PRESENCE.init(RefCell::new(display::TouchPresence::new(display_ui)));
     let platform_ref = RESCUE_PLATFORM.init(RefCell::new(rescue_platform::RescuePlatform));
+    let hooks_ref = DEVICE_HOOKS.init(RefCell::new(handler::DeviceHooks));
     let (kvm, kvc) = (kvmain_range(), kvcnt_range());
     let kv_total = (kvm.end - kvm.start) + (kvc.end - kvc.start);
     let worker = Worker::new(
@@ -1101,6 +1105,7 @@ async fn main(spawner: Spawner) {
         rng_ref,
         presence_ref,
         platform_ref,
+        hooks_ref,
         serial_id,
         serial_hash,
         otp_mkek,

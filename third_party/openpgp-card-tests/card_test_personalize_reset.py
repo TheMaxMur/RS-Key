@@ -87,3 +87,13 @@ class Test_Personalize_Reset(object):
         else:
             r = card.cmd_put_data(0x00, 0xd3, b"")
             assert r
+
+    def test_restore_reset_code(self, card):
+        # This module deletes D3 while resetting personalization.  Restore it
+        # because the session-scoped card fixture is used by later suites.
+        assert card.verify(3, FACTORY_PASSPHRASE_PW3)
+        assert card.setup_reset_code(RESETCODE_TEST)
+
+    def test_restore_pw1_status(self, card):
+        r = card.cmd_put_data(0x00, 0xc4, b"\x01")
+        assert r

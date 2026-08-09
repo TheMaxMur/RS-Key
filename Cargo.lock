@@ -1107,6 +1107,8 @@ dependencies = [
  "rsk-bench",
  "rsk-bip39",
  "rsk-crypto",
+ "rsk-device",
+ "rsk-display",
  "rsk-fido",
  "rsk-fs",
  "rsk-led",
@@ -1119,8 +1121,10 @@ dependencies = [
  "rsk-rsa-asm",
  "rsk-sdk",
  "rsk-slip39",
+ "rsk-store",
  "rsk-ui",
  "rsk-usb",
+ "rsk-vendor",
  "sequential-storage",
  "smart-leds",
  "static_cell",
@@ -2179,6 +2183,51 @@ dependencies = [
 ]
 
 [[package]]
+name = "rsk-device"
+version = "0.1.0"
+dependencies = [
+ "rsa",
+ "rsk-crypto",
+ "rsk-fido",
+ "rsk-fs",
+ "rsk-mgmt",
+ "rsk-oath",
+ "rsk-openpgp",
+ "rsk-otp",
+ "rsk-piv",
+ "rsk-rescue",
+ "rsk-sdk",
+ "rsk-usb",
+ "rsk-vendor",
+ "zeroize",
+]
+
+[[package]]
+name = "rsk-display"
+version = "0.1.0"
+dependencies = [
+ "embassy-time",
+ "embedded-graphics",
+ "rsk-bip39",
+ "rsk-crypto",
+ "rsk-device",
+ "rsk-fido",
+ "rsk-fs",
+ "rsk-led",
+ "rsk-mgmt",
+ "rsk-oath",
+ "rsk-openpgp",
+ "rsk-otp",
+ "rsk-piv",
+ "rsk-rescue",
+ "rsk-sdk",
+ "rsk-slip39",
+ "rsk-ui",
+ "rsk-vendor",
+ "zeroize",
+]
+
+[[package]]
 name = "rsk-ec"
 version = "0.1.0"
 dependencies = [
@@ -2354,6 +2403,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "rsk-store"
+version = "0.1.0"
+dependencies = [
+ "embassy-futures",
+ "embedded-storage-async",
+ "rsk-fs",
+ "rsk-sdk",
+ "sequential-storage",
+]
+
+[[package]]
 name = "rsk-ui"
 version = "0.1.0"
 dependencies = [
@@ -2370,6 +2430,15 @@ dependencies = [
  "embassy-usb",
  "rsk-sdk",
  "zeroize",
+]
+
+[[package]]
+name = "rsk-vendor"
+version = "0.1.0"
+dependencies = [
+ "rsk-fs",
+ "rsk-led",
+ "rsk-sdk",
 ]
 
 [[package]]

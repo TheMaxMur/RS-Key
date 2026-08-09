@@ -1,0 +1,142 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 RS-Key contributors
+
+# The suites that used to need a board, run against `tools/emu`.
+#
+# `tests/*.py` were hand-run against a flashed key, so nothing caught a *test*
+# that had rotted — and several had: seven stale expectations, including a wrong
+# value in the published metadata statement, were found the day the emulator
+# could run them. This is the job that stops that happening again.
+#
+# On pull requests as well as nightly, because a stale test is cheapest to find
+# in the change that staled it. Gated on `scripts/ci-scope.sh` so an edit that
+# cannot reach the emulator does not boot one.
+#
+# Two halves, because the transport splits them:
+#   sockets — everything the emulator can serve over TCP, on the runner directly.
+#   usb     — `02`, `61`, `65`, `73`, `77` and the pico-fido conformance suite,
+#             which read USB descriptors or go through python-fido2's and
+#             pyscard's own transports. Those need a kernel that enumerated the
+#             device, i.e. `vhci_hcd` — which a GitHub-hosted runner has no way to
+#             provide (no module loading, and no reliable /dev/kvm either). So
+#             they run inside a QEMU guest under software emulation; see
+#             `scripts/usbip-suites.sh`.
+
+name: emulator
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "20 4 * * *" # 04:20 UTC daily, clear of deep-checks at 05:17
+
+permissions:
+  contents: read
+
+concurrency:
+  group: emulator-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      emulator: ${{ steps.scope.outputs.emulator }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      # The refs go through `env`, never through `${{ }}` inside the script: a
+      # branch name is attacker-supplied on a fork PR, and the difference is a
+      # shell injection.
+      - name: what changed
+        id: scope
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.base_ref }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          files=""
+          if [ "$EVENT" = "pull_request" ]; then
+            files="$(git diff --name-only "origin/$BASE...HEAD")"
+          elif [ -n "$BEFORE" ] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            files="$(git diff --name-only "$BEFORE" HEAD)"
+          fi
+          # Empty means we could not work out a base (a schedule run, a new
+          # branch) — ci-scope.sh reads that as "everything", which is the
+          # direction a mistake should fail in.
+          printf '%s\n' "$files" | ./scripts/ci-scope.sh | tee -a "$GITHUB_OUTPUT"
+
+  sockets:
+    needs: changes
+    if: needs.changes.outputs.emulator == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+
+      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            tools/emu/target
+          key: emu-${{ runner.os }}-${{ hashFiles('tools/emu/Cargo.lock', 'flake.lock') }}
+          restore-keys: emu-${{ runner.os }}-
+
+      - name: the on-device suites + the OpenPGP conformance suite, against tools/emu
+        run: nix develop -c ./scripts/emu-suites.sh
+        env:
+          HOST_TARGET: x86_64-unknown-linux-gnu
+
+      - name: emulator logs
+        if: failure()
+        run: |
+          # The script keeps each session's stderr next to its store; a failure
+          # is usually the device saying why, not the suite.
+          find /tmp -name '*.log' -newermt '-45 minutes' -path '*/tmp.*' \
+            -exec sh -c 'echo "--- $1"; tail -40 "$1"' _ {} \; 2>/dev/null || true
+
+  usb:
+    needs: changes
+    if: needs.changes.outputs.emulator == 'true'
+    runs-on: ubuntu-latest
+    # The guest runs on TCG, so everything inside it is several times slower than
+    # the same suites on metal. The budget is generous on purpose: a timeout here
+    # would read as a device fault.
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+
+      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+        with:
+          # Its own cache key: this job's closure carries a kernel, QEMU and a
+          # whole NixOS, none of which the socket half needs.
+          primary-key: nix-usbip-${{ runner.os }}-${{ hashFiles('flake.lock', 'nix/usbip-vm.nix') }}
+          restore-prefixes-first-match: nix-usbip-${{ runner.os }}-
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            tools/emu/target
+          key: emu-${{ runner.os }}-${{ hashFiles('tools/emu/Cargo.lock', 'flake.lock') }}
+          restore-keys: emu-${{ runner.os }}-
+
+      - name: the suites that need a real USB stack, in a QEMU guest
+        run: nix develop -c ./scripts/usbip-suites.sh
+        env:
+          HOST_TARGET: x86_64-unknown-linux-gnu

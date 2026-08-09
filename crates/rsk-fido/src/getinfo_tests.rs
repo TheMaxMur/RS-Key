@@ -219,12 +219,13 @@ fn get_info_fields() {
     assert_eq!(d.u8().unwrap(), 63);
 
     // 0x1F authenticatorConfigCommands [enableEnterpriseAttestation (0x01),
-    // toggleAlwaysUv (0x02), setMinPINLength (0x03)]
+    // toggleAlwaysUv (0x02), setMinPINLength (0x03), vendorPrototype (0xFF)]
     assert_eq!(d.u8().unwrap(), 0x1F);
-    assert_eq!(d.array().unwrap().unwrap(), 3);
+    assert_eq!(d.array().unwrap().unwrap(), 4);
     assert_eq!(d.u8().unwrap(), 0x01);
     assert_eq!(d.u8().unwrap(), 0x02);
     assert_eq!(d.u8().unwrap(), 0x03);
+    assert_eq!(d.u8().unwrap(), 0xFF);
 
     // Map fully consumed.
     assert!(d.datatype().is_err());

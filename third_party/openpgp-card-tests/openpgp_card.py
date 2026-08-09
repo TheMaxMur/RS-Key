@@ -84,14 +84,13 @@ class OpenPGP_Card(object):
             self.kdf_supported = True
 
     def configure_kdf(self, kdf_config):
+        old_kdf_iters = self.__kdf_iters
+        old_kdf_salt_user = self.__kdf_salt_user
+        old_kdf_salt_admin = self.__kdf_salt_admin
+
         self.kdf_data = kdf_config
         r = self.cmd_put_data(0x00, 0xf9, kdf_config)
         if self.kdf_data == b"" or self.kdf_data == b"\x81\x01\x00":
-            if not self.is_gnuk and not self.is_yubikey:
-                self.change_passwd(1, FACTORY_PASSPHRASE_PW1,
-                                   FACTORY_PASSPHRASE_PW1, -1)
-                self.change_passwd(3, FACTORY_PASSPHRASE_PW3,
-                                   FACTORY_PASSPHRASE_PW3, -1)
             self.__kdf_iters = None
             self.__kdf_salt_user = None
             self.__kdf_salt_reset = None
@@ -102,11 +101,25 @@ class OpenPGP_Card(object):
             self.__kdf_salt_user = salt_user
             self.__kdf_salt_reset = salt_reset
             self.__kdf_salt_admin = salt_admin
-            if not self.is_gnuk and not self.is_yubikey:
-                self.change_passwd(1, FACTORY_PASSPHRASE_PW1,
-                                   FACTORY_PASSPHRASE_PW1, 1)
-                self.change_passwd(3, FACTORY_PASSPHRASE_PW3,
-                                   FACTORY_PASSPHRASE_PW3, 1)
+
+        if not self.is_gnuk and not self.is_yubikey:
+            def kdf_value(pin, who, iterations, salt_user, salt_admin):
+                if not iterations:
+                    return pin
+                salt = salt_admin if who == 3 and salt_admin else salt_user
+                return kdf_calc(pin, salt, iterations)
+
+            old_pw1 = kdf_value(FACTORY_PASSPHRASE_PW1, 1,
+                                old_kdf_iters, old_kdf_salt_user, old_kdf_salt_admin)
+            new_pw1 = kdf_value(FACTORY_PASSPHRASE_PW1, 1,
+                                self.__kdf_iters, self.__kdf_salt_user, self.__kdf_salt_admin)
+            self.cmd_change_reference_data(1, old_pw1 + new_pw1)
+
+            old_pw3 = kdf_value(FACTORY_PASSPHRASE_PW3, 3,
+                                old_kdf_iters, old_kdf_salt_user, old_kdf_salt_admin)
+            new_pw3 = kdf_value(FACTORY_PASSPHRASE_PW3, 3,
+                                self.__kdf_iters, self.__kdf_salt_user, self.__kdf_salt_admin)
+            self.cmd_change_reference_data(3, old_pw3 + new_pw3)
         return r
 
     def save_algo_attribute(self, keyno, attr):
@@ -125,6 +138,15 @@ class OpenPGP_Card(object):
             return self.cmd_verify(who, pw_hash)
         else:
             return self.cmd_verify(who, passwd)
+
+    def deauthenticate(self, who):
+        cmd_data = iso7816_compose(0x20, 0xff, 0x80+who, b'')
+        sw = self.__reader.send_cmd(cmd_data)
+        if len(sw) != 2:
+            raise ValueError(sw)
+        if not (sw[0] == 0x90 and sw[1] == 0x00):
+            raise ValueError("%02x%02x" % (sw[0], sw[1]))
+        return True
 
     # Higher layer CHANGE_PASSWD possibly using KDF Data Object
     # KDF_CHANGE: 0 no-change, -1 to be cleared, 1 to be configured
@@ -265,15 +287,15 @@ class OpenPGP_Card(object):
             cmd_data = iso7816_compose(0xca, tagh, tagl, b"")
         else:
             cmd_data = iso7816_compose(0xca, tagh, tagl, b"", le=254)
-        sw = self.__reader.send_cmd(cmd_data)
-        if len(sw) < 2:
-            raise ValueError(sw)
+        response = self.__reader.send_cmd(cmd_data)
+        if len(response) < 2:
+            raise ValueError(response)
+        body = response[:-2]
+        sw = response[-2:]
         if sw[0] == 0x61:
-            return self.cmd_get_response(sw[1])
-        elif (sw[-2] == 0x61):
-            return sw + self.cmd_get_response(sw[-1])
-        elif sw[-2] == 0x90 and sw[-1] == 0x00:
-            return sw[0:-2]
+            return body + self.cmd_get_response(sw[1])
+        elif sw[0] == 0x90 and sw[1] == 0x00:
+            return body
         if sw[0] == 0x6a and sw[1] == 0x88:
             return None
         else:
@@ -396,12 +418,14 @@ class OpenPGP_Card(object):
         sw = self.__reader.send_cmd(cmd_data)
         if len(sw) < 2:
             raise ValueError(sw)
-        if sw[-2] == 0x61:
-            pk = self.cmd_get_response(sw[1])
-        elif sw[-2] == 0x90 and sw[-1] == 0x00:
-            pk = sw
+        body = sw[:-2]
+        status = sw[-2:]
+        if status[0] == 0x61:
+            pk = body + self.cmd_get_response(status[1])
+        elif status[0] == 0x90 and status[1] == 0x00:
+            pk = body
         else:
-            raise ValueError("%02x%02x" % (sw[0], sw[1]))
+            raise ValueError("%02x%02x" % (status[0], status[1]))
         return pk
 
     def cmd_get_public_key(self, keyno):
