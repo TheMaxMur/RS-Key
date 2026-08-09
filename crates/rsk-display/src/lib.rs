@@ -51,7 +51,7 @@ use embedded_graphics::{
 };
 use zeroize::Zeroize;
 
-use rsk_crypto::Device;
+use rsk_crypto::{Device, FusedKey, FusedRead, read_fused};
 use rsk_fs::Fs;
 use rsk_sdk::Confirm;
 use rsk_ui::{
@@ -255,20 +255,21 @@ pub struct DeviceInfo {
 
 /// The device key material the read-only passkey enumerator needs to load and unbox
 /// the resident-credential seed from `EF_KEY_DEV` — the same identity the worker's
-/// `Ctx` carries, kept as owned copies so the display task can build a [`Device`] on
-/// demand (when the Passkeys tab is open) without holding the seed itself.
+/// `Ctx` carries. The serials are owned copies; the MKEK is a way to read the fuses,
+/// so the display task builds a [`Device`] on demand (when the Passkeys tab is open)
+/// while holding neither the seed nor the root key.
 pub struct DeviceKeys {
     pub serial_id: [u8; 8],
     pub serial_hash: [u8; 32],
-    pub otp_mkek: Option<[u8; 32]>,
+    pub mkek_source: Option<FusedKey>,
 }
 
 impl DeviceKeys {
-    fn device(&self) -> Device<'_> {
+    fn device<'k>(&'k self, mkek: &'k FusedRead) -> Device<'k> {
         Device {
             serial_hash: &self.serial_hash,
             serial_id: &self.serial_id,
-            otp_key: self.otp_mkek.as_ref(),
+            otp_key: mkek.as_deref(),
         }
     }
 }
@@ -489,7 +490,8 @@ where
     /// panel, the lesson the PIV `has_data` lag taught. Borrow-safe like [`Self::load_rps`]
     /// (the worker is parked while this thread-executor task runs).
     fn refresh_home_stats(&mut self) {
-        let dev = self.keys.device();
+        let mkek = read_fused(self.keys.mkek_source);
+        let dev = self.keys.device(&mkek);
         let mut store = self.fs.borrow_mut();
         self.home_pin_set = rsk_fido::passkeys::device_pin_is_set(&mut store);
         let mut creds = 0u16;
@@ -543,7 +545,8 @@ where
     /// impact but does not remove it — the gap silently omitted the device's
     /// highest-value actions from the log of a user who deliberately turned it on.
     fn journal_local(&self, ev: u8) {
-        let dev = self.keys.device();
+        let mkek = read_fused(self.keys.mkek_source);
+        let dev = self.keys.device(&mkek);
         let now = self.hooks.attach_elapsed_ms();
         rsk_fido::journal::append_local(&dev, &mut self.fs.borrow_mut(), now, ev, 0);
     }

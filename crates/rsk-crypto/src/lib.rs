@@ -29,7 +29,7 @@ pub use crc::crc32;
 pub use des::{des3_decrypt_block, des3_encrypt_block};
 pub use drbg::HmacDrbg;
 pub use hash::{sha1, sha256, sha384, sha512};
-pub use kdf::{Device, PinKdf};
+pub use kdf::{Device, FusedKey, FusedRead, PinKdf, read_fused};
 pub use mac::{ct_eq, hkdf_sha256, hkdf_sha512, hmac_sha1, hmac_sha256, hmac_sha512};
 pub use mlkem::{MlKem768Pair, mlkem768_encapsulate};
 pub use pinproto::PinProto;

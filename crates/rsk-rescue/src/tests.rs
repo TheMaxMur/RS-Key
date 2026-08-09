@@ -4,6 +4,12 @@
 use super::*;
 use rsk_fs::storage::ram::RamStorage;
 
+/// A provisioned MKEK for the tests. The applet holds a way to READ the fuses, not
+/// the key, so a test source has to be a plain `fn`.
+fn test_mkek() -> Option<[u8; 32]> {
+    Some([0x11; 32])
+}
+
 struct LcgRng(u64);
 impl Rng for LcgRng {
     fn fill(&mut self, buf: &mut [u8]) {
@@ -173,12 +179,12 @@ fn lock_app<'a>(
     rng: &'a RefCell<LcgRng>,
     platform: &'a RefCell<FakePlatform>,
     presence: &'a RefCell<AlwaysConfirm>,
-    otp_key: Option<[u8; 32]>,
+    mkek_source: Option<FusedKey>,
 ) -> RescueApplet<'a> {
     RescueApplet::new(
         SERIAL_ID,
         SERIAL_HASH,
-        otp_key,
+        mkek_source,
         None,
         rng,
         platform,
@@ -197,7 +203,7 @@ fn otp_lock_writes_once_then_idempotent() {
     let rng = RefCell::new(LcgRng(7));
     let platform = RefCell::new(FakePlatform::default()); // lock_raw = Some(0)
     let presence = RefCell::new(AlwaysConfirm);
-    let mut app = lock_app(&rng, &platform, &presence, Some([0x11; 32]));
+    let mut app = lock_app(&rng, &platform, &presence, Some(test_mkek as FusedKey));
     let mut fs = Fs::new(RamStorage::new());
 
     let (sw, _) = run(&mut app, &mut fs, &lock_apdu());
@@ -231,7 +237,7 @@ fn otp_lock_rejects_bad_guards() {
     let rng = RefCell::new(LcgRng(7));
     let platform = RefCell::new(FakePlatform::default());
     let presence = RefCell::new(AlwaysConfirm);
-    let mut app = lock_app(&rng, &platform, &presence, Some([0x11; 32]));
+    let mut app = lock_app(&rng, &platform, &presence, Some(test_mkek as FusedKey));
     let mut fs = Fs::new(RamStorage::new());
 
     // wrong P1 (not the page number)
@@ -268,7 +274,7 @@ fn otp_lock_refuses_foreign_lock_value() {
         ..Default::default()
     });
     let presence = RefCell::new(AlwaysConfirm);
-    let mut app = lock_app(&rng, &platform, &presence, Some([0x11; 32]));
+    let mut app = lock_app(&rng, &platform, &presence, Some(test_mkek as FusedKey));
     let mut fs = Fs::new(RamStorage::new());
     let (sw, _) = run(&mut app, &mut fs, &lock_apdu());
     assert_eq!(sw, Sw::CONDITIONS_NOT_SATISFIED);
@@ -288,7 +294,7 @@ fn otp_lock_read_error_is_exec_error() {
         ..Default::default()
     });
     let presence = RefCell::new(AlwaysConfirm);
-    let mut app = lock_app(&rng, &platform, &presence, Some([0x11; 32]));
+    let mut app = lock_app(&rng, &platform, &presence, Some(test_mkek as FusedKey));
     let mut fs = Fs::new(RamStorage::new());
     let (sw, _) = run(&mut app, &mut fs, &lock_apdu());
     assert_eq!(sw, Sw::EXEC_ERROR);
@@ -336,7 +342,7 @@ fn rollback_require_needs_secure_boot() {
     let rng = RefCell::new(LcgRng(7));
     let platform = RefCell::new(FakePlatform::default()); // secure boot off
     let presence = RefCell::new(AlwaysConfirm);
-    let mut app = lock_app(&rng, &platform, &presence, Some([0x11; 32]));
+    let mut app = lock_app(&rng, &platform, &presence, Some(test_mkek as FusedKey));
     let mut fs = Fs::new(RamStorage::new());
     let (sw, _) = run(&mut app, &mut fs, &rollback_apdu());
     assert_eq!(sw, Sw::CONDITIONS_NOT_SATISFIED);
@@ -348,7 +354,7 @@ fn rollback_require_rejects_bad_guards() {
     let rng = RefCell::new(LcgRng(7));
     let platform = RefCell::new(secure_platform());
     let presence = RefCell::new(AlwaysConfirm);
-    let mut app = lock_app(&rng, &platform, &presence, Some([0x11; 32]));
+    let mut app = lock_app(&rng, &platform, &presence, Some(test_mkek as FusedKey));
     let mut fs = Fs::new(RamStorage::new());
 
     // wrong magic (including the *other* P1's magic)
@@ -395,7 +401,7 @@ fn rollback_require_read_error_is_exec_error() {
         ..secure_platform()
     });
     let presence = RefCell::new(AlwaysConfirm);
-    let mut app = lock_app(&rng, &platform, &presence, Some([0x11; 32]));
+    let mut app = lock_app(&rng, &platform, &presence, Some(test_mkek as FusedKey));
     let mut fs = Fs::new(RamStorage::new());
     let (sw, _) = run(&mut app, &mut fs, &rollback_apdu());
     assert_eq!(sw, Sw::EXEC_ERROR);
@@ -806,7 +812,7 @@ fn otp_fuse_writes_require_user_presence() {
     let mut app = RescueApplet::new(
         SERIAL_ID,
         SERIAL_HASH,
-        Some([0x11; 32]),
+        Some(test_mkek as FusedKey),
         None,
         &rng,
         &platform,
@@ -825,7 +831,7 @@ fn otp_fuse_writes_require_user_presence() {
     let mut app = RescueApplet::new(
         SERIAL_ID,
         SERIAL_HASH,
-        Some([0x11; 32]),
+        Some(test_mkek as FusedKey),
         None,
         &rng,
         &platform,

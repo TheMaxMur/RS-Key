@@ -25,6 +25,12 @@ fn dev() -> Device<'static> {
 const SERIAL_ID: [u8; 8] = [0xAA, 0xBB, 0xCC, 0xDD, 5, 6, 7, 8];
 const SERIAL_HASH: [u8; 32] = [0x22; 32];
 
+/// A provisioned MKEK for the tests. The applet holds a way to READ the fuses, not
+/// the key, so a test source has to be a plain `fn`.
+fn test_mkek() -> Option<[u8; 32]> {
+    Some([0x66; 32])
+}
+
 fn make_fs() -> Fs<RamStorage> {
     let mut fs = Fs::new(RamStorage::new());
     fs.scan();
@@ -250,7 +256,13 @@ fn a_blocked_pw3_neither_migrates_nor_writes() {
     let rng = RefCell::new(CountRng(0));
     let mut fs = make_fs();
     let presence = RefCell::new(crate::AlwaysConfirm);
-    let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, Some([0x66; 32]), &rng, &presence);
+    let mut app = OpenpgpApplet::new(
+        SERIAL_ID,
+        SERIAL_HASH,
+        Some(test_mkek as FusedKey),
+        &rng,
+        &presence,
+    );
     let mut wrong = vec![0x00, consts::INS_VERIFY, 0x00, consts::PW3_MODE83, 0x08];
     wrong.extend_from_slice(b"99999999");
     for _ in 0..3 {
@@ -276,7 +288,13 @@ fn an_unblocked_legacy_verifier_still_migrates() {
     let rng = RefCell::new(CountRng(0));
     let mut fs = make_fs();
     let presence = RefCell::new(crate::AlwaysConfirm);
-    let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, Some([0x66; 32]), &rng, &presence);
+    let mut app = OpenpgpApplet::new(
+        SERIAL_ID,
+        SERIAL_HASH,
+        Some(test_mkek as FusedKey),
+        &rng,
+        &presence,
+    );
     let mut before = [0u8; 64];
     let n = fs.read(consts::EF_PW3, &mut before).expect("PW3 verifier");
     verify_pin(&mut app, &mut fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
@@ -287,7 +305,13 @@ fn an_unblocked_legacy_verifier_still_migrates() {
         after[..n],
         "verifier stayed on the pre-OTP arm"
     );
-    let mut app2 = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, Some([0x66; 32]), &rng, &presence);
+    let mut app2 = OpenpgpApplet::new(
+        SERIAL_ID,
+        SERIAL_HASH,
+        Some(test_mkek as FusedKey),
+        &rng,
+        &presence,
+    );
     verify_pin(&mut app2, &mut fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
 }
 

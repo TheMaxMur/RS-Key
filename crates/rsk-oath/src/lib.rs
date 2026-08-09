@@ -11,7 +11,7 @@ mod seal;
 
 use core::cell::RefCell;
 
-use rsk_crypto::{Device, hmac_sha1, hmac_sha256, hmac_sha512};
+use rsk_crypto::{Device, FusedKey, FusedRead, hmac_sha1, hmac_sha256, hmac_sha512, read_fused};
 use rsk_fs::{Fs, KeyFid, Storage};
 pub use rsk_sdk::Confirm;
 use rsk_sdk::tlv::{find_tag, format_len};
@@ -155,9 +155,9 @@ enum Chain {
 pub struct OathApplet<'a> {
     serial_id: [u8; 8],
     serial_hash: [u8; 32],
-    /// The OTP MKEK, once provisioned. OATH stores nothing under kbase today;
-    /// wired anyway so every applet shares one derivation truth.
-    otp_key: Option<[u8; 32]>,
+    /// How to read the OTP MKEK, once provisioned. OATH stores nothing under
+    /// kbase today; wired anyway so every applet shares one derivation truth.
+    mkek_source: Option<FusedKey>,
     rng: &'a RefCell<dyn Rng>,
     presence: &'a RefCell<dyn UserPresence>,
     /// Access-code session state. `true` when no code is set (everything
@@ -177,14 +177,14 @@ impl<'a> OathApplet<'a> {
     pub fn new(
         serial_id: [u8; 8],
         serial_hash: [u8; 32],
-        otp_key: Option<[u8; 32]>,
+        mkek_source: Option<FusedKey>,
         rng: &'a RefCell<dyn Rng>,
         presence: &'a RefCell<dyn UserPresence>,
     ) -> Self {
         Self {
             serial_id,
             serial_hash,
-            otp_key,
+            mkek_source,
             rng,
             presence,
             validated: true,
@@ -194,11 +194,11 @@ impl<'a> OathApplet<'a> {
         }
     }
 
-    fn device(&self) -> Device<'_> {
+    fn device<'k>(&'k self, mkek: &'k FusedRead) -> Device<'k> {
         Device {
             serial_hash: &self.serial_hash,
             serial_id: &self.serial_id,
-            otp_key: self.otp_key.as_ref(),
+            otp_key: mkek.as_deref(),
         }
     }
 
@@ -280,7 +280,8 @@ impl<'a> OathApplet<'a> {
         }
 
         let mut scratch = [0u8; CRED_MAX];
-        let dev = self.device();
+        let mkek = read_fused(self.mkek_source);
+        let dev = self.device(&mkek);
         let fid = match find_cred(&dev, fs, name, &mut scratch) {
             Some((fid, _)) => fid,
             None => match free_slot(fs) {
@@ -309,7 +310,8 @@ impl<'a> OathApplet<'a> {
             return Sw::INCORRECT_PARAMS;
         };
         let mut scratch = [0u8; CRED_MAX];
-        let dev = self.device();
+        let mkek = read_fused(self.mkek_source);
+        let dev = self.device(&mkek);
         match find_cred(&dev, fs, name, &mut scratch) {
             Some((fid, _)) => {
                 let _ = fs.delete(fid);
@@ -357,7 +359,8 @@ impl<'a> OathApplet<'a> {
             return Sw::DATA_INVALID;
         }
         self.rng.borrow_mut().fill(&mut self.challenge);
-        let dev = self.device();
+        let mkek = read_fused(self.mkek_source);
+        let dev = self.device(&mkek);
         if !seal::seal_put(&dev, fs, &mut *self.rng.borrow_mut(), EF_OATH_CODE, key) {
             return Sw::MEMORY_FAILURE;
         }
@@ -409,7 +412,8 @@ impl<'a> OathApplet<'a> {
         let start = self.chain_at as usize;
         let mut resume = None;
         {
-            let dev = self.device();
+            let mkek = read_fused(self.mkek_source);
+            let dev = self.device(&mkek);
             let mut fids = [0u16; MAX_OATH_CRED as usize];
             let nfids = present_creds(fs, &mut fids);
             let mut scratch = [0u8; CRED_MAX];
@@ -478,7 +482,8 @@ impl<'a> OathApplet<'a> {
             return Sw::INCORRECT_PARAMS;
         };
         let mut code = [0u8; OATH_CODE_MAX];
-        let dev = self.device();
+        let mkek = read_fused(self.mkek_source);
+        let dev = self.device(&mkek);
         // A present-but-unreadable code (over-long or corrupt) must keep the applet
         // LOCKED — a fail-open here unlocked it without the access code. A truly
         // absent code leaves the applet as select() set it (unlocked, no code).
@@ -526,7 +531,8 @@ impl<'a> OathApplet<'a> {
             return Sw::INCORRECT_PARAMS;
         };
         let mut scratch = [0u8; CRED_MAX];
-        let dev = self.device();
+        let mkek = read_fused(self.mkek_source);
+        let dev = self.device(&mkek);
         let Some((fid, n)) = find_cred(&dev, fs, name, &mut scratch) else {
             return Sw::DATA_INVALID;
         };
@@ -633,7 +639,8 @@ impl<'a> OathApplet<'a> {
         let start = self.chain_at as usize;
         let mut resume = None;
         {
-            let dev = self.device();
+            let mkek = read_fused(self.mkek_source);
+            let dev = self.device(&mkek);
             let mut fids = [0u16; MAX_OATH_CRED as usize];
             let nfids = present_creds(fs, &mut fids);
             let mut scratch = [0u8; CRED_MAX];
@@ -709,7 +716,8 @@ impl<'a> OathApplet<'a> {
         }
         // The named credential is ignored — slot 0 is always the one verified.
         let mut scratch = [0u8; CRED_MAX];
-        let dev = self.device();
+        let mkek = read_fused(self.mkek_source);
+        let dev = self.device(&mkek);
         let Some(n) = seal::seal_read(&dev, fs, KeyFid::new(EF_OATH_CRED), &mut scratch) else {
             return Sw::DATA_INVALID;
         };
@@ -778,7 +786,8 @@ impl<'a> OathApplet<'a> {
             return SW_WRONG_DATA;
         }
         let mut scratch = [0u8; CRED_MAX];
-        let dev = self.device();
+        let mkek = read_fused(self.mkek_source);
+        let dev = self.device(&mkek);
         let Some((fid, n)) = find_cred(&dev, fs, name, &mut scratch) else {
             return Sw::DATA_INVALID;
         };
@@ -832,7 +841,8 @@ impl<'a> OathApplet<'a> {
             return SW_WRONG_DATA;
         };
         let mut scratch = [0u8; CRED_MAX];
-        let dev = self.device();
+        let mkek = read_fused(self.mkek_source);
+        let dev = self.device(&mkek);
         let Some((_, n)) = find_cred(&dev, fs, name, &mut scratch) else {
             return Sw::DATA_INVALID;
         };
@@ -861,7 +871,8 @@ impl<'a> OathApplet<'a> {
     /// hash (which [`Self::cmd_verify_otp_pin`] / [`Self::cmd_change_otp_pin`]
     /// upgrade to v1 on success).
     fn otp_pin_matches(&self, rec: &[u8], pw: &[u8]) -> bool {
-        let dev = self.device();
+        let mkek = read_fused(self.mkek_source);
+        let dev = self.device(&mkek);
         match rec.len() {
             OTP_PIN_REC_V1 if rec[1] == OTP_PIN_FMT_V1 => {
                 let stored = &rec[2..OTP_PIN_REC_V1];
@@ -885,7 +896,8 @@ impl<'a> OathApplet<'a> {
         let mut rec = [0u8; OTP_PIN_REC_V1];
         rec[0] = MAX_OTP_COUNTER;
         rec[1] = OTP_PIN_FMT_V1;
-        rec[2..].copy_from_slice(&self.device().pin_derive_verifier(pw));
+        let mkek = read_fused(self.mkek_source);
+        rec[2..].copy_from_slice(&self.device(&mkek).pin_derive_verifier(pw));
         rec
     }
 

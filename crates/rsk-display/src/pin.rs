@@ -154,7 +154,8 @@ where
                         rsk_ui::RenameKey::Save => {
                             t9.commit();
                             let committed = t9.value();
-                            let dev = self.keys.device();
+                            let mkek = read_fused(self.keys.mkek_source);
+                            let dev = self.keys.device(&mkek);
                             let saved = rsk_fido::passkeys::set_rp_nickname(
                                 &dev,
                                 &mut self.fs.borrow_mut(),
@@ -242,7 +243,8 @@ where
         fids: &mut [u16],
         page: u16,
     ) -> (usize, u16) {
-        let dev = self.keys.device();
+        let mkek = read_fused(self.keys.mkek_source);
+        let dev = self.keys.device(&mkek);
         let offset = page as usize * rsk_ui::PK_ROWS_MAX;
         let mut store = self.fs.borrow_mut();
         let mut idx = 0usize;
@@ -754,7 +756,8 @@ where
                 _ => break, // confirm declined / timeout / host yield
             };
             if n1 == n2 && rsk_crypto::ct_eq(&new[..n1], &confirm[..n2]) {
-                let dev = self.keys.device();
+                let mkek = read_fused(self.keys.mkek_source);
+                let dev = self.keys.device(&mkek);
                 // The pad already enforced the length floor; a flash error is the only
                 // realistic failure and leaves no PIN set — abandon either way. Route to the
                 // device PIN's own record or the FIDO clientPIN's by target.
@@ -814,7 +817,8 @@ where
         // / EF_RETRIES wouldn't exist for the gate to verify against (it would dead-end on the
         // missing retry counter). Idempotent: every step is has-data guarded.
         {
-            let dev = self.keys.device();
+            let mkek = read_fused(self.keys.mkek_source);
+            let dev = self.keys.device(&mkek);
             let mut rng = self.rng.borrow_mut();
             let mut fs = self.fs.borrow_mut();
             let _ = rsk_piv::files::scan_files(&dev, &mut fs, &mut *rng);
@@ -880,7 +884,8 @@ where
             // recovery secret), matching `run_set_pin` / `collect_new_piv_pin` hygiene.
             let mut pad = rsk_piv::pad_pin(&buf[..n])?;
             let sw = {
-                let dev = self.keys.device();
+                let mkek = read_fused(self.keys.mkek_source);
+                let dev = self.keys.device(&mkek);
                 rsk_piv::verify_reference(&dev, &mut self.fs.borrow_mut(), which, &pad)
             };
             if sw == rsk_sdk::Sw::OK {
@@ -964,7 +969,8 @@ where
         let applied = match self.collect_new_piv_pin(piv_ref_title(which)) {
             Some(mut new_pad) => {
                 let sw = {
-                    let dev = self.keys.device();
+                    let mkek = read_fused(self.keys.mkek_source);
+                    let dev = self.keys.device(&mkek);
                     rsk_piv::change_reference(
                         &dev,
                         &mut self.fs.borrow_mut(),
@@ -1005,7 +1011,8 @@ where
         let applied = match self.collect_new_piv_pin(piv_ref_title(rsk_piv::PinRef::Pin)) {
             Some(mut new_pad) => {
                 let sw = {
-                    let dev = self.keys.device();
+                    let mkek = read_fused(self.keys.mkek_source);
+                    let dev = self.keys.device(&mkek);
                     rsk_piv::unblock_pin_with_puk(
                         &dev,
                         &mut self.fs.borrow_mut(),
@@ -1038,7 +1045,8 @@ where
         // Materialise the PIV defaults first (a never-host-selected display unit) so the host
         // can later VERIFY the PIN to read the protected key. Idempotent.
         {
-            let dev = self.keys.device();
+            let mkek = read_fused(self.keys.mkek_source);
+            let dev = self.keys.device(&mkek);
             let mut rng = self.rng.borrow_mut();
             let mut fs = self.fs.borrow_mut();
             let _ = rsk_piv::files::scan_files(&dev, &mut fs, &mut *rng);
@@ -1055,7 +1063,8 @@ where
         // The generate + seal holds the dev/rng/fs borrows across a synchronous, no-await span
         // (no key search — AES key gen is instant), so the worker can't preempt.
         let ok = {
-            let dev = self.keys.device();
+            let mkek = read_fused(self.keys.mkek_source);
+            let dev = self.keys.device(&mkek);
             let mut rng = self.rng.borrow_mut();
             let mut fs = self.fs.borrow_mut();
             rsk_piv::protect_mgm_key(&dev, &mut fs, &mut *rng) == rsk_sdk::Sw::OK

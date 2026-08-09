@@ -15,11 +15,10 @@ pub mod rollback;
 
 use core::cell::RefCell;
 
-use rsk_crypto::Device;
+use rsk_crypto::{Device, FusedKey, FusedRead, read_fused};
 use rsk_fs::{Fs, Storage};
 pub use rsk_sdk::Confirm;
 use rsk_sdk::{Apdu, Applet, ResBuf, Sw};
-use zeroize::Zeroize;
 
 /// Rescue applet AID.
 pub const RESCUE_AID: &[u8] = &[0xA0, 0x58, 0x3F, 0xC1, 0x9B, 0x7E, 0x4F, 0x21];
@@ -104,12 +103,13 @@ pub trait UserPresence {
 pub struct RescueApplet<'a> {
     serial_id: [u8; 8],
     serial_hash: [u8; 32],
-    /// The OTP MKEK, once provisioned.
-    otp_key: Option<[u8; 32]>,
+    /// How to read the OTP MKEK, once provisioned — never the key itself, so no
+    /// copy of it sits in this applet's memory between operations.
+    mkek_source: Option<FusedKey>,
     /// How to fetch the OTP DEVK (the keydev secp256k1 scalar), rather than the
     /// scalar itself: two rarely-run commands want it, and it is fused, so it is
     /// not one to park in RAM for the power cycle.
-    devk: Option<fn() -> Option<[u8; 32]>>,
+    devk: Option<FusedKey>,
     rng: &'a RefCell<dyn Rng>,
     platform: &'a RefCell<dyn Platform>,
     /// Touch/approval gate for the runtime-reachable privileged commands.
@@ -125,8 +125,8 @@ impl<'a> RescueApplet<'a> {
     pub fn new(
         serial_id: [u8; 8],
         serial_hash: [u8; 32],
-        otp_key: Option<[u8; 32]>,
-        devk: Option<fn() -> Option<[u8; 32]>>,
+        mkek_source: Option<FusedKey>,
+        devk: Option<FusedKey>,
         rng: &'a RefCell<dyn Rng>,
         platform: &'a RefCell<dyn Platform>,
         presence: &'a RefCell<dyn UserPresence>,
@@ -136,7 +136,7 @@ impl<'a> RescueApplet<'a> {
         Self {
             serial_id,
             serial_hash,
-            otp_key,
+            mkek_source,
             devk,
             rng,
             platform,
@@ -146,11 +146,11 @@ impl<'a> RescueApplet<'a> {
         }
     }
 
-    fn device(&self) -> Device<'_> {
+    fn device<'k>(&'k self, mkek: &'k FusedRead) -> Device<'k> {
         Device {
             serial_hash: &self.serial_hash,
             serial_id: &self.serial_id,
-            otp_key: self.otp_key.as_ref(),
+            otp_key: mkek.as_deref(),
         }
     }
 
@@ -174,13 +174,12 @@ impl<'a> RescueApplet<'a> {
                     return Sw::CONDITIONS_NOT_SATISFIED;
                 }
                 let mut rng = self.rng.borrow_mut();
-                // Fetched for this command and wiped before the early return: the
-                // fused scalar is not held between the two commands that want it.
-                let mut fused = self.devk.and_then(|read| read());
-                let key = keydev::load_or_generate(&self.device(), fused.as_ref(), fs, &mut *rng);
-                if let Some(k) = fused.as_mut() {
-                    k.zeroize();
-                }
+                // Both fuses are read for this command alone: each local is the
+                // only copy in RAM and dies at the end of this arm.
+                let fused = read_fused(self.devk);
+                let mkek = read_fused(self.mkek_source);
+                let dev = self.device(&mkek);
+                let key = keydev::load_or_generate(&dev, fused.as_deref(), fs, &mut *rng);
                 let Some(key) = key else {
                     return Sw::EXEC_ERROR;
                 };
@@ -199,13 +198,12 @@ impl<'a> RescueApplet<'a> {
                     return Sw::WRONG_LENGTH;
                 }
                 let mut rng = self.rng.borrow_mut();
-                // Fetched for this command and wiped before the early return: the
-                // fused scalar is not held between the two commands that want it.
-                let mut fused = self.devk.and_then(|read| read());
-                let key = keydev::load_or_generate(&self.device(), fused.as_ref(), fs, &mut *rng);
-                if let Some(k) = fused.as_mut() {
-                    k.zeroize();
-                }
+                // Both fuses are read for this command alone: each local is the
+                // only copy in RAM and dies at the end of this arm.
+                let fused = read_fused(self.devk);
+                let mkek = read_fused(self.mkek_source);
+                let dev = self.device(&mkek);
+                let key = keydev::load_or_generate(&dev, fused.as_deref(), fs, &mut *rng);
                 let Some(key) = key else {
                     return Sw::EXEC_ERROR;
                 };
@@ -388,7 +386,11 @@ impl<'a> RescueApplet<'a> {
         if apdu.data != OTP_LOCK_MAGIC {
             return Sw::DATA_INVALID;
         }
-        if self.otp_key.is_none() {
+        // Reads the fuses, not the source: firmware always wires a reader, so
+        // testing the `Option` would answer "is a reader present" instead of "are
+        // the keys provisioned" — and this guard is the whole reason the lock
+        // cannot be burnt over a blank page (audit run-36).
+        if read_fused(self.mkek_source).is_none() {
             return Sw::CONDITIONS_NOT_SATISFIED;
         }
         let Some(cur) = self.platform.borrow().read_page58_lock_raw() else {

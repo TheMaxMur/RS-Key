@@ -34,7 +34,12 @@ const KEY_PAGE: usize = 58;
 
 /// Read the provisioned MKEK. `None` when unprovisioned.
 ///
-/// Every seal and unseal needs it, so this one is read once at boot and held.
+/// Handed to the applets as a `fn` and called per operation rather than held: the
+/// root every sealed record hangs off had eight resident copies, and the derived
+/// `kbase` never was one — it is recomputed and zeroized on each use. A read costs
+/// 48 µs against the milliseconds of crypto it precedes. Reading it late is only
+/// possible because [`sw_lock_key_page`] leaves the page's secure side open; see
+/// the note there.
 pub fn read_mkek() -> Option<[u8; 32]> {
     match option_env!("PK_FAKE_MKEK") {
         Some(hex) => Some(parse_hex32(hex)),

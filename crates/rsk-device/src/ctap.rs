@@ -7,7 +7,7 @@
 
 use core::cell::RefCell;
 
-use rsk_crypto::Device;
+use rsk_crypto::{Device, FusedKey, read_fused};
 use rsk_fs::{Fs, Storage};
 use rsk_sdk::apdu::Apdu;
 use rsk_sdk::{Applet, Dispatcher, ResBuf};
@@ -38,8 +38,9 @@ pub struct AppletHandler<'a, S: Storage, R: crate::Rng + 'static, VP: rsk_vendor
     presence: &'a RefCell<dyn rsk_fido::UserPresence>,
     serial_id: [u8; 8],
     serial_hash: [u8; 32],
-    /// The OTP MKEK, once provisioned.
-    otp_key: Option<[u8; 32]>,
+    /// How to read the OTP MKEK, once provisioned — never the key itself, so no
+    /// copy of it sits in this applet's memory between operations.
+    mkek_source: Option<FusedKey>,
     resp: [u8; RESP_CAP],
 }
 
@@ -58,7 +59,7 @@ impl<'a, S: Storage, R: crate::Rng + 'static, VP: rsk_vendor::Platform>
         vendor_platform: VP,
         serial_id: [u8; 8],
         serial_hash: [u8; 32],
-        otp_key: Option<[u8; 32]>,
+        mkek_source: Option<FusedKey>,
         devk: Option<fn() -> Option<[u8; 32]>>,
     ) -> Self {
         // The OTP DEVK signs audit-journal checkpoints (rsk_fido::journal); it
@@ -87,7 +88,7 @@ impl<'a, S: Storage, R: crate::Rng + 'static, VP: rsk_vendor::Platform>
             presence,
             serial_id,
             serial_hash,
-            otp_key,
+            mkek_source,
             resp: [0; RESP_CAP],
         }
     }
@@ -125,10 +126,11 @@ impl<S: Storage, R: crate::Rng + 'static, VP: rsk_vendor::Platform> AppletHandle
             const INS_SELECT: u8 = 0xA4;
             if self.disp.current().is_none() && parsed.ins != INS_SELECT {
                 // Borrow only the serial fields so rng/state/resp stay free.
+                let mkek = read_fused(self.mkek_source);
                 let dev = Device {
                     serial_hash: &self.serial_hash,
                     serial_id: &self.serial_id,
-                    otp_key: self.otp_key.as_ref(),
+                    otp_key: mkek.as_deref(),
                 };
                 let (sw, n) = {
                     let mut fsb = self.fs.borrow_mut();
@@ -180,10 +182,11 @@ impl<S: Storage, R: crate::Rng + 'static, VP: rsk_vendor::Platform> AppletHandle
             // crate-private and leaving the RAM soft lock armed only fails closed
             // (host clientPIN stays blocked until a replug), so it stays as it is.
         }
+        let mkek = read_fused(self.mkek_source);
         let dev = Device {
             serial_hash: &self.serial_hash,
             serial_id: &self.serial_id,
-            otp_key: self.otp_key.as_ref(),
+            otp_key: mkek.as_deref(),
         };
         // Which CTAPHID channel is asking. Cross-message state a second process on
         // its own channel must not be able to ride — the seed-backup MSE key —

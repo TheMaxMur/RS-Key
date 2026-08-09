@@ -290,11 +290,13 @@ sequenceDiagram
 Key-grade material in RAM is wiped (`zeroize`, volatile writes) when its use
 ends: session state and PIN/UV tokens on drop, transient key copies at end of
 scope including error paths, and the transport/exchange buffers as soon as a
-message completes (requests carry PINs and imported keys). The fused DEVK is
-not held at all: the three commands that sign with it read it from OTP and
-wipe their copy, so the one unrotatable key is absent from RAM the rest of the
-time. Accepted
-residuals: `Copy` temporaries inside RustCrypto curve arithmetic, digest
+message completes (requests carry PINs and imported keys). Neither fused key is
+held at all: the applets carry a way to *read* OTP, not the key, so the DEVK and
+the MKEK exist in RAM only inside the operation that asked for one and are wiped
+when it returns. That is what puts them out of reach of a parser bug — parsing
+runs before any store access, so at that moment neither key is anywhere in
+memory. It buys nothing against code execution, which can drive the same reads.
+Accepted residuals: `Copy` temporaries inside RustCrypto curve arithmetic, digest
 internals, and heap temporaries inside the `rsa` crate. Short-lived,
 library-internal, not wipeable without forking the crates.
 

@@ -331,7 +331,7 @@ fn keys() -> DeviceKeys {
     DeviceKeys {
         serial_id: SERIAL_ID,
         serial_hash: SERIAL_HASH,
-        otp_mkek: None,
+        mkek_source: None,
     }
 }
 

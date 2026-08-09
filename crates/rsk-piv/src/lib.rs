@@ -22,7 +22,7 @@ mod x509;
 
 use core::cell::RefCell;
 
-use rsk_crypto::Device;
+use rsk_crypto::{Device, FusedKey, FusedRead, read_fused};
 use rsk_fs::{Fs, Sealed, Storage};
 pub use rsk_openpgp::Rng;
 use rsk_openpgp::keys::{MAX_RSA_BYTES, MAX_RSA_PUBDO, RSA_PUB_EXP_BE, make_rsa_pub_body};
@@ -139,8 +139,9 @@ impl Session {
 pub struct PivApplet<'a> {
     serial_id: [u8; 8],
     serial_hash: [u8; 32],
-    /// The OTP MKEK, once provisioned.
-    otp_key: Option<[u8; 32]>,
+    /// How to read the OTP MKEK, once provisioned — never the key itself, so no
+    /// copy of it sits in this applet's memory between operations.
+    mkek_source: Option<FusedKey>,
     rng: &'a RefCell<dyn Rng>,
     presence: &'a RefCell<dyn UserPresence>,
     sess: Session,
@@ -157,14 +158,14 @@ impl<'a> PivApplet<'a> {
     pub fn new(
         serial_id: [u8; 8],
         serial_hash: [u8; 32],
-        otp_key: Option<[u8; 32]>,
+        mkek_source: Option<FusedKey>,
         rng: &'a RefCell<dyn Rng>,
         presence: &'a RefCell<dyn UserPresence>,
     ) -> Self {
         PivApplet {
             serial_id,
             serial_hash,
-            otp_key,
+            mkek_source,
             rng,
             presence,
             sess: Session::default(),
@@ -173,9 +174,14 @@ impl<'a> PivApplet<'a> {
     }
 
     /// Owned copies of the device identifiers, for building a [`Device`] that
-    /// does not hold a borrow of `self` across `&mut self` calls.
-    fn device_ids(&self) -> ([u8; 32], [u8; 8], Option<[u8; 32]>) {
-        (self.serial_hash, self.serial_id, self.otp_key)
+    /// does not hold a borrow of `self` across `&mut self` calls. The MKEK is read
+    /// from the fuses here, so it is live only while the caller holds the tuple.
+    fn device_ids(&self) -> ([u8; 32], [u8; 8], FusedRead) {
+        (
+            self.serial_hash,
+            self.serial_id,
+            read_fused(self.mkek_source),
+        )
     }
 
     /// If `apdu` is a PIV RSA GENERATE, validate it fully and return the slot,
@@ -213,10 +219,11 @@ impl<'a> PivApplet<'a> {
         let Some(algo) = keygen::rsa_algo_from_size(key.size()) else {
             return (0, Sw::EXEC_ERROR);
         };
+        let mkek = read_fused(self.mkek_source);
         let dev = Device {
             serial_hash: &self.serial_hash,
             serial_id: &self.serial_id,
-            otp_key: self.otp_key.as_ref(),
+            otp_key: mkek.as_deref(),
         };
         let mut res = ResBuf::new(resp);
         let sw = keygen::finish_rsa(&dev, fs, rng, slot, algo, pol, key, &mut res);
@@ -266,11 +273,11 @@ impl<S: Storage> Applet<Fs<S>> for PivApplet<'_> {
         // power-cycle they are present — skip the five flash `has_data` probes
         // scan_files would otherwise repeat on every re-SELECT.
         if !self.files_ensured {
-            let (serial_hash, serial_id, otp_key) = self.device_ids();
+            let (serial_hash, serial_id, mkek) = self.device_ids();
             let dev = Device {
                 serial_hash: &serial_hash,
                 serial_id: &serial_id,
-                otp_key: otp_key.as_ref(),
+                otp_key: mkek.as_deref(),
             };
             let mut rng = self.rng.borrow_mut();
             if files::scan_files(&dev, fs, &mut *rng).is_err() {
@@ -286,11 +293,11 @@ impl<S: Storage> Applet<Fs<S>> for PivApplet<'_> {
     }
 
     fn process(&mut self, apdu: &Apdu, fs: &mut Fs<S>, res: &mut ResBuf) -> Sw {
-        let (serial_hash, serial_id, otp_key) = self.device_ids();
+        let (serial_hash, serial_id, mkek) = self.device_ids();
         let dev = Device {
             serial_hash: &serial_hash,
             serial_id: &serial_id,
-            otp_key: otp_key.as_ref(),
+            otp_key: mkek.as_deref(),
         };
         match apdu.ins {
             INS_VERSION => {
@@ -602,10 +609,11 @@ impl PivApplet<'_> {
         if !self.sess.has_pin {
             return Sw::SECURITY_STATUS_NOT_SATISFIED;
         }
+        let mkek = read_fused(self.mkek_source);
         let dev = Device {
             serial_hash: &self.serial_hash,
             serial_id: &self.serial_id,
-            otp_key: self.otp_key.as_ref(),
+            otp_key: mkek.as_deref(),
         };
         let mut key = [0u8; 32];
         let klen = match seal::seal_read(&dev, fs, key_fid(SLOT_CARDMGM), &mut key) {

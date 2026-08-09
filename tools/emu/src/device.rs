@@ -198,7 +198,7 @@ pub fn run(
             rsk_display::DeviceKeys {
                 serial_id: cfg.serial,
                 serial_hash: rsk_crypto::sha256(&cfg.serial),
-                otp_mkek: None,
+                mkek_source: None,
             },
             rng,
         ))));
@@ -238,8 +238,8 @@ async fn serve<PR: rsk_device::UserPresence + 'static>(
     // No OTP block and no device key: an emulator has no fuses to hold them, so
     // records are sealed under the chip-serial-only root — the same context a
     // device that has never been provisioned uses.
-    let otp_key: Option<[u8; 32]> = None;
-    let devk: Option<fn() -> Option<[u8; 32]>> = None;
+    let mkek_source: Option<rsk_crypto::FusedKey> = None;
+    let devk_source: Option<rsk_crypto::FusedKey> = None;
     let dev = || Device {
         serial_hash: &serial_hash,
         serial_id: &serial_id,
@@ -283,8 +283,8 @@ async fn serve<PR: rsk_device::UserPresence + 'static>(
         vendor_platform.clone(),
         serial_id,
         serial_hash,
-        otp_key,
-        devk,
+        mkek_source,
+        devk_source,
     );
     let mut ccid = CcidApplets::new(
         fs,
@@ -295,8 +295,8 @@ async fn serve<PR: rsk_device::UserPresence + 'static>(
         vendor_platform,
         serial_id,
         serial_hash,
-        otp_key,
-        devk,
+        mkek_source,
+        devk_source,
         cfg.kv_total,
         cfg.flash_size,
         openpgp_mfr(cfg.yubico),
@@ -414,8 +414,8 @@ async fn serve<PR: rsk_device::UserPresence + 'static>(
                     },
                     serial_id,
                     serial_hash,
-                    otp_key,
-                    devk,
+                    mkek_source,
+                    devk_source,
                 );
                 ccid.refresh_enabled();
                 attach = Instant::now();
@@ -453,8 +453,8 @@ async fn serve<PR: rsk_device::UserPresence + 'static>(
                 },
                 serial_id,
                 serial_hash,
-                otp_key,
-                devk,
+                mkek_source,
+                devk_source,
             );
             ccid.refresh_enabled();
             eprintln!("emu: warm reboot — RAM state dropped, the reset window stays shut");

@@ -17,6 +17,7 @@ use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Instant};
 use zeroize::Zeroize;
 
+use rsk_crypto::FusedKey;
 use rsk_usb::ccid::{ApduHandler, SecureResult};
 use rsk_usb::ctaphid::{CTAP_MAX_MESSAGE, MsgHandler};
 
@@ -318,8 +319,8 @@ impl<'a> Worker<'a> {
         hooks: &'a RefCell<DeviceHooks>,
         serial_id: [u8; 8],
         serial_hash: [u8; 32],
-        otp_key: Option<[u8; 32]>,
-        devk: Option<fn() -> Option<[u8; 32]>>,
+        mkek_source: Option<FusedKey>,
+        devk_source: Option<FusedKey>,
         kv_total: u32,
         openpgp_mfr: u16,
     ) -> Self {
@@ -332,8 +333,8 @@ impl<'a> Worker<'a> {
                 crate::vendor::VendorPlatform,
                 serial_id,
                 serial_hash,
-                otp_key,
-                devk,
+                mkek_source,
+                devk_source,
             ),
             ccid: Ccid::new(
                 fs,
@@ -344,8 +345,8 @@ impl<'a> Worker<'a> {
                 crate::vendor::VendorPlatform,
                 serial_id,
                 serial_hash,
-                otp_key,
-                devk,
+                mkek_source,
+                devk_source,
                 kv_total,
                 crate::flash_storage::FLASH_SIZE as u32,
                 openpgp_mfr,

@@ -30,6 +30,14 @@ impl UserPresence for StubPresence {
 
 const SERIAL: [u8; 8] = [0x12, 0x34, 0x56, 0x78, 0, 0, 0, 0];
 
+/// A provisioned MKEK for the tests. The applet holds a way to READ the fuses, not
+/// the key, so a test source has to be a plain `fn` — a closure over a local could
+/// not coerce to one.
+const TEST_MKEK: [u8; 32] = [0x55; 32];
+fn test_mkek() -> Option<[u8; 32]> {
+    Some(TEST_MKEK)
+}
+
 fn new_fs() -> Fs<RamStorage> {
     let mut fs = Fs::new(RamStorage::new());
     fs.scan();
@@ -885,9 +893,8 @@ fn cred_sealed_before_otp_burn_survives_the_burn() {
         serial_id: &SERIAL,
         otp_key: None,
     };
-    let otp_key = [0x55u8; 32];
     let otp = Device {
-        otp_key: Some(&otp_key),
+        otp_key: Some(&TEST_MKEK),
         ..nootp
     };
     // Seal a credential blob under the pre-OTP arm (content is opaque to the
@@ -989,7 +996,6 @@ fn otp_pin_set_before_burn_still_verifies_after_burn() {
     let mut fs = new_fs();
     let rng = RefCell::new(CountRng(7));
     let touch = RefCell::new(AlwaysConfirm);
-    let otp_key = [0x55u8; 32];
 
     // Pre-burn: set the OTP-PIN (v1 under the NO-OTP kbase).
     {
@@ -1003,7 +1009,7 @@ fn otp_pin_set_before_burn_still_verifies_after_burn() {
     }
 
     // Post-burn: the same PIN must still verify, via the without_otp fallback.
-    let mut app = OathApplet::new(SERIAL, [0x22; 32], Some(otp_key), &rng, &touch);
+    let mut app = OathApplet::new(SERIAL, [0x22; 32], Some(test_mkek), &rng, &touch);
     let (sw, _) = run(
         &mut app,
         &mut fs,
@@ -1015,7 +1021,7 @@ fn otp_pin_set_before_burn_still_verifies_after_burn() {
     let otp_dev = Device {
         serial_hash: &[0x22; 32],
         serial_id: &SERIAL,
-        otp_key: Some(&otp_key),
+        otp_key: Some(&TEST_MKEK),
     };
     let mut rec = [0u8; 34];
     assert_eq!(fs.read(EF_OTP_PIN, &mut rec), Some(34));

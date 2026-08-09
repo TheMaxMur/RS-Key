@@ -146,7 +146,8 @@ where
             // before the policy was raised may be shorter than `expected`.)
             match self.collect_pin(title, caption, 4, expected, &mut pin, true) {
                 rsk_fido::PinEntry::Entered(len) => {
-                    let dev = self.keys.device();
+                    let mkek = read_fused(self.keys.mkek_source);
+                    let dev = self.keys.device(&mkek);
                     let verdict = match scope {
                         PinScope::Device => rsk_fido::passkeys::spend_and_verify_device_pin(
                             &dev,

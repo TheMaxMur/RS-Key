@@ -8,6 +8,7 @@
 
 use core::cell::RefCell;
 
+use rsk_crypto::FusedKey;
 use rsk_fs::{Fs, Storage};
 
 use rsk_mgmt::ManagementApplet;
@@ -131,8 +132,8 @@ impl<'a, S: Storage, R: crate::Rng + 'static, VP: rsk_vendor::Platform> CcidAppl
         vendor_platform: VP,
         serial_id: [u8; 8],
         serial_hash: [u8; 32],
-        otp_key: Option<[u8; 32]>,
-        devk: Option<fn() -> Option<[u8; 32]>>,
+        mkek_source: Option<FusedKey>,
+        devk: Option<FusedKey>,
         kv_total: u32,
         flash_size: u32,
         openpgp_mfr: u16,
@@ -146,22 +147,22 @@ impl<'a, S: Storage, R: crate::Rng + 'static, VP: rsk_vendor::Platform> CcidAppl
             // as the rescue applet (one `&RefCell<Presence>` behind two traits),
             // closing the cross-AID bypass of that gate.
             vendor: VendorApplet::new(vendor_platform, presence),
-            openpgp: OpenpgpApplet::new(serial_id, serial_hash, otp_key, rng, presence)
+            openpgp: OpenpgpApplet::new(serial_id, serial_hash, mkek_source, rng, presence)
                 .with_manufacturer(openpgp_mfr),
             management: ManagementApplet::new(serial_id, presence),
             // Touch-flagged OATH credentials gate CALCULATE on the same button.
-            oath: OathApplet::new(serial_id, serial_hash, otp_key, rng, presence),
-            otp: OtpApplet::new(serial_id, serial_hash, otp_key, rng, presence),
+            oath: OathApplet::new(serial_id, serial_hash, mkek_source, rng, presence),
+            otp: OtpApplet::new(serial_id, serial_hash, mkek_source, rng, presence),
             // PIV reuses the OpenPGP user-presence trait, so the same presence
             // source drives its slot/management touch policies.
-            piv: PivApplet::new(serial_id, serial_hash, otp_key, rng, presence),
+            piv: PivApplet::new(serial_id, serial_hash, mkek_source, rng, presence),
             // The recovery/provisioning interface: phy config, flash stats,
             // secure-boot status, session RTC, device-key attestation, reboot.
             // Registered last so the fast-path indices above stay valid.
             rescue: RescueApplet::new(
                 serial_id,
                 serial_hash,
-                otp_key,
+                mkek_source,
                 devk,
                 rng,
                 platform,

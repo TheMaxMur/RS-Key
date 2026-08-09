@@ -302,7 +302,8 @@ where
     /// three reads (the device is taken first, so the OATH unseal-walk and the `fs` borrow
     /// don't overlap). Borrow-safe like [`Self::load_rps`] — the worker is parked here.
     fn load_apps(&self) -> rsk_ui::AppsView {
-        let dev = self.keys.device();
+        let mkek = read_fused(self.keys.mkek_source);
+        let dev = self.keys.device(&mkek);
         let mut fs = self.fs.borrow_mut();
         let openpgp_keys = rsk_openpgp::info::read_info(&mut fs).key_count();
         let piv_slots = rsk_piv::info::read_info(&mut fs).populated();
@@ -870,7 +871,8 @@ where
         };
         let Some(nbits) = rsa_nbits else {
             // EC / Ed25519 / X25519 are instant.
-            let dev = self.keys.device();
+            let mkek = read_fused(self.keys.mkek_source);
+            let dev = self.keys.device(&mkek);
             let mut rng = self.rng.borrow_mut();
             let mut fs = self.fs.borrow_mut();
             return match rsk_piv::info::next_free_retired(&mut fs) {
@@ -883,7 +885,8 @@ where
         let Some(key) = self.piv_search_rsa(nbits) else {
             return false;
         };
-        let dev = self.keys.device();
+        let mkek = read_fused(self.keys.mkek_source);
+        let dev = self.keys.device(&mkek);
         let mut rng = self.rng.borrow_mut();
         let mut fs = self.fs.borrow_mut();
         match rsk_piv::info::next_free_retired(&mut fs) {
@@ -923,7 +926,8 @@ where
     /// and the true total. Each credential is device-unsealed inside the enumerator (the
     /// display never holds the secret); borrow-safe like [`Self::load_rps`].
     fn load_oath(&self, rows: &mut [rsk_ui::OathRow], page: u16) -> (usize, u16) {
-        let dev = self.keys.device();
+        let mkek = read_fused(self.keys.mkek_source);
+        let dev = self.keys.device(&mkek);
         let offset = page as usize * rsk_ui::PK_ROWS_MAX;
         let mut fs = self.fs.borrow_mut();
         let mut idx = 0usize;
@@ -1012,7 +1016,8 @@ where
     /// Build one OATH credential's detail by its global list position. Re-enumerates (the
     /// display holds no secret), clamps the picked credential's metadata for display.
     fn load_oath_cred(&self, idx: usize) -> rsk_ui::OathDetailView {
-        let dev = self.keys.device();
+        let mkek = read_fused(self.keys.mkek_source);
+        let dev = self.keys.device(&mkek);
         let mut fs = self.fs.borrow_mut();
         let mut view = rsk_ui::OathDetailView::default();
         let mut i = 0usize;
@@ -1072,7 +1077,8 @@ where
     /// the kept count and the true total. Reads + decrypts from the shared store; the
     /// seed is loaded and zeroized inside the enumerator (the display never holds it).
     fn load_rps(&self, rows: &mut [RpRow], hashes: &mut [[u8; 32]], page: u16) -> (usize, u16) {
-        let dev = self.keys.device();
+        let mkek = read_fused(self.keys.mkek_source);
+        let dev = self.keys.device(&mkek);
         let offset = page as usize * rsk_ui::PK_ROWS_MAX;
         let mut store = self.fs.borrow_mut();
         let mut idx = 0usize;
@@ -1105,7 +1111,8 @@ where
     /// entry marks the session boundary and older rows show no time (no wall clock).
     /// Borrow-safe like [`Self::load_rps`] (the worker is parked while this modal runs).
     fn load_events(&self, rows: &mut [AuditRow], page: u16) -> (usize, u16) {
-        let dev = self.keys.device();
+        let mkek = read_fused(self.keys.mkek_source);
+        let dev = self.keys.device(&mkek);
         // Cap the live clock at the journal's own resolution: `build_entry` saturates the
         // stored `uptime_ms` to `u32::MAX`, so after ~49.7 days of continuous uptime both
         // sides saturate together and a just-logged event still reads "now" rather than a

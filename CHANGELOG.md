@@ -77,6 +77,18 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   memory-disclosure bug reaches. It changes nothing against an attacker already
   executing code on the device, who has the store root in RAM either way.
 
+- **Neither is the fused master key.** The DEVK change left the bigger secret
+  behind: the MKEK — the root every sealed record hangs off — was read once at
+  boot and then copied *by value* into eight owners (the CTAP handler, all five
+  CCID applets, the display's key block, and `main`'s own local), each resident at
+  a fixed address for the whole power cycle. The derived material never was: every
+  `derive_kbase` recomputes and zeroizes. So the raw fuse value was the only thing
+  actually parked in RAM, and it was parked eight times. All eight now hold a
+  reader; the key exists only inside the operation that asked for it, which puts
+  it out of reach of a parser bug — parsing happens before any store access. Same
+  scope as the DEVK change: nothing against code execution. Measured cost of the
+  read: **48 µs**, against 8.9 ms for the cheapest crypto step it precedes.
+
 ### Fixed
 
 - **A signed release image did not boot on a secure-boot device.** `picotool

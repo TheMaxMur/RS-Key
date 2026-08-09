@@ -3011,6 +3011,11 @@ fn torn_import_leaves_no_attestable_origin() {
 #[test]
 fn kbase_migration_reseals_slots_and_pin_falls_back() {
     const OTP: [u8; 32] = [0x44; 32];
+    // The applet holds a way to READ the fuses, not the key, so its test source has
+    // to be a plain `fn` — a closure over `OTP` could not coerce to one.
+    fn otp_source() -> Option<[u8; 32]> {
+        Some(OTP)
+    }
     // Provision under a pre-OTP device: defaults + a generated 9A key.
     let rng = RefCell::new(TestRng(7));
     let pres = RefCell::new(AlwaysConfirm);
@@ -3043,7 +3048,7 @@ fn kbase_migration_reseals_slots_and_pin_falls_back() {
     // authenticates, the default PIN verifies via the fallback (and once
     // more directly against the re-stored verifier), and slot 9A signs with
     // the SAME key it had before the migration.
-    let mut app2 = PivApplet::new(SERIAL, HASH, Some(OTP), &rng, &pres);
+    let mut app2 = PivApplet::new(SERIAL, HASH, Some(otp_source as FusedKey), &rng, &pres);
     select(&mut app2, &mut fs);
     auth_mgm(&mut app2, &mut fs);
     verify_pin(&mut app2, &mut fs);

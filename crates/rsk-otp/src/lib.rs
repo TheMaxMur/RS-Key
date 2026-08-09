@@ -9,7 +9,7 @@
 
 use core::cell::RefCell;
 
-use rsk_crypto::{Device, aes128_encrypt_block, ct_eq, hmac_sha1};
+use rsk_crypto::{Device, FusedKey, FusedRead, aes128_encrypt_block, ct_eq, hmac_sha1, read_fused};
 use rsk_fs::{Fs, KeyFid, Storage};
 pub use rsk_sdk::Confirm;
 use rsk_sdk::{Apdu, Applet, ResBuf, Sw};
@@ -227,8 +227,9 @@ const SW_WRONG_DATA: Sw = Sw::WRONG_LENGTH;
 pub struct OtpApplet<'a> {
     serial_id: [u8; 8],
     serial_hash: [u8; 32],
-    /// The OTP MKEK, once provisioned — roots the slot seal in the hardware fuse.
-    otp_key: Option<[u8; 32]>,
+    /// How to read the OTP MKEK that roots the slot seal — never the key itself,
+    /// so no copy of it sits in this applet's memory between operations.
+    mkek_source: Option<FusedKey>,
     rng: &'a RefCell<dyn Rng>,
     presence: &'a RefCell<dyn UserPresence>,
     /// Status-record sequence number; bumped on every config write, reset on
@@ -243,14 +244,14 @@ impl<'a> OtpApplet<'a> {
     pub fn new(
         serial_id: [u8; 8],
         serial_hash: [u8; 32],
-        otp_key: Option<[u8; 32]>,
+        mkek_source: Option<FusedKey>,
         rng: &'a RefCell<dyn Rng>,
         presence: &'a RefCell<dyn UserPresence>,
     ) -> Self {
         Self {
             serial_id,
             serial_hash,
-            otp_key,
+            mkek_source,
             rng,
             presence,
             config_seq: 1,
@@ -258,11 +259,11 @@ impl<'a> OtpApplet<'a> {
         }
     }
 
-    fn device(&self) -> Device<'_> {
+    fn device<'k>(&'k self, mkek: &'k FusedRead) -> Device<'k> {
         Device {
             serial_hash: &self.serial_hash,
             serial_id: &self.serial_id,
-            otp_key: self.otp_key.as_ref(),
+            otp_key: mkek.as_deref(),
         }
     }
 
@@ -275,13 +276,15 @@ impl<'a> OtpApplet<'a> {
         fid: u16,
         buf: &mut [u8; SLOT_SIZE],
     ) -> Option<usize> {
-        read_slot(&self.device(), fs, fid, buf)
+        let mkek = read_fused(self.mkek_source);
+        read_slot(&self.device(&mkek), fs, fid, buf)
     }
 
     /// Seal+write a slot record. `false` on a storage failure.
     fn put_slot<S: Storage>(&self, fs: &mut Fs<S>, fid: u16, data: &[u8]) -> bool {
+        let mkek = read_fused(self.mkek_source);
         seal::seal_put(
-            &self.device(),
+            &self.device(&mkek),
             fs,
             &mut *self.rng.borrow_mut(),
             KeyFid::new(fid),
