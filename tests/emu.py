@@ -82,8 +82,11 @@ UNSUPPORTED = {
     # gives it the Yubico card identity `30` checks. What it has no hardware for is
     # the LED, the second core's counters and the drop to BOOTSEL.
     "51_secure_reboot": "reboots to BOOTSEL; there is no bootloader to fall into",
-    # Below the applet layer: the emulator serves reports and APDUs, not USB.
-    "02_usb_interfaces": "reads the USB descriptors; the emulator has no USB",
+    # Below the applet layer: this shim serves reports and APDUs, not USB. The
+    # emulator itself does have a USB stack now — `--usbip` attaches it to a Linux
+    # host as a real device — but that path needs no shim, so these run there as
+    # ordinary hardware suites rather than through here.
+    "02_usb_interfaces": "reads the USB descriptors; this shim serves reports",
     "73_otp_keyboard": "drives the OTP keyboard interface over raw USB",
     "77_otp_touch_wait": "drives the OTP keyboard interface over raw USB",
     "53_ccid_pinpad": "needs the PC/SC reader's FEATURE_VERIFY_PIN_DIRECT layer",
@@ -188,7 +191,11 @@ def _enumerate(vid=0, pid=0):
         {
             "path": EMU_PATH,
             "vendor_id": 0x1209,
-            "product_id": 0x000D,
+            # The default build's identity (`VIDPID=RSKey`), which is also what
+            # `--usbip` presents. It was 0x000D here and in the USB/IP device
+            # info — a number neither the firmware nor its build script has ever
+            # produced, written twice from the same guess.
+            "product_id": 0x0001,
             "serial_number": EMU_SERIAL,
             "product_string": EMU_PRODUCT,
             "manufacturer_string": "RS-Key",
