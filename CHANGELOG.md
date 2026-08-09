@@ -166,6 +166,33 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   sit behind a `Hooks` trait whose defaults are exact no-ops. Behaviour and wire
   surface unchanged; no `bcdDevice` bump.
 
+### Changed
+
+- **CI stopped building 24 firmware images for a documentation edit.** Every pull
+  request ran the whole package — the gate, every feature flavour, every build
+  knob — while `scripts/docs.sh check` ran in no workflow at all, so a docs-only
+  change got 26 heavy jobs and zero link checking. `scripts/ci-scope.sh` now
+  classifies a change and the jobs gate on it: the flavour matrix and the knob
+  smokes want firmware, `crates/`, a toolchain pin or `nix/firmware.nix`; the
+  emulator suites want the code they run; a documentation-only change runs the
+  new `docs` job and nothing else. The rules are a script with a `--self-test`
+  that `check.sh` runs, not a `paths:` filter, because their failure direction is
+  a job that silently does not run. Two things stay unconditional: the mdBook
+  build with its link check, and gitleaks — a secret scan that can be skipped is
+  not a secret scan.
+
+- **The firmware matrix stopped rebuilding from cold every time.** All 24 flavour
+  rows shared one cargo cache key with each other *and* with the gate, so they
+  raced to write the same entry while each restored a `target/` some other feature
+  set had built — a matrix whose entire point is that the rows differ, thrashing a
+  cache on that difference. Each row now has its own key. The build-knob smokes,
+  which ran thirteen VIDPID presets and five env builds in sequence as the
+  workflow's slowest job, moved into `scripts/ci-knobs.sh` and run as five
+  parallel rows; grouped rather than one row per preset, because a public repo
+  gets 20 concurrent runners and the flavour matrix already wants 24. The script
+  and the matrix name the same groups in two places, so `check.sh` checks they
+  still agree — a group only the script knows about is a smoke nobody runs.
+
 ### Fixed
 
 - **On-panel settings were lost if the key was unplugged with the menu still

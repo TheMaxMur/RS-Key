@@ -245,6 +245,10 @@ run "cargo-vet (supply-chain)" cargo vet --locked
 # and nothing in the type system notices a missing arm. OATH's was absent for a
 # release (audit run-36); this is the check that would have caught it.
 run "gate-union (device wipe)" python scripts/gate_union.py
+# CI skips jobs on these rules, and a wrong one skips a job silently — the one
+# failure direction nothing else would report.
+run "ci scope rules"           ./scripts/ci-scope.sh --self-test
+run "ci knob groups"           ./scripts/ci-knobs.sh --self-test
 run "docs constants match code" python scripts/docs_constants.py
 run "pytest (tools/rsk)"       python -m pytest tools/rsk -q
 # The interop allow-list is the only thing that tells an expected RS-Key/YubiKey

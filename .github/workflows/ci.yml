@@ -1,7 +1,16 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 RS-Key contributors
 
-# Three jobs:
+# Five jobs:
+#   changes — what this change can possibly affect (`scripts/ci-scope.sh`), so a
+#             documentation edit does not build 24 firmware images. Gating is by
+#             `if:` on the jobs rather than `paths:` on the trigger: a skipped
+#             JOB still reports, a skipped WORKFLOW reports nothing, and the
+#             second kind is the one that quietly hides a missing check.
+#   docs    — the mdBook build + link check, and gitleaks. Always. It is the only
+#             job a documentation-only change runs, so the secret scan lives here
+#             too — `check.sh` runs it as well, and one that can be skipped is
+#             not a secret scan.
 #   check   — the merge gate, the same single source of truth as local work:
 #             `nix develop -c ./scripts/check.sh` (docs/testing.md, "CI parity").
 #             Green locally means green here; no CI-only logic to drift.
@@ -31,7 +40,62 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      firmware: ${{ steps.scope.outputs.firmware }}
+      docs_only: ${{ steps.scope.outputs.docs_only }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      # The refs go through `env`, never through `${{ }}` inside the script: a
+      # branch name is attacker-supplied on a fork PR, and the difference is a
+      # shell injection.
+      - name: what changed
+        id: scope
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.base_ref }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          files=""
+          if [ "$EVENT" = "pull_request" ]; then
+            files="$(git diff --name-only "origin/$BASE...HEAD")"
+          elif [ -n "$BEFORE" ] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            files="$(git diff --name-only "$BEFORE" HEAD)"
+          fi
+          # An empty list means we could not work out a base — ci-scope.sh reads
+          # that as "everything", which is the direction a mistake should fail in.
+          printf '%s\n' "$files"
+          printf '%s\n' "$files" | ./scripts/ci-scope.sh | tee -a "$GITHUB_OUTPUT"
+
+  docs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+
+      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+
+      - name: docs build + link check
+        run: nix develop -c ./scripts/docs.sh check
+
+      - name: gitleaks
+        run: nix develop -c gitleaks detect --no-banner --redact
+
   check:
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
@@ -52,8 +116,8 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'flake.lock') }}
-          restore-keys: cargo-${{ runner.os }}-
+          key: cargo-check-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'flake.lock') }}
+          restore-keys: cargo-check-${{ runner.os }}-
 
       - name: check.sh — fmt, clippy, host tests, fips flavor, firmware builds, audit, deny, gitleaks
         run: nix develop -c ./scripts/check.sh
@@ -61,6 +125,8 @@ jobs:
           HOST_TARGET: x86_64-unknown-linux-gnu
 
   flavors:
+    needs: changes
+    if: needs.changes.outputs.firmware == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -154,8 +220,12 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'flake.lock') }}
-          restore-keys: cargo-${{ runner.os }}-
+          # One key per flavour. Sharing it meant 24 jobs racing to write the
+          # same entry while each restored a `target/` another feature set had
+          # built — so a matrix whose whole point is that the rows differ was
+          # rebuilding from cold, and thrashing the cache doing it.
+          key: cargo-flavor-${{ matrix.name }}-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'flake.lock') }}
+          restore-keys: cargo-flavor-${{ matrix.name }}-${{ runner.os }}-
 
       - name: build (${{ matrix.name }})
         run: nix develop -c env ${{ matrix.env }} cargo build --release -p firmware ${{ matrix.args }}
@@ -173,8 +243,18 @@ jobs:
           path: firmware-${{ matrix.name }}.uf2
 
   knobs:
+    needs: changes
+    if: needs.changes.outputs.firmware == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        # `scripts/ci-knobs.sh --groups` is the list; keep the two in step, since
+        # a group nobody names is a smoke nobody runs. Grouped rather than one row
+        # per preset: a public repo gets 20 concurrent runners and `flavors`
+        # already wants 24, so past that more rows buy queue time, not wall-clock.
+        group: [vidpid-1, vidpid-2, vidpid-3, identity, misc]
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -191,44 +271,8 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'flake.lock') }}
-          restore-keys: cargo-${{ runner.os }}-
+          key: cargo-knobs-${{ matrix.group }}-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'flake.lock') }}
+          restore-keys: cargo-knobs-${{ matrix.group }}-${{ runner.os }}-
 
-      - name: every VIDPID preset builds
-        run: |
-          for preset in RSKey Yubikey5 YubikeyNeo YubiHSM NitroHSM NitroFIDO2 NitroStart NitroPro Nitro3 Gnuk GnuPG Pico Dev; do
-            echo "::group::VIDPID=$preset"
-            nix develop -c env VIDPID="$preset" cargo build --release -p firmware
-            echo "::endgroup::"
-          done
-
-      - name: default identity is RS-Key, Yubico flavor is opt-in
-        run: |
-          nix develop -c bash -euo pipefail -c '
-            o=target/thumbv8m.main-none-eabihf/release/build/firmware-*/output
-            cargo clean -p firmware
-            cargo build --release -p firmware >/dev/null
-            grep -qx "cargo:rustc-env=PK_USB_VID=4617" $o
-            grep -qx "cargo:rustc-env=PK_USB_MANUFACTURER=RS-Key" $o
-            grep -qx "cargo:rustc-env=PK_USB_PRODUCT=RS-Key Security Key" $o
-            env VIDPID=Yubikey5 cargo build --release -p firmware >/dev/null
-            grep -qx "cargo:rustc-env=PK_USB_VID=4176" $o
-            grep -qx "cargo:rustc-env=PK_USB_MANUFACTURER=Yubico" $o
-            echo "default = RS-Key identity, Yubikey5 = Yubico identity: OK"
-          '
-
-      - name: raw USB_VID/USB_PID override
-        run: nix develop -c env VIDPID=Dev USB_VID=0xFEFF USB_PID=0x0001 cargo build --release -p firmware
-
-      - name: FW_VERSION + masquerade preset (the docs example)
-        run: nix develop -c env VIDPID=NitroFIDO2 FW_VERSION=1.4.0 cargo build --release -p firmware
-
-      - name: hardened XOSC startup delay
-        run: nix develop -c env XOSC_DELAY_MULT=512 cargo build --release -p firmware
-
-      - name: FAKE_MKEK / FAKE_DEVK test build
-        run: |
-          nix develop -c env \
-            FAKE_MKEK=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
-            FAKE_DEVK=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
-            cargo build --release -p firmware
+      - name: knobs (${{ matrix.group }})
+        run: nix develop -c ./scripts/ci-knobs.sh ${{ matrix.group }}

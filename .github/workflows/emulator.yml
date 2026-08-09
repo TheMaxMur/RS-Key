@@ -9,12 +9,12 @@
 # could run them. This is the job that stops that happening again.
 #
 # On pull requests as well as nightly, because a stale test is cheapest to find
-# in the change that staled it.
+# in the change that staled it. Gated on `scripts/ci-scope.sh` so an edit that
+# cannot reach the emulator does not boot one.
 #
 # What is NOT here yet is the half that wants real USB — `02`, `61`, `65`, `73`,
-# `77` and the pico-fido conformance suite. Those need `vhci_hcd` on the runner
-# and `tools/emu --usbip`; whether a GitHub-hosted runner carries that module is
-# unverified, and an unverified CI job is worse than a named gap.
+# `77` and the pico-fido conformance suite. Those need `vhci_hcd`, which a
+# GitHub-hosted runner cannot provide.
 
 name: emulator
 
@@ -33,7 +33,40 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  suites:
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      emulator: ${{ steps.scope.outputs.emulator }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      # The refs go through `env`, never through `${{ }}` inside the script: a
+      # branch name is attacker-supplied on a fork PR, and the difference is a
+      # shell injection.
+      - name: what changed
+        id: scope
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.base_ref }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          files=""
+          if [ "$EVENT" = "pull_request" ]; then
+            files="$(git diff --name-only "origin/$BASE...HEAD")"
+          elif [ -n "$BEFORE" ] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            files="$(git diff --name-only "$BEFORE" HEAD)"
+          fi
+          # Empty means we could not work out a base (a schedule run, a new
+          # branch) — ci-scope.sh reads that as "everything", which is the
+          # direction a mistake should fail in.
+          printf '%s\n' "$files" | ./scripts/ci-scope.sh | tee -a "$GITHUB_OUTPUT"
+
+  sockets:
+    needs: changes
+    if: needs.changes.outputs.emulator == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
