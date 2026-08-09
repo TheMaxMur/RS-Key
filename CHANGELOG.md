@@ -29,10 +29,27 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 > upgrade in place**: their stores end far below the E10 block and their layouts
 > are byte-identical to 0.4.7.
 >
-> Kept at the top rather than in 0.4.8's notes below, because the people it
-> concerns are the ones arriving later, after that section has scrolled away.
+> Kept here as well as in the release's own notes below: this banner is for
+> whoever opens the file, and the copy inside the release section is what the
+> release page shows — `release-build.yml` builds the notes from that section
+> alone, so a warning only at the top would never reach it. **Carry the copy
+> forward into each new version's section while pre-0.4.8 16 MB keys are still
+> out there.**
 
 ## [Unreleased]
+
+> ### ⚠️ Upgrading a 16 MB key provisioned before 0.4.8 wipes it
+>
+> **Export your seed first** ([seed backup](docs/guides/seed-backup.md)).
+>
+> 0.4.8 moved the KV store on a 16 MB part 4 KB down — 0.4.7's partition table
+> claimed the chip's last sector, which holds the `0x10FFFF00` block the bootrom's
+> RP2350-E10 workaround owns, so the 16 MB images could not be built at all. A key
+> provisioned with an older 16 MB build comes up factory-empty: no passkeys, no
+> OpenPGP or PIV keys, no OATH credentials.
+>
+> The 16 MB flavors only — `display` and `16mb`, and the `abrobot-16m` and
+> `waveshare-touch-lcd` board presets. **4 MB and 2 MB keys upgrade in place.**
 
 ### Added
 
