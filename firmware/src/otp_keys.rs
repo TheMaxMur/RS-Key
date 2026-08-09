@@ -84,14 +84,16 @@ pub fn bench_key_read() -> u32 {
 /// read-write — this firmware runs entirely secure). The irreversible LOCK1
 /// fuse below is the permanent counterpart.
 ///
-/// Closing the *secure* side as well, once [`read_mkek`] has run, would
-/// deny a later code-execution bug a second read of the fuses. It does not work:
-/// SW_LOCK is documented to re-initialise from the OTP lock pages "at reset", but
-/// measured on A4 it **survives `SCB::sys_reset`** (only the bootrom path clears
-/// it). The vendor warm reboot would therefore come back to a page it cannot
-/// read, fall through to the pre-OTP key arm, and lose access to its own sealed
-/// records until a power cycle. Do not add `set_sec` here without changing what
-/// that reboot does.
+/// Closing the *secure* side as well would deny a later code-execution bug any
+/// read of the fuses. Do not: [`read_mkek`] and [`read_devk`] are now called per
+/// operation, so it would break the running power cycle outright — every applet
+/// would drop to the pre-OTP arm and lose its own sealed records — and not only
+/// the next boot, which is how this read before the keys stopped being resident.
+/// The next boot is lost too: SW_LOCK is documented to re-initialise from the OTP
+/// lock pages "at reset", but measured on A4 it **survives `SCB::sys_reset`**
+/// (only the bootrom path clears it), so the vendor warm reboot comes back to an
+/// unreadable page. Making that reboot cold is not the way out either — the
+/// clientPIN soft lock keys on a power-on (`pin_lock`, CTAP 2.1 §6.5.5.6).
 pub fn sw_lock_key_page() {
     rp_pac::OTP.sw_lock(KEY_PAGE).write(|w| {
         w.set_nsec(rp_pac::otp::vals::SwLockNsec::Inaccessible);
