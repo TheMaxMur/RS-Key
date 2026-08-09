@@ -179,15 +179,20 @@ board**, rotation, and recovery.
 #    the signature does not cover the fence (build.md#the-partition-table).
 cargo build --release -p firmware
 scripts/pt.sh target/thumbv8m.main-none-eabihf/release/firmware firmware-pt.elf
-picotool uf2 convert firmware-pt.elf -t elf firmware.uf2
-#    (or a single `nix build .#firmware`, whose result/firmware.uf2 already has it)
+#    (or a single `nix build .#firmware`, whose result/firmware.elf already has it)
 
-# 2. sign it. otp_secureboot.json does NOT exist yet: you pick the path, and
-#    `seal` creates the file there. It is the artifact stage 2c fuses.
-picotool seal --sign --hash firmware.uf2 firmware-signed.uf2 \
+# 2. sign the ELF — NOT the UF2, and convert afterwards. `seal` retires the
+#    image's own IMAGE_DEF (the linker's, carrying no signature and no rollback
+#    version) only when handed an ELF; given a UF2 it appends its signed block and
+#    leaves that one live and FIRST, which a SECURE_BOOT_ENABLE + ROLLBACK_REQUIRED
+#    device meets first and refuses — while the host still prints
+#    "signature: verified". otp_secureboot.json does NOT exist yet: you pick the
+#    path, and `seal` creates the file there. It is the artifact stage 2c fuses.
+picotool seal --sign --hash firmware-pt.elf -t elf firmware-signed.elf -t elf \
     ~/.rs-key-secrets/secure_boot_key.pem ~/.rs-key-secrets/otp_secureboot.json \
     --major 1 --minor 0 --rollback 1
-picotool info firmware-signed.uf2              # must say "signature: verified"
+picotool uf2 convert firmware-signed.elf -t elf firmware-signed.uf2
+picotool info -a firmware-signed.elf   # "signature: verified", and block 1 "ignored"
 ls -l ~/.rs-key-secrets/otp_secureboot.json    # seal wrote this; 2c needs it
 
 # 3. BOOTSEL, then flash + confirm the device works:
@@ -288,10 +293,11 @@ Re-drag the signed one to recover.
 ```sh
 cargo build --release -p firmware
 scripts/pt.sh target/thumbv8m.main-none-eabihf/release/firmware firmware-pt.elf
-picotool uf2 convert firmware-pt.elf -t elf firmware.uf2
-picotool seal --sign --hash firmware.uf2 firmware-signed.uf2 \
+# seal the ELF, convert after — a UF2 in leaves the unsigned IMAGE_DEF first (2b)
+picotool seal --sign --hash firmware-pt.elf -t elf firmware-signed.elf -t elf \
     ~/.rs-key-secrets/secure_boot_key.pem ~/.rs-key-secrets/otp_secureboot.json \
     --major 1 --minor 0 --rollback 1
+picotool uf2 convert firmware-signed.elf -t elf firmware-signed.uf2
 # BOOTSEL (hands-free: rsk reboot bootsel), then:
 picotool load -v firmware-signed.uf2 && picotool reboot   # or drag it onto the RP2350 drive
 ```

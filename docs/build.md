@@ -23,8 +23,9 @@ flowchart TD
     pt --> conv["picotool uf2 convert"]
     conv --> uf2["firmware.uf2"]
     uf2 --> flash["BOOTSEL flash"]
-    uf2 -. "secure boot only" .-> seal["picotool seal --sign<br/>signing key (host-only)"]
-    seal -.-> signed["firmware-signed.uf2"]
+    pt -. "secure boot only — seal the ELF" .-> seal["picotool seal --sign<br/>signing key (host-only)"]
+    seal -.-> sconv["picotool uf2 convert"]
+    sconv -.-> signed["firmware-signed.uf2"]
     signed -.-> flash
 ```
 
@@ -227,9 +228,12 @@ Two caveats:
 - **The output is UNSIGNED.** On a secure-boot device you still seal it with
   your key. The signing key deliberately never enters the build sandbox:
   ```sh
-  picotool seal --sign --hash result/firmware.uf2 firmware-signed.uf2 \
+  # the ELF, not the UF2: sealing a UF2 leaves the image's own unsigned
+  # IMAGE_DEF first in the chain, and a secure-boot device refuses that
+  picotool seal --sign --hash result/firmware.elf -t elf firmware-signed.elf -t elf \
       ~/.rs-key-secrets/secure_boot_key.pem ~/.rs-key-secrets/otp_secureboot.json \
       --major 1 --minor 0 --rollback 1
+  picotool uf2 convert firmware-signed.elf -t elf firmware-signed.uf2
   ```
   The `.pem` is your signing key, the `.json` is where `seal` writes the
   boot-key fingerprint, and `--major`/`--minor` stamp an **image version** into

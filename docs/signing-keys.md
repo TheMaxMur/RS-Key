@@ -113,7 +113,7 @@ enabling enforcement yet:
 
 ```sh
 # seal once to produce the otp.json (also see production.md, stage 2b):
-picotool seal --sign --hash firmware.uf2 firmware-signed.uf2 \
+picotool seal --sign --hash firmware-pt.elf -t elf firmware-signed.elf -t elf \
     ~/.rs-key-secrets/secure_boot_key.pem ~/.rs-key-secrets/otp_secureboot.json \
     --major 1 --minor 0 --rollback 1
 rsk secure-boot status                          # bootkey present: False
@@ -137,8 +137,9 @@ straight after:
 # decrypt for the seal only — best on a RAM-backed dir so the plaintext never
 # touches disk; openssl prompts for the passphrase:
 ( umask 077; openssl ec -in ~/.rs-key-secrets/secure_boot_key.pem -out /tmp/sk.pem )
-picotool seal --sign --hash firmware.uf2 firmware-signed.uf2 \
+picotool seal --sign --hash firmware-pt.elf -t elf firmware-signed.elf -t elf \
     /tmp/sk.pem ~/.rs-key-secrets/otp_secureboot.json --major 1 --minor 0 --rollback 1
+picotool uf2 convert firmware-signed.elf -t elf firmware-signed.uf2
 rm -P /tmp/sk.pem        # overwrite + delete (Linux: shred -u /tmp/sk.pem)
 # BOOTSEL, then:
 picotool load -v firmware-signed.uf2 && picotool reboot   # or drag it onto the RP2350 drive

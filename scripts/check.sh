@@ -120,6 +120,37 @@ partition_table_fences_the_store() {
   echo "store partition $got, NSBOOT denied; firmware partition writable"
 }
 
+# `picotool seal --sign` retires the image's own IMAGE_DEF — the one the linker
+# put in `.start_block`, which carries no signature and no rollback version — by
+# rewriting it to `ignored`, and appends its signed one. It only does that when
+# it is handed the **ELF**. Given a UF2 it appends and leaves the original live,
+# and a board with SECURE_BOOT_ENABLE + ROLLBACK_REQUIRED walks the chain, meets
+# that first block, and refuses the whole image. Nothing on the host notices:
+# `picotool info` still says "signature: verified", because it reports the block
+# it found last. The documented ritual said UF2, so every signed release since
+# the partition table landed (0x0871) would have bricked a provisioned key until
+# it was reflashed — measured on one. A throwaway key keeps this offline; the
+# real one never enters the gate.
+release_image_retires_its_unsigned_image_def() {
+  local elf dir key first
+  elf="target/thumbv8m.main-none-eabihf/release/firmware"
+  dir=$(mktemp -d)
+  key="$dir/throwaway.pem"
+  openssl ecparam -genkey -name secp256k1 -noout -out "$key" 2>/dev/null
+  scripts/pt.sh "$elf" "$dir/pt.elf" 2>/dev/null
+  picotool seal --sign --hash "$dir/pt.elf" -t elf "$dir/signed.elf" -t elf \
+    "$key" "$dir/otp.json" --major 1 --minor 0 --rollback 1 >/dev/null
+  first=$(picotool info -a "$dir/signed.elf" |
+    awk '/Metadata Block 1/ { f = 1 } f && /block type:/ { print $3; exit }')
+  if [ "$first" != "ignored" ]; then
+    echo "FAIL: the sealed image's first metadata block is '$first', want 'ignored'." >&2
+    echo "      A live unsigned IMAGE_DEF ahead of the signed one does not boot on a" >&2
+    echo "      secure-boot device. Seal the ELF, then convert to UF2 — not the reverse." >&2
+    exit 1
+  fi
+  echo "sealed image retires its unsigned IMAGE_DEF (block 1 = ignored)"
+}
+
 run "fmt"                      cargo fmt --all --check
 # `BOARD` because `rsk-wipe`'s build script refuses to guess a flash size (see
 # the rsk-wipe steps below); `waveshare-one` is the reference board, whose
@@ -211,6 +242,7 @@ run "build firmware (release)" cargo build --release -p firmware
 run "firmware size budget"     firmware_size_budget
 run "firmware stack floor"     firmware_stack_floor
 run "partition table fences the store" partition_table_fences_the_store
+run "sealed image retires its unsigned IMAGE_DEF" release_image_retires_its_unsigned_image_def
 # The 16 MB geometry is the one that broke: the store used to end at the top of
 # the XIP window, where the bootrom's RP2350-E10 absolute block lives, and
 # `picotool partition create` refuses a table claiming it — a build the release

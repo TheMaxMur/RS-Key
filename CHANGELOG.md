@@ -69,11 +69,27 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   memory-disclosure bug reaches. It changes nothing against an attacker already
   executing code on the device, who has the store root in RAM either way.
 
+### Fixed
+
+- **A signed release image did not boot on a secure-boot device.** `picotool
+  seal --sign` retires the image's own `IMAGE_DEF` — the linker's, carrying no
+  signature and no rollback version — only when it is handed the **ELF**. Given
+  a UF2 it appends its signed block and leaves that first one live, so a board
+  with `SECURE_BOOT_ENABLE` and `ROLLBACK_REQUIRED` meets it first and refuses
+  the image, while the host still prints `signature: verified`. The documented
+  ritual said UF2, so every signed image built that way since the partition
+  table landed (`0x0871`) would fail to boot — found by upgrading a provisioned
+  key, which then would not start until it was reflashed. All five sealing
+  snippets in the docs now seal the ELF and convert afterwards.
+
 ### Added
 
 - The gate asserts a **stack floor** (`FIRMWARE_STACK_FLOOR_KIB`, alongside the
   flash budget). Static RAM had grown 28.5 KiB since `0x082B`, taking the same
   amount off the stack ceiling with nothing measuring it.
+- The gate seals a throwaway-keyed image and asserts its first metadata block is
+  `ignored`, so the sealing order above cannot silently regress. The real signing
+  key stays out of it.
 
 ## [0.4.9] - 2026-08-09
 
