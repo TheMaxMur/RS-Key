@@ -80,18 +80,22 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   that gets fixed fails the run rather than staying listed for ever. Nothing in
   `third_party/` is edited: the run is steered from outside by a pytest plugin.
   Both suites were refreshed from upstream at the same time (commits recorded in
-  `third_party/README.md`, which nothing did before). pico-fido: **212 passed / 13
-  expected divergences / 8 failed**; the OpenPGP card suite grew by ~250 newly
-  enabled tests and fails most of one section. Every listed divergence is a spec
-  citation, not a shrug — and the OpenPGP ones turn out to be a place where the
-  spec contradicts itself (§4.4.1 says a constructed DO is returned *including*
-  its tag and length; §7.2.6's worked example omits it). The new failures are
-  unclassified and deliberately unlisted, so the card half reports rather than
-  gates until they are read. The OpenPGP
-  card suite reaches the card through pyscard alone, so it runs over the
-  emulator's card socket with no PC/SC, no USB and no root — **172 passed, 9
-  failed** — which is what lets it run on any machine rather than one with a
-  reader and a key in it.
+  `third_party/README.md`, which nothing did before). pico-fido: **214 passed / 19
+  expected divergences / 0 failed**. The OpenPGP card suite: **269 passed / 19
+  divergences / 181 deselected / 0 failed** — it reaches the card through pyscard
+  alone, so it runs over the emulator's card socket with no PC/SC, no USB and no
+  root, on any machine rather than one with a reader and a key in it. Both gate.
+  Every listed divergence is a spec citation, not a shrug: where the suite and the
+  spec disagree the spec decides, and one of the refreshed suite's new tests found
+  a real bug (`authenticatorConfigCommands`, below). The OpenPGP entries include a
+  place where the spec contradicts itself (§4.4.1 says a constructed DO is returned
+  *including* its tag and length; §7.2.6's worked example omits it). The
+  deselections are a separate list, and a narrower claim: whole modules exercising
+  a vendor extension RS-Key does not implement — Gnuk's admin-less mode, where PW1
+  gains admin rights, which OpenPGP Card 3.4.1 never mentions. They are removed at
+  collection rather than xfailed because an xfailed test still runs, and these ones
+  block the card's admin PIN on the way past: deselecting the feature took the card
+  suite from 192 failures to 13, and the difference was all cascade.
 
 - **The emulator speaks the OTP frame protocol.** The keyboard interface's feature
   reports — the transport `ykman otp` uses, and the one `ykpers`/KeePassXC drive —
@@ -187,6 +191,14 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   has failed on real hardware ever since and nobody ran it. It now checks the
   decision instead: the keyboard interface serves the frame protocol, the FIDO
   interface must refuse it.
+
+- **`tests/14_up_only_after_reboot.py` passed on one laptop and crashed
+  everywhere else.** It asserts with the credential from an enrolled
+  `ed25519-sk` key and defaults to `~/.ssh/id_ed25519_sk`; on a machine that has
+  never run `ssh-keygen -t ed25519-sk` that is a `FileNotFoundError` traceback,
+  which reads as a device fault. It now skips (77) with the reason. Found by
+  running the emulator sweep on a second machine — which is what the CI job is
+  for.
 
 - **The emulator was building against a different embassy than the firmware.**
   `tools/emu` is a detached workspace, so its `branch = "main"` resolved on its own

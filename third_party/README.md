@@ -47,7 +47,7 @@ python tests/third_party.py openpgp    # the OpenPGP card suite
 ```
 
 It changes nothing in these directories — the run is steered from outside by a
-pytest plugin. Two things it supplies that the suites cannot ask for themselves:
+pytest plugin. Four things it supplies that the suites cannot ask for themselves:
 
 - **the power cycle.** RS-Key takes `authenticatorReset` only inside the CTAP 2.1
   §6.6 power-up window, which an operator reopens by unplugging. pico-fido has no
@@ -57,6 +57,17 @@ pytest plugin. Two things it supplies that the suites cannot ask for themselves:
 - **the divergence list.** Everything RS-Key deliberately does not do for these
   suites is named in `DIVERGENCES` with its reason, as `xfail(strict=True)` — so a
   divergence that gets fixed *fails* the run instead of quietly staying listed.
+- **the inapplicable list.** Whole modules exercising a *vendor extension* RS-Key
+  does not implement — Gnuk's admin-less mode, and clearing PW3 to the empty
+  string — are removed at collection rather than xfailed, because an xfailed test
+  still runs: those modules expect PW3 verification to fail, which on a card
+  without admin-less mode is three wrong admin PINs, and the blocked counter takes
+  every later module with it. This is upstream's own `skip_gnuk_only_tests`
+  fixture, reinstated from outside after upstream deleted it.
+- **the ordering.** `040_pcsc_extra` selects the PIV and Management applets and
+  restores the OpenPGP selection on its last line — a line an xfailed test never
+  reaches. It runs last, so a listed divergence cannot leave the next section
+  talking to the wrong applet.
 
 The two suites need different amounts of machine. `openpgp` reaches the card
 through pyscard alone, so the emulator's card socket stands in for the reader —

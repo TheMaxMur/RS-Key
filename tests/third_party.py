@@ -104,13 +104,39 @@ DIVERGENCES: dict[str, dict[str, str]] = {
         "test_070_oath.py::test_bothoath": "the challenge TLV is sent truncated (`74` with no length)",
         "test_070_oath.py::test_imf_overwrite": "the challenge TLV is sent truncated (`74` with no length)",
         "test_070_oath.py::test_imf_more": "the challenge TLV is sent truncated (`74` with no length)",
+        # CTAP 2.3.1 §6.4 lists encCredStoreState (0x1E) as **Optional**, like its
+        # sibling encIdentifier (0x19); RS-Key emits neither. Both are conveniences
+        # for a platform holding the persistent pinUvAuthToken — a cache-invalidation
+        # hint and a device id — and §6.4 conditions neither on the perCredMgmtRO
+        # option, which RS-Key does set. Not implemented, not required.
+        "test_000_getinfo.py::test_get_info_ctap_23_fields_are_well_formed": "encCredStoreState (0x1E) is Optional in §6.4 and not implemented",
+        "test_000_getinfo.py::test_enc_cred_store_state_changes_with_resident_credentials": "encCredStoreState (0x1E) is Optional in §6.4 and not implemented",
+        # pinComplexityPolicy (0x1B), also Optional in §6.4. Absent, so
+        # python-fido2 refuses the setMinPINLength parameter locally.
+        "test_037_minpinlength.py::test_pin_complexity_policy_extension": "pinComplexityPolicy (0x1B) is Optional in §6.4 and not implemented",
+        # The suite hardcodes its own device's limit (120) instead of reading
+        # `maxRPIDsForSetMinPINLength`, which §6.11.4 tells platforms to read:
+        # "Platform can track how many RP IDs it can set, by checking value of the
+        # maxRPIDsForSetMinPINLength member". RS-Key advertises 8, so 121 RP IDs
+        # overrun MAX_RAW_SUBPARA before the count is reached and the answer is
+        # REQUEST_TOO_LARGE. At *this* device's limit + 1 the answer is the
+        # KEY_STORE_FULL the test wants — measured, not assumed.
+        "test_037_minpinlength.py::test_setminpin_too_many_rpids": "the suite sends 121 RP IDs, ignoring the maxRPIDsForSetMinPINLength (8) §6.11.4 says to read",
+        # CTAP 2.3.1 §12.9, verbatim: "authenticatorMakeCredential authenticator
+        # extension output: None." The test asserts an authData extension output
+        # the extension does not define. RS-Key persists the flag and returns it
+        # where §12.9 does define an output — getAssertion, and credMgmt 0x0C.
+        "test_040_cred_mgmt.py::test_credential_management_reports_third_party_payment": "§12.9 defines NO makeCredential extension output for thirdPartyPayment",
+        # The CTAPHID MSG channel exposes the RS-Key vendor AID (`F0 00 00 00 01`),
+        # not the Yubico Management one — device config over FIDO is CTAPHID `0x41`
+        # here (docs/protocol.md §9), and ykman reaches management over CCID or its
+        # own CTAPHID vendor commands, never an AID SELECT on MSG. The property the
+        # test is named for holds: with the vendor applet selected a U2F VERSION is
+        # 6D00, and after CTAPHID_INIT it is `U2F_V2 9000` again (`deselect_msg`).
+        "test_055_hid.py::TestHID::test_msg_vendor_select_does_not_hijack_u2f_after_init": "the FIDO MSG channel carries the RS-Key vendor AID, not the Management one",
     },
-    # Refreshing from upstream (see third_party/README.md) enabled sections that
-    # were skipped before — `030_kdfsingle` and `040_pcsc_extra` above all — and we
-    # fail most of them. Those are UNCLASSIFIED and deliberately absent here.
-    #
-    # The three entries that are here are one question, and the spec answers it
-    # twice, differently.
+    # The first three entries are one question, and the spec answers it twice,
+    # differently.
     #
     # §4.4.1: "Simple DOs (S) return only the value with GET DATA. Constructed DOs
     # (C, marked yellow) are returned INCLUDING THEIR TAG AND LENGTH."
@@ -135,36 +161,143 @@ DIVERGENCES: dict[str, dict[str, str]] = {
         # be empty rather than to carry empty children. §4.4.1 allows a zero-length
         # Name; whether it must be absent is unstated.
         "::test_name_lang_sex": "§4.4.1 vs §7.2.6 wrapper, plus: unset cardholder children present vs absent",
+        # The same wrapper question, reached through the new pcsc section: it reads
+        # DO 6E and asserts the response *starts* with the child tag `4F`.
+        "::test_openpgp_status_objects": "§4.4.1 vs §7.2.6: DO 6E arrives with its own tag, so it starts 6E, not 4F",
+        # Both halves of this one are content errors, not length errors: an ECDSA
+        # attribute whose OID is 16 zero bytes, and an RSA attribute truncated to
+        # two. The spec's own gloss splits them — `6700 Wrong length (Lc and/or
+        # Le)` is about the ISO length fields, `6A80 Incorrect parameters in the
+        # command data field` is about the content. RS-Key answers 6A80 to both;
+        # the rejection the test is named for happens either way.
+        "::test_openpgp_rejects_invalid_algorithm_attributes": "6A80 (bad data field) rather than 6700, whose gloss is 'Lc and/or Le'",
+        # CHANGE REFERENCE DATA with P2 = 82. §7.2.3 defines exactly two: "P2 81
+        # (PW1) or 83 (PW3)". An undefined P2 is what `6B00 Wrong parameters P1-P2`
+        # is for; `6A88 Referenced data … not found` describes a defined reference
+        # that is absent. RS-Key answers 6B00 for 82 and for 84 alike.
+        "::test_openpgp_reset_code_and_pw_status": "§7.2.3 defines P2 81/83 only, so 82 is 6B00 (wrong P1-P2), not 6A88",
+        # Reported firmware version. RS-Key defaults to 5.7.4 (a current YubiKey 5,
+        # `FW_VERSION=X.Y.Z` at build time); the suite hardcodes its own device's
+        # 5.7.0. One number, read through the Management DeviceInfo TLV and through
+        # PIV GET VERSION.
+        "::test_management_applet_config": "the suite hardcodes its own 5.7.0; RS-Key reports FW_VERSION (5.7.4)",
+        "::test_piv_basic_version_serial_and_object_round_trip": "the suite hardcodes its own 5.7.0; RS-Key reports FW_VERSION (5.7.4)",
+        # Replaying a single-auth challenge as a mutual-auth witness. RS-Key
+        # refuses it a step earlier than the suite expects — on the challenge
+        # *kind* (`ChallengeKind::MutualWitness`, audit run-34), so it never
+        # reaches the witness comparison that would answer 6984. 6A80 is the
+        # bad-data-field code for a witness the card never issued.
+        "::test_piv_management_auth_flow_binding": "the replayed witness is refused by challenge kind (6A80) before the comparison that answers 6984",
     },
 }
+
+# Whole modules that exercise a *vendor extension* RS-Key does not implement.
+# Unlike a divergence these are removed at collection, because an xfail still runs
+# the test: admin-less mode expects PW3 verification to fail, and on a card without
+# it those are three wrong admin PINs — the counter blocks and every later module
+# fails on a card the suite itself bricked. Deselecting the feature took the run
+# from 192 failures to 13; the difference was all cascade.
+#
+# This is upstream's own `skip_gnuk_only_tests` fixture, reinstated from outside
+# after upstream deleted it. Removing an entry is a claim that RS-Key grew the
+# feature, and the tests are here to check that claim.
+INAPPLICABLE: dict[str, dict[str, str]] = {
+    "fido": {},
+    "openpgp": {
+        # Gnuk's admin-less mode: setting PW1 equal to PW3 makes PW1 authorize
+        # admin operations, and PW3 then answers 6982 rather than counting down.
+        # OpenPGP Card 3.4.1 does not mention it — the phrase appears nowhere in
+        # the spec — and it is a security-relevant privilege change, so adopting it
+        # is a maintainer's decision, not a test's.
+        "010_kdfnone/test_040_adminless_kdfnone.py": "Gnuk admin-less mode: PW1 gains admin rights, absent from OpenPGP Card 3.4.1",
+        "010_kdfnone/test_041_adminless_kdfnone.py": "runs inside the admin-less block above",
+        "010_kdfnone/test_042_adminless_kdfnone.py": "runs inside the admin-less block above",
+        "010_kdfnone/test_043_adminless_kdfnone.py": "runs inside the admin-less block above",
+        "010_kdfnone/test_044_adminless_kdfnone.py": "runs inside the admin-less block above",
+        "010_kdfnone/test_045_adminless_kdfnone.py": "runs inside the admin-less block above",
+        "010_kdfnone/test_046_adminless_kdfnone.py": "runs inside the admin-less block above",
+        "010_kdfnone/test_047_adminless_upgrade_kdfnone.py": "opts an admin-full card into admin-less mode explicitly",
+        "030_kdfsingle/test_070_adminless_kdfsingle.py": "Gnuk admin-less mode, over a single-salt KDF",
+        "030_kdfsingle/test_071_adminless_kdfsingle.py": "runs inside the admin-less block above",
+        "030_kdfsingle/test_072_adminless_kdfsingle.py": "runs inside the admin-less block above",
+        "030_kdfsingle/test_073_adminless_kdfsingle.py": "runs inside the admin-less block above",
+        "030_kdfsingle/test_074_adminless_kdfsingle.py": "runs inside the admin-less block above",
+        "030_kdfsingle/test_075_adminless_kdfsingle.py": "runs inside the admin-less block above",
+        # Clearing PW3 to the empty string — the doorway into admin-less mode, and
+        # upstream's own comment used to read "Gnuk specific feature of clear PW3"
+        # before the guard was dropped. §4.3.1 puts PW3 at "8 characters/digits
+        # minimum", so a zero-length new PW3 is 6700 here.
+        "010_kdfnone/test_019_adminfull_kdfnone.py": "clearing PW3 to empty: §4.3.1 sets an 8-character minimum",
+        "020_kdffull/05_finalize/test_059_adminfull_kdffull.py": "clearing PW3 to empty: §4.3.1 sets an 8-character minimum",
+        "030_kdfsingle/test_066_adminfull_kdfsingle.py": "clearing PW3 to empty: §4.3.1 sets an 8-character minimum",
+        "030_kdfsingle/test_076_adminless_kdfsingle.py": "clearing PW3 to empty: §4.3.1 sets an 8-character minimum",
+    },
+}
+
+# Sections moved to the end of the run. `040_pcsc_extra` switches applets (PIV,
+# Management) and restores the OpenPGP selection on its last line — a line an
+# xfailed test never reaches, which leaves the next section talking to the wrong
+# applet (VERIFY answers 6A88, PUT DATA 6D00). Ordering it last costs nothing,
+# because nothing comes after it, and keeps a listed divergence from failing seven
+# tests in `090_finalize` that have nothing to do with it.
+LAST: dict[str, tuple[str, ...]] = {
+    "fido": (),
+    "openpgp": ("040_pcsc_extra/",),
+}
+
+
+def _match(patterns, nodeid):
+    """The first pattern that is a substring of `nodeid`, with its reason."""
+    for pattern, reason in patterns.items():
+        if pattern in nodeid:
+            return pattern, reason
+    return None, None
 
 
 class Plugin:
     """Steers a vendored suite from outside: the power cycle it cannot ask for,
-    and the divergences it does not know about."""
+    the sections that must not poison the card, and the divergences it does not
+    know about."""
 
     def __init__(self, suite):
         self.suite = suite
         self.marked = []
+        self.dropped = {}
 
     def pytest_configure(self, config):
         _install_power_cycle()
         _install_reboot()
         config.addinivalue_line("markers", "rsk_divergence: expected, and why")
 
-    def pytest_collection_modifyitems(self, items):
+    def pytest_collection_modifyitems(self, config, items):
         import pytest
 
+        keep, drop = [], []
         for item in items:
-            for pattern, reason in DIVERGENCES[self.suite].items():
-                if pattern in item.nodeid:
-                    item.add_marker(
-                        pytest.mark.xfail(reason=f"RS-Key: {reason}", strict=True)
-                    )
-                    self.marked.append((item.nodeid, reason))
-                    break
+            pattern, reason = _match(INAPPLICABLE[self.suite], item.nodeid)
+            if pattern:
+                self.dropped.setdefault(pattern, [reason, 0])[1] += 1
+                drop.append(item)
+                continue
+            _, reason = _match(DIVERGENCES[self.suite], item.nodeid)
+            if reason:
+                item.add_marker(
+                    pytest.mark.xfail(reason=f"RS-Key: {reason}", strict=True)
+                )
+                self.marked.append((item.nodeid, reason))
+            keep.append(item)
+
+        if drop:
+            config.hook.pytest_deselected(items=drop)
+        late = LAST[self.suite]
+        items[:] = [i for i in keep if not any(p in i.nodeid for p in late)]
+        items += [i for i in keep if any(p in i.nodeid for p in late)]
 
     def pytest_terminal_summary(self, terminalreporter):
+        if self.dropped:
+            terminalreporter.write_sep("=", "RS-Key: not applicable (deselected)")
+            for pattern, (reason, count) in self.dropped.items():
+                terminalreporter.write_line(f"  {pattern} ({count})\n      {reason}")
         if not self.marked:
             return
         terminalreporter.write_sep("=", "RS-Key divergences (expected, xfail)")

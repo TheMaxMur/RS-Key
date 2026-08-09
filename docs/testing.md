@@ -275,11 +275,28 @@ nix develop -c python tests/75_seed_backup.py --pin <your PIN>
 - The FIDO PIN is never guessed: destructive PIN tests take `--pin`
   explicitly.
 
-Two external suites were run against the implementation: Yubico's python-fido2
-test corpus and the Gnuk/OpenPGP card suite (see
-[third_party/](https://github.com/TheMaxMur/RS-Key/tree/main/third_party) if
-vendored, or run them from their upstream checkouts). Running an upstream
-corpus shows conformance on the cases it covers; it is not a security audit.
+## The vendored upstream suites
+
+Two other ecosystems' own conformance suites live in
+[third_party/](https://github.com/TheMaxMur/RS-Key/tree/main/third_party) —
+pico-fido's and pico-openpgp/Gnuk's — and `tests/third_party.py` runs them against
+RS-Key:
+
+```sh
+nix develop -c python tests/third_party.py openpgp   # over the emulator's card socket
+nix develop -c python tests/third_party.py fido      # needs a board, or --usbip
+```
+
+Nothing in those directories is edited. The run is steered from outside by a
+pytest plugin that supplies the power cycle the CTAP 2.1 §6.6 reset window needs,
+names every deliberate divergence as a strict `xfail`, and deselects the modules
+that exercise a vendor extension RS-Key does not implement. Both lists carry a
+spec citation per entry, and `strict` means a divergence that gets fixed *fails*
+the run instead of staying listed for ever — which is how the last refresh caught
+one that upstream had corrected.
+
+Running an upstream corpus shows conformance on the cases it covers; it is not a
+security audit.
 
 ## Without a board — the emulator
 
@@ -295,8 +312,9 @@ nix develop -c python tests/emu.py tests/11_fido_makecredential.py
 `tests/emu.py` puts a fake `hid` module and a fake `smartcard` package in front of
 the target script and points the power-cycle helper at the emulator's replug
 opcode, so no test file changes and neither hidapi nor pyscard need be installed.
-**43 of the 52 suites pass**, FIDO and card alike (two want `--pin`, one wants
-`--yubico`); the other 9 are refused by name with their reason and exit 77 — they need raw USB,
+**42 of the 52 suites pass**, FIDO and card alike (two want `--pin`, one wants
+`--yubico`; a 43rd needs an enrolled `ed25519-sk` key and skips without one); the
+other 9 are refused by name with their reason and exit 77 — they need raw USB,
 python-fido2, or hardware, and `tools/emu/README.md` lists which is which. The
 store underneath is the device's own (`crates/rsk-store`) over a mock NOR flash
 with the board's geometry, so the suites run against a log-structured ring that
