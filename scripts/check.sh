@@ -248,6 +248,10 @@ run "gate-union (device wipe)" python scripts/gate_union.py
 # CI skips jobs on these rules, and a wrong one skips a job silently — the one
 # failure direction nothing else would report.
 run "ci scope rules"           ./scripts/ci-scope.sh --self-test
+# Deep-checks runs this nightly, which is where it kept being discovered — twice
+# now the tree went red for a hotspot that had been sitting in a commit for hours.
+# It costs ~7 s and needs nothing the shell has not already fetched.
+run "complexity ratchet"       ./scripts/complexity_gate.sh
 run "ci knob groups"           ./scripts/ci-knobs.sh --self-test
 run "docs constants match code" python scripts/docs_constants.py
 run "pytest (tools/rsk)"       python -m pytest tools/rsk -q

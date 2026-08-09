@@ -2,8 +2,9 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 RS-Key contributors
 
-# Cognitive-complexity ratchet — a regression alarm, NOT a merge gate. Runs in
-# deep-checks (daily), the sibling of the coverage floor: it fails when ANY
+# Cognitive-complexity ratchet. Runs in `check.sh` (so a hotspot is caught before
+# it is pushed, not the next night) and in deep-checks, the sibling of the
+# coverage floor: it fails when ANY
 # non-test function in the crate libraries crosses the cognitive ceiling, so a
 # new hotspot trips the moment it lands instead of at the next manual
 # metrics.sh pass. It is a ratchet — when a refactor lowers the peak, lower the
@@ -24,9 +25,10 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-# The current crate peak is 31 (PIV general_authenticate, APDU parse); this
-# ceiling sits just above it so ordinary edits pass and only a genuine new
-# hotspot trips. Ratchet it down as the peak falls.
+# The current crate peak is 35 (`rsk_fido::credmgmt::enumerate_creds`), which is
+# the ceiling itself — there is no headroom left, so the next function to reach it
+# trips this. Ratchet the ceiling down as the peak falls; do not raise it to buy
+# room for a hotspot, which is what the alarm is for.
 COGNITIVE_CEILING="${COGNITIVE_CEILING:-35}"
 
 mapfile -t src < <(find crates -maxdepth 2 -type d -name src | sort)
