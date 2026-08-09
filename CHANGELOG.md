@@ -13,6 +13,14 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+### Fixed
+
+- **`authenticatorReset` can no longer remain in processing forever when the flash
+  walk re-yields a removed FIDO record.** Its sweep now de-duplicates stored versions
+  of one FID and carries the same progress bound as the PIV, OATH and OpenPGP wipes;
+  a non-converging backend returns `CTAP2_ERR_OTHER` instead of wedging the worker.
+  **bcdDevice → 0x0874.**
+
 ## [0.4.8] - 2026-08-08
 
 Everything in 0.4.7 below, plus the fix for the reason it never shipped: the
