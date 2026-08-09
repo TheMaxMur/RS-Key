@@ -43,6 +43,14 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   emulator can stay on a Mac while a Linux VM imports it. See
   `tools/emu/README.md`.
 
+- **The trusted-display guide shows the display, not photographs of it.** The six
+  screens in [docs/guides/display.md](docs/guides/display.md) were camera shots of
+  a 2.8" panel, complete with the room's white balance — the background reads blue
+  in them and is near-black on the device. They are now what `rsk_ui::render`
+  draws, at the panel's own 240×320, written by `rsk-emu --screenshots` and
+  regenerable the day a screen changes. The guide also says the display can be
+  tried in a window (`--display`) before buying the board.
+
 - **CI runs the on-device suites.** `scripts/emu-suites.sh` drives every suite
   that needs no board — `tests/*.py` over the emulator's socket transports, plus
   the vendored OpenPGP card conformance suite — each on a fresh flash image, and

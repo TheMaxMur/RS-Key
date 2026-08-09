@@ -22,7 +22,27 @@ The whole feature is `dep:`-gated. A standard key without a screen compiles
 from the default firmware image), so an ordinary build is byte-for-byte
 unaffected.
 
-![The RS-Key trusted display (Waveshare RP2350-Touch-LCD-2.8) showing its Home screen: a bright "Ready" status beside a check, a status card reading USB connected / Device PIN set / Passkeys 0, and a bottom navigation bar with Home, Passkeys, Apps and Settings tabs](../images/display-home.jpg)
+![The trusted display's Home screen: a bright "Ready" status beside a check, a status card reading USB connected / Device PIN set / Passkeys 0, and a bottom navigation bar with Home, Passkeys, Apps and Settings tabs](../images/display-home.png)
+
+## Try it without a board
+
+The screens on this page are not photographs — they are what `rsk_ui::render`
+draws, at the panel's own 240×320. The same renderer runs in a window:
+
+```sh
+cargo run --manifest-path tools/emu/Cargo.toml --target "$HOST" -- --display
+```
+
+That is the whole flow, not a viewer. The ambient loop, the Approve/Deny hold,
+the on-screen PIN pad and the Settings menu are the code the board runs
+(`crates/rsk-display`); a mouse held on a button enters it through the same
+`TouchPad` a finger does, and the power button is the space bar. So the ceremony
+this page is about — *a signature cannot be had without a tap on a screen naming
+the true relying party* — can be tried before deciding whether to buy the
+hardware.
+
+The images themselves are regenerated with `rsk-emu --screenshots docs/images`
+when a screen changes.
 
 ## Building and flashing
 
@@ -94,7 +114,7 @@ device-local nickname (which you set, not the host) keeps its head instead.
 
 ## Entering a PIN on the trusted screen
 
-![The trusted display's Device PIN screen: a row of masked entry dots and an eye reveal toggle above a 3×4 numeric keypad (1–9, a backspace key, 0, and a blue confirm key), with "8 tries remaining" beneath](../images/display-pin.jpg)
+![The trusted display's Device PIN screen: a row of masked entry dots and an eye reveal toggle above a 3×4 numeric keypad (1–9, a backspace key, 0, and a blue confirm key), with "8 tries remaining" beneath](../images/display-pin.png)
 
 The panel has an on-screen numeric **PIN pad**: digits are masked, an **eye
 toggle** reveals them briefly so you can check before committing, and the minimum
@@ -144,7 +164,7 @@ This backs four things:
 
 ## Passkeys
 
-![The trusted display's Passkeys tab on a device with no resident credentials, showing a key glyph and the empty-state message "No passkeys yet"](../images/display-passkeys.jpg)
+![The trusted display's Passkeys tab on a device with no resident credentials, showing a key glyph and the empty-state message "No passkeys yet"](../images/display-passkeys.png)
 
 The Passkeys tab lists resident credentials by relying party (real `rpId` +
 account count) and drills into a per-account detail where a passkey can be
@@ -158,7 +178,7 @@ device-local and not seen by host credential managers.
 
 ## Apps — a read-only credential browser
 
-![The trusted display's Apps tab listing three applets as read-only rows: OpenPGP (0 keys), PIV (0 slots) and OATH (0 codes), each with a chevron to drill in](../images/display-apps.jpg)
+![The trusted display's Apps tab listing three applets as read-only rows: OpenPGP (0 keys), PIV (0 slots) and OATH (0 codes), each with a chevron to drill in](../images/display-apps.png)
 
 The Apps tab reads applet state **without a PIN**. No key material, PIN or public
 point is ever shown, and no OATH code is computed (the device has no clock).
@@ -179,7 +199,7 @@ point is ever shown, and no OATH code is computed (the device has no clock).
 
 ## Settings
 
-![The trusted display's Settings menu with three entries, Display, Security, and Firmware (showing the running bcdDevice build), above the navigation bar](../images/display-settings.jpg)
+![The trusted display's Settings menu with three entries, Display, Security, and Firmware (showing the running bcdDevice build), above the navigation bar](../images/display-settings.png)
 
 Grouped into three domains, plus the journal / backup / reset actions:
 
@@ -222,7 +242,7 @@ so a host reset is accepted whenever you confirm it on screen — no replug.
 
 ## Security model
 
-![The trusted display's Locked screen: a padlock glyph centred above "Locked" and the hint "Touch to unlock"](../images/display-locked.jpg)
+![The trusted display's Locked screen: a padlock glyph centred above "Locked" and the hint "Touch to unlock"](../images/display-locked.png)
 
 The device PIN (`EF_DEVICE_PIN`, its own sealed record + retry counter) gates the
 on-device UI (unlock, on-device delete, factory reset) independently of FIDO.

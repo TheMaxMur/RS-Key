@@ -22,6 +22,7 @@ mod park;
 mod platform;
 mod presence;
 mod rng;
+mod shots;
 mod signals;
 mod store;
 mod usbip;
@@ -62,6 +63,7 @@ usage: rsk-emu [options]
   --touch             ask for every user presence on the terminal
   --display           open the trusted display in a window; presence is an
                       on-screen hold, exactly as on a screen board
+  --screenshots <dir> write the docs' display screens as PNGs and exit
   --usbip [addr]      serve USB/IP (default 127.0.0.1:3240) so a Linux host can
                       attach the emulator as a REAL USB device
   --trace             log every command and its status
@@ -111,6 +113,8 @@ fn main() {
             "--store" => cfg.store = Some(value("--store").into()),
             "--touch" => cfg.touch = true,
             "--display" => cfg.display = true,
+            // Renders and exits: no store, no sockets, nothing to serve.
+            "--screenshots" => shots::run(&value("--screenshots")),
             "--usbip" => {
                 cfg.usbip = Some(match args.next() {
                     Some(a) if !a.starts_with("--") => a,
