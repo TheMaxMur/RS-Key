@@ -407,3 +407,7 @@ where
         Timer::after_millis(100).await;
     }
 }
+
+#[cfg(test)]
+#[path = "status_tests.rs"]
+mod tests;

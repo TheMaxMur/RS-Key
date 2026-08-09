@@ -1194,3 +1194,7 @@ where
         }
     }
 }
+
+#[cfg(test)]
+#[path = "applets_tests.rs"]
+mod tests;

@@ -1067,3 +1067,7 @@ where
         }
     }
 }
+
+#[cfg(test)]
+#[path = "pin_tests.rs"]
+mod tests;

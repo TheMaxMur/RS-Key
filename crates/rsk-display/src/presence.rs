@@ -430,3 +430,7 @@ where
         }
     }
 }
+
+#[cfg(test)]
+#[path = "presence_tests.rs"]
+mod tests;

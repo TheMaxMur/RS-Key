@@ -184,3 +184,7 @@ where
         proceed
     }
 }
+
+#[cfg(test)]
+#[path = "gates_tests.rs"]
+mod tests;

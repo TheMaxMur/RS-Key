@@ -29,7 +29,11 @@
 //! the interrupt executor preempts the busy-wait throughout, so keepalives keep
 //! flowing and a full-frame repaint never stalls enumeration.
 
-#![no_std]
+// Host test builds link `std`: the doubles the flow runs against (a recording
+// panel, a scripted touch pad) want a heap and a mutex, and the crates the tests
+// borrow from — `rsk-fs`'s RAM storage, `embassy-time`'s `std` driver — are std
+// too. The firmware build is untouched, and no test code reaches the image.
+#![cfg_attr(not(test), no_std)]
 
 extern crate alloc;
 
@@ -548,3 +552,6 @@ where
         self.shown = None;
     }
 }
+
+#[cfg(test)]
+mod tests;

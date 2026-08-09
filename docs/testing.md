@@ -7,7 +7,7 @@ for end-to-end integration.
 
 | Layer | What it checks | Where |
 |---|---|---|
-| Host unit tests | parsers, state machines, applets, crypto (~350 tests) | `#[cfg(test)]` in each crate |
+| Host unit tests | parsers, state machines, applets, crypto, the display flow (~1500 tests) | `#[cfg(test)]` in each crate |
 | Fuzzing | the same logic under adversarial bytes | `fuzz/` |
 | Miri | the fuzz targets' logic under the UB checker | `fuzz/tests/miri.rs` |
 | Kani proofs | bounded model checking — every input, not a sample | `#[cfg(kani)]` in the crates |
@@ -42,13 +42,24 @@ Green check.sh is the bar for every commit.
 ```sh
 nix develop -c cargo test -p rsk-sdk -p rsk-fs -p rsk-usb -p rsk-crypto \
     -p rsk-fido -p rsk-openpgp -p rsk-rsa-asm -p rsk-mgmt -p rsk-oath \
-    -p rsk-otp -p rsk-piv -p rsk-rescue -p rsk-vendor -p rsk-device -p rsk-store --target aarch64-apple-darwin
+    -p rsk-otp -p rsk-piv -p rsk-rescue -p rsk-vendor -p rsk-device -p rsk-store \
+    -p rsk-display --target aarch64-apple-darwin
 ```
 
-(`HOST_TARGET` env overrides the triple in `check.sh`.) Crypto tests pin
-NIST/RFC vectors; applet tests drive full protocol flows (register → assert,
-PIN lockout ladders, OpenPGP import → sign → verify against `RustCrypto`,
-PIV generate → attest → parse with `x509-parser`).
+(`HOST_TARGET` env overrides the triple in `check.sh`, which runs the full crate
+list.) Crypto tests pin NIST/RFC vectors; applet tests drive full protocol flows
+(register → assert, PIN lockout ladders, OpenPGP import → sign → verify against
+`RustCrypto`, PIV generate → attest → parse with `x509-parser`).
+
+`rsk-display` is the odd one: its subject is a *screen*, and it is tested by
+giving the flow a panel that records what was drawn, a touch pad that reads back
+a scripted sequence of samples, and a board whose backlight, wake button and
+presence flags are plain fields. The panel and the touch controller are type
+parameters and the rest sits behind `Hooks`, so the gestures that carry the
+security — the hold that approves a ceremony, the retry ladder behind the PIN
+pad, the auto-lock a host must not be able to postpone — run on the host at the
+same code the board runs. `embassy-time`'s `std` feature supplies the clock, so
+the deadlines and debounces are the real ones (see `crates/rsk-display/src/tests.rs`).
 
 ## Fuzzing
 

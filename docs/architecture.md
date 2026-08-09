@@ -100,6 +100,7 @@ platform libraries. The per-crate detail is in the table. The shape is:
 | `rsk-rsa-asm` | vendored C/ARM-asm modular exponentiation behind one FFI fn (host build uses a pure-Rust fallback) |
 | `rsk-led` | the `EF_LED_CONF` codec for the status-LED config block, shared by the firmware and the `rsk led` host tool |
 | `rsk-ui` | the trusted-display UI model (operation prompts, untrusted relying-party-string sanitizing, Allow/Deny button geometry); compiled only into the `display` build |
+| `rsk-display` | the trusted display's *flow* — which screen is shown when, the PIN pad, the browse modals, the Approve/Deny wait — over a panel and a touch controller it takes as type parameters, so the firmware drives an ST7789 and the emulator a window; `display` build only |
 
 Everything except `firmware` is hardware-agnostic and runs the full test
 suite on the host ([testing.md](testing.md)).

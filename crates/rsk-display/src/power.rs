@@ -141,3 +141,7 @@ where
         }
     }
 }
+
+#[cfg(test)]
+#[path = "power_tests.rs"]
+mod tests;

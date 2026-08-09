@@ -314,3 +314,7 @@ where
         let _ = self.fs.borrow_mut().put(EF_DISPLAY, &cfg.encode());
     }
 }
+
+#[cfg(test)]
+#[path = "settings_tests.rs"]
+mod tests;

@@ -45,3 +45,7 @@ pub trait TouchPad {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "touch_tests.rs"]
+mod tests;
