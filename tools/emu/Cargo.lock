@@ -1596,6 +1596,7 @@ dependencies = [
  "embassy-futures",
  "embassy-time",
  "embassy-time-queue-utils",
+ "embassy-usb",
  "embedded-graphics",
  "embedded-graphics-simulator",
  "embedded-storage-async",

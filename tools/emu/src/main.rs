@@ -23,6 +23,7 @@ mod rng;
 mod signals;
 mod store;
 mod usbip;
+mod usbip_driver;
 
 use std::io::BufRead;
 use std::net::TcpListener;

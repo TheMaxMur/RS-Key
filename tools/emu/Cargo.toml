@@ -53,6 +53,10 @@ embassy-time = { git = "https://github.com/embassy-rs/embassy", branch = "main",
 embassy-time-queue-utils = { git = "https://github.com/embassy-rs/embassy", branch = "main", features = ["generic-queue-8"] }
 embedded-storage-async = "0.4"
 embassy-futures = { git = "https://github.com/embassy-rs/embassy", branch = "main" }
+# The USB stack itself, so `--usbip` enumerates the device's own descriptors
+# rather than a second description of them. Already in the graph through
+# `rsk-usb`; naming it here is what lets `usbip_driver` implement its `Driver`.
+embassy-usb = { git = "https://github.com/embassy-rs/embassy", branch = "main" }
 
 [workspace]
 
