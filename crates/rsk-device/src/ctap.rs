@@ -59,7 +59,7 @@ impl<'a, S: Storage, R: crate::Rng + 'static, VP: rsk_vendor::Platform>
         serial_id: [u8; 8],
         serial_hash: [u8; 32],
         otp_key: Option<[u8; 32]>,
-        devk: Option<[u8; 32]>,
+        devk: Option<fn() -> Option<[u8; 32]>>,
     ) -> Self {
         // The OTP DEVK signs audit-journal checkpoints (rsk_fido::journal); it
         // rides in FidoState so the pure FIDO logic stays caller-supplied.
@@ -71,7 +71,7 @@ impl<'a, S: Storage, R: crate::Rng + 'static, VP: rsk_vendor::Platform>
         let boot = hooks.borrow_mut().boot_state();
         fido_state.restore_pin_lock(boot.lock);
         fido_state.warm_boot = boot.warm;
-        fido_state.devk = devk;
+        fido_state.devk_source = devk;
         // Generate the clientPIN ephemeral key-agreement key at power-up (CTAP 2.1
         // §6.5.5.7), not lazily on the first clientPIN — so the first PIN entry
         // after plug-in doesn't pay the one-time ~40 ms `d·G`. The TRNG is seeded

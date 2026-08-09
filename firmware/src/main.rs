@@ -503,7 +503,7 @@ async fn main(spawner: Spawner) {
     let serial_id = embassy_rp::otp::get_chipid().unwrap_or(0).to_le_bytes();
     let serial_hash = rsk_crypto::sha256(&serial_id);
 
-    let (otp_mkek, otp_devk) = otp_keys::read_keys();
+    let otp_mkek = otp_keys::read_mkek();
     otp_keys::sw_lock_key_page();
 
     let flash = Flash::<_, Blocking, FLASH_SIZE>::new_blocking(p.FLASH);
@@ -653,7 +653,7 @@ async fn main(spawner: Spawner) {
     config.max_power = 100;
     config.max_packet_size_0 = 64;
     // bcdDevice build counter; also surfaced on the trusted-display Firmware screen.
-    let device_release: u16 = 0x0877;
+    let device_release: u16 = 0x0878;
     config.device_release = device_release;
 
     let mut builder = Builder::new(
@@ -1109,7 +1109,7 @@ async fn main(spawner: Spawner) {
         serial_id,
         serial_hash,
         otp_mkek,
-        otp_devk,
+        Some(otp_keys::read_devk as fn() -> Option<[u8; 32]>),
         kv_total,
         openpgp_mfr,
     );

@@ -372,7 +372,7 @@ fn checkpoint_requires_devk_and_signature_verifies() {
     });
     assert_eq!(err, Err(CtapError::NotAllowed));
 
-    state.devk = Some([7; 32]);
+    state.devk_source = Some(|| Some([7; 32]));
     run_ctx(&mut fs, &mut state, |ctx| {
         append(ctx, EV_MAKE_CRED, 0, &[1; 8]);
     });
@@ -472,4 +472,35 @@ fn for_each_event_visits_newest_first_and_counts() {
     });
     assert_eq!(total2, 4);
     assert_eq!(kept, 2);
+}
+
+/// The DEVK is read for each checkpoint rather than kept in `FidoState`. That
+/// indirection exists only to keep an unrotatable, fused signing key out of RAM
+/// between the rare commands that want it, so caching it would undo the change
+/// while every other assertion here still passed.
+#[test]
+fn the_checkpoint_reads_the_devk_per_call() {
+    use core::sync::atomic::{AtomicUsize, Ordering};
+
+    static READS: AtomicUsize = AtomicUsize::new(0);
+    fn source() -> Option<[u8; 32]> {
+        READS.fetch_add(1, Ordering::Relaxed);
+        Some([7; 32])
+    }
+
+    let mut fs = Fs::new(RamStorage::new());
+    let mut state = FidoState::new();
+    state.devk_source = Some(source);
+    let mut out = [0u8; 512];
+
+    run_ctx(&mut fs, &mut state, |ctx| {
+        append(ctx, EV_MAKE_CRED, 0, &[1; 8]);
+    });
+    for expected in 1..=3 {
+        run_ctx(&mut fs, &mut state, |ctx| {
+            vendor_checkpoint(ctx, &[0x55; 16], &mut out)
+        })
+        .unwrap();
+        assert_eq!(READS.load(Ordering::Relaxed), expected);
+    }
 }

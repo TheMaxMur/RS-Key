@@ -239,7 +239,7 @@ async fn serve<PR: rsk_device::UserPresence + 'static>(
     // records are sealed under the chip-serial-only root — the same context a
     // device that has never been provisioned uses.
     let otp_key: Option<[u8; 32]> = None;
-    let devk: Option<[u8; 32]> = None;
+    let devk: Option<fn() -> Option<[u8; 32]>> = None;
     let dev = || Device {
         serial_hash: &serial_hash,
         serial_id: &serial_id,

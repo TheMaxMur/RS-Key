@@ -51,7 +51,7 @@ fn dev() -> UsbDeviceInfo {
         speed: 2,
         id_vendor: 0x1209,
         id_product: 0x000d,
-        bcd_device: 0x0877,
+        bcd_device: 0x0878,
         device_class: 0,
         device_subclass: 0,
         device_protocol: 0,
@@ -75,7 +75,7 @@ fn device_info_lands_in_the_kernels_field_offsets() {
     // idVendor / idProduct / bcdDevice
     assert_eq!(&b[300..302], &0x1209u16.to_be_bytes());
     assert_eq!(&b[302..304], &0x000du16.to_be_bytes());
-    assert_eq!(&b[304..306], &0x0877u16.to_be_bytes());
+    assert_eq!(&b[304..306], &0x0878u16.to_be_bytes());
     // the six trailing bytes
     assert_eq!(&b[306..312], &[0, 0, 0, 1, 1, 3]);
 }

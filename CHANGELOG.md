@@ -58,6 +58,17 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   so the next flash write wedges until a replug — but that is the intended
   trade against a silent write issued while a key is being generated.
 
+- **The fused device key is no longer resident.** The OTP DEVK — the attestation
+  root, and the one secret on the key that can never be rotated — was read at
+  boot and parked for the whole power cycle in *two* places, `FidoState` and the
+  rescue applet. Three rarely-run commands want it: the two rescue keydev
+  commands and the audit checkpoint, which belongs to a journal that is off by
+  default. So on a shipped device it sat in RAM for commands nobody calls. Both
+  copies are now a `fn` that reads OTP when a command needs it, and the fetched
+  copy is zeroized before that command returns. This narrows what a
+  memory-disclosure bug reaches. It changes nothing against an attacker already
+  executing code on the device, who has the store root in RAM either way.
+
 ### Added
 
 - The gate asserts a **stack floor** (`FIRMWARE_STACK_FLOOR_KIB`, alongside the

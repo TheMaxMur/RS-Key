@@ -319,7 +319,7 @@ impl<'a> Worker<'a> {
         serial_id: [u8; 8],
         serial_hash: [u8; 32],
         otp_key: Option<[u8; 32]>,
-        devk: Option<[u8; 32]>,
+        devk: Option<fn() -> Option<[u8; 32]>>,
         kv_total: u32,
         openpgp_mfr: u16,
     ) -> Self {

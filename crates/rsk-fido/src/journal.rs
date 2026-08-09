@@ -475,8 +475,14 @@ pub fn vendor_checkpoint<S: Storage, R: Rng>(
     if challenge.len() > 32 {
         return Err(CtapError::InvalidParameter);
     }
-    let devk = ctx.state.devk.ok_or(CtapError::NotAllowed)?;
-    let key = attestation_key(&devk, ctx.dev.serial_hash).ok_or(CtapError::Other)?;
+    // Fetched here rather than held: the DEVK is unrotatable, and this is the one
+    // command that wants it. Zeroize before the `?` so a failed derivation still
+    // wipes the copy.
+    let mut devk =
+        ctx.state.devk_source.ok_or(CtapError::NotAllowed)?().ok_or(CtapError::NotAllowed)?;
+    let key = attestation_key(&devk, ctx.dev.serial_hash);
+    devk.zeroize();
+    let key = key.ok_or(CtapError::Other)?;
     let (head, m) = chain_head(&ctx.dev, ctx.fs);
 
     let mut msg = [0u8; CKPT_TAG.len() + 32 + 4 + 32];

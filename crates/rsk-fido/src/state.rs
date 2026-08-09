@@ -272,10 +272,13 @@ pub struct FidoState {
     /// Soft-lock: the seed decrypted by a vendor `UNLOCK`. RAM-only — held until
     /// power-off, a reset, or an `AUT_DISABLE`; zeroized on `Drop` and on overwrite.
     pub keydev_dec: Option<[u8; 32]>,
-    /// The OTP DEVK (the reset-stable attestation root), set once by the
-    /// firmware at boot; `None` on an unprovisioned device and in most tests.
+    /// How to fetch the OTP DEVK (the reset-stable attestation root), rather than
+    /// the key itself: it is wanted by one opt-in command, and holding it would
+    /// park an unrotatable signing key in RAM for the whole power cycle. `None` on
+    /// an unprovisioned device and in most tests. A bare `fn` because there is no
+    /// state to carry — the same shape the transport's touch/cancel hooks use.
     /// Device identity, not session state — it survives [`Self::reset`].
-    pub devk: Option<[u8; 32]>,
+    pub devk_source: Option<fn() -> Option<[u8; 32]>>,
     /// Whether this power cycle's `EV_BOOT` journal entry has been written
     /// ([`crate::journal`]). Survives [`Self::reset`] — the cycle did not end.
     pub audit_boot_logged: bool,
@@ -315,7 +318,7 @@ impl FidoState {
             mse_key: [0; 32],
             mse_pub: [0; 65],
             keydev_dec: None,
-            devk: None,
+            devk_source: None,
             audit_boot_logged: false,
             warm_boot: false,
             channel: 0,
@@ -353,12 +356,12 @@ impl FidoState {
     /// flag and the warm-boot origin are device/power-cycle facts, not session
     /// state — they carry across, as does the in-flight request's channel.
     pub fn reset(&mut self) {
-        let devk = self.devk;
+        let devk_source = self.devk_source;
         let audit_boot_logged = self.audit_boot_logged;
         let warm_boot = self.warm_boot;
         let channel = self.channel;
         *self = Self::new();
-        self.devk = devk;
+        self.devk_source = devk_source;
         self.audit_boot_logged = audit_boot_logged;
         self.warm_boot = warm_boot;
         self.channel = channel;
@@ -534,9 +537,6 @@ impl Drop for FidoState {
         self.paut.token.zeroize();
         self.mse_key.zeroize();
         if let Some(k) = self.keydev_dec.as_mut() {
-            k.zeroize();
-        }
-        if let Some(k) = self.devk.as_mut() {
             k.zeroize();
         }
     }

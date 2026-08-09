@@ -132,7 +132,7 @@ impl<'a, S: Storage, R: crate::Rng + 'static, VP: rsk_vendor::Platform> CcidAppl
         serial_id: [u8; 8],
         serial_hash: [u8; 32],
         otp_key: Option<[u8; 32]>,
-        devk: Option<[u8; 32]>,
+        devk: Option<fn() -> Option<[u8; 32]>>,
         kv_total: u32,
         flash_size: u32,
         openpgp_mfr: u16,

@@ -19,6 +19,7 @@ use rsk_crypto::Device;
 use rsk_fs::{Fs, Storage};
 pub use rsk_sdk::Confirm;
 use rsk_sdk::{Apdu, Applet, ResBuf, Sw};
+use zeroize::Zeroize;
 
 /// Rescue applet AID.
 pub const RESCUE_AID: &[u8] = &[0xA0, 0x58, 0x3F, 0xC1, 0x9B, 0x7E, 0x4F, 0x21];
@@ -105,8 +106,10 @@ pub struct RescueApplet<'a> {
     serial_hash: [u8; 32],
     /// The OTP MKEK, once provisioned.
     otp_key: Option<[u8; 32]>,
-    /// The OTP DEVK: the keydev secp256k1 scalar itself.
-    devk: Option<[u8; 32]>,
+    /// How to fetch the OTP DEVK (the keydev secp256k1 scalar), rather than the
+    /// scalar itself: two rarely-run commands want it, and it is fused, so it is
+    /// not one to park in RAM for the power cycle.
+    devk: Option<fn() -> Option<[u8; 32]>>,
     rng: &'a RefCell<dyn Rng>,
     platform: &'a RefCell<dyn Platform>,
     /// Touch/approval gate for the runtime-reachable privileged commands.
@@ -123,7 +126,7 @@ impl<'a> RescueApplet<'a> {
         serial_id: [u8; 8],
         serial_hash: [u8; 32],
         otp_key: Option<[u8; 32]>,
-        devk: Option<[u8; 32]>,
+        devk: Option<fn() -> Option<[u8; 32]>>,
         rng: &'a RefCell<dyn Rng>,
         platform: &'a RefCell<dyn Platform>,
         presence: &'a RefCell<dyn UserPresence>,
@@ -171,9 +174,14 @@ impl<'a> RescueApplet<'a> {
                     return Sw::CONDITIONS_NOT_SATISFIED;
                 }
                 let mut rng = self.rng.borrow_mut();
-                let Some(key) =
-                    keydev::load_or_generate(&self.device(), self.devk.as_ref(), fs, &mut *rng)
-                else {
+                // Fetched for this command and wiped before the early return: the
+                // fused scalar is not held between the two commands that want it.
+                let mut fused = self.devk.and_then(|read| read());
+                let key = keydev::load_or_generate(&self.device(), fused.as_ref(), fs, &mut *rng);
+                if let Some(k) = fused.as_mut() {
+                    k.zeroize();
+                }
+                let Some(key) = key else {
                     return Sw::EXEC_ERROR;
                 };
                 let mut digest = [0u8; 32];
@@ -191,9 +199,14 @@ impl<'a> RescueApplet<'a> {
                     return Sw::WRONG_LENGTH;
                 }
                 let mut rng = self.rng.borrow_mut();
-                let Some(key) =
-                    keydev::load_or_generate(&self.device(), self.devk.as_ref(), fs, &mut *rng)
-                else {
+                // Fetched for this command and wiped before the early return: the
+                // fused scalar is not held between the two commands that want it.
+                let mut fused = self.devk.and_then(|read| read());
+                let key = keydev::load_or_generate(&self.device(), fused.as_ref(), fs, &mut *rng);
+                if let Some(k) = fused.as_mut() {
+                    k.zeroize();
+                }
+                let Some(key) = key else {
                     return Sw::EXEC_ERROR;
                 };
                 res.extend(&keydev::public_uncompressed(&key));

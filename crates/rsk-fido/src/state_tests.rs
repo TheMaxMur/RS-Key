@@ -67,7 +67,7 @@ fn warm_boot_survives_reset_but_session_state_does_not() {
     // Power-cycle facts.
     st.warm_boot = true;
     st.audit_boot_logged = true;
-    st.devk = Some([0x7C; 32]);
+    st.devk_source = Some(|| Some([0x7C; 32]));
     // Session state.
     st.paut.permissions = PERM_ACFG;
     st.begin_using_token(true, 0);
@@ -84,7 +84,7 @@ fn warm_boot_survives_reset_but_session_state_does_not() {
         "the reset window keys on how the cycle started"
     );
     assert!(st.audit_boot_logged);
-    assert_eq!(st.devk, Some([0x7C; 32]));
+    assert_eq!(st.devk_source.and_then(|read| read()), Some([0x7C; 32]));
     assert!(!st.paut.in_use);
     assert_eq!(st.paut.permissions, 0);
     assert!(!st.user_verified());
