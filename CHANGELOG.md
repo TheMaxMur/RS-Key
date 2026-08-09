@@ -47,6 +47,14 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   the mode that wedged ML-DSA-65 `makeCredential` at `0x082A` — the overflowing
   write landed in `.bss` and the device halted with no diagnostic.
 
+- **Core0's stack floor no longer depends on the linker.** `flip-link` puts that
+  stack at the bottom of RAM, so an overflow already faults on unmapped memory:
+  this closes no gap. Below that stack is not a narrow guard band a large frame
+  could step over, but the whole unmapped half of the address space. What arming
+  `MSPLIM` on entry to `main` adds is that the bound is stated in code, so
+  dropping `flip-link` becomes a visible edit rather than a silent return to a
+  stack growing into `.bss`.
+
 - **Core1's stack has a hardware limit.** Its 16 KiB stack is an array in
   `.bss`, which `flip-link` cannot help with — that guards core0's stack by
   moving it to the edge of RAM. Core1 now programs ARMv8-M's `MSPLIM` on entry,

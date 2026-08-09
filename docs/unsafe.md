@@ -7,12 +7,12 @@ contained. Adding a new `unsafe` requires updating this page. (Safe Rust rules
 out memory-corruption bugs in this code. It is not a security audit; see the
 [threat model](threat-model.md).)
 
-**Runtime sites: 20.** Twelve in the firmware proper (`main.rs` + `presence.rs`):
+**Runtime sites: 21.** Twelve in the firmware proper (`main.rs` + `presence.rs`):
 the interrupt-handler pair (2), the `Send` impl, the heap init, and the eight
 GPIO-pin `steal`s (the presence button, the LED power-enable rail, the nuisance
 USR LED, the display build's wake button, and — display builds only — the panel's
-CS/DC/RST/TP_RST control lines). Two for the per-core prime sieves and one for
-core1's stack limit, three in the RSA assembly FFI, two in the standalone
+CS/DC/RST/TP_RST control lines). Two for the per-core prime sieves and one
+stack limit per core, three in the RSA assembly FFI, two in the standalone
 flash-wipe tool.
 
 ```mermaid
@@ -22,6 +22,7 @@ flowchart TB
       b["Send for SendUsb"]
       c["heap init"]
       d["GPIO pin steal ×8 (presence, LED power, USR LED, display wake + CS/DC/RST/TP_RST)"]
+      d2["core0 stack limit (MSPLIM)"]
     end
     subgraph kg["firmware/src/core1.rs"]
       e["per-core prime sieves (×2)"]
@@ -155,10 +156,11 @@ on core0; the partition (which core touches which sieve) is structural, and the 
 a candidate, scrubbed at the top of every keygen). A wrong residue can only let
 a composite through to the strong-MR/Lucas test, which still rejects it.
 
-### 15. Core1's stack limit
+### 15–16. The per-core stack limits (`main.rs`, `core1.rs`)
 
 ```rust
-unsafe { cortex_m::register::msplim::write(stack_floor) }; // core1, entering `core1_main`
+unsafe { cortex_m::register::msplim::write(&raw const _stack_end as u32) }; // core0, entering `main`
+unsafe { cortex_m::register::msplim::write(stack_floor) };                  // core1, entering `core1_main`
 ```
 
 Core1's stack is an ordinary `Stack<16384>` array in `.bss`, so a push past its
@@ -169,9 +171,16 @@ the stack-pointer decrement itself, which a read-only MPU guard band would not: 
 frame big enough to step over the band writes past it and never faults, and the
 modexp chain on this core reserves ~6 KiB at a time. Programming it is a bare
 `MSR` that no safe API wraps.
+Core0 gets the same instruction for a weaker reason, and it is worth being plain
+about: `flip-link` already puts that stack at the bottom of RAM, so an overflow
+runs off into unmapped space and faults with or without this — there is no gap
+here to close. What the write buys is independence from the linker. Drop
+`flip-link` and that floor disappears silently, along with the only thing keeping
+this stack out of `.bss`; `MSPLIM` states the bound in code, where it can be read
+and where removing it is a visible edit.
 *Safe alternative:* none. `cortex-m` offers no checked form, and the MPU route is
 both weaker (above) and more `unsafe`, not less.
-*Containment:* one write, on the core that owns the stack, before anything has
+*Containment:* one write per core, on the core that owns that stack, before anything has
 pushed, with that stack's own base as the value — no legitimate frame sits below
 it. A violation raises UsageFault/HardFault on core1. That is **not** graceful:
 `embassy_rp::multicore::pause_core1` spins unbounded on the inter-core FIFO, and a

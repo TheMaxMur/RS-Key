@@ -442,6 +442,25 @@ static UI: StaticCell<RefCell<display::Ui>> = StaticCell::new();
 struct SendUsb(UsbDevice<'static, Drv>);
 unsafe impl Send for SendUsb {}
 
+/// Hold core0's stack to the floor the linker gave it.
+///
+/// `flip-link` already puts this stack at the bottom of RAM, so running off it
+/// lands in unmapped space and faults — that is what guards it today, and it
+/// needs no help. What it does not do is say so in the code: drop the linker and
+/// the floor goes with it, silently, leaving the stack growing into `.bss`
+/// again. `MSPLIM` states the bound where it can be read, and traps the SP
+/// decrement rather than the write that follows it. Core1 arms its own — the
+/// register is per-core, and there the guard is load-bearing ([`core1`]).
+fn arm_stack_limit() {
+    // Provided by cortex-m-rt (and rewritten by flip-link when it inverts RAM).
+    unsafe extern "C" {
+        static _stack_end: u8;
+    }
+    // SAFETY: writes this core's stack-limit register, first thing in `main`,
+    // with the linker's own end-of-stack address — no live frame sits below it.
+    unsafe { cortex_m::register::msplim::write(&raw const _stack_end as u32) };
+}
+
 #[embassy_executor::task]
 async fn usb_task(mut device: SendUsb) {
     device.0.run().await;
@@ -488,6 +507,8 @@ fn kvcnt_range() -> core::ops::Range<u32> {
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
+    arm_stack_limit();
+
     let mut config = embassy_rp::config::Config::default();
     if let Some(xosc) = config.clocks.xosc.as_mut() {
         xosc.delay_multiplier = XOSC_DELAY_MULT;
@@ -653,7 +674,7 @@ async fn main(spawner: Spawner) {
     config.max_power = 100;
     config.max_packet_size_0 = 64;
     // bcdDevice build counter; also surfaced on the trusted-display Firmware screen.
-    let device_release: u16 = 0x0878;
+    let device_release: u16 = 0x0879;
     config.device_release = device_release;
 
     let mut builder = Builder::new(
