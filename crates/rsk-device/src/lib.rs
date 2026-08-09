@@ -18,7 +18,9 @@
 //! build inherits every one of them and behaves like a device that has none of
 //! that hardware, which is what it is.
 
-#![no_std]
+// Host test builds link `std`: the RAM `Fs` the wiring is exercised over wants a
+// heap, and no test code reaches the firmware image.
+#![cfg_attr(not(test), no_std)]
 
 extern crate alloc;
 
@@ -139,3 +141,6 @@ impl<T> UserPresence for T where
         + rsk_vendor::UserPresence
 {
 }
+
+#[cfg(test)]
+mod tests;

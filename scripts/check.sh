@@ -179,6 +179,13 @@ run "clippy (display firmware)" env LED_KIND=none cargo clippy -p firmware --fea
 # The trusted-display PIN pad's trivial-PIN reject is display+strong-pin-gated, so the
 # plain display clippy above never compiles it — lint the combination explicitly.
 run "clippy (display strong-pin)" env LED_KIND=none cargo clippy -p firmware --features display,strong-pin -- -D warnings
+# The `display` feature of the WIRING adds the CCID secure-PIN gate
+# (`pin_ref_ready`) and the chaining reset the on-pad VERIFY needs. Neither is
+# compiled by any run above, and the gate is the one that decides whether the
+# trusted display is painted for a credential the host has not addressed — it had
+# no gate at all until audit run-36, so it does not go back to having no test.
+run "test (display wiring)"    cargo test -p rsk-device --features display --target "$HOST"
+run "clippy (display wiring)"  cargo clippy -p rsk-device --features display --target "$HOST" --all-targets -- -D warnings
 run "build firmware (release)" cargo build --release -p firmware
 run "firmware size budget"     firmware_size_budget
 run "partition table fences the store" partition_table_fences_the_store

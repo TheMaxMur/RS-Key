@@ -32,6 +32,11 @@ rsk-usb = { workspace = true }
 # dispatch, exactly as they were in `firmware/`.
 zeroize = { workspace = true }
 
+[dev-dependencies]
+# The RAM `Storage` every applet crate's tests already run against — the routing
+# rules here are only meaningful over a real `Fs`.
+rsk-fs = { workspace = true, features = ["test-util"] }
+
 [features]
 # The strict admin-write profile: see firmware's `strict-config`. It decides
 # whether CTAPHID carries WRITE CONFIG and whether Management RESET wipes.

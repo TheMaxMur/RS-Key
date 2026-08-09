@@ -234,3 +234,7 @@ impl<S: Storage, R: crate::Rng + 'static, VP: rsk_vendor::Platform> AppletHandle
         &self.resp[..n]
     }
 }
+
+#[cfg(test)]
+#[path = "ctap_tests.rs"]
+mod tests;

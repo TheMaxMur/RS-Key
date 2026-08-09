@@ -521,3 +521,7 @@ impl<'a, S: Storage, R: crate::Rng + 'static, VP: rsk_vendor::Platform> CcidAppl
         Some(n + 2)
     }
 }
+
+#[cfg(test)]
+#[path = "ccid_tests.rs"]
+mod tests;
