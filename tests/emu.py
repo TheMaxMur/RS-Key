@@ -226,6 +226,31 @@ class NoCardException(SmartcardException):
         self.hresult = hresult
 
 
+class CardRequestTimeoutException(SmartcardException):
+    pass
+
+
+class AnyCardType:
+    """pyscard's "any card will do" filter. There is exactly one card here, so it
+    is a marker and nothing else."""
+
+
+class EmuCardRequest:
+    """pyscard's `CardRequest`: wait for a card, hand back something carrying a
+    `.connection`.
+
+    The emulator's card is always in its slot, so there is nothing to wait for —
+    and an emulator that is not running surfaces as `NoCardException` from the
+    caller's own `connect()`, which names the socket, rather than as a ten-second
+    "no card inserted" that names nothing."""
+
+    def __init__(self, timeout=None, cardType=None, **_):
+        self.timeout = timeout
+
+    def waitforcard(self):
+        return types.SimpleNamespace(connection=EmuCard())
+
+
 class CardConnection:
     """pyscard's protocol constants; the emulator serves APDUs and has no T=0/T=1
     layer to select between, so `connect` takes the argument and ignores it."""
@@ -268,6 +293,13 @@ class EmuCard:
         if len(resp) < 2:
             raise CardConnectionException(f"response shorter than a status word: {resp.hex()}")
         return list(resp[:-2]), resp[-2], resp[-1]
+
+    def reconnect(self, protocol=None, mode=None, disposition=None):
+        """`SCardReconnect` — a card reset. Powering the slot off and on again is
+        what the emulator has and what a real reader does, so the selected
+        applet's security status goes with it either way."""
+        self.disconnect()
+        self.connect(protocol)
 
     def disconnect(self):
         if self.sock is None:
@@ -345,7 +377,7 @@ def install():
 
 
 def _install_smartcard():
-    """A `smartcard` package with the four modules the suites import.
+    """A `smartcard` package with the modules the suites import.
 
     `smartcard.pcsc.PCSCPart10` is deliberately absent: it is the PC/SC feature
     layer (`FEATURE_VERIFY_PIN_DIRECT`), which the emulator has nothing behind,
@@ -362,16 +394,25 @@ def _install_smartcard():
     conn = types.ModuleType("smartcard.CardConnection")
     conn.CardConnection = CardConnection
 
+    card_type = types.ModuleType("smartcard.CardType")
+    card_type.AnyCardType = AnyCardType
+
+    card_request = types.ModuleType("smartcard.CardRequest")
+    card_request.CardRequest = EmuCardRequest
+
     exceptions = types.ModuleType("smartcard.Exceptions")
     exceptions.SmartcardException = SmartcardException
     exceptions.CardConnectionException = CardConnectionException
     exceptions.NoCardException = NoCardException
+    exceptions.CardRequestTimeoutException = CardRequestTimeoutException
 
     sys.modules["smartcard"] = pkg
     for name, module in (
         ("System", system),
         ("util", util),
         ("CardConnection", conn),
+        ("CardType", card_type),
+        ("CardRequest", card_request),
         ("Exceptions", exceptions),
     ):
         sys.modules[f"smartcard.{name}"] = module

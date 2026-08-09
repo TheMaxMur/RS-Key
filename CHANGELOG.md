@@ -52,7 +52,11 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   that gets fixed fails the run rather than staying listed for ever. Nothing in
   `third_party/` is edited: the run is steered from outside by a pytest plugin.
   pico-fido against the emulator: **188 passed, 14 failed, 2 expected**, up from
-  119 passed / 24 failed / 61 errors before the power cycle existed.
+  119 passed / 24 failed / 61 errors before the power cycle existed. The OpenPGP
+  card suite reaches the card through pyscard alone, so it runs over the
+  emulator's card socket with no PC/SC, no USB and no root — **172 passed, 9
+  failed** — which is what lets it run on any machine rather than one with a
+  reader and a key in it.
 
 - **The emulator speaks the OTP frame protocol.** The keyboard interface's feature
   reports — the transport `ykman otp` uses, and the one `ykpers`/KeePassXC drive —

@@ -33,9 +33,14 @@ import emu  # noqa: E402  (needs the path above)
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+# Each suite, and whether the emulator's socket shim can stand in for its
+# transport. `openpgp` reaches the card through pyscard alone, so the card socket
+# is enough — no PC/SC, no USB, no root, which is what lets it run anywhere.
+# `fido` is driven by python-fido2's own HID transport, which wants a real device:
+# that one needs `--usbip`.
 SUITES = {
-    "fido": "third_party/pico-fido-tests/pico-fido",
-    "openpgp": "third_party/openpgp-card-tests",
+    "fido": ("third_party/pico-fido-tests/pico-fido", False),
+    "openpgp": ("third_party/openpgp-card-tests", True),
 }
 
 # What RS-Key deliberately does not do the way these suites expect. The key is a
@@ -121,9 +126,11 @@ def _install_power_cycle():
 def run(suite, extra):
     import pytest
 
-    path = os.path.join(ROOT, SUITES[suite])
-    print(f"== {suite}: {SUITES[suite]}")
-    return pytest.main([path, *extra], plugins=[Plugin(suite)])
+    rel, shim = SUITES[suite]
+    if shim:
+        emu.install()
+    print(f"== {suite}: {rel}{' (over the emulator socket)' if shim else ''}")
+    return pytest.main([os.path.join(ROOT, rel), *extra], plugins=[Plugin(suite)])
 
 
 def main():

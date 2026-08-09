@@ -47,6 +47,12 @@ pytest plugin. Two things it supplies that the suites cannot ask for themselves:
   suites is named in `DIVERGENCES` with its reason, as `xfail(strict=True)` — so a
   divergence that gets fixed *fails* the run instead of quietly staying listed.
 
+The two suites need different amounts of machine. `openpgp` reaches the card
+through pyscard alone, so the emulator's card socket stands in for the reader —
+no PC/SC, no USB, no root, and it runs wherever the emulator does. `fido` is
+driven by python-fido2's own HID transport, which wants a real device: point it
+at `tools/emu --usbip` attached to a Linux host, or at a board.
+
 Running pytest directly still works, and is what the commands below do.
 
 ## Running them by hand
