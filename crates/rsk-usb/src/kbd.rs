@@ -58,3 +58,92 @@ pub const KEYBOARD_REPORT_DESCRIPTOR: &[u8] = &[
 /// Left-Shift in the report's modifier byte — the keystroke builder's half of
 /// the descriptor above.
 pub const KEYBOARD_MODIFIER_LEFTSHIFT: u8 = 0x02;
+
+/// The boot-keyboard input report: `[modifier, reserved, keycode, 0, 0, 0, 0, 0]`.
+pub const KEYBOARD_REPORT_SIZE: usize = 8;
+
+/// Raw-scancode marker: a static-password slot stores scancodes, and the high bit
+/// means "with shift".
+const SCANCODE_SHIFT: u8 = 0x80;
+
+/// ASCII → (left-shift?, HID keycode) for the characters a typed ticket can
+/// contain (modhex letters, digits, CR) plus the rest of the printable set for
+/// completeness; unmapped bytes type nothing.
+fn ascii_to_keycode(c: u8) -> (bool, u8) {
+    match c {
+        b'a'..=b'z' => (false, 0x04 + (c - b'a')),
+        b'A'..=b'Z' => (true, 0x04 + (c - b'A')),
+        b'1'..=b'9' => (false, 0x1E + (c - b'1')),
+        b'0' => (false, 0x27),
+        b'\n' | b'\r' => (false, 0x28), // Enter
+        0x1B => (false, 0x29),          // Esc
+        0x08 => (false, 0x2A),          // Backspace
+        b'\t' => (false, 0x2B),
+        b' ' => (false, 0x2C),
+        b'-' => (false, 0x2D),
+        b'=' => (false, 0x2E),
+        b'[' => (false, 0x2F),
+        b']' => (false, 0x30),
+        b'\\' => (false, 0x31),
+        b';' => (false, 0x33),
+        b'\'' => (false, 0x34),
+        b'`' => (false, 0x35),
+        b',' => (false, 0x36),
+        b'.' => (false, 0x37),
+        b'/' => (false, 0x38),
+        b'!' => (true, 0x1E),
+        b'@' => (true, 0x1F),
+        b'#' => (true, 0x20),
+        b'$' => (true, 0x21),
+        b'%' => (true, 0x22),
+        b'^' => (true, 0x23),
+        b'&' => (true, 0x24),
+        b'*' => (true, 0x25),
+        b'(' => (true, 0x26),
+        b')' => (true, 0x27),
+        b'_' => (true, 0x2D),
+        b'+' => (true, 0x2E),
+        b'{' => (true, 0x2F),
+        b'}' => (true, 0x30),
+        b'|' => (true, 0x31),
+        b':' => (true, 0x33),
+        b'"' => (true, 0x34),
+        b'~' => (true, 0x35),
+        b'<' => (true, 0x36),
+        b'>' => (true, 0x37),
+        b'?' => (true, 0x38),
+        _ => (false, 0),
+    }
+}
+
+/// The key-press report for `byte`, or `None` if it maps to no key.
+///
+/// `encode` true → `byte` is ASCII, mapped through the table above (a typed
+/// ticket); false → `byte` is already a HID scancode with [`SCANCODE_SHIFT`] for
+/// the modifier (a static password, which is stored as scancodes precisely so a
+/// keyboard layout cannot rewrite it).
+///
+/// The release report is `[0; 8]`, which every caller sends next — it is not
+/// returned here because there is nothing to compute about it.
+pub fn keystroke(byte: u8, encode: bool) -> Option<[u8; KEYBOARD_REPORT_SIZE]> {
+    let (shift, keycode) = if encode {
+        ascii_to_keycode(byte)
+    } else {
+        (byte & SCANCODE_SHIFT != 0, byte & !SCANCODE_SHIFT)
+    };
+    if keycode == 0 {
+        return None;
+    }
+    let mut report = [0u8; KEYBOARD_REPORT_SIZE];
+    report[0] = if shift {
+        KEYBOARD_MODIFIER_LEFTSHIFT
+    } else {
+        0
+    };
+    report[2] = keycode;
+    Some(report)
+}
+
+#[cfg(test)]
+#[path = "kbd_tests.rs"]
+mod tests;
