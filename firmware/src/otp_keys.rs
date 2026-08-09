@@ -49,6 +49,15 @@ pub fn read_keys() -> (Option<[u8; 32]>, Option<[u8; 32]>) {
 /// to the key page for this power cycle via SW_LOCK (secure access stays
 /// read-write — this firmware runs entirely secure). The irreversible LOCK1
 /// fuse below is the permanent counterpart.
+///
+/// Closing the *secure* side as well, once [`read_keys`] holds both keys, would
+/// deny a later code-execution bug a second read of the fuses. It does not work:
+/// SW_LOCK is documented to re-initialise from the OTP lock pages "at reset", but
+/// measured on A4 it **survives `SCB::sys_reset`** (only the bootrom path clears
+/// it). The vendor warm reboot would therefore come back to a page it cannot
+/// read, fall through to the pre-OTP key arm, and lose access to its own sealed
+/// records until a power cycle. Do not add `set_sec` here without changing what
+/// that reboot does.
 pub fn sw_lock_key_page() {
     rp_pac::OTP.sw_lock(KEY_PAGE).write(|w| {
         w.set_nsec(rp_pac::otp::vals::SwLockNsec::Inaccessible);
