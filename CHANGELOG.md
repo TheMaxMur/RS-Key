@@ -49,7 +49,11 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   in them and is near-black on the device. They are now what `rsk_ui::render`
   draws, at the panel's own 240×320, written by `rsk-emu --screenshots` and
   regenerable the day a screen changes. The guide also says the display can be
-  tried in a window (`--display`) before buying the board.
+  tried in a window (`--display`) before buying the board. Ten screens it only
+  described in prose are now shown too — including the Approve / Deny ceremony the
+  page is *about*, and the same prompt against a padded look-alike relying party,
+  where the clip keeps `…m.attacker.com` in view instead of the head an attacker
+  padded it with.
 
 - **CI runs the on-device suites.** `scripts/emu-suites.sh` drives every suite
   that needs no board — `tests/*.py` over the emulator's socket transports, plus

@@ -22,7 +22,9 @@ use embedded_graphics::prelude::*;
 use embedded_graphics_simulator::{OutputSettingsBuilder, SimulatorDisplay};
 
 use rsk_ui::{
-    AppsView, HomeView, PinCaption, PinPad, Screen, SettingsPage, SettingsView, StatusKind,
+    AccountRow, AppsView, AuditKind, AuditRow, BackupView, ConfirmPrompt, HomeView, Label, OathRow,
+    OpenpgpView, PgpSlotRow, PinCaption, PinPad, PivSlotRow, PivView, Screen, SettingsPage,
+    SettingsView, StatusKind,
 };
 
 /// The panel's own size. The PNGs are 1:1 with it — a doc image that has been
@@ -105,6 +107,185 @@ fn shoot(dir: &Path) -> std::io::Result<Vec<String>> {
                 backup_sealed: false,
             }),
         );
+    });
+
+    // The ceremony the whole guide is about: a trusted title the device owns, and
+    // the relying party verbatim underneath it.
+    save("display-approve", &|p| {
+        let _ = rsk_ui::render(
+            p,
+            &Screen::Confirm(ConfirmPrompt::new("Sign in?", b"github.com", b"maxmur")),
+        );
+    });
+
+    // The same prompt against a padded look-alike. The guide claims the clip keeps
+    // the *registrable* suffix rather than the head, so `attacker.example` cannot
+    // hide behind the cut — this is that claim, rendered.
+    save("display-approve-lookalike", &|p| {
+        let _ = rsk_ui::render(
+            p,
+            &Screen::Confirm(ConfirmPrompt::new(
+                "Sign in?",
+                b"accounts.google.com.attacker.com",
+                b"maxmur",
+            )),
+        );
+    });
+
+    save("display-register", &|p| {
+        let _ = rsk_ui::render(
+            p,
+            &Screen::Confirm(ConfirmPrompt::new(
+                "Save new passkey?",
+                b"github.com",
+                b"maxmur",
+            )),
+        );
+    });
+
+    // Secure boot off, because that is the state a reader has: the screen warns
+    // rather than claiming a check it is not doing.
+    save("display-firmware", &|p| {
+        let _ = rsk_ui::render_firmware(
+            p,
+            crate::usbip_stack::BCD_DEVICE,
+            0x0052_534B_454D_5501,
+            false,
+        );
+    });
+
+    save("display-audit", &|p| {
+        let rows = [
+            AuditRow {
+                kind: AuditKind::Login,
+                secs_ago: Some(12),
+            },
+            AuditRow {
+                kind: AuditKind::Register,
+                secs_ago: Some(340),
+            },
+            AuditRow {
+                kind: AuditKind::Denied,
+                secs_ago: Some(3_600),
+            },
+            AuditRow {
+                kind: AuditKind::Pin,
+                secs_ago: Some(7_200),
+            },
+            AuditRow {
+                kind: AuditKind::Boot,
+                secs_ago: Some(86_400),
+            },
+        ];
+        let _ = rsk_ui::render_audit_log(p, &rows, 0, rows.len() as u16, true);
+    });
+
+    // A provisioned device whose export window is still open — the state the
+    // seed-backup guide sends a reader here to check.
+    save("display-backup", &|p| {
+        let _ = rsk_ui::render_backup(
+            p,
+            &BackupView {
+                sealed: false,
+                has_seed: true,
+                exportable: true,
+                can_reveal: true,
+            },
+        );
+    });
+
+    save("display-service", &|p| {
+        let accounts = [
+            AccountRow {
+                name: Label::clamp(b"maxmur"),
+                protected: false,
+            },
+            AccountRow {
+                name: Label::clamp(b"maxmur-work"),
+                protected: true,
+            },
+        ];
+        let _ = rsk_ui::render_service(
+            p,
+            &Label::clamp_domain(b"github.com"),
+            true,
+            &accounts,
+            0,
+            accounts.len() as u16,
+        );
+    });
+
+    save("display-openpgp", &|p| {
+        let _ = rsk_ui::render_openpgp(
+            p,
+            &OpenpgpView {
+                slots: [
+                    PgpSlotRow {
+                        present: true,
+                        algo: Label::clamp(b"Ed25519"),
+                        touch: true,
+                    },
+                    PgpSlotRow {
+                        present: true,
+                        algo: Label::clamp(b"X25519"),
+                        touch: false,
+                    },
+                    PgpSlotRow {
+                        present: false,
+                        algo: Label::default(),
+                        touch: false,
+                    },
+                ],
+                cardholder_name: Label::clamp(b"Maxim Muravev"),
+                sig_count: 7,
+                pw1: 3,
+                pw3: 3,
+            },
+        );
+    });
+
+    save("display-piv", &|p| {
+        let slot = |n: u8, present: bool, algo: &[u8], cert: bool| PivSlotRow {
+            slot: n,
+            present,
+            cert,
+            algo: Label::clamp(algo),
+        };
+        let _ = rsk_ui::render_piv(
+            p,
+            &PivView {
+                slots: [
+                    slot(0x9A, true, b"P-256", true),
+                    slot(0x9C, true, b"RSA-2048", true),
+                    slot(0x9D, false, b"", false),
+                    slot(0x9E, false, b"", false),
+                ],
+                extra: 2,
+                pin: 3,
+                puk: 3,
+            },
+        );
+    });
+
+    save("display-oath", &|p| {
+        let rows = [
+            OathRow {
+                name: Label::clamp(b"GitHub:maxmur"),
+                hotp: false,
+                touch: true,
+            },
+            OathRow {
+                name: Label::clamp(b"AWS:root"),
+                hotp: false,
+                touch: false,
+            },
+            OathRow {
+                name: Label::clamp(b"Bank:counter"),
+                hotp: true,
+                touch: false,
+            },
+        ];
+        let _ = rsk_ui::render_oath(p, &rows, 0, rows.len() as u16);
     });
 
     Ok(written)

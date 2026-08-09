@@ -96,6 +96,9 @@ operation and the **real relying party**, and waits for a deliberate action:
   screen (shield + relying party + a hold-to-approve button). **Deny** refuses
   with `OPERATION_DENIED`.
 
+![The trusted display's sign-in prompt: the trusted title "Sign in?", a globe glyph beside the relying party "github.com" with the account "maxmur" under it, an amber "Approve only if you started this" caution, and a red Deny button beside a blue Hold to approve button](../images/display-approve.png)
+![The trusted display's registration prompt: the same card under the trusted title "Save new passkey?", showing relying party github.com and account maxmur above Deny and Hold to approve](../images/display-register.png)
+
 Every prompt waits for the previous finger to lift before it will accept a tap,
 and a prompt that runs out of time is denied rather than approved — a finger
 resting on *Save* when the window expires cancels the registration, it does not
@@ -107,7 +110,10 @@ shows that string verbatim, never a host-supplied brand logo. A relying-party id
 too long for the box is **clipped with a truncation marker**, and the clip keeps
 the **registrable-domain suffix** (a leading `…` ellipsis) rather than the head.
 So a padded look-alike such as `accounts.google.com.attacker.com` can never hide
-its real domain (`…attacker.com`) behind the cut. This holds on every screen that
+its real domain (`…attacker.com`) behind the cut.
+
+![The same sign-in prompt against a padded look-alike relying party: the name is clipped from the front with a leading ellipsis so it reads "…m.attacker.com", leaving the real registrable domain in view rather than the "accounts.google.com" head the attacker padded it with](../images/display-approve-lookalike.png)
+ This holds on every screen that
 shows an attacker-chosen `rpId`: the approve and enrollment prompts and the
 Passkeys manager's list, service-detail title and Confirm-Delete card. A
 device-local nickname (which you set, not the host) keeps its head instead.
@@ -176,6 +182,8 @@ wiped by a reset, and (unlike a host `updateUserInformation`) never re-seals the
 credential, so the passkey keeps working. The trade-off: the nickname is
 device-local and not seen by host credential managers.
 
+![The trusted display's per-service passkey detail for github.com: a back chevron and a pencil rename affordance beside the title, two account rows (maxmur, and maxmur-work marked UV), and a "2 accounts" footer](../images/display-service.png)
+
 ## Apps — a read-only credential browser
 
 ![The trusted display's Apps tab listing three applets as read-only rows: OpenPGP (0 keys), PIV (0 slots) and OATH (0 codes), each with a chevron to drill in](../images/display-apps.png)
@@ -196,6 +204,10 @@ point is ever shown, and no OATH code is computed (the device has no clock).
   management-key auth: physical presence at the panel *is* the authorisation.
 - **OATH**: the stored credentials (label, TOTP/HOTP, a padlock when
   touch-gated), each with a detail (type, HMAC algorithm, digits, TOTP step).
+
+![The trusted display's OpenPGP overview: Signature (Ed25519), Encryption (X25519), an empty Authentication slot and a Card holder row, with the signature counter and PIN attempts along the bottom](../images/display-openpgp.png)
+![The trusted display's PIV overview: Authentication (P-256), Signature (RSA-2048), empty Key Management and Card Auth slots, a "Retired & F9" row showing 2 populated slots, and the PIN / PUK attempt counts](../images/display-piv.png)
+![The trusted display's OATH list: three credentials — GitHub:maxmur (TOTP, padlocked for touch), AWS:root (TOTP) and Bank:counter (HOTP) — above the note that codes are shown in the RS-Key app](../images/display-oath.png)
 
 ## Settings
 
@@ -221,8 +233,12 @@ Grouped into three domains, plus the journal / backup / reset actions:
   secure-boot fuse state (it warns when secure boot is off rather than claiming a
   check it isn't doing), and the hold-to-**reboot into BOOTSEL** for an over-USB
   update.
+
+![The trusted display's Firmware screen: the installed build 0x0874 under a chip glyph, "Updates arrive over USB." and an amber warning that updates are NOT verified, the chip serial, and a blue Verify & install button](../images/display-firmware.png)
 - **Audit log**: the most recent device-journal events (sign-ins, passkeys
   added, PIN changes, lockouts, resets, power cycles), colour-coded, newest first.
+
+![The trusted display's Audit log: five colour-coded rows newest first — Signed in (now), Passkey added (5m), PIN blocked (1h), PIN changed (2h), Powered on (1d) — with a "5 events" footer](../images/display-audit.png)
 - **Backup**. An honest view of the recovery-seed export **window**: whether a
   seed is present and whether its one-time export has been **sealed**. While the
   window is open, **Show recovery** (gated by the device PIN) paints a 24-word
@@ -230,6 +246,8 @@ Grouped into three domains, plus the journal / backup / reset actions:
   screen**, derived on the device, never crossing USB, behind a hold + warning,
   wiped the instant they're shown. **Seal backup** closes the window for good
   (until a factory reset). See [seed-backup.md](seed-backup.md).
+
+![The trusted display's Backup screen: an amber "Review needed — Seed export still open." card above rows reading Seed: Present and Backup window: Open, with Show recovery phrase and Seal backup buttons](../images/display-backup.png)
 - **Factory reset**: erases every applet's data (FIDO, PIV, OpenPGP, OATH),
   scrubs the flash, and reboots to a blank device (gated by the device PIN, then
   a hold). Only the org attestation and the fused OTP / secure-boot state survive.
