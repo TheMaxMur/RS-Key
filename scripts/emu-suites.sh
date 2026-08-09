@@ -119,10 +119,10 @@ echo "on-device: $pass passed, $fail failed, $skip refused by name"
 if [ ${#failed[@]} -gt 0 ]; then
   printf 'failed: %s\n' "${failed[*]}"
 fi
-# The card suite still has unclassified failures, so it reports rather than
-# gates: listing them in `third_party.py`'s DIVERGENCES before anyone has looked
-# would be the exact thing that list exists to prevent. Delete this carve-out —
-# do not soften it — once they are classified.
+# The card suite's nine failures are one unsettled disagreement about whether a
+# constructed DO carries its own tag (`third_party.py`'s "openpgp" note), so it
+# reports rather than gates. Delete this carve-out — do not soften it — once the
+# spec text settles that.
 echo "third_party (openpgp): $tp_note — reported, NOT gating (unclassified failures)"
 
 [ "$fail" -eq 0 ] || exit 1

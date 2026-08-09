@@ -61,7 +61,66 @@ DIVERGENCES: dict[str, dict[str, str]] = {
         # there is nothing to count. A board doing on-card RSA does emit them —
         # `tests/50_touch_latency.py` is where that is measured.
         "test_055_hid.py::TestHID::test_keep_alive": "no command here is slow enough to stream a keepalive",
+        # CTAP 2.1 §6.1.2: `up` is implicitly true for makeCredential and an
+        # explicit `up: true` is accepted — only `up: false` is INVALID_OPTION.
+        # The FIDO conformance tool checks both (MakeCredential Req-6, P-3/F-1)
+        # and RS-Key passes it; the suite asserts the opposite for `up: true`.
+        "test_000_getinfo.py::test_Check_up_option": "CTAP 2.1 accepts an explicit up:true; only up:false is INVALID_OPTION",
+        # CTAP 2.1 §6.5.5.5, verbatim: "If a PIN has already been set,
+        # authenticator returns CTAP2_ERR_PIN_AUTH_INVALID error". The suite wants
+        # NOT_ALLOWED, which is the CTAP 2.0 answer.
+        "test_010_pin.py::test_set_pin_twice": "§6.5.5.5 makes a second setPIN PIN_AUTH_INVALID, not NOT_ALLOWED",
+        # CTAP 2.1 zero-length-pinUvAuthParam probe: PIN_INVALID when a PIN is set,
+        # PIN_NOT_SET when it is not. The suite wants PIN_AUTH_INVALID — again the
+        # 2.0 answer. Both halves are pinned by `conformance::pin`.
+        "test_010_pin.py::test_zero_length_pin_auth": "the CTAP 2.1 probe answers PIN_INVALID, not PIN_AUTH_INVALID",
+        # RS-Key advertises `makeCredUvNotRqd`, under which CTAP 2.1 §6.1.2 lets a
+        # NON-discoverable credential be made on presence alone. The suite asserts
+        # PUAT_REQUIRED unconditionally, without reading the option.
+        "test_010_pin.py::test_get_no_pin_auth": "makeCredUvNotRqd: a non-discoverable credential needs no token",
+        "test_010_pin.py::test_make_credential_no_pin": "makeCredUvNotRqd: a non-discoverable credential needs no token",
+        # The test calls `device.reboot()` when it sees PIN_AUTH_BLOCKED and then
+        # asserts PIN_AUTH_BLOCKED again — a ladder that only holds while that
+        # reboot does nothing. Given a real power cycle (which the runner supplies,
+        # see `_install_reboot`), the consecutive-mismatch counter clears at
+        # attempt 4 exactly as §6.5.5.7 requires, and the next answer is
+        # PIN_INVALID.
+        "test_010_pin.py::test_lockout": "asserts a lockout its own reboot() is supposed to clear",
+        # CTAP 2.1 §6.2.2: user identifiable information "MUST NOT be returned if
+        # user verification is not done by the authenticator". This assertion runs
+        # without UV, so `id` alone is the whole permitted entity.
+        "test_022_discoverable.py::test_rk_maximum_list_capacity_per_rp_nodisplay": "§6.2.2 forbids returning user name/displayName without UV",
+        # The request's keyAgreement is an all-zero point, which is not on P-256.
+        # Refusing it (INVALID_PARAMETER) before deriving anything is the
+        # invalid-curve defence; reaching the saltAuth check first would mean doing
+        # ECDH with an attacker-chosen off-curve point.
+        "test_035_hmac_secret.py::test_bad_auth": "the off-curve keyAgreement is refused before the salt MAC is looked at",
+        # After the card reset the test performs, no applet is selected, so a bare
+        # LIST is 6A82 (file not found) rather than 6982. Dropping the selection on
+        # a power transition is deliberate — it is what makes a second local
+        # process re-authenticate (ApduHandler::reset_card).
+        "test_070_oath.py::test_auth": "a card reset deselects the applet, so LIST without SELECT is 6A82",
+        "test_070_oath.py::test_noauth": "a card reset deselects the applet, so LIST without SELECT is 6A82",
+        # These send CALCULATE with a bare `74` tag — no length byte, no value —
+        # which is not a TLV. With the encoded empty challenge `74 00` that ykman
+        # actually sends, RS-Key answers the suite's own expected codes byte for
+        # byte (`45 d9 0f 25` for the IMF case).
+        "test_070_oath.py::test_bothoath": "the challenge TLV is sent truncated (`74` with no length)",
+        "test_070_oath.py::test_imf_overwrite": "the challenge TLV is sent truncated (`74` with no length)",
+        "test_070_oath.py::test_imf_more": "the challenge TLV is sent truncated (`74` with no length)",
     },
+    # Nothing listed: all nine failures are ONE disagreement, and it is not settled.
+    # RS-Key returns a constructed DO *with* its own tag and length
+    # (`7a 05 93 03 …`); the Gnuk-derived suite expects the content alone
+    # (`93 03 …`). GnuPG 2.4.8 reads our card completely either way — every field
+    # of `gpg --card-status`, including the ones inside DO 6E — so this is two
+    # readings of OpenPGP Card 3.4 §7.2.6 rather than a broken card, and putting
+    # it here before someone rules on the spec text would be exactly the kind of
+    # entry this list exists to prevent.
+    #
+    # Six of the nine (DO 7A ×4, DO 6E ×2) turn on the wrapper alone. The other
+    # three (DO 65) also ask whether an unset cardholder DO should be empty or
+    # carry empty children; RS-Key sends `5b 00 5f 2d 00 5f 35 00`.
     "openpgp": {},
 }
 
@@ -76,6 +135,7 @@ class Plugin:
 
     def pytest_configure(self, config):
         _install_power_cycle()
+        _install_reboot()
         config.addinivalue_line("markers", "rsk_divergence: expected, and why")
 
     def pytest_collection_modifyitems(self, items):
@@ -121,6 +181,32 @@ def _install_power_cycle():
         return original(self, *args, **kwargs)
 
     Ctap2.reset = reset
+
+
+def _install_reboot():
+    """Answer the suite's "Please reboot authenticator and hit enter".
+
+    pico-fido's `Device.reboot()` prompts an operator and waits five seconds; the
+    tests that call it are checking state a power cycle clears — RS-Key's
+    three-wrong-PINs-per-boot soft lock, which is exactly what the prompt is for.
+    Left unanswered it times out and the device never actually rebooted, so those
+    tests measure a lockout that was never lifted.
+
+    The same operator stand-in the reset gets, for the same reason: a power cycle
+    is one message on the card socket here.
+    """
+    conftest = sys.modules.get("conftest")
+    device = getattr(conftest, "Device", None)
+    if device is None or not hasattr(device, "reboot"):
+        return
+
+    original = device.reboot
+
+    def reboot(self, *args, **kwargs):
+        emu.power_cycle()
+        return original(self, *args, **kwargs)
+
+    device.reboot = reboot
 
 
 def run(suite, extra):
