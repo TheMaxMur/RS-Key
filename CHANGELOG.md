@@ -11,6 +11,27 @@ Two other version numbers live in the firmware and are deliberately **not** this
 tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 `FW_VERSION` — the YubiKey-compatibility version reported to host tools (5.7.4).
 
+> ## ⚠️ Upgrading a 16 MB key provisioned before 0.4.8 wipes it
+>
+> **Export your seed first** ([seed backup](docs/guides/seed-backup.md)).
+>
+> 0.4.7 gave every image a partition table that fenced the KV store off BOOTSEL.
+> On a 16 MB part that table claimed the chip's last sector — which holds
+> `0x10FFFF00`, the absolute block the bootrom's RP2350-E10 workaround owns — and
+> `picotool` refuses to hand it over, so the 16 MB images never built and 0.4.7
+> was never published. **0.4.8 stops the layout one sector short of the top, and
+> that moves the store 4 KB down.** A key provisioned with an older 16 MB build
+> comes up factory-empty: no passkeys, no OpenPGP or PIV keys, no OATH
+> credentials.
+>
+> This affects the 16 MB flavors only — `display` and `16mb`, and the
+> `abrobot-16m` and `waveshare-touch-lcd` board presets. **4 MB and 2 MB keys
+> upgrade in place**: their stores end far below the E10 block and their layouts
+> are byte-identical to 0.4.7.
+>
+> Kept at the top rather than in 0.4.8's notes below, because the people it
+> concerns are the ones arriving later, after that section has scrolled away.
+
 ## [Unreleased]
 
 ### Added
