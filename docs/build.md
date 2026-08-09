@@ -117,6 +117,12 @@ hugs the current image, so a runaway dependency (a whole extra EC curve is
 Lower `FIRMWARE_FLASH_BUDGET_KIB` when the image shrinks; raise it in the same
 commit when a real feature legitimately grows it.
 
+RAM has the mirror-image ratchet, `FIRMWARE_STACK_FLOOR_KIB`. Whatever `.data`
+and `.bss` do not take is stack, so a new static costs stack depth — and the
+deepest paths on this chip (ML-DSA-65 keygen, the RSA modexp chain) run close
+enough to the ceiling that it has already wedged a device. The gate reads the
+figure straight out of the ELF and fails under the floor.
+
 ## The partition table
 
 The shipped image carries an RP2350 partition table that fences the KV store off

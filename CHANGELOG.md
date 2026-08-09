@@ -38,6 +38,12 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+### Added
+
+- The gate asserts a **stack floor** (`FIRMWARE_STACK_FLOOR_KIB`, alongside the
+  flash budget). Static RAM had grown 28.5 KiB since `0x082B`, taking the same
+  amount off the stack ceiling with nothing measuring it.
+
 ## [0.4.9] - 2026-08-09
 
 The emulator release: `tools/emu` runs the applet stack on the host, and with it

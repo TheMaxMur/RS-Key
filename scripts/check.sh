@@ -70,6 +70,27 @@ firmware_size_budget() {
   fi
 }
 
+# Everything between `_stack_end` and `_stack_start` is stack, and every byte of
+# `.data`/`.bss` growth takes one from it — silently, since no build step reads
+# it. That has already cost a device: at 0x082A ML-DSA-65 keygen met the statics
+# and wedged the key. Same ratchet discipline as the flash budget, floor instead
+# of ceiling. The two symbols swap ends under flip-link, so subtract, don't
+# assume which is on top.
+FIRMWARE_STACK_FLOOR_KIB=168
+firmware_stack_floor() {
+  local elf="target/thumbv8m.main-none-eabihf/release/firmware"
+  local top bot kib
+  top=$(arm-none-eabi-nm "$elf" | awk '$3 == "_stack_start" { print $1 }')
+  bot=$(arm-none-eabi-nm "$elf" | awk '$3 == "_stack_end" { print $1 }')
+  kib=$(( (0x$top - 0x$bot) / 1024 ))
+  echo "stack ${kib} KiB / ${FIRMWARE_STACK_FLOOR_KIB} KiB floor; ML-DSA-65 makeCredential peaks near 114 KiB"
+  if [ "$kib" -lt "$FIRMWARE_STACK_FLOOR_KIB" ]; then
+    echo "FAIL: only ${kib} KiB of stack left, under the ${FIRMWARE_STACK_FLOOR_KIB} KiB floor." >&2
+    echo "      Static RAM grew into the stack. Shrink it, or lower the floor deliberately." >&2
+    exit 1
+  fi
+}
+
 # `scripts/pt.sh` fences the KV store off from the USB bootloader. A table whose
 # bounds drift from the store is worse than no table at all: the image still
 # links, still boots, and the gate still passes, but the running firmware loses
@@ -188,6 +209,7 @@ run "test (display wiring)"    cargo test -p rsk-device --features display --tar
 run "clippy (display wiring)"  cargo clippy -p rsk-device --features display --target "$HOST" --all-targets -- -D warnings
 run "build firmware (release)" cargo build --release -p firmware
 run "firmware size budget"     firmware_size_budget
+run "firmware stack floor"     firmware_stack_floor
 run "partition table fences the store" partition_table_fences_the_store
 # The 16 MB geometry is the one that broke: the store used to end at the top of
 # the XIP window, where the bootrom's RP2350-E10 absolute block lives, and
