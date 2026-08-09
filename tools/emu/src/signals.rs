@@ -3,7 +3,15 @@
 
 //! The three flags the socket threads and the device thread share.
 
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
+
+/// Who a presence wait belongs to, mirroring `firmware/src/presence.rs`. A wait
+/// with no scope is nobody's: the display's own on-panel ceremonies are not a
+/// transport's to report or to cancel.
+pub const SCOPE_NONE: u8 = 0;
+pub const SCOPE_FIDO: u8 = 1;
+pub const SCOPE_CCID: u8 = 2;
+pub const SCOPE_OTP: u8 = 3;
 
 #[derive(Default)]
 pub struct Signals {
@@ -11,6 +19,15 @@ pub struct Signals {
     /// streams `STATUS_UPNEEDED` rather than `STATUS_PROCESSING` — that is what
     /// makes a client say "touch your security key".
     up_pending: AtomicBool,
+    /// Which transport that wait belongs to ([`SCOPE_FIDO`] &c).
+    ///
+    /// One presence backend serves every transport, so an unscoped flag tells
+    /// BOTH the FIDO keepalive and the OTP status frame that a touch is pending
+    /// whichever asked for it — a FIDO client saying "touch your security key"
+    /// for an OpenPGP signature, and the OTP status byte announcing a wait
+    /// `tests/77_otp_touch_wait.py` would then read as its own.
+    /// `firmware/src/presence.rs` keeps a `WAIT_SCOPE` for exactly this.
+    wait_scope: AtomicU8,
     /// The CTAPHID channel whose command the device thread is running; 0 = idle.
     active_cid: AtomicU32,
     /// The channel a `CTAPHID_CANCEL` was last seen on.
@@ -36,8 +53,17 @@ impl Signals {
         self.up_pending.store(v, Ordering::Release);
     }
 
-    pub fn up_pending(&self) -> bool {
-        self.up_pending.load(Ordering::Acquire)
+    /// Whose the next presence wait is. Set by the job dispatcher, which is the
+    /// only place that knows which transport asked — the presence backend serves
+    /// all of them through one object.
+    pub fn set_wait_scope(&self, scope: u8) {
+        self.wait_scope.store(scope, Ordering::Release);
+    }
+
+    /// Is a touch pending *for `scope`*? A transport asking about someone else's
+    /// wait gets `false`, which is the whole point.
+    pub fn up_pending_for(&self, scope: u8) -> bool {
+        self.up_pending.load(Ordering::Acquire) && self.wait_scope.load(Ordering::Acquire) == scope
     }
 
     /// Claim the device for `cid`, clearing any cancel left over from before this
@@ -97,3 +123,7 @@ impl Signals {
         self.otp_wait.load(Ordering::Acquire) && self.otp_cancel.load(Ordering::Acquire)
     }
 }
+
+#[cfg(test)]
+#[path = "signals_tests.rs"]
+mod tests;

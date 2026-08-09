@@ -31,7 +31,7 @@ use rsk_fs::Fs;
 use crate::platform::EmuPlatform;
 use crate::presence::EmuPresence;
 use crate::rng::EmuRng;
-use crate::signals::Signals;
+use crate::signals::{self, Signals};
 use crate::store::EmuStore;
 
 /// The OpenPGP AID's manufacturer field, chosen by the same rule the firmware
@@ -321,6 +321,16 @@ async fn serve<PR: rsk_device::UserPresence + 'static>(
             Err(std::sync::mpsc::TryRecvError::Disconnected) => break,
         };
         let now_ms = attach.elapsed().as_millis() as u64;
+        // Whose a touch wait this job starts would be. One presence backend serves
+        // every transport, so without this the FIDO keepalive and the OTP status
+        // frame both announce whichever wait is running — `firmware/src/worker.rs`
+        // sets the same scope per job kind, for the same reason.
+        signals.set_wait_scope(match req.job {
+            Job::Cbor { .. } | Job::Msg(_) | Job::Vendor { .. } => signals::SCOPE_FIDO,
+            Job::Apdu(_) | Job::ResetCard => signals::SCOPE_CCID,
+            Job::OtpHid { .. } => signals::SCOPE_OTP,
+            Job::OtpStatus | Job::DeselectMsg | Job::Replug => signals::SCOPE_NONE,
+        });
         let out = match req.job {
             Job::Cbor { cid, data } => {
                 signals.begin(cid);

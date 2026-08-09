@@ -48,12 +48,16 @@ echo "== starting the emulators (USB/IP + the card socket the reset window needs
 # a stock driver skips — see `scripts/usbip-guest.sh`). Both at once rather than
 # in sequence so the guest boots once: under TCG a boot costs more than a process.
 start_emu() { # <tag> <fido port> <ccid port> <usbip port> [extra…]
-  # stdin closed: `--touch` reads its confirmations from the terminal, and here
-  # there is no operator — which is the point. `77` asserts that a touch-gated
-  # challenge does not wedge the transport *during* the wait, so what it needs is
-  # a device that waits and a press that never comes.
+  # stdin is a fifo this script holds open and never writes to, NOT /dev/null.
+  # `--touch` reads confirmations from stdin, and on EOF the emulator correctly
+  # stops pretending anyone could answer and times out at once — so a closed
+  # stdin makes a `--touch` device behave exactly like a no-touch one. What `77`
+  # needs is the opposite: a device that really waits, for a press that never
+  # comes, so the host can watch the transport stay live through the wait.
+  mkfifo "$WORK/$1.stdin"
+  exec {fd}<>"$WORK/$1.stdin" # keep a writer alive for the emulator's lifetime
   "$EMU" --host 0.0.0.0 --fido-port "$2" --ccid-port "$3" --usbip "0.0.0.0:$4" \
-    --store "$WORK/$1.store" "${@:5}" </dev/null >"$WORK/$1.log" 2>&1 &
+    --store "$WORK/$1.store" "${@:5}" <"$WORK/$1.stdin" >"$WORK/$1.log" 2>&1 &
   for _ in $(seq 50); do
     grep -q "device ready" "$WORK/$1.log" && return 0
     sleep 0.2

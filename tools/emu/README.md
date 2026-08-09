@@ -133,12 +133,14 @@ All of that in one command — including the two identities, since `73` wants th
 Yubico one and the rest must not have it — is `scripts/usbip-suites.sh`, which is
 also what CI runs. It boots a guest that owns a `vhci_hcd`
 (`nix build .#usbip-vm`) because a GitHub-hosted runner cannot be one, and keeps
-the emulators outside it on the VM host. It runs `02`, `61`, `65`, `73` and the
-pico-fido conformance suite; **`77` is deliberately not in it.** Armed with
-`ykman otp chalresp --touch` the slot does read as configured, but no wait
-follows — even started `--touch` with nobody to answer — so the suite has nothing
-to watch. Whether that is the presence model or the slot's touch flag is open;
-until someone reads it, running it would gate CI on an undiagnosed condition.
+the emulators outside it on the VM host. All six run: `02`, `61`, `65`, `73`,
+`77` and the pico-fido conformance suite.
+
+`77` needs the emulator's stdin held **open** — the runner uses a fifo it never
+writes to. On EOF the emulator correctly stops pretending anyone could answer and
+times the touch out at once, which makes a `--touch` device behave like a
+no-touch one and leaves the suite nothing to watch; a fifo gives it the real
+thing, a wait nobody ever ends.
 
 ## The wire
 

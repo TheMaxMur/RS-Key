@@ -105,7 +105,9 @@ const KBD_RPT_SIZE: usize = 8;
 static SIGNALS: OnceLock<Arc<Signals>> = OnceLock::new();
 
 fn up_pending() -> bool {
-    SIGNALS.get().is_some_and(|s| s.up_pending())
+    SIGNALS
+        .get()
+        .is_some_and(|s| s.up_pending_for(crate::signals::SCOPE_FIDO))
 }
 
 /// `CtapHid` only calls this for a `CTAPHID_CANCEL` whose channel is the one in

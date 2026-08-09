@@ -119,14 +119,19 @@ echo
 echo "== phase 2: the Yubico identity (ykman's OtpConnection binds no other)"
 attach "$PORT_YUBICO" 7802 "YubiKey" || exit 1
 run tests/73_otp_keyboard.py
-# `77` is NOT here, and not because it is inconvenient: it watches a touch-gated
-# challenge hold the transport and then let go, so it needs a device that really
-# waits. `ykman otp chalresp --touch` does arm the slot here (the status frame
-# shows slot 2 configured), but no wait follows even with the emulator started
-# `--touch` and no operator to answer — so there is nothing for the suite to
-# observe. Whether that is the emulator's presence model or the slot's touch flag
-# is an open question about `tools/emu`, not about this runner; running it anyway
-# would gate CI on a condition nobody has diagnosed.
+
+# `77` watches a touch-gated challenge hold the transport and then let go, so it
+# needs a slot that waits — armed here, because that is ykman's job and not the
+# suite's. The emulator behind this port runs `--touch` with its stdin held open
+# by the runner, so the wait is real and nobody ever ends it.
+if ykman otp chalresp --touch --force 2 000102030405060708090a0b0c0d0e0f10111213; then
+  run tests/77_otp_touch_wait.py --slot 2
+  ykman otp delete --force 2 || true
+else
+  echo "FAIL: could not arm a touch slot — 77 not run"
+  fail=$((fail + 1))
+  failed+=("otp-arming")
+fi
 detach "YubiKey" || exit 1
 
 echo

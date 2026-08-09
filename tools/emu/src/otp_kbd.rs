@@ -104,7 +104,7 @@ impl RequestHandler for OtpHandler {
             return None;
         }
         let mut out = [0u8; REPORT_SIZE];
-        let up = self.signals.up_pending();
+        let up = self.signals.up_pending_for(crate::signals::SCOPE_OTP);
         self.shared
             .lock()
             .expect("otp mutex poisoned")

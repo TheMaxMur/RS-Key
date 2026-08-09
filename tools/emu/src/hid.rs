@@ -184,7 +184,10 @@ fn run_job(
         match rx.recv_timeout(Duration::from_millis(KEEPALIVE_MS)) {
             Ok(out) => return Ok(out),
             Err(RecvTimeoutError::Timeout) => {
-                if let Some(status) = keepalive_status(is_cbor, shared.signals.up_pending()) {
+                if let Some(status) = keepalive_status(
+                    is_cbor,
+                    shared.signals.up_pending_for(crate::signals::SCOPE_FIDO),
+                ) {
                     write_msg(stream, cid, CTAPHID_KEEPALIVE, &[status])?;
                 }
             }
