@@ -35,7 +35,7 @@ use rsk_usb::ctaphid::{CtapHid, FIDO_REPORT_DESCRIPTOR, HID_RPT_SIZE, MsgHandler
 
 use crate::device::{Job, Req};
 use crate::signals::Signals;
-use crate::usbip::UsbDeviceInfo;
+use crate::usbip::{Ret, Urb, UrbSink, UsbDeviceInfo};
 use crate::usbip_driver::UsbIpDriver;
 
 /// The USB identity a default firmware build carries (`VIDPID=RSKey`), because
@@ -302,6 +302,42 @@ fn usb_config(yubico: bool) -> UsbConfig<'static> {
     config
 }
 
+/// The USB/IP port, plus the one thing a real key does that the transport cannot
+/// express: an attach is a power-up.
+///
+/// The CTAP 2.1 §6.6 reset window runs from the moment the device could answer at
+/// all, and on a board that is boot. Here the process can have been running for
+/// hours before a host imports it, so measuring from process start would leave the
+/// window already shut the first time anyone looked — `authenticatorReset` would
+/// answer `NOT_ALLOWED` forever. An attach is also the only analogue this build has
+/// of `tests/replug.py`'s physical unplug, and it is what the socket transport's
+/// own replug opcode already means: RAM state goes, the card is reset, the clock
+/// restarts.
+struct PoweredPort {
+    inner: crate::usbip_driver::Port,
+    jobs: Sender<Req>,
+}
+
+impl UrbSink for PoweredPort {
+    fn attach(&mut self, rets: Sender<Ret>) {
+        let (tx, _rx) = mpsc::channel();
+        let _ = self.jobs.send(Req {
+            job: Job::Replug,
+            reply: tx,
+        });
+        self.inner.attach(rets);
+    }
+    fn submit(&mut self, urb: Urb) {
+        self.inner.submit(urb);
+    }
+    fn unlink(&mut self, seqnum: u32) -> bool {
+        self.inner.unlink(seqnum)
+    }
+    fn detach(&mut self) {
+        self.inner.detach();
+    }
+}
+
 /// Build the device, then serve USB/IP on `addr` for as long as the process runs.
 ///
 /// Two threads: this one runs the USB stack's executor, the listener's runs the
@@ -320,7 +356,7 @@ pub fn serve(addr: String, jobs: Sender<Req>, signals: Arc<Signals>, yubico: boo
 
     // Leaked, not stack-held: `Builder` hands `&'d` out to the classes, and the
     // device outlives every frame here. `StaticCell` is where the board puts it.
-    let (driver, mut port) = crate::usbip_driver::new();
+    let (driver, port) = crate::usbip_driver::new();
     let mut builder = Builder::new(
         driver,
         usb_config(yubico),
@@ -348,6 +384,10 @@ pub fn serve(addr: String, jobs: Sender<Req>, signals: Arc<Signals>, yubico: boo
         request_cancel,
     );
 
+    let mut port = PoweredPort {
+        inner: port,
+        jobs: jobs.clone(),
+    };
     std::thread::spawn(move || {
         if let Err(e) = crate::usbip::listen(&addr, &device_info(yubico), &INTERFACES, &mut port) {
             eprintln!("emu: cannot serve USB/IP on {addr}: {e}");

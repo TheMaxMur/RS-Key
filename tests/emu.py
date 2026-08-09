@@ -90,8 +90,9 @@ UNSUPPORTED = {
     "73_otp_keyboard": "drives the OTP keyboard interface over raw USB",
     "77_otp_touch_wait": "drives the OTP keyboard interface over raw USB",
     "53_ccid_pinpad": "needs the PC/SC reader's FEATURE_VERIFY_PIN_DIRECT layer",
-    # Faking python-fido2's own transport would leave the suite testing this
-    # shim instead of a third-party client, which is the whole point of it.
+    # Faking python-fido2's own transport would leave the suite testing this shim
+    # instead of a third-party client, which is the whole point of it. Under
+    # `--usbip` there is nothing to fake — they run against the real one.
     "61_pqc_thirdparty_client": "driven through python-fido2's HID transport",
     "65_pqc_thirdparty_client65": "driven through python-fido2's HID transport",
     # Hardware by definition.

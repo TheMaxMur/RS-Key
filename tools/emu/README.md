@@ -55,7 +55,7 @@ of them is an unexplained failure:
 | `02`, `73`, `77` | raw USB — this shim serves reports. They run against `--usbip` below, as ordinary hardware suites |
 | `51` | reboots to BOOTSEL; there is no bootloader to fall into |
 | `53` | the PC/SC `FEATURE_VERIFY_PIN_DIRECT` reader layer |
-| `61`, `65` | driven through python-fido2's own HID transport — faking it would leave the suite testing this shim instead of a third-party client |
+| `61`, `65` | driven through python-fido2's own HID transport — faking it would leave the suite testing this shim instead of a third-party client. Under `--usbip` there is nothing to fake, and they run |
 | `54`, `90` | SRAM residue and OTP-fuse migration — hardware by definition |
 
 The list lives in `tests/emu.py` (`UNSUPPORTED`); removing an entry is a claim
@@ -94,6 +94,13 @@ fido2-token -L                 # /dev/hidraw1: vendor=0x1209, product=0x0001
 fido2-token -I /dev/hidraw1    # CTAP2.3 getInfo
 opensc-tool -a                 # 3b:fc:…:52:53:2d:4b:65:79  — the RS-Key ATR
 ```
+
+Five of the nine suites this shim refuses run here instead, with nothing faked:
+`02_usb_interfaces`, `61`/`65` (python-fido2's own HID transport, ML-DSA verified
+by OpenSSL), `73_otp_keyboard` and `77_otp_touch_wait`. A USB/IP attach is this
+build's power-up — RAM state goes, the card resets, the CTAP 2.1 §6.6 window
+reopens — so `tests/replug.py`'s physical unplug becomes `usbip detach` +
+`usbip attach`.
 
 The keyboard interface carries the OTP frame protocol — the transport
 `ykman otp` speaks — so `02_usb_interfaces`, `73_otp_keyboard` and

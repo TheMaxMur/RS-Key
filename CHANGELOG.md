@@ -49,9 +49,17 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   (`rsk_otp::hid::OtpHid`, moved out of `firmware/` so both builds share it). With
   it, `tests/02_usb_interfaces.py`, `73_otp_keyboard.py` and `77_otp_touch_wait.py`
   run with no hardware: interface order, an HMAC-SHA1 challenge-response through
-  ykman's own `OtpConnection`, and a touch wait the host can abandon. Typed
+  ykman's own `OtpConnection`, and a touch wait the host can abandon — as do
+  `61`/`65`, driven by python-fido2's own HID transport with OpenSSL verifying the
+  ML-DSA signatures. Five of the nine suites the socket shim refuses now run. Typed
   tickets are not emulated — a ticket comes from a button gesture, and this build
   has no button.
+- **A USB/IP attach is a power-up.** RAM state goes, the card resets and the CTAP
+  2.1 §6.6 reset window reopens, so `tests/replug.py`'s physical unplug becomes a
+  `usbip detach` + `attach`. Measuring that window from process start instead left
+  it already shut the first time any host looked, and `authenticatorReset` answered
+  `NOT_ALLOWED` for ever.
+
 - **`--yubico` now presents the whole Yubico identity**, USB VID/PID and descriptor
   strings included, not only the ATR and the OpenPGP AID vendor. `ykman` and Yubico
   Authenticator find a device by the Yubico VID; a half-applied masquerade is a
