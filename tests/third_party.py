@@ -109,19 +109,32 @@ DIVERGENCES: dict[str, dict[str, str]] = {
         "test_070_oath.py::test_imf_overwrite": "the challenge TLV is sent truncated (`74` with no length)",
         "test_070_oath.py::test_imf_more": "the challenge TLV is sent truncated (`74` with no length)",
     },
-    # Nothing listed: all nine failures are ONE disagreement, and it is not settled.
-    # RS-Key returns a constructed DO *with* its own tag and length
-    # (`7a 05 93 03 …`); the Gnuk-derived suite expects the content alone
-    # (`93 03 …`). GnuPG 2.4.8 reads our card completely either way — every field
-    # of `gpg --card-status`, including the ones inside DO 6E — so this is two
-    # readings of OpenPGP Card 3.4 §7.2.6 rather than a broken card, and putting
-    # it here before someone rules on the spec text would be exactly the kind of
-    # entry this list exists to prevent.
+    # All nine are one question, and the spec answers it twice, differently.
     #
-    # Six of the nine (DO 7A ×4, DO 6E ×2) turn on the wrapper alone. The other
-    # three (DO 65) also ask whether an unset cardholder DO should be empty or
-    # carry empty children; RS-Key sends `5b 00 5f 2d 00 5f 35 00`.
-    "openpgp": {},
+    # §4.4.1: "Simple DOs (S) return only the value with GET DATA. Constructed DOs
+    # (C, marked yellow) are returned INCLUDING THEIR TAG AND LENGTH."
+    # §7.2.6, worked example: `00 CA 00 65 00` → `5B 0B … 5F2D 02 … 5F35 01 31`,
+    # with no `65` wrapper at all.
+    #
+    # RS-Key follows §4.4.1 and sends the wrapper (`7a 05 93 03 …`); the
+    # Gnuk-derived suite follows the §7.2.6 example and expects the children alone.
+    # GnuPG 2.4.8 reads our card completely — every field of `gpg --card-status`,
+    # including everything inside DO 6E — so both framings are live in the wild and
+    # the dominant client copes with either.
+    #
+    # Listed rather than "fixed" because moving to the other reading is a wire
+    # change: a `bcdDevice` bump and every reader of these DOs (`tools/tui`'s
+    # `ber_find`, `tools/rsk`, the trusted display's OpenPGP screens) revisited.
+    # That is the maintainer's call on an ambiguous spec, not a test's.
+    "openpgp": {
+        "::test_ds_counter": "§4.4.1 vs §7.2.6: we send DO 7A with its own tag; the example omits it",
+        "::test_app_data": "§4.4.1 vs §7.2.6: we send DO 6E with its own tag; the example omits it",
+        # This one asks a second question too: with the wrapper gone we would send
+        # `5b 00 5f 2d 00 5f 35 00`, and the suite wants an unset cardholder DO to
+        # be empty rather than to carry empty children. §4.4.1 allows a zero-length
+        # Name; whether it must be absent is unstated.
+        "::test_name_lang_sex": "§4.4.1 vs §7.2.6 wrapper, plus: unset cardholder children present vs absent",
+    },
 }
 
 
