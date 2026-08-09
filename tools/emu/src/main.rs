@@ -185,7 +185,7 @@ fn main() {
         // Its own thread: the listener blocks on accept, while the device thread
         // keeps serving the sockets it already has.
         std::thread::spawn(move || {
-            let mut sink = usbip::StallAll;
+            let mut sink = usbip::StallAll::default();
             if let Err(e) = usbip::listen(&addr, &mut sink) {
                 eprintln!("emu: cannot serve USB/IP on {addr}: {e}");
             }
