@@ -31,6 +31,18 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   the button enters that flow through the same `TouchPad` a finger does. The
   ambient loop runs alongside the host's, on one executor, as on the board — so
   the window is a device you can pick up and use, not just a ceremony viewer.
+- **`tools/emu --usbip` makes the emulator a real USB device.** The Linux kernel's
+  `vhci_hcd` attaches a TCP peer as a virtual host controller, so a host sees
+  `/dev/hidraw*` and a PC/SC reader with no USB hardware anywhere — and what it
+  enumerates is the device's own stack, not a description of it: the same
+  `embassy_usb::Builder`, the same three interfaces in the same order, the same
+  `rsk-usb` transports, over an `embassy_usb::driver::Driver` written against the
+  USB/IP protocol. `fido2-token`, a browser, `ykman` and `gpg` reach the emulator
+  through it, and the interface order issue #55 was about is now checked against
+  the descriptors a host actually reads. USB/IP is network-transparent, so the
+  emulator can stay on a Mac while a Linux VM imports it. See
+  `tools/emu/README.md`.
+
 - The CTAPHID and CCID message vocabularies in `rsk-usb` are public, so the
   emulator's transports name the same values instead of redeclaring them.
 - `scripts/docs_constants.py` now checks the constants copied into `tests/*.py`

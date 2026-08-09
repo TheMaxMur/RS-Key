@@ -81,13 +81,27 @@ sudo usbip list -r <host>              # lists rsk-emu and its three interfaces
 sudo usbip attach -r <host> -b rsk-emu
 ```
 
-**Status: the transport is done, the device behind it is not.** Both protocol
-phases are implemented and tested (30 tests), and a real kernel lists the device
-with its interfaces in the right order — which is the `02_usb_interfaces` /
-issue #55 property, and the reason this is worth having. But every URB is
-answered with a STALL, because the seam behind it (`usbip::UrbSink`) has no USB
-stack in it yet; the `embassy_usb::driver::Driver` impl is what fills it. An
-attach therefore succeeds and enumeration then fails.
+What attaches is the device's own USB stack, not a description of it: the same
+`embassy_usb::Builder`, the same three interfaces in the same order, the same
+`rsk_usb::ctaphid` and `rsk_usb::ccid` transports the firmware runs, over
+`usbip_driver` instead of the RP2350's USB peripheral. So the interface order —
+`02_usb_interfaces`, issue #55 — is checked against the descriptors a host really
+reads, and `fido2-token`, a browser, `ykman` and `gpg` all work.
+
+```bash
+fido2-token -L                 # /dev/hidraw1: vendor=0x1209, product=0x0001
+fido2-token -I /dev/hidraw1    # CTAP2.3 getInfo
+opensc-tool -a                 # 3b:fc:…:52:53:2d:4b:65:79  — the RS-Key ATR
+```
+
+Two things to know. The keyboard interface is declared but types nothing: this
+build has no OTP transport, and the interface exists so the *order* is the
+device's. And PC/SC finds no reader on the default identity until the ccid
+driver's whitelist carries it (`overlays.ccid-rs-key`, `docs/linux.md`) — the
+same thing that happens with a real key, for the same reason.
+
+Needs Linux and root for `vhci_hcd`; the emulator itself can stay on a Mac,
+because USB/IP is network-transparent.
 
 ## The wire
 

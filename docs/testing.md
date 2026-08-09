@@ -306,12 +306,21 @@ reason the refused suites are named rather than left to fail somewhere in the
 middle. `--touch` prompts for every presence on the terminal (and prints what a
 trusted display would have shown); `--trace` logs each command and its status.
 
+`--usbip` goes further: it serves the USB/IP protocol, so a Linux host's
+`vhci_hcd` attaches the emulator as a genuine USB device — `/dev/hidraw*`, a
+PC/SC reader, something a browser can talk to. What enumerates there is the
+device's own stack (the same `embassy_usb::Builder`, the same `rsk-usb`
+transports, over a driver written against URBs), so the descriptors and the
+interface order are the real ones. Needs Linux and root; the emulator itself can
+stay on a Mac, because USB/IP is network-transparent. See `tools/emu/README.md`.
+
 What it buys is the run these suites otherwise never get: they are hand-run
 against a flashed board, so nothing catches a *test* that has rotted. What it
 cannot stand in for is the hardware under the applet layer — no secure boot, no
-OTP, no fuses, no USB stack, so enumeration and interface order are unproven by
-it, and the flash is a mock: the log structure and the `--power-cut` injector are
-real, the medium's wear and partial-erase physics are not. The applet wiring
+OTP, no fuses — and the flash is a mock: the log structure and the `--power-cut`
+injector are real, the medium's wear and partial-erase physics are not. The USB
+stack is real under `--usbip` and absent otherwise, so a plain run proves nothing
+about enumeration or interface order. The applet wiring
 *is* shared (`crates/rsk-device`), so a routing or gating bug does show up here;
 what is still written twice is the worker's sequencing and the board's own
 `firmware/src/{main,worker,presence,led}.rs`
