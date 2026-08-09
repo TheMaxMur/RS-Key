@@ -20,6 +20,5 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
 
-from skip_gnuk_only_tests import *
 from card_test_personalize_card_1 import *
 from card_test_personalize_card_2 import *

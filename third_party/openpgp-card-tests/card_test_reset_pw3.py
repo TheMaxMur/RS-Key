@@ -21,16 +21,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
 
 from card_const import *
-import pytest
 
 class Test_Reset_PW3(object):
-    # Gnuk specific feature of clear PW3
     def test_setup_pw3_null(self, card):
-        if card.is_gnuk:
-            r = card.change_passwd(3, FACTORY_PASSPHRASE_PW3, b'', kdf_change=-1)
-            assert r
-        else:
-            pytest.skip("Gnuk only feature of clearing PW3")
+        r = card.change_passwd(3, FACTORY_PASSPHRASE_PW3, b'', kdf_change=-1)
+        assert r
 
     def test_verify_pw3(self, card):
         v = card.verify(3, FACTORY_PASSPHRASE_PW3)

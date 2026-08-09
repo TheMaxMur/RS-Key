@@ -15,6 +15,17 @@ repo's top-level license file):
 | `pico-fido-tests/` | [polhenarejos/pico-fido](https://github.com/polhenarejos/pico-fido) `tests/` | **GPL-3.0-only** (headers read "GNU General Public License … version 3") | AGPL-3.0 (pico-fido's repo LICENSE) |
 | `openpgp-card-tests/` | [polhenarejos/pico-openpgp](https://github.com/polhenarejos/pico-openpgp) `tests/`, derived from [Gnuk](https://www.fsij.org/gnuk/) (NIIBE Yutaka / g10 Code GmbH) | **GPL-3.0-or-later** (Gnuk headers: "either version 3 … or any later version") | AGPL-3.0 |
 
+Vendored from upstream at:
+
+| Directory | Upstream commit | Dated |
+|---|---|---|
+| `pico-fido-tests/` | `b1bacec29db76f6944f9db9ffb595934a89c5a41` | 2026-08-02 |
+| `openpgp-card-tests/` | `1472b26574b2e74d371fe052c7e5f5e30cd2a997` | 2026-07-27 |
+
+Only the pytest part is taken — the docker scripts, build wrappers and C sources
+that sit beside them upstream are not vendored. Record the commit when you
+refresh, or the next refresh has nothing to diff against.
+
 These suites are **run-only** (pytest/pyscard) — they are never compiled or
 linked into the firmware, and every upstream header is preserved verbatim, so
 the GPL/AGPL split above does not interact with RS-Key's own AGPL-3.0-only

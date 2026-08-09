@@ -21,5 +21,4 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
 
 from skip_if_kdfreq import *
-from skip_gnuk_only_tests import *
 from card_test_personalize_reset import *

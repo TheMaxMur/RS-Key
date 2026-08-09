@@ -79,12 +79,15 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   card socket — and names every deliberate divergence as a strict `xfail`, so one
   that gets fixed fails the run rather than staying listed for ever. Nothing in
   `third_party/` is edited: the run is steered from outside by a pytest plugin.
-  Both suites are green: pico-fido **189 passed / 15 expected divergences**, from
-  119 passed / 24 failed / 61 errors before the runner existed; the OpenPGP card
-  suite **172 passed / 9 expected**. Each of the 24 entries is a spec citation,
-  not a shrug — and the OpenPGP nine turn out to be one place where the spec
-  contradicts itself (§4.4.1 says a constructed DO is returned *including* its tag
-  and length; §7.2.6's worked example omits it). The OpenPGP
+  Both suites were refreshed from upstream at the same time (commits recorded in
+  `third_party/README.md`, which nothing did before). pico-fido: **212 passed / 13
+  expected divergences / 8 failed**; the OpenPGP card suite grew by ~250 newly
+  enabled tests and fails most of one section. Every listed divergence is a spec
+  citation, not a shrug — and the OpenPGP ones turn out to be a place where the
+  spec contradicts itself (§4.4.1 says a constructed DO is returned *including*
+  its tag and length; §7.2.6's worked example omits it). The new failures are
+  unclassified and deliberately unlisted, so the card half reports rather than
+  gates until they are read. The OpenPGP
   card suite reaches the card through pyscard alone, so it runs over the
   emulator's card socket with no PC/SC, no USB and no root — **172 passed, 9
   failed** — which is what lets it run on any machine rather than one with a

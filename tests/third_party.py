@@ -86,10 +86,6 @@ DIVERGENCES: dict[str, dict[str, str]] = {
         # attempt 4 exactly as §6.5.5.7 requires, and the next answer is
         # PIN_INVALID.
         "test_010_pin.py::test_lockout": "asserts a lockout its own reboot() is supposed to clear",
-        # CTAP 2.1 §6.2.2: user identifiable information "MUST NOT be returned if
-        # user verification is not done by the authenticator". This assertion runs
-        # without UV, so `id` alone is the whole permitted entity.
-        "test_022_discoverable.py::test_rk_maximum_list_capacity_per_rp_nodisplay": "§6.2.2 forbids returning user name/displayName without UV",
         # The request's keyAgreement is an all-zero point, which is not on P-256.
         # Refusing it (INVALID_PARAMETER) before deriving anything is the
         # invalid-curve defence; reaching the saltAuth check first would mean doing
@@ -109,7 +105,12 @@ DIVERGENCES: dict[str, dict[str, str]] = {
         "test_070_oath.py::test_imf_overwrite": "the challenge TLV is sent truncated (`74` with no length)",
         "test_070_oath.py::test_imf_more": "the challenge TLV is sent truncated (`74` with no length)",
     },
-    # All nine are one question, and the spec answers it twice, differently.
+    # Refreshing from upstream (see third_party/README.md) enabled sections that
+    # were skipped before — `030_kdfsingle` and `040_pcsc_extra` above all — and we
+    # fail most of them. Those are UNCLASSIFIED and deliberately absent here.
+    #
+    # The three entries that are here are one question, and the spec answers it
+    # twice, differently.
     #
     # §4.4.1: "Simple DOs (S) return only the value with GET DATA. Constructed DOs
     # (C, marked yellow) are returned INCLUDING THEIR TAG AND LENGTH."
