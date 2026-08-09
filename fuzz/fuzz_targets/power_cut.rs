@@ -5,12 +5,17 @@
 
 //! Power-cut torture for the rsk-fs flash stack. `fs_ops` proves the `Fs`
 //! bookkeeping over clean reboots; this target cuts the power *mid-write* and
-//! *mid-erase*. The stack is a scaled-down mirror of
-//! `firmware/src/flash_storage.rs` — the same two `sequential-storage` map
-//! partitions (main + counter, with the same FID routing) over one shared
-//! flash, here `MockFlashBase` with its byte-granular `bytes_until_shutoff`
-//! power-cut injector, sized small (8 + 4 pages) so page migration and
-//! reclaim — where a torn write hurts most — happen within a fuzz exec.
+//! *mid-erase*. The stack is the device's own — [`rsk_store::SeqStorage`], the
+//! same two `sequential-storage` map partitions with the same FID routing — over
+//! `MockFlashBase` and its byte-granular `bytes_until_shutoff` injector, sized
+//! small (8 + 4 pages) so page migration and reclaim, where a torn write hurts
+//! most, happen within a fuzz exec.
+//!
+//! It used to be a hand-written mirror of `firmware/src/flash_storage.rs`, which
+//! could only ever be as right as whoever last synced it — and it had drifted: no
+//! `last_error` (so the torture could not see a read fault reported as one), no
+//! `compact` (the scrub lap went unfuzzed), and one counter FID missing from the
+//! routing. Torturing the shipped code removes that whole class of doubt.
 //!
 //! The fuzzer drives Fs/meta ops with a shadow model and arms a cut budget at
 //! chosen points. Once a cut fires, a `dead` latch fails every further
@@ -32,13 +37,12 @@ use std::rc::Rc;
 use embassy_futures::block_on;
 use embedded_storage_async::nor_flash::{ErrorType, MultiwriteNorFlash, NorFlash, ReadNorFlash};
 use libfuzzer_sys::fuzz_target;
-use rsk_fs::{EF_META, Fs, Storage};
-use rsk_sdk::error::{Error, Result};
+use rsk_fs::{EF_META, Fs};
+use rsk_store::SeqStorage;
+use sequential_storage::cache::Cache;
 use sequential_storage::cache::key_pointers::ArrayKeyPointers;
 use sequential_storage::cache::page_pointers::ArrayPagePointers;
 use sequential_storage::cache::page_states::ArrayPageStates;
-use sequential_storage::cache::{Cache, CacheImpl};
-use sequential_storage::map::{MapConfig, MapStorage};
 use sequential_storage::mock_flash::{MockFlashBase, MockFlashError, Operation, WriteCountCheck};
 
 // One 48 KiB flash: pages 0..8 main, 8..12 counter (4 KiB pages, 4-byte words).
@@ -47,21 +51,18 @@ const PAGE_WORDS: usize = 1024;
 type Mock = MockFlashBase<12, WORD, PAGE_WORDS>;
 const MAIN_RANGE: core::ops::Range<u32> = 0..(8 * 4096);
 const COUNTER_RANGE: core::ops::Range<u32> = (8 * 4096)..(12 * 4096);
-const KV_BUF: usize = 2048;
 const META_MAX: usize = 1024;
 
 type MainCache = Cache<ArrayPageStates<8>, ArrayPagePointers<8>, ArrayKeyPointers<u16, 32>, u16>;
 type CounterCache = Cache<ArrayPageStates<4>, ArrayPagePointers<4>, ArrayKeyPointers<u16, 4>, u16>;
 
-// Five main-partition FIDs plus the three counter-routed ones from
-// firmware/src/flash_storage.rs::is_counter_fid — both partitions get torn.
-const FIDS: [u16; 8] = [
-    0xB000, 0xB001, 0xB002, 0xB003, 0xB004, 0xC000, 0x0093, 0xCC01,
+// Five main-partition FIDs plus every counter-routed one
+// (`rsk_store::is_counter_fid`) — both partitions get torn. The mirror this
+// replaced listed only three of the four; `EF_CRED_CTR` (0xC001), rewritten on
+// every getAssertion, was the one it missed.
+const FIDS: [u16; 9] = [
+    0xB000, 0xB001, 0xB002, 0xB003, 0xB004, 0xC000, 0xC001, 0x0093, 0xCC01,
 ];
-
-fn is_counter_fid(fid: u16) -> bool {
-    matches!(fid, 0xC000 | 0x0093 | 0xCC01)
-}
 
 /// The `SharedFlash` analog: one mock flash shared by both partitions, plus
 /// the power latch. Mutations after a fired cut fail without touching flash.
@@ -113,101 +114,26 @@ impl NorFlash for SharedMock {
 }
 impl MultiwriteNorFlash for SharedMock {}
 
-/// The `FlashStorage` mirror: two map partitions, counter-FID routing, one
-/// scratch buffer, errors collapsed exactly the way the firmware collapses
-/// them (a read error reads as "absent" — the torture asserts that this can
-/// never make a committed file vanish).
-struct TortureStorage {
-    main: MapStorage<u16, SharedMock, MainCache>,
-    counter: MapStorage<u16, SharedMock, CounterCache>,
-    buf: [u8; KV_BUF],
-}
+/// The device's store over the cuttable mock. Errors are collapsed exactly as
+/// the firmware collapses them, because this *is* the firmware's collapsing.
+type TortureStorage = SeqStorage<SharedMock, MainCache, CounterCache>;
 
-impl TortureStorage {
-    fn new(flash: SharedMock) -> Self {
-        Self {
-            main: MapStorage::new(
-                flash.clone(),
-                MapConfig::new(MAIN_RANGE),
-                MainCache::new(
-                    ArrayPageStates::new(),
-                    ArrayPagePointers::new(),
-                    ArrayKeyPointers::new(),
-                ),
-            ),
-            counter: MapStorage::new(
-                flash,
-                MapConfig::new(COUNTER_RANGE),
-                CounterCache::new(
-                    ArrayPageStates::new(),
-                    ArrayPagePointers::new(),
-                    ArrayKeyPointers::new(),
-                ),
-            ),
-            buf: [0; KV_BUF],
-        }
-    }
-}
-
-impl Storage for TortureStorage {
-    fn read(&mut self, fid: u16, buf: &mut [u8]) -> Option<usize> {
-        let value = if is_counter_fid(fid) {
-            block_on(self.counter.fetch_item::<&[u8]>(&mut self.buf, &fid)).ok()??
-        } else {
-            block_on(self.main.fetch_item::<&[u8]>(&mut self.buf, &fid)).ok()??
-        };
-        let n = value.len().min(buf.len());
-        buf[..n].copy_from_slice(&value[..n]);
-        Some(value.len())
-    }
-    fn write(&mut self, fid: u16, data: &[u8]) -> Result<()> {
-        if is_counter_fid(fid) {
-            block_on(self.counter.store_item::<&[u8]>(&mut self.buf, &fid, &data))
-        } else {
-            block_on(self.main.store_item::<&[u8]>(&mut self.buf, &fid, &data))
-        }
-        .map_err(|_| Error::MemoryFatal)
-    }
-    fn remove(&mut self, fid: u16) -> Result<()> {
-        if is_counter_fid(fid) {
-            block_on(self.counter.remove_item(&mut self.buf, &fid))
-        } else {
-            block_on(self.main.remove_item(&mut self.buf, &fid))
-        }
-        .map_err(|_| Error::MemoryFatal)
-    }
-    fn size(&mut self, fid: u16) -> Option<usize> {
-        let value = if is_counter_fid(fid) {
-            block_on(self.counter.fetch_item::<&[u8]>(&mut self.buf, &fid)).ok()??
-        } else {
-            block_on(self.main.fetch_item::<&[u8]>(&mut self.buf, &fid)).ok()??
-        };
-        Some(value.len())
-    }
-    fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) -> bool {
-        // Mirror the firmware: both partitions must complete for the caller to
-        // trust absence-by-omission. Runs both regardless of the first's outcome.
-        let main_done = for_each_in(&mut self.main, &mut self.buf, f);
-        let counter_done = for_each_in(&mut self.counter, &mut self.buf, f);
-        main_done && counter_done
-    }
-}
-
-fn for_each_in<C: CacheImpl<u16>>(
-    map: &mut MapStorage<u16, SharedMock, C>,
-    buf: &mut [u8],
-    f: &mut dyn FnMut(u16),
-) -> bool {
-    let Ok(mut iter) = block_on(map.fetch_all_items(buf)) else {
-        return false;
-    };
-    loop {
-        match block_on(iter.next::<&[u8]>(buf)) {
-            Ok(Some((key, _))) => f(key),
-            Ok(None) => return true,
-            Err(_) => return false,
-        }
-    }
+fn new_storage(flash: SharedMock) -> TortureStorage {
+    TortureStorage::new(
+        flash,
+        MAIN_RANGE,
+        COUNTER_RANGE,
+        MainCache::new(
+            ArrayPageStates::new(),
+            ArrayPagePointers::new(),
+            ArrayKeyPointers::new(),
+        ),
+        CounterCache::new(
+            ArrayPageStates::new(),
+            ArrayPagePointers::new(),
+            ArrayKeyPointers::new(),
+        ),
+    )
 }
 
 /// What the power cut interrupted — the only operation whose outcome is
@@ -232,7 +158,7 @@ fn reboot_verify(
 ) {
     loop {
         shared.dead.set(false);
-        *fs = Fs::new(TortureStorage::new(shared.clone()));
+        *fs = Fs::new(new_storage(shared.clone()));
         fs.scan();
         if shared.dead.get() {
             continue; // the cut landed inside the mount/repair — die again
@@ -359,7 +285,7 @@ fuzz_target!(|data: &[u8]| {
         flash: flash.clone(),
         dead: dead.clone(),
     };
-    let mut fs = Fs::new(TortureStorage::new(shared.clone()));
+    let mut fs = Fs::new(new_storage(shared.clone()));
     fs.scan();
 
     let mut val: HashMap<u16, Vec<u8>> = HashMap::new();

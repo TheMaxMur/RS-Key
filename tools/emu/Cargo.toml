@@ -1,0 +1,70 @@
+# Standalone host emulator — NOT part of the firmware workspace (the empty
+# [workspace] table below detaches it from the parent so it builds for the host,
+# not thumbv8m).
+[package]
+name = "rsk-emu"
+version = "0.1.0"
+license = "AGPL-3.0-only"
+edition = "2024"
+description = "rs-key software emulator — the applet stack on a socket, no hardware"
+
+[[bin]]
+name = "rsk-emu"
+path = "src/main.rs"
+
+# Only the in-tree crates: the emulator is the same applet code the firmware
+# runs, wired to a socket instead of USB. No external dependency joins an
+# authenticator's build for a dev tool — randomness comes from `/dev/urandom`
+# and the CLI is parsed by hand.
+[dependencies]
+rsk-sdk = { path = "../../crates/rsk-sdk" }
+rsk-fs = { path = "../../crates/rsk-fs" }
+rsk-usb = { path = "../../crates/rsk-usb" }
+rsk-crypto = { path = "../../crates/rsk-crypto" }
+rsk-fido = { path = "../../crates/rsk-fido" }
+rsk-openpgp = { path = "../../crates/rsk-openpgp" }
+rsk-mgmt = { path = "../../crates/rsk-mgmt" }
+rsk-oath = { path = "../../crates/rsk-oath" }
+rsk-otp = { path = "../../crates/rsk-otp" }
+rsk-piv = { path = "../../crates/rsk-piv" }
+rsk-rescue = { path = "../../crates/rsk-rescue" }
+rsk-vendor = { path = "../../crates/rsk-vendor" }
+# The applet wiring — the same one the firmware runs, not a copy of it.
+rsk-device = { path = "../../crates/rsk-device" }
+# The device's own store backend, over sequential-storage's mock NOR flash — the
+# `_test` feature is what carries that mock, and it is the reason the emulator can
+# have log-structured storage instead of a map that overwrites in place.
+rsk-store = { path = "../../crates/rsk-store" }
+sequential-storage = { version = "=8.0.0", features = ["_test"] }
+# The trusted display: the same flow the firmware runs, over a window instead of
+# an ST7789. `rsk-ui` draws it, `embedded-graphics-simulator` opens the SDL2
+# panel — and because the renderer is generic over `DrawTarget`, neither of them
+# knows the difference.
+rsk-display = { path = "../../crates/rsk-display" }
+rsk-ui = { path = "../../crates/rsk-ui" }
+embedded-graphics = "0.8"
+embedded-graphics-simulator = "0.7"
+# `std` is the feature that makes `Instant::now()` link off-target: it supplies a
+# real time driver, which is why the display flow's 231 deadline/debounce sites
+# needed no host-specific handling at all.
+embassy-time = { git = "https://github.com/embassy-rs/embassy", branch = "main", features = ["std"] }
+# Awaiting a `Timer` (the display loop's tick) needs a timer-queue implementation
+# picked; on-target embassy-executor provides one, and off-target this is it.
+embassy-time-queue-utils = { git = "https://github.com/embassy-rs/embassy", branch = "main", features = ["generic-queue-8"] }
+embedded-storage-async = "0.4"
+embassy-futures = { git = "https://github.com/embassy-rs/embassy", branch = "main" }
+# The USB stack itself, so `--usbip` enumerates the device's own descriptors
+# rather than a second description of them. Already in the graph through
+# `rsk-usb`; naming it here is what lets `usbip_driver` implement its `Driver`.
+embassy-usb = { git = "https://github.com/embassy-rs/embassy", branch = "main" }
+
+[workspace]
+
+# Same vendored sequential-storage patch as the root workspace and `fuzz/`. Without
+# it this detached workspace resolved upstream from crates.io, so the suites ran
+# against a DIFFERENT store library than the device: the fork aborts a walk on a
+# genuine read fault where upstream `continue`s past it, and that return value is
+# what `for_each_key` hands `Fs::scan` to decide a key is absent. An emulator that
+# confuses "unreadable" for "absent" passes exactly the case the device fails.
+[patch.crates-io]
+sequential-storage = { path = "../../third_party/sequential-storage" }

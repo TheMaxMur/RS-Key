@@ -160,7 +160,7 @@ fn getinfo_limits_and_formats() {
     for _ in 0..n {
         cmds.push(d.u32().unwrap());
     }
-    assert_eq!(cmds, vec![0x01u32, 0x02, 0x03]);
+    assert_eq!(cmds, vec![0x01u32, 0x02, 0x03, 0xFF]);
 
     let mut d = field_at(&r.body, 0x0E).expect("firmwareVersion (0x0E) present");
     assert_eq!(d.u32().unwrap(), FIRMWARE_VERSION);

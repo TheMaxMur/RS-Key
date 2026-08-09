@@ -1,23 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 RS-Key contributors
 
-//! Bridges CTAPHID MSG/CBOR to the applet layer. The flash file system is shared
-//! with the CCID handler through a `RefCell`, borrowed only for the duration of
-//! one synchronous dispatch — never across an `.await`.
-
-use core::cell::RefCell;
+//! The board's half of the applet wiring: the TRNG-backed DRBG every applet draws
+//! from, the store type, and the [`rsk_device::Hooks`] that reach the hardware the
+//! wiring itself cannot have. The wiring is `crates/rsk-device`.
 
 use embassy_rp::peripherals::TRNG;
 use embassy_rp::trng::Trng;
 
-use rsk_crypto::{Device, HmacDrbg};
+use rsk_crypto::HmacDrbg;
 use rsk_fs::Fs;
-use rsk_sdk::apdu::Apdu;
-use rsk_sdk::{Applet, Dispatcher, ResBuf};
 use zeroize::Zeroize;
 
 use crate::flash_storage::FlashStorage;
-use crate::vendor::VendorApplet;
+use crate::vendor::VendorPlatform;
 
 /// Raised when the trusted display commits a new clientPIN; consumed by the next
 /// CBOR dispatch to end the RAM session token. The flash-backed `pcmr` grant is not
@@ -40,10 +36,6 @@ pub fn note_local_pin_changed() {
 
 /// The applet-dispatch context (the flash file system).
 pub type Store = Fs<FlashStorage>;
-
-// Sized to the CTAPHID transport maximum (= getInfo's maxMsgSize): an ML-DSA-44
-// makeCredential response runs ~4 KB.
-const RESP_CAP: usize = rsk_usb::ctaphid::CTAP_MAX_MESSAGE;
 
 /// Hardware-seeded HMAC-DRBG ([`rsk_crypto::HmacDrbg`]) over the RP2350 TRNG.
 ///
@@ -129,211 +121,57 @@ impl rsk_rescue::Rng for FidoRng {
     }
 }
 
-pub struct AppletHandler<'a> {
-    fs: &'a RefCell<Store>,
-    disp: Dispatcher,
-    vendor: VendorApplet<'a>,
-    /// The hardware TRNG, shared with the CCID/OpenPGP transport through a
-    /// `RefCell` (borrowed only for one synchronous dispatch, never across an
-    /// `.await`), like the flash `Fs`.
-    rng: &'a RefCell<FidoRng>,
-    /// Cross-message PIN/UV-auth state (PIN token, the ephemeral ECDH key …);
-    /// lives for one power cycle.
-    fido_state: rsk_fido::FidoState,
-    /// Physical user presence (BOOTSEL by default, optionally a GPIO button),
-    /// shared with the OpenPGP applet through a
-    /// `RefCell`; borrowed only for a touch wait inside one dispatch.
-    presence: &'a RefCell<dyn rsk_fido::UserPresence>,
-    serial_id: [u8; 8],
-    serial_hash: [u8; 32],
-    /// The OTP MKEK, once provisioned.
-    otp_key: Option<[u8; 32]>,
-    resp: [u8; RESP_CAP],
-}
+/// The applet wiring, bound to this board's types. The wiring itself is
+/// `rsk-device`; these aliases are what the worker names.
+pub type Ctap<'a> = rsk_device::AppletHandler<'a, FlashStorage, FidoRng, VendorPlatform>;
+pub type Ccid<'a> = rsk_device::CcidApplets<'a, FlashStorage, FidoRng, VendorPlatform>;
 
-impl<'a> AppletHandler<'a> {
-    #[allow(clippy::too_many_arguments)] // one-time wiring from the worker
-    pub fn new(
-        fs: &'a RefCell<Store>,
-        rng: &'a RefCell<FidoRng>,
-        presence: &'a RefCell<dyn rsk_fido::UserPresence>,
-        // Same physical presence, as the rescue trait, for the vendor applet's
-        // gated reboot-to-BOOTSEL (this transport also dispatches the vendor AID).
-        vendor_presence: &'a RefCell<dyn rsk_rescue::UserPresence>,
-        serial_id: [u8; 8],
-        serial_hash: [u8; 32],
-        otp_key: Option<[u8; 32]>,
-        devk: Option<[u8; 32]>,
-    ) -> Self {
-        // The OTP DEVK signs audit-journal checkpoints (rsk_fido::journal); it
-        // rides in FidoState so the pure FIDO logic stays caller-supplied.
-        let mut fido_state = rsk_fido::FidoState::new();
-        // Restore the clientPIN soft lock if the last boot was a warm reset: the
-        // canary survives `sys_reset` but not a real power cycle, which is the
-        // distinction CTAP 2.1 §6.5.5.6 draws. The same canary reports the warm
-        // boot itself, which §6.6's reset window keys on.
+/// What `rsk-device` reaches back into the board for: the LED atomics a flash
+/// record cannot reach, the watchdog register that carries the clientPIN soft
+/// lock across a warm reset, the trusted display's PIN latch, and the second
+/// core's prime search.
+pub struct DeviceHooks;
+
+impl rsk_device::Hooks<FlashStorage> for DeviceHooks {
+    fn config_written(&mut self, fs: &mut Store) {
+        crate::vendor::load_led_config(fs);
+    }
+
+    fn request_reboot(&mut self) {
+        crate::vendor::request_reboot(false);
+    }
+
+    fn store_pin_lock(&mut self, lock: rsk_fido::state::PinLock) {
+        crate::pin_lock::set(lock);
+    }
+
+    /// Restores the soft lock and reports whether this power cycle was entered
+    /// warm. Runs exactly once — `restore_and_arm` consumes the tag — which is why
+    /// `rsk-device` calls it only when the handler is built.
+    fn boot_state(&mut self) -> rsk_device::BootState {
         let boot = crate::pin_lock::restore_and_arm();
-        fido_state.restore_pin_lock(boot.lock);
-        fido_state.warm_boot = boot.warm;
-        fido_state.devk = devk;
-        // Generate the clientPIN ephemeral key-agreement key at power-up (CTAP 2.1
-        // §6.5.5.7), not lazily on the first clientPIN — so the first PIN entry
-        // after plug-in doesn't pay the one-time ~40 ms `d·G`. The TRNG is seeded
-        // by the time the worker builds the handler.
-        fido_state.ensure_initialized(&mut *rng.borrow_mut());
-        Self {
-            fs,
-            disp: Dispatcher::new(),
-            vendor: VendorApplet::new(vendor_presence),
-            rng,
-            fido_state,
-            presence,
-            serial_id,
-            serial_hash,
-            otp_key,
-            resp: [0; RESP_CAP],
+        rsk_device::BootState {
+            warm: boot.warm,
+            lock: boot.lock,
         }
     }
 
-    /// Wipe the response buffer — it can hold a PIN token or other secrets after
-    /// a dispatch. Called by the worker once the response has been handed off.
-    pub fn scrub(&mut self) {
-        self.resp.zeroize();
+    /// The trusted display committed a new clientPIN since the last command.
+    /// Consumed here, set on the display task — `FidoState` is the handler's, not
+    /// the panel's.
+    #[cfg(feature = "display")]
+    fn local_pin_changed(&mut self) -> bool {
+        LOCAL_PIN_CHANGED.swap(false, core::sync::atomic::Ordering::AcqRel)
     }
 
-    /// Secure-reboot wipe: clear the response buffer and the cross-message FIDO
-    /// auth state — `reset` zeroizes the PIN/UV token, session key and ephemeral
-    /// ECDH scalar via their `Drop` impls.
-    pub fn scrub_secrets(&mut self) {
-        self.resp.zeroize();
-        self.fido_state.reset();
-    }
-}
-
-// Synchronous dispatch called by the worker (`crate::worker`) on the thread
-// executor; the CTAPHID transport reaches it through the worker handshake.
-impl AppletHandler<'_> {
-    /// Drop any applet selected over CTAPHID_MSG. Called (via the worker) on a
-    /// CTAPHID_INIT so a fresh session starts with nothing selected — U2F has no
-    /// SELECT and must not inherit a prior vendor-AID selection.
-    pub fn deselect_msg(&mut self) {
-        self.disp.clear_selection();
-    }
-
-    pub fn handle_msg(&mut self, apdu: &[u8]) -> &[u8] {
-        // U2F (CTAP1) has no SELECT over CTAPHID: route its INS straight to the
-        // FIDO applet when nothing else is selected. A vendor AID SELECT takes
-        // the dispatcher path below.
-        if let Ok(parsed) = Apdu::parse(apdu) {
-            const INS_SELECT: u8 = 0xA4;
-            if self.disp.current().is_none() && parsed.ins != INS_SELECT {
-                // Borrow only the serial fields so rng/state/resp stay free.
-                let dev = Device {
-                    serial_hash: &self.serial_hash,
-                    serial_id: &self.serial_id,
-                    otp_key: self.otp_key.as_ref(),
-                };
-                let now_ms = crate::usb_attach::elapsed_ms();
-                let (sw, n) = {
-                    let mut fsb = self.fs.borrow_mut();
-                    let mut rngb = self.rng.borrow_mut();
-                    let mut presence = self.presence.borrow_mut();
-                    let mut ctx = rsk_fido::Ctx {
-                        dev,
-                        fs: &mut *fsb,
-                        rng: &mut *rngb,
-                        state: &mut self.fido_state,
-                        now_ms,
-                        presence: &mut *presence,
-                    };
-                    rsk_fido::u2f::process_u2f(&mut ctx, &parsed, &mut self.resp[..RESP_CAP - 2])
-                };
-                self.resp[n..n + 2].copy_from_slice(&sw.to_bytes());
-                return &self.resp[..n + 2];
-            }
-        }
-
-        // Body fills resp[..cap-2]; the status word is appended after it.
-        let (sw, n) = {
-            let mut res = ResBuf::new(&mut self.resp[..RESP_CAP - 2]);
-            let mut applets: [&mut dyn Applet<Store>; 1] = [&mut self.vendor];
-            let mut fsb = self.fs.borrow_mut();
-            let sw = self.disp.process(apdu, &mut applets, &mut *fsb, &mut res);
-            (sw, res.len())
-        };
-        self.resp[n..n + 2].copy_from_slice(&sw.to_bytes());
-        &self.resp[..n + 2]
-    }
-
-    pub fn handle_cbor(&mut self, cid: u32, data: &[u8]) -> &[u8] {
-        // The trusted display re-keyed the clientPIN since the last command: end
-        // every session credential the old PIN authorized, before this one can use
-        // it. Set on the display task, consumed here — `FidoState` is ours, not its.
-        //
-        // RAM only. §6.5.5.6 step 15's persistent half used to be signalled through
-        // this same flag, which an APDU-only warm reboot drops before any CBOR command
-        // consumes it — leaving the `pcmr` grant live for ever (audit run-37). It is
-        // now revoked inside the write that installs the new verifier.
-        #[cfg(feature = "display")]
-        if LOCAL_PIN_CHANGED.swap(false, core::sync::atomic::Ordering::AcqRel) {
-            let mut rngb = self.rng.borrow_mut();
-            self.fido_state.reset_pin_uv_auth_token(&mut *rngb);
-            // The host path also clears `needs_power_cycle` here; that field is
-            // crate-private and leaving the RAM soft lock armed only fails closed
-            // (host clientPIN stays blocked until a replug), so it stays as it is.
-        }
-        let dev = Device {
-            serial_hash: &self.serial_hash,
-            serial_id: &self.serial_id,
-            otp_key: self.otp_key.as_ref(),
-        };
-        // Which CTAPHID channel is asking. Cross-message state a second process on
-        // its own channel must not be able to ride — the seed-backup MSE key —
-        // binds to this (see `FidoState::mse_ready`).
-        self.fido_state.channel = cid;
-        // Since the USB attach, not since power-up: the §6.6 reset window a host has
-        // to hit is measured from the moment the device could answer at all.
-        let now_ms = crate::usb_attach::elapsed_ms();
-        let n = {
-            let mut fsb = self.fs.borrow_mut();
-            let mut rngb = self.rng.borrow_mut();
-            let mut presence = self.presence.borrow_mut();
-            let mut ctx = rsk_fido::Ctx {
-                dev,
-                fs: &mut *fsb,
-                rng: &mut *rngb,
-                state: &mut self.fido_state,
-                now_ms,
-                presence: &mut *presence,
-            };
-            rsk_fido::process_cbor(&mut ctx, data, &mut self.resp)
-        };
-        // Persist the clientPIN soft lock across a warm reboot. It is RAM-only, and a
-        // host can request `SCB::sys_reset` ungated (vendor 0x1F P1=0, the rescue
-        // twin, or the phy config-write auto-reboot) — which cleared it and let host
-        // malware burn the whole retry budget unattended, the exact thing CTAP 2.1
-        // §6.5.5.6's power-cycle requirement exists to prevent.
-        crate::pin_lock::set(self.fido_state.pin_lock());
-        // A vendor (0x41) CONFIG_WRITE with the LED target persists EF_LED_CONF,
-        // but the LED atomics live here in the firmware — reload the block after
-        // any 0x41 command to apply it live, matching the CCID SET_LED. 0x41 is
-        // rare (backup/audit/config), so the extra flash read is negligible, and
-        // it is a no-op when the record is absent or unchanged.
-        if data.first() == Some(&rsk_fido::consts::CTAP_VENDOR) {
-            let mut fsb = self.fs.borrow_mut();
-            crate::vendor::load_led_config(&mut fsb);
-            // A PHY config-write changes the USB identity, which is only read at
-            // boot. If power-cycle-on-reset is enabled (phy opts, the default),
-            // warm-reboot so the new VID/PID/product/interfaces apply without a
-            // manual replug (fixes the "config doesn't take effect" report). The
-            // reset runs in the worker after this response flushes.
-            if rsk_fido::vendor::take_phy_written() {
-                let phy = rsk_rescue::phy::load(&mut fsb).unwrap_or_default();
-                if phy.opts & rsk_rescue::phy::OPT_DISABLE_POWER_RESET == 0 {
-                    crate::vendor::request_reboot(false);
-                }
-            }
-        }
-        &self.resp[..n]
+    /// Both cores race the prime search while the transports keep the host alive.
+    /// `Some` either way: this board *has* an accelerator, so a failed search is a
+    /// failed command, not a fall-through to the single-core path.
+    fn rsa_search(
+        &mut self,
+        nbits: usize,
+        rng: &mut dyn rsk_openpgp::Rng,
+    ) -> rsk_device::SearchResult {
+        Some(crate::core1::run_rsa_search(nbits, rng))
     }
 }

@@ -37,12 +37,22 @@ the mdBook site.
 | `soft-lock-states.svg` | Soft-lock state machine (Sealed / Locked / Unlocked) | original — from `guides/soft-lock.md` |
 | `seed-backup-window.svg` | Seed-export one-time window (No seed / Open / Finalized) | original — from `guides/seed-backup.md` |
 | `backup-key-redundancy.svg` | Primary + backup key enrolled at each account | original — from `guides/backup-key.md` |
-| `display-home.jpg` | Photo — trusted display, Home / "Ready" screen | own device photo (Waveshare RP2350-Touch-LCD-2.8), cropped, EXIF stripped |
-| `display-pin.jpg` | Photo — trusted display, Device PIN pad | own device photo, cropped, EXIF stripped |
-| `display-passkeys.jpg` | Photo — trusted display, Passkeys (empty) | own device photo, cropped, EXIF stripped |
-| `display-apps.jpg` | Photo — trusted display, Apps browser | own device photo, cropped, EXIF stripped |
-| `display-settings.jpg` | Photo — trusted display, Settings menu | own device photo, cropped, EXIF stripped |
-| `display-locked.jpg` | Photo — trusted display, Locked screen | own device photo, cropped, EXIF stripped |
+| `display-home.png` | Trusted display — Home / "Ready" screen | original — rendered by `rsk_ui::render` at the panel's 240×320 (`rsk-emu --screenshots`) |
+| `display-pin.png` | Trusted display — Device PIN pad | original — rendered by `rsk_ui::render` at the panel's 240×320 (`rsk-emu --screenshots`) |
+| `display-passkeys.png` | Trusted display — Passkeys (empty) | original — rendered by `rsk_ui::render` at the panel's 240×320 (`rsk-emu --screenshots`) |
+| `display-apps.png` | Trusted display — Apps browser | original — rendered by `rsk_ui::render` at the panel's 240×320 (`rsk-emu --screenshots`) |
+| `display-settings.png` | Trusted display — Settings menu | original — rendered by `rsk_ui::render` at the panel's 240×320 (`rsk-emu --screenshots`) |
+| `display-locked.png` | Trusted display — Locked screen | original — rendered by `rsk_ui::render` at the panel's 240×320 (`rsk-emu --screenshots`) |
+| `display-approve.png` | Trusted display — Sign-in Approve / Deny prompt | original — rendered by `rsk_ui::render` at the panel's 240×320 (`rsk-emu --screenshots`) |
+| `display-approve-lookalike.png` | Trusted display — Approve prompt, padded look-alike rpId clipped to its registrable domain | original — rendered by `rsk_ui::render` at the panel's 240×320 (`rsk-emu --screenshots`) |
+| `display-register.png` | Trusted display — "Save new passkey?" enrollment prompt | original — rendered by `rsk_ui::render` at the panel's 240×320 (`rsk-emu --screenshots`) |
+| `display-service.png` | Trusted display — Passkeys — per-service detail (accounts, rename) | original — rendered by `rsk_ui::render` at the panel's 240×320 (`rsk-emu --screenshots`) |
+| `display-openpgp.png` | Trusted display — Apps — OpenPGP overview | original — rendered by `rsk_ui::render` at the panel's 240×320 (`rsk-emu --screenshots`) |
+| `display-piv.png` | Trusted display — Apps — PIV overview | original — rendered by `rsk_ui::render` at the panel's 240×320 (`rsk-emu --screenshots`) |
+| `display-oath.png` | Trusted display — Apps — OATH credential list | original — rendered by `rsk_ui::render` at the panel's 240×320 (`rsk-emu --screenshots`) |
+| `display-firmware.png` | Trusted display — Settings — Firmware (build, serial, secure-boot state) | original — rendered by `rsk_ui::render` at the panel's 240×320 (`rsk-emu --screenshots`) |
+| `display-audit.png` | Trusted display — Settings — Audit log | original — rendered by `rsk_ui::render` at the panel's 240×320 (`rsk-emu --screenshots`) |
+| `display-backup.png` | Trusted display — Settings — Backup / seed-export window | original — rendered by `rsk_ui::render` at the panel's 240×320 (`rsk-emu --screenshots`) |
 | `board-one.jpg` | Photo — Waveshare RP2350-One (reference board) | **Waveshare product photo**, used with attribution (hardware.md) |
 | `board-zero.jpg` | Photo — Waveshare RP2350-Zero (mini USB-C stick) | **Waveshare product photo**, used with attribution |
 | `board-display.jpg` | Photo — Waveshare RP2350-Touch-LCD-2.8 (display board) | **Waveshare product photo**, used with attribution |

@@ -1,0 +1,49 @@
+[package]
+name = "rsk-display"
+version = "0.1.0"
+license = "AGPL-3.0-only"
+edition = "2024"
+publish = false
+
+# The trusted display's *flow* — which screen is shown when, the PIN pad's state
+# machine, the browse modals, the Approve/Deny wait. `rsk-ui` already held the
+# *rendering* (host-tested + Kani); this held everything that decides what to
+# render, and it lived in `firmware/`, so nothing but a flashed board could run
+# it. The panel and the touch controller are type parameters, and the four
+# hardware verbs left over (backlight, wake button) plus the firmware's own
+# globals sit behind `Hooks` — so the emulator can drive the same flow against a
+# window.
+[dependencies]
+rsk-sdk = { workspace = true }
+rsk-fs = { workspace = true }
+rsk-crypto = { workspace = true }
+rsk-fido = { workspace = true }
+rsk-openpgp = { workspace = true }
+rsk-oath = { workspace = true }
+rsk-otp = { workspace = true }
+rsk-piv = { workspace = true }
+rsk-mgmt = { workspace = true }
+rsk-rescue = { workspace = true }
+rsk-vendor = { workspace = true }
+rsk-device = { workspace = true }
+# The screens themselves, plus the untrusted-string sanitizing and the Allow/Deny
+# geometry this flow positions its taps against.
+rsk-ui = { workspace = true }
+# The STATUS_* indices a ceremony borrows and restores.
+rsk-led = { workspace = true }
+# On-device seed reveal (BIP-39 words) and the SLIP-39 Shamir split behind it.
+rsk-bip39 = { workspace = true }
+rsk-slip39 = { workspace = true }
+# The shared `DrawTarget` vocabulary the panel type parameter is bound by.
+embedded-graphics = { workspace = true }
+# Deadlines, debounce windows and the busy-wait polls the flow is built from.
+# Host builds supply the `std` driver; the firmware's comes from embassy-rp.
+embassy-time = { workspace = true }
+zeroize = { workspace = true }
+
+[features]
+# Mirrors the firmware feature: the PIN pad's trivial-PIN reject.
+strict-config = ["rsk-mgmt/strict-config", "rsk-fido/strict-config", "rsk-otp/strict-config", "rsk-vendor/strict-config", "rsk-device/strict-config"]
+# The PIN pad's trivial-PIN reject, and the FIPS profile's screen copy.
+strong-pin = ["rsk-fido/strong-pin"]
+fips-profile = ["rsk-fido/fips-profile"]

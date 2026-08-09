@@ -1,0 +1,23 @@
+[package]
+name = "rsk-store"
+version = "0.1.0"
+license = "AGPL-3.0-only"
+edition = "2024"
+publish = false
+
+# The `rsk_fs::Storage` backend the device actually runs: two `sequential-storage`
+# map partitions over one flash, counter FIDs routed away from the credential
+# pages, and the scrub lap that physically destroys superseded secrets. It was
+# `firmware/src/flash_storage.rs`, which meant the `power_cut` fuzz target could
+# only torture a hand-written mirror of it and the emulator had no log-structured
+# store at all.
+[dependencies]
+rsk-fs = { workspace = true }
+rsk-sdk = { workspace = true }
+sequential-storage = "8"
+# The async NorFlash traits the backend is generic over (the same 0.4
+# `sequential-storage` uses).
+embedded-storage-async = "0.4"
+# `sequential-storage` is async-only; every backing flash this crate is used with
+# resolves on the first poll, so each op is driven synchronously.
+embassy-futures = { workspace = true }

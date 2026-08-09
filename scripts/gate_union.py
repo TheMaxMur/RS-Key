@@ -27,7 +27,7 @@ import re
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-UNION = ROOT / "firmware/src/ccid_handler.rs"
+UNION = ROOT / "crates/rsk-device/src/ccid.rs"
 UNION_FN = "gates_wiped_last"
 
 # `fn is_<applet>_gate_fid(fid: u16) -> bool` / `..._lock_fid`, at any visibility.
@@ -70,9 +70,10 @@ def union_body(text):
 
 
 def sources():
-    """Every non-test Rust file a gate predicate can live in. `firmware/src` is in
-    scope because a predicate defined there is named by the union in the same crate
-    — the one place a `pub`-less one is idiomatic, and it used to be unscanned."""
+    """Every non-test Rust file a gate predicate can live in. `firmware/src` stays in
+    scope even though the union moved to `crates/rsk-device`: a predicate defined
+    there can still be named, and a tree that stops being scanned is a tree whose
+    missing arms stop being reported."""
     for path in sorted((ROOT / "crates").glob("*/src/**/*.rs")) + sorted(
         (ROOT / "firmware/src").glob("**/*.rs")
     ):

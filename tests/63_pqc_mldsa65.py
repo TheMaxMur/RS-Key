@@ -119,8 +119,12 @@ def main():
         (cred_id, alg, pk, auth_data, att), dt_mc = make_credential(dev, cid, [-49, -7])
         assert alg == -49, f"selected alg {alg}, want -49 (first supported)"
         assert len(pk) == PK_LEN, f"pk len {len(pk)}, want {PK_LEN}"
-        assert att["alg"] == -49 and len(att["sig"]) == SIG_LEN, "attStmt shape"
-        assert ML_DSA_65.verify(pk, auth_data + CDH, att["sig"]), "attestation sig"
+        # Basic attestation is ES256 by the device key whatever the credential
+        # algorithm is (`makecredential.rs` writes ALG_ES256 unconditionally), so a
+        # PQC credential leaves the statement unchanged — same expectation as
+        # 60_pqc_mldsa. This asserted an ML-DSA-65 SELF-attestation until
+        # 2026-08-08, which no build has ever produced.
+        assert att["alg"] == -7 and att["x5c"], f"attStmt {att}"
 
         # 4. The same rule decides between the two ML-DSA sets.
         (_, alg2, _, _, _), _ = make_credential(dev, cid, [-49, -48])
@@ -133,7 +137,8 @@ def main():
         ad2, sig2, _ = get_assertion(dev, cid, cred_id)
         c1 = int.from_bytes(ad1[33:37], "big")
         c2 = int.from_bytes(ad2[33:37], "big")
-        assert c2 > c1, f"sign counter did not grow ({c1} -> {c2})"
+        # Per-credential counters, non-resident credential — see 60_pqc_mldsa.
+        assert (c1, c2) == (0, 0), f"non-resident credential reported a counter ({c1} -> {c2})"
         assert ML_DSA_65.verify(pk, ad2 + CDH, sig2)
 
         # 6. Classic -> PQC resident upgrade for one rp/user.

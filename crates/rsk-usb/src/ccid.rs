@@ -22,10 +22,13 @@ use embassy_time::Timer;
 use embassy_usb::Builder;
 use embassy_usb::driver::{Driver, Endpoint, EndpointError, EndpointIn, EndpointOut};
 
-// CCID bulk-OUT message types (Bulk-OUT, PC → reader).
+// CCID bulk-OUT message types (Bulk-OUT, PC → reader). The message vocabulary
+// and the framing helpers below are public for the same reason CTAPHID's are:
+// `tools/emu` is a second transport over the same protocol, and a protocol
+// spelled out twice is a protocol that drifts.
 const CCID_SET_PARAMS: u8 = 0x61;
-const CCID_POWER_ON: u8 = 0x62;
-const CCID_POWER_OFF: u8 = 0x63;
+pub const CCID_POWER_ON: u8 = 0x62;
+pub const CCID_POWER_OFF: u8 = 0x63;
 const CCID_SLOT_STATUS: u8 = 0x65;
 const CCID_GET_PARAMS: u8 = 0x6C;
 const CCID_RESET_PARAMS: u8 = 0x6D;
@@ -34,18 +37,18 @@ const CCID_SECURE: u8 = 0x69;
 const CCID_SET_RATE: u8 = 0x73;
 
 // CCID bulk-IN message types (Bulk-IN, reader → PC).
-const CCID_DATA_BLOCK_RET: u8 = 0x80;
+pub const CCID_DATA_BLOCK_RET: u8 = 0x80;
 const CCID_SLOT_STATUS_RET: u8 = 0x81;
 const CCID_PARAMS_RET: u8 = 0x82;
 const CCID_SET_RATE_RET: u8 = 0x84;
 
 /// `bStatus` after power-off / reset: ICC present, inactive.
-const STATUS_INACTIVE: u8 = 1;
+pub const STATUS_INACTIVE: u8 = 1;
 /// `bStatus` after power-on: ICC present, active.
-const STATUS_ACTIVE: u8 = 0;
+pub const STATUS_ACTIVE: u8 = 0;
 /// `bStatus` for a time-extension `RDR_to_PC_DataBlock` (bmCommandStatus = "time
 /// extension requested").
-const STATUS_TIMEEXT: u8 = 0x80;
+pub const STATUS_TIMEEXT: u8 = 0x80;
 /// `bStatus` the secure-PIN path reports when the card actually ran the VERIFY
 /// (even a wrong-PIN status word is a *successful* command — the card answered).
 /// The transport substitutes the live slot status for this value.
@@ -59,7 +62,7 @@ pub const SECURE_ERR_CANCELLED: u8 = 0xEF;
 pub const SECURE_ERR_TIMEOUT: u8 = 0xF0;
 /// Time-extension cadence while a long op runs — well under the T=1 block waiting
 /// time, so the host's transaction never times out.
-const WTX_INTERVAL_MS: u64 = 200;
+pub const WTX_INTERVAL_MS: u64 = 200;
 /// Abandon a bulk-IN response if the host stops draining it for this long. A
 /// client that walks away mid-response must not block the CCID task forever in
 /// `write_transfer().await` — that would stop the bulk-OUT read and wedge the
@@ -72,7 +75,7 @@ use crate::TX_TIMEOUT_MS;
 /// left in the buffer is spliced onto whatever the next host sends.
 const RX_TIMEOUT_MS: u64 = 500;
 
-const HEADER: usize = 10;
+pub const HEADER: usize = 10;
 /// `dwMaxCCIDMessageLength` from the class descriptor.
 pub const MAX_CCID_MSG: usize = 2048;
 /// `wMaxPacketSize` of the three CCID endpoints (full-speed USB). A bulk-IN
@@ -188,7 +191,7 @@ pub struct SecureResult {
 }
 
 /// If `msg` is an `XfrBlock`, the `(start, end)` byte range of its APDU payload.
-fn xfr_apdu(msg: &[u8]) -> Option<(usize, usize)> {
+pub fn xfr_apdu(msg: &[u8]) -> Option<(usize, usize)> {
     if msg.len() < HEADER || msg[0] != CCID_XFR_BLOCK {
         return None;
     }
@@ -198,7 +201,7 @@ fn xfr_apdu(msg: &[u8]) -> Option<(usize, usize)> {
 
 /// If `msg` is a `PC_to_RDR_Secure`, the `(start, end)` byte range of its
 /// `abPINDataStructure` payload (the CCID pinpad VERIFY request).
-fn secure_apdu(msg: &[u8]) -> Option<(usize, usize)> {
+pub fn secure_apdu(msg: &[u8]) -> Option<(usize, usize)> {
     if msg.len() < HEADER || msg[0] != CCID_SECURE {
         return None;
     }
@@ -207,7 +210,7 @@ fn secure_apdu(msg: &[u8]) -> Option<(usize, usize)> {
 }
 
 /// Write the 10-byte CCID response header.
-fn put_header(out: &mut [u8], msg_type: u8, length: u32, seq: u8, status: u8) {
+pub fn put_header(out: &mut [u8], msg_type: u8, length: u32, seq: u8, status: u8) {
     out[0] = msg_type;
     out[1..5].copy_from_slice(&length.to_le_bytes());
     out[5] = 0; // bSlot

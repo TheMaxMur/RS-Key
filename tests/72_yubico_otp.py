@@ -125,8 +125,13 @@ def main():
 
     status = otp.select()
     print(f"SELECT -> status {list(status)}")
-    if len(status) != 7 or list(status[:3]) != [5, 7, 4]:
-        fail(f"status record {list(status)} not a 5.7.4 7-byte record")
+    # Six bytes over CCID: version(3), programming sequence, slot valid/touch
+    # bits, pad. The seventh — the touch-wait status byte — belongs to the
+    # keyboard frame protocol, and dropping it here is what makes SELECT answer
+    # byte-for-byte like a real YubiKey's (`00c7232`, issue #44). This asserted
+    # seven until 2026-08-08, three weeks after that landed.
+    if len(status) != 6 or list(status[:3]) != [5, 7, 4]:
+        fail(f"status record {list(status)} not a 5.7.4 6-byte record")
     otp.delete_slot(0x01)
     otp.delete_slot(0x03)
     status = otp.select()

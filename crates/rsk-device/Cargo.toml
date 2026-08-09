@@ -1,0 +1,40 @@
+[package]
+name = "rsk-device"
+version = "0.1.0"
+license = "AGPL-3.0-only"
+edition = "2024"
+publish = false
+
+# The applet wiring both the firmware and `tools/emu` run: which applets exist, in
+# what order, what gates each, and how a CTAPHID or CCID message reaches one. It
+# was `firmware/src/{handler,ccid_handler}.rs` until the emulator needed a second
+# copy of it — and a second copy of the routing rules is how they drift.
+[dependencies]
+rsk-sdk = { workspace = true }
+rsk-fs = { workspace = true }
+rsk-crypto = { workspace = true }
+rsk-fido = { workspace = true }
+rsk-openpgp = { workspace = true }
+rsk-mgmt = { workspace = true }
+rsk-oath = { workspace = true }
+rsk-otp = { workspace = true }
+rsk-piv = { workspace = true }
+rsk-rescue = { workspace = true }
+rsk-vendor = { workspace = true }
+# `RsaPrivateKey` names the result of the keygen hook — the dual-core prime search
+# the firmware runs in place of the applet's own. Already in the tree via
+# rsk-openpgp and rsk-piv, which is where the key goes next.
+rsa = { workspace = true }
+# The CTAPHID message ceiling sizes the response buffer, and the transport that
+# enforces it is the one that defines it.
+rsk-usb = { workspace = true }
+# Response buffers carry PIN tokens and deciphered session keys; wiped after each
+# dispatch, exactly as they were in `firmware/`.
+zeroize = { workspace = true }
+
+[features]
+# The strict admin-write profile: see firmware's `strict-config`. It decides
+# whether CTAPHID carries WRITE CONFIG and whether Management RESET wipes.
+strict-config = ["rsk-mgmt/strict-config", "rsk-fido/strict-config", "rsk-otp/strict-config", "rsk-vendor/strict-config"]
+# The trusted-display build: adds the on-pad PIN paths the screen drives.
+display = []

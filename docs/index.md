@@ -32,6 +32,10 @@ host-side tooling to drive and provision all of it.
   something. No toolchain needed; the images are on the
   [releases page](https://github.com/TheMaxMur/RS-Key/releases/latest) and
   [releases.md](releases.md) says which one to take
+- **No board yet?** The emulator runs the same applet code over sockets, and its
+  `--display` mode opens the trusted screen in a window — the Approve/Deny
+  ceremony can be tried with a mouse before buying anything
+  ([testing.md](testing.md#without-a-board--the-emulator))
 - **[Hardware](hardware.md)**: supported boards and the knobs for them
 - **[Build options](build.md)**: every compile-time flag and environment knob
 - **[Using the device](guides/fido2.md)**: per-feature guides for FIDO2, SSH,

@@ -8,7 +8,7 @@
 
 Exercises the large-blob store on the device:
   1. reset + getInfo          -> options.largeBlobs True; maxSerializedLargeBlobArray
-                                 (0x0B) == 2048
+                                 (0x0B) == MAX_LARGE_BLOB_SIZE
   2. get(offset 0)            -> the 17-byte CTAP2.1 default array
   3. setPIN + getPinUvAuthTokenUsingPinWithPermissions(largeBlobWrite)
   4. set (single fragment)    -> commits; get reads the same bytes back
@@ -46,6 +46,11 @@ from ctaphid import (  # noqa: E402
 PIN = b"1234"
 PERM_LBW = 0x10
 LARGE_BLOBS = 0x0C
+# `MAX_LARGE_BLOB_SIZE` = 2046 — crates/rsk-fido/src/consts.rs, which defines it as
+# `rsk_fs::MAX_VALUE_BYTES` (the backend's per-record ceiling, KV_BUF - 2). It was a
+# flat 2048 until 2026-08-04; the literal here went on asserting the old value for
+# four days, and the interop allow-list rotted on the same move (scripts/check.sh).
+MAX_LARGE_BLOB_SIZE = 2046
 # The empty CBOR array 0x80 followed by left16(SHA-256(0x80)).
 DEFAULT_BLOB = bytes.fromhex("80") + hashlib.sha256(bytes([0x80])).digest()[:16]
 
@@ -108,7 +113,9 @@ def main():
         dev, cid = replug.reset(dev, "step 1's clean slate")
         gi = decode(send_cbor(dev, cid, bytes([0x04]))[1:])
         assert gi[4].get("largeBlobs") is True, "options.largeBlobs not advertised"
-        assert gi.get(0x0B) == 2048, f"maxSerializedLargeBlobArray = {gi.get(0x0B)}, want 2048"
+        assert gi.get(0x0B) == MAX_LARGE_BLOB_SIZE, (
+            f"maxSerializedLargeBlobArray = {gi.get(0x0B)}, want {MAX_LARGE_BLOB_SIZE}"
+        )
         print(f"getInfo: largeBlobs=True, maxSerializedLargeBlobArray={gi[0x0B]}")
 
         # 2. A fresh device returns the 17-byte default array.

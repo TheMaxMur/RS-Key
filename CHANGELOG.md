@@ -11,7 +11,325 @@ Two other version numbers live in the firmware and are deliberately **not** this
 tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 `FW_VERSION` — the YubiKey-compatibility version reported to host tools (5.7.4).
 
+> ## ⚠️ Upgrading a 16 MB key provisioned before 0.4.8 wipes it
+>
+> **Export your seed first** ([seed backup](docs/guides/seed-backup.md)).
+>
+> 0.4.7 gave every image a partition table that fenced the KV store off BOOTSEL.
+> On a 16 MB part that table claimed the chip's last sector — which holds
+> `0x10FFFF00`, the absolute block the bootrom's RP2350-E10 workaround owns — and
+> `picotool` refuses to hand it over, so the 16 MB images never built and 0.4.7
+> was never published. **0.4.8 stops the layout one sector short of the top, and
+> that moves the store 4 KB down.** A key provisioned with an older 16 MB build
+> comes up factory-empty: no passkeys, no OpenPGP or PIV keys, no OATH
+> credentials.
+>
+> This affects the 16 MB flavors only — `display` and `16mb`, and the
+> `abrobot-16m` and `waveshare-touch-lcd` board presets. **4 MB and 2 MB keys
+> upgrade in place**: their stores end far below the E10 block and their layouts
+> are byte-identical to 0.4.7.
+>
+> Kept here as well as in the release's own notes below: this banner is for
+> whoever opens the file, and the copy inside the release section is what the
+> release page shows — `release-build.yml` builds the notes from that section
+> alone, so a warning only at the top would never reach it. **Carry the copy
+> forward into each new version's section while pre-0.4.8 16 MB keys are still
+> out there.**
+
 ## [Unreleased]
+
+## [0.4.9] - 2026-08-09
+
+The emulator release: `tools/emu` runs the applet stack on the host, and with it
+the suites that had been hand-run against a flashed board — including, over
+USB/IP, the ones that need a kernel to have enumerated the device. Both vendored
+upstream conformance suites are refreshed, classified against the specs and now
+gate; one of their new tests found a real getInfo bug. CI runs what a change can
+affect instead of everything.
+
+> ### ⚠️ Upgrading a 16 MB key provisioned before 0.4.8 wipes it
+>
+> **Export your seed first** ([seed backup](docs/guides/seed-backup.md)).
+>
+> 0.4.8 moved the KV store on a 16 MB part 4 KB down — 0.4.7's partition table
+> claimed the chip's last sector, which holds the `0x10FFFF00` block the bootrom's
+> RP2350-E10 workaround owns, so the 16 MB images could not be built at all. A key
+> provisioned with an older 16 MB build comes up factory-empty: no passkeys, no
+> OpenPGP or PIV keys, no OATH credentials.
+>
+> The 16 MB flavors only — `display` and `16mb`, and the `abrobot-16m` and
+> `waveshare-touch-lcd` board presets. **4 MB and 2 MB keys upgrade in place.**
+
+### Added
+
+- **A software emulator, `tools/emu`.** The applet crates run on the host and
+  serve CTAPHID and APDUs over TCP, so the `tests/*.py` suites — until now
+  hand-run against a flashed board, and therefore never run in CI — work with no
+  hardware attached (`python tests/emu.py tests/11_fido_makecredential.py`). It
+  is a development tool, not a key: no secure boot, no OTP, no fuses, no USB
+  stack. Its device identity is deliberately its own, so emulator-made material
+  is recognisable as such. See [docs/testing.md](docs/testing.md) and
+  `tools/emu/README.md`.
+- **`tools/emu --display` runs the trusted display in a window.** The Approve/Deny
+  ceremony — the screen whose whole promise is that a signature cannot be had
+  without a tap on a panel naming the true relying party — could until now only be
+  seen on a board with a screen soldered to it. It renders on the host, from the
+  same `rsk_ui::render` and the same `crates/rsk-display` flow, and a mouse held on
+  the button enters that flow through the same `TouchPad` a finger does. The
+  ambient loop runs alongside the host's, on one executor, as on the board — so
+  the window is a device you can pick up and use, not just a ceremony viewer.
+- **`tools/emu --usbip` makes the emulator a real USB device.** The Linux kernel's
+  `vhci_hcd` attaches a TCP peer as a virtual host controller, so a host sees
+  `/dev/hidraw*` and a PC/SC reader with no USB hardware anywhere — and what it
+  enumerates is the device's own stack, not a description of it: the same
+  `embassy_usb::Builder`, the same three interfaces in the same order, the same
+  `rsk-usb` transports, over an `embassy_usb::driver::Driver` written against the
+  USB/IP protocol. `fido2-token`, a browser, `ykman` and `gpg` reach the emulator
+  through it, and the interface order issue #55 was about is now checked against
+  the descriptors a host actually reads. USB/IP is network-transparent, so the
+  emulator can stay on a Mac while a Linux VM imports it. See
+  `tools/emu/README.md`.
+
+- **The trusted-display guide shows the display, not photographs of it.** The six
+  screens in [docs/guides/display.md](docs/guides/display.md) were camera shots of
+  a 2.8" panel, complete with the room's white balance — the background reads blue
+  in them and is near-black on the device. They are now what `rsk_ui::render`
+  draws, at the panel's own 240×320, written by `rsk-emu --screenshots` and
+  regenerable the day a screen changes. The guide also says the display can be
+  tried in a window (`--display`) before buying the board. Ten screens it only
+  described in prose are now shown too — including the Approve / Deny ceremony the
+  page is *about*, and the same prompt against a padded look-alike relying party,
+  where the clip keeps `…m.attacker.com` in view instead of the head an attacker
+  padded it with.
+
+- **The emulator is described where people look for it.** README, the docs' front
+  page, the quick start and CONTRIBUTING all now say it exists and how to use it
+  for testing — it had been reachable only from `docs/testing.md` and
+  `docs/architecture.md`, which is not where someone with no board goes looking.
+  CONTRIBUTING's on-device bullet also said those suites are run by hand against a
+  board; that stopped being true when CI started running them.
+
+- **CI runs the on-device suites.** `scripts/emu-suites.sh` drives every suite
+  that needs no board — `tests/*.py` over the emulator's socket transports, plus
+  the vendored OpenPGP card conformance suite — each on a fresh flash image, and
+  `.github/workflows/emulator.yml` runs it on pull requests and nightly. These
+  suites were hand-run against a flashed key, which is why seven of them had
+  rotted unnoticed; this is what stops the eighth. The half that wants real USB
+  (`02`, `61`, `65`, `73`, `77` and the pico-fido suite) still needs a runner with
+  `vhci_hcd` and is not in CI yet.
+
+- **`tests/third_party.py` runs the vendored upstream suites against RS-Key.**
+  `third_party/` has carried pico-fido's and pico-openpgp/Gnuk's own conformance
+  suites for a while with no way to run them that did not need a board and a
+  person. The runner supplies what they cannot ask for — the power cycle RS-Key's
+  CTAP 2.1 §6.6 reset window needs, which against `tools/emu` is one message on the
+  card socket — and names every deliberate divergence as a strict `xfail`, so one
+  that gets fixed fails the run rather than staying listed for ever. Nothing in
+  `third_party/` is edited: the run is steered from outside by a pytest plugin.
+  Both suites were refreshed from upstream at the same time (commits recorded in
+  `third_party/README.md`, which nothing did before). pico-fido: **214 passed / 19
+  expected divergences / 0 failed**. The OpenPGP card suite: **269 passed / 19
+  divergences / 181 deselected / 0 failed** — it reaches the card through pyscard
+  alone, so it runs over the emulator's card socket with no PC/SC, no USB and no
+  root, on any machine rather than one with a reader and a key in it. Both gate.
+  Every listed divergence is a spec citation, not a shrug: where the suite and the
+  spec disagree the spec decides, and one of the refreshed suite's new tests found
+  a real bug (`authenticatorConfigCommands`, below). The OpenPGP entries include a
+  place where the spec contradicts itself (§4.4.1 says a constructed DO is returned
+  *including* its tag and length; §7.2.6's worked example omits it). The
+  deselections are a separate list, and a narrower claim: whole modules exercising
+  a vendor extension RS-Key does not implement — Gnuk's admin-less mode, where PW1
+  gains admin rights, which OpenPGP Card 3.4.1 never mentions. They are removed at
+  collection rather than xfailed because an xfailed test still runs, and these ones
+  block the card's admin PIN on the way past: deselecting the feature took the card
+  suite from 192 failures to 13, and the difference was all cascade.
+
+- **The emulator speaks the OTP frame protocol.** The keyboard interface's feature
+  reports — the transport `ykman otp` uses, and the one `ykpers`/KeePassXC drive —
+  now answer on `--usbip`, running the device's own state machine
+  (`rsk_otp::hid::OtpHid`, moved out of `firmware/` so both builds share it). With
+  it, `tests/02_usb_interfaces.py`, `73_otp_keyboard.py` and `77_otp_touch_wait.py`
+  run with no hardware: interface order, an HMAC-SHA1 challenge-response through
+  ykman's own `OtpConnection`, and a touch wait the host can abandon — as do
+  `61`/`65`, driven by python-fido2's own HID transport with OpenSSL verifying the
+  ML-DSA signatures. Five of the nine suites the socket shim refuses now run. Typed
+  tickets are not emulated — a ticket comes from a button gesture, and this build
+  has no button.
+- **A USB/IP attach is a power-up.** RAM state goes, the card resets and the CTAP
+  2.1 §6.6 reset window reopens, so `tests/replug.py`'s physical unplug becomes a
+  `usbip detach` + `attach`. Measuring that window from process start instead left
+  it already shut the first time any host looked, and `authenticatorReset` answered
+  `NOT_ALLOWED` for ever.
+
+- **`--yubico` now presents the whole Yubico identity**, USB VID/PID and descriptor
+  strings included, not only the ATR and the OpenPGP AID vendor. `ykman` and Yubico
+  Authenticator find a device by the Yubico VID; a half-applied masquerade is a
+  card they cannot see at all, which is why the firmware ties all of it to one
+  effective VID.
+
+- The CTAPHID and CCID message vocabularies in `rsk-usb` are public, so the
+  emulator's transports name the same values instead of redeclaring them.
+- `scripts/docs_constants.py` now checks the constants copied into `tests/*.py`
+  and `metadata/*.json`, not only those quoted in `docs/`, and resolves one
+  `const A = B;` indirection — which is where the large-blob value below hid.
+  66 copies checked, up from 5; the gate prints the live count on every run.
+
+- **The applet wiring moved into `crates/rsk-device`.** `firmware/src/handler.rs`
+  and `ccid_handler.rs` were the last of the device that no test could reach and
+  the emulator had to reimplement — and what they hold is exactly the load-bearing
+  part: whether a U2F command can land on the vendor applet, whether a disabled
+  application is really invisible, and which records a device-wide wipe may take
+  first. Both builds now run the same code, and the board's own parts (the LED
+  atomics, the watchdog register carrying the clientPIN soft lock across a warm
+  reset, the dual-core prime search, the display's PIN latch) sit behind a `Hooks`
+  trait whose defaults are exact no-ops. Behaviour and wire surface unchanged; no
+  `bcdDevice` bump.
+- **The vendor applet moved into `crates/rsk-vendor`.** It was the last applet
+  living in `firmware/`, so it was the only one with no host tests and the only
+  one the emulator could not serve. Its hardware — the LED atomics, the second
+  core's counters, the measurement benches, the reset — now sits behind a
+  `Platform` trait the firmware fills in, and the applet itself is host-tested.
+  Behaviour and wire surface unchanged: the same AID, the same instructions, the
+  same status words (a build without an LED answers `INS_NOT_SUPPORTED` exactly
+  as the unmatched instruction did before). No `bcdDevice` bump — nothing the
+  device does over the wire changed.
+- **The flash backend moved into `crates/rsk-store`.** The two
+  `sequential-storage` partitions, the counter-FID routing and the scrub lap
+  lived only in `firmware/src/flash_storage.rs`, so nothing that is not a board
+  could run them: the `power_cut` fuzz target tortured a hand-written mirror, and
+  the emulator had no log-structured store at all. Both now drive the shipped
+  backend — the emulator over `sequential-storage`'s mock NOR flash with the
+  device's geometry, with `--power-cut <n>` arming the injector. The firmware
+  keeps what is the board's: the shared flash peripheral and its cache sizes.
+  Behaviour unchanged; no `bcdDevice` bump.
+- **The trusted display's flow moved into `crates/rsk-display`.** `rsk-ui` already
+  held *what to draw*, host-tested and Kani-proved; the layer that decides *which
+  screen when* — the PIN pad's state machine, the browse modals, the Approve/Deny
+  wait that is the anti-phishing guarantee — lived in `firmware/`, so the only
+  thing that could run it was a flashed board with a panel soldered on. The panel
+  and the touch controller are now type parameters (a `DrawTarget<Color = Rgb565>`
+  and a `TouchPad`), and the verbs that are genuinely the board's — backlight, wake
+  button, the LED a ceremony borrows, the firmware globals it coordinates through —
+  sit behind a `Hooks` trait whose defaults are exact no-ops. Behaviour and wire
+  surface unchanged; no `bcdDevice` bump.
+
+- **The suites that need a real USB stack now run in CI too, inside a VM.**
+  `02_usb_interfaces`, `61`/`65`, `73`/`77` and the pico-fido conformance suite
+  read USB descriptors or go through python-fido2's and pyscard's own transports,
+  so they want a device the kernel enumerated — `vhci_hcd`, which a GitHub-hosted
+  runner cannot supply: it cannot load a module
+  ([runner-images#7541](https://github.com/actions/runner-images/issues/7541))
+  and has no reliable `/dev/kvm`
+  ([community#8305](https://github.com/orgs/community/discussions/8305)).
+  `scripts/usbip-suites.sh` boots a QEMU guest that does (`nix build .#usbip-vm`)
+  and attaches the emulator to it over the network. The emulator stays *outside*
+  the guest — it is a TCP peer, not a device — which keeps the guest a fixed
+  appliance (kernel, `usbip`, `pcscd`, Python) that no firmware change can
+  invalidate, and keeps its build the same `cargo` one as everywhere else. Two
+  emulators run at once on separate ports, because `73` drives ykman's own
+  `OtpConnection` (which binds Yubico USB ids and nothing else) while the rest
+  must stay on the default identity — the one whose CCID interface a stock driver
+  skips, and the reason `nix/ccid.nix` exists. Everything inside runs on software
+  emulation, so it costs minutes rather than seconds; it runs on every PR and
+  nightly alongside the socket half.
+
+### Changed
+
+- **CI stopped building 24 firmware images for a documentation edit.** Every pull
+  request ran the whole package — the gate, every feature flavour, every build
+  knob — while `scripts/docs.sh check` ran in no workflow at all, so a docs-only
+  change got 26 heavy jobs and zero link checking. `scripts/ci-scope.sh` now
+  classifies a change and the jobs gate on it: the flavour matrix and the knob
+  smokes want firmware, `crates/`, a toolchain pin or `nix/firmware.nix`; the
+  emulator suites want the code they run; a documentation-only change runs the
+  new `docs` job and nothing else. The rules are a script with a `--self-test`
+  that `check.sh` runs, not a `paths:` filter, because their failure direction is
+  a job that silently does not run. Two things stay unconditional: the mdBook
+  build with its link check, and gitleaks — a secret scan that can be skipped is
+  not a secret scan.
+
+- **The firmware matrix stopped rebuilding from cold every time.** All 24 flavour
+  rows shared one cargo cache key with each other *and* with the gate, so they
+  raced to write the same entry while each restored a `target/` some other feature
+  set had built — a matrix whose entire point is that the rows differ, thrashing a
+  cache on that difference. Each row now has its own key. The build-knob smokes,
+  which ran thirteen VIDPID presets and five env builds in sequence as the
+  workflow's slowest job, moved into `scripts/ci-knobs.sh` and run as five
+  parallel rows; grouped rather than one row per preset, because a public repo
+  gets 20 concurrent runners and the flavour matrix already wants 24. The script
+  and the matrix name the same groups in two places, so `check.sh` checks they
+  still agree — a group only the script knows about is a smoke nobody runs.
+
+### Fixed
+
+- **On-panel settings were lost if the key was unplugged with the menu still
+  open.** Brightness, display-sleep and the touch timeout were written to flash
+  only when Settings *closed* — one write per editing session instead of one per
+  −/+ tap, which is what keeps that churn out of the credential partition. But a
+  USB key is unplugged, not shut down, and the settings screen is exactly where
+  someone decides they are done: the change they had already watched take effect
+  silently did not survive. An edit now also flushes once the menu has gone quiet
+  for 1.5 s, so a run of taps is still a single write and the loss window shrinks
+  from "the whole time the menu is open" to a moment. `bcdDevice` `0x0873` →
+  `0x0874`.
+- **The emulator pinned two CPU cores while doing nothing.** `embassy_futures::block_on`
+  re-polls in a tight loop and its waker does nothing — correct on a microcontroller
+  with nothing else to do, and 200% of a laptop for a tool meant to be left running
+  while you use the browser talking to it. Everything the emulator awaits registers a
+  real waker, so it now sleeps between them: 201% → 1.3% idle, and the same while a
+  USB/IP host is attached.
+- **`tests/02_usb_interfaces.py` demanded behaviour the device deliberately does
+  not have.** It required the OTP frame protocol on *both* HID interfaces, which
+  was true until audit run-30 removed it from the FIDO one — on macOS, serving it
+  there put the whole FIDO interface behind the Input Monitoring prompt. The suite
+  has failed on real hardware ever since and nobody ran it. It now checks the
+  decision instead: the keyboard interface serves the frame protocol, the FIDO
+  interface must refuse it.
+
+- **`tests/14_up_only_after_reboot.py` passed on one laptop and crashed
+  everywhere else.** It asserts with the credential from an enrolled
+  `ed25519-sk` key and defaults to `~/.ssh/id_ed25519_sk`; on a machine that has
+  never run `ssh-keygen -t ed25519-sk` that is a `FileNotFoundError` traceback,
+  which reads as a device fault. It now skips (77) with the reason. Found by
+  running the emulator sweep on a second machine — which is what the CI job is
+  for.
+
+- **The emulator was building against a different embassy than the firmware.**
+  `tools/emu` is a detached workspace, so its `branch = "main"` resolved on its own
+  clock — two months ahead of the lock the device ships. Harmless while the
+  emulator only spoke sockets; not harmless now that it runs the real USB stack,
+  where the drifted crate is the one that emits the descriptors a host enumerates.
+  It follows the firmware's rev, and `scripts/check.sh` fails if any workspace
+  parts from it. Same shape as the vendored `sequential-storage` fork the same
+  workspace had silently replaced with upstream.
+- **The `power_cut` fuzz target was tearing a mirror of the store, not the
+  store.** The re-implementation it drove had drifted three ways, each load-bearing
+  for what the target claims to prove: no `last_error`, so it could not see
+  "absent" being confused with "the read failed" (the audit run-36 class); no
+  `compact`, so the scrub lap that destroys superseded secrets was never fuzzed;
+  and `EF_CRED_CTR` (0xC001) routed to the main partition where the device routes
+  it to the counter one, tearing the store's busiest key in the wrong place. It
+  now drives `rsk_store::SeqStorage` directly.
+
+- **The published metadata statements said `maxSerializedLargeBlobArray` was
+  2048.** The value moved to 2046 on 2026-08-04, when `MAX_LARGE_BLOB_SIZE`
+  became `rsk_fs::MAX_VALUE_BYTES` — the store's real per-record ceiling — and
+  both `metadata/rs-key.metadata.json` and its conformance variant kept
+  advertising the old number to whoever reads them. `tests/62_metadata_statement.py`
+  is the check for exactly this drift, and it had not been run since.
+
+- **getInfo hid the `vendorPrototype` config subcommand it implements.**
+  `authenticatorConfigCommands` (`0x1F`) listed `0x01`, `0x02` and `0x03` but not
+  `0xFF`, and CTAP 2.3.1 §6.11.7 is explicit: "authenticatorConfigCommands MUST
+  contain an array member with the value 0xFF if this subcommand is supported".
+  RS-Key does support it — it is the phy/soft-lock configuration arm
+  [docs/protocol.md](docs/protocol.md) §11 publishes for PicoForge — so a client
+  reading the member to decide whether to use it was told the arm was absent while
+  the wire spec documented it. Not obscurity in either direction: the same section
+  says vendors must not count on it, and the arm still needs an `acfg`
+  pinUvAuthToken. `0x15` (`vendorPrototypeConfigCommands`, *which* vendor ids
+  exist) stays unadvertised. Found by the refreshed pico-fido suite.
+  `bcdDevice` `0x0874` → `0x0875`.
 
 ## [0.4.8] - 2026-08-08
 
@@ -3942,7 +4260,8 @@ family that keeps the "enterprise" features in the open tree.
   signature of it, and a CycloneDX SBOM. See
   [docs/releases.md](docs/releases.md) to verify a download.
 
-[Unreleased]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.8...HEAD
+[Unreleased]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.9...HEAD
+[0.4.9]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.8...v0.4.9
 [0.4.8]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.7...v0.4.8
 [0.4.7]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.6...v0.4.7
 [0.4.6]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.5...v0.4.6

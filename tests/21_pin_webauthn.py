@@ -15,6 +15,16 @@ Proves CTAP2.1 PIN/UV enforcement end-to-end on the device:
                            (makeCredUvNotRqd), and then the UV flag stays clear
 
 The pinUvAuthParam is HMAC-SHA256(pinUvAuthToken, clientDataHash) (protocol two).
+
+**One token per UP-gated operation.** A successful makeCredential/getAssertion
+spends its token: CTAP 2.1 §6.5.5.7 has the authenticator clear the UP/UV flags
+and every permission but largeBlobWrite once the user-presence test passes, so the
+next command sees no permissions and answers PIN_AUTH_INVALID (0x33). That is what
+a real platform does too, and it is the GHSA-wqjm-653g-hgw3 fix — a token that
+survived the touch let a follow-on authenticatorConfig ride it. This test reused
+one token across two makeCredentials until 2026-08-08 and had been failing since
+that fix shipped in 0.4.1.
+
 A clean device is assumed (flash rsk-wipe first); a second run reuses the PIN.
 """
 import hashlib
@@ -77,9 +87,15 @@ def main():
         # already set (changePIN is the only way to replace one).
         assert sp[0] in (0x00, 0x33), f"setPIN status {sp[0]:#x}"
         ph = hashlib.sha256(PIN).digest()[:16]
-        tk = client_pin(dev, cid, {1: 2, 2: 5, 3: proto.cose(), 6: proto.encrypt(ph)})
-        assert tk[0] == 0x00, f"getPinToken status {tk[0]:#x}"
-        token = proto.decrypt(decode(tk[1:])[2])
+
+        def new_token():
+            """A freshly minted pinUvAuthToken. One per UP-gated command — the
+            previous one was spent by the touch (see the module docstring). The
+            ECDH shared secret outlives the token, so only getPinToken repeats."""
+            tk = client_pin(dev, cid, {1: 2, 2: 5, 3: proto.cose(), 6: proto.encrypt(ph)})
+            assert tk[0] == 0x00, f"getPinToken status {tk[0]:#x}"
+            return proto.decrypt(decode(tk[1:])[2])
+
         print("clientPIN: pinUvAuthToken obtained")
 
         cdh = hashlib.sha256(b"rs-key test").digest()
@@ -91,7 +107,7 @@ def main():
                 3: {"id": user, "name": "u"},
                 4: [{"alg": -7, "type": "public-key"}],
                 7: {"rk": True},  # resident, so getAssertion can discover it
-                8: token_mac(token, cdh),
+                8: token_mac(new_token(), cdh),
                 9: 2,
             }))
             assert r[0] == 0x00, f"makeCredential status {r[0]:#x}"
@@ -108,7 +124,7 @@ def main():
         ga = send_cbor(dev, cid, bytes([0x02]) + enc({
             1: RP_ID,
             2: cdh,
-            6: token_mac(token, cdh),
+            6: token_mac(new_token(), cdh),
             7: 2,
         }))
         assert ga[0] == 0x00, f"getAssertion status {ga[0]:#x}"

@@ -82,7 +82,7 @@
       { "alg": -35, "type": "public-key" },
       { "alg": -36, "type": "public-key" }
     ],
-    "maxSerializedLargeBlobArray": 2048,
+    "maxSerializedLargeBlobArray": 2046,
     "forcePINChange": false,
     "minPINLength": 4,
     "firmwareVersion": 329476,
@@ -92,6 +92,6 @@
     "remainingDiscoverableCredentials": 256,
     "attestationFormats": ["packed"],
     "maxPINLength": 63,
-    "authenticatorConfigCommands": [1, 2, 3]
+    "authenticatorConfigCommands": [1, 2, 3, 255]
   }
 }

@@ -42,7 +42,7 @@ Green check.sh is the bar for every commit.
 ```sh
 nix develop -c cargo test -p rsk-sdk -p rsk-fs -p rsk-usb -p rsk-crypto \
     -p rsk-fido -p rsk-openpgp -p rsk-rsa-asm -p rsk-mgmt -p rsk-oath \
-    -p rsk-otp -p rsk-piv -p rsk-rescue --target aarch64-apple-darwin
+    -p rsk-otp -p rsk-piv -p rsk-rescue -p rsk-vendor -p rsk-device -p rsk-store --target aarch64-apple-darwin
 ```
 
 (`HOST_TARGET` env overrides the triple in `check.sh`.) Crypto tests pin
@@ -91,10 +91,12 @@ multi-step):
   `META_MAX` boundary, and the live key set must equal the model's after any
   prefix of operations.
 - `power_cut` is the torture extension of `fs_ops`: the same op-sequence
-  shadow model, but over the *real* on-device storage stack, a scaled-down
-  mirror of `firmware/src/flash_storage.rs` (the two `sequential-storage`
-  partitions, counter-FID routing, the caches) on a mock NOR flash whose
-  power can be cut after any byte of any write or erase. Once a cut fires, a
+  shadow model, but over the on-device storage stack itself — `rsk-store`,
+  the two `sequential-storage` partitions with their counter-FID routing and
+  caches — on a mock NOR flash whose power can be cut after any byte of any
+  write or erase. It tortured a hand-written mirror of that stack until the
+  backend moved into a crate; the mirror had drifted (no `last_error`, no
+  `compact`, a missing counter FID), which is the argument for not having one. Once a cut fires, a
   dead-latch fails every further mutation (a dead device cannot keep
   writing), the stack is rebuilt with fresh caches over the surviving bytes,
   and the model checks atomicity (the torn op reads as old or new, never
@@ -273,11 +275,106 @@ nix develop -c python tests/75_seed_backup.py --pin <your PIN>
 - The FIDO PIN is never guessed: destructive PIN tests take `--pin`
   explicitly.
 
-Two external suites were run against the implementation: Yubico's python-fido2
-test corpus and the Gnuk/OpenPGP card suite (see
-[third_party/](https://github.com/TheMaxMur/RS-Key/tree/main/third_party) if
-vendored, or run them from their upstream checkouts). Running an upstream
-corpus shows conformance on the cases it covers; it is not a security audit.
+## The vendored upstream suites
+
+Two other ecosystems' own conformance suites live in
+[third_party/](https://github.com/TheMaxMur/RS-Key/tree/main/third_party) —
+pico-fido's and pico-openpgp/Gnuk's — and `tests/third_party.py` runs them against
+RS-Key:
+
+```sh
+nix develop -c python tests/third_party.py openpgp   # over the emulator's card socket
+nix develop -c python tests/third_party.py fido      # needs a board, or --usbip
+```
+
+Nothing in those directories is edited. The run is steered from outside by a
+pytest plugin that supplies the power cycle the CTAP 2.1 §6.6 reset window needs,
+names every deliberate divergence as a strict `xfail`, and deselects the modules
+that exercise a vendor extension RS-Key does not implement. Both lists carry a
+spec citation per entry, and `strict` means a divergence that gets fixed *fails*
+the run instead of staying listed for ever — which is how the last refresh caught
+one that upstream had corrected.
+
+Running an upstream corpus shows conformance on the cases it covers; it is not a
+security audit.
+
+## Without a board — the emulator
+
+`tools/emu` runs the applet crates on the host and serves CTAPHID and APDUs over
+TCP, so the suites above can run with no hardware attached:
+
+```sh
+nix develop -c cargo run --manifest-path tools/emu/Cargo.toml \
+  --target "$HOST" -- --store ./emu.store
+nix develop -c python tests/emu.py tests/11_fido_makecredential.py
+```
+
+`tests/emu.py` puts a fake `hid` module and a fake `smartcard` package in front of
+the target script and points the power-cycle helper at the emulator's replug
+opcode, so no test file changes and neither hidapi nor pyscard need be installed.
+**42 of the 52 suites pass**, FIDO and card alike (two want `--pin`, one wants
+`--yubico`; a 43rd needs an enrolled `ed25519-sk` key and skips without one); the
+other 9 are refused by name with their reason and exit 77 — they need raw USB,
+python-fido2, or hardware, and `tools/emu/README.md` lists which is which. The
+store underneath is the device's own (`crates/rsk-store`) over a mock NOR flash
+with the board's geometry, so the suites run against a log-structured ring that
+migrates and reclaims — not a map that overwrites in place. A harness that cannot
+tell "does not apply here" from "broken" hides the second one, which is the whole
+reason the refused suites are named rather than left to fail somewhere in the
+middle. `--touch` prompts for every presence on the terminal (and prints what a
+trusted display would have shown); `--trace` logs each command and its status.
+
+One command runs everything that needs no board — the suites above plus the
+vendored OpenPGP conformance suite, each against a fresh flash image:
+
+```sh
+nix develop -c ./scripts/emu-suites.sh
+```
+
+That is what CI runs (`.github/workflows/emulator.yml`), on pull requests and
+nightly. It is the answer to the oldest gap in this table: `tests/*.py` were
+hand-run against a flashed key, so nothing caught a *test* that had rotted — and
+several had.
+
+`--usbip` goes further: it serves the USB/IP protocol, so a Linux host's
+`vhci_hcd` attaches the emulator as a genuine USB device — `/dev/hidraw*`, a
+PC/SC reader, something a browser can talk to. What enumerates there is the
+device's own stack (the same `embassy_usb::Builder`, the same `rsk-usb`
+transports, over a driver written against URBs), so the descriptors and the
+interface order are the real ones. The suites this shim refuses for wanting raw
+USB — `02_usb_interfaces`, `61`/`65` (python-fido2's own transport),
+`73_otp_keyboard`, `77_otp_touch_wait` — run there instead, as ordinary hardware
+suites with nothing faked, and so does the pico-fido conformance suite. Needs
+Linux and root; the emulator itself can stay on a Mac, because USB/IP is
+network-transparent. See `tools/emu/README.md`.
+
+`scripts/usbip-suites.sh` is that run in one command, and it is what CI calls:
+
+```sh
+nix develop -c ./scripts/usbip-suites.sh   # Linux only
+```
+
+A GitHub-hosted runner cannot supply `vhci_hcd` — it cannot load a module, and
+has no reliable `/dev/kvm` either — so the script boots a QEMU guest that can
+(`nix build .#usbip-vm`, defined in `nix/usbip-vm.nix`) and attaches the
+emulator to it over the network. The emulator itself stays outside the guest:
+it is a TCP peer, not a device, which keeps the guest a fixed appliance —
+kernel, `usbip`, `pcscd`, Python — that a firmware change cannot invalidate.
+There is no KVM, so everything inside runs on software emulation; budget minutes,
+not seconds.
+
+What it buys is the run these suites otherwise never get: they are hand-run
+against a flashed board, so nothing catches a *test* that has rotted. What it
+cannot stand in for is the hardware under the applet layer — no secure boot, no
+OTP, no fuses — and the flash is a mock: the log structure and the `--power-cut`
+injector are real, the medium's wear and partial-erase physics are not. The USB
+stack is real under `--usbip` and absent otherwise, so a plain run proves nothing
+about enumeration or interface order. The applet wiring
+*is* shared (`crates/rsk-device`), so a routing or gating bug does show up here;
+what is still written twice is the worker's sequencing and the board's own
+`firmware/src/{main,worker,presence,led}.rs`
+([tools/emu/README.md](https://github.com/TheMaxMur/RS-Key/tree/main/tools/emu)
+lists the gaps). A green emulator run is a protocol result, not a device result.
 
 ## Latency harness
 

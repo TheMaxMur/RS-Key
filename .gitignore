@@ -14,6 +14,12 @@ result-*
 secure_boot_*.pem
 *.pem
 /tools/tui/target/
+/tools/emu/target/
+# `rsk-emu --store <path>` writes a flash image, and that image holds the device
+# seed in the clear — there is no OTP root under an emulator to seal it to. The
+# default path is the working directory, so this is the difference between a
+# throwaway test key and one committed to a public repository.
+*.store
 
 # Documentation site: build output and the mermaid assets that
 # `mdbook-mermaid install` generates next to book.toml (not committed).

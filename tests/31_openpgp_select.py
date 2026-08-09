@@ -39,8 +39,14 @@ VERSION = [0x00, 0xF1, 0x00, 0x00, 0x00]
 HISTORICAL_BYTES = [0x00, 0x31, 0x84, 0x73, 0x80, 0x01, 0xC0, 0x05, 0x90, 0x00]
 # PW status byte 0 ("PW1 valid for several PSO:CDS") is mutable runtime state
 # (set via PUT DATA C4), so only the fixed tail is asserted: the three max PIN
-# lengths (127) and the three retry counters (3).
-PW_STATUS_FIXED = [127, 127, 127, 3, 3, 3]
+# lengths (127) and the three retry counters.
+#
+# The middle counter is the resetting code's, and it ships **0**: the RC is
+# deactivated until PUT DATA 0xD3 sets a real one, per OpenPGP Card 3.4 §4.3.4,
+# so `RESET RETRY P1=0` cannot run against a default RC. That is the run-10 audit
+# fix (`ca7e056`, 2026-07-08) — this expectation still read 3 until 2026-08-08,
+# which is to say it asserted the backdoor the fix closed.
+PW_STATUS_FIXED = [127, 127, 127, 3, 0, 3]
 # The vendor VERSION command (INS 0xF1) answers with the device firmware version
 # (`rsk_sdk::FIRMWARE_VERSION`), as a real YubiKey does — its OpenPGP "Application
 # version" is its firmware version. Not the OpenPGP card version (3.4).

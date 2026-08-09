@@ -22,6 +22,10 @@ flowchart TD
 That is the whole list. You only need a toolchain if you want to build the
 firmware yourself instead of downloading it.
 
+No board yet? The [emulator](testing.md#without-a-board--the-emulator) runs the
+same applet code on your machine — enough to drive the protocol suites, and with
+`--display`, to try the trusted screen's Approve/Deny ceremony with a mouse.
+
 ## 1. Get the firmware
 
 Download the newest `rs-key-<version>-default.uf2` from the
