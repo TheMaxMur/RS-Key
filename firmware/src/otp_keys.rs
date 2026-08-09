@@ -56,6 +56,24 @@ pub fn read_devk() -> Option<[u8; 32]> {
     }
 }
 
+/// What one provisioned [`read_key`] costs, for the latency harness (`rsk bench
+/// otp`). Deliberately not [`read_mkek`]: that short-circuits on a blank page
+/// after the presence loop, so an unprovisioned board would time half the work
+/// and under-report. Doing both halves unconditionally makes the number the same
+/// on any board. Returns a checksum for the caller to `black_box` — the reads
+/// have no other effect and would otherwise be optimized away.
+#[cfg(feature = "bench")]
+pub fn bench_key_read() -> u32 {
+    let mut acc = 0u32;
+    for i in 0..KEY_ROWS {
+        acc ^= otp::read_raw_word(MKEK_ROW + i).unwrap_or(0);
+    }
+    for i in 0..KEY_ROWS {
+        acc ^= otp::read_ecc_word(MKEK_ROW + i).unwrap_or(0) as u32;
+    }
+    acc
+}
+
 /// The volatile, every-boot half of the key-page lock: block non-secure access
 /// to the key page for this power cycle via SW_LOCK (secure access stays
 /// read-write — this firmware runs entirely secure). The irreversible LOCK1
