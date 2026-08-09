@@ -27,6 +27,30 @@ lead with ML-DSA-44, which older fido2 libraries parse but cannot check).
 
 ## Running them
 
+The supported way is `tests/third_party.py`, which runs them **against RS-Key**
+rather than against the device they were written for:
+
+```sh
+python tests/third_party.py fido       # the pico-fido suite
+python tests/third_party.py openpgp    # the OpenPGP card suite
+```
+
+It changes nothing in these directories — the run is steered from outside by a
+pytest plugin. Two things it supplies that the suites cannot ask for themselves:
+
+- **the power cycle.** RS-Key takes `authenticatorReset` only inside the CTAP 2.1
+  §6.6 power-up window, which an operator reopens by unplugging. pico-fido has no
+  such window and resets in fixtures, so on a board a human is the missing piece
+  and against `tools/emu` one message on the card socket is. Without it, 61 of the
+  suite's tests error in setup.
+- **the divergence list.** Everything RS-Key deliberately does not do for these
+  suites is named in `DIVERGENCES` with its reason, as `xfail(strict=True)` — so a
+  divergence that gets fixed *fails* the run instead of quietly staying listed.
+
+Running pytest directly still works, and is what the commands below do.
+
+## Running them by hand
+
 Flash the **no-touch test build** first (the suites cannot press the
 button); if your board enforces secure boot, sign it
 ([docs/production.md](../docs/production.md)).

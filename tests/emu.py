@@ -129,10 +129,15 @@ def _recv_exact(sock, n):
     return buf
 
 
-def _replug():
+def power_cycle():
     """Tell the emulator to power-cycle. Best effort: without the card socket
     (`--ccid-port 0`) there is nothing to ask, and the suite then fails on the
-    reset window rather than on a connection error."""
+    reset window rather than on a connection error.
+
+    Public because `third_party.py` needs the same thing for the same reason: the
+    CTAP 2.1 §6.6 window is what an operator reopens by unplugging, and a suite
+    that resets has to get it from somewhere.
+    """
     try:
         with socket.create_connection(_addr(ENV_CCID_ADDR, DEFAULT_CCID_ADDR), timeout=5) as s:
             s.sendall(bytes([OP_REPLUG]) + (0).to_bytes(4, "big"))
@@ -387,7 +392,7 @@ def _patch_replug():
         return  # a suite that never power-cycles does not need it
 
     def wait_gone(timeout=None):
-        _replug()
+        power_cycle()
 
     def wait_back(timeout=None):
         import time

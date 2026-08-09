@@ -43,6 +43,17 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   emulator can stay on a Mac while a Linux VM imports it. See
   `tools/emu/README.md`.
 
+- **`tests/third_party.py` runs the vendored upstream suites against RS-Key.**
+  `third_party/` has carried pico-fido's and pico-openpgp/Gnuk's own conformance
+  suites for a while with no way to run them that did not need a board and a
+  person. The runner supplies what they cannot ask for — the power cycle RS-Key's
+  CTAP 2.1 §6.6 reset window needs, which against `tools/emu` is one message on the
+  card socket — and names every deliberate divergence as a strict `xfail`, so one
+  that gets fixed fails the run rather than staying listed for ever. Nothing in
+  `third_party/` is edited: the run is steered from outside by a pytest plugin.
+  pico-fido against the emulator: **188 passed, 14 failed, 2 expected**, up from
+  119 passed / 24 failed / 61 errors before the power cycle existed.
+
 - **The emulator speaks the OTP frame protocol.** The keyboard interface's feature
   reports — the transport `ykman otp` uses, and the one `ykpers`/KeePassXC drive —
   now answer on `--usbip`, running the device's own state machine

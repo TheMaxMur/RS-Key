@@ -172,6 +172,18 @@ impl MsgHandler for HidJobs {
         run_job(&self.0, job).await.map(|body| copy_out(&body, out))
     }
 
+    /// The terminal is this build's indicator, the same one the socket transport
+    /// claims — so the capability bit is honest and `CTAPHID_WINK` does something
+    /// visible, rather than the two transports disagreeing about whether the same
+    /// emulator has anything to flash.
+    fn can_wink(&self) -> bool {
+        true
+    }
+
+    fn wink(&mut self) {
+        eprintln!("emu: ✨ wink");
+    }
+
     fn reset_app_selection(&mut self) {
         // Synchronous, so there is nothing to await the answer with; the queue is
         // one queue, so the device thread still runs it before the next command.
