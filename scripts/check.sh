@@ -21,6 +21,33 @@ lock_in_sync() {
   git diff --exit-code -- flake.lock
 }
 
+# `tools/emu` and `fuzz/` are detached workspaces, so each resolves the embassy
+# git dependency on its own clock: `branch = "main"` in three manifests is three
+# different commits, and nothing says so. The emulator had drifted two months
+# ahead — which, now that it runs the real USB stack, means the descriptors a host
+# enumerates were not the ones the device ships. Same failure as the vendored
+# sequential-storage fork it silently replaced with upstream. One pin, the
+# firmware's; every other lock follows it.
+embassy_revs_match() {
+  local want got lock
+  want=$(grep -oh 'embassy?branch=main#[0-9a-f]\{40\}' Cargo.lock | sort -u)
+  if [ "$(printf '%s' "$want" | grep -c '')" -ne 1 ]; then
+    echo "FAIL: the root Cargo.lock does not pin exactly one embassy rev." >&2
+    exit 1
+  fi
+  for lock in tools/*/Cargo.lock fuzz/Cargo.lock; do
+    got=$(grep -oh 'embassy?branch=main#[0-9a-f]\{40\}' "$lock" | sort -u || true)
+    [ -n "$got" ] || continue
+    if [ "$got" != "$want" ]; then
+      echo "FAIL: $lock is on ${got#*#} but the firmware is on ${want#*#}." >&2
+      echo "      cargo update --manifest-path ${lock%Cargo.lock}Cargo.toml \\" >&2
+      echo "        --precise ${want#*#} \$(grep -o '^name = \"embassy-[a-z-]*\"' $lock | cut -d'\"' -f2)" >&2
+      exit 1
+    fi
+  done
+  echo "every workspace is on embassy ${want#*#}"
+}
+
 # The shipping image must fit the 2560K code region (firmware/memory.x); this
 # ceiling is a *ratchet* well under that hard limit. It hugs the current image
 # (876 KiB) plus a small margin, so a runaway — an accidental fat dependency
@@ -196,6 +223,7 @@ run "rsk-wipe refuses an unknown flash size" sh -c '
     echo "FAIL: rsk-wipe failed for the wrong reason:"; printf "%s\n" "$out" | tail -5; exit 1
   }'
 run "flake.lock in sync"       lock_in_sync
+run "one embassy for all"      embassy_revs_match
 # RUSTSEC-2023-0071: rsa Marvin timing side-channel — no fixed release; it is the
 # OpenPGP RSA backend, mitigated by blinding. Justification in deny.toml.
 run "cargo-audit (SCA)"        cargo audit --ignore RUSTSEC-2023-0071

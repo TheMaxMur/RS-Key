@@ -89,6 +89,14 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   for 1.5 s, so a run of taps is still a single write and the loss window shrinks
   from "the whole time the menu is open" to a moment. `bcdDevice` `0x0873` →
   `0x0874`.
+- **The emulator was building against a different embassy than the firmware.**
+  `tools/emu` is a detached workspace, so its `branch = "main"` resolved on its own
+  clock — two months ahead of the lock the device ships. Harmless while the
+  emulator only spoke sockets; not harmless now that it runs the real USB stack,
+  where the drifted crate is the one that emits the descriptors a host enumerates.
+  It follows the firmware's rev, and `scripts/check.sh` fails if any workspace
+  parts from it. Same shape as the vendored `sequential-storage` fork the same
+  workspace had silently replaced with upstream.
 - **The `power_cut` fuzz target was tearing a mirror of the store, not the
   store.** The re-implementation it drove had drifted three ways, each load-bearing
   for what the target claims to prove: no `last_error`, so it could not see
