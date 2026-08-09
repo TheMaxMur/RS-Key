@@ -21,3 +21,17 @@ embedded-storage-async = "0.4"
 # `sequential-storage` is async-only; every backing flash this crate is used with
 # resolves on the first poll, so each op is driven synchronously.
 embassy-futures = { workspace = true }
+
+# No dev-dependencies, and the reason is measured rather than assumed. The obvious
+# one is `sequential-storage`'s own `mock_flash`, the way `fuzz/` and `tools/emu`
+# get it — but those are DETACHED workspaces with their own lockfiles, and this
+# crate is a root member. Here the `_test` feature unifies onto the very same
+# `sequential-storage` build the firmware links, so its tree is not a dev-only one:
+# `cargo vet --locked` (a gate step) then wants **safe-to-deploy** for 16 crates it
+# drags in — futures×7, approx, slab, and heapless's defmt→syn/thiserror/bitflags.
+# None of them is what the mock needs: `mock_flash.rs` imports only `core`,
+# `embedded_storage_async` and `Vec`, and `futures` appears in that crate solely in
+# doctests. Narrowing the feature would mean a second local change to the vendored
+# fork, whose patch notes deliberately record that only `src/map.rs` differs from
+# published 8.0.0. So the fake NOR chip lives in `src/tests.rs` — the store under
+# test is still the fork, which is the part that has to be the device's.

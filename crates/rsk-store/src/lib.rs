@@ -14,7 +14,9 @@
 //! a file behind `tools/emu`. A store that only the firmware could instantiate is
 //! a store nothing could test.
 
-#![no_std]
+// Host test builds link `std`: the RAM NOR flash the suite runs the store over
+// wants a heap, and no test code reaches the firmware image.
+#![cfg_attr(not(test), no_std)]
 
 use core::ops::Range;
 
@@ -237,3 +239,6 @@ fn for_each_in<F: NorFlash + MultiwriteNorFlash, C: CacheImpl<u16>>(
         }
     }
 }
+
+#[cfg(test)]
+mod tests;
