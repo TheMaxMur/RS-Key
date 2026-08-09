@@ -1,0 +1,69 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 RS-Key contributors
+
+# The suites that used to need a board, run against `tools/emu`.
+#
+# `tests/*.py` were hand-run against a flashed key, so nothing caught a *test*
+# that had rotted — and several had: seven stale expectations, including a wrong
+# value in the published metadata statement, were found the day the emulator
+# could run them. This is the job that stops that happening again.
+#
+# On pull requests as well as nightly, because a stale test is cheapest to find
+# in the change that staled it.
+#
+# What is NOT here yet is the half that wants real USB — `02`, `61`, `65`, `73`,
+# `77` and the pico-fido conformance suite. Those need `vhci_hcd` on the runner
+# and `tools/emu --usbip`; whether a GitHub-hosted runner carries that module is
+# unverified, and an unverified CI job is worse than a named gap.
+
+name: emulator
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "20 4 * * *" # 04:20 UTC daily, clear of deep-checks at 05:17
+
+permissions:
+  contents: read
+
+concurrency:
+  group: emulator-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  suites:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+
+      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            tools/emu/target
+          key: emu-${{ runner.os }}-${{ hashFiles('tools/emu/Cargo.lock', 'flake.lock') }}
+          restore-keys: emu-${{ runner.os }}-
+
+      - name: the on-device suites + the OpenPGP conformance suite, against tools/emu
+        run: nix develop -c ./scripts/emu-suites.sh
+        env:
+          HOST_TARGET: x86_64-unknown-linux-gnu
+
+      - name: emulator logs
+        if: failure()
+        run: |
+          # The script keeps each session's stderr next to its store; a failure
+          # is usually the device saying why, not the suite.
+          find /tmp -name '*.log' -newermt '-45 minutes' -path '*/tmp.*' \
+            -exec sh -c 'echo "--- $1"; tail -40 "$1"' _ {} \; 2>/dev/null || true

@@ -306,6 +306,18 @@ reason the refused suites are named rather than left to fail somewhere in the
 middle. `--touch` prompts for every presence on the terminal (and prints what a
 trusted display would have shown); `--trace` logs each command and its status.
 
+One command runs everything that needs no board — the suites above plus the
+vendored OpenPGP conformance suite, each against a fresh flash image:
+
+```sh
+nix develop -c ./scripts/emu-suites.sh
+```
+
+That is what CI runs (`.github/workflows/emulator.yml`), on pull requests and
+nightly. It is the answer to the oldest gap in this table: `tests/*.py` were
+hand-run against a flashed key, so nothing caught a *test* that had rotted — and
+several had.
+
 `--usbip` goes further: it serves the USB/IP protocol, so a Linux host's
 `vhci_hcd` attaches the emulator as a genuine USB device — `/dev/hidraw*`, a
 PC/SC reader, something a browser can talk to. What enumerates there is the

@@ -43,6 +43,15 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   emulator can stay on a Mac while a Linux VM imports it. See
   `tools/emu/README.md`.
 
+- **CI runs the on-device suites.** `scripts/emu-suites.sh` drives every suite
+  that needs no board — `tests/*.py` over the emulator's socket transports, plus
+  the vendored OpenPGP card conformance suite — each on a fresh flash image, and
+  `.github/workflows/emulator.yml` runs it on pull requests and nightly. These
+  suites were hand-run against a flashed key, which is why seven of them had
+  rotted unnoticed; this is what stops the eighth. The half that wants real USB
+  (`02`, `61`, `65`, `73`, `77` and the pico-fido suite) still needs a runner with
+  `vhci_hcd` and is not in CI yet.
+
 - **`tests/third_party.py` runs the vendored upstream suites against RS-Key.**
   `third_party/` has carried pico-fido's and pico-openpgp/Gnuk's own conformance
   suites for a while with no way to run them that did not need a board and a
