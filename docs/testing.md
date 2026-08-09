@@ -311,8 +311,11 @@ trusted display would have shown); `--trace` logs each command and its status.
 PC/SC reader, something a browser can talk to. What enumerates there is the
 device's own stack (the same `embassy_usb::Builder`, the same `rsk-usb`
 transports, over a driver written against URBs), so the descriptors and the
-interface order are the real ones. Needs Linux and root; the emulator itself can
-stay on a Mac, because USB/IP is network-transparent. See `tools/emu/README.md`.
+interface order are the real ones. The three suites this shim refuses for wanting
+raw USB — `02_usb_interfaces`, `73_otp_keyboard`, `77_otp_touch_wait` — run there
+instead, as ordinary hardware suites with nothing faked. Needs Linux and root; the
+emulator itself can stay on a Mac, because USB/IP is network-transparent. See
+`tools/emu/README.md`.
 
 What it buys is the run these suites otherwise never get: they are hand-run
 against a flashed board, so nothing catches a *test* that has rotted. What it

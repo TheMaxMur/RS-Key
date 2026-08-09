@@ -43,6 +43,21 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   emulator can stay on a Mac while a Linux VM imports it. See
   `tools/emu/README.md`.
 
+- **The emulator speaks the OTP frame protocol.** The keyboard interface's feature
+  reports — the transport `ykman otp` uses, and the one `ykpers`/KeePassXC drive —
+  now answer on `--usbip`, running the device's own state machine
+  (`rsk_otp::hid::OtpHid`, moved out of `firmware/` so both builds share it). With
+  it, `tests/02_usb_interfaces.py`, `73_otp_keyboard.py` and `77_otp_touch_wait.py`
+  run with no hardware: interface order, an HMAC-SHA1 challenge-response through
+  ykman's own `OtpConnection`, and a touch wait the host can abandon. Typed
+  tickets are not emulated — a ticket comes from a button gesture, and this build
+  has no button.
+- **`--yubico` now presents the whole Yubico identity**, USB VID/PID and descriptor
+  strings included, not only the ATR and the OpenPGP AID vendor. `ykman` and Yubico
+  Authenticator find a device by the Yubico VID; a half-applied masquerade is a
+  card they cannot see at all, which is why the firmware ties all of it to one
+  effective VID.
+
 - The CTAPHID and CCID message vocabularies in `rsk-usb` are public, so the
   emulator's transports name the same values instead of redeclaring them.
 - `scripts/docs_constants.py` now checks the constants copied into `tests/*.py`
@@ -107,6 +122,14 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   while you use the browser talking to it. Everything the emulator awaits registers a
   real waker, so it now sleeps between them: 201% → 1.3% idle, and the same while a
   USB/IP host is attached.
+- **`tests/02_usb_interfaces.py` demanded behaviour the device deliberately does
+  not have.** It required the OTP frame protocol on *both* HID interfaces, which
+  was true until audit run-30 removed it from the FIDO one — on macOS, serving it
+  there put the whole FIDO interface behind the Input Monitoring prompt. The suite
+  has failed on real hardware ever since and nobody ran it. It now checks the
+  decision instead: the keyboard interface serves the frame protocol, the FIDO
+  interface must refuse it.
+
 - **The emulator was building against a different embassy than the firmware.**
   `tools/emu` is a detached workspace, so its `branch = "main"` resolved on its own
   clock — two months ahead of the lock the device ships. Harmless while the

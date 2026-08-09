@@ -46,7 +46,32 @@ use crate::usbip_driver::UsbIpDriver;
 const VID: u16 = 0x1209;
 const PID: u16 = 0x0001;
 const MANUFACTURER: &str = "RS-Key";
+/// Deliberately not a board serial: everything derived from it is the
+/// emulator's, and the Yubico identity keeps it so a masquerade still says which
+/// device answered.
+const SERIAL: &str = "rs-key-emu";
 const PRODUCT: &str = "RS-Key Security Key (emulator)";
+
+/// The Yubico interop identity, matching the firmware's `VIDPID=Yubikey5` build.
+///
+/// `--yubico` is one identity or none: `ykman` and Yubico Authenticator find a
+/// device by the Yubico VID and read its PID from the PC/SC reader name, so a
+/// build that answers with the Yubico ATR under a pid.codes VID is a card those
+/// tools cannot see at all. The firmware ties the ATR, the OpenPGP AID vendor and
+/// the descriptor strings to one effective VID for exactly this reason.
+const YUBICO_VID: u16 = 0x1050;
+const YUBICO_PID: u16 = 0x0407;
+const YUBICO_MANUFACTURER: &str = "Yubico";
+const YUBICO_PRODUCT: &str = "YubiKey RSK OTP+FIDO+CCID";
+
+/// The four descriptor fields that follow the effective VID.
+const fn identity(yubico: bool) -> (u16, u16, &'static str, &'static str) {
+    if yubico {
+        (YUBICO_VID, YUBICO_PID, YUBICO_MANUFACTURER, YUBICO_PRODUCT)
+    } else {
+        (VID, PID, MANUFACTURER, PRODUCT)
+    }
+}
 
 /// `bcdDevice`, mirroring `firmware/src/main.rs`'s `device_release`. A host reads
 /// it before anything else, so an emulator claiming a build it is not running
@@ -58,6 +83,19 @@ const CONFIG_DESC_LEN: usize = 256;
 const BOS_DESC_LEN: usize = 256;
 const MSOS_DESC_LEN: usize = 64;
 const CONTROL_BUF_LEN: usize = 64;
+
+/// A descriptor string has to fit the control buffer, and `embassy-usb` finds out
+/// the hard way: it *asserts* mid-transfer, which here kills the USB thread and on
+/// a device would be `panic_halt` with the host still waiting. `USB_STR_MAX` is
+/// exactly what [`CONTROL_BUF_LEN`] allows (2 header bytes + 2 per UTF-16 unit),
+/// which is why the phy record clamps to it — so the emulator borrows the same
+/// ceiling and the same compile-time check the firmware has, rather than
+/// discovering it from a host that stopped enumerating.
+const _: () = assert!(PRODUCT.len() <= rsk_rescue::phy::USB_STR_MAX);
+const _: () = assert!(YUBICO_PRODUCT.len() <= rsk_rescue::phy::USB_STR_MAX);
+const _: () = assert!(MANUFACTURER.len() <= rsk_rescue::phy::USB_STR_MAX);
+const _: () = assert!(YUBICO_MANUFACTURER.len() <= rsk_rescue::phy::USB_STR_MAX);
+const _: () = assert!(SERIAL.len() <= rsk_rescue::phy::USB_STR_MAX);
 
 /// The keyboard interface's report size (the boot-keyboard 8-byte report).
 const KBD_RPT_SIZE: usize = 8;
@@ -85,7 +123,7 @@ fn request_cancel() {
 /// The polling is the point: this future is what `CtapHid` races its keepalive
 /// against, so a blocking `recv` would stop the keepalives for the whole length
 /// of a makeCredential and the host would give up mid-ceremony.
-async fn run_job(jobs: &Sender<Req>, job: Job) -> Option<Vec<u8>> {
+pub async fn run_job(jobs: &Sender<Req>, job: Job) -> Option<Vec<u8>> {
     let (tx, rx) = mpsc::channel();
     jobs.send(Req { job, reply: tx }).ok()?;
     loop {
@@ -165,15 +203,16 @@ impl ApduHandler for CardJobs {
 /// The device this emulator presents to a USB/IP client, matching the descriptors
 /// [`declare`] builds. The kernel reads these *before* it issues a single
 /// GET_DESCRIPTOR, to size its own model of the device.
-pub fn device_info() -> UsbDeviceInfo {
+pub fn device_info(yubico: bool) -> UsbDeviceInfo {
+    let (vid, pid, _, _) = identity(yubico);
     UsbDeviceInfo {
         path: "/sys/devices/rsk-emu/usb1/1-1",
         busid: crate::usbip::BUSID,
         busnum: 1,
         devnum: 1,
         speed: 2, // full speed, like the RP2350
-        id_vendor: VID,
-        id_product: PID,
+        id_vendor: vid,
+        id_product: pid,
         bcd_device: BCD_DEVICE,
         device_class: 0,
         device_subclass: 0,
@@ -210,6 +249,7 @@ fn declare<'d>(
     builder: &mut Builder<'d, UsbIpDriver>,
     kbd_state: &'d mut HidState<'d>,
     fido_state: &'d mut HidState<'d>,
+    otp: Option<&'d mut crate::otp_kbd::OtpHandler>,
     jobs: &Sender<Req>,
     atr: &'static [u8],
 ) -> (
@@ -222,11 +262,9 @@ fn declare<'d>(
         kbd_state,
         HidConfig {
             report_descriptor: rsk_usb::kbd::KEYBOARD_REPORT_DESCRIPTOR,
-            // No request handler: the OTP frame protocol runs on the device's
-            // keyboard interface and this build has no OTP transport at all, so a
-            // feature report gets the stack's refusal rather than a reply the
-            // emulator cannot honestly give.
-            request_handler: None,
+            // The OTP frame protocol — the `ykman otp` transport — rides this
+            // interface's feature reports, exactly as on the board.
+            request_handler: otp.map(|h| h as &'d mut dyn embassy_usb::class::hid::RequestHandler),
             poll_ms: 10,
             max_packet_size: KBD_RPT_SIZE as u16,
             hid_subclass: HidSubclass::No,
@@ -252,11 +290,12 @@ fn declare<'d>(
     (kbd, fido, ccid)
 }
 
-fn usb_config() -> UsbConfig<'static> {
-    let mut config = UsbConfig::new(VID, PID);
-    config.manufacturer = Some(MANUFACTURER);
-    config.product = Some(PRODUCT);
-    config.serial_number = Some("rs-key-emu");
+fn usb_config(yubico: bool) -> UsbConfig<'static> {
+    let (vid, pid, manufacturer, product) = identity(yubico);
+    let mut config = UsbConfig::new(vid, pid);
+    config.manufacturer = Some(manufacturer);
+    config.product = Some(product);
+    config.serial_number = Some(SERIAL);
     config.max_power = 100;
     config.max_packet_size_0 = 64;
     config.device_release = BCD_DEVICE;
@@ -272,7 +311,7 @@ fn usb_config() -> UsbConfig<'static> {
 // unreachable end has to be allowed rather than declared away.
 #[allow(unreachable_code)]
 pub fn serve(addr: String, jobs: Sender<Req>, signals: Arc<Signals>, yubico: bool) {
-    let _ = SIGNALS.set(signals);
+    let _ = SIGNALS.set(signals.clone());
     let atr: &'static [u8] = if yubico {
         rsk_usb::ccid::ATR_YUBIKEY
     } else {
@@ -284,37 +323,47 @@ pub fn serve(addr: String, jobs: Sender<Req>, signals: Arc<Signals>, yubico: boo
     let (driver, mut port) = crate::usbip_driver::new();
     let mut builder = Builder::new(
         driver,
-        usb_config(),
+        usb_config(yubico),
         Box::leak(Box::new([0u8; CONFIG_DESC_LEN])),
         Box::leak(Box::new([0u8; BOS_DESC_LEN])),
         Box::leak(Box::new([0u8; MSOS_DESC_LEN])),
         Box::leak(Box::new([0u8; CONTROL_BUF_LEN])),
     );
+    let otp = crate::otp_kbd::OtpKbd::new();
     let (_kbd, fido, mut ccid) = declare(
         &mut builder,
         Box::leak(Box::new(HidState::new())),
         Box::leak(Box::new(HidState::new())),
+        Some(Box::leak(Box::new(otp.handler(signals.clone())))),
         &jobs,
         atr,
     );
     let mut usb = builder.build();
     let (reader, writer) = fido.split();
-    let mut ctap = CtapHid::new(reader, writer, HidJobs(jobs), up_pending, request_cancel);
+    let mut ctap = CtapHid::new(
+        reader,
+        writer,
+        HidJobs(jobs.clone()),
+        up_pending,
+        request_cancel,
+    );
 
     std::thread::spawn(move || {
-        if let Err(e) = crate::usbip::listen(&addr, &device_info(), &INTERFACES, &mut port) {
+        if let Err(e) = crate::usbip::listen(&addr, &device_info(yubico), &INTERFACES, &mut port) {
             eprintln!("emu: cannot serve USB/IP on {addr}: {e}");
         }
     });
 
-    // One executor, three futures, the way the board arranges them — except that
+    // One executor, four futures, the way the board arranges them — except that
     // the board's applets sit on a second executor and here they sit on a second
-    // thread. `_kbd` is only held: this build types nothing, and an interface
-    // nobody drives is still an interface the host must see in the right place.
-    crate::park::block_on(embassy_futures::join::join3(
+    // thread. `_kbd` is only held: a ticket is typed by a button gesture and this
+    // build has no button, so the keyboard's IN endpoint stays silent while its
+    // feature reports carry the frame protocol.
+    crate::park::block_on(embassy_futures::join::join4(
         usb.run(),
         ctap.run(),
         ccid.run(),
+        crate::otp_kbd::run(otp, jobs, signals),
     ));
 }
 

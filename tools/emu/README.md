@@ -27,8 +27,9 @@ cargo run --manifest-path tools/emu/Cargo.toml --target "$HOST" -- --store ./my.
   --trace             log every command and its status
   --seed <hex>        seed the DRBG deterministically (predictable keys)
   --serial <16 hex>   device serial
-  --yubico            present the Yubico card identity (ATR + OpenPGP AID
-                      manufacturer), as a build carrying the Yubico VID does
+  --yubico            present the Yubico identity — USB VID/PID and descriptor
+                      strings, the ATR, the OpenPGP AID vendor — as the
+                      VIDPID=Yubikey5 build does. `ykman` needs it.
   --power-cut <n>     cut the flash's power after n bytes of writes
 ```
 
@@ -51,7 +52,7 @@ of them is an unexplained failure:
 
 | Skipped here | Why |
 |---|---|
-| `02`, `73`, `77` | raw USB: interface layout, the OTP keyboard, pyusb |
+| `02`, `73`, `77` | raw USB — this shim serves reports. They run against `--usbip` below, as ordinary hardware suites |
 | `51` | reboots to BOOTSEL; there is no bootloader to fall into |
 | `53` | the PC/SC `FEATURE_VERIFY_PIN_DIRECT` reader layer |
 | `61`, `65` | driven through python-fido2's own HID transport — faking it would leave the suite testing this shim instead of a third-party client |
@@ -94,11 +95,26 @@ fido2-token -I /dev/hidraw1    # CTAP2.3 getInfo
 opensc-tool -a                 # 3b:fc:…:52:53:2d:4b:65:79  — the RS-Key ATR
 ```
 
-Two things to know. The keyboard interface is declared but types nothing: this
-build has no OTP transport, and the interface exists so the *order* is the
-device's. And PC/SC finds no reader on the default identity until the ccid
-driver's whitelist carries it (`overlays.ccid-rs-key`, `docs/linux.md`) — the
-same thing that happens with a real key, for the same reason.
+The keyboard interface carries the OTP frame protocol — the transport
+`ykman otp` speaks — so `02_usb_interfaces`, `73_otp_keyboard` and
+`77_otp_touch_wait` all run here. What it does *not* do is type: a ticket is
+emitted by a button gesture and this build has no button, so the keyboard's IN
+endpoint stays silent.
+
+`ykman` finds a device by the Yubico VID, so those suites need `--yubico`, which
+now presents the whole Yubico identity — VID/PID and descriptor strings as well as
+the ATR and the OpenPGP AID vendor. `77` also needs `--touch` and a slot
+programmed with one, or there is no wait for it to watch the device let go of:
+
+```bash
+rsk-emu --store ./emu.store --yubico --touch --usbip 0.0.0.0:3240
+ykman otp chalresp --touch --force 1 <20-byte-hex>
+python tests/77_otp_touch_wait.py --slot 1
+```
+
+PC/SC finds no reader on the default identity until the ccid driver's whitelist
+carries it (`overlays.ccid-rs-key`, `docs/linux.md`) — the same thing that happens
+with a real key, for the same reason.
 
 Needs Linux and root for `vhci_hcd`; the emulator itself can stay on a Mac,
 because USB/IP is network-transparent.

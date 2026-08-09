@@ -17,6 +17,7 @@ mod ccid;
 mod device;
 mod display;
 mod hid;
+mod otp_kbd;
 mod park;
 mod platform;
 mod presence;
@@ -64,8 +65,9 @@ usage: rsk-emu [options]
   --usbip [addr]      serve USB/IP (default 127.0.0.1:3240) so a Linux host can
                       attach the emulator as a REAL USB device
   --trace             log every command and its status
-  --yubico            present the Yubico card identity (ATR + OpenPGP AID
-                      manufacturer), as a build carrying the Yubico VID does
+  --yubico            present the Yubico identity: USB VID/PID and descriptor
+                      strings, the ATR, and the OpenPGP AID vendor, as the
+                      VIDPID=Yubikey5 build does. ykman looks for that VID.
   --power-cut <n>     cut the flash's power after n bytes of writes; every op
                       after that fails, as it does on a chip that lost its supply
   --seed <hex>        seed the DRBG deterministically — every key becomes

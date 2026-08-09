@@ -103,8 +103,10 @@ pub struct Config {
     pub kv_total: u32,
     pub flash_size: u32,
     pub trace: bool,
-    /// Present the Yubico card identity — the ATR and the OpenPGP AID's
-    /// manufacturer — as a build carrying the Yubico VID does.
+    /// Present the Yubico identity: the USB VID/PID and descriptor strings over
+    /// `--usbip`, the ATR, and the OpenPGP AID's manufacturer — as the
+    /// `VIDPID=Yubikey5` build does. One identity or none: `ykman` finds a device
+    /// by the Yubico VID and reads its PID out of the PC/SC reader name.
     pub yubico: bool,
     /// Cut the power after this many bytes of flash writes — `MockFlashBase`'s
     /// own injector, the same one the `power_cut` fuzz target arms.
@@ -121,6 +123,13 @@ pub enum Job {
     Vendor { cmd: u8, data: Vec<u8> },
     /// A CCID APDU.
     Apdu(Vec<u8>),
+    /// One keyboard-interface OTP frame: `slot` is the command, `payload` its
+    /// 64 bytes. Answers `status_frame(8) ‖ body` — one channel, and the status
+    /// frame is fixed-width, so the split is unambiguous.
+    OtpHid { slot: u8, payload: Vec<u8> },
+    /// The OTP applet's 7-byte status record, for seeding the idle status frame
+    /// before the host's first poll.
+    OtpStatus,
     /// CTAPHID_INIT: drop anything selected over the MSG transport.
     DeselectMsg,
     /// The card was reset (PC/SC would have re-powered it): drop the selected
@@ -357,6 +366,20 @@ async fn serve<PR: rsk_device::UserPresence + 'static>(
                 }
                 Some(body)
             }
+            Job::OtpHid { slot, payload } => {
+                let mut p = [0u8; 64];
+                let n = payload.len().min(64);
+                p[..n].copy_from_slice(&payload[..n]);
+                let (body, len, status) = ccid.handle_otp_hid(slot, &p);
+                ccid.scrub();
+                let mut out = status.to_vec();
+                out.extend_from_slice(&body[..len]);
+                if cfg.trace {
+                    eprintln!("emu: otp frame slot={slot:#04x} -> {len} B + status");
+                }
+                Some(out)
+            }
+            Job::OtpStatus => Some(ccid.otp_status_record().to_vec()),
             Job::DeselectMsg => {
                 ctap.deselect_msg();
                 Some(Vec::new())

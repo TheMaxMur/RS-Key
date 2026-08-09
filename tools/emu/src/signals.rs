@@ -20,6 +20,15 @@ pub struct Signals {
     /// single global "cancel requested" boolean is exactly the bug audit run-31
     /// filed as HIGH.
     cancel_cid: AtomicU32,
+    /// An OTP frame command owns the presence wait.
+    ///
+    /// One presence backend serves every transport, so without a scope a FIDO
+    /// `CTAPHID_CANCEL` would end an OTP challenge's touch wait and the OTP dummy
+    /// write would end a FIDO ceremony. `firmware/src/presence.rs` splits them the
+    /// same way, for the same reason.
+    otp_wait: AtomicBool,
+    /// The host asked to end that wait — the dummy write, or the next command.
+    otp_cancel: AtomicBool,
 }
 
 impl Signals {
@@ -59,9 +68,32 @@ impl Signals {
             .store(self.active_cid.load(Ordering::Acquire), Ordering::Release);
     }
 
-    /// Whether the in-flight command has been cancelled by its *own* channel.
+    /// Claim the presence wait for an OTP frame command, dropping any cancel left
+    /// over from before it.
+    pub fn begin_otp(&self) {
+        self.otp_cancel.store(false, Ordering::Release);
+        self.otp_wait.store(true, Ordering::Release);
+    }
+
+    pub fn end_otp(&self) {
+        self.otp_wait.store(false, Ordering::Release);
+    }
+
+    /// End the OTP wait, if one is what is running.
+    pub fn cancel_otp(&self) {
+        if self.otp_wait.load(Ordering::Acquire) {
+            self.otp_cancel.store(true, Ordering::Release);
+        }
+    }
+
+    /// Whether the in-flight command has been cancelled by its own transport: a
+    /// FIDO `CTAPHID_CANCEL` on the channel that owns the ceremony, or the OTP
+    /// host moving on from a challenge waiting for its press.
     pub fn cancelled(&self) -> bool {
         let active = self.active_cid.load(Ordering::Acquire);
-        active != 0 && self.cancel_cid.load(Ordering::Acquire) == active
+        if active != 0 && self.cancel_cid.load(Ordering::Acquire) == active {
+            return true;
+        }
+        self.otp_wait.load(Ordering::Acquire) && self.otp_cancel.load(Ordering::Acquire)
     }
 }

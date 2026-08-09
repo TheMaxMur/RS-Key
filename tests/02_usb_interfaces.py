@@ -11,9 +11,12 @@ host test can see (they live in the USB descriptors and on the control pipe):
     CCID. `ykpers`/`ykcore` (KeePassXC, ykchalresp, pam_yubico) claims interface
     0 and puts the OTP frame reports there without reading a descriptor first,
     so whichever interface sits at index 0 decides whether those tools work;
-  * the OTP frame protocol answers a HID feature GET_REPORT on *both* HID
-    interfaces, as a 5.7.4 YubiKey does, which keeps such a host working even if
-    the order ever shifts (e.g. an interface disabled in the phy record).
+  * the OTP frame protocol answers a HID feature GET_REPORT on the keyboard
+    interface, and *only* there. A 5.7.4 YubiKey answers it on both, and RS-Key
+    did too until audit run-30: serving it on the FIDO interface gains no host
+    that needs it, and on macOS it drags the whole FIDO interface behind the
+    Input Monitoring prompt. So the FIDO interface must refuse it — that is the
+    decision, and this is where it is checked.
 
     pip install pyusb        # plus libusb
     python tests/02_usb_interfaces.py
@@ -133,15 +136,21 @@ def main():
         sys.exit(f"FAIL: CCID at {ccid_itfs[0]} precedes FIDO at {fido_itf}")
     print(f"  OK  order: keyboard/OTP {kbd_itf}, FIDO {fido_itf}, CCID {ccid_itfs}")
 
-    for itf, (_, frame) in probes.items():
-        if frame is None or len(frame) != STATUS_FRAME_LEN:
-            sys.exit(f"FAIL: interface {itf} served no OTP status frame")
-        if not 1 <= frame[1] <= 9:
-            sys.exit(f"FAIL: interface {itf} status frame looks wrong: {frame.hex(' ')}")
-        print(
-            f"  OK  itf {itf} status frame {frame.hex(' ')} "
-            f"(version {frame[1]}.{frame[2]}.{frame[3]})"
-        )
+    frame = probes[kbd_itf][1]
+    if frame is None or len(frame) != STATUS_FRAME_LEN:
+        sys.exit(f"FAIL: interface {kbd_itf} served no OTP status frame")
+    if not 1 <= frame[1] <= 9:
+        sys.exit(f"FAIL: interface {kbd_itf} status frame looks wrong: {frame.hex(' ')}")
+    print(
+        f"  OK  itf {kbd_itf} status frame {frame.hex(' ')} "
+        f"(version {frame[1]}.{frame[2]}.{frame[3]})"
+    )
+    # Audit run-30: the FIDO interface is CTAP-only. A frame here would mean the
+    # OTP transport had crept back onto it, which on macOS puts FIDO behind the
+    # Input Monitoring prompt.
+    if probes[fido_itf][1] is not None:
+        sys.exit(f"FAIL: interface {fido_itf} (FIDO) answered the OTP frame protocol")
+    print(f"  OK  itf {fido_itf} refuses the OTP frame protocol (CTAP-only)")
 
     print("PASS")
     return 0

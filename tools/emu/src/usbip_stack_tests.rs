@@ -22,7 +22,7 @@ fn config_descriptor() -> Vec<u8> {
         let (driver, _port) = crate::usbip_driver::new();
         let mut builder = Builder::new(
             driver,
-            usb_config(),
+            usb_config(false),
             &mut config_desc,
             &mut bos,
             &mut msos,
@@ -32,6 +32,7 @@ fn config_descriptor() -> Vec<u8> {
             &mut builder,
             &mut kbd_state,
             &mut fido_state,
+            None,
             &jobs,
             rsk_usb::ccid::ATR_RSKEY,
         );
@@ -111,13 +112,18 @@ fn the_devlist_matches_the_descriptors() {
 /// …and the count the kernel is told before it reads anything is that same list's.
 #[test]
 fn the_device_info_counts_the_interfaces_it_has() {
-    let d = device_info();
+    let d = device_info(false);
     assert_eq!(
         d.num_interfaces as usize,
         interfaces_in(&config_descriptor()).len()
     );
     assert_eq!(d.id_vendor, VID);
     assert_eq!(d.id_product, PID);
+    // …and `--yubico` is one identity or none: the tools that look for it match
+    // the VID, and read the PID out of the PC/SC reader name.
+    let yk = device_info(true);
+    assert_eq!(yk.id_vendor, YUBICO_VID);
+    assert_eq!(yk.id_product, YUBICO_PID);
     assert_eq!(d.bcd_device, BCD_DEVICE);
 }
 
