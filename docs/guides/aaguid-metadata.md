@@ -60,7 +60,7 @@ embedded `authenticatorGetInfo` that mirrors exactly what the device returns to
 | Field | RS-Key value |
 |---|---|
 | `attestationTypes` | `["basic_full"]`: packed attestation with an `x5c` leaf |
-| `attestationRootCertificates` | `[]`: the leaf is per-device and self-signed, so there is no shareable root |
+| `attestationRootCertificates` | `[]`: the leaf is per-device and self-signed, so there is no shareable root — the statement's own `legalHeader` says so, since MDS defines this field as the anchors "for the batch chain" and an empty one otherwise reads as a broken chain rather than an absent one |
 | `authenticationAlgorithms` | secp256r1 / ed25519 / secp384r1 / secp521r1 / secp256k1 (ECDSA + EdDSA) |
 | `keyProtection` | `["hardware"]`: RP2350 flash/OTP, not a separate certified secure element |
 | `matcherProtection` | `["on_chip"]`: the PIN is verified on the device |
