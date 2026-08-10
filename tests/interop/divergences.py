@@ -172,6 +172,12 @@ RULES = [
      ExpectDiff(None, r"4078",
                 "RS-Key advertises its store's true per-value ceiling, rsk_fs::MAX_VALUE_BYTES")),
     ("fido.getinfo.maxCredBlobLength", ExpectDiff(None, r"128", "RS-Key 128 vs real 32")),
+    # A YubiKey publishes neither 0x15 nor the 0xFF entry in 0x1F; RS-Key
+    # implements the vendorPrototype arm, and CTAP 2.3 §6.11.3 ties the two, so it
+    # must publish both. Deliberate, not a fidelity gap.
+    ("fido.getinfo.vendorPrototypeConfigCommands",
+     ExpectDiff(None, None,
+                "RS-Key implements vendorPrototype, so §6.11.3 requires listing its ids")),
     ("fido.getinfo.maxRPIDsForSetMinPINLength", ExpectDiff(None, None, "RS-Key 8 vs real 1")),
 
     # ── FIDO getInfo option skew (build-config), each side pinned ──────────

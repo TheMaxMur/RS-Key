@@ -218,6 +218,10 @@ def part_b(stmt):
         "transports": m[0x09],
         "maxRPIDsForSetMinPINLength": m[0x10],
         "remainingDiscoverableCredentials": m[0x14],
+        # 0x15 is u64-valued; `10_fido_getinfo`'s decoder needs its 8-byte-uint
+        # arm for this to parse at all. A member missing from THIS map reads as a
+        # drift against the statement, not as an oversight — add both together.
+        "vendorPrototypeConfigCommands": m[0x15],
         "attestationFormats": m[0x16],
         "maxPINLength": m[0x1D],
         "authenticatorConfigCommands": m[0x1F],
