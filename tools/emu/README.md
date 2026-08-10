@@ -39,6 +39,11 @@ the delay the CTAPHID endpoint reports `UPNEEDED`; a `CANCEL` on the active
 channel ends the operation before it is approved. This mode is intended for
 deterministic conformance runs that need to observe keepalive and cancellation.
 
+A timer answers the prompt, so this remains an **auto-confirming** authenticator,
+not a confirm-showing one: the CTAP 2.1 §6.6 reset window still applies, exactly
+as under the default instant presence. `--touch`, where a person answers, is the
+mode that is exempt from it.
+
 Build the emulator with the conformance-specific FIDO feature and run it with
 delayed presence like this:
 

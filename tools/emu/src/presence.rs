@@ -151,9 +151,19 @@ impl rsk_fido::UserPresence for EmuPresence {
         }
     }
 
-    /// Delayed auto-touch emits the same named confirmation as terminal mode.
+    /// The terminal prompt does name the operation and wait for a person, so a
+    /// `--touch` run is the confirm-showing kind of authenticator CTAP 2.1 §6.6
+    /// exempts from the reset window. An auto-confirming one is not, and
+    /// [`PresenceMode::Delayed`] is auto-confirming — it prints the same lines,
+    /// but a timer answers them, so nobody has seen anything. Claiming otherwise
+    /// turns off the reset window (`rsk_fido::reset`) in the one mode built for
+    /// unattended conformance runs: measured, a reset 13.3 s after power-on
+    /// returned `0x00` instead of `NOT_ALLOWED`, and `tests/27_reset_window.py`
+    /// failed. It also promotes the emulator to the trusted-display profile for
+    /// `makeCredential` / `getAssertion` / `setPIN`, which is not what a
+    /// screenless key under test is.
     fn shows_confirm(&self) -> bool {
-        self.mode != PresenceMode::Instant
+        self.mode == PresenceMode::Terminal
     }
 }
 
