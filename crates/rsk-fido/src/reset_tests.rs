@@ -397,7 +397,7 @@ fn reset_sweep_fails_when_storage_does_not_converge() {
     assert_eq!(sweep(&mut ctx, is_fido_fid), Err(CtapError::Other));
 }
 
-/// `RESET_MAX_DELETES` is written as `3 * MAX_RESIDENT_CREDENTIALS + 13`, and the
+/// `RESET_MAX_DELETES` is written as `4 * MAX_RESIDENT_CREDENTIALS + 13`, and the
 /// 13 is a hand-count of `is_fido_fid`'s fixed arm. Count the predicate instead of
 /// trusting it: add a record there and the bound silently stops covering the
 /// applet, whose failure mode is a reset that gives up on a FULL device — the one

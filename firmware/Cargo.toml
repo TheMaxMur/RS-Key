@@ -141,6 +141,11 @@ strict-up = ["rsk-fido/strict-up"]
 # operations return PUAT_REQUIRED until you do (the platform is prompted to set one).
 # Still runtime-toggleable; an authenticatorReset returns it to this compiled default.
 always-uv = ["rsk-fido/always-uv"]
+# Serve the CTAP 2.3 `largeBlob` extension INSTEAD OF the CTAP 2.1 largeBlobKey +
+# authenticatorLargeBlobs pair (see rsk-fido's feature docs — the spec forbids
+# supporting both). OFF by default: the 2.1 pair is what shipping browsers drive.
+# Build `--features largeblob-ext`.
+largeblob-ext = ["rsk-fido/largeblob-ext"]
 # Restore today's strict admin-write authorization. The DEFAULT build is now the
 # permissive, full-YubiKey/ykman-compatible admin surface: device-config writes
 # (CCID Management WRITE CONFIG, FIDO vendor CONFIG_WRITE, the CTAPHID/OTP-HID

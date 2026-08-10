@@ -23,7 +23,8 @@ use crate::cbordec::{cbor, def_arr, def_map};
 use crate::consts::{
     CM_DELETE_CREDENTIAL, CM_ENUMERATE_CREDS_BEGIN, CM_ENUMERATE_CREDS_NEXT,
     CM_ENUMERATE_RPS_BEGIN, CM_ENUMERATE_RPS_NEXT, CM_GET_CREDS_METADATA, CM_UPDATE_USER_INFO,
-    CRED_PROT_UV_OPTIONAL, EF_CRED, EF_RP, MAX_RAW_SUBPARA, MAX_RESIDENT_CREDENTIALS,
+    CRED_PROT_UV_OPTIONAL, EF_CRED, EF_RP, LARGE_BLOB_EXT, MAX_RAW_SUBPARA,
+    MAX_RESIDENT_CREDENTIALS,
 };
 use crate::credential::{
     CRED_BOX_MAX, CRED_REC_MAX, CRED_RESIDENT_LEN, CredInput, RECORD_PREFIX, RP_PREFIX, RP_REC_MAX,
@@ -34,6 +35,7 @@ use crate::credential::{
 use crate::ec::{CredKey, cached_point_len, cose_public_from_point};
 use crate::error::{CtapError, CtapResult};
 use crate::keyderiv::fido_load_key;
+use crate::largeblobext;
 use crate::seed::load_ppuat;
 use crate::state::{FidoState, PERM_CM};
 use crate::{Ctx, Rng};
@@ -532,8 +534,10 @@ fn enumerate_creds_response(
 
     // Extension response fields: 0x0A credProtect (always — defaults to level 1),
     // 0x0B largeBlobKey (derived, when the credential opted in), 0x0C
-    // thirdPartyPayment (always).
-    let large_blob_key = if cred.ext.large_blob_key {
+    // thirdPartyPayment (always). The stored opt-in outlives the design it belongs
+    // to — a credential created by a default build carries it, and a
+    // `largeblob-ext` build must still not serve half of the CTAP 2.1 pair.
+    let large_blob_key = if cred.ext.large_blob_key && !LARGE_BLOB_EXT {
         Some(derive_large_blob_key(seed, key_input))
     } else {
         None
@@ -646,6 +650,10 @@ fn delete_credential<S: Storage, R: Rng>(
     ctx.fs
         .delete(EF_CRED + slot)
         .map_err(|_| CtapError::NotAllowed)?;
+    // The credential's large blob goes with it. Best-effort and non-atomic: a
+    // power cut between the two leaves an orphan that the AAD binding stops the
+    // slot's next owner from opening, and `credential_store` clears anyway.
+    largeblobext::discard(ctx.fs, slot);
     decrement_rp(ctx.fs, rp_id_hash)?;
     Ok(0)
 }

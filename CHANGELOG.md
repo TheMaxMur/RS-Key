@@ -214,6 +214,34 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Added
 
+- **The CTAP 2.3 `largeBlob` extension, as an opt-in build
+  (`--features largeblob-ext`).** It carries the whole blob inside the
+  `getAssertion` that reads or writes it and keeps it with the credential,
+  instead of the CTAP 2.1 arrangement where the platform manages one array and
+  the device only hands out a per-credential key. Read it with
+  `largeBlob: {read: true}`, write it with `{write: <bytes>, originalSize: n}`
+  and a **non-empty allowList** — §12.4 makes naming the credential the
+  precondition for a write — and the answers come back in
+  `unsignedExtensionOutputs`.
+
+  It is not additive, and that is the spec's doing: §12.4 says
+  *"Authenticators MUST NOT support both extensions"*, so the build **withdraws**
+  the `largeBlobKey` extension, the `authenticatorLargeBlobs` command (`0x0C` now
+  answers `CTAP1_ERR_INVALID_COMMAND`), the `largeBlobs` option and
+  `maxSerializedLargeBlobArray`. Since every shipping browser drives the 2.1 pair
+  today and no client speaks the 2.3 extension yet, **the default build is
+  unchanged** — turning this on trades working WebAuthn `largeBlob` support for
+  a design nothing currently asks for. Up to 4046 bytes per credential
+  (discoverable only: a non-discoverable credential has no record to hang a blob
+  on, so `support: "required"` there is `CTAP2_ERR_LARGE_BLOB_STORAGE_FULL`).
+
+  One thing the spec does not ask for: each blob is sealed at rest under the
+  device seed with the credential id as AAD. The 2.1 array arrives already
+  encrypted by the platform, but a 2.3 blob arrives as compressed plaintext, so
+  without the seal it would sit readable in a flash dump — and the AAD is also
+  what stops a record left behind in a reused slot being served to the
+  credential that takes it next. **bcdDevice → 0x0881.**
+
 - The gate asserts a **stack floor** (`FIRMWARE_STACK_FLOOR_KIB`, alongside the
   flash budget). Static RAM had grown 28.5 KiB since `0x082B`, taking the same
   amount off the stack ceiling with nothing measuring it.

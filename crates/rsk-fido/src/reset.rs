@@ -9,8 +9,8 @@
 use rsk_fs::Storage;
 
 use crate::consts::{
-    EF_ALWAYS_UV, EF_ATT_CHAIN, EF_ATT_KEY, EF_BACKUP_SEALED, EF_COUNTER, EF_CRED, EF_CRED_CTR,
-    EF_DEVICE_PIN, EF_EA_ENABLED, EF_EE_DEV, EF_KEY_DEV, EF_KEY_DEV_ENC, EF_LARGEBLOB,
+    EF_ALWAYS_UV, EF_ATT_CHAIN, EF_ATT_KEY, EF_BACKUP_SEALED, EF_COUNTER, EF_CRED, EF_CRED_BLOB,
+    EF_CRED_CTR, EF_DEVICE_PIN, EF_EA_ENABLED, EF_EE_DEV, EF_KEY_DEV, EF_KEY_DEV_ENC, EF_LARGEBLOB,
     EF_MINPINLEN, EF_PAUTHTOKEN, EF_PIN, EF_RP, EF_RPNICK, MAX_RESIDENT_CREDENTIALS,
     RESET_WINDOW_MS,
 };
@@ -19,9 +19,9 @@ use crate::journal;
 use crate::seed::ensure_seed;
 use crate::{Ctx, Rng};
 
-/// Progress backstop for one [`sweep`] phase: the FIDO predicate spans three
+/// Progress backstop for one [`sweep`] phase: the FIDO predicate spans four
 /// 256-slot ranges and 13 fixed records, so a converging sweep cannot exceed this.
-const RESET_MAX_DELETES: u32 = 3 * MAX_RESIDENT_CREDENTIALS as u32 + 13;
+const RESET_MAX_DELETES: u32 = 4 * MAX_RESIDENT_CREDENTIALS as u32 + 13;
 
 /// `authenticatorReset`: factory-reset the FIDO applet. Replies with only the
 /// status byte. Also the documented recovery from a soft lock with a lost lock
@@ -163,6 +163,9 @@ fn is_fido_fid(fid: u16) -> bool {
         || (EF_CRED..EF_CRED + MAX_RESIDENT_CREDENTIALS).contains(&fid)
         || (EF_RP..EF_RP + MAX_RESIDENT_CREDENTIALS).contains(&fid)
         || (EF_RPNICK..EF_RPNICK + MAX_RESIDENT_CREDENTIALS).contains(&fid)
+        // Swept in EVERY build, not just `largeblob-ext`: a key that once ran that
+        // firmware must still be wipeable by the one it is flashed with next.
+        || (EF_CRED_BLOB..EF_CRED_BLOB + MAX_RESIDENT_CREDENTIALS).contains(&fid)
 }
 
 /// Whether `fid` survives an on-device **factory reset** (the trusted-display

@@ -88,6 +88,15 @@ always-uv = []
 # device config ungated (full YubiKey/ykman parity); `--features strict-config`
 # re-imposes the gate. See firmware's `strict-config`.
 strict-config = []
+# Serve the CTAP 2.3 §12.4 `largeBlob` extension INSTEAD OF the CTAP 2.1
+# large-blob design. Not additive, and not a choice this crate could dodge: §12.4
+# says "Authenticators MUST NOT support both extensions", so enabling it
+# WITHDRAWS the `largeBlobKey` extension, the `authenticatorLargeBlobs` command
+# (0x0C) and the `largeBlobs` option, and stores blobs per credential instead of
+# in one platform-managed array. OFF by default because the 2.1 pair is what every
+# shipping browser drives today; the 2.3 extension has no client implementations
+# yet. Build `--features largeblob-ext`.
+largeblob-ext = []
 # On-device latency-harness timing entrypoints (`bench` module). OFF by default,
 # NEVER shipped — enabling it exposes a vendor timing oracle over the crypto
 # primitives, like `keygen-bench`. Drives the real hot paths (variable-base P-256

@@ -8,9 +8,12 @@
 
 use super::Authr;
 use crate::consts::{
-    ALG_ES256, CTAP_CLIENT_PIN, CTAP_CREDENTIAL_MGMT, CTAP_GET_ASSERTION, CTAP_LARGE_BLOBS,
-    CTAP_MAKE_CREDENTIAL,
+    ALG_ES256, CTAP_CLIENT_PIN, CTAP_CREDENTIAL_MGMT, CTAP_GET_ASSERTION, CTAP_MAKE_CREDENTIAL,
 };
+// Serving the CTAP 2.1 large-blob design, which a `largeblob-ext` build withdraws
+// (§12.4), so these go with the tests that drive it.
+#[cfg(not(feature = "largeblob-ext"))]
+use crate::consts::CTAP_LARGE_BLOBS;
 use crate::error::CtapError;
 use minicbor::Encoder;
 use minicbor::encode::write::Cursor;
@@ -145,6 +148,9 @@ fn credmgmt_unknown_subcommand() {
     expect(CTAP_CREDENTIAL_MGMT, &req, CtapError::InvalidParameter);
 }
 
+// The CTAP 2.1 large-blob design, which a `largeblob-ext` build withdraws
+// wholesale (§12.4: "Authenticators MUST NOT support both extensions").
+#[cfg(not(feature = "largeblob-ext"))]
 #[test]
 fn largeblobs_get_and_set_conflict() {
     // Supplying both get (0x01) and set (0x02) → INVALID_PARAMETER.
@@ -157,6 +163,9 @@ fn largeblobs_get_and_set_conflict() {
     expect(CTAP_LARGE_BLOBS, &req, CtapError::InvalidParameter);
 }
 
+// The CTAP 2.1 large-blob design, which a `largeblob-ext` build withdraws
+// wholesale (§12.4: "Authenticators MUST NOT support both extensions").
+#[cfg(not(feature = "largeblob-ext"))]
 #[test]
 fn largeblobs_missing_offset() {
     // A get without the mandatory offset (0x03) → INVALID_PARAMETER.

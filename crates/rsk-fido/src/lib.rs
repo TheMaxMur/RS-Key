@@ -28,6 +28,7 @@ pub mod getinfo;
 pub mod hmacsecret;
 pub mod journal;
 pub mod keyderiv;
+pub mod largeblobext;
 pub mod largeblobs;
 pub mod makecredential;
 pub mod passkeys;
@@ -238,7 +239,11 @@ pub fn process_cbor<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, data: &[u8], out: &
         consts::CTAP_SELECTION => selection::selection(ctx),
         consts::CTAP_CONFIG => config::authenticator_config(ctx, params, &mut out[1..]),
         consts::CTAP_CREDENTIAL_MGMT => credmgmt::cred_mgmt(ctx, params, &mut out[1..]),
-        consts::CTAP_LARGE_BLOBS => largeblobs::large_blobs(ctx, params, &mut out[1..]),
+        // CTAP 2.3 §12.4: a build that serves the `largeBlob` extension must not
+        // also serve this command, and getInfo drops `largeBlobs` to match.
+        consts::CTAP_LARGE_BLOBS if !consts::LARGE_BLOB_EXT => {
+            largeblobs::large_blobs(ctx, params, &mut out[1..])
+        }
         consts::CTAP_VENDOR => vendor::vendor(ctx, params, &mut out[1..]),
         _ => Err(CtapError::InvalidCommand),
     };

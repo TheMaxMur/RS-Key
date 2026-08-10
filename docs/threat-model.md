@@ -309,7 +309,16 @@ key, and the ungated `authenticatorLargeBlobs get` alongside it, with no touch a
 no PIN, on a device with `alwaysUv` enabled. Per §6.10 the confidentiality of that
 data is a function of the credential's protection policy, so a relying party that
 needs it gated should set `credProtect` accordingly. Deviating unilaterally would
-fail conformance; the asymmetry belongs upstream.
+fail conformance; the asymmetry belongs upstream. The CTAP 2.3 §12.4 `largeBlob`
+extension (`--features largeblob-ext`) inherits the same property and is
+implemented as written for the same reason — it puts no UP/UV precondition on a
+read either, so a silent `up:false` probe returns the blob. It is not a wider
+exposure than the pair it replaces: there, an ungated assertion yields the
+largeBlobKey and an ungated `authenticatorLargeBlobs get` yields the ciphertext,
+which is the same plaintext by another route. What that build does add is a blob
+the *device* holds in the clear, since the platform no longer encrypts it — so
+`largeblob-ext` seals each blob at rest under the device seed, with the
+credential id as AAD.
 
 The reboot to BOOTSEL is presence-gated but takes no PIN, so "one touch, then
 dump RAM" is a real attacker move. `worker::reboot` wipes the live key material

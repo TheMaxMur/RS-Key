@@ -2803,6 +2803,9 @@ fn hmac_secret_survives_updateuserinfo_reseal_end_to_end() {
     assert_eq!(dec1, rsk_crypto::hmac_sha256(&cr[..32], &salt).to_vec());
 }
 
+// The CTAP 2.1 large-blob design, which a `largeblob-ext` build withdraws
+// wholesale (§12.4: "Authenticators MUST NOT support both extensions").
+#[cfg(not(feature = "largeblob-ext"))]
 #[test]
 fn large_blob_key_in_assertion() {
     let (mut fs, mut rng) = setup();

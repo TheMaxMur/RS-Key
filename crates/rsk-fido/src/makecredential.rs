@@ -34,7 +34,8 @@ use crate::consts::{
     ALG_ESP384, ALG_ESP512, ALG_MLDSA44, ALG_MLDSA65, CRED_PROT_UV_REQUIRED, CURVE_ED25519,
     CURVE_MLDSA44, CURVE_MLDSA65, CURVE_P256, CURVE_P256K1, CURVE_P384, CURVE_P521, EF_ATT_CHAIN,
     EF_EA_ENABLED, EF_EE_DEV, EF_MINPINLEN, EF_PIN, FLAG_AT, FLAG_ED, FLAG_UP, FLAG_UV,
-    MAX_CREDBLOB_LENGTH, MAX_CREDENTIAL_COUNT_IN_LIST, MAX_MIN_PIN_RPIDS, MAX_RESIDENT_CREDENTIALS,
+    LARGE_BLOB_EXT, MAX_CREDBLOB_LENGTH, MAX_CREDENTIAL_COUNT_IN_LIST, MAX_MIN_PIN_RPIDS,
+    MAX_RESIDENT_CREDENTIALS,
 };
 use crate::credential::{
     CRED_BOX_MAX, CRED_PUBKEY_MAX, CRED_REC_MAX, CRED_RESIDENT_LEN, CredExt, CredInput, Credential,
@@ -47,6 +48,7 @@ use crate::error::{CtapError, CtapResult};
 use crate::hmacsecret::{self, HmacSecretReq, SALT_ENC_MAX};
 use crate::journal;
 use crate::keyderiv::fido_load_key;
+use crate::largeblobext::{self, McInput};
 use crate::seed::load_att_key;
 use crate::state::PERM_MC;
 use crate::{Ctx, Rng};
@@ -115,6 +117,8 @@ struct Request<'a> {
     ext_third_party_payment: bool,
     ext_hmac_secret: bool,
     ext_large_blob_key: Option<bool>,
+    /// The CTAP 2.3 `largeBlob` extension input, on a `largeblob-ext` build.
+    ext_large_blob: McInput,
     hmac_secret_mc: HmacSecretReq<'a>,
     /// enterpriseAttestation (request field 0x0A): 0 none, 1 vendor-facilitated,
     /// 2 platform-managed (full attestation by the device key).
@@ -145,6 +149,7 @@ fn parse(data: &[u8]) -> Result<Request<'_>, CtapError> {
         ext_third_party_payment: false,
         ext_hmac_secret: false,
         ext_large_blob_key: None,
+        ext_large_blob: McInput::Absent,
         hmac_secret_mc: HmacSecretReq::default(),
         enterprise_attestation: 0,
     };
@@ -259,7 +264,11 @@ fn parse_extensions<'a>(d: &mut Decoder<'a>, req: &mut Request<'a>) -> Result<()
             "thirdPartyPayment" => req.ext_third_party_payment = cbor(d.bool())?,
             "hmac-secret" => req.ext_hmac_secret = cbor(d.bool())?,
             "hmac-secret-mc" => req.hmac_secret_mc = hmacsecret::parse(d)?,
-            "largeBlobKey" => req.ext_large_blob_key = Some(cbor(d.bool())?),
+            // Only one of the two large-blob designs is a recognized extension in
+            // a given build (§12.4); the other falls through to the skip arm like
+            // any unknown one, so its downstream checks stay inert.
+            "largeBlobKey" if !LARGE_BLOB_EXT => req.ext_large_blob_key = Some(cbor(d.bool())?),
+            "largeBlob" if LARGE_BLOB_EXT => req.ext_large_blob = largeblobext::parse_mc(d)?,
             _ => cbor(d.skip())?,
         }
     }
@@ -646,6 +655,19 @@ fn make_credential_inner<S: Storage, R: Rng>(
         None
     };
 
+    // §12.4 makeCredential: this device gives every DISCOVERABLE credential
+    // large-blob capability (the spec's "MAY choose to always create new
+    // credentials with large blob capability"), because the blob hangs off the
+    // resident record. A non-discoverable credential keeps no on-device state at
+    // all, so `support: "required"` is refused rather than silently unmet — and
+    // an absent input returns nothing, the "MUST NOT return unsolicited output".
+    let large_blob_supported = match req.ext_large_blob {
+        McInput::Absent => false,
+        _ if req.rk => true,
+        McInput::Required => return Err(CtapError::LargeBlobStorageFull),
+        McInput::Preferred => false,
+    };
+
     let resp_len = encode_mc_response(
         out,
         &ad[..ad_len],
@@ -657,6 +679,7 @@ fn make_credential_inner<S: Storage, R: Rng>(
             ea_performed,
         },
         large_blob_key,
+        large_blob_supported,
     )?;
 
     if req.rk
@@ -689,26 +712,32 @@ struct AttShape {
     ea_performed: bool,
 }
 
-/// Encode the makeCredential response:
-/// `{1: fmt, 2: authData, 3: attStmt [, 4: ep] [, 5: largeBlobKey]}`.
+/// Encode the makeCredential response: `{1: fmt, 2: authData, 3: attStmt
+/// [, 4: ep] [, 5: largeBlobKey] [, 6: unsignedExtensionOutputs]}`.
 ///
 /// `fmt` is always `"packed"` and attStmt is always `{alg, sig, x5c}` — basic
 /// attestation with the device cert, or the org chain when EA was performed. The
 /// three keys are already in CTAP2 canonical order. `ep` appears only when EA was
-/// actually performed.
+/// actually performed. Fields 5 and 6 are the two mutually exclusive large-blob
+/// designs, so at most one of them is ever present.
 fn encode_mc_response(
     out: &mut [u8],
     ad: &[u8],
     att: &AttBufs,
     shape: AttShape,
     large_blob_key: Option<[u8; 32]>,
+    large_blob_supported: bool,
 ) -> CtapResult {
     let mut enc = Encoder::new(Cursor::new(out));
-    enc.map(3 + u64::from(shape.ea_performed) + u64::from(large_blob_key.is_some()))
-        .and_then(|e| e.u8(1)?.str("packed"))
-        .and_then(|e| e.u8(2)?.bytes(ad))
-        .and_then(|e| e.u8(3))
-        .map_err(|_| CtapError::Other)?;
+    enc.map(
+        3 + u64::from(shape.ea_performed)
+            + u64::from(large_blob_key.is_some())
+            + u64::from(large_blob_supported),
+    )
+    .and_then(|e| e.u8(1)?.str("packed"))
+    .and_then(|e| e.u8(2)?.bytes(ad))
+    .and_then(|e| e.u8(3))
+    .map_err(|_| CtapError::Other)?;
     enc.map(3)
         .and_then(|e| e.str("alg")?.i64(ALG_ES256))
         .and_then(|e| e.str("sig")?.bytes(&att.sig[..shape.sig_len]))
@@ -723,6 +752,10 @@ fn encode_mc_response(
         enc.u8(5)
             .and_then(|e| e.bytes(&lbk))
             .map_err(|_| CtapError::Other)?;
+    }
+    if large_blob_supported {
+        enc.u8(6).map_err(|_| CtapError::Other)?;
+        largeblobext::write_mc_output(&mut enc).map_err(|_| CtapError::Other)?;
     }
     Ok(enc.writer().position())
 }

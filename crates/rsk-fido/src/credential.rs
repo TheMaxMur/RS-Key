@@ -49,8 +49,8 @@ const RP_PROTO: &[u8] = b"RS-Key/EF_RP/rpId";
 /// box key is distinct from the rpId box and every cred-box key.
 const NICK_PROTO: &[u8] = b"RS-Key/EF_RPNICK/nick";
 const PROTO_LEN: usize = 4;
-const IV_LEN: usize = 12;
-const TAG_LEN: usize = 16;
+pub(crate) const IV_LEN: usize = 12;
+pub(crate) const TAG_LEN: usize = 16;
 const SILENT_TAG_LEN: usize = 16;
 /// Legacy header before the ciphertext on a prefixed box: proto + iv.
 const HEAD_LEN: usize = PROTO_LEN + IV_LEN; // 16
@@ -208,7 +208,7 @@ pub struct Credential<'a> {
 }
 
 /// The box encryption key: a SLIP-0022 HMAC chain over the device seed.
-fn derive_chacha_key(seed: &[u8; 32], proto: &[u8]) -> [u8; 32] {
+pub(crate) fn derive_chacha_key(seed: &[u8; 32], proto: &[u8]) -> [u8; 32] {
     let mut k = hmac_sha256(seed, b"SLIP-0022");
     k = hmac_sha256(&k, proto);
     hmac_sha256(&k, b"Encryption key")
@@ -812,6 +812,12 @@ pub fn credential_store<S: Storage>(
     if new_record {
         bump_rp(fs, seed, rp_id_hash, rp_id)?;
     }
+    // Whoever held this slot before is gone: a credential deleted by a torn
+    // `deleteCredential`, or the (rp, user) pair this call is re-registering with a
+    // fresh credential id. Either way its large blob is stale. The AAD binding
+    // already stops it being SERVED to the new credential, but leaving it behind
+    // costs a flash record per reuse.
+    crate::largeblobext::discard(fs, slot);
     if let Err(e) = fs.put(EF_CRED + slot, &rec[..total]) {
         if new_record {
             let _ = crate::credmgmt::decrement_rp(fs, rp_id_hash);

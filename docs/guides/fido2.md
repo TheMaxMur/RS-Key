@@ -172,6 +172,7 @@ getInfo advertises seven extensions:
 | `credProtect` | UV-gated credential visibility (levels 1–3) | |
 | `credBlob` | small opaque blob stored with the credential | 128 bytes |
 | `largeBlobKey` + large blobs | per-credential key into a device blob store | 4 KB store |
+| `largeBlob` (CTAP 2.3) | the blob itself, per credential, inside the assertion | 4046 B/credential; **replaces** the row above, `largeblob-ext` build only |
 | `minPinLength` | the device hands its PIN-length policy to the RP | |
 | `thirdPartyPayment` | the secure-payment-confirmation marker | |
 

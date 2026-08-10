@@ -28,6 +28,11 @@ mod extensions;
 mod getassertion;
 mod getinfo;
 mod hmac;
+// The two large-blob designs are mutually exclusive (CTAP 2.3 §12.4), so each
+// file only makes sense against the build that serves its side.
+#[cfg(feature = "largeblob-ext")]
+mod largeblobext;
+#[cfg(not(feature = "largeblob-ext"))]
 mod largeblobs;
 mod makecredential;
 mod multialg;

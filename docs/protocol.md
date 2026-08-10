@@ -308,7 +308,11 @@ needs only the identifiers above. RS-Key implements:
   getAssertion, getNextAssertion, clientPIN, reset, selection,
   credentialManagement, authenticatorConfig,
   largeBlobs (writable without a `pinUvAuthParam` until a PIN is set or `alwaysUv` is
-  on, per §6.10.2). `options.perCredMgmtRO` is true, so a tool may request the
+  on, per §6.10.2 — a `--features largeblob-ext` build serves the CTAP 2.3 §12.4
+  `largeBlob` **extension** in its place and answers `0x0C` with
+  `CTAP1_ERR_INVALID_COMMAND`, because §12.4 forbids supporting both; detect it
+  from getInfo, which drops `largeBlobs`, `maxSerializedLargeBlobArray` and the
+  `largeBlobKey` extension in that build). `options.perCredMgmtRO` is true, so a tool may request the
   `pcmr` permission (`0x40`, alone) and get the **persistent** pinUvAuthToken: it
   drives getCredsMetadata / enumerateRPs / enumerateCredentials, never the two
   writers, and survives replugs until a PIN change or a reset — a credential list

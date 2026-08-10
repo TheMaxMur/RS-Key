@@ -21,8 +21,8 @@ use minicbor::encode::{Error, Write};
 
 use crate::consts::{
     AAGUID, ALG_EDDSA, ALG_ES256, ALG_ES384, ALG_ES512, ALG_MLDSA44, ALG_MLDSA65, FIRMWARE_VERSION,
-    MAX_CRED_ID_LENGTH, MAX_CREDBLOB_LENGTH, MAX_CREDENTIAL_COUNT_IN_LIST, MAX_LARGE_BLOB_SIZE,
-    MAX_MIN_PIN_RPIDS, MAX_MSG_SIZE,
+    LARGE_BLOB_EXT, MAX_CRED_ID_LENGTH, MAX_CREDBLOB_LENGTH, MAX_CREDENTIAL_COUNT_IN_LIST,
+    MAX_LARGE_BLOB_SIZE, MAX_MIN_PIN_RPIDS, MAX_MSG_SIZE,
 };
 use crate::cose::cose_public_key;
 use crate::error::{CtapError, CtapResult};
@@ -82,8 +82,9 @@ fn write_info<W: Write>(
     remaining_rk: u16,
 ) -> Result<(), Error<W::Error>> {
     // Keys are ascending uints → CTAP canonical order (1-byte keys 0x01..0x16
-    // first, then the 2-byte keys 0x1D, 0x1F).
-    enc.map(20)?;
+    // first, then the 2-byte keys 0x1D, 0x1F). The `largeblob-ext` build drops
+    // 0x0B with the command it describes.
+    enc.map(19 + u64::from(!LARGE_BLOB_EXT))?;
 
     // 0x01 versions — advertise the full backward-compatible superset up to
     // FIDO_2_3 (the implemented surface: credMgmt, largeBlobs, credProtect,
@@ -113,13 +114,18 @@ fn write_info<W: Write>(
     }
     enc.str("FIDO_2_0")?.str("FIDO_2_1")?.str("FIDO_2_3")?;
 
-    // 0x02 extensions
+    // 0x02 extensions — exactly one of the two large-blob designs (CTAP 2.3
+    // §12.4 forbids both), so the list length does not change either way.
     enc.u8(0x02)?
         .array(7)?
         .str("credBlob")?
         .str("credProtect")?
         .str("hmac-secret")?
-        .str("largeBlobKey")?
+        .str(if LARGE_BLOB_EXT {
+            "largeBlob"
+        } else {
+            "largeBlobKey"
+        })?
         .str("minPinLength")?
         .str("hmac-secret-mc")?
         .str("thirdPartyPayment")?;
@@ -134,7 +140,13 @@ fn write_info<W: Write>(
     // display); "alwaysUv" sorts first among the 8-char keys (before "credMgmt");
     // "perCredMgmtRO" (13) lands between "largeBlobs" (10) and "pinUvAuthToken"
     // (14); "makeCredUvNotRqd" is the longest key, so it sorts last.
-    enc.u8(0x04)?.map(12 + u64::from(builtin_uv))?;
+    //
+    // `largeBlobs` goes away entirely on a `largeblob-ext` build: §6.4 spells it
+    // out — "This option MUST NOT be set to true if the largeBlob extension is
+    // supported instead" — and false and absent mean the same thing here, so the
+    // key is simply not emitted.
+    enc.u8(0x04)?
+        .map(11 + u64::from(!LARGE_BLOB_EXT) + u64::from(builtin_uv))?;
     enc.str("ep")?.bool(ea_enabled)?;
     enc.str("rk")?.bool(true)?;
     enc.str("up")?.bool(true)?;
@@ -147,7 +159,9 @@ fn write_info<W: Write>(
     enc.str("credMgmt")?.bool(true)?;
     enc.str("authnrCfg")?.bool(true)?;
     enc.str("clientPin")?.bool(pin_set)?;
-    enc.str("largeBlobs")?.bool(true)?;
+    if !LARGE_BLOB_EXT {
+        enc.str("largeBlobs")?.bool(true)?;
+    }
     // perCredMgmtRO (CTAP 2.2 §6.4): the `pcmr` permission may be requested, which
     // hands the platform the persistent pinUvAuthToken for read-only credential
     // management. Without this key §6.5.5.7.2/.3 require refusing `pcmr` outright.
@@ -219,8 +233,13 @@ fn write_info<W: Write>(
         cose_public_key(enc, ALG_EDDSA)?;
     }
 
-    // 0x0B maxSerializedLargeBlobArray
-    enc.u8(0x0B)?.u64(MAX_LARGE_BLOB_SIZE as u64)?;
+    // 0x0B maxSerializedLargeBlobArray — describes the array the
+    // `authenticatorLargeBlobs` command serves, so it goes with that command.
+    // §12.4 defines no equivalent ceiling for the extension: an over-long write
+    // is answered by `written: false`, not by a published limit.
+    if !LARGE_BLOB_EXT {
+        enc.u8(0x0B)?.u64(MAX_LARGE_BLOB_SIZE as u64)?;
+    }
 
     // 0x0C forceChangePin (EF_MINPINLEN[1]); enforced at token issuance (clientpin).
     enc.u8(0x0C)?.bool(force_change)?;

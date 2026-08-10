@@ -219,6 +219,15 @@ run "clippy (strong-pin fw)"   cargo clippy -p firmware --features strong-pin --
 run "clippy (strict-config fw)"  cargo clippy -p firmware --features strict-config -- -D warnings
 run "clippy (strict-config host)" cargo clippy -p rsk-mgmt -p rsk-otp -p rsk-fido -p rsk-vendor -p rsk-device --features strict-config --target "$HOST" --all-targets -- -D warnings
 run "test (strict-config)"       cargo test -p rsk-mgmt -p rsk-otp -p rsk-fido -p rsk-vendor -p rsk-device --features strict-config --target "$HOST"
+# `largeblob-ext` swaps the CTAP 2.1 large-blob design for the CTAP 2.3 extension
+# (§12.4 forbids serving both). Unlike the profiles above this one runs the WHOLE
+# suite: the tests that describe the withdrawn design are cfg'd out, everything
+# else — canonical getInfo included — must hold in either build, and a bare
+# name-filter would have hidden exactly the fallout this swap can cause.
+run "clippy (largeblob-ext fw)"   cargo clippy -p firmware --features largeblob-ext -- -D warnings
+run "clippy (largeblob-ext host)" cargo clippy -p rsk-fido --features largeblob-ext --target "$HOST" --all-targets -- -D warnings
+run "test (largeblob-ext)"        cargo test -p rsk-fido --features largeblob-ext --target "$HOST"
+run "clippy (emu largeblob-ext)"  cargo clippy --manifest-path tools/emu/Cargo.toml --target "$HOST" --all-targets --features largeblob-ext -- -D warnings
 # The `bench` latency-harness vendor command (never shipped) is only compiled with
 # its feature on, so gate that build here — otherwise a signature change to the EC /
 # KDF hot paths it times would rot the bench module unseen (keep it compiling). The

@@ -2,7 +2,11 @@
 // Copyright (C) 2026 RS-Key contributors
 
 use super::*;
-use crate::consts::ALG_ES256K;
+use crate::consts::{ALG_ES256K, LARGE_BLOB_EXT};
+
+/// Options in a screenless build. `largeBlobs` is one of them, and it goes away
+/// with the command it describes on a `largeblob-ext` build (§12.4).
+const N_OPTIONS: usize = 12 - LARGE_BLOB_EXT as usize;
 use minicbor::Decoder;
 
 /// Decode the advertised `algorithms` (0x0A) COSE ids from a getInfo response.
@@ -65,7 +69,12 @@ fn algorithms_advertisement_policy() {
     }
 }
 
+/// A golden transcript of the DEFAULT profile's getInfo. The `largeblob-ext`
+/// build serves a different member set by design, checked by
+/// `conformance::largeblobext::get_info_offers_the_extension_and_withdraws_the_pair`
+/// rather than by threading conditionals through every line here.
 #[test]
+#[cfg(not(feature = "largeblob-ext"))]
 fn get_info_fields() {
     let mut buf = [0u8; 512];
     let n = get_info(true, 4, false, false, false, false, 200, &mut buf).unwrap();
@@ -253,14 +262,14 @@ fn option_pairs(builtin_uv: bool, pin_set: bool) -> std::vec::Vec<(std::string::
 /// PIN is configured. A screenless key omits it entirely.
 #[test]
 fn uv_option_present_only_with_builtin_uv() {
-    // Screenless: no "uv" key, 12 options.
+    // Screenless: no "uv" key.
     let plain = option_pairs(false, true);
-    assert_eq!(plain.len(), 12);
+    assert_eq!(plain.len(), N_OPTIONS);
     assert!(!plain.iter().any(|(k, _)| k == "uv"));
 
     // Display build, PIN set: "uv" = true, immediately after "up".
     let ready = option_pairs(true, true);
-    assert_eq!(ready.len(), 13);
+    assert_eq!(ready.len(), N_OPTIONS + 1);
     let up = ready.iter().position(|(k, _)| k == "up").unwrap();
     assert_eq!(ready[up + 1].0, "uv", "uv must sort right after up");
     assert!(ready[up + 1].1, "uv = true once a PIN is configured");
@@ -448,7 +457,7 @@ fn make_cred_uv_not_rqd_is_cleared_by_always_uv() {
         }
         assert_eq!(d.u8().unwrap(), 0x04);
         let opts = d.map().unwrap().unwrap();
-        assert_eq!(opts, 12, "no built-in UV on this build");
+        assert_eq!(opts as usize, N_OPTIONS, "no built-in UV on this build");
         // makeCredUvNotRqd is the longest key, so canonical order puts it last.
         for _ in 0..opts - 1 {
             d.str().unwrap();

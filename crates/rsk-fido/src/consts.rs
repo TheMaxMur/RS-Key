@@ -209,6 +209,15 @@ pub const MAX_RAW_SUBPARA: usize = 384;
 /// so the advertised number is one the device can actually commit — the sibling
 /// of the ATT_IMPORT cap mismatch (audit run-32).
 pub const MAX_LARGE_BLOB_SIZE: usize = rsk_fs::MAX_VALUE_BYTES;
+/// Which of the two mutually exclusive large-blob designs this build serves.
+/// CTAP 2.3 §12.4: "Authenticators MUST NOT support both extensions" — so the
+/// `largeblob-ext` build offers the 2.3 `largeBlob` extension and withdraws the
+/// 2.1 trio (the `largeBlobKey` extension, the `authenticatorLargeBlobs`
+/// command, and the `largeBlobs` option), while the default build does the
+/// reverse. Every site that implements either side branches on THIS rather than
+/// on `cfg`, so both shapes stay compiled — and linted, and testable — whichever
+/// way the feature is set.
+pub const LARGE_BLOB_EXT: bool = cfg!(feature = "largeblob-ext");
 /// Max bytes per `authenticatorLargeBlobs` fragment.
 pub const MAX_FRAGMENT_LENGTH: usize = MAX_MSG_SIZE as usize - 64;
 /// Initial serialized large-blob array: the empty CBOR array `0x80` followed
@@ -284,6 +293,13 @@ pub const EF_RP: u16 = 0xD000; // relying-party metadata, 0xD000..0xD0FF
 pub const EF_RPNICK: u16 = 0xD300;
 /// Longest device-local RP nickname (bytes) the trusted display stores + accepts.
 pub const RP_NICK_MAX_LEN: usize = 24;
+/// Per-credential large blobs (the CTAP 2.3 `largeBlob` extension), 0xD500..0xD5FF
+/// — one slot per EF_CRED slot, sealed at rest (see [`crate::largeblobext`]). PIV
+/// owns 0xD100..=0xD2FF and 0xD400..=0xD4FF, so this sits clear of it. Written
+/// only by the `largeblob-ext` build, but swept by `authenticatorReset` in EVERY
+/// build: a key that ran that firmware once must still be wipeable by the one it
+/// is flashed with next.
+pub const EF_CRED_BLOB: u16 = 0xD500;
 pub const EF_PIN: u16 = 0x1080; // PIN: [retries, len, format, verifier(32)]
 /// The **persistent** pinUvAuthToken (CTAP 2.2 §6.5.2.2): a bearer secret the
 /// platform keeps across power cycles, so it is kbase-sealed like the seed. Its

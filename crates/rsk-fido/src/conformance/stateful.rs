@@ -18,17 +18,25 @@
 //! `test_channel_interleaving`, which pin the same rule (Apache-2.0; the
 //! behaviour is the spec's, the code here is ours).
 
-use super::{Authr, assert_ok, assert_ok_empty, field_at, pin_auth};
+use super::{Authr, assert_ok, field_at, pin_auth};
 use crate::consts::{
     ALG_ES256, CM_ENUMERATE_RPS_BEGIN, CM_ENUMERATE_RPS_NEXT, CM_GET_CREDS_METADATA,
     CTAP_CREDENTIAL_MGMT, CTAP_GET_ASSERTION, CTAP_GET_INFO, CTAP_GET_NEXT_ASSERTION,
-    CTAP_LARGE_BLOBS, CTAP_MAKE_CREDENTIAL, CTAP_SELECTION, MAX_LARGE_BLOB_SIZE,
+    CTAP_MAKE_CREDENTIAL,
 };
 use crate::error::CtapError;
-use crate::state::{PERM_CM, PERM_LBW};
+use crate::state::PERM_CM;
+// Serving the CTAP 2.1 large-blob design, which a `largeblob-ext` build withdraws
+// (§12.4), so these go with the tests that drive it.
 use minicbor::Encoder;
 use minicbor::encode::write::Cursor;
-use rsk_crypto::sha256;
+#[cfg(not(feature = "largeblob-ext"))]
+use {
+    super::assert_ok_empty,
+    crate::consts::{CTAP_LARGE_BLOBS, CTAP_SELECTION, MAX_LARGE_BLOB_SIZE},
+    crate::state::PERM_LBW,
+    rsk_crypto::sha256,
+};
 
 const RP_ID: &str = "example.com";
 
@@ -74,6 +82,7 @@ fn ga() -> Vec<u8> {
 
 /// A largeBlobs `set` fragment. `length` is sent only for the opening one, as
 /// §6.10.2 requires (it is the total array size, not this fragment's).
+#[cfg(not(feature = "largeblob-ext"))]
 fn lb_set(set: &[u8], offset: u64, length: Option<u64>, param: &[u8]) -> Vec<u8> {
     let mut buf = [0u8; 128];
     let n = {
@@ -93,6 +102,7 @@ fn lb_set(set: &[u8], offset: u64, length: Option<u64>, param: &[u8]) -> Vec<u8>
 
 /// The pinUvAuthParam a `set` fragment carries: MAC over
 /// `0xff×32 ‖ 0x0c ‖ 0x00 ‖ offset_le(4) ‖ SHA-256(fragment)`.
+#[cfg(not(feature = "largeblob-ext"))]
 fn lb_param(token: &[u8; 32], offset: u32, fragment: &[u8]) -> Vec<u8> {
     let mut vd = [0u8; 70];
     vd[..32].fill(0xff);
@@ -126,6 +136,9 @@ fn cm(sub: u64, param: Option<&[u8]>) -> Vec<u8> {
 /// The large-blob buffer is the sequence with no other bound at all — no timer,
 /// and on a PIN-less key no token either — so before this rule an interrupted
 /// transfer stayed live until some later `offset == 0`.
+// The CTAP 2.1 large-blob design, which a `largeblob-ext` build withdraws
+// wholesale (§12.4: "Authenticators MUST NOT support both extensions").
+#[cfg(not(feature = "largeblob-ext"))]
 #[test]
 fn an_unrelated_command_abandons_a_part_written_large_blob() {
     let mut a = Authr::fresh();
@@ -161,6 +174,7 @@ fn an_unrelated_command_abandons_a_part_written_large_blob() {
     assert_ne!(d.bytes().unwrap(), &blob[..], "nothing was committed");
 }
 
+#[cfg(not(feature = "largeblob-ext"))]
 fn lb_get_full() -> Vec<u8> {
     let mut buf = [0u8; 32];
     let n = {
@@ -269,6 +283,9 @@ fn a_non_continuing_subcommand_of_the_same_command_ends_the_enumerate_walk() {
 
 /// …and `largeBlobs` ends it too, though it is neither. Also measured on the
 /// YubiKey (Begin, largeBlobs get, getNextRP → `0x30`).
+// The CTAP 2.1 large-blob design, which a `largeblob-ext` build withdraws
+// wholesale (§12.4: "Authenticators MUST NOT support both extensions").
+#[cfg(not(feature = "largeblob-ext"))]
 #[test]
 fn a_large_blobs_command_ends_the_enumerate_walk() {
     let mut a = Authr::fresh();
@@ -299,6 +316,9 @@ fn a_large_blobs_command_ends_the_enumerate_walk() {
 /// matter are already in place, and the failure mode is what makes ours the safer
 /// side — a YubiKey has already dropped the stored array by the time the second
 /// fragment arrives, while this one still holds the old array intact.
+// The CTAP 2.1 large-blob design, which a `largeblob-ext` build withdraws
+// wholesale (§12.4: "Authenticators MUST NOT support both extensions").
+#[cfg(not(feature = "largeblob-ext"))]
 #[test]
 fn a_large_blobs_read_does_not_abandon_the_write() {
     let mut a = Authr::fresh();

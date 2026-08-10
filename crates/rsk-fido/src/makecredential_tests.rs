@@ -918,6 +918,9 @@ fn min_pin_length_extension_for_listed_rp() {
     assert_eq!(d.u8().unwrap(), 6);
 }
 
+// The CTAP 2.1 large-blob design, which a `largeblob-ext` build withdraws
+// wholesale (§12.4: "Authenticators MUST NOT support both extensions").
+#[cfg(not(feature = "largeblob-ext"))]
 #[test]
 fn large_blob_key_in_make_credential() {
     // A resident request opting into largeBlobKey returns the derived key (0x05).

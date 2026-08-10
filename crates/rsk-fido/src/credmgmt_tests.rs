@@ -507,6 +507,9 @@ fn parse_cred(resp: &[u8], begin: bool) -> (std::vec::Vec<u8>, [u8; 32], [u8; 32
     (uid, x, y, total)
 }
 
+// The CTAP 2.1 large-blob design, which a `largeblob-ext` build withdraws
+// wholesale (§12.4: "Authenticators MUST NOT support both extensions").
+#[cfg(not(feature = "largeblob-ext"))]
 #[test]
 fn enumerate_emits_extension_fields() {
     let (mut fs, mut rng) = setup();
@@ -1363,6 +1366,7 @@ fn assert_ga_signs_under(fs: &mut Fs<RamStorage>, id: &[u8], x: &[u8; 32], y: &[
 }
 
 // The largeBlobKey (enumerate field 0x0B) of an enumerateCredentials response.
+#[cfg(not(feature = "largeblob-ext"))]
 fn enum_largeblobkey(resp: &[u8]) -> Option<std::vec::Vec<u8>> {
     let mut d = Decoder::new(resp);
     let fields = d.map().unwrap().unwrap();
@@ -1427,6 +1431,9 @@ fn update_preserves_signing_key_end_to_end() {
 }
 
 // The largeBlobKey likewise survives the reseal (v2 keys off the stable id).
+// The CTAP 2.1 large-blob design, which a `largeblob-ext` build withdraws
+// wholesale (§12.4: "Authenticators MUST NOT support both extensions").
+#[cfg(not(feature = "largeblob-ext"))]
 #[test]
 fn update_preserves_largeblobkey() {
     let (mut fs, mut rng) = setup();

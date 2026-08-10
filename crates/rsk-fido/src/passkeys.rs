@@ -272,6 +272,9 @@ pub fn delete_cred<S: Storage>(fs: &mut Fs<S>, ef_cred_fid: u16) -> bool {
     if fs.delete(ef_cred_fid).is_err() {
         return false;
     }
+    // Same as the CTAP `deleteCredential`: the credential's large blob goes with
+    // it, keyed by the slot the fid encodes.
+    crate::largeblobext::discard(fs, ef_cred_fid - EF_CRED);
     let _ = crate::credmgmt::decrement_rp(fs, &rp_id_hash);
     true
 }

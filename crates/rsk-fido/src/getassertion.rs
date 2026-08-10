@@ -20,7 +20,7 @@ use crate::cbordec::{cbor, def_map, parse_credential_descriptors};
 use crate::clientpin::{UvOutcome, builtin_uv_enabled, builtin_uv_step};
 use crate::consts::{
     CRED_PROT_UV_OPTIONAL_WITH_LIST, CRED_PROT_UV_REQUIRED, CURVE_P256, EF_CRED, EF_PIN, FLAG_ED,
-    FLAG_UP, FLAG_UV, MAX_CREDENTIAL_COUNT_IN_LIST, MAX_RESIDENT_CREDENTIALS,
+    FLAG_UP, FLAG_UV, LARGE_BLOB_EXT, MAX_CREDENTIAL_COUNT_IN_LIST, MAX_RESIDENT_CREDENTIALS,
 };
 use crate::credential::{
     CRED_BOX_MAX, CRED_REC_MAX, CRED_RESIDENT_LEN, Credential, RECORD_PREFIX, USER_ID_MAX,
@@ -32,6 +32,7 @@ use crate::error::{CtapError, CtapResult};
 use crate::hmacsecret::{self, HmacSecretReq, SALT_AUTH_MAX, SALT_ENC_MAX};
 use crate::journal;
 use crate::keyderiv::{KEY_HANDLE_LEN, fido_load_key, verify_key};
+use crate::largeblobext::{self, GaInput};
 use crate::seed::{cred_sign_counter, get_sign_counter, set_cred_sign_counter};
 use crate::state::{AssertionState, MAX_ASSERTION_CREDS, PERM_GA};
 use crate::{Ctx, Rng};
@@ -67,6 +68,8 @@ struct Request<'a> {
     ext_cred_blob: bool,
     ext_third_party_payment: bool,
     ext_large_blob_key: Option<bool>,
+    /// The CTAP 2.3 `largeBlob` extension input, on a `largeblob-ext` build.
+    ext_large_blob: GaInput<'a>,
     hmac_secret: HmacSecretReq<'a>,
 }
 
@@ -86,6 +89,7 @@ fn parse(data: &[u8]) -> Result<Request<'_>, CtapError> {
         ext_cred_blob: false,
         ext_third_party_payment: false,
         ext_large_blob_key: None,
+        ext_large_blob: GaInput::Absent,
         hmac_secret: HmacSecretReq::default(),
     };
     let n = def_map(&mut d)?;
@@ -124,7 +128,11 @@ fn parse_extensions<'a>(d: &mut Decoder<'a>, req: &mut Request<'a>) -> Result<()
         match cbor(d.str())? {
             "credBlob" => req.ext_cred_blob = cbor(d.bool())?,
             "thirdPartyPayment" => req.ext_third_party_payment = cbor(d.bool())?,
-            "largeBlobKey" => req.ext_large_blob_key = Some(cbor(d.bool())?),
+            // Only one of the two large-blob designs is a recognized extension in
+            // a given build (§12.4); the other falls through to the skip arm like
+            // any unknown one, so its downstream checks stay inert.
+            "largeBlobKey" if !LARGE_BLOB_EXT => req.ext_large_blob_key = Some(cbor(d.bool())?),
+            "largeBlob" if LARGE_BLOB_EXT => req.ext_large_blob = largeblobext::parse_ga(d)?,
             "hmac-secret" => req.hmac_secret = hmacsecret::parse(d)?,
             _ => cbor(d.skip())?,
         }
@@ -708,6 +716,19 @@ fn get_assertion_inner<S: Storage, R: Rng>(
     // assertion loses its permission.
     ctx.state.consume_after_user_presence_if(req.up);
 
+    // CTAP 2.3 §12.4 largeBlob, run here so the gesture the assertion asked for is
+    // already spent before any flash is touched. The rules themselves live with the
+    // extension.
+    let large_blob = largeblobext::process_ga(
+        ctx,
+        seed,
+        req.ext_large_blob,
+        &best.resident_id,
+        best.slot,
+        req.allow_len > 0,
+        req.up,
+    );
+
     // authData = rpIdHash | flags([UP][,UV][,ED]) | counter [| ext] — no attestedCredentialData.
     // Per-credential signature counter: a resident credential reports (and then
     // advances) its own EF_CRED_CTR entry, so an RP can't correlate this key's
@@ -732,7 +753,9 @@ fn get_assertion_inner<S: Storage, R: Rng>(
     let mut sig = [0u8; MAX_SIG_LEN];
     let sig_len = key.sign(&ad[..ad_len + 32], ctx.rng, &mut sig);
 
-    // Response: { 1: {id,type}, 2: authData, 3: sig [, 4: user] [, 5: count] [, 7: largeBlobKey] }.
+    // Response: { 1: {id,type}, 2: authData, 3: sig [, 4: user] [, 5: count]
+    // [, 7: largeBlobKey] [, 8: unsignedExtensionOutputs] }. Fields 7 and 8 are
+    // the two mutually exclusive large-blob designs, so at most one appears.
     // A resident credential's id is its STORED 42-byte resident id (stable across
     // updateUserInformation); a non-resident's is the box itself.
     let cred_id: &[u8] = if best.resident {
@@ -754,6 +777,7 @@ fn get_assertion_inner<S: Storage, R: Rng>(
     if large_blob_key.is_some() {
         fields += 1; // largeBlobKey
     }
+    fields += u64::from(large_blob.emits()); // unsignedExtensionOutputs
 
     let mut enc = Encoder::new(Cursor::new(&mut *out));
     enc.map(fields)
@@ -800,6 +824,8 @@ fn get_assertion_inner<S: Storage, R: Rng>(
             .and_then(|e| e.bytes(&lbk))
             .map_err(|_| CtapError::Other)?;
     }
+    largeblobext::write_ga_output(&mut enc, &large_blob, &ctx.state.lba.temp)
+        .map_err(|_| CtapError::Other)?;
     let resp_len = enc.writer().position();
 
     // Advance the per-credential counter AFTER building the response (so a torn
