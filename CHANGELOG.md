@@ -114,6 +114,10 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   next command. Emulator only: the firmware and the emulator's `--usbip` path
   (which runs the real transport) were never affected.
 
+- `metadata/README.md` called the attestation `basic_surrogate`; the statements
+  themselves declare `basic_full`, which is what the device sends — packed with a
+  self-signed per-device `x5c` leaf.
+
 - **A record the routing table no longer points at could not be deleted, and
   `authenticatorReset` swept for it forever.** The store keeps two partitions and
   routes each fid to one of them; `for_each_key` walks BOTH, but `remove` targeted
