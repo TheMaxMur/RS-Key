@@ -91,11 +91,16 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
-- **`authenticatorReset` can no longer remain in processing forever when the flash
-  walk re-yields a removed FIDO record.** Its sweep now de-duplicates stored versions
-  of one FID and carries the same progress bound as the PIV, OATH and OpenPGP wipes;
-  a non-converging backend returns `CTAP2_ERR_OTHER` instead of wedging the worker.
-  **bcdDevice → 0x087B.**
+- **`authenticatorReset` deleted the same record up to 64 times.** `for_each_key`
+  walks stored items, so an overwritten file yields its fid once per superseded
+  version until reclaim; the API says a batching caller must de-dup, and the reset
+  sweep did not. Its 64-slot batch filled with copies of one fid — the counters and
+  a re-registered credential are exactly what a busy key rewrites most — so a pass
+  spent its whole budget re-deleting a record already gone and left the rest of the
+  wipe to later passes. It de-dupes now, and carries the same progress backstop as
+  the PIV, OATH and OpenPGP wipes: a backend that keeps yielding a record it has
+  confirmed removed returns `CTAP2_ERR_OTHER` rather than holding the worker in
+  processing. **bcdDevice → 0x087B.**
 
 - **A signed release image did not boot on a secure-boot device.** `picotool
   seal --sign` retires the image's own `IMAGE_DEF` — the linker's, carrying no

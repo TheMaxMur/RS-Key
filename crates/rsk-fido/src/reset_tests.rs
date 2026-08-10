@@ -295,8 +295,14 @@ fn reset_wipes_false_absent_credential_without_looping() {
     assert!(load_keydev(&dev(), &mut fs).is_some());
 }
 
+/// Yields one fid many times per pass, the way the log-structured backend does for
+/// a file with superseded versions, and counts how often the sweep asks to remove
+/// it. `remove` succeeds every time — the real store's does, on a present key and
+/// on an absent one alike — so a sweep that failed to de-dup would still return
+/// `Ok` here. The count is what pins the contract.
 struct DuplicateVersions {
     live: bool,
+    removes: u32,
 }
 
 impl rsk_fs::Storage for DuplicateVersions {
@@ -307,9 +313,7 @@ impl rsk_fs::Storage for DuplicateVersions {
         Ok(())
     }
     fn remove(&mut self, _fid: u16) -> rsk_sdk::error::Result<()> {
-        if !self.live {
-            return Err(rsk_sdk::error::Error::MemoryFatal);
-        }
+        self.removes += 1;
         self.live = false;
         Ok(())
     }
@@ -326,9 +330,16 @@ impl rsk_fs::Storage for DuplicateVersions {
     }
 }
 
+/// `Fs::for_each_key` documents that one fid can be yielded more than once (one
+/// stored item per superseded version, until reclaim) and that a batching caller
+/// must de-dup. Without that, the 64-slot batch fills with copies of a single fid
+/// and the sweep asks to delete it 64 times.
 #[test]
 fn reset_sweep_de_dupes_stored_versions() {
-    let mut fs = Fs::new(DuplicateVersions { live: true });
+    let mut fs = Fs::new(DuplicateVersions {
+        live: true,
+        removes: 0,
+    });
     let mut rng = SeqRng(1);
     let mut state = FidoState::new();
     let mut presence = crate::AlwaysConfirm;
@@ -341,6 +352,11 @@ fn reset_sweep_de_dupes_stored_versions() {
         now_ms: 0,
     };
     assert_eq!(sweep(&mut ctx, is_fido_fid), Ok(()));
+    assert_eq!(
+        fs.into_storage().removes,
+        1,
+        "64 stored versions of one fid must cost one delete, not 64"
+    );
 }
 
 struct ReYielding;
@@ -379,6 +395,20 @@ fn reset_sweep_fails_when_storage_does_not_converge() {
         now_ms: 0,
     };
     assert_eq!(sweep(&mut ctx, is_fido_fid), Err(CtapError::Other));
+}
+
+/// `RESET_MAX_DELETES` is written as `3 * MAX_RESIDENT_CREDENTIALS + 13`, and the
+/// 13 is a hand-count of `is_fido_fid`'s fixed arm. Count the predicate instead of
+/// trusting it: add a record there and the bound silently stops covering the
+/// applet, whose failure mode is a reset that gives up on a FULL device — the one
+/// place a stale constant costs the most.
+#[test]
+fn reset_bound_is_exactly_the_fid_space() {
+    let live = (0..=u16::MAX).filter(|&fid| is_fido_fid(fid)).count();
+    assert_eq!(
+        live as u32, RESET_MAX_DELETES,
+        "the bound must equal the number of fids the sweep can legitimately delete"
+    );
 }
 
 /// Audit run-36 class sweep: `is_fido_gate_fid` is the set `reset` defers to its
