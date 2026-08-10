@@ -922,8 +922,10 @@ SET     00 10 40 11        # P1=0x40 brightness, P2 = color 1 | status 1<<4 = 0x
    hardware-config path. Send `authenticatorConfig` (CTAP `0x0D`) with subCommand
    `vendorPrototype` (`0xFF`) and subCommandParams `{1: vendorCommandId(u64),
    3: value(uint)}`, gated by an `acfg` pinUvAuthToken (no touch). getInfo's
-   `authenticatorConfigCommands` (`0x1F`) lists `0xFF`, so the arm is detectable
-   without probing. The supported
+   `authenticatorConfigCommands` (`0x1F`) lists `0xFF` and
+   `vendorPrototypeConfigCommands` (`0x15`) enumerates the IDs below, so the arm
+   and its commands are both detectable without probing — §6.11.3 ties the two,
+   so a build that hides one hides both. The supported
    IDs, the ones PicoForge writes, set the phy record and take effect on the
    next boot: `PhysicalVidPid 0x6fcb19b0cbe3acfa` (value `(vid<<16)|pid`),
    `PhysicalLedGpio 0x7b392a394de9f948`, `PhysicalLedBrightness 0x76a85945985d02fd`,

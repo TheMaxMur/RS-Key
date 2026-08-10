@@ -104,6 +104,28 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   on-flash item format, so every existing record still reads. **bcdDevice →
   0x0880.**
 
+- **getInfo claimed a config subcommand that, by the spec's own definition, it
+  did not implement.** `authenticatorConfigCommands` (`0x1F`) listed
+  `vendorPrototype` (`0xFF`) while `vendorPrototypeConfigCommands` (`0x15`) was
+  absent — and CTAP 2.3 §6.11.3 makes the second the precondition for the first:
+  the subcommand "is only implemented if the `vendorPrototypeConfigCommands`
+  member in the authenticatorGetInfo response is present". So the two members
+  together said a supported subcommand was not implemented.
+
+  This finishes the `0x0875` fix rather than reversing it. Listing `0xFF` was
+  itself required (§6.11.7 makes it a MUST once the arm exists); what that change
+  left out was the companion member, on the reasoning that `0x15` is optional
+  "and a YubiKey hides it" — true, but a YubiKey hides `0xFF` along with it. Now
+  published: the six vendorCommandIds `authenticatorConfig` actually dispatches,
+  the soft-lock enable/disable pair and the four PicoForge phy writes. Nothing is
+  given away — [docs/protocol.md](docs/protocol.md) §9 already documents them,
+  and §6.11.7 says vendors "MUST NOT count on obscurity of the vendorCommandId
+  value as any sort of security".
+
+  Found by an external CTAP 2.3 conformance runner driven against a live board.
+  The rule is a cross-field constraint over getInfo, so nothing in the gate was
+  in a position to see it. **bcdDevice → 0x0882.**
+
 - **A multi-call sequence no longer survives an unrelated command in the middle
   of it.** CTAP 2.2 §6 lets an authenticator assume each stateful command is
   "exclusively preceded" by its own kind or by the command that initialized it —

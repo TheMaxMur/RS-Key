@@ -76,12 +76,17 @@ fn algorithms_advertisement_policy() {
 #[test]
 #[cfg(not(feature = "largeblob-ext"))]
 fn get_info_fields() {
-    let mut buf = [0u8; 512];
+    use crate::consts::{
+        CONFIG_AUT_DISABLE, CONFIG_AUT_ENABLE, CONFIG_PHY_LED_BRIGHTNESS, CONFIG_PHY_LED_GPIO,
+        CONFIG_PHY_OPTIONS, CONFIG_PHY_VIDPID,
+    };
+
+    let mut buf = [0u8; 1024];
     let n = get_info(true, 4, false, false, false, false, 200, &mut buf).unwrap();
     let mut d = Decoder::new(&buf[..n]);
 
     let entries = d.map().unwrap().unwrap();
-    assert_eq!(entries, 20);
+    assert_eq!(entries, 21);
 
     // 0x01 versions
     assert_eq!(d.u8().unwrap(), 0x01);
@@ -217,6 +222,24 @@ fn get_info_fields() {
     assert_eq!(d.u8().unwrap(), 0x14);
     assert_eq!(d.u16().unwrap(), 200);
 
+    // 0x15 vendorPrototypeConfigCommands — the ids `config.rs` dispatches. §6.11.3
+    // ties this member to the 0xFF entry in 0x1F below: neither may appear alone.
+    assert_eq!(d.u8().unwrap(), 0x15);
+    assert_eq!(d.array().unwrap().unwrap(), 6);
+    assert_eq!(
+        (0..6)
+            .map(|_| d.u64().unwrap())
+            .collect::<std::vec::Vec<_>>(),
+        std::vec![
+            CONFIG_AUT_ENABLE,
+            CONFIG_AUT_DISABLE,
+            CONFIG_PHY_VIDPID,
+            CONFIG_PHY_LED_BRIGHTNESS,
+            CONFIG_PHY_LED_GPIO,
+            CONFIG_PHY_OPTIONS,
+        ]
+    );
+
     // 0x16 attestationFormats: only ["packed"] — every credential carries basic
     // attestation with the device x5c.
     assert_eq!(d.u8().unwrap(), 0x16);
@@ -242,7 +265,7 @@ fn get_info_fields() {
 
 /// Read the `options` (0x04) map as `(key, value)` pairs.
 fn option_pairs(builtin_uv: bool, pin_set: bool) -> std::vec::Vec<(std::string::String, bool)> {
-    let mut buf = [0u8; 512];
+    let mut buf = [0u8; 1024];
     let n = get_info(pin_set, 4, false, false, false, builtin_uv, 256, &mut buf).unwrap();
     let mut d = Decoder::new(&buf[..n]);
     d.map().unwrap();
@@ -282,7 +305,7 @@ fn uv_option_present_only_with_builtin_uv() {
 #[test]
 fn client_pin_reflects_pin_state() {
     // options.clientPin is false before a PIN is set, true after.
-    let mut buf = [0u8; 512];
+    let mut buf = [0u8; 1024];
     for pin_set in [false, true] {
         let n = get_info(pin_set, 4, false, false, false, false, 256, &mut buf).unwrap();
         let mut d = Decoder::new(&buf[..n]);
@@ -316,7 +339,7 @@ fn client_pin_reflects_pin_state() {
 #[test]
 fn min_pin_policy_reflected() {
     // 0x0D mirrors minPINLength, 0x0C the forceChangePin flag.
-    let mut buf = [0u8; 512];
+    let mut buf = [0u8; 1024];
     let n = get_info(true, 8, true, false, false, false, 256, &mut buf).unwrap();
     let mut d = Decoder::new(&buf[..n]);
     d.map().unwrap();
@@ -337,7 +360,7 @@ fn ep_reflects_ea_enabled() {
     // options.ep is always present and mirrors the enableEnterpriseAttestation
     // state: false at reset, true once EA has been enabled.
     for ea in [false, true] {
-        let mut buf = [0u8; 512];
+        let mut buf = [0u8; 1024];
         let n = get_info(true, 4, false, ea, false, false, 256, &mut buf).unwrap();
         let mut d = Decoder::new(&buf[..n]);
         d.map().unwrap();
@@ -358,7 +381,7 @@ fn always_uv_reflects_state() {
     // options.alwaysUv is always present and mirrors the toggleAlwaysUv state:
     // false at reset, true once alwaysUv has been enabled.
     for always_uv in [false, true] {
-        let mut buf = [0u8; 512];
+        let mut buf = [0u8; 1024];
         let n = get_info(true, 4, false, false, always_uv, false, 256, &mut buf).unwrap();
         let mut d = Decoder::new(&buf[..n]);
         d.map().unwrap();
@@ -388,7 +411,7 @@ fn u2f_v2_dropped_when_always_uv() {
         (true, &["FIDO_2_0", "FIDO_2_1", "FIDO_2_3"]),
     ];
     for (always_uv, want) in cases {
-        let mut buf = [0u8; 512];
+        let mut buf = [0u8; 1024];
         let n = get_info(true, 4, false, false, always_uv, false, 256, &mut buf).unwrap();
         let mut d = Decoder::new(&buf[..n]);
         d.map().unwrap();
@@ -415,7 +438,7 @@ fn u2f_v2_survives_always_uv_behind_a_configured_pad() {
         (false, false, false),
     ];
     for (builtin_uv, pin_set, want_u2f) in cases {
-        let mut buf = [0u8; 512];
+        let mut buf = [0u8; 1024];
         let n = get_info(pin_set, 4, false, false, true, builtin_uv, 256, &mut buf).unwrap();
         let mut d = Decoder::new(&buf[..n]);
         d.map().unwrap();
@@ -446,7 +469,7 @@ fn make_cred_uv_not_rqd_is_cleared_by_always_uv() {
     // device advertises. `enforce_pin` already refuses (fails closed) — this is
     // the advertisement catching up, so a platform stops sending the request.
     for always_uv in [false, true] {
-        let mut buf = [0u8; 512];
+        let mut buf = [0u8; 1024];
         let n = get_info(true, 4, false, false, always_uv, false, 256, &mut buf).unwrap();
         let mut d = Decoder::new(&buf[..n]);
         d.map().unwrap();

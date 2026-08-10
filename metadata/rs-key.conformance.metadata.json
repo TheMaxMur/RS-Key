@@ -91,6 +91,10 @@
     "transports": ["usb"],
     "maxRPIDsForSetMinPINLength": 8,
     "remainingDiscoverableCredentials": 256,
+    "vendorPrototypeConfigCommands": [
+      280418718411032034, 1743354915178307289, 8055560605607898362,
+      8550182048006734589, 8879174565946325320, 2783008008553857119
+    ],
     "attestationFormats": ["packed"],
     "maxPINLength": 63,
     "authenticatorConfigCommands": [1, 2, 3, 255]
