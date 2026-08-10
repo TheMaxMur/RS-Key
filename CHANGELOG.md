@@ -38,6 +38,14 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+### Fixed
+
+- **`authenticatorReset` can no longer remain in processing forever when the flash
+  walk re-yields a removed FIDO record.** Its sweep now de-duplicates stored versions
+  of one FID and carries the same progress bound as the PIV, OATH and OpenPGP wipes;
+  a non-converging backend returns `CTAP2_ERR_OTHER` instead of wedging the worker.
+  **bcdDevice → 0x0876.**
+
 ## [0.4.9] - 2026-08-09
 
 The emulator release: `tools/emu` runs the applet stack on the host, and with it

@@ -19,6 +19,10 @@ use crate::journal;
 use crate::seed::ensure_seed;
 use crate::{Ctx, Rng};
 
+/// Progress backstop for one [`sweep`] phase: the FIDO predicate spans three
+/// 256-slot ranges and 13 fixed records, so a converging sweep cannot exceed this.
+const RESET_MAX_DELETES: u32 = 3 * MAX_RESIDENT_CREDENTIALS as u32 + 13;
+
 /// `authenticatorReset`: factory-reset the FIDO applet. Replies with only the
 /// status byte. Also the documented recovery from a soft lock with a lost lock
 /// key: `EF_KEY_DEV_ENC` is wiped with everything else and a fresh seed is
@@ -63,13 +67,15 @@ pub fn reset<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>) -> CtapResult {
 
 /// One phase of the reset sweep: delete every live FIDO-owned fid matching `pred`,
 /// reporting success only when the enumeration provably completed over an empty
-/// range. Batched because `for_each_key` cannot delete mid-iteration.
+/// range. Batched because `for_each_key` cannot delete mid-iteration, and de-duped
+/// because the flash walk can yield multiple stored versions of one fid.
 fn sweep<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, pred: fn(u16) -> bool) -> Result<(), CtapError> {
+    let mut deleted = 0u32;
     loop {
         let mut keys = [0u16; 64];
         let mut n = 0usize;
         let complete = ctx.fs.for_each_key(&mut |fid| {
-            if pred(fid) && n < keys.len() {
+            if pred(fid) && n < keys.len() && !keys[..n].contains(&fid) {
                 keys[n] = fid;
                 n += 1;
             }
@@ -82,6 +88,10 @@ fn sweep<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, pred: fn(u16) -> bool) -> Resu
             } else {
                 Err(CtapError::Other)
             };
+        }
+        deleted += n as u32;
+        if deleted > RESET_MAX_DELETES {
+            return Err(CtapError::Other);
         }
         for &fid in &keys[..n] {
             // force_delete (unconditional), not delete: a false-absent key would be
