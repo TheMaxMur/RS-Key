@@ -91,6 +91,20 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Changed
 
+- **An abandoned `largeBlobs` write is dropped after 30 s.** CTAP 2.3 §6 names
+  four stateful sequences and bounds all of them the same way: "exclusively
+  preceded" by their own continuation, with "no more than 30 seconds" between
+  those commands. The command half was already enforced for all four; this
+  finishes the time half for the one sequence still missing it, and it is the one
+  that needed it most — a part-written array is the only sequence whose
+  continuation legs carry no authorization on a PIN-less key, so nothing but some
+  *other* command arriving could retire it. Send nothing and it sat in RAM for the
+  rest of the power cycle. The window is per fragment, not per array, so a slow
+  link transferring a full 4078-byte blob is unaffected; an expired transfer
+  answers `CTAP2_ERR_INVALID_SEQ` and leaves the stored array untouched, exactly
+  as an interrupted one already did. Inert on a `--features largeblob-ext` build,
+  which never arms this accumulator. **bcdDevice → 0x0885.**
+
 - **A credential-management enumerate walk now retires on a timer of its own.**
   The cursor is dropped once 30 s pass with no leg served. That is the bound CTAP
   2.3 §6 names for every stateful command — an authenticator may assume "no more

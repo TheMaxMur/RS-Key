@@ -319,8 +319,10 @@ needs only the identifiers above. RS-Key implements:
   can be refreshed without re-prompting for the PIN. The enumerate *walk* it opens
   is not that durable: the cursor behind `getNextRP` / `getNextCredential` retires
   after **30 s** idle, and after any command that is not one of those two
-  continuations (CTAP 2.2 §6), so draw a list in one uninterrupted pass and restart
-  from the *Begin* if it stalls. `maxMsgSize` = `7609`.
+  continuations (CTAP 2.3 §6), so draw a list in one uninterrupted pass and restart
+  from the *Begin* if it stalls. The same 30 s applies **between the fragments of a
+  `largeBlobs` set**; there an abandoned transfer answers `CTAP2_ERR_INVALID_SEQ`
+  and the previously stored array is left intact. `maxMsgSize` = `7609`.
   Supported COSE algorithms:
   ES256 `-7`, ES384 `-35`, ES512 `-36`, ES256K `-47`, EdDSA `-8`,
   ML-DSA-44 `-48`, ML-DSA-65 `-49` (both negotiable via `pubKeyCredParams`;

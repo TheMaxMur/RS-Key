@@ -356,14 +356,14 @@ fn a_large_blobs_command_ends_the_enumerate_walk() {
     );
 }
 
-/// The large-blob write keeps the looser rule, deliberately: any `largeBlobs`
-/// command continues it, including a read between two fragments. That is where we
-/// are stricter than a YubiKey, which retires this sequence on nothing at all —
-/// not another command, not a non-continuing largeBlobs, not a 35-second gap
-/// (all three measured). Going further here would buy nothing: the two rules that
-/// matter are already in place, and the failure mode is what makes ours the safer
-/// side — a YubiKey has already dropped the stored array by the time the second
-/// fragment arrives, while this one still holds the old array intact.
+/// The large-blob write keeps the looser *command* rule, deliberately: any
+/// `largeBlobs` command continues it, including a read between two fragments. Its
+/// time rule is the strict one — see the test below. A YubiKey retires this
+/// sequence on nothing at all: not another command, not a non-continuing
+/// largeBlobs, not a 35-second gap (all three measured). The failure mode is what
+/// makes ours the safer side either way — a YubiKey has already dropped the stored
+/// array by the time the second fragment arrives, while this one still holds the
+/// old array intact.
 // The CTAP 2.1 large-blob design, which a `largeblob-ext` build withdraws
 // wholesale (§12.4: "Authenticators MUST NOT support both extensions").
 #[cfg(not(feature = "largeblob-ext"))]
@@ -388,6 +388,64 @@ fn a_large_blobs_read_does_not_abandon_the_write() {
         CTAP_LARGE_BLOBS,
         &lb_set(&blob[split..], split as u64, None, &p1),
     ));
+}
+
+/// A part-written array does not survive the idle window either. This is the
+/// sequence that needs the timer most: on a PIN-less key its fragments carry no
+/// token, so before this the only thing that could retire an abandoned transfer
+/// was some *other* command arriving — send nothing and it sat in RAM for the
+/// whole power cycle. The control is the same transfer with the same two
+/// fragments and no gap, which commits.
+// The CTAP 2.1 large-blob design, which a `largeblob-ext` build withdraws
+// wholesale (§12.4: "Authenticators MUST NOT support both extensions").
+#[cfg(not(feature = "largeblob-ext"))]
+#[test]
+fn an_idle_large_blob_write_is_abandoned() {
+    let body = [0xA5u8; 40];
+    let mut blob = body.to_vec();
+    blob.extend_from_slice(&sha256(&body)[..16]); // 56 bytes total
+    let split = 30;
+
+    // Control: uninterrupted and unhurried-but-inside-the-window, the array commits.
+    let mut b = Authr::fresh();
+    let btoken = b.arm_token(PERM_LBW);
+    let p0 = lb_param(&btoken, 0, &blob[..split]);
+    assert_ok_empty(&b.send(
+        CTAP_LARGE_BLOBS,
+        &lb_set(&blob[..split], 0, Some(blob.len() as u64), &p0),
+    ));
+    b.clock += STATEFUL_WALK_IDLE_MS - 5_000;
+    let p1 = lb_param(&btoken, split as u32, &blob[split..]);
+    assert_ok_empty(&b.send(
+        CTAP_LARGE_BLOBS,
+        &lb_set(&blob[split..], split as u64, None, &p1),
+    ));
+
+    // The same transfer with the window elapsed: the second fragment has nothing
+    // left to continue, and answers as an out-of-sequence one.
+    let mut a = Authr::fresh();
+    let token = a.arm_token(PERM_LBW);
+    let p0 = lb_param(&token, 0, &blob[..split]);
+    assert_ok_empty(&a.send(
+        CTAP_LARGE_BLOBS,
+        &lb_set(&blob[..split], 0, Some(blob.len() as u64), &p0),
+    ));
+    a.clock += STATEFUL_WALK_IDLE_MS;
+    let p1 = lb_param(&token, split as u32, &blob[split..]);
+    let r = a.send(
+        CTAP_LARGE_BLOBS,
+        &lb_set(&blob[split..], split as u64, None, &p1),
+    );
+    assert_eq!(
+        r.status,
+        CtapError::InvalidSeq.as_u8(),
+        "an abandoned transfer must not accept its next fragment"
+    );
+
+    // And, as with the interrupted write, nothing was committed.
+    let g = a.send(CTAP_LARGE_BLOBS, &lb_get_full());
+    let mut d = field_at(&g.body, 1).expect("config fragment (0x01) present");
+    assert_ne!(d.bytes().unwrap(), &blob[..], "nothing was committed");
 }
 
 /// The rule must not be wider than it says: a sequence continued by its own kind

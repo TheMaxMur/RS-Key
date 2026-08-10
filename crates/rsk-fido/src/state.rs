@@ -113,7 +113,7 @@ pub struct CredMgmtState {
     /// the relying-party ids that authorization bought, having shown no token.
     pub channel: u32,
     /// `now_ms` of the last leg this walk served, its *Begin* included — the
-    /// idle window in [`FidoState::expire_stale_walk`] measures from here. It is
+    /// idle window in [`FidoState::expire_stale_sequences`] measures from here. It is
     /// the only bound a walk opened under the persistent `pcmr` token has: that
     /// token carries no usage timer of its own (CTAP 2.2 §6.8.2).
     pub last_leg_ms: u64,
@@ -179,7 +179,7 @@ impl CredMgmtState {
     }
 
     /// Whether either walk still has a leg to serve — the counter half of the two
-    /// above, so [`FidoState::expire_stale_walk`] can tell a live cursor from a
+    /// above, so [`FidoState::expire_stale_sequences`] can tell a live cursor from a
     /// spent one and leave `last_leg_ms` alone when there is nothing to retire.
     fn walking(&self) -> bool {
         self.rp_counter <= self.rp_total || self.cred_counter <= self.cred_total
@@ -207,6 +207,11 @@ impl CredMgmtState {
 pub struct LargeBlobState {
     pub expected_length: usize,
     pub expected_next_offset: usize,
+    /// `now_ms` of the last fragment accepted into `temp` — the idle window in
+    /// [`FidoState::expire_stale_sequences`] measures from here. Meaningful only
+    /// while [`Self::in_flight`]; an arming fragment that is then rejected leaves
+    /// it stale, which expires the abandoned transfer rather than preserving it.
+    pub last_fragment_ms: u64,
     pub temp: [u8; MAX_LARGE_BLOB_SIZE],
 }
 
@@ -215,8 +220,17 @@ impl LargeBlobState {
         Self {
             expected_length: 0,
             expected_next_offset: 0,
+            last_fragment_ms: 0,
             temp: [0; MAX_LARGE_BLOB_SIZE],
         }
+    }
+
+    /// Whether a multi-fragment write is part-way through. `expected_length` is
+    /// armed by the `offset == 0` fragment and cleared when the array commits, so
+    /// it is the whole in-flight condition; a `largeblob-ext` build never arms it
+    /// (it borrows only `temp`), which is why the timer is inert there.
+    fn in_flight(&self) -> bool {
+        self.expected_length != 0
     }
 
     /// Abandon a part-written array. Only the two counters: `temp` is refilled
@@ -552,8 +566,9 @@ impl FidoState {
     /// operation occurs in between", and fail the sequence with
     /// `CTAP2_ERR_NOT_ALLOWED` when that is violated. The clause is a MAY, so the
     /// permissive reading is conformant too; taking it up buys a smaller state
-    /// surface, and the large-blob buffer in particular has neither a timer nor,
-    /// on a PIN-less key, a token to bound it.
+    /// surface. It is the command half of the rule — the same clause's 30-second
+    /// half is [`Self::expire_stale_sequences`], which the large-blob buffer needs
+    /// most: on a PIN-less key it has no token bounding it either.
     ///
     /// Each slot names its own continuation, so an unrelated command retires all
     /// three while a continuation retires only the other two. The enumerate cursor
@@ -586,15 +601,21 @@ impl FidoState {
         }
     }
 
-    /// Retire an enumerate cursor left idle past [`STATEFUL_WALK_IDLE_MS`], checked
+    /// Retire a stateful sequence left idle past [`STATEFUL_WALK_IDLE_MS`], checked
     /// before every CBOR command beside [`Self::expire_stale_token`]. CTAP 2.3 §6
     /// also *requires* the state to die with the token that authorized the opening
-    /// call, which [`Self::stop_using_token`] does — but the persistent `pcmr` token
-    /// never expires, so that MUST alone left such a walk live for the power cycle.
-    pub fn expire_stale_walk(&mut self, now_ms: u64) {
-        if self.cm.walking() && now_ms.saturating_sub(self.cm.last_leg_ms) >= STATEFUL_WALK_IDLE_MS
-        {
+    /// call, which [`Self::stop_using_token`] does — but a `pcmr` token never
+    /// expires and a PIN-less key's large-blob write has no token at all, so that
+    /// MUST alone left both live for the whole power cycle.
+    ///
+    /// The assertion walk is absent because it times itself, per §6.3 step 7, inside
+    /// [`crate::getassertion::get_next_assertion`].
+    pub fn expire_stale_sequences(&mut self, now_ms: u64) {
+        if self.cm.walking() && idle_past(now_ms, self.cm.last_leg_ms) {
             self.cm.reset();
+        }
+        if self.lba.in_flight() && idle_past(now_ms, self.lba.last_fragment_ms) {
+            self.lba.reset();
         }
     }
 
@@ -616,6 +637,12 @@ impl FidoState {
     pub fn verify_token(&self, proto: PinProto, data: &[u8], param: &[u8]) -> bool {
         pinproto::verify(proto, &self.paut.token, data, param)
     }
+}
+
+/// Whether the gap since `since_ms` has reached the window CTAP 2.3 §6 lets an
+/// authenticator assume between the legs of a stateful command.
+fn idle_past(now_ms: u64, since_ms: u64) -> bool {
+    now_ms.saturating_sub(since_ms) >= STATEFUL_WALK_IDLE_MS
 }
 
 /// Build the pinUvAuthParam message `0xff×32 ‖ cmd ‖ subcommand ‖ params` into

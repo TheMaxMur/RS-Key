@@ -212,6 +212,10 @@ fn write_fragment<S: Storage, R: Rng>(
     let next = ctx.state.lba.expected_next_offset;
     ctx.state.lba.temp[next..next + set.len()].copy_from_slice(set);
     ctx.state.lba.expected_next_offset += set.len();
+    // Per fragment, so a platform sending a large array over a slow link keeps its
+    // transfer alive; the window is the gap CTAP 2.3 §6 bounds "between such
+    // commands", not a budget for the whole array.
+    ctx.state.lba.last_fragment_ms = ctx.now_ms;
 
     if ctx.state.lba.expected_next_offset == ctx.state.lba.expected_length {
         let total = ctx.state.lba.expected_length;

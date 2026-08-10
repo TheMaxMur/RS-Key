@@ -178,13 +178,13 @@ fn an_idle_cursor_expires_on_its_own_timer() {
     let mut st = mid_walk();
     st.cm.last_leg_ms = 1_000;
 
-    st.expire_stale_walk(1_000 + STATEFUL_WALK_IDLE_MS - 1);
+    st.expire_stale_sequences(1_000 + STATEFUL_WALK_IDLE_MS - 1);
     assert_eq!(
         next_rp(&mut st),
         Err(CtapError::NoCredentials),
         "the last millisecond of the window still belongs to the walk"
     );
 
-    st.expire_stale_walk(1_000 + STATEFUL_WALK_IDLE_MS);
+    st.expire_stale_sequences(1_000 + STATEFUL_WALK_IDLE_MS);
     assert_eq!(next_rp(&mut st), Err(CtapError::NotAllowed));
 }

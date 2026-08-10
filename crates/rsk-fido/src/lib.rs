@@ -201,11 +201,11 @@ pub fn process_cbor<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, data: &[u8], out: &
         return 1;
     };
 
-    // Retire a pinUvAuthToken whose usage timer has elapsed before it can
-    // authorize this command (CTAP 2.1 §6.5.5.7), and an enumerate cursor left
-    // idle past its own window — a *Next* leg brings no authorization to expire.
+    // Retire a pinUvAuthToken whose usage timer has elapsed before it can authorize
+    // this command (CTAP 2.1 §6.5.5.7), and any stateful sequence left idle past the
+    // window CTAP 2.3 §6 bounds — their continuation legs bring no token to expire.
     ctx.state.expire_stale_token(ctx.now_ms);
-    ctx.state.expire_stale_walk(ctx.now_ms);
+    ctx.state.expire_stale_sequences(ctx.now_ms);
 
     // CTAP 2.2 §6: a stateful sequence may assume it is "exclusively preceded" by
     // its own kind or by the command that initialized it, so every sequence this
