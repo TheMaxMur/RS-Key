@@ -603,7 +603,11 @@ impl FidoState {
         self.paut.in_use && self.paut.user_verified
     }
 
-    /// `getUserPresentFlagValue` — false unless a token is in use.
+    /// `getUserPresentFlagValue` — false unless a token is in use, and in practice
+    /// always false: no ceremony here mints a token carrying presence (see
+    /// [`crate::clientpin`]'s `issue_token` for why). The §6.1.2 step 14 / §6.2.2
+    /// step 9 presence gates deliberately do not consult it — reading it there is
+    /// only correct together with the decision that would set it.
     pub fn user_present(&self) -> bool {
         self.paut.in_use && self.paut.user_present
     }

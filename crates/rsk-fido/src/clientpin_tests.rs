@@ -732,6 +732,32 @@ fn builtin_uv_token_success() {
     assert_eq!(ef_pin_retries(&mut fs), MAX_PIN_RETRIES);
 }
 
+/// The pad verifies the user; it does not stand in for the touch. §6.5.5.7.3 step
+/// 12 would let a built-in UV that "supplied evidence of user interaction" mint a
+/// token carrying presence, and §6.1.2 step 14 would then skip the presence
+/// request — deleting the one screen that names the rp, which is the whole point
+/// of the display. This device takes step 13, and this test keeps it there.
+#[test]
+fn builtin_uv_token_does_not_carry_user_presence() {
+    let (mut fs, mut rng, mut state, plat) = setup_with_pin(b"1234");
+    let mut out = [0u8; 256];
+    let mut pad = UvPad::typing(b"1234");
+    run_with(
+        &mut pad,
+        &mut fs,
+        &mut rng,
+        &mut state,
+        &plat.get_uv_token_req(PERM_GA as u64),
+        &mut out,
+    )
+    .unwrap();
+    assert!(state.user_verified(), "the pad did verify the user");
+    assert!(
+        !state.user_present(),
+        "a PIN typed on the pad must not stand in for the per-operation touch"
+    );
+}
+
 /// A wrong on-screen PIN is reported as UV_INVALID (the built-in-UV dialect of
 /// PIN_INVALID) and spends one of the shared retries.
 #[test]
