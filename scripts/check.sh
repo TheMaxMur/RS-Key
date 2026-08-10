@@ -190,9 +190,11 @@ run "fmt (fuzz)"               cargo fmt --manifest-path fuzz/Cargo.toml --check
 # (the fuzz workspace inherits the thumbv8m default, so `--target` is required)
 # typechecks every target's calls now, on stable, in the gate — no nightly, no
 # sanitizer build. The instrumented `cargo fuzz build` + run stays in deep-checks.
-# `--tests` also covers tests/miri.rs, which mirrors the same constructors (its
-# drift went unseen for a wave of unpushed commits until a local miri run).
-run "check (fuzz)"             cargo check --manifest-path fuzz/Cargo.toml --tests --target "$HOST"
+# It must be `--all-targets`, not `--tests`: the fuzz targets are `[[bin]]`s and
+# `--tests` compiles only test targets, so this row typechecked tests/miri.rs and
+# nothing else — the very drift it names went on unseen in `fido_vendor` and
+# `oath_otp_pin` while the row reported green.
+run "check (fuzz)"             cargo check --manifest-path fuzz/Cargo.toml --all-targets --target "$HOST"
 run "test (host)"              cargo test -p rsk-sdk -p rsk-fs -p rsk-usb -p rsk-crypto -p rsk-fido -p rsk-openpgp -p rsk-rsa-asm -p rsk-sha512 -p rsk-ec -p rsk-mldsa -p rsk-mgmt -p rsk-oath -p rsk-otp -p rsk-piv -p rsk-rescue -p rsk-vendor -p rsk-device -p rsk-display -p rsk-store -p rsk-led -p rsk-ui -p rsk-bip39 -p rsk-slip39 -p rsk-bench --target "$HOST"
 # The PQC-advertisement opt-in changes the getInfo shape — test both forms.
 run "test (advertise-pqc)"     cargo test -p rsk-fido --features advertise-pqc --target "$HOST" getinfo

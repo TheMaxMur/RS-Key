@@ -13,6 +13,7 @@
 use core::cell::RefCell;
 
 use libfuzzer_sys::fuzz_target;
+use rsk_crypto::FusedKey;
 use rsk_fs::Fs;
 use rsk_fs::storage::ram::RamStorage;
 use rsk_oath::{OathApplet, Rng};
@@ -24,6 +25,12 @@ const INS_VERIFY_PIN: u8 = 0xB2;
 const INS_CHANGE_PIN: u8 = 0xB3;
 const TAG_PASSWORD: u8 = 0x80;
 const TAG_NEW_PASSWORD: u8 = 0x81;
+
+/// The OTP-fused MKEK, as the applet takes it: a reader, not the key. Matches how
+/// the firmware supplies one — the fuse is read on demand, never held in RAM.
+fn fused_mkek() -> Option<[u8; 32]> {
+    Some([0x5A; 32])
+}
 
 struct CountRng(u8);
 impl Rng for CountRng {
@@ -66,7 +73,8 @@ fuzz_target!(|data: &[u8]| {
 
     // Both generations: None exercises the legacy/serial arm, Some exercises the
     // v1 OTP-rooted verifier and its without_otp() fallback.
-    for otp in [None, Some([0x5A; 32])] {
+    let generations: [Option<FusedKey>; 2] = [None, Some(fused_mkek)];
+    for otp in generations {
         let mut fs = Fs::new(RamStorage::new());
         fs.scan();
         // Seed the fuzzer's raw record (EF_OTP_PIN is a plaintext verifier slot).
