@@ -1927,6 +1927,70 @@ fn get_next_assertion_expires_after_a_quiet_thirty_seconds() {
     );
 }
 
+/// A `getNextAssertion` belongs to the channel whose `getAssertion` opened the
+/// walk. A second process on its own CTAPHID channel asking for it gets
+/// `CTAP2_ERR_NOT_ALLOWED` — otherwise it collects an assertion signed over the
+/// FIRST channel's clientDataHash, under the first request's presence decision,
+/// having neither supplied the one nor satisfied the other.
+///
+/// Ported from OpenSK's `test_channel_interleaving`; the same scoping this state
+/// struct's neighbour `mse_cid` already applies, and the unscoped version of it
+/// is what audit run-31 filed as HIGH.
+#[test]
+fn get_next_assertion_refuses_a_second_channel() {
+    const CHANNEL_A: u32 = 0x0100_0000;
+    const CHANNEL_B: u32 = 0x0200_0000;
+
+    let (mut fs, mut rng) = setup();
+    let mut state = crate::FidoState::new();
+    for (uid, t) in [(&[9u8, 8, 7, 6][..], 10u64), (&[1u8, 1, 1, 1][..], 20u64)] {
+        let mut out = [0u8; 1024];
+        let mut presence = crate::AlwaysConfirm;
+        let mut ctx = Ctx {
+            presence: &mut presence,
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: t,
+        };
+        make_credential(&mut ctx, &mc_request_user(uid), &mut out).unwrap();
+    }
+
+    state.channel = CHANNEL_A;
+    let mut o1 = [0u8; 1024];
+    let n1 = {
+        let mut presence = crate::AlwaysConfirm;
+        let mut ctx = Ctx {
+            presence: &mut presence,
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 30,
+        };
+        get_assertion(&mut ctx, &ga_request(None), &mut o1).unwrap()
+    };
+    assert_eq!(user_and_count(&o1[..n1]).1, Some(2), "a walk is open");
+
+    state.channel = CHANNEL_B;
+    let mut o2 = [0u8; 1024];
+    let mut presence = crate::AlwaysConfirm;
+    let mut ctx = Ctx {
+        presence: &mut presence,
+        dev: dev(),
+        fs: &mut fs,
+        rng: &mut rng,
+        state: &mut state,
+        now_ms: 31,
+    };
+    assert_eq!(
+        get_next_assertion(&mut ctx, &mut o2),
+        Err(CtapError::NotAllowed),
+        "another channel may not walk this one's assertions"
+    );
+}
+
 #[test]
 fn get_next_assertion_uses_per_credential_counter() {
     // The getNextAssertion path must advance the walked credential's OWN counter

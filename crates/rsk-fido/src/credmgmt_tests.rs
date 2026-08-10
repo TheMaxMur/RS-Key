@@ -274,6 +274,44 @@ fn enumerate_rps_walks_then_not_allowed() {
     );
 }
 
+/// An enumerate walk belongs to the channel whose *Begin* opened it. §6.8 exempts
+/// the *Next* subcommands from carrying a pinUvAuthParam of their own — they
+/// inherit the Begin's authorization — so without a channel check a second process
+/// can call `getNextRP` on its own channel and read the relying-party ids the
+/// first channel's token authorized, having presented no token at all.
+///
+/// Ported from OpenSK, which keeps every multi-call sequence in one slot that any
+/// other command clears (`StatefulCommand`); the sibling hole in the assertion
+/// walk is `get_next_assertion_refuses_a_second_channel`.
+#[test]
+fn enumerate_rps_refuses_a_second_channel() {
+    const CHANNEL_A: u32 = 0x0100_0000;
+    const CHANNEL_B: u32 = 0x0200_0000;
+
+    let (mut fs, mut rng) = setup();
+    register(&mut fs, &mut rng, "example.com", &[1, 1], "a");
+    register(&mut fs, &mut rng, "other.com", &[2, 2], "b");
+    let mut state = armed(PERM_CM);
+
+    state.channel = CHANNEL_A;
+    let mut out = [0u8; 256];
+    let n = run(
+        &mut fs,
+        &mut state,
+        &cm_request(0x02, None, &TOKEN),
+        &mut out,
+    )
+    .unwrap();
+    assert_eq!(parse_rp(&out[..n], true).2, Some(2), "a walk is open");
+
+    state.channel = CHANNEL_B;
+    assert_eq!(
+        run(&mut fs, &mut state, &cm_next(0x03), &mut out),
+        Err(CtapError::NotAllowed),
+        "another channel may not walk this one's enumeration"
+    );
+}
+
 #[test]
 fn dropping_the_token_strands_a_walk_in_progress() {
     // The Next walkers carry no pinUvAuthParam of their own (CTAP 2.1 §6.8) — they

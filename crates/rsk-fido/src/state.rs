@@ -34,6 +34,12 @@ pub const MAX_ASSERTION_CREDS: usize = MAX_CREDENTIAL_COUNT_IN_LIST as usize;
 /// first) rather than the credentials themselves; `getNextAssertion` re-reads them.
 pub struct AssertionState {
     pub active: bool,
+    /// The [`FidoState::channel`] the opening `getAssertion` arrived on. A walk
+    /// carries that request's clientDataHash and its presence/UV decision, so a
+    /// second process asking for the next leg on its own channel would collect an
+    /// assertion over a hash it never sent, behind a touch it never gave — the
+    /// scoping `mse_cid` below already applies, for the same reason.
+    pub channel: u32,
     pub rp_id_hash: [u8; 32],
     pub client_data_hash: [u8; 32],
     pub uv: bool,
@@ -64,6 +70,7 @@ impl AssertionState {
     const fn new() -> Self {
         Self {
             active: false,
+            channel: 0,
             rp_id_hash: [0; 32],
             client_data_hash: [0; 32],
             uv: false,
@@ -99,6 +106,11 @@ impl AssertionState {
 /// The *Begin* subcommands reset the counters; the *Next* variants read them.
 /// `FidoState::reset` clears it.
 pub struct CredMgmtState {
+    /// The [`FidoState::channel`] whose *Begin* opened the walk. §6.8 exempts the
+    /// *Next* subcommands from carrying a pinUvAuthParam of their own — they
+    /// inherit the Begin's authorization — so without this a second process reads
+    /// the relying-party ids that authorization bought, having shown no token.
+    pub channel: u32,
     // u16 so a fully-provisioned store (MAX_RESIDENT_CREDENTIALS = 256) can be
     // counted and walked to the last slot; a u8 saturated at 255, hiding the
     // 256th RP/credential from enumeration.
@@ -131,6 +143,7 @@ pub struct CredMgmtState {
 impl CredMgmtState {
     const fn new() -> Self {
         Self {
+            channel: 0,
             rp_counter: 1,
             rp_total: 0,
             cred_counter: 1,
@@ -142,6 +155,18 @@ impl CredMgmtState {
             rp_index_gen: 0,
             rp_index_valid: false,
         }
+    }
+
+    /// Whether `channel` may take the next leg of the RP walk: it opened it, and
+    /// the walk has not run out. Both halves in one place because a *Next* carries
+    /// no authorization of its own (§6.8) — the pair IS the authorization check.
+    pub fn may_walk_rps(&self, channel: u32) -> bool {
+        self.channel == channel && self.rp_counter <= self.rp_total
+    }
+
+    /// [`Self::may_walk_rps`] for the credential walk.
+    pub fn may_walk_creds(&self, channel: u32) -> bool {
+        self.channel == channel && self.cred_counter <= self.cred_total
     }
 
     /// Drop the enumerate cursor back to its fail-closed start (`rp_counter >

@@ -525,6 +525,7 @@ fn resolve_by_discovery<S: Storage, R: Rng>(
             rp_id_hash,
             uv,
             ctx.now_ms,
+            ctx.state.channel,
         );
     }
 }
@@ -540,9 +541,11 @@ fn arm_get_next_assertion(
     rp_id_hash: &[u8; 32],
     uv: bool,
     now_ms: u64,
+    channel: u32,
 ) {
     cands.sort_unstable_by_key(|c| core::cmp::Reverse(c.1));
     gna.active = true;
+    gna.channel = channel;
     gna.rp_id_hash = *rp_id_hash;
     gna.client_data_hash.copy_from_slice(req.client_data_hash);
     gna.uv = uv;
@@ -850,7 +853,13 @@ fn encode_ga_extensions(
 /// `NotAllowed` if there is no carry-over, it is exhausted, or the 30 s window
 /// elapsed.
 pub fn get_next_assertion<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, out: &mut [u8]) -> CtapResult {
-    if !ctx.state.gna.active || ctx.state.gna.counter >= ctx.state.gna.total {
+    // The walk belongs to the channel that opened it (`AssertionState::channel`):
+    // its legs are signed over that request's clientDataHash and ride its
+    // presence/UV decision, so a second process must not be able to continue it.
+    if !ctx.state.gna.active
+        || ctx.state.gna.channel != ctx.state.channel
+        || ctx.state.gna.counter >= ctx.state.gna.total
+    {
         return Err(CtapError::NotAllowed);
     }
     if ctx.now_ms.saturating_sub(ctx.state.gna.started_ms) > 30_000 {

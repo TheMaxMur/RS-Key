@@ -318,10 +318,11 @@ fn enumerate_rps<S: Storage, R: Rng>(
     out: &mut [u8],
 ) -> CtapResult {
     if begin {
+        ctx.state.cm.channel = ctx.state.channel;
         ctx.state.cm.rp_counter = 1;
         ctx.state.cm.rp_total = 0;
         ctx.state.cm.rp_next_slot = 0;
-    } else if ctx.state.cm.rp_counter > ctx.state.cm.rp_total {
+    } else if !ctx.state.cm.may_walk_rps(ctx.state.channel) {
         return Err(CtapError::NotAllowed);
     }
     let target = ctx.state.cm.rp_counter;
@@ -399,10 +400,11 @@ fn enumerate_creds<S: Storage, R: Rng>(
     out: &mut [u8],
 ) -> CtapResult {
     if begin {
+        ctx.state.cm.channel = ctx.state.channel;
         ctx.state.cm.cred_counter = 1;
         ctx.state.cm.cred_total = 0;
         ctx.state.cm.cred_next_slot = 0;
-    } else if ctx.state.cm.cred_counter > ctx.state.cm.cred_total {
+    } else if !ctx.state.cm.may_walk_creds(ctx.state.channel) {
         return Err(CtapError::NotAllowed);
     }
     let target = ctx.state.cm.cred_counter;

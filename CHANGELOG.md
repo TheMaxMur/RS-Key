@@ -89,6 +89,25 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   scope as the DEVK change: nothing against code execution. Measured cost of the
   read: **48 µs**, against 8.9 ms for the cheapest crypto step it precedes.
 
+### Security
+
+- **A second process could walk another channel's `getNextAssertion`, and its
+  credential-management enumeration.** Both are multi-call sequences whose
+  continuation legs carry no authorization of their own: `getNextAssertion` has
+  no parameters at all, and CTAP 2.1 §6.8 exempts credMgmt's *Next* subcommands
+  from a `pinUvAuthParam` — each inherits what the opening call established.
+  Neither was bound to the CTAPHID channel that opened it, so a second process on
+  its own channel could ask for the next leg and be served: an assertion signed
+  over the **first** channel's clientDataHash under the first request's presence
+  and UV decision, or the relying-party ids the first channel's token bought.
+  Both now record the opening channel and refuse any other with
+  `CTAP2_ERR_NOT_ALLOWED` — the scoping the seed-backup MSE key already used, and
+  the unscoped form of it is what audit run-31 filed as HIGH. The two other
+  multi-call sequences were checked and are not affected: the large-blob write
+  re-verifies a token on every fragment, and the MSE handshake was already
+  channel-bound. Found by porting Google OpenSK's `test_channel_interleaving`,
+  which pins the same rule. **bcdDevice → 0x087E.**
+
 ### Fixed
 
 - **`CTAPHID_LOCK` was advertised nowhere, and let a foreign `CTAPHID_INIT`
