@@ -404,10 +404,18 @@ fn enumerate_credentials_returns_matching_pubkey() {
 }
 
 #[test]
-fn rp_and_credential_cursors_are_independent_when_interleaved() {
-    // The slot cursors for the RP and credential walks are separate, so
-    // interleaving getNextRP and getNextCredential must advance each walk without
-    // corrupting the other (a regression guard for the cursor optimization).
+fn starting_a_credential_walk_ends_the_rp_walk() {
+    // Only one enumerate walk lives at a time: `enumerateCredentialsBegin` is a
+    // credentialManagement command that continues no RP walk, so §6's
+    // "exclusively preceded" retires it. Measured the same way on a YubiKey 5.7.4
+    // — Begin RPs, enumerateCredentialsBegin, getNextRP answers 0x30 — and OpenSK
+    // keeps every such sequence in one slot for the same reason.
+    //
+    // This replaces a test that interleaved the two walks and asserted both
+    // survived. That was the guard for the per-walk slot cursors, which are still
+    // separate fields; what it can still prove is the half that outlives the
+    // rule — the credential walk that took over runs to completion on its own
+    // cursor, so the RP walk's did not corrupt it on the way out.
     let (mut fs, mut rng) = setup();
     register(&mut fs, &mut rng, "example.com", &[1, 1], "alice");
     register(&mut fs, &mut rng, "example.com", &[2, 2], "bob");
@@ -436,24 +444,22 @@ fn rp_and_credential_cursors_are_independent_when_interleaved() {
     let (cu1, _, _, cred_total) = parse_cred(&out[..n], true);
     assert_eq!(cred_total, Some(2));
 
-    // Interleave the Next calls: RP walk and credential walk advance independently.
-    let n = run(&mut fs, &mut state, &cm_next(0x03), &mut out).unwrap();
-    let (rp2, _, _) = parse_rp(&out[..n], false);
-    let n = run(&mut fs, &mut state, &cm_next(0x05), &mut out).unwrap();
-    let (cu2, _, _, _) = parse_cred(&out[..n], false);
-
-    // Each walk returned two distinct entries — no cursor skipped or repeated.
-    assert_ne!(rp1, rp2);
-    assert_ne!(cu1, cu2);
-    // Both are exhausted.
+    // The RP walk did not survive the credential Begin.
     assert_eq!(
         run(&mut fs, &mut state, &cm_next(0x03), &mut out),
-        Err(CtapError::NotAllowed)
+        Err(CtapError::NotAllowed),
+        "enumerateCredentialsBegin continues no RP walk, so it ends the one open"
     );
+
+    // The credential walk that took over still runs to its end on its own cursor.
+    let n = run(&mut fs, &mut state, &cm_next(0x05), &mut out).unwrap();
+    let (cu2, _, _, _) = parse_cred(&out[..n], false);
+    assert_ne!(cu1, cu2, "no credential skipped or repeated");
     assert_eq!(
         run(&mut fs, &mut state, &cm_next(0x05), &mut out),
         Err(CtapError::NotAllowed)
     );
+    let _ = rp1;
 }
 
 fn parse_cred(resp: &[u8], begin: bool) -> (std::vec::Vec<u8>, [u8; 32], [u8; 32], Option<u8>) {

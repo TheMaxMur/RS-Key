@@ -154,6 +154,13 @@ pub fn cred_mgmt<S: Storage, R: Rng>(
         _ => {}
     }
 
+    // Past those two, this is a credentialManagement command that does NOT
+    // continue an enumerate walk, so §6's "exclusively preceded" ends the one in
+    // flight — `process_cbor` cannot do it, the subcommand is only known here. A
+    // YubiKey 5.7.4 behaves the same, measured: Begin, getCredsMetadata,
+    // getNextRP answers NOT_ALLOWED.
+    ctx.state.cm.reset();
+
     // Every other subcommand requires a verified pinUvAuthParam.
     let param = req.param.ok_or(CtapError::PuatRequired)?;
     if req.proto != 1 && req.proto != 2 {

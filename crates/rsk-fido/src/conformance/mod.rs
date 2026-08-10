@@ -34,6 +34,7 @@ mod multialg;
 mod pin;
 mod reset;
 mod selection;
+mod stateful;
 mod u2f;
 
 /// Deterministic RNG (copied per test file, matching the repo convention).

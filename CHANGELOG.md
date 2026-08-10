@@ -89,6 +89,34 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   scope as the DEVK change: nothing against code execution. Measured cost of the
   read: **48 µs**, against 8.9 ms for the cheapest crypto step it precedes.
 
+### Changed
+
+- **A multi-call sequence no longer survives an unrelated command in the middle
+  of it.** CTAP 2.2 §6 lets an authenticator assume each stateful command is
+  "exclusively preceded" by its own kind or by the command that initialized it —
+  "no other authenticator operation occurs in between" — and fail it with
+  `CTAP2_ERR_NOT_ALLOWED` otherwise. The device now takes that up for all four
+  sequences the spec names: the `getNextAssertion` walk, credentialManagement's
+  two enumerate cursors, and a part-written large-blob array. The clause is a
+  MAY, so the previous behaviour was conformant; what this buys is a smaller
+  state surface, and the large-blob buffer in particular had nothing else
+  bounding it — no timer, and on a PIN-less key no token — so an abandoned
+  transfer sat in RAM until some later `offset == 0`. A platform that interleaves
+  (a `getInfo` between `getAssertion` and `getNextAssertion`, say) now gets
+  `CTAP2_ERR_NOT_ALLOWED` where it used to be served; the spec asks platforms not
+  to.
+
+  The enumerate cursor goes further, because a shipped authenticator does:
+  measured on a YubiKey 5.7.4, its walk dies on an unrelated command, on a
+  `credentialManagement` subcommand that is not one of the two *Next* walkers, on
+  a `largeBlobs` command, and on a 35-second gap with the token still live. All
+  but the timer are matched here. Its large-blob write, by contrast, survives all
+  four — so on that one sequence this device is the stricter of the two, kept
+  that way because the failure modes are not symmetric: a YubiKey drops the
+  stored array on the *opening* fragment, so an abandoned transfer destroys it,
+  while this one accumulates in RAM and leaves the previous array intact.
+  **bcdDevice → 0x087F.**
+
 ### Security
 
 - **A second process could walk another channel's `getNextAssertion`, and its

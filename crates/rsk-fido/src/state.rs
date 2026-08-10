@@ -12,8 +12,9 @@ use rsk_crypto::pinproto::{self, PinProto, public_xy};
 
 use crate::Rng;
 use crate::consts::{
-    MAX_CREDENTIAL_COUNT_IN_LIST, MAX_LARGE_BLOB_SIZE, MAX_RESIDENT_CREDENTIALS,
-    PUAT_INITIAL_USAGE_LIMIT_MS, PUAT_MAX_USAGE_PERIOD_MS,
+    CTAP_CREDENTIAL_MGMT, CTAP_GET_NEXT_ASSERTION, CTAP_LARGE_BLOBS, MAX_CREDENTIAL_COUNT_IN_LIST,
+    MAX_LARGE_BLOB_SIZE, MAX_RESIDENT_CREDENTIALS, PUAT_INITIAL_USAGE_LIMIT_MS,
+    PUAT_MAX_USAGE_PERIOD_MS,
 };
 use crate::hmacsecret::{SALT_AUTH_MAX, SALT_ENC_MAX};
 
@@ -123,7 +124,9 @@ pub struct CredMgmtState {
     /// next getNextRP / getNextCredential, so each getNext is O(gap-to-next-match)
     /// rather than re-scanning from slot 0 (which made a full walk O(n^2)). The
     /// matching Begin resets it to 0. RP and credential enumerations keep separate
-    /// cursors so an interleaved walk of both does not corrupt either.
+    /// cursors, though only one walk is ever live: a Begin of either retires the
+    /// other (§6 "exclusively preceded", `retire_sequences_except`), so the split
+    /// buys isolation between consecutive walks rather than concurrent ones.
     pub rp_next_slot: u16,
     pub cred_next_slot: u16,
     /// Per-EF_CRED-slot cache of the credential's rpId-hash prefix (its first 4
@@ -173,7 +176,7 @@ impl CredMgmtState {
     /// rp_total`), so a *Next* answers `NotAllowed` until the next authorized
     /// *Begin*. The slot→rpId-prefix cache stays: it is a `write_gen`-guarded perf
     /// index, holds no authorization, and never leaves the device.
-    fn reset(&mut self) {
+    pub fn reset(&mut self) {
         self.rp_counter = 1;
         self.rp_total = 0;
         self.cred_counter = 1;
@@ -201,6 +204,15 @@ impl LargeBlobState {
             expected_next_offset: 0,
             temp: [0; MAX_LARGE_BLOB_SIZE],
         }
+    }
+
+    /// Abandon a part-written array. Only the two counters: `temp` is refilled
+    /// wholesale by the `offset == 0` fragment that starts the next transfer, and
+    /// wiping 2 KiB on every unrelated command would cost more than it protects
+    /// (the buffer holds platform-supplied blob bytes, not device secrets).
+    fn reset(&mut self) {
+        self.expected_length = 0;
+        self.expected_next_offset = 0;
     }
 }
 
@@ -514,6 +526,37 @@ impl FidoState {
         // §6.8 exempts them) — they inherit the *Begin* call's authorization, so the
         // cursor must die with the token that granted it.
         self.cm.reset();
+    }
+
+    /// Abandon every multi-call sequence `cmd` does not continue — the assertion
+    /// walk, both credential-management enumerate cursors, and a part-written
+    /// large blob.
+    ///
+    /// CTAP 2.2 §6 lets an authenticator "maintain state based on the assumption
+    /// that each stateful command is exclusively preceded by either another
+    /// instance of the same command, or by the corresponding state initializing
+    /// command", where *exclusively preceded* means "no other authenticator
+    /// operation occurs in between", and fail the sequence with
+    /// `CTAP2_ERR_NOT_ALLOWED` when that is violated. The clause is a MAY, so the
+    /// permissive reading is conformant too; taking it up buys a smaller state
+    /// surface, and the large-blob buffer in particular has neither a timer nor,
+    /// on a PIN-less key, a token to bound it.
+    ///
+    /// Each slot names its own continuation, so an unrelated command retires all
+    /// three while a continuation retires only the other two. The enumerate cursor
+    /// is continued by just two of credentialManagement's subcommands, which this
+    /// cannot see — [`crate::credmgmt::cred_mgmt`] retires that one itself once it
+    /// has parsed the subcommand.
+    pub fn retire_sequences_except(&mut self, cmd: u8) {
+        if cmd != CTAP_GET_NEXT_ASSERTION {
+            self.gna.reset();
+        }
+        if cmd != CTAP_CREDENTIAL_MGMT {
+            self.cm.reset();
+        }
+        if cmd != CTAP_LARGE_BLOBS {
+            self.lba.reset();
+        }
     }
 
     /// Expire an in-use token once its usage timer has run out (CTAP 2.1

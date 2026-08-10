@@ -204,6 +204,12 @@ pub fn process_cbor<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, data: &[u8], out: &
     // authorize this command (CTAP 2.1 §6.5.5.7).
     ctx.state.expire_stale_token(ctx.now_ms);
 
+    // CTAP 2.2 §6: a stateful sequence may assume it is "exclusively preceded" by
+    // its own kind or by the command that initialized it, so every sequence this
+    // command does not continue ends here. `getAssertion` continues nothing — it
+    // is an initializer, and arms its own walk after this clears the previous one.
+    ctx.state.retire_sequences_except(cmd);
+
     let result = match cmd {
         consts::CTAP_GET_INFO => {
             // minPINLength / forceChangePin come from EF_MINPINLEN ([len, force]).
