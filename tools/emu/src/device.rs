@@ -29,7 +29,7 @@ use rsk_device::{AppletHandler, BootState, CcidApplets, Hooks};
 use rsk_fs::Fs;
 
 use crate::platform::EmuPlatform;
-use crate::presence::EmuPresence;
+use crate::presence::{EmuPresence, PresenceMode};
 use crate::rng::EmuRng;
 use crate::signals::{self, Signals};
 use crate::store::EmuStore;
@@ -93,7 +93,7 @@ impl Hooks<EmuStore> for EmuHooks {
 
 pub struct Config {
     pub store: Option<PathBuf>,
-    pub touch: bool,
+    pub presence: PresenceMode,
     /// Serve the trusted display in a window; presence becomes an on-screen hold.
     pub display: bool,
     /// Serve USB/IP on this address, so a Linux host sees a real USB device.
@@ -212,7 +212,7 @@ pub fn run(
             serve(cfg, jobs, signals, fs, rng, &presence),
         ));
     } else {
-        let presence = RefCell::new(EmuPresence::new(cfg.touch, lines, signals.clone()));
+        let presence = RefCell::new(EmuPresence::new(cfg.presence, lines, signals.clone()));
         crate::park::block_on(serve(cfg, jobs, signals, fs, rng, &presence));
     }
 }

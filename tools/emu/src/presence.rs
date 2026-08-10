@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 RS-Key contributors
 
-//! User presence for the emulator: either instant (the default, matching a
-//! no-touch test image) or a prompt on the terminal that waits for a line on
-//! stdin.
+//! User presence for the emulator: instant, prompted on the terminal, or
+//! deterministically confirmed after a delay.
 //!
 //! The prompt prints the [`Confirm`] context — the trusted title plus the
 //! relying party's untrusted strings — because a terminal is the closest thing
@@ -12,7 +11,7 @@
 
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use rsk_sdk::Confirm;
 
@@ -25,8 +24,15 @@ const TOUCH_TIMEOUT: Duration = Duration::from_secs(30);
 /// Poll the cancel flag this often while waiting for a line.
 const POLL: Duration = Duration::from_millis(50);
 
-/// The emulator's own presence verdict, mapped to each crate's `Presence` below.
 #[derive(Clone, Copy, PartialEq, Eq)]
+pub enum PresenceMode {
+    Instant,
+    Terminal,
+    Delayed(Duration),
+}
+
+/// The emulator's own presence verdict, mapped to each crate's `Presence` below.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Verdict {
     Confirmed,
     Timeout,
@@ -35,29 +41,24 @@ enum Verdict {
 }
 
 pub struct EmuPresence {
-    prompt: bool,
+    mode: PresenceMode,
     lines: Option<Receiver<String>>,
     signals: Arc<Signals>,
 }
 
 impl EmuPresence {
-    /// `prompt = false` confirms instantly (the `AlwaysConfirm` behaviour host
-    /// tests and a no-button build already have); `true` waits on `lines`.
-    pub fn new(prompt: bool, lines: Option<Receiver<String>>, signals: Arc<Signals>) -> Self {
+    pub fn new(mode: PresenceMode, lines: Option<Receiver<String>>, signals: Arc<Signals>) -> Self {
         Self {
-            prompt,
+            mode,
             lines,
             signals,
         }
     }
 
     fn ask(&mut self, confirm: Confirm<'_>) -> Verdict {
-        if !self.prompt {
+        if self.mode == PresenceMode::Instant {
             return Verdict::Confirmed;
         }
-        let Some(lines) = &self.lines else {
-            return Verdict::Confirmed;
-        };
         eprintln!("\n┌─ {} ─────────────", confirm.title);
         if !confirm.primary.is_empty() {
             eprintln!("│ {}", printable(confirm.primary));
@@ -65,29 +66,62 @@ impl EmuPresence {
         if !confirm.secondary.is_empty() {
             eprintln!("│ {}", printable(confirm.secondary));
         }
-        eprintln!("└─ [Enter] approve · [d] deny");
+        match self.mode {
+            PresenceMode::Terminal => eprintln!("└─ [Enter] approve · [d] deny"),
+            PresenceMode::Delayed(delay) => {
+                eprintln!("└─ auto-approve in {} ms", delay.as_millis())
+            }
+            PresenceMode::Instant => unreachable!(),
+        }
 
         self.signals.set_up_pending(true);
-        let deadline = std::time::Instant::now() + TOUCH_TIMEOUT;
-        let verdict = loop {
-            if self.signals.cancelled() {
-                eprintln!("   … cancelled by the host");
-                break Verdict::Cancelled;
-            }
-            if std::time::Instant::now() >= deadline {
-                eprintln!("   … timed out");
-                break Verdict::Timeout;
-            }
-            match lines.recv_timeout(POLL) {
-                Ok(l) if l.trim().eq_ignore_ascii_case("d") => break Verdict::Declined,
-                Ok(_) => break Verdict::Confirmed,
-                Err(RecvTimeoutError::Timeout) => continue,
-                // stdin closed: nothing can ever answer, so stop pretending.
-                Err(RecvTimeoutError::Disconnected) => break Verdict::Timeout,
-            }
+        let verdict = match self.mode {
+            PresenceMode::Terminal => self.wait_for_terminal(),
+            PresenceMode::Delayed(delay) => self.wait_for_delay(delay),
+            PresenceMode::Instant => unreachable!(),
         };
         self.signals.set_up_pending(false);
         verdict
+    }
+
+    fn wait_for_terminal(&self) -> Verdict {
+        let lines = self
+            .lines
+            .as_ref()
+            .expect("terminal presence requires a stdin receiver");
+        let deadline = Instant::now() + TOUCH_TIMEOUT;
+        loop {
+            if self.signals.cancelled() {
+                eprintln!("   … cancelled by the host");
+                return Verdict::Cancelled;
+            }
+            if Instant::now() >= deadline {
+                eprintln!("   … timed out");
+                return Verdict::Timeout;
+            }
+            match lines.recv_timeout(POLL) {
+                Ok(l) if l.trim().eq_ignore_ascii_case("d") => return Verdict::Declined,
+                Ok(_) => return Verdict::Confirmed,
+                Err(RecvTimeoutError::Timeout) => continue,
+                // stdin closed: nothing can ever answer, so stop pretending.
+                Err(RecvTimeoutError::Disconnected) => return Verdict::Timeout,
+            }
+        }
+    }
+
+    fn wait_for_delay(&self, delay: Duration) -> Verdict {
+        let deadline = Instant::now() + delay;
+        loop {
+            if self.signals.cancelled() {
+                eprintln!("   … cancelled by the host");
+                return Verdict::Cancelled;
+            }
+            let now = Instant::now();
+            if now >= deadline {
+                return Verdict::Confirmed;
+            }
+            std::thread::sleep(POLL.min(deadline - now));
+        }
     }
 }
 
@@ -117,11 +151,9 @@ impl rsk_fido::UserPresence for EmuPresence {
         }
     }
 
-    /// The terminal prompt does name the operation, so a `--touch` run is the
-    /// confirm-showing kind of authenticator CTAP 2.1 §6.6 exempts from the
-    /// reset window; an auto-confirming one is not.
+    /// Delayed auto-touch emits the same named confirmation as terminal mode.
     fn shows_confirm(&self) -> bool {
-        self.prompt
+        self.mode != PresenceMode::Instant
     }
 }
 
@@ -186,3 +218,7 @@ impl rsk_rescue::UserPresence for EmuPresence {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "presence_tests.rs"]
+mod tests;

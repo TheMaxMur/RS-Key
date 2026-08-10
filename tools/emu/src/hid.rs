@@ -180,22 +180,92 @@ fn run_job(
         let _ = rx.recv();
         return Ok(None);
     };
+
+    let previous_timeout = stream.read_timeout()?;
+    let result = run_active_job(stream, shared, &rx, cid, is_cbor);
+    let restore = stream.set_read_timeout(previous_timeout);
+    match (result, restore) {
+        (Err(error), _) => Err(error),
+        (Ok(_), Err(error)) => Err(error),
+        (Ok(out), Ok(())) => Ok(out),
+    }
+}
+
+fn run_active_job(
+    stream: &mut TcpStream,
+    shared: &Arc<Shared>,
+    rx: &mpsc::Receiver<Option<Vec<u8>>>,
+    cid: u32,
+    is_cbor: bool,
+) -> io::Result<Option<Vec<u8>>> {
+    let poll = Duration::from_millis(50);
+    let keepalive = Duration::from_millis(KEEPALIVE_MS);
+    let mut next_keepalive = Instant::now() + keepalive;
+    let mut watch = [0u8; HID_RPT_SIZE];
+    let mut watched = 0;
+    let mut reading = false;
+
     loop {
-        match rx.recv_timeout(Duration::from_millis(KEEPALIVE_MS)) {
+        match rx.try_recv() {
             Ok(out) => return Ok(out),
-            Err(RecvTimeoutError::Timeout) => {
-                if let Some(status) = keepalive_status(
-                    is_cbor,
-                    shared.signals.up_pending_for(crate::signals::SCOPE_FIDO),
-                ) {
-                    write_msg(stream, cid, CTAPHID_KEEPALIVE, &[status])?;
-                }
-            }
-            Err(RecvTimeoutError::Disconnected) => {
+            Err(mpsc::TryRecvError::Disconnected) => {
                 return Err(io::Error::other("the device thread dropped the job"));
             }
+            Err(mpsc::TryRecvError::Empty) => {}
+        }
+
+        let now = Instant::now();
+        if now >= next_keepalive {
+            if let Some(status) = keepalive_status(
+                is_cbor,
+                shared.signals.up_pending_for(crate::signals::SCOPE_FIDO),
+            ) {
+                write_msg(stream, cid, CTAPHID_KEEPALIVE, &[status])?;
+            }
+            next_keepalive = now + keepalive;
+        }
+
+        if !shared.signals.up_pending_for(crate::signals::SCOPE_FIDO) {
+            let wait = next_keepalive.saturating_duration_since(Instant::now());
+            match rx.recv_timeout(wait) {
+                Ok(out) => return Ok(out),
+                Err(RecvTimeoutError::Timeout) => continue,
+                Err(RecvTimeoutError::Disconnected) => {
+                    return Err(io::Error::other("the device thread dropped the job"));
+                }
+            }
+        }
+
+        if !reading {
+            stream.set_read_timeout(Some(poll))?;
+            reading = true;
+        }
+        match stream.read(&mut watch[watched..]) {
+            Ok(0) => return Err(io::Error::from(io::ErrorKind::UnexpectedEof)),
+            Ok(n) => {
+                watched += n;
+                if watched == HID_RPT_SIZE {
+                    if is_cancel_report(&watch, cid) {
+                        shared.signals.request_cancel(cid);
+                    }
+                    watched = 0;
+                }
+            }
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::WouldBlock
+                        | io::ErrorKind::TimedOut
+                        | io::ErrorKind::Interrupted
+                ) => {}
+            Err(error) => return Err(error),
         }
     }
+}
+
+fn is_cancel_report(frame: &[u8; HID_RPT_SIZE], cid: u32) -> bool {
+    frame[4] == CTAPHID_CANCEL
+        && u32::from_le_bytes([frame[0], frame[1], frame[2], frame[3]]) == cid
 }
 
 fn write_msg(stream: &mut TcpStream, cid: u32, cmd: u8, data: &[u8]) -> io::Result<()> {
@@ -204,3 +274,7 @@ fn write_msg(stream: &mut TcpStream, cid: u32, cmd: u8, data: &[u8]) -> io::Resu
     }
     stream.flush()
 }
+
+#[cfg(test)]
+#[path = "hid_tests.rs"]
+mod tests;
