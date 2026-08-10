@@ -81,7 +81,11 @@ pub fn keepalive_status(is_cbor: bool, up_pending: bool) -> Option<u8> {
 /// the active channel `cid` — the signal to abort the worker's user-presence
 /// wait. `n` is the number of bytes read. The transport reads frames
 /// concurrently with the worker only to catch this; everything else is ignored.
-fn is_cancel_frame(frame: &[u8; HID_RPT_SIZE], n: usize, cid: u32) -> bool {
+///
+/// Public because `tools/emu` has to make the same judgement on its own socket:
+/// the CANCEL rule is one sentence of protocol, and a second copy of it is a
+/// second thing to keep in step.
+pub fn is_cancel_frame(frame: &[u8; HID_RPT_SIZE], n: usize, cid: u32) -> bool {
     n >= 5
         && frame[4] == CTAPHID_CANCEL
         && u32::from_le_bytes([frame[0], frame[1], frame[2], frame[3]]) == cid
@@ -98,6 +102,7 @@ use crate::TX_TIMEOUT_MS;
 
 pub const CTAPHID_IF_VERSION: u8 = 2;
 pub const CAPFLAG_WINK: u8 = 0x01;
+pub const CAPFLAG_LOCK: u8 = 0x02;
 pub const CAPFLAG_CBOR: u8 = 0x04;
 
 // Device version reported in CTAPHID_INIT / CTAPHID_VERSION — the shared firmware
@@ -168,8 +173,26 @@ impl ChannelLock {
         self.until_ms = now_ms + u64::from(seconds) * 1000;
     }
 
-    /// Whether `cid` must be turned away because another channel holds the lock.
-    pub fn blocks(&self, cid: u32, now_ms: u64) -> bool {
+    /// Whether `cmd` arriving on `cid` must be turned away because another channel
+    /// holds the lock. §11.2.9.2.2 — "as long as the lock is active, any other
+    /// channel trying to send a message will fail" — and a `CTAPHID_INIT` sent to
+    /// resynchronise some *other* allocated channel (§11.2.9.1.3's first function)
+    /// is such a message: letting it through would hand a second application the
+    /// one command that discards state, which is what the lock exists to prevent.
+    ///
+    /// The single carve-out is an INIT on the BROADCAST cid — §11.2.9.1.3's second
+    /// function, asking for a channel id. That is not traffic on a channel, and
+    /// refusing it would leave a newly-started application with no id to be turned
+    /// away *on*, so it could not tell a locked device from a broken one.
+    pub fn refuses(&self, cid: u32, cmd: u8, now_ms: u64) -> bool {
+        if cmd == CTAPHID_INIT && cid == CID_BROADCAST {
+            return false;
+        }
+        self.blocks(cid, now_ms)
+    }
+
+    /// Ownership and expiry alone, without the command-shaped carve-out above.
+    fn blocks(&self, cid: u32, now_ms: u64) -> bool {
         now_ms < self.until_ms && self.cid != cid
     }
 }
@@ -260,9 +283,12 @@ pub trait MsgHandler {
 /// has an indicator to flash: an invisible wink is worse than an unset bit,
 /// because the host offers the command precisely to tell two identical-looking
 /// keys apart, and a silent success tells the user the wrong key is the right one.
+/// LOCK is unconditional — [`ChannelLock`] implements the command, and a host
+/// reads this bit to decide whether to attempt it at all, so leaving it clear
+/// does not make the device safer, it hides a working command.
 /// `NMSG` stays clear — CTAPHID_MSG (U2F) is implemented.
 pub fn init_capabilities(can_wink: bool) -> u8 {
-    CAPFLAG_CBOR | if can_wink { CAPFLAG_WINK } else { 0 }
+    CAPFLAG_CBOR | CAPFLAG_LOCK | if can_wink { CAPFLAG_WINK } else { 0 }
 }
 
 /// Run the identification burst where there is something to run it on, and report
@@ -571,11 +597,8 @@ impl<'d, D: Driver<'d>, H: MsgHandler> CtapHid<'d, D, H> {
             Outcome::Error(cid, code) => {
                 write_message(&mut self.writer, cid, CTAPHID_ERROR, &[code]).await;
             }
-            // §11.2.9.2.2: while another channel holds the lock, "any other channel
-            // trying to send a message will fail". Allocating a channel is not
-            // sending a message, so a broadcast INIT still gets through.
             Outcome::Message(cid, cmd)
-                if cmd != CTAPHID_INIT && self.lock.blocks(cid, Instant::now().as_millis()) =>
+                if self.lock.refuses(cid, cmd, Instant::now().as_millis()) =>
             {
                 write_message(&mut self.writer, cid, CTAPHID_ERROR, &[ERR_CHANNEL_BUSY]).await;
             }

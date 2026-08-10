@@ -56,12 +56,7 @@ pub fn serve(mut stream: TcpStream, shared: Arc<Shared>) -> io::Result<()> {
         match asm.feed(&frame) {
             Outcome::None => {}
             Outcome::Error(cid, code) => write_msg(&mut stream, cid, CTAPHID_ERROR, &[code])?,
-            // §11.2.9.2.2: while another channel holds the lock every other
-            // channel fails — but allocating a channel is not sending a message,
-            // so a broadcast INIT still gets through.
-            Outcome::Message(cid, cmd)
-                if cmd != CTAPHID_INIT && shared.lock.lock().unwrap().blocks(cid, now_ms) =>
-            {
+            Outcome::Message(cid, cmd) if shared.lock.lock().unwrap().refuses(cid, cmd, now_ms) => {
                 write_msg(&mut stream, cid, CTAPHID_ERROR, &[ERR_CHANNEL_BUSY])?
             }
             Outcome::Message(cid, cmd) => {

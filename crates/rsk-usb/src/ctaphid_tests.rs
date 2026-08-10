@@ -473,15 +473,46 @@ fn channel_lock_excludes_other_channels_until_it_expires() {
     assert!(!lock.blocks(theirs, 10_400));
 }
 
+/// The one command the lock lets past is a BROADCAST `CTAPHID_INIT` — a request
+/// for a channel id, not traffic on a channel. An INIT aimed at another
+/// *allocated* channel is a message like any other (§11.2.9.1.3: it "discards the
+/// current transaction, buffers and state"), so it is refused; letting it through
+/// handed a second application exactly the command the lock exists to withhold.
+#[test]
+fn only_a_broadcast_init_survives_someone_elses_lock() {
+    let mut lock = ChannelLock::default();
+    let (mine, theirs) = (0x0100_0000, 0x0100_0001);
+    lock.arm(mine, 5, 1_000);
+
+    assert!(
+        !lock.refuses(CID_BROADCAST, CTAPHID_INIT, 1_500),
+        "allocation"
+    );
+    assert!(lock.refuses(theirs, CTAPHID_INIT, 1_500), "channel resync");
+    assert!(lock.refuses(theirs, CTAPHID_PING, 1_500));
+    assert!(lock.refuses(theirs, CTAPHID_CBOR, 1_500));
+    assert!(
+        !lock.refuses(mine, CTAPHID_CBOR, 1_500),
+        "the owner may work"
+    );
+    // Nothing is refused once it expires, resync included.
+    assert!(!lock.refuses(theirs, CTAPHID_INIT, 6_500));
+}
+
 /// §11.2.9.2.1 defines `CAPABILITY_WINK` as "implements CTAPHID_WINK", and the
 /// command itself as producing "some visual or audible identification". A build
 /// with nothing to flash must therefore leave the bit clear: the host offers wink
 /// to tell two identical-looking keys apart, so a silent success points the user
-/// at the wrong key. CBOR is unconditional; NMSG stays clear (U2F is implemented).
+/// at the wrong key. CBOR and LOCK are unconditional — both commands are
+/// implemented, and a host decides whether to *try* CTAPHID_LOCK from this byte,
+/// so an unset bit hides a working feature. NMSG stays clear (U2F is implemented).
 #[test]
 fn wink_is_claimed_only_where_something_can_flash() {
-    assert_eq!(init_capabilities(true), CAPFLAG_WINK | CAPFLAG_CBOR);
-    assert_eq!(init_capabilities(false), CAPFLAG_CBOR);
+    assert_eq!(
+        init_capabilities(true),
+        CAPFLAG_WINK | CAPFLAG_LOCK | CAPFLAG_CBOR
+    );
+    assert_eq!(init_capabilities(false), CAPFLAG_LOCK | CAPFLAG_CBOR);
     assert_eq!(
         init_capabilities(false) & CAPFLAG_WINK,
         0,

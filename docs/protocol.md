@@ -119,7 +119,11 @@ continuation frames: `CID(4) | SEQ(1) | data[:59]`. `CTAPHID_INIT = 0x86`,
 Take the channel id from the `CTAPHID_INIT` response and use that one: every INIT on
 the broadcast CID allocates a fresh id, so an id hardcoded or cached across sessions
 will not be yours. `CTAPHID_LOCK` is honoured for the 1–10 seconds it asks for, and
-other channels get `ERR_CHANNEL_BUSY` meanwhile.
+the INIT capability byte carries `CAPABILITY_LOCK` (`0x02`) to say so. Meanwhile
+every other channel gets `ERR_CHANNEL_BUSY` — including one sending `CTAPHID_INIT`
+to resynchronise itself. The exception is an INIT on the **broadcast** CID, which
+still gets through: a client arriving mid-lock is given an id, then turned away on
+it.
 
 ![CTAPHID framing: a 64-byte init frame (CID, CMD, BCNT-hi/lo header then 57 payload bytes) and a continuation frame (CID, SEQ header then 59 payload bytes)](images/ctaphid-frame.svg)
 

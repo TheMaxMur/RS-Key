@@ -91,6 +91,18 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **`CTAPHID_LOCK` was advertised nowhere, and let a foreign `CTAPHID_INIT`
+  through.** Two halves of one command. The INIT reply's capability byte left
+  `CAPABILITY_LOCK` (0x02) clear although the lock is implemented, and a host
+  decides from that byte whether to attempt the command at all — so a working
+  feature was unreachable. Meanwhile the dispatch exempted *every* `CTAPHID_INIT`
+  from a held lock, though its own comment justified only the broadcast one
+  (asking for a channel id). An INIT aimed at another allocated channel is
+  §11.2.9.1.3's other function — it "discards the current transaction, buffers and
+  state" — which is precisely what the lock exists to withhold from a second
+  application. The bit is set now, and only a broadcast INIT survives someone
+  else's lock. **bcdDevice → 0x087D.**
+
 - **A record the routing table no longer points at could not be deleted, and
   `authenticatorReset` swept for it forever.** The store keeps two partitions and
   routes each fid to one of them; `for_each_key` walks BOTH, but `remove` targeted
