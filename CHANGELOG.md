@@ -46,6 +46,14 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   a non-converging backend returns `CTAP2_ERR_OTHER` instead of wedging the worker.
   **bcdDevice → 0x0876.**
 
+### Added
+
+- **Deterministic delayed presence for `rsk-emu`.** `--auto-touch-ms` exposes a
+  real pending-presence interval to CTAPHID clients, honours channel-scoped
+  cancellation, and then confirms automatically. The emulator workspace also
+  forwards the `rsk-fido/fido-conformance` feature for unattended conformance
+  runs against the socket applet stack.
+
 ## [0.4.9] - 2026-08-09
 
 The emulator release: `tools/emu` runs the applet stack on the host, and with it

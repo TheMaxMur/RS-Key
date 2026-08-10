@@ -36,6 +36,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use device::Config;
+use presence::PresenceMode;
 use signals::Signals;
 
 const DEFAULT_FIDO_PORT: u16 = 7799;
@@ -61,6 +62,7 @@ usage: rsk-emu [options]
   --ccid-port <n>     APDU/card port, 0 disables (default 7800)
   --store <path>      persist the file system here (default: memory only)
   --touch             ask for every user presence on the terminal
+  --auto-touch-ms <n> mark presence pending, then approve it after n milliseconds
   --display           open the trusted display in a window; presence is an
                       on-screen hold, exactly as on a screen board
   --screenshots <dir> write the docs' display screens as PNGs and exit
@@ -84,7 +86,7 @@ fn main() {
     let mut ccid_port = DEFAULT_CCID_PORT;
     let mut cfg = Config {
         store: None,
-        touch: false,
+        presence: PresenceMode::Instant,
         display: false,
         usbip: None,
         seed: None,
@@ -95,6 +97,8 @@ fn main() {
         yubico: false,
         power_cut: None,
     };
+    let mut touch = false;
+    let mut auto_touch = None;
 
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -111,7 +115,8 @@ fn main() {
             "--fido-port" => fido_port = parse_port(&value("--fido-port")),
             "--ccid-port" => ccid_port = parse_port(&value("--ccid-port")),
             "--store" => cfg.store = Some(value("--store").into()),
-            "--touch" => cfg.touch = true,
+            "--touch" => touch = true,
+            "--auto-touch-ms" => auto_touch = Some(parse_millis(&value("--auto-touch-ms"))),
             "--display" => cfg.display = true,
             // Renders and exits: no store, no sockets, nothing to serve.
             "--screenshots" => shots::run(&value("--screenshots")),
@@ -136,6 +141,16 @@ fn main() {
     if fido_port == 0 && ccid_port == 0 {
         die("both transports are disabled — nothing to serve");
     }
+    if auto_touch.is_some() && (touch || cfg.display) {
+        die("--auto-touch-ms is mutually exclusive with --touch and --display");
+    }
+    cfg.presence = if touch {
+        PresenceMode::Terminal
+    } else if let Some(delay) = auto_touch {
+        PresenceMode::Delayed(delay)
+    } else {
+        PresenceMode::Instant
+    };
     if cfg.seed.is_some() {
         eprintln!("emu: DETERMINISTIC SEED — every key this run mints is predictable");
     }
@@ -146,7 +161,7 @@ fn main() {
     // The terminal is the only input the prompt has, so it is read once, here,
     // and handed to the device thread — two readers of stdin would race for the
     // same line.
-    let lines = cfg.touch.then(|| {
+    let lines = (cfg.presence == PresenceMode::Terminal).then(|| {
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
             for line in std::io::stdin().lock().lines().map_while(Result::ok) {
@@ -231,6 +246,16 @@ fn parse_u32(s: &str) -> u32 {
 fn parse_port(s: &str) -> u16 {
     s.parse()
         .unwrap_or_else(|_| die(&format!("not a port: {s:?}")))
+}
+
+fn parse_millis(s: &str) -> std::time::Duration {
+    let millis: u64 = s
+        .parse()
+        .unwrap_or_else(|_| die(&format!("not a positive millisecond delay: {s:?}")));
+    if millis == 0 {
+        die("auto-touch delay must be positive");
+    }
+    std::time::Duration::from_millis(millis)
 }
 
 /// Decode hex, optionally demanding an exact byte length.
