@@ -103,6 +103,17 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   application. The bit is set now, and only a broadcast INIT survives someone
   else's lock. **bcdDevice → 0x087D.**
 
+- **`tools/emu` could not see a `CTAPHID_CANCEL` while it waited for a touch.**
+  Its socket transport parks in the job wait for the whole of a command and reads
+  nothing meanwhile, so the cancel frame sat in the receive buffer until the
+  ceremony it was sent to abort had already ended: `authenticatorSelection` and a
+  presence-gated `makeCredential` both answered as though no cancel had come,
+  instead of `CTAP2_ERR_KEEPALIVE_CANCEL`. It now polls the connection during the
+  touch wait — the window `CtapHid` watches on the device, and only that window,
+  since off it the platform pipelines and a frame read there would be a swallowed
+  next command. Emulator only: the firmware and the emulator's `--usbip` path
+  (which runs the real transport) were never affected.
+
 - **A record the routing table no longer points at could not be deleted, and
   `authenticatorReset` swept for it forever.** The store keeps two partitions and
   routes each fid to one of them; `for_each_key` walks BOTH, but `remove` targeted

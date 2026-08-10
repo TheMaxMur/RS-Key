@@ -23,7 +23,7 @@ use rsk_usb::ctaphid::{
     CTAPHID_VENDOR_FIRST, CTAPHID_VERSION, CTAPHID_WINK, ChannelLock, CidAllocator, DEVICE_UUID,
     ERR_CHANNEL_BUSY, ERR_INVALID_CMD, ERR_INVALID_LEN, ERR_INVALID_PAR, HID_RPT_SIZE,
     KEEPALIVE_MS, LOCK_MAX_SECONDS, Outcome, Reassembler, TxFrames, init_capabilities,
-    keepalive_status,
+    is_cancel_frame, keepalive_status,
 };
 
 use crate::device::{Job, Req};
@@ -159,8 +159,9 @@ fn dispatch(
 
 /// Hand a job to the device thread, streaming `CTAPHID_KEEPALIVE` on `channel`
 /// while it runs — the frames that make a client show "touch your security key"
-/// instead of timing out. Pass `channel = None` for a job whose answer nobody
-/// waits on.
+/// instead of timing out — and watching that same channel for the
+/// `CTAPHID_CANCEL` that ends the touch wait. Pass `channel = None` for a job
+/// whose answer nobody waits on.
 fn run_job(
     shared: &Arc<Shared>,
     job: Job,
@@ -175,15 +176,20 @@ fn run_job(
         let _ = rx.recv();
         return Ok(None);
     };
+    let mut watch = CancelWatch::default();
     loop {
         match rx.recv_timeout(Duration::from_millis(KEEPALIVE_MS)) {
             Ok(out) => return Ok(out),
             Err(RecvTimeoutError::Timeout) => {
-                if let Some(status) = keepalive_status(
-                    is_cbor,
-                    shared.signals.up_pending_for(crate::signals::SCOPE_FIDO),
-                ) {
+                let up = shared.signals.up_pending_for(crate::signals::SCOPE_FIDO);
+                if let Some(status) = keepalive_status(is_cbor, up) {
                     write_msg(stream, cid, CTAPHID_KEEPALIVE, &[status])?;
+                }
+                // Only during the touch wait, exactly as `CtapHid::run_with_keepalive`
+                // watches only then: off it the platform pipelines its next request,
+                // and a frame consumed here would be that request swallowed.
+                if up && poll_cancel(stream, &mut watch, cid)? {
+                    shared.signals.request_cancel(cid);
                 }
             }
             Err(RecvTimeoutError::Disconnected) => {
@@ -193,9 +199,77 @@ fn run_job(
     }
 }
 
+/// The `CTAPHID_CANCEL` that arrives mid-ceremony, on a socket nobody else is
+/// reading.
+///
+/// `serve` is parked inside `run_job` for the whole of a command, so a cancel
+/// frame would otherwise sit in the receive buffer until the touch wait it was
+/// sent to abort had already ended — the wait is the only thing worth cancelling,
+/// so the command would always answer as if no cancel had come. The device
+/// transport races this read in its `select3` instead; this is the socket's
+/// version of the same watch.
+///
+/// The partial frame is carried between polls: TCP may split a 64-byte report
+/// across segments, and half a frame dropped here would misalign every frame
+/// after it.
+struct CancelWatch {
+    frame: [u8; HID_RPT_SIZE],
+    have: usize,
+}
+
+impl Default for CancelWatch {
+    fn default() -> Self {
+        Self {
+            frame: [0; HID_RPT_SIZE],
+            have: 0,
+        }
+    }
+}
+
+impl CancelWatch {
+    /// Consume whatever has already arrived, without blocking; `true` once a whole
+    /// frame proves to be a CANCEL for `cid`. Any other frame is dropped, as the
+    /// device transport drops it.
+    fn poll<R: Read>(&mut self, mut src: R, cid: u32) -> io::Result<bool> {
+        loop {
+            match src.read(&mut self.frame[self.have..]) {
+                // The peer closed. `serve`'s own read reports that; here it just
+                // means no cancel is coming.
+                Ok(0) => return Ok(false),
+                Ok(n) => {
+                    self.have += n;
+                    if self.have < HID_RPT_SIZE {
+                        continue;
+                    }
+                    self.have = 0;
+                    if is_cancel_frame(&self.frame, HID_RPT_SIZE, cid) {
+                        return Ok(true);
+                    }
+                }
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => return Ok(false),
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                Err(e) => return Err(e),
+            }
+        }
+    }
+}
+
+/// [`CancelWatch::poll`] over the connection, which has to leave blocking mode for
+/// it and be back in it before `serve` reads the next frame.
+fn poll_cancel(stream: &TcpStream, watch: &mut CancelWatch, cid: u32) -> io::Result<bool> {
+    stream.set_nonblocking(true)?;
+    let seen = watch.poll(stream, cid);
+    stream.set_nonblocking(false)?;
+    seen
+}
+
 fn write_msg(stream: &mut TcpStream, cid: u32, cmd: u8, data: &[u8]) -> io::Result<()> {
     for f in TxFrames::new(cid, cmd, data) {
         stream.write_all(&f)?;
     }
     stream.flush()
 }
+
+#[cfg(test)]
+#[path = "hid_tests.rs"]
+mod tests;
