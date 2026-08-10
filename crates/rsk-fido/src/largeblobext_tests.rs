@@ -171,6 +171,31 @@ fn get_assertion_rejects_every_other_member_combination() {
     }
 }
 
+/// §12.4 says a CDDL violation is INVALID_CBOR — including a wrong TYPE, which the
+/// shared decode helper would otherwise report as CBOR_UNEXPECTED_TYPE. The
+/// combination tests above all use well-typed values, so this path went unchecked
+/// until an external CTAP 2.3 runner failed large-blob F-4/F-5 on it.
+#[test]
+fn a_wrong_type_is_invalid_cbor_not_unexpected_type() {
+    let mistyped: [&[(&str, V)]; 4] = [
+        &[("support", V::U32(1))], // support must be a text string
+        &[("read", V::U32(1))],    // read must be a bool
+        &[("write", V::Str("not bytes")), ("originalSize", V::U32(1))],
+        &[("write", V::Bytes(&[1])), ("originalSize", V::Bool(true))],
+    ];
+    assert_eq!(
+        parse_mc_bytes(&ext_map(mistyped[0])),
+        Err(CtapError::InvalidCbor)
+    );
+    for entries in &mistyped[1..] {
+        let req = ext_map(entries);
+        assert!(
+            matches!(parse_ga_bytes(&req), Err(CtapError::InvalidCbor)),
+            "a mistyped member must be INVALID_CBOR, not CBOR_UNEXPECTED_TYPE"
+        );
+    }
+}
+
 #[test]
 fn a_written_blob_reads_back_with_its_original_size() {
     let mut h = Harness::new();

@@ -27,11 +27,21 @@ use rsk_crypto::{chacha20poly1305_decrypt, chacha20poly1305_encrypt};
 use rsk_fs::{Fs, Storage};
 use zeroize::Zeroize;
 
-use crate::cbordec::{cbor, def_map};
+use crate::cbordec::def_map;
 use crate::consts::{EF_CRED_BLOB, MAX_LARGE_BLOB_SIZE};
 use crate::credential::{CRED_RESIDENT_LEN, IV_LEN, TAG_LEN, derive_chacha_key};
 use crate::error::CtapError;
 use crate::{Ctx, Rng};
+
+/// Every decode failure inside this extension's inputs is `CTAP2_ERR_INVALID_CBOR`.
+/// §12.4 says so for both commands — "If the input does not conform to the given
+/// CDDL, return CTAP2_ERR_INVALID_CBOR" — and a wrong *type* is a CDDL violation
+/// like any other. The shared [`crate::cbordec::cbor`] helper would answer
+/// `CTAP2_ERR_CBOR_UNEXPECTED_TYPE` instead, which an external CTAP 2.3
+/// conformance runner rejects (large-blob F-4/F-5).
+fn cddl<T>(r: Result<T, minicbor::decode::Error>) -> Result<T, CtapError> {
+    r.map_err(|_| CtapError::InvalidCbor)
+}
 
 /// Derive label for the per-credential blob box — its own domain, so this key can
 /// never coincide with a cred-box, rpId or nickname key.
@@ -73,9 +83,9 @@ pub fn parse_mc(d: &mut Decoder<'_>) -> Result<McInput, CtapError> {
     let n = def_map(d)?;
     let mut out = McInput::Absent;
     for _ in 0..n {
-        match cbor(d.str())? {
+        match cddl(d.str())? {
             "support" => {
-                out = match cbor(d.str())? {
+                out = match cddl(d.str())? {
                     "required" => McInput::Required,
                     "preferred" => McInput::Preferred,
                     _ => return Err(CtapError::InvalidCbor),
@@ -99,17 +109,17 @@ pub fn parse_ga<'a>(d: &mut Decoder<'a>) -> Result<GaInput<'a>, CtapError> {
     let mut write: Option<&'a [u8]> = None;
     let mut original_size: Option<u64> = None;
     for _ in 0..n {
-        match cbor(d.str())? {
+        match cddl(d.str())? {
             // The CDDL pins the value to `true`; `read: false` is not a member of
             // the type, so it is malformed rather than a request for nothing.
             "read" => {
-                if !cbor(d.bool())? {
+                if !cddl(d.bool())? {
                     return Err(CtapError::InvalidCbor);
                 }
                 read = true;
             }
-            "write" => write = Some(cbor(d.bytes())?),
-            "originalSize" => original_size = Some(cbor(d.u64())?),
+            "write" => write = Some(cddl(d.bytes())?),
+            "originalSize" => original_size = Some(cddl(d.u64())?),
             _ => return Err(CtapError::InvalidCbor),
         }
     }

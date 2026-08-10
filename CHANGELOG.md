@@ -104,6 +104,17 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   on-flash item format, so every existing record still reads. **bcdDevice →
   0x0880.**
 
+- **The CTAP 2.3 `largeBlob` extension answered the wrong status for a mistyped
+  input** (`--features largeblob-ext` only). §12.4 says a CDDL violation is
+  `CTAP2_ERR_INVALID_CBOR` for both commands, but the parsers went through the
+  shared decode helper, which reports a wrong *type* as
+  `CTAP2_ERR_CBOR_UNEXPECTED_TYPE`. The extension's own inputs now map every
+  decode failure to `INVALID_CBOR`. The unit tests missed it because their
+  CDDL-violation cases were all well-typed — an external CTAP 2.3 conformance
+  runner driven against a `largeblob-ext` emulator caught it (large-blob F-4 and
+  F-5), and the regression test now covers the type axis too. That group is
+  12/12 green after the fix. **bcdDevice → 0x0883.**
+
 - **getInfo claimed a config subcommand that, by the spec's own definition, it
   did not implement.** `authenticatorConfigCommands` (`0x1F`) listed
   `vendorPrototype` (`0xFF`) while `vendorPrototypeConfigCommands` (`0x15`) was
