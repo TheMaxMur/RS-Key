@@ -12,6 +12,9 @@ description = "rs-key software emulator — the applet stack on a socket, no har
 name = "rsk-emu"
 path = "src/main.rs"
 
+[features]
+fido-conformance = ["rsk-fido/fido-conformance"]
+
 # Only the in-tree crates: the emulator is the same applet code the firmware
 # runs, wired to a socket instead of USB. No external dependency joins an
 # authenticator's build for a dev tool — randomness comes from `/dev/urandom`

@@ -177,6 +177,7 @@ run "test (tui)"               cargo test --manifest-path tools/tui/Cargo.toml -
 # protocol suites without a board, which is exactly when they have no board.
 run "fmt (emu)"                cargo fmt --manifest-path tools/emu/Cargo.toml --check
 run "clippy (emu)"             cargo clippy --manifest-path tools/emu/Cargo.toml --target "$HOST" --all-targets -- -D warnings
+run "clippy (emu conformance)" cargo clippy --manifest-path tools/emu/Cargo.toml --target "$HOST" --all-targets --features fido-conformance -- -D warnings
 # fuzz/ is also its own (nightly) workspace. rustfmt needs no toolchain, so the
 # stable gate can format-check it here; building/clippy stay in the .#fuzz shell
 # (deep-checks CI). Format fuzz/ with this same stable rustfmt — not the .#fuzz
@@ -295,6 +296,7 @@ run "cargo-audit (tui SCA)"    cargo audit --file tools/tui/Cargo.lock
 # the Linux kernel's and whose framing rule decides how many bytes come off the
 # socket next; both fail silently on the wire rather than loudly.
 run "test (emu)"               cargo test --manifest-path tools/emu/Cargo.toml --target "$HOST"
+run "test (emu conformance)"   cargo test --manifest-path tools/emu/Cargo.toml --target "$HOST" --features fido-conformance
 run "cargo-audit (emu SCA)"    cargo audit --file tools/emu/Cargo.lock --ignore RUSTSEC-2023-0071
 run "cargo-deny"               cargo deny check
 # Supply-chain provenance-of-review: every dependency must be covered by an

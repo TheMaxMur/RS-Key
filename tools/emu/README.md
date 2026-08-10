@@ -20,6 +20,7 @@ cargo run --manifest-path tools/emu/Cargo.toml --target "$HOST" -- --store ./my.
   --ccid-port <n>     APDU/card port, 0 disables (default 7800)
   --store <path>      the flash image to mount (default: a blank chip, memory only)
   --touch             ask for every user presence on the terminal
+  --auto-touch-ms <n> report presence pending, then approve after n milliseconds
   --display           open the trusted display in a window (SDL2); presence
                       becomes an on-screen hold, as on a screen board
   --usbip [addr]      serve USB/IP (default 127.0.0.1:3240) so a Linux host can
@@ -32,6 +33,26 @@ cargo run --manifest-path tools/emu/Cargo.toml --target "$HOST" -- --store ./my.
                       VIDPID=Yubikey5 build does. `ykman` needs it.
   --power-cut <n>     cut the flash's power after n bytes of writes
 ```
+
+`--auto-touch-ms` is mutually exclusive with `--touch` and `--display`. During
+the delay the CTAPHID endpoint reports `UPNEEDED`; a `CANCEL` on the active
+channel ends the operation before it is approved. This mode is intended for
+deterministic conformance runs that need to observe keepalive and cancellation.
+
+Build the emulator with the conformance-specific FIDO feature and run it with
+delayed presence like this:
+
+```bash
+HOST="$(rustc -vV | sed -n 's/^host: //p')"
+cargo build --manifest-path tools/emu/Cargo.toml --target "$HOST" \
+  --features fido-conformance
+tools/emu/target/"$HOST"/debug/rsk-emu \
+  --store ./conformance.store --fido-port 7799 --ccid-port 7800 \
+  --auto-touch-ms 250 --trace
+```
+
+The `fido-conformance` feature forwards to `rsk-fido/fido-conformance`, which
+uses the authenticator profile intended for the upstream FIDO corpus.
 
 ## Running the on-device suites against it
 

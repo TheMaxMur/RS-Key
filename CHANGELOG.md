@@ -160,6 +160,11 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 - The gate seals a throwaway-keyed image and asserts its first metadata block is
   `ignored`, so the sealing order above cannot silently regress. The real signing
   key stays out of it.
+- **Deterministic delayed presence for `rsk-emu`.** `--auto-touch-ms` exposes a
+  real pending-presence interval to CTAPHID clients, honours channel-scoped
+  cancellation, and then confirms automatically. The emulator workspace also
+  forwards the `rsk-fido/fido-conformance` feature for unattended conformance
+  runs against the socket applet stack.
 
 ## [0.4.9] - 2026-08-09
 
