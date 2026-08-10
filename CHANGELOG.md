@@ -91,6 +91,18 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **A record the routing table no longer points at could not be deleted, and
+  `authenticatorReset` swept for it forever.** The store keeps two partitions and
+  routes each fid to one of them; `for_each_key` walks BOTH, but `remove` targeted
+  only the routed one. A fid whose routing changed between firmware versions
+  therefore sat in the other partition — invisible to every read, yielded on every
+  walk, deletable by nothing — and the reset sweep, which finishes only when its
+  range comes back empty, could never finish. `EF_CRED_CTR` is exactly such a fid:
+  0x081D wrote it to the main partition on every assertion and 0x0821 moved it to
+  the counter one, so a key flashed from source inside that window carries one (no
+  release does — 0.3.6 predates the record and 0.3.7 already routes it). `remove`
+  now clears both partitions. **bcdDevice → 0x087C.**
+
 - **`authenticatorReset` deleted the same record up to 64 times.** `for_each_key`
   walks stored items, so an overwritten file yields its fid once per superseded
   version until reclaim; the API says a batching caller must de-dup, and the reset

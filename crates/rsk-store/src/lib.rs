@@ -134,13 +134,18 @@ impl<F: NorFlash + MultiwriteNorFlash + Clone, CM: CacheImpl<u16>, CC: CacheImpl
         .map_err(|_| Error::MemoryFatal)
     }
 
+    /// Removes from BOTH partitions, not just the one [`is_counter_fid`] routes to.
+    /// `for_each_key` walks both, so a copy in the other partition is invisible to
+    /// `read` yet yielded on every pass — a record nothing can delete, and
+    /// `authenticatorReset`'s sweep loops on it until its progress bound gives up.
+    /// The routing has moved once already (`EF_CRED_CTR` 0xC001 joined the counter
+    /// set at 0x0821, after 0x081D had been writing it to main), so this is a state
+    /// the tree has produced, not a hypothetical. On a fid that was never misrouted
+    /// the second call finds nothing and costs one ring walk.
     fn remove(&mut self, fid: u16) -> Result<()> {
-        if is_counter_fid(fid) {
-            block_on(self.counter.remove_item(&mut self.buf, &fid))
-        } else {
-            block_on(self.main.remove_item(&mut self.buf, &fid))
-        }
-        .map_err(|_| Error::MemoryFatal)
+        let main = block_on(self.main.remove_item(&mut self.buf, &fid));
+        let counter = block_on(self.counter.remove_item(&mut self.buf, &fid));
+        main.and(counter).map_err(|_| Error::MemoryFatal)
     }
 
     fn size(&mut self, fid: u16) -> Option<usize> {

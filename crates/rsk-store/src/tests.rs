@@ -508,3 +508,54 @@ fn the_lap_is_sized_from_the_partition_it_sweeps() {
         "wrote {written} B for a {ring} B ring — sized for someone else's partition"
     );
 }
+
+/// A store whose partitions are swapped: its main ring is the physical COUNTER
+/// range and its counter ring the physical MAIN one. Writing a counter fid through
+/// it therefore lands that fid in the physical MAIN range — the state a device
+/// reaches for real when the routing table changes under it, which
+/// [`is_counter_fid`] did once (`EF_CRED_CTR` moved into the counter set at 0x0821
+/// after 0x081D had written it to main).
+fn mount_misrouted(flash: &SharedMock) -> SeqStorage<SharedMock, CounterCache, MainCache> {
+    SeqStorage::new(
+        flash.clone(),
+        COUNTER,
+        MAIN,
+        CounterCache::new(
+            ArrayPageStates::new(),
+            ArrayPagePointers::new(),
+            ArrayKeyPointers::new(),
+        ),
+        MainCache::new(
+            ArrayPageStates::new(),
+            ArrayPagePointers::new(),
+            ArrayKeyPointers::new(),
+        ),
+    )
+}
+
+#[test]
+fn remove_clears_a_fid_the_routing_no_longer_points_at() {
+    // The failure this pins is not a lost byte: `for_each_key` walks BOTH rings, so
+    // a copy in the ring `remove` does not target is yielded on every pass forever
+    // while `read` cannot see it. `authenticatorReset` sweeps until its predicate's
+    // range comes back empty, so one such record is a reset that never finishes.
+    let flash = SharedMock::new();
+    let mut wrong = mount_misrouted(&flash);
+    wrong.write(CTR, b"stranded").unwrap();
+    drop(wrong);
+
+    let mut store = mount(&flash);
+    assert_eq!(
+        keys(&mut store).0,
+        vec![CTR],
+        "the walk sees the stranded copy"
+    );
+    assert_eq!(read_vec(&mut store, CTR), None, "but a read routes past it");
+
+    store.remove(CTR).unwrap();
+    assert_eq!(
+        keys(&mut store).0,
+        Vec::<u16>::new(),
+        "a record the walk keeps yielding after a delete is one no sweep can finish"
+    );
+}
