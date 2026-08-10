@@ -169,7 +169,7 @@ RULES = [
      ExpectDiff(None, r"16", "RS-Key allows 16 vs real 8")),
     ("fido.getinfo.maxCredentialIdLength", ExpectDiff(None, None, "credential-id box length differs")),
     ("fido.getinfo.maxSerializedLargeBlobArray",
-     ExpectDiff(None, r"2046",
+     ExpectDiff(None, r"4078",
                 "RS-Key advertises its store's true per-value ceiling, rsk_fs::MAX_VALUE_BYTES")),
     ("fido.getinfo.maxCredBlobLength", ExpectDiff(None, r"128", "RS-Key 128 vs real 32")),
     ("fido.getinfo.maxRPIDsForSetMinPINLength", ExpectDiff(None, None, "RS-Key 8 vs real 1")),

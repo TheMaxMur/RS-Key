@@ -171,7 +171,7 @@ getInfo advertises seven extensions:
 | `hmac-secret-mc` | the same evaluation at registration time | |
 | `credProtect` | UV-gated credential visibility (levels 1–3) | |
 | `credBlob` | small opaque blob stored with the credential | 128 bytes |
-| `largeBlobKey` + large blobs | per-credential key into a device blob store | 2 KB store |
+| `largeBlobKey` + large blobs | per-credential key into a device blob store | 4 KB store |
 | `minPinLength` | the device hands its PIN-length policy to the RP | |
 | `thirdPartyPayment` | the secure-payment-confirmation marker | |
 

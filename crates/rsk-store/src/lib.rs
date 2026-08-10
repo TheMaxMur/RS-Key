@@ -28,8 +28,8 @@ use sequential_storage::map::{MapConfig, MapStorage};
 use rsk_fs::Storage;
 use rsk_sdk::error::{Error, Result};
 
-/// Scratch for one map op; must fit the largest stored key+value (EF_META ≤ 1 KiB).
-const KV_BUF: usize = 2048;
+/// Scratch for one map op; must fit the largest stored key+value.
+const KV_BUF: usize = 4080;
 
 // The 2-byte FID shares the scratch with the value, so the per-value ceiling the
 // `Storage` trait publishes is exactly two under it.
@@ -37,6 +37,14 @@ const _: () = assert!(rsk_fs::MAX_VALUE_BYTES == KV_BUF - 2);
 
 /// Flash erase-sector size (RP2350 QSPI), = one `sequential-storage` page.
 const SECTOR: usize = 4096;
+
+// A `sequential-storage` item lives inside ONE page, so the ceiling is the sector
+// minus the page and item headers — measured at 16 bytes, i.e. 4078 value bytes
+// plus the 2-byte FID. Nothing type-checks this: a larger `MAX_VALUE_BYTES`
+// compiles and then fails at runtime on the first write that big, which is how
+// the 4094 first tried here was caught (`the_published_ceiling_is_the_one_the_
+// scratch_can_hold`). Raise the sector, not this, if more is ever needed.
+const _: () = assert!(KV_BUF <= SECTOR - 16);
 
 /// Transient FID the [`Storage::compact`] lap churns to advance the main ring.
 /// Routed to main (not a counter FID), it never reaches `Fs` and is removed at

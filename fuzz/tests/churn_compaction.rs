@@ -40,7 +40,8 @@ type Mock = MockFlashBase<PAGES, WORD, PAGE_WORDS>;
 const SECTOR: usize = 4096;
 const PARTITION_LEN: usize = PAGES * SECTOR;
 const RANGE: core::ops::Range<u32> = 0..(PARTITION_LEN as u32);
-const KV_BUF: usize = 2048;
+// See `kv_durability`: derived from the published ceiling, never a literal.
+const KV_BUF: usize = rsk_fs::MAX_VALUE_BYTES + 2;
 type Cache =
     SsCache<ArrayPageStates<PAGES>, ArrayPagePointers<PAGES>, ArrayKeyPointers<u16, 16>, u16>;
 type Store = MapStorage<u16, SharedMock, Cache>;

@@ -91,6 +91,19 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Changed
 
+- **A flash record now holds 4078 bytes instead of 2046.** Two things ride that
+  ceiling and doubled with it: the serialized large-blob array
+  (`maxSerializedLargeBlobArray` in `getInfo`, so a platform sees the new room
+  without being told) and an imported enterprise attestation chain
+  (`ATT_IMPORT`). No other applet sizes itself against it — PIV, OpenPGP and
+  OATH carry their own, lower caps and are unchanged. The number is not round
+  because a `sequential-storage` item must fit inside one 4096-byte flash page:
+  16 bytes of page and item headers come off the top, then the 2-byte FID that
+  shares the scratch with the value. **A provisioned key upgrades in place** —
+  only the size of the buffer the backend serializes through changed, not the
+  on-flash item format, so every existing record still reads. **bcdDevice →
+  0x0880.**
+
 - **A multi-call sequence no longer survives an unrelated command in the middle
   of it.** CTAP 2.2 §6 lets an authenticator assume each stateful command is
   "exclusively preceded" by its own kind or by the command that initialized it —

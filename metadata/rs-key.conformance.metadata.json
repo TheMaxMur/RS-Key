@@ -83,7 +83,7 @@
       { "alg": -35, "type": "public-key" },
       { "alg": -36, "type": "public-key" }
     ],
-    "maxSerializedLargeBlobArray": 2046,
+    "maxSerializedLargeBlobArray": 4078,
     "forcePINChange": false,
     "minPINLength": 4,
     "firmwareVersion": 329476,

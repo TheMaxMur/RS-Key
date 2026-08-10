@@ -46,11 +46,11 @@ from ctaphid import (  # noqa: E402
 PIN = b"1234"
 PERM_LBW = 0x10
 LARGE_BLOBS = 0x0C
-# `MAX_LARGE_BLOB_SIZE` = 2046 — crates/rsk-fido/src/consts.rs, which defines it as
+# `MAX_LARGE_BLOB_SIZE` = 4078 — crates/rsk-fido/src/consts.rs, which defines it as
 # `rsk_fs::MAX_VALUE_BYTES` (the backend's per-record ceiling, KV_BUF - 2). It was a
 # flat 2048 until 2026-08-04; the literal here went on asserting the old value for
 # four days, and the interop allow-list rotted on the same move (scripts/check.sh).
-MAX_LARGE_BLOB_SIZE = 2046
+MAX_LARGE_BLOB_SIZE = 4078
 # The empty CBOR array 0x80 followed by left16(SHA-256(0x80)).
 DEFAULT_BLOB = bytes.fromhex("80") + hashlib.sha256(bytes([0x80])).digest()[:16]
 

@@ -92,7 +92,7 @@ pub trait Applet<C> {
 const CHAIN_BUF_SIZE: usize = 2038;
 /// Holds the unsent tail of a response while the host fetches it with GET
 /// RESPONSE. Sized to the largest response buffer a caller passes (the CCID
-/// handler's 2046-byte body cap).
+/// handler's 2038-byte body cap).
 const RESP_CHAIN_CAP: usize = 2048;
 
 /// `61 XX` bytes-remaining; SW2 saturates to `00` (= 256+ left) per ISO 7816-4.
