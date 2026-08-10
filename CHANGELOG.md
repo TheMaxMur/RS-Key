@@ -91,6 +91,12 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **`authenticatorReset` can no longer remain in processing forever when the flash
+  walk re-yields a removed FIDO record.** Its sweep now de-duplicates stored versions
+  of one FID and carries the same progress bound as the PIV, OATH and OpenPGP wipes;
+  a non-converging backend returns `CTAP2_ERR_OTHER` instead of wedging the worker.
+  **bcdDevice → 0x087B.**
+
 - **A signed release image did not boot on a secure-boot device.** `picotool
   seal --sign` retires the image's own `IMAGE_DEF` — the linker's, carrying no
   signature and no rollback version — only when it is handed the **ELF**. Given

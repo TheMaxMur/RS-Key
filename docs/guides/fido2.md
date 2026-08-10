@@ -206,6 +206,10 @@ Two details that catch people out:
   screen, so the window is not what stands between you and an accidental wipe; the
   reset works whenever you confirm it on the panel.
 
+The flash wipe is bounded: if storage keeps reporting a record after a successful
+delete, reset returns `CTAP2_ERR_OTHER` instead of staying in the processing state
+indefinitely.
+
 `rsk offboard` handles this for you: it sends the reset, and only if the device
 refuses does it prompt for the replug and retry.
 

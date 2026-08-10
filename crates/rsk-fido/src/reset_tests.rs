@@ -295,6 +295,92 @@ fn reset_wipes_false_absent_credential_without_looping() {
     assert!(load_keydev(&dev(), &mut fs).is_some());
 }
 
+struct DuplicateVersions {
+    live: bool,
+}
+
+impl rsk_fs::Storage for DuplicateVersions {
+    fn read(&mut self, _fid: u16, _buf: &mut [u8]) -> Option<usize> {
+        None
+    }
+    fn write(&mut self, _fid: u16, _data: &[u8]) -> rsk_sdk::error::Result<()> {
+        Ok(())
+    }
+    fn remove(&mut self, _fid: u16) -> rsk_sdk::error::Result<()> {
+        if !self.live {
+            return Err(rsk_sdk::error::Error::MemoryFatal);
+        }
+        self.live = false;
+        Ok(())
+    }
+    fn size(&mut self, _fid: u16) -> Option<usize> {
+        None
+    }
+    fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) -> bool {
+        if self.live {
+            for _ in 0..64 {
+                f(EF_CRED);
+            }
+        }
+        true
+    }
+}
+
+#[test]
+fn reset_sweep_de_dupes_stored_versions() {
+    let mut fs = Fs::new(DuplicateVersions { live: true });
+    let mut rng = SeqRng(1);
+    let mut state = FidoState::new();
+    let mut presence = crate::AlwaysConfirm;
+    let mut ctx = Ctx {
+        presence: &mut presence,
+        dev: dev(),
+        fs: &mut fs,
+        rng: &mut rng,
+        state: &mut state,
+        now_ms: 0,
+    };
+    assert_eq!(sweep(&mut ctx, is_fido_fid), Ok(()));
+}
+
+struct ReYielding;
+
+impl rsk_fs::Storage for ReYielding {
+    fn read(&mut self, _fid: u16, _buf: &mut [u8]) -> Option<usize> {
+        None
+    }
+    fn write(&mut self, _fid: u16, _data: &[u8]) -> rsk_sdk::error::Result<()> {
+        Ok(())
+    }
+    fn remove(&mut self, _fid: u16) -> rsk_sdk::error::Result<()> {
+        Ok(())
+    }
+    fn size(&mut self, _fid: u16) -> Option<usize> {
+        None
+    }
+    fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) -> bool {
+        f(EF_CRED);
+        true
+    }
+}
+
+#[test]
+fn reset_sweep_fails_when_storage_does_not_converge() {
+    let mut fs = Fs::new(ReYielding);
+    let mut rng = SeqRng(1);
+    let mut state = FidoState::new();
+    let mut presence = crate::AlwaysConfirm;
+    let mut ctx = Ctx {
+        presence: &mut presence,
+        dev: dev(),
+        fs: &mut fs,
+        rng: &mut rng,
+        state: &mut state,
+        now_ms: 0,
+    };
+    assert_eq!(sweep(&mut ctx, is_fido_fid), Err(CtapError::Other));
+}
+
 /// Audit run-36 class sweep: `is_fido_gate_fid` is the set `reset` defers to its
 /// second phase *and* the set the device-wide `Fs::factory_wipe` inherits, so a
 /// record that gates the applet but is missing from it gets deleted ahead of the
