@@ -733,10 +733,10 @@ fn builtin_uv_token_success() {
 }
 
 /// The pad verifies the user; it does not stand in for the touch. §6.5.5.7.3 step
-/// 12 would let a built-in UV that "supplied evidence of user interaction" mint a
+/// 13 would let a built-in UV that "supplied evidence of user interaction" mint a
 /// token carrying presence, and §6.1.2 step 14 would then skip the presence
 /// request — deleting the one screen that names the rp, which is the whole point
-/// of the display. This device takes step 13, and this test keeps it there.
+/// of the display. This device takes step 14, and this test keeps it there.
 #[test]
 fn builtin_uv_token_does_not_carry_user_presence() {
     let (mut fs, mut rng, mut state, plat) = setup_with_pin(b"1234");

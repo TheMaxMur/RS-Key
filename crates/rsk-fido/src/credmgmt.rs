@@ -376,9 +376,9 @@ fn enumerate_rps<S: Storage, R: Rng>(
         ctx.state.cm.rp_total = total;
     }
     ctx.state.cm.rp_counter = target.saturating_add(1);
-    // Per leg, not per walk: a platform drawing an account picker must not run out
-    // of the idle window halfway down its own list (§6.3 does the same for the
-    // assertion walk, "Reset the timer").
+    // Per leg, not per walk — CTAP 2.3 §6 bounds the gap "between such commands",
+    // so a platform drawing an account picker cannot run out of the window halfway
+    // down its own list (§6.3 step 7 says the same for the assertion walk).
     ctx.state.cm.last_leg_ms = ctx.now_ms;
 
     // The EF_RP tail is boxed under the device seed — recover the rpId domain.

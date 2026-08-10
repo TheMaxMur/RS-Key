@@ -587,10 +587,10 @@ impl FidoState {
     }
 
     /// Retire an enumerate cursor left idle past [`STATEFUL_WALK_IDLE_MS`], checked
-    /// before every CBOR command beside [`Self::expire_stale_token`]. A *Next* leg
-    /// carries no authorization of its own, so a walk with no timer is bounded only
-    /// by the token that opened it — and the persistent `pcmr` token has no timer
-    /// either, which left such a walk continuable for the whole power cycle.
+    /// before every CBOR command beside [`Self::expire_stale_token`]. CTAP 2.3 §6
+    /// also *requires* the state to die with the token that authorized the opening
+    /// call, which [`Self::stop_using_token`] does — but the persistent `pcmr` token
+    /// never expires, so that MUST alone left such a walk live for the power cycle.
     pub fn expire_stale_walk(&mut self, now_ms: u64) {
         if self.cm.walking() && now_ms.saturating_sub(self.cm.last_leg_ms) >= STATEFUL_WALK_IDLE_MS
         {

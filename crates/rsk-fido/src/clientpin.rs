@@ -384,16 +384,16 @@ fn issue_token<S: Storage, R: Rng>(
     rp_id: Option<&str>,
     out: &mut [u8],
 ) -> CtapResult {
-    // §6.5.5.7.2/.3 step 14: a `pcmr` request is answered with the persistent token
-    // and stops there — it neither mints nor begins using a session token. Minting
-    // it here *is* the permission assignment: the record exists only while some
-    // platform holds the grant (`EF_PAUTHTOKEN`).
+    // §6.5.5.7.2 step 12 / .3 step 11: a `pcmr` request is answered with the
+    // persistent token and stops there — it neither mints nor begins using a
+    // session token. Minting it here *is* the permission assignment: the record
+    // exists only while some platform holds the grant (`EF_PAUTHTOKEN`).
     let mut pdata = if permissions & PERM_PCMR != 0 {
         ensure_ppuat(&ctx.dev, ctx.fs, ctx.rng).map_err(|_| CtapError::Other)?
     } else {
         ctx.state.reset_pin_uv_auth_token(ctx.rng);
-        // §6.5.5.7.3 steps 12/13 are an either/or, and their Note says which one
-        // applies "can vary between authenticators": always 13 here, because a
+        // §6.5.5.7.3 steps 13/14 are an either/or, and their Note says which one
+        // applies "can vary between authenticators": always 14 here, because a
         // `true` would make §6.1.2 step 14 skip the presence request — which on a
         // display build is the screen that names the rp. Step 14's Note allows it.
         ctx.state.begin_using_token(false, ctx.now_ms);

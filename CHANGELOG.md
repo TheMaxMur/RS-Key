@@ -92,17 +92,21 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 ### Changed
 
 - **A credential-management enumerate walk now retires on a timer of its own.**
-  The cursor is dropped once 30 s pass with no leg served — the window CTAP 2.1
-  §6.3 states for `getNextAssertion`, and per leg like that one, so a platform
-  drawing an account picker cannot run out of it halfway down its own list. It
-  had no timer before: it died when the pinUvAuthToken that opened it did, which
-  is numerically the same 30 s but a side effect rather than a stated bound — and
-  no bound at all for a walk opened with the **persistent** `pcmr` token, which
-  CTAP 2.2 §6.8.2 gives no usage timer, so that cursor stayed continuable for the
+  The cursor is dropped once 30 s pass with no leg served. That is the bound CTAP
+  2.3 §6 names for every stateful command — an authenticator may assume "no more
+  than 30 seconds will elapse between such commands" — and *between* is why the
+  timer is per leg rather than per walk: a platform drawing an account picker
+  cannot run out of it halfway down its own list. §6.3 step 7 says the same for
+  `getNextAssertion`, which already did it.
+
+  The same clause requires the state to die with the pinUvAuthToken that
+  authorized the opening call, and that part was already in place. It is not
+  enough on its own: the **persistent** `pcmr` token has no usage timer (§6.8.2),
+  so a walk opened with one had no bound at all and stayed continuable for the
   whole power cycle as long as nothing else was sent. The *Next* legs carry no
-  authorization of their own (§6.8), which makes the cursor the authorization;
-  it is now bounded in time as well as to its channel. This is the one row of the
-  YubiKey 5.7.4 comparison below that did not match. **bcdDevice → 0x0884.**
+  authorization of their own (§6.8), which makes the cursor the authorization; it
+  is now bounded in time as well as to its channel. This is also the one row of
+  the YubiKey 5.7.4 comparison below that did not match. **bcdDevice → 0x0884.**
 
 - **A flash record now holds 4078 bytes instead of 2046.** Two things ride that
   ceiling and doubled with it: the serialized large-blob array
