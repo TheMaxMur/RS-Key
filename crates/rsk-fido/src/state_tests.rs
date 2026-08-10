@@ -169,3 +169,22 @@ fn expiring_token_strands_the_credmgmt_walk() {
     st.expire_stale_token(PUAT_INITIAL_USAGE_LIMIT_MS);
     assert_eq!(next_rp(&mut st), Err(CtapError::NotAllowed));
 }
+
+#[test]
+fn an_idle_cursor_expires_on_its_own_timer() {
+    // Driven alone, as `process_cbor` calls it beside `expire_stale_token`, so what
+    // retires the cursor here is its own window and not the token's — the case a
+    // walk opened under the timer-less persistent `pcmr` token is really in.
+    let mut st = mid_walk();
+    st.cm.last_leg_ms = 1_000;
+
+    st.expire_stale_walk(1_000 + STATEFUL_WALK_IDLE_MS - 1);
+    assert_eq!(
+        next_rp(&mut st),
+        Err(CtapError::NoCredentials),
+        "the last millisecond of the window still belongs to the walk"
+    );
+
+    st.expire_stale_walk(1_000 + STATEFUL_WALK_IDLE_MS);
+    assert_eq!(next_rp(&mut st), Err(CtapError::NotAllowed));
+}

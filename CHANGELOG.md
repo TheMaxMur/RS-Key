@@ -91,6 +91,19 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Changed
 
+- **A credential-management enumerate walk now retires on a timer of its own.**
+  The cursor is dropped once 30 s pass with no leg served — the window CTAP 2.1
+  §6.3 states for `getNextAssertion`, and per leg like that one, so a platform
+  drawing an account picker cannot run out of it halfway down its own list. It
+  had no timer before: it died when the pinUvAuthToken that opened it did, which
+  is numerically the same 30 s but a side effect rather than a stated bound — and
+  no bound at all for a walk opened with the **persistent** `pcmr` token, which
+  CTAP 2.2 §6.8.2 gives no usage timer, so that cursor stayed continuable for the
+  whole power cycle as long as nothing else was sent. The *Next* legs carry no
+  authorization of their own (§6.8), which makes the cursor the authorization;
+  it is now bounded in time as well as to its channel. This is the one row of the
+  YubiKey 5.7.4 comparison below that did not match. **bcdDevice → 0x0884.**
+
 - **A flash record now holds 4078 bytes instead of 2046.** Two things ride that
   ceiling and doubled with it: the serialized large-blob array
   (`maxSerializedLargeBlobArray` in `getInfo`, so a platform sees the new room
@@ -156,11 +169,12 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   measured on a YubiKey 5.7.4, its walk dies on an unrelated command, on a
   `credentialManagement` subcommand that is not one of the two *Next* walkers, on
   a `largeBlobs` command, and on a 35-second gap with the token still live. All
-  but the timer are matched here. Its large-blob write, by contrast, survives all
-  four — so on that one sequence this device is the stricter of the two, kept
-  that way because the failure modes are not symmetric: a YubiKey drops the
-  stored array on the *opening* fragment, so an abandoned transfer destroys it,
-  while this one accumulates in RAM and leaves the previous array intact.
+  four are matched here, the timer as of `0x0884` above. Its large-blob write, by
+  contrast, survives all four — so on that one sequence this device is the
+  stricter of the two, kept that way because the failure modes are not
+  symmetric: a YubiKey drops the stored array on the *opening* fragment, so an
+  abandoned transfer destroys it, while this one accumulates in RAM and leaves
+  the previous array intact.
   **bcdDevice → 0x087F.**
 
 ### Security

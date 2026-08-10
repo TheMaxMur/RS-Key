@@ -331,6 +331,11 @@ pub const PUAT_INITIAL_USAGE_LIMIT_MS: u64 = 30_000;
 /// it cannot linger for the whole power cycle.
 pub const PUAT_MAX_USAGE_PERIOD_MS: u64 = 600_000;
 
+/// How long a stateful walk may sit idle before it retires. CTAP 2.1 §6.3 states
+/// it for getNextAssertion; credentialManagement's enumerate cursor has none of
+/// its own and takes the same bound, which is what a YubiKey 5.7.4 does.
+pub const STATEFUL_WALK_IDLE_MS: u64 = 30_000;
+
 /// `authenticatorReset` power-up window (CTAP 2.1 §6.6): an authenticator with no
 /// display honors a reset only this long after power-up, so the wipe takes a
 /// deliberate replug. Measured from a *power-on* reset — see

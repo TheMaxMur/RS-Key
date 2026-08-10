@@ -18,11 +18,11 @@
 //! `test_channel_interleaving`, which pin the same rule (Apache-2.0; the
 //! behaviour is the spec's, the code here is ours).
 
-use super::{Authr, assert_ok, field_at, pin_auth};
+use super::{Authr, assert_ok, dev, field_at, pin_auth};
 use crate::consts::{
     ALG_ES256, CM_ENUMERATE_RPS_BEGIN, CM_ENUMERATE_RPS_NEXT, CM_GET_CREDS_METADATA,
     CTAP_CREDENTIAL_MGMT, CTAP_GET_ASSERTION, CTAP_GET_INFO, CTAP_GET_NEXT_ASSERTION,
-    CTAP_MAKE_CREDENTIAL,
+    CTAP_MAKE_CREDENTIAL, STATEFUL_WALK_IDLE_MS,
 };
 use crate::error::CtapError;
 use crate::state::PERM_CM;
@@ -247,6 +247,54 @@ fn an_unrelated_command_ends_the_enumerate_walk() {
         r.status,
         CtapError::NotAllowed.as_u8(),
         "the enumerate cursor did not survive the command in between"
+    );
+}
+
+/// …and time ends it too, on a window of the walk's own. Driven under the
+/// **persistent** token, which is the case with no other bound: §6.8.2's `pcmr`
+/// token carries no usage timer, so before this the cursor stayed continuable for
+/// the whole power cycle as long as nothing else was sent. A YubiKey 5.7.4 retires
+/// the same cursor after a 35-second gap with its token still live (measured).
+#[test]
+fn an_idle_enumerate_walk_retires_on_its_own_timer() {
+    let mut a = Authr::fresh();
+    let rps = [
+        "one.example",
+        "two.example",
+        "three.example",
+        "four.example",
+    ];
+    for (i, rp) in rps.iter().enumerate() {
+        assert_ok(&a.send(CTAP_MAKE_CREDENTIAL, &mc_rk_on(rp, &[i as u8])));
+    }
+    let ppuat = crate::seed::ensure_ppuat(&dev(), &mut a.fs, &mut a.rng).unwrap();
+    let begin = cm(
+        CM_ENUMERATE_RPS_BEGIN,
+        Some(&pin_auth(&ppuat, &[CM_ENUMERATE_RPS_BEGIN as u8])),
+    );
+
+    let r = a.send(CTAP_CREDENTIAL_MGMT, &begin);
+    assert_ok(&r);
+    let mut d = field_at(&r.body, 5).expect("totalRPs (0x05) present");
+    assert_eq!(
+        d.u32().unwrap(),
+        4,
+        "four RPs, so the leg refused below is a retirement and not an exhausted walk"
+    );
+
+    // Two legs, each after a gap that is most of the window — the second is served
+    // only because the first pushed the deadline out.
+    for _ in 0..2 {
+        a.clock += STATEFUL_WALK_IDLE_MS - 5_000;
+        assert_ok(&a.send(CTAP_CREDENTIAL_MGMT, &cm(CM_ENUMERATE_RPS_NEXT, None)));
+    }
+
+    a.clock += STATEFUL_WALK_IDLE_MS;
+    assert_eq!(
+        a.send(CTAP_CREDENTIAL_MGMT, &cm(CM_ENUMERATE_RPS_NEXT, None))
+            .status,
+        CtapError::NotAllowed.as_u8(),
+        "an idle cursor must not stay walkable for the whole power cycle"
     );
 }
 

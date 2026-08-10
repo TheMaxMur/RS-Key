@@ -316,7 +316,11 @@ needs only the identifiers above. RS-Key implements:
   `pcmr` permission (`0x40`, alone) and get the **persistent** pinUvAuthToken: it
   drives getCredsMetadata / enumerateRPs / enumerateCredentials, never the two
   writers, and survives replugs until a PIN change or a reset — a credential list
-  can be refreshed without re-prompting for the PIN. `maxMsgSize` = `7609`.
+  can be refreshed without re-prompting for the PIN. The enumerate *walk* it opens
+  is not that durable: the cursor behind `getNextRP` / `getNextCredential` retires
+  after **30 s** idle, and after any command that is not one of those two
+  continuations (CTAP 2.2 §6), so draw a list in one uninterrupted pass and restart
+  from the *Begin* if it stalls. `maxMsgSize` = `7609`.
   Supported COSE algorithms:
   ES256 `-7`, ES384 `-35`, ES512 `-36`, ES256K `-47`, EdDSA `-8`,
   ML-DSA-44 `-48`, ML-DSA-65 `-49` (both negotiable via `pubKeyCredParams`;

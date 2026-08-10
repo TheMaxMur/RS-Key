@@ -21,6 +21,7 @@ use crate::clientpin::{UvOutcome, builtin_uv_enabled, builtin_uv_step};
 use crate::consts::{
     CRED_PROT_UV_OPTIONAL_WITH_LIST, CRED_PROT_UV_REQUIRED, CURVE_P256, EF_CRED, EF_PIN, FLAG_ED,
     FLAG_UP, FLAG_UV, LARGE_BLOB_EXT, MAX_CREDENTIAL_COUNT_IN_LIST, MAX_RESIDENT_CREDENTIALS,
+    STATEFUL_WALK_IDLE_MS,
 };
 use crate::credential::{
     CRED_BOX_MAX, CRED_REC_MAX, CRED_RESIDENT_LEN, Credential, RECORD_PREFIX, USER_ID_MAX,
@@ -888,7 +889,7 @@ pub fn get_next_assertion<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, out: &mut [u8
     {
         return Err(CtapError::NotAllowed);
     }
-    if ctx.now_ms.saturating_sub(ctx.state.gna.started_ms) > 30_000 {
+    if ctx.now_ms.saturating_sub(ctx.state.gna.started_ms) > STATEFUL_WALK_IDLE_MS {
         ctx.state.gna.reset();
         return Err(CtapError::NotAllowed);
     }

@@ -376,6 +376,10 @@ fn enumerate_rps<S: Storage, R: Rng>(
         ctx.state.cm.rp_total = total;
     }
     ctx.state.cm.rp_counter = target.saturating_add(1);
+    // Per leg, not per walk: a platform drawing an account picker must not run out
+    // of the idle window halfway down its own list (§6.3 does the same for the
+    // assertion walk, "Reset the timer").
+    ctx.state.cm.last_leg_ms = ctx.now_ms;
 
     // The EF_RP tail is boxed under the device seed — recover the rpId domain.
     let mut rp_id_hash = [0u8; 32];
@@ -493,6 +497,7 @@ fn enumerate_creds<S: Storage, R: Rng>(
         ctx.state.cm.rp_id_hash = *rp_id_hash;
     }
     ctx.state.cm.cred_counter = target.saturating_add(1);
+    ctx.state.cm.last_leg_ms = ctx.now_ms;
     Ok(resp_len)
 }
 

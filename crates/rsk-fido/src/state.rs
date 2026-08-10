@@ -14,7 +14,7 @@ use crate::Rng;
 use crate::consts::{
     CTAP_CREDENTIAL_MGMT, CTAP_GET_NEXT_ASSERTION, CTAP_LARGE_BLOBS, MAX_CREDENTIAL_COUNT_IN_LIST,
     MAX_LARGE_BLOB_SIZE, MAX_RESIDENT_CREDENTIALS, PUAT_INITIAL_USAGE_LIMIT_MS,
-    PUAT_MAX_USAGE_PERIOD_MS,
+    PUAT_MAX_USAGE_PERIOD_MS, STATEFUL_WALK_IDLE_MS,
 };
 use crate::hmacsecret::{SALT_AUTH_MAX, SALT_ENC_MAX};
 
@@ -112,6 +112,11 @@ pub struct CredMgmtState {
     /// inherit the Begin's authorization — so without this a second process reads
     /// the relying-party ids that authorization bought, having shown no token.
     pub channel: u32,
+    /// `now_ms` of the last leg this walk served, its *Begin* included — the
+    /// idle window in [`FidoState::expire_stale_walk`] measures from here. It is
+    /// the only bound a walk opened under the persistent `pcmr` token has: that
+    /// token carries no usage timer of its own (CTAP 2.2 §6.8.2).
+    pub last_leg_ms: u64,
     // u16 so a fully-provisioned store (MAX_RESIDENT_CREDENTIALS = 256) can be
     // counted and walked to the last slot; a u8 saturated at 255, hiding the
     // 256th RP/credential from enumeration.
@@ -147,6 +152,7 @@ impl CredMgmtState {
     const fn new() -> Self {
         Self {
             channel: 0,
+            last_leg_ms: 0,
             rp_counter: 1,
             rp_total: 0,
             cred_counter: 1,
@@ -170,6 +176,13 @@ impl CredMgmtState {
     /// [`Self::may_walk_rps`] for the credential walk.
     pub fn may_walk_creds(&self, channel: u32) -> bool {
         self.channel == channel && self.cred_counter <= self.cred_total
+    }
+
+    /// Whether either walk still has a leg to serve — the counter half of the two
+    /// above, so [`FidoState::expire_stale_walk`] can tell a live cursor from a
+    /// spent one and leave `last_leg_ms` alone when there is nothing to retire.
+    fn walking(&self) -> bool {
+        self.rp_counter <= self.rp_total || self.cred_counter <= self.cred_total
     }
 
     /// Drop the enumerate cursor back to its fail-closed start (`rp_counter >
@@ -570,6 +583,18 @@ impl FidoState {
         let since_use = now_ms.saturating_sub(self.paut.last_used_ms);
         if since_issue >= PUAT_MAX_USAGE_PERIOD_MS || since_use >= PUAT_INITIAL_USAGE_LIMIT_MS {
             self.stop_using_token();
+        }
+    }
+
+    /// Retire an enumerate cursor left idle past [`STATEFUL_WALK_IDLE_MS`], checked
+    /// before every CBOR command beside [`Self::expire_stale_token`]. A *Next* leg
+    /// carries no authorization of its own, so a walk with no timer is bounded only
+    /// by the token that opened it — and the persistent `pcmr` token has no timer
+    /// either, which left such a walk continuable for the whole power cycle.
+    pub fn expire_stale_walk(&mut self, now_ms: u64) {
+        if self.cm.walking() && now_ms.saturating_sub(self.cm.last_leg_ms) >= STATEFUL_WALK_IDLE_MS
+        {
+            self.cm.reset();
         }
     }
 
