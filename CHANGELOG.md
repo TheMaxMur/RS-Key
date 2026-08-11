@@ -40,6 +40,32 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Security
 
+- **A PIV signature at a PIN-always slot no longer locks the whole card.**
+  Slot `9C`'s pin policy is *always* — "the PIN must be verified every time
+  immediately before a signature" (SP 800-73-4 pt1 Table 5). The applet had no
+  state for that condition, so it enforced it by clearing the card's only PIN
+  latch, and that latch gates everything: after one signature at `9C`, a
+  signature at `9A`, an ECDH at `9D`, the PIN-protected `PRINTED` object and even
+  the `VERIFY` status query all refused with `6982` until the host verified
+  again. The ordinary sign-then-decrypt session — S/MIME, or PIV-auth followed by
+  key management — asked for a second PIN it should not need. Measured on a
+  YubiKey 5.7.4: every one of those answers `9000`. The same line was wrong in
+  the other direction too, and that half is the security-relevant one: because
+  the clear was keyed on *always*, an operation at a pin-policy **once** slot
+  spent nothing, so `VERIFY` → sign at `9A` → sign at `9C` produced a `9C`
+  signature with no PIN immediately before it — on a YubiKey that second
+  signature is refused. There are now two flags. The PIN's own status is set by
+  `VERIFY` and cleared only by a failed `VERIFY`, `VERIFY P1=FF`, SET RETRIES,
+  another applet's SELECT or a reset; a separate freshness bit is spent by any
+  private-key operation that reaches a slot key needing a PIN — retired slots
+  `82`–`95` included, and a failed one counts, since a garbage ECDH point or an
+  RSA cryptogram of the wrong length still used the key — and read only by
+  *always* slots. A pin-policy **never** operation spends nothing, a
+  management-key (`9B`) handshake spends nothing (it is not a key slot, so the
+  escrow flow `age-plugin-yubikey` uses kept working), and neither does a request
+  that never gets to the key: a wrong algorithm, an unprovisioned slot, a denied
+  touch, or a body whose tags the dispatcher declines. **bcdDevice → 0x0891.**
+
 - **A failed authentication now revokes the standing one on OpenPGP and on the
   PIV management key.** `0x088B` fixed this for PIV's `VERIFY`; the same rule was
   unenforced on two neighbouring commands. On OpenPGP, a wrong PW1/PW2/PW3 in

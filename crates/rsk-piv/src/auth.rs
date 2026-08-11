@@ -13,7 +13,7 @@ use rsk_crypto::{
     Device, aes_ecb_decrypt_block, aes_ecb_encrypt_block, des3_decrypt_block, des3_encrypt_block,
 };
 use rsk_fs::{Fs, Storage};
-use rsk_openpgp::keys::Curve;
+use rsk_openpgp::keys::PrivKey;
 use rsk_openpgp::rsa_crt;
 use rsk_openpgp::{Presence, Rng, UserPresence};
 use rsk_sdk::tlv::find_tag;
@@ -52,6 +52,19 @@ fn check_touch(policy: u8, presence: &mut dyn UserPresence) -> Result<(), Sw> {
     }
 }
 
+/// Whether the session satisfies a key slot's resolved pin policy. `NEVER` is the
+/// only value that skips the PIN — naming the two that *require* one let an
+/// unrecognised byte mean "no PIN" (audit run-34 #18).
+fn pin_satisfied(sess: &Session, pinpol: u8) -> bool {
+    match pinpol {
+        PINPOLICY_NEVER => true,
+        // "verified every time immediately before" (SP 800-73-4 pt1 §3.2.1 Table 5):
+        // the VERIFY must also be unspent — see [`GenAuth::spend_pin`].
+        PINPOLICY_ALWAYS => sess.has_pin && sess.pin_fresh,
+        _ => sess.has_pin,
+    }
+}
+
 /// One ECB block under the management key; `data` is `chal_len` bytes.
 fn mgm_crypt(algo: u8, key: &[u8], data: &mut [u8], dir: Dir) -> Result<(), Sw> {
     match algo {
@@ -87,11 +100,36 @@ struct GenAuth<'c, S: Storage> {
     presence: &'c mut dyn UserPresence,
     algo: u8,
     key_ref: u8,
+    pin_policy: u8,
     touch_policy: u8,
     chal_len: usize,
 }
 
 impl<S: Storage> GenAuth<'_, S> {
+    /// Spend the PIN freshness an ALWAYS slot reads. Measured on a YubiKey 5.7.4: a
+    /// private-key operation at any PIN-gated slot closes every ALWAYS slot, and
+    /// nothing clears the PIN's own status — 9B included, hence `is_key`.
+    fn spend_pin(&mut self) {
+        if self.pin_policy != PINPOLICY_NEVER && is_key(self.key_ref) {
+            self.sess.pin_fresh = false;
+        }
+    }
+
+    /// The slot's EC key, bound to the algorithm the host asked for — and the point
+    /// of no return for [`Self::spend_pin`]. Measured on a YubiKey 5.7.4: once a
+    /// request reaches the key the freshness is gone whether the computation then
+    /// succeeds or not (a garbage ECDH point costs it), while a wrong algorithm, an
+    /// unprovisioned slot or a denied touch never reaches it and costs nothing.
+    fn load_ec(&mut self) -> Result<PrivKey, Sw> {
+        let key = seal::load_ec_key(self.dev, self.fs, key_fid(self.key_ref))?;
+        let want = keygen::curve_for_algo(self.algo).ok_or(Sw::INCORRECT_P1P2)?;
+        if key.curve() != want {
+            return Err(Sw::INCORRECT_P1P2);
+        }
+        self.spend_pin();
+        Ok(key)
+    }
+
     /// Start a management-key handshake: record the outstanding challenge and
     /// drop any standing 9B status — measured on a YubiKey 5.7.4, a step 1
     /// revokes and nothing else at 9B does. 9B-only; both callers check.
@@ -189,6 +227,7 @@ impl<S: Storage> GenAuth<'_, S> {
             ALGO_RSA1024 | ALGO_RSA2048 | ALGO_RSA3072 | ALGO_RSA4096 => {
                 check_touch(self.touch_policy, self.presence)?;
                 let crt = seal::load_rsa_crt(self.dev, self.fs, key_fid(self.key_ref))?;
+                self.spend_pin();
                 if c.len() != crt.modulus_len() {
                     return Err(Sw::INCORRECT_PARAMS);
                 }
@@ -199,11 +238,7 @@ impl<S: Storage> GenAuth<'_, S> {
             }
             ALGO_ECCP256 | ALGO_ECCP384 => {
                 check_touch(self.touch_policy, self.presence)?;
-                let key = seal::load_ec_key(self.dev, self.fs, key_fid(self.key_ref))?;
-                let want = keygen::curve_for_algo(self.algo).ok_or(Sw::INCORRECT_P1P2)?;
-                if key.curve() != want {
-                    return Err(Sw::INCORRECT_P1P2);
-                }
+                let key = self.load_ec()?;
                 let mut raw = [0u8; 96];
                 let rn = key.sign(c, self.rng, &mut raw)?;
                 let mut der = [0u8; 112];
@@ -212,10 +247,7 @@ impl<S: Storage> GenAuth<'_, S> {
             }
             ALGO_ED25519 => {
                 check_touch(self.touch_policy, self.presence)?;
-                let key = seal::load_ec_key(self.dev, self.fs, key_fid(self.key_ref))?;
-                if key.curve() != Curve::Ed25519 {
-                    return Err(Sw::INCORRECT_P1P2);
-                }
+                let key = self.load_ec()?;
                 // PureEdDSA signs the raw message `c`; the 64-byte signature is
                 // returned bare (no ASN.1 wrapping).
                 let mut sig = [0u8; 64];
@@ -275,11 +307,7 @@ impl<S: Storage> GenAuth<'_, S> {
             return Err(Sw::INCORRECT_P1P2);
         }
         check_touch(self.touch_policy, self.presence)?;
-        let key = seal::load_ec_key(self.dev, self.fs, key_fid(self.key_ref))?;
-        let want = keygen::curve_for_algo(self.algo).ok_or(Sw::INCORRECT_P1P2)?;
-        if key.curve() != want {
-            return Err(Sw::INCORRECT_P1P2);
-        }
+        let key = self.load_ec()?;
         let mut shared = [0u8; 48];
         let n = key.ecdh(pp, &mut shared)?;
         dyn_auth_resp(res, TAG_AUTH_RESPONSE, &shared[..n])?;
@@ -359,10 +387,7 @@ pub(crate) fn general_authenticate<S: Storage>(
             PINPOLICY_ONCE
         };
     }
-    // `NEVER` is the only value that skips the PIN — the same fail-closed rule as
-    // `check_touch`. Naming the two values that *require* one let an unrecognised
-    // byte mean "no PIN" (audit run-34 #18).
-    if pinpol != PINPOLICY_NEVER && is_key(key_ref) && !sess.has_pin {
+    if is_key(key_ref) && !pin_satisfied(sess, pinpol) {
         mgm_key.zeroize();
         return Sw::SECURITY_STATUS_NOT_SATISFIED;
     }
@@ -384,6 +409,7 @@ pub(crate) fn general_authenticate<S: Storage>(
             presence: &mut *presence,
             algo,
             key_ref,
+            pin_policy: pinpol,
             touch_policy,
             chal_len,
         };
@@ -406,18 +432,7 @@ pub(crate) fn general_authenticate<S: Storage>(
     mgm_key.zeroize();
 
     match sw {
-        Ok(()) => {
-            // pin-policy ALWAYS re-locks the PIN after each use — but only for an
-            // actual key-slot sign, mirroring the `is_key` check that gated it
-            // above. The 9B management key also stores pin-policy ALWAYS, and its
-            // mutual auth is not a PIN-gated op, so it must not clear has_pin (else
-            // a VERIFY-then-mgmt-auth-then-sign client, e.g. age-plugin-yubikey,
-            // hits 6982 on the slot sign).
-            if pinpol == PINPOLICY_ALWAYS && is_key(key_ref) {
-                sess.has_pin = false;
-            }
-            Sw::OK
-        }
+        Ok(()) => Sw::OK,
         Err(e) => e,
     }
 }

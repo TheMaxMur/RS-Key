@@ -123,6 +123,10 @@ pub(crate) enum ChallengeKind {
 #[derive(Default)]
 pub(crate) struct Session {
     pub(crate) has_pin: bool,
+    /// The PIN verified *and* unspent since: a pin-policy ALWAYS slot needs both.
+    /// A private-key operation at any PIN-gated slot spends this one alone
+    /// ([`auth::general_authenticate`]), leaving the card's PIN status standing.
+    pub(crate) pin_fresh: bool,
     pub(crate) has_mgm: bool,
     pub(crate) has_challenge: bool,
     pub(crate) chal_kind: ChallengeKind,
@@ -135,8 +139,16 @@ pub(crate) struct Session {
 }
 
 impl Session {
+    /// Set (or clear) the card's PIN security status. Freshness never outlives it,
+    /// so every writer of `has_pin` goes through here — only a key operation spends
+    /// freshness on its own.
+    fn set_pin(&mut self, verified: bool) {
+        self.has_pin = verified;
+        self.pin_fresh = verified;
+    }
+
     fn reset(&mut self) {
-        self.has_pin = false;
+        self.set_pin(false);
         self.has_mgm = false;
         self.has_challenge = false;
         self.chal_kind = ChallengeKind::None;
@@ -399,7 +411,7 @@ impl PivApplet<'_> {
             if apdu.nc != 0 {
                 return Sw::WRONG_LENGTH;
             }
-            self.sess.has_pin = false;
+            self.sess.set_pin(false);
             return Sw::OK;
         }
         if apdu.nc == 0 {
@@ -425,7 +437,7 @@ impl PivApplet<'_> {
         // think is compromised — did not stop an attacker who already had a live
         // verified session.
         let sw = check_ref(dev, fs, EF_PIN, RETRY_PIN, apdu.data);
-        self.sess.has_pin = sw.is_ok();
+        self.sess.set_pin(sw.is_ok());
         sw
     }
 
@@ -487,7 +499,7 @@ impl PivApplet<'_> {
         {
             return Sw::MEMORY_FAILURE;
         }
-        self.sess.has_pin = false;
+        self.sess.set_pin(false);
         Sw::OK
     }
 

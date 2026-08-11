@@ -174,6 +174,15 @@ ykman piv keys generate --pin-policy ALWAYS --touch-policy ALWAYS 9a pub.pem
 | `ONCE` | PIN once per session (default for `9a`/`9d`/`9e`/retired) |
 | `ALWAYS` | PIN before every operation (default for `9c`) |
 
+`ALWAYS` means the VERIFY has to be the last thing before the operation: a
+private-key operation at **any** PIN-gated slot uses it up — including a
+default-policy `9e`, and including one that fails after reaching the key — so
+`VERIFY` → sign at `9a` → sign at `9c` refuses the second signature with `6982`.
+Verify again between them. Nothing else is affected — the PIN itself stays
+verified, so a `9c` signature does not close the `ONCE` slots, the PIN-protected
+management key or a plain `VERIFY` status query, and a `NEVER`-policy key never
+uses anything up.
+
 | `--touch-policy` | Effect |
 |---|---|
 | `NEVER` | no button press (default for the `9b` management key) |

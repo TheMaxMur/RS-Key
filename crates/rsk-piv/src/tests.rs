@@ -110,6 +110,20 @@ fn gen_template(algo: u8) -> Vec<u8> {
     vec![0xAC, 0x03, 0x80, 0x01, algo]
 }
 
+/// P-256 GENERAL AUTHENTICATE over a fixed digest at `slot`.
+fn sign_p256<S: Storage>(app: &mut PivApplet, fs: &mut Fs<S>, slot: u8) -> Sw {
+    let mut msg = vec![0x7C, 0x24, 0x82, 0x00, 0x81, 0x20];
+    msg.extend_from_slice(&[0x42u8; 32]);
+    run(app, fs, INS_AUTHENTICATE, ALGO_ECCP256, slot, &msg).0
+}
+
+/// P-256 ECDH (tag 85) at 0x9D against `point`.
+fn ecdh_p256<S: Storage>(app: &mut PivApplet, fs: &mut Fs<S>, point: &[u8]) -> Sw {
+    let mut msg = vec![0x7C, 0x45, 0x82, 0x00, 0x85, 0x41];
+    msg.extend_from_slice(point);
+    run(app, fs, INS_AUTHENTICATE, ALGO_ECCP256, SLOT_KEYMGM, &msg).0
+}
+
 /// Presence stand-in whose answer the test flips between calls.
 struct Scripted {
     confirm: bool,
@@ -1626,6 +1640,439 @@ fn pin_policy_always_on_signature_slot() {
         &msg,
     );
     assert_eq!(sw, Sw::OK);
+}
+
+/// A signature at a pin-policy ALWAYS slot re-locks that policy and nothing else.
+/// Measured on a YubiKey 5.7.4: sign at 9C, then 9A/9D/PRINTED/the status query all
+/// still answer 9000. Ours cleared the card's only PIN latch, so one S/MIME
+/// signature shut every PIN-gated surface until the host verified again.
+#[test]
+fn a_pin_always_signature_keeps_the_rest_of_the_pin_session() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    verify_pin(&mut app, &mut fs);
+    // 9C's default pin policy resolves to ALWAYS, 9A's and 9D's to ONCE.
+    for slot in [SLOT_SIGNATURE, SLOT_AUTHENTICATION] {
+        let tmpl = gen_template(ALGO_ECCP256);
+        assert_eq!(
+            run(&mut app, &mut fs, INS_ASYM_KEYGEN, 0, slot, &tmpl).0,
+            Sw::OK
+        );
+    }
+    let (sw, resp) = run(
+        &mut app,
+        &mut fs,
+        INS_ASYM_KEYGEN,
+        0,
+        SLOT_KEYMGM,
+        &gen_template(ALGO_ECCP256),
+    );
+    assert_eq!(sw, Sw::OK);
+    let point = ec_point_of(&resp);
+
+    // Plant the ADMIN-DATA flag the way a host does, so PRINTED is a real
+    // PIN-gated object rather than an absent one.
+    let plant = vec![
+        TAG_DATA_PATH,
+        0x03,
+        0x5F,
+        0xFF,
+        0x00,
+        TAG_DATA_OBJECT,
+        0x05,
+        PIVMAN_TAG,
+        0x03,
+        PIVMAN_FLAGS_TAG,
+        0x01,
+        PIVMAN_FLAG_MGM_PROTECTED,
+    ];
+    assert_eq!(
+        run(&mut app, &mut fs, INS_PUT_DATA, 0x3F, 0xFF, &plant).0,
+        Sw::OK
+    );
+    let printed = [TAG_DATA_PATH, 0x03, 0x5F, 0xC1, 0x09];
+
+    // Each instrument below reads the PIN status and nothing else: with the
+    // status dropped (`VERIFY P1=FF`) every one of them refuses.
+    assert_eq!(
+        run(&mut app, &mut fs, INS_VERIFY, 0xFF, 0x80, &[]).0,
+        Sw::OK
+    );
+    assert_eq!(
+        run(&mut app, &mut fs, INS_GET_DATA, 0x3F, 0xFF, &printed).0,
+        Sw::SECURITY_STATUS_NOT_SATISFIED
+    );
+    assert_eq!(
+        sign_p256(&mut app, &mut fs, SLOT_AUTHENTICATION),
+        Sw::SECURITY_STATUS_NOT_SATISFIED
+    );
+    assert_eq!(
+        ecdh_p256(&mut app, &mut fs, &point),
+        Sw::SECURITY_STATUS_NOT_SATISFIED
+    );
+
+    verify_pin(&mut app, &mut fs);
+    assert_eq!(sign_p256(&mut app, &mut fs, SLOT_SIGNATURE), Sw::OK);
+    assert_eq!(
+        sign_p256(&mut app, &mut fs, SLOT_AUTHENTICATION),
+        Sw::OK,
+        "a pin-policy ONCE slot"
+    );
+    assert_eq!(
+        ecdh_p256(&mut app, &mut fs, &point),
+        Sw::OK,
+        "ECDH at a pin-policy ONCE slot"
+    );
+    assert_eq!(
+        run(&mut app, &mut fs, INS_GET_DATA, 0x3F, 0xFF, &printed).0,
+        Sw::OK,
+        "the PIN-protected PRINTED object"
+    );
+    assert_eq!(
+        run(&mut app, &mut fs, INS_VERIFY, 0, 0x80, &[]).0,
+        Sw::OK,
+        "the VERIFY status query"
+    );
+    assert_eq!(
+        run(&mut app, &mut fs, INS_PUT_DATA, 0x3F, 0xFF, &plant).0,
+        Sw::OK,
+        "the standing 9B status"
+    );
+    // Only the ALWAYS slot itself re-locks.
+    assert_eq!(
+        sign_p256(&mut app, &mut fs, SLOT_SIGNATURE),
+        Sw::SECURITY_STATUS_NOT_SATISFIED
+    );
+}
+
+/// The other half of the same rule, also measured on 5.7.4: the freshness an
+/// ALWAYS slot reads is spent by a key operation at *any* PIN-gated slot — a ONCE
+/// signature or an ECDH closes 9C — while a pin-policy NEVER operation spends
+/// nothing. Ours keyed the clear on ALWAYS, so a ONCE operation left 9C open.
+#[test]
+fn a_key_operation_at_a_once_slot_spends_the_always_freshness() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    verify_pin(&mut app, &mut fs);
+    for slot in [SLOT_SIGNATURE, SLOT_AUTHENTICATION] {
+        let tmpl = gen_template(ALGO_ECCP256);
+        assert_eq!(
+            run(&mut app, &mut fs, INS_ASYM_KEYGEN, 0, slot, &tmpl).0,
+            Sw::OK
+        );
+    }
+    let (sw, resp) = run(
+        &mut app,
+        &mut fs,
+        INS_ASYM_KEYGEN,
+        0,
+        SLOT_KEYMGM,
+        &gen_template(ALGO_ECCP256),
+    );
+    assert_eq!(sw, Sw::OK);
+    let point = ec_point_of(&resp);
+    // A retired slot, pin policy NEVER, to check what must NOT spend.
+    let tmpl = vec![
+        0xAC,
+        0x09,
+        0x80,
+        0x01,
+        ALGO_ECCP256,
+        0xAA,
+        0x01,
+        PINPOLICY_NEVER,
+        0xAB,
+        0x01,
+        TOUCHPOLICY_NEVER,
+    ];
+    assert_eq!(
+        run(&mut app, &mut fs, INS_ASYM_KEYGEN, 0, 0x82, &tmpl).0,
+        Sw::OK
+    );
+
+    verify_pin(&mut app, &mut fs);
+    assert_eq!(sign_p256(&mut app, &mut fs, SLOT_AUTHENTICATION), Sw::OK);
+    assert_eq!(
+        sign_p256(&mut app, &mut fs, SLOT_SIGNATURE),
+        Sw::SECURITY_STATUS_NOT_SATISFIED,
+        "a signature at a ONCE slot spends the ALWAYS freshness"
+    );
+
+    verify_pin(&mut app, &mut fs);
+    assert_eq!(ecdh_p256(&mut app, &mut fs, &point), Sw::OK);
+    assert_eq!(
+        sign_p256(&mut app, &mut fs, SLOT_SIGNATURE),
+        Sw::SECURITY_STATUS_NOT_SATISFIED,
+        "an ECDH at a ONCE slot spends it too"
+    );
+
+    verify_pin(&mut app, &mut fs);
+    assert_eq!(sign_p256(&mut app, &mut fs, 0x82), Sw::OK);
+    assert_eq!(
+        sign_p256(&mut app, &mut fs, SLOT_SIGNATURE),
+        Sw::OK,
+        "a pin-policy NEVER operation spends nothing"
+    );
+}
+
+/// A GENERAL AUTHENTICATE that reaches no key at all must spend nothing: the
+/// dispatcher's no-op arm is not an operation. (Its `9000` is itself a divergence
+/// — a YubiKey answers 6A80 to a body with no usable tag — recorded separately.)
+#[test]
+fn a_general_authenticate_that_uses_no_key_spends_nothing() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    verify_pin(&mut app, &mut fs);
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            INS_ASYM_KEYGEN,
+            0,
+            SLOT_SIGNATURE,
+            &gen_template(ALGO_ECCP256)
+        )
+        .0,
+        Sw::OK
+    );
+    verify_pin(&mut app, &mut fs);
+    for body in [
+        vec![0x7C, 0x02, 0x82, 0x00],
+        vec![0x7C, 0x03, 0x5F, 0x01, 0x00],
+    ] {
+        let (sw, _) = run(
+            &mut app,
+            &mut fs,
+            INS_AUTHENTICATE,
+            ALGO_ECCP256,
+            SLOT_SIGNATURE,
+            &body,
+        );
+        assert_eq!(sw, Sw::OK, "body {body:02X?}");
+    }
+    assert_eq!(
+        sign_p256(&mut app, &mut fs, SLOT_SIGNATURE),
+        Sw::OK,
+        "no key was used, so the PIN freshness must still stand"
+    );
+}
+
+/// The last cell of the same boundary: a *denied touch* stops the operation before
+/// the key, so it spends nothing — measured on a YubiKey 5.7.4 (a touch-policy
+/// ALWAYS slot left to time out leaves every ALWAYS slot open).
+#[test]
+fn a_denied_touch_spends_no_pin_freshness() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(Scripted { confirm: true });
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    verify_pin(&mut app, &mut fs);
+    // 9A keeps the default touch policy ALWAYS; 9C is generated touch NEVER so the
+    // instrument itself never asks for one.
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            INS_ASYM_KEYGEN,
+            0,
+            SLOT_AUTHENTICATION,
+            &gen_template(ALGO_ECCP256)
+        )
+        .0,
+        Sw::OK
+    );
+    let tmpl = vec![
+        0xAC,
+        0x09,
+        0x80,
+        0x01,
+        ALGO_ECCP256,
+        0xAA,
+        0x01,
+        PINPOLICY_ALWAYS,
+        0xAB,
+        0x01,
+        TOUCHPOLICY_NEVER,
+    ];
+    assert_eq!(
+        run(&mut app, &mut fs, INS_ASYM_KEYGEN, 0, SLOT_SIGNATURE, &tmpl).0,
+        Sw::OK
+    );
+
+    verify_pin(&mut app, &mut fs);
+    pres.borrow_mut().confirm = false;
+    assert_eq!(
+        sign_p256(&mut app, &mut fs, SLOT_AUTHENTICATION),
+        Sw::SECURITY_STATUS_NOT_SATISFIED
+    );
+    pres.borrow_mut().confirm = true;
+    assert_eq!(
+        sign_p256(&mut app, &mut fs, SLOT_SIGNATURE),
+        Sw::OK,
+        "the declined operation never reached the key"
+    );
+}
+
+/// Where the spend happens, measured on a YubiKey 5.7.4: a request that *reaches*
+/// the slot's key spends the freshness even when it then fails (a garbage ECDH
+/// point, an RSA cryptogram of the wrong length), while one that never gets that
+/// far — a wrong algorithm, an unprovisioned slot — spends nothing.
+#[test]
+fn a_key_operation_that_fails_still_spends_the_freshness() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    verify_pin(&mut app, &mut fs);
+    for (slot, algo) in [
+        (SLOT_SIGNATURE, ALGO_ECCP256),
+        (SLOT_AUTHENTICATION, ALGO_ECCP256),
+        (SLOT_KEYMGM, ALGO_ECCP256),
+        (0x82, ALGO_RSA1024),
+    ] {
+        assert_eq!(
+            run(
+                &mut app,
+                &mut fs,
+                INS_ASYM_KEYGEN,
+                0,
+                slot,
+                &gen_template(algo)
+            )
+            .0,
+            Sw::OK
+        );
+    }
+
+    verify_pin(&mut app, &mut fs);
+    let junk = [0x04u8; 65];
+    assert_eq!(ecdh_p256(&mut app, &mut fs, &junk), Sw::DATA_INVALID);
+    assert_eq!(
+        sign_p256(&mut app, &mut fs, SLOT_SIGNATURE),
+        Sw::SECURITY_STATUS_NOT_SATISFIED,
+        "a failed ECDH used the key, so it spent the freshness"
+    );
+
+    verify_pin(&mut app, &mut fs);
+    let mut short = vec![0x7C, 0x0C, 0x82, 0x00, 0x81, 0x08];
+    short.extend_from_slice(&[0x42u8; 8]);
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            INS_AUTHENTICATE,
+            ALGO_RSA1024,
+            0x82,
+            &short
+        )
+        .0,
+        Sw::INCORRECT_PARAMS
+    );
+    assert_eq!(
+        sign_p256(&mut app, &mut fs, SLOT_SIGNATURE),
+        Sw::SECURITY_STATUS_NOT_SATISFIED,
+        "a wrong-length RSA cryptogram reached the key too"
+    );
+
+    // The other side of the boundary.
+    verify_pin(&mut app, &mut fs);
+    let mut wrong_algo = vec![0x7C, 0x24, 0x82, 0x00, 0x81, 0x20];
+    wrong_algo.extend_from_slice(&[0x42u8; 32]);
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            INS_AUTHENTICATE,
+            ALGO_ECCP384,
+            SLOT_AUTHENTICATION,
+            &wrong_algo
+        )
+        .0,
+        Sw::INCORRECT_P1P2
+    );
+    assert_eq!(
+        sign_p256(&mut app, &mut fs, SLOT_SIGNATURE),
+        Sw::OK,
+        "a wrong algorithm never reaches the key"
+    );
+
+    verify_pin(&mut app, &mut fs);
+    assert_eq!(
+        sign_p256(&mut app, &mut fs, 0x8A),
+        Sw::REFERENCE_NOT_FOUND,
+        "an unprovisioned slot"
+    );
+    assert_eq!(sign_p256(&mut app, &mut fs, SLOT_SIGNATURE), Sw::OK);
+}
+
+/// A slot record carrying the literal `DEFAULT` policy byte — what a pre-run-34
+/// build stored — is resolved at use time, and the resolution now picks the spend
+/// as well as the gate. 9C means ALWAYS there, every other slot ONCE.
+#[test]
+fn a_legacy_default_pin_policy_byte_resolves_at_use_time() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    verify_pin(&mut app, &mut fs);
+    for slot in [SLOT_SIGNATURE, SLOT_AUTHENTICATION] {
+        assert_eq!(
+            run(
+                &mut app,
+                &mut fs,
+                INS_ASYM_KEYGEN,
+                0,
+                slot,
+                &gen_template(ALGO_ECCP256)
+            )
+            .0,
+            Sw::OK
+        );
+        // The record is the 4-byte head plus keygen's cached public point.
+        let mut meta = [0u8; 96];
+        let n = fs.meta_find(key_fid(slot).get(), &mut meta).unwrap();
+        meta[1] = PINPOLICY_DEFAULT;
+        fs.meta_add(key_fid(slot).get(), &meta[..n]).unwrap();
+    }
+
+    select(&mut app, &mut fs);
+    assert_eq!(
+        sign_p256(&mut app, &mut fs, SLOT_AUTHENTICATION),
+        Sw::SECURITY_STATUS_NOT_SATISFIED,
+        "DEFAULT at 9A is ONCE, not NEVER"
+    );
+    verify_pin(&mut app, &mut fs);
+    assert_eq!(sign_p256(&mut app, &mut fs, SLOT_AUTHENTICATION), Sw::OK);
+    assert_eq!(
+        sign_p256(&mut app, &mut fs, SLOT_SIGNATURE),
+        Sw::SECURITY_STATUS_NOT_SATISFIED,
+        "the 9A operation spent the freshness DEFAULT-at-9C reads"
+    );
+    verify_pin(&mut app, &mut fs);
+    assert_eq!(sign_p256(&mut app, &mut fs, SLOT_SIGNATURE), Sw::OK);
+    assert_eq!(
+        sign_p256(&mut app, &mut fs, SLOT_SIGNATURE),
+        Sw::SECURITY_STATUS_NOT_SATISFIED,
+        "DEFAULT at 9C is ALWAYS"
+    );
 }
 
 #[test]
