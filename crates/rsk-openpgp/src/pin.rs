@@ -481,11 +481,17 @@ pub fn verify<S: Storage>(
         if !data.is_empty() {
             return Sw::INCORRECT_PARAMS;
         }
+        // §7.2.2 defines P2 = 81 / 82 / 83 and nothing else, so an undefined one
+        // names a password reference that does not exist and there is nothing to
+        // reset. Falling through to OK reported success for a security-status
+        // reset that never happened — and the SAME undefined P2 on the P1=00 path
+        // below already answered 6B00, so the one command disagreed with itself.
+        // A YubiKey 5.7.4 answers 6B00 to every undefined P2 here, measured.
         match p2 {
             PW1_MODE81 => sess.has_pw1 = false,
             PW1_MODE82 => sess.has_pw2 = false,
             PW3_MODE83 => sess.has_pw3 = false,
-            _ => {}
+            _ => return Sw::WRONG_P1P2,
         }
         return Sw::OK;
     }

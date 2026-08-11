@@ -40,6 +40,17 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Security
 
+- **OpenPGP's security-status reset refuses a password reference that does not
+  exist.** `VERIFY` with `P1=FF` is the standard's way for a host to drop its own
+  privileges, and §7.2.2 defines `P2` = `81` / `82` / `83`. Ours matched those
+  three and fell through to `9000` for anything else, so `00 20 FF 00`,
+  `… FF 80`, `… FF 84`, `… FF FF` all reported a successful reset of nothing —
+  while the *same* undefined `P2` on the `P1=00` path already answered `6B00`, so
+  one command disagreed with itself. That self-contradiction is what made it a
+  defect rather than a taste question. A YubiKey 5.7.4 answers `6B00` to every
+  undefined `P2` here, measured across all eight values. The three defined ones
+  are untouched and still reset only their own latch. **bcdDevice → 0x088D.**
+
 - **SELECT matches an AID the way ISO 7816-4 and a YubiKey do.** The dispatcher
   asked whether the requested AID *started with* a registered one, so any applet
   answered to `its AID ‖ anything`. On PIV that meant selecting with

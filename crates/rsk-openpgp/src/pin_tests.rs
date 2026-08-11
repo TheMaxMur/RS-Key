@@ -971,3 +971,60 @@ fn a_refused_new_pin_leaves_no_staged_record() {
     let mut got = [0u8; DEK_SIZE];
     load_dek(&d, &mut fs, &s2, &mut got).unwrap();
 }
+
+/// VERIFY's P1=FF security-status reset must refuse a password reference that
+/// does not exist. §7.2.2 defines P2 = 81 / 82 / 83; an undefined one used to
+/// fall through to `9000`, reporting a reset of nothing — while the very same
+/// P2 on the P1=00 path answered `6B00`, so one command disagreed with itself.
+/// A YubiKey 5.7.4 answers `6B00` to every undefined P2 here.
+#[test]
+fn a_status_reset_for_a_reference_that_does_not_exist_is_refused() {
+    let d = dev();
+    let mut fs = setup();
+    let mut sess = Session::new();
+    for p2 in [0x00u8, 0x80, 0x84, 0x85, 0xFF] {
+        assert_eq!(
+            verify(&d, &mut fs, &mut sess, &mut CountRng(0), 0xFF, p2, &[]),
+            Sw::WRONG_P1P2,
+            "P1=FF P2={p2:#04x}"
+        );
+        // The same undefined P2 on the other path, for the comparison that made
+        // this a defect rather than a taste question.
+        assert_eq!(
+            verify(
+                &d,
+                &mut fs,
+                &mut sess,
+                &mut CountRng(0),
+                0x00,
+                p2,
+                PW1_DEFAULT
+            ),
+            Sw::WRONG_P1P2,
+            "P1=00 P2={p2:#04x}"
+        );
+    }
+    // The three defined ones still reset, and only their own latch.
+    for (p2, set, get) in [
+        (PW1_MODE81, 0u8, 0u8),
+        (PW1_MODE82, 1, 1),
+        (PW3_MODE83, 2, 2),
+    ] {
+        let _ = (set, get);
+        verify(
+            &d,
+            &mut fs,
+            &mut sess,
+            &mut CountRng(0),
+            0x00,
+            p2,
+            PW1_DEFAULT,
+        );
+        assert_eq!(
+            verify(&d, &mut fs, &mut sess, &mut CountRng(0), 0xFF, p2, &[]),
+            Sw::OK,
+            "P1=FF P2={p2:#04x} is defined and must work"
+        );
+    }
+    assert!(!sess.has_pw1 && !sess.has_pw2 && !sess.has_pw3);
+}
