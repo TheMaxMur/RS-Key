@@ -40,6 +40,25 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Security
 
+- **An OATH/OTP PIN now actually gates the password safe.** The applet can store
+  a login, a password and a note per credential — the password-safe extension
+  `nitropy` speaks — and `GET CREDENTIAL` (`0xB5`) served them to any fresh,
+  unauthenticated connection whenever no OATH access password was configured,
+  **which is the shipping default**. The only gate was the session's `validated`
+  flag, and `SELECT` sets that unconditionally on a code-less applet, so a PIN
+  the owner had deliberately set guarded nothing at all: the card handed back the
+  stored password to a host that presented no credential of any kind. `VERIFY
+  CODE` (`0xB1`) had the same gate and the same hole. Both now require the OTP
+  PIN to have been presented in the current session once `EF_OTP_PIN` exists,
+  tracked separately from `validated` because `VERIFY PIN` also sets that one (it
+  doubles as `VALIDATE` for the nitropy flow) and the two facts are not the same.
+  A wrong PIN revokes a standing unlock and a re-`SELECT` does not inherit it.
+  The applet already reasoned about exactly this hole in `SET PIN`, which defends
+  itself with an operator touch; the two commands that return secrets never got
+  the treatment. A store with **neither** a PIN nor an access password stays open,
+  as YKOATH intends for a code-less applet — this only makes the credential the
+  owner did create mean something. **bcdDevice → 0x0888.**
+
 - **OpenPGP no longer returns a truncated data object as if it were complete.**
   DO `C0` announced room for a 2048-byte cardholder certificate and 2048-byte
   special DOs, `PUT DATA` stored whatever it was given, and `GET DATA` then

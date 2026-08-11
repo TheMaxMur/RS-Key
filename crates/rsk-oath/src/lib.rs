@@ -164,6 +164,12 @@ pub struct OathApplet<'a> {
     /// allowed); with a code set, SELECT resets it and VALIDATE/VERIFY PIN
     /// flip it back.
     validated: bool,
+    /// Whether *this* session presented the OTP PIN. Distinct from `validated`,
+    /// which VERIFY PIN also sets (it doubles as VALIDATE for the nitropy flow)
+    /// and which SELECT sets unconditionally on a code-less applet — so
+    /// `validated` alone cannot tell "the owner proved the PIN" from "no access
+    /// code is configured", and the password-safe reads need the first.
+    otp_pin_verified: bool,
     /// Challenge the host must answer in VALIDATE; regenerated on SELECT and
     /// SET CODE.
     challenge: [u8; CHALLENGE_LEN],
@@ -188,6 +194,7 @@ impl<'a> OathApplet<'a> {
             rng,
             presence,
             validated: true,
+            otp_pin_verified: false,
             challenge: [0; CHALLENGE_LEN],
             chain: Chain::None,
             chain_at: 0,
@@ -710,6 +717,9 @@ impl<'a> OathApplet<'a> {
         if !self.validated {
             return Sw::SECURITY_STATUS_NOT_SATISFIED;
         }
+        if let Err(sw) = self.otp_pin_gate(fs) {
+            return sw;
+        }
         let data = &apdu.data[..apdu.nc];
         if find_tag(data, TAG_NAME as u16).is_none() {
             return Sw::INCORRECT_PARAMS;
@@ -830,6 +840,9 @@ impl<'a> OathApplet<'a> {
         if !self.validated {
             return Sw::SECURITY_STATUS_NOT_SATISFIED;
         }
+        if let Err(sw) = self.otp_pin_gate(fs) {
+            return sw;
+        }
         let data = &apdu.data[..apdu.nc];
         if data.len() < 3 {
             return Sw::INCORRECT_PARAMS;
@@ -899,6 +912,27 @@ impl<'a> OathApplet<'a> {
         let mkek = read_fused(self.mkek_source);
         rec[2..].copy_from_slice(&self.device(&mkek).pin_derive_verifier(pw));
         rec
+    }
+
+    /// The gate the two password-safe reads (`0xB1` VERIFY CODE, `0xB5` GET
+    /// CREDENTIAL) share: **once an OTP PIN exists it is required**, whether or
+    /// not an access code is also set.
+    ///
+    /// `validated` alone was the gate, and on a code-less applet — the shipping
+    /// default — `select()` sets it unconditionally, so a PIN the owner set
+    /// guarded nothing: a fresh connection that presented no credential at all
+    /// got the stored password back. `cmd_set_otp_pin` below already reasons
+    /// about exactly this hole and defends itself with a touch; the two commands
+    /// that actually return secrets never got the treatment.
+    ///
+    /// A store with neither a code nor a PIN stays open, as YKOATH intends for a
+    /// code-less applet — this only makes the credential the owner *did* create
+    /// mean something.
+    fn otp_pin_gate<S: Storage>(&self, fs: &mut Fs<S>) -> Result<(), Sw> {
+        if fs.has_data(EF_OTP_PIN) && !self.otp_pin_verified {
+            return Err(Sw::SECURITY_STATUS_NOT_SATISFIED);
+        }
+        Ok(())
     }
 
     fn cmd_set_otp_pin<S: Storage>(&mut self, apdu: &Apdu, fs: &mut Fs<S>) -> Sw {
@@ -1011,6 +1045,7 @@ impl<'a> OathApplet<'a> {
         };
         // Any attempt clears a prior unlock; only a correct PIN re-validates below.
         self.validated = false;
+        self.otp_pin_verified = false;
         // Shared anti-bruteforce chokepoint: refuse at the counter floor, spend the
         // retry (persist + read-back), then constant-time compare.
         if let Err(sw) = self.spend_and_match_otp_pin(fs, &mut rec, size, pw) {
@@ -1024,6 +1059,7 @@ impl<'a> OathApplet<'a> {
         // (rsk-fs `EF_HARDENED` invariant; audit run-35).
         rsk_fs::request_rescrub(fs);
         self.validated = true;
+        self.otp_pin_verified = true;
         Sw::OK
     }
 }
@@ -1038,6 +1074,7 @@ impl<S: Storage> Applet<Fs<S>> for OathApplet<'_> {
     /// `select` recomputes `validated` from whether a code is set.
     fn deselect(&mut self, _fs: &mut Fs<S>) {
         self.validated = false;
+        self.otp_pin_verified = false;
         self.chain = Chain::None;
     }
 
@@ -1066,8 +1103,10 @@ impl<S: Storage> Applet<Fs<S>> for OathApplet<'_> {
         // A new SELECT abandons any pending LIST / CALCULATE ALL page.
         self.chain = Chain::None;
         // With a code set, every new SELECT must start locked: protected
-        // commands work only after VALIDATE (or VERIFY PIN).
+        // commands work only after VALIDATE (or VERIFY PIN). The PIN itself is
+        // never inherited across a SELECT, code or no code.
         self.validated = !code_set;
+        self.otp_pin_verified = false;
         Sw::OK
     }
 

@@ -1823,3 +1823,108 @@ fn a_completed_reset_clears_credentials_and_the_code() {
     assert!(!fs.has_data(EF_OTP_PIN));
     assert!((0..5u16).all(|i| !fs.has_data(EF_OATH_CRED + i)));
 }
+
+/// An OTP PIN the owner set must be required before the password-safe secrets
+/// are served, on the code-less applet that is the shipping default.
+///
+/// `validated` was the only gate, and `select()` sets it unconditionally when no
+/// access code is configured — so the PIN gated nothing: a fresh session that
+/// presented no credential at all got the stored password back. `cmd_set_otp_pin`
+/// already reasoned about that hole and defended itself with a touch; the two
+/// commands that return secrets did not.
+#[test]
+fn an_otp_pin_is_required_before_the_password_safe_is_served() {
+    let mut fs = new_fs();
+    let rng = RefCell::new(CountRng(3));
+    let touch = RefCell::new(AlwaysConfirm);
+    let mut app = OathApplet::new(SERIAL, [0x22; 32], Some(test_mkek), &rng, &touch);
+    select(&mut app, &mut fs);
+
+    let mut cred = put_data(b"bank", 0x21, 6, SECRET_SHA1, false, None);
+    cred.extend(tlv(TAG_PWS_PASSWORD, b"hunter2"));
+    put(&mut app, &mut fs, &cred);
+    let get = apdu(INS_GET_CREDENTIAL, 0, 0, &tlv(TAG_NAME, b"bank"));
+
+    // No PIN and no code: an openly unprotected store, unchanged — YKOATH leaves
+    // a code-less applet open and this is the same choice, made visibly.
+    let (sw, body) = run(&mut app, &mut fs, &get);
+    assert_eq!(sw, Sw::OK);
+    assert!(find_tag(&body, TAG_PWS_PASSWORD as u16).is_some());
+
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            &apdu(INS_SET_PIN, 0, 0, &tlv(TAG_PASSWORD, b"1234"))
+        )
+        .0,
+        Sw::OK
+    );
+
+    // A new session: SELECT re-opens the code-less applet, but the PIN now exists
+    // and has not been presented.
+    let mut app = OathApplet::new(SERIAL, [0x22; 32], Some(test_mkek), &rng, &touch);
+    select(&mut app, &mut fs);
+    let (sw, body) = run(&mut app, &mut fs, &get);
+    assert_eq!(sw, Sw::SECURITY_STATUS_NOT_SATISFIED);
+    assert!(body.is_empty(), "a refusal carries no secret");
+
+    // VERIFY CODE (0xB1) is the other reader and gets the same gate.
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            &apdu(INS_VERIFY_CODE, 0, 0, &tlv(TAG_NAME, b"bank"))
+        )
+        .0,
+        Sw::SECURITY_STATUS_NOT_SATISFIED
+    );
+
+    // Present it, and the same session is served.
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            &apdu(INS_VERIFY_PIN, 0, 0, &tlv(TAG_PASSWORD, b"1234"))
+        )
+        .0,
+        Sw::OK
+    );
+    let (sw, body) = run(&mut app, &mut fs, &get);
+    assert_eq!(sw, Sw::OK);
+    assert_eq!(
+        find_tag(&body, TAG_PWS_PASSWORD as u16),
+        Some(&b"hunter2"[..])
+    );
+
+    // A wrong PIN revokes the unlock the correct one granted.
+    assert_ne!(
+        run(
+            &mut app,
+            &mut fs,
+            &apdu(INS_VERIFY_PIN, 0, 0, &tlv(TAG_PASSWORD, b"9999"))
+        )
+        .0,
+        Sw::OK
+    );
+    assert_eq!(
+        run(&mut app, &mut fs, &get).0,
+        Sw::SECURITY_STATUS_NOT_SATISFIED
+    );
+
+    // And a re-SELECT does not inherit it.
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            &apdu(INS_VERIFY_PIN, 0, 0, &tlv(TAG_PASSWORD, b"1234"))
+        )
+        .0,
+        Sw::OK
+    );
+    select(&mut app, &mut fs);
+    assert_eq!(
+        run(&mut app, &mut fs, &get).0,
+        Sw::SECURITY_STATUS_NOT_SATISFIED
+    );
+}

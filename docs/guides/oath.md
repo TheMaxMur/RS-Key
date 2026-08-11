@@ -132,6 +132,24 @@ Footguns:
 - `--touch` per account and the access password are independent hardenings.
   Use either, both, or neither.
 
+### The OTP PIN and the password safe
+
+Alongside the OATH accounts the applet can store a login, a password and a note
+per credential — the password-safe extension `nitropy` speaks. Those fields are
+secrets in a way a TOTP code is not: a code expires, a stored password does not.
+
+They are read by `GET CREDENTIAL`, and **the rule is that an OTP PIN, once set,
+is always required for it** — on a fresh connection, whether or not an access
+password is also configured, and again after every re-select. `VERIFY CODE` is
+gated the same way. Set the PIN with `nitropy nk3 secrets set-pin`; the card
+demands a touch when it mints one, so a PIN cannot be planted on a key someone
+briefly picked up.
+
+With **neither** a PIN nor an access password the store is open to anything on
+the CCID interface, exactly as the credential list is — that is the code-less
+default this applet shares with a YubiKey, not an oversight. If you keep
+passwords on the key, set one of the two.
+
 ## Manage
 
 ```sh
