@@ -848,3 +848,34 @@ fn otp_fuse_writes_require_user_presence() {
         "no burn without presence"
     );
 }
+
+/// A WRITE selector this build does not implement must be refused, not answered
+/// `9000`. The arm used to be a no-op OK framed as forward compatibility, which
+/// for a write is backwards: this is the provisioning path, so a newer host
+/// against older firmware was told the device identity had been written when
+/// nothing had. The inner P2 dispatch and `keydev_sign` already answer
+/// `INCORRECT_P1P2`, so only this arm disagreed.
+#[test]
+fn an_unimplemented_write_selector_is_refused() {
+    let rng = RefCell::new(LcgRng(7));
+    let platform = RefCell::new(FakePlatform::default());
+    let presence = RefCell::new(AlwaysConfirm);
+    let mut app = lock_app(&rng, &platform, &presence, None);
+    let mut fs = Fs::new(RamStorage::new());
+    fs.scan();
+
+    // The real P1 = 0x01 writes the phy record, as the control.
+    let blob = [0x00u8, 0x00];
+    assert_eq!(
+        run(&mut app, &mut fs, &apdu(0x80, INS_WRITE, 0x01, 0, &blob)).0,
+        Sw::OK,
+        "the control: an implemented selector still writes"
+    );
+    for p1 in [0x00u8, 0x03, 0x07, 0x42, 0xFF] {
+        assert_eq!(
+            run(&mut app, &mut fs, &apdu(0x80, INS_WRITE, p1, 0, &blob)).0,
+            Sw::INCORRECT_P1P2,
+            "WRITE P1={p1:#04x}"
+        );
+    }
+}

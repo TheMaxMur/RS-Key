@@ -271,8 +271,18 @@ impl<'a> RescueApplet<'a> {
                 self.platform.borrow_mut().set_time(epoch);
                 Sw::OK
             }
-            // An unknown P1 is a no-op OK.
-            _ => Sw::OK,
+            // Refuse a selector this build does not implement. The comment here
+            // used to read "an unknown P1 is a no-op OK", framed as forward
+            // compatibility — but for a WRITE that is backwards. This is the
+            // PROVISIONING path: P1=0x01 writes the phy record, i.e. VID/PID, the
+            // USB interfaces and the LED, the device's identity. A newer `rsk` or
+            // PicoForge against older firmware sends a selector that firmware does
+            // not know, is told the write landed, and the operator moves on
+            // believing the device is provisioned. Silent success is exactly what
+            // stops a host detecting the version mismatch, which is what 0x6A86
+            // exists for — and the inner P2 dispatch and `keydev_sign` right above
+            // already answer that way, so only this one arm disagreed.
+            _ => Sw::INCORRECT_P1P2,
         }
     }
 

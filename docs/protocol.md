@@ -513,6 +513,12 @@ firmware predates the rescue applet.
 | `1F` | `00` | `00` | — | — | REBOOT (warm; device drops off bus) |
 | `1F` | `01` | `00` | — | — | REBOOT to BOOTSEL bootloader |
 
+Every P1 this applet implements is in that table. **A P1 outside it answers
+`6A86`** (RS-Key `0x088E`+; earlier builds answered `9000` to an unimplemented
+`1C` selector without writing anything, so a newer client could not tell a
+too-old firmware from a completed write). Use that, and the SELECT handshake
+above, to detect a firmware that predates a selector you send.
+
 > ### ⚠️ Irreversible operations — handle with explicit confirmation
 > `1B/58` (`"LOCK58"`) permanently locks OTP page-58; `1B/48` (`"ROLLBK"`)
 > permanently sets the anti-rollback-required fuse. **Both are one-way fuse burns

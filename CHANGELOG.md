@@ -40,6 +40,22 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Security
 
+- **The rescue applet no longer reports a write it did not perform.** `WRITE`
+  (`0x1C`) answered `9000` to any selector it does not implement — measured, P1
+  `0x03` / `0x07` / `0x42` / `0xFF` each returned success and wrote nothing while
+  the real `P1=0x01` grew the phy record in the same run. The comment called it a
+  no-op OK, framed as forward compatibility, and for a write that is backwards:
+  this is the **provisioning** path, where `P1=0x01` writes VID/PID, the USB
+  interfaces and the LED — the device's identity. A newer `rsk` or PicoForge
+  against older firmware sends a selector that firmware does not know, is told the
+  write landed, and the operator moves on believing the device is provisioned.
+  Silent success is precisely what stops a host detecting the version mismatch,
+  which is what `0x6A86` exists for. The inconsistency was inside one function:
+  the inner P2 dispatch and `keydev_sign` directly above already refuse an unknown
+  selector that way. No YubiKey comparison is possible and that is a measured
+  fact, not a skipped step — the rescue applet is RS-Key's own and has no
+  counterpart on any other card. **bcdDevice → 0x088E.**
+
 - **OpenPGP's security-status reset refuses a password reference that does not
   exist.** `VERIFY` with `P1=FF` is the standard's way for a host to drop its own
   privileges, and §7.2.2 defines `P2` = `81` / `82` / `83`. Ours matched those
