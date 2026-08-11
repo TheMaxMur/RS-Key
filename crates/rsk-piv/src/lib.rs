@@ -406,13 +406,18 @@ impl PivApplet<'_> {
             }
             return Sw::retries(left);
         }
-        match check_ref(dev, fs, EF_PIN, RETRY_PIN, apdu.data) {
-            Sw::OK => {
-                self.sess.has_pin = true;
-                Sw::OK
-            }
-            sw => sw,
-        }
+        // SP 800-73-4 Part 2 §3.2.1.1 on a mismatch: "the card command shall
+        // fail, the PIV Card Application shall return the status word '63 CX',
+        // **the security status of the key reference shall be set to FALSE**, and
+        // the retry counter … shall be decremented by one." A YubiKey 5.7.4 does
+        // exactly that, measured: sign, one wrong VERIFY, and the next signature
+        // is 6982. Ours kept signing, so a user who blocked the card by typing
+        // wrong PINs — the human reflex, and the standard advice for a card they
+        // think is compromised — did not stop an attacker who already had a live
+        // verified session.
+        let sw = check_ref(dev, fs, EF_PIN, RETRY_PIN, apdu.data);
+        self.sess.has_pin = sw.is_ok();
+        sw
     }
 
     /// CHANGE REFERENCE DATA (INS 0x24): `old ‖ new`, old length taken from

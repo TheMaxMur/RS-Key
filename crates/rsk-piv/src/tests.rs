@@ -3917,3 +3917,71 @@ fn a_new_reference_shorter_than_the_minimum_is_refused() {
         WRONG_DATA
     );
 }
+
+/// A failed VERIFY must drop a standing one. SP 800-73-4 Part 2 §3.2.1.1 says the
+/// security status of the key reference **shall** be set to FALSE on a mismatch,
+/// and a YubiKey 5.7.4 does it — measured: sign, one wrong VERIFY, next signature
+/// `6982`. Ours kept signing, so entering wrong PINs at a card you think is
+/// compromised — the human reflex, and the standard advice — did not stop an
+/// attacker holding a session in which the real PIN had already been entered.
+#[test]
+fn a_failed_verify_revokes_the_standing_one() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    assert_eq!(
+        run(&mut app, &mut fs, INS_VERIFY, 0, 0x80, &DEFAULT_PIN).0,
+        Sw::OK
+    );
+    // Generate a key so there is a PIN-gated operation to hold the status against.
+    let (sw, _) = run(
+        &mut app,
+        &mut fs,
+        INS_ASYM_KEYGEN,
+        0,
+        0x9A,
+        &[0xAC, 0x03, 0x80, 0x01, 0x11],
+    );
+    assert_eq!(sw, Sw::OK);
+    let sign = |app: &mut PivApplet, fs: &mut Fs<_>| {
+        let inner = [&[0x82u8, 0x00, 0x81, 32][..], &[0u8; 32][..]].concat();
+        let body = [&[0x7Cu8, inner.len() as u8][..], &inner[..]].concat();
+        run(app, fs, INS_AUTHENTICATE, 0x11, 0x9A, &body).0
+    };
+    assert_eq!(sign(&mut app, &mut fs), Sw::OK, "the control: it signs");
+
+    // One wrong PIN.
+    let mut wrong = *b"99999999";
+    wrong[6..].copy_from_slice(&[0xFF, 0xFF]);
+    assert_eq!(
+        run(&mut app, &mut fs, INS_VERIFY, 0, 0x80, &wrong).0,
+        Sw::new(0x63, 0xC2)
+    );
+    assert_eq!(
+        sign(&mut app, &mut fs),
+        Sw::SECURITY_STATUS_NOT_SATISFIED,
+        "a failed VERIFY must revoke the standing one"
+    );
+
+    // Re-verifying restores it, and blocking the PIN leaves nothing standing.
+    assert_eq!(
+        run(&mut app, &mut fs, INS_VERIFY, 0, 0x80, &DEFAULT_PIN).0,
+        Sw::OK
+    );
+    assert_eq!(sign(&mut app, &mut fs), Sw::OK);
+    for _ in 0..3 {
+        run(&mut app, &mut fs, INS_VERIFY, 0, 0x80, &wrong);
+    }
+    assert_eq!(
+        run(&mut app, &mut fs, INS_VERIFY, 0, 0x80, &[]).0,
+        Sw::PIN_BLOCKED
+    );
+    assert_eq!(
+        sign(&mut app, &mut fs),
+        Sw::SECURITY_STATUS_NOT_SATISFIED,
+        "a blocked PIN must not leave a session signing"
+    );
+}

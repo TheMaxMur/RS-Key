@@ -40,6 +40,20 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Security
 
+- **A failed PIV VERIFY now drops the standing one.** SP 800-73-4 Part 2
+  §3.2.1.1 is explicit that on a mismatch "the card command shall fail, the PIV
+  Card Application shall return the status word `63 CX`, **the security status of
+  the key reference shall be set to FALSE**", and a YubiKey 5.7.4 does exactly
+  that — measured: sign, one wrong VERIFY, and the next signature is `6982`. Ours
+  kept signing: a wrong PIN reported `63 CX` and left the session's standing
+  verification alone, and three wrong PINs blocked the reference (`6983`) while
+  PIN-gated signing continued on the same session. Bounded to a live session, but
+  it meant that entering wrong PINs at a card you believe is compromised — the
+  human reflex, and the standard advice — did nothing to an attacker who already
+  had a session in which the real PIN had been entered. `6983` then described the
+  card's willingness to take another PIN rather than its capability.
+  **bcdDevice → 0x088B.**
+
 - **PIV no longer accepts a 3-digit PIN as its own credential.** The applet
   checked nothing about a *new* PIN or PUK, so `CHANGE REFERENCE DATA` and
   `RESET RETRY COUNTER` would set the card's authentication floor to three
