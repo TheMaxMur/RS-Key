@@ -10,10 +10,34 @@ use crate::consts::*;
 /// Historical bytes.
 pub const HISTORICAL_BYTES: &[u8] = &[0x00, 0x31, 0x84, 0x73, 0x80, 0x01, 0xC0, 0x05, 0x90, 0x00];
 
+/// The largest value PUT DATA accepts and GET DATA returns whole, for both DO
+/// classes DO C0 sizes: the cardholder certificate (bytes 5-6) and the special
+/// DOs (bytes 7-8). One owner — C0 is built from it below and `SCRATCH` is it, so
+/// the announcement cannot drift from what the card can actually serve.
+///
+/// The value is the CCID transport's real body ceiling: a frame carries
+/// `MAX_CCID_MSG - 10` = 2038 bytes and the applet is handed that minus the two
+/// status bytes. Announcing the rounder 2048 a YubiKey does would put the cliff
+/// back, twelve bytes further out — `ResBuf::extend` writes *nothing* when the
+/// body does not fit and its `false` is discarded, so an over-long DO would read
+/// as empty with `9000`. `rsk-device` holds the compile-time assertion that ties
+/// this to `RESP_CAP`; neither crate can see the other's constant.
+pub const MAX_DO_BYTES: usize = 2036;
+
 /// Extended capabilities: no secure messaging, GET CHALLENGE (128), key import,
 /// PW-status puttable, private DO, changeable algo attrs, AES, KDF-DO.
-pub const EXTENDED_CAPABILITIES: &[u8] =
-    &[0x7f, 0x00, 0x00, 0x80, 0x08, 0x00, 0x08, 0x00, 0x00, 0x01];
+pub const EXTENDED_CAPABILITIES: &[u8] = &[
+    0x7f,
+    0x00,
+    0x00,
+    0x80,
+    (MAX_DO_BYTES >> 8) as u8,
+    MAX_DO_BYTES as u8,
+    (MAX_DO_BYTES >> 8) as u8,
+    MAX_DO_BYTES as u8,
+    0x00,
+    0x01,
+];
 
 /// Extended length information: max cmd 0x07ff, max rsp 0x0800.
 pub const EXLEN_INFO: &[u8] = &[0x02, 0x02, 0x07, 0xff, 0x02, 0x02, 0x08, 0x00];

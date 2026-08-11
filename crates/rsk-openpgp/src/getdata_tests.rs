@@ -175,21 +175,21 @@ fn get_next_walks_to_following_priv_do() {
 }
 
 #[test]
-fn oversized_algo_attr_truncates_without_panic() {
-    // run-3 #1 / run-2 F3 regression: Fs::read reports the value's FULL stored
-    // length; an over-long DO (here a 1500-byte C1 algorithm attribute) must
-    // clamp to the output buffer, never slice past it (which would panic-reset).
+fn oversized_do_is_refused_not_truncated() {
+    // run-3 #1 / run-2 F3 regression: `Fs::read` reports the value's FULL stored
+    // length, so an over-long DO (here a 1500-byte C1 algorithm attribute) must
+    // never be sliced past the output buffer — that would panic-reset the device.
+    // It used to clamp and answer `9000`, which is the same short-body-reported-
+    // as-complete lie PUT DATA's length bound now prevents at the source; only a
+    // value written by an older build can still get here, and it says so.
     let mut fs = fs();
     fs.put(EF_ALGO_PRIV1, &[0x01u8; 1500]).unwrap();
     let a = aid();
     let mut out = [0u8; 1024];
     let mut cur = None;
     let (n, sw) = get_data(EF_ALGO_SIG, false, false, &mut fs, &a, &mut cur, &mut out);
-    assert_eq!(sw, Sw::OK);
-    assert!(
-        n <= out.len(),
-        "returned length clamped to the output buffer"
-    );
+    assert_eq!(sw, Sw::MEMORY_FAILURE);
+    assert_eq!(n, 0, "an error carries no body");
 }
 
 /// Every attribute the card advertises must survive PUT DATA → GET DATA byte for

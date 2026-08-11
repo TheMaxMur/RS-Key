@@ -30,6 +30,15 @@ use crate::Hooks;
 // OATH LIST) overrun the frame, and `run_xfr` silently dropped the tail incl. SW.
 const RESP_CAP: usize = 2038;
 
+// OpenPGP announces a maximum DO length in its own crate, which cannot see this
+// one; this is the only place both are visible. A DO longer than the body an
+// applet is handed (`RESP_CAP - 2`, the status bytes being appended after) does
+// not truncate on the way out — `ResBuf::extend` writes nothing at all and its
+// `false` is discarded — so an announcement above this ceiling would make GET
+// DATA answer `9000` with an empty body. E3's class: two owners of one meaning,
+// no compiler between them.
+const _: () = assert!(rsk_openpgp::files::MAX_DO_BYTES <= RESP_CAP - 2);
+
 /// Registration-order indices of the applets whose RSA keygen is fast-pathed.
 const IDX_OPENPGP: usize = 1;
 const IDX_PIV: usize = 5;

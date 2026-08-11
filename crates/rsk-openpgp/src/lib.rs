@@ -103,8 +103,11 @@ pub(crate) fn check_uif<S: Storage>(
     Ok(())
 }
 
-/// Scratch buffer for building a GET DATA response or the SELECT FCI. The largest
-/// single DO (`0xFA` algorithm information, three key slots) is ~370 bytes.
+/// Scratch buffer for the SELECT FCI and the PSO results. **Not** for GET DATA,
+/// which builds into the caller's response buffer: a stored DO can be as long as
+/// DO C0 announces, and giving the applet private RAM that size costs more than
+/// the stack floor has. The largest thing built here is the `0xFA` algorithm
+/// information at ~370 bytes.
 const SCRATCH: usize = 1024;
 
 /// The OpenPGP applet. Holds the per-power-cycle session state (`has_pw1/2/3`
@@ -216,15 +219,27 @@ impl<'a> OpenpgpApplet<'a> {
         if apdu.nc > 0 {
             return Sw::WRONG_LENGTH;
         }
+        // Both arms build straight into the response buffer. Going via `scratch`
+        // and copying meant the applet had to own RAM as large as the biggest DO
+        // it could return, and the RP2350's stack floor does not have a spare
+        // 2 KiB — that is why the scratch was 1024 while DO C0 announced twice
+        // that, and why the announcement was the thing that had to be wrong.
+        let room = res.capacity() - res.len();
         if fid == consts::EF_CH_CERT {
             // Cardholder certificate (7F21): return the SELECT-DATA-selected
             // occurrence (EF_CH_1/2/3). A free read; an unset cert is empty.
             let stor = consts::EF_CH_1 + self.sess.cert_occ as u16;
-            if let Some(n) = fs.read(stor, &mut self.scratch) {
-                // `fs.read` returns the value's FULL stored length while the
-                // backend copies only what fit; clamp before slicing so an
-                // over-long stored cert cannot force an OOB panic (reset).
-                res.extend(&self.scratch[..n.min(self.scratch.len())]);
+            if let Some(n) = fs.read(stor, res.spare_mut()) {
+                // `fs.read` reports the value's FULL stored length while the
+                // backend copies only what fit. PUT DATA now bounds every write
+                // at MAX_DO_BYTES, so this can only be a value an older build
+                // wrote through the 2037-byte chaining buffer — one byte more
+                // than fits. Say so instead of handing back a short body with
+                // `9000`, which is the whole defect this rule exists to end.
+                if n > room {
+                    return Sw::MEMORY_FAILURE;
+                }
+                res.commit(n);
             }
             return Sw::OK;
         }
@@ -235,11 +250,10 @@ impl<'a> OpenpgpApplet<'a> {
             fs,
             &self.full_aid,
             &mut self.current_ef,
-            &mut self.scratch,
+            res.spare_mut(),
         );
         if sw.is_ok() {
-            let n = n.min(self.scratch.len());
-            res.extend(&self.scratch[..n]);
+            res.commit(n);
         }
         sw
     }
@@ -248,6 +262,13 @@ impl<'a> OpenpgpApplet<'a> {
     /// status (0xC4) touch the cert / DEK / status files and route to their own
     /// handlers; every other DO is a generic write.
     fn handle_put_data<S: Storage>(&mut self, fid: u16, apdu: &Apdu, fs: &mut Fs<S>) -> Sw {
+        // One owner for the length DO C0 announces, checked before the routing
+        // splits: the cardholder certificate below writes flash without going
+        // through `putdata::put_data`, so a check living only there would guard
+        // every DO except the one C0's own bytes 5-6 are about.
+        if apdu.data.len() > files::MAX_DO_BYTES {
+            return consts::WRONG_DATA;
+        }
         if fid == consts::EF_CH_CERT {
             // Cardholder certificate write (PW3): the SELECT-DATA occurrence
             // picks the EF_CH_1/2/3 instance; empty data deletes it.

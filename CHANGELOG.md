@@ -40,6 +40,34 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Security
 
+- **OpenPGP no longer returns a truncated data object as if it were complete.**
+  DO `C0` announced room for a 2048-byte cardholder certificate and 2048-byte
+  special DOs, `PUT DATA` stored whatever it was given, and `GET DATA` then
+  clamped the read to the applet's 1024-byte scratch and answered `9000`. A
+  1500-byte certificate — an ordinary X.509 size, and exactly what OpenPGP Card
+  3.4 §9.7 defines the object for — wrote OK, read back 1024 bytes and reported
+  success: 476 bytes gone with nothing on the wire to say so, which is silent
+  corruption rather than a status-code nit. The same cliff hit Login data (`5E`),
+  URL (`5F50`) and the private-use DOs. Both numbers are now one constant, and it
+  is the transport's real ceiling — 2036, the CCID frame's 2038-byte body less
+  the status word — so values up to it round trip byte for byte and a longer one
+  is refused at the write with `6A80`, the answer a YubiKey 5.7.4 gives past its
+  own limit. **The announcement went down, not up:** 2048 was never deliverable,
+  because `ResBuf::extend` writes *nothing* when a body does not fit, so an
+  over-long DO would have come back empty with `9000` — the same lie twelve bytes
+  further out. `rsk-device`, the one crate that sees both, now carries a
+  compile-time assertion tying them. The length is checked once, before `PUT
+  DATA` routes, because the cardholder certificate is the one DO whose target
+  file is chosen by session state (`SELECT DATA`'s occurrence) rather than by its
+  tag, so it writes flash on its own path and a check in the generic writer would
+  have missed exactly the object `C0`'s bytes 5-6 are about. An earlier build's
+  chaining buffer capped a write at 2037, one byte past the new limit, so the two
+  read paths no longer clamp either: a stored value they cannot return whole
+  answers `6581` instead of a short body under `9000`. That keeps the run-3 #1
+  guarantee — never slice past the buffer, never panic-reset — and drops only the
+  part of it that reported the truncation as success.
+  **bcdDevice → 0x0887.**
+
 - **A stack overflow now faults instead of corrupting RAM.** The firmware links
   through `flip-link`, which puts the stack below `.data`/`.bss` so running off
   the end hits unmapped memory under `0x20000000` rather than overwriting the

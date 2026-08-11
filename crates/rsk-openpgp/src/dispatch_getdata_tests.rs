@@ -156,3 +156,121 @@ fn verify_default_pw1_via_dispatcher_is_ok() {
         "default PW1 must verify through the dispatcher on a provisioned FS"
     );
 }
+
+/// A cardholder certificate the size DO C0 announces must survive the round trip
+/// whole, and one byte past it must be refused at the write instead of coming
+/// back short with `9000`. Driven through the dispatcher because the truncation
+/// lived in the applet's own scratch, not in `put_data` or `get_data`: a 1500-byte
+/// certificate — an ordinary X.509 size, and §9.7's named use — used to write OK,
+/// read back 1024 bytes and report success, losing 476 with nothing to tell the
+/// host. A YubiKey 5.7.4 announces the same 2048 and holds to it exactly.
+#[test]
+fn a_do_the_card_announces_room_for_reads_back_whole() {
+    let mut fs = setup();
+    let rng = RefCell::new(CountRng(0));
+    let presence = RefCell::new(crate::AlwaysConfirm);
+    let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
+    let mut disp = Dispatcher::default();
+    let mut applets: [&mut dyn rsk_sdk::Applet<Fs<RamStorage>>; 1] = [&mut app];
+    assert_eq!(
+        dispatch(&mut disp, &mut applets, &mut fs, SELECT_OPENPGP).1,
+        Sw::OK
+    );
+    let mut verify = std::vec![
+        0x00u8,
+        0x20,
+        0x00,
+        0x83,
+        crate::consts::PW3_DEFAULT.len() as u8
+    ];
+    verify.extend_from_slice(crate::consts::PW3_DEFAULT);
+    assert_eq!(
+        dispatch(&mut disp, &mut applets, &mut fs, &verify).1,
+        Sw::OK
+    );
+
+    // C0 bytes 5-6 (certificate) and 7-8 (special DOs) are the announcement.
+    let (c0, sw) = dispatch(
+        &mut disp,
+        &mut applets,
+        &mut fs,
+        &[0x00, 0xCA, 0x00, 0xC0, 0x00],
+    );
+    assert_eq!(sw, Sw::OK);
+    let announced = u16::from_be_bytes([c0[4], c0[5]]) as usize;
+    assert_eq!(announced, crate::files::MAX_DO_BYTES);
+    assert_eq!(u16::from_be_bytes([c0[6], c0[7]]) as usize, announced);
+
+    // Chained PUT DATA 7F21 — 255-byte segments, the shape a host uses.
+    let value: Vec<u8> = (0..announced).map(|i| (i * 7 + 11) as u8).collect();
+    let write = |disp: &mut Dispatcher,
+                 applets: &mut [&mut dyn rsk_sdk::Applet<Fs<RamStorage>>],
+                 fs: &mut Fs<RamStorage>,
+                 v: &[u8]| {
+        let mut rest = v;
+        while rest.len() > 255 {
+            let mut a = std::vec![0x10u8, 0xDA, 0x7F, 0x21, 255];
+            a.extend_from_slice(&rest[..255]);
+            let sw = dispatch(disp, applets, fs, &a).1;
+            if sw != Sw::OK {
+                return sw;
+            }
+            rest = &rest[255..];
+        }
+        let mut a = std::vec![0x00u8, 0xDA, 0x7F, 0x21, rest.len() as u8];
+        a.extend_from_slice(rest);
+        dispatch(disp, applets, fs, &a).1
+    };
+    assert_eq!(
+        write(&mut disp, &mut applets, &mut fs, &value),
+        Sw::OK,
+        "a certificate of exactly the announced length must be accepted"
+    );
+
+    // A 2048-byte DO exceeds one short-Le response, so the read walks the `61xx`
+    // GET RESPONSE chain the way gpg and opensc do.
+    let read_cert = |disp: &mut Dispatcher,
+                     applets: &mut [&mut dyn rsk_sdk::Applet<Fs<RamStorage>>],
+                     fs: &mut Fs<RamStorage>| {
+        let (mut body, mut sw) = dispatch(disp, applets, fs, &[0x00, 0xCA, 0x7F, 0x21, 0x00]);
+        while sw.0 & 0xFF00 == 0x6100 {
+            let (more, next) = dispatch(disp, applets, fs, &[0x00, 0xC0, 0x00, 0x00, sw.0 as u8]);
+            body.extend_from_slice(&more);
+            sw = next;
+        }
+        (body, sw)
+    };
+    let (back, sw) = read_cert(&mut disp, &mut applets, &mut fs);
+    assert_eq!(sw, Sw::OK);
+    assert_eq!(
+        back.len(),
+        announced,
+        "read back short — the 9000 would be a lie"
+    );
+    assert_eq!(back, value, "read back different bytes");
+
+    // One byte past the announcement: refused at the write, and the stored value
+    // is left alone rather than half-replaced.
+    let mut too_long = value.clone();
+    too_long.push(0xFF);
+    assert_eq!(
+        write(&mut disp, &mut applets, &mut fs, &too_long),
+        crate::consts::WRONG_DATA,
+        "one byte over the announced maximum must be refused, not truncated"
+    );
+    let (still, _) = read_cert(&mut disp, &mut applets, &mut fs);
+    assert_eq!(
+        still, value,
+        "a refused write must not disturb the stored DO"
+    );
+
+    // Far past it the dispatcher's chain buffer ends the conversation before the
+    // applet sees a thing. Which status that is belongs to the E9/E28 CLA sweep
+    // (it is `CLA_NOT_SUPPORTED` or `WRONG_LENGTH` depending on which segment
+    // overflows); what must hold either way is that it is not a success and the
+    // stored certificate is untouched.
+    let way_over = std::vec![0x5Au8; announced + 512];
+    assert_ne!(write(&mut disp, &mut applets, &mut fs, &way_over), Sw::OK);
+    let (survived, _) = read_cert(&mut disp, &mut applets, &mut fs);
+    assert_eq!(survived, value);
+}

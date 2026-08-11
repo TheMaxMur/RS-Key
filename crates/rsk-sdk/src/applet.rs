@@ -51,6 +51,20 @@ impl<'a> ResBuf<'a> {
             false
         }
     }
+    /// The unwritten tail, so a producer can fill the response **in place**
+    /// instead of building the body in a buffer of its own and copying it in.
+    /// A GET DATA that does the latter needs private RAM as large as the object
+    /// it may return, which on a 520 KiB part is the difference between serving
+    /// a 2 KiB data object and not. Commit what was written with [`Self::commit`].
+    pub fn spare_mut(&mut self) -> &mut [u8] {
+        &mut self.buf[self.len..]
+    }
+    /// Take `n` bytes written through [`Self::spare_mut`] into the body.
+    /// Saturates at the capacity, so a miscounted producer cannot claim more
+    /// than it could have written.
+    pub fn commit(&mut self, n: usize) {
+        self.len = self.buf.len().min(self.len + n);
+    }
     pub fn as_slice(&self) -> &[u8] {
         &self.buf[..self.len]
     }

@@ -80,11 +80,13 @@ pub fn get_data<S: Storage>(
     };
     // `build` reports a DO's full stored length, which can exceed `out` when an
     // over-long object was stored (Fs::read returns the value's full length, the
-    // Func(AlgoInfo) C1/C2/C3 arm returns fs.size() directly). Clamp before any
-    // slice so an oversized object truncates instead of panicking here
-    // (`&out[..data_len]`) or upstream (`res.extend(&scratch[..n])`).
+    // Func(AlgoInfo) C1/C2/C3 arm returns fs.size() directly). PUT DATA bounds
+    // every write at MAX_DO_BYTES = out.len(), so reaching here means a value an
+    // older build wrote through the wider chaining buffer. Refuse rather than
+    // slice: a short body under `9000` is indistinguishable from a complete one,
+    // and the caller would panic on `&out[..data_len]` if we did not.
     if data_len > out.len() {
-        data_len = out.len();
+        return (0, Sw::MEMORY_FAILURE);
     }
     // GET DATA returns a PRIMITIVE DO's bare value (gpg/opensc want the value,
     // not its tag+length), but a CONSTRUCTED template DO keeps its outer
