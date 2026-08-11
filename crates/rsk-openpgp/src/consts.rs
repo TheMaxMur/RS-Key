@@ -84,6 +84,19 @@ pub const EF_DEK_PW1: KeyFid = KeyFid::new(0x109a); // DEK wrapped under PW1
 pub const EF_DEK_RC: KeyFid = KeyFid::new(0x109b); // DEK wrapped under reset code
 pub const EF_DEK_PW3: KeyFid = KeyFid::new(0x109c); // DEK wrapped under PW3
 pub const EF_DEK_PWPIV: u16 = 0x109d;
+/// Staging slots for a DEK re-wrap, so that updating a PIN — two flash records,
+/// the verifier and the DEK copy sealed under it — survives losing power between
+/// them. Each holds `[target FID low byte] ‖ [the record the target takes]`.
+///
+/// **One slot per target, not one shared slot.** A shared one is silently
+/// destroyed by the next PIN update of any kind: a PW3 change that tore leaves a
+/// stage pending, and the very next PW1 change — even one the card *refuses* —
+/// overwrites it, taking the recovery with it. Only the update that owns a slot
+/// ever writes it. Retired by [`crate::pin::load_dek`] or by the commit that
+/// completes the update.
+pub const EF_DEK_STAGE_PW1: KeyFid = KeyFid::new(0x109e);
+pub const EF_DEK_STAGE_RC: KeyFid = KeyFid::new(0x109f);
+pub const EF_DEK_STAGE_PW3: KeyFid = KeyFid::new(0x10a1);
 pub const EF_CH_1: u16 = 0x1f21;
 pub const EF_CH_2: u16 = 0x1f22;
 pub const EF_CH_3: u16 = 0x1f23;

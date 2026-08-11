@@ -697,3 +697,277 @@ fn an_overlong_pw_status_record_cannot_panic_the_retry_writers() {
     let n = fs.read(EF_PW_PRIV, &mut pw).unwrap();
     assert_eq!((n, pw[PW1_RETRY_IDX], pw[pw_retry_idx(EF_RC)]), (8, 3, 0));
 }
+
+/// A flash that stops accepting writes once its budget runs out — the software
+/// half of `tools/emu --power-cut`, so a torn state can be produced by driving
+/// the REAL command rather than by hand-assembling what it might have left
+/// behind. Reads keep working, which is what a card does after a failed write.
+struct DyingStorage {
+    inner: RamStorage,
+    budget: std::rc::Rc<std::cell::Cell<usize>>,
+}
+impl DyingStorage {
+    fn new() -> (Self, std::rc::Rc<std::cell::Cell<usize>>) {
+        let budget = std::rc::Rc::new(std::cell::Cell::new(usize::MAX));
+        (
+            Self {
+                inner: RamStorage::new(),
+                budget: budget.clone(),
+            },
+            budget,
+        )
+    }
+    fn spend(&mut self) -> rsk_sdk::error::Result<()> {
+        match self.budget.get() {
+            0 => Err(rsk_sdk::error::Error::MemoryFatal),
+            n => {
+                self.budget.set(n - 1);
+                Ok(())
+            }
+        }
+    }
+}
+impl rsk_fs::Storage for DyingStorage {
+    fn read(&mut self, fid: u16, buf: &mut [u8]) -> Option<usize> {
+        self.inner.read(fid, buf)
+    }
+    fn write(&mut self, fid: u16, data: &[u8]) -> rsk_sdk::error::Result<()> {
+        self.spend()?;
+        self.inner.write(fid, data)
+    }
+    fn remove(&mut self, fid: u16) -> rsk_sdk::error::Result<()> {
+        self.spend()?;
+        self.inner.remove(fid)
+    }
+    fn size(&mut self, fid: u16) -> Option<usize> {
+        self.inner.size(fid)
+    }
+    fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) -> bool {
+        self.inner.for_each_key(f)
+    }
+}
+
+/// Drive the REAL `change_pin` with the flash dying partway through, at every
+/// write it makes, and require the card to be usable afterwards in every case.
+///
+/// Updating a PIN writes the verifier and the DEK copy sealed under it, and a cut
+/// between them used to leave the new verifier standing over a copy sealed under
+/// the PIN nobody holds: the new PIN verified and everything needing the DEK
+/// answered `6400`. Ordering cannot fix it — mirrored, the tear is mirrored — so
+/// the update stages, writes the verifier, then commits, and `load_dek` finishes
+/// an interrupted one.
+///
+/// This drives the command, not the helpers. Rewiring `change_pin` back to a
+/// straight re-wrap has to fail here, which is the point.
+#[test]
+fn change_pin_is_recoverable_at_every_write_it_makes() {
+    const NEW: &[u8] = b"87654321";
+    let d = dev();
+
+    for budget in 0..12 {
+        let (storage, tap) = DyingStorage::new();
+        let mut fs = Fs::new(storage);
+        fs.scan();
+        scan_files(&d, &mut fs, &mut CountRng(0)).unwrap();
+        let mut sess = Session::new();
+        assert_eq!(
+            verify(
+                &d,
+                &mut fs,
+                &mut sess,
+                &mut CountRng(0),
+                0x00,
+                PW3_MODE83,
+                PW3_DEFAULT
+            ),
+            Sw::OK
+        );
+        let mut want = [0u8; DEK_SIZE];
+        load_dek(&d, &mut fs, &sess, &mut want).unwrap();
+
+        tap.set(budget);
+        let mut data = PW3_DEFAULT.to_vec();
+        data.extend_from_slice(NEW);
+        let sw = change_pin(
+            &d,
+            &mut fs,
+            &mut sess,
+            &mut CountRng(3),
+            0x00,
+            PW3_MODE83,
+            &data,
+        );
+        tap.set(usize::MAX);
+
+        // Whichever PIN the card came back on, that PIN must open the DEK — and
+        // it must be the SAME key, not a new one.
+        let mut after = Session::new();
+        if verify(
+            &d,
+            &mut fs,
+            &mut after,
+            &mut CountRng(0),
+            0x00,
+            PW3_MODE83,
+            NEW,
+        ) != Sw::OK
+        {
+            after = Session::new();
+            assert_eq!(
+                verify(
+                    &d,
+                    &mut fs,
+                    &mut after,
+                    &mut CountRng(0),
+                    0x00,
+                    PW3_MODE83,
+                    PW3_DEFAULT
+                ),
+                Sw::OK,
+                "budget {budget}: neither PIN verifies — the card is unusable"
+            );
+        }
+        let mut got = [0u8; DEK_SIZE];
+        load_dek(&d, &mut fs, &after, &mut got).unwrap_or_else(|e| {
+            panic!("budget {budget} (change returned {sw:?}): the standing PIN cannot open the DEK: {e:?}")
+        });
+        assert_eq!(got, want, "budget {budget}: recovered a different key");
+        assert!(
+            !fs.has_key(EF_DEK_STAGE_PW3),
+            "budget {budget}: a stage survived a recovered card"
+        );
+    }
+}
+
+/// One staging slot per target. A shared slot is destroyed by the next PIN update
+/// of any kind — including one the card refuses — and that takes the pending
+/// recovery with it.
+#[test]
+fn a_pending_stage_survives_an_unrelated_pin_update() {
+    let d = dev();
+    let mut fs = setup();
+    let mut sess = Session::new();
+    verify(
+        &d,
+        &mut fs,
+        &mut sess,
+        &mut CountRng(0),
+        0x00,
+        PW3_MODE83,
+        PW3_DEFAULT,
+    );
+    let mut dek = [0u8; DEK_SIZE];
+    load_dek(&d, &mut fs, &sess, &mut dek).unwrap();
+
+    // A PW3 update torn after its verifier: PW3 stands on b"87654321", its copy
+    // is still sealed under the default, and the stage holds the new one.
+    const NEW3: &[u8] = b"87654321";
+    stage_dek(&d, &mut fs, &mut CountRng(9), EF_DEK_PW3, NEW3, &dek).unwrap();
+    put_verifier(&d, &mut fs, EF_PW3, NEW3).unwrap();
+
+    // Now a completely unrelated PW1 change, and a refused one for good measure.
+    let mut s1 = Session::new();
+    verify(
+        &d,
+        &mut fs,
+        &mut s1,
+        &mut CountRng(0),
+        0x00,
+        PW1_MODE81,
+        PW1_DEFAULT,
+    );
+    let mut short = PW1_DEFAULT.to_vec();
+    short.extend_from_slice(b"12");
+    change_pin(
+        &d,
+        &mut fs,
+        &mut s1,
+        &mut CountRng(4),
+        0x00,
+        PW1_MODE81,
+        &short,
+    );
+    let mut ok = PW1_DEFAULT.to_vec();
+    ok.extend_from_slice(b"654321");
+    assert_eq!(
+        change_pin(
+            &d,
+            &mut fs,
+            &mut s1,
+            &mut CountRng(5),
+            0x00,
+            PW1_MODE81,
+            &ok
+        ),
+        Sw::OK
+    );
+
+    // PW3's recovery must still be there.
+    let mut s3 = Session::new();
+    assert_eq!(
+        verify(
+            &d,
+            &mut fs,
+            &mut s3,
+            &mut CountRng(0),
+            0x00,
+            PW3_MODE83,
+            NEW3
+        ),
+        Sw::OK
+    );
+    let mut got = [0u8; DEK_SIZE];
+    load_dek(&d, &mut fs, &s3, &mut got)
+        .expect("the PW3 stage was destroyed by an unrelated PW1 update");
+    assert_eq!(got, dek);
+}
+
+/// A refused new PIN must leave nothing behind. Staging before the value is
+/// judged left an orphan record holding the DEK sealed under a value the card
+/// rejected, which nothing ever retires.
+#[test]
+fn a_refused_new_pin_leaves_no_staged_record() {
+    let d = dev();
+    let mut fs = setup();
+    let mut sess = Session::new();
+    verify(
+        &d,
+        &mut fs,
+        &mut sess,
+        &mut CountRng(0),
+        0x00,
+        PW3_MODE83,
+        PW3_DEFAULT,
+    );
+    let mut data = PW3_DEFAULT.to_vec();
+    data.extend_from_slice(b"12"); // under PW3_MIN_LEN
+    assert_ne!(
+        change_pin(
+            &d,
+            &mut fs,
+            &mut sess,
+            &mut CountRng(3),
+            0x00,
+            PW3_MODE83,
+            &data
+        ),
+        Sw::OK
+    );
+    assert!(!fs.has_key(EF_DEK_STAGE_PW3));
+    // And the card is untouched.
+    let mut s2 = Session::new();
+    assert_eq!(
+        verify(
+            &d,
+            &mut fs,
+            &mut s2,
+            &mut CountRng(0),
+            0x00,
+            PW3_MODE83,
+            PW3_DEFAULT
+        ),
+        Sw::OK
+    );
+    let mut got = [0u8; DEK_SIZE];
+    load_dek(&d, &mut fs, &s2, &mut got).unwrap();
+}

@@ -40,6 +40,34 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Security
 
+- **A PIN change interrupted by losing power no longer looks like a dead card.**
+  Updating an OpenPGP PIN writes two flash records — the verifier, and the copy
+  of the data-encryption key sealed under that PIN — and a cut between them left
+  the new verifier standing over a copy sealed under the PIN nobody holds any
+  more. The new PIN verified and every operation needing the key answered `6400`.
+  Measured on `tools/emu --power-cut`, reproducible at every byte offset in the
+  window. Ordering cannot fix it: whichever record lands first, the tear leaves
+  the other one describing the other PIN, which is why the two paths that already
+  wrote the key copy first were no safer. The update now stages the new copy in
+  its own slot, writes the verifier, then commits, and the next `VERIFY` finishes
+  an interrupted one — the detection-based recovery `migrate_pin_kbase` has always
+  used for the kbase migration, applied to all four sites that update a verifier
+  and its key copy together. Every torn state is covered by a host test that
+  builds it directly rather than by whichever offset a power-cut sweep happens to
+  land on.
+
+  **It was never key loss, contrary to how this was first recorded.** The key
+  copies are per-PIN and only the one being changed was damaged, so a card in
+  that state is repaired by reaching the key through a different PIN — but the
+  two directions need different commands and are not interchangeable. A torn
+  **PW3** change is repaired by verifying PW1 and re-running the change, because
+  `load_dek` prefers PW1's copy when PW1 is verified. That same preference is
+  what breaks the mirror image: for a torn **PW1** change, verifying PW1 puts the
+  damaged copy back in front, so the repair is the admin `unblock` (RESET RETRY
+  COUNTER), which never verifies PW1. Both are now in
+  `docs/guides/openpgp.md` for anyone on an older build.
+  **bcdDevice → 0x0889.**
+
 - **An OATH/OTP PIN now actually gates the password safe.** The applet can store
   a login, a password and a note per credential — the password-safe extension
   `nitropy` speaks — and `GET CREDENTIAL` (`0xB5`) served them to any fresh,

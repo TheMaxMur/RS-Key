@@ -227,6 +227,47 @@ gpg/card> passwd            # menu option 2: "unblock PIN" via Reset Code
 
 Both reset PW1's retry counter and re-seal its key material under the new PIN.
 
+### A PIN change interrupted by unplugging the key
+
+Changing a PIN rewrites two things: the PIN's verifier, and the copy of the key
+that PIN unwraps. Pull the key out of the port between the two — during
+`gpg --change-pin` — and the card reports a memory error.
+
+Since firmware `0x0889` the card finishes the interrupted change itself on the
+next `VERIFY`, so there is nothing to do. **On an older build the card comes back
+in a state that looks fatal and is not:** the affected PIN verifies, and every
+operation that needs a key answers *"Card error"*. Do **not** factory-reset it.
+
+The card keeps one copy of the key per PIN and only the copy belonging to the PIN
+you changed was damaged, so the repair is to reach the key through a *different*
+PIN. Which one depends on which PIN you were changing, and the two recipes are
+not interchangeable:
+
+**The admin PIN (PW3) was being changed** — verify the user PIN first, in the
+same session, then change PW3 again:
+
+```sh
+gpg --card-edit
+gpg/card> verify            # PW1 — its copy of the key is untouched
+gpg/card> admin
+gpg/card> passwd            # change PW3 again; the card is repaired
+```
+
+**The user PIN (PW1) was being changed** — use the admin unblock, and do **not**
+verify PW1 anywhere in that session:
+
+```sh
+gpg --card-edit
+gpg/card> admin
+gpg/card> passwd            # menu option 1, "unblock PIN" — sets PW1 via PW3
+```
+
+The order matters for a reason worth knowing: the card reaches for PW1's copy of
+the key whenever PW1 is verified, ahead of the admin's. So for a torn PW1 change,
+verifying PW1 — even with the PIN that now works — puts the damaged copy back in
+front and the repair fails. `unblock` never verifies PW1, which is why it is the
+one that works there.
+
 ### Factory reset (OpenPGP only)
 
 ```sh

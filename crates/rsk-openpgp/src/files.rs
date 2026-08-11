@@ -100,6 +100,9 @@ pub fn source(fid: u16) -> DoSource {
         || fid == EF_DEK_PW1.get()
         || fid == EF_DEK_RC.get()
         || fid == EF_DEK_PW3.get()
+        || fid == EF_DEK_STAGE_PW1.get()
+        || fid == EF_DEK_STAGE_RC.get()
+        || fid == EF_DEK_STAGE_PW3.get()
     {
         return DoSource::Internal;
     }

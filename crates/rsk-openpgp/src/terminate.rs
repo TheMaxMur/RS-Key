@@ -28,6 +28,9 @@ pub fn is_openpgp_fid(fid: u16) -> bool {
         || fid == EF_DEK_PW1.get()
         || fid == EF_DEK_RC.get()
         || fid == EF_DEK_PW3.get()
+        || fid == EF_DEK_STAGE_PW1.get()
+        || fid == EF_DEK_STAGE_RC.get()
+        || fid == EF_DEK_STAGE_PW3.get()
     {
         return true;
     }

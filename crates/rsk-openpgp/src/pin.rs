@@ -307,15 +307,157 @@ pub fn load_dek<S: Storage>(
         return Err(Sw::CONDITIONS_NOT_SATISFIED); // no PIN verified
     };
     let mut blob = [0u8; DEK_FILE_SIZE];
-    let n = fs
-        .read_key(fid, &mut blob)
-        .ok_or(Sw::REFERENCE_NOT_FOUND)?
-        .min(blob.len());
-    if n < 1 || blob[0] != DEK_FORMAT_V3 {
+    let opened = match fs.read_key(fid, &mut blob) {
+        Some(n) => {
+            let n = n.min(blob.len());
+            n >= 1
+                && blob[0] == DEK_FORMAT_V3
+                && dev
+                    .decrypt_with_aad(key, &blob[1..n], PinKdf::V2, out)
+                    .is_ok()
+        }
+        // Absent, not merely unopenable. `EF_DEK_RC` legitimately does not exist
+        // until a reset code is set, so the very first PUT DATA 0xD3 can tear
+        // with no committed record at all — recover from the stage rather than
+        // returning here, which is where an `ok_or(…)?` used to stop.
+        None => false,
+    };
+    if opened {
+        // The committed copy opened, which is proof that THIS target's stage is
+        // garbage: either the update completed, or it was abandoned before its
+        // verifier landed and the old PIN is still the one that works. A stage
+        // that is still worth something is unreachable from here — the PIN that
+        // opens the committed copy is the PIN the stage would replace. Retiring
+        // it is what stops a refused or interrupted update leaving a live record
+        // holding the DEK sealed under a value nobody uses.
+        if let Some(stage) = stage_fid(fid)
+            && fs.has_key(stage)
+        {
+            let _ = fs.delete_key(stage);
+            rsk_fs::request_rescrub(fs);
+        }
+        return Ok(());
+    }
+    // The caller's PIN verified and yet its own copy will not open. The only way
+    // both are true is an update that lost power between its two records, leaving
+    // the new verifier standing over a copy sealed under the old PIN.
+    recover_staged_dek(dev, fs, fid, key, out)
+}
+
+/// The staging slot belonging to a DEK target.
+fn stage_fid(dek_fid: KeyFid) -> Option<KeyFid> {
+    match dek_fid.get() {
+        f if f == EF_DEK_PW1.get() => Some(EF_DEK_STAGE_PW1),
+        f if f == EF_DEK_PW3.get() => Some(EF_DEK_STAGE_PW3),
+        f if f == EF_DEK_RC.get() => Some(EF_DEK_STAGE_RC),
+        _ => None,
+    }
+}
+
+/// Whether a staged record is one [`commit_staged_dek`] may apply to `dek_fid`.
+/// The two readers of this record share one guard on purpose: a commit that
+/// accepted less than a recovery does would write a short or corrupt blob over
+/// the live copy and then delete the only thing that could have restored it.
+fn staged_is_for(staged: &[u8], dek_fid: KeyFid) -> bool {
+    staged.len() >= 3 && staged[0] == dek_fid.get() as u8 && staged[1] == DEK_FORMAT_V3
+}
+
+/// Complete an interrupted PIN update from its staging slot: open the staged copy
+/// under the session key that just verified, commit it, and retire the stage.
+/// `Err` leaves everything untouched.
+fn recover_staged_dek<S: Storage>(
+    dev: &Device,
+    fs: &mut Fs<S>,
+    fid: KeyFid,
+    key: &[u8; 32],
+    out: &mut [u8; DEK_SIZE],
+) -> Result<(), Sw> {
+    let stage = stage_fid(fid).ok_or(Sw::EXEC_ERROR)?;
+    let mut staged = [0u8; 1 + DEK_FILE_SIZE];
+    let n = match fs.read_key(stage, &mut staged) {
+        Some(n) => n.min(staged.len()),
+        None => return Err(Sw::EXEC_ERROR),
+    };
+    if !staged_is_for(&staged[..n], fid) {
+        staged.zeroize();
         return Err(Sw::EXEC_ERROR);
     }
-    dev.decrypt_with_aad(key, &blob[1..n], PinKdf::V2, out)
-        .map_err(|_| Sw::EXEC_ERROR)?;
+    let opened = dev
+        .decrypt_with_aad(key, &staged[2..n], PinKdf::V2, out)
+        .is_ok();
+    let commit = if opened {
+        fs.put_key(fid, Sealed::wrap(&staged[1..n]))
+            .map_err(|_| Sw::MEMORY_FAILURE)
+    } else {
+        Err(Sw::EXEC_ERROR)
+    };
+    staged.zeroize();
+    if let Err(sw) = commit {
+        // `decrypt_with_aad` writes the plaintext before it checks the tag, and
+        // on this path it may have *succeeded* — so an error return can leave the
+        // real DEK in the caller's buffer, which no caller of `load_dek` expects
+        // to have to scrub.
+        out.zeroize();
+        return Err(sw);
+    }
+    let _ = fs.delete_key(stage);
+    // The copy just superseded is rooted in a PIN the owner has replaced; the
+    // same reasoning as `migrate_pin_kbase`'s re-arm applies.
+    rsk_fs::request_rescrub(fs);
+    Ok(())
+}
+
+/// Seal `dek` under `pin` into `dek_fid`'s staging slot, ahead of the verifier
+/// write that makes `pin` the one a host presents. Returns the session key the
+/// caller keeps, exactly as [`rewrap_dek`] does — a caller stages, writes the
+/// verifier, then [`commit_staged_dek`]s, and a power cut at any point leaves a
+/// state [`load_dek`] can finish. **Validate the new PIN before calling this**:
+/// staging first would leave an orphan record behind a refused value.
+fn stage_dek<S: Storage>(
+    dev: &Device,
+    fs: &mut Fs<S>,
+    rng: &mut dyn Rng,
+    dek_fid: KeyFid,
+    pin: &[u8],
+    dek: &[u8; DEK_SIZE],
+) -> Result<[u8; 32], Sw> {
+    let stage = stage_fid(dek_fid).ok_or(Sw::EXEC_ERROR)?;
+    let session = dev.pin_derive_session(pin);
+    let mut rec = [0u8; 1 + DEK_FILE_SIZE];
+    rec[0] = dek_fid.get() as u8;
+    rec[1] = DEK_FORMAT_V3;
+    let mut nonce = [0u8; 12];
+    rng.fill(&mut nonce);
+    let r = match dev.encrypt_with_aad(&session, dek, PinKdf::V2, &nonce, &mut rec[2..]) {
+        Ok(_) => fs
+            .put_key(stage, Sealed::wrap(&rec))
+            .map_err(|_| Sw::MEMORY_FAILURE),
+        Err(_) => Err(Sw::EXEC_ERROR),
+    };
+    rec.zeroize();
+    r.map(|()| session)
+}
+
+/// Move the staged copy onto its target and retire the stage. Called after the
+/// verifier write; a power cut before it leaves the work for [`load_dek`].
+fn commit_staged_dek<S: Storage>(fs: &mut Fs<S>, dek_fid: KeyFid) -> Result<(), Sw> {
+    let stage = stage_fid(dek_fid).ok_or(Sw::EXEC_ERROR)?;
+    let mut staged = [0u8; 1 + DEK_FILE_SIZE];
+    let n = match fs.read_key(stage, &mut staged) {
+        Some(n) => n.min(staged.len()),
+        None => return Err(Sw::EXEC_ERROR),
+    };
+    if !staged_is_for(&staged[..n], dek_fid) {
+        staged.zeroize();
+        return Err(Sw::EXEC_ERROR);
+    }
+    let r = fs
+        .put_key(dek_fid, Sealed::wrap(&staged[1..n]))
+        .map_err(|_| Sw::MEMORY_FAILURE);
+    staged.zeroize();
+    r?;
+    let _ = fs.delete_key(stage);
+    rsk_fs::request_rescrub(fs);
     Ok(())
 }
 
@@ -504,16 +646,26 @@ pub fn change_pin<S: Storage>(
         return sw;
     }
     let new_pin = &data[old_len..];
+    // Stage, verifier, commit — see `stage_dek`. Ordering alone cannot fix this:
+    // whichever record lands first, the tear leaves the other one describing a
+    // different PIN, and the PIN that is missing is the one nobody holds any more.
     let result = (|| {
-        put_verifier(dev, fs, fid, new_pin)?;
-        match p2 {
-            PW1_MODE81 => {
-                sess.session_pw1 = rewrap_dek(dev, fs, rng, EF_DEK_PW1, new_pin, &dek)?;
-            }
-            PW3_MODE83 => {
-                sess.session_pw3 = rewrap_dek(dev, fs, rng, EF_DEK_PW3, new_pin, &dek)?;
-            }
+        let dek_fid = match p2 {
+            PW1_MODE81 => EF_DEK_PW1,
+            PW3_MODE83 => EF_DEK_PW3,
             _ => return Err(Sw::WRONG_P1P2),
+        };
+        // Judge the new value BEFORE anything is written: `check_pin_len`'s own
+        // doc says a path that re-seals the DEK ahead of the verifier must call
+        // it, and staging is exactly that. Otherwise a refused PIN leaves an
+        // orphan stage behind, which is a live record nothing ever retires.
+        check_pin_len(fid, new_pin.len())?;
+        let session = stage_dek(dev, fs, rng, dek_fid, new_pin, &dek)?;
+        put_verifier(dev, fs, fid, new_pin)?;
+        commit_staged_dek(fs, dek_fid)?;
+        match p2 {
+            PW1_MODE81 => sess.session_pw1 = session,
+            _ => sess.session_pw3 = session,
         }
         Ok(())
     })();
@@ -567,8 +719,10 @@ pub fn reset_retry<S: Storage>(
         }
         let result = (|| {
             check_pin_len(EF_PW1, new_pin.len())?;
-            sess.session_pw1 = rewrap_dek(dev, fs, rng, EF_DEK_PW1, new_pin, &dek)?;
+            let session = stage_dek(dev, fs, rng, EF_DEK_PW1, new_pin, &dek)?;
             put_verifier(dev, fs, EF_PW1, new_pin)?;
+            commit_staged_dek(fs, EF_DEK_PW1)?;
+            sess.session_pw1 = session;
             pin_reset_retries(fs, EF_PW1, true)
         })();
         dek.zeroize();
@@ -590,9 +744,10 @@ pub fn reset_retry<S: Storage>(
     }
     let result = (|| {
         check_pin_len(EF_PW1, new_pin.len())?;
-        let session = rewrap_dek(dev, fs, rng, EF_DEK_PW1, new_pin, &dek)?;
-        sess.session_pw1 = session;
+        let session = stage_dek(dev, fs, rng, EF_DEK_PW1, new_pin, &dek)?;
         put_verifier(dev, fs, EF_PW1, new_pin)?;
+        commit_staged_dek(fs, EF_DEK_PW1)?;
+        sess.session_pw1 = session;
         pin_reset_retries(fs, EF_PW1, true)
     })();
     dek.zeroize();
@@ -630,8 +785,10 @@ pub fn put_reset_code<S: Storage>(
         return sw;
     }
     let result = (|| {
+        check_pin_len(EF_RC, data.len())?;
+        stage_dek(dev, fs, rng, EF_DEK_RC, data, &dek)?;
         put_verifier(dev, fs, EF_RC, data)?;
-        rewrap_dek(dev, fs, rng, EF_DEK_RC, data, &dek)?;
+        commit_staged_dek(fs, EF_DEK_RC)?;
         // Activate the resetting code: it ships deactivated (counter 0), so
         // enable its retry counter now that a real RC exists.
         pin_reset_retries(fs, EF_RC, true)?;
