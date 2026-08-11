@@ -92,6 +92,16 @@ struct GenAuth<'c, S: Storage> {
 }
 
 impl<S: Storage> GenAuth<'_, S> {
+    /// Start a management-key handshake: record the outstanding challenge and
+    /// drop any standing 9B status — measured on a YubiKey 5.7.4, a step 1
+    /// revokes and nothing else at 9B does. 9B-only; both callers check.
+    fn begin_handshake(&mut self, kind: ChallengeKind) {
+        self.sess.has_challenge = true;
+        self.sess.chal_kind = kind;
+        self.sess.chal_algo = self.algo;
+        self.sess.has_mgm = false;
+    }
+
     /// t80 mutual auth: step 1 (empty witness) returns an encrypted witness under
     /// the management key; step 2 verifies the returned witness and answers the
     /// host challenge. Only a `MutualWitness` this device issued may be verified.
@@ -114,9 +124,7 @@ impl<S: Storage> GenAuth<'_, S> {
             let mut enc = [0u8; 16];
             enc[..self.chal_len].copy_from_slice(&self.sess.challenge[..self.chal_len]);
             mgm_crypt(self.algo, mgm, &mut enc[..self.chal_len], Dir::Encrypt)?;
-            self.sess.has_challenge = true;
-            self.sess.chal_kind = ChallengeKind::MutualWitness;
-            self.sess.chal_algo = self.algo;
+            self.begin_handshake(ChallengeKind::MutualWitness);
             dyn_auth_resp(res, TAG_AUTH_WITNESS, &enc[..self.chal_len])?;
             return Ok(());
         }
@@ -155,10 +163,16 @@ impl<S: Storage> GenAuth<'_, S> {
     /// t81 single auth step 1: issue a plaintext challenge for the host to
     /// encrypt and return (verified in [`single_auth_verify`]).
     fn single_challenge(&mut self, res: &mut ResBuf) -> Result<(), Sw> {
+        // Step 2 is 9B-only, so a challenge asked for at a key slot may not enter
+        // the session: stored there it authenticates 9B without ever revoking it
+        // (step 2 binds kind and algo, not the slot) and wrecks a live handshake.
+        if self.key_ref != SLOT_CARDMGM {
+            let mut chal = [0u8; 16];
+            self.rng.fill(&mut chal[..self.chal_len]);
+            return dyn_auth_resp(res, TAG_AUTH_CHALLENGE, &chal[..self.chal_len]);
+        }
         self.rng.fill(&mut self.sess.challenge[..self.chal_len]);
-        self.sess.has_challenge = true;
-        self.sess.chal_kind = ChallengeKind::SingleChallenge;
-        self.sess.chal_algo = self.algo;
+        self.begin_handshake(ChallengeKind::SingleChallenge);
         dyn_auth_resp(
             res,
             TAG_AUTH_CHALLENGE,

@@ -155,9 +155,25 @@ fn set_pin_retry_counter<S: Storage>(fs: &mut Fs<S>, fid: u16, value: u8) -> Res
     fs.put(EF_PW_PRIV, &pw[..n]).map_err(|_| Sw::MEMORY_FAILURE)
 }
 
+/// Drop the access status of the reference `check_pin` was comparing. Keyed on
+/// `fid`, never on `p2`: RESET RETRY COUNTER checks `EF_RC` while passing
+/// `p2 = 0x81`, and a wrong resetting code must leave PW1.81 standing.
+fn clear_access_status(sess: &mut Session, fid: u16, p2: u8) {
+    if fid == EF_PW1 {
+        if p2 == PW1_MODE81 {
+            sess.has_pw1 = false;
+        } else {
+            sess.has_pw2 = false;
+        }
+    } else if fid == EF_PW3 {
+        sess.has_pw3 = false;
+    }
+}
+
 /// Verify `data` against the stored verifier of PIN `fid`. On success resets
 /// the retry counter and sets the matching `has_pw*` flag + session key; on
-/// failure decrements the counter and returns `63 Cx` / blocked.
+/// failure decrements the counter, clears that reference's access status and
+/// returns `63 Cx` / blocked.
 pub fn check_pin<S: Storage>(
     dev: &Device,
     fs: &mut Fs<S>,
@@ -200,6 +216,11 @@ pub fn check_pin<S: Storage>(
                 &dev.without_otp().pin_derive_verifier(data),
             );
         if !migrated {
+            // §4.2's list of what invalidates an access status omits a failed
+            // comparison, but a YubiKey 5.7.4 clears exactly the addressed
+            // reference here — in VERIFY and CHANGE alike — so a wrong password
+            // stops PSO:CDS and the admin surface instead of leaving them open.
+            clear_access_status(sess, fid, p2);
             return match pin_wrong_retry(fs, fid) {
                 Ok(retries) => Sw::retries(retries),
                 Err(()) => Sw::PIN_BLOCKED,

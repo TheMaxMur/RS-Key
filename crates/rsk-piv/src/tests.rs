@@ -1067,6 +1067,258 @@ fn mgm_challenge_bound_to_issuing_algorithm() {
 }
 
 #[test]
+fn a_new_mgmt_handshake_revokes_the_standing_9b_status() {
+    // E38's class on a third command. Measured on a YubiKey 5.7.4, three runs,
+    // each after `ykman piv reset`: a standing 9B status does not survive a new
+    // management-key handshake — a failed step 2 revokes it, and so does a bare
+    // challenge request that is never answered. Ours kept it, so PUT DATA went on
+    // succeeding after a wrong-key attempt.
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    // PUT DATA of PRINTED: management-key gated, and stores nothing.
+    let put = |app: &mut PivApplet, fs: &mut Fs<RamStorage>| -> Sw {
+        let obj = [0x5C, 0x03, 0x5F, 0xC1, 0x09, 0x53, 0x03, 0x41, 0x42, 0x43];
+        run(app, fs, INS_PUT_DATA, 0x3F, 0xFF, &obj).0
+    };
+    select(&mut app, &mut fs);
+    assert_eq!(
+        put(&mut app, &mut fs),
+        Sw::SECURITY_STATUS_NOT_SATISFIED,
+        "control: the instrument reads 9B closed"
+    );
+    auth_mgm(&mut app, &mut fs);
+    assert_eq!(put(&mut app, &mut fs), Sw::OK, "control: 9B open");
+
+    // Single auth, wrong response.
+    let (sw, _) = run(
+        &mut app,
+        &mut fs,
+        INS_AUTHENTICATE,
+        ALGO_AES192,
+        0x9B,
+        &[0x7C, 0x02, 0x81, 0x00],
+    );
+    assert_eq!(sw, Sw::OK);
+    let mut msg = vec![0x7C, 0x12, 0x82, 0x10];
+    msg.extend_from_slice(&[0u8; 16]);
+    let (sw, _) = run(&mut app, &mut fs, INS_AUTHENTICATE, ALGO_AES192, 0x9B, &msg);
+    assert_eq!(sw, Sw::DATA_INVALID);
+    assert_eq!(
+        put(&mut app, &mut fs),
+        Sw::SECURITY_STATUS_NOT_SATISFIED,
+        "a failed single auth must revoke 9B"
+    );
+
+    // Mutual auth, wrong witness.
+    auth_mgm(&mut app, &mut fs);
+    let (sw, _) = run(
+        &mut app,
+        &mut fs,
+        INS_AUTHENTICATE,
+        ALGO_AES192,
+        0x9B,
+        &[0x7C, 0x02, 0x80, 0x00],
+    );
+    assert_eq!(sw, Sw::OK);
+    let mut msg = vec![0x7C, 0x24, 0x80, 0x10];
+    msg.extend_from_slice(&[0u8; 16]);
+    msg.push(0x81);
+    msg.push(0x10);
+    msg.extend_from_slice(&[0xA5u8; 16]);
+    let (sw, _) = run(&mut app, &mut fs, INS_AUTHENTICATE, ALGO_AES192, 0x9B, &msg);
+    assert_eq!(sw, Sw::DATA_INVALID);
+    assert_eq!(
+        put(&mut app, &mut fs),
+        Sw::SECURITY_STATUS_NOT_SATISFIED,
+        "a failed mutual auth must revoke 9B"
+    );
+
+    // Either step 1 revokes it on its own, answered or not.
+    for step1 in [[0x7C, 0x02, 0x81, 0x00], [0x7C, 0x02, 0x80, 0x00]] {
+        auth_mgm(&mut app, &mut fs);
+        let (sw, _) = run(
+            &mut app,
+            &mut fs,
+            INS_AUTHENTICATE,
+            ALGO_AES192,
+            0x9B,
+            &step1,
+        );
+        assert_eq!(sw, Sw::OK);
+        assert_eq!(
+            put(&mut app, &mut fs),
+            Sw::SECURITY_STATUS_NOT_SATISFIED,
+            "issuing a challenge must revoke 9B"
+        );
+    }
+
+    // …and only a step 1 does. Measured on the same YubiKey: every other 9B
+    // request leaves the status alone, so revoking on the dispatch as a whole
+    // would be a divergence of its own.
+    let mut t82_unsolicited = vec![0x7C, 0x12, 0x82, 0x10];
+    t82_unsolicited.extend_from_slice(&[0u8; 16]);
+    let mut t81_oracle = vec![0x7C, 0x12, 0x81, 0x10];
+    t81_oracle.extend_from_slice(&[0u8; 16]);
+    for (algo, body) in [
+        (ALGO_AES192, t82_unsolicited),
+        (ALGO_AES192, t81_oracle),
+        (ALGO_AES192, vec![0x7C, 0x03, 0x85, 0x01, 0x00]),
+        (0x99, vec![0x7C, 0x02, 0x81, 0x00]),
+    ] {
+        auth_mgm(&mut app, &mut fs);
+        let (sw, _) = run(&mut app, &mut fs, INS_AUTHENTICATE, algo, 0x9B, &body);
+        assert_ne!(sw, Sw::OK, "algo {algo:#04x} body {body:02x?}");
+        assert_eq!(
+            put(&mut app, &mut fs),
+            Sw::OK,
+            "a 9B request that is not a handshake step must keep the status"
+        );
+    }
+
+    // Cross-term, measured on the same YubiKey: a wrong PIN leaves 9B alone.
+    auth_mgm(&mut app, &mut fs);
+    let (sw, _) = run(&mut app, &mut fs, INS_VERIFY, 0, 0x80, &[0x39u8; 8]);
+    assert_eq!(sw, Sw::new(0x63, 0xC2));
+    assert_eq!(
+        put(&mut app, &mut fs),
+        Sw::OK,
+        "a wrong PIN must not revoke 9B"
+    );
+}
+
+#[test]
+fn a_key_slot_challenge_is_not_a_management_key_challenge() {
+    // The revocation above rides on the handshake, and every single-auth
+    // challenge used to enter the session whatever slot asked for it — so one
+    // taken out at 9A answered 9B, and staging the failure there cost nothing.
+    // A YubiKey 5.7.4 issues no challenge outside 9B at all (6A80, two runs).
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    let put = |app: &mut PivApplet, fs: &mut Fs<RamStorage>| -> Sw {
+        let obj = [0x5C, 0x03, 0x5F, 0xC1, 0x09, 0x53, 0x03, 0x41, 0x42, 0x43];
+        run(app, fs, INS_PUT_DATA, 0x3F, 0xFF, &obj).0
+    };
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    verify_pin(&mut app, &mut fs);
+    // A key slot only reaches the dispatch once it holds a key: an empty one
+    // answers 6A88 and would prove nothing.
+    let (sw, _) = run(
+        &mut app,
+        &mut fs,
+        INS_ASYM_KEYGEN,
+        0x00,
+        0x9A,
+        &gen_template(ALGO_ECCP256),
+    );
+    assert_eq!(sw, Sw::OK);
+    assert_eq!(put(&mut app, &mut fs), Sw::OK, "control: 9B open");
+
+    let (sw, chal) = run(
+        &mut app,
+        &mut fs,
+        INS_AUTHENTICATE,
+        ALGO_AES192,
+        0x9A,
+        &[0x7C, 0x02, 0x81, 0x00],
+    );
+    assert_eq!(sw, Sw::OK);
+    assert_eq!(&chal[..4], &[0x7C, 0x12, 0x81, 0x10]);
+    assert_eq!(
+        put(&mut app, &mut fs),
+        Sw::OK,
+        "a key-slot challenge must leave 9B alone"
+    );
+    // Answered at 9B with the right ciphertext it must still not authenticate —
+    // otherwise the failure above is a management-key attempt that cost nothing.
+    let mut r: [u8; 16] = chal[4..20].try_into().unwrap();
+    rsk_crypto::aes_ecb_encrypt_block(&DEFAULT_MGM, &mut r).unwrap();
+    let mut msg = vec![0x7C, 0x12, 0x82, 0x10];
+    msg.extend_from_slice(&r);
+    let (sw, _) = run(&mut app, &mut fs, INS_AUTHENTICATE, ALGO_AES192, 0x9B, &msg);
+    assert_eq!(
+        sw,
+        Sw::INCORRECT_PARAMS,
+        "a 9A challenge must not authenticate 9B"
+    );
+
+    // Control in the same run: asked for at 9B, the identical request revokes.
+    let (sw, _) = run(
+        &mut app,
+        &mut fs,
+        INS_AUTHENTICATE,
+        ALGO_AES192,
+        0x9B,
+        &[0x7C, 0x02, 0x81, 0x00],
+    );
+    assert_eq!(sw, Sw::OK);
+    assert_eq!(put(&mut app, &mut fs), Sw::SECURITY_STATUS_NOT_SATISFIED);
+}
+
+#[test]
+fn a_key_slot_challenge_does_not_disturb_a_9b_handshake() {
+    // The same session field: a key-slot request used to overwrite the
+    // outstanding 9B challenge, so a host that interleaved one lost the
+    // handshake and its status with it. Measured on a YubiKey 5.7.4, two runs:
+    // a GENERAL AUTHENTICATE at another slot leaves the handshake completable.
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    let put = |app: &mut PivApplet, fs: &mut Fs<RamStorage>| -> Sw {
+        let obj = [0x5C, 0x03, 0x5F, 0xC1, 0x09, 0x53, 0x03, 0x41, 0x42, 0x43];
+        run(app, fs, INS_PUT_DATA, 0x3F, 0xFF, &obj).0
+    };
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    verify_pin(&mut app, &mut fs);
+    let (sw, _) = run(
+        &mut app,
+        &mut fs,
+        INS_ASYM_KEYGEN,
+        0x00,
+        0x9A,
+        &gen_template(ALGO_ECCP256),
+    );
+    assert_eq!(sw, Sw::OK);
+
+    for interleaved in [false, true] {
+        auth_mgm(&mut app, &mut fs);
+        let (sw, chal) = run(
+            &mut app,
+            &mut fs,
+            INS_AUTHENTICATE,
+            ALGO_AES192,
+            0x9B,
+            &[0x7C, 0x02, 0x81, 0x00],
+        );
+        assert_eq!(sw, Sw::OK);
+        if interleaved {
+            let (sw, _) = run(
+                &mut app,
+                &mut fs,
+                INS_AUTHENTICATE,
+                ALGO_ECCP256,
+                0x9A,
+                &[0x7C, 0x02, 0x81, 0x00],
+            );
+            assert_eq!(sw, Sw::OK);
+        }
+        let mut r: [u8; 16] = chal[4..20].try_into().unwrap();
+        rsk_crypto::aes_ecb_encrypt_block(&DEFAULT_MGM, &mut r).unwrap();
+        let mut msg = vec![0x7C, 0x12, 0x82, 0x10];
+        msg.extend_from_slice(&r);
+        let (sw, _) = run(&mut app, &mut fs, INS_AUTHENTICATE, ALGO_AES192, 0x9B, &msg);
+        assert_eq!(sw, Sw::OK, "interleaved {interleaved}");
+        assert_eq!(put(&mut app, &mut fs), Sw::OK, "interleaved {interleaved}");
+    }
+}
+
+#[test]
 fn get_data_clamps_oversized_stored_object() {
     // Run-7 H3 (defense-in-depth): a stored object longer than the MAX_OBJECT
     // read buffer must be returned clamped, never panic on the slice. Only a raw

@@ -40,6 +40,35 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Security
 
+- **A failed authentication now revokes the standing one on OpenPGP and on the
+  PIV management key.** `0x088B` fixed this for PIV's `VERIFY`; the same rule was
+  unenforced on two neighbouring commands. On OpenPGP, a wrong PW1/PW2/PW3 in
+  `VERIFY` *or* `CHANGE REFERENCE DATA` left the access status standing:
+  measured on the emulator, three wrong PW1 entries blocked the card at 0/3 and
+  `PSO:CDS` kept producing real signatures, and three wrong PW3 entries left the
+  admin surface open — an attacker holding a live session could still install a
+  resetting code and reset the user's PW1. Entering wrong PINs at a card you
+  believe is compromised, the human reflex, did nothing. Now exactly the
+  addressed reference is cleared, and nothing more: PW1 no. 81 and no. 82 stay
+  independent latches (they share an error counter but not a status, so gpg's
+  two-mode verify is unaffected), a wrong *resetting code* still clears nothing,
+  and an operation another reference also authorises — `PSO:CDS` with PW3
+  verified, say — goes on working until that one is cleared too. A reference
+  already at 0 retries is turned away before the comparison, so it clears
+  nothing either. On PIV, a standing management-key (`9B`) status survived a
+  wrong-key handshake; starting a fresh handshake now revokes it and only a
+  completed one raises it again. Nothing else at `9B` touches it — not a step 2
+  with no handshake in progress, not a refused tag, not a bad algorithm — because
+  that is where the YubiKey draws the line too. A single-auth challenge asked for
+  at a *key* slot no longer enters the session at all: it used to authenticate
+  `9B` when answered there, which staged a failed management-key attempt that
+  cost no standing status, and its arrival wrecked a `9B` handshake already in
+  progress that a YubiKey completes. Both rules were measured on a YubiKey 5.7.4
+  first, runs from a factory reset — and the same measurement is why PIV's
+  `CHANGE REFERENCE DATA` and `RESET RETRY COUNTER` were deliberately **left
+  alone**: the YubiKey keeps the PIN's security status through both, against
+  SP 800-73-4 §3.2.2/§3.2.3, and we match it. **bcdDevice → 0x0890.**
+
 - **OpenPGP's own in-application SELECT matches an AID the way the dispatcher
   does.** The AID rule changed for every applet at `0x088C`, but the OpenPGP
   applet carries a second SELECT of its own and it kept the old test, so

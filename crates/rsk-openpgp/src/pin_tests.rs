@@ -120,6 +120,9 @@ fn pin_and_dek_migrate_to_otp_kbase_at_verify() {
         ),
         Sw::OK
     );
+    // The fallback arm is a SUCCESS: it must not take the wrong-password exit
+    // that clears the addressed status, nor a sibling's.
+    assert!(sess.has_pw3 && sess.has_pw1);
     let mut dek3 = [0u8; DEK_SIZE];
     load_dek(&d, &mut fs, &sess, &mut dek3).unwrap();
     // Same underlying DEK either way.
@@ -168,6 +171,21 @@ fn verify_wrong_pin_decrements_then_blocks() {
     let mut sess = Session::new();
     let d = dev();
     let mut rng = CountRng(0);
+    // Arm PW3 first, else the trailing `!sess.has_pw3` holds on a Session that was
+    // never raised and the assertion cannot fail (run-34 #9 class).
+    assert_eq!(
+        verify(
+            &d,
+            &mut fs,
+            &mut sess,
+            &mut rng,
+            0x00,
+            PW3_MODE83,
+            PW3_DEFAULT
+        ),
+        Sw::OK
+    );
+    assert!(sess.has_pw3);
     // Wrong PW3 ("12345678" is right); 3 tries → block.
     for expect in [0xC2u8, 0xC1, 0x00] {
         let sw = verify(
@@ -1027,4 +1045,154 @@ fn a_status_reset_for_a_reference_that_does_not_exist_is_refused() {
         );
     }
     assert!(!sess.has_pw1 && !sess.has_pw2 && !sess.has_pw3);
+}
+
+/// Verify all three references, leaving every access status standing.
+fn arm_all(d: &Device, fs: &mut Fs<RamStorage>, sess: &mut Session) {
+    let mut rng = CountRng(0);
+    for (p2, pw) in [
+        (PW1_MODE82, PW1_DEFAULT),
+        (PW1_MODE81, PW1_DEFAULT),
+        (PW3_MODE83, PW3_DEFAULT),
+    ] {
+        assert_eq!(verify(d, fs, sess, &mut rng, 0x00, p2, pw), Sw::OK);
+    }
+    assert!(sess.has_pw1 && sess.has_pw2 && sess.has_pw3);
+}
+
+#[test]
+fn wrong_password_drops_only_the_addressed_access_status() {
+    // E38(b): a failed comparison must clear the access status of exactly the
+    // reference it addressed — measured on a YubiKey 5.7.4, which does it in
+    // VERIFY and in CHANGE REFERENCE DATA alike. Ours kept all three, so PSO:CDS
+    // went on signing with PW1 at 0/3 and the admin surface stayed open at PW3 0/3.
+    let mut fs = setup();
+    let mut sess = Session::new();
+    let d = dev();
+    let mut rng = CountRng(0);
+    for (p2, wrong, keep) in [
+        (PW1_MODE81, b"999999".as_slice(), [false, true, true]),
+        (PW1_MODE82, b"999999".as_slice(), [true, false, true]),
+        (PW3_MODE83, b"99999999".as_slice(), [true, true, false]),
+    ] {
+        arm_all(&d, &mut fs, &mut sess);
+        assert_eq!(
+            verify(&d, &mut fs, &mut sess, &mut rng, 0x00, p2, wrong),
+            Sw::new(0x63, 0xC2),
+            "VERIFY {p2:#04x} wrong"
+        );
+        assert_eq!(
+            [sess.has_pw1, sess.has_pw2, sess.has_pw3],
+            keep,
+            "after a wrong VERIFY {p2:#04x}"
+        );
+    }
+}
+
+#[test]
+fn change_pin_wrong_old_drops_only_the_addressed_access_status() {
+    // Same rule on INS 0x24: the write-up named this path and only this one.
+    let mut fs = setup();
+    let mut sess = Session::new();
+    let d = dev();
+    let mut rng = CountRng(0);
+    for (p2, data, keep) in [
+        (PW1_MODE81, b"999999654321".as_slice(), [false, true, true]),
+        (
+            PW3_MODE83,
+            b"9999999987654321".as_slice(),
+            [true, true, false],
+        ),
+    ] {
+        arm_all(&d, &mut fs, &mut sess);
+        assert_eq!(
+            change_pin(&d, &mut fs, &mut sess, &mut rng, 0x00, p2, data),
+            Sw::new(0x63, 0xC2),
+            "CHANGE {p2:#04x} wrong old"
+        );
+        assert_eq!(
+            [sess.has_pw1, sess.has_pw2, sess.has_pw3],
+            keep,
+            "after a wrong CHANGE {p2:#04x}"
+        );
+    }
+}
+
+#[test]
+fn wrong_reset_code_keeps_every_access_status() {
+    // The trap in the same rule: RESET RETRY COUNTER checks EF_RC but passes
+    // P2 = 0x81, so a clear keyed on P2 would revoke PW1.81 on a wrong resetting
+    // code. A YubiKey keeps all three here — EF_RC carries no access status.
+    let mut fs = setup();
+    let mut sess = Session::new();
+    let d = dev();
+    let mut rng = CountRng(7);
+    verify(
+        &d,
+        &mut fs,
+        &mut sess,
+        &mut rng,
+        0x00,
+        PW3_MODE83,
+        PW3_DEFAULT,
+    );
+    assert_eq!(
+        put_reset_code(&d, &mut fs, &mut sess, &mut rng, b"resetme0"),
+        Sw::OK
+    );
+    arm_all(&d, &mut fs, &mut sess);
+    assert_eq!(
+        reset_retry(
+            &d,
+            &mut fs,
+            &mut sess,
+            &mut rng,
+            0x00,
+            PW1_MODE81,
+            b"99999999111111"
+        ),
+        Sw::new(0x63, 0xC2)
+    );
+    assert!(sess.has_pw1 && sess.has_pw2 && sess.has_pw3);
+}
+
+#[test]
+fn blocking_pw1_through_mode81_leaves_mode82_standing() {
+    // PW1.81 and PW1.82 share one error counter but are independent statuses
+    // (measured: a YubiKey with PW1 at 0/3 still serves a PW1.82-gated write).
+    // Blocking through 81 must not take 82 down with it — the #25 shape again,
+    // and the reason the clear is keyed per reference rather than per counter.
+    let mut fs = setup();
+    let mut sess = Session::new();
+    let d = dev();
+    let mut rng = CountRng(0);
+    arm_all(&d, &mut fs, &mut sess);
+    for expect in [
+        Sw::new(0x63, 0xC2),
+        Sw::new(0x63, 0xC1),
+        Sw::PIN_BLOCKED,
+        // The fourth is refused by the blocked floor, before any comparison: it
+        // must not clear anything either.
+        Sw::PIN_BLOCKED,
+    ] {
+        assert_eq!(
+            verify(
+                &d, &mut fs, &mut sess, &mut rng, 0x00, PW1_MODE81, b"999999"
+            ),
+            expect
+        );
+        assert!(!sess.has_pw1);
+        assert!(sess.has_pw2 && sess.has_pw3);
+    }
+    // The floor sits above the clear for the *addressed* reference too, which
+    // the loop above cannot show (81's latch is already down). Measured twice on
+    // a YubiKey 5.7.4 with PW1 at 0/3: 6983 either way, and its PW1.82-gated
+    // write (DO 0101, PW3 down) still answers 9000.
+    for pw in [b"999999".as_slice(), PW1_DEFAULT] {
+        assert_eq!(
+            verify(&d, &mut fs, &mut sess, &mut rng, 0x00, PW1_MODE82, pw),
+            Sw::PIN_BLOCKED
+        );
+        assert!(sess.has_pw2 && sess.has_pw3, "the floor cleared a latch");
+    }
 }
