@@ -60,8 +60,12 @@ impl<'a> ResBuf<'a> {
         &mut self.buf[self.len..]
     }
     /// Take `n` bytes written through [`Self::spare_mut`] into the body.
-    /// Saturates at the capacity, so a miscounted producer cannot claim more
-    /// than it could have written.
+    ///
+    /// Clamped to the capacity, which is the only thing this can check — it
+    /// cannot know how much the producer actually wrote. Committing more than
+    /// was written publishes whatever the backing array held, and that array is
+    /// reused across commands, so the bytes would be the tail of the PREVIOUS
+    /// response. Every caller must pass exactly what it wrote.
     pub fn commit(&mut self, n: usize) {
         self.len = self.buf.len().min(self.len + n);
     }

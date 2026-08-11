@@ -66,10 +66,13 @@ pub fn cmd_select(apdu: &Apdu, out: &mut [u8]) -> (usize, Sw) {
     let found = match p1 {
         0x00 if apdu.nc == 0 => true, // select MF / application root
         0x00..=0x02 if apdu.nc == 2 => !matches!(source(fid), DoSource::None),
-        0x04 => {
-            let aid = OPENPGP_AID;
-            apdu.nc >= aid.len() && &apdu.data[..aid.len()] == aid
-        }
+        // Same rule the dispatcher applies (ISO 7816-4 truncated select): the
+        // requested AID must be a PREFIX of ours. This arm is reachable — the
+        // dispatcher only intercepts P2 `00`/`04`, so a `P2 = 05` SELECT lands
+        // here — and it used to ask the opposite question, accepting
+        // `AID ‖ anything` that the dispatcher had just started refusing. Two
+        // paths, one rule.
+        0x04 => !apdu.data.is_empty() && OPENPGP_AID.starts_with(apdu.data),
         _ => false,
     };
     if !found {

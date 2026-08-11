@@ -40,6 +40,21 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Security
 
+- **OpenPGP's own in-application SELECT matches an AID the way the dispatcher
+  does.** The AID rule changed for every applet at `0x088C`, but the OpenPGP
+  applet carries a second SELECT of its own and it kept the old test, so
+  `AID ‖ anything` still selected there. It is reachable: the dispatcher only
+  intercepts `P2` `00`/`04`, so a `P2 = 05` SELECT lands in the applet and used
+  to answer `9000` with a full FCI for exactly the input the dispatcher had just
+  started refusing — one card, two rules. Found by reviewing the `0x088C` change
+  rather than by a test, which is the point of the other half of this entry:
+  that change altered a rule shared by seven applets and two transports and
+  shipped with no test at all, since every existing suite selects by an exact
+  constant. `rsk-sdk` now pins it — every prefix selects, `AID ‖ byte` and a
+  divergence inside the AID do not, an empty candidate is refused, and a prefix
+  two applets share resolves to the first registered one.
+  **bcdDevice → 0x088F.**
+
 - **The rescue applet no longer reports a write it did not perform.** `WRITE`
   (`0x1C`) answered `9000` to any selector it does not implement — measured, P1
   `0x03` / `0x07` / `0x42` / `0xFF` each returned success and wrote nothing while

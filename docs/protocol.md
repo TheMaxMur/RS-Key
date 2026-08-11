@@ -275,6 +275,19 @@ mirrors a current YubiKey 5 so Yubico tooling is satisfied under the Yubico VID.
 
 SELECT an applet with `00 A4 04 00 Lc <AID> 00`.
 
+**How an AID is matched** (RS-Key `0x088C`+): ISO 7816-4 truncated select — the
+AID you send must be a **prefix of** a registered one, and the first applet it
+matches wins. So a shortened AID selects (PIV answers to `A0 00 00 03 08`), an
+AID with anything appended does **not** (earlier builds selected on
+`registered AID ‖ junk`, which let PIV answer to `A0 00 00 03 08 00 00 00 00` —
+the AID SP 800-85A-4 C.1.1.2 names as invalid), and an **empty** AID is refused
+rather than treated as "select the default application". Two consequences worth
+planning for: OpenPGP is selected by the 6-byte AID below, **not** by the 16-byte
+value it reports in DO `4F` (that one carries the device serial and is longer, so
+it is not a prefix — a real YubiKey refuses it too); and a prefix short enough to
+match several applets resolves by registration order, which is the order of the
+table below, so probe with the full AID unless you mean to.
+
 | Applet | AID | Spec status | Config-relevant? |
 |---|---|---|---|
 | FIDO2 | `A0 00 00 06 47 2F 00 01` | Standard (CTAP2) | identity only |
@@ -283,7 +296,7 @@ SELECT an applet with `00 A4 04 00 Lc <AID> 00`.
 | **Management** | `A0 00 00 05 27 47 11 17` | Yubico-compatible | **yes — §6** |
 | OATH | `A0 00 00 05 27 21 01` | Yubico OATH | data only |
 | OTP | `A0 00 00 05 27 20 01` | Yubico OTP | data only |
-| PIV | `A0 00 00 03 08` | NIST SP 800-73 | data only |
+| PIV | `A0 00 00 03 08 00 00 10 00 01 00` | NIST SP 800-73 | data only |
 | OpenPGP | `D2 76 00 01 24 01` | OpenPGP card 3.x | data only |
 | **Rescue** | `A0 58 3F C1 9B 7E 4F 21` | **RS-Key-specific** | **yes — §7** |
 | **Vendor / LED** | `F0 00 00 00 01` | **RS-Key-specific** | **yes — §8** |

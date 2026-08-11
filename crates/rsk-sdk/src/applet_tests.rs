@@ -1018,3 +1018,65 @@ fn a_mid_chain_header_change_drops_the_chain() {
         "the injected segments survived into the victim's command"
     );
 }
+
+/// SELECT-by-AID is ISO 7816-4 truncated matching: the requested AID must be a
+/// PREFIX of a registered one, first match wins. The test used to be the other
+/// way round — the candidate had to *start with* a registered AID — so every
+/// applet answered to `its AID followed by anything`, and on PIV that selected
+/// the AID SP 800-85A-4 C.1.1.2 names as invalid.
+#[test]
+fn select_matches_an_aid_by_prefix() {
+    const ECHO_AID: &[u8] = &[0xA0, 0x00, 0x00, 0x06, 0x47, 0x2F, 0x00, 0x01];
+    const OATH_AID: &[u8] = &[0xA0, 0x00, 0x00, 0x05, 0x27, 0x21, 0x01];
+    let mut echo = Echo { selected: false };
+    let mut oath = Oathish;
+    let mut apps: [&mut dyn Applet<()>; 2] = [&mut echo, &mut oath];
+    let mut d = Dispatcher::new();
+
+    fn sel(aid: &[u8]) -> std::vec::Vec<u8> {
+        let mut v = std::vec![0x00u8, 0xA4, 0x04, 0x00, aid.len() as u8];
+        v.extend_from_slice(aid);
+        v.push(0x00);
+        v
+    }
+    fn go(d: &mut Dispatcher, apps: &mut [&mut dyn Applet<()>], raw: &[u8]) -> Sw {
+        let mut buf = [0u8; 64];
+        let mut res = ResBuf::new(&mut buf);
+        d.process(raw, apps, &mut (), &mut res)
+    }
+
+    // The whole AID, and every prefix of it, select.
+    for n in 1..=ECHO_AID.len() {
+        assert_eq!(
+            go(&mut d, &mut apps, &sel(&ECHO_AID[..n])),
+            Sw::OK,
+            "a {n}-byte prefix must select"
+        );
+    }
+    // One byte MORE than the AID does not — the case that used to pass, and the
+    // shape that let PIV answer to the AID SP 800-85A-4 calls invalid.
+    let mut over = ECHO_AID.to_vec();
+    over.push(0xFF);
+    assert_eq!(go(&mut d, &mut apps, &sel(&over)), Sw::FILE_NOT_FOUND);
+    // Nor does a value that diverges inside the AID.
+    let mut wrong = ECHO_AID.to_vec();
+    let last = wrong.len() - 1;
+    wrong[last] ^= 0x01;
+    assert_eq!(go(&mut d, &mut apps, &sel(&wrong)), Sw::FILE_NOT_FOUND);
+    // An empty candidate is a prefix of everything, and is refused rather than
+    // treated as ISO's "select the default application".
+    assert_eq!(
+        go(&mut d, &mut apps, &[0x00, 0xA4, 0x04, 0x00, 0x00]),
+        Sw::FILE_NOT_FOUND
+    );
+    // A prefix both applets share resolves to the FIRST registered one, so the
+    // registration order in `rsk-device` decides — worth pinning, because it is
+    // the one thing about this rule a host cannot predict from its own AID.
+    assert_eq!(
+        ECHO_AID[..3],
+        OATH_AID[..3],
+        "the fixture needs a shared prefix"
+    );
+    assert_eq!(go(&mut d, &mut apps, &sel(&ECHO_AID[..3])), Sw::OK);
+    assert_eq!(d.current(), Some(0), "the lower index wins a shared prefix");
+}

@@ -253,7 +253,11 @@ impl<'a> OpenpgpApplet<'a> {
             res.spare_mut(),
         );
         if sw.is_ok() {
-            res.commit(n);
+            // `get_data` bounds `n` by the buffer it was handed, but commit what
+            // was written and not what was reported: `ResBuf::commit` can only
+            // clamp to the capacity, and anything past the written bytes is the
+            // tail of the previous response in a reused array.
+            res.commit(n.min(room));
         }
         sw
     }
