@@ -218,6 +218,9 @@ fn dispatch<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req, out: &mut [u8]) 
         VENDOR_ATT_STATE => att_state(ctx, out),
         VENDOR_CONFIG_WRITE => config_write(ctx, req),
         VENDOR_CONFIG_READ => config_read(ctx, req, out),
+        // Mirrors credentialManagement's answer, which is the YubiKey's for its own
+        // `0x41`. The `CONFIG_VENDOR` id check one level down keeps its
+        // INVALID_SUBCOMMAND: that is the spec's own rule for a vendorCommandId.
         _ => Err(CtapError::InvalidParameter),
     }
 }

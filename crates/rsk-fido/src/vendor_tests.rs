@@ -1937,3 +1937,30 @@ fn idempotent_phy_and_led_config_writes_append_no_journal_entry() {
     assert_eq!(fs.read(EF_LED_CONF, &mut cur), Some(rsk_led::CONF_LEN));
     assert_eq!(cur, led);
 }
+
+/// A subcommand `0x41` does not implement answers INVALID_PARAMETER, mirroring
+/// credentialManagement — which is what a YubiKey 5.7.4 gives for its own `0x41`.
+/// Not INVALID_SUBCOMMAND: that stays the answer for an unknown `vendorCommandId`
+/// under `CONFIG_VENDOR`, where the spec names it explicitly.
+#[test]
+fn undefined_vendor_subcommand_is_invalid_parameter() {
+    let (mut fs, mut rng, mut st) = setup();
+    let mut req = [0u8; 32];
+    let mut out = [0u8; 64];
+    for subcmd in [0x00u64, 0x0F, 0x7F] {
+        let n = one_byte_req(&mut req, subcmd);
+        let e = call(
+            &mut fs,
+            &mut rng,
+            &mut st,
+            &mut AlwaysConfirm,
+            &req[..n],
+            &mut out,
+        );
+        assert_eq!(
+            e,
+            Err(CtapError::InvalidParameter),
+            "vendor subcommand {subcmd:#04x}"
+        );
+    }
+}

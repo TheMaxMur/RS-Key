@@ -125,10 +125,11 @@ pub fn client_pin<S: Storage, R: Rng>(
         0x4 => change_pin(ctx, &req, out),
         CP_GET_PIN_TOKEN | CP_GET_PIN_UV_TOKEN_USING_PIN => get_pin_token(ctx, &req, out),
         // Built-in UV (0x06 token / 0x07 retries) exists only where the firmware can
-        // collect a PIN on its own UI; elsewhere it falls through to UnsupportedOption.
+        // collect a PIN on its own UI; elsewhere it is a subcommand this build does
+        // not implement, which §8.1 covers along with every undefined value.
         0x6 if ctx.presence.uv_available() => get_uv_token(ctx, &req, out),
         0x7 if ctx.presence.uv_available() => get_uv_retries(ctx, out),
-        _ => Err(CtapError::UnsupportedOption),
+        _ => Err(CtapError::InvalidSubcommand),
     }
 }
 

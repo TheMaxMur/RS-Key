@@ -901,9 +901,10 @@ fn builtin_uv_decline_denies_without_burning_a_retry() {
 }
 
 /// Without an on-device pad (the default backend), the built-in-UV subcommands
-/// answer UnsupportedOption — exactly as a standard key does.
+/// are ones this build does not implement, so §8.1's rule applies to them like
+/// any undefined value: CTAP2_ERR_INVALID_SUBCOMMAND.
 #[test]
-fn builtin_uv_subcommands_unsupported_without_a_pad() {
+fn builtin_uv_subcommands_are_invalid_subcommand_without_a_pad() {
     let (mut fs, mut rng, mut state, plat) = setup_with_pin(b"1234");
     let mut out = [0u8; 256];
     assert_eq!(
@@ -914,13 +915,31 @@ fn builtin_uv_subcommands_unsupported_without_a_pad() {
             &plat.get_uv_token_req(PERM_GA as u64),
             &mut out,
         ),
-        Err(CtapError::UnsupportedOption)
+        Err(CtapError::InvalidSubcommand)
     );
     let uv_retries = build(&[(1, V::U(plat.wire)), (2, V::U(7))]);
     assert_eq!(
         run(&mut fs, &mut rng, &mut state, &uv_retries, &mut out),
-        Err(CtapError::UnsupportedOption)
+        Err(CtapError::InvalidSubcommand)
     );
+}
+
+/// §8.1: "If the authenticator implements a command code having subcommands, but
+/// does not implement an invoked subcommand, it MUST return
+/// CTAP2_ERR_INVALID_SUBCOMMAND." 0x00 stays MISSING_PARAMETER — it is the
+/// absent-parameter sentinel, not a subcommand value (see the `0x0` arm).
+#[test]
+fn undefined_clientpin_subcommand_is_invalid_subcommand() {
+    let (mut fs, mut rng, mut state, plat) = setup_with_pin(b"1234");
+    let mut out = [0u8; 256];
+    for sub in [0x08u64, 0x0A, 0x7F, 0xFF] {
+        let req = build(&[(1, V::U(plat.wire)), (2, V::U(sub))]);
+        assert_eq!(
+            run(&mut fs, &mut rng, &mut state, &req, &mut out),
+            Err(CtapError::InvalidSubcommand),
+            "clientPIN subcommand {sub:#04x}"
+        );
+    }
 }
 
 /// getUVRetries (0x07) reports the shared budget that getPINRetries does, under

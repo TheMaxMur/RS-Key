@@ -91,6 +91,24 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Changed
 
+- **An unimplemented subcommand answers what a YubiKey answers.** CTAP 2.2 §8.1
+  makes `CTAP2_ERR_INVALID_SUBCOMMAND` a MUST here, and its own NOTE concedes
+  that implementations of earlier versions do not follow it. A YubiKey 5.7.4 is
+  one of them, so hosts are written against *its* codes and these now match it,
+  measured cell for cell: `authenticatorConfig` judges the subcommand **before**
+  the pinUvAuthParam — `0x00` is the absent-parameter sentinel
+  (`CTAP2_ERR_MISSING_PARAMETER`), an id the card does not implement is
+  `CTAP1_ERR_INVALID_PARAMETER` with or without a token, and only a known one
+  reaches `CTAP2_ERR_PUAT_REQUIRED`; `credentialManagement` keeps answering
+  `CTAP2_ERR_PUAT_REQUIRED` to every subcommand without a token and
+  `CTAP1_ERR_INVALID_PARAMETER` once one verifies. Previously
+  `authenticatorConfig` said `CTAP2_ERR_UNSUPPORTED_OPTION` and gated first.
+  `clientPIN` is the exception and is left on the spec's `0x3E`: the YubiKey has
+  no stable answer to copy there — the same key returns `0x01`, `0x33`, `0x02` or
+  `0x14` for the same undefined subcommand depending on `pinUvAuthProtocol` and
+  on what ran before it. That also covers `0x06`/`0x07` on a build with no PIN
+  pad, which used to report an unsupported *option*. **bcdDevice → 0x0886.**
+
 - **An abandoned `largeBlobs` write is dropped after 30 s.** CTAP 2.3 §6 names
   four stateful sequences and bounds all of them the same way: "exclusively
   preceded" by their own continuation, with "no more than 30 seconds" between

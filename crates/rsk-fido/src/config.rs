@@ -186,6 +186,17 @@ pub fn authenticator_config<S: Storage, R: Rng>(
     let _ = out;
     let req = parse(data)?;
 
+    // The subcommand is judged before the token, matching a YubiKey 5.7.4 cell for
+    // cell: 0 is the absent-parameter sentinel (`0x14`), an id we do not implement
+    // is `0x02` with or without a token, and only a *known* one reaches the
+    // authorization and its `0x36`. Nothing is disclosed by this ordering — the
+    // three subcommands are already named in getInfo's options.
+    match req.subcommand {
+        0 => return Err(CtapError::MissingParameter),
+        CONFIG_ENABLE_EA | CONFIG_TOGGLE_ALWAYS_UV | CONFIG_SET_MIN_PIN | CONFIG_VENDOR => {}
+        _ => return Err(CtapError::InvalidParameter),
+    }
+
     let param = req.pin_uv_auth_param.ok_or(CtapError::PuatRequired)?;
     if req.proto == 0 {
         return Err(CtapError::MissingParameter);
@@ -247,7 +258,8 @@ pub fn authenticator_config<S: Storage, R: Rng>(
             CONFIG_PHY_OPTIONS => set_phy(ctx, |p| p.opts = req.vendor_param_int as u16),
             _ => Err(CtapError::InvalidSubcommand),
         },
-        _ => Err(CtapError::UnsupportedOption),
+        // Unreachable: the pre-auth match above admits exactly these four.
+        _ => Err(CtapError::InvalidParameter),
     }
 }
 

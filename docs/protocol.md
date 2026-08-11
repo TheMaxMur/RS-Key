@@ -218,6 +218,7 @@ surface returns:
 | `0x36` | PUAT_REQUIRED | a PIN is set but no `pinUvAuthToken` was supplied |
 | `0x39` | REQUEST_TOO_LARGE | `subCommandParams` over the limit |
 | `0x3D` | INTEGRITY_FAILURE | blob failed authenticated decryption |
+| `0x3E` | INVALID_SUBCOMMAND | unknown `vendorCommandId` under `authenticatorConfig`'s `0xFF`. A `0x41` **subcommand** this build does not implement is `0x02`, matching a YubiKey |
 
 ---
 

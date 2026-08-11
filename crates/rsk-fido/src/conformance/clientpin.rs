@@ -66,9 +66,10 @@ fn clientpin_get_retries() {
 
 #[test]
 fn clientpin_unsupported_subcommand() {
-    // getUVRetries (0x07) needs built-in UV; a screenless build rejects it with
-    // CTAP2_ERR_UNSUPPORTED_OPTION (§6.5).
+    // getUVRetries (0x07) needs built-in UV; a screenless build does not
+    // implement it, and §8.1 fixes the answer for an unimplemented subcommand at
+    // CTAP2_ERR_INVALID_SUBCOMMAND.
     let r = Authr::fresh().send(CTAP_CLIENT_PIN, &cp_request(2, 7));
-    assert_eq!(r.status, CtapError::UnsupportedOption.as_u8());
+    assert_eq!(r.status, CtapError::InvalidSubcommand.as_u8());
     assert!(r.body.is_empty(), "an error response carries no CBOR body");
 }

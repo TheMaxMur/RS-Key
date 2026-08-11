@@ -138,7 +138,8 @@ fn clientpin_invalid_protocol() {
 
 #[test]
 fn credmgmt_unknown_subcommand() {
-    // An unknown subCommand (with a param present) → INVALID_PARAMETER.
+    // An unknown subCommand (with a param present) → INVALID_PARAMETER, which is
+    // what a YubiKey 5.7.4 answers here (§8.1 would say INVALID_SUBCOMMAND).
     let req = enc(|e| {
         e.map(3).unwrap();
         e.u8(1).unwrap().u64(0x99).unwrap();

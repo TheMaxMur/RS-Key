@@ -218,6 +218,9 @@ pub fn cred_mgmt<S: Storage, R: Rng>(
             let (slot, _) = found.ok_or(CtapError::NoCredentials)?;
             update_user(ctx, slot, user_id, req.user_name, req.user_display_name)
         }
+        // §8.1 would have this be INVALID_SUBCOMMAND; a YubiKey 5.7.4 answers
+        // INVALID_PARAMETER here and hosts are written against it. Measured, both
+        // 0x0A and its 0x41 prototype, stable across runs.
         _ => Err(CtapError::InvalidParameter),
     }
 }

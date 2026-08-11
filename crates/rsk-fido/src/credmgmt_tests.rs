@@ -174,6 +174,14 @@ fn subpara_update(cred_id: &[u8], uid: &[u8], name: &str, dname: &str) -> std::v
     buf[..n].to_vec()
 }
 
+// A CBOR unsigned int: past 23 the value no longer fits the type byte.
+fn push_uint(out: &mut std::vec::Vec<u8>, v: u8) {
+    if v > 0x17 {
+        out.push(0x18);
+    }
+    out.push(v);
+}
+
 // Build a credMgmt request, MACing over `subcommand ‖ subpara` under `token`.
 fn cm_request(subcmd: u8, subpara: Option<&[u8]>, token: &[u8; 32]) -> std::vec::Vec<u8> {
     let mut payload = std::vec![subcmd];
@@ -186,7 +194,8 @@ fn cm_request(subcmd: u8, subpara: Option<&[u8]>, token: &[u8; 32]) -> std::vec:
     let mut req = std::vec::Vec::new();
     let fields = if subpara.is_some() { 4u8 } else { 3 };
     req.push(0xA0 | fields);
-    req.extend_from_slice(&[0x01, subcmd]); // 1: subCommand
+    req.push(0x01); // 1: subCommand
+    push_uint(&mut req, subcmd);
     if let Some(sp) = subpara {
         req.push(0x02); // 2: subCommandParams (raw)
         req.extend_from_slice(sp);
@@ -1781,4 +1790,38 @@ fn clearing_the_persistent_token_revokes_the_grant() {
         Err(CtapError::PinAuthInvalid)
     );
     assert_ne!(ensure_ppuat(&dev(), &mut fs, &mut rng).unwrap(), old);
+}
+
+/// A subcommand this command does not implement. Pinned to a YubiKey 5.7.4,
+/// measured cell for cell and stable across runs: INVALID_PARAMETER once a token
+/// verifies, PUAT_REQUIRED for every subcommand without one — including the
+/// unknown ones, so a stranger cannot enumerate them. §8.1's INVALID_SUBCOMMAND
+/// is the spec's answer and neither device gives it.
+#[test]
+fn undefined_credmgmt_subcommand_matches_a_yubikey() {
+    let (mut fs, mut rng) = setup();
+    register(&mut fs, &mut rng, "example.com", &[1, 1], "a");
+    let mut out = [0u8; 512];
+    for subcmd in [0x00u8, 0x08, 0x7F] {
+        let mut state = armed(PERM_CM);
+        assert_eq!(
+            run(
+                &mut fs,
+                &mut state,
+                &cm_request(subcmd, None, &TOKEN),
+                &mut out
+            ),
+            Err(CtapError::InvalidParameter),
+            "credMgmt subcommand {subcmd:#04x} with a token"
+        );
+        // No token: the auth gate answers first, undefined subcommand or not.
+        let mut state = FidoState::new();
+        let mut bare = std::vec![0xA1u8, 0x01];
+        push_uint(&mut bare, subcmd);
+        assert_eq!(
+            run(&mut fs, &mut state, &bare, &mut out),
+            Err(CtapError::PuatRequired),
+            "credMgmt subcommand {subcmd:#04x} without a token"
+        );
+    }
 }
