@@ -40,6 +40,23 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Security
 
+- **SELECT matches an AID the way ISO 7816-4 and a YubiKey do.** The dispatcher
+  asked whether the requested AID *started with* a registered one, so any applet
+  answered to `its AID ‖ anything`. On PIV that meant selecting with
+  `A0 00 00 03 08 00 00 00 00` — the AID SP 800-85A-4 C.1.1.2 names as invalid and
+  expects `6A82` for — and with `A0 00 00 03 08` followed by five junk bytes. The
+  test is now the other way round, which is what truncated SELECT means: the
+  requested AID must be a **prefix of** a registered one, first match wins.
+  Measured on a YubiKey 5.7.4 across three applets, including a one-byte
+  candidate, so this is its rule and not an inference. PIV consequently registers
+  its full AID (`A0 00 00 03 08 00 00 10 00 01 00`) rather than the bare NIST
+  RID — with the old rule a shortened registration was what let the junk through,
+  and with the new one it would have made the real AID unselectable. The 9-byte
+  version-agnostic prefix and the bare RID both still select, matching the
+  YubiKey. An **empty** candidate is refused rather than treated as "select the
+  default": it is a prefix of everything, and nothing here should be reachable
+  without being named. **bcdDevice → 0x088C.**
+
 - **A failed PIV VERIFY now drops the standing one.** SP 800-73-4 Part 2
   §3.2.1.1 is explicit that on a mismatch "the card command shall fail, the PIV
   Card Application shall return the status word `63 CX`, **the security status of

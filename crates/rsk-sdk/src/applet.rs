@@ -81,8 +81,9 @@ impl<'a> ResBuf<'a> {
 /// `C` is a shared context (the file system in `firmware`) the dispatcher threads
 /// into every call, so applets hold no `static mut` device state.
 pub trait Applet<C> {
-    /// The application identifier, without a length prefix. SELECT matches when
-    /// this is a prefix of the requested AID.
+    /// The application identifier, without a length prefix, in FULL — SELECT
+    /// matches when the requested AID is a prefix of this (ISO 7816-4 truncated
+    /// select), so registering a shortened form makes the real AID unselectable.
     fn aid(&self) -> &'static [u8];
     /// Called on SELECT. `reselect` is true when this applet was already current.
     /// `res` receives the SELECT response body (e.g. an OpenPGP FCI); leave it
@@ -334,12 +335,20 @@ impl Dispatcher {
             return self.maybe_chain(sw, apdu.ne, chain_ok, res);
         }
 
-        // SELECT by AID. A disabled applet is skipped, so its AID matches nothing
+        // SELECT by AID, ISO 7816-4 truncated: the candidate must be a PREFIX of
+        // a registered AID, and the first applet it matches wins. The test used
+        // to be the other way round — the candidate had to *start with* a
+        // registered AID — which selected an applet for `AID ‖ anything`, so PIV
+        // answered to the AID SP 800-85A-4 C.1.1.2 names as invalid. A YubiKey
+        // 5.7.4 matches by prefix on every applet it carries, measured, down to a
+        // one-byte candidate. An EMPTY candidate is refused rather than treated
+        // as "select the default": it is a prefix of everything, and nothing on
+        // this device should be reachable without naming it at all.
+        // A disabled applet is skipped, so its AID matches nothing
         // (→ FILE_NOT_FOUND) just as if it were never registered.
         if select {
             let found = applets.iter().enumerate().position(|(i, app)| {
-                let aid = app.aid();
-                self.selectable(i) && apdu.data.len() >= aid.len() && &apdu.data[..aid.len()] == aid
+                self.selectable(i) && !apdu.data.is_empty() && app.aid().starts_with(apdu.data)
             });
             return match found {
                 Some(i) => {

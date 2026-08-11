@@ -39,7 +39,16 @@ use files::*;
 
 /// The PIV AID prefix the dispatcher matches. The full requested AID is
 /// `A0 00 00 03 08 00 00 10 00 01 00`.
-pub const PIV_AID: &[u8] = &[0xA0, 0x00, 0x00, 0x03, 0x08];
+/// The PIV application AID, SP 800-73-4 §2.2 in full: the NIST RID followed by
+/// the application identifier and its version. Registered whole rather than as
+/// the bare RID, because SELECT matches a candidate as a PREFIX of this — so the
+/// 9-byte version-agnostic prefix and the bare RID both still select, while
+/// `RID ‖ anything else` no longer does. SP 800-85A-4 C.1.1.2 names
+/// `A0 00 00 03 08 00 00 00 00` as an INVALID AID expecting `6A82`, and it is
+/// only invalid against the full value.
+pub const PIV_AID: &[u8] = &[
+    0xA0, 0x00, 0x00, 0x03, 0x08, 0x00, 0x00, 0x10, 0x00, 0x01, 0x00,
+];
 
 /// Reported PIV application version — the shared [`rsk_sdk::FIRMWARE_VERSION`]
 /// (default 5.7.4, `FW_VERSION`-overridable).
@@ -313,7 +322,7 @@ impl<S: Storage> Applet<Fs<S>> for PivApplet<'_> {
                 if apdu.p2 != 0x01 {
                     return Sw::WRONG_P1P2;
                 }
-                if apdu.data.len() >= PIV_AID.len() && &apdu.data[..PIV_AID.len()] == PIV_AID {
+                if !apdu.data.is_empty() && PIV_AID.starts_with(apdu.data) {
                     return apt(res);
                 }
                 Sw::OK
