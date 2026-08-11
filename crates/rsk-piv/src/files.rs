@@ -183,6 +183,13 @@ pub const DISCOVERY: &[u8] = &[
 /// SP 800-73 padded PIN-block wire length (PIN/PUK padded to 8 with `0xFF`).
 pub const PIN_WIRE_LEN: usize = 8;
 
+/// The pad byte that fills a reference out to [`PIN_WIRE_LEN`].
+pub const PIN_PAD: u8 = 0xFF;
+
+/// Shortest PIN or PUK the card will store — SP 800-73-4 §2.4.3 puts the
+/// reference at 6-8 bytes, and a YubiKey enforces that half of the rule.
+pub const PIN_MIN_LEN: usize = 6;
+
 /// Default credentials: PIN `123456` padded to 8 with `0xFF`, PUK `12345678`,
 /// management key `0102…08` ×3 typed as AES-192 (the YubiKey 5.7-era default
 /// key type).

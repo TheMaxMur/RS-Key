@@ -1102,6 +1102,31 @@ pub fn pad_pin(entered: &[u8]) -> Option<[u8; PIN_WIRE_LEN]> {
     Some(out)
 }
 
+/// The rule for a NEW PIN or PUK value: SP 800-73-4 §2.4.3 puts the reference at
+/// 6-8 bytes, `0xFF`-padded to 8. Only the length half is enforced, and that is
+/// deliberate — a YubiKey 5.7.4 accepts a non-digit reference on both the PIN and
+/// the PUK (measured), hosts are written against it, and the length is the half
+/// that matters anyway: it is what makes the search space larger than the retry
+/// counter. Without it the card accepted a 3-digit PIN as its own credential —
+/// 1000 candidates against three tries.
+fn check_new_reference(new: &[u8]) -> Result<(), Sw> {
+    // The RAW slice is what gets stored: `put_pin_verifier` takes its length as
+    // the record's own. Bound it before stripping, or a longer value ending in
+    // padding strips to something legal and is then stored at its full length —
+    // a reference no conformant host can ever present, i.e. the card wedged
+    // until a factory reset. A YubiKey answers 6A80 to an over-long one too.
+    if new.len() > PIN_WIRE_LEN {
+        return Err(WRONG_DATA);
+    }
+    // Trailing padding is not part of the value. `0xFF` is unambiguous here even
+    // though non-digits are allowed: it is the pad byte the wire form defines.
+    let len = new.iter().rposition(|&b| b != PIN_PAD).map_or(0, |i| i + 1);
+    if !(PIN_MIN_LEN..=PIN_WIRE_LEN).contains(&len) {
+        return Err(WRONG_DATA);
+    }
+    Ok(())
+}
+
 /// Change a PIN or PUK: verify `old` (burns a retry on mismatch, exactly like the
 /// CHANGE REFERENCE DATA APDU), then store `new`. Shared by that handler and the
 /// on-device panel flow; panel callers pad both via [`pad_pin`] first so the
@@ -1113,13 +1138,17 @@ pub fn change_reference<S: Storage>(
     old: &[u8],
     new: &[u8],
 ) -> Sw {
-    if new.is_empty() || new.len() > PIN_WIRE_LEN {
-        return Sw::WRONG_LENGTH;
-    }
     let (fid, retry) = which.fid_retry();
+    // The OLD reference is judged first: a YubiKey spends a retry on a wrong one
+    // whether or not the new value is well formed, and only a correct old value
+    // reaches the format check. SP 800-85A-4 C.2.2.1's "the retry counter remains
+    // unchanged" is about exactly that case, and it holds.
     match check_ref(dev, fs, fid, retry, old) {
         Sw::OK => {}
         sw => return sw,
+    }
+    if let Err(sw) = check_new_reference(new) {
+        return sw;
     }
     if put_pin_verifier(dev, fs, fid, new).is_err() {
         return Sw::MEMORY_FAILURE;
@@ -1135,12 +1164,12 @@ pub fn unblock_pin_with_puk<S: Storage>(
     puk: &[u8],
     new: &[u8],
 ) -> Sw {
-    if new.is_empty() || new.len() > PIN_WIRE_LEN {
-        return Sw::WRONG_LENGTH;
-    }
     match check_ref(dev, fs, EF_PUK, RETRY_PUK, puk) {
         Sw::OK => {}
         sw => return sw,
+    }
+    if let Err(sw) = check_new_reference(new) {
+        return sw;
     }
     if put_pin_verifier(dev, fs, EF_PIN, new).is_err() {
         return Sw::MEMORY_FAILURE;

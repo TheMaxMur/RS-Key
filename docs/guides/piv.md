@@ -79,11 +79,12 @@ device PIN and a hold. (`ykman piv access change-management-key --generate
 
 The panel manages PINs/PUKs that follow the standard PIV convention (**6–8
 digits, padded to 8 bytes with `0xFF`**), which is what `ykman`, `yubico-piv-tool`
-and OpenSC all use. A PIN or PUK provisioned *outside* that convention (e.g.
-hand-crafted raw `CHANGE REFERENCE DATA` / `RESET RETRY` APDUs that store an
-unpadded or sub-6-digit value) can't be verified on the panel; re-set it with
-`ykman` first. The factory defaults follow the convention, so the panel works
-out of the box.
+and OpenSC all use. Since firmware `0x088A` the card refuses to *store* a value
+shorter than six bytes at all, so a sub-6-digit reference can no longer be
+provisioned by any route. A reference stored **unpadded** by an older build is
+still possible, and it can't be verified on the panel; re-set it with `ykman`
+first. The factory defaults follow the convention, so the panel works out of the
+box.
 
 > The defaults are public. Until you change the PIN, PUK and management key,
 > anyone with physical access can generate, import or delete keys. Treat a

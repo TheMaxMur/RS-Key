@@ -3793,3 +3793,127 @@ fn the_mgm_metadata_repair_reads_the_surviving_keys_algorithm() {
         );
     }
 }
+
+/// A new PIN or PUK must be 6-8 bytes before its padding. Without the rule the
+/// card took a 3-digit PIN as its own credential — 1000 candidates against a
+/// three-try counter, which is precisely the search space the minimum exists to
+/// set. SP 800-85A-4 assertion C.2.2.1 wants `6A80` with the retry counter
+/// untouched, and a YubiKey 5.7.4 gives exactly that (measured).
+///
+/// The digits-only half of SP 800-73-4 §2.4.3 is deliberately NOT enforced: the
+/// same YubiKey stores a non-digit reference on both the PIN and the PUK, so a
+/// host may send one and the card must take it.
+#[test]
+fn a_new_reference_shorter_than_the_minimum_is_refused() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+
+    let pad = |v: &[u8]| {
+        let mut o = [0xFFu8; PIN_WIRE_LEN];
+        o[..v.len()].copy_from_slice(v);
+        o
+    };
+    let change = |app: &mut PivApplet, fs: &mut Fs<_>, p2: u8, old: &[u8], new: &[u8]| {
+        let mut msg = old.to_vec();
+        msg.extend_from_slice(new);
+        run(app, fs, INS_CHANGE_PIN, 0, p2, &msg).0
+    };
+
+    for (new, label) in [
+        (&pad(b"777")[..], "3 bytes"),
+        (&pad(b"12345")[..], "5 bytes, one short"),
+        (&pad(b"")[..], "nothing but padding"),
+    ] {
+        assert_eq!(
+            change(&mut app, &mut fs, 0x80, &DEFAULT_PIN, new),
+            WRONG_DATA,
+            "PIN <- {label}"
+        );
+        // …and the old PIN is untouched by the refusal.
+        assert_eq!(
+            run(&mut app, &mut fs, INS_VERIFY, 0, 0x80, &DEFAULT_PIN).0,
+            Sw::OK
+        );
+        assert_eq!(
+            change(&mut app, &mut fs, 0x81, &DEFAULT_PUK, new),
+            WRONG_DATA,
+            "PUK <- {label}"
+        );
+    }
+
+    // A value longer than the wire form, ending in padding, would strip to a
+    // legal length and then be STORED at its full length — a reference no host
+    // can present again. It has to be refused on the raw length.
+    let mut over = pad(b"123456").to_vec();
+    over.extend_from_slice(&[0xFF; 8]);
+    assert_eq!(
+        change(&mut app, &mut fs, 0x80, &DEFAULT_PIN, &over),
+        WRONG_DATA,
+        "a 16-byte new value must not be stored"
+    );
+    assert_eq!(
+        run(&mut app, &mut fs, INS_VERIFY, 0, 0x80, &DEFAULT_PIN).0,
+        Sw::OK,
+        "and the reference is untouched"
+    );
+
+    // A correct old PIN with a malformed new one must not COST a try — and in
+    // fact it restores the counter, because the old reference verified and
+    // §3.2.1.1 resets on any successful verification. Measured on a YubiKey
+    // 5.7.4 from a counter already at 2: the refusal takes it back to 3, the
+    // same as here. So SP 800-85A-4 C.2.2.1's "remains unchanged" holds a
+    // fortiori, and asserting "unchanged" literally would be asserting a
+    // divergence.
+    let full = reference_retries_left(&mut fs, PinRef::Pin).unwrap();
+    let mut wrong = pad(b"999999").to_vec();
+    wrong.extend_from_slice(&pad(b"654321"));
+    run(&mut app, &mut fs, INS_CHANGE_PIN, 0, 0x80, &wrong);
+    assert!(
+        reference_retries_left(&mut fs, PinRef::Pin).unwrap() < full,
+        "the wrong old PIN spent a try"
+    );
+    change(&mut app, &mut fs, 0x80, &DEFAULT_PIN, &pad(b"777"));
+    assert_eq!(
+        reference_retries_left(&mut fs, PinRef::Pin).unwrap(),
+        full,
+        "a refused format costs nothing; the verified old reference restored it"
+    );
+
+    // A WRONG old PIN does spend one, malformed new value or not — a YubiKey
+    // judges the old reference first and so does this.
+    let mut bad = pad(b"999999").to_vec();
+    bad.extend_from_slice(&pad(b"777"));
+    let sw = run(&mut app, &mut fs, INS_CHANGE_PIN, 0, 0x80, &bad).0;
+    assert_eq!(sw, Sw::new(0x63, 0xC2), "the old reference is judged first");
+
+    // The lengths that ARE allowed, including a non-digit one.
+    run(&mut app, &mut fs, INS_VERIFY, 0, 0x80, &DEFAULT_PIN);
+    for (new, label) in [
+        (&pad(b"123456")[..], "6 bytes"),
+        (&pad(b"1234567")[..], "7 bytes"),
+        (&pad(b"12345678")[..], "8 bytes"),
+        (&pad(b"ABCDEF")[..], "6 non-digits — a YubiKey takes these"),
+    ] {
+        assert_eq!(
+            change(&mut app, &mut fs, 0x80, &pad(b"123456"), new),
+            Sw::OK,
+            "PIN <- {label}"
+        );
+        // put it back for the next case
+        assert_eq!(
+            change(&mut app, &mut fs, 0x80, new, &pad(b"123456")),
+            Sw::OK
+        );
+    }
+
+    // RESET RETRY COUNTER is the other writer and gets the same rule.
+    let mut msg = DEFAULT_PUK.to_vec();
+    msg.extend_from_slice(&pad(b"777"));
+    assert_eq!(
+        run(&mut app, &mut fs, INS_RESET_RETRY, 0, 0x80, &msg).0,
+        WRONG_DATA
+    );
+}

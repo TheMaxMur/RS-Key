@@ -40,6 +40,23 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Security
 
+- **PIV no longer accepts a 3-digit PIN as its own credential.** The applet
+  checked nothing about a *new* PIN or PUK, so `CHANGE REFERENCE DATA` and
+  `RESET RETRY COUNTER` would set the card's authentication floor to three
+  digits — 1000 candidates against a three-try counter, when the 6-byte minimum
+  exists precisely to make that search larger than the counter. Confirmed end to
+  end: set it to `"777"`, and `"777"` then verifies. `ykman` validates
+  client-side, but SP 800-73-4 §2.4.3 puts the rule on the *card* because a
+  client cannot be trusted to, and SP 800-85A-4 assertion C.2.2.1 tests it.
+  Both writers now require the reference to be 6-8 bytes before its `0xFF`
+  padding, answering `6A80` without spending a try — which is what a YubiKey
+  5.7.4 does, measured on one factory-reset applet per case. The digits-only half
+  of §2.4.3 is deliberately **not** enforced: the same YubiKey stores a non-digit
+  reference on both the PIN and the PUK, so a host may send one and the card has
+  to take it. The old reference is still judged first, so a wrong current PIN
+  spends a try whether or not the new value is well formed — also matching.
+  **bcdDevice → 0x088A.**
+
 - **A PIN change interrupted by losing power no longer looks like a dead card.**
   Updating an OpenPGP PIN writes two flash records — the verifier, and the copy
   of the data-encryption key sealed under that PIN — and a cut between them left
