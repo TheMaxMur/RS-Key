@@ -327,6 +327,11 @@ run "ci scope rules"           ./scripts/ci-scope.sh --self-test
 # It costs ~7 s and needs nothing the shell has not already fetched.
 run "complexity ratchet"       ./scripts/complexity_gate.sh
 run "ci knob groups"           ./scripts/ci-knobs.sh --self-test
+# The Kani proofs run nightly, but their roster is a hand-written `-p` list and a
+# crate absent from it is simply not proven — `rsk-ui` and `rsk-led` never were,
+# under a row named "prove every harness". Checking the roster is a grep, so it
+# belongs here, where the harness gets written; the solver stays nightly.
+run "kani roster"              python scripts/kani_gate.py
 run "docs constants match code" python scripts/docs_constants.py
 run "pytest (tools/rsk)"       python -m pytest tools/rsk -q
 # The interop allow-list is the only thing that tells an expected RS-Key/YubiKey

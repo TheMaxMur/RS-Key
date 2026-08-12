@@ -176,9 +176,14 @@ this is the one deliberately non-nix tool (install once, outside the dev
 shell):
 
 ```sh
-cargo install --locked kani-verifier && cargo kani setup
-cargo kani -p rsk-sdk -p rsk-fs -p rsk-rsa-asm -p rsk-crypto -p rsk-rescue -p rsk-openpgp
+cargo install --locked kani-verifier --version 0.67.0 && cargo kani setup
+cargo kani -p rsk-sdk -p rsk-fs -p rsk-rsa-asm -p rsk-crypto -p rsk-mldsa -p rsk-rescue -p rsk-openpgp -p rsk-otp -p rsk-piv -p rsk-oath -p rsk-usb -p rsk-ui -p rsk-led -p rsk-slip39 -p rsk-bip39 -Z unstable-options --harness-timeout 30m
 ```
+
+Pin the version — a verdict belongs to the tool that gave it, and an unpinned
+install is not the one CI runs. `--harness-timeout` is experimental (hence the
+`-Z`): it turns a harness that stops converging into a red row in half an hour
+instead of a six-hour job that ends in nothing.
 
 The proofs are bounded, and the bound is the honest fine print. A 16- to
 20-byte symbolic buffer reaches every branch of the TLV/APDU parsers; bigger
@@ -205,7 +210,16 @@ structural (`< m`, panic-free) where it doesn't, or relational against a
 division-free reformulation. Anything bigger gets a fuzz target.
 
 CI: the daily `deep-checks` workflow has a `kani` job (rustup-based, version
-pinned, `~/.kani` cached) running the same `cargo kani` line.
+pinned, `~/.kani` cached) running the same `cargo kani` line — literally the
+same one, because `scripts/kani_gate.py` compares them. That guard is in the
+merge gate (the proofs themselves stay daily): it holds the roster of crates
+carrying a `#[kani::proof]` and fails when one is missing from the `-p` list,
+which is how 20 of the 49 harnesses came to be run by nothing at all.
+
+One crate is deliberately off the list. `rsk-bench`'s `summarize` sorts
+`samples[warmup..]`, whose length is symbolic, so CBMC unwinds it unbounded and
+returns no verdict — not in 5 minutes, and not with `--default-unwind 5`. The
+exclusion and its reason live in that script, next to the roster it belongs to.
 
 ## On-device tests
 
