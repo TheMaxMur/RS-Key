@@ -40,6 +40,21 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **DO `0xFA` no longer advertises two algorithms nothing can use.** X448 and
+  Ed448 were listed among the supported per-slot attributes while GENERATE and
+  IMPORT refused them outright — and because the write gate accepts exactly what
+  that list advertises, `PUT DATA C1` of Ed448 *succeeded*: the attribute stuck,
+  `gpg --card-status` reported Ed448 for the slot, and every operation on it
+  failed until a good attribute was written back. §4.4.3.9 makes DO `0xFA` the
+  machine-readable contract a terminal is told to use for key import, so an entry
+  in it is a promise; no host reads the guide that documented the exception.
+  Dropping the two costs nothing — nothing could use them — and closes the trap in
+  the same move, because the writer and the advertisement have been one list since
+  audit run-33. Measured on a YubiKey 5.7.4: it refuses every unadvertised
+  attribute with `6A80` and leaves the DO unchanged, so the state ours could reach
+  cannot exist there.
+  **bcdDevice → 0x08AA.**
+
 - **A password of a length no password could have no longer costs a retry.**
   VERIFY compared whatever it was handed: a one-byte or 200-byte value against a
   6-to-127-character reference was treated as a wrong guess, so it spent a try and

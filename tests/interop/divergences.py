@@ -217,7 +217,7 @@ RULES = [
     # ── OpenPGP structural divergences ────────────────────────────────────
     ("openpgp.secureMessaging",
      ExpectDiff(None, r"(?i)(<missing>|^0$|off|false)", "RS-Key does not implement OpenPGP secure messaging")),
-    ("openpgp.algoInfo", Superset("Ed448/X448 advertised-unimplemented; no Brainpool — set differences")),
+    ("openpgp.algoInfo", Superset("set differences: RS-Key adds RSA-1024 and offers no brainpoolP512r1")),
 
     # ── PIV structural ────────────────────────────────────────────────────
     ("piv.attestation.rootSelfSigned",

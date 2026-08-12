@@ -583,11 +583,22 @@ fn put_data_refuses_an_unadvertised_algorithm_attribute() {
         &[0x01, 0x06, 0x00, 0x00, 0x20, 0x00],       // RSA-1536: never advertised
         &[0x01, 0x10, 0x0F, 0x00, 0x20, 0x00],       // 4111 bits → really RSA-4096
         &[0x13, 0x2B, 0x81, 0x04, 0x00, 0x21],       // an OID we do not implement
+        // Ed448 and X448 were advertised while GENERATE and IMPORT refused them,
+        // so the write landed and the slot stayed dead until a good attribute was
+        // written back — `gpg --card-status` reporting Ed448 for a slot where
+        // nothing works. A YubiKey 5.7.4 answers 6A80 to every attribute it does
+        // not advertise and leaves the DO unchanged (measured, 3/3).
+        &[0x16, 0x2B, 0x65, 0x71], // Ed448
+        &[0x12, 0x2B, 0x65, 0x6F], // X448
     ] {
         assert_eq!(
             put(&mut app, &mut fs, 0x00, 0xC1, attr),
             crate::consts::WRONG_DATA,
             "accepted {attr:02x?}"
+        );
+        assert!(
+            !fs.has_data(consts::EF_ALGO_PRIV1),
+            "stored {attr:02x?} anyway"
         );
     }
 

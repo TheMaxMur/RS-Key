@@ -97,12 +97,11 @@ It is below every current guidance (NIST SP 800-131A retired it in 2013) and it
 is here only so a key generated under an older build keeps working. Do not pick
 it for a new key.
 
-Not supported. gpg will offer them, and the card even accepts the `key-attr`
-write, but **GENERATE / keytocard** then refuses with `0x6A81` "Function not
-supported": **X448**, **Ed448**, and **brainpoolP512r1**. (X448 and Ed448 still
-appear in the `0xFA` advertisement but are non-functional; brainpoolP512r1 is not
-advertised.) No mature `no_std` Rust arithmetic exists for those yet, so shipping
-them would mean unaudited curve math.
+Not supported: **X448**, **Ed448** and **brainpoolP512r1**. gpg will offer them;
+the card advertises none of the three in DO `0xFA` and refuses the `key-attr`
+write with `0x6A80`, so a slot cannot end up announcing a curve it will not use.
+No mature `no_std` Rust arithmetic exists for those yet, so shipping them would
+mean unaudited curve math.
 
 On-card generation means the private keys never existed anywhere else, and
 **cannot be backed up**. gpg's "make an off-card backup" prompt covers the

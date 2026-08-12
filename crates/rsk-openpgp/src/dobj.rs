@@ -32,11 +32,9 @@ pub(crate) const ATTR_BP384R1: &[u8] = &[
 pub(crate) const ATTR_CV25519: &[u8] = &[
     11, ALGO_ECDH, 0x2b, 0x06, 0x01, 0x04, 0x01, 0x97, 0x55, 0x01, 0x05, 0x01,
 ];
-const ATTR_X448: &[u8] = &[4, ALGO_ECDH, 0x2b, 0x65, 0x6f];
 pub(crate) const ATTR_ED25519: &[u8] = &[
     10, ALGO_EDDSA, 0x2b, 0x06, 0x01, 0x04, 0x01, 0xda, 0x47, 0x0f, 0x01,
 ];
-const ATTR_ED448: &[u8] = &[4, ALGO_EDDSA, 0x2b, 0x65, 0x71];
 
 // The algorithms each slot supports. `emit_algoinfo` publishes these in DO `0xFA`
 // and `putdata` accepts nothing else into C1/C2/C3 — one definition, so the card
@@ -44,6 +42,12 @@ const ATTR_ED448: &[u8] = &[4, ALGO_EDDSA, 0x2b, 0x65, 0x71];
 // should reject unsupported values in the DO"). Without the check, `nbits` came
 // straight off the wire and `RsaKeygen::usable` took any 32-byte multiple, so a
 // PW3 holder could set 512 and have the *owner* generate a factorable key later.
+//
+// §4.4.3.9 also makes this the machine-readable contract a terminal is told to
+// use for key import, so an entry here is a promise, not a wish list: X448 and
+// Ed448 sat in it while GENERATE and IMPORT refused them, and the only thing a
+// host could do with the advertisement was store an attribute that left the slot
+// dead — `gpg --card-status` showing Ed448 for a slot where nothing works.
 pub(crate) const ALGO_SIG_SUPPORTED: &[&[u8]] = &[
     ATTR_RSA1K,
     ATTR_RSA2K,
@@ -56,7 +60,6 @@ pub(crate) const ALGO_SIG_SUPPORTED: &[&[u8]] = &[
     ATTR_BP256R1,
     ATTR_BP384R1,
     ATTR_ED25519,
-    ATTR_ED448,
 ];
 pub(crate) const ALGO_DEC_SUPPORTED: &[&[u8]] = &[
     ATTR_RSA1K,
@@ -70,7 +73,6 @@ pub(crate) const ALGO_DEC_SUPPORTED: &[&[u8]] = &[
     ATTR_BP256R1,
     ATTR_BP384R1,
     ATTR_CV25519,
-    ATTR_X448,
 ];
 pub(crate) const ALGO_AUT_SUPPORTED: &[&[u8]] = ALGO_SIG_SUPPORTED;
 
