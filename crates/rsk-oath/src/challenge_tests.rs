@@ -56,12 +56,14 @@ fn calc_all(app: &mut OathApplet, fs: &mut Fs<RamStorage>, chal: &[u8]) -> (Sw, 
 }
 
 /// The card's own answer, computed host-side: the RFC 4226 truncation of the
-/// HMAC over the *whole* challenge. Independent of both read paths, so a clamp
-/// shows up as a value and not just as a disagreement.
+/// HMAC over the *whole* challenge, reduced to the six digits every credential
+/// in this file carries. Independent of both read paths, so a clamp shows up as
+/// a value and not just as a disagreement.
 fn expected(chal: &[u8]) -> [u8; 4] {
     let mac = hmac_sha1(SECRET_SHA1, chal);
     let off = (mac[19] & 0xF) as usize;
-    [mac[off] & 0x7F, mac[off + 1], mac[off + 2], mac[off + 3]]
+    let trunc = u32::from_be_bytes([mac[off] & 0x7F, mac[off + 1], mac[off + 2], mac[off + 3]]);
+    (trunc % 10u32.pow(6)).to_be_bytes()
 }
 
 #[test]

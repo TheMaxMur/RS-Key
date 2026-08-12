@@ -118,7 +118,7 @@ frame chain the YubiKey-OATH way instead: `61 XX` followed by **SEND REMAINING**
 Authenticator send. A host that stops at the first frame still sees a valid
 (shorter) list.
 
-Four OATH rules a host has to expect, all matching a YubiKey 5.7.4. `PUT`
+Five OATH rules a host has to expect, all matching a YubiKey 5.7.4. `PUT`
 (`0x01`) is strict about the credential body — KEY TLV 16..=66 bytes, digits
 6/7/8, type `0x10`/`0x20`, algorithm 1/2/3, name 1..=64 bytes, the initial moving
 factor on HOTP only and exactly 4 bytes, the PROPERTY byte as the bare `78 vv`
@@ -147,6 +147,14 @@ whatever the credential's type, so a `HOTP` account that ignores the challenge
 refuses an over-wide one too. Both read paths therefore answer the same code for
 the same challenge at every accepted width — including across a `SEND REMAINING`
 page — and the usual 8-byte TOTP counter is simply the common case.
+
+The fifth is what a truncated response carries. With `P2 = 0x01` the `76` TLV is
+`[digits][code(4)]`, and the four bytes are the RFC 4226 dynamic truncation
+**already reduced to that credential's digit count** — big-endian, so a 6-digit
+account never exceeds `000F 423F`. A host must not reduce a second time expecting
+a different answer, and `VERIFY CODE` (`0xB1`) compares exactly the value
+`CALCULATE` sent. The untruncated form (`P2 = 0x00`, tag `75`) is unaffected: it
+carries the whole HMAC.
 
 ### 1.2 CTAPHID framing
 

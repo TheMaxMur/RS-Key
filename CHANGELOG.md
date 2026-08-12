@@ -124,6 +124,22 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **A truncated OATH `CALCULATE` carried the raw 31-bit truncation, not the
+  code.** RFC 4226 §5.3 makes an OTP the dynamic truncation *reduced to the
+  account's digit count*, and a YubiKey 5.7.4 sends the reduced value: same
+  secret, same challenge, same 6-digit credential, the card answers
+  `76 05 06 00 0A 46 83` (673411) where we answered `76 05 06 00 28 CB 03`
+  (2673411, the truncation itself), measured twice at 6 and at 8 digits. `ykman`
+  and Yubico Authenticator reduce host-side, so they showed the right code
+  either way; a strict YKOATH client saw ten digits where a YubiKey shows six.
+  Our own applet did not agree with itself either — `VERIFY CODE` (`0xB1`)
+  compares the *reduced* code, so feeding `CALCULATE`'s four bytes straight back
+  into it was refused. Both read paths (`0xA2` and `0xA4`) build their response
+  through one function, and the modulus is the one `VERIFY CODE` already used. A
+  credential stored by a build from before `PUT` bounded digits to 6/7/8 has no
+  modulus and keeps answering with the bare truncation rather than becoming
+  unreadable. **bcdDevice → 0x08B7.**
+
 - **OATH `CALCULATE ALL` computed a different code from `CALCULATE` for the same
   credential and the same challenge.** The bulk read clamped the challenge to its
   first 8 bytes, on a comment asserting the spec said 8; the individual read

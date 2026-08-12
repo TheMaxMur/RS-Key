@@ -26,6 +26,10 @@ mod otp_pin_tests;
 #[path = "set_code_tests.rs"]
 mod set_code_tests;
 
+/// The four bytes a truncated CALCULATE / CALCULATE ALL response carries.
+#[path = "code_tests.rs"]
+mod code_tests;
+
 /// RFC 6238 reference secrets.
 const SECRET_SHA1: &[u8] = b"12345678901234567890";
 const SECRET_SHA256: &[u8] = b"12345678901234567890123456789012";
@@ -1600,12 +1604,11 @@ fn calculate_all_mixes_response_kinds() {
     let (sw, body) = run(&mut app, &mut fs, &apdu(INS_CALC_ALL, 0, 0x01, &chal));
     assert_eq!(sw, Sw::OK);
 
-    // Entry 1: full truncated TOTP response (RFC 6238 SHA-1 @ T=1).
+    // Entry 1: full truncated TOTP response (RFC 6238 SHA-1 @ T=1), the eight
+    // digits the credential was stored with.
     let mut expect = tlv(TAG_NAME, b"totp");
-    let h = hmac_sha1(SECRET_SHA1, &1u64.to_be_bytes());
-    let off = (h[19] & 0xF) as usize;
-    expect.extend([TAG_RESPONSE + 1, 5, 8, h[off] & 0x7F]);
-    expect.extend(&h[off + 1..off + 4]);
+    expect.extend([TAG_RESPONSE + 1, 5, 8]);
+    expect.extend(&94_287_082u32.to_be_bytes());
     // Entry 2: HOTP is not calculated in bulk.
     expect.extend(tlv(TAG_NAME, b"hotp"));
     expect.extend([TAG_NO_RESPONSE, 1, 6]);

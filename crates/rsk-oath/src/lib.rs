@@ -1352,8 +1352,9 @@ fn alg_supported(ty_alg: u8) -> bool {
     )
 }
 
-/// The decimal width VERIFY CODE reduces a truncated HMAC to. PUT bounds
-/// `digits` to 6..=8, but a build before that stored anything the host sent and
+/// The decimal width a truncated HMAC is reduced to — one owner for the code
+/// CALCULATE sends and the code VERIFY CODE compares. PUT bounds `digits` to
+/// 6..=8, but a build before that stored anything the host sent and
 /// `10^digits` would overflow — so an out-of-range record is refused rather than
 /// silently compared at the wrong width.
 fn code_modulus(digits: u8) -> Option<u32> {
@@ -1389,10 +1390,13 @@ fn calculate(truncate: bool, key: &[u8], chal: &[u8], res: &mut ResBuf) -> Optio
         res.push(4 + 1);
         res.push(key[1]);
         let off = (mac[size - 1] & 0xF) as usize;
-        res.push(mac[off] & 0x7F);
-        res.push(mac[off + 1]);
-        res.push(mac[off + 2]);
-        res.push(mac[off + 3]);
+        let trunc = u32::from_be_bytes([mac[off] & 0x7F, mac[off + 1], mac[off + 2], mac[off + 3]]);
+        // RFC 4226 §5.3: the code is the truncation reduced to the credential's
+        // decimal width — what a 5.7.4 sends, and what VERIFY CODE compares. A
+        // width from before PUT bounded it has no modulus; the bare truncation
+        // keeps such a record readable instead of unanswerable.
+        let code = code_modulus(key[1]).map_or(trunc, |m| trunc % m);
+        res.extend(&code.to_be_bytes());
     } else {
         res.push((size + 1) as u8);
         res.push(key[1]);

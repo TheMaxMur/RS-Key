@@ -113,7 +113,12 @@ class Oath:
         body = resp[2:]
         digits = body[0]
         if truncated:
-            code = struct.unpack(">I", body[1:5])[0] % (10 ** digits)
+            code = struct.unpack(">I", body[1:5])[0]
+            # The four bytes are the truncation already reduced to `digits`
+            # decimals, the way a YubiKey sends it. Reducing again here would
+            # hide a device that did not (E65).
+            if code >= 10 ** digits:
+                fail(f"CALCULATE {name!r}: {code} is wider than {digits} digits")
             return code
         return body[1:]
 
