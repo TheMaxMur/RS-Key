@@ -40,6 +40,22 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Security
 
+- **PUT DATA no longer stores a fingerprint or a timestamp of an impossible
+  length.** OpenPGP 3.4 §4.4.1 fixes each key fingerprint at 20 bytes and each
+  generation timestamp at 4, and `C5`/`C6`/`CD` republish them as fixed-width
+  slices. `put_data` length-checked only the UIF and algorithm DOs, so a
+  28-byte `C7` was accepted with `9000` and then read back as *two different
+  values* — 28 bytes standalone, 20 inside `C5` — with no error either way.
+  gpg writes `C7` immediately after generating a key, so a host that got the
+  length wrong had no way to find out. All nine writable DOs of the class are
+  now gated (`C7`–`C9` and the CA fingerprints `CA`–`CC` at 20, `CE`–`D0` at 4),
+  the empty write included, and a refusal leaves the DO byte-for-byte as it was
+  — measured on a YubiKey 5.7.4 at eight lengths per DO, which is exactly what
+  it does. The reader's stride and the writer's gate now come from one pair of
+  constants, so they cannot drift. `C5`/`C6`/`CD` stay unwritable; we answer
+  `6A88` where that card answers `6B00`, which is a divergence in the status
+  byte only. **bcdDevice → 0x0897.**
+
 - **DO `0xDE` tells an imported key from a generated one.** OpenPGP 3.4
   §4.4.3.8 gives each slot's status byte three values — `00` absent, `01`
   generated on card, `02` **imported** — and its first sentence says why: the

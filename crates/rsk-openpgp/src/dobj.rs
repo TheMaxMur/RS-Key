@@ -328,20 +328,20 @@ impl<'a, S: Storage> DoWriter<'a, S> {
 
     fn emit_fp(&mut self) -> usize {
         self.push((EF_FP & 0xff) as u8);
-        self.push(60);
-        self.emit_trium(EF_FP_SIG, 3, 20) + 2
+        self.push((KEY_SLOTS * FP_LEN) as u8);
+        self.emit_trium(EF_FP_SIG, KEY_SLOTS, FP_LEN) + 2
     }
 
     fn emit_cafp(&mut self) -> usize {
         self.push((EF_CA_FP & 0xff) as u8);
-        self.push(60);
-        self.emit_trium(EF_FP_CA1, 3, 20) + 2
+        self.push((KEY_SLOTS * FP_LEN) as u8);
+        self.emit_trium(EF_FP_CA1, KEY_SLOTS, FP_LEN) + 2
     }
 
     fn emit_ts(&mut self) -> usize {
         self.push((EF_TS_ALL & 0xff) as u8);
-        self.push(12);
-        self.emit_trium(EF_TS_SIG, 3, 4) + 2
+        self.push((KEY_SLOTS * TS_LEN) as u8);
+        self.emit_trium(EF_TS_SIG, KEY_SLOTS, TS_LEN) + 2
     }
 
     fn emit_keyinfo(&mut self) -> usize {

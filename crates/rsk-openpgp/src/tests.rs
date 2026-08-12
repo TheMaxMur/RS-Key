@@ -1466,6 +1466,59 @@ fn key_info_reports_generated_and_imported_apart() {
     assert_eq!(key_info(&mut app, &mut fs), [1, 0, 2, 0, 3, 0]);
 }
 
+// OpenPGP 3.4 §4.4.1 fixes the fingerprint DOs at 20 bytes and the timestamps
+// at 4, and C5/C6/CD republish them as fixed-width slices. A write of any other
+// length used to be stored, so the same DO read back as two different values —
+// itself standalone, and a truncation inside the aggregate. A YubiKey 5.7.4
+// answers 6A80 at every other length and leaves the DO alone.
+#[test]
+fn put_data_polices_the_fixed_length_dos() {
+    let rng = RefCell::new(LcgRng(19));
+    let mut fs = make_fs();
+    let presence = RefCell::new(crate::AlwaysConfirm);
+    let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
+    verify_pin(&mut app, &mut fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
+
+    // Each of the nine, at its own length and at every length around it.
+    let fps = [0xC7u8, 0xC8, 0xC9, 0xCA, 0xCB, 0xCC];
+    let tss = [0xCEu8, 0xCF, 0xD0];
+    for (tags, want) in [(&fps[..], consts::FP_LEN), (&tss[..], consts::TS_LEN)] {
+        for &tag in tags {
+            let good = vec![0xB0u8; want];
+            assert_eq!(put(&mut app, &mut fs, 0x00, tag, &good), Sw::OK);
+            for n in [0, 1, want - 1, want + 1, want * 2, 60] {
+                assert_eq!(
+                    put(&mut app, &mut fs, 0x00, tag, &vec![0xEE; n]),
+                    consts::WRONG_DATA,
+                    "PUT {tag:#04X} len {n}"
+                );
+                // …and the refusal changed nothing.
+                let (body, sw) = run(&mut app, &mut fs, &[0x00, consts::INS_GET_DATA, 0x00, tag]);
+                assert_eq!(sw, Sw::OK);
+                assert_eq!(body, good, "PUT {tag:#04X} len {n} altered the DO");
+            }
+        }
+    }
+
+    // The aggregates stay read-only, at every length.
+    for tag in [0xC5u8, 0xC6, 0xCD] {
+        for n in [0, 4, 12, 20, 60, 61] {
+            assert_eq!(
+                put(&mut app, &mut fs, 0x00, tag, &vec![0xEE; n]),
+                Sw::REFERENCE_NOT_FOUND
+            );
+        }
+    }
+
+    // What was written lands in the right slice of each aggregate.
+    let (c5, _) = run(&mut app, &mut fs, &[0x00, consts::INS_GET_DATA, 0x00, 0xC5]);
+    assert_eq!(c5, vec![0xB0u8; consts::KEY_SLOTS * consts::FP_LEN]);
+    let (c6, _) = run(&mut app, &mut fs, &[0x00, consts::INS_GET_DATA, 0x00, 0xC6]);
+    assert_eq!(c6, vec![0xB0u8; consts::KEY_SLOTS * consts::FP_LEN]);
+    let (cd, _) = run(&mut app, &mut fs, &[0x00, consts::INS_GET_DATA, 0x00, 0xCD]);
+    assert_eq!(cd, vec![0xB0u8; consts::KEY_SLOTS * consts::TS_LEN]);
+}
+
 // OpenPGP 3.4 §7.2.7 gives GET NEXT DATA exactly one job — walk the three 7F21
 // occurrences — and §5 makes that read *Always*. Measured on a YubiKey 5.7.4:
 // GET DATA anchors the walk, GET NEXT advances then reads, and the step past the

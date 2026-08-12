@@ -132,6 +132,11 @@ pub const EF_ALGO_AUT: u16 = 0x00c3; // S
 pub const EF_PW_STATUS: u16 = 0x00c4; // S — PW status bytes (7)
 pub const EF_FP: u16 = 0x00c5; // S — fingerprints (3×20)
 pub const EF_CA_FP: u16 = 0x00c6; // S — CA fingerprints (3×20)
+/// OpenPGP 3.4 §4.4.1 fixes a fingerprint at 20 bytes and a key-generation
+/// timestamp at 4; `C5`/`C6`/`CD` are read-only concatenations of `KEY_SLOTS` of
+/// them, so the writer's length gate and the reader's stride are one value.
+pub const FP_LEN: usize = 20;
+pub const TS_LEN: usize = 4;
 pub const EF_FP_SIG: u16 = 0x00c7; // S
 pub const EF_FP_DEC: u16 = 0x00c8; // S
 pub const EF_FP_AUT: u16 = 0x00c9; // S

@@ -13,8 +13,24 @@ use crate::consts::*;
 use crate::files::{DoSource, source};
 use crate::pin::Session;
 
-/// Write `data` to the DO addressed by `fid` (empty `data` deletes it). ACL:
-/// private DOs 1/3 need PW2 or PW3; everything else needs PW3.
+/// The length OpenPGP 3.4 §4.4.1 fixes for `fid`, where it fixes one.
+///
+/// `C5`/`C6`/`CD` republish these DOs as fixed-width slices, so a value of any
+/// other length reads back as two different things: itself standalone, and a
+/// truncation (or a zero-pad) inside the aggregate. Refusing the write is the
+/// only answer that keeps one DO one value — and it is what a YubiKey does, at
+/// every length, leaving the DO untouched.
+fn fixed_do_len(fid: u16) -> Option<usize> {
+    match fid {
+        EF_FP_SIG | EF_FP_DEC | EF_FP_AUT | EF_FP_CA1 | EF_FP_CA2 | EF_FP_CA3 => Some(FP_LEN),
+        EF_TS_SIG | EF_TS_DEC | EF_TS_AUT => Some(TS_LEN),
+        _ => None,
+    }
+}
+
+/// Write `data` to the DO addressed by `fid` (empty `data` deletes it, unless
+/// the DO has a fixed length). ACL: private DOs 1/3 need PW2 or PW3; everything
+/// else needs PW3.
 pub fn put_data<S: Storage>(fs: &mut Fs<S>, sess: &Session, fid: u16, data: &[u8]) -> Sw {
     let target = match fid {
         // Routed away by the dispatch (put_reset_code / put_pw_status); rejected
@@ -53,6 +69,13 @@ pub fn put_data<S: Storage>(fs: &mut Fs<S>, sess: &Session, fid: u16, data: &[u8
         && !data.is_empty()
         && !crate::dobj::advertised_algo(fid, data)
     {
+        return WRONG_DATA;
+    }
+
+    // Including the empty write, which would otherwise delete the DO: a YubiKey
+    // refuses length 0 here too, and there is no way to express "no fingerprint"
+    // in C5 anyway — an absent one already reads as zeroes.
+    if fixed_do_len(fid).is_some_and(|want| data.len() != want) {
         return WRONG_DATA;
     }
 
