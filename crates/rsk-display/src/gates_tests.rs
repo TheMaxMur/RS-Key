@@ -116,13 +116,90 @@ fn the_two_pin_scopes_have_separate_counters() {
     rsk_fido::passkeys::store_local_pin(&dev(), &mut env.fs.borrow_mut(), PIN)
         .expect("the fixture PIN must satisfy the clientPIN floor");
     let mut ui = env.ui(Pad::taps(&pin_entry(WRONG_PIN)));
-    ui.hooks.presence_ms = 100; // the re-prompt then times out rather than looping
     assert!(!ui.local_pin_gate(PinScope::Device));
+    assert_eq!(
+        rsk_fido::passkeys::device_pin_retries_left(&mut env.fs.borrow_mut()),
+        Some(rsk_fido::consts::MAX_PIN_RETRIES - 1),
+        "the control: without this the pad could have compared nothing"
+    );
     assert_eq!(
         rsk_fido::passkeys::pin_retries_left(&mut env.fs.borrow_mut()),
         Some(rsk_fido::consts::MAX_PIN_RETRIES),
         "the FIDO clientPIN's budget is untouched"
     );
+    assert_eq!(
+        ui.hooks.pin_failed, 0,
+        "a wrong device PIN is no CTAP event"
+    );
+}
+
+/// A wrong clientPIN at the pad must end a host's outstanding `pinUvAuthToken`.
+/// This gate is only ever the current-PIN prompt of the on-device FIDO-PIN change,
+/// i.e. `changePIN`'s old-PIN check performed at the panel — and over USB that
+/// check drops the token (`0x08B4`, measured on a YubiKey 5.7.4 four times per
+/// door). Nothing signalled here, so the same wrong PIN killed the token from one
+/// side of the device and not the other.
+#[test]
+fn a_wrong_clientpin_at_the_pad_ends_the_host_token() {
+    let env = Env::new();
+    rsk_fido::passkeys::store_local_pin(&dev(), &mut env.fs.borrow_mut(), PIN)
+        .expect("the fixture PIN must satisfy the clientPIN floor");
+    let mut ui = env.ui(Pad::taps(&pin_entry(WRONG_PIN)));
+    assert!(!ui.local_pin_gate(PinScope::Fido));
+    assert_eq!(
+        rsk_fido::passkeys::pin_retries_left(&mut env.fs.borrow_mut()),
+        Some(rsk_fido::consts::MAX_PIN_RETRIES - 1),
+        "the control: the pad really did compare and spend an attempt"
+    );
+    assert_eq!(ui.hooks.pin_failed, 1);
+}
+
+/// The correct clientPIN, and a decline, are not failed comparisons.
+#[test]
+fn only_a_failed_comparison_ends_the_host_token() {
+    let env = Env::new();
+    rsk_fido::passkeys::store_local_pin(&dev(), &mut env.fs.borrow_mut(), PIN)
+        .expect("the fixture PIN must satisfy the clientPIN floor");
+    let mut ui = env.ui(Pad::taps(&pin_entry(PIN)));
+    assert!(ui.local_pin_gate(PinScope::Fido));
+    assert_eq!(ui.hooks.pin_failed, 0, "the right PIN ends nothing");
+
+    let mut ui = env.ui(Pad::taps(&[center(rsk_ui::PIN_CANCEL_RECT)]));
+    assert!(!ui.local_pin_gate(PinScope::Fido));
+    assert_eq!(ui.hooks.pin_failed, 0, "a decline is not an attempt");
+}
+
+/// Every comparison the pad makes signals, down to the one that blocks the PIN —
+/// that last attempt is compared, and over USB it drops the token too. The attempt
+/// *after* the budget is spent is turned away before any comparison, and the wire
+/// path leaves an outstanding token alone there, so it must not signal.
+#[test]
+fn a_pad_entry_that_compares_nothing_ends_nothing() {
+    let env = Env::new();
+    rsk_fido::passkeys::store_local_pin(&dev(), &mut env.fs.borrow_mut(), PIN)
+        .expect("the fixture PIN must satisfy the clientPIN floor");
+    let budget = rsk_fido::consts::MAX_PIN_RETRIES as usize;
+    let mut taps = Vec::new();
+    for _ in 0..budget {
+        taps.extend(pin_entry(WRONG_PIN));
+    }
+    let mut ui = env.ui(Pad::taps(&taps));
+    ui.hooks.host_pending = true; // dismisses the "PIN blocked" notice
+    assert!(!ui.local_pin_gate(PinScope::Fido));
+    assert_eq!(
+        rsk_fido::passkeys::pin_retries_left(&mut env.fs.borrow_mut()),
+        Some(0)
+    );
+    assert_eq!(
+        ui.hooks.pin_failed, budget,
+        "every compared attempt signals, the blocking one included"
+    );
+
+    // A fresh visit to a spent counter compares nothing.
+    let mut ui = env.ui(Pad::taps(&pin_entry(PIN)));
+    ui.hooks.host_pending = true;
+    assert!(!ui.local_pin_gate(PinScope::Fido));
+    assert_eq!(ui.hooks.pin_failed, 0);
 }
 
 #[test]

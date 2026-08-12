@@ -137,6 +137,13 @@ where
             (retries, expected)
         };
         let mut pin = [0u8; 64];
+        // A clientPIN refused here is `changePIN`'s failed old-PIN check performed
+        // at the pad, and over USB that check ends the host's outstanding
+        // pinUvAuthToken. Only this scope: the device PIN is no CTAP credential.
+        // The budget test is what tells a comparison from a refusal — `Blocked`
+        // with nothing left to spend was turned away before any compare, and the
+        // wire path leaves the token alone there too.
+        let ends_host_token = scope == PinScope::Fido && retries.is_some_and(|left| left > 0);
         // Show the remaining attempts up front (the design's enterpin "N tries
         // remaining"); a wrong entry then swaps it for the danger "Wrong PIN, N left".
         let mut caption = retries.map(|left| PinCaption::TriesRemaining { left });
@@ -165,11 +172,17 @@ where
                         rsk_fido::passkeys::LocalPin::Ok => break true,
                         // Re-prompt showing the remaining attempts until the budget runs out.
                         rsk_fido::passkeys::LocalPin::Wrong { retries_left } => {
+                            if ends_host_token {
+                                self.hooks.note_local_pin_failed();
+                            }
                             caption = Some(PinCaption::WrongPin { retries_left });
                         }
                         // Budget spent — note it and break; the notice is shown below, once
                         // the immutable `dev` borrow has been released.
                         rsk_fido::passkeys::LocalPin::Blocked => {
+                            if ends_host_token {
+                                self.hooks.note_local_pin_failed();
+                            }
                             blocked = true;
                             break false;
                         }

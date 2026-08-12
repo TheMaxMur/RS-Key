@@ -115,6 +115,11 @@ pub trait Hooks {
     /// A device PIN was re-keyed from the panel: the host side must end every
     /// session credential the old PIN authorized (CTAP 2.1 §6.5.5.6).
     fn note_local_pin_changed(&mut self) {}
+    /// A clientPIN comparison *failed* at the panel's pad. Same consequence — the
+    /// host's outstanding `pinUvAuthToken` ends — for the other reason: the pad's
+    /// current-PIN prompt is `changePIN`'s old-PIN check, and over USB that check
+    /// drops the token on a mismatch.
+    fn note_local_pin_failed(&mut self) {}
     /// Whether the boot ROM actually verifies the image signature (read from OTP),
     /// shown read-only on Settings → Firmware.
     fn secure_boot_enabled(&self) -> bool {

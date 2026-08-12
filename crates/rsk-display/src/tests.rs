@@ -188,6 +188,8 @@ pub struct Board {
     pub attach_ms: u64,
     /// How many times a panel-set PIN told the host side to end its sessions.
     pub pin_changed: usize,
+    /// …and how many times a failed clientPIN comparison at the pad did.
+    pub pin_failed: usize,
 }
 
 impl Board {
@@ -207,6 +209,7 @@ impl Board {
             secure_boot: false,
             attach_ms: 0,
             pin_changed: 0,
+            pin_failed: 0,
         }
     }
 
@@ -248,6 +251,9 @@ impl Hooks for Board {
     }
     fn note_local_pin_changed(&mut self) {
         self.pin_changed += 1;
+    }
+    fn note_local_pin_failed(&mut self) {
+        self.pin_failed += 1;
     }
     fn secure_boot_enabled(&self) -> bool {
         self.secure_boot

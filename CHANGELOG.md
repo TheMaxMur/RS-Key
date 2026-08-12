@@ -54,10 +54,29 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   were within the letter of the spec and the card does strictly more; parity
   decides, and it is the safe direction — a token minted before someone started
   guessing stops working, and a platform can always mint another. The reset sits
-  in the one function every PIN check passes through, so the on-screen PIN pad
-  inherits it as well. Untouched, deliberately: the persistent `pcmr` token is a
-  separate flash-backed grant that survives replugs until a PIN change or a
-  reset, and a failed attempt is neither. **bcdDevice → 0x08B4.**
+  in the one function every *host* PIN check passes through — the on-screen PIN
+  pad is a second one and did not inherit it; see the entry below, which closes
+  that. Untouched, deliberately: the persistent `pcmr` token is a separate
+  flash-backed grant that survives replugs until a PIN change or a reset, and a
+  failed attempt is neither. **bcdDevice → 0x08B4.**
+
+- **A wrong FIDO PIN typed on the trusted display's own pad now ends the host's
+  outstanding `pinUvAuthToken` too.** The entry above landed the rule in
+  `spend_and_verify_pin_hash` and said the pad inherited it. It does not: the pad
+  verifies the same `EF_PIN` record through a second function, which by design
+  omits the CTAP-session side effects because the display task holds no CTAP
+  context. The panel's only clientPIN prompt is the current-PIN step of the
+  on-device *Change FIDO PIN* flow — `changePIN`'s old-PIN check, performed at the
+  pad — so on a display build the same wrong PIN killed a platform's token when it
+  arrived over USB and left it working when it was typed on the screen. The pad
+  now signals the worker, which drops the token before the next CBOR command, the
+  same path an on-device PIN *change* already used. It signals only for the
+  clientPIN — the device PIN gates the panel's own UI and is no CTAP credential —
+  and only when there was a retry budget to spend, because an entry that meets an
+  already-blocked PIN is turned away before any comparison and the host path
+  leaves a standing token alone there as well. No YubiKey has a pad, so this one
+  is class consistency with the wire rule rather than a measured cell.
+  **bcdDevice → 0x08B5.**
 
 - **OATH `SET CODE` installed an access code with no key material.** `73 01 01`
   — an algorithm byte and nothing after it — answered `9000` and locked the
