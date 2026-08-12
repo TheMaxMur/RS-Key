@@ -19,6 +19,8 @@ fuzz_target!(|data: &[u8]| {
     // Determinism: two instances from the same seed yield the same stream.
     let mut a = HmacDrbg::new(seed);
     let mut b = HmacDrbg::new(seed);
+    // …and a third, untouched, holding the block a *fresh* instantiation emits.
+    let mut c = HmacDrbg::new(seed);
     let mut out_a = [0u8; 256];
     let mut out_b = [0u8; 256];
     a.fill(&mut out_a[..len]);
@@ -40,4 +42,11 @@ fuzz_target!(|data: &[u8]| {
     b.fill(&mut ctrl);
     assert_ne!(pre, post);
     assert_ne!(post, ctrl);
+
+    // Those two prove the state MOVED, not that it moved FORWARD. A reseed that
+    // rewinds re-emits keystream already handed out, and `fill`'s trailing ratchet
+    // keeps `pre != post` true through it; only `c` holds what a rewind would emit.
+    let mut fresh = [0u8; 64];
+    c.fill(&mut fresh);
+    assert_ne!(post, fresh, "the reseed rewound the generator");
 });

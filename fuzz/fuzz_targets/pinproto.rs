@@ -48,7 +48,10 @@ fuzz_target!(|data: &[u8]| {
         let mut mac = [0u8; 32];
         let n = pinproto::authenticate(proto, &shared, data, &mut mac).expect("32-byte MAC buffer");
         assert!(pinproto::verify(proto, &shared, data, &mac[..n]));
-        mac[0] ^= 0xff;
+        // The corrupted index comes off the input rather than being fixed at 0:
+        // a `verify` comparing only `mac[..1]` survived 300k executions of the
+        // byte-0 form, since that form corrupts the one byte it does compare.
+        mac[data.first().copied().unwrap_or(0) as usize % n] ^= 0xff;
         assert!(!pinproto::verify(proto, &shared, data, &mac[..n]));
     }
 });
