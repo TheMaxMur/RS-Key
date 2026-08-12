@@ -1344,6 +1344,9 @@ fn select_data_arms_the_walk_and_a_body_is_not_a_length_error() {
 
     app.deselect(&mut fs);
     assert_eq!(run(&mut app, &mut fs, &select_cert(1)).1, Sw::OK);
+    // The occurrence SELECT DATA chose is the one GET DATA reads and the one the
+    // walk starts from — the same pointer, not two.
+    assert_eq!(run(&mut app, &mut fs, &get), (certs[1].to_vec(), Sw::OK));
     assert_eq!(run(&mut app, &mut fs, &next), (certs[2].to_vec(), Sw::OK));
 
     // A body is ignored on GET DATA — of the cert and of an ordinary DO — and is
@@ -1377,6 +1380,90 @@ fn select_data_arms_the_walk_and_a_body_is_not_a_length_error() {
     );
     // …and refusing it moved nothing: the walk still starts where it was armed.
     assert_eq!(run(&mut app, &mut fs, &next), (certs[1].to_vec(), Sw::OK));
+}
+
+// OpenPGP 3.4 §4.4.3.8 gives DO 0xDE three status values per slot: 00 absent,
+// 01 generated on card, 02 imported. Ours collapsed them to a boolean, so an
+// imported key claimed on-card generation — the one direction that misleads a
+// host about whether the key could have been backed up. The transition table
+// below is the one measured on a YubiKey 5.7.4.
+#[test]
+fn key_info_reports_generated_and_imported_apart() {
+    let rng = RefCell::new(LcgRng(17));
+    let mut fs = make_fs();
+    let presence = RefCell::new(crate::AlwaysConfirm);
+    let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
+    verify_pin(&mut app, &mut fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
+
+    fn key_info(app: &mut OpenpgpApplet, fs: &mut Fs<RamStorage>) -> Vec<u8> {
+        let (b, sw) = run(app, fs, &[0x00, consts::INS_GET_DATA, 0x00, 0xDE]);
+        assert_eq!(sw, Sw::OK);
+        b
+    }
+    fn generate(app: &mut OpenpgpApplet, fs: &mut Fs<RamStorage>, crt: u8) {
+        let a = [0x00, consts::INS_KEYPAIR_GEN, 0x80, 0x00, 0x02, crt, 0x00];
+        assert_eq!(run(app, fs, &a).1, Sw::OK);
+    }
+
+    for tag in [0xC1u8, 0xC2, 0xC3] {
+        assert_eq!(put(&mut app, &mut fs, 0x00, tag, ATTR_P256), Sw::OK);
+    }
+    // No keys at all.
+    assert_eq!(key_info(&mut app, &mut fs), [1, 0, 2, 0, 3, 0]);
+
+    generate(&mut app, &mut fs, consts::CRT_AUT);
+    assert_eq!(key_info(&mut app, &mut fs), [1, 0, 2, 0, 3, 1]);
+
+    // IMPORT over the same slot: generated → imported.
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            &ec_import(consts::CRT_AUT, &[0x44u8; 32])
+        )
+        .1,
+        Sw::OK
+    );
+    assert_eq!(key_info(&mut app, &mut fs), [1, 0, 2, 0, 3, 2]);
+
+    // A power cycle must not lose it — the origin is persisted, not session state.
+    app.deselect(&mut fs);
+    assert_eq!(key_info(&mut app, &mut fs), [1, 0, 2, 0, 3, 2]);
+
+    // IMPORT into a slot that was empty, and GENERATE back over the imported one.
+    verify_pin(&mut app, &mut fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            &ec_import(consts::CRT_DEC, &[0x55u8; 32])
+        )
+        .1,
+        Sw::OK
+    );
+    assert_eq!(key_info(&mut app, &mut fs), [1, 0, 2, 2, 3, 2]);
+    generate(&mut app, &mut fs, consts::CRT_AUT);
+    assert_eq!(key_info(&mut app, &mut fs), [1, 0, 2, 2, 3, 1]);
+    generate(&mut app, &mut fs, consts::CRT_SIG);
+    assert_eq!(key_info(&mut app, &mut fs), [1, 1, 2, 2, 3, 1]);
+
+    // A key predating the origin record must not be claimed as on-card: drop the
+    // record with all three keys in place and every slot reads back imported.
+    fs.delete(consts::EF_KEY_ORIGIN).unwrap();
+    assert_eq!(key_info(&mut app, &mut fs), [1, 2, 2, 2, 3, 2]);
+
+    // TERMINATE DF takes the record with everything else.
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            &[0x00, consts::INS_TERMINATE_DF, 0x00, 0x00]
+        )
+        .1,
+        Sw::OK
+    );
+    assert!(!fs.has_data(consts::EF_KEY_ORIGIN));
+    assert_eq!(key_info(&mut app, &mut fs), [1, 0, 2, 0, 3, 0]);
 }
 
 // OpenPGP 3.4 §7.2.7 gives GET NEXT DATA exactly one job — walk the three 7F21

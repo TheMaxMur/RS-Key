@@ -132,7 +132,7 @@ fn in_reset_window<S: Storage, R: Rng>(ctx: &Ctx<S, R>) -> bool {
 }
 
 /// Whether `fid` is cleared by `authenticatorReset` — every FIDO-owned flash file plus
-/// the trusted-display device PIN. Never the OpenPGP applet's files (0x1081-0x10d6 /
+/// the trusted-display device PIN. Never the OpenPGP applet's files (0x1081-0x10de /
 /// 0x00xx / 0x5fxx / 0x1f2x — and note 0x10a0 inside that span is OATH's `EF_OTP_PIN`,
 /// not OpenPGP's, so the band is not contiguously one applet's) or the vendor counter
 /// (0xCC01). FIDO and OpenPGP interleave

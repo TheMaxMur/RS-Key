@@ -131,6 +131,13 @@ which way the trade-off goes. The usual recoverable setup: generate the master
 key **offline**, move only the three subkeys to the card, and store the master
 key material on encrypted offline media.
 
+The card records which way each slot was filled and reports it in DO `0xDE`,
+because that is the difference between a key that can only exist here and one
+that has a copy somewhere. A slot filled by a build older than this one, or one
+whose GENERATE lost power partway, reads as **imported**: the card will not
+claim on-card generation it cannot prove. Generate into the slot again if you
+want the stronger claim back.
+
 ## Daily use
 
 ### Signing and decryption

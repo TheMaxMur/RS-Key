@@ -22,6 +22,7 @@ pub mod internalaut;
 pub mod keypairgen;
 pub mod keys;
 pub mod mse;
+pub mod origin;
 pub mod pin;
 pub mod pso;
 pub mod putdata;

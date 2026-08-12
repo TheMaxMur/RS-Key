@@ -135,8 +135,8 @@ pub fn source(fid: u16) -> DoSource {
         // chaining): not GET-DATA-able. The private-key + PW-DEK slots are
         // handled by the KeyFid guard above.
         EF_PW1 | EF_RC | EF_PW3 | EF_ALGO_PRIV1 | EF_ALGO_PRIV2 | EF_ALGO_PRIV3 | EF_PW_PRIV
-        | EF_PW_RETRIES | EF_PB_SIG | EF_PB_DEC | EF_PB_AUT | EF_DEK | EF_DEK_PWPIV | EF_CH_1
-        | EF_CH_2 | EF_CH_3 => DoSource::Internal,
+        | EF_PW_RETRIES | EF_PB_SIG | EF_PB_DEC | EF_PB_AUT | EF_KEY_ORIGIN | EF_DEK
+        | EF_DEK_PWPIV | EF_CH_1 | EF_CH_2 | EF_CH_3 => DoSource::Internal,
 
         _ => DoSource::None,
     }

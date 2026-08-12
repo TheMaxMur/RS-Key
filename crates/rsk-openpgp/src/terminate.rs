@@ -50,6 +50,7 @@ pub fn is_openpgp_fid(fid: u16) -> bool {
                 | EF_PB_SIG
                 | EF_PB_DEC
                 | EF_PB_AUT
+                | EF_KEY_ORIGIN
                 | EF_DEK
                 | EF_DEK_PWPIV
                 | EF_CH_1

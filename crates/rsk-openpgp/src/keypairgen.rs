@@ -15,6 +15,7 @@ use crate::keys::{
     MAX_EC_POINT, MAX_RSA_PUBDO, PrivKey, curve_from_attr, generate_rsa, make_ec_pubkey_do,
     make_rsa_response, reset_sig_count, store_aes_key, store_ec_key, store_rsa_key,
 };
+use crate::origin;
 use crate::pin::Session;
 use rsa::RsaPrivateKey;
 
@@ -140,9 +141,10 @@ fn generate<S: Storage>(
     Ok(n)
 }
 
-/// The post-store tail shared by EC and RSA generate: reset the signature
-/// counter on the SIG slot; mint a fresh AES-256 key on the DEC slot (OpenPGP
-/// cannot generate a symmetric key directly; a storage failure is non-fatal).
+/// The post-store tail shared by EC and RSA generate: record the slot's origin
+/// for DO 0xDE; reset the signature counter on the SIG slot; mint a fresh AES-256
+/// key on the DEC slot (OpenPGP cannot generate a symmetric key directly; a
+/// storage failure is non-fatal).
 fn keygen_tail<S: Storage>(
     dev: &Device,
     fs: &mut Fs<S>,
@@ -150,6 +152,11 @@ fn keygen_tail<S: Storage>(
     rng: &mut dyn Rng,
     fid: KeyFid,
 ) -> Result<(), Sw> {
+    // After the key is committed, never before: a tear in between leaves the
+    // slot reading as imported, which is the claim that cannot be too strong —
+    // and for that same reason a mark that does not persist is not worth failing
+    // a keygen the host already paid for.
+    let _ = origin::mark(fs, fid, origin::ORIGIN_GENERATED);
     if fid == EF_PK_SIG {
         reset_sig_count(fs)?;
     } else if fid == EF_PK_DEC {

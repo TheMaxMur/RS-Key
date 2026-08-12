@@ -15,6 +15,7 @@ use crate::keys::{
     MAX_EC_POINT, MAX_RSA_PUBDO, PrivKey, RSA_PUB_EXP_BE, curve_from_attr, make_ec_pubkey_do,
     make_rsa_response, reset_sig_count, rsa_from_pqe, store_ec_key, store_rsa_key,
 };
+use crate::origin;
 use crate::pin::Session;
 
 /// BER length: a byte < 0x80 is the length; `0x81` introduces a 1-byte length,
@@ -174,6 +175,11 @@ fn try_import<S: Storage>(
                 return Err(WRONG_DATA);
             }
             let key = rsa_from_pqe(e, p, q).ok_or(Sw::EXEC_ERROR)?;
+            // Before the key is committed, never after: a tear in between leaves
+            // the slot reading as imported, which is the honest claim either way.
+            // Its failure is fatal for the same reason — storing on top of a mark
+            // that did not persist keeps an older `01` over an imported key.
+            origin::mark(fs, fid, origin::ORIGIN_IMPORTED)?;
             store_rsa_key(dev, fs, sess, fid, &key)?;
 
             // Public-key DO → EF_PB_* (slot FID + 3).
@@ -206,6 +212,7 @@ fn try_import<S: Storage>(
             let mut point = [0u8; MAX_EC_POINT];
             let plen = key.public_point(&mut point)?;
 
+            origin::mark(fs, fid, origin::ORIGIN_IMPORTED)?;
             store_ec_key(dev, fs, sess, fid, &key)?;
 
             // Store the public-key DO into EF_PB_* (slot FID + 3).

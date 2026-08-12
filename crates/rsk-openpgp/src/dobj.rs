@@ -351,12 +351,17 @@ impl<'a, S: Storage> DoWriter<'a, S> {
             self.push(6);
         }
         // OpenPGP Card 3.4 §4.4.3.8: key-ref 01=SIG, 02=DEC, 03=AUT, then a status
-        // byte (00 = not present, 01 = present). ykman >= 5.2 keys its parse on
-        // these refs, so they must be the spec values, not 0-indexed.
+        // byte — 00 not present, 01 generated on card, 02 imported. ykman >= 5.2
+        // keys its parse on these refs, so they must be the spec values, not
+        // 0-indexed.
         for (key_ref, fid) in [(1u8, EF_PK_SIG), (2, EF_PK_DEC), (3, EF_PK_AUT)] {
             self.push(key_ref);
-            let present = self.fs.has_key(fid);
-            self.push(if present { 0x01 } else { 0x00 });
+            let status = if self.fs.has_key(fid) {
+                crate::origin::of(self.fs, fid)
+            } else {
+                0x00
+            };
+            self.push(status);
         }
         self.pos - init
     }

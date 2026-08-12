@@ -79,6 +79,12 @@ pub const EF_PK_AUT: KeyFid = KeyFid::new(0x10d3); // private AUT key, DEK-seale
 pub const EF_PB_SIG: u16 = 0x10d4; // public-key DO = EF_PK_SIG + 3 (not secret)
 pub const EF_PB_DEC: u16 = 0x10d5;
 pub const EF_PB_AUT: u16 = 0x10d6;
+/// Per-slot key origin backing DO `0xDE`'s status byte — `0x1000 | tag`, the
+/// same private-companion convention `algo_tag_to_priv` uses for C1/C2/C3.
+pub const EF_KEY_ORIGIN: u16 = 0x10de;
+/// Asymmetric key slots (SIG, DEC, AUT) — the pairs DO `0xDE` reports and the
+/// length of the `EF_KEY_ORIGIN` record.
+pub const KEY_SLOTS: usize = 3;
 pub const EF_DEK: u16 = 0x1099;
 pub const EF_DEK_PW1: KeyFid = KeyFid::new(0x109a); // DEK wrapped under PW1
 pub const EF_DEK_RC: KeyFid = KeyFid::new(0x109b); // DEK wrapped under reset code

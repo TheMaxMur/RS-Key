@@ -40,6 +40,26 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Security
 
+- **DO `0xDE` tells an imported key from a generated one.** OpenPGP 3.4
+  §4.4.3.8 gives each slot's status byte three values — `00` absent, `01`
+  generated on card, `02` **imported** — and its first sentence says why: the
+  DO exists so a host can tell whether the private key could have been backed
+  up. Ours collapsed it to a boolean, so an imported key reported `01` and
+  claimed a guarantee the card had never made. Measured on a YubiKey 5.7.4,
+  which ships a factory `02` on its imported attestation key and moves the byte
+  on every transition; ours now matches that table cell for cell, including
+  across a power cycle: absent → GENERATE `01` → IMPORT `02` → GENERATE `01`,
+  each of the three slots independent, and TERMINATE DF back to `00`. The
+  origin is a new internal record (`EF_KEY_ORIGIN`), and **a key that predates
+  it reads as imported** — `02` is the honest default, since absent proof of
+  on-card generation the card must not claim it. That default is also the
+  power-cut design: GENERATE records its origin *after* the key is committed
+  and IMPORT *before*, so a tear in either direction leaves `02` and never a
+  false `01`. An IMPORT whose origin record cannot be written is refused
+  (`6581`, key untouched) rather than storing a key the slot still describes as
+  generated. Generate into the slot again to restore the stronger claim.
+  **bcdDevice → 0x0896.**
+
 - **GET NEXT DATA now does the one thing the spec defines it for.** OpenPGP 3.4
   §7.2.7 gives INS `0xCC` a single use — walk the three occurrences of the
   cardholder certificate (7F21) — and §5's access table makes that read
