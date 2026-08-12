@@ -44,13 +44,17 @@ Green check.sh is the bar for every commit.
 
 ```sh
 nix develop -c cargo test -p rsk-sdk -p rsk-fs -p rsk-usb -p rsk-crypto \
-    -p rsk-fido -p rsk-openpgp -p rsk-rsa-asm -p rsk-mgmt -p rsk-oath \
-    -p rsk-otp -p rsk-piv -p rsk-rescue -p rsk-vendor -p rsk-device -p rsk-store \
-    -p rsk-display --target aarch64-apple-darwin
+    -p rsk-fido -p rsk-openpgp -p rsk-rsa-asm -p rsk-sha512 -p rsk-ec \
+    -p rsk-mldsa -p rsk-mgmt -p rsk-oath -p rsk-otp -p rsk-piv \
+    -p rsk-rescue -p rsk-vendor -p rsk-device -p rsk-display -p rsk-store \
+    -p rsk-led -p rsk-ui -p rsk-bip39 -p rsk-slip39 -p rsk-bench \
+    --target aarch64-apple-darwin
 ```
 
-(`HOST_TARGET` env overrides the triple in `check.sh`, which runs the full crate
-list.) Crypto tests pin NIST/RFC vectors; applet tests drive full protocol flows
+(`HOST_TARGET` env overrides the triple in `check.sh`, which runs this same
+list — `scripts/roster_gate.py` fails when either drifts from `[workspace]
+members`, which is how this copy came to be missing eight crates.) Crypto tests
+pin NIST/RFC vectors; applet tests drive full protocol flows
 (register → assert, PIN lockout ladders, OpenPGP import → sign → verify against
 `RustCrypto`, PIV generate → attest → parse with `x509-parser`).
 

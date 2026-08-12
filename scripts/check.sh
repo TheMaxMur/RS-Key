@@ -214,9 +214,9 @@ run "clippy (fuzz)"            cargo clippy --manifest-path fuzz/Cargo.toml --al
 #
 # What these rows still do NOT check, so nobody reads them as more than they are:
 # `missing_docs` is off (an undocumented item is nobody's failure here); a plain
-# `//` comment is not parsed for links, so a dead name in one rots unseen; and
-# the `-p` rosters below are hand-written, with nothing tying them to
-# `[workspace] members` — the kani-roster shape, still unguarded here.
+# `//` comment is not parsed for links, so a dead name in one rots unseen. The
+# `-p` rosters below stay hand-written, but no longer unwatched: `crate roster`
+# fails when one of them drifts from `[workspace] members`.
 run "rustdoc (host)"           env RUSTDOCFLAGS="-D warnings" cargo doc -p rsk-sdk -p rsk-fs -p rsk-usb -p rsk-crypto -p rsk-fido -p rsk-openpgp -p rsk-rsa-asm -p rsk-sha512 -p rsk-ec -p rsk-mldsa -p rsk-mgmt -p rsk-oath -p rsk-otp -p rsk-piv -p rsk-rescue -p rsk-vendor -p rsk-device -p rsk-display -p rsk-store -p rsk-led -p rsk-ui -p rsk-bip39 -p rsk-slip39 -p rsk-bench --no-deps --target "$HOST"
 run "rustdoc (host all-feat)"  env RUSTDOCFLAGS="-D warnings" cargo doc -p rsk-sdk -p rsk-fs -p rsk-usb -p rsk-crypto -p rsk-fido -p rsk-openpgp -p rsk-rsa-asm -p rsk-sha512 -p rsk-ec -p rsk-mldsa -p rsk-mgmt -p rsk-oath -p rsk-otp -p rsk-piv -p rsk-rescue -p rsk-vendor -p rsk-device -p rsk-display -p rsk-store -p rsk-led -p rsk-ui -p rsk-bip39 -p rsk-slip39 -p rsk-bench --no-deps --all-features --target "$HOST"
 # A third permutation, because the two above document only public items and so
@@ -380,6 +380,10 @@ run "ci knob groups"           ./scripts/ci-knobs.sh --self-test
 # under a row named "prove every harness". Checking the roster is a grep, so it
 # belongs here, where the harness gets written; the solver stays nightly.
 run "kani roster"              python scripts/kani_gate.py
+# Same failure one file closer to home: the host `-p` list above is written out
+# five times here and once in docs/testing.md, and nothing tied any copy to
+# `[workspace] members`. The docs copy had already rotted to 16 of 24.
+run "crate roster"             python scripts/roster_gate.py
 run "docs constants match code" python scripts/docs_constants.py
 run "pytest (tools/rsk)"       python -m pytest tools/rsk -q
 # The interop allow-list is the only thing that tells an expected RS-Key/YubiKey
