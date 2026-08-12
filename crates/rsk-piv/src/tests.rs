@@ -4713,3 +4713,111 @@ fn a_failed_verify_revokes_the_standing_one() {
         "a blocked PIN must not leave a session signing"
     );
 }
+
+/// The other half of that rule, and the reason [`verify_reference`] takes no
+/// `Session`: only VERIFY revokes. A wrong old PIN at CHANGE REFERENCE DATA, a
+/// wrong PUK at RESET RETRY COUNTER, and the panel's own gate all spend a retry
+/// and leave the card's security status exactly where it was — including the
+/// attempt that blocks the reference.
+///
+/// SP 800-73-4 Part 2 §3.2.2 and §3.2.3 say the opposite (set it to FALSE on
+/// `63CX`), so this is the parity rule overriding the spec, which is why it needs
+/// a test rather than a comment. Measured on a YubiKey 5.7.4, three passes from a
+/// factory reset with the VERIFY row above as the control that a revocation is
+/// visible at all: sign `9000` after one failed CHANGE, after the CHANGE that
+/// blocks the PIN, after a failed RESET RETRY COUNTER, and after the one that
+/// blocks the PUK.
+#[test]
+fn only_a_failed_verify_revokes_the_standing_one() {
+    let rng = RefCell::new(TestRng(11));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    let dev = Device {
+        serial_hash: &HASH,
+        serial_id: &SERIAL,
+        otp_key: None,
+    };
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    verify_pin(&mut app, &mut fs);
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            INS_ASYM_KEYGEN,
+            0,
+            0x9A,
+            &gen_template(ALGO_ECCP256)
+        )
+        .0,
+        Sw::OK
+    );
+    assert_eq!(
+        sign_p256(&mut app, &mut fs, 0x9A),
+        Sw::OK,
+        "the control: it signs"
+    );
+
+    let wrong = pad_pin(b"999999").unwrap();
+    let wrong_puk = pad_pin(b"99999999").unwrap();
+    let new = pad_pin(b"654321").unwrap();
+
+    // The panel's gate (`rsk-display`'s `gate_piv_ref`) is this call: the old-secret
+    // check of a CHANGE, never a VERIFY. It cannot go red — E45's fix has to add a
+    // `Session` parameter — so it is a tripwire on that signature, not coverage.
+    assert_eq!(
+        verify_reference(&dev, &mut fs, PinRef::Pin, &wrong),
+        Sw::retries(2)
+    );
+    assert_eq!(
+        sign_p256(&mut app, &mut fs, 0x9A),
+        Sw::OK,
+        "the panel's PIN gate must not revoke a host's security status"
+    );
+    assert_eq!(
+        verify_reference(&dev, &mut fs, PinRef::Pin, &DEFAULT_PIN),
+        Sw::OK
+    );
+
+    // RESET RETRY COUNTER spends the PUK's own counter, down to blocking it.
+    for left in [2u8, 1] {
+        let msg = [&wrong_puk[..], &new[..]].concat();
+        assert_eq!(
+            run(&mut app, &mut fs, INS_RESET_RETRY, 0, 0x80, &msg).0,
+            Sw::retries(left)
+        );
+        assert_eq!(sign_p256(&mut app, &mut fs, 0x9A), Sw::OK);
+    }
+    let msg = [&wrong_puk[..], &new[..]].concat();
+    assert_eq!(
+        run(&mut app, &mut fs, INS_RESET_RETRY, 0, 0x80, &msg).0,
+        Sw::PIN_BLOCKED
+    );
+    assert_eq!(
+        sign_p256(&mut app, &mut fs, 0x9A),
+        Sw::OK,
+        "blocking the PUK must not revoke the PIN's security status"
+    );
+
+    // CHANGE REFERENCE DATA spends the PIN's, down to blocking it — and the
+    // standing status outlives even that, which is the cell E45 read as a defect.
+    for left in [2u8, 1] {
+        let msg = [&wrong[..], &new[..]].concat();
+        assert_eq!(
+            run(&mut app, &mut fs, INS_CHANGE_PIN, 0, 0x80, &msg).0,
+            Sw::retries(left)
+        );
+        assert_eq!(sign_p256(&mut app, &mut fs, 0x9A), Sw::OK);
+    }
+    let msg = [&wrong[..], &new[..]].concat();
+    assert_eq!(
+        run(&mut app, &mut fs, INS_CHANGE_PIN, 0, 0x80, &msg).0,
+        Sw::PIN_BLOCKED
+    );
+    assert_eq!(
+        sign_p256(&mut app, &mut fs, 0x9A),
+        Sw::OK,
+        "blocking the PIN through CHANGE must not revoke the standing status"
+    );
+}

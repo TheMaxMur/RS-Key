@@ -869,6 +869,11 @@ where
     /// spent. Returns the secret padded to the 8-byte PIV wire form on success (for the
     /// following change/unblock), or `None` on cancel / timeout / blocked (the latter shows
     /// the lockout notice). The retry counter is the PIV applet's own (`EF_RETRIES`).
+    ///
+    /// It reaches no `Session`, and must not: this is the old-secret check of a
+    /// CHANGE / RESET RETRY COUNTER, which a YubiKey lets a host's standing PIN
+    /// status outlive — blocking the reference here included (`rsk-piv`'s
+    /// `only_a_failed_verify_revokes_the_standing_one`).
     fn gate_piv_ref(&mut self, which: rsk_piv::PinRef, buf: &mut [u8]) -> Option<[u8; 8]> {
         let title = piv_ref_title(which);
         let mut caption = rsk_piv::reference_retries_left(&mut self.fs.borrow_mut(), which)

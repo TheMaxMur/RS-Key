@@ -1254,6 +1254,12 @@ pub fn reference_retries_left<S: Storage>(fs: &mut Fs<S>, which: PinRef) -> Opti
 /// mismatch → `63Cx` / `6983`, resets on success). For the on-panel change/unblock flows to
 /// gate on the *current* secret before collecting the new one; the host VERIFY APDU stays
 /// its own path. Callers mirroring the host wire pad via [`pad_pin`] first.
+///
+/// It takes no session state on purpose: this is the *old-secret* check of a
+/// CHANGE REFERENCE DATA / RESET RETRY COUNTER, and a YubiKey 5.7.4 keeps the
+/// card's standing PIN status through a failed one — even the attempt that blocks
+/// the reference. Only VERIFY revokes; the pair is pinned by
+/// `only_a_failed_verify_revokes_the_standing_one`.
 pub fn verify_reference<S: Storage>(dev: &Device, fs: &mut Fs<S>, which: PinRef, pin: &[u8]) -> Sw {
     let (fid, retry) = which.fid_retry();
     check_ref(dev, fs, fid, retry, pin)
