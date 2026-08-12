@@ -411,10 +411,8 @@ impl<'a> OathApplet<'a> {
         Sw::OK
     }
 
-    fn cmd_reset<S: Storage>(&mut self, apdu: &Apdu, fs: &mut Fs<S>) -> Sw {
-        if apdu.p1 != 0xDE || apdu.p2 != 0xAD {
-            return Sw::INCORRECT_P1P2;
-        }
+    fn cmd_reset<S: Storage>(&mut self, _apdu: &Apdu, fs: &mut Fs<S>) -> Sw {
+        // `DE AD` is checked by `p1p2_ok`, ahead of the dispatch.
         // Prove the wipe rather than assume it. `present_creds` reads the in-RAM
         // present bitmap, which a boot scan truncated by a read fault leaves
         // *undecided* — so a live credential was skipped and the host still got
@@ -555,9 +553,6 @@ impl<'a> OathApplet<'a> {
     }
 
     fn cmd_calculate<S: Storage>(&mut self, apdu: &Apdu, fs: &mut Fs<S>, res: &mut ResBuf) -> Sw {
-        if apdu.p2 != 0x00 && apdu.p2 != 0x01 {
-            return Sw::INCORRECT_P1P2;
-        }
         if !self.validated {
             return Sw::SECURITY_STATUS_NOT_SATISFIED;
         }
@@ -657,9 +652,6 @@ impl<'a> OathApplet<'a> {
         fs: &mut Fs<S>,
         res: &mut ResBuf,
     ) -> Sw {
-        if apdu.p2 != 0x00 && apdu.p2 != 0x01 {
-            return Sw::INCORRECT_P1P2;
-        }
         if !self.validated {
             return Sw::SECURITY_STATUS_NOT_SATISFIED;
         }
@@ -1251,6 +1243,13 @@ impl<S: Storage> Applet<Fs<S>> for OathApplet<'_> {
         if apdu.ins != INS_SEND_REMAINING {
             self.chain = Chain::None;
         }
+        // Judged for every command, ahead of its body and its access-code gate,
+        // the way a 5.7.4 judges it. An instruction this applet does not
+        // implement passes through to `6D00`: ISO 7816-4 §5.3.4 puts INS before
+        // P1-P2.
+        if !p1p2_ok(apdu.ins, apdu.p1, apdu.p2) {
+            return Sw::WRONG_P1P2;
+        }
         match apdu.ins {
             INS_PUT => self.cmd_put(apdu, fs),
             INS_DELETE => self.cmd_delete(apdu, fs),
@@ -1275,6 +1274,32 @@ impl<S: Storage> Applet<Fs<S>> for OathApplet<'_> {
             INS_GET_CREDENTIAL => self.cmd_get_credential(apdu, fs, res),
             _ => Sw::INS_NOT_SUPPORTED,
         }
+    }
+}
+
+/// Whether a command this applet implements takes this `P1`/`P2` pair, as a
+/// YubiKey 5.7.4 answers it — every row below is a measured cell, repeated
+/// (worklog TRACK-oath2 §E60). `00 00` is the rule; `01` in `P2` is the
+/// truncated read and **nothing else** — the card answers `6B00` to it on PUT,
+/// DELETE, SET CODE, RENAME and LIST — and RESET alone is `DE AD`.
+///
+/// One owner, consulted before every dispatch, because the alternative is each
+/// handler remembering: `P1` was read by no command at all, and `P2` by two.
+/// An instruction that is not ours answers `6D00` instead, so it is left alone.
+fn p1p2_ok(ins: u8, p1: u8, p2: u8) -> bool {
+    match ins {
+        INS_RESET => p1 == 0xDE && p2 == 0xAD,
+        // The one place `P2` carries a meaning: `01` selects the truncated form.
+        INS_CALCULATE | INS_CALC_ALL => p1 == 0x00 && matches!(p2, 0x00 | 0x01),
+        // The card's own asymmetry, and it is stable: VALIDATE refuses only when
+        // *both* bytes are set — `(00,02)`, `(01,00)`, `(02,00)`, `(00,FF)` and
+        // `(FF,00)` all reach its handler, where every sibling wants `00 00`.
+        INS_VALIDATE => p1 == 0x00 || p2 == 0x00,
+        INS_PUT | INS_DELETE | INS_SET_CODE | INS_RENAME | INS_LIST | INS_SEND_REMAINING
+        | INS_VERIFY_CODE | INS_VERIFY_PIN | INS_CHANGE_PIN | INS_SET_PIN | INS_GET_CREDENTIAL => {
+            p1 == 0x00 && p2 == 0x00
+        }
+        _ => true,
     }
 }
 

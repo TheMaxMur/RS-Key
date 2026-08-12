@@ -158,13 +158,13 @@ fn the_bound_is_judged_after_p1p2_and_before_the_credential() {
         Sw::DATA_INVALID
     );
 
-    // An undefined P2 outranks it (the code itself is E60's cell, not this one).
+    // An undefined P2 outranks it, and answers with its own word (E60).
     let mut d = tlv(TAG_NAME, b"c");
     d.extend(tlv(TAG_CHALLENGE, &[0x01; 65]));
     let (sw, _) = run(&mut app, &mut fs, &apdu(INS_CALCULATE, 0, 0x02, &d));
-    assert_ne!(sw, Sw::INCORRECT_PARAMS, "P1/P2 is judged first");
+    assert_eq!(sw, Sw::WRONG_P1P2, "P1/P2 is judged first");
     let (sw, _) = run(&mut app, &mut fs, &apdu(INS_CALC_ALL, 0, 0x02, &d));
-    assert_ne!(sw, Sw::INCORRECT_PARAMS, "P1/P2 is judged first");
+    assert_eq!(sw, Sw::WRONG_P1P2, "P1/P2 is judged first");
 }
 
 #[test]

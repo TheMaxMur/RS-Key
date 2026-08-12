@@ -118,7 +118,7 @@ frame chain the YubiKey-OATH way instead: `61 XX` followed by **SEND REMAINING**
 Authenticator send. A host that stops at the first frame still sees a valid
 (shorter) list.
 
-Five OATH rules a host has to expect, all matching a YubiKey 5.7.4. `PUT`
+Six OATH rules a host has to expect, all matching a YubiKey 5.7.4. `PUT`
 (`0x01`) is strict about the credential body — KEY TLV 16..=66 bytes, digits
 6/7/8, type `0x10`/`0x20`, algorithm 1/2/3, name 1..=64 bytes, the initial moving
 factor on HOTP only and exactly 4 bytes, the PROPERTY byte as the bare `78 vv`
@@ -159,6 +159,15 @@ account never exceeds `000F 423F`. A host must not reduce a second time expectin
 a different answer, and `VERIFY CODE` (`0xB1`) compares exactly the value
 `CALCULATE` sent. The untruncated form (`P2 = 0x00`, tag `75`) is unaffected: it
 carries the whole HMAC.
+
+The sixth runs across the whole table: the parameter bytes. Every OATH command
+is sent `P1 = 00`, `P2 = 00`. The `01` that selects the truncated form belongs to
+`CALCULATE` and `CALCULATE ALL` and to nothing else — on `PUT`, `DELETE`, `SET
+CODE`, `RENAME` and `LIST` it is refused like any other stray byte. `RESET` alone
+takes `DE AD`, and `VALIDATE` is the card's own exception: it refuses only when
+**both** bytes are non-zero. Anything else is **`6B00`**, judged before the
+command's body and before the access-code gate so nothing is written; an
+instruction the applet does not implement still answers `6D00` first.
 
 ### 1.2 CTAPHID framing
 
@@ -249,6 +258,7 @@ Source: `crates/rsk-sdk/src/sw.rs`.
 | `6985` | CONDITIONS_NOT_SATISFIED | state precondition unmet (e.g. RTC unset) |
 | `6A80` | INCORRECT_PARAMS | bad data field |
 | `6A86` | INCORRECT_P1P2 | unsupported P1/P2 |
+| `6B00` | WRONG_P1P2 | P1/P2 outside what this command takes |
 | `6D00` | INS_NOT_SUPPORTED | unknown INS for this applet |
 | `6E00` | CLA_NOT_SUPPORTED | wrong CLA for this applet |
 

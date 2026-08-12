@@ -124,6 +124,21 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **The OATH applet read `P1` in no command and `P2` in two.** A YubiKey 5.7.4
+  judges both for every command and answers **`6B00`** — not the `6A86` we sent.
+  We accepted `P1 = 01` outright (`9000`), so a host's typo in the parameter
+  bytes came back as a completed command; `RESET` was the one place `P1` was
+  looked at at all. The rule now lives in one place the whole table passes
+  through, ahead of each command's body and its access-code gate, so a refused
+  pair writes nothing: `00 00` everywhere, `00 01` on `CALCULATE` and `CALCULATE
+  ALL` alone (the card refuses that byte on `PUT`, `DELETE`, `SET CODE`,
+  `RENAME` and `LIST`, where it used to complete the command here), `DE AD` for
+  `RESET`, and `VALIDATE` as the card's own exception — it refuses only when
+  both bytes are non-zero. Anything else is `6B00`, and an instruction the
+  applet does not implement still answers `6D00` first, per ISO 7816-4 §5.3.4.
+  ykman 5.9.2 and the vendored YKOATH suite send exactly the accepted pairs,
+  the password-safe commands (`B1`..`B5`) included. **bcdDevice → 0x08BA.**
+
 - **OATH `SET CODE` took a proof carried over a challenge of any length.** The
   host proves it knows the code it is installing by HMACing a challenge of its
   own choosing, and we HMACed whatever it sent — one byte included, which is

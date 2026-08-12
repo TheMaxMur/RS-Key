@@ -145,6 +145,28 @@ def main():
     if tlv_get(body, TAG_CHALLENGE) is not None:
         fail("challenge TLV present after RESET — access code not cleared?")
 
+    # Parameter bytes, as a YubiKey judges them: `00 00` everywhere, the `01`
+    # that truncates on CALCULATE and CALCULATE ALL alone, `DE AD` on RESET, and
+    # `6B00` for the rest (E60). A RESET the card would refuse must not reach the
+    # wipe, and a PUT it would refuse must not reach the store.
+    for ins, p1, p2 in [
+        (INS_LIST, 1, 0), (INS_LIST, 0, 1), (INS_CALCULATE, 1, 0),
+        (INS_CALC_ALL, 0, 2), (INS_VALIDATE, 0x0A, 0x0A),
+        (INS_RESET, 0, 0), (INS_RESET, 0xDE, 0),
+    ]:
+        _, sw = oath.apdu(ins, p1, p2, want=None)
+        if sw != 0x6B00:
+            fail(f"INS {ins:02X} P1={p1:02X} P2={p2:02X}: SW {sw:04X} != 6B00")
+    _, sw = oath.apdu(
+        INS_PUT, 0, 1,
+        tlv(TAG_NAME, b"ghost") + tlv(TAG_KEY, bytes([TYPE_TOTP | ALG_SHA1, 6]) + SECRET_SHA1),
+        want=None,
+    )
+    if sw != 0x6B00:
+        fail(f"PUT with P2=01: SW {sw:04X} != 6B00")
+    if oath.apdu(INS_LIST, 0, 0)[0]:
+        fail("PUT with P2=01 reached the store")
+
     # HOTP first so it lands in slot 0 (VERIFY CODE always targets slot 0).
     oath.put(b"hotp6", TYPE_HOTP | ALG_SHA1, 6, SECRET_SHA1)
     oath.put(b"rfc-sha1", TYPE_TOTP | ALG_SHA1, 8, SECRET_SHA1)

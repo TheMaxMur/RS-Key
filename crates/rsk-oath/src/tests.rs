@@ -30,6 +30,10 @@ mod set_code_tests;
 #[path = "code_tests.rs"]
 mod code_tests;
 
+/// Which `P1`/`P2` pair each command takes, across the whole table.
+#[path = "p1p2_tests.rs"]
+mod p1p2_tests;
+
 /// RFC 6238 reference secrets.
 const SECRET_SHA1: &[u8] = b"12345678901234567890";
 const SECRET_SHA256: &[u8] = b"12345678901234567890123456789012";
@@ -961,7 +965,7 @@ fn reset_clears_creds_code_and_pin() {
     assert_eq!(sw, Sw::OK);
 
     let (sw, _) = run(&mut app, &mut fs, &apdu(INS_RESET, 0, 0, &[]));
-    assert_eq!(sw, Sw::INCORRECT_P1P2);
+    assert_eq!(sw, Sw::WRONG_P1P2);
     let (sw, _) = run(&mut app, &mut fs, &apdu(INS_RESET, 0xDE, 0xAD, &[]));
     assert_eq!(sw, Sw::OK);
 
@@ -1618,7 +1622,7 @@ fn calculate_all_mixes_response_kinds() {
     assert_eq!(body, expect);
 
     let (sw, _) = run(&mut app, &mut fs, &apdu(INS_CALC_ALL, 0, 0x02, &chal));
-    assert_eq!(sw, Sw::INCORRECT_P1P2);
+    assert_eq!(sw, Sw::WRONG_P1P2);
     let (sw, _) = run(&mut app, &mut fs, &apdu(INS_CALC_ALL, 0, 0x01, &[]));
     assert_eq!(sw, Sw::INCORRECT_PARAMS);
 }
