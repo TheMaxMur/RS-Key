@@ -11,6 +11,30 @@ HOST="${HOST_TARGET:-aarch64-apple-darwin}"
 
 run() { echo; echo "== $1 =="; shift; "$@"; }
 
+# `cargo test` calls a selection of nothing a pass: a name filter that matches
+# no test prints "0 passed; …; N filtered out" and exits 0. Five rows below take
+# such a filter, so renaming a test turned one of them into a no-op while the
+# gate stayed green — measured, `cargo test -p rsk-fido zzz_no_such_test` → 527
+# filtered out, rc 0. Every `cargo test` row goes through this instead, filtered
+# or not, and has to show a test that actually passed. The unit is the row: a
+# crate with no tests of its own is not what this catches, a row that ran none is.
+run_tests() {
+  local name=$1 log
+  shift
+  log=$(mktemp)
+  echo; echo "== $name =="
+  # `tee`, not a redirect: the output belongs on the console like every other
+  # row's. `pipefail` (set above) keeps cargo's own failure the pipeline's, so a
+  # genuinely failing test stops the gate here rather than reaching the grep.
+  "$@" 2>&1 | tee "$log"
+  if ! grep -qE '^test result: ok\. [1-9][0-9]* passed' "$log"; then
+    echo "FAIL: $name ran no test at all." >&2
+    echo "      A name filter matching nothing exits 0 and reads as a pass." >&2
+    exit 1
+  fi
+  rm -f "$log"
+}
+
 # flake.lock must stay in sync with flake.nix: regenerate the lock (without
 # upgrading existing pins, unlike `nix flake update`) and fail if it changed. A
 # stale committed lock means a "green" run no longer matches flake.nix, silently
@@ -173,7 +197,7 @@ run "clippy (tui)"             cargo clippy --manifest-path tools/tui/Cargo.toml
 # green (audit run-34 #9 proved it by mutation). They are asserted at the callers
 # now: `rsk/test_refuse_to_guess.py`, `rsk/test_secureboot.py`'s stage commands,
 # and `device_tests.rs`'s `every_hid_open_site_is_classified`.
-run "test (tui)"               cargo test --manifest-path tools/tui/Cargo.toml --target "$HOST"
+run_tests "test (tui)"               cargo test --manifest-path tools/tui/Cargo.toml --target "$HOST"
 # tools/emu is the third host-only workspace (the software emulator) — same
 # reason it is gated here: nothing in the --workspace runs above can see it, and
 # an emulator that stops compiling is found when someone tries to run the
@@ -247,32 +271,32 @@ run "rustdoc (emu)"            env RUSTDOCFLAGS="-D warnings" cargo doc --manife
 # exits 0 in 0.1 s — a green row over an empty set, the defect this block exists
 # to prevent. The flag overrides `doc = false`; `--all-targets` is not a `doc` flag.
 run "rustdoc (fuzz)"           env RUSTDOCFLAGS="-D warnings" cargo doc --manifest-path fuzz/Cargo.toml --bins --no-deps --target "$HOST"
-run "test (host)"              cargo test --workspace --exclude firmware --exclude rsk-wipe --target "$HOST"
+run_tests "test (host)"              cargo test --workspace --exclude firmware --exclude rsk-wipe --target "$HOST"
 # The PQC-advertisement opt-in changes the getInfo shape — test both forms.
-run "test (advertise-pqc)"     cargo test -p rsk-fido --features advertise-pqc --target "$HOST" getinfo
+run_tests "test (advertise-pqc)"     cargo test -p rsk-fido --features advertise-pqc --target "$HOST" getinfo
 # fido-conformance suppresses the default EdDSA (-8) advertisement (the
 # shipping/default build advertises -8; this drops it for the tool) and implies
 # `strict-up`, which drops the U2F don't-enforce control byte. Run the WHOLE suite,
 # not a name filter: the build for this permutation happens either way, so the extra
 # cost is seconds, and a `getinfo`-only filter left a stale U2F expectation failing
 # here unnoticed. This is also the only gate coverage `strict-up` gets.
-run "test (fido-conformance)"  cargo test -p rsk-fido --features fido-conformance --target "$HOST"
+run_tests "test (fido-conformance)"  cargo test -p rsk-fido --features fido-conformance --target "$HOST"
 # The FIPS-style profile changes algorithm menus / PIN floor / export policy;
 # run its tests (name-filtered: the regular fixtures assume the 4-char PIN
 # floor) and type-check the locked firmware image.
-run "test (fips: rsk-fido)"    cargo test -p rsk-fido --features fips-profile --target "$HOST" fips
-run "test (fips: rsk-piv)"     cargo test -p rsk-piv --features fips-profile --target "$HOST" fips
+run_tests "test (fips: rsk-fido)"    cargo test -p rsk-fido --features fips-profile --target "$HOST" fips
+run_tests "test (fips: rsk-piv)"     cargo test -p rsk-piv --features fips-profile --target "$HOST" fips
 run "clippy (fips firmware)"   cargo clippy -p firmware --features fips-profile -- -D warnings
 # `strong-pin` raises the same 6-code-point floor and adds a trivial-PIN block, so it
 # reuses the fips name-filter dodge (regular fixtures assume the 4-char floor).
-run "test (strong-pin)"        cargo test -p rsk-fido --features strong-pin --target "$HOST" strong_pin
+run_tests "test (strong-pin)"        cargo test -p rsk-fido --features strong-pin --target "$HOST" strong_pin
 run "clippy (strong-pin fw)"   cargo clippy -p firmware --features strong-pin -- -D warnings
 # `strict-config` restores today's strict admin-write authorization (the DEFAULT
 # build is the permissive full-YubiKey-compat surface). The default path is what
 # every run above lints/tests; gate the strict path explicitly or it rots.
 run "clippy (strict-config fw)"  cargo clippy -p firmware --features strict-config -- -D warnings
 run "clippy (strict-config host)" cargo clippy -p rsk-mgmt -p rsk-otp -p rsk-fido -p rsk-vendor -p rsk-device --features strict-config --target "$HOST" --all-targets -- -D warnings
-run "test (strict-config)"       cargo test -p rsk-mgmt -p rsk-otp -p rsk-fido -p rsk-vendor -p rsk-device --features strict-config --target "$HOST"
+run_tests "test (strict-config)"       cargo test -p rsk-mgmt -p rsk-otp -p rsk-fido -p rsk-vendor -p rsk-device --features strict-config --target "$HOST"
 # `largeblob-ext` swaps the CTAP 2.1 large-blob design for the CTAP 2.3 extension
 # (§12.4 forbids serving both). Unlike the profiles above this one runs the WHOLE
 # suite: the tests that describe the withdrawn design are cfg'd out, everything
@@ -280,7 +304,7 @@ run "test (strict-config)"       cargo test -p rsk-mgmt -p rsk-otp -p rsk-fido -
 # name-filter would have hidden exactly the fallout this swap can cause.
 run "clippy (largeblob-ext fw)"   cargo clippy -p firmware --features largeblob-ext -- -D warnings
 run "clippy (largeblob-ext host)" cargo clippy -p rsk-fido --features largeblob-ext --target "$HOST" --all-targets -- -D warnings
-run "test (largeblob-ext)"        cargo test -p rsk-fido --features largeblob-ext --target "$HOST"
+run_tests "test (largeblob-ext)"        cargo test -p rsk-fido --features largeblob-ext --target "$HOST"
 run "clippy (emu largeblob-ext)"  cargo clippy --manifest-path tools/emu/Cargo.toml --target "$HOST" --all-targets --features largeblob-ext -- -D warnings
 # The `bench` latency-harness vendor command (never shipped) is only compiled with
 # its feature on, so gate that build here — otherwise a signature change to the EC /
@@ -288,7 +312,7 @@ run "clippy (emu largeblob-ext)"  cargo clippy --manifest-path tools/emu/Cargo.t
 # host test proves each selector still drives the REAL primitive, not an error path.
 run "clippy (bench fw)"        cargo clippy -p firmware --features bench -- -D warnings
 run "clippy (bench host)"      cargo clippy -p rsk-fido --features bench --target "$HOST" --all-targets -- -D warnings
-run "test (bench)"             cargo test -p rsk-fido --features bench --target "$HOST" bench
+run_tests "test (bench)"             cargo test -p rsk-fido --features bench --target "$HOST" bench
 # The display path (panel driver + touch) is `LED_KIND=none`-only, so the default
 # embedded clippy above never lints it — gate it explicitly, like the fips firmware.
 run "clippy (display firmware)" env LED_KIND=none cargo clippy -p firmware --features display -- -D warnings
@@ -300,7 +324,7 @@ run "clippy (display strong-pin)" env LED_KIND=none cargo clippy -p firmware --f
 # compiled by any run above, and the gate is the one that decides whether the
 # trusted display is painted for a credential the host has not addressed — it had
 # no gate at all until audit run-36, so it does not go back to having no test.
-run "test (display wiring)"    cargo test -p rsk-device --features display --target "$HOST"
+run_tests "test (display wiring)"    cargo test -p rsk-device --features display --target "$HOST"
 run "clippy (display wiring)"  cargo clippy -p rsk-device --features display --target "$HOST" --all-targets -- -D warnings
 run "build firmware (release)" cargo build --release -p firmware
 run "firmware size budget"     firmware_size_budget
@@ -358,8 +382,8 @@ run "cargo-audit (tui SCA)"    cargo audit --file tools/tui/Cargo.lock
 # The emulator's own host tests — today the USB/IP codec, whose struct layouts are
 # the Linux kernel's and whose framing rule decides how many bytes come off the
 # socket next; both fail silently on the wire rather than loudly.
-run "test (emu)"               cargo test --manifest-path tools/emu/Cargo.toml --target "$HOST"
-run "test (emu conformance)"   cargo test --manifest-path tools/emu/Cargo.toml --target "$HOST" --features fido-conformance
+run_tests "test (emu)"               cargo test --manifest-path tools/emu/Cargo.toml --target "$HOST"
+run_tests "test (emu conformance)"   cargo test --manifest-path tools/emu/Cargo.toml --target "$HOST" --features fido-conformance
 run "cargo-audit (emu SCA)"    cargo audit --file tools/emu/Cargo.lock --ignore RUSTSEC-2023-0071
 run "cargo-deny"               cargo deny check
 # Supply-chain provenance-of-review: every dependency must be covered by an
