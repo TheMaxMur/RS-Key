@@ -139,9 +139,17 @@ getInfo advertises these COSE algorithms. A relying party picks one in its
 | `-36` ES512 | NIST P-521 | slow keygen/sign |
 | `-47` ES256K | secp256k1 | dropped from new credentials on `fips-profile` |
 
+RS-Key selects the **first** supported algorithm a site offers, so put your
+preferred curve first in the list.
+
 The curve-explicit COSE ids (`-9` ESP256, `-19` Ed25519, `-51` ESP384, `-52`
-ESP512) are also accepted in `pubKeyCredParams`. RS-Key selects the **first**
-supported algorithm a site offers, so put your preferred curve first in the list.
+ESP512) are accepted too, and a credential comes back stamped with **the id the
+site asked for** — offer only `-9` and the attested key says `-9`, not `-7`.
+They name the same curves and the same keys as the classic spellings; only the
+label differs. They are **not advertised in getInfo**, like `-8`, `-47` and the
+ML-DSA ids: a host that knows to ask gets them, and one that reads the
+advertisement offers a classic spelling instead. A YubiKey refuses all four —
+we are deliberately wider here.
 
 ## Post-quantum credentials
 

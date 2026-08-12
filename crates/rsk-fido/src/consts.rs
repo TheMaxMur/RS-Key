@@ -108,7 +108,8 @@ pub const ALG_ES512: i64 = -36;
 pub const ALG_ES256K: i64 = -47;
 pub const ALG_EDDSA: i64 = -8;
 pub const ALG_ECDH_ES_HKDF_256: i64 = -25; // clientPIN key agreement
-// Curve-explicit aliases also accepted in pubKeyCredParams.
+// Curve-explicit ids. Accepted in pubKeyCredParams and echoed back in the
+// attested key; unadvertised, like -8/-47 and ML-DSA (see `getinfo.rs`).
 pub const ALG_ESP256: i64 = -9; // ECDSA-SHA256 P-256
 pub const ALG_ED25519: i64 = -19; // EdDSA Ed25519
 pub const ALG_ESP384: i64 = -51; // ECDSA-SHA384 P-384

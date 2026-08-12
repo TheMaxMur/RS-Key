@@ -124,6 +124,28 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **A credential asked for under a curve-explicit COSE id came back stamped with
+  a different one.** `pubKeyCredParams` offering only ESP256 (`-9`), ESP384
+  (`-51`), ESP512 (`-52`) or Ed25519 (`-19`) registered a credential attesting
+  `-7`, `-35`, `-36` or `-8` instead — the id the site asked for was quietly
+  folded onto its classic spelling. That is the one answer nothing supports:
+  WebAuthn L3 §7.1 has the relying party check the returned key's `alg` against
+  the list it sent, so such a site had to fail its own registration, and with
+  `rk` set it had already burnt a discoverable-credential slot doing so. The
+  attested key now carries the id the request selected. A YubiKey 5.7.4 answers
+  `CTAP2_ERR_UNSUPPORTED_ALGORITHM` to all four — measured across two
+  authentication states and re-measured from a second instrument — because its
+  supported set is exactly its advertised set; ours is deliberately wider, as it
+  already is for `-36`, `-47` and ML-DSA `-48`/`-49`, so §6.1.2 step 3 governs and
+  the chosen id is the one the element specified. The four stay **unadvertised**
+  in getInfo, on the same terms as `-8` and `-47`. A site offering both spellings
+  gets whichever it lists first. Credentials already created keep working
+  untouched: assertions select the key by curve, not by `alg`. One record change,
+  compatible both directions — a curve-explicit id on P-256 is now stored (key 9),
+  where before only a non-default curve was; an absent key 9 still reads as
+  ES256/P-256, so a box an older build wrote is unchanged and one this build
+  writes for `-7` is byte-identical to before. **bcdDevice → 0x08BC.**
+
 - **OATH `CALCULATE`, `VALIDATE` and `SET CODE` accepted bodies the host did not
   mean.** All three found each tag anywhere in the data field and ignored
   whatever else was there, so a duplicate tag (which of the two is the key?), a

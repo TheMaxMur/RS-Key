@@ -424,7 +424,11 @@ needs only the identifiers above. RS-Key implements:
   ES256 `-7`, ES384 `-35`, ES512 `-36`, ES256K `-47`, EdDSA `-8`,
   ML-DSA-44 `-48`, ML-DSA-65 `-49` (both negotiable via `pubKeyCredParams`;
   advertised in getInfo only under the `advertise-pqc` build). ML-DSA-87 `-50`
-  is recognised but unsupported: its response overruns `maxMsgSize`.
+  is recognised but unsupported: its response overruns `maxMsgSize`. The
+  curve-explicit ids ESP256 `-9`, Ed25519 `-19`, ESP384 `-51` and ESP512 `-52`
+  are negotiable and unadvertised on the same terms, and the attested key
+  carries the id the request selected rather than the classic spelling of the
+  same curve.
   (`crates/rsk-fido/src/consts.rs`.)
 - **CTAP1 / U2F 1.1/1.2.**
 - **PIV**: NIST SP 800-73 (Yubico PIV extensions for metadata). `GET DATA` for

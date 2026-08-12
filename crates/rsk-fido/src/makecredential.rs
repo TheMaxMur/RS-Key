@@ -72,17 +72,24 @@ const _: () = assert!(
     "authData buffer too small for the ML-DSA-65 worst case",
 );
 
-/// Map a requested COSE alg (incl. the curve-explicit aliases) to its canonical
-/// `(alg, curve)`, or `None` if unsupported.
+/// Map a requested COSE alg to the `(alg, curve)` the credential is created with,
+/// or `None` if unsupported. The alg returned is the one the platform **asked
+/// for**: the curve-explicit ids (`-9`/`-19`/`-51`/`-52`) share their key material
+/// with the classic spelling, and WebAuthn §7.1 has the RP match the attested
+/// key's alg against the list it sent, so folding one fails its own registration.
 fn alg_to_curve(alg: i64) -> Option<(i64, u8)> {
     match alg {
-        ALG_ES256 | ALG_ESP256 => Some((ALG_ES256, CURVE_P256)),
-        ALG_ES384 | ALG_ESP384 => Some((ALG_ES384, CURVE_P384)),
-        ALG_ES512 | ALG_ESP512 => Some((ALG_ES512, CURVE_P521)),
+        ALG_ES256 => Some((ALG_ES256, CURVE_P256)),
+        ALG_ESP256 => Some((ALG_ESP256, CURVE_P256)),
+        ALG_ES384 => Some((ALG_ES384, CURVE_P384)),
+        ALG_ESP384 => Some((ALG_ESP384, CURVE_P384)),
+        ALG_ES512 => Some((ALG_ES512, CURVE_P521)),
+        ALG_ESP512 => Some((ALG_ESP512, CURVE_P521)),
         // The FIPS-style profile keeps secp256k1 out of new credentials
         // (existing K1 credentials still assert — creation is the policy gate).
         ALG_ES256K if cfg!(not(feature = "fips-profile")) => Some((ALG_ES256K, CURVE_P256K1)),
-        ALG_EDDSA | ALG_ED25519 => Some((ALG_EDDSA, CURVE_ED25519)),
+        ALG_EDDSA => Some((ALG_EDDSA, CURVE_ED25519)),
+        ALG_ED25519 => Some((ALG_ED25519, CURVE_ED25519)),
         // ML-DSA-44 and -65 are backed; -50 (ML-DSA-87) falls through — its
         // response overruns the CTAPHID message ceiling.
         ALG_MLDSA44 => Some((ALG_MLDSA44, CURVE_MLDSA44)),
@@ -627,7 +634,8 @@ fn make_credential_inner<S: Storage, R: Rng>(
     }
     let cose_len = {
         let mut enc = Encoder::new(Cursor::new(&mut ad[p..]));
-        key.cose_public(&mut enc).map_err(|_| CtapError::Other)?;
+        key.cose_public(req.sel_alg, &mut enc)
+            .map_err(|_| CtapError::Other)?;
         enc.writer().position()
     };
     p += cose_len;

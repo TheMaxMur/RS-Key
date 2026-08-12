@@ -2,7 +2,7 @@
 // Copyright (C) 2026 RS-Key contributors
 
 use super::*;
-use crate::consts::EF_ALWAYS_UV;
+use crate::consts::{ALG_ED25519, ALG_ESP256, ALG_ESP384, ALG_ESP512, EF_ALWAYS_UV};
 use crate::seed::ensure_seed;
 use minicbor::Decoder;
 use p256::Sec1Point;
@@ -448,6 +448,69 @@ fn unsupported_alg_rejected() {
         make_credential(&mut ctx, &buf[..n], &mut out),
         Err(CtapError::UnsupportedAlgorithm)
     );
+}
+
+// The COSE `alg` (key 3) of the credential public key a response attests.
+fn attested_alg(resp: &[u8]) -> i64 {
+    let mut d = Decoder::new(resp);
+    assert!(d.map().unwrap().unwrap() >= 3);
+    assert_eq!(d.u8().unwrap(), 1);
+    assert_eq!(d.str().unwrap(), ATT_FMT);
+    assert_eq!(d.u8().unwrap(), 2);
+    let auth_data = d.bytes().unwrap();
+    let cred_len = u16::from_be_bytes([auth_data[53], auth_data[54]]) as usize;
+    let mut cd = Decoder::new(&auth_data[55 + cred_len..]);
+    let entries = cd.map().unwrap().unwrap();
+    for _ in 0..entries {
+        if cd.i64().unwrap() == 3 {
+            return cd.i64().unwrap();
+        }
+        cd.skip().unwrap();
+    }
+    panic!("attested COSE key carries no alg");
+}
+
+// One-element pubKeyCredParams offering `alg`.
+fn only_alg(e: &mut Encoder<Cursor<&mut [u8]>>, alg: i64) {
+    e.u8(4).unwrap().array(1).unwrap().map(2).unwrap();
+    e.str("alg").unwrap().i64(alg).unwrap();
+    e.str("type").unwrap().str("public-key").unwrap();
+}
+
+#[test]
+fn a_fully_specified_alg_is_attested_as_itself() {
+    // WebAuthn L3 §7.1 has the relying party match the attested key's alg against
+    // the list it sent, so a request offering only the curve-explicit spelling must
+    // get that spelling back. Folding it onto the legacy id failed the RP's own
+    // registration — and with rk set it had already spent a discoverable slot.
+    for alg in [ALG_ESP256, ALG_ESP384, ALG_ESP512, ALG_ED25519] {
+        let (resp, _fs) = run(&mc_build(4, |e| only_alg(e, alg)));
+        assert_eq!(
+            attested_alg(&resp),
+            alg,
+            "curve-explicit alg {alg} must be attested as itself"
+        );
+    }
+    // The legacy spellings are unaffected and each still attests what it offered.
+    for alg in [ALG_ES256, ALG_EDDSA] {
+        let (resp, _fs) = run(&mc_build(4, |e| only_alg(e, alg)));
+        assert_eq!(attested_alg(&resp), alg);
+    }
+    // With both spellings offered the first supported element wins (§6.1.2 step 3
+    // scans in the platform's preference order), so the id chosen is the id
+    // attested — the same rule, not a special case for the alias.
+    for pair in [[ALG_ESP256, ALG_ES256], [ALG_ES256, ALG_ESP256]] {
+        let req = mc_build(4, |e| {
+            e.u8(4).unwrap().array(2).unwrap();
+            for a in pair {
+                e.map(2).unwrap();
+                e.str("alg").unwrap().i64(a).unwrap();
+                e.str("type").unwrap().str("public-key").unwrap();
+            }
+        });
+        let (resp, _fs) = run(&req);
+        assert_eq!(attested_alg(&resp), pair[0]);
+    }
 }
 
 #[test]

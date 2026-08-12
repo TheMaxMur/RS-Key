@@ -269,7 +269,7 @@ fn cose_xy(key: &CredKey) -> (std::vec::Vec<u8>, std::vec::Vec<u8>) {
     let mut buf = [0u8; 256];
     let n = {
         let mut e = Encoder::new(Cursor::new(&mut buf[..]));
-        key.cose_public(&mut e).unwrap();
+        key.cose_public(key.alg(), &mut e).unwrap();
         e.writer().position()
     };
     let mut d = Decoder::new(&buf[..n]);
@@ -345,7 +345,7 @@ fn ed25519_sign_verifies_under_cose_key() {
     let mut buf = [0u8; 128];
     let cn = {
         let mut e = Encoder::new(Cursor::new(&mut buf[..]));
-        key.cose_public(&mut e).unwrap();
+        key.cose_public(key.alg(), &mut e).unwrap();
         e.writer().position()
     };
     let mut d = Decoder::new(&buf[..cn]);
@@ -387,7 +387,7 @@ fn bench_register_crypto() {
         for _ in 0..iters {
             let key = CredKey::from_raw(curve as i64, &raw).unwrap();
             let mut e = Encoder::new(Cursor::new(&mut buf[..]));
-            key.cose_public(&mut e).unwrap();
+            key.cose_public(key.alg(), &mut e).unwrap();
             key.sign(MSG, &mut rng, &mut sig);
         }
         let per = t.elapsed() / iters;
@@ -448,7 +448,7 @@ fn cached_point_encodes_identically_to_derived() {
         let mut derived = [0u8; 256];
         let dn = {
             let mut enc = Encoder::new(Cursor::new(&mut derived[..]));
-            key.cose_public(&mut enc).unwrap();
+            key.cose_public(key.alg(), &mut enc).unwrap();
             enc.writer().position()
         };
 
@@ -463,7 +463,7 @@ fn cached_point_encodes_identically_to_derived() {
         let mut cached = [0u8; 256];
         let cn = {
             let mut enc = Encoder::new(Cursor::new(&mut cached[..]));
-            cose_public_from_point(curve, &pt[..pn], &mut enc).unwrap();
+            cose_public_from_point(curve, key.alg(), &pt[..pn], &mut enc).unwrap();
             enc.writer().position()
         };
 

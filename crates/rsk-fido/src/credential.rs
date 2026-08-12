@@ -285,8 +285,11 @@ fn encode_body<W: minicbor::encode::Write>(
     c: &CredInput,
 ) -> core::result::Result<(), minicbor::encode::Error<W::Error>> {
     let ext_n = c.ext.box_entries();
-    // alg/curve are stored only for non-default curves (P-256 boxes stay identical).
-    let store_alg = c.curve != CURVE_P256 as i64;
+    // alg/curve are stored only when the pair is not the default. A curve-explicit
+    // id on P-256 (ESP256, -9) is the one case where the curve alone is not enough
+    // to re-emit the COSE key credMgmt hands back; an absent key 9 still decodes as
+    // ES256/P-256, so a box an older build wrote reads the same as before.
+    let store_alg = c.curve != CURVE_P256 as i64 || c.alg != ALG_ES256;
     let mut n = 4u64; // rpId, userId, created, use_sign_count
     if !c.user_name.is_empty() {
         n += 1;

@@ -595,8 +595,13 @@ fn enumerate_creds_response(
         .map_err(|_| CtapError::Other)?;
     enc.u8(8).map_err(|_| CtapError::Other)?;
     match &key {
-        Some(k) => k.cose_public(&mut enc),
-        None => cose_public_from_point(cred.curve, cached_pubkey.unwrap_or_default(), &mut enc),
+        Some(k) => k.cose_public(cred.alg, &mut enc),
+        None => cose_public_from_point(
+            cred.curve,
+            cred.alg,
+            cached_pubkey.unwrap_or_default(),
+            &mut enc,
+        ),
     }
     .map_err(|_| CtapError::Other)?;
 

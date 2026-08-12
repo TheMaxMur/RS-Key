@@ -1922,7 +1922,7 @@ fn miri_fido_cred_pqc() {
             let mut cbor = [0u8; 4096];
             let mut enc =
                 minicbor::Encoder::new(minicbor::encode::write::Cursor::new(&mut cbor[..]));
-            let _ = key.cose_public(&mut enc);
+            let _ = key.cose_public(key.alg(), &mut enc);
         }
     }
 }

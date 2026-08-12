@@ -213,7 +213,8 @@ fn write_info<W: Write>(
     //
     // ES256K (-47) stays unadvertised in EVERY profile for the same P-06 reason.
     // Both -8 and -47 remain fully implemented — makeCredential negotiates them
-    // from a request regardless of advertisement (like ML-DSA-44). Keep the
+    // from a request regardless of advertisement (like ML-DSA-44), and so are the
+    // curve-explicit ids -9/-19/-51/-52, which a request gets back verbatim. Keep the
     // advertised set in sync with the metadata (`authenticationAlgorithms` +
     // `authenticatorGetInfo.algorithms`); `tests/62` enforces it, and
     // `metadata/rs-key.conformance.metadata.json` is the EdDSA-free variant for
