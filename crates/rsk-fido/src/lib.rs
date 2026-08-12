@@ -213,6 +213,31 @@ pub fn process_cbor<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, data: &[u8], out: &
     // is an initializer, and arms its own walk after this clears the previous one.
     ctx.state.retire_sequences_except(cmd);
 
+    // The canonical-form gate for the commands that parse a request body. getInfo,
+    // reset, selection and getNextAssertion take no parameters and never look at
+    // the bytes — the oracle likewise answers getInfo normally with a trailing byte.
+    //
+    // `largeBlobs` only where this build implements it: with the `largeBlob`
+    // extension served instead (§12.4), `0x0C` is a command we do not have, and a
+    // trailing byte must not turn its INVALID_COMMAND into INVALID_CBOR — a
+    // YubiKey answers `0x01` to every command it does not implement, body or no
+    // body. Same defect this commit fixes, one layer up: the body deciding what
+    // the command is.
+    if (matches!(
+        cmd,
+        consts::CTAP_MAKE_CREDENTIAL
+            | consts::CTAP_GET_ASSERTION
+            | consts::CTAP_CLIENT_PIN
+            | consts::CTAP_CONFIG
+            | consts::CTAP_CREDENTIAL_MGMT
+            | consts::CTAP_VENDOR
+    ) || (cmd == consts::CTAP_LARGE_BLOBS && !consts::LARGE_BLOB_EXT))
+        && let Err(e) = cbordec::one_cbor_item(params)
+    {
+        out[0] = e.as_u8();
+        return 1;
+    }
+
     let result = match cmd {
         consts::CTAP_GET_INFO => {
             // minPINLength / forceChangePin come from EF_MINPINLEN ([len, force]).

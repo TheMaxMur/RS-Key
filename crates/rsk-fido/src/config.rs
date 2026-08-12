@@ -15,7 +15,7 @@ use zeroize::Zeroize;
 use rsk_crypto::sha256;
 use rsk_rescue::phy;
 
-use crate::cbordec::{cbor, def_arr, def_map};
+use crate::cbordec::{cbor, def_arr, def_map, skip_value};
 use crate::consts::{
     CONFIG_AUT_DISABLE, CONFIG_AUT_ENABLE, CONFIG_ENABLE_EA, CONFIG_PHY_LED_BRIGHTNESS,
     CONFIG_PHY_LED_GPIO, CONFIG_PHY_OPTIONS, CONFIG_PHY_VIDPID, CONFIG_SET_MIN_PIN,
@@ -117,7 +117,7 @@ fn parse(data: &[u8]) -> Result<Req<'_>, CtapError> {
                 req.proto_present = true;
             }
             4 => req.pin_uv_auth_param = Some(cbor(d.bytes())?),
-            _ => cbor(d.skip())?,
+            _ => skip_value(&mut d)?,
         }
     }
     Ok(req)
@@ -140,7 +140,7 @@ fn parse_subparams<'a>(
         } else if req.subcommand == CONFIG_VENDOR {
             parse_vendor_sub(d, req, sk)?;
         } else {
-            cbor(d.skip())?;
+            skip_value(d)?;
         }
     }
     req.raw_subpara = &data[start..d.position()];
@@ -165,7 +165,7 @@ fn parse_min_pin_sub<'a>(d: &mut Decoder<'a>, req: &mut Req<'a>, sk: u64) -> Res
             }
         }
         3 => req.force_change = cbor(d.bool())?,
-        _ => cbor(d.skip())?,
+        _ => skip_value(d)?,
     }
     Ok(())
 }
@@ -177,7 +177,7 @@ fn parse_vendor_sub<'a>(d: &mut Decoder<'a>, req: &mut Req<'a>, sk: u64) -> Resu
         1 => req.vendor_id = cbor(d.u64())?,
         2 => req.vendor_param = cbor(d.bytes())?,
         3 => req.vendor_param_int = cbor(d.u64())?,
-        _ => cbor(d.skip())?,
+        _ => skip_value(d)?,
     }
     Ok(())
 }

@@ -37,7 +37,7 @@ use rsk_led::{CONF_LEN as LED_CONF_LEN, EF_LED_CONF};
 use rsk_mgmt::{DevConfError, persist_dev_conf};
 use rsk_rescue::phy;
 
-use crate::cbordec::{cbor, def_map};
+use crate::cbordec::{cbor, def_map, skip_value};
 use crate::cert;
 use crate::consts::{
     CONFIG_TARGET_DEV_CONF, CONFIG_TARGET_LED, CONFIG_TARGET_PHY, CTAP_VENDOR, EF_ATT_CHAIN,
@@ -117,7 +117,7 @@ fn parse(data: &[u8]) -> Result<Req<'_>, CtapError> {
                             match cbor(d.i32())? {
                                 -2 => req.kax = cbor(d.bytes())?,
                                 -3 => req.kay = cbor(d.bytes())?,
-                                _ => cbor(d.skip())?,
+                                _ => skip_value(&mut d)?,
                             }
                         }
                     } else if sk == 1
@@ -144,7 +144,7 @@ fn parse(data: &[u8]) -> Result<Req<'_>, CtapError> {
                     } else if sk == 2 && req.subcommand == VENDOR_CONFIG_WRITE {
                         req.blob = cbor(d.bytes())?;
                     } else {
-                        cbor(d.skip())?;
+                        skip_value(&mut d)?;
                     }
                 }
                 req.raw_subpara = &data[start..d.position()];
@@ -154,7 +154,7 @@ fn parse(data: &[u8]) -> Result<Req<'_>, CtapError> {
                 req.proto_present = true;
             }
             4 => req.pin_uv_auth_param = Some(cbor(d.bytes())?),
-            _ => cbor(d.skip())?,
+            _ => skip_value(&mut d)?,
         }
     }
     Ok(req)

@@ -19,7 +19,7 @@ use zeroize::Zeroize;
 use rsk_crypto::pinproto::{self, PinProto};
 use rsk_fs::{Fs, Storage};
 
-use crate::cbordec::{cbor, def_arr, def_map};
+use crate::cbordec::{cbor, def_arr, def_map, skip_value};
 use crate::consts::{
     CM_DELETE_CREDENTIAL, CM_ENUMERATE_CREDS_BEGIN, CM_ENUMERATE_CREDS_NEXT,
     CM_ENUMERATE_RPS_BEGIN, CM_ENUMERATE_RPS_NEXT, CM_GET_CREDS_METADATA, CM_UPDATE_USER_INFO,
@@ -86,7 +86,7 @@ fn parse(data: &[u8]) -> Result<Req<'_>, CtapError> {
             2 => parse_subpara(data, &mut d, &mut req)?,
             3 => req.proto = Some(cbor(d.u32())? as u64),
             4 => req.param = Some(cbor(d.bytes())?),
-            _ => cbor(d.skip())?,
+            _ => skip_value(&mut d)?,
         }
     }
     Ok(req)
@@ -115,7 +115,7 @@ fn parse_subpara<'a>(
                                 cbor(d.str())?;
                             }
                         }
-                        _ => cbor(d.skip())?, // "type"
+                        _ => skip_value(d)?, // "type"
                     }
                 }
             }
@@ -126,11 +126,11 @@ fn parse_subpara<'a>(
                         "id" => req.user_id = Some(cbor(d.bytes())?),
                         "name" => req.user_name = cbor(d.str())?,
                         "displayName" => req.user_display_name = cbor(d.str())?,
-                        _ => cbor(d.skip())?,
+                        _ => skip_value(d)?,
                     }
                 }
             }
-            _ => cbor(d.skip())?,
+            _ => skip_value(d)?,
         }
     }
     req.raw_subpara = &data[start..d.position()];

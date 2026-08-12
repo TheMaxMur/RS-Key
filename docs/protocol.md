@@ -211,6 +211,7 @@ surface returns:
 |---|---|---|
 | `0x00` | OK | success |
 | `0x02` | INVALID_PARAMETER | malformed param / bad key / wrong blob length |
+| `0x12` | INVALID_CBOR | the body is not exactly one CBOR item (trailing bytes) |
 | `0x14` | MISSING_PARAMETER | required field absent (e.g. blob/`pinUvAuthParam`) |
 | `0x27` | OPERATION_DENIED | touch declined / timed out |
 | `0x30` | NOT_ALLOWED | precondition unmet (no MSE channel, one already spent or owned by another CTAPHID channel, an `MSE` while one is live (§9.1), sealed, soft-locked, or an `authenticatorReset` outside the §5.1 power-up window) |

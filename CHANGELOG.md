@@ -40,6 +40,29 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Security
 
+- **A CTAP2 request body must now be exactly one CBOR item.** Bytes after the
+  top-level map were read as the end of the message and ignored, so two readers of
+  the same wire bytes could disagree about what was asked — the request-smuggling
+  shape. §8 makes this a decoder SHOULD, and a YubiKey 5.7.4 refuses it with
+  `CTAP2_ERR_INVALID_CBOR`, measured on clientPIN, getAssertion and makeCredential
+  alike; the gate therefore lives in the dispatcher, once, for every command that
+  parses a body. getInfo is exempt because it never looks at its body, which is
+  also what the oracle does. A map header that under-counts its entries sweeps
+  along with it — the entries it disowns are now trailing bytes rather than
+  parameters we silently never read (`0x12`, not `0x14`). Measured and
+  deliberately left alone, with the readings on record: non-minimal integer
+  encodings (keys, values and major-2..4 length headers) and nesting past four
+  levels are accepted by the oracle too — §8's nesting clause is a floor for
+  authenticators, not a cap. CBOR **tags** are the second half of the same rule:
+  refused already where a parser *reads* the value, walked straight through where
+  it *skips* one, which is most of the key space — `{1:2, 2:2, 99: tag(0,1)}`
+  answered `SUCCESS` here and `0x12` on the oracle. All 26 skip arms refuse a tag
+  now. Duplicate
+  and descending map keys are the one cell where we are stricter than the oracle
+  and §8 endorses it ("decoders SHOULD reject"); left for the maintainer to rule on
+  rather than loosened.
+  **bcdDevice → 0x089F.**
+
 - **hmac-secret now answers the three codes §12.5 names.** A `saltAuth` that fails
   to verify was `CTAP2_ERR_EXTENSION_FIRST` — a code about extension *ordering*,
   which tells the platform to resend the request that just failed its MAC — where

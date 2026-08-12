@@ -16,7 +16,7 @@ use rsk_fs::Storage;
 
 use rsk_crypto::sha256;
 
-use crate::cbordec::{cbor, def_map};
+use crate::cbordec::{cbor, def_map, skip_value};
 use crate::consts::{
     CTAP_LARGE_BLOBS, EF_LARGEBLOB, EF_PIN, LARGEBLOB_MIN, MAX_FRAGMENT_LENGTH, MAX_LARGE_BLOB_SIZE,
 };
@@ -77,7 +77,7 @@ fn parse(data: &[u8]) -> Result<Req<'_>, CtapError> {
                 req.proto = cbor(d.u64())?;
                 req.proto_present = true;
             }
-            _ => cbor(d.skip())?,
+            _ => skip_value(&mut d)?,
         }
     }
     Ok(req)

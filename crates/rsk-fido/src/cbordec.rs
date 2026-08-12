@@ -21,6 +21,37 @@ pub fn cbor<T>(r: core::result::Result<T, minicbor::decode::Error>) -> Result<T,
     })
 }
 
+/// Skip a value the parser does not read — but refuse a CBOR **tag** rather than
+/// walking through it. §8's canonical form has no tags at all, and a decoder that
+/// silently steps over one lets two readers of the same message disagree about
+/// what was sent, which is the request-smuggling shape [`one_cbor_item`] exists
+/// for. Measured on a YubiKey 5.7.4: a tag on a value it does not read is
+/// `CTAP2_ERR_INVALID_CBOR`, on one it does read `CTAP1_ERR_INVALID_PARAMETER`,
+/// and on a map *key* `CTAP2_ERR_CBOR_UNEXPECTED_TYPE` — which is what the typed
+/// readers here already answer, so only the skipped ones needed the rule.
+pub fn skip_value(d: &mut Decoder) -> Result<(), CtapError> {
+    if cbor(d.datatype())? == minicbor::data::Type::Tag {
+        return Err(CtapError::InvalidCbor);
+    }
+    cbor(d.skip())
+}
+
+/// §8: a CTAP2 request body is exactly ONE CBOR item. Anything after it is a
+/// request-smuggling shape — two readers of the same message can disagree about
+/// what was asked — and a YubiKey 5.7.4 refuses it with CTAP2_ERR_INVALID_CBOR on
+/// every command that parses a body.
+///
+/// A body the decoder cannot even walk is left to the command parser: it has the
+/// context for the specific code, and this pass must not pre-empt it. `skip` is
+/// the counter-based no-alloc one, so an adversarially nested body costs no stack.
+pub fn one_cbor_item(params: &[u8]) -> Result<(), CtapError> {
+    let mut d = Decoder::new(params);
+    if d.skip().is_ok() && d.position() != params.len() {
+        return Err(CtapError::InvalidCbor);
+    }
+    Ok(())
+}
+
 pub fn def_map(d: &mut Decoder) -> Result<u64, CtapError> {
     cbor(d.map())?.ok_or(CtapError::InvalidCbor)
 }
@@ -65,7 +96,7 @@ pub fn parse_credential_descriptors<'a>(
                     is_public_key = cbor(d.str())? == PUBLIC_KEY_TYPE;
                     type_present = true;
                 }
-                _ => cbor(d.skip())?,
+                _ => skip_value(d)?,
             }
         }
         // A credential descriptor needs both "type" and "id".

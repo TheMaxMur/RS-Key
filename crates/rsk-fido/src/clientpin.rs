@@ -20,7 +20,7 @@ use rsk_crypto::pinproto::{self, PinProto};
 use rsk_crypto::{Device, sha256};
 use rsk_fs::{Fs, Storage};
 
-use crate::cbordec::{cbor, def_map};
+use crate::cbordec::{cbor, def_map, skip_value};
 use crate::consts::{
     CP_GET_PIN_TOKEN, CP_GET_PIN_UV_TOKEN_USING_PIN, EF_DEVICE_PIN, EF_MINPINLEN, EF_PIN,
     MAX_MIN_PIN_RPIDS, MAX_PIN_RETRIES, MIN_PIN_LENGTH, PIN_MISMATCH_LIMIT,
@@ -82,7 +82,7 @@ fn parse(data: &[u8]) -> Result<Req<'_>, CtapError> {
                         // kty (1), crv (-1) and alg (3) are the platform's to get
                         // right: a YubiKey 5.7.4 reads none of the three, and
                         // answers SUCCESS to kty=6, crv=6 and alg=-7 alike.
-                        _ => cbor(d.skip())?,
+                        _ => skip_value(&mut d)?,
                     }
                 }
             }
@@ -91,7 +91,7 @@ fn parse(data: &[u8]) -> Result<Req<'_>, CtapError> {
             6 => req.pin_hash_enc = Some(cbor(d.bytes())?),
             9 => req.permissions = cbor(d.u32())? as u64,
             10 => req.rp_id = Some(cbor(d.str())?),
-            _ => cbor(d.skip())?,
+            _ => skip_value(&mut d)?,
         }
     }
     Ok(req)

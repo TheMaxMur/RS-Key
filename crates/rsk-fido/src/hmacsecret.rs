@@ -15,7 +15,7 @@ use rsk_crypto::hmac_sha256;
 use rsk_crypto::pinproto::{self, IV_SIZE, PinProto};
 
 use crate::Rng;
-use crate::cbordec::{cbor, def_map};
+use crate::cbordec::{cbor, def_map, skip_value};
 use crate::credential::derive_hmac_key;
 use crate::error::CtapError;
 
@@ -88,14 +88,14 @@ pub fn parse<'a>(d: &mut Decoder<'a>) -> Result<HmacSecretReq<'a>, CtapError> {
                     match cbor(d.i32())? {
                         -2 => coord(&mut req.peer_x, cbor(d.bytes())?)?,
                         -3 => coord(&mut req.peer_y, cbor(d.bytes())?)?,
-                        _ => cbor(d.skip())?,
+                        _ => skip_value(d)?,
                     }
                 }
             }
             0x02 => req.salt_enc = Some(cbor(d.bytes())?),
             0x03 => req.salt_auth = Some(cbor(d.bytes())?),
             0x04 => req.proto = cbor(d.u32())? as u64,
-            _ => cbor(d.skip())?,
+            _ => skip_value(d)?,
         }
     }
     Ok(req)

@@ -16,7 +16,7 @@ use zeroize::Zeroize;
 use rsk_crypto::sha256;
 use rsk_fs::Storage;
 
-use crate::cbordec::{cbor, def_map, parse_credential_descriptors};
+use crate::cbordec::{cbor, def_map, parse_credential_descriptors, skip_value};
 use crate::clientpin::{UvOutcome, builtin_uv_enabled, builtin_uv_step};
 use crate::consts::{
     CRED_PROT_UV_OPTIONAL_WITH_LIST, CRED_PROT_UV_REQUIRED, CURVE_P256, EF_CRED, EF_PIN, FLAG_ED,
@@ -117,7 +117,7 @@ fn parse(data: &[u8]) -> Result<Request<'_>, CtapError> {
             4 => parse_extensions(&mut d, &mut req)?,
             6 => req.pin_uv_auth_param = Some(cbor(d.bytes())?),
             7 => req.pin_uv_auth_protocol = Some(cbor(d.u32())? as u64),
-            _ => cbor(d.skip())?,
+            _ => skip_value(&mut d)?,
         }
     }
     Ok(req)
@@ -136,7 +136,7 @@ fn parse_extensions<'a>(d: &mut Decoder<'a>, req: &mut Request<'a>) -> Result<()
             "largeBlobKey" if !LARGE_BLOB_EXT => req.ext_large_blob_key = Some(cbor(d.bool())?),
             "largeBlob" if LARGE_BLOB_EXT => req.ext_large_blob = largeblobext::parse_ga(d)?,
             "hmac-secret" => req.hmac_secret = hmacsecret::parse(d)?,
-            _ => cbor(d.skip())?,
+            _ => skip_value(d)?,
         }
     }
     Ok(())
@@ -150,7 +150,7 @@ fn parse_options(d: &mut Decoder<'_>, req: &mut Request<'_>) -> Result<(), CtapE
             "rk" => req.rk_option = cbor(d.bool())?,
             "uv" => req.uv = cbor(d.bool())?,
             "up" => req.up = cbor(d.bool())?,
-            _ => cbor(d.skip())?,
+            _ => skip_value(d)?,
         }
     }
     Ok(())

@@ -25,7 +25,7 @@ use rsk_crypto::MLDSA65_PK_LEN;
 use rsk_crypto::sha256;
 use rsk_fs::{Fs, Storage};
 
-use crate::cbordec::{cbor, def_arr, def_map, parse_credential_descriptors};
+use crate::cbordec::{cbor, def_arr, def_map, parse_credential_descriptors, skip_value};
 use crate::cert;
 use crate::clientpin::{UvOutcome, builtin_uv_enabled, builtin_uv_step};
 use crate::consts::{
@@ -180,7 +180,7 @@ fn parse(data: &[u8]) -> Result<Request<'_>, CtapError> {
             8 => req.pin_uv_auth_param = Some(cbor(d.bytes())?),
             9 => req.pin_uv_auth_protocol = Some(cbor(d.u32())? as u64),
             10 => req.enterprise_attestation = Some(cbor(d.u32())? as u64),
-            _ => cbor(d.skip())?,
+            _ => skip_value(&mut d)?,
         }
     }
     Ok(req)
@@ -198,7 +198,7 @@ fn parse_rp_entity<'a>(d: &mut Decoder<'a>, req: &mut Request<'a>) -> Result<(),
             "name" => {
                 let _: &str = cbor(d.str())?;
             }
-            _ => cbor(d.skip())?,
+            _ => skip_value(d)?,
         }
     }
     Ok(())
@@ -212,7 +212,7 @@ fn parse_user_entity<'a>(d: &mut Decoder<'a>, req: &mut Request<'a>) -> Result<(
             "id" => req.user_id = cbor(d.bytes())?,
             "name" => req.user_name = cbor(d.str())?,
             "displayName" => req.user_display_name = cbor(d.str())?,
-            _ => cbor(d.skip())?,
+            _ => skip_value(d)?,
         }
     }
     Ok(())
@@ -237,7 +237,7 @@ fn parse_pubkey_params(d: &mut Decoder<'_>, req: &mut Request<'_>) -> Result<(),
                     alg = cbor(d.i64())?;
                     alg_present = true;
                 }
-                _ => cbor(d.skip())?,
+                _ => skip_value(d)?,
             }
         }
         // Every entry is a PublicKeyCredentialParameters and must carry both
@@ -272,7 +272,7 @@ fn parse_extensions<'a>(d: &mut Decoder<'a>, req: &mut Request<'a>) -> Result<()
             // any unknown one, so its downstream checks stay inert.
             "largeBlobKey" if !LARGE_BLOB_EXT => req.ext_large_blob_key = Some(cbor(d.bool())?),
             "largeBlob" if LARGE_BLOB_EXT => req.ext_large_blob = largeblobext::parse_mc(d)?,
-            _ => cbor(d.skip())?,
+            _ => skip_value(d)?,
         }
     }
     Ok(())
@@ -286,7 +286,7 @@ fn parse_options(d: &mut Decoder<'_>, req: &mut Request<'_>) -> Result<(), CtapE
             "rk" => req.rk = cbor(d.bool())?,
             "up" => req.up = Some(cbor(d.bool())?),
             "uv" => req.uv = cbor(d.bool())?,
-            _ => cbor(d.skip())?,
+            _ => skip_value(d)?,
         }
     }
     Ok(())
