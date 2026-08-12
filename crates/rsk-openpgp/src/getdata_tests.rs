@@ -139,12 +139,16 @@ fn internal_ef_read_is_denied() {
 }
 
 #[test]
-fn priv_do_3_needs_pw2_or_pw3() {
+fn priv_do_3_needs_pw2_and_pw3_will_not_do() {
     let mut fs = fs();
     let a = aid();
     let mut out = [0u8; 16];
     let mut cur = None;
     let (_, sw) = get_data(EF_PRIV_DO_3, false, false, &mut fs, &a, &mut cur, &mut out);
+    assert_eq!(sw, Sw::SECURITY_STATUS_NOT_SATISFIED);
+    // The admin PIN is not the cardholder's: §4.4.1 gives `0103` to PW1 no. 82
+    // alone, and a YubiKey 5.7.4 refuses PW3 on it.
+    let (_, sw) = get_data(EF_PRIV_DO_3, false, true, &mut fs, &a, &mut cur, &mut out);
     assert_eq!(sw, Sw::SECURITY_STATUS_NOT_SATISFIED);
     // With PW2 it becomes readable (a plain flash DO).
     let (_, sw) = get_data(EF_PRIV_DO_3, true, false, &mut fs, &a, &mut cur, &mut out);

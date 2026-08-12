@@ -2156,3 +2156,101 @@ fn pw3_alone_opens_no_key_operation() {
         }
     }
 }
+
+/// OpenPGP 3.4.1 §4.4.1 splits the private-use DOs between two owners: `0101`
+/// and `0103` are the cardholder's (PW1 no. 82), `0102` and `0104` the admin's
+/// (PW3), and there is no admin override on the cardholder's pair. Measured on a
+/// YubiKey 5.7.4, 3/3, in all four auth states: with only PW3 verified both
+/// `00CA010300` and `00DA0103…` answer `6982`, and so does `00DA0101…`.
+#[test]
+fn the_private_use_dos_answer_to_the_password_that_owns_them() {
+    let rng = RefCell::new(LcgRng(23));
+    let mut fs = make_fs();
+    let presence = RefCell::new(crate::AlwaysConfirm);
+    let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
+
+    let denied = Sw::SECURITY_STATUS_NOT_SATISFIED;
+    // (mode latched, [0101, 0102, 0103, 0104]) for GET, then for PUT.
+    let none: &[u8] = &[];
+    let pw1: &[u8] = &[consts::PW1_MODE81];
+    let pw2: &[u8] = &[consts::PW1_MODE82];
+    let pw3: &[u8] = &[consts::PW3_MODE83];
+    let reads = [
+        (none, [Sw::OK, Sw::OK, denied, denied]),
+        (pw1, [Sw::OK, Sw::OK, denied, denied]),
+        (pw2, [Sw::OK, Sw::OK, Sw::OK, denied]),
+        (pw3, [Sw::OK, Sw::OK, denied, Sw::OK]),
+    ];
+    let writes = [
+        (none, [denied; 4]),
+        (pw1, [denied; 4]),
+        (pw2, [Sw::OK, denied, Sw::OK, denied]),
+        (pw3, [denied, Sw::OK, denied, Sw::OK]),
+    ];
+
+    let latch = |app: &mut OpenpgpApplet, fs: &mut Fs<RamStorage>, modes: &[u8]| {
+        app.deselect(fs);
+        for &mode in modes {
+            let pw = if mode == consts::PW3_MODE83 {
+                consts::PW3_DEFAULT
+            } else {
+                consts::PW1_DEFAULT
+            };
+            verify_pin(app, fs, mode, pw);
+        }
+    };
+    // Every DO carries a baseline written from a fully-authenticated session, so
+    // a later refusal means "this state may not" and not "this DO is unwritable".
+    latch(&mut app, &mut fs, &[consts::PW1_MODE82, consts::PW3_MODE83]);
+    for lo in 1..=4u8 {
+        assert_eq!(put(&mut app, &mut fs, 0x01, lo, b"BASE"), Sw::OK);
+    }
+
+    for (modes, want) in reads {
+        latch(&mut app, &mut fs, modes);
+        for (i, expect) in want.iter().enumerate() {
+            let lo = i as u8 + 1;
+            let sw = run(
+                &mut app,
+                &mut fs,
+                &[0x00, consts::INS_GET_DATA, 0x01, lo, 0x00],
+            )
+            .1;
+            assert_eq!(sw, *expect, "GET DATA 01{lo:02X} with {modes:02X?}");
+        }
+    }
+
+    for (modes, want) in writes {
+        latch(&mut app, &mut fs, modes);
+        for (i, expect) in want.iter().enumerate() {
+            let lo = i as u8 + 1;
+            let marker = [0x57, modes.first().copied().unwrap_or(0), lo];
+            assert_eq!(
+                put(&mut app, &mut fs, 0x01, lo, &marker),
+                *expect,
+                "PUT DATA 01{lo:02X} with {modes:02X?}"
+            );
+            // The SW is not the evidence — what is in the DO is. Read it back
+            // from a session that may read every one of the four.
+            latch(&mut app, &mut fs, &[consts::PW1_MODE82, consts::PW3_MODE83]);
+            let (body, sw) = run(
+                &mut app,
+                &mut fs,
+                &[0x00, consts::INS_GET_DATA, 0x01, lo, 0x00],
+            );
+            assert_eq!(sw, Sw::OK);
+            if expect.is_ok() {
+                assert_eq!(body, marker, "PUT DATA 01{lo:02X} with {modes:02X?}");
+                assert_eq!(put(&mut app, &mut fs, 0x01, lo, b"BASE"), Sw::OK);
+            } else {
+                // A refusal that *deletes* the DO would pass a "the marker is not
+                // there" assertion, and losing the value is the worse half.
+                assert_eq!(
+                    body, b"BASE",
+                    "a refused PUT DATA 01{lo:02X} with {modes:02X?} changed the DO"
+                );
+            }
+            latch(&mut app, &mut fs, modes);
+        }
+    }
+}

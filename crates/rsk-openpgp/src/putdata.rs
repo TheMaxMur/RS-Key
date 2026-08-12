@@ -46,8 +46,9 @@ fn max_do_len(fid: u16) -> Option<usize> {
 }
 
 /// Write `data` to the DO addressed by `fid` (empty `data` deletes it, unless
-/// the DO has a fixed length). ACL: private DOs 1/3 need PW2 or PW3; everything
-/// else needs PW3.
+/// the DO has a fixed length). ACL: private DOs 1/3 are the cardholder's and need
+/// PW2 — §4.4.1 gives the admin no override on them, and a YubiKey 5.7.4 refuses
+/// PW3 on both, 3/3 — everything else needs PW3.
 pub fn put_data<S: Storage>(fs: &mut Fs<S>, sess: &Session, fid: u16, data: &[u8]) -> Sw {
     let target = match fid {
         // Routed away by the dispatch (put_reset_code / put_pw_status); rejected
@@ -73,11 +74,7 @@ pub fn put_data<S: Storage>(fs: &mut Fs<S>, sess: &Session, fid: u16, data: &[u8
     };
 
     let priv13 = fid == EF_PRIV_DO_1 || fid == EF_PRIV_DO_3;
-    let authorized = if priv13 {
-        sess.has_pw2 || sess.has_pw3
-    } else {
-        sess.has_pw3
-    };
+    let authorized = if priv13 { sess.has_pw2 } else { sess.has_pw3 };
     if !authorized {
         return Sw::SECURITY_STATUS_NOT_SATISFIED;
     }

@@ -30,6 +30,12 @@ the card spec's rule and what a YubiKey does. (Earlier RS-Key builds let PW3
 stand in for PW1 here. If you have a script that unlocks signing with the admin
 PIN, it needs the user PIN now.)
 
+The same split governs the four private-use data objects: `0101` and `0103` are
+the cardholder's and open to the **user** PIN, `0102` and `0104` are the admin's.
+There is no admin override on the cardholder's pair — `0101` and `0103` answer
+`6982` to PW3, as a YubiKey does. (Earlier RS-Key builds took the admin PIN on
+those two as well; a script that stashes data there needs the user PIN now.)
+
 The card enforces those lengths itself: a `CHANGE REFERENCE DATA` or `RESET
 RETRY COUNTER` carrying a new value outside the range is refused with `6985`,
 whatever the host's own policy is. gpg applies the same `≥ 6` / `≥ 8` minima

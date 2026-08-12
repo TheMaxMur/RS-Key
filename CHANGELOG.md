@@ -40,6 +40,26 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Security
 
+- **The OpenPGP admin PIN no longer reaches the cardholder's private-use DOs.**
+  OpenPGP Card 3.4.1 §4.4.1 hands `0101` and `0103` to PW1 no. 82 — the
+  cardholder — and `0102`/`0104` to PW3, with no admin override on the first
+  pair. Ours let PW3 stand in for PW2 on three of those cells: reading `0103`,
+  writing `0103`, and writing `0101`. Whoever holds the admin PIN could therefore
+  read and overwrite the two objects the card sets aside for the owner, which is
+  the one pair of DOs whose whole purpose is that the admin credential is not
+  enough. A YubiKey 5.7.4 answers `6982` to `00CA010300`, `00DA0103…` and
+  `00DA0101…` with only PW3 verified — measured 3/3 across the full 4-DO × 4-state
+  matrix, with a fully-authenticated baseline write proving each DO writable
+  first, so a `6982` there means "this password may not" and not "this DO is
+  read-only". Nothing is lost: the values stay readable and writable to PW2, and a
+  tightening only turns some `9000`s into `6982`s. `gpg` never used the admin PIN
+  for these — it prompts for the cardholder PIN when it touches a private DO — so
+  no host flow changes. One thing the admin credential can still do to the
+  cardholder's pair is destroy it: `TERMINATE DF` wipes the whole applet, which is
+  §7.2.16's own model and not an exception to this rule. The Gnuk-derived
+  conformance suite expects the permissive behaviour and is listed as a deliberate
+  divergence (three tests, both KDF host modules). **bcdDevice → 0x08F0.**
+
 - **A persistent credential-management grant no longer outlives the PIN that
   granted it.** CTAP 2.2 §6.8.2's `pcmr` token is a bearer secret in flash
   (`EF_PAUTHTOKEN`): its holder drives getCredsMetadata, enumerateRPsBegin and
