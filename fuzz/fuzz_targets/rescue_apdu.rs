@@ -19,6 +19,9 @@ use rsk_rescue::rollback::{ROLLBACK_REQUIRED_BIT, RollbackRaw};
 use rsk_rescue::{Confirm, Platform, Presence, RescueApplet, Rng, SecureBootStatus, UserPresence};
 use rsk_sdk::{Apdu, Applet, ResBuf};
 
+mod apdu_frame;
+use apdu_frame::next_frame;
+
 const SERIAL_ID: [u8; 8] = [0xAA, 0xBB, 0xCC, 0xDD, 5, 6, 7, 8];
 const SERIAL_HASH: [u8; 32] = [0x22; 32];
 
@@ -103,16 +106,14 @@ fuzz_target!(|data: &[u8]| {
         4 * 1024 * 1024,
     );
 
-    let mut i = 0;
-    while i < data.len() {
-        let len = data[i] as usize;
-        i += 1;
-        let end = (i + len).min(data.len());
-        if let Ok(apdu) = Apdu::parse(&data[i..end]) {
+    // `[len][apdu bytes…]*`; 0xFF is the extended-Lc escape (see `apdu_frame`).
+    let mut rest = data;
+    while let Some((frame, tail)) = next_frame(rest) {
+        rest = tail;
+        if let Ok(apdu) = Apdu::parse(frame.as_slice()) {
             let mut buf = [0u8; 2048];
             let mut res = ResBuf::new(&mut buf);
             let _ = app.process(&apdu, &mut fs, &mut res);
         }
-        i = end;
     }
 });

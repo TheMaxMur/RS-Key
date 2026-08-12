@@ -33,7 +33,7 @@ use rsk_otp::hid::{FrameRx, FrameTx, REPORT_SIZE, RxOutcome};
 use rsk_rescue::phy::{PHY_MAX_SIZE, PhyData};
 use rsk_sdk::apdu::Apdu;
 use rsk_sdk::tlv::{Tlv, find_tag};
-use rsk_sdk::{Applet, ResBuf};
+use rsk_sdk::{Applet, ResBuf, Sw};
 use rsk_usb::ccid::process_message;
 use rsk_usb::ctaphid::{CTAP_MAX_MESSAGE, HID_RPT_SIZE, Outcome, Reassembler, TxFrames};
 
@@ -1218,14 +1218,14 @@ fn miri_otp_hid() {
 fn miri_piv_apdu() {
     use rsk_piv::{AlwaysConfirm, PivApplet};
 
-    fn run(app: &mut PivApplet, fs: &mut Fs<RamStorage>, raw: &[u8]) -> Vec<u8> {
+    fn run(app: &mut PivApplet, fs: &mut Fs<RamStorage>, raw: &[u8]) -> (Sw, Vec<u8>) {
         if let Ok(apdu) = Apdu::parse(raw) {
             let mut buf = [0u8; 4096];
             let mut res = ResBuf::new(&mut buf);
-            let _ = app.process(&apdu, fs, &mut res);
-            return res.as_slice().to_vec();
+            let sw = app.process(&apdu, fs, &mut res);
+            return (sw, res.as_slice().to_vec());
         }
-        Vec::new()
+        (Sw::WRONG_LENGTH, Vec::new())
     }
 
     const DEFAULT_PIN: [u8; 8] = [0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0xFF, 0xFF];
@@ -1235,28 +1235,29 @@ fn miri_piv_apdu() {
         0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
     ];
 
-    fn auth_mgm(app: &mut PivApplet, fs: &mut Fs<RamStorage>) {
+    fn auth_mgm(app: &mut PivApplet, fs: &mut Fs<RamStorage>) -> Sw {
         use aes::cipher::generic_array::GenericArray;
         use aes::cipher::{BlockDecrypt, KeyInit};
-        let wit = run(
+        let (sw, wit) = run(
             app,
             fs,
             &[0x00, 0x87, 0x0A, 0x9B, 0x04, 0x7C, 0x02, 0x80, 0x00],
         );
-        if wit.len() < 20 {
-            return;
-        }
+        assert_eq!(sw, Sw::OK, "mutual auth step 1 (witness) must succeed");
+        assert!(wit.len() >= 20, "witness response too short: {wit:02X?}");
         let cipher = aes::Aes192::new(GenericArray::from_slice(&DEFAULT_MGM));
         let mut w = [0u8; 16];
         w.copy_from_slice(&wit[4..20]);
         let mut blk = GenericArray::clone_from_slice(&w);
         cipher.decrypt_block(&mut blk);
-        let mut msg = vec![0x00, 0x87, 0x0A, 0x9B, 0x24, 0x7C, 0x22, 0x80, 0x10];
+        // Lc counts the whole 7C wrapper (2 + 36) and the 7C length both inner
+        // objects (80 10 + 16, 81 10 + 16) — see the fuzz target's note.
+        let mut msg = vec![0x00, 0x87, 0x0A, 0x9B, 0x26, 0x7C, 0x24, 0x80, 0x10];
         msg.extend_from_slice(&blk);
         msg.push(0x81);
         msg.push(0x10);
         msg.extend_from_slice(&[0xA5; 16]);
-        let _ = run(app, fs, &msg);
+        run(app, fs, &msg).0
     }
 
     let rng = RefCell::new(CountRng(0));
@@ -1270,18 +1271,26 @@ fn miri_piv_apdu() {
         let mut res = ResBuf::new(&mut buf);
         let _ = Applet::select(&mut app, false, &mut fs, &mut res);
     }
-    auth_mgm(&mut app, &mut fs);
+    assert_eq!(
+        auth_mgm(&mut app, &mut fs),
+        Sw::OK,
+        "mutual auth step 2 must succeed"
+    );
 
     let mut verify = vec![0x00, 0x20, 0x00, 0x80, 0x08];
     verify.extend_from_slice(&DEFAULT_PIN);
-    let _ = run(&mut app, &mut fs, &verify);
+    assert_eq!(
+        run(&mut app, &mut fs, &verify).0,
+        Sw::OK,
+        "VERIFY of the default PIN must succeed"
+    );
 
     for data in [
         &b"\x00\xa4\x04\x00"[..],
         b"\x00\xcb\x3f\xff\x05\x5c\x03\x5f\xc1\x06",
         b"\x00\xcb\x3f\xff\x05\x5c\x03\x5f\xc1\x09",
     ] {
-        let _ = run(&mut app, &mut fs, data);
+        run(&mut app, &mut fs, data);
     }
 }
 

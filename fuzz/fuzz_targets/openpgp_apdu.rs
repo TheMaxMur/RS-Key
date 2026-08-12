@@ -21,7 +21,10 @@ use rsk_openpgp::consts::{
     INS_VERIFY, PW1_DEFAULT, PW1_MODE81, PW1_MODE82, PW3_DEFAULT, PW3_MODE83,
 };
 use rsk_openpgp::{OpenpgpApplet, Rng, scan_files};
-use rsk_sdk::{Apdu, Applet, ResBuf};
+use rsk_sdk::{Apdu, Applet, ResBuf, Sw};
+
+mod apdu_frame;
+use apdu_frame::next_frame;
 
 const SERIAL_ID: [u8; 8] = [0xAA, 0xBB, 0xCC, 0xDD, 5, 6, 7, 8];
 const SERIAL_HASH: [u8; 32] = [0x22; 32];
@@ -44,12 +47,14 @@ fn dev() -> Device<'static> {
     }
 }
 
-fn run(app: &mut OpenpgpApplet, fs: &mut Fs<RamStorage>, raw: &[u8]) {
+fn run(app: &mut OpenpgpApplet, fs: &mut Fs<RamStorage>, raw: &[u8]) -> Sw {
     if let Ok(apdu) = Apdu::parse(raw) {
         let mut buf = [0u8; 2048];
         let mut res = ResBuf::new(&mut buf);
-        let _ = app.process(&apdu, fs, &mut res);
+        return app.process(&apdu, fs, &mut res);
     }
+    // The status the dispatcher answers for an unparseable command.
+    Sw::WRONG_LENGTH
 }
 
 fuzz_target!(|data: &[u8]| {
@@ -63,6 +68,8 @@ fuzz_target!(|data: &[u8]| {
     let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
 
     // Authenticate so the IMPORT / PSO / INTERNAL-AUT parsers are reachable.
+    // The seeding takes no fuzzer input, so asserting it worked cannot flake —
+    // and a seed that silently stops authenticating is invisible otherwise.
     for (mode, pin) in [
         (PW3_MODE83, PW3_DEFAULT),
         (PW1_MODE81, PW1_DEFAULT),
@@ -70,17 +77,21 @@ fuzz_target!(|data: &[u8]| {
     ] {
         let mut v = vec![0x00, INS_VERIFY, 0x00, mode, pin.len() as u8];
         v.extend_from_slice(pin);
-        run(&mut app, &mut fs, &v);
+        assert_eq!(
+            run(&mut app, &mut fs, &v),
+            Sw::OK,
+            "seed VERIFY of mode {mode:#04X} must succeed"
+        );
     }
 
     // Replay a sequence of length-prefixed APDUs (so the fuzzer can chain e.g.
-    // PUT DATA then GET DATA, or IMPORT then PSO) against the live applet.
-    let mut i = 0;
-    while i < data.len() {
-        let len = data[i] as usize;
-        i += 1;
-        let end = (i + len).min(data.len());
-        let raw = &data[i..end];
+    // PUT DATA then GET DATA, or IMPORT then PSO) against the live applet. The
+    // 0xFF prefix is the extended-Lc escape — see `apdu_frame`; PUT DATA up to
+    // MAX_DO_BYTES (2036) is only reachable through it.
+    let mut rest = data;
+    while let Some((frame, tail)) = next_frame(rest) {
+        rest = tail;
+        let raw = frame.as_slice();
         // Skip on-device GENERATE (INS 0x47, P1 0x80): key generation is not an
         // input parser, and an RSA keygen would dominate the fuzzer's time budget.
         // The generate dispatch is covered by host tests; read-public (P1 0x81) is
@@ -89,6 +100,5 @@ fuzz_target!(|data: &[u8]| {
         if !is_generate {
             run(&mut app, &mut fs, raw);
         }
-        i = end;
     }
 });

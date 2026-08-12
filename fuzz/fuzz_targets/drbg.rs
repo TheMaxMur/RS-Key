@@ -25,8 +25,19 @@ fuzz_target!(|data: &[u8]| {
     b.fill(&mut out_b[..len]);
     assert_eq!(out_a[..len], out_b[..len]);
 
-    // Reseed with the same material and keep drawing — must not panic.
+    // A reseed must move the state and must not replay the stream. `b` is the
+    // control — same seed, same draws, never reseeded — so a `reseed` that dropped
+    // its entropy would leave the two post-reseed blocks equal.
+    let mut pre = [0u8; 64];
+    let mut ctrl = [0u8; 64];
+    a.fill(&mut pre);
+    b.fill(&mut ctrl);
+    assert_eq!(pre, ctrl);
+
     a.reseed(seed);
-    let mut more = [0u8; 64];
-    a.fill(&mut more);
+    let mut post = [0u8; 64];
+    a.fill(&mut post);
+    b.fill(&mut ctrl);
+    assert_ne!(pre, post);
+    assert_ne!(post, ctrl);
 });

@@ -1447,6 +1447,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "rsk-device"
+version = "0.1.0"
+dependencies = [
+ "rsa",
+ "rsk-crypto",
+ "rsk-fido",
+ "rsk-fs",
+ "rsk-mgmt",
+ "rsk-oath",
+ "rsk-openpgp",
+ "rsk-otp",
+ "rsk-piv",
+ "rsk-rescue",
+ "rsk-sdk",
+ "rsk-usb",
+ "rsk-vendor",
+ "zeroize",
+]
+
+[[package]]
 name = "rsk-ec"
 version = "0.1.0"
 dependencies = [
@@ -1500,6 +1520,7 @@ dependencies = [
  "minicbor",
  "rsa",
  "rsk-crypto",
+ "rsk-device",
  "rsk-fido",
  "rsk-fs",
  "rsk-mgmt",
@@ -1513,6 +1534,7 @@ dependencies = [
  "rsk-store",
  "rsk-ui",
  "rsk-usb",
+ "rsk-vendor",
  "sequential-storage",
  "sha2 0.10.9",
 ]
@@ -1660,6 +1682,15 @@ dependencies = [
  "embassy-usb",
  "rsk-sdk",
  "zeroize",
+]
+
+[[package]]
+name = "rsk-vendor"
+version = "0.1.0"
+dependencies = [
+ "rsk-fs",
+ "rsk-led",
+ "rsk-sdk",
 ]
 
 [[package]]
