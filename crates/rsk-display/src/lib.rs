@@ -177,7 +177,7 @@ const SETTINGS_PERSIST_QUIET_MS: u64 = 1_500;
 /// backstop so a walked-away device doesn't leave the passkey list (or a menu) on
 /// screen indefinitely. It is **not** the host-starvation guard: while a tab is open
 /// the worker is parked (single thread executor), but the browse loops poll
-/// [`crate::worker::host_request_pending`] and yield the instant a host command
+/// [`Hooks::host_request_pending`] and yield the instant a host command
 /// arrives, so this bound can be generous (a comfortable browse) without making the
 /// host wait for it.
 const MENU_INACTIVITY_MS: u64 = 60_000;
@@ -532,8 +532,8 @@ where
     }
 
     /// Hand the panel back to the ambient loop on a modal's exit. Closing a tab back to
-    /// idle is repainted *immediately* by [`status_task`]'s dispatcher, and a tab → next
-    /// tab hand-off renders the new tab directly, so neither needs the ambient-quiet
+    /// idle is repainted *immediately* by the firmware's `status_task` dispatcher, and a
+    /// tab → next tab hand-off renders the new tab directly, so neither needs the ambient-quiet
     /// window (that is only for the pad → confirm gap, set in `confirm_wait` /
     /// `collect_pin`). So this just clears the last-shown marker.
     /// Record a panel-originated action in the on-device audit journal.

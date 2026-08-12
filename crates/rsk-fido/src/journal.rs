@@ -180,7 +180,7 @@ pub(crate) fn is_enabled<S: Storage>(fs: &mut Fs<S>) -> bool {
 }
 
 /// Turn journalling on (write the flag) or off (delete it). Best-effort; the
-/// caller records the transition in the journal itself (see [`vendor`]).
+/// caller records the transition in the journal itself (see [`crate::vendor`]).
 pub(crate) fn set_enabled<S: Storage>(fs: &mut Fs<S>, on: bool) -> Result<(), ()> {
     if on {
         fs.put(EF_AUDIT_ENABLED, &[1]).map_err(|_| ())

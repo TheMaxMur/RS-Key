@@ -592,7 +592,7 @@ pub fn derive_large_blob_key(seed: &[u8; 32], cred_id: &[u8]) -> [u8; 32] {
     k
 }
 
-/// The key-derivation input for a credential's signing key ([`fido_load_key`]),
+/// The key-derivation input for a credential's signing key ([`crate::keyderiv::fido_load_key`]),
 /// hmac-secret ([`derive_hmac_key`]) and largeBlobKey ([`derive_large_blob_key`]).
 ///
 /// A **v2/v3/v4 resident** credential ([`resident_keys_off_id`]) keys off its

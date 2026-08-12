@@ -5,7 +5,7 @@
 //! device can render a recovery phrase without a host. Provenance: the SHA-256 of the
 //! newline-joined list (with a trailing newline) is
 //! `2f5eed53a4727b4bf8880d8f3f199efc90e58503646d9ff8eff3a2ed3b24dbda` — the published
-//! BIP-39 english.txt checksum, asserted by [`crate::tests`]. Generated from the
+//! BIP-39 english.txt checksum, asserted by `crate::tests`. Generated from the
 //! `mnemonic` package's english.txt; do not hand-edit.
 
 /// The 2048 BIP-39 English words, in index order (`WORDS[0]` = "abandon", `WORDS[2047]`

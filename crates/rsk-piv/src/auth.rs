@@ -199,7 +199,7 @@ impl<S: Storage> GenAuth<'_, S> {
     }
 
     /// t81 single auth step 1: issue a plaintext challenge for the host to
-    /// encrypt and return (verified in [`single_auth_verify`]).
+    /// encrypt and return (verified in [`Self::single_auth_verify`]).
     fn single_challenge(&mut self, res: &mut ResBuf) -> Result<(), Sw> {
         // Step 2 is 9B-only, so a challenge asked for at a key slot may not enter
         // the session: stored there it authenticates 9B without ever revoking it

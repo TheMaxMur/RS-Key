@@ -360,7 +360,7 @@ fn aut_enable<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, param: &[u8]) -> CtapResu
 ///
 /// The gate is that the seed was unlocked this power cycle, which proves *someone*
 /// presented the lock key. It does not prove it was this caller: unlike
-/// [`FidoState::mse_cid`] two fields above it, `keydev_dec` carries no channel,
+/// [`crate::state::FidoState::mse_cid`] two fields above it, `keydev_dec` carries no channel,
 /// token or timer and lives until power-off (audit run-34 #28). That is accepted —
 /// the lock key **is** the authorisation, and an attacker positioned to abuse the
 /// window already meets `BACKUP_EXPORT`'s prerequisites, which hand over the seed

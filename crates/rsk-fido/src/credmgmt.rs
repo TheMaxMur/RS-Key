@@ -748,7 +748,7 @@ fn update_user<S: Storage, R: Rng>(
 ///
 /// The credential's signing key, hmac-secret and largeBlobKey stay stable too:
 /// v2 credentials derive them from the preserved resident id
-/// ([`credential::resident_key_input`]), not the box, so the RP's stored pubkey
+/// ([`crate::credential::resident_key_input`]), not the box, so the RP's stored pubkey
 /// keeps verifying after an update. Legacy v1 credentials (created before that
 /// marker) still key off the box and so DO rotate on an update — the id derived
 /// from a v1 box is not re-issued, so this only affects passkeys made by older

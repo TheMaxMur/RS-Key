@@ -233,7 +233,7 @@ where
     }
 
     /// Enumerate the resident accounts under `hash` into `accts`, recording each one's
-    /// `EF_CRED` slot fid into the parallel `fids` (the key [`run_delete`] takes to
+    /// `EF_CRED` slot fid into the parallel `fids` (the key [`Self::run_delete`] takes to
     /// remove it). The label is the user name, else the display name, else a placeholder
     /// (a binary user id is not a legible label); credProtect ≥ 2 marks the row UV-gated.
     pub(super) fn load_accts(
@@ -274,15 +274,15 @@ where
     /// masked keypad, block-polls the CST328 accumulating ASCII digits into `out`, and
     /// honours the same UP_PENDING / CANCEL_REQUESTED / timeout contract as the confirm
     /// wait. Owns the panel via `&mut self` (single thread executor → the worker is
-    /// parked), so both the host built-in-UV path ([`TouchPresence::collect_pin`]) and a
-    /// display-initiated gate ([`local_pin_gate`]) share one pad. Each key debounces to
+    /// parked), so both the host built-in-UV path (`TouchPresence::collect_pin`) and a
+    /// display-initiated gate ([`Self::local_pin_gate`]) share one pad. Each key debounces to
     /// release; OK commits only at/above `min_len`, Del backspaces, Cancel declines, and the
     /// eye toggle reveals/hides the typed digits (auto re-masking after a short idle). The
     /// entered digits are the caller's to zeroize after verifying.
     ///
     /// `yield_to_host`: on a *local* gate (delete / factory-reset / unlock) no host is
     /// waiting on this PIN, so a queued host command must not be starved while the user
-    /// types — set it `true` to abandon entry ([`PinEntry::Cancelled`], no retry burned)
+    /// types — set it `true` to abandon entry ([`rsk_fido::PinEntry::Cancelled`], no retry burned)
     /// the instant a command arrives, mirroring the browse modals. The host built-in-UV
     /// path sets it `false`: there the host *is* waiting on this exact PIN (its `REQ` is
     /// already consumed), so it blocks to the presence timeout as before.
@@ -693,7 +693,7 @@ where
     }
 
     /// The on-device Set / Change PIN flow for `target` (Settings → Security → Device/FIDO
-    /// PIN). When that PIN is already set it is verified first via [`local_pin_gate`] (so a
+    /// PIN). When that PIN is already set it is verified first via [`Self::local_pin_gate`] (so a
     /// change still proves knowledge of the current PIN; a first-time set returns at once
     /// with no prompt), then the new PIN is entered twice and the two must match before it
     /// is written with a fresh retry budget. The **device** PIN goes to its own

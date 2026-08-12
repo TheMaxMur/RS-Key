@@ -64,7 +64,7 @@ where
     /// The Passkeys tab — list resident relying parties (read-only), with a drill-in to
     /// each RP's accounts. Enumerates from the shared flash store on entry (the worker is
     /// parked while this synchronous loop runs, so the borrow is safe). Returns the next
-    /// nav destination so the [`status_task`] dispatcher can switch tabs directly:
+    /// nav destination so the firmware's `status_task` dispatcher can switch tabs directly:
     /// `Some(tab)` opens that tab, `None` returns to the idle Home screen.
     pub(super) fn run_passkeys(&mut self) -> Option<NavTab> {
         // Snapshot the RP list and render first (so the switch feels instant), then let
@@ -144,7 +144,7 @@ where
 
     /// One RP's detail: show its name (the device-local nickname if set, else the rpId),
     /// list its resident accounts, let a tap on an account start the Confirm-Delete flow
-    /// ([`run_delete`]), and the title-bar pencil open the rename flow ([`run_rename`]).
+    /// ([`Self::run_delete`]), and the title-bar pencil open the rename flow ([`Self::run_rename`]).
     /// The back chevron (or a tap on the active Passkeys tab) returns to the list; another
     /// nav tab leaves the Passkeys tab; the back chevron only ever returns
     /// [`ServiceResult::Back`]. After a delete the set is reloaded — when the last account
@@ -1107,7 +1107,7 @@ where
     /// Snapshot the most recent journal events for the audit log, newest first. Each
     /// `EV_*` code maps to its display [`rsk_ui::AuditKind`], and an entry from the
     /// **current** power cycle also carries how long ago it happened — the journal
-    /// stamps [`crate::usb_attach::elapsed_ms`], which resets each boot, so a boot
+    /// stamps [`Hooks::attach_elapsed_ms`], which resets each boot, so a boot
     /// entry marks the session boundary and older rows show no time (no wall clock).
     /// Borrow-safe like [`Self::load_rps`] (the worker is parked while this modal runs).
     fn load_events(&self, rows: &mut [AuditRow], page: u16) -> (usize, u16) {

@@ -77,7 +77,7 @@ pub(crate) const ALGO_AUT_SUPPORTED: &[&[u8]] = ALGO_SIG_SUPPORTED;
 /// Whether `data` is an algorithm attribute this card advertises for `fid`
 /// (C1/C2/C3). `data` is the DO *value*; the templates carry a leading TLV length
 /// byte, so compare against `attr[1..]` — after the same ECDSA→ECDH rewrite
-/// [`emit_algo`] applies to the DEC list, so what we accept is exactly what DO
+/// [`DoWriter::emit_algo`] applies to the DEC list, so what we accept is exactly what DO
 /// `0xFA` published.
 pub(crate) fn advertised_algo(fid: u16, data: &[u8]) -> bool {
     let set = match fid {

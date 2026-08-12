@@ -177,8 +177,8 @@ where
 }
 
 /// Whether a subcommand spends the seed-backup channel. Every one of these reads
-/// `mse_key`/`mse_pub` behind [`FidoState::mse_ready`], so the channel must not
-/// survive the call — see [`FidoState::mse_active`] for why it is one-shot.
+/// `mse_key`/`mse_pub` behind [`crate::state::FidoState::mse_ready`], so the channel must
+/// not survive the call — see [`crate::state::FidoState::mse_active`] for why it is one-shot.
 /// `AUT_ENABLE`'s twin lives in [`crate::config`], which clears it there.
 const fn consumes_mse(subcommand: u64) -> bool {
     matches!(

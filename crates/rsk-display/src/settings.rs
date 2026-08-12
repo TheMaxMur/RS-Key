@@ -8,7 +8,7 @@ use super::status::{adjust_sleep, adjust_timeout};
 use super::*;
 
 /// Persisted display-settings record: the backlight level and display-sleep timeout
-/// edited in Settings → Display, read at boot ([`Ui::build`]) and rewritten on
+/// edited in Settings → Display, read at boot ([`Ui::new`]) and rewritten on
 /// Settings exit ([`Ui::persist_settings`]) so they survive a reboot. In the system
 /// config FID range next to `EF_PHY` (`0xE020`) / `EF_META`, outside every applet's
 /// reset scope; not reachable by any host APDU. The touch timeout is *not* here — it

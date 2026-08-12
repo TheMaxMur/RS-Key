@@ -50,7 +50,8 @@ where
     /// device-PIN gate (the `EF_DEVICE_PIN` retry ladder, same as the destructive-action
     /// gate): a correct PIN drops the lock, a wrong one re-prompts until the right PIN, a
     /// cancel / timeout, or the counter is spent — all of which leave it locked. Returns
-    /// the panel to [`status_task`], which then paints Home (unlocked) or Locked again.
+    /// the panel to the firmware's `status_task`, which then paints Home (unlocked) or
+    /// Locked again.
     pub(super) fn run_unlock(&mut self) {
         // Let the unlock tap's finger lift before the pad starts reading digits.
         self.touch
