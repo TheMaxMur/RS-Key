@@ -8,9 +8,12 @@ row, three rustdoc rows, the host test row — and `docs/testing.md` carries a
 sixth for a reader to copy. Nothing tied any of them to `Cargo.toml`'s
 `[workspace] members`, so a crate that joins the tree joins none of the rosters
 and every row stays green while covering less than its name says. Not
-hypothetical: the docs copy had already rotted to 16 of 24, missing every crate
-added since it was written — `rsk-ec`, `rsk-mldsa` and `rsk-sha512` among them,
-which is to say the crypto.
+hypothetical, and the shape of it is worse than neglect: the docs copy stood at
+16 of 24 while having been amended four times, each by the commit that added the
+one crate it names (`rsk-vendor`, `rsk-device`, `rsk-store`, `rsk-display`). The
+eight it missed — `rsk-led`, `rsk-ui`, `rsk-bip39`, `rsk-slip39`, `rsk-mldsa`,
+`rsk-sha512`, `rsk-bench`, `rsk-ec` — had all joined the tree *before* those
+four. A list somebody keeps amending is exactly the list nobody rereads.
 
 Same shape as the Kani roster next door and the same fix: the roster is checked,
 not remembered. It is a second script rather than more rules inside
@@ -22,9 +25,15 @@ two unrelated failures.
 The rules, and the mistake each one catches:
 
 * a roster may only name real workspace members — a typo, or a crate that left;
-* a roster filtering no features must name every member under `crates/` — the
-  new crate nobody added. A `--features X` row is about the crates that declare
-  X and is exempt; `--all-features` filters nothing and is not;
+* in `check.sh`, a roster filtering no features must name every member under
+  `crates/` — the new crate nobody added. A `--features X` row is about the
+  crates that declare X and is exempt; `--all-features` filters nothing and is
+  not. Every row there is a gate row, so every one of them owes the whole tree;
+* `docs/testing.md` must *carry* that list, not consist of it. It is prose, and
+  prose grows examples: holding its every `cargo test -p …` to the whole tree
+  reported 23 missing crates the moment a one-crate `cargo test -p rsk-fido`
+  example was added beside the roster, and a guard that cries wolf on a docs
+  edit is a guard someone deletes;
 * each of [`WHOLE_TREE`]'s verbs keeps at least one such roster in `check.sh` —
   deleting the row, or commenting it out, which is what "make the gate faster"
   reaches for first;
@@ -33,11 +42,14 @@ The rules, and the mistake each one catches:
 * `check.sh` still runs this script.
 
 `kani_gate.py` shipped with two holes worth not repeating. It counted a
-commented-out invocation as a live one, so only lines that execute count here (a
-`#` line is a shell comment in the script and a heading in the docs; neither
-runs anything). And it compared crate sets while the rest of the command was
-free to drift; the analog here is the `crates/` directory itself, which is why
-the filesystem is checked against `Cargo.toml` instead of trusted through it.
+commented-out invocation as a live one, so only what executes counts here — and
+"executes" is judged from the `#`, not from the line's first character. This rule
+first shipped as `startswith("#")`, under which `true # run "test (host)" …` left
+a fully counted roster over a row that ran nothing; `kani_gate.py` had the same
+hole in its own form and both were closed together. And it compared crate sets
+while the rest of the command was free to drift; the analog here is the `crates/`
+directory itself, which is why the filesystem is checked against `Cargo.toml`
+instead of trusted through it.
 
 Limits, so the row is not read as more than it is. It compares crate sets, not
 switches: a roster can stay complete while the row stops doing what its name
@@ -74,8 +86,18 @@ PKG = re.compile(r"(?:-p|--package)\s+([\w-]+)")
 #: `-F` is `--features`' short form. `--all-features` deliberately does not
 #: match — it selects no subset, so that row owes the whole roster too.
 SELECTIVE = re.compile(r"(?:^|\s)(?:--features\b|-F)")
+#: A `#` at a word boundary comments out the rest of the line in both sources — a
+#: shell one in `check.sh` and in the docs' fenced blocks, a heading in the docs'
+#: prose. Wherever on the line it starts, nothing after it runs.
+COMMENT = re.compile(r"(?:^|\s)#")
 
 Roster = collections.namedtuple("Roster", "path verb named filtered")
+
+
+def code(line):
+    """`line` up to the `#` that comments the remainder of it out."""
+    found = COMMENT.search(line)
+    return line[: found.start()] if found else line
 
 
 def logical_lines(path):
@@ -93,14 +115,12 @@ def rosters(path):
     """Every executed `cargo clippy|doc|test … -p …` line in `path`.
 
     A line with no `-p` names no roster (`cargo doc --manifest-path tools/tui/…`
-    is the whole of its own workspace), and a commented one runs nothing. Each
+    is the whole of its own workspace), and a commented tail runs nothing. Each
     invocation's arguments stop at the next one, so two chained on one line stay
     two rosters — merged, either could hide behind the other's crates.
     """
     for line in logical_lines(path):
-        body = line.strip()
-        if body.startswith("#"):
-            continue
+        body = code(line).strip()
         found = list(INVOCATION.finditer(body))
         for this, after in zip(found, [*found[1:], None]):
             tail = body[this.end() : after.start() if after else len(body)]
@@ -142,8 +162,9 @@ def main():
         for crate in sorted(roster.named - set(member)):
             problems.append(f"{where} names {crate}, not a workspace member")
         # A roster naming no `crates/` member is about `firmware`/`rsk-wipe`, the
-        # thumbv8m-only pair; it owes nothing to this list.
-        if roster.filtered or not roster.named & crates:
+        # thumbv8m-only pair; it owes nothing to this list. The docs owe one
+        # complete copy, checked below, not completeness line by line.
+        if roster.path != CHECK or roster.filtered or not roster.named & crates:
             continue
         for crate in sorted(crates - roster.named):
             problems.append(f"{where} does not name {crate}")
@@ -160,9 +181,18 @@ def main():
                 " the row is gone or commented out. If the verb moved to"
                 " --workspace, take it out of WHOLE_TREE and say so there."
             )
-    if not [r for r in found if r.path == DOCS]:
-        problems.append(f"{DOCS} no longer carries the `-p` roster a reader copies")
-    live = (r for r in logical_lines(CHECK) if not r.strip().startswith("#"))
+    quoted = [
+        r for r in found if r.path == DOCS and not r.filtered and r.named & crates
+    ]
+    if not any(crates <= r.named for r in quoted):
+        # Which near-miss gets quoted only shapes the message; the verdict is
+        # whether the whole list is in the file at all.
+        near = max(quoted, key=lambda r: len(r.named & crates), default=None)
+        gap = f": {', '.join(sorted(crates - near.named))} missing" if near else ""
+        problems.append(
+            f"{DOCS} no longer carries the `-p` roster a reader copies{gap}"
+        )
+    live = (code(r) for r in logical_lines(CHECK))
     if not [r for r in live if str(SELF) in r]:
         problems.append(f"{CHECK} does not run {SELF}: the rosters are unchecked again")
 

@@ -32,7 +32,10 @@ Counting matching strings is not enough — the header's local-equivalent commen
 second copy in the same file, so putting a `#` in front of the `run:` line left three
 agreeing rosters and this guard green over a job that proved nothing. Deleting the
 step was caught; disabling it was not, and disabling it is what a hurried "make the
-nightly stop failing" does.
+nightly stop failing" does. "Uncommented" is judged per invocation and from the `#`,
+not from the line's first character: `run: true # cargo kani …` runs the `true` and
+reads as live to a `startswith` test — the hole this shipped with, and the one
+`roster_gate.py` inherited from it.
 
 Deliberately syntactic. It cannot say a harness proves anything worth proving — that
 is the harness's own business — only that the solver is pointed at it.
@@ -67,6 +70,10 @@ INVOCATION = re.compile(r"cargo kani\b.*")
 PKG = re.compile(r"-p ([\w-]+)")
 #: A step's `run:`, either `run: <command>` or a `run: |` block scalar.
 RUN_KEY = re.compile(r"run:\s*(?:[|>][-+\d]*)?\s*")
+#: A `#` at a word boundary comments out the rest of the line, whether it is YAML
+#: or the shell inside a `run:` block. Wherever on the line it starts, nothing
+#: after it runs.
+COMMENT = re.compile(r"(?:^|\s)#")
 
 Roster = collections.namedtuple("Roster", "path named switches executed")
 
@@ -86,6 +93,19 @@ def switches(line):
         else:
             tail.append(word)
     return tuple(tail)
+
+
+def commands(body):
+    """Each `cargo kani …` on `body`, flagged live, its commented tail dropped.
+
+    Live means left of the `#`. One that starts to the right of it is a quotation —
+    the header's copy — and keeps its whole text, `#` and all being what it quotes.
+    """
+    comment = COMMENT.search(body)
+    width = comment.start() if comment else len(body)
+    for found in INVOCATION.finditer(body):
+        live = found.start() < width
+        yield (body[found.start() : width] if live else found.group()), live
 
 
 def logical_lines(text):
@@ -113,9 +133,10 @@ def logical_lines(text):
 def workflow_rosters():
     """The workflow's `cargo kani … -p …` lines, each flagged executed or not.
 
-    Executed = inside a step's `run:` scalar and not commented out; that is the only
+    Executed = inside a step's `run:` scalar and left of any `#`; that is the only
     copy the job actually runs. Everything else in the file — the header's
-    local-equivalent comment, a step name — is a quotation of it.
+    local-equivalent comment, a step name, a tail some edit commented out — is a
+    quotation of it.
     """
     run_indent = None
     for indent, body in logical_lines(WORKFLOW.read_text()):
@@ -131,14 +152,14 @@ def workflow_rosters():
             executed = True  # a continuation line of the block scalar
         else:
             run_indent, executed = None, False
-        for line in INVOCATION.findall(body):
-            yield WORKFLOW, line, executed
+        for line, live in commands(body):
+            yield WORKFLOW, line, executed and live
 
 
 def docs_rosters():
     """The docs' `cargo kani … -p …` line — a reader's copy, never run by CI."""
     for _, body in logical_lines(DOCS.read_text()):
-        for line in INVOCATION.findall(body):
+        for line, _live in commands(body):
             yield DOCS, line, False
 
 
