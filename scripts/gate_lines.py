@@ -7,7 +7,8 @@ still the whole truth, and both read the same files to do it. Each had to learn
 the same things: a trailing `\\` folds two lines into one command, a `#` kills
 the rest of a line wherever on that line it falls, a `cargo …` in a workflow is
 only *run* when it sits inside a step's `run:` scalar — and, since both guards
-now walk the checkout looking for rosters, which directories are not the tree.
+now walk the checkout (one for proofs, one for stray package selections), which
+directories are not the tree.
 
 Those rules lived in two copies. 237fd00 judged the shared surface to be "a
 five-line continuation-joiner", which was true then; ffbfaef then had to fix the
@@ -41,15 +42,6 @@ RUN_KEY = re.compile(r"run:\s*(?:(?P<fold>[|>])[-+\d]*)?\s*")
 #: The package-selection flag in the spellings cargo takes: `-p x`,
 #: `--package x`, `--package=x`.
 PKG = re.compile(r"(?<![\w-])(?:-p|--package)[=\s]+([\w-]+)(?![\w-])")
-
-#: The same flag with an operand a substitution fills in, so no reader can
-#: resolve it from the flag alone: `-p ${c}`, `-p "$c"`, `-p @crate@`. The
-#: roster is then the list being iterated — `nix/checks.nix` hid a twelve-crate
-#: shortfall behind one of these, invisible to a `git grep -- '-p rsk-'`
-#: census. A sigil, not "anything but a name", so that prose writing `-p …`
-#: stays prose. Only meaningful inside cargo's arguments: a `mkdir -p` over a
-#: variable directory matches it too.
-PKG_GENERATED = re.compile(r"""(?<![\w-])(?:-p|--package)[=\s]+["']?[$@{%]""")
 
 
 def invocation(verbs):

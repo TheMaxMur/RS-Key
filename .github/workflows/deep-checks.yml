@@ -31,7 +31,7 @@
 #   nix develop .#fuzz -c cargo fuzz run <target> -- -max_total_time=120
 #   nix develop .#fuzz -c ./scripts/fuzz-coverage.sh
 #   cargo kani -p rsk-sdk -p rsk-fs -p rsk-rsa-asm -p rsk-crypto -p rsk-mldsa -p rsk-rescue -p rsk-openpgp -p rsk-otp -p rsk-piv -p rsk-oath -p rsk-usb -p rsk-ui -p rsk-led -p rsk-slip39 -p rsk-bip39 -Z unstable-options --harness-timeout 30m  (cargo install kani-verifier)
-#   nix develop -c cargo llvm-cov --summary-only --fail-under-lines 80 --target <host> -p rsk-sdk -p rsk-fs -p rsk-usb -p rsk-crypto -p rsk-fido -p rsk-openpgp -p rsk-rsa-asm -p rsk-sha512 -p rsk-ec -p rsk-mldsa -p rsk-mgmt -p rsk-oath -p rsk-otp -p rsk-piv -p rsk-rescue -p rsk-vendor -p rsk-device -p rsk-display -p rsk-store -p rsk-led -p rsk-ui -p rsk-bip39 -p rsk-slip39 -p rsk-bench
+#   nix develop -c cargo llvm-cov --summary-only --fail-under-lines 80 --target <host> --workspace --exclude firmware --exclude rsk-wipe
 #   nix develop -c ./scripts/complexity_gate.sh
 
 name: deep-checks
@@ -295,20 +295,17 @@ jobs:
           restore-keys: coverage-${{ runner.os }}-
 
       # Host crates only — the embedded firmware image is not host-measurable, so
-      # its coverage is 0 by construction and excluded. The roster is every crate
-      # under crates/, the set scripts/check.sh lints and tests, and
-      # scripts/roster_gate.py fails when it or the header's copy of it drifts
-      # from [workspace] members — it had been measuring 20 of 24. The 80% floor
-      # is a regression alarm, not a target: 85.0% line over the 24, 90.6% over
-      # the 20 (aarch64-apple-darwin), so a real drop fails and noise does not.
+      # its coverage is 0 by construction. firmware and rsk-wipe are the two
+      # workspace members that are not under crates/ and the two that are
+      # thumbv8m-only, so the exclusion is the whole of it; scripts/roster_gate.py
+      # holds this row and the header's copy of it to that pair. The 80% floor is
+      # a regression alarm, not a target: 85.0% line over the 24 crates
+      # (aarch64-apple-darwin), so a real drop fails and noise does not.
       - name: llvm-cov — host-crate line coverage, floored at 80%
         run: |
           nix develop -c cargo llvm-cov --summary-only --fail-under-lines 80 \
             --target x86_64-unknown-linux-gnu \
-            -p rsk-sdk -p rsk-fs -p rsk-usb -p rsk-crypto -p rsk-fido -p rsk-openpgp \
-            -p rsk-rsa-asm -p rsk-sha512 -p rsk-ec -p rsk-mldsa -p rsk-mgmt -p rsk-oath -p rsk-otp -p rsk-piv \
-            -p rsk-rescue -p rsk-vendor -p rsk-device -p rsk-display -p rsk-store \
-            -p rsk-led -p rsk-ui -p rsk-bip39 -p rsk-slip39 -p rsk-bench
+            --workspace --exclude firmware --exclude rsk-wipe
 
   complexity:
     runs-on: ubuntu-latest

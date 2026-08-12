@@ -43,21 +43,18 @@ Green check.sh is the bar for every commit.
 `thumbv8m`):
 
 ```sh
-nix develop -c cargo test -p rsk-sdk -p rsk-fs -p rsk-usb -p rsk-crypto \
-    -p rsk-fido -p rsk-openpgp -p rsk-rsa-asm -p rsk-sha512 -p rsk-ec \
-    -p rsk-mldsa -p rsk-mgmt -p rsk-oath -p rsk-otp -p rsk-piv \
-    -p rsk-rescue -p rsk-vendor -p rsk-device -p rsk-display -p rsk-store \
-    -p rsk-led -p rsk-ui -p rsk-bip39 -p rsk-slip39 -p rsk-bench \
+nix develop -c cargo test --workspace --exclude firmware --exclude rsk-wipe \
     --target aarch64-apple-darwin
 ```
 
-(`HOST_TARGET` env overrides the triple in `check.sh`, which runs this same
-list — `scripts/roster_gate.py` fails when any copy of it drifts from
-`[workspace] members`, which is how this one came to be missing eight crates,
-the nightly coverage row four and `nix flake check`'s twelve. It finds the
-copies rather than being told where they are, so a tenth cannot sit unwatched.)
-Crypto tests
-pin NIST/RFC vectors; applet tests drive full protocol flows
+(The two excludes are the whole of the exclusion: they are the only workspace
+members not under `crates/`, and both are thumbv8m-only. `HOST_TARGET` env
+overrides the triple in `check.sh`, which selects the same way — this used to be
+a hand-written 24-crate `-p` list written out nine times over four files, and
+it had rotted to 16 crates here, 20 on the nightly coverage row and 12 in
+`nix flake check`. `scripts/roster_gate.py` now holds every copy of the
+selection to that pair, and finds the copies rather than being told where they
+are.) Crypto tests pin NIST/RFC vectors; applet tests drive full protocol flows
 (register → assert, PIN lockout ladders, OpenPGP import → sign → verify against
 `RustCrypto`, PIV generate → attest → parse with `x509-parser`).
 
