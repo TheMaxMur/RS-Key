@@ -40,6 +40,21 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Security
 
+- **The vendor applet's core1 counter read (`INS 12`) is gone from the shipping
+  image.** `docs/protocol.md` has said all along that it "exist[s] only in
+  debug/bench builds"; the firmware implemented it unconditionally, so every key
+  answered it. What it hands out is the second core's prime-search telemetry —
+  candidates tried and primes found, per core — which is a timing oracle over RSA
+  key generation, read over an ungated CCID APDU with no touch and no PIN. Its two
+  neighbours on the same AID were already gated for exactly that reason
+  (`keygen-bench` for `INS 13`, `bench` for `INS 14`); this one is now behind
+  `core1-stats`, and a default build answers `6D00` from the `Platform` trait's own
+  default. Nothing host-side ever called it — not `tools/rsk`, not `tools/tui`, not
+  a `tests/*.py` — so no tool loses a command. The gate now reads the built image
+  and refuses any of the three debug commands in it, with a sibling method as the
+  positive control so a nameless artifact fails instead of passing.
+  **bcdDevice → 0x08BE.**
+
 - **The PIV PIN and PUK are spent before they are compared, and the counter is
   read back.** `check_ref` compared first and wrote the retry counter after, and
   it trusted the write. A flash write that *refuses* is caught — the card answers

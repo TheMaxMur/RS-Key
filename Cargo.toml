@@ -139,7 +139,9 @@ num-bigint-dig = { version = "0.8.6", default-features = false, features = ["i12
 
 [profile.release]
 codegen-units = 1
-debug = 2          # keep symbols; UF2 size unaffected (debug info isn't flashed)
+# Keep symbols; UF2 size unaffected (debug info isn't flashed). Load-bearing:
+# check.sh's `debug_vendor_commands_absent` reads these names out of the ELF.
+debug = 2
 lto = "fat"
 opt-level = "s"    # our crates stay size-optimized…
 

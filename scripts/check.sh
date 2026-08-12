@@ -115,6 +115,46 @@ firmware_stack_floor() {
   fi
 }
 
+# The vendor AID's three debug commands (INS 12/13/14) are timing oracles — over
+# the RSA keygen prime search and the EC/KDF hot paths — so each is feature-gated
+# and none may reach a shipped image. A `#[cfg]` is only as good as the default
+# feature set, and nothing else here reads the artifact, so read it: `opt-level=s`
+# inlines the method away but `debug = 2` keeps its linkage name. `led_block` is
+# the positive control — the same `impl Platform for VendorPlatform` produces it —
+# so an image that simply lost its names fails instead of passing vacuously.
+# Mutation table, each observed red — and note a bare `#[cfg]` removal is a COMPILE
+# error (the bodies need feature-gated items), so the mutations are whole builds:
+# the pre-gate image → `core1_stats` fires; `--features bench,keygen-bench,core1-stats`
+# → all three names present, row red; `strip --strip-debug` → the control fires.
+DEBUG_VENDOR_METHODS=(core1_stats keygen_bench latency_bench)
+debug_vendor_commands_absent() {
+  local elf="target/thumbv8m.main-none-eabihf/release/firmware" m
+  if [ ! -f "$elf" ]; then
+    echo "FAIL: $elf was not built, so there is nothing to check." >&2
+    exit 1
+  fi
+  if [ "${#DEBUG_VENDOR_METHODS[@]}" -ne 3 ]; then
+    echo "FAIL: the debug-command list lost an entry; an empty loop reads as a pass." >&2
+    exit 1
+  fi
+  if ! LC_ALL=C grep -qa "led_block" "$elf"; then
+    echo "FAIL: no VendorPlatform method name in $elf, so the search below proves nothing." >&2
+    echo "      Restore \`debug\` in [profile.release] or re-point this check." >&2
+    exit 1
+  fi
+  for m in "${DEBUG_VENDOR_METHODS[@]}"; do
+    if LC_ALL=C grep -qa "$m" "$elf"; then
+      echo "FAIL: the debug vendor command \`$m\` is compiled into the default image." >&2
+      echo "      It is a timing oracle; keep it behind its feature. Matched:" >&2
+      # An unanchored match over 17 MB of .debug_str: print it, so an unrelated
+      # name colliding with one of these is diagnosable rather than just red.
+      LC_ALL=C grep -ao ".\{0,60\}$m.\{0,20\}" "$elf" | head -3 >&2
+      exit 1
+    fi
+  done
+  echo "no debug vendor command in the default image (${DEBUG_VENDOR_METHODS[*]})"
+}
+
 # `scripts/pt.sh` fences the KV store off from the USB bootloader. A table whose
 # bounds drift from the store is worse than no table at all: the image still
 # links, still boots, and the gate still passes, but the running firmware loses
@@ -356,6 +396,9 @@ run "clippy (emu largeblob-ext)"  cargo clippy --manifest-path tools/emu/Cargo.t
 run "clippy (bench fw)"        cargo clippy -p firmware --features bench -- -D warnings
 run "clippy (bench host)"      cargo clippy -p rsk-fido --features bench --target "$HOST" --all-targets -- -D warnings
 run_tests "test (bench)"             cargo test -p rsk-fido --features bench --target "$HOST" bench
+# Same reason for core1's counter read (INS 0x12): gated out of every build above,
+# so nothing would notice `core1::stats` rotting against the atomics it packs.
+run "clippy (core1-stats fw)"  cargo clippy -p firmware --features core1-stats -- -D warnings
 # The display path (panel driver + touch) is `LED_KIND=none`-only, so the default
 # embedded clippy above never lints it — gate it explicitly, like the fips firmware.
 run "clippy (display firmware)" env LED_KIND=none cargo clippy -p firmware --features display -- -D warnings
@@ -372,6 +415,7 @@ run "clippy (display wiring)"  cargo clippy -p rsk-device --features display --t
 run "build firmware (release)" cargo build --release -p firmware
 run "firmware size budget"     firmware_size_budget
 run "firmware stack floor"     firmware_stack_floor
+run "no debug vendor command in the image" debug_vendor_commands_absent
 run "partition table fences the store" partition_table_fences_the_store
 run "sealed image retires its unsigned IMAGE_DEF" release_image_retires_its_unsigned_image_def
 # The 16 MB geometry is the one that broke: the store used to end at the top of

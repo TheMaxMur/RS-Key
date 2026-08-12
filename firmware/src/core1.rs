@@ -110,11 +110,11 @@ static CORE1_STACK: StaticCell<Stack<16384>> = StaticCell::new();
 static mut CORE0_SIEVE: IncrementalSieve = IncrementalSieve::new();
 static mut CORE1_SIEVE: IncrementalSieve = IncrementalSieve::new();
 
-/// Liveness counters, readable over the vendor applet (INS 0x12) — the only
-/// window into core1, which has no debugger and no UART: idle-loop wakes and
-/// jobs taken on core1, then candidates tried / primes found per core (the
-/// per-core rates expose cross-core XIP/bus contention). Relaxed throughout —
-/// monotonic telemetry, not synchronization.
+/// Liveness counters, readable over the vendor applet (INS 0x12) on a
+/// `core1-stats` build — the only window into core1, which has no debugger and no
+/// UART: idle-loop wakes and jobs taken on core1, then candidates tried / primes
+/// found per core (the per-core rates expose cross-core XIP/bus contention).
+/// Relaxed throughout — monotonic telemetry, not synchronization.
 static WAKES: AtomicU32 = AtomicU32::new(0);
 static JOBS: AtomicU32 = AtomicU32::new(0);
 static C1_TRIES: AtomicU32 = AtomicU32::new(0);
@@ -124,6 +124,7 @@ static C0_FINDS: AtomicU32 = AtomicU32::new(0);
 
 /// The seven counters plus the live flags (busy, stop, job-pending, degraded),
 /// little-endian packed for the vendor read.
+#[cfg(feature = "core1-stats")]
 pub fn stats() -> [u8; 32] {
     let mut out = [0u8; 32];
     let counters = [

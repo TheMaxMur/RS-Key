@@ -51,8 +51,9 @@ Three details make that work:
 - The key returns the moment the pool completes; core1's last candidate
   finishes in the background.
 - A core1 that ever stops answering latches the engine into single-core mode
-  rather than stalling the worker (`INS 0x12` on the vendor applet reads the
-  engine's counters and flags).
+  rather than stalling the worker (on a `--features core1-stats` build, `INS 0x12`
+  on the vendor applet reads the engine's counters and flags; a shipped image
+  answers `6D00` — they time the prime search).
 
 Outside keygen, core1 parks in WFE, and embassy-rp pauses it around every flash
 erase/program, so its XIP fetches never collide with flash writes.
@@ -96,7 +97,7 @@ platform libraries. The per-crate detail is in the table. The shape is:
 | `rsk-rescue` | recovery/provisioning applet: identity, phy config record, flash info, secure-boot status, attestation key, reboot, the one OTP-lock write |
 | `rsk-store` | the `rsk_fs::Storage` backend the device runs: two `sequential-storage` map partitions (credentials vs. the hot counters), the counter-FID routing, and the scrub lap that physically destroys superseded secrets — generic over the flash, so the fuzzer can cut its power and the emulator can mount a file |
 | `rsk-device` | the applet wiring both the firmware and the emulator run: which applets exist, what capability gates each, and how a CTAPHID or CCID message reaches one — the board's own parts behind a `Hooks` trait |
-| `rsk-vendor` | the vendor AID: the persisted test counter, SET/GET LED, core1 stats, the measurement benches and the reboot request — the hardware behind a `Platform` the firmware fills in |
+| `rsk-vendor` | the vendor AID: the persisted test counter, SET/GET LED, the reboot request, and — gated out of every shipped image — core1 stats and the measurement benches; the hardware behind a `Platform` the firmware fills in |
 | `rsk-rsa-asm` | vendored C/ARM-asm modular exponentiation behind one FFI fn (host build uses a pure-Rust fallback) |
 | `rsk-led` | the `EF_LED_CONF` codec for the status-LED config block, shared by the firmware and the `rsk led` host tool |
 | `rsk-ui` | the trusted-display UI model (operation prompts, untrusted relying-party-string sanitizing, Allow/Deny button geometry); compiled only into the `display` build |

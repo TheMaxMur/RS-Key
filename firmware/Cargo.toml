@@ -112,6 +112,10 @@ strong-pin = ["rsk-fido/strong-pin", "rsk-display?/strong-pin"]
 # Keygen microbenchmark vendor command (INS 0x13). Debug/measurement only —
 # never ship it: it exposes a timing oracle over the primality primitives.
 keygen-bench = []
+# core1's liveness counters over the vendor AID (INS 0x12) — the only window into
+# a core with no debugger and no UART. Grouped with the benches, and for their
+# reason: the per-core candidate/find rates time the RSA keygen prime search.
+core1-stats = []
 # On-device latency harness (vendor INS 0x14). Debug/measurement only, never
 # shipped — like keygen-bench it exposes a timing oracle, here over the EC / KDF
 # hot paths. Times a primitive over many iterations via the RP2350 timer and

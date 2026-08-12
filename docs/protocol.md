@@ -739,8 +739,9 @@ per device status), persisted in flash and applied immediately. Source:
 | `11` | `00` | `00` | — | 17-byte config block | GET LED config |
 | `1F` | `00`/`01` | `00` | — | — | REBOOT (warm / BOOTSEL). `01` is user-presence-gated (`6985` if declined; see §7) |
 
-`INS 12` (CORE1_STATS) and `INS 13` (KEYGEN_BENCH) exist only in debug/bench
-builds and are not part of the stable surface.
+`INS 12` (CORE1_STATS) and `INS 13` (KEYGEN_BENCH) exist only in the measurement
+builds that ask for them (`--features core1-stats` / `keygen-bench`); a shipped
+image answers `6D00`, and neither is part of the stable surface.
 
 **SET LED `0x10` gating:** ungated by default (like the rest of the config surface),
 **user-presence-gated under `strict-config`** — the FIDO twin

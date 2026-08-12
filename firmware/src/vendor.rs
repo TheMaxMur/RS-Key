@@ -3,7 +3,8 @@
 
 //! The firmware half of the vendor applet: the pending-reboot slot, and the
 //! [`rsk_vendor::Platform`] that gives the applet its hardware — the LED atomics,
-//! the second core's counters, the measurement benches and the reset.
+//! the reset, and (measurement builds only) the second core's counters and the
+//! timing benches.
 //!
 //! The applet itself (its AID, the counter, the APDU dispatch and the
 //! reboot-to-BOOTSEL gate) lives in `crates/rsk-vendor`, where it is host-tested
@@ -96,6 +97,11 @@ impl rsk_vendor::Platform for VendorPlatform {
         Some(crate::led::config_block())
     }
 
+    /// Behind `core1-stats` so it never ships, for the reason the two benches
+    /// below are gated: the per-core candidate/find counters are a timing oracle
+    /// over the RSA keygen prime search. Gated out, the trait default answers
+    /// `INS_NOT_SUPPORTED`.
+    #[cfg(feature = "core1-stats")]
     fn core1_stats(&self) -> Option<[u8; 32]> {
         Some(crate::core1::stats())
     }
