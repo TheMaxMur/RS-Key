@@ -26,17 +26,27 @@ what a reader copies: without `-Z unstable-options` the `--harness-timeout` besi
 is not even accepted, so a roster-only comparison lets the documented command drift
 into one that does not run.
 
+One of those lines has to be the one CI *runs*, so the workflow's copies are told
+apart: a roster counts as executed only inside a step's `run:` scalar, uncommented.
+Counting matching strings is not enough — the header's local-equivalent comment is a
+second copy in the same file, so putting a `#` in front of the `run:` line left three
+agreeing rosters and this guard green over a job that proved nothing. Deleting the
+step was caught; disabling it was not, and disabling it is what a hurried "make the
+nightly stop failing" does.
+
 Deliberately syntactic. It cannot say a harness proves anything worth proving — that
 is the harness's own business — only that the solver is pointed at it.
 """
 
+import collections
 import os
 import pathlib
 import re
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-SOURCES = (ROOT / ".github/workflows/deep-checks.yml", ROOT / "docs/testing.md")
+WORKFLOW = ROOT / ".github/workflows/deep-checks.yml"
+DOCS = ROOT / "docs/testing.md"
 
 #: Crates with a harness the daily row deliberately does not run, each with the
 #: measured reason. An exclusion is a debt, so it is checked too: one naming a crate
@@ -53,8 +63,12 @@ EXCLUDED = {
 PINNED = re.compile(r'KANI_VERSION:\s*"([\d.]+)"')
 DOC_PIN = re.compile(r"kani-verifier --version ([\d.]+)")
 
-INVOCATION = re.compile(r"cargo kani\b[^\n]*")
+INVOCATION = re.compile(r"cargo kani\b.*")
 PKG = re.compile(r"-p ([\w-]+)")
+#: A step's `run:`, either `run: <command>` or a `run: |` block scalar.
+RUN_KEY = re.compile(r"run:\s*(?:[|>][-+\d]*)?\s*")
+
+Roster = collections.namedtuple("Roster", "path named switches executed")
 
 
 def switches(line):
@@ -74,17 +88,71 @@ def switches(line):
     return tuple(tail)
 
 
-def invocations():
-    """(path, crate set, switches) for every `cargo kani` line that names packages.
+def logical_lines(text):
+    """(indent, stripped text) per line, with `\\` continuations joined into one.
 
-    A line with no `-p` is `cargo kani setup`, not a roster. Zero rosters overall is
-    a hard failure below: a scanner that matches nothing reports nothing.
+    A 250-character command gets reflowed onto several lines sooner or later, and a
+    roster read off half of it would fail the comparison against the other copies.
+    A guard that cries wolf on a formatting edit is a guard someone deletes.
     """
-    for path in SOURCES:
-        for line in INVOCATION.findall(path.read_text()):
-            named = frozenset(PKG.findall(line))
-            if named:
-                yield path.relative_to(ROOT), named, switches(line)
+    parts, indent = [], 0
+    for raw in text.splitlines():
+        if not parts:
+            indent = len(raw) - len(raw.lstrip())
+        stripped = raw.strip()
+        if stripped.endswith("\\"):
+            parts.append(stripped[:-1].strip())
+            continue
+        parts.append(stripped)
+        yield indent, " ".join(p for p in parts if p)
+        parts = []
+    if parts:
+        yield indent, " ".join(p for p in parts if p)
+
+
+def workflow_rosters():
+    """The workflow's `cargo kani … -p …` lines, each flagged executed or not.
+
+    Executed = inside a step's `run:` scalar and not commented out; that is the only
+    copy the job actually runs. Everything else in the file — the header's
+    local-equivalent comment, a step name — is a quotation of it.
+    """
+    run_indent = None
+    for indent, body in logical_lines(WORKFLOW.read_text()):
+        if not body:
+            continue
+        if body.startswith("- "):
+            indent, body = indent + 2, body[2:]
+        if body.startswith("#"):
+            executed = False  # a YAML comment, or a shell one inside the block
+        elif RUN_KEY.match(body):
+            run_indent, executed = indent, True
+        elif run_indent is not None and indent > run_indent:
+            executed = True  # a continuation line of the block scalar
+        else:
+            run_indent, executed = None, False
+        for line in INVOCATION.findall(body):
+            yield WORKFLOW, line, executed
+
+
+def docs_rosters():
+    """The docs' `cargo kani … -p …` line — a reader's copy, never run by CI."""
+    for _, body in logical_lines(DOCS.read_text()):
+        for line in INVOCATION.findall(body):
+            yield DOCS, line, False
+
+
+def invocations():
+    """A [`Roster`] for every `cargo kani` line that names packages.
+
+    A line with no `-p` is `cargo kani setup`, not a roster. Each source must still
+    carry the copy it owns — the checks below say which — because a scanner that
+    matches nothing reports nothing.
+    """
+    for path, line, executed in (*workflow_rosters(), *docs_rosters()):
+        named = frozenset(PKG.findall(line))
+        if named:
+            yield Roster(path.relative_to(ROOT), named, switches(line), executed)
 
 
 def crates_with_proofs():
@@ -122,20 +190,31 @@ def main():
     proven, orphans = crates_with_proofs()
     problems = []
 
-    if len(rosters) < 3:
+    workflow, docs = WORKFLOW.relative_to(ROOT), DOCS.relative_to(ROOT)
+    if not [r for r in rosters if r.executed]:
         problems.append(
-            f"only {len(rosters)} `cargo kani -p …` line(s) found in "
-            f"{[str(p.relative_to(ROOT)) for p in SOURCES]}; expected the workflow's"
-            " run: line, its local-equivalent comment, and the docs command."
+            f"no `cargo kani … -p …` runs in {workflow}: the roster is in no step's"
+            " `run:`, or that line is commented out — the copies left in the file"
+            " agree with each other over a job that proves nothing."
         )
-    if len({named for _, named, _ in rosters}) > 1:
+    if not [r for r in rosters if r.path == workflow and not r.executed]:
+        problems.append(
+            f"{workflow}'s local-equivalent comment no longer carries the"
+            " `cargo kani … -p …` line the row runs."
+        )
+    if not [r for r in rosters if r.path == docs]:
+        problems.append(
+            f"{docs} no longer carries a `cargo kani … -p …` line; it is what a"
+            " reader copies, and it says CI runs the same one."
+        )
+    if len({r.named for r in rosters}) > 1:
         problems.append("the `cargo kani` lines name different crates:")
-        problems += [f"  {path}: {' '.join(sorted(named))}" for path, named, _ in rosters]
-    if len({tail for _, _, tail in rosters}) > 1:
+        problems += [f"  {r.path}: {' '.join(sorted(r.named))}" for r in rosters]
+    if len({r.switches for r in rosters}) > 1:
         problems.append("the `cargo kani` lines carry different switches:")
-        problems += [f"  {path}: {' '.join(tail) or '(none)'}" for path, _, tail in rosters]
+        problems += [f"  {r.path}: {' '.join(r.switches) or '(none)'}" for r in rosters]
 
-    listed = set().union(*(named for _, named, _ in rosters)) if rosters else set()
+    listed = set().union(*(r.named for r in rosters)) if rosters else set()
     for crate in sorted(proven - listed - set(EXCLUDED)):
         problems.append(f"{crate} has a #[kani::proof] that no CI row runs")
     for crate in sorted(listed - proven):
@@ -147,8 +226,8 @@ def main():
     for rel in orphans:
         problems.append(f"{rel} has a #[kani::proof] no `-p` can reach")
 
-    want = PINNED.search(SOURCES[0].read_text())
-    got = DOC_PIN.search(SOURCES[1].read_text())
+    want = PINNED.search(WORKFLOW.read_text())
+    got = DOC_PIN.search(DOCS.read_text())
     if not want:
         problems.append("KANI_VERSION is not pinned in the workflow")
     elif not got:
@@ -170,7 +249,7 @@ def main():
         return 1
 
     print(
-        f"kani-gate: ok — {len(listed)} crates on the `-p` list, "
+        f"kani-gate: ok — {len(listed)} crates on the `-p` list the row runs, "
         f"excluded: {', '.join(EXCLUDED)}"
     )
     return 0

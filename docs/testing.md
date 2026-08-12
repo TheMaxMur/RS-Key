@@ -219,7 +219,10 @@ pinned, `~/.kani` cached) running the same `cargo kani` line — literally the
 same one, because `scripts/kani_gate.py` compares them. That guard is in the
 merge gate (the proofs themselves stay daily): it holds the roster of crates
 carrying a `#[kani::proof]` and fails when one is missing from the `-p` list,
-which is how 20 of the 49 harnesses came to be run by nothing at all.
+which is how 20 of the 49 harnesses came to be run by nothing at all. It also
+fails when the workflow's `run:` line stops carrying that list — commenting the
+step out leaves the file's other copies agreeing with this one, over a job that
+proves nothing.
 
 One crate is deliberately off the list. `rsk-bench`'s `summarize` sorts
 `samples[warmup..]`, whose length is symbolic, so CBMC unwinds it unbounded and
