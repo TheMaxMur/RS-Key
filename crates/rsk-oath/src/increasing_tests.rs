@@ -403,8 +403,21 @@ fn calculate_all_does_not_mark_a_credential_it_does_not_compute() {
     );
 }
 
-/// CALCULATE on a credential that is both touch-gated and only-increasing, with
-/// `outcome` as the press: `(status word, asks)`.
+/// PUT the touch+only-increasing credential the two tests below share. It lives
+/// in `fs`, not in an applet, so a later [`calc_touched`] finds the mark the
+/// earlier one left — a re-PUT would rebuild the blob and drop it.
+fn put_touched(fs: &mut Fs<RamStorage>, rng: &RefCell<CountRng>) {
+    let touch = RefCell::new(AlwaysConfirm);
+    let mut app = OathApplet::new(SERIAL, [0x22; 32], None, rng, &touch);
+    assert_eq!(
+        put_prop(&mut app, fs, b"ti", Some(PROP_TOUCH | PROP_INCREASING)),
+        Sw::OK
+    );
+}
+
+/// CALCULATE on that credential with `outcome` as the press. Its own applet
+/// each time: `StubPresence` cannot change its mind, and the press outcome is
+/// what these rows vary.
 fn calc_touched(
     fs: &mut Fs<RamStorage>,
     rng: &RefCell<CountRng>,
@@ -413,10 +426,6 @@ fn calc_touched(
 ) -> Vec<Sw> {
     let touch = RefCell::new(StubPresence(outcome, 0));
     let mut app = OathApplet::new(SERIAL, [0x22; 32], None, rng, &touch);
-    assert_eq!(
-        put_prop(&mut app, fs, b"ti", Some(PROP_TOUCH | PROP_INCREASING)),
-        Sw::OK
-    );
     chals
         .iter()
         .map(|c| {
@@ -436,6 +445,7 @@ fn the_touch_gate_runs_before_the_mark() {
     // mark exactly where it was. The control in the same run: an increasing-only
     // credential answers `6A80` in 0.00 s at that same lower challenge.
     let (mut fs, rng) = fixture();
+    put_touched(&mut fs, &rng);
     assert_eq!(
         calc_touched(&mut fs, &rng, Presence::Declined, &[0x50, 0x40]),
         [
@@ -452,8 +462,8 @@ fn the_touch_gate_runs_before_the_mark() {
         calc(&mut app, &mut fs, b"inc", 0x40).is_none(),
         "the control must fire, or the rows above prove nothing",
     );
-    // And once the press is refused, the credential is still at its old mark:
-    // a *confirmed* press at the lower challenge computes.
+    // Neither refused press moved the credential's mark: a *confirmed* press at
+    // the lower challenge still computes, on the same stored credential.
     assert_eq!(
         calc_touched(&mut fs, &rng, Presence::Confirmed, &[0x40])[0],
         Sw::OK,
@@ -466,6 +476,7 @@ fn a_confirmed_press_advances_the_mark() {
     // everything measured there is consistent with a successful press behaving
     // like any other successful CALCULATE, and that is what this side does.
     let (mut fs, rng) = fixture();
+    put_touched(&mut fs, &rng);
     assert_eq!(
         calc_touched(&mut fs, &rng, Presence::Confirmed, &[0x50, 0x40, 0x60]),
         [Sw::OK, Sw::INCORRECT_PARAMS, Sw::OK],
