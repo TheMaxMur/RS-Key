@@ -54,8 +54,8 @@ fn card_challenge(app: &mut OathApplet, fs: &mut Fs<RamStorage>) -> Vec<u8> {
 /// VALIDATE carrying `proof`. Takes no SELECT of its own — every SELECT rotates
 /// the challenge the proof was built for.
 fn validate_proof(app: &mut OathApplet, fs: &mut Fs<RamStorage>, proof: &[u8]) -> Sw {
-    let mut d = tlv(TAG_CHALLENGE, &[9u8; 8]);
-    d.extend(tlv(TAG_RESPONSE, proof));
+    let mut d = tlv(TAG_RESPONSE, proof);
+    d.extend(tlv(TAG_CHALLENGE, &[9u8; 8]));
     run(app, fs, &apdu(INS_VALIDATE, 0, 0, &d)).0
 }
 

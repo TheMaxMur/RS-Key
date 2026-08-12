@@ -118,7 +118,7 @@ frame chain the YubiKey-OATH way instead: `61 XX` followed by **SEND REMAINING**
 Authenticator send. A host that stops at the first frame still sees a valid
 (shorter) list.
 
-Six OATH rules a host has to expect, all matching a YubiKey 5.7.4. `PUT`
+Seven OATH rules a host has to expect, all matching a YubiKey 5.7.4. `PUT`
 (`0x01`) is strict about the credential body — KEY TLV 16..=66 bytes, digits
 6/7/8, type `0x10`/`0x20`, algorithm 1/2/3, name 1..=64 bytes, the initial moving
 factor on HOTP only and exactly 4 bytes, the PROPERTY byte as the bare `78 vv`
@@ -152,7 +152,16 @@ refuses an over-wide one too. Both read paths therefore answer the same code for
 the same challenge at every accepted width — including across a `SEND REMAINING`
 page — and the usual 8-byte TOTP counter is simply the common case.
 
-The fifth is what a truncated response carries. With `P2 = 0x01` the `76` TLV is
+The fifth is how the bodies are read. `CALCULATE`, `VALIDATE` and `SET CODE`
+are parsed **by position**: exactly the documented TLVs, in the documented
+order, with nothing before, between or after them — `71` then `74` for
+`CALCULATE`, **`75` then `74`** for `VALIDATE` (the response comes first, as
+ykman sends it), `73` then `74` then `75` for `SET CODE`, or a lone `73 00` to
+remove the code. A reordering, a repeated tag, an unknown tag or a trailing byte
+is `6A80`, with nothing stored. `CALCULATE ALL` is the one exception the card
+makes: its `74` must be the **first** TLV, and whatever follows it is ignored.
+
+The sixth is what a truncated response carries. With `P2 = 0x01` the `76` TLV is
 `[digits][code(4)]`, and the four bytes are the RFC 4226 dynamic truncation
 **already reduced to that credential's digit count** — big-endian, so a 6-digit
 account never exceeds `000F 423F`. A host must not reduce a second time expecting
@@ -160,7 +169,7 @@ a different answer, and `VERIFY CODE` (`0xB1`) compares exactly the value
 `CALCULATE` sent. The untruncated form (`P2 = 0x00`, tag `75`) is unaffected: it
 carries the whole HMAC.
 
-The sixth runs across the whole table: the parameter bytes. Every OATH command
+The seventh runs across the whole table: the parameter bytes. Every OATH command
 is sent `P1 = 00`, `P2 = 00`. The `01` that selects the truncated form belongs to
 `CALCULATE` and `CALCULATE ALL` and to nothing else — on `PUT`, `DELETE`, `SET
 CODE`, `RENAME` and `LIST` it is refused like any other stray byte. `RESET` alone

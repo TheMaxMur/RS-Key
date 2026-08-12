@@ -124,6 +124,23 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **OATH `CALCULATE`, `VALIDATE` and `SET CODE` accepted bodies the host did not
+  mean.** All three found each tag anywhere in the data field and ignored
+  whatever else was there, so a duplicate tag (which of the two is the key?), a
+  reordering and trailing junk all came back `9000`. A YubiKey 5.7.4 reads them
+  by position — exactly the documented TLVs, in the documented order, nothing
+  before, between or after — and answers `6A80` to every one of those. The
+  orders are `71 74` for `CALCULATE`, **`75 74`** for `VALIDATE` (the response
+  really does come first) and `73 74 75` for `SET CODE`, with a lone `73 00`
+  still removing the access code; `CALCULATE ALL` keeps the card's one
+  exception, where the `74` must be first and the rest is ignored. Same class as
+  the `PUT` grammar that shipped earlier. Checked before tightening: ykman 5.9.2
+  (`yubikit/oath.py`) and the vendored pico-fido suite send exactly these
+  orders, `tools/rsk` and the TUI have no OATH path, and the in-tree suites
+  built two of them the other way round — those were ours, and are corrected.
+  The password-safe commands (`B1`..`B5`) are left as they were: no YubiKey
+  implements them, so there is nothing to match. **bcdDevice → 0x08BB.**
+
 - **The OATH applet read `P1` in no command and `P2` in two.** A YubiKey 5.7.4
   judges both for every command and answers **`6B00`** — not the `6A86` we sent.
   We accepted `P1 = 01` outright (`9000`), so a host's typo in the parameter

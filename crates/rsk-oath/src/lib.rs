@@ -362,14 +362,22 @@ impl<'a> OathApplet<'a> {
             self.validated = true;
             return Sw::OK;
         }
-        let Some(key) = find_tag(data, TAG_KEY as u16) else {
-            return Sw::INCORRECT_PARAMS;
-        };
-        if key.is_empty() {
+        // `73 00` on its own is the card's spelling of "remove the access code";
+        // a `73` with key material and no proof after it is `6A80` there.
+        if let Some([key]) = parse_exact(data, [TAG_KEY]) {
+            if !key.is_empty() {
+                return Sw::INCORRECT_PARAMS;
+            }
             let _ = fs.delete_key(EF_OATH_CODE);
             self.validated = true;
             return Sw::OK;
         }
+        // KEY, CHALLENGE, RESPONSE and nothing else, in the card's order —
+        // which is ykman's and the YKOATH document's.
+        let Some([key, chal, resp]) = parse_exact(data, [TAG_KEY, TAG_CHALLENGE, TAG_RESPONSE])
+        else {
+            return Sw::INCORRECT_PARAMS;
+        };
         // An algorithm byte plus key material a YubiKey would take. Judged
         // before the proof, so a body outside it is a syntax error and not a
         // failed authentication, and before a byte is written, so the standing
@@ -381,13 +389,9 @@ impl<'a> OathApplet<'a> {
         // what ykman and Yubico Authenticator send; a 5.7.4 answers `6A80` to
         // every other length. Narrower is the half that matters — those 8 bytes
         // are the whole margin the proof has.
-        let Some(chal) = find_tag(data, TAG_CHALLENGE as u16).filter(|c| c.len() == CHALLENGE_LEN)
-        else {
+        if chal.len() != CHALLENGE_LEN {
             return Sw::INCORRECT_PARAMS;
-        };
-        let Some(resp) = find_tag(data, TAG_RESPONSE as u16) else {
-            return Sw::INCORRECT_PARAMS;
-        };
+        }
         // The host proves it knows the new code: response = HMAC(key, challenge).
         let mut mac = [0u8; 64];
         let Some(size) = oath_hmac(key[0], &key[1..], chal, &mut mac) else {
@@ -508,10 +512,9 @@ impl<'a> OathApplet<'a> {
 
     fn cmd_validate<S: Storage>(&mut self, apdu: &Apdu, fs: &mut Fs<S>, res: &mut ResBuf) -> Sw {
         let data = &apdu.data[..apdu.nc];
-        let Some(chal) = find_tag(data, TAG_CHALLENGE as u16) else {
-            return Sw::INCORRECT_PARAMS;
-        };
-        let Some(resp) = find_tag(data, TAG_RESPONSE as u16) else {
+        // RESPONSE then CHALLENGE — the order the YKOATH document lists and
+        // ykman sends, and the only one the card takes.
+        let Some([resp, chal]) = parse_exact(data, [TAG_RESPONSE, TAG_CHALLENGE]) else {
             return Sw::INCORRECT_PARAMS;
         };
         let mut code = [0u8; OATH_CODE_MAX];
@@ -557,10 +560,12 @@ impl<'a> OathApplet<'a> {
             return Sw::SECURITY_STATUS_NOT_SATISFIED;
         }
         let data = &apdu.data[..apdu.nc];
-        let Some(chal) = challenge_of(data) else {
+        // NAME then CHALLENGE and nothing else, the way the card reads it and
+        // the way ykman writes it.
+        let Some([name, chal]) = parse_exact(data, [TAG_NAME, TAG_CHALLENGE]) else {
             return Sw::INCORRECT_PARAMS;
         };
-        let Some(name) = find_tag(data, TAG_NAME as u16) else {
+        let Some(chal) = challenge_of(chal) else {
             return Sw::INCORRECT_PARAMS;
         };
         let mut scratch = [0u8; CRED_MAX];
@@ -655,7 +660,7 @@ impl<'a> OathApplet<'a> {
         if !self.validated {
             return Sw::SECURITY_STATUS_NOT_SATISFIED;
         }
-        let Some(chal) = challenge_of(&apdu.data[..apdu.nc]) else {
+        let Some(chal) = calc_all_challenge(&apdu.data[..apdu.nc]) else {
             return Sw::INCORRECT_PARAMS;
         };
         // `only increasing` is settled for the whole store before a byte of the
@@ -1303,12 +1308,20 @@ fn p1p2_ok(ins: u8, p1: u8, p2: u8) -> bool {
     }
 }
 
-/// The challenge a read path was given, or `None` where a YubiKey answers
-/// `6A80`. One owner for both of them: CALCULATE and CALCULATE ALL have to
-/// refuse the same widths and HMAC the same bytes, or a host reading one code
+/// The width rule both read paths owe the challenge, or `None` where a YubiKey
+/// answers `6A80`. One owner for both of them: CALCULATE and CALCULATE ALL have
+/// to refuse the same widths and HMAC the same bytes, or a host reading one code
 /// two ways gets two answers.
-fn challenge_of(data: &[u8]) -> Option<&[u8]> {
-    find_tag(data, TAG_CHALLENGE as u16).filter(|c| c.len() <= CHALLENGE_MAX)
+fn challenge_of(chal: &[u8]) -> Option<&[u8]> {
+    (chal.len() <= CHALLENGE_MAX).then_some(chal)
+}
+
+/// CALCULATE ALL's body: the challenge has to be the **first** TLV, and a 5.7.4
+/// ignores whatever follows it — the one command whose grammar is not
+/// positional throughout (§E61).
+fn calc_all_challenge(data: &[u8]) -> Option<&[u8]> {
+    let (t, v) = tlv_at(data, 0)?;
+    (t == TAG_CHALLENGE).then(|| challenge_of(&data[v]))?
 }
 
 /// A stored credential's YKOATH properties byte, or 0 when it carries none.
@@ -1741,38 +1754,61 @@ fn free_slot<S: Storage>(fs: &mut Fs<S>) -> Option<u16> {
         .map(|i| EF_OATH_CRED + i as u16)
 }
 
+/// The BER-TLV starting at `blob[at..]`: its tag and the byte range of its
+/// value. `None` on a truncated or over-long one, which ends any walk.
+fn tlv_at(blob: &[u8], at: usize) -> Option<(u8, core::ops::Range<usize>)> {
+    let t = *blob.get(at)?;
+    let mut i = at + 1;
+    let l0 = *blob.get(i)?;
+    i += 1;
+    let len = match l0 {
+        0x82 => {
+            let v = ((*blob.get(i)? as usize) << 8) | *blob.get(i + 1)? as usize;
+            i += 2;
+            v
+        }
+        0x81 => {
+            let v = *blob.get(i)? as usize;
+            i += 1;
+            v
+        }
+        n => n as usize,
+    };
+    let end = i.checked_add(len)?;
+    (end <= blob.len()).then_some((t, i..end))
+}
+
 /// Byte range of the first `tag` value inside `blob` (so callers can mutate it
 /// in place — the HOTP counter bump).
 fn find_tag_range(blob: &[u8], tag: u8) -> Option<core::ops::Range<usize>> {
     let mut i = 0;
     while i < blob.len() {
-        let t = *blob.get(i)?;
-        i += 1;
-        let l0 = *blob.get(i)?;
-        i += 1;
-        let len = match l0 {
-            0x82 => {
-                let v = ((*blob.get(i)? as usize) << 8) | *blob.get(i + 1)? as usize;
-                i += 2;
-                v
-            }
-            0x81 => {
-                let v = *blob.get(i)? as usize;
-                i += 1;
-                v
-            }
-            n => n as usize,
-        };
-        let end = i.checked_add(len)?;
-        if end > blob.len() {
-            return None;
-        }
+        let (t, v) = tlv_at(blob, i)?;
         if t == tag {
-            return Some(i..end);
+            return Some(v);
         }
-        i = end;
+        i = v.end;
     }
     None
+}
+
+/// The body of a command a YubiKey 5.7.4 reads by position: exactly `tags`, in
+/// that order, with nothing before, between or after them. `None` is the card's
+/// `6A80` — a reordered, repeated or unknown tag, a missing field, or a byte
+/// left over (worklog ORACLE-oathfido §E61). The length octet is decoded as
+/// everywhere else here, so only the grammar is judged.
+fn parse_exact<const N: usize>(data: &[u8], tags: [u8; N]) -> Option<[&[u8]; N]> {
+    let mut out = [&[][..]; N];
+    let mut at = 0;
+    for (slot, &tag) in out.iter_mut().zip(tags.iter()) {
+        let (t, v) = tlv_at(data, at)?;
+        if t != tag {
+            return None;
+        }
+        at = v.end;
+        *slot = &data[v];
+    }
+    (at == data.len()).then_some(out)
 }
 
 /// Tags a credential body may carry, in the order a YubiKey requires them: the

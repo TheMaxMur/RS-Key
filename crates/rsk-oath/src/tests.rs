@@ -34,6 +34,10 @@ mod code_tests;
 #[path = "p1p2_tests.rs"]
 mod p1p2_tests;
 
+/// The TLV bodies the read and access-code commands accept, tag by tag.
+#[path = "grammar_tests.rs"]
+mod grammar_tests;
+
 /// RFC 6238 reference secrets.
 const SECRET_SHA1: &[u8] = b"12345678901234567890";
 const SECRET_SHA256: &[u8] = b"12345678901234567890123456789012";
@@ -141,8 +145,8 @@ fn calc_code(
     challenge: u64,
     digits: u32,
 ) -> u32 {
-    let mut d = tlv(TAG_CHALLENGE, &challenge.to_be_bytes());
-    d.extend(tlv(TAG_NAME, name));
+    let mut d = tlv(TAG_NAME, name);
+    d.extend(tlv(TAG_CHALLENGE, &challenge.to_be_bytes()));
     let (sw, body) = run(app, fs, &apdu(INS_CALCULATE, 0, 0x01, &d));
     assert_eq!(sw, Sw::OK);
     // [tag=0x76][len=5][digits][4-byte code]
@@ -369,8 +373,8 @@ fn totp_full_response() {
         &mut fs,
         &put_data(b"t", 0x21, 6, SECRET_SHA1, false, None),
     );
-    let mut d = tlv(TAG_CHALLENGE, &1u64.to_be_bytes());
-    d.extend(tlv(TAG_NAME, b"t"));
+    let mut d = tlv(TAG_NAME, b"t");
+    d.extend(tlv(TAG_CHALLENGE, &1u64.to_be_bytes()));
     let (sw, body) = run(&mut app, &mut fs, &apdu(INS_CALCULATE, 0, 0x00, &d));
     assert_eq!(sw, Sw::OK);
     assert_eq!(body[0], TAG_RESPONSE);
@@ -428,8 +432,8 @@ fn calculate_touch_cred_requires_press() {
         &mut fs,
         &put_data(b"h", 0x11, 6, SECRET_SHA1, true, None),
     );
-    let mut d = tlv(TAG_CHALLENGE, &0u64.to_be_bytes());
-    d.extend(tlv(TAG_NAME, b"h"));
+    let mut d = tlv(TAG_NAME, b"h");
+    d.extend(tlv(TAG_CHALLENGE, &0u64.to_be_bytes()));
     let (sw, body) = run(&mut app, &mut fs, &apdu(INS_CALCULATE, 0, 0x01, &d));
     assert_eq!(sw, Sw::SECURITY_STATUS_NOT_SATISFIED);
     assert!(body.is_empty());
@@ -752,8 +756,8 @@ fn rename_replaces_name_in_place() {
     assert_eq!(sw, Sw::OK);
     // Old gone, new resolves and still calculates correctly.
     assert_eq!(calc_code(&mut app, &mut fs, b"newname", 1, 8), 94287082);
-    let mut d = tlv(TAG_CHALLENGE, &1u64.to_be_bytes());
-    d.extend(tlv(TAG_NAME, b"old"));
+    let mut d = tlv(TAG_NAME, b"old");
+    d.extend(tlv(TAG_CHALLENGE, &1u64.to_be_bytes()));
     let (sw, _) = run(&mut app, &mut fs, &apdu(INS_CALCULATE, 0, 1, &d));
     assert_eq!(sw, Sw::DATA_INVALID);
 
@@ -896,20 +900,20 @@ fn set_code_and_validate_flow() {
 
     // VALIDATE with a wrong response stays locked…
     let host_chal = [9u8, 9, 9, 9, 8, 8, 8, 8];
-    let mut d = tlv(TAG_CHALLENGE, &host_chal);
-    d.extend(tlv(TAG_RESPONSE, &[0u8; 20]));
+    let mut d = tlv(TAG_RESPONSE, &[0u8; 20]);
+    d.extend(tlv(TAG_CHALLENGE, &host_chal));
     let (sw, _) = run(&mut app, &mut fs, &apdu(INS_VALIDATE, 0, 0, &d));
     assert_eq!(sw, Sw::INCORRECT_PARAMS);
     // …and a truncated (1-byte) response must not brute-force its way in.
     let full = hmac_sha1(&[0xAB; 16], &card_chal);
-    let mut d = tlv(TAG_CHALLENGE, &host_chal);
-    d.extend(tlv(TAG_RESPONSE, &full[..1]));
+    let mut d = tlv(TAG_RESPONSE, &full[..1]);
+    d.extend(tlv(TAG_CHALLENGE, &host_chal));
     let (sw, _) = run(&mut app, &mut fs, &apdu(INS_VALIDATE, 0, 0, &d));
     assert_eq!(sw, Sw::INCORRECT_PARAMS);
 
     // Correct response unlocks and returns the mutual proof.
-    let mut d = tlv(TAG_CHALLENGE, &host_chal);
-    d.extend(tlv(TAG_RESPONSE, &full));
+    let mut d = tlv(TAG_RESPONSE, &full);
+    d.extend(tlv(TAG_CHALLENGE, &host_chal));
     let (sw, body) = run(&mut app, &mut fs, &apdu(INS_VALIDATE, 0, 0, &d));
     assert_eq!(sw, Sw::OK);
     assert_eq!(
@@ -937,8 +941,8 @@ fn validate_without_code_reports_invalid() {
     let rng = RefCell::new(CountRng(7));
     let touch = RefCell::new(AlwaysConfirm);
     let mut app = OathApplet::new(SERIAL, [0x22; 32], None, &rng, &touch);
-    let mut d = tlv(TAG_CHALLENGE, &[0; 8]);
-    d.extend(tlv(TAG_RESPONSE, &[0; 20]));
+    let mut d = tlv(TAG_RESPONSE, &[0; 20]);
+    d.extend(tlv(TAG_CHALLENGE, &[0; 8]));
     let (sw, _) = run(&mut app, &mut fs, &apdu(INS_VALIDATE, 0, 0, &d));
     assert_eq!(sw, Sw::DATA_INVALID);
     // But the applet stays usable — no access code is set.
@@ -1535,8 +1539,8 @@ fn validate_fails_closed_on_unreadable_code() {
     ));
     app.validated = false;
     // VALIDATE must NOT unlock: the code cannot be read, so fail closed.
-    let mut d = tlv(TAG_CHALLENGE, &[0u8; 8]);
-    d.extend(tlv(TAG_RESPONSE, &[0u8; 20]));
+    let mut d = tlv(TAG_RESPONSE, &[0u8; 20]);
+    d.extend(tlv(TAG_CHALLENGE, &[0u8; 8]));
     let (sw, _) = run(&mut app, &mut fs, &apdu(INS_VALIDATE, 0, 0, &d));
     assert_eq!(sw, Sw::DATA_INVALID);
     assert!(!app.validated);
@@ -1634,8 +1638,8 @@ fn calculate_rejects_unknowns() {
     let touch = RefCell::new(AlwaysConfirm);
     let mut app = OathApplet::new(SERIAL, [0x22; 32], None, &rng, &touch);
     // Unknown credential name.
-    let mut d = tlv(TAG_CHALLENGE, &1u64.to_be_bytes());
-    d.extend(tlv(TAG_NAME, b"ghost"));
+    let mut d = tlv(TAG_NAME, b"ghost");
+    d.extend(tlv(TAG_CHALLENGE, &1u64.to_be_bytes()));
     let (sw, _) = run(&mut app, &mut fs, &apdu(INS_CALCULATE, 0, 1, &d));
     assert_eq!(sw, Sw::DATA_INVALID);
     // Missing challenge.
@@ -1672,8 +1676,8 @@ fn calculate_rejects_unknowns() {
         KeyFid::new(EF_OATH_CRED),
         &blob
     ));
-    let mut d = tlv(TAG_CHALLENGE, &1u64.to_be_bytes());
-    d.extend(tlv(TAG_NAME, b"bad"));
+    let mut d = tlv(TAG_NAME, b"bad");
+    d.extend(tlv(TAG_CHALLENGE, &1u64.to_be_bytes()));
     let (sw, _) = run(&mut app, &mut fs, &apdu(INS_CALCULATE, 0, 1, &d));
     assert_eq!(sw, Sw::EXEC_ERROR);
     // Bad CLA and unknown INS.
@@ -1810,8 +1814,8 @@ fn list_and_calc_all_paginate_the_full_store() {
     // SEND REMAINING is an empty OK, not a stale resumed frame.
     let (sw, _) = run_fw(&mut app, &mut fs, &apdu(INS_LIST, 0, 0, &[]));
     assert_eq!(sw, Sw::BYTES_REMAINING_00);
-    let mut d = tlv(TAG_CHALLENGE, &1u64.to_be_bytes());
-    d.extend(tlv(TAG_NAME, &acct_name(0)));
+    let mut d = tlv(TAG_NAME, &acct_name(0));
+    d.extend(tlv(TAG_CHALLENGE, &1u64.to_be_bytes()));
     let (sw, _) = run_fw(&mut app, &mut fs, &apdu(INS_CALCULATE, 0, 0x01, &d));
     assert_eq!(sw, Sw::OK);
     let (sw, body) = run_fw(&mut app, &mut fs, &apdu(INS_SEND_REMAINING, 0, 0, &[]));

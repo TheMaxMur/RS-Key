@@ -25,8 +25,8 @@ fn calc_bytes(
     name: &[u8],
     chal: u64,
 ) -> (u8, [u8; 4]) {
-    let mut d = tlv(TAG_CHALLENGE, &chal.to_be_bytes());
-    d.extend(tlv(TAG_NAME, name));
+    let mut d = tlv(TAG_NAME, name);
+    d.extend(tlv(TAG_CHALLENGE, &chal.to_be_bytes()));
     let (sw, body) = run(app, fs, &apdu(INS_CALCULATE, 0, 0x01, &d));
     assert_eq!(sw, Sw::OK);
     assert_eq!(body[0], TAG_RESPONSE + 1);

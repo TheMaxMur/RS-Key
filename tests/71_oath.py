@@ -298,7 +298,7 @@ def main():
     host_chal = bytes([9] * 8)
     _, sw = oath.apdu(
         INS_VALIDATE, 0, 0,
-        tlv(TAG_CHALLENGE, host_chal) + tlv(TAG_RESPONSE, bytes(20)), want=None,
+        tlv(TAG_RESPONSE, bytes(20)) + tlv(TAG_CHALLENGE, host_chal), want=None,
     )
     # 6A80, as a YubiKey answers it: 6984 is that card's word for "no code is
     # installed", and the two states have to stay tellable apart (E62).
@@ -307,8 +307,16 @@ def main():
     # Correct response unlocks; card answers our challenge (mutual auth).
     resp = hmac_mod.new(code_key, bytes(card_chal), hashlib.sha1).digest()
     body, _ = oath.apdu(
-        INS_VALIDATE, 0, 0, tlv(TAG_CHALLENGE, host_chal) + tlv(TAG_RESPONSE, resp)
+        INS_VALIDATE, 0, 0, tlv(TAG_RESPONSE, resp) + tlv(TAG_CHALLENGE, host_chal)
     )
+    # The card reads VALIDATE by position — response first, as ykman sends it —
+    # so the other order is 6A80 whatever the proof says (E61).
+    _, sw = oath.apdu(
+        INS_VALIDATE, 0, 0,
+        tlv(TAG_CHALLENGE, host_chal) + tlv(TAG_RESPONSE, resp), want=None,
+    )
+    if sw != 0x6A80:
+        fail(f"VALIDATE with the TLVs reordered: SW {sw:04X} != 6A80")
     if tlv_get(body, TAG_RESPONSE) != hmac_mod.new(code_key, host_chal, hashlib.sha1).digest():
         fail("VALIDATE: mutual-auth response wrong")
     oath.apdu(INS_LIST, 0, 0)

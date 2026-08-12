@@ -170,8 +170,8 @@ fn a_failed_change_drops_an_access_code_unlock_too() {
     /// Answer the challenge the current SELECT handed out — nothing else.
     fn validate(app: &mut OathApplet, fs: &mut Fs<RamStorage>, body: &[u8]) -> Sw {
         let card_chal = find_tag(body, TAG_CHALLENGE as u16).unwrap().to_vec();
-        let mut d = tlv(TAG_CHALLENGE, &[9u8, 9, 9, 9, 8, 8, 8, 8]);
-        d.extend(tlv(TAG_RESPONSE, &hmac_sha1(&[0xAB; 16], &card_chal)));
+        let mut d = tlv(TAG_RESPONSE, &hmac_sha1(&[0xAB; 16], &card_chal));
+        d.extend(tlv(TAG_CHALLENGE, &[9u8, 9, 9, 9, 8, 8, 8, 8]));
         run(app, fs, &apdu(INS_VALIDATE, 0, 0, &d)).0
     }
 
