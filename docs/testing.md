@@ -298,6 +298,61 @@ One crate is deliberately off the tiers. `rsk-bench`'s `summarize` sorts
 returns no verdict — not in 5 minutes, and not with `--default-unwind 5`. The
 exclusion and its reason live in that guard, next to the roster it belongs to.
 
+## The security-state model (TLA+)
+
+`formal/RSKeySecurityState.tla` models the authenticator's security state
+machine — PIN retries, the pinUvAuthToken and its permissions, which transport
+owns the touch, which channel owns a stateful walk, the reset window, the
+persistent gate records, and the position at which power is lost inside a
+multi-write flash sequence. TLC checks six named invariants exhaustively at
+small constants; the names are the ones the `rsk-fido` Kani harnesses use, so
+one property reads model → code → harness by grep.
+
+It exists because Kani proves a property over *one call* and RS-Key's dangerous
+defects have lived in *orderings*. It is a **design artefact, not an assurance
+layer**: it is not in `flake.nix`, not in the gate and not in CI, and a green
+run is a statement about the model. `formal/README.md` is its scope statement —
+what it covers, where it departs from the firmware **and in which direction**,
+the mutation experiment that keeps its invariants falsifiable, and the two
+counterexamples it has produced on the shipped tree. Read that before quoting a
+result from it.
+
+```sh
+cd formal && ./gen-configs.sh && ./run-tlc.sh all   # needs tla2tools.jar + a JRE
+```
+
+## Formal claims — what is and is not verified
+
+This is the paragraph to quote, and it is deliberately narrow. Everything in it
+is measured; nothing in it is an aspiration.
+
+> **RS-Key is not formally verified.** Two narrow, bounded layers exist. With
+> **Kani** (a bounded model checker) the tree proves specific properties of
+> parsers, codecs, file metadata and arithmetic helpers — over all inputs *up to
+> a stated bound*, not over all inputs — and three proofs about short
+> *sequences* of security-state transitions on the real `FidoState`: a
+> `pinUvAuthToken` retired by `stopUsingPinUvAuthToken`, a reroll, an
+> `authenticatorReset`, a power cycle or its own usage timer never authorizes
+> again, and a `credentialManagement` enumerate walk is servable only to the
+> channel whose *Begin* opened it. Those hold for every four- or five-operation
+> sequence from one starting state; longer sequences, other starting states and
+> the flash-backed persistent grant are outside them. On top of that sits a
+> **TLA+ model** of the authenticator's security state. TLC checks six named
+> invariants exhaustively over ~13.2 million states at small constants. **That
+> is a result about the model, not about the firmware binary**: it is only as
+> good as the model's fidelity to the code, which is maintained by hand. Every
+> invariant has been shown to be breakable by an injected defect, so none of
+> them is a check that cannot fail — and the model has already produced two
+> counterexamples on the shipped tree, both awaiting a ruling.
+
+The hedging is load-bearing, and the tree's own history is why. The model's
+green run once rested on an abstraction that made it **narrower** than the
+firmware — a power cut left the device permanently seedless, where the real one
+regenerates the seed on every boot — so a class of reachable states was never
+explored at all. A green result over an unfaithful model proves nothing, and
+only a hand review found it. Hand-maintained fidelity is the weak link here, and
+saying so is part of the claim rather than a footnote to it.
+
 ## On-device tests
 
 Numbered, self-contained scripts under `tests/`, run from the dev shell
