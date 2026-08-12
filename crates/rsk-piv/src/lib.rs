@@ -76,11 +76,6 @@ const INS_VERSION: u8 = 0xFD;
 const INS_IMPORT_ASYM: u8 = 0xFE;
 const INS_SET_MGMKEY: u8 = 0xFF;
 
-/// YubiKey "PRINTED INFORMATION" object — repurposed to hold the PIN-protected
-/// management key (readable only after a PIN VERIFY, and only once protection is
-/// enabled). The key itself is synthesized from the sealed 0x9B auth slot, never
-/// stored a second time.
-const PRINTED_ID: u32 = 0x5FC109;
 const CHUID_ID: u32 = 0x5FC102;
 /// PivmanData (ADMIN DATA) TLV: outer `0x80 { 0x81 = flags, 0x82 = derived-key
 /// salt, 0x83 = PIN-change timestamp }`; flag bit `0x02` means the management key
@@ -632,6 +627,12 @@ impl PivApplet<'_> {
         let mut id: u32 = 0;
         for &b in &d[2..2 + l] {
             id = id << 8 | b as u32;
+        }
+        // Before the object is looked up: an absent one must answer the same
+        // 6982 a present one does, or the gate becomes a probe for what the card
+        // holds (measured on a YubiKey, both cells, 3 runs).
+        if read_needs_pin(id) && !self.sess.has_pin {
+            return Sw::SECURITY_STATUS_NOT_SATISFIED;
         }
         if id == DISCOVERY_ID {
             res.extend(DISCOVERY);

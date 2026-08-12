@@ -175,6 +175,28 @@ pub(crate) fn data_object_fid(low: u8) -> Option<u16> {
     (low < 0xF0).then_some(0xD200 | low as u16)
 }
 
+/// The four data objects SP 800-73-4 pt1 Table 3 gives a contact read condition
+/// of PIN. YubiKey "PRINTED INFORMATION" is one of them, and here it also backs
+/// the PIN-protected management key (see `get_protected_mgm`).
+pub const CARDHOLDER_FINGERPRINTS_ID: u32 = 0x5FC103;
+pub const CARDHOLDER_FACIAL_IMAGE_ID: u32 = 0x5FC108;
+pub const PRINTED_ID: u32 = 0x5FC109;
+pub const CARDHOLDER_IRIS_IMAGES_ID: u32 = 0x5FC121;
+
+/// Whether GET DATA for this object needs the PIN. Measured on a YubiKey 5.7.4,
+/// 3 runs: exactly Table 3's PIN set and nothing else, judged *before* the
+/// object's existence — so an absent one answers `6982`, not `6A82` — and the
+/// management key does not stand in for the PIN.
+pub(crate) fn read_needs_pin(id: u32) -> bool {
+    matches!(
+        id,
+        CARDHOLDER_FINGERPRINTS_ID
+            | CARDHOLDER_FACIAL_IMAGE_ID
+            | PRINTED_ID
+            | CARDHOLDER_IRIS_IMAGES_ID
+    )
+}
+
 pub const DISCOVERY_ID: u32 = 0x7E;
 
 /// The discovery object (returned raw, not wrapped in `53`): the full PIV AID

@@ -203,6 +203,25 @@ to require a press too.
 > honour the 15-second touch cache a real YubiKey offers; it errs strict and
 > asks every time. If you set `CACHED`, expect `ALWAYS` behaviour.
 
+## Data objects that need the PIN to read
+
+Most `PUT DATA` objects are readable by anything that can open the reader — that
+is what SP 800-73-4 pt1 Table 3 says, and a certificate is public anyway. Four
+are not:
+
+| Object | Name |
+|---|---|
+| `5FC103` | Cardholder Fingerprints |
+| `5FC108` | Cardholder Facial Image |
+| `5FC109` | Printed Information |
+| `5FC121` | Cardholder Iris Images |
+
+`ykman piv objects export 5fc103 -` on one of those needs a `VERIFY` first, or
+the card answers `6982`. The refusal comes before the lookup, so an empty object
+and a populated one are indistinguishable without the PIN. The management key
+does **not** substitute for it: writing these is management-gated, reading them
+is PIN-gated, and the two are separate conditions.
+
 ## Attestation
 
 ```sh

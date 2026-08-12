@@ -819,10 +819,17 @@ fn pin_protected_mgm_key_roundtrip() {
     const PRINTED: [u8; 3] = [0x5F, 0xC1, 0x09];
     const ADMIN: [u8; 3] = [0x5F, 0xFF, 0x00];
 
-    // No leak: before protection PRINTED reads as absent (even though the
-    // default mgmt key exists in 0x9B) — protection is opt-in.
+    // PRINTED carries Table 3's PIN read condition whatever it holds, so an
+    // unauthenticated read never gets as far as asking whether it exists.
+    let (sw, _) = run(&mut app, &mut fs, INS_GET_DATA, 0x3F, 0xFF, &get(PRINTED));
+    assert_eq!(sw, Sw::SECURITY_STATUS_NOT_SATISFIED);
+    // No leak: with the PIN, before protection it still reads as absent (even
+    // though the default mgmt key exists in 0x9B) — protection is opt-in.
+    verify_pin(&mut app, &mut fs);
     let (sw, _) = run(&mut app, &mut fs, INS_GET_DATA, 0x3F, 0xFF, &get(PRINTED));
     assert_eq!(sw, Sw::FILE_NOT_FOUND);
+    let (sw, _) = run(&mut app, &mut fs, INS_VERIFY, 0xFF, 0x80, &[]);
+    assert_eq!(sw, Sw::OK); // drop the PIN status again
 
     // Protect: fresh random AES-256 key, sealed + flagged.
     assert_eq!(protect_mgm_key(&dev, &mut fs, &mut TestRng(42)), Sw::OK);
@@ -1010,6 +1017,108 @@ fn set_mgmkey_revokes_the_pin_protected_escrow() {
     let (sw, printed) = run(&mut app, &mut fs, INS_GET_DATA, 0x3F, 0xFF, &get(PRINTED));
     assert_eq!(sw, Sw::OK);
     assert_eq!(&printed[6..6 + new_key.len()], &new_key);
+}
+
+/// SP 800-73-4 pt1 Table 3 gives four data objects a contact read condition of
+/// PIN — fingerprints, facial image, printed information, iris images — and a
+/// YubiKey 5.7.4 gates exactly those four and no others. Ours served three of
+/// them to anyone who could open the reader, so a card provisioned as a real PIV
+/// credential handed over its biometrics with no PIN. Measured 3 runs per card:
+/// the gate is judged BEFORE the object's existence (an absent one is `6982`
+/// unauthenticated and `6A82` with the PIN), and the management key does not
+/// stand in for the PIN.
+#[test]
+fn the_pin_read_condition_objects_are_not_world_readable() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    let get = |id: u32| [0x5C, 0x03, (id >> 16) as u8, (id >> 8) as u8, id as u8];
+    let put = |id: u32| {
+        let mut v = get(id).to_vec();
+        v.extend_from_slice(&[TAG_DATA_OBJECT, 0x03, 0x41, 0x42, 0x43]);
+        v
+    };
+    // PRINTED is the escrow object here and has no plain storage, so it is only
+    // asserted on the unauthenticated cell.
+    let gated = [
+        CARDHOLDER_FINGERPRINTS_ID,
+        CARDHOLDER_FACIAL_IMAGE_ID,
+        PRINTED_ID,
+        CARDHOLDER_IRIS_IMAGES_ID,
+    ];
+    let ungated = [CHUID_ID, 0x5FC105u32, 0x5FC10A, 0x5FC101, 0x5FC10B];
+    for id in gated.iter().chain(ungated.iter()) {
+        if *id == PRINTED_ID {
+            continue;
+        }
+        assert_eq!(
+            run(&mut app, &mut fs, INS_PUT_DATA, 0x3F, 0xFF, &put(*id)).0,
+            Sw::OK,
+            "PUT {id:06X}"
+        );
+    }
+
+    // A power cycle: the management key stays up, the PIN does not.
+    let mut cold = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    select(&mut cold, &mut fs);
+    for id in gated {
+        assert_eq!(
+            run(&mut cold, &mut fs, INS_GET_DATA, 0x3F, 0xFF, &get(id)).0,
+            Sw::SECURITY_STATUS_NOT_SATISFIED,
+            "{id:06X} was world-readable"
+        );
+    }
+    for id in ungated {
+        assert_eq!(
+            run(&mut cold, &mut fs, INS_GET_DATA, 0x3F, 0xFF, &get(id)).0,
+            Sw::OK,
+            "{id:06X} lost its Always read condition"
+        );
+    }
+    // The management key is not the PIN.
+    auth_mgm(&mut cold, &mut fs);
+    for id in gated {
+        assert_eq!(
+            run(&mut cold, &mut fs, INS_GET_DATA, 0x3F, 0xFF, &get(id)).0,
+            Sw::SECURITY_STATUS_NOT_SATISFIED,
+            "{id:06X} opened to the management key"
+        );
+    }
+    // …and an ABSENT gated object is still the security status, not 6A82 —
+    // the gate comes first, so it cannot be used to probe what a card holds.
+    verify_pin(&mut cold, &mut fs);
+    for id in gated {
+        if id == PRINTED_ID {
+            continue;
+        }
+        let (sw, body) = run(&mut cold, &mut fs, INS_GET_DATA, 0x3F, 0xFF, &get(id));
+        assert_eq!(sw, Sw::OK, "{id:06X}");
+        assert_eq!(
+            &body,
+            &[TAG_DATA_OBJECT, 0x03, 0x41, 0x42, 0x43],
+            "{id:06X}"
+        );
+    }
+    let absent = CARDHOLDER_IRIS_IMAGES_ID;
+    let mut wipe = get(absent).to_vec();
+    wipe.extend_from_slice(&[TAG_DATA_OBJECT, 0x00]);
+    assert_eq!(
+        run(&mut cold, &mut fs, INS_PUT_DATA, 0x3F, 0xFF, &wipe).0,
+        Sw::OK
+    );
+    assert_eq!(
+        run(&mut cold, &mut fs, INS_GET_DATA, 0x3F, 0xFF, &get(absent)).0,
+        Sw::FILE_NOT_FOUND
+    );
+    let mut cold2 = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    select(&mut cold2, &mut fs);
+    assert_eq!(
+        run(&mut cold2, &mut fs, INS_GET_DATA, 0x3F, 0xFF, &get(absent)).0,
+        Sw::SECURITY_STATUS_NOT_SATISFIED
+    );
 }
 
 /// `Storage` that refuses to write one fid — a flash failure landing exactly on
@@ -4239,14 +4348,11 @@ fn pivman_printed_codec_property_fuzz() {
         // (b)+(c) GET DATA 5FC109 must not panic and must honour the gate.
         let get_printed = [0x5C, 0x03, PRINTED[0], PRINTED[1], PRINTED[2]];
 
-        // Without a PIN: never discloses the key.
+        // Without a PIN: never discloses the key, and never says whether the
+        // object is there — PRINTED's read condition is PIN whatever it holds.
         let (sw_nopin, body_nopin) = run(&mut app, &mut fs, INS_GET_DATA, 0x3F, 0xFF, &get_printed);
-        if actual {
-            assert_eq!(sw_nopin, Sw::SECURITY_STATUS_NOT_SATISFIED);
-        } else {
-            assert_eq!(sw_nopin, Sw::FILE_NOT_FOUND);
-        }
-        assert!(body_nopin.is_empty() || sw_nopin != Sw::OK);
+        assert_eq!(sw_nopin, Sw::SECURITY_STATUS_NOT_SATISFIED);
+        assert!(body_nopin.is_empty());
 
         // With a PIN verified: discloses ONLY if protection is on, and the
         // disclosed key is exactly the sealed 0x9B mgmt key (32B), TLV-wrapped.

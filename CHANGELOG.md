@@ -40,6 +40,20 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Security
 
+- **The PIV data objects whose read condition is the PIN are no longer
+  world-readable.** SP 800-73-4 pt1 Table 3 gives four objects a contact read
+  condition of PIN — Cardholder Fingerprints (`5FC103`), Cardholder Facial Image
+  (`5FC108`), Printed Information (`5FC109`) and Cardholder Iris Images
+  (`5FC121`) — and a YubiKey 5.7.4 gates exactly those four and nothing else.
+  `GET DATA` applied a PIN check to `5FC109` alone, and then only once the
+  management key had been PIN-protected, so a card provisioned as a real PIV
+  credential handed its fingerprint templates, facial image and iris images to
+  any process that could open the reader. Measured three runs per card: the gate
+  is judged *before* the object is looked up, so an absent one answers `6982` and
+  not `6A82` and cannot be used to probe what a card holds, and the management
+  key does not stand in for the PIN. Writing them stays management-gated —
+  reading and writing are separate conditions. **bcdDevice → 0x08D2.**
+
 - **A PIV `CHANGE REFERENCE DATA` / `RESET RETRY COUNTER` body is two wire forms
   or nothing.** The handlers split the body at the *stored* reference length and
   handed the whole remainder over as the new value, and `put_pin_verifier` writes
