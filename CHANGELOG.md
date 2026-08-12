@@ -40,6 +40,28 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Security
 
+- **A wipe deletes the device seed first, so a power cut can no longer leave a
+  *usable* passkey behind.** `authenticatorReset`'s own comment promised "the seed
+  leads, so a surviving credential record is cryptographically dead" and nothing
+  implemented it: the sweep batches every non-gate FIDO file, and `for_each_key`
+  yields in flash-ring order rather than FID order, so `EF_RP` could go before
+  `EF_CRED`. Cut power in between and the key comes back with a live discoverable
+  credential whose relying-party entry is gone — `enumerateRPs` and the trusted
+  display's Passkeys view both walk `EF_RP`, so neither lists it;
+  `enumerateCredentials` is per relying party, so nothing can reach it to delete
+  it; and `getAssertion` scans `EF_CRED` and signs with it happily. A TLA+ model of
+  the wipe found it (`NoUnmanageableCredential`, 72128 distinct states, depth 13).
+  The seed now goes in its own flash write ahead of the batch — both of its shapes,
+  `EF_KEY_DEV` and the soft lock's `EF_KEY_DEV_ENC` — and the device-wide
+  `Fs::factory_wipe` behind the Management RESET and the on-screen factory reset
+  takes the same lead phase, since it bypasses the applet sweep entirely. **The
+  strand itself is not prevented**: a torn wipe can still leave an `EF_CRED` record
+  with no `EF_RP` entry, holding its credential slot until the next reset. What
+  changes is that the record no longer decrypts under the regenerated seed, so
+  nothing can authenticate with it — which is what the comment always claimed. A
+  wipe that completes behaves exactly as before; the cost is one extra flash-ring
+  walk per reset for whichever seed shape is absent. **bcdDevice → 0x08BF.**
+
 - **The vendor applet's core1 counter read (`INS 12`) is gone from the shipping
   image.** `docs/protocol.md` has said all along that it "exist[s] only in
   debug/bench builds"; the firmware implemented it unconditionally, so every key

@@ -666,6 +666,7 @@ where
                 .borrow_mut()
                 .factory_wipe(
                     rsk_fido::survives_factory_reset,
+                    rsk_fido::is_fido_seed_fid,
                     rsk_device::gates_wiped_last,
                 )
                 .is_ok();

@@ -144,7 +144,8 @@ fn factory_wipe_erases_all_but_preserved() {
     fs.put(0xC000, b"ctr").unwrap(); // a counter
     fs.put(0xAAAA, b"keep").unwrap(); // stands in for the preserved attestation
 
-    fs.factory_wipe(|fid| fid == 0xAAAA, |_| false).unwrap();
+    fs.factory_wipe(|fid| fid == 0xAAAA, |_| false, |_| false)
+        .unwrap();
 
     let mut buf = [0u8; 8];
     // Everything not preserved is gone — including the dynamic-file registration.
@@ -161,7 +162,7 @@ fn factory_wipe_with_nothing_to_keep_empties_the_store() {
     let mut fs = fs();
     fs.put(0xCF01, b"a").unwrap();
     fs.put(0xCF02, b"b").unwrap();
-    fs.factory_wipe(|_| false, |_| false).unwrap();
+    fs.factory_wipe(|_| false, |_| false, |_| false).unwrap();
     let mut seen = 0;
     fs.for_each_key(&mut |_| seen += 1);
     assert_eq!(seen, 0);
@@ -572,7 +573,7 @@ fn factory_wipe_fails_on_a_truncated_enumeration() {
     st.0.write(0xCF20, b"credential").unwrap();
     let mut fs = Fs::new(st);
     assert_eq!(
-        fs.factory_wipe(|_| false, |_| false),
+        fs.factory_wipe(|_| false, |_| false, |_| false),
         Err(Error::MemoryFatal)
     );
     let mut out = [0u8; 16];
@@ -607,7 +608,7 @@ fn factory_wipe_removes_the_gate_records_last() {
             fs.put(fid, &[0xAA]).unwrap();
         }
         fs.put(0xD180, &[0xBB]).unwrap();
-        let _ = fs.factory_wipe(|_| false, |fid| fid == 0xD180);
+        let _ = fs.factory_wipe(|_| false, |_| false, |fid| fid == 0xD180);
         let secrets_left = [0x1000u16, 0x1001, 0x1002].iter().any(|&f| fs.has_data(f));
         if secrets_left {
             assert!(

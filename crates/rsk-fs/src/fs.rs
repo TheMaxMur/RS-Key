@@ -313,17 +313,34 @@ impl<S: Storage> Fs<S> {
     /// `wipe_oath`'s half was missing from the firmware's union for a release
     /// (audit run-36), which is why each applet now exports its own predicate rather
     /// than having its fids open-coded at the call site.
+    ///
+    /// `first` is the mirror image: a record every *other* record's secrecy hangs
+    /// on, so a prefix of the wipe that stops after it leaves nothing readable. Only
+    /// FIDO has one — its device seed — since PIV, OATH and OpenPGP hold key
+    /// material per slot; `rsk_fido::is_fido_seed_fid` names it.
     pub fn factory_wipe(
         &mut self,
         preserve: impl Fn(u16) -> bool,
+        first: impl Fn(u16) -> bool,
         last: impl Fn(u16) -> bool,
     ) -> Result<()> {
-        for gates in [false, true] {
+        // `first` wins over `last` if a caller ever hands in overlapping predicates:
+        // deleting a record early can only ever be safe, deleting it late cannot.
+        let phase_of = |fid: u16| {
+            if first(fid) {
+                0
+            } else if last(fid) {
+                2
+            } else {
+                1
+            }
+        };
+        for phase in 0..3 {
             loop {
                 let mut batch = [0u16; 64];
                 let mut n = 0usize;
                 let complete = self.storage.for_each_key(&mut |fid| {
-                    if !preserve(fid) && last(fid) == gates && n < batch.len() {
+                    if !preserve(fid) && phase_of(fid) == phase && n < batch.len() {
                         batch[n] = fid;
                         n += 1;
                     }

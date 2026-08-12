@@ -71,12 +71,12 @@ match more than one file in the tree.
 
 | Invariant | What it asserts here | The Rust construct that owns it |
 |---|---|---|
-| `NoAuthorizationBypass` | No protected operation completes without the live authorization its own gate requires | `crates/rsk-fido/src/`: `getassertion.rs:376-379` · `makecredential.rs:437-441` · `config.rs:222-224` · `credmgmt.rs:277` · retry ladder `clientpin.rs:719-804` · soft lock `state.rs:284-291` + `crates/rsk-device/src/ctap.rs:215-222` · reset window `reset.rs:126-132` · walk owner `state.rs:169-179`, `credmgmt.rs:338` |
+| `NoAuthorizationBypass` | No protected operation completes without the live authorization its own gate requires | `crates/rsk-fido/src/`: `getassertion.rs:376-379` · `makecredential.rs:437-441` · `config.rs:222-224` · `credmgmt.rs:277` · retry ladder `clientpin.rs:719-804` · soft lock `state.rs:284-291` + `crates/rsk-device/src/ctap.rs:215-222` · reset window `reset.rs:148-154` · walk owner `state.rs:169-179`, `credmgmt.rs:338` |
 | `NoCrossTransportTouchConsumption` | A presence decision produced for one transport is never applied to another — neither a confirm nor a cancel | `firmware/src/presence.rs:42-49` (`WAIT_SCOPE`) · `:66-96` (`pending_for`, `request_cancel`) · `:159-163, 259-266, 277-292` (the `spent` latch). **The stale-cancel drop has two owners, `:251` and `:292`** — either alone carries the property, so removing one does not fall over |
 | `NoTokenAfterInvalidation` | A grant invalidated by a PIN change, PIN set, reset, `stopUsingPinUvAuthToken` or power cycle never authorizes again | `crates/rsk-fido/src/`: `state.rs:484-497` (`reset_pin_uv_auth_token`) · `state.rs:542-556` (`stop_using_token`) · `state.rs:590-602` (`expire_stale_token`) · `clientpin.rs:300-311` · `seed.rs:310-311` (`clear_ppuat`) |
-| `NoAccessibleSecretWithoutGate` | No live secret is reachable while the gate record that protects it is gone | `crates/rsk-fido/src/`: `reset.rs:105-124` (`is_fido_gate_fid`) · `reset.rs:51-58` (phase order) · `credmgmt.rs:249-265` (`authorized_by_ppuat`) · `clientpin.rs:213-217`, `:824-828` |
+| `NoAccessibleSecretWithoutGate` | No live secret is reachable while the gate record that protects it is gone | `crates/rsk-fido/src/`: `reset.rs:127-146` (`is_fido_gate_fid`) · `reset.rs:51-66` (phase order) · `credmgmt.rs:249-265` (`authorized_by_ppuat`) · `clientpin.rs:213-217`, `:824-828` |
 | `NoUnmanageableCredential` | Every live credential is reachable by the management surface (its `EF_RP` entry exists) | `crates/rsk-fido/src/`: `credential.rs:804-826` (registration write order) · `credmgmt.rs:652-706` (`delete_credential` / `decrement_rp`) · `passkeys.rs:89-151` (`for_each_rp`, the `EF_RP` walk the display lists from) |
-| `ResetNeverWeakensSurvivingState` | No prefix of an `authenticatorReset` — torn or complete — leaves a surviving usable secret whose gate has already gone | `crates/rsk-fido/src/`: `reset.rs:30-66` (`reset`, two-phase) · `reset.rs:68-103` (`sweep`) · `reset.rs:105-124` (`is_fido_gate_fid`, incl. `EF_BACKUP_SEALED`) · `reset.rs:171-179` (`survives_factory_reset`). Shipped twin for its third clause: `reset_tests.rs::a_torn_reset_never_unseals_a_surviving_seed` |
+| `ResetNeverWeakensSurvivingState` | No prefix of an `authenticatorReset` — torn or complete — leaves a surviving usable secret whose gate has already gone | `crates/rsk-fido/src/`: `reset.rs:30-75` (`reset`, seed then two phases) · `reset.rs:77-112` (`sweep`) · `reset.rs:127-146` (`is_fido_gate_fid`, incl. `EF_BACKUP_SEALED`) · `reset.rs:193-201` (`survives_factory_reset`). Shipped twin for its third clause: `reset_tests.rs::a_torn_reset_never_unseals_a_surviving_seed` |
 
 Two of these overlap by design and the overlap is stated rather than hidden:
 `NoAccessibleSecretWithoutGate` is the **steady-state** claim on every path,
@@ -85,7 +85,7 @@ the state a reset was handed against the state the reset produced, which the
 steady-state form cannot see.
 
 `EF_BACKUP_SEALED` is the one gate here that reads backwards: its **absence** is
-the permissive state (`reset.rs:110-117`), so what a torn wipe can do is
+the permissive state (`reset.rs:132-139`), so what a torn wipe can do is
 *re-open* the one-time seed-export window over a seed it did not manage to
 destroy. That is the audit run-36 class fix, and it is the third clause of
 `ResetNeverWeakensSurvivingState`, not of the steady-state invariant — on a
@@ -142,8 +142,8 @@ checks **only** the named invariant.
 
 | Mutation switch | Removes | Target invariant | Caught in |
 |---|---|---|---|
-| `BugResetGatesFirst` | `reset.rs:57-58` phase order | `ResetNeverWeakensSurvivingState` | 2 352 states |
-| `BugBackupSealedNotAGate` | `reset.rs:110-123` — `EF_BACKUP_SEALED` back in phase 1 (audit run-36) | `ResetNeverWeakensSurvivingState` | 2 347 states |
+| `BugResetGatesFirst` | `reset.rs:67-68` phase order | `ResetNeverWeakensSurvivingState` | 2 352 states |
+| `BugBackupSealedNotAGate` | `reset.rs:132-145` — `EF_BACKUP_SEALED` back in phase 1 (audit run-36) | `ResetNeverWeakensSurvivingState` | 2 347 states |
 | `BugCredBeforeRp` | `credential.rs:804-814` write order | `NoUnmanageableCredential` | 820 states |
 | `BugDeleteRpBeforeCred` | `credmgmt.rs:659-665` — `decrement_rp` ahead of the `EF_CRED` delete | `NoUnmanageableCredential` | 111 503 states |
 | `BugTokenSurvivesPinChange` | `clientpin.rs:311` | `NoTokenAfterInvalidation` | 15 299 states |
@@ -154,7 +154,7 @@ checks **only** the named invariant.
 | `BugUnscopedCancel` | `presence.rs:93` scope check | `NoCrossTransportTouchConsumption` | 127 states |
 | `BugTouchNotSpent` | `presence.rs:288` `spent` latch | `NoCrossTransportTouchConsumption` | 5 717 states |
 | `BugSoftLockLostOnWarmReset` | `ctap.rs:215-222` `PinLock` carry | `NoAuthorizationBypass` | 4 993 states |
-| `BugWarmResetReopensWindow` | `reset.rs:131` `!warm_boot` | `NoAuthorizationBypass` | 126 states |
+| `BugWarmResetReopensWindow` | `reset.rs:153` `!warm_boot` | `NoAuthorizationBypass` | 126 states |
 | `BugCmWalkIgnoresChannel` | `state.rs:172` channel equality | `NoAuthorizationBypass` | 1 242 states |
 
 **14 of 14 mutants are caught, each by the invariant that names it.**
@@ -210,7 +210,8 @@ direction, the wipe rather than the write.
 Severity **LOW**: it needs a power cut inside a touch-gated factory reset, it
 discloses nothing, and re-running the reset clears it (`EF_CRED` is in the
 phase-1 predicate). Modelled fix `FixSweepDropsCredsBeforeRpEntries`: order
-phase 1 so no `EF_RP` entry is dropped while a credential is live.
+phase 1 so no `EF_RP` entry is dropped while a credential is live. **Not the fix
+that shipped** — see the status section below.
 
 ### Finding 2 — a torn phase 2 can strand a persistent grant on a PIN-less key
 
@@ -235,10 +236,31 @@ Severity **LOW**: it needs a prior `pcmr` grant, a power cut at a specific
 point, and the user never re-setting a PIN; the exposure is the credential
 directory (rp ids, credential ids, user names), not keys or assertions.
 Modelled fix `FixPpuatRequiresPin`: refuse a persistent grant when `EF_PIN` is
-absent — one owner, one line, at `authorized_by_ppuat`.
+absent — one owner, one line, at `authorized_by_ppuat`. **This is the fix that
+shipped**, verbatim.
 
-**Both findings need the maintainer's ruling; neither is fixed here.** With
-both proposed fixes modelled, `ShippedFixed.cfg` is exhaustively green.
+### Both are fixed in the tree now — one of them differently
+
+Landed after this model was written: **Finding 2** at bcdDevice `0x08C0`, by exactly
+the modelled `FixPpuatRequiresPin` — `authorized_by_ppuat` refuses when `EF_PIN` is
+absent. **Finding 1** at `0x08BF`, but *not* by `FixSweepDropsCredsBeforeRpEntries`:
+the maintainer's fix deletes the seed (`EF_KEY_DEV`, and `EF_KEY_DEV_ENC` for a
+soft-locked device) in its own write ahead of both sweep phases, so the strand still
+happens and the survivor no longer decrypts. `Fs::factory_wipe` took the same lead
+phase in the same commit.
+
+**The configurations below have not been re-run, and two of them no longer describe
+the tree.** Whoever re-runs them:
+
+- `Shipped.cfg` still has `FixPpuatRequiresPin` off. Turn it on; `Shipped.cfg` then
+  models the shipped tree for Finding 2 and `Shipped_OnlyFinding2.cfg` becomes the
+  historical record of a fixed defect.
+- `NoUnmanageableCredential` asks that no live credential outlive its `EF_RP` entry
+  — *prevention*. The shipped mitigation makes the survivor unopenable instead, and
+  this spec has no notion of a record's key, so the property cannot express it and
+  `Shipped.cfg` stays RED on it. Re-scoping it to "live **and openable**" needs the
+  credential record to carry whether the seed that opens it is still present; that is
+  a model change, not a config flip, and it is the honest way to make this row green.
 
 ## Results
 

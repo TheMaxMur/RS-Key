@@ -284,7 +284,11 @@ impl<'a, S: Storage, R: crate::Rng + 'static, VP: rsk_vendor::Platform> CcidAppl
     pub fn factory_wipe(&mut self) -> bool {
         self.fs
             .borrow_mut()
-            .factory_wipe(rsk_fido::survives_factory_reset, gates_wiped_last)
+            .factory_wipe(
+                rsk_fido::survives_factory_reset,
+                rsk_fido::is_fido_seed_fid,
+                gates_wiped_last,
+            )
             .is_ok()
     }
 

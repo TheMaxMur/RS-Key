@@ -1928,7 +1928,7 @@ fn the_exported_lock_predicate_protects_the_device_wide_wipe() {
             fs.put(EF_OATH_CRED + i, &[0x11; 24]).unwrap();
         }
 
-        let _ = fs.factory_wipe(|_| false, is_oath_lock_fid);
+        let _ = fs.factory_wipe(|_| false, |_| false, is_oath_lock_fid);
 
         if (0..5u16).any(|i| fs.has_data(EF_OATH_CRED + i)) {
             assert!(

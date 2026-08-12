@@ -25,7 +25,7 @@ const RESET_MAX_DELETES: u32 = 4 * MAX_RESIDENT_CREDENTIALS as u32 + 13;
 
 /// `authenticatorReset`: factory-reset the FIDO applet. Replies with only the
 /// status byte. Also the documented recovery from a soft lock with a lost lock
-/// key: `EF_KEY_DEV_ENC` is wiped with everything else and a fresh seed is
+/// key: `EF_KEY_DEV_ENC` leads the wipe with the seed it wraps and a fresh seed is
 /// generated (the old identity is gone — that is the design).
 pub fn reset<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>) -> CtapResult {
     if !ctx.presence.shows_confirm() && !in_reset_window(ctx) {
@@ -48,15 +48,24 @@ pub fn reset<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>) -> CtapResult {
     // ([`is_fido_fid`]) — a blind 0..256 EF_CRED/EF_RP sweep would write a
     // tombstone per absent slot, filling the partition and slowing the flash GC.
     //
-    // Two phases, for the reason `rsk_piv::files::wipe_piv` and `wipe_oath` state:
-    // `for_each_key` yields in flash-ring order, not FID order, so one combined
-    // sweep can reach `EF_PIN` before the credentials — and a power cut there
-    // leaves the owner's passkeys live with the PIN and `alwaysUv` gone, i.e.
-    // assertable on a touch alone. Secrets first (the seed leads, so a surviving
-    // credential record is cryptographically dead), gates last.
+    // Two phases for the sweeps, for the reason `rsk_piv::files::wipe_piv` and
+    // `wipe_oath` state: `for_each_key` yields in flash-ring order, not FID order,
+    // so one combined sweep can reach `EF_PIN` before the credentials — and a power
+    // cut there leaves the owner's passkeys live with the PIN and `alwaysUv` gone,
+    // i.e. assertable on a touch alone. Secrets first, gates last.
+    //
+    // The live session goes before any of it: `Ctx::load_keydev` prefers
+    // `state.keydev_dec`, so a sweep that fails after the flash seed is gone would
+    // otherwise leave the rest of the power cycle running on a seed nothing stores.
+    ctx.state.reset();
+    // And the seed leads the flash, in its own write ahead of the batch: ring order
+    // otherwise reaches `EF_RP` before `EF_CRED`, and what a cut leaves behind must
+    // at least be undecryptable. `EF_KEY_DEV_ENC` is the soft lock's copy of it.
+    for fid in FIDO_SEED_FIDS {
+        ctx.fs.force_delete(fid).map_err(|_| CtapError::Other)?;
+    }
     sweep(ctx, |fid| is_fido_fid(fid) && !is_fido_gate_fid(fid))?;
     sweep(ctx, is_fido_gate_fid)?;
-    ctx.state.reset();
     ensure_seed(&ctx.dev, ctx.fs, ctx.rng).map_err(|_| CtapError::Other)?;
     // Privacy: fold the journal window into the epoch (per-event details are
     // scrubbed, aggregate history stays attested), then record the reset.
@@ -100,6 +109,19 @@ fn sweep<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, pred: fn(u16) -> bool) -> Resu
             ctx.fs.force_delete(fid).map_err(|_| CtapError::Other)?;
         }
     }
+}
+
+/// The two flash shapes of the device seed: the plain record, and the soft lock's
+/// wrapped copy. Every credential box, rpId box, credBlob, hmac-secret key and
+/// large-blob key is derived from it, so deleting it FIRST is what makes whatever a
+/// torn wipe leaves behind undecryptable.
+pub const FIDO_SEED_FIDS: [u16; 2] = [EF_KEY_DEV.get(), EF_KEY_DEV_ENC.get()];
+
+/// [`FIDO_SEED_FIDS`] as a predicate. Public because the device-wide
+/// `Fs::factory_wipe` bypasses [`reset`] and needs the same rule — it is the only
+/// other path that can leave a live credential over a live seed.
+pub fn is_fido_seed_fid(fid: u16) -> bool {
+    FIDO_SEED_FIDS.contains(&fid)
 }
 
 /// The FIDO records that *gate* the applet rather than being the secret itself.
