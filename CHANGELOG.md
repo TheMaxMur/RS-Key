@@ -1293,6 +1293,32 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   `formal/`, so one property reads model → code → harness. **cfg-gated code
   never reaches the image, so no `bcdDevice` bump.**
 
+- **A TLA+ model of the security state, `formal/RSKeySecurityState.tla`.** 41
+  actions over PIN retries, the pinUvAuthToken and its permissions, the touch
+  and channel owners, the reset window, the persistent gate records and the
+  position at which power is lost inside a multi-write flash sequence. TLC
+  checks six named invariants — the same six the `rsk-fido` Kani harnesses use —
+  exhaustively over 13 232 120 distinct states at small constants. Fourteen
+  mutation switches rebuild real RS-Key defects and **all fourteen are caught by
+  the invariant that names them**, each proved solo so a mutant caught by a
+  sibling cannot pass for one that names its own; `-coverage` shows no dead
+  action. It has produced **two counterexamples on the shipped tree** (a torn
+  reset phase can strand an unmanageable credential, or a persistent
+  credentialManagement grant on a key whose PIN record is gone) — both LOW, both
+  awaiting a ruling, neither fixed.
+
+  It is a **design artefact, not an assurance layer**, and `docs/testing.md` →
+  "Formal claims" is the paragraph to quote: a green TLC run is a result about
+  the model, whose fidelity to the code is maintained by hand. An adversarial
+  review of the first revision proved why that wording matters — the green run
+  rested on an abstraction that made the model *narrower* than the firmware (a
+  power cut left the device permanently seedless, where every boot regenerates
+  the seed), and repairing it turned the run red until a device-lifetime ghost
+  in one invariant was retired at the right moment. Both are fixed, and the
+  measurement that the repaired invariant still catches its mutant is in
+  `formal/README.md`. Not in `flake.nix`, not in the gate, not in CI: the
+  2.2 MB `tla2tools.jar` plus a host JRE, run on demand.
+
 - **The CTAP 2.3 `largeBlob` extension, as an opt-in build
   (`--features largeblob-ext`).** It carries the whole blob inside the
   `getAssertion` that reads or writes it and keeps it with the credential,
