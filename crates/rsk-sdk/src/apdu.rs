@@ -63,6 +63,9 @@ impl<'a> Apdu<'a> {
                     n => n as usize,
                 };
             } else {
+                // The whole 16-bit Lc, never its low byte. A YubiKey 5.7.4 stores
+                // `Lc mod 256` here and answers `9000` — 300 bytes of PUT DATA
+                // become 44 — which is the one parity that loses a user's data.
                 nc = be16(&buf[5..7]) as usize;
                 let start = 7;
                 if start + nc > size {
