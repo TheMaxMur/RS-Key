@@ -501,6 +501,16 @@ run "kani roster"              python scripts/kani_gate.py
 # rotted to 16 of 24 in the docs, 20 on the nightly coverage row, 12 in the
 # flake. This holds every copy of that selection to the tree.
 run "crate roster"             python scripts/roster_gate.py
+# Three conventions AGENTS.md states and nothing enforced: the `bcdDevice` bump
+# (skipped three times in two days), the CHANGELOG entry that owes it, and the
+# SPDX header on every source file. Ported from Wasefire's `ci-changelog.sh` and
+# `ci-copyright.sh` — their trick is that an artifact is stale when the sources
+# moved after it last did. The fourth is the same shape one layer out: the TLA+
+# model's ~175 `file.rs:line` citations were checked once, by hand, and a model
+# pointing at a line that has moved reads as authoritative while being wrong.
+run "bcd bump + CHANGELOG"     python scripts/bcd_gate.py
+run "SPDX headers"             python scripts/spdx_gate.py
+run "formal citations"         python scripts/citation_gate.py
 # The two guards above decide whether the gate covers the tree, and neither had
 # a single test while five commits rewrote them by hand. This is that hand
 # battery kept: a fixture workspace, one mutation per case, both directions.
