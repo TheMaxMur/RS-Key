@@ -147,13 +147,18 @@ impl Session {
         self.pin_fresh = verified;
     }
 
-    fn reset(&mut self) {
-        self.set_pin(false);
-        self.has_mgm = false;
+    /// Drop an outstanding GENERAL AUTHENTICATE challenge/witness.
+    fn clear_challenge(&mut self) {
         self.has_challenge = false;
         self.chal_kind = ChallengeKind::None;
         self.chal_algo = 0;
         self.challenge.zeroize();
+    }
+
+    fn reset(&mut self) {
+        self.set_pin(false);
+        self.has_mgm = false;
+        self.clear_challenge();
     }
 }
 
@@ -194,6 +199,21 @@ impl<'a> PivApplet<'a> {
         }
     }
 
+    /// Age an outstanding 9B challenge/witness against the command about to run.
+    /// Measured on a YubiKey 5.7.4, 3/3 over 10 slots: one survives another
+    /// GENERAL AUTHENTICATE (any P1/P2, success or failure) and a GET METADATA of
+    /// 9B itself; everything else drops it, including commands that fail. §3.2.4
+    /// does not give the lifetime, but it does say an interrupted GA chain "has no
+    /// effect on the PIV Card Application" — this is that principle one command
+    /// wider, and it narrows the race in which a host sharing the card completes
+    /// someone else's handshake.
+    fn age_challenge(&mut self, ins: u8, p2: u8) {
+        if ins == INS_AUTHENTICATE || (ins == INS_GET_METADATA && p2 == SLOT_CARDMGM) {
+            return;
+        }
+        self.sess.clear_challenge();
+    }
+
     /// Owned copies of the device identifiers, for building a [`Device`] that
     /// does not hold a borrow of `self` across `&mut self` calls. The MKEK is read
     /// from the fuses here, so it is live only while the caller holds the tuple.
@@ -217,6 +237,11 @@ impl<'a> PivApplet<'a> {
         p2: u8,
         data: &[u8],
     ) -> Option<(u8, usize, [u8; 2])> {
+        // GENERATE reaches the applet here when the firmware runs the dual-core
+        // prime search, and through `process` otherwise — so the challenge rule
+        // is applied on both, or an RSA keygen would be the one command that
+        // leaves an outstanding challenge standing.
+        self.age_challenge(INS_ASYM_KEYGEN, p2);
         if p1 != 0x00 || !self.sess.has_mgm || !is_key(p2) {
             return None;
         }
@@ -324,6 +349,7 @@ impl<S: Storage> Applet<Fs<S>> for PivApplet<'_> {
     }
 
     fn process(&mut self, apdu: &Apdu, fs: &mut Fs<S>, res: &mut ResBuf) -> Sw {
+        self.age_challenge(apdu.ins, apdu.p2);
         let (serial_hash, serial_id, mkek) = self.device_ids();
         let dev = Device {
             serial_hash: &serial_hash,
@@ -1435,3 +1461,7 @@ mod tests;
 #[cfg(test)]
 #[path = "reselect_tests.rs"]
 mod reselect_tests;
+
+#[cfg(test)]
+#[path = "challenge_tests.rs"]
+mod challenge_tests;

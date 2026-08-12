@@ -115,6 +115,24 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Security
 
+- **An outstanding PIV management-key challenge no longer survives arbitrary
+  traffic.** GENERAL AUTHENTICATE at 9B hands the host a challenge (or a witness)
+  to answer; ours stayed answerable across *every* intervening command — GET
+  DATA, PUT DATA, VERIFY, GET METADATA of any slot, an unimplemented
+  instruction — until the applet was deselected. That is the widest possible
+  window for a host sharing the card to finish someone else's handshake. It still
+  takes the management key, so this is a longer race and not a bypass, but the
+  race had no end. SP 800-73-4 Part 2 §3.2.4 does not give the lifetime, so the
+  oracle decides: measured on a YubiKey 5.7.4, 3/3 over ten slots and both
+  handshake flows, a challenge survives only another GENERAL AUTHENTICATE — even
+  one that fails, even at another slot — and a GET METADATA of 9B itself; every
+  other command drops it, and a SELECT that leaves PIV selected keeps it. Ours now
+  implements exactly that, in one place every command passes through (plus the
+  RSA-keygen fast path, which is the one command that reaches the applet without
+  it). The neighbouring cells are pinned alongside: a challenge is single-use, and
+  "none outstanding" stays a different status word from "wrong answer".
+  **bcdDevice → 0x08A7.**
+
 - **A failed OATH PIN *change* now drops the standing authentication, as a
   failed verify already did.** The two siblings disagreed about one rule. `0xB2`
   VERIFY PIN with a wrong PIN answered `6982` and closed the password safe;
