@@ -40,6 +40,25 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Security
 
+- **The Yubico-OTP use counter now stops one short of the ceiling instead of one
+  past it.** Its two writers disagreed by one. `ticket::build` guarded the counter
+  it already held and *then* incremented, so the press whose session counter wraps
+  at `0x7FFF` stored `0x8000` — the reserved high bit — while `power_up_bump`
+  guards the value it is about to store and so can never write above `0x7FFF`.
+  Once `0x8000` is on flash the boot bump computes `0x8001`, fails its own guard
+  and never writes again: the use counter is frozen while the RAM session counter
+  restarts at 0 on every power-up, so the `(use, session)` pair a Yubico
+  validation server orders OTPs by repeats every 256 presses. That is the replay
+  defence, not a display field. Nothing reached it — the fuzz target presses each
+  slot once from session 0, so the wrapping branch never runs, and the unit test
+  exercised the path at counter 5. Both writers now take their step from one
+  place, pinned by host tests at the ceiling and by two Kani proofs over every
+  `(u16, u8)`: the counter only climbs and never leaves `stored..=0x7FFF`, and the
+  two writers take the same step from the same value. What a key should do once it
+  legitimately reaches the ceiling is unchanged and still open; what it must not
+  do is lower the counter, because lowering it *is* the replay.
+  **bcdDevice → 0x0892.**
+
 - **A PIV signature at a PIN-always slot no longer locks the whole card.**
   Slot `9C`'s pin policy is *always* — "the PIN must be verified every time
   immediately before a signature" (SP 800-73-4 pt1 Table 5). The applet had no

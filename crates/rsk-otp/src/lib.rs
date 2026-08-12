@@ -15,6 +15,7 @@ pub use rsk_sdk::Confirm;
 use rsk_sdk::{Apdu, Applet, ResBuf, Sw};
 use zeroize::Zeroize;
 
+mod counter;
 pub mod hid;
 pub mod seal;
 pub mod ticket;
@@ -987,8 +988,8 @@ pub fn power_up_bump<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng
         if n < SLOT_SIZE {
             rec[CONFIG_SIZE..].fill(0);
         }
-        let counter = u16::from_be_bytes([rec[CONFIG_SIZE], rec[CONFIG_SIZE + 1]]).wrapping_add(1);
-        if counter <= USE_COUNTER_MAX {
+        let stored = u16::from_be_bytes([rec[CONFIG_SIZE], rec[CONFIG_SIZE + 1]]);
+        if let Some(counter) = counter::boot_use_counter(stored) {
             rec[CONFIG_SIZE..CONFIG_SIZE + 2].copy_from_slice(&counter.to_be_bytes());
             let _ = seal::seal_put(dev, fs, rng, KeyFid::new(fid), &rec);
         }

@@ -115,6 +115,21 @@ fn yubico_session_wrap_bumps_counter() {
 }
 
 #[test]
+fn yubico_use_counter_stops_at_the_ceiling() {
+    let mut cfg = [0u8; CONFIG_SIZE];
+    cfg[OFF_AES_KEY..OFF_AES_KEY + 16].copy_from_slice(&[0x22; 16]);
+    let mut slot = [0u8; SLOT_SIZE];
+    slot[..CONFIG_SIZE].copy_from_slice(&cfg);
+    slot[CONFIG_SIZE..CONFIG_SIZE + 2].copy_from_slice(&crate::USE_COUNTER_MAX.to_be_bytes());
+    let mut out = [0u8; MAX_TICKET];
+    // The wrapping press at the ceiling must store nothing: 0x8000 sets the
+    // reserved high bit, and power_up_bump would then decline forever after.
+    let t = build(&slot, 255, 0, [0, 0], &mut out).unwrap();
+    assert_eq!(t.new_session, 0);
+    assert!(t.new_tail.is_none());
+}
+
+#[test]
 fn static_password_types_scancodes_verbatim() {
     let mut cfg = [0u8; CONFIG_SIZE];
     for (i, b) in cfg[..38].iter_mut().enumerate() {
