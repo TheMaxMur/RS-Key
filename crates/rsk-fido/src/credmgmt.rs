@@ -8,7 +8,7 @@
 //! permission; the MAC covers the subcommand byte for 0x01/0x02 and
 //! `subcommand ‖ <raw subCommandParams>` for 0x04/0x06/0x07. The three read
 //! subcommands additionally accept the persistent token's `pcmr` grant
-//! (CTAP 2.2 §6.8.2/.3/.4); the two writers never do.
+//! (CTAP 2.2 §6.8.2/.3/.4) while a PIN is set; the two writers never do.
 //! enumerateCredentials emits the core 0x06–0x09 plus the extension fields
 //! 0x0A credProtect / 0x0B largeBlobKey (derived) / 0x0C thirdPartyPayment.
 
@@ -23,7 +23,7 @@ use crate::cbordec::{cbor, def_arr, def_map, skip_value};
 use crate::consts::{
     CM_DELETE_CREDENTIAL, CM_ENUMERATE_CREDS_BEGIN, CM_ENUMERATE_CREDS_NEXT,
     CM_ENUMERATE_RPS_BEGIN, CM_ENUMERATE_RPS_NEXT, CM_GET_CREDS_METADATA, CM_UPDATE_USER_INFO,
-    CRED_PROT_UV_OPTIONAL, EF_CRED, EF_RP, LARGE_BLOB_EXT, MAX_RAW_SUBPARA,
+    CRED_PROT_UV_OPTIONAL, EF_CRED, EF_PIN, EF_RP, LARGE_BLOB_EXT, MAX_RAW_SUBPARA,
     MAX_RESIDENT_CREDENTIALS,
 };
 use crate::credential::{
@@ -247,15 +247,21 @@ fn authorize_cm<S: Storage, R: Rng>(
 }
 
 /// Whether the MAC was made with the persistent token (CTAP 2.2 §6.8.2 step 4).
-/// A holder of it *is* the `pcmr` grant — the record exists only while the
-/// permission does — and a persistent token carries no rpId binding and no usage
-/// timer, so it authorizes on its own. Absent record: no grant, no match.
+/// A holder of it *is* the `pcmr` grant, and a persistent token carries no rpId
+/// binding and no usage timer, so it authorizes on its own. No record — or no
+/// `EF_PIN` behind it — is no grant.
 fn authorized_by_ppuat<S: Storage, R: Rng>(
     ctx: &mut Ctx<S, R>,
     proto: PinProto,
     payload: &[u8],
     param: &[u8],
 ) -> bool {
+    // Both issuance paths gate on `EF_PIN` (§6.5.5.7.2/.3), so a grant without one is
+    // the torn reset `clientpin.rs` names: that cleanup runs on set-PIN, which an owner
+    // carrying on touch-only never does, leaving the old holder the next credentials.
+    if !ctx.fs.has_data(EF_PIN) {
+        return false;
+    }
     let Some(mut tok) = load_ppuat(&ctx.dev, ctx.fs) else {
         return false;
     };

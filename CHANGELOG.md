@@ -40,6 +40,24 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Security
 
+- **A persistent credential-management grant no longer outlives the PIN that
+  granted it.** CTAP 2.2 §6.8.2's `pcmr` token is a bearer secret in flash
+  (`EF_PAUTHTOKEN`): its holder drives getCredsMetadata, enumerateRPsBegin and
+  enumerateCredsBegin with no PIN check, because the record's presence *is* the
+  permission. That reasoning holds for every way the record can legitimately come
+  to exist — both issuance paths refuse without a PIN — and stops holding after a
+  torn `authenticatorReset`, whose gate phase can take `EF_PIN` and lose power
+  before `EF_PAUTHTOKEN`. The existing defence clears the leftover when a PIN is
+  next established; an owner who carries on with a touch-only key never does that,
+  and the old holder went on reading the credential directory — relying-party ids,
+  credential ids, user names — of everything registered afterwards. Not keys, not
+  assertions: deleteCredential and updateUserInformation never consulted the grant.
+  The three reads now refuse it when no PIN is set, which is the same
+  `PIN_AUTH_INVALID` a completed reset already answers, so a platform cannot tell
+  the torn case from the clean one. Found by a TLA+ model of the wipe
+  (`NoAccessibleSecretWithoutGate`, 102523 distinct states, depth 14). Nothing
+  changes for a device with a PIN. **bcdDevice → 0x08C0.**
+
 - **A wipe deletes the device seed first, so a power cut can no longer leave a
   *usable* passkey behind.** `authenticatorReset`'s own comment promised "the seed
   leads, so a surviving credential record is cryptographically dead" and nothing

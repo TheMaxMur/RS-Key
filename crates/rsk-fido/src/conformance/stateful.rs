@@ -267,6 +267,9 @@ fn an_idle_enumerate_walk_retires_on_its_own_timer() {
     for (i, rp) in rps.iter().enumerate() {
         assert_ok(&a.send(CTAP_MAKE_CREDENTIAL, &mc_rk_on(rp, &[i as u8])));
     }
+    // A `pcmr` grant is only issuable with a PIN, and the reads refuse one without —
+    // so the record alone would have this walk rejected before the timer is reached.
+    a.set_pin_file();
     let ppuat = crate::seed::ensure_ppuat(&dev(), &mut a.fs, &mut a.rng).unwrap();
     let begin = cm(
         CM_ENUMERATE_RPS_BEGIN,

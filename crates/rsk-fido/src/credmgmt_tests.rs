@@ -134,6 +134,22 @@ fn setup() -> (Fs<RamStorage>, SeqRng) {
     (fs, rng)
 }
 
+/// Mint a `pcmr` grant the way a platform can actually reach one: both issuance
+/// paths require a PIN (§6.5.5.7.2/.3), and the reads refuse a grant without one as
+/// a torn-reset leftover — so a harness that skips `EF_PIN` proves the refusal
+/// rather than the grant.
+fn grant_pcmr(fs: &mut Fs<RamStorage>, rng: &mut SeqRng) -> [u8; 32] {
+    // Full-length record, not a stand-in: the verifier answers `CTAP2_ERR_OTHER`
+    // to a short one, so a later test that drove a clientPIN command through this
+    // would get that instead of a PIN check.
+    let mut pin_file = [0u8; crate::clientpin::PIN_FILE_LEN];
+    pin_file[0] = 8; // retries
+    pin_file[1] = 4; // min length
+    pin_file[2] = 1;
+    fs.put(EF_PIN, &pin_file).unwrap();
+    ensure_ppuat(&dev(), fs, rng).unwrap()
+}
+
 // Encode a subCommandParams map, returning its raw CBOR bytes.
 fn subpara_rpidhash(rp_hash: &[u8; 32]) -> std::vec::Vec<u8> {
     let mut buf = [0u8; 64];
@@ -1721,7 +1737,7 @@ fn enumerate_credentials_reads_are_linear_not_quadratic() {
 fn persistent_token_authorizes_the_reads_after_a_power_cycle() {
     let (mut fs, mut rng) = setup();
     register(&mut fs, &mut rng, "example.com", &[1, 1], "a");
-    let ppuat = ensure_ppuat(&dev(), &mut fs, &mut rng).unwrap();
+    let ppuat = grant_pcmr(&mut fs, &mut rng);
     let rp_hash = sha256(b"example.com");
     let subpara = subpara_rpidhash(&rp_hash);
 
@@ -1746,6 +1762,40 @@ fn persistent_token_authorizes_the_reads_after_a_power_cycle() {
     assert_eq!(state.paut.permissions, 0, "no session token was involved");
 }
 
+/// …but not past the PIN that granted it. `authenticatorReset`'s gate phase can take
+/// `EF_PIN` and lose power before `EF_PAUTHTOKEN`; `clientpin.rs` clears the leftover
+/// when a PIN is next established, which an owner carrying on with a touch-only key
+/// never does. The old holder would go on reading the credential directory — rp ids,
+/// credential ids, user names — of everything registered after the reset.
+#[test]
+fn a_persistent_grant_does_not_outlive_its_pin() {
+    let (mut fs, mut rng) = setup();
+    register(&mut fs, &mut rng, "example.com", &[1, 1], "a");
+    let ppuat = grant_pcmr(&mut fs, &mut rng);
+    let rp_hash = sha256(b"example.com");
+    let subpara = subpara_rpidhash(&rp_hash);
+    fs.force_delete(EF_PIN).unwrap();
+
+    let mut state = FidoState::new();
+    let mut out = [0u8; 512];
+    for (subcmd, sp) in [
+        (0x01u8, None),
+        (0x02, None),
+        (0x04, Some(subpara.as_slice())),
+    ] {
+        assert_eq!(
+            run(
+                &mut fs,
+                &mut state,
+                &cm_request(subcmd, sp, &ppuat),
+                &mut out
+            ),
+            Err(CtapError::PinAuthInvalid),
+            "subcommand {subcmd:#04x} served a grant that outlived its PIN"
+        );
+    }
+}
+
 /// The permission is *read* only (§6.5.5.7 permissions table): deleteCredential and
 /// updateUserInformation never consult the persistent token, so the same MAC that
 /// just enumerated is rejected here.
@@ -1753,7 +1803,7 @@ fn persistent_token_authorizes_the_reads_after_a_power_cycle() {
 fn persistent_token_is_refused_by_the_writers() {
     let (mut fs, mut rng) = setup();
     let (cred_id, ..) = register(&mut fs, &mut rng, "example.com", &[1, 1], "a");
-    let ppuat = ensure_ppuat(&dev(), &mut fs, &mut rng).unwrap();
+    let ppuat = grant_pcmr(&mut fs, &mut rng);
     let del = subpara_cred(&cred_id);
     let upd = subpara_update(&cred_id, &[1, 1], "a", "A");
 
@@ -1780,7 +1830,7 @@ fn persistent_token_is_refused_by_the_writers() {
 fn clearing_the_persistent_token_revokes_the_grant() {
     let (mut fs, mut rng) = setup();
     register(&mut fs, &mut rng, "example.com", &[1, 1], "a");
-    let old = ensure_ppuat(&dev(), &mut fs, &mut rng).unwrap();
+    let old = grant_pcmr(&mut fs, &mut rng);
     clear_ppuat(&mut fs).unwrap();
 
     let mut state = FidoState::new();
