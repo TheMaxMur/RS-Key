@@ -40,6 +40,24 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **A password of a length no password could have no longer costs a retry.**
+  VERIFY compared whatever it was handed: a one-byte or 200-byte value against a
+  6-to-127-character reference was treated as a wrong guess, so it spent a try and
+  dropped an already-entered PIN. Three of those block the reference. Measured on
+  a YubiKey 5.7.4, 3/3 at every boundary: PW1 and the reset code below 6 or above
+  127, and PW3 below 8 or above 127, answer `6A80`, spend nothing, and leave the
+  standing access status up — and the length is judged before the blocked check,
+  not after. Ours now does the same, in the one place all three of VERIFY, CHANGE
+  REFERENCE DATA and RESET RETRY COUNTER compare a reference. **The gate applies
+  only where the stored reference is itself inside the policy:** `PIN_MAX_LEN`
+  arrived in a build that *added* the length check, so an older one stored
+  whatever it was given, and this guide promises a shorter legacy value keeps
+  working — refusing it would lock an owner out of their own key, which is never
+  the parity answer. What is refused is the published policy and never the stored
+  length itself; refusing exactly the lengths that cannot match would tell anyone
+  holding the card how long the password is.
+  **bcdDevice → 0x08A9.**
+
 - **OpenPGP key IMPORT is now held to the slot's algorithm attribute.** The RSA
   arm read that attribute only to decide "RSA or EC" and never compared a length,
   so a 1024-bit key imported cleanly into a slot announcing RSA-2048 — and the

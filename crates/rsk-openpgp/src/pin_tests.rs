@@ -1260,3 +1260,127 @@ fn the_status_query_reports_the_latch_before_the_counter() {
         Sw::PIN_BLOCKED
     );
 }
+
+/// The retry counters as DO C4 reports them, and whether the reference is latched.
+fn state(fs: &mut Fs<RamStorage>, sess: &mut Session, p2: u8, fid: u16) -> (u8, Sw) {
+    let mut pw = [0u8; 8];
+    let n = fs.read(EF_PW_PRIV, &mut pw).unwrap_or(0);
+    let idx = pw_retry_idx(fid);
+    let left = if idx < n { pw[idx] } else { 0 };
+    let latch = verify(&dev(), fs, sess, &mut CountRng(0), 0x00, p2, &[]);
+    (left, latch)
+}
+
+#[test]
+fn a_password_of_an_impossible_length_is_not_a_wrong_password() {
+    // Measured on a YubiKey 5.7.4, 3/3 at every boundary: PW1 below 6 or above 127
+    // and PW3 below 8 or above 127 answer `6A80`, spend no retry and leave the
+    // standing access status up. A length the reference could not have is a
+    // malformed request; only a plausible one is an attempt.
+    for (p2, fid, good, impossible, plausible) in [
+        (
+            PW1_MODE81,
+            EF_PW1,
+            PW1_DEFAULT,
+            [1usize, 2, 5, 128, 129, 200, 255].as_slice(),
+            [6usize, 7, 127].as_slice(),
+        ),
+        (
+            PW3_MODE83,
+            EF_PW3,
+            PW3_DEFAULT,
+            [1, 2, 5, 6, 7, 128, 129, 200, 255].as_slice(),
+            [8, 9, 127].as_slice(),
+        ),
+    ] {
+        let mut fs = setup();
+        let mut sess = Session::new();
+        let d = dev();
+        let arm = |fs: &mut Fs<RamStorage>, sess: &mut Session| {
+            assert_eq!(
+                verify(&d, fs, sess, &mut CountRng(0), 0x00, p2, good),
+                Sw::OK
+            );
+        };
+
+        arm(&mut fs, &mut sess);
+        for len in impossible {
+            let sw = verify(
+                &d,
+                &mut fs,
+                &mut sess,
+                &mut CountRng(0),
+                0x00,
+                p2,
+                &vec![b'A'; *len],
+            );
+            assert_eq!(sw, WRONG_DATA, "{p2:02X}: a {len}-byte value");
+            assert_eq!(
+                state(&mut fs, &mut sess, p2, fid),
+                (PW_RETRIES_DEFAULT, Sw::OK),
+                "{p2:02X}: a {len}-byte value cost a retry or the latch"
+            );
+        }
+        // The control: a wrong password of a length the reference could have IS an
+        // attempt, and must go on costing one.
+        for len in plausible {
+            arm(&mut fs, &mut sess);
+            let sw = verify(
+                &d,
+                &mut fs,
+                &mut sess,
+                &mut CountRng(0),
+                0x00,
+                p2,
+                &vec![b'A'; *len],
+            );
+            assert_eq!(sw, Sw::retries(PW_RETRIES_DEFAULT - 1), "{p2:02X}/{len}");
+            assert_eq!(
+                state(&mut fs, &mut sess, p2, fid).1,
+                Sw::retries(PW_RETRIES_DEFAULT - 1),
+                "{p2:02X}: a plausible wrong value must drop the latch"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_stored_reference_outside_the_policy_still_verifies() {
+    // `PIN_MAX_LEN` arrived with 055ef86, whose diff ADDS `check_pin_len` — so an
+    // older build stored whatever it was given, and the guide still promises a
+    // shorter legacy value keeps working. The length gate must not lock that owner
+    // out of their own key: it applies only where the stored reference is itself
+    // inside the policy.
+    let mut fs = setup();
+    let mut sess = Session::new();
+    let d = dev();
+    store_verifier(&d, &mut fs, EF_PW1, b"abc").unwrap();
+
+    assert_eq!(
+        verify(
+            &d,
+            &mut fs,
+            &mut sess,
+            &mut CountRng(0),
+            0x00,
+            PW1_MODE81,
+            b"abc"
+        ),
+        Sw::OK,
+        "a legacy 3-byte reference must still verify"
+    );
+    // And a wrong value of that same impossible length is still an attempt here —
+    // the gate is off for this card, not inverted.
+    assert_eq!(
+        verify(
+            &d,
+            &mut fs,
+            &mut sess,
+            &mut CountRng(0),
+            0x00,
+            PW1_MODE81,
+            b"abd"
+        ),
+        Sw::retries(PW_RETRIES_DEFAULT - 1)
+    );
+}

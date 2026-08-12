@@ -183,7 +183,14 @@ pub fn check_pin<S: Storage>(
     p2: u8,
     data: &[u8],
 ) -> Sw {
-    // The retry-block floor comes first, as PIV `check_ref` and FIDO `clientpin` do:
+    // A length no reference of this kind could hold is a malformed request, not a
+    // wrong password: measured on a YubiKey 5.7.4, 3/3 at every boundary, it
+    // answers `6A80`, spends no retry and leaves the standing access status up —
+    // and it does so BEFORE the blocked check, as E47's precedence note has it.
+    if offered_len_impossible(fs, fid, data.len()) {
+        return WRONG_DATA;
+    }
+    // The retry-block floor comes next, as PIV `check_ref` and FIDO `clientpin` do:
     // deriving — and worse, migrating — ahead of it made a blocked reference do two
     // flash writes for the correct value and none for a wrong one, an oracle.
     let mut pw = [0u8; 8];
@@ -569,6 +576,28 @@ fn check_pin_len(fid: u16, len: usize) -> Result<(), Sw> {
         return Err(Sw::WRONG_LENGTH);
     }
     Ok(())
+}
+
+/// Whether an offered password is a length the stored reference could not be.
+///
+/// Only when that reference is itself inside the policy. `PIN_MAX_LEN` arrived
+/// with `055ef86`, whose diff *adds* `check_pin_len` — so a build before it stored
+/// whatever it was given, and `docs/guides/openpgp.md` still promises a shorter
+/// legacy value keeps working. Gating unconditionally would lock such an owner out
+/// of their own key, and losing a credential is never the parity answer. The
+/// verifier record's first byte is the stored length, which is what makes the
+/// question answerable at all.
+///
+/// The policy is the gate, never the stored length itself: refusing exactly the
+/// lengths that cannot match would publish the password's length to anyone with
+/// the card. `C4` publishes the policy already.
+fn offered_len_impossible<S: Storage>(fs: &mut Fs<S>, fid: u16, len: usize) -> bool {
+    let mut rec = [0u8; 1];
+    let stored = match fs.read(fid, &mut rec) {
+        Some(n) if n >= 1 => rec[0] as usize,
+        _ => return false,
+    };
+    check_pin_len(fid, stored).is_ok() && check_pin_len(fid, len).is_err()
 }
 
 /// Whether `fid`'s stored verifier is one [`check_pin`] can never accept — too

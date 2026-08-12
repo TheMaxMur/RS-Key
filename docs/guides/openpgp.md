@@ -36,6 +36,12 @@ whatever the host's own policy is. gpg applies the same `≥ 6` / `≥ 8` minima
 before it ever reaches the card. A shorter reference stored by an older firmware
 keeps verifying; only new ones are checked.
 
+A **verify** of a value outside the range is refused the same way, with `6A80` —
+and it costs **no retry** and leaves an already-entered PIN standing, because a
+password the reference could not be is a malformed request rather than a wrong
+guess. On a card still holding a legacy out-of-range reference the check is off,
+so that reference stays verifiable.
+
 A fresh card has **no** Reset Code. It stays deactivated until an admin sets one
 (`passwd` option 4, below), so `RESET RETRY COUNTER` in its RC form cannot run
 against a known default.
