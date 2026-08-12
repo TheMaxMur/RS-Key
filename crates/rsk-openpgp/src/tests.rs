@@ -1658,6 +1658,59 @@ fn key_info_reports_generated_and_imported_apart() {
 // length used to be stored, so the same DO read back as two different values —
 // itself standalone, and a truncation inside the aggregate. A YubiKey 5.7.4
 // answers 6A80 at every other length and leaves the DO alone.
+/// §4.4.1 caps the cardholder name at 39 bytes and the language preference at 8,
+/// and §4.4.3.4 gives the sex DO the ISO 5218 code set rather than a length. A
+/// YubiKey 5.7.4 refuses a byte over either cap with `6A80` and leaves the DO
+/// alone (measured at the maximum, +1, 254 and 255), and refuses `'A'` for sex.
+#[test]
+fn put_data_caps_the_cardholder_dos() {
+    let rng = RefCell::new(CountRng(7));
+    let mut fs = make_fs();
+    let presence = RefCell::new(crate::AlwaysConfirm);
+    let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
+    verify_pin(&mut app, &mut fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
+
+    for (p1, p2, max) in [
+        (0x00u8, 0x5Bu8, consts::NAME_MAX),
+        (0x5F, 0x2D, consts::LANG_MAX),
+    ] {
+        let good = vec![b'x'; max];
+        assert_eq!(put(&mut app, &mut fs, p1, p2, &good), Sw::OK);
+        for n in [max + 1, max + 2, 254, 255] {
+            assert_eq!(
+                put(&mut app, &mut fs, p1, p2, &vec![b'y'; n]),
+                consts::WRONG_DATA,
+                "PUT {p1:02X}{p2:02X} len {n}"
+            );
+            let (body, sw) = run(
+                &mut app,
+                &mut fs,
+                &[0x00, consts::INS_GET_DATA, p1, p2, 0x00],
+            );
+            assert_eq!(sw, Sw::OK);
+            assert_eq!(body, good, "PUT {p1:02X}{p2:02X} len {n} altered the DO");
+        }
+        // Clearing the DO is still allowed — this is a cap, not a fixed width.
+        assert_eq!(put(&mut app, &mut fs, p1, p2, &[]), Sw::OK);
+    }
+
+    // Sex: every ISO 5218 code, and nothing else.
+    for v in consts::SEX_VALUES {
+        assert_eq!(put(&mut app, &mut fs, 0x5F, 0x35, &[*v]), Sw::OK);
+    }
+    for v in [b'A', b'3', b'm', 0x00] {
+        assert_eq!(
+            put(&mut app, &mut fs, 0x5F, 0x35, &[v]),
+            consts::WRONG_DATA,
+            "sex {v:#04X}"
+        );
+    }
+    assert_eq!(
+        put(&mut app, &mut fs, 0x5F, 0x35, b"11"),
+        consts::WRONG_DATA
+    );
+}
+
 #[test]
 fn put_data_polices_the_fixed_length_dos() {
     let rng = RefCell::new(LcgRng(19));

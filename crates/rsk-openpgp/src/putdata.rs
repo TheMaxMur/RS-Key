@@ -28,6 +28,23 @@ fn fixed_do_len(fid: u16) -> Option<usize> {
     }
 }
 
+/// The maximum §4.4.1 gives `fid`, where it gives one — a cap, not a fixed width,
+/// so an empty write still deletes the DO.
+///
+/// Measured on a YubiKey 5.7.4, 3/3: 39 bytes of name and 8 of language
+/// preference are `9000`, one byte more is `6A80`, and so are 254 and 255 — the
+/// DO untouched every time. Ours took any length, and the cardholder reader that
+/// feeds the trusted display carries an 8-byte language field, so a longer one
+/// was already being shown cut.
+fn max_do_len(fid: u16) -> Option<usize> {
+    match fid {
+        EF_CH_NAME => Some(NAME_MAX),
+        EF_LANG_PREF => Some(LANG_MAX),
+        EF_SEX => Some(1),
+        _ => None,
+    }
+}
+
 /// Write `data` to the DO addressed by `fid` (empty `data` deletes it, unless
 /// the DO has a fixed length). ACL: private DOs 1/3 need PW2 or PW3; everything
 /// else needs PW3.
@@ -81,6 +98,15 @@ pub fn put_data<S: Storage>(fs: &mut Fs<S>, sess: &Session, fid: u16, data: &[u8
     // refuses length 0 here too, and there is no way to express "no fingerprint"
     // in C5 anyway — an absent one already reads as zeroes.
     if fixed_do_len(fid).is_some_and(|want| data.len() != want) {
+        return WRONG_DATA;
+    }
+    if max_do_len(fid).is_some_and(|max| data.len() > max) {
+        return WRONG_DATA;
+    }
+    // §4.4.3.4 enumerates the sex DO's values rather than bounding them, so this
+    // one is a content gate: a YubiKey answers `6A80` to `'A'`, which is the right
+    // length and not a code.
+    if fid == EF_SEX && !data.is_empty() && !SEX_VALUES.contains(&data[0]) {
         return WRONG_DATA;
     }
 

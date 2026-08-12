@@ -40,6 +40,19 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **The cardholder DOs are held to the shapes the spec gives them.** PUT DATA of
+  the name (`5B`), the language preference (`5F2D`) and the sex (`5F35`) took any
+  length and any content: a 255-byte name and a `5F35` of `'A'` both stored with
+  `9000`. §4.4.1 caps the first two at 39 and 8 bytes and §4.4.3.4 gives the third
+  the ISO 5218 code set, and a YubiKey 5.7.4 enforces all three — one byte over
+  either cap is `6A80` with the DO untouched, and `'A'` is `6A80` on length 1, a
+  content refusal rather than a length one. This is the same class as the
+  fingerprint and timestamp gate that shipped earlier, on the DOs it did not
+  sweep. Clearing a DO still works: these are caps, not fixed widths. It also
+  closes a quiet display bug — the cardholder reader that feeds the trusted panel
+  carries an 8-byte language field, so a longer one was already being shown cut.
+  **bcdDevice → 0x08AE.**
+
 - **A new password of an out-of-range length is refused with `6985`, not
   `6700`.** The APDU carrying it is perfectly well formed; it is the value inside
   that the card will not take, and `6700` "wrong length" sends a host looking at
