@@ -196,6 +196,37 @@ run "fmt (fuzz)"               cargo fmt --manifest-path fuzz/Cargo.toml --check
 # and five diagnostics sat in it committed and red. Clippy subsumes the check, so
 # it replaces that row rather than joining it — two rows thrash one target-dir.
 run "clippy (fuzz)"            cargo clippy --manifest-path fuzz/Cargo.toml --all-targets --target "$HOST" -- -D warnings
+# No row in this script or in any workflow had ever run rustdoc, so every
+# intra-doc link in the tree was unchecked and 19 of the units below had rotted
+# to 75 broken ones. `RUSTDOCFLAGS` is what makes these rows able to go red at
+# all — a broken link is only a warning, and plain `cargo doc` exits 0 over every
+# one of them. It pairs with `--no-deps`, which keeps that `-D` off dependency
+# docs nobody here can fix.
+#
+# Two permutations per unit, because a doc link crosses a cfg boundary in both
+# directions and neither run sees the other's half: the default build cannot see
+# a link written INSIDE feature-gated code (rsk-fido's `bench` module hid three),
+# and an all-features build cannot see a link TO an item a feature removes
+# (`--features display` drops `Blinker`/`ButtonPresence`, which the default
+# firmware docs link to). `tools/tui` declares no features and `tools/emu`'s two
+# only forward to rsk-fido, which `--no-deps` excludes, so for those a second
+# permutation would re-document the same source.
+run "rustdoc (host)"           env RUSTDOCFLAGS="-D warnings" cargo doc -p rsk-sdk -p rsk-fs -p rsk-usb -p rsk-crypto -p rsk-fido -p rsk-openpgp -p rsk-rsa-asm -p rsk-sha512 -p rsk-ec -p rsk-mldsa -p rsk-mgmt -p rsk-oath -p rsk-otp -p rsk-piv -p rsk-rescue -p rsk-vendor -p rsk-device -p rsk-display -p rsk-store -p rsk-led -p rsk-ui -p rsk-bip39 -p rsk-slip39 -p rsk-bench --no-deps --target "$HOST"
+run "rustdoc (host all-feat)"  env RUSTDOCFLAGS="-D warnings" cargo doc -p rsk-sdk -p rsk-fs -p rsk-usb -p rsk-crypto -p rsk-fido -p rsk-openpgp -p rsk-rsa-asm -p rsk-sha512 -p rsk-ec -p rsk-mldsa -p rsk-mgmt -p rsk-oath -p rsk-otp -p rsk-piv -p rsk-rescue -p rsk-vendor -p rsk-device -p rsk-display -p rsk-store -p rsk-led -p rsk-ui -p rsk-bip39 -p rsk-slip39 -p rsk-bench --no-deps --all-features --target "$HOST"
+# `firmware` and `rsk-wipe` are the workspace's only thumbv8m-only members, so
+# these two rows take the default target instead of $HOST. `BOARD` because
+# rsk-wipe refuses to guess a flash size, `LED_KIND=none` because `--all-features`
+# turns on `display`, whose compile_error guard demands it. rsk-wipe declares no
+# features, so only the firmware needs the second permutation.
+run "rustdoc (embedded)"       env BOARD=waveshare-one RUSTDOCFLAGS="-D warnings" cargo doc -p firmware -p rsk-wipe --no-deps
+run "rustdoc (firmware all-feat)" env BOARD=waveshare-one LED_KIND=none RUSTDOCFLAGS="-D warnings" cargo doc -p firmware --no-deps --all-features
+run "rustdoc (tui)"            env RUSTDOCFLAGS="-D warnings" cargo doc --manifest-path tools/tui/Cargo.toml --no-deps --target "$HOST"
+run "rustdoc (emu)"            env RUSTDOCFLAGS="-D warnings" cargo doc --manifest-path tools/emu/Cargo.toml --no-deps --target "$HOST"
+# `--bins` is load-bearing: cargo-fuzz writes `doc = false` on all 53 targets, so
+# a plain `cargo doc` here documents nothing, prints no `Documenting` line and
+# exits 0 in 0.1 s — a green row over an empty set, the defect this block exists
+# to prevent. The flag overrides `doc = false`; `--all-targets` is not a `doc` flag.
+run "rustdoc (fuzz)"           env RUSTDOCFLAGS="-D warnings" cargo doc --manifest-path fuzz/Cargo.toml --bins --no-deps --target "$HOST"
 run "test (host)"              cargo test -p rsk-sdk -p rsk-fs -p rsk-usb -p rsk-crypto -p rsk-fido -p rsk-openpgp -p rsk-rsa-asm -p rsk-sha512 -p rsk-ec -p rsk-mldsa -p rsk-mgmt -p rsk-oath -p rsk-otp -p rsk-piv -p rsk-rescue -p rsk-vendor -p rsk-device -p rsk-display -p rsk-store -p rsk-led -p rsk-ui -p rsk-bip39 -p rsk-slip39 -p rsk-bench --target "$HOST"
 # The PQC-advertisement opt-in changes the getInfo shape — test both forms.
 run "test (advertise-pqc)"     cargo test -p rsk-fido --features advertise-pqc --target "$HOST" getinfo

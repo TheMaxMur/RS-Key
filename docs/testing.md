@@ -27,11 +27,12 @@ Top to bottom: fast and host-only, tapering to slow and needs-a-board.
 nix develop -c ./scripts/check.sh
 ```
 
-runs fmt, clippy (embedded **and** host targets, `-D warnings`), all host
-tests, both firmware builds (touch + no-touch), the rsk-wipe build, a firmware
-flash-size ratchet (the shipping image must stay under a ceiling that hugs its
-current size, well below the 2560K code region), `cargo-audit`, `cargo-deny`,
-`cargo-vet` and `gitleaks`.
+runs fmt, clippy (embedded **and** host targets, `-D warnings`), rustdoc over
+every workspace (also `-D warnings`, so a broken intra-doc link fails the gate),
+all host tests, both firmware builds (touch + no-touch), the rsk-wipe build, a
+firmware flash-size ratchet (the shipping image must stay under a ceiling that
+hugs its current size, well below the 2560K code region), `cargo-audit`,
+`cargo-deny`, `cargo-vet` and `gitleaks`.
 Green check.sh is the bar for every commit.
 
 ## Host tests
