@@ -99,8 +99,10 @@ DIVERGENCES: dict[str, dict[str, str]] = {
         "test_070_oath.py::test_noauth": "a card reset deselects the applet, so LIST without SELECT is 6A82",
         # These send CALCULATE with a bare `74` tag — no length byte, no value —
         # which is not a TLV. With the encoded empty challenge `74 00` that ykman
-        # actually sends, RS-Key answers the suite's own expected codes byte for
-        # byte (`45 d9 0f 25` for the IMF case).
+        # actually sends, RS-Key computes the same truncation these expect. It no
+        # longer sends the same *bytes*: their literals (`45 d9 0f 25` for the IMF
+        # case) are the raw 31-bit truncation, and a YubiKey 5.7.4 reduces it to
+        # the credential's six digits, which RS-Key now does too (E65).
         "test_070_oath.py::test_bothoath": "the challenge TLV is sent truncated (`74` with no length)",
         "test_070_oath.py::test_imf_overwrite": "the challenge TLV is sent truncated (`74` with no length)",
         "test_070_oath.py::test_imf_more": "the challenge TLV is sent truncated (`74` with no length)",
