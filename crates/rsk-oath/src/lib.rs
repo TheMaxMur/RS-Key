@@ -67,7 +67,14 @@ const OATH_CODE_MAX: usize = 128;
 const EF_OTP_PIN: u16 = 0x10A0;
 
 const MAX_OATH_CRED: u16 = 255;
+/// Width of the VALIDATE challenge SELECT offers — the one place YKOATH fixes a
+/// challenge length. A read path's challenge is [`CHALLENGE_MAX`] wide.
 const CHALLENGE_LEN: usize = 8;
+/// Widest challenge CALCULATE and CALCULATE ALL accept. A YubiKey 5.7.4 treats
+/// it as an opaque byte string, HMACs exactly what it was sent and answers
+/// `6A80` from 65 — on both read paths, before the credential lookup and
+/// whatever the credential's type (worklog ORACLE-oathfido §E58).
+const CHALLENGE_MAX: usize = 64;
 const MAX_OTP_COUNTER: u8 = 3;
 /// OTP-PIN record format tag. v1 = `[counter, 0x01, pin_derive_verifier(pin)]`
 /// roots the verifier in the OTP MKEK (identical to the OpenPGP/PIV PINs), so a
@@ -132,12 +139,11 @@ const PWS_MAX: usize = 255;
 const PROP_INCREASING: u8 = 0x01;
 const PROP_TOUCH: u8 = 0x02;
 
-/// Width of the stored high-water mark, and so the widest challenge an
-/// only-increasing credential accepts. A YubiKey takes 0..=64 bytes of challenge
-/// and answers `6A80` above that, so a mark this wide holds everything the card
-/// would ever compare. Right-zero-padded to a fixed width, which makes the
-/// comparison the card's own — see [`raise_mark`].
-const MARK_LEN: usize = 64;
+/// Width of the stored high-water mark: exactly [`CHALLENGE_MAX`], so a mark
+/// holds every challenge either read path will ever compare against it.
+/// Right-zero-padded to that fixed width, which makes the comparison the card's
+/// own — see [`raise_mark`].
+const MARK_LEN: usize = CHALLENGE_MAX;
 
 // Instructions.
 const INS_PUT: u8 = 0x01;
@@ -177,7 +183,7 @@ enum Chain {
     },
     CalcAll {
         p2: u8,
-        chal: [u8; CHALLENGE_LEN],
+        chal: [u8; CHALLENGE_MAX],
         chal_len: u8,
     },
 }
@@ -534,7 +540,7 @@ impl<'a> OathApplet<'a> {
             return Sw::SECURITY_STATUS_NOT_SATISFIED;
         }
         let data = &apdu.data[..apdu.nc];
-        let Some(chal) = find_tag(data, TAG_CHALLENGE as u16) else {
+        let Some(chal) = challenge_of(data) else {
             return Sw::INCORRECT_PARAMS;
         };
         let Some(name) = find_tag(data, TAG_NAME as u16) else {
@@ -635,7 +641,7 @@ impl<'a> OathApplet<'a> {
         if !self.validated {
             return Sw::SECURITY_STATUS_NOT_SATISFIED;
         }
-        let Some(chal) = find_tag(&apdu.data[..apdu.nc], TAG_CHALLENGE as u16) else {
+        let Some(chal) = challenge_of(&apdu.data[..apdu.nc]) else {
             return Sw::INCORRECT_PARAMS;
         };
         // `only increasing` is settled for the whole store before a byte of the
@@ -643,21 +649,19 @@ impl<'a> OathApplet<'a> {
         // credential the challenge does not beat — empty body, plain credentials
         // collateral — while the marks before it have already advanced. Our pages
         // go out as they are built, so a refusal found on page 2 could not be
-        // taken back: the pass has to finish first. It reads the challenge the
-        // host sent, not the clamped copy below, or the two read paths would
-        // disagree about which challenges run backwards.
+        // taken back: the pass has to finish first.
         if let Err(sw) = self.advance_marks(fs, chal) {
             return sw;
         }
-        // Stash the (8-byte, per YKOATH) time challenge so SEND REMAINING pages
-        // recompute the same codes; a longer challenge is clamped (spec is 8).
-        let mut chal_buf = [0u8; CHALLENGE_LEN];
-        let chal_len = chal.len().min(CHALLENGE_LEN);
-        chal_buf[..chal_len].copy_from_slice(&chal[..chal_len]);
+        // Stash the challenge whole so SEND REMAINING pages recompute the same
+        // codes — every byte of it, or a later page would answer a different
+        // code from the first under one 9000.
+        let mut chal_buf = [0u8; CHALLENGE_MAX];
+        chal_buf[..chal.len()].copy_from_slice(chal);
         self.chain = Chain::CalcAll {
             p2: apdu.p2,
             chal: chal_buf,
-            chal_len: chal_len as u8,
+            chal_len: chal.len() as u8,
         };
         self.chain_at = 0;
         self.calc_all_page(fs, res)
@@ -1250,6 +1254,14 @@ impl<S: Storage> Applet<Fs<S>> for OathApplet<'_> {
             _ => Sw::INS_NOT_SUPPORTED,
         }
     }
+}
+
+/// The challenge a read path was given, or `None` where a YubiKey answers
+/// `6A80`. One owner for both of them: CALCULATE and CALCULATE ALL have to
+/// refuse the same widths and HMAC the same bytes, or a host reading one code
+/// two ways gets two answers.
+fn challenge_of(data: &[u8]) -> Option<&[u8]> {
+    find_tag(data, TAG_CHALLENGE as u16).filter(|c| c.len() <= CHALLENGE_MAX)
 }
 
 /// A stored credential's YKOATH properties byte, or 0 when it carries none.

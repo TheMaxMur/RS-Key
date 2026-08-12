@@ -118,7 +118,7 @@ frame chain the YubiKey-OATH way instead: `61 XX` followed by **SEND REMAINING**
 Authenticator send. A host that stops at the first frame still sees a valid
 (shorter) list.
 
-Two OATH rules a host has to expect, both matching a YubiKey 5.7.4. `PUT`
+Three OATH rules a host has to expect, all matching a YubiKey 5.7.4. `PUT`
 (`0x01`) is strict about the credential body — KEY TLV 16..=66 bytes, digits
 6/7/8, type `0x10`/`0x20`, algorithm 1/2/3, name 1..=64 bytes, the initial moving
 factor on HOTP only and exactly 4 bytes, the PROPERTY byte as the bare `78 vv`
@@ -135,6 +135,14 @@ whole command with an empty body. The one exception is a credential a build
 before this rule stored: its body can leave no room for the mark, and `CALCULATE
 ALL` then reports it with `77` (no response) and computes the rest of the store
 rather than failing — its own `CALCULATE` still answers `6A80`.
+
+The third is the challenge itself. `CALCULATE` (`0xA2`) and `CALCULATE ALL`
+(`0xA4`) take an opaque byte string of **0..=64 bytes** in the `74` TLV and HMAC
+all of it; 65 or more is `6A80`, judged before the credential is looked up and
+whatever the credential's type, so a `HOTP` account that ignores the challenge
+refuses an over-wide one too. Both read paths therefore answer the same code for
+the same challenge at every accepted width — including across a `SEND REMAINING`
+page — and the usual 8-byte TOTP counter is simply the common case.
 
 ### 1.2 CTAPHID framing
 

@@ -13,6 +13,11 @@ mod put_tests;
 #[path = "increasing_tests.rs"]
 mod increasing_tests;
 
+/// The challenge itself: how wide it may be, and that both read paths HMAC all
+/// of it.
+#[path = "challenge_tests.rs"]
+mod challenge_tests;
+
 /// What a failed OTP-PIN attempt does to the standing authentication.
 #[path = "otp_pin_tests.rs"]
 mod otp_pin_tests;

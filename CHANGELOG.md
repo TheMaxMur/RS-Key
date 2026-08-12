@@ -40,6 +40,25 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **OATH `CALCULATE ALL` computed a different code from `CALCULATE` for the same
+  credential and the same challenge.** The bulk read clamped the challenge to its
+  first 8 bytes, on a comment asserting the spec said 8; the individual read
+  hashed all of it. A YubiKey 5.7.4 does neither: it takes the challenge as an
+  opaque **0..=64-byte** string, HMACs exactly what it was sent on both paths, and
+  answers `6A80` from 65 — measured at 0, 1, 7, 8, 9, 15, 16, 20, 32, 62, 63, 64,
+  65, 66, 80, 100, 127, 128 and 200 bytes, three readings each. So a host reading
+  one account two ways got two answers for every challenge over 8 bytes, and a
+  challenge no card would accept got a code out of us instead of a refusal. The
+  bound now sits in one place both commands pass through, before the credential
+  lookup (a name that does not exist and a 65-byte challenge is `6A80`, not
+  `6984`) and after `P1`/`P2`, and the paging stash carries the whole challenge so
+  a `SEND REMAINING` page cannot answer a different code from the first frame.
+  This also settles the `only increasing` mark: it has always been compared
+  against the challenge the host sent, so a clamped code meant the mark recorded
+  bytes no code was ever computed from — the two are now the same bytes, and the
+  stored mark's width is the challenge bound rather than a second copy of 64.
+  **bcdDevice → 0x08B2.**
+
 - **The resetting-code write keeps its own refusal word.** The judgement that a
   new password is out of range has one owner, and moving it from `6700` to
   `6985` moved all three of its callers — but only CHANGE REFERENCE DATA had
