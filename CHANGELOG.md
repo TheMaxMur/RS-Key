@@ -40,6 +40,27 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Security
 
+- **The PIV PIN and PUK are spent before they are compared, and the counter is
+  read back.** `check_ref` compared first and wrote the retry counter after, and
+  it trusted the write. A flash write that *refuses* is caught — the card answers
+  `6581` to the right secret and a wrong one alike, so nothing leaks. One that
+  silently keeps nothing is not, and that is the failure the rest of this tree
+  already defends against (the FIDO clientPIN reads its counter back, citing a
+  glitch or a partial program; so do the OTP fuse writes). In that state a wrong
+  PIN answered `63Cx` and the right one `9000`, at full speed, with the counter
+  pinned at its starting value: the retry budget had stopped being a budget, on
+  VERIFY, CHANGE REFERENCE DATA and RESET RETRY COUNTER alike. The attempt is now
+  spent and confirmed *before* any comparison, so a store that is not storing
+  refuses ahead of learning anything. Reading the counter back is not enough on
+  its own and was not the fix: on a full counter the success path rewrites the
+  value already there, which a lying store satisfies — the ordering is what
+  closes it. **On a working device nothing changes**: the same status words, the
+  same counter, in the same order on the wire. The one cost is that a power cut
+  between the write and the answer spends a retry the holder did not use, which
+  is how the FIDO and OATH PINs have always behaved. OpenPGP's `check_pin` has
+  the same compare-then-spend shape and is deliberately untouched here.
+  **bcdDevice → 0x08B6.**
+
 - **A wrong FIDO PIN no longer leaves an outstanding `pinUvAuthToken`
   working.** A platform that held a token — minted with the right PIN — kept it
   usable across any number of failed PIN attempts by anything else plugged into

@@ -1105,6 +1105,24 @@ fn check_ref<S: Storage>(dev: &Device, fs: &mut Fs<S>, fid: u16, retry: usize, p
     let Some(PIN_REC_LEN) = fs.read(fid, &mut rec) else {
         return Sw::MEMORY_FAILURE;
     };
+    // Spend the attempt BEFORE comparing, and read the counter back before
+    // trusting it — `rsk-fido`'s `spend_and_verify_pin_hash` and the OTP fuse
+    // writes do the same. This single write is the anti-bruteforce gate, and
+    // comparing first left a window in which a write that *silently* did not
+    // land (a glitch, a partial program) answered `63Cx` to a wrong PIN and
+    // `9000` to the right one with the counter frozen — unlimited guesses at
+    // full speed. Ordering is what closes it, not the read-back alone: on a
+    // full counter the success path rewrites the value it already holds, so a
+    // read-back after the comparison is satisfied by a store that stored
+    // nothing. The cost is that a power cut here spends a retry the holder did
+    // not use, which is the direction to fail in.
+    if set_retries_left(fs, retry, left - 1).is_err() {
+        return Sw::MEMORY_FAILURE;
+    }
+    match retries_left(fs, retry) {
+        Ok(n) if n == left - 1 => {}
+        _ => return Sw::MEMORY_FAILURE,
+    }
     let ver = dev.pin_derive_verifier(pin);
     let mut matched = ct_eq(&ver, &rec[2..PIN_REC_LEN]);
     if !matched
@@ -1133,9 +1151,6 @@ fn check_ref<S: Storage>(dev: &Device, fs: &mut Fs<S>, fid: u16, retry: usize, p
         return Sw::OK;
     }
     let left = left - 1;
-    if set_retries_left(fs, retry, left).is_err() {
-        return Sw::MEMORY_FAILURE;
-    }
     if left == 0 {
         Sw::PIN_BLOCKED
     } else {
@@ -1479,3 +1494,7 @@ mod reselect_tests;
 #[cfg(test)]
 #[path = "challenge_tests.rs"]
 mod challenge_tests;
+
+#[cfg(test)]
+#[path = "dying_tests.rs"]
+mod dying_tests;
