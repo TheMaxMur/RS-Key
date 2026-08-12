@@ -386,6 +386,21 @@ fn verify_code_reduces_by_the_stored_digit_count() {
 }
 
 #[test]
+fn alg_supported_is_exactly_oath_hmacs_domain() {
+    // The rule has two owners — PUT's bound and `oath_hmac`'s match — and
+    // nothing tied them: adding an arm to one would leave the other refusing a
+    // credential the card takes, or storing one CALCULATE answers `6400` to.
+    let mut out = [0u8; 64];
+    for b in 0u8..=255 {
+        assert_eq!(
+            alg_supported(b),
+            oath_hmac(b, b"k", b"m", &mut out).is_some(),
+            "key byte {b:#04x}",
+        );
+    }
+}
+
+#[test]
 fn calculate_all_never_emits_a_truncated_response_tlv() {
     // PUT can no longer store an unknown algorithm, but a build before this one
     // could: such a credential made CALCULATE ALL emit a `0x76` TLV one byte long
