@@ -55,11 +55,22 @@ pub fn scan_files<S: Storage>(
     fs: &mut Fs<S>,
     rng: &mut dyn Rng,
 ) -> Result<(), Error> {
-    // DEK: generate once when none of the wrapped copies exist.
+    // DEK: generate once, and judge BOTH wrapped copies together. One power cut
+    // between the two writes below used to be permanent — `has_key(EF_DEK_PW1)`
+    // alone made this guard false on the next boot, so PW3's copy was never
+    // created, while the verifier further down still went in. PW3 then verified
+    // for good and everything needing the DEK answered `6A88`, with TERMINATE DF
+    // the only way out. Same two-record class as the PIN update E29 closed.
+    //
+    // Only while NEITHER verifier exists: past that the card has been provisioned,
+    // and a missing copy is a lost record rather than an interrupted first boot —
+    // regenerating the DEK there would throw the keys away. Nothing can be lost in
+    // the window this does cover: no key can exist before the first boot finishes.
+    let provisioning = !fs.has_data(EF_PW1) && !fs.has_data(EF_PW3);
     let mut reset_dek = false;
-    if !fs.has_key(EF_DEK_PW1)
+    if provisioning
+        && (!fs.has_key(EF_DEK_PW1) || !fs.has_key(EF_DEK_PW3))
         && !fs.has_key(EF_DEK_RC)
-        && !fs.has_key(EF_DEK_PW3)
         && !fs.has_data(EF_DEK)
     {
         let mut random_dek = [0u8; DEK_SIZE];

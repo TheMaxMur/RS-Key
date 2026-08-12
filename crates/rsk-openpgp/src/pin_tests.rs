@@ -1384,3 +1384,52 @@ fn a_stored_reference_outside_the_policy_still_verifies() {
         Sw::retries(PW_RETRIES_DEFAULT - 1)
     );
 }
+
+/// Drive the REAL first boot with the flash dying at every write it makes, boot
+/// again on the same flash, and require the card to be usable afterwards.
+///
+/// Provisioning writes the DEK sealed under PW1 and then the same DEK sealed
+/// under PW3, and a cut between them used to be permanent: the next boot saw
+/// PW1's copy, skipped the whole block — and wrote the PW3 verifier anyway. PW3
+/// then verified for ever over a DEK copy that did not exist, so every operation
+/// needing it answered `6A88` and only TERMINATE DF escaped. The trigger is
+/// narrow (a first boot interrupted at exactly the wrong moment) and the outcome
+/// was not.
+#[test]
+fn provisioning_is_recoverable_at_every_write_it_makes() {
+    let d = dev();
+    for budget in 0..14 {
+        let (storage, tap) = DyingStorage::new();
+        let mut fs = Fs::new(storage);
+        fs.scan();
+
+        tap.set(budget);
+        let _ = scan_files(&d, &mut fs, &mut CountRng(0));
+        // Power comes back; a different RNG, so a DEK regenerated on this boot is
+        // provably not the one the interrupted boot was writing.
+        tap.set(usize::MAX);
+        scan_files(&d, &mut fs, &mut CountRng(9))
+            .unwrap_or_else(|e| panic!("budget {budget}: the second boot failed: {e:?}"));
+
+        // Both defaults verify, and both open the SAME DEK.
+        let mut deks = [[0u8; DEK_SIZE]; 2];
+        for (i, (p2, pw)) in [(PW1_MODE81, PW1_DEFAULT), (PW3_MODE83, PW3_DEFAULT)]
+            .into_iter()
+            .enumerate()
+        {
+            let mut sess = Session::new();
+            assert_eq!(
+                verify(&d, &mut fs, &mut sess, &mut CountRng(0), 0x00, p2, pw),
+                Sw::OK,
+                "budget {budget}: the default {p2:02X} does not verify"
+            );
+            load_dek(&d, &mut fs, &sess, &mut deks[i]).unwrap_or_else(|e| {
+                panic!("budget {budget}: {p2:02X} verifies but cannot open the DEK: {e:?}")
+            });
+        }
+        assert_eq!(
+            deks[0], deks[1],
+            "budget {budget}: the two PINs unwrap different keys"
+        );
+    }
+}

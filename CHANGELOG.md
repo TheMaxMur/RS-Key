@@ -40,6 +40,23 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **A power cut during OpenPGP's first boot is no longer permanent.**
+  Provisioning writes the data-encryption key twice — sealed under the default
+  user PIN, then under the default admin PIN — under a single "none of the copies
+  exist" guard. A cut between those two writes made the guard false on the next
+  boot, so the admin copy was never created, while the admin verifier further down
+  still went in: PW3 then verified for ever over a key copy that did not exist,
+  every operation needing it answered `6A88`, and TERMINATE DF was the only way
+  out. The pair is judged together now, and only while neither verifier exists —
+  past that point the card has been provisioned and a missing copy is a lost
+  record rather than an interrupted first boot, where regenerating the key would
+  throw the keys away. Nothing can be lost inside the window this does cover: no
+  key can exist before the first boot finishes. Same two-record class as the PIN
+  update fixed earlier, with a far narrower trigger and a worse outcome. The test
+  drives the real provisioning with the flash dying at every write it makes, then
+  boots again on the same flash and requires both PINs to open the same key.
+  **bcdDevice → 0x08AF.**
+
 - **The cardholder DOs are held to the shapes the spec gives them.** PUT DATA of
   the name (`5B`), the language preference (`5F2D`) and the sex (`5F35`) took any
   length and any content: a 255-byte name and a `5F35` of `'A'` both stored with
