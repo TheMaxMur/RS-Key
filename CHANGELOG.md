@@ -53,8 +53,12 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   slot once from session 0, so the wrapping branch never runs, and the unit test
   exercised the path at counter 5. Both writers now take their step from one
   place, pinned by host tests at the ceiling and by two Kani proofs over every
-  `(u16, u8)`: the counter only climbs and never leaves `stored..=0x7FFF`, and the
-  two writers take the same step from the same value. What a key should do once it
+  session byte against every counter at or below `0x7FFF`: the counter only
+  climbs and never leaves `stored..=0x7FFF`, and the two writers take the same
+  step from the same value. A counter *above* the ceiling — the very state this
+  bug wrote — is assumed away rather than proved, which makes those two the
+  induction step; the base case is that the only other writers of those bytes
+  zero the record or copy it forward verbatim. What a key should do once it
   legitimately reaches the ceiling is unchanged and still open; what it must not
   do is lower the counter, because lowering it *is* the replay.
   **bcdDevice → 0x0892.**

@@ -193,7 +193,7 @@ run "fmt (fuzz)"               cargo fmt --manifest-path fuzz/Cargo.toml --check
 # nothing else — the very drift it names went on unseen in `fido_vendor` and
 # `oath_otp_pin` while the row reported green. And it must be clippy, not
 # `cargo check`: `fuzz/` was the one workspace no lint row in the tree reached,
-# and four diagnostics sat in it committed and red. Clippy subsumes the check, so
+# and five diagnostics sat in it committed and red. Clippy subsumes the check, so
 # it replaces that row rather than joining it — two rows thrash one target-dir.
 run "clippy (fuzz)"            cargo clippy --manifest-path fuzz/Cargo.toml --all-targets --target "$HOST" -- -D warnings
 run "test (host)"              cargo test -p rsk-sdk -p rsk-fs -p rsk-usb -p rsk-crypto -p rsk-fido -p rsk-openpgp -p rsk-rsa-asm -p rsk-sha512 -p rsk-ec -p rsk-mldsa -p rsk-mgmt -p rsk-oath -p rsk-otp -p rsk-piv -p rsk-rescue -p rsk-vendor -p rsk-device -p rsk-display -p rsk-store -p rsk-led -p rsk-ui -p rsk-bip39 -p rsk-slip39 -p rsk-bench --target "$HOST"

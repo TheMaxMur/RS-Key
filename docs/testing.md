@@ -187,8 +187,9 @@ cargo kani -p rsk-sdk -p rsk-fs -p rsk-rsa-asm -p rsk-crypto -p rsk-mldsa -p rsk
 
 Pin the version — a verdict belongs to the tool that gave it, and an unpinned
 install is not the one CI runs. `--harness-timeout` is experimental (hence the
-`-Z`): it turns a harness that stops converging into a red row in half an hour
-instead of a six-hour job that ends in nothing.
+`-Z`) and applies per harness, not per run: one that stops converging is failed
+after half an hour and the rest still run, so a verdict comes back at all
+instead of the run hanging on it.
 
 The proofs are bounded, and the bound is the honest fine print. A 16- to
 20-byte symbolic buffer reaches every branch of the TLV/APDU parsers; bigger
@@ -219,7 +220,7 @@ pinned, `~/.kani` cached) running the same `cargo kani` line — literally the
 same one, because `scripts/kani_gate.py` compares them. That guard is in the
 merge gate (the proofs themselves stay daily): it holds the roster of crates
 carrying a `#[kani::proof]` and fails when one is missing from the `-p` list,
-which is how 20 of the 49 harnesses came to be run by nothing at all. It also
+which is how 20 of the 51 harnesses came to be run by nothing at all. It also
 fails when the workflow's `run:` line stops carrying that list — commenting the
 step out leaves the file's other copies agreeing with this one, over a job that
 proves nothing.

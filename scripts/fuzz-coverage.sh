@@ -35,7 +35,9 @@ ign='(fuzz/fuzz_targets/|/\.cargo/registry/|/rustc/|/library/|/rustlib/)'
 # Same floor and same reason as the deep-checks fuzz loop: `set -e` does not fire
 # on an empty or failing $( ) in a `for` word list, so a broken `cargo fuzz list`
 # printed an empty table and exited 0. Lower both floors in the same commit.
-FUZZ_TARGET_FLOOR=50
+# A literal, not `${FUZZ_TARGET_FLOOR:-53}`: a floor the environment can lower is
+# not a ratchet, so `env FUZZ_TARGET_FLOOR=… ` in front of this script does nothing.
+FUZZ_TARGET_FLOOR=53
 targets=("$@")
 if [ "${#targets[@]}" -eq 0 ]; then
   mapfile -t targets < <(cargo fuzz list)

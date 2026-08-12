@@ -925,8 +925,8 @@ pub const NAV_TABS: [NavTab; 4] = [
 ];
 const NAV_CELL_W: u16 = PANEL_W / NAV_TABS.len() as u16;
 
-/// The rect of nav tab `i` (`0..3`) — single source of truth for the renderer and
-/// [`hit_nav`].
+/// The rect of nav tab `i` (`0..NAV_TABS.len()`) — single source of truth for the
+/// renderer and [`hit_nav`].
 pub const fn nav_tab_rect(i: u16) -> Rect {
     Rect::new(i * NAV_CELL_W, NAV_TOP, NAV_CELL_W, NAV_H)
 }

@@ -127,9 +127,10 @@ jobs:
           nix develop .#fuzz -c bash -euo pipefail -c '
             # `set -e` does not fire on an empty or failing $( ) used as a `for`
             # word list, so a broken `cargo fuzz list` fuzzed zero targets and
-            # this job reported green — measured, rc=0. Floor the roster like the
-            # firmware-size ratchet; lower FUZZ_TARGET_FLOOR, and the twin in
-            # scripts/fuzz-coverage.sh, in the commit that removes a target.
+            # this job reported green — measured, rc=0. Floor the roster at today's
+            # count: unlike the firmware-size ratchet it needs no margin, because a
+            # target count has no build noise. Lower FUZZ_TARGET_FLOOR, and the twin
+            # in scripts/fuzz-coverage.sh, in the commit that removes a target.
             mapfile -t targets < <(cargo fuzz list)
             # The corpus lives in one LRU-evictable cache entry; on a restore
             # miss every target starts from empty and the run still says DONE.
@@ -153,7 +154,7 @@ jobs:
           '
         env:
           FUZZ_SECONDS: ${{ inputs.fuzz_seconds || '120' }}
-          FUZZ_TARGET_FLOOR: "50"
+          FUZZ_TARGET_FLOOR: "53"
 
       - name: upload crash artifacts
         if: failure()
@@ -237,9 +238,10 @@ jobs:
           cargo kani setup
 
       # `-p` per crate, not a bare `cargo kani`: `rsk-bench` is deliberately out
-      # (scripts/kani_gate.py holds the roster and the reason). The timeout is
-      # what makes a non-convergent harness fail this row in 30 min instead of
-      # spending the job's 6 hours on it — experimental, hence the `-Z`.
+      # (scripts/kani_gate.py holds the roster and the reason). `--harness-timeout`
+      # is per harness, not per row — Kani runs the rest and fails at the end — so
+      # it caps one non-convergent proof, while `timeout-minutes` caps the job:
+      # ~50 harnesses at 30m each far outruns its 6 h. Experimental, hence the `-Z`.
       - name: prove every harness
         run: cargo kani -p rsk-sdk -p rsk-fs -p rsk-rsa-asm -p rsk-crypto -p rsk-mldsa -p rsk-rescue -p rsk-openpgp -p rsk-otp -p rsk-piv -p rsk-oath -p rsk-usb -p rsk-ui -p rsk-led -p rsk-slip39 -p rsk-bip39 -Z unstable-options --harness-timeout 30m
   repro:

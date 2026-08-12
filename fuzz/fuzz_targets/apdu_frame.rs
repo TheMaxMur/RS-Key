@@ -18,9 +18,9 @@
 //! `len == 0xFF` instead reads `cla ins p1 p2 hi lo` and *synthesises* the
 //! header around the next `be16(hi, lo)` bytes.
 //!
-//! `0xFF` is the escape deliberately: it used to mean a 255-byte chunk, the
-//! single rarest length, so the accumulated corpora keep essentially all of
-//! their meaning.
+//! `0xFF` is the escape because it is the longest chunk a byte can ask for, so
+//! "longer than that" is the next meaning along — not because it is rare: it was
+//! ~0.4% of corpus prefixes, and taking it reframed about a fifth of the files.
 
 /// Length prefix that introduces an extended-Lc header instead of 255 bytes.
 const EXT_ESCAPE: u8 = 0xFF;
