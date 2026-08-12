@@ -3,7 +3,7 @@
 
 use std::net::TcpListener;
 
-use rsk_usb::ctaphid::STATUS_UPNEEDED;
+use rsk_usb::ctaphid::{CID_BROADCAST, STATUS_UPNEEDED};
 
 use super::*;
 use crate::signals::SCOPE_FIDO;
@@ -15,6 +15,61 @@ fn frame(cid: u32, cmd: u8) -> [u8; HID_RPT_SIZE] {
     f[0..4].copy_from_slice(&cid.to_le_bytes());
     f[4] = cmd;
     f
+}
+
+/// An init-type frame declaring `bcnt` payload bytes, carrying as much of `data`
+/// as fits.
+fn init_frame(cid: u32, cmd: u8, bcnt: usize, data: &[u8]) -> [u8; HID_RPT_SIZE] {
+    let mut f = frame(cid, cmd);
+    f[5..7].copy_from_slice(&(bcnt as u16).to_be_bytes());
+    let n = data.len().min(HID_RPT_SIZE - 7);
+    f[7..7 + n].copy_from_slice(&data[..n]);
+    f
+}
+
+/// `serve` on the far end of a real socket, with a stub device thread behind it,
+/// so a test drives the loop the way a client does rather than its pieces.
+fn serve_on_a_socket() -> TcpStream {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+
+    let (jobs, requests) = mpsc::channel::<Req>();
+    std::thread::spawn(move || {
+        while let Ok(req) = requests.recv() {
+            let _ = req.reply.send(Some(Vec::new()));
+        }
+    });
+    let shared = Arc::new(Shared {
+        jobs,
+        signals: Arc::new(Signals::default()),
+        cids: Mutex::new(CidAllocator::new()),
+        lock: Mutex::new(ChannelLock::default()),
+        boot: Instant::now(),
+    });
+    std::thread::spawn(move || {
+        let (stream, _) = listener.accept().unwrap();
+        let _ = serve(stream, shared);
+    });
+
+    let client = TcpStream::connect(address).unwrap();
+    client
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    client
+}
+
+fn read_frame(client: &mut TcpStream) -> [u8; HID_RPT_SIZE] {
+    let mut f = [0u8; HID_RPT_SIZE];
+    client.read_exact(&mut f).unwrap();
+    f
+}
+
+/// A `CTAPHID_INIT` on the broadcast channel; returns the channel it hands out.
+fn allocate(client: &mut TcpStream, nonce: u8) -> u32 {
+    let f = init_frame(CID_BROADCAST, CTAPHID_INIT, 8, &[nonce; 8]);
+    client.write_all(&f).unwrap();
+    let r = read_frame(client);
+    u32::from_le_bytes([r[15], r[16], r[17], r[18]])
 }
 
 /// A socket that hands out scripted chunks and then says "nothing yet", the way a
@@ -161,4 +216,69 @@ fn a_cancel_reaches_a_job_waiting_for_a_touch() {
         Some(vec![0x2d])
     );
     assert!(signals.cancelled());
+}
+
+/// An abandoned multi-frame message must not own the reassembler for the life of
+/// the connection. Measured on the emulator before this: after frame 1 of a
+/// 200-byte PING the client got no MSG_TIMEOUT at all, and a complete PING on a
+/// second channel answered `CHANNEL_BUSY` at t+0.6 s, t+2 s and t+5 s alike —
+/// only a `CTAPHID_INIT` on the stuck channel ever cleared it. One TCP connection
+/// is one HID interface, so there is nowhere else for the session to escape to.
+#[test]
+fn an_abandoned_message_times_out_instead_of_wedging_the_session() {
+    let mut client = serve_on_a_socket();
+    let stuck = allocate(&mut client, 0x01);
+    let other = allocate(&mut client, 0x11);
+
+    // Frame 1 of 200 bytes, then silence.
+    client
+        .write_all(&init_frame(stuck, CTAPHID_PING, 200, &[0xa5; 57]))
+        .unwrap();
+
+    let r = read_frame(&mut client);
+    assert_eq!(u32::from_le_bytes([r[0], r[1], r[2], r[3]]), stuck);
+    assert_eq!(r[4], CTAPHID_ERROR);
+    assert_eq!(
+        r[7], ERR_MSG_TIMEOUT,
+        "the late message is dropped, and said so"
+    );
+
+    // And the session is usable again without a client having to guess that an
+    // INIT on someone else's channel is the way out.
+    client
+        .write_all(&init_frame(other, CTAPHID_PING, 2, &[0xab, 0xcd]))
+        .unwrap();
+    let r = read_frame(&mut client);
+    assert_eq!(r[4], CTAPHID_PING, "not {:#04x}", r[7]);
+    assert_eq!(&r[7..9], &[0xab, 0xcd]);
+}
+
+/// The deadline is per frame, not per message: continuations 300 ms apart are
+/// each inside `RX_TIMEOUT_MS` and the message completes, though it takes 900 ms
+/// end to end. Without this a timeout could be turned into a cap on how long a
+/// large message may take, which is the same wedge with a slower trigger.
+#[test]
+fn continuations_that_keep_arriving_are_not_timed_out() {
+    let mut client = serve_on_a_socket();
+    let cid = allocate(&mut client, 0x02);
+
+    let body: Vec<u8> = (0..200u32).map(|i| i as u8).collect();
+    client
+        .write_all(&init_frame(cid, CTAPHID_PING, body.len(), &body))
+        .unwrap();
+    for (seq, chunk) in body[57..].chunks(HID_RPT_SIZE - 5).enumerate() {
+        std::thread::sleep(Duration::from_millis(300));
+        let mut f = frame(cid, seq as u8);
+        f[5..5 + chunk.len()].copy_from_slice(chunk);
+        client.write_all(&f).unwrap();
+    }
+
+    let mut echo = Vec::new();
+    let r = read_frame(&mut client);
+    assert_eq!(r[4], CTAPHID_PING, "not {:#04x}", r[7]);
+    echo.extend_from_slice(&r[7..]);
+    while echo.len() < body.len() {
+        echo.extend_from_slice(&read_frame(&mut client)[5..]);
+    }
+    assert_eq!(&echo[..body.len()], &body[..]);
 }

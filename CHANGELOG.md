@@ -530,6 +530,19 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   next command. Emulator only: the firmware and the emulator's `--usbip` path
   (which runs the real transport) were never affected.
 
+- **`tools/emu` had no CTAPHID inter-frame timeout, so an abandoned message
+  wedged the session for good.** The device transport races its frame read
+  against `RX_TIMEOUT_MS` and answers `CTAPHID_ERROR(MSG_TIMEOUT)`; the socket
+  loop blocked in `read_exact` with no deadline instead. Measured: after frame 1
+  of a 200-byte `CTAPHID_PING` and nothing more, a complete PING on a second
+  channel was refused `CHANNEL_BUSY` at t+0.6 s, t+2 s and t+5 s alike, and only
+  a `CTAPHID_INIT` on the abandoned channel ever cleared it. One TCP connection
+  is one HID interface, so a client had nowhere else to go — the emulator
+  modelled the wedge faithfully and never modelled the escape. It now shares the
+  transport's own constant and times the message out at 500 ms, carrying a
+  half-arrived report across the deadline (TCP may split one; USB never does).
+  Emulator only.
+
 - `metadata/README.md` called the attestation `basic_surrogate`; the statements
   themselves declare `basic_full`, which is what the device sends — packed with a
   self-signed per-device `x5c` leaf.

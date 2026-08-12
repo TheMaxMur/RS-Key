@@ -90,8 +90,10 @@ pub fn is_cancel_frame(frame: &[u8; HID_RPT_SIZE], n: usize, cid: u32) -> bool {
         && frame[4] == CTAPHID_CANCEL
         && u32::from_le_bytes([frame[0], frame[1], frame[2], frame[3]]) == cid
 }
-// Abort an in-progress reassembly if the next frame is this late.
-const RX_TIMEOUT_MS: u64 = 500;
+/// Abort an in-progress reassembly if the next frame is this late. Public
+/// because `tools/emu` bounds the read on its own socket with it: one deadline
+/// for both transports, or the emulator wedges where the device recovers.
+pub const RX_TIMEOUT_MS: u64 = 500;
 // Abandon a response if the host stops draining the IN endpoint for this long.
 // `HidWriter::write` only completes once the host reads the report, so a client
 // that walks away mid-response would otherwise block the transport task forever

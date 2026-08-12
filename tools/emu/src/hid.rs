@@ -21,9 +21,9 @@ use rsk_usb::ctaphid::{
     CID_BROADCAST, CTAPHID_CANCEL, CTAPHID_CBOR, CTAPHID_ERROR, CTAPHID_IF_VERSION, CTAPHID_INIT,
     CTAPHID_KEEPALIVE, CTAPHID_LOCK, CTAPHID_MSG, CTAPHID_PING, CTAPHID_SYNC, CTAPHID_UUID,
     CTAPHID_VENDOR_FIRST, CTAPHID_VERSION, CTAPHID_WINK, ChannelLock, CidAllocator, DEVICE_UUID,
-    ERR_CHANNEL_BUSY, ERR_INVALID_CMD, ERR_INVALID_LEN, ERR_INVALID_PAR, HID_RPT_SIZE,
-    KEEPALIVE_MS, LOCK_MAX_SECONDS, Outcome, Reassembler, TxFrames, init_capabilities,
-    is_cancel_frame, keepalive_status,
+    ERR_CHANNEL_BUSY, ERR_INVALID_CMD, ERR_INVALID_LEN, ERR_INVALID_PAR, ERR_MSG_TIMEOUT,
+    HID_RPT_SIZE, KEEPALIVE_MS, LOCK_MAX_SECONDS, Outcome, RX_TIMEOUT_MS, Reassembler, TxFrames,
+    init_capabilities, is_cancel_frame, keepalive_status,
 };
 
 use crate::device::{Job, Req};
@@ -45,22 +45,110 @@ pub struct Shared {
 
 pub fn serve(mut stream: TcpStream, shared: Arc<Shared>) -> io::Result<()> {
     let mut asm = Reassembler::new();
-    let mut frame = [0u8; HID_RPT_SIZE];
+    let mut rx = FrameRx::default();
     loop {
-        match stream.read_exact(&mut frame) {
-            Ok(()) => {}
-            Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => return Ok(()),
-            Err(e) => return Err(e),
-        }
-        let now_ms = shared.boot.elapsed().as_millis() as u64;
-        match asm.feed(&frame) {
-            Outcome::None => {}
-            Outcome::Error(cid, code) => write_msg(&mut stream, cid, CTAPHID_ERROR, &[code])?,
-            Outcome::Message(cid, cmd) if shared.lock.lock().unwrap().refuses(cid, cmd, now_ms) => {
-                write_msg(&mut stream, cid, CTAPHID_ERROR, &[ERR_CHANNEL_BUSY])?
+        match rx.next(&stream, asm.in_progress())? {
+            Rx::Eof => return Ok(()),
+            // A host that sends frame 1 and walks away otherwise keeps the
+            // reassembler for the life of the connection, and one connection is one
+            // HID interface: every other channel is answered `CHANNEL_BUSY` until a
+            // `CTAPHID_INIT` on the abandoned one. `CtapHid::run` recovers by racing
+            // its read against the same deadline.
+            Rx::Timeout => {
+                let cid = asm.current_cid();
+                asm.abort();
+                write_msg(&mut stream, cid, CTAPHID_ERROR, &[ERR_MSG_TIMEOUT])?;
             }
-            Outcome::Message(cid, cmd) => {
-                dispatch(&mut stream, &shared, &mut asm, cid, cmd, now_ms)?
+            Rx::Frame => {
+                let now_ms = shared.boot.elapsed().as_millis() as u64;
+                match asm.feed(&rx.frame) {
+                    Outcome::None => {}
+                    Outcome::Error(cid, code) => {
+                        write_msg(&mut stream, cid, CTAPHID_ERROR, &[code])?
+                    }
+                    Outcome::Message(cid, cmd)
+                        if shared.lock.lock().unwrap().refuses(cid, cmd, now_ms) =>
+                    {
+                        write_msg(&mut stream, cid, CTAPHID_ERROR, &[ERR_CHANNEL_BUSY])?
+                    }
+                    Outcome::Message(cid, cmd) => {
+                        dispatch(&mut stream, &shared, &mut asm, cid, cmd, now_ms)?
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// What [`FrameRx::next`] came back with.
+enum Rx {
+    /// A whole 64-byte report is in [`FrameRx::frame`].
+    Frame,
+    /// The deadline passed with the report still incomplete.
+    Timeout,
+    /// The peer closed.
+    Eof,
+}
+
+/// The RX half of the connection: whole 64-byte reports, deadlined while a
+/// multi-frame message is mid-reassembly.
+///
+/// The bytes of a half-arrived report are carried across the deadline rather than
+/// dropped — TCP may split a report, and half a frame discarded here misaligns
+/// every frame behind it. The device transport needs none of that: USB delivers
+/// whole reports, so its `select` can simply abandon the read.
+struct FrameRx {
+    frame: [u8; HID_RPT_SIZE],
+    have: usize,
+}
+
+impl Default for FrameRx {
+    fn default() -> Self {
+        Self {
+            frame: [0; HID_RPT_SIZE],
+            have: 0,
+        }
+    }
+}
+
+impl FrameRx {
+    /// The next whole report. `bounded` is "a message is mid-reassembly", and only
+    /// then is the wait finite — an idle transport waits for its next client as
+    /// long as it takes, exactly as `CtapHid::run` does.
+    fn next(&mut self, mut stream: &TcpStream, bounded: bool) -> io::Result<Rx> {
+        let deadline = Instant::now() + Duration::from_millis(RX_TIMEOUT_MS);
+        loop {
+            let left = if bounded {
+                let left = deadline.saturating_duration_since(Instant::now());
+                // A zero read timeout means "no timeout" to the socket layer.
+                if left.is_zero() {
+                    return Ok(Rx::Timeout);
+                }
+                Some(left)
+            } else {
+                None
+            };
+            stream.set_read_timeout(left)?;
+            match stream.read(&mut self.frame[self.have..]) {
+                Ok(0) => return Ok(Rx::Eof),
+                Ok(n) => {
+                    self.have += n;
+                    if self.have == HID_RPT_SIZE {
+                        self.have = 0;
+                        return Ok(Rx::Frame);
+                    }
+                }
+                // An expired read timeout arrives as one or the other by platform.
+                Err(e)
+                    if matches!(
+                        e.kind(),
+                        io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+                    ) =>
+                {
+                    return Ok(Rx::Timeout);
+                }
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+                Err(e) => return Err(e),
             }
         }
     }
