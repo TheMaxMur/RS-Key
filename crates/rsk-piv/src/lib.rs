@@ -237,10 +237,13 @@ impl<'a> PivApplet<'a> {
         p2: u8,
         data: &[u8],
     ) -> Option<(u8, usize, [u8; 2])> {
-        // GENERATE reaches the applet here when the firmware runs the dual-core
-        // prime search, and through `process` otherwise — so the challenge rule
-        // is applied on both, or an RSA keygen would be the one command that
-        // leaves an outstanding challenge standing.
+        // The shortcut's copy of `process`'s first rule: a GENERATE served from
+        // here never reaches `process` at all. It is unobservable today and no
+        // test can fail on it — `begin_handshake` drops `has_mgm`, so past the
+        // guard below there is never a challenge left to age, and a *declined*
+        // GENERATE falls through to `process`, which ages it there. Both facts
+        // belong to other files (`auth.rs`, `rsk-device`'s `ccid.rs`); this line
+        // is what holds if either moves.
         self.age_challenge(INS_ASYM_KEYGEN, p2);
         if p1 != 0x00 || !self.sess.has_mgm || !is_key(p2) {
             return None;
