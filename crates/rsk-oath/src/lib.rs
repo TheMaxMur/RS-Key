@@ -692,6 +692,14 @@ impl<'a> OathApplet<'a> {
                 Some(k) if k.len() >= 2 && scratch[k.start] & OATH_TYPE_MASK != OATH_TYPE_HOTP => {}
                 _ => continue,
             }
+            // A blob an older build wrote can have no room for a mark, or carry
+            // a `D0` of another width — it kept unrecognised tags verbatim. One
+            // such record must not fail the bulk read for the whole store, so
+            // skip it here; `calc_all_page` gives it no code either, and its own
+            // CALCULATE still refuses.
+            if !mark_has_room(&scratch[..n]) {
+                continue;
+            }
             if !raise_mark(&mut scratch, &mut n, chal) {
                 return Err(Sw::INCORRECT_PARAMS);
             }
@@ -763,7 +771,7 @@ impl<'a> OathApplet<'a> {
                     res.push(TAG_TOUCH_RESPONSE);
                     res.push(1);
                     res.push(key[1]);
-                } else if alg_supported(key[0]) {
+                } else if bulk_computable(blob, key[0]) {
                     res.push(TAG_RESPONSE + p2);
                     // `alg_supported` is exactly `oath_hmac`'s domain.
                     let _ = calculate(p2 == 0x01, key, chal, res);
@@ -1284,6 +1292,28 @@ fn raise_mark(blob: &mut [u8], n: &mut usize, chal: &[u8]) -> bool {
         Some(_) => false,
         None => mark != [0u8; MARK_LEN] && emit_tlv(blob, n, TAG_LAST_CHAL, &mark),
     }
+}
+
+/// Whether [`raise_mark`] can keep a mark in this blob: a stored one already at
+/// [`MARK_LEN`], or room in a `CRED_MAX` buffer for a fresh one. Nothing this
+/// build stores can fail it — PUT's rule bounds a body well under that — but a
+/// record an older build wrote can, since it kept unrecognised tags verbatim.
+/// Mirrors [`emit_tlv`]'s arithmetic for a [`MARK_LEN`] value (1 tag + 1 length
+/// byte); `mark_has_room_matches_raise_mark` is the assertion tying the two.
+fn mark_has_room(blob: &[u8]) -> bool {
+    match find_tag_range(blob, TAG_LAST_CHAL) {
+        Some(r) => r.len() == MARK_LEN,
+        None => blob.len() + 2 + MARK_LEN <= CRED_MAX,
+    }
+}
+
+/// Whether CALCULATE ALL may serve this credential a code, rather than the
+/// protocol's "no response". False for an algorithm [`oath_hmac`] has no arm
+/// for, and for an `only increasing` credential whose mark cannot be kept —
+/// computing that one here would be the single path on which the property the
+/// owner asked for is not enforced.
+fn bulk_computable(blob: &[u8], ty_alg: u8) -> bool {
+    alg_supported(ty_alg) && (cred_property(blob) & PROP_INCREASING == 0 || mark_has_room(blob))
 }
 
 /// Whether [`oath_hmac`] has an arm for this key byte's algorithm nibble — the

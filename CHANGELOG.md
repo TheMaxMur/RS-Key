@@ -38,6 +38,25 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+### Fixed
+
+- **One old OATH record no longer fails `CALCULATE ALL` for the whole key.**
+  Enforcing `only increasing` gave every opted-in credential a high-water mark
+  in its stored blob, and a build before that one kept unrecognised tags
+  verbatim — so a body already sitting on a provisioned key can have no room for
+  a mark, or carry a private-tag value of the wrong width. Either one made the
+  bulk read answer `6A80` with an **empty body**, for every account on the key,
+  on every call, with nothing in the response to say which credential was at
+  fault and no way back short of finding and deleting it. Such a record is now
+  skipped by the mark pass and reported with the protocol's own "no response"
+  tag, exactly as an uncomputable algorithm already was — it still has no code
+  on either read path, because its mark cannot be kept and serving it in bulk
+  would be the one place the property does not hold, but it no longer takes the
+  rest of the store with it. Nothing a current build can store is affected: the
+  `PUT` rule bounds a credential body well under the room a mark needs, and the
+  two are now tied by an assertion rather than by arithmetic in two places.
+  **bcdDevice → 0x08A3.**
+
 ### Security
 
 - **A failed OATH PIN *change* now drops the standing authentication, as a

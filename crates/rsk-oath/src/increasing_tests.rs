@@ -294,6 +294,93 @@ fn calculate_all_fails_whole_and_leaves_the_prefix_advanced() {
     assert!(calc(&mut app, &mut fs, b"zz", 1).is_some());
 }
 
+/// Seal `blob` into a credential slot the way a build before this one left it —
+/// the only way to get a body PUT now refuses.
+fn plant(fs: &mut Fs<RamStorage>, slot: u16, blob: &[u8]) {
+    let dev = Device {
+        serial_hash: &[0x22; 32],
+        serial_id: &SERIAL,
+        otp_key: None,
+    };
+    assert!(seal::seal_put(
+        &dev,
+        fs,
+        &mut CountRng(3),
+        KeyFid::new(EF_OATH_CRED + slot),
+        blob
+    ));
+}
+
+#[test]
+fn a_record_with_no_room_for_a_mark_does_not_fail_the_whole_bulk_read() {
+    // An older build kept unrecognised tags verbatim, so a stored body can be
+    // near CRED_MAX or already carry a `D0` of another width. Neither can hold
+    // this credential's mark — but one such record must not take CALCULATE ALL
+    // down for every other account on the key, with an empty body and no way to
+    // tell which one is at fault.
+    let key = {
+        let mut k = vec![0x21u8, 6];
+        k.extend_from_slice(SECRET_SHA1);
+        k
+    };
+    for (label, tail) in [
+        ("no room for a mark", {
+            // 1 tag + 1 length byte + 64 must not fit what is left of CRED_MAX.
+            let mut v = Vec::new();
+            for _ in 0..4 {
+                v.extend([0x99, 0x81, 200]);
+                v.extend([0xAA; 200]);
+            }
+            v.extend([0x99, 0x81, 118]);
+            v.extend([0xAA; 118]);
+            v
+        }),
+        ("a planted mark of another width", {
+            let mut v = vec![TAG_LAST_CHAL, 8];
+            v.extend([0xFF; 8]);
+            v
+        }),
+    ] {
+        let (mut fs, rng) = fixture();
+        let touch = RefCell::new(AlwaysConfirm);
+        let mut app = OathApplet::new(SERIAL, [0x22; 32], None, &rng, &touch);
+        let mut blob = tlv(TAG_NAME, b"old");
+        blob.extend(tlv(TAG_KEY, &key));
+        blob.extend(tlv(TAG_PROPERTY, &[0x01]));
+        blob.extend(tail);
+        plant(&mut fs, 0, &blob);
+        assert_eq!(put_prop(&mut app, &mut fs, b"live", None), Sw::OK);
+
+        let chal = tlv(TAG_CHALLENGE, &1500u64.to_be_bytes());
+        let (sw, body) = run(&mut app, &mut fs, &apdu(INS_CALC_ALL, 0, 0x01, &chal));
+        assert_eq!(sw, Sw::OK, "{label}: one old record failed the bulk read");
+        assert_eq!(count_tag(&body, TAG_NAME), 2, "{label}");
+        // It gets no code on this path either — enforcing it is impossible, so
+        // serving it would be the one place the property does not hold.
+        assert_eq!(count_tag(&body, TAG_NO_RESPONSE), 1, "{label}: {body:02X?}");
+        assert_eq!(count_tag(&body, TAG_RESPONSE + 1), 1, "{label}");
+        // And its own CALCULATE still fails closed.
+        assert!(calc(&mut app, &mut fs, b"old", 1500).is_none(), "{label}");
+        assert!(calc(&mut app, &mut fs, b"live", 1500).is_some(), "{label}");
+    }
+}
+
+#[test]
+fn mark_has_room_matches_raise_mark() {
+    // Two owners of one question: the bulk read's skip and `raise_mark`'s own
+    // `emit_tlv` arithmetic. Whenever the predicate says a mark fits, the write
+    // must succeed — and when it says it does not, the write must fail.
+    for used in [0usize, 100, 900, 957, 958, 959, 1000, CRED_MAX] {
+        let mut blob = [0u8; CRED_MAX];
+        let mut n = used;
+        assert_eq!(
+            mark_has_room(&blob[..used]),
+            raise_mark(&mut blob, &mut n, &[1u8; 8]),
+            "a blob of {used} bytes",
+        );
+    }
+}
+
 #[test]
 fn calculate_all_does_not_mark_a_credential_it_does_not_compute() {
     // A touch-gated credential is only advertised (tag 7C), not computed — so

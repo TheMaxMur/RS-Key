@@ -122,7 +122,10 @@ TOTP credential carrying it computes only for a challenge strictly greater than
 the highest one it has served, comparing the raw challenge bytes zero-extended on
 the right — plain numeric `>` for the usual 8-byte counter. A challenge at or
 below that mark is `6A80`, and in `CALCULATE ALL` one such credential fails the
-whole command with an empty body.
+whole command with an empty body. The one exception is a credential a build
+before this rule stored: its body can leave no room for the mark, and `CALCULATE
+ALL` then reports it with `77` (no response) and computes the rest of the store
+rather than failing — its own `CALCULATE` still answers `6A80`.
 
 ### 1.2 CTAPHID framing
 
