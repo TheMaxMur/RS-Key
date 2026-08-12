@@ -4,7 +4,8 @@
 //! E59: what SET CODE (`0x03`) accepts as an access code. A YubiKey 5.7.4 takes
 //! an algorithm byte plus **14..=64 bytes** of key — the same range it enforces
 //! on a credential's secret — and answers `6A80` for everything else, leaving
-//! the installed code exactly as it was (worklog ORACLE-oathfido §E59).
+//! the installed code exactly as it was (worklog ORACLE-oathfido §E59). E62 is
+//! the other half of the same lock: which word VALIDATE (`0xA3`) refuses with.
 
 use super::*;
 
@@ -39,13 +40,24 @@ fn code_installed(app: &mut OathApplet, fs: &mut Fs<RamStorage>) -> bool {
     offered
 }
 
+/// The challenge this SELECT offered, which VALIDATE proves knowledge over.
+fn card_challenge(app: &mut OathApplet, fs: &mut Fs<RamStorage>) -> Vec<u8> {
+    let (_, body) = select(app, fs);
+    find_tag(&body, TAG_CHALLENGE as u16).unwrap().to_vec()
+}
+
+/// VALIDATE carrying `proof`. Takes no SELECT of its own — every SELECT rotates
+/// the challenge the proof was built for.
+fn validate_proof(app: &mut OathApplet, fs: &mut Fs<RamStorage>, proof: &[u8]) -> Sw {
+    let mut d = tlv(TAG_CHALLENGE, &[9u8; 8]);
+    d.extend(tlv(TAG_RESPONSE, proof));
+    run(app, fs, &apdu(INS_VALIDATE, 0, 0, &d)).0
+}
+
 /// VALIDATE against the challenge this SELECT offered, with `secret`.
 fn validate(app: &mut OathApplet, fs: &mut Fs<RamStorage>, secret: &[u8]) -> Sw {
-    let (_, body) = select(app, fs);
-    let chal = find_tag(&body, TAG_CHALLENGE as u16).unwrap().to_vec();
-    let mut d = tlv(TAG_CHALLENGE, &[9u8; 8]);
-    d.extend(tlv(TAG_RESPONSE, &hmac_sha1(secret, &chal)));
-    run(app, fs, &apdu(INS_VALIDATE, 0, 0, &d)).0
+    let chal = card_challenge(app, fs);
+    validate_proof(app, fs, &hmac_sha1(secret, &chal))
 }
 
 #[test]
@@ -136,7 +148,7 @@ fn a_refused_set_code_leaves_the_installed_one_alone() {
     assert!(code_installed(&mut app, &mut fs));
     assert_eq!(
         validate(&mut app, &mut fs, &short),
-        Sw::DATA_INVALID,
+        Sw::INCORRECT_PARAMS,
         "the refused key must not open the applet",
     );
     assert_eq!(
@@ -164,6 +176,44 @@ fn the_two_documented_ways_to_remove_a_code_still_work() {
         );
         assert!(!code_installed(&mut app, &mut fs));
     }
+}
+
+#[test]
+fn a_wrong_proof_is_not_the_word_for_no_code_at_all() {
+    // E62: the card answers `6A80` to a proof that does not match and keeps
+    // `6984` for "no such object" — nothing installed to match against. We
+    // answered `6984` to both, so a host could not tell a wrong access code
+    // from an applet that has none (worklog ORACLE-oathfido §E62).
+    let (mut fs, rng) = fixture();
+    let touch = RefCell::new(AlwaysConfirm);
+    let mut app = OathApplet::new(SERIAL, [0x22; 32], None, &rng, &touch);
+    let good = [0xABu8; 16];
+    assert_eq!(
+        validate_proof(&mut app, &mut fs, &hmac_sha1(&good, &[0u8; 8])),
+        Sw::DATA_INVALID,
+        "no code installed",
+    );
+
+    assert_eq!(set_code(&mut app, &mut fs, &good), Sw::OK);
+    assert_eq!(
+        validate(&mut app, &mut fs, &[0xCDu8; 16]),
+        Sw::INCORRECT_PARAMS,
+        "a wrong key",
+    );
+    // A right key proved over the wrong bytes, and a truncated proof of the
+    // right one: the card refuses both the same way.
+    assert_eq!(
+        validate_proof(&mut app, &mut fs, &hmac_sha1(&good, &[0u8; 8])),
+        Sw::INCORRECT_PARAMS,
+        "the right key over a stale challenge",
+    );
+    let chal = card_challenge(&mut app, &mut fs);
+    assert_eq!(
+        validate_proof(&mut app, &mut fs, &hmac_sha1(&good, &chal)[..1]),
+        Sw::INCORRECT_PARAMS,
+        "a one-byte proof",
+    );
+    assert_eq!(validate(&mut app, &mut fs, &good), Sw::OK);
 }
 
 #[test]

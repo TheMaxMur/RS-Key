@@ -532,8 +532,11 @@ impl<'a> OathApplet<'a> {
         let Some(size) = oath_hmac(code[0], &code[1..], &self.challenge, &mut mac) else {
             return Sw::INCORRECT_PARAMS;
         };
+        // A proof that does not match is `6A80` on a 5.7.4, which keeps `6984`
+        // for "no code is installed" — the two branches above. One word for both
+        // states left a host unable to tell a wrong password from no password.
         if !ct_eq(resp, &mac[..size]) {
-            return Sw::DATA_INVALID;
+            return Sw::INCORRECT_PARAMS;
         }
         // Mutual authentication: answer the host's challenge with the same key.
         let Some(size) = oath_hmac(code[0], &code[1..], chal, &mut mac) else {

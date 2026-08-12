@@ -266,8 +266,10 @@ def main():
         INS_VALIDATE, 0, 0,
         tlv(TAG_CHALLENGE, host_chal) + tlv(TAG_RESPONSE, bytes(20)), want=None,
     )
-    if sw != 0x6984:
-        fail(f"VALIDATE with wrong response: SW {sw:04X} != 6984")
+    # 6A80, as a YubiKey answers it: 6984 is that card's word for "no code is
+    # installed", and the two states have to stay tellable apart (E62).
+    if sw != 0x6A80:
+        fail(f"VALIDATE with wrong response: SW {sw:04X} != 6A80")
     # Correct response unlocks; card answers our challenge (mutual auth).
     resp = hmac_mod.new(code_key, bytes(card_chal), hashlib.sha1).digest()
     body, _ = oath.apdu(

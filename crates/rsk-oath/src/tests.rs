@@ -895,13 +895,13 @@ fn set_code_and_validate_flow() {
     let mut d = tlv(TAG_CHALLENGE, &host_chal);
     d.extend(tlv(TAG_RESPONSE, &[0u8; 20]));
     let (sw, _) = run(&mut app, &mut fs, &apdu(INS_VALIDATE, 0, 0, &d));
-    assert_eq!(sw, Sw::DATA_INVALID);
+    assert_eq!(sw, Sw::INCORRECT_PARAMS);
     // …and a truncated (1-byte) response must not brute-force its way in.
     let full = hmac_sha1(&[0xAB; 16], &card_chal);
     let mut d = tlv(TAG_CHALLENGE, &host_chal);
     d.extend(tlv(TAG_RESPONSE, &full[..1]));
     let (sw, _) = run(&mut app, &mut fs, &apdu(INS_VALIDATE, 0, 0, &d));
-    assert_eq!(sw, Sw::DATA_INVALID);
+    assert_eq!(sw, Sw::INCORRECT_PARAMS);
 
     // Correct response unlocks and returns the mutual proof.
     let mut d = tlv(TAG_CHALLENGE, &host_chal);

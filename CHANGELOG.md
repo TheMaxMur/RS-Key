@@ -124,6 +124,16 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **A wrong OATH access code answered the word for "there is no access
+  code".** `VALIDATE` (`0xA3`) refused a proof that did not match with `6984`,
+  which is the same status the applet returns when nothing is installed to match
+  against. A YubiKey 5.7.4 keeps the two apart: `6A80` for a proof that does not
+  match — right length or truncated — and `6984` only for "no such object",
+  measured twice at every challenge width. A host that got `6984` could not tell
+  whether it had the wrong password or the card had none, and the two want
+  opposite next steps. `SET CODE`'s own proof check is unchanged: `6984` there
+  is the card's answer too. **bcdDevice → 0x08B8.**
+
 - **A truncated OATH `CALCULATE` carried the raw 31-bit truncation, not the
   code.** RFC 4226 §5.3 makes an OTP the dynamic truncation *reduced to the
   account's digit count*, and a YubiKey 5.7.4 sends the reduced value: same
