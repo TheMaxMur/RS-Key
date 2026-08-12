@@ -38,6 +38,31 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+### Security
+
+- **OATH `SET CODE` installed an access code with no key material.** `73 01 01`
+  — an algorithm byte and nothing after it — answered `9000` and locked the
+  applet behind a key that is the empty string, so the VALIDATE response every
+  session wants is `HMAC("", challenge)`: a lock anyone can open, standing
+  between the owner and their accounts, and indistinguishable from a real one
+  from the outside. Anything up to 127 bytes was taken as well. A YubiKey 5.7.4
+  accepts an algorithm byte plus **14..=64 bytes** of key and answers `6A80`
+  outside that, which is the same range it enforces on a credential's secret —
+  one rule, two commands, and it is now one constant here too. Measured across
+  0, 1, 2, 3, 13, 14, 15, 16, 20, 32, 63, 64, 65 and up: on that card the
+  "protected but unopenable" state cannot be reached at all, because every
+  accepted `SET CODE` is one whose key the host proved it can HMAC with and
+  every refused one leaves the previous state untouched. Ours now refuses before
+  the proof is checked and before a byte is written, so a rejected `SET CODE`
+  from a validated session leaves the standing code opening the applet — checked
+  both ways. The bound is on what `SET CODE` takes, never on what `VALIDATE` can
+  read: a longer code stored by an older build still opens the applet, or the
+  upgrade would lock its owner out. Unchanged and deliberate: an empty `73` value
+  *or* an empty body still removes the code. A 5.7.4 answers `6A80` to the second
+  spelling, but YKOATH's own text makes a zero length the way to remove
+  authentication, so that one cell is left as the document has it.
+  **bcdDevice → 0x08B3.**
+
 ### Fixed
 
 - **OATH `CALCULATE ALL` computed a different code from `CALCULATE` for the same

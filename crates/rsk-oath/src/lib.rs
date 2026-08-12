@@ -60,9 +60,11 @@ impl UserPresence for AlwaysConfirm {
 // FIDs.
 const EF_OATH_CRED: u16 = 0xBA00; // 255 cred slots, 0xBA00..=0xBAFE (each a sealed KeyFid)
 const EF_OATH_CODE: KeyFid = KeyFid::new(0xBAFF); // SET CODE validation key, sealed
-/// Max stored access-code length. Bounds SET CODE so the code always fits the
-/// VALIDATE read buffer — otherwise an over-long code makes `seal_read` fail and
-/// (pre-fix) VALIDATE unlocked the applet without the code.
+/// VALIDATE's read buffer, and so the widest access code that can still be
+/// read back — otherwise `seal_read` fails and (pre-fix) VALIDATE unlocked the
+/// applet without the code. SET CODE bounds its input far tighter
+/// ([`CODE_TLV_MAX`]); this stays wide because a build before that rule stored
+/// up to this much, and such a key must go on opening.
 const OATH_CODE_MAX: usize = 128;
 const EF_OTP_PIN: u16 = 0x10A0;
 
@@ -119,12 +121,17 @@ const OATH_TYPE_HOTP: u8 = 0x10;
 const OATH_TYPE_TOTP: u8 = 0x20;
 const OATH_TYPE_MASK: u8 = 0xF0;
 
-/// What PUT accepts in a credential body, measured against a YubiKey 5.7.4 —
-/// which answers `6A80` and stores nothing for everything outside these bounds.
-/// The KEY TLV is `[type|alg, digits, secret…]`, so 16..=66 is a 14..=64-byte
-/// secret.
-const KEY_TLV_MIN: usize = 16;
-const KEY_TLV_MAX: usize = 66;
+/// What a YubiKey 5.7.4 takes as OATH key material — one rule for a
+/// credential's secret and for the access code, `6A80` and nothing stored
+/// outside it (worklog ORACLE-oathfido §E59).
+const SECRET_MIN: usize = 14;
+const SECRET_MAX: usize = 64;
+/// A credential's KEY TLV is `[type|alg, digits, secret…]`.
+const KEY_TLV_MIN: usize = SECRET_MIN + 2;
+const KEY_TLV_MAX: usize = SECRET_MAX + 2;
+/// SET CODE's KEY TLV is `[alg, secret…]`.
+const CODE_TLV_MIN: usize = SECRET_MIN + 1;
+const CODE_TLV_MAX: usize = SECRET_MAX + 1;
 const NAME_MAX: usize = 64;
 const DIGITS_MIN: u8 = 6;
 const DIGITS_MAX: u8 = 8;
@@ -358,10 +365,12 @@ impl<'a> OathApplet<'a> {
             self.validated = true;
             return Sw::OK;
         }
-        // The code must fit the VALIDATE read buffer, else it becomes unreadable
-        // and (pre-fix) unlocked the applet without the code.
-        if key.len() > OATH_CODE_MAX {
-            return Sw::WRONG_LENGTH;
+        // An algorithm byte plus key material a YubiKey would take. Judged
+        // before the proof, so a body outside it is a syntax error and not a
+        // failed authentication, and before a byte is written, so the standing
+        // code survives the refusal.
+        if !(CODE_TLV_MIN..=CODE_TLV_MAX).contains(&key.len()) {
+            return Sw::INCORRECT_PARAMS;
         }
         let Some(chal) = find_tag(data, TAG_CHALLENGE as u16) else {
             return Sw::INCORRECT_PARAMS;

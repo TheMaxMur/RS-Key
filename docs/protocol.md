@@ -126,7 +126,10 @@ pair, the four YKOATH tags in that order, no duplicate, no unknown tag and no
 trailing byte. Anything else is `6A80` with **nothing stored**, so a rejected
 `PUT` leaves an existing credential of that name working. (RS-Key also stores the
 password-safe fields `0x83`/`0x84`/`0x85`, ≤255 bytes each, which may sit
-anywhere in the body.) And PROPERTIES bit 0, *only increasing*, is enforced: a
+anywhere in the body.) `SET CODE` (`0x03`) holds its key to the same measured
+rule: the `73` TLV is one algorithm byte plus **14..=64 bytes** of key material,
+or empty to remove the access code — anything else is `6A80` and whatever code
+was installed is left exactly as it was. And PROPERTIES bit 0, *only increasing*, is enforced: a
 TOTP credential carrying it computes only for a challenge strictly greater than
 the highest one it has served, comparing the raw challenge bytes zero-extended on
 the right — plain numeric `>` for the usual 8-byte counter. A challenge at or

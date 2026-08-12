@@ -22,6 +22,10 @@ mod challenge_tests;
 #[path = "otp_pin_tests.rs"]
 mod otp_pin_tests;
 
+/// What SET CODE accepts as an access code, and what a refusal leaves behind.
+#[path = "set_code_tests.rs"]
+mod set_code_tests;
+
 /// RFC 6238 reference secrets.
 const SECRET_SHA1: &[u8] = b"12345678901234567890";
 const SECRET_SHA256: &[u8] = b"12345678901234567890123456789012";
