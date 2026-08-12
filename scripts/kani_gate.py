@@ -35,16 +35,18 @@ step was caught; disabling it was not, and disabling it is what a hurried "make 
 nightly stop failing" does. "Uncommented" is judged per invocation and from the `#`,
 not from the line's first character: `run: true # cargo kani …` runs the `true` and
 reads as live to a `startswith` test — the hole this shipped with, and the one
-`roster_gate.py` inherited from it. That rule, the `\\` continuation-joiner and the
-`run:` walk itself are `gate_lines.py`'s now, one owner for both guards, because
-inheriting it a second time is how it came to be wrong in two places at once.
+`roster_gate.py` inherited from it. That rule, the `\\` continuation-joiner, the
+`run:` walk itself, what a package flag is and which directories are the tree are
+`gate_lines.py`'s now, one owner for both guards, because inheriting any of it a
+second time is how it came to be wrong in two places at once — `-p` and
+`--package` were the same flag to one guard and two to the other until they
+shared this one.
 
 Deliberately syntactic. It cannot say a harness proves anything worth proving — that
 is the harness's own business — only that the solver is pointed at it.
 """
 
 import collections
-import os
 import pathlib
 import re
 import sys
@@ -70,27 +72,19 @@ EXCLUDED = {
 PINNED = re.compile(r'KANI_VERSION:\s*"([\d.]+)"')
 DOC_PIN = re.compile(r"kani-verifier --version ([\d.]+)")
 
-INVOCATION = re.compile(r"cargo kani\b.*")
-PKG = re.compile(r"-p ([\w-]+)")
+INVOCATION = gate_lines.invocation(("kani",))
 
 Roster = collections.namedtuple("Roster", "path named switches executed")
 
 
 def switches(line):
-    """The line's arguments with the `-p <crate>` roster and any trailing hint gone.
+    """The line's arguments with the package roster and any trailing hint gone.
 
     The workflow's comment copy ends in a `(cargo install …)` aside that the `run:`
     line and the docs do not carry, so the comparison starts after the first `(`.
     """
-    args, tail, skip = line.split("(", 1)[0].split()[2:], [], False
-    for word in args:
-        if skip:
-            skip = False
-        elif word == "-p":
-            skip = True
-        else:
-            tail.append(word)
-    return tuple(tail)
+    args = INVOCATION.sub("", line.split("(", 1)[0], count=1)
+    return tuple(gate_lines.strip_packages(args).split())
 
 
 def commands(body):
@@ -102,7 +96,7 @@ def commands(body):
     live, quoted = gate_lines.split_at_comment(body)
     for segment, is_live in ((live, True), (quoted, False)):
         for found in INVOCATION.finditer(segment):
-            yield found.group(), is_live
+            yield segment[found.start() :], is_live
 
 
 def workflow_rosters():
@@ -133,7 +127,7 @@ def invocations():
     matches nothing reports nothing.
     """
     for path, line, executed in (*workflow_rosters(), *docs_rosters()):
-        named = frozenset(PKG.findall(line))
+        named = gate_lines.packages(line)
         if named:
             yield Roster(path.relative_to(ROOT), named, switches(line), executed)
 
@@ -147,24 +141,13 @@ def crates_with_proofs():
     just the places a proof is *supposed* to live is how the blind spot gets rebuilt.
     """
     found, orphans = set(), []
-    for dirpath, dirnames, filenames in os.walk(ROOT):
-        # A nested checkout (agent worktrees live under `.claude/worktrees/`) carries
-        # a whole second copy of the tree, and none of its crates is a workspace
-        # member, so every proof in it would read as an orphan no `-p` can reach.
-        dirnames[:] = [
-            d
-            for d in dirnames
-            if d not in ("target", ".git") and not (pathlib.Path(dirpath, d, ".git")).exists()
-        ]
-        for name in filenames:
-            path = pathlib.Path(dirpath, name)
-            if path.suffix != ".rs" or "#[kani::proof" not in path.read_text():
-                continue
-            rel = path.relative_to(ROOT)
-            if rel.parts[0] == "crates":
-                found.add(rel.parts[1])
-            else:
-                orphans.append(rel)
+    for rel in gate_lines.tree_files(ROOT):
+        if rel.suffix != ".rs" or "#[kani::proof" not in (ROOT / rel).read_text():
+            continue
+        if rel.parts[0] == "crates":
+            found.add(rel.parts[1])
+        else:
+            orphans.append(rel)
     return found, sorted(orphans)
 
 

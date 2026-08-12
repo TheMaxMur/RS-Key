@@ -17,7 +17,11 @@ let
 
   # The same host-testable crates scripts/check.sh runs (no_std libs whose unit
   # tests build for the host). The on-device tests/ scripts need real hardware
-  # and stay out of the sandbox.
+  # and stay out of the sandbox. This list was written complete and never
+  # amended once: it stood at the 12 crates the tree had in June while twelve
+  # more joined, so `nix flake check` ran half the suite under a comment
+  # promising all of it. scripts/roster_gate.py holds it to [workspace] members
+  # now — it reads the list by name, so keep the flags generated from it.
   hostCrates = [
     "rsk-sdk"
     "rsk-fs"
@@ -26,11 +30,23 @@ let
     "rsk-fido"
     "rsk-openpgp"
     "rsk-rsa-asm"
+    "rsk-sha512"
+    "rsk-ec"
+    "rsk-mldsa"
     "rsk-mgmt"
     "rsk-oath"
     "rsk-otp"
     "rsk-piv"
     "rsk-rescue"
+    "rsk-vendor"
+    "rsk-device"
+    "rsk-display"
+    "rsk-store"
+    "rsk-led"
+    "rsk-ui"
+    "rsk-bip39"
+    "rsk-slip39"
+    "rsk-bench"
   ];
 in
 {
