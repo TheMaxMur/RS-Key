@@ -99,6 +99,10 @@ const HOST_SCALAR: [u8; 32] = [0x42; 32];
 /// The PIN the handshake sets. Eight bytes clears `MIN_PIN_LENGTH` on both the
 /// default build (4) and `strong-pin` (6).
 const PIN: &[u8] = b"12345678";
+/// Widest pinUvAuthToken plaintext [`Sess::issued_token`] will decrypt. Two CBC
+/// blocks of slack over the 32 it must be, so an over-long token is decrypted and
+/// measured rather than refused by the buffer — the bound itself is an assert.
+const TOKEN_PT_MAX: usize = 64;
 
 /// Relying parties a request may name. Index 0 is what [`provisioned`] stores, so
 /// a getAssertion can hit a resident credential from the very first command; the
@@ -1422,16 +1426,29 @@ impl Sess {
     }
 
     /// Drive one getPinUvAuthToken message and return the token it served, or
-    /// `None` if the device refused or the reply carried no decryptable one.
+    /// `None` if the device refused. A served token is checked, not skipped: the
+    /// only `None` past `CTAP2_OK` is a reply with no key 2 at all.
     fn issued_token(&mut self, msg: &[u8], proto: PinProto, secret: &[u8]) -> Option<[u8; 32]> {
         let w = self.step(msg);
         if self.out[0] != rsk_fido::CTAP2_OK {
             return None;
         }
         let sealed = map_bytes(&self.out[1..w], 2)?;
-        let mut token = [0u8; 32];
-        let len = pinproto::decrypt(proto, secret, sealed, &mut token).ok()?;
+        // Decrypt into a buffer WIDER than the token. `decrypt` refuses when the
+        // plaintext would not fit, so a 32-byte one turned an over-long token into
+        // `Err` and the skip below it swallowed the finding: only a SHORT token was
+        // ever caught. Both directions now land on the length assert.
+        let mut plain = [0u8; TOKEN_PT_MAX];
+        assert!(
+            sealed.len() <= proto.iv_overhead() + TOKEN_PT_MAX,
+            "clientPIN sealed {} bytes for a 32-byte pinUvAuthToken",
+            sealed.len()
+        );
+        let len = pinproto::decrypt(proto, secret, sealed, &mut plain)
+            .expect("clientPIN served a pinUvAuthToken its own protocol cannot decrypt");
         assert_eq!(len, TOKEN.len(), "an issued pinUvAuthToken is 32 bytes");
+        let mut token = [0u8; 32];
+        token.copy_from_slice(&plain[..TOKEN.len()]);
         Some(token)
     }
 
