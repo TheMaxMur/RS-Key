@@ -167,3 +167,29 @@ fn an_overlong_pw_status_record_cannot_panic_the_rc_settle() {
         "DO C4 must not advertise an absent RC"
     );
 }
+
+#[test]
+fn maxima_an_older_build_moved_are_restored_at_boot() {
+    // A card that took `PUT DATA 00 C4 = 01 06 06 06` under a build that copied
+    // the whole body announced max 6 for the rest of its life: PUT DATA writes
+    // the flag only now, and no other writer touches these bytes. gpg reads the
+    // announcement as the limit, so the owner could never set a longer PIN again.
+    let mut fs = fresh();
+    fs.put(EF_PW_PRIV, &[0x01, 6, 6, 6, 3, 0, 3]).unwrap();
+    scan_files(&dev(), &mut fs, &mut CountRng(0)).unwrap();
+
+    let mut pw = [0u8; 7];
+    let n = fs.read(EF_PW_PRIV, &mut pw).unwrap();
+    assert_eq!(&pw[1..4], &PW_STATUS_DEFAULT[1..4], "the announced maxima");
+    // Only those three bytes: the flag the owner set and the retry counters stay.
+    assert_eq!(pw[0], 0x01);
+    assert_eq!(&pw[4..n], &[3, 0, 3]);
+
+    // Idempotent, and it does not resurrect a shorter record's missing bytes.
+    let mut short = fresh();
+    short.put(EF_PW_PRIV, &[0x00, 6]).unwrap();
+    settle_pw_status_maxima(&mut short).unwrap();
+    let mut got = [0u8; 7];
+    let n = short.read(EF_PW_PRIV, &mut got).unwrap();
+    assert_eq!(&got[..n], &[0x00, PW_STATUS_DEFAULT[1]]);
+}

@@ -88,6 +88,36 @@ fn put_data_pw_status_routes_to_handler() {
     assert_eq!(sw, Sw::SECURITY_STATUS_NOT_SATISFIED);
 }
 
+// §4.4.2: C4's max-length bytes "should not be changed". `put_pw_status` copied
+// the flag *and* all three, so `PUT C4 = 01 06 06 06` answered 9000 and the card
+// went on announcing max 6 while VERIFY still compared a 40-byte password — an
+// announcement about itself that it did not enforce.
+#[test]
+fn put_data_c4_cannot_move_the_announced_pw_maxima() {
+    let rng = RefCell::new(CountRng(0));
+    let mut fs = make_fs();
+    let presence = RefCell::new(crate::AlwaysConfirm);
+    let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
+    verify_pin(&mut app, &mut fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
+    let read_c4 = |app: &mut OpenpgpApplet, fs: &mut Fs<RamStorage>| {
+        run(app, fs, &[0x00, consts::INS_GET_DATA, 0x00, 0xC4]).0
+    };
+
+    assert_eq!(
+        put(&mut app, &mut fs, 0x00, 0xC4, &[0x01, 0x06, 0x06, 0x06]),
+        consts::WRONG_DATA
+    );
+    assert_eq!(read_c4(&mut app, &mut fs), [0x01, 127, 127, 127, 3, 0, 3]);
+    // The flag itself still moves, and only to a value the DO defines.
+    assert_eq!(put(&mut app, &mut fs, 0x00, 0xC4, &[0x00]), Sw::OK);
+    assert_eq!(read_c4(&mut app, &mut fs), [0x00, 127, 127, 127, 3, 0, 3]);
+    assert_eq!(
+        put(&mut app, &mut fs, 0x00, 0xC4, &[0x02]),
+        consts::WRONG_DATA
+    );
+    assert_eq!(read_c4(&mut app, &mut fs), [0x00, 127, 127, 127, 3, 0, 3]);
+}
+
 #[test]
 fn put_data_reset_code_routes_to_handler() {
     // PUT DATA 0xD3 (resetting code) must route to put_reset_code, which needs

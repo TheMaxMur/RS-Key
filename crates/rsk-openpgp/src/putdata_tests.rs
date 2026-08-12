@@ -128,26 +128,58 @@ fn put_pw_status_updates_flag_in_place() {
 }
 
 #[test]
-fn put_pw_status_cannot_overwrite_retry_counters() {
-    // A >=5-byte C4 field must update only the flag + 3 max-length bytes; the
-    // three retry counters that follow are read-only. A host writing a full
-    // 7-byte record must never zero them — that would block every PIN across a
-    // power cycle, recoverable only by a key-destroying TERMINATE DF.
+fn put_pw_status_writes_only_the_flag() {
+    // §4.4.2: the max-length bytes "should not be changed", and the three retry
+    // counters after them are read-only outright — zeroing those would block
+    // every PIN across a power cycle, recoverable only by a key-destroying
+    // TERMINATE DF. A YubiKey 5.7.4 enforces both by taking a ONE-byte write of
+    // 00 or 01 and nothing else. The DO must be unchanged after each refusal:
+    // an announced maximum the card does not enforce is a lie about itself.
     let (mut fs, mut sess) = setup();
     admin(&mut fs, &mut sess);
-    assert_eq!(
-        put_pw_status(&mut fs, &sess, &[0x01, 0x7F, 0x7F, 0x7F, 0, 0, 0]),
-        Sw::OK
-    );
+    let start = [
+        0x01,
+        PIN_MAX_LEN as u8,
+        PIN_MAX_LEN as u8,
+        PIN_MAX_LEN as u8,
+        3,
+        0,
+        3,
+    ];
     let mut pw = [0u8; 7];
-    let n = fs.read(EF_PW_PRIV, &mut pw).unwrap();
-    assert_eq!(n, 7);
+    assert_eq!(fs.read(EF_PW_PRIV, &mut pw), Some(7));
+    assert_eq!(pw, start);
+
+    for bad in [
+        &[][..],
+        &[0x02],
+        &[0x07],
+        &[0xFF],
+        &[0x01, 0x06],
+        &[0x01, 0x06, 0x06, 0x06],
+        &[0x01, 0x06, 0x06, 0x06, 0x03, 0x00, 0x03],
+        &[0x01, 0x7F, 0x7F, 0x7F, 0, 0, 0],
+    ] {
+        assert_eq!(put_pw_status(&mut fs, &sess, bad), WRONG_DATA, "{bad:02X?}");
+        assert_eq!(fs.read(EF_PW_PRIV, &mut pw), Some(7));
+        assert_eq!(pw, start, "a refused PUT C4 changed the DO: {bad:02X?}");
+    }
+
+    // The one accepted form moves the flag and nothing else.
+    assert_eq!(put_pw_status(&mut fs, &sess, &[0x00]), Sw::OK);
+    assert_eq!(fs.read(EF_PW_PRIV, &mut pw), Some(7));
     assert_eq!(
-        &pw[0..4],
-        &[0x01, 0x7F, 0x7F, 0x7F],
-        "flag + max-lengths written"
+        pw,
+        [
+            0x00,
+            PIN_MAX_LEN as u8,
+            PIN_MAX_LEN as u8,
+            PIN_MAX_LEN as u8,
+            3,
+            0,
+            3
+        ]
     );
-    assert_eq!(&pw[4..7], &[3, 0, 3], "retry counters must be read-only");
 }
 
 #[test]

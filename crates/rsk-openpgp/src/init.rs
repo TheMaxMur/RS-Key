@@ -124,6 +124,7 @@ pub fn scan_files<S: Storage>(
     }
     neutralize_default_reset_code(dev, fs)?;
     settle_rc_retry_counter(fs)?;
+    settle_pw_status_maxima(fs)?;
     Ok(())
 }
 
@@ -171,6 +172,37 @@ fn settle_rc_retry_counter<S: Storage>(fs: &mut Fs<S>) -> Result<(), Error> {
     let idx = pw_retry_idx(EF_RC);
     if idx < n && pw[idx] != 0 {
         pw[idx] = 0;
+        put(fs, EF_PW_PRIV, &pw[..n])?;
+    }
+    Ok(())
+}
+
+/// Restore DO C4's three max-length bytes on a card an older build let move them.
+/// Firmware through bcdDevice 0x0897 copied a PUT DATA `0xC4` body across the
+/// flag *and* all three maxima, so `01 06 06 06` announced max 6 for good; the
+/// writer touches the flag only now, and nothing else in the applet ever rewrites
+/// those bytes — so without this a card carrying one is stuck announcing a limit
+/// `gpg` then refuses to let its owner exceed, with TERMINATE DF the only escape.
+/// Idempotent: the flash write happens only on repair.
+fn settle_pw_status_maxima<S: Storage>(fs: &mut Fs<S>) -> Result<(), Error> {
+    let mut pw = [0u8; 8];
+    let Some(n) = fs.read(EF_PW_PRIV, &mut pw) else {
+        return Ok(());
+    };
+    let n = n.min(pw.len());
+    let mut moved = false;
+    for (i, want) in PW_STATUS_DEFAULT
+        .iter()
+        .enumerate()
+        .take(PW1_RETRY_IDX)
+        .skip(1)
+    {
+        if i < n && pw[i] != *want {
+            pw[i] = *want;
+            moved = true;
+        }
+    }
+    if moved {
         put(fs, EF_PW_PRIV, &pw[..n])?;
     }
     Ok(())

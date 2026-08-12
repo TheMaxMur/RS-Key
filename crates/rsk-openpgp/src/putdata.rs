@@ -107,24 +107,27 @@ pub fn put_data<S: Storage>(fs: &mut Fs<S>, sess: &Session, fid: u16, data: &[u8
     Sw::OK
 }
 
-/// PUT DATA PW status (`0xC4` → `EF_PW_PRIV`): update the leading status bytes
-/// (the "PW1 valid for multiple signatures" flag + max-length bytes) in place,
-/// preserving the retry counters. Requires PW3.
+/// PUT DATA PW status (`0xC4` → `EF_PW_PRIV`): set the "PW1 valid for several
+/// PSO:CDS" flag, the DO's only writable byte. Requires PW3.
 pub fn put_pw_status<S: Storage>(fs: &mut Fs<S>, sess: &Session, data: &[u8]) -> Sw {
     if !sess.has_pw3 {
         return Sw::SECURITY_STATUS_NOT_SATISFIED;
+    }
+    // §4.4.2 on the max-length bytes: "should not be changed". A card that lets
+    // them move publishes a claim about itself it does not enforce — C4 could be
+    // made to announce max 6 while VERIFY went on comparing a 40-byte password.
+    // A YubiKey 5.7.4 takes a ONE-byte write of 00 or 01 and refuses every other
+    // length and value with 6A80, leaving the DO alone; the flag is the whole
+    // writable surface.
+    if data.len() != 1 || data[0] > 1 {
+        return WRONG_DATA;
     }
     let mut pw = [0u8; 7];
     let n = match fs.read(EF_PW_PRIV, &mut pw) {
         Some(n) => n.min(pw.len()),
         None => return Sw::REFERENCE_NOT_FOUND,
     };
-    // Only the leading bytes (flag + 3 max-length bytes) are writable via PUT
-    // DATA; the retry counters that follow (indices PW1_RETRY_IDX..) are
-    // read-only. Capping at the first counter stops a long field from zeroing
-    // them and blocking every PIN across a power cycle.
-    let m = data.len().min(n).min(PW1_RETRY_IDX);
-    pw[..m].copy_from_slice(&data[..m]);
+    pw[0] = data[0];
     if fs.put(EF_PW_PRIV, &pw[..n]).is_err() {
         return Sw::MEMORY_FAILURE;
     }

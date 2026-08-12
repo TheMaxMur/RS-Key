@@ -40,6 +40,22 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Security
 
+- **DO `C4`'s announced password maxima can no longer be rewritten.** §4.4.2
+  says of the PW status bytes' length information that it "should not be
+  changed", and `put_pw_status` copied the flag *plus all three*. So
+  `PUT C4 = 01 06 06 06` answered `9000`, the card then told every host its
+  passwords may be at most 6 bytes, and `VERIFY` went on comparing a 40-byte
+  one — an announcement about itself that it did not enforce, writable by
+  anyone holding the admin PIN and persistent across a power cycle. A YubiKey
+  5.7.4 takes a **one-byte** write of `00` or `01` — the "PW1 valid for several
+  signatures" flag, which is the DO's whole writable surface — and answers
+  `6A80` to every other length and value with the DO untouched. Measured across
+  nine payloads, matched cell for cell. `gpg`'s `forcesig` sends exactly the
+  accepted form and is unaffected. A card whose maxima an older build already
+  moved has them restored at boot — with nothing else in the applet writing
+  those bytes, `01 06 06 06` would otherwise announce max 6 for good and `gpg`
+  would refuse to let its owner set a longer PIN. **bcdDevice → 0x0898.**
+
 - **PUT DATA no longer stores a fingerprint or a timestamp of an impossible
   length.** OpenPGP 3.4 §4.4.1 fixes each key fingerprint at 20 bytes and each
   generation timestamp at 4, and `C5`/`C6`/`CD` republish them as fixed-width
