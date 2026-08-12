@@ -11,9 +11,11 @@
 #   fuzz-coverage — per-target libFuzzer region/line coverage over that
 #          accumulated corpus (scripts/fuzz-coverage.sh): a summary table on the
 #          step page and the per-target HTML uploaded. Advisory, not a gate.
-#   kani — the #[kani::proof] bounded model-checking harnesses (docs/
-#          testing.md). Kani is not in nixpkgs and its setup downloads a
-#          prebuilt CBMC bundle, so this one job is rustup-based, not nix.
+#   kani — every #[kani::proof] harness: the `all` tier of scripts/kani.sh
+#          (docs/testing.md). The fast tier of that same script runs per-PR in
+#          ci.yml; this row is the one that owes the whole roster, including the
+#          ~80-minute phy round-trip. Kani is not in nixpkgs and its setup
+#          downloads a prebuilt CBMC bundle, so this job is rustup-based, not nix.
 #   repro — `nix build .#firmware` twice (`--rebuild` diffs every output
 #          byte): proves the hermetic image is bit-reproducible and publishes
 #          the canonical sha256 for this flake.lock (docs/build.md).
@@ -30,7 +32,7 @@
 #   nix develop .#fuzz -c cargo miri test --manifest-path fuzz/Cargo.toml
 #   nix develop .#fuzz -c cargo fuzz run <target> -- -max_total_time=120
 #   nix develop .#fuzz -c ./scripts/fuzz-coverage.sh
-#   cargo kani -p rsk-sdk -p rsk-fs -p rsk-rsa-asm -p rsk-crypto -p rsk-mldsa -p rsk-rescue -p rsk-openpgp -p rsk-otp -p rsk-piv -p rsk-oath -p rsk-usb -p rsk-ui -p rsk-led -p rsk-slip39 -p rsk-bip39 -Z unstable-options --harness-timeout 30m  (cargo install kani-verifier)
+#   ./scripts/kani.sh all   (needs `cargo install kani-verifier` first — not nix)
 #   nix develop -c cargo llvm-cov --summary-only --fail-under-lines 80 --target <host> --workspace --exclude firmware --exclude rsk-wipe
 #   nix develop -c ./scripts/complexity_gate.sh
 
@@ -238,13 +240,15 @@ jobs:
           command -v cargo-kani >/dev/null || cargo install --locked kani-verifier --version "$KANI_VERSION"
           cargo kani setup
 
-      # `-p` per crate, not a bare `cargo kani`: `rsk-bench` is deliberately out
-      # (scripts/kani_gate.py holds the roster and the reason). `--harness-timeout`
-      # is per harness, not per row — Kani runs the rest and fails at the end — so
-      # it caps one non-convergent proof, while `timeout-minutes` caps the job:
-      # ~50 harnesses at 30m each far outruns its 6 h. Experimental, hence the `-Z`.
+      # The `all` tier: every crate carrying a harness, `rsk-bench` aside
+      # (scripts/kani_gate.py holds that exclusion and its measured reason). The
+      # script also floors the harness count, because a roster that selects
+      # nothing exits 0. `--harness-timeout`, which it passes, is per harness and
+      # not per row — Kani runs the rest and fails at the end — so it caps one
+      # non-convergent proof, while `timeout-minutes` caps the job: ~53 harnesses
+      # at 30m each far outruns its 6 h.
       - name: prove every harness
-        run: cargo kani -p rsk-sdk -p rsk-fs -p rsk-rsa-asm -p rsk-crypto -p rsk-mldsa -p rsk-rescue -p rsk-openpgp -p rsk-otp -p rsk-piv -p rsk-oath -p rsk-usb -p rsk-ui -p rsk-led -p rsk-slip39 -p rsk-bip39 -Z unstable-options --harness-timeout 30m
+        run: ./scripts/kani.sh all
   repro:
     runs-on: ubuntu-latest
     timeout-minutes: 60

@@ -35,7 +35,21 @@ fn parse_ehl_head_total() {
 }
 
 /// Walking the `7F48` template + `5F48` key data never panics and always
-/// terminates, for any start position and any bytes.
+/// terminates, for any start position and any bytes — and the (offset, length)
+/// pairs it hands back **carve the key data into disjoint, ascending pieces**,
+/// each non-empty, each with `off + len` computable.
+///
+/// The carve is the claim. `try_import` reads element 0 as the RSA public
+/// exponent, 1 as prime P and 2 as prime Q, and the parser reports offsets into
+/// the host's own buffer rather than slices, so nothing in the type system says
+/// two elements cannot name overlapping bytes: an import where P and Q share
+/// their tail would be accepted and stored as a key whose modulus the device
+/// cannot factor back. The old harness (`let _ =`) proved only that the parse
+/// returns.
+///
+/// `off + len` is checked because that is the expression the caller evaluates —
+/// `data.get(o..o + len[t])`. A wrapping add there is a panic under
+/// `debug_assertions` and a silently absurd range without them.
 #[kani::proof]
 #[kani::unwind(12)]
 fn parse_ehl_body_total() {
@@ -45,5 +59,23 @@ fn parse_ehl_body_total() {
     let pos: usize = kani::any();
     kani::assume(n <= N);
     kani::assume(pos <= n);
-    let _ = parse_ehl_body(&data[..n], pos);
+    let Ok((off, len)) = parse_ehl_body(&data[..n], pos) else {
+        return;
+    };
+    let mut prev_end = 0usize;
+    let mut t = 0usize;
+    while t < off.len() {
+        if let Some(o) = off[t] {
+            assert!(len[t] > 0, "an element was carved out with no bytes in it");
+            assert!(o >= prev_end, "elements overlap or run backwards");
+            let end = o.checked_add(len[t]);
+            assert!(end.is_some(), "off + len overflows at the call site");
+            prev_end = end.unwrap_or(prev_end);
+        }
+        t += 1;
+    }
+    kani::cover!(
+        off.iter().filter(|o| o.is_some()).count() >= 2,
+        "two elements carved"
+    );
 }

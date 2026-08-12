@@ -31,8 +31,21 @@ FIRMWARE='^(firmware/|crates/|Cargo\.(toml|lock)$|rust-toolchain|nix/(firmware|d
 # emulator IS those crates; `tests/` and `third_party/` are the suites themselves.
 EMULATOR='^(tools/emu/|tests/|third_party/|crates/|firmware/|scripts/(emu-suites|usbip-suites|usbip-guest|check)\.sh$|nix/|flake\.(nix|lock)$|Cargo\.(toml|lock)$|\.github/workflows/emulator\.yml$)'
 
+# What the Kani proofs are about: the crate libraries they run over, the manifests
+# that decide what is compiled into them, and the tier script itself. Not
+# `firmware/` — thumbv8m-only, and no harness can live there — and not the nix
+# tree, since Kani is the one tool deliberately outside it.
+PROOFS='^(crates/|Cargo\.(toml|lock)$|scripts/kani\.sh$|\.github/workflows/ci\.yml$)'
+
+# The security-state surface the sequence proofs model, and the reason those are
+# worth twelve minutes on a pull request rather than a day later: the FIDO token
+# and credential-management state machine, the filesystem its records live in, the
+# KV store under that, and the wiper that is meant to leave none of it behind.
+PROOFS_STATE='^(crates/rsk-(fido|fs|store)/|rsk-wipe/|scripts/kani\.sh$)'
+
 classify() {
-  local files firmware=false emulator=false docs_only=true n=0
+  local files firmware=false emulator=false proofs=false proofs_state=false
+  local docs_only=true n=0
   files="$(cat)"
   while IFS= read -r f; do
     [ -n "$f" ] || continue
@@ -40,6 +53,8 @@ classify() {
     [[ "$f" =~ $DOCS_ONLY ]] || docs_only=false
     [[ "$f" =~ $FIRMWARE ]] && firmware=true
     [[ "$f" =~ $EMULATOR ]] && emulator=true
+    [[ "$f" =~ $PROOFS ]] && proofs=true
+    [[ "$f" =~ $PROOFS_STATE ]] && proofs_state=true
   done <<<"$files"
 
   # No file list means we could not work out the base — treat it as "everything".
@@ -47,11 +62,20 @@ classify() {
     firmware=true
     emulator=true
     docs_only=false
+    proofs=true
+    proofs_state=true
   fi
+
+  # The state tier is a step inside the job the `proofs` output gates, so a change
+  # that wants it has to turn the job on as well. `rsk-wipe/` is outside `crates/`
+  # and would otherwise ask for a step in a job that never ran.
+  [ "$proofs_state" = true ] && proofs=true
 
   echo "firmware=$firmware"
   echo "emulator=$emulator"
   echo "docs_only=$docs_only"
+  echo "proofs=$proofs"
+  echo "proofs_state=$proofs_state"
 }
 
 self_test() {
@@ -89,6 +113,18 @@ crates/rsk-fido/src/getinfo.rs"                              "firmware=true emul
   check "nothing known"        ""                            "firmware=true emulator=true docs_only=false"
   # A path nobody has classified must not read as documentation.
   check "a new top-level dir"  "somewhere-new/thing.rs"      "docs_only=false"
+  # The Kani tiers. A crate change runs the fast tier; only the four paths the
+  # sequence proofs are about also run the slow one, and each of them has to turn
+  # the job on as well as the step.
+  check "a proven crate"       "crates/rsk-oath/src/lib.rs"  "proofs=true proofs_state=false"
+  check "the fido state"       "crates/rsk-fido/src/state.rs" "proofs=true proofs_state=true"
+  check "the filesystem"       "crates/rsk-fs/src/fs.rs"     "proofs=true proofs_state=true"
+  check "the kv store"         "crates/rsk-store/src/lib.rs" "proofs=true proofs_state=true"
+  check "the wiper"            "rsk-wipe/src/main.rs"        "proofs=true proofs_state=true"
+  check "the tier script"      "scripts/kani.sh"             "proofs=true proofs_state=true"
+  check "a doc alone, proofs"  "docs/guides/display.md"      "proofs=false proofs_state=false"
+  check "the host CLI, proofs" "tools/rsk/led.py"            "proofs=false proofs_state=false"
+  check "nothing known, proofs" ""                           "proofs=true proofs_state=true"
 
   if [ "$fails" -eq 0 ]; then
     echo "ci-scope: self-test ok"

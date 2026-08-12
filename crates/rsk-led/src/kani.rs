@@ -49,12 +49,29 @@ fn touch_stays_visible_and_unique() {
     assert_touch_invariant(&cfg);
 }
 
-/// And it holds for every accepted record length, so an older firmware's block
-/// still in flash cannot decode into an aliased indicator on the upgrade boot.
+/// And it holds for **every** accepted record length, so no block left in flash
+/// by another firmware — older or newer — can decode into an aliased indicator
+/// on the upgrade boot.
+///
+/// Every length, not the seven this used to name. That list was not the set of
+/// behaviours: the pre-effect arm computes `n = (len - 1) / 2` and updates only
+/// `n.min(N_STATUS)` statuses, so a 7- or 8-byte record leaves the last status
+/// holding whatever the live config had — the one shape where an old record and
+/// a running config mix, and the one the list skipped. 10, 11, 12, 14, 15 and 16
+/// went unvisited too, and `CONF_LEN + 1`, a longer record from a future format,
+/// was not reachable at all.
+///
+/// The lengths are concrete and swept rather than symbolic. A symbolic `len`
+/// makes `&block[..len]` a symbolic-length slice and every index into it
+/// symbolic with it: measured at over 4 minutes without converging, against
+/// well under a second for the whole sweep. The domain is 19 values; enumerating
+/// it is exhaustive over exactly the same set.
 #[kani::proof]
 fn every_block_length_holds_the_invariant() {
-    let block: [u8; CONF_LEN] = kani::any();
-    for len in [0, 1, 2, 3, 9, 13, CONF_LEN] {
+    // Two past CONF_LEN: a record a later format made longer still takes the
+    // first arm, and must still land on a lawful config.
+    let block: [u8; CONF_LEN + 2] = kani::any();
+    for len in 0..=CONF_LEN + 2 {
         let mut cfg = any_config();
         cfg.apply_block(&block[..len]);
         assert_touch_invariant(&cfg);

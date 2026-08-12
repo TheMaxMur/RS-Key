@@ -822,3 +822,7 @@ fn reseal_user<S: Storage, R: Rng>(
 #[cfg(test)]
 #[path = "credmgmt_tests.rs"]
 mod tests;
+
+#[cfg(kani)]
+#[path = "credmgmt_kani.rs"]
+mod proofs;

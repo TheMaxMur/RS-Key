@@ -5,7 +5,13 @@ use super::*;
 
 /// Walking ANY byte sequence (up to 16 bytes — past every tag/length form
 /// with room for several nested objects) never panics, never overflows, and
-/// always terminates; every yielded value lies inside the input.
+/// always terminates; every yielded value is a **sub-slice of the input**, and
+/// successive values neither overlap nor run backwards.
+///
+/// Containment is what the applets rest on: `find_tag` hands a value straight to
+/// a command handler that reads it as attacker-controlled but in-bounds memory.
+/// `value.len() <= n` alone did not say where the value *is* — a decoder handing
+/// back a same-length window past the end of the input satisfied it.
 #[kani::proof]
 #[kani::unwind(18)]
 fn walk_any_input() {
@@ -13,9 +19,28 @@ fn walk_any_input() {
     let data: [u8; N] = kani::any();
     let n: usize = kani::any();
     kani::assume(n <= N);
-    for (_tag, value) in Tlv::new(&data[..n]) {
-        assert!(value.len() <= n);
+    let input = &data[..n];
+    let whole = input.as_ptr_range();
+    // Where the previous object's value ended. The next value starts *strictly*
+    // after it, because its own tag and length bytes sit in between: that is
+    // what rules out a same-length window handed back at the header's address,
+    // which `>=` would have admitted.
+    let mut prev_end = whole.start;
+    let mut seen = 0usize;
+    for (_tag, value) in Tlv::new(input) {
+        let v = value.as_ptr_range();
+        assert!(
+            v.start > prev_end,
+            "value starts at or before the last one ended"
+        );
+        assert!(v.end <= whole.end, "value runs past the end of the input");
+        prev_end = v.end;
+        seen += 1;
     }
+    // Two bytes (tag + length) is the smallest object, so a walk over `n` bytes
+    // cannot yield more than `n / 2` of them: it terminates, and the unwind bound
+    // above is not what is holding it back.
+    assert!(seen <= n / 2, "more objects than the input can hold");
 }
 
 /// An object headed by `format_len` walks back out of the REAL decoder as one

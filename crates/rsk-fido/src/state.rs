@@ -669,3 +669,7 @@ impl Drop for FidoState {
 #[cfg(test)]
 #[path = "state_tests.rs"]
 mod tests;
+
+#[cfg(kani)]
+#[path = "state_kani.rs"]
+mod proofs;

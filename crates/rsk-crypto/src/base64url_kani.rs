@@ -48,18 +48,37 @@ fn encode_decode_roundtrip() {
     assert_eq!(&dec[..dn], &src[..n]);
 }
 
-/// `decode` over EVERY byte string up to 8 chars: never panics (the
-/// output index stays inside the buffer for any mix of valid chars and
-/// `=`), and what it writes never exceeds `decoded_len`.
+/// `decode` over EVERY byte string up to 8 chars: never panics (the output
+/// index stays inside the buffer for any mix of valid chars and `=`), what it
+/// writes never exceeds `decoded_len`, and it writes **exactly** the `w` bytes
+/// it reports — never one past them, and never nothing where it claims output.
+///
+/// The tail sentinel is the addition worth having. `w <= decoded_len(n)` is a
+/// bound on a returned *number*; it says nothing about the buffer, so it held
+/// just as well for a decoder that wrote past `w` into a caller's scratch — and
+/// every caller here (`rsk-oath`'s URI import, the CTAP JSON edges) hands
+/// `decode` a stack buffer it then reads only `w` bytes of. `0xA5` is the
+/// sentinel: not 0, so "the decoder wrote a zero byte" and "the decoder wrote
+/// nothing" stay distinguishable.
 #[kani::proof]
 #[kani::unwind(10)]
 fn decode_any_input_safe() {
     const N: usize = 8;
+    const PAD: u8 = 0xA5;
     let src: [u8; N] = kani::any();
     let n: usize = kani::any();
     kani::assume(n <= N);
-    let mut dst = [0u8; 6]; // decoded_len(8)
+    let mut dst = [PAD; 6]; // decoded_len(8)
     if let Ok(w) = decode(&mut dst, &src[..n]) {
-        assert!(w <= decoded_len(n).unwrap());
+        assert!(w <= decoded_len(n).unwrap(), "wrote more than decoded_len");
+        let mut i = w;
+        while i < dst.len() {
+            assert!(
+                dst[i] == PAD,
+                "decode scribbled past the length it reported"
+            );
+            i += 1;
+        }
+        kani::cover!(w > 0, "a decode that produced output");
     }
 }

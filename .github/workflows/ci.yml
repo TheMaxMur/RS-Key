@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 RS-Key contributors
 
-# Six jobs:
+# Seven jobs:
 #   changes — what this change can possibly affect (`scripts/ci-scope.sh`), so a
 #             documentation edit does not build 24 firmware images. Gating is by
 #             `if:` on the jobs rather than `paths:` on the trigger: a skipped
@@ -14,6 +14,14 @@
 #   check   — the merge gate, the same single source of truth as local work:
 #             `nix develop -c ./scripts/check.sh` (docs/testing.md, "CI parity").
 #             Green locally means green here; no CI-only logic to drift.
+#   proofs  — the Kani harnesses this change can have broken: the fast tier of
+#             `scripts/kani.sh` on any crate edit, plus the security-state tier
+#             (rsk-fido and rsk-fs — twelve minutes, one harness peaking at
+#             9.3 GiB) when the diff reaches the state those sequence proofs are
+#             about. Everything slower — the ~80-minute phy round-trip, the
+#             functional division specs — stays in the daily `deep-checks` row,
+#             which runs the whole roster. Not part of `check.sh`: Kani is the one
+#             tool deliberately outside the nix shell (docs/testing.md).
 #   flavors — every feature combination of the firmware (no-touch ×
 #             advertise-pqc × fips-profile), the strong-pin / always-uv /
 #             strict-up behavior flavors (each with a pqc pair), and the
@@ -50,6 +58,8 @@ jobs:
     outputs:
       firmware: ${{ steps.scope.outputs.firmware }}
       docs_only: ${{ steps.scope.outputs.docs_only }}
+      proofs: ${{ steps.scope.outputs.proofs }}
+      proofs_state: ${{ steps.scope.outputs.proofs_state }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -127,6 +137,51 @@ jobs:
         run: nix develop -c ./scripts/check.sh
         env:
           HOST_TARGET: x86_64-unknown-linux-gnu
+
+  proofs:
+    needs: changes
+    if: needs.changes.outputs.proofs == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      KANI_VERSION: "0.67.0"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Same key the daily row writes, so a pull request restores the CBMC bundle
+      # that job already downloaded rather than fetching its own.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.kani
+            ~/.cargo/bin/cargo-kani
+            ~/.cargo/bin/kani
+            ~/.cargo/registry
+          key: kani-${{ runner.os }}-${{ env.KANI_VERSION }}
+
+      # Kani builds under its own pinned nightly into its own target dir, so this
+      # shares nothing with the `check` job's cache and needs a key of its own.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: target
+          key: cargo-kani-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-kani-${{ runner.os }}-
+
+      - name: install kani (rustup-based — not packaged in nixpkgs)
+        run: |
+          command -v cargo-kani >/dev/null || cargo install --locked kani-verifier --version "$KANI_VERSION"
+          cargo kani setup
+
+      - name: prove the fast tier
+        run: ./scripts/kani.sh pr
+
+      # The expensive half, run only when the change reaches the state it is about
+      # (`scripts/ci-scope.sh`, PROOFS_STATE). A step, not a second job: the Kani
+      # install and the build cache above are most of the cost, and paying them
+      # twice to skip twelve minutes of solving is the wrong trade.
+      - name: prove the security-state crates
+        if: needs.changes.outputs.proofs_state == 'true'
+        run: ./scripts/kani.sh state
 
   flavors:
     needs: changes

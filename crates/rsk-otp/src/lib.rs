@@ -957,7 +957,8 @@ pub fn migrate_seal<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng)
         }
         if let Some(n) = fs.read_key(fid, &mut raw) {
             // Only re-seal a genuine plaintext config; anything longer is not a
-            // legacy record (the smallest sealed blob is already > SLOT_SIZE).
+            // legacy record — the smallest sealed blob is already > SLOT_SIZE,
+            // asserted at compile time in `seal.rs`.
             if (CONFIG_SIZE..=SLOT_SIZE).contains(&n) {
                 let _ = seal::seal_put(dev, fs, rng, fid, &raw[..n]);
             }

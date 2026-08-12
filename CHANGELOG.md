@@ -1259,6 +1259,40 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Added
 
+- **Three Kani harnesses that prove things about *sequences* of security
+  states, not single calls.** The 53 harnesses this tree already had are all
+  single-call: a parser, a codec, one arithmetic step. RS-Key's dangerous
+  defects have not lived there — they have lived in orderings (a token
+  surviving a PIN change, one channel continuing another's enumerate walk, a
+  gate deleted before the key it guards). `rsk-fido` now carries a symbolic
+  four- to five-operation sequence over the **real** `FidoState`, checked after
+  every step: `NoTokenAfterInvalidation` (a pinUvAuthToken retired by
+  `stopUsingPinUvAuthToken`, a reroll, an `authenticatorReset`, a power cycle or
+  its own usage timer never authorizes again, and only a fresh issuance brings
+  one back) and `NoAuthorizationBypass` (a credentialManagement enumerate walk
+  is servable only to the channel whose *Begin* opened it — CTAP 2.1 §6.8
+  exempts the *Next* legs from carrying authorization of their own, so the
+  `(channel, counter)` pair **is** the check).
+
+  The third drives the real `verify_cm_token` with a `pinUvAuthParam` minted
+  while the grant was live and replayed after it died, and asserts two things:
+  the gate refuses, **and the replayed MAC still verifies**. `stop_using_token`
+  deliberately leaves the token bytes in place, and `config.rs` and
+  `credmgmt.rs` test the MAC and the permission bits and nothing else — so at
+  those two sites zeroing `permissions` is not defence in depth, it is the only
+  defence. That asymmetry is now pinned by a proof instead of by a comment.
+
+  **All eight clauses have been shown to be able to fail**, one isolated
+  mutation each, every one rebuilding a real defect or removing a defence the
+  tree relies on: `stop_using_token` keeping permissions or wiping the token
+  bytes, `may_walk_rps` ignoring the channel or losing its counter half,
+  `user_verified()` dropping the UV flag, and `consume_after_user_presence`
+  keeping permissions (GHSA-wqjm-653g-hgw3). Each turns exactly the clause that
+  names it red, and nothing else. Costs, on an 18-core Apple Silicon under load:
+  138 s, 43 s and 393 s. The invariant names are shared with the TLA+ model in
+  `formal/`, so one property reads model → code → harness. **cfg-gated code
+  never reaches the image, so no `bcdDevice` bump.**
+
 - **The CTAP 2.3 `largeBlob` extension, as an opt-in build
   (`--features largeblob-ext`).** It carries the whole blob inside the
   `getAssertion` that reads or writes it and keeps it with the credential,
@@ -1286,6 +1320,29 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   without the seal it would sit readable in a flash dump — and the AAD is also
   what stops a record left behind in a reused slot being served to the
   credential that takes it next. **bcdDevice → 0x0881.**
+
+- **The Kani proofs run on pull requests now, split into tiers by measured
+  cost.** They used to run only in the daily `deep-checks` row, because one
+  harness in `rsk-rescue` costs ~80 minutes — so every proof sat a day away from
+  the change that broke it. Measured, they are not one population: 38 harnesses
+  over 12 crates discharge in 209 s of solving all told, and four crates hold
+  everything slow. `ci.yml` has a `proofs` job running the fast tier on any change
+  under `crates/`, plus the `rsk-fido` + `rsk-fs` sequence proofs (~13 min) when
+  the diff reaches `rsk-fido`, `rsk-fs`, `rsk-store` or `rsk-wipe` — the state
+  those proofs are about. The daily row still runs **all** of them; nothing was
+  dropped from it.
+
+  `scripts/kani.sh` owns tier → crates and is the only place a roster is written;
+  it also floors the number of harnesses each tier must prove, because a roster
+  that selects nothing prints a summary and exits 0 — the shape this repo has
+  now shipped three times. `kani_gate.py` reads that table back with `--tiers`
+  and holds it to the same contract as before (every crate carrying a proof on
+  the full tier, every tier run by a row CI actually executes, every tier on the
+  page a reader copies), and it finally has its own mutation table —
+  `scripts/test_kani_gate.py`, 27 cases, both directions.
+
+  ⚠️ `proofs` is a new job name. If `main`'s ruleset should require it, it has to
+  be added there; nothing in the repository can do that for itself.
 
 - The gate asserts a **stack floor** (`FIRMWARE_STACK_FLOOR_KIB`, alongside the
   flash budget). Static RAM had grown 28.5 KiB since `0x082B`, taking the same

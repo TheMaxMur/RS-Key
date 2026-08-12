@@ -21,13 +21,22 @@ use rsk_crypto::{Device, aes256gcm_decrypt, aes256gcm_encrypt, hkdf_sha256};
 use rsk_fs::{Fs, KeyFid, Sealed, Storage};
 use zeroize::Zeroize;
 
-use crate::{Rng, SLOT_SIZE};
+use crate::{CONFIG_SIZE, Rng, SLOT_SIZE};
 
 const NONCE_LEN: usize = 12;
 const TAG_LEN: usize = 16;
 /// Largest sealed plaintext: a full slot record (config + counter tail).
 const MAX_PLAIN: usize = SLOT_SIZE;
 pub(crate) const MAX_BLOB: usize = NONCE_LEN + MAX_PLAIN + TAG_LEN;
+
+// `crate::migrate_seal` takes a stored blob whose length is in
+// `CONFIG_SIZE..=SLOT_SIZE` to be legacy plaintext and seals it in place. The
+// shortest blob this module can produce must therefore be longer than the
+// longest plaintext, or that boot pass would seal an already-sealed slot a
+// second time — unrecoverably, since only the outer layer would ever unseal.
+// Compile-time, not a Kani harness: it is arithmetic over four constants, and
+// the build that ships is the one that has to hold it.
+const _: () = assert!(NONCE_LEN + CONFIG_SIZE + TAG_LEN > SLOT_SIZE);
 
 const INFO_OTP_SLOT: &[u8] = b"OTP/SLOT";
 
@@ -113,10 +122,6 @@ pub fn seal_read<S: Storage>(
     blob.zeroize();
     Some(pt_len)
 }
-
-#[cfg(kani)]
-#[path = "seal_kani.rs"]
-mod proofs;
 
 #[cfg(test)]
 #[path = "seal_tests.rs"]

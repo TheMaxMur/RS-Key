@@ -52,11 +52,36 @@ fn clamp_domain_sanitizes_bounds_and_keeps_tail() {
     }
 }
 
-/// The Allow and Deny hit regions are disjoint, so no tap can select both.
+/// `hit_confirm` — the shipped consent hit-test — answers Allow for exactly the
+/// taps inside [`ALLOW_RECT`], Deny for exactly the taps inside [`DENY_RECT`],
+/// and `None` everywhere else on the panel.
+///
+/// The rect-only claim this replaces (`!(ALLOW.contains(p) && DENY.contains(p))`)
+/// already followed from the compile-time layout block in `lib.rs`, and it said
+/// nothing about the function the firmware calls. The clause that earns the
+/// proof is the last one: the space around the buttons is security margin — the
+/// consent screen exists so that a brush against the panel cannot approve an
+/// assertion — and only the dispatch function, not the geometry, can promise a
+/// tap landing there selects nothing.
 #[kani::proof]
-fn confirm_buttons_disjoint() {
+fn confirm_hit_selects_at_most_one_button() {
     let p = Point::new(kani::any(), kani::any());
-    assert!(!(ALLOW_RECT.contains(p) && DENY_RECT.contains(p)));
+    let hit = hit_confirm(p);
+    assert!(
+        (hit == Some(Button::Allow)) == ALLOW_RECT.contains(p),
+        "Allow is not exactly the Allow rect"
+    );
+    assert!(
+        (hit == Some(Button::Deny)) == DENY_RECT.contains(p),
+        "Deny is not exactly the Deny rect"
+    );
+    assert!(
+        hit.is_none() == !(ALLOW_RECT.contains(p) || DENY_RECT.contains(p)),
+        "a tap in the security margin still selected a button"
+    );
+    kani::cover!(hit == Some(Button::Allow), "a tap that approves");
+    kani::cover!(hit == Some(Button::Deny), "a tap that denies");
+    kani::cover!(hit.is_none(), "a tap in the security margin");
 }
 
 /// No tap selects two PIN-pad keys at once: the Cancel target is disjoint from

@@ -162,10 +162,16 @@ invariants hold. The harnesses live next to the unit tests as
 `#[cfg(kani)] mod proofs` and cover the small, total, attacker- or
 crypto-critical helpers, where a proof genuinely beats a sample:
 
-- `rsk-sdk`: BER-TLV walk over arbitrary bytes; `format_len` round-trip for
-  every `u16`; APDU case-1..4 parsing over every buffer up to the bound.
-- `rsk-fs`: the `EF_META` record-walk (`rebuild_meta`) over arbitrary
-  (corrupt) blobs.
+- `rsk-sdk`: BER-TLV walk over arbitrary bytes — every yielded value is a
+  sub-slice of the input, and successive values neither overlap nor run
+  backwards; `format_len` round-trip for every `u16`; APDU case-1..4 parsing
+  over every buffer up to the bound.
+- `rsk-fs`: the `EF_META` record-walk (`rebuild_meta`) over arbitrary (corrupt)
+  blobs — nothing written past the length it reports, and the old record for the
+  rebuilt fid is **gone** from the output, which is what `meta_delete` and
+  `meta_add`'s replace both mean. Stated by feeding the output back through the
+  same function rather than by a second decoder, which would only prove two
+  copies of one walk agree.
 - `rsk-rsa-asm`: `mod_small` proven *functionally* (`== v % m`, every
   dividend up to 2 bytes and every modulus) and panic-free / `< m` for every
   input up to 8 bytes; the `IncrementalSieve` residue invariant
@@ -175,13 +181,27 @@ crypto-critical helpers, where a proof genuinely beats a sample:
   panic-free (no overflow/underflow) and mutually inverse for every length up
   to 64 KiB; `encode∘decode == id` for every input up to 9 bytes (every
   `len % 3` tail, with and without preceding full chunks); `decode` panic-free
-  over every byte string up to 8 chars.
+  over every byte string up to 8 chars and writing exactly the length it
+  reports, never a byte past it.
 - `rsk-rescue`: the `phy` device-configuration record: `parse` total over
-  every byte string up to 12 bytes (and always materializes an interface
-  mask); `serialize∘parse == id` for every `PhyData` (every field-presence
-  combination and value, product strings up to 4 bytes), modulo the documented
-  missing-ENABLED_USB_ITF→ALL normalization, with `PHY_MAX_SIZE` sufficiency
-  proven en route.
+  every byte string up to 12 bytes, always materializing an interface mask and
+  always yielding a record that serializes back into `PHY_MAX_SIZE` (the
+  read-modify-write the rescue interface performs); `overlay` never turning a
+  stored field back into "absent", and leaving a field whose tag the host blob
+  never mentions exactly as it was — the merge's own promise, and the
+  data-loss one; `serialize∘parse == id` for every `PhyData` (every
+  field-presence combination and value, product strings up to 4 bytes), modulo
+  the documented missing-ENABLED_USB_ITF→ALL normalization.
+- `rsk-fido`: the tree's only **state-sequence** proofs. The others each check
+  one call; these drive a symbolic four- to five-operation sequence over the
+  real `FidoState` and check an invariant after every step — a pinUvAuthToken
+  dies on each invalidation and only a fresh issuance brings one back
+  (`NoTokenAfterInvalidation`, asserted both on the state the call sites read
+  and on the real `verify_cm_token` with a replayed genuine MAC), and a
+  credentialManagement enumerate walk is servable only to the channel whose
+  *Begin* opened it (`NoAuthorizationBypass`). The names are the ones
+  `formal/RSKeySecurityState.tla` uses, so one property can be traced model →
+  code → harness by grep.
 
 Kani is **not** in nixpkgs and its setup downloads a prebuilt CBMC bundle, so
 this is the one deliberately non-nix tool (install once, outside the dev
@@ -189,8 +209,32 @@ shell):
 
 ```sh
 cargo install --locked kani-verifier --version 0.67.0 && cargo kani setup
-cargo kani -p rsk-sdk -p rsk-fs -p rsk-rsa-asm -p rsk-crypto -p rsk-mldsa -p rsk-rescue -p rsk-openpgp -p rsk-otp -p rsk-piv -p rsk-oath -p rsk-usb -p rsk-ui -p rsk-led -p rsk-slip39 -p rsk-bip39 -Z unstable-options --harness-timeout 30m
+./scripts/kani.sh pr       # the fast tier — what every pull request runs
+./scripts/kani.sh state    # rsk-fido + rsk-fs, the security-state sequences
+./scripts/kani.sh all      # every harness; what runs daily
 ```
+
+`scripts/kani.sh` owns the tier → crate table and nothing else does, and it
+floors the number of harnesses each tier has to come back with — a roster that
+selects nothing prints a summary and exits 0, the same shape as a `cargo test`
+name filter that matches no test. `scripts/kani_gate.py` reads that table back
+with `--tiers` and fails the merge gate on a crate that carries a
+`#[kani::proof]` and is on no tier.
+
+The split is by measured cost, not by guess (kani 0.67.0, 18-core Apple Silicon
+under load, 2026-08-12; "solve" excludes compilation, which dominates a cold
+run):
+
+| Tier | Crates | Harnesses | Solve | Slowest harness |
+|---|---|---|---|---|
+| `pr` | 12 | 38 | 209 s | `rsk-piv::set_protected_total_and_invariant`, 57 s |
+| `state` | 2 | 4 | ~12 min | `rsk-fido::…_at_call_site`, ~8.5 min (9.3 GiB peak) |
+| `all` | 16 | 53 | ~1 h 45 | `rsk-rescue::serialize_parse_roundtrip`, ~80 min |
+
+`pr` passes `--harness-timeout 5m`, five times its slowest harness. That cap is
+the tripwire on the tier assignment: a fast-tier harness that grows past it
+fails the pull request instead of quietly making every one of them wait, and the
+answer is to move its crate to the slow list, never to raise the cap.
 
 Pin the version — a verdict belongs to the tool that gave it, and an unpinned
 install is not the one CI runs. `--harness-timeout` is experimental (hence the
@@ -203,6 +247,16 @@ The proofs are bounded, and the bound is the honest fine print. A 16- to
 inputs are the fuzzers' job. Big loops (a full modexp, Baillie–PSW) are out of
 CBMC's reach by design and stay covered by the differential tests and on-device
 KATs.
+
+For a sequence proof the bound is the sequence, and two more walls stand behind
+it. **Cost:** one HMAC-SHA-256 evaluation over concrete bytes costs CBMC ~130 s,
+so a harness that drives a real MAC-checking gate can afford it once at the end,
+never once per step. **Reach:** anything that pulls `p256` in — a `Ctx`, and so
+the whole CTAP dispatch — does not merely time out, it aborts in codegen.
+Kani 0.67.0 panics on `crypto-bigint 0.7.5`'s `UintRef::lowest_u64`
+(*"BinaryOperation Expression does not typecheck Plus … FlexibleArray"*), which
+is why three of the four token gates are represented by the state predicates
+they read rather than invoked. Each harness names what it does not prove.
 
 The sharpest bound is on *functional division* specs. Proving
 `mod_small == v % m` makes the solver equate two division circuits
@@ -222,20 +276,27 @@ proof harness sized to what CBMC can swallow: functional where it converges,
 structural (`< m`, panic-free) where it doesn't, or relational against a
 division-free reformulation. Anything bigger gets a fuzz target.
 
-CI: the daily `deep-checks` workflow has a `kani` job (rustup-based, version
-pinned, `~/.kani` cached) running the same `cargo kani` line — literally the
-same one, because `scripts/kani_gate.py` compares them. That guard is in the
-merge gate (the proofs themselves stay daily): it holds the roster of crates
-carrying a `#[kani::proof]` and fails when one is missing from the `-p` list,
-which is how 20 of the 51 harnesses came to be run by nothing at all. It also
-fails when the workflow's `run:` line stops carrying that list — commenting the
-step out leaves the file's other copies agreeing with this one, over a job that
-proves nothing.
+CI runs the tiers above, from this same script (rustup-based, version pinned,
+`~/.kani` cached — Kani is the one tool outside the nix shell). `ci.yml`'s
+`proofs` job runs `pr` on any change under `crates/`, and adds `state` when the
+diff reaches `rsk-fido`, `rsk-fs`, `rsk-store` or `rsk-wipe` — the surface those
+sequence proofs are about (`scripts/ci-scope.sh`, `PROOFS` / `PROOFS_STATE`,
+both covered by its `--self-test`). `deep-checks.yml`'s daily `kani` job runs
+`all`.
 
-One crate is deliberately off the list. `rsk-bench`'s `summarize` sorts
+`scripts/kani_gate.py` is in the merge gate and holds the tiers to their word:
+the `all` tier must be exactly the crates carrying a `#[kani::proof]` less the
+exclusion below, every other tier a non-empty subset of it, every tier both run
+by a CI row and written on this page, and no workflow or page may hand-write a
+`cargo kani … -p …` roster of its own. That guard exists because the row named
+"prove every harness" was running 29 of 49, and because commenting the `run:`
+line out once left the file's other copies agreeing with each other over a job
+that proved nothing. Its own mutation table is `scripts/test_kani_gate.py`.
+
+One crate is deliberately off the tiers. `rsk-bench`'s `summarize` sorts
 `samples[warmup..]`, whose length is symbolic, so CBMC unwinds it unbounded and
 returns no verdict — not in 5 minutes, and not with `--default-unwind 5`. The
-exclusion and its reason live in that script, next to the roster it belongs to.
+exclusion and its reason live in that guard, next to the roster it belongs to.
 
 ## On-device tests
 
@@ -507,18 +568,20 @@ third reader of our CTAP replies, and the only one that claims 2.3.
 ## CI parity
 
 `check.sh` is plain bash over the Nix dev shell. A CI job is
-`nix develop -c ./scripts/check.sh` plus, on a runner with the board
-attached, the `tests/` scripts. The scheduled `deep-checks` workflow is the
-Miri, fuzz and Kani commands from this page, daily, plus a `repro` job that
-builds the hermetic firmware twice and requires bit-identical outputs
+`nix develop -c ./scripts/check.sh` plus the `proofs` job — `scripts/kani.sh`,
+which cannot join `check.sh` because Kani is not in the dev shell — plus, on a
+runner with the board attached, the `tests/` scripts. The scheduled
+`deep-checks` workflow is the Miri, fuzz and full-tier Kani commands from this
+page, daily, plus a `repro` job that builds the hermetic firmware twice and
+requires bit-identical outputs
 ([build.md](build.md#nix-build-hermetic-no-dev-shell)), an `llvm-cov` job that
 floors host-crate line coverage, and a `complexity` job that ratchets
 crate-library cognitive complexity. No hidden state.
 
 ```mermaid
 flowchart TB
-    a["Merge gate — every commit / PR<br/>check.sh: fmt · clippy · host tests · firmware builds · size ratchet · audit · deny · vet · gitleaks"]
-    b["Daily — deep-checks<br/>Miri · timed libFuzzer · Kani · repro (bit-identical build) · llvm-cov (coverage floor) · complexity (cognitive ratchet)"]
+    a["Merge gate — every commit / PR<br/>check.sh: fmt · clippy · host tests · firmware builds · size ratchet · audit · deny · vet · gitleaks<br/>proofs: Kani pr tier (+ state tier when the diff reaches it)"]
+    b["Daily — deep-checks<br/>Miri · timed libFuzzer · Kani (all tiers) · repro (bit-identical build) · llvm-cov (coverage floor) · complexity (cognitive ratchet)"]
     a ~~~ b
 ```
 
