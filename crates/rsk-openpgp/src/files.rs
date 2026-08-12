@@ -24,13 +24,20 @@ pub const HISTORICAL_BYTES: &[u8] = &[0x00, 0x31, 0x84, 0x73, 0x80, 0x01, 0xC0, 
 /// this to `RESP_CAP`; neither crate can see the other's constant.
 pub const MAX_DO_BYTES: usize = 2036;
 
-/// Extended capabilities: no secure messaging, GET CHALLENGE (128), key import,
+/// The most random bytes GET CHALLENGE serves, and DO C0 bytes 3-4. One owner,
+/// for the same reason [`MAX_DO_BYTES`] is: C0 announced 128 while the command
+/// served anything up to the applet's 1024-byte scratch, so the number a host
+/// reads off the card said nothing about what the card would do. `rsk-openpgp`'s
+/// `SCRATCH` is the ceiling this may take, asserted at compile time there.
+pub const MAX_CHALLENGE_BYTES: usize = 1024;
+
+/// Extended capabilities: no secure messaging, GET CHALLENGE, key import,
 /// PW-status puttable, private DO, changeable algo attrs, AES, KDF-DO.
 pub const EXTENDED_CAPABILITIES: &[u8] = &[
     0x7f,
     0x00,
-    0x00,
-    0x80,
+    (MAX_CHALLENGE_BYTES >> 8) as u8,
+    MAX_CHALLENGE_BYTES as u8,
     (MAX_DO_BYTES >> 8) as u8,
     MAX_DO_BYTES as u8,
     (MAX_DO_BYTES >> 8) as u8,

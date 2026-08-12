@@ -111,6 +111,10 @@ pub(crate) fn check_uif<S: Storage>(
 /// information at ~370 bytes.
 const SCRATCH: usize = 1024;
 
+/// GET CHALLENGE fills the scratch, so what DO C0 announces cannot exceed it —
+/// the two used to drift, C0 saying 128 while the command served up to 1024.
+const _: () = assert!(files::MAX_CHALLENGE_BYTES <= SCRATCH);
+
 /// The OpenPGP applet. Holds the per-power-cycle session state (`has_pw1/2/3`
 /// and the session keys via [`Session`], the currently selected DO); the
 /// persistent state lives in flash. The device serial and the shared TRNG
@@ -523,9 +527,28 @@ impl<S: Storage> Applet<Fs<S>> for OpenpgpApplet<'_> {
             }
             consts::INS_MSE => mse::mse(&mut self.sess, apdu),
             consts::INS_CHALLENGE => {
-                // GET CHALLENGE: `apdu.ne` random bytes (already normalised, so > 0).
+                // §7.2.15 fixes P1 = P2 = 00. Stricter than a YubiKey 5.7.4, which
+                // refuses only when BOTH are non-zero — so this refuses everything
+                // that card refuses and nothing a conformant host sends.
+                if apdu.p1 != 0 || apdu.p2 != 0 {
+                    return Sw::WRONG_P1P2;
+                }
+                // GET CHALLENGE: `apdu.ne` random bytes. Bounded by what DO C0
+                // announces, not by the buffer that happens to back it: an
+                // announcement a host cannot rely on is worth nothing, and
+                // truncating to it under `9000` would be worse than refusing.
                 let ne = apdu.ne;
-                if ne > self.scratch.len() {
+                if ne == 0 {
+                    // A command carrying Lc and no Le at all — zero random bytes
+                    // under 9000 reads as a served challenge. `6A80`, the answer
+                    // measured on a YubiKey 5.7.4; ISO case 1 is indistinguishable
+                    // here because `Apdu::parse` defaults its Ne to 256.
+                    return consts::WRONG_DATA;
+                }
+                if ne > files::MAX_CHALLENGE_BYTES {
+                    // No cell to copy: that card over-announces by ten, corrupts
+                    // its own response one byte past what it can serve and wedges
+                    // its CCID interface four past that. ISO 7816-4 decides.
                     return Sw::WRONG_LENGTH;
                 }
                 self.rng.borrow_mut().fill(&mut self.scratch[..ne]);

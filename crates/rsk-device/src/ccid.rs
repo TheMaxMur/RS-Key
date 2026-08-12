@@ -38,6 +38,12 @@ const RESP_CAP: usize = 2038;
 // DATA answer `9000` with an empty body. E3's class: two owners of one meaning,
 // no compiler between them.
 const _: () = assert!(rsk_openpgp::files::MAX_DO_BYTES <= RESP_CAP - 2);
+// Same cliff, same reason, for the other number DO C0 announces: GET CHALLENGE
+// serves `Le` bytes up to this maximum, and one byte over the body an applet is
+// handed would answer `9000` with nothing in it. Its sibling assertion in
+// `rsk-openpgp` bounds it by the scratch it is drawn into; that one cannot see
+// this ceiling.
+const _: () = assert!(rsk_openpgp::files::MAX_CHALLENGE_BYTES <= RESP_CAP - 2);
 
 /// Registration-order indices of the applets whose RSA keygen is fast-pathed.
 const IDX_OPENPGP: usize = 1;

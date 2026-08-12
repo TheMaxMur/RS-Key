@@ -151,6 +151,77 @@ fn get_challenge_returns_ne_random_bytes() {
     assert_eq!(body, (0u8..8).collect::<Vec<_>>());
 }
 
+// DO C0 bytes 3-4 are the card's own statement of how much randomness it will
+// hand over. It said 128 while the command served anything up to the 1024-byte
+// scratch, so the number a host read off the card described nothing. The two are
+// one constant now, and §7.2.15's P1 = P2 = 00 is enforced (a YubiKey 5.7.4
+// refuses only when both are non-zero — this is the strictly stricter side).
+#[test]
+fn get_challenge_serves_exactly_what_do_c0_announces() {
+    let rng = RefCell::new(CountRng(0));
+    let mut fs = make_fs();
+    let presence = RefCell::new(crate::AlwaysConfirm);
+    let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
+
+    let (c0, sw) = run(&mut app, &mut fs, &[0x00, consts::INS_GET_DATA, 0x00, 0xC0]);
+    assert_eq!(sw, Sw::OK);
+    let announced = ((c0[2] as usize) << 8) | c0[3] as usize;
+    assert_eq!(announced, files::MAX_CHALLENGE_BYTES);
+
+    let ext = |ne: usize| {
+        [
+            0x00,
+            consts::INS_CHALLENGE,
+            0x00,
+            0x00,
+            0x00,
+            (ne >> 8) as u8,
+            ne as u8,
+        ]
+    };
+    // Everything up to the announcement is served in full…
+    for ne in [1, 8, 255, 256, 257, announced - 1, announced] {
+        let (body, sw) = run(&mut app, &mut fs, &ext(ne));
+        assert_eq!(sw, Sw::OK, "Le {ne}");
+        assert_eq!(body.len(), ne, "Le {ne}");
+    }
+    // …and one byte past it is refused, not truncated under 9000.
+    for ne in [announced + 1, 2048, 4096] {
+        let (body, sw) = run(&mut app, &mut fs, &ext(ne));
+        assert_eq!(sw, Sw::WRONG_LENGTH, "Le {ne}");
+        assert!(body.is_empty(), "Le {ne}");
+    }
+
+    for (p1, p2) in [(0x01, 0x00), (0x00, 0x01), (0x01, 0x01), (0xFF, 0xFF)] {
+        let (body, sw) = run(
+            &mut app,
+            &mut fs,
+            &[0x00, consts::INS_CHALLENGE, p1, p2, 0x08],
+        );
+        assert_eq!(sw, Sw::WRONG_P1P2, "P1P2 {p1:02X}{p2:02X}");
+        assert!(body.is_empty());
+    }
+
+    // Command data with a valid Le is accepted and ignored, as on a YubiKey.
+    let (body, sw) = run(
+        &mut app,
+        &mut fs,
+        &[0x00, consts::INS_CHALLENGE, 0x00, 0x00, 0x01, 0xAA, 0x08],
+    );
+    assert_eq!(sw, Sw::OK);
+    assert_eq!(body.len(), 8);
+
+    // Command data and no Le at all: zero random bytes under 9000 would read as
+    // a served challenge. 6A80 is that card's answer, measured; 6700 was ours.
+    let (body, sw) = run(
+        &mut app,
+        &mut fs,
+        &[0x00, consts::INS_CHALLENGE, 0x00, 0x00, 0x01, 0xAA],
+    );
+    assert_eq!(sw, consts::WRONG_DATA);
+    assert!(body.is_empty());
+}
+
 #[test]
 fn activate_file_is_ok() {
     let rng = RefCell::new(CountRng(0));

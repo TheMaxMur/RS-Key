@@ -40,6 +40,25 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Security
 
+- **GET CHALLENGE serves exactly what DO `C0` announces, and takes `P1 = P2 =
+  00`.** `C0` bytes 3-4 said **128** while the command handed over anything up
+  to the applet's 1024-byte scratch, so the one number a host can read off the
+  card about its randomness described nothing the card did. The two are one
+  constant now (`MAX_CHALLENGE_BYTES`, tied by compile-time assertions to the
+  scratch it is drawn into and to the CCID frame it must fit), announced as the
+  1024 that was always being served — raising the
+  announcement to meet the behaviour rather than cutting the behaviour, so no
+  host that works today stops working. Past it the command refuses (`6700`)
+  rather than truncating under `9000`. §7.2.15 fixes `P1` and `P2` at `00` and
+  neither was read; both are enforced now, which is stricter than a YubiKey
+  5.7.4 — measured, that card refuses only when *both* are non-zero, so this
+  refuses everything it refuses and nothing a conformant host sends. A command
+  carrying data and **no `Le` at all** now answers `6A80` — the code measured on
+  that card — instead of `9000` with zero random bytes. The ISO case-1 form of that (`00 84 00 00`)
+  still returns 256: `Apdu::parse` defaults a missing `Ne` to 256 for every
+  applet, so the OpenPGP handler cannot tell it from `Le = 0`. **bcdDevice →
+  0x0899.**
+
 - **DO `C4`'s announced password maxima can no longer be rewritten.** §4.4.2
   says of the PW status bytes' length information that it "should not be
   changed", and `put_pw_status` copied the flag *plus all three*. So
