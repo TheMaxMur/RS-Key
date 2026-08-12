@@ -52,8 +52,9 @@ nix develop -c cargo test -p rsk-sdk -p rsk-fs -p rsk-usb -p rsk-crypto \
 ```
 
 (`HOST_TARGET` env overrides the triple in `check.sh`, which runs this same
-list — `scripts/roster_gate.py` fails when either drifts from `[workspace]
-members`, which is how this copy came to be missing eight crates.) Crypto tests
+list — `scripts/roster_gate.py` fails when any copy of it drifts from
+`[workspace] members`, which is how this one came to be missing eight crates and
+the nightly coverage row four.) Crypto tests
 pin NIST/RFC vectors; applet tests drive full protocol flows
 (register → assert, PIN lockout ladders, OpenPGP import → sign → verify against
 `RustCrypto`, PIV generate → attest → parse with `x509-parser`).

@@ -35,7 +35,9 @@ step was caught; disabling it was not, and disabling it is what a hurried "make 
 nightly stop failing" does. "Uncommented" is judged per invocation and from the `#`,
 not from the line's first character: `run: true # cargo kani …` runs the `true` and
 reads as live to a `startswith` test — the hole this shipped with, and the one
-`roster_gate.py` inherited from it.
+`roster_gate.py` inherited from it. That rule, the `\\` continuation-joiner and the
+`run:` walk itself are `gate_lines.py`'s now, one owner for both guards, because
+inheriting it a second time is how it came to be wrong in two places at once.
 
 Deliberately syntactic. It cannot say a harness proves anything worth proving — that
 is the harness's own business — only that the solver is pointed at it.
@@ -46,6 +48,8 @@ import os
 import pathlib
 import re
 import sys
+
+import gate_lines
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 WORKFLOW = ROOT / ".github/workflows/deep-checks.yml"
@@ -68,12 +72,6 @@ DOC_PIN = re.compile(r"kani-verifier --version ([\d.]+)")
 
 INVOCATION = re.compile(r"cargo kani\b.*")
 PKG = re.compile(r"-p ([\w-]+)")
-#: A step's `run:`, either `run: <command>` or a `run: |` block scalar.
-RUN_KEY = re.compile(r"run:\s*(?:[|>][-+\d]*)?\s*")
-#: A `#` at a word boundary comments out the rest of the line, whether it is YAML
-#: or the shell inside a `run:` block. Wherever on the line it starts, nothing
-#: after it runs.
-COMMENT = re.compile(r"(?:^|\s)#")
 
 Roster = collections.namedtuple("Roster", "path named switches executed")
 
@@ -101,33 +99,10 @@ def commands(body):
     Live means left of the `#`. One that starts to the right of it is a quotation —
     the header's copy — and keeps its whole text, `#` and all being what it quotes.
     """
-    comment = COMMENT.search(body)
-    width = comment.start() if comment else len(body)
-    for found in INVOCATION.finditer(body):
-        live = found.start() < width
-        yield (body[found.start() : width] if live else found.group()), live
-
-
-def logical_lines(text):
-    """(indent, stripped text) per line, with `\\` continuations joined into one.
-
-    A 250-character command gets reflowed onto several lines sooner or later, and a
-    roster read off half of it would fail the comparison against the other copies.
-    A guard that cries wolf on a formatting edit is a guard someone deletes.
-    """
-    parts, indent = [], 0
-    for raw in text.splitlines():
-        if not parts:
-            indent = len(raw) - len(raw.lstrip())
-        stripped = raw.strip()
-        if stripped.endswith("\\"):
-            parts.append(stripped[:-1].strip())
-            continue
-        parts.append(stripped)
-        yield indent, " ".join(p for p in parts if p)
-        parts = []
-    if parts:
-        yield indent, " ".join(p for p in parts if p)
+    live, quoted = gate_lines.split_at_comment(body)
+    for segment, is_live in ((live, True), (quoted, False)):
+        for found in INVOCATION.finditer(segment):
+            yield found.group(), is_live
 
 
 def workflow_rosters():
@@ -138,27 +113,14 @@ def workflow_rosters():
     local-equivalent comment, a step name, a tail some edit commented out — is a
     quotation of it.
     """
-    run_indent = None
-    for indent, body in logical_lines(WORKFLOW.read_text()):
-        if not body:
-            continue
-        if body.startswith("- "):
-            indent, body = indent + 2, body[2:]
-        if body.startswith("#"):
-            executed = False  # a YAML comment, or a shell one inside the block
-        elif RUN_KEY.match(body):
-            run_indent, executed = indent, True
-        elif run_indent is not None and indent > run_indent:
-            executed = True  # a continuation line of the block scalar
-        else:
-            run_indent, executed = None, False
+    for body, executed in gate_lines.yaml_runs(WORKFLOW.read_text()):
         for line, live in commands(body):
             yield WORKFLOW, line, executed and live
 
 
 def docs_rosters():
     """The docs' `cargo kani … -p …` line — a reader's copy, never run by CI."""
-    for _, body in logical_lines(DOCS.read_text()):
+    for _indent, body in gate_lines.logical_lines(DOCS.read_text()):
         for line, _live in commands(body):
             yield DOCS, line, False
 

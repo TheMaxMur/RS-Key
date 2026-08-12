@@ -384,8 +384,9 @@ run "ci knob groups"           ./scripts/ci-knobs.sh --self-test
 # belongs here, where the harness gets written; the solver stays nightly.
 run "kani roster"              python scripts/kani_gate.py
 # Same failure one file closer to home: the host `-p` list above is written out
-# five times here and once in docs/testing.md, and nothing tied any copy to
-# `[workspace] members`. The docs copy had already rotted to 16 of 24.
+# five times here, once in docs/testing.md and twice in deep-checks.yml (the
+# nightly llvm-cov row and the header quoting it), and nothing tied any copy to
+# `[workspace] members`. The docs copy had rotted to 16 of 24, coverage to 20.
 run "crate roster"             python scripts/roster_gate.py
 run "docs constants match code" python scripts/docs_constants.py
 run "pytest (tools/rsk)"       python -m pytest tools/rsk -q
