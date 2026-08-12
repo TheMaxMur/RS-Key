@@ -152,29 +152,6 @@ fn priv_do_3_needs_pw2_or_pw3() {
 }
 
 #[test]
-fn get_next_without_prior_get_data_is_record_not_found() {
-    let mut fs = fs();
-    let a = aid();
-    let mut out = [0u8; 16];
-    let mut cur = None;
-    let (_, sw) = get_next_data(EF_PRIV_DO_1, false, true, &mut fs, &a, &mut cur, &mut out);
-    assert_eq!(sw, Sw::RECORD_NOT_FOUND);
-}
-
-#[test]
-fn get_next_walks_to_following_priv_do() {
-    let mut fs = fs();
-    fs.put(EF_PRIV_DO_2, &[0xCA, 0xFE]).unwrap();
-    let a = aid();
-    let mut out = [0u8; 16];
-    let mut cur = Some(EF_PRIV_DO_1);
-    let (n, sw) = get_next_data(EF_PRIV_DO_1, false, true, &mut fs, &a, &mut cur, &mut out);
-    assert_eq!(sw, Sw::OK);
-    assert_eq!(&out[..n], &[0xCA, 0xFE]);
-    assert_eq!(cur, Some(EF_PRIV_DO_2));
-}
-
-#[test]
 fn oversized_do_is_refused_not_truncated() {
     // run-3 #1 / run-2 F3 regression: `Fs::read` reports the value's FULL stored
     // length, so an over-long DO (here a 1500-byte C1 algorithm attribute) must

@@ -206,19 +206,35 @@ impl<'a> OpenpgpApplet<'a> {
         keypairgen::rsa_generate_finish(&dev, fs, &self.sess, rng, fid, key, out)
     }
 
+    /// Read the SELECT-DATA-selected cardholder-certificate occurrence
+    /// (`EF_CH_1/2/3`) into `res`. §5's access table gives 7F21 READ = *Always*,
+    /// so this is free; an unset occurrence reads as empty.
+    fn read_cert_occurrence<S: Storage>(&mut self, fs: &mut Fs<S>, res: &mut ResBuf) -> Sw {
+        let room = res.capacity() - res.len();
+        let stor = consts::EF_CH_1 + self.sess.cert_occ as u16;
+        if let Some(n) = fs.read(stor, res.spare_mut()) {
+            // `fs.read` reports the value's FULL stored length while the
+            // backend copies only what fit. PUT DATA now bounds every write
+            // at MAX_DO_BYTES, so this can only be a value an older build
+            // wrote through the 2037-byte chaining buffer — one byte more
+            // than fits. Say so instead of handing back a short body with
+            // `9000`, which is the whole defect this rule exists to end.
+            if n > room {
+                return Sw::MEMORY_FAILURE;
+            }
+            res.commit(n);
+        }
+        Sw::OK
+    }
+
     /// GET DATA (0xCA): the cardholder-certificate occurrence (7F21) is a free
     /// read of the SELECT-DATA-selected slot; every other DO goes through
     /// `getdata::get_data` (PW2/PW3-gated).
-    fn handle_get_data<S: Storage>(
-        &mut self,
-        fid: u16,
-        apdu: &Apdu,
-        fs: &mut Fs<S>,
-        res: &mut ResBuf,
-    ) -> Sw {
-        if apdu.nc > 0 {
-            return Sw::WRONG_LENGTH;
-        }
+    fn handle_get_data<S: Storage>(&mut self, fid: u16, fs: &mut Fs<S>, res: &mut ResBuf) -> Sw {
+        // Command data is ignored, not refused: a YubiKey 5.7.4 answers `00 CA
+        // 00 5E 01 AA` with the DO, and the tag is in P1/P2 anyway, so there is
+        // nothing for a body to say.
+        //
         // Both arms build straight into the response buffer. Going via `scratch`
         // and copying meant the applet had to own RAM as large as the biggest DO
         // it could return, and the RP2350's stack floor does not have a spare
@@ -226,22 +242,14 @@ impl<'a> OpenpgpApplet<'a> {
         // that, and why the announcement was the thing that had to be wrong.
         let room = res.capacity() - res.len();
         if fid == consts::EF_CH_CERT {
-            // Cardholder certificate (7F21): return the SELECT-DATA-selected
-            // occurrence (EF_CH_1/2/3). A free read; an unset cert is empty.
-            let stor = consts::EF_CH_1 + self.sess.cert_occ as u16;
-            if let Some(n) = fs.read(stor, res.spare_mut()) {
-                // `fs.read` reports the value's FULL stored length while the
-                // backend copies only what fit. PUT DATA now bounds every write
-                // at MAX_DO_BYTES, so this can only be a value an older build
-                // wrote through the 2037-byte chaining buffer — one byte more
-                // than fits. Say so instead of handing back a short body with
-                // `9000`, which is the whole defect this rule exists to end.
-                if n > room {
-                    return Sw::MEMORY_FAILURE;
-                }
-                res.commit(n);
+            let sw = self.read_cert_occurrence(fs, res);
+            if sw.is_ok() {
+                // The anchor GET NEXT DATA walks from — set here as well as in
+                // `get_data`, which this arm never reaches, and only on a read
+                // that produced an occurrence.
+                self.current_ef = Some(fid);
             }
-            return Sw::OK;
+            return sw;
         }
         let (n, sw) = getdata::get_data(
             fid,
@@ -336,24 +344,25 @@ impl<S: Storage> Applet<Fs<S>> for OpenpgpApplet<'_> {
     fn process(&mut self, apdu: &Apdu, fs: &mut Fs<S>, res: &mut ResBuf) -> Sw {
         let fid = ((apdu.p1 as u16) << 8) | apdu.p2 as u16;
         match apdu.ins {
-            consts::INS_GET_DATA => self.handle_get_data(fid, apdu, fs, res),
+            consts::INS_GET_DATA => self.handle_get_data(fid, fs, res),
             consts::INS_GET_NEXT_DATA => {
                 if apdu.nc > 0 {
-                    return Sw::WRONG_LENGTH;
+                    return consts::WRONG_DATA;
                 }
-                let (n, sw) = getdata::get_next_data(
-                    fid,
-                    self.sess.has_pw2,
-                    self.sess.has_pw3,
-                    fs,
-                    &self.full_aid,
-                    &mut self.current_ef,
-                    &mut self.scratch,
-                );
-                if sw.is_ok() {
-                    res.extend(&self.scratch[..n]);
+                // OpenPGP 3.4 §7.2.7 gives GET NEXT DATA exactly one use: walking
+                // the 7F21 occurrences after a GET DATA of that DO anchored the
+                // walk. Any other tag, no anchor, or a walk past the last
+                // occurrence is wrong data — measured on a YubiKey 5.7.4, which
+                // answers 6A80 to all three and leaves the occurrence pointer
+                // where the walk ended.
+                if fid != consts::EF_CH_CERT
+                    || self.current_ef != Some(consts::EF_CH_CERT)
+                    || self.sess.cert_occ + 1 >= consts::CERT_OCCURRENCES
+                {
+                    return consts::WRONG_DATA;
                 }
-                sw
+                self.sess.cert_occ += 1;
+                self.read_cert_occurrence(fs, res)
             }
             consts::INS_SELECT => {
                 let (n, sw) = select::cmd_select(apdu, &mut self.scratch);
@@ -535,7 +544,16 @@ impl<S: Storage> Applet<Fs<S>> for OpenpgpApplet<'_> {
             }
             // SELECT DATA (0xA5): pick the cardholder-certificate occurrence (7F21 →
             // EF_CH_1/2/3) for the following GET / PUT DATA.
-            consts::INS_SELECT_DATA => select::select_data(apdu, &mut self.sess),
+            consts::INS_SELECT_DATA => {
+                let sw = select::select_data(apdu, &mut self.sess);
+                if sw.is_ok() {
+                    // SELECT DATA arms the walk as much as GET DATA does — a
+                    // YubiKey walks from the selected occurrence with no read in
+                    // between, and that is the natural way to start at one.
+                    self.current_ef = Some(consts::EF_CH_CERT);
+                }
+                sw
+            }
             // Deliberately unsupported: GET BULK DATA (0xCE, vendor), the management
             // applet, and secure messaging — none used by gpg/scdaemon over USB/PC-SC.
             _ => Sw::INS_NOT_SUPPORTED,

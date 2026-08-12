@@ -1308,6 +1308,159 @@ fn cardholder_cert_write_needs_pw3_and_select_validates() {
     assert_eq!(run(&mut app, &mut fs, &bad_p2).1, Sw::INCORRECT_P1P2);
 }
 
+// SELECT DATA is the walk's other starting gun — measured on a YubiKey 5.7.4,
+// which walks from the selected occurrence with no GET DATA in between — and
+// neither command refuses a body: GET DATA ignores one, GET NEXT DATA answers
+// 6A80 rather than 6700.
+#[test]
+fn select_data_arms_the_walk_and_a_body_is_not_a_length_error() {
+    let rng = RefCell::new(LcgRng(29));
+    let mut fs = make_fs();
+    let presence = RefCell::new(crate::AlwaysConfirm);
+    let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
+    verify_pin(&mut app, &mut fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
+
+    let certs: [&[u8]; 3] = [&[0xB0; 8], &[0xB1; 9], &[0xB2; 10]];
+    for (occ, cert) in certs.iter().enumerate() {
+        assert_eq!(run(&mut app, &mut fs, &select_cert(occ as u8)).1, Sw::OK);
+        let mut p = vec![0x00, consts::INS_PUT_DATA, 0x7F, 0x21, cert.len() as u8];
+        p.extend_from_slice(cert);
+        assert_eq!(run(&mut app, &mut fs, &p).1, Sw::OK);
+    }
+
+    let get = [0x00, consts::INS_GET_DATA, 0x7F, 0x21];
+    let next = [0x00, consts::INS_GET_NEXT_DATA, 0x7F, 0x21];
+
+    // Control: the applet SELECT clears the anchor, so the walk really is armed
+    // by what follows and not left over from the writes above.
+    app.deselect(&mut fs);
+    assert_eq!(run(&mut app, &mut fs, &next).1, consts::WRONG_DATA);
+
+    // SELECT DATA alone arms it, from the occurrence it selected.
+    assert_eq!(run(&mut app, &mut fs, &select_cert(0)).1, Sw::OK);
+    assert_eq!(run(&mut app, &mut fs, &next), (certs[1].to_vec(), Sw::OK));
+    assert_eq!(run(&mut app, &mut fs, &next), (certs[2].to_vec(), Sw::OK));
+    assert_eq!(run(&mut app, &mut fs, &next).1, consts::WRONG_DATA);
+
+    app.deselect(&mut fs);
+    assert_eq!(run(&mut app, &mut fs, &select_cert(1)).1, Sw::OK);
+    assert_eq!(run(&mut app, &mut fs, &next), (certs[2].to_vec(), Sw::OK));
+
+    // A body is ignored on GET DATA — of the cert and of an ordinary DO — and is
+    // wrong data, not a wrong length, on GET NEXT.
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            &[0x00, consts::INS_GET_DATA, 0x7F, 0x21, 0x01, 0xAA]
+        ),
+        (certs[2].to_vec(), Sw::OK)
+    );
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            &[0x00, consts::INS_GET_DATA, 0x00, 0x5E, 0x01, 0xAA]
+        )
+        .1,
+        Sw::OK
+    );
+    assert_eq!(run(&mut app, &mut fs, &select_cert(0)).1, Sw::OK);
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            &[0x00, consts::INS_GET_NEXT_DATA, 0x7F, 0x21, 0x01, 0xAA]
+        )
+        .1,
+        consts::WRONG_DATA
+    );
+    // …and refusing it moved nothing: the walk still starts where it was armed.
+    assert_eq!(run(&mut app, &mut fs, &next), (certs[1].to_vec(), Sw::OK));
+}
+
+// OpenPGP 3.4 §7.2.7 gives GET NEXT DATA exactly one job — walk the three 7F21
+// occurrences — and §5 makes that read *Always*. Measured on a YubiKey 5.7.4:
+// GET DATA anchors the walk, GET NEXT advances then reads, and the step past the
+// last occurrence is 6A80 with the pointer left where it was.
+#[test]
+fn get_next_data_walks_the_cardholder_cert_occurrences() {
+    let rng = RefCell::new(LcgRng(13));
+    let mut fs = make_fs();
+    let presence = RefCell::new(crate::AlwaysConfirm);
+    let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
+    verify_pin(&mut app, &mut fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
+
+    let certs: [&[u8]; 3] = [&[0xA0; 8], &[0xA1; 9], &[0xA2; 10]];
+    for (occ, cert) in certs.iter().enumerate() {
+        assert_eq!(run(&mut app, &mut fs, &select_cert(occ as u8)).1, Sw::OK);
+        let mut p = vec![0x00, consts::INS_PUT_DATA, 0x7F, 0x21, cert.len() as u8];
+        p.extend_from_slice(cert);
+        assert_eq!(run(&mut app, &mut fs, &p).1, Sw::OK);
+    }
+
+    let get = [0x00, consts::INS_GET_DATA, 0x7F, 0x21];
+    let next = [0x00, consts::INS_GET_NEXT_DATA, 0x7F, 0x21];
+
+    // No anchor yet: a cold GET NEXT is wrong data, not a walk from occurrence 0.
+    app.deselect(&mut fs);
+    assert_eq!(run(&mut app, &mut fs, &next).1, consts::WRONG_DATA);
+
+    // The whole walk with NOTHING verified — 7F21 READ is Always.
+    assert_eq!(run(&mut app, &mut fs, &select_cert(0)).1, Sw::OK);
+    assert_eq!(run(&mut app, &mut fs, &get), (certs[0].to_vec(), Sw::OK));
+    assert_eq!(run(&mut app, &mut fs, &next), (certs[1].to_vec(), Sw::OK));
+    assert_eq!(run(&mut app, &mut fs, &next), (certs[2].to_vec(), Sw::OK));
+    assert_eq!(run(&mut app, &mut fs, &next).1, consts::WRONG_DATA);
+    assert_eq!(run(&mut app, &mut fs, &next).1, consts::WRONG_DATA);
+    // The exhausted step does not move the pointer on.
+    assert_eq!(run(&mut app, &mut fs, &get), (certs[2].to_vec(), Sw::OK));
+
+    // An intervening GET DATA of another DO re-anchors the walk elsewhere.
+    assert_eq!(run(&mut app, &mut fs, &select_cert(0)).1, Sw::OK);
+    assert_eq!(run(&mut app, &mut fs, &get).1, Sw::OK);
+    assert_eq!(
+        run(&mut app, &mut fs, &[0x00, consts::INS_GET_DATA, 0x00, 0x5E]).1,
+        Sw::OK
+    );
+    assert_eq!(run(&mut app, &mut fs, &next).1, consts::WRONG_DATA);
+
+    // A GET NEXT of some other tag is refused and leaves the anchor alone.
+    assert_eq!(run(&mut app, &mut fs, &get).1, Sw::OK);
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            &[0x00, consts::INS_GET_NEXT_DATA, 0x01, 0x01]
+        )
+        .1,
+        consts::WRONG_DATA
+    );
+    assert_eq!(run(&mut app, &mut fs, &next), (certs[1].to_vec(), Sw::OK));
+
+    // GET NEXT after a GET DATA of a DO that has no occurrences: still 6A80.
+    for tag in [[0x01u8, 0x01], [0x00, 0x5E], [0x00, 0x6E]] {
+        assert_eq!(
+            run(
+                &mut app,
+                &mut fs,
+                &[0x00, consts::INS_GET_DATA, tag[0], tag[1]]
+            )
+            .1,
+            Sw::OK
+        );
+        assert_eq!(
+            run(
+                &mut app,
+                &mut fs,
+                &[0x00, consts::INS_GET_NEXT_DATA, tag[0], tag[1]]
+            )
+            .1,
+            consts::WRONG_DATA
+        );
+    }
+}
+
 #[test]
 fn generate_ed25519_aut_internal_authenticate_verifies() {
     use ed25519_dalek::Verifier;

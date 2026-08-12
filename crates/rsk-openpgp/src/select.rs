@@ -6,7 +6,7 @@
 
 use rsk_sdk::{Apdu, Sw};
 
-use crate::consts::{EF_CH_CERT, OPENPGP_AID, WRONG_DATA};
+use crate::consts::{CERT_OCCURRENCES, EF_CH_CERT, OPENPGP_AID, WRONG_DATA};
 use crate::files::{DoSource, source};
 use crate::pin::Session;
 
@@ -115,7 +115,7 @@ pub fn select_data(apdu: &Apdu, sess: &mut Session) -> Sw {
         d[4] as u16
     };
     // Only the cardholder certificate has occurrences; three of them (EF_CH_1/2/3).
-    if tag != EF_CH_CERT || apdu.p1 >= 3 {
+    if tag != EF_CH_CERT || apdu.p1 >= CERT_OCCURRENCES {
         return Sw::REFERENCE_NOT_FOUND;
     }
     sess.cert_occ = apdu.p1;

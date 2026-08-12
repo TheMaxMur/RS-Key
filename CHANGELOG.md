@@ -40,6 +40,30 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Security
 
+- **GET NEXT DATA now does the one thing the spec defines it for.** OpenPGP 3.4
+  §7.2.7 gives INS `0xCC` a single use — walk the three occurrences of the
+  cardholder certificate (7F21) — and §5's access table makes that read
+  *Always*. Ours could not do it at all: `00 CC 7F 21` answered `6A83` whether
+  or not the admin PIN was verified, so the second and third certificates were
+  reachable only by a SELECT DATA before each read. Three independent causes,
+  all fixed. The GET DATA handler's 7F21 arm returned before recording the DO,
+  so the walk had no anchor; the command was gated on PW3, which is the ACL of
+  a write, not of this read; and SELECT DATA — the way to walk from an arbitrary
+  occurrence without a read to throw away — did not arm the walk either, though
+  measurement shows the reference card walks straight on from it. What it
+  implemented instead — a `current_ef + 1`
+  walk over the private DOs `0101`–`0104` — is in no version of the card spec
+  and is removed; a YubiKey 5.7.4 answers `6A80` to GET NEXT DATA for every tag
+  but 7F21, and so do we now. The rest of the model is measured against that
+  card cell for cell: GET DATA anchors the walk and does not move the
+  occurrence pointer, GET NEXT advances then reads, the step past the last
+  occurrence is `6A80` and leaves the pointer where it was, an intervening GET
+  DATA of another DO drops the anchor, and a refused GET NEXT of another tag
+  does not. Swept with it, the class the walk sits in: **command data on a GET
+  DATA is ignored rather than refused**, as that card ignores it — `00 CA 00 5E
+  01 AA` serves the DO instead of answering `6700`, and GET NEXT DATA with a
+  body answers `6A80`. **bcdDevice → 0x0895.**
+
 - **MANAGE SECURITY ENVIRONMENT had its two control-reference templates the
   wrong way round, so the only form a conformant host sends did nothing.**
   OpenPGP 3.4 §7.2.18 names the templates by their ISO 7816-8 meanings — `A4`

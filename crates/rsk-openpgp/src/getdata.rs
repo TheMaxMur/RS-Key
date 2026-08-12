@@ -116,38 +116,6 @@ pub fn get_data<S: Storage>(
     (data_len, Sw::OK)
 }
 
-/// Walk the private DOs (`0101`..`0104`): requires a prior GET DATA (sets
-/// `current_ef`), the same DO group, and PW3; then reads `current_ef + 1`.
-pub fn get_next_data<S: Storage>(
-    fid: u16,
-    has_pw2: bool,
-    has_pw3: bool,
-    fs: &mut Fs<S>,
-    full_aid: &[u8; 16],
-    current_ef: &mut Option<u16>,
-    out: &mut [u8],
-) -> (usize, Sw) {
-    let cur = match *current_ef {
-        Some(f) => f,
-        None => return (0, Sw::RECORD_NOT_FOUND),
-    };
-    if matches!(source(fid), DoSource::None) {
-        return (0, Sw::REFERENCE_NOT_FOUND);
-    }
-    // The next-DO walk is an update-class operation, gated on PW3.
-    if !has_pw3 {
-        return (0, Sw::SECURITY_STATUS_NOT_SATISFIED);
-    }
-    if (cur & 0x1ff0) != (fid & 0x1ff0) {
-        return (0, Sw::WRONG_P1P2);
-    }
-    let next = cur + 1;
-    if matches!(source(next), DoSource::None) {
-        return (0, Sw::REFERENCE_NOT_FOUND);
-    }
-    get_data(next, has_pw2, has_pw3, fs, full_aid, current_ef, out)
-}
-
 #[cfg(test)]
 #[path = "getdata_tests.rs"]
 mod tests;

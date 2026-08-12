@@ -100,6 +100,13 @@ pub const EF_DEK_STAGE_PW3: KeyFid = KeyFid::new(0x10a1);
 pub const EF_CH_1: u16 = 0x1f21;
 pub const EF_CH_2: u16 = 0x1f22;
 pub const EF_CH_3: u16 = 0x1f23;
+/// How many occurrences DO 7F21 has (`EF_CH_1..EF_CH_3`) — the range SELECT DATA
+/// accepts and the point GET NEXT DATA's walk stops at.
+pub const CERT_OCCURRENCES: u8 = 3;
+// Raising the count without adding the file compiles: the walk would reach FID
+// 0x1f24, which `files::source` classifies as no DO at all and TERMINATE DF does
+// not wipe. The occurrences are a contiguous range and this is what says so.
+const _: () = assert!(EF_CH_1 + CERT_OCCURRENCES as u16 - 1 == EF_CH_3);
 
 // ---------------- Data-object FIDs / tags (tag == FID) ----------------
 // `//C` = computed/composite DO, `//S` = stored DO.
