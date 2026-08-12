@@ -40,6 +40,30 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Security
 
+- **hmac-secret now answers the three codes §12.5 names.** A `saltAuth` that fails
+  to verify was `CTAP2_ERR_EXTENSION_FIRST` — a code about extension *ordering*,
+  which tells the platform to resend the request that just failed its MAC — where
+  §12.5 says `CTAP2_ERR_PIN_AUTH_INVALID` verbatim. A `saltAuth` of the wrong
+  *length* was folded into that same MAC compare and so answered the MAC's code;
+  a YubiKey 5.7.4 refuses anything but 16 or 32 bytes, under either protocol,
+  *before* the MAC. And the `saltEnc` wire gate was per-protocol, so a 48-byte
+  `saltEnc` under protocol one — which the oracle accepts — was refused with
+  `CTAP1_ERR_INVALID_LENGTH`; the gate is now the oracle's protocol-agnostic union
+  {32, 48, 64, 80}, with §12.5's own rule ("the result is not 32 or 64 bytes long
+  → `CTAP1_ERR_INVALID_PARAMETER`") applied after the MAC, where the spec puts it.
+  Everything the oracle rejects is still rejected with the same `0x03` it uses, and
+  the order is unchanged: lengths before crypto, so unauthenticated input is thrown
+  out cheaply and nothing leaks that the wire length did not already show — the
+  measurement confirms the reference device does the same. A zero-length `saltEnc`
+  or `saltAuth` is now a length error rather than a missing parameter; an *absent*
+  one is still `CTAP2_ERR_MISSING_PARAMETER`, judged where it was so it stays ahead
+  of the `up:false` refusal. `CTAP2_ERR_EXTENSION_FIRST` is no longer reachable and
+  its variant is gone. Not changed: hmac-secret on an `up:false` assertion stays
+  `CTAP2_ERR_UNSUPPORTED_OPTION`, which is §12.5 verbatim and what FIDO conformance
+  checks — the YubiKey answers `CTAP2_ERR_UP_REQUIRED` there and is the one that
+  diverges.
+  **bcdDevice → 0x089E.**
+
 - **A numeric `0` is a value the platform sent, not a parameter it omitted.** Four
   request fields carried no present-flag, so `0` was indistinguishable from absence
   and each of them answered the wrong thing. `pinUvAuthProtocol: 0` on

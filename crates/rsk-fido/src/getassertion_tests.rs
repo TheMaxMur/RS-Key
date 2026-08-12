@@ -4079,3 +4079,203 @@ fn ga_pin_uv_auth_protocol_zero_is_a_value_not_an_absence() {
         );
     }
 }
+
+// getAssertion + hmac-secret with the sub-fields under the test's control: each
+// salt independently present or absent, any length, and either protocol.
+fn ga_request_hmac_raw(
+    allow: &[u8],
+    px: &[u8; 32],
+    py: &[u8; 32],
+    se: Option<&[u8]>,
+    sa: Option<&[u8]>,
+    proto: u64,
+) -> std::vec::Vec<u8> {
+    let mut buf = [0u8; 512];
+    let n = {
+        let mut e = Encoder::new(Cursor::new(&mut buf[..]));
+        e.map(4).unwrap();
+        e.u8(1).unwrap().str("example.com").unwrap();
+        e.u8(2).unwrap().bytes(&CDH).unwrap();
+        e.u8(3).unwrap().array(1).unwrap().map(2).unwrap();
+        e.str("type").unwrap().str("public-key").unwrap();
+        e.str("id").unwrap().bytes(allow).unwrap();
+        e.u8(4).unwrap().map(1).unwrap();
+        e.str("hmac-secret")
+            .unwrap()
+            .map(2 + u64::from(se.is_some()) + u64::from(sa.is_some()))
+            .unwrap();
+        e.u8(1).unwrap();
+        cose_xy(&mut e, px, py);
+        if let Some(b) = se {
+            e.u8(2).unwrap().bytes(b).unwrap();
+        }
+        if let Some(b) = sa {
+            e.u8(3).unwrap().bytes(b).unwrap();
+        }
+        e.u8(4).unwrap().u64(proto).unwrap();
+        e.writer().position()
+    };
+    buf[..n].to_vec()
+}
+
+/// The three codes §12.5 names for hmac-secret, driven through getAssertion.
+/// A failed `saltAuth` verification used to be CTAP2_ERR_EXTENSION_FIRST — an
+/// ordering code that tells the platform to resend what just failed its MAC —
+/// where §12.5 says CTAP2_ERR_PIN_AUTH_INVALID. A `saltAuth` of the wrong *length*
+/// was folded into that same MAC compare, so it answered the MAC's code instead of
+/// CTAP1_ERR_INVALID_LENGTH; a YubiKey 5.7.4 refuses anything but 16 or 32 bytes,
+/// under either protocol, before the MAC. And the wire gate is the oracle's union
+/// of both protocols' lengths — {32, 48, 64, 80} — with the protocol's own rule
+/// applied after decryption, where §12.5 names CTAP1_ERR_INVALID_PARAMETER.
+#[test]
+fn hmac_secret_length_and_mac_codes() {
+    use rsk_crypto::pinproto::{authenticate, ecdh, encrypt, public_xy};
+    let (mut fs, mut rng) = setup();
+    let mut state = crate::FidoState::new();
+    state.regenerate(&mut rng);
+    let (ax, ay) = state.ephemeral_public().unwrap();
+    let mc = run_mc_state(&mut fs, &mut rng, &mut state, &mc_request_lbk_hmac());
+    let (id, _x, _y) = parse_mc(&mc);
+    let plat = {
+        let mut s = [0u8; 32];
+        s[0] = 0x22;
+        s[31] = 0x22;
+        s
+    };
+    let (px, py) = public_xy(&plat).unwrap();
+
+    for proto in [PinProto::One, PinProto::Two] {
+        let wire = if proto == PinProto::One { 1u64 } else { 2 };
+        let mut shared = [0u8; 64];
+        let slen = ecdh(proto, &plat, &ax, &ay, &mut shared).unwrap();
+        let secret = &shared[..slen];
+        // A saltEnc of `n` wire bytes, with the MAC that matches it.
+        let sealed = |n: usize| -> (std::vec::Vec<u8>, std::vec::Vec<u8>) {
+            let mut se = [0u8; SALT_ENC_MAX];
+            let pt = [0x77u8; SALT_ENC_MAX];
+            let body = n - proto.iv_overhead();
+            let ne = encrypt(proto, secret, &[0x01u8; 16], &pt[..body], &mut se).unwrap();
+            let mut sa = [0u8; 32];
+            let na = authenticate(proto, secret, &se[..ne], &mut sa).unwrap();
+            (se[..ne].to_vec(), sa[..na].to_vec())
+        };
+        let mut err = |req: &[u8]| {
+            let mut out = [0u8; 1024];
+            let mut presence = crate::AlwaysConfirm;
+            let mut ctx = Ctx {
+                presence: &mut presence,
+                dev: dev(),
+                fs: &mut fs,
+                rng: &mut rng,
+                state: &mut state,
+                now_ms: 20,
+            };
+            get_assertion(&mut ctx, req, &mut out).map(|_| ())
+        };
+
+        // Wire lengths: the four the oracle accepts pass the gate under BOTH
+        // protocols; a block multiple that is not one of them does not.
+        for n in [16usize, 96, 112] {
+            let (se, sa) = (std::vec![0u8; n], std::vec![0u8; 32]);
+            assert_eq!(
+                err(&ga_request_hmac_raw(
+                    &id,
+                    &px,
+                    &py,
+                    Some(&se),
+                    Some(&sa),
+                    wire
+                )),
+                Err(CtapError::InvalidLength),
+                "proto {wire} saltEnc {n}"
+            );
+        }
+        // A legal wire length this protocol could not have produced decrypts to 16,
+        // 48 or 80 bytes, which §12.5 refuses with INVALID_PARAMETER after the MAC.
+        for n in [32usize, 48, 64, 80] {
+            let (se, sa) = sealed(n);
+            let got = err(&ga_request_hmac_raw(
+                &id,
+                &px,
+                &py,
+                Some(&se),
+                Some(&sa),
+                wire,
+            ));
+            let salt = n - proto.iv_overhead();
+            if salt == 32 || salt == 64 {
+                got.unwrap_or_else(|e| panic!("proto {wire} saltEnc {n} refused with {e:?}"));
+            } else {
+                assert_eq!(
+                    got,
+                    Err(CtapError::InvalidParameter),
+                    "proto {wire} saltEnc {n}"
+                );
+            }
+        }
+        // saltAuth: only 16 and 32 bytes reach the MAC, and the MAC's own failure is
+        // PIN_AUTH_INVALID. (A 16-byte MAC under protocol two is length-legal and
+        // then cannot match, which is the same code.)
+        let (se, good) = sealed(32 + proto.iv_overhead());
+        for n in [0usize, 8, 15, 17, 31, 33] {
+            let sa = std::vec![0u8; n];
+            assert_eq!(
+                err(&ga_request_hmac_raw(
+                    &id,
+                    &px,
+                    &py,
+                    Some(&se),
+                    Some(&sa),
+                    wire
+                )),
+                Err(CtapError::InvalidLength),
+                "proto {wire} saltAuth {n}"
+            );
+        }
+        for n in [16usize, 32] {
+            let sa = std::vec![0u8; n];
+            assert_eq!(
+                err(&ga_request_hmac_raw(
+                    &id,
+                    &px,
+                    &py,
+                    Some(&se),
+                    Some(&sa),
+                    wire
+                )),
+                Err(CtapError::PinAuthInvalid),
+                "proto {wire} saltAuth {n} with a wrong MAC"
+            );
+        }
+        // An absent sub-field is still MISSING_PARAMETER — a zero-length one is not.
+        assert_eq!(
+            err(&ga_request_hmac_raw(&id, &px, &py, None, Some(&good), wire)),
+            Err(CtapError::MissingParameter)
+        );
+        assert_eq!(
+            err(&ga_request_hmac_raw(&id, &px, &py, Some(&se), None, wire)),
+            Err(CtapError::MissingParameter)
+        );
+        assert_eq!(
+            err(&ga_request_hmac_raw(
+                &id,
+                &px,
+                &py,
+                Some(&[]),
+                Some(&good),
+                wire
+            )),
+            Err(CtapError::InvalidLength)
+        );
+        // The control: a well-formed request still evaluates the salts.
+        err(&ga_request_hmac_raw(
+            &id,
+            &px,
+            &py,
+            Some(&se),
+            Some(&good),
+            wire,
+        ))
+        .unwrap();
+    }
+}

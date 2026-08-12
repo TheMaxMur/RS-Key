@@ -356,11 +356,11 @@ pub fn make_credential<S: Storage, R: Rng>(
     if req.hmac_secret_mc.present && !req.ext_hmac_secret {
         return Err(CtapError::MissingParameter);
     }
-    // hmac-secret-mc carries the same salt fields as getAssertion's hmac-secret;
-    // reject an empty salt up front for parity with `get_assertion` rather than
-    // relying only on the downstream length check in `hmacsecret::eval`.
+    // hmac-secret-mc carries the same salt fields as getAssertion's hmac-secret, so
+    // an absent one is refused in the same place and with the same code. A
+    // zero-length one was sent, and is the length gate's business.
     if req.hmac_secret_mc.present
-        && (req.hmac_secret_mc.salt_enc.is_empty() || req.hmac_secret_mc.salt_auth.is_empty())
+        && (req.hmac_secret_mc.salt_enc.is_none() || req.hmac_secret_mc.salt_auth.is_none())
     {
         return Err(CtapError::MissingParameter);
     }

@@ -294,8 +294,11 @@ pub fn get_assertion<S: Storage, R: Rng>(
     if req.ext_large_blob_key == Some(false) {
         return Err(CtapError::InvalidOption);
     }
+    // §12.5's saltEnc / saltAuth are mandatory when the extension is present, and a
+    // YubiKey 5.7.4 answers MISSING_PARAMETER for an absent one ahead of its own
+    // up-rule. A zero-length one was sent, and is the length gate's business.
     if req.hmac_secret.present
-        && (req.hmac_secret.salt_enc.is_empty() || req.hmac_secret.salt_auth.is_empty())
+        && (req.hmac_secret.salt_enc.is_none() || req.hmac_secret.salt_auth.is_none())
     {
         return Err(CtapError::MissingParameter);
     }
@@ -574,15 +577,13 @@ fn arm_get_next_assertion(
         gna.hmac_proto = req.hmac_secret.proto;
         gna.hmac_peer_x = req.hmac_secret.peer_x;
         gna.hmac_peer_y = req.hmac_secret.peer_y;
-        let se = req.hmac_secret.salt_enc.len().min(gna.hmac_salt_enc.len());
-        gna.hmac_salt_enc[..se].copy_from_slice(&req.hmac_secret.salt_enc[..se]);
+        let salt_enc = req.hmac_secret.salt_enc.unwrap_or_default();
+        let se = salt_enc.len().min(gna.hmac_salt_enc.len());
+        gna.hmac_salt_enc[..se].copy_from_slice(&salt_enc[..se]);
         gna.hmac_salt_enc_len = se as u8;
-        let sa = req
-            .hmac_secret
-            .salt_auth
-            .len()
-            .min(gna.hmac_salt_auth.len());
-        gna.hmac_salt_auth[..sa].copy_from_slice(&req.hmac_secret.salt_auth[..sa]);
+        let salt_auth = req.hmac_secret.salt_auth.unwrap_or_default();
+        let sa = salt_auth.len().min(gna.hmac_salt_auth.len());
+        gna.hmac_salt_auth[..sa].copy_from_slice(&salt_auth[..sa]);
         gna.hmac_salt_auth_len = sa as u8;
     }
     gna.ext_cred_blob = req.ext_cred_blob;
@@ -989,8 +990,8 @@ fn next_assertion_response<S: Storage, R: Rng>(
             proto: g.hmac_proto,
             peer_x: g.hmac_peer_x,
             peer_y: g.hmac_peer_y,
-            salt_enc: &salt_enc[..se],
-            salt_auth: &salt_auth[..sa],
+            salt_enc: Some(&salt_enc[..se]),
+            salt_auth: Some(&salt_auth[..sa]),
         };
         let ephemeral = *ctx.state.ephemeral_scalar();
         hmacsecret::eval(&req, &ephemeral, seed, key_input, uv, ctx.rng, &mut hs)?

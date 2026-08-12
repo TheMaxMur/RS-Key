@@ -57,8 +57,8 @@ fn roundtrip(proto: PinProto, two_salts: bool) {
     let req = HmacSecretReq {
         peer_x: px,
         peer_y: py,
-        salt_enc: &salt_enc,
-        salt_auth: &salt_auth,
+        salt_enc: Some(&salt_enc),
+        salt_auth: Some(&salt_auth),
         proto: if proto == PinProto::One { 1 } else { 2 },
         present: true,
     };
@@ -108,8 +108,8 @@ fn uv_half_differs_from_non_uv() {
     let req = HmacSecretReq {
         peer_x: px,
         peer_y: py,
-        salt_enc: &salt_enc,
-        salt_auth: &salt_auth,
+        salt_enc: Some(&salt_enc),
+        salt_auth: Some(&salt_auth),
         proto: 2,
         present: true,
     };
@@ -129,8 +129,14 @@ fn uv_half_differs_from_non_uv() {
     assert_ne!(&without[..32], &with[..32]);
 }
 
+/// §12.5 verbatim: "Authenticator calls verify(shared secret, saltEnc, saltAuth) —
+/// if the verification fails, return CTAP2_ERR_PIN_AUTH_INVALID." It used to be
+/// CTAP2_ERR_EXTENSION_FIRST, a code about extension ordering that tells a platform
+/// to retry the very request that just failed its MAC. No YubiKey reading exists:
+/// §12.5 puts the check after "the authenticator waits for user consent", and the
+/// oracle refuses hmac-secret on an `up: false` assertion outright.
 #[test]
-fn bad_salt_auth_is_extension_first() {
+fn bad_salt_auth_is_pin_auth_invalid() {
     let auth_scalar = scalar(0x11);
     let plat_scalar = scalar(0x22);
     let (ax, ay) = public_xy(&auth_scalar).unwrap();
@@ -141,8 +147,8 @@ fn bad_salt_auth_is_extension_first() {
     let req = HmacSecretReq {
         peer_x: px,
         peer_y: py,
-        salt_enc: &salt_enc,
-        salt_auth: &salt_auth,
+        salt_enc: Some(&salt_enc),
+        salt_auth: Some(&salt_auth),
         proto: 2,
         present: true,
     };
@@ -158,7 +164,7 @@ fn bad_salt_auth_is_extension_first() {
             &mut rng,
             &mut out
         ),
-        Err(CtapError::ExtensionFirst)
+        Err(CtapError::PinAuthInvalid)
     );
 }
 
@@ -166,8 +172,8 @@ fn bad_salt_auth_is_extension_first() {
 fn bad_salt_length_rejected() {
     let auth_scalar = scalar(0x11);
     let req = HmacSecretReq {
-        salt_enc: &[0u8; 20], // neither 32 nor 64 (+ v2 IV)
-        salt_auth: &[0u8; 32],
+        salt_enc: Some(&[0u8; 20]), // not one of the four legal wire lengths
+        salt_auth: Some(&[0u8; 32]),
         proto: 2,
         present: true,
         ..Default::default()
