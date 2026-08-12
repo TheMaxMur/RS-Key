@@ -13,6 +13,7 @@ use minicbor::encode::write::Cursor;
 use minicbor::{Decoder, Encoder};
 use zeroize::Zeroize;
 
+use rsk_crypto::pinproto::PinProto;
 use rsk_crypto::sha256;
 use rsk_fs::Storage;
 
@@ -281,12 +282,21 @@ pub fn get_assertion<S: Storage, R: Rng>(
     // is not an error, the option is simply treated as false. Otherwise `uv` is an
     // error only when there is no built-in user verification method, or it is not
     // presently configured — on a screenless build, always.
+    //
+    // Judged above step 2's protocol, where the oracle puts it: a bare uv:true is
+    // INVALID_OPTION there whatever `pinUvAuthProtocol` says. `rk` is NOT in that
+    // class and stays below — measured, it loses to the protocol on that card.
     if req.pin_uv_auth_param.is_some() {
         req.uv = false;
     }
     if req.uv && !builtin_uv_enabled(ctx) {
         return Err(CtapError::InvalidOption);
     }
+    // §6.2.2 step 2 ahead of every check below — where the oracle puts it: a
+    // present-but-unsupported protocol outranks `options.rk`, an hmac-secret
+    // missing its salts and the selection gesture. An absent one is
+    // `enforce_pin`'s business.
+    let proto = crate::clientpin::checked_proto(req.pin_uv_auth_protocol)?;
     if req.rk_option {
         return Err(CtapError::UnsupportedOption);
     }
@@ -310,7 +320,7 @@ pub fn get_assertion<S: Storage, R: Rng>(
     }
 
     let rp_id_hash = sha256(req.rp_id.as_bytes());
-    let verified = enforce_pin(ctx, &req, &rp_id_hash)?;
+    let verified = enforce_pin(ctx, &req, &rp_id_hash, proto)?;
     // §6.2.2 step 8: a built-in UV ceremony IS the evidence of user interaction, so
     // the response asserts presence. Normalising `up` here carries that through the
     // UP flag and the getNextAssertion legs; the poll itself is skipped below.
@@ -354,9 +364,8 @@ fn enforce_pin<S: Storage, R: Rng>(
     ctx: &mut Ctx<S, R>,
     req: &Request,
     rp_id_hash: &[u8; 32],
+    proto: Option<PinProto>,
 ) -> Result<UvOutcome, CtapError> {
-    // §6.2.2 step 2 ahead of step 1's selection gesture — where the oracle puts it.
-    let proto = crate::clientpin::checked_proto(req.pin_uv_auth_protocol)?;
     match req.pin_uv_auth_param {
         // Zero-length probe (selection gesture): touch, then report PIN state.
         // With no button configured this confirms instantly. CTAP 2.1 §6.2.2 step 1

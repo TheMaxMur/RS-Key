@@ -22,6 +22,7 @@ use minicbor::{Decoder, Encoder};
 use zeroize::Zeroize;
 
 use rsk_crypto::MLDSA65_PK_LEN;
+use rsk_crypto::pinproto::PinProto;
 use rsk_crypto::sha256;
 use rsk_fs::{Fs, Storage};
 
@@ -307,7 +308,6 @@ pub fn make_credential<S: Storage, R: Rng>(
     out: &mut [u8],
 ) -> CtapResult {
     let mut req = parse(data)?;
-
     if req.client_data_hash.len() != 32 || req.rp_id.is_empty() || req.user_id.is_empty() {
         return Err(CtapError::MissingParameter);
     }
@@ -333,12 +333,6 @@ pub fn make_credential<S: Storage, R: Rng>(
     // not an error.
     req.user_name = truncate_utf8(req.user_name, USER_NAME_MAX);
     req.user_display_name = truncate_utf8(req.user_display_name, USER_NAME_MAX);
-    if !req.has_pubkey_param {
-        return Err(CtapError::MissingParameter);
-    }
-    if req.sel_alg == 0 {
-        return Err(CtapError::UnsupportedAlgorithm);
-    }
     // §6.1.2 step 5: "pinUvAuthParam and the 'uv' option are processed as mutually
     // exclusive with pinUvAuthParam taking precedence" — a token request that also
     // carries uv:true is NOT an error, the option is simply treated as false.
@@ -349,11 +343,27 @@ pub fn make_credential<S: Storage, R: Rng>(
     // MakeCredential Req-6: P-3 up=true succeeds, F-1 up=false fails). `uv` is an
     // error only when there is no built-in user verification method, or it is not
     // presently configured — on a screenless build, always.
+    //
+    // Judged ABOVE step 2's protocol, which is where the oracle puts it and not
+    // where §6.1.2's numbering does: a YubiKey 5.7.4 answers INVALID_OPTION to
+    // up:false and to a bare uv:true whatever `pinUvAuthProtocol` says, and only
+    // the request map's own shape beats them there.
     if req.up == Some(false) {
         return Err(CtapError::InvalidOption);
     }
     if req.uv && !builtin_uv_enabled(ctx) {
         return Err(CtapError::InvalidOption);
+    }
+    // §6.1.2 step 2 ahead of every check below — where the oracle puts it: a
+    // present-but-unsupported protocol outranks a bad algorithm, an unchoosable
+    // `pubKeyCredParams`, the remaining options and the selection gesture. An
+    // absent one is `enforce_pin`'s business.
+    let proto = crate::clientpin::checked_proto(req.pin_uv_auth_protocol)?;
+    if !req.has_pubkey_param {
+        return Err(CtapError::MissingParameter);
+    }
+    if req.sel_alg == 0 {
+        return Err(CtapError::UnsupportedAlgorithm);
     }
     // largeBlobKey may not be requested as false and requires a resident key.
     if req.ext_large_blob_key == Some(false) || (req.ext_large_blob_key == Some(true) && !req.rk) {
@@ -394,7 +404,7 @@ pub fn make_credential<S: Storage, R: Rng>(
     }
 
     let rp_id_hash = sha256(req.rp_id.as_bytes());
-    let verified = enforce_pin(ctx, &req, &rp_id_hash)?;
+    let verified = enforce_pin(ctx, &req, &rp_id_hash, proto)?;
 
     let mut seed = ctx.load_keydev().ok_or(CtapError::Other)?;
     let result = make_credential_inner(ctx, &req, &rp_id_hash, &seed, verified, out);
@@ -422,9 +432,8 @@ fn enforce_pin<S: Storage, R: Rng>(
     ctx: &mut Ctx<S, R>,
     req: &Request,
     rp_id_hash: &[u8; 32],
+    proto: Option<PinProto>,
 ) -> Result<UvOutcome, CtapError> {
-    // §6.1.2 step 2 ahead of step 1's selection gesture — where the oracle puts it.
-    let proto = crate::clientpin::checked_proto(req.pin_uv_auth_protocol)?;
     let pin_set = ctx.fs.has_data(EF_PIN);
     match req.pin_uv_auth_param {
         // Zero-length probe: a selection gesture — wait for a touch, then report

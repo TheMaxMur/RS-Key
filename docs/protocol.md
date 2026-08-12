@@ -990,6 +990,21 @@ not support is `0x02 INVALID_PARAMETER`, and a value of `0` counts as unsupporte
 rather than omitted (it used to answer `0x14`, as did `3` and every other unknown
 value). Since bcdDevice `0x0894`.
 
+An unsupported one is judged **before the algorithm, the extensions and the
+remaining options** — `makeCredential` and `getAssertion` included, where it used
+to be judged after all of them, so a request that got two things wrong was told
+about the wrong one (bcdDevice `0x08B6`). Two things still outrank it, both
+because a YubiKey 5.7.4 puts them there:
+
+- the request map's own shape — keys 1..=4 of `makeCredential` and 1..=2 of
+  `getAssertion` are read in order, and an absent, empty or over-long one is
+  answered before any value is validated;
+- the **option values** of §6.1.2/§6.2.2 step 4: `up:false` on `makeCredential`,
+  and `uv:true` with no `pinUvAuthParam` on a build without built-in user
+  verification, are `0x2C INVALID_OPTION` whatever `pinUvAuthProtocol` says.
+  `options.rk` is *not* in that class and loses to the protocol, on that card and
+  here.
+
 ---
 
 ## 10. Worked examples

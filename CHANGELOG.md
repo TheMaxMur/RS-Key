@@ -124,6 +124,26 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **A makeCredential or getAssertion that named an unsupported PIN/UV-auth
+  protocol was told about something else.** The protocol was judged inside the
+  PIN gate, which runs after the algorithm check, the option checks and the
+  extension checks — so a request that got two things wrong learned about the
+  second one and could keep resending the protocol the key had already refused. A
+  YubiKey 5.7.4 puts that judgement earlier: measured against a bad algorithm, an
+  empty `pubKeyCredParams`, `options.rk` and an hmac-secret missing its salts, it
+  answers `CTAP1_ERR_INVALID_PARAMETER` to every one of them, on both commands.
+  Ours does now too, judged once at the top and passed down rather than
+  re-derived. This finishes the sweep started in `0x089D`, which moved the same
+  judgement ahead of the selection gesture on these two commands and ahead of
+  everything on the other five. Only a request naming a protocol other than 1 or
+  2 changes: those were errors before and are errors now, with the code that
+  names the actual cause. Two things still outrank it, both because that card
+  puts them there: the request map's own shape — an absent mandatory key is
+  `MISSING_PARAMETER` before any value is looked at — and the option *values* of
+  §6.1.2/§6.2.2 step 4, so `up:false` and a bare `uv:true` stay
+  `CTAP2_ERR_INVALID_OPTION` whatever the protocol says (eight readings each,
+  with and without a `pinUvAuthParam`). **bcdDevice → 0x08BD.**
+
 - **A credential asked for under a curve-explicit COSE id came back stamped with
   a different one.** `pubKeyCredParams` offering only ESP256 (`-9`), ESP384
   (`-51`), ESP512 (`-52`) or Ed25519 (`-19`) registered a credential attesting

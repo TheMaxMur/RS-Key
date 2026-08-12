@@ -4080,6 +4080,142 @@ fn ga_pin_uv_auth_protocol_zero_is_a_value_not_an_absence() {
     }
 }
 
+// getAssertion with a `pinUvAuthParam` (6), a `pinUvAuthProtocol` (7) of `proto`,
+// and one extra fault written by `fault` into the keys between them.
+// Writes request keys into a half-built map.
+type Keys<'a> = &'a dyn Fn(&mut Encoder<Cursor<&mut [u8]>>);
+// One check-order row: label, the keys it writes, how many, and the code that
+// fault alone would get.
+type OrderRow<'a> = (&'a str, Keys<'a>, u64, CtapError);
+
+fn ga_request_faulty(proto: u64, nkeys: u64, fault: Keys) -> std::vec::Vec<u8> {
+    let mut buf = [0u8; 256];
+    let n = {
+        let mut e = Encoder::new(Cursor::new(&mut buf[..]));
+        e.map(4 + nkeys).unwrap();
+        e.u8(1).unwrap().str("example.com").unwrap();
+        e.u8(2).unwrap().bytes(&CDH).unwrap();
+        fault(&mut e);
+        e.u8(6).unwrap().bytes(&[0xEEu8; 32]).unwrap();
+        e.u8(7).unwrap().u64(proto).unwrap();
+        e.writer().position()
+    };
+    buf[..n].to_vec()
+}
+
+/// The getAssertion half of the check-order rule: §6.2.2 step 2 outranks the
+/// checks below it, not just step 1's selection gesture. Measured on a YubiKey
+/// 5.7.4 — a present-but-unsupported `pinUvAuthProtocol` is
+/// CTAP1_ERR_INVALID_PARAMETER alongside `options.rk`, an hmac-secret missing its
+/// salts, `up:false` and an allowList it holds no credential for. Ours judged it
+/// inside `enforce_pin`, after all of them.
+///
+/// Bounded at both ends. Above: an absent key 1 or 2 is refused by `parse` before
+/// key 7 is read. Below: `uv` is NOT in this set — see
+/// `ga_uv_option_outranks_the_protocol`. `rk` is, measured: that card answers
+/// INVALID_PARAMETER to `options.rk` under a bad protocol and UNSUPPORTED_OPTION
+/// under a good one, so the two options are judged in different places there.
+#[test]
+fn ga_unsupported_protocol_outranks_every_later_check() {
+    let (mut fs, mut rng) = setup();
+    let mut state = crate::FidoState::new();
+    let mut err = |req: &[u8]| {
+        let mut out = [0u8; 1024];
+        let mut presence = crate::AlwaysConfirm;
+        let mut ctx = Ctx {
+            presence: &mut presence,
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 10,
+        };
+        get_assertion(&mut ctx, req, &mut out).unwrap_err()
+    };
+    let rows: [OrderRow; 2] = [
+        (
+            "options.rk",
+            &|e| {
+                e.u8(5).unwrap().map(1).unwrap();
+                e.str("rk").unwrap().bool(true).unwrap();
+            },
+            1,
+            CtapError::UnsupportedOption,
+        ),
+        (
+            "hmac-secret with no salts",
+            &|e| {
+                e.u8(4).unwrap().map(1).unwrap();
+                e.str("hmac-secret").unwrap().map(1).unwrap();
+                e.u8(1).unwrap().map(0).unwrap();
+            },
+            1,
+            CtapError::MissingParameter,
+        ),
+    ];
+    for (label, fault, nkeys, alone) in rows {
+        assert_eq!(
+            err(&ga_request_faulty(3, nkeys, fault)),
+            CtapError::InvalidParameter,
+            "unsupported protocol must outrank: {label}"
+        );
+        // The control: a SUPPORTED protocol leaves the fault reporting itself.
+        assert_eq!(
+            err(&ga_request_faulty(1, nkeys, fault)),
+            alone,
+            "supported protocol must not mask: {label}"
+        );
+    }
+}
+
+/// `uv:true` on a build with no built-in user verification is judged BEFORE the
+/// protocol, the one place §6.2.2's step numbering and that card disagree — eight
+/// readings, protocol 0, 3 and 9 alike, and the same on makeCredential
+/// (`option_value_errors_outrank_the_protocol`). No `pinUvAuthParam` here: one
+/// present would make step 4 treat the option as false, which is the rule the
+/// card does NOT implement and we keep.
+#[test]
+fn ga_uv_option_outranks_the_protocol() {
+    let (mut fs, mut rng) = setup();
+    let mut state = crate::FidoState::new();
+    let mut err = |req: &[u8]| {
+        let mut out = [0u8; 1024];
+        let mut presence = crate::AlwaysConfirm;
+        let mut ctx = Ctx {
+            presence: &mut presence,
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 10,
+        };
+        get_assertion(&mut ctx, req, &mut out).unwrap_err()
+    };
+    let uv_true = |proto: Option<u64>| {
+        let mut buf = [0u8; 256];
+        let n = {
+            let mut e = Encoder::new(Cursor::new(&mut buf[..]));
+            e.map(3 + u64::from(proto.is_some())).unwrap();
+            e.u8(1).unwrap().str("example.com").unwrap();
+            e.u8(2).unwrap().bytes(&CDH).unwrap();
+            e.u8(5).unwrap().map(1).unwrap();
+            e.str("uv").unwrap().bool(true).unwrap();
+            if let Some(p) = proto {
+                e.u8(7).unwrap().u64(p).unwrap();
+            }
+            e.writer().position()
+        };
+        buf[..n].to_vec()
+    };
+    for proto in [None, Some(0), Some(3), Some(9)] {
+        assert_eq!(
+            err(&uv_true(proto)),
+            CtapError::InvalidOption,
+            "bare uv:true must outrank protocol {proto:?}"
+        );
+    }
+}
+
 // getAssertion + hmac-secret with the sub-fields under the test's control: each
 // salt independently present or absent, any length, and either protocol.
 fn ga_request_hmac_raw(

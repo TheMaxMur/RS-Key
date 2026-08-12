@@ -2204,6 +2204,191 @@ fn pin_uv_auth_protocol_zero_is_a_value_not_an_absence() {
     );
 }
 
+// Writes request keys into a half-built map.
+type Keys<'a> = &'a dyn Fn(&mut Encoder<Cursor<&mut [u8]>>);
+// One check-order row: label, the keys it writes, how many, and the code that
+// fault alone would get.
+type OrderRow<'a> = (&'a str, Keys<'a>, u64, CtapError);
+
+// A makeCredential carrying `pinUvAuthParam` (8) and a `pinUvAuthProtocol` (9)
+// of `proto`, over whatever request keys `head` writes. `nkeys` counts only
+// those; the two PIN keys are added here.
+fn mc_with_proto(nkeys: u64, proto: u64, head: Keys) -> std::vec::Vec<u8> {
+    let mut buf = [0u8; 256];
+    let n = {
+        let mut e = Encoder::new(Cursor::new(&mut buf[..]));
+        e.map(nkeys + 2).unwrap();
+        head(&mut e);
+        e.u8(8).unwrap().bytes(&[0xEEu8; 32]).unwrap();
+        e.u8(9).unwrap().u64(proto).unwrap();
+        e.writer().position()
+    };
+    buf[..n].to_vec()
+}
+
+fn mc_cdh(e: &mut Encoder<Cursor<&mut [u8]>>) {
+    e.u8(1).unwrap().bytes(&[0xCDu8; 32]).unwrap();
+}
+
+fn mc_rp(e: &mut Encoder<Cursor<&mut [u8]>>) {
+    e.u8(2).unwrap().map(1).unwrap();
+    e.str("id").unwrap().str("example.com").unwrap();
+}
+
+fn mc_user(e: &mut Encoder<Cursor<&mut [u8]>>) {
+    e.u8(3).unwrap().map(1).unwrap();
+    e.str("id").unwrap().bytes(&[1, 2, 3, 4]).unwrap();
+}
+
+/// §6.1.2 step 2 outranks the checks below it, not just step 1's selection
+/// gesture: a YubiKey 5.7.4 answers CTAP1_ERR_INVALID_PARAMETER to a
+/// present-but-unsupported `pinUvAuthProtocol` when the algorithm is also
+/// unsupported or `pubKeyCredParams` is empty — measured across both, four
+/// readings each. Ours judged it inside `enforce_pin`, i.e. after all of them, so
+/// a request that got two things wrong was told about the wrong one. Same class
+/// as `a4cbf54`.
+///
+/// Bounded at both ends, each end measured rather than assumed. Above: a request
+/// missing one of the mandatory keys 1..=4 is refused by `parse` before key 9 is
+/// ever read, so it keeps answering MISSING_PARAMETER where that card answers
+/// INVALID_PARAMETER (`missing_mandatory_param_rejected` pins it), and a
+/// malformed `pubKeyCredParams` entry outranks the protocol on that card too.
+/// Below: the option-value errors of step 4 — see
+/// `option_value_errors_outrank_the_protocol`, which is the other half of this
+/// rule and the reason `up:false` is not a row here.
+#[test]
+fn unsupported_protocol_outranks_every_later_check() {
+    let rows: [OrderRow; 2] = [
+        (
+            "unsupported alg",
+            &|e| {
+                mc_cdh(e);
+                mc_rp(e);
+                mc_user(e);
+                // An unassigned COSE id, not a real-but-unbacked one: the point of
+                // the row is the ordering, so it must not start passing the day an
+                // algorithm is added.
+                only_alg(e, -1000);
+            },
+            4,
+            CtapError::UnsupportedAlgorithm,
+        ),
+        (
+            // The control code here is OURS, and it is a measured divergence in
+            // its own right: that card answers UNSUPPORTED_ALGORITHM to an empty
+            // list (and to an absent key 4), three readings, since §6.1.2 step 3's
+            // loop simply chooses nothing. Recorded, not silently blessed.
+            "empty pubKeyCredParams",
+            &|e| {
+                mc_cdh(e);
+                mc_rp(e);
+                mc_user(e);
+                e.u8(4).unwrap().array(0).unwrap();
+            },
+            4,
+            CtapError::MissingParameter,
+        ),
+    ];
+    for (label, head, nkeys, alone) in rows {
+        assert_eq!(
+            run_err(&mc_with_proto(nkeys, 3, head)),
+            CtapError::InvalidParameter,
+            "unsupported protocol must outrank: {label}"
+        );
+        // The control: with a SUPPORTED protocol the same request keeps reporting
+        // its own fault, so the gate discriminates instead of blanket-refusing.
+        assert_eq!(
+            run_err(&mc_with_proto(nkeys, 1, head)),
+            alone,
+            "supported protocol must not mask: {label}"
+        );
+    }
+}
+
+// A makeCredential over `head` with NO pinUvAuthParam and a `pinUvAuthProtocol`
+// of `proto` — the shape a bare `uv:true` needs, since a param present would make
+// §6.1.2 step 5 treat the option as false.
+fn mc_proto_no_param(nkeys: u64, proto: u64, head: Keys) -> std::vec::Vec<u8> {
+    let mut buf = [0u8; 256];
+    let n = {
+        let mut e = Encoder::new(Cursor::new(&mut buf[..]));
+        e.map(nkeys + 1).unwrap();
+        head(&mut e);
+        e.u8(9).unwrap().u64(proto).unwrap();
+        e.writer().position()
+    };
+    buf[..n].to_vec()
+}
+
+/// The other end of the check order, and the one §6.1.2's numbering gets wrong:
+/// step 4's option-value errors are judged BEFORE step 2's protocol, not after.
+/// Measured on a YubiKey 5.7.4, eight readings per row and across every
+/// confounder (`pinUvAuthParam` present, absent or empty; protocol 0, 3 and 9):
+/// `up:false` and a bare `uv:true` are CTAP2_ERR_INVALID_OPTION whatever the
+/// protocol says, and they outrank a bad algorithm and an empty
+/// `pubKeyCredParams` there too. Only the request map's own shape beats them.
+///
+/// This is a guard against re-hoisting: judging the protocol first — which the
+/// spec's step numbers invite — silently converts all of these to
+/// INVALID_PARAMETER.
+#[test]
+fn option_value_errors_outrank_the_protocol() {
+    let up_false: Keys = &|e| {
+        mc_cdh(e);
+        mc_rp(e);
+        mc_user(e);
+        good_params(e);
+        e.u8(7).unwrap().map(1).unwrap();
+        e.str("up").unwrap().bool(false).unwrap();
+    };
+    // Compounded with an algorithm the card also refuses: it answers the option
+    // there too, so this pins which of the two wins.
+    let up_false_bad_alg: Keys = &|e| {
+        mc_cdh(e);
+        mc_rp(e);
+        mc_user(e);
+        only_alg(e, ALG_ESP256);
+        e.u8(7).unwrap().map(1).unwrap();
+        e.str("up").unwrap().bool(false).unwrap();
+    };
+    for (label, head) in [
+        ("up:false", up_false),
+        ("up:false + bad alg", up_false_bad_alg),
+    ] {
+        for proto in [0u64, 3, 9] {
+            assert_eq!(
+                run_err(&mc_with_proto(5, proto, head)),
+                CtapError::InvalidOption,
+                "{label} must outrank protocol {proto}"
+            );
+        }
+        // The control: it is the option being reported, not a blanket refusal —
+        // a supported protocol gives the same code.
+        assert_eq!(
+            run_err(&mc_with_proto(5, 1, head)),
+            CtapError::InvalidOption
+        );
+    }
+
+    // A bare uv:true on a build with no built-in user verification. It carries no
+    // pinUvAuthParam: one present would make step 5 clear the option first.
+    let uv_true: Keys = &|e| {
+        mc_cdh(e);
+        mc_rp(e);
+        mc_user(e);
+        good_params(e);
+        e.u8(7).unwrap().map(1).unwrap();
+        e.str("uv").unwrap().bool(true).unwrap();
+    };
+    for proto in [0u64, 3, 9] {
+        assert_eq!(
+            run_err(&mc_proto_no_param(5, proto, uv_true)),
+            CtapError::InvalidOption,
+            "bare uv:true must outrank protocol {proto}"
+        );
+    }
+}
+
 /// §6.1.2 step 9 keys on `enterpriseAttestation` being PRESENT, not on it being
 /// non-zero: with EA disabled — the shipping default — every present value is
 /// refused, `0` included. It used to register an ordinary credential, so a
