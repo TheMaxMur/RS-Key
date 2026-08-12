@@ -222,12 +222,15 @@ run "rustdoc (host all-feat)"  env RUSTDOCFLAGS="-D warnings" cargo doc -p rsk-s
 # A third permutation, because the two above document only public items and so
 # resolve only the links a public item carries: 28 more were broken at the commit
 # that fixed the first 75, in eight crates, two of them on that commit's clean
-# list. One row is enough for the whole class — measured, `--document-private-items`
-# adds nothing over firmware, rsk-wipe, tui, emu or fuzz, and its `--all-features`
-# half found the identical 28, so a fourth permutation would only re-report them.
-# The row itself is ~5 s warm and it invalidates the row above, so this rustdoc
-# block measured 8.5 s -> 15.6 s: roughly double, and that is the whole price of
-# the only row in the script that resolves a private item's links.
+# list. One row is enough for the whole class — firmware, rsk-wipe, tui, emu and
+# fuzz are bin-only, and rustdoc documents a binary's private items by default, so
+# the flag is a no-op over all five (each of their rows goes red on a broken link
+# in a private `fn main` already); its `--all-features` half found the identical
+# 28, so a fourth permutation would only re-report them. It is the dearest row in
+# the block, and the row above pays for it too — their flags differ, so each run
+# invalidates the other's fingerprint. Deliberately no seconds: the pair timed
+# 8.5 s -> 15.6 s when this line was written and 21 s -> 43 s when re-timed later
+# in the same tree, so a figure here is a claim that does not survive re-reading.
 run "rustdoc (host private)"   env RUSTDOCFLAGS="-D warnings" cargo doc -p rsk-sdk -p rsk-fs -p rsk-usb -p rsk-crypto -p rsk-fido -p rsk-openpgp -p rsk-rsa-asm -p rsk-sha512 -p rsk-ec -p rsk-mldsa -p rsk-mgmt -p rsk-oath -p rsk-otp -p rsk-piv -p rsk-rescue -p rsk-vendor -p rsk-device -p rsk-display -p rsk-store -p rsk-led -p rsk-ui -p rsk-bip39 -p rsk-slip39 -p rsk-bench --no-deps --document-private-items --target "$HOST"
 # `firmware` and `rsk-wipe` are the workspace's only thumbv8m-only members, so
 # these two rows take the default target instead of $HOST. `BOARD` because
