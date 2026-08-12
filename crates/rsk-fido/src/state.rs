@@ -209,7 +209,7 @@ pub struct LargeBlobState {
     pub expected_next_offset: usize,
     /// `now_ms` of the last fragment accepted into `temp` — the idle window in
     /// [`FidoState::expire_stale_sequences`] measures from here. Meaningful only
-    /// while [`Self::in_flight`]; an arming fragment that is then rejected leaves
+    /// while `Self::in_flight`; an arming fragment that is then rejected leaves
     /// it stale, which expires the abandoned transfer rather than preserving it.
     pub last_fragment_ms: u64,
     pub temp: [u8; MAX_LARGE_BLOB_SIZE],
@@ -286,7 +286,7 @@ pub struct PinLock {
     /// clientPIN is locked until the authenticator is really power-cycled.
     pub engaged: bool,
     /// Consecutive wrong PINs this power cycle; the lock arms at
-    /// [`PIN_MISMATCH_LIMIT`].
+    /// [`crate::consts::PIN_MISMATCH_LIMIT`].
     pub mismatches: u8,
 }
 

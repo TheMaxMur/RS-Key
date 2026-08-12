@@ -51,7 +51,7 @@ pub const EV_PIN_SET: u8 = 0x05;
 pub const EV_PIN_CHANGE: u8 = 0x06;
 /// aux: 0 = retry counter exhausted, 1 = per-boot mismatch block.
 pub const EV_PIN_LOCKOUT: u8 = 0x07;
-/// aux = new minimum; detail[0] = forceChangePin flag.
+/// aux = new minimum; `detail[0]` = forceChangePin flag.
 pub const EV_CFG_MIN_PIN: u8 = 0x08;
 pub const EV_CFG_EA: u8 = 0x09;
 pub const EV_LOCK_ENGAGE: u8 = 0x0A;
@@ -191,7 +191,7 @@ pub(crate) fn set_enabled<S: Storage>(fs: &mut Fs<S>, on: bool) -> Result<(), ()
 
 /// Append one event, opening the power cycle with an [`EV_BOOT`] entry first.
 /// Errors are swallowed — the journal never fails the operation it records.
-/// A no-op while journalling is off (opt-in, [`is_enabled`]): no flash is written.
+/// A no-op while journalling is off (opt-in, `is_enabled`): no flash is written.
 pub fn append<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, ev: u8, aux: u8, detail: &[u8]) {
     if !is_enabled(ctx.fs) {
         return;

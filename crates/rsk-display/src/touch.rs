@@ -27,7 +27,7 @@ pub trait TouchPad {
     }
 
     /// [`Self::wait_release`] for a host consent ceremony, which never waits less
-    /// than [`RELEASE_FLOOR_MS`]: a host can shorten the presence timeout, and an
+    /// than `RELEASE_FLOOR_MS`: a host can shorten the presence timeout, and an
     /// expiry that returns here with the finger still down degrades the debounce
     /// into a no-op for a level-triggered caller. Only the ceremonies take the
     /// floor — a menu's deadline is the UI's own idle limit, and stalling it on a

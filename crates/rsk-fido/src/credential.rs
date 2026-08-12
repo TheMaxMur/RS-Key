@@ -13,7 +13,7 @@
 //! credential id carries no device- or model-fingerprint an RP could link on
 //! (WebAuthn unlinkability — a YubiKey's ids look random for the same reason).
 //! The encryption key comes from a fixed internal `CRED_PROTO` label, never from
-//! an on-wire byte. [`verify_decrypt`] still opens the legacy `f1d00202`-prefixed
+//! an on-wire byte. `verify_decrypt` still opens the legacy `f1d00202`-prefixed
 //! boxes relying parties registered before this format — the poly1305 tag tells
 //! the framings apart, so old credentials keep working across the upgrade.
 //!
@@ -618,8 +618,8 @@ pub(crate) fn resident_key_input<'a>(
 
 /// A resident record is `rp_id_hash(32) ‖ resident_id(42) ‖ [pubkey trailer] ‖
 /// full_cred_id`. The trailer (`pubkey_len(1) ‖ pubkey`) is present for a v3 or v4
-/// resident id and is read/written through [`cred_record_box`] /
-/// [`cred_record_pubkey`] / [`compose_cred_record`]; legacy v1/v2 records have the
+/// resident id and is read/written through `cred_record_box` /
+/// `cred_record_pubkey` / `compose_cred_record`; legacy v1/v2 records have the
 /// box directly at `RECORD_PREFIX`.
 pub const RECORD_PREFIX: usize = 32 + CRED_RESIDENT_LEN;
 

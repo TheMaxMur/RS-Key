@@ -233,7 +233,7 @@ impl ProcessingStatus {
 }
 
 /// The 8-byte status frame served by an idle GET_REPORT:
-/// `status` (= [`crate::OtpApplet::status_bytes`]) prefixed by a reserved byte.
+/// `status` (= `crate::OtpApplet::status_bytes`) prefixed by a reserved byte.
 pub fn status_frame(status: [u8; 7]) -> [u8; REPORT_SIZE] {
     [
         0, status[0], status[1], status[2], status[3], status[4], status[5], status[6],

@@ -229,7 +229,7 @@ const ALLOW_W: u16 = PANEL_W - 2 * BTN_SIDE - DENY_W - BTN_GAP;
 pub const BTN_BAND_TOP: u16 = PANEL_H - BTN_H - BTN_BOTTOM;
 /// Deny on the left (the safe default), a single tap.
 pub const DENY_RECT: Rect = Rect::new(BTN_SIDE, BTN_BAND_TOP, DENY_W, BTN_H);
-/// Hold-to-approve on the right, wider; a full [`BTN_GAP`] separates it from Deny.
+/// Hold-to-approve on the right, wider; a full `BTN_GAP` separates it from Deny.
 pub const ALLOW_RECT: Rect = Rect::new(BTN_SIDE + DENY_W + BTN_GAP, BTN_BAND_TOP, ALLOW_W, BTN_H);
 
 // Compile-time layout invariants (paint and hit-test share these rects): the two

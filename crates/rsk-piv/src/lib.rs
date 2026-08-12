@@ -7,7 +7,7 @@
 //! Yubico extensions `ykman piv` / `yubico-piv-tool` exercise (metadata, serial,
 //! attestation, move/delete, set-mgm-key, set-retries, reset), reached over CCID.
 //! Pure and host-testable; key machinery comes from `rsk-openpgp`, private keys
-//! at rest are GCM-sealed ([`seal`]), and management operations (IMPORT KEY, PUT
+//! at rest are GCM-sealed (`seal`), and management operations (IMPORT KEY, PUT
 //! DATA, SET MGM KEY, MOVE KEY, SET RETRIES) require management-key auth.
 
 extern crate alloc;
@@ -207,9 +207,9 @@ impl<'a> PivApplet<'a> {
 
     /// If `apdu` is a PIV RSA GENERATE, validate it fully and return the slot,
     /// modulus size and resolved policy bytes so the firmware can run the slow
-    /// prime search itself (stepping [`RsaKeygen`] between CCID keepalives).
-    /// `None` falls through to normal dispatch — EC generate, or any error
-    /// (re-validated there so the right SW is reported).
+    /// prime search itself (stepping [`rsk_openpgp::keys::RsaKeygen`] between
+    /// CCID keepalives). `None` falls through to normal dispatch — EC generate,
+    /// or any error (re-validated there so the right SW is reported).
     pub fn rsa_generate_params<S: Storage>(
         &mut self,
         _fs: &mut Fs<S>,
@@ -1277,7 +1277,7 @@ fn mgm_clear_protected<S: Storage>(fs: &mut Fs<S>) -> Result<(), Sw> {
 /// no prior state, just overwriting the slot.
 ///
 /// The ADMIN-DATA record is rebuilt from any prior host-written one
-/// ([`pivman_set_protected`]): the PIN-change timestamp and unrelated flag bits
+/// (`pivman_set_protected`): the PIN-change timestamp and unrelated flag bits
 /// survive, so on-panel protect no longer discards a host's PivmanData.
 pub fn protect_mgm_key<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng) -> Sw {
     // Read any existing PivmanData up front (before the writes below), so the new

@@ -232,7 +232,7 @@ pub fn write<S: Storage, R: Rng>(
 ///
 /// The plaintext stays in the buffer after this returns — the caller encodes the
 /// response straight out of it — and is only displaced by the next blob. Same
-/// call as [`crate::state::LargeBlobState::reset`] makes about its own accumulator:
+/// call as `crate::state::LargeBlobState::reset` makes about its own accumulator:
 /// these are bytes the platform handed over or is about to receive, not device
 /// secrets, and the BOOTSEL drop clears SRAM anyway.
 pub fn read<S: Storage, R: Rng>(

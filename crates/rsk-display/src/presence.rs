@@ -6,9 +6,9 @@
 use super::gates::PinScope;
 use super::*;
 
-/// The on-screen presence backend — the `display` build's
-/// [`crate::presence::Presence`]. Holds the shared [`Ui`]; renders a trusted
-/// Approve/Deny prompt and block-waits a tap.
+/// The on-screen presence backend — what the firmware's `presence::Presence`
+/// alias names on the `display` build. Holds the shared [`Ui`]; renders a
+/// trusted Approve/Deny prompt and block-waits a tap.
 pub struct TouchPresence<'a, P, T, H, S, R>
 where
     P: DrawTarget<Color = Rgb565>,
@@ -239,7 +239,7 @@ where
     }
 
     /// Collect a PIN on the on-screen pad for a host CCID secure-PIN-entry request
-    /// (OpenPGP / PIV VERIFY over a pinpad reader). Like [`Self::collect_pin_impl`]
+    /// (OpenPGP / PIV VERIFY over a pinpad reader). Like `Self::collect_pin_impl`
     /// but with a per-PIN `title` so the trusted screen names which PIN is asked for.
     /// The host is waiting on this exact PIN (its `PC_to_RDR_Secure` is in flight,
     /// the CCID transport streaming time-extensions), so it blocks to the presence

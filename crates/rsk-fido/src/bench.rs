@@ -4,20 +4,20 @@
 //! Feature-gated timing entrypoints for the on-device latency harness.
 //!
 //! NEVER shipped: the `bench` feature gates a vendor `INS_BENCH` that is a timing
-//! oracle over the crypto primitives (like `keygen-bench`). Each [`run`] drives
-//! the REAL hot path with fixed, public inputs and returns a checksum of the
-//! result so the compiler cannot fold the call away. Inputs are constants (a
-//! public on-curve point, a fixed scalar/seed/path/message) — no device secret is
-//! involved, so exposing the primitive is a timing leak of already-public code,
-//! not of any key.
+//! oracle over the crypto primitives (like `keygen-bench`). Each
+//! [`crate::bench::run`] drives the REAL hot path with fixed, public inputs and
+//! returns a checksum of the result so the compiler cannot fold the call away.
+//! Inputs are constants (a public on-curve point, a fixed scalar/seed/path/message)
+//! — no device secret is involved, so exposing the primitive is a timing leak of
+//! already-public code, not of any key.
 //!
 //! Selectors:
 //! - `0` — variable-base P-256 ECDH ([`rsk_crypto::pinproto::ecdh_raw`]): the
 //!   clientPIN key-agreement path, whose crate scalar-mul is the ~34 KB working
 //!   set that overflows the XIP cache (the ±30 ms layout-sensitive one).
-//! - `1` — P-256 fixed-base comb sign ([`crate::ec::sign_p256_comb`]): the
+//! - `1` — P-256 fixed-base comb sign (`crate::ec::sign_p256_comb`): the
 //!   getAssertion signing hot path.
-//! - `2` — the HKDF-SHA512 key-derivation ratchet ([`crate::keyderiv::ratchet`]).
+//! - `2` — the HKDF-SHA512 key-derivation ratchet (`crate::keyderiv::ratchet`).
 
 use core::hint::black_box;
 

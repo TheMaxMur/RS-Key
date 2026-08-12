@@ -104,7 +104,7 @@ impl P256Key {
 
     /// Deterministic ECDSA-SHA256 over `msg`, DER-encoded into `out`; returns the
     /// signature length. `out` must hold at least [`MAX_DER_SIG`] bytes. Signs via the
-    /// fixed-base comb ([`sign_p256_comb`]) — byte-identical to the crate's signer.
+    /// fixed-base comb (`sign_p256_comb`) — byte-identical to the crate's signer.
     pub fn sign_der(&self, msg: &[u8], out: &mut [u8]) -> usize {
         sign_p256_comb(self.signing.as_nonzero_scalar(), msg, out)
     }
@@ -116,7 +116,7 @@ pub enum CredKey {
     // All four Weierstrass curves hold the bare scalar, not a `SigningKey`: building a
     // `SigningKey` eagerly derives the public key (a fixed-base mul) that getAssertion
     // never needs — it only signs. Both signing's `k·G` and `cose_public`'s `d·G` go
-    // through the fixed-base comb (`comb_mul_p256`/`_p384`/`comb_mul`/`comb_mul_k256`),
+    // through the fixed-base comb (`comb_mul_p256`/`_p384`/`_p521`/`comb_mul_k256`),
     // which bypasses the crate's variable-time scalar-mul (slow on Cortex-M33).
     P256(p256::NonZeroScalar),
     P384(p384::NonZeroScalar),
@@ -274,10 +274,10 @@ impl CredKey {
     /// Sign `msg` (authData ‖ clientDataHash) into `out`; returns the length
     /// (≤ [`MAX_SIG_LEN`]). ECDSA curves emit DER using the curve's canonical
     /// digest: P-256 / P-384 / secp256k1 deterministic RFC 6979 (P-256 signs `k·G`
-    /// with the fixed-base [`comb_mul_p256`], see [`sign_p256_comb`]); P-521 a random
-    /// nonce from `rng`, with `k·G` via the fixed-base [`comb_mul`]. EdDSA
-    /// emits the raw 64 bytes; ML-DSA-44 the raw 2420-byte FIPS 204 signature,
-    /// hedged with 32 `rng` bytes.
+    /// with the fixed-base [`rsk_ec::comb_mul_p256`], see `sign_p256_comb`); P-521
+    /// a random nonce from `rng`, with `k·G` via the fixed-base
+    /// [`rsk_ec::comb_mul_p521`]. EdDSA emits the raw 64 bytes; ML-DSA-44 the raw
+    /// 2420-byte FIPS 204 signature, hedged with 32 `rng` bytes.
     pub fn sign(&self, msg: &[u8], rng: &mut impl Rng, out: &mut [u8]) -> usize {
         fn put(bytes: &[u8], out: &mut [u8]) -> usize {
             out[..bytes.len()].copy_from_slice(bytes);

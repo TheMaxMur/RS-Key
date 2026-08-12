@@ -59,8 +59,8 @@ where
 }
 
 /// One audit row: a status dot (its colour the at-a-glance signal), the event label, and
-/// a right-aligned "time ago". Mirrors [`render_row`]'s card + clip metrics, but leads
-/// with a coloured dot instead of a muted glyph.
+/// a right-aligned "time ago". Mirrors `components::list::row`'s card + clip metrics,
+/// but leads with a coloured dot instead of a muted glyph.
 fn audit_body<D: DrawTarget<Color = Rgb565>>(
     t: &mut D,
     rect: Rect,

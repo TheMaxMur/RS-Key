@@ -922,7 +922,7 @@ fn backup_state<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, out: &mut [u8]) -> Ctap
 }
 
 /// The seed-backup status for the trusted-display Backup screen — the same
-/// `sealed` / `has_seed` bits [`backup_state`] reports to the host, plus whether
+/// `sealed` / `has_seed` bits `backup_state` reports to the host, plus whether
 /// this build can export at all.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct BackupStatus {
@@ -941,7 +941,7 @@ pub struct BackupStatus {
 }
 
 /// Read the seed-backup status from the store for the on-device Backup screen
-/// (Settings → Security → Backup). A lean, `Ctx`-free mirror of [`backup_state`]'s
+/// (Settings → Security → Backup). A lean, `Ctx`-free mirror of `backup_state`'s
 /// flags — no CBOR — so the display task can read it directly while the worker is parked.
 pub fn backup_status<S: Storage>(fs: &mut rsk_fs::Fs<S>) -> BackupStatus {
     BackupStatus {
@@ -953,12 +953,12 @@ pub fn backup_status<S: Storage>(fs: &mut rsk_fs::Fs<S>) -> BackupStatus {
 }
 
 /// Seal the one-time backup window on-device (Settings → Security → Backup → Seal),
-/// mirroring host [`BACKUP_FINALIZE`](backup_finalize) without the `Ctx` / journal:
-/// write the `EF_BACKUP_SEALED` marker so the seed can no longer be exported **or**
-/// shown as a recovery phrase until a factory reset reopens the window. The display
-/// task gates this behind the device PIN and a deliberate hold — the same rule its
-/// other irreversible actions follow, because sealing cannot be undone without a
-/// factory reset that destroys the seed it protects.
+/// mirroring host `BACKUP_FINALIZE` without the `Ctx` / journal: write the
+/// `EF_BACKUP_SEALED` marker so the seed can no longer be exported **or** shown as
+/// a recovery phrase until a factory reset reopens the window. The display task
+/// gates this behind the device PIN and a deliberate hold — the same rule its other
+/// irreversible actions follow, because sealing cannot be undone without a factory
+/// reset that destroys the seed it protects.
 pub fn mark_backup_sealed<S: Storage>(fs: &mut rsk_fs::Fs<S>) -> bool {
     fs.put(EF_BACKUP_SEALED, &[1]).is_ok()
 }

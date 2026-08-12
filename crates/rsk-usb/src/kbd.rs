@@ -119,7 +119,7 @@ fn ascii_to_keycode(c: u8) -> (bool, u8) {
 /// The key-press report for `byte`, or `None` if it maps to no key.
 ///
 /// `encode` true → `byte` is ASCII, mapped through the table above (a typed
-/// ticket); false → `byte` is already a HID scancode with [`SCANCODE_SHIFT`] for
+/// ticket); false → `byte` is already a HID scancode with `SCANCODE_SHIFT` for
 /// the modifier (a static password, which is stored as scancodes precisely so a
 /// keyboard layout cannot rewrite it).
 ///

@@ -10,7 +10,7 @@
 //! `nonce(12) ‖ ct ‖ tag(16)`, AAD = serial_hash. Device-sealed (no access code
 //! in the key): the slot must type / answer without a separate at-rest unlock,
 //! exactly like the OATH credential secrets ([`crate::seal`]'s sibling in
-//! [`rsk_oath`]). With the OTP MKEK provisioned, `kbase` — and so this seal —
+//! `rsk_oath`). With the OTP MKEK provisioned, `kbase` — and so this seal —
 //! roots in the hardware fuse key.
 //!
 //! This closes the one applet whose secrets were still stored raw: FIDO / PIV /

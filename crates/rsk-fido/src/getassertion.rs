@@ -5,7 +5,7 @@
 //! (resident-id lookup or a non-resident box) or, if the allowList is absent, by
 //! scanning resident credentials for the rp; sign authData ‖ clientDataHash
 //! with the credential key. A verified `pinUvAuthParam` sets the `uv` flag
-//! ([`enforce_pin`]); credProtect visibility is enforced in [`Best::consider`].
+//! (`enforce_pin`); credProtect visibility is enforced in `Best::consider`.
 //! When resident discovery finds more than one credential, the sorted EF_CRED
 //! slots are saved so [`get_next_assertion`] can return the rest one at a time.
 

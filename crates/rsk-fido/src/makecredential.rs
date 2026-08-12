@@ -8,7 +8,7 @@
 //! and a packed EdDSA self-attestation fails on Windows/WinHello (issue #26).
 //! Resident keys (rk) are stored; non-resident credentials carry the full box in
 //! authData. A configured PIN requires a verified `pinUvAuthParam`
-//! ([`enforce_pin`]), which sets the `uv` flag — except for a non-discoverable
+//! (`enforce_pin`), which sets the `uv` flag — except for a non-discoverable
 //! credential, which `makeCredUvNotRqd` lets through on presence alone. Request
 //! extensions are sealed into the box and echoed in the authData extension
 //! output (ED flag); excludeList is credProtect-aware. Enterprise attestation

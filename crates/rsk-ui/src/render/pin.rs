@@ -37,7 +37,7 @@ pub fn pin_title_overflows(title: &str) -> bool {
 /// apart, shifted left by `offset` px (mod the loop period) and hard-clipped to the band,
 /// so a long title like "OpenPGP Sign PIN" reads in full without ever painting over the
 /// back chevron or the Lock glyph. The caller advances `offset` over time to animate it;
-/// `offset` is ignored when the title fits. (Same band a static [`pin`] frame uses, so a
+/// `offset` is ignored when the title fits. (Same band a static `pin` frame uses, so a
 /// non-overflowing title looks identical whether or not the caller animates.)
 pub fn render_pin_title<D: DrawTarget<Color = Rgb565>>(
     t: &mut D,

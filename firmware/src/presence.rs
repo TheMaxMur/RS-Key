@@ -6,12 +6,12 @@
 //! RAM function; a GPIO button is polled active-low with an internal pull-up by
 //! default, or active-high with a pull-down when `PRESENCE_ACTIVE_HIGH` is set. The
 //! wait blocks the worker while the high-priority transports stream keepalives
-//! reporting `UPNEEDED` ([`up_pending`]). One [`ButtonPresence`] serves every
+//! reporting `UPNEEDED` ([`up_pending`]). One `ButtonPresence` serves every
 //! applet's `UserPresence` trait; a touch is required by default, and the opt-in
 //! `no-touch` feature makes `request` confirm instantly (for the automated suites,
 //! which cannot press a button). The `display` build takes presence from the
-//! touchscreen ([`crate::display::TouchPresence`]) instead, so this whole module is
-//! compiled out there.
+//! touchscreen (`crate::display::TouchPresence`) instead, so the button backend
+//! below is compiled out there.
 
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 
@@ -174,7 +174,7 @@ enum Button {
 /// The presence backend the [`crate::worker::Worker`] owns, selected at build
 /// time so the worker wiring stays backend-agnostic. The standard key confirms
 /// with the BOOTSEL button (or a `PRESENCE_PIN` GPIO); the `display` build swaps
-/// this alias to the [`crate::display::TouchPresence`] that renders on-screen
+/// this alias to the `crate::display::TouchPresence` that renders on-screen
 /// Approve/Deny and returns a real `Declined` — every applet's `UserPresence`
 /// trait is satisfied by whichever backend this names, so only this alias changes.
 #[cfg(not(feature = "display"))]

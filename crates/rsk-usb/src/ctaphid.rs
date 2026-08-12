@@ -558,7 +558,7 @@ impl<'d, D: Driver<'d>, H: MsgHandler> CtapHid<'d, D, H> {
 
     /// Read frames forever, reassemble messages, answer native commands. While a
     /// multi-frame message is mid-reassembly, the wait for the next frame is bound
-    /// to [`RX_TIMEOUT_MS`]; on timeout the transaction is aborted with
+    /// to `RX_TIMEOUT_MS`; on timeout the transaction is aborted with
     /// `CTAPHID_ERROR(MSG_TIMEOUT)`.
     pub async fn run(&mut self) -> ! {
         let mut frame = [0u8; HID_RPT_SIZE];

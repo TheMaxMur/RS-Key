@@ -202,8 +202,8 @@ impl Dispatcher {
     }
 
     /// Return the card to a clean state after an ICC reset: deselect the current
-    /// applet — so it drops its security status, which [`clear_selection`] alone
-    /// does not — and discard any buffered chain or pending response.
+    /// applet — so it drops its security status, which [`Self::clear_selection`]
+    /// alone does not — and discard any buffered chain or pending response.
     ///
     /// `clear_selection` exists for CTAPHID_INIT, where only the *selection* is
     /// stale. A power transition is stronger: OpenPGP 3.4 (VERIFY) and NIST

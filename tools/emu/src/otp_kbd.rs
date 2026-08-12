@@ -32,7 +32,7 @@ use crate::signals::Signals;
 #[derive(Default)]
 struct Shared {
     hid: OtpHid,
-    /// Parked in [`next_request`]; woken when a whole frame lands.
+    /// Parked in `OtpKbd::next_request`; woken when a whole frame lands.
     waker: Option<Waker>,
 }
 

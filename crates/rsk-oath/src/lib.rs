@@ -1219,9 +1219,9 @@ fn is_oath_cred_fid(fid: u16) -> bool {
 }
 
 /// The two records that gate access: the access-code key and the OTP-PIN. Kept
-/// separate from [`is_oath_cred_fid`] so [`wipe_oath`] can delete them last.
+/// separate from `is_oath_cred_fid` so `wipe_oath` can delete them last.
 ///
-/// Public because the device-wide `Fs::factory_wipe` bypasses [`wipe_oath`] and
+/// Public because the device-wide `Fs::factory_wipe` bypasses `wipe_oath` and
 /// needs the same rule — it was private for a release, so the firmware could not
 /// name it and a torn device reset left the credentials live with no lock at all
 /// (audit run-36). OATH's failure mode is the sharper one of the family: its

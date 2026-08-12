@@ -4,7 +4,7 @@
 //! Vector icons drawn as hand-authored 1-bit bitmaps — no bitmap *asset* files, no
 //! icon font, but no longer one contour scaled to every size either. Each glyph is
 //! drawn by hand at the **canonical render sizes** the UI actually paints it
-//! ([`CANON`]: a 14px list-row marker, a 16/18/20px nav/header icon, a 36/44px
+//! (`CANON`: a 14px list-row marker, a 16/18/20px nav/header icon, a 36/44px
 //! headline), so a detailed icon stays crisp at 14px instead of collapsing into a
 //! blob the way a single 16×16 contour did once the `(gx*g1+8)/16` grid map rounded
 //! its features off-axis. A request for an off-canonical size (12, 22, 28, 32, 38, …)
@@ -15,7 +15,7 @@
 //! and hand-editable: the maintainer tweaks a pixel by editing a character. They are
 //! host-testable like the rest of the UI model — one test asserts every bitmap is
 //! square and paints inside its box, a second asserts each glyph is mirror-symmetric
-//! about the axes [`sym`] claims for it, at every canonical size (this is what guards
+//! about the axes `sym` claims for it, at every canonical size (this is what guards
 //! against the "crooked" look: symmetry is now a property of the authored art, checked
 //! exactly where it is authored).
 //!

@@ -12,7 +12,7 @@
 //!
 //! Level, not edges. A real panel reports contact *continuously* while touched,
 //! which is what the flow's debounce and its 800 ms hold-to-approve are built on,
-//! so [`Touch::read`] reports the mouse button as held rather than as a click
+//! so `Touch::read` reports the mouse button as held rather than as a click
 //! event — press, hold, release maps onto press, hold, lift.
 
 use std::cell::{Cell, RefCell};

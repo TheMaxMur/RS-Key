@@ -29,7 +29,7 @@ impl PinScope {
 }
 
 /// The PIN-screen header for a PIV reference (the application PIN or the PUK), the
-/// PIV analog of [`PinScope::pin_title`]. Also the CCID secure-PIN path's title source
+/// PIV analog of `PinScope::pin_title`. Also the CCID secure-PIN path's title source
 /// (`worker::secure_pin_meta`), so a host VERIFY and an on-panel change name the same thing.
 pub fn piv_ref_title(which: rsk_piv::PinRef) -> &'static str {
     match which {

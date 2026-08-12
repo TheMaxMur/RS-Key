@@ -894,7 +894,7 @@ pub fn min_pin_length<S: Storage>(fs: &mut Fs<S>) -> u8 {
     }
 }
 
-/// The pending forced-PIN-change flag (EF_MINPINLEN[1]).
+/// The pending forced-PIN-change flag (`EF_MINPINLEN[1]`).
 fn force_change_pending<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>) -> bool {
     let mut buf = [0u8; 2];
     matches!(ctx.fs.read(EF_MINPINLEN, &mut buf), Some(n) if n >= 2 && buf[1] != 0)
@@ -981,7 +981,7 @@ fn retries_left_at<S: Storage>(fid: u16, fs: &mut Fs<S>) -> Option<u8> {
 
 /// Verify a PIN typed on the device's own pad for a display-initiated action (a
 /// local Passkeys delete — there is no host and no CTAP session). It reuses
-/// [`spend_and_verify_pin_hash`]'s persistent anti-bruteforce gate verbatim — the EF_PIN
+/// `spend_and_verify_pin_hash`'s persistent anti-bruteforce gate verbatim — the EF_PIN
 /// retry counter is decremented before the compare and read back fail-closed, a
 /// correct PIN resets it and migrates a legacy PIN-wrapped seed, a wrong attempt
 /// at zero is a hard block — but deliberately omits the CTAP-session side effects
@@ -1096,7 +1096,7 @@ fn spend_and_verify_pin_at<S: Storage>(
 /// clientPIN exactly as if it had been set over USB. It enforces both `minPINLength` and
 /// the host-representable [`MAX_PIN_LENGTH`] ceiling (so a panel-set PIN stays usable over
 /// USB). The flash-backed `pcmr` grant dies with the old PIN inside
-/// [`write_pin_verifier`]. What is left to the caller is the RAM session token: `FidoState`
+/// `write_pin_verifier`. What is left to the caller is the RAM session token: `FidoState`
 /// lives in the worker and outlives every dispatch, so a token minted under the old PIN
 /// would keep `PERM_CM` authority (and `deleteCredential` takes no touch) for up to
 /// `PUAT_MAX_USAGE_PERIOD_MS` after the owner believes they locked the host out. The

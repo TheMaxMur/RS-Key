@@ -53,7 +53,7 @@ pub const PINPOLICY_NEVER: u8 = 1;
 pub const PINPOLICY_ONCE: u8 = 2;
 pub const PINPOLICY_ALWAYS: u8 = 3;
 /// `0` means "the card's default" on both axes; it is resolved at store time by
-/// [`crate::keygen::resolved_policies`] and never persisted.
+/// `crate::keygen::resolved_policies` and never persisted.
 pub const TOUCHPOLICY_DEFAULT: u8 = 0;
 pub const TOUCHPOLICY_NEVER: u8 = 1;
 pub const TOUCHPOLICY_ALWAYS: u8 = 2;
@@ -102,7 +102,7 @@ pub fn is_key(slot: u8) -> bool {
 }
 
 /// Private-key file for a wire slot (also 9B and F9). A [`KeyFid`]: its contents
-/// are AES-256-GCM-sealed ([`seal`]), so the slot can only be reached through the
+/// are AES-256-GCM-sealed (`seal`), so the slot can only be reached through the
 /// typed key API, never the plaintext `Fs::put`/`read`.
 pub fn key_fid(slot: u8) -> KeyFid {
     KeyFid::new(0xD100 | slot as u16)
@@ -332,7 +332,7 @@ pub(crate) fn is_piv_fid(fid: u16) -> bool {
 
 /// The records that *gate* the applet: the PIN and PUK verifiers, their retry
 /// state, and the 0x9B management key. Public because the device-wide
-/// `Fs::factory_wipe` bypasses [`wipe_piv`] and needs the same rule. [`wipe_piv`]
+/// `Fs::factory_wipe` bypasses `wipe_piv` and needs the same rule. `wipe_piv`
 /// deletes these last — `scan_files` re-creates every one of them at a *published*
 /// default, and PIV slot keys are sealed device-rooted rather than PIN-bound, so a
 /// sweep that took one first and then lost power would re-seed a published
@@ -357,7 +357,7 @@ fn is_piv_secret_fid(fid: u16) -> bool {
 const RESET_MAX_DELETES: u32 = 768;
 
 /// Factory-reset the applet: delete every PIV file and meta record
-/// ([`is_piv_fid`]), then re-create the defaults. Scoped to the PIV fid range —
+/// (`is_piv_fid`), then re-create the defaults. Scoped to the PIV fid range —
 /// the other applets' data must survive a PIV reset.
 pub fn reset_files<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng) -> Result<(), Sw> {
     let wiped = wipe_piv(fs);

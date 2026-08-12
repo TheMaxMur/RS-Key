@@ -46,7 +46,8 @@ pub trait Storage {
     /// probe credential slots without a per-slot `read` of every absent FID).
     /// Returns `true` iff the enumeration ran to completion — every live key was
     /// yielded. A `false` return means the walk was truncated (a flash read fault),
-    /// so the caller MUST NOT treat an un-yielded FID as absent (see [`Fs::scan`]).
+    /// so the caller MUST NOT treat an un-yielded FID as absent (see
+    /// [`crate::Fs::scan`]).
     fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) -> bool;
     /// Physically reclaim superseded records so that *overwritten* and *deleted*
     /// payloads are erased from the medium, not merely unlinked.

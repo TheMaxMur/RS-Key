@@ -297,7 +297,7 @@ where
 
 /// Repaint just the success circle at `scale_pct`% of its resting size — the building
 /// block of the firmware's pop (e.g. 60 → 106 → 100, ending at 100 for the resting
-/// frame). It clears the fixed [`SUCCESS_BOX`] to background first (so a smaller frame
+/// frame). It clears the fixed `SUCCESS_BOX` to background first (so a smaller frame
 /// erases a larger one cleanly), then fills the tinted circle and centres the mark
 /// glyph at ~48% of the circle (the Lock-in-circle proportion on the blocked screen).
 pub fn render_success_circle<D>(

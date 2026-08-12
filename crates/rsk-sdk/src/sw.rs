@@ -36,7 +36,7 @@ impl Sw {
     }
 
     /// ISO 7816-4 `63Cx` — verification failed, `x` retries remaining, saturating
-    /// at [`RETRIES_REPORTED_MAX`]. Unclamped, `left` past the nibble sets stray
+    /// at `RETRIES_REPORTED_MAX`. Unclamped, `left` past the nibble sets stray
     /// SW2 bits and `0x40` collides with `63C0`, which every host reads as blocked.
     #[inline]
     pub const fn retries(left: u8) -> Self {

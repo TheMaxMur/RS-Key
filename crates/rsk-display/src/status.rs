@@ -33,8 +33,8 @@ pub(super) fn adjust_sleep(delta: i8) -> bool {
     next != cur
 }
 
-/// Map the LED status engine's index ([`led::status`]) onto the on-screen status,
-/// so the panel shows the same idle/working/touch state the LED would.
+/// Map the LED status engine's index ([`Hooks::led_status`]) onto the on-screen
+/// status, so the panel shows the same idle/working/touch state the LED would.
 fn status_to_kind(s: u8) -> StatusKind {
     match s {
         rsk_led::STATUS_IDLE => StatusKind::Idle,
@@ -351,7 +351,7 @@ where
 }
 
 /// Ambient status screen: after letting the splash linger, repaint the idle/working
-/// status whenever [`led::status`] changes. The confirm prompt is painted by
+/// status whenever [`Hooks::led_status`] changes. The confirm prompt is painted by
 /// [`TouchPresence`] (which holds the same [`Ui`]); a synchronous confirm occupies
 /// this executor, so this loop never runs mid-confirm and the two never collide on
 /// the panel (the `try_borrow_mut` is belt-and-suspenders).

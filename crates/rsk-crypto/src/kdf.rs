@@ -169,7 +169,7 @@ impl Device<'_> {
         Ok(total)
     }
 
-    /// Inverse of [`encrypt_with_aad`]; writes the plaintext into `out` and
+    /// Inverse of [`Self::encrypt_with_aad`]; writes the plaintext into `out` and
     /// returns its length. `Err(Decrypt)` on auth failure.
     pub fn decrypt_with_aad(
         &self,
