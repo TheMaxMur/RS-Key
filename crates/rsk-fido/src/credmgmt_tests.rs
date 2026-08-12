@@ -1825,3 +1825,41 @@ fn undefined_credmgmt_subcommand_matches_a_yubikey() {
         );
     }
 }
+
+/// The protocol rule again, and both halves of it. A YubiKey 5.7.4 answers
+/// INVALID_PARAMETER to `pinUvAuthProtocol: 0` on a request carrying no token at
+/// all, and MISSING_PARAMETER when the token is there and the protocol is not —
+/// which is the distinction this command used to collapse in both directions.
+#[test]
+fn the_protocol_is_judged_before_the_token_and_absent_is_not_zero() {
+    let mut out = [0u8; 64];
+    for proto in [std::vec![0x00u8], std::vec![0x03], std::vec![0x18, 0xFF]] {
+        // {1: getCredsMetadata, 3: proto} — no pinUvAuthParam.
+        let mut req = std::vec![0xA2, 0x01, 0x01, 0x03];
+        req.extend_from_slice(&proto);
+        let mut fs = Fs::new(RamStorage::new());
+        let mut state = armed(PERM_CM);
+        assert_eq!(
+            run(&mut fs, &mut state, &req, &mut out),
+            Err(CtapError::InvalidParameter),
+            "protocol {proto:?}"
+        );
+    }
+    // A param with no protocol beside it: the parameter that is missing is the
+    // protocol, not the token.
+    let mut req = std::vec![0xA2, 0x01, 0x01, 0x04, 0x50];
+    req.extend_from_slice(&[0xAA; 16]);
+    let mut fs = Fs::new(RamStorage::new());
+    let mut state = armed(PERM_CM);
+    assert_eq!(
+        run(&mut fs, &mut state, &req, &mut out),
+        Err(CtapError::MissingParameter)
+    );
+    // Control: neither present is still the token's own code.
+    let mut fs = Fs::new(RamStorage::new());
+    let mut state = armed(PERM_CM);
+    assert_eq!(
+        run(&mut fs, &mut state, &[0xA1, 0x01, 0x01], &mut out),
+        Err(CtapError::PuatRequired)
+    );
+}

@@ -9,6 +9,7 @@ use minicbor::Decoder;
 use p256::Sec1Point;
 use p256::ecdsa::{Signature, VerifyingKey, signature::Verifier};
 use rsk_crypto::Device;
+use rsk_crypto::pinproto::PinProto;
 use rsk_fs::Fs;
 use rsk_fs::storage::ram::RamStorage;
 
@@ -3997,6 +3998,84 @@ fn hmac_secret_coordinate_must_be_exactly_32_bytes() {
             run_ga(&ga_request_hmac(&resident_id, x, &py, &se[..ne], &sa[..na])),
             Err(CtapError::InvalidParameter),
             "hmac-secret keyAgreement x {label}"
+        );
+    }
+}
+
+// getAssertion with `pinUvAuthParam` (key 6) and `pinUvAuthProtocol` (key 7) each
+// independently present or absent, and no allowList — §6.2.2 step 2 fires before
+// credential discovery, so the matrix needs no registered credential.
+fn ga_request_pin_opt(param: Option<&[u8]>, proto: Option<u64>) -> std::vec::Vec<u8> {
+    let mut buf = [0u8; 256];
+    let n = {
+        let mut e = Encoder::new(Cursor::new(&mut buf[..]));
+        e.map(2 + u64::from(param.is_some()) + u64::from(proto.is_some()))
+            .unwrap();
+        e.u8(1).unwrap().str("example.com").unwrap();
+        e.u8(2).unwrap().bytes(&CDH).unwrap();
+        if let Some(p) = param {
+            e.u8(6).unwrap().bytes(p).unwrap();
+        }
+        if let Some(v) = proto {
+            e.u8(7).unwrap().u64(v).unwrap();
+        }
+        e.writer().position()
+    };
+    buf[..n].to_vec()
+}
+
+/// The getAssertion half of §6.2.2 step 2 (word for word §6.1.2 step 2): a
+/// `pinUvAuthProtocol` of `0` is a protocol the platform sent and this build does
+/// not support — INVALID_PARAMETER — not an absent parameter. Measured on a
+/// YubiKey 5.7.4 with a param, without one, and ahead of the selection gesture.
+#[test]
+fn ga_pin_uv_auth_protocol_zero_is_a_value_not_an_absence() {
+    let (mut fs, mut rng) = setup();
+    let mut state = crate::FidoState::new();
+    let garbage = [0xEEu8; 32];
+    let mut err = |req: &[u8]| {
+        let mut out = [0u8; 1024];
+        let mut presence = crate::AlwaysConfirm;
+        let mut ctx = Ctx {
+            presence: &mut presence,
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 10,
+        };
+        get_assertion(&mut ctx, req, &mut out).unwrap_err()
+    };
+    for param in [Some(&garbage[..]), None, Some(&[][..])] {
+        assert_eq!(
+            err(&ga_request_pin_opt(param, Some(0))),
+            CtapError::InvalidParameter,
+            "protocol 0, param {:?}",
+            param.map(<[u8]>::len)
+        );
+        assert_eq!(
+            err(&ga_request_pin_opt(param, Some(3))),
+            CtapError::InvalidParameter
+        );
+    }
+    assert_eq!(
+        err(&ga_request_pin_opt(Some(&garbage), None)),
+        CtapError::MissingParameter
+    );
+    for proto in [1, 2] {
+        assert_eq!(
+            err(&ga_request_pin_opt(Some(&garbage), Some(proto))),
+            CtapError::PinAuthInvalid
+        );
+        // A supported protocol still reaches the gesture and the credential walk,
+        // so the gate discriminates rather than refusing everything that names one.
+        assert_eq!(
+            err(&ga_request_pin_opt(Some(&[]), Some(proto))),
+            CtapError::PinNotSet
+        );
+        assert_eq!(
+            err(&ga_request_pin_opt(None, Some(proto))),
+            CtapError::NoCredentials
         );
     }
 }

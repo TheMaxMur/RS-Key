@@ -47,7 +47,7 @@ use crate::{Ctx, Rng};
 struct Req<'a> {
     subcommand: u64,
     raw_subpara: &'a [u8],
-    proto: u64,
+    proto: Option<u64>,
     param: Option<&'a [u8]>,
     rp_id_hash: Option<&'a [u8]>,
     cred_id: Option<&'a [u8]>,
@@ -61,7 +61,7 @@ fn parse(data: &[u8]) -> Result<Req<'_>, CtapError> {
     let mut req = Req {
         subcommand: 0,
         raw_subpara: &[],
-        proto: 0,
+        proto: None,
         param: None,
         rp_id_hash: None,
         cred_id: None,
@@ -84,7 +84,7 @@ fn parse(data: &[u8]) -> Result<Req<'_>, CtapError> {
         match key {
             1 => req.subcommand = cbor(d.u32())? as u64,
             2 => parse_subpara(data, &mut d, &mut req)?,
-            3 => req.proto = cbor(d.u32())? as u64,
+            3 => req.proto = Some(cbor(d.u32())? as u64),
             4 => req.param = Some(cbor(d.bytes())?),
             _ => cbor(d.skip())?,
         }
@@ -163,12 +163,13 @@ pub fn cred_mgmt<S: Storage, R: Rng>(
     // getNextRP answers NOT_ALLOWED.
     ctx.state.cm.reset();
 
-    // Every other subcommand requires a verified pinUvAuthParam.
+    // Every other subcommand requires a verified pinUvAuthParam — but the protocol
+    // is judged first, and absent is not the same as unsupported: a YubiKey 5.7.4
+    // answers INVALID_PARAMETER to `pinUvAuthProtocol: 0` with no param at all,
+    // and MISSING_PARAMETER when the param is there and the protocol is not.
+    let proto = crate::clientpin::checked_proto(req.proto)?;
     let param = req.param.ok_or(CtapError::PuatRequired)?;
-    if req.proto != 1 && req.proto != 2 {
-        return Err(CtapError::InvalidParameter);
-    }
-    let proto = PinProto::from_u64(req.proto).ok_or(CtapError::InvalidParameter)?;
+    let proto = proto.ok_or(CtapError::MissingParameter)?;
 
     match req.subcommand {
         CM_GET_CREDS_METADATA => {

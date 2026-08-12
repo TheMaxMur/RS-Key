@@ -8,6 +8,7 @@ use minicbor::Decoder;
 use p256::Sec1Point;
 use p256::ecdsa::{Signature, VerifyingKey, signature::Verifier};
 use rsk_crypto::Device;
+use rsk_crypto::pinproto::PinProto;
 use rsk_fs::Fs;
 use rsk_fs::storage::ram::RamStorage;
 
@@ -808,16 +809,23 @@ fn mc_request_credprotect(level: u64) -> std::vec::Vec<u8> {
     buf[..n].to_vec()
 }
 
+/// §12.1 defines levels 1/2/3 and names no error for anything else, so the oracle
+/// decides: a YubiKey 5.7.4 answers CTAP1_ERR_INVALID_PARAMETER to 0, 4 and 255
+/// alike. `0` used to register a credential with no protection and no extension
+/// output at all — the request said something and the card silently did another.
 #[test]
 fn credprotect_out_of_range_rejected() {
-    // Only levels 1/2/3 are defined (§12.1). A level of 4 must be rejected
-    // with INVALID_OPTION, not silently degraded to no-protection.
-    assert_eq!(
-        run_err(&mc_request_credprotect(4)),
-        CtapError::InvalidOption
-    );
-    // A valid level still registers.
-    assert!(!run(&mc_request_credprotect(3)).0.is_empty());
+    for level in [0, 4, 255] {
+        assert_eq!(
+            run_err(&mc_request_credprotect(level)),
+            CtapError::InvalidParameter,
+            "credProtect {level}"
+        );
+    }
+    // Every defined level still registers.
+    for level in [1, 2, 3] {
+        assert!(!run(&mc_request_credprotect(level)).0.is_empty());
+    }
 }
 
 #[test]
@@ -2073,4 +2081,89 @@ fn exclude_list_at_max_excludes_and_foreign_types_do_not() {
         .is_ok(),
         "a foreign-typed descriptor names no credential this device can assert"
     );
+}
+
+// makeCredential with `pinUvAuthParam` (key 8) and `pinUvAuthProtocol` (key 9)
+// each independently present or absent, so §6.1.2 step 2's matrix can be driven
+// from the wire instead of from the parsed struct.
+fn mc_request_pin_opt(param: Option<&[u8]>, proto: Option<u64>) -> std::vec::Vec<u8> {
+    let n = 4 + u64::from(param.is_some()) + u64::from(proto.is_some());
+    mc_build(n, |e| {
+        good_params(e);
+        if let Some(p) = param {
+            e.u8(8).unwrap().bytes(p).unwrap();
+        }
+        if let Some(v) = proto {
+            e.u8(9).unwrap().u64(v).unwrap();
+        }
+    })
+}
+
+/// §6.1.2 step 2.1 is about a protocol the platform *sent* and this build does not
+/// support; 2.2's MISSING_PARAMETER is about one it did not send. A numeric `0`
+/// used to take the second branch, so a platform that sent `pinUvAuthProtocol: 0`
+/// was told to add the parameter it had already added — a loop it cannot leave.
+/// Measured on a YubiKey 5.7.4: `0` is INVALID_PARAMETER with a param, without a
+/// param, and even ahead of step 1's zero-length selection gesture.
+#[test]
+fn pin_uv_auth_protocol_zero_is_a_value_not_an_absence() {
+    let garbage = [0xEEu8; 32];
+    for param in [Some(&garbage[..]), None, Some(&[][..])] {
+        assert_eq!(
+            run_err(&mc_request_pin_opt(param, Some(0))),
+            CtapError::InvalidParameter,
+            "protocol 0, param {:?}",
+            param.map(<[u8]>::len)
+        );
+        // An unsupported non-zero protocol has always answered this; `0` now joins it.
+        assert_eq!(
+            run_err(&mc_request_pin_opt(param, Some(3))),
+            CtapError::InvalidParameter
+        );
+    }
+    // The absent protocol keeps its own code, and a supported one still reaches
+    // the token check — so the gate above discriminates rather than blanket-refusing.
+    assert_eq!(
+        run_err(&mc_request_pin_opt(Some(&garbage), None)),
+        CtapError::MissingParameter
+    );
+    for proto in [1, 2] {
+        assert_eq!(
+            run_err(&mc_request_pin_opt(Some(&garbage), Some(proto))),
+            CtapError::PinAuthInvalid
+        );
+    }
+    // With a supported protocol the zero-length probe still runs its gesture and
+    // reports the PIN state (§6.1.2 step 1) — the gate must not swallow it.
+    assert_eq!(
+        run_err(&mc_request_pin_opt(Some(&[]), Some(2))),
+        CtapError::PinNotSet
+    );
+}
+
+/// §6.1.2 step 9 keys on `enterpriseAttestation` being PRESENT, not on it being
+/// non-zero: with EA disabled — the shipping default — every present value is
+/// refused, `0` included. It used to register an ordinary credential, so a
+/// platform asking for enterprise attestation and getting none could not tell.
+#[test]
+fn enterprise_attestation_zero_is_a_value_not_an_absence() {
+    assert_eq!(
+        run_ea(&build_request_ea(0), false).map(|_| ()).unwrap_err(),
+        CtapError::InvalidParameter
+    );
+    // Enabled, `0` is still not one of the two defined levels (§6.1.2 step 9's
+    // else-branch). No YubiKey reading exists — this key advertises no `ep`.
+    assert_eq!(
+        run_ea(&build_request_ea(0), true).map(|_| ()).unwrap_err(),
+        CtapError::InvalidOption
+    );
+    // Omitting the field entirely still registers, with EA off or on.
+    for enable in [false, true] {
+        assert!(
+            !run_ea(&mc_build(4, good_params), enable)
+                .unwrap()
+                .0
+                .is_empty()
+        );
+    }
 }

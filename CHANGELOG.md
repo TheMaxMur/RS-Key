@@ -40,6 +40,36 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Security
 
+- **A numeric `0` is a value the platform sent, not a parameter it omitted.** Four
+  request fields carried no present-flag, so `0` was indistinguishable from absence
+  and each of them answered the wrong thing. `pinUvAuthProtocol: 0` on
+  makeCredential and getAssertion answered `CTAP2_ERR_MISSING_PARAMETER` — telling
+  a platform to add the parameter it had just sent, a loop it cannot leave —
+  where §6.1.2 / §6.2.2 step 2.1 and a YubiKey 5.7.4 both say
+  `CTAP1_ERR_INVALID_PARAMETER`; measured, the oracle refuses `0` with a
+  `pinUvAuthParam`, without one, and even ahead of step 1's zero-length selection
+  gesture, so the gate now sits there too. `enterpriseAttestation: 0` registered an
+  ordinary credential, where §6.1.2 step 9 keys on the field being *present* and
+  the oracle refuses every present value while EA is disabled. `credProtect: 0`
+  registered a credential with no protection and no extension output at all —
+  §12.1 names no error for an out-of-range level, so the oracle decides, and it
+  answers `CTAP1_ERR_INVALID_PARAMETER` to `0`, `4` and `255` alike: levels 4 and
+  255 therefore move off `CTAP2_ERR_INVALID_OPTION`, and the test that asserted the
+  old code was itself encoding the defect. clientPIN's own two sentinels go with
+  them: protocol `0` is `CTAP1_ERR_INVALID_PARAMETER` on every subcommand and is
+  judged before the missing-input check (the oracle refuses it on a request that
+  carries nothing else), and a keyAgreement whose `alg` is `0` or simply absent is
+  now accepted — the oracle reads `kty`, `crv` and `alg` not at all. Swept across
+  the whole class: `authenticatorConfig`, `authenticatorLargeBlobs`,
+  `authenticatorCredentialManagement` and the vendor `0x41` channel had the same
+  collapse and now separate absent (`0x14`) from unsupported (`0x02`). The
+  **order** moved with the codes: all five judged the protocol *after* the token
+  or subcommand it travels with, so a request that got both wrong was told about
+  the wrong one. `authenticatorClientPIN` now judges it once, above the
+  dispatch — `getPINRetries`, the one subcommand every host calls
+  unauthenticated, used to answer `SUCCESS` under a protocol this build does not
+  support. **bcdDevice → 0x089D.**
+
 - **A COSE key-agreement coordinate must now be exactly 32 bytes.** The platform's
   `keyAgreement` is a P-256 COSE key, and a coordinate that is not 32 bytes wide is
   not one — but a short one used to be right-aligned into the buffer, so a platform

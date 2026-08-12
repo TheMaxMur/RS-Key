@@ -7,6 +7,7 @@ use crate::{AlwaysConfirm, FidoState, Presence, UserPresence};
 use rsk_crypto::Device;
 use rsk_crypto::MlKem768Pair;
 use rsk_crypto::mlkem::MLKEM768_SEED_LEN;
+use rsk_crypto::pinproto::PinProto;
 use rsk_fs::Fs;
 use rsk_fs::storage::ram::RamStorage;
 
@@ -2023,6 +2024,47 @@ fn mse_coordinate_must_be_exactly_32_bytes() {
             ),
             Err(CtapError::InvalidParameter),
             "x {label}"
+        );
+    }
+}
+
+/// The `0x41` channel's own copy of the protocol rule. No oracle exists for a
+/// vendor command, so the rule is its siblings': a present-but-unsupported
+/// `pinUvAuthProtocol` — `0` included — is INVALID_PARAMETER, judged before the
+/// token it belongs to is found missing.
+#[test]
+fn an_unsupported_protocol_is_judged_before_the_missing_token() {
+    for proto in [0u64, 3, 255] {
+        let (mut fs, mut rng, mut st) = setup();
+        fs.put(EF_PIN, &[8, 4, 1]).unwrap();
+        let _ = handshake(&mut fs, &mut rng, &mut st);
+        let mut req = [0u8; 32];
+        let n = {
+            let mut e = Encoder::new(Cursor::new(&mut req[..]));
+            e.map(2)
+                .unwrap()
+                .u8(1)
+                .unwrap()
+                .u64(VENDOR_BACKUP_EXPORT)
+                .unwrap()
+                .u8(3)
+                .unwrap()
+                .u64(proto)
+                .unwrap();
+            e.writer().position()
+        };
+        let mut out = [0u8; 128];
+        assert_eq!(
+            call(
+                &mut fs,
+                &mut rng,
+                &mut st,
+                &mut AlwaysConfirm,
+                &req[..n],
+                &mut out
+            ),
+            Err(CtapError::InvalidParameter),
+            "protocol {proto}"
         );
     }
 }

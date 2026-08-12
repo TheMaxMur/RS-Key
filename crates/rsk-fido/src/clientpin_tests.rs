@@ -5,6 +5,7 @@ use super::*;
 use crate::FidoState;
 use crate::consts::EF_KEY_DEV;
 use crate::seed::{ensure_seed, load_keydev};
+use minicbor::encode::Write as _;
 use rsk_crypto::Device;
 use rsk_crypto::pinproto::public_xy;
 use rsk_fs::Fs;
@@ -150,6 +151,8 @@ enum V<'a> {
     Cose(&'a [u8; 32], &'a [u8; 32]),
     /// A keyAgreement whose coordinates go on the wire verbatim, however long.
     CoseVar(&'a [u8], &'a [u8]),
+    /// Pre-encoded CBOR, written as the field's value.
+    Raw(&'a [u8]),
 }
 
 fn build(fields: &[(u8, V)]) -> std::vec::Vec<u8> {
@@ -167,6 +170,7 @@ fn build(fields: &[(u8, V)]) -> std::vec::Vec<u8> {
                     e.bytes(b).unwrap();
                 }
                 V::Cose(x, y) => cose_key_ecdh(&mut e, x, y).unwrap(),
+                V::Raw(b) => e.writer_mut().write_all(b).unwrap(),
                 V::CoseVar(x, y) => crate::cose::cose_key_ec2_var(
                     &mut e,
                     crate::consts::ALG_ECDH_ES_HKDF_256,
@@ -1950,5 +1954,116 @@ fn key_agreement_coordinate_must_be_exactly_32_bytes() {
                 "coordinate {which} {label}"
             );
         }
+    }
+}
+
+// A platform keyAgreement whose `alg` is a chosen value, or omitted entirely.
+fn cose_with_alg(x: &[u8; 32], y: &[u8; 32], alg: Option<i64>) -> std::vec::Vec<u8> {
+    let mut buf = [0u8; 128];
+    let n = {
+        let mut e = Encoder::new(Cursor::new(&mut buf[..]));
+        e.map(if alg.is_some() { 5 } else { 4 }).unwrap();
+        e.u8(1).unwrap().u8(2).unwrap();
+        if let Some(a) = alg {
+            e.u8(3).unwrap().i64(a).unwrap();
+        }
+        e.i8(-1).unwrap().u8(1).unwrap();
+        e.i8(-2).unwrap().bytes(x).unwrap();
+        e.i8(-3).unwrap().bytes(y).unwrap();
+        e.writer().position()
+    };
+    buf[..n].to_vec()
+}
+
+/// clientPIN's own copies of the "numeric 0 means absent" sentinel. A
+/// `pinUvAuthProtocol` of 0 answered MISSING_PARAMETER on every subcommand, and a
+/// keyAgreement whose `alg` was 0 — or simply omitted — was refused the same way.
+/// Measured on a YubiKey 5.7.4: protocol 0 is INVALID_PARAMETER, and `alg` is
+/// never read (kty, crv and alg may say anything, including nothing).
+#[test]
+fn clientpin_protocol_zero_is_invalid_and_alg_is_not_read() {
+    let (mut fs, mut rng) = setup();
+    let mut state = FidoState::new();
+    let mut out = [0u8; 256];
+
+    // Every subcommand, defined or not, and the `0` sentinel with them: the
+    // protocol is judged before the dispatch, as on a YubiKey 5.7.4 — measured on
+    // getPINRetries, which is the one subcommand every host calls unauthenticated
+    // and which used to answer SUCCESS with a protocol it does not support.
+    for sub in [0u64, 1, 2, 3, 4, 5, 6, 7, 9, 0x99] {
+        for proto in [0u64, 3, 255] {
+            assert_eq!(
+                run(
+                    &mut fs,
+                    &mut rng,
+                    &mut state,
+                    &build(&[(1, V::U(proto)), (2, V::U(sub))]),
+                    &mut out
+                ),
+                Err(CtapError::InvalidParameter),
+                "subcommand {sub} with protocol {proto}"
+            );
+        }
+    }
+    // Control: with a supported protocol those same subcommands keep their own
+    // answers, so the rule above is the protocol's.
+    assert!(
+        run(
+            &mut fs,
+            &mut rng,
+            &mut state,
+            &build(&[(1, V::U(1)), (2, V::U(1))]),
+            &mut out
+        )
+        .is_ok(),
+        "getPINRetries under a supported protocol"
+    );
+    for (sub, want) in [
+        (0u64, CtapError::MissingParameter),
+        (0x99, CtapError::InvalidSubcommand),
+    ] {
+        assert_eq!(
+            run(
+                &mut fs,
+                &mut rng,
+                &mut state,
+                &build(&[(1, V::U(1)), (2, V::U(sub))]),
+                &mut out
+            ),
+            Err(want),
+            "subcommand {sub} under a supported protocol"
+        );
+    }
+
+    let plat = key_agreement(&mut fs, &mut rng, &mut state, PinProto::Two, 2);
+    run(
+        &mut fs,
+        &mut rng,
+        &mut state,
+        &plat.set_pin_req(b"1234"),
+        &mut out,
+    )
+    .unwrap();
+    // Every `alg` the platform can put in the COSE key — including the sentinel
+    // value and no key at all — still mints a token, because the ECDH is correct.
+    for alg in [
+        None,
+        Some(0),
+        Some(-7),
+        Some(crate::consts::ALG_ECDH_ES_HKDF_256),
+    ] {
+        let plat = key_agreement(&mut fs, &mut rng, &mut state, PinProto::Two, 2);
+        let h = sha256(b"1234");
+        let phe = plat.enc(&h[..16]);
+        let cose = cose_with_alg(&plat.x, &plat.y, alg);
+        let req = build(&[
+            (1, V::U(2)),
+            (2, V::U(9)),
+            (3, V::Raw(&cose)),
+            (6, V::B(&phe)),
+            (9, V::U(PERM_MC as u64)),
+        ]);
+        run(&mut fs, &mut rng, &mut state, &req, &mut out)
+            .unwrap_or_else(|e| panic!("alg {alg:?} refused with {e:?}"));
     }
 }

@@ -22,7 +22,6 @@ use minicbor::{Decoder, Encoder};
 use zeroize::Zeroize;
 
 use rsk_crypto::MLDSA65_PK_LEN;
-use rsk_crypto::pinproto::PinProto;
 use rsk_crypto::sha256;
 use rsk_fs::{Fs, Storage};
 
@@ -31,10 +30,10 @@ use crate::cert;
 use crate::clientpin::{UvOutcome, builtin_uv_enabled, builtin_uv_step};
 use crate::consts::{
     AAGUID, ALG_ED25519, ALG_EDDSA, ALG_ES256, ALG_ES256K, ALG_ES384, ALG_ES512, ALG_ESP256,
-    ALG_ESP384, ALG_ESP512, ALG_MLDSA44, ALG_MLDSA65, CRED_PROT_UV_REQUIRED, CURVE_ED25519,
-    CURVE_MLDSA44, CURVE_MLDSA65, CURVE_P256, CURVE_P256K1, CURVE_P384, CURVE_P521, EF_ATT_CHAIN,
-    EF_EA_ENABLED, EF_EE_DEV, EF_MINPINLEN, EF_PIN, FLAG_AT, FLAG_ED, FLAG_UP, FLAG_UV,
-    LARGE_BLOB_EXT, MAX_CREDBLOB_LENGTH, MAX_CREDENTIAL_COUNT_IN_LIST, MAX_MIN_PIN_RPIDS,
+    ALG_ESP384, ALG_ESP512, ALG_MLDSA44, ALG_MLDSA65, CRED_PROT_UV_OPTIONAL, CRED_PROT_UV_REQUIRED,
+    CURVE_ED25519, CURVE_MLDSA44, CURVE_MLDSA65, CURVE_P256, CURVE_P256K1, CURVE_P384, CURVE_P521,
+    EF_ATT_CHAIN, EF_EA_ENABLED, EF_EE_DEV, EF_MINPINLEN, EF_PIN, FLAG_AT, FLAG_ED, FLAG_UP,
+    FLAG_UV, LARGE_BLOB_EXT, MAX_CREDBLOB_LENGTH, MAX_CREDENTIAL_COUNT_IN_LIST, MAX_MIN_PIN_RPIDS,
     MAX_RESIDENT_CREDENTIALS,
 };
 use crate::credential::{
@@ -110,8 +109,11 @@ struct Request<'a> {
     up: Option<bool>,
     uv: bool,
     pin_uv_auth_param: Option<&'a [u8]>,
-    pin_uv_auth_protocol: u64,
-    ext_cred_protect: u64,
+    /// `None` = the platform sent no pinUvAuthProtocol. A numeric `0` is a value
+    /// it did send, and an unsupported one (§6.1.2 step 2).
+    pin_uv_auth_protocol: Option<u64>,
+    /// `None` = no credProtect extension. `Some(0)` is an out-of-range level.
+    ext_cred_protect: Option<u64>,
     ext_cred_blob: &'a [u8],
     ext_min_pin_length: bool,
     ext_third_party_payment: bool,
@@ -120,9 +122,10 @@ struct Request<'a> {
     /// The CTAP 2.3 `largeBlob` extension input, on a `largeblob-ext` build.
     ext_large_blob: McInput,
     hmac_secret_mc: HmacSecretReq<'a>,
-    /// enterpriseAttestation (request field 0x0A): 0 none, 1 vendor-facilitated,
-    /// 2 platform-managed (full attestation by the device key).
-    enterprise_attestation: u64,
+    /// enterpriseAttestation (request field 0x0A): 1 vendor-facilitated, 2
+    /// platform-managed (full attestation by the device key). §6.1.2 step 9 keys
+    /// on the field being **present**, so `None` and `Some(0)` differ.
+    enterprise_attestation: Option<u64>,
 }
 
 fn parse(data: &[u8]) -> Result<Request<'_>, CtapError> {
@@ -142,8 +145,8 @@ fn parse(data: &[u8]) -> Result<Request<'_>, CtapError> {
         up: None,
         uv: false,
         pin_uv_auth_param: None,
-        pin_uv_auth_protocol: 0,
-        ext_cred_protect: 0,
+        pin_uv_auth_protocol: None,
+        ext_cred_protect: None,
         ext_cred_blob: &[],
         ext_min_pin_length: false,
         ext_third_party_payment: false,
@@ -151,7 +154,7 @@ fn parse(data: &[u8]) -> Result<Request<'_>, CtapError> {
         ext_large_blob_key: None,
         ext_large_blob: McInput::Absent,
         hmac_secret_mc: HmacSecretReq::default(),
-        enterprise_attestation: 0,
+        enterprise_attestation: None,
     };
 
     let n = def_map(&mut d)?;
@@ -175,8 +178,8 @@ fn parse(data: &[u8]) -> Result<Request<'_>, CtapError> {
             6 => parse_extensions(&mut d, &mut req)?,
             7 => parse_options(&mut d, &mut req)?,
             8 => req.pin_uv_auth_param = Some(cbor(d.bytes())?),
-            9 => req.pin_uv_auth_protocol = cbor(d.u32())? as u64,
-            10 => req.enterprise_attestation = cbor(d.u32())? as u64,
+            9 => req.pin_uv_auth_protocol = Some(cbor(d.u32())? as u64),
+            10 => req.enterprise_attestation = Some(cbor(d.u32())? as u64),
             _ => cbor(d.skip())?,
         }
     }
@@ -258,7 +261,7 @@ fn parse_extensions<'a>(d: &mut Decoder<'a>, req: &mut Request<'a>) -> Result<()
     let m = def_map(d)?;
     for _ in 0..m {
         match cbor(d.str())? {
-            "credProtect" => req.ext_cred_protect = cbor(d.u32())? as u64,
+            "credProtect" => req.ext_cred_protect = Some(cbor(d.u32())? as u64),
             "credBlob" => req.ext_cred_blob = cbor(d.bytes())?,
             "minPinLength" => req.ext_min_pin_length = cbor(d.bool())?,
             "thirdPartyPayment" => req.ext_third_party_payment = cbor(d.bool())?,
@@ -361,20 +364,24 @@ pub fn make_credential<S: Storage, R: Rng>(
     {
         return Err(CtapError::MissingParameter);
     }
-    // credProtect (§12.1) defines only levels 1/2/3; reject an out-of-range value
-    // (CTAP2_ERR_INVALID_OPTION) instead of silently degrading it to no-protection.
-    if req.ext_cred_protect > CRED_PROT_UV_REQUIRED {
-        return Err(CtapError::InvalidOption);
+    // credProtect (§12.1) defines only levels 1/2/3 and names no error for anything
+    // else, so the oracle decides: a YubiKey 5.7.4 refuses 0, 4 and 255 alike with
+    // CTAP1_ERR_INVALID_PARAMETER. A level of `0` is a value the platform sent.
+    if let Some(level) = req.ext_cred_protect
+        && !(CRED_PROT_UV_OPTIONAL..=CRED_PROT_UV_REQUIRED).contains(&level)
+    {
+        return Err(CtapError::InvalidParameter);
     }
-    // Enterprise attestation (§6.1.2): only when enabled via authenticatorConfig,
-    // and only levels 1/2. Whether it is actually performed (and the `ep` flag set)
-    // is decided later: type 2 for any RP, type 1 only for a vendor-listed RP — see
-    // `rp_eligible_for_vendor_ea` and `full_ea` in `make_credential_inner`.
-    if req.enterprise_attestation > 0 {
+    // Enterprise attestation (§6.1.2 step 9) keys on the field being PRESENT: with
+    // EA disabled every present value is INVALID_PARAMETER — `0` included, measured
+    // — and with it enabled only 1/2 pass. Whether attestation is actually performed
+    // (and the `ep` flag set) is decided later: type 2 for any RP, type 1 only for a
+    // vendor-listed RP — see `rp_eligible_for_vendor_ea` in `make_credential_inner`.
+    if let Some(level) = req.enterprise_attestation {
         if !ctx.fs.has_data(EF_EA_ENABLED) {
             return Err(CtapError::InvalidParameter);
         }
-        if req.enterprise_attestation != 1 && req.enterprise_attestation != 2 {
+        if level != 1 && level != 2 {
             return Err(CtapError::InvalidOption);
         }
     }
@@ -409,6 +416,8 @@ fn enforce_pin<S: Storage, R: Rng>(
     req: &Request,
     rp_id_hash: &[u8; 32],
 ) -> Result<UvOutcome, CtapError> {
+    // §6.1.2 step 2 ahead of step 1's selection gesture — where the oracle puts it.
+    let proto = crate::clientpin::checked_proto(req.pin_uv_auth_protocol)?;
     let pin_set = ctx.fs.has_data(EF_PIN);
     match req.pin_uv_auth_param {
         // Zero-length probe: a selection gesture — wait for a touch, then report
@@ -425,10 +434,7 @@ fn enforce_pin<S: Storage, R: Rng>(
             })
         }
         Some(param) => {
-            let proto = match req.pin_uv_auth_protocol {
-                0 => return Err(CtapError::MissingParameter),
-                p => PinProto::from_u64(p).ok_or(CtapError::InvalidParameter)?,
-            };
+            let proto = proto.ok_or(CtapError::MissingParameter)?;
             if !ctx.state.verify_token(proto, req.client_data_hash, param)
                 || ctx.state.paut.permissions & PERM_MC == 0
                 || (ctx.state.paut.has_rp_id && ctx.state.paut.rp_id_hash != *rp_id_hash)
@@ -510,7 +516,7 @@ fn make_credential_inner<S: Storage, R: Rng>(
         alg: req.sel_alg,
         curve: req.sel_curve,
         ext: CredExt {
-            cred_protect: req.ext_cred_protect,
+            cred_protect: req.ext_cred_protect.unwrap_or(0),
             cred_blob: req.ext_cred_blob,
             hmac_secret: req.ext_hmac_secret,
             large_blob_key: req.ext_large_blob_key == Some(true),
@@ -636,8 +642,8 @@ fn make_credential_inner<S: Storage, R: Rng>(
     // presents the org/EP cert and sets the `ep` flag. A type-1 request for a
     // non-listed RP is NOT enterprise: full attestation with the device's own
     // cert and no `ep` (CTAP2.1 §6.1.3, conformance Enterprise-Attestation F-6).
-    let ea_performed = req.enterprise_attestation == 2
-        || (req.enterprise_attestation == 1 && rp_eligible_for_vendor_ea(req.rp_id));
+    let ea_performed = req.enterprise_attestation == Some(2)
+        || (req.enterprise_attestation == Some(1) && rp_eligible_for_vendor_ea(req.rp_id));
     // Every credential ships packed **basic** attestation: the device key signs and
     // the x5c leaf is its cert. Both alternatives break clients — an empty
     // `fmt:"none"` statement is rejected by OpenSSH < 10.0, which verifies any
@@ -895,7 +901,7 @@ fn encode_mc_extensions<S: Storage>(
         0
     };
     let l = u64::from(blob_present)
-        + u64::from(req.ext_cred_protect != 0)
+        + u64::from(req.ext_cred_protect.is_some())
         + u64::from(req.ext_hmac_secret)
         + u64::from(min_pin > 0)
         + u64::from(!hmac_mc.is_empty());
@@ -911,9 +917,9 @@ fn encode_mc_extensions<S: Storage>(
             .and_then(|e| e.bool(req.ext_cred_blob.len() <= MAX_CREDBLOB_LENGTH))
             .map_err(|_| CtapError::Other)?;
     }
-    if req.ext_cred_protect != 0 {
+    if let Some(level) = req.ext_cred_protect {
         enc.str("credProtect")
-            .and_then(|e| e.u64(req.ext_cred_protect))
+            .and_then(|e| e.u64(level))
             .map_err(|_| CtapError::Other)?;
     }
     if req.ext_hmac_secret {

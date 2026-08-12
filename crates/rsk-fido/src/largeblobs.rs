@@ -14,7 +14,6 @@ use minicbor::encode::{Error, Write};
 use minicbor::{Decoder, Encoder};
 use rsk_fs::Storage;
 
-use rsk_crypto::pinproto::PinProto;
 use rsk_crypto::sha256;
 
 use crate::cbordec::{cbor, def_map};
@@ -186,11 +185,11 @@ fn write_fragment<S: Storage, R: Rng>(
     // unverified write can destroy but never read.
     if ctx.fs.has_data(EF_PIN) || crate::config::always_uv_enabled(ctx.fs) {
         // pinUvAuthParam MAC over 0xff×32 ‖ 0x0c ‖ 0x00 ‖ offset_le(4) ‖ sha256(set).
+        // A present-but-unsupported protocol is judged first — `0` is a value the
+        // platform sent — and an absent one only where the token needs it.
+        let proto = crate::clientpin::checked_proto(req.proto_present.then_some(req.proto))?;
         let param = req.pin_uv_auth_param.ok_or(CtapError::PuatRequired)?;
-        if req.proto == 0 {
-            return Err(CtapError::MissingParameter);
-        }
-        let proto = PinProto::from_u64(req.proto).ok_or(CtapError::InvalidParameter)?;
+        let proto = proto.ok_or(CtapError::MissingParameter)?;
         let mut vd = [0u8; 70];
         vd[..32].fill(0xff);
         vd[32] = CTAP_LARGE_BLOBS;

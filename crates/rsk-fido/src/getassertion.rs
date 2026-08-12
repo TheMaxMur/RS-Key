@@ -37,7 +37,6 @@ use crate::largeblobext::{self, GaInput};
 use crate::seed::{cred_sign_counter, get_sign_counter, set_cred_sign_counter};
 use crate::state::{AssertionState, MAX_ASSERTION_CREDS, PERM_GA};
 use crate::{Ctx, Rng};
-use rsk_crypto::pinproto::PinProto;
 
 const MAX_ALLOW: usize = MAX_CREDENTIAL_COUNT_IN_LIST as usize;
 /// Sized by the create-side ceiling so no creatable box is ever skipped
@@ -65,7 +64,9 @@ struct Request<'a> {
     /// `get_assertion_inner` and the `strict-up` feature.
     up: bool,
     pin_uv_auth_param: Option<&'a [u8]>,
-    pin_uv_auth_protocol: u64,
+    /// `None` = the platform sent no pinUvAuthProtocol. A numeric `0` is a value
+    /// it did send, and an unsupported one (§6.2.2 step 2).
+    pin_uv_auth_protocol: Option<u64>,
     ext_cred_blob: bool,
     ext_third_party_payment: bool,
     ext_large_blob_key: Option<bool>,
@@ -86,7 +87,7 @@ fn parse(data: &[u8]) -> Result<Request<'_>, CtapError> {
         uv: false,
         up: true,
         pin_uv_auth_param: None,
-        pin_uv_auth_protocol: 0,
+        pin_uv_auth_protocol: None,
         ext_cred_blob: false,
         ext_third_party_payment: false,
         ext_large_blob_key: None,
@@ -115,7 +116,7 @@ fn parse(data: &[u8]) -> Result<Request<'_>, CtapError> {
             5 => parse_options(&mut d, &mut req)?,
             4 => parse_extensions(&mut d, &mut req)?,
             6 => req.pin_uv_auth_param = Some(cbor(d.bytes())?),
-            7 => req.pin_uv_auth_protocol = cbor(d.u32())? as u64,
+            7 => req.pin_uv_auth_protocol = Some(cbor(d.u32())? as u64),
             _ => cbor(d.skip())?,
         }
     }
@@ -351,6 +352,8 @@ fn enforce_pin<S: Storage, R: Rng>(
     req: &Request,
     rp_id_hash: &[u8; 32],
 ) -> Result<UvOutcome, CtapError> {
+    // §6.2.2 step 2 ahead of step 1's selection gesture — where the oracle puts it.
+    let proto = crate::clientpin::checked_proto(req.pin_uv_auth_protocol)?;
     match req.pin_uv_auth_param {
         // Zero-length probe (selection gesture): touch, then report PIN state.
         // With no button configured this confirms instantly. CTAP 2.1 §6.2.2 step 1
@@ -365,10 +368,7 @@ fn enforce_pin<S: Storage, R: Rng>(
             })
         }
         Some(param) => {
-            let proto = match req.pin_uv_auth_protocol {
-                0 => return Err(CtapError::MissingParameter),
-                p => PinProto::from_u64(p).ok_or(CtapError::InvalidParameter)?,
-            };
+            let proto = proto.ok_or(CtapError::MissingParameter)?;
             if !ctx.state.verify_token(proto, req.client_data_hash, param)
                 || !ctx.state.user_verified()
                 || ctx.state.paut.permissions & PERM_GA == 0

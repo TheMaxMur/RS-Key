@@ -7,6 +7,7 @@ use minicbor::Encoder;
 use minicbor::encode::write::Cursor;
 use rsk_crypto::Device;
 use rsk_crypto::pinproto;
+use rsk_crypto::pinproto::PinProto;
 use rsk_fs::Fs;
 use rsk_fs::storage::ram::RamStorage;
 
@@ -466,4 +467,35 @@ fn undefined_config_subcommand_matches_a_yubikey() {
         Err(CtapError::PuatRequired),
         "a KNOWN subcommand still reaches the auth gate"
     );
+}
+
+/// `pinUvAuthProtocol: 0` is a value the platform sent, and a YubiKey 5.7.4 judges
+/// it before it has looked at the subcommand or missed the token: `0x02`, not the
+/// `0x36` a bare "no param" gets and not the `0x14` subcommand `0` gets.
+#[test]
+fn an_unsupported_protocol_is_judged_before_the_subcommand_and_the_token() {
+    for sub in [0x03u8, 0x00, 0x09] {
+        // {1: sub, 3: proto} — no pinUvAuthParam at all. 255 needs its own header.
+        for proto in [std::vec![0x00u8], std::vec![0x03], std::vec![0x18, 0xFF]] {
+            let mut req = std::vec![0xA2, 0x01, sub, 0x03];
+            req.extend_from_slice(&proto);
+            let mut state = armed(PERM_ACFG);
+            assert_eq!(
+                run(&mut state, &req),
+                Err(CtapError::InvalidParameter),
+                "subcommand {sub:#x} protocol {proto:?}"
+            );
+        }
+    }
+    // Control: the same requests with a supported protocol keep their own answers,
+    // so the rule above is the protocol's and not a blanket refusal.
+    for (sub, want) in [
+        (0x03u8, CtapError::PuatRequired),
+        (0x00, CtapError::MissingParameter),
+        (0x09, CtapError::InvalidParameter),
+    ] {
+        let req = std::vec![0xA2, 0x01, sub, 0x03, 0x02];
+        let mut state = armed(PERM_ACFG);
+        assert_eq!(run(&mut state, &req), Err(want), "subcommand {sub:#x}");
+    }
 }

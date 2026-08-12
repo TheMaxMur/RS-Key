@@ -30,7 +30,7 @@ use zeroize::Zeroize;
 use rsk_crypto::chachapoly::{chacha20poly1305_decrypt, chacha20poly1305_encrypt};
 use rsk_crypto::mac::hkdf_sha256;
 use rsk_crypto::mlkem::{MLKEM768_CT_LEN, MLKEM768_EK_LEN, mlkem768_encapsulate};
-use rsk_crypto::pinproto::{PinProto, ecdh_raw};
+use rsk_crypto::pinproto::ecdh_raw;
 use rsk_crypto::sha256;
 use rsk_fs::Storage;
 use rsk_led::{CONF_LEN as LED_CONF_LEN, EF_LED_CONF};
@@ -89,6 +89,8 @@ struct Req<'a> {
     target: u64,
     raw_subpara: &'a [u8],
     proto: u64,
+    /// Whether key 3 was supplied — see `config::Req::proto_present`.
+    proto_present: bool,
     pin_uv_auth_param: Option<&'a [u8]>,
 }
 
@@ -147,7 +149,10 @@ fn parse(data: &[u8]) -> Result<Req<'_>, CtapError> {
                 }
                 req.raw_subpara = &data[start..d.position()];
             }
-            3 => req.proto = cbor(d.u32())? as u64,
+            3 => {
+                req.proto = cbor(d.u32())? as u64;
+                req.proto_present = true;
+            }
             4 => req.pin_uv_auth_param = Some(cbor(d.bytes())?),
             _ => cbor(d.skip())?,
         }
@@ -719,8 +724,11 @@ fn gate<S: Storage, R: Rng>(
 /// pad, out of the host's reach.
 fn pin_gate<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> Result<(), CtapError> {
     if ctx.fs.has_data(EF_PIN) {
+        // A present-but-unsupported protocol is judged first — `0` is a value the
+        // platform sent — and an absent one only where the token needs it.
+        let proto = crate::clientpin::checked_proto(req.proto_present.then_some(req.proto))?;
         let param = req.pin_uv_auth_param.ok_or(CtapError::PuatRequired)?;
-        let proto = PinProto::from_u64(req.proto).ok_or(CtapError::MissingParameter)?;
+        let proto = proto.ok_or(CtapError::MissingParameter)?;
         if req.raw_subpara.len() > MAX_RAW_SUBPARA {
             return Err(CtapError::RequestTooLarge);
         }

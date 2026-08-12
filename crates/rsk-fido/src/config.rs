@@ -12,7 +12,6 @@ use minicbor::Decoder;
 use rsk_fs::{Fs, Sealed, Storage};
 use zeroize::Zeroize;
 
-use rsk_crypto::pinproto::PinProto;
 use rsk_crypto::sha256;
 use rsk_rescue::phy;
 
@@ -61,6 +60,9 @@ struct Req<'a> {
     subcommand: u64,
     raw_subpara: &'a [u8],
     proto: u64,
+    /// Whether key 3 was supplied: `0` is a protocol the platform named, not one
+    /// it omitted, and the two answer different codes (§6.11 → §6.1.2 step 2).
+    proto_present: bool,
     pin_uv_auth_param: Option<&'a [u8]>,
     new_min_pin: u64,
     force_change: bool,
@@ -84,6 +86,7 @@ fn parse(data: &[u8]) -> Result<Req<'_>, CtapError> {
         subcommand: 0,
         raw_subpara: &[],
         proto: 0,
+        proto_present: false,
         pin_uv_auth_param: None,
         new_min_pin: 0,
         force_change: false,
@@ -109,7 +112,10 @@ fn parse(data: &[u8]) -> Result<Req<'_>, CtapError> {
         match key {
             1 => req.subcommand = cbor(d.u32())? as u64,
             2 => parse_subparams(&mut d, &mut req, data)?,
-            3 => req.proto = cbor(d.u32())? as u64,
+            3 => {
+                req.proto = cbor(d.u32())? as u64;
+                req.proto_present = true;
+            }
             4 => req.pin_uv_auth_param = Some(cbor(d.bytes())?),
             _ => cbor(d.skip())?,
         }
@@ -191,6 +197,12 @@ pub fn authenticator_config<S: Storage, R: Rng>(
     // is `0x02` with or without a token, and only a *known* one reaches the
     // authorization and its `0x36`. Nothing is disclosed by this ordering — the
     // three subcommands are already named in getInfo's options.
+    // …and a protocol that is *present and unsupported* is judged before even that,
+    // as on that card: it answers INVALID_PARAMETER to `pinUvAuthProtocol: 0`
+    // whether the subcommand is one it implements or the `0` sentinel, i.e. before
+    // it has looked at which was asked. An *absent* one is a different rule and
+    // stays below, where the token it belongs to is required.
+    let proto = crate::clientpin::checked_proto(req.proto_present.then_some(req.proto))?;
     match req.subcommand {
         0 => return Err(CtapError::MissingParameter),
         CONFIG_ENABLE_EA | CONFIG_TOGGLE_ALWAYS_UV | CONFIG_SET_MIN_PIN | CONFIG_VENDOR => {}
@@ -198,10 +210,7 @@ pub fn authenticator_config<S: Storage, R: Rng>(
     }
 
     let param = req.pin_uv_auth_param.ok_or(CtapError::PuatRequired)?;
-    if req.proto == 0 {
-        return Err(CtapError::MissingParameter);
-    }
-    let proto = PinProto::from_u64(req.proto).ok_or(CtapError::InvalidParameter)?;
+    let proto = proto.ok_or(CtapError::MissingParameter)?;
     if req.raw_subpara.len() > MAX_RAW_SUBPARA {
         return Err(CtapError::RequestTooLarge);
     }

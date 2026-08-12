@@ -910,6 +910,11 @@ and the token must carry the `acfg` permission (`0x20`). `rawSubCommandParams` i
 the verbatim CBOR bytes of the key-2 map. Reference flow:
 `tools/rsk/backup.py`.
 
+An **omitted** `pinUvAuthProtocol` is `0x14 MISSING_PARAMETER`; one this build does
+not support is `0x02 INVALID_PARAMETER`, and a value of `0` counts as unsupported
+rather than omitted (it used to answer `0x14`, as did `3` and every other unknown
+value). Since bcdDevice `0x0894`.
+
 ---
 
 ## 10. Worked examples

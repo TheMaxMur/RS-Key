@@ -44,7 +44,6 @@ pub const MAX_PIN_LENGTH: usize = PADDED_PIN_LEN - 1;
 struct Req<'a> {
     proto: u64,
     subcommand: u64,
-    alg: i64,
     key_agreement: bool,
     kax: &'a [u8],
     kay: &'a [u8],
@@ -78,10 +77,12 @@ fn parse(data: &[u8]) -> Result<Req<'_>, CtapError> {
                 let m = def_map(&mut d)?;
                 for _ in 0..m {
                     match cbor(d.i32())? {
-                        3 => req.alg = cbor(d.i64())?,
                         -2 => req.kax = cbor(d.bytes())?,
                         -3 => req.kay = cbor(d.bytes())?,
-                        _ => cbor(d.skip())?, // kty (1), crv (-1)
+                        // kty (1), crv (-1) and alg (3) are the platform's to get
+                        // right: a YubiKey 5.7.4 reads none of the three, and
+                        // answers SUCCESS to kty=6, crv=6 and alg=-7 alike.
+                        _ => cbor(d.skip())?,
                     }
                 }
             }
@@ -104,6 +105,16 @@ fn coord(src: &[u8]) -> Result<[u8; 32], CtapError> {
     src.try_into().map_err(|_| CtapError::InvalidParameter)
 }
 
+/// CTAP 2.1 §6.1.2 / §6.2.2 step 2's protocol gate, shared by makeCredential and
+/// getAssertion. A *present* `pinUvAuthProtocol` must name a protocol this build
+/// supports — `0` is such a value, not an absence — and a YubiKey 5.7.4 judges it
+/// ahead of step 1's selection gesture, with or without a `pinUvAuthParam`.
+pub(crate) fn checked_proto(proto: Option<u64>) -> Result<Option<PinProto>, CtapError> {
+    proto
+        .map(|p| PinProto::from_u64(p).ok_or(CtapError::InvalidParameter))
+        .transpose()
+}
+
 /// `authenticatorClientPIN`: dispatch the subcommand, writing the response CBOR
 /// into `out` and returning its length (0 for set/changePIN, which reply with
 /// only the status byte).
@@ -115,17 +126,24 @@ pub fn client_pin<S: Storage, R: Rng>(
     let req = parse(data)?;
     ctx.state.ensure_initialized(ctx.rng);
 
+    // One owner, ahead of the subcommand: a YubiKey 5.7.4 answers INVALID_PARAMETER
+    // to an unsupported protocol — `0` included — on getPINRetries, on subcommand
+    // `0` and on an undefined subcommand alike, i.e. before it has looked at which
+    // one was asked for. The parser has already made key 1 mandatory, so an absent
+    // protocol never reaches here.
+    let proto = PinProto::from_u64(req.proto).ok_or(CtapError::InvalidParameter)?;
+
     match req.subcommand {
         0x0 => Err(CtapError::MissingParameter),
         0x1 => get_pin_retries(ctx, out),
-        0x2 => get_key_agreement(ctx, &req, out),
-        0x3 => set_pin(ctx, &req, out),
-        0x4 => change_pin(ctx, &req, out),
-        CP_GET_PIN_TOKEN | CP_GET_PIN_UV_TOKEN_USING_PIN => get_pin_token(ctx, &req, out),
+        0x2 => get_key_agreement(ctx, out),
+        0x3 => set_pin(ctx, &req, proto, out),
+        0x4 => change_pin(ctx, &req, proto, out),
+        CP_GET_PIN_TOKEN | CP_GET_PIN_UV_TOKEN_USING_PIN => get_pin_token(ctx, &req, proto, out),
         // Built-in UV (0x06 token / 0x07 retries) exists only where the firmware can
         // collect a PIN on its own UI; elsewhere it is a subcommand this build does
         // not implement, which §8.1 covers along with every undefined value.
-        0x6 if ctx.presence.uv_available() => get_uv_token(ctx, &req, out),
+        0x6 if ctx.presence.uv_available() => get_uv_token(ctx, &req, proto, out),
         0x7 if ctx.presence.uv_available() => get_uv_retries(ctx, out),
         _ => Err(CtapError::InvalidSubcommand),
     }
@@ -144,18 +162,7 @@ fn get_pin_retries<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, out: &mut [u8]) -> C
     Ok(len)
 }
 
-fn get_key_agreement<S: Storage, R: Rng>(
-    ctx: &mut Ctx<S, R>,
-    req: &Req,
-    out: &mut [u8],
-) -> CtapResult {
-    if PinProto::from_u64(req.proto).is_none() {
-        return Err(if req.proto == 0 {
-            CtapError::MissingParameter
-        } else {
-            CtapError::InvalidParameter
-        });
-    }
+fn get_key_agreement<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, out: &mut [u8]) -> CtapResult {
     let (x, y) = ctx.state.ephemeral_public().ok_or(CtapError::Other)?;
     let len = encode(out, |e| {
         e.map(1)?.u8(1)?;
@@ -164,9 +171,14 @@ fn get_key_agreement<S: Storage, R: Rng>(
     Ok(len)
 }
 
-fn set_pin<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req, out: &mut [u8]) -> CtapResult {
+fn set_pin<S: Storage, R: Rng>(
+    ctx: &mut Ctx<S, R>,
+    req: &Req,
+    proto: PinProto,
+    out: &mut [u8],
+) -> CtapResult {
     let _ = out;
-    let proto = require_pin_inputs(req, true, false)?;
+    require_pin_inputs(req, true, false)?;
     // §6.5.5.5: "If a PIN has already been set, authenticator returns
     // CTAP2_ERR_PIN_AUTH_INVALID error" — changePIN is the only way to replace one.
     if ctx.fs.has_data(EF_PIN) {
@@ -210,9 +222,14 @@ fn set_pin<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req, out: &mut [u8]) -
     Ok(0)
 }
 
-fn change_pin<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req, out: &mut [u8]) -> CtapResult {
+fn change_pin<S: Storage, R: Rng>(
+    ctx: &mut Ctx<S, R>,
+    req: &Req,
+    proto: PinProto,
+    out: &mut [u8],
+) -> CtapResult {
     let _ = out;
-    let proto = require_pin_inputs(req, true, true)?;
+    require_pin_inputs(req, true, true)?;
     let pin_hash_enc = req.pin_hash_enc.unwrap();
     let new_pin_enc = req.new_pin_enc.unwrap();
     pin_set_and_unblocked(ctx)?;
@@ -297,8 +314,13 @@ fn change_pin<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req, out: &mut [u8]
     Ok(0)
 }
 
-fn get_pin_token<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req, out: &mut [u8]) -> CtapResult {
-    let proto = require_pin_inputs(req, false, true)?;
+fn get_pin_token<S: Storage, R: Rng>(
+    ctx: &mut Ctx<S, R>,
+    req: &Req,
+    proto: PinProto,
+    out: &mut [u8],
+) -> CtapResult {
+    require_pin_inputs(req, false, true)?;
     let permissions = req.permissions as u8;
     if req.subcommand == CP_GET_PIN_TOKEN {
         if req.permissions != 0 || req.rp_id.is_some() {
@@ -431,8 +453,13 @@ fn issue_token<S: Storage, R: Rng>(
 /// user verifies on the device's own UI (the trusted-display PIN pad) — the PIN
 /// never crosses the host — and the same EF_PIN verifier is checked locally. Only
 /// reached on a build that advertises `options.uv` (gated in the dispatch).
-fn get_uv_token<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req, out: &mut [u8]) -> CtapResult {
-    let proto = require_pin_inputs(req, false, false)?;
+fn get_uv_token<S: Storage, R: Rng>(
+    ctx: &mut Ctx<S, R>,
+    req: &Req,
+    proto: PinProto,
+    out: &mut [u8],
+) -> CtapResult {
+    require_pin_inputs(req, false, false)?;
     let permissions = req.permissions as u8;
     // WithPermissions: a non-zero permission set is mandatory; bio-enrollment (be)
     // is unsupported, and pcm-readonly (pcmr) may not be combined with anything else.
@@ -663,22 +690,16 @@ fn pin_set_and_unblocked<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>) -> Result<(), 
 /// Common presence checks for set/change/getToken; returns the protocol.
 /// `need_new_pin` (set/change) also requires `pinUvAuthParam`; getPinToken carries
 /// neither.
-fn require_pin_inputs(
-    req: &Req,
-    need_new_pin: bool,
-    need_pin_hash: bool,
-) -> Result<PinProto, CtapError> {
+fn require_pin_inputs(req: &Req, need_new_pin: bool, need_pin_hash: bool) -> Result<(), CtapError> {
     let missing = !req.key_agreement
         || req.kax.is_empty()
         || req.kay.is_empty()
-        || req.proto == 0
-        || req.alg == 0
         || (need_new_pin && (req.new_pin_enc.is_none() || req.pin_uv_auth_param.is_none()))
         || (need_pin_hash && req.pin_hash_enc.is_none());
     if missing {
         return Err(CtapError::MissingParameter);
     }
-    PinProto::from_u64(req.proto).ok_or(CtapError::InvalidParameter)
+    Ok(())
 }
 
 fn derive_shared<S: Storage, R: Rng>(
