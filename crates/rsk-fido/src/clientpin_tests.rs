@@ -148,6 +148,8 @@ enum V<'a> {
     U(u64),
     B(&'a [u8]),
     Cose(&'a [u8; 32], &'a [u8; 32]),
+    /// A keyAgreement whose coordinates go on the wire verbatim, however long.
+    CoseVar(&'a [u8], &'a [u8]),
 }
 
 fn build(fields: &[(u8, V)]) -> std::vec::Vec<u8> {
@@ -165,6 +167,14 @@ fn build(fields: &[(u8, V)]) -> std::vec::Vec<u8> {
                     e.bytes(b).unwrap();
                 }
                 V::Cose(x, y) => cose_key_ecdh(&mut e, x, y).unwrap(),
+                V::CoseVar(x, y) => crate::cose::cose_key_ec2_var(
+                    &mut e,
+                    crate::consts::ALG_ECDH_ES_HKDF_256,
+                    crate::consts::CURVE_P256,
+                    x,
+                    y,
+                )
+                .unwrap(),
             }
         }
         e.writer().position()
@@ -275,12 +285,25 @@ impl Platform {
 
     // getPinUvAuthTokenUsingPinWithPermissions (subCommand 9) with `perms`.
     fn get_token_perms_req(&self, pin: &[u8], perms: u64) -> std::vec::Vec<u8> {
+        self.get_token_perms_req_coords(pin, perms, &self.x, &self.y)
+    }
+
+    // The same request with the keyAgreement coordinates written verbatim, so a
+    // test can send a coordinate that is not 32 bytes while the ECDH underneath
+    // stays correct.
+    fn get_token_perms_req_coords(
+        &self,
+        pin: &[u8],
+        perms: u64,
+        x: &[u8],
+        y: &[u8],
+    ) -> std::vec::Vec<u8> {
         let h = sha256(pin);
         let phe = self.enc(&h[..16]);
         build(&[
             (1, V::U(self.wire)),
             (2, V::U(9)),
-            (3, V::Cose(&self.x, &self.y)),
+            (3, V::CoseVar(x, y)),
             (6, V::B(&phe)),
             (9, V::U(perms)),
         ])
@@ -1842,4 +1865,90 @@ fn pcmr_consent_card_names_the_permission() {
     )
     .unwrap();
     assert_eq!(pad2.titles, std::vec!["Always list passkeys?"]);
+}
+
+/// A platform scalar whose public key's `x` (`which = 0`) or `y` (`which = 1`)
+/// starts with a zero byte, with that public key. Stripping a byte off an
+/// arbitrary coordinate lands off the curve, so such a request is refused either
+/// way and a test built on one cannot tell the length rule from the failed ECDH —
+/// only a genuine leading-zero encoding exercises what the old left-pad rescued.
+fn scalar_with_leading_zero(which: usize) -> ([u8; 32], [u8; 32], [u8; 32]) {
+    for i in 1u32..100_000 {
+        let mut s = [0u8; 32];
+        s[28..].copy_from_slice(&i.to_be_bytes());
+        let (x, y) = public_xy(&s).unwrap();
+        if [x, y][which][0] == 0 {
+            return (s, x, y);
+        }
+    }
+    panic!("no P-256 scalar with a leading-zero coordinate in the search range");
+}
+
+/// Agree with the authenticator's current ephemeral key using `pscalar` instead
+/// of [`key_agreement`]'s fixed one.
+fn platform_from(state: &FidoState, proto: PinProto, wire: u64, pscalar: &[u8; 32]) -> Platform {
+    let (ax, ay) = state.ephemeral_public().unwrap();
+    let (x, y) = public_xy(pscalar).unwrap();
+    let mut shared = [0u8; 64];
+    let slen = pinproto::ecdh(proto, pscalar, &ax, &ay, &mut shared).unwrap();
+    Platform {
+        proto,
+        wire,
+        x,
+        y,
+        shared,
+        slen,
+    }
+}
+
+/// §6.5's keyAgreement is a P-256 COSE key, and a coordinate that is not exactly
+/// 32 bytes is not one. A short one used to be left-padded, so a platform whose
+/// bignum drops a leading zero still got a token; a YubiKey 5.7.4 answers
+/// INVALID_PARAMETER to 31 and to 33 bytes alike.
+#[test]
+fn key_agreement_coordinate_must_be_exactly_32_bytes() {
+    let (mut fs, mut rng) = setup();
+    let mut state = FidoState::new();
+    let mut out = [0u8; 256];
+    let plat = key_agreement(&mut fs, &mut rng, &mut state, PinProto::Two, 2);
+    run(
+        &mut fs,
+        &mut rng,
+        &mut state,
+        &plat.set_pin_req(b"1234"),
+        &mut out,
+    )
+    .unwrap();
+
+    for which in [0usize, 1] {
+        let (pscalar, x, y) = scalar_with_leading_zero(which);
+        // Control: this very key at full width mints a token, so each refusal
+        // below is the coordinate's length and not the key agreement.
+        let plat = platform_from(&state, PinProto::Two, 2, &pscalar);
+        run(
+            &mut fs,
+            &mut rng,
+            &mut state,
+            &plat.get_token_perms_req(b"1234", PERM_MC as u64),
+            &mut out,
+        )
+        .unwrap();
+
+        let short = [&x[1..], &y[1..]][which];
+        let padded = [&[0u8][..], [&x[..], &y[..]][which]].concat();
+        for (label, coord) in [("stripped to 31", short), ("padded to 33", &padded[..])] {
+            let (cx, cy) = if which == 0 {
+                (coord, &y[..])
+            } else {
+                (&x[..], coord)
+            };
+            let plat = platform_from(&state, PinProto::Two, 2, &pscalar);
+            let req = plat.get_token_perms_req_coords(b"1234", PERM_MC as u64, cx, cy);
+            assert_eq!(
+                run(&mut fs, &mut rng, &mut state, &req, &mut out),
+                Err(CtapError::InvalidParameter),
+                "coordinate {which} {label}"
+            );
+        }
+    }
 }

@@ -2491,7 +2491,7 @@ fn stored_box_and_seed(fs: &mut Fs<RamStorage>) -> (std::vec::Vec<u8>, [u8; 32])
     (cred_record_box(&rec[..n]).to_vec(), seed)
 }
 
-fn cose_xy(e: &mut Encoder<Cursor<&mut [u8]>>, x: &[u8; 32], y: &[u8; 32]) {
+fn cose_xy(e: &mut Encoder<Cursor<&mut [u8]>>, x: &[u8], y: &[u8]) {
     e.map(5).unwrap();
     e.u8(1).unwrap().u8(2).unwrap(); // kty EC2
     e.u8(3).unwrap().i64(-25).unwrap(); // alg ECDH
@@ -2500,13 +2500,7 @@ fn cose_xy(e: &mut Encoder<Cursor<&mut [u8]>>, x: &[u8; 32], y: &[u8; 32]) {
     e.i8(-3).unwrap().bytes(y).unwrap();
 }
 
-fn ga_request_hmac(
-    allow: &[u8],
-    px: &[u8; 32],
-    py: &[u8; 32],
-    se: &[u8],
-    sa: &[u8],
-) -> std::vec::Vec<u8> {
+fn ga_request_hmac(allow: &[u8], px: &[u8], py: &[u8], se: &[u8], sa: &[u8]) -> std::vec::Vec<u8> {
     let mut buf = [0u8; 512];
     let n = {
         let mut e = Encoder::new(Cursor::new(&mut buf[..]));
@@ -3932,4 +3926,77 @@ fn foreign_type_in_allow_list_neither_matches_nor_falls_through() {
         Err(CtapError::NoCredentials),
         "a foreign-typed descriptor must not match on its id"
     );
+}
+
+/// hmac-secret's `keyAgreement` is the second COSE-parse site, and it used to
+/// left-pad a short coordinate exactly as clientPIN's did — so a platform whose
+/// bignum drops a leading zero still had its salts evaluated. A YubiKey 5.7.4
+/// refuses 31 and 33 bytes here too (INVALID_PARAMETER).
+#[test]
+fn hmac_secret_coordinate_must_be_exactly_32_bytes() {
+    use rsk_crypto::pinproto::{authenticate, ecdh, encrypt, public_xy};
+    let (mut fs, mut rng) = setup();
+    let mut state = crate::FidoState::new();
+    state.regenerate(&mut rng);
+    let (ax, ay) = state.ephemeral_public().unwrap();
+    let mc = run_mc_state(&mut fs, &mut rng, &mut state, &mc_request_lbk_hmac());
+    let (resident_id, _x, _y) = parse_mc(&mc);
+
+    // A platform key whose x really starts with a zero byte: stripping a byte off
+    // an arbitrary coordinate lands off the curve and would be refused either
+    // way, so only this shape can tell the length rule from a failed ECDH.
+    let plat = (1u32..100_000)
+        .map(|i| {
+            let mut s = [0u8; 32];
+            s[28..].copy_from_slice(&i.to_be_bytes());
+            s
+        })
+        .find(|s| public_xy(s).unwrap().0[0] == 0)
+        .expect("no P-256 scalar with a leading-zero x in the search range");
+    let (px, py) = public_xy(&plat).unwrap();
+    let mut shared = [0u8; 64];
+    let slen = ecdh(PinProto::Two, &plat, &ax, &ay, &mut shared).unwrap();
+    let mut se = [0u8; 48];
+    let ne = encrypt(
+        PinProto::Two,
+        &shared[..slen],
+        &[0x01u8; 16],
+        &[0x77u8; 32],
+        &mut se,
+    )
+    .unwrap();
+    let mut sa = [0u8; 32];
+    let na = authenticate(PinProto::Two, &shared[..slen], &se[..ne], &mut sa).unwrap();
+
+    let mut run_ga = |req: &[u8]| {
+        let mut out = [0u8; 1024];
+        let mut presence = crate::AlwaysConfirm;
+        let mut ctx = Ctx {
+            presence: &mut presence,
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 20,
+        };
+        get_assertion(&mut ctx, req, &mut out).map(|_| ())
+    };
+    // Control: the same key at full width evaluates hmac-secret.
+    run_ga(&ga_request_hmac(
+        &resident_id,
+        &px,
+        &py,
+        &se[..ne],
+        &sa[..na],
+    ))
+    .unwrap();
+
+    let padded = [&[0u8][..], &px[..]].concat();
+    for (label, x) in [("stripped to 31", &px[1..]), ("padded to 33", &padded[..])] {
+        assert_eq!(
+            run_ga(&ga_request_hmac(&resident_id, x, &py, &se[..ne], &sa[..na])),
+            Err(CtapError::InvalidParameter),
+            "hmac-secret keyAgreement x {label}"
+        );
+    }
 }

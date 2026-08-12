@@ -74,6 +74,12 @@ fn call(
 }
 
 fn build_mse(buf: &mut [u8], hx: &[u8; 32], hy: &[u8; 32]) -> usize {
+    build_mse_coords(buf, hx, hy)
+}
+
+/// The same request with the coordinates carried as arbitrary byte strings, so a
+/// test can send one that is not 32 bytes long.
+fn build_mse_coords(buf: &mut [u8], hx: &[u8], hy: &[u8]) -> usize {
     let mut e = Encoder::new(Cursor::new(buf));
     e.map(2)
         .unwrap()
@@ -1961,6 +1967,62 @@ fn undefined_vendor_subcommand_is_invalid_parameter() {
             e,
             Err(CtapError::InvalidParameter),
             "vendor subcommand {subcmd:#04x}"
+        );
+    }
+}
+
+/// E1's third site. The MSE channel parses a platform COSE key of its own, and it
+/// carried the same right-align: a host whose bignum drops a genuine leading zero
+/// sent 31 bytes and had them shifted into a *different* point. Mined so the
+/// stripped byte really is a leading zero — take one off an arbitrary coordinate
+/// and the point leaves the curve, so the request is refused either way and the
+/// probe proves nothing.
+#[test]
+fn mse_coordinate_must_be_exactly_32_bytes() {
+    let (mut hx, mut hy) = ([0u8; 32], [0u8; 32]);
+    for i in 1u32..100_000 {
+        let mut scalar = [0u8; 32];
+        scalar[28..].copy_from_slice(&i.to_be_bytes());
+        let (x, y) = P256Key::from_scalar(&scalar).unwrap().public_xy();
+        if x[0] == 0 {
+            (hx, hy) = (x, y);
+            break;
+        }
+    }
+    assert_eq!(hx[0], 0, "no scalar with a leading-zero x in range");
+
+    let mut req = [0u8; 200];
+    let mut out = [0u8; 200];
+
+    // Control: this very key at full width opens the channel, so each refusal
+    // below is the coordinate's length and not a failed key agreement.
+    let (mut fs, mut rng, mut state) = setup();
+    let n = build_mse_coords(&mut req, &hx, &hy);
+    call(
+        &mut fs,
+        &mut rng,
+        &mut state,
+        &mut AlwaysConfirm,
+        &req[..n],
+        &mut out,
+    )
+    .unwrap();
+
+    let padded = [&[0u8][..], &hx[..]].concat();
+    for (label, x) in [("stripped to 31", &hx[1..]), ("padded to 33", &padded[..])] {
+        let (mut fs, mut rng, mut state) = setup();
+        let n = build_mse_coords(&mut req, x, &hy);
+        assert_eq!(
+            call(
+                &mut fs,
+                &mut rng,
+                &mut state,
+                &mut AlwaysConfirm,
+                &req[..n],
+                &mut out
+            ),
+            Err(CtapError::InvalidParameter),
+            "x {label}"
         );
     }
 }

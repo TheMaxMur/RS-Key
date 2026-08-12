@@ -49,13 +49,11 @@ impl Default for HmacSecretReq<'_> {
     }
 }
 
-/// Right-align a COSE coordinate (≤ 32 bytes, big-endian) into a 32-byte buffer.
+/// A COSE P-256 coordinate: exactly 32 bytes, big-endian, never left-padded —
+/// the twin of `clientpin::coord`, and measured on a YubiKey 5.7.4 at this site
+/// too (31 and 33 bytes both INVALID_PARAMETER).
 fn coord(dst: &mut [u8; 32], src: &[u8]) -> Result<(), CtapError> {
-    if src.len() > 32 {
-        return Err(CtapError::InvalidParameter);
-    }
-    *dst = [0; 32];
-    dst[32 - src.len()..].copy_from_slice(src);
+    *dst = src.try_into().map_err(|_| CtapError::InvalidParameter)?;
     Ok(())
 }
 

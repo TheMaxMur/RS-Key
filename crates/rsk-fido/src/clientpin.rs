@@ -96,14 +96,12 @@ fn parse(data: &[u8]) -> Result<Req<'_>, CtapError> {
     Ok(req)
 }
 
-/// Right-align a COSE coordinate into 32 bytes.
+/// A COSE P-256 coordinate: exactly 32 bytes, never left-padded. A short one used
+/// to be right-aligned, which rescued a platform whose bignum strips a leading
+/// zero — but a YubiKey 5.7.4 refuses 31 *and* 33 bytes with INVALID_PARAMETER at
+/// both COSE-parse sites, so the lenience only bought a divergence.
 fn coord(src: &[u8]) -> Result<[u8; 32], CtapError> {
-    if src.len() > 32 {
-        return Err(CtapError::InvalidParameter);
-    }
-    let mut out = [0u8; 32];
-    out[32 - src.len()..].copy_from_slice(src);
-    Ok(out)
+    src.try_into().map_err(|_| CtapError::InvalidParameter)
 }
 
 /// `authenticatorClientPIN`: dispatch the subcommand, writing the response CBOR

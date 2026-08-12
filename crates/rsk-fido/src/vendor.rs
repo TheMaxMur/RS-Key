@@ -155,14 +155,11 @@ fn parse(data: &[u8]) -> Result<Req<'_>, CtapError> {
     Ok(req)
 }
 
-/// Right-align a COSE coordinate into 32 bytes.
+/// A COSE P-256 coordinate: exactly 32 bytes, never left-padded — the same rule
+/// `clientpin::coord` and `hmacsecret::coord` apply to the platform key they
+/// parse. Every host that speaks this channel emits fixed-width coordinates.
 fn coord(src: &[u8]) -> Result<[u8; 32], CtapError> {
-    if src.len() > 32 {
-        return Err(CtapError::InvalidParameter);
-    }
-    let mut out = [0u8; 32];
-    out[32 - src.len()..].copy_from_slice(src);
-    Ok(out)
+    src.try_into().map_err(|_| CtapError::InvalidParameter)
 }
 
 fn encode<F>(out: &mut [u8], f: F) -> Result<usize, CtapError>

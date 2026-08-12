@@ -860,8 +860,12 @@ Keys 3/4 are present only when a PIN is set (see gating).
 Establishes an encrypted channel for the seed-moving subcommands.
 
 - **Request** `subCommandParams = {1: COSE_Key}` where the COSE key is the host's
-  P-256 public key `{1:2, 3:-25, -1:1, -2:X, -3:Y}`. Optional key `2` = the host's
-  ML-KEM-768 encapsulation key (1184 B) to make the channel **hybrid PQC**.
+  P-256 public key `{1:2, 3:-25, -1:1, -2:X, -3:Y}`. **`X` and `Y` are each
+  exactly 32 bytes** — a coordinate whose leading zero your bignum dropped is
+  `0x02 INVALID_PARAMETER`, not left-padded (RS-Key `0x089C`+; the same rule the
+  clientPIN and hmac-secret COSE parses apply, and what a YubiKey 5.7.4 does).
+  Optional key `2` = the host's ML-KEM-768 encapsulation key (1184 B) to make the
+  channel **hybrid PQC**.
 - **Response** `{1: COSE_Key}` = the device's ephemeral P-256 public key (same COSE
   shape, `-2:dx, -3:dy`). If the request included an ML-KEM ek, the response adds
   key `2` = the 1088-byte ML-KEM ciphertext.

@@ -40,6 +40,23 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Security
 
+- **A COSE key-agreement coordinate must now be exactly 32 bytes.** The platform's
+  `keyAgreement` is a P-256 COSE key, and a coordinate that is not 32 bytes wide is
+  not one — but a short one used to be right-aligned into the buffer, so a platform
+  whose bignum strips a leading zero still set a PIN, still got a `pinUvAuthToken`
+  and still had its hmac-secret salts evaluated. Measured on a YubiKey 5.7.4: 31
+  bytes and 33 bytes both answer `CTAP1_ERR_INVALID_PARAMETER`, on protocol 1 and 2
+  alike, at clientPIN's COSE parse *and* at hmac-secret's own. Nothing legitimate
+  relied on the lenience: every host in this tree emits fixed-width coordinates,
+  and the padding it rescued is a bug on the platform's side that no other
+  authenticator hides. Swept across all three COSE-parse sites — clientPIN,
+  hmac-secret and the vendor MSE channel, which had the same right-align and no
+  oracle to check it against. The measurement takes a platform key whose `x`
+  genuinely begins with a zero byte: strip a byte off any other coordinate and the
+  point leaves the curve, so the request is refused for the wrong reason and the
+  test cannot tell the rule from the failed key agreement.
+  **bcdDevice → 0x089C.**
+
 - **⚠️ The OpenPGP admin PIN no longer authorises any key operation. This
   removes something that works today.** §7.2.10 gives `PSO:CDS` the access
   condition PW1 no. 81, §7.2.11 gives `PSO:DECIPHER` PW1 no. 82 and §7.2.13
