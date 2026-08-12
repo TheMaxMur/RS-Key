@@ -530,6 +530,18 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   next command. Emulator only: the firmware and the emulator's `--usbip` path
   (which runs the real transport) were never affected.
 
+- **`docs/protocol.md` §4 invited a SELECT that fails for three of its ten
+  AIDs.** The section opens "SELECT an applet with `00 A4 04 00 Lc <AID> 00`" and
+  then tables FIDO2, the FIDO2 backup id and U2F beside the seven real card
+  applets — but those three are not CCID applets and answer `6A82`
+  (FILE_NOT_FOUND); CTAP1/U2F and CTAP2 ride CTAPHID and have no SELECT at all.
+  §4 is the third-party / PicoForge wire spec, so a reader building from it wrote
+  a probe that could not work and had nothing to tell that apart from a broken
+  key. The table gains a **Transport** column with all ten measured on both
+  transports, which also records the narrower half nobody had written down:
+  `CTAPHID_MSG` offers exactly one applet, the vendor one. Documentation only —
+  no wire change.
+
 - **`tools/emu`'s power cycle skipped the Yubico-OTP use-counter bump, so the
   bench could not test the replay defence.** `firmware/src/main.rs` runs
   `power_up_bump` at every cold boot precisely because the RAM session counter

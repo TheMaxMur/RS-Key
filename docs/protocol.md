@@ -288,18 +288,28 @@ it is not a prefix — a real YubiKey refuses it too); and a prefix short enough
 match several applets resolves by registration order, which is the order of the
 table below, so probe with the full AID unless you mean to.
 
-| Applet | AID | Spec status | Config-relevant? |
-|---|---|---|---|
-| FIDO2 | `A0 00 00 06 47 2F 00 01` | Standard (CTAP2) | identity only |
-| FIDO2 (backup id) | `B0 00 00 06 47 2F 00 01` | RS-Key | — |
-| U2F | `A0 00 00 05 27 10 02` | Standard (CTAP1/U2F) | — |
-| **Management** | `A0 00 00 05 27 47 11 17` | Yubico-compatible | **yes — §6** |
-| OATH | `A0 00 00 05 27 21 01` | Yubico OATH | data only |
-| OTP | `A0 00 00 05 27 20 01` | Yubico OTP | data only |
-| PIV | `A0 00 00 03 08 00 00 10 00 01 00` | NIST SP 800-73 | data only |
-| OpenPGP | `D2 76 00 01 24 01` | OpenPGP card 3.x | data only |
-| **Rescue** | `A0 58 3F C1 9B 7E 4F 21` | **RS-Key-specific** | **yes — §7** |
-| **Vendor / LED** | `F0 00 00 00 01` | **RS-Key-specific** | **yes — §8** |
+**Where that SELECT works.** The recipe above is CCID's (§1.1), and three of the
+ten rows below are not CCID applets: **FIDO2, the FIDO2 backup id and U2F answer
+`6A82` (FILE_NOT_FOUND)**. CTAP1/U2F and CTAP2 ride CTAPHID and have no SELECT at
+all (§1.2), so those three are registered identifiers rather than anything this
+build dispatches to. The other transport is narrower still: `CTAPHID_MSG` offers
+exactly one applet, the vendor one, and every other AID answers `6A82` there —
+which is why a U2F command arriving after a vendor SELECT on the same session was
+a real bug (`tests/15_u2f_vendor_msg_isolation.py`). Measured on both transports,
+all ten AIDs, and recorded in the **Transport** column.
+
+| Applet | AID | Transport | Spec status | Config-relevant? |
+|---|---|---|---|---|
+| FIDO2 | `A0 00 00 06 47 2F 00 01` | none — CTAPHID, no SELECT | Standard (CTAP2) | identity only |
+| FIDO2 (backup id) | `B0 00 00 06 47 2F 00 01` | none — CTAPHID, no SELECT | RS-Key | — |
+| U2F | `A0 00 00 05 27 10 02` | none — CTAPHID, no SELECT | Standard (CTAP1/U2F) | — |
+| **Management** | `A0 00 00 05 27 47 11 17` | CCID | Yubico-compatible | **yes — §6** |
+| OATH | `A0 00 00 05 27 21 01` | CCID | Yubico OATH | data only |
+| OTP | `A0 00 00 05 27 20 01` | CCID | Yubico OTP | data only |
+| PIV | `A0 00 00 03 08 00 00 10 00 01 00` | CCID | NIST SP 800-73 | data only |
+| OpenPGP | `D2 76 00 01 24 01` | CCID | OpenPGP card 3.x | data only |
+| **Rescue** | `A0 58 3F C1 9B 7E 4F 21` | CCID | **RS-Key-specific** | **yes — §7** |
+| **Vendor / LED** | `F0 00 00 00 01` | CCID + `CTAPHID_MSG` | **RS-Key-specific** | **yes — §8** |
 
 Sources: `crates/rsk-fido/src/consts.rs`,
 `crates/rsk-mgmt`,
@@ -308,7 +318,9 @@ Sources: `crates/rsk-fido/src/consts.rs`,
 `crates/rsk-piv`,
 `crates/rsk-openpgp/src/consts.rs`,
 `crates/rsk-rescue`,
-`firmware/src/vendor.rs`.
+`firmware/src/vendor.rs`. Which AID each transport actually offers is not in any
+of those: it is the applet list `crates/rsk-device/src/ccid.rs` builds for CCID
+and the one-entry list in `crates/rsk-device/src/ctap.rs` for `CTAPHID_MSG`.
 
 ---
 
