@@ -40,6 +40,21 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Security
 
+- **The OpenPGP `VERIFY` status query reports the latch, not the counter.**
+  §7.2.2's empty-`Lc` form reports the *verification state*, and the applet
+  answered `6983` whenever the reference's retry counter was 0 — before looking
+  at whether that reference was verified. Both ends of that were wrong. With
+  PW1 blocked at 0/3, a PW1.82 latch raised before the block is still live and
+  still authorises `PSO:DECIPHER` and `INTERNAL AUTHENTICATE`; a YubiKey 5.7.4
+  answers `9000`, so a host asking "am I still authenticated?" was told the
+  session was dead while the very next command worked. And with the latch down
+  and the counter at 0 that card answers `63C0`, the count — it never answers
+  `6983` to this form at all. Both now match, measured across the whole
+  transition. The data-bearing `VERIFY` is untouched: a blocked reference still
+  refuses with `6983`, correct password or not. The PIV applet has the same
+  shape in its own `VERIFY` status form; it is governed by a different spec and
+  was not measured here, so it is left alone. **bcdDevice → 0x089A.**
+
 - **GET CHALLENGE serves exactly what DO `C0` announces, and takes `P1 = P2 =
   00`.** `C0` bytes 3-4 said **128** while the command handed over anything up
   to the applet's 1024-byte scratch, so the one number a host can read off the

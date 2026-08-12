@@ -1196,3 +1196,67 @@ fn blocking_pw1_through_mode81_leaves_mode82_standing() {
         assert!(sess.has_pw2 && sess.has_pw3, "the floor cleared a latch");
     }
 }
+
+#[test]
+fn the_status_query_reports_the_latch_before_the_counter() {
+    // E47. §7.2.2's empty-Lc VERIFY reports the *verification state*, and a
+    // YubiKey 5.7.4 never answers 6983 to it — measured with PW1 at 0/3: the
+    // standing PW1.82 latch reports 9000 three readings running, and once that
+    // latch is dropped the same query reports 63C0, not 6983. Ours returned
+    // PIN_BLOCKED for both, so a host could not tell an authorised session from
+    // a dead one — and the latch really is live, since it still authorises
+    // PSO:DECIPHER and INTERNAL AUTHENTICATE.
+    let mut fs = setup();
+    let mut sess = Session::new();
+    let d = dev();
+    let mut rng = CountRng(0);
+    arm_all(&d, &mut fs, &mut sess);
+
+    // Block PW1 through mode 81; 82's latch stays up (they share one counter).
+    for _ in 0..PW_RETRIES_DEFAULT {
+        verify(
+            &d, &mut fs, &mut sess, &mut rng, 0x00, PW1_MODE81, b"999999",
+        );
+    }
+    assert!(sess.has_pw2, "the counter is blocked, the 82 latch is not");
+
+    let status = |fs: &mut Fs<RamStorage>, sess: &mut Session, p2| {
+        verify(&d, fs, sess, &mut CountRng(0), 0x00, p2, &[])
+    };
+    // Latch up, retries 0 → the session is still good.
+    assert_eq!(status(&mut fs, &mut sess, PW1_MODE82), Sw::OK);
+    // Latch down, retries 0 → the count, which is zero. Never PIN_BLOCKED.
+    assert_eq!(status(&mut fs, &mut sess, PW1_MODE81), Sw::retries(0));
+    assert_eq!(
+        verify(&d, &mut fs, &mut sess, &mut rng, 0xFF, PW1_MODE82, &[]),
+        Sw::OK,
+        "P1=FF drops the 82 latch"
+    );
+    assert_eq!(status(&mut fs, &mut sess, PW1_MODE82), Sw::retries(0));
+
+    // The unblocked reference is unaffected in both directions.
+    assert_eq!(status(&mut fs, &mut sess, PW3_MODE83), Sw::OK);
+    assert_eq!(
+        verify(&d, &mut fs, &mut sess, &mut rng, 0xFF, PW3_MODE83, &[]),
+        Sw::OK
+    );
+    assert_eq!(
+        status(&mut fs, &mut sess, PW3_MODE83),
+        Sw::retries(PW_RETRIES_DEFAULT)
+    );
+
+    // The DATA form still refuses a blocked reference — that floor is separate,
+    // and the YubiKey answers 6983 there with the correct password too.
+    assert_eq!(
+        verify(
+            &d,
+            &mut fs,
+            &mut sess,
+            &mut rng,
+            0x00,
+            PW1_MODE81,
+            PW1_DEFAULT
+        ),
+        Sw::PIN_BLOCKED
+    );
+}

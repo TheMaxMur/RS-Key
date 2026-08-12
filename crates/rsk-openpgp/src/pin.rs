@@ -540,14 +540,15 @@ pub fn verify<S: Storage>(
         let _ = size;
         return check_pin(dev, fs, sess, rng, fid, p2, data);
     }
-    // Status query: report the remaining retries / current auth state.
+    // Status query: §7.2.2's empty-Lc form reports the *verification state*, so
+    // the latch is read before the counter. Answering PIN_BLOCKED on `retries == 0`
+    // was wrong at both ends: a standing latch still authorises PSO:DECIPHER and
+    // INTERNAL AUTHENTICATE after PW1 blocks, and an unlatched blocked reference
+    // is `63C0` — a YubiKey 5.7.4 never answers 6983 to this form at all.
     let mut pw = [0u8; 8];
     let pn = fs.read(EF_PW_PRIV, &mut pw).unwrap_or(0);
     let idx = pw_retry_idx(fid);
     let retries = if idx < pn { pw[idx] } else { 0 };
-    if retries == 0 {
-        return Sw::PIN_BLOCKED;
-    }
     let authed = (p2 == PW1_MODE81 && sess.has_pw1)
         || (p2 == PW1_MODE82 && sess.has_pw2)
         || (p2 == PW3_MODE83 && sess.has_pw3);
