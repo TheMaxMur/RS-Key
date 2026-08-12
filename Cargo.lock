@@ -2298,6 +2298,7 @@ dependencies = [
  "rsk-crypto",
  "rsk-fs",
  "rsk-sdk",
+ "rsk-usb",
  "zeroize",
 ]
 

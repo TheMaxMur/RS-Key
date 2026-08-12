@@ -21,3 +21,7 @@ zeroize = { workspace = true }
 [dev-dependencies]
 # RamStorage for the host tests (the same backend rsk-fido/rsk-openpgp use).
 rsk-fs = { workspace = true, features = ["test-util"] }
+# The CCID frame size, so the response capacity the enumeration tests measure
+# against is the transport's own number rather than a fourth copy of it. Tests
+# only: the applet is transport-agnostic and stays that way.
+rsk-usb = { workspace = true }
