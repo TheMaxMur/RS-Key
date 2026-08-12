@@ -40,6 +40,30 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Security
 
+- **A PIV `CHANGE REFERENCE DATA` / `RESET RETRY COUNTER` body is two wire forms
+  or nothing.** The handlers split the body at the *stored* reference length and
+  handed the whole remainder over as the new value, and `put_pin_verifier` writes
+  the raw slice's length as the record's own — so `00 24 00 80` with an `8 ‖ 6`
+  body answered `9000` and stored a six-byte PIN. After that the padded `VERIFY`
+  every host sends burned retries while only the raw six-byte body passed, the
+  conformant `8 ‖ 8` change back was refused (the split had moved to six), and
+  with the PUK shortened the same way the only exit was `INS FB` RESET — which
+  destroys every PIV key and certificate. A YubiKey 5.7.4 answers `6A80` to every
+  body but sixteen bytes on all three commands (`00 24 00 80`, `00 24 00 81`,
+  `00 2C 00 80`), and judges the length *before* the old reference, so a wrong old
+  value inside a malformed body costs no retry either; measured three runs per
+  cell per card. `check_new_reference` is now the single owner of the value rule
+  — an exact eight bytes, not a bound — so the panel path and any future caller
+  are covered too, and the body is split at the wire form rather than at whatever
+  the card has stored. That split matters on a card an older build already
+  poisoned: sizing the gate off the stored length instead looks like it preserves
+  more, and in fact takes the last exit away, because the sixteen-byte unblock
+  every host sends would stop spending the PUK counter and `INS FB` RESET is gated
+  on both counters reaching zero. As shipped, all three configurations keep the
+  exits they had — a poisoned PIN is repaired by the PUK unblock and a poisoned
+  PUK by `SET RETRIES`, both with the keys intact, and a card poisoned on both
+  still reaches its reset. **bcdDevice → 0x08D1.**
+
 - **A PIV `VERIFY` whose body is not the 8-byte wire form no longer burns a PIN
   retry.** SP 800-73-4 pt2 §2.4.3 fixes the PIN block at 8 bytes, `0xFF`-padded;
   the handler tested only for the empty status query and then handed a body of

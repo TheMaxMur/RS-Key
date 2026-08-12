@@ -551,6 +551,180 @@ fn change_pin_and_puk() {
     assert_eq!(sw, Sw::OK);
 }
 
+/// A CHANGE REFERENCE DATA / RESET RETRY COUNTER body is two wire forms, and
+/// nothing else. Ours split at the *stored* length and handed the whole
+/// remainder over as the new value, so `8 ‖ 6` stored a six-byte reference that
+/// no conformant host can ever present again — and with the PUK shortened the
+/// same way, only a card-destroying RESET got out. A YubiKey 5.7.4 answers
+/// `6A80` to every body but 16 bytes, judged *before* the old half, so a wrong
+/// old reference in a malformed body costs no retry either (3 runs per cell).
+#[test]
+fn a_reference_change_takes_two_wire_forms_or_nothing() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    let short = b"654321";
+    let full = b"654321\xff\xff";
+    for (ins, p2, old) in [
+        (INS_CHANGE_PIN, 0x80u8, &DEFAULT_PIN),
+        (INS_CHANGE_PIN, 0x81, &DEFAULT_PUK),
+        (INS_RESET_RETRY, 0x80, &DEFAULT_PUK),
+    ] {
+        for new in [&short[..], &short[..4], b"654321\xff\xff\xff"] {
+            let mut msg = old.to_vec();
+            msg.extend_from_slice(new);
+            assert_eq!(
+                run(&mut app, &mut fs, ins, 0, p2, &msg).0,
+                WRONG_DATA,
+                "INS {ins:02X} P2 {p2:02X} with a {}-byte new value",
+                new.len()
+            );
+        }
+        // The old half alone, and a short old half, are the same refusal.
+        assert_eq!(run(&mut app, &mut fs, ins, 0, p2, old).0, WRONG_DATA);
+        let mut msg = old[..6].to_vec();
+        msg.extend_from_slice(full);
+        assert_eq!(run(&mut app, &mut fs, ins, 0, p2, &msg).0, WRONG_DATA);
+        // …and a WRONG old reference inside a malformed body costs no retry —
+        // under the wire form and over it, since only the length gate can refuse
+        // an over-long body before the comparison runs.
+        for tail in [&short[..], b"654321\xff\xff\xff"] {
+            let mut msg = [0x39u8; PIN_WIRE_LEN].to_vec();
+            msg.extend_from_slice(tail);
+            assert_eq!(run(&mut app, &mut fs, ins, 0, p2, &msg).0, WRONG_DATA);
+        }
+    }
+    assert_eq!(reference_retries_left(&mut fs, PinRef::Pin), Some(3));
+    assert_eq!(reference_retries_left(&mut fs, PinRef::Puk), Some(3));
+    // The PIN is still the one the card started with, and still addressable.
+    assert_eq!(
+        run(&mut app, &mut fs, INS_VERIFY, 0, 0x80, &DEFAULT_PIN).0,
+        Sw::OK
+    );
+    // The panel-facing owner refuses an unpadded value too, so no caller can
+    // reintroduce a stored reference the wire form cannot produce.
+    let dev = Device {
+        serial_hash: &HASH,
+        serial_id: &SERIAL,
+        otp_key: None,
+    };
+    assert_eq!(
+        change_reference(&dev, &mut fs, PinRef::Pin, &DEFAULT_PIN, short),
+        WRONG_DATA
+    );
+    assert_eq!(
+        unblock_pin_with_puk(&dev, &mut fs, &DEFAULT_PUK, short),
+        WRONG_DATA
+    );
+}
+
+/// A card an OLDER build let a non-conformant host poison — a reference stored
+/// unpadded, so the wire form can never present it — must keep every exit it had.
+/// The three configurations, each driven through the real APDUs:
+///
+/// The reason this is a test and not a comment: sizing the length gate off the
+/// *stored* length instead of a flat two wire forms looks like it preserves more
+/// (a short old half could still be presented), and in fact takes the last exit
+/// away — the 16-byte body every host sends would stop burning, the PUK counter
+/// could never reach zero, and `INS FB` RESET is gated on both counters at zero.
+#[test]
+fn a_poisoned_reference_keeps_every_exit_it_had() {
+    let dev = Device {
+        serial_hash: &HASH,
+        serial_id: &SERIAL,
+        otp_key: None,
+    };
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    // Six raw bytes, never 0xFF-padded — and deliberately the PREFIX of the
+    // padded default, so a body split at the stored length would match where one
+    // split at the wire form must not.
+    let short = b"123456";
+    let block = |app: &mut PivApplet, fs: &mut Fs<RamStorage>, ins: u8, p2: u8, body: &[u8]| {
+        for _ in 0..4 {
+            if run(app, fs, ins, 0, p2, body).0 == Sw::PIN_BLOCKED {
+                return true;
+            }
+        }
+        false
+    };
+
+    // (a) the PIN alone is poisoned: the PUK unblock repairs it, keys intact.
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    put_pin_verifier(&dev, &mut fs, EF_PIN, short).unwrap();
+    assert_eq!(
+        run(&mut app, &mut fs, INS_VERIFY, 0, 0x80, &DEFAULT_PIN).0,
+        Sw::retries(2),
+        "the padded VERIFY no conformant host can avoid"
+    );
+    // The body splits at the wire form, not at what the card stored: the padded
+    // old half must MISS the short verifier rather than match its first six bytes.
+    let mut change = DEFAULT_PIN.to_vec();
+    change.extend_from_slice(b"87654321");
+    assert_eq!(
+        run(&mut app, &mut fs, INS_CHANGE_PIN, 0, 0x80, &change).0,
+        Sw::retries(1)
+    );
+    let mut unblock = DEFAULT_PUK.to_vec();
+    unblock.extend_from_slice(&DEFAULT_PIN);
+    assert_eq!(
+        run(&mut app, &mut fs, INS_RESET_RETRY, 0, 0x80, &unblock).0,
+        Sw::OK
+    );
+    assert_eq!(
+        run(&mut app, &mut fs, INS_VERIFY, 0, 0x80, &DEFAULT_PIN).0,
+        Sw::OK
+    );
+
+    // (b) the PUK alone is poisoned: SET RETRIES rewrites both, keys intact.
+    let mut fs = new_fs();
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    select(&mut app, &mut fs);
+    put_pin_verifier(&dev, &mut fs, EF_PUK, short).unwrap();
+    auth_mgm(&mut app, &mut fs);
+    verify_pin(&mut app, &mut fs);
+    assert_eq!(run(&mut app, &mut fs, INS_SET_RETRIES, 3, 3, &[]).0, Sw::OK);
+    let mut change = DEFAULT_PUK.to_vec();
+    change.extend_from_slice(b"87654321");
+    assert_eq!(
+        run(&mut app, &mut fs, INS_CHANGE_PIN, 0, 0x81, &change).0,
+        Sw::OK
+    );
+
+    // (c) BOTH poisoned: no repair is reachable, so the reset ladder is the last
+    // exit and every rung of it has to still work.
+    let mut fs = new_fs();
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    select(&mut app, &mut fs);
+    put_pin_verifier(&dev, &mut fs, EF_PIN, short).unwrap();
+    put_pin_verifier(&dev, &mut fs, EF_PUK, short).unwrap();
+    assert_eq!(
+        run(&mut app, &mut fs, INS_RESET, 0, 0, &[]).0,
+        Sw::INCORRECT_PARAMS,
+        "RESET before the counters are spent"
+    );
+    assert!(
+        block(&mut app, &mut fs, INS_VERIFY, 0x80, &DEFAULT_PIN),
+        "the padded VERIFY must still spend the PIN counter"
+    );
+    let mut unblock = DEFAULT_PUK.to_vec();
+    unblock.extend_from_slice(&DEFAULT_PIN);
+    assert!(
+        block(&mut app, &mut fs, INS_RESET_RETRY, 0x80, &unblock),
+        "the 16-byte unblock every host sends must still spend the PUK counter"
+    );
+    assert_eq!(run(&mut app, &mut fs, INS_RESET, 0, 0, &[]).0, Sw::OK);
+    assert_eq!(
+        run(&mut app, &mut fs, INS_VERIFY, 0, 0x80, &DEFAULT_PIN).0,
+        Sw::OK,
+        "the reset restored an addressable card"
+    );
+}
+
 /// The on-device (panel) PIN/PUK/unblock path: `pad_pin` + the shared
 /// `change_reference` / `unblock_pin_with_puk` library fns must produce a state
 /// a host (ykman / yubico-piv-tool, which always pads to 8 with 0xFF) accepts.

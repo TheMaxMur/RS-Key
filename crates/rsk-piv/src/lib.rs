@@ -495,8 +495,7 @@ impl PivApplet<'_> {
         sw
     }
 
-    /// CHANGE REFERENCE DATA (INS 0x24): `old ‖ new`, old length taken from
-    /// the stored record.
+    /// CHANGE REFERENCE DATA (INS 0x24): `old ‖ new`, one wire form each.
     fn change_pin<S: Storage>(&mut self, dev: &Device, fs: &mut Fs<S>, apdu: &Apdu) -> Sw {
         if apdu.p1 != 0x00 {
             return Sw::INCORRECT_P1P2;
@@ -506,15 +505,10 @@ impl PivApplet<'_> {
             REF_PUK => PinRef::Puk,
             _ => return Sw::INCORRECT_P1P2,
         };
-        let (fid, _) = which.fid_retry();
-        let old_len = match stored_pin_len(fs, fid) {
-            Ok(n) => n,
-            Err(sw) => return sw,
+        let Some((old, new)) = wire_reference_pair(apdu) else {
+            return WRONG_DATA;
         };
-        if apdu.nc <= old_len {
-            return Sw::WRONG_LENGTH;
-        }
-        change_reference(dev, fs, which, &apdu.data[..old_len], &apdu.data[old_len..])
+        change_reference(dev, fs, which, old, new)
     }
 
     /// RESET RETRY COUNTER (INS 0x2C): unblock/replace the PIN with the PUK.
@@ -522,14 +516,10 @@ impl PivApplet<'_> {
         if apdu.p1 != 0x00 || apdu.p2 != REF_PIN {
             return Sw::INCORRECT_P1P2;
         }
-        let puk_len = match stored_pin_len(fs, EF_PUK) {
-            Ok(n) => n,
-            Err(sw) => return sw,
+        let Some((puk, new)) = wire_reference_pair(apdu) else {
+            return WRONG_DATA;
         };
-        if apdu.nc <= puk_len {
-            return Sw::WRONG_LENGTH;
-        }
-        unblock_pin_with_puk(dev, fs, &apdu.data[..puk_len], &apdu.data[puk_len..])
+        unblock_pin_with_puk(dev, fs, puk, new)
     }
 
     /// SET RETRIES (INS 0xFA): resets both references to their defaults with the
@@ -1086,12 +1076,14 @@ fn reset_counter<S: Storage>(fs: &mut Fs<S>, idx: usize) -> Sw {
     }
 }
 
-fn stored_pin_len<S: Storage>(fs: &mut Fs<S>, fid: u16) -> Result<usize, Sw> {
-    let mut rec = [0u8; PIN_REC_LEN];
-    let Some(PIN_REC_LEN) = fs.read(fid, &mut rec) else {
-        return Err(Sw::MEMORY_FAILURE);
-    };
-    Ok(rec[0] as usize)
+/// The `old ‖ new` body of CHANGE REFERENCE DATA / RESET RETRY COUNTER: exactly
+/// two [`PIN_WIRE_LEN`] blocks, split at the wire form and not at whatever length
+/// the card happens to have stored. Splitting at the stored length is what let an
+/// `8 ‖ 6` body mint a reference the wire form cannot present, and sizing the
+/// gate off it would leave a card poisoned that way unable to spend its PUK
+/// counter — the one precondition `INS FB` RESET has.
+fn wire_reference_pair<'a>(apdu: &'a Apdu) -> Option<(&'a [u8], &'a [u8])> {
+    (apdu.nc == 2 * PIN_WIRE_LEN).then(|| apdu.data.split_at(PIN_WIRE_LEN))
 }
 
 /// Boot-pass migration: re-seal every sealed PIV key slot under the OTP kbase
@@ -1206,11 +1198,11 @@ pub fn pad_pin(entered: &[u8]) -> Option<[u8; PIN_WIRE_LEN]> {
 /// 1000 candidates against three tries.
 fn check_new_reference(new: &[u8]) -> Result<(), Sw> {
     // The RAW slice is what gets stored: `put_pin_verifier` takes its length as
-    // the record's own. Bound it before stripping, or a longer value ending in
-    // padding strips to something legal and is then stored at its full length —
-    // a reference no conformant host can ever present, i.e. the card wedged
-    // until a factory reset. A YubiKey answers 6A80 to an over-long one too.
-    if new.len() > PIN_WIRE_LEN {
+    // the record's own. So the wire form is the rule, not a bound — anything
+    // shorter or longer is stored at that length and becomes a reference no
+    // conformant host can ever present, i.e. the card wedged until a factory
+    // reset. This is the one owner: panel callers reach it through [`pad_pin`].
+    if new.len() != PIN_WIRE_LEN {
         return Err(WRONG_DATA);
     }
     // Trailing padding is not part of the value. `0xFF` is unambiguous here even
