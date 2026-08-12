@@ -341,16 +341,22 @@ impl<'a, S: Storage, R: crate::Rng + 'static, VP: rsk_vendor::Platform> CcidAppl
     /// SW1 SW2). On-card RSA keygen is run to completion inline (see module docs);
     /// everything else goes straight to the applet dispatcher.
     pub fn handle_apdu(&mut self, apdu: &[u8]) -> &[u8] {
-        // The keygen fast paths bypass `Dispatcher::process`, which is what would
-        // normally drop a stale GET RESPONSE remainder and reset an interrupted
-        // command chain; a GENERATE is neither a 0xC0 nor a chain segment, so
-        // clearing both here matches the ordinary dispatch (applet.rs).
-        if let Some(n) = self.try_rsa_keygen(apdu) {
+        // The keygen fast paths bypass `Dispatcher::process`, so the class byte it
+        // judges has to be judged ahead of them: a chaining segment is not a command
+        // yet, and a secure-messaging class is refused. Falling through is what
+        // answers both — measured on a YubiKey 5.7.4, `04 47 00 9A …` is `6E00`
+        // where `00 47 …` is `6982`, and `10 47 …` is accumulated, never executed.
+        let dispatchable =
+            Apdu::parse(apdu).is_ok_and(|p| !p.is_chaining() && !p.is_secure_messaging());
+        // They also bypass the drop of a stale GET RESPONSE remainder and the reset
+        // of an interrupted command chain; a GENERATE is neither a 0xC0 nor a chain
+        // segment, so clearing both here matches the ordinary dispatch (applet.rs).
+        if dispatchable && let Some(n) = self.try_rsa_keygen(apdu) {
             self.disp.clear_pending();
             self.disp.clear_chaining();
             return &self.resp[..n];
         }
-        if let Some(n) = self.try_piv_rsa_keygen(apdu) {
+        if dispatchable && let Some(n) = self.try_piv_rsa_keygen(apdu) {
             self.disp.clear_pending();
             self.disp.clear_chaining();
             return &self.resp[..n];

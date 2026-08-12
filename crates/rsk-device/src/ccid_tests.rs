@@ -342,6 +342,66 @@ fn a_host_build_falls_through_to_the_applets_own_keygen() {
     assert!(ccid.try_rsa_keygen(&generate).is_none());
 }
 
+#[test]
+fn a_keygen_fast_path_judges_the_class_byte_too() {
+    // Both fast paths run BEFORE `Dispatcher::process`, so its class-byte rule has
+    // to be applied ahead of them or a GENERATE is the one command that escapes it.
+    // Measured on a YubiKey 5.7.4: `04 47 00 9A …` is `6E00` where `00 47 …` is
+    // `6982`, and `10 47 …` is accumulated as a chain segment, never executed.
+    const DEFAULT_MGM: [u8; 24] = [
+        1, 2, 3, 4, 5, 6, 7, 8, 1, 2, 3, 4, 5, 6, 7, 8, 1, 2, 3, 4, 5, 6, 7, 8,
+    ];
+    const AES192: u8 = rsk_piv::files::ALGO_AES192;
+    let env = Env::new();
+    env.board.borrow_mut().accelerator = true;
+    let mut ccid = env.ccid();
+    assert_eq!(
+        sw(ccid.handle_apdu(&select(rsk_piv::PIV_AID))),
+        rsk_sdk::Sw::OK
+    );
+    // The management key, so GENERATE is refused for its class and not for auth.
+    let step1 = ccid
+        .handle_apdu(&apdu(0x00, 0x87, AES192, 0x9B, &[0x7C, 0x02, 0x81, 0x00]))
+        .to_vec();
+    assert_eq!(sw(&step1), rsk_sdk::Sw::OK);
+    let mut block: [u8; 16] = step1[4..20].try_into().unwrap();
+    rsk_crypto::aes_ecb_encrypt_block(&DEFAULT_MGM, &mut block).unwrap();
+    let mut answer = std::vec![0x7Cu8, 0x12, 0x82, 0x10];
+    answer.extend_from_slice(&block);
+    assert_eq!(
+        sw(ccid.handle_apdu(&apdu(0x00, 0x87, AES192, 0x9B, &answer))),
+        rsk_sdk::Sw::OK
+    );
+    // RSA-2048 into 9A: the one command the firmware runs off the dispatcher.
+    let generate = |cla| {
+        apdu(
+            cla,
+            rsk_piv::INS_ASYM_KEYGEN,
+            0x00,
+            0x9A,
+            &[0xAC, 0x03, 0x80, 0x01, 0x07],
+        )
+    };
+    // The control: with an accelerator the fast path really does fire and answer
+    // for itself, so a class that still reaches it is visible here.
+    assert_eq!(
+        sw(ccid.handle_apdu(&generate(0x00))),
+        rsk_sdk::Sw::EXEC_ERROR,
+        "the fast path did not fire, so this test proves nothing"
+    );
+    assert_eq!(
+        sw(ccid.handle_apdu(&generate(0x04))),
+        rsk_sdk::Sw::CLA_NOT_SUPPORTED,
+        "a secure-messaging class generated a key"
+    );
+    let seg = ccid.handle_apdu(&generate(0x10)).to_vec();
+    assert_eq!(
+        (sw(&seg), seg.len()),
+        (rsk_sdk::Sw::OK, 2),
+        "a chain segment was executed instead of accumulated"
+    );
+}
+
 // --- the CCID pinpad gate (trusted-display builds only) ---------------------
 
 #[cfg(feature = "display")]

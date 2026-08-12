@@ -40,6 +40,20 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **The on-card RSA keygen no longer escapes the class-byte rule.** Both RSA
+  GENERATE fast paths — the ones the firmware runs off the dispatcher so the
+  prime search can use both cores while the transport streams time extensions —
+  are entered before `Dispatcher::process`, so the class byte it judges was not
+  judged for them. On a build with the accelerator that made GENERATE the one
+  command a secure-messaging class still executed: `04 47 …` generated a key and
+  answered `9000` where every other command answers `6E00`, and `10 47 …` was
+  executed outright instead of being accumulated as a chain segment. Measured on
+  a YubiKey 5.7.4: `04 47 00 9A …` is `6E00` where `00 47 …` is `6982`, and
+  `10 47 …` answers `9000` with the next command reporting `6883`. Both fast
+  paths now fall through to normal dispatch for those classes, which is what
+  answers them. A host build has no accelerator, so nothing changes there.
+  **bcdDevice → 0x08B0.**
+
 - **A power cut during OpenPGP's first boot is no longer permanent.**
   Provisioning writes the data-encryption key twice — sealed under the default
   user PIN, then under the default admin PIN — under a single "none of the copies

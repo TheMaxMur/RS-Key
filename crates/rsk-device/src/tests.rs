@@ -39,6 +39,10 @@ pub struct Board {
     /// one-shot flag.
     pub local_pin_change: bool,
     pub boot_state_reads: usize,
+    /// Off by default, as a host build is; set it and [`Hooks::rsa_search`] says
+    /// "the accelerator ran and found nothing", which is what lets a test see
+    /// whether a keygen fast path fired at all.
+    pub accelerator: bool,
 }
 
 impl Hooks<RamStorage> for Board {
@@ -58,9 +62,12 @@ impl Hooks<RamStorage> for Board {
     fn local_pin_changed(&mut self) -> bool {
         core::mem::take(&mut self.local_pin_change)
     }
-    // `rsa_search` is deliberately left at its default `None`: a host build has no
-    // accelerator, so a GENERATE falls through to the applet's own single-core
-    // path. That fall-through is the behaviour under test in `ccid_tests`.
+    // `None` — no accelerator — is what a host build is, and the fall-through it
+    // causes is itself under test in `ccid_tests`; `accelerator` opts into the
+    // other answer so a test can tell a fast path that fired from one that did not.
+    fn rsa_search(&mut self, _nbits: usize, _rng: &mut dyn rsk_openpgp::Rng) -> SearchResult {
+        if self.accelerator { Some(None) } else { None }
+    }
 }
 
 /// Physical presence, behind all seven applet traits at once — one button, as on
