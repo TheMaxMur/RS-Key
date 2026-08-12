@@ -132,6 +132,9 @@ const KEY_TLV_MAX: usize = SECRET_MAX + 2;
 /// SET CODE's KEY TLV is `[alg, secret…]`.
 const CODE_TLV_MIN: usize = SECRET_MIN + 1;
 const CODE_TLV_MAX: usize = SECRET_MAX + 1;
+/// Or SET CODE would take a code VALIDATE cannot read back — the protected-but-
+/// unopenable state this bound exists to close.
+const _: () = assert!(CODE_TLV_MAX <= OATH_CODE_MAX);
 const NAME_MAX: usize = 64;
 const DIGITS_MIN: u8 = 6;
 const DIGITS_MAX: u8 = 8;
@@ -146,11 +149,13 @@ const PWS_MAX: usize = 255;
 const PROP_INCREASING: u8 = 0x01;
 const PROP_TOUCH: u8 = 0x02;
 
-/// Width of the stored high-water mark: exactly [`CHALLENGE_MAX`], so a mark
-/// holds every challenge either read path will ever compare against it.
-/// Right-zero-padded to that fixed width, which makes the comparison the card's
-/// own — see [`raise_mark`].
-const MARK_LEN: usize = CHALLENGE_MAX;
+/// Width of the stored high-water mark. Frozen, not derived: a stored `D0` is
+/// recognised by its length, so a value that followed [`CHALLENGE_MAX`] would
+/// make every mark an older build wrote unreadable. Right-zero-padded to it,
+/// which makes the comparison the card's own — see [`raise_mark`].
+const MARK_LEN: usize = 64;
+/// A mark has to hold any challenge a read path can compare against it.
+const _: () = assert!(CHALLENGE_MAX <= MARK_LEN);
 
 // Instructions.
 const INS_PUT: u8 = 0x01;
