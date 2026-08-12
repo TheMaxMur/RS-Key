@@ -997,6 +997,68 @@ fn import_rsa_sig_then_pso_sign_verifies() {
 }
 
 #[test]
+fn import_rsa_holds_the_key_to_the_algorithm_attribute() {
+    // §4.4.3.12: "The length of the key data shall match the values given in the
+    // DO 'Algorithm attributes' (C1 - C3)." Without it the card gives two answers
+    // about one key — C1 says one size, the public-key DO publishes another, and
+    // `gpg --card-status` prints the attribute. Measured on a YubiKey 5.7.4: every
+    // mismatch is `6A80` and nothing is stored.
+    let rng = RefCell::new(CountRng(7));
+    let mut fs = make_fs();
+    let presence = RefCell::new(crate::AlwaysConfirm);
+    let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
+    verify_pin(&mut app, &mut fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
+
+    // The slot announces RSA-4096; the key on offer is the 2048-bit fixture.
+    let attr4096 = [0x01u8, 0x10, 0x00, 0x00, 0x20, 0x00];
+    assert_eq!(put(&mut app, &mut fs, 0x00, 0xC1, &attr4096), Sw::OK);
+    let (_, sw) = run(
+        &mut app,
+        &mut fs,
+        &rsa_import(0xB6, &[0x01, 0x00, 0x01], &hx(RSA_P), &hx(RSA_Q)),
+    );
+    assert_eq!(sw, consts::WRONG_DATA);
+    assert!(
+        !fs.has_data(consts::EF_PK_SIG.get()),
+        "nothing may be stored"
+    );
+
+    // The same key against the attribute that describes it.
+    let attr2048 = [0x01u8, 0x08, 0x00, 0x00, 0x20, 0x00];
+    assert_eq!(put(&mut app, &mut fs, 0x00, 0xC1, &attr2048), Sw::OK);
+    let (_, sw) = run(
+        &mut app,
+        &mut fs,
+        &rsa_import(0xB6, &[0x01, 0x00, 0x01], &hx(RSA_P), &hx(RSA_Q)),
+    );
+    assert_eq!(sw, Sw::OK);
+}
+
+#[test]
+fn import_refuses_an_unadvertised_stored_algorithm_attribute() {
+    // GENERATE's own gate, on the other door into the same slot. A build predating
+    // the PUT DATA gate stored any attribute under PW3 and `EF_ALGO_PRIV*` has no
+    // default and no migration, so the value survives the upgrade — and an import
+    // against it lands a key this build will not honour.
+    let rng = RefCell::new(CountRng(7));
+    let mut fs = make_fs();
+    let presence = RefCell::new(crate::AlwaysConfirm);
+    let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
+    verify_pin(&mut app, &mut fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
+
+    // rsa2048 with a non-standard 17-bit exponent field: not in DO 0xFA.
+    fs.put(consts::EF_ALGO_PRIV1, &[0x01, 0x08, 0x00, 0x00, 0x11, 0x00])
+        .unwrap();
+    let (_, sw) = run(
+        &mut app,
+        &mut fs,
+        &rsa_import(0xB6, &[0x01, 0x00, 0x01], &hx(RSA_P), &hx(RSA_Q)),
+    );
+    assert_eq!(sw, consts::WRONG_DATA);
+    assert!(!fs.has_data(consts::EF_PK_SIG.get()));
+}
+
+#[test]
 fn import_rsa_rejects_non_65537_exponent() {
     let rng = RefCell::new(CountRng(7));
     let mut fs = make_fs();

@@ -40,6 +40,23 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **OpenPGP key IMPORT is now held to the slot's algorithm attribute.** The RSA
+  arm read that attribute only to decide "RSA or EC" and never compared a length,
+  so a 1024-bit key imported cleanly into a slot announcing RSA-2048 — and the
+  card then gave two different answers about the same key: `C1` kept saying 2048
+  while the public-key DO published the real modulus, with `gpg --card-status`
+  printing the attribute. §4.4.3.12 makes the match a `shall`, and a YubiKey
+  5.7.4 enforces it: 1024, 3072 and 4096 against a `C1` of 2048 are each `6A80`
+  with nothing stored. IMPORT also reads the attribute through the same owner
+  GENERATE uses, so an attribute this build does not advertise — one a
+  pre-gate build could have stored, since `EF_ALGO_PRIV*` has no default and no
+  migration — refuses both doors into the slot, not just one. The guide promised
+  this refusal already and was wrong about the size, which was the case a user is
+  most likely to hit; it is corrected, and it now also records that **RSA-1024 is
+  advertised and works here** (a YubiKey offers no such thing) and should not be
+  chosen for a new key.
+  **bcdDevice → 0x08A8.**
+
 - **Re-selecting the application you are already on no longer throws away the
   PIN.** Both OpenPGP and PIV reset their whole security status on every SELECT,
   including a SELECT of their own AID — so a host that re-selects before each

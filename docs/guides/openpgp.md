@@ -84,7 +84,12 @@ gpg read back):
 |---|---|---|
 | ECC (sign/auth) | **Ed25519**, NIST **P-256 / P-384 / P-521**, **secp256k1**, **brainpoolP256r1 / P384r1** | EdDSA on Ed25519; ECDSA on the Weierstrass curves |
 | ECC (encrypt) | **Cv25519** (X25519), NIST **P-256 / P-384 / P-521**, **secp256k1**, **brainpoolP256r1 / P384r1** | ECDH; the DEC slot only |
-| RSA | **2048 / 3072 / 4096** | exponent fixed at 65537 (what gpg imports) |
+| RSA | **2048 / 3072 / 4096**, plus **1024** | exponent fixed at 65537 (what gpg imports) |
+
+**RSA-1024 is advertised and it works** — a YubiKey does not offer it at all.
+It is below every current guidance (NIST SP 800-131A retired it in 2013) and it
+is here only so a key generated under an older build keeps working. Do not pick
+it for a new key.
 
 Not supported. gpg will offer them, and the card even accepts the `key-attr`
 write, but **GENERATE / keytocard** then refuses with `0x6A81` "Function not
@@ -128,7 +133,10 @@ gpg> save
 `keytocard` *moves* the selected subkey onto the card, replacing the on-disk
 copy with a stub that points at the device. Set `key-attr` to match the
 incoming key's algorithm **before** `keytocard`, or the card refuses the import.
-A mismatched algorithm/curve returns "Wrong data" / "Function not supported"
+The **size** counts as much as the family: a 2048-bit key offered to a slot
+announcing RSA-4096 is refused, because the attribute is what `gpg
+--card-status` and every other host reads back as the truth about that slot.
+A mismatched algorithm/curve/size returns "Wrong data" / "Function not supported"
 and a missing admin (PW3) session returns "Security status not satisfied". gpg
 surfaces one of these as a card refusal.
 

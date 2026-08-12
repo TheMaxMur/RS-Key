@@ -6,6 +6,7 @@
 //! The CRT tag picks the slot; the algorithm comes from the slot's
 //! algorithm-attribute DO (`EF_ALGO_PRIV{1,2,3}`), set beforehand via PUT DATA.
 
+use rsa::traits::PublicKeyParts;
 use rsk_crypto::Device;
 use rsk_fs::{Fs, KeyFid, Storage};
 use rsk_sdk::Sw;
@@ -136,15 +137,13 @@ fn try_import<S: Storage>(
     }
     let (off, len) = parse_ehl_body(data, pos)?;
 
-    // The algorithm attribute decides RSA vs EC and (for EC) the curve.
-    let algo_fid = slot_algo_fid(fid);
+    // The algorithm attribute decides RSA vs EC and (for EC) the curve — and is
+    // refused unless DO 0xFA advertises it. GENERATE grew that gate so the
+    // owner's own key could not be minted under an attribute this build will not
+    // honour; IMPORT reaches the same slot by the other door, so it reads through
+    // the same owner.
     let mut algo_buf = [0u8; 16];
-    let algo: &[u8] = match fs.read(algo_fid, &mut algo_buf) {
-        // Clamp: `Storage::read` reports the DO's full stored length and PUT DATA
-        // caps nothing, so an over-long C1/C2/C3 must not slice OOB = brick.
-        Some(n) if n > 0 => &algo_buf[..n.min(algo_buf.len())],
-        _ => DEFAULT_ALGO,
-    };
+    let algo = crate::keypairgen::read_advertised_algo(fs, fid, &mut algo_buf)?;
     match algo[0] {
         ALGO_RSA => {
             // Exponent (0x91), prime P (0x92) and prime Q (0x93) must all be present.
@@ -175,6 +174,19 @@ fn try_import<S: Storage>(
                 return Err(WRONG_DATA);
             }
             let key = rsa_from_pqe(e, p, q).ok_or(Sw::EXEC_ERROR)?;
+            // §4.4.3.12: "The length of the key data shall match the values given
+            // in the DO 'Algorithm attributes'". Without this the card's two
+            // answers about one key disagree — C1 goes on saying 2048 while the
+            // public-key DO publishes the real modulus, and `gpg --card-status`
+            // prints the attribute. Measured on a YubiKey 5.7.4: 1024, 3072 and
+            // 4096 against a C1 of 2048 are all `6A80`.
+            if algo.len() < 3 {
+                return Err(WRONG_DATA);
+            }
+            let nbits = ((algo[1] as usize) << 8) | algo[2] as usize;
+            if key.size() * 8 != nbits {
+                return Err(WRONG_DATA);
+            }
             // Before the key is committed, never after: a tear in between leaves
             // the slot reading as imported, which is the honest claim either way.
             // Its failure is fatal for the same reason — storing on top of a mark

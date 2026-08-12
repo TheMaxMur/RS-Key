@@ -58,7 +58,8 @@ pub fn keypair_gen<S: Storage>(
     }
 }
 
-/// The slot's algorithm attribute, refused unless DO `0xFA` advertises it.
+/// The slot's algorithm attribute, refused unless DO `0xFA` advertises it. Shared
+/// with IMPORT, which reaches the same slot by the other door.
 ///
 /// `put_data` gates the *writer*, but a value stored by a build that predates that
 /// gate survives a firmware upgrade untouched — `EF_ALGO_PRIV*` is `DoSource::Internal`
@@ -70,7 +71,7 @@ pub fn keypair_gen<S: Storage>(
 ///
 /// Clamps to the buffer: `Storage::read` reports the DO's full stored length and PUT
 /// DATA caps nothing, so an over-long C1/C2/C3 must not slice OOB = brick.
-fn read_advertised_algo<'a, S: Storage>(
+pub(crate) fn read_advertised_algo<'a, S: Storage>(
     fs: &mut Fs<S>,
     fid: KeyFid,
     buf: &'a mut [u8; 16],
