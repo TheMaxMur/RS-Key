@@ -26,7 +26,7 @@
 //! makeCredential / getAssertion / clientPIN / credentialManagement respectively
 //! and whose later commands are drawn from [`MIX`].
 //!
-//! Three things make the generated arms reach state, not just parsers:
+//! Four things make the generated arms reach state, not just parsers:
 //!
 //!  * **A fixed identity pool.** `rp.id` and `user.id` come from four constants
 //!    ([`RP_IDS`] / [`USER_IDS`]), never from fuzzer bytes. Random 32-byte
@@ -41,6 +41,9 @@
 //!    HMAC with it ([`Auth::Token`]) instead of only ever feeding the reject path.
 //!    §6.5.5.7 spends the token on the first ceremony, so [`MIX`] can re-arm it —
 //!    that stands in for the clientPIN handshake the fuzzer cannot run.
+//!  * **The large-blob accumulator.** A commit wants the whole
+//!    `body ‖ left16(SHA-256(body))` array over fragments whose offsets chain, so
+//!    [`lb_write`] reads the device's own `lba` to continue the array it armed.
 //!
 //! The oracle is [`check_reply`]: nothing may panic, and every reply is either a
 //! bare CTAP error byte or `0x00` followed by exactly one definite-length CBOR
@@ -69,7 +72,7 @@ use rsk_fido::credential::{
 };
 use rsk_fido::passkeys::{for_each_cred, for_each_rp};
 use rsk_fido::seed::{ensure_seed, load_keydev};
-use rsk_fido::state::{PERM_ACFG, PERM_CM, PERM_GA, PERM_LBW, PERM_MC, PERM_PCMR};
+use rsk_fido::state::{LargeBlobState, PERM_ACFG, PERM_CM, PERM_GA, PERM_LBW, PERM_MC, PERM_PCMR};
 use rsk_fido::{Ctx, FidoState, Rng, process_cbor};
 use rsk_fs::Fs;
 use rsk_fs::storage::ram::RamStorage;
@@ -140,6 +143,46 @@ const CM_SUBS: [u64; 8] = [
 ];
 /// `pinUvAuthToken` permission masks a clientPIN request may ask for.
 const PERM_SETS: [u64; 5] = [0x00, 0x01, 0x03, 0x7F, 0xFF];
+/// authenticatorConfig subcommands: the three CTAP 2.1 ones, the vendor arm, the
+/// absent-parameter sentinel (`0`) and one this build refuses.
+const CFG_SUBS: [u64; 6] = [
+    consts::CONFIG_ENABLE_EA,
+    consts::CONFIG_TOGGLE_ALWAYS_UV,
+    consts::CONFIG_SET_MIN_PIN,
+    consts::CONFIG_VENDOR,
+    0x00,
+    0x04,
+];
+/// `vendorCommandId` for the 0xFF arm: the soft-lock pair, the four PicoForge
+/// physical-config ids, and one that must land on `CTAP2_ERR_INVALID_SUBCOMMAND`.
+const CFG_VENDOR_IDS: [u64; 7] = [
+    consts::CONFIG_AUT_ENABLE,
+    consts::CONFIG_AUT_DISABLE,
+    consts::CONFIG_PHY_VIDPID,
+    consts::CONFIG_PHY_LED_GPIO,
+    consts::CONFIG_PHY_LED_BRIGHTNESS,
+    consts::CONFIG_PHY_OPTIONS,
+    0,
+];
+/// rpIds a `setMinPINLength` list draws from. The long one is here so that a list
+/// over `MAX_MIN_PIN_RPIDS` also overshoots `MAX_RAW_SUBPARA`, which is refused
+/// earlier and by a different rule (`CTAP2_ERR_REQUEST_TOO_LARGE`).
+const MIN_PIN_RP_IDS: [&str; 4] = [
+    RP_IDS[0],
+    RP_IDS[1],
+    RP_IDS[2],
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example",
+];
+/// `minPINLength` values: `0` keeps the current floor, `63` is `MAX_PIN_LENGTH`
+/// and the two above it are the ceiling refusal that a bare `as u8` used to wrap.
+const MIN_PINS: [u64; 7] = [0, 1, 4, 8, 63, 64, 256];
+/// Large-blob array body sizes. `0` puts the array under `LARGEBLOB_MIN`; the rest
+/// are well inside `MAX_FRAGMENT_LENGTH`, so a split is the harness's choice
+/// rather than a transport limit.
+const LB_BODIES: [usize; 5] = [0, 1, 24, 100, 300];
+/// Scratch for one generated large-blob array — the largest [`LB_BODIES`] entry
+/// plus its 16-byte integrity tag.
+const LB_MAX: usize = LB_BODIES[LB_BODIES.len() - 1] + 16;
 
 const K_MC: u8 = 1;
 const K_GA: u8 = 2;
@@ -150,14 +193,22 @@ const K_NEXT: u8 = 6;
 const K_RESET: u8 = 7;
 /// Not a command: re-arm the pinUvAuthToken (see [`Sess::rearm`]).
 const K_REARM: u8 = 8;
+const K_CFG: u8 = 9;
+const K_LB: u8 = 10;
 /// Arms 0..=4 of byte 0; arm 0 is the raw replay.
 const ARMS: u8 = 5;
 
 /// The command mix after the opening one; repeated entries weight the draw.
 /// Reset is rare on purpose — it wipes the store, and a session that resets early
 /// spends the rest of its budget against an empty one.
+///
+/// **Sixteen entries, and only two of them changed meaning.** `pick` draws this by
+/// `% MIX.len()`, so a 17th re-phases every sequence the accumulated corpus encodes
+/// — an 18-entry version cost `getassertion.rs` 9.3 pp and `ec.rs` 8.8 pp, measured
+/// over that corpus. The two slots come from clientPIN and credentialManagement,
+/// which paid 0.1 and 0.4 pp for them.
 const MIX: [u8; 16] = [
-    K_MC, K_MC, K_MC, K_MC, K_GA, K_GA, K_GA, K_GA, K_CP, K_CP, K_CM, K_CM, K_INFO, K_NEXT,
+    K_MC, K_MC, K_MC, K_MC, K_GA, K_GA, K_GA, K_GA, K_CP, K_LB, K_CM, K_CFG, K_INFO, K_NEXT,
     K_REARM, K_RESET,
 ];
 
@@ -891,14 +942,182 @@ fn cm(u: &mut Unstructured<'_>, pool: &CredPool, enc: &mut Enc<'_>) -> EncRes {
     Ok(())
 }
 
+/// Scratch for one authenticatorConfig `subCommandParams` map. Sized past
+/// `MAX_RAW_SUBPARA` so the over-long list [`MIN_PIN_RP_IDS`] can build still
+/// reaches the device, instead of dying in the encoder before its refusal runs.
+const CFG_SUB_MAX: usize = consts::MAX_RAW_SUBPARA + 256;
+
+/// `subCommandParams` (authenticatorConfig key 2), built standalone because the
+/// pinUvAuth MAC covers its raw bytes.
+fn cfg_subpara(
+    u: &mut Unstructured<'_>,
+    sub: u64,
+    buf: &mut [u8],
+) -> Result<usize, EncError<EndOfSlice>> {
+    let mut enc = Encoder::new(Cursor::new(buf));
+    if sub == consts::CONFIG_SET_MIN_PIN {
+        let rps = u
+            .int_in_range(0u64..=consts::MAX_MIN_PIN_RPIDS as u64 + 1)
+            .unwrap_or(0);
+        enc.map(3)?
+            .u8(1)?
+            .u64(pick(u, &MIN_PINS))?
+            .u8(2)?
+            .array(rps)?;
+        for _ in 0..rps {
+            enc.str(pick(u, &MIN_PIN_RP_IDS))?;
+        }
+        enc.u8(3)?.bool(u.ratio(1u8, 2).unwrap_or(false))?;
+    } else if sub == consts::CONFIG_VENDOR {
+        enc.map(3)?.u8(1)?.u64(pick(u, &CFG_VENDOR_IDS))?.u8(2)?;
+        // The soft-lock ids read this as an MSE-wrapped 32-byte lock key.
+        enc_filler(&mut enc, 0xBB, pick(u, &[0usize, 32, 60, 92]))?;
+        enc.u8(3)?.u64(pick(u, &[0u64, 0x1050_0407, 0xFFFF_FFFF]))?;
+    } else {
+        // A subcommand that defines no params still carries a map, and `parse`
+        // has to skip it without reading it as one of the two it does know.
+        enc.map(1)?.u8(1)?.u64(pick(u, &[0u64, 1]))?;
+    }
+    Ok(enc.writer().position())
+}
+
+/// `authenticatorConfig` (0x0D). Key 1 (subCommand) is mandatory and first; 3 and
+/// 4 ascend after it. No dedicated target reaches this command — only
+/// `process_cbor` callers do — and everything past `verify_token` needs the
+/// `acfg` token this harness owns.
+fn cfg(u: &mut Unstructured<'_>, enc: &mut Enc<'_>) -> EncRes {
+    let sub = pick(u, &CFG_SUBS);
+    let mut sub_buf = [0u8; CFG_SUB_MAX];
+    let sub_len = if u.ratio(7u8, 8).unwrap_or(true) {
+        cfg_subpara(u, sub, &mut sub_buf).unwrap_or(0)
+    } else {
+        0
+    };
+    let auth = Auth::draw(u);
+
+    let fields = 1 + u64::from(sub_len > 0) + 2 * u64::from(auth.present());
+    enc.map(fields)?;
+    enc.u8(1)?.u64(sub)?;
+    if sub_len > 0 {
+        enc.u8(2)?;
+        enc.writer_mut()
+            .write_all(&sub_buf[..sub_len])
+            .map_err(EncError::write)?;
+    }
+    if auth.present() {
+        // CTAP 2.1 §6.11: the MAC covers 0xff×32 ‖ 0x0d ‖ subCommand ‖ subCommandParams.
+        let mut msg = [0u8; 34 + CFG_SUB_MAX];
+        msg[..32].fill(0xff);
+        msg[32] = consts::CTAP_CONFIG;
+        msg[33] = sub as u8;
+        msg[34..34 + sub_len].copy_from_slice(&sub_buf[..sub_len]);
+        let mut mac = [0u8; 32];
+        enc.u8(3)?.u64(auth.proto())?;
+        enc.u8(4)?
+            .bytes(auth.param(&msg[..34 + sub_len], &mut mac))?;
+    }
+    Ok(())
+}
+
+/// A valid large-blob array — `body ‖ left16(SHA-256(body))`, the shape §6.10.2's
+/// commit verifies. A mutator never assembles one, so the commit, its integrity
+/// check and the flash write are unreachable without this.
+fn lb_array(buf: &mut [u8; LB_MAX], body: usize) -> usize {
+    let n = filler(buf, 0xCC, body.min(LB_MAX - 16)).len();
+    let tag = sha256(&buf[..n]);
+    buf[n..n + 16].copy_from_slice(&tag[..16]);
+    n + 16
+}
+
+/// `authenticatorLargeBlobs` (0x0C) read: `{1: get, 3: offset}`. §6.10.2 forbids
+/// `length` and the auth pair here, so `extra` supplies one to exercise that.
+fn lb_read(u: &mut Unstructured<'_>, enc: &mut Enc<'_>) -> EncRes {
+    let get = pick(u, &[0u64, 1, 32, consts::MAX_FRAGMENT_LENGTH as u64 + 1]);
+    // The last two are past any stored array, and past `usize` on the device.
+    let off = pick(u, &[0u64, 8, 4096, u64::from(u32::MAX) + 5]);
+    let extra = u.ratio(1u8, 8).unwrap_or(false);
+    enc.map(2 + u64::from(extra))?
+        .u8(1)?
+        .u64(get)?
+        .u8(3)?
+        .u64(off)?;
+    if extra {
+        enc.u8(4)?.u64(consts::LARGEBLOB_MIN as u64)?;
+    }
+    Ok(())
+}
+
+/// `authenticatorLargeBlobs` (0x0C) write: `{2: fragment, 3: offset, 4: length?}`
+/// plus the auth pair. `lba` is the device's own accumulator, so a split write's
+/// second fragment continues the *same* array — without that the commit only ever
+/// reaches its integrity refusal, and the cross-command offset accumulation this
+/// target exists for is never exercised.
+fn lb_write(u: &mut Unstructured<'_>, lba: &LargeBlobState, enc: &mut Enc<'_>) -> EncRes {
+    let mut buf = [0u8; LB_MAX];
+    let next = lba.expected_next_offset;
+    // Drawn even when the accumulator decides it, so one input costs the same
+    // bytes whatever state it lands in and keeps its meaning across execs.
+    let fresh = pick(u, &LB_BODIES) + 16;
+    let total = if next > 0 && (consts::LARGEBLOB_MIN..=LB_MAX).contains(&lba.expected_length) {
+        lba.expected_length
+    } else {
+        fresh
+    };
+    let n = lb_array(&mut buf, total - 16);
+
+    let off = if u.ratio(7u8, 8).unwrap_or(true) {
+        next
+    } else {
+        pick(u, &[0usize, 1, 4096])
+    };
+    let lo = off.min(n);
+    // Half of what is left, so a second fragment has somewhere to land.
+    let hi = if u.ratio(1u8, 2).unwrap_or(false) {
+        lo + (n - lo).div_ceil(2)
+    } else {
+        n
+    };
+    let frag = &buf[lo..hi];
+    // `length` belongs on the arming fragment only; sending it on a continuation
+    // (or omitting it at offset 0) is the `CTAP1_ERR_INVALID_PARAMETER` leg.
+    let length = (off == 0) != u.ratio(1u8, 8).unwrap_or(false);
+    let auth = Auth::draw(u);
+
+    enc.map(2 + u64::from(length) + 2 * u64::from(auth.present()))?;
+    enc.u8(2)?.bytes(frag)?.u8(3)?.u64(off as u64)?;
+    if length {
+        enc.u8(4)?.u64(n as u64)?;
+    }
+    if auth.present() {
+        // §6.10.2: the MAC covers 0xff×32 ‖ 0x0c ‖ 0x00 ‖ offset_le(4) ‖ sha256(fragment).
+        let mut msg = [0u8; 70];
+        msg[..32].fill(0xff);
+        msg[32] = consts::CTAP_LARGE_BLOBS;
+        msg[34..38].copy_from_slice(&(off as u32).to_le_bytes());
+        msg[38..70].copy_from_slice(&sha256(frag));
+        let mut mac = [0u8; 32];
+        enc.u8(5)?.bytes(auth.param(&msg, &mut mac))?;
+        enc.u8(6)?.u64(auth.proto())?;
+    }
+    Ok(())
+}
+
 /// Build one CTAPHID_CBOR message of `kind` into `buf`; 0 means the encoder ran
 /// out of room and the step is skipped.
-fn build(kind: u8, u: &mut Unstructured<'_>, pool: &CredPool, buf: &mut [u8]) -> usize {
+fn build(
+    kind: u8,
+    u: &mut Unstructured<'_>,
+    pool: &CredPool,
+    lba: &LargeBlobState,
+    buf: &mut [u8],
+) -> usize {
     buf[0] = match kind {
         K_MC => consts::CTAP_MAKE_CREDENTIAL,
         K_GA => consts::CTAP_GET_ASSERTION,
         K_CP => consts::CTAP_CLIENT_PIN,
         K_CM => consts::CTAP_CREDENTIAL_MGMT,
+        K_CFG => consts::CTAP_CONFIG,
+        K_LB => consts::CTAP_LARGE_BLOBS,
         K_INFO => consts::CTAP_GET_INFO,
         K_NEXT => consts::CTAP_GET_NEXT_ASSERTION,
         _ => consts::CTAP_RESET,
@@ -911,6 +1130,9 @@ fn build(kind: u8, u: &mut Unstructured<'_>, pool: &CredPool, buf: &mut [u8]) ->
         K_MC => mc(u, pool, &mut enc),
         K_GA => ga(u, pool, &mut enc),
         K_CP => cp(u, &mut enc),
+        K_CFG => cfg(u, &mut enc),
+        K_LB if u.ratio(1u8, 3).unwrap_or(false) => lb_read(u, &mut enc),
+        K_LB => lb_write(u, lba, &mut enc),
         _ => cm(u, pool, &mut enc),
     };
     if built.is_err() {
@@ -1076,7 +1298,7 @@ fuzz_target!(|data: &[u8]| {
             if kind == K_REARM {
                 s.rearm();
             } else {
-                let n = build(kind, &mut u, &s.pool, &mut msg);
+                let n = build(kind, &mut u, &s.pool, &s.state.lba, &mut msg);
                 if n > 0 {
                     s.step(&msg[..n]);
                 }
