@@ -40,6 +40,18 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **PIV VERIFY of an undefined key reference answers `6A80`, not `6A88`.** SP
+  800-73-4's VERIFY response table lists `6982`, `6983`, `6A80`, `6A81`, `6A86`,
+  `63 00` and `63 CX` — `6A88` appears nowhere in it — and a YubiKey 5.7.4
+  answers `6A80` to every P2 but `80`, in both the case-1 and the `Le` form. Ours
+  said "referenced data not found". The oracle and the spec agree against us, so
+  this one is a straight correction. (The neighbouring cell that *looked* like the
+  same class is not one: the empty-`Lc` status query answers `6983` when the
+  counter is exhausted, which is what a YubiKey does on PIV and the opposite of
+  what it does on OpenPGP — measured in both latch states, and our four cells are
+  already right.)
+  **bcdDevice → 0x08AC.**
+
 - **A P1P2 that names something a command cannot address now answers `6B00`.**
   PUT DATA of `C5`, `C6`, `CD` or `7A` — the computed aggregates a host reads out
   of `6E`/`73` and only *looks* able to write — answered `6A88` "referenced data

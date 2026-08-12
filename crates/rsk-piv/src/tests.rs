@@ -358,6 +358,35 @@ fn version_and_serial() {
     assert_eq!(s, rsk_mgmt::serial4(SERIAL).to_vec());
 }
 
+/// SP 800-73-4 lists `6A80` for an undefined key reference and no `6A88` anywhere
+/// in the VERIFY response table; a YubiKey 5.7.4 answers `6A80` to every P2 but
+/// `80`, measured in both the case-1 and the `Le` form.
+#[test]
+fn verify_of_an_undefined_reference_is_wrong_data() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    for p2 in [0x00u8, 0x01, 0x04, 0x81, 0x82, 0x9B, 0xFF] {
+        assert_eq!(
+            run(&mut app, &mut fs, INS_VERIFY, 0, p2, &[]).0,
+            WRONG_DATA,
+            "P2 {p2:02X}"
+        );
+        assert_eq!(
+            run(&mut app, &mut fs, INS_VERIFY, 0, p2, &DEFAULT_PIN).0,
+            WRONG_DATA,
+            "P2 {p2:02X} with data"
+        );
+    }
+    // The one reference this application does have still answers its own status.
+    assert_eq!(
+        run(&mut app, &mut fs, INS_VERIFY, 0, 0x80, &[]).0,
+        Sw::retries(3)
+    );
+}
+
 #[test]
 fn pin_verify_retry_and_unblock() {
     let rng = RefCell::new(TestRng(7));

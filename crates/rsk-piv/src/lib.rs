@@ -436,8 +436,13 @@ impl PivApplet<'_> {
         if apdu.p1 != 0x00 && apdu.p1 != 0xFF {
             return Sw::INCORRECT_P1P2;
         }
+        // SP 800-73-4's VERIFY response table has no `6A88` in it at all: an
+        // undefined key reference is `6A80`, and that is what a YubiKey 5.7.4
+        // answers to `00`, `01`, `04`, `81`, `82`, `9B` and `FF` alike (measured,
+        // case 1 and with an Le, 3/3). Only `80` names a reference this
+        // application has.
         if apdu.p2 != REF_PIN {
-            return Sw::REFERENCE_NOT_FOUND;
+            return WRONG_DATA;
         }
         if !fs.has_data(EF_PIN) {
             return Sw::REFERENCE_NOT_FOUND;
