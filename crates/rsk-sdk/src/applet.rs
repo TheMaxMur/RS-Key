@@ -235,6 +235,16 @@ impl Dispatcher {
             Err(_) => return Sw::WRONG_LENGTH,
         };
 
+        // The class byte, one owner for every applet. A YubiKey 5.7.4 examines
+        // exactly two bits and in this order: chaining wins outright (`1C`, `90`
+        // and `FF` are plain segments there, so an SM refusal must not touch
+        // them), else a secure-messaging class is `6E00` — measured on PIV,
+        // OpenPGP and OATH alike. Serving it instead would hand a client that
+        // believes it negotiated SM an unprotected exchange it cannot tell apart.
+        if !apdu.is_chaining() && apdu.is_secure_messaging() {
+            return Sw::CLA_NOT_SUPPORTED;
+        }
+
         // GET RESPONSE (0xC0): hand back the next slice of a chained response
         // before touching the applets — it is a transport command, not theirs.
         if apdu.ins == 0xC0 && self.pending_off < self.pending_len {

@@ -94,6 +94,15 @@ def select(conn, aid):
     return transmit(conn, [0x00, 0xA4, 0x04, 0x00, len(aid)] + list(aid) + [0x00])
 ```
 
+The class byte is judged before the command, for every applet and for SELECT
+itself. Bit `0x10` marks a **command-chaining** segment and is looked at first, so
+`10`, `1C`, `90` and `FF` are all ordinary segments. Otherwise a class carrying a
+secure-messaging indication (`CLA & 0x0C`: `04`, `0C`, `84`, `8C`, …) answers
+`6E00` — **no applet here implements secure messaging**, and OpenPGP's Extended
+Capabilities says so. Applets that additionally name a class of their own reject
+anything else themselves (OATH, management, OTP and U2F want `00`; rescue wants
+`80`).
+
 ![ISO-7816 short-APDU cases. Every command opens with the four-byte header CLA INS P1 P2. Case 1 is header only; Case 2 appends a one-byte Le (expected response length, 00 meaning up to 256); Case 3 appends Lc then Lc bytes of command data; Case 4 appends Lc, data, and Le. SELECT is a Case 4 command, VERIFY a Case 3 command](images/apdu-cases.svg)
 
 A success body longer than the request's `Le` (including a Case-3 command that

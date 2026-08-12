@@ -1080,3 +1080,61 @@ fn select_matches_an_aid_by_prefix() {
     assert_eq!(go(&mut d, &mut apps, &sel(&ECHO_AID[..3])), Sw::OK);
     assert_eq!(d.current(), Some(0), "the lower index wins a shared prefix");
 }
+
+/// The class byte, measured on a YubiKey 5.7.4 across PIV, OpenPGP and OATH: a
+/// class asking for secure messaging is `6E00`, and the chaining bit is looked at
+/// FIRST — `1C`, `90` and `FF` are plain segments there, not SM refusals.
+#[test]
+fn a_secure_messaging_class_is_refused() {
+    let mut echo = Echo { selected: false };
+    let mut apps: [&mut dyn Applet<()>; 1] = [&mut echo];
+    let mut d = Dispatcher::new();
+
+    fn go(d: &mut Dispatcher, apps: &mut [&mut dyn Applet<()>], raw: &[u8]) -> (Sw, usize) {
+        let mut buf = [0u8; 64];
+        let mut res = ResBuf::new(&mut buf);
+        let sw = d.process(raw, apps, &mut (), &mut res);
+        (sw, res.len())
+    }
+    let mut sel = std::vec![0x00u8, 0xA4, 0x04, 0x00, 0x08];
+    sel.extend_from_slice(&[0xA0, 0x00, 0x00, 0x06, 0x47, 0x2F, 0x00, 0x01]);
+    assert_eq!(go(&mut d, &mut apps, &sel).0, Sw::OK);
+
+    // 04 and 84 are the two the oracle could be asked directly (macOS PC/SC
+    // refuses to transmit the rest); 0C and 8C are the ISO SM encodings the same
+    // rule covers, and the applet must never see any of them.
+    for cla in [0x04u8, 0x84, 0x0C, 0x8C, 0x4C] {
+        assert_eq!(
+            go(&mut d, &mut apps, &[cla, 0x10, 0, 0, 0x02, 0xAA, 0xBB]),
+            (Sw::CLA_NOT_SUPPORTED, 0),
+            "CLA {cla:02X} asks for secure messaging"
+        );
+    }
+    // A SELECT is not privileged: the class is judged before the command is.
+    let mut sm_sel = sel.clone();
+    sm_sel[0] = 0x04;
+    assert_eq!(
+        go(&mut d, &mut apps, &sm_sel).0,
+        Sw::CLA_NOT_SUPPORTED,
+        "SELECT at an SM class"
+    );
+
+    // Everything the oracle serves must still be served, byte for byte.
+    for cla in [0x00u8, 0x80, 0x40, 0xC0] {
+        assert_eq!(
+            go(&mut d, &mut apps, &[cla, 0x10, 0, 0, 0x02, 0xAA, 0xBB]),
+            (Sw::OK, 2),
+            "CLA {cla:02X} carries no SM indication"
+        );
+    }
+    // …and the chaining bit still wins over it. `1C` answered as `6882`/`6E00`
+    // would CREATE a divergence: the card takes it as an ordinary segment.
+    for cla in [0x1Cu8, 0x90, 0xFF] {
+        assert_eq!(
+            go(&mut d, &mut apps, &[cla, 0x10, 0, 0, 0x02, 0xAA, 0xBB]),
+            (Sw::OK, 0),
+            "CLA {cla:02X} is a chaining segment"
+        );
+        d.clear_chaining();
+    }
+}

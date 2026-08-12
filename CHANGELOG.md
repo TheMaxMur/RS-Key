@@ -40,6 +40,24 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **A command asking for secure messaging is refused instead of executed in the
+  clear.** The class byte was nobody's business: OpenPGP and PIV never looked at
+  it at all, so `04`, `0C`, `84` and `8C` — the ISO 7816-4 encodings that say
+  "this exchange is secured" — ran as if they had been `00`, returning the real
+  answer with `9000`. A client that believes it negotiated secure messaging got
+  an unprotected exchange and had nothing in the response to tell it apart, and
+  this card announces secure messaging **unsupported** (OpenPGP Extended
+  Capabilities, bit 8 of byte 1 clear). The class is now judged once, in the
+  dispatcher, before any applet or SELECT sees the command: chaining (bit `0x10`)
+  is examined first and wins outright, then `CLA & 0x0C` answers `6E00`.
+  Measured against a YubiKey 5.7.4 on PIV, OpenPGP and OATH: it answers `6E00` to
+  `04` and `84`, serves `00`, `80`, `40` and `C0`, and takes `1C`, `90` and `FF`
+  as plain chaining segments — so refusing `1C` would have *created* a
+  divergence. (The two remaining ISO secure-messaging classes cannot be asked of
+  a YubiKey at all: macOS PC/SC refuses to transmit 124 of the 256 class values,
+  `0C` among them, so the spec decides those and it says the same thing.)
+  **bcdDevice → 0x08A4.**
+
 - **One old OATH record no longer fails `CALCULATE ALL` for the whole key.**
   Enforcing `only increasing` gave every opted-in credential a high-water mark
   in its stored blob, and a build before that one kept unrecognised tags
