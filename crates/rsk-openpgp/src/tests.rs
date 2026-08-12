@@ -317,7 +317,7 @@ fn change_pin_rejects_an_empty_new_pw3() {
     let mut c = vec![0x00, consts::INS_CHANGE_PIN, 0x00, consts::PW3_MODE83];
     c.push(consts::PW3_DEFAULT.len() as u8);
     c.extend_from_slice(consts::PW3_DEFAULT);
-    assert_eq!(run(&mut app, &mut fs, &c).1, Sw::WRONG_LENGTH);
+    assert_eq!(run(&mut app, &mut fs, &c).1, Sw::CONDITIONS_NOT_SATISFIED);
 
     // A fresh session: PW3 still gates TERMINATE DF, still verifies, and the
     // factory reset still runs.
@@ -338,12 +338,15 @@ fn change_pin_enforces_the_reference_length_limits() {
     let mut fs = make_fs();
     let presence = RefCell::new(crate::AlwaysConfirm);
     let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
+    // `6985`, not `6700`: the APDU is well formed, the value in it is the problem.
+    // A YubiKey 5.7.4 answers `6985` at every out-of-range length, 3/3, for both
+    // references and without spending a retry.
     for new in [b"12345".as_slice(), &[0x39u8; consts::PIN_MAX_LEN + 1]] {
         let body = [consts::PW1_DEFAULT, new].concat();
         let mut c = vec![0x00, consts::INS_CHANGE_PIN, 0x00, consts::PW1_MODE81];
         c.push(body.len() as u8);
         c.extend_from_slice(&body);
-        assert_eq!(run(&mut app, &mut fs, &c).1, Sw::WRONG_LENGTH);
+        assert_eq!(run(&mut app, &mut fs, &c).1, Sw::CONDITIONS_NOT_SATISFIED);
     }
     // Nothing was written: the old PW1 still verifies.
     verify_pin(&mut app, &mut fs, consts::PW1_MODE81, consts::PW1_DEFAULT);

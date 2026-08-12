@@ -31,7 +31,7 @@ stand in for PW1 here. If you have a script that unlocks signing with the admin
 PIN, it needs the user PIN now.)
 
 The card enforces those lengths itself: a `CHANGE REFERENCE DATA` or `RESET
-RETRY COUNTER` carrying a new value outside the range is refused with `6700`,
+RETRY COUNTER` carrying a new value outside the range is refused with `6985`,
 whatever the host's own policy is. gpg applies the same `≥ 6` / `≥ 8` minima
 before it ever reaches the card. A shorter reference stored by an older firmware
 keeps verifying; only new ones are checked.

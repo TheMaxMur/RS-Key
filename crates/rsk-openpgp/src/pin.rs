@@ -572,8 +572,12 @@ fn check_pin_len(fid: u16, len: usize) -> Result<(), Sw> {
     } else {
         PW3_MIN_LEN
     };
+    // `6985`, not `6700`: the APDU's length is fine, it is the value inside it the
+    // card will not take. Measured on a YubiKey 5.7.4, 3/3 on both references and
+    // at every boundary — 0, 1 and 5 are `6985` for PW1, 0 through 7 for PW3, and
+    // 128 and 200 for both, with no retry spent.
     if len < min || len > PIN_MAX_LEN {
-        return Err(Sw::WRONG_LENGTH);
+        return Err(Sw::CONDITIONS_NOT_SATISFIED);
     }
     Ok(())
 }

@@ -40,6 +40,16 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **A new password of an out-of-range length is refused with `6985`, not
+  `6700`.** The APDU carrying it is perfectly well formed; it is the value inside
+  that the card will not take, and `6700` "wrong length" sends a host looking at
+  its own framing. Measured on a YubiKey 5.7.4, 3/3 on both references and at
+  every boundary — `6985` for 0, 1 and 5 on PW1, for 0 through 7 on PW3, and for
+  128 and 200 on both, with no retry spent. One owner: `CHANGE REFERENCE DATA`,
+  `RESET RETRY COUNTER` and the reset-code write all judge a new value through
+  the same check, so all three now say the same thing.
+  **bcdDevice → 0x08AD.**
+
 - **PIV VERIFY of an undefined key reference answers `6A80`, not `6A88`.** SP
   800-73-4's VERIFY response table lists `6982`, `6983`, `6A80`, `6A81`, `6A86`,
   `63 00` and `63 CX` — `6A88` appears nowhere in it — and a YubiKey 5.7.4
