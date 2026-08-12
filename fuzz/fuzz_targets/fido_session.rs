@@ -1404,26 +1404,35 @@ impl Sess {
                 ..CpReq::default()
             },
         );
-        let w = self.step(&msg[..n]);
+        // §6.5.5.7 mints a fresh token per issuance (`reset_pin_uv_auth_token`), so
+        // the *same* request twice must not answer with the same token — that is the
+        // linkability the random IV on the ciphertext exists to prevent, one layer
+        // down. Comparing the served token against the one the session was holding
+        // cannot see it: getKeyAgreement above already ran `ensure_initialized`,
+        // which replaces that value, so only a defect at all three mint sites at
+        // once would make the two equal.
+        let Some(first) = self.issued_token(&msg[..n], proto, secret) else {
+            return;
+        };
+        let Some(second) = self.issued_token(&msg[..n], proto, secret) else {
+            return;
+        };
+        assert_ne!(first, second, "getPinToken re-issued the standing token");
+        self.token = second;
+    }
+
+    /// Drive one getPinUvAuthToken message and return the token it served, or
+    /// `None` if the device refused or the reply carried no decryptable one.
+    fn issued_token(&mut self, msg: &[u8], proto: PinProto, secret: &[u8]) -> Option<[u8; 32]> {
+        let w = self.step(msg);
         if self.out[0] != rsk_fido::CTAP2_OK {
-            return;
+            return None;
         }
-        let Some(sealed) = map_bytes(&self.out[1..w], 2) else {
-            return;
-        };
+        let sealed = map_bytes(&self.out[1..w], 2)?;
         let mut token = [0u8; 32];
-        let Ok(len) = pinproto::decrypt(proto, secret, sealed, &mut token) else {
-            return;
-        };
+        let len = pinproto::decrypt(proto, secret, sealed, &mut token).ok()?;
         assert_eq!(len, TOKEN.len(), "an issued pinUvAuthToken is 32 bytes");
-        // §6.5.5.7 mints a fresh token per issuance (`reset_pin_uv_auth_token`);
-        // handing back the one the session already held is the linkability the
-        // random IV on the ciphertext exists to prevent, one layer down.
-        assert_ne!(
-            token, self.token,
-            "getPinToken re-issued the standing token"
-        );
-        self.token = token;
+        Some(token)
     }
 
     /// Drive one CTAPHID_CBOR message; returns the reply length in `self.out`.
