@@ -198,13 +198,16 @@ fn generic_put_data_does_not_handle_specials() {
 }
 
 #[test]
-fn unknown_tag_not_found() {
+fn an_unwritable_tag_is_a_wrong_p1p2() {
+    // The tag IS P1P2 for this command, so a tag PUT DATA cannot write is a wrong
+    // parameter and not a missing object — measured on a YubiKey 5.7.4, which
+    // answers `6B00` to an unknown tag and to the computed aggregates alike.
     let (mut fs, mut sess) = setup();
     admin(&mut fs, &mut sess);
-    assert_eq!(
-        put_data(&mut fs, &sess, 0x4242, b"x"),
-        Sw::REFERENCE_NOT_FOUND
-    );
+    assert_eq!(put_data(&mut fs, &sess, 0x4242, b"x"), Sw::WRONG_P1P2);
+    for tag in [EF_FP, EF_CA_FP, EF_TS_ALL] {
+        assert_eq!(put_data(&mut fs, &sess, tag, b"x"), Sw::WRONG_P1P2);
+    }
 }
 
 #[test]

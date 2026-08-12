@@ -1483,10 +1483,10 @@ fn cardholder_cert_write_needs_pw3_and_select_validates() {
     let mut bad_tag = select_cert(0);
     (bad_tag[9], bad_tag[10]) = (0x00, 0x65); // tag 0x0065 (cardholder data)
     assert_eq!(run(&mut app, &mut fs, &bad_tag).1, Sw::REFERENCE_NOT_FOUND);
-    assert_eq!(
-        run(&mut app, &mut fs, &select_cert(3)).1,
-        Sw::REFERENCE_NOT_FOUND
-    );
+    // An occurrence past the last one is a wrong P1 — a YubiKey answers `6B00` to
+    // 3 and 4 where 0-2 are `9000`; the unknown TAG above stays `6A88` because it
+    // is named in the data field, not in P1P2.
+    assert_eq!(run(&mut app, &mut fs, &select_cert(3)).1, Sw::WRONG_P1P2);
     let mut bad_p2 = select_cert(0);
     bad_p2[3] = 0x00;
     assert_eq!(run(&mut app, &mut fs, &bad_p2).1, Sw::INCORRECT_P1P2);
@@ -1684,12 +1684,13 @@ fn put_data_polices_the_fixed_length_dos() {
         }
     }
 
-    // The aggregates stay read-only, at every length.
+    // The aggregates stay read-only, at every length, and say so the way a
+    // YubiKey does: `6B00`, the tag being this command's P1P2.
     for tag in [0xC5u8, 0xC6, 0xCD] {
         for n in [0, 4, 12, 20, 60, 61] {
             assert_eq!(
                 put(&mut app, &mut fs, 0x00, tag, &vec![0xEE; n]),
-                Sw::REFERENCE_NOT_FOUND
+                Sw::WRONG_P1P2
             );
         }
     }

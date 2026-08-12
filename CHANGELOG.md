@@ -40,6 +40,21 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **A P1P2 that names something a command cannot address now answers `6B00`.**
+  PUT DATA of `C5`, `C6`, `CD` or `7A` — the computed aggregates a host reads out
+  of `6E`/`73` and only *looks* able to write — answered `6A88` "referenced data
+  not found", as did an unknown tag, and SELECT DATA of occurrence 3 or 4 did the
+  same. But the tag is this command's P1P2, and so is the occurrence, so the
+  wrong-parameter code is the accurate one: a YubiKey 5.7.4 answers `6B00` to
+  every one of those (measured 3/3, with occurrences 0-2 still `9000`). An
+  unknown *tag* in SELECT DATA's data field keeps `6A88`, which is where it
+  belongs. Two exceptions stay as they were and are noted rather than swept: the
+  signature counter refuses its write with `6985` because that DO exists here and
+  is write-never (a YubiKey does not serve it standalone at all), and GET DATA of
+  the aggregates keeps working — a wider surface than the oracle's, which the
+  spec permits and no host is hurt by.
+  **bcdDevice → 0x08AB.**
+
 - **DO `0xFA` no longer advertises two algorithms nothing can use.** X448 and
   Ed448 were listed among the supported per-slot attributes while GENERATE and
   IMPORT refused them outright — and because the write gate accepts exactly what

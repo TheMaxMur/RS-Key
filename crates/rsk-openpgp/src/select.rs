@@ -115,8 +115,14 @@ pub fn select_data(apdu: &Apdu, sess: &mut Session) -> Sw {
         d[4] as u16
     };
     // Only the cardholder certificate has occurrences; three of them (EF_CH_1/2/3).
-    if tag != EF_CH_CERT || apdu.p1 >= CERT_OCCURRENCES {
+    // The two failures are different bytes: an occurrence past the last one is P1
+    // (a YubiKey 5.7.4 answers `6B00` to 3 and 4, measured 3/3, where 0-2 are
+    // `9000`), while a tag with no occurrences at all is named in the data field.
+    if tag != EF_CH_CERT {
         return Sw::REFERENCE_NOT_FOUND;
+    }
+    if apdu.p1 >= CERT_OCCURRENCES {
+        return Sw::WRONG_P1P2;
     }
     sess.cert_occ = apdu.p1;
     Sw::OK

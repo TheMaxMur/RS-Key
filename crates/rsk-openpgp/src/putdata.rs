@@ -47,7 +47,12 @@ pub fn put_data<S: Storage>(fs: &mut Fs<S>, sess: &Session, fid: u16, data: &[u8
         // Algorithm attributes write to the private storage read back by `dobj`.
         EF_ALGO_SIG | EF_ALGO_DEC | EF_ALGO_AUT => algo_tag_to_priv(fid),
         f if matches!(source(f), DoSource::Flash) => f,
-        _ => return Sw::REFERENCE_NOT_FOUND,
+        // PUT DATA carries its target in P1P2, so a tag this command cannot write
+        // is a wrong P1P2 and not a missing object: a YubiKey 5.7.4 answers `6B00`
+        // to `C5`, `C6`, `CD`, `7A` and to a tag it does not know at all (measured,
+        // 3/3). The computed aggregates are the ones a host actually reaches for —
+        // they are read from `6E`/`73` and only look writable.
+        _ => return Sw::WRONG_P1P2,
     };
 
     let priv13 = fid == EF_PRIV_DO_1 || fid == EF_PRIV_DO_3;
