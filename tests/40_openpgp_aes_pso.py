@@ -59,9 +59,11 @@ def main():
 
     tx(SELECT, "SELECT OpenPGP AID")
     tx([0x00, INS_VERIFY, 0x00, MODE_PW3, len(PW3_DEFAULT)] + list(PW3_DEFAULT), "VERIFY PW3")
-    # Generate the DEC keypair — this mints the DEC slot's AES-256 key. PW3 (admin)
-    # also authorises the AES PSO (gate is `!has_pw3 && !has_pw2`), so no separate
-    # PW2 verify is needed — which also avoids depending on PW1's state.
+    # PW3 authorises GENERATE; the AES PSO itself takes PW1 no. 82 and nothing
+    # else (OpenPGP 3.4 §7.2.11), so verify that too.
+    tx([0x00, INS_VERIFY, 0x00, MODE_PW1_82, len(PW1_DEFAULT)] + list(PW1_DEFAULT),
+       "VERIFY PW1 (82)")
+    # Generate the DEC keypair — this mints the DEC slot's AES-256 key.
     tx([0x00, INS_PUT_DATA, 0x00, 0xC2, len(ATTR_P256_ECDH)] + list(ATTR_P256_ECDH),
        "PUT DEC algo-attr (P-256 ECDH)")
     # Extended-length GENERATE (00 00 02 Lc | B8 00 | 00 00 Le), as in the keygen test.

@@ -55,6 +55,8 @@ INS_PUT_DATA = 0xDA
 INS_IMPORT = 0xDB
 MODE_PW1 = 0x81
 MODE_PW2 = 0x82
+MODE_PW1_81 = 0x81
+MODE_PW1_82 = 0x82
 MODE_PW3 = 0x83
 
 # Algorithm-attribute values (algo-id ‖ OID): P-256 tagged ECDSA on the signing
@@ -116,11 +118,13 @@ def main():
         return data, sw1, sw2
 
     tx(SELECT, "SELECT OpenPGP AID")
-    # PW3 (admin) authorises IMPORT and all three crypto ops (PSO:CDS accepts
-    # PW1|PW3, DECIPHER / INTERNAL-AUT accept PW2|PW3), so one admin VERIFY is
-    # enough — and it avoids depending on PW1's state, which a prior gpg session
-    # may have changed away from the default.
+    # PW3 (admin) authorises IMPORT; the crypto ops take PW1 and only PW1 —
+    # no. 81 for PSO:CDS, no. 82 for DECIPHER and INTERNAL AUTHENTICATE
+    # (OpenPGP 3.4 §7.2.10/§7.2.11/§7.2.13). So this needs PW1 at its default,
+    # which a prior gpg session against the same key may have changed.
     tx(apdu(INS_VERIFY, 0x00, MODE_PW3, PW3_DEFAULT), "VERIFY PW3 (admin)")
+    tx(apdu(INS_VERIFY, 0x00, MODE_PW1_81, PW1_DEFAULT), "VERIFY PW1 (81, signing)")
+    tx(apdu(INS_VERIFY, 0x00, MODE_PW1_82, PW1_DEFAULT), "VERIFY PW1 (82, decrypt/auth)")
 
     # ---------------- P-256 ECDSA: IMPORT + PSO:CDS ----------------
     sig_priv = ec.generate_private_key(ec.SECP256R1())

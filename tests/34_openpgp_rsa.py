@@ -46,6 +46,7 @@ from _device import find_reader  # noqa: E402
 OPENPGP_AID = [0xD2, 0x76, 0x00, 0x01, 0x24, 0x01]
 SELECT = [0x00, 0xA4, 0x04, 0x00, len(OPENPGP_AID)] + OPENPGP_AID + [0x00]
 
+PW1_DEFAULT = b"123456"
 PW3_DEFAULT = b"12345678"
 
 INS_VERIFY = 0x20
@@ -53,6 +54,8 @@ INS_PSO = 0x2A
 INS_INTERNAL_AUT = 0x88
 INS_PUT_DATA = 0xDA
 INS_IMPORT = 0xDB
+MODE_PW1_81 = 0x81
+MODE_PW1_82 = 0x82
 MODE_PW3 = 0x83
 
 # RSA-2048 algorithm attribute: ALGO_RSA, 2048-bit modulus, 32-bit exponent field,
@@ -139,6 +142,8 @@ def main():
 
     tx(SELECT, "SELECT OpenPGP AID")
     tx(apdu(INS_VERIFY, 0x00, MODE_PW3, PW3_DEFAULT), "VERIFY PW3 (admin)")
+    tx(apdu(INS_VERIFY, 0x00, MODE_PW1_81, PW1_DEFAULT), "VERIFY PW1 (81, signing)")
+    tx(apdu(INS_VERIFY, 0x00, MODE_PW1_82, PW1_DEFAULT), "VERIFY PW1 (82, decrypt/auth)")
 
     # ---------------- RSA-2048 SIG: IMPORT + PSO:CDS ----------------
     sig_priv = rsa.generate_private_key(public_exponent=65537, key_size=2048)

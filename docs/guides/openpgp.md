@@ -24,6 +24,12 @@ YubiKey" ([build.md](../build.md)).
 | Admin PIN (PW3) | `12345678` | 8–127 | key import/generation, card settings |
 | Reset Code (RC) | unset | 8–127 | unblocking PW1 without PW3 |
 
+Those columns are exclusive: the admin PIN authorises no key operation. It
+cannot sign, decrypt or authenticate, however recently it was entered — that is
+the card spec's rule and what a YubiKey does. (Earlier RS-Key builds let PW3
+stand in for PW1 here. If you have a script that unlocks signing with the admin
+PIN, it needs the user PIN now.)
+
 The card enforces those lengths itself: a `CHANGE REFERENCE DATA` or `RESET
 RETRY COUNTER` carrying a new value outside the range is refused with `6700`,
 whatever the host's own policy is. gpg applies the same `≥ 6` / `≥ 8` minima

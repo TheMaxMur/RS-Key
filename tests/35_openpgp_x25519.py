@@ -39,8 +39,11 @@ from _device import find_reader  # noqa: E402
 OPENPGP_AID = [0xD2, 0x76, 0x00, 0x01, 0x24, 0x01]
 SELECT = [0x00, 0xA4, 0x04, 0x00, len(OPENPGP_AID)] + OPENPGP_AID + [0x00]
 
+PW1_DEFAULT = b"123456"
 PW3_DEFAULT = b"12345678"
 INS_VERIFY, INS_PSO, INS_PUT_DATA, INS_IMPORT = 0x20, 0x2A, 0xDA, 0xDB
+MODE_PW1_81 = 0x81
+MODE_PW1_82 = 0x82
 MODE_PW3 = 0x83
 CRT_DEC = 0xB8
 
@@ -100,6 +103,7 @@ def main():
 
     tx(SELECT, "SELECT OpenPGP AID")
     tx(apdu(INS_VERIFY, 0x00, MODE_PW3, PW3_DEFAULT), "VERIFY PW3 (admin)")
+    tx(apdu(INS_VERIFY, 0x00, MODE_PW1_82, PW1_DEFAULT), "VERIFY PW1 (82, decrypt/auth)")
 
     dec = X25519PrivateKey.generate()
     scalar_le = dec.private_bytes(RAW, RAWPRIV, NOENC)

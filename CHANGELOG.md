@@ -40,6 +40,28 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Security
 
+- **⚠️ The OpenPGP admin PIN no longer authorises any key operation. This
+  removes something that works today.** §7.2.10 gives `PSO:CDS` the access
+  condition PW1 no. 81, §7.2.11 gives `PSO:DECIPHER` PW1 no. 82 and §7.2.13
+  gives `INTERNAL AUTHENTICATE` the same; none of them names PW3. The applet
+  accepted PW3 in place of all three, with a comment saying it was "for parity
+  with the cards in the field" — and the only card in the field we can measure
+  contradicts it. A YubiKey 5.7.4 answers `6982` to PW3 alone on all three
+  operations, three runs of the full 8 × 3 latch matrix, cell for cell. Three
+  rows of that matrix change here: PW3 alone, PW1.81 + PW3, and PW1.82 + PW3 —
+  a session holding the admin PIN plus the wrong PW1 mode used to get
+  everything. The AES `PSO` was swept with them (§7.2.11 names PW1 no. 82; that
+  card has no AES DO to measure, so the spec decides and its siblings' rule
+  applies). **If you have a script or habit that unlocks signing with the admin
+  PIN, it needs the user PIN now**; `docs/guides/openpgp.md` says so, and its
+  PIN table already described the narrower rule. `gpg` and `gpg-agent` are
+  unaffected — they verify PW1 for these operations, which is why nothing
+  caught this. Six host tests and five `tests/*.py` suites verified only PW3
+  before a crypto operation and are corrected in the same change; the
+  `forcesig` special case in `pso.rs` existed only to stop PW3 standing in when
+  PW1 was one-shot, and goes with it (`inc_sig_count` still clears PW1 exactly
+  as before). **bcdDevice → 0x089B.**
+
 - **The OpenPGP `VERIFY` status query reports the latch, not the counter.**
   §7.2.2's empty-`Lc` form reports the *verification state*, and the applet
   answered `6983` whenever the reference's retry counter was 0 — before looking

@@ -744,6 +744,8 @@ fn import_p256_dec_then_pso_decipher_ecdh() {
     let (_, sw) = run(&mut app, &mut fs, &ec_import(0xB8, &dec_scalar));
     assert_eq!(sw, Sw::OK);
 
+    verify_pin(&mut app, &mut fs, consts::PW1_MODE82, consts::PW1_DEFAULT);
+
     // An ephemeral peer key; the card must return the shared x-coordinate.
     let eph = [0x33u8; 32];
     let eph_pub = p256_vk(&eph).to_sec1_point(false);
@@ -783,6 +785,8 @@ fn mse_redirects_decipher_to_aut_slot() {
         run(&mut app, &mut fs, &ec_import(0xA4, &aut_scalar)).1,
         Sw::OK
     );
+
+    verify_pin(&mut app, &mut fs, consts::PW1_MODE82, consts::PW1_DEFAULT);
 
     // One peer ephemeral key, reused across both deciphers.
     let eph = [0x33u8; 32];
@@ -876,6 +880,8 @@ fn import_ed25519_aut_then_internal_authenticate() {
     let seed = [0x44u8; 32];
     let (_, sw) = run(&mut app, &mut fs, &ec_import(0xA4, &seed));
     assert_eq!(sw, Sw::OK);
+
+    verify_pin(&mut app, &mut fs, consts::PW1_MODE82, consts::PW1_DEFAULT);
 
     // INTERNAL AUTHENTICATE signs the message directly (PureEdDSA).
     let msg = b"challenge-to-sign-with-the-auth-key";
@@ -1031,6 +1037,8 @@ fn import_rsa_dec_then_pso_decipher() {
     );
     assert_eq!(sw, Sw::OK);
 
+    verify_pin(&mut app, &mut fs, consts::PW1_MODE82, consts::PW1_DEFAULT);
+
     // Encrypt a "session key" to the imported public key; the card recovers it.
     let msg = b"a-32-byte-openpgp-session-key!!!";
     let ct = rsa_pubkey()
@@ -1105,6 +1113,8 @@ fn import_cv25519_dec_then_pso_decipher() {
     alice_be.reverse();
     let (_, sw) = run(&mut app, &mut fs, &ec_import(0xB8, &alice_be));
     assert_eq!(sw, Sw::OK);
+
+    verify_pin(&mut app, &mut fs, consts::PW1_MODE82, consts::PW1_DEFAULT);
 
     // PSO:DECIPHER with the 0x40-prefixed peer point.
     let mut point = vec![0x40u8];
@@ -1717,7 +1727,8 @@ fn generate_ed25519_aut_internal_authenticate_verifies() {
     let point = ec_point(&do_).to_vec();
     assert_eq!(point.len(), 32);
 
-    // PW3 still authorises INTERNAL AUTHENTICATE (it accepts PW2 or PW3).
+    verify_pin(&mut app, &mut fs, consts::PW1_MODE82, consts::PW1_DEFAULT);
+
     let msg = b"challenge-to-sign-with-the-auth-key";
     let mut a = vec![0x00, consts::INS_INTERNAL_AUT, 0x00, 0x00, msg.len() as u8];
     a.extend_from_slice(msg);
@@ -1914,4 +1925,81 @@ fn rsa4096_generate_path_produces_signable_key() {
     assert_eq!(sw, Sw::OK);
     pk.verify(rsa::Pkcs1v15Sign::new_unprefixed(), &di, &sig)
         .unwrap();
+}
+
+// E40. §7.2.10/§7.2.11/§7.2.13 give PSO:CDS the access condition PW1 no. 81 and
+// PSO:DECIPHER / INTERNAL AUTHENTICATE PW1 no. 82, and name no other reference.
+// The applet let PW3 stand in for all three; a YubiKey 5.7.4 answers 6982 to PW3
+// alone, three runs of this whole matrix, cell for cell. This is a NARROWING —
+// unlocking signing with the admin PIN used to work and now does not.
+#[test]
+fn pw3_alone_opens_no_key_operation() {
+    let rng = RefCell::new(LcgRng(23));
+    let mut fs = make_fs();
+    let presence = RefCell::new(crate::AlwaysConfirm);
+    let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
+    verify_pin(&mut app, &mut fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
+    put(&mut app, &mut fs, 0x00, 0xC1, ATTR_P256);
+    put(&mut app, &mut fs, 0x00, 0xC2, ATTR_P256_ECDH);
+    put(&mut app, &mut fs, 0x00, 0xC3, ATTR_P256);
+    for crt in [consts::CRT_SIG, consts::CRT_DEC, consts::CRT_AUT] {
+        assert_eq!(keygen(&mut app, &mut fs, 0x80, crt).1, Sw::OK);
+    }
+
+    let eph_pub = p256_vk(&[0x33u8; 32]).to_sec1_point(false);
+    let f86 = [&[0x86, eph_pub.as_bytes().len() as u8], eph_pub.as_bytes()].concat();
+    let f7f49 = [&[0x7F, 0x49, f86.len() as u8], f86.as_slice()].concat();
+    let a6 = [&[0xA6, f7f49.len() as u8], f7f49.as_slice()].concat();
+    let mut dec = vec![0x00, consts::INS_PSO, 0x80, 0x86, a6.len() as u8];
+    dec.extend_from_slice(&a6);
+    let mut cds = vec![0x00, consts::INS_PSO, 0x9E, 0x9A, 32];
+    cds.extend_from_slice(&[0x42u8; 32]);
+    let mut aut = vec![0x00, consts::INS_INTERNAL_AUT, 0x00, 0x00, 32];
+    aut.extend_from_slice(&[0x42u8; 32]);
+    // AES ENCIPHER over the key GENERATE minted on the DEC slot.
+    let mut aes = vec![0x00, consts::INS_PSO, 0x86, 0x80, 16];
+    aes.extend_from_slice(&[0x11u8; 16]);
+
+    // Every combination of the three latches; the columns are CDS, DEC, AUT, AES.
+    let denied = Sw::SECURITY_STATUS_NOT_SATISFIED;
+    for (latches, want) in [
+        (&[][..], [denied; 4]),
+        (&[consts::PW1_MODE81], [Sw::OK, denied, denied, denied]),
+        (&[consts::PW1_MODE82], [denied, Sw::OK, Sw::OK, Sw::OK]),
+        (&[consts::PW3_MODE83], [denied; 4]),
+        (
+            &[consts::PW1_MODE81, consts::PW3_MODE83],
+            [Sw::OK, denied, denied, denied],
+        ),
+        (
+            &[consts::PW1_MODE82, consts::PW3_MODE83],
+            [denied, Sw::OK, Sw::OK, Sw::OK],
+        ),
+        (
+            &[consts::PW1_MODE81, consts::PW1_MODE82],
+            [Sw::OK, Sw::OK, Sw::OK, Sw::OK],
+        ),
+    ] {
+        app.deselect(&mut fs);
+        for &mode in latches {
+            let pw = if mode == consts::PW3_MODE83 {
+                consts::PW3_DEFAULT
+            } else {
+                consts::PW1_DEFAULT
+            };
+            verify_pin(&mut app, &mut fs, mode, pw);
+        }
+        for (cmd, expect, name) in [
+            (&cds, want[0], "PSO:CDS"),
+            (&dec, want[1], "PSO:DECIPHER"),
+            (&aut, want[2], "INTERNAL AUTHENTICATE"),
+            (&aes, want[3], "PSO:ENCIPHER (AES)"),
+        ] {
+            assert_eq!(
+                run(&mut app, &mut fs, cmd).1,
+                expect,
+                "{name} with latches {latches:02X?}"
+            );
+        }
+    }
 }
