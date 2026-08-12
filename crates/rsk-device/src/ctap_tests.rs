@@ -198,10 +198,36 @@ fn a_secure_reboot_drops_the_auth_state_but_not_the_boot_verdict() {
     assert!(ctap.fido_state.warm_boot);
 }
 
+/// The number getInfo puts ON THE WIRE has to be the number the transport
+/// enforces. A YubiKey 5.7.4 demonstrates the invariant: it advertises 1536 and
+/// its largest accepted CTAPHID payload is exactly 1536, with 1537 killed by an
+/// `ERR_INVALID_LEN` frame before any CBOR is parsed. Over-declare it and a
+/// conforming platform sends a message that dies in the transport, with no way to
+/// have predicted it. The old assertion here compared `RESP_CAP` with the constant
+/// it is *defined as*, so it held for any value of the advertised one.
 #[test]
-fn the_response_buffer_is_the_transport_maximum() {
-    // getInfo advertises `maxMsgSize` from the transport constant; a buffer smaller
-    // than it would truncate a response the host was told to expect (an ML-DSA-44
+fn getinfo_advertises_the_transport_maximum() {
+    let env = Env::new();
+    let mut ctap = env.ctap();
+    let resp = ctap.handle_cbor(0xABCD, &GET_INFO, 0).to_vec();
+    assert_eq!(resp[0], 0, "getInfo failed");
+    let mut d = minicbor::Decoder::new(&resp[1..]);
+    let n = d.map().unwrap().unwrap();
+    let mut advertised = None;
+    for _ in 0..n {
+        let key = d.u8().unwrap();
+        if key == 0x05 {
+            advertised = Some(d.u64().unwrap());
+        } else {
+            d.skip().unwrap();
+        }
+    }
+    assert_eq!(
+        advertised,
+        Some(rsk_usb::ctaphid::CTAP_MAX_MESSAGE as u64),
+        "getInfo's maxMsgSize must be the CTAPHID transport ceiling"
+    );
+    // The response buffer has to hold what that promises (an ML-DSA-44
     // makeCredential runs ~4 KB).
-    assert_eq!(RESP_CAP, rsk_usb::ctaphid::CTAP_MAX_MESSAGE);
+    assert!(RESP_CAP >= advertised.unwrap() as usize);
 }

@@ -19,6 +19,12 @@ use crate::Hooks;
 // Sized to the CTAPHID transport maximum (= getInfo's maxMsgSize): an ML-DSA-44
 // makeCredential response runs ~4 KB.
 const RESP_CAP: usize = rsk_usb::ctaphid::CTAP_MAX_MESSAGE;
+// getInfo advertises `maxMsgSize` from a LITERAL in `rsk-fido`, which does not
+// depend on `rsk-usb` — this crate is the only one that sees both, so nothing else
+// stops the two drifting. Over-declare it and a conforming platform sends a message
+// the transport drops before any CBOR is read; `MAX_FRAGMENT_LENGTH` (the
+// largeBlobs ceiling) is derived from the same literal and rides on this too.
+const _: () = assert!(rsk_fido::consts::MAX_MSG_SIZE as usize == RESP_CAP);
 
 pub struct AppletHandler<'a, S: Storage, R: crate::Rng + 'static, VP: rsk_vendor::Platform> {
     fs: &'a RefCell<Fs<S>>,

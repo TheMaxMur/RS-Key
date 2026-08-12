@@ -33,6 +33,9 @@ rsk-usb = { workspace = true }
 zeroize = { workspace = true }
 
 [dev-dependencies]
+# Reading a CTAP2 response back apart. Dev-only, and already in the tree via
+# rsk-fido — the applet that wrote the bytes.
+minicbor = { workspace = true }
 # The RAM `Storage` every applet crate's tests already run against — the routing
 # rules here are only meaningful over a real `Fs`.
 rsk-fs = { workspace = true, features = ["test-util"] }

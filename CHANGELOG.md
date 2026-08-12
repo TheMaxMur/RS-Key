@@ -40,6 +40,25 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Security
 
+- **The advertised `maxMsgSize` is now tied to the transport that has to carry
+  it.** getInfo advertised a literal `7609` in `rsk-fido`; the frame that is
+  actually refused is sized by a *computed* constant in `rsk-usb`, and `rsk-fido`
+  does not depend on `rsk-usb`, so nothing linked them — the two tests that name
+  the constant only check getInfo echoes it back, which holds for any value. The
+  declared number is a conforming platform's only licence to send a larger
+  message: over-declare it and the platform sends one the transport drops before
+  any CBOR is read, with no way to have predicted it. A YubiKey 5.7.4 demonstrates
+  the invariant — it advertises 1536 and its largest accepted CTAPHID payload is
+  exactly 1536, with 1537 killed by an `ERR_INVALID_LEN` frame; `maxMsgSize` and
+  the enforced ceiling are one number. `rsk-device` sees both crates and now
+  carries a compile-time assertion between them, so the *firmware build* fails
+  rather than a test — and the largeBlobs fragment ceiling, derived from the same
+  literal, rides on it. The sibling assertion that was already there compared the
+  response buffer with the constant it is *defined as* and so could not fail; it is
+  replaced by one that drives getInfo and checks the number on the wire. No wire
+  change and no `bcdDevice` bump: both values are 7609 today, and this is the
+  ratchet that keeps them equal.
+
 - **A CTAP2 request body must now be exactly one CBOR item.** Bytes after the
   top-level map were read as the end of the message and ignored, so two readers of
   the same wire bytes could disagree about what was asked — the request-smuggling

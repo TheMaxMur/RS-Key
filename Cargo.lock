@@ -2187,6 +2187,7 @@ dependencies = [
 name = "rsk-device"
 version = "0.1.0"
 dependencies = [
+ "minicbor",
  "rsa",
  "rsk-crypto",
  "rsk-fido",
