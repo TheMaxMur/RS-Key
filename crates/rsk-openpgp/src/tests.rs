@@ -136,6 +136,29 @@ fn put_data_reset_code_routes_to_handler() {
 }
 
 #[test]
+fn an_out_of_range_reset_code_is_wrong_data() {
+    // Same judgement as CHANGE REFERENCE DATA's new value, different command and
+    // different word: this value arrives in PUT DATA's data field. Measured on a
+    // YubiKey 5.7.4, 3/3, at 1, 5, 6, 7 and 128 — `6A80` where CHANGE is `6985`.
+    let rng = RefCell::new(CountRng(0));
+    let mut fs = make_fs();
+    let presence = RefCell::new(crate::AlwaysConfirm);
+    let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
+    verify_pin(&mut app, &mut fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
+    for n in [1usize, 5, 6, 7, consts::PIN_MAX_LEN + 1, 200] {
+        assert_eq!(
+            put(&mut app, &mut fs, 0x00, 0xD3, &vec![b'R'; n]),
+            consts::WRONG_DATA,
+            "a {n}-byte resetting code"
+        );
+    }
+    // The shortest one the policy allows lands, and clearing the DO still works —
+    // an empty PUT deletes the reset code, which is not a length refusal.
+    assert_eq!(put(&mut app, &mut fs, 0x00, 0xD3, b"resetme0"), Sw::OK);
+    assert_eq!(put(&mut app, &mut fs, 0x00, 0xD3, &[]), Sw::OK);
+}
+
+#[test]
 fn get_challenge_returns_ne_random_bytes() {
     let rng = RefCell::new(CountRng(0));
     let mut fs = make_fs();

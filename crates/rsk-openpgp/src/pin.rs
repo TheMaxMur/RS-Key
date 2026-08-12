@@ -846,7 +846,10 @@ pub fn put_reset_code<S: Storage>(
         return sw;
     }
     let result = (|| {
-        check_pin_len(EF_RC, data.len())?;
+        // The one caller whose refusal is not `6985`: this value arrives in PUT
+        // DATA's data field, and a YubiKey 5.7.4 answers `6A80` there (3/3, at 1,
+        // 5, 6, 7 and 128) where CHANGE and RESET RETRY both answer `6985`.
+        check_pin_len(EF_RC, data.len()).map_err(|_| WRONG_DATA)?;
         stage_dek(dev, fs, rng, EF_DEK_RC, data, &dek)?;
         put_verifier(dev, fs, EF_RC, data)?;
         commit_staged_dek(fs, EF_DEK_RC)?;

@@ -40,6 +40,17 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **The resetting-code write keeps its own refusal word.** The judgement that a
+  new password is out of range has one owner, and moving it from `6700` to
+  `6985` moved all three of its callers — but only CHANGE REFERENCE DATA had
+  been measured. A YubiKey 5.7.4 answers `6985` for CHANGE REFERENCE DATA and
+  for RESET RETRY COUNTER under either P1, and `6A80` for `PUT DATA D3`: the
+  resetting code is not offered to a VERIFY-shaped command, it arrives in PUT
+  DATA's data field. Only that one call site is named differently; the range
+  itself still has a single owner. The same measurement confirms the resetting
+  code's minimum length is 8, which is what the card already enforced.
+  **bcdDevice → 0x08B1.**
+
 - **The on-card RSA keygen no longer escapes the class-byte rule.** Both RSA
   GENERATE fast paths — the ones the firmware runs off the dispatcher so the
   prime search can use both cores while the transport streams time extensions —
