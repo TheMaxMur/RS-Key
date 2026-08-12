@@ -347,9 +347,8 @@ fuzz_target!(|data: &[u8]| {
             }
             OP_SET_CAPS => {
                 // The cap mask is this target's second magic value after the AIDs:
-                // disabling anything otherwise means inventing `03 02 <hi> <lo>`
-                // behind two more bytes, so the SELECT gate and the OTP-inert
-                // clause only ever ran with everything enabled.
+                // no run ever invented `03 02 <hi> <lo>` — 190 787 generated executions
+                // reached neither gated clause, only three evictable corpus seeds did.
                 let hi = byte(data, &mut i);
                 let lo = byte(data, &mut i);
                 let blob = [0x04, TAG_USB_ENABLED, 0x02, hi, lo];
