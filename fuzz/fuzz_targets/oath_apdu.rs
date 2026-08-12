@@ -60,11 +60,12 @@ fuzz_target!(|data: &[u8]| {
             b'5', b'6', b'7', b'8', b'9', b'0',
         ][..],
         &[
-            0x00, 0x01, 0, 0, 0x16, // PUT, Lc = 22
+            0x00, 0x01, 0, 0, 0x20, // PUT, Lc = 32
             0x71, 0x04, b'h', b'o', b't', b'p', // NAME
-            0x73, 0x08, 0x11, 6, b'k', b'e', b'y', b'k', b'e', b'y', // KEY: HOTP|SHA1
+            0x73, 0x10, 0x11, 6, // KEY: HOTP|SHA1, 6 digits, KEY_TLV_MIN long
+            b'k', b'e', b'y', b'k', b'e', b'y', b'k', b'e', b'y', b'k', b'e', b'y', b'k', b'e',
             0x78, 0x02, // bare property pair (touch)
-            0x7A, 0x02, 0x00, 0x05, // IMF, short (padded by PUT)
+            0x7A, 0x04, 0x00, 0x00, 0x00, 0x05, // IMF, the one width the card takes
         ][..],
     ] {
         assert_eq!(run(&mut app, &mut fs, put), Sw::OK, "seed PUT must succeed");
