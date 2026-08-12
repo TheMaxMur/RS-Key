@@ -66,7 +66,7 @@ use minicbor::encode::{Error as EncError, Write};
 use minicbor::{Decoder, Encoder};
 use rsk_crypto::pinproto::{self, PinProto};
 use rsk_crypto::{Device, sha256};
-use rsk_fido::consts;
+use rsk_fido::consts::{self, CP_GET_PIN_UV_TOKEN_USING_PIN};
 use rsk_fido::credential::{
     CRED_RESIDENT_LEN, CredExt, CredInput, credential_create, credential_store, derive_resident,
 };
@@ -81,9 +81,24 @@ type Enc<'a> = Encoder<Cursor<&'a mut [u8]>>;
 type EncRes = Result<(), EncError<EndOfSlice>>;
 
 /// The token [`Sess::new`] arms `FidoState` with. The harness owns it, so it can
-/// mint the MAC a mutator never could.
+/// mint the MAC a mutator never could — until [`Sess::pin_handshake`] replaces it
+/// with one the device really issued.
 const TOKEN: [u8; 32] = [0x99; 32];
 const ALL_PERMS: u8 = PERM_MC | PERM_GA | PERM_CM | PERM_LBW | PERM_ACFG | PERM_PCMR;
+/// What a token request may ask for. `pcmr` is excluded because §6.5.5.7.2 refuses
+/// it in company, and it answers with the persistent token rather than a session one.
+const HANDSHAKE_PERMS: u64 = (ALL_PERMS & !PERM_PCMR) as u64;
+
+/// The two clientPIN subcommands the handshake needs that `rsk-fido` does not name
+/// itself: getKeyAgreement and setPIN.
+const CP_GET_KEY_AGREEMENT: u64 = 0x02;
+const CP_SET_PIN: u64 = 0x03;
+/// The host's ECDH scalar — fixed, so a session costs one scalar multiply instead
+/// of a keygen and an input keeps its meaning across runs. In `[1, n)` for P-256.
+const HOST_SCALAR: [u8; 32] = [0x42; 32];
+/// The PIN the handshake sets. Eight bytes clears `MIN_PIN_LENGTH` on both the
+/// default build (4) and `strong-pin` (6).
+const PIN: &[u8] = b"12345678";
 
 /// Relying parties a request may name. Index 0 is what [`provisioned`] stores, so
 /// a getAssertion can hit a resident credential from the very first command; the
@@ -355,7 +370,7 @@ impl CredPool {
     /// (`rpIdHash ‖ flags ‖ signCount ‖ aaguid ‖ credIdLen ‖ credId`).
     fn harvest(&mut self, reply: &[u8]) {
         const OFF: usize = 32 + 1 + 4 + 16;
-        let Some(auth) = auth_data(reply) else {
+        let Some(auth) = map_bytes(reply, 2) else {
             return;
         };
         if auth.len() < OFF + 2 || auth[32] & consts::FLAG_AT == 0 {
@@ -368,19 +383,20 @@ impl CredPool {
     }
 }
 
-/// The `authData` byte string (response key 2) of a makeCredential reply.
-fn auth_data(reply: &[u8]) -> Option<&[u8]> {
+/// The byte string a reply map carries under `key` — makeCredential's `authData`
+/// and clientPIN's encrypted `pinUvAuthToken` are both response key 2.
+fn map_bytes(reply: &[u8], key: u32) -> Option<&[u8]> {
     let mut d = Decoder::new(reply);
     let n = d.map().ok()??;
-    let mut auth = None;
+    let mut found = None;
     for _ in 0..n {
         match d.u32() {
-            Ok(2) => auth = Some(d.bytes().ok()?),
+            Ok(k) if k == key => found = Some(d.bytes().ok()?),
             Ok(_) => d.skip().ok()?,
             Err(_) => return None,
         }
     }
-    auth
+    found
 }
 
 // ------------------------------------------------------------------- generators
@@ -444,21 +460,21 @@ enum Auth {
     Absent,
     /// Zero-length param — CTAP 2.1 §6.1.2 step 1's selection-gesture probe.
     Probe(u64),
-    /// The real HMAC under the token [`Sess::new`] armed. Everything past
+    /// The real HMAC under the session's live token. Everything past
     /// `verify_token` — the uv flag, the permission and rpId-binding checks, the
     /// §6.5.5.7 spend — is unreachable without this.
-    Token(u64),
+    Token(u64, [u8; 32]),
     /// Fuzzer-shaped bytes of a chosen length: the reject leg.
     Garbage(u64, usize),
 }
 
 impl Auth {
-    fn draw(u: &mut Unstructured<'_>) -> Self {
+    fn draw(u: &mut Unstructured<'_>, token: &[u8; 32]) -> Self {
         let proto = pick(u, &PROTOS);
         match u.int_in_range(0u8..=7).unwrap_or(0) {
             0..=2 => Auth::Absent,
             3 => Auth::Probe(proto),
-            4..=6 => Auth::Token(proto),
+            4..=6 => Auth::Token(proto, *token),
             _ => Auth::Garbage(proto, pick(u, &[15usize, 16, 17, 32, 33])),
         }
     }
@@ -470,7 +486,7 @@ impl Auth {
     fn proto(&self) -> u64 {
         match *self {
             Auth::Absent => 0,
-            Auth::Probe(p) | Auth::Token(p) | Auth::Garbage(p, _) => p,
+            Auth::Probe(p) | Auth::Token(p, _) | Auth::Garbage(p, _) => p,
         }
     }
 
@@ -478,11 +494,11 @@ impl Auth {
     fn param<'b>(&self, msg: &[u8], buf: &'b mut [u8; 32]) -> &'b [u8] {
         match *self {
             Auth::Absent | Auth::Probe(_) => &[],
-            Auth::Token(p) => {
+            Auth::Token(p, token) => {
                 // An undefined protocol is rejected before the MAC is ever
                 // checked, so any concrete one will do for the bytes.
                 let proto = PinProto::from_u64(p).unwrap_or(PinProto::Two);
-                let n = pinproto::authenticate(proto, &TOKEN, msg, buf).unwrap_or(0);
+                let n = pinproto::authenticate(proto, &token, msg, buf).unwrap_or(0);
                 &buf[..n]
             }
             Auth::Garbage(_, n) => {
@@ -529,12 +545,8 @@ impl Opts {
 }
 
 /// A COSE_Key of the shape clientPIN key agreement and hmac-secret expect: EC2
-/// P-256 with ECDH-ES+HKDF-256. The coordinates are filler, so the point is
-/// off-curve and the ECDH must refuse rather than compute.
-fn cose_p256(u: &mut Unstructured<'_>, enc: &mut Enc<'_>) -> EncRes {
-    let len = pick(u, &[32usize, 32, 32, 31, 33, 0]);
-    let mut xb = [0u8; 48];
-    let mut yb = [0u8; 48];
+/// P-256 with ECDH-ES+HKDF-256.
+fn cose_key(enc: &mut Enc<'_>, x: &[u8], y: &[u8]) -> EncRes {
     enc.map(5)?
         .u8(1)?
         .u8(2)?
@@ -543,10 +555,19 @@ fn cose_p256(u: &mut Unstructured<'_>, enc: &mut Enc<'_>) -> EncRes {
         .i8(-1)?
         .u8(consts::CURVE_P256)?
         .i8(-2)?
-        .bytes(filler(&mut xb, 0x33, len))?
+        .bytes(x)?
         .i8(-3)?
-        .bytes(filler(&mut yb, 0x44, len))?;
+        .bytes(y)?;
     Ok(())
+}
+
+/// The same key with filler coordinates, so the point is off-curve and the ECDH
+/// must refuse rather than compute.
+fn cose_p256(u: &mut Unstructured<'_>, enc: &mut Enc<'_>) -> EncRes {
+    let len = pick(u, &[32usize, 32, 32, 31, 33, 0]);
+    let mut xb = [0u8; 48];
+    let mut yb = [0u8; 48];
+    cose_key(enc, filler(&mut xb, 0x33, len), filler(&mut yb, 0x44, len))
 }
 
 /// The `hmac-secret` extension map: `{1: COSE key, 2: saltEnc, 3: saltAuth, 4: proto}`.
@@ -691,7 +712,7 @@ fn descriptors(u: &mut Unstructured<'_>, pool: &CredPool, k: u64, enc: &mut Enc<
 
 /// `authenticatorMakeCredential` (0x01). Keys 1..=4 are mandatory and ordered
 /// first; 5..=10 are optional and ascending, which `parse` enforces.
-fn mc(u: &mut Unstructured<'_>, pool: &CredPool, enc: &mut Enc<'_>) -> EncRes {
+fn mc(u: &mut Unstructured<'_>, pool: &CredPool, token: &[u8; 32], enc: &mut Enc<'_>) -> EncRes {
     let rp = pick(u, &RP_IDS);
     let uid = pick(u, &USER_IDS);
     let uname = pick(u, &USER_NAMES);
@@ -702,7 +723,7 @@ fn mc(u: &mut Unstructured<'_>, pool: &CredPool, enc: &mut Enc<'_>) -> EncRes {
     let excl = opt_count(u, 1, 3);
     let ext = McExt::draw(u);
     let opts = Opts::draw(u);
-    let auth = Auth::draw(u);
+    let auth = Auth::draw(u, token);
     let ea = u
         .ratio(1u8, 8)
         .unwrap_or(false)
@@ -761,14 +782,14 @@ fn mc(u: &mut Unstructured<'_>, pool: &CredPool, enc: &mut Enc<'_>) -> EncRes {
 }
 
 /// `authenticatorGetAssertion` (0x02). Keys 1..=2 mandatory and first.
-fn ga(u: &mut Unstructured<'_>, pool: &CredPool, enc: &mut Enc<'_>) -> EncRes {
+fn ga(u: &mut Unstructured<'_>, pool: &CredPool, token: &[u8; 32], enc: &mut Enc<'_>) -> EncRes {
     let rp = pick(u, &RP_IDS);
     let mut cdh_buf = [0u8; 48];
     let cdh = filler(&mut cdh_buf, 0x22, cdh_len(u));
     let allow = opt_count(u, 1, 2);
     let ext = GaExt::draw(u);
     let opts = Opts::draw(u);
-    let auth = Auth::draw(u);
+    let auth = Auth::draw(u, token);
 
     let fields = 2
         + u64::from(allow.is_some())
@@ -857,6 +878,88 @@ fn cp(u: &mut Unstructured<'_>, enc: &mut Enc<'_>) -> EncRes {
     Ok(())
 }
 
+// -------------------------------------------------------------- clientPIN ECDH
+
+/// The host's ECDH public point, derived once: it is a fixed scalar, and a
+/// scalar multiply per execution would be pure overhead.
+fn host_key() -> &'static ([u8; 32], [u8; 32]) {
+    static K: OnceLock<([u8; 32], [u8; 32])> = OnceLock::new();
+    K.get_or_init(|| pinproto::public_xy(&HOST_SCALAR).expect("a fixed in-range scalar"))
+}
+
+/// The optional halves of a clientPIN request, in the ascending key order `parse`
+/// enforces: keyAgreement (3), pinUvAuthParam (4), newPinEnc (5), pinHashEnc (6)
+/// and permissions (9). An empty slice or a zero means the key is absent.
+#[derive(Default)]
+struct CpReq<'a> {
+    key_agreement: bool,
+    param: &'a [u8],
+    new_pin_enc: &'a [u8],
+    pin_hash_enc: &'a [u8],
+    permissions: u64,
+}
+
+fn cp_body(enc: &mut Enc<'_>, proto: u64, sub: u64, r: &CpReq<'_>) -> EncRes {
+    let fields = 2
+        + u64::from(r.key_agreement)
+        + u64::from(!r.param.is_empty())
+        + u64::from(!r.new_pin_enc.is_empty())
+        + u64::from(!r.pin_hash_enc.is_empty())
+        + u64::from(r.permissions != 0);
+    enc.map(fields)?;
+    enc.u8(1)?.u64(proto)?.u8(2)?.u64(sub)?;
+    if r.key_agreement {
+        let (x, y) = host_key();
+        enc.u8(3)?;
+        cose_key(enc, x, y)?;
+    }
+    if !r.param.is_empty() {
+        enc.u8(4)?.bytes(r.param)?;
+    }
+    if !r.new_pin_enc.is_empty() {
+        enc.u8(5)?.bytes(r.new_pin_enc)?;
+    }
+    if !r.pin_hash_enc.is_empty() {
+        enc.u8(6)?.bytes(r.pin_hash_enc)?;
+    }
+    if r.permissions != 0 {
+        enc.u8(9)?.u64(r.permissions)?;
+    }
+    Ok(())
+}
+
+/// One well-formed clientPIN message into `buf`; 0 if it did not fit.
+fn cp_msg(buf: &mut [u8], proto: u64, sub: u64, r: &CpReq<'_>) -> usize {
+    buf[0] = consts::CTAP_CLIENT_PIN;
+    let mut enc = Encoder::new(Cursor::new(&mut buf[1..]));
+    if cp_body(&mut enc, proto, sub, r).is_err() {
+        return 0;
+    }
+    1 + enc.writer().position()
+}
+
+/// The `(x, y)` of the COSE key a getKeyAgreement reply carries under key 1.
+fn key_agreement_xy(body: &[u8]) -> Option<([u8; 32], [u8; 32])> {
+    let mut d = Decoder::new(body);
+    let n = d.map().ok()??;
+    let (mut x, mut y) = (None, None);
+    for _ in 0..n {
+        if d.u32().ok()? != 1 {
+            d.skip().ok()?;
+            continue;
+        }
+        let m = d.map().ok()??;
+        for _ in 0..m {
+            match d.i32().ok()? {
+                -2 => x = d.bytes().ok()?.try_into().ok(),
+                -3 => y = d.bytes().ok()?.try_into().ok(),
+                _ => d.skip().ok()?,
+            }
+        }
+    }
+    Some((x?, y?))
+}
+
 /// `subCommandParams` (credentialManagement key 2), built standalone because the
 /// pinUvAuthParam MAC covers its raw bytes.
 fn cm_subpara(
@@ -909,7 +1012,7 @@ fn cm_subpara(
 
 /// `authenticatorCredentialManagement` (0x0A). Key 1 mandatory and first; 2, 3, 4
 /// ascend after it.
-fn cm(u: &mut Unstructured<'_>, pool: &CredPool, enc: &mut Enc<'_>) -> EncRes {
+fn cm(u: &mut Unstructured<'_>, pool: &CredPool, token: &[u8; 32], enc: &mut Enc<'_>) -> EncRes {
     const SUB_MAX: usize = 1024;
     let sub = pick(u, &CM_SUBS);
     let mut sub_buf = [0u8; SUB_MAX];
@@ -918,7 +1021,7 @@ fn cm(u: &mut Unstructured<'_>, pool: &CredPool, enc: &mut Enc<'_>) -> EncRes {
     } else {
         0
     };
-    let auth = Auth::draw(u);
+    let auth = Auth::draw(u, token);
 
     let fields = 1 + u64::from(sub_len > 0) + 2 * u64::from(auth.present());
     enc.map(fields)?;
@@ -985,7 +1088,7 @@ fn cfg_subpara(
 /// 4 ascend after it. No dedicated target reaches this command — only
 /// `process_cbor` callers do — and everything past `verify_token` needs the
 /// `acfg` token this harness owns.
-fn cfg(u: &mut Unstructured<'_>, enc: &mut Enc<'_>) -> EncRes {
+fn cfg(u: &mut Unstructured<'_>, token: &[u8; 32], enc: &mut Enc<'_>) -> EncRes {
     let sub = pick(u, &CFG_SUBS);
     let mut sub_buf = [0u8; CFG_SUB_MAX];
     let sub_len = if u.ratio(7u8, 8).unwrap_or(true) {
@@ -993,7 +1096,7 @@ fn cfg(u: &mut Unstructured<'_>, enc: &mut Enc<'_>) -> EncRes {
     } else {
         0
     };
-    let auth = Auth::draw(u);
+    let auth = Auth::draw(u, token);
 
     let fields = 1 + u64::from(sub_len > 0) + 2 * u64::from(auth.present());
     enc.map(fields)?;
@@ -1052,7 +1155,12 @@ fn lb_read(u: &mut Unstructured<'_>, enc: &mut Enc<'_>) -> EncRes {
 /// second fragment continues the *same* array — without that the commit only ever
 /// reaches its integrity refusal, and the cross-command offset accumulation this
 /// target exists for is never exercised.
-fn lb_write(u: &mut Unstructured<'_>, lba: &LargeBlobState, enc: &mut Enc<'_>) -> EncRes {
+fn lb_write(
+    u: &mut Unstructured<'_>,
+    lba: &LargeBlobState,
+    token: &[u8; 32],
+    enc: &mut Enc<'_>,
+) -> EncRes {
     let mut buf = [0u8; LB_MAX];
     let next = lba.expected_next_offset;
     // Drawn even when the accumulator decides it, so one input costs the same
@@ -1081,7 +1189,7 @@ fn lb_write(u: &mut Unstructured<'_>, lba: &LargeBlobState, enc: &mut Enc<'_>) -
     // `length` belongs on the arming fragment only; sending it on a continuation
     // (or omitting it at offset 0) is the `CTAP1_ERR_INVALID_PARAMETER` leg.
     let length = (off == 0) != u.ratio(1u8, 8).unwrap_or(false);
-    let auth = Auth::draw(u);
+    let auth = Auth::draw(u, token);
 
     enc.map(2 + u64::from(length) + 2 * u64::from(auth.present()))?;
     enc.u8(2)?.bytes(frag)?.u8(3)?.u64(off as u64)?;
@@ -1109,6 +1217,7 @@ fn build(
     u: &mut Unstructured<'_>,
     pool: &CredPool,
     lba: &LargeBlobState,
+    token: &[u8; 32],
     buf: &mut [u8],
 ) -> usize {
     buf[0] = match kind {
@@ -1127,13 +1236,13 @@ fn build(
     }
     let mut enc = Encoder::new(Cursor::new(&mut buf[1..]));
     let built = match kind {
-        K_MC => mc(u, pool, &mut enc),
-        K_GA => ga(u, pool, &mut enc),
+        K_MC => mc(u, pool, token, &mut enc),
+        K_GA => ga(u, pool, token, &mut enc),
         K_CP => cp(u, &mut enc),
-        K_CFG => cfg(u, &mut enc),
+        K_CFG => cfg(u, token, &mut enc),
         K_LB if u.ratio(1u8, 3).unwrap_or(false) => lb_read(u, &mut enc),
-        K_LB => lb_write(u, lba, &mut enc),
-        _ => cm(u, pool, &mut enc),
+        K_LB => lb_write(u, lba, token, &mut enc),
+        _ => cm(u, pool, token, &mut enc),
     };
     if built.is_err() {
         return 0;
@@ -1185,6 +1294,9 @@ struct Sess {
     presence: rsk_fido::AlwaysConfirm,
     now_ms: u64,
     pool: CredPool,
+    /// The token the generated requests MAC with — [`TOKEN`] until a handshake
+    /// mints a real one, and back to it on every [`Sess::rearm`].
+    token: [u8; 32],
     out: [u8; OUT_MAX],
 }
 
@@ -1202,25 +1314,120 @@ impl Sess {
             presence: rsk_fido::AlwaysConfirm,
             now_ms: 2,
             pool,
+            token: TOKEN,
             out: [0; OUT_MAX],
         };
         s.rearm();
         s
     }
 
-    /// Arm a token with every permission. A real platform gets a fresh one from
+    /// Plant a token with every permission. A real platform gets a fresh one from
     /// clientPIN after each ceremony spends it (§6.5.5.7 clears UV and all but
-    /// largeBlobWrite); the fuzzer cannot run that ECDH handshake, so this stands
-    /// in for it — without a re-arm a session gets exactly one token-authorized
-    /// command and the rest bounce off `PIN_AUTH_INVALID`.
+    /// largeBlobWrite); this is the cheap stand-in, so a session that never runs
+    /// [`Sess::pin_handshake`] still gets more than one token-authorized command
+    /// before the rest bounce off `PIN_AUTH_INVALID`.
     fn rearm(&mut self) {
+        self.token = TOKEN;
         self.state.paut.token = TOKEN;
         self.state.paut.permissions = ALL_PERMS;
         self.state.paut.has_rp_id = false;
         self.state.begin_using_token(false, self.now_ms);
     }
 
-    fn step(&mut self, msg: &[u8]) {
+    /// The clientPIN handshake a platform really runs: getKeyAgreement, ECDH
+    /// against a fixed host scalar, setPIN, then a permissions token, which the
+    /// generated requests then MAC with. It sets `EF_PIN` — the branch every
+    /// PIN-set leg of makeCredential and getAssertion hangs off, and one no
+    /// mutator can reach, since setPIN wants a MAC over an ECDH nobody can guess.
+    fn pin_handshake(&mut self, proto: PinProto) {
+        let p = match proto {
+            PinProto::One => 1,
+            PinProto::Two => 2,
+        };
+        let mut msg = [0u8; 256];
+
+        let n = cp_msg(&mut msg, p, CP_GET_KEY_AGREEMENT, &CpReq::default());
+        let w = self.step(&msg[..n]);
+        if self.out[0] != rsk_fido::CTAP2_OK {
+            return;
+        }
+        let Some((dx, dy)) = key_agreement_xy(&self.out[1..w]) else {
+            return;
+        };
+        let mut shared = [0u8; 64];
+        let Ok(slen) = pinproto::ecdh(proto, &HOST_SCALAR, &dx, &dy, &mut shared) else {
+            return;
+        };
+        let secret = &shared[..slen];
+        let iv = [0x5Cu8; pinproto::IV_SIZE];
+
+        // setPIN: the padded PIN encrypted under the shared secret, MAC'd with it.
+        let mut padded = [0u8; 64];
+        padded[..PIN.len()].copy_from_slice(PIN);
+        let mut new_pin_enc = [0u8; 64 + pinproto::IV_SIZE];
+        let Ok(enc_len) = pinproto::encrypt(proto, secret, &iv, &padded, &mut new_pin_enc) else {
+            return;
+        };
+        let mut mac = [0u8; 32];
+        let Ok(mac_len) = pinproto::authenticate(proto, secret, &new_pin_enc[..enc_len], &mut mac)
+        else {
+            return;
+        };
+        let n = cp_msg(
+            &mut msg,
+            p,
+            CP_SET_PIN,
+            &CpReq {
+                key_agreement: true,
+                param: &mac[..mac_len],
+                new_pin_enc: &new_pin_enc[..enc_len],
+                ..CpReq::default()
+            },
+        );
+        self.step(&msg[..n]);
+
+        // …then a token: left16(SHA-256(PIN)) under the same secret.
+        let mut pin_hash_enc = [0u8; 16 + pinproto::IV_SIZE];
+        let Ok(hash_len) =
+            pinproto::encrypt(proto, secret, &iv, &sha256(PIN)[..16], &mut pin_hash_enc)
+        else {
+            return;
+        };
+        let n = cp_msg(
+            &mut msg,
+            p,
+            CP_GET_PIN_UV_TOKEN_USING_PIN,
+            &CpReq {
+                key_agreement: true,
+                pin_hash_enc: &pin_hash_enc[..hash_len],
+                permissions: HANDSHAKE_PERMS,
+                ..CpReq::default()
+            },
+        );
+        let w = self.step(&msg[..n]);
+        if self.out[0] != rsk_fido::CTAP2_OK {
+            return;
+        }
+        let Some(sealed) = map_bytes(&self.out[1..w], 2) else {
+            return;
+        };
+        let mut token = [0u8; 32];
+        let Ok(len) = pinproto::decrypt(proto, secret, sealed, &mut token) else {
+            return;
+        };
+        assert_eq!(len, TOKEN.len(), "an issued pinUvAuthToken is 32 bytes");
+        // §6.5.5.7 mints a fresh token per issuance (`reset_pin_uv_auth_token`);
+        // handing back the one the session already held is the linkability the
+        // random IV on the ciphertext exists to prevent, one layer down.
+        assert_ne!(
+            token, self.token,
+            "getPinToken re-issued the standing token"
+        );
+        self.token = token;
+    }
+
+    /// Drive one CTAPHID_CBOR message; returns the reply length in `self.out`.
+    fn step(&mut self, msg: &[u8]) -> usize {
         let mut ctx = Ctx {
             presence: &mut self.presence,
             dev: self.dev,
@@ -1242,6 +1449,7 @@ impl Sess {
         }
         // Advance past the token-timeout edges.
         self.now_ms += 997;
+        w
     }
 
     /// The trusted-display Passkeys view over whatever the session left in flash.
@@ -1278,6 +1486,19 @@ fuzz_target!(|data: &[u8]| {
     };
     let mut s = Sess::new(provisioned());
 
+    // Byte 0 carries two more bits above the arm selector: whether to run the
+    // clientPIN handshake first, and under which protocol. They come out of `arm`
+    // rather than from `u`, because a drawn bit re-phases every generated sequence
+    // the accumulated corpus encodes while `arm / ARMS` costs nothing.
+    let q = arm / ARMS;
+    if q & 1 == 1 {
+        s.pin_handshake(if q & 2 == 0 {
+            PinProto::Two
+        } else {
+            PinProto::One
+        });
+    }
+
     if arm % ARMS == 0 {
         // Arm 0 — raw replay: BE16-length-prefixed CBOR messages, the shape the
         // accumulated corpus is in. Large-blob fragments need more than one byte
@@ -1298,7 +1519,7 @@ fuzz_target!(|data: &[u8]| {
             if kind == K_REARM {
                 s.rearm();
             } else {
-                let n = build(kind, &mut u, &s.pool, &s.state.lba, &mut msg);
+                let n = build(kind, &mut u, &s.pool, &s.state.lba, &s.token, &mut msg);
                 if n > 0 {
                     s.step(&msg[..n]);
                 }

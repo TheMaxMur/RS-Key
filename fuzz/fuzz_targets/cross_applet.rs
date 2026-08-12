@@ -34,6 +34,7 @@
 //! | `0xF3` | `refresh_enabled()` — re-read the capability mask from flash |
 //! | `0xF4` | `factory_wipe()` — the device-wide reset |
 //! | `0xF5` | `handle_otp_hid(slot, payload)` — the keyboard interface |
+//! | `0xF6` | WRITE CONFIG `USB_ENABLED = be16(hi, lo)` — the capability mask |
 //! | anything else | a raw APDU, framed by `apdu_frame::next_frame`: one length byte then that many bytes, or `0xFF` for the extended-Lc escape |
 //!
 //! Beyond not panicking, the oracle is the set of rules this crate owns and no
@@ -64,9 +65,13 @@ const OPENPGP_MFR: u16 = 0x1234;
 
 /// OpenPGP `GENERATE ASYMMETRIC KEY` and PIV `GENERATE` are both INS `0x47`.
 const INS_GENERATE: u8 = 0x47;
-/// The ykman vendor command the FIDO transport must always serve; `0x43` (WRITE
-/// CONFIG) is its ungated twin on the default build and needs no constant here.
+/// The ykman vendor commands the FIDO transport serves: READ CONFIG must always
+/// answer, and WRITE CONFIG is its ungated twin on the default build.
 const CTAP_READ_CONFIG: u8 = 0x42;
+const CTAP_WRITE_CONFIG: u8 = 0x43;
+/// DeviceInfo's `USB_ENABLED` tag — mirrors `rsk-mgmt`'s crate-private
+/// `TAG_USB_ENABLED`, the one writable field that decides which applets exist.
+const TAG_USB_ENABLED: u8 = 0x03;
 /// The four PIN references the trusted display's pad can be asked to collect.
 const PIN_REFS: [u8; 4] = [
     rsk_openpgp::consts::PW1_MODE81,
@@ -96,6 +101,7 @@ const OP_RESET_CHAINING: u8 = 0xF2;
 const OP_REFRESH: u8 = 0xF3;
 const OP_FACTORY_WIPE: u8 = 0xF4;
 const OP_OTP_HID: u8 = 0xF5;
+const OP_SET_CAPS: u8 = 0xF6;
 
 /// The board underneath the wiring. Every [`Hooks`] method stays at its default,
 /// which is what a build with none of that hardware does — and `rsa_search`'s
@@ -338,6 +344,16 @@ fuzz_target!(|data: &[u8]| {
                         "function slot {slot:#04x} answered while OTP is off"
                     );
                 }
+            }
+            OP_SET_CAPS => {
+                // The cap mask is this target's second magic value after the AIDs:
+                // disabling anything otherwise means inventing `03 02 <hi> <lo>`
+                // behind two more bytes, so the SELECT gate and the OTP-inert
+                // clause only ever ran with everything enabled.
+                let hi = byte(data, &mut i);
+                let lo = byte(data, &mut i);
+                let blob = [0x04, TAG_USB_ENABLED, 0x02, hi, lo];
+                let _ = ccid.ctap_mgmt(CTAP_WRITE_CONFIG, &blob);
             }
             // A raw APDU. The length is its own byte rather than the opcode's:
             // reserving `0x00`–`0x06` would otherwise make every 4-, 5- and

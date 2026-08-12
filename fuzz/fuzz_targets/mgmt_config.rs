@@ -13,6 +13,11 @@
 //! that hid the EF_DEV_CONF over-length panic — is explored directly against the
 //! persisted flash. Nothing may panic.
 //!
+//! The sequence opens by writing a record straight to `EF_DEV_CONF`. Nothing this
+//! build accepts through WRITE CONFIG can store more than 24 stripped bytes, so
+//! the record an older build left behind — the state an upgraded key is actually
+//! in, since `EF_DEV_CONF` survives every reset — has no other way in.
+//!
 //! The read-back is judged, not discarded. Three properties, none of which needs
 //! to know the DeviceInfo field set: an accepted write leaves a READ CONFIG that
 //! still answers; the answer is a body a host can parse whole; and the answer the
@@ -34,11 +39,13 @@ const INS_READ_CONFIG: u8 = 0x1D;
 /// The CCID short-APDU response budget — what the dispatch path gets.
 const CCID_RES_CAP: usize = 256;
 
-/// Smallest response buffer any transport hands READ CONFIG: the OTP-HID frame
-/// (mirrors rsk-mgmt's crate-private `MIN_CONFIG_RES_CAP`). It is the budget the
-/// echo clamp actually bites at — a 43-byte config once wedged this transport into
-/// a permanently empty `9000` (audit run-33).
-const MIN_CONFIG_RES_CAP: usize = 64;
+/// `EF_DEV_CONF`'s file id (mirrors rsk-mgmt's crate-private constant).
+const EF_DEV_CONF: u16 = 0x1122;
+
+/// Longest record the harness seeds. Past `EF_DEV_CONF_READ_MAX` (64) on purpose:
+/// `config_tlv`'s `full <= conf.len()` guard has no other way to be exercised,
+/// since every write this build accepts stores at most 24 stripped bytes.
+const LEGACY_MAX: usize = 128;
 
 fn run(app: &mut ManagementApplet<'_>, fs: &mut Fs<RamStorage>, raw: &[u8]) -> Option<Sw> {
     let apdu = Apdu::parse(raw).ok()?;
@@ -47,11 +54,10 @@ fn run(app: &mut ManagementApplet<'_>, fs: &mut Fs<RamStorage>, raw: &[u8]) -> O
     Some(app.process(&apdu, fs, &mut res))
 }
 
-/// One READ CONFIG through the direct (non-CCID) entry point into a `cap`-byte
-/// response buffer — the transports differ only in how much room they give it.
-fn read_back(app: &ManagementApplet<'_>, fs: &mut Fs<RamStorage>, cap: usize) -> (Sw, Vec<u8>) {
+/// One READ CONFIG through the direct (non-CCID) entry point.
+fn read_back(app: &ManagementApplet<'_>, fs: &mut Fs<RamStorage>) -> (Sw, Vec<u8>) {
     let mut buf = [0u8; CCID_RES_CAP];
-    let mut res = ResBuf::new(&mut buf[..cap]);
+    let mut res = ResBuf::new(&mut buf);
     let sw = app.read_config(fs, &mut res);
     (sw, res.as_slice().to_vec())
 }
@@ -88,9 +94,20 @@ fuzz_target!(|data: &[u8]| {
     let presence = RefCell::new(AlwaysConfirm);
     let mut app = ManagementApplet::new([0x12, 0x34, 0x56, 0x78, 1, 2, 3, 4], &presence);
 
-    // Consume the input as a sequence of `(len, blob)` writes; after each one,
-    // read the config back. State persists in `fs` across the whole sequence.
+    // Seed a record straight into flash first. `persist_dev_conf` refuses every
+    // blob an older build could store and this record outlives every reset, so
+    // the post-upgrade field state is reachable from nowhere else in this target.
     let mut i = 0;
+    if !data.is_empty() {
+        let n = (data[0] as usize).min(LEGACY_MAX).min(data.len() - 1);
+        i = 1 + n;
+        if n > 0 {
+            let _ = fs.put(EF_DEV_CONF, &data[1..1 + n]);
+        }
+    }
+
+    // Consume the rest as a sequence of `(len, blob)` writes; after each one,
+    // read the config back. State persists in `fs` across the whole sequence.
     while i < data.len() {
         let inner = data[i] as usize; // 0..=255 — short Lc fits, may exceed 64
         i += 1;
@@ -110,25 +127,26 @@ fuzz_target!(|data: &[u8]| {
         cmd.extend_from_slice(blob);
         let wrote = run(&mut app, &mut fs, &cmd);
 
-        // Read it back over every interface that serves the DeviceInfo TLV.
+        // One cap, not two: `EF_DEV_CONF_MAX` is *derived* from the 64-byte one,
+        // so the echo clamp equals `room` there and both answers are equal by
+        // construction — 0 divergences in 15.9M paired reads, and in 550k more
+        // once the seeding above could store what the writer refuses.
         let _ = run(&mut app, &mut fs, &[0x00, INS_READ_CONFIG, 0, 0, 0x00]);
-        for cap in [MIN_CONFIG_RES_CAP, CCID_RES_CAP] {
-            let (sw, body) = read_back(&app, &mut fs, cap);
-            // A write the device accepted must leave it able to describe itself.
-            // A refused one changed nothing, so it carries no such obligation.
-            if wrote == Some(Sw::OK) {
-                assert_eq!(sw, Sw::OK, "READ CONFIG failed after an accepted write");
-            }
-            assert_parseable(sw, &body);
+        let (sw, body) = read_back(&app, &mut fs);
+        // A write the device accepted must leave it able to describe itself.
+        // A refused one changed nothing, so it carries no such obligation.
+        if wrote == Some(Sw::OK) {
+            assert_eq!(sw, Sw::OK, "READ CONFIG failed after an accepted write");
         }
+        assert_parseable(sw, &body);
     }
 
     // The rescan invariant, over the state the whole sequence left behind. `scan`
     // rebuilds the present-cache from the backend exactly as the device does at
     // power-up, so a difference is a record only one of the two paths can see.
-    let (sw_live, live) = read_back(&app, &mut fs, CCID_RES_CAP);
+    let (sw_live, live) = read_back(&app, &mut fs);
     fs.scan();
-    let (sw_cold, cold) = read_back(&app, &mut fs, CCID_RES_CAP);
+    let (sw_cold, cold) = read_back(&app, &mut fs);
     assert_eq!(
         sw_live, sw_cold,
         "READ CONFIG status changed across a rescan"
