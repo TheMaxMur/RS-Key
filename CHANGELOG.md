@@ -530,6 +530,18 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   next command. Emulator only: the firmware and the emulator's `--usbip` path
   (which runs the real transport) were never affected.
 
+- **`tools/emu`'s power cycle skipped the Yubico-OTP use-counter bump, so the
+  bench could not test the replay defence.** `firmware/src/main.rs` runs
+  `power_up_bump` at every cold boot precisely because the RAM session counter
+  restarts at 0 on each power-up: if the persistent use counter stood still, the
+  `(use, session)` pair a Yubico validation server orders OTPs by would repeat.
+  The emulator had no reference to it at all — neither at process start nor on
+  the replug (`OP_REPLUG`, and the USB/IP attach that shares it), so it reset the
+  session half and left the persistent half exactly where it was: the one
+  arrangement the defence exists to prevent, on the bench built to test it. Both
+  power-ups bump now, and the ungated warm reboot still does not — a bump there
+  would hand any host a way to walk the counter to its ceiling. Emulator only.
+
 - **`tools/emu` had no CTAPHID inter-frame timeout, so an abandoned message
   wedged the session for good.** The device transport races its frame read
   against `RX_TIMEOUT_MS` and answers `CTAPHID_ERROR(MSG_TIMEOUT)`; the socket

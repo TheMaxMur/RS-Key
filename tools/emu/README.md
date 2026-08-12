@@ -181,8 +181,9 @@ response         len:u32 BE | payload
 ```
 
 `op` is `00` for a CCID message and `03` for a replug (a power cycle: RAM state
-is dropped and the CTAP 2.1 §6.6 reset window reopens — CCID has no message for
-that, because a power cycle is not a card reset). The payload of a `00` is a
+is dropped, the CTAP 2.1 §6.6 reset window reopens, and every plain Yubico-OTP
+slot's use counter advances — CCID has no message for that, because a power cycle
+is not a card reset, and a warm reboot is neither). The payload of a `00` is a
 whole `PC_to_RDR` message, header and all, and the answer is a whole `RDR_to_PC`:
 the same bytes a PC/SC driver puts on the bulk endpoints, so `rsk_usb::ccid` runs
 here rather than being bypassed. One request may draw several responses, as a
