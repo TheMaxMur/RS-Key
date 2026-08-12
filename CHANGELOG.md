@@ -99,8 +99,9 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   a `SEND REMAINING` page cannot answer a different code from the first frame.
   This also settles the `only increasing` mark: it has always been compared
   against the challenge the host sent, so a clamped code meant the mark recorded
-  bytes no code was ever computed from — the two are now the same bytes, and the
-  stored mark's width is the challenge bound rather than a second copy of 64.
+  bytes no code was ever computed from — the two are now the same bytes. The
+  stored mark stays a fixed 64 bytes, so a mark an older build wrote is still
+  readable; a compile-time assertion holds the challenge bound at or below it.
   **bcdDevice → 0x08B2.**
 
 - **The resetting-code write keeps its own refusal word.** The judgement that a
