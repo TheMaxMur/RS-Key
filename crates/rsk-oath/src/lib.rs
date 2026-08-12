@@ -792,12 +792,15 @@ impl<'a> OathApplet<'a> {
         let (Some((_, name)), Some((_, new_name))) = (names.next(), names.next()) else {
             return SW_WRONG_DATA;
         };
-        if name == new_name {
-            return SW_WRONG_DATA;
-        }
         let mut scratch = [0u8; CRED_MAX];
         let mkek = read_fused(self.mkek_source);
         let dev = self.device(&mkek);
+        // One credential per name: PUT holds it by overwriting, RENAME by refusing
+        // a taken target (self-rename included, as on a YubiKey 5.7.4). Judged
+        // before the source, which stays invisible only while both answer this.
+        if find_cred(&dev, fs, new_name, &mut scratch).is_some() {
+            return Sw::DATA_INVALID;
+        }
         let Some((fid, n)) = find_cred(&dev, fs, name, &mut scratch) else {
             return Sw::DATA_INVALID;
         };

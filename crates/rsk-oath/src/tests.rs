@@ -727,15 +727,85 @@ fn rename_replaces_name_in_place() {
     let (sw, _) = run(&mut app, &mut fs, &apdu(INS_CALCULATE, 0, 1, &d));
     assert_eq!(sw, Sw::DATA_INVALID);
 
-    // Same old/new name is rejected; unknown name is DATA_INVALID.
+    // Same old/new name is the taken-target case; unknown name is DATA_INVALID.
     let mut d = tlv(TAG_NAME, b"newname");
     d.extend(tlv(TAG_NAME, b"newname"));
     let (sw, _) = run(&mut app, &mut fs, &apdu(INS_RENAME, 0, 0, &d));
-    assert_eq!(sw, SW_WRONG_DATA);
+    assert_eq!(sw, Sw::DATA_INVALID);
     let mut d = tlv(TAG_NAME, b"missing");
     d.extend(tlv(TAG_NAME, b"other"));
     let (sw, _) = run(&mut app, &mut fs, &apdu(INS_RENAME, 0, 0, &d));
     assert_eq!(sw, Sw::DATA_INVALID);
+}
+
+/// One credential per name is the store's rule — PUT keeps it by overwriting
+/// (`put_overwrites_same_name`), so RENAME keeps it by refusing. A YubiKey 5.7.4
+/// answers `6984` to a taken target, and nothing on the card moves.
+#[test]
+fn rename_onto_an_existing_name_is_refused() {
+    let mut fs = new_fs();
+    let rng = RefCell::new(CountRng(7));
+    let touch = RefCell::new(AlwaysConfirm);
+    let mut app = OathApplet::new(SERIAL, [0x22; 32], None, &rng, &touch);
+    put(
+        &mut app,
+        &mut fs,
+        &put_data(b"alpha", 0x21, 8, SECRET_SHA1, false, None),
+    );
+    put(
+        &mut app,
+        &mut fs,
+        &put_data(b"beta", 0x21, 8, b"beta-secret-01234567", false, None),
+    );
+    let alpha_code = calc_code(&mut app, &mut fs, b"alpha", 1, 8);
+    let beta_code = calc_code(&mut app, &mut fs, b"beta", 1, 8);
+    assert_ne!(alpha_code, beta_code);
+
+    let mut d = tlv(TAG_NAME, b"alpha");
+    d.extend(tlv(TAG_NAME, b"beta"));
+    let (sw, _) = run(&mut app, &mut fs, &apdu(INS_RENAME, 0, 0, &d));
+    assert_eq!(sw, Sw::DATA_INVALID);
+    // Refused means untouched: two rows, each still answering with its own secret.
+    // A second `beta` would shadow the first, and deleting it would silently change
+    // which code the surviving row produces.
+    let (_, body) = run(&mut app, &mut fs, &apdu(INS_LIST, 0, 0, &[]));
+    assert_eq!(
+        body,
+        [
+            vec![TAG_NAME_LIST, 6, 0x21],
+            b"alpha".to_vec(),
+            vec![TAG_NAME_LIST, 5, 0x21],
+            b"beta".to_vec(),
+        ]
+        .concat()
+    );
+    assert_eq!(calc_code(&mut app, &mut fs, b"alpha", 1, 8), alpha_code);
+    assert_eq!(calc_code(&mut app, &mut fs, b"beta", 1, 8), beta_code);
+
+    // Renaming onto itself is that same taken target, not a syntax error.
+    let mut d = tlv(TAG_NAME, b"beta");
+    d.extend(tlv(TAG_NAME, b"beta"));
+    let (sw, _) = run(&mut app, &mut fs, &apdu(INS_RENAME, 0, 0, &d));
+    assert_eq!(sw, Sw::DATA_INVALID);
+    // A taken target is judged first, so these two pin that the missing-source
+    // answer survives it: both refusals must stay the one status word, or the
+    // card's `6984` for a source it does not have turns into the target's.
+    for (from, to) in [(&b"nosuch"[..], &b"nosuch"[..]), (b"nosuch", b"beta")] {
+        let mut d = tlv(TAG_NAME, from);
+        d.extend(tlv(TAG_NAME, to));
+        let (sw, _) = run(&mut app, &mut fs, &apdu(INS_RENAME, 0, 0, &d));
+        assert_eq!(sw, Sw::DATA_INVALID);
+    }
+
+    // The collision predicate is the byte-exact one the source lookup already
+    // uses: a target differing only in case is free, and the rename carries the
+    // secret across.
+    let mut d = tlv(TAG_NAME, b"alpha");
+    d.extend(tlv(TAG_NAME, b"Beta"));
+    let (sw, _) = run(&mut app, &mut fs, &apdu(INS_RENAME, 0, 0, &d));
+    assert_eq!(sw, Sw::OK);
+    assert_eq!(calc_code(&mut app, &mut fs, b"Beta", 1, 8), alpha_code);
+    assert_eq!(calc_code(&mut app, &mut fs, b"beta", 1, 8), beta_code);
 }
 
 /// Drive the full access-code lifecycle the way ykman does.

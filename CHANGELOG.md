@@ -40,6 +40,36 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Security
 
+- **An OATH rename onto a name that is already taken is refused instead of
+  minting a second credential with that name.** One credential per name is the
+  store's rule, and only one of its two writers held it: PUT looks the name up
+  and overwrites, RENAME looked up the source and never the target. Measured on
+  the emulator, `RENAME alpha -> beta` with a `beta` already stored answered
+  `9000` and left two rows called `beta`. Every name-addressed command then
+  resolves to the lower slot, so `CALCULATE beta` returned alpha's code,
+  `GET CREDENTIAL beta` returned alpha's stored login and password, and the real
+  `beta` became unaddressable while still holding its slot — so deleting the row
+  a host displays silently changes which code the remaining one produces. It
+  compounds: three more renames onto the same name gave four rows called `beta`,
+  and they survive a power cycle. A YubiKey 5.7.4 answers `6984` to a taken
+  target and changes nothing, measured across the surface — including a target
+  differing only in case (free, so `9000`), a target of the other OATH type, and
+  renaming a credential onto itself, which the applet used to report as a syntax
+  error (`6700`). The target is now looked up with the byte-exact lookup the
+  source already uses, and both refusals report the same "no such object", so a
+  rename whose source does not exist reads the same whatever the target names —
+  which is also the one cell of the card's own order that cannot be measured
+  from outside. Nothing else moves: a rename onto a free name still carries the
+  secret, type, algorithm, digits, HOTP counter, touch property and LIST
+  position across, still needs no free slot on a full store, and the
+  access-code gate still answers before the parser. `ykman` hid this — it
+  pre-checks the collision on the host and never sends the APDU, so only a
+  client that does not pre-check ever saw the duplicate, and that is why
+  `docs/guides/oath.md` already described the behaviour the card only has now.
+  A duplicate an older build already wrote is left alone: both rows are real
+  credentials, and removing one is data loss.
+  **bcdDevice → 0x0893.**
+
 - **The Yubico-OTP use counter now stops one short of the ceiling instead of one
   past it.** Its two writers disagreed by one. `ticket::build` guarded the counter
   it already held and *then* incremented, so the press whose session counter wraps
