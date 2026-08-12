@@ -129,8 +129,9 @@ jobs:
             # word list, so a broken `cargo fuzz list` fuzzed zero targets and
             # this job reported green — measured, rc=0. Floor the roster at today's
             # count: unlike the firmware-size ratchet it needs no margin, because a
-            # target count has no build noise. Lower FUZZ_TARGET_FLOOR, and the twin
-            # in scripts/fuzz-coverage.sh, in the commit that removes a target.
+            # target count has no build noise. Lower FUZZ_TARGET_FLOOR, and its two
+            # copies in scripts/fuzz-coverage.sh and scripts/check.sh, in the commit
+            # that removes a target.
             mapfile -t targets < <(cargo fuzz list)
             # The corpus lives in one LRU-evictable cache entry; on a restore
             # miss every target starts from empty and the run still says DONE.

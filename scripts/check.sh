@@ -175,6 +175,48 @@ release_image_retires_its_unsigned_image_def() {
   echo "sealed image retires its unsigned IMAGE_DEF (block 1 = ignored)"
 }
 
+# The `fmt (fuzz)` and `clippy (fuzz)` rows compile `fuzz/` and never run it, so a
+# behaviour change in `crates/` can leave a harness dead with the PR green. It did:
+# `oath_apdu` asserts its hard-coded seed PUT succeeded, PUT gained the card's
+# key-length bounds at 0x08A0, and the target panicked on EVERY input — the empty
+# one included — until the nightly reported it as a crash ~13 h later. libFuzzer
+# replays one input with no instrumentation, so this uses the same stable
+# toolchain as every row above (no nightly, no `.#fuzz` shell) and runs each
+# target on the empty file. Liveness only — no sanitizer, no coverage, no
+# fuzzing; those stay in deep-checks.
+#
+# Same floor, and the same reason, as scripts/fuzz-coverage.sh and the
+# deep-checks fuzz loop: a `for` over an empty word list runs nothing and exits
+# 0. Lower all three in the commit that removes a target.
+FUZZ_TARGET_FLOOR=53
+fuzz_targets_are_alive() {
+  local manifest log empty bins dead=""
+  manifest=$(mktemp)
+  log=$(mktemp)
+  empty=$(mktemp)
+  # Diagnostics still render to stderr, and `set -e` still stops the gate on a
+  # compile error; only the JSON goes to the file.
+  cargo build --manifest-path fuzz/Cargo.toml --bins --target "$HOST" \
+    --message-format=json-render-diagnostics >"$manifest"
+  # cargo's own artifact list, not a directory listing: a binary left behind by a
+  # deleted target would otherwise read as alive forever.
+  mapfile -t bins < <(grep -o '"executable":"[^"]*"' "$manifest" | cut -d'"' -f4)
+  echo "${#bins[@]} fuzz targets (floor ${FUZZ_TARGET_FLOOR}), one execution each on the empty input"
+  if [ "${#bins[@]}" -lt "$FUZZ_TARGET_FLOOR" ]; then
+    echo "FAIL: the build yielded ${#bins[@]} fuzz targets, under the ${FUZZ_TARGET_FLOOR} floor." >&2
+    exit 1
+  fi
+  for b in "${bins[@]}"; do
+    "$b" "$empty" >"$log" 2>&1 || { dead="$dead ${b##*/}"; cat "$log" >&2; }
+  done
+  rm -f "$manifest" "$log" "$empty"
+  if [ -n "$dead" ]; then
+    echo "FAIL: these fuzz targets die before they read a fuzzer byte:$dead" >&2
+    echo "      A harness whose hard-coded preamble stopped working fuzzes nothing." >&2
+    exit 1
+  fi
+}
+
 run "fmt"                      cargo fmt --all --check
 # `BOARD` because `rsk-wipe`'s build script refuses to guess a flash size (see
 # the rsk-wipe steps below); `waveshare-one` is the reference board, whose
@@ -223,6 +265,7 @@ run "fmt (fuzz)"               cargo fmt --manifest-path fuzz/Cargo.toml --check
 # and five diagnostics sat in it committed and red. Clippy subsumes the check, so
 # it replaces that row rather than joining it — two rows thrash one target-dir.
 run "clippy (fuzz)"            cargo clippy --manifest-path fuzz/Cargo.toml --all-targets --target "$HOST" -- -D warnings
+run "fuzz targets alive"       fuzz_targets_are_alive
 # No row in this script or in any workflow had ever run rustdoc, so every
 # intra-doc link in the tree was unchecked and 19 of the units below had rotted
 # to 75 broken ones. `RUSTDOCFLAGS` is what makes these rows able to go red at

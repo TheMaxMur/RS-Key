@@ -34,7 +34,8 @@ ign='(fuzz/fuzz_targets/|/\.cargo/registry/|/rustc/|/library/|/rustlib/)'
 
 # Same floor and same reason as the deep-checks fuzz loop: `set -e` does not fire
 # on an empty or failing $( ) in a `for` word list, so a broken `cargo fuzz list`
-# printed an empty table and exited 0. Lower both floors in the same commit.
+# printed an empty table and exited 0. The third copy is the `fuzz targets alive`
+# row in scripts/check.sh; lower all three in the same commit.
 # A literal, not `${FUZZ_TARGET_FLOOR:-53}`: a floor the environment can lower is
 # not a ratchet, so `env FUZZ_TARGET_FLOOR=… ` in front of this script does nothing.
 FUZZ_TARGET_FLOOR=53
