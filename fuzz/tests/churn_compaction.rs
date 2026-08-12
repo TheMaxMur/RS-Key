@@ -135,10 +135,10 @@ fn churn_lap_physically_scrubs_superseded_secret() {
     // The append-only log still holds the weaker pre-OTP copy: this is the
     // remnant a flash dump would recover (the bug being fixed).
     assert!(
-        contains(&flash.borrow().as_bytes(), pre_otp),
+        contains(flash.borrow().as_bytes(), pre_otp),
         "pre-condition: the superseded pre-OTP seed must exist in raw flash"
     );
-    assert!(contains(&flash.borrow().as_bytes(), otp));
+    assert!(contains(flash.borrow().as_bytes(), otp));
 
     churn_full_lap(&mut map, &mut buf);
 
@@ -150,7 +150,7 @@ fn churn_lap_physically_scrubs_superseded_secret() {
 
     // …and the weaker remnant physically erased from flash.
     assert!(
-        !contains(&flash.borrow().as_bytes(), pre_otp),
+        !contains(flash.borrow().as_bytes(), pre_otp),
         "the pre-OTP seed remnant must be physically scrubbed from raw flash"
     );
 }

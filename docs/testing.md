@@ -121,10 +121,12 @@ nix develop .#fuzz -c cargo fuzz list
 nix develop .#fuzz -c cargo fuzz run <target> -- -max_total_time=60
 ```
 
-The fuzz workspace is separate (nightly + libfuzzer) and is **not** built by
-check.sh. After changing a shared type, `nix develop .#fuzz -c cargo fuzz build`
-to catch drift. House rule: new attacker-facing parser or dispatch
-surface ⇒ new fuzz target in the same change.
+The fuzz workspace is separate (nightly + libfuzzer), but check.sh lints it on
+stable — the `clippy (fuzz)` row, `--all-targets` against the host target — so a
+shared type change that breaks a target fails the gate rather than the next
+nightly. The instrumented build still needs the nightly shell:
+`nix develop .#fuzz -c cargo fuzz build`. House rule: new attacker-facing parser
+or dispatch surface ⇒ new fuzz target in the same change.
 
 **Miri** runs every target's logic once more as plain tests under the UB
 checker, reporting undefined behavior instead of panics (`fuzz/tests/miri.rs`;
@@ -139,7 +141,10 @@ workflow: the Miri suite, plus a timed libFuzzer pass over every target with
 the corpus carried between runs, crash artifacts uploaded. A separate
 `fuzz-coverage` job then measures per-target region/line coverage over that
 accumulated corpus (`scripts/fuzz-coverage.sh`, run it the same way locally),
-writing a summary table and uploading a per-target HTML report.
+writing a summary table and uploading a per-target HTML report. A
+`for t in $(cargo fuzz list)` word list reports green when the list is empty, so
+both loops floor the roster first — `FUZZ_TARGET_FLOOR` in the workflow and the
+same number in the script. Lower it only in the commit that removes a target.
 
 ## Kani proofs
 

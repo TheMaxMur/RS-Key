@@ -32,16 +32,31 @@ covbuild="fuzz/coverage/.build"
 # report — we measure OUR parser/dispatch surface, not the glue around it.
 ign='(fuzz/fuzz_targets/|/\.cargo/registry/|/rustc/|/library/|/rustlib/)'
 
+# Same floor and same reason as the deep-checks fuzz loop: `set -e` does not fire
+# on an empty or failing $( ) in a `for` word list, so a broken `cargo fuzz list`
+# printed an empty table and exited 0. Lower both floors in the same commit.
+FUZZ_TARGET_FLOOR=50
 targets=("$@")
 if [ "${#targets[@]}" -eq 0 ]; then
   mapfile -t targets < <(cargo fuzz list)
+  if [ "${#targets[@]}" -lt "$FUZZ_TARGET_FLOOR" ]; then
+    echo "FAIL: cargo fuzz list yielded ${#targets[@]} targets, under the ${FUZZ_TARGET_FLOOR} floor." >&2
+    exit 1
+  fi
 fi
+# The numbers below are only as good as the corpus behind them, and in CI that
+# corpus is one evictable cache entry.
+echo "${#targets[@]} target(s), corpus: $(find fuzz/corpus -type f 2>/dev/null | wc -l) inputs"
 
 summary="${GITHUB_STEP_SUMMARY:-/dev/stdout}"
 printf '### libFuzzer per-target coverage\n\n| target | regions | lines |\n|---|---|---|\n' >> "$summary"
 
 for t in "${targets[@]}"; do
   echo "== coverage: $t =="
+  # cargo-fuzz merges EVERY profraw it ever wrote here and never clears it, so a
+  # local number could only go up: two unrelated corpora returned byte-identical
+  # percentages. CI is unaffected — it caches .build, never raw/.
+  rm -rf "fuzz/coverage/$t/raw"
   # Replay the accumulated corpus under instrumentation → merged profdata. A
   # target with an empty/absent corpus or a build hiccup must not abort the rest.
   if ! cargo fuzz coverage "$t" --target-dir "$covbuild"; then

@@ -187,8 +187,7 @@ fn reboot_verify(
                 let old_m = meta.get(f).cloned();
                 // delete drops meta FIRST: value-gone-but-meta-alive is the
                 // one state the order forbids.
-                let ok = (got_v == old_v && got_m == old_m)
-                    || (got_v == old_v && got_m.is_none())
+                let ok = (got_v == old_v && (got_m == old_m || got_m.is_none()))
                     || (got_v.is_none() && got_m.is_none());
                 assert!(ok, "torn delete: forbidden intermediate state");
                 match got_v {

@@ -179,22 +179,23 @@ run "fmt (emu)"                cargo fmt --manifest-path tools/emu/Cargo.toml --
 run "clippy (emu)"             cargo clippy --manifest-path tools/emu/Cargo.toml --target "$HOST" --all-targets -- -D warnings
 run "clippy (emu conformance)" cargo clippy --manifest-path tools/emu/Cargo.toml --target "$HOST" --all-targets --features fido-conformance -- -D warnings
 # fuzz/ is also its own (nightly) workspace. rustfmt needs no toolchain, so the
-# stable gate can format-check it here; building/clippy stay in the .#fuzz shell
-# (deep-checks CI). Format fuzz/ with this same stable rustfmt — not the .#fuzz
-# nightly one, which lays imports out differently.
+# stable gate can format-check it here. Format fuzz/ with this same stable
+# rustfmt — not the .#fuzz nightly one, which lays imports out differently.
 run "fmt (fuzz)"               cargo fmt --manifest-path fuzz/Cargo.toml --check
 # The fuzz targets call into the applet crates, so a crate signature change can
 # leave a target uncompilable — but the full `cargo fuzz build` only runs weekly
 # in .#fuzz, so that drift used to surface days later (it did: a `new()` arity
-# change silently broke three targets). A plain `cargo check` on the HOST target
-# (the fuzz workspace inherits the thumbv8m default, so `--target` is required)
-# typechecks every target's calls now, on stable, in the gate — no nightly, no
-# sanitizer build. The instrumented `cargo fuzz build` + run stays in deep-checks.
+# change silently broke three targets). This row typechecks every target's calls
+# on stable instead, on the HOST target (the fuzz workspace inherits the thumbv8m
+# default, so `--target` is required); the instrumented build stays in deep-checks.
 # It must be `--all-targets`, not `--tests`: the fuzz targets are `[[bin]]`s and
 # `--tests` compiles only test targets, so this row typechecked tests/miri.rs and
 # nothing else — the very drift it names went on unseen in `fido_vendor` and
-# `oath_otp_pin` while the row reported green.
-run "check (fuzz)"             cargo check --manifest-path fuzz/Cargo.toml --all-targets --target "$HOST"
+# `oath_otp_pin` while the row reported green. And it must be clippy, not
+# `cargo check`: `fuzz/` was the one workspace no lint row in the tree reached,
+# and four diagnostics sat in it committed and red. Clippy subsumes the check, so
+# it replaces that row rather than joining it — two rows thrash one target-dir.
+run "clippy (fuzz)"            cargo clippy --manifest-path fuzz/Cargo.toml --all-targets --target "$HOST" -- -D warnings
 run "test (host)"              cargo test -p rsk-sdk -p rsk-fs -p rsk-usb -p rsk-crypto -p rsk-fido -p rsk-openpgp -p rsk-rsa-asm -p rsk-sha512 -p rsk-ec -p rsk-mldsa -p rsk-mgmt -p rsk-oath -p rsk-otp -p rsk-piv -p rsk-rescue -p rsk-vendor -p rsk-device -p rsk-display -p rsk-store -p rsk-led -p rsk-ui -p rsk-bip39 -p rsk-slip39 -p rsk-bench --target "$HOST"
 # The PQC-advertisement opt-in changes the getInfo shape — test both forms.
 run "test (advertise-pqc)"     cargo test -p rsk-fido --features advertise-pqc --target "$HOST" getinfo
