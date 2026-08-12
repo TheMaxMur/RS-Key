@@ -234,7 +234,8 @@ INAPPLICABLE: dict[str, dict[str, str]] = {
         # Clearing PW3 to the empty string — the doorway into admin-less mode, and
         # upstream's own comment used to read "Gnuk specific feature of clear PW3"
         # before the guard was dropped. §4.3.1 puts PW3 at "8 characters/digits
-        # minimum", so a zero-length new PW3 is 6700 here.
+        # minimum", so a zero-length new PW3 is 6985 here (the APDU is well
+        # formed; it is the value inside it the card will not take).
         "010_kdfnone/test_019_adminfull_kdfnone.py": "clearing PW3 to empty: §4.3.1 sets an 8-character minimum",
         "020_kdffull/05_finalize/test_059_adminfull_kdffull.py": "clearing PW3 to empty: §4.3.1 sets an 8-character minimum",
         "030_kdfsingle/test_066_adminfull_kdfsingle.py": "clearing PW3 to empty: §4.3.1 sets an 8-character minimum",
