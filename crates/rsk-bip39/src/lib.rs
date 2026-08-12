@@ -27,7 +27,13 @@ pub const WORD_COUNT: usize = 24;
 /// bits; the 264-bit string is then read big-endian in 11-bit groups. The returned array
 /// is secret (it reconstructs the seed) — zeroize it once the phrase is shown.
 pub fn entropy_to_indices(entropy: &[u8; 32]) -> [u16; WORD_COUNT] {
-    let checksum = rsk_crypto::sha256(entropy)[0];
+    pack_indices(entropy, rsk_crypto::sha256(entropy)[0])
+}
+
+/// The packing half of [`entropy_to_indices`], with the checksum byte passed in.
+/// Split out so `indices_in_range` proves the real loop over a symbolic checksum
+/// instead of dragging SHA-256 into the solver for no added assurance.
+fn pack_indices(entropy: &[u8; 32], checksum: u8) -> [u16; WORD_COUNT] {
     // Bit `b` of the 264-bit string: the first 256 come from `entropy` (MSB-first per
     // byte), the last 8 from `checksum`. No copy of the seed is made.
     let bit = |b: usize| -> u16 {

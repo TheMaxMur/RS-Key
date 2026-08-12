@@ -102,14 +102,32 @@ fn settings_keys_disjoint() {
     assert!(!(ADJ_PLUS_RECT.contains(p) && TITLE_BACK_RECT.contains(p)));
 }
 
-/// No tap selects two nav tabs at once, and no tap selects two list rows at once
-/// (for any first-row offset) — so the design-system navigation can't misfire.
+/// No tap selects two nav tabs at once, no tap selects two list rows at once (for
+/// any first-row offset), and what the renderer paints is what [`hit_nav`] routes —
+/// so the design-system navigation can't misfire.
 #[kani::proof]
 fn nav_and_rows_disjoint() {
     let p = Point::new(kani::any(), kani::any());
     let (i, j): (u16, u16) = (kani::any(), kani::any());
-    kani::assume(i < 3 && j < 3 && i != j);
+    let tabs = NAV_TABS.len() as u16;
+    kani::assume(i < tabs && j < tabs && i != j);
     assert!(!(nav_tab_rect(i).contains(p) && nav_tab_rect(j).contains(p)));
+
+    // Paint ⇒ hit, for EVERY tap: a tab rect is on-panel by construction, so the cell
+    // the renderer fills for tab `i` is exactly the one `hit_nav` routes there.
+    assert!(!nav_tab_rect(i).contains(p) || hit_nav(p) == Some(NAV_TABS[i as usize]));
+    // Nothing above the nav band routes anywhere at all.
+    assert!(p.y >= NAV_TOP || hit_nav(p).is_none());
+
+    // Hit ⇒ paint only holds for an on-panel tap: `hit_nav` clamps x with `.min()`
+    // while `nav_tab_rect` does not, and the touch path never clamps its raw 12-bit
+    // coordinate — so an off-panel x routes to Settings with no rect under it.
+    let q = Point::new(kani::any(), kani::any());
+    kani::assume(q.x < PANEL_W && q.y < PANEL_H);
+    assert_eq!(
+        nav_tab_rect(i).contains(q),
+        hit_nav(q) == Some(NAV_TABS[i as usize])
+    );
 
     let y0: u16 = kani::any();
     kani::assume(y0 <= PANEL_H);
