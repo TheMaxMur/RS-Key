@@ -13,6 +13,10 @@ mod put_tests;
 #[path = "increasing_tests.rs"]
 mod increasing_tests;
 
+/// What a failed OTP-PIN attempt does to the standing authentication.
+#[path = "otp_pin_tests.rs"]
+mod otp_pin_tests;
+
 /// RFC 6238 reference secrets.
 const SECRET_SHA1: &[u8] = b"12345678901234567890";
 const SECRET_SHA256: &[u8] = b"12345678901234567890123456789012";

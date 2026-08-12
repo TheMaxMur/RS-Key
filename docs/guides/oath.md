@@ -168,6 +168,13 @@ the CCID interface, exactly as the credential list is — that is the code-less
 default this applet shares with a YubiKey, not an oversight. If you keep
 passwords on the key, set one of the two.
 
+A failed PIN attempt shuts the safe again, whether it arrives as a verify or as
+a PIN *change* with the wrong old PIN, and either way it spends a retry. So
+walking away mid-session no longer leaves the safe readable to whoever tries the
+PIN next: the three failed guesses that lock the card also close what the last
+correct PIN opened. A malformed request is not an attempt — it costs no retry
+and changes nothing.
+
 ## Manage
 
 ```sh

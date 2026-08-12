@@ -1110,6 +1110,16 @@ impl<'a> OathApplet<'a> {
         let Some(new_pw) = find_tag(data, TAG_NEW_PASSWORD as u16) else {
             return Sw::INCORRECT_PARAMS;
         };
+        // A failed authentication drops the standing one — the rule E38 shipped
+        // for OpenPGP and PIV, and the one this command's own sibling
+        // (`cmd_verify_otp_pin`) already holds. Both flags, because `validated`
+        // is reachable *through* the OTP PIN: VERIFY sets it too, doubling as
+        // VALIDATE for the nitropy flow, so one bool carries both provenances and
+        // leaving it standing would leave a status the caller could have got by
+        // proving the very PIN it just failed. Placed like the sibling's — after
+        // the record and TLV checks, so a malformed request is not an attempt.
+        self.validated = false;
+        self.otp_pin_verified = false;
         // Same anti-bruteforce gate as VERIFY: refuse at the counter floor. After a
         // lock-out even a correct old-PIN cannot CHANGE (that floor "recovery" was
         // the run-6 unlimited-guessing oracle); recover with RESET instead.

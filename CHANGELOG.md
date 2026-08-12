@@ -40,6 +40,28 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Security
 
+- **A failed OATH PIN *change* now drops the standing authentication, as a
+  failed verify already did.** The two siblings disagreed about one rule. `0xB2`
+  VERIFY PIN with a wrong PIN answered `6982` and closed the password safe;
+  `0xB3` CHANGE PIN with a wrong *old* PIN answered `6982` and left it **open**.
+  Measured with the control firing in the same run. The sharp end is that the
+  anti-bruteforce machinery then protected nothing that was already open: after
+  burning every retry — the card refusing even the correct PIN — `0xB5` GET
+  CREDENTIAL went on serving the stored password. This is the class shipped for
+  OpenPGP and PIV: a failed authentication drops the standing one. A CHANGE now
+  clears both the OTP-PIN status and the access-code one, because `validated` is
+  reachable *through* the PIN (VERIFY sets it too, doubling as VALIDATE for the
+  nitropy flow), so leaving it would leave a status obtainable by proving the
+  very PIN that just failed — the trade VERIFY already makes. The clear sits
+  where the sibling's does, after the record and TLV checks, so a malformed
+  request stays a syntax error rather than a spent attempt. No YubiKey behaviour
+  exists to copy here and that is measured, not assumed: a 5.7.4 answers `6D00`
+  to all of `0xB0`–`0xB6` and does not distinguish this family from any other
+  unimplemented instruction, so the applet's own siblings decide. Unchanged, and
+  measured on the card rather than swept along with it: a failed OATH *access
+  code* VALIDATE keeps the standing unlock on a YubiKey, and keeps it here too.
+  **bcdDevice → 0x08A2.**
+
 - **The OATH `only increasing` property is enforced instead of stored and
   ignored.** YKOATH's PROPERTIES bit 0 promises that a credential's challenge
   never goes backwards. RS-Key accepted the byte at `PUT`, persisted it, and then
