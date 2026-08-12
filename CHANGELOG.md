@@ -40,6 +40,26 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Security
 
+- **MANAGE SECURITY ENVIRONMENT had its two control-reference templates the
+  wrong way round, so the only form a conformant host sends did nothing.**
+  OpenPGP 3.4 §7.2.18 names the templates by their ISO 7816-8 meanings — `A4`
+  is the Authentication Template and configures INTERNAL AUTHENTICATE, `B8` the
+  Confidentiality Template and configures PSO:DECIPHER — and its worked example
+  is `00 22 41 A4 03 83 01 02`. The applet read `A4` as DECIPHER and `B8` as
+  INTERNAL AUTHENTICATE. Both halves were wrong in the way that hides: the
+  spec's own example answered `9000` and repointed DECIPHER at the DEC key it
+  already used, a silent no-op, while `41 B8 83 01 02` — which no conformant
+  host sends — is what actually cross-wired a slot. Measured end to end with an
+  ECDSA P-256 authentication key and an ECDSA P-384 decryption key, so the
+  response length names the slot: `41 A4 83 01 02` then INTERNAL AUTHENTICATE
+  used to return 64 bytes (unchanged) and now returns 96. A real YubiKey 5.7.4
+  does not implement INS `0x22` at all — `6D00` to all eleven forms probed, and
+  its own DO C0 byte 10 says so — so there is no oracle here and the spec
+  decides; our C0 keeps announcing MSE as supported, because we do implement
+  it. **Three existing tests encoded the inversion** and are corrected in the
+  same change; a new end-to-end test drives the `A4` arm through the applet's
+  dispatcher, which no test did before — that arm was the no-op, so nothing
+  failed when it broke. **bcdDevice → 0x0894.**
 - **An OATH rename onto a name that is already taken is refused instead of
   minting a second credential with that name.** One credential per name is the
   store's rule, and only one of its two writers held it: PUT looks the name up

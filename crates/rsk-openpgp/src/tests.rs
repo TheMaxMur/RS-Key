@@ -696,8 +696,9 @@ fn mse_redirects_decipher_to_aut_slot() {
     let (z_dec, sw) = run(&mut app, &mut fs, &dec_cmd);
     assert_eq!(sw, Sw::OK);
 
-    // MSE: point the DECIPHER template (P2=0xA4) at key ref 3 → the AUT slot.
-    let mse = [0x00, consts::INS_MSE, 0x41, 0xA4, 0x03, 0x83, 0x01, 0x03];
+    // MSE: point the confidentiality template (P2=0xB8 = PSO:DECIPHER) at key
+    // ref 3 → the AUT slot.
+    let mse = [0x00, consts::INS_MSE, 0x41, 0xB8, 0x03, 0x83, 0x01, 0x03];
     assert_eq!(run(&mut app, &mut fs, &mse).1, Sw::OK);
 
     // Now DECIPHER uses the AUT key → a different shared secret, matching host ECDH.
@@ -708,6 +709,57 @@ fn mse_redirects_decipher_to_aut_slot() {
     let peer = p256::PublicKey::from_sec1_bytes(eph_pub.as_bytes()).unwrap();
     let shared = p256::ecdh::diffie_hellman(sk.to_nonzero_scalar(), peer.as_affine());
     assert_eq!(&z_aut, shared.raw_secret_bytes().as_slice());
+}
+
+// OpenPGP 3.4 §7.2.18's own worked example is `00 22 41 A4 03 83 01 02` — an
+// ISO 7816-8 Authentication Template, so it configures INTERNAL AUTHENTICATE.
+// It is also the only form a conformant host sends, and it used to answer 9000
+// while changing nothing. Driven through `process`, not `mse`, because the
+// defect was invisible to a helper-level test: both arms wrote a session field.
+#[test]
+fn mse_at_template_redirects_internal_authenticate() {
+    use p256::ecdsa::signature::hazmat::PrehashVerifier;
+    let rng = RefCell::new(CountRng(7));
+    let mut fs = make_fs();
+    let presence = RefCell::new(crate::AlwaysConfirm);
+    let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
+    verify_pin(&mut app, &mut fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
+
+    // A different ECDSA P-256 key in the DEC and AUT slots, so the verifying key
+    // that accepts the signature names the slot the card actually used.
+    put(&mut app, &mut fs, 0x00, 0xC2, ATTR_P256);
+    put(&mut app, &mut fs, 0x00, 0xC3, ATTR_P256);
+    let dec_scalar = [0x22u8; 32];
+    let aut_scalar = [0x44u8; 32];
+    assert_eq!(
+        run(&mut app, &mut fs, &ec_import(consts::CRT_DEC, &dec_scalar)).1,
+        Sw::OK
+    );
+    assert_eq!(
+        run(&mut app, &mut fs, &ec_import(consts::CRT_AUT, &aut_scalar)).1,
+        Sw::OK
+    );
+    verify_pin(&mut app, &mut fs, consts::PW1_MODE82, consts::PW1_DEFAULT);
+
+    let digest = [0x42u8; 32];
+    let mut int_aut = vec![0x00, consts::INS_INTERNAL_AUT, 0x00, 0x00, 32];
+    int_aut.extend_from_slice(&digest);
+
+    let (sig, sw) = run(&mut app, &mut fs, &int_aut);
+    assert_eq!(sw, Sw::OK);
+    let s = p256::ecdsa::Signature::from_slice(&sig).unwrap();
+    p256_vk(&aut_scalar).verify_prehash(&digest, &s).unwrap();
+
+    let mse = [0x00, consts::INS_MSE, 0x41, 0xA4, 0x03, 0x83, 0x01, 0x02];
+    assert_eq!(run(&mut app, &mut fs, &mse).1, Sw::OK);
+
+    let (sig, sw) = run(&mut app, &mut fs, &int_aut);
+    assert_eq!(sw, Sw::OK);
+    let s = p256::ecdsa::Signature::from_slice(&sig).unwrap();
+    p256_vk(&dec_scalar)
+        .verify_prehash(&digest, &s)
+        .expect("MSE 41 A4 {83 01 02} did not repoint INTERNAL AUTHENTICATE");
+    assert!(p256_vk(&aut_scalar).verify_prehash(&digest, &s).is_err());
 }
 
 #[test]

@@ -11,7 +11,8 @@ that MANAGE SECURITY ENVIRONMENT (0x22) repoints DECIPHER from the DEC key to th
 key:
 
     DECIPHER (default)  -> ECDH with the DEC key
-    MSE 41 A4 {83 01 03} -> point the DECIPHER template at key ref 3 (AUT slot)
+    MSE 41 B8 {83 01 03} -> point the confidentiality template (PSO:DECIPHER,
+                            ISO 7816-8 CT) at key ref 3 (AUT slot)
     DECIPHER again       -> ECDH with the AUT key  (different shared secret)
 
 Both shared secrets are checked against host ECDH with `cryptography`.
@@ -119,7 +120,7 @@ def main():
     z_dec, _, _ = tx(decipher_apdu(peer_point), "PSO:DECIPHER (default = DEC)")
     z_dec = bytes(z_dec)
 
-    tx(apdu(INS_MSE, 0x41, 0xA4, bytes([0x83, 0x01, 0x03])), "MSE DEC->ref3 (AUT slot)")
+    tx(apdu(INS_MSE, 0x41, CRT_DEC, bytes([0x83, 0x01, 0x03])), "MSE DEC->ref3 (AUT slot)")
 
     z_aut, _, _ = tx(decipher_apdu(peer_point), "PSO:DECIPHER (after MSE = AUT)")
     z_aut = bytes(z_aut)
