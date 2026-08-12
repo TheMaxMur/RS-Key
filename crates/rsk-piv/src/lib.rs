@@ -471,6 +471,16 @@ impl PivApplet<'_> {
             }
             return Sw::retries(left);
         }
+        // SP 800-73-4 pt2 §2.4.3 fixes the reference at 8 bytes on the wire, so a
+        // body that cannot be one is not a mismatch and must not cost a retry —
+        // three of them blocked the PIN. A YubiKey answers 6A80 and still drops the
+        // standing status (measured 1-16, 24, 32; `Lc = 1` alone keeps it, a quirk
+        // we do not copy). Ahead of `check_ref` so it also precedes the blocked
+        // floor, which is the oracle's order too.
+        if apdu.nc != PIN_WIRE_LEN {
+            self.sess.set_pin(false);
+            return WRONG_DATA;
+        }
         // SP 800-73-4 Part 2 §3.2.1.1 on a mismatch: "the card command shall
         // fail, the PIV Card Application shall return the status word '63 CX',
         // **the security status of the key reference shall be set to FALSE**, and

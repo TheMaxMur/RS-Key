@@ -387,6 +387,103 @@ fn verify_of_an_undefined_reference_is_wrong_data() {
     );
 }
 
+/// SP 800-73-4 pt2 §2.4.3 fixes the reference at 8 bytes on the wire, and a body
+/// that cannot be one is not a mismatch. Measured on a YubiKey 5.7.4, every
+/// length taken in 1-16, 24 and 32 but 8: `6A80`, counter untouched — while the
+/// 8-byte all-pad control burns on both cards, so it is a wire-form gate and not
+/// a refusal to compare. Three malformed VERIFYs used to block our PIN.
+///
+/// Also pins the two cells the refusal has to get right beyond the counter: it
+/// revokes the standing status (including at `Lc = 1`, where the oracle keeps it
+/// — the one divergence, and the stricter side of it), and it is judged ahead of
+/// the blocked floor, so a blocked PIN answers `6A80` and not `6983`. Both
+/// measured on the oracle, 2 runs.
+#[test]
+fn a_verify_body_that_is_not_the_wire_form_costs_no_retry() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    let body = [0x31u8; 32];
+    for n in [1usize, 2, 4, 6, 7, 9, 16, 32] {
+        assert_eq!(
+            run(&mut app, &mut fs, INS_VERIFY, 0, 0x80, &body[..n]).0,
+            WRONG_DATA,
+            "{n}-byte body"
+        );
+        assert_eq!(
+            reference_retries_left(&mut fs, PinRef::Pin),
+            Some(3),
+            "{n}-byte body cost a retry"
+        );
+    }
+    // The control: a well-formed reference that is simply wrong still burns.
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            INS_VERIFY,
+            0,
+            0x80,
+            &[PIN_PAD; PIN_WIRE_LEN]
+        )
+        .0,
+        Sw::retries(2)
+    );
+    assert_eq!(reference_retries_left(&mut fs, PinRef::Pin), Some(2));
+    // …and the standing status goes, as it does on a YubiKey for every refused
+    // length but one — `Lc = 1`, where it keeps it and we do not.
+    for n in [6usize, 1] {
+        verify_pin(&mut app, &mut fs);
+        assert_eq!(run(&mut app, &mut fs, INS_VERIFY, 0, 0x80, &[]).0, Sw::OK);
+        assert_eq!(
+            run(&mut app, &mut fs, INS_VERIFY, 0, 0x80, &body[..n]).0,
+            WRONG_DATA
+        );
+        assert_eq!(
+            run(&mut app, &mut fs, INS_VERIFY, 0, 0x80, &[]).0,
+            Sw::retries(3),
+            "a refused {n}-byte body left the standing status up"
+        );
+    }
+    // A wrong P1 or P2 is refused too and does NOT revoke — measured, and the
+    // reason the rule above is about the wire form and not about refusals.
+    verify_pin(&mut app, &mut fs);
+    for (p1, p2) in [(0x01u8, 0x80u8), (0x00, 0x81)] {
+        run(&mut app, &mut fs, INS_VERIFY, p1, p2, &DEFAULT_PIN);
+        assert_eq!(
+            run(&mut app, &mut fs, INS_VERIFY, 0, 0x80, &[]).0,
+            Sw::OK,
+            "P1 {p1:02X} P2 {p2:02X} revoked the standing status"
+        );
+    }
+    // Blocked: the wire form is judged first, so a malformed body is 6A80 where
+    // a well-formed one — right or wrong — is 6983.
+    for _ in 0..3 {
+        run(
+            &mut app,
+            &mut fs,
+            INS_VERIFY,
+            0,
+            0x80,
+            &[PIN_PAD; PIN_WIRE_LEN],
+        );
+    }
+    assert_eq!(
+        run(&mut app, &mut fs, INS_VERIFY, 0, 0x80, &DEFAULT_PIN).0,
+        Sw::PIN_BLOCKED
+    );
+    assert_eq!(
+        run(&mut app, &mut fs, INS_VERIFY, 0, 0x80, &body[..6]).0,
+        WRONG_DATA
+    );
+    assert_eq!(
+        run(&mut app, &mut fs, INS_VERIFY, 0, 0x80, &[]).0,
+        Sw::PIN_BLOCKED
+    );
+}
+
 #[test]
 fn pin_verify_retry_and_unblock() {
     let rng = RefCell::new(TestRng(7));
@@ -486,10 +583,12 @@ fn panel_pin_ops_match_host_wire() {
     // A host VERIFY (always padded) accepts the panel-set PIN...
     let (sw, _) = run(&mut app, &mut fs, INS_VERIFY, 0, 0x80, &new);
     assert_eq!(sw, Sw::OK);
-    // ...and the unpadded 6-byte form does NOT — padding is load-bearing.
+    // ...and the unpadded 6-byte form does NOT — padding is load-bearing. It is
+    // refused on the wire form, so it costs the standing status but no retry.
     let (sw, _) = run(&mut app, &mut fs, INS_VERIFY, 0, 0x80, b"654321");
-    assert_ne!(sw, Sw::OK);
-    let (sw, _) = run(&mut app, &mut fs, INS_VERIFY, 0, 0x80, &new); // reset the burned retry
+    assert_eq!(sw, WRONG_DATA);
+    assert_eq!(reference_retries_left(&mut fs, PinRef::Pin), Some(3));
+    let (sw, _) = run(&mut app, &mut fs, INS_VERIFY, 0, 0x80, &new);
     assert_eq!(sw, Sw::OK);
 
     // Wrong old PIN burns a retry and leaves the PIN unchanged.

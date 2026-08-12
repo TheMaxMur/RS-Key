@@ -40,6 +40,27 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Security
 
+- **A PIV `VERIFY` whose body is not the 8-byte wire form no longer burns a PIN
+  retry.** SP 800-73-4 pt2 §2.4.3 fixes the PIN block at 8 bytes, `0xFF`-padded;
+  the handler tested only for the empty status query and then handed a body of
+  *any* length to the comparison, which missed and decremented. Three malformed
+  `VERIFY`s — a middleware that forgets to pad, a host that sends the six digits
+  raw, a fuzzer — blocked the PIV PIN, and recovery then needed the PUK. A
+  YubiKey 5.7.4 answers `6A80` with the counter untouched to every body length
+  taken in 1-16, 24 and 32 except 8; the 8-byte all-pad control burns on both
+  cards, which is what makes this a wire-form gate rather than a refusal to
+  compare. Measured three runs per length per card. The refusal still drops the
+  card's standing PIN status, as the YubiKey does for every length but one — an
+  `Lc = 1` body keeps it there, a quirk we do not copy, since revoking is the
+  stricter half. A wrong `P1` or `P2` is refused *without* revoking on both cards,
+  so this is a rule about the wire form and not about refusals in general. The
+  gate is judged ahead of the blocked floor, again as the oracle does: on a
+  blocked PIN a malformed body answers `6A80` where a well-formed one answers
+  `6983`. Note the *write* side of the same wire form is only closed by the entry
+  above it in this list; until that one, a card could still be given a short
+  reference by a non-conformant host, and this gate then refused the short
+  `VERIFY` that used to reach it — recoverable with `CHANGE REFERENCE DATA` or a
+  PUK unblock, but a state worth naming. **bcdDevice → 0x08D0.**
 - **The OpenPGP admin PIN no longer reaches the cardholder's private-use DOs.**
   OpenPGP Card 3.4.1 §4.4.1 hands `0101` and `0103` to PW1 no. 82 — the
   cardholder — and `0102`/`0104` to PW3, with no admin override on the first
