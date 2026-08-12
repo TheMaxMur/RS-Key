@@ -165,7 +165,15 @@ crypto-critical helpers, where a proof genuinely beats a sample:
 - `rsk-sdk`: BER-TLV walk over arbitrary bytes — every yielded value is a
   sub-slice of the input, and successive values neither overlap nor run
   backwards; `format_len` round-trip for every `u16`; APDU case-1..4 parsing
-  over every buffer up to the bound.
+  over every buffer up to the bound; and the **dispatcher over every *pair* of
+  raw APDUs** up to six bytes each — the one harness here that applies a
+  sequence to a stateful object, because command chaining's three audit
+  findings each needed two commands to express. It pins that the applet is
+  never handed a body from a command it did not itself terminate, that a
+  dropped chain leaves no bytes behind, that a secure-messaging class reaches
+  no applet, and that a SELECT for a registered AID always arrives. It is also
+  the tree's only `cfg(kani)` change to production source; the shrink and its
+  reasoning are in `applet_kani.rs`.
 - `rsk-fs`: the `EF_META` record-walk (`rebuild_meta`) over arbitrary (corrupt)
   blobs — nothing written past the length it reports, and the old record for the
   rebuilt fid is **gone** from the output, which is what `meta_delete` and

@@ -1259,6 +1259,29 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Added
 
+- **A Kani proof over the APDU dispatcher's *sequences*, the first one in the
+  tree that applies more than a single call to a stateful object.**
+  `Dispatcher::process` carries three audit findings in its own comments —
+  run-34 #26 (a stranded `CLA 0x10` APDU prefixed the next command, so the
+  victim's own GENERAL AUTHENTICATE signed the injector's data under the
+  victim's touch), run-35 (fixing that for SELECT alone left every other
+  instruction absorbing it), run-37 (a mismatch-only test let a stranded segment
+  swallow the next client's SELECT, leaving the previous applet selected and
+  still PIN-verified) — each reachable in two or three APDUs, and every existing
+  harness was single-call, so the surface with three demonstrated bugs had no
+  proof at all. The new one drives the real dispatcher with a recording stub
+  applet over a selected card and **every pair of raw APDUs up to six bytes**,
+  and shows: it never panics; the chain buffer stays in bounds and a *dropped*
+  chain leaves no bytes behind, not merely a cleared flag; **the applet is never
+  handed a body from a command it did not itself terminate** — the `Nc` it sees
+  is the second command's own unless the pair is a legitimate ISO 7816-4 chain,
+  in which case it is exactly the sum, with no third possibility; a
+  secure-messaging class reaches no applet, SELECT included; and a well-formed
+  SELECT for a registered AID always reaches the applet, whatever chain state it
+  walks into. Reintroducing any of the three historical bugs makes it fail, and
+  the solver hands back the two-APDU witness. Proof-only (`cfg(kani)`): the
+  firmware image is byte-identical, so no `bcdDevice` is owed.
+
 - **Three Kani harnesses that prove things about *sequences* of security
   states, not single calls.** The 53 harnesses this tree already had are all
   single-call: a parser, a codec, one arithmetic step. RS-Key's dangerous
