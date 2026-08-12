@@ -2067,3 +2067,8 @@ fn clientpin_protocol_zero_is_invalid_and_alg_is_not_read() {
             .unwrap_or_else(|e| panic!("alg {alg:?} refused with {e:?}"));
     }
 }
+
+/// What a failed PIN check does to a pinUvAuthToken already in a platform's
+/// hands. Hung off this module so it inherits the Platform harness above.
+#[path = "pin_token_tests.rs"]
+mod pin_token_tests;

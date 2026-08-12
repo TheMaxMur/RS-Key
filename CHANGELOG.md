@@ -40,6 +40,25 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Security
 
+- **A wrong FIDO PIN no longer leaves an outstanding `pinUvAuthToken`
+  working.** A platform that held a token — minted with the right PIN — kept it
+  usable across any number of failed PIN attempts by anything else plugged into
+  the same session, so the retry counter was the only thing an attacker's wrong
+  guesses cost them; the credential the *previous* holder was still using was
+  untouched. A YubiKey 5.7.4 invalidates the token on a failed PIN check, through
+  every door — `getPinUvAuthTokenUsingPinWithPermissions` (`0x09`), the legacy
+  `getPinToken` (`0x05`) and `changePIN`'s old-PIN check — measured four times
+  per door on both PIN/UV-auth protocols, with idle, `getKeyAgreement` and
+  `getPINRetries` as controls that leave it alive on both devices. CTAP 2.0
+  §5.6.6 and 2.1 name only the key-agreement regeneration in that branch, so we
+  were within the letter of the spec and the card does strictly more; parity
+  decides, and it is the safe direction — a token minted before someone started
+  guessing stops working, and a platform can always mint another. The reset sits
+  in the one function every PIN check passes through, so the on-screen PIN pad
+  inherits it as well. Untouched, deliberately: the persistent `pcmr` token is a
+  separate flash-backed grant that survives replugs until a PIN change or a
+  reset, and a failed attempt is neither. **bcdDevice → 0x08B4.**
+
 - **OATH `SET CODE` installed an access code with no key material.** `73 01 01`
   — an algorithm byte and nothing after it — answered `9000` and locked the
   applet behind a key that is the empty string, so the VALIDATE response every

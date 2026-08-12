@@ -769,6 +769,14 @@ fn spend_and_verify_pin_hash<S: Storage, R: Rng>(
     }
     if !matched {
         ctx.state.regenerate(ctx.rng);
+        // A YubiKey 5.7.4 drops any outstanding pinUvAuthToken here too, through
+        // all three doors (0x05, 0x09, changePIN's old-PIN check) — measured ×4
+        // each, with getKeyAgreement / getPINRetries / idle as the controls that
+        // leave it alive. CTAP 2.0 §5.6.6 and 2.1 name only the key
+        // regeneration, so this is the card's rule, and the safe direction: a
+        // token minted before someone started guessing stops working, and a
+        // platform can always mint another.
+        ctx.state.reset_pin_uv_auth_token(ctx.rng);
         if retries == 0 {
             // The transition into the hard lockout (later attempts are turned
             // away before the verify, so this records exactly once).
