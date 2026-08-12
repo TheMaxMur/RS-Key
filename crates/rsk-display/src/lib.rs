@@ -531,11 +531,6 @@ where
         let _ = panel.fill_contiguous(&area, colors);
     }
 
-    /// Hand the panel back to the ambient loop on a modal's exit. Closing a tab back to
-    /// idle is repainted *immediately* by the firmware's `status_task` dispatcher, and a
-    /// tab → next tab hand-off renders the new tab directly, so neither needs the ambient-quiet
-    /// window (that is only for the pad → confirm gap, set in `confirm_wait` /
-    /// `collect_pin`). So this just clears the last-shown marker.
     /// Record a panel-originated action in the on-device audit journal.
     ///
     /// The panel renders the journal as its evidence surface, yet nothing under
@@ -551,6 +546,11 @@ where
         rsk_fido::journal::append_local(&dev, &mut self.fs.borrow_mut(), now, ev, 0);
     }
 
+    /// Hand the panel back to the ambient loop on a modal's exit. Closing a tab back to
+    /// idle is repainted *immediately* by the firmware's `status_task` dispatcher, and a
+    /// tab → next tab hand-off renders the new tab directly, so neither needs the ambient-quiet
+    /// window (that is only for the pad → confirm gap, set in `confirm_wait` /
+    /// `collect_pin`). So this just clears the last-shown marker.
     fn end_modal(&mut self) {
         self.shown = None;
     }
