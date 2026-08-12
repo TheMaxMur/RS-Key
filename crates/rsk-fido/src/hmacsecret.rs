@@ -22,9 +22,8 @@ use crate::error::CtapError;
 /// Max saltEnc: two 32-byte salts + the PIN-protocol-2 IV — also the max [`eval`]
 /// output length (`pinproto::encrypt` output = IV overhead + plaintext).
 pub const SALT_ENC_MAX: usize = 64 + 16;
-/// Headroom over the 32-byte protocol-2 saltAuth MAC — kept at the existing
-/// size, not a spec formula.
-pub const SALT_AUTH_MAX: usize = 48;
+/// Max saltAuth: protocol two's untruncated 32-byte MAC.
+pub const SALT_AUTH_MAX: usize = 32;
 
 /// Every `saltEnc` wire length §12.5 can produce: one or two 32-byte salts, with
 /// or without protocol two's 16-byte IV. Deliberately protocol-agnostic — a
@@ -38,6 +37,10 @@ const _: () = assert!(SALT_ENC_LENGTHS[SALT_ENC_LENGTHS.len() - 1] == SALT_ENC_M
 /// `saltAuth` MAC lengths: protocol one truncates to 16 bytes, protocol two keeps
 /// 32. Also protocol-agnostic on the oracle, and also judged before the MAC.
 const SALT_AUTH_LENGTHS: [usize; 2] = [16, 32];
+// Same one-number rule as saltEnc above, and the reason this list may not be
+// widened alone: the replay copy truncates, so a longer length the gate accepted
+// would reach the MAC as a legal-length one.
+const _: () = assert!(SALT_AUTH_LENGTHS[SALT_AUTH_LENGTHS.len() - 1] == SALT_AUTH_MAX);
 
 /// A parsed hmac-secret / hmac-secret-mc request map.
 pub struct HmacSecretReq<'a> {

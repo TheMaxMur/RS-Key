@@ -4217,7 +4217,10 @@ fn hmac_secret_length_and_mac_codes() {
         // PIN_AUTH_INVALID. (A 16-byte MAC under protocol two is length-legal and
         // then cannot match, which is the same code.)
         let (se, good) = sealed(32 + proto.iv_overhead());
-        for n in [0usize, 8, 15, 17, 31, 33] {
+        // Past 32 the gate is the only thing standing between the wire and
+        // `AssertionState`'s replay copy, which is `SALT_AUTH_MAX` wide and
+        // truncates rather than refuses.
+        for n in [0usize, 8, 15, 17, 31, 33, 48, 64] {
             let sa = std::vec![0u8; n];
             assert_eq!(
                 err(&ga_request_hmac_raw(
