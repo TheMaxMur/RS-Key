@@ -118,7 +118,7 @@ frame chain the YubiKey-OATH way instead: `61 XX` followed by **SEND REMAINING**
 Authenticator send. A host that stops at the first frame still sees a valid
 (shorter) list.
 
-Three OATH rules a host has to expect, all matching a YubiKey 5.7.4. `PUT`
+Four OATH rules a host has to expect, all matching a YubiKey 5.7.4. `PUT`
 (`0x01`) is strict about the credential body — KEY TLV 16..=66 bytes, digits
 6/7/8, type `0x10`/`0x20`, algorithm 1/2/3, name 1..=64 bytes, the initial moving
 factor on HOTP only and exactly 4 bytes, the PROPERTY byte as the bare `78 vv`
@@ -129,17 +129,18 @@ password-safe fields `0x83`/`0x84`/`0x85`, ≤255 bytes each, which may sit
 anywhere in the body.) `SET CODE` (`0x03`) holds its key to the same measured
 rule: the `73` TLV is one algorithm byte plus **14..=64 bytes** of key material,
 or empty to remove the access code — anything else is `6A80` and whatever code
-was installed is left exactly as it was. And PROPERTIES bit 0, *only increasing*, is enforced: a
-TOTP credential carrying it computes only for a challenge strictly greater than
-the highest one it has served, comparing the raw challenge bytes zero-extended on
-the right — plain numeric `>` for the usual 8-byte counter. A challenge at or
-below that mark is `6A80`, and in `CALCULATE ALL` one such credential fails the
-whole command with an empty body. The one exception is a credential a build
-before this rule stored: its body can leave no room for the mark, and `CALCULATE
-ALL` then reports it with `77` (no response) and computes the rest of the store
-rather than failing — its own `CALCULATE` still answers `6A80`.
+was installed is left exactly as it was. And PROPERTIES bit 0, *only
+increasing*, is enforced: a TOTP credential carrying it computes only for a
+challenge strictly greater than the highest one it has served, comparing the raw
+challenge bytes zero-extended on the right — plain numeric `>` for the usual
+8-byte counter. A challenge at or below that mark is `6A80`, and in `CALCULATE
+ALL` one such credential fails the whole command with an empty body. The one
+exception is a credential a build before this rule stored: its body can leave no
+room for the mark, and `CALCULATE ALL` then reports it with `77` (no response)
+and computes the rest of the store rather than failing — its own `CALCULATE`
+still answers `6A80`.
 
-The third is the challenge itself. `CALCULATE` (`0xA2`) and `CALCULATE ALL`
+The fourth is the challenge itself. `CALCULATE` (`0xA2`) and `CALCULATE ALL`
 (`0xA4`) take an opaque byte string of **0..=64 bytes** in the `74` TLV and HMAC
 all of it; 65 or more is `6A80`, judged before the credential is looked up and
 whatever the credential's type, so a `HOTP` account that ignores the challenge
