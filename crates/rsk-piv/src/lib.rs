@@ -285,8 +285,18 @@ impl<S: Storage> Applet<Fs<S>> for PivApplet<'_> {
         true
     }
 
-    fn select(&mut self, _reselect: bool, fs: &mut Fs<S>, res: &mut ResBuf) -> Sw {
-        self.sess.reset();
+    /// SP 800-73-4 Part 2 §3.1.1 makes this a `shall`: when the requested AID is
+    /// the PIV AID "or the right-truncated version thereof" and PIV is already
+    /// current, "the setting of all security status indicators in the PIV Card
+    /// Application shall be unchanged" — §2.4.2 counting the PIN and the card
+    /// application administration key among them. A different valid AID and a
+    /// power cycle still clear it, through the dispatcher's `deselect`, and an
+    /// AID the ICC does not support never reaches an applet. Measured on a
+    /// YubiKey 5.7.4, 3/3, every paragraph of §3.1.1 reproduced.
+    fn select(&mut self, reselect: bool, fs: &mut Fs<S>, res: &mut ResBuf) -> Sw {
+        if !reselect {
+            self.sess.reset();
+        }
         // The default PIN/PUK/retry/mgmt/attestation files are provisioned once
         // and afterwards only ever removed by a path that recreates them (PIV
         // `reset_files`) or reboots (trusted-display factory wipe → `sys_reset`);
@@ -1421,3 +1431,7 @@ mod proofs;
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "reselect_tests.rs"]
+mod reselect_tests;

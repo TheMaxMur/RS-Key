@@ -104,7 +104,11 @@ box.
 
 The signature slot (`9c`) demands the PIN before **every** private-key
 operation; the other slots cache the PIN for the rest of the session after one
-VERIFY. `9e` carries no special default on this firmware. Like the other
+VERIFY. A session ends when the card loses power or another application is
+selected on it — an OpenPGP or OATH tool reaching for the same key mid-session
+does exactly that. Selecting **PIV** again does not end it (SP 800-73-4 Part 2
+§3.1.1), so a tool that re-selects before each command keeps the PIN it already
+gave. `9e` carries no special default on this firmware. Like the other
 non-signature slots it defaults to PIN **once per session**, so a default-policy
 9e key still needs one VERIFY before use. For true card-auth / contactless
 no-PIN behaviour, generate the 9e key with an explicit `--pin-policy NEVER`.

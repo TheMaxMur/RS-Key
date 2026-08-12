@@ -40,6 +40,25 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **Re-selecting the application you are already on no longer throws away the
+  PIN.** Both OpenPGP and PIV reset their whole security status on every SELECT,
+  including a SELECT of their own AID — so a host that re-selects before each
+  command (several do) was made to ask for the PIN again and again, and the
+  symptom reads as "the card keeps asking", which nobody files as a conformance
+  bug. Both specs say the opposite in as many words. SP 800-73-4 Part 2 §3.1.1
+  makes it a `shall`: with PIV current and the requested AID the PIV AID "or the
+  right-truncated version thereof", "the setting of all security status
+  indicators in the PIV Card Application shall be unchanged". OpenPGP 3.4.1 §4.2
+  gives the access status "up to a RESET of the card, a SELECT to a **different**
+  DF or an internal resetting", and §7.2.2 repeats it for PW1 82 —
+  `rsk-openpgp` even quoted that sentence and then did the opposite. Measured on
+  a YubiKey 5.7.4, 3/3 on both applets, including the right-truncated AID: a
+  re-SELECT keeps everything and an unsupported AID never reaches an applet at
+  all. **This holds authentication longer than before** and is a deliberate
+  relaxation, so the two SELECTs that must still clear are pinned by the same
+  tests: a different valid AID, and an ICC power cycle.
+  **bcdDevice → 0x08A6.**
+
 - **DO 7F66 now announces the APDU the transport can actually carry.** OpenPGP's
   extended-length information said 2047 command / 2048 response bytes while one
   CCID frame carries 2038, and §7.7 tells a host it may send exactly what that DO

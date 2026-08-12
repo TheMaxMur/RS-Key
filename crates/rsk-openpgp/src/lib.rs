@@ -339,8 +339,17 @@ impl<S: Storage> Applet<Fs<S>> for OpenpgpApplet<'_> {
         true
     }
 
-    fn select(&mut self, _reselect: bool, _fs: &mut Fs<S>, res: &mut ResBuf) -> Sw {
-        self.reset_session();
+    /// §4.2 spends its one sentence on which SELECT clears the access status —
+    /// "a SELECT to a **different** DF" — and §7.2.2 repeats it for PW1 82. A
+    /// SELECT that lands back here is not a state transition at all, so nothing
+    /// is reset: not the PWs, not the MSE key references, not the SELECT DATA
+    /// occurrence. Measured on a YubiKey 5.7.4, 3/3: re-SELECT of the bare AID
+    /// and of a 5-byte truncation both keep all three PWs, while a different
+    /// valid AID and an ICC power cycle clear them (the dispatcher's `deselect`).
+    fn select(&mut self, reselect: bool, _fs: &mut Fs<S>, res: &mut ResBuf) -> Sw {
+        if !reselect {
+            self.reset_session();
+        }
         let n = select::build_fci(&mut self.scratch);
         res.extend(&self.scratch[..n]);
         Sw::OK
@@ -595,3 +604,7 @@ mod serial_identity_tests;
 #[cfg(test)]
 #[path = "dispatch_getdata_tests.rs"]
 mod dispatch_getdata_tests;
+
+#[cfg(test)]
+#[path = "reselect_tests.rs"]
+mod reselect_tests;

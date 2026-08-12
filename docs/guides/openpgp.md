@@ -158,8 +158,13 @@ gpg drives the slots automatically: the SIG slot signs, the DEC slot decrypts.
 Encryption *to* a recipient is a public-key operation and never touches the
 card. Only **decryption** does.
 
-By default PW1 stays valid for the session after the first signature. To force
-a PIN on **every** signature, flip the PW1 status byte:
+By default PW1 stays valid for the session after the first signature. That
+session ends when the key is unplugged or another application is selected on the
+card — a PIV or OATH tool reaching for the same key mid-session does exactly
+that. Selecting **OpenPGP** again does not end it (§4.2 spends its rule on "a
+SELECT to a *different* DF"), so a tool that re-selects before each command keeps
+the PIN it already gave. To force a PIN on **every** signature, flip the PW1
+status byte:
 
 ```sh
 gpg/card> admin
