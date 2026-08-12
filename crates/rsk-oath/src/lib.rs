@@ -98,6 +98,10 @@ const TAG_NEW_PASSWORD: u8 = 0x81;
 const TAG_PWS_LOGIN: u8 = 0x83;
 const TAG_PWS_PASSWORD: u8 = 0x84;
 const TAG_PWS_METADATA: u8 = 0x85;
+/// Private to the stored blob: the `only increasing` high-water mark. Never on
+/// the wire — PUT refuses every tag outside [`PUT_TAGS`], so a host can neither
+/// plant one nor read one back, and neither can it on a YubiKey.
+const TAG_LAST_CHAL: u8 = 0xD0;
 
 const ALG_HMAC_SHA1: u8 = 0x01;
 const ALG_HMAC_SHA256: u8 = 0x02;
@@ -123,7 +127,17 @@ const IMF_LEN: usize = 4;
 /// the one byte GET CREDENTIAL writes, or the field would be stored unreadable.
 const PWS_MAX: usize = 255;
 
+/// YKOATH PROPERTIES bitmap. A YubiKey reads exactly these two bits and ignores
+/// 2..7 (`78 FC` computes, `78 FF` asks for a touch) — so we do too.
+const PROP_INCREASING: u8 = 0x01;
 const PROP_TOUCH: u8 = 0x02;
+
+/// Width of the stored high-water mark, and so the widest challenge an
+/// only-increasing credential accepts. A YubiKey takes 0..=64 bytes of challenge
+/// and answers `6A80` above that, so a mark this wide holds everything the card
+/// would ever compare. Right-zero-padded to a fixed width, which makes the
+/// comparison the card's own — see [`raise_mark`].
+const MARK_LEN: usize = 64;
 
 // Instructions.
 const INS_PUT: u8 = 0x01;
@@ -450,10 +464,7 @@ impl<'a> OathApplet<'a> {
                     {
                         props |= 0x4;
                     }
-                    if find_tag(blob, TAG_PROPERTY as u16)
-                        .and_then(|v| v.first())
-                        .is_some_and(|p| p & PROP_TOUCH != 0)
-                    {
+                    if cred_property(blob) & PROP_TOUCH != 0 {
                         props |= 0x1;
                     }
                     res.push(props);
@@ -532,21 +543,21 @@ impl<'a> OathApplet<'a> {
         let mut scratch = [0u8; CRED_MAX];
         let mkek = read_fused(self.mkek_source);
         let dev = self.device(&mkek);
-        let Some((fid, n)) = find_cred(&dev, fs, name, &mut scratch) else {
+        let Some((fid, mut n)) = find_cred(&dev, fs, name, &mut scratch) else {
             return Sw::DATA_INVALID;
         };
-        let blob = &scratch[..n];
-        let Some(key) = find_tag(blob, TAG_KEY as u16) else {
+        // Ranges, not slices: the mark below rewrites the blob in place, and a
+        // borrow held across that would have to be a second CRED_MAX buffer.
+        let Some(key_at) = find_tag_range(&scratch[..n], TAG_KEY) else {
             return Sw::INCORRECT_PARAMS;
         };
-        if key.len() < 2 {
+        if key_at.len() < 2 {
             return Sw::INCORRECT_PARAMS;
         }
+        let prop = cred_property(&scratch[..n]);
         // Touch-flagged credentials compute only after a confirmed press —
         // gated here, before the HOTP counter burns.
-        if find_tag(blob, TAG_PROPERTY as u16)
-            .and_then(|v| v.first())
-            .is_some_and(|p| p & PROP_TOUCH != 0)
+        if prop & PROP_TOUCH != 0
             && self
                 .presence
                 .borrow_mut()
@@ -555,23 +566,42 @@ impl<'a> OathApplet<'a> {
         {
             return Sw::SECURITY_STATUS_NOT_SATISFIED;
         }
-        let hotp = key[0] & OATH_TYPE_MASK == OATH_TYPE_HOTP;
+        let hotp = scratch[key_at.start] & OATH_TYPE_MASK == OATH_TYPE_HOTP;
         // HOTP ignores the host challenge: the stored 8-byte counter is the
         // moving factor.
         let imf = if hotp {
-            match find_tag_range(blob, TAG_IMF) {
+            match find_tag_range(&scratch[..n], TAG_IMF) {
                 Some(r) if r.len() >= 8 => Some(r),
                 _ => return Sw::INCORRECT_PARAMS,
             }
         } else {
             None
         };
+        // `only increasing`: the challenge must beat this credential's mark, and
+        // the raised mark is persisted BEFORE a code exists. The CCID layer puts
+        // `res` on the wire whatever the status word is, so a code pushed ahead
+        // of a failed write would be a replayable one the store never recorded.
+        // TOTP only — HOTP ignores the challenge, and the card leaves it inert.
+        if !hotp && prop & PROP_INCREASING != 0 {
+            if !raise_mark(&mut scratch, &mut n, chal) {
+                return Sw::INCORRECT_PARAMS;
+            }
+            if !seal::seal_put(
+                &dev,
+                fs,
+                &mut *self.rng.borrow_mut(),
+                KeyFid::new(fid),
+                &scratch[..n],
+            ) {
+                return Sw::MEMORY_FAILURE;
+            }
+        }
         res.push(TAG_RESPONSE + apdu.p2);
         let chal_eff = match &imf {
-            Some(r) => &blob[r.start..r.start + 8],
+            Some(r) => &scratch[r.start..r.start + 8],
             None => chal,
         };
-        if calculate(apdu.p2 == 0x01, key, chal_eff, res).is_none() {
+        if calculate(apdu.p2 == 0x01, &scratch[key_at], chal_eff, res).is_none() {
             return Sw::EXEC_ERROR;
         }
         if let Some(r) = imf {
@@ -608,6 +638,17 @@ impl<'a> OathApplet<'a> {
         let Some(chal) = find_tag(&apdu.data[..apdu.nc], TAG_CHALLENGE as u16) else {
             return Sw::INCORRECT_PARAMS;
         };
+        // `only increasing` is settled for the whole store before a byte of the
+        // response is built. The card fails the ENTIRE command at the first
+        // credential the challenge does not beat — empty body, plain credentials
+        // collateral — while the marks before it have already advanced. Our pages
+        // go out as they are built, so a refusal found on page 2 could not be
+        // taken back: the pass has to finish first. It reads the challenge the
+        // host sent, not the clamped copy below, or the two read paths would
+        // disagree about which challenges run backwards.
+        if let Err(sw) = self.advance_marks(fs, chal) {
+            return sw;
+        }
         // Stash the (8-byte, per YKOATH) time challenge so SEND REMAINING pages
         // recompute the same codes; a longer challenge is clamped (spec is 8).
         let mut chal_buf = [0u8; CHALLENGE_LEN];
@@ -620,6 +661,51 @@ impl<'a> OathApplet<'a> {
         };
         self.chain_at = 0;
         self.calc_all_page(fs, res)
+    }
+
+    /// Raise every only-increasing credential's mark to `chal`, in store order,
+    /// stopping at the first one the challenge does not beat. The marks
+    /// committed before that offender stay raised — the card is not atomic here
+    /// either, measured twice plus a reversed-order control (worklog §6.4).
+    ///
+    /// Credentials CALCULATE ALL does not compute are skipped: HOTP, which
+    /// ignores the challenge, and touch-gated ones, which the bulk read only
+    /// advertises. The mark records the highest challenge at which a code was
+    /// actually produced, so advancing a touch credential's here would make the
+    /// individual CALCULATE the host sends next — at that same challenge —
+    /// refuse the press it just asked for.
+    fn advance_marks<S: Storage>(&self, fs: &mut Fs<S>, chal: &[u8]) -> Result<(), Sw> {
+        let mkek = read_fused(self.mkek_source);
+        let dev = self.device(&mkek);
+        let mut fids = [0u16; MAX_OATH_CRED as usize];
+        let nfids = present_creds(fs, &mut fids);
+        let mut scratch = [0u8; CRED_MAX];
+        for &fid in &fids[..nfids] {
+            let Some(mut n) = seal::seal_read(&dev, fs, KeyFid::new(fid), &mut scratch) else {
+                continue;
+            };
+            let prop = cred_property(&scratch[..n]);
+            if prop & PROP_INCREASING == 0 || prop & PROP_TOUCH != 0 {
+                continue;
+            }
+            match find_tag_range(&scratch[..n], TAG_KEY) {
+                Some(k) if k.len() >= 2 && scratch[k.start] & OATH_TYPE_MASK != OATH_TYPE_HOTP => {}
+                _ => continue,
+            }
+            if !raise_mark(&mut scratch, &mut n, chal) {
+                return Err(Sw::INCORRECT_PARAMS);
+            }
+            if !seal::seal_put(
+                &dev,
+                fs,
+                &mut *self.rng.borrow_mut(),
+                KeyFid::new(fid),
+                &scratch[..n],
+            ) {
+                return Err(Sw::MEMORY_FAILURE);
+            }
+        }
+        Ok(())
     }
 
     /// Emit CALCULATE ALL entries from `self.chain_at` until the frame fills
@@ -673,10 +759,7 @@ impl<'a> OathApplet<'a> {
                     res.push(TAG_NO_RESPONSE);
                     res.push(1);
                     res.push(key[1]);
-                } else if find_tag(blob, TAG_PROPERTY as u16)
-                    .and_then(|v| v.first())
-                    .is_some_and(|p| p & PROP_TOUCH != 0)
-                {
+                } else if cred_property(blob) & PROP_TOUCH != 0 {
                     res.push(TAG_TOUCH_RESPONSE);
                     res.push(1);
                     res.push(key[1]);
@@ -741,9 +824,7 @@ impl<'a> OathApplet<'a> {
         // A touch-flagged credential is exercised only after a confirmed press —
         // else VERIFY CODE is a presence-free guessing oracle on its current OTP,
         // the same reason cmd_calculate gates here.
-        if find_tag(blob, TAG_PROPERTY as u16)
-            .and_then(|v| v.first())
-            .is_some_and(|p| p & PROP_TOUCH != 0)
+        if cred_property(blob) & PROP_TOUCH != 0
             && self
                 .presence
                 .borrow_mut()
@@ -1153,6 +1234,48 @@ impl<S: Storage> Applet<Fs<S>> for OathApplet<'_> {
     }
 }
 
+/// A stored credential's YKOATH properties byte, or 0 when it carries none.
+/// The one place the bitmap is read, so both bits mean the same thing to every
+/// caller.
+fn cred_property(blob: &[u8]) -> u8 {
+    find_tag(blob, TAG_PROPERTY as u16)
+        .and_then(|v| v.first().copied())
+        .unwrap_or(0)
+}
+
+/// Compare `chal` against this credential's `only increasing` high-water mark
+/// and, when it is strictly greater, write the new mark into `blob` for the
+/// caller to persist. `false` = refuse the CALCULATE.
+///
+/// The mark is stored right-zero-padded to [`MARK_LEN`], which is both what lets
+/// it be rewritten in place (no second `CRED_MAX` buffer on the stack) and
+/// exactly the card's comparison: zero-extend both sides on the right and
+/// compare unsigned. That one rule reproduces all ten mixed-width rows measured
+/// on a 5.7.4 (worklog TRACK-oath §6.5), and at TOTP's 8-byte challenge it is
+/// plain numeric `>`. An absent mark is all-zero, so a fresh credential refuses
+/// challenge 0 and serves 1, as the card does.
+fn raise_mark(blob: &mut [u8], n: &mut usize, chal: &[u8]) -> bool {
+    if chal.len() > MARK_LEN {
+        return false;
+    }
+    let mut mark = [0u8; MARK_LEN];
+    mark[..chal.len()].copy_from_slice(chal);
+    match find_tag_range(&blob[..*n], TAG_LAST_CHAL) {
+        Some(r) if r.len() == MARK_LEN => {
+            if mark[..] <= blob[r.clone()] {
+                return false;
+            }
+            blob[r].copy_from_slice(&mark);
+            true
+        }
+        // A mark of another width can only be one a caller planted through an
+        // older build, which stored unrecognised tags verbatim. Refuse rather
+        // than append a second one the walker would never reach.
+        Some(_) => false,
+        None => mark != [0u8; MARK_LEN] && emit_tlv(blob, n, TAG_LAST_CHAL, &mark),
+    }
+}
+
 /// Whether [`oath_hmac`] has an arm for this key byte's algorithm nibble — the
 /// one owner of "which algorithms exist", shared by PUT's rule and the bulk
 /// read that has to frame a credential it cannot compute.
@@ -1390,9 +1513,7 @@ pub fn for_each_cred<S: Storage>(
         let hotp = key[0] & OATH_TYPE_MASK == OATH_TYPE_HOTP;
         let algo = key[0] & ALG_MASK;
         let digits = key.get(1).copied().unwrap_or(0);
-        let touch = find_tag(blob, TAG_PROPERTY as u16)
-            .and_then(|v| v.first().copied())
-            .is_some_and(|p| p & PROP_TOUCH != 0);
+        let touch = cred_property(blob) & PROP_TOUCH != 0;
         let (period_prefix, label) = split_period(name);
         let period = if hotp { 0 } else { period_prefix.unwrap_or(30) };
         f(OathCredView {

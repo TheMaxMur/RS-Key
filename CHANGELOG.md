@@ -40,6 +40,40 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Security
 
+- **The OATH `only increasing` property is enforced instead of stored and
+  ignored.** YKOATH's PROPERTIES bit 0 promises that a credential's challenge
+  never goes backwards. RS-Key accepted the byte at `PUT`, persisted it, and then
+  consulted only bit 1 (touch) — `PROP_INCREASING` did not exist in the applet.
+  Measured: a credential stored with `78 01` served challenge 100, then 101,
+  then **50**, then **101 again with the same code**, and a control stored
+  without the property answered identically in every row. So the card kept a
+  security flag it did not implement, and gave the host no way to find out. What
+  the property buys is exactly what was missing: a thief with brief physical
+  access cannot harvest past TOTP windows, and their use of a *future* window
+  makes the owner's next legitimate `CALCULATE` fail — the detection half. A
+  YubiKey 5.7.4 really does enforce it, so parity decides, and refusing the `PUT`
+  instead (the other option) is contrary to the card, which answers `9000`.
+  Each opted-in credential now carries a persisted high-water mark: `CALCULATE`
+  serves a code only for a challenge strictly greater than it, then raises it —
+  and raises it *before* the code is computed, because the CCID layer puts the
+  response buffer on the wire whatever the status word says. A refused
+  `CALCULATE` leaves the mark alone, the initial mark is zero (so nothing is
+  refused until the first code), the mark follows a `RENAME` and a re-`PUT`
+  clears it, and the comparison is the card's own: zero-extend both sides on the
+  right and compare unsigned, which is plain numeric `>` at TOTP's 8-byte
+  challenge and reproduces all ten mixed-width rows measured on the card.
+  `CALCULATE ALL` matches the card's harder rule — one credential at or below its
+  mark fails the **whole** command with an empty body, with the marks before it
+  in store order already raised — which needs the comparison pass to finish
+  before the first response byte, since pages go out as they are built. The
+  property stays inert for HOTP (which ignores the challenge) and bits 2–7 stay
+  ignored, both as measured. Credentials the bulk read does not compute — HOTP,
+  and touch-gated ones it only advertises — are not marked by it, so the
+  `CALCULATE ALL` → touch → `CALCULATE` flow still works at the same challenge.
+  Upgrading is safe: a credential an older build stored with `78 01` starts
+  enforcing from a zero mark, and no data moves.
+  **bcdDevice → 0x08A1.**
+
 - **OATH `PUT` now accepts exactly the credential bodies a YubiKey accepts, and
   a refused one no longer destroys the credential it would have overwritten.**
   The body was barely parsed: any algorithm nibble, any type nibble, any digit

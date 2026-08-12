@@ -109,6 +109,21 @@ frame chain the YubiKey-OATH way instead: `61 XX` followed by **SEND REMAINING**
 Authenticator send. A host that stops at the first frame still sees a valid
 (shorter) list.
 
+Two OATH rules a host has to expect, both matching a YubiKey 5.7.4. `PUT`
+(`0x01`) is strict about the credential body — KEY TLV 16..=66 bytes, digits
+6/7/8, type `0x10`/`0x20`, algorithm 1/2/3, name 1..=64 bytes, the initial moving
+factor on HOTP only and exactly 4 bytes, the PROPERTY byte as the bare `78 vv`
+pair, the four YKOATH tags in that order, no duplicate, no unknown tag and no
+trailing byte. Anything else is `6A80` with **nothing stored**, so a rejected
+`PUT` leaves an existing credential of that name working. (RS-Key also stores the
+password-safe fields `0x83`/`0x84`/`0x85`, ≤255 bytes each, which may sit
+anywhere in the body.) And PROPERTIES bit 0, *only increasing*, is enforced: a
+TOTP credential carrying it computes only for a challenge strictly greater than
+the highest one it has served, comparing the raw challenge bytes zero-extended on
+the right — plain numeric `>` for the usual 8-byte counter. A challenge at or
+below that mark is `6A80`, and in `CALCULATE ALL` one such credential fails the
+whole command with an empty body.
+
 ### 1.2 CTAPHID framing
 
 64-byte HID reports. Init frame: `CID(4) | CMD(1) | BCNT_HI | BCNT_LO | data[:57]`;

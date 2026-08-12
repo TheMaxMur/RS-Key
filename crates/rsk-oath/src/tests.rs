@@ -9,6 +9,10 @@ use rsk_fs::storage::ram::RamStorage;
 #[path = "put_tests.rs"]
 mod put_tests;
 
+/// The `only increasing` property's high-water mark, on both read paths.
+#[path = "increasing_tests.rs"]
+mod increasing_tests;
+
 /// RFC 6238 reference secrets.
 const SECRET_SHA1: &[u8] = b"12345678901234567890";
 const SECRET_SHA256: &[u8] = b"12345678901234567890123456789012";

@@ -94,6 +94,24 @@ status not satisfied" and **nothing is computed**. For HOTP this gate sits
 press leaves the account exactly where it was. The button is the same physical
 press used by FIDO and OpenPGP UIF; only one prompt is outstanding at a time.
 
+## Accounts that only go forward
+
+The YKOATH protocol has a second per-account property beside touch, *only
+increasing*, and the firmware enforces it the way a YubiKey does. A TOTP account
+carrying it remembers the highest challenge it has served and refuses anything at
+or below that, so its codes can only move forward in time. That is worth having
+against brief physical access: nobody can walk your clock backwards and harvest
+the windows you already used, and if someone does read a *future* window, your
+next legitimate code fails — which is how you find out.
+
+The cost is that the account is only as usable as your clock. If the host's time
+jumps backwards (a bad NTP correction, a timezone-confused VM, a dual-boot
+machine with a local-time RTC), the account stops answering until real time
+catches up, and there is no way to lower the mark short of re-adding the account.
+`ykman` does not expose the property today; a client that does will say so.
+Ordinary accounts are unaffected — the mark exists only where the property was
+set at enrollment.
+
 ## The OATH access password
 
 By default the credential list and codes are readable by anything that can
