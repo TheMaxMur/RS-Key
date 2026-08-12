@@ -402,3 +402,72 @@ fn calculate_all_does_not_mark_a_credential_it_does_not_compute() {
         "the bulk read consumed a challenge it never computed",
     );
 }
+
+/// CALCULATE on a credential that is both touch-gated and only-increasing, with
+/// `outcome` as the press: `(status word, asks)`.
+fn calc_touched(
+    fs: &mut Fs<RamStorage>,
+    rng: &RefCell<CountRng>,
+    outcome: Presence,
+    chals: &[u64],
+) -> Vec<Sw> {
+    let touch = RefCell::new(StubPresence(outcome, 0));
+    let mut app = OathApplet::new(SERIAL, [0x22; 32], None, rng, &touch);
+    assert_eq!(
+        put_prop(&mut app, fs, b"ti", Some(PROP_TOUCH | PROP_INCREASING)),
+        Sw::OK
+    );
+    chals
+        .iter()
+        .map(|c| {
+            let mut d = tlv(TAG_NAME, b"ti");
+            d.extend(tlv(TAG_CHALLENGE, &c.to_be_bytes()));
+            run(&mut app, fs, &apdu(INS_CALCULATE, 0, 0x01, &d)).0
+        })
+        .collect()
+}
+
+#[test]
+fn the_touch_gate_runs_before_the_mark() {
+    // Measured on the card by *not* pressing (worklog ORACLE-oathfido): a
+    // touch+increasing credential blocks for the full button wait and answers
+    // `6982` — and a later, LOWER challenge blocks again instead of answering
+    // `6A80` instantly, which is how the card says the un-pressed call left the
+    // mark exactly where it was. The control in the same run: an increasing-only
+    // credential answers `6A80` in 0.00 s at that same lower challenge.
+    let (mut fs, rng) = fixture();
+    assert_eq!(
+        calc_touched(&mut fs, &rng, Presence::Declined, &[0x50, 0x40]),
+        [
+            Sw::SECURITY_STATUS_NOT_SATISFIED,
+            Sw::SECURITY_STATUS_NOT_SATISFIED
+        ],
+        "a refused press must not be reported as a backwards challenge",
+    );
+    let touch = RefCell::new(AlwaysConfirm);
+    let mut app = OathApplet::new(SERIAL, [0x22; 32], None, &rng, &touch);
+    assert_eq!(put_prop(&mut app, &mut fs, b"inc", Some(0x01)), Sw::OK);
+    assert!(calc(&mut app, &mut fs, b"inc", 0x50).is_some());
+    assert!(
+        calc(&mut app, &mut fs, b"inc", 0x40).is_none(),
+        "the control must fire, or the rows above prove nothing",
+    );
+    // And once the press is refused, the credential is still at its old mark:
+    // a *confirmed* press at the lower challenge computes.
+    assert_eq!(
+        calc_touched(&mut fs, &rng, Presence::Confirmed, &[0x40])[0],
+        Sw::OK,
+    );
+}
+
+#[test]
+fn a_confirmed_press_advances_the_mark() {
+    // The other half, which no session without a finger can read off the card:
+    // everything measured there is consistent with a successful press behaving
+    // like any other successful CALCULATE, and that is what this side does.
+    let (mut fs, rng) = fixture();
+    assert_eq!(
+        calc_touched(&mut fs, &rng, Presence::Confirmed, &[0x50, 0x40, 0x60]),
+        [Sw::OK, Sw::INCORRECT_PARAMS, Sw::OK],
+    );
+}
