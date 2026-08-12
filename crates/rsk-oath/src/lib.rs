@@ -105,7 +105,23 @@ const ALG_HMAC_SHA512: u8 = 0x03;
 const ALG_MASK: u8 = 0x0F;
 
 const OATH_TYPE_HOTP: u8 = 0x10;
+const OATH_TYPE_TOTP: u8 = 0x20;
 const OATH_TYPE_MASK: u8 = 0xF0;
+
+/// What PUT accepts in a credential body, measured against a YubiKey 5.7.4 —
+/// which answers `6A80` and stores nothing for everything outside these bounds.
+/// The KEY TLV is `[type|alg, digits, secret…]`, so 16..=66 is a 14..=64-byte
+/// secret.
+const KEY_TLV_MIN: usize = 16;
+const KEY_TLV_MAX: usize = 66;
+const NAME_MAX: usize = 64;
+const DIGITS_MIN: u8 = 6;
+const DIGITS_MAX: u8 = 8;
+/// HOTP's initial moving factor, the one width ykman sends and the card takes.
+const IMF_LEN: usize = 4;
+/// Largest password-safe field (RS-Key's own extension). Its length has to fit
+/// the one byte GET CREDENTIAL writes, or the field would be stored unreadable.
+const PWS_MAX: usize = 255;
 
 const PROP_TOUCH: u8 = 0x02;
 
@@ -227,41 +243,21 @@ impl<'a> OathApplet<'a> {
             return Sw::SECURITY_STATUS_NOT_SATISFIED;
         }
         let data = &apdu.data[..apdu.nc];
-        let (mut name, mut key, mut imf, mut prop) = (None, None, None, None);
-        for (t, v) in PutIter::new(data) {
-            // The stored-blob walkers (find_tag_range/PutIter) decode 1-byte tags;
-            // reject the 2-byte tag form (tag&0x1f==0x1f) so a credential is never
-            // re-read differently by the SDK Tlv walker. No OATH tag uses that form.
-            if t & 0x1f == 0x1f {
-                return Sw::INCORRECT_PARAMS;
-            }
-            match t {
-                TAG_NAME if name.is_none() => name = Some(v),
-                TAG_KEY if key.is_none() => key = Some(v),
-                TAG_IMF if imf.is_none() => imf = Some(v),
-                TAG_PROPERTY if prop.is_none() => prop = v.first().copied(),
-                _ => {}
-            }
-        }
-        let Some(key) = key else {
+        // Judged before a byte is written. PUT overwrites by name, so a body
+        // accepted here and found unusable later does not occupy a free slot —
+        // it replaces a working credential with a dead one under `9000`, and the
+        // secret is gone (worklog TRACK-oath §7.7a, measured against the card).
+        let Some(f) = parse_put(data) else {
             return Sw::INCORRECT_PARAMS;
         };
-        // key = [type|alg, digits, secret…]; must hold at least those 2 bytes.
-        if key.len() < 2 {
-            return Sw::INCORRECT_PARAMS;
-        }
-        let Some(name) = name else {
-            return Sw::INCORRECT_PARAMS;
-        };
-        let hotp = key[0] & OATH_TYPE_MASK == OATH_TYPE_HOTP;
 
-        // Rebuild in normalised form: NAME, KEY, PROPERTY as a real TLV, other
-        // TLVs verbatim, and (HOTP) the IMF last, zero-padded to 8 bytes.
+        // Rebuild in normalised form: NAME, KEY, PROPERTY as a real TLV, the
+        // password-safe fields verbatim, and (HOTP) the IMF last as 8 bytes.
         let mut blob = [0u8; CRED_MAX];
         let mut n = 0;
-        let mut ok = emit_tlv(&mut blob, &mut n, TAG_NAME, name);
-        ok &= emit_tlv(&mut blob, &mut n, TAG_KEY, key);
-        if let Some(p) = prop {
+        let mut ok = emit_tlv(&mut blob, &mut n, TAG_NAME, f.name);
+        ok &= emit_tlv(&mut blob, &mut n, TAG_KEY, f.key);
+        if let Some(p) = f.prop {
             ok &= emit_tlv(&mut blob, &mut n, TAG_PROPERTY, &[p]);
         }
         for (t, v) in PutIter::new(data) {
@@ -270,17 +266,13 @@ impl<'a> OathApplet<'a> {
                 _ => ok &= emit_tlv(&mut blob, &mut n, t, v),
             }
         }
-        if hotp {
+        if f.hotp {
+            // The 4-byte initial moving factor is left-padded into the counter.
             let mut counter = [0u8; 8];
-            match imf {
-                // Short IMF values are left-padded (ykman sends 4 bytes).
-                Some(v) if v.len() <= 8 => counter[8 - v.len()..].copy_from_slice(v),
-                Some(v) => counter.copy_from_slice(&v[..8]),
-                None => {}
+            if let Some(v) = f.imf {
+                counter[8 - v.len()..].copy_from_slice(v);
             }
             ok &= emit_tlv(&mut blob, &mut n, TAG_IMF, &counter);
-        } else if let Some(v) = imf {
-            ok &= emit_tlv(&mut blob, &mut n, TAG_IMF, v);
         }
         if !ok {
             return Sw::FILE_FULL;
@@ -289,7 +281,7 @@ impl<'a> OathApplet<'a> {
         let mut scratch = [0u8; CRED_MAX];
         let mkek = read_fused(self.mkek_source);
         let dev = self.device(&mkek);
-        let fid = match find_cred(&dev, fs, name, &mut scratch) {
+        let fid = match find_cred(&dev, fs, f.name, &mut scratch) {
             Some((fid, _)) => fid,
             None => match free_slot(fs) {
                 Some(fid) => fid,
@@ -688,13 +680,18 @@ impl<'a> OathApplet<'a> {
                     res.push(TAG_TOUCH_RESPONSE);
                     res.push(1);
                     res.push(key[1]);
-                } else {
+                } else if alg_supported(key[0]) {
                     res.push(TAG_RESPONSE + p2);
-                    if calculate(p2 == 0x01, key, chal, res).is_none() {
-                        // Unknown algorithm: emit the digits byte only.
-                        res.push(1);
-                        res.push(key[1]);
-                    }
+                    // `alg_supported` is exactly `oath_hmac`'s domain.
+                    let _ = calculate(p2 == 0x01, key, chal, res);
+                } else {
+                    // A build before PUT's rule could store an algorithm nibble
+                    // that has no HMAC. There is no code — and a `0x76` TLV one
+                    // byte long is not one either, so say so with the protocol's
+                    // own "no response" rather than a malformed frame under 9000.
+                    res.push(TAG_NO_RESPONSE);
+                    res.push(1);
+                    res.push(key[1]);
                 }
             }
         }
@@ -772,7 +769,9 @@ impl<'a> OathApplet<'a> {
         };
         let off = (mac[size - 1] & 0xF) as usize;
         let trunc = u32::from_be_bytes([mac[off] & 0x7F, mac[off + 1], mac[off + 2], mac[off + 3]]);
-        let modulus = if key[1] == 6 { 1_000_000 } else { 100_000_000 };
+        let Some(modulus) = code_modulus(key[1]) else {
+            return Sw::DATA_INVALID;
+        };
         if trunc % modulus != code_int {
             return SW_WRONG_DATA;
         }
@@ -792,6 +791,11 @@ impl<'a> OathApplet<'a> {
         let (Some((_, name)), Some((_, new_name))) = (names.next(), names.next()) else {
             return SW_WRONG_DATA;
         };
+        // The same 1..=64 bound PUT enforces — otherwise every stored name is
+        // one RENAME away from a length no host can address.
+        if new_name.is_empty() || new_name.len() > NAME_MAX {
+            return Sw::INCORRECT_PARAMS;
+        }
         let mut scratch = [0u8; CRED_MAX];
         let mkek = read_fused(self.mkek_source);
         let dev = self.device(&mkek);
@@ -1147,6 +1151,24 @@ impl<S: Storage> Applet<Fs<S>> for OathApplet<'_> {
             _ => Sw::INS_NOT_SUPPORTED,
         }
     }
+}
+
+/// Whether [`oath_hmac`] has an arm for this key byte's algorithm nibble — the
+/// one owner of "which algorithms exist", shared by PUT's rule and the bulk
+/// read that has to frame a credential it cannot compute.
+fn alg_supported(ty_alg: u8) -> bool {
+    matches!(
+        ty_alg & ALG_MASK,
+        ALG_HMAC_SHA1 | ALG_HMAC_SHA256 | ALG_HMAC_SHA512
+    )
+}
+
+/// The decimal width VERIFY CODE reduces a truncated HMAC to. PUT bounds
+/// `digits` to 6..=8, but a build before that stored anything the host sent and
+/// `10^digits` would overflow — so an out-of-range record is refused rather than
+/// silently compared at the wrong width.
+fn code_modulus(digits: u8) -> Option<u32> {
+    matches!(digits, DIGITS_MIN..=DIGITS_MAX).then(|| 10u32.pow(digits as u32))
 }
 
 /// HMAC with the credential's algorithm nibble; returns the digest size.
@@ -1527,6 +1549,104 @@ fn find_tag_range(blob: &[u8], tag: u8) -> Option<core::ops::Range<usize>> {
         i = end;
     }
     None
+}
+
+/// Tags a credential body may carry, in the order a YubiKey requires them: the
+/// four YKOATH ones first, then RS-Key's password-safe extension (which no
+/// YubiKey implements, so the Nitrokey spec governs those three and they may sit
+/// anywhere). Position here is both the duplicate bitmask's bit and the sort key
+/// the order rule compares.
+///
+/// An allow-list rather than a skip-list, which also settles run-3 #6: no tag
+/// here uses the 2-byte BER form (`tag & 0x1f == 0x1f`), so a stored credential
+/// can never be re-read differently by the SDK's `Tlv` walker.
+const PUT_TAGS: [u8; 7] = [
+    TAG_NAME,
+    TAG_KEY,
+    TAG_PROPERTY,
+    TAG_IMF,
+    TAG_PWS_LOGIN,
+    TAG_PWS_PASSWORD,
+    TAG_PWS_METADATA,
+];
+/// How many of [`PUT_TAGS`] are the ordered YKOATH ones.
+const PUT_TAGS_ORDERED: usize = 4;
+
+/// A credential body PUT has accepted, field by field.
+struct PutFields<'d> {
+    name: &'d [u8],
+    key: &'d [u8],
+    imf: Option<&'d [u8]>,
+    prop: Option<u8>,
+    hotp: bool,
+}
+
+/// Split a PUT body into its fields, or `None` where a YubiKey 5.7.4 answers
+/// `6A80` and stores nothing: an unknown or repeated tag, KEY before NAME, a
+/// field outside its measured bounds, or anything left over after the last TLV.
+/// The card's grid is in the worklog (TRACK-oath §7); every bound here is a
+/// measured cell, not a guess.
+fn parse_put(data: &[u8]) -> Option<PutFields<'_>> {
+    let (mut name, mut key, mut imf, mut prop) = (None, None, None, None);
+    let (mut seen, mut order) = (0u8, 0usize);
+    let mut it = PutIter::new(data);
+    for (t, v) in it.by_ref() {
+        let idx = PUT_TAGS.iter().position(|&x| x == t)?;
+        if seen & (1 << idx) != 0 {
+            return None;
+        }
+        seen |= 1 << idx;
+        // PutIter yields in wire order, so the YKOATH tags climbing this index
+        // is the card's NAME, KEY, PROPERTY, IMF ordering.
+        if idx < PUT_TAGS_ORDERED {
+            if idx < order {
+                return None;
+            }
+            order = idx;
+        }
+        match t {
+            TAG_NAME => name = Some(v),
+            TAG_KEY => key = Some(v),
+            TAG_IMF => imf = Some(v),
+            TAG_PROPERTY => prop = Some(*v.first()?),
+            // A password-safe field longer than its one-byte length would be
+            // stored where GET CREDENTIAL could never serve it back.
+            _ if v.len() > PWS_MAX => return None,
+            _ => {}
+        }
+    }
+    // Whatever PutIter could not decode stays in `rest`: trailing junk, a
+    // truncated TLV, or a property tag with no byte after it.
+    if !it.rest.is_empty() {
+        return None;
+    }
+    let (name, key) = (name?, key?);
+    if name.is_empty() || name.len() > NAME_MAX {
+        return None;
+    }
+    // key = [type|alg, digits, secret…], so the length bound covers both bytes.
+    if !(KEY_TLV_MIN..=KEY_TLV_MAX).contains(&key.len())
+        || !(DIGITS_MIN..=DIGITS_MAX).contains(&key[1])
+        || !alg_supported(key[0])
+    {
+        return None;
+    }
+    let hotp = match key[0] & OATH_TYPE_MASK {
+        OATH_TYPE_HOTP => true,
+        OATH_TYPE_TOTP => false,
+        _ => return None,
+    };
+    // The IMF seeds HOTP's counter; TOTP has no moving factor to seed.
+    if imf.is_some_and(|v| !hotp || v.len() != IMF_LEN) {
+        return None;
+    }
+    Some(PutFields {
+        name,
+        key,
+        imf,
+        prop,
+        hotp,
+    })
 }
 
 /// TLV walk over PUT data. `TAG_PROPERTY` is special-cased per the YKOATH spec:

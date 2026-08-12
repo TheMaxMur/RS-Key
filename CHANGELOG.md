@@ -40,6 +40,38 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Security
 
+- **OATH `PUT` now accepts exactly the credential bodies a YubiKey accepts, and
+  a refused one no longer destroys the credential it would have overwritten.**
+  The body was barely parsed: any algorithm nibble, any type nibble, any digit
+  count, any name length, any secret length and any extra tag were stored and
+  served back under `9000`. Three of those bite. A **2-byte KEY TLV is an empty
+  HMAC secret** — every RS-Key would then answer the same code for the same
+  challenge, computable offline by anyone. An **algorithm nibble outside 1/2/3**
+  stores a credential that `LIST` shows and `CALCULATE` can never compute
+  (`6400` forever), which `CALCULATE ALL` framed as a `0x76` response TLV one
+  byte long where the protocol says five — a malformed frame under a success
+  status. And **unrecognised tags were kept verbatim**, roughly 1 KiB per slot
+  across 255 slots: a caller-chosen write primitive on the CCID interface.
+  Sharpest of all, because PUT overwrites by name, one malformed PUT **replaced
+  a working credential with a permanently dead one and answered `9000`**, secret
+  unrecoverable; a YubiKey refuses the PUT and the original keeps computing.
+  Measured across the whole boundary on a 5.7.4 and now matched cell for cell:
+  KEY TLV 16..=66 bytes, digits 6/7/8, type `0x10` or `0x20`, algorithm 1/2/3,
+  name 1..=64 bytes, the initial moving factor on HOTP only and exactly 4 bytes,
+  the property as the bare `78 vv` pair ykman sends, and no unknown tag, repeat,
+  wrong order or trailing byte — everything else is `6A80` with **nothing
+  stored**, decided before the store is touched. RENAME takes the same name
+  bound, or PUT's would be one rename away from a bypass. Two follow-ons in the
+  same class: `VERIFY CODE` reduced every code that was not 6 digits to 8, so a
+  legal 7-digit credential rejected its own correct code (`6700`) and accepted
+  the 8-digit reduction; and `CALCULATE ALL` now reports a credential it cannot
+  compute with the protocol's own "no response" tag instead of that truncated
+  frame. RS-Key's password-safe fields are its own extension, not a YubiKey tag,
+  and stay accepted. Stored credentials are untouched — the rule is on the write
+  path only, and an out-of-range one an older build wrote still lists, renames
+  and deletes.
+  **bcdDevice → 0x08A0.**
+
 - **The advertised `maxMsgSize` is now tied to the transport that has to carry
   it.** getInfo advertised a literal `7609` in `rsk-fido`; the frame that is
   actually refused is sized by a *computed* constant in `rsk-usb`, and `rsk-fido`

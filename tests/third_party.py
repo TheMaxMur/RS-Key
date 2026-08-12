@@ -104,6 +104,14 @@ DIVERGENCES: dict[str, dict[str, str]] = {
         "test_070_oath.py::test_bothoath": "the challenge TLV is sent truncated (`74` with no length)",
         "test_070_oath.py::test_imf_overwrite": "the challenge TLV is sent truncated (`74` with no length)",
         "test_070_oath.py::test_imf_more": "the challenge TLV is sent truncated (`74` with no length)",
+        # These enroll 7-byte and 9-byte HMAC secrets (`foo bar`, `blahonga!`).
+        # A YubiKey 5.7.4 answers `6A80` and stores nothing below a 16-byte KEY
+        # TLV — measured across the whole boundary — and RS-Key matches the card
+        # rather than pico-fido here (E34). `test_bothoath` and
+        # `test_imf_overwrite` above enroll short secrets too; they were already
+        # listed for the challenge TLV and now fail one step earlier.
+        "test_070_oath.py::test_rename_prefix_extension": "enrolls a 7-byte OATH secret; a YubiKey refuses a KEY TLV under 16 bytes",
+        "test_070_oath.py::test_delete": "enrolls a 9-byte OATH secret; a YubiKey refuses a KEY TLV under 16 bytes",
         # CTAP 2.3.1 §6.4 lists encCredStoreState (0x1E) as **Optional**, like its
         # sibling encIdentifier (0x19); RS-Key emits neither. Both are conveniences
         # for a platform holding the persistent pinUvAuthToken — a cache-invalidation

@@ -179,6 +179,14 @@ wipe the whole key instead, see `rsk offboard`.
 - HOTP counters are persisted across reboots and continue from where they were.
   Touch-required HOTP accounts only advance the counter *after* the touch, so
   there are no drive-by increments.
+- Enrollment is checked before anything is written, the way a YubiKey checks it:
+  the secret is 14–64 bytes, the name 1–64, the code 6/7/8 digits, the hash one
+  of SHA1/SHA256/SHA512. A client that sends anything else gets `6A80` and
+  **nothing is stored** — in particular, a rejected `add` over an existing
+  account leaves that account working instead of replacing it with one that can
+  never produce a code. `ykman` and Yubico Authenticator stay inside these
+  bounds; a client that does not was writing an account no authenticator app
+  could ever use.
 - OATH interop (add → list → calculate → delete, plus TOTP crypto-verified
   against RFC vectors, via both `ykman oath` and Yubico Authenticator) is
   tracked in [interop.md](../interop.md#oath--otp).

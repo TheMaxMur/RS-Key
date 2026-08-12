@@ -4,6 +4,11 @@
 use super::*;
 use rsk_fs::storage::ram::RamStorage;
 
+/// PUT's body grammar — a rule per field, a measured card cell per rule. Hung
+/// off this module rather than the crate root so it inherits the helpers below.
+#[path = "put_tests.rs"]
+mod put_tests;
+
 /// RFC 6238 reference secrets.
 const SECRET_SHA1: &[u8] = b"12345678901234567890";
 const SECRET_SHA256: &[u8] = b"12345678901234567890123456789012";
@@ -1616,12 +1621,33 @@ fn calculate_rejects_unknowns() {
         &apdu(INS_CALCULATE, 0, 1, &tlv(TAG_NAME, b"x")),
     );
     assert_eq!(sw, Sw::INCORRECT_PARAMS);
-    // Unknown algorithm nibble in a stored key fails cleanly.
-    put(
-        &mut app,
-        &mut fs,
-        &put_data(b"bad", 0x29, 6, SECRET_SHA1, false, None),
+    // Unknown algorithm nibble in a stored key fails cleanly. PUT refuses one
+    // now (E34), so the fixture is planted the way a build before it stored one
+    // — otherwise this asserts over an empty slot and proves nothing.
+    assert_eq!(
+        put(
+            &mut app,
+            &mut fs,
+            &put_data(b"bad", 0x29, 6, SECRET_SHA1, false, None)
+        ),
+        Sw::INCORRECT_PARAMS,
     );
+    let dev = Device {
+        serial_hash: &[0x22; 32],
+        serial_id: &SERIAL,
+        otp_key: None,
+    };
+    let mut blob = tlv(TAG_NAME, b"bad");
+    let mut key = vec![0x29u8, 6];
+    key.extend_from_slice(SECRET_SHA1);
+    blob.extend(tlv(TAG_KEY, &key));
+    assert!(seal::seal_put(
+        &dev,
+        &mut fs,
+        &mut CountRng(3),
+        KeyFid::new(EF_OATH_CRED),
+        &blob
+    ));
     let mut d = tlv(TAG_CHALLENGE, &1u64.to_be_bytes());
     d.extend(tlv(TAG_NAME, b"bad"));
     let (sw, _) = run(&mut app, &mut fs, &apdu(INS_CALCULATE, 0, 1, &d));
