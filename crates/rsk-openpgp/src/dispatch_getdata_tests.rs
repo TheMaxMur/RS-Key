@@ -274,3 +274,64 @@ fn a_do_the_card_announces_room_for_reads_back_whole() {
     let (survived, _) = read_cert(&mut disp, &mut applets, &mut fs);
     assert_eq!(survived, value);
 }
+
+/// DO 7F66 is a promise a host is entitled to act on (§7.7), so the number on the
+/// wire must be the one the transport carries — not the encoder's own idea of it.
+/// The tie from [`crate::files::MAX_APDU_BYTES`] to the CCID frame is a
+/// compile-time assertion in `rsk-device`, the only crate that sees both; this is
+/// the other half, that GET DATA really emits that constant.
+#[test]
+fn exlen_info_announces_the_apdu_the_transport_carries() {
+    let mut fs = setup();
+    let rng = RefCell::new(CountRng(0));
+    let presence = RefCell::new(crate::AlwaysConfirm);
+    let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
+    let mut disp = Dispatcher::default();
+    let mut applets: [&mut dyn rsk_sdk::Applet<Fs<RamStorage>>; 1] = [&mut app];
+
+    assert_eq!(
+        dispatch(&mut disp, &mut applets, &mut fs, SELECT_OPENPGP).1,
+        Sw::OK
+    );
+    let (body, sw) = dispatch(
+        &mut disp,
+        &mut applets,
+        &mut fs,
+        &[0x00, 0xCA, 0x7F, 0x66, 0x00],
+    );
+    assert_eq!(sw, Sw::OK);
+    let max = crate::files::MAX_APDU_BYTES as u16;
+    assert_eq!(
+        body,
+        std::vec![
+            0x02,
+            0x02,
+            (max >> 8) as u8,
+            max as u8,
+            0x02,
+            0x02,
+            (max >> 8) as u8,
+            max as u8,
+        ],
+        "7F66 must announce {max} in both directions"
+    );
+    // The same DO inside the application-related data `6E`, which is where a
+    // YubiKey serves it and where `gpg` reads it. Extended `Le`, so the template
+    // arrives whole instead of through `61xx`.
+    let (tpl, sw) = dispatch(
+        &mut disp,
+        &mut applets,
+        &mut fs,
+        &[0x00, 0xCA, 0x00, 0x6E, 0x00, 0x00, 0x00],
+    );
+    assert_eq!(sw, Sw::OK);
+    let at = tpl
+        .windows(2)
+        .position(|w| w == [0x7F, 0x66])
+        .expect("7F66 inside 6E");
+    assert_eq!(
+        &tpl[at + 3..at + 11],
+        &body[..],
+        "6E carries the same bytes"
+    );
+}

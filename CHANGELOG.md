@@ -40,6 +40,25 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **DO 7F66 now announces the APDU the transport can actually carry.** OpenPGP's
+  extended-length information said 2047 command / 2048 response bytes while one
+  CCID frame carries 2038, and §7.7 tells a host it may send exactly what that DO
+  says — so the nine byte-lengths in between were licensed by the card and
+  refused by its own reader, with no applet ever seeing them. §4.1.3.1 defines
+  the pair as "the total amount of bytes sent to or received from the card in any
+  command", header and lengths included, so the number to announce is the frame:
+  2038, in both directions. It is now derived from one named constant instead of
+  written out twice, and `rsk-device` — the only crate that sees both `rsk-openpgp`
+  and `rsk-usb` — carries the compile-time assertion tying it to
+  `MAX_CCID_MSG - HEADER`, so the two cannot drift again. Measured against a
+  YubiKey 5.7.4: it announces 3070 and carries 3062, so the exact-fit property is
+  not something the oracle demonstrates — the spec and the arithmetic are what
+  decide it. Also measured, and *not* changed here: past its limit the YubiKey
+  answers `6700` and the card lives; ours answers `6F00` and resynchronises, and
+  the software emulator hangs up instead — recorded rather than fixed, because
+  the transport's accumulator has no host-testable seam.
+  **bcdDevice → 0x08A5.**
+
 - **A command asking for secure messaging is refused instead of executed in the
   clear.** The class byte was nobody's business: OpenPGP and PIV never looked at
   it at all, so `04`, `0C`, `84` and `8C` — the ISO 7816-4 encodings that say

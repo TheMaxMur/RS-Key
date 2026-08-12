@@ -29,6 +29,14 @@ use crate::Hooks;
 // one frame; sizing this to the full message let a large response (e.g. a long
 // OATH LIST) overrun the frame, and `run_xfr` silently dropped the tail incl. SW.
 const RESP_CAP: usize = 2038;
+const _: () = assert!(RESP_CAP == rsk_usb::ccid::MAX_CCID_MSG - rsk_usb::ccid::HEADER);
+
+// The frame is also the largest command APDU that ever reaches an applet, and
+// OpenPGP announces that number to the host in DO 7F66. It announced 2047 and
+// 2048 against a transport carrying 2038, so §7.7 licensed nine byte-lengths the
+// reader answers with an error before any applet sees them. Only this crate sees
+// both constants.
+const _: () = assert!(rsk_openpgp::files::MAX_APDU_BYTES == RESP_CAP);
 
 // OpenPGP announces a maximum DO length in its own crate, which cannot see this
 // one; this is the only place both are visible. A DO longer than the body an
