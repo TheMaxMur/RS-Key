@@ -124,6 +124,18 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **OATH `SET CODE` took a proof carried over a challenge of any length.** The
+  host proves it knows the code it is installing by HMACing a challenge of its
+  own choosing, and we HMACed whatever it sent — one byte included, which is
+  one byte of margin for a proof whose whole job is to stop a code being
+  installed by something that cannot compute with it. A YubiKey 5.7.4 accepts
+  **exactly 8 bytes**, the width of the challenge it hands out itself, and
+  answers `6A80` to every other length with the installed code untouched.
+  `ykman` 5.9.2 and Yubico Authenticator send `os.urandom(8)`, the vendored
+  YKOATH suite never calls `SET CODE`, and both ways of *removing* a code are
+  judged before the challenge is read — so nothing that works today starts
+  being refused. **bcdDevice → 0x08B9.**
+
 - **A wrong OATH access code answered the word for "there is no access
   code".** `VALIDATE` (`0xA3`) refused a proof that did not match with `6984`,
   which is the same status the applet returns when nothing is installed to match

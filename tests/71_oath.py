@@ -249,6 +249,18 @@ def main():
     code_key = bytes(range(16))
     chal = bytes([1, 2, 3, 4, 5, 6, 7, 8])
     proof = hmac_mod.new(code_key, chal, hashlib.sha1).digest()
+    # The proof is carried over exactly 8 bytes, as on a YubiKey — a narrower
+    # challenge would install a code on a proof with that much less margin (E63).
+    short = chal[:7]
+    _, sw = oath.apdu(
+        INS_SET_CODE, 0, 0,
+        tlv(TAG_KEY, bytes([ALG_SHA1]) + code_key) + tlv(TAG_CHALLENGE, short)
+        + tlv(TAG_RESPONSE, hmac_mod.new(code_key, short, hashlib.sha1).digest()), want=None,
+    )
+    if sw != 0x6A80:
+        fail(f"SET CODE over a 7-byte challenge: SW {sw:04X} != 6A80")
+    if tlv_get(oath.select(), TAG_CHALLENGE) is not None:
+        fail("SET CODE over a 7-byte challenge installed a code anyway")
     oath.apdu(
         INS_SET_CODE, 0, 0,
         tlv(TAG_KEY, bytes([ALG_SHA1]) + code_key) + tlv(TAG_CHALLENGE, chal) + tlv(TAG_RESPONSE, proof),

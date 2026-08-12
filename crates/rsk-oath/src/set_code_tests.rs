@@ -15,15 +15,20 @@ fn fixture() -> (Fs<RamStorage>, RefCell<CountRng>) {
 
 const PROOF_CHAL: [u8; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
 
-/// SET CODE with `secret` as the key material, proving knowledge of it the way
-/// ykman does: `75` = `HMAC(secret, 74)`.
-fn set_code(app: &mut OathApplet, fs: &mut Fs<RamStorage>, secret: &[u8]) -> Sw {
+/// SET CODE with `secret` as the key material, proving knowledge of it over
+/// `chal` the way ykman does: `75` = `HMAC(secret, 74)`.
+fn set_code_over(app: &mut OathApplet, fs: &mut Fs<RamStorage>, secret: &[u8], chal: &[u8]) -> Sw {
     let mut key = vec![ALG_HMAC_SHA1];
     key.extend_from_slice(secret);
     let mut d = tlv(TAG_KEY, &key);
-    d.extend(tlv(TAG_CHALLENGE, &PROOF_CHAL));
-    d.extend(tlv(TAG_RESPONSE, &hmac_sha1(secret, &PROOF_CHAL)));
+    d.extend(tlv(TAG_CHALLENGE, chal));
+    d.extend(tlv(TAG_RESPONSE, &hmac_sha1(secret, chal)));
     run(app, fs, &apdu(INS_SET_CODE, 0, 0, &d)).0
+}
+
+/// SET CODE over the 8-byte challenge every host sends.
+fn set_code(app: &mut OathApplet, fs: &mut Fs<RamStorage>, secret: &[u8]) -> Sw {
+    set_code_over(app, fs, secret, &PROOF_CHAL)
 }
 
 /// Whether a code is installed, asked the way a host would: SELECT offers a
@@ -175,6 +180,31 @@ fn the_two_documented_ways_to_remove_a_code_still_work() {
             Sw::OK
         );
         assert!(!code_installed(&mut app, &mut fs));
+    }
+}
+
+#[test]
+fn the_proof_is_carried_over_exactly_eight_bytes() {
+    // E63: the card takes its own challenge width and nothing else, and every
+    // host sends 8 (ykman: `os.urandom(8)`). We took any length, so a one-byte
+    // challenge installed a code on a proof with one byte of margin.
+    for len in [0usize, 1, 2, 4, 7, 8, 9, 16, 20, 64] {
+        let (mut fs, rng) = fixture();
+        let touch = RefCell::new(AlwaysConfirm);
+        let mut app = OathApplet::new(SERIAL, [0x22; 32], None, &rng, &touch);
+        let secret = [0xABu8; 16];
+        let chal: Vec<u8> = (0..len).map(|i| 0x30 + i as u8).collect();
+        let accepted = len == CHALLENGE_LEN;
+        assert_eq!(
+            set_code_over(&mut app, &mut fs, &secret, &chal),
+            if accepted {
+                Sw::OK
+            } else {
+                Sw::INCORRECT_PARAMS
+            },
+            "a {len}-byte challenge",
+        );
+        assert_eq!(code_installed(&mut app, &mut fs), accepted, "{len} bytes");
     }
 }
 

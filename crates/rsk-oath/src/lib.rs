@@ -377,7 +377,12 @@ impl<'a> OathApplet<'a> {
         if !(CODE_TLV_MIN..=CODE_TLV_MAX).contains(&key.len()) {
             return Sw::INCORRECT_PARAMS;
         }
-        let Some(chal) = find_tag(data, TAG_CHALLENGE as u16) else {
+        // Exactly the width of the challenge the card itself hands out, which is
+        // what ykman and Yubico Authenticator send; a 5.7.4 answers `6A80` to
+        // every other length. Narrower is the half that matters — those 8 bytes
+        // are the whole margin the proof has.
+        let Some(chal) = find_tag(data, TAG_CHALLENGE as u16).filter(|c| c.len() == CHALLENGE_LEN)
+        else {
             return Sw::INCORRECT_PARAMS;
         };
         let Some(resp) = find_tag(data, TAG_RESPONSE as u16) else {

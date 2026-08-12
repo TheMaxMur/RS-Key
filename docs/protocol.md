@@ -129,11 +129,13 @@ password-safe fields `0x83`/`0x84`/`0x85`, ≤255 bytes each, which may sit
 anywhere in the body.) `SET CODE` (`0x03`) holds its key to the same measured
 rule: the `73` TLV is one algorithm byte plus **14..=64 bytes** of key material,
 or empty to remove the access code — anything else is `6A80` and whatever code
-was installed is left exactly as it was. `VALIDATE` (`0xA3`) then refuses a
-proof that does not match with `6A80` as well; `6984` from it means something
-else entirely — no access code is installed to match against. And PROPERTIES
-bit 0, *only increasing*, is enforced: a TOTP credential carrying it computes
-only for a challenge strictly greater than the highest one it has served,
+was installed is left exactly as it was. Its proof travels over an **exactly
+8-byte** `74` challenge (`os.urandom(8)`, as ykman sends it); any other width is
+`6A80`, and removing a code needs no challenge at all. `VALIDATE` (`0xA3`) then
+refuses a proof that does not match with `6A80` as well; `6984` from it means
+something else entirely — no access code is installed to match against. And
+PROPERTIES bit 0, *only increasing*, is enforced: a TOTP credential carrying it
+computes only for a challenge strictly greater than the highest one it has served,
 comparing the raw challenge bytes zero-extended on the right — plain numeric `>`
 for the usual 8-byte counter. A challenge at or below that mark is `6A80`, and
 in `CALCULATE ALL` one such credential fails the whole command with an empty
