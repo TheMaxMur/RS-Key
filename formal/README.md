@@ -168,9 +168,9 @@ mutants nothing catches.
 
 | Mutation switch | Removes | Target property | Caught in |
 |---|---|---|---|
-| `BugAssertWedgesOnTimeout` | only a confirm completes a getAssertion | `EveryOpQuiesces` | 78 022 states |
-| `BugWaitScopeNotCleared` | `worker.rs:521` `set_wait_scope(SCOPE_NONE)` | `EveryWaitReleases` | 71 841 states |
-| `BugWalkNeverExpires` | `state.rs:613-619` `expire_stale_sequences` | `EveryWalkCloses` | 91 295 states |
+| `BugAssertWedgesOnTimeout` | only a confirm completes a getAssertion | `EveryOpQuiesces` | 79 523 states |
+| `BugWaitScopeNotCleared` | `worker.rs:521` `set_wait_scope(SCOPE_NONE)` | `EveryWaitReleases` | 76 446 states |
+| `BugWalkNeverExpires` | `state.rs:613-619` `expire_stale_sequences` | `EveryWalkCloses` | 93 607 states |
 
 **One mutant needs a companion, and that is a result.** `BugBackupSealedNotAGate`
 rebuilds audit run-36's class — the backup marker swept ahead of the seed it
@@ -181,7 +181,7 @@ under it, from a `companion_bug` table in `gen-configs.sh`. A mutant that stops
 firing because a fix subsumed it is worth knowing; a mutant that stops firing
 silently is the failure this file exists to avoid.
 
-**18 of 18 mutants are caught, each by the invariant that names it**, and 3 of 3
+**19 of 19 mutants are caught, each by the invariant that names it**, and 3 of 3
 liveness mutants by the property that names them.
 `NoAccessibleSecretWithoutGate` is the one invariant no switch names as its
 target; `BugResetGatesFirst` breaks it too, and
@@ -249,6 +249,25 @@ removes the drop: **RED in 127 distinct states at depth 5**, the trace being a
 CTAPHID cancel ending a CCID ceremony. Without the action the same mutant is
 **GREEN over 6 580 784 states** — which is how "either owner alone carries the
 property" came to be written here, and it is wrong.
+
+### And a fourth the review found, which was not a missing writer at all
+
+`RegisterTouched` and `AssertFinish` had `pres.granted = "confirm"` as an
+enabling conjunct, not as a Guard with a Policy. A step that is merely never
+*enabled* without a confirm cannot notice a build that stopped requiring one:
+the review removed the presence gate from makeCredential **and** getAssertion at
+once — a credential written to flash and an assertion served with no touch at
+all — and every invariant stayed **GREEN over 9 658 460 states**. On a key with
+no PIN and no `alwaysUv` the touch is the only authorization there is, which is
+exactly what `NoAuthorizationBypass` claims to cover. `TouchGuard` /
+`TouchPolicy` fix it and `BugNoTouchRequired` catches it in 121 states at
+depth 5.
+
+Worth stating plainly, because it is the point of the exercise: the audit above
+read every action against every invariant and still missed this one. It was
+looking for a `viol` writer that should exist and does not; this was a gate with
+no writer at all, and it took an independent reviewer whose only job was to break
+things.
 
 ### The other two holes
 
@@ -382,15 +401,15 @@ than closed:
 
 | Configuration | Verdict | States generated | Distinct | Depth | Wall |
 |---|---|---|---|---|---|
-| `Shipped.cfg` (the tree as it stands) | **GREEN, exhaustive** | 55 988 607 | 6 664 764 | 49 | 100 s |
-| `Historical_E76.cfg` (the seed-lead taken back out) | RED `NoUnmanageableCredential` | 368 041 | 55 869 | 13 | 2 s |
-| `Historical_E77.cfg` (`FixPpuatRequiresPin` taken back out) | RED `NoAccessibleSecretWithoutGate` | 500 860 | 76 492 | 14 | 2 s |
-| 18 × `Mut_*.cfg` | RED, each caught | 262 – 899 702 | 118 – 138 546 | 5 – 15 | ≤ 2 s |
-| 18 × `Solo_*.cfg` | RED, each on its **own** target | 226 – 874 472 | 125 – 135 329 | 5 – 15 | ≤ 2 s |
+| `Shipped.cfg` (the tree as it stands) | **GREEN, exhaustive** | 56 047 231 | 6 664 764 | 49 | 83 s |
+| `Historical_E76.cfg` (the seed-lead taken back out) | RED `NoUnmanageableCredential` | 356 065 | 54 007 | 13 | 1 s |
+| `Historical_E77.cfg` (`FixPpuatRequiresPin` taken back out) | RED `NoAccessibleSecretWithoutGate` | 512 054 | 77 771 | 14 | 1 s |
+| 19 × `Mut_*.cfg` | RED, each caught | 262 – 899 702 | 118 – 138 546 | 5 – 15 | ≤ 2 s |
+| 19 × `Solo_*.cfg` | RED, each on its **own** target | 226 – 874 472 | 125 – 135 329 | 5 – 15 | ≤ 2 s |
 | `Solo_NoAccessibleSecretWithoutGate.cfg` | RED, the repaired clause | 1 296 217 | 194 351 | 16 | 3 s |
-| `Liveness.cfg` (reduced constants) | **GREEN** | 6 030 147 | 805 268 | 42 | 128 s |
+| `Liveness.cfg` (reduced constants) | **GREEN** | 6 030 147 | 805 268 | 42 | 118 s |
 | `Liveness_Full.cfg` (the safety matrix's constants) | **GREEN** | 55 988 607 | 6 664 764 | 49 | **1475 s** |
-| 3 × `LiveMut_*.cfg` | RED, each on its own property | 472 238 – 552 011 | 71 841 – 91 295 | — | ≤ 4 s |
+| 3 × `LiveMut_*.cfg` | RED, each on its own property | 482 460 – 564 677 | 76 446 – 93 607 | — | ≤ 4 s |
 
 Only `ShippedFixed.cfg` is an exhaustive search; every RED row stops at the
 first counterexample, so its counts move a few percent between runs with the

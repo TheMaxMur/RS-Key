@@ -56,7 +56,8 @@ CONSTANTS
     BugConsumeKeepsMcGa,          \* state.rs:522-528  a narrowed 6.5.5.7 triad
     BugNoDropStaleCancelAtEntry,  \* rsk-device presence.rs:192-193 wait entry
     BugWrongPinKeepsToken,        \* clientpin.rs:779  the pre-E38 tree
-    BugSeedDoesNotLead            \* reset.rs:61-65 / fs.rs `first`, pre-0x08BF
+    BugSeedDoesNotLead,           \* reset.rs:61-65 / fs.rs `first`, pre-0x08BF
+    BugNoTouchRequired            \* the presence gate on mc / ga
 
 (* Mutation switches for the LIVENESS properties. Kept apart from the set above *)
 (* because they break no invariant -- a wedge is a perfectly safe state -- so    *)
@@ -559,13 +560,25 @@ RegisterStart(r, t) ==
     /\ op' = [kind |-> "register", t |-> t, rp |-> r, step |-> 0]
     /\ UNCHANGED << pin, gate, store, lock, tok, plat, walk, sys, snap, upSpent >>
 
+\* THE TOUCH IS AN AUTHORIZATION, and on a key with no PIN and no alwaysUv it is
+\* the only one -- so it needs a Policy like every other gate here, not just an
+\* enabling conjunct. A step that is merely never ENABLED without a confirm
+\* cannot notice a build that stopped requiring one: the review removed the
+\* presence gate from makeCredential AND getAssertion at once and every invariant
+\* stayed green over 9 658 460 states.
+TouchGuard  == IF BugNoTouchRequired THEN pres.granted # "none"
+                                     ELSE pres.granted = "confirm"
+TouchPolicy == pres.granted = "confirm"
+
 RegisterTouched ==
     /\ op.kind = "register" /\ op.step = 0
-    /\ pres.granted = "confirm"
+    /\ TouchGuard
+    /\ viol' = IF TouchPolicy THEN viol
+                              ELSE viol \cup {"NoAuthorizationBypass"}
     /\ tok' = ConsumedTok
     /\ upSpent' = TRUE
     /\ op' = [op EXCEPT !.step = 1]
-    /\ UNCHANGED << pin, gate, store, lock, plat, pres, walk, sys, snap, viol >>
+    /\ UNCHANGED << pin, gate, store, lock, plat, pres, walk, sys, snap >>
 
 RegisterRefused ==
     /\ op.kind = "register" /\ op.step = 0
@@ -614,11 +627,16 @@ AssertFinish ==
     /\ op.kind = "assert"
     /\ IF BugAssertWedgesOnTimeout THEN pres.granted = "confirm"
                                    ELSE pres.granted # "none"
-    /\ tok' = IF pres.granted = "confirm" THEN ConsumedTok ELSE tok
-    /\ upSpent' = IF pres.granted = "confirm" THEN TRUE ELSE upSpent
+    \* `issued` is whether the assertion is actually served, which is what the
+    \* touch gates; the other outcomes only end the operation.
+    /\ LET issued == BugNoTouchRequired \/ pres.granted = "confirm" IN
+         /\ viol' = IF issued /\ ~TouchPolicy
+                      THEN viol \cup {"NoAuthorizationBypass"} ELSE viol
+         /\ tok' = IF issued THEN ConsumedTok ELSE tok
+         /\ upSpent' = IF issued THEN TRUE ELSE upSpent
     /\ pres' = ClosedWait(pres)
     /\ op' = NoOp
-    /\ UNCHANGED << pin, gate, store, lock, plat, walk, sys, snap, viol >>
+    /\ UNCHANGED << pin, gate, store, lock, plat, walk, sys, snap >>
 
 (***************************************************************************)
 (* authenticatorConfig -- no touch of its own. config.rs:223.              *)
@@ -627,7 +645,13 @@ AssertFinish ==
 \* The requirement GHSA-wqjm-653g-hgw3 states: an acfg operation may not be
 \* authorized by a token whose user-presence test some other command already
 \* spent.
-ConfigPolicy == TokenPolicy("acfg", NoRp) /\ ~upSpent
+\* config.rs:222-224 tests the MAC and PERM_ACFG and NOTHING else -- no `in_use`,
+\* and no rpId binding either. The shared TokenGuardBare carries the binding
+\* because credentialManagement's check_rp_binding does; here it is a guard the
+\* Rust does not have, and it was inert only because it stood in the policy too.
+ConfigGuard  == plat.held /\ plat.verifies /\ "acfg" \in tok.perms
+ConfigPolicy == plat.held /\ ~plat.revoked /\ tok.live /\ "acfg" \in tok.perms
+                /\ ~upSpent
 
 \* No `pin.set` conjunct: config.rs:222-224 tests the MAC and PERM_ACFG and
 \* nothing else. It carried one until the review measured it inert (a live token
@@ -636,7 +660,7 @@ ConfigPolicy == TokenPolicy("acfg", NoRp) /\ ~upSpent
 \* guard the Rust does not have.
 ConfigOp ==
     /\ Idle
-    /\ TokenGuardBare("acfg", NoRp)
+    /\ ConfigGuard
     /\ viol' = IF ConfigPolicy THEN viol ELSE viol \cup TokenBypass
     /\ gate' = [gate EXCEPT !.alwaysUv = ~gate.alwaysUv]
     /\ snap' = NoSnap
