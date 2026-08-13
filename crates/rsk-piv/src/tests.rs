@@ -7110,3 +7110,49 @@ fn the_management_slots_default_flag_answers_for_the_slots_touch_policy() {
         "a card provisioned before 0x08D7 still reports its factory key"
     );
 }
+
+/// The PIN and PUK metadata records carry the algorithm tag every other slot
+/// carries. Ours emitted only `05` and `06`, so the two records the command
+/// serves for a *secret* had a different shape from the ones it serves for a key
+/// — the only cell left in the whole PIV P1P2 sweep differing from the reference
+/// in shape rather than in content. A YubiKey 5.7.4 answers both `00 F7 00 80 00`
+/// and `00 F7 00 81 00` with `01 01 FF 05 01 01 06 02 03 03`, measured 3 runs
+/// byte-identical on a fresh `ykman piv reset`.
+#[test]
+fn the_pin_and_puk_metadata_carry_the_algorithm_tag() {
+    let rng = RefCell::new(TestRng(9));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    for slot in [REF_PIN, REF_PUK] {
+        let (sw, md) = run(&mut app, &mut fs, INS_GET_METADATA, 0, slot, &[]);
+        assert_eq!(sw, Sw::OK);
+        assert_eq!(
+            md,
+            // The byte, not the constant that holds it: written as `ALGO_PIN`
+            // both sides of this move together and any value but `0x0A` ships
+            // green, which is the whole payload of this change.
+            std::vec![0x01, 0x01, 0xFF, 0x05, 0x01, 1, 0x06, 0x02, 3, 3],
+            "slot {slot:02X}: the whole record, in the reference's order"
+        );
+    }
+    // The tag is fixed, so it must not move when the rest of the record does:
+    // change the PIN and spend a retry, and only `05` and `06` follow.
+    let mut msg = DEFAULT_PIN.to_vec();
+    msg.extend_from_slice(b"violets8");
+    assert_eq!(
+        run(&mut app, &mut fs, INS_CHANGE_PIN, 0, 0x80, &msg).0,
+        Sw::OK
+    );
+    assert_eq!(
+        run(&mut app, &mut fs, INS_VERIFY, 0, 0x80, &DEFAULT_PIN).0,
+        Sw::new(0x63, 0xC2)
+    );
+    let (sw, md) = run(&mut app, &mut fs, INS_GET_METADATA, 0, REF_PIN, &[]);
+    assert_eq!(sw, Sw::OK);
+    assert_eq!(
+        md,
+        std::vec![0x01, 0x01, 0xFF, 0x05, 0x01, 0, 0x06, 0x02, 3, 2]
+    );
+}

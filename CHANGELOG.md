@@ -49,6 +49,17 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **PIV `GET METADATA` for the PIN and PUK carries the algorithm tag.** The two
+  records the command serves for a secret had a different shape from the ones it
+  serves for a key: `05` and `06` and no `01`. A YubiKey 5.7.4 answers both
+  `00 F7 00 80 00` and `00 F7 00 81 00` with `01 01 FF 05 01 01 06 02 03 03` —
+  algorithm `FF`, SP 800-78 having no identifier for a secret that is not a key —
+  measured 3 runs byte-identical, and it was the last cell in the whole PIV
+  `P1P2` sweep where our record differed from the reference's in shape rather
+  than in content. Nothing in tree read the tag and `yubikit`'s `PinMetadata`
+  does not require it, so this is parity rather than a repair. `bcdDevice` →
+  `0x0933`.
+
 - **PIV `GET METADATA 9B` tag `05` answers for the slot's touch policy as well as
   its key.** It compared the stored management key against the factory one and
   stopped there, so a card carrying the factory key behind a touch gate the owner

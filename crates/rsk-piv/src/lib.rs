@@ -826,6 +826,9 @@ impl PivApplet<'_> {
                     Ok(t) => t,
                     Err(sw) => return sw,
                 };
+                // The algorithm tag every other slot carries, so the record a
+                // host parses has one shape whichever reference it named.
+                res.extend(&[0x01, 0x01, ALGO_PIN]);
                 res.extend(&[0x05, 0x01, is_default as u8]);
                 res.extend(&[0x06, 0x02, total, left]);
                 Sw::OK

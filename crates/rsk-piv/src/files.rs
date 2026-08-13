@@ -29,6 +29,10 @@ pub const ALGO_ECCP384: u8 = 0x14;
 pub const ALGO_RSA4096: u8 = 0x16;
 pub const ALGO_ED25519: u8 = 0xE0;
 pub const ALGO_X25519: u8 = 0xE1;
+/// The algorithm `GET METADATA` reports for the PIN and PUK — SP 800-78 has no
+/// identifier for a secret that is not a key, and a YubiKey 5.7.4 answers `FF`
+/// for both references.
+pub const ALGO_PIN: u8 = 0xFF;
 
 /// SEC1 uncompressed point: `0x04` + two 48-byte P-384 coordinates (the largest
 /// PIV curve).
