@@ -5,6 +5,10 @@ license = "AGPL-3.0-only"
 edition = "2024"
 publish = false
 
+# `cfg(kani)` guards the proof harnesses (set by `cargo kani`, unknown to rustc).
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
+
 # The applet wiring both the firmware and `tools/emu` run: which applets exist, in
 # what order, what gates each, and how a CTAPHID or CCID message reaches one. It
 # was `firmware/src/{handler,ccid_handler}.rs` until the emulator needed a second

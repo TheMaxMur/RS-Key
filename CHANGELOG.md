@@ -177,6 +177,22 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   authentication, so that one cell is left as the document has it.
   **bcdDevice → 0x08B3.**
 
+### Changed
+
+- **The presence-scope arbitration moved into `crates/rsk-device`.** Which
+  transport owns the one physical button, whose cancel may end its touch wait,
+  and the `spent` latch that stops one hold satisfying two ceremonies all lived
+  in `firmware/src/presence.rs` — a `no_std` embassy-rp binary for thumbv8m that
+  neither `cargo test` nor `cargo kani -p` can build, so the rule an unprivileged
+  FIDO-HID process must not be able to cancel an OpenPGP signature had no test
+  and no proof. It has both now: the arbitration is `rsk_device::presence`, with
+  the button, the clock and the blocking delay behind a `Board` trait, and
+  `firmware/src/presence.rs` keeps the board half and the seven `UserPresence`
+  impls. `NoCrossTransportTouchConsumption` — the fourth of the six TLA+
+  invariants, and the one `formal/README.md` said could not be proved where it
+  lived — now reaches a Kani harness, taking the traceability table from two of
+  six to three. Behaviour and wire surface unchanged; no `bcdDevice` bump.
+
 ### Fixed
 
 - **A makeCredential or getAssertion that named an unsupported PIN/UV-auth

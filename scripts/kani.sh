@@ -8,7 +8,7 @@
 # harness in `rsk-rescue` costs ~80 minutes and nothing that expensive belongs on
 # a pull request. But that put every proof a day away from the change that broke
 # it, and the split is cheap once the cost is measured rather than assumed: the
-# whole fast tier discharges in 209 s of solving (docs/testing.md carries the
+# whole fast tier discharges in ~212 s of solving (docs/testing.md carries the
 # table), while four crates hold everything slow.
 #
 # So: `pr` on every pull request that touches the crates, `state` additionally
@@ -32,13 +32,14 @@ cd "$(dirname "$0")/.."
 # --- the tiers ---------------------------------------------------------------
 #
 # FAST: every crate whose whole harness set discharges in under a minute a
-# harness. Measured 2026-08-13 on kani 0.67.0 under load — 39 harnesses, 196 s of
+# harness. Measured 2026-08-13 on kani 0.67.0 under load — 45 harnesses, 200 s of
 # solving all told, the slowest three being `rsk-piv::set_protected…` at 45 s,
-# `rsk-led::every_block_length…` at 44 s and `indices_in_range` at 29 s.
+# `rsk-led::every_block_length…` at 44 s and `indices_in_range` at 29 s. The
+# `rsk-device` six (the presence arbitration) cost 3 s together.
 # `--harness-timeout 5m` below is the tripwire on that claim: a harness that
 # grows past it fails the PR row rather than quietly making every pull request
 # wait, and the answer is to move its crate to SLOW, not to raise the cap.
-FAST="rsk-sdk rsk-fs rsk-crypto rsk-openpgp rsk-otp rsk-piv rsk-oath rsk-usb rsk-ui rsk-led rsk-slip39 rsk-bip39"
+FAST="rsk-sdk rsk-fs rsk-crypto rsk-openpgp rsk-otp rsk-piv rsk-oath rsk-usb rsk-ui rsk-led rsk-slip39 rsk-bip39 rsk-device"
 
 # SLOW: the arithmetic and the state sequences. `rsk-rescue` carries the ~80 min
 # `serialize_parse_roundtrip`, `rsk-rsa-asm` the functional division spec and the
@@ -60,9 +61,9 @@ STATEFUL="rsk-fido rsk-fs"
 # too: a rename or a deleted `#[cfg(kani)]` hook that takes harnesses away
 # silently. Raise these in the commit that adds a harness; lower one only in the
 # commit that removes one.
-FLOOR_pr=39
+FLOOR_pr=45
 FLOOR_state=4
-FLOOR_all=54
+FLOOR_all=60
 
 # The per-harness cap. Not per row — Kani runs the rest and fails at the end — so
 # it bounds one non-convergent proof, never the tier.

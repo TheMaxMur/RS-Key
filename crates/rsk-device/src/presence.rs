@@ -243,3 +243,7 @@ impl ButtonWait {
 #[cfg(test)]
 #[path = "presence_tests.rs"]
 mod tests;
+
+#[cfg(kani)]
+#[path = "presence_kani.rs"]
+mod proofs;

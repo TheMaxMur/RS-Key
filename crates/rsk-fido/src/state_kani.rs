@@ -315,11 +315,11 @@ const W_TIME_PASSES: u8 = 7;
 /// (`lib.rs:214`), another credentialManagement subcommand (`credmgmt.rs:164`),
 /// `stopUsingPinUvAuthToken`, an `authenticatorReset`, or the §6 idle window.
 ///
-/// This is the Kani-reachable half of the maintainer's
-/// `cancel(transport, channel)` property. The other half — one transport
-/// cancelling another's touch — is **not expressible here**: `WAIT_SCOPE` and the
-/// `spent` latch live in `firmware/src/presence.rs`, a thumbv8m embassy binary
-/// that no `cargo kani -p` can reach. See the run's worklog.
+/// This is the channel half of the maintainer's `cancel(transport, channel)`
+/// property. The transport half — one transport cancelling another's touch — is
+/// not expressible over `FidoState`; it is proved in
+/// `crates/rsk-device/src/presence_kani.rs`, where the arbitration moved out of
+/// `firmware/src/presence.rs` so a harness could reach it at all.
 ///
 /// What this does **not** prove: the Begin is reproduced from its call site's
 /// cursor writes rather than invoked (`enumerate_rps` needs flash and the device

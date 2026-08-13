@@ -329,19 +329,24 @@ whole tree (untracked files included) on 2026-08-12:
 |---|---|---|---|---|
 | `NoAuthorizationBypass` | ✓ | ✗ | ✓ `state_kani.rs` | ✗ |
 | `NoTokenAfterInvalidation` | ✓ | ✗ | ✓ `state_kani.rs`, `credmgmt_kani.rs` | ✗ |
-| `NoCrossTransportTouchConsumption` | ✓ | ✗ | ✗ | ✗ |
+| `NoCrossTransportTouchConsumption` | ✓ | ✗ | ✓ `presence_kani.rs` | ✗ |
 | `NoAccessibleSecretWithoutGate` | ✓ | ✗ | ✗ | ✗ |
 | `NoUnmanageableCredential` | ✓ | ✗ | ✗ | ✗ |
 | `ResetNeverWeakensSurvivingState` | ✓ | ✗ | ✗ | ✗ |
 
-**Two of six reach a Kani harness. None reaches any of the 54 fuzz targets, and
-none appears in non-test Rust.** So the traceability is a plan, and it is stated
-here as one. The obstacles are known and unequal, which is why this is not just
-a to-do list:
+**Three of six reach a Kani harness. None reaches any of the 54 fuzz targets,
+and none appears in non-test Rust.** So the traceability is still mostly a plan,
+and it is stated here as one. The obstacles are known and unequal, which is why
+this is not just a to-do list:
 
-- `NoCrossTransportTouchConsumption` **cannot** get a Kani harness today. Its
-  whole mechanism now lives in `crates/rsk-device/src/presence.rs`, host-testable
-  at last, but no harness has been written over it yet.
+- `NoCrossTransportTouchConsumption` **is proved now**, and the row above is the
+  first one this table changed. It could not be while its whole mechanism lived
+  in `firmware/src/presence.rs`, a `no_std` embassy-rp binary that no
+  `cargo kani -p` can build; the arbitration was lifted into
+  `crates/rsk-device/src/presence.rs`, behaviour unchanged, and the two clauses
+  the model names — `TouchCancel`'s `cancelBy = scope` and `TouchConfirm`'s
+  `usedBy`— are `no_cross_transport_touch_consumption_cancel` and
+  `..._confirm` in `presence_kani.rs`.
 - `NoAccessibleSecretWithoutGate` and `ResetNeverWeakensSurvivingState` are
   about flash records, so a harness needs an `Fs`. `rsk-fs` already carries
   sequence proofs; that is the natural home, not `rsk-fido`.
@@ -407,8 +412,8 @@ than a settled abstraction.
   review showed this is exactly as narrow as it sounds: the cancel is dropped at
   **both** ends of a wait (`crates/rsk-device/src/presence.rs:193` *and*
   `:226`), so removing either alone leaves the model green — a reviewer trusting
-  one citation would see nothing fall. The unit test `w8_…` is what pins the
-  drop at exit.
+  one citation would see nothing fall. The Kani harness has the same blind spot
+  and says so; the unit test `w8_…` is what pins the drop at exit.
 - **The button build only** (`presence.shows_confirm() = FALSE`), so the reset
   window always applies; a display build bypasses it by design (`reset.rs:31`)
   and that path is unmodelled.

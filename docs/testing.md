@@ -200,6 +200,14 @@ crypto-critical helpers, where a proof genuinely beats a sample:
   data-loss one; `serialize∘parse == id` for every `PhyData` (every
   field-presence combination and value, product strings up to 4 bytes), modulo
   the documented missing-ENABLED_USB_ITF→ALL normalization.
+- `rsk-device`: the presence-scope arbitration — one physical button, four
+  transports. Over a symbolic interleaving of button samples and host cancels,
+  a touch wait ends `Cancelled` only for the transport that owns it (so a CCID
+  or on-panel wait cannot be cancelled at all), is advertised as pending to that
+  transport and no other, and one unbroken hold satisfies at most one ceremony.
+  Those are `NoCrossTransportTouchConsumption`'s `TouchCancel` and `TouchConfirm`
+  clauses; the arbitration was lifted out of `firmware/src/presence.rs` so a
+  harness could reach it, since no `cargo kani -p` builds a thumbv8m binary.
 - `rsk-fido`: the tree's only **state-sequence** proofs. The others each check
   one call; these drive a symbolic four- to five-operation sequence over the
   real `FidoState` and check an invariant after every step — a pinUvAuthToken
@@ -235,9 +243,9 @@ run):
 
 | Tier | Crates | Harnesses | Solve | Slowest harness |
 |---|---|---|---|---|
-| `pr` | 12 | 38 | 209 s | `rsk-piv::set_protected_total_and_invariant`, 57 s |
+| `pr` | 13 | 45 | 212 s | `rsk-piv::set_protected_total_and_invariant`, 57 s |
 | `state` | 2 | 4 | ~12 min | `rsk-fido::…_at_call_site`, ~8.5 min (9.3 GiB peak) |
-| `all` | 16 | 53 | ~1 h 45 | `rsk-rescue::serialize_parse_roundtrip`, ~80 min |
+| `all` | 17 | 60 | ~1 h 45 | `rsk-rescue::serialize_parse_roundtrip`, ~80 min |
 
 `pr` passes `--harness-timeout 5m`, five times its slowest harness. That cap is
 the tripwire on the tier assignment: a fast-tier harness that grows past it
