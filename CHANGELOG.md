@@ -275,6 +275,32 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **`PUT DATA 5FC109` (PRINTED INFORMATION) stored nothing and said `9000`.**
+  `ykman piv objects import 5fc109 …` followed by `export` did not round-trip, and
+  any host that put real printed information there lost it silently — the read
+  answered `6A82` even with the PIN. A YubiKey round-trips it, measured. It is an
+  ordinary data object now, PIN-gated for reading like its three Table 3 siblings.
+  One shape is still acknowledged and deliberately **not** stored: a body that is
+  exactly a PivmanProtectedData escrow record (`88 L { 89 L <key> }`, what
+  `ykman piv access change-management-key --protect` writes there). The key it
+  carries is already sealed in the `0x9B` slot that `GET DATA` synthesizes the
+  reply from, and persisting the host's copy would leave a management key in
+  plaintext at rest, which is the whole reason this card synthesizes rather than
+  stores. The match is on that exact shape — length-consistent, no trailer, a real
+  management-key length — so printed information that merely carries those tags is
+  stored like anything else. While the escrow is live, PRINTED *is* the escrow:
+  the read answers with the key, and a write of other content is refused with
+  `6985` rather than accepted and hidden under it. That is also how this avoids
+  the YubiKey's behaviour in the same spot, which takes the write and destroys the
+  only copy of a management key its owner may never have seen. An escrowed card
+  therefore reads back exactly what it did before. **bcdDevice → 0x08D3.**
+
+- **A PIV `PUT DATA` that deletes no longer answers `9000` when the delete
+  failed.** The store half already mapped a refusing flash write to `6581`; the
+  delete half dropped the result on the floor, so a host wiping fingerprints, an
+  iris image or printed information off a card got the word that says they are
+  gone while they were still there. Same class as the entry above, and after it
+  those objects hold real data.
 - **The OpenPGP sex DO `5F35` now holds a code the card will take back.** We
   seeded `'0'` (ISO 5218 "not known") at first boot and accepted it on
   `PUT DATA`; a YubiKey 5.7.4 answers `6A80` to `'0'` and holds `'9'` ("not

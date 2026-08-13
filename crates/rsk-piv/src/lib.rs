@@ -638,7 +638,9 @@ impl PivApplet<'_> {
             res.extend(DISCOVERY);
             return Sw::OK;
         }
-        if id == PRINTED_ID {
+        // An escrowed card reads its management key back here, synthesized from
+        // the sealed 0x9B slot; otherwise PRINTED is an ordinary data object.
+        if id == PRINTED_ID && mgm_is_protected(fs) {
             return self.get_protected_mgm(fs, res);
         }
         let Some(fid) = object_fid(id) else {
@@ -668,15 +670,12 @@ impl PivApplet<'_> {
         Sw::OK
     }
 
-    /// GET DATA for the PRINTED object (`5FC109`) — the PIN-protected management
-    /// key. Returns it only when protection is enabled (the ADMIN-DATA flag) AND
-    /// the PIN is verified; a default or plain mgmt key reads as absent, so the
-    /// key is never PIN-disclosed unless the user opted in. The key is synthesized
-    /// from the sealed 0x9B auth slot — there is no second copy at rest.
+    /// GET DATA for the PRINTED object (`5FC109`) once protection is enabled (the
+    /// caller checks the ADMIN-DATA flag): the PIN-protected management key,
+    /// synthesized from the sealed 0x9B auth slot, so there is no second copy at
+    /// rest. Never reached without the flag, so the key is not disclosed unless
+    /// the user opted in.
     fn get_protected_mgm<S: Storage>(&mut self, fs: &mut Fs<S>, res: &mut ResBuf) -> Sw {
-        if !mgm_is_protected(fs) {
-            return Sw::FILE_NOT_FOUND;
-        }
         if !self.sess.has_pin {
             return Sw::SECURITY_STATUS_NOT_SATISFIED;
         }
@@ -732,11 +731,20 @@ impl PivApplet<'_> {
         let fid = match (path[0], path[1], path[2]) {
             // ADMIN DATA (5FFF00): the protection flags. Plaintext (non-secret).
             (0x5F, 0xFF, 0x00) => EF_PIVMAN_DATA,
-            // PRINTED (5FC109): the PIN-protected mgmt key is virtual — backed by
-            // the sealed 0x9B auth slot (set via SET MANAGEMENT KEY); the host's
-            // copy isn't persisted (GET DATA synthesizes it), so acknowledge the
-            // write without storing the key plaintext at rest.
-            (0x5F, 0xC1, 0x09) => return Sw::OK,
+            // PRINTED (5FC109) carrying an escrow record: the key it holds is
+            // already sealed in the 0x9B slot that GET DATA synthesizes from, and
+            // storing the host's copy would leave a management key in plaintext at
+            // rest. Acknowledged, not persisted. Ordinary printed information
+            // falls through to the generic object below and round-trips.
+            (0x5F, 0xC1, 0x09) if is_mgm_escrow(obj) => return Sw::OK,
+            // While the escrow is live, PRINTED *is* the escrow: GET DATA answers
+            // with the synthesized key, so other content stored under it could
+            // never be read back. Refused rather than acknowledged and hidden —
+            // and a YubiKey's alternative, overwriting the escrow, loses the only
+            // copy of a management key the owner may never have seen.
+            (0x5F, 0xC1, 0x09) if !obj.is_empty() && mgm_is_protected(fs) => {
+                return Sw::CONDITIONS_NOT_SATISFIED;
+            }
             (0x5F, 0xC1, b) => match data_object_fid(b) {
                 Some(fid) => fid,
                 None => return WRONG_DATA,
@@ -744,8 +752,10 @@ impl PivApplet<'_> {
             _ => return WRONG_DATA,
         };
         if obj.is_empty() {
-            let _ = fs.delete(fid);
-            return Sw::OK;
+            return match fs.delete(fid) {
+                Ok(()) => Sw::OK,
+                Err(_) => Sw::MEMORY_FAILURE,
+            };
         }
         if obj.len() > MAX_OBJECT {
             return Sw::WRONG_LENGTH;
@@ -1284,6 +1294,26 @@ pub fn reference_retries_left<S: Storage>(fs: &mut Fs<S>, which: PinRef) -> Opti
 pub fn verify_reference<S: Storage>(dev: &Device, fs: &mut Fs<S>, which: PinRef, pin: &[u8]) -> Sw {
     let (fid, retry) = which.fid_retry();
     check_ref(dev, fs, fid, retry, pin)
+}
+
+/// Whether a PRINTED body is exactly a PivmanProtectedData escrow record —
+/// `88 L1 { 89 L2 <key> }`, nothing around it, `L2` a management-key length.
+/// Matched exactly rather than scanned for: a `find_tag` scan swallows ordinary
+/// printed information that happens to carry those tags, which is the very
+/// defect this arm sits beside, and misses a `88` the host nested one level down.
+fn is_mgm_escrow(obj: &[u8]) -> bool {
+    let [PROTECTED_TAG, outer, PROTECTED_MGM_TAG, klen, ..] = *obj else {
+        return false;
+    };
+    let (outer, klen) = (outer as usize, klen as usize);
+    obj.len() == 2 + outer && outer == 2 + klen && is_mgm_key_len(klen)
+}
+
+/// A length a 9B management key can have — [`mgm_key_len`]'s image.
+fn is_mgm_key_len(len: usize) -> bool {
+    [ALGO_3DES, ALGO_AES128, ALGO_AES192, ALGO_AES256]
+        .iter()
+        .any(|&algo| mgm_key_len(algo) == Some(len))
 }
 
 /// Whether the management key is marked PIN-protected (the ADMIN-DATA `0x02`

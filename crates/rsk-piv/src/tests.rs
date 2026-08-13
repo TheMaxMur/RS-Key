@@ -1041,19 +1041,29 @@ fn the_pin_read_condition_objects_are_not_world_readable() {
         v.extend_from_slice(&[TAG_DATA_OBJECT, 0x03, 0x41, 0x42, 0x43]);
         v
     };
-    // PRINTED is the escrow object here and has no plain storage, so it is only
-    // asserted on the unauthenticated cell.
     let gated = [
         CARDHOLDER_FINGERPRINTS_ID,
         CARDHOLDER_FACIAL_IMAGE_ID,
         PRINTED_ID,
         CARDHOLDER_IRIS_IMAGES_ID,
     ];
-    let ungated = [CHUID_ID, 0x5FC105u32, 0x5FC10A, 0x5FC101, 0x5FC10B];
+    // The controls include each gated id's immediate neighbours, so an off-by-one
+    // in `read_needs_pin` cannot pass. CHUID is a weak control on its own — it
+    // answers OK even when absent (the Windows synthesis) — hence the rest.
+    let ungated = [
+        CHUID_ID,
+        0x5FC101u32,
+        0x5FC102,
+        0x5FC104,
+        0x5FC105,
+        0x5FC107,
+        0x5FC10A,
+        0x5FC10B,
+        0x5FC10C,
+        0x5FC120,
+        0x5FC122,
+    ];
     for id in gated.iter().chain(ungated.iter()) {
-        if *id == PRINTED_ID {
-            continue;
-        }
         assert_eq!(
             run(&mut app, &mut fs, INS_PUT_DATA, 0x3F, 0xFF, &put(*id)).0,
             Sw::OK,
@@ -1091,9 +1101,6 @@ fn the_pin_read_condition_objects_are_not_world_readable() {
     // the gate comes first, so it cannot be used to probe what a card holds.
     verify_pin(&mut cold, &mut fs);
     for id in gated {
-        if id == PRINTED_ID {
-            continue;
-        }
         let (sw, body) = run(&mut cold, &mut fs, INS_GET_DATA, 0x3F, 0xFF, &get(id));
         assert_eq!(sw, Sw::OK, "{id:06X}");
         assert_eq!(
@@ -1121,12 +1128,194 @@ fn the_pin_read_condition_objects_are_not_world_readable() {
     );
 }
 
-/// `Storage` that refuses to write one fid — a flash failure landing exactly on
-/// SET MANAGEMENT KEY's seal write. The target is shared with the test so it can
-/// be armed after the setup writes have landed.
+/// PRINTED (`5FC109`) is a data object on a YubiKey — `ykman piv objects
+/// import/export` round-trips it, measured — and here it is also where the
+/// PIN-protected management key is read back from. Ours answered `9000` to the
+/// write and threw the bytes away, so the round trip silently lost whatever a
+/// host stored. It stores now, with one exception that stays: a body that IS an
+/// escrow record is still acknowledged and not persisted, because the key it
+/// carries is already sealed in `0x9B` and writing the host's copy would put a
+/// management key in flash in plaintext — the one thing this design exists to
+/// avoid. An escrowed card keeps reading back the synthesized key, as before.
+#[test]
+fn printed_information_round_trips_but_an_escrow_body_is_never_stored() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    let dev = Device {
+        serial_hash: &HASH,
+        serial_id: &SERIAL,
+        otp_key: None,
+    };
+    let get = [0x5C, 0x03, 0x5F, 0xC1, 0x09];
+    let printed = [TAG_DATA_OBJECT, 0x03, 0x41, 0x42, 0x43];
+    let mut put = get.to_vec();
+    put.extend_from_slice(&printed);
+    auth_mgm(&mut app, &mut fs);
+    verify_pin(&mut app, &mut fs);
+
+    assert_eq!(
+        run(&mut app, &mut fs, INS_PUT_DATA, 0x3F, 0xFF, &put).0,
+        Sw::OK
+    );
+    let (sw, body) = run(&mut app, &mut fs, INS_GET_DATA, 0x3F, 0xFF, &get);
+    assert_eq!(sw, Sw::OK, "PRINTED did not round-trip");
+    assert_eq!(&body, &printed);
+
+    // It is real storage: it survives a power cycle, and it is still PIN-gated.
+    let mut cold = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    select(&mut cold, &mut fs);
+    assert_eq!(
+        run(&mut cold, &mut fs, INS_GET_DATA, 0x3F, 0xFF, &get).0,
+        Sw::SECURITY_STATUS_NOT_SATISFIED
+    );
+    verify_pin(&mut cold, &mut fs);
+    let (sw, body) = run(&mut cold, &mut fs, INS_GET_DATA, 0x3F, 0xFF, &get);
+    assert_eq!(sw, Sw::OK);
+    assert_eq!(&body, &printed);
+
+    // An escrow body is acknowledged and NOT persisted. Written while protection
+    // is off, so nothing can mask it: the read still finds the earlier printed
+    // information, never the key the host offered.
+    let host_key = [0x5Au8; 24];
+    let mut escrow = vec![PROTECTED_TAG, 2 + host_key.len() as u8];
+    escrow.push(PROTECTED_MGM_TAG);
+    escrow.push(host_key.len() as u8);
+    escrow.extend_from_slice(&host_key);
+    let mut put_escrow = get.to_vec();
+    put_escrow.extend_from_slice(&[TAG_DATA_OBJECT, escrow.len() as u8]);
+    put_escrow.extend_from_slice(&escrow);
+    auth_mgm(&mut cold, &mut fs);
+    assert_eq!(
+        run(&mut cold, &mut fs, INS_PUT_DATA, 0x3F, 0xFF, &put_escrow).0,
+        Sw::OK
+    );
+    let (sw, body) = run(&mut cold, &mut fs, INS_GET_DATA, 0x3F, 0xFF, &get);
+    assert_eq!(sw, Sw::OK);
+    assert_eq!(&body, &printed, "the host's escrow copy was stored");
+
+    // Once protection is on, the synthesized key wins over anything stored.
+    assert_eq!(protect_mgm_key(&dev, &mut fs, &mut TestRng(42)), Sw::OK);
+    let (sw, body) = run(&mut cold, &mut fs, INS_GET_DATA, 0x3F, 0xFF, &get);
+    assert_eq!(sw, Sw::OK);
+    assert_eq!(
+        &body[..6],
+        &[
+            TAG_DATA_OBJECT,
+            0x24,
+            PROTECTED_TAG,
+            0x22,
+            PROTECTED_MGM_TAG,
+            0x20
+        ]
+    );
+    let mut sealed = [0u8; 32];
+    let n = seal::seal_read(&dev, &mut fs, key_fid(SLOT_CARDMGM), &mut sealed).unwrap();
+    assert_eq!(&body[6..6 + n], &sealed[..n]);
+    // …so a write of anything else is refused while it is live, rather than
+    // acknowledged and hidden under it. (A YubiKey takes the write and loses the
+    // escrowed key with it; that is the data loss we do not copy.)
+    assert_eq!(
+        run(&mut cold, &mut fs, INS_PUT_DATA, 0x3F, 0xFF, &put).0,
+        Sw::CONDITIONS_NOT_SATISFIED
+    );
+    // Revoking is `ykman`'s own sequence and its first step is an EMPTY 53 to
+    // PRINTED, so the empty body has to stay accepted while protection is on —
+    // and it is the delete form, so the printed information goes with the escrow.
+    // Asserted the way a host actually does it, not the way the library call
+    // alone would leave it.
+    let mut wipe = get.to_vec();
+    wipe.extend_from_slice(&[TAG_DATA_OBJECT, 0x00]);
+    assert_eq!(
+        run(&mut cold, &mut fs, INS_PUT_DATA, 0x3F, 0xFF, &wipe).0,
+        Sw::OK
+    );
+    mgm_clear_protected(&mut fs).unwrap();
+    verify_pin(&mut cold, &mut fs);
+    assert_eq!(
+        run(&mut cold, &mut fs, INS_GET_DATA, 0x3F, 0xFF, &get).0,
+        Sw::FILE_NOT_FOUND
+    );
+    // …and with the escrow gone it is ordinary storage again. (The management
+    // status from earlier still stands — `protect_mgm_key` rotates the key in
+    // flash, not the session — so no second mutual auth here, which would need
+    // the random key it just minted.)
+    assert_eq!(
+        run(&mut cold, &mut fs, INS_PUT_DATA, 0x3F, 0xFF, &put).0,
+        Sw::OK
+    );
+    let (sw, body) = run(&mut cold, &mut fs, INS_GET_DATA, 0x3F, 0xFF, &get);
+    assert_eq!(sw, Sw::OK);
+    assert_eq!(&body, &printed);
+}
+
+/// The escrow guard's own table. It is the whole reason a management key does
+/// not end up in flash in plaintext, so the shapes either side of it are pinned
+/// here rather than left to the one happy-path body the caller test sends.
+#[test]
+fn the_escrow_guard_matches_that_shape_and_no_other() {
+    let key = [0x5Au8; 24];
+    let escrow = |k: &[u8]| {
+        let mut v = vec![
+            PROTECTED_TAG,
+            2 + k.len() as u8,
+            PROTECTED_MGM_TAG,
+            k.len() as u8,
+        ];
+        v.extend_from_slice(k);
+        v
+    };
+    assert!(is_mgm_escrow(&escrow(&key)));
+    assert!(is_mgm_escrow(&escrow(&[0u8; 16])));
+    assert!(is_mgm_escrow(&escrow(&[0u8; 32])));
+    for (body, why) in [
+        (vec![], "empty"),
+        (vec![PROTECTED_TAG, 0x00], "88 with no content"),
+        (
+            vec![PROTECTED_TAG, 0x02, PROTECTED_MGM_TAG, 0x00],
+            "empty key",
+        ),
+        (escrow(&[0u8; 20]), "not a management-key length"),
+        (
+            vec![PROTECTED_TAG, 0x02, 0x8A, 0x18],
+            "the inner tag is not 89",
+        ),
+        (
+            [escrow(&key).as_slice(), &[0x41]].concat(),
+            "a trailing byte after the record",
+        ),
+        (
+            [&[0x30u8, 0x1C][..], escrow(&key).as_slice()].concat(),
+            "an escrow nested one level down",
+        ),
+        (
+            [&escrow(&key)[..2], &[0x41, 0x42], &escrow(&key)[2..]].concat(),
+            "content before the inner tag",
+        ),
+    ] {
+        assert!(!is_mgm_escrow(&body), "{why} was taken for an escrow");
+    }
+    // Printed information that merely carries the tags is stored, not swallowed.
+    assert!(!is_mgm_escrow(&[
+        TAG_DATA_OBJECT,
+        0x04,
+        PROTECTED_TAG,
+        0x02,
+        PROTECTED_MGM_TAG,
+        0x00
+    ]));
+}
+
+/// `Storage` that refuses to write, or to remove, one fid — a flash failure
+/// landing exactly on SET MANAGEMENT KEY's seal write, or on a PUT DATA that
+/// deletes. Both targets are shared with the test so they can be armed after the
+/// setup writes have landed.
 struct RefuseWrite {
     inner: RamStorage,
     refuse: Rc<Cell<Option<u16>>>,
+    refuse_remove: Rc<Cell<Option<u16>>>,
 }
 
 impl Storage for RefuseWrite {
@@ -1140,6 +1329,9 @@ impl Storage for RefuseWrite {
         self.inner.write(fid, data)
     }
     fn remove(&mut self, fid: u16) -> rsk_sdk::error::Result<()> {
+        if self.refuse_remove.get() == Some(fid) {
+            return Err(rsk_sdk::error::Error::MemoryFatal);
+        }
         self.inner.remove(fid)
     }
     fn size(&mut self, fid: u16) -> Option<usize> {
@@ -1148,6 +1340,57 @@ impl Storage for RefuseWrite {
     fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) -> bool {
         self.inner.for_each_key(f)
     }
+}
+
+/// A PUT DATA that deletes must not answer `9000` when the delete did not
+/// happen. The write half already maps a refusing store to `6581`; the delete
+/// half swallowed it, so a host wiping fingerprints off a card got the word that
+/// says they are gone while they were still there.
+#[test]
+fn a_delete_that_did_not_happen_is_not_reported_as_done() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let refuse_remove = Rc::new(Cell::new(None));
+    let mut fs = Fs::new(RefuseWrite {
+        inner: RamStorage::new(),
+        refuse: Rc::new(Cell::new(None)),
+        refuse_remove: Rc::clone(&refuse_remove),
+    });
+    fs.scan();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    let id = CARDHOLDER_FINGERPRINTS_ID;
+    let path = [0x5C, 0x03, (id >> 16) as u8, (id >> 8) as u8, id as u8];
+    let mut put = path.to_vec();
+    put.extend_from_slice(&[TAG_DATA_OBJECT, 0x03, 0x41, 0x42, 0x43]);
+    assert_eq!(
+        run(&mut app, &mut fs, INS_PUT_DATA, 0x3F, 0xFF, &put).0,
+        Sw::OK
+    );
+    let mut wipe = path.to_vec();
+    wipe.extend_from_slice(&[TAG_DATA_OBJECT, 0x00]);
+    refuse_remove.set(Some(0xD200 | (id & 0xFF) as u16));
+    assert_eq!(
+        run(&mut app, &mut fs, INS_PUT_DATA, 0x3F, 0xFF, &wipe).0,
+        Sw::MEMORY_FAILURE
+    );
+    verify_pin(&mut app, &mut fs);
+    assert_eq!(
+        run(&mut app, &mut fs, INS_GET_DATA, 0x3F, 0xFF, &path).0,
+        Sw::OK,
+        "the object is still there, which is what the refusal was about"
+    );
+    // With the flash healthy again the same command succeeds and the object goes.
+    refuse_remove.set(None);
+    assert_eq!(
+        run(&mut app, &mut fs, INS_PUT_DATA, 0x3F, 0xFF, &wipe).0,
+        Sw::OK
+    );
+    assert_eq!(
+        run(&mut app, &mut fs, INS_GET_DATA, 0x3F, 0xFF, &path).0,
+        Sw::FILE_NOT_FOUND
+    );
 }
 
 /// SET MANAGEMENT KEY torn by a failed seal write: the escrow flag must still
@@ -1163,6 +1406,7 @@ fn failed_set_mgmkey_keeps_the_escrow_for_the_unchanged_key() {
     let mut fs = Fs::new(RefuseWrite {
         inner: RamStorage::new(),
         refuse: Rc::clone(&refuse),
+        refuse_remove: Rc::new(Cell::new(None)),
     });
     fs.scan();
     select(&mut app, &mut fs);
@@ -1502,7 +1746,7 @@ fn a_new_mgmt_handshake_revokes_the_standing_9b_status() {
     let pres = RefCell::new(AlwaysConfirm);
     let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
     let mut fs = new_fs();
-    // PUT DATA of PRINTED: management-key gated, and stores nothing.
+    // PUT DATA of PRINTED: management-key gated like every other object.
     let put = |app: &mut PivApplet, fs: &mut Fs<RamStorage>| -> Sw {
         let obj = [0x5C, 0x03, 0x5F, 0xC1, 0x09, 0x53, 0x03, 0x41, 0x42, 0x43];
         run(app, fs, INS_PUT_DATA, 0x3F, 0xFF, &obj).0
@@ -3598,8 +3842,8 @@ fn reset_sweeps_more_files_than_one_batch() {
     auth_mgm(&mut app, &mut fs);
     verify_pin(&mut app, &mut fs);
 
-    // Every host-writable data object: 5FC100..5FC1EF (5FC109 is the virtual
-    // PRINTED object, never stored) plus the ADMIN DATA object 5FFF00.
+    // Every host-writable data object: 5FC100..5FC1EF plus the ADMIN DATA
+    // object 5FFF00.
     let put = |id: [u8; 3]| {
         [
             TAG_DATA_PATH,
@@ -3827,8 +4071,7 @@ fn reset_converges_over_multi_version_stuffing() {
             0x41,
         ]
     };
-    // 5FC109 is the virtual PRINTED object (acknowledged, never stored), so the
-    // 240 objects that do land are 5FC100..5FC1EF minus it, plus ADMIN DATA.
+    // The 241 objects that land are 5FC100..5FC1EF plus ADMIN DATA.
     for _ in 0..10 {
         for low in 0x00..=0xEFu8 {
             let (sw, _) = run(

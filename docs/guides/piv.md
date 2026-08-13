@@ -222,6 +222,25 @@ and a populated one are indistinguishable without the PIN. The management key
 does **not** substitute for it: writing these is management-gated, reading them
 is PIN-gated, and the two are separate conditions.
 
+`5FC109` has a second job: it is where a PIN-protected management key is read
+back from. **While protection is on, PRINTED is that escrow and nothing else** —
+the read answers with the key, synthesized from slot `9b`, and a write of any
+other content is refused with `6985` rather than accepted and hidden underneath
+it. Revoke the protection first (`ykman piv access change-management-key`
+without `--protect`, or set a new key any other way) and it is ordinary storage
+again. Note that `ykman`'s own revoke clears PRINTED as its first step, so
+anything stored there before you turned protection on does not survive the round
+trip.
+
+The one write the card never keeps is a *PivmanProtectedData* body — exactly
+`88 L { 89 L <key> }`, what `--protect` sends — which is acknowledged and
+dropped, because the key it carries is already sealed in `9b` and a second copy
+would sit in flash in plaintext. The match is on that exact shape, so printed
+information that merely happens to contain those tags is stored like anything
+else. One consequence worth knowing: `--protect` fails on a card that already
+has other content in PRINTED, because `ykman` tries to parse it as an escrow
+record. Clear the object first.
+
 ## Attestation
 
 ```sh
