@@ -1512,6 +1512,35 @@ NoAccessibleSecretWithoutGate ==
     \* the claim worth making. BugPpuatIsAGate is the tree that cannot make it.
     /\ Idle => (gate.ppuat => pin.set)
 
+(***************************************************************************)
+(* TWO FACTS THE MODEL HAS BEEN RELYING ON IN PROSE. Neither is one of the  *)
+(* six, and neither is a security requirement -- each is a structural       *)
+(* property of the shipped tree that an ARGUMENT elsewhere in this file     *)
+(* rests on. An argument nothing checks is the shape that has cost this     *)
+(* model most, so both are asserted on Shipped.cfg and both carry a mutant. *)
+(***************************************************************************)
+
+\* WHY SeedReachable's `ram` disjunct is inert. `DeviceUnlock` needs a live flash
+\* seed and `ResetConfirmed` drops the RAM copy ahead of the flash one, so the
+\* second home never outlives the first -- measured once over 17 190 324 states,
+\* written into the README, and then relied on. Asserting it makes the day it
+\* stops being true a RED row rather than a discovery: the disjunct would start
+\* doing work, and the three clauses restated in terms of it with it.
+\* BugStateResetAfterWipe is the tree where it is false, which is exactly the
+\* regression that made the disjunct necessary.
+RamNeverOutlivesFlashSeed == ram => store.seed
+
+\* ConfigGuard carries no `pin.set` conjunct because config.rs:222-224 does not,
+\* and the justification for the model's own `~(gate.alwaysUv /\ ~pin.set)` on
+\* makeCredential and getAssertion is the same sentence: a live token implies a
+\* PIN was set on every reachable path. That sentence was refuted once already --
+\* modelling only the `keydev_dec` half of `ctx.state.reset()` left a live token
+\* outliving the deletion of EF_PIN -- and the repair put it back without
+\* checking it. Measured now rather than argued: with the conjunct removed from
+\* both call sites the reachable space is bit-identical AND the transition count
+\* is unchanged, so it disables nothing, because this holds.
+NoLiveTokenWithoutPinRecord == tok.live => pin.set
+
 \* Every live credential is reachable by the management surface: enumerateRPs
 \* and the trusted-display Passkeys view both walk EF_RP, so a credential
 \* without its RP entry can be authenticated with but neither listed nor

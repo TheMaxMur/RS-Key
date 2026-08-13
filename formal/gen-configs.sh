@@ -85,6 +85,21 @@ ALL_INV=(NoAuthorizationBypass NoCrossTransportTouchConsumption
          NoTokenAfterInvalidation NoAccessibleSecretWithoutGate
          NoUnmanageableCredential ResetNeverWeakensSurvivingState)
 
+# Structural facts the model's own arguments rest on, asserted on the baseline
+# rather than argued in a comment. Deliberately NOT in ALL_INV: a mutant reports
+# the FIRST invariant it violates, so adding one to the 27 mutant configs would
+# move verdicts that are the record of which invariant names which defect. Each
+# gets its own Solo config against the mutant that falsifies it.
+EXTRA_INV=(RamNeverOutlivesFlashSeed NoLiveTokenWithoutPinRecord)
+extra_mutant() {
+  # ctx.state.reset() moved back behind the flash work leaves the RAM seed
+  # standing past the flash delete AND a live token past EF_PIN's deletion.
+  case "$1" in
+    RamNeverOutlivesFlashSeed)   echo BugStateResetAfterWipe ;;
+    NoLiveTokenWithoutPinRecord) echo BugStateResetAfterWipe ;;
+  esac
+}
+
 emit() { # $1 = cfg, $2 = bug switch (""), $3 = sweep fix, $4 = ppuat fix
   local out=$1 on=${2:-} fix=${3:-TRUE} fix2=${4:-${3:-TRUE}}
   {
@@ -116,7 +131,7 @@ emit() { # $1 = cfg, $2 = bug switch (""), $3 = sweep fix, $4 = ppuat fix
       local t; t=$(target_inv "$on"); echo "    $t"
       for i in "${ALL_INV[@]}"; do [ "$i" = "$t" ] || echo "    $i"; done
     else
-      for i in "${ALL_INV[@]}"; do echo "    $i"; done
+      for i in "${ALL_INV[@]}" "${EXTRA_INV[@]}"; do echo "    $i"; done
     fi
   } > "$out"
 }
@@ -144,6 +159,11 @@ for b in "${BUGS[@]}"; do SOLO=1 emit "Solo_$b.cfg" "$b" FALSE TRUE; done
 # solo -- previously a hand-written file wearing this script's header.
 SOLO=1 SOLO_INV=NoAccessibleSecretWithoutGate \
   emit Solo_NoAccessibleSecretWithoutGate.cfg BugResetGatesFirst FALSE TRUE
+# One per structural fact, against the mutant that makes it false. Without these
+# the two would be claims asserted only where nothing can break them.
+for i in "${EXTRA_INV[@]}"; do
+  SOLO=1 SOLO_INV="$i" emit "Solo_$i.cfg" "$(extra_mutant "$i")" FALSE TRUE
+done
 # Liveness. Its own constants, and they are SMALLER on purpose -- TLC's
 # liveness check builds a behaviour graph on top of the state graph, so the cost
 # is not comparable to an invariant run. The reduction is stated here rather
