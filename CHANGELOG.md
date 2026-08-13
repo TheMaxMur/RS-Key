@@ -49,6 +49,23 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **A PIV object id resolves by its whole value, not its low sixteen bits.**
+  `object_fid` matched `id & 0xFFFF` for the two Yubico objects, so the 2-byte id
+  `FF01` — and `00FF01`, `7FFF01`, `ABFF01` — all read the **attestation
+  certificate**, and `FF00` the ADMIN-DATA object. Same class as the `7F61` alias
+  fixed one entry below, two lines from the line that fixed it, and found by the
+  review of that fix. A YubiKey 5.7.4 resolves the exact three bytes and answers
+  `6A82` to every masked spelling, measured 3 runs byte-identical. Read-only and
+  both objects are ungated-read, so nothing was disclosed that a host could not
+  already ask for by its proper name — but two ids sharing a file is the defect,
+  not the consequence. The `5FC1xx` arm's mask was already exact and is now
+  pinned too, because `read_needs_pin` matches an id **exactly**: a masked
+  spelling that still resolved would have read a Table 3 object with no PIN.
+  `data_object_fid`'s `0xF0` reservation — what keeps `5FC1F1` from being a
+  second, management-key-only door to the attestation certificate
+  ([limitations](docs/limitations.md) says there is none) — had no test at all and
+  has one now. `bcdDevice` → `0x0925`.
+
 - **The panel's "Protect mgmt key" keeps a touch gate the owner raised.**
   `protect_mgm_key` wrote `TOUCHPOLICY_NEVER` over whatever stood there, so a card
   whose owner had raised the `0x9B` gate with `SET MGM KEY P2=0xFE` came back

@@ -4948,8 +4948,11 @@ fn the_bit_group_template_is_not_an_alias_of_a_data_object() {
         Sw::FILE_NOT_FOUND,
         "7F61 after writing 5FC1B6"
     );
-    // Both cards refuse a write to `7F61` — it was never storable, which is why
-    // the alias could only ever be reached from the other end.
+    // Both cards refuse the `5C`-form write to `7F61` — this pins `put_data`'s
+    // own 3-byte-path guard, not the map, and it passes with the alias restored.
+    // It is here because it is why the alias was only ever reachable from the
+    // other end. (A *bare* `7F 61 …` body is a different encoding and lands on
+    // the acknowledged-not-stored arm.)
     let mut bad = bitgt.to_vec();
     bad.extend_from_slice(&[TAG_DATA_OBJECT, 0x02, 0x42, 0x42]);
     assert_eq!(
@@ -4961,6 +4964,117 @@ fn the_bit_group_template_is_not_an_alias_of_a_data_object() {
     // second one that would have to be kept out of `data_object_fid`'s way.
     assert_eq!(object_fid(0x7F61), None);
     assert_eq!(object_fid(0x5F_C1_B6), Some(0xD2B6));
+}
+
+/// An object id is its whole value. `object_fid`'s second arm matched on
+/// `id & 0xFFFF`, so every id ending in `FF01` or `FF00` — including the 2-byte
+/// `FF01` — resolved to the attestation certificate or the ADMIN-DATA object. A
+/// YubiKey 5.7.4 resolves the exact three bytes and nothing else: `5FFF01` is
+/// `9000` with 418 bytes, and `FF01`, `00FF01`, `7FFF01`, `ABFF01`, `FF00` and
+/// `ABFF00` are all `6A82` (3 runs, byte-identical).
+///
+/// Also pins `data_object_fid`'s reservation bound, which is what keeps
+/// `5FC1F0`/`5FC1F1` from being a second way into those two files — a
+/// management-key write to the attestation certificate, which
+/// `docs/limitations.md` says cannot happen. Widening the bound leaves the rest
+/// of this suite green.
+#[test]
+fn an_object_id_is_its_whole_value() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+
+    // The attestation certificate is minted by `scan_files`, so the 3-byte id
+    // answers with it and every masked spelling must not.
+    let exact = [TAG_DATA_PATH, 0x03, 0x5F, 0xFF, 0x01];
+    let (sw, real) = run(&mut app, &mut fs, INS_GET_DATA, 0x3F, 0xFF, &exact);
+    assert_eq!(sw, Sw::OK);
+    assert!(
+        real.len() > 64,
+        "the attestation cert is there to be aliased"
+    );
+    for masked in [
+        &[TAG_DATA_PATH, 0x02, 0xFF, 0x01][..],
+        &[TAG_DATA_PATH, 0x03, 0x00, 0xFF, 0x01][..],
+        &[TAG_DATA_PATH, 0x03, 0x7F, 0xFF, 0x01][..],
+        &[TAG_DATA_PATH, 0x03, 0xAB, 0xFF, 0x01][..],
+        &[TAG_DATA_PATH, 0x02, 0xFF, 0x00][..],
+        &[TAG_DATA_PATH, 0x03, 0xAB, 0xFF, 0x00][..],
+    ] {
+        assert_eq!(
+            run(&mut app, &mut fs, INS_GET_DATA, 0x3F, 0xFF, masked).0,
+            Sw::FILE_NOT_FOUND,
+            "masked id {:02X?}",
+            &masked[2..]
+        );
+    }
+    // The ADMIN-DATA object is empty until something writes it, which is exactly
+    // how the `7F61` alias hid: write it, then re-check the masked spellings.
+    let mut admin = vec![TAG_DATA_PATH, 0x03, 0x5F, 0xFF, 0x00, TAG_DATA_OBJECT, 0x02];
+    admin.extend_from_slice(&[PIVMAN_TAG, 0x00]);
+    assert_eq!(
+        run(&mut app, &mut fs, INS_PUT_DATA, 0x3F, 0xFF, &admin).0,
+        Sw::OK
+    );
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            INS_GET_DATA,
+            0x3F,
+            0xFF,
+            &[TAG_DATA_PATH, 0x02, 0xFF, 0x00]
+        )
+        .0,
+        Sw::FILE_NOT_FOUND,
+        "FF00 once 5FFF00 has data"
+    );
+
+    // The `5FC1xx` arm's mask must be exact too, and this is the cell that makes
+    // it matter: `read_needs_pin` matches the id EXACTLY, so a masked spelling
+    // that still resolved to the file would read a Table 3 object with no PIN.
+    let fp = [TAG_DATA_PATH, 0x03, 0x5F, 0xC1, 0x03];
+    let mut plant = fp.to_vec();
+    plant.extend_from_slice(&[TAG_DATA_OBJECT, 0x03, 0x41, 0x42, 0x43]);
+    assert_eq!(
+        run(&mut app, &mut fs, INS_PUT_DATA, 0x3F, 0xFF, &plant).0,
+        Sw::OK
+    );
+    assert_eq!(
+        run(&mut app, &mut fs, INS_GET_DATA, 0x3F, 0xFF, &fp).0,
+        Sw::SECURITY_STATUS_NOT_SATISFIED,
+        "the fingerprints object is PIN-gated by its exact id"
+    );
+    for masked in [
+        &[TAG_DATA_PATH, 0x03, 0x1F, 0xC1, 0x03][..],
+        &[TAG_DATA_PATH, 0x03, 0xAF, 0xC1, 0x03][..],
+        &[TAG_DATA_PATH, 0x02, 0xC1, 0x03][..],
+    ] {
+        assert_eq!(
+            run(&mut app, &mut fs, INS_GET_DATA, 0x3F, 0xFF, masked).0,
+            Sw::FILE_NOT_FOUND,
+            "masked 5FC103 as {:02X?} must not skip the PIN gate",
+            &masked[2..]
+        );
+    }
+
+    // The reservation that keeps the `5FC1xx` range out of those two files.
+    assert_eq!(data_object_fid(0xEF), Some(0xD2EF));
+    assert_eq!(data_object_fid(0xF0), None);
+    assert_eq!(data_object_fid(0xF1), None);
+    let mut over = vec![TAG_DATA_PATH, 0x03, 0x5F, 0xC1, 0xF1, TAG_DATA_OBJECT, 0x03];
+    over.extend_from_slice(b"XXX");
+    assert_eq!(
+        run(&mut app, &mut fs, INS_PUT_DATA, 0x3F, 0xFF, &over).0,
+        WRONG_DATA,
+        "5FC1F1 must not be a second door to the attestation certificate"
+    );
+    let (sw, still) = run(&mut app, &mut fs, INS_GET_DATA, 0x3F, 0xFF, &exact);
+    assert_eq!(sw, Sw::OK);
+    assert_eq!(still, real, "the attestation certificate is untouched");
 }
 
 #[test]

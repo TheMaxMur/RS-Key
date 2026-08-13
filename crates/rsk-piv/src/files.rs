@@ -170,19 +170,24 @@ pub const EF_PIVMAN_DATA: u16 = 0xD2F0;
 /// (`5FC109`) is handled specially in GET/PUT DATA (the PIN-protected mgmt key),
 /// not through this generic table.
 ///
-/// The BIT group template `7F61` is deliberately absent. It used to map to
-/// `0xD2B6` — which is `data_object_fid(0xB6)`, i.e. `5FC1B6`'s own file — so a
-/// `PUT DATA 5FC1B6` came back out of `GET DATA 7F61`. It is never populated,
-/// and an id with no file already answers the `6A82` a YubiKey 5.7.4 gives
-/// `7F61` in every state (measured, before and after writing `5FC1B6`), so the
-/// entry bought an alias and nothing else.
+/// An id resolves by its **whole value**. The second arm matched `id & 0xFFFF`,
+/// so the 2-byte `FF01` — and `00FF01`, `7FFF01`, `ABFF01` — all read the
+/// attestation certificate, and `FF00` the ADMIN-DATA object. A YubiKey 5.7.4
+/// resolves the exact three bytes and answers `6A82` to every masked spelling
+/// (measured, 3 runs). The first arm's mask is exact and stays.
+///
+/// The BIT group template `7F61` is deliberately absent for the same reason. It
+/// used to map to `0xD2B6` — which is `data_object_fid(0xB6)`, i.e. `5FC1B6`'s
+/// own file — so a `PUT DATA 5FC1B6` came back out of `GET DATA 7F61`. It is
+/// never populated, and an id with no file answers the `6A82` the card gives
+/// `7F61` in every state, so the entry bought an alias and nothing else.
 pub fn object_fid(id: u32) -> Option<u16> {
     if id & 0xFFFF00 == 0x5FC100 {
         return data_object_fid((id & 0xFF) as u8);
     }
-    match id & 0xFFFF {
-        0xFF01 => Some(EF_ATTESTATION_CERT),
-        0xFF00 => Some(EF_PIVMAN_DATA),
+    match id {
+        0x5F_FF_01 => Some(EF_ATTESTATION_CERT),
+        0x5F_FF_00 => Some(EF_PIVMAN_DATA),
         _ => None,
     }
 }
