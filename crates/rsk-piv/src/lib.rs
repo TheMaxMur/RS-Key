@@ -1408,7 +1408,8 @@ fn mgm_clear_protected<S: Storage>(fs: &mut Fs<S>) -> Result<(), Sw> {
 ///
 /// The ADMIN-DATA record is rebuilt from any prior host-written one
 /// (`pivman_set_protected`): the PIN-change timestamp and unrelated flag bits
-/// survive, so on-panel protect no longer discards a host's PivmanData.
+/// survive, so on-panel protect no longer discards a host's PivmanData. A touch
+/// gate raised with `SET MGM KEY P2 = 0xFE` survives too — see below.
 pub fn protect_mgm_key<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng) -> Sw {
     // Read any existing PivmanData up front (before the writes below), so the new
     // record can carry its timestamp / flags forward.
@@ -1420,6 +1421,17 @@ pub fn protect_mgm_key<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn R
     let mut admin = [0u8; PIVMAN_MAX];
     let admin_len = pivman_set_protected(prior, &mut admin);
 
+    // The one thing about the slot this action was not asked to change. Only
+    // `SET MGM KEY P2 = 0xFE` raises the gate, and it is a setting rather than a
+    // property of the key bytes, so re-keying does not retire it; anything but a
+    // stored ALWAYS resolves to the published default, which keeps a spurious or
+    // torn record from inventing one.
+    let mut cur = [0u8; 8];
+    let touch = match fs.meta_find(key_fid(SLOT_CARDMGM).get(), &mut cur) {
+        Some(n) if n >= 3 && cur[2] == TOUCHPOLICY_ALWAYS => TOUCHPOLICY_ALWAYS,
+        _ => TOUCHPOLICY_NEVER,
+    };
+
     let mut key = [0u8; 32];
     rng.fill(&mut key);
     let sealed = seal::seal_put(dev, fs, rng, key_fid(SLOT_CARDMGM), &key);
@@ -1430,7 +1442,7 @@ pub fn protect_mgm_key<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn R
     if fs
         .meta_add(
             key_fid(SLOT_CARDMGM).get(),
-            &[ALGO_AES256, MGM_PIN_POLICY, TOUCHPOLICY_NEVER],
+            &[ALGO_AES256, MGM_PIN_POLICY, touch],
         )
         .is_err()
     {

@@ -4314,6 +4314,93 @@ fn the_management_slot_reports_one_touch_policy_in_every_state() {
     );
 }
 
+/// E142: `protect_mgm_key` is the last writer of the `9B` touch byte that ignores
+/// what stood there. The previous fix reconciled the repair arm on the argument
+/// that a re-provisioning restores published defaults and that an owner who raised
+/// the gate keeps it; the panel's protect action broke the second half — it re-keys
+/// the slot, and wrote `NEVER` over an `ALWAYS` the owner had set with
+/// `SET MGM KEY P2 = 0xFE`.
+///
+/// The reference cannot arbitrate: `--protect` there is a `SET MGM KEY` and states
+/// its own P2, so the card is only ever told the policy, never asked to keep one.
+/// Ours has no P2 to state — a panel hold is its whole input — so the choice is
+/// between inventing `NEVER` and carrying the owner's value, and the rule that
+/// decides it is the one this repo already applies: a raised gate is a setting, and
+/// a command named for something else must not drop it.
+#[test]
+fn protecting_the_management_key_keeps_a_gate_the_owner_raised() {
+    let rng = RefCell::new(TestRng(13));
+    let pres = RefCell::new(AlwaysConfirm);
+    let dev = Device {
+        serial_hash: &HASH,
+        serial_id: &SERIAL,
+        otp_key: None,
+    };
+    let touch = |md: &[u8]| find_tag(md, 0x02).unwrap()[1];
+    let meta = |app: &mut PivApplet, fs: &mut Fs<RamStorage>| -> Vec<u8> {
+        let (sw, md) = run(app, fs, INS_GET_METADATA, 0, SLOT_CARDMGM, &[]);
+        assert_eq!(sw, Sw::OK);
+        md
+    };
+
+    for raised in [false, true] {
+        let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+        let mut fs = new_fs();
+        select(&mut app, &mut fs);
+        auth_mgm(&mut app, &mut fs);
+        if raised {
+            let mut set_key = vec![ALGO_AES256, SLOT_CARDMGM, 32];
+            set_key.extend_from_slice(&[0x7Bu8; 32]);
+            assert_eq!(
+                run(&mut app, &mut fs, INS_SET_MGMKEY, 0xFF, 0xFE, &set_key).0,
+                Sw::OK
+            );
+        }
+        let before = if raised {
+            TOUCHPOLICY_ALWAYS
+        } else {
+            TOUCHPOLICY_NEVER
+        };
+        assert_eq!(touch(&meta(&mut app, &mut fs)), before, "raised={raised}");
+
+        assert_eq!(protect_mgm_key(&dev, &mut fs, &mut TestRng(44)), Sw::OK);
+        assert_eq!(
+            touch(&meta(&mut app, &mut fs)),
+            before,
+            "protect_mgm_key must not move the touch byte, raised={raised}"
+        );
+        // The rest of the record is the protect action's own: a fresh AES-256 key,
+        // and the escrow flag set. Without these the assertion above would also
+        // pass on a protect that did nothing at all.
+        let md = meta(&mut app, &mut fs);
+        assert_eq!(find_tag(&md, 0x01).unwrap(), &[ALGO_AES256]);
+        assert_eq!(find_tag(&md, 0x05).unwrap(), &[0], "not the factory key");
+        assert!(mgm_is_protected(&mut fs), "the escrow flag is set");
+    }
+
+    // Carrying the byte forward must not become "trust whatever is there". A head
+    // that is gone, and one carrying a value no writer emits, both resolve to the
+    // published default — the same rule the repair arm was given, so a torn or
+    // spurious record cannot invent a gate through this path either.
+    for planted in [None, Some(0x7Fu8), Some(TOUCHPOLICY_CACHED)] {
+        let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+        let mut fs = new_fs();
+        select(&mut app, &mut fs);
+        let fid = files::key_fid(SLOT_CARDMGM).get();
+        fs.meta_delete(fid).unwrap();
+        if let Some(byte) = planted {
+            fs.meta_add(fid, &[ALGO_AES192, MGM_PIN_POLICY, byte])
+                .unwrap();
+        }
+        assert_eq!(protect_mgm_key(&dev, &mut fs, &mut TestRng(45)), Sw::OK);
+        assert_eq!(
+            touch(&meta(&mut app, &mut fs)),
+            TOUCHPOLICY_NEVER,
+            "planted={planted:?}"
+        );
+    }
+}
+
 #[test]
 fn move_and_delete_key() {
     let rng = RefCell::new(TestRng(7));

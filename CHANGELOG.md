@@ -49,6 +49,18 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **The panel's "Protect mgmt key" keeps a touch gate the owner raised.**
+  `protect_mgm_key` wrote `TOUCHPOLICY_NEVER` over whatever stood there, so a card
+  whose owner had raised the `0x9B` gate with `SET MGM KEY P2=0xFE` came back
+  touch-free after an on-screen protect — a second setting changed by an action
+  asked for something else, and the one writer left over after `0x08F9`
+  reconciled the others. It re-keys the slot, but the gate is a property of the
+  slot rather than of the key bytes, so it now carries forward. Only a stored
+  `ALWAYS` does: an absent head or a byte no writer emits still resolves to the
+  published default, so a torn or spurious record cannot invent a gate through
+  this path either. Panel-only, and no host path reaches it. `bcdDevice` →
+  `0x0924`.
+
 - **PIV `GET DATA 7F61` no longer returns whatever was written to `5FC1B6`.** The
   BIT group template and the data object `5FC1B6` shared one file: `object_fid`
   mapped `7F61` to `0xD2B6`, which is `5FC1B6`'s own fid. A management-key write
