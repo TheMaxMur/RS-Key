@@ -59,8 +59,10 @@ const OP_STOP: u8 = 2;
 ///
 /// What this does **not** prove: only the `cm` permission and only this call
 /// site; the persistent `pcmr` grant that `authorize_cm` consults *before* this
-/// (`credmgmt.rs:240-242`) is in flash and out of reach here — it is finding 2
-/// of the TLA+ run and is not fixed; four operations, one starting state; and
+/// (`credmgmt.rs:240-242`) is in flash and out of reach here — finding 2 of the
+/// TLA+ run, closed at the consumer by `32b9fa3` and at the producer by
+/// `31c6e73`, and pinned by host tests rather than by this harness; four
+/// operations, one starting state; and
 /// the MAC is exercised on one concrete payload, so this says nothing about
 /// `pinproto::verify` as a MAC.
 #[kani::proof]
