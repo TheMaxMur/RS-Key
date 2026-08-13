@@ -496,7 +496,8 @@ Round two's "no, in two independent ways" was exact.
 | `Solo_NoAccessibleSecretWithoutGate.cfg` | RED, the repaired clause | 2 950 708 | 454 454 | 16 | 6 s |
 | `Seams.cfg` (the second module) | **GREEN, exhaustive** | 9 309 | 666 | 12 | < 1 s |
 | 9 × `SeamMut_*.cfg` / 9 × `SeamSolo_*.cfg` | RED, each on its own target | 77 – 3 293 | 27 – 375 | 4 – 8 | ≤ 1 s |
-| `Liveness.cfg` (reduced constants) | **out of memory** at the 4 GB default, state search complete | 85 388 061 | 7 903 336 | 43 | 1500 s |
+| `Liveness.cfg` (reduced constants, `HEAP=12g`) | **GREEN** | 85 388 061 | 7 903 336 | 43 | **1555 s** |
+| `Liveness.cfg` at `run-tlc.sh`'s 4 GB default | **out of memory** in the temporal check, state search complete | 85 388 061 | 7 903 336 | 43 | 1500 s |
 | 3 × `LiveMut_*.cfg` | RED, each on its own property | 522 975 – 715 341 | 72 739 – 97 496 | — | 4 s |
 
 Only `ShippedFixed.cfg` is an exhaustive search; every RED row stops at the
@@ -932,18 +933,20 @@ It is **7 903 336 distinct states now**, and the state graph is no longer the
 cost. TLC builds a behaviour graph on top of it — **23 710 008 nodes** — and at
 `run-tlc.sh`'s default 4 GB heap the final temporal check **runs out of memory**
 after 1500 s, with the state search already complete. So the reduced constants
-are no longer reduced enough, and the honest statement is that this layer now
-needs either a bigger heap or a smaller model than the one it is checking. The
-ceiling it reports is the JVM's, not TLC's: `HEAP=12g ./run-tlc.sh Liveness.cfg`
-is the first thing to try. `Liveness_Full.cfg`, the same properties over the
-safety matrix's 61 M states, is not attemptable there at all and was not
-attempted.
+are no longer reduced enough — but the ceiling is the JVM's rather than TLC's,
+and **`HEAP=12g ./run-tlc.sh Liveness.cfg` is GREEN** over the same 7 903 336
+distinct states at depth 43, in **1555 s**. So the three properties do hold at
+these constants; what changed is that the routine command no longer establishes
+it. `run-tlc.sh`'s 4 GB default is the thing to revisit, and whether to raise it
+or to reduce `emit_live`'s constants again is a maintainer's call — both are one
+line.
 
-The three `LiveMut_*` configs are unaffected and all three still fall on the
-property that names them, in 4 s each — a counterexample search halts long before
-the graph is built. What is lost while this stands is the **green** row: the
-mutants still prove the properties are falsifiable, and nothing currently proves
-they hold.
+`Liveness_Full.cfg`, the same properties over the safety matrix's 61 M states,
+was not attempted: the reduced config already needs 12 GB and 26 minutes.
+
+The three `LiveMut_*` configs are unaffected either way and all three still fall
+on the property that names them in 4 s each — a counterexample search halts long
+before the graph is built.
 
 There is still no `SYMMETRY` on `RPs`/`Channels`, which costs time and not
 soundness.
