@@ -215,7 +215,11 @@ impl ButtonWait {
             board.block_for_ms(POLL_MS);
         };
         if result == Outcome::Confirmed {
-            self.await_release(board, timeout_us);
+            // The debounce runs inside what is LEFT of this ceremony's budget, not a
+            // fresh copy of it: the window the operator configured is the whole
+            // wait's, and a press landing on the deadline used to double it.
+            let elapsed = board.now_us().wrapping_sub(start);
+            self.await_release(board, timeout_us.saturating_sub(elapsed));
         }
         // The debounce is bounded, so it can give up with the finger still down;
         // whatever the outcome, a button that never released carries no new consent.
@@ -227,12 +231,18 @@ impl ButtonWait {
         result
     }
 
-    /// Debounce: wait for release (bounded by its own fresh budget) so a held
-    /// button doesn't immediately satisfy the next operation.
-    fn await_release<B: Board>(&mut self, board: &mut B, timeout_us: u64) {
+    /// Debounce: wait for release, within `budget_us`, so a held button doesn't
+    /// immediately satisfy the next operation.
+    ///
+    /// Giving up with the finger still down costs nothing the `spent` latch does not
+    /// already carry: it is set from the sample either way. That is why this takes no
+    /// floor where `rsk_display`'s `wait_release_ceremony` does — that one debounces
+    /// at ceremony *entry*, with no latch behind it. The release *edge* it leaves is
+    /// the idle click watcher's to discount ([`crate::click`]).
+    fn await_release<B: Board>(&mut self, board: &mut B, budget_us: u64) {
         let release = board.now_us();
         while board.pressed() {
-            if board.now_us().wrapping_sub(release) >= timeout_us {
+            if board.now_us().wrapping_sub(release) >= budget_us {
                 break;
             }
             board.block_for_ms(POLL_MS);

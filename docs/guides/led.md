@@ -234,6 +234,12 @@ while your finger is still on the button, and the next queued request would then
 inherit that same press as its consent. `rsk hw` refuses anything below 10, and
 the firmware raises it anyway if some other host writes the record directly.
 
+It bounds the **whole** ceremony, not just the wait for a press: a key that
+confirms and then waits for the finger to lift stops waiting at the same
+deadline, so no one request occupies a button key for longer than the window.
+(A trusted-display key may add up to 3 s absorbing a finger already on the
+panel.)
+
 ### Reset to defaults
 
 ```sh

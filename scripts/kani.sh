@@ -62,9 +62,9 @@ STATEFUL="rsk-fido rsk-fs"
 # too: a rename or a deleted `#[cfg(kani)]` hook that takes harnesses away
 # silently. Raise these in the commit that adds a harness; lower one only in the
 # commit that removes one.
-FLOOR_pr=49
+FLOOR_pr=50
 FLOOR_state=8
-FLOOR_all=64
+FLOOR_all=65
 
 # Source-level `kani::cover!`s each tier must report on. Kani 0.67.0 has no
 # `--fail-uncoverable`, so an unsatisfiable cover prints "N of M cover properties

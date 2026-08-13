@@ -243,7 +243,7 @@ or OTP, where every applet's presence goes through the same
 `ButtonPresence::wait` reading the same global.
 
 the wait-entry clear (`crates/rsk-device/src/presence.rs:192-193`) eats it at wait entry, and that is the whole defence.
-`:226` cannot help, because the dispatch that took the cancel never entered
+`:230` cannot help, because the dispatch that took the cancel never entered
 `wait`. `HostCancelLatched` models the latch and `BugNoDropStaleCancelAtEntry`
 removes the drop: **RED in 127 distinct states at depth 5**, the trace being a
 CTAPHID cancel ending a CCID ceremony. Without the action the same mutant is
@@ -548,7 +548,7 @@ than a settled abstraction.
   worker sets it around the whole dispatch (`Arbiter::set_wait_scope`). The
   review showed this is exactly as narrow as it sounds: the cancel is dropped at
   **both** ends of a wait (`crates/rsk-device/src/presence.rs:193` *and*
-  `:226`), so removing either alone leaves the model green — a reviewer trusting
+  `:230`), so removing either alone leaves the model green — a reviewer trusting
   one citation would see nothing fall. The Kani harness has the same blind spot
   and says so; the unit test `w8_…` is what pins the drop at exit.
 - **The button build only** (`presence.shows_confirm() = FALSE`), so the reset

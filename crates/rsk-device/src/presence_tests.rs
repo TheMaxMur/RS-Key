@@ -421,25 +421,44 @@ fn w5_the_debounce_waits_for_the_release() {
     assert_eq!(board.delays, 3);
 }
 
+/// The bound the debounce must not break: wherever the press lands — first sample,
+/// mid-window, or the iteration the deadline would have fired on (W4a precedes W4d)
+/// — a finger that never lifts carries the wait to the ceremony's own deadline and
+/// no further. A debounce with a *fresh* budget took the last of those to 2× the
+/// configured window, and the worker is held for all of it.
+///
+/// `at == 0` passes under either shape (nothing has elapsed, so the two budgets are
+/// the same); rows 1..=`polls` are the ones that discriminate. The row past the end
+/// closes the boundary from the other side.
 #[test]
-fn w5_the_debounce_has_its_own_budget_so_a_ceremony_can_run_to_twice_the_timeout() {
+fn w5_a_ceremony_never_outlasts_the_window_it_was_given() {
     let polls = 4u32;
     let budget_us = polls as u64 * POLL_MS * US_PER_MS;
 
-    // A hold that never lifts spends a whole second budget in the debounce.
-    let arb = armed(SCOPE_FIDO, polls);
-    let mut held = TestBoard::new(&arb, vec![true]);
-    assert_eq!(ButtonWait::new().wait(&arb, &mut held), Outcome::Confirmed);
-    assert_eq!(held.now_us, budget_us, "the debounce cut its budget short");
+    for at in 0..=polls as usize {
+        let arb = armed(SCOPE_FIDO, polls);
+        // The last entry repeats, so the finger is down from `at` onwards.
+        let mut presses = vec![false; at];
+        presses.push(true);
+        let mut board = TestBoard::new(&arb, presses);
+        assert_eq!(
+            ButtonWait::new().wait(&arb, &mut board),
+            Outcome::Confirmed,
+            "press at sample {at}"
+        );
+        assert_eq!(
+            board.now_us, budget_us,
+            "press at sample {at}: the ceremony did not end on its own deadline"
+        );
+    }
 
-    // The worst case: the press lands on the iteration the deadline would have
-    // fired on (W4a precedes W4d), then the finger never lifts.
-    let arb2 = armed(SCOPE_FIDO, polls);
-    let mut presses = vec![false; polls as usize];
+    // One sample later is past the deadline, so there is nothing left to confirm.
+    let arb = armed(SCOPE_FIDO, polls);
+    let mut presses = vec![false; polls as usize + 1];
     presses.push(true);
-    let mut late = TestBoard::new(&arb2, presses);
-    assert_eq!(ButtonWait::new().wait(&arb2, &mut late), Outcome::Confirmed);
-    assert_eq!(late.now_us, 2 * budget_us);
+    let mut board = TestBoard::new(&arb, presses);
+    assert_eq!(ButtonWait::new().wait(&arb, &mut board), Outcome::Timeout);
+    assert_eq!(board.now_us, budget_us);
 }
 
 // ---------------------------------------------------------------- the scope moving mid-wait

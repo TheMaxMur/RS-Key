@@ -689,7 +689,7 @@ zero/empty TLV. (A host may still do a full read-modify-write for clarity.)
 | `04` | LED_GPIO | 1 | data-pin GPIO `0..=29` |
 | `05` | LED_BRIGHTNESS | 1 | global channel max `0..=255` |
 | `06` | OPTS | 2 | flags (BE16): `WCID 0x1`, `DIMM 0x2`, `DISABLE_POWER_RESET 0x4`, `LED_STEADY 0x8` |
-| `08` | PRESENCE_TIMEOUT | 1 | touch-wait timeout in **seconds** (`0`/absent ⇒ firmware default 30 s; a non-zero value below `10` is raised to `10`). Matches PicoForge `PresenceTimeout`. |
+| `08` | PRESENCE_TIMEOUT | 1 | touch-wait timeout in **seconds**, bounding the whole ceremony on a button build — the press wait and the release debounce that follows a confirm share it; a trusted-display ceremony may add up to 3 s absorbing a resting finger (`0`/absent ⇒ firmware default 30 s; a non-zero value below `10` is raised to `10`). Matches PicoForge `PresenceTimeout`. |
 | `09` | USB_PRODUCT | 1..33 | product string + trailing `NUL` (length **includes** the NUL). A 33-byte value with no terminating NUL is malformed and leaves the stored string **unchanged**; an empty value is the explicit clear |
 | `0A` | ENABLED_CURVES | 4 | FIDO curve bitmask (BE32) |
 | `0B` | ENABLED_USB_ITF | 1 | interface mask: `CCID 0x1`, `WCID 0x2`, `HID 0x4`, `KB 0x8`, `LWIP 0x10` |

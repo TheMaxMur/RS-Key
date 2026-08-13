@@ -272,15 +272,15 @@ run):
 
 | Tier | Crates | Harnesses | Covers | Solve | Slowest harness |
 |---|---|---|---|---|---|
-| `pr` | 13 | 49 | 23 | 199 s | `rsk-piv::set_protected_total_and_invariant`, 47 s |
+| `pr` | 13 | 50 | 23 | 199 s | `rsk-piv::set_protected_total_and_invariant`, 47 s |
 | `state` | 2 | 8 | 9 | ~10 min | `rsk-fido::…_at_call_site`, ~7 min (9.3 GiB peak) |
-| `all` | 17 | 65 | 31 | ~1 h 45 | `rsk-rescue::serialize_parse_roundtrip`, ~80 min |
+| `all` | 17 | 66 | 31 | ~1 h 45 | `rsk-rescue::serialize_parse_roundtrip`, ~80 min |
 
 `pr` and `state` are measured runs. `all` has never been run end to end here:
 its harness count is `#[kani::proof]`s counted from source (the same count is
 exact for the two tiers that were run) and its cover count is the two measured
 tiers plus `rsk-rescue`'s one, so **`FLOOR_all` is a number no run has reached**
-— and at 64 it is one under the source count.
+— and at 65 it is one under the source count.
 
 `pr` passes `--harness-timeout 5m`, five times its slowest harness. That cap is
 the tripwire on the tier assignment: a fast-tier harness that grows past it

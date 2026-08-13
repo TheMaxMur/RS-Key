@@ -47,7 +47,7 @@ CONSTANTS
     BugStopUsingKeepsPerms,       \* state.rs:545-556  stopUsingPinUvAuthToken
     BugNoConsumeAfterUp,          \* state.rs:518-530  GHSA-wqjm-653g-hgw3
     BugUnscopedCancel,            \* rsk-device presence.rs:116-120 cancel scope
-    BugTouchNotSpent,             \* rsk-device presence.rs:200-208,222 `spent`
+    BugTouchNotSpent,             \* rsk-device presence.rs:200-208,226 `spent`
     BugSoftLockLostOnWarmReset,   \* ctap.rs:215-222   PinLock across sys_reset
     BugWarmResetReopensWindow,    \* reset.rs:130-132  in_reset_window
     BugCmWalkIgnoresChannel,      \* state.rs:169-179  may_walk_rps
@@ -198,7 +198,7 @@ Init ==
 
 (***************************************************************************)
 (* Presence -- one physical button serves every applet, so the wait carries *)
-(* an owner. crates/rsk-device/src/presence.rs:25-166, 190-241.            *)
+(* an owner. crates/rsk-device/src/presence.rs:25-166, 190-250.            *)
 (***************************************************************************)
 
 Idle == op.kind = "none"

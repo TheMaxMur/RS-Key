@@ -288,6 +288,23 @@ fn up_pending_never_advertises_another_transports_wait() {
     assert_eq!(arb.pending_for(asker), pending && asker == owner);
 }
 
+/// One ceremony never outlasts the window it was given, over every interleaving
+/// of button samples and host cancels rather than the four schedules the unit
+/// test scripts. The debounce used to take a *fresh* copy of the budget, so a
+/// press landing on the deadline ran the wait — and the single-threaded worker
+/// behind it — to twice the operator's configured window.
+#[kani::proof]
+#[kani::unwind(6)]
+fn a_ceremony_never_outlasts_its_window() {
+    let scope = any_scope();
+    let arb = armed(scope);
+    let mut board = SymBoard::new(&arb, scope);
+    let mut latch = ButtonWait { spent: kani::any() };
+    let _ = latch.wait(&arb, &mut board);
+
+    assert!(board.now_us <= BUDGET_POLLS as u64 * POLL_MS * US_PER_MS);
+}
+
 /// The consent window a phy record may impose never undercuts [`MIN_TIMEOUT_SECS`].
 /// The record is host-writable through the ungated `CONFIG_WRITE`, and a window
 /// short enough to expire mid-press turns a single hold into two grants.

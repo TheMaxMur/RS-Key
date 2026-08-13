@@ -49,6 +49,20 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **One touch ceremony can no longer hold the key for twice the touch timeout.**
+  After a confirm, the wait for the finger to lift took a *fresh* copy of the
+  configured window instead of what was left of the ceremony's own, so a press
+  landing on the iteration the deadline would have fired on ran the request to 2×
+  the timeout — 60 s on the default, and 8.5 minutes at the 255 s a host can write
+  into `EF_PHY`'s `PresenceTimeout`. The worker is single-threaded, so every other
+  request queues behind it, and the key keeps reporting `UPNEEDED` the whole
+  time. The debounce now runs inside the remainder of the ceremony's budget,
+  which is what `rsk-display`'s touch-panel ceremonies already did. A debounce
+  that gives up early loses nothing the `spent` latch does not already carry —
+  it is set from the button sample either way — and the release edge it leaves
+  behind is the click counter's to discount, which is the fix above.
+  **bcdDevice → 0x0903.**
+
 - **A touch you were asked for no longer types a one-time password.** The idle
   click counter turns N presses into "type slot N", and a consent ceremony uses
   the same button. The worker cleared the accumulated click state when a dispatch
