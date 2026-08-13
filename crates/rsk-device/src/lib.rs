@@ -29,6 +29,7 @@ use alloc::boxed::Box;
 use rsk_fido::state::PinLock;
 
 mod ccid;
+pub mod click;
 mod ctap;
 pub mod presence;
 

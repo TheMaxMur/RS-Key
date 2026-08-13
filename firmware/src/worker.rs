@@ -18,6 +18,7 @@ use embassy_time::{Duration, Instant};
 use zeroize::Zeroize;
 
 use rsk_crypto::FusedKey;
+use rsk_device::click::Clicks;
 use rsk_usb::ccid::{ApduHandler, SecureResult};
 use rsk_usb::ctaphid::{CTAP_MAX_MESSAGE, MsgHandler};
 
@@ -286,11 +287,10 @@ pub struct Worker<'a> {
     /// for the typed-ticket press watcher and the same backend the applets borrow
     /// for touch confirmation, behind the shared `RefCell`.
     presence: &'a RefCell<Presence>,
-    /// Click-counter state: last sampled level, click count, and the
-    /// ms of the last release.
-    btn_state: bool,
-    btn_count: u8,
-    btn_time: u64,
+    /// The idle click gesture. Host-tested in `rsk_device::click`, because its one
+    /// load-bearing rule — a press a ceremony consumed is not a click — is pure
+    /// logic over a level and a clock.
+    clicks: Clicks,
     /// CTAPHID channel the last `Kind::Msg` arrived on. The MSG applet selection is
     /// one global for every channel and U2F has no SELECT of its own, so a change
     /// of channel drops it — otherwise another process's SELECT of the vendor AID
@@ -301,8 +301,6 @@ pub struct Worker<'a> {
 /// Button-watcher poll cadence; also the idle tick that lets the
 /// worker re-arm the press timer between requests.
 const BTN_POLL_MS: u64 = 16;
-/// A multi-click must land within this window to count toward the same gesture.
-const CLICK_WINDOW_MS: u64 = 1000;
 
 impl<'a> Worker<'a> {
     /// `presence` is the one BOOTSEL button, shared (through its `RefCell`) by the
@@ -353,9 +351,7 @@ impl<'a> Worker<'a> {
             ),
             rng,
             presence,
-            btn_state: false,
-            btn_count: 0,
-            btn_time: 0,
+            clicks: Clicks::new(),
             last_msg_cid: None,
         }
     }
@@ -525,14 +521,14 @@ impl<'a> Worker<'a> {
     }
 
     /// A dispatch may have consumed a button press for touch confirmation; forget
-    /// any pending click so it isn't mistaken for a typed-ticket gesture.
+    /// any pending click so it isn't mistaken for a typed-ticket gesture, and hand
+    /// over whether that press is *still* down — its release is the ceremony's.
     ///
     /// Every dispatch arm must call this — but NOT `button_tick`, whose whole job is
     /// to accumulate the gesture across the click window.
     fn forget_pending_click(&mut self) {
-        self.btn_state = false;
-        self.btn_count = 0;
-        self.btn_time = 0;
+        let held = self.presence.borrow_mut().poll_pressed();
+        self.clicks.consumed_by_ceremony(held);
     }
 
     /// Handle a CCID `PC_to_RDR_Secure` (pinpad VERIFY). Parse the request, collect
@@ -668,29 +664,12 @@ impl<'a> Worker<'a> {
     fn button_tick(&mut self) {
         let now = Instant::now().as_millis();
         let cur = self.presence.borrow_mut().poll_pressed();
-        if cur != self.btn_state {
-            if !cur {
-                // Released: count the click if it falls in the multi-click window.
-                if self.btn_time == 0 || self.btn_time + CLICK_WINDOW_MS > now {
-                    self.btn_count = self.btn_count.saturating_add(1);
-                }
-                self.btn_time = now;
-            }
-            self.btn_state = cur;
-        }
-        // Window closed with the button released → act on the click count.
-        if self.btn_time > 0
-            && self.btn_count > 0
-            && self.btn_time + CLICK_WINDOW_MS < now
-            && !self.btn_state
-        {
-            let slot = self.btn_count;
-            let ts = (now / 1000) as u32;
-            if let Some((buf, len, encode)) = self.ccid.otp_button_ticket(slot, ts) {
-                otp_kbd::enqueue(&buf[..len], encode);
-            }
-            self.btn_count = 0;
-            self.btn_time = 0;
+        let Some(slot) = self.clicks.tick(now, cur) else {
+            return;
+        };
+        let ts = (now / 1000) as u32;
+        if let Some((buf, len, encode)) = self.ccid.otp_button_ticket(slot, ts) {
+            otp_kbd::enqueue(&buf[..len], encode);
         }
     }
 

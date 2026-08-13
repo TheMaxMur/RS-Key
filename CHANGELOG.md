@@ -49,6 +49,18 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **A touch you were asked for no longer types a one-time password.** The idle
+  click counter turns N presses into "type slot N", and a consent ceremony uses
+  the same button. The worker cleared the accumulated click state when a dispatch
+  ended — but a touch wait can return with the finger still down, and clearing
+  counters cannot suppress an edge that has not happened yet, so the release of
+  the press you had just made for a signature or a PIN was counted as one click
+  and, a second later, typed slot 1's Yubico-OTP into whatever had focus. A
+  ceremony now hands the counter the button's live level, and the release it
+  produces is discounted once. The gesture itself is unchanged: a press made
+  while the key is idle still counts. The logic moved to `rsk_device::click`,
+  where it is host-tested. **bcdDevice → 0x0902.**
+
 - **The emulator's trusted display no longer drops the host's session token on
   the floor.** On a board, a clientPIN re-keyed *or refused* at the on-panel
   keypad ends the platform's outstanding `pinUvAuthToken` before the next CBOR
