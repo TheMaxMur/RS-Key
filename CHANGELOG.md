@@ -40,6 +40,22 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **A PIV card whose `0x9B` metadata was lost no longer comes back demanding a
+  touch.** `scan_files`' repair arm — the one that runs when the management key
+  survived but its metadata head did not — wrote `TOUCHPOLICY_ALWAYS`, while all
+  three other writers (the mint arm, `protect_mgm_key`, and `SET MGM KEY` at
+  P2=`0xFF`) wrote `NEVER`. A repaired card therefore invented a touch gate its
+  owner never set, and the only way back down (`SET MGM KEY`) needs a management
+  auth that must first pass that same touch — so where the button cannot be
+  reached, the only escape was blocking the PIN and PUK and running a RESET that
+  wipes every PIV key. It was not even reachable only by a torn wipe: a transient
+  `EF_META` read fault at the first SELECT of a power cycle enters the same arm on
+  a perfectly healthy card. The repair is a re-provisioning, and every other record
+  `scan_files` restores comes back at its published default, so the touch byte now
+  does too — the value a YubiKey 5.7.4 reports on a fresh card, measured 3/3, and
+  the one `docs/guides/piv.md` already documented. A card that raised the gate
+  itself with `SET MGM KEY` P2=`0xFE` keeps it. `bcdDevice` → `0x08F9`.
+
 - **Generating an OpenPGP keypair no longer destroys the AES key a host installed
   at DO `D5`.** The DEC arm of GENERATE minted a fresh AES-256 key over whatever
   stood there. That was harmless while the card was the only thing that could

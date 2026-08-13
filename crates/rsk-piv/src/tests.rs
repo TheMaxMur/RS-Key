@@ -4041,6 +4041,96 @@ fn the_management_slot_reports_one_pin_policy_in_every_state() {
     assert_eq!(sw, Sw::OK, "9B is not PIN-gated by its own metadata byte");
 }
 
+/// E95: the same sweep on the *touch* axis, which E42 left alone. Three writers said
+/// NEVER and the metadata **repair** said ALWAYS, so a card that lost its head came
+/// back demanding a touch its owner never asked for — and lowering it needs a
+/// management auth that now has to pass that very touch. The repair is a
+/// re-provisioning: `scan_files` restores every other missing record at its published
+/// default, so the touch byte takes the published default too. A YubiKey cannot be
+/// asked which is right — its 9B metadata is a projection of the key record, with no
+/// write command, no `DELETE 9B` (`00 F6 FF 9B` → `6A88`) and no observed partial
+/// read — so the reference answers the reachable question instead: a fresh card, 3/3.
+#[test]
+fn the_management_slot_reports_one_touch_policy_in_every_state() {
+    let rng = RefCell::new(TestRng(11));
+    let pres = RefCell::new(AlwaysConfirm);
+    let dev = Device {
+        serial_hash: &HASH,
+        serial_id: &SERIAL,
+        otp_key: None,
+    };
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    let meta = |app: &mut PivApplet, fs: &mut Fs<RamStorage>| -> Vec<u8> {
+        let (sw, md) = run(app, fs, INS_GET_METADATA, 0, SLOT_CARDMGM, &[]);
+        assert_eq!(sw, Sw::OK);
+        md
+    };
+    // Byte-for-byte what a YubiKey 5.7.4 answers on a fresh card (3/3, and again
+    // after a second `piv reset`): AES-192, pin DEFAULT, touch NEVER, key is default.
+    assert_eq!(
+        meta(&mut app, &mut fs),
+        [
+            0x01,
+            0x01,
+            ALGO_AES192,
+            0x02,
+            0x02,
+            0x00,
+            0x01,
+            0x05,
+            0x01,
+            0x01
+        ]
+    );
+
+    assert_eq!(protect_mgm_key(&dev, &mut fs, &mut TestRng(43)), Sw::OK);
+    let touch = |md: &[u8]| find_tag(md, 0x02).unwrap()[1];
+    assert_eq!(
+        touch(&meta(&mut app, &mut fs)),
+        TOUCHPOLICY_NEVER,
+        "protect_mgm_key"
+    );
+
+    // The repair arm: the head gone, the key alive. A fresh applet so SELECT re-runs
+    // `scan_files` rather than trusting its own fast path, and a DECLINING button —
+    // the substance of this finding is the gate that gets enforced, not the byte that
+    // gets reported, and only a mutual auth that completes can tell them apart.
+    let declines = RefCell::new(Scripted { confirm: false });
+    let mut fs3 = new_fs();
+    let mut healed = PivApplet::new(SERIAL, HASH, None, &rng, &declines);
+    select(&mut healed, &mut fs3);
+    fs3.meta_delete(files::key_fid(SLOT_CARDMGM).get()).unwrap();
+    let mut healed = PivApplet::new(SERIAL, HASH, None, &rng, &declines);
+    select(&mut healed, &mut fs3);
+    auth_mgm(&mut healed, &mut fs3); // asserts OK — a touch would fail here
+    assert_eq!(
+        touch(&meta(&mut healed, &mut fs3)),
+        TOUCHPOLICY_NEVER,
+        "the repair arm disagrees with every other writer"
+    );
+
+    // …and a host that DID raise the gate still has it: SET MGM KEY P2 = 0xFE is the
+    // one path that may write ALWAYS, exactly as the reference does. Its own card —
+    // `protect_mgm_key` above replaced the default key `auth_mgm` presents.
+    let mut fs2 = new_fs();
+    let mut app2 = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    select(&mut app2, &mut fs2);
+    auth_mgm(&mut app2, &mut fs2);
+    let mut set_key = vec![ALGO_AES256, SLOT_CARDMGM, 32];
+    set_key.extend_from_slice(&[0x7Bu8; 32]);
+    assert_eq!(
+        run(&mut app2, &mut fs2, INS_SET_MGMKEY, 0xFF, 0xFE, &set_key).0,
+        Sw::OK
+    );
+    assert_eq!(
+        touch(&meta(&mut app2, &mut fs2)),
+        TOUCHPOLICY_ALWAYS,
+        "SET MANAGEMENT KEY P2=0xFE"
+    );
+}
+
 #[test]
 fn move_and_delete_key() {
     let rng = RefCell::new(TestRng(7));
@@ -5988,12 +6078,13 @@ fn scan_files_repairs_the_mgm_metadata_when_only_it_is_missing() {
     let n = fs.meta_find(mgm_fid, &mut meta).unwrap_or(0);
     assert!(n >= 3, "the metadata the auth path reads was not repaired");
     assert_eq!(meta[0], ALGO_AES192, "repaired with the wrong algorithm");
-    // The surviving key's touch policy is NOT recoverable, so the repair must take
-    // the restrictive one. Handing it the fresh-card default would silently drop a
-    // gate the owner raised via SET MGM KEY.
+    // E95: the repair is a re-provisioning, and `scan_files` re-provisions every
+    // other missing record at its published default (PIN, PUK, retries, the key
+    // itself). The touch byte is not recoverable, so it takes that same default —
+    // the one a YubiKey 5.7.4 reports on a fresh card, measured 3/3.
     assert_eq!(
-        meta[2], TOUCHPOLICY_ALWAYS,
-        "a repaired policy must fail safe, not default to touch-OFF"
+        meta[2], TOUCHPOLICY_NEVER,
+        "the repair invented a touch gate"
     );
     let mut after = [0u8; 128];
     let after_n = fs.read(mgm_fid, &mut after).unwrap();

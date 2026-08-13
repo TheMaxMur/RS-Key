@@ -301,21 +301,21 @@ pub fn scan_files<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng) -
         let head = if minted_mgm {
             // A card we just provisioned takes the YubiKey 5 defaults: AES-192, touch
             // OFF (admin provisioning isn't touch-gated), still enforced if a host
-            // raises it via SET MGM KEY. Slot keys keep their ALWAYS default.
+            // raises it via SET MGM KEY.
             Some((ALGO_AES192, TOUCHPOLICY_NEVER))
         } else {
-            // A key that SURVIVED without its head must not be handed those: its
-            // algorithm is recoverable from the sealed length, its touch policy is
-            // not, so take the restrictive one rather than silently dropping a gate
-            // the owner raised — and never claim AES-192 over a 16- or 32-byte key,
-            // which would wedge the slot on `meta[0] != algo` instead of repairing it.
+            // A surviving key keeps its algorithm — the sealed length gives it, and
+            // claiming AES-192 over a 16- or 32-byte one wedges the slot on
+            // `meta[0] != algo`. Its touch policy is not recoverable, so it takes the
+            // published default like every other record here (E95): inventing ALWAYS
+            // gated management behind a touch whose only exit needs that same touch.
             let mut key = [0u8; 32];
             let n = seal::seal_read(dev, fs, key_fid(SLOT_CARDMGM), &mut key);
             key.zeroize();
             match n {
-                Ok(16) => Some((ALGO_AES128, TOUCHPOLICY_ALWAYS)),
-                Ok(24) => Some((ALGO_AES192, TOUCHPOLICY_ALWAYS)),
-                Ok(32) => Some((ALGO_AES256, TOUCHPOLICY_ALWAYS)),
+                Ok(16) => Some((ALGO_AES128, TOUCHPOLICY_NEVER)),
+                Ok(24) => Some((ALGO_AES192, TOUCHPOLICY_NEVER)),
+                Ok(32) => Some((ALGO_AES256, TOUCHPOLICY_NEVER)),
                 // Unreadable: GENERAL AUTHENTICATE reads the key through the same
                 // seal, so slot 9B is already dead. Leaving the head absent fails
                 // just that slot closed; erroring here fails the whole SELECT
