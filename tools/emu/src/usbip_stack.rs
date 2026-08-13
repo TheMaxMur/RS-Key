@@ -73,11 +73,6 @@ const fn identity(yubico: bool) -> (u16, u16, &'static str, &'static str) {
     }
 }
 
-/// `bcdDevice`, mirroring `firmware/src/main.rs`'s `device_release`. A host reads
-/// it before anything else, so an emulator claiming a build it is not running
-/// lies in the very first descriptor it serves.
-pub const BCD_DEVICE: u16 = 0x0879;
-
 /// Descriptor scratch, sized as the firmware sizes it.
 const CONFIG_DESC_LEN: usize = 256;
 const BOS_DESC_LEN: usize = 256;
@@ -224,7 +219,7 @@ pub fn device_info(yubico: bool) -> UsbDeviceInfo {
         speed: 2, // full speed, like the RP2350
         id_vendor: vid,
         id_product: pid,
-        bcd_device: BCD_DEVICE,
+        bcd_device: crate::bcd::BCD_DEVICE,
         device_class: 0,
         device_subclass: 0,
         device_protocol: 0,
@@ -309,7 +304,7 @@ fn usb_config(yubico: bool) -> UsbConfig<'static> {
     config.serial_number = Some(SERIAL);
     config.max_power = 100;
     config.max_packet_size_0 = 64;
-    config.device_release = BCD_DEVICE;
+    config.device_release = crate::bcd::BCD_DEVICE;
     config
 }
 

@@ -124,7 +124,7 @@ fn the_device_info_counts_the_interfaces_it_has() {
     let yk = device_info(true);
     assert_eq!(yk.id_vendor, YUBICO_VID);
     assert_eq!(yk.id_product, YUBICO_PID);
-    assert_eq!(d.bcd_device, BCD_DEVICE);
+    assert_eq!(d.bcd_device, crate::bcd::BCD_DEVICE);
 }
 
 /// The keyboard is interface 0 and FIDO is interface 1. Stated separately from

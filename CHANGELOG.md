@@ -88,6 +88,17 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   **both** writers of the record — `docs/protocol.md` §8 and
   `docs/threat-model.md` §1 record it as deliberate ykman parity — so it is left
   to the maintainer rather than half-applied here. **bcdDevice → 0x0950.**
+
+- **`rsk-emu` reports the `bcdDevice` of the firmware it is built beside.** The
+  emulator's copy was written by hand and had drifted 172 releases behind by the
+  time anyone looked (`0x0879` against that day's `0x0925`), so the very first
+  descriptor it serves — over
+  `--usbip`, and the build the trusted display shows — named a firmware nobody
+  was running. It is read out of `firmware/src/main.rs` at compile time now,
+  under the same rule `scripts/bcd_gate.py` reads it by, so it cannot drift
+  again; a firmware that stops binding it fails the emulator's build with a
+  message saying so.
+
 - **A PIV object id resolves by its whole value, not its low sixteen bits.**
   `object_fid` matched `id & 0xFFFF` for the two Yubico objects, so the 2-byte id
   `FF01` — and `00FF01`, `7FFF01`, `ABFF01` — all read the **attestation

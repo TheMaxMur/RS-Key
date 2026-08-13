@@ -13,6 +13,7 @@
 //! rsk-emu --store ./my.store --touch
 //! ```
 
+mod bcd;
 mod ccid;
 mod device;
 mod display;

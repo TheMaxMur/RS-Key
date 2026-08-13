@@ -375,7 +375,7 @@ pub fn serve_display<P, T>(
         parts.touch,
         parts.hooks,
         rsk_display::DeviceInfo {
-            version: crate::usbip_stack::BCD_DEVICE,
+            version: crate::bcd::BCD_DEVICE,
             chipid: u64::from_le_bytes(cfg.serial),
         },
         fs,

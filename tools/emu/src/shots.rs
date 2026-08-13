@@ -100,7 +100,7 @@ fn shoot(dir: &Path) -> std::io::Result<Vec<String>> {
                 brightness: rsk_ui::BRIGHTNESS_LEVELS,
                 timeout_secs: 15,
                 sleep_secs: 30,
-                version: crate::usbip_stack::BCD_DEVICE,
+                version: crate::bcd::BCD_DEVICE,
                 chipid: 0,
                 device_pin_set: true,
                 fido_pin_set: false,
@@ -146,12 +146,7 @@ fn shoot(dir: &Path) -> std::io::Result<Vec<String>> {
     // Secure boot off, because that is the state a reader has: the screen warns
     // rather than claiming a check it is not doing.
     save("display-firmware", &|p| {
-        let _ = rsk_ui::render_firmware(
-            p,
-            crate::usbip_stack::BCD_DEVICE,
-            0x0052_534B_454D_5501,
-            false,
-        );
+        let _ = rsk_ui::render_firmware(p, crate::bcd::BCD_DEVICE, 0x0052_534B_454D_5501, false);
     });
 
     save("display-audit", &|p| {
