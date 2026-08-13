@@ -75,9 +75,11 @@ uses it with just the PIV PIN. `ykman piv info` shows it as protected and
 the PIV PIN **alone** grants management access (it unlocks the random key), so
 treat the PIN accordingly; the panel states this and gates the action behind the
 device PIN and a hold. (`ykman piv access change-management-key --generate
---protect` does the same thing from the host.) If you had raised the management
-key's touch policy (`--touch`, below), the panel action keeps it: it replaces the
-key, not the gate, so admin actions still ask for a press.
+--protect` installs a random PIN-protected key from the host too.) If you had
+raised the management key's touch policy (`--touch`, below), **the panel action
+keeps it** — it replaces the key, not the gate, so admin actions still ask for a
+press. The host command does not: `ykman` sends the policy in the command itself
+and defaults it to off, so re-run it with `--touch` if you want the gate back.
 
 The panel manages PINs/PUKs that follow the standard PIV convention (**6–8
 digits, padded to 8 bytes with `0xFF`**), which is what `ykman`, `yubico-piv-tool`

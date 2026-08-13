@@ -800,12 +800,12 @@ impl PivApplet<'_> {
     ) -> Sw {
         // Kept strict on purpose. A YubiKey 5.7.4 ignores P1 here entirely and
         // serves the full record for `01`, `02`, `80` and `FF` alike (measured,
-        // 3 runs) — and the same is true of INS `47`, `FA`, `FF`, `F6`, `FE`,
-        // `FB`, `F9`, `FD`, `F8` and `CB`: the PIN commands' key reference and
-        // this command's P2 are the only P1P2 that card judges at all. Parity
-        // does not run this direction: the standing ruling keeps our strictness
-        // where the reference is *looser*, and loosening one cell of ten would
-        // leave the applet incoherent with itself.
+        // 3 runs) — and ignores P1P2 on INS `47`, `FA`, `FF`, `F6`, `FE`, `FB`,
+        // `F9` and `CB` too: the PIN commands' key reference and this command's
+        // P2 are the only P1P2 that card judges. Parity does not run this
+        // direction — the standing ruling keeps our strictness where the
+        // reference is *looser*. (`FD` and `FE` are P1P2-blind on our side as
+        // well, so this is the majority of the applet, not all of it.)
         if apdu.p1 != 0x00 {
             return Sw::INCORRECT_P1P2;
         }
@@ -1411,8 +1411,8 @@ fn mgm_clear_protected<S: Storage>(fs: &mut Fs<S>) -> Result<(), Sw> {
 ///
 /// Power-cut ordering: the key+meta are written before the ADMIN flag, so a torn
 /// write leaves the flag clear → PRINTED reads absent (fail-closed, no half-key
-/// disclosure). Re-running this (or a PIV factory reset) recovers — it depends on
-/// no prior state, just overwriting the slot.
+/// disclosure). Re-running this (or a PIV factory reset) recovers: the only prior
+/// state it reads is the touch byte, and an absent one resolves to the default.
 ///
 /// The ADMIN-DATA record is rebuilt from any prior host-written one
 /// (`pivman_set_protected`): the PIN-change timestamp and unrelated flag bits
