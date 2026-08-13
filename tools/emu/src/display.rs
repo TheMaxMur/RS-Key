@@ -325,6 +325,28 @@ impl rsk_display::Hooks for EmuDisplayHooks {
     fn set_presence_timeout_ms(&mut self, ms: u32) {
         self.timeout_ms.set(ms);
     }
+    /// There is no accelerator here, but this trait's `None` means "no accelerator
+    /// **and** no key" — where `rsk_device::Hooks::rsa_search`'s `None` means "fall
+    /// through to the applet's own single-core path", which is why a generate over
+    /// the wire works on this build. Run that same path, one candidate per tick so
+    /// the on-screen spinner keeps moving.
+    fn rsa_search_progress(
+        &mut self,
+        nbits: usize,
+        rng: &mut dyn rsk_openpgp::Rng,
+        on_tick: &mut dyn FnMut(),
+    ) -> Option<Box<rsk_openpgp::keys::RsaPrivateKey>> {
+        let mut keygen = rsk_openpgp::keys::RsaKeygen::new(nbits);
+        let mut sieve = rsk_rsa_asm::IncrementalSieve::new();
+        loop {
+            on_tick();
+            match keygen.step(&mut sieve, rng) {
+                rsk_openpgp::keys::RsaStep::Done(key) => return Some(key),
+                rsk_openpgp::keys::RsaStep::Failed => return None,
+                rsk_openpgp::keys::RsaStep::More => {}
+            }
+        }
+    }
 }
 
 /// The three pieces `rsk_display::Ui::new` takes from a board, as one handle: a

@@ -621,6 +621,45 @@ fn an_open_menu_hands_the_executor_back_when_a_host_command_lands() {
     panel_bench(drive_menu_yield);
 }
 
+/// The smallest RSA modulus the PIV and OpenPGP keygen screens offer, so this runs
+/// the real search at the size a person is most likely to pick.
+const RSA_BITS: usize = 2048;
+
+/// The panel can generate an RSA key, which is the whole of E152: the hook was left
+/// at `rsk_display::Hooks`'s default `None`, and *that* trait reads `None` as "no
+/// accelerator **and** no key", so `piv_store_generated` reported a failure on a
+/// build where the same generate over the wire succeeded. `rsk_device::Hooks`'s
+/// identically-named default means the opposite — fall through to the applet's own
+/// single-core path — which is the path this now runs.
+#[test]
+fn the_panel_generates_the_rsa_key_the_wire_can() {
+    let mut hooks = EmuDisplayHooks::new(
+        Rc::new(Cell::new(rsk_display::BL_TOP)),
+        Rc::new(Cell::new(false)),
+        crate::device::Queued::default(),
+        Arc::new(Signals::default()),
+    );
+    let mut rng = crate::rng::EmuRng::from_seed(&[0xa7; 32]);
+    let mut ticks = 0usize;
+
+    let key =
+        rsk_display::Hooks::rsa_search_progress(&mut hooks, RSA_BITS, &mut rng, &mut || ticks += 1)
+            .expect("the panel has a single-core path to fall through to, as the wire does");
+
+    // The applet's own encoder taking the key is what says it is a usable one of the
+    // size asked for, without this test learning the `rsa` crate's API.
+    let mut out = [0u8; 1024];
+    let n = rsk_openpgp::keys::make_rsa_response(&key, &mut out);
+    assert!(
+        n > RSA_BITS / 8,
+        "the response carries no {RSA_BITS}-bit modulus ({n} bytes)"
+    );
+    assert!(
+        ticks > 1,
+        "the search ticked {ticks} times — the on-screen spinner would read as hung"
+    );
+}
+
 /// Poll `ready` until it holds or `bound` runs out; `false` says it never did.
 fn wait_until(bound: Duration, ready: impl Fn() -> bool) -> bool {
     let deadline = Instant::now() + bound;

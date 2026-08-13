@@ -149,6 +149,15 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   while the key is idle still counts. The logic moved to `rsk_device::click`,
   where it is host-tested. **bcdDevice → 0x0902.**
 
+- **An RSA key can be generated from `rsk-emu --display`'s own screen.** The panel
+  asks the board for the prime search, and `rsk_display::Hooks`' default answer is
+  "no accelerator **and** no key" — so the emulator, which implemented none, failed
+  every on-screen PIV or OpenPGP RSA generate as "generate failed" while the same
+  generate over the wire succeeded. The identically-named `rsk_device::Hooks`
+  default means the opposite (fall through to the applet's own single-core path),
+  which is why only the screen was affected. The panel now runs that same path,
+  ticking per candidate so the spinner keeps moving.
+
 - **`rsk-emu --display` tells the host about the touch it is waiting for, and
   takes a `CTAPHID_CANCEL`.** The panel kept `up_pending` and the cancel flag in
   cells nothing else read, while the CTAPHID keepalive and the cancel path spoke
