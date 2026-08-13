@@ -552,10 +552,9 @@ async fn serve<PR: rsk_device::UserPresence + 'static>(
                 ctap.scrub();
                 Some(body)
             }
-            // No `begin`/`end`: a vendor command cannot start a touch wait, and
-            // `rsk_usb::ctaphid::run_vendor` streams no keepalive and watches for no
-            // CANCEL either — so a board cannot cancel one, and bracketing it here
-            // would make the emulator answer a cancel the device ignores.
+            // No `begin`/`end`: no vendor command is presence-gated, and
+            // `rsk_usb::ctaphid::run_vendor` streams no keepalive and watches for
+            // no CANCEL — so a board cannot cancel one either.
             Job::Vendor { cmd, data } => {
                 let body = ccid.ctap_mgmt(cmd, &data).map(<[u8]>::to_vec);
                 ccid.scrub();

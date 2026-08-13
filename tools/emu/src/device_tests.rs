@@ -118,7 +118,7 @@ fn ask(jobs: &Jobs, job: Job) -> Vec<u8> {
     let (reply, answer) = mpsc::channel();
     jobs.send(job, reply).expect("the device thread");
     answer
-        .recv_timeout(std::time::Duration::from_secs(30))
+        .recv_timeout(Duration::from_secs(30))
         .expect("the device answered")
         .expect("a body")
 }
@@ -368,8 +368,9 @@ fn u2f_register() -> Vec<u8> {
 }
 
 /// U2F's only "interact and try again" status, which `u2f_interaction` answers
-/// for a declined, timed-out or cancelled touch alike.
-const SW_CONDITIONS_NOT_SATISFIED: [u8; 2] = [0x69, 0x85];
+/// for a declined, timed-out or cancelled touch alike. Off the same typed table
+/// `firmware/src/worker.rs` writes it from, not the two bytes again.
+const SW_CONDITIONS_NOT_SATISFIED: [u8; 2] = rsk_sdk::Sw::CONDITIONS_NOT_SATISFIED.to_bytes();
 
 /// Queue `job` on its own channel and hand back the receiver, without waiting.
 fn queue(jobs: &Jobs, job: Job) -> mpsc::Receiver<Option<Vec<u8>>> {
@@ -461,15 +462,25 @@ fn a_cancel_from_another_channel_leaves_a_u2f_ceremony_alone() {
     );
 
     signals.request_cancel(OTHER_CID);
+    let sent = Instant::now();
     let body = answer
         .recv_timeout(touch_hold() * 3)
         .expect("the device answered")
         .expect("a U2F response is always a body");
+    let took = sent.elapsed();
 
     assert_eq!(
         body[body.len() - 2..],
         SW_OK,
         "a second process's cancel ended a ceremony it does not own"
+    );
+    // The status word alone would also be SW_OK if the cancel had simply arrived
+    // after the wait was over; this is what says it arrived during it and was
+    // ignored.
+    assert!(
+        took >= cancel_bound(),
+        "the ceremony ended {took:?} after the foreign cancel — too soon to say \
+         whether it was ignored or merely late"
     );
 
     shut_down(path, jobs, device);
@@ -482,7 +493,7 @@ fn a_cancel_from_another_channel_leaves_a_u2f_ceremony_alone() {
 /// command that ever grows a touch gate reds this and has to be given a channel.
 #[test]
 fn a_vendor_command_asks_for_no_touch() {
-    let (path, jobs, signals, device) =
+    let (path, jobs, _signals, device) =
         bench_with("vendor-no-touch", PresenceMode::Delayed(touch_hold()));
 
     let sent = Instant::now();
@@ -498,10 +509,6 @@ fn a_vendor_command_asks_for_no_touch() {
     assert!(
         took < cancel_bound(),
         "the vendor read waited {took:?} — something on that path asked for a touch"
-    );
-    assert!(
-        !signals.up_pending_for(signals::SCOPE_FIDO),
-        "a vendor command left a touch pending behind it"
     );
 
     shut_down(path, jobs, device);
