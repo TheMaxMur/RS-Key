@@ -240,11 +240,23 @@ cannot turn your signatures touchless. Clearing it takes `TERMINATE DF` +
 
 ## AES encryption (PSO)
 
-The DEC slot carries an on-card **AES-256** key, minted automatically whenever
-the encryption keypair is generated. Tools that expose the card's symmetric
-PSO (e.g. `gpg-card`) can `ENCIPHER` / `DECIPHER` arbitrary block-aligned data
-with it (raw AES-CBC, zero IV; output is `0x02 || cryptogram`). It needs PW1
-(PW2). Most users never touch this. Public-key encryption is the normal path.
+The DEC slot carries an on-card **AES** key, minted automatically as AES-256
+whenever the encryption keypair is generated. Tools that expose the card's
+symmetric PSO (e.g. `gpg-card`) can `ENCIPHER` / `DECIPHER` arbitrary
+block-aligned data with it (raw AES-CBC, zero IV; output is `0x02 ||
+cryptogram`). It needs PW1 (PW2). Most users never touch this. Public-key
+encryption is the normal path.
+
+A host can also supply the key itself, with `PUT DATA` on DO `D5` under the
+**admin** PIN: 16 bytes for AES-128 or 32 for AES-256, and no other length.
+
+Two things to know before you rely on it. There is **no way to remove** an
+installed key — only overwrite it, regenerate the encryption keypair, or reset the
+applet — and **regenerating the encryption keypair replaces it**, because that is
+how the slot's secrets are retired. Importing a key with `keytocard` does not.
+Anything you encrypted under a key you supplied is unrecoverable once either of
+those happens, and the card cannot tell you a key is there: DO `D5` is
+write-only.
 
 ## Recovery and reset
 

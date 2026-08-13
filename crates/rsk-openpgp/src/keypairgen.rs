@@ -146,6 +146,11 @@ fn generate<S: Storage>(
 /// for DO 0xDE; reset the signature counter on the SIG slot; mint a fresh AES-256
 /// key on the DEC slot (OpenPGP cannot generate a symmetric key directly; a
 /// storage failure is non-fatal).
+///
+/// The mint **overwrites a key a host installed with `PUT DATA D5`**, and that is
+/// the precedence on purpose: regenerating the DEC keypair is how a holder retires
+/// that slot's secrets, and leaving the old symmetric key behind would make the
+/// rotation a half-truth. IMPORT does not mint, so it does not clobber either.
 fn keygen_tail<S: Storage>(
     dev: &Device,
     fs: &mut Fs<S>,

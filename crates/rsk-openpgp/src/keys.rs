@@ -905,15 +905,24 @@ pub fn make_ec_pubkey_do(point: &[u8], out: &mut [u8]) -> usize {
     p + plen
 }
 
-/// Seal a 32-byte AES key under the DEK and write it to `EF_AES_KEY`. OpenPGP
-/// cannot generate symmetric keys directly, so GENERATE mints a fresh AES-256
-/// key whenever the DEC keypair is (re)generated.
+/// Seal an AES key under the DEK and write it to `EF_AES_KEY`. GENERATE mints a
+/// fresh AES-256 key whenever the DEC keypair is (re)generated; `PUT DATA D5`
+/// installs a host-supplied one.
+///
+/// [`AES_KEY_LENS`] is enforced HERE, not at the callers: the widths are what
+/// `load_aes_key` and `aes_pso` can serve, and a slot sealed at any other one
+/// answers `6400` for good — unreadable, undeletable, and clearable only by a
+/// keygen or TERMINATE DF. Two callers today, so the check would be a coin-flip
+/// away from living in only one of them.
 pub fn store_aes_key<S: Storage>(
     dev: &Device,
     fs: &mut Fs<S>,
     sess: &Session,
-    key: &[u8; 32],
+    key: &[u8],
 ) -> Result<(), Sw> {
+    if !AES_KEY_LENS.contains(&key.len()) {
+        return Err(WRONG_DATA);
+    }
     let mut blob = [0u8; 32 + DEK_SEAL_OVERHEAD];
     let r = (|| {
         let bn = dek_seal(dev, fs, sess, EF_AES_KEY, key, &mut blob)?;
@@ -948,7 +957,8 @@ pub fn load_aes_key<S: Storage>(
         }
     };
     blob.zeroize();
-    // GENERATE only ever mints a 32-byte AES-256 key; re-seal a legacy one forward.
+    // No legacy record can be narrower: GENERATE only ever minted 32 bytes, and
+    // `PUT DATA D5` (which can write 16) has always sealed under GCM.
     if legacy && n == 32 {
         let _ = store_aes_key(dev, fs, sess, &kdata);
     }

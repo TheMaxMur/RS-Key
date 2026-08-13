@@ -275,9 +275,9 @@ impl<'a> OpenpgpApplet<'a> {
         sw
     }
 
-    /// PUT DATA (0xDA): the cardholder cert (7F21), reset code (0xD3) and PW
-    /// status (0xC4) touch the cert / DEK / status files and route to their own
-    /// handlers; every other DO is a generic write.
+    /// PUT DATA (0xDA): the cardholder cert (7F21), reset code (0xD3), AES key
+    /// (0xD5) and PW status (0xC4) touch the cert / DEK / key / status files and
+    /// route to their own handlers; every other DO is a generic write.
     fn handle_put_data<S: Storage>(&mut self, fid: u16, apdu: &Apdu, fs: &mut Fs<S>) -> Sw {
         // One owner for the length DO C0 announces, checked before the routing
         // splits: the cardholder certificate below writes flash without going
@@ -311,6 +311,14 @@ impl<'a> OpenpgpApplet<'a> {
             };
             let mut rng = self.rng.borrow_mut();
             pin::put_reset_code(&dev, fs, &mut self.sess, &mut *rng, apdu.data)
+        } else if fid == consts::EF_AES_KEY.get() {
+            let mkek = read_fused(self.mkek_source);
+            let dev = Device {
+                serial_hash: &self.serial_hash,
+                serial_id: &self.serial_id,
+                otp_key: mkek.as_deref(),
+            };
+            putdata::put_aes_key(&dev, fs, &self.sess, apdu.data)
         } else if fid == consts::EF_PW_STATUS {
             putdata::put_pw_status(fs, &self.sess, apdu.data)
         } else {

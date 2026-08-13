@@ -161,6 +161,13 @@ pub const EF_TS_DEC: u16 = 0x00cf; // S
 pub const EF_TS_AUT: u16 = 0x00d0; // S
 pub const EF_RESET_CODE: u16 = 0x00d3; // S — PUT redirects to EF_RC
 pub const EF_AES_KEY: KeyFid = KeyFid::new(0x00d5); // S — symmetric key for DEC slot, DEK-sealed
+
+/// The key widths DO `D5` takes, and the only widths `store_aes_key` will seal.
+/// OpenPGP 3.4 §7.2.11 gives PSO:DEC/ENC an AES-128 or an AES-256 key and nothing
+/// between. `load_aes_key`'s legacy predicate is wider (it also passes 24), which
+/// is slack rather than history: no build ever wrote a record of that width.
+pub const AES_KEY_LENS: [usize; 2] = [16, 32];
+
 pub const EF_UIF_SIG: u16 = 0x00d6; // S — user-interaction flag (touch)
 pub const EF_UIF_DEC: u16 = 0x00d7; // S
 pub const EF_UIF_AUT: u16 = 0x00d8; // S

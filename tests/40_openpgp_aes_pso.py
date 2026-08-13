@@ -4,16 +4,18 @@
 
 """OpenPGP AES symmetric PSO test (encipher / decipher) over PC/SC.
 
-The OpenPGP card AES operation uses the symmetric key minted on the DEC slot
-(`EF_AES_KEY`, tag D5), in raw AES-CBC with a zero IV and no padding:
+The OpenPGP card AES operation uses the symmetric key at `EF_AES_KEY` (tag D5) —
+minted on the DEC slot by GENERATE, or written by the host with `PUT DATA D5` —
+in raw AES-CBC with a zero IV and no padding:
 
     PSO:ENCIPHER (86 80)  plaintext            -> 0x02 || cryptogram
     PSO:DECIPHER (80 86)  0x02 || cryptogram   -> plaintext
 
-The key is sealed under the DEK and never leaves the card, so this verifies by
-round-trip (encipher then decipher must recover the plaintext). Needs PW2 (the
-DEC password, default "123456"); the DEC keypair is (re)generated each run to
-mint a fresh AES key, so the test is idempotent.
+The minted key is sealed under the DEK and never leaves the card, so that half is
+verified by round-trip. A host-written key is known, so the second half checks the
+cryptogram byte-for-byte against an independent AES-CBC. Needs PW2 (the DEC
+password, default "123456") to use the key and PW3 to write it; the DEC keypair is
+(re)generated each run to mint a fresh one, so the test is idempotent.
 
     nix develop -c python tests/40_openpgp_aes_pso.py
 """
@@ -24,6 +26,10 @@ try:
     from smartcard.util import toHexString
 except ImportError:
     sys.exit("missing dependency: pip install pyscard")
+try:
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+except ImportError:
+    sys.exit("missing dependency: pip install cryptography")
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _device import find_reader  # noqa: E402
@@ -91,7 +97,30 @@ def main():
         fail(f"non-block-aligned ENCIPHER: SW {sw1:02X}{sw2:02X} != 6700")
     print("  block-alignment enforced (15-byte plaintext -> 6700)")
 
-    print("\nPASS (AES encipher/decipher round-trip)")
+    # PUT DATA D5: the host supplies the key itself (OpenPGP 3.4 §7.2.11), which
+    # is what Extended Capabilities b2 announces. AES-128 and AES-256 only.
+    for bad in (0, 1, 15, 17, 24, 31, 33):
+        _, sw1, sw2 = conn.transmit([0x00, INS_PUT_DATA, 0x00, 0xD5, bad] + [0x22] * bad)
+        if (sw1, sw2) != (0x6A, 0x80):
+            fail(f"PUT DATA D5 with {bad} bytes: SW {sw1:02X}{sw2:02X} != 6A80")
+    print("  PUT DATA D5 takes 16 or 32 bytes and nothing else")
+
+    for key in (bytes(range(16)), bytes(range(32))):
+        tx([0x00, INS_PUT_DATA, 0x00, 0xD5, len(key)] + list(key),
+           f"PUT DATA D5 ({len(key) * 8}-bit key)")
+        enc = tx([0x00, INS_PSO, 0x86, 0x80, len(pt)] + list(pt) + [0x00],
+                 "PSO:ENCIPHER under it")
+        enc_ctx = Cipher(algorithms.AES(key), modes.CBC(bytes(16))).encryptor()
+        want = enc_ctx.update(pt) + enc_ctx.finalize()
+        if enc[1:] != want:
+            fail(f"the D5 key is not the key the PSO used: {enc[1:].hex()} != {want.hex()}")
+        dec = tx([0x00, INS_PSO, 0x80, 0x86, len(enc)] + list(enc) + [0x00],
+                 "PSO:DECIPHER under it")
+        if dec != pt:
+            fail(f"round-trip under a host-supplied key: {dec.hex()} != {pt.hex()}")
+    print("  the host-supplied key is the key the PSO uses (AES-CBC, zero IV)")
+
+    print("\nPASS (AES encipher/decipher round-trip, host-supplied D5 key)")
 
 
 if __name__ == "__main__":

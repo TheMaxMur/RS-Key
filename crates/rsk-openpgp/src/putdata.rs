@@ -2,10 +2,12 @@
 // Copyright (C) 2026 RS-Key contributors
 
 //! PUT DATA (INS 0xDA): write the working DOs, with the algorithm-attribute
-//! redirect (C1/C2/C3 → EF_ALGO_PRIV1/2/3). The reset code (0xD3) and PW-status
-//! (0xC4) are routed by the dispatch to their own handlers (they touch the DEK
-//! / status file, not the generic DO store).
+//! redirect (C1/C2/C3 → EF_ALGO_PRIV1/2/3). The reset code (0xD3), the AES key
+//! (0xD5) and PW-status (0xC4) are routed by the dispatch to their own handlers
+//! (they touch the DEK / the sealed key / the status file, not the generic DO
+//! store).
 
+use rsk_crypto::Device;
 use rsk_fs::{Fs, Storage};
 use rsk_sdk::Sw;
 
@@ -138,6 +140,26 @@ pub fn put_data<S: Storage>(fs: &mut Fs<S>, sess: &Session, fid: u16, data: &[u8
         return Sw::MEMORY_FAILURE;
     }
     Sw::OK
+}
+
+/// PUT DATA AES key (`0xD5` → `EF_AES_KEY`): install the symmetric key PSO:ENC and
+/// PSO:DECIPHER use. PW3, and the widths `store_aes_key` enforces — §7.2.11's 16
+/// (AES-128) or 32 (AES-256). Extended Capabilities b2 announces AES, and `D5` is
+/// the spec's only way for a host to supply the key it announces; without this the
+/// only key those operations could ever use was the one GENERATE mints internally.
+///
+/// §7.2.11 gives `D5` no deletion, so an empty body is `6A80` like any other wrong
+/// width and **there is no way to remove an installed key** — only overwriting it,
+/// a DEC keygen, or TERMINATE DF. Deliberate: an empty write that disarmed an
+/// announced capability would be the worse of the two silences.
+pub fn put_aes_key<S: Storage>(dev: &Device, fs: &mut Fs<S>, sess: &Session, data: &[u8]) -> Sw {
+    if !sess.has_pw3 {
+        return Sw::SECURITY_STATUS_NOT_SATISFIED;
+    }
+    match crate::keys::store_aes_key(dev, fs, sess, data) {
+        Ok(()) => Sw::OK,
+        Err(sw) => sw,
+    }
 }
 
 /// PUT DATA PW status (`0xC4` → `EF_PW_PRIV`): set the "PW1 valid for several

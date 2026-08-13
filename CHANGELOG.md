@@ -240,6 +240,36 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   data, `'0'` was our own invention, and the alternative is a byte the card reads
   out and refuses back. **bcdDevice → 0x08F2.**
 
+- **`PUT DATA D5` installs the AES key, so the capability the card announces can
+  be completed.** Extended Capabilities byte 1 bit 2 says this card does PSO:DEC
+  and PSO:ENC with AES, and OpenPGP 3.4 §7.2.11 makes DO `D5` the way a host
+  supplies that key. We announced the bit, implemented both operations, and had no
+  `D5` handler at all — the tag fell through to `6B00` — so the only AES key those
+  operations could ever use was the one `GENERATE` mints internally on the DEC
+  slot, which no host can supply or replace. `D5` now takes PW3 and exactly the two
+  widths §7.2.11 gives that key, 16 (AES-128) or 32 (AES-256); every other length,
+  the empty write included, is `6A80` with the standing key left in place. A
+  YubiKey is no help here and is not being followed: it answers `6B00` to
+  `PUT DATA D5` in every state, has no AES PSO at all, and leaves the capability
+  bit clear — self-consistently. Ours was the inconsistent card, and the spec is
+  the reference where our functionality is wider.
+
+  Three consequences worth reading before relying on it, none of them silent any
+  more. §7.2.11 gives `D5` no deletion, so **an installed key cannot be removed** —
+  only overwritten, replaced by a DEC keygen, or cleared by `TERMINATE DF`; an
+  empty write that disarmed an announced capability would be the worse silence.
+  **Regenerating the encryption keypair replaces the key**, because that is how a
+  holder retires the slot's secrets; `keytocard` (IMPORT) does not, and the two are
+  pinned apart by a test now. And `GET DATA D5` answers `6982`, not `6A88`: the DO
+  is READ = *Never* per §4.4.1 and is an internal EF like every other sealed slot —
+  before this it reported "no such object" for an object the card would now accept.
+
+  The key is checked byte-for-byte, not by round-trip: the host suite compares the
+  cryptogram against an independent AES-CBC implementation, and the gate's own test
+  carries the FIPS-197 §C.1/C.3 vectors (a zero-IV CBC of one block is that block
+  under ECB), which is what catches a silent AES-256 → AES-128 truncation that two
+  round-trips cannot see. **bcdDevice → 0x08F6.**
+
 - **IMPORT judges the password before the key slot, finishing the `PUT DATA`
   sweep.** `0x08F3` moved that judgement ahead of the tag on `PUT DATA` (`0xDA`)
   and stopped one instruction short. IMPORT (`0xDB`) carries its target — the

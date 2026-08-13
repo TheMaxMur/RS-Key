@@ -2280,7 +2280,11 @@ fn put_data_judges_the_password_before_the_tag() {
     // (tag, what PW3 gets). Everything before PW3 is `denied`, on every row.
     // Rows 1-6 and 8 are the card's; row 7 (`93`) is ours — see the note above.
     let tags: [(u8, Sw); 8] = [
-        (0xD5, Sw::WRONG_P1P2),               // AES key
+        // `D5` is a DELIBERATE divergence in the PW3 column: a YubiKey answers
+        // `6B00` there because it has no AES DO at all, and we implement §7.2.11's
+        // — so a one-byte body is a wrong length. Only the pre-PW3 cells are parity
+        // (`put_data_d5_installs_the_key_the_aes_pso_uses` owns the rest).
+        (0xD5, consts::WRONG_DATA),           // AES key
         (0xC5, Sw::WRONG_P1P2),               // fingerprints, read-only
         (0xCD, Sw::WRONG_P1P2),               // timestamps, read-only
         (0x7A, Sw::WRONG_P1P2),               // security support, read-only
@@ -2313,6 +2317,174 @@ fn put_data_judges_the_password_before_the_tag() {
             "PUT DATA {tag:02X} with PW3"
         );
     }
+}
+
+/// E23(c): DO `D5` is the spec's way for a host to supply the AES key PSO:ENC and
+/// PSO:DECIPHER use, and Extended Capabilities b2 announces we have them. We
+/// announced the capability with no writer, so the only key those operations could
+/// ever use was the one GENERATE mints internally — a capability no conforming
+/// host could complete. A YubiKey has nothing to copy here: it answers `6B00` to
+/// `PUT DATA D5` in every state and leaves b2 clear, so §4.4.3.7 and §7.2.11 are
+/// the reference and the widths are theirs — 16 or 32 bytes, nothing else.
+#[test]
+fn put_data_d5_installs_the_key_the_aes_pso_uses() {
+    let rng = RefCell::new(LcgRng(31));
+    let mut fs = make_fs();
+    let presence = RefCell::new(crate::AlwaysConfirm);
+    let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
+
+    let d5 = |app: &mut OpenpgpApplet, fs: &mut Fs<RamStorage>, key: &[u8]| {
+        put(app, fs, 0x00, 0xD5, key)
+    };
+    let encipher = |app: &mut OpenpgpApplet, fs: &mut Fs<RamStorage>, pt: &[u8]| {
+        let mut a = vec![0x00, consts::INS_PSO, 0x86, 0x80, pt.len() as u8];
+        a.extend_from_slice(pt);
+        run(app, fs, &a)
+    };
+
+    // §4.4.1 gives `D5` to PW3, and the judgement comes before the length.
+    assert_eq!(
+        d5(&mut app, &mut fs, &[0x11; 32]),
+        Sw::SECURITY_STATUS_NOT_SATISFIED
+    );
+    verify_pin(&mut app, &mut fs, consts::PW1_MODE82, consts::PW1_DEFAULT);
+    assert_eq!(
+        d5(&mut app, &mut fs, &[0x11; 32]),
+        Sw::SECURITY_STATUS_NOT_SATISFIED,
+        "the DEC password is not the admin one"
+    );
+    assert!(!fs.has_data(consts::EF_AES_KEY.get()));
+
+    verify_pin(&mut app, &mut fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
+    // AES-128 and AES-256, and nothing between or outside.
+    for len in [16usize, 32] {
+        assert_eq!(d5(&mut app, &mut fs, &vec![0x11; len]), Sw::OK, "len {len}");
+    }
+    let pt = [0xABu8; 16];
+    let standing = encipher(&mut app, &mut fs, &pt);
+    assert_eq!(standing.1, Sw::OK);
+    for len in [0usize, 1, 15, 17, 24, 31, 33, 64] {
+        assert_eq!(
+            d5(&mut app, &mut fs, &vec![0x22; len]),
+            consts::WRONG_DATA,
+            "len {len}"
+        );
+        // A refused write must leave the standing key doing the work.
+        assert_eq!(encipher(&mut app, &mut fs, &pt), standing, "len {len}");
+    }
+
+    // The key the host writes is the key the operation uses: two different keys
+    // must give two different cryptograms, and re-installing the first must bring
+    // its cryptogram back. The key is DEK-sealed, so this is how it is shown.
+    assert_eq!(d5(&mut app, &mut fs, &[0x33; 32]), Sw::OK);
+    let other = encipher(&mut app, &mut fs, &pt);
+    assert_eq!(other.1, Sw::OK);
+    assert_ne!(other.0, standing.0, "a new D5 key did not reach the PSO");
+    assert_eq!(d5(&mut app, &mut fs, &[0x11; 32]), Sw::OK);
+    assert_eq!(encipher(&mut app, &mut fs, &pt), standing);
+
+    // …and the WHOLE key is the key, not a prefix of it. Two keys differing only
+    // past byte 16 would still give two cryptograms, so the argument above cannot
+    // see an AES-256 → AES-128 truncation. FIPS-197 §C.1/C.3 can: a zero-IV CBC of
+    // one block is that block under ECB, so these are the published vectors.
+    let fips = [
+        (
+            &[
+                0x00u8, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C,
+                0x0D, 0x0E, 0x0F,
+            ][..],
+            [
+                0x69u8, 0xC4, 0xE0, 0xD8, 0x6A, 0x7B, 0x04, 0x30, 0xD8, 0xCD, 0xB7, 0x80, 0x70,
+                0xB4, 0xC5, 0x5A,
+            ],
+        ),
+        (
+            &[
+                0x00u8, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C,
+                0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A,
+                0x1B, 0x1C, 0x1D, 0x1E, 0x1F,
+            ][..],
+            [
+                0x8Eu8, 0xA2, 0xB7, 0xCA, 0x51, 0x67, 0x45, 0xBF, 0xEA, 0xFC, 0x49, 0x90, 0x4B,
+                0x49, 0x60, 0x89,
+            ],
+        ),
+    ];
+    let block = [
+        0x00u8, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE,
+        0xFF,
+    ];
+    for (key, want) in fips {
+        assert_eq!(d5(&mut app, &mut fs, key), Sw::OK);
+        // The write is the admin's and the use is the cardholder's, so prove the
+        // two are separate sessions: drop everything and come back with PW2 only.
+        app.deselect(&mut fs);
+        verify_pin(&mut app, &mut fs, consts::PW1_MODE82, consts::PW1_DEFAULT);
+        let (cg, sw) = encipher(&mut app, &mut fs, &block);
+        assert_eq!(sw, Sw::OK);
+        assert_eq!(cg[0], 0x02);
+        assert_eq!(&cg[1..], &want, "FIPS-197 vector, {}-byte key", key.len());
+        // …and it round-trips back through DECIPHER.
+        let mut a = vec![0x00, consts::INS_PSO, 0x80, 0x86, cg.len() as u8];
+        a.extend_from_slice(&cg);
+        let (back, sw) = run(&mut app, &mut fs, &a);
+        assert_eq!(sw, Sw::OK);
+        assert_eq!(&back, &block[..], "round-trip, {}-byte key", key.len());
+        verify_pin(&mut app, &mut fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
+    }
+
+    // READ = *Never* (§4.4.1), and the card must not call an object it just took
+    // "not found": `D5` is an internal EF like every other sealed slot.
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            &[0x00, consts::INS_GET_DATA, 0x00, 0xD5, 0x00]
+        )
+        .1,
+        Sw::SECURITY_STATUS_NOT_SATISFIED
+    );
+}
+
+/// Which writer wins. GENERATE on the DEC slot mints its own AES key, so it
+/// **overwrites** one a host installed at `D5`; IMPORT does not mint, so it leaves
+/// it standing. That precedence is deliberate — regenerating the DEC keypair is
+/// how a holder retires that slot's secrets, and a symmetric key surviving the
+/// rotation would make it a half-truth — but it was accidental until `D5` had a
+/// writer, and nothing said so. Pinned here so the next reader finds a decision.
+#[test]
+fn a_dec_keygen_replaces_a_host_installed_aes_key_and_an_import_does_not() {
+    let rng = RefCell::new(LcgRng(41));
+    let mut fs = make_fs();
+    let presence = RefCell::new(crate::AlwaysConfirm);
+    let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
+    verify_pin(&mut app, &mut fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
+    verify_pin(&mut app, &mut fs, consts::PW1_MODE82, consts::PW1_DEFAULT);
+    assert_eq!(put(&mut app, &mut fs, 0x00, 0xC2, ATTR_P256_ECDH), Sw::OK);
+
+    let encipher = |app: &mut OpenpgpApplet, fs: &mut Fs<RamStorage>| {
+        let mut a = vec![0x00, consts::INS_PSO, 0x86, 0x80, 16];
+        a.extend_from_slice(&[0xABu8; 16]);
+        run(app, fs, &a)
+    };
+    assert_eq!(put(&mut app, &mut fs, 0x00, 0xD5, &[0x11u8; 32]), Sw::OK);
+    let installed = encipher(&mut app, &mut fs);
+    assert_eq!(installed.1, Sw::OK);
+
+    // IMPORT into the DEC slot leaves it alone…
+    let scalar = [0x22u8; 32];
+    assert_eq!(run(&mut app, &mut fs, &ec_import(0xB8, &scalar)).1, Sw::OK);
+    assert_eq!(
+        encipher(&mut app, &mut fs),
+        installed,
+        "IMPORT must not touch the AES key"
+    );
+
+    // …and GENERATE replaces it.
+    assert_eq!(keygen(&mut app, &mut fs, 0x80, 0xB8).1, Sw::OK);
+    let after = encipher(&mut app, &mut fs);
+    assert_eq!(after.1, Sw::OK);
+    assert_ne!(after.0, installed.0, "a DEC keygen must rotate the AES key");
 }
 
 /// The E81 rule at the other door. IMPORT (`0xDB`) carries its target — the
