@@ -14,6 +14,10 @@
 //! naming it, so the guide can show a state that takes a provisioned key and six
 //! taps to reach — and the flow's own correctness is what `tests/*.py` and the
 //! `--display` window are for.
+//!
+//! The two screens that show a build number take the tree's own `bcdDevice`, so
+//! a shipped PNG is only as fresh as the checkout that rendered it; the rest of
+//! what they show is fixture.
 
 use std::path::Path;
 

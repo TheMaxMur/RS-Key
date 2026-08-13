@@ -16,10 +16,10 @@
 //! binding it fails this build with a message saying so, rather than serving a
 //! number nobody has checked since.
 
-/// The binding, character for character as `scripts/bcd_gate.py`'s
-/// `RELEASE_TEXT` writes it: both readers key off the same shape, so a rename
-/// breaks both at once instead of leaving one quietly reading a stale tree.
-const ANCHOR: &[u8] = b"let device_release: u16 = 0x";
+/// The binding, character for character as `scripts/bcd_gate.py` writes it —
+/// same name there, so a `git grep RELEASE_TEXT` lands on both readers and a
+/// rename breaks both at once instead of leaving one quietly reading a stale tree.
+const RELEASE_TEXT: &[u8] = b"let device_release: u16 = 0x";
 
 /// The counter the firmware in this checkout carries.
 pub const BCD_DEVICE: u16 = parse(include_str!(concat!(
@@ -38,13 +38,16 @@ const fn parse(src: &str) -> u16 {
     let mut i = 0;
     while i < b.len() {
         let mut j = i;
-        while j < b.len() && (b[j] == b' ' || b[j] == b'\t') {
+        // Everything `str::strip` would take off a line but the newline itself:
+        // `bcd_gate.py` strips before it looks for a `//`, and a decoy indented
+        // with a form feed would otherwise be read here and dropped there.
+        while j < b.len() && b[j] != b'\n' && b[j].is_ascii_whitespace() {
             j += 1;
         }
         let comment = j + 1 < b.len() && b[j] == b'/' && b[j + 1] == b'/';
         while j < b.len() && b[j] != b'\n' {
-            if !comment && at(b, j, ANCHOR) {
-                return hex(b, j + ANCHOR.len());
+            if !comment && at(b, j, RELEASE_TEXT) {
+                return hex(b, j + RELEASE_TEXT.len());
             }
             j += 1;
         }

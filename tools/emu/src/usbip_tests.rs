@@ -42,6 +42,9 @@ fn op_header_refuses_a_short_read() {
     assert_eq!(OpHeader::parse(&[0x01, 0x11, 0x80]), None);
 }
 
+/// Field-offset fixture, not the device: every value here is chosen to be
+/// recognisable at a byte offset, which is why none of them is the identity
+/// `device_info` really serves.
 fn dev() -> UsbDeviceInfo {
     UsbDeviceInfo {
         path: "/sys/devices/rsk-emu/1-1",
@@ -51,7 +54,7 @@ fn dev() -> UsbDeviceInfo {
         speed: 2,
         id_vendor: 0x1209,
         id_product: 0x000d,
-        bcd_device: 0x0879,
+        bcd_device: 0xBEEF,
         device_class: 0,
         device_subclass: 0,
         device_protocol: 0,
@@ -75,7 +78,7 @@ fn device_info_lands_in_the_kernels_field_offsets() {
     // idVendor / idProduct / bcdDevice
     assert_eq!(&b[300..302], &0x1209u16.to_be_bytes());
     assert_eq!(&b[302..304], &0x000du16.to_be_bytes());
-    assert_eq!(&b[304..306], &0x0879u16.to_be_bytes());
+    assert_eq!(&b[304..306], &0xBEEFu16.to_be_bytes());
     // the six trailing bytes
     assert_eq!(&b[306..312], &[0, 0, 0, 1, 1, 3]);
 }

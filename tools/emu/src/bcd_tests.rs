@@ -38,12 +38,19 @@ fn the_counter_is_the_firmwares_own() {
 
 /// A number nobody had to remember is worth nothing if the parser can be fooled
 /// by prose. `bcd_gate.py` drops comment lines for exactly this, and a decoy
-/// ahead of the binding is the shape it was bitten by.
+/// ahead of the binding is the shape it was bitten by
+/// (`scripts/test_bcd_gate.py`'s own fixture).
+///
+/// The decoy is **indented**, as the real one would be: the binding sits inside
+/// `fn main`, so a column-0 decoy leaves the whitespace skip untested — dropping
+/// it kept every other test here green.
 #[test]
 fn a_commented_binding_is_not_the_counter() {
     let src = "\
-// next release: `let device_release: u16 = 0xFFFF`
+fn main() {
+    // next release: `let device_release: u16 = 0xFFFF`
     let device_release: u16 = 0x0925;
+}
 ";
     assert_eq!(parse(src), 0x0925);
     // …and the decoy really is one: on its own it parses, so the test above is
