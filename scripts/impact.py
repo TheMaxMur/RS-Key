@@ -60,10 +60,16 @@ def defined(line, path):
     binding. Read as one, it answered `git grep -w _` with 2381 sites — and a
     report nobody can read is not a report, which is the failure this file is
     for, one layer up.
+
+    A const *generic parameter* on a line of its own is spelled like an item and
+    is not one. Only a parameter list carries on past the type with `,` or `>`;
+    an item ends in `;`, or opens a bracket its value continues inside.
     """
     if path.endswith(".rs"):
         m = RUST_DEF.match(line)
         name = m.group("name") if m else None
+        if name and code_only(line, path).rstrip().endswith((",", ">")):
+            return None
     elif path.endswith(".py"):
         m = PY_DEF.match(line)
         name = (m.group("name") or m.group("fname")) if m else None
@@ -119,8 +125,8 @@ def parse(diff):
     return touched, cut, gone, born, where
 
 
-def bracket_delta(line, path):
-    """`line`'s bracket balance, skipping strings and the trailing comment.
+def code_only(line, path):
+    """`line` with its string bodies and its trailing comment blanked out.
 
     A `//`-commented `)` used to close a definition's span early, which drops the
     lines after it — and a dropped line is a use site nobody is told to read, the
@@ -129,25 +135,31 @@ def bracket_delta(line, path):
     """
     quotes = '"' if path.endswith(".rs") else "\"'"
     comment = "//" if path.endswith(".rs") else "#"
-    delta, quote, i = 0, None, 0
+    out, quote, i = [], None, 0
     while i < len(line):
         ch = line[i]
         if quote:
-            if ch == "\\":
-                i += 2
-                continue
+            step = 2 if ch == "\\" else 1
             if ch == quote:
                 quote = None
-        elif ch in quotes:
+            out.append(" " * step)
+            i += step
+            continue
+        if ch in quotes:
             quote = ch
+            out.append(" ")
         elif line.startswith(comment, i):
             break
-        elif ch in "([{":
-            delta += 1
-        elif ch in ")]}":
-            delta -= 1
+        else:
+            out.append(ch)
         i += 1
-    return delta
+    return "".join(out)
+
+
+def bracket_delta(line, path):
+    """`line`'s bracket balance, strings and the trailing comment aside."""
+    code = code_only(line, path)
+    return sum(map(code.count, "([{")) - sum(map(code.count, ")]}"))
 
 
 def statement_end(lines, start, path):

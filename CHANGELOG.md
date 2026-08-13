@@ -241,6 +241,15 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   `_` is a hole and not a name now, in both the Rust and the Python paths, and
   the script has the mutation table it never had.
 
+- **A const generic parameter is no longer read as a constant.** A
+  `const N: usize,` alone on a line inside a multi-line `<…>` is spelled exactly
+  like an item, and `scripts/impact.py` reported it — answering `git grep -w N`
+  with 323 lines, the same unreadable shape the anonymous constant made. Only a
+  parameter list carries on past the type with `,` or `>`; an item ends in `;`,
+  or opens a bracket its value continues inside. No such parameter is in the tree
+  today, so nothing changes about what the hook prints — it is closed before the
+  first one lands, because the report it would ruin is the one nobody then reads.
+
 - **`bcdDevice` skips to `0x08F7`, past a number two branches had already
   spent.** The OpenPGP and PIV conformance work ran in parallel worktrees on
   reserved ranges — `0x08F0`–`0x08F6` and `0x08D0`–`0x08D9` — so that neither

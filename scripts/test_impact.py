@@ -31,9 +31,11 @@ import impact
 SCRIPT = pathlib.Path(impact.__file__).resolve()
 
 #: A crate-shaped file: named constants of every shape the tool must still see —
-#: single-line, multi-line, one-letter, underscore-prefixed — and the anonymous
-#: constants that made it unreadable. `WIDTH` is the control: every case asserts
-#: it is still reported, so a fix that silences the whole report fails here.
+#: single-line, multi-line, one-letter, underscore-prefixed — and the two shapes
+#: that are spelled like one and are not, the anonymous constant and the const
+#: generic parameter. `WIDTH` is the control: every case asserts it is still
+#: reported, so a fix that silences the whole report fails here. New shapes go at
+#: the end; the site lists below are line numbers.
 RUST = """\
 pub const WIDTH: usize = 32;
 pub const N: usize = 4;
@@ -55,6 +57,18 @@ pub fn body() -> usize {
 
 pub const WIDTH_MAX: usize = 64;
 pub const WIDTH_MIN: usize = WIDTH_MAX / 2;
+
+pub struct Wide<
+    const N: usize,
+> {
+    pub data: [u8; N],
+}
+
+pub const SPANS: [&str; 3] = [
+    "a ) b",
+    "two",  // and one in a comment: )
+    "three",
+];
 """
 
 PY = """\
@@ -79,6 +93,10 @@ use crate::WIDTH;
 
 pub fn other() -> usize {
     WIDTH * 2
+}
+
+pub fn spans() -> usize {
+    crate::SPANS.len()
 }
 """
 
@@ -239,6 +257,28 @@ def test_a_one_letter_name_is_still_a_name(tree):
     """The other over-fix: dropping short names to close the generic-parameter shape."""
     tree.edit("src/lib.rs", "pub const N: usize = 4;", "pub const N: usize = 5;")
     assert tree.names() == ["N"]
+
+
+def test_a_const_generic_parameter_is_not_a_definition(tree):
+    """A parameter list carries on with `,`; an item ends in `;`. E131.
+
+    Giving the parameter a default is the diff shape a real edit makes, and the
+    name it would report is the one a `git grep -w` floods on — 323 lines in this
+    repo, where a proof harness's own `const N` makes `N` a real name too.
+    """
+    widen(tree)
+    tree.edit("src/lib.rs", "    const N: usize,", "    const N: usize = 4,")
+    assert tree.names() == ["WIDTH"]
+
+
+def test_a_bracket_in_a_string_or_a_comment_does_not_end_a_definition(tree):
+    """A `//`-commented `)` used to close a span early, dropping the lines after it.
+
+    Both decoys sit above the edited element, so a `code_only` blind to either one
+    loses `SPANS` — and a lost definition is a use site nobody is told to read.
+    """
+    tree.edit("src/lib.rs", '    "three",', '    "four",')
+    assert tree.names() == ["SPANS"]
 
 
 def test_the_flood_does_not_hide_a_real_finding_beside_it(tree):
