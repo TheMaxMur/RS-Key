@@ -61,6 +61,10 @@ const REPLY_TIMEOUT: Duration = Duration::from_secs(90);
 /// screen that does not yield at all makes it wait out `MENU_INACTIVITY_MS`
 /// (60 s), so anything between the two separates them.
 const MENU_YIELD_BOUND: Duration = Duration::from_secs(20);
+// The bound only separates the two while it sits strictly between them. The lower
+// end is public and checked here; `MENU_INACTIVITY_MS` is private to `rsk-display`,
+// so the upper end is prose until it is not.
+const _: () = assert!(rsk_display::UI_YIELD_FLOOR_MS < 20_000);
 
 /// What the same command takes with the panel idle — the control that says the
 /// figure above is a modal holding the executor and not the emulator being slow.

@@ -165,8 +165,12 @@ fn dispatch(
     match cmd {
         CTAPHID_INIT => {
             // A fresh session drops anything selected over MSG, so U2F (which has
-            // no SELECT) cannot inherit it.
-            run_job(shared, Job::DeselectMsg, false, None)?;
+            // no SELECT) cannot inherit it. Queued and not awaited, because the
+            // board's is a `MSG_DESELECT` store the transport never waits on: one
+            // FIFO still runs it before the next MSG, and an INIT that waited would
+            // sit behind an open on-panel modal for the whole inactivity bound.
+            let (done, _) = mpsc::channel();
+            let _ = shared.jobs.send(Job::DeselectMsg, done);
             // nonce(8) | newcid(4) | iface | major | minor | build | caps
             let nonce = asm.message();
             let mut resp = [0u8; 17];
@@ -213,7 +217,7 @@ fn dispatch(
         }
         CTAPHID_MSG => {
             let data = asm.message().to_vec();
-            let out = run_job(shared, Job::Msg(data), false, Some((stream, cid)))?;
+            let out = run_job(shared, Job::Msg(data), false, stream, cid)?;
             match out {
                 Some(body) => write_msg(stream, cid, CTAPHID_MSG, &body),
                 None => write_msg(stream, cid, CTAPHID_ERROR, &[ERR_INVALID_CMD]),
@@ -224,7 +228,7 @@ fn dispatch(
             if data.is_empty() {
                 return write_msg(stream, cid, CTAPHID_ERROR, &[ERR_INVALID_LEN]);
             }
-            let out = run_job(shared, Job::Cbor { cid, data }, true, Some((stream, cid)))?;
+            let out = run_job(shared, Job::Cbor { cid, data }, true, stream, cid)?;
             match out {
                 Some(body) => write_msg(stream, cid, CTAPHID_CBOR, &body),
                 None => write_msg(stream, cid, CTAPHID_ERROR, &[ERR_INVALID_CMD]),
@@ -236,7 +240,7 @@ fn dispatch(
                 cmd: cmd & !0x80,
                 data,
             };
-            match run_job(shared, job, false, Some((stream, cid)))? {
+            match run_job(shared, job, false, stream, cid)? {
                 Some(body) => write_msg(stream, cid, cmd, &body),
                 None => write_msg(stream, cid, CTAPHID_ERROR, &[ERR_INVALID_CMD]),
             }
@@ -245,25 +249,21 @@ fn dispatch(
     }
 }
 
-/// Hand a job to the device thread, streaming `CTAPHID_KEEPALIVE` on `channel`
-/// while it runs — the frames that make a client show "touch your security key"
-/// instead of timing out — and watching that same channel for the
-/// `CTAPHID_CANCEL` that ends the touch wait. Pass `channel = None` for a job
-/// whose answer nobody waits on.
+/// Hand a job to the device thread, streaming `CTAPHID_KEEPALIVE` on `cid` while
+/// it runs — the frames that make a client show "touch your security key" instead
+/// of timing out — and watching that same channel for the `CTAPHID_CANCEL` that
+/// ends the touch wait.
 fn run_job(
     shared: &Arc<Shared>,
     job: Job,
     is_cbor: bool,
-    channel: Option<(&mut TcpStream, u32)>,
+    stream: &mut TcpStream,
+    cid: u32,
 ) -> io::Result<Option<Vec<u8>>> {
     let (tx, rx) = mpsc::channel();
     if shared.jobs.send(job, tx).is_err() {
         return Err(io::Error::other("the device thread is gone"));
     }
-    let Some((stream, cid)) = channel else {
-        let _ = rx.recv();
-        return Ok(None);
-    };
     let mut watch = CancelWatch::default();
     loop {
         match rx.recv_timeout(Duration::from_millis(KEEPALIVE_MS)) {

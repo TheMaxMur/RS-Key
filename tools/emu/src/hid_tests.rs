@@ -30,13 +30,28 @@ fn init_frame(cid: u32, cmd: u8, bcnt: usize, data: &[u8]) -> [u8; HID_RPT_SIZE]
 /// `serve` on the far end of a real socket, with a stub device thread behind it,
 /// so a test drives the loop the way a client does rather than its pieces.
 fn serve_on_a_socket() -> TcpStream {
+    serve_on_a_socket_with(true)
+}
+
+/// As above, but `answers = false` leaves the device thread taking jobs and never
+/// replying — the emulator's version of a worker parked behind an on-panel modal.
+fn serve_on_a_socket_with(answers: bool) -> TcpStream {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
 
     let (jobs, requests) = crate::device::job_queue();
     std::thread::spawn(move || {
+        // A parked job is *held*, not dropped: dropping its reply sender answers
+        // the caller with a disconnect, which is the one thing a parked worker
+        // never does — and would make a caller that waits look like one that does
+        // not.
+        let mut parked = Vec::new();
         while let Ok(req) = requests.next() {
-            let _ = req.reply.send(Some(Vec::new()));
+            if answers {
+                let _ = req.reply.send(Some(Vec::new()));
+            } else {
+                parked.push(req);
+            }
         }
     });
     let shared = Arc::new(Shared {
@@ -142,6 +157,26 @@ fn a_closed_connection_ends_the_poll() {
     assert!(!w.poll(&mut src, CID).unwrap());
 }
 
+/// `CTAPHID_INIT` answers whatever the device thread is doing.
+///
+/// The board's deselect is a `MSG_DESELECT` store its transport never waits on
+/// (`firmware/src/worker.rs`), so an INIT is answered in microseconds even with a
+/// modal holding the worker's executor. Awaiting it here made an INIT sit behind
+/// an open on-panel screen for the whole inactivity bound — a client that
+/// re-enumerates on a stale channel would have hung on the first frame it sent.
+#[test]
+fn an_init_does_not_wait_for_a_parked_device_thread() {
+    let mut client = serve_on_a_socket_with(false);
+    client
+        .write_all(&init_frame(CID_BROADCAST, CTAPHID_INIT, 8, &[7; 8]))
+        .unwrap();
+
+    let mut msg = [0u8; HID_RPT_SIZE];
+    client.read_exact(&mut msg).expect("the INIT was answered");
+    assert_eq!(msg[4], CTAPHID_INIT);
+    assert_eq!(&msg[7..15], &[7u8; 8], "the nonce comes back");
+}
+
 /// The whole path over a real socket, with a stand-in device thread: a pending
 /// touch streams `UPNEEDED`, another channel's CANCEL is ignored, and this
 /// channel's — split across two writes — ends the ceremony.
@@ -187,7 +222,7 @@ fn a_cancel_reaches_a_job_waiting_for_a_touch() {
             cid: CID,
             data: vec![0x0b],
         };
-        let out = run_job(&shared, job, true, Some((&mut stream, CID)));
+        let out = run_job(&shared, job, true, &mut stream, CID);
         done_tx.send(out.unwrap()).unwrap();
     });
 

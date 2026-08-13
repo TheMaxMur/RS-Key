@@ -183,44 +183,100 @@ fn a_warm_reboot_is_not_a_power_cycle() {
     shut_down(path, jobs, device);
 }
 
+/// Every [`Job`] variant, and whether a queued one is a request the parked worker
+/// is owed the executor for (`rsk_display::Hooks::host_request_pending`). The
+/// membership is the `REQ` set of `firmware/src/worker.rs` — get it wrong in
+/// either direction and the emulator's panel yields where a board would not, or
+/// starves where a board would not.
+fn every_job() -> Vec<(Job, bool, &'static str)> {
+    vec![
+        (
+            Job::Cbor {
+                cid: 1,
+                data: vec![0x04],
+            },
+            true,
+            "CTAPHID_CBOR",
+        ),
+        (Job::Msg(vec![0x00, 0x03, 0, 0]), true, "CTAPHID_MSG"),
+        (
+            Job::Vendor {
+                cmd: 0x01,
+                data: Vec::new(),
+            },
+            true,
+            "a CTAPHID vendor command",
+        ),
+        (Job::Apdu(vec![0x00, 0xA4, 0x04, 0x00]), true, "a CCID APDU"),
+        (Job::ResetCard, true, "a card reset"),
+        (
+            Job::OtpHid {
+                slot: 0x30,
+                payload: vec![0; 64],
+            },
+            false,
+            "an OTP frame — the board's own OTP_REQ",
+        ),
+        (
+            Job::OtpStatus,
+            false,
+            "the OTP status read — inline in the board's worker",
+        ),
+        (
+            Job::DeselectMsg,
+            false,
+            "the CTAPHID_INIT deselect — an atomic on the board",
+        ),
+        (
+            Job::Replug,
+            false,
+            "a power cycle — no host request behind it",
+        ),
+    ]
+}
+
 /// The queue's own accounting, which is what an on-panel modal reads to decide
-/// whether the parked worker is owed the executor
-/// (`rsk_display::Hooks::host_request_pending`). A count that never came back down
-/// would close every modal 2.5 s after the last touch; one that never went up
-/// makes a modal starve the host for the full `MENU_INACTIVITY_MS`.
-///
-/// The OTP frame is deliberately not counted: it is `firmware/src/worker.rs`'s
-/// separate `OTP_REQ`, which a board's modal does not yield to either.
+/// whether to hand the executor back. A count that never comes down closes every
+/// modal 2.5 s after the last touch; one that never goes up starves the host for
+/// the full `MENU_INACTIVITY_MS`.
 #[test]
 fn a_queued_host_request_is_pending_only_until_the_device_takes_it() {
     let (jobs, source) = job_queue();
     let queued = source.queued();
     let (reply, _answers) = mpsc::channel();
 
-    assert!(!queued.any(), "an empty queue owes the worker nothing");
-    jobs.send(
-        Job::Cbor {
-            cid: 1,
-            data: vec![0x04],
-        },
-        reply.clone(),
-    )
-    .unwrap();
-    assert!(queued.any(), "a queued CBOR command is a pending request");
-    source.try_next().expect("the job is there");
-    assert!(!queued.any(), "taking it is the pickup that clears REQ");
+    for (job, counts, what) in every_job() {
+        assert!(!queued.any(), "the queue is empty before {what}");
+        jobs.send(job, reply.clone()).unwrap();
+        assert_eq!(queued.any(), counts, "{what}");
+        source.try_next().expect("the job is there");
+        assert!(!queued.any(), "the pickup clears {what}");
+    }
 
-    jobs.send(
-        Job::OtpHid {
-            slot: 0x30,
-            payload: vec![0; 64],
-        },
-        reply,
-    )
-    .unwrap();
-    assert!(!queued.any(), "an OTP frame is the board's own OTP_REQ");
-    source.try_next().expect("the frame is there");
+    // Two outstanding, one taken: a count, not a flag. The transports are separate
+    // threads and nothing serialises them, so this is the ordinary case and not a
+    // corner of it.
+    jobs.send(Job::ResetCard, reply.clone()).unwrap();
+    jobs.send(Job::ResetCard, reply.clone()).unwrap();
+    source.try_next().expect("the first is there");
+    assert!(queued.any(), "the second is still owed the executor");
+    source.try_next().expect("the second is there");
     assert!(!queued.any());
+
+    // A send that never reached the queue owes nothing either — otherwise a device
+    // thread that exits mid-session leaves the panel yielding to a ghost.
+    drop(source);
+    assert!(
+        jobs.send(
+            Job::Cbor {
+                cid: 1,
+                data: vec![0x04]
+            },
+            reply
+        )
+        .is_err()
+    );
+    assert!(!queued.any(), "a refused send left its claim behind");
 }
 
 /// A wait raised once a dispatch is over belongs to nobody: it is an on-panel

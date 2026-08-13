@@ -156,6 +156,9 @@ impl Job {
     /// interface's OTP frames are that worker's separate `OTP_REQ` and the
     /// `CTAPHID_INIT` deselect is an atomic there, so neither closes a modal on a
     /// board; the status read and the replug have no host request behind them.
+    /// The board's sixth `REQ` member, a CCID pinpad `Secure`, has no [`Job`]
+    /// here — there is no pad to collect on — so it belongs in this set the day
+    /// one appears.
     fn is_host_request(&self) -> bool {
         matches!(
             self,
@@ -184,6 +187,20 @@ impl Queued {
     pub fn any(&self) -> bool {
         self.0.load(Ordering::Acquire) > 0
     }
+
+    fn claim(&self) {
+        self.0.fetch_add(1, Ordering::Release);
+    }
+
+    /// Saturating: a release with nothing outstanding would wrap the count and
+    /// leave every modal closing the moment it opened.
+    fn release(&self) {
+        let _ = self
+            .0
+            .fetch_update(Ordering::Release, Ordering::Acquire, |n| {
+                Some(n.saturating_sub(1))
+            });
+    }
 }
 
 /// The transports' end of the device thread's queue.
@@ -199,11 +216,11 @@ impl Jobs {
     pub fn send(&self, job: Job, reply: Sender<Option<Vec<u8>>>) -> Result<(), ()> {
         let counted = job.is_host_request();
         if counted {
-            self.queued.0.fetch_add(1, Ordering::Release);
+            self.queued.claim();
         }
         self.tx.send(Req { job, reply }).map_err(|_| {
             if counted {
-                self.queued.0.fetch_sub(1, Ordering::Release);
+                self.queued.release();
             }
         })
     }
@@ -233,14 +250,7 @@ impl JobSource {
     /// on the board.
     fn took(&self, req: Req) -> Req {
         if req.job.is_host_request() {
-            // Saturating: a decrement with nothing outstanding would wrap the
-            // count and leave every modal closing the moment it opened.
-            let _ = self
-                .queued
-                .0
-                .fetch_update(Ordering::Release, Ordering::Acquire, |n| {
-                    Some(n.saturating_sub(1))
-                });
+            self.queued.release();
         }
         req
     }
@@ -250,6 +260,9 @@ impl JobSource {
     }
 }
 
+/// The two ends of the device thread's queue, sharing one [`Queued`]. There is no
+/// other way to build either, which is what makes the count structural rather than
+/// a convention every transport has to keep.
 pub fn job_queue() -> (Jobs, JobSource) {
     let (tx, rx) = std::sync::mpsc::channel();
     let queued = Queued::default();
