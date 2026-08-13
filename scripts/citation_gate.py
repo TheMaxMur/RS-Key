@@ -119,8 +119,6 @@ PENDING = {
     " README's mutation table still cite the bare name, which now resolves two ways",
     "reset.rs:126-132": "a430f2d moved the wipe's seed handling; the range starts"
     " on a blank line now",
-    "presence.rs:288": "4798668 again — 288 was the firmware file's `spent` latch,"
-    " and the device crate's is 249 lines long",
 }
 
 #: Below this a page is not citing, it is failing to be parsed. Today: 107 and 68.

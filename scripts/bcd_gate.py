@@ -135,16 +135,11 @@ RELEASE = re.compile(r"let device_release: u16 = (0x[0-9A-Fa-f]+)")
 #: finds nothing and every commit reads as "never bumped".
 RELEASE_TEXT = "let device_release: u16 = 0x"
 
-#: The one unbumped span this ratchet landed over, and its owner. `4798668
-#: refactor(presence)` lifted the scope arbitration out of `firmware/src/
-#: presence.rs` into `crates/rsk-device/src/presence.rs` — behaviour unchanged by
-#: its own account, emitted image not, which is what this row asks about. It was
-#: in flight when the row landed and is not this change's to bump.
-#:
-#: Keyed on the BASE, so it expires by itself: any bump moves the base, this stops
-#: matching, and the guard says to delete the line. A debt with a name and an end,
-#: the way `kani_gate.py` records its own.
-LANDED_OVER = ("32b9fa32", "4798668 refactor(presence), in flight when this row landed")
+#: An unbumped span this ratchet is allowed to land over, and its owner. Keyed on
+#: the BASE so it expires by itself: any bump moves the base, this stops matching,
+#: and the guard demands the line be deleted. A debt with a name and an end, the
+#: way `kani_gate.py` records its own. Empty when nothing is owed.
+LANDED_OVER = ("", "")
 
 #: Everything the linker can pull into a firmware image, before the line filter.
 VISIBLE = ("firmware/", "crates/")

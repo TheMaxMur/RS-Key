@@ -243,7 +243,7 @@ or OTP, where every applet's presence goes through the same
 `ButtonPresence::wait` reading the same global.
 
 the wait-entry clear (`crates/rsk-device/src/presence.rs:192-193`) eats it at wait entry, and that is the whole defence.
-`:292` cannot help, because the dispatch that took the cancel never entered
+`:226` cannot help, because the dispatch that took the cancel never entered
 `wait`. `HostCancelLatched` models the latch and `BugNoDropStaleCancelAtEntry`
 removes the drop: **RED in 127 distinct states at depth 5**, the trace being a
 CTAPHID cancel ending a CCID ceremony. Without the action the same mutant is
@@ -385,7 +385,7 @@ than closed:
   the same commit. It is unmodelled.
 - **The model could not have caught the regression that fix's own review
   caught.** `Ctx::load_keydev` prefers the in-RAM `state.keydev_dec`
-  (`lib.rs:183-187`), so with the flash seed always deleted first a *failed*
+  (`crates/rsk-fido/src/lib.rs:183-187`), so with the flash seed always deleted first a *failed*
   sweep would have left the power cycle running on a seed nothing stores —
   `BACKUP_EXPORT` included — which is why `ctx.state.reset()` moved ahead of the
   flash work. This spec has no RAM copy of the seed (`keydev_dec` is populated by
