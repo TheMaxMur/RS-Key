@@ -88,6 +88,19 @@ still possible, and it can't be verified on the panel; re-set it with `ykman`
 first. The factory defaults follow the convention, so the panel works out of the
 box.
 
+> **If an older build shortened *both* the PIN and the PUK, the only way back
+> destroys the keys.** Since `0x08D1` a `CHANGE REFERENCE DATA` / `RESET RETRY
+> COUNTER` body is sixteen bytes or nothing, so no build can enter this state any
+> more — but a card already in it has no non-destructive exit. A shortened PIN
+> alone is repaired by `ykman piv access unblock-pin` (the PUK still works), and a
+> shortened PUK alone by `ykman piv access set-retries` (the PIN still works),
+> both with every key intact. With both shortened, neither repair is presentable:
+> block both counters with wrong guesses and run `ykman piv reset`, which wipes
+> every PIV key and certificate. The state needed an older build *and* a host that
+> sent a fourteen-byte reference pair, which no shipped tool emits, so it is
+> unlikely you are here — but if you are, restore the slots from backup after the
+> reset rather than looking for a gentler command.
+
 > The defaults are public. Until you change the PIN, PUK and management key,
 > anyone with physical access can generate, import or delete keys. Treat a
 > default-credential card as unprovisioned.
