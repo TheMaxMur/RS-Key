@@ -417,28 +417,39 @@ PivKeyOp ==
 \* security status (crates/rsk-device/src/ccid.rs:327-342,
 \* crates/rsk-sdk/src/applet.rs:222-230). This is the one the `cross_applet`
 \* fuzz target already watches, one layer down.
+\* Its own trailing UNCHANGED named `psig` while the ELSE branch assigned it, so
+\* `psig' = FALSE /\ psig' = psig` pinned the whole action to a no-op wherever
+\* PW1 stood verified under the one-shot status: a card reset taken from that
+\* state was not modelled at all, and the MUTANT was enabled where the shipped
+\* tree was not. 336 firings, no new distinct states -- the same shape as the
+\* precedence trap, and `tla-lint.py` is what now finds both.
 CardReset ==
     /\ IF BugCardResetKeepsStatus
-         THEN /\ UNCHANGED << held, fresh, oneShotSig, psig >>
+         THEN /\ UNCHANGED << held, fresh, psig >>
          ELSE /\ held' = AllCleared
               /\ fresh' = FALSE
               /\ psig' = FALSE
-              /\ oneShotSig' = oneShotSig   \* a flash DO: it survives the reset
     /\ pfresh' = IF BugCardResetKeepsStatus THEN pfresh ELSE FALSE
     /\ sel' = NoApplet
-    /\ UNCHANGED << oneShotSig, psig, oathCodeSet, refused, viol >>
+    /\ UNCHANGED << oneShotSig, oathCodeSet, refused, viol >>  \* a flash DO
 
 \* A power cycle or a host-requested warm reset rebuilds every struct from
 \* `new()`, so nothing in this module survives either. FIDO's clientPIN soft
 \* lock is the only thing that rides a warm reset, and it belongs to the other
 \* module (firmware/src/pin_lock.rs:12-21).
+\* `psig` goes with `held["pw1"]`, here and in FactoryWipe. A ghost left standing
+\* over a cleared status can only make the Policy that reads it EASIER to
+\* satisfy, which is the direction that hides a violation rather than inventing
+\* one -- masked today because every writer of `held["pw1"] = TRUE` writes `psig`
+\* too, and that is an argument rather than a guarantee.
 PowerCycle ==
     /\ sel' = NoApplet
     /\ held' = AllCleared
     /\ fresh' = FALSE
     /\ pfresh' = FALSE
+    /\ psig' = FALSE
     /\ refused' = NoRef
-    /\ UNCHANGED << oneShotSig, psig, oathCodeSet, viol >>
+    /\ UNCHANGED << oneShotSig, oathCodeSet, viol >>
 
 \* `authenticatorReset` is FIDO's and reaches none of these: `is_fido_fid` is an
 \* explicit enumeration plus four credential ranges precisely because the applets
@@ -459,9 +470,10 @@ FactoryWipe ==
     /\ held' = [r \in Refs |-> r = "oathCode"]
     /\ fresh' = FALSE
     /\ pfresh' = FALSE
+    /\ psig' = FALSE
     /\ oathCodeSet' = FALSE
     /\ refused' = NoRef
-    /\ UNCHANGED << oneShotSig, psig, viol >>
+    /\ UNCHANGED << oneShotSig, viol >>
 
 Next ==
     \/ \E a \in Applets : Reselect(a)

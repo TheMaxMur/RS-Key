@@ -26,6 +26,12 @@ HEAP=${HEAP:-4g}
 [ -r "$JAR" ] || { echo "tla2tools.jar not found at $JAR" >&2; exit 2; }
 [ -n "$JAVA" ] || { echo "no java on PATH" >&2; exit 2; }
 
+# Two TLA+ traps that leave a spec well-formed and a run GREEN -- a precedence
+# slip that turns an assignment into a guard, and an action pinned to a no-op by
+# its own UNCHANGED. Both have bitten this model. Checking anything before the
+# source is clean would be checking the wrong spec.
+python3 tla-lint.py || exit 2
+
 # Which module a configuration belongs to: the seam configs are the second
 # module's, and TLC takes the module name rather than reading it from the cfg.
 spec_for() { case "$1" in Seam*) echo RSKeyAppletSeams ;; *) echo RSKeySecurityState ;; esac; }
