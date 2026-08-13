@@ -15,7 +15,8 @@ BUGS=(BugResetGatesFirst BugCredBeforeRp BugTokenSurvivesPinChange
       BugSoftLockLostOnWarmReset BugWarmResetReopensWindow
       BugCmWalkIgnoresChannel BugDeleteRpBeforeCred BugBackupSealedNotAGate
       BugConsumeKeepsMcGa BugNoDropStaleCancelAtEntry BugWrongPinKeepsToken
-      BugSeedDoesNotLead BugNoTouchRequired BugStateResetAfterWipe)
+      BugSeedDoesNotLead BugNoTouchRequired BugStateResetAfterWipe
+      BugPanelCancelable BugUnscopedOtpCancel BugLocalPinKeepsToken)
 
 # Mutants whose defect the shipped seed-lead makes unreachable: they rebuild a
 # pre-0x08BF ordering bug, so their configuration must be the pre-0x08BF tree.
@@ -50,6 +51,9 @@ target_inv() {
     BugSeedDoesNotLead)         echo NoUnmanageableCredential ;;
     BugNoTouchRequired)         echo NoAuthorizationBypass ;;
     BugStateResetAfterWipe)     echo ResetNeverWeakensSurvivingState ;;
+    BugPanelCancelable)         echo NoCrossTransportTouchConsumption ;;
+    BugUnscopedOtpCancel)       echo NoCrossTransportTouchConsumption ;;
+    BugLocalPinKeepsToken)      echo NoTokenAfterInvalidation ;;
   esac
 }
 

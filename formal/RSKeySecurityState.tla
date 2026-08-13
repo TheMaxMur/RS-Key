@@ -60,7 +60,10 @@ CONSTANTS
     BugWrongPinKeepsToken,        \* clientpin.rs:779  the pre-E38 tree
     BugSeedDoesNotLead,           \* reset.rs:61-65 / fs.rs `first`, pre-0x08BF
     BugNoTouchRequired,           \* the presence gate on mc / ga
-    BugStateResetAfterWipe        \* reset.rs:57-60 ctx.state.reset() ordering
+    BugStateResetAfterWipe,       \* reset.rs:57-60 ctx.state.reset() ordering
+    BugPanelCancelable,           \* the panel's half of request_cancel's scope test
+    BugUnscopedOtpCancel,         \* crates/rsk-device/src/presence.rs:125
+    BugLocalPinKeepsToken         \* crates/rsk-display/src/gates.rs:146
 
 (* Mutation switches for the LIVENESS properties. Kept apart from the set above *)
 (* because they break no invariant -- a wedge is a perfectly safe state -- so    *)
@@ -88,7 +91,21 @@ CONSTANT FixPpuatRequiresPin
 NoOwner == "none"          \* SCOPE_NONE            (crates/rsk-device/src/presence.rs:26)
 Fido    == "fido"          \* SCOPE_FIDO -- CTAPHID (crates/rsk-device/src/presence.rs:28)
 Ccid    == "ccid"          \* SCOPE_CCID -- CCID    (crates/rsk-device/src/presence.rs:30)
+Otp     == "otp"           \* SCOPE_OTP             (crates/rsk-device/src/presence.rs:31-32)
+
+\* SCOPE_NONE with a wait OPEN. The firmware stores one byte for two states --
+\* "no host request is in flight" and "an on-panel flow owns the button"
+\* (crates/rsk-device/src/presence.rs:25-26) -- and they are different states:
+\* request_cancel refuses in both, but only one of them can be ENDED by a touch.
+\* Collapsing them left the panel unable to own a ceremony at all, so a physical
+\* hold spent on an on-panel flow was invisible to the one-hold-one-ceremony rule
+\* and E45's ruling -- the panel owns the session -- had nothing to be true of.
+Panel   == "panel"
+
+\* The transports a CTAP-shaped ceremony can arrive on. Otp and Panel are wait
+\* OWNERS but not hosts of a makeCredential, so they are not in here.
 Transports == {Fido, Ccid}
+Owners     == Transports \cup {Otp, Panel, NoOwner}
 
 NoRp   == "norp"           \* PinUvAuthToken.has_rp_id = FALSE (state.rs:252)
 NoChan == "nochan"
@@ -177,13 +194,13 @@ TypeOK ==
                   policyMism: 0..MismatchLimit]
     /\ tok   \in [live: BOOLEAN, perms: PermSets, rp: RPs \cup {NoRp}]
     /\ plat  \in [held: BOOLEAN, verifies: BOOLEAN, revoked: BOOLEAN]
-    /\ pres  \in [scope: Transports \cup {NoOwner}, cancelReq: BOOLEAN,
-                  cancelBy: Transports \cup {NoOwner}, granted: Decisions,
+    /\ pres  \in [scope: Owners, cancelReq: BOOLEAN,
+                  cancelBy: Owners, granted: Decisions,
                   pressing: BOOLEAN, spent: BOOLEAN,
-                  usedBy: Transports \cup {NoOwner}]
+                  usedBy: Owners]
     /\ walk  \in [open: BOOLEAN, chan: Channels \cup {NoChan}]
     /\ sys   \in [warmBoot: BOOLEAN, clock: 0..MaxClock]
-    /\ op    \in [kind: OpKinds, t: Transports \cup {NoOwner},
+    /\ op    \in [kind: OpKinds, t: Owners,
                   rp: RPs \cup {NoRp}, step: 0..3]
     /\ snap  \in [seen: BOOLEAN, pin: BOOLEAN, auv: BOOLEAN,
                   surv: SUBSET RPs, seed: BOOLEAN, sealed: BOOLEAN]
@@ -279,7 +296,14 @@ PressUp ==
 \* CTAPHID_CANCEL for the channel being processed. rsk-usb ctaphid.rs:757-762
 \* raises it; crates/rsk-device/src/presence.rs:116-120 is the scope check that decides
 \* whether it may end THIS wait. Only the CTAPHID transport can send one.
-CancelGuard  == IF BugUnscopedCancel THEN TRUE ELSE pres.scope = Fido
+\* E45's ruling in one line: request_cancel accepts ONLY while the wait it would
+\* end belongs to CTAPHID, so a host cancel is a no-op against a CCID ceremony,
+\* an OTP one, and an on-panel one -- "an on-panel ceremony is nobody's to
+\* cancel". BugPanelCancelable loosens exactly the panel half of that test, which
+\* is the narrow mistake somebody could make while keeping the CCID half.
+CancelGuard  == IF BugUnscopedCancel THEN TRUE
+                ELSE IF BugPanelCancelable THEN pres.scope \in {Fido, Panel}
+                ELSE pres.scope = Fido
 HostCancel ==
     /\ WaitOpen
     /\ CancelGuard
@@ -343,6 +367,50 @@ TouchCancel ==
 TouchTimeout ==
     /\ WaitOpen
     /\ pres' = [pres EXCEPT !.granted = "timeout"]
+    /\ UNCHANGED << pin, gate, store, lock, tok, plat, walk, sys, op, snap,
+                    upSpent, viol, ram >>
+
+\* THE PANEL AND THE OTP FRAME PROTOCOL ALSO OPEN WAITS, and neither is a host's
+\* to cancel. An on-panel ceremony -- Settings, Backup's reveal-recovery hold,
+\* the Passkeys delete -- runs BETWEEN dispatches, where the worker has left
+\* WAIT_SCOPE at SCOPE_NONE (firmware/src/worker.rs:519-521); an OTP frame's wait
+\* runs under SCOPE_OTP (firmware/src/worker.rs:652-654). Both clear a stale
+\* cancel at their own wait's entry -- the panel in its own loop
+\* (crates/rsk-display/src/presence.rs:45-48), not in ButtonWait::wait -- so
+\* OpenWaitFor stands for two different drops here and
+\* BugNoDropStaleCancelAtEntry removes both at once.
+\*
+\* NARROWER than a display build in one way, stated because it is the risk
+\* direction: that build compiles ButtonWait out entirely
+\* (firmware/src/presence.rs:99-106) and the panel's own release debounce takes
+\* over the `spent` latch, so the model keeps a defence the display build
+\* implements somewhere else rather than one it does not have.
+LocalCeremonyStart(o) ==
+    /\ Idle
+    /\ pres.scope = NoOwner
+    /\ pres' = OpenWaitFor(o)
+    /\ UNCHANGED << pin, gate, store, lock, tok, plat, walk, sys, op, snap,
+                    upSpent, viol, ram >>
+
+\* The ceremony ends and WAIT_SCOPE goes back to SCOPE_NONE.
+LocalCeremonyEnds ==
+    /\ pres.scope \in {Otp, Panel}
+    /\ pres.granted # "none"
+    /\ pres' = ClosedWait(pres)
+    /\ UNCHANGED << pin, gate, store, lock, tok, plat, walk, sys, op, snap,
+                    upSpent, viol, ram >>
+
+\* cancel_otp_wait (crates/rsk-device/src/presence.rs:124-134): the host's dummy
+\* 0x8f write, or a frame that supersedes the wait, ends an OTP ceremony. It is a
+\* SECOND writer of the same `cancel_requested` AtomicBool the CTAPHID door
+\* writes, and the only thing keeping the two apart is its own scope test -- the
+\* same shape of defence, in a different function, which is why it needs its own
+\* mutant rather than riding BugUnscopedCancel.
+OtpCancelGuard == IF BugUnscopedOtpCancel THEN TRUE ELSE pres.scope = Otp
+OtpCancelWait ==
+    /\ WaitOpen
+    /\ OtpCancelGuard
+    /\ pres' = [pres EXCEPT !.cancelReq = TRUE, !.cancelBy = Otp]
     /\ UNCHANGED << pin, gate, store, lock, tok, plat, walk, sys, op, snap,
                     upSpent, viol, ram >>
 
@@ -493,6 +561,59 @@ MintPpuat ==
     /\ gate' = [gate EXCEPT !.ppuat = TRUE, !.ppuatStale = FALSE]
     /\ UNCHANGED << store, tok, plat, pres, walk, sys, op, snap, upSpent,
                     ram >>
+
+(***************************************************************************)
+(* THE PANEL'S PIN PAD IS A FOURTH DOOR ONTO EF_PIN.                       *)
+(* crates/rsk-display/src/gates.rs:114-200 (`local_pin_gate`).             *)
+(***************************************************************************)
+
+\* It spends the SAME persistent retry counter the wire path spends -- a correct
+\* PIN refills it, a wrong one costs a try -- because
+\* `spend_and_verify_local_pin` is `spend_and_verify_pin_at(EF_PIN, ..)`
+\* (crates/rsk-fido/src/clientpin.rs:1019-1026). What it deliberately does NOT
+\* touch is the CTAP session: no ECDH regeneration, no RAM 3-strikes lock, no
+\* journal (crates/rsk-fido/src/clientpin.rs:1013-1017). So this is not a
+\* PinAttempt: the pad neither consults `lock.soft` nor arms it, and the
+\* persistent 8-try counter is the whole gate. A host-soft-locked device still
+\* takes PIN entry at the pad, which is the documented recovery.
+LocalPinEnabled == Idle /\ pin.set /\ pin.retries > 0
+
+\* E66. A clientPIN refused at the pad is changePIN's failed old-PIN check
+\* performed locally, and over USB that check ends the host's outstanding
+\* pinUvAuthToken (clientpin.rs:779) -- so it must here too, or the panel is a
+\* door the revocation rule does not cover. `ends_host_token`
+\* (crates/rsk-display/src/gates.rs:139-146) is the Rust's own test and it is
+\* deliberately narrow in two ways the model reproduces: the FIDO scope only (the
+\* device PIN is no CTAP credential, and EF_DEVICE_PIN is not modelled), and only
+\* with budget left to spend, because a `Blocked` verdict reached at zero was
+\* turned away before any compare -- which `LocalPinEnabled` already excludes.
+\*
+\* Modelled as taking effect at once. The hook is consumed at the head of the
+\* next CBOR dispatch (crates/rsk-device/src/ctap.rs:184-187), not inside
+\* gates.rs, but nothing can use the token in between: every command that reads
+\* it is a CBOR command and the flag is spent before the dispatch runs.
+LocalPinWrong ==
+    /\ LocalPinEnabled
+    /\ pin'  = [pin EXCEPT !.retries = pin.retries - 1]
+    /\ tok'  = IF BugLocalPinKeepsToken
+                 THEN tok ELSE [live |-> FALSE, perms |-> {}, rp |-> NoRp]
+    /\ plat' = [plat EXCEPT !.verifies = IF BugLocalPinKeepsToken
+                                           THEN plat.verifies ELSE FALSE,
+                            !.revoked = TRUE]
+    /\ walk' = IF BugLocalPinKeepsToken THEN walk
+                                        ELSE [open |-> FALSE, chan |-> NoChan]
+    /\ UNCHANGED << gate, store, lock, pres, sys, op, snap, upSpent, viol,
+                    ram >>
+
+\* A correct PIN at the pad refills the persistent budget
+\* (crates/rsk-fido/src/clientpin.rs:1019-1026) and grants NOTHING host-visible:
+\* no token, no `pcmr`, no CCID security status. It also leaves the RAM soft lock
+\* armed, which fails closed -- the host stays blocked until a replug.
+LocalPinOk ==
+    /\ LocalPinEnabled
+    /\ pin' = [pin EXCEPT !.retries = MaxRetries]
+    /\ UNCHANGED << gate, store, lock, tok, plat, pres, walk, sys, op, snap,
+                    upSpent, viol, ram >>
 
 (***************************************************************************)
 (* setPIN / changePIN -- multi-write, so a power cut has a position.        *)
@@ -1094,7 +1215,9 @@ WalkExpires ==
 
 Next ==
     \/ PressDown \/ PressUp \/ HostCancel \/ HostCancelLatched
-    \/ WalkExpires
+    \/ WalkExpires \/ OtpCancelWait \/ LocalCeremonyEnds
+    \/ \E o \in {Otp, Panel} : LocalCeremonyStart(o)
+    \/ LocalPinWrong \/ LocalPinOk
     \/ TouchConfirm \/ TouchCancel \/ TouchTimeout
     \/ \E ps \in PermSets, r \in RPs \cup {NoRp} : GetPinToken(ps, r)
     \/ WrongPin \/ MintPpuat
@@ -1145,6 +1268,9 @@ OpAdvances ==
     \/ DeleteCredWriteA \/ DeleteCredWriteB
     \/ ResetRefused \/ ResetConfirmed \/ ResetSweepSecrets \/ ResetSweepGates
     \/ ResetFinish \/ ResetAborts
+    \* A ceremony the panel or the OTP protocol opened is in flight in exactly the
+    \* sense OpAdvances means: its own dispatch runs to completion.
+    \/ LocalCeremonyEnds
 
 \* The presence wait carries PRESENCE_TIMEOUT_MS
 \* (crates/rsk-device/src/presence.rs:212-213),
