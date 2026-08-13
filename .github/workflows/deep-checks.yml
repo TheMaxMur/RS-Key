@@ -246,9 +246,11 @@ jobs:
       # script also floors the harness count and the `kani::cover!` count, because
       # a roster that selects nothing exits 0 and so does a cover nothing reaches.
       # `--harness-timeout`, which it passes, is per harness and not per row —
-      # Kani runs the rest and fails at the end — so it caps one non-convergent
-      # proof, while `timeout-minutes` caps the job: ~65 harnesses at 30m each far
-      # outruns its 6 h.
+      # Kani runs the rest and fails at the end. It is set to this job's own 6 h,
+      # so `timeout-minutes` is the real bound and the per-harness cap exists only
+      # to keep the flag from being unset: a cap that fires on this tier costs more
+      # than it saves, because the non-zero exit ends the script at the `tee` and
+      # the harness and cover floors below it are never read.
       - name: prove every harness
         run: ./scripts/kani.sh all
   repro:

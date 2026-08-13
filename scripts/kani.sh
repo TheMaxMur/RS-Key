@@ -96,9 +96,14 @@ DEAD_COVER_COPIES_MAX=1
 # ends this script at the `tee`, and none of the checks below is reached (measured).
 TIMEOUT_pr=5m
 TIMEOUT_state=30m
-# 27m42s against this 30m, an 8% margin, and a slower box tips it — at which point
-# the row fails on a correct harness and `FLOOR_all` is never read at all.
-TIMEOUT_all=30m
+# The runner's own ceiling, deliberately, because on this tier a cap that fires is
+# worse than no cap: the run exits 1, `pipefail` ends the script at the `tee`, and
+# `FLOOR_all` and `COVERS_all` go unread — the row reports nothing rather than
+# reporting a slow proof. 30m was picked against 27m42s on Apple Silicon and would
+# have tripped on the first CI run: the phy round-trip takes ~80m on a hosted
+# runner (`2637a20` measured it there). The trade this makes is that one
+# non-convergent proof now consumes the whole 6 h job instead of its own slot.
+TIMEOUT_all=6h
 
 # The one owner of tier → crates. `--tiers` and the run path both come through
 # here, so a tier the guard is shown is a tier that would actually run.
