@@ -107,6 +107,8 @@ if [ "${1:-}" = "all" ]; then
   one Historical_E77.cfg       # counterexample it closed stays reproducible
   for f in Mut_*.cfg; do one "$f"; done   # mutant vs the whole invariant set
   for f in Solo_*.cfg; do one "$f"; done  # mutant vs its own target only
+  one Fairness.cfg                        # the one fairness assumption that is
+  for f in FairMut_*.cfg; do one "$f"; done # a disjunction, and E160 verbatim
   one Liveness.cfg                        # the three temporal properties, and
   for f in LiveMut_*.cfg; do one "$f"; done # one mutant per property
   one Seams.cfg                           # the second module: the applet seams

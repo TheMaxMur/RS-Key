@@ -30,6 +30,10 @@ Seams.cfg                            GREEN   200
 \* is that one-line fix, kept beside the number that motivates it.
 Liveness.cfg                         GREEN   2000000   12g
 Liveness_Full.cfg                    GREEN   2000000   24g
+\* The fairness-shape check: the same reduced constants, `Spec` rather than
+\* `FairSpec`, and eighteen ENABLED evaluations per state for about 5% more wall
+\* clock than the plain safety run.
+Fairness.cfg                         GREEN   2000000
 
 \* Every mutant must FIRE. A counterexample search halts at the first violation,
 \* so its state count is worker-scheduling dependent and carries no floor.
@@ -40,3 +44,4 @@ SoloClause_*.cfg                     RED     -
 SeamMut_*.cfg                        RED     -
 SeamSolo_*.cfg                       RED     -
 LiveMut_*.cfg                        RED     -
+FairMut_*.cfg                        RED     -

@@ -77,6 +77,13 @@ CONSTANTS
     BugWaitScopeNotCleared,       \* worker.rs:521  set_wait_scope(SCOPE_NONE)
     BugWalkNeverExpires           \* state.rs:613-619 expire_stale_sequences
 
+(* A switch on the SHAPE of the fairness assumption rather than on a behaviour: *)
+(* E160 verbatim, LocalCeremonyEnds folded back into OpAdvances, where          *)
+(* WF over the disjunction lets the PIN ladder discharge a panel wait's         *)
+(* obligation. It breaks an invariant, not a property, so it is neither a       *)
+(* BUGS nor a LIVE_BUGS member and gets its own pair of configurations.         *)
+CONSTANT BugFairnessFoldsLocalCeremony
+
 (* A PROPOSED fix, not a defect: order phase 1 of the reset sweep so no EF_RP  *)
 (* entry is dropped while its EF_CRED record is still live. The shipped        *)
 (* `sweep` batches both in `for_each_key` order, which fs.rs:238-241 documents *)
@@ -1369,7 +1376,19 @@ Spec == Init /\ [][Next]_vars
 \* So every step that ADVANCES an in-flight sequence eventually happens: nothing
 \* in the firmware can park one. What it cannot survive is a power cut, and
 \* PowerCut is not fair, so "eventually" here still admits the cut.
+\* WHAT MAKES THIS DISJUNCTION SOUND, and it is the thing E160 got wrong one
+\* action over: `WF_vars(A \/ B)` promises only that SOME disjunct fires, which
+\* is a fair reading of "the in-flight sequence advances" exactly while every
+\* disjunct belongs to the SAME sequence. Every one of the eighteen is gated on
+\* `op.kind`, and `Idle` gates every *Start, so there is only ever one. Fold in
+\* an action that can be enabled beside a sequence -- which is precisely what
+\* folding `LocalCeremonyEnds` in here did -- and the promise is satisfied by the
+\* other activity while this one waits for ever.
+\*
+\* `OpAdvancesIsOneActivity` is that argument as an invariant rather than as a
+\* paragraph, and BugFairnessFoldsLocalCeremony is E160 verbatim.
 OpAdvances ==
+    \/ (BugFairnessFoldsLocalCeremony /\ LocalCeremonyEnds)
     \/ RegisterTouched \/ RegisterRefused \/ RegisterWriteA \/ RegisterWriteB
     \/ AssertFinish
     \/ SetPinClearPpuat \/ SetPinWrite
@@ -1414,6 +1433,17 @@ EveryWaitReleases == WaitOpen ~> (pres.scope = NoOwner)
 \* A stateful enumerate cursor is a per-channel resource; one left open forever
 \* is the same shape one leg down.
 EveryWalkCloses == walk.open ~> ~walk.open
+
+\* The one fairness conjunct that is a DISJUNCTION, checked rather than argued.
+\* If no disjunct of OpAdvances can be enabled while the device is quiescent,
+\* then every disjunct that IS enabled belongs to the single in-flight `op`, and
+\* `WF_vars(OpAdvances)` means what its comment says. This is a safety invariant
+\* over `Spec`, not a temporal property -- Fairness.cfg checks it at the liveness
+\* constants, where `ENABLED` over eighteen actions is affordable.
+\*
+\* The other three conjuncts are single actions and need no such argument;
+\* formal/README.md carries the audit of all four.
+OpAdvancesIsOneActivity == ENABLED OpAdvances => ~Idle
 
 (***************************************************************************)
 (* THE INVARIANTS. The names are load-bearing: the same six must appear on  *)
