@@ -68,13 +68,21 @@ impl rsk_vendor::Platform for EmuVendorPlatform {
 
 /// What `rsk-device` reaches back into the board for. The emulator has none of
 /// that hardware, so every method keeps the trait's default — except the warm
-/// boot, which it *can* report, because a warm reboot is a thing it really does.
-#[derive(Default)]
+/// boot, which it *can* report, because a warm reboot is a thing it really does,
+/// and the panel's PIN signal, which it can report on a `--display` run.
 pub struct EmuHooks {
     warm: bool,
+    /// Set by `EmuDisplayHooks` when the panel re-keyed or refused the clientPIN.
+    local_pin: Rc<Cell<bool>>,
 }
 
 impl Hooks<EmuStore> for EmuHooks {
+    /// Consumed once, exactly as the firmware swaps its `LOCAL_PIN_CHANGED`: the
+    /// token dies before the next CBOR command, not before every later one.
+    fn local_pin_changed(&mut self) -> bool {
+        self.local_pin.replace(false)
+    }
+
     /// The phy record was rewritten. A real key re-enumerates under its new USB
     /// identity here; this one can only say so.
     fn request_reboot(&mut self) {
@@ -155,6 +163,7 @@ pub fn run(
     jobs: Receiver<Req>,
     signals: Arc<Signals>,
     lines: Option<Receiver<String>>,
+    taps: Option<crate::taps::TapPad>,
 ) {
     let store = match crate::store::open(cfg.store.clone(), cfg.power_cut) {
         Ok(s) => s,
@@ -185,36 +194,58 @@ pub fn run(
     // generic over it. With `--display` it is the trusted screen in a window,
     // driven by the same `rsk_display` flow the board runs.
     if cfg.display {
-        let (panel, touch, hooks, quit) = crate::display::open();
-        let ui = Box::leak(Box::new(RefCell::new(rsk_display::Ui::new(
-            panel,
-            touch,
-            hooks,
-            rsk_display::DeviceInfo {
-                version: crate::usbip_stack::BCD_DEVICE,
-                chipid: u64::from_le_bytes(cfg.serial),
-            },
-            fs,
-            rsk_display::DeviceKeys {
-                serial_id: cfg.serial,
-                serial_hash: rsk_crypto::sha256(&cfg.serial),
-                mkek_source: None,
-            },
-            rng,
-        ))));
+        let (parts, quit) = crate::display::open(taps);
         let _ = quit;
-        let presence = RefCell::new(rsk_display::TouchPresence::new(ui));
-        // The panel's own loop and the host's, on one executor — the same shape
-        // the firmware has, and the reason neither needs a lock: they only ever
-        // interleave where the other is not holding a borrow.
-        crate::park::block_on(embassy_futures::select::select(
-            rsk_display::status_loop(ui),
-            serve(cfg, jobs, signals, fs, rng, &presence),
-        ));
+        serve_display(cfg, jobs, signals, fs, rng, parts);
     } else {
         let presence = RefCell::new(EmuPresence::new(cfg.presence, lines, signals.clone()));
-        crate::park::block_on(serve(cfg, jobs, signals, fs, rng, &presence));
+        let local_pin = Rc::new(Cell::new(false));
+        crate::park::block_on(serve(cfg, jobs, signals, local_pin, fs, rng, &presence));
     }
+}
+
+/// The `--display` build's wiring: the panel's own loop and the host's, on one
+/// executor — the same shape the firmware has, and the reason neither needs a
+/// lock: they only ever interleave where the other is not holding a borrow.
+///
+/// Generic over the panel and the pad because that is what the emulator's own
+/// tests substitute (a recording panel, a scripted finger) — the wiring itself,
+/// including the `EmuDisplayHooks` → `EmuHooks` PIN signal, stays the one a
+/// `--display` run uses.
+pub fn serve_display<P, T>(
+    cfg: Config,
+    jobs: Receiver<Req>,
+    signals: Arc<Signals>,
+    fs: &'static RefCell<Fs<crate::store::EmuStore>>,
+    rng: &'static RefCell<EmuRng>,
+    parts: crate::display::PanelParts<P, T>,
+) where
+    P: embedded_graphics::draw_target::DrawTarget<Color = embedded_graphics::pixelcolor::Rgb565>
+        + 'static,
+    T: rsk_display::TouchPad + 'static,
+{
+    let local_pin = parts.hooks.local_pin_signal();
+    let ui = Box::leak(Box::new(RefCell::new(rsk_display::Ui::new(
+        parts.panel,
+        parts.touch,
+        parts.hooks,
+        rsk_display::DeviceInfo {
+            version: crate::usbip_stack::BCD_DEVICE,
+            chipid: u64::from_le_bytes(cfg.serial),
+        },
+        fs,
+        rsk_display::DeviceKeys {
+            serial_id: cfg.serial,
+            serial_hash: rsk_crypto::sha256(&cfg.serial),
+            mkek_source: None,
+        },
+        rng,
+    ))));
+    let presence = RefCell::new(rsk_display::TouchPresence::new(ui));
+    crate::park::block_on(embassy_futures::select::select(
+        rsk_display::status_loop(ui),
+        serve(cfg, jobs, signals, local_pin, fs, rng, &presence),
+    ));
 }
 
 /// Everything downstream of the presence backend, generic over it.
@@ -227,6 +258,7 @@ async fn serve<PR: rsk_device::UserPresence + 'static>(
     cfg: Config,
     jobs: Receiver<Req>,
     signals: Arc<Signals>,
+    local_pin: Rc<Cell<bool>>,
     fs: &'static RefCell<Fs<crate::store::EmuStore>>,
     rng: &'static RefCell<EmuRng>,
     presence: &RefCell<PR>,
@@ -283,7 +315,10 @@ async fn serve<PR: rsk_device::UserPresence + 'static>(
     // The wiring itself: the same two handlers `firmware`'s worker owns. One vendor
     // platform handle, cloned into both, because the reboot they queue is the same
     // device's — one static there, one `Rc<Cell>` here.
-    let hooks = RefCell::new(EmuHooks::default());
+    let hooks = RefCell::new(EmuHooks {
+        warm: false,
+        local_pin,
+    });
     let vendor_platform = EmuVendorPlatform::default();
     let reboot_requested = vendor_platform.reboot.clone();
     let mut ctap = AppletHandler::new(

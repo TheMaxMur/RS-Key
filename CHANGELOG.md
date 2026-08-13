@@ -38,7 +38,27 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+### Added
+
+- **`rsk-emu --taps <file>` drives the trusted display's keypad from a script.**
+  One contact per line (`x,y[,hold_ms[,gap_ms]]`, `#` comments), read back
+  through the same `TouchPad` the CST328 implements, so the flows behind the pad
+  — the unlock gate, the on-device PIN change — can be exercised without a
+  mouse. It replaces the mouse for the run and says so; a script that is empty or
+  points off the 240×320 glass is refused rather than silently ignored.
+
 ### Fixed
+
+- **The emulator's trusted display no longer drops the host's session token on
+  the floor.** On a board, a clientPIN re-keyed *or refused* at the on-panel
+  keypad ends the platform's outstanding `pinUvAuthToken` before the next CBOR
+  command (CTAP 2.1 §6.5.5.6). `rsk-emu --display` raised neither event: the
+  panel's `note_local_pin_failed` was the trait's no-op and the flag its sibling
+  did set had no reader at all, so the same wrong PIN killed the token on
+  hardware and left it working under the emulator. Both events now reach the
+  worker, as they do on the board. The rule shipped long ago and this is the
+  first time it has been *seen* to fire anywhere — there was no way to type at
+  the pad until now.
 
 - **A PIV card whose `0x9B` metadata was lost no longer comes back demanding a
   touch.** `scan_files`' repair arm — the one that runs when the management key

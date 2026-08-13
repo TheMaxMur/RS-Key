@@ -93,7 +93,8 @@ fn bench(name: &str) -> (PathBuf, mpsc::Sender<Req>, JoinHandle<()>) {
         yubico: false,
         power_cut: None,
     };
-    let device = std::thread::spawn(move || run(cfg, requests, Arc::new(Signals::default()), None));
+    let device =
+        std::thread::spawn(move || run(cfg, requests, Arc::new(Signals::default()), None, None));
     (path, jobs, device)
 }
 

@@ -41,6 +41,17 @@ this page is about — *a signature cannot be had without a tap on a screen nami
 the true relying party* — can be tried before deciding whether to buy the
 hardware.
 
+`--taps <file>` replaces the mouse with a script — one contact per line,
+`x,y[,hold_ms[,gap_ms]]` in panel pixels, `#` for a comment — so a sequence that
+takes six taps to reach can be replayed instead of performed:
+
+```text
+# Settings → Security → FIDO PIN
+209,301
+119,123
+119,123
+```
+
 The images themselves are regenerated with `rsk-emu --screenshots docs/images`
 when a screen changes.
 

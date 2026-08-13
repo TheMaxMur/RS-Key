@@ -18,6 +18,8 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
+use crate::taps::TapPad;
+
 use embedded_graphics::geometry::{Dimensions, Point as EgPoint, Size};
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::*;
@@ -103,10 +105,20 @@ pub struct Touch {
     /// space bar, so the "power button sleeps from any screen" behaviour is
     /// reachable at all.
     wake: Rc<Cell<bool>>,
+    /// `--taps`: a scripted finger *instead of* the mouse, so a flow behind the
+    /// keypad can be driven without a person. The window still repaints and still
+    /// takes its quit and wake keys, so the script is watchable.
+    taps: Option<TapPad>,
 }
 
 impl Touch {
-    fn new(panel: Panel, quit: Rc<Cell<bool>>, duty: Rc<Cell<u16>>, wake: Rc<Cell<bool>>) -> Self {
+    fn new(
+        panel: Panel,
+        quit: Rc<Cell<bool>>,
+        duty: Rc<Cell<u16>>,
+        wake: Rc<Cell<bool>>,
+        taps: Option<TapPad>,
+    ) -> Self {
         let out = OutputSettingsBuilder::new().scale(SCALE).build();
         Self {
             win: Window::new("RS-Key", &out),
@@ -115,6 +127,7 @@ impl Touch {
             quit,
             duty,
             wake,
+            taps,
         }
     }
 
@@ -176,6 +189,9 @@ impl rsk_display::TouchPad for Touch {
                 _ => {}
             }
         }
+        if let Some(taps) = &mut self.taps {
+            return taps.read();
+        }
         self.held.map(|p| rsk_ui::Point {
             x: p.x as u16,
             y: p.y as u16,
@@ -199,12 +215,17 @@ pub struct EmuDisplayHooks {
     cancel: Cell<bool>,
     timeout_ms: Cell<u32>,
     reboot: Cell<bool>,
-    pin_changed: Cell<bool>,
+    /// A local PIN event the host side has to act on. Shared with [`EmuHooks`],
+    /// which consumes it before the next CBOR command — the emulator's analog of
+    /// `firmware/src/handler.rs`'s `LOCAL_PIN_CHANGED`.
+    ///
+    /// [`EmuHooks`]: crate::device::EmuHooks
+    pin_changed: Rc<Cell<bool>>,
     started: Option<std::time::Instant>,
 }
 
 impl EmuDisplayHooks {
-    fn new(duty: Rc<Cell<u16>>, wake: Rc<Cell<bool>>) -> Self {
+    pub fn new(duty: Rc<Cell<u16>>, wake: Rc<Cell<bool>>) -> Self {
         Self {
             duty,
             wake,
@@ -212,6 +233,11 @@ impl EmuDisplayHooks {
             started: Some(std::time::Instant::now()),
             ..Default::default()
         }
+    }
+
+    /// The handle the worker half reads the panel's PIN events through.
+    pub fn local_pin_signal(&self) -> Rc<Cell<bool>> {
+        self.pin_changed.clone()
     }
 }
 
@@ -242,6 +268,12 @@ impl rsk_display::Hooks for EmuDisplayHooks {
     fn note_local_pin_changed(&mut self) {
         self.pin_changed.set(true);
     }
+    /// Both events mean the same thing to the worker — end the RAM
+    /// `pinUvAuthToken` before the next CBOR command — so they share one flag, as
+    /// `firmware/src/display.rs` maps them to one signal.
+    fn note_local_pin_failed(&mut self) {
+        self.pin_changed.set(true);
+    }
     fn set_up_pending(&mut self, pending: bool) {
         self.up_pending.set(pending);
     }
@@ -259,13 +291,40 @@ impl rsk_display::Hooks for EmuDisplayHooks {
     }
 }
 
-/// Open the window and hand back the three pieces `rsk_display::Ui::new` wants,
-/// plus the quit flag the caller polls.
-pub fn open() -> (Panel, Touch, EmuDisplayHooks, Rc<Cell<bool>>) {
+/// The three pieces `rsk_display::Ui::new` takes from a board, as one handle: a
+/// panel to draw on, a pad to read, and the verbs neither of them covers. Kept
+/// together because they are substituted together — a window and a mouse here, a
+/// sink and a script under test.
+pub struct PanelParts<P, T> {
+    pub panel: P,
+    pub touch: T,
+    pub hooks: EmuDisplayHooks,
+}
+
+/// Open the window and hand back those pieces, plus the quit flag the caller
+/// polls. `taps` replaces the mouse when a script was given.
+pub fn open(taps: Option<TapPad>) -> (PanelParts<Panel, Touch>, Rc<Cell<bool>>) {
     let panel = Panel::new();
     let quit = Rc::new(Cell::new(false));
     let duty = Rc::new(Cell::new(rsk_display::BL_TOP));
     let wake = Rc::new(Cell::new(false));
-    let touch = Touch::new(panel.clone(), quit.clone(), duty.clone(), wake.clone());
-    (panel, touch, EmuDisplayHooks::new(duty, wake), quit)
+    let touch = Touch::new(
+        panel.clone(),
+        quit.clone(),
+        duty.clone(),
+        wake.clone(),
+        taps,
+    );
+    (
+        PanelParts {
+            panel,
+            touch,
+            hooks: EmuDisplayHooks::new(duty, wake),
+        },
+        quit,
+    )
 }
+
+#[cfg(test)]
+#[path = "display_tests.rs"]
+mod tests;
