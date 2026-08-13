@@ -49,6 +49,19 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **An unauthenticated OpenPGP `PUT DATA` with an over-long body answers `6982`,
+  not `6A80`.** The `MAX_DO_BYTES` gate — the cap DO `C0` announces — was checked
+  above every ACL, so a body one byte past it was the last thing in this command
+  that outranked the password; `0x08F3` had moved the tag below the ACL and left
+  the length above it. A YubiKey 5.7.4 answers `6982` at 10, 2036, 2037 and 3000
+  bytes on `5E`, `7A`, `D5`, `D3`, `C4`, `7F21`, `C1`, `0101`, `0103` and an
+  unknown tag alike, 3 runs byte-identical. **The authorised half deliberately
+  does not follow the card**: measured, it answers `9000` to an over-long chained
+  write and silently keeps only `n mod 256` bytes (`n = 256` stores nothing at
+  all), which is the one behaviour this project never copies — so an over-long
+  write past the cap stays `6A80` with the DO untouched, and everything up to the
+  cap still stores byte-for-byte. `bcdDevice` → `0x0922`.
+
 - **PIV `CHANGE REFERENCE DATA` / `RESET RETRY COUNTER` answer `6A88` for a key
   reference they do not have.** Both answered `6A86`; a YubiKey 5.7.4 answers
   `6A88` — *reference not found* — on the P2 axis (`00`, `01`, `04`, `82`, `9B`,

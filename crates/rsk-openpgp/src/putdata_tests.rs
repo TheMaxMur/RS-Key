@@ -227,3 +227,19 @@ fn an_overlong_pw_status_record_cannot_panic_put_pw_status() {
     assert_eq!(fs.read(EF_PW_PRIV, &mut pw), Some(7));
     assert_eq!(&pw[4..7], &[3, 0, 3], "retry counters preserved");
 }
+
+#[test]
+fn put_aes_key_is_pw3_gated_on_a_direct_call() {
+    // The dispatcher gates every PUT DATA before it routes here, so this arm's own
+    // `has_pw3` is dominated on the wire and nothing exercised it — the sibling
+    // handlers all have a direct-call test and this one did not. It is a `pub`
+    // function; its precondition is its own.
+    let (mut fs, mut sess) = setup();
+    let key = [0x11u8; 32];
+    assert_eq!(
+        put_aes_key(&dev(), &mut fs, &sess, &key),
+        Sw::SECURITY_STATUS_NOT_SATISFIED
+    );
+    admin(&mut fs, &mut sess);
+    assert_eq!(put_aes_key(&dev(), &mut fs, &sess, &key), Sw::OK);
+}

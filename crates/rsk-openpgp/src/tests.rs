@@ -46,6 +46,17 @@ fn run(app: &mut OpenpgpApplet, fs: &mut Fs<RamStorage>, raw: &[u8]) -> (Vec<u8>
     (res.as_slice().to_vec(), sw)
 }
 
+/// [`run`] with a response buffer that can hold `MAX_DO_BYTES` — `SCRATCH` is
+/// 1024 and is deliberately not the GET DATA ceiling, so reading a DO back at
+/// its announced size needs the transport's buffer rather than the applet's.
+fn run_big(app: &mut OpenpgpApplet, fs: &mut Fs<RamStorage>, raw: &[u8]) -> (Vec<u8>, Sw) {
+    let apdu = Apdu::parse(raw).unwrap();
+    let mut buf = [0u8; crate::files::MAX_APDU_BYTES];
+    let mut res = ResBuf::new(&mut buf);
+    let sw = app.process(&apdu, fs, &mut res);
+    (res.as_slice().to_vec(), sw)
+}
+
 #[test]
 fn select_emits_fci() {
     let rng = RefCell::new(CountRng(0));
@@ -491,6 +502,15 @@ fn verify_pin(app: &mut OpenpgpApplet, fs: &mut Fs<RamStorage>, mode: u8, pin: &
 
 fn put(app: &mut OpenpgpApplet, fs: &mut Fs<RamStorage>, p1: u8, p2: u8, data: &[u8]) -> Sw {
     let mut a = vec![0x00, consts::INS_PUT_DATA, p1, p2, data.len() as u8];
+    a.extend_from_slice(data);
+    run(app, fs, &a).1
+}
+
+/// PUT DATA in the extended-length form, so a body past 255 bytes is expressible.
+fn put_long(app: &mut OpenpgpApplet, fs: &mut Fs<RamStorage>, p1: u8, p2: u8, data: &[u8]) -> Sw {
+    let mut a = vec![0x00, consts::INS_PUT_DATA, p1, p2, 0x00];
+    a.push((data.len() >> 8) as u8);
+    a.push(data.len() as u8);
     a.extend_from_slice(data);
     run(app, fs, &a).1
 }
@@ -2317,6 +2337,115 @@ fn put_data_judges_the_password_before_the_tag() {
             "PUT DATA {tag:02X} with PW3"
         );
     }
+}
+
+/// E96: the password outranks the body's LENGTH too. `MAX_DO_BYTES` — the cap
+/// `C0` announces — was checked above every ACL, so a body one byte past it came
+/// back `6A80` where every other unauthenticated PUT DATA answers `6982`. A
+/// YubiKey 5.7.4 answers `6982` at 10, 2036, 2037 and 3000 bytes, on `5E`, `7A`,
+/// `D5`, `D3`, `C4`, `7F21`, `C1`, `0101`, `0103` and an unknown tag alike —
+/// 3 runs, byte-identical.
+///
+/// The PW3 column is a **deliberate divergence and is not parity**: measured, the
+/// card answers `9000` to an over-long chained write and silently keeps only
+/// `n mod 256` bytes (`n = 256` stores nothing at all; 300 → 44; 2036 → 244;
+/// 3000 → 184; identical at two chunk sizes). Adopting that would lose user data,
+/// which is the one carve-out — so an over-long authorised write stays `6A80`
+/// with the DO untouched.
+#[test]
+fn put_data_judges_the_password_before_the_body_length() {
+    let rng = RefCell::new(LcgRng(29));
+    let mut fs = make_fs();
+    let presence = RefCell::new(crate::AlwaysConfirm);
+    let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
+
+    let over = vec![0x41u8; crate::files::MAX_DO_BYTES + 1];
+    let at_cap = vec![0x41u8; crate::files::MAX_DO_BYTES];
+    // Every routed tag plus the generic and the two PW2 DOs — the length gate sat
+    // above all of them, so the flatness has to be shown across the whole split.
+    let tags: [(u8, u8); 10] = [
+        (0x00, 0x5E),
+        (0x00, 0x7A),
+        (0x00, 0xD5),
+        (0x00, 0xD3),
+        (0x00, 0xC4),
+        (0x7F, 0x21),
+        (0x00, 0xC1),
+        (0x01, 0x01),
+        (0x01, 0x03),
+        (0xFF, 0xFF),
+    ];
+    let none: &[u8] = &[];
+    for modes in [none, &[consts::PW1_MODE81], &[consts::PW1_MODE82]] {
+        app.deselect(&mut fs);
+        for &mode in modes {
+            verify_pin(&mut app, &mut fs, mode, consts::PW1_DEFAULT);
+        }
+        for (p1, p2) in tags {
+            // PW1 no. 82 is the cardholder's, so it authorises `0101`/`0103` and
+            // only those: they are past the ACL and meet the length gate instead.
+            let want = if modes == [consts::PW1_MODE82] && p1 == 0x01 && (p2 == 0x01 || p2 == 0x03)
+            {
+                consts::WRONG_DATA
+            } else {
+                Sw::SECURITY_STATUS_NOT_SATISFIED
+            };
+            assert_eq!(
+                put_long(&mut app, &mut fs, p1, p2, &over),
+                want,
+                "over-long PUT DATA {p1:02X}{p2:02X} with {modes:02X?}"
+            );
+            // The same tags at the cap: `6982` before this fix and after it, so a
+            // reader can see the ACL answer is what moved and not the boundary.
+            // (The assertion that a moved boundary fails is the `at_cap` write
+            // under PW3 at the end — this pair is the flatness, not the edge.)
+            if want == Sw::SECURITY_STATUS_NOT_SATISFIED {
+                assert_eq!(
+                    put_long(&mut app, &mut fs, p1, p2, &at_cap),
+                    Sw::SECURITY_STATUS_NOT_SATISFIED,
+                    "at-cap PUT DATA {p1:02X}{p2:02X} with {modes:02X?}"
+                );
+            }
+        }
+    }
+    // With PW3 the refusal is ours and not the card's — see the note above. The
+    // two cardholder DOs stay `6982` even here, because PW3 is not their password:
+    // which password a caller holds, not which one is "higher", is what decides
+    // whether the length gate is reached at all.
+    app.deselect(&mut fs);
+    verify_pin(&mut app, &mut fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
+    for (p1, p2) in tags {
+        let want = if p1 == 0x01 {
+            Sw::SECURITY_STATUS_NOT_SATISFIED
+        } else {
+            consts::WRONG_DATA
+        };
+        assert_eq!(
+            put_long(&mut app, &mut fs, p1, p2, &over),
+            want,
+            "over-long PUT DATA {p1:02X}{p2:02X} with PW3"
+        );
+    }
+    // …and the cap itself is still writable, so the refusal is protecting the
+    // buffer rather than moving the boundary in by one.
+    assert_eq!(put_long(&mut app, &mut fs, 0x00, 0x5E, &at_cap), Sw::OK);
+
+    // The status word is not the evidence — what is in the DO is. Adopting the
+    // card's own answer here means answering and keeping `n mod 256` bytes, so a
+    // refusal that stores a truncation would satisfy every assertion above. It
+    // does not satisfy this one: the cap-length value written a moment ago is
+    // still there, whole, after the refusal.
+    assert_eq!(
+        put_long(&mut app, &mut fs, 0x00, 0x5E, &over),
+        consts::WRONG_DATA
+    );
+    let (back, sw) = run_big(
+        &mut app,
+        &mut fs,
+        &[0x00, consts::INS_GET_DATA, 0x00, 0x5E, 0x00, 0x08, 0x00],
+    );
+    assert_eq!(sw, Sw::OK);
+    assert_eq!(back, at_cap, "the refused write left the DO whole");
 }
 
 /// E23(c): DO `D5` is the spec's way for a host to supply the AES key PSO:ENC and

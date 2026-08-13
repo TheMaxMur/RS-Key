@@ -47,18 +47,29 @@ fn max_do_len(fid: u16) -> Option<usize> {
     }
 }
 
+/// Whether `sess` may write the DO addressed by `fid`. Private DOs 1/3 are the
+/// cardholder's and need PW2 — §4.4.1 gives the admin no override on them, and a
+/// YubiKey 5.7.4 refuses PW3 on both, 3/3 — everything else needs PW3.
+///
+/// One owner for PUT DATA's whole ACL: the dispatch asks first, so nothing about
+/// the request — not the tag, not the body's length — is judged ahead of the
+/// password, and the routed handlers below re-state it for a direct caller.
+pub fn write_authorized(sess: &Session, fid: u16) -> bool {
+    if fid == EF_PRIV_DO_1 || fid == EF_PRIV_DO_3 {
+        sess.has_pw2
+    } else {
+        sess.has_pw3
+    }
+}
+
 /// Write `data` to the DO addressed by `fid` (empty `data` deletes it, unless
-/// the DO has a fixed length). ACL: private DOs 1/3 are the cardholder's and need
-/// PW2 — §4.4.1 gives the admin no override on them, and a YubiKey 5.7.4 refuses
-/// PW3 on both, 3/3 — everything else needs PW3.
+/// the DO has a fixed length).
 pub fn put_data<S: Storage>(fs: &mut Fs<S>, sess: &Session, fid: u16, data: &[u8]) -> Sw {
     // The password is judged BEFORE the tag: a YubiKey 5.7.4 answers a flat `6982`
     // to every tag until PW3 and only then tells `6B00` from `9000` (7 tags × 3
     // states × 3 runs). Resolving first let an unauthenticated caller enumerate
     // the writable set by the `6B00`-vs-`6982` split. `fid` is P1P2, not a lookup.
-    let priv13 = fid == EF_PRIV_DO_1 || fid == EF_PRIV_DO_3;
-    let authorized = if priv13 { sess.has_pw2 } else { sess.has_pw3 };
-    if !authorized {
+    if !write_authorized(sess, fid) {
         return Sw::SECURITY_STATUS_NOT_SATISFIED;
     }
 

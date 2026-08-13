@@ -221,7 +221,7 @@ impl<'a> OpenpgpApplet<'a> {
             // `fs.read` reports the value's FULL stored length while the
             // backend copies only what fit. PUT DATA now bounds every write
             // at MAX_DO_BYTES, so this can only be a value an older build
-            // wrote through the 2037-byte chaining buffer — one byte more
+            // wrote through the chaining path, which delivers one byte more
             // than fits. Say so instead of handing back a short body with
             // `9000`, which is the whole defect this rule exists to end.
             if n > room {
@@ -279,28 +279,37 @@ impl<'a> OpenpgpApplet<'a> {
     /// (0xD5) and PW status (0xC4) touch the cert / DEK / key / status files and
     /// route to their own handlers; every other DO is a generic write.
     fn handle_put_data<S: Storage>(&mut self, fid: u16, apdu: &Apdu, fs: &mut Fs<S>) -> Sw {
+        // The password outranks the body's length as well as its tag: a YubiKey
+        // 5.7.4 answers `6982` to a PUT DATA it is not authorised for at every
+        // tag AND every length (10 to 3000 bytes over ten tags, 3 runs). E81
+        // moved the tag below the ACL and left this one above it.
+        if !putdata::write_authorized(&self.sess, fid) {
+            return Sw::SECURITY_STATUS_NOT_SATISFIED;
+        }
         // One owner for the length DO C0 announces, checked before the routing
         // splits: the cardholder certificate below writes flash without going
         // through `putdata::put_data`, so a check living only there would guard
         // every DO except the one C0's own bytes 5-6 are about.
+        //
+        // NOT parity, deliberately: the card answers `9000` here and keeps only
+        // `n mod 256` bytes, which is the one behaviour AGENTS.md says never to
+        // copy.
         if apdu.data.len() > files::MAX_DO_BYTES {
             return consts::WRONG_DATA;
         }
         if fid == consts::EF_CH_CERT {
-            // Cardholder certificate write (PW3): the SELECT-DATA occurrence
-            // picks the EF_CH_1/2/3 instance; empty data deletes it.
-            if !self.sess.has_pw3 {
-                Sw::SECURITY_STATUS_NOT_SATISFIED
+            // Cardholder certificate write (PW3, held by the gate above — this
+            // arm is inline and private, so unlike the routed handlers it has no
+            // direct caller to re-state it for): the SELECT-DATA occurrence picks
+            // the EF_CH_1/2/3 instance; empty data deletes it.
+            let stor = consts::EF_CH_1 + self.sess.cert_occ as u16;
+            if apdu.data.is_empty() {
+                let _ = fs.delete(stor);
+                Sw::OK
+            } else if fs.put(stor, apdu.data).is_err() {
+                Sw::MEMORY_FAILURE
             } else {
-                let stor = consts::EF_CH_1 + self.sess.cert_occ as u16;
-                if apdu.data.is_empty() {
-                    let _ = fs.delete(stor);
-                    Sw::OK
-                } else if fs.put(stor, apdu.data).is_err() {
-                    Sw::MEMORY_FAILURE
-                } else {
-                    Sw::OK
-                }
+                Sw::OK
             }
         } else if fid == consts::EF_RESET_CODE {
             let mkek = read_fused(self.mkek_source);
