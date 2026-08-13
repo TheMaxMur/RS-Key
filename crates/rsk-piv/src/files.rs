@@ -165,10 +165,17 @@ pub const EF_PIVMAN_DATA: u16 = 0xD2F0;
 
 /// Map a GET/PUT DATA object id (the `5C` tag value, 1–3 bytes big-endian) to
 /// its file — the GET DATA allow-list: the `5FC1xx` objects, the discovery
-/// object (`0x7E`, dynamic — `None` here), the BIT group template (`0x7F61`,
-/// never populated), the Yubico attestation cert (`5FFF01`) and the ADMIN DATA
-/// object (`5FFF00`). The PRINTED object (`5FC109`) is handled specially in
-/// GET/PUT DATA (the PIN-protected mgmt key), not through this generic table.
+/// object (`0x7E`, dynamic — `None` here), the Yubico attestation cert
+/// (`5FFF01`) and the ADMIN DATA object (`5FFF00`). The PRINTED object
+/// (`5FC109`) is handled specially in GET/PUT DATA (the PIN-protected mgmt key),
+/// not through this generic table.
+///
+/// The BIT group template `7F61` is deliberately absent. It used to map to
+/// `0xD2B6` — which is `data_object_fid(0xB6)`, i.e. `5FC1B6`'s own file — so a
+/// `PUT DATA 5FC1B6` came back out of `GET DATA 7F61`. It is never populated,
+/// and an id with no file already answers the `6A82` a YubiKey 5.7.4 gives
+/// `7F61` in every state (measured, before and after writing `5FC1B6`), so the
+/// entry bought an alias and nothing else.
 pub fn object_fid(id: u32) -> Option<u16> {
     if id & 0xFFFF00 == 0x5FC100 {
         return data_object_fid((id & 0xFF) as u8);
@@ -176,7 +183,6 @@ pub fn object_fid(id: u32) -> Option<u16> {
     match id & 0xFFFF {
         0xFF01 => Some(EF_ATTESTATION_CERT),
         0xFF00 => Some(EF_PIVMAN_DATA),
-        0x7F61 => Some(0xD2B6), // BITGT: a valid id with no data → 6A82
         _ => None,
     }
 }

@@ -4823,6 +4823,59 @@ impl Storage for StubbornStorage {
     }
 }
 
+/// The BIT group template `7F61` and the data object `5FC1B6` are two different
+/// objects, and used to share one fid: `object_fid(0x5FC1B6)` is `0xD200 | 0xB6`
+/// = `0xD2B6`, and `7F61` was mapped to that same `0xD2B6`, so a write to one
+/// read back through the other. Measured on both cards: writing `5FC1B6` under
+/// the management key is `9000` on a YubiKey 5.7.4 and on ours, and afterwards
+/// `GET DATA 7F61` is `6A82` there and was the written value here.
+#[test]
+fn the_bit_group_template_is_not_an_alias_of_a_data_object() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+
+    let bitgt = [TAG_DATA_PATH, 0x02, 0x7F, 0x61];
+    let obj = [TAG_DATA_PATH, 0x03, 0x5F, 0xC1, 0xB6];
+    assert_eq!(
+        run(&mut app, &mut fs, INS_GET_DATA, 0x3F, 0xFF, &bitgt).0,
+        Sw::FILE_NOT_FOUND,
+        "7F61 on a fresh card"
+    );
+
+    let mut write = obj.to_vec();
+    write.extend_from_slice(&[TAG_DATA_OBJECT, 0x04, 0x41, 0x42, 0x43, 0x44]);
+    assert_eq!(
+        run(&mut app, &mut fs, INS_PUT_DATA, 0x3F, 0xFF, &write).0,
+        Sw::OK
+    );
+    let (sw, back) = run(&mut app, &mut fs, INS_GET_DATA, 0x3F, 0xFF, &obj);
+    assert_eq!(sw, Sw::OK);
+    assert_eq!(&back, &[TAG_DATA_OBJECT, 0x04, 0x41, 0x42, 0x43, 0x44]);
+    // The whole finding: this was `9000` with `5FC1B6`'s bytes.
+    assert_eq!(
+        run(&mut app, &mut fs, INS_GET_DATA, 0x3F, 0xFF, &bitgt).0,
+        Sw::FILE_NOT_FOUND,
+        "7F61 after writing 5FC1B6"
+    );
+    // Both cards refuse a write to `7F61` — it was never storable, which is why
+    // the alias could only ever be reached from the other end.
+    let mut bad = bitgt.to_vec();
+    bad.extend_from_slice(&[TAG_DATA_OBJECT, 0x02, 0x42, 0x42]);
+    assert_eq!(
+        run(&mut app, &mut fs, INS_PUT_DATA, 0x3F, 0xFF, &bad).0,
+        WRONG_DATA
+    );
+    // The wire cells above hold for any fid `7F61` cannot reach, so this last
+    // pair is about the map itself: `7F61` owns no file at all, rather than a
+    // second one that would have to be kept out of `data_object_fid`'s way.
+    assert_eq!(object_fid(0x7F61), None);
+    assert_eq!(object_fid(0x5F_C1_B6), Some(0xD2B6));
+}
+
 #[test]
 fn reset_reports_failure_when_the_sweep_cannot_converge() {
     let dev = Device {

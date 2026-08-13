@@ -49,6 +49,18 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **PIV `GET DATA 7F61` no longer returns whatever was written to `5FC1B6`.** The
+  BIT group template and the data object `5FC1B6` shared one file: `object_fid`
+  mapped `7F61` to `0xD2B6`, which is `5FC1B6`'s own fid. A management-key write
+  to `5FC1B6` — an ordinary, ungated-read data object — therefore came back out of
+  `GET DATA 7F61`, refuting the comment beside the mapping, which said a valid id
+  with no data answers `6A82`. A YubiKey 5.7.4 answers `6A82` to `7F61` before and
+  after that write, measured on both cards; `7F61` is never populated and is not
+  writable on either card, so it now owns no file and answers `6A82` the way an
+  unknown id already does. No security impact — both ends are ungated-read and
+  management-gated-write — but two objects sharing a fid is a latent one.
+  `bcdDevice` → `0x0923`.
+
 - **An unauthenticated OpenPGP `PUT DATA` with an over-long body answers `6982`,
   not `6A80`.** The `MAX_DO_BYTES` gate — the cap DO `C0` announces — was checked
   above every ACL, so a body one byte past it was the last thing in this command
