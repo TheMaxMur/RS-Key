@@ -185,14 +185,22 @@ mutants nothing catches.
 | `BugWaitScopeNotCleared` | `worker.rs:521` `set_wait_scope(SCOPE_NONE)` | `EveryWaitReleases` | 76 446 states |
 | `BugWalkNeverExpires` | `state.rs:613-619` `expire_stale_sequences` | `EveryWalkCloses` | 93 607 states |
 
-**One mutant needs a companion, and that is a result.** `BugBackupSealedNotAGate`
+**Two mutants need a companion, and that is a result.** `BugBackupSealedNotAGate`
 rebuilds audit run-36's class — the backup marker swept ahead of the seed it
 protects — and once the seed leads the wipe unconditionally (0x08BF) the window
 it re-opens is over a seed that is already gone, so it is **not falsifiable on
-its own any more**. Its configuration therefore carries `BugSeedDoesNotLead`
-under it, from a `companion_bug` table in `gen-configs.sh`. A mutant that stops
-firing because a fix subsumed it is worth knowing; a mutant that stops firing
-silently is the failure this file exists to avoid.
+its own any more**. `BugSetPinKeepsPpuat` went the same way under `eab4b5c`: with
+the grant swept in phase 1 and `EF_PIN` in phase 2, and phase 2 unable to start
+until phase 1 is empty, `~pin.set /\ gate.ppuat` is unreachable — so setPIN can
+never meet a stranded grant to keep. That is not an inference: it is the same
+fact `NoAccessibleSecretWithoutGate`'s new structural clause asserts, and the
+clause is green on the whole reachable space. Measured from the other side too —
+without its companion the mutant explored **40 459 667 distinct states without a
+counterexample** before the run was stopped, against 639 550 with it.
+
+Both carry their companion from a `companion_bug` table in `gen-configs.sh`. A
+mutant that stops firing because a fix subsumed it is worth knowing; a mutant
+that stops firing silently is the failure this file exists to avoid.
 
 **27 of 27 mutants are caught, each by the invariant that names it**, and 3 of 3
 liveness mutants by the property that names them.

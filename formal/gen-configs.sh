@@ -26,6 +26,11 @@ BUGS=(BugResetGatesFirst BugCredBeforeRp BugTokenSurvivesPinChange
 companion_bug() {
   case "$1" in
     BugBackupSealedNotAGate) echo BugSeedDoesNotLead ;;
+    # eab4b5c moved EF_PAUTHTOKEN into the SECRETS phase, and phase 2 cannot
+    # start until phase 1 is empty -- so `~pin.set /\ gate.ppuat` is now
+    # unreachable, and setPIN can no longer meet a stranded grant to keep.
+    # The mutant explores the whole space and comes back GREEN without this.
+    BugSetPinKeepsPpuat)     echo BugPpuatIsAGate ;;
     *) echo "" ;;
   esac
 }
