@@ -571,7 +571,10 @@ keyboard goes inert. The change is live (next command; no replug). Its ceiling
 is `USB_SUPPORTED`, so a wider host-written mask is clamped. The re-enable path
 is never gated — the Management applet (§6), the FIDO vendor `CONFIG_WRITE`
 (§9) and the OTP-HID identify/config slots stay reachable — so a disable is
-always reversible. Building `--features strict-config` gates the *write* on
+always reversible. The *mask* is; the flash it lives in is not, and a replay of
+these ungated writes spends erase cycles nothing returns
+([threat-model.md](threat-model.md) §1). Identical records are dropped before
+the write, so only distinct ones cost anything. Building `--features strict-config` gates the *write* on
 operator presence; the enforcement of a persisted mask is the same on both
 builds.
 

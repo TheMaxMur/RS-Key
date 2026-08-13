@@ -44,7 +44,15 @@ bulk stream, ISO-7816 APDUs, CTAP2 CBOR. Defenses:
   That is a **reversible denial-of-service**, not a confidentiality or integrity
   break — the Management applet, the FIDO vendor command, and the OTP-HID
   identify/config slots are never gated, so any single transport can re-enable it,
-  and no secret is exposed. If you need config writes gated on the operator,
+  and no secret is exposed. **Reversible describes the mask, not the flash it is
+  written to.** The same ungated commands persist their records, and a host that
+  replays one indefinitely spends erase cycles that nothing gives back: measured
+  on the device's own store geometry, a `SET LED` replay at a nearly full ring
+  costs ~204 bytes and one main-partition page erase per twenty writes, which at
+  the rate a host can drive it puts the array's endurance budget in weeks of
+  continuous hammering. Idempotent writes are now dropped before they reach flash
+  on both the vendor and FIDO paths, which removes the cheap version of that;
+  what remains is bounded by how fast a host can produce *distinct* records. If you need config writes gated on the operator,
   build/flash **`firmware-strict-config`**, which restores the presence/PIN gates
   and refuses the ungated transport writes ([build.md](build.md)). It is not the
   runtime flash flag `EF_HARDENED`.
