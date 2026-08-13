@@ -153,6 +153,19 @@ writing a summary table and uploading a per-target HTML report. A
 both loops floor the roster first — `FUZZ_TARGET_FLOOR` in the workflow and the
 same number in the script. Lower it only in the commit that removes a target.
 
+Coverage says which *lines* a corpus reached. `scripts/fuzz-dimensions.py` says
+which **inputs** it explored, for `power_cut`: how much of the storage was
+invalid before init, how many operations and distinct FIDs an exec drove, how
+many times the power went, how many erases and bytes the store spent. It replays
+a corpus with `RSK_POWER_CUT_STATS=1` and prints one log-bucket row per axis.
+
+```sh
+nix develop .#fuzz -c ./scripts/fuzz-dimensions.py fuzz/corpus/power_cut
+```
+
+It gates nothing and is not in CI — there is no coverage floor anywhere in this
+tree, and a reporter that looks like a gate is worse than none.
+
 ## Kani proofs
 
 Where a fuzzer samples inputs, [Kani](https://model-checking.github.io/kani/)

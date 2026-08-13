@@ -38,7 +38,9 @@ use sequential_storage::cache::Cache;
 use sequential_storage::cache::key_pointers::ArrayKeyPointers;
 use sequential_storage::cache::page_pointers::ArrayPagePointers;
 use sequential_storage::cache::page_states::ArrayPageStates;
-use sequential_storage::mock_flash::{MockFlashBase, MockFlashError, Operation, WriteCountCheck};
+use sequential_storage::mock_flash::{
+    FlashStatsSnapshot, MockFlashBase, MockFlashError, Operation, WriteCountCheck,
+};
 
 // One 48 KiB flash: pages 0..8 main, 8..12 counter (4 KiB pages, 4-byte words).
 const WORD: usize = 4;
@@ -60,6 +62,11 @@ const META_MAX: usize = 1024;
 // (`rsk_store::is_counter_fid`) — both partitions get torn. The mirror this
 // replaced listed only three of the four; `EF_CRED_CTR` (0xC001), rewritten on
 // every getAssertion, was the one it missed.
+//
+// The selector below is `% FIDS.len()`, not `& 7`: three bits index 0..7, so the
+// ninth entry — `0xCC01`, a counter FID — could never be written by any input,
+// while the sweep asserted it absent on every one of them. A whole partition
+// routing was in the roster and out of the reach of the fuzzer.
 const FIDS: [u16; 9] = [
     0xB000, 0xB001, 0xB002, 0xB003, 0xB004, 0xC000, 0xC001, 0x0093, 0xCC01,
 ];
@@ -140,12 +147,15 @@ fn new_storage(flash: SharedMock) -> TortureStorage {
 /// over the same flash bytes, because RAM does not survive a power cycle.
 struct MockDevice {
     shared: SharedMock,
+    /// How many boots this exec has needed. Reported, never asserted on.
+    boots: u32,
 }
 
 impl Device for MockDevice {
     type Storage = TortureStorage;
 
     fn boot(&mut self) -> Fs<TortureStorage> {
+        self.boots += 1;
         Fs::new(new_storage(self.shared.clone()))
     }
 
@@ -158,11 +168,63 @@ impl Device for MockDevice {
     }
 }
 
+/// One line per exec on stderr when `RSK_POWER_CUT_STATS` is set, for
+/// `scripts/fuzz-dimensions.py` to bucket over a whole corpus.
+///
+/// A diagnostic, not a check. Nothing in this tree gates on fuzz coverage —
+/// `scripts/fuzz-coverage.sh` has no coverage floor at all — and a reporter that
+/// looks like a gate is worse than none, because someone eventually believes it.
+/// Wasefire computes the same log-bucket histograms in Rust; here the axes are
+/// printed and the bucketing is a script, which keeps the histogram testable and
+/// the target free of anything that runs during fuzzing.
+fn report(
+    dirty: usize,
+    ops: u32,
+    fids: u32,
+    from: FlashStatsSnapshot,
+    dev: &MockDevice,
+    model: &PowerCutModel,
+) {
+    if std::env::var_os("RSK_POWER_CUT_STATS").is_none() {
+        return;
+    }
+    let stats = from.compare_to(dev.shared.flash.borrow().stats_snapshot());
+    eprintln!(
+        "power-cut-stats dirty={dirty} ops={ops} fids={fids} boots={} live={} \
+erases={} writes={} bytes_written={}",
+        dev.boots,
+        model.live(),
+        stats.erases,
+        stats.writes,
+        stats.bytes_written,
+    );
+}
+
 /// A payload of the requested length, tagged so a stale value cannot pass for a
 /// fresh one.
 fn payload(it: &mut impl Iterator<Item = u8>, tag: u8) -> Vec<u8> {
     let len = (it.next().unwrap_or(0) as usize).min(64);
     (0..len).map(|j| (j as u8) ^ tag).collect()
+}
+
+/// Scribble `len` bytes of the input over the front of the flash before the
+/// store has ever seen it, so the mount meets a storage it did not write.
+///
+/// Wasefire's `DirtyLength` dimension. Theirs then stops checking the model
+/// entirely ("should not crash but may misbehave"); ours keeps it, because the
+/// model can be *adopted* from whatever the first stable mount reports. What the
+/// store decides an invalid storage means is its own business; that it stays
+/// self-consistent and power-cut-safe from that point on is still a property, and
+/// it is the one this target is about.
+fn scribble(flash: &mut Mock, len: usize, seed: &[u8]) {
+    if len == 0 || seed.is_empty() {
+        return;
+    }
+    let bytes = flash.as_bytes_mut();
+    let len = len.min(bytes.len());
+    for (i, cell) in bytes[..len].iter_mut().enumerate() {
+        *cell = seed[i % seed.len()] ^ (i as u8).rotate_left(3);
+    }
 }
 
 fuzz_target!(|data: &[u8]| {
@@ -173,20 +235,42 @@ fuzz_target!(|data: &[u8]| {
         None,
         true,
     )));
+    // Two header bytes choose how much of the storage is invalid before init.
+    // Zero for most inputs — the clean-storage case has to stay the common one —
+    // and up to a page and a half otherwise, which crosses the first partition's
+    // page boundary where a half-written header hurts.
+    let dirty = match data.split_first() {
+        Some((&head, rest)) if head & 0x80 != 0 => {
+            let width = rest.first().copied().unwrap_or(0) as usize;
+            width * 24
+        }
+        _ => 0,
+    };
+    scribble(&mut flash.borrow_mut(), dirty, data);
     let mut dev = MockDevice {
         shared: SharedMock {
             flash: flash.clone(),
             dead: Rc::new(Cell::new(false)),
         },
+        boots: 0,
     };
     let mut fs = Fs::new(new_storage(dev.shared.clone()));
     fs.scan();
     let mut model = PowerCutModel::new(&FIDS, META_MAX);
+    if dirty > 0 {
+        // Whatever the store made of the garbage is the committed truth from here.
+        model.adopt(&mut dev, &mut fs);
+    }
     let mut tag: u8 = 0;
+    let (mut ops, mut touched) = (0u32, 0u16);
+    let from = flash.borrow().stats_snapshot();
 
     let mut it = data.iter().copied();
     while let Some(b) = it.next() {
-        let fid = FIDS[((b >> 3) & 7) as usize];
+        ops += 1;
+        let index = (b >> 3) as usize % FIDS.len();
+        let fid = FIDS[index];
+        touched |= 1 << index;
         tag = tag.wrapping_add(0x35);
 
         // Bit 6 arms the power cut: the budget (in flash bytes touched by
@@ -216,4 +300,5 @@ fuzz_target!(|data: &[u8]| {
         };
         model.step(&mut dev, &mut fs, op);
     }
+    report(dirty, ops, touched.count_ones(), from, &dev, &model);
 });
