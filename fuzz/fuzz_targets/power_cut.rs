@@ -17,27 +17,22 @@
 //! `compact` (the scrub lap went unfuzzed), and one counter FID missing from the
 //! routing. Torturing the shipped code removes that whole class of doubt.
 //!
-//! The fuzzer drives Fs/meta ops with a shadow model and arms a cut budget at
-//! chosen points. Once a cut fires, a `dead` latch fails every further
-//! mutation until "reboot" — a dead device cannot keep writing (`Fs::delete`
-//! swallows the `meta_delete` error and would otherwise continue). On reboot
-//! the whole stack is rebuilt with FRESH caches (RAM does not survive) over
-//! the same flash bytes, and the model is checked: the interrupted operation
-//! may have landed or not (atomicity — old or new value, never garbage, and
-//! for `delete` never value-gone-but-meta-alive, the inverse of its documented
-//! order), every *committed* file must read back exactly (durability — a
-//! spurious `None` here is the on-device "seed lost, regenerate" disaster),
-//! and the live key set must match. Cuts landing inside the post-cut repair
-//! or the next mount are themselves survived by rebooting again.
+//! What is left here is the *medium*: a mock NOR chip that can lose power inside
+//! a write or an erase, and the decoder that turns fuzzer bytes into operations.
+//! The oracle — the shadow model, the legal post-cut states, the durability
+//! sweep — is [`rsk_fs::powercut`], where a unit test and the emulator can reach
+//! it too. It lived in this file for as long as it did only because nobody moved
+//! it, and that made every property it asserts reachable by fuzzing and by
+//! nothing else.
 
 use std::cell::{Cell, RefCell};
-use std::collections::{BTreeSet, HashMap};
 use std::rc::Rc;
 
 use embassy_futures::block_on;
 use embedded_storage_async::nor_flash::{ErrorType, MultiwriteNorFlash, NorFlash, ReadNorFlash};
 use libfuzzer_sys::fuzz_target;
-use rsk_fs::{EF_META, Fs};
+use rsk_fs::Fs;
+use rsk_fs::powercut::{Device, Op, PowerCutModel};
 use rsk_store::SeqStorage;
 use sequential_storage::cache::Cache;
 use sequential_storage::cache::key_pointers::ArrayKeyPointers;
@@ -51,10 +46,15 @@ const PAGE_WORDS: usize = 1024;
 type Mock = MockFlashBase<12, WORD, PAGE_WORDS>;
 const MAIN_RANGE: core::ops::Range<u32> = 0..(8 * 4096);
 const COUNTER_RANGE: core::ops::Range<u32> = (8 * 4096)..(12 * 4096);
-const META_MAX: usize = 1024;
 
 type MainCache = Cache<ArrayPageStates<8>, ArrayPagePointers<8>, ArrayKeyPointers<u16, 32>, u16>;
 type CounterCache = Cache<ArrayPageStates<4>, ArrayPagePointers<4>, ArrayKeyPointers<u16, 4>, u16>;
+
+/// `fs.rs`'s private `META_MAX`: what `EF_META` holds in total. The model needs
+/// it to predict whether a rebuilt blob would have fit; widening the crate's own
+/// constant would be a change to a file the firmware compiles, for a testing
+/// convenience, so it is passed in — as this target has always spelled it.
+const META_MAX: usize = 1024;
 
 // Five main-partition FIDs plus every counter-routed one
 // (`rsk_store::is_counter_fid`) — both partitions get torn. The mirror this
@@ -136,139 +136,33 @@ fn new_storage(flash: SharedMock) -> TortureStorage {
     )
 }
 
-/// What the power cut interrupted — the only operation whose outcome is
-/// allowed to be ambiguous after the reboot.
-enum Pending {
-    Put(u16, Vec<u8>),
-    Delete(u16),
-    MetaAdd(u16, Vec<u8>, bool),
-    MetaDelete(u16),
+/// The mock chip as a whole device: a boot rebuilds the store with FRESH caches
+/// over the same flash bytes, because RAM does not survive a power cycle.
+struct MockDevice {
+    shared: SharedMock,
 }
 
-/// Reboot until a mount + full model check completes without a (re-armed or
-/// repair-triggered) cut, resolving `pending` ambiguity on the first stable
-/// observation. The cut budget self-disarms when it fires, so this loop
-/// terminates.
-fn reboot_verify(
-    shared: &SharedMock,
-    fs: &mut Fs<TortureStorage>,
-    val: &mut HashMap<u16, Vec<u8>>,
-    meta: &mut HashMap<u16, Vec<u8>>,
-    mut pending: Option<Pending>,
-) {
-    loop {
-        shared.dead.set(false);
-        *fs = Fs::new(new_storage(shared.clone()));
-        fs.scan();
-        if shared.dead.get() {
-            continue; // the cut landed inside the mount/repair — die again
-        }
+impl Device for MockDevice {
+    type Storage = TortureStorage;
 
-        // Resolve the interrupted op from what the flash actually holds.
-        let mut buf = [0u8; 256];
-        match &pending {
-            Some(Pending::Put(f, new)) => {
-                let got = fs.read(*f, &mut buf).map(|n| buf[..n.min(256)].to_vec());
-                let old = val.get(f).cloned();
-                assert!(
-                    got == old || got.as_deref() == Some(new),
-                    "torn put: neither old nor new"
-                );
-                match got {
-                    Some(v) => val.insert(*f, v),
-                    None => val.remove(f),
-                };
-            }
-            Some(Pending::Delete(f)) => {
-                let got_v = fs.read(*f, &mut buf).map(|n| buf[..n.min(256)].to_vec());
-                let mut mb = [0u8; 256];
-                let got_m = fs.meta_find(*f, &mut mb).map(|n| mb[..n.min(256)].to_vec());
-                let old_v = val.get(f).cloned();
-                let old_m = meta.get(f).cloned();
-                // delete drops meta FIRST: value-gone-but-meta-alive is the
-                // one state the order forbids.
-                let ok = (got_v == old_v && (got_m == old_m || got_m.is_none()))
-                    || (got_v.is_none() && got_m.is_none());
-                assert!(ok, "torn delete: forbidden intermediate state");
-                match got_v {
-                    Some(v) => val.insert(*f, v),
-                    None => val.remove(f),
-                };
-                match got_m {
-                    Some(m) => meta.insert(*f, m),
-                    None => meta.remove(f),
-                };
-            }
-            Some(Pending::MetaAdd(f, new, fits)) => {
-                let mut mb = [0u8; 256];
-                let got = fs.meta_find(*f, &mut mb).map(|n| mb[..n.min(256)].to_vec());
-                let old = meta.get(f).cloned();
-                assert!(
-                    got == old || (*fits && got.as_deref() == Some(new)),
-                    "torn meta_add: neither old nor new"
-                );
-                match got {
-                    Some(m) => meta.insert(*f, m),
-                    None => meta.remove(f),
-                };
-            }
-            Some(Pending::MetaDelete(f)) => {
-                let mut mb = [0u8; 256];
-                let got = fs.meta_find(*f, &mut mb).map(|n| mb[..n.min(256)].to_vec());
-                let old = meta.get(f).cloned();
-                assert!(got == old || got.is_none(), "torn meta_delete: garbage");
-                match got {
-                    Some(m) => meta.insert(*f, m),
-                    None => meta.remove(f),
-                };
-            }
-            None => {}
-        }
-        if shared.dead.get() {
-            continue; // a repair write inside the resolution reads was cut
-        }
-        pending = None; // resolved against stable flash — now committed
-
-        // Durability sweep: every committed file and meta record must read
-        // back exactly; the key set must be the model's (EF_META may linger
-        // physically after the last meta record's delete was cut).
-        let mut clean = true;
-        for f in FIDS {
-            let got = fs.read(f, &mut buf).map(|n| buf[..n.min(256)].to_vec());
-            let mut mb = [0u8; 256];
-            let got_m = fs.meta_find(f, &mut mb).map(|n| mb[..n.min(256)].to_vec());
-            if shared.dead.get() {
-                clean = false;
-                break;
-            }
-            assert_eq!(got, val.get(&f).cloned(), "committed file lost or changed");
-            assert_eq!(
-                got_m,
-                meta.get(&f).cloned(),
-                "committed meta lost or changed"
-            );
-        }
-        if !clean {
-            continue;
-        }
-        let mut live = BTreeSet::new();
-        fs.for_each_key(&mut |k| {
-            live.insert(k);
-        });
-        if shared.dead.get() {
-            continue;
-        }
-        let want: BTreeSet<u16> = val.keys().copied().collect();
-        assert!(live.is_superset(&want), "committed key missing after cut");
-        assert!(
-            live.difference(&want).all(|&k| k == EF_META),
-            "unexpected key after cut"
-        );
-        if !meta.is_empty() {
-            assert!(live.contains(&EF_META));
-        }
-        return;
+    fn boot(&mut self) -> Fs<TortureStorage> {
+        Fs::new(new_storage(self.shared.clone()))
     }
+
+    fn dead(&self) -> bool {
+        self.shared.dead.get()
+    }
+
+    fn revive(&mut self) {
+        self.shared.dead.set(false);
+    }
+}
+
+/// A payload of the requested length, tagged so a stale value cannot pass for a
+/// fresh one.
+fn payload(it: &mut impl Iterator<Item = u8>, tag: u8) -> Vec<u8> {
+    let len = (it.next().unwrap_or(0) as usize).min(64);
+    (0..len).map(|j| (j as u8) ^ tag).collect()
 }
 
 fuzz_target!(|data: &[u8]| {
@@ -279,16 +173,15 @@ fuzz_target!(|data: &[u8]| {
         None,
         true,
     )));
-    let dead = Rc::new(Cell::new(false));
-    let shared = SharedMock {
-        flash: flash.clone(),
-        dead: dead.clone(),
+    let mut dev = MockDevice {
+        shared: SharedMock {
+            flash: flash.clone(),
+            dead: Rc::new(Cell::new(false)),
+        },
     };
-    let mut fs = Fs::new(new_storage(shared.clone()));
+    let mut fs = Fs::new(new_storage(dev.shared.clone()));
     fs.scan();
-
-    let mut val: HashMap<u16, Vec<u8>> = HashMap::new();
-    let mut meta: HashMap<u16, Vec<u8>> = HashMap::new();
+    let mut model = PowerCutModel::new(&FIDS, META_MAX);
     let mut tag: u8 = 0;
 
     let mut it = data.iter().copied();
@@ -300,8 +193,8 @@ fuzz_target!(|data: &[u8]| {
         // writes/erases) decides where inside the op — or a later one, or the
         // next mount's repair — the lights go out.
         if b & 0x40 != 0 {
-            let m = flash.borrow().bytes_until_shutoff.is_none();
-            if m && !dead.get() {
+            let unarmed = flash.borrow().bytes_until_shutoff.is_none();
+            if unarmed && !dev.shared.dead.get() {
                 let hi = it.next().unwrap_or(0);
                 let lo = it.next().unwrap_or(64);
                 flash.borrow_mut().bytes_until_shutoff =
@@ -309,110 +202,18 @@ fuzz_target!(|data: &[u8]| {
             }
         }
 
-        let mut pending = None;
-        match b & 7 {
-            0 => {
-                let len = (it.next().unwrap_or(0) as usize).min(64);
-                let v: Vec<u8> = (0..len).map(|j| (j as u8) ^ tag).collect();
-                let r = fs.put(fid, &v);
-                if !dead.get() {
-                    r.unwrap();
-                    val.insert(fid, v);
-                } else {
-                    pending = Some(Pending::Put(fid, v));
-                }
-            }
-            1 => {
-                let cap = (it.next().unwrap_or(0) as usize).min(255);
-                let mut buf = [0u8; 255];
-                let got = fs.read(fid, &mut buf[..cap]);
-                if !dead.get() {
-                    match val.get(&fid) {
-                        Some(v) => {
-                            let n = got.expect("present file must read");
-                            assert_eq!(n, v.len());
-                            let m = n.min(cap);
-                            assert_eq!(&buf[..m], &v[..m]);
-                        }
-                        None => assert!(got.is_none()),
-                    }
-                }
-            }
-            2 => {
-                let r = fs.delete(fid);
-                if !dead.get() {
-                    r.unwrap();
-                    val.remove(&fid);
-                    meta.remove(&fid);
-                } else {
-                    pending = Some(Pending::Delete(fid));
-                }
-            }
-            3 => {
-                let len = (it.next().unwrap_or(0) as usize).min(64);
-                let v: Vec<u8> = (0..len).map(|j| (j as u8) ^ tag).collect();
-                let rebuilt: usize = meta
-                    .iter()
-                    .filter(|(f, _)| **f != fid)
-                    .map(|(_, m)| 4 + m.len())
-                    .sum::<usize>()
-                    + 4
-                    + len;
-                let fits = rebuilt <= META_MAX;
-                let r = fs.meta_add(fid, &v);
-                if !dead.get() {
-                    if fits {
-                        r.unwrap();
-                        meta.insert(fid, v);
-                    } else {
-                        assert!(r.is_err());
-                    }
-                } else {
-                    pending = Some(Pending::MetaAdd(fid, v, fits));
-                }
-            }
-            4 => {
-                let mut out = [0u8; 64];
-                let got = fs.meta_find(fid, &mut out);
-                if !dead.get() {
-                    match meta.get(&fid) {
-                        Some(v) => {
-                            let n = got.expect("present meta must be found");
-                            assert_eq!(n, v.len());
-                            let m = n.min(out.len());
-                            assert_eq!(&out[..m], &v[..m]);
-                        }
-                        None => assert!(got.is_none()),
-                    }
-                }
-            }
-            5 => {
-                let r = fs.meta_delete(fid);
-                if !dead.get() {
-                    r.unwrap();
-                    meta.remove(&fid);
-                } else {
-                    pending = Some(Pending::MetaDelete(fid));
-                }
-            }
-            6 => {
-                // Clean reboot — same full re-mount and model check.
-                reboot_verify(&shared, &mut fs, &mut val, &mut meta, None);
-                continue;
-            }
-            _ => {
-                if !dead.get() {
-                    let mut buf = [0u8; 0];
-                    match val.get(&fid) {
-                        Some(v) => assert_eq!(fs.read(fid, &mut buf), Some(v.len())),
-                        None => assert_eq!(fs.read(fid, &mut buf), None),
-                    }
-                }
-            }
-        }
-
-        if dead.get() {
-            reboot_verify(&shared, &mut fs, &mut val, &mut meta, pending);
-        }
+        let op = match b & 7 {
+            0 => Op::Put(fid, payload(&mut it, tag)),
+            1 => Op::Read(fid, (it.next().unwrap_or(0) as usize).min(255)),
+            2 => Op::Delete(fid),
+            3 => Op::MetaAdd(fid, payload(&mut it, tag)),
+            4 => Op::MetaFind(fid),
+            5 => Op::MetaDelete(fid),
+            6 => Op::Reboot,
+            // A zero-length buffer: the length a present file reports must not
+            // depend on there being room for it.
+            _ => Op::Read(fid, 0),
+        };
+        model.step(&mut dev, &mut fs, op);
     }
 });

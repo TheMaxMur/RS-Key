@@ -10,6 +10,11 @@
 //! ranges and access control, so `Fs` is a plain typed KV store.
 
 pub mod fs;
+// The power-cut oracle. Its rules are `no_std` so `cargo kani` can prove them;
+// the driver that runs them against a real `Fs` needs a heap and is behind
+// `test-util`, which only `[dev-dependencies]` entries turn on.
+#[cfg(any(test, feature = "test-util", kani))]
+pub mod powercut;
 pub mod sealed;
 pub mod storage;
 

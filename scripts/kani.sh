@@ -32,10 +32,11 @@ cd "$(dirname "$0")/.."
 # --- the tiers ---------------------------------------------------------------
 #
 # FAST: every crate whose whole harness set discharges in under a minute a
-# harness. Measured 2026-08-13 on kani 0.67.0 under load — 45 harnesses, 200 s of
+# harness. Measured 2026-08-13 on kani 0.67.0 under load — 49 harnesses, 200 s of
 # solving all told, the slowest three being `rsk-piv::set_protected…` at 45 s,
 # `rsk-led::every_block_length…` at 44 s and `indices_in_range` at 29 s. The
-# `rsk-device` six (the presence arbitration) cost 3 s together.
+# `rsk-device` six (the presence arbitration) cost 3 s together, and the four
+# `rsk-fs::powercut` rules 0.5 s.
 # `--harness-timeout 5m` below is the tripwire on that claim: a harness that
 # grows past it fails the PR row rather than quietly making every pull request
 # wait, and the answer is to move its crate to SLOW, not to raise the cap.
@@ -61,9 +62,9 @@ STATEFUL="rsk-fido rsk-fs"
 # too: a rename or a deleted `#[cfg(kani)]` hook that takes harnesses away
 # silently. Raise these in the commit that adds a harness; lower one only in the
 # commit that removes one.
-FLOOR_pr=45
-FLOOR_state=4
-FLOOR_all=60
+FLOOR_pr=49
+FLOOR_state=8
+FLOOR_all=64
 
 # The per-harness cap. Not per row — Kani runs the rest and fails at the end — so
 # it bounds one non-convergent proof, never the tier.
