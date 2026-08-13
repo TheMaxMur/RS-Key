@@ -22,13 +22,17 @@ JAR=${TLA2TOOLS_JAR:-/nix/store/kvrhq0951riz03ffwiskcyr0dymg6k5g-tla2tools.jar}
 JAVA=${JAVA:-$(command -v java)}
 WORKERS=${WORKERS:-2}
 HEAP=${HEAP:-4g}
-SPEC=RSKeySecurityState
 
 [ -r "$JAR" ] || { echo "tla2tools.jar not found at $JAR" >&2; exit 2; }
 [ -n "$JAVA" ] || { echo "no java on PATH" >&2; exit 2; }
 
+# Which module a configuration belongs to: the seam configs are the second
+# module's, and TLC takes the module name rather than reading it from the cfg.
+spec_for() { case "$1" in Seam*) echo RSKeyAppletSeams ;; *) echo RSKeySecurityState ;; esac; }
+
 one() {
-  local cfg=$1 log="out/${1%.cfg}.log"
+  local cfg=$1 log="out/${1%.cfg}.log" SPEC
+  SPEC=$(spec_for "$cfg")
   mkdir -p out
   local t0 t1
   t0=$(date +%s)
@@ -41,7 +45,17 @@ one() {
   depth=$(grep -oE 'depth of the complete state graph search is [0-9]+' "$log" \
             | tail -1 | grep -oE '[0-9]+$')
   if grep -q 'Model checking completed. No error has been found' "$log"; then
-    verdict="GREEN"
+    # A GREEN run over a state space that never took a step is not a pass, it is
+    # a spec nothing enabled -- which is how `Seams.cfg` first came back GREEN
+    # over ONE distinct state, on a conjunct that TLA+ precedence had turned into
+    # an extra guard (`fresh' = x /\ fresh` is `(fresh' = x) /\ fresh`). Every
+    # invariant holds vacuously there. Two is the floor because it is not a
+    # judgement call: below it the Next relation fired nothing at all.
+    if [ "${distinct:-0}" -lt 2 ] || [ "${depth:-0}" -lt 2 ]; then
+      verdict="VACUOUS: nothing was enabled"
+    else
+      verdict="GREEN"
+    fi
   else
     verdict="RED: $(grep -oE 'Invariant [A-Za-z]+ is violated' "$log" | head -1 \
                      | sed 's/Invariant //; s/ is violated//')"
@@ -59,6 +73,9 @@ if [ "${1:-}" = "all" ]; then
   for f in Solo_*.cfg; do one "$f"; done  # mutant vs its own target only
   one Liveness.cfg                        # the three temporal properties, and
   for f in LiveMut_*.cfg; do one "$f"; done # one mutant per property
+  one Seams.cfg                           # the second module: the applet seams
+  for f in SeamMut_*.cfg; do one "$f"; done
+  for f in SeamSolo_*.cfg; do one "$f"; done
   # Liveness_Full.cfg is NOT here: 1475 s for the same verdict the reduced
   # constants give in 139 s. Run it by hand when the reduction is questioned.
 else

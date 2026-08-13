@@ -474,6 +474,90 @@ at least once in the green run — no zero-total row in
 question `kani::cover` answers on the Kani side: a transition that never fires
 makes every clause guarding it free.
 
+## The second module — `RSKeyAppletSeams.tla`
+
+`RSKeySecurityState.tla` is all FIDO. The applets' own security statuses —
+PIV's PIN / PUK / management key and its `pin_fresh`, OpenPGP's PW1 / PW2 / PW3,
+OATH's access code and OTP PIN — live in `RSKeyAppletSeams.tla`, and it models
+**the seams only**: who holds which status, and what ends it. None of the three
+command sets is in it, because the defects have not been in the command sets.
+
+### Why a second module and not more variables in the first
+
+Because the two state machines share no variable, and that is measured rather
+than assumed. The CCID side owns a `Dispatcher` and the only instances of
+openpgp / oath / piv / otp / management / rescue / vendor
+(`crates/rsk-device/src/ccid.rs:86-102`); the CTAPHID side owns a **separate**
+`Dispatcher` whose applet array is literally one element, its own `VendorApplet`
+(`crates/rsk-device/src/ctap.rs:160-164`). PIV, OpenPGP and OATH are not
+reachable over CTAPHID at all, so no status can be established on one transport
+and honoured on the other. A product of the two models would multiply 17 M
+states by this one's 205 and buy exactly zero new interleavings. What they do
+share — one flash, one button — appears here as events (`FactoryWipe`,
+`PowerCycle`), and that is stated in the module as the abstraction it is.
+
+### What it asserts
+
+| Invariant | What it asserts | The Rust that owns it |
+|---|---|---|
+| `NoStatusOutsideItsSelection` | An applet holds a security status only while it is the **selected** applet. Structural — it reads straight out of the state | `crates/rsk-sdk/src/applet.rs:374-390` (the one place that decides what a selection does to the applet that was current) · `crates/rsk-piv/src/lib.rs:153-157` · `crates/rsk-openpgp/src/pin.rs:67-80` · `crates/rsk-oath/src/lib.rs:1200-1204` · `crates/rsk-device/src/ccid.rs:327-342` (the ICC power transition) |
+| `NoStatusAfterARefusedAuth` | A reference whose authentication was just refused is not authenticated | `crates/rsk-piv/src/lib.rs:140-143` · `crates/rsk-openpgp/src/pin.rs:158-170` · `crates/rsk-oath/src/lib.rs:1148-1149` |
+| `NoKeyOpOnTheAdminStatus` | No key operation runs on a status its own specification does not name | `crates/rsk-openpgp/src/pso.rs:80-92` · `crates/rsk-openpgp/src/internalaut.rs:45-48` · `crates/rsk-piv/src/auth.rs:58-66`, `:114-118` |
+| `ReselectPreservesAccessStatus` | A re-SELECT of the same AID changes no access status. **A conformance claim, labelled as one** | `crates/rsk-piv/src/lib.rs:319-322` · `crates/rsk-openpgp/src/lib.rs:357-360` |
+
+The fourth one points the other way from the first three and that is why it is
+separate: `637ed98` **widened** the authentication window, so no safety
+invariant here can see it, and without a property of its own the switch that
+rebuilds the pre-`637ed98` tree would be a mutant nothing catches. Its authority
+is SP 800-73-4 pt 2 §3.1.1 (a `shall`), OpenPGP 3.4.1 §4.2, and a YubiKey 5.7.4
+measured keeping every status through a re-SELECT on both applets.
+
+**There is no cross-applet rule for what a refused authentication costs, and
+writing one would have made the shipped tree red for two deliberate reasons.**
+PIV's `CHANGE REFERENCE DATA` takes no `&mut Session` at all
+(`crates/rsk-piv/src/lib.rs:494-518`) — SP 800-73-4 and a measured YubiKey both
+keep the status through a refused change. OATH's access-code `VALIDATE` keeps
+the standing unlock too (`crates/rsk-oath/src/lib.rs:539-541`), because a MAC
+challenge-response has no retry counter for a refusal to protect. OATH's OTP-PIN
+`CHANGE` **does** drop it (`aa47867`), and OpenPGP's refused CHANGE clears the
+addressed reference. Three applets, three rules, each settled by a different
+authority — so `NoStatusAfterARefusedAuth` is keyed on the reference the model's
+own actions report as refused, and the two exempt actions deliberately report
+nothing.
+
+| Mutation switch | Rebuilds | Target invariant | Caught in |
+|---|---|---|---|
+| `BugSelectKeepsOtherApplet` | `crates/rsk-sdk/src/applet.rs:379-387` — the `deselect` a select of a *different* AID runs | `NoStatusOutsideItsSelection` | 27 states |
+| `BugReselectResetsStatus` | `637ed98` taken back out: PIV and OpenPGP resetting on every select | `ReselectPreservesAccessStatus` | 42 states |
+| `BugCardResetKeepsStatus` | `crates/rsk-device/src/ccid.rs:327-342` — the ICC power transition | `NoStatusOutsideItsSelection` | 29 states |
+| `BugAdminOpensKeyOps` | `e5da38b` taken back out: PW3 standing in for PW1/PW2 | `NoKeyOpOnTheAdminStatus` | 67 states |
+| `BugFailedChangeKeepsStatus` | `aa47867` taken back out: a refused OTP-PIN change that leaves the safe open | `NoStatusAfterARefusedAuth` | 74 states |
+| `BugPinFreshNotSpent` | `crates/rsk-piv/src/auth.rs:114-118` — one VERIFY, one key operation | `NoKeyOpOnTheAdminStatus` | 83 states |
+
+`Seams.cfg` is **GREEN, exhaustive, 2 858 states generated / 205 distinct at
+depth 9**, and 6 of 6 mutants are caught by the invariant that names them.
+
+**One of those six needed the property repaired first, and it is the useful
+result.** `BugPinFreshNotSpent` ran **green** as written: stopping `pin_fresh`
+from being spent also leaves the Policy that reads `pin_fresh` satisfied, so a
+second key operation on one VERIFY looked legal to the invariant that was meant
+to forbid it. The repair is a ghost `pfresh` — the freshness the *requirement*
+leaves behind, always spent — beside the `fresh` the Rust holds. The two are
+equal in every state of the shipped tree (`Seams.cfg`'s 205 distinct states are
+bit-identical before and after), and they diverge only under the mutant, which
+now falls in 83.
+
+### And a `GREEN` verdict that meant nothing
+
+`Seams.cfg` first came back **GREEN over one distinct state at depth 1**, with
+every invariant holding vacuously, because `fresh' = held'["pivPin"] /\ fresh`
+is `(fresh' = held'["pivPin"]) /\ fresh` — `=` binds tighter than `/\` in
+TLA+ — which turned an assignment into an extra guard and disabled both SELECT
+actions. `run-tlc.sh` now reports `VACUOUS: nothing was enabled` instead of
+`GREEN` when a passing run has fewer than 2 distinct states or a depth below 2.
+Two is not a judgement call: below it the `Next` relation fired nothing at all.
+Mutation-tested by putting the parentheses back and watching the row change.
+
 ## Traceability — measured, not asserted
 
 The point of naming the invariants was that one property should be greppable

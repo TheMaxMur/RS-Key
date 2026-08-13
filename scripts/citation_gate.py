@@ -84,7 +84,11 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 #: The pages that carry citations. Both, because the README's invariant table is
 #: what a reader consults first and it cites more finely than the model does.
-PAGES = (pathlib.Path("formal/RSKeySecurityState.tla"), pathlib.Path("formal/README.md"))
+PAGES = (
+    pathlib.Path("formal/RSKeySecurityState.tla"),
+    pathlib.Path("formal/RSKeyAppletSeams.tla"),
+    pathlib.Path("formal/README.md"),
+)
 
 #: Where a bare basename is looked up, in order. The model's subject first.
 SEARCH = (
@@ -116,7 +120,7 @@ AMBIGUOUS = {
 #: longer fires is stale and fails, so each one ends when its citation is fixed.
 PENDING: dict[str, str] = {}
 
-#: Below this a page is not citing, it is failing to be parsed. Today: 107 and 68.
+#: Below this a page is not citing, it is failing to be parsed. Today: 111, 40, 82.
 FLOOR = 25
 
 #: `path.rs:12`, `path.rs:12-20`, `path.rs:12-20, 44`, and the continuation

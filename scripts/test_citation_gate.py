@@ -37,12 +37,33 @@ VARIABLES
 ====
 """
 
+#: Every page `PAGES` names that a case does not drive. It has to clear the
+#: citation FLOOR, because a page that cites nothing is itself a problem.
+STUB = """\\* a page this case does not drive (clientpin.rs:2, clientpin.rs:4-6)
+"""
+
 PAGE = """# The model
 
 | invariant | where |
 |---|---|
 | `NoDrift` | `crates/rsk-fido/src/`: `clientpin.rs:4-6` · `:8` |
 """
+
+
+#: The two pages the cases below drive: the `.tla` one carries the citations a
+#: case edits, the `.md` one the continuation forms. Resolved by SUFFIX rather
+#: than by position — `PAGES` grew a third entry when the applet-seams module
+#: landed, and `PAGES[1]` silently became a different page, which failed six
+#: cases at once. Every other page in the tuple is written out as a stub so a
+#: run over the fixture is not complaining about a page that is simply absent.
+def _page(name):
+    hits = [p for p in citation_gate.PAGES if p.name == name]
+    assert len(hits) == 1, f"{name} is not one of {citation_gate.PAGES}"
+    return hits[0]
+
+
+MODEL_PAGE = _page("RSKeySecurityState.tla")
+PROSE_PAGE = _page("README.md")
 
 
 class Tree:
@@ -56,8 +77,10 @@ class Tree:
         self.write("crates/rsk-usb/src/ctaphid.rs", CODE)
         self.write("crates/rsk-fs/src/lib.rs", CODE)
         self.write("firmware/src/main.rs", CODE)
-        self.write(citation_gate.PAGES[0], MODEL)
-        self.write(citation_gate.PAGES[1], PAGE)
+        for page in citation_gate.PAGES:
+            self.write(page, STUB)
+        self.write(MODEL_PAGE, MODEL)
+        self.write(PROSE_PAGE, PAGE)
         subprocess.run(["git", "-C", str(root), "init", "-q"], check=True)
 
     def write(self, rel, text):
@@ -116,12 +139,12 @@ def test_a_cited_file_that_is_gone(tree):
 
 
 def test_a_line_past_the_end_of_the_file(tree):
-    tree.edit(citation_gate.PAGES[0], "state.rs:4-6", "state.rs:4-600")
+    tree.edit(MODEL_PAGE, "state.rs:4-6", "state.rs:4-600")
     assert only(tree.problems(), "which has 8 lines")
 
 
 def test_a_range_that_runs_backwards(tree):
-    tree.edit(citation_gate.PAGES[0], "state.rs:4-6", "state.rs:6-4")
+    tree.edit(MODEL_PAGE, "state.rs:4-6", "state.rs:6-4")
     assert only(tree.problems(), "runs backwards")
 
 
@@ -133,39 +156,39 @@ def test_a_cited_line_that_drifted_onto_a_blank(tree):
 
 def test_a_continuation_that_binds_to_a_gone_file(tree):
     """`:8` inherits the file named before it, so it rots with that file."""
-    tree.edit(citation_gate.PAGES[1], "clientpin.rs:4-6", "clientpin.rs:400-600")
+    tree.edit(PROSE_PAGE, "clientpin.rs:4-6", "clientpin.rs:400-600")
     assert only(tree.problems(), "which has 8 lines")
 
 
 def test_a_bare_continuation_with_no_file_before_it(tree):
-    tree.edit(citation_gate.PAGES[1], "`clientpin.rs:4-6` · `:8`", "`:8`")
+    tree.edit(PROSE_PAGE, "`clientpin.rs:4-6` · `:8`", "`:8`")
     assert only(tree.problems(), "with no file named before it")
 
 
 def test_a_comma_list_is_read_through(tree):
-    tree.edit(citation_gate.PAGES[0], "clientpin.rs:2,4-6", "clientpin.rs:2,400")
+    tree.edit(MODEL_PAGE, "clientpin.rs:2,4-6", "clientpin.rs:2,400")
     assert only(tree.problems(), "which has 8 lines")
 
 
 def test_an_explicit_path_is_taken_literally(tree):
-    tree.edit(citation_gate.PAGES[0], "firmware/src/main.rs:2", "firmware/src/other.rs:2")
+    tree.edit(MODEL_PAGE, "firmware/src/main.rs:2", "firmware/src/other.rs:2")
     assert only(tree.problems(), "no such file is in the tree")
 
 
 def test_an_en_dash_does_not_swallow_the_upper_bound(tree):
     """A smart-dash substitution used to leave a single-line citation that passed."""
-    tree.edit(citation_gate.PAGES[0], "state.rs:4-6", "state.rs:4\u20136000")
+    tree.edit(MODEL_PAGE, "state.rs:4-6", "state.rs:4\u20136000")
     assert only(tree.problems(), "which has 8 lines")
 
 
 def test_a_space_after_the_colon_still_counts(tree):
-    tree.edit(citation_gate.PAGES[0], "state.rs:4-6", "state.rs: 6000")
+    tree.edit(MODEL_PAGE, "state.rs:4-6", "state.rs: 6000")
     assert only(tree.problems(), "which has 8 lines")
 
 
 def test_line_zero_is_not_a_line(tree):
     """It passed both bounds checks and then asserted about `body[-1]`."""
-    tree.edit(citation_gate.PAGES[0], "state.rs:4-6", "state.rs:0")
+    tree.edit(MODEL_PAGE, "state.rs:4-6", "state.rs:0")
     assert only(tree.problems(), "names line 0")
 
 
@@ -173,8 +196,8 @@ def test_a_continuation_does_not_bind_across_lines(tree):
     """`seen` used to live for a whole page, so a bare `:1` bound to a file named
     hundreds of lines earlier and was silently checked against it."""
     tree.write(
-        citation_gate.PAGES[1],
-        (tree.root / citation_gate.PAGES[1]).read_text() + "\nA later sentence: `:1`.\n",
+        PROSE_PAGE,
+        (tree.root / PROSE_PAGE).read_text() + "\nA later sentence: `:1`.\n",
     )
     assert only(tree.problems(), "with no file named before it")
 
@@ -198,7 +221,7 @@ def test_a_registered_ambiguous_basename_is_allowed(tree):
 
 
 def test_a_page_that_is_gone(tree):
-    (tree.root / citation_gate.PAGES[1]).unlink()
+    (tree.root / PROSE_PAGE).unlink()
     assert only(tree.problems(), "is gone; the model")
 
 
@@ -234,7 +257,7 @@ def test_a_same_named_file_in_a_second_search_directory_is_reported(tree):
 
 def test_a_pending_entry_carries_its_citation(tree):
     debt = {"state.rs:4-600": "someone else's to re-point"}
-    tree.edit(citation_gate.PAGES[0], "state.rs:4-6", "state.rs:4-600")
+    tree.edit(MODEL_PAGE, "state.rs:4-6", "state.rs:4-600")
     assert tree.problems(pending=debt) == []
 
 
@@ -249,7 +272,7 @@ def test_a_pending_entry_that_no_longer_rots(tree):
 
 def test_a_page_that_stopped_citing(tree):
     """A regex that matches nothing loops over nothing and exits 0."""
-    tree.write(citation_gate.PAGES[0], "---- MODULE Probe ----\n====\n")
+    tree.write(MODEL_PAGE, "---- MODULE Probe ----\n====\n")
     assert only(tree.problems(), "under the floor")
 
 
