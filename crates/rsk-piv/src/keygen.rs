@@ -114,7 +114,11 @@ pub(crate) fn resolved_policies(
         Some(_) => return Err(WRONG_DATA),
     };
     let touch = match req_touch {
-        None => TOUCHPOLICY_ALWAYS,
+        // An ABSENT tag is "the card's default", and a YubiKey 5.7.4 resolves that
+        // to NEVER on every slot (measured, 3 runs × 4 slots). ALWAYS here made a
+        // plain `ykman piv keys generate` mint a key that hangs every scripted use
+        // waiting for a press nobody asked for; ask with `--touch-policy ALWAYS`.
+        None => TOUCHPOLICY_NEVER,
         Some(t @ (TOUCHPOLICY_NEVER | TOUCHPOLICY_ALWAYS | TOUCHPOLICY_CACHED)) => t,
         Some(_) => return Err(WRONG_DATA),
     };

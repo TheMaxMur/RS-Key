@@ -273,6 +273,24 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   lived — now reaches a Kani harness, taking the traceability table from two of
   six to three. Behaviour and wire surface unchanged; no `bcdDevice` bump.
 
+### Changed
+
+- **A PIV key generated without `--touch-policy` no longer demands a touch.** The
+  card resolved an absent touch tag to `ALWAYS`, so a plain
+  `ykman piv keys generate 9a pub.pem` minted a key that wanted a physical press
+  before every sign, decrypt and ECDH — and every unattended consumer (`pkcs11`,
+  `age-plugin`, SSH with a PIV key) then hung on a prompt nobody was there to
+  answer, with no diagnostic beyond a timeout. The one flag that would have
+  avoided it is the one the user did not pass. A YubiKey 5.7.4 resolves the same
+  absent tag to `NEVER`, measured three runs across all four primary slots, both
+  through `ykman` and through a raw `GENERATE` carrying no `AC` policy tags at
+  all. Ours does now, on every slot including the retired ones and the
+  trusted-display's own retired-slot generation. **Nothing is silently
+  downgraded**: an explicit `--touch-policy ALWAYS` or `CACHED` is stored and
+  enforced exactly as before, and keys already on a card keep the policy they were
+  generated with — this is the default for *new* keys only. If you want the press,
+  ask for it, which is also how you ask a YubiKey. **bcdDevice → 0x08D4.**
+
 ### Fixed
 
 - **`PUT DATA 5FC109` (PRINTED INFORMATION) stored nothing and said `9000`.**

@@ -158,15 +158,12 @@ fn touch_policy_enforced_on_slot_sign() {
     // Management auth: default mgm touch is NEVER, so no touch is consulted.
     auth_mgm(&mut app, &mut fs);
     verify_pin(&mut app, &mut fs);
-    // Generate a P-256 key in 9A — default touch policy ALWAYS.
-    let (sw, _) = run(
-        &mut app,
-        &mut fs,
-        INS_ASYM_KEYGEN,
-        0,
-        0x9A,
-        &gen_template(ALGO_ECCP256),
-    );
+    // Generate a P-256 key in 9A asking for touch ALWAYS — the card's own default
+    // is NEVER, so the policy under test has to be named.
+    let mut tmpl = gen_template(ALGO_ECCP256);
+    tmpl.extend_from_slice(&[0xAB, 0x01, TOUCHPOLICY_ALWAYS]);
+    tmpl[1] += 3;
+    let (sw, _) = run(&mut app, &mut fs, INS_ASYM_KEYGEN, 0, 0x9A, &tmpl);
     assert_eq!(sw, Sw::OK);
     let (sw, md) = run(&mut app, &mut fs, INS_GET_METADATA, 0, 0x9A, &[]);
     assert_eq!(sw, Sw::OK);
@@ -2220,7 +2217,7 @@ fn keygen_p256_sign_and_verify() {
     assert_eq!(find_tag(&md, 0x01).unwrap(), &[ALGO_ECCP256]);
     assert_eq!(
         find_tag(&md, 0x02).unwrap(),
-        &[PINPOLICY_ONCE, TOUCHPOLICY_ALWAYS]
+        &[PINPOLICY_ONCE, TOUCHPOLICY_NEVER]
     );
     assert_eq!(find_tag(&md, 0x03).unwrap(), &[ORIGIN_GENERATED]);
     let pk = find_tag(&md, 0x04).unwrap();
@@ -2536,8 +2533,11 @@ fn a_denied_touch_spends_no_pin_freshness() {
     select(&mut app, &mut fs);
     auth_mgm(&mut app, &mut fs);
     verify_pin(&mut app, &mut fs);
-    // 9A keeps the default touch policy ALWAYS; 9C is generated touch NEVER so the
-    // instrument itself never asks for one.
+    // 9A is generated touch ALWAYS (the card's default is NEVER); 9C touch NEVER
+    // so the instrument itself never asks for one.
+    let mut always = gen_template(ALGO_ECCP256);
+    always.extend_from_slice(&[0xAB, 0x01, TOUCHPOLICY_ALWAYS]);
+    always[1] += 3;
     assert_eq!(
         run(
             &mut app,
@@ -2545,7 +2545,7 @@ fn a_denied_touch_spends_no_pin_freshness() {
             INS_ASYM_KEYGEN,
             0,
             SLOT_AUTHENTICATION,
-            &gen_template(ALGO_ECCP256)
+            &always
         )
         .0,
         Sw::OK
@@ -4691,7 +4691,7 @@ fn policy_bytes_are_resolved_and_undefined_ones_refused() {
     // An ABSENT tag is what "default" means…
     assert_eq!(
         resolved_policies(0x9A, None, None).unwrap(),
-        [PINPOLICY_ONCE, TOUCHPOLICY_ALWAYS]
+        [PINPOLICY_ONCE, TOUCHPOLICY_NEVER]
     );
     assert_eq!(
         resolved_policies(SLOT_SIGNATURE, None, None).unwrap()[0],
@@ -4714,6 +4714,79 @@ fn policy_bytes_are_resolved_and_undefined_ones_refused() {
             assert_eq!(resolved_policies(0x9A, Some(p), Some(t)).unwrap(), [p, t]);
         }
     }
+}
+
+/// A GENERATE that names no touch policy takes the card's default, and the card's
+/// default is NEVER. Measured on a YubiKey 5.7.4, 3 runs × 4 slots, both through
+/// `ykman` and through a raw GENERATE with no `AC` policy tags at all: touch byte
+/// `0x01` every time. Ours resolved the same absent tag to ALWAYS, so a plain
+/// `ykman piv keys generate 9a` minted a key demanding a physical press on every
+/// private-key operation — scripted PIV use (pkcs11, age-plugin, SSH) hung on it
+/// with no diagnostic beyond a timeout, and the flag the user needed was the one
+/// they had not passed. Asked for explicitly, ALWAYS still means ALWAYS.
+#[test]
+fn a_generated_key_takes_the_cards_touch_default_which_is_never() {
+    use crate::keygen::resolved_policies;
+    for slot in [
+        SLOT_AUTHENTICATION,
+        SLOT_SIGNATURE,
+        SLOT_KEYMGM,
+        SLOT_CARDAUTH,
+        SLOT_RETIRED_FIRST,
+    ] {
+        assert_eq!(
+            resolved_policies(slot, None, None).unwrap()[1],
+            TOUCHPOLICY_NEVER,
+            "slot {slot:02X}"
+        );
+        assert_eq!(
+            resolved_policies(slot, None, Some(TOUCHPOLICY_ALWAYS)).unwrap()[1],
+            TOUCHPOLICY_ALWAYS,
+            "slot {slot:02X} asked for ALWAYS"
+        );
+    }
+    // End to end, against a presence that says no: a default-generated key signs
+    // anyway, because it never asks. Only the stored byte can make this pass.
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(Scripted { confirm: false });
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    let (sw, _) = run(
+        &mut app,
+        &mut fs,
+        INS_ASYM_KEYGEN,
+        0,
+        SLOT_AUTHENTICATION,
+        &gen_template(ALGO_ECCP256),
+    );
+    assert_eq!(sw, Sw::OK);
+    let (sw, meta) = run(
+        &mut app,
+        &mut fs,
+        INS_GET_METADATA,
+        0,
+        SLOT_AUTHENTICATION,
+        &[],
+    );
+    assert_eq!(sw, Sw::OK);
+    assert_eq!(&meta[3..6], &[0x02, 0x02, PINPOLICY_ONCE]);
+    assert_eq!(meta[6], TOUCHPOLICY_NEVER);
+    verify_pin(&mut app, &mut fs);
+    assert_eq!(sign_p256(&mut app, &mut fs, SLOT_AUTHENTICATION), Sw::OK);
+    // …and a slot generated with an explicit ALWAYS is refused by that same
+    // declining presence, so the assertion above is about the stored policy and
+    // not about the presence stub having stopped being asked at all.
+    let mut tmpl = gen_template(ALGO_ECCP256);
+    tmpl.extend_from_slice(&[0xAB, 0x01, TOUCHPOLICY_ALWAYS]);
+    tmpl[1] += 3;
+    let (sw, _) = run(&mut app, &mut fs, INS_ASYM_KEYGEN, 0, SLOT_KEYMGM, &tmpl);
+    assert_eq!(sw, Sw::OK);
+    assert_eq!(
+        sign_p256(&mut app, &mut fs, SLOT_KEYMGM),
+        Sw::SECURITY_STATUS_NOT_SATISFIED
+    );
 }
 
 #[test]

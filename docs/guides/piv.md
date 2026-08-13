@@ -189,15 +189,15 @@ uses anything up.
 
 | `--touch-policy` | Effect |
 |---|---|
-| `NEVER` | no button press (default for the `9b` management key) |
-| `ALWAYS` | a physical touch before every private-key operation (default for generated slot keys) |
+| `NEVER` | no button press — **the default**, for slot keys and the `9b` management key alike |
+| `ALWAYS` | a physical touch before every private-key operation |
 | `CACHED` | treated as `ALWAYS` on this device (see below) |
 
-Generated slot keys default to **touch ALWAYS**: each sign / decrypt / ECDH
-needs a button press. A declined touch fails the operation with `6982`. The
-management key ships **touch NEVER** so admin provisioning isn't gated; raise it
-with `ykman piv access change-management-key --touch` if you want admin actions
-to require a press too.
+Ask for the press and you get it on every sign / decrypt / ECDH, and a declined
+touch fails the operation with `6982`. Don't ask, and the key never prompts —
+which is what makes `pkcs11`, `age-plugin` and SSH usable unattended. Raise the
+management key's own policy with `ykman piv access change-management-key
+--touch` if you want admin actions gated too.
 
 > `CACHED` is treated as `ALWAYS`. The device has no wall clock, so it cannot
 > honour the 15-second touch cache a real YubiKey offers; it errs strict and
