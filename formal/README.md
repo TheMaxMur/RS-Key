@@ -495,7 +495,9 @@ Round two's "no, in two independent ways" was exact.
 | 27 × `Solo_*.cfg` | RED, each on its **own** target | 71 – 2 019 403 | 46 – 264 030 | 4 – 15 | ≤ 4 s |
 | `Solo_NoAccessibleSecretWithoutGate.cfg` | RED, the repaired clause | 2 950 708 | 454 454 | 16 | 6 s |
 | `Seams.cfg` (the second module) | **GREEN, exhaustive** | 9 309 | 666 | 12 | < 1 s |
-| 9 × `SeamMut_*.cfg` / 9 × `SeamSolo_*.cfg` | RED, each on its own target | 77 – 3 068 | 27 – 361 | 4 – 8 | ≤ 1 s |
+| 9 × `SeamMut_*.cfg` / 9 × `SeamSolo_*.cfg` | RED, each on its own target | 77 – 3 293 | 27 – 375 | 4 – 8 | ≤ 1 s |
+| `Liveness.cfg` (reduced constants) | **out of memory** at the 4 GB default, state search complete | 85 388 061 | 7 903 336 | 43 | 1500 s |
+| 3 × `LiveMut_*.cfg` | RED, each on its own property | 522 975 – 715 341 | 72 739 – 97 496 | — | 4 s |
 
 Only `ShippedFixed.cfg` is an exhaustive search; every RED row stops at the
 first counterexample, so its counts move a few percent between runs with the
@@ -917,17 +919,31 @@ That is why **`lock.soft ~> ~lock.soft` is not asserted.** The soft lock clears
 only on a correct PIN or a real power cycle, and neither is the device's to
 promise; asserting it would need `WF(PowerCut)`, which is a claim about the user.
 
-`Liveness.cfg` runs at **smaller constants than the safety matrix** — one
-relying party, one channel, `MaxRetries` 2 : `MismatchLimit` 1 — and the
-reduction is a parameter of the same generator function, not a hand-edited file.
-`Liveness_Full.cfg` is the same three properties at the safety matrix's own
-constants, so the price is measured rather than assumed — and the measurement is
-**15.7×**. Over the identical 6 664 764 distinct states, `Shipped.cfg` checks six
-invariants in 94 s and `Liveness_Full.cfg` checks three properties in **1475 s**;
-TLC builds a behaviour graph on top of the state graph (19 994 292 nodes here)
-and walks it for each temporal branch. Both are GREEN, so the reduction costs
-nothing in confidence at these constants — it costs 22 minutes of wall clock,
-which is why the routine configuration is the small one.
+### The liveness layer has outgrown its heap, and that is a number not a shrug
+
+`Liveness.cfg` runs at **smaller constants than the safety matrix** — one relying
+party, one channel, `MaxRetries` 2 : `MismatchLimit` 1 — and the reduction is a
+parameter of the same generator function, not a hand-edited file. Two rounds ago
+that config was 805 268 distinct states in 118 s, against `Liveness_Full.cfg`'s
+6 664 764 in 1475 s: a measured 15.7× for the same verdict, which is why the
+routine configuration is the small one.
+
+It is **7 903 336 distinct states now**, and the state graph is no longer the
+cost. TLC builds a behaviour graph on top of it — **23 710 008 nodes** — and at
+`run-tlc.sh`'s default 4 GB heap the final temporal check **runs out of memory**
+after 1500 s, with the state search already complete. So the reduced constants
+are no longer reduced enough, and the honest statement is that this layer now
+needs either a bigger heap or a smaller model than the one it is checking. The
+ceiling it reports is the JVM's, not TLC's: `HEAP=12g ./run-tlc.sh Liveness.cfg`
+is the first thing to try. `Liveness_Full.cfg`, the same properties over the
+safety matrix's 61 M states, is not attemptable there at all and was not
+attempted.
+
+The three `LiveMut_*` configs are unaffected and all three still fall on the
+property that names them, in 4 s each — a counterexample search halts long before
+the graph is built. What is lost while this stands is the **green** row: the
+mutants still prove the properties are falsifiable, and nothing currently proves
+they hold.
 
 There is still no `SYMMETRY` on `RPs`/`Channels`, which costs time and not
 soundness.
