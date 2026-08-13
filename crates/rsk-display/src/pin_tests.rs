@@ -1,6 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 RS-Key contributors
 
+//! ⚠️ These scripts count **polls**; `pin.rs` and `touch.rs` measure `Instant::now()`.
+//! Under load a poll outlasts `TOUCH_POLL_MS`, so a script sized at a fraction of
+//! `HOLD_MS` spans more wall-clock than it names and a hold completes where the
+//! test expects it not to. Three of them have been seen to fail that way inside a
+//! loaded `check.sh` and pass on every isolated re-run. Widening a script does not
+//! fix it and narrowing it removes what the assertion tests; the fix is a clock
+//! seam through the crate, which nothing has yet.
+
 use std::vec;
 
 use super::*;
