@@ -751,6 +751,18 @@ image answers `6D00`, and neither is part of the stable surface.
 (`CONFIG_WRITE`/`CONFIG_TARGET_LED`) is gated there too, so the vendor AID cannot be
 used to bypass it.
 
+**SET LED `0x10` is idempotent.** A request whose resulting 17-byte block already
+matches the stored `EF_LED_CONF` answers `9000` and writes no flash, exactly as the
+FIDO twin does. The LED is still applied live, so the two are indistinguishable from
+the host; what changes is the flash. Before this, a replayed SET LED appended
+**28.1 bytes of the main (credential) partition** every time — measured over the
+device's own store on the board's 352-page ring — rising to 117.0 / 203.8 B on a
+74.8 % / 85.2 % live ring, where reclaim had to migrate credential records past it.
+A record written by an *older* firmware (a 13/9/3/2-byte layout) is not a match and
+is upgraded on the next write. **This bounds the replay only**: the command stays
+ungated by default, so a host that varies the block on every call still churns
+those pages, as do the other ungated config writes beside it.
+
 **INCREMENT `0x01` gating:** user-presence-gated in every build. The applet answers
 on both CCID and CTAPHID, so ungated this was a flash-write primitive for anything
 that can open either interface — measured at ~390 writes/s, 16 bytes of the counter

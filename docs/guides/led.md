@@ -265,7 +265,8 @@ The firmware writes the block to `EF_LED_CONF` and reloads it on every boot,
 so your settings survive a power cycle but not an OpenPGP/FIDO factory reset
 (those don't touch this file). The `led.rs` module keeps per-status atomics
 that the render task reads live. SET LED updates them immediately, then
-persists the full block to flash.
+persists the full block to flash — unless the record already holds exactly that
+block, in which case it answers `9000` and leaves the flash alone.
 
 The touch rules above live in the block codec (`crates/rsk-led`), not in any one
 command handler, so they apply wherever a block is decoded: the CCID setter, the

@@ -201,6 +201,13 @@ impl<S: Storage, P: Platform> Applet<Fs<S>> for VendorApplet<'_, P> {
                 let Some(block) = block else {
                     return Sw::INS_NOT_SUPPORTED;
                 };
+                // A replay costs no flash — the guard run-27 gave the FIDO twin
+                // (CONFIG_TARGET_LED) and never swept here. Ungated on this AID,
+                // each identical write appended 28 B of the credential ring.
+                let mut cur = [0u8; CONF_LEN];
+                if fs.read(EF_LED_CONF, &mut cur) == Some(CONF_LEN) && cur == block {
+                    return Sw::OK;
+                }
                 if fs.put(EF_LED_CONF, &block).is_err() {
                     return Sw::MEMORY_FAILURE;
                 }

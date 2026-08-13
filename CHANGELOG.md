@@ -49,6 +49,26 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **A replayed vendor `SET LED` no longer writes flash.** `INS 10` on the vendor
+  AID persisted `EF_LED_CONF` on every call, including one that changed nothing —
+  the guard audit run-27 gave its FIDO twin (`CONFIG_WRITE`/`CONFIG_TARGET_LED`) in
+  `cad140e` and never swept to the CCID sibling, and the shape `persist_dev_conf`
+  already folds into the writer for the DeviceInfo record. It is ungated on the
+  default build and reachable over both CCID and CTAPHID, and `EF_LED_CONF` is
+  **not** a counter FID, so the churn landed in the main partition, where the
+  credentials live. Measured over the device's own store (`rsk_store::SeqStorage`
+  on the board's 352-page main ring), driving byte-identical APDUs: 28.1 B appended
+  per replay on an empty key, and 117.0 B / 203.8 B once the ring was 74.8% / 85.2%
+  live and reclaim had to migrate credential records past it — one main-page erase
+  per 35 and per 20 writes respectively. A replay now costs nothing at all. The LED
+  is still applied live before the comparison, so a host sees no difference; a
+  record written by an older firmware (13/9/3/2-byte layout) is not a match and is
+  still upgraded. **This bounds only the replay**: a host that varies the block on
+  every call still churns the same pages, on this command and on its ungated
+  siblings. Closing that means re-taking the ungated-by-default decision across
+  **both** writers of the record — `docs/protocol.md` §8 and
+  `docs/threat-model.md` §1 record it as deliberate ykman parity — so it is left
+  to the maintainer rather than half-applied here. **bcdDevice → 0x0950.**
 - **A PIV object id resolves by its whole value, not its low sixteen bits.**
   `object_fid` matched `id & 0xFFFF` for the two Yubico objects, so the 2-byte id
   `FF01` — and `00FF01`, `7FFF01`, `ABFF01` — all read the **attestation
