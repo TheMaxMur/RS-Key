@@ -88,6 +88,18 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   **both** writers of the record — `docs/protocol.md` §8 and
   `docs/threat-model.md` §1 record it as deliberate ykman parity — so it is left
   to the maintainer rather than half-applied here. **bcdDevice → 0x0950.**
+- **An open screen no longer holds up `rsk-emu`'s power cycle.** The harness's
+  replug — the emulator's stand-in for pulling the key out, and what a suite
+  needs to reopen the CTAP 2.1 §6.6 reset window — is answered by the device
+  thread, which an on-panel modal holds. It is not a host request, so nothing
+  made the modal yield to it: measured, **60.17 s** under an open Settings
+  screen, against `tests/emu.py`'s 5 s socket timeout, so a suite that resets
+  would have reported that it could not replug. It is counted apart from the
+  host requests now and the panel yields to it without the floor those wait —
+  the floor is against a host *repeating* a command, and there is no repetition
+  behind an operator pulling the key out. Nothing changes on a run without
+  `--display`.
+
 - **`rsk-emu --display`'s window keeps drawing while the panel generates an RSA
   key.** The panel is a *buffer* here where a board's is the glass: nothing the
   flow paints is on screen until the window is pushed, and the only thing that

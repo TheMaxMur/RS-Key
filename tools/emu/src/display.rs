@@ -301,16 +301,21 @@ impl rsk_display::Hooks for EmuDisplayHooks {
         self.links.attach.get().elapsed().as_millis() as u64
     }
     fn host_request_pending(&self) -> bool {
-        self.queued.any()
+        self.queued.any() || self.queued.unplugged()
     }
     /// The floor is the whole point and every modal exit poll uses this form: a
     /// bare [`rsk_display::Hooks::host_request_pending`] lets a host close a screen on
     /// its first poll, so a loop of any ungated command denies the on-device
     /// browse layer entirely (audit run-35).
+    ///
+    /// A queued power cycle skips it: the floor is against a host *repeating* a
+    /// command, and behind this one is the harness pulling the key out — which on
+    /// a board takes the screen with it at once and needs no yielding to.
     fn host_request_pending_after(&self, since: embassy_time::Instant) -> bool {
-        self.queued.any()
-            && since.elapsed()
-                >= embassy_time::Duration::from_millis(rsk_display::UI_YIELD_FLOOR_MS)
+        self.queued.unplugged()
+            || (self.queued.any()
+                && since.elapsed()
+                    >= embassy_time::Duration::from_millis(rsk_display::UI_YIELD_FLOOR_MS))
     }
     fn request_reboot(&mut self, _bootsel: bool) {
         self.reboot.set(true);

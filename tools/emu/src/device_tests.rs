@@ -265,11 +265,21 @@ fn a_queued_host_request_is_pending_only_until_the_device_takes_it() {
     let (reply, _answers) = mpsc::channel();
 
     for (job, counts, what) in every_job() {
-        assert!(!queued.any(), "the queue is empty before {what}");
+        // A power cycle is counted apart: it is not a host request, and the panel
+        // yields to it without the floor those get.
+        let unplug = matches!(job, Job::Replug);
+        assert!(
+            !queued.any() && !queued.unplugged(),
+            "the queue is empty before {what}"
+        );
         jobs.send(job, reply.clone()).unwrap();
         assert_eq!(queued.any(), counts, "{what}");
+        assert_eq!(queued.unplugged(), unplug, "{what}");
         source.try_next().expect("the job is there");
-        assert!(!queued.any(), "the pickup clears {what}");
+        assert!(
+            !queued.any() && !queued.unplugged(),
+            "the pickup clears {what}"
+        );
     }
 
     // Two outstanding, one taken: a count, not a flag. The transports are separate

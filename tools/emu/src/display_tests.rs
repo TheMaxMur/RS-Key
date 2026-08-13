@@ -640,6 +640,45 @@ fn an_open_menu_hands_the_executor_back_when_a_host_command_lands() {
     panel_bench(drive_menu_yield);
 }
 
+/// What the harness's power cycle may wait for an open menu. `tests/emu.py`'s
+/// `power_cycle()` gives the socket 5 s and then reports "could not replug", so a
+/// bound under it is the difference between a suite that runs under `--display`
+/// and one that cannot.
+const REPLUG_BOUND: Duration = Duration::from_secs(2);
+// It has to be under the floor as well, or a replug taking the host request path
+// would pass this too.
+const _: () = assert!(2_000 < rsk_display::UI_YIELD_FLOOR_MS);
+
+/// E191. A power cycle is not a host request — a board has no such job at all,
+/// and an operator pulling the key out takes the screen with it at once. So the
+/// panel hands the executor back for one without the floor a host command waits,
+/// where before it sat behind the modal for `MENU_INACTIVITY_MS`.
+fn drive_menu_replug(jobs: Jobs, taps: SyncSender<Tap>, _signals: Arc<Signals>) {
+    let skip = target(|p| rsk_ui::hit_onboard(p) == Some(rsk_ui::OnboardChoice::Skip));
+    push(&taps, Tap::at(skip.x, skip.y));
+    settle(&taps);
+
+    let settings = nav_tab(rsk_ui::NavTab::Settings);
+    push(&taps, Tap::at(settings.x, settings.y));
+    settle(&taps);
+
+    let opened = Instant::now();
+    let (reply, answer) = mpsc::channel();
+    jobs.send(Job::Replug, reply)
+        .expect("the device thread is alive");
+    answered(&answer);
+    let waited = opened.elapsed();
+    assert!(
+        waited < REPLUG_BOUND,
+        "the open menu made the harness's power cycle wait {waited:?};          `tests/emu.py` gives it 5 s and then reports that it could not replug"
+    );
+}
+
+#[test]
+fn an_open_menu_does_not_hold_a_power_cycle() {
+    panel_bench(drive_menu_replug);
+}
+
 /// How long the driver below spends before the replug, and how fresh the clock
 /// must read afterwards. The gap between them is what says the clock restarted
 /// rather than having been running all along.

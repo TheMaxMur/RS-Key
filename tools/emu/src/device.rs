@@ -177,7 +177,8 @@ pub struct Req {
     pub reply: Sender<Option<Vec<u8>>>,
 }
 
-/// How many host requests are queued for the device thread but not picked up yet.
+/// How many host requests are queued for the device thread but not picked up yet,
+/// and whether a power cycle is.
 ///
 /// The board reads the same fact off `firmware/src/worker.rs`'s `REQ.signaled()`,
 /// and an on-panel modal polls it to hand the parked worker its executor back
@@ -185,25 +186,54 @@ pub struct Req {
 /// peeked, so the count is kept by the queue itself rather than by each of the
 /// four transports — a fifth one cannot forget what it never had to remember.
 #[derive(Clone, Default)]
-pub struct Queued(Arc<AtomicU32>);
+pub struct Queued {
+    hosts: Arc<AtomicU32>,
+    /// …and whether a power cycle is. Counted apart, because a board has no such
+    /// job at all: an unplug is not a request, it is the power going away, and
+    /// what it does to an open modal is end it — instantly, and mid-hold. So the
+    /// panel yields to this one without `UI_YIELD_FLOOR_MS`, which exists to stop
+    /// a host *repeating* a command from holding the owner's screen shut; there
+    /// is no repetition behind an operator pulling the key out.
+    unplugs: Arc<AtomicU32>,
+}
 
 impl Queued {
+    /// Is a host request waiting for the device thread?
     pub fn any(&self) -> bool {
-        self.0.load(Ordering::Acquire) > 0
+        self.hosts.load(Ordering::Acquire) > 0
     }
 
-    fn claim(&self) {
-        self.0.fetch_add(1, Ordering::Release);
+    /// …and is a power cycle?
+    pub fn unplugged(&self) -> bool {
+        self.unplugs.load(Ordering::Acquire) > 0
+    }
+
+    /// Which count `job` belongs to, if either. One owner per job, so a modal
+    /// cannot be told the same one twice.
+    fn slot(&self, job: &Job) -> Option<&AtomicU32> {
+        if job.is_host_request() {
+            Some(&self.hosts)
+        } else if matches!(job, Job::Replug) {
+            Some(&self.unplugs)
+        } else {
+            None
+        }
+    }
+
+    fn claim(&self, job: &Job) {
+        if let Some(n) = self.slot(job) {
+            n.fetch_add(1, Ordering::Release);
+        }
     }
 
     /// Saturating: a release with nothing outstanding would wrap the count and
     /// leave every modal closing the moment it opened.
-    fn release(&self) {
-        let _ = self
-            .0
-            .fetch_update(Ordering::Release, Ordering::Acquire, |n| {
+    fn release(&self, job: &Job) {
+        if let Some(n) = self.slot(job) {
+            let _ = n.fetch_update(Ordering::Release, Ordering::Acquire, |n| {
                 Some(n.saturating_sub(1))
             });
+        }
     }
 }
 
@@ -239,15 +269,12 @@ impl Jobs {
     /// Queue `job`, to be answered on `reply`. `Err` once the device thread is
     /// gone, which is the only way a send fails.
     pub fn send(&self, job: Job, reply: Sender<Option<Vec<u8>>>) -> Result<(), ()> {
-        let counted = job.is_host_request();
-        if counted {
-            self.queued.claim();
-        }
-        self.tx.send(Req { job, reply }).map_err(|_| {
-            if counted {
-                self.queued.release();
-            }
-        })
+        self.queued.claim(&job);
+        // The refused send hands the job back, so the release is the same claim
+        // undone rather than a second reading of what was counted.
+        self.tx
+            .send(Req { job, reply })
+            .map_err(|e| self.queued.release(&e.0.job))
     }
 }
 
@@ -274,9 +301,7 @@ impl JobSource {
     /// Taking a job drops its claim on [`Queued`] — the pickup that clears `REQ`
     /// on the board.
     fn took(&self, req: Req) -> Req {
-        if req.job.is_host_request() {
-            self.queued.release();
-        }
+        self.queued.release(&req.job);
         req
     }
 
