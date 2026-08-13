@@ -88,6 +88,18 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   **both** writers of the record — `docs/protocol.md` §8 and
   `docs/threat-model.md` §1 record it as deliberate ykman parity — so it is left
   to the maintainer rather than half-applied here. **bcdDevice → 0x0950.**
+- **`rsk-emu --display`'s window keeps drawing while the panel generates an RSA
+  key.** The panel is a *buffer* here where a board's is the glass: nothing the
+  flow paints is on screen until the window is pushed, and the only thing that
+  pushed it was a touch poll — which the prime search, a synchronous span, never
+  reaches. Watched with a window open and a scripted finger: at RSA-4096 the
+  window sat on the screen from *before* the generate for **2.1–3.0 s**, showing
+  neither the "generating" screen nor the arc that is there to say the device has
+  not hung. The search now pushes the window itself, at the 100 ms the arc turns
+  at: measured again, 39 pushes across a 4.1 s search, longest gap 125 ms. The
+  seal that follows still does not repaint — neither does a board's, because
+  nothing draws during it.
+
 - **A `CTAPHID_CANCEL` ends a U2F ceremony on `rsk-emu`, as it does on a board.**
   `Job::Msg` was dispatched under channel 0 while the cancel check needs a real
   one, so the CANCEL both emulator transports faithfully raised was dropped: a

@@ -550,12 +550,13 @@ fn panel_bench(
     let queued = jobs_rx.queued();
     let signals = Arc::new(Signals::default());
     let hooks = EmuDisplayHooks::new(
-        // The backlight and wake handles are the window's; a headless run simply
-        // does not share them with one.
+        // The backlight, wake and repaint handles are the window's; a headless run
+        // simply does not share them with one.
         Rc::new(Cell::new(rsk_display::BL_TOP)),
         Rc::new(Cell::new(false)),
         queued,
         signals.clone(),
+        Rc::new(|| {}),
     );
     // The same handle `serve_display` reads off those hooks, so this bench watches
     // the seam rather than a second copy of it.
@@ -678,6 +679,7 @@ fn the_panel_reads_the_workers_attach_clock() {
         Rc::new(Cell::new(false)),
         crate::device::Queued::default(),
         Arc::new(Signals::default()),
+        Rc::new(|| {}),
     );
     let links = hooks.links();
     std::thread::sleep(Duration::from_millis(FRESH_CLOCK_MS));
@@ -705,18 +707,27 @@ const RSA_BITS: usize = 2048;
 /// single-core path — which is exactly the path this now runs.
 #[test]
 fn the_panel_generates_the_rsa_key_the_wire_can() {
+    let pushes = Rc::new(Cell::new(0u32));
+    let counted = pushes.clone();
     let mut hooks = EmuDisplayHooks::new(
         Rc::new(Cell::new(rsk_display::BL_TOP)),
         Rc::new(Cell::new(false)),
         crate::device::Queued::default(),
         Arc::new(Signals::default()),
+        Rc::new(move || counted.set(counted.get() + 1)),
     );
     let mut rng = crate::rng::EmuRng::from_seed(&[0xa7; 32]);
     let mut ticks = 0usize;
+    // How many pushes had happened when the search took its first candidate.
+    let mut at_first_tick = None;
 
-    let key =
-        rsk_display::Hooks::rsa_search_progress(&mut hooks, RSA_BITS, &mut rng, &mut || ticks += 1)
-            .expect("the panel has a single-core path to fall through to, as the wire does");
+    let started = Instant::now();
+    let key = rsk_display::Hooks::rsa_search_progress(&mut hooks, RSA_BITS, &mut rng, &mut || {
+        ticks += 1;
+        at_first_tick.get_or_insert(pushes.get());
+    })
+    .expect("the panel has a single-core path to fall through to, as the wire does");
+    let took = started.elapsed();
 
     // The applet's own encoder taking the key is what says it is a usable one of
     // the size asked for, without this test learning the `rsa` crate's API:
@@ -732,6 +743,28 @@ fn the_panel_generates_the_rsa_key_the_wire_can() {
     assert!(
         ticks > 1,
         "the search ticked {ticks} times — the on-screen spinner would read as hung"
+    );
+
+    // E193. The ticks paint the arc into the panel *buffer*; on this build nothing
+    // is on screen until the window is pushed, and this span never polls the pad
+    // that would push it. The control first: a search shorter than one push
+    // interval would make the count below mean nothing.
+    assert!(
+        took >= Duration::from_millis(crate::display::SPIN_PRESENT_MS),
+        "the search took {took:?}, inside one push interval"
+    );
+    assert!(
+        pushes.get() > 1,
+        "the window was pushed {} times during a {took:?} search — it would show \
+         the screen from before the generate for the whole of it, where a board's \
+         arc really turns",
+        pushes.get()
+    );
+    assert_eq!(
+        at_first_tick,
+        Some(1),
+        "the search started with the \"generating\" screen its caller painted still \
+         only in the buffer — a board is showing it by then"
     );
 }
 
