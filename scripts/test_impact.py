@@ -87,6 +87,11 @@ pub static mut SCRATCH: u8 = 0;
 
 pub const PAIR: [u8; 2] = [1,
     2];
+
+pub const DELIMS: [u8; 2] = [
+    b')',
+    b'(',
+];
 """
 
 PY = """\
@@ -136,6 +141,10 @@ pub fn scratch() -> u8 {
 
 pub fn pair() -> u8 {
     crate::PAIR[0]
+}
+
+pub fn delims() -> u8 {
+    crate::DELIMS[0]
 }
 """
 
@@ -453,6 +462,21 @@ def test_a_bracket_in_a_string_or_a_comment_does_not_end_a_definition(tree):
     """
     tree.edit("src/lib.rs", '    "three",', '    "four",')
     assert tree.names() == ["SPANS"]
+
+
+def test_a_char_literal_does_not_end_a_definition(tree):
+    """E206. `b')'` is a bracket the source never had, and it cut the span short.
+
+    The decoy is the *first* element, so a scanner that spends it closes `DELIMS`
+    before reaching the edited one and the definition drops out of the report
+    entirely — the false-negative direction, not the over-reading one the block
+    comment gives. A lifetime has no closing quote, which is what keeps this from
+    blanking `&'a str` and losing a definition the other way round.
+    """
+    tree.edit("src/lib.rs", "    b'(',", "    b'{',")
+    report = tree.report()
+    assert sorted(report) == ["DELIMS"]
+    assert report["DELIMS"] == ["src/other.rs:24"]
 
 
 def test_the_flood_does_not_hide_a_real_finding_beside_it(tree):

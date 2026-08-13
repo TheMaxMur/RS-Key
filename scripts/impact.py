@@ -60,6 +60,10 @@ PY_DEF = re.compile(
     r"^(?:(?P<name>[A-Z_][A-Z0-9_]*)\s*=(?!=)|def\s+(?P<fname>[A-Za-z_][A-Za-z0-9_]*)\s*\()"
 )
 HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(?P<start>\d+)(?:,(?P<count>\d+))? @@")
+# A Rust char literal — `'x'`, `'\n'`, `b')'`. The closing quote is the whole
+# discriminator: a lifetime (`'a`) has none, and blanking one would shorten a
+# definition's span, which is the direction this file must not fail in.
+CHAR_LIT = re.compile(r"'(?:[^'\\]|\\.)'")
 
 
 def git(*args):
@@ -161,10 +165,10 @@ def code_only(line, path):
 
     A `//`-commented `)` used to close a definition's span early, which drops the
     lines after it — and a dropped line is a use site nobody is told to read, the
-    exact failure this file exists to prevent. Rust `'` is left alone (it is a
-    lifetime far more often than a char literal). A `/*` with no `*/` beside it
-    truncates, so a block comment's later lines still read as code — over-reading,
-    which is the safe way to be wrong here.
+    exact failure this file exists to prevent. A Rust `'` closes the same way when
+    it opens a char literal ([`CHAR_LIT`]): `b')'` spends a bracket the source
+    never had. A `/*` with no `*/` beside it truncates, so a block comment's later
+    lines still read as code — over-reading, which is the safe way to be wrong here.
     """
     quotes = '"' if path.endswith(".rs") else "\"'"
     comment = "//" if path.endswith(".rs") else "#"
@@ -189,6 +193,10 @@ def code_only(line, path):
                 break
             out.append(" " * (end + 2 - i))
             i = end + 2
+            continue
+        elif path.endswith(".rs") and (lit := CHAR_LIT.match(line, i)):
+            out.append(" " * (lit.end() - i))
+            i = lit.end()
             continue
         else:
             out.append(ch)
