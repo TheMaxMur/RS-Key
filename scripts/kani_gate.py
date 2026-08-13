@@ -38,6 +38,18 @@ the table with `--tiers`; this reads that table and asks four things of it:
 * and every tier is in docs/testing.md, which is what a reader copies and which
   says CI runs the same commands.
 
+The counts those tiers are floored at are read the same way. `kani.sh`'s
+`FLOOR_*`/`COVERS_*` say how many harnesses and `kani::cover!`s a run must come
+back with, docs/testing.md prints the same numbers in a table, and all four sets
+were kept by the instruction "raise it in the commit that adds one". They drifted:
+`FLOOR_all` sat at 64 against a tree of 65, so one harness could have gone missing
+under a floor that still passed. Counted from the source here instead, both
+directions — a floor under the tree is loose, one over it demands more than a run
+can report — and the same for the page's table. The count is comment-stripped,
+because two `*_kani.rs` files discuss `kani::cover!` in prose, and a spelling
+neither counter can see is refused by name rather than skipped: an uncounted
+harness is a floor set one too low, which is the drift, and it would be silent.
+
 Nothing outside `scripts/kani.sh` may write a `-p` roster into a workflow or into
 that page. That is the rule the old three-way string comparison was standing in
 for, and it is the one that stops a fifth copy from appearing the day someone
@@ -85,6 +97,21 @@ DOC_PIN = re.compile(r"kani-verifier --version ([\d.]+)")
 
 #: An invocation of the tier runner, with or without a `./` and whatever drives it.
 INVOKED = re.compile(r"(?<![\w/-])(?:\./)?scripts/kani\.sh\s+(\S+)")
+
+#: The two shapes the floors are counts of. Every one in this tree is written
+#: exactly like this, `#[kani::proof]` alone on its line.
+HARNESS = re.compile(r"#\[kani::proof\]")
+COVER = re.compile(r"\bkani::cover!")
+
+#: Code that names one of them in a spelling neither counter sees: a contract
+#: harness, a `cfg_attr` form, an import that could rename the macro. Refused, not
+#: skipped — the miss would set a floor low, which is exactly the drift.
+UNSEEN = re.compile(r"kani::(?:proof|cover)|^\s*use\s+kani::")
+
+#: `kani.sh`'s ratchets, and the columns docs/testing.md prints beside them:
+#: `| `pr` | 13 | 49 | 23 | …` is crates, harnesses, covers.
+RATCHET = re.compile(r"^(FLOOR|COVERS)_(\w+)=(\d+)$", re.M)
+DOC_ROW = re.compile(r"^\|\s*`(\w+)`\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|", re.M)
 
 #: A hand-written roster: `cargo kani` with a package flag on it. `cargo kani
 #: setup` carries none and is not one.
@@ -150,23 +177,117 @@ def sources(root):
     yield DOCS, (root / DOCS).read_text(), False
 
 
+def code_lines(text):
+    """`text`'s lines with `//` and `/* … */` comments taken out.
+
+    Prose is not a harness: `presence_kani.rs` and `rsa-asm/src/kani.rs` each
+    discuss `kani::cover!` in a doc comment, and counting those two puts a floor
+    above anything a run can report. A `//` inside a string ends the line early,
+    which can only ever cut a macro's *arguments* — the token that opens the
+    statement is left of any string on the line.
+    """
+    depth = 0
+    for line in text.splitlines():
+        out, i = [], 0
+        while i < len(line):
+            if depth:
+                if line.startswith("*/", i):
+                    depth -= 1
+                    i += 2
+                elif line.startswith("/*", i):
+                    depth += 1
+                    i += 2
+                else:
+                    i += 1
+            elif line.startswith("/*", i):
+                depth += 1
+                i += 2
+            elif line.startswith("//", i):
+                break
+            else:
+                out.append(line[i])
+                i += 1
+        yield "".join(out)
+
+
+def counted(text):
+    """(harnesses, covers, the lines naming one that neither counter can see)."""
+    harnesses = covers = 0
+    unseen = []
+    for line in code_lines(text):
+        harnesses += len(HARNESS.findall(line))
+        covers += len(COVER.findall(line))
+        if UNSEEN.search(COVER.sub("", HARNESS.sub("", line))):
+            unseen.append(line.strip())
+    return harnesses, covers, unseen
+
+
 def crates_with_proofs(root):
-    """Crates carrying a `#[kani::proof]`, plus any proof that sits outside one.
+    """(harnesses per crate, covers per crate, orphans, uncountable lines).
 
     The whole tree is walked, not `crates/*/src`: the root `cargo kani` reaches only
     workspace members, so a harness under `fuzz/`, `tools/*` (detached workspaces) or
     `firmware/` (thumbv8m-only) is run by nothing and no `-p` can fix it. Scanning
     just the places a proof is *supposed* to live is how the blind spot gets rebuilt.
     """
-    found, orphans = set(), []
+    harnesses, covers = collections.Counter(), collections.Counter()
+    orphans, unseen = [], []
     for rel in gate_lines.tree_files(root):
-        if rel.suffix != ".rs" or "#[kani::proof" not in (root / rel).read_text():
+        if rel.suffix != ".rs":
             continue
-        if rel.parts[0] == "crates":
-            found.add(rel.parts[1])
-        else:
+        text = (root / rel).read_text()
+        if "kani::" not in text:
+            continue
+        found, reached, odd = counted(text)
+        unseen += [f"{rel}: {line}" for line in odd]
+        if not found and not reached:
+            continue
+        if rel.parts[0] != "crates":
             orphans.append(rel)
-    return found, sorted(orphans)
+            continue
+        # Guarded, not `+= 0`: a `Counter` inserts the key either way, and the
+        # membership of these two is what says which crates are proven and which
+        # carry a cover no harness reaches.
+        if found:
+            harnesses[rel.parts[1]] += found
+        if reached:
+            covers[rel.parts[1]] += reached
+    return harnesses, covers, sorted(orphans), unseen
+
+
+def ratchets(root, table, harnesses, covers):
+    """Problems where a floor, or a number the page prints, is not the tree's count.
+
+    Both directions are wrong and they fail differently. A floor under the tree is
+    loose — the harness that goes missing takes it with it, which is how
+    `FLOOR_all` came to sit at 64 against 65 — and one over the tree asks for more
+    than any run can report, which fails the row after it has done the work.
+    """
+    kept = {(k, t): int(v) for k, t, v in RATCHET.findall((root / RUNNER).read_text())}
+    rows = {
+        m[1]: (int(m[2]), int(m[3]), int(m[4]))
+        for m in DOC_ROW.finditer((root / DOCS).read_text())
+    }
+    problems = []
+    for tier, crates in sorted(table.items()):
+        counts = (sum(harnesses[c] for c in crates), sum(covers[c] for c in crates))
+        for kind, want, shape in (
+            ("FLOOR", counts[0], "#[kani::proof]"),
+            ("COVERS", counts[1], "kani::cover!"),
+        ):
+            if kept.get((kind, tier)) != want:
+                problems.append(
+                    f"scripts/kani.sh has {kind}_{tier}={kept.get((kind, tier))}, and the"
+                    f" crates on that tier carry {want} {shape}"
+                )
+        if tier not in rows:
+            problems.append(f"{DOCS}'s tier table has no `{tier}` row to check")
+        elif rows[tier] != (len(crates), *counts):
+            problems.append(
+                f"{DOCS} prints {rows[tier]} for `{tier}`; the tree has"
+                f" {(len(crates), *counts)} (crates, harnesses, covers)"
+            )
+    return problems
 
 
 def audit(root):  # noqa: C901 — one clause per failure mode, each named
@@ -176,9 +297,18 @@ def audit(root):  # noqa: C901 — one clause per failure mode, each named
     found = list(sources(root))
     seen = [u for rel, text, yaml in found for u in uses(rel, text, yaml)]
     loose = sorted({r for rel, text, yaml in found for r in handwritten(rel, text, yaml)})
-    proven, orphans = crates_with_proofs(root)
+    harnesses, covers, orphans, unseen = crates_with_proofs(root)
+    proven = set(harnesses)
     problems = []
 
+    for line in unseen:
+        problems.append(
+            f"{line} — neither counter can see that spelling, so every floor it"
+            " belongs to would sit one too low; write it `#[kani::proof]` or"
+            " `kani::cover!`"
+        )
+    for crate in sorted(set(covers) - proven):
+        problems.append(f"{crate} has a kani::cover! but no #[kani::proof] to reach it")
     for rel in loose:
         problems.append(
             f"{rel} writes its own `cargo kani … -p …` roster; scripts/kani.sh"
@@ -219,7 +349,8 @@ def audit(root):  # noqa: C901 — one clause per failure mode, each named
         for crate in sorted(crates - listed):
             problems.append(f"{crate} is on the `{tier}` tier but not on `{FULL}`")
     for rel in orphans:
-        problems.append(f"{rel} has a #[kani::proof] no tier can reach")
+        problems.append(f"{rel} has a #[kani::proof] or kani::cover! no tier can reach")
+    problems += ratchets(root, table, harnesses, covers)
 
     want = PINNED.search((root / PINNED_IN).read_text())
     got = DOC_PIN.search((root / DOCS).read_text())
@@ -232,6 +363,8 @@ def audit(root):  # noqa: C901 — one clause per failure mode, each named
 
     summary = (
         f"kani-gate: ok — {len(table)} tiers over {len(listed)} crates, "
+        f"{sum(harnesses[c] for c in listed)} harnesses and "
+        f"{sum(covers[c] for c in listed)} kani::cover! counted from source, "
         f"excluded: {', '.join(EXCLUDED)}"
     )
     return problems, summary

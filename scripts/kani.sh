@@ -60,8 +60,8 @@ STATEFUL="rsk-fido rsk-fs"
 # fuzz row over an empty target list, a `-p` roster missing two thirds of the
 # crates — and every one of them exited 0. The floor catches the weaker version
 # too: a rename or a deleted `#[cfg(kani)]` hook that takes harnesses away
-# silently. Raise these in the commit that adds a harness; lower one only in the
-# commit that removes one.
+# silently. These are not kept by hand: `scripts/kani_gate.py` counts the tree's
+# `#[kani::proof]` per tier and fails the merge gate on any number below.
 FLOOR_pr=50
 FLOOR_state=8
 FLOOR_all=65
@@ -72,8 +72,7 @@ FLOOR_all=65
 # turns this tree's "vacuity guards" from comments into checks. Reading nothing
 # is caught on its own (the row fails when the per-check listing is absent); the
 # floor is for the partial case, a cover that stopped being reported while the
-# rest still are. Same terms as the harness floors above: raise it in the commit
-# that adds a cover.
+# rest still are. Counted from source by the same guard as the floors above.
 COVERS_pr=23
 COVERS_state=9
 COVERS_all=31

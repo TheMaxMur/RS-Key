@@ -28,6 +28,12 @@ set -euo pipefail
 FAST="rsk-a rsk-b"
 SLOW="rsk-c"
 STATEFUL="rsk-a"
+FLOOR_pr=2
+FLOOR_state=1
+FLOOR_all=3
+COVERS_pr=3
+COVERS_state=2
+COVERS_all=4
 crates_of() {
   case "$1" in
     pr) echo "$FAST" ;;
@@ -74,16 +80,31 @@ cargo install --locked kani-verifier --version 0.67.0 && cargo kani setup
 ./scripts/kani.sh state
 ./scripts/kani.sh all
 ```
+
+| Tier | Crates | Harnesses | Covers | Solve | Slowest harness |
+|---|---|---|---|---|---|
+| `pr` | 2 | 2 | 3 | 1 s | `rsk-a::p`, 1 s |
+| `state` | 1 | 1 | 2 | 1 s | `rsk-a::p`, 1 s |
+| `all` | 3 | 3 | 4 | 2 s | `rsk-c::p`, 2 s |
 """
 
-#: crate → the file in it that carries a harness. `rsk-bench` is here because the
-#: guard checks its own exclusion list: one naming a crate with no proof is stale.
+#: crate → (the file in it that carries a harness, how many `kani::cover!` are in
+#: it). `rsk-bench` is here because the guard checks its own exclusion list: one
+#: naming a crate with no proof is stale. The counts are what the floors in
+#: `RUNNER` and the table in `DOCS` are set to, so the clean tree is consistent
+#: and every mutation below moves exactly one of the four copies.
 PROVEN = {
-    "rsk-a": "src/lib.rs",
-    "rsk-b": "src/tlv_kani.rs",
-    "rsk-c": "src/lib.rs",
-    "rsk-bench": "src/kani.rs",
+    "rsk-a": ("src/lib.rs", 2),
+    "rsk-b": ("src/tlv_kani.rs", 1),
+    "rsk-c": ("src/lib.rs", 1),
+    "rsk-bench": ("src/kani.rs", 0),
 }
+
+
+def harness(covers):
+    """A file with one `#[kani::proof]` and `covers` `kani::cover!` inside it."""
+    body = "".join(f"    kani::cover!(x == {i});\n" for i in range(covers))
+    return f"#[kani::proof]\nfn p() {{\n{body}}}\n"
 
 
 class Tree:
@@ -95,8 +116,8 @@ class Tree:
         self.write(kani_gate.WORKFLOWS / "ci.yml", CI)
         self.write(kani_gate.PINNED_IN, DEEP)
         self.write(kani_gate.DOCS, DOCS)
-        for crate, rel in PROVEN.items():
-            self.write(f"crates/{crate}/{rel}", "#[kani::proof]\nfn p() {}\n")
+        for crate, (rel, covers) in PROVEN.items():
+            self.write(f"crates/{crate}/{rel}", harness(covers))
         subprocess.run(["git", "init", "-q"], cwd=root, check=True)
 
     def write(self, rel, text, executable=False):
@@ -298,11 +319,92 @@ def test_cargo_kani_setup_is_not_a_roster(tree):
 
 def test_a_per_crate_hint_in_a_source_comment_is_not_a_roster(tree):
     """`cargo kani -p rsk-a` in a doc comment tells a reader how to run one crate."""
-    tree.write(
+    tree.edit(
         "crates/rsk-a/src/lib.rs",
-        "/// Kani proof harnesses (`cargo kani -p rsk-a`).\n#[kani::proof]\nfn p() {}\n",
+        "#[kani::proof]",
+        "/// Kani proof harnesses (`cargo kani -p rsk-a`).\n#[kani::proof]",
     )
     assert tree.problems() == []
+
+
+# --- the floors, and the numbers the page prints beside them ------------------
+
+
+def test_a_harness_named_in_prose_is_not_a_harness(tree):
+    """The objection this derivation had to answer, and the reason it strips first.
+
+    `presence_kani.rs` and `rsa-asm/src/kani.rs` each discuss `kani::cover!` in a
+    doc comment; counted, they put `COVERS_pr` and `COVERS_all` one over anything
+    a run can report, and the tier goes red for a parsing reason.
+    """
+    tree.edit(
+        "crates/rsk-a/src/lib.rs",
+        "#[kani::proof]",
+        "//! An unsatisfiable `kani::cover!` does not fail the harness.\n"
+        "/* nor does a #[kani::proof]\n   spelled across a block comment */\n"
+        "#[kani::proof]",
+    )
+    assert tree.problems() == []
+
+
+def test_a_harness_added_without_raising_the_floor(tree):
+    """E130 itself: `FLOOR_all` sat at 64 while the tree carried 65."""
+    tree.write("crates/rsk-c/src/more_kani.rs", harness(0))
+    assert only(tree.problems(), "FLOOR_all=3, and the crates on that tier carry 4")
+
+
+def test_a_floor_raised_past_the_tree(tree):
+    """The other direction: a run cannot report more than the source has."""
+    tree.edit(kani_gate.RUNNER, "FLOOR_pr=2", "FLOOR_pr=3")
+    assert only(tree.problems(), "FLOOR_pr=3, and the crates on that tier carry 2")
+
+
+def test_a_cover_added_without_raising_the_floor(tree):
+    """One `kani::cover!` reaches two tiers here, and both floors are checked."""
+    tree.edit("crates/rsk-a/src/lib.rs", "kani::cover!(x == 0);", harness(3).strip())
+    problems = tree.problems()
+    assert only(problems, "COVERS_pr=3, and the crates on that tier carry 5")
+    assert only(problems, "COVERS_state=2, and the crates on that tier carry 4")
+    assert only(problems, "COVERS_all=4, and the crates on that tier carry 6")
+
+
+def test_a_floor_deleted_outright(tree):
+    """A tier whose floor is gone reads as `None`, not as satisfied."""
+    tree.edit(kani_gate.RUNNER, "COVERS_state=2\n", "")
+    assert only(tree.problems(), "COVERS_state=None")
+
+
+@pytest.mark.parametrize(
+    "column, printed",
+    [(1, "(3, 3, 4)"), (2, "(3, 3, 4)"), (3, "(3, 3, 4)")],
+)
+def test_the_page_s_own_copy_of_the_numbers_drifted(tree, column, printed):
+    """docs/testing.md is the fourth copy: a reader learns the row's rule there."""
+    cells = "| `all` | 3 | 3 | 4 |".split("|")
+    cells[column + 1] = f" {int(cells[column + 1]) + 1} "
+    tree.edit(kani_gate.DOCS, "| `all` | 3 | 3 | 4 |", "|".join(cells))
+    assert only(tree.problems(), f"the tree has {printed}")
+
+
+def test_the_page_s_tier_row_deleted(tree):
+    tree.edit(kani_gate.DOCS, "| `state` | 1 | 1 | 2 | 1 s | `rsk-a::p`, 1 s |\n", "")
+    assert only(tree.problems(), "tier table has no `state` row")
+
+
+@pytest.mark.parametrize(
+    "line",
+    ["#[kani::proof_for_contract(f)]", "#[cfg_attr(kani, kani::proof)]", "use kani::cover;"],
+)
+def test_a_spelling_neither_counter_can_see_is_refused(tree, line):
+    """An uncounted harness is a floor set one too low, and it would be silent."""
+    tree.edit("crates/rsk-a/src/lib.rs", "#[kani::proof]", f"{line}\n#[kani::proof]")
+    assert only(tree.problems(), "neither counter can see that spelling")
+
+
+def test_a_cover_in_a_crate_no_harness_reaches(tree):
+    """A `kani::cover!` outside every harness is checked by nothing, quietly."""
+    tree.write("crates/rsk-e/src/lib.rs", "fn f() { kani::cover!(true); }\n")
+    assert only(tree.problems(), "rsk-e has a kani::cover! but no #[kani::proof]")
 
 
 # --- the guard's own wiring ---------------------------------------------------

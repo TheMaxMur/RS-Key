@@ -277,10 +277,17 @@ run):
 | `all` | 17 | 66 | 31 | ~1 h 45 | `rsk-rescue::serialize_parse_roundtrip`, ~80 min |
 
 `pr` and `state` are measured runs. `all` has never been run end to end here:
-its harness count is `#[kani::proof]`s counted from source (the same count is
-exact for the two tiers that were run) and its cover count is the two measured
-tiers plus `rsk-rescue`'s one, so **`FLOOR_all` is a number no run has reached**
-— and at 65 it is one under the source count.
+its cover count is the two measured tiers plus `rsk-rescue`'s one, so
+**`FLOOR_all` is a number no run has reached**.
+
+None of the six figures in the Harnesses and Covers columns is kept by hand, and
+neither are `kani.sh`'s `FLOOR_*`/`COVERS_*`. `scripts/kani_gate.py` counts the
+tree's `#[kani::proof]` and `kani::cover!` per tier — comments stripped, since two
+`*_kani.rs` files discuss `kani::cover!` in prose — and fails the merge gate on
+any of the four copies that disagrees, in either direction. They *had* been kept
+by the instruction "raise it in the commit that adds one", and `FLOOR_all` drifted
+to 64 against a tree of 65: one harness could have gone missing under a floor that
+still passed.
 
 `pr` passes `--harness-timeout 5m`, five times its slowest harness. That cap is
 the tripwire on the tier assignment: a fast-tier harness that grows past it
