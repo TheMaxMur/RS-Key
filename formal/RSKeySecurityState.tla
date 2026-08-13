@@ -54,7 +54,7 @@ CONSTANTS
     BugDeleteRpBeforeCred,        \* credmgmt.rs:664-671 deleteCredential order
     BugBackupSealedNotAGate,      \* reset.rs:110-123  is_fido_gate_fid (run-36)
     BugConsumeKeepsMcGa,          \* state.rs:522-528  a narrowed 6.5.5.7 triad
-    BugNoDropStaleCancelAtEntry,  \* presence.rs:250-251 the wait-entry drop
+    BugNoDropStaleCancelAtEntry,  \* rsk-device presence.rs:192-193 wait entry
     BugWrongPinKeepsToken,        \* clientpin.rs:779  the pre-E38 tree
     BugSeedDoesNotLead            \* reset.rs:61-65 / fs.rs `first`, pre-0x08BF
 
@@ -1020,8 +1020,8 @@ OpAdvances ==
     \/ ResetRefused \/ ResetConfirmed \/ ResetSweepSecrets \/ ResetSweepGates
     \/ ResetFinish
 
-\* The presence wait carries PRESENCE_TIMEOUT_MS (presence.rs:270-272), so it
-\* resolves with no finger and no cancel. This is the assumption that makes
+\* The presence wait carries PRESENCE_TIMEOUT_MS (rsk-device presence.rs:212-213),
+\* so it resolves with no finger and no cancel. This is the assumption that makes
 \* every ceremony terminate, and it is the one the firmware most clearly owes.
 \*
 \* NOT fair, deliberately: PressDown, PressUp, HostCancel, HostCancelLatched,

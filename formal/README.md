@@ -151,15 +151,15 @@ checks **only** the named invariant.
 | `BugChangePinKeepsPpuat` | `clientpin.rs:300-304` | `NoTokenAfterInvalidation` | 11 183 states |
 | `BugStopUsingKeepsPerms` | `state.rs:546-547` zeroing perms | `NoTokenAfterInvalidation` | 1 404 states |
 | `BugNoConsumeAfterUp` | `state.rs:518-530` (GHSA-wqjm-653g-hgw3) | `NoAuthorizationBypass` | 275 564 states |
-| `BugUnscopedCancel` | `presence.rs:93` scope check | `NoCrossTransportTouchConsumption` | 127 states |
-| `BugTouchNotSpent` | `presence.rs:288` `spent` latch | `NoCrossTransportTouchConsumption` | 5 717 states |
+| `BugUnscopedCancel` | `Arbiter::request_cancel`'s scope check | `NoCrossTransportTouchConsumption` | 127 states |
+| `BugTouchNotSpent` | `ButtonWait::wait`'s `spent` latch | `NoCrossTransportTouchConsumption` | 5 717 states |
 | `BugSoftLockLostOnWarmReset` | `ctap.rs:215-222` `PinLock` carry | `NoAuthorizationBypass` | 4 993 states |
 | `BugWarmResetReopensWindow` | `reset.rs:153` `!warm_boot` | `NoAuthorizationBypass` | 126 states |
 | `BugCmWalkIgnoresChannel` | `state.rs:172` channel equality | `NoAuthorizationBypass` | 1 242 states |
 | `BugSeedDoesNotLead` | `reset.rs:61-65` / `fs.rs`'s `first` — the pre-0x08BF wipe | `NoUnmanageableCredential` | 55 765 states |
 | `BugWrongPinKeepsToken` | `clientpin.rs:779` — the pre-E38 tree, a mismatch that keeps the token | `NoTokenAfterInvalidation` | 623 states |
 | `BugConsumeKeepsMcGa` | `state.rs:522-528` — a §6.5.5.7 triad narrowed to the config permissions | `NoAuthorizationBypass` | 3 383 states |
-| `BugNoDropStaleCancelAtEntry` | `presence.rs:250-251` — the wait-entry cancel drop | `NoCrossTransportTouchConsumption` | 125 states |
+| `BugNoDropStaleCancelAtEntry` | the wait-entry clear (`crates/rsk-device/src/presence.rs:192-193`) — the wait-entry cancel drop | `NoCrossTransportTouchConsumption` | 125 states |
 
 And the three that break a **liveness** property rather than an invariant. They
 are a separate `LIVE_BUGS` list in `gen-configs.sh` on purpose: a wedge is a
@@ -235,14 +235,14 @@ the record rather than preventing it.
 `HostCancel` required an open wait, so the model could not raise a
 `CTAPHID_CANCEL` at any other moment. The firmware can, and it matters:
 `set_wait_scope` is called around the whole **dispatch** (`worker.rs:429`,
-`:521`), not around the touch wait, so `request_cancel` (`presence.rs:92-96`)
+`:521`), not around the touch wait, so `Arbiter::request_cancel` (`crates/rsk-device/src/presence.rs:116-120`)
 accepts a cancel during a FIDO command that never opens one — getInfo, a
 capability-denied CBOR, a silent `up:false`. **Nothing clears
 `CANCEL_REQUESTED` when that dispatch ends**, and the next dispatch may be CCID
 or OTP, where every applet's presence goes through the same
 `ButtonPresence::wait` reading the same global.
 
-`presence.rs:250-251` eats it at wait entry, and that is the whole defence.
+the wait-entry clear (`crates/rsk-device/src/presence.rs:192-193`) eats it at wait entry, and that is the whole defence.
 `:292` cannot help, because the dispatch that took the cancel never entered
 `wait`. `HostCancelLatched` models the latch and `BugNoDropStaleCancelAtEntry`
 removes the drop: **RED in 127 distinct states at depth 5**, the trace being a
@@ -551,7 +551,7 @@ than a settled abstraction.
 `EveryWalkCloses` against it. The fairness is the load-bearing part, because an
 assumption the implementation does not honour makes its property meaningless:
 the synchronous worker (`worker.rs:637-660`) never parks a sequence, the
-presence wait carries `PRESENCE_TIMEOUT_MS` (`presence.rs:270-272`), and
+presence wait carries `PRESENCE_TIMEOUT_MS` (`crates/rsk-device/src/presence.rs:212-213`), and
 `expire_stale_sequences` (`state.rs:613-619`) retires an idle cursor. Nothing
 else is fair — not a press, a release, a host cancel, a power cut, a warm reset
 or any `*Start` — because assuming a user eventually touches or a device is
