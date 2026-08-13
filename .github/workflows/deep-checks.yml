@@ -242,11 +242,12 @@ jobs:
 
       # The `all` tier: every crate carrying a harness, `rsk-bench` aside
       # (scripts/kani_gate.py holds that exclusion and its measured reason). The
-      # script also floors the harness count, because a roster that selects
-      # nothing exits 0. `--harness-timeout`, which it passes, is per harness and
-      # not per row — Kani runs the rest and fails at the end — so it caps one
-      # non-convergent proof, while `timeout-minutes` caps the job: ~61 harnesses
-      # at 30m each far outruns its 6 h.
+      # script also floors the harness count and the `kani::cover!` count, because
+      # a roster that selects nothing exits 0 and so does a cover nothing reaches.
+      # `--harness-timeout`, which it passes, is per harness and not per row —
+      # Kani runs the rest and fails at the end — so it caps one non-convergent
+      # proof, while `timeout-minutes` caps the job: ~65 harnesses at 30m each far
+      # outruns its 6 h.
       - name: prove every harness
         run: ./scripts/kani.sh all
   repro:

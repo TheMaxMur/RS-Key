@@ -251,15 +251,36 @@ name filter that matches no test. `scripts/kani_gate.py` reads that table back
 with `--tiers` and fails the merge gate on a crate that carries a
 `#[kani::proof]` and is on no tier.
 
+It also reads back every `kani::cover!`, because **Kani does not fail a harness
+on one nothing satisfies**: 0.67.0 has no `--fail-uncoverable`, so an
+unsatisfiable or unreachable cover prints "N of M cover properties satisfied"
+and the run still reports SUCCESSFUL. Since a cover is what says a guarded
+assertion was reached at all, that made every "vacuity guard" in the tree a
+comment. The row groups Kani's per-check verdicts by harness and source location
+and fails on a cover no execution reaches — *grouped*, not off that summary line,
+because one `cover!` becomes several CBMC properties wherever the enclosing MIR
+branches on something the condition re-tests, and the copies on the contradicting
+arms are dead by construction. `rebuild_meta_any_blob` is the worked example: its
+`!with_new && …` cover is reported twice, UNSATISFIABLE on the `with_new` arm and
+SATISFIED on the other, and the summary line says "2 of 3" over a cover that is
+genuinely reached. Reading the summary would have failed a correct harness and
+sent someone to repair it.
+
 The split is by measured cost, not by guess (kani 0.67.0, 18-core Apple Silicon
-under load, 2026-08-12; "solve" excludes compilation, which dominates a cold
+under load, 2026-08-13; "solve" excludes compilation, which dominates a cold
 run):
 
-| Tier | Crates | Harnesses | Solve | Slowest harness |
-|---|---|---|---|---|
-| `pr` | 13 | 45 | 212 s | `rsk-piv::set_protected_total_and_invariant`, 57 s |
-| `state` | 2 | 4 | ~12 min | `rsk-fido::…_at_call_site`, ~8.5 min (9.3 GiB peak) |
-| `all` | 17 | 61 | ~1 h 45 | `rsk-rescue::serialize_parse_roundtrip`, ~80 min |
+| Tier | Crates | Harnesses | Covers | Solve | Slowest harness |
+|---|---|---|---|---|---|
+| `pr` | 13 | 49 | 23 | 199 s | `rsk-piv::set_protected_total_and_invariant`, 47 s |
+| `state` | 2 | 8 | 9 | ~10 min | `rsk-fido::…_at_call_site`, ~7 min (9.3 GiB peak) |
+| `all` | 17 | 65 | 31 | ~1 h 45 | `rsk-rescue::serialize_parse_roundtrip`, ~80 min |
+
+`pr` and `state` are measured runs. `all` has never been run end to end here:
+its harness count is `#[kani::proof]`s counted from source (the same count is
+exact for the two tiers that were run) and its cover count is the two measured
+tiers plus `rsk-rescue`'s one, so **`FLOOR_all` is a number no run has reached**
+— and at 64 it is one under the source count.
 
 `pr` passes `--harness-timeout 5m`, five times its slowest harness. That cap is
 the tripwire on the tier assignment: a fast-tier harness that grows past it

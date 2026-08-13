@@ -78,10 +78,10 @@ fn sieve_step_keeps_residues() {
 }
 
 /// Non-vacuity for [`sieve_step_keeps_residues`], asserted rather than covered.
-/// A `kani::cover!` would be the idiomatic way to say this and it does not work:
-/// on 0.67.0 an unsatisfiable cover prints "0 of 1 cover properties satisfied"
-/// and the harness still reports SUCCESSFUL, so it is a note, not a guard
-/// (`crates/rsk-device/src/presence_kani.rs` measured the same thing).
+/// A `kani::cover!` says this idiomatically but not here: on 0.67.0 an
+/// unsatisfiable cover prints "0 of 1 cover properties satisfied" and the harness
+/// still reports SUCCESSFUL, so it fails through `scripts/kani.sh`'s cover row or
+/// not at all. An assertion fails where it is written, which this one is worth.
 ///
 /// Concrete seed, so this is 143 s against its neighbour's ~24 min.
 #[kani::proof]

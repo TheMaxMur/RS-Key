@@ -234,8 +234,9 @@ fn no_token_after_invalidation() {
         );
     }
 
-    // Non-vacuity. Without these the clauses above are satisfied by a sequence
-    // alphabet whose interesting states are unreachable.
+    // Non-vacuity, enforced by `scripts/kani.sh`'s cover row and not by Kani,
+    // which exits 0 on a cover nothing satisfies: without these the clauses above
+    // are satisfied by a sequence alphabet whose interesting states never arise.
     kani::cover!(granted && st.user_verified() && st.paut.permissions != 0);
     kani::cover!(!granted && st.paut.token == tok0); // stopped, bytes intact
     kani::cover!(!verified && st.paut.in_use); // consumed after presence
@@ -433,9 +434,9 @@ fn no_authorization_bypass_walk_owner() {
         check_walk_owner(&st, rp_owner, cred_owner);
     }
 
-    // Non-vacuity: a walk really is servable to its owner, on either channel, and
-    // the idle window really does retire one — otherwise B1/B2 hold over a device
-    // that walks nothing.
+    // Non-vacuity, enforced by `scripts/kani.sh`'s cover row and not by Kani: a
+    // walk really is servable to its owner on either channel, and the idle window
+    // really does retire one, or B1/B2 hold over a device that walks nothing.
     kani::cover!(rp_owner == Some(C1) && st.cm.may_walk_rps(C1));
     kani::cover!(cred_owner == Some(C2) && st.cm.may_walk_creds(C2));
     kani::cover!(jumped && !st.cm.may_walk_rps(C1) && !st.cm.may_walk_rps(C2));

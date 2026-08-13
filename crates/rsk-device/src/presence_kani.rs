@@ -9,8 +9,9 @@
 //!
 //! Every premise is asserted rather than assumed. Measured on kani 0.67.0: an
 //! **unsatisfiable `kani::cover!` does not fail the harness** — it prints
-//! "N of M cover properties satisfied" and still reports SUCCESSFUL. So a `cover!`
-//! is a note, not a guard, and a vacuous proof would read as a passing one.
+//! "N of M cover properties satisfied" and still reports SUCCESSFUL. `kani.sh`'s
+//! cover row reads those verdicts back, so a `cover!` guards at the tier; an
+//! asserted premise guards here, where the counterexample is.
 
 use super::*;
 

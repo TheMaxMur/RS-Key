@@ -66,7 +66,8 @@ fn assemble_verify_never_writes_out_of_bounds() {
         }
 
         // Every assertion above sits inside this branch, so it asserts nothing
-        // unless the branch is reachable with the shape it is aimed at.
+        // unless the branch is reachable with the shape it is aimed at. Kani
+        // exits 0 on that; `scripts/kani.sh`'s cover row is what fails the tier.
         kani::cover!(tbuf[0] & 0x10 != 0, "host CLA carries the chaining bit");
         kani::cover!(
             tbuf[3] == PIV_PIN_P2 && plen < PIV_PIN_LEN,

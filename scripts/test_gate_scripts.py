@@ -24,6 +24,11 @@ HERE = pathlib.Path(__file__).resolve().parent
 #: predate the convention are named here rather than pattern-matched, so the
 #: pattern stays exact.
 GATES = sorted(p.name for p in HERE.glob("*_gate.py") if not p.name.startswith("test_"))
+#: Guards the `*_gate.py` pattern cannot reach, so they are owed a table by name
+#: rather than by glob: `impact.py` is run by the pre-commit hook and not by
+#: `check.sh`, and `kani.sh` is a shell script. Both once had no table at all,
+#: which is the same blind spot one file over.
+NAMED = {"impact.py": "test_impact.py", "kani.sh": "test_kani_sh.py"}
 #: The pytest invocation that has to reach the tests, wherever it is spelled.
 COLLECTS = re.compile(r"pytest\s+([^\n|;&]*)")
 
@@ -44,7 +49,14 @@ def test_every_gate_is_run_by_check_sh():
 
 def test_every_gate_has_a_mutation_table():
     missing = [g for g in GATES if not (HERE / f"test_{g}").is_file()]
+    missing += [g for g, table in NAMED.items() if not (HERE / table).is_file()]
     assert not missing, f"no scripts/test_<name>.py for {missing}"
+
+
+def test_the_named_guards_still_exist():
+    """A table kept for a guard that went away is one nobody will notice go stale."""
+    missing = [g for g in NAMED if not (HERE / g).is_file()]
+    assert not missing, f"{missing} are named here but not in scripts/"
 
 
 def test_the_mutation_tables_are_collected():

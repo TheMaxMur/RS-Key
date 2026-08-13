@@ -32,7 +32,8 @@ fn use_counter_climbs_and_stops_at_the_ceiling() {
     }
 
     // Vacuity guard: the assumed region must still reach a write on both paths,
-    // or the bounds above hold for the empty reason.
+    // or the bounds above hold for the empty reason. Kani exits 0 on a cover
+    // nothing satisfies — `scripts/kani.sh`'s cover row is what fails the tier.
     kani::cover!(persist);
     kani::cover!(boot_use_counter(stored).is_some());
 }
