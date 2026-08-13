@@ -286,6 +286,12 @@ impl<'a> OpenpgpApplet<'a> {
         if !putdata::write_authorized(&self.sess, fid) {
             return Sw::SECURITY_STATUS_NOT_SATISFIED;
         }
+        // …and the tag outranks the length in turn: a DO no arm below can write
+        // has no body length to be wrong about, and a YubiKey 5.7.4 answers
+        // `6B00` to `7A`, `FFFF` and `0042` at every length under PW3.
+        if !putdata::writable(fid) {
+            return Sw::WRONG_P1P2;
+        }
         // One owner for the length DO C0 announces, checked before the routing
         // splits: the cardholder certificate below writes flash without going
         // through `putdata::put_data`, so a check living only there would guard

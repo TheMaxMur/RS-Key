@@ -2412,12 +2412,15 @@ fn put_data_judges_the_password_before_the_body_length() {
     // With PW3 the refusal is ours and not the card's — see the note above. The
     // two cardholder DOs stay `6982` even here, because PW3 is not their password:
     // which password a caller holds, not which one is "higher", is what decides
-    // whether the length gate is reached at all.
+    // whether the length gate is reached at all. And a tag no arm can write never
+    // reaches it either (E188) — that half IS parity, and it has its own test.
     app.deselect(&mut fs);
     verify_pin(&mut app, &mut fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
     for (p1, p2) in tags {
         let want = if p1 == 0x01 {
             Sw::SECURITY_STATUS_NOT_SATISFIED
+        } else if !crate::putdata::writable(((p1 as u16) << 8) | p2 as u16) {
+            Sw::WRONG_P1P2
         } else {
             consts::WRONG_DATA
         };
@@ -2698,4 +2701,102 @@ fn import_judges_the_password_before_the_key_slot() {
     assert_eq!(run(&mut app, &mut fs, &ehl(0x99)).1, consts::WRONG_DATA);
     assert_eq!(put(&mut app, &mut fs, 0x00, 0xC1, ATTR_P256), Sw::OK);
     assert_eq!(run(&mut app, &mut fs, &ec_import(0xB6, &scalar)).1, Sw::OK);
+}
+
+/// E188: under PW3, a tag PUT DATA cannot write has no body length to be wrong
+/// about. `MAX_DO_BYTES` is deliberately one owner sitting ABOVE the routing
+/// split — the cardholder-certificate arm writes flash without passing through
+/// `putdata::put_data`, so a check living only there would guard every DO except
+/// the one `C0`'s bytes 5-6 are about — but that put it above the tag as well, so
+/// an unwritable tag answered `6B00` up to the cap and `6A80` past it. A YubiKey
+/// 5.7.4 answers `6B00` at 10, 2036, 2037, 2038 and 3000 bytes on `7A`, `FFFF`
+/// and `0042` alike with PW3 verified, 3 runs byte-identical.
+///
+/// The order is now password → tag → length, and the length gate still sits above
+/// the split. Nothing about the unauthorised column moves: it is a flat `6982` at
+/// every tag and every length, which is `0x0922`'s property and its own test's.
+#[test]
+fn put_data_judges_the_tag_before_the_body_length() {
+    let rng = RefCell::new(LcgRng(37));
+    let mut fs = make_fs();
+    let presence = RefCell::new(crate::AlwaysConfirm);
+    let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
+    verify_pin(&mut app, &mut fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
+
+    let cap = crate::files::MAX_DO_BYTES;
+    // Unwritable and unknown tags: one answer at every length, including past the
+    // cap. `7A` is WRITE = *Never* in §5, `C5`/`CD` are computed aggregates read
+    // out of `6E`/`73`, and the last two are not DOs at all.
+    for (p1, p2) in [
+        (0x00u8, 0x7Au8),
+        (0x00, 0xC5),
+        (0x00, 0xCD),
+        (0xFF, 0xFF),
+        (0x00, 0x42),
+    ] {
+        for len in [0usize, 10, cap - 1, cap, cap + 1, cap + 2, cap + 512] {
+            assert_eq!(
+                put_long(&mut app, &mut fs, p1, p2, &vec![0x41u8; len]),
+                Sw::WRONG_P1P2,
+                "PUT DATA {p1:02X}{p2:02X} with {len} bytes under PW3"
+            );
+        }
+    }
+    // A tag it CAN write still meets the length gate past the cap, and still
+    // takes the cap itself — the carve-out `0x0922` recorded, since the reference
+    // answers `9000` there and keeps only `n mod 256` bytes.
+    assert_eq!(
+        put_long(&mut app, &mut fs, 0x00, 0x5E, &vec![0x41u8; cap]),
+        Sw::OK
+    );
+    assert_eq!(
+        put_long(&mut app, &mut fs, 0x00, 0x5E, &vec![0x41u8; cap + 1]),
+        consts::WRONG_DATA
+    );
+    // …and the routed arms, which the length gate exists to cover, answer for
+    // their own contents rather than for the tag.
+    assert_eq!(
+        put_long(&mut app, &mut fs, 0x7F, 0x21, &vec![0x41u8; cap + 1]),
+        consts::WRONG_DATA
+    );
+    assert_eq!(
+        put_long(&mut app, &mut fs, 0x00, 0xD5, &vec![0x41u8; cap + 1]),
+        consts::WRONG_DATA
+    );
+
+    // One owner: `writable` must answer for the whole 16-bit space exactly as the
+    // command does. Without this the predicate above the length gate and the
+    // writer's own `_ => WRONG_P1P2` arm are two tables that can drift.
+    //
+    // The set, not just the agreement. Wherever `writable` is false the cell
+    // reduces to `false == false` and asserts nothing, so the loop alone catches
+    // a WIDENED predicate and not a narrowed one — dropping `EF_RESET_CODE`,
+    // `EF_PW_STATUS` or `EF_ALGO_SIG` from it passes the loop untouched. Naming
+    // the set makes a removed arm change an observable list.
+    let mut writable = std::vec::Vec::new();
+    for fid in 0..=0xFFFFu16 {
+        let sw = put(&mut app, &mut fs, (fid >> 8) as u8, fid as u8, &[]);
+        assert_eq!(
+            crate::putdata::writable(fid),
+            sw != Sw::WRONG_P1P2,
+            "PUT DATA {fid:04X} answered {:04X}",
+            sw.0
+        );
+        if crate::putdata::writable(fid) {
+            writable.push(fid);
+        }
+    }
+    assert_eq!(
+        writable,
+        std::vec![
+            0x0101, 0x0102, 0x0103, 0x0104, 0x005B, 0x005E, 0x0093, 0x00C1, 0x00C2, 0x00C3, 0x00C4,
+            0x00C7, 0x00C8, 0x00C9, 0x00CA, 0x00CB, 0x00CC, 0x00CE, 0x00CF, 0x00D0, 0x00D3, 0x00D5,
+            0x00D6, 0x00D7, 0x00D8, 0x00F9, 0x5F2D, 0x5F35, 0x5F50, 0x7F21,
+        ]
+        .into_iter()
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect::<std::vec::Vec<_>>(),
+        "the writable set, in full"
+    );
 }

@@ -49,6 +49,19 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **An OpenPGP `PUT DATA` to a tag the card cannot write is `6B00` at every body
+  length.** Past `MAX_DO_BYTES` it was `6A80`: the cap that DO `C0` announces sits
+  above the routing split on purpose — the cardholder-certificate arm writes flash
+  without passing through the generic writer — but that put it above the *tag* as
+  well, so a DO no arm below could write was answered for by its body's length. A
+  YubiKey 5.7.4 answers `6B00` to `7A`, `FFFF` and `0042` at 10, 2036, 2037, 2038
+  and 3000 bytes with PW3 verified, 3 runs byte-identical. The order is password →
+  tag → length now, and "is there anywhere to put this" has one owner that a
+  whole-tag-space test holds to what the command actually answers. The
+  unauthorised column is unchanged — a flat `6982` at every tag and every length —
+  and so is the deliberate divergence above the cap for a writable DO, where the
+  reference answers `9000` and keeps `n mod 256` bytes. `bcdDevice` → `0x0934`.
+
 - **PIV `GET METADATA` for the PIN and PUK carries the algorithm tag.** The two
   records the command serves for a secret had a different shape from the ones it
   serves for a key: `05` and `06` and no `01`. A YubiKey 5.7.4 answers both

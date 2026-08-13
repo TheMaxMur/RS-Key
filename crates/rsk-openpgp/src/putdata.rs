@@ -64,6 +64,25 @@ pub fn write_authorized(sess: &Session, fid: u16) -> bool {
     }
 }
 
+/// Whether PUT DATA has anywhere to put `fid` at all — the union of the tags the
+/// dispatch routes to their own handlers and the ones [`put_data`] writes itself.
+///
+/// One owner for the same reason [`write_authorized`] is: the `MAX_DO_BYTES` gate
+/// sits above the routing split, so without this it judged the body's length for
+/// tags no arm below it can write. A YubiKey 5.7.4 answers `6B00` to `7A`, `FFFF`
+/// and `0042` at every length under PW3. A test walks the whole 16-bit space and
+/// pins both the agreement with the command AND the resulting set by name — the
+/// agreement alone is vacuous wherever this returns false, so it would catch a
+/// widened table and not a narrowed one.
+pub fn writable(fid: u16) -> bool {
+    fid == EF_AES_KEY.get()
+        || matches!(
+            fid,
+            EF_CH_CERT | EF_RESET_CODE | EF_PW_STATUS | EF_ALGO_SIG | EF_ALGO_DEC | EF_ALGO_AUT
+        )
+        || matches!(source(fid), DoSource::Flash)
+}
+
 /// Write `data` to the DO addressed by `fid` (empty `data` deletes it, unless
 /// the DO has a fixed length).
 pub fn put_data<S: Storage>(fs: &mut Fs<S>, sess: &Session, fid: u16, data: &[u8]) -> Sw {
