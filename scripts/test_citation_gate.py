@@ -149,6 +149,56 @@ def test_an_explicit_path_is_taken_literally(tree):
     assert only(tree.problems(), "no such file is in the tree")
 
 
+def test_an_en_dash_does_not_swallow_the_upper_bound(tree):
+    """A smart-dash substitution used to leave a single-line citation that passed."""
+    tree.edit(citation_gate.PAGES[0], "state.rs:4-6", "state.rs:4\u20136000")
+    assert only(tree.problems(), "which has 8 lines")
+
+
+def test_a_space_after_the_colon_still_counts(tree):
+    tree.edit(citation_gate.PAGES[0], "state.rs:4-6", "state.rs: 6000")
+    assert only(tree.problems(), "which has 8 lines")
+
+
+def test_line_zero_is_not_a_line(tree):
+    """It passed both bounds checks and then asserted about `body[-1]`."""
+    tree.edit(citation_gate.PAGES[0], "state.rs:4-6", "state.rs:0")
+    assert only(tree.problems(), "names line 0")
+
+
+def test_a_continuation_does_not_bind_across_lines(tree):
+    """`seen` used to live for a whole page, so a bare `:1` bound to a file named
+    hundreds of lines earlier and was silently checked against it."""
+    tree.write(
+        citation_gate.PAGES[1],
+        (tree.root / citation_gate.PAGES[1]).read_text() + "\nA later sentence: `:1`.\n",
+    )
+    assert only(tree.problems(), "with no file named before it")
+
+
+def test_an_unregistered_ambiguous_basename(tree):
+    """First-hit-wins re-points every citation of a name, silently and page-wide."""
+    tree.write("crates/rsk-device/src/state.rs", "one line\n")
+    assert only(tree.problems(), "search directories")
+
+
+def test_a_registered_ambiguous_basename_is_allowed(tree):
+    """The one the model means, with the measurement, so the pick is reviewable."""
+    tree.write("crates/rsk-device/src/clientpin.rs", "one line\n")
+    was = dict(citation_gate.AMBIGUOUS)
+    citation_gate.AMBIGUOUS["clientpin.rs"] = ("crates/rsk-fido/src/clientpin.rs", "measured")
+    try:
+        assert tree.problems() == []
+    finally:
+        citation_gate.AMBIGUOUS.clear()
+        citation_gate.AMBIGUOUS.update(was)
+
+
+def test_a_page_that_is_gone(tree):
+    (tree.root / citation_gate.PAGES[1]).unlink()
+    assert only(tree.problems(), "is gone; the model")
+
+
 # --- the cases that must stay green -------------------------------------------
 
 
@@ -170,10 +220,10 @@ def test_a_same_named_file_outside_the_search_path_is_not_picked(tree):
     assert tree.problems() == []
 
 
-def test_the_search_order_prefers_the_applet(tree):
-    """A basename in two search directories resolves to the model's own crate."""
+def test_a_same_named_file_in_a_second_search_directory_is_reported(tree):
+    """Not silently resolved by order: the pick has to be written down."""
     tree.write("firmware/src/state.rs", "one line\n")
-    assert tree.problems() == []
+    assert only(tree.problems(), "search directories")
 
 
 # --- the guard's own blind spots ----------------------------------------------

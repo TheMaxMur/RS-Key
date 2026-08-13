@@ -30,6 +30,9 @@ class Tree:
         self.write("scripts/hooks/pre-commit", f"#!/usr/bin/env bash\n# {spdx_gate.HEADER}\n")
         self.write("crates/rsk-a/Cargo.toml", '[package]\nname = "rsk-a"\n')
         self.write("README.md", "# no header here, and none is asked for\n")
+        self.write(".github/workflows/ci.yml", f"# {spdx_gate.HEADER}\nname: ci\n")
+        for form in spdx_gate.UNHEADERED:
+            self.write(form, "name: a form\n")
         self.write("LICENSE", "the licence itself\n")
         self.write("third_party/upstream/LICENSE", "MIT\n")
         self.write("third_party/upstream/test_it.py", "def test(): pass\n")
@@ -44,8 +47,14 @@ class Tree:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text)
 
-    def problems(self):
-        return spdx_gate.audit(self.root)[0]
+    def problems(self, floor=1):
+        """Audited with the floor lowered: the fixture is smaller than the tree."""
+        was = spdx_gate.FLOOR
+        spdx_gate.FLOOR = floor
+        try:
+            return spdx_gate.audit(self.root)[0]
+        finally:
+            spdx_gate.FLOOR = was
 
 
 @pytest.fixture
@@ -161,12 +170,53 @@ def test_the_repo_licence_does_not_excuse_everything(tree):
     assert only(tree.problems(), "that is not an exemption")
 
 
+def test_a_new_workflow_with_no_header(tree):
+    """`.yml` is checked, so the next workflow is too — the three issue forms are
+    excused one by one rather than by extension."""
+    tree.write(".github/workflows/nightly.yml", "name: nightly\n")
+    assert only(tree.problems(), ".github/workflows/nightly.yml has no")
+
+
+def test_the_issue_forms_stay_excused(tree):
+    assert tree.problems() == []
+    assert len(spdx_gate.UNHEADERED) == 3
+
+
+def test_an_excused_file_that_grew_a_header(tree):
+    form = next(iter(spdx_gate.UNHEADERED))
+    tree.write(form, f"# {spdx_gate.HEADER}\nname: a form\n")
+    assert only(tree.problems(), "drop its UNHEADERED entry")
+
+
+def test_an_excused_file_that_is_gone(tree):
+    for form in spdx_gate.UNHEADERED:
+        (tree.root / form).unlink()
+    assert only(tree.problems(), "is listed in UNHEADERED but is not in the tree")
+
+
+def test_a_file_with_no_extension_and_no_shebang(tree):
+    """A Makefile has no suffix to classify, and used to fall through the gap."""
+    tree.write("Makefile", "all:\n\tcargo build\n")
+    assert only(tree.problems(), "this guard has never been told about")
+
+
+def test_a_walk_that_finds_nothing(tree):
+    """No roster to go empty, but a walk can still return nothing and exit 0."""
+    assert only(tree.problems(floor=9999), "under the floor")
+
+
+def test_a_stray_licensing_note_does_not_excuse_a_vendored_tree(tree):
+    (tree.root / "third_party/upstream/LICENSE").unlink()
+    tree.write("third_party/upstream/LICENSING-NOTES.md", "we use MIT somewhere\n")
+    assert only(tree.problems(), "that is not an exemption")
+
+
 # --- the set of extensions cannot go stale in silence -------------------------
 
 
 def test_an_extension_nobody_has_classified(tree):
     tree.write("tools/web/app.ts", "export const a = 1;\n")
-    assert only(tree.problems(), "has an extension `.ts` this guard has never")
+    assert only(tree.problems(), "is a `.ts` this guard has never")
 
 
 def test_the_two_sets_do_not_overlap():

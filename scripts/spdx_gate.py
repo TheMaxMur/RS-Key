@@ -30,8 +30,14 @@ learns it is unchecked — and this is the cheapest thing that cannot.
 
 A file with no extension is checked when it starts with `#!`: `scripts/hooks/
 pre-commit` is a shell script and carries the header, and the next hook beside it
-should not escape by having no suffix. `LICENSE` and `NOTICE` are skipped — they
-are the licence.
+should not escape by having no suffix. One that is neither a script nor a name in
+[`NOT_SOURCE`] is reported, so a `Makefile` or a `Dockerfile` cannot slip through
+the gap between "no suffix" and "not classified".
+
+A checked type may still be excused file by file — [`UNHEADERED`] — and only file
+by file. The three `.github/ISSUE_TEMPLATE/*.yml` forms carry no header while the
+eight workflow files and `dependabot.yml` all do, so excusing the *extension*
+would have left every future workflow unchecked in order to excuse three forms.
 
 ## The exemptions, and their debt
 
@@ -66,18 +72,32 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 HEADER = "SPDX-License-Identifier: AGPL-3.0-only"
 WINDOW = 3
 
-#: Extensions the whole tree already carries the header on. Growing this set
-#: means stamping the files that do not — a bulk edit, deliberately not this
-#: guard's to make on its own.
+#: Extensions the whole tree already carries the header on, plus `.yml`, whose
+#: three exceptions are listed by name below rather than excusing the extension.
+#: Growing this set means stamping the files that do not — a bulk edit,
+#: deliberately not this guard's to make on its own.
 CHECKED = frozenset({".rs", ".py", ".sh", ".nix", ".svg", ".x", ".tla", ".js", ".html",
-                     ".c", ".h", ".S"})
+                     ".c", ".h", ".S", ".yml"})
+
+#: Below this the guard is green over nothing. It has no roster to go empty, but
+#: it does walk a tree, and a walk that returns nothing exits 0 — the shape four
+#: guards in this repo shipped with. Today: 610.
+FLOOR = 500
+
+#: Files a suffix cannot classify, by name and with the reason. Named, not
+#: pattern-matched, so a `Makefile` or a `Dockerfile` — neither of which has a
+#: suffix either — is a failure that says "classify it" rather than a silent pass.
+NOT_SOURCE = {
+    "LICENSE": "the licence itself",
+    "NOTICE": "the attribution file",
+    ".gitignore": "git configuration",
+}
 
 #: The rest, each with the measured reason it is not checked. Present so that an
 #: extension in neither set is a failure rather than a silent gap.
 UNCHECKED = {
     ".md": "the tree is split — 21 of 57 carry it, the docs/ pages do not",
     ".toml": "12 of 44; a cargo manifest carries no header by convention",
-    ".yml": "8 of 11; the three ISSUE_TEMPLATE files are GitHub-rendered forms",
     ".json": "data",
     ".txt": "data",
     ".cfg": "data (kani/proptest knobs and board fragments)",
@@ -95,6 +115,18 @@ EXEMPT = {
     "crates/rsk-rsa-asm/csrc/": "Emil Lenngren's BSD-2-Clause bignum C and asm",
 }
 
+#: Files of a checked type that carry no header for a stated reason. Listed one
+#: by one, never by directory: `.yml` is checked because the eight workflow files
+#: and `dependabot.yml` all carry the header, and blanket-excusing the extension
+#: would have left every FUTURE workflow unchecked to excuse these three. Also
+#: checked for staleness — one naming a file that is gone, or that has since
+#: grown a header, fails.
+UNHEADERED = {
+    ".github/ISSUE_TEMPLATE/bug_report.yml": "a GitHub-rendered issue form",
+    ".github/ISSUE_TEMPLATE/config.yml": "a GitHub-rendered issue form",
+    ".github/ISSUE_TEMPLATE/feature_request.yml": "a GitHub-rendered issue form",
+}
+
 
 def kind(root, rel):
     """Whether `rel` is checked, unchecked-with-a-reason, or unclassified.
@@ -110,9 +142,13 @@ def kind(root, rel):
     if suffix:
         return suffix
     # No extension: a script is still a source file, and a hook beside
-    # `pre-commit` should not escape by having no suffix.
+    # `pre-commit` should not escape by having no suffix. A `Makefile` has no
+    # suffix either, so anything that is neither a script nor a named licence is
+    # reported rather than skipped.
     with (root / rel).open("rb") as handle:
-        return "" if handle.read(2) == b"#!" else None
+        if handle.read(2) == b"#!":
+            return ""
+    return None if rel.name in NOT_SOURCE else f"file with no extension, {rel.name},"
 
 
 def licensed(root, rel):
@@ -123,9 +159,12 @@ def licensed(root, rel):
     tree. The repo's own top-level `LICENSE` is not one of them — it would excuse
     everything.
     """
+    # `any(dir.glob(p) for p in …)` is always true: a generator is truthy. The
+    # tests caught it; the guard had gone green over every exempt file.
     for parent in list(rel.parents)[:-1]:
-        if any((root / parent).glob("LIC[EN]*")):
-            return True
+        for pattern in ("LICEN[CS]E*", "COPYING*"):
+            if any((root / parent).glob(pattern)):
+                return True
     head = (root / rel).read_text(errors="replace").splitlines()[:25]
     return any("Copyright" in line for line in head)
 
@@ -133,17 +172,14 @@ def licensed(root, rel):
 def audit(root):
     """(problems, one-line summary) for how this checkout licenses its sources."""
     root = pathlib.Path(root)
-    problems, checked, exempted = [], 0, set()
+    problems, checked, exempted, excused = [], 0, set(), set()
     for rel in sorted(gate_lines.tree_files(root)):
         unknown = kind(root, rel)
         if unknown is None:
             continue
-        if unknown:
-            problems.append(
-                f"{rel} has an extension `{unknown}` this guard has never been"
-                " told about: add it to CHECKED, or to UNCHECKED with the reason"
-            )
-            continue
+        # Between "this type is asked about" and the header itself: a vendored
+        # tree's own files are upstream's business, whatever type they are — the
+        # licence texts beside them have no suffix to classify.
         prefix = next((p for p in EXEMPT if str(rel).startswith(p)), None)
         if prefix:
             exempted.add(prefix)
@@ -153,12 +189,30 @@ def audit(root):
                     " line and sits under no LICENCE — that is not an exemption"
                 )
             continue
+        if unknown:
+            problems.append(
+                f"{rel} is a `{unknown}` this guard has never been told about:"
+                " add it to CHECKED, or to UNCHECKED/NOT_SOURCE with the reason"
+            )
+            continue
+        if str(rel) in UNHEADERED:
+            excused.add(str(rel))
+            if HEADER in (root / rel).read_text(errors="replace"):
+                problems.append(f"{rel} carries the header now; drop its UNHEADERED entry")
+            continue
         checked += 1
         head = (root / rel).read_text(errors="replace").splitlines()[:WINDOW]
         if not any(HEADER in line for line in head):
             problems.append(f"{rel} has no `{HEADER}` in its first {WINDOW} lines")
     for prefix in sorted(set(EXEMPT) - exempted):
         problems.append(f"nothing under `{prefix}` is exempt any more; drop the entry")
+    for rel in sorted(set(UNHEADERED) - excused):
+        problems.append(f"{rel} is listed in UNHEADERED but is not in the tree")
+    if checked < FLOOR:
+        problems.append(
+            f"only {checked} files were checked, under the floor of {FLOOR}:"
+            " the walk found nothing, or the checked set stopped matching"
+        )
     return problems, (
         f"spdx-gate: ok — {checked} source files carry the header,"
         f" {len(EXEMPT)} vendored trees exempt"

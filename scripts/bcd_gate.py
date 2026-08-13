@@ -43,9 +43,19 @@ So the paths below are only the first filter, and each changed **line** inside
 them is then asked whether it can end up in the binary. A line cannot when it is
 a comment, a `#[cfg(…test…)]` / `#[cfg(…kani…)]` attribute, the `#[path]`/`mod`
 declaration of a module that is cfg-gated, or a `const _: () = …` compile-time
-assertion (an anonymous const item emits no code). Whitespace-only and
-blank-line changes are dropped by `git diff -w --ignore-blank-lines`. Everything
-else counts, and one line is enough.
+assertion (an anonymous const item emits no code) — and, for each of those, only
+when the line is *nothing but* that construct, since
+`#[cfg(not(test))] pub const TIMEOUT_MS: u32 = 1;` carries a cfg and ships every
+byte of the const. Blank-line changes are dropped; whitespace changes are **not**
+(`-w` also ignores whitespace inside a string literal, and a USB descriptor
+losing its spaces produced an empty diff). Everything else counts, and one line
+is enough.
+
+Documentation under those paths (`.md`, `.txt`) is excluded: nothing in
+`crates/` or `firmware/` calls `include_str!`/`include_bytes!`, so prose cannot
+reach the binary, and demanding a bump for a crate README is the false alarm that
+gets a guard deleted. Every other `.toml` there — the board knobs — is compared
+as parsed TOML like a manifest, so a comment edit is not a build input either.
 
 Which files are cfg-gated is read out of the module graph, not off a name
 pattern: a crate root's `#[cfg(test)] mod tests;` carries no `#[path]`, and
@@ -130,24 +140,48 @@ VISIBLE = ("firmware/", "crates/")
 #: Cargo's non-lib targets: compiled by `cargo test`/`cargo bench`, never by the
 #: lib build the firmware links.
 NOT_A_LIB_TARGET = re.compile(r"^crates/[^/]+/(tests|benches|examples)/")
+#: Prose, wherever it sits. Nothing in `crates/` or `firmware/` reaches for a
+#: file with `include_str!`/`include_bytes!` (measured: no call site in either),
+#: so a crate README or a licence text cannot end up in the binary — and asking
+#: for a bump on one is the false alarm that gets a guard deleted.
+PROSE = (".md", ".txt")
 #: Manifest tables that decide what a lib build compiles. `dev-dependencies`,
 #: `[[test]]` and `[[bench]]` are absent on purpose — a test-only dependency is
 #: the single most common reason a firmware crate's manifest moves.
-MANIFEST_TABLES = ("dependencies", "build-dependencies", "target", "features", "lib", "package")
+MANIFEST_TABLES = (
+    "dependencies",
+    "build-dependencies",
+    "target",
+    "features",
+    "lib",
+    "bin",
+    "package",
+    "profile",
+    "patch",
+)
 
 #: A `mod x;` that names a file. An inline `mod x { … }` adds no file, so it is
 #: not one, and its body is ordinary code that the line filter reads as such.
-MOD_DECL = re.compile(r"^\s*(?:pub(?:\s*\([^)]*\))?\s+)?mod\s+([A-Za-z_]\w*)\s*;")
-ATTRIBUTE = re.compile(r"^\s*#!?\[")
+MOD_DECL = re.compile(r"^\s*(?:pub(?:\s*\([^)]*\))?\s+)?mod\s+([A-Za-z_]\w*)\s*;\s*$")
+#: An OUTER attribute — `#[…]`. `#![…]` applies to the enclosing file, not to the
+#: item below it, and reading one as if it did let `#![cfg_attr(not(test),
+#: no_std)]` at the top of a `lib.rs` gate the first `mod` under it: three
+#: shipping modules (rsk-oath's seal, rsk-rescue's keydev, rsk-ui's aa) were
+#: outside the counter entirely.
+ATTRIBUTE = re.compile(r"^\s*#\[")
+#: A line that is nothing but attributes. The exemptions below are about lines
+#: that emit no code, and `#[cfg(not(test))] pub const X: u32 = 1;` emits plenty.
+ONLY_ATTRIBUTES = re.compile(r"^(?:#!?\[[^\]]*\]\s*)+$")
 #: A cfg predicate mentioning `test` or `kani`, in any nesting (`any`, `all`,
 #: `not`) and as `cfg_attr` too. `not(test)` is here on purpose: the attribute
 #: line itself emits nothing either way, and the code it gates is judged on its
 #: own lines.
 CFG_TEST = re.compile(r"#!?\[\s*cfg(?:_attr)?\s*\([^)]*\b(?:test|kani)\b")
 PATH_ATTR = re.compile(r'#\s*!?\[\s*path\s*=\s*"([^"]+)"\s*\]')
-#: `const _: () = …;` — an anonymous const item. It is evaluated at compile time
-#: and emits no code, so a static assertion is not a change to the image.
-CONST_ASSERT = re.compile(r"^const _: \(\) = ")
+#: `const _: () = …` — an anonymous const item, evaluated at compile time and
+#: emitting no code. Anchored at both ends (rustfmt keeps one item per line), so
+#: a second item smuggled onto the same line is still read as code.
+CONST_ASSERT = re.compile(r"^const _: \(\) = .*(?:;|\{)$")
 
 
 def git(root, *args, missing_ok=False):
@@ -164,6 +198,13 @@ def git(root, *args, missing_ok=False):
     return done.stdout if not done.returncode else ""
 
 
+def listing(text):
+    """A NUL-separated `git` listing as a list. `-z` because git QUOTES a path
+    with a non-ASCII byte otherwise, and a quoted path matches no prefix here —
+    a file that cannot be classified is a file that is never asked about."""
+    return [rel for rel in text.split("\0") if rel]
+
+
 def read(root, rev, rel):
     """`rel` at `rev`, or from the working tree when `rev` is None. '' if absent."""
     if rev is None:
@@ -173,8 +214,16 @@ def read(root, rev, rel):
 
 
 def release(text):
-    """The counter's value in a `main.rs`, or None if it does not bind one."""
-    found = RELEASE.search(text)
+    """The counter's value in a `main.rs`, or None if it does not bind one.
+
+    Comment lines are dropped first. `RELEASE.search` over the raw file takes the
+    *first* match anywhere, so one line of prose quoting the binding — a
+    `// next release: … = 0xFFFF` note, a doc comment explaining the counter —
+    became the value the guard read. That flips the working tree into "the bump
+    is here", which skips the reachability check for the whole tree.
+    """
+    code = "\n".join(l for l in text.splitlines() if not l.strip().startswith("//"))
+    found = RELEASE.search(code)
     return int(found.group(1), 16) if found else None
 
 
@@ -212,14 +261,16 @@ def files(root, base):
     at all, so a brand new `crates/rsk-fido/src/thing.rs` — exactly the change
     this row is for — would otherwise be a path with an empty diff and no hit.
     """
-    tracked = git(root, "diff", "--name-only", base).split("\n")
-    new = git(root, "ls-files", "--others", "--exclude-standard").split("\n")
+    tracked = listing(git(root, "diff", "--name-only", "-z", base))
+    new = listing(git(root, "ls-files", "-z", "--others", "--exclude-standard"))
 
     def mine(names):
         return [
             rel
-            for rel in dict.fromkeys(filter(None, names))
-            if rel.startswith(VISIBLE) and not NOT_A_LIB_TARGET.match(rel)
+            for rel in dict.fromkeys(names)
+            if rel.startswith(VISIBLE)
+            and not NOT_A_LIB_TARGET.match(rel)
+            and not rel.endswith(PROSE)
         ]
 
     untracked = set(mine(new))
@@ -238,12 +289,12 @@ def units(paths):
 def sources(root, rev, unit):
     """The `.rs` files of one build unit at `rev`, as {path: text}."""
     if rev is None:
-        listing = git(root, "ls-files", "--cached", "--others", "--exclude-standard", "--", unit)
+        found = git(root, "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", unit)
     else:
-        listing = git(root, "ls-tree", "-r", "--name-only", rev, "--", unit, missing_ok=True)
+        found = git(root, "ls-tree", "-r", "-z", "--name-only", rev, "--", unit, missing_ok=True)
     return {
         rel: read(root, rev, rel)
-        for rel in listing.split("\n")
+        for rel in listing(found)
         if rel.endswith(".rs") and not NOT_A_LIB_TARGET.match(rel)
     }
 
@@ -260,7 +311,10 @@ def declarations(text):
             held = []
         elif ATTRIBUTE.match(line):
             held.append(line)
-        elif line.strip():
+        else:
+            # A blank line ends the run too: an attribute is attached to the item
+            # it touches, and treating a gap as transparent let a file-level
+            # `#![cfg_attr(not(test), no_std)]` gate the first `mod` below it.
             held = []
 
 
@@ -283,7 +337,12 @@ def resolve(parent, name, operand, known):
 
 
 def gated(root, rev, unit):
-    """(cfg-gated files, cfg-gated `(parent, module name)` declarations) of `unit`.
+    """(ungated files, gated files, ungated declarations, gated declarations).
+
+    Both halves, because an exemption has to be revision-aware: a module that was
+    cfg-gated at the base and is *not* gated now has just entered the image, and
+    unioning only the gated sides excused both it and the `mod` line that let it
+    in. What is gated on one side and plain on the other is not gated.
 
     Walked from the crate roots so gating is inherited: `tests.rs` is declared
     `#[cfg(test)] mod tests;` with no `#[path]`, and the modules *it* declares
@@ -292,7 +351,7 @@ def gated(root, rev, unit):
     `#[path]` above it that says which file it names.
     """
     known = sources(root, rev, unit)
-    seen, out, decls = set(), set(), set()
+    seen, out, decls, declared = set(), set(), set(), set()
     queue = [(rel, False) for rel in (f"{unit}/src/lib.rs", f"{unit}/src/main.rs") if rel in known]
     while queue:
         rel, gate = queue.pop()
@@ -302,6 +361,7 @@ def gated(root, rev, unit):
         if gate:
             out.add(rel)
         for name, operand, own in declarations(known[rel]):
+            declared.add((rel, name))
             if gate or own:
                 decls.add((rel, name))
             child = resolve(rel, name, operand, known)
@@ -309,25 +369,42 @@ def gated(root, rev, unit):
                 queue.append((child, gate or own))
     # A file reachable both gated and ungated is in the image; the ungated walk
     # wins, so subtract what the walk also reached without a gate.
-    return out - {rel for rel, gate in seen if not gate}, decls
+    # Reached WITHOUT a gate — not merely "not gated". A file no root reaches is
+    # compiled by nothing, so it is in neither half, and newly hooking it up must
+    # not read as "it used to be in the image".
+    plain = {rel for rel, gate in seen if not gate}
+    return plain, out - plain, declared - decls, decls
 
 
-def manifest(text):
-    """A manifest reduced to the tables a lib build compiles from."""
+def manifest(text, rel):
+    """A TOML build input reduced to what a build actually reads.
+
+    A `Cargo.toml` keeps only the tables a lib or bin build compiles from; any
+    other TOML under these paths — `firmware/boards/*.toml`, the board knobs — is
+    compared whole, minus its comments, which parsing drops for free.
+    """
     try:
         parsed = tomllib.loads(text)
     except tomllib.TOMLDecodeError:
         return text  # unparseable: compare it verbatim rather than excuse it
+    if not rel.endswith("Cargo.toml"):
+        return parsed
     return {name: value for name, value in parsed.items() if name in MANIFEST_TABLES}
 
 
 def changed_lines(root, base, rel, untracked):
-    """Added and removed lines for one file, whitespace-only changes dropped."""
+    """Added and removed lines for one file, blank-line changes dropped.
+
+    Deliberately NOT `-w`: it ignores whitespace inside string literals too, so
+    `"YubiKey RSK OTP+FIDO+CCID"` losing its spaces — a USB descriptor every host
+    tool reads — produced an empty diff. `cargo fmt --check` is a gate row, so a
+    reindent that is not part of a real edit does not happen here anyway.
+    """
     if rel in untracked:
         yield from read(root, None, rel).splitlines()
         return
     diff = git(
-        root, "diff", "-w", "--ignore-blank-lines", "-U0", base, "--", rel, missing_ok=True
+        root, "diff", "--ignore-blank-lines", "-U0", base, "--", rel, missing_ok=True
     )
     for line in diff.splitlines():
         if line[:1] in "+-" and not line.startswith(("+++", "---")):
@@ -335,15 +412,23 @@ def changed_lines(root, base, rel, untracked):
 
 
 def reaches_image(line, rel, excused, decls):
-    """Whether one changed line can end up in the binary."""
+    """Whether one changed line can end up in the binary.
+
+    Each excuse asks that the line be *nothing but* the construct it names.
+    `#[cfg(not(test))] pub const TIMEOUT_MS: u32 = 1;` carries a cfg mentioning
+    `test` and ships every byte of that const.
+    """
     body = line.strip()
     if not body or body.startswith("//"):
         return False
-    if CFG_TEST.search(body) or CONST_ASSERT.match(body):
+    if CONST_ASSERT.match(body):
         return False
-    operand = PATH_ATTR.search(body)
-    if operand and f"{rel.rsplit('/', 1)[0]}/{operand.group(1)}" in excused:
-        return False
+    if ONLY_ATTRIBUTES.match(body):
+        if CFG_TEST.search(body):
+            return False
+        operand = PATH_ATTR.search(body)
+        if operand and f"{rel.rsplit('/', 1)[0]}/{operand.group(1)}" in excused:
+            return False
     decl = MOD_DECL.match(body)
     return not (decl and (rel, decl.group(1)) in decls)
 
@@ -351,19 +436,28 @@ def reaches_image(line, rel, excused, decls):
 def image_changes(root, base):
     """[(path, the line that decided it)] for everything the image can feel."""
     paths, untracked = files(root, base)
-    excused, decls = set(), set()
+    plain, gated_files, plain_decls, gated_decls = set(), set(), set(), set()
     for unit in units(paths):
         for rev in (base, None):
-            found, declared = gated(root, rev, unit)
-            excused |= found
-            decls |= declared
+            open_files, gate, open_decls, gates = gated(root, rev, unit)
+            plain |= open_files
+            gated_files |= gate
+            plain_decls |= open_decls
+            gated_decls |= gates
+    # Gated on every side that has it. A file gated at the base and un-gated now
+    # has just entered the image, and so has the `mod` line that let it in.
+    excused = gated_files - plain
+    decls = gated_decls - plain_decls
     hits = []
     for rel in paths:
         if rel in excused:
             continue
-        if rel.endswith("Cargo.toml"):
-            if manifest(read(root, base, rel)) != manifest(read(root, None, rel)):
-                hits.append((rel, "a table a lib build compiles from"))
+        if rel.endswith(".toml"):
+            # Parsed, not textual: a board knob's comment is not a build input,
+            # and a manifest's `[dev-dependencies]` is not one either.
+            before, after = read(root, base, rel), read(root, None, rel)
+            if manifest(before, rel) != manifest(after, rel):
+                hits.append((rel, "a table a build reads"))
             continue
         if not rel.endswith(".rs"):
             hits.append((rel, "not a Rust source file, so every byte counts"))
@@ -403,7 +497,9 @@ def audit(root):  # noqa: C901 — one clause per failure mode, each named
             " and a number that does not is the shape of one copied out of a"
             f" stale document instead of read from {MAIN}"
         )
-    if not git(root, "diff", "--name-only", span, "--", str(CHANGELOG)).strip():
+    if not (root / CHANGELOG).is_file():
+        problems.append(f"{CHANGELOG} is gone; deleting it is not a way to satisfy this row")
+    elif not git(root, "diff", "--name-only", span, "--", str(CHANGELOG)).strip():
         problems.append(
             f"{CHANGELOG} has not moved since {span}: a bump is a released"
             " behaviour change and owes an [Unreleased] entry"

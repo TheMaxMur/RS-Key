@@ -33,9 +33,13 @@ async fn main(_s: Spawner) {
 }
 """
 
-LIB = """#![no_std]
+LIB = """#![cfg_attr(not(test), no_std)]
+
+mod helper;
 
 pub const WIDTH: usize = 8;
+
+pub const PRODUCT: &str = "RS Key Probe";
 
 pub fn judge(byte: u8) -> bool {
     byte < 0x80
@@ -64,6 +68,10 @@ MANIFEST = """[package]
 name = "rsk-a"
 version = "0.1.0"
 
+[[bin]]
+name = "rsk-a"
+path = "src/main.rs"
+
 [dependencies]
 minicbor = "2.2"
 
@@ -88,6 +96,9 @@ class Tree:
         self.write("firmware/memory.x", "MEMORY { FLASH : ORIGIN = 0x10000000 }\n")
         self.write("crates/rsk-a/Cargo.toml", MANIFEST)
         self.write("crates/rsk-a/src/lib.rs", LIB)
+        self.write("crates/rsk-a/src/helper.rs", "pub fn help() -> u8 { 1 }\n")
+        self.write("crates/rsk-a/README.md", "# rsk-a\n")
+        self.write("firmware/boards/probe.toml", "# a knob\nflash = \"4M\"\n")
         self.write("crates/rsk-a/src/tests.rs", TESTS)
         self.write("crates/rsk-a/src/sub_tests.rs", "use super::*;\n")
         self.write("crates/rsk-a/src/kani.rs", "use super::*;\n")
@@ -187,7 +198,7 @@ def test_a_non_rust_file_under_firmware(tree):
 
 def test_a_real_dependency(tree):
     tree.edit("crates/rsk-a/Cargo.toml", 'minicbor = "2.2"', 'minicbor = "2.3"')
-    assert only(tree.problems(), "a table a lib build compiles from")
+    assert only(tree.problems(), "a table a build reads")
 
 
 def test_a_plain_module_declaration_is_code(tree):
@@ -198,7 +209,82 @@ def test_a_plain_module_declaration_is_code(tree):
     assert only(tree.problems(), "mod extra;")
 
 
+def test_a_comment_quoting_the_binding_is_not_the_counter(tree):
+    """One line of prose above it used to become the value the guard read."""
+    tree.edit(
+        "firmware/src/main.rs",
+        "    let device_release",
+        "    // next release: `let device_release: u16 = 0xFFFF`\n    let device_release",
+    )
+    tree.append("crates/rsk-a/src/lib.rs", "\npub const EXTRA: u8 = 1;\n")
+    tree.note()
+    assert only(tree.problems(), "pub const EXTRA")
+
+
+def test_an_inner_attribute_does_not_gate_the_module_below_it(tree):
+    """`#![cfg_attr(not(test), no_std)]` gated three shipping modules for real."""
+    tree.append("crates/rsk-a/src/helper.rs", "\npub const EXTRA: u8 = 1;\n")
+    assert only(tree.problems(), "crates/rsk-a/src/helper.rs")
+
+
+def test_a_cfg_attribute_sharing_a_line_with_code(tree):
+    """`#[cfg(not(test))] pub const X` ships every byte of the const."""
+    tree.append(
+        "crates/rsk-a/src/lib.rs",
+        "\n#[cfg(not(test))] pub const TIMEOUT_MS: u32 = 1;\n",
+    )
+    assert only(tree.problems(), "TIMEOUT_MS")
+
+
+def test_un_gating_a_test_module_puts_it_in_the_image(tree):
+    tree.edit("crates/rsk-a/src/lib.rs", "#[cfg(test)]\nmod tests;", "pub mod tests;")
+    tree.append("crates/rsk-a/src/tests.rs", "\npub const NOW_SHIPPED: u8 = 1;\n")
+    tree.commit("un-gate the test module")
+    assert only(tree.problems(), "crates/rsk-a/src/tests.rs")
+
+
+def test_whitespace_inside_a_string_literal(tree):
+    """`git diff -w` ignored it, and a USB descriptor is made of exactly that."""
+    tree.edit("crates/rsk-a/src/lib.rs", '"RS Key Probe"', '"RSKeyProbe"')
+    assert only(tree.problems(), "PRODUCT")
+
+
+def test_repointing_a_binary_at_another_source_file(tree):
+    tree.edit("crates/rsk-a/Cargo.toml", 'path = "src/main.rs"', 'path = "src/other.rs"')
+    assert only(tree.problems(), "a table a build reads")
+
+
+def test_a_path_git_would_quote(tree):
+    """Without `-z` git quotes it, and a quoted path matches no prefix here."""
+    tree.write("crates/rsk-a/src/caf\u00e9.rs", "pub fn cafe() -> u8 { 1 }\n")
+    assert only(tree.problems(), "caf")
+
+
+def test_deleting_the_changelog_is_not_a_way_to_satisfy_the_row(tree):
+    (tree.root / "CHANGELOG.md").unlink()
+    tree.bump()
+    assert only(tree.problems(), "deleting it is not a way")
+
+
 # --- what does not ------------------------------------------------------------
+
+
+def test_a_crate_readme(tree):
+    """Nothing under these paths `include_str!`s prose, so it reaches no image."""
+    tree.append("crates/rsk-a/README.md", "\nA sentence.\n")
+    assert tree.problems() == []
+
+
+def test_a_comment_in_a_board_knob(tree):
+    tree.edit("firmware/boards/probe.toml", "# a knob", "# a knob, explained")
+    assert tree.problems() == []
+
+
+def test_a_board_knob_value(tree):
+    tree.edit("firmware/boards/probe.toml", 'flash = "4M"', 'flash = "16M"')
+    assert only(tree.problems(), "a table a build reads")
+
+
 
 
 def test_a_doc_comment(tree):
@@ -261,9 +347,12 @@ def test_a_compile_time_assertion(tree):
     assert tree.problems() == []
 
 
-def test_a_reindent(tree):
+def test_a_reindent_counts(tree):
+    """`-w` would drop it — and with it a string literal losing its spaces, which
+    is what a USB descriptor is. `cargo fmt --check` is its own gate row, so a
+    reindent does not arrive on its own here."""
     tree.edit("crates/rsk-a/src/lib.rs", "    byte < 0x80", "        byte < 0x80")
-    assert tree.problems() == []
+    assert only(tree.problems(), "byte < 0x80")
 
 
 def test_a_cfg_attribute_over_shipped_code(tree):
