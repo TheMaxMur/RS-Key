@@ -118,6 +118,25 @@ class FixtureHolder:
 
 def fixture_call(holder):
     return holder.fixture_method()
+
+
+FIXTURE_SPANS = [
+    'a ) b',
+    "two",  # and one in a comment: )
+    "say \\" ) done",
+    'four',
+]
+
+
+def fixture_span_use():
+    return len(FIXTURE_SPANS)
+"""
+
+#: A second file defining a name `src/lib.rs` also defines. Two modules each with
+#: their own `SERIAL_OFF` is ordinary; what is not ordinary is dropping this line
+#: from the report because it *looks* like the definition being changed.
+DUP = """\
+pub(crate) const SERIAL_OFF: usize = 9;
 """
 
 USER = """\
@@ -152,7 +171,13 @@ pub fn delims() -> u8 {
 #: Prose that says `N` more times than a report will print. `N` is a real
 #: constant in `RUST` *and* an ordinary word here, and `git grep -w` cannot tell
 #: the two apart — which is the whole of E132, and why order beats precision.
-NOTES = "".join(f"Row {i}: the N in the table is the element count.\n" for i in range(1, 26))
+#:
+#: The first line names a constant the tree does not define yet: docs describing
+#: a thing before the code lands is how a brand-new definition comes with a use
+#: site already on it, which is what makes the `fresh` guard visible.
+NOTES = "The FIXTURE_ROW column is reserved.\n" + "".join(
+    f"Row {i}: the N in the table is the element count.\n" for i in range(1, 26)
+)
 
 
 class Tree:
@@ -162,13 +187,19 @@ class Tree:
         self.root = root
         self.write("src/lib.rs", RUST)
         self.write("src/other.rs", USER)
+        self.write("src/dup.rs", DUP)
         self.write("tool.py", PY)
         self.write("docs/notes.md", NOTES)
         self.git("init", "-q")
         for key, value in config:
             self.git("config", key, value)
         self.git("add", "-A")
-        self.git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "base")
+        self.land("base")
+
+    def land(self, message="landed"):
+        """Commit what is staged. A rev-range needs two sides to compare."""
+        self.git("add", "-A")
+        self.git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", message)
 
     def git(self, *args):
         return subprocess.run(
@@ -464,6 +495,21 @@ def test_a_bracket_in_a_string_or_a_comment_does_not_end_a_definition(tree):
     assert tree.names() == ["SPANS"]
 
 
+def test_the_python_half_of_the_scanner_reads_its_own_quotes_and_comments(tree):
+    """E205. `'`, `#` and the escape step were Rust's fixture's job by accident.
+
+    Three decoys above the edited element, one per half: a `'`-quoted bracket, a
+    `#`-commented one, and one behind an escaped quote — where a scanner that
+    steps over `\\` by one closes the string early and reads the rest as code.
+    Any of the three loses `FIXTURE_SPANS`, which is the dropped-definition
+    direction, in the language `defined()` reaches through `bracket_delta`.
+    """
+    tree.edit("tool.py", "    'four',", "    'five',")
+    report = tree.report()
+    assert sorted(report) == ["FIXTURE_SPANS"]
+    assert report["FIXTURE_SPANS"] == ["tool.py:35"]
+
+
 def test_a_char_literal_does_not_end_a_definition(tree):
     """E206. `b')'` is a bracket the source never had, and it cut the span short.
 
@@ -542,6 +588,107 @@ def test_the_search_is_sized_by_the_staged_side_not_the_worktree(tree):
     # reporter fails in. The sites are worktree line numbers — `uses()` greps the
     # worktree while `touched` comes from the index, which is its own known limit.
     assert report["SCRATCH"] == ["src/other.rs:16"]
+
+
+# --- what `redefinitions` refuses to call a redefinition ------------------------
+
+
+def test_a_brand_new_definition_is_not_a_redefinition(tree):
+    """E203. Added-only is new: nothing downstream can have gone unread yet.
+
+    `FIXTURE_ROW` is named in the docs before the code lands — the ordinary way a
+    fresh definition arrives with a `git grep` hit already on it, and the only way
+    the guard's absence is visible at all.
+    """
+    tree.edit(
+        "src/lib.rs",
+        "pub const WIDTH: usize = 32;\n",
+        "pub const WIDTH: usize = 32;\npub const FIXTURE_ROW: usize = 3;\n",
+    )
+    assert tree.report() == {}
+
+
+def test_a_definition_line_re_emitted_unchanged_is_a_rewrite_around_it(tree):
+    """E203. Moving a constant writes its line on both sides, identically.
+
+    The value did not change, so the users do not need re-reading — and the first
+    clause cannot see it, because a move puts the same text in `gone` and `born`
+    and the touched line is the definition's own.
+    """
+    tree.edit("src/lib.rs", "pub(crate) const SERIAL_OFF: usize = 4;\n", "")
+    tree.edit(
+        "src/lib.rs",
+        "pub const WIDTH: usize = 32;\n",
+        "pub const WIDTH: usize = 32;\npub(crate) const SERIAL_OFF: usize = 4;\n",
+    )
+    assert tree.report() == {}
+
+
+def test_another_files_definition_of_the_same_name_is_still_a_site(tree):
+    """E203. `is_def` excuses the definition being changed, not every namesake.
+
+    `src/dup.rs` defines its own `SERIAL_OFF`; dropping it from the list because
+    it *looks* like a definition line hides the site most worth reading — a second
+    owner of the same name, which is where a narrowed constant does its damage.
+    """
+    tree.edit(
+        "src/lib.rs",
+        "pub(crate) const SERIAL_OFF: usize = 4;",
+        "pub(crate) const SERIAL_OFF: usize = 5;",
+    )
+    report = tree.report()
+    assert sorted(report) == ["SERIAL_OFF"]
+    assert report["SERIAL_OFF"] == ["src/dup.rs:1", "src/other.rs:12"]
+
+
+# --- the rev-range path, which nothing drives ----------------------------------
+
+
+def test_a_rev_range_is_sized_by_its_own_second_side(tree):
+    """E202. `A..B`'s hunk numbers belong to B, so `post_lines` must read B.
+
+    Nothing drives this path — the hook always reports on the index — so the whole
+    expression that picks the side was asserted by nothing. The working tree is
+    padded *after* the commit lands: read from there instead of from B, the hunk's
+    line number falls in padding that encloses no definition at all.
+    """
+    tree.edit("src/lib.rs", "    2,\n", "    7,\n")
+    tree.land()
+    path = tree.root / "src/lib.rs"
+    path.write_text("// landed after\n" * 9 + path.read_text())
+    assert sorted(tree.report(None, "HEAD~1..HEAD")) == ["TABLE"]
+
+
+def test_an_open_ended_rev_range_ends_at_HEAD(tree):
+    """`A..` names HEAD, and `rsplit` hands back `''` for it.
+
+    Without the fallback the side reads as `":"` — the index — which the same
+    padding separates from HEAD, since the run stages it.
+    """
+    tree.edit("src/lib.rs", "    2,\n", "    7,\n")
+    tree.land()
+    path = tree.root / "src/lib.rs"
+    path.write_text("// landed after\n" * 9 + path.read_text())
+    assert sorted(tree.report(None, "HEAD~1..")) == ["TABLE"]
+
+
+def test_a_bare_revision_compares_it_to_the_working_tree(tree):
+    """No `..`, so the hunk numbers belong to the worktree and nothing else.
+
+    The decoy renames a constant *after* the run stages it, so one line number
+    carries two different names. Read from the worktree it is a brand-new one and
+    nothing is owed; read from the index it is the old one, mid-rename, and the
+    report gains a row the change never made. Padding proves nothing on this path
+    — the padding is in the diff either way, so both readings answer `TABLE`.
+    """
+
+    def decoy():
+        path = tree.root / "src/dup.rs"
+        path.write_text(path.read_text().replace("SERIAL_OFF", "DUP_ONLY"))
+
+    tree.edit("src/lib.rs", "    2,\n", "    7,\n")
+    tree.land()
+    assert sorted(tree.report(decoy, "HEAD~1")) == ["TABLE"]
 
 
 # --- the two defects the audit found and no test did ---------------------------
