@@ -143,8 +143,12 @@ fn copy_out(body: &[u8], out: &mut [u8]) -> usize {
 struct HidJobs(Jobs);
 
 impl MsgHandler for HidJobs {
-    async fn handle_msg(&mut self, _cid: u32, apdu: &[u8], out: &mut [u8]) -> usize {
-        match run_job(&self.0, Job::Msg(apdu.to_vec())).await {
+    async fn handle_msg(&mut self, cid: u32, apdu: &[u8], out: &mut [u8]) -> usize {
+        let job = Job::Msg {
+            cid,
+            data: apdu.to_vec(),
+        };
+        match run_job(&self.0, job).await {
             Some(body) => copy_out(&body, out),
             None => 0,
         }

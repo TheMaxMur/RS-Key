@@ -88,6 +88,18 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   **both** writers of the record — `docs/protocol.md` §8 and
   `docs/threat-model.md` §1 record it as deliberate ykman parity — so it is left
   to the maintainer rather than half-applied here. **bcdDevice → 0x0950.**
+- **A `CTAPHID_CANCEL` ends a U2F ceremony on `rsk-emu`, as it does on a board.**
+  `Job::Msg` was dispatched under channel 0 while the cancel check needs a real
+  one, so the CANCEL both emulator transports faithfully raised was dropped: a
+  cancelled U2F REGISTER ran the presence wait out and then **minted the
+  credential the host had already withdrawn**. On a board U2F runs under
+  `SCOPE_FIDO` and `Arbiter::request_cancel` ends it, with the CTAPHID transport
+  watching the reader for the frame throughout the touch wait. The U2F job now
+  carries the channel that asked, so the cancel is scoped exactly as the CBOR
+  path's already was — a second process's CANCEL still cannot end this one's
+  ceremony. Vendor commands are deliberately left alone: none is presence-gated
+  and the transport streams no keepalive for them, so a board cannot cancel one
+  either.
 
 - **`rsk-emu` reports the `bcdDevice` of the firmware it is built beside.** The
   emulator's copy was written by hand and had drifted 172 releases behind by the

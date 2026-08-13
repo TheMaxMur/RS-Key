@@ -217,7 +217,7 @@ fn dispatch(
         }
         CTAPHID_MSG => {
             let data = asm.message().to_vec();
-            let out = run_job(shared, Job::Msg(data), false, stream, cid)?;
+            let out = run_job(shared, Job::Msg { cid, data }, false, stream, cid)?;
             match out {
                 Some(body) => write_msg(stream, cid, CTAPHID_MSG, &body),
                 None => write_msg(stream, cid, CTAPHID_ERROR, &[ERR_INVALID_CMD]),

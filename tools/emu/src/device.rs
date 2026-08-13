@@ -128,8 +128,12 @@ pub struct Config {
 pub enum Job {
     /// CTAPHID_CBOR: a CTAP2 message on channel `cid`.
     Cbor { cid: u32, data: Vec<u8> },
-    /// CTAPHID_MSG: a U2F APDU.
-    Msg(Vec<u8>),
+    /// CTAPHID_MSG: a U2F APDU on channel `cid`.
+    ///
+    /// The channel is carried for the same reason [`Job::Cbor`] carries it: a U2F
+    /// REGISTER or AUTHENTICATE waits for a touch, and only the owning channel's
+    /// `CTAPHID_CANCEL` may end that wait (CTAP 2.1 §11.2.9.1.4).
+    Msg { cid: u32, data: Vec<u8> },
     /// A CTAPHID vendor command (the ykman Management reads).
     Vendor { cmd: u8, data: Vec<u8> },
     /// A CCID APDU.
@@ -162,7 +166,7 @@ impl Job {
     fn is_host_request(&self) -> bool {
         matches!(
             self,
-            Job::Cbor { .. } | Job::Msg(_) | Job::Vendor { .. } | Job::Apdu(_) | Job::ResetCard
+            Job::Cbor { .. } | Job::Msg { .. } | Job::Vendor { .. } | Job::Apdu(_) | Job::ResetCard
         )
     }
 }
@@ -517,7 +521,7 @@ async fn serve<PR: rsk_device::UserPresence + 'static>(
         // frame both announce whichever wait is running — `firmware/src/worker.rs`
         // sets the same scope per job kind, for the same reason.
         signals.set_wait_scope(match req.job {
-            Job::Cbor { .. } | Job::Msg(_) | Job::Vendor { .. } => signals::SCOPE_FIDO,
+            Job::Cbor { .. } | Job::Msg { .. } | Job::Vendor { .. } => signals::SCOPE_FIDO,
             Job::Apdu(_) | Job::ResetCard => signals::SCOPE_CCID,
             Job::OtpHid { .. } => signals::SCOPE_OTP,
             Job::OtpStatus | Job::DeselectMsg | Job::Replug => signals::SCOPE_NONE,
@@ -541,13 +545,17 @@ async fn serve<PR: rsk_device::UserPresence + 'static>(
                 }
                 Some(body)
             }
-            Job::Msg(data) => {
-                signals.begin(0);
+            Job::Msg { cid, data } => {
+                signals.begin(cid);
                 let body = ctap.handle_msg(&data, now_ms).to_vec();
                 signals.end();
                 ctap.scrub();
                 Some(body)
             }
+            // No `begin`/`end`: a vendor command cannot start a touch wait, and
+            // `rsk_usb::ctaphid::run_vendor` streams no keepalive and watches for no
+            // CANCEL either — so a board cannot cancel one, and bracketing it here
+            // would make the emulator answer a cancel the device ignores.
             Job::Vendor { cmd, data } => {
                 let body = ccid.ctap_mgmt(cmd, &data).map(<[u8]>::to_vec);
                 ccid.scrub();
