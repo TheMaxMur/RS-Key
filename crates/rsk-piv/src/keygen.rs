@@ -581,6 +581,11 @@ pub(crate) fn import<S: Storage>(
     slot: u8,
     data: &[u8],
 ) -> Sw {
+    // `is_key` excludes F9, and that is a DELIBERATE divergence: a YubiKey lets a
+    // host load its own attestation key there, which on this card — where F9 is
+    // generated at first boot and never leaves — would let anyone holding the
+    // management key replace the device's attestation identity irreversibly over
+    // one APDU. Pinned by a test and docs/limitations.md; do not "fix" it.
     if !is_key(slot) {
         return Sw::INCORRECT_P1P2;
     }

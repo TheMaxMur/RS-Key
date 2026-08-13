@@ -3927,6 +3927,121 @@ fn move_and_delete_key() {
     assert_eq!(sw, Sw::REFERENCE_NOT_FOUND);
 }
 
+/// The attestation identity is the device's, and no host replaces it. A YubiKey
+/// lets one: `IMPORT` into `f9` loads a host key and `PUT DATA 5FFF01` loads the
+/// matching certificate, a documented enterprise feature there. Here `f9` is
+/// generated at first boot and never leaves, so taking those two commands would
+/// let anyone holding the management key swap the device's attestation identity
+/// irreversibly over one APDU. Measured cost of the other choice, on the record:
+/// one probe pass in this project destroyed a real YubiKey's factory chain with
+/// a single `PUT DATA 5FFF01`, and no reset restores it.
+///
+/// A DELIBERATE divergence. This test exists so a parity sweep cannot quietly
+/// adopt it; the reasoning also lives in `docs/limitations.md`.
+#[test]
+fn the_attestation_identity_is_not_host_replaceable() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    verify_pin(&mut app, &mut fs);
+    // The key the card minted for itself, before anyone tries to displace it.
+    let (sw, before) = run(
+        &mut app,
+        &mut fs,
+        INS_GET_METADATA,
+        0,
+        SLOT_ATTESTATION,
+        &[],
+    );
+    assert_eq!(sw, Sw::OK);
+
+    let mut scalar = vec![0x06, 48];
+    scalar.extend_from_slice(&[0x11u8; 48]);
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            INS_IMPORT_ASYM,
+            ALGO_ECCP384,
+            SLOT_ATTESTATION,
+            &scalar
+        )
+        .0,
+        Sw::INCORRECT_P1P2,
+        "IMPORT at F9"
+    );
+    let mut cert = vec![TAG_DATA_PATH, 0x03, 0x5F, 0xFF, 0x01, TAG_DATA_OBJECT, 0x03];
+    cert.extend_from_slice(&[0x41, 0x42, 0x43]);
+    assert_eq!(
+        run(&mut app, &mut fs, INS_PUT_DATA, 0x3F, 0xFF, &cert).0,
+        WRONG_DATA,
+        "PUT DATA 5FFF01"
+    );
+    // Neither refusal moved anything: the key, its metadata and the certificate
+    // the card signed for itself are the ones it started with.
+    let (sw, after) = run(
+        &mut app,
+        &mut fs,
+        INS_GET_METADATA,
+        0,
+        SLOT_ATTESTATION,
+        &[],
+    );
+    assert_eq!(sw, Sw::OK);
+    assert_eq!(after, before);
+    let (sw, obj) = run(
+        &mut app,
+        &mut fs,
+        INS_GET_DATA,
+        0x3F,
+        0xFF,
+        &[0x5C, 0x03, 0x5F, 0xFF, 0x01],
+    );
+    assert_eq!(sw, Sw::OK);
+    assert!(find_tag(find_tag(&obj, 0x53).unwrap(), 0x70).is_some());
+    // …and attestation still works, which is what the refusals protect.
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            INS_ATTESTATION,
+            SLOT_AUTHENTICATION,
+            0,
+            &[]
+        )
+        .0,
+        Sw::REFERENCE_NOT_FOUND,
+        "no key at 9A yet"
+    );
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            INS_ASYM_KEYGEN,
+            0,
+            SLOT_AUTHENTICATION,
+            &gen_template(ALGO_ECCP256)
+        )
+        .0,
+        Sw::OK
+    );
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            INS_ATTESTATION,
+            SLOT_AUTHENTICATION,
+            0,
+            &[]
+        )
+        .0,
+        Sw::OK
+    );
+}
+
 /// `GET METADATA F9` answered `6A88` — "referenced data not found" — on a card
 /// that mints that key and its self-signed certificate at first boot, which is
 /// wrong on its face. The slot simply has no metadata record: `scan_files`

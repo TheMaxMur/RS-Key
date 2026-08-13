@@ -754,6 +754,12 @@ impl PivApplet<'_> {
                 Some(fid) => fid,
                 None => return WRONG_DATA,
             },
+            // Everything else, and `5FFF01` in particular: the attestation
+            // certificate is not host-writable. A YubiKey takes that write — one
+            // probe pass in this project destroyed a real YubiKey's factory chain
+            // with it, unrecoverably — and pairing it with a host-loaded F9 key
+            // would let the management key alone replace the device's attestation
+            // identity. Deliberate; pinned by a test and docs/limitations.md.
             _ => return WRONG_DATA,
         };
         if obj.is_empty() {
