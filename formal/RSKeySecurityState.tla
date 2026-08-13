@@ -46,18 +46,21 @@ CONSTANTS
     BugChangePinKeepsPpuat,       \* clientpin.rs:300-304
     BugStopUsingKeepsPerms,       \* state.rs:545-556  stopUsingPinUvAuthToken
     BugNoConsumeAfterUp,          \* state.rs:518-530  GHSA-wqjm-653g-hgw3
-    BugUnscopedCancel,            \* rsk-device presence.rs:116-120 cancel scope
-    BugTouchNotSpent,             \* rsk-device presence.rs:200-208,226 `spent`
+    \* the three below cite crates/rsk-device/src/presence.rs -- the bare name
+    \* also resolves to firmware/src/presence.rs since the arbitration was lifted
+    BugUnscopedCancel,            \* crates/rsk-device/src/presence.rs:116-120
+    BugTouchNotSpent,             \* crates/rsk-device/src/presence.rs:200-208,226
     BugSoftLockLostOnWarmReset,   \* ctap.rs:215-222   PinLock across sys_reset
     BugWarmResetReopensWindow,    \* reset.rs:130-132  in_reset_window
     BugCmWalkIgnoresChannel,      \* state.rs:169-179  may_walk_rps
     BugDeleteRpBeforeCred,        \* credmgmt.rs:664-671 deleteCredential order
     BugBackupSealedNotAGate,      \* reset.rs:110-123  is_fido_gate_fid (run-36)
     BugConsumeKeepsMcGa,          \* state.rs:522-528  a narrowed 6.5.5.7 triad
-    BugNoDropStaleCancelAtEntry,  \* rsk-device presence.rs:192-193 wait entry
+    BugNoDropStaleCancelAtEntry,  \* crates/rsk-device/src/presence.rs:192-193
     BugWrongPinKeepsToken,        \* clientpin.rs:779  the pre-E38 tree
     BugSeedDoesNotLead,           \* reset.rs:61-65 / fs.rs `first`, pre-0x08BF
-    BugNoTouchRequired            \* the presence gate on mc / ga
+    BugNoTouchRequired,           \* the presence gate on mc / ga
+    BugStateResetAfterWipe        \* reset.rs:57-60 ctx.state.reset() ordering
 
 (* Mutation switches for the LIVENESS properties. Kept apart from the set above *)
 (* because they break no invariant -- a wedge is a perfectly safe state -- so    *)
@@ -141,10 +144,19 @@ VARIABLES
     \* never mistaken for the one the reset was handed.
     snap,
     upSpent,\* ghost: a user-presence test has been spent since the token issued
-    viol    \* ghost: the set of invariant names some step has violated
+    viol,   \* ghost: the set of invariant names some step has violated
+    \* `state.keydev_dec` (state.rs:336-338): the seed a vendor UNLOCK decrypted
+    \* into RAM on a soft-locked device. NOT a second seed -- it is the SAME
+    \* owner's seed by another route, and `Ctx::load_keydev` PREFERS it
+    \* (crates/rsk-fido/src/lib.rs:183-187), so deleting the flash record does
+    \* not end reachability
+    \* while this stands. That preference is the whole of E110: the model used to
+    \* have only the flash record, so a wipe whose flash half succeeded read as
+    \* "the seed is gone" when the power cycle was still running on this copy.
+    ram
 
 vars == << pin, gate, store, lock, tok, plat, pres, walk, sys, op, snap,
-           upSpent, viol >>
+           upSpent, viol, ram >>
 
 NoOp == [kind |-> "none", t |-> NoOwner, rp |-> NoRp, step |-> 0]
 
@@ -177,6 +189,7 @@ TypeOK ==
                   surv: SUBSET RPs, seed: BOOLEAN, sealed: BOOLEAN]
     /\ upSpent \in BOOLEAN
     /\ viol  \in SUBSET InvNames
+    /\ ram   \in BOOLEAN
 
 Init ==
     /\ pin   = [set |-> FALSE, retries |-> MaxRetries, everSet |-> FALSE]
@@ -195,6 +208,27 @@ Init ==
     /\ snap  = NoSnap
     /\ upSpent = FALSE
     /\ viol  = {}
+    /\ ram   = FALSE
+
+(***************************************************************************)
+(* The seed's TWO homes. Every credential box, rpId box, credBlob,          *)
+(* hmac-secret key and large-blob key is derived from the device seed       *)
+(* (reset.rs:114-118), and `Ctx::load_keydev` reads it from RAM first and   *)
+(* flash second (crates/rsk-fido/src/lib.rs:183-187). So "the records still  *)
+(* open" is a claim                                                         *)
+(* about BOTH, and the wipe's own claim -- that what a tear leaves behind is *)
+(* undecryptable -- holds only once the last copy is gone.                   *)
+(***************************************************************************)
+
+SeedReachable == store.seed \/ ram
+
+\* What is left openable once `reach` is the whole truth about the seed. The
+\* records themselves stay on flash either way; `store.cred` / `store.rpent`
+\* mean the records that still OPEN, so losing the last copy empties them and
+\* takes the reset snapshot's survivors with it.
+KeepOpen(s, reach) == IF reach THEN s ELSE [s EXCEPT !.cred = {}, !.rpent = {}]
+KeepSurv(sn, reach) == IF reach THEN sn
+                                ELSE [sn EXCEPT !.seed = FALSE, !.surv = {}]
 
 (***************************************************************************)
 (* Presence -- one physical button serves every applet, so the wait carries *)
@@ -233,14 +267,14 @@ PressDown ==
     /\ ~pres.pressing
     /\ pres' = [pres EXCEPT !.pressing = TRUE, !.usedBy = NoOwner]
     /\ UNCHANGED << pin, gate, store, lock, tok, plat, walk, sys, op, snap,
-                    upSpent, viol >>
+                    upSpent, viol, ram >>
 
 PressUp ==
     /\ pres.pressing
     /\ pres' = [pres EXCEPT !.pressing = FALSE, !.spent = FALSE,
                             !.usedBy = NoOwner]
     /\ UNCHANGED << pin, gate, store, lock, tok, plat, walk, sys, op, snap,
-                    upSpent, viol >>
+                    upSpent, viol, ram >>
 
 \* CTAPHID_CANCEL for the channel being processed. rsk-usb ctaphid.rs:757-762
 \* raises it; crates/rsk-device/src/presence.rs:116-120 is the scope check that decides
@@ -251,7 +285,7 @@ HostCancel ==
     /\ CancelGuard
     /\ pres' = [pres EXCEPT !.cancelReq = TRUE, !.cancelBy = Fido]
     /\ UNCHANGED << pin, gate, store, lock, tok, plat, walk, sys, op, snap,
-                    upSpent, viol >>
+                    upSpent, viol, ram >>
 
 \* WAIT_SCOPE is set around the whole DISPATCH (worker.rs:429, :521), not around
 \* the touch wait, so Arbiter::request_cancel accepts a cancel during a FIDO
@@ -266,7 +300,7 @@ HostCancelLatched ==
     /\ ~pres.cancelReq
     /\ pres' = [pres EXCEPT !.cancelReq = TRUE, !.cancelBy = Fido]
     /\ UNCHANGED << pin, gate, store, lock, tok, plat, walk, sys, op, snap,
-                    upSpent, viol >>
+                    upSpent, viol, ram >>
 
 \* crates/rsk-device/src/presence.rs:200-205: a press the previous
 \* ceremony already consumed is not
@@ -288,7 +322,7 @@ TouchConfirm ==
                  THEN viol
                  ELSE viol \cup {"NoCrossTransportTouchConsumption"}
     /\ UNCHANGED << pin, gate, store, lock, tok, plat, walk, sys, op, snap,
-                    upSpent >>
+                    upSpent, ram >>
 
 \* crates/rsk-device/src/presence.rs:209-211. A cancel raised by
 \* transport A must never end a wait
@@ -301,7 +335,7 @@ TouchCancel ==
                  THEN viol
                  ELSE viol \cup {"NoCrossTransportTouchConsumption"}
     /\ UNCHANGED << pin, gate, store, lock, tok, plat, walk, sys, op, snap,
-                    upSpent >>
+                    upSpent, ram >>
 
 \* crates/rsk-device/src/presence.rs:212-214. Modelled as always
 \* enabled rather than tied to the
@@ -310,7 +344,7 @@ TouchTimeout ==
     /\ WaitOpen
     /\ pres' = [pres EXCEPT !.granted = "timeout"]
     /\ UNCHANGED << pin, gate, store, lock, tok, plat, walk, sys, op, snap,
-                    upSpent, viol >>
+                    upSpent, viol, ram >>
 
 (***************************************************************************)
 (* Authorization. Guard = the Rust; Policy = the requirement.              *)
@@ -431,7 +465,7 @@ GetPinToken(ps, r) ==
     /\ plat' = [held |-> TRUE, verifies |-> TRUE, revoked |-> FALSE]
     /\ walk' = [open |-> FALSE, chan |-> NoChan]
     /\ upSpent' = FALSE
-    /\ UNCHANGED << gate, store, pres, sys, op, snap >>
+    /\ UNCHANGED << gate, store, pres, sys, op, snap, ram >>
 
 \* clientpin.rs:771 regenerates the ECDH key on a mismatch and :779 drops any
 \* outstanding pinUvAuthToken with it, through all three doors -- measured off a
@@ -449,7 +483,7 @@ WrongPin ==
     \* with the token that granted it.
     /\ walk' = IF BugWrongPinKeepsToken THEN walk
                                         ELSE [open |-> FALSE, chan |-> NoChan]
-    /\ UNCHANGED << gate, store, pres, sys, op, snap, upSpent >>
+    /\ UNCHANGED << gate, store, pres, sys, op, snap, upSpent, ram >>
 
 \* getPinUvAuthTokenUsingPinWithPermissions with `pcmr`: mints the PERSISTENT
 \* token, a flash record that outlives the power cycle (clientpin.rs:408-413,
@@ -457,7 +491,8 @@ WrongPin ==
 MintPpuat ==
     /\ PinAttempt(TRUE)
     /\ gate' = [gate EXCEPT !.ppuat = TRUE, !.ppuatStale = FALSE]
-    /\ UNCHANGED << store, tok, plat, pres, walk, sys, op, snap, upSpent >>
+    /\ UNCHANGED << store, tok, plat, pres, walk, sys, op, snap, upSpent,
+                    ram >>
 
 (***************************************************************************)
 (* setPIN / changePIN -- multi-write, so a power cut has a position.        *)
@@ -469,7 +504,7 @@ SetPinStart ==
     /\ ~pin.set
     /\ op' = [kind |-> "setpin", t |-> Fido, rp |-> NoRp, step |-> 0]
     /\ UNCHANGED << pin, gate, store, lock, tok, plat, pres, walk, sys, snap,
-                    upSpent, viol >>
+                    upSpent, viol, ram >>
 
 \* clientpin.rs:213-217 / write_pin_verifier :824-828 -- revoke BEFORE the new
 \* verifier lands. A torn authenticatorReset can drop EF_PIN and lose power
@@ -482,7 +517,7 @@ SetPinClearPpuat ==
                  ELSE [gate EXCEPT !.ppuat = FALSE, !.ppuatStale = FALSE]
     /\ op' = [op EXCEPT !.step = 1]
     /\ UNCHANGED << pin, store, lock, tok, plat, pres, walk, sys, snap,
-                    upSpent, viol >>
+                    upSpent, viol, ram >>
 
 SetPinWrite ==
     /\ op.kind = "setpin" /\ op.step = 1
@@ -490,12 +525,14 @@ SetPinWrite ==
     /\ lock' = [lock EXCEPT !.soft = FALSE, !.mism = 0, !.policyMism = 0]
     /\ op' = NoOp
     /\ snap' = NoSnap
-    /\ UNCHANGED << gate, store, tok, plat, pres, walk, sys, upSpent, viol >>
+    /\ UNCHANGED << gate, store, tok, plat, pres, walk, sys, upSpent, viol,
+                    ram >>
 
 ChangePinStart == \* clientpin.rs:235-276: gates, then spend-and-verify.
     /\ PinAttempt(TRUE)
     /\ op' = [kind |-> "chpin", t |-> Fido, rp |-> NoRp, step |-> 0]
-    /\ UNCHANGED << gate, store, tok, plat, pres, walk, sys, snap, upSpent >>
+    /\ UNCHANGED << gate, store, tok, plat, pres, walk, sys, snap, upSpent,
+                    ram >>
 
 \* clientpin.rs:300-304, step 15 of 6.5.5.6: revoke the persistent grant BEFORE
 \* the new verifier lands, or a power cut leaves the old holder authorized
@@ -507,7 +544,7 @@ ChangePinClearPpuat ==
                  ELSE [gate EXCEPT !.ppuat = FALSE, !.ppuatStale = FALSE]
     /\ op' = [op EXCEPT !.step = 1]
     /\ UNCHANGED << pin, store, lock, tok, plat, pres, walk, sys, snap,
-                    upSpent, viol >>
+                    upSpent, viol, ram >>
 
 ChangePinWrite == \* clientpin.rs:305 store_new_pin
     /\ op.kind = "chpin" /\ op.step = 1
@@ -515,7 +552,8 @@ ChangePinWrite == \* clientpin.rs:305 store_new_pin
     /\ lock' = [lock EXCEPT !.soft = FALSE, !.mism = 0, !.policyMism = 0]
     /\ op' = [op EXCEPT !.step = 2]
     /\ snap' = NoSnap
-    /\ UNCHANGED << gate, store, tok, plat, pres, walk, sys, upSpent, viol >>
+    /\ UNCHANGED << gate, store, tok, plat, pres, walk, sys, upSpent, viol,
+                    ram >>
 
 \* clientpin.rs:311 resetPinUvAuthToken -- RAM only, and it must end every
 \* session credential the old PIN authorized (state.rs:486-497).
@@ -530,7 +568,8 @@ ChangePinRotateToken ==
     /\ walk' = IF BugTokenSurvivesPinChange THEN walk
                                             ELSE [open |-> FALSE, chan |-> NoChan]
     /\ op' = NoOp
-    /\ UNCHANGED << pin, gate, store, lock, pres, sys, snap, upSpent, viol >>
+    /\ UNCHANGED << pin, gate, store, lock, pres, sys, snap, upSpent, viol,
+                    ram >>
 
 \* stopUsingPinUvAuthToken (state.rs:542-556) / expire_stale_token (:593-602).
 \* The bytes stay put; in_use = FALSE and zero permissions make every
@@ -543,7 +582,8 @@ StopUsingToken ==
                  ELSE [live |-> FALSE, perms |-> {}, rp |-> NoRp]
     /\ plat' = [plat EXCEPT !.revoked = TRUE]
     /\ walk' = [open |-> FALSE, chan |-> NoChan]
-    /\ UNCHANGED << pin, gate, store, lock, pres, sys, op, snap, upSpent, viol >>
+    /\ UNCHANGED << pin, gate, store, lock, pres, sys, op, snap, upSpent,
+                    viol, ram >>
 
 (***************************************************************************)
 (* makeCredential / getAssertion.                                          *)
@@ -558,7 +598,8 @@ RegisterStart(r, t) ==
     /\ viol' = IF OpPolicy("mc", r) THEN viol ELSE viol \cup TokenBypass
     /\ pres' = OpenWaitFor(t)
     /\ op' = [kind |-> "register", t |-> t, rp |-> r, step |-> 0]
-    /\ UNCHANGED << pin, gate, store, lock, tok, plat, walk, sys, snap, upSpent >>
+    /\ UNCHANGED << pin, gate, store, lock, tok, plat, walk, sys, snap,
+                    upSpent, ram >>
 
 \* THE TOUCH IS AN AUTHORIZATION, and on a key with no PIN and no alwaysUv it is
 \* the only one -- so it needs a Policy like every other gate here, not just an
@@ -578,7 +619,7 @@ RegisterTouched ==
     /\ tok' = ConsumedTok
     /\ upSpent' = TRUE
     /\ op' = [op EXCEPT !.step = 1]
-    /\ UNCHANGED << pin, gate, store, lock, plat, pres, walk, sys, snap >>
+    /\ UNCHANGED << pin, gate, store, lock, plat, pres, walk, sys, snap, ram >>
 
 RegisterRefused ==
     /\ op.kind = "register" /\ op.step = 0
@@ -586,7 +627,7 @@ RegisterRefused ==
     /\ pres' = ClosedWait(pres)
     /\ op' = NoOp
     /\ UNCHANGED << pin, gate, store, lock, tok, plat, walk, sys, snap,
-                    upSpent, viol >>
+                    upSpent, viol, ram >>
 
 \* credential.rs:804-826. Order so that any truncation leaves an RP entry
 \* without a credential -- invisible but harmless -- never a credential
@@ -599,7 +640,7 @@ RegisterWriteA ==
                   ELSE [store EXCEPT !.rpent = store.rpent \cup {op.rp}]
     /\ op' = [op EXCEPT !.step = 2]
     /\ UNCHANGED << pin, gate, lock, tok, plat, pres, walk, sys, snap,
-                    upSpent, viol >>
+                    upSpent, viol, ram >>
 
 RegisterWriteB ==
     /\ op.kind = "register" /\ op.step = 2
@@ -608,20 +649,22 @@ RegisterWriteB ==
                   ELSE [store EXCEPT !.cred = store.cred \cup {op.rp}]
     /\ pres' = ClosedWait(pres)
     /\ op' = NoOp
-    /\ UNCHANGED << pin, gate, lock, tok, plat, walk, sys, snap, upSpent, viol >>
+    /\ UNCHANGED << pin, gate, lock, tok, plat, walk, sys, snap, upSpent,
+                    viol, ram >>
 
 \* getassertion.rs:382-390. Needs PERM_GA, the rpId binding, and a touch.
 AssertStart(r, t) ==
     /\ Idle
     /\ pres.scope = NoOwner
     /\ r \in store.cred
-    /\ store.seed                            \* a credential without the seed is dead
+    /\ SeedReachable                         \* a credential without the seed is dead
     /\ ~(gate.alwaysUv /\ ~pin.set)
     /\ OpGuard("ga", r)
     /\ viol' = IF OpPolicy("ga", r) THEN viol ELSE viol \cup TokenBypass
     /\ pres' = OpenWaitFor(t)
     /\ op' = [kind |-> "assert", t |-> t, rp |-> r, step |-> 0]
-    /\ UNCHANGED << pin, gate, store, lock, tok, plat, walk, sys, snap, upSpent >>
+    /\ UNCHANGED << pin, gate, store, lock, tok, plat, walk, sys, snap,
+                    upSpent, ram >>
 
 AssertFinish ==
     /\ op.kind = "assert"
@@ -636,7 +679,7 @@ AssertFinish ==
          /\ upSpent' = IF issued THEN TRUE ELSE upSpent
     /\ pres' = ClosedWait(pres)
     /\ op' = NoOp
-    /\ UNCHANGED << pin, gate, store, lock, plat, walk, sys, snap >>
+    /\ UNCHANGED << pin, gate, store, lock, plat, walk, sys, snap, ram >>
 
 (***************************************************************************)
 (* authenticatorConfig -- no touch of its own. config.rs:223.              *)
@@ -664,8 +707,8 @@ ConfigOp ==
     /\ viol' = IF ConfigPolicy THEN viol ELSE viol \cup TokenBypass
     /\ gate' = [gate EXCEPT !.alwaysUv = ~gate.alwaysUv]
     /\ snap' = NoSnap
-    /\ UNCHANGED << pin, store, lock, tok, plat, pres, walk, sys, op,
-                    upSpent >>
+    /\ UNCHANGED << pin, store, lock, tok, plat, pres, walk, sys, op, upSpent,
+                    ram >>
 
 (***************************************************************************)
 (* Vendor BACKUP_FINALIZE -- vendor.rs:894-901, and its on-device twin      *)
@@ -683,7 +726,25 @@ BackupFinalize ==
     /\ ~gate.backupSealed
     /\ gate' = [gate EXCEPT !.backupSealed = TRUE]
     /\ UNCHANGED << pin, store, lock, tok, plat, pres, walk, sys, op, snap,
-                    upSpent, viol >>
+                    upSpent, viol, ram >>
+
+\* Vendor UNLOCK (vendor.rs:543-566): the host presents the 32-byte lock key over
+\* the MSE channel, the wrapped seed on flash decrypts, and `state.keydev_dec`
+\* holds it until power-off. No PIN and no touch -- knowing the lock key IS the
+\* authorization -- so this is not modelled as a gate, only as the one door
+\* through which a second copy of the seed comes into existence.
+\*
+\* WIDER than the firmware in two directions, both sound: the model has no device
+\* lock, so it does not require the seed to be stored WRAPPED (only a locked
+\* device has an EF_KEY_DEV_ENC to open), and it omits AUT_DISABLE
+\* (config.rs:394-395), which only ever CLEARS the copy.
+DeviceUnlock ==
+    /\ Idle
+    /\ store.seed
+    /\ ~ram
+    /\ ram' = TRUE
+    /\ UNCHANGED << pin, gate, store, lock, tok, plat, pres, walk, sys, op,
+                    snap, upSpent, viol >>
 
 (***************************************************************************)
 (* credentialManagement -- the enumerate walk, its channel, and the        *)
@@ -702,7 +763,7 @@ CmBeginViaToken(ch, r) ==
     /\ viol' = IF TokenPolicy("cm", r) THEN viol ELSE viol \cup TokenBypass
     /\ walk' = [open |-> TRUE, chan |-> ch]
     /\ UNCHANGED << pin, gate, store, lock, tok, plat, pres, sys, op, snap,
-                    upSpent >>
+                    upSpent, ram >>
 
 \* A persistent grant that outlived what authorized it is NoTokenAfterInvalidation;
 \* one that reads the credential directory on a key whose PIN record is gone is
@@ -722,7 +783,7 @@ CmBeginViaPpuat(ch) ==
          \cup (IF pin.set THEN {} ELSE {"NoAccessibleSecretWithoutGate"})
     /\ walk' = [open |-> TRUE, chan |-> ch]
     /\ UNCHANGED << pin, gate, store, lock, tok, plat, pres, sys, op, snap,
-                    upSpent >>
+                    upSpent, ram >>
 
 \* state.rs:169-179 may_walk_rps: a *Next* carries no pinUvAuthParam of its own
 \* (6.8 exempts it) -- the (channel, counter) pair IS the authorization check.
@@ -736,7 +797,7 @@ CmNext(ch) ==
     /\ viol' = IF CmNextPolicy(ch) THEN viol
                                    ELSE viol \cup {"NoAuthorizationBypass"}
     /\ UNCHANGED << pin, gate, store, lock, tok, plat, pres, walk, sys, op,
-                    snap, upSpent >>
+                    snap, upSpent, ram >>
 
 \* 0x06 deleteCredential (credmgmt.rs:657-711). It calls verify_cm_token
 \* DIRECTLY rather than going through authorize_cm, so the persistent grant
@@ -748,7 +809,7 @@ DeleteCredStart(r) ==
     /\ viol' = IF TokenPolicy("cm", r) THEN viol ELSE viol \cup TokenBypass
     /\ op' = [kind |-> "delcred", t |-> Fido, rp |-> r, step |-> 0]
     /\ UNCHANGED << pin, gate, store, lock, tok, plat, pres, walk, sys, snap,
-                    upSpent >>
+                    upSpent, ram >>
 
 \* Two flash writes, so a cut has a position: `delete_credential` drops the
 \* EF_CRED record first (credmgmt.rs:664-666) and `decrement_rp` deletes the
@@ -764,7 +825,8 @@ DeleteCredWriteA ==
               \* a deleted credential no longer survives an earlier reset either
               /\ snap' = [snap EXCEPT !.surv = snap.surv \ {op.rp}]
     /\ op' = [op EXCEPT !.step = 1]
-    /\ UNCHANGED << pin, gate, lock, tok, plat, pres, walk, sys, upSpent, viol >>
+    /\ UNCHANGED << pin, gate, lock, tok, plat, pres, walk, sys, upSpent,
+                    viol, ram >>
 
 DeleteCredWriteB ==
     /\ op.kind = "delcred" /\ op.step = 1
@@ -774,7 +836,8 @@ DeleteCredWriteB ==
          ELSE /\ store' = [store EXCEPT !.rpent = store.rpent \ {op.rp}]
               /\ UNCHANGED snap
     /\ op' = NoOp
-    /\ UNCHANGED << pin, gate, lock, tok, plat, pres, walk, sys, upSpent, viol >>
+    /\ UNCHANGED << pin, gate, lock, tok, plat, pres, walk, sys, upSpent,
+                    viol, ram >>
 
 (***************************************************************************)
 (* authenticatorReset -- reset.rs:30-66. Two phases, each a batch of        *)
@@ -782,7 +845,7 @@ DeleteCredWriteB ==
 (* order WITHIN a phase is not controlled and is modelled as arbitrary.     *)
 (***************************************************************************)
 
-\* reset.rs:126-132. A warm boot CLOSES the window rather than opening one:
+\* reset.rs:148-153. A warm boot CLOSES the window rather than opening one:
 \* sys_reset is host-requestable ungated, so a window the host can restart at
 \* will is no window at all. Modelled on a button build, where
 \* presence.shows_confirm() is FALSE and the window therefore applies.
@@ -802,7 +865,8 @@ ResetStart ==
                  ELSE viol \cup {"NoAuthorizationBypass"}
     /\ pres' = OpenWaitFor(Fido)
     /\ op' = [kind |-> "reset", t |-> Fido, rp |-> NoRp, step |-> 0]
-    /\ UNCHANGED << pin, gate, store, lock, tok, plat, walk, sys, snap, upSpent >>
+    /\ UNCHANGED << pin, gate, store, lock, tok, plat, walk, sys, snap,
+                    upSpent, ram >>
 
 ResetRefused ==
     /\ op.kind = "reset" /\ op.step = 0
@@ -810,23 +874,33 @@ ResetRefused ==
     /\ pres' = ClosedWait(pres)
     /\ op' = NoOp
     /\ UNCHANGED << pin, gate, store, lock, tok, plat, walk, sys, snap,
-                    upSpent, viol >>
+                    upSpent, viol, ram >>
 
 \* The touch is in (reset.rs:37-45); the wipe begins. Snapshot what the
 \* surviving state was gated by, so ResetNeverWeakensSurvivingState is a
 \* relational claim rather than a restatement of the post state.
+\*
+\* THE LIVE SESSION GOES FIRST, ahead of every flash write (reset.rs:57-60). That
+\* is not tidiness: with the flash seed deleted first, a sweep that then FAILS
+\* leaves the rest of the power cycle running on `state.keydev_dec` -- the seed
+\* nothing stores any more -- and BACKUP_EXPORT reads through `Ctx::load_keydev`
+\* like everything else. BugStateResetAfterWipe is that ordering taken back out.
 ResetConfirmed ==
     /\ op.kind = "reset" /\ op.step = 0
     /\ pres.granted = "confirm"
+    /\ ram' = IF BugStateResetAfterWipe THEN ram ELSE FALSE
+    \* A previous attempt may have aborted with the flash record already gone, so
+    \* dropping the RAM copy here can be the moment the last one dies.
+    /\ store' = KeepOpen(store, store.seed \/ ram')
     /\ snap' = [seen |-> TRUE, pin |-> pin.set, auv |-> gate.alwaysUv,
-                surv |-> store.cred, seed |-> store.seed,
+                surv |-> store'.cred, seed |-> store.seed \/ ram',
                 sealed |-> gate.backupSealed]
     \* Deliberately NOT marking the persistent grant stale here. A reset that is
     \* torn did not happen: the PIN that bought the grant may still stand, and
     \* the user retries. The grant becomes illegitimate when the PIN record it
     \* was bought with is gone -- which PpuatPolicy tests directly.
     /\ op' = [op EXCEPT !.step = IF BugResetGatesFirst THEN 2 ELSE 1]
-    /\ UNCHANGED << pin, gate, store, lock, tok, plat, pres, walk, sys,
+    /\ UNCHANGED << pin, gate, lock, tok, plat, pres, walk, sys,
                     upSpent, viol >>
 
 \* Which phase EF_BACKUP_SEALED belongs to is the audit run-36 class fix itself
@@ -852,20 +926,24 @@ ResetSweepSecrets ==
          THEN /\ \/ /\ store.seed
                     \* Every box the applet holds hangs off this record, so its
                     \* deletion is what makes the rest unopenable -- the wipe's
-                    \* whole claim, and now its first write.
-                    /\ store' = [store EXCEPT !.seed = FALSE,
-                                              !.cred = {}, !.rpent = {}]
+                    \* whole claim, and now its first write. UNLESS a RAM copy
+                    \* stands: then this write ends nothing, and the per-record
+                    \* deletes below are what empties the store. That is E110.
+                    /\ store' = KeepOpen([store EXCEPT !.seed = FALSE], ram)
                     \* the owner's seed is gone, and with it every credential
                     \* that could have survived the reset
-                    /\ snap' = [snap EXCEPT !.seed = FALSE, !.surv = {}]
+                    /\ snap' = KeepSurv(snap, ram)
                     /\ UNCHANGED gate
                  \/ \E r \in store.cred :
-                       /\ ~SeedLeadsTheWipe
+                       \* Once the flash record has gone the batch still has to
+                       \* run: with the seed leading, it has nothing left to
+                       \* delete -- with a RAM copy live, it has everything.
+                       /\ (SeedLeadsTheWipe => ~store.seed)
                        /\ store' = [store EXCEPT !.cred = store.cred \ {r}]
                        \* this credential no longer survives the reset
                        /\ snap' = [snap EXCEPT !.surv = snap.surv \ {r}]
                        /\ UNCHANGED gate
-                 \/ /\ ~SeedLeadsTheWipe
+                 \/ /\ (SeedLeadsTheWipe => ~store.seed)
                     /\ \E r \in store.rpent :
                          store' = [store EXCEPT !.rpent = store.rpent \ {r}]
                     /\ FixSweepDropsCredsBeforeRpEntries => store.cred = {}
@@ -877,7 +955,8 @@ ResetSweepSecrets ==
               /\ UNCHANGED op
          ELSE /\ op' = [op EXCEPT !.step = IF BugResetGatesFirst THEN 3 ELSE 2]
               /\ UNCHANGED << store, snap, gate >>
-    /\ UNCHANGED << pin, lock, tok, plat, pres, walk, sys, upSpent, viol >>
+    /\ UNCHANGED << pin, lock, tok, plat, pres, walk, sys, upSpent, viol,
+                    ram >>
 
 \* `everSet` is the ghost obligation "a PIN record must gate the secrets this
 \* device holds". Deleting EF_PIN discharges it only when the secrets phase has
@@ -905,11 +984,14 @@ ResetSweepGates ==
               /\ UNCHANGED op
          ELSE /\ op' = [op EXCEPT !.step = IF BugResetGatesFirst THEN 1 ELSE 3]
               /\ UNCHANGED << pin, gate >>
-    /\ UNCHANGED << store, lock, tok, plat, pres, walk, sys, snap, upSpent, viol >>
+    /\ UNCHANGED << store, lock, tok, plat, pres, walk, sys, snap, upSpent,
+                    viol, ram >>
 
-\* reset.rs:59-60: state.reset() then ensure_seed. The session dies with it.
+\* reset.rs:69: ensure_seed. The session already died at reset.rs:60, ahead of the
+\* flash, so `ram` is only still standing here on the BugStateResetAfterWipe tree.
 ResetFinish ==
     /\ op.kind = "reset" /\ op.step = 3
+    /\ ram'   = FALSE
     /\ store' = [store EXCEPT !.seed = TRUE]
     /\ tok'   = [live |-> FALSE, perms |-> {}, rp |-> NoRp]
     /\ plat'  = [held |-> FALSE, verifies |-> FALSE, revoked |-> TRUE]
@@ -924,12 +1006,26 @@ ResetFinish ==
     /\ snap' = NoSnap
     /\ UNCHANGED << gate, sys, viol >>
 
+\* Any `?` in reset.rs:64-69 -- a force_delete that errors, a truncated
+\* `for_each_key` (reset.rs:95-99), the RESET_MAX_DELETES backstop, a failed
+\* ensure_seed. The command answers with an error and THE DEVICE KEEPS RUNNING:
+\* no boot, no ensure_seed, RAM intact. That is the transition the model did not
+\* have, and without it the RAM copy above is unobservable -- every other tear
+\* here goes through PowerCut / WarmReset, which clear RAM on the way past.
+ResetAborts ==
+    /\ op.kind = "reset" /\ op.step \in {1, 2, 3}
+    /\ pres' = ClosedWait(pres)
+    /\ op' = NoOp
+    /\ UNCHANGED << pin, gate, store, lock, tok, plat, walk, sys, snap,
+                    upSpent, viol, ram >>
+
 (***************************************************************************)
 (* Power. A cut may land anywhere, including between two flash writes of    *)
 (* one operation -- that is the "power-cut position" the mandate names.     *)
 (***************************************************************************)
 
 VolatileCleared ==
+    /\ ram'  = FALSE
     /\ tok'  = [live |-> FALSE, perms |-> {}, rp |-> NoRp]
     /\ plat' = [held |-> FALSE, verifies |-> FALSE, revoked |-> TRUE]
     /\ walk' = [open |-> FALSE, chan |-> NoChan]
@@ -944,7 +1040,13 @@ VolatileCleared ==
 \* the device mid-wipe therefore comes back WITH a seed and can hold usable
 \* credentials again. Leaving it out made the model less permissive than the
 \* firmware -- the one direction a safety argument cannot absorb.
-BootEnsuresSeed == store' = [store EXCEPT !.seed = TRUE]
+\*
+\* The boot is also where a RAM-only seed dies: a cut taken with the flash record
+\* already deleted comes back with a FRESH seed and nothing that opens under the
+\* old one, so KeepOpen/KeepSurv settle up here for whatever the wipe left.
+BootEnsuresSeed ==
+    /\ store' = [KeepOpen(store, store.seed) EXCEPT !.seed = TRUE]
+    /\ snap'  = KeepSurv(snap, store.seed)
 
 \* A real power cycle: the RAM soft lock and its mismatch batch are gone
 \* because the thing they were counting -- this power cycle -- has ended.
@@ -954,7 +1056,7 @@ PowerCut ==
     /\ lock' = [soft |-> FALSE, mism |-> 0, policyMism |-> 0]
     /\ sys'  = [warmBoot |-> FALSE, clock |-> 0]
     /\ pin'  = [pin EXCEPT !.retries = pin.retries]
-    /\ UNCHANGED << gate, snap, viol >>
+    /\ UNCHANGED << gate, viol >>
 
 \* A host-requestable warm reset (SCB::sys_reset -- vendor 0x1F P1=0, the
 \* rescue twin, the phy config-write auto-reboot). ctap.rs:215-222 carries the
@@ -967,13 +1069,13 @@ WarmReset ==
                  ELSE [soft |-> lock.soft, mism |-> lock.mism,
                        policyMism |-> lock.policyMism]
     /\ sys'  = [warmBoot |-> TRUE, clock |-> 0]
-    /\ UNCHANGED << pin, gate, snap, viol >>
+    /\ UNCHANGED << pin, gate, viol >>
 
 Tick ==
     /\ sys.clock < MaxClock
     /\ sys' = [sys EXCEPT !.clock = sys.clock + 1]
     /\ UNCHANGED << pin, gate, store, lock, tok, plat, pres, walk, op, snap,
-                    upSpent, viol >>
+                    upSpent, viol, ram >>
 
 \* expire_stale_sequences (state.rs:613-619): an enumerate cursor idle past
 \* STATEFUL_WALK_IDLE_MS is reset, WHATEVER opened it. The model closed a walk
@@ -986,7 +1088,7 @@ WalkExpires ==
     /\ walk.open
     /\ walk' = [open |-> FALSE, chan |-> NoChan]
     /\ UNCHANGED << pin, gate, store, lock, tok, plat, pres, sys, op, snap,
-                    upSpent, viol >>
+                    upSpent, viol, ram >>
 
 (***************************************************************************)
 
@@ -1002,14 +1104,14 @@ Next ==
     \/ \E r \in RPs, t \in Transports : RegisterStart(r, t)
     \/ RegisterTouched \/ RegisterRefused \/ RegisterWriteA \/ RegisterWriteB
     \/ \E r \in RPs, t \in Transports : AssertStart(r, t)
-    \/ AssertFinish \/ ConfigOp \/ BackupFinalize
+    \/ AssertFinish \/ ConfigOp \/ BackupFinalize \/ DeviceUnlock
     \/ \E ch \in Channels, r \in RPs \cup {NoRp} : CmBeginViaToken(ch, r)
     \/ \E ch \in Channels : CmBeginViaPpuat(ch)
     \/ \E ch \in Channels : CmNext(ch)
     \/ \E r \in RPs : DeleteCredStart(r)
     \/ DeleteCredWriteA \/ DeleteCredWriteB
     \/ ResetStart \/ ResetRefused \/ ResetConfirmed
-    \/ ResetSweepSecrets \/ ResetSweepGates \/ ResetFinish
+    \/ ResetSweepSecrets \/ ResetSweepGates \/ ResetFinish \/ ResetAborts
     \/ PowerCut \/ WarmReset \/ Tick
 
 Spec == Init /\ [][Next]_vars
@@ -1042,9 +1144,10 @@ OpAdvances ==
     \/ ChangePinClearPpuat \/ ChangePinWrite \/ ChangePinRotateToken
     \/ DeleteCredWriteA \/ DeleteCredWriteB
     \/ ResetRefused \/ ResetConfirmed \/ ResetSweepSecrets \/ ResetSweepGates
-    \/ ResetFinish
+    \/ ResetFinish \/ ResetAborts
 
-\* The presence wait carries PRESENCE_TIMEOUT_MS (rsk-device presence.rs:212-213),
+\* The presence wait carries PRESENCE_TIMEOUT_MS
+\* (crates/rsk-device/src/presence.rs:212-213),
 \* so it resolves with no finger and no cancel. This is the assumption that makes
 \* every ceremony terminate, and it is the one the firmware most clearly owes.
 \*
@@ -1156,7 +1259,7 @@ NoTokenAfterInvalidation ==
 \* is a step.
 NoAccessibleSecretWithoutGate ==
     /\ "NoAccessibleSecretWithoutGate" \notin viol
-    /\ Idle => ((store.cred # {} /\ store.seed /\ pin.everSet) => pin.set)
+    /\ Idle => ((store.cred # {} /\ SeedReachable /\ pin.everSet) => pin.set)
 
 \* Every live credential is reachable by the management surface: enumerateRPs
 \* and the trusted-display Passkeys view both walk EF_RP, so a credential
@@ -1172,8 +1275,8 @@ NoUnmanageableCredential == Idle => store.cred \subseteq store.rpent
 \* destroy. Shipped twin: reset_tests.rs::a_torn_reset_never_unseals_a_surviving_seed.
 ResetNeverWeakensSurvivingState ==
     (Idle /\ snap.seen) =>
-      /\ (snap.surv # {} /\ store.seed /\ snap.pin) => pin.set
-      /\ (snap.surv # {} /\ store.seed /\ snap.auv) => gate.alwaysUv
+      /\ (snap.surv # {} /\ SeedReachable /\ snap.pin) => pin.set
+      /\ (snap.surv # {} /\ SeedReachable /\ snap.auv) => gate.alwaysUv
       /\ (snap.seed /\ snap.sealed) => gate.backupSealed
 
 =============================================================================

@@ -76,7 +76,7 @@ match more than one file in the tree.
 | `NoTokenAfterInvalidation` | A grant invalidated by a PIN change, PIN set, reset, `stopUsingPinUvAuthToken` or power cycle never authorizes again | `crates/rsk-fido/src/`: `state.rs:484-497` (`reset_pin_uv_auth_token`) · `state.rs:542-556` (`stop_using_token`) · `state.rs:590-602` (`expire_stale_token`) · `clientpin.rs:300-311` · `seed.rs:310-311` (`clear_ppuat`) |
 | `NoAccessibleSecretWithoutGate` | No live secret is reachable while the gate record that protects it is gone | `crates/rsk-fido/src/`: `reset.rs:127-149` (`is_fido_gate_fid`) · `reset.rs:51-66` (phase order) · `credmgmt.rs:249-265` (`authorized_by_ppuat`) · `clientpin.rs:213-217`, `:824-828` |
 | `NoUnmanageableCredential` | Every live credential is reachable by the management surface (its `EF_RP` entry exists) | `crates/rsk-fido/src/`: `credential.rs:804-826` (registration write order) · `credmgmt.rs:657-711` (`delete_credential` / `decrement_rp`) · `passkeys.rs:89-151` (`for_each_rp`, the `EF_RP` walk the display lists from) |
-| `ResetNeverWeakensSurvivingState` | No prefix of an `authenticatorReset` — torn or complete — leaves a surviving usable secret whose gate has already gone | `crates/rsk-fido/src/`: `reset.rs:30-75` (`reset`, seed then two phases) · `reset.rs:77-112` (`sweep`) · `reset.rs:127-149` (`is_fido_gate_fid`, incl. `EF_BACKUP_SEALED`) · `reset.rs:196-204` (`survives_factory_reset`). Shipped twin for its third clause: `reset_tests.rs::a_torn_reset_never_unseals_a_surviving_seed` |
+| `ResetNeverWeakensSurvivingState` | No prefix of an `authenticatorReset` — torn or complete — leaves a surviving usable secret whose gate has already gone, where "surviving" counts the RAM copy of the seed as well as the flash record | `crates/rsk-fido/src/`: `reset.rs:30-75` (`reset`, session then seed then two phases) · `reset.rs:57-60` (`ctx.state.reset()` ahead of every flash write) · `reset.rs:77-112` (`sweep`, and the `Err` at `:95-99` that leaves the device running) · `reset.rs:138-146` (`is_fido_gate_fid`, incl. `EF_BACKUP_SEALED`) · `reset.rs:199-201` (`survives_factory_reset`) · `crates/rsk-fido/src/lib.rs:183-187` (`Ctx::load_keydev`, the RAM copy that wins) · `state.rs:422-432` (`FidoState::reset`, what drops it). Shipped twin for its third clause: `reset_tests.rs::a_torn_reset_never_unseals_a_surviving_seed` |
 
 Two of these overlap by design and the overlap is stated rather than hidden:
 `NoAccessibleSecretWithoutGate` is the **steady-state** claim on every path,
@@ -126,7 +126,7 @@ it with a secret still live **is** the violation, and it must not be able to
 cancel its own alarm.
 
 Measured both ways. With the condition, `BugResetGatesFirst` still falls solo on
-this invariant in 252 430 states. Without it, that run comes back green.
+this invariant in 454 454 states. Without it, that run comes back green.
 
 ## Can these invariants fail? — the mutation experiment
 
@@ -159,7 +159,8 @@ checks **only** the named invariant.
 | `BugSeedDoesNotLead` | `reset.rs:61-65` / `fs.rs`'s `first` — the pre-0x08BF wipe | `NoUnmanageableCredential` | 55 765 states |
 | `BugWrongPinKeepsToken` | `clientpin.rs:779` — the pre-E38 tree, a mismatch that keeps the token | `NoTokenAfterInvalidation` | 623 states |
 | `BugConsumeKeepsMcGa` | `state.rs:522-528` — a §6.5.5.7 triad narrowed to the config permissions | `NoAuthorizationBypass` | 3 383 states |
-| `BugNoDropStaleCancelAtEntry` | the wait-entry clear (`crates/rsk-device/src/presence.rs:192-193`) — the wait-entry cancel drop | `NoCrossTransportTouchConsumption` | 125 states |
+| `BugNoDropStaleCancelAtEntry` | the wait-entry clear (`crates/rsk-device/src/presence.rs:192-193`) — the wait-entry cancel drop | `NoCrossTransportTouchConsumption` | 151 states |
+| `BugStateResetAfterWipe` | `reset.rs:57-60` — `ctx.state.reset()` moved back behind the flash work, which is the regression E76's own review caught | `ResetNeverWeakensSurvivingState` | 38 880 states |
 
 And the three that break a **liveness** property rather than an invariant. They
 are a separate `LIVE_BUGS` list in `gen-configs.sh` on purpose: a wedge is a
@@ -181,19 +182,19 @@ under it, from a `companion_bug` table in `gen-configs.sh`. A mutant that stops
 firing because a fix subsumed it is worth knowing; a mutant that stops firing
 silently is the failure this file exists to avoid.
 
-**19 of 19 mutants are caught, each by the invariant that names it**, and 3 of 3
+**20 of 20 mutants are caught, each by the invariant that names it**, and 3 of 3
 liveness mutants by the property that names them.
 `NoAccessibleSecretWithoutGate` is the one invariant no switch names as its
 target; `BugResetGatesFirst` breaks it too, and
-`Solo_NoAccessibleSecretWithoutGate.cfg` shows that alone in 252 430 states.
+`Solo_NoAccessibleSecretWithoutGate.cfg` shows that alone in 454 454 states.
 The shipped tree breaks it as well — see finding 2.
 
 That last one is not a formality. `NoAccessibleSecretWithoutGate` was repaired
-in this revision (`pin.everSet` now retires when the gate phase deletes `EF_PIN`
-over an already-emptied store — see "The `everSet` repair"), and a loosened
-invariant that stops crying wolf can just as easily stop catching real defects.
-The solo run is the measurement that says it did not: **252 430 states, still
-red, on the same mutant as before the repair.**
+in an earlier revision (`pin.everSet` now retires when the gate phase deletes
+`EF_PIN` over an already-emptied store — see "The `everSet` repair"), and a
+loosened invariant that stops crying wolf can just as easily stop catching real
+defects. The solo run is the measurement that says it did not: **454 454 states,
+still red, on the same mutant as before the repair.**
 
 One mutant was **not** caught on the first attempt, and that mattered more than
 the eleven that were. `BugStopUsingKeepsPerms` ran green over 6 275 376 distinct states
@@ -376,40 +377,58 @@ off the seed and `credential_load` / `for_each_rp` are the chokepoints every
 reader goes through. `SeedLeadsTheWipe` is the ordering rule that no other delete
 may precede the seed's, and `BugSeedDoesNotLead` is the tree before 0x08BF.
 
-Two things the re-run turned up that are **not** fixed, and are recorded rather
-than closed:
+One thing the re-run turned up is **still** unfixed, and is recorded rather than
+closed: **the model has one reset path.** `Fs::factory_wipe` — the Management
+RESET and the on-screen factory reset — is a second producer of the state
+`NoUnmanageableCredential` forbids, and it took the same `first` predicate in the
+same commit. It is unmodelled.
 
-- **The model has one reset path.** `Fs::factory_wipe` — the Management RESET and
-  the on-screen factory reset — is a second producer of the state
-  `NoUnmanageableCredential` forbids, and it took the same `first` predicate in
-  the same commit. It is unmodelled.
-- **The model could not have caught the regression that fix's own review
-  caught.** `Ctx::load_keydev` prefers the in-RAM `state.keydev_dec`
-  (`crates/rsk-fido/src/lib.rs:183-187`), so with the flash seed always deleted first a *failed*
-  sweep would have left the power cycle running on a seed nothing stores —
-  `BACKUP_EXPORT` included — which is why `ctx.state.reset()` moved ahead of the
-  flash work. This spec has no RAM copy of the seed (`keydev_dec` is populated by
-  the *device* soft-lock unlock, `vendor.rs:558-559`, a concept absent here — its
-  `lock` is the clientPIN mismatch lock) and no failed-sweep transition: every
-  tear goes through `PowerCut`/`WarmReset`, which clear RAM. So
-  `ResetNeverWeakensSurvivingState`'s third clause is keyed on the flash seed
-  alone, where the firmware's "the owner's seed is still reachable" is flash **or**
-  RAM. Closing it needs the device soft lock, and a half-modelled seam is worse
-  than an unmodelled one.
+### The blindness that regression exposed — closed
+
+The second one *was* the sharpest result this model had produced about itself:
+**it could not have caught the regression that fix's own review caught.**
+`Ctx::load_keydev` prefers the in-RAM `state.keydev_dec`
+(`crates/rsk-fido/src/lib.rs:183-187`), so
+with the flash seed always deleted first a *failed* sweep would have left the
+power cycle running on a seed nothing stores — `BACKUP_EXPORT` included — which
+is why `ctx.state.reset()` moved ahead of the flash work (`reset.rs:57-60`).
+
+Both halves of the blindness are now modelled, and each had to be closed
+separately:
+
+- **The RAM copy.** `ram` is `state.keydev_dec` (`state.rs:336-338`);
+  `SeedReachable == store.seed \/ ram` is what "the owner's seed is still
+  reachable" means; `DeviceUnlock` is the vendor `UNLOCK` (`vendor.rs:543-566`)
+  that is its only door. `KeepOpen` / `KeepSurv` move the wipe's own claim — that
+  what a tear leaves behind is undecryptable — from the flash delete to the
+  moment the **last** copy dies.
+- **The failed sweep.** `ResetAborts` is any `?` in `reset.rs:64-69` returning
+  `Err`: the command answers with an error and the device **keeps running**, no
+  boot, no `ensure_seed`, RAM intact. Every other tear in the model goes through
+  `PowerCut` / `WarmReset`, which clear RAM on the way past — which is precisely
+  why the RAM copy was unobservable without this action.
+
+`BugStateResetAfterWipe` is the regression, and it is **RED on
+`ResetNeverWeakensSurvivingState` in 38 880 distinct states at depth 11**: seal
+the backup window, unlock the device so the seed is in RAM, start the reset, let
+the flash seed go, let phase 2 take `EF_BACKUP_SEALED`, then abort. The one-time
+`BACKUP_EXPORT` window is re-opened over a seed the device can still reach.
+
+Each new action is load-bearing, measured one at a time against that mutant:
+lift `ResetAborts` out of `Next` and it is **GREEN over 13 443 648 distinct
+states**; lift `DeviceUnlock` out instead and it is **GREEN over 10 330 542**.
+Round two's "no, in two independent ways" was exact.
 
 ## Results
 
 | Configuration | Verdict | States generated | Distinct | Depth | Wall |
 |---|---|---|---|---|---|
-| `Shipped.cfg` (the tree as it stands) | **GREEN, exhaustive** | 56 047 231 | 6 664 764 | 49 | 83 s |
-| `Historical_E76.cfg` (the seed-lead taken back out) | RED `NoUnmanageableCredential` | 356 065 | 54 007 | 13 | 1 s |
-| `Historical_E77.cfg` (`FixPpuatRequiresPin` taken back out) | RED `NoAccessibleSecretWithoutGate` | 512 054 | 77 771 | 14 | 1 s |
-| 19 × `Mut_*.cfg` | RED, each caught | 262 – 899 702 | 118 – 138 546 | 5 – 15 | ≤ 2 s |
-| 19 × `Solo_*.cfg` | RED, each on its **own** target | 226 – 874 472 | 125 – 135 329 | 5 – 15 | ≤ 2 s |
-| `Solo_NoAccessibleSecretWithoutGate.cfg` | RED, the repaired clause | 1 296 217 | 194 351 | 16 | 3 s |
-| `Liveness.cfg` (reduced constants) | **GREEN** | 6 030 147 | 805 268 | 42 | 118 s |
-| `Liveness_Full.cfg` (the safety matrix's constants) | **GREEN** | 55 988 607 | 6 664 764 | 49 | **1475 s** |
-| 3 × `LiveMut_*.cfg` | RED, each on its own property | 482 460 – 564 677 | 76 446 – 93 607 | — | ≤ 4 s |
+| `Shipped.cfg` (the tree as it stands) | **GREEN, exhaustive** | 140 109 599 | 17 190 324 | 50 | 240 s |
+| `Historical_E76.cfg` (the seed-lead taken back out) | RED `NoUnmanageableCredential` | 665 750 | 99 770 | 13 | 2 s |
+| `Historical_E77.cfg` (`FixPpuatRequiresPin` taken back out) | RED `NoAccessibleSecretWithoutGate` | 1 001 124 | 148 629 | 14 | 2 s |
+| 20 × `Mut_*.cfg` | RED, each caught | 255 – 1 833 544 | 137 – 266 831 | 5 – 15 | ≤ 4 s |
+| 20 × `Solo_*.cfg` | RED, each on its **own** target | 272 – 1 802 948 | 150 – 264 030 | 5 – 15 | ≤ 3 s |
+| `Solo_NoAccessibleSecretWithoutGate.cfg` | RED, the repaired clause | 2 950 708 | 454 454 | 16 | 6 s |
 
 Only `ShippedFixed.cfg` is an exhaustive search; every RED row stops at the
 first counterexample, so its counts move a few percent between runs with the
@@ -529,6 +548,20 @@ abstractions producing traces the firmware cannot follow.
   flash-ring order (`fs.rs:238-241`), which is *a* fixed order per device state,
   not a free choice. Both findings below need only that some reachable ring
   order puts one delete before another.
+- **`DeviceUnlock` is ungated and needs no device lock.** The real vendor
+  `UNLOCK` (`vendor.rs:543-566`) requires the seed to be stored *wrapped* — only
+  a soft-locked device has an `EF_KEY_DEV_ENC` to open — and the host to present
+  the 32-byte lock key. The model requires only a live flash seed. It also omits
+  `AUT_DISABLE` (`config.rs:394-395`), which only ever *clears* the RAM copy.
+  Both widen where `ram` can be TRUE, never where it must be FALSE, and it is
+  the RAM copy **surviving** that the invariant is about.
+- **`ResetAborts` fires at any of the wipe's three positions** and models every
+  `?` in `reset.rs:64-69` as one transition — a `force_delete` error, a truncated
+  `for_each_key` (`reset.rs:95-99`), the `RESET_MAX_DELETES` backstop, a failed
+  `ensure_seed`. Which of them a real device can be made to hit, and by whom, is
+  not modelled: the abort is available unconditionally, which is the sound
+  direction and is why the counterexample it produces is about the *strength of
+  the ordering*, not a reachable attack.
 
 ### Narrower than the firmware — the risk direction, and the whole list
 

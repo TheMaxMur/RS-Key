@@ -1,46 +1,48 @@
-Shipped.cfg                                GREEN                                  states=56047231  distinct=6664764  depth=49  83s
-Historical_E76.cfg                         RED: NoUnmanageableCredential          states=356065    distinct=54007    depth=13  1s
-Historical_E77.cfg                         RED: NoAccessibleSecretWithoutGate     states=512054    distinct=77771    depth=14  1s
-Mut_BugBackupSealedNotAGate.cfg            RED: ResetNeverWeakensSurvivingState   states=11057     distinct=2571     depth=8   1s
-Mut_BugChangePinKeepsPpuat.cfg             RED: NoTokenAfterInvalidation          states=8832      distinct=2039     depth=8   1s
-Mut_BugCmWalkIgnoresChannel.cfg            RED: NoAuthorizationBypass             states=5964      distinct=1491     depth=8   1s
-Mut_BugConsumeKeepsMcGa.cfg                RED: NoAuthorizationBypass             states=24166     distinct=4637     depth=9   1s
-Mut_BugCredBeforeRp.cfg                    RED: NoUnmanageableCredential          states=2966      distinct=893      depth=7   0s
-Mut_BugDeleteRpBeforeCred.cfg              RED: NoUnmanageableCredential          states=586792    distinct=87497    depth=14  2s
-Mut_BugNoConsumeAfterUp.cfg                RED: NoAuthorizationBypass             states=18271     distinct=3688     depth=9   1s
-Mut_BugNoDropStaleCancelAtEntry.cfg        RED: NoCrossTransportTouchConsumption  states=236       distinct=127      depth=5   1s
-Mut_BugNoTouchRequired.cfg                 RED: NoAuthorizationBypass             states=290       distinct=128      depth=5   1s
-Mut_BugResetGatesFirst.cfg                 RED: ResetNeverWeakensSurvivingState   states=10877     distinct=2512     depth=8   0s
-Mut_BugSeedDoesNotLead.cfg                 RED: NoUnmanageableCredential          states=375099    distinct=56577    depth=13  2s
-Mut_BugSetPinKeepsPpuat.cfg                RED: NoTokenAfterInvalidation          states=906171    distinct=136307   depth=15  2s
-Mut_BugSoftLockLostOnWarmReset.cfg         RED: NoAuthorizationBypass             states=8691      distinct=2014     depth=8   1s
-Mut_BugStopUsingKeepsPerms.cfg             RED: NoTokenAfterInvalidation          states=1901      distinct=645      depth=7   1s
-Mut_BugTokenSurvivesPinChange.cfg          RED: NoTokenAfterInvalidation          states=46057     distinct=7954     depth=10  1s
-Mut_BugTouchNotSpent.cfg                   RED: NoCrossTransportTouchConsumption  states=30847     distinct=5780     depth=9   1s
-Mut_BugUnscopedCancel.cfg                  RED: NoCrossTransportTouchConsumption  states=378       distinct=153      depth=5   0s
-Mut_BugWarmResetReopensWindow.cfg          RED: NoAuthorizationBypass             states=265       distinct=117      depth=5   1s
-Mut_BugWrongPinKeepsToken.cfg              RED: NoTokenAfterInvalidation          states=1921      distinct=648      depth=7   1s
-Solo_BugBackupSealedNotAGate.cfg           RED: ResetNeverWeakensSurvivingState   states=10897     distinct=2522     depth=8   1s
-Solo_BugChangePinKeepsPpuat.cfg            RED: NoTokenAfterInvalidation          states=9569      distinct=2181     depth=8   0s
-Solo_BugCmWalkIgnoresChannel.cfg           RED: NoAuthorizationBypass             states=6000      distinct=1502     depth=8   1s
-Solo_BugConsumeKeepsMcGa.cfg               RED: NoAuthorizationBypass             states=19878     distinct=3908     depth=9   1s
-Solo_BugCredBeforeRp.cfg                   RED: NoUnmanageableCredential          states=2974      distinct=893      depth=7   1s
-Solo_BugDeleteRpBeforeCred.cfg             RED: NoUnmanageableCredential          states=583934    distinct=86882    depth=14  2s
-Solo_BugNoConsumeAfterUp.cfg               RED: NoAuthorizationBypass             states=20179     distinct=3969     depth=9   1s
-Solo_BugNoDropStaleCancelAtEntry.cfg       RED: NoCrossTransportTouchConsumption  states=238       distinct=129      depth=5   1s
-Solo_BugNoTouchRequired.cfg                RED: NoAuthorizationBypass             states=290       distinct=128      depth=5   0s
-Solo_BugResetGatesFirst.cfg                RED: ResetNeverWeakensSurvivingState   states=11302     distinct=2600     depth=8   1s
-Solo_BugSeedDoesNotLead.cfg                RED: NoUnmanageableCredential          states=375058    distinct=56581    depth=13  2s
-Solo_BugSetPinKeepsPpuat.cfg               RED: NoTokenAfterInvalidation          states=922088    distinct=137878   depth=15  2s
-Solo_BugSoftLockLostOnWarmReset.cfg        RED: NoAuthorizationBypass             states=8248      distinct=1937     depth=8   1s
-Solo_BugStopUsingKeepsPerms.cfg            RED: NoTokenAfterInvalidation          states=1901      distinct=645      depth=7   1s
-Solo_BugTokenSurvivesPinChange.cfg         RED: NoTokenAfterInvalidation          states=45815     distinct=7799     depth=10  1s
-Solo_BugTouchNotSpent.cfg                  RED: NoCrossTransportTouchConsumption  states=31063     distinct=5883     depth=9   1s
-Solo_BugUnscopedCancel.cfg                 RED: NoCrossTransportTouchConsumption  states=359       distinct=148      depth=5   0s
-Solo_BugWarmResetReopensWindow.cfg         RED: NoAuthorizationBypass             states=267       distinct=118      depth=5   1s
-Solo_BugWrongPinKeepsToken.cfg             RED: NoTokenAfterInvalidation          states=1898      distinct=630      depth=7   1s
-Solo_NoAccessibleSecretWithoutGate.cfg     RED: NoAccessibleSecretWithoutGate     states=1369613   distinct=198079   depth=16  3s
-Liveness.cfg                               GREEN                                  states=6030147   distinct=805268   depth=42  118s
-LiveMut_BugAssertWedgesOnTimeout.cfg       RED: Error: Temporal properties were violated. states=482460    distinct=79523    depth=?   3s
-LiveMut_BugWaitScopeNotCleared.cfg         RED: Error: Temporal properties were violated. states=514824    distinct=76446    depth=?   4s
-LiveMut_BugWalkNeverExpires.cfg            RED: Error: Temporal properties were violated. states=564677    distinct=93607    depth=?   4s
+Shipped.cfg                                GREEN                                  states=140109599 distinct=17190324 depth=50  257s
+Historical_E76.cfg                         RED: NoUnmanageableCredential          states=665750    distinct=99770    depth=13  2s
+Historical_E77.cfg                         RED: NoAccessibleSecretWithoutGate     states=1001124   distinct=148629   depth=14  2s
+Mut_BugBackupSealedNotAGate.cfg            RED: ResetNeverWeakensSurvivingState   states=15156     distinct=3665     depth=8   1s
+Mut_BugChangePinKeepsPpuat.cfg             RED: NoTokenAfterInvalidation          states=12400     distinct=2997     depth=8   1s
+Mut_BugCmWalkIgnoresChannel.cfg            RED: NoAuthorizationBypass             states=7471      distinct=2048     depth=8   1s
+Mut_BugConsumeKeepsMcGa.cfg                RED: NoAuthorizationBypass             states=24921     distinct=5300     depth=9   1s
+Mut_BugCredBeforeRp.cfg                    RED: NoUnmanageableCredential          states=3846      distinct=1219     depth=7   0s
+Mut_BugDeleteRpBeforeCred.cfg              RED: NoUnmanageableCredential          states=1093166   distinct=160141   depth=14  2s
+Mut_BugNoConsumeAfterUp.cfg                RED: NoAuthorizationBypass             states=26361     distinct=5553     depth=9   1s
+Mut_BugNoDropStaleCancelAtEntry.cfg        RED: NoCrossTransportTouchConsumption  states=255       distinct=145      depth=5   1s
+Mut_BugNoTouchRequired.cfg                 RED: NoAuthorizationBypass             states=350       distinct=156      depth=5   0s
+Mut_BugResetGatesFirst.cfg                 RED: ResetNeverWeakensSurvivingState   states=15038     distinct=3638     depth=8   1s
+Mut_BugSeedDoesNotLead.cfg                 RED: NoUnmanageableCredential          states=665128    distinct=99620    depth=13  2s
+Mut_BugSetPinKeepsPpuat.cfg                RED: NoTokenAfterInvalidation          states=1833544   distinct=266831   depth=15  4s
+Mut_BugSoftLockLostOnWarmReset.cfg         RED: NoAuthorizationBypass             states=10897     distinct=2684     depth=8   1s
+Mut_BugStateResetAfterWipe.cfg             RED: ResetNeverWeakensSurvivingState   states=233986    distinct=39003    depth=11  1s
+Mut_BugStopUsingKeepsPerms.cfg             RED: NoTokenAfterInvalidation          states=2724      distinct=938      depth=7   1s
+Mut_BugTokenSurvivesPinChange.cfg          RED: NoTokenAfterInvalidation          states=66593     distinct=11921    depth=10  1s
+Mut_BugTouchNotSpent.cfg                   RED: NoCrossTransportTouchConsumption  states=15835     distinct=3899     depth=8   1s
+Mut_BugUnscopedCancel.cfg                  RED: NoCrossTransportTouchConsumption  states=438       distinct=181      depth=5   0s
+Mut_BugWarmResetReopensWindow.cfg          RED: NoAuthorizationBypass             states=276       distinct=137      depth=5   1s
+Mut_BugWrongPinKeepsToken.cfg              RED: NoTokenAfterInvalidation          states=2667      distinct=907      depth=7   1s
+Solo_BugBackupSealedNotAGate.cfg           RED: ResetNeverWeakensSurvivingState   states=14287     distinct=3453     depth=8   1s
+Solo_BugChangePinKeepsPpuat.cfg            RED: NoTokenAfterInvalidation          states=12188     distinct=2950     depth=8   0s
+Solo_BugCmWalkIgnoresChannel.cfg           RED: NoAuthorizationBypass             states=8045      distinct=2163     depth=8   1s
+Solo_BugConsumeKeepsMcGa.cfg               RED: NoAuthorizationBypass             states=24673     distinct=5192     depth=9   1s
+Solo_BugCredBeforeRp.cfg                   RED: NoUnmanageableCredential          states=3858      distinct=1220     depth=7   1s
+Solo_BugDeleteRpBeforeCred.cfg             RED: NoUnmanageableCredential          states=1097488   distinct=160999   depth=14  2s
+Solo_BugNoConsumeAfterUp.cfg               RED: NoAuthorizationBypass             states=27590     distinct=5715     depth=9   0s
+Solo_BugNoDropStaleCancelAtEntry.cfg       RED: NoCrossTransportTouchConsumption  states=272       distinct=151      depth=5   1s
+Solo_BugNoTouchRequired.cfg                RED: NoAuthorizationBypass             states=350       distinct=156      depth=5   1s
+Solo_BugResetGatesFirst.cfg                RED: ResetNeverWeakensSurvivingState   states=14468     distinct=3472     depth=8   1s
+Solo_BugSeedDoesNotLead.cfg                RED: NoUnmanageableCredential          states=665750    distinct=99770    depth=13  1s
+Solo_BugSetPinKeepsPpuat.cfg               RED: NoTokenAfterInvalidation          states=1802948   distinct=264030   depth=15  3s
+Solo_BugSoftLockLostOnWarmReset.cfg        RED: NoAuthorizationBypass             states=12064     distinct=2911     depth=8   1s
+Solo_BugStateResetAfterWipe.cfg            RED: ResetNeverWeakensSurvivingState   states=233277    distinct=38880    depth=11  2s
+Solo_BugStopUsingKeepsPerms.cfg            RED: NoTokenAfterInvalidation          states=2700      distinct=919      depth=7   1s
+Solo_BugTokenSurvivesPinChange.cfg         RED: NoTokenAfterInvalidation          states=62130     distinct=11321    depth=10  1s
+Solo_BugTouchNotSpent.cfg                  RED: NoCrossTransportTouchConsumption  states=16709     distinct=4081     depth=8   1s
+Solo_BugUnscopedCancel.cfg                 RED: NoCrossTransportTouchConsumption  states=405       distinct=168      depth=5   1s
+Solo_BugWarmResetReopensWindow.cfg         RED: NoAuthorizationBypass             states=339       distinct=150      depth=5   0s
+Solo_BugWrongPinKeepsToken.cfg             RED: NoTokenAfterInvalidation          states=2667      distinct=907      depth=7   1s
+Solo_NoAccessibleSecretWithoutGate.cfg     RED: NoAccessibleSecretWithoutGate     states=2950708   distinct=454454   depth=16  6s
+Liveness.cfg                               GREEN                                  states=17095045  distinct=2312736  depth=44  387s
+LiveMut_BugAssertWedgesOnTimeout.cfg       RED: Error: Temporal properties were violated. states=329307    distinct=57337    depth=?   5s
+LiveMut_BugWaitScopeNotCleared.cfg         RED: Error: Temporal properties were violated. states=438983    distinct=72816    depth=?   4s
+LiveMut_BugWalkNeverExpires.cfg            RED: Error: Temporal properties were violated. states=481177    distinct=82298    depth=?   4s

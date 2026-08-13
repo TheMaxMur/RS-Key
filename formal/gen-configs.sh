@@ -15,7 +15,7 @@ BUGS=(BugResetGatesFirst BugCredBeforeRp BugTokenSurvivesPinChange
       BugSoftLockLostOnWarmReset BugWarmResetReopensWindow
       BugCmWalkIgnoresChannel BugDeleteRpBeforeCred BugBackupSealedNotAGate
       BugConsumeKeepsMcGa BugNoDropStaleCancelAtEntry BugWrongPinKeepsToken
-      BugSeedDoesNotLead BugNoTouchRequired)
+      BugSeedDoesNotLead BugNoTouchRequired BugStateResetAfterWipe)
 
 # Mutants whose defect the shipped seed-lead makes unreachable: they rebuild a
 # pre-0x08BF ordering bug, so their configuration must be the pre-0x08BF tree.
@@ -49,6 +49,7 @@ target_inv() {
     BugWrongPinKeepsToken)      echo NoTokenAfterInvalidation ;;
     BugSeedDoesNotLead)         echo NoUnmanageableCredential ;;
     BugNoTouchRequired)         echo NoAuthorizationBypass ;;
+    BugStateResetAfterWipe)     echo ResetNeverWeakensSurvivingState ;;
   esac
 }
 
@@ -165,3 +166,4 @@ for b in "${LIVE_BUGS[@]}"; do emit_live "LiveMut_$b.cfg" "$b"; done
 # the reduction above is a measurement rather than an assertion.
 emit_live Liveness_Full.cfg "" full
 echo "wrote Shipped.cfg, 2 historical configs, ${#BUGS[@]} mutant configs and ${#LIVE_BUGS[@]} liveness configs"
+

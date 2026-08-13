@@ -107,19 +107,14 @@ AMBIGUOUS = {
     ),
 }
 
-#: The citations this row landed over, each with the commit that rotted it. They
-#: are `formal/`'s to re-point, not this change's — the model was being rewritten
-#: in the same hours this guard was written, and editing someone else's in-flight
-#: page to make my own row green is how a ratchet becomes a lie.
+#: The citations a row landed over, each with the commit that rotted it. Empty
+#: today: the two this guard shipped with — `reset.rs:126-132`, whose range
+#: `a430f2d` had moved onto a blank line, and the bare `presence.rs`, which
+#: `4798668` made resolve two ways — were both re-pointed by `formal/` itself.
 #:
 #: Checked in both directions, like `kani_gate.py`'s exclusions: an entry that no
 #: longer fires is stale and fails, so each one ends when its citation is fixed.
-PENDING = {
-    "presence.rs": "4798668 lifted the arbitration into rsk-device; two rows of"
-    " README's mutation table still cite the bare name, which now resolves two ways",
-    "reset.rs:126-132": "a430f2d moved the wipe's seed handling; the range starts"
-    " on a blank line now",
-}
+PENDING: dict[str, str] = {}
 
 #: Below this a page is not citing, it is failing to be parsed. Today: 107 and 68.
 FLOOR = 25
