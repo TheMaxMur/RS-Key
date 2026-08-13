@@ -83,9 +83,11 @@ impl Signals {
         self.cancel_cid.store(cid, Ordering::Release);
     }
 
-    /// Drop a cancel no ceremony consumed. Every wait clears it on the way in and
-    /// on the way out — `rsk_device::presence::ButtonWait` does the same, so a
-    /// CANCEL that raced the end of one ceremony cannot end the next one.
+    /// Drop a cancel no ceremony consumed — both the channel's and the OTP
+    /// transport's, as the board's arbiter has one flag for the two. Every wait
+    /// clears it on the way in and on the way out, exactly as
+    /// `rsk_device::presence::ButtonWait` does, so a CANCEL that raced the end of
+    /// one ceremony cannot end the next.
     pub fn clear_cancel(&self) {
         self.cancel_cid.store(0, Ordering::Release);
         self.otp_cancel.store(false, Ordering::Release);
@@ -123,12 +125,20 @@ impl Signals {
     /// Whether the in-flight command has been cancelled by its own transport: a
     /// FIDO `CTAPHID_CANCEL` on the channel that owns the ceremony, or the OTP
     /// host moving on from a challenge waiting for its press.
+    ///
+    /// The OTP arm is scoped as well, because `otp_wait` is raised by the
+    /// transport *before* the job is queued — so it is up while an OTP frame waits
+    /// behind somebody else's ceremony, and without the scope a dummy write would
+    /// end that one. `rsk_device::presence::Arbiter::cancel_otp_wait` gates the
+    /// same rule on the writing side.
     pub fn cancelled(&self) -> bool {
         let active = self.active_cid.load(Ordering::Acquire);
         if active != 0 && self.cancel_cid.load(Ordering::Acquire) == active {
             return true;
         }
-        self.otp_wait.load(Ordering::Acquire) && self.otp_cancel.load(Ordering::Acquire)
+        self.wait_scope.load(Ordering::Acquire) == SCOPE_OTP
+            && self.otp_wait.load(Ordering::Acquire)
+            && self.otp_cancel.load(Ordering::Acquire)
     }
 }
 
