@@ -101,7 +101,10 @@ secure-messaging indication (`CLA & 0x0C`: `04`, `0C`, `84`, `8C`, …) answers
 `6E00` — **no applet here implements secure messaging**, and OpenPGP's Extended
 Capabilities says so. Applets that additionally name a class of their own reject
 anything else themselves (OATH, management, OTP and U2F want `00`; rescue wants
-`80`).
+`80`). A chain is reassembled into a single command of at most **2038 bytes**
+(one CCID frame); a segment that would reach or pass that is `6700`, and the
+partial chain is dropped rather than dispatched — so a host that retries the
+segment is starting a **new** chain, not continuing the old one.
 
 ![ISO-7816 short-APDU cases. Every command opens with the four-byte header CLA INS P1 P2. Case 1 is header only; Case 2 appends a one-byte Le (expected response length, 00 meaning up to 256); Case 3 appends Lc then Lc bytes of command data; Case 4 appends Lc, data, and Le. SELECT is a Case 4 command, VERIFY a Case 3 command](images/apdu-cases.svg)
 
@@ -264,6 +267,7 @@ Source: `crates/rsk-sdk/src/sw.rs`.
 | `6400` | EXEC_ERROR | execution error (internal) |
 | `6581` | MEMORY_FAILURE | flash write failed |
 | `6700` | WRONG_LENGTH | bad `Lc`/`Le` for this command |
+| `6883` | LAST_CHAIN_EXPECTED | an APDU arrived that neither continues nor closes the open command chain |
 | `6982` | SECURITY_STATUS_NOT_SATISFIED | auth/precondition missing |
 | `6984` | DATA_INVALID | malformed payload (e.g. bad guard magic) |
 | `6985` | CONDITIONS_NOT_SATISFIED | state precondition unmet (e.g. RTC unset) |

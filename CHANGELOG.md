@@ -49,6 +49,16 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **A command chain that outgrows the reassembly buffer is a length error, not a
+  class error.** The intermediate segment that reached the ceiling answered
+  `6E00` — "CLA not supported" — telling the host its class byte was wrong when
+  the only thing wrong was the length; fifty lines down, the *final* segment's
+  overflow already answered `6700`. One condition, two answers. A YubiKey 5.7.4
+  answers `6700` on the intermediate segment too (measured on a chained OpenPGP
+  `PUT DATA`, authenticated and not, past its own ~3060-byte ceiling), so the
+  two ends now agree with each other and with the card. `docs/protocol.md` says
+  what the ceiling is. `bcdDevice` → `0x0931`.
+
 - **OpenPGP `GET DATA` and in-application `SELECT` stop telling an internal file
   from an absent one.** `GET DATA` spoke three answers for "I do not serve this":
   `6A88` for a tag it did not know, `6982` for one of the 28 internal storage

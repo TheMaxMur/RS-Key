@@ -265,9 +265,8 @@ fn a_do_the_card_announces_room_for_reads_back_whole() {
     );
 
     // Far past it the dispatcher's chain buffer ends the conversation before the
-    // applet sees a thing. Which status that is belongs to the E9/E28 CLA sweep
-    // (it is `CLA_NOT_SUPPORTED` or `WRONG_LENGTH` depending on which segment
-    // overflows); what must hold either way is that it is not a success and the
+    // applet sees a thing, with the `WRONG_LENGTH` its own test pins from both
+    // ends of that check; what matters here is that it is not a success and the
     // stored certificate is untouched.
     let way_over = std::vec![0x5Au8; announced + 512];
     assert_ne!(write(&mut disp, &mut applets, &mut fs, &way_over), Sw::OK);

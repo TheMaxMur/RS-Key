@@ -1138,3 +1138,85 @@ fn a_secure_messaging_class_is_refused() {
         d.clear_chaining();
     }
 }
+
+/// A chain that outgrows the reassembly buffer is a length error, and it is the
+/// same length error whichever segment reaches the ceiling. The intermediate
+/// segment answered `6E00` (CLA not supported) while the final one — fifty lines
+/// down, same condition — answered `6700`, so one command had two answers and one
+/// of them told the host its class byte was wrong. A YubiKey 5.7.4 answers `6700`
+/// on the intermediate segment too, measured on a chained OpenPGP `PUT DATA` at
+/// 3350 bytes and up (its own ceiling is around 3060 accumulated), both
+/// authenticated and not.
+#[test]
+fn a_chain_past_the_reassembly_buffer_is_a_length_error_at_either_end() {
+    let mut echo = Echo { selected: false };
+    let mut applets: [&mut dyn Applet<()>; 1] = [&mut echo];
+    let mut disp = Dispatcher::new();
+    let mut out = [0u8; 64];
+    let mut res = ResBuf::new(&mut out);
+
+    let mut sel = vec![0x00, 0xA4, 0x04, 0x00, 0x08];
+    sel.extend_from_slice(&[0xA0, 0x00, 0x00, 0x06, 0x47, 0x2F, 0x00, 0x01]);
+    assert_eq!(disp.process(&sel, &mut applets, &mut (), &mut res), Sw::OK);
+
+    // Fill the buffer with whole segments, then overflow it on the next one.
+    let seg = |n: usize| {
+        let mut a = vec![0x10u8, 0x10, 0, 0, n as u8];
+        a.extend(core::iter::repeat_n(0xA5, n));
+        a
+    };
+    let mut sent = 0usize;
+    while sent + 255 < CHAIN_BUF_SIZE {
+        assert_eq!(
+            disp.process(&seg(255), &mut applets, &mut (), &mut res),
+            Sw::OK,
+            "segment at {sent}"
+        );
+        sent += 255;
+    }
+    let over = CHAIN_BUF_SIZE - sent;
+    assert!(
+        over <= 255,
+        "the last whole segment left {over} bytes of room"
+    );
+    assert_eq!(
+        disp.process(&seg(over), &mut applets, &mut (), &mut res),
+        Sw::WRONG_LENGTH,
+        "an intermediate segment past the buffer"
+    );
+
+    // …and the chain is gone, so the next command starts clean rather than
+    // dispatching the abandoned prefix. The probe carries a DIFFERENT P1: with
+    // the segments' own header it masks to the chain's, so a dispatcher that
+    // kept `chaining` would absorb it as a legitimate terminator and answer the
+    // same `9000` with the same one byte — this assertion could not fail.
+    assert_eq!(
+        disp.process(
+            &[0x00, 0x10, 0x01, 0, 0x01, 0xEE],
+            &mut applets,
+            &mut (),
+            &mut res
+        ),
+        Sw::OK
+    );
+    assert_eq!(res.as_slice(), &[0xEE]);
+    assert!(!disp.chaining && disp.chain_len == 0, "no chain survives");
+
+    // The FINAL segment's overflow, which already answered `6700` — asserted so
+    // the two ends cannot drift apart again.
+    let mut sent = 0usize;
+    while sent + 255 < CHAIN_BUF_SIZE {
+        assert_eq!(
+            disp.process(&seg(255), &mut applets, &mut (), &mut res),
+            Sw::OK
+        );
+        sent += 255;
+    }
+    let mut last = vec![0x00u8, 0x10, 0, 0, 255];
+    last.extend(core::iter::repeat_n(0xA5, 255));
+    assert_eq!(
+        disp.process(&last, &mut applets, &mut (), &mut res),
+        Sw::WRONG_LENGTH,
+        "a final segment past the buffer"
+    );
+}

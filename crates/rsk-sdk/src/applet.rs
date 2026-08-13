@@ -108,6 +108,11 @@ pub trait Applet<C> {
     }
 }
 
+/// Holds a command chain's accumulated segments. It is the CCID handler's
+/// body cap — one frame — and `docs/protocol.md` publishes that number to
+/// third-party hosts. `rsk-sdk` cannot see `rsk-usb`, so nothing but this
+/// sentence ties the two together; `rsk-device` holds the compile-time
+/// assertions for the constants it can reach.
 #[cfg(not(kani))]
 const CHAIN_BUF_SIZE: usize = 2038;
 /// Holds the unsent tail of a response while the host fetches it with GET
@@ -286,7 +291,10 @@ impl Dispatcher {
                 self.chain[..self.chain_len].zeroize();
                 self.chain_len = 0;
                 self.chaining = false;
-                return Sw::CLA_NOT_SUPPORTED;
+                // The same length error the final segment's overflow gives
+                // below: the command is too long, and the class byte that
+                // carried it was right. A YubiKey 5.7.4 answers `6700` here too.
+                return Sw::WRONG_LENGTH;
             }
             self.chain[self.chain_len..self.chain_len + apdu.nc].copy_from_slice(apdu.data);
             self.chain_len += apdu.nc;
