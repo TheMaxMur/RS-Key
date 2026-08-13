@@ -798,6 +798,14 @@ impl PivApplet<'_> {
         apdu: &Apdu,
         res: &mut ResBuf,
     ) -> Sw {
+        // Kept strict on purpose. A YubiKey 5.7.4 ignores P1 here entirely and
+        // serves the full record for `01`, `02`, `80` and `FF` alike (measured,
+        // 3 runs) — and the same is true of INS `47`, `FA`, `FF`, `F6`, `FE`,
+        // `FB`, `F9`, `FD`, `F8` and `CB`: the PIN commands' key reference and
+        // this command's P2 are the only P1P2 that card judges at all. Parity
+        // does not run this direction: the standing ruling keeps our strictness
+        // where the reference is *looser*, and loosening one cell of ten would
+        // leave the applet incoherent with itself.
         if apdu.p1 != 0x00 {
             return Sw::INCORRECT_P1P2;
         }
