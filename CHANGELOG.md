@@ -394,6 +394,22 @@ below in the usual four sections, security last.
   tell a dead one from a live one; paying it beats teaching the guard a hole.
   **bcdDevice → 0x0953.**
 
+- **PIV `GENERAL AUTHENTICATE` dispatches on a typed operation, not on a raw
+  tag.** Which operation a dynamic-auth template asks for was decided by one
+  hand-kept list of accepted tags and then carried out by a separate `match` on
+  the tag byte, whose catch-all answered `6A80`. Nothing tied the two together,
+  and the compiler could not object: the `match` was over a `u8`, so its
+  catch-all made it exhaustive whatever the arms said. A tag added to the filter
+  and forgotten in the dispatch would therefore be *selected* as the operation
+  and then refused — a silent no-op wearing a status word. Both lists are now
+  the variants of one private `Op`, the dispatch is exhaustive over the enum,
+  and the drift is a build error; verified by adding a fifth variant and
+  watching `E0004` name the missing arm. Behaviour is unchanged — the PIV suite
+  passes untouched, and the tag comparison stays `u16`-wide, since matching on a
+  truncated low byte would let `0x0181` pass for `0x81`. The image is 16 bytes
+  smaller.
+  **bcdDevice → 0x0954.**
+
 ### Fixed
 
 - **A one-byte body is one refusal on every PIV command, and the management key

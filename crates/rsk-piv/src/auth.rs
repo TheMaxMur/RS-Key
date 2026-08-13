@@ -438,23 +438,23 @@ pub(crate) fn general_authenticate<S: Storage>(
             chal_len,
         };
         match op {
-            Some((TAG_AUTH_WITNESS, w)) => {
+            Some((Op::Witness, w)) => {
                 let host_chal = find_tag(dyn_auth, TAG_AUTH_CHALLENGE as u16);
                 ga.mutual_auth(&mgm_key[..mgm_len], w, host_chal, res)
             }
             // Empty at 9B opens the single-auth handshake; at a key slot it is a
             // private-key operation over an empty challenge, which is what the
             // oracle answers with a signature where we answered random bytes.
-            Some((TAG_AUTH_CHALLENGE, c)) if c.is_empty() && key_ref == SLOT_CARDMGM => {
+            Some((Op::Challenge, c)) if c.is_empty() && key_ref == SLOT_CARDMGM => {
                 ga.single_challenge(res)
             }
-            Some((TAG_AUTH_CHALLENGE, c)) => ga.slot_key_op(c, res),
-            Some((TAG_AUTH_RESPONSE, r)) => ga.single_auth_verify(&mgm_key[..mgm_len], r),
-            Some((TAG_AUTH_EXPONENTIATION, pp)) => ga.ecdh_op(pp, res),
+            Some((Op::Challenge, c)) => ga.slot_key_op(c, res),
+            Some((Op::Response, r)) => ga.single_auth_verify(&mgm_key[..mgm_len], r),
+            Some((Op::Exponentiation, pp)) => ga.ecdh_op(pp, res),
             // No operation tag the card recognises. A YubiKey answers 6A80 to
             // every such body — an unknown tag, a truncated TLV, a lone empty
             // response placeholder — where we used to answer 9000 and do nothing.
-            _ => Err(WRONG_DATA),
+            None => Err(WRONG_DATA),
         }
     };
     mgm_key.zeroize();
@@ -473,16 +473,39 @@ pub(crate) fn general_authenticate<S: Storage>(
 ///
 /// An EMPTY `82` is the response placeholder every conformant body opens with, not
 /// a request to verify one; a non-empty `82` is single-auth step 2.
-fn first_operation(dyn_auth: &[u8]) -> Option<(u8, &[u8])> {
-    const WITNESS: u16 = TAG_AUTH_WITNESS as u16;
-    const CHALLENGE: u16 = TAG_AUTH_CHALLENGE as u16;
-    const RESPONSE: u16 = TAG_AUTH_RESPONSE as u16;
-    const EXPONENTIATION: u16 = TAG_AUTH_EXPONENTIATION as u16;
-    Tlv::new(dyn_auth)
-        .find(|&(t, v)| match t {
-            WITNESS | CHALLENGE | EXPONENTIATION => true,
-            RESPONSE => !v.is_empty(),
-            _ => false,
-        })
-        .map(|(t, v)| (t as u8, v))
+fn first_operation(dyn_auth: &[u8]) -> Option<(Op, &[u8])> {
+    Tlv::new(dyn_auth).find_map(|(t, v)| match Op::from_tag(t) {
+        Some(Op::Response) if v.is_empty() => None,
+        Some(op) => Some((op, v)),
+        None => None,
+    })
+}
+
+/// The operations a dynamic-auth template can name. `general_authenticate`
+/// dispatches on this rather than on a raw tag, so a variant added here without an
+/// arm there is a compile error — where the two hand-kept lists it replaces would
+/// have let the card accept the tag and then refuse the body with `6A80`.
+enum Op {
+    Witness,
+    Challenge,
+    Response,
+    Exponentiation,
+}
+
+impl Op {
+    /// Tags compare as `u16` because `Tlv` also yields two-byte ones, and matching
+    /// on a truncated low byte would let `0x0181` pass for `0x81`.
+    fn from_tag(tag: u16) -> Option<Self> {
+        const WITNESS: u16 = TAG_AUTH_WITNESS as u16;
+        const CHALLENGE: u16 = TAG_AUTH_CHALLENGE as u16;
+        const RESPONSE: u16 = TAG_AUTH_RESPONSE as u16;
+        const EXPONENTIATION: u16 = TAG_AUTH_EXPONENTIATION as u16;
+        match tag {
+            WITNESS => Some(Self::Witness),
+            CHALLENGE => Some(Self::Challenge),
+            RESPONSE => Some(Self::Response),
+            EXPONENTIATION => Some(Self::Exponentiation),
+            _ => None,
+        }
+    }
 }
