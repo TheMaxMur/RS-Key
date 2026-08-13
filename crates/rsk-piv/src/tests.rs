@@ -3132,6 +3132,118 @@ fn x25519_generate_has_no_cert_and_agrees() {
     assert_eq!(shared, &expected[..]);
 }
 
+/// An imported private scalar is exactly the field length or it is not that
+/// key. Ours bounded it from above only, so a one-byte P-256 scalar was stored
+/// and signed with (`d = 1`, a key anyone can forge against), and 32 bytes
+/// declared as P-384 was silently accepted as a P-384 key. A YubiKey 5.7.4
+/// answers `6A80` to every length but the field's — measured 1, 2, 31, 33 on
+/// P-256 and 32, 47 on P-384, three runs — and left-padding is the host's job,
+/// not the card's, because a host that got the length wrong got the key wrong.
+#[test]
+fn an_imported_scalar_is_exactly_the_field_length() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    let imp = |tag: u8, n: usize| {
+        let mut v = vec![tag, n as u8];
+        v.extend(core::iter::repeat_n(0x11u8, n));
+        v
+    };
+    for (algo, field) in [(ALGO_ECCP256, 32usize), (ALGO_ECCP384, 48)] {
+        for n in [1usize, 2, field - 1, field + 1] {
+            assert_eq!(
+                run(
+                    &mut app,
+                    &mut fs,
+                    INS_IMPORT_ASYM,
+                    algo,
+                    0x9E,
+                    &imp(0x06, n)
+                )
+                .0,
+                WRONG_DATA,
+                "algo {algo:02X} with a {n}-byte scalar"
+            );
+        }
+        assert_eq!(
+            run(
+                &mut app,
+                &mut fs,
+                INS_IMPORT_ASYM,
+                algo,
+                0x9E,
+                &imp(0x06, field)
+            )
+            .0,
+            Sw::OK,
+            "algo {algo:02X} at the field length"
+        );
+    }
+    // The Edwards pair carries its scalar under its own tag and is the same rule.
+    for (algo, tag) in [(ALGO_ED25519, 0x07u8), (ALGO_X25519, 0x08)] {
+        for n in [1usize, 31, 33] {
+            assert_eq!(
+                run(&mut app, &mut fs, INS_IMPORT_ASYM, algo, 0x9E, &imp(tag, n)).0,
+                WRONG_DATA,
+                "algo {algo:02X} with a {n}-byte scalar"
+            );
+        }
+        assert_eq!(
+            run(
+                &mut app,
+                &mut fs,
+                INS_IMPORT_ASYM,
+                algo,
+                0x9E,
+                &imp(tag, 32)
+            )
+            .0,
+            Sw::OK,
+            "algo {algo:02X} at 32 bytes"
+        );
+    }
+    // The all-zero scalar was already refused and still is.
+    let mut zero = vec![0x06, 32];
+    zero.extend_from_slice(&[0u8; 32]);
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            INS_IMPORT_ASYM,
+            ALGO_ECCP256,
+            0x9E,
+            &zero
+        )
+        .0,
+        WRONG_DATA
+    );
+    // Audit run-36's rule, on the inputs this gate newly refuses: a refused import
+    // leaves the slot exactly as it was. Every import arm drops the slot meta and
+    // seals the new key first, so a length judged after the write would have
+    // destroyed a provisioned slot on each of the rows above.
+    let before = run(&mut app, &mut fs, INS_GET_METADATA, 0, 0x9E, &[]);
+    assert_eq!(before.0, Sw::OK);
+    for (algo, n) in [
+        (ALGO_ECCP256, 1usize),
+        (ALGO_ECCP384, 32),
+        (ALGO_ED25519, 31),
+    ] {
+        let tag = if algo == ALGO_ED25519 { 0x07 } else { 0x06 };
+        assert_eq!(
+            run(&mut app, &mut fs, INS_IMPORT_ASYM, algo, 0x9E, &imp(tag, n)).0,
+            WRONG_DATA
+        );
+        assert_eq!(
+            run(&mut app, &mut fs, INS_GET_METADATA, 0, 0x9E, &[]),
+            before,
+            "a refused {n}-byte {algo:02X} import moved the slot"
+        );
+    }
+}
+
 /// Import an Ed25519 seed (tag 0x07) and an X25519 scalar (tag 0x08) the way
 /// `ykman piv keys import` does, then sign / agree with the imported keys.
 #[test]

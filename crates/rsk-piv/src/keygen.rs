@@ -501,8 +501,12 @@ fn import_ec<S: Storage>(
     let Some(curve) = curve_for_algo(algo) else {
         return Err(WRONG_DATA);
     };
+    // Exactly the field length, not at most: a short scalar is a different key
+    // from the one the host meant, and `06 01 01` was stored and signed with as
+    // d = 1. Left-padding is the host's job — a YubiKey refuses every other
+    // length too, including 32 bytes offered as P-384 (measured, 3 runs).
     let field = if algo == ALGO_ECCP256 { 32 } else { 48 };
-    if scalar.len() > field {
+    if scalar.len() != field {
         return Err(WRONG_DATA);
     }
     let Some(key) = PrivKey::from_scalar(curve, scalar) else {
@@ -537,7 +541,9 @@ fn import_edwards<S: Storage>(
     let Some(scalar) = find_tag(data, tag).filter(|v| !v.is_empty()) else {
         return Err(WRONG_DATA);
     };
-    if scalar.len() > 32 {
+    // Exactly 32, as in `import_ec`: the Curve25519 seed and scalar are fixed
+    // width, and a short one is a different key from the one the host meant.
+    if scalar.len() != 32 {
         return Err(WRONG_DATA);
     }
     // ykman / yubico-piv-tool import the X25519 private key little-endian

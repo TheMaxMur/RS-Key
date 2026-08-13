@@ -309,6 +309,18 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **A PIV key import takes a private scalar of exactly the field length.** The
+  length was bounded from above only, so `IMPORT` accepted a one-byte P-256
+  scalar, stored it, and then signed with it — `d = 1`, a key anyone can forge
+  against — and it accepted 32 bytes declared as P-384 as a P-384 key. A YubiKey
+  5.7.4 answers `6A80` to every length but the curve's field: measured 1, 2, 31
+  and 33 bytes on P-256 and 32 and 47 on P-384, three runs each. Left-padding a
+  short value is the host's job, because a host that got the length wrong got the
+  key wrong. Ed25519 and X25519 imports take the same rule at 32 bytes. It needs
+  the management key and the host chose the bytes, so this is conformance and
+  fail-fast rather than a hole — but a slot quietly holding a key nobody meant to
+  import is worth refusing. **bcdDevice → 0x08D6.**
+
 - **`PUT DATA 5FC109` (PRINTED INFORMATION) stored nothing and said `9000`.**
   `ykman piv objects import 5fc109 …` followed by `export` did not round-trip, and
   any host that put real printed information there lost it silently — the read
