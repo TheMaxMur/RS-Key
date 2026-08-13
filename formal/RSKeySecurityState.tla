@@ -591,7 +591,7 @@ MintPpuat ==
 \* It spends the SAME persistent retry counter the wire path spends -- a correct
 \* PIN refills it, a wrong one costs a try -- because
 \* `spend_and_verify_local_pin` is `spend_and_verify_pin_at(EF_PIN, ..)`
-\* (crates/rsk-fido/src/clientpin.rs:1019-1026). What it deliberately does NOT
+\* (crates/rsk-fido/src/clientpin.rs:1019-1025). What it deliberately does NOT
 \* touch is the CTAP session: no ECDH regeneration, no RAM 3-strikes lock, no
 \* journal (crates/rsk-fido/src/clientpin.rs:1013-1017). So this is not a
 \* PinAttempt: the pad neither consults `lock.soft` nor arms it, and the
@@ -638,7 +638,7 @@ LocalPinWrong ==
     /\ UNCHANGED << gate, store, lock, pres, sys, op, snap, upSpent, ram >>
 
 \* A correct PIN at the pad refills the persistent budget
-\* (crates/rsk-fido/src/clientpin.rs:1019-1026) and grants NOTHING host-visible:
+\* (crates/rsk-fido/src/clientpin.rs:1019-1025) and grants NOTHING host-visible:
 \* no token, no `pcmr`, no CCID security status. It also leaves the RAM soft lock
 \* armed, which fails closed -- the host stays blocked until a replug.
 LocalPinOk ==

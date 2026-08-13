@@ -138,7 +138,12 @@ rebuilds a real RS-Key defect or removes a defence the tree currently has;
 caught by a sibling cannot be mistaken for one that names its own.
 
 "Caught in" is the `Solo_*.cfg` run's distinct-state count — the run that
-checks **only** the named invariant.
+checks **only** the named invariant. **Read it as an order of magnitude, not a
+figure**: a counterexample search halts at the first violation, so the count is
+worker-scheduling dependent and moves between runs of the identical command
+(`Solo_BugPanelCancelable` measured 184 at one worker, 223 and 228 at two, 256
+at four, 153 at eight). The verdict and the invariant are the result; the count
+says how deep TLC had to go to find it, roughly.
 
 | Mutation switch | Removes | Target invariant | Caught in |
 |---|---|---|---|
@@ -161,7 +166,10 @@ checks **only** the named invariant.
 | `BugConsumeKeepsMcGa` | `state.rs:522-528` — a §6.5.5.7 triad narrowed to the config permissions | `NoAuthorizationBypass` | 3 383 states |
 | `BugNoDropStaleCancelAtEntry` | the wait-entry clear (`crates/rsk-device/src/presence.rs:192-193`) — the wait-entry cancel drop | `NoCrossTransportTouchConsumption` | 151 states |
 | `BugStateResetAfterWipe` | `reset.rs:57-60` — `ctx.state.reset()` moved back behind the flash work, which is the regression E76's own review caught | `ResetNeverWeakensSurvivingState` | 38 880 states |
-| `BugPanelCancelable` | the panel half of `request_cancel`'s scope test (`crates/rsk-device/src/presence.rs:116-120`) — E45's ruling | `NoCrossTransportTouchConsumption` | 238 states |
+| `BugPanelCancelable` | the panel half of `request_cancel`'s scope test (`crates/rsk-device/src/presence.rs:116-120`) — E45's ruling | `NoCrossTransportTouchConsumption` | 230 states |
+| `BugHostPreemptsLocalWait` | the button's owner: a host command opening a wait over a live on-panel ceremony | `NoAuthorizationBypass` | 46 states |
+| `BugLocalPinIgnoresBudget` | the pad honouring the exhausted `EF_PIN` counter (`crates/rsk-display/src/gates.rs:126-128`) | `NoAuthorizationBypass` | 10 370 states |
+| `BugPpuatIsAGate` | `eab4b5c` — `EF_PAUTHTOKEN` back in the deferred phase, where a torn wipe strands a grant with no PIN | `NoAccessibleSecretWithoutGate` | 218 421 states |
 | `BugUnscopedOtpCancel` | `cancel_otp_wait`'s own scope test (`crates/rsk-device/src/presence.rs:124-134`) — the second writer of the same cancel flag | `NoCrossTransportTouchConsumption` | 237 states |
 | `BugLocalPinKeepsToken` | `ends_host_token` (`crates/rsk-display/src/gates.rs:139-146`) — E66, the panel's PIN pad as a fourth door | `NoTokenAfterInvalidation` | 1 662 states |
 | `BugSetPinOverExisting` | `clientpin.rs:184-186` — setPIN refusing to overwrite a live PIN | `NoAuthorizationBypass` | 741 states |
@@ -186,7 +194,7 @@ under it, from a `companion_bug` table in `gen-configs.sh`. A mutant that stops
 firing because a fix subsumed it is worth knowing; a mutant that stops firing
 silently is the failure this file exists to avoid.
 
-**24 of 24 mutants are caught, each by the invariant that names it**, and 3 of 3
+**27 of 27 mutants are caught, each by the invariant that names it**, and 3 of 3
 liveness mutants by the property that names them.
 `NoAccessibleSecretWithoutGate` is the one invariant no switch names as its
 target; `BugResetGatesFirst` breaks it too, and
@@ -472,14 +480,14 @@ Round two's "no, in two independent ways" was exact.
 
 | Configuration | Verdict | States generated | Distinct | Depth | Wall |
 |---|---|---|---|---|---|
-| `Shipped.cfg` (the tree as it stands) | **GREEN, exhaustive** | 962 227 379 | 79 985 500 | 52 | **1971 s** |
-| `Historical_E76.cfg` (the seed-lead taken back out) | RED `NoUnmanageableCredential` | 665 750 | 99 770 | 13 | 2 s |
-| `Historical_E77.cfg` (`FixPpuatRequiresPin` taken back out) | RED `NoAccessibleSecretWithoutGate` | 1 001 124 | 148 629 | 14 | 2 s |
-| 23 × `Mut_*.cfg` | RED, each caught | 255 – 1 833 544 | 137 – 266 831 | 5 – 15 | ≤ 4 s |
-| 23 × `Solo_*.cfg` | RED, each on its **own** target | 272 – 1 802 948 | 150 – 264 030 | 5 – 15 | ≤ 3 s |
+| `Shipped.cfg` (the tree as it stands) | **GREEN, exhaustive** | 813 099 753 | 61 215 504 | 50 | **1199 s** |
+| `Historical_E76.cfg` (the seed-lead taken back out) | RED `NoUnmanageableCredential` | 2 285 185 | 246 289 | 13 | 4 s |
+| `Historical_E77.cfg` (the grant back in phase 2 **and** the consumer fix out) | RED `NoAccessibleSecretWithoutGate` | 2 191 706 | 232 626 | 13 | 4 s |
+| 27 × `Mut_*.cfg` | RED, each caught | 71 – 2 191 706 | 46 – 266 831 | 4 – 15 | ≤ 4 s |
+| 27 × `Solo_*.cfg` | RED, each on its **own** target | 71 – 2 019 403 | 46 – 264 030 | 4 – 15 | ≤ 4 s |
 | `Solo_NoAccessibleSecretWithoutGate.cfg` | RED, the repaired clause | 2 950 708 | 454 454 | 16 | 6 s |
-| `Seams.cfg` (the second module) | **GREEN, exhaustive** | 2 858 | 205 | 9 | < 1 s |
-| 6 × `SeamMut_*.cfg` / 6 × `SeamSolo_*.cfg` | RED, each on its own target | 77 – 483 | 27 – 83 | 4 – 5 | ≤ 1 s |
+| `Seams.cfg` (the second module) | **GREEN, exhaustive** | 9 309 | 666 | 12 | < 1 s |
+| 9 × `SeamMut_*.cfg` / 9 × `SeamSolo_*.cfg` | RED, each on its own target | 77 – 3 068 | 27 – 361 | 4 – 8 | ≤ 1 s |
 
 Only `ShippedFixed.cfg` is an exhaustive search; every RED row stops at the
 first counterexample, so its counts move a few percent between runs with the
@@ -489,14 +497,20 @@ deterministic under 2 workers (49 or 50 between runs of the same config); the
 single-worker run says **49**, and that is the figure in the table. The full
 table is regenerated by `./run-tlc.sh all` into `out/MATRIX.txt`.
 
-The green row is **12× the state space this model carried two rounds ago and
-24× the wall clock**, and the growth is all fidelity: `ram` and `ResetAborts`
-took it from 6 664 764 to 17 190 324, and the panel, the OTP owner and the
-on-panel PIN door took it from there to 79 985 500. The last of those three is
-the expensive one — `LocalPinOk` refills the persistent retry budget without
-clearing the RAM soft lock, which makes `(retries, lock)` pairs reachable that
-were not. It is a state the firmware really is in; the cost of saying so is on
-this row.
+The green row is **9× the state space this model carried two rounds ago and 15×
+the wall clock**, and both the growth and the one shrink are fidelity. `ram` and
+`ResetAborts` took it from 6 664 764 to 17 190 324; the panel, the OTP owner and
+the on-panel PIN door took it to 79 985 500 — `LocalPinOk` refilling the
+persistent retry budget without clearing the RAM soft lock is the expensive one,
+because it makes `(retries, lock)` pairs reachable that were not, and it is a
+state the device really is in.
+
+Then it went **down** to 61 215 504, by 23%, while gaining four Policies. Two
+fidelity repairs did that: `ctx.state.reset()` modelled in full rather than only
+its `keydev_dec` half, and `makeCredential` requiring the seed as `getAssertion`
+already did. Every state they removed was one the firmware cannot be in — the
+same shape as the boot-time `ensure_seed` repair two revisions ago, and the
+second time on this model that being *more* faithful has made it *smaller*.
 
 Constants: `RPs = {r1,r2}`, `Channels = {c1,c2}`, `MaxRetries = 3`,
 `MismatchLimit = 2`, `MaxClock = 1`, `ResetWindow = 0`. `MaxRetries` must
@@ -564,7 +578,7 @@ falls in 238 states.
 (`crates/rsk-display/src/gates.rs:114-200`) spends the **same** persistent
 `EF_PIN` retry counter the wire path spends, because
 `spend_and_verify_local_pin` is `spend_and_verify_pin_at(EF_PIN, ..)`
-(`crates/rsk-fido/src/clientpin.rs:1019-1026`). A clientPIN refused there is
+(`crates/rsk-fido/src/clientpin.rs:1019-1025`). A clientPIN refused there is
 changePIN's failed old-PIN check performed locally, so it must end the host's
 outstanding grant exactly as `clientpin.rs:779` does. `ends_host_token`
 (`crates/rsk-display/src/gates.rs:139-146`) is the Rust's own test and it is
@@ -656,10 +670,13 @@ nothing.
 | `BugCardResetKeepsStatus` | `crates/rsk-device/src/ccid.rs:327-342` — the ICC power transition | `NoStatusOutsideItsSelection` | 29 states |
 | `BugAdminOpensKeyOps` | `e5da38b` taken back out: PW3 standing in for PW1/PW2 | `NoKeyOpOnTheAdminStatus` | 67 states |
 | `BugFailedChangeKeepsStatus` | `aa47867` taken back out: a refused OTP-PIN change that leaves the safe open | `NoStatusAfterARefusedAuth` | 74 states |
-| `BugPinFreshNotSpent` | `crates/rsk-piv/src/auth.rs:114-118` — one VERIFY, one key operation | `NoKeyOpOnTheAdminStatus` | 83 states |
+| `BugPinFreshNotSpent` | `crates/rsk-piv/src/auth.rs:114-118` — one VERIFY, one key operation | `NoKeyOpOnTheAdminStatus` | 79 states |
+| `BugSigPinNotSpent` | `crates/rsk-openpgp/src/keys.rs:977-981` — the same shape one applet over, PW1 valid for one PSO:CDS | `NoKeyOpOnTheAdminStatus` | 361 states |
+| `BugUserStatusOpensAdmin` | a *user* status opening the admin surface — the converse `BugAdminOpensKeyOps` cannot express | `NoKeyOpOnTheAdminStatus` | 48 states |
+| `BugRefusedValidateGrants` | a refused OATH access-code `VALIDATE` that grants the unlock | `NoStatusAfterARefusedAuth` | 73 states |
 
-`Seams.cfg` is **GREEN, exhaustive, 2 858 states generated / 205 distinct at
-depth 9**, and 6 of 6 mutants are caught by the invariant that names them.
+`Seams.cfg` is **GREEN, exhaustive, 9 309 states generated / 666 distinct at
+depth 12**, and 9 of 9 mutants are caught by the invariant that names them.
 
 **One of those six needed the property repaired first, and it is the useful
 result.** `BugPinFreshNotSpent` ran **green** as written: stopping `pin_fresh`
@@ -670,6 +687,37 @@ leaves behind, always spent — beside the `fresh` the Rust holds. The two are
 equal in every state of the shipped tree (`Seams.cfg`'s 205 distinct states are
 bit-identical before and after), and they diverge only under the mutant, which
 now falls in 83.
+
+### The four gaps a second review found, and the two it could not close
+
+An adversarial reviewer took both modules apart. Its two most valuable results
+are **bit-identical GREENs**, which is the strongest form of "nothing could see
+this": deleting the pad's retry-budget gate, and letting a host command open a
+wait over a live on-panel ceremony, each left the reachable space at exactly
+79 985 500 states. The mechanism for the second is that `OpenWaitFor` overwrites
+`scope`, `cancelReq`, `cancelBy` and `granted`, so nothing was left to record
+who owned the button first — E45's ruling with nothing to be true of, one layer
+up from the cancel it had been modelled at. `ButtonFreeGuard`/`Policy` and
+`LocalPinGuard`/`Policy` close both.
+
+In the seam module it found that **`NoKeyOpOnTheAdminStatus` had no admin
+surface to be about**: `pivMgm` was written by one action and read by no guard,
+so the invariant's converse — a *user* status opening the *admin* surface — was
+unfalsifiable. `AdminOp` costs a handful of states and `BugUserStatusOpensAdmin`
+falls in 48. It also found the second `pin_fresh`-shaped hole, one applet over:
+OpenPGP's `inc_sig_count` clears `has_pw1` under the one-shot PW status
+(`crates/rsk-openpgp/src/keys.rs:977-981`), which `PgpKeyOp` had no term for —
+`BugSigPinNotSpent`, RED in 361 once `oneShotSig`/`psig` exist. And a **refused
+OATH `VALIDATE` that GRANTS the unlock was invisible**, because the `refused`
+ghost provably never names that reference: exempting the action from the refusal
+rule had exempted it from everything.
+
+Two things it measured that are corrections to this page rather than defects:
+`Reselect` contributes **zero** distinct states on the shipped tree, so
+`ReselectPreservesAccessStatus` distinguishes exactly the two branches written
+to make it distinguishable — a self-check, and it cannot see `pin_fresh` at all.
+And `FactoryWipe` separated from the reboot its callers queue is **GREEN with 93
+new states**: the fused step is load-bearing and had not said so.
 
 ### And a `GREEN` verdict that meant nothing
 
@@ -837,9 +885,12 @@ than a settled abstraction.
   not check — the most obvious place to extend it.
 - **Two transports** (CTAPHID, CCID). `SCOPE_OTP` and the on-panel
   `SCOPE_NONE` ceremonies are not modelled.
-- **Three of `is_fido_gate_fid`'s six records are modelled** — `EF_PIN`,
-  `EF_ALWAYS_UV`, `EF_PAUTHTOKEN`, plus `EF_BACKUP_SEALED` since the review.
-  `EF_DEVICE_PIN` and `EF_MINPINLEN` are still absent.
+- **Three of `is_fido_gate_fid`'s FIVE records are modelled** — `EF_PIN`,
+  `EF_ALWAYS_UV` and `EF_BACKUP_SEALED`. `EF_DEVICE_PIN` and `EF_MINPINLEN` are
+  absent. It was six until `eab4b5c` moved `EF_PAUTHTOKEN` out: the predicate's
+  own rule is "records whose *absence* is permissive", a grant is a permission,
+  so its absence is restrictive, and it was the one member that never met the
+  rule. It is a secret here now, swept in phase 1.
 
 ### Liveness — three properties, and what is deliberately NOT asserted
 
