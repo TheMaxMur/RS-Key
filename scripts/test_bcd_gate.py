@@ -234,6 +234,28 @@ def test_an_inner_attribute_does_not_gate_the_module_below_it(tree):
     assert only(tree.problems(), "crates/rsk-a/src/helper.rs")
 
 
+def test_making_a_crate_host_testable_is_not_an_image_change(tree):
+    """The `#![no_std]` half of the rewrite emits no more than the half replacing it.
+
+    `51fe715f`, `20dcf94e` and `8b254493` are all this shape and all correctly
+    unbumped; the row fired on the removed line because it carries no `test`.
+    """
+    tree.edit(
+        "crates/rsk-a/src/lib.rs", "#![cfg_attr(not(test), no_std)]", "#![no_std]"
+    )
+    assert tree.problems() == []
+
+
+def test_dropping_no_std_altogether_still_counts(tree):
+    """The excuse is for the attribute, not for whatever replaces it."""
+    tree.edit(
+        "crates/rsk-a/src/lib.rs",
+        "#![cfg_attr(not(test), no_std)]",
+        "pub const LINKED_STD: u8 = 1;",
+    )
+    assert only(tree.problems(), "LINKED_STD")
+
+
 def test_a_cfg_attribute_sharing_a_line_with_code(tree):
     """`#[cfg(not(test))] pub const X` ships every byte of the const."""
     tree.append(

@@ -178,6 +178,11 @@ ATTRIBUTE = re.compile(r"^\s*#\[")
 #: A line that is nothing but attributes. The exemptions below are about lines
 #: that emit no code, and `#[cfg(not(test))] pub const X: u32 = 1;` emits plenty.
 ONLY_ATTRIBUTES = re.compile(r"^(?:#!?\[[^\]]*\]\s*)+$")
+#: The bare crate attribute alone, so the `#![no_std]` half of a
+#: `#![cfg_attr(not(test), no_std)]` rewrite is excused with its twin. Only this
+#: one: `#![no_main]` is the same shape but pairs with nothing, and a
+#: layout attribute like `#[repr(C)]` moves bytes.
+NO_STD = re.compile(r"^#!\[\s*no_std\s*\]$")
 #: A cfg predicate mentioning `test` or `kani`, in any nesting (`any`, `all`,
 #: `not`) and as `cfg_attr` too. `not(test)` is here on purpose: the attribute
 #: line itself emits nothing either way, and the code it gates is judged on its
@@ -431,6 +436,14 @@ def reaches_image(line, rel, excused, decls):
         return False
     if ONLY_ATTRIBUTES.match(body):
         if CFG_TEST.search(body):
+            return False
+        # Making a crate host-testable rewrites `#![no_std]` into
+        # `#![cfg_attr(not(test), no_std)]`. The added line is excused above; the
+        # removed one carries no `test`, so the row fired on three such commits
+        # (`51fe715f`, `20dcf94e`, `8b254493`) for a pair that emits identical
+        # code. The attribute itself emits none either way, which is the same
+        # argument the cfg excuse rests on.
+        if NO_STD.match(body):
             return False
         operand = PATH_ATTR.search(body)
         if operand and f"{rel.rsplit('/', 1)[0]}/{operand.group(1)}" in excused:
