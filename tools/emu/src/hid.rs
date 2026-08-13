@@ -26,7 +26,7 @@ use rsk_usb::ctaphid::{
     init_capabilities, is_cancel_frame, keepalive_status,
 };
 
-use crate::device::{Job, Req};
+use crate::device::{Job, Jobs};
 use crate::signals::Signals;
 
 /// The emulator prints its wink to the terminal, so it really does have an
@@ -34,7 +34,7 @@ use crate::signals::Signals;
 const CAN_WINK: bool = true;
 
 pub struct Shared {
-    pub jobs: mpsc::Sender<Req>,
+    pub jobs: Jobs,
     pub signals: Arc<Signals>,
     /// Channel ids are device-wide, not per-connection: two client processes
     /// sharing one key must not be handed the same channel (§11.2.9.1.3).
@@ -257,7 +257,7 @@ fn run_job(
     channel: Option<(&mut TcpStream, u32)>,
 ) -> io::Result<Option<Vec<u8>>> {
     let (tx, rx) = mpsc::channel();
-    if shared.jobs.send(Req { job, reply: tx }).is_err() {
+    if shared.jobs.send(job, tx).is_err() {
         return Err(io::Error::other("the device thread is gone"));
     }
     let Some((stream, cid)) = channel else {

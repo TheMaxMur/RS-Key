@@ -18,6 +18,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
+use crate::device::Queued;
 use crate::taps::TapPad;
 
 use embedded_graphics::geometry::{Dimensions, Point as EgPoint, Size};
@@ -221,14 +222,18 @@ pub struct EmuDisplayHooks {
     ///
     /// [`EmuHooks`]: crate::device::EmuHooks
     pin_changed: Rc<Cell<bool>>,
+    /// Host requests the device thread has not picked up. A modal holds the single
+    /// executor, so this is the only way the flow can learn one is waiting.
+    queued: Queued,
     started: Option<std::time::Instant>,
 }
 
 impl EmuDisplayHooks {
-    pub fn new(duty: Rc<Cell<u16>>, wake: Rc<Cell<bool>>) -> Self {
+    pub fn new(duty: Rc<Cell<u16>>, wake: Rc<Cell<bool>>, queued: Queued) -> Self {
         Self {
             duty,
             wake,
+            queued,
             timeout_ms: Cell::new(30_000),
             started: Some(std::time::Instant::now()),
             ..Default::default()
@@ -258,6 +263,18 @@ impl rsk_display::Hooks for EmuDisplayHooks {
         self.started
             .map(|s| s.elapsed().as_millis() as u64)
             .unwrap_or(0)
+    }
+    fn host_request_pending(&self) -> bool {
+        self.queued.any()
+    }
+    /// The floor is the whole point and every modal exit poll uses this form: a
+    /// bare [`Self::host_request_pending`] lets a host close the owner's screen on
+    /// its first poll, so a loop of any ungated command denies the on-device
+    /// browse layer entirely (audit run-35).
+    fn host_request_pending_after(&self, since: embassy_time::Instant) -> bool {
+        self.queued.any()
+            && since.elapsed()
+                >= embassy_time::Duration::from_millis(rsk_display::UI_YIELD_FLOOR_MS)
     }
     fn request_reboot(&mut self, _bootsel: bool) {
         self.reboot.set(true);
@@ -303,7 +320,7 @@ pub struct PanelParts<P, T> {
 
 /// Open the window and hand back those pieces, plus the quit flag the caller
 /// polls. `taps` replaces the mouse when a script was given.
-pub fn open(taps: Option<TapPad>) -> (PanelParts<Panel, Touch>, Rc<Cell<bool>>) {
+pub fn open(taps: Option<TapPad>, queued: Queued) -> (PanelParts<Panel, Touch>, Rc<Cell<bool>>) {
     let panel = Panel::new();
     let quit = Rc::new(Cell::new(false));
     let duty = Rc::new(Cell::new(rsk_display::BL_TOP));
@@ -319,7 +336,7 @@ pub fn open(taps: Option<TapPad>) -> (PanelParts<Panel, Touch>, Rc<Cell<bool>>) 
         PanelParts {
             panel,
             touch,
-            hooks: EmuDisplayHooks::new(duty, wake),
+            hooks: EmuDisplayHooks::new(duty, wake, queued),
         },
         quit,
     )

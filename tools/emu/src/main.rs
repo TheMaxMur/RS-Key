@@ -163,7 +163,7 @@ fn main() {
         eprintln!("emu: DETERMINISTIC SEED — every key this run mints is predictable");
     }
 
-    let (jobs_tx, jobs_rx) = mpsc::channel();
+    let (jobs_tx, jobs_rx) = device::job_queue();
     let signals = Arc::new(Signals::default());
 
     // The terminal is the only input the prompt has, so it is read once, here,

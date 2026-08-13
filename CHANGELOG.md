@@ -149,6 +149,17 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   while the key is idle still counts. The logic moved to `rsk_device::click`,
   where it is host-tested. **bcdDevice → 0x0902.**
 
+- **An on-screen menu no longer starves the host under `rsk-emu --display`.** A
+  board hands the parked worker its executor back on the first 16 ms poll once a
+  host command has landed and the screen has been idle for `UI_YIELD_FLOOR_MS`,
+  so an open Settings or Passkeys screen costs a queued command a couple of
+  seconds. The emulator answered `Hooks::host_request_pending` with the trait's
+  `false` and yielded only when the 60 s inactivity backstop closed the screen —
+  **3750×** longer, in the direction that hides the problem, so any latency
+  measured through `--display` was the emulator's and not the firmware's. Both
+  that hook and its floor-gated sibling are now answered off the job queue's own
+  count of requests the device thread has not yet picked up.
+
 - **The emulator's trusted display no longer drops the host's session token on
   the floor.** On a board, a clientPIN re-keyed *or refused* at the on-panel
   keypad ends the platform's outstanding `pinUvAuthToken` before the next CBOR

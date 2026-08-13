@@ -17,7 +17,7 @@ fn config_descriptor() -> Vec<u8> {
     let mut control = [0u8; CONTROL_BUF_LEN];
     let mut kbd_state = HidState::new();
     let mut fido_state = HidState::new();
-    let (jobs, _rx) = mpsc::channel();
+    let (jobs, _rx) = crate::device::job_queue();
     let used = {
         let (driver, _port) = crate::usbip_driver::new();
         let mut builder = Builder::new(

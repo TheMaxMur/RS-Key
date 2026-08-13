@@ -56,7 +56,7 @@ fn use_counter(path: &Path) -> Option<u16> {
 /// A blank flash image holding one plain Yubico-OTP slot — every flag byte zero,
 /// which is the kind `power_up_bump` advances (HOTP / short / static it skips) —
 /// with the device thread running against it.
-fn bench(name: &str) -> (PathBuf, mpsc::Sender<Req>, JoinHandle<()>) {
+fn bench(name: &str) -> (PathBuf, Jobs, JoinHandle<()>) {
     let path = std::env::temp_dir().join(format!("rsk-emu-{name}-{}.img", std::process::id()));
     let _ = std::fs::remove_file(&path);
 
@@ -79,7 +79,7 @@ fn bench(name: &str) -> (PathBuf, mpsc::Sender<Req>, JoinHandle<()>) {
     );
     assert_eq!(use_counter(&path), Some(0), "a freshly programmed slot");
 
-    let (jobs, requests) = mpsc::channel();
+    let (jobs, requests) = job_queue();
     let cfg = Config {
         store: Some(path.clone()),
         presence: PresenceMode::Instant,
@@ -99,16 +99,16 @@ fn bench(name: &str) -> (PathBuf, mpsc::Sender<Req>, JoinHandle<()>) {
 }
 
 /// Send one job and wait for its answer.
-fn ask(jobs: &mpsc::Sender<Req>, job: Job) -> Vec<u8> {
+fn ask(jobs: &Jobs, job: Job) -> Vec<u8> {
     let (reply, answer) = mpsc::channel();
-    jobs.send(Req { job, reply }).expect("the device thread");
+    jobs.send(job, reply).expect("the device thread");
     answer
         .recv_timeout(std::time::Duration::from_secs(30))
         .expect("the device answered")
         .expect("a body")
 }
 
-fn shut_down(path: PathBuf, jobs: mpsc::Sender<Req>, device: JoinHandle<()>) {
+fn shut_down(path: PathBuf, jobs: Jobs, device: JoinHandle<()>) {
     drop(jobs);
     device.join().unwrap();
     let _ = std::fs::remove_file(path);
@@ -178,4 +178,44 @@ fn a_warm_reboot_is_not_a_power_cycle() {
     );
 
     shut_down(path, jobs, device);
+}
+
+/// The queue's own accounting, which is what an on-panel modal reads to decide
+/// whether the parked worker is owed the executor
+/// (`rsk_display::Hooks::host_request_pending`). A count that never came back down
+/// would close every modal 2.5 s after the last touch; one that never went up
+/// makes a modal starve the host for the full `MENU_INACTIVITY_MS`.
+///
+/// The OTP frame is deliberately not counted: it is `firmware/src/worker.rs`'s
+/// separate `OTP_REQ`, which a board's modal does not yield to either.
+#[test]
+fn a_queued_host_request_is_pending_only_until_the_device_takes_it() {
+    let (jobs, source) = job_queue();
+    let queued = source.queued();
+    let (reply, _answers) = mpsc::channel();
+
+    assert!(!queued.any(), "an empty queue owes the worker nothing");
+    jobs.send(
+        Job::Cbor {
+            cid: 1,
+            data: vec![0x04],
+        },
+        reply.clone(),
+    )
+    .unwrap();
+    assert!(queued.any(), "a queued CBOR command is a pending request");
+    source.try_next().expect("the job is there");
+    assert!(!queued.any(), "taking it is the pickup that clears REQ");
+
+    jobs.send(
+        Job::OtpHid {
+            slot: 0x30,
+            payload: vec![0; 64],
+        },
+        reply,
+    )
+    .unwrap();
+    assert!(!queued.any(), "an OTP frame is the board's own OTP_REQ");
+    source.try_next().expect("the frame is there");
+    assert!(!queued.any());
 }

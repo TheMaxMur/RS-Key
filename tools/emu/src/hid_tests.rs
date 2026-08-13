@@ -33,9 +33,9 @@ fn serve_on_a_socket() -> TcpStream {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
 
-    let (jobs, requests) = mpsc::channel::<Req>();
+    let (jobs, requests) = crate::device::job_queue();
     std::thread::spawn(move || {
-        while let Ok(req) = requests.recv() {
+        while let Ok(req) = requests.next() {
             let _ = req.reply.send(Some(Vec::new()));
         }
     });
@@ -159,7 +159,7 @@ fn a_cancel_reaches_a_job_waiting_for_a_touch() {
     signals.begin(CID);
     signals.set_up_pending(true);
 
-    let (jobs, requests) = mpsc::channel();
+    let (jobs, requests) = crate::device::job_queue();
     let shared = Arc::new(Shared {
         jobs,
         signals: signals.clone(),
@@ -172,7 +172,7 @@ fn a_cancel_reaches_a_job_waiting_for_a_touch() {
     // as `EmuPresence` does, then answers KEEPALIVE_CANCEL.
     let device = signals.clone();
     std::thread::spawn(move || {
-        let req = requests.recv().unwrap();
+        let req = requests.next().unwrap();
         let deadline = Instant::now() + Duration::from_secs(5);
         while !device.cancelled() && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(5));

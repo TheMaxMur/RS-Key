@@ -33,7 +33,7 @@ use embassy_usb::{Builder, Config as UsbConfig};
 use rsk_usb::ccid::{ApduHandler, Ccid};
 use rsk_usb::ctaphid::{CtapHid, FIDO_REPORT_DESCRIPTOR, HID_RPT_SIZE, MsgHandler};
 
-use crate::device::{Job, Req};
+use crate::device::{Job, Jobs};
 use crate::signals::Signals;
 use crate::usbip::{Ret, Urb, UrbSink, UsbDeviceInfo};
 use crate::usbip_driver::UsbIpDriver;
@@ -125,9 +125,9 @@ fn request_cancel() {
 /// The polling is the point: this future is what `CtapHid` races its keepalive
 /// against, so a blocking `recv` would stop the keepalives for the whole length
 /// of a makeCredential and the host would give up mid-ceremony.
-pub async fn run_job(jobs: &Sender<Req>, job: Job) -> Option<Vec<u8>> {
+pub async fn run_job(jobs: &Jobs, job: Job) -> Option<Vec<u8>> {
     let (tx, rx) = mpsc::channel();
-    jobs.send(Req { job, reply: tx }).ok()?;
+    jobs.send(job, tx).ok()?;
     loop {
         match rx.try_recv() {
             Ok(out) => return out,
@@ -145,7 +145,7 @@ fn copy_out(body: &[u8], out: &mut [u8]) -> usize {
 
 /// The FIDO interface's half: it runs no applet, it queues one — the same split
 /// the firmware has between its transport executor and its worker.
-struct HidJobs(Sender<Req>);
+struct HidJobs(Jobs);
 
 impl MsgHandler for HidJobs {
     async fn handle_msg(&mut self, _cid: u32, apdu: &[u8], out: &mut [u8]) -> usize {
@@ -190,16 +190,13 @@ impl MsgHandler for HidJobs {
         // Synchronous, so there is nothing to await the answer with; the queue is
         // one queue, so the device thread still runs it before the next command.
         let (tx, _rx) = mpsc::channel();
-        let _ = self.0.send(Req {
-            job: Job::DeselectMsg,
-            reply: tx,
-        });
+        let _ = self.0.send(Job::DeselectMsg, tx);
     }
 }
 
 /// The card interface's half. `handle_secure` keeps the trait's default: there is
 /// no on-device pad on this path, and `bPINSupport` below says so.
-struct CardJobs(Sender<Req>);
+struct CardJobs(Jobs);
 
 impl ApduHandler for CardJobs {
     async fn handle_apdu(&mut self, apdu: &[u8], out: &mut [u8]) -> usize {
@@ -264,7 +261,7 @@ fn declare<'d>(
     kbd_state: &'d mut HidState<'d>,
     fido_state: &'d mut HidState<'d>,
     otp: Option<&'d mut crate::otp_kbd::OtpHandler>,
-    jobs: &Sender<Req>,
+    jobs: &Jobs,
     atr: &'static [u8],
 ) -> (
     HidWriter<'d, UsbIpDriver, KBD_RPT_SIZE>,
@@ -329,16 +326,13 @@ fn usb_config(yubico: bool) -> UsbConfig<'static> {
 /// restarts.
 struct PoweredPort {
     inner: crate::usbip_driver::Port,
-    jobs: Sender<Req>,
+    jobs: Jobs,
 }
 
 impl UrbSink for PoweredPort {
     fn attach(&mut self, rets: Sender<Ret>) {
         let (tx, _rx) = mpsc::channel();
-        let _ = self.jobs.send(Req {
-            job: Job::Replug,
-            reply: tx,
-        });
+        let _ = self.jobs.send(Job::Replug, tx);
         self.inner.attach(rets);
     }
     fn submit(&mut self, urb: Urb) {
@@ -360,7 +354,7 @@ impl UrbSink for PoweredPort {
 // does this function; `!` is not writable as a return type on stable, so the
 // unreachable end has to be allowed rather than declared away.
 #[allow(unreachable_code)]
-pub fn serve(addr: String, jobs: Sender<Req>, signals: Arc<Signals>, yubico: bool) {
+pub fn serve(addr: String, jobs: Jobs, signals: Arc<Signals>, yubico: bool) {
     let _ = SIGNALS.set(signals.clone());
     let atr: &'static [u8] = if yubico {
         rsk_usb::ccid::ATR_YUBIKEY

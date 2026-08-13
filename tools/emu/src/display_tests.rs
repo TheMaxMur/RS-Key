@@ -15,17 +15,18 @@
 
 use std::convert::Infallible;
 use std::sync::Arc;
-use std::sync::mpsc::{self, Sender, SyncSender, TrySendError};
+use std::sync::mpsc::{self, SyncSender, TrySendError};
 use std::time::{Duration, Instant};
 
 use rsk_crypto::pinproto::{self, PinProto};
 use rsk_fido::CtapError;
 use rsk_fido::consts::{
-    CTAP_CLIENT_PIN, CTAP_CREDENTIAL_MGMT, MAX_PIN_RETRIES, PUAT_INITIAL_USAGE_LIMIT_MS,
+    CTAP_CLIENT_PIN, CTAP_CREDENTIAL_MGMT, CTAP_GET_INFO, MAX_PIN_RETRIES,
+    PUAT_INITIAL_USAGE_LIMIT_MS,
 };
 
 use super::*;
-use crate::device::{Config, Job, Req, serve_display};
+use crate::device::{Config, Job, Jobs, job_queue, serve_display};
 use crate::presence::PresenceMode;
 use crate::signals::Signals;
 use crate::taps::{Tap, TapPad};
@@ -50,9 +51,20 @@ const CTAP2_OK: u8 = 0x00;
 const CID: u32 = 0x0102_0304;
 
 /// How long the panel may take to answer a job. The display flow holds the single
-/// executor while a modal is open, so a queued command waits for it — generously
-/// bounded here so a wedged flow fails the test instead of hanging it.
-const REPLY_TIMEOUT: Duration = Duration::from_secs(60);
+/// executor while a modal is open, so a queued command waits for it — bounded
+/// past `MENU_INACTIVITY_MS` (60 s) so a screen that never yields fails on the
+/// bound below with its real figure rather than on a receive timeout.
+const REPLY_TIMEOUT: Duration = Duration::from_secs(90);
+
+/// What a queued command may wait for an open menu. A board hands the executor
+/// over on the first `TOUCH_POLL_MS` (16 ms) poll past `UI_YIELD_FLOOR_MS`; a
+/// screen that does not yield at all makes it wait out `MENU_INACTIVITY_MS`
+/// (60 s), so anything between the two separates them.
+const MENU_YIELD_BOUND: Duration = Duration::from_secs(20);
+
+/// What the same command takes with the panel idle — the control that says the
+/// figure above is a modal holding the executor and not the emulator being slow.
+const IDLE_REPLY_BOUND: Duration = Duration::from_secs(1);
 
 /// Lifted samples before the consent hold, so the ambient status loop — which
 /// polls the pad every 100 ms while idle — cannot swallow the contact before the
@@ -271,6 +283,15 @@ fn get_key_agreement_req() -> Vec<u8> {
     v
 }
 
+/// The cheapest ungated command there is — no PIN, no touch, no state. It is also
+/// the one audit run-35 named: a host looping it is what [`UI_YIELD_FLOOR_MS`]
+/// stops from holding the owner's screen shut.
+///
+/// [`UI_YIELD_FLOOR_MS`]: rsk_display::UI_YIELD_FLOOR_MS
+fn get_info_req() -> Vec<u8> {
+    vec![CTAP_GET_INFO]
+}
+
 fn get_pin_retries_req() -> Vec<u8> {
     let mut v = vec![CTAP_CLIENT_PIN];
     v.extend(map(&[(1, u(PROTO_WIRE)), (2, u(1))]));
@@ -363,13 +384,10 @@ fn parse_pin_retries(body: &[u8]) -> u8 {
 
 // --- the run ---------------------------------------------------------------
 
-fn ask(jobs: &Sender<Req>, data: Vec<u8>) -> Vec<u8> {
+fn ask(jobs: &Jobs, data: Vec<u8>) -> Vec<u8> {
     let (reply, answer) = mpsc::channel();
-    jobs.send(Req {
-        job: Job::Cbor { cid: CID, data },
-        reply,
-    })
-    .expect("the device thread is alive");
+    jobs.send(Job::Cbor { cid: CID, data }, reply)
+        .expect("the device thread is alive");
     answer
         .recv_timeout(REPLY_TIMEOUT)
         .expect("the device answered within the bound")
@@ -378,7 +396,7 @@ fn ask(jobs: &Sender<Req>, data: Vec<u8>) -> Vec<u8> {
 
 /// The host and the finger, from a thread of their own: `serve_display` owns the
 /// caller's thread the way `device::run` owns the process's.
-fn drive(jobs: Sender<Req>, taps: SyncSender<Tap>) {
+fn drive(jobs: Jobs, taps: SyncSender<Tap>) {
     assert_eq!(
         PinProto::from_u64(PROTO_WIRE as u64),
         Some(PROTO),
@@ -469,8 +487,12 @@ fn drive(jobs: Sender<Req>, taps: SyncSender<Tap>) {
     );
 }
 
-#[test]
-fn a_wrong_clientpin_at_the_panel_ends_the_hosts_pin_token() {
+/// `serve_display`'s own wiring, headless: the panel is a sink and the pad a
+/// script, which is what it is generic over. `host` is the platform, on a thread
+/// of its own — `serve_display` owns the caller's thread the way `device::run`
+/// owns the process's, and returns when the driver drops its sender, so a driver
+/// panic ends the run and `join` re-raises it.
+fn panel_bench(host: impl FnOnce(Jobs, SyncSender<Tap>) + Send + 'static) {
     let store = crate::store::open(None, None).expect("a memory-backed store");
     let fs: &'static RefCell<rsk_fs::Fs<crate::store::EmuStore>> =
         Box::leak(Box::new(RefCell::new(rsk_fs::Fs::new(store))));
@@ -492,13 +514,12 @@ fn a_wrong_clientpin_at_the_panel_ends_the_hosts_pin_token() {
         power_cut: None,
     };
 
-    let (jobs_tx, jobs_rx) = mpsc::channel();
+    let (jobs_tx, jobs_rx) = job_queue();
+    let queued = jobs_rx.queued();
     // One slot, which is what makes the script self-pacing — see `push`.
     let (taps_tx, taps_rx) = mpsc::sync_channel(1);
-    let host = std::thread::spawn(move || drive(jobs_tx, taps_tx));
+    let driver = std::thread::spawn(move || host(jobs_tx, taps_tx));
 
-    // Returns when the driver drops its sender — so a driver panic ends this too,
-    // and `join` re-raises it.
     serve_display(
         cfg,
         jobs_rx,
@@ -513,8 +534,58 @@ fn a_wrong_clientpin_at_the_panel_ends_the_hosts_pin_token() {
             hooks: EmuDisplayHooks::new(
                 Rc::new(Cell::new(rsk_display::BL_TOP)),
                 Rc::new(Cell::new(false)),
+                queued,
             ),
         },
     );
-    host.join().expect("the host thread");
+    driver.join().expect("the host thread");
+}
+
+/// The other half of the same executor: an open menu must hand it back when a
+/// host command lands, and not before [`UI_YIELD_FLOOR_MS`] has passed.
+///
+/// [`UI_YIELD_FLOOR_MS`]: rsk_display::UI_YIELD_FLOOR_MS
+fn drive_menu_yield(jobs: Jobs, taps: SyncSender<Tap>) {
+    let skip = target(|p| rsk_ui::hit_onboard(p) == Some(rsk_ui::OnboardChoice::Skip));
+    push(&taps, Tap::at(skip.x, skip.y));
+    settle(&taps);
+
+    let idle = Instant::now();
+    assert_eq!(ask(&jobs, get_info_req())[0], CTAP2_OK, "getInfo");
+    let idle = idle.elapsed();
+    assert!(
+        idle < IDLE_REPLY_BOUND,
+        "an idle panel answered in {idle:?} — the figure below would mean nothing"
+    );
+
+    // Open Settings, then queue the same command behind it. `settle` returns only
+    // once the panel has read the contact and taken another behind it — which the
+    // menu's own release wait is what took — so the modal is open and holding the
+    // executor before the clock below starts.
+    let settings = nav_tab(rsk_ui::NavTab::Settings);
+    push(&taps, Tap::at(settings.x, settings.y));
+    settle(&taps);
+    let opened = Instant::now();
+    assert_eq!(ask(&jobs, get_info_req())[0], CTAP2_OK, "getInfo");
+    let waited = opened.elapsed();
+    assert!(
+        waited >= Duration::from_millis(rsk_display::UI_YIELD_FLOOR_MS),
+        "the menu yielded after {waited:?}, inside the floor — a host repeating an \
+         ungated command can hold the owner's screen shut (audit run-35)"
+    );
+    assert!(
+        waited < MENU_YIELD_BOUND,
+        "the menu made a queued host command wait {waited:?}; a board yields on the \
+         first 16 ms poll past the floor"
+    );
+}
+
+#[test]
+fn a_wrong_clientpin_at_the_panel_ends_the_hosts_pin_token() {
+    panel_bench(drive);
+}
+
+#[test]
+fn an_open_menu_hands_the_executor_back_when_a_host_command_lands() {
+    panel_bench(drive_menu_yield);
 }

@@ -21,7 +21,10 @@ use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
-use std::sync::mpsc::{Receiver, Sender};
+use std::sync::atomic::{AtomicU32, Ordering};
+#[cfg(test)]
+use std::sync::mpsc::RecvError;
+use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 use std::time::Instant;
 
 use rsk_crypto::Device;
@@ -147,10 +150,116 @@ pub enum Job {
     Replug,
 }
 
+impl Job {
+    /// Whether this is one of the transport requests `firmware/src/worker.rs`
+    /// signals `REQ` for — the set an on-panel modal yields to. The keyboard
+    /// interface's OTP frames are that worker's separate `OTP_REQ` and the
+    /// `CTAPHID_INIT` deselect is an atomic there, so neither closes a modal on a
+    /// board; the status read and the replug have no host request behind them.
+    fn is_host_request(&self) -> bool {
+        matches!(
+            self,
+            Job::Cbor { .. } | Job::Msg(_) | Job::Vendor { .. } | Job::Apdu(_) | Job::ResetCard
+        )
+    }
+}
+
 pub struct Req {
     pub job: Job,
     /// `None` means "no response" (an unsupported vendor command).
     pub reply: Sender<Option<Vec<u8>>>,
+}
+
+/// How many host requests are queued for the device thread but not picked up yet.
+///
+/// The board reads the same fact off `firmware/src/worker.rs`'s `REQ.signaled()`,
+/// and an on-panel modal polls it to hand the parked worker its executor back
+/// (`rsk_display::Hooks::host_request_pending`). An `mpsc::Receiver` cannot be
+/// peeked, so the count is kept by the queue itself rather than by each of the
+/// four transports — a fifth one cannot forget what it never had to remember.
+#[derive(Clone, Default)]
+pub struct Queued(Arc<AtomicU32>);
+
+impl Queued {
+    pub fn any(&self) -> bool {
+        self.0.load(Ordering::Acquire) > 0
+    }
+}
+
+/// The transports' end of the device thread's queue.
+#[derive(Clone)]
+pub struct Jobs {
+    tx: Sender<Req>,
+    queued: Queued,
+}
+
+impl Jobs {
+    /// Queue `job`, to be answered on `reply`. `Err` once the device thread is
+    /// gone, which is the only way a send fails.
+    pub fn send(&self, job: Job, reply: Sender<Option<Vec<u8>>>) -> Result<(), ()> {
+        let counted = job.is_host_request();
+        if counted {
+            self.queued.0.fetch_add(1, Ordering::Release);
+        }
+        self.tx.send(Req { job, reply }).map_err(|_| {
+            if counted {
+                self.queued.0.fetch_sub(1, Ordering::Release);
+            }
+        })
+    }
+}
+
+/// The device thread's end.
+pub struct JobSource {
+    rx: Receiver<Req>,
+    queued: Queued,
+}
+
+impl JobSource {
+    /// The next queued job, if one is waiting.
+    pub fn try_next(&self) -> Result<Req, TryRecvError> {
+        self.rx.try_recv().map(|req| self.took(req))
+    }
+
+    /// The next queued job, waiting for one. The device loop uses
+    /// [`Self::try_next`] because it has a panel loop to interleave with; a
+    /// transport's own test has nothing to do between jobs and blocks instead.
+    #[cfg(test)]
+    pub fn next(&self) -> Result<Req, RecvError> {
+        self.rx.recv().map(|req| self.took(req))
+    }
+
+    /// Taking a job drops its claim on [`Queued`] — the pickup that clears `REQ`
+    /// on the board.
+    fn took(&self, req: Req) -> Req {
+        if req.job.is_host_request() {
+            // Saturating: a decrement with nothing outstanding would wrap the
+            // count and leave every modal closing the moment it opened.
+            let _ = self
+                .queued
+                .0
+                .fetch_update(Ordering::Release, Ordering::Acquire, |n| {
+                    Some(n.saturating_sub(1))
+                });
+        }
+        req
+    }
+
+    pub fn queued(&self) -> Queued {
+        self.queued.clone()
+    }
+}
+
+pub fn job_queue() -> (Jobs, JobSource) {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let queued = Queued::default();
+    (
+        Jobs {
+            tx,
+            queued: queued.clone(),
+        },
+        JobSource { rx, queued },
+    )
 }
 
 /// Build the device and answer jobs until every sender is gone.
@@ -160,7 +269,7 @@ pub struct Req {
 /// reason.
 pub fn run(
     cfg: Config,
-    jobs: Receiver<Req>,
+    jobs: JobSource,
     signals: Arc<Signals>,
     lines: Option<Receiver<String>>,
     taps: Option<crate::taps::TapPad>,
@@ -194,7 +303,7 @@ pub fn run(
     // generic over it. With `--display` it is the trusted screen in a window,
     // driven by the same `rsk_display` flow the board runs.
     if cfg.display {
-        let (parts, quit) = crate::display::open(taps);
+        let (parts, quit) = crate::display::open(taps, jobs.queued());
         let _ = quit;
         serve_display(cfg, jobs, signals, fs, rng, parts);
     } else {
@@ -214,7 +323,7 @@ pub fn run(
 /// `--display` run uses.
 pub fn serve_display<P, T>(
     cfg: Config,
-    jobs: Receiver<Req>,
+    jobs: JobSource,
     signals: Arc<Signals>,
     fs: &'static RefCell<Fs<crate::store::EmuStore>>,
     rng: &'static RefCell<EmuRng>,
@@ -256,7 +365,7 @@ pub fn serve_display<P, T>(
 /// other's await points.
 async fn serve<PR: rsk_device::UserPresence + 'static>(
     cfg: Config,
-    jobs: Receiver<Req>,
+    jobs: JobSource,
     signals: Arc<Signals>,
     local_pin: Rc<Cell<bool>>,
     fs: &'static RefCell<Fs<crate::store::EmuStore>>,
@@ -356,15 +465,15 @@ async fn serve<PR: rsk_device::UserPresence + 'static>(
     eprintln!("emu: device ready — serial {}", hex(&serial_id));
 
     loop {
-        let req = match jobs.try_recv() {
+        let req = match jobs.try_next() {
             Ok(req) => req,
             // Nothing queued: yield, so a display loop selected against this one
             // gets to run. 1 ms keeps the socket latency invisible.
-            Err(std::sync::mpsc::TryRecvError::Empty) => {
+            Err(TryRecvError::Empty) => {
                 embassy_time::Timer::after_millis(1).await;
                 continue;
             }
-            Err(std::sync::mpsc::TryRecvError::Disconnected) => break,
+            Err(TryRecvError::Disconnected) => break,
         };
         let now_ms = attach.elapsed().as_millis() as u64;
         // Whose a touch wait this job starts would be. One presence backend serves
