@@ -49,6 +49,16 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **A refused PIV `VERIFY` P1 answers `6A80`, the way the reference spells it.**
+  `00 20 <P1> 80` with a P1 the command does not define answered `6A86`, and
+  `00 20 FF 80` carrying a body — the status-reset form, which takes none —
+  answered `6700`; a YubiKey 5.7.4 answers `6A80` to both (measured over P1
+  `01`/`02`/`7F`/`FE` and over `FF` with 1- and 8-byte bodies, 3 runs
+  byte-identical). It was the last `6700` in the PIN handlers. Neither refusal
+  moves the standing PIN status on either card, and the one VERIFY refusal that
+  *does* drop it — a malformed body at P1 `00` — is unchanged. `bcdDevice` →
+  `0x0920`.
+
 - **One touch ceremony can no longer hold the key for twice the touch timeout.**
   After a confirm, the wait for the finger to lift took a *fresh* copy of the
   configured window instead of what was left of the ceremony's own, so a press

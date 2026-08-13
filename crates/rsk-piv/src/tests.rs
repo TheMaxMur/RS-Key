@@ -522,6 +522,72 @@ fn pin_verify_retry_and_unblock() {
     assert_eq!(sw, Sw::OK);
 }
 
+/// VERIFY's own framing is one status word on the reference — `6A80` — where
+/// ours had two: `6A86` for an undefined P1 and `6700` for `P1 = FF` carrying a
+/// body. Measured on a YubiKey 5.7.4 over `01`, `02`, `7F`, `FE` and
+/// `FF`-with-body, 3 runs byte-identical, and none of them moves the standing PIN
+/// status. Only a malformed *body* at `P1 = 00` drops it — a different rule that
+/// stays.
+///
+/// Both PIN states, deliberately: with the axis walked only on a verified card, a
+/// gate reading `p1 != 00 && p1 != FF && has_pin` passed the whole suite while
+/// serving the retry counter — and a wrong-P1 VERIFY — to an unverified caller.
+#[test]
+fn verify_refuses_its_own_framing_with_one_status_word() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    for verified in [false, true] {
+        if verified {
+            verify_pin(&mut app, &mut fs);
+        }
+        for p1 in [0x01u8, 0x02, 0x7F, 0xFE] {
+            for body in [&[][..], &DEFAULT_PIN[..]] {
+                assert_eq!(
+                    run(&mut app, &mut fs, INS_VERIFY, p1, 0x80, body).0,
+                    WRONG_DATA,
+                    "VERIFY P1={p1:02X} with {} body bytes, verified={verified}",
+                    body.len()
+                );
+            }
+        }
+        // `P1 = FF` names the reset, so a body makes it a VERIFY the card cannot
+        // read — not a length error.
+        for body in [&DEFAULT_PIN[..], &[0x41][..]] {
+            assert_eq!(
+                run(&mut app, &mut fs, INS_VERIFY, 0xFF, 0x80, body).0,
+                WRONG_DATA,
+                "VERIFY P1=FF with {} body bytes, verified={verified}",
+                body.len()
+            );
+        }
+        // The control the loop turns on: none of the refusals above moved the
+        // PIN state in either direction, so the retry query still answers what it
+        // did before them — the full counter unverified, `9000` verified.
+        let want = if verified {
+            Sw::OK
+        } else {
+            Sw::new(0x63, 0xC3)
+        };
+        assert_eq!(
+            run(&mut app, &mut fs, INS_VERIFY, 0, 0x80, &[]).0,
+            want,
+            "retry query after the refusals, verified={verified}"
+        );
+    }
+    // The two P1 values the command does define still do their own jobs.
+    assert_eq!(
+        run(&mut app, &mut fs, INS_VERIFY, 0xFF, 0x80, &[]).0,
+        Sw::OK
+    );
+    assert_eq!(
+        run(&mut app, &mut fs, INS_VERIFY, 0, 0x80, &[]).0,
+        Sw::new(0x63, 0xC3)
+    );
+}
+
 #[test]
 fn change_pin_and_puk() {
     let rng = RefCell::new(TestRng(7));

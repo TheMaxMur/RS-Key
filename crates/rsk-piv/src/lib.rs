@@ -431,14 +431,18 @@ impl PivApplet<'_> {
         apdu: &Apdu,
         _res: &mut ResBuf,
     ) -> Sw {
+        // Both halves of VERIFY's own framing are `6A80` on a YubiKey 5.7.4, not
+        // `6A86` and not `6700`: measured over P1 `01`/`02`/`7F`/`FE` and over
+        // `FF` carrying a body, 3 runs each, and none of them moves the standing
+        // status (only a malformed body at P1 `00` does, below).
         if apdu.p1 != 0x00 && apdu.p1 != 0xFF {
-            return Sw::INCORRECT_P1P2;
+            return WRONG_DATA;
         }
-        // SP 800-73-4's VERIFY response table has no `6A88` in it at all: an
-        // undefined key reference is `6A80`, and that is what a YubiKey 5.7.4
-        // answers to `00`, `01`, `04`, `81`, `82`, `9B` and `FF` alike (measured,
-        // case 1 and with an Le, 3/3). Only `80` names a reference this
-        // application has.
+        // SP 800-73-4's VERIFY response table has no `6A88` for an undefined key
+        // reference: it is `6A80`, and that is what a YubiKey 5.7.4 answers to
+        // `00`, `01`, `04`, `81`, `82`, `9B` and `FF` alike (measured, case 1 and
+        // with an Le, 3/3). Only `80` names a reference this application has —
+        // one it can still be *missing*, which is the `6A88` below.
         if apdu.p2 != REF_PIN {
             return WRONG_DATA;
         }
@@ -448,7 +452,7 @@ impl PivApplet<'_> {
         if apdu.p1 == 0xFF {
             // SP 800-73: reset the security status of the PIN.
             if apdu.nc != 0 {
-                return Sw::WRONG_LENGTH;
+                return WRONG_DATA;
             }
             self.sess.set_pin(false);
             return Sw::OK;
