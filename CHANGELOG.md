@@ -309,6 +309,22 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **A key in a retired PIV slot is no longer a one-way trip, and
+  `GET METADATA f9` answers.** Two narrow gates, both measured against a YubiKey
+  5.7.4 three runs each. `MOVE KEY` refused retired → active with `6A86`, so a
+  key parked in `82`–`95` could never come back to `9a`/`9c`/`9d`/`9e`; the
+  oracle allows both directions (`82 → 9a`, `9a → 82`, `82 → 9c` all `9000`) and
+  Yubico documents no direction restriction. The refusal carried no reason, and
+  a self-move — the case that would destroy a key — is refused separately and
+  still is. `GET METADATA` at the attestation slot answered `6A88`, "referenced
+  data not found", on a card that mints that key and its self-signed certificate
+  at first boot: the slot simply keeps no metadata record, because `is_key(0xf9)`
+  is false and nothing had needed one. The head is now synthesized rather than
+  stored — every field is fixed by construction, an on-card ECCP384 key that is
+  always generated — so a card provisioned by an older build answers exactly as a
+  fresh one does, with no flash migration. A slot whose key is gone still reports
+  it gone. **bcdDevice → 0x08D8.**
+
 - **`GET METADATA 9B` reports one PIN policy instead of two.** Slot `9B` is the
   management key, not a key slot: `is_key(0x9B)` is false in both the PIN gate
   and the freshness spend, so its stored pin-policy byte gates nothing. Two

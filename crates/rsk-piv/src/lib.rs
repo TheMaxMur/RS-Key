@@ -842,6 +842,17 @@ impl PivApplet<'_> {
                 res.extend(&[0x03, 0x01, meta[3]]);
                 self.slot_pubkey_tlv(dev, fs, s, &meta[..n], res)
             }
+            // F9 keeps no metadata record — `scan_files` mints the key, its
+            // cached point and its certificate, and nothing needed a head. The
+            // head is therefore synthesized rather than stored, so a card an
+            // older build provisioned answers the same as a fresh one. Every
+            // field is fixed by construction: on-card ECCP384, always generated.
+            SLOT_ATTESTATION if fs.has_key(key_fid(SLOT_ATTESTATION)) => {
+                res.extend(&[0x01, 0x01, ALGO_ECCP384]);
+                res.extend(&[0x02, 0x02, ATTESTATION_PIN_POLICY, TOUCHPOLICY_NEVER]);
+                res.extend(&[0x03, 0x01, ORIGIN_GENERATED]);
+                self.slot_pubkey_tlv(dev, fs, SLOT_ATTESTATION, &[ALGO_ECCP384], res)
+            }
             _ => Sw::REFERENCE_NOT_FOUND,
         }
     }
@@ -981,9 +992,6 @@ impl PivApplet<'_> {
         // A self-move would write the key back then delete the source — the same
         // slot — destroying it; reject before any write, as real hardware does.
         if to == from {
-            return Sw::INCORRECT_P1P2;
-        }
-        if is_retired(from) && is_active(to) {
             return Sw::INCORRECT_P1P2;
         }
         // The sealed blob is bound to the device, not the fid, so it moves

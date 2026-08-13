@@ -280,8 +280,9 @@ ykman piv keys move 9a 82          # 9a → retired slot 82, cert + metadata fol
 ykman piv keys delete 9c           # wipe the signature slot's key
 ```
 
-A key in a retired slot cannot be moved back into an active slot. Both
-operations require management-key auth.
+Moves go both ways — a key parked in a retired slot can come back to an active
+one. Moving a key onto its own slot is refused, because the source-delete would
+erase what the move just wrote. Both operations require management-key auth.
 
 ## Use it
 

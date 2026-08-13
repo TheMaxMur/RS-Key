@@ -3906,13 +3906,107 @@ fn move_and_delete_key() {
         &[0x5C, 0x03, 0x5F, 0xC1, 0x0D],
     );
     assert_eq!(sw, Sw::OK);
-    // Retired → active is rejected; delete works.
+    // Retired → active works too — the trip is not one-way. Measured on a
+    // YubiKey 5.7.4: 82 → 9A, 9A → 82 and 82 → 9C all answer 9000, three runs.
     let (sw, _) = run(&mut app, &mut fs, INS_MOVE_KEY, 0x9A, 0x82, &[]);
-    assert_eq!(sw, Sw::INCORRECT_P1P2);
+    assert_eq!(sw, Sw::OK);
+    let (sw, md) = run(&mut app, &mut fs, INS_GET_METADATA, 0, 0x9A, &[]);
+    assert_eq!(sw, Sw::OK);
+    assert_eq!(find_tag(&md, 0x01).unwrap(), &[ALGO_ECCP256]);
+    let (sw, _) = run(&mut app, &mut fs, INS_GET_METADATA, 0, 0x82, &[]);
+    assert_eq!(sw, Sw::REFERENCE_NOT_FOUND, "the source slot is emptied");
+    // …and the moved key is the same key: it still signs.
+    verify_pin(&mut app, &mut fs);
+    assert_eq!(sign_p256(&mut app, &mut fs, 0x9A), Sw::OK);
+    // Back out again, then delete.
+    let (sw, _) = run(&mut app, &mut fs, INS_MOVE_KEY, 0x82, 0x9A, &[]);
+    assert_eq!(sw, Sw::OK);
     let (sw, _) = run(&mut app, &mut fs, INS_MOVE_KEY, 0xFF, 0x82, &[]);
     assert_eq!(sw, Sw::OK);
     let (sw, _) = run(&mut app, &mut fs, INS_GET_METADATA, 0, 0x82, &[]);
     assert_eq!(sw, Sw::REFERENCE_NOT_FOUND);
+}
+
+/// `GET METADATA F9` answered `6A88` — "referenced data not found" — on a card
+/// that mints that key and its self-signed certificate at first boot, which is
+/// wrong on its face. The slot simply has no metadata record: `scan_files`
+/// stores the key, its cached public point and the certificate, and never a
+/// head, because `is_key(0xF9)` is false and nothing else needed one. A YubiKey
+/// answers `9000` with algorithm, policies, origin and the public key. Ours
+/// synthesizes the head rather than storing one, so a card provisioned by an
+/// older build answers the same as a fresh one.
+#[test]
+fn the_attestation_slot_reports_its_metadata() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    let (sw, md) = run(
+        &mut app,
+        &mut fs,
+        INS_GET_METADATA,
+        0,
+        SLOT_ATTESTATION,
+        &[],
+    );
+    assert_eq!(sw, Sw::OK);
+    assert_eq!(find_tag(&md, 0x01).unwrap(), &[ALGO_ECCP384]);
+    assert_eq!(find_tag(&md, 0x03).unwrap(), &[ORIGIN_GENERATED]);
+    // The public key is the one the F9 certificate carries.
+    let pk = find_tag(&md, 0x04).unwrap();
+    assert_eq!(pk[0], 0x86);
+    let point = &pk[2..2 + pk[1] as usize];
+    assert_eq!(point.len(), 97);
+    let (sw, obj) = run(
+        &mut app,
+        &mut fs,
+        INS_GET_DATA,
+        0x3F,
+        0xFF,
+        &[0x5C, 0x03, 0x5F, 0xFF, 0x01],
+    );
+    assert_eq!(sw, Sw::OK);
+    let cert = find_tag(find_tag(&obj, 0x53).unwrap(), 0x70).unwrap();
+    let (_, parsed) = x509_parser::parse_x509_certificate(cert).unwrap();
+    assert_eq!(
+        parsed
+            .tbs_certificate
+            .subject_pki
+            .subject_public_key
+            .data
+            .as_ref(),
+        point
+    );
+    // Ungated, like every other GET METADATA and like the oracle's.
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            INS_GET_METADATA,
+            0,
+            SLOT_ATTESTATION,
+            &[]
+        )
+        .0,
+        Sw::OK
+    );
+    // A card whose F9 key is gone reports it gone, rather than a synthetic head
+    // over nothing. Read on the same applet: a SELECT would re-provision it.
+    fs.delete_key(key_fid(SLOT_ATTESTATION)).unwrap();
+    let _ = fs.delete(pubkey_fid(SLOT_ATTESTATION));
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            INS_GET_METADATA,
+            0,
+            SLOT_ATTESTATION,
+            &[]
+        )
+        .0,
+        Sw::REFERENCE_NOT_FOUND
+    );
 }
 
 #[test]

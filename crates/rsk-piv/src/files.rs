@@ -66,6 +66,12 @@ pub const TOUCHPOLICY_DEFAULT: u8 = 0;
 /// used to fill the field in with opposite guesses. A YubiKey 5.7.4 reports `0`
 /// in every state (fresh, escrowed, after a host rotation), measured.
 pub const MGM_PIN_POLICY: u8 = PINPOLICY_DEFAULT;
+
+/// The pin-policy byte `GET METADATA F9` reports. Neither card PIN-gates the
+/// attestation slot — `ATTEST` answers with nothing verified on both — so the
+/// byte is descriptive only; a YubiKey 5.7.4 reports `ONCE` there and we match.
+pub const ATTESTATION_PIN_POLICY: u8 = PINPOLICY_ONCE;
+
 pub const TOUCHPOLICY_NEVER: u8 = 1;
 pub const TOUCHPOLICY_ALWAYS: u8 = 2;
 pub const TOUCHPOLICY_CACHED: u8 = 3;
