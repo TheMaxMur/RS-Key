@@ -471,16 +471,19 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   three hundred that are not, and the list says what the number is where it cuts
   off at twenty.
 
-- **`bcdDevice` skips to `0x08F7`, past a number two branches had already
-  spent.** The OpenPGP and PIV conformance work ran in parallel worktrees on
-  reserved ranges — `0x08F0`–`0x08F6` and `0x08D0`–`0x08D9` — so that neither
-  computed its next value from a base the other was moving, which is what
-  produced three collisions the day before. The reservation held, but PIV landed
-  second, leaving the tip reporting a *lower* counter than commits behind it. No
-  released image ever carried `0x08F0`–`0x08F6`; the risk is a bench one, where a
-  board flashed from an intermediate commit and one flashed later could answer
-  `ioreg` with the same number and not be the same firmware. This bump ends that
-  by starting above every value the history has used. Behaviour is unchanged.
+- **`bcdDevice` skips twice, past numbers parallel branches had already spent —
+  to `0x08F7` and then to `0x0952`.** Conformance work ran in separate worktrees
+  on reserved ranges so that no branch computed its next value from a base
+  another was moving, which is what produced three collisions the day before.
+  The reservations held both times; the assumption about *landing order* did
+  not, and the lower-numbered branch landed second on each occasion, leaving the
+  tip reporting a lower counter than commits behind it. No released image ever
+  carried the skipped values. The risk is a bench one: a board flashed from an
+  intermediate commit and one flashed later could answer `ioreg` with the same
+  number and not be the same firmware, and reading that number is how a flash is
+  verified here. Each skip starts above every value the history has used, which
+  ends it without renumbering landed commits off a moving base — the operation
+  that caused the original collisions. Behaviour is unchanged by either.
 
 ### Security
 
