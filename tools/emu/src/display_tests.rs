@@ -799,6 +799,15 @@ fn the_panel_generates_the_rsa_key_the_wire_can() {
          arc really turns",
         pushes.get()
     );
+    // …and not on every candidate: the arc cannot change faster than the push
+    // interval, so the extra uploads would be the search's own hot path paying for
+    // pixels that did not change. A push per candidate is ~1700 over this search.
+    let cap = took.as_millis() as u32 / crate::display::SPIN_PRESENT_MS as u32 + 2;
+    assert!(
+        pushes.get() <= cap,
+        "the window was pushed {} times in {took:?}, against a cap of {cap}",
+        pushes.get()
+    );
     assert_eq!(
         at_first_tick,
         Some(1),

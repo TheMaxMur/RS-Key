@@ -101,7 +101,7 @@ impl DrawTarget for Panel {
 /// pushes it. Anything that paints during a span the pad is not polled in —
 /// the RSA prime search — has to reach this or the window stays on the screen
 /// before it.
-pub struct Presenter {
+struct Presenter {
     win: Window,
     panel: Panel,
     /// The backlight the flow has asked for. There is no lamp to dim, so the
@@ -112,6 +112,33 @@ pub struct Presenter {
 }
 
 impl Presenter {
+    /// Open the window and hand back its two ends: the pad that pumps it, and the
+    /// handle anything painting outside a pad poll pushes it with. Minted together
+    /// because a `Touch` pumping one window while the search pushes another fails
+    /// nothing — it just restores E193, quietly.
+    fn split(
+        panel: Panel,
+        duty: Rc<Cell<u16>>,
+        quit: Rc<Cell<bool>>,
+        wake: Rc<Cell<bool>>,
+        taps: Option<TapPad>,
+    ) -> (Touch, Repaint) {
+        let out = OutputSettingsBuilder::new().scale(SCALE).build();
+        let view = Rc::new(RefCell::new(Self {
+            win: Window::new("RS-Key", &out),
+            panel,
+            duty,
+        }));
+        let touch = Touch {
+            view: view.clone(),
+            held: None,
+            quit,
+            wake,
+            taps,
+        };
+        (touch, Rc::new(move || view.borrow_mut().present()))
+    }
+
     /// Push the panel to the window, scaled by the backlight.
     fn present(&mut self) {
         let duty = self.duty.get();
@@ -242,8 +269,9 @@ pub struct EmuDisplayHooks {
     /// Host requests the device thread has not picked up. A modal holds the single
     /// executor, so this is the only way the flow can learn one is waiting.
     queued: Queued,
-    /// Push the panel to the window. Only the RSA search needs it: every other
-    /// screen this build paints is followed by a `TouchPad::read`, which pushes.
+    /// Push the panel to the window. The RSA search is the only span that can
+    /// reach it — `show_success`, the factory-reset notice and the boot splash
+    /// paint into spans that poll no hook this build can push from (E301).
     repaint: Repaint,
     /// The presence flags the ceremonies share with the transports — the same
     /// object `hid.rs`'s keepalive reads and its `CTAPHID_CANCEL` writes. A board
@@ -413,20 +441,13 @@ pub fn open(
     let quit = Rc::new(Cell::new(false));
     let duty = Rc::new(Cell::new(rsk_display::BL_TOP));
     let wake = Rc::new(Cell::new(false));
-    let out = OutputSettingsBuilder::new().scale(SCALE).build();
-    let view = Rc::new(RefCell::new(Presenter {
-        win: Window::new("RS-Key", &out),
-        panel: panel.clone(),
-        duty: duty.clone(),
-    }));
-    let touch = Touch {
-        view: view.clone(),
-        held: None,
-        quit: quit.clone(),
-        wake: wake.clone(),
+    let (touch, repaint) = Presenter::split(
+        panel.clone(),
+        duty.clone(),
+        quit.clone(),
+        wake.clone(),
         taps,
-    };
-    let repaint: Repaint = Rc::new(move || view.borrow_mut().present());
+    );
     (
         PanelParts {
             panel,
