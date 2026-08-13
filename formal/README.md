@@ -663,7 +663,7 @@ measured keeping every status through a re-SELECT on both applets.
 **There is no cross-applet rule for what a refused authentication costs, and
 writing one would have made the shipped tree red for two deliberate reasons.**
 PIV's `CHANGE REFERENCE DATA` takes no `&mut Session` at all
-(`crates/rsk-piv/src/lib.rs:494-518`) — SP 800-73-4 and a measured YubiKey both
+(`crates/rsk-piv/src/lib.rs:497-531`) — SP 800-73-4 and a measured YubiKey both
 keep the status through a refused change. OATH's access-code `VALIDATE` keeps
 the standing unlock too (`crates/rsk-oath/src/lib.rs:539-541`), because a MAC
 challenge-response has no retry counter for a refusal to protect. OATH's OTP-PIN
