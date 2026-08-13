@@ -53,14 +53,23 @@ def git(*args):
 
 
 def defined(line, path):
-    """The name defined on `line`, or None. `path` picks the language."""
+    """The name defined on `line`, or None. `path` picks the language.
+
+    `_` is a hole, not a name: Rust's anonymous constant (`const _: () =
+    assert!(…)`, an idiom this tree uses ~80 times) and Python's throwaway
+    binding. Read as one, it answered `git grep -w _` with 2381 sites — and a
+    report nobody can read is not a report, which is the failure this file is
+    for, one layer up.
+    """
     if path.endswith(".rs"):
         m = RUST_DEF.match(line)
-        return m.group("name") if m else None
-    if path.endswith(".py"):
+        name = m.group("name") if m else None
+    elif path.endswith(".py"):
         m = PY_DEF.match(line)
-        return (m.group("name") or m.group("fname")) if m else None
-    return None
+        name = (m.group("name") or m.group("fname")) if m else None
+    else:
+        return None
+    return None if name == "_" else name
 
 
 def parse(diff):

@@ -40,6 +40,15 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **The pre-commit hook's impact report is readable again.** `scripts/impact.py`
+  read Rust's anonymous constant — `const _: () = assert!(…)`, an idiom this tree
+  uses about eighty times — as a constant *named* `_`, and then answered
+  `git grep -w _` with 2381 "unread use sites". It fired once for real, on the
+  presence lift, printing beside the one report that mattered. A guard nobody can
+  read is not a guard — the same failure as a proof nobody runs, one layer up.
+  `_` is a hole and not a name now, in both the Rust and the Python paths, and
+  the script has the mutation table it never had.
+
 - **`bcdDevice` skips to `0x08F7`, past a number two branches had already
   spent.** The OpenPGP and PIV conformance work ran in parallel worktrees on
   reserved ranges — `0x08F0`–`0x08F6` and `0x08D0`–`0x08D9` — so that neither
