@@ -68,7 +68,7 @@ STATEFUL="rsk-fido rsk-fs"
 # the diff shows it.
 FLOOR_pr=50
 FLOOR_state=8
-FLOOR_all=65
+FLOOR_all=66
 
 # Source-level `kani::cover!`s each tier must report on. Kani 0.67.0 has no
 # `--fail-uncoverable`, so an unsatisfiable cover prints "N of M cover properties
