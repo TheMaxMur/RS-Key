@@ -845,6 +845,19 @@ impl PivApplet<'_> {
                     Err(sw) => return sw,
                 };
                 key.zeroize();
+                // Tag `05` answers "is this slot as it left the factory", not
+                // "are these the factory key bytes" — a YubiKey 5.7.4 clears it
+                // when the FACTORY key is written back with `P2 = 0xFE`,
+                // measured 2 runs.
+                //
+                // The touch byte only. `meta[1]` looks like the same argument,
+                // but `0x0875` shipped `PINPOLICY_ALWAYS` there and `0x08D7`
+                // changed the mint without repairing what was written, so folding
+                // it in would clear the flag on every upgraded card still holding
+                // the factory key — losing a true warning to make a byte no
+                // reference varies agree. `&`, not `&&`: the key compare is
+                // `ct_eq` and this must not reintroduce a branch on its result.
+                let is_default = is_default & (meta[2] == TOUCHPOLICY_NEVER);
                 res.extend(&[0x01, 0x01, meta[0]]);
                 res.extend(&[0x02, 0x02, meta[1], meta[2]]);
                 res.extend(&[0x05, 0x01, is_default as u8]);

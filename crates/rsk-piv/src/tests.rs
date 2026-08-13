@@ -6976,3 +6976,137 @@ fn only_a_failed_verify_revokes_the_standing_one() {
         "blocking the PIN through CHANGE must not revoke the standing status"
     );
 }
+
+/// `GET METADATA 9B`'s tag `05` answers "is this slot as it left the factory",
+/// not "are these the factory key bytes". Measured on a YubiKey 5.7.4, 2 runs
+/// byte-identical, `00 F7 00 9B 00` after each write:
+///
+/// ```text
+///   fresh reset                     01 01 0A 02 02 00 01 05 01 01
+///   a different AES-192 key, P2=FF  01 01 0A 02 02 00 01 05 01 00
+///   the FACTORY key back, P2=FF     01 01 0A 02 02 00 01 05 01 01
+///   the FACTORY key, P2=FE          01 01 0A 02 02 00 02 05 01 00   <- touch ALWAYS
+/// ```
+///
+/// Ours read the key bytes alone, so the last row said `01` — the record
+/// contradicting itself, since tag `02` in the same response publishes the touch
+/// byte that made the slot non-default.
+///
+/// The touch byte is the whole rule, deliberately. Folding in `meta[1]` reads as
+/// the same argument and is the wrong answer: `0x0875` shipped `PINPOLICY_ALWAYS`
+/// there, `0x08D7` changed the mint without repairing what was already written,
+/// and `set_mgmkey` forwards the byte — so every upgraded card still holding the
+/// factory key would report `00`, and `ykman piv info` would stop warning about a
+/// management key that really is the published default. The last cell here is
+/// that card.
+#[test]
+fn the_management_slots_default_flag_answers_for_the_slots_touch_policy() {
+    let rng = RefCell::new(TestRng(21));
+    let pres = RefCell::new(AlwaysConfirm);
+    let default_flag = |app: &mut PivApplet, fs: &mut Fs<RamStorage>| -> u8 {
+        let (sw, md) = run(app, fs, INS_GET_METADATA, 0, SLOT_CARDMGM, &[]);
+        assert_eq!(sw, Sw::OK);
+        // The touch byte travels with it, so a flag that moved for the wrong
+        // reason cannot pass as the right one.
+        let touch = find_tag(&md, 0x02).unwrap()[1];
+        let flag = find_tag(&md, 0x05).unwrap()[0];
+        assert_eq!(
+            find_tag(&md, 0x01).unwrap().len(),
+            1,
+            "the algorithm tag is still there"
+        );
+        flag | (touch << 4)
+    };
+    let factory = |p2: u8| {
+        let mut b = vec![ALGO_AES192, SLOT_CARDMGM, 24];
+        b.extend_from_slice(&DEFAULT_MGM);
+        (b, p2)
+    };
+
+    // a. fresh card: the factory key, touch NEVER.
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    assert_eq!(
+        default_flag(&mut app, &mut fs),
+        1 | (TOUCHPOLICY_NEVER << 4),
+        "a fresh card is the factory configuration"
+    );
+
+    // b. a different key at P2=FF — the key half, which already worked.
+    let mut other = vec![ALGO_AES192, SLOT_CARDMGM, 24];
+    other.extend_from_slice(&[0x7Bu8; 24]);
+    assert_eq!(
+        run(&mut app, &mut fs, INS_SET_MGMKEY, 0xFF, 0xFF, &other).0,
+        Sw::OK
+    );
+    assert_eq!(
+        default_flag(&mut app, &mut fs),
+        TOUCHPOLICY_NEVER << 4,
+        "a rotated key is not the factory configuration"
+    );
+
+    // c. the FACTORY key written back at P2=FF — default again.
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    let (body, p2) = factory(0xFF);
+    assert_eq!(
+        run(&mut app, &mut fs, INS_SET_MGMKEY, 0xFF, p2, &body).0,
+        Sw::OK
+    );
+    assert_eq!(
+        default_flag(&mut app, &mut fs),
+        1 | (TOUCHPOLICY_NEVER << 4),
+        "the factory key written back is the factory configuration"
+    );
+
+    // d. the FACTORY key at P2=FE — the cell this fixes.
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    let (body, p2) = factory(0xFE);
+    assert_eq!(
+        run(&mut app, &mut fs, INS_SET_MGMKEY, 0xFF, p2, &body).0,
+        Sw::OK
+    );
+    assert_eq!(
+        default_flag(&mut app, &mut fs),
+        TOUCHPOLICY_ALWAYS << 4,
+        "the factory key behind a raised touch gate is not the factory configuration"
+    );
+
+    // e. planted touch bytes. `NEVER` is the rule, not "anything but ALWAYS": a
+    // head carrying a value no writer emits is not the factory configuration
+    // either, and `!= ALWAYS` would call it one.
+    // The last row is the card the rule is scoped for — `0x0875`'s
+    // `PINPOLICY_ALWAYS` in `meta[1]`, still on the factory key. It must keep
+    // reporting `01`, or an upgrade silently retires a true warning.
+    let flag_for = |planted: [u8; 3]| -> u8 {
+        let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+        let mut fs = new_fs();
+        select(&mut app, &mut fs);
+        fs.meta_add(files::key_fid(SLOT_CARDMGM).get(), &planted)
+            .unwrap();
+        find_tag(
+            &run(&mut app, &mut fs, INS_GET_METADATA, 0, SLOT_CARDMGM, &[]).1,
+            0x05,
+        )
+        .unwrap()[0]
+    };
+    for touch in [TOUCHPOLICY_CACHED, TOUCHPOLICY_DEFAULT, 0x7F] {
+        assert_eq!(
+            flag_for([ALGO_AES192, MGM_PIN_POLICY, touch]),
+            0,
+            "touch byte {touch:#04X} is not the factory configuration"
+        );
+    }
+    assert_eq!(
+        flag_for([ALGO_AES192, PINPOLICY_ALWAYS, TOUCHPOLICY_NEVER]),
+        1,
+        "a card provisioned before 0x08D7 still reports its factory key"
+    );
+}

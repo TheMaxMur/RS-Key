@@ -49,6 +49,23 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **PIV `GET METADATA 9B` tag `05` answers for the slot's touch policy as well as
+  its key.** It compared the stored management key against the factory one and
+  stopped there, so a card carrying the factory key behind a touch gate the owner
+  had raised reported itself as being in its factory configuration — while tag
+  `02`, two fields earlier in the same response, published the touch byte that
+  said otherwise. A YubiKey 5.7.4 clears the flag in exactly that case (measured
+  2 runs: factory key + `P2=0xFE` → `01 01 0A 02 02 00 02 05 01 00`), and the
+  `0x08F9` fix that reconciled this record's touch byte already argued from that
+  reading. **`ykman piv info` follows the flag** — on a fresh card it prints
+  "WARNING: Using default Management key!" and with the gate raised it does not,
+  measured on the reference, which is the behaviour being matched. The pin-policy
+  byte is deliberately *not* folded in: `0x0875` shipped `PINPOLICY_ALWAYS`
+  there, `0x08D7` changed the mint without repairing what was already written,
+  and `SET MGM KEY` forwards the byte — so a card upgraded from a release would
+  have lost that warning while still holding the published default key.
+  `bcdDevice` → `0x0932`.
+
 - **A command chain that outgrows the reassembly buffer is a length error, not a
   class error.** The intermediate segment that reached the ceiling answered
   `6E00` — "CLA not supported" — telling the host its class byte was wrong when
