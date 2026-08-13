@@ -329,8 +329,12 @@ def main():
 
     touched, cut, gone, born, where = parse(diff)
     if not touched:
-        print("impact.py: could not parse the diff — reporting nothing is NOT a "
-              "clean result here; check `git config diff.*`", file=sys.stderr)
+        # A hunk the parser could file under no path is the failure this alarm is
+        # for. Without one there was no content to read: a binary, mode-only or
+        # rename-only change carries neither `+++` nor `@@`, by design.
+        if any(line.startswith("@@") for line in diff.splitlines()):
+            print("impact.py: could not parse the diff — reporting nothing is NOT a "
+                  "clean result here; check `git config diff.*`", file=sys.stderr)
         return 0
     redefined = redefinitions(touched, cut, gone, born, where, post)
     report = []

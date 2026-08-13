@@ -177,29 +177,37 @@ class Tree:
         assert text.count(old) == 1, f"{rel} does not say {old!r} exactly once"
         path.write_text(text.replace(old, new))
 
-    def run(self, unstaged=None):
+    def run(self, unstaged=None, *args):
         """The hook's own output over the change as staged.
 
         `unstaged` runs after `git add`, so the index and the worktree differ: the
         hunk line numbers belong to the staged side, and sizing the search by the
         other one measures lines nobody staged.
+
+        `self.err` keeps stderr: the one thing this tool prints there is an alarm,
+        and an alarm is judged by when it stays quiet as much as by when it fires.
         """
         self.git("add", "-A")
         if unstaged:
             unstaged()
-        self.text = subprocess.run(
-            ["python3", str(SCRIPT)], cwd=self.root, capture_output=True, text=True, check=True
-        ).stdout
+        done = subprocess.run(
+            ["python3", str(SCRIPT), *args],
+            cwd=self.root,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        self.text, self.err = done.stdout, done.stderr
         return self.text
 
-    def report(self, unstaged=None):
+    def report(self, unstaged=None, *args):
         """`{name: [file:line, …]}` — what the hook prints, in the order it prints.
 
         The raw output stays on `self.text`, so a case can assert the report's
         prose — the order, the truncation note — off the same single run.
         """
         found, name = {}, None
-        for line in self.run(unstaged).splitlines():
+        for line in self.run(unstaged, *args).splitlines():
             if "(redefined in " in line:
                 name = line.split()[0]
                 found[name] = []
@@ -548,3 +556,46 @@ def test_a_content_line_that_looks_like_a_header_does_not_retarget(tree):
     tree.edit("tool.py", "def fixture_keep(value=FIXTURE_LIMIT):", "def fixture_keep(value=FIXTURE_LIMIT + 0):")
     report = tree.report()
     assert "tool.py:13" not in report.get("FIXTURE_LIMIT", []), report
+
+
+# --- the alarm, and the commits it has nothing to say about --------------------
+
+#: The alarm's own words, matched on stderr. It is judged by when it stays quiet
+#: as much as by when it fires: a warning that greets `git mv` is one nobody reads
+#: twice, and the signal it carries is gone by the time it is needed.
+ALARM = "could not parse the diff"
+
+
+@pytest.mark.parametrize("shape", ["a new binary asset", "chmod +x", "git mv"])
+def test_a_contentless_change_is_not_a_diff_nobody_could_parse(tree, shape):
+    """E204. All three carry no `+++` header and no hunk — by design, not by defeat.
+
+    Read as a parse failure they spent the one alarm this tool has on the commit
+    shapes it has least to say about, and this repo has both kinds: 23 tracked
+    binary assets and 17 executable scripts.
+    """
+    if shape == "a new binary asset":
+        (tree.root / "assets").mkdir()
+        (tree.root / "assets/blob.bin").write_bytes(bytes(range(32)))
+    elif shape == "chmod +x":
+        (tree.root / "tool.py").chmod(0o755)
+    else:
+        tree.git("mv", "src/other.rs", "src/moved.rs")
+    assert tree.report() == {}
+    assert ALARM not in tree.err, tree.err
+
+
+def test_a_diff_whose_hunks_name_no_file_is_still_an_alarm(tree, tmp_path_factory):
+    """The direction that fix must not close: content nothing could file.
+
+    `diff.external` hands git's whole output to another program — one of the very
+    `git config diff.*` settings the message sends the reader to look at, and the
+    only way a hunk reaches this parser with no file to its name.
+    """
+    driver = tmp_path_factory.mktemp("ext") / "diff.sh"
+    driver.write_text('#!/bin/sh\nprintf "@@ -1 +1 @@\\n-x\\n+y\\n"\n')
+    driver.chmod(0o755)
+    tree.git("config", "diff.external", str(driver))
+    widen(tree)
+    assert tree.report() == {}
+    assert ALARM in tree.err, tree.err
