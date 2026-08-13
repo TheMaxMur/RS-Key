@@ -106,11 +106,18 @@ COVER = re.compile(r"\bkani::cover!")
 #: Code that names one of them in a spelling neither counter sees: a contract
 #: harness, a `cfg_attr` form, an import that could rename the macro. Refused, not
 #: skipped — the miss would set a floor low, which is exactly the drift.
-UNSEEN = re.compile(r"kani::(?:proof|cover)|^\s*use\s+kani::")
+UNSEEN = re.compile(r"kani::(?:proof|cover)|^\s*use\s+kani(?:::|\s*;)")
+
+#: A raw-string opener — `r"`, `r#"`, `br##"` — with its hashes, so the matching
+#: close is found rather than the first quote after it.
+RAW_STRING = re.compile(r'(?:b|c)?r(#*)"')
+#: A char literal, so `'"'` cannot open a string and `'/'` cannot open a comment.
+#: A lifetime does not match it: `'a` has no closing quote.
+CHAR_LIT = re.compile(r"'(?:\\.|[^\\'])'")
 
 #: `kani.sh`'s ratchets, and the columns docs/testing.md prints beside them:
 #: `| `pr` | 13 | 49 | 23 | …` is crates, harnesses, covers.
-RATCHET = re.compile(r"^(FLOOR|COVERS)_(\w+)=(\d+)$", re.M)
+RATCHET = re.compile(r"^\s*(?:readonly\s+)?(FLOOR|COVERS)_(\w+)=\"?(\d+)\"?\s*(?:#.*)?$", re.M)
 DOC_ROW = re.compile(r"^\|\s*`(\w+)`\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|", re.M)
 
 #: A hand-written roster: `cargo kani` with a package flag on it. `cargo kani
@@ -177,49 +184,72 @@ def sources(root):
     yield DOCS, (root / DOCS).read_text(), False
 
 
+def blanked(chunk):
+    """`chunk` as spaces, newlines kept — so line numbers and the quoted line hold."""
+    return "".join(ch if ch == "\n" else " " for ch in chunk)
+
+
 def code_lines(text):
-    """`text`'s lines with `//` and `/* … */` comments taken out.
+    """(`text`'s lines with strings and comments blanked, a `/*` still open at EOF).
 
     Prose is not a harness: `presence_kani.rs` and `rsa-asm/src/kani.rs` each
     discuss `kani::cover!` in a doc comment, and counting those two puts a floor
-    above anything a run can report. A `//` inside a string ends the line early,
-    which can only ever cut a macro's *arguments* — the token that opens the
-    statement is left of any string on the line.
+    above anything a run can report.
+
+    Strings are stripped *first*, and that ordering is the whole of it. A `/*`
+    inside a string literal — `rsk-wipe/build.rs` has the shape — otherwise opens
+    a block comment that never closes and swallows the rest of the file, taking
+    the refusal below down with it, so the under-count would be silent in exactly
+    the place it must not be. Rust that compiles never ends inside a block
+    comment, so a depth left over at EOF means the scan mis-read something.
     """
-    depth = 0
-    for line in text.splitlines():
-        out, i = [], 0
-        while i < len(line):
-            if depth:
-                if line.startswith("*/", i):
-                    depth -= 1
-                    i += 2
-                elif line.startswith("/*", i):
-                    depth += 1
-                    i += 2
+    out, i, n, depth = [], 0, len(text), 0
+    while i < n:
+        raw = RAW_STRING.match(text, i)
+        if raw and not (i and (text[i - 1].isalnum() or text[i - 1] == "_")):
+            close = text.find('"' + raw.group(1), raw.end())
+            end = n if close < 0 else close + 1 + len(raw.group(1))
+        elif text[i] == '"':
+            end = i + 1
+            while end < n and text[end] != '"':
+                end += 2 if text[end] == "\\" else 1
+            end = min(end + 1, n)
+        elif char := CHAR_LIT.match(text, i):
+            end = char.end()
+        elif text.startswith("//", i):
+            end = text.find("\n", i)
+            end = n if end < 0 else end
+        elif text.startswith("/*", i):
+            depth, end = 1, i + 2
+            while end < n and depth:
+                if text.startswith("/*", end):
+                    depth, end = depth + 1, end + 2
+                elif text.startswith("*/", end):
+                    depth, end = depth - 1, end + 2
                 else:
-                    i += 1
-            elif line.startswith("/*", i):
-                depth += 1
-                i += 2
-            elif line.startswith("//", i):
-                break
-            else:
-                out.append(line[i])
-                i += 1
-        yield "".join(out)
+                    end += 1
+        else:
+            out.append(text[i])
+            i += 1
+            continue
+        out.append(blanked(text[i:end]))
+        i = end
+    return "".join(out).splitlines(), depth != 0
 
 
 def counted(text):
-    """(harnesses, covers, the lines naming one that neither counter can see)."""
+    """(harnesses, covers, the reasons a count taken here cannot be trusted)."""
+    lines, swallowed = code_lines(text)
     harnesses = covers = 0
-    unseen = []
-    for line in code_lines(text):
+    reasons = []
+    for line in lines:
         harnesses += len(HARNESS.findall(line))
         covers += len(COVER.findall(line))
         if UNSEEN.search(COVER.sub("", HARNESS.sub("", line))):
-            unseen.append(line.strip())
-    return harnesses, covers, unseen
+            reasons.append(f"{line.strip()} — neither counter can see that spelling")
+    if swallowed:
+        reasons.append("a /* … */ is still open at end of file — the scan stopped there")
+    return harnesses, covers, reasons
 
 
 def crates_with_proofs(root):
@@ -236,10 +266,13 @@ def crates_with_proofs(root):
         if rel.suffix != ".rs":
             continue
         text = (root / rel).read_text()
-        if "kani::" not in text:
+        if "kani" not in text:
             continue
         found, reached, odd = counted(text)
-        unseen += [f"{rel}: {line}" for line in odd]
+        # Collected before the early return: a file whose *only* kani content is a
+        # spelling nothing counts has found == reached == 0, and that is precisely
+        # the file the refusal exists for.
+        unseen += [f"{rel}: {reason}" for reason in odd]
         if not found and not reached:
             continue
         if rel.parts[0] != "crates":
@@ -264,21 +297,38 @@ def ratchets(root, table, harnesses, covers):
     than any run can report, which fails the row after it has done the work.
     """
     kept = {(k, t): int(v) for k, t, v in RATCHET.findall((root / RUNNER).read_text())}
-    rows = {
-        m[1]: (int(m[2]), int(m[3]), int(m[4]))
-        for m in DOC_ROW.finditer((root / DOCS).read_text())
-    }
+    rows, printed = {}, collections.Counter()
+    for found in DOC_ROW.finditer((root / DOCS).read_text()):
+        printed[found[1]] += 1
+        rows[found[1]] = (int(found[2]), int(found[3]), int(found[4]))
     problems = []
+    # A dict comprehension over `finditer` is last-match-wins, and `DOC_ROW` is
+    # anchored to no heading — a second table repeating a tier would quietly
+    # decide the check. Counted instead, so the duplicate is the finding.
+    for tier, times in sorted(printed.items()):
+        if times > 1:
+            problems.append(
+                f"{DOCS} prints {times} rows for `{tier}`; only one may say what"
+                " the tree carries"
+            )
     for tier, crates in sorted(table.items()):
         counts = (sum(harnesses[c] for c in crates), sum(covers[c] for c in crates))
         for kind, want, shape in (
             ("FLOOR", counts[0], "#[kani::proof]"),
             ("COVERS", counts[1], "kani::cover!"),
         ):
-            if kept.get((kind, tier)) != want:
+            got = kept.get((kind, tier))
+            if got != want:
+                # Named, not `=None`: the message used to point at a file that
+                # plainly reads `FLOOR_pr=49` and call it None.
+                reads = (
+                    f"{kind}_{tier} is not written there"
+                    if got is None
+                    else f"{kind}_{tier}={got}"
+                )
                 problems.append(
-                    f"scripts/kani.sh has {kind}_{tier}={kept.get((kind, tier))}, and the"
-                    f" crates on that tier carry {want} {shape}"
+                    f"scripts/kani.sh: {reads}, and the crates on that tier carry"
+                    f" {want} {shape}"
                 )
         if tier not in rows:
             problems.append(f"{DOCS}'s tier table has no `{tier}` row to check")
@@ -303,9 +353,8 @@ def audit(root):  # noqa: C901 — one clause per failure mode, each named
 
     for line in unseen:
         problems.append(
-            f"{line} — neither counter can see that spelling, so every floor it"
-            " belongs to would sit one too low; write it `#[kani::proof]` or"
-            " `kani::cover!`"
+            f"{line}, so every floor it belongs to would sit one too low;"
+            " write harnesses `#[kani::proof]` and covers `kani::cover!`"
         )
     for crate in sorted(set(covers) - proven):
         problems.append(f"{crate} has a kani::cover! but no #[kani::proof] to reach it")

@@ -18,7 +18,7 @@
 #             `scripts/kani.sh` on any crate edit, plus the security-state tier
 #             (rsk-fido and rsk-fs — twelve minutes, one harness peaking at
 #             9.3 GiB) when the diff reaches the state those sequence proofs are
-#             about. Everything slower — the ~80-minute phy round-trip, the
+#             about. Everything slower — the phy round-trip, the
 #             functional division specs — stays in the daily `deep-checks` row,
 #             which runs the whole roster. Not part of `check.sh`: Kani is the one
 #             tool deliberately outside the nix shell (docs/testing.md).

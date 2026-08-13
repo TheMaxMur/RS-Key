@@ -14,7 +14,8 @@
 #   kani — every #[kani::proof] harness: the `all` tier of scripts/kani.sh
 #          (docs/testing.md). The fast tier of that same script runs per-PR in
 #          ci.yml; this row is the one that owes the whole roster, including the
-#          ~80-minute phy round-trip. Kani is not in nixpkgs and its setup
+#          phy round-trip — ~80 min on a hosted runner (2637a20), 27m42s locally,
+#          against a 30m per-harness cap. Kani is not in nixpkgs and its setup
 #          downloads a prebuilt CBMC bundle, so this job is rustup-based, not nix.
 #   repro — `nix build .#firmware` twice (`--rebuild` diffs every output
 #          byte): proves the hermetic image is bit-reproducible and publishes

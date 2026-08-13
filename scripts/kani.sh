@@ -62,7 +62,10 @@ STATEFUL="rsk-fido rsk-fs"
 # crates — and every one of them exited 0. The floor catches the weaker version
 # too: a rename or a deleted `#[cfg(kani)]` hook that takes harnesses away
 # silently. These are not kept by hand: `scripts/kani_gate.py` counts the tree's
-# `#[kani::proof]` per tier and fails the merge gate on any number below.
+# `#[kani::proof]` per tier and fails the merge gate on any disagreement. So
+# they are a consistency check against the tree, not a ratchet against history:
+# deleting a harness and pasting the new number is self-consistent, and only
+# the diff shows it.
 FLOOR_pr=50
 FLOOR_state=8
 FLOOR_all=65
@@ -137,7 +140,7 @@ crates="$(crates_of "$tier")" || {
 # a wrong verdict quietly, which is the failure this row exists to end.
 for arg in "$@"; do
   case "$arg" in
-  -j | -j[0-9]* | --jobs | --jobs=*)
+  -j* | --jobs*)
     echo "FAIL: $0 will not run harnesses in parallel ('$arg')." >&2
     echo "      The kani::cover! verdicts are read per harness out of Kani's" >&2
     echo "      per-check listing, and parallel harnesses interleave it." >&2
@@ -154,6 +157,10 @@ for c in $crates; do
 done
 
 log=$(mktemp)
+# `set -e` + `pipefail` end this script at the `tee` on any failing run, so an
+# explicit `rm` below it never runs — and a tripped --harness-timeout is now a
+# known way to get there.
+trap 'rm -f "$log"' EXIT
 echo "== kani ($tier): $(echo "$crates" | xargs | tr ' ' ',') =="
 # `tee`, not a redirect: the harness output belongs on the console. `pipefail`
 # (set above) keeps cargo-kani's own failure the pipeline's, so a real property
@@ -192,7 +199,6 @@ cover_report=$(awk '
 cover_dead=$(printf '%s\n' "$cover_report" | sed -n 's/^dead //p')
 cover_seen=$(printf '%s\n' "$cover_report" | sed -n 's/^seen //p')
 cover_copies=$(printf '%s\n' "$cover_report" | sed -n 's/^copies //p')
-rm -f "$log"
 if [ -z "$proved" ]; then
   echo "FAIL: kani tier '$tier' printed no summary line — it proved nothing." >&2
   exit 1

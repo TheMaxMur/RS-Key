@@ -298,17 +298,25 @@ def test_the_verifier_s_own_failure_is_the_row_s(run):
 # --- the arguments it will and will not pass through ---------------------------
 
 
-@pytest.mark.parametrize("arg", [["--jobs", "4"], ["--jobs=4"], ["-j"], ["-j4"]])
+@pytest.mark.parametrize(
+    "arg",
+    [["--jobs", "4"], ["--jobs=4"], ["-j"], ["-j4"], ["-j16"], ["-j=4"], ["-j=default"]],
+)
 def test_running_harnesses_in_parallel_is_refused(run, arg):
-    """`-Z unstable-options` is already on the command line, so this is one flag away.
+    """Parallel harnesses interleave `Checking harness` with another one's checks,
+    and the cover groups are keyed by whichever printed last.
 
-    Parallel harnesses interleave `Checking harness` with another one's checks, and
-    the cover groups are keyed by whichever printed last — a wrong verdict, quietly.
+    `-j=4` is `--jobs 4` to the real cargo-kani 0.67.0, and `-j16` is two digits —
+    both walked past the first spelling of this list, which is the sixth guard in
+    a row here to ship with a hole. The patterns are total now.
     """
     r = run(green(), args=arg)
     assert r.returncode == 2
     assert "parallel" in r.stderr
     assert "covers reached" not in r.stdout
+    # Before the work, not after it: the banner prints immediately above the
+    # `cargo kani` invocation, so its absence is what pins the ordering.
+    assert "== kani (" not in r.stdout
 
 
 def test_an_ordinary_pass_through_argument_still_runs(run):

@@ -101,7 +101,7 @@ PROVEN = {
 }
 
 
-def harness(covers):
+def fixture_harness(covers):
     """A file with one `#[kani::proof]` and `covers` `kani::cover!` inside it."""
     body = "".join(f"    kani::cover!(x == {i});\n" for i in range(covers))
     return f"#[kani::proof]\nfn p() {{\n{body}}}\n"
@@ -117,7 +117,7 @@ class Tree:
         self.write(kani_gate.PINNED_IN, DEEP)
         self.write(kani_gate.DOCS, DOCS)
         for crate, (rel, covers) in PROVEN.items():
-            self.write(f"crates/{crate}/{rel}", harness(covers))
+            self.write(f"crates/{crate}/{rel}", fixture_harness(covers))
         subprocess.run(["git", "init", "-q"], cwd=root, check=True)
 
     def write(self, rel, text, executable=False):
@@ -349,7 +349,7 @@ def test_a_harness_named_in_prose_is_not_a_harness(tree):
 
 def test_a_harness_added_without_raising_the_floor(tree):
     """E130 itself: `FLOOR_all` sat at 64 while the tree carried 65."""
-    tree.write("crates/rsk-c/src/more_kani.rs", harness(0))
+    tree.write("crates/rsk-c/src/more_kani.rs", fixture_harness(0))
     assert only(tree.problems(), "FLOOR_all=3, and the crates on that tier carry 4")
 
 
@@ -361,7 +361,7 @@ def test_a_floor_raised_past_the_tree(tree):
 
 def test_a_cover_added_without_raising_the_floor(tree):
     """One `kani::cover!` reaches two tiers here, and both floors are checked."""
-    tree.edit("crates/rsk-a/src/lib.rs", "kani::cover!(x == 0);", harness(3).strip())
+    tree.edit("crates/rsk-a/src/lib.rs", "kani::cover!(x == 0);", fixture_harness(3).strip())
     problems = tree.problems()
     assert only(problems, "COVERS_pr=3, and the crates on that tier carry 5")
     assert only(problems, "COVERS_state=2, and the crates on that tier carry 4")
@@ -371,7 +371,7 @@ def test_a_cover_added_without_raising_the_floor(tree):
 def test_a_floor_deleted_outright(tree):
     """A tier whose floor is gone reads as `None`, not as satisfied."""
     tree.edit(kani_gate.RUNNER, "COVERS_state=2\n", "")
-    assert only(tree.problems(), "COVERS_state=None")
+    assert only(tree.problems(), "COVERS_state is not written there")
 
 
 @pytest.mark.parametrize(
@@ -393,7 +393,12 @@ def test_the_page_s_tier_row_deleted(tree):
 
 @pytest.mark.parametrize(
     "line",
-    ["#[kani::proof_for_contract(f)]", "#[cfg_attr(kani, kani::proof)]", "use kani::cover;"],
+    [
+        "#[kani::proof_for_contract(f)]",
+        "#[cfg_attr(kani, kani::proof)]",
+        "use kani::cover;",
+        "use kani::*;",
+    ],
 )
 def test_a_spelling_neither_counter_can_see_is_refused(tree, line):
     """An uncounted harness is a floor set one too low, and it would be silent."""
@@ -419,3 +424,85 @@ def test_the_tests_are_named_after_the_guard():
     """`check.sh` collects `scripts` wholesale, so the name is the registration."""
     here = pathlib.Path(__file__).name
     assert here == f"test_{pathlib.Path(kani_gate.__file__).stem}.py"
+
+
+def test_a_spelling_is_refused_even_when_it_is_all_the_file_has(tree):
+    """M2. The refusal was collected *after* the "nothing here" early return.
+
+    A file whose only kani content is a spelling nothing counts has zero of both,
+    so it took the early exit and said nothing — the silent under-count the
+    refusal exists to make loud, in the one file where it is the whole story.
+    """
+    tree.write("crates/rsk-c/src/gen_kani.rs", "#[cfg_attr(kani, kani::proof)]\nfn q() {}\n")
+    assert only(tree.problems(), "neither counter can see that spelling")
+
+
+def test_a_slash_star_inside_a_string_does_not_swallow_the_file(tree):
+    """Finding 3, and the shape is already in this tree (`rsk-wipe/build.rs`).
+
+    Read before strings, a `/*` in a string literal opens a block comment that
+    never closes: everything under it leaves both counters *and* the refusal. The
+    mirror of that is what makes it the worst kind — the gate then reports a floor
+    over the tree and coaches whoever reads it into lowering the number.
+    """
+    tree.write(
+        "crates/rsk-c/src/glob_kani.rs",
+        'const HELP: &str = "set BOARD=<boards/*.toml>";\n' + fixture_harness(1),
+    )
+    problems = tree.problems()
+    assert only(problems, "FLOOR_all=3, and the crates on that tier carry 4")
+    assert only(problems, "COVERS_all=4, and the crates on that tier carry 5")
+
+
+def test_a_block_comment_left_open_is_refused(tree):
+    """The tripwire under the stripper: Rust that compiles never ends inside one."""
+    tree.write("crates/rsk-c/src/open_kani.rs", "/* never closed\n" + fixture_harness(0))
+    assert only(tree.problems(), "still open at end of file")
+
+
+def test_a_nested_block_comment_closes_once(tree):
+    """M3. Rust nests them; a scanner that does not, ends the comment early."""
+    tree.edit(
+        "crates/rsk-a/src/lib.rs",
+        "#[kani::proof]",
+        "/* outer /* inner */ #[kani::proof] fn ghost() {} */\n#[kani::proof]",
+    )
+    assert tree.problems() == []
+
+
+def test_two_harnesses_on_one_line_are_two(tree):
+    """M10. `findall`, not `search` — the shape a tidying pass would introduce."""
+    tree.edit(
+        "crates/rsk-c/src/lib.rs",
+        "#[kani::proof]\nfn p()",
+        "#[kani::proof] fn q() {} #[kani::proof]\nfn p()",
+    )
+    assert only(tree.problems(), "FLOOR_all=3, and the crates on that tier carry 4")
+
+
+def test_a_cover_outside_crates_is_an_orphan_too(tree):
+    """M4. The widened message covers both, and only the harness half was driven."""
+    tree.write("fuzz/fuzz_targets/c.rs", "fn f() { kani::cover!(true); }\n")
+    assert only(tree.problems(), "no tier can reach")
+
+
+def test_the_page_may_print_one_row_per_tier(tree):
+    """Finding 6. `finditer` into a dict is last-match-wins, and it scans the page.
+
+    A quick-reference table repeating a tier would decide the check instead of the
+    real one, silently — so a duplicate is itself the finding.
+    """
+    tree.edit(
+        kani_gate.DOCS,
+        "| `all` | 3 | 3 | 4 | 2 s | `rsk-c::p`, 2 s |",
+        "| `all` | 3 | 3 | 4 | 2 s | `rsk-c::p`, 2 s |\n\nrecap\n\n| `all` | 3 | 3 | 4 |",
+    )
+    assert only(tree.problems(), "prints 2 rows for `all`")
+
+
+@pytest.mark.parametrize("spelling", ["FLOOR_all=3  # three crates", '  FLOOR_all="3"'])
+def test_a_reformatted_floor_is_still_read(tree, spelling):
+    """Finding 7. It tolerated no comment, no quotes, no indent — and then said
+    the number was `None` over a file that plainly prints it."""
+    tree.edit(kani_gate.RUNNER, "FLOOR_all=3", spelling)
+    assert tree.problems() == []

@@ -267,10 +267,15 @@ genuinely reached. Reading the summary would have failed a correct harness and
 sent someone to repair it.
 
 That grouping is why `scripts/kani.sh` refuses `--jobs`. Extra arguments go
-through to `cargo kani`, `-Z unstable-options` is already on the command line, and
-parallel harnesses interleave `Checking harness` with another one's checks — the
-verdicts would then be filed under whichever harness printed last, quietly. The
-script exits 2 and says so rather than reading an interleaved log.
+through to `cargo kani`, and parallel harnesses would interleave `Checking
+harness` with another one's checks, filing every verdict under whichever printed
+last. On the pinned 0.67.0 that cannot actually happen: `--jobs` there *requires*
+`--output-format=terse` and refuses the combination otherwise, and a terse run
+carries no per-check listing at all — which the row already fails on, by name. So
+the refusal buys a message that says which flag and why, one step before a run
+that would otherwise die half an hour later on a confusing one. It is also the
+thing that has to be revisited if a later Kani lets the two combine, because then
+the interleaving becomes real and grouping by harness stops being safe.
 
 The split is by measured cost, not by guess (kani 0.67.0, 18-core Apple Silicon
 under load, 2026-08-13; "solve" excludes compilation, which dominates a cold
