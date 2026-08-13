@@ -203,6 +203,27 @@ impl Queued {
     }
 }
 
+/// The two handles the panel and the worker hold jointly, where a board has two
+/// globals: the local-PIN event `EmuHooks` consumes before the next CBOR command
+/// (`firmware/src/handler.rs`'s `LOCAL_PIN_CHANGED`), and the USB attach clock a
+/// power cycle restarts (`crate::usb_attach`). One clock, not two, is what stops a
+/// panel-originated audit entry and a host-originated one from being stamped on
+/// different ones — which is the whole point of `Hooks::attach_elapsed_ms`.
+#[derive(Clone)]
+pub struct PanelLinks {
+    pub local_pin: Rc<Cell<bool>>,
+    pub attach: Rc<Cell<Instant>>,
+}
+
+impl Default for PanelLinks {
+    fn default() -> Self {
+        Self {
+            local_pin: Rc::new(Cell::new(false)),
+            attach: Rc::new(Cell::new(Instant::now())),
+        }
+    }
+}
+
 /// The transports' end of the device thread's queue.
 #[derive(Clone)]
 pub struct Jobs {
@@ -315,14 +336,15 @@ pub fn run(
     // is a *type*, not a value — so the split is here and everything below is
     // generic over it. With `--display` it is the trusted screen in a window,
     // driven by the same `rsk_display` flow the board runs.
+    let links = PanelLinks::default();
     if cfg.display {
-        let (parts, quit) = crate::display::open(taps, jobs.queued(), signals.clone());
+        let (parts, quit) =
+            crate::display::open(taps, jobs.queued(), signals.clone(), links.clone());
         let _ = quit;
-        serve_display(cfg, jobs, signals, fs, rng, parts);
+        serve_display(cfg, jobs, signals, fs, rng, parts, links);
     } else {
         let presence = RefCell::new(EmuPresence::new(cfg.presence, lines, signals.clone()));
-        let local_pin = Rc::new(Cell::new(false));
-        crate::park::block_on(serve(cfg, jobs, signals, local_pin, fs, rng, &presence));
+        crate::park::block_on(serve(cfg, jobs, signals, links, fs, rng, &presence));
     }
 }
 
@@ -341,12 +363,12 @@ pub fn serve_display<P, T>(
     fs: &'static RefCell<Fs<crate::store::EmuStore>>,
     rng: &'static RefCell<EmuRng>,
     parts: crate::display::PanelParts<P, T>,
+    links: PanelLinks,
 ) where
     P: embedded_graphics::draw_target::DrawTarget<Color = embedded_graphics::pixelcolor::Rgb565>
         + 'static,
     T: rsk_display::TouchPad + 'static,
 {
-    let local_pin = parts.hooks.local_pin_signal();
     let ui = Box::leak(Box::new(RefCell::new(rsk_display::Ui::new(
         parts.panel,
         parts.touch,
@@ -366,7 +388,7 @@ pub fn serve_display<P, T>(
     let presence = RefCell::new(rsk_display::TouchPresence::new(ui));
     crate::park::block_on(embassy_futures::select::select(
         rsk_display::status_loop(ui),
-        serve(cfg, jobs, signals, local_pin, fs, rng, &presence),
+        serve(cfg, jobs, signals, links, fs, rng, &presence),
     ));
 }
 
@@ -380,7 +402,7 @@ async fn serve<PR: rsk_device::UserPresence + 'static>(
     cfg: Config,
     jobs: JobSource,
     signals: Arc<Signals>,
-    local_pin: Rc<Cell<bool>>,
+    links: PanelLinks,
     fs: &'static RefCell<Fs<crate::store::EmuStore>>,
     rng: &'static RefCell<EmuRng>,
     presence: &RefCell<PR>,
@@ -439,7 +461,7 @@ async fn serve<PR: rsk_device::UserPresence + 'static>(
     // device's — one static there, one `Rc<Cell>` here.
     let hooks = RefCell::new(EmuHooks {
         warm: false,
-        local_pin,
+        local_pin: links.local_pin,
     });
     let vendor_platform = EmuVendorPlatform::default();
     let reboot_requested = vendor_platform.reboot.clone();
@@ -472,8 +494,9 @@ async fn serve<PR: rsk_device::UserPresence + 'static>(
 
     // Time is measured from the USB *attach*, not from process start: the CTAP 2.1
     // §6.6 reset window a host has to hit runs from the moment the device could
-    // answer at all, so a replug has to restart it (`usb_attach::elapsed_ms`).
-    let mut attach = Instant::now();
+    // answer at all, so a replug has to restart it (`usb_attach::elapsed_ms`). The
+    // panel reads the same cell, so both stamp on one clock.
+    links.attach.set(Instant::now());
 
     eprintln!("emu: device ready — serial {}", hex(&serial_id));
 
@@ -488,7 +511,7 @@ async fn serve<PR: rsk_device::UserPresence + 'static>(
             }
             Err(TryRecvError::Disconnected) => break,
         };
-        let now_ms = attach.elapsed().as_millis() as u64;
+        let now_ms = links.attach.get().elapsed().as_millis() as u64;
         // Whose a touch wait this job starts would be. One presence backend serves
         // every transport, so without this the FIDO keepalive and the OTP status
         // frame both announce whichever wait is running — `firmware/src/worker.rs`
@@ -587,7 +610,7 @@ async fn serve<PR: rsk_device::UserPresence + 'static>(
                     devk_source,
                 );
                 ccid.refresh_enabled();
-                attach = Instant::now();
+                links.attach.set(Instant::now());
                 eprintln!("emu: replugged — fresh session, reset window open");
                 Some(Vec::new())
             }

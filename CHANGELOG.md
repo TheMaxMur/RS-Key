@@ -149,6 +149,13 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   while the key is idle still counts. The logic moved to `rsk_device::click`,
   where it is host-tested. **bcdDevice → 0x0902.**
 
+- **The panel and the worker share one attach clock under `rsk-emu --display`.**
+  `Hooks::attach_elapsed_ms` exists so a panel-originated audit entry is stamped on
+  the same clock as a host-originated one; the emulator's panel measured from
+  process start while the worker measured from the attach, which `Job::Replug`
+  restarts. After a power cycle the two diverged by however long the session had
+  been running. On a board both read `usb_attach::elapsed_ms`.
+
 - **An RSA key can be generated from `rsk-emu --display`'s own screen.** The panel
   asks the board for the prime search, and `rsk_display::Hooks`' default answer is
   "no accelerator **and** no key" — so the emulator, which implemented none, failed

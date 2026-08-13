@@ -19,7 +19,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::Arc;
 
-use crate::device::Queued;
+use crate::device::{PanelLinks, Queued};
 use crate::signals::Signals;
 use crate::taps::TapPad;
 
@@ -215,12 +215,10 @@ pub struct EmuDisplayHooks {
     led: Cell<u8>,
     timeout_ms: Cell<u32>,
     reboot: Cell<bool>,
-    /// A local PIN event the host side has to act on. Shared with [`EmuHooks`],
-    /// which consumes it before the next CBOR command — the emulator's analog of
-    /// `firmware/src/handler.rs`'s `LOCAL_PIN_CHANGED`.
-    ///
-    /// [`EmuHooks`]: crate::device::EmuHooks
-    pin_changed: Rc<Cell<bool>>,
+    /// The local-PIN event and the attach clock, both shared with the worker half
+    /// — a board reaches the same two through `crate::handler` and
+    /// `crate::usb_attach`.
+    links: PanelLinks,
     /// Host requests the device thread has not picked up. A modal holds the single
     /// executor, so this is the only way the flow can learn one is waiting.
     queued: Queued,
@@ -229,7 +227,6 @@ pub struct EmuDisplayHooks {
     /// routes the three hooks below into `presence::ARBITER` for the same reason:
     /// a panel that keeps them to itself is a second copy nobody can see.
     signals: Arc<Signals>,
-    started: Option<std::time::Instant>,
 }
 
 impl EmuDisplayHooks {
@@ -238,6 +235,7 @@ impl EmuDisplayHooks {
         wake: Rc<Cell<bool>>,
         queued: Queued,
         signals: Arc<Signals>,
+        links: PanelLinks,
     ) -> Self {
         Self {
             duty,
@@ -245,16 +243,10 @@ impl EmuDisplayHooks {
             led: Cell::default(),
             timeout_ms: Cell::new(30_000),
             reboot: Cell::new(false),
-            pin_changed: Rc::new(Cell::new(false)),
+            links,
             queued,
             signals,
-            started: Some(std::time::Instant::now()),
         }
-    }
-
-    /// The handle the worker half reads the panel's PIN events through.
-    pub fn local_pin_signal(&self) -> Rc<Cell<bool>> {
-        self.pin_changed.clone()
     }
 }
 
@@ -271,10 +263,10 @@ impl rsk_display::Hooks for EmuDisplayHooks {
     fn set_led_status(&mut self, status: u8) {
         self.led.set(status);
     }
+    /// The worker's clock, not one of the panel's own: `Job::Replug` restarts it,
+    /// and an audit entry stamped here has to sort against a host-stamped one.
     fn attach_elapsed_ms(&self) -> u64 {
-        self.started
-            .map(|s| s.elapsed().as_millis() as u64)
-            .unwrap_or(0)
+        self.links.attach.get().elapsed().as_millis() as u64
     }
     fn host_request_pending(&self) -> bool {
         self.queued.any()
@@ -295,13 +287,13 @@ impl rsk_display::Hooks for EmuDisplayHooks {
         self.reboot.get()
     }
     fn note_local_pin_changed(&mut self) {
-        self.pin_changed.set(true);
+        self.links.local_pin.set(true);
     }
     /// Both events mean the same thing to the worker — end the RAM
     /// `pinUvAuthToken` before the next CBOR command — so they share one flag, as
     /// `firmware/src/display.rs` maps them to one signal.
     fn note_local_pin_failed(&mut self) {
-        self.pin_changed.set(true);
+        self.links.local_pin.set(true);
     }
     fn set_up_pending(&mut self, pending: bool) {
         self.signals.set_up_pending(pending);
@@ -365,6 +357,7 @@ pub fn open(
     taps: Option<TapPad>,
     queued: Queued,
     signals: Arc<Signals>,
+    links: PanelLinks,
 ) -> (PanelParts<Panel, Touch>, Rc<Cell<bool>>) {
     let panel = Panel::new();
     let quit = Rc::new(Cell::new(false));
@@ -381,7 +374,7 @@ pub fn open(
         PanelParts {
             panel,
             touch,
-            hooks: EmuDisplayHooks::new(duty, wake, queued, signals),
+            hooks: EmuDisplayHooks::new(duty, wake, queued, signals, links),
         },
         quit,
     )

@@ -26,7 +26,7 @@ use rsk_fido::consts::{
 };
 
 use super::*;
-use crate::device::{Config, Job, Jobs, job_queue, serve_display};
+use crate::device::{Config, Job, Jobs, PanelLinks, job_queue, serve_display};
 use crate::presence::PresenceMode;
 use crate::signals::Signals;
 use crate::taps::{Tap, TapPad};
@@ -518,7 +518,9 @@ fn drive(jobs: Jobs, taps: SyncSender<Tap>, _signals: Arc<Signals>) {
 /// of its own — `serve_display` owns the caller's thread the way `device::run`
 /// owns the process's, and returns when the driver drops its sender, so a driver
 /// panic ends the run and `join` re-raises it.
-fn panel_bench(host: impl FnOnce(Jobs, SyncSender<Tap>, Arc<Signals>) + Send + 'static) {
+fn panel_bench(
+    host: impl FnOnce(Jobs, SyncSender<Tap>, Arc<Signals>) + Send + 'static,
+) -> PanelLinks {
     let store = crate::store::open(None, None).expect("a memory-backed store");
     let fs: &'static RefCell<rsk_fs::Fs<crate::store::EmuStore>> =
         Box::leak(Box::new(RefCell::new(rsk_fs::Fs::new(store))));
@@ -543,6 +545,7 @@ fn panel_bench(host: impl FnOnce(Jobs, SyncSender<Tap>, Arc<Signals>) + Send + '
     let (jobs_tx, jobs_rx) = job_queue();
     let queued = jobs_rx.queued();
     let signals = Arc::new(Signals::default());
+    let links = PanelLinks::default();
     // One slot, which is what makes the script self-pacing — see `push`.
     let (taps_tx, taps_rx) = mpsc::sync_channel(1);
     let driver = {
@@ -566,10 +569,13 @@ fn panel_bench(host: impl FnOnce(Jobs, SyncSender<Tap>, Arc<Signals>) + Send + '
                 Rc::new(Cell::new(false)),
                 queued,
                 signals,
+                links.clone(),
             ),
         },
+        links.clone(),
     );
     driver.join().expect("the host thread");
+    links
 }
 
 /// The other half of the same executor: an open menu must hand it back when a
@@ -613,24 +619,79 @@ fn drive_menu_yield(jobs: Jobs, taps: SyncSender<Tap>, _signals: Arc<Signals>) {
 
 #[test]
 fn a_wrong_clientpin_at_the_panel_ends_the_hosts_pin_token() {
-    panel_bench(drive);
+    let _ = panel_bench(drive);
 }
 
 #[test]
 fn an_open_menu_hands_the_executor_back_when_a_host_command_lands() {
-    panel_bench(drive_menu_yield);
+    let _ = panel_bench(drive_menu_yield);
 }
 
-/// The smallest RSA modulus the PIV and OpenPGP keygen screens offer, so this runs
-/// the real search at the size a person is most likely to pick.
+/// How long the driver below spends before the replug, and how fresh the clock
+/// must read afterwards. The gap between them is what says the clock restarted
+/// rather than having been running all along.
+const PRE_REPLUG_MS: u64 = 600;
+const FRESH_CLOCK_MS: u128 = 250;
+
+/// Burn a measurable amount of the attach clock, then power-cycle.
+fn drive_replug(jobs: Jobs, _taps: SyncSender<Tap>, _signals: Arc<Signals>) {
+    assert_eq!(ask(&jobs, get_info_req())[0], CTAP2_OK, "getInfo");
+    std::thread::sleep(Duration::from_millis(PRE_REPLUG_MS));
+    let (reply, answer) = mpsc::channel();
+    jobs.send(Job::Replug, reply)
+        .expect("the device thread is alive");
+    answered(&answer);
+}
+
+/// A power cycle restarts the clock the panel stamps with, because it is the
+/// worker's clock and not one of the panel's own. `Job::Replug` reopens the CTAP
+/// 2.1 §6.6 reset window by restarting it; a panel measuring from process start
+/// would go on stamping audit entries against a window that had already moved.
+#[test]
+fn a_replug_restarts_the_clock_the_panel_stamps_with() {
+    let links = panel_bench(drive_replug);
+    let since = links.attach.get().elapsed().as_millis();
+    assert!(
+        since < FRESH_CLOCK_MS,
+        "the attach clock reads {since} ms after a replug — it never restarted"
+    );
+}
+
+/// …and the panel really reads that cell. One line each side, and the whole point
+/// of `Hooks::attach_elapsed_ms` is that both sides read one clock.
+#[test]
+fn the_panel_reads_the_workers_attach_clock() {
+    let links = PanelLinks::default();
+    let hooks = EmuDisplayHooks::new(
+        Rc::new(Cell::new(rsk_display::BL_TOP)),
+        Rc::new(Cell::new(false)),
+        crate::device::Queued::default(),
+        Arc::new(Signals::default()),
+        links.clone(),
+    );
+    std::thread::sleep(Duration::from_millis(FRESH_CLOCK_MS as u64));
+    assert!(
+        rsk_display::Hooks::attach_elapsed_ms(&hooks) >= FRESH_CLOCK_MS as u64,
+        "the panel's clock is not running"
+    );
+    // What `serve` does on `Job::Replug`.
+    links.attach.set(Instant::now());
+    assert!(
+        rsk_display::Hooks::attach_elapsed_ms(&hooks) < FRESH_CLOCK_MS as u64,
+        "the worker restarted the clock and the panel did not notice"
+    );
+}
+
+/// The smallest RSA modulus the PIV and OpenPGP keygen screens offer, so the test
+/// runs the real search at the size a person is most likely to pick.
 const RSA_BITS: usize = 2048;
 
-/// The panel can generate an RSA key, which is the whole of E152: the hook was left
-/// at `rsk_display::Hooks`'s default `None`, and *that* trait reads `None` as "no
-/// accelerator **and** no key", so `piv_store_generated` reported a failure on a
-/// build where the same generate over the wire succeeded. `rsk_device::Hooks`'s
+/// The panel can generate an RSA key, which is the whole of E152: the hook was
+/// left at `rsk_display::Hooks`'s default `None`, and *that* trait reads `None` as
+/// "no accelerator **and** no key", so `piv_store_generated` reported a failure on
+/// a build where the same generate over the wire succeeded. `rsk_device::Hooks`'s
 /// identically-named default means the opposite — fall through to the applet's own
-/// single-core path — which is the path this now runs.
+/// single-core path — which is exactly the path this now runs.
 #[test]
 fn the_panel_generates_the_rsa_key_the_wire_can() {
     let mut hooks = EmuDisplayHooks::new(
@@ -638,6 +699,7 @@ fn the_panel_generates_the_rsa_key_the_wire_can() {
         Rc::new(Cell::new(false)),
         crate::device::Queued::default(),
         Arc::new(Signals::default()),
+        PanelLinks::default(),
     );
     let mut rng = crate::rng::EmuRng::from_seed(&[0xa7; 32]);
     let mut ticks = 0usize;
@@ -646,8 +708,8 @@ fn the_panel_generates_the_rsa_key_the_wire_can() {
         rsk_display::Hooks::rsa_search_progress(&mut hooks, RSA_BITS, &mut rng, &mut || ticks += 1)
             .expect("the panel has a single-core path to fall through to, as the wire does");
 
-    // The applet's own encoder taking the key is what says it is a usable one of the
-    // size asked for, without this test learning the `rsa` crate's API.
+    // The applet's own encoder taking the key is what says it is a usable one of
+    // the size asked for, without this test learning the `rsa` crate's API.
     let mut out = [0u8; 1024];
     let n = rsk_openpgp::keys::make_rsa_response(&key, &mut out);
     assert!(
@@ -721,5 +783,5 @@ fn drive_panel_presence(jobs: Jobs, taps: SyncSender<Tap>, signals: Arc<Signals>
 
 #[test]
 fn the_panels_presence_flags_are_the_transports() {
-    panel_bench(drive_panel_presence);
+    let _ = panel_bench(drive_panel_presence);
 }
