@@ -31,16 +31,16 @@ EXTENDS Naturals, FiniteSets
 CONSTANTS
     RPs,                \* relying parties (>= 2 to exercise rpId binding)
     Channels,           \* CTAPHID channel ids (>= 2 to exercise walk ownership)
-    MaxRetries,         \* models MAX_PIN_RETRIES = 8   (consts.rs:313)
-    MismatchLimit,      \* models PIN_MISMATCH_LIMIT = 3 (consts.rs:317)
+    MaxRetries,         \* models MAX_PIN_RETRIES = 8   (consts.rs:314)
+    MismatchLimit,      \* models PIN_MISMATCH_LIMIT = 3 (consts.rs:318)
     MaxClock,           \* coarse tick ceiling
-    ResetWindow         \* models RESET_WINDOW_MS = 10_000 (consts.rs:344)
+    ResetWindow         \* models RESET_WINDOW_MS = 10_000 (consts.rs:345)
 
 (* Mutation switches. All FALSE is the shipped tree. Each rebuilds one real  *)
 (* defect; `formal/README.md` maps every switch to its commit or audit id.   *)
 CONSTANTS
     BugResetGatesFirst,           \* reset.rs:57-58   two-phase wipe order
-    BugCredBeforeRp,              \* credential.rs:804-814 registration order
+    BugCredBeforeRp,              \* credential.rs:807-826 registration order
     BugTokenSurvivesPinChange,    \* clientpin.rs:311  resetPinUvAuthToken
     BugSetPinKeepsPpuat,          \* clientpin.rs:213-217
     BugChangePinKeepsPpuat,       \* clientpin.rs:300-304
@@ -51,8 +51,9 @@ CONSTANTS
     BugSoftLockLostOnWarmReset,   \* ctap.rs:215-222   PinLock across sys_reset
     BugWarmResetReopensWindow,    \* reset.rs:130-132  in_reset_window
     BugCmWalkIgnoresChannel,      \* state.rs:169-179  may_walk_rps
-    BugDeleteRpBeforeCred,        \* credmgmt.rs:659-665 deleteCredential order
-    BugBackupSealedNotAGate       \* reset.rs:110-123  is_fido_gate_fid (run-36)
+    BugDeleteRpBeforeCred,        \* credmgmt.rs:664-671 deleteCredential order
+    BugBackupSealedNotAGate,      \* reset.rs:110-123  is_fido_gate_fid (run-36)
+    BugWrongPinKeepsToken         \* clientpin.rs:779  the pre-E38 tree
 
 (* A PROPOSED fix, not a defect: order phase 1 of the reset sweep so no EF_RP  *)
 (* entry is dropped while its EF_CRED record is still live. The shipped        *)
@@ -276,8 +277,8 @@ TouchTimeout ==
 (***************************************************************************)
 
 \* THE FOUR CALL SITES DO NOT TEST THE SAME THING, and the difference is
-\* load-bearing. makeCredential (makecredential.rs:437-441) and getAssertion
-\* (getassertion.rs:376-379) test the MAC, `user_verified()` -- which is
+\* load-bearing. makeCredential (makecredential.rs:454-457) and getAssertion
+\* (getassertion.rs:384-387) test the MAC, `user_verified()` -- which is
 \* `in_use && user_verified` (state.rs:623-625) -- the permission bit and the
 \* rpId binding. authenticatorConfig (config.rs:222-224) and
 \* credentialManagement (credmgmt.rs:277) test the MAC and the permission bit
@@ -292,7 +293,7 @@ TokenGuardUv(p, rp) ==
     /\ plat.held /\ plat.verifies
     /\ tok.live                            \* user_verified(): in_use && uv
     /\ p \in tok.perms
-    /\ (tok.rp = NoRp \/ tok.rp = rp)      \* getassertion.rs:378 rpId binding
+    /\ (tok.rp = NoRp \/ tok.rp = rp)      \* getassertion.rs:387 rpId binding
 
 \* config.rs:222-224 / credmgmt.rs:277 -- no `in_use` conjunct exists here.
 TokenGuardBare(p, rp) ==
@@ -309,7 +310,7 @@ TokenPolicy(p, rp) ==
     /\ (tok.rp = NoRp \/ tok.rp = rp)
 
 \* UV is required when a clientPIN exists or alwaysUv is on; otherwise a touch
-\* alone authorizes (getassertion.rs:377 `if uv_required`).
+\* alone authorizes (getassertion.rs:385 `if uv_required`).
 UvRequired == pin.set \/ gate.alwaysUv
 
 OpGuard(p, rp)  == IF UvRequired THEN TokenGuardUv(p, rp) ELSE TRUE
@@ -342,13 +343,13 @@ PinAttempt(correct) ==
     /\ viol' = IF PinAttemptPolicy THEN viol
                                    ELSE viol \cup {"NoAuthorizationBypass"}
     /\ IF correct
-         THEN \* clientpin.rs:790-791 reset the budget and the mismatch batch.
+         THEN \* clientpin.rs:798-799 reset the budget and the mismatch batch.
               /\ pin' = [pin EXCEPT !.retries = MaxRetries]
               /\ lock' = [soft |-> FALSE, mism |-> 0, policyMism |-> 0]
          ELSE LET r == pin.retries - 1 IN
               /\ pin' = [pin EXCEPT !.retries = r]
               /\ lock' = IF r = 0
-                           THEN lock            \* clientpin.rs:772-776 hard lock
+                           THEN lock            \* clientpin.rs:780-785 hard lock
                            ELSE [lock EXCEPT
                                    !.mism = lock.mism + 1,
                                    !.policyMism =
@@ -370,11 +371,23 @@ GetPinToken(ps, r) ==
     /\ upSpent' = FALSE
     /\ UNCHANGED << gate, store, pres, sys, op, snap >>
 
+\* clientpin.rs:771 regenerates the ECDH key on a mismatch and :779 drops any
+\* outstanding pinUvAuthToken with it, through all three doors -- measured off a
+\* YubiKey rather than taken from the spec, and it is the safe direction. The
+\* model used to say the token was untouched here, which is the tree as it stood
+\* BEFORE that landed; BugWrongPinKeepsToken is that tree.
 WrongPin ==
     /\ PinAttempt(FALSE)
-    \* clientpin.rs:771 regenerates the ECDH key on mismatch; the session token
-    \* is not rotated, so the platform's copy is untouched here.
-    /\ UNCHANGED << gate, store, tok, plat, pres, walk, sys, op, snap, upSpent >>
+    /\ tok'  = IF BugWrongPinKeepsToken
+                 THEN tok ELSE [live |-> FALSE, perms |-> {}, rp |-> NoRp]
+    /\ plat' = [plat EXCEPT !.verifies = IF BugWrongPinKeepsToken
+                                           THEN plat.verifies ELSE FALSE,
+                            !.revoked = TRUE]
+    \* reset_pin_uv_auth_token calls cm.reset() (state.rs:487): the cursor dies
+    \* with the token that granted it.
+    /\ walk' = IF BugWrongPinKeepsToken THEN walk
+                                        ELSE [open |-> FALSE, chan |-> NoChan]
+    /\ UNCHANGED << gate, store, pres, sys, op, snap, upSpent >>
 
 \* getPinUvAuthTokenUsingPinWithPermissions with `pcmr`: mints the PERSISTENT
 \* token, a flash record that outlives the power cycle (clientpin.rs:408-413,
@@ -474,7 +487,7 @@ StopUsingToken ==
 (* makeCredential / getAssertion.                                          *)
 (***************************************************************************)
 
-\* makecredential.rs:439-448. Needs PERM_MC and a touch.
+\* makecredential.rs:452-460. Needs PERM_MC and a touch.
 RegisterStart(r, t) ==
     /\ Idle
     /\ pres.scope = NoOwner
@@ -525,7 +538,7 @@ RegisterWriteB ==
     /\ op' = NoOp
     /\ UNCHANGED << pin, gate, lock, tok, plat, walk, sys, snap, upSpent, viol >>
 
-\* getassertion.rs:377-387. Needs PERM_GA, the rpId binding, and a touch.
+\* getassertion.rs:382-390. Needs PERM_GA, the rpId binding, and a touch.
 AssertStart(r, t) ==
     /\ Idle
     /\ pres.scope = NoOwner
@@ -640,7 +653,7 @@ CmNext(ch) ==
     /\ UNCHANGED << pin, gate, store, lock, tok, plat, pres, walk, sys, op,
                     snap, upSpent >>
 
-\* 0x06 deleteCredential (credmgmt.rs:652-706). It calls verify_cm_token
+\* 0x06 deleteCredential (credmgmt.rs:657-711). It calls verify_cm_token
 \* DIRECTLY rather than going through authorize_cm, so the persistent grant
 \* authorizes no writes -- which is why CmBeginViaPpuat has no delete twin.
 DeleteCredStart(r) ==
@@ -655,7 +668,7 @@ DeleteCredStart(r) ==
                     upSpent >>
 
 \* Two flash writes, so a cut has a position: `delete_credential` drops the
-\* EF_CRED record first (credmgmt.rs:659-661) and `decrement_rp` deletes the
+\* EF_CRED record first (credmgmt.rs:664-666) and `decrement_rp` deletes the
 \* EF_RP entry only once its count reaches zero (:697-699). That order leaves a
 \* torn delete showing an RP entry with no credential -- invisible but harmless.
 \* Reversed, it strands exactly the credential finding 1 strands.
