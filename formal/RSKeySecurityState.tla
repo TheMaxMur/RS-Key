@@ -264,6 +264,11 @@ WaitOpen == pres.scope # NoOwner /\ pres.granted = "none"
 \* host command only outside a hold (crates/rsk-display/src/lib.rs:190-196), so
 \* the firmware never reassigns WAIT_SCOPE out from under a live ceremony.
 \*
+\* FOUR sites carry it: RegisterStart, AssertStart, ResetStart and
+\* LocalCeremonyStart. BugHostPreemptsLocalWait keeps the name of the case it was
+\* found on -- a host command over a live on-panel ceremony -- and loosens all
+\* four, because it is one rule with one meaning.
+\*
 \* This was an enabling conjunct on all three *Start actions and nothing more,
 \* which is the family that hid the presence gate over 9 658 460 states: a step
 \* that is merely never ENABLED cannot notice a build that stopped refusing.
@@ -406,12 +411,22 @@ TouchTimeout ==
 \* (firmware/src/presence.rs:99-106) and the panel's own release debounce takes
 \* over the `spent` latch, so the model keeps a defence the display build
 \* implements somewhere else rather than one it does not have.
+\* THE FOURTH SITE OF THE SAME RULE, and it was the one still written as a bare
+\* conjunct after the other three got their Policy. `pres.scope = NoOwner` here
+\* is one-hold-one-ceremony seen from the panel's side; removing it let an OTP
+\* frame take the button from a live on-panel flow and back, and left the
+\* reachable space BIT-IDENTICAL at 7 903 336 states (reduced constants) with
+\* 4.8 M extra transitions -- the same mechanism as the host half, since
+\* OpenWaitFor overwrites scope, cancelReq, cancelBy and granted and leaves
+\* nothing to record who held it first.
 LocalCeremonyStart(o) ==
     /\ Idle
-    /\ pres.scope = NoOwner
+    /\ ButtonFreeGuard
+    /\ viol' = IF ButtonFreePolicy THEN viol
+                                   ELSE viol \cup {"NoAuthorizationBypass"}
     /\ pres' = OpenWaitFor(o)
     /\ UNCHANGED << pin, gate, store, lock, tok, plat, walk, sys, op, snap,
-                    upSpent, viol, ram >>
+                    upSpent, ram >>
 
 \* The ceremony ends and WAIT_SCOPE goes back to SCOPE_NONE.
 LocalCeremonyEnds ==
