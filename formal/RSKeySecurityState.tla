@@ -58,6 +58,14 @@ CONSTANTS
     BugWrongPinKeepsToken,        \* clientpin.rs:779  the pre-E38 tree
     BugSeedDoesNotLead            \* reset.rs:61-65 / fs.rs `first`, pre-0x08BF
 
+(* Mutation switches for the LIVENESS properties. Kept apart from the set above *)
+(* because they break no invariant -- a wedge is a perfectly safe state -- so    *)
+(* listing them in the safety matrix would mean 3 mutants nothing catches.       *)
+CONSTANTS
+    BugAssertWedgesOnTimeout,     \* getassertion.rs: only a confirm completes it
+    BugWaitScopeNotCleared,       \* worker.rs:521  set_wait_scope(SCOPE_NONE)
+    BugWalkNeverExpires           \* state.rs:613-619 expire_stale_sequences
+
 (* A PROPOSED fix, not a defect: order phase 1 of the reset sweep so no EF_RP  *)
 (* entry is dropped while its EF_CRED record is still live. The shipped        *)
 (* `sweep` batches both in `for_each_key` order, which fs.rs:238-241 documents *)
@@ -209,8 +217,11 @@ OpenWaitFor(t) ==
 \* nobody's to cancel (crates/rsk-device/src/presence.rs:103-105), and
 \* :226 clears a cancel that raced in.
 ClosedWait(p) ==
-    [p EXCEPT !.scope = NoOwner, !.cancelReq = FALSE, !.cancelBy = NoOwner,
-              !.granted = "none"]
+    IF BugWaitScopeNotCleared
+      THEN [p EXCEPT !.cancelReq = FALSE, !.cancelBy = NoOwner,
+                     !.granted = "none"]
+      ELSE [p EXCEPT !.scope = NoOwner, !.cancelReq = FALSE,
+                     !.cancelBy = NoOwner, !.granted = "none"]
 
 \* The user's finger. PressUp clears `spent` exactly as
 \* crates/rsk-device/src/presence.rs:207 does.
@@ -601,7 +612,8 @@ AssertStart(r, t) ==
 
 AssertFinish ==
     /\ op.kind = "assert"
-    /\ pres.granted # "none"
+    /\ IF BugAssertWedgesOnTimeout THEN pres.granted = "confirm"
+                                   ELSE pres.granted # "none"
     /\ tok' = IF pres.granted = "confirm" THEN ConsumedTok ELSE tok
     /\ upSpent' = IF pres.granted = "confirm" THEN TRUE ELSE upSpent
     /\ pres' = ClosedWait(pres)
@@ -939,10 +951,24 @@ Tick ==
     /\ UNCHANGED << pin, gate, store, lock, tok, plat, pres, walk, op, snap,
                     upSpent, viol >>
 
+\* expire_stale_sequences (state.rs:613-619): an enumerate cursor idle past
+\* STATEFUL_WALK_IDLE_MS is reset, WHATEVER opened it. The model closed a walk
+\* only through the session token, and that docstring says in as many words why
+\* the token is not enough -- "a `pcmr` token never expires", so a walk opened by
+\* the persistent grant had no closer at all here. Modelled as always enabled,
+\* like the other timers.
+WalkExpires ==
+    /\ ~BugWalkNeverExpires
+    /\ walk.open
+    /\ walk' = [open |-> FALSE, chan |-> NoChan]
+    /\ UNCHANGED << pin, gate, store, lock, tok, plat, pres, sys, op, snap,
+                    upSpent, viol >>
+
 (***************************************************************************)
 
 Next ==
     \/ PressDown \/ PressUp \/ HostCancel \/ HostCancelLatched
+    \/ WalkExpires
     \/ TouchConfirm \/ TouchCancel \/ TouchTimeout
     \/ \E ps \in PermSets, r \in RPs \cup {NoRp} : GetPinToken(ps, r)
     \/ WrongPin \/ MintPpuat
@@ -963,6 +989,62 @@ Next ==
     \/ PowerCut \/ WarmReset \/ Tick
 
 Spec == Init /\ [][Next]_vars
+
+(***************************************************************************)
+(* LIVENESS. All six invariants are safety -- "the bad thing does not        *)
+(* happen" -- and a device that starts a ceremony and never finishes it       *)
+(* satisfies every one of them. A WEDGE is a liveness failure, and RS-Key has *)
+(* shipped one, so the safety-only reading was a real blind spot rather than  *)
+(* a theoretical one.                                                         *)
+(*                                                                            *)
+(* A fairness assumption that is not true of the implementation makes its      *)
+(* property meaningless, so each is justified against the code and the         *)
+(* environment gets NONE of them.                                             *)
+(***************************************************************************)
+
+\* WEAK fairness, and weak is the right strength for all three: each of these is
+\* continuously enabled from the moment it becomes enabled until it fires, so
+\* strong fairness would buy nothing and would assert more than the code does.
+\*
+\* The worker is synchronous -- one `Exchange` at a time, under a lock, and the
+\* dispatch runs to completion before the next is accepted (worker.rs:637-660).
+\* So every step that ADVANCES an in-flight sequence eventually happens: nothing
+\* in the firmware can park one. What it cannot survive is a power cut, and
+\* PowerCut is not fair, so "eventually" here still admits the cut.
+OpAdvances ==
+    \/ RegisterTouched \/ RegisterRefused \/ RegisterWriteA \/ RegisterWriteB
+    \/ AssertFinish
+    \/ SetPinClearPpuat \/ SetPinWrite
+    \/ ChangePinClearPpuat \/ ChangePinWrite \/ ChangePinRotateToken
+    \/ DeleteCredWriteA \/ DeleteCredWriteB
+    \/ ResetRefused \/ ResetConfirmed \/ ResetSweepSecrets \/ ResetSweepGates
+    \/ ResetFinish
+
+\* The presence wait carries PRESENCE_TIMEOUT_MS (presence.rs:270-272), so it
+\* resolves with no finger and no cancel. This is the assumption that makes
+\* every ceremony terminate, and it is the one the firmware most clearly owes.
+\*
+\* NOT fair, deliberately: PressDown, PressUp, HostCancel, HostCancelLatched,
+\* PowerCut, WarmReset, Tick and every *Start. Assuming a user eventually
+\* touches, a host eventually sends, or a device is eventually replugged would
+\* prove liveness the device does not have.
+FairSpec == Spec /\ WF_vars(OpAdvances)
+                 /\ WF_vars(TouchTimeout)
+                 /\ WF_vars(WalkExpires)
+
+\* No wedge: a ceremony that has begun reaches quiescence, by finishing, by
+\* being refused, or by losing power. This is the class the getAssertion wedge
+\* belongs to, and no invariant in this file can see it.
+EveryOpQuiesces == (op.kind # "none") ~> Idle
+
+\* The touch is one physical button shared by every applet, so a wait that never
+\* releases `WAIT_SCOPE` is not one stuck ceremony -- it is every later ceremony
+\* on any transport, and a cancel that can reach across.
+EveryWaitReleases == WaitOpen ~> (pres.scope = NoOwner)
+
+\* A stateful enumerate cursor is a per-channel resource; one left open forever
+\* is the same shape one leg down.
+EveryWalkCloses == walk.open ~> ~walk.open
 
 (***************************************************************************)
 (* THE INVARIANTS. The names are load-bearing: the same six must appear on  *)
