@@ -164,12 +164,15 @@ fn a_refused_set_code_leaves_the_installed_one_alone() {
 }
 
 #[test]
-fn the_two_documented_ways_to_remove_a_code_still_work() {
-    // `73 00` is the card's spelling. An absent body is the YKOATH document's
-    // ("If length 0 is sent, authentication is removed") — a 5.7.4 answers
-    // `6A80` to that one, and the divergence is the maintainer's call, not a
-    // fix's: copying the card would break a host that follows the document.
-    for body in [&tlv(TAG_KEY, &[])[..], &[][..]] {
+fn only_the_card_s_spelling_removes_a_code() {
+    // `73 00` is the card's spelling, and it is the one ykman sends. A body-less
+    // APDU is the YKOATH document's ("If length 0 is sent, authentication is
+    // removed") and a 5.7.4 answers `6A80` to it; we follow the card, which costs
+    // no functionality — the standing code survives the refusal either way.
+    for (body, want, removed) in [
+        (&tlv(TAG_KEY, &[])[..], Sw::OK, true),
+        (&[][..], Sw::INCORRECT_PARAMS, false),
+    ] {
         let (mut fs, rng) = fixture();
         let touch = RefCell::new(AlwaysConfirm);
         let mut app = OathApplet::new(SERIAL, [0x22; 32], None, &rng, &touch);
@@ -177,10 +180,32 @@ fn the_two_documented_ways_to_remove_a_code_still_work() {
         assert_eq!(validate(&mut app, &mut fs, &[0xABu8; 16]), Sw::OK);
         assert_eq!(
             run(&mut app, &mut fs, &apdu(INS_SET_CODE, 0, 0, body)).0,
-            Sw::OK
+            want,
+            "{body:02X?}"
         );
-        assert!(!code_installed(&mut app, &mut fs));
+        assert_eq!(code_installed(&mut app, &mut fs), !removed, "{body:02X?}");
+        // A refusal must leave the standing code opening the applet, not a card
+        // locked behind something neither side can now name.
+        if !removed {
+            assert_eq!(validate(&mut app, &mut fs, &[0xABu8; 16]), Sw::OK);
+        }
     }
+}
+
+#[test]
+fn a_body_less_set_code_is_refused_before_the_gate_it_would_open() {
+    // The refusal must not become a way past the access code: an unvalidated
+    // session gets `6982` and the code stays installed, exactly as before.
+    let (mut fs, rng) = fixture();
+    let touch = RefCell::new(AlwaysConfirm);
+    let mut app = OathApplet::new(SERIAL, [0x22; 32], None, &rng, &touch);
+    assert_eq!(set_code(&mut app, &mut fs, &[0xABu8; 16]), Sw::OK);
+    assert!(code_installed(&mut app, &mut fs));
+    assert_eq!(
+        run(&mut app, &mut fs, &apdu(INS_SET_CODE, 0, 0, &[])).0,
+        Sw::SECURITY_STATUS_NOT_SATISFIED
+    );
+    assert!(code_installed(&mut app, &mut fs));
 }
 
 #[test]

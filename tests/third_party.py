@@ -91,12 +91,15 @@ DIVERGENCES: dict[str, dict[str, str]] = {
         # invalid-curve defence; reaching the saltAuth check first would mean doing
         # ECDH with an attacker-chosen off-curve point.
         "test_035_hmac_secret.py::test_bad_auth": "the off-curve keyAgreement is refused before the salt MAC is looked at",
-        # After the card reset the test performs, no applet is selected, so a bare
-        # LIST is 6A82 (file not found) rather than 6982. Dropping the selection on
-        # a power transition is deliberate — it is what makes a second local
-        # process re-authenticate (ApduHandler::reset_card).
-        "test_070_oath.py::test_auth": "a card reset deselects the applet, so LIST without SELECT is 6A82",
-        "test_070_oath.py::test_noauth": "a card reset deselects the applet, so LIST without SELECT is 6A82",
+        # Both reach `SET CODE` with a 13-byte secret, so its `73` value is 14
+        # bytes where a YubiKey 5.7.4 takes 15..=65 — that is where they fail now
+        # (E59). Behind it, and the reason they were listed: after the card reset
+        # the test performs, no applet is selected, so a bare LIST is 6A82 (file
+        # not found) rather than 6982. Dropping the selection on a power transition
+        # is deliberate — it is what makes a second local process re-authenticate
+        # (ApduHandler::reset_card).
+        "test_070_oath.py::test_auth": "a 13-byte access code; and a card reset deselects the applet, so LIST without SELECT is 6A82",
+        "test_070_oath.py::test_noauth": "a 13-byte access code; and a card reset deselects the applet, so LIST without SELECT is 6A82",
         # These send CALCULATE with a bare `74` tag — no length byte, no value —
         # which is not a TLV. With the encoded empty challenge `74 00` that ykman
         # actually sends, RS-Key computes the same truncation these expect. It no

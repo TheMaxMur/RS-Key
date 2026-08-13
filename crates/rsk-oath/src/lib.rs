@@ -357,13 +357,9 @@ impl<'a> OathApplet<'a> {
             return Sw::SECURITY_STATUS_NOT_SATISFIED;
         }
         let data = &apdu.data[..apdu.nc];
-        if data.is_empty() {
-            let _ = fs.delete_key(EF_OATH_CODE);
-            self.validated = true;
-            return Sw::OK;
-        }
-        // `73 00` on its own is the card's spelling of "remove the access code";
-        // a `73` with key material and no proof after it is `6A80` there.
+        // `73 00` is the card's ONE spelling of "remove the access code" — the one
+        // ykman sends. A body-less APDU is `6A80` there despite YKOATH's "if length
+        // 0 is sent", and so is a `73` carrying key material with no proof after it.
         if let Some([key]) = parse_exact(data, [TAG_KEY]) {
             if !key.is_empty() {
                 return Sw::INCORRECT_PARAMS;

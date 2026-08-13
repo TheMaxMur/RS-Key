@@ -192,10 +192,11 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   both ways. The bound is on what `SET CODE` takes, never on what `VALIDATE` can
   read: a longer code stored by an older build still opens the applet, or the
   upgrade would lock its owner out. Unchanged and deliberate: an empty `73` value
-  *or* an empty body still removes the code. A 5.7.4 answers `6A80` to the second
-  spelling, but YKOATH's own text makes a zero length the way to remove
-  authentication, so that one cell is left as the document has it.
-  **bcdDevice → 0x08B3.**
+  still removes the code. (This entry also kept a **body-less** `SET CODE` doing
+  the same, citing YKOATH's own text. That cell was reconsidered against the card
+  and is refused now — see below. It predates this entry, so relative to released
+  0.4.9 it is a live behaviour change for a host that followed the document
+  rather than the card.) **bcdDevice → 0x08B3.**
 
 ### Changed
 
@@ -238,6 +239,18 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   old firmware accepted `'0'` from a host. Both codes are non-answers rather than
   data, `'0'` was our own invention, and the alternative is a byte the card reads
   out and refuses back. **bcdDevice → 0x08F2.**
+
+- **OATH `SET CODE` with no body at all is `6A80`, not "remove the access code".**
+  A YubiKey 5.7.4 refuses a body-less `SET CODE` and removes a code only for the
+  `73 00` spelling — the one ykman actually sends, and the one RS-Key already
+  implements. The earlier entry above kept the body-less form because YKOATH's own
+  document says "if length 0 is sent, authentication is removed"; measured against
+  the card, that sentence describes the `73` value's length and not the APDU's.
+  Reversing it costs no functionality and loses nothing: the removal a host
+  actually performs still works, and the refusal leaves the standing code opening
+  the applet rather than dropping it — checked both ways, including that an
+  unvalidated session still meets `6982` first and cannot use the refusal as a way
+  past the gate. **bcdDevice → 0x08F4.**
 
 - **PUT DATA judges the password before the tag.** The command carries its target
   in P1P2, and ours resolved that target first: an **unauthenticated** caller got
@@ -363,9 +376,11 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   **exactly 8 bytes**, the width of the challenge it hands out itself, and
   answers `6A80` to every other length with the installed code untouched.
   `ykman` 5.9.2 and Yubico Authenticator send `os.urandom(8)`, the vendored
-  YKOATH suite never calls `SET CODE`, and both ways of *removing* a code are
-  judged before the challenge is read — so nothing that works today starts
-  being refused. **bcdDevice → 0x08B9.**
+  YKOATH suite's three `SET CODE` calls are already listed as divergences on an
+  earlier rule, and *removing* a code is judged before the challenge is read — so
+  nothing that works today starts being refused. (This entry said "both ways of
+  removing"; the body-less spelling is refused now, see below.)
+  **bcdDevice → 0x08B9.**
 
 - **A wrong OATH access code answered the word for "there is no access
   code".** `VALIDATE` (`0xA3`) refused a proof that did not match with `6984`,

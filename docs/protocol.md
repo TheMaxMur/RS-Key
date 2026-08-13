@@ -157,8 +157,10 @@ are parsed **by position**: exactly the documented TLVs, in the documented
 order, with nothing before, between or after them — `71` then `74` for
 `CALCULATE`, **`75` then `74`** for `VALIDATE` (the response comes first, as
 ykman sends it), `73` then `74` then `75` for `SET CODE`, or a lone `73 00` to
-remove the code. A reordering, a repeated tag, an unknown tag or a trailing byte
-is `6A80`, with nothing stored. `CALCULATE ALL` is the one exception the card
+remove the code — that spelling and no other, so a `SET CODE` carrying **no body
+at all** is `6A80` and the standing code goes on opening the applet, as on a
+YubiKey. A reordering, a repeated tag, an unknown tag or a trailing byte is
+`6A80`, with nothing stored. `CALCULATE ALL` is the one exception the card
 makes: its `74` must be the **first** TLV, and whatever follows it is ignored.
 
 The sixth is what a truncated response carries. With `P2 = 0x01` the `76` TLV is
