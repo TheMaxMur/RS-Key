@@ -35,7 +35,7 @@ use rsk_usb::ccid::{
     xfr_apdu,
 };
 
-use crate::device::{Job, Jobs};
+use crate::device::{Job, Jobs, Unplug};
 
 /// A CCID message.
 const OP_CCID: u8 = 0x00;
@@ -72,7 +72,7 @@ pub fn serve(mut stream: TcpStream, jobs: Jobs, atr: &'static [u8]) -> io::Resul
 
         match op {
             OP_REPLUG => {
-                run(&jobs, Job::Replug)?;
+                run(&jobs, Job::Replug(Unplug::Operator))?;
                 status = STATUS_INACTIVE; // the card comes back unpowered
                 send(&mut stream, &[])?;
             }

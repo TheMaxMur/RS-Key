@@ -33,7 +33,7 @@ use embassy_usb::{Builder, Config as UsbConfig};
 use rsk_usb::ccid::{ApduHandler, Ccid};
 use rsk_usb::ctaphid::{CtapHid, FIDO_REPORT_DESCRIPTOR, HID_RPT_SIZE, MsgHandler};
 
-use crate::device::{Job, Jobs};
+use crate::device::{Job, Jobs, Unplug};
 use crate::signals::Signals;
 use crate::usbip::{Ret, Urb, UrbSink, UsbDeviceInfo};
 use crate::usbip_driver::UsbIpDriver;
@@ -330,8 +330,11 @@ struct PoweredPort {
 
 impl UrbSink for PoweredPort {
     fn attach(&mut self, rets: Sender<Ret>) {
+        // A host's, not an operator's: `listen` accepts imports in an unbounded
+        // loop, so this is repeatable at TCP-connect rate and must not be the
+        // un-floored kind an open modal yields to at once.
         let (tx, _rx) = mpsc::channel();
-        let _ = self.jobs.send(Job::Replug, tx);
+        let _ = self.jobs.send(Job::Replug(Unplug::Host), tx);
         self.inner.attach(rets);
     }
     fn submit(&mut self, urb: Urb) {

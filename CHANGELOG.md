@@ -99,6 +99,32 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   the floor is against a host *repeating* a command, and there is no repetition
   behind an operator pulling the key out. Nothing changes on a run without
   `--display`.
+- **An open browse screen no longer holds up `rsk-emu`'s power cycle.** The
+  harness's replug — the emulator's stand-in for pulling the key out, and what a
+  suite needs to reopen the CTAP 2.1 §6.6 reset window — is answered by the
+  device thread, which an on-panel modal holds. It is not a host request, so
+  nothing made the modal yield to it: measured, **60.17 s** under an open
+  Settings screen, against `tests/emu.py`'s 5 s socket timeout, so a suite that
+  resets would have reported that it could not replug. The menu, browse and
+  notice screens now hand the executor back for one within a poll, without the
+  floor a host command waits — that floor is against a host *repeating* a
+  command, and there is no repetition behind a person pulling the key out. A
+  USB/IP import queues the same power cycle and *is* repeatable, so it is
+  floored with the other host actions. What still holds a replug up is a screen
+  that polls no such hook — a PIN pad with a digit typed, or anything running
+  inside a dispatch — which on a board is answered by the power going away.
+  Nothing changes on a run without `--display`.
+
+- **A U2F command on a new CTAPHID channel no longer inherits another channel's
+  applet selection under `rsk-emu`.** The MSG applet selection is one global for
+  every channel and U2F has no SELECT of its own, so a board drops it when the
+  channel changes as well as on a `CTAPHID_INIT` (audit run-34 #27, run-35). The
+  emulator had only the INIT half — the one
+  `tests/15_u2f_vendor_msg_isolation.py` drives — so another process's vendor-AID
+  SELECT still sent a second channel's U2F REGISTER to `INS_INCREMENT`. It keeps
+  the board's `last_msg_cid` now. Its two CTAPHID transports still share one
+  channel-id space, so a socket channel and a USB/IP one with the same id are not
+  told apart; that is recorded, not fixed.
 
 - **`rsk-emu --display`'s window keeps drawing while the panel generates an RSA
   key.** The panel is a *buffer* here where a board's is the glass: nothing the

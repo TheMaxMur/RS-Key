@@ -151,7 +151,20 @@ pub enum Job {
     /// applet's security status, so a reconnect really does re-authenticate.
     ResetCard,
     /// The device was unplugged and plugged back in.
-    Replug,
+    Replug(Unplug),
+}
+
+/// Who pulled the plug.
+///
+/// A board cannot tell the two apart — power is power — but the emulator has two
+/// senders and only one of them is an operator: a USB/IP import is a *host*
+/// action, and a host can repeat it as fast as it can open a socket.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Unplug {
+    /// The harness's `OP_REPLUG`, which is a person pulling the key out.
+    Operator,
+    /// A USB/IP client attaching. Queued at TCP-connect rate if it wants to be.
+    Host,
 }
 
 impl Job {
@@ -166,7 +179,12 @@ impl Job {
     fn is_host_request(&self) -> bool {
         matches!(
             self,
-            Job::Cbor { .. } | Job::Msg { .. } | Job::Vendor { .. } | Job::Apdu(_) | Job::ResetCard
+            Job::Cbor { .. }
+                | Job::Msg { .. }
+                | Job::Vendor { .. }
+                | Job::Apdu(_)
+                | Job::ResetCard
+                | Job::Replug(Unplug::Host)
         )
     }
 }
@@ -178,7 +196,7 @@ pub struct Req {
 }
 
 /// How many host requests are queued for the device thread but not picked up yet,
-/// and whether a power cycle is.
+/// and whether an operator's power cycle is.
 ///
 /// The board reads the same fact off `firmware/src/worker.rs`'s `REQ.signaled()`,
 /// and an on-panel modal polls it to hand the parked worker its executor back
@@ -188,12 +206,12 @@ pub struct Req {
 #[derive(Clone, Default)]
 pub struct Queued {
     hosts: Arc<AtomicU32>,
-    /// …and whether a power cycle is. Counted apart, because a board has no such
-    /// job at all: an unplug is not a request, it is the power going away, and
-    /// what it does to an open modal is end it — instantly, and mid-hold. So the
-    /// panel yields to this one without `UI_YIELD_FLOOR_MS`, which exists to stop
-    /// a host *repeating* a command from holding the owner's screen shut; there
-    /// is no repetition behind an operator pulling the key out.
+    /// The operator's power cycle, counted apart: a board has no such job at all
+    /// — an unplug is not a request, it is the power going away, and what it does
+    /// to an open modal is end it at once. So the panel yields to this one without
+    /// `UI_YIELD_FLOOR_MS`, which exists to stop a host *repeating* a command from
+    /// holding the owner's screen shut. [`Unplug::Host`] is a host and is counted
+    /// with them, floor and all.
     unplugs: Arc<AtomicU32>,
 }
 
@@ -203,8 +221,8 @@ impl Queued {
         self.hosts.load(Ordering::Acquire) > 0
     }
 
-    /// …and is a power cycle?
-    pub fn unplugged(&self) -> bool {
+    /// Is an operator's power cycle?
+    pub fn unplug_pending(&self) -> bool {
         self.unplugs.load(Ordering::Acquire) > 0
     }
 
@@ -213,7 +231,7 @@ impl Queued {
     fn slot(&self, job: &Job) -> Option<&AtomicU32> {
         if job.is_host_request() {
             Some(&self.hosts)
-        } else if matches!(job, Job::Replug) {
+        } else if matches!(job, Job::Replug(Unplug::Operator)) {
             Some(&self.unplugs)
         } else {
             None
@@ -554,7 +572,7 @@ async fn serve<PR: rsk_device::UserPresence + 'static>(
             Job::Cbor { .. } | Job::Msg { .. } | Job::Vendor { .. } => signals::SCOPE_FIDO,
             Job::Apdu(_) | Job::ResetCard => signals::SCOPE_CCID,
             Job::OtpHid { .. } => signals::SCOPE_OTP,
-            Job::OtpStatus | Job::DeselectMsg | Job::Replug => signals::SCOPE_NONE,
+            Job::OtpStatus | Job::DeselectMsg | Job::Replug(_) => signals::SCOPE_NONE,
         });
         let out = match req.job {
             Job::Cbor { cid, data } => {
@@ -578,8 +596,8 @@ async fn serve<PR: rsk_device::UserPresence + 'static>(
             Job::Msg { cid, data } => {
                 // U2F has no SELECT of its own, so without this another process's
                 // SELECT of the vendor AID sends this one's REGISTER to
-                // `INS_INCREMENT`. `Job::DeselectMsg` is the other half — the
-                // board's `MSG_DESELECT`, set by every CTAPHID_INIT.
+                // `INS_INCREMENT`. The two transports share one id space, though,
+                // so a socket channel and a USB/IP one can still collide (E302).
                 if last_msg_cid.replace(cid) != Some(cid) {
                     ctap.deselect_msg();
                 }
@@ -636,7 +654,7 @@ async fn serve<PR: rsk_device::UserPresence + 'static>(
             // A power cycle: the store is flash and survives, everything in RAM
             // does not, and the attach clock restarts — which is what reopens the
             // §6.6 reset window that a warm reboot deliberately does not.
-            Job::Replug => {
+            Job::Replug(_) => {
                 ccid.reset_card();
                 power_up_bump();
                 hooks.borrow_mut().warm = false;

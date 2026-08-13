@@ -30,7 +30,7 @@ use rsk_fido::consts::{
 };
 
 use super::*;
-use crate::device::{Config, Job, Jobs, PanelLinks, job_queue, serve_display};
+use crate::device::{Config, Job, Jobs, PanelLinks, Unplug, job_queue, serve_display};
 use crate::presence::PresenceMode;
 use crate::signals::Signals;
 use crate::taps::{Tap, TapPad};
@@ -644,15 +644,18 @@ fn an_open_menu_hands_the_executor_back_when_a_host_command_lands() {
 /// `power_cycle()` gives the socket 5 s and then reports "could not replug", so a
 /// bound under it is the difference between a suite that runs under `--display`
 /// and one that cannot.
-const REPLUG_BOUND: Duration = Duration::from_secs(2);
-// It has to be under the floor as well, or a replug taking the host request path
-// would pass this too.
-const _: () = assert!(2_000 < rsk_display::UI_YIELD_FLOOR_MS);
+const REPLUG_BOUND_MS: u64 = 2_000;
+const REPLUG_BOUND: Duration = Duration::from_millis(REPLUG_BOUND_MS);
+// Derived from the bound rather than its value written again: it has to stay under
+// the floor too, or a replug taking the host-request path would pass this as well.
+const _: () = assert!(REPLUG_BOUND_MS < rsk_display::UI_YIELD_FLOOR_MS);
 
-/// E191. A power cycle is not a host request — a board has no such job at all,
-/// and an operator pulling the key out takes the screen with it at once. So the
-/// panel hands the executor back for one without the floor a host command waits,
-/// where before it sat behind the modal for `MENU_INACTIVITY_MS`.
+/// E191. An operator's power cycle is not a host request — a board has no such
+/// job at all, and pulling the key out takes the screen with it at once. So a
+/// *browse* screen hands the executor back for one without the floor a host
+/// command waits, where before it sat behind the modal for `MENU_INACTIVITY_MS`.
+/// The screens that poll no such hook — a pad mid-entry, anything inside a
+/// dispatch — still hold it, and a board answers those by losing power.
 fn drive_menu_replug(jobs: Jobs, taps: SyncSender<Tap>, _signals: Arc<Signals>) {
     let skip = target(|p| rsk_ui::hit_onboard(p) == Some(rsk_ui::OnboardChoice::Skip));
     push(&taps, Tap::at(skip.x, skip.y));
@@ -664,19 +667,52 @@ fn drive_menu_replug(jobs: Jobs, taps: SyncSender<Tap>, _signals: Arc<Signals>) 
 
     let opened = Instant::now();
     let (reply, answer) = mpsc::channel();
-    jobs.send(Job::Replug, reply)
+    jobs.send(Job::Replug(Unplug::Operator), reply)
         .expect("the device thread is alive");
     answered(&answer);
     let waited = opened.elapsed();
     assert!(
         waited < REPLUG_BOUND,
-        "the open menu made the harness's power cycle wait {waited:?};          `tests/emu.py` gives it 5 s and then reports that it could not replug"
+        "the open menu made the harness's power cycle wait {waited:?}; \
+         `tests/emu.py` gives it 5 s and then reports it could not replug"
     );
 }
 
 #[test]
 fn an_open_menu_does_not_hold_a_power_cycle() {
     panel_bench(drive_menu_replug);
+}
+
+/// …and only an operator's. `PoweredPort::attach` queues a power cycle per USB/IP
+/// import and `usbip::listen` accepts them in an unbounded loop, so a peer that
+/// reconnects in a loop would otherwise close every on-panel screen on its first
+/// poll — the denial `UI_YIELD_FLOOR_MS` exists to stop (audit run-35), and worse
+/// than the one it stops, because no touch resets a floor that is not applied.
+#[test]
+fn a_usbip_import_waits_out_the_floor_like_any_other_host() {
+    let (jobs, source) = job_queue();
+    let hooks = EmuDisplayHooks::new(
+        Rc::new(Cell::new(rsk_display::BL_TOP)),
+        Rc::new(Cell::new(false)),
+        source.queued(),
+        Arc::new(Signals::default()),
+        Rc::new(|| {}),
+    );
+    let (reply, _answers) = mpsc::channel();
+
+    jobs.send(Job::Replug(Unplug::Host), reply.clone())
+        .expect("the queue is alive");
+    assert!(
+        !rsk_display::Hooks::host_request_pending_after(&hooks, embassy_time::Instant::now()),
+        "a USB/IP import closed a screen on its first poll"
+    );
+
+    jobs.send(Job::Replug(Unplug::Operator), reply)
+        .expect("the queue is alive");
+    assert!(
+        rsk_display::Hooks::host_request_pending_after(&hooks, embassy_time::Instant::now()),
+        "an operator pulling the key out is the one case that skips the floor"
+    );
 }
 
 /// How long the driver below spends before the replug, and how fresh the clock
@@ -690,7 +726,7 @@ fn drive_replug(jobs: Jobs, _taps: SyncSender<Tap>, _signals: Arc<Signals>) {
     assert_eq!(ask(&jobs, get_info_req())[0], CTAP2_OK, "getInfo");
     std::thread::sleep(Duration::from_millis(PRE_REPLUG_MS));
     let (reply, answer) = mpsc::channel();
-    jobs.send(Job::Replug, reply)
+    jobs.send(Job::Replug(Unplug::Operator), reply)
         .expect("the device thread is alive");
     answered(&answer);
 }

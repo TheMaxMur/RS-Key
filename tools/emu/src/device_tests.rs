@@ -26,6 +26,9 @@ const USE_COUNTER: usize = 52;
 const VENDOR_AID: [u8; 5] = [0xF0, 0x00, 0x00, 0x00, 0x01];
 const INS_REBOOT: u8 = 0x1F;
 const SW_OK: [u8; 2] = [0x90, 0x00];
+/// What the vendor applet answers a U2F INS it does not know — the byte pair
+/// `tests/15_u2f_vendor_msg_isolation.py` names as the hijack's symptom.
+const SW_INS_NOT_SUPPORTED: [u8; 2] = rsk_sdk::Sw::INS_NOT_SUPPORTED.to_bytes();
 
 const SERIAL: [u8; 8] = *b"RSKEMUT1";
 
@@ -155,7 +158,7 @@ fn a_power_cycle_advances_the_yubico_otp_use_counter() {
         "process start is a power-up too"
     );
 
-    ask(&jobs, Job::Replug);
+    ask(&jobs, Job::Replug(Unplug::Operator));
     assert_eq!(
         use_counter(&path),
         Some(2),
@@ -200,7 +203,7 @@ fn a_warm_reboot_is_not_a_power_cycle() {
 /// membership is the `REQ` set of `firmware/src/worker.rs` — get it wrong in
 /// either direction and the emulator's panel yields where a board would not, or
 /// starves where a board would not.
-fn every_job() -> Vec<(Job, bool, &'static str)> {
+fn every_job() -> Vec<(Job, bool, bool, &'static str)> {
     vec![
         (
             Job::Cbor {
@@ -208,6 +211,7 @@ fn every_job() -> Vec<(Job, bool, &'static str)> {
                 data: vec![0x04],
             },
             true,
+            false,
             "CTAPHID_CBOR",
         ),
         (
@@ -216,6 +220,7 @@ fn every_job() -> Vec<(Job, bool, &'static str)> {
                 data: vec![0x00, 0x03, 0, 0],
             },
             true,
+            false,
             "CTAPHID_MSG",
         ),
         (
@@ -224,32 +229,48 @@ fn every_job() -> Vec<(Job, bool, &'static str)> {
                 data: Vec::new(),
             },
             true,
+            false,
             "a CTAPHID vendor command",
         ),
-        (Job::Apdu(vec![0x00, 0xA4, 0x04, 0x00]), true, "a CCID APDU"),
-        (Job::ResetCard, true, "a card reset"),
+        (
+            Job::Apdu(vec![0x00, 0xA4, 0x04, 0x00]),
+            true,
+            false,
+            "a CCID APDU",
+        ),
+        (Job::ResetCard, true, false, "a card reset"),
         (
             Job::OtpHid {
                 slot: 0x30,
                 payload: vec![0; 64],
             },
             false,
+            false,
             "an OTP frame — the board's own OTP_REQ",
         ),
         (
             Job::OtpStatus,
+            false,
             false,
             "the OTP status read — inline in the board's worker",
         ),
         (
             Job::DeselectMsg,
             false,
+            false,
             "the CTAPHID_INIT deselect — an atomic on the board",
         ),
         (
-            Job::Replug,
+            Job::Replug(Unplug::Operator),
             false,
-            "a power cycle — no host request behind it",
+            true,
+            "an operator's power cycle — no host request behind it",
+        ),
+        (
+            Job::Replug(Unplug::Host),
+            true,
+            false,
+            "a USB/IP import — a host action, and one it can repeat",
         ),
     ]
 }
@@ -264,20 +285,19 @@ fn a_queued_host_request_is_pending_only_until_the_device_takes_it() {
     let queued = source.queued();
     let (reply, _answers) = mpsc::channel();
 
-    for (job, counts, what) in every_job() {
-        // A power cycle is counted apart: it is not a host request, and the panel
-        // yields to it without the floor those get.
-        let unplug = matches!(job, Job::Replug);
+    // Two columns, both declared rather than derived: an operator's power cycle is
+    // the one the panel yields to without the floor, and nothing else is.
+    for (job, counts, unplug, what) in every_job() {
         assert!(
-            !queued.any() && !queued.unplugged(),
+            !queued.any() && !queued.unplug_pending(),
             "the queue is empty before {what}"
         );
         jobs.send(job, reply.clone()).unwrap();
         assert_eq!(queued.any(), counts, "{what}");
-        assert_eq!(queued.unplugged(), unplug, "{what}");
+        assert_eq!(queued.unplug_pending(), unplug, "{what}");
         source.try_next().expect("the job is there");
         assert!(
-            !queued.any() && !queued.unplugged(),
+            !queued.any() && !queued.unplug_pending(),
             "the pickup clears {what}"
         );
     }
@@ -539,9 +559,10 @@ fn a_u2f_command_on_another_channel_drops_the_selection() {
             data: U2F_VERSION.to_vec(),
         },
     );
-    assert_ne!(
-        held, U2F_V2_OK,
-        "the selection did not stick — nothing to inherit"
+    assert_eq!(
+        held[held.len() - 2..],
+        SW_INS_NOT_SUPPORTED,
+        "the selection did not stick — there would be nothing to inherit"
     );
 
     let fresh = ask(
