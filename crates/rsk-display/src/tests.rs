@@ -9,6 +9,11 @@
 //! this possible at all: the doubles below are the emulator's `--display` wiring,
 //! reduced to what an assertion needs. Every sibling `*_tests.rs` builds its case
 //! from [`Env`].
+//!
+//! It also holds the census over `firmware/src/worker.rs`: the firmware side of
+//! [`Hooks::host_request_pending`] is four lines of glue over statics that no host
+//! build can link, so what this crate's browse loops depend on is asserted by
+//! reading that source, the way `rsk_ui`'s ceremony-title census reads the tree.
 
 use std::collections::VecDeque;
 use std::sync::{Mutex, MutexGuard};
@@ -613,4 +618,130 @@ fn a_host_ceremony_does_not_postpone_the_lock() {
     assert_eq!(LAST_LOCAL_MS.load(Ordering::Relaxed), local_before);
     note_local_activity();
     assert_ne!(LAST_LOCAL_MS.load(Ordering::Relaxed), local_before);
+}
+
+/// `Worker::run` races several wake sources and `host_request_pending` decides
+/// which of them an open modal must yield to. Nothing but this test links the two
+/// lists, and a source added to one and forgotten in the other starves silently
+/// behind a menu for a minute — which is what the OTP keyboard frame did (E190).
+///
+/// It compares the two *sets of receivers*, both parsed the same way, rather than
+/// asking whether each name appears: `REQ` is a suffix of `otp_kbd::OTP_REQ`, so a
+/// substring test passed a predicate that had dropped the transports entirely.
+#[test]
+fn every_worker_wake_source_is_classified() {
+    let raw = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../firmware/src/worker.rs"),
+    )
+    .expect("firmware/src/worker.rs");
+    // Every assertion below reads source text, so a comment naming the token it
+    // looks for would satisfy it (the class `bbc506c` fixed in the gate scripts).
+    let worker = strip_line_comments(&raw);
+
+    // A fourth source means `select4`: the moment to classify it, here and in
+    // `host_request_pending` — not to widen this assertion.
+    assert_eq!(
+        worker.matches("match select3(").count(),
+        1,
+        "the worker no longer races exactly three sources in exactly one place"
+    );
+    let raced = receivers(select3_args(&worker), ".wait()");
+    assert_eq!(
+        raced,
+        ["REQ", "otp_kbd::OTP_REQ"],
+        "the worker's wake sources moved"
+    );
+
+    let pending = fn_body(&worker, "pub(crate) fn host_request_pending()");
+    assert_eq!(
+        receivers(pending, ".signaled()"),
+        raced,
+        "`host_request_pending` consults a different set than the worker races; \
+         work from a source it omits starves behind an open modal"
+    );
+
+    // Nearly every browse loop takes the floor variant, so a second copy of the
+    // list there is the copy that would decide. It must delegate, not repeat.
+    let after = fn_body(&worker, "pub(crate) fn host_request_pending_after(");
+    assert!(
+        after.contains("host_request_pending()"),
+        "`host_request_pending_after` no longer delegates"
+    );
+    assert!(
+        receivers(after, ".signaled()").is_empty(),
+        "`host_request_pending_after` keeps its own source list; delegate instead"
+    );
+    // What makes it safe to let one more transport close the owner's screen
+    // (audit run-35): without the floor, one queued command latches the yield.
+    assert!(
+        after.contains("UI_YIELD_FLOOR_MS"),
+        "the floor variant no longer applies the floor"
+    );
+}
+
+/// Drop `//` comments, so an assertion below cannot be satisfied by a comment that
+/// names the token it looks for. Block comments are refused rather than parsed —
+/// a naive `/*` scan is what swallowed a whole file in `bbc506c`.
+fn strip_line_comments(src: &str) -> String {
+    assert!(
+        !src.contains("/*"),
+        "worker.rs grew a block comment; this parser only handles `//`"
+    );
+    src.lines()
+        .map(|l| l.split_once("//").map_or(l, |(code, _)| code))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The argument list of `Worker::run`'s `select3`.
+fn select3_args(worker: &str) -> &str {
+    let at = worker.find("match select3(").expect("the worker's select3");
+    let arms = &worker[at..];
+    let end = arms
+        .find("\n            )")
+        .expect("the select3 argument list");
+    &arms[..end]
+}
+
+/// Every path receiving `suffix` in `text`, in source order — `REQ.wait()` yields
+/// `REQ`, `otp_kbd::OTP_REQ.signaled()` yields the whole path. The `select3` timer
+/// arm receives neither and is deliberately not one of them.
+fn receivers(text: &str, suffix: &str) -> Vec<String> {
+    text.match_indices(suffix)
+        .map(|(at, _)| {
+            text[..at]
+                .chars()
+                .rev()
+                .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == ':')
+                .collect::<String>()
+                .chars()
+                .rev()
+                .collect()
+        })
+        .collect()
+}
+
+/// The body of the function whose signature line is `sig`, by brace matching.
+fn fn_body<'a>(src: &'a str, sig: &str) -> &'a str {
+    assert_eq!(src.matches(sig).count(), 1, "{sig} is gone, or duplicated");
+    let at = src.find(sig).expect("checked above");
+    let open = at + src[at..].find('{').expect("a body");
+    let mut depth = 0usize;
+    for (i, c) in src[open..].char_indices() {
+        match c {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    // The two bodies this is used on are boolean expressions; a
+                    // string literal in one could carry a brace past the match.
+                    let body = &src[open..open + i];
+                    assert!(!body.contains('"'), "{sig}'s body grew a string literal");
+                    return body;
+                }
+            }
+            _ => {}
+        }
+    }
+    panic!("{sig} has no closing brace");
 }

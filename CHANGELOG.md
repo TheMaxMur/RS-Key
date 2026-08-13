@@ -49,6 +49,25 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **An on-device menu now yields to an OTP command too, not only to
+  CTAPHID/CCID.** On a trusted-display build the worker runs on one thread, so a
+  browse modal (Passkeys / Settings) hands it back the moment host work is queued
+  — but the predicate that decides it read only the transports' signal, and a
+  keyboard-interface OTP frame is the worker's *separate* one. A `ykman otp
+  calculate` behind an open menu therefore waited out the 60 s privacy backstop or
+  a tap — a host-visible failure, not just a delay, since the OTP transport has no
+  keepalive and gives up first — and an OTP command that needs a touch had no
+  screen to paint its prompt on until the modal went. Both queued sources now
+  count, and the floor-applying variant delegates to the same predicate rather than
+  keeping a second copy of the list — the copy 23 of the 26 display call sites
+  actually use. The `UI_YIELD_FLOOR_MS` floor (audit run-35) applies unchanged, and
+  the OTP signal is raised only by a complete 10-report frame with a matching CRC,
+  never by a host's status poll, so nothing fires on idle enumeration. Button
+  builds are unaffected — the whole path is display-only. What this does **not**
+  change: a yield still ends whatever modal is open, and a few of them lose work
+  when it does (a half-typed passkey nickname, a seed being copied to paper). That
+  was already true for a CTAPHID command and is a separate finding.
+  **bcdDevice → 0x0951.**
 - **A replayed vendor `SET LED` no longer writes flash.** `INS 10` on the vendor
   AID persisted `EF_LED_CONF` on every call, including one that changed nothing —
   the guard audit run-27 gave its FIDO twin (`CONFIG_WRITE`/`CONFIG_TARGET_LED`) in

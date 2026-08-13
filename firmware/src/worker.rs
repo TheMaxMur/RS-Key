@@ -97,14 +97,18 @@ static DONE: Signal<Cs, ()> = Signal::new();
 /// ordering (the client waits for the INIT reply) makes Relaxed sufficient.
 static MSG_DESELECT: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
-/// Whether a transport request is queued for the worker but not yet picked up. The
+/// Whether host work is queued for the worker but not yet picked up. The
 /// trusted-display browse modals (Passkeys / Settings) poll this: while one is open
 /// the worker is parked on the single thread executor, so a host command would wait
 /// behind it — yielding back to idle the instant one arrives lets the worker run,
 /// which is a precise alternative to capping the wait with a blind inactivity timeout.
+///
+/// **Every host-request source [`Worker::run`] races belongs here**, not only the
+/// transports': `rsk_display::tests::every_worker_wake_source_is_classified` holds
+/// the two lists together. The INIT deselect is an atomic; the tick is our own.
 #[cfg(feature = "display")]
 pub(crate) fn host_request_pending() -> bool {
-    REQ.signaled()
+    REQ.signaled() || otp_kbd::OTP_REQ.signaled()
 }
 
 /// [`host_request_pending`], but only once the UI has been idle for
@@ -117,7 +121,7 @@ pub(crate) fn host_request_pending() -> bool {
 /// written for exactly that and had been applied at 2 of 26 sites.
 #[cfg(feature = "display")]
 pub(crate) fn host_request_pending_after(since: embassy_time::Instant) -> bool {
-    REQ.signaled()
+    host_request_pending()
         && since.elapsed() >= embassy_time::Duration::from_millis(crate::display::UI_YIELD_FLOOR_MS)
 }
 
