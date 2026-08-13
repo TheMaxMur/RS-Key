@@ -2259,11 +2259,16 @@ fn the_private_use_dos_answer_to_the_password_that_owns_them() {
 }
 
 /// E81: PUT DATA carries its target in P1P2, and the card judges the PASSWORD
-/// before it says anything about the tag. Measured on a YubiKey 5.7.4, 7 tags ×
-/// 3 auth states × 3 runs: every tag is a flat `6982` until PW3, and only then
-/// does it tell `6B00` (not a writable target) from `9000`. Ours resolved the tag
-/// first, so an unauthenticated caller could enumerate the writable set by the
-/// `6B00`-vs-`6982` split.
+/// before it says anything about the tag. Measured on a YubiKey 5.7.4 over
+/// **7 tags × 3 auth states** (unverified, PW2, PW3) × 3 runs: every tag is a flat
+/// `6982` until PW3, and only then does it tell `6B00` (not a writable target)
+/// from `9000`. Ours resolved the tag first, so an unauthenticated caller could
+/// enumerate the writable set by the `6B00`-vs-`6982` split.
+///
+/// Two things below are ours, not the card's, and are marked as such: the PW1
+/// (P2 `81`) column, which the measurement did not visit, and the `93` row, which
+/// it did not include — its `6985` under PW3 is this applet's own answer, reasoned
+/// at `putdata::put_data`, and only its pre-PW3 cells are parity.
 #[test]
 fn put_data_judges_the_password_before_the_tag() {
     let rng = RefCell::new(LcgRng(29));
@@ -2273,6 +2278,7 @@ fn put_data_judges_the_password_before_the_tag() {
 
     let denied = Sw::SECURITY_STATUS_NOT_SATISFIED;
     // (tag, what PW3 gets). Everything before PW3 is `denied`, on every row.
+    // Rows 1-6 and 8 are the card's; row 7 (`93`) is ours — see the note above.
     let tags: [(u8, Sw); 8] = [
         (0xD5, Sw::WRONG_P1P2),               // AES key
         (0xC5, Sw::WRONG_P1P2),               // fingerprints, read-only
@@ -2307,4 +2313,55 @@ fn put_data_judges_the_password_before_the_tag() {
             "PUT DATA {tag:02X} with PW3"
         );
     }
+}
+
+/// The E81 rule at the other door. IMPORT (`0xDB`) carries its target — the
+/// control-reference template naming the key slot — inside the body, and
+/// `parse_ehl_head` resolved it before the PW3 check: an unauthenticated caller
+/// got `6A80` for a CRT the card does not know and `6982` for one it does, which
+/// enumerates the accepted slot set exactly as the `6B00`/`6982` split enumerated
+/// the writable DOs. Unmeasured on a YubiKey — the reference was measured on
+/// `0xDA` — so this cell follows by class, not by measurement.
+#[test]
+fn import_judges_the_password_before_the_key_slot() {
+    let rng = RefCell::new(LcgRng(37));
+    let mut fs = make_fs();
+    let presence = RefCell::new(crate::AlwaysConfirm);
+    let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
+
+    // `B6`/`B8`/`A4` are the slots the card knows; `99` is not one.
+    let ehl = |crt: u8| {
+        let body = [crt, 0x00, 0x7F, 0x48, 0x00, 0x5F, 0x48, 0x00];
+        let header = [&[0x4D, body.len() as u8], body.as_slice()].concat();
+        let mut a = vec![
+            0x00,
+            consts::INS_PUT_DATA_ODD,
+            0x3F,
+            0xFF,
+            header.len() as u8,
+        ];
+        a.extend_from_slice(&header);
+        a
+    };
+    for crt in [0xB6u8, 0xB8, 0xA4, 0x99, 0x00, 0xFF] {
+        assert_eq!(
+            run(&mut app, &mut fs, &ehl(crt)).1,
+            Sw::SECURITY_STATUS_NOT_SATISFIED,
+            "IMPORT CRT {crt:02X} unauthenticated"
+        );
+    }
+    // …and a well-formed import is refused the same way, so the flatness is the
+    // ACL and not the body being unparseable.
+    let scalar = [0x11u8; 32];
+    assert_eq!(
+        run(&mut app, &mut fs, &ec_import(0xB6, &scalar)).1,
+        Sw::SECURITY_STATUS_NOT_SATISFIED
+    );
+
+    // The controls: with PW3 the card tells the slots apart again, and the same
+    // well-formed import lands.
+    verify_pin(&mut app, &mut fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
+    assert_eq!(run(&mut app, &mut fs, &ehl(0x99)).1, consts::WRONG_DATA);
+    assert_eq!(put(&mut app, &mut fs, 0x00, 0xC1, ATTR_P256), Sw::OK);
+    assert_eq!(run(&mut app, &mut fs, &ec_import(0xB6, &scalar)).1, Sw::OK);
 }

@@ -240,6 +240,21 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   data, `'0'` was our own invention, and the alternative is a byte the card reads
   out and refuses back. **bcdDevice → 0x08F2.**
 
+- **IMPORT judges the password before the key slot, finishing the `PUT DATA`
+  sweep.** `0x08F3` moved that judgement ahead of the tag on `PUT DATA` (`0xDA`)
+  and stopped one instruction short. IMPORT (`0xDB`) carries its target — the
+  control-reference template naming the key slot — inside the body, and the body
+  was parsed first: an **unauthenticated** caller got `6A80` for a template the
+  card does not know and `6982` for one it does, which enumerates the accepted
+  slot set `{B6, B8, A4}` and the header framing exactly as the `6B00`-vs-`6982`
+  split enumerated the writable DOs. It answers a flat `6982` now, whatever the
+  body says. Unmeasured on a YubiKey — the reference was measured on `0xDA` — so
+  this cell follows by class rather than by measurement, and the test says so.
+  Two comments recording that measurement are corrected in the same breath: both
+  read as if `6B00` were the card's answer everywhere, when it was taken with PW3
+  verified, and one of them is the twin the `0x08F3` commit qualified while
+  leaving its sibling alone. **bcdDevice → 0x08F5.**
+
 - **OATH `SET CODE` with no body at all is `6A80`, not "remove the access code".**
   A YubiKey 5.7.4 refuses a body-less `SET CODE` and removes a code only for the
   `73 00` spelling — the one ykman actually sends, and the one RS-Key already

@@ -55,6 +55,13 @@ pub fn import_data<S: Storage>(
     if data.len() < 5 {
         return Sw::WRONG_LENGTH;
     }
+    // Key import is an admin (PW3) operation, judged before the body is read: the
+    // control-reference template inside it names the key slot, so resolving first
+    // let an unauthenticated caller enumerate the slots the card knows by the
+    // `6A80`-vs-`6982` split. Same rule as `putdata::put_data`, other instruction.
+    if !sess.has_pw3 {
+        return Sw::SECURITY_STATUS_NOT_SATISFIED;
+    }
     match try_import(dev, fs, sess, data) {
         Ok(()) => Sw::OK,
         Err(sw) => sw,
@@ -131,10 +138,6 @@ fn try_import<S: Storage>(
     data: &[u8],
 ) -> Result<(), Sw> {
     let (fid, pos) = parse_ehl_head(data)?;
-    // Key import is an admin (PW3) operation.
-    if !sess.has_pw3 {
-        return Err(Sw::SECURITY_STATUS_NOT_SATISFIED);
-    }
     let (off, len) = parse_ehl_body(data, pos)?;
 
     // The algorithm attribute decides RSA vs EC and (for EC) the curve — and is

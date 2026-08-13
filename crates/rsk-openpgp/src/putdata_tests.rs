@@ -201,7 +201,9 @@ fn generic_put_data_does_not_handle_specials() {
 fn an_unwritable_tag_is_a_wrong_p1p2() {
     // The tag IS P1P2 for this command, so a tag PUT DATA cannot write is a wrong
     // parameter and not a missing object — measured on a YubiKey 5.7.4, which
-    // answers `6B00` to an unknown tag and to the computed aggregates alike.
+    // answers `6B00` to an unknown tag and to the computed aggregates alike, **with
+    // PW3 verified**. Before that the card says only `6982`, which is why this test
+    // authenticates first and why the ordering is asserted separately (E81).
     let (mut fs, mut sess) = setup();
     admin(&mut fs, &mut sess);
     assert_eq!(put_data(&mut fs, &sess, 0x4242, b"x"), Sw::WRONG_P1P2);
