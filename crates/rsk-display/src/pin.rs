@@ -272,7 +272,7 @@ where
 
     /// Collect a PIN on the on-screen pad (the trusted built-in-UV input). Renders the
     /// masked keypad, block-polls the CST328 accumulating ASCII digits into `out`, and
-    /// honours the same UP_PENDING / CANCEL_REQUESTED / timeout contract as the confirm
+    /// honours the same up-pending / cancel / timeout contract as the confirm
     /// wait. Owns the panel via `&mut self` (single thread executor → the worker is
     /// parked), so both the host built-in-UV path (`TouchPresence::collect_pin`) and a
     /// display-initiated gate ([`Self::local_pin_gate`]) share one pad. Each key debounces to

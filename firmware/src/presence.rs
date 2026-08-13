@@ -12,8 +12,13 @@
 //! which cannot press a button). The `display` build takes presence from the
 //! touchscreen (`crate::display::TouchPresence`) instead, so the button backend
 //! below is compiled out there.
-
-use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
+//!
+//! The arbitration itself — which transport owns the wait, whose cancel may end
+//! it, and the `spent` latch that stops one hold satisfying two ceremonies —
+//! lives in [`rsk_device::presence`], where it is host-tested and carries the
+//! Kani harnesses for `NoCrossTransportTouchConsumption`. What stays here is the
+//! board half: the button sample, the embassy clock, the LED indicator, and the
+//! one `static` the transport and worker executors share.
 
 #[cfg(not(feature = "display"))]
 use embassy_rp::Peri;
@@ -27,46 +32,28 @@ use embassy_rp::bootsel::is_bootsel_pressed;
 #[cfg(all(not(feature = "no-touch"), not(feature = "display")))]
 use embassy_time::{Duration, Instant, block_for};
 
-/// Set while the worker is blocked in a presence wait — read by the CTAPHID
-/// keepalive to report `UPNEEDED` (0x02) instead of `PROCESSING` (0x01). Shared
-/// with the `display` build's `TouchPresence`.
-pub(crate) static UP_PENDING: AtomicBool = AtomicBool::new(false);
+#[cfg(not(feature = "display"))]
+use rsk_device::presence::ButtonWait;
+#[cfg(all(not(feature = "no-touch"), not(feature = "display")))]
+use rsk_device::presence::{Board, Outcome};
 
-/// Set by the CTAPHID transport (high-priority executor) when a `CTAPHID_CANCEL`
-/// arrives for the request the worker is processing. The button wait — running on
-/// the worker executor — polls it each iteration and abandons with `Cancelled`, so
-/// the in-flight CTAP2 command answers `CTAP2_ERR_KEEPALIVE_CANCEL`. Cross-executor
-/// (transport sets, worker reads), mirroring `UP_PENDING` in the other direction.
-pub(crate) static CANCEL_REQUESTED: AtomicBool = AtomicBool::new(false);
+use rsk_device::presence::Arbiter;
 
-/// Which transport owns the presence wait the worker is running. Every cancel and
-/// every "a touch is pending" advertisement is scoped to it, because one button
-/// serves all of them: without this an unprivileged FIDO-HID process could
-/// `CTAPHID_CANCEL` a CCID (OpenPGP/PIV/OATH) or keyboard-frame (Yubico-OTP)
-/// ceremony — and on a button build inherit the user's descending finger onto its
-/// own request, since a fresh wait starts with `spent == false`. CTAP 2.1 §11.2.9.1.4
-/// scopes a cancel to its own channel.
-static WAIT_SCOPE: AtomicU8 = AtomicU8::new(SCOPE_NONE);
+pub(crate) use rsk_device::presence::MIN_TIMEOUT_SECS;
+pub use rsk_device::presence::{SCOPE_CCID, SCOPE_FIDO, SCOPE_NONE, SCOPE_OTP};
 
-/// No host request in flight: an on-panel (local) flow owns the button.
-pub const SCOPE_NONE: u8 = 0;
-/// CTAPHID — CTAP2 (CBOR), U2F (MSG) and the Management vendor commands.
-pub const SCOPE_FIDO: u8 = 1;
-/// CCID — every applet APDU, including the pinpad VERIFY.
-pub const SCOPE_CCID: u8 = 2;
-/// The keyboard interface's Yubico-OTP frame protocol.
-pub const SCOPE_OTP: u8 = 3;
+/// The one presence arbiter. Cross-executor: the CTAPHID / keyboard transports
+/// run on the high-priority interrupt executor and raise cancels or read
+/// "is a touch pending", while the worker runs the wait on the thread executor.
+static ARBITER: Arbiter = Arbiter::new();
+
+#[cfg(feature = "display")]
+const _: () = assert!(MIN_TIMEOUT_SECS as u16 == rsk_ui::TIMEOUT_CHOICES[0]);
 
 /// Mark which transport the worker is dispatching for. Set around every dispatch,
 /// `SCOPE_NONE` between them so an on-panel ceremony is nobody's to cancel.
 pub fn set_wait_scope(scope: u8) {
-    WAIT_SCOPE.store(scope, Ordering::Release);
-}
-
-/// Is a touch pending *for `scope`*? Both hooks below need the conjunction, never
-/// the bare flag.
-fn pending_for(scope: u8) -> bool {
-    UP_PENDING.load(Ordering::Acquire) && WAIT_SCOPE.load(Ordering::Acquire) == scope
+    ARBITER.set_wait_scope(scope);
 }
 
 /// The CTAPHID keepalive hook passed to `CtapHid::new`: is a touch being awaited
@@ -76,78 +63,37 @@ fn pending_for(scope: u8) -> bool {
 /// the key for somebody else's operation — and keeps the transport from arming the
 /// frame reader that turns a cancel into a cross-transport abort.
 pub fn up_pending() -> bool {
-    pending_for(SCOPE_FIDO)
+    ARBITER.pending_for(SCOPE_FIDO)
 }
 
 /// The keyboard-interface status-frame hook: is *its* touch pending? Reported in
 /// the OTP status byte so a host polling for a touch-gated challenge-response sees
 /// the wait (issue #55).
 pub fn otp_up_pending() -> bool {
-    pending_for(SCOPE_OTP)
+    ARBITER.pending_for(SCOPE_OTP)
 }
 
 /// The CTAPHID cancel hook passed to `CtapHid::new`: request that an in-flight
 /// touch wait be abandoned. Only ever ends a FIDO ceremony — the wait it aborts
 /// must be the one the cancelling channel owns.
 pub fn request_cancel() {
-    if WAIT_SCOPE.load(Ordering::Acquire) == SCOPE_FIDO {
-        CANCEL_REQUESTED.store(true, Ordering::Release);
-    }
+    ARBITER.request_cancel();
 }
 
 /// End an OTP touch wait because the host moved on: it sent the dummy write that
 /// aborts (`0x8f`), or a new frame — a YubiKey lets either supersede the wait, and
 /// without that every later command reads "would block" until the wait times out.
 pub fn cancel_otp_wait() {
-    if WAIT_SCOPE.load(Ordering::Acquire) == SCOPE_OTP {
-        CANCEL_REQUESTED.store(true, Ordering::Relaxed);
-        // The wait is over as of this decision; stop advertising it right away so
-        // the host's next status poll cannot read a stale "waiting for touch".
-        UP_PENDING.store(false, Ordering::Relaxed);
-    }
+    ARBITER.cancel_otp_wait();
 }
-
-/// Built-in touch-wait timeout (ms) used when the phy record carries none.
-const DEFAULT_TIMEOUT_MS: u32 = 30_000;
-/// Touch-wait timeout in ms, seeded at boot from the phy record's
-/// `PRESENCE_TIMEOUT` tag (PicoForge `0x08`, seconds). Read live by the wait.
-pub(crate) static PRESENCE_TIMEOUT_MS: AtomicU32 = AtomicU32::new(DEFAULT_TIMEOUT_MS);
-
-/// Shortest touch-wait window a stored timeout may impose, matching the on-device
-/// settings menu's own floor (`rsk_ui::TIMEOUT_CHOICES`). The phy record is
-/// host-writable through the ungated `CONFIG_WRITE`, and a consent window short
-/// enough to expire mid-press turns a single hold into two grants.
-pub(crate) const MIN_TIMEOUT_SECS: u8 = 10;
-#[cfg(feature = "display")]
-const _: () = assert!(MIN_TIMEOUT_SECS as u16 == rsk_ui::TIMEOUT_CHOICES[0]);
 
 /// Override the touch-wait timeout from the phy record — value in **seconds**,
-/// matching PicoForge's tag `0x08`. `0` (or an absent tag) keeps the
-/// built-in 30 s default; anything below [`MIN_TIMEOUT_SECS`] is raised to it.
-/// Call once at boot, before any applet runs.
+/// matching PicoForge's tag `0x08`. `0` (or an absent tag) keeps the built-in
+/// 30 s default; anything below [`MIN_TIMEOUT_SECS`] is raised to it, which
+/// `main.rs`'s `effective_timeout_secs` has to mirror by hand. Call once at
+/// boot, before any applet runs.
 pub fn set_timeout_secs(secs: u8) {
-    if secs != 0 {
-        let secs = secs.max(MIN_TIMEOUT_SECS);
-        PRESENCE_TIMEOUT_MS.store(secs as u32 * 1000, Ordering::Relaxed);
-    }
-}
-
-// Poll cadence for the press wait. `block_for` keeps interrupts enabled, so the
-// high-priority executor (USB + keepalives) runs between polls; only the ~4000-cycle
-// `is_bootsel_pressed` read briefly masks interrupts. The timeout is runtime
-// (`PRESENCE_TIMEOUT_MS`).
-#[cfg(all(not(feature = "no-touch"), not(feature = "display")))]
-const POLL_MS: u64 = 16;
-
-/// Neutral wait result, mapped to each applet's own `Presence` enum. The button
-/// has no "declined" gesture; `Cancelled` comes from a `CTAPHID_CANCEL` (FIDO
-/// only) observed via [`CANCEL_REQUESTED`].
-#[cfg(all(not(feature = "no-touch"), not(feature = "display")))]
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Outcome {
-    Confirmed,
-    Timeout,
-    Cancelled,
+    ARBITER.set_timeout_secs(secs);
 }
 
 /// User presence via BOOTSEL (default) or a dedicated GPIO button.
@@ -155,11 +101,8 @@ enum Outcome {
 pub struct ButtonPresence {
     #[cfg_attr(feature = "no-touch", allow(dead_code))]
     button: Button,
-    /// The button was still down when the last wait returned, so that press is
-    /// spent: consent is per-operation, and the level-triggered wait would
-    /// otherwise hand the same hold to the next queued request.
     #[cfg_attr(feature = "no-touch", allow(dead_code))]
-    spent: bool,
+    latch: ButtonWait,
 }
 
 /// The presence source: the BOOTSEL hardware button, or a GPIO button (the bool is
@@ -169,6 +112,46 @@ pub struct ButtonPresence {
 enum Button {
     Bootsel(Peri<'static, BOOTSEL>),
     Gpio(Input<'static>, bool),
+}
+
+#[cfg(all(not(feature = "no-touch"), not(feature = "display")))]
+impl Button {
+    fn sample(&mut self) -> bool {
+        match self {
+            Button::Bootsel(bootsel) => is_bootsel_pressed(bootsel.reborrow()),
+            Button::Gpio(button, active_high) => {
+                if *active_high {
+                    button.is_high()
+                } else {
+                    button.is_low()
+                }
+            }
+        }
+    }
+}
+
+// `Instant::as_micros` floors and `Duration::from_millis` rounds up, so the
+// crate's `now_us - start >= ms * 1000` is only the exact comparison the wait
+// used to make while a tick *is* a microsecond. Pin it rather than comment it.
+#[cfg(all(not(feature = "no-touch"), not(feature = "display")))]
+const _: () = assert!(embassy_time::TICK_HZ == 1_000_000);
+
+/// `block_for` keeps interrupts enabled, so the high-priority executor (USB +
+/// keepalives) runs between polls; only the ~4000-cycle `is_bootsel_pressed` read
+/// briefly masks them.
+#[cfg(all(not(feature = "no-touch"), not(feature = "display")))]
+impl Board for Button {
+    fn pressed(&mut self) -> bool {
+        self.sample()
+    }
+
+    fn now_us(&self) -> u64 {
+        Instant::now().as_micros()
+    }
+
+    fn block_for_ms(&mut self, ms: u64) {
+        block_for(Duration::from_millis(ms));
+    }
 }
 
 /// The presence backend the [`crate::worker::Worker`] owns, selected at build
@@ -188,7 +171,7 @@ impl ButtonPresence {
     pub fn new_bootsel(bootsel: Peri<'static, BOOTSEL>) -> Self {
         Self {
             button: Button::Bootsel(bootsel),
-            spent: false,
+            latch: ButtonWait::new(),
         }
     }
 
@@ -210,21 +193,7 @@ impl ButtonPresence {
         let input = Input::new(any, pull);
         Self {
             button: Button::Gpio(input, active_high),
-            spent: false,
-        }
-    }
-
-    #[cfg(not(feature = "no-touch"))]
-    fn pressed(&mut self) -> bool {
-        match &mut self.button {
-            Button::Bootsel(bootsel) => is_bootsel_pressed(bootsel.reborrow()),
-            Button::Gpio(button, active_high) => {
-                if *active_high {
-                    button.is_high()
-                } else {
-                    button.is_low()
-                }
-            }
+            latch: ButtonWait::new(),
         }
     }
 
@@ -233,7 +202,7 @@ impl ButtonPresence {
     pub fn poll_pressed(&mut self) -> bool {
         #[cfg(not(feature = "no-touch"))]
         {
-            self.pressed()
+            self.button.sample()
         }
         #[cfg(feature = "no-touch")]
         {
@@ -246,50 +215,7 @@ impl ButtonPresence {
         // Save the LED status, show the touch status for the wait, restore after.
         let saved = crate::led::status();
         crate::led::set_status(crate::led::STATUS_TOUCH);
-        // Drop any cancel left from an earlier (already-finished) request so this
-        // wait starts clean.
-        CANCEL_REQUESTED.store(false, Ordering::Relaxed);
-        UP_PENDING.store(true, Ordering::Release);
-        let start = Instant::now();
-        let timeout = Duration::from_millis(PRESENCE_TIMEOUT_MS.load(Ordering::Relaxed) as u64);
-        // Wait for a press; a CTAPHID_CANCEL aborts it, and with neither before
-        // the timeout it times out.
-        let result = loop {
-            if self.pressed() {
-                // A press the previous ceremony already consumed is not consent for
-                // this one; it stays spent until the finger actually lifts.
-                if !self.spent {
-                    break Outcome::Confirmed;
-                }
-            } else {
-                self.spent = false;
-            }
-            if CANCEL_REQUESTED.load(Ordering::Acquire) {
-                break Outcome::Cancelled;
-            }
-            if start.elapsed() >= timeout {
-                break Outcome::Timeout;
-            }
-            block_for(Duration::from_millis(POLL_MS));
-        };
-        // Debounce: wait for release (bounded) so a held button doesn't
-        // immediately satisfy the next operation.
-        if result == Outcome::Confirmed {
-            let release = Instant::now();
-            while self.pressed() {
-                if release.elapsed() >= timeout {
-                    break;
-                }
-                block_for(Duration::from_millis(POLL_MS));
-            }
-        }
-        // The debounce is bounded, so it can give up with the finger still down;
-        // whatever the outcome, a button that never released carries no new consent.
-        self.spent = self.pressed();
-        UP_PENDING.store(false, Ordering::Release);
-        // Clear any cancel that raced in (e.g. just after a confirm) so it can't
-        // leak into the next request's wait.
-        CANCEL_REQUESTED.store(false, Ordering::Relaxed);
+        let result = self.latch.wait(&ARBITER, &mut self.button);
         crate::led::set_status(saved);
         result
     }
@@ -424,24 +350,24 @@ impl rsk_mgmt::UserPresence for ButtonPresence {
 }
 
 // Accessors for the trusted display, which reaches these through
-// `rsk_display::Hooks` rather than naming the statics across a crate boundary.
+// `rsk_display::Hooks` rather than naming the arbiter across a crate boundary.
 #[cfg(feature = "display")]
 pub fn set_up_pending(pending: bool) {
-    UP_PENDING.store(pending, Ordering::Release);
+    ARBITER.set_up_pending(pending);
 }
 #[cfg(feature = "display")]
 pub fn set_cancel_requested(requested: bool) {
-    CANCEL_REQUESTED.store(requested, Ordering::Relaxed);
+    ARBITER.set_cancel_requested(requested);
 }
 #[cfg(feature = "display")]
 pub fn cancel_requested() -> bool {
-    CANCEL_REQUESTED.load(Ordering::Acquire)
+    ARBITER.cancel_requested()
 }
 #[cfg(feature = "display")]
 pub fn presence_timeout_ms() -> u32 {
-    PRESENCE_TIMEOUT_MS.load(Ordering::Relaxed)
+    ARBITER.timeout_ms()
 }
 #[cfg(feature = "display")]
 pub fn set_presence_timeout_ms(ms: u32) {
-    PRESENCE_TIMEOUT_MS.store(ms, Ordering::Relaxed);
+    ARBITER.set_timeout_ms(ms);
 }

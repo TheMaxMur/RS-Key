@@ -72,7 +72,7 @@ match more than one file in the tree.
 | Invariant | What it asserts here | The Rust construct that owns it |
 |---|---|---|
 | `NoAuthorizationBypass` | No protected operation completes without the live authorization its own gate requires | `crates/rsk-fido/src/`: `getassertion.rs:376-379` · `makecredential.rs:437-441` · `config.rs:222-224` · `credmgmt.rs:277` · retry ladder `clientpin.rs:719-804` · soft lock `state.rs:284-291` + `crates/rsk-device/src/ctap.rs:215-222` · reset window `reset.rs:148-154` · walk owner `state.rs:169-179`, `credmgmt.rs:338` |
-| `NoCrossTransportTouchConsumption` | A presence decision produced for one transport is never applied to another — neither a confirm nor a cancel | `firmware/src/presence.rs:42-49` (`WAIT_SCOPE`) · `:66-96` (`pending_for`, `request_cancel`) · `:159-163, 259-266, 277-292` (the `spent` latch). **The stale-cancel drop has two owners, `:251` and `:292`** — either alone carries the property, so removing one does not fall over |
+| `NoCrossTransportTouchConsumption` | A presence decision produced for one transport is never applied to another — neither a confirm nor a cancel | `crates/rsk-device/src/presence.rs`: `Arbiter::pending_for` · `::request_cancel` / `::cancel_otp_wait` (the scope guards) · `ButtonWait::wait` (the `spent` latch). `firmware/src/presence.rs` keeps only the board half. **The stale-cancel drop has two owners, the clear at the wait's entry and the one at its exit** — either alone carries the property, so removing one does not fall over, which is why only the unit test `w8_…` pins the exit one |
 | `NoTokenAfterInvalidation` | A grant invalidated by a PIN change, PIN set, reset, `stopUsingPinUvAuthToken` or power cycle never authorizes again | `crates/rsk-fido/src/`: `state.rs:484-497` (`reset_pin_uv_auth_token`) · `state.rs:542-556` (`stop_using_token`) · `state.rs:590-602` (`expire_stale_token`) · `clientpin.rs:300-311` · `seed.rs:310-311` (`clear_ppuat`) |
 | `NoAccessibleSecretWithoutGate` | No live secret is reachable while the gate record that protects it is gone | `crates/rsk-fido/src/`: `reset.rs:127-146` (`is_fido_gate_fid`) · `reset.rs:51-66` (phase order) · `credmgmt.rs:249-265` (`authorized_by_ppuat`) · `clientpin.rs:213-217`, `:824-828` |
 | `NoUnmanageableCredential` | Every live credential is reachable by the management surface (its `EF_RP` entry exists) | `crates/rsk-fido/src/`: `credential.rs:804-826` (registration write order) · `credmgmt.rs:652-706` (`delete_credential` / `decrement_rp`) · `passkeys.rs:89-151` (`for_each_rp`, the `EF_RP` walk the display lists from) |
@@ -340,11 +340,8 @@ here as one. The obstacles are known and unequal, which is why this is not just
 a to-do list:
 
 - `NoCrossTransportTouchConsumption` **cannot** get a Kani harness today. Its
-  whole mechanism lives in `firmware/src/presence.rs`, and `firmware` is a
-  `no_std` embassy-rp binary that no `cargo kani -p` can build —
-  `scripts/kani_gate.py` says so in as many words. It needs the arbitration
-  lifted into a host-testable crate first; that is a production-source change
-  and the maintainer's call.
+  whole mechanism now lives in `crates/rsk-device/src/presence.rs`, host-testable
+  at last, but no harness has been written over it yet.
 - `NoAccessibleSecretWithoutGate` and `ResetNeverWeakensSurvivingState` are
   about flash records, so a harness needs an `Fs`. `rsk-fs` already carries
   sequence proofs; that is the natural home, not `rsk-fido`.
@@ -405,11 +402,13 @@ than a settled abstraction.
   (`PermSets`); `largeBlobWrite` is modelled as the empty set that
   `consume_after_user_presence` leaves behind. A defect reachable only from an
   unusual permission combination is not modelled.
-- **`WAIT_SCOPE` is modelled as the owner of an open touch wait**, where the
-  firmware sets it around the whole dispatch. The review showed this is exactly
-  as narrow as it sounds: the cancel is dropped at **both** ends of a wait
-  (`presence.rs:251` *and* `:292`), so removing either alone leaves the model
-  green — a reviewer trusting one citation would see nothing fall.
+- **The wait's scope is modelled as the owner of an open touch wait**, where the
+  worker sets it around the whole dispatch (`Arbiter::set_wait_scope`). The
+  review showed this is exactly as narrow as it sounds: the cancel is dropped at
+  **both** ends of a wait (`crates/rsk-device/src/presence.rs:193` *and*
+  `:226`), so removing either alone leaves the model green — a reviewer trusting
+  one citation would see nothing fall. The unit test `w8_…` is what pins the
+  drop at exit.
 - **The button build only** (`presence.shows_confirm() = FALSE`), so the reset
   window always applies; a display build bypasses it by design (`reset.rs:31`)
   and that path is unmodelled.

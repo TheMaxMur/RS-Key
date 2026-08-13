@@ -30,6 +30,7 @@ use rsk_fido::state::PinLock;
 
 mod ccid;
 mod ctap;
+pub mod presence;
 
 pub use ccid::CcidApplets;
 // The union is only reachable where a device-wide wipe is: `Management RESET` on

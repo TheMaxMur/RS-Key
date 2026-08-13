@@ -96,7 +96,7 @@ platform libraries. The per-crate detail is in the table. The shape is:
 | `rsk-mgmt` | the YubiKey management applet (DeviceInfo, interface toggles) served over both CCID and CTAPHID |
 | `rsk-rescue` | recovery/provisioning applet: identity, phy config record, flash info, secure-boot status, attestation key, reboot, the one OTP-lock write |
 | `rsk-store` | the `rsk_fs::Storage` backend the device runs: two `sequential-storage` map partitions (credentials vs. the hot counters), the counter-FID routing, and the scrub lap that physically destroys superseded secrets — generic over the flash, so the fuzzer can cut its power and the emulator can mount a file |
-| `rsk-device` | the applet wiring both the firmware and the emulator run: which applets exist, what capability gates each, and how a CTAPHID or CCID message reaches one — the board's own parts behind a `Hooks` trait |
+| `rsk-device` | the applet wiring both the firmware and the emulator run: which applets exist, what capability gates each, and how a CTAPHID or CCID message reaches one — the board's own parts behind a `Hooks` trait. Also the presence-scope arbitration (`presence`): which transport owns the one button, whose cancel may end its wait, and the `spent` latch, with the button and clock behind a `Board` seam |
 | `rsk-vendor` | the vendor AID: the persisted test counter, SET/GET LED, the reboot request, and — gated out of every shipped image — core1 stats and the measurement benches; the hardware behind a `Platform` the firmware fills in |
 | `rsk-rsa-asm` | vendored C/ARM-asm modular exponentiation behind one FFI fn (host build uses a pure-Rust fallback) |
 | `rsk-led` | the `EF_LED_CONF` codec for the status-LED config block, shared by the firmware and the `rsk led` host tool |

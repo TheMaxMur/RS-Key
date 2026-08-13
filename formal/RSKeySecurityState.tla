@@ -46,8 +46,8 @@ CONSTANTS
     BugChangePinKeepsPpuat,       \* clientpin.rs:300-304
     BugStopUsingKeepsPerms,       \* state.rs:545-556  stopUsingPinUvAuthToken
     BugNoConsumeAfterUp,          \* state.rs:518-530  GHSA-wqjm-653g-hgw3
-    BugUnscopedCancel,            \* presence.rs:92-96 WAIT_SCOPE on cancel
-    BugTouchNotSpent,             \* presence.rs:259-266,288 the `spent` latch
+    BugUnscopedCancel,            \* rsk-device presence.rs:116-120 cancel scope
+    BugTouchNotSpent,             \* rsk-device presence.rs:200-208,222 `spent`
     BugSoftLockLostOnWarmReset,   \* ctap.rs:215-222   PinLock across sys_reset
     BugWarmResetReopensWindow,    \* reset.rs:130-132  in_reset_window
     BugCmWalkIgnoresChannel,      \* state.rs:169-179  may_walk_rps
@@ -69,9 +69,9 @@ CONSTANT FixSweepDropsCredsBeforeRpEntries
 (* persistent grant when EF_PIN is absent -- one owner, one line.              *)
 CONSTANT FixPpuatRequiresPin
 
-NoOwner == "none"          \* SCOPE_NONE            (presence.rs:52)
-Fido    == "fido"          \* SCOPE_FIDO -- CTAPHID (presence.rs:54)
-Ccid    == "ccid"          \* SCOPE_CCID -- CCID    (presence.rs:56)
+NoOwner == "none"          \* SCOPE_NONE            (crates/rsk-device/src/presence.rs:26)
+Fido    == "fido"          \* SCOPE_FIDO -- CTAPHID (crates/rsk-device/src/presence.rs:28)
+Ccid    == "ccid"          \* SCOPE_CCID -- CCID    (crates/rsk-device/src/presence.rs:30)
 Transports == {Fido, Ccid}
 
 NoRp   == "norp"           \* PinUvAuthToken.has_rp_id = FALSE (state.rs:252)
@@ -178,26 +178,28 @@ Init ==
 
 (***************************************************************************)
 (* Presence -- one physical button serves every applet, so the wait carries *)
-(* an owner. firmware/src/presence.rs:33-108, 244-295.                      *)
+(* an owner. crates/rsk-device/src/presence.rs:25-166, 190-241.            *)
 (***************************************************************************)
 
 Idle == op.kind = "none"
 WaitOpen == pres.scope # NoOwner /\ pres.granted = "none"
 
-\* ButtonPresence::wait entry: presence.rs:251-252 drops a cancel left over
-\* from an already-finished request, so each wait starts clean.
+\* ButtonWait::wait entry: crates/rsk-device/src/presence.rs:193-194
+\* drops a cancel left over from an already-finished request, so each wait
+\* starts clean.
 OpenWaitFor(t) ==
     [pres EXCEPT !.scope = t, !.cancelReq = FALSE, !.cancelBy = NoOwner,
                  !.granted = "none"]
 
 \* The dispatch is over; set_wait_scope(SCOPE_NONE) so an on-panel ceremony is
-\* nobody's to cancel (presence.rs:60-64), and presence.rs:292 clears a cancel
-\* that raced in.
+\* nobody's to cancel (crates/rsk-device/src/presence.rs:103-105), and
+\* :226 clears a cancel that raced in.
 ClosedWait(p) ==
     [p EXCEPT !.scope = NoOwner, !.cancelReq = FALSE, !.cancelBy = NoOwner,
               !.granted = "none"]
 
-\* The user's finger. PressUp clears `spent` exactly as presence.rs:265 does.
+\* The user's finger. PressUp clears `spent` exactly as
+\* crates/rsk-device/src/presence.rs:207 does.
 \* `usedBy` is a ghost naming the transport that has already been served by the
 \* CURRENT continuous hold, so it is cleared by every release: a second press
 \* is a second consent, and only an uninterrupted hold can be double-spent.
@@ -215,7 +217,7 @@ PressUp ==
                     upSpent, viol >>
 
 \* CTAPHID_CANCEL for the channel being processed. rsk-usb ctaphid.rs:757-762
-\* raises it; firmware/src/presence.rs:92-96 is the scope check that decides
+\* raises it; crates/rsk-device/src/presence.rs:116-120 is the scope check that decides
 \* whether it may end THIS wait. Only the CTAPHID transport can send one.
 CancelGuard  == IF BugUnscopedCancel THEN TRUE ELSE pres.scope = Fido
 HostCancel ==
@@ -225,7 +227,8 @@ HostCancel ==
     /\ UNCHANGED << pin, gate, store, lock, tok, plat, walk, sys, op, snap,
                     upSpent, viol >>
 
-\* presence.rs:258-263: a press the previous ceremony already consumed is not
+\* crates/rsk-device/src/presence.rs:200-205: a press the previous
+\* ceremony already consumed is not
 \* consent for this one. `stillHeld` is the debounce at :277-288 giving up with
 \* the finger down (TRUE) or the user releasing (FALSE); both are reachable.
 TouchConfirm ==
@@ -246,7 +249,8 @@ TouchConfirm ==
     /\ UNCHANGED << pin, gate, store, lock, tok, plat, walk, sys, op, snap,
                     upSpent >>
 
-\* presence.rs:267-269. A cancel raised by transport A must never end a wait
+\* crates/rsk-device/src/presence.rs:209-211. A cancel raised by
+\* transport A must never end a wait
 \* owned by transport B.
 TouchCancel ==
     /\ WaitOpen
@@ -258,7 +262,8 @@ TouchCancel ==
     /\ UNCHANGED << pin, gate, store, lock, tok, plat, walk, sys, op, snap,
                     upSpent >>
 
-\* presence.rs:270-272. Modelled as always enabled rather than tied to the
+\* crates/rsk-device/src/presence.rs:212-214. Modelled as always
+\* enabled rather than tied to the
 \* clock: an over-approximation (more behaviours), sound for safety.
 TouchTimeout ==
     /\ WaitOpen

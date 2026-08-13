@@ -85,9 +85,9 @@ where
 
     /// Render `confirm` and block-wait for an Allow/Deny tap, a `CTAPHID_CANCEL`,
     /// or the presence timeout, then hand the panel back to the status loop. Sets
-    /// `UP_PENDING` so the CTAPHID keepalive reports `UPNEEDED`, and polls
-    /// `CANCEL_REQUESTED` each iteration — the same cross-executor contract the
-    /// BOOTSEL wait honours.
+    /// the up-pending flag so the CTAPHID keepalive reports `UPNEEDED`, and polls
+    /// the cancel flag each iteration — the same cross-executor contract the
+    /// BOOTSEL wait honours through `rsk_device::presence::Arbiter`.
     fn confirm_wait(&mut self, confirm: Confirm<'_>) -> Outcome {
         let saved = self.ui.borrow_mut().ceremony_begin();
 
