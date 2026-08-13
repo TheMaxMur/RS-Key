@@ -163,7 +163,8 @@ checks **only** the named invariant.
 | `BugStateResetAfterWipe` | `reset.rs:57-60` — `ctx.state.reset()` moved back behind the flash work, which is the regression E76's own review caught | `ResetNeverWeakensSurvivingState` | 38 880 states |
 | `BugPanelCancelable` | the panel half of `request_cancel`'s scope test (`crates/rsk-device/src/presence.rs:116-120`) — E45's ruling | `NoCrossTransportTouchConsumption` | 238 states |
 | `BugUnscopedOtpCancel` | `cancel_otp_wait`'s own scope test (`crates/rsk-device/src/presence.rs:124-134`) — the second writer of the same cancel flag | `NoCrossTransportTouchConsumption` | 237 states |
-| `BugLocalPinKeepsToken` | `ends_host_token` (`crates/rsk-display/src/gates.rs:139-146`) — E66, the panel's PIN pad as a fourth door | `NoTokenAfterInvalidation` | 1 604 states |
+| `BugLocalPinKeepsToken` | `ends_host_token` (`crates/rsk-display/src/gates.rs:139-146`) — E66, the panel's PIN pad as a fourth door | `NoTokenAfterInvalidation` | 1 662 states |
+| `BugSetPinOverExisting` | `clientpin.rs:184-186` — setPIN refusing to overwrite a live PIN | `NoAuthorizationBypass` | 741 states |
 
 And the three that break a **liveness** property rather than an invariant. They
 are a separate `LIVE_BUGS` list in `gen-configs.sh` on purpose: a wedge is a
@@ -185,7 +186,7 @@ under it, from a `companion_bug` table in `gen-configs.sh`. A mutant that stops
 firing because a fix subsumed it is worth knowing; a mutant that stops firing
 silently is the failure this file exists to avoid.
 
-**23 of 23 mutants are caught, each by the invariant that names it**, and 3 of 3
+**24 of 24 mutants are caught, each by the invariant that names it**, and 3 of 3
 liveness mutants by the property that names them.
 `NoAccessibleSecretWithoutGate` is the one invariant no switch names as its
 target; `BugResetGatesFirst` breaks it too, and
@@ -272,6 +273,51 @@ read every action against every invariant and still missed this one. It was
 looking for a `viol` writer that should exist and does not; this was a gate with
 no writer at all, and it took an independent reviewer whose only job was to break
 things.
+
+### And the next reviewer found two more of exactly the same shape
+
+The repair above fixed the two call sites it was found on and **left the class
+open at two others**, which is the more useful result: the lesson did not
+generalise by itself.
+
+- **`authenticatorReset`'s touch.** `ResetConfirmed` had `pres.granted =
+  "confirm"` as an enabling conjunct with no Policy, long after `TouchGuard` /
+  `TouchPolicy` had been written for exactly this. Removing the presence gate
+  from the wipe left every invariant **GREEN over 17 911 536 states** — a factory
+  reset served with no touch at all. `ResetConfirmed` carries the same pair now;
+  with makeCredential and getAssertion lifted out of `Next` so they cannot mask
+  it, `BugNoTouchRequired` is **RED through the reset alone in 254 states**, on a
+  trace whose middle step is `TouchTimeout`.
+- **setPIN over an existing PIN.** `clientpin.rs:184-186` is the only thing
+  standing between a stranger with physical access and their own clientPIN —
+  changePIN spends a retry and verifies the old one, setPIN does not. It was
+  `~pin.set`, an enabling conjunct, and removing it left everything **GREEN over
+  21 393 948 states** while a token minted under the new PIN read the credential
+  directory. `SetPinGuard` / `SetPinPolicy` and `BugSetPinOverExisting` close it
+  in 741.
+
+Two other things that review measured are corrections rather than defects, and
+they belong here because they change what this page may claim:
+
+- **`SeedReachable`'s `ram` disjunct is inert, and the three clauses restated in
+  terms of it are inert with it.** `ram => store.seed` holds over **all 17 190 324
+  states** of the tree as it stood when that was measured, because `DeviceUnlock`
+  needs a live flash seed and `ResetConfirmed` drops the RAM copy before the
+  flash one goes. Dropping the disjunct leaves the state set *identical* and
+  flips no verdict. So the credit for closing E110 belongs to `KeepSurv`'s
+  `reach` argument — which is what carries `snap.seed` past the flash delete on
+  the mutant tree — together with `ResetAborts` and `DeviceUnlock`, and **not**
+  to the restatement. The restatement stays because it is the faithful reading of
+  `Ctx::load_keydev`, not because it does work.
+- **Two of the three `ram' = FALSE` assignments are dead.** `ResetFinish`'s can
+  never differ (the RAM copy is already gone by step 3) and `VolatileCleared`'s
+  is unobservable while `DeviceUnlock` is ungated. Both, removed, give back the
+  *identical* state graph. They are kept as statements of what the code does.
+
+And one limitation of the `Solo_*` convention, measured rather than assumed: it
+names an **invariant**, never a clause. All four reset-family mutants report
+`ResetNeverWeakensSurvivingState`, and all four traces are its **third** clause;
+clauses 1 and 2 have one owner between them.
 
 ### The other two holes
 

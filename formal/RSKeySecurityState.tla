@@ -63,7 +63,8 @@ CONSTANTS
     BugStateResetAfterWipe,       \* reset.rs:57-60 ctx.state.reset() ordering
     BugPanelCancelable,           \* the panel's half of request_cancel's scope test
     BugUnscopedOtpCancel,         \* crates/rsk-device/src/presence.rs:125
-    BugLocalPinKeepsToken         \* crates/rsk-display/src/gates.rs:146
+    BugLocalPinKeepsToken,        \* crates/rsk-display/src/gates.rs:146
+    BugSetPinOverExisting         \* clientpin.rs:184-186 setPIN over a live PIN
 
 (* Mutation switches for the LIVENESS properties. Kept apart from the set above *)
 (* because they break no invariant -- a wedge is a perfectly safe state -- so    *)
@@ -619,13 +620,24 @@ LocalPinOk ==
 (* setPIN / changePIN -- multi-write, so a power cut has a position.        *)
 (***************************************************************************)
 
-\* clientpin.rs:184-186: a PIN already set may only be replaced by changePIN.
+\* clientpin.rs:184-186: a PIN already set may only be replaced by changePIN,
+\* which spends a retry and verifies the old one. setPIN carries no such check,
+\* so this test IS the authorization -- and it needs a Policy like every other
+\* gate here, not just an enabling conjunct. A step that is merely never ENABLED
+\* over a live PIN cannot notice a build that stopped refusing: remove it and a
+\* stranger sets their own PIN, mints a token and reads the credential directory,
+\* which every invariant here stayed green over for 21 393 948 states.
+SetPinGuard  == IF BugSetPinOverExisting THEN TRUE ELSE ~pin.set
+SetPinPolicy == ~pin.set
+
 SetPinStart ==
     /\ Idle
-    /\ ~pin.set
+    /\ SetPinGuard
+    /\ viol' = IF SetPinPolicy THEN viol
+                               ELSE viol \cup {"NoAuthorizationBypass"}
     /\ op' = [kind |-> "setpin", t |-> Fido, rp |-> NoRp, step |-> 0]
     /\ UNCHANGED << pin, gate, store, lock, tok, plat, pres, walk, sys, snap,
-                    upSpent, viol, ram >>
+                    upSpent, ram >>
 
 \* clientpin.rs:213-217 / write_pin_verifier :824-828 -- revoke BEFORE the new
 \* verifier lands. A torn authenticatorReset can drop EF_PIN and lose power
@@ -714,6 +726,11 @@ StopUsingToken ==
 RegisterStart(r, t) ==
     /\ Idle
     /\ pres.scope = NoOwner
+    \* Every credential box is derived from the seed, so a registration without
+    \* one cannot complete either. It was only ever AssertStart's conjunct, which
+    \* let `store.cred` -- "the records that still open" -- hold a record with no
+    \* seed to open it once ResetAborts could strand a seedless running device.
+    /\ SeedReachable
     /\ ~(gate.alwaysUv /\ ~pin.set)          \* alwaysUv with no PIN fails closed
     /\ OpGuard("mc", r)
     /\ viol' = IF OpPolicy("mc", r) THEN viol ELSE viol \cup TokenBypass
@@ -876,7 +893,6 @@ DeviceUnlock ==
 \* It carries no rpId binding and no usage timer, so it authorizes alone --
 \* which is exactly why every path that invalidates it must delete the record.
 PpuatGuard  == IF FixPpuatRequiresPin THEN gate.ppuat /\ pin.set ELSE gate.ppuat
-PpuatPolicy == gate.ppuat /\ ~gate.ppuatStale /\ pin.set
 
 CmBeginViaToken(ch, r) ==
     /\ Idle
@@ -1008,7 +1024,14 @@ ResetRefused ==
 \* like everything else. BugStateResetAfterWipe is that ordering taken back out.
 ResetConfirmed ==
     /\ op.kind = "reset" /\ op.step = 0
-    /\ pres.granted = "confirm"
+    \* The SAME Guard/Policy pair mc and ga carry, and for the same reason: the
+    \* wipe's touch was an enabling conjunct here long after that lesson landed,
+    \* so removing the presence gate from authenticatorReset left every invariant
+    \* green over 17 911 536 states -- a factory reset served with no touch at
+    \* all, inside a window a replug opens.
+    /\ TouchGuard
+    /\ viol' = IF TouchPolicy THEN viol
+                              ELSE viol \cup {"NoAuthorizationBypass"}
     /\ ram' = IF BugStateResetAfterWipe THEN ram ELSE FALSE
     \* A previous attempt may have aborted with the flash record already gone, so
     \* dropping the RAM copy here can be the moment the last one dies.
@@ -1019,10 +1042,29 @@ ResetConfirmed ==
     \* Deliberately NOT marking the persistent grant stale here. A reset that is
     \* torn did not happen: the PIN that bought the grant may still stand, and
     \* the user retries. The grant becomes illegitimate when the PIN record it
-    \* was bought with is gone -- which PpuatPolicy tests directly.
+    \* was bought with is gone -- which CmBeginViaPpuat's own recorder tests.
     /\ op' = [op EXCEPT !.step = IF BugResetGatesFirst THEN 2 ELSE 1]
-    /\ UNCHANGED << pin, gate, lock, tok, plat, pres, walk, sys,
-                    upSpent, viol >>
+    \* `ctx.state.reset()` in full, not only its `keydev_dec` half: the session
+    \* token, the platform's copy of it and the enumerate cursor die here too
+    \* (state.rs:422-432). Modelling only the seed left a live token outliving
+    \* the deletion of EF_PIN once ResetAborts could strand one, which is
+    \* 2 152 364 states the firmware cannot be in -- and it refuted ConfigGuard's
+    \* own justification, that a live token implies a PIN was set. The clientPIN
+    \* soft lock is NOT cleared here, and that is the one narrowing: `lock`
+    \* carries a policy ghost (`policyMism`) the firmware has no field for, so
+    \* whether a reset that then aborts may launder the RAM lock is a question
+    \* this model states rather than answers.
+    /\ tok'  = IF BugStateResetAfterWipe THEN tok
+                                         ELSE [live |-> FALSE, perms |-> {},
+                                               rp |-> NoRp]
+    /\ plat' = IF BugStateResetAfterWipe THEN plat
+                                         ELSE [held |-> FALSE,
+                                               verifies |-> FALSE,
+                                               revoked |-> TRUE]
+    /\ walk' = IF BugStateResetAfterWipe THEN walk
+                                         ELSE [open |-> FALSE, chan |-> NoChan]
+    /\ upSpent' = IF BugStateResetAfterWipe THEN upSpent ELSE FALSE
+    /\ UNCHANGED << pin, gate, lock, pres, sys >>
 
 \* Which phase EF_BACKUP_SEALED belongs to is the audit run-36 class fix itself
 \* (reset.rs:110-117): it is in the GATE set, so the marker outlives the seed it
@@ -1268,9 +1310,6 @@ OpAdvances ==
     \/ DeleteCredWriteA \/ DeleteCredWriteB
     \/ ResetRefused \/ ResetConfirmed \/ ResetSweepSecrets \/ ResetSweepGates
     \/ ResetFinish \/ ResetAborts
-    \* A ceremony the panel or the OTP protocol opened is in flight in exactly the
-    \* sense OpAdvances means: its own dispatch runs to completion.
-    \/ LocalCeremonyEnds
 
 \* The presence wait carries PRESENCE_TIMEOUT_MS
 \* (crates/rsk-device/src/presence.rs:212-213),
@@ -1281,9 +1320,19 @@ OpAdvances ==
 \* PowerCut, WarmReset, Tick and every *Start. Assuming a user eventually
 \* touches, a host eventually sends, or a device is eventually replugged would
 \* prove liveness the device does not have.
+\* Its OWN conjunct, not a disjunct of OpAdvances, and the difference is a
+\* counterexample rather than a preference. WF over a disjunction only promises
+\* that SOME disjunct fires, and a local ceremony is the first thing here that
+\* can be in flight beside another sequence -- LocalCeremonyStart takes the
+\* button, but setPIN and changePIN need only `Idle`. So a panel wait that had
+\* taken its confirm sat open for ever while the PIN ladder kept OpAdvances
+\* satisfied on its own, and EveryWaitReleases failed in 423 900 states.
+\* Justified the same way worker.rs:519-521 justifies the FIDO half: the
+\* ceremony's own dispatch runs to completion and puts WAIT_SCOPE back.
 FairSpec == Spec /\ WF_vars(OpAdvances)
                  /\ WF_vars(TouchTimeout)
                  /\ WF_vars(WalkExpires)
+                 /\ WF_vars(LocalCeremonyEnds)
 
 \* No wedge: a ceremony that has begun reaches quiescence, by finishing, by
 \* being refused, or by losing power. This is the class the getAssertion wedge
