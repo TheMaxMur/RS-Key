@@ -147,7 +147,10 @@ RULES = [
      ExpectDiff(None, r"rs-key-0001",
                 "RS-Key ships a fixed USB serial string; a real YubiKey exposes none (serial is via the mgmt applet)")),
     ("usb.bcdDevice",
-     ExpectDiff(None, r"(?i)0x08", "RS-Key bcdDevice is an internal build counter (0x08xx)")),
+     # Four hex digits, not a prefix: pinning `0x08` dated the assertion to one
+     # release series and it expired the day the counter reached `0x09`.
+     ExpectDiff(None, r"(?i)0x[0-9a-f]{4}",
+                "RS-Key bcdDevice is an internal build counter, not a firmware version")),
     ("usb.product", ExpectDiff(None, r"(?i)yubikey", "product strings differ; RS-Key carries 'RSK'")),
     ("usb.manufacturer", ExpectDiff(None, None, "manufacturer string may differ")),
     ("ccid.atr", ExpectDiff(None, None, "ATR historical bytes differ (real spells 'YubiKey')")),
