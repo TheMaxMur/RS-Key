@@ -65,7 +65,14 @@ CONSTANTS
     \* (crates/rsk-openpgp/src/putdata.rs:59-65). Its own switch rather than a
     \* share of BugUserStatusOpensAdmin, for the reason BugUnscopedOtpCancel has
     \* its own: a second gate on the same requirement, in a different function.
-    BugPwStatusIgnoresAdmin
+    BugPwStatusIgnoresAdmin,
+    \* The two EXEMPT refusals, each taken back out. PIV's CHANGE REFERENCE DATA
+    \* clearing the standing status -- SP 800-73-4 pt2 3.2.2/3.2.3 say it does
+    \* not, and a YubiKey 5.7.4 was measured keeping it -- and a refused OATH
+    \* access-code VALIDATE dropping the standing unlock, where a MAC
+    \* challenge-response has no retry counter for a refusal to protect.
+    BugPivChangeResetsStatus,
+    BugRefusedValidateDropsUnlock
 
 \* The three CCID applets that carry an in-RAM security status. `NoApplet` is
 \* `Dispatcher::current = None` (crates/rsk-sdk/src/applet.rs:145): nothing
@@ -88,7 +95,8 @@ RefOwner(r) ==
     ELSE Oath
 
 InvNames == { "NoKeyOpOnTheAdminStatus", "NoStatusAfterARefusedAuth",
-              "ReselectPreservesAccessStatus" }
+              "ReselectPreservesAccessStatus",
+              "ExemptRefusalPreservesStatus" }
 
 VARIABLES
     sel,    \* Dispatcher::current            (crates/rsk-sdk/src/applet.rs:145)
@@ -234,11 +242,22 @@ PivVerify(ok) ==
 \* (crates/rsk-piv/src/lib.rs:497-531), so a refused change costs the standing
 \* status NOTHING. Deliberate, and settled by measurement rather than taste:
 \* SP 800-73-4 pt2 3.2.2/3.2.3 say the security status is unchanged and a real
-\* YubiKey keeps it. It is here so the invariant below cannot be written as a
-\* cross-applet rule by accident.
+\* YubiKey keeps it.
+\*
+\* It was `UNCHANGED vars` -- a stutter step, which `[][Next]_vars` admits
+\* anyway, so the action was indistinguishable from not existing and the
+\* exemption it stands for was a comment. The KEEP is a requirement in its own
+\* right and it now has the pair every other requirement here carries.
 PivChangeRefused ==
     /\ sel = Piv
-    /\ UNCHANGED vars
+    /\ held'   = IF BugPivChangeResetsStatus
+                   THEN [held EXCEPT !["pivPin"] = FALSE] ELSE held
+    /\ fresh'  = IF BugPivChangeResetsStatus THEN FALSE ELSE fresh
+    /\ pfresh' = IF BugPivChangeResetsStatus THEN FALSE ELSE pfresh
+    /\ viol'   = IF held' = held /\ fresh' = fresh
+                   THEN viol ELSE viol \cup {"ExemptRefusalPreservesStatus"}
+    \* NOT a writer of `refused`, and that is the whole content of the rule.
+    /\ UNCHANGED << sel, oneShotSig, psig, oathCodeSet, refused >>
 
 \* OpenPGP clears EXACTLY the addressed reference, and it keys the clear on the
 \* FID it compared rather than on P2 (crates/rsk-openpgp/src/pin.rs:158-170):
@@ -300,12 +319,22 @@ OathChangeRefused ==
 \* refused VALIDATE into a successful one was invisible -- `refused` provably
 \* never takes the value "oathCode", so the ghost clause cannot reach that
 \* reference at all. This is the Guard/Policy pair that can.
+\* The two directions are DIFFERENT rules and each needs its own name: granting
+\* on a refusal is the safety defect, dropping the standing unlock is the
+\* conformance one (a YubiKey 5.7.4 keeps it, and there is no retry counter for
+\* a refusal to protect). One recorder for both would have made the verdict
+\* ambiguous the way four sibling call sites once made NoAuthorizationBypass's.
 OathValidateRefused ==
     /\ sel = Oath
     /\ held' = IF BugRefusedValidateGrants
-                 THEN [held EXCEPT !["oathCode"] = TRUE] ELSE held
-    /\ viol' = IF held'["oathCode"] = held["oathCode"]
-                 THEN viol ELSE viol \cup {"NoStatusAfterARefusedAuth"}
+                 THEN [held EXCEPT !["oathCode"] = TRUE]
+                 ELSE IF BugRefusedValidateDropsUnlock
+                        THEN [held EXCEPT !["oathCode"] = FALSE] ELSE held
+    /\ viol' = viol
+         \cup (IF held'["oathCode"] /\ ~held["oathCode"]
+                 THEN {"NoStatusAfterARefusedAuth"} ELSE {})
+         \cup (IF held["oathCode"] /\ ~held'["oathCode"]
+                 THEN {"ExemptRefusalPreservesStatus"} ELSE {})
     /\ UNCHANGED << sel, fresh, pfresh, oneShotSig, psig, oathCodeSet,
                     refused >>
 
@@ -556,6 +585,23 @@ NoStatusAfterARefusedAuth ==
 \* Ghost half, writers enumerated: PgpKeyOp and PivKeyOp. No other action is
 \* gated by an authorization in this module.
 NoKeyOpOnTheAdminStatus == "NoKeyOpOnTheAdminStatus" \notin viol
+
+\* THE OTHER HALF OF THE REFUSAL RULE, and it points the opposite way: two
+\* refusals must cost NOTHING, and each is settled by its own authority rather
+\* than by a cross-applet principle. PIV's CHANGE REFERENCE DATA takes no
+\* `&mut Session` at all (crates/rsk-piv/src/lib.rs:497-531) -- SP 800-73-4 pt2
+\* 3.2.2/3.2.3, plus a measured YubiKey 5.7.4. OATH's access-code VALIDATE keeps
+\* the standing unlock (crates/rsk-oath/src/lib.rs:539-541), because a MAC
+\* challenge-response has no retry counter for a refusal to protect.
+\*
+\* So THREE APPLETS KEEP THREE RULES and no single one can be written: OpenPGP's
+\* refused CHANGE clears the addressed reference, OATH's OTP-PIN CHANGE drops
+\* both flags, and these two keep everything. That is the honest answer, and
+\* what makes it a property rather than a paragraph is that both exemptions are
+\* now falsifiable in the direction they actually go.
+\*
+\* Ghost, two writers: PivChangeRefused and OathValidateRefused.
+ExemptRefusalPreservesStatus == "ExemptRefusalPreservesStatus" \notin viol
 
 \* A CONFORMANCE claim, not a security one, and it is labelled as such because
 \* it points the other way from the three above: 637ed98 WIDENED the
