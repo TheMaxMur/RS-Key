@@ -77,8 +77,10 @@ const OP_TIME_PASSES: u8 = 7;
 /// (`clientpin.rs:415-421`): fresh token, begin using it, then the permission
 /// set. Its rpId binding (`:422-428`) is left out — `paut.has_rp_id` starts
 /// false and no clause here reads the hash. Reproduced rather than called
-/// because the real function needs a `Ctx`, whose reachable set includes P-256
-/// (see the module note in `credmgmt_kani.rs`).
+/// because the real function needs a whole `Ctx` — flash, a device identity and
+/// a presence source — none of which this sequence has. Not because *holding* a
+/// `Ctx` codegens p256: measured, it does not. The three inline call-site gates
+/// are the different case — their bodies reach the curve (docs/testing.md).
 fn issue_token(st: &mut FidoState, rng: &mut StepRng, permissions: u8, now_ms: u64) {
     st.reset_pin_uv_auth_token(rng);
     st.begin_using_token(false, now_ms);

@@ -277,15 +277,29 @@ inputs are the fuzzers' job. Big loops (a full modexp, Baillie–PSW) are out of
 CBMC's reach by design and stay covered by the differential tests and on-device
 KATs.
 
-For a sequence proof the bound is the sequence, and two more walls stand behind
+For a sequence proof the bound is the sequence, and three more walls stand behind
 it. **Cost:** one HMAC-SHA-256 evaluation over concrete bytes costs CBMC ~130 s,
 so a harness that drives a real MAC-checking gate can afford it once at the end,
-never once per step. **Reach:** anything that pulls `p256` in — a `Ctx`, and so
-the whole CTAP dispatch — does not merely time out, it aborts in codegen.
-Kani 0.67.0 panics on `crypto-bigint 0.7.5`'s `UintRef::lowest_u64`
-(*"BinaryOperation Expression does not typecheck Plus … FlexibleArray"*), which
-is why three of the four token gates are represented by the state predicates
-they read rather than invoked. Each harness names what it does not prove.
+never once per step. **Codegen:** a harness that reaches p256's field arithmetic
+aborts in codegen — Kani 0.67.0 panics on `crypto-bigint 0.7.5`'s
+`UintRef::lowest_u64` (*"BinaryOperation Expression does not typecheck Plus …
+FlexibleArray"*), upstream
+[kani#2683](https://github.com/model-checking/kani/issues/2683) — whose
+`ConstantIndex` path `main` fixed in
+[#4681](https://github.com/model-checking/kani/pull/4681), in no release, and
+without closing the issue. It is the *build profile* that selects that path, not
+the dependency: the crash needs a MIR `ConstantIndex`, which every `opt-level`
+but `0` produces (swept 0/1/2/3/s/z), so
+`[profile.dev.package.crypto-bigint] opt-level = 0` removes it — measured, and
+**this tree deliberately does not carry that override**, because the wall behind
+it stands anyway. Merely *holding* a `Ctx` never triggers it either: Kani
+codegens what a harness reaches, not what its types mention. **Reach:** behind
+the ICE sits `cmov 0.5.4`'s `asm!` backend, reached via `ctutils`, which Kani
+cannot model on either host target — it answers `VERIFICATION: FAILED` on an
+unsupported reachable construct (measured), so the path is closed loudly, never
+by a silent pass. Hence three of the four token gates are represented by the
+state predicates they read rather than invoked. Each harness names what it does
+not prove.
 
 The sharpest bound is on *functional division* specs. Proving
 `mod_small == v % m` makes the solver equate two division circuits
