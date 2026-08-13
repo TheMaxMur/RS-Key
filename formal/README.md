@@ -156,8 +156,33 @@ checks **only** the named invariant.
 | `BugSoftLockLostOnWarmReset` | `ctap.rs:215-222` `PinLock` carry | `NoAuthorizationBypass` | 4 993 states |
 | `BugWarmResetReopensWindow` | `reset.rs:153` `!warm_boot` | `NoAuthorizationBypass` | 126 states |
 | `BugCmWalkIgnoresChannel` | `state.rs:172` channel equality | `NoAuthorizationBypass` | 1 242 states |
+| `BugSeedDoesNotLead` | `reset.rs:61-65` / `fs.rs`'s `first` — the pre-0x08BF wipe | `NoUnmanageableCredential` | 55 765 states |
+| `BugWrongPinKeepsToken` | `clientpin.rs:779` — the pre-E38 tree, a mismatch that keeps the token | `NoTokenAfterInvalidation` | 623 states |
+| `BugConsumeKeepsMcGa` | `state.rs:522-528` — a §6.5.5.7 triad narrowed to the config permissions | `NoAuthorizationBypass` | 3 383 states |
+| `BugNoDropStaleCancelAtEntry` | `presence.rs:250-251` — the wait-entry cancel drop | `NoCrossTransportTouchConsumption` | 125 states |
 
-**14 of 14 mutants are caught, each by the invariant that names it.**
+And the three that break a **liveness** property rather than an invariant. They
+are a separate `LIVE_BUGS` list in `gen-configs.sh` on purpose: a wedge is a
+perfectly safe state, so putting them in the table above would have meant three
+mutants nothing catches.
+
+| Mutation switch | Removes | Target property | Caught in |
+|---|---|---|---|
+| `BugAssertWedgesOnTimeout` | only a confirm completes a getAssertion | `EveryOpQuiesces` | 44 550 states |
+| `BugWaitScopeNotCleared` | `worker.rs:521` `set_wait_scope(SCOPE_NONE)` | `EveryWaitReleases` | 78 269 states |
+| `BugWalkNeverExpires` | `state.rs:613-619` `expire_stale_sequences` | `EveryWalkCloses` | 94 435 states |
+
+**One mutant needs a companion, and that is a result.** `BugBackupSealedNotAGate`
+rebuilds audit run-36's class — the backup marker swept ahead of the seed it
+protects — and once the seed leads the wipe unconditionally (0x08BF) the window
+it re-opens is over a seed that is already gone, so it is **not falsifiable on
+its own any more**. Its configuration therefore carries `BugSeedDoesNotLead`
+under it, from a `companion_bug` table in `gen-configs.sh`. A mutant that stops
+firing because a fix subsumed it is worth knowing; a mutant that stops firing
+silently is the failure this file exists to avoid.
+
+**18 of 18 mutants are caught, each by the invariant that names it**, and 3 of 3
+liveness mutants by the property that names them.
 `NoAccessibleSecretWithoutGate` is the one invariant no switch names as its
 target; `BugResetGatesFirst` breaks it too, and
 `Solo_NoAccessibleSecretWithoutGate.cfg` shows that alone in 252 430 states.
@@ -182,7 +207,74 @@ bytes that stay put and keeps succeeding. Splitting the guard in two
 (`TokenGuardUv` / `TokenGuardBare`) made the mutant fall in 840 states. A model
 that flatters the code proves nothing about it.
 
-## Findings on the tree as it stands
+## The `viol` ghost, and the three holes an audit found in it
+
+Three of the six invariants and half of a fourth are `"Name" \notin viol` — a
+ghost set the actions themselves write into. Such an invariant is only as strong
+as the completeness of those writers, and **the mutation experiment above
+structurally cannot find a writer that is missing**: it tests the assignments
+that exist. Every action in `Next` was therefore read against every invariant,
+and each hole below is proved by taking its repair back out and watching the
+mutant that should catch it come back green.
+
+Where a property can be read out of the STATE it now is, because a structural
+clause needs no cooperation from any action. Six of the pre-existing mutants no
+longer depend on the ghost at all: `(upSpent /\ tok.live) => tok.perms = {}`,
+`(lock.policyMism >= MismatchLimit) => lock.soft`,
+`~(plat.held /\ plat.revoked /\ tok.perms # {})`,
+`~(gate.ppuat /\ gate.ppuatStale)` and
+`(pres.granted = "cancel") => (pres.cancelBy = pres.scope)`. What stays a ghost
+is named as such in the model's comments, with its writers enumerated: the rpId
+binding and the confirm half of the touch rule leave no bad *state*, only a bad
+*step*, and `NoAccessibleSecretWithoutGate`'s `pcmr` clause stays deliberately —
+the structural form would call the shipped fix a defect, because that fix refuses
+the record rather than preventing it.
+
+### The cancel that no wait was open for
+
+`HostCancel` required an open wait, so the model could not raise a
+`CTAPHID_CANCEL` at any other moment. The firmware can, and it matters:
+`set_wait_scope` is called around the whole **dispatch** (`worker.rs:429`,
+`:521`), not around the touch wait, so `request_cancel` (`presence.rs:92-96`)
+accepts a cancel during a FIDO command that never opens one — getInfo, a
+capability-denied CBOR, a silent `up:false`. **Nothing clears
+`CANCEL_REQUESTED` when that dispatch ends**, and the next dispatch may be CCID
+or OTP, where every applet's presence goes through the same
+`ButtonPresence::wait` reading the same global.
+
+`presence.rs:250-251` eats it at wait entry, and that is the whole defence.
+`:292` cannot help, because the dispatch that took the cancel never entered
+`wait`. `HostCancelLatched` models the latch and `BugNoDropStaleCancelAtEntry`
+removes the drop: **RED in 127 distinct states at depth 5**, the trace being a
+CTAPHID cancel ending a CCID ceremony. Without the action the same mutant is
+**GREEN over 6 580 784 states** — which is how "either owner alone carries the
+property" came to be written here, and it is wrong.
+
+### The other two holes
+
+`upSpent` — a user-presence test has been spent — had exactly **one** reader,
+`ConfigPolicy`, so the model saw CTAP 2.1 §6.5.5.7 only through the advisory
+that named authenticatorConfig. `BugConsumeKeepsMcGa` is the narrow fix somebody
+could have written instead, and a second assertion then rides the touch the
+first one collected: **GREEN over 9 087 628 states** before the structural
+clause, RED in 4 823 after.
+
+And four sibling call sites disagreed about which name they wrote —
+makeCredential and getAssertion both, authenticatorConfig only
+`NoAuthorizationBypass`, the two credentialManagement sites only
+`NoTokenAfterInvalidation` — so a `Solo_*` run coming back green meant either
+"not violated" or "violated under the other name". One `TokenBypass` recorder
+serves all four now. Measured with `ConfigOp` lifted out of `Next` so it cannot
+mask the pair: **GREEN over 11 088 688 states** with the old recorders, RED in
+1 489 with the shared one.
+
+## Findings on the tree as it stands — both are FIXED
+
+`Shipped.cfg` is **green**. The two findings below were produced by this model
+and closed in `a430f2d` (0x08BF) and `32b9fa3` (0x08C0); each is kept as a
+`Historical_*.cfg` — the tree with exactly that fix taken back out — so the
+counterexample stays reproducible and the fix stays demonstrably load-bearing.
+
 
 `Shipped.cfg` (every switch off) is **RED**, and that is the result, not a
 broken model. Both findings are one class: **the two-phase wipe controls the
@@ -249,30 +341,55 @@ soft-locked device) in its own write ahead of both sweep phases, so the strand s
 happens and the survivor no longer decrypts. `Fs::factory_wipe` took the same lead
 phase in the same commit.
 
-**The configurations below have not been re-run, and two of them no longer describe
-the tree.** Whoever re-runs them:
+**Both have been re-run, and both counterexamples are gone.** `Shipped.cfg` — the
+tree, no proposed fixes, no switches — is exhaustively GREEN over 6 664 764
+distinct states at depth 49. Each fix taken back out on its own brings its own
+counterexample straight back (`Historical_E76.cfg`, `Historical_E77.cfg`), which
+is what says the fixes are load-bearing rather than incidental.
 
-- `Shipped.cfg` still has `FixPpuatRequiresPin` off. Turn it on; `Shipped.cfg` then
-  models the shipped tree for Finding 2 and `Shipped_OnlyFinding2.cfg` becomes the
-  historical record of a fixed defect.
-- `NoUnmanageableCredential` asks that no live credential outlive its `EF_RP` entry
-  — *prevention*. The shipped mitigation makes the survivor unopenable instead, and
-  this spec has no notion of a record's key, so the property cannot express it and
-  `Shipped.cfg` stays RED on it. Re-scoping it to "live **and openable**" needs the
-  credential record to carry whether the seed that opens it is still present; that is
-  a model change, not a config flip, and it is the honest way to make this row green.
+Finding 2 needed a config flip: `FixPpuatRequiresPin` is ON everywhere now,
+because it is the tree. Finding 1 needed a model change, and it is the one the
+note above asked for. `NoUnmanageableCredential` asked for *prevention*; the
+shipped mitigation delivers *unopenability*; and `store.cred` meant "a record
+exists". It means **"a record that still opens"** now — justified by the fix's own
+verified premise, that every credential box, rpId box and `EF_RP` domain hangs
+off the seed and `credential_load` / `for_each_rp` are the chokepoints every
+reader goes through. `SeedLeadsTheWipe` is the ordering rule that no other delete
+may precede the seed's, and `BugSeedDoesNotLead` is the tree before 0x08BF.
+
+Two things the re-run turned up that are **not** fixed, and are recorded rather
+than closed:
+
+- **The model has one reset path.** `Fs::factory_wipe` — the Management RESET and
+  the on-screen factory reset — is a second producer of the state
+  `NoUnmanageableCredential` forbids, and it took the same `first` predicate in
+  the same commit. It is unmodelled.
+- **The model could not have caught the regression that fix's own review
+  caught.** `Ctx::load_keydev` prefers the in-RAM `state.keydev_dec`
+  (`lib.rs:183-187`), so with the flash seed always deleted first a *failed*
+  sweep would have left the power cycle running on a seed nothing stores —
+  `BACKUP_EXPORT` included — which is why `ctx.state.reset()` moved ahead of the
+  flash work. This spec has no RAM copy of the seed (`keydev_dec` is populated by
+  the *device* soft-lock unlock, `vendor.rs:558-559`, a concept absent here — its
+  `lock` is the clientPIN mismatch lock) and no failed-sweep transition: every
+  tear goes through `PowerCut`/`WarmReset`, which clear RAM. So
+  `ResetNeverWeakensSurvivingState`'s third clause is keyed on the flash seed
+  alone, where the firmware's "the owner's seed is still reachable" is flash **or**
+  RAM. Closing it needs the device soft lock, and a half-modelled seam is worse
+  than an unmodelled one.
 
 ## Results
 
 | Configuration | Verdict | States generated | Distinct | Depth | Wall |
 |---|---|---|---|---|---|
-| `ShippedFixed.cfg` (both fixes) | **GREEN, exhaustive** | 92 091 537 | 13 232 120 | 49 | 154 s |
-| `Shipped.cfg` (tree as it stands) | RED `NoUnmanageableCredential` | 396 416 | 72 646 | 13 | 3 s |
-| `Shipped_OnlyFinding1.cfg` | RED `NoUnmanageableCredential` | 393 857 | 72 128 | 13 | 1 s |
-| `Shipped_OnlyFinding2.cfg` | RED `NoAccessibleSecretWithoutGate` | 565 888 | 102 523 | 14 | 2 s |
-| 14 × `Mut_*.cfg` | RED, each caught | 251 – 2 435 962 | 125 – 416 917 | 5 – 17 | ≤ 5 s |
-| 14 × `Solo_*.cfg` | RED, each on its **own** target | 260 – 2 440 300 | 126 – 416 314 | 5 – 17 | ≤ 5 s |
-| `Solo_NoAccessibleSecretWithoutGate.cfg` | RED, the repaired clause | 1 460 850 | 252 430 | 16 | 5 s |
+| `Shipped.cfg` (the tree as it stands) | **GREEN, exhaustive** | 55 988 607 | 6 664 764 | 49 | 100 s |
+| `Historical_E76.cfg` (the seed-lead taken back out) | RED `NoUnmanageableCredential` | 368 041 | 55 869 | 13 | 2 s |
+| `Historical_E77.cfg` (`FixPpuatRequiresPin` taken back out) | RED `NoAccessibleSecretWithoutGate` | 500 860 | 76 492 | 14 | 2 s |
+| 18 × `Mut_*.cfg` | RED, each caught | 262 – 899 702 | 118 – 138 546 | 5 – 15 | ≤ 2 s |
+| 18 × `Solo_*.cfg` | RED, each on its **own** target | 226 – 874 472 | 125 – 135 329 | 5 – 15 | ≤ 2 s |
+| `Solo_NoAccessibleSecretWithoutGate.cfg` | RED, the repaired clause | 1 296 217 | 194 351 | 16 | 3 s |
+| `Liveness.cfg` (reduced constants) | **GREEN** | 6 030 147 | 805 268 | 43 | 120 s |
+| 3 × `LiveMut_*.cfg` | RED, each on its own property | 261 771 – 571 929 | 44 550 – 94 435 | — | ≤ 4 s |
 
 Only `ShippedFixed.cfg` is an exhaustive search; every RED row stops at the
 first counterexample, so its counts move a few percent between runs with the
@@ -328,16 +445,16 @@ whole tree (untracked files included) on 2026-08-12:
 | Invariant | `.tla` | non-test Rust | Kani harness | fuzz target |
 |---|---|---|---|---|
 | `NoAuthorizationBypass` | ✓ | ✗ | ✓ `state_kani.rs` | ✗ |
-| `NoTokenAfterInvalidation` | ✓ | ✗ | ✓ `state_kani.rs`, `credmgmt_kani.rs` | ✗ |
+| `NoTokenAfterInvalidation` | ✓ | ✗ | ✓ `state_kani.rs`, `credmgmt_kani.rs` | ✓ `fido_session.rs` |
 | `NoCrossTransportTouchConsumption` | ✓ | ✗ | ✓ `presence_kani.rs` | ✗ |
 | `NoAccessibleSecretWithoutGate` | ✓ | ✗ | ✗ | ✗ |
 | `NoUnmanageableCredential` | ✓ | ✗ | ✗ | ✗ |
 | `ResetNeverWeakensSurvivingState` | ✓ | ✗ | ✗ | ✗ |
 
-**Three of six reach a Kani harness. None reaches any of the 54 fuzz targets,
-and none appears in non-test Rust.** So the traceability is still mostly a plan,
-and it is stated here as one. The obstacles are known and unequal, which is why
-this is not just a to-do list:
+**Three of six reach a Kani harness. One of six reaches a fuzz target, and none
+appears in non-test Rust.** So the traceability is still mostly a plan, and it is
+stated here as one. The obstacles are known and unequal, which is why this is not
+just a to-do list:
 
 - `NoCrossTransportTouchConsumption` **is proved now**, and the row above is the
   first one this table changed. It could not be while its whole mechanism lived
@@ -427,10 +544,31 @@ than a settled abstraction.
   `EF_ALWAYS_UV`, `EF_PAUTHTOKEN`, plus `EF_BACKUP_SEALED` since the review.
   `EF_DEVICE_PIN` and `EF_MINPINLEN` are still absent.
 
-### Safety only
+### Liveness — three properties, and what is deliberately NOT asserted
 
-`Spec == Init /\ [][Next]_vars`: no fairness, no `PROPERTY` in any `.cfg`. A
-device that starts a reset and never finishes it satisfies all six invariants.
-Nothing here says an operation ever *completes* — only that no reachable state
-is bad. There is also no `SYMMETRY` on `RPs`/`Channels`, which costs time and
-not soundness.
+`Spec` is still safety-only; `FairSpec` adds weak fairness on three things and
+`Liveness.cfg` checks `EveryOpQuiesces`, `EveryWaitReleases` and
+`EveryWalkCloses` against it. The fairness is the load-bearing part, because an
+assumption the implementation does not honour makes its property meaningless:
+the synchronous worker (`worker.rs:637-660`) never parks a sequence, the
+presence wait carries `PRESENCE_TIMEOUT_MS` (`presence.rs:270-272`), and
+`expire_stale_sequences` (`state.rs:613-619`) retires an idle cursor. Nothing
+else is fair — not a press, a release, a host cancel, a power cut, a warm reset
+or any `*Start` — because assuming a user eventually touches or a device is
+eventually replugged would prove liveness the device does not have.
+
+That is why **`lock.soft ~> ~lock.soft` is not asserted.** The soft lock clears
+only on a correct PIN or a real power cycle, and neither is the device's to
+promise; asserting it would need `WF(PowerCut)`, which is a claim about the user.
+
+`Liveness.cfg` runs at **smaller constants than the safety matrix** — one
+relying party, one channel, `MaxRetries` 2 : `MismatchLimit` 1 — and the
+reduction is a parameter of the same generator function, not a hand-edited file.
+`Liveness_Full.cfg` is the same three properties at the safety matrix's own
+constants, so the price is measured rather than assumed. TLC builds a behaviour
+graph on top of the state graph, so the two costs are not comparable: the
+reduced run is 120 s over 805 268 distinct states where the same reduction under
+an invariant is seconds.
+
+There is still no `SYMMETRY` on `RPs`/`Channels`, which costs time and not
+soundness.
