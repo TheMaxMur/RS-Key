@@ -99,6 +99,17 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   the floor is against a host *repeating* a command, and there is no repetition
   behind an operator pulling the key out. Nothing changes on a run without
   `--display`.
+- **`rsk-emu --display` yields an open menu to an OTP frame, as the firmware now
+  does.** The emulator classified a keyboard-interface OTP frame as *not* one of
+  the sources a modal hands the executor back for, because the board's
+  `host_request_pending` named only the transports' signal — and said so citing
+  that file. The firmware fix above makes that mirror wrong, and the emulator's
+  own table asserted the old rule, so a green suite said nothing: measured,
+  **60.18 s** behind an open Settings screen. Both now name every host source the
+  worker races, and the emulator's floor-applying hook delegates to its bare one
+  instead of listing the sources twice — the second copy is what went stale on
+  the board. This makes E190 a measured result rather than a read one.
+
 - **An open browse screen no longer holds up `rsk-emu`'s power cycle.** The
   harness's replug — the emulator's stand-in for pulling the key out, and what a
   suite needs to reopen the CTAP 2.1 §6.6 reset window — is answered by the

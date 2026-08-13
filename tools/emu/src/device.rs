@@ -168,14 +168,14 @@ pub enum Unplug {
 }
 
 impl Job {
-    /// Whether this is one of the transport requests `firmware/src/worker.rs`
-    /// signals `REQ` for — the set an on-panel modal yields to. The keyboard
-    /// interface's OTP frames are that worker's separate `OTP_REQ` and the
-    /// `CTAPHID_INIT` deselect is an atomic there, so neither closes a modal on a
-    /// board; the status read and the replug have no host request behind them.
-    /// The board's sixth `REQ` member, a CCID pinpad `Secure`, has no [`Job`]
-    /// here — there is no pad to collect on — so it belongs in this set the day
-    /// one appears.
+    /// Whether this is one of the sources `firmware/src/worker.rs`'s
+    /// `host_request_pending` names — the set an on-panel modal yields to. That is
+    /// every host-request source the worker races: the `REQ` transports **and** the
+    /// keyboard interface's OTP frames, its separate `OTP_REQ`. The `CTAPHID_INIT`
+    /// deselect is an atomic there and the tick is the worker's own, so neither is
+    /// one; an operator's power cycle has no host behind it and is counted apart.
+    /// The board's sixth `REQ` member, a CCID pinpad `Secure`, has no [`Job`] here
+    /// — there is no pad to collect on — so it joins this set the day one appears.
     fn is_host_request(&self) -> bool {
         matches!(
             self,
@@ -184,6 +184,7 @@ impl Job {
                 | Job::Vendor { .. }
                 | Job::Apdu(_)
                 | Job::ResetCard
+                | Job::OtpHid { .. }
                 | Job::Replug(Unplug::Host)
         )
     }

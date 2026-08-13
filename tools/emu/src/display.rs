@@ -340,9 +340,12 @@ impl rsk_display::Hooks for EmuDisplayHooks {
     /// a command, and behind this one is a person pulling the key out, which on a
     /// board takes the screen with it at once. A USB/IP import is a host's, so it
     /// is floored with the rest.
+    ///
+    /// Everything else delegates rather than naming the sources a second time, as
+    /// `firmware/src/worker.rs`'s pair does — the copy is what went stale there.
     fn host_request_pending_after(&self, since: embassy_time::Instant) -> bool {
         self.queued.unplug_pending()
-            || (self.queued.any()
+            || (self.host_request_pending()
                 && since.elapsed()
                     >= embassy_time::Duration::from_millis(rsk_display::UI_YIELD_FLOOR_MS))
     }

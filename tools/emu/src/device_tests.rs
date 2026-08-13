@@ -244,9 +244,9 @@ fn every_job() -> Vec<(Job, bool, bool, &'static str)> {
                 slot: 0x30,
                 payload: vec![0; 64],
             },
+            true,
             false,
-            false,
-            "an OTP frame — the board's own OTP_REQ",
+            "an OTP frame — the worker's own OTP_REQ, which it also yields to",
         ),
         (
             Job::OtpStatus,

@@ -640,6 +640,68 @@ fn an_open_menu_hands_the_executor_back_when_a_host_command_lands() {
     panel_bench(drive_menu_yield);
 }
 
+/// `rsk_otp`'s `P1_CHAL_HMAC_SLOT1` — an OTP frame the applet really answers,
+/// named here as the other applet-private constants are.
+const OTP_CHAL_HMAC_SLOT1: u8 = 0x30;
+
+/// One keyboard-interface OTP frame, answered.
+fn otp_frame(jobs: &Jobs) {
+    let (reply, answer) = mpsc::channel();
+    jobs.send(
+        Job::OtpHid {
+            slot: OTP_CHAL_HMAC_SLOT1,
+            payload: vec![0; 64],
+        },
+        reply,
+    )
+    .expect("the device thread is alive");
+    answered(&answer);
+}
+
+/// E190, measured rather than read. A keyboard-interface OTP frame is the
+/// worker's separate `OTP_REQ`, and `firmware/src/worker.rs`'s
+/// `host_request_pending` named only `REQ` — so a `ykman otp calculate` behind an
+/// open menu waited out `MENU_INACTIVITY_MS` where a `getInfo` closed it after the
+/// floor, and that transport has no keepalive to wait with. The firmware names
+/// both sources now (`942a284`); this is the same bound `drive_menu_yield` holds a
+/// CTAPHID command to, over the frame.
+fn drive_menu_otp_yield(jobs: Jobs, taps: SyncSender<Tap>, _signals: Arc<Signals>) {
+    let skip = target(|p| rsk_ui::hit_onboard(p) == Some(rsk_ui::OnboardChoice::Skip));
+    push(&taps, Tap::at(skip.x, skip.y));
+    settle(&taps);
+
+    let idle = Instant::now();
+    otp_frame(&jobs);
+    let idle = idle.elapsed();
+    assert!(
+        idle < IDLE_REPLY_BOUND,
+        "an idle panel answered an OTP frame in {idle:?} — the figure below would \
+         mean nothing"
+    );
+
+    let settings = nav_tab(rsk_ui::NavTab::Settings);
+    push(&taps, Tap::at(settings.x, settings.y));
+    settle(&taps);
+    let opened = Instant::now();
+    otp_frame(&jobs);
+    let waited = opened.elapsed();
+    assert!(
+        waited >= Duration::from_millis(rsk_display::UI_YIELD_FLOOR_MS),
+        "the menu yielded to an OTP frame after {waited:?}, inside the floor — the \
+         OTP transport gets exactly the terms a CTAPHID command has, not better ones"
+    );
+    assert!(
+        waited < MENU_YIELD_BOUND,
+        "the menu made an OTP frame wait {waited:?}; the frame's host has no \
+         keepalive to wait with, so it gives up first"
+    );
+}
+
+#[test]
+fn an_open_menu_hands_the_executor_back_for_an_otp_frame_too() {
+    panel_bench(drive_menu_otp_yield);
+}
+
 /// What the harness's power cycle may wait for an open menu. `tests/emu.py`'s
 /// `power_cycle()` gives the socket 5 s and then reports "could not replug", so a
 /// bound under it is the difference between a suite that runs under `--display`
