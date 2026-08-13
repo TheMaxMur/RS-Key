@@ -55,7 +55,8 @@ CONSTANTS
     BugBackupSealedNotAGate,      \* reset.rs:110-123  is_fido_gate_fid (run-36)
     BugConsumeKeepsMcGa,          \* state.rs:522-528  a narrowed 6.5.5.7 triad
     BugNoDropStaleCancelAtEntry,  \* presence.rs:250-251 the wait-entry drop
-    BugWrongPinKeepsToken         \* clientpin.rs:779  the pre-E38 tree
+    BugWrongPinKeepsToken,        \* clientpin.rs:779  the pre-E38 tree
+    BugSeedDoesNotLead            \* reset.rs:61-65 / fs.rs `first`, pre-0x08BF
 
 (* A PROPOSED fix, not a defect: order phase 1 of the reset sweep so no EF_RP  *)
 (* entry is dropped while its EF_CRED record is still live. The shipped        *)
@@ -105,7 +106,14 @@ VARIABLES
     \* the rest: its ABSENCE is the permissive state (reset.rs:110-117), so what
     \* a torn wipe can re-open is a window the owner had closed.
     gate,   \*                                                 (reset.rs:116-124)
-    store,  \* the secrets: [cred, rpent, seed]                (reset.rs:141-169)
+    \* The secrets: [cred, rpent, seed]. `cred` and `rpent` are the records that
+    \* still OPEN, not the records that still occupy a slot: every credential box,
+    \* rpId box and EF_RP domain is sealed under the seed, and `credential_load` /
+    \* `for_each_rp` are the chokepoints every reader goes through (a430f2d). So
+    \* deleting the seed empties both here while the flash records remain, which
+    \* is exactly what the shipped wipe buys and the only thing these invariants
+    \* can be about -- an unopenable record is neither usable nor manageable.
+    store,  \*                                                  (reset.rs:163-191)
     lock,   \* the soft lock: [soft, mism, policyMism]         (state.rs:284-291)
     tok,    \* device-side session token: [live, perms, rp]    (state.rs:247-261)
     plat,   \* the platform's copy: [held, verifies, revoked]  (ghost + wire)
@@ -794,27 +802,40 @@ SealedIsASecret == BugBackupSealedNotAGate /\ gate.backupSealed
 SecretsLive == store.seed \/ store.cred # {} \/ store.rpent # {} \/ SealedIsASecret
 GatesLive   == pin.set \/ gate.alwaysUv \/ gate.ppuat \/ SealedIsAGate
 
-\* Phase 1, reset.rs:57 -- every live FIDO-owned fid that is NOT a gate. One
+\* reset.rs:61-65 -- the seed goes in its own force_delete AHEAD of the batch, so
+\* nothing the sweep leaves behind still opens. Modelled as an ordering rule over
+\* the same phase rather than a fourth step: the tear between the touch and the
+\* seed delete leaves the store untouched, which is a state the model already has.
+SeedLeadsTheWipe == ~BugSeedDoesNotLead
+
+\* Phase 1, reset.rs:67 -- every live FIDO-owned fid that is NOT a gate. One
 \* force_delete per step, in an order the flash ring picks.
 ResetSweepSecrets ==
     /\ op.kind = "reset" /\ op.step = 1
     /\ IF SecretsLive
          THEN /\ \/ /\ store.seed
-                    /\ store' = [store EXCEPT !.seed = FALSE]
-                    \* the owner's seed is gone; whatever a later boot
-                    \* regenerates is a different one
-                    /\ snap' = [snap EXCEPT !.seed = FALSE]
+                    \* Every box the applet holds hangs off this record, so its
+                    \* deletion is what makes the rest unopenable -- the wipe's
+                    \* whole claim, and now its first write.
+                    /\ store' = [store EXCEPT !.seed = FALSE,
+                                              !.cred = {}, !.rpent = {}]
+                    \* the owner's seed is gone, and with it every credential
+                    \* that could have survived the reset
+                    /\ snap' = [snap EXCEPT !.seed = FALSE, !.surv = {}]
                     /\ UNCHANGED gate
                  \/ \E r \in store.cred :
+                       /\ ~SeedLeadsTheWipe
                        /\ store' = [store EXCEPT !.cred = store.cred \ {r}]
                        \* this credential no longer survives the reset
                        /\ snap' = [snap EXCEPT !.surv = snap.surv \ {r}]
                        /\ UNCHANGED gate
-                 \/ /\ \E r \in store.rpent :
+                 \/ /\ ~SeedLeadsTheWipe
+                    /\ \E r \in store.rpent :
                          store' = [store EXCEPT !.rpent = store.rpent \ {r}]
                     /\ FixSweepDropsCredsBeforeRpEntries => store.cred = {}
                     /\ UNCHANGED << gate, snap >>
                  \/ /\ SealedIsASecret
+                    /\ SeedLeadsTheWipe => ~store.seed
                     /\ gate' = [gate EXCEPT !.backupSealed = FALSE]
                     /\ UNCHANGED << store, snap >>
               /\ UNCHANGED op

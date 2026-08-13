@@ -52,10 +52,9 @@ one() {
 }
 
 if [ "${1:-}" = "all" ]; then
-  one Shipped.cfg              # the tree as it stands -- expected RED
-  one Shipped_OnlyFinding1.cfg # each finding with the other's fix applied,
-  one Shipped_OnlyFinding2.cfg # so neither can mask the other
-  one ShippedFixed.cfg         # both proposed fixes -- expected GREEN
+  one Shipped.cfg              # the tree as it stands -- expected GREEN
+  one Historical_E76.cfg       # each shipped fix taken back out, so the
+  one Historical_E77.cfg       # counterexample it closed stays reproducible
   for f in Mut_*.cfg; do one "$f"; done   # mutant vs the whole invariant set
   for f in Solo_*.cfg; do one "$f"; done  # mutant vs its own target only
 else

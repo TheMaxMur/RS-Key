@@ -14,7 +14,18 @@ BUGS=(BugResetGatesFirst BugCredBeforeRp BugTokenSurvivesPinChange
       BugNoConsumeAfterUp BugUnscopedCancel BugTouchNotSpent
       BugSoftLockLostOnWarmReset BugWarmResetReopensWindow
       BugCmWalkIgnoresChannel BugDeleteRpBeforeCred BugBackupSealedNotAGate
-      BugConsumeKeepsMcGa BugNoDropStaleCancelAtEntry BugWrongPinKeepsToken)
+      BugConsumeKeepsMcGa BugNoDropStaleCancelAtEntry BugWrongPinKeepsToken
+      BugSeedDoesNotLead)
+
+# Mutants whose defect the shipped seed-lead makes unreachable: they rebuild a
+# pre-0x08BF ordering bug, so their configuration must be the pre-0x08BF tree.
+# That the list is not empty is the measured strength of that fix -- see README.
+companion_bug() {
+  case "$1" in
+    BugBackupSealedNotAGate) echo BugSeedDoesNotLead ;;
+    *) echo "" ;;
+  esac
+}
 
 # The invariant each mutant must break, so a silent mutant is visible as such.
 target_inv() {
@@ -36,6 +47,7 @@ target_inv() {
     BugConsumeKeepsMcGa)        echo NoAuthorizationBypass ;;
     BugNoDropStaleCancelAtEntry) echo NoCrossTransportTouchConsumption ;;
     BugWrongPinKeepsToken)      echo NoTokenAfterInvalidation ;;
+    BugSeedDoesNotLead)         echo NoUnmanageableCredential ;;
   esac
 }
 
@@ -56,7 +68,8 @@ emit() { # $1 = cfg, $2 = bug switch (""), $3 = sweep fix, $4 = ppuat fix
     echo "    MaxClock = 1"
     echo "    ResetWindow = 0"
     for b in "${BUGS[@]}"; do
-      if [ "$b" = "$on" ]; then echo "    $b = TRUE"; else echo "    $b = FALSE"; fi
+      if [ "$b" = "$on" ] || { [ -n "$on" ] && [ "$b" = "$(companion_bug "$on")" ]; }
+      then echo "    $b = TRUE"; else echo "    $b = FALSE"; fi
     done
     echo "    FixSweepDropsCredsBeforeRpEntries = $fix"
     echo "    FixPpuatRequiresPin = $fix2"
@@ -75,22 +88,23 @@ emit() { # $1 = cfg, $2 = bug switch (""), $3 = sweep fix, $4 = ppuat fix
   } > "$out"
 }
 
-# The tree as it stands. Expected RED on NoUnmanageableCredential -- see the
-# finding in formal/README.md; that is the result, not a broken model.
-emit Shipped.cfg "" FALSE FALSE
-# Each finding isolated, so neither can mask the other.
-emit Shipped_OnlyFinding1.cfg "" FALSE TRUE
-emit Shipped_OnlyFinding2.cfg "" TRUE FALSE
-# The same tree with the proposed sweep ordering. Expected fully GREEN, and the
-# baseline every mutant is measured against.
-emit ShippedFixed.cfg "" TRUE TRUE
-# Mutants carry the proposed fix so the pre-existing finding cannot mask them.
-for b in "${BUGS[@]}"; do emit "Mut_$b.cfg" "$b" TRUE TRUE; done
+# THE TREE AS IT STANDS, and it is the green baseline the mutants are measured
+# against. Two constants carry the history: `FixPpuatRequiresPin` shipped
+# verbatim at 0x08C0, so it is ON; `FixSweepDropsCredsBeforeRpEntries` is a
+# counterfactual the tree did NOT take -- 0x08BF made the seed lead the wipe
+# instead, which is the default (`BugSeedDoesNotLead = FALSE`), so it is OFF.
+emit Shipped.cfg "" FALSE TRUE
+# The two findings this model produced, kept as regression configurations rather
+# than deleted: each is the tree with exactly the shipped fix taken back out.
+emit Historical_E76.cfg BugSeedDoesNotLead FALSE TRUE
+emit Historical_E77.cfg "" FALSE FALSE
+# Mutants run on the tree's own settings, so nothing pre-existing can mask them.
+for b in "${BUGS[@]}"; do emit "Mut_$b.cfg" "$b" FALSE TRUE; done
 # One config per mutant listing ONLY its target invariant.
-for b in "${BUGS[@]}"; do SOLO=1 emit "Solo_$b.cfg" "$b" TRUE TRUE; done
+for b in "${BUGS[@]}"; do SOLO=1 emit "Solo_$b.cfg" "$b" FALSE TRUE; done
 # NoAccessibleSecretWithoutGate is the one invariant no switch names as its
 # target. BugResetGatesFirst breaks it as well as its own, and this proves that
 # solo -- previously a hand-written file wearing this script's header.
 SOLO=1 SOLO_INV=NoAccessibleSecretWithoutGate \
-  emit Solo_NoAccessibleSecretWithoutGate.cfg BugResetGatesFirst TRUE TRUE
-echo "wrote Shipped.cfg, ShippedFixed.cfg and ${#BUGS[@]} mutant configs"
+  emit Solo_NoAccessibleSecretWithoutGate.cfg BugResetGatesFirst FALSE TRUE
+echo "wrote Shipped.cfg, 2 historical configs and ${#BUGS[@]} mutant configs"
