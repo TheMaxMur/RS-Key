@@ -15,7 +15,9 @@ use crate::consts::*;
 use crate::files::{DoSource, source};
 use crate::pin::Session;
 
-/// The length OpenPGP 3.4 §4.4.1 fixes for `fid`, where it fixes one.
+/// The length OpenPGP 3.4 §4.4.2 fixes for `fid`, where it fixes one — the
+/// individual DOs, which §4.4.1 has no rows for at all; only the `C5`/`C6`/`CD`
+/// aggregates that republish them appear there.
 ///
 /// `C5`/`C6`/`CD` republish these DOs as fixed-width slices, so a value of any
 /// other length reads back as two different things: itself standalone, and a
@@ -48,8 +50,8 @@ fn max_do_len(fid: u16) -> Option<usize> {
 }
 
 /// Whether `sess` may write the DO addressed by `fid`. Private DOs 1/3 are the
-/// cardholder's and need PW2 — §4.4.1 gives the admin no override on them, and a
-/// YubiKey 5.7.4 refuses PW3 on both, 3/3 — everything else needs PW3.
+/// cardholder's and need PW2 — §5's access table gives the admin no override on
+/// them, and a YubiKey 5.7.4 refuses PW3 on both, 3/3 — everything else is PW3.
 ///
 /// One owner for PUT DATA's whole ACL: the dispatch asks first, so nothing about
 /// the request — not the tag, not the body's length — is judged ahead of the

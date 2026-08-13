@@ -1696,8 +1696,9 @@ fn key_info_reports_generated_and_imported_apart() {
     assert_eq!(key_info(&mut app, &mut fs), [1, 0, 2, 0, 3, 0]);
 }
 
-// OpenPGP 3.4 §4.4.1 fixes the fingerprint DOs at 20 bytes and the timestamps
-// at 4, and C5/C6/CD republish them as fixed-width slices. A write of any other
+// OpenPGP 3.4 §4.4.2 fixes the fingerprint DOs at 20 bytes and the timestamps
+// at 4 — §4.4.1 lists only the C5/C6/CD aggregates that republish them as
+// fixed-width slices. A write of any other
 // length used to be stored, so the same DO read back as two different values —
 // itself standalone, and a truncation inside the aggregate. A YubiKey 5.7.4
 // answers 6A80 at every other length and leaves the DO alone.
@@ -2180,7 +2181,7 @@ fn pw3_alone_opens_no_key_operation() {
     }
 }
 
-/// OpenPGP 3.4.1 §4.4.1 splits the private-use DOs between two owners: `0101`
+/// OpenPGP 3.4.1 §5 splits the private-use DOs between two owners: `0101`
 /// and `0103` are the cardholder's (PW1 no. 82), `0102` and `0104` the admin's
 /// (PW3), and there is no admin override on the cardholder's pair. Measured on a
 /// YubiKey 5.7.4, 3/3, in all four auth states: with only PW3 verified both
@@ -2471,7 +2472,7 @@ fn put_data_d5_installs_the_key_the_aes_pso_uses() {
         run(app, fs, &a)
     };
 
-    // §4.4.1 gives `D5` to PW3, and the judgement comes before the length.
+    // §5 gives `D5` WRITE to PW3, and the judgement comes before the length.
     assert_eq!(
         d5(&mut app, &mut fs, &[0x11; 32]),
         Sw::SECURITY_STATUS_NOT_SATISFIED
@@ -2562,7 +2563,7 @@ fn put_data_d5_installs_the_key_the_aes_pso_uses() {
         verify_pin(&mut app, &mut fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
     }
 
-    // READ = *Never* (§4.4.1), and the card must not call an object it just took
+    // READ = *Never* (§5), and the card must not call an object it just took
     // "not found": `D5` is an internal EF like every other sealed slot.
     assert_eq!(
         run(

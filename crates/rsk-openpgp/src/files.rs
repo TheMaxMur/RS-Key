@@ -130,10 +130,11 @@ pub fn source(fid: u16) -> DoSource {
         || fid == EF_DEK_STAGE_PW1.get()
         || fid == EF_DEK_STAGE_RC.get()
         || fid == EF_DEK_STAGE_PW3.get()
-        // §4.4.1 gives `D5` WRITE = PW3, READ = *Never*. It is the same shape as
-        // its neighbours above and belongs with them: `PUT DATA D5` writes it, so
-        // answering GET DATA "no such object" would have the card contradict
-        // itself about an object it just took.
+        // §5's access table gives `D5` WRITE = PW3, READ = *Never*; §4.4.2 has
+        // the DO, and §4.4.1 has no `D5` row at all, which is what write-only
+        // means there. Same shape as its neighbours above and it belongs with
+        // them: `PUT DATA D5` writes it, so answering GET DATA "no such object"
+        // would have the card contradict itself about an object it just took.
         || fid == EF_AES_KEY.get()
     {
         return DoSource::Internal;

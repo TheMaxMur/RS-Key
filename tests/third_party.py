@@ -178,7 +178,8 @@ DIVERGENCES: dict[str, dict[str, str]] = {
         # DO 6E and asserts the response *starts* with the child tag `4F`.
         "::test_openpgp_status_objects": "§4.4.1 vs §7.2.6: DO 6E arrives with its own tag, so it starts 6E, not 4F",
         # The three private-use DO cells where Gnuk gives the admin an override
-        # §4.4.1 does not: `0101` and `0103` belong to PW1 no. 82, `0102`/`0104` to
+        # §5's access table does not: `0101` and `0103` belong to PW1 no. 82,
+        # `0102`/`0104` to
         # PW3, and the spec grants no PW3 fallback on the cardholder's pair. A
         # YubiKey 5.7.4 refuses all three with 6982 — measured 3/3 over the full
         # 4-DO x 4-state matrix — so the spec and the reference agree against this
@@ -186,9 +187,9 @@ DIVERGENCES: dict[str, dict[str, str]] = {
         # module still pass, which is what keeps these three honest: `0101` under
         # PW1.82 writes, `0102`/`0104` under PW3 write, and `0103` under PW1.81 is
         # refused.
-        "::test_private_do_0101_write_ok_with_pw3": "§4.4.1 gives 0101 to PW1 no. 82; a YubiKey refuses PW3 there (6982)",
-        "::test_private_do_0103_write_ok_with_pw3": "§4.4.1 gives 0103 to PW1 no. 82; a YubiKey refuses PW3 there (6982)",
-        "::test_private_do_0103_read_ok_with_pw3": "§4.4.1 gives 0103 to PW1 no. 82; a YubiKey refuses PW3 there (6982)",
+        "::test_private_do_0101_write_ok_with_pw3": "§5 gives 0101 to PW1 no. 82; a YubiKey refuses PW3 there (6982)",
+        "::test_private_do_0103_write_ok_with_pw3": "§5 gives 0103 to PW1 no. 82; a YubiKey refuses PW3 there (6982)",
+        "::test_private_do_0103_read_ok_with_pw3": "§5 gives 0103 to PW1 no. 82; a YubiKey refuses PW3 there (6982)",
         # Both halves of this one are content errors, not length errors: an ECDSA
         # attribute whose OID is 16 zero bytes, and an RSA attribute truncated to
         # two. The spec's own gloss splits them — `6700 Wrong length (Lc and/or

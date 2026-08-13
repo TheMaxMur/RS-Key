@@ -66,10 +66,12 @@ pub fn get_data<S: Storage>(
         DoSource::Internal => return (0, Sw::SECURITY_STATUS_NOT_SATISFIED),
         _ => {}
     }
-    // §4.4.1 gives the private DOs two different owners and no admin override:
-    // `0103` is the cardholder's (PW1 no. 82), `0104` the admin's. PW3 used to
-    // satisfy `0103` as well, which is one password reading the other's DO — a
-    // YubiKey 5.7.4 answers `6982` to `00CA010300` with only PW3 verified, 3/3.
+    // §5's access table gives the private DOs two different owners and no admin
+    // override: `0103` is the cardholder's (PW1 no. 82), `0104` the admin's.
+    // PW3 used to satisfy `0103` as well, which is one password reading the
+    // other's DO — a YubiKey 5.7.4 answers `6982` to `00CA010300` with only PW3
+    // verified, 3/3. It also serves `0104` unauthenticated, which §5 forbids and
+    // we do not copy.
     if fid == EF_PRIV_DO_3 && !has_pw2 {
         return (0, Sw::SECURITY_STATUS_NOT_SATISFIED);
     }
