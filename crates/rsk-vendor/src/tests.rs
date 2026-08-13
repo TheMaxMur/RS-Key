@@ -204,6 +204,33 @@ fn reboot_to_bootsel_needs_the_operator() {
     assert_eq!(app.platform.reboots, vec![(false,)]);
 }
 
+/// Measured on `tools/emu` before this gate existed: 391 increments/s sustained
+/// over the CCID socket and 411/s over CTAPHID_MSG, no PIN and no touch, each one
+/// appending 16 bytes to the counter partition — a page erase every ~255 of them
+/// once the 128 KiB partition has filled. Whoever can open either interface could
+/// cycle the flash that also holds the FIDO signature counters. This applet's own
+/// reason for gating the BOOTSEL reboot applies verbatim: it answers on both
+/// transports, so an ungated write here is one nothing else on the device gates.
+#[test]
+fn incrementing_the_counter_needs_the_operator() {
+    let pres = RefCell::new(Declining);
+    let mut app = VendorApplet::new(BarePlatform, &pres);
+    let mut fs = Fs::new(RamStorage::default());
+
+    let (sw, body) = run(&mut app, &mut fs, &apdu(INS_INCREMENT, 0, 0, &[]));
+    assert_eq!(sw, Sw::CONDITIONS_NOT_SATISFIED);
+    assert!(body.is_empty(), "a refused increment answered with a value");
+    assert!(
+        !fs.has_data(COUNTER_FID),
+        "a declined touch wrote flash anyway — the wear this gate exists to close"
+    );
+
+    // Reading it back is not a write and stays ungated, so a host tool can still
+    // see the counter it is not allowed to move.
+    let (sw, body) = run(&mut app, &mut fs, &apdu(INS_GET, 0, 0, &[]));
+    assert_eq!((sw, body), (Sw::OK, vec![0, 0, 0, 0]));
+}
+
 #[test]
 fn reboot_rejects_a_bad_p1_and_a_body() {
     let pres = RefCell::new(AlwaysConfirm);

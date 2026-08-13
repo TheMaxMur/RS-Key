@@ -62,10 +62,10 @@ pub enum Presence {
     Declined,
 }
 
-/// Physical user presence, gating reboot-to-BOOTSEL (and, under `strict-config`,
-/// the LED write). The firmware backs this with the same source the rescue applet
-/// uses, deliberately: this applet is reachable over *both* CCID and CTAPHID, so
-/// an ungated twin here would be a cross-AID bypass of that gate.
+/// Physical user presence, gating reboot-to-BOOTSEL, the counter write, and —
+/// under `strict-config` — the LED write. The firmware backs this with the same
+/// source the rescue applet uses, deliberately: this applet is reachable over
+/// *both* CCID and CTAPHID, so an ungated twin here would be a cross-AID bypass.
 pub trait UserPresence {
     fn request(&mut self, confirm: Confirm<'_>) -> Presence;
 }
@@ -165,6 +165,12 @@ impl<S: Storage, P: Platform> Applet<Fs<S>> for VendorApplet<'_, P> {
                 Sw::OK
             }
             INS_INCREMENT => {
+                // A test hook has no business handing a host a flash-write primitive:
+                // ungated this was ~390 writes/s over either transport, 16 B each.
+                // (SET LED below is its ungated main-partition twin, by decision.)
+                if !self.confirmed(Confirm::titled("Write test counter?")) {
+                    return Sw::CONDITIONS_NOT_SATISFIED;
+                }
                 let next = read_counter(fs).wrapping_add(1);
                 if fs.put(COUNTER_FID, &next.to_be_bytes()).is_err() {
                     return Sw::MEMORY_FAILURE;

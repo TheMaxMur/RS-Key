@@ -166,9 +166,9 @@ impl<'a, S: Storage, R: crate::Rng + 'static, VP: rsk_vendor::Platform> CcidAppl
             rng,
             hooks,
             disp: Dispatcher::new(),
-            // The vendor reboot-to-BOOTSEL (P1=01) is gated by the same presence
-            // as the rescue applet (one `&RefCell<Presence>` behind two traits),
-            // closing the cross-AID bypass of that gate.
+            // The vendor gates — reboot-to-BOOTSEL (P1=01) and the counter write —
+            // take the same presence as the rescue applet (one `&RefCell<Presence>`
+            // behind two traits), closing the cross-AID bypass of that gate.
             vendor: VendorApplet::new(vendor_platform, presence),
             openpgp: OpenpgpApplet::new(serial_id, serial_hash, mkek_source, rng, presence)
                 .with_manufacturer(openpgp_mfr),

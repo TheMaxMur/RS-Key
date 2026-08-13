@@ -11,6 +11,12 @@ Exercises CTAPHID_MSG -> APDU dispatch -> vendor applet -> flash: SELECT by
 AID, increment the persisted u32 counter, read it back. To prove persistence,
 power-cycle the board (hold BOOT, tap RESET — NOT re-flash) and run again: the
 "before" value must have carried over, not reset to 0.
+
+INCREMENT is user-presence-gated — it is a flash write a host could otherwise
+cycle at will — so on a board with a button this waits for a touch, and `msg()`
+drains the KEEPALIVE(UPNEEDED) frames the transport streams meanwhile. The
+no-touch test image and `tools/emu` confirm on their own, and neither emits a
+keepalive; `tools/emu --auto-touch-ms 500` is what exercises the drain.
 """
 import os
 import sys
@@ -25,7 +31,11 @@ from _device import find  # noqa: E402
 
 REPORT_LEN = 64
 CTAPHID_MSG = 0x83
+CTAPHID_KEEPALIVE = 0xBB
 CTAPHID_ERROR = 0xBF
+# Longer than the firmware's own touch window (presence::MIN_TIMEOUT_SECS is 10 s,
+# the default 30 s, the stored maximum 255 s), so a slow operator is not a failure.
+TOUCH_TIMEOUT_MS = 260_000
 
 VENDOR_AID = bytes([0xF0, 0x00, 0x00, 0x00, 0x01])
 APDU_SELECT = bytes([0x00, 0xA4, 0x04, 0x00, len(VENDOR_AID)]) + VENDOR_AID
@@ -59,6 +69,13 @@ def msg(dev, cid, apdu):
     write_frame(dev, cid + bytes([CTAPHID_MSG, len(apdu) >> 8, len(apdu) & 0xFF]) + apdu)
 
     r = read_frame(dev)
+    # INCREMENT waits for a touch, and the transport streams KEEPALIVE(UPNEEDED)
+    # every 100 ms while it does. Drain them or the first one reads as a wrong
+    # answer; the timeout is the firmware's own touch window plus slack.
+    while len(r) >= 5 and r[4] == CTAPHID_KEEPALIVE:
+        r = read_frame(dev, timeout_ms=TOUCH_TIMEOUT_MS)
+    if not r:
+        sys.exit("no response — the device went quiet mid-request")
     if r[4] == CTAPHID_ERROR:
         sys.exit(f"device returned CTAPHID_ERROR code={r[7]:#04x}")
     assert r[4] == CTAPHID_MSG, f"unexpected response cmd {r[4]:#x}"

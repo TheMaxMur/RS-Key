@@ -113,6 +113,30 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Security
 
+- **The vendor applet's test counter no longer writes flash unauthenticated.**
+  `INS 01` (INCREMENT) on AID `F0 00 00 00 01` appended to flash with no PIN, no
+  touch and no rate limit, and the applet answers on **both** CCID and CTAPHID —
+  the transport an unprivileged process reaches without any smartcard service.
+  Measured on `tools/emu`, which runs the device's own `sequential-storage` over
+  the device's geometry: 391 increments/s sustained over the CCID socket and
+  411/s over CTAPHID_MSG, 16.0 bytes of the counter partition per increment, and
+  once that 128 KiB partition fills (~8 100 increments) the ring reclaims — 44
+  page erases counted over the next ~11 900 increments, a lower bound because a
+  page erased and refilled between two samples is not seen. The churn stays inside
+  the counter partition — the main partition did not move by a byte over 2 000
+  increments — so what a wear attack reaches is the signature counters, not the
+  credentials, and the erases spread across all 32 pages. A slow primitive, then;
+  what decides it is that this is a test hook with no product function, and it
+  should not be the thing that offers one. It takes a touch now, exactly like the
+  AID's reboot-to-BOOTSEL arm and for the same stated reason; `GET 02` reads and
+  stays ungated, and a no-touch build (what the on-device suites run against)
+  confirms on its own. Not a pure gain: an ungated command that raises a consent
+  ceremony lets a host hold the key in "awaiting touch", which is the shape the
+  reboot and Management-reset verbs already have — visible, and far slower than
+  the writes it replaces. The config-surface writes beside it (`SET LED`, the FIDO
+  `CONFIG_WRITE` twin) stay ungated by default; that is the deliberate ykman
+  admin-surface parity and a separate question. **bcdDevice → 0x0901.**
+
 - **A torn wipe can no longer leave a credential-management grant standing over
   a deleted PIN.** The persistent `pcmr` token (`EF_PAUTHTOKEN`) was swept in the
   same phase as `EF_PIN` by both wipes — `authenticatorReset` and the device-wide

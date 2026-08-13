@@ -662,6 +662,7 @@ above, to detect a firmware that predates a selector you send.
 > The **vendor** applet (§8) exposes the same reboot verb, reachable over both the
 > CCID and CTAPHID transports; its `1F/01` (BOOTSEL) is gated identically, so the
 > gate cannot be bypassed via the vendor AID. Its warm reboot (`1F/00`) is ungated.
+> Its test-counter write (`01`) is gated in **every** build — see §8.
 
 ### 7.1 The phy record (`EF_PHY`) — **PicoForge-compatible**
 
@@ -729,13 +730,13 @@ Notes for a host implementation:
 
 **AID `F0 00 00 00 01`. CLA `00`.** Live LED customization (color/brightness/effect
 per device status), persisted in flash and applied immediately. Source:
-`firmware/src/vendor.rs`,
+`crates/rsk-vendor/src/lib.rs`,
 `firmware/src/led.rs`. Reference client:
 `tools/rsk/led.py`.
 
 | INS | P1 | P2 | Request | Response | Purpose |
 |---|---|---|---|---|---|
-| `01` | — | — | — | counter (BE4) | INCREMENT test counter, return new value |
+| `01` | — | — | — | counter (BE4) | INCREMENT test counter, return new value. User-presence-gated (`6985` if declined) |
 | `02` | — | — | — | counter (BE4) | GET test counter |
 | `10` | brightness `0..255` | `color \| steady \| status<<4` | `[effect[, speed]]` opt. | — | SET LED for one status |
 | `11` | `00` | `00` | — | 17-byte config block | GET LED config |
@@ -749,6 +750,16 @@ image answers `6D00`, and neither is part of the stable surface.
 **user-presence-gated under `strict-config`** — the FIDO twin
 (`CONFIG_WRITE`/`CONFIG_TARGET_LED`) is gated there too, so the vendor AID cannot be
 used to bypass it.
+
+**INCREMENT `0x01` gating:** user-presence-gated in every build. The applet answers
+on both CCID and CTAPHID, so ungated this was a flash-write primitive for anything
+that can open either interface — measured at ~390 writes/s, 16 bytes of the counter
+partition each. A test hook with no product function should not offer one; the
+config-surface writes next to it (`SET LED`, and the FIDO `CONFIG_WRITE` twin) stay
+ungated by default on purpose, which is a separate decision (§9, `strict-config`).
+`GET 0x02` reads and stays ungated. A no-touch build confirms without a button, which
+is what `tests/01_flash_persistence.py` and `tests/30_ccid_transport.py` run against;
+on a button build the CTAPHID caller sees `KEEPALIVE(UPNEEDED)` until the touch lands.
 
 **Touch-status normalization.** The awaiting-touch indicator is the only consent
 signal on a build without the trusted display, so the `EF_LED_CONF` codec — not any

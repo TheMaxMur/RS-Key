@@ -59,8 +59,8 @@ impl<'a, S: Storage, R: crate::Rng + 'static, VP: rsk_vendor::Platform>
         rng: &'a RefCell<R>,
         hooks: &'a RefCell<dyn Hooks<S>>,
         // One physical presence source: CTAP user presence and the vendor applet's
-        // gated reboot-to-BOOTSEL (this transport also dispatches the vendor AID)
-        // are the same button behind two traits.
+        // gated arms (this transport also dispatches the vendor AID) are the same
+        // button behind two traits.
         presence: &'a RefCell<PR>,
         vendor_platform: VP,
         serial_id: [u8; 8],

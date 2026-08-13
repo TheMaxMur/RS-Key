@@ -13,6 +13,9 @@ bulk -> rsk_usb::ccid -> APDU dispatch -> vendor applet. Powers the card on
 (FIDO ATR), SELECTs the vendor applet by AID, and increments/reads the
 persisted counter — the same applet tests/01 drives over CTAPHID_MSG.
 
+INCREMENT is user-presence-gated, so on a board with a button this waits for a
+touch; the no-touch test image and `tools/emu` confirm on their own.
+
 Needs pyscard and a running PC/SC daemon (built in on macOS).
 """
 import os
