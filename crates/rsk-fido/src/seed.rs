@@ -278,8 +278,8 @@ pub fn store_att_key<S: Storage>(dev: &Device, fs: &mut Fs<S>, key: &[u8; 32]) -
 
 /// The persistent pinUvAuthToken (CTAP 2.2 §6.5.2.2), sealed exactly like the
 /// seed. `None` means no platform holds a `pcmr` grant. Presence is necessary but
-/// NOT sufficient — a torn reset can leave the record behind its PIN, so
-/// [`crate::credmgmt`] owns the grant test, not this reader.
+/// NOT sufficient — a build whose wipe deferred this record could leave it behind
+/// its PIN, so [`crate::credmgmt`] owns the grant test, not this reader.
 pub fn load_ppuat<S: Storage>(dev: &Device, fs: &mut Fs<S>) -> Option<[u8; 32]> {
     get_sealed32(dev, fs, EF_PAUTHTOKEN)
 }

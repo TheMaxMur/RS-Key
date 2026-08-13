@@ -113,6 +113,21 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Security
 
+- **A torn wipe can no longer leave a credential-management grant standing over
+  a deleted PIN.** The persistent `pcmr` token (`EF_PAUTHTOKEN`) was swept in the
+  same phase as `EF_PIN` by both wipes — `authenticatorReset` and the device-wide
+  factory wipe behind Management RESET and the on-screen "erase everything" — and
+  that phase deletes in flash-ring order, which on a freshly provisioned key puts
+  the PIN first. A cut between the two left the grant live with no PIN behind it,
+  and its holder could go on reading the credential directory of everything
+  registered afterwards. The grant is a *permission*, so unlike every other record
+  in that phase its absence is the restrictive state; it goes with the secrets now,
+  where no prefix of a wipe can do worse than revoke it early — and the ordering
+  stops depending on which record the ring happens to hold first. The refusal added
+  in `0x08C0` stays, for a record an older build already wrote to flash. The counter
+  skips to a fresh decade because parallel branches held `0x08F8`–`0x08FF`.
+  **bcdDevice → 0x0900.**
+
 - **The PIV data objects whose read condition is the PIN are no longer
   world-readable.** SP 800-73-4 pt1 Table 3 gives four objects a contact read
   condition of PIN — Cardholder Fingerprints (`5FC103`), Cardholder Facial Image

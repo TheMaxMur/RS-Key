@@ -257,8 +257,8 @@ fn authorized_by_ppuat<S: Storage, R: Rng>(
     param: &[u8],
 ) -> bool {
     // Both issuance paths gate on `EF_PIN` (§6.5.5.7.2/.3), so a grant without one is
-    // the torn reset `clientpin.rs` names: that cleanup runs on set-PIN, which an owner
-    // carrying on touch-only never does, leaving the old holder the next credentials.
+    // a leftover from a build whose wipe deferred `EF_PAUTHTOKEN` past the PIN. The
+    // wipes revoke it with the secrets now; this refuses one already on flash.
     if !ctx.fs.has_data(EF_PIN) {
         return false;
     }

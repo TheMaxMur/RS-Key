@@ -422,6 +422,10 @@ fn reset_bound_is_exactly_the_fid_space() {
 /// on-device recovery-phrase reveal. It sat in the same phase as `EF_KEY_DEV`, so a
 /// torn wipe could take the marker first and re-open a window the owner had closed
 /// over a seed that was still live.
+///
+/// `EF_PAUTHTOKEN` is the record that was in the set without meeting its rule: a
+/// grant's absence is the RESTRICTIVE state, so deferring it produced a tear of the
+/// opposite kind — a live `pcmr` grant over a deleted PIN.
 #[test]
 fn the_gate_set_defers_every_record_whose_absence_is_permissive() {
     use crate::consts::{
@@ -432,7 +436,6 @@ fn the_gate_set_defers_every_record_whose_absence_is_permissive() {
         EF_DEVICE_PIN,
         EF_ALWAYS_UV,
         EF_MINPINLEN,
-        EF_PAUTHTOKEN.get(),
         EF_BACKUP_SEALED,
     ] {
         assert!(is_fido_gate_fid(fid), "{fid:#06x} gates the applet");
@@ -442,9 +445,17 @@ fn the_gate_set_defers_every_record_whose_absence_is_permissive() {
         );
     }
     // The secrets themselves must stay in phase 1 — deferring the seed would invert
-    // the rule and delete the gate first.
-    for fid in [EF_KEY_DEV.get(), EF_CRED, EF_LARGEBLOB] {
-        assert!(!is_fido_gate_fid(fid), "{fid:#06x} is a secret, not a gate");
+    // the rule and delete the gate first — and so must a grant, whose absence denies
+    // rather than permits.
+    for fid in [EF_KEY_DEV.get(), EF_CRED, EF_LARGEBLOB, EF_PAUTHTOKEN.get()] {
+        assert!(
+            !is_fido_gate_fid(fid),
+            "{fid:#06x} is a secret or a grant, not a gate"
+        );
+        assert!(
+            is_fido_fid(fid),
+            "{fid:#06x} is not deferred, so the sweep must own it"
+        );
     }
 }
 
@@ -841,4 +852,120 @@ fn the_seed_set_is_exactly_the_two_records_a_credential_hangs_on() {
     for fid in [EF_CRED, EF_RP, EF_PIN, EF_LARGEBLOB] {
         assert!(!is_fido_seed_fid(fid), "{fid:#06x} does not lead the wipe");
     }
+}
+
+/// A provisioned store carrying the two records E77's torn state is made of, in the
+/// order the field writes them: the PIN is established first, and the `pcmr` grant
+/// is only minted on a later getPinToken, so the PIN is the older ring entry and a
+/// single-phase sweep reaches it first.
+fn provisioned_with_a_grant() -> TearAfter {
+    let mut fs = Fs::new(TearAfter {
+        items: Vec::new(),
+        budget: usize::MAX,
+    });
+    fs.scan();
+    let mut rng = SeqRng(17);
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+    let seed = load_keydev(&dev(), &mut fs).unwrap();
+    provision_passkey(&mut fs, &seed);
+    let mut pin_file = [0u8; crate::clientpin::PIN_FILE_LEN];
+    pin_file[0] = 8; // retries
+    pin_file[1] = 4; // min length
+    pin_file[2] = 1;
+    fs.put(EF_PIN, &pin_file).unwrap();
+    crate::seed::ensure_ppuat(&dev(), &mut fs, &mut rng).unwrap();
+    fs.into_storage()
+}
+
+/// The grant in `EF_PAUTHTOKEN` is a *permission*, so unlike every other record the
+/// wipe defers, its absence is the RESTRICTIVE state. Batched with `EF_PIN` it made
+/// both wipes producers of the torn state E77 closes at the consumer: a cut between
+/// the two leaves a live `pcmr` grant with no PIN behind it, and the holder goes on
+/// reading the credential directory of everything registered afterwards. `credmgmt`
+/// refusing it is one `if` on one build; no prefix of a wipe should be able to
+/// produce the state at all.
+fn no_wipe_prefix_leaves_a_grant_without_its_pin(
+    mut wipe: impl FnMut(&mut Fs<TearAfter>) -> bool,
+    what: &str,
+) {
+    use crate::consts::{EF_KEY_DEV, EF_PAUTHTOKEN};
+
+    let base = provisioned_with_a_grant();
+    let live = base.items.len();
+
+    let mut saw_grant = false;
+    // `reset`'s lead phase force-deletes both seed shapes whether or not they are
+    // there, and the harness charges budget for an absent one, so the tear points
+    // run past the number of items the store holds.
+    for budget in 0..live + FIDO_SEED_FIDS.len() {
+        let mut fs = Fs::new(TearAfter {
+            budget,
+            ..base.clone()
+        });
+        fs.scan();
+        wipe(&mut fs);
+        if !fs.has_data(EF_PAUTHTOKEN.get()) {
+            continue;
+        }
+        // Only a prefix that got as far as the lead delete counts as a tear point:
+        // budget 0 leaves the store untouched and would satisfy the guard below
+        // without proving the loop ever reached a partial wipe.
+        saw_grant |= !fs.has_data(EF_KEY_DEV.get());
+        assert!(
+            fs.has_data(EF_PIN),
+            "{what}: tear at {budget} left a credMgmt grant standing over a deleted PIN"
+        );
+    }
+    assert!(
+        saw_grant,
+        "vacuous: no partial wipe left the grant behind, so nothing was proved"
+    );
+
+    // The subject has to be a wipe that really wipes — and one that reaches its LAST
+    // phase, or the loop's property holds for the trivial reason that no PIN is ever
+    // deleted.
+    let mut fs = Fs::new(TearAfter {
+        budget: usize::MAX,
+        ..base.clone()
+    });
+    fs.scan();
+    assert!(wipe(&mut fs), "the control run did not report success");
+    assert!(!fs.has_data(EF_CRED), "the control run kept a credential");
+    assert!(
+        !fs.has_data(EF_PAUTHTOKEN.get()),
+        "the control run kept the grant"
+    );
+    assert!(!fs.has_data(EF_PIN), "the control run never reached a gate");
+}
+
+#[test]
+fn a_torn_reset_never_leaves_a_grant_without_its_pin() {
+    no_wipe_prefix_leaves_a_grant_without_its_pin(
+        |fs| {
+            let mut rng = SeqRng(3);
+            let mut state = FidoState::new();
+            let mut presence = crate::AlwaysConfirm;
+            let mut ctx = Ctx {
+                presence: &mut presence,
+                dev: dev(),
+                fs,
+                rng: &mut rng,
+                state: &mut state,
+                now_ms: 0,
+            };
+            reset(&mut ctx).is_ok()
+        },
+        "authenticatorReset",
+    );
+}
+
+#[test]
+fn a_torn_device_wide_wipe_never_leaves_a_grant_without_its_pin() {
+    no_wipe_prefix_leaves_a_grant_without_its_pin(
+        |fs| {
+            fs.factory_wipe(survives_factory_reset, is_fido_seed_fid, is_fido_gate_fid)
+                .is_ok()
+        },
+        "factory_wipe",
+    );
 }

@@ -135,14 +135,17 @@ pub fn is_fido_seed_fid(fid: u16) -> bool {
 /// display build, the on-device recovery-phrase reveal. It sat in the same phase as
 /// `EF_KEY_DEV`, so a torn wipe could take the marker first and re-open a window the
 /// owner had closed over a seed that was still live (audit run-36 class sweep).
+///
+/// `EF_PAUTHTOKEN` is deliberately **not** here, though it was until it produced
+/// the same class of tear from the other side: the `pcmr` grant is a permission, so
+/// its absence is the RESTRICTIVE state, and deferring it alongside `EF_PIN` meant a
+/// cut between the two left a live grant with no PIN behind it. It goes with the
+/// secrets, where a prefix can only ever revoke it early.
 pub fn is_fido_gate_fid(fid: u16) -> bool {
-    // EF_PAUTHTOKEN is a `KeyFid` (the sealed persistent pinUvAuthToken), so it
-    // can't sit in the `u16` match arm — compare its raw FID explicitly.
-    fid == EF_PAUTHTOKEN.get()
-        || matches!(
-            fid,
-            EF_PIN | EF_DEVICE_PIN | EF_ALWAYS_UV | EF_MINPINLEN | EF_BACKUP_SEALED
-        )
+    matches!(
+        fid,
+        EF_PIN | EF_DEVICE_PIN | EF_ALWAYS_UV | EF_MINPINLEN | EF_BACKUP_SEALED
+    )
 }
 
 /// CTAP 2.1 §6.6: a reset is honored only within [`RESET_WINDOW_MS`] of power-up,

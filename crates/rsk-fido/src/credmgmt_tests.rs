@@ -1762,11 +1762,13 @@ fn persistent_token_authorizes_the_reads_after_a_power_cycle() {
     assert_eq!(state.paut.permissions, 0, "no session token was involved");
 }
 
-/// …but not past the PIN that granted it. `authenticatorReset`'s gate phase can take
-/// `EF_PIN` and lose power before `EF_PAUTHTOKEN`; `clientpin.rs` clears the leftover
-/// when a PIN is next established, which an owner carrying on with a touch-only key
-/// never does. The old holder would go on reading the credential directory — rp ids,
-/// credential ids, user names — of everything registered after the reset.
+/// …but not past the PIN that granted it. A build whose wipe still deferred
+/// `EF_PAUTHTOKEN` alongside `EF_PIN` could take the PIN and lose power before the
+/// grant; `clientpin.rs` clears such a leftover when a PIN is next established, which
+/// an owner carrying on with a touch-only key never does. The old holder would go on
+/// reading the credential directory — rp ids, credential ids, user names — of
+/// everything registered after the reset. Both wipes revoke the grant with the
+/// secrets now (`reset.rs`), so this refusal covers what is already on flash.
 #[test]
 fn a_persistent_grant_does_not_outlive_its_pin() {
     let (mut fs, mut rng) = setup();

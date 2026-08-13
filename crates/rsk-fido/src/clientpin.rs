@@ -210,10 +210,9 @@ fn set_pin<S: Storage, R: Rng>(
     if dec.is_err() {
         return Err(CtapError::PinAuthInvalid);
     }
-    // No PIN was set, so no `pcmr` grant can be outstanding — except after a torn
-    // `authenticatorReset`, whose last phase can drop EF_PIN and lose power before
-    // EF_PAUTHTOKEN. Establishing a PIN over that leftover would hand the old
-    // holder read access to the credentials created next.
+    // No PIN was set, so no `pcmr` grant can be outstanding — except one a build
+    // whose wipe still deferred EF_PAUTHTOKEN left behind. Establishing a PIN over
+    // that leftover would hand the old holder the credentials created next.
     clear_ppuat(ctx.fs).map_err(|_| CtapError::Other)?;
     let res = store_new_pin(ctx, &padded);
     padded.zeroize();

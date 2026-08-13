@@ -138,6 +138,33 @@ fn the_wipe_defers_every_applets_own_gate_records() {
 
 #[cfg(any(not(feature = "strict-config"), feature = "display"))]
 #[test]
+fn no_applet_defers_another_applets_record() {
+    // The union is an OR, so an applet that takes a record OUT of its own gate set
+    // — FIDO moved the `pcmr` grant to phase 1 for exactly that reason — still has
+    // it deferred if a neighbour's predicate claims it. FIDO and OpenPGP interleave
+    // in the 0x10xx band, so this is not hypothetical.
+    type Gate = fn(u16) -> bool;
+    let predicates: [(&str, Gate); 4] = [
+        ("fido", rsk_fido::is_fido_gate_fid),
+        ("piv", rsk_piv::files::is_piv_gate_fid),
+        ("oath", rsk_oath::is_oath_lock_fid),
+        ("openpgp", rsk_openpgp::terminate::is_openpgp_gate_fid),
+    ];
+    for fid in 0..=u16::MAX {
+        let owners: std::vec::Vec<&str> = predicates
+            .iter()
+            .filter(|(_, owns)| owns(fid))
+            .map(|(name, _)| *name)
+            .collect();
+        assert!(
+            owners.len() <= 1,
+            "{fid:#06x} is claimed as a gate by {owners:?}"
+        );
+    }
+}
+
+#[cfg(any(not(feature = "strict-config"), feature = "display"))]
+#[test]
 fn the_wipe_defers_nothing_it_was_not_asked_to() {
     // The other direction: everything deferred belongs to one of the four. A wipe
     // that holds back a record nobody owns leaves it behind for ever.

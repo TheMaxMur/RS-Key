@@ -122,7 +122,7 @@ VARIABLES
     \* deleting the seed empties both here while the flash records remain, which
     \* is exactly what the shipped wipe buys and the only thing these invariants
     \* can be about -- an unopenable record is neither usable nor manageable.
-    store,  \*                                                  (reset.rs:163-191)
+    store,  \*                                                  (reset.rs:166-194)
     lock,   \* the soft lock: [soft, mism, policyMism]         (state.rs:284-291)
     tok,    \* device-side session token: [live, perms, rp]    (state.rs:247-261)
     plat,   \* the platform's copy: [held, verifies, revoked]  (ghost + wire)
@@ -385,7 +385,7 @@ ConsumedTok ==
              ELSE [tok EXCEPT !.perms = {}]
 
 (***************************************************************************)
-(* clientPIN. clientpin.rs:317-394 (getPinToken) and :719-804 (the verify). *)
+(* clientPIN. clientpin.rs:316-393 (getPinToken) and :718-803 (the verify). *)
 (***************************************************************************)
 
 \* clientpin.rs:341-344 -- a PIN must exist, have budget, and the RAM soft lock
