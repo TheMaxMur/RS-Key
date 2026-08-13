@@ -524,6 +524,11 @@ impl PivApplet<'_> {
         if !self.sess.has_mgm || !self.sess.has_pin {
             return Sw::SECURITY_STATUS_NOT_SATISFIED;
         }
+        // A DELIBERATE divergence, not an oversight: `00 FA 00 00` on a YubiKey
+        // 5.7.4 answers 9000 and sets both counters to 0/0, permanently blocking
+        // the card — only a factory reset recovers, and it takes the keys. That is
+        // AGENTS.md's one parity carve-out (never adopt a behaviour that loses
+        // user data), so this refusal stays. Pinned by a test; do not "fix" it.
         if apdu.p1 == 0 || apdu.p2 == 0 {
             return Sw::INCORRECT_PARAMS;
         }

@@ -160,6 +160,12 @@ covers the security boundary. This page covers feature and hardware gaps.
   firmware, where anyone could extract it. Browsers hide the leaf unless a site
   asks for `attestation: "direct"`; native CTAP clients such as `ssh-keygen` see
   it. A factory reset regenerates the seed and with it the certificate.
+- **`SET RETRIES` will not set a zero budget.** `00 FA 00 00` on a YubiKey
+  answers `9000` and leaves the card at `0/0` tries, permanently blocked, with
+  only a factory reset — which destroys every key — to recover. RS-Key answers
+  `6A80` and changes nothing. The project matches a YubiKey everywhere except
+  where matching would lose user data, and this is that exception.
+  *Status: never — deliberate.*
 - **OpenPGP secure messaging** is not implemented (rarely used by clients;
   PINs gate everything in practice).
 - **One physical button on the base build.** Touch = the BOOTSEL button, and

@@ -3944,6 +3944,47 @@ fn move_key_same_slot_rejected() {
     assert_eq!(find_tag(&md, 0x01).unwrap(), &[ALGO_ECCP256]);
 }
 
+/// `SET RETRIES` with a zero in either parameter is refused, and that is a
+/// DELIBERATE divergence — the one place this applet does not follow the oracle.
+/// `00 FA 00 00` on a YubiKey 5.7.4 answers `9000` and sets both counters to
+/// `0/0`, permanently blocking the card; `ykman piv info` then reads
+/// `PIN tries remaining: 0/0` and only a factory reset recovers, taking every
+/// key with it. AGENTS.md's one parity carve-out is "never adopt a YubiKey
+/// behaviour that loses user data", so the refusal stays. This test exists so a
+/// future parity sweep cannot quietly turn it into a brick.
+///
+/// Measured once, by the review pass that found it; deliberately NOT re-run —
+/// blocking the oracle at 0/0 to re-confirm a finding that says "do not change
+/// this" is not worth the card.
+#[test]
+fn a_zero_retry_budget_is_refused_and_that_is_deliberate() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    verify_pin(&mut app, &mut fs);
+    for (p1, p2) in [(0u8, 0u8), (0, 3), (3, 0)] {
+        assert_eq!(
+            run(&mut app, &mut fs, INS_SET_RETRIES, p1, p2, &[]).0,
+            Sw::INCORRECT_PARAMS,
+            "P1 {p1} P2 {p2}"
+        );
+    }
+    // Nothing moved: a refused call is not a half-applied one, so the references
+    // and their counters are still the ones the card started with.
+    assert_eq!(reference_retries_left(&mut fs, PinRef::Pin), Some(3));
+    assert_eq!(reference_retries_left(&mut fs, PinRef::Puk), Some(3));
+    assert_eq!(
+        run(&mut app, &mut fs, INS_VERIFY, 0, 0x80, &DEFAULT_PIN).0,
+        Sw::OK
+    );
+    // …and the smallest budget that is still a budget goes through.
+    assert_eq!(run(&mut app, &mut fs, INS_SET_RETRIES, 1, 1, &[]).0, Sw::OK);
+    assert_eq!(reference_retries_left(&mut fs, PinRef::Pin), Some(1));
+}
+
 #[test]
 fn set_retries_and_reset_card() {
     let rng = RefCell::new(TestRng(7));
