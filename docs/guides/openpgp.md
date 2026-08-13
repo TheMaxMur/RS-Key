@@ -240,9 +240,11 @@ cannot turn your signatures touchless. Clearing it takes `TERMINATE DF` +
 
 ## AES encryption (PSO)
 
-The DEC slot carries an on-card **AES** key, minted automatically as AES-256
-whenever the encryption keypair is generated. Tools that expose the card's
-symmetric PSO (e.g. `gpg-card`) can `ENCIPHER` / `DECIPHER` arbitrary
+The card carries one **AES** key, in DO `D5`. It belongs to the card, not to a key
+slot — the spec names it by the commands it serves, and `ENCIPHER` uses no key
+slot at all. The card seeds it as AES-256 the first time you generate an
+encryption keypair, so the feature works out of the box. Tools that expose the
+card's symmetric PSO (e.g. `gpg-card`) can `ENCIPHER` / `DECIPHER` arbitrary
 block-aligned data with it (raw AES-CBC, zero IV; output is `0x02 ||
 cryptogram`). It needs PW1 (PW2). Most users never touch this. Public-key
 encryption is the normal path.
@@ -250,13 +252,10 @@ encryption is the normal path.
 A host can also supply the key itself, with `PUT DATA` on DO `D5` under the
 **admin** PIN: 16 bytes for AES-128 or 32 for AES-256, and no other length.
 
-Two things to know before you rely on it. There is **no way to remove** an
-installed key — only overwrite it, regenerate the encryption keypair, or reset the
-applet — and **regenerating the encryption keypair replaces it**, because that is
-how the slot's secrets are retired. Importing a key with `keytocard` does not.
-Anything you encrypted under a key you supplied is unrecoverable once either of
-those happens, and the card cannot tell you a key is there: DO `D5` is
-write-only.
+Once a key is there nothing replaces it but another `PUT DATA D5` — generating or
+importing a keypair leaves it alone, on every slot. There is **no way to remove**
+it short of `TERMINATE DF` + `ACTIVATE FILE`, which wipes the applet, and the card
+cannot tell you a key is there: DO `D5` is write-only.
 
 ## Recovery and reset
 

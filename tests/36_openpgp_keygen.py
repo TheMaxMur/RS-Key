@@ -20,7 +20,7 @@ returns from GENERATE (parsed from the 7F49 DO):
   * P-256 ECDSA  — GENERATE SIG, PSO:CDS, verify the signature.
   * Ed25519      — GENERATE AUT, INTERNAL AUTHENTICATE, verify the signature.
   * P-256 ECDH   — GENERATE DEC, PSO:DECIPHER, verify the shared secret (this
-                   also mints the DEC slot's AES key).
+                   also seeds the card's AES key, if DO D5 is still empty).
   * RSA-2048     — GENERATE SIG, **timed** (on-chip RSA keygen is slow), then
                    PSO:CDS verified. Use --skip-rsa to leave it out.
 
@@ -235,7 +235,7 @@ def main():
     expected = eph_priv.exchange(ec.ECDH(), dec_pub)
     if z != expected:
         fail(f"ECDH mismatch:\n  card={z.hex()}\n  host={expected.hex()}")
-    print("  P-256 ECDH shared secret MATCHES host (DEC + AES key generated)")
+    print("  P-256 ECDH shared secret MATCHES host (DEC key generated)")
 
     print("PASS")
 

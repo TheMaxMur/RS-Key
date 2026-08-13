@@ -40,6 +40,21 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **Generating an OpenPGP keypair no longer destroys the AES key a host installed
+  at DO `D5`.** The DEC arm of GENERATE minted a fresh AES-256 key over whatever
+  stood there. That was harmless while the card was the only thing that could
+  write `D5`; `PUT DATA D5` landed this week, and the same line became an
+  unrelated operation quietly shredding host key material — everything encrypted
+  under that key unrecoverable, with no error, and no way to read the DO back to
+  notice. OpenPGP 3.4.1 makes `D5` card-level, not the DEC slot's: §7.2.12's
+  PSO:ENCIPHER carries **no key reference at all**, so the card's one `D5` is the
+  whole key material of a command that never touches the DEC slot, and §7.2.14
+  lets GENERATE reset the signature counter and "other related DO (e. g.
+  certificates)" — a DO with no per-slot instance is related to none of the three
+  key pairs. GENERATE still seeds `D5` when it is **empty**, so the AES capability
+  Extended Capabilities b2 announces works on a fresh card as before.
+  `bcdDevice` → `0x08F8`.
+
 - **The pre-commit hook's impact report is readable again.** `scripts/impact.py`
   read Rust's anonymous constant — `const _: () = assert!(…)`, an idiom this tree
   uses about eighty times — as a constant *named* `_`, and then answered

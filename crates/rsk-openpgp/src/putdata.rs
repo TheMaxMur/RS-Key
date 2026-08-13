@@ -150,8 +150,8 @@ pub fn put_data<S: Storage>(fs: &mut Fs<S>, sess: &Session, fid: u16, data: &[u8
 ///
 /// §7.2.11 gives `D5` no deletion, so an empty body is `6A80` like any other wrong
 /// width and **there is no way to remove an installed key** — only overwriting it,
-/// a DEC keygen, or TERMINATE DF. Deliberate: an empty write that disarmed an
-/// announced capability would be the worse of the two silences.
+/// or the TERMINATE DF + ACTIVATE FILE reset that §7.2.17 gives every DO.
+/// Deliberate: an empty write disarming an announced capability is the worse silence.
 pub fn put_aes_key<S: Storage>(dev: &Device, fs: &mut Fs<S>, sess: &Session, data: &[u8]) -> Sw {
     if !sess.has_pw3 {
         return Sw::SECURITY_STATUS_NOT_SATISFIED;

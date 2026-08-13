@@ -143,14 +143,14 @@ fn generate<S: Storage>(
 }
 
 /// The post-store tail shared by EC and RSA generate: record the slot's origin
-/// for DO 0xDE; reset the signature counter on the SIG slot; mint a fresh AES-256
-/// key on the DEC slot (OpenPGP cannot generate a symmetric key directly; a
+/// for DO 0xDE; reset the signature counter on the SIG slot; seed `D5` on the DEC
+/// slot if it is empty (OpenPGP cannot generate a symmetric key directly; a
 /// storage failure is non-fatal).
 ///
-/// The mint **overwrites a key a host installed with `PUT DATA D5`**, and that is
-/// the precedence on purpose: regenerating the DEC keypair is how a holder retires
-/// that slot's secrets, and leaving the old symmetric key behind would make the
-/// rotation a half-truth. IMPORT does not mint, so it does not clobber either.
+/// The seed never **replaces** a standing key. §7.2.14 lets GENERATE reset the DS
+/// counter and "other related DO (e. g. certificates)", and `D5` is related to no
+/// key pair: §7.2.12 gives PSO:ENCIPHER no key reference at all, so one card-level
+/// AES key serves a command that never touches the DEC slot.
 fn keygen_tail<S: Storage>(
     dev: &Device,
     fs: &mut Fs<S>,
@@ -165,7 +165,7 @@ fn keygen_tail<S: Storage>(
     let _ = origin::mark(fs, fid, origin::ORIGIN_GENERATED);
     if fid == EF_PK_SIG {
         reset_sig_count(fs)?;
-    } else if fid == EF_PK_DEC {
+    } else if fid == EF_PK_DEC && !fs.has_key(EF_AES_KEY) {
         let mut aes = [0u8; 32];
         rng.fill(&mut aes);
         let _ = store_aes_key(dev, fs, sess, &aes);

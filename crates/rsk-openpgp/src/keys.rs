@@ -905,15 +905,15 @@ pub fn make_ec_pubkey_do(point: &[u8], out: &mut [u8]) -> usize {
     p + plen
 }
 
-/// Seal an AES key under the DEK and write it to `EF_AES_KEY`. GENERATE mints a
-/// fresh AES-256 key whenever the DEC keypair is (re)generated; `PUT DATA D5`
-/// installs a host-supplied one.
+/// Seal an AES key under the DEK and write it to `EF_AES_KEY`. A DEC GENERATE
+/// seeds an AES-256 key when the DO is empty; `PUT DATA D5` installs a
+/// host-supplied one, and nothing overwrites that.
 ///
 /// [`AES_KEY_LENS`] is enforced HERE, not at the callers: the widths are what
-/// `load_aes_key` and `aes_pso` can serve, and a slot sealed at any other one
-/// answers `6400` for good — unreadable, undeletable, and clearable only by a
-/// keygen or TERMINATE DF. Two callers today, so the check would be a coin-flip
-/// away from living in only one of them.
+/// `load_aes_key` and `aes_pso` can serve, and a slot sealed at any other one is
+/// unreadable and undeletable. It is not unrecoverable — this writes through
+/// without reading the old value, so `PUT DATA D5` repairs any unloadable record —
+/// but two callers make the check a coin-flip away from living in only one.
 pub fn store_aes_key<S: Storage>(
     dev: &Device,
     fs: &mut Fs<S>,

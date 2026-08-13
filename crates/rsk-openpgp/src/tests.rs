@@ -1351,7 +1351,7 @@ fn generate_dec_ecdh_mints_aes_key() {
     let (do_, sw) = keygen(&mut app, &mut fs, 0x80, 0xB8);
     assert_eq!(sw, Sw::OK);
     let point = ec_point(&do_).to_vec();
-    // Generating the DEC key also mints a fresh AES key.
+    // Generating the DEC key also seeds the card's AES key, `D5` being empty here.
     assert!(fs.has_data(consts::EF_AES_KEY.get()));
 
     // The card computes ECDH with the generated key; ECDH is symmetric, so
@@ -1376,7 +1376,7 @@ fn generate_dec_ecdh_mints_aes_key() {
 fn aes_pso_encipher_decipher_roundtrip() {
     // OpenPGP-card AES symmetric PSO: ENCIPHER (86 80) plaintext -> 0x02 ||
     // cryptogram; DECIPHER (80 86) 0x02 || cryptogram -> plaintext, using the
-    // AES key minted on the DEC slot. The key is DEK-sealed (unknown host-side),
+    // AES key the DEC keygen seeded. The key is DEK-sealed (unknown host-side),
     // so correctness is shown by round-trip.
     let rng = RefCell::new(LcgRng(7));
     let mut fs = make_fs();
@@ -2112,7 +2112,7 @@ fn pw3_alone_opens_no_key_operation() {
     cds.extend_from_slice(&[0x42u8; 32]);
     let mut aut = vec![0x00, consts::INS_INTERNAL_AUT, 0x00, 0x00, 32];
     aut.extend_from_slice(&[0x42u8; 32]);
-    // AES ENCIPHER over the key GENERATE minted on the DEC slot.
+    // AES ENCIPHER over the card key the DEC keygen seeded.
     let mut aes = vec![0x00, consts::INS_PSO, 0x86, 0x80, 16];
     aes.extend_from_slice(&[0x11u8; 16]);
 
@@ -2446,21 +2446,23 @@ fn put_data_d5_installs_the_key_the_aes_pso_uses() {
     );
 }
 
-/// Which writer wins. GENERATE on the DEC slot mints its own AES key, so it
-/// **overwrites** one a host installed at `D5`; IMPORT does not mint, so it leaves
-/// it standing. That precedence is deliberate — regenerating the DEC keypair is
-/// how a holder retires that slot's secrets, and a symmetric key surviving the
-/// rotation would make it a half-truth — but it was accidental until `D5` had a
-/// writer, and nothing said so. Pinned here so the next reader finds a decision.
+/// E98: `D5` is card-level, so no keygen may destroy it. §7.2.12 gives PSO:ENCIPHER
+/// no key reference at all — `D5` is its whole key material, on a command that never
+/// touches the DEC slot — and §7.2.14 lets GENERATE reset the DS counter and "other
+/// related DO (e. g. certificates)"; the card's one `D5` is related to none of its
+/// three key pairs. GENERATE still mints into an EMPTY `D5`, because Extended
+/// Capabilities b2 promises AES and a fresh card has no other way to get a key there.
 #[test]
-fn a_dec_keygen_replaces_a_host_installed_aes_key_and_an_import_does_not() {
+fn a_keygen_mints_the_aes_key_only_when_d5_is_empty() {
     let rng = RefCell::new(LcgRng(41));
     let mut fs = make_fs();
     let presence = RefCell::new(crate::AlwaysConfirm);
     let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
     verify_pin(&mut app, &mut fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
     verify_pin(&mut app, &mut fs, consts::PW1_MODE82, consts::PW1_DEFAULT);
+    assert_eq!(put(&mut app, &mut fs, 0x00, 0xC1, ATTR_P256), Sw::OK);
     assert_eq!(put(&mut app, &mut fs, 0x00, 0xC2, ATTR_P256_ECDH), Sw::OK);
+    assert_eq!(put(&mut app, &mut fs, 0x00, 0xC3, ATTR_P256), Sw::OK);
 
     let encipher = |app: &mut OpenpgpApplet, fs: &mut Fs<RamStorage>| {
         let mut a = vec![0x00, consts::INS_PSO, 0x86, 0x80, 16];
@@ -2480,11 +2482,38 @@ fn a_dec_keygen_replaces_a_host_installed_aes_key_and_an_import_does_not() {
         "IMPORT must not touch the AES key"
     );
 
-    // …and GENERATE replaces it.
-    assert_eq!(keygen(&mut app, &mut fs, 0x80, 0xB8).1, Sw::OK);
-    let after = encipher(&mut app, &mut fs);
-    assert_eq!(after.1, Sw::OK);
-    assert_ne!(after.0, installed.0, "a DEC keygen must rotate the AES key");
+    // …and so does GENERATE, on every slot — the DEC one twice, because a second
+    // regeneration is the rotation the old precedence was defended as.
+    for crt in [0xB6u8, 0xB8, 0xA4, 0xB8] {
+        assert_eq!(
+            keygen(&mut app, &mut fs, 0x80, crt).1,
+            Sw::OK,
+            "crt {crt:#04X}"
+        );
+        assert_eq!(
+            encipher(&mut app, &mut fs),
+            installed,
+            "GENERATE {crt:#04X} destroyed the host's D5 key"
+        );
+    }
+
+    // On a card whose `D5` is empty, the DEC keygen still mints one: the capability
+    // b2 announces has to work before any host has written the DO.
+    let mut fresh = make_fs();
+    let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
+    verify_pin(
+        &mut app,
+        &mut fresh,
+        consts::PW3_MODE83,
+        consts::PW3_DEFAULT,
+    );
+    assert_eq!(
+        put(&mut app, &mut fresh, 0x00, 0xC2, ATTR_P256_ECDH),
+        Sw::OK
+    );
+    assert!(!fresh.has_key(consts::EF_AES_KEY));
+    assert_eq!(keygen(&mut app, &mut fresh, 0x80, 0xB8).1, Sw::OK);
+    assert!(fresh.has_key(consts::EF_AES_KEY));
 }
 
 /// The E81 rule at the other door. IMPORT (`0xDB`) carries its target — the

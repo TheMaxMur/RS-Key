@@ -57,8 +57,8 @@ fn try_pso<S: Storage>(
 ) -> Result<usize, Sw> {
     let (p1, p2, data) = (apdu.p1, apdu.p2, apdu.data);
 
-    // AES symmetric PSO over `EF_AES_KEY` — the DEC slot's AES key, minted by
-    // GENERATE and settable by `PUT DATA D5`. DECIPHER carries the `0x02` padding
+    // AES symmetric PSO over `EF_AES_KEY` — the card's AES key, seeded by a DEC
+    // GENERATE and set by `PUT DATA D5`. DECIPHER carries the `0x02` padding
     // indicator — unambiguous against RSA's `0x00` / ECDH's `0xA6` — so it routes
     // here; ENCIPHER (`86 80`) is AES-only per the card spec (input = plaintext,
     // output = `0x02 || cryptogram`). Both need the DEC password (PW2/PW3) and

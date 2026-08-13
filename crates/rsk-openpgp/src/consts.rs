@@ -160,7 +160,11 @@ pub const EF_TS_SIG: u16 = 0x00ce; // S
 pub const EF_TS_DEC: u16 = 0x00cf; // S
 pub const EF_TS_AUT: u16 = 0x00d0; // S
 pub const EF_RESET_CODE: u16 = 0x00d3; // S — PUT redirects to EF_RC
-pub const EF_AES_KEY: KeyFid = KeyFid::new(0x00d5); // S — symmetric key for DEC slot, DEK-sealed
+/// The AES key for PSO:ENC/DEC — **card-level, not the DEC slot's**. 3.4 names it
+/// by its commands, gives it no Key-Ref (§5 gives those to the three private keys
+/// only), and §7.2.12's PSO:ENCIPHER takes no key reference at all, so this one DO
+/// is the whole key material of a command that never touches the DEC slot.
+pub const EF_AES_KEY: KeyFid = KeyFid::new(0x00d5); // S — DEK-sealed
 
 /// The key widths DO `D5` takes, and the only widths `store_aes_key` will seal.
 /// OpenPGP 3.4 §7.2.11 gives PSO:DEC/ENC an AES-128 or an AES-256 key and nothing
