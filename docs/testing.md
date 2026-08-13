@@ -197,7 +197,8 @@ crypto-critical helpers, where a proof genuinely beats a sample:
   dividend up to 2 bytes and every modulus) and panic-free / `< m` for every
   input up to 8 bytes; the `IncrementalSieve` residue invariant
   (`res[i] == cand mod p_i` after a step, verdict identical to the flat
-  sieve) for every seed.
+  sieve) for every seed, plus the concrete-seed twin that keeps that invariant
+  from holding over a sieve which never steps.
 - `rsk-crypto`: the `base64url` length helpers (`encoded_len` / `decoded_len`)
   panic-free (no overflow/underflow) and mutually inverse for every length up
   to 64 KiB; `encode∘decode == id` for every input up to 9 bytes (every
@@ -258,7 +259,7 @@ run):
 |---|---|---|---|---|
 | `pr` | 13 | 45 | 212 s | `rsk-piv::set_protected_total_and_invariant`, 57 s |
 | `state` | 2 | 4 | ~12 min | `rsk-fido::…_at_call_site`, ~8.5 min (9.3 GiB peak) |
-| `all` | 17 | 60 | ~1 h 45 | `rsk-rescue::serialize_parse_roundtrip`, ~80 min |
+| `all` | 17 | 61 | ~1 h 45 | `rsk-rescue::serialize_parse_roundtrip`, ~80 min |
 
 `pr` passes `--harness-timeout 5m`, five times its slowest harness. That cap is
 the tripwire on the tier assignment: a fast-tier harness that grows past it
