@@ -14,7 +14,7 @@ BUGS=(BugResetGatesFirst BugCredBeforeRp BugTokenSurvivesPinChange
       BugNoConsumeAfterUp BugUnscopedCancel BugTouchNotSpent
       BugSoftLockLostOnWarmReset BugWarmResetReopensWindow
       BugCmWalkIgnoresChannel BugDeleteRpBeforeCred BugBackupSealedNotAGate
-      BugWrongPinKeepsToken)
+      BugConsumeKeepsMcGa BugNoDropStaleCancelAtEntry BugWrongPinKeepsToken)
 
 # The invariant each mutant must break, so a silent mutant is visible as such.
 target_inv() {
@@ -33,6 +33,8 @@ target_inv() {
     BugCmWalkIgnoresChannel)    echo NoAuthorizationBypass ;;
     BugDeleteRpBeforeCred)      echo NoUnmanageableCredential ;;
     BugBackupSealedNotAGate)    echo ResetNeverWeakensSurvivingState ;;
+    BugConsumeKeepsMcGa)        echo NoAuthorizationBypass ;;
+    BugNoDropStaleCancelAtEntry) echo NoCrossTransportTouchConsumption ;;
     BugWrongPinKeepsToken)      echo NoTokenAfterInvalidation ;;
   esac
 }

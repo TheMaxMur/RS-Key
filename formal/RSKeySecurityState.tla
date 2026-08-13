@@ -53,6 +53,8 @@ CONSTANTS
     BugCmWalkIgnoresChannel,      \* state.rs:169-179  may_walk_rps
     BugDeleteRpBeforeCred,        \* credmgmt.rs:664-671 deleteCredential order
     BugBackupSealedNotAGate,      \* reset.rs:110-123  is_fido_gate_fid (run-36)
+    BugConsumeKeepsMcGa,          \* state.rs:522-528  a narrowed 6.5.5.7 triad
+    BugNoDropStaleCancelAtEntry,  \* presence.rs:250-251 the wait-entry drop
     BugWrongPinKeepsToken         \* clientpin.rs:779  the pre-E38 tree
 
 (* A PROPOSED fix, not a defect: order phase 1 of the reset sweep so no EF_RP  *)
@@ -185,12 +187,15 @@ Init ==
 Idle == op.kind = "none"
 WaitOpen == pres.scope # NoOwner /\ pres.granted = "none"
 
-\* ButtonWait::wait entry: crates/rsk-device/src/presence.rs:193-194
-\* drops a cancel left over from an already-finished request, so each wait
-\* starts clean.
+\* ButtonWait::wait entry: crates/rsk-device/src/presence.rs:192-193 drops a
+\* cancel left over from an already-finished request, so each wait starts clean.
+\* It is the ONLY thing that eats a cancel latched by a dispatch that never
+\* waited -- see HostCancelLatched; the exit clear at :225-226 cannot help there.
 OpenWaitFor(t) ==
-    [pres EXCEPT !.scope = t, !.cancelReq = FALSE, !.cancelBy = NoOwner,
-                 !.granted = "none"]
+    IF BugNoDropStaleCancelAtEntry
+      THEN [pres EXCEPT !.scope = t, !.granted = "none"]
+      ELSE [pres EXCEPT !.scope = t, !.cancelReq = FALSE, !.cancelBy = NoOwner,
+                        !.granted = "none"]
 
 \* The dispatch is over; set_wait_scope(SCOPE_NONE) so an on-panel ceremony is
 \* nobody's to cancel (crates/rsk-device/src/presence.rs:103-105), and
@@ -224,6 +229,21 @@ CancelGuard  == IF BugUnscopedCancel THEN TRUE ELSE pres.scope = Fido
 HostCancel ==
     /\ WaitOpen
     /\ CancelGuard
+    /\ pres' = [pres EXCEPT !.cancelReq = TRUE, !.cancelBy = Fido]
+    /\ UNCHANGED << pin, gate, store, lock, tok, plat, walk, sys, op, snap,
+                    upSpent, viol >>
+
+\* WAIT_SCOPE is set around the whole DISPATCH (worker.rs:429, :521), not around
+\* the touch wait, so Arbiter::request_cancel accepts a cancel during a FIDO
+\* command that never opens one -- getInfo, a denied CBOR, getAssertion up:false.
+\* Nothing clears `cancel_requested` when that dispatch ends, so the latch
+\* survives into the next transport's wait and only the wait-entry clear eats it.
+\* Modelling the cancel as raisable ONLY inside an open wait made that defence
+\* look redundant. Wider than the firmware in one direction (a CCID dispatch
+\* holds SCOPE_CCID, which request_cancel refuses) -- sound for safety.
+HostCancelLatched ==
+    /\ pres.scope = NoOwner
+    /\ ~pres.cancelReq
     /\ pres' = [pres EXCEPT !.cancelReq = TRUE, !.cancelBy = Fido]
     /\ UNCHANGED << pin, gate, store, lock, tok, plat, walk, sys, op, snap,
                     upSpent, viol >>
@@ -316,11 +336,33 @@ UvRequired == pin.set \/ gate.alwaysUv
 OpGuard(p, rp)  == IF UvRequired THEN TokenGuardUv(p, rp) ELSE TRUE
 OpPolicy(p, rp) == IF UvRequired THEN TokenPolicy(p, rp) ELSE TRUE
 
+\* The names ONE admitted-but-unauthorized token step records. The four sibling
+\* call sites used to disagree -- makeCredential/getAssertion wrote both,
+\* authenticatorConfig only the first, the two credentialManagement sites only
+\* the second -- so a Solo_* run coming back green meant either "not violated"
+\* or "violated under the other name", and there was no way to tell which.
+\* Every one of them is a protected operation, so a step its Policy forbids is
+\* NoAuthorizationBypass; it is ALSO NoTokenAfterInvalidation exactly when what
+\* got through was a grant the device had already retired or revoked.
+TokenBypass ==
+    {"NoAuthorizationBypass"}
+      \cup (IF tok.live /\ ~plat.revoked
+              THEN {} ELSE {"NoTokenAfterInvalidation"})
+
 \* CTAP 2.1 6.5.5.7 post-user-presence triad (state.rs:518-530). Spending the
 \* token down to largeBlobWrite is what stops a follow-on authenticatorConfig
 \* riding the touch that a getAssertion just collected (GHSA-wqjm-653g-hgw3).
+\* BugConsumeKeepsMcGa is the narrow fix somebody could have written for that
+\* advisory instead: strip the config-carrying permissions and leave the
+\* getPinToken 0x05 pair standing, so a SECOND assertion still rides the touch
+\* the first one collected. It is here because the model could not see it --
+\* `upSpent` had exactly one reader, ConfigPolicy.
 ConsumedTok ==
-    IF BugNoConsumeAfterUp \/ ~tok.live THEN tok ELSE [tok EXCEPT !.perms = {}]
+    IF BugNoConsumeAfterUp \/ ~tok.live
+      THEN tok
+      ELSE IF BugConsumeKeepsMcGa /\ tok.perms = {"mc", "ga"}
+             THEN tok
+             ELSE [tok EXCEPT !.perms = {}]
 
 (***************************************************************************)
 (* clientPIN. clientpin.rs:317-394 (getPinToken) and :719-804 (the verify). *)
@@ -493,9 +535,7 @@ RegisterStart(r, t) ==
     /\ pres.scope = NoOwner
     /\ ~(gate.alwaysUv /\ ~pin.set)          \* alwaysUv with no PIN fails closed
     /\ OpGuard("mc", r)
-    /\ viol' = IF OpPolicy("mc", r)
-                 THEN viol
-                 ELSE viol \cup {"NoAuthorizationBypass", "NoTokenAfterInvalidation"}
+    /\ viol' = IF OpPolicy("mc", r) THEN viol ELSE viol \cup TokenBypass
     /\ pres' = OpenWaitFor(t)
     /\ op' = [kind |-> "register", t |-> t, rp |-> r, step |-> 0]
     /\ UNCHANGED << pin, gate, store, lock, tok, plat, walk, sys, snap, upSpent >>
@@ -546,9 +586,7 @@ AssertStart(r, t) ==
     /\ store.seed                            \* a credential without the seed is dead
     /\ ~(gate.alwaysUv /\ ~pin.set)
     /\ OpGuard("ga", r)
-    /\ viol' = IF OpPolicy("ga", r)
-                 THEN viol
-                 ELSE viol \cup {"NoAuthorizationBypass", "NoTokenAfterInvalidation"}
+    /\ viol' = IF OpPolicy("ga", r) THEN viol ELSE viol \cup TokenBypass
     /\ pres' = OpenWaitFor(t)
     /\ op' = [kind |-> "assert", t |-> t, rp |-> r, step |-> 0]
     /\ UNCHANGED << pin, gate, store, lock, tok, plat, walk, sys, snap, upSpent >>
@@ -579,8 +617,7 @@ ConfigPolicy == TokenPolicy("acfg", NoRp) /\ ~upSpent
 ConfigOp ==
     /\ Idle
     /\ TokenGuardBare("acfg", NoRp)
-    /\ viol' = IF ConfigPolicy THEN viol
-                               ELSE viol \cup {"NoAuthorizationBypass"}
+    /\ viol' = IF ConfigPolicy THEN viol ELSE viol \cup TokenBypass
     /\ gate' = [gate EXCEPT !.alwaysUv = ~gate.alwaysUv]
     /\ snap' = NoSnap
     /\ UNCHANGED << pin, store, lock, tok, plat, pres, walk, sys, op,
@@ -618,9 +655,7 @@ PpuatPolicy == gate.ppuat /\ ~gate.ppuatStale /\ pin.set
 CmBeginViaToken(ch, r) ==
     /\ Idle
     /\ TokenGuardBare("cm", r)
-    /\ viol' = IF TokenPolicy("cm", r)
-                 THEN viol
-                 ELSE viol \cup {"NoTokenAfterInvalidation"}
+    /\ viol' = IF TokenPolicy("cm", r) THEN viol ELSE viol \cup TokenBypass
     /\ walk' = [open |-> TRUE, chan |-> ch]
     /\ UNCHANGED << pin, gate, store, lock, tok, plat, pres, sys, op, snap,
                     upSpent >>
@@ -632,8 +667,14 @@ CmBeginViaToken(ch, r) ==
 CmBeginViaPpuat(ch) ==
     /\ Idle
     /\ PpuatGuard
+    \* Deliberately NOT recording the PIN-less case under NoAuthorizationBypass
+    \* too: the grant presented is a valid one that nothing invalidated, and the
+    \* proposed fix refuses it at the guard rather than stopping the record from
+    \* being stranded. What is missing is the GATE, which is the other name.
     /\ viol' = viol
-         \cup (IF gate.ppuatStale THEN {"NoTokenAfterInvalidation"} ELSE {})
+         \cup (IF gate.ppuatStale
+                 THEN {"NoAuthorizationBypass", "NoTokenAfterInvalidation"}
+                 ELSE {})
          \cup (IF pin.set THEN {} ELSE {"NoAccessibleSecretWithoutGate"})
     /\ walk' = [open |-> TRUE, chan |-> ch]
     /\ UNCHANGED << pin, gate, store, lock, tok, plat, pres, sys, op, snap,
@@ -660,9 +701,7 @@ DeleteCredStart(r) ==
     /\ Idle
     /\ r \in store.cred
     /\ TokenGuardBare("cm", r)
-    /\ viol' = IF TokenPolicy("cm", r)
-                 THEN viol
-                 ELSE viol \cup {"NoTokenAfterInvalidation"}
+    /\ viol' = IF TokenPolicy("cm", r) THEN viol ELSE viol \cup TokenBypass
     /\ op' = [kind |-> "delcred", t |-> Fido, rp |-> r, step |-> 0]
     /\ UNCHANGED << pin, gate, store, lock, tok, plat, pres, walk, sys, snap,
                     upSpent >>
@@ -882,7 +921,7 @@ Tick ==
 (***************************************************************************)
 
 Next ==
-    \/ PressDown \/ PressUp \/ HostCancel
+    \/ PressDown \/ PressUp \/ HostCancel \/ HostCancelLatched
     \/ TouchConfirm \/ TouchCancel \/ TouchTimeout
     \/ \E ps \in PermSets, r \in RPs \cup {NoRp} : GetPinToken(ps, r)
     \/ WrongPin \/ MintPpuat
@@ -911,19 +950,63 @@ Spec == Init /\ [][Next]_vars
 (* invariant -> Rust construct table.                                       *)
 (***************************************************************************)
 
+\* A `"Name" \notin viol` clause is only as strong as the completeness of the
+\* assignments that populate it, and an action that should record and does not
+\* makes its invariant silently pass. So each of the three below leads with
+\* whatever part of the property can be read out of the STATE -- those clauses
+\* need no cooperation from any action and cannot be defeated by forgetting one
+\* -- and keeps the ghost only for the part that is genuinely about a STEP.
+\* Where a ghost clause survives, the comment says which actions must maintain
+\* it, exhaustively.
+
 \* No protected operation completes without the live authorization its own
 \* gate requires -- the token and its permission, the retry budget, the soft
 \* lock, the reset window, the walk's owning channel.
-NoAuthorizationBypass == "NoAuthorizationBypass" \notin viol
+\*
+\* Ghost half: the reset window (ResetStart), the walk's owning channel
+\* (CmNext), the retry budget and soft lock (PinAttempt, hence GetPinToken /
+\* WrongPin / MintPpuat / ChangePinStart), and a token step admitted against
+\* policy (RegisterStart, AssertStart, ConfigOp, CmBeginViaToken,
+\* CmBeginViaPpuat, DeleteCredStart, via TokenBypass). Those eleven are the
+\* whole list; no other action is gated by an authorization.
+NoAuthorizationBypass ==
+    /\ "NoAuthorizationBypass" \notin viol
+    \* CTAP 2.1 6.5.5.7: once a user-presence test is spent the token carries
+    \* largeBlobWrite and nothing else, so nothing can ride that touch -- not
+    \* the authenticatorConfig the advisory named and not a second assertion.
+    /\ (upSpent /\ tok.live) => tok.perms = {}
+    \* The RAM soft lock must reflect the policy it stands for: MismatchLimit
+    \* consecutive mismatches and no real power cycle since (ctap.rs:215-222).
+    /\ (lock.policyMism >= MismatchLimit) => lock.soft
 
 \* A presence decision produced for one transport is never applied to
 \* another: neither a confirm (one hold, one ceremony) nor a cancel.
+\*
+\* Ghost half: TouchConfirm only. TouchConfirm rewrites `usedBy` in the same
+\* step it reads it, so the pre-state -- which transport the current hold has
+\* already served -- is visible to nothing else.
 NoCrossTransportTouchConsumption ==
-    "NoCrossTransportTouchConsumption" \notin viol
+    /\ "NoCrossTransportTouchConsumption" \notin viol
+    \* The cancel half reads structurally: TouchCancel leaves `cancelBy`
+    \* standing, so a decision wearing the wrong owner's name is a state.
+    /\ (pres.granted = "cancel") => (pres.cancelBy = pres.scope)
 
 \* A grant that has been invalidated -- by a PIN change, a PIN set, a reset,
 \* stopUsingPinUvAuthToken or a power cycle -- never authorizes again.
-NoTokenAfterInvalidation == "NoTokenAfterInvalidation" \notin viol
+\*
+\* Ghost half: the rpId binding, which is the one way to use a grant that is
+\* live and yet not yours (RegisterStart, AssertStart, ConfigOp,
+\* CmBeginViaToken, DeleteCredStart via TokenBypass; CmBeginViaPpuat for a
+\* stale persistent record). It leaves no bad state behind -- only a bad step.
+NoTokenAfterInvalidation ==
+    /\ "NoTokenAfterInvalidation" \notin viol
+    \* Every path that retires a session token must leave nothing behind that
+    \* still opens a door. `verify_token` is a MAC over bytes that stay put, so
+    \* zero permissions is the whole defence (state.rs:546-547).
+    /\ ~(plat.held /\ plat.revoked /\ tok.perms # {})
+    \* And every path that revokes the persistent grant must DELETE the record,
+    \* not merely stop honouring it (clientpin.rs:213-217, :300-304).
+    /\ ~(gate.ppuat /\ gate.ppuatStale)
 
 \* The three flash-shaped invariants below are asserted over QUIESCENT states
 \* only (`Idle`), and that is the strong reading rather than a weakening. A
@@ -936,6 +1019,14 @@ NoTokenAfterInvalidation == "NoTokenAfterInvalidation" \notin viol
 \* No live secret sits behind a gate record that is no longer there: a usable
 \* credential on a key that has ever had a PIN implies the PIN record, and a
 \* persistent grant with credentials to read implies the PIN that bought it.
+\*
+\* The second half stays a ghost DELIBERATELY, and CmBeginViaPpuat is its only
+\* writer. The structural form -- `gate.ppuat => pin.set`, no stranded grant
+\* record may exist at all -- is a strictly stronger claim than the fix under
+\* consideration: FixPpuatRequiresPin refuses the record at the guard and
+\* leaves it stranded, so a structural clause would call the accepted fix a
+\* defect. What the invariant is about is REACHABILITY, and reachability here
+\* is a step.
 NoAccessibleSecretWithoutGate ==
     /\ "NoAccessibleSecretWithoutGate" \notin viol
     /\ Idle => ((store.cred # {} /\ store.seed /\ pin.everSet) => pin.set)
