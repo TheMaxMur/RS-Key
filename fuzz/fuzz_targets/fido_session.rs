@@ -1415,13 +1415,22 @@ impl Sess {
         // cannot see it: getKeyAgreement above already ran `ensure_initialized`,
         // which replaces that value, so only a defect at all three mint sites at
         // once would make the two equal.
+        //
+        // It is also this tree's one fuzz instance of a `formal/` invariant, and
+        // the assertion carries the name so the trace is greppable end to end:
+        // `NoTokenAfterInvalidation` -> `reset_pin_uv_auth_token` (state.rs:484-497,
+        // the owner `formal/README.md` names first) -> here. A re-issued token is a
+        // grant the mint invalidated going on authorizing.
         let Some(first) = self.issued_token(&msg[..n], proto, secret) else {
             return;
         };
         let Some(second) = self.issued_token(&msg[..n], proto, secret) else {
             return;
         };
-        assert_ne!(first, second, "getPinToken re-issued the standing token");
+        assert_ne!(
+            first, second,
+            "NoTokenAfterInvalidation: getPinToken re-issued the standing token"
+        );
         self.token = second;
     }
 
