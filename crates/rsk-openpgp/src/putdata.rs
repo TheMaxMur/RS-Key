@@ -101,8 +101,8 @@ pub fn put_data<S: Storage>(fs: &mut Fs<S>, sess: &Session, fid: u16, data: &[u8
         return WRONG_DATA;
     }
     // §4.4.3.4 enumerates the sex DO's values rather than bounding them, so this
-    // one is a content gate: a YubiKey answers `6A80` to `'A'`, which is the right
-    // length and not a code.
+    // is a content gate, and the list is the card's rather than ISO 5218's: a
+    // YubiKey answers `6A80` to `'A'` and to `'0'`, a code the standard defines.
     if fid == EF_SEX && !data.is_empty() && !SEX_VALUES.contains(&data[0]) {
         return WRONG_DATA;
     }

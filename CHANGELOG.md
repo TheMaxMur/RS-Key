@@ -215,6 +215,30 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **The OpenPGP sex DO `5F35` now holds a code the card will take back.** We
+  seeded `'0'` (ISO 5218 "not known") at first boot and accepted it on
+  `PUT DATA`; a YubiKey 5.7.4 answers `6A80` to `'0'` and holds `'9'` ("not
+  applicable") itself — six readings across two independent resets — so its
+  default is a member of its own accepted set and a host can read `5F35` out of
+  DO `65` and write the same byte straight back. Ours could not, once the set was
+  narrowed, which is a read-modify-write `gpg --edit-card` actually performs. The
+  accepted set is now `{'1','2','9'}` and the first-boot default is `'9'`.
+  **Upgrade path**: a card provisioned by an older build holds `'0'`, so boot
+  settles it to `'9'` — a one-time repair in the same family as the PW-status
+  maxima below, guarded by a read of the DO, so the boot after it writes nothing
+  and a store that refuses the write leaves the old byte for the next boot to
+  retry. It runs **after** the other boot repairs rather than beside the first-boot
+  seeds, because it is the only write an already-settled card makes and a failure
+  must not skip the resetting-code repair that precedes it. The write coerces *any*
+  byte outside the set, not just `'0'`: the cost is identical and it also settles a
+  record some other build left.
+  **The honest cost**: ISO 5218 distinguishes `0` (not known) from `9` (not
+  applicable), so the repair does change a stated meaning, and the card cannot
+  tell a `'0'` it wrote by default from one a cardholder deliberately chose — the
+  old firmware accepted `'0'` from a host. Both codes are non-answers rather than
+  data, `'0'` was our own invention, and the alternative is a byte the card reads
+  out and refuses back. **bcdDevice → 0x08F2.**
+
 - **An explicit `0` PIN- or touch-policy byte in a PIV key template is refused.**
   On the wire, "default" is expressed by *omitting* the `AA` / `AB` tag. Sending
   the tag with value `0x00` is a different thing, and a YubiKey 5.7.4 treats it as

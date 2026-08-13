@@ -1682,9 +1682,10 @@ fn key_info_reports_generated_and_imported_apart() {
 // itself standalone, and a truncation inside the aggregate. A YubiKey 5.7.4
 // answers 6A80 at every other length and leaves the DO alone.
 /// §4.4.1 caps the cardholder name at 39 bytes and the language preference at 8,
-/// and §4.4.3.4 gives the sex DO the ISO 5218 code set rather than a length. A
-/// YubiKey 5.7.4 refuses a byte over either cap with `6A80` and leaves the DO
-/// alone (measured at the maximum, +1, 254 and 255), and refuses `'A'` for sex.
+/// and §4.4.3.4 gives the sex DO a value list rather than a length. A YubiKey
+/// 5.7.4 refuses a byte over either cap with `6A80` and leaves the DO alone
+/// (measured at the maximum, +1, 254 and 255), and its list is narrower than ISO
+/// 5218: `'A'` and `'0'` alike are `6A80`.
 #[test]
 fn put_data_caps_the_cardholder_dos() {
     let rng = RefCell::new(CountRng(7));
@@ -1717,11 +1718,13 @@ fn put_data_caps_the_cardholder_dos() {
         assert_eq!(put(&mut app, &mut fs, p1, p2, &[]), Sw::OK);
     }
 
-    // Sex: every ISO 5218 code, and nothing else.
+    // Sex: the codes the card takes, and nothing else. `'0'` (ISO 5218 "not
+    // known") is in the standard and NOT in the set: a YubiKey 5.7.4 answers
+    // `6A80` to it, 3/3, and holds `'9'` itself.
     for v in consts::SEX_VALUES {
         assert_eq!(put(&mut app, &mut fs, 0x5F, 0x35, &[*v]), Sw::OK);
     }
-    for v in [b'A', b'3', b'm', 0x00] {
+    for v in [b'0', b'A', b'3', b'm', 0x00] {
         assert_eq!(
             put(&mut app, &mut fs, 0x5F, 0x35, &[v]),
             consts::WRONG_DATA,

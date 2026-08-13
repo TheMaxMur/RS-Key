@@ -140,12 +140,15 @@ pub const TS_LEN: usize = 4;
 
 /// The maxima OpenPGP 3.4 §4.4.1 gives the cardholder DOs it caps: the name `5B`
 /// at 39 bytes, the language preference `5F2D` at 8 (four two-letter codes). The
-/// sex DO `5F35` is one byte from the ISO 5218 code set — not known, male,
-/// female, not applicable — and nothing else; §4.4.3.4 enumerates it rather than
-/// bounding it, which is why it is a value list and not a length.
+/// sex DO `5F35` is one byte from the ISO 5218 code set; §4.4.3.4 enumerates it
+/// rather than bounding it, which is why it is a value list and not a length.
+///
+/// The set is male / female / not-applicable. ISO 5218's fourth code, `'0'` (not
+/// known), is **not** in it: a YubiKey 5.7.4 answers `6A80` to `PUT DATA 5F35 30`
+/// and holds `'9'` itself (3/3, twice, across two independent resets).
 pub const NAME_MAX: usize = 39;
 pub const LANG_MAX: usize = 8;
-pub const SEX_VALUES: &[u8] = b"0129";
+pub const SEX_VALUES: &[u8] = b"129";
 pub const EF_FP_SIG: u16 = 0x00c7; // S
 pub const EF_FP_DEC: u16 = 0x00c8; // S
 pub const EF_FP_AUT: u16 = 0x00c9; // S

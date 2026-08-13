@@ -193,3 +193,142 @@ fn maxima_an_older_build_moved_are_restored_at_boot() {
     let n = short.read(EF_PW_PRIV, &mut got).unwrap();
     assert_eq!(&got[..n], &[0x00, PW_STATUS_DEFAULT[1]]);
 }
+
+/// E70: `SEX_VALUES` narrowed to the set a YubiKey accepts — `{'1','2','9'}` —
+/// and `'0'`, which older builds seeded, is no longer in it. Boot repairs the
+/// stranded byte rather than leaving a card that can read `5F35` and not write it
+/// back. Both directions, because the second is the one that catches a per-boot
+/// flash write on a card that needs no repair.
+#[test]
+fn boot_settles_a_sex_code_outside_the_value_list() {
+    // `Fs::read` reports the value's FULL stored length, so clamp before slicing —
+    // a stale row longer than the buffer would panic instead of failing.
+    let sex_of = |fs: &mut Fs<RamStorage>| {
+        let mut b = [0u8; 4];
+        let n = fs.read(EF_SEX, &mut b).unwrap();
+        b[..n.min(b.len())].to_vec()
+    };
+    // Every shape a provisioned card could be holding: the `'0'` firmware through
+    // 0x08F1 wrote, another ISO 5218 code we never accepted, an absent DO, and two
+    // lengths no value list can describe.
+    for stale in [Some(&b"0"[..]), Some(b"3"), None, Some(b""), Some(b"19")] {
+        let mut fs = fresh();
+        scan_files(&dev(), &mut fs, &mut CountRng(0)).unwrap();
+        match stale {
+            None => fs.delete(EF_SEX).unwrap(),
+            Some(v) => fs.put(EF_SEX, v).unwrap(),
+        }
+        scan_files(&dev(), &mut fs, &mut CountRng(0)).unwrap();
+        assert_eq!(
+            sex_of(&mut fs),
+            SEX_DEFAULT,
+            "not settled from {stale:02X?}"
+        );
+        // …and the boot after it writes nothing, or the repair is a wear bug.
+        let writes = fs.write_gen();
+        scan_files(&dev(), &mut fs, &mut CountRng(0)).unwrap();
+        assert_eq!(
+            fs.write_gen(),
+            writes,
+            "a settled card rewrote 5F35 on boot"
+        );
+        assert_eq!(sex_of(&mut fs), SEX_DEFAULT);
+    }
+
+    // A code the card does accept is the cardholder's, not ours to overwrite.
+    for keep in SEX_VALUES {
+        let mut fs = fresh();
+        scan_files(&dev(), &mut fs, &mut CountRng(0)).unwrap();
+        fs.put(EF_SEX, &[*keep]).unwrap();
+        let writes = fs.write_gen();
+        scan_files(&dev(), &mut fs, &mut CountRng(0)).unwrap();
+        assert_eq!(sex_of(&mut fs), [*keep], "boot moved an accepted code");
+        assert_eq!(fs.write_gen(), writes, "boot rewrote an accepted code");
+    }
+}
+
+/// A repair the store REFUSES leaves the old byte and the next boot retries. The
+/// budget also pins the cost: zero writes fails, one write is enough, so the
+/// repair is exactly one `put` — and on an already-provisioned card it is the
+/// FIRST write `scan_files` makes, which is what makes that count meaningful.
+///
+/// This models a rejected write, not a torn one: the flash's own power-cut
+/// behaviour (an append-only CRC'd item, so a cut leaves the previous value live)
+/// belongs to `rsk-store` and `fuzz/fuzz_targets/power_cut.rs`, not here.
+#[test]
+fn a_refused_sex_repair_leaves_the_old_byte_and_retries() {
+    let (store, budget) = DyingStorage::new();
+    let mut fs = Fs::new(store);
+    fs.scan();
+    scan_files(&dev(), &mut fs, &mut CountRng(0)).unwrap();
+    fs.put(EF_SEX, b"0").unwrap();
+    let mut b = [0u8; 4];
+
+    // Nothing else in `scan_files` writes on an already-provisioned card, so the
+    // first refused write IS the repair.
+    budget.set(0);
+    assert_eq!(
+        scan_files(&dev(), &mut fs, &mut CountRng(0)),
+        Err(Error::Storage)
+    );
+    let n = fs.read(EF_SEX, &mut b).unwrap();
+    assert_eq!(&b[..n], b"0", "a refused write must not eat the old value");
+
+    // One write is the whole repair, and the boot after it is free.
+    budget.set(1);
+    scan_files(&dev(), &mut fs, &mut CountRng(0)).unwrap();
+    let n = fs.read(EF_SEX, &mut b).unwrap();
+    assert_eq!(&b[..n], SEX_DEFAULT);
+    budget.set(0);
+    scan_files(&dev(), &mut fs, &mut CountRng(0)).unwrap();
+}
+
+/// `RamStorage` whose writes fail once `budget` runs out. A verbatim second copy
+/// of `pin_tests`\' own: hoisting it into a shared `#[cfg(test)]` module is a
+/// refactor of two other files, so it is left for one rather than folded in here.
+struct DyingStorage {
+    inner: RamStorage,
+    budget: std::rc::Rc<std::cell::Cell<usize>>,
+}
+
+impl DyingStorage {
+    fn new() -> (Self, std::rc::Rc<std::cell::Cell<usize>>) {
+        let budget = std::rc::Rc::new(std::cell::Cell::new(usize::MAX));
+        (
+            Self {
+                inner: RamStorage::new(),
+                budget: budget.clone(),
+            },
+            budget,
+        )
+    }
+    fn spend(&mut self) -> rsk_sdk::error::Result<()> {
+        match self.budget.get() {
+            0 => Err(rsk_sdk::error::Error::MemoryFatal),
+            n => {
+                self.budget.set(n - 1);
+                Ok(())
+            }
+        }
+    }
+}
+
+impl rsk_fs::Storage for DyingStorage {
+    fn read(&mut self, fid: u16, buf: &mut [u8]) -> Option<usize> {
+        self.inner.read(fid, buf)
+    }
+    fn write(&mut self, fid: u16, data: &[u8]) -> rsk_sdk::error::Result<()> {
+        self.spend()?;
+        self.inner.write(fid, data)
+    }
+    fn remove(&mut self, fid: u16) -> rsk_sdk::error::Result<()> {
+        self.spend()?;
+        self.inner.remove(fid)
+    }
+    fn size(&mut self, fid: u16) -> Option<usize> {
+        self.inner.size(fid)
+    }
+    fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) -> bool {
+        self.inner.for_each_key(f)
+    }
+}
