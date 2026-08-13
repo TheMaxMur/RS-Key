@@ -38,6 +38,16 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+## [0.4.10] - 2026-08-14
+
+The conformance release: every applet swept against a real YubiKey 5.7.4, three
+runs per cell, with each difference measured before it was called a bug — which
+retired several of the findings that had started the sweep. Four of what survived
+could damage a key, and two defaults change in ways you will notice. The rest is
+status words, at-rest ordering, and the instruments that were supposed to catch
+this class already: proofs that ran against nothing, fuzz targets that never
+reached their applet, and gate rows nobody had watched go red.
+
 ### TL;DR
 
 A conformance release, measured rather than argued: where an entry below names a
@@ -6583,7 +6593,8 @@ family that keeps the "enterprise" features in the open tree.
   signature of it, and a CycloneDX SBOM. See
   [docs/releases.md](docs/releases.md) to verify a download.
 
-[Unreleased]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.9...HEAD
+[Unreleased]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.10...HEAD
+[0.4.10]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.9...v0.4.10
 [0.4.9]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.8...v0.4.9
 [0.4.8]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.7...v0.4.8
 [0.4.7]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.6...v0.4.7
