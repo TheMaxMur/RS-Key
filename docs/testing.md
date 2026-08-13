@@ -543,7 +543,9 @@ with the board's geometry, so the suites run against a log-structured ring that
 migrates and reclaims — not a map that overwrites in place. A harness that cannot
 tell "does not apply here" from "broken" hides the second one, which is the whole
 reason the refused suites are named rather than left to fail somewhere in the
-middle. `--touch` prompts for every presence on the terminal (and prints what a
+middle — and the reason the two that want `--pin` are refused the same way when it
+is not given, rather than dying in argparse where a sweep reads them as broken.
+`--touch` prompts for every presence on the terminal (and prints what a
 trusted display would have shown); `--trace` logs each command and its status.
 
 One command runs everything that needs no board — the suites above plus the

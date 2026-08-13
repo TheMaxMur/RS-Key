@@ -92,7 +92,10 @@ that the emulator grew the capability.
 
 `30` needs the Yubico card identity: start the emulator `--yubico` and it runs,
 otherwise the shim asks the card for its ATR and skips. `28` and `76` take `--pin` and want a PIN already set (`21_pin_webauthn` sets
-`1234`). `50` and `52` measure that a touch took time, so they only mean
+`1234`); given both, they pass. Without the flag the shim refuses them by name
+(`NEEDS_ARGS`) rather than letting them die in argparse, so a hand-run sweep reads
+them as not invoked instead of as a device failure. `50` and `52` measure that a
+touch took time, so they only mean
 something with `--touch` and a human at the keyboard.
 
 ## As a real USB device (`--usbip`)
