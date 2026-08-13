@@ -127,6 +127,21 @@ crates="$(crates_of "$tier")" || {
   exit 2
 }
 
+# The cover groups below are keyed by the harness whose `Checking harness` line
+# came last, so running harnesses in parallel interleaves the listing and files a
+# cover under the wrong one. Refused, not parsed around: an interleaved log gives
+# a wrong verdict quietly, which is the failure this row exists to end.
+for arg in "$@"; do
+  case "$arg" in
+  -j | -j[0-9]* | --jobs | --jobs=*)
+    echo "FAIL: $0 will not run harnesses in parallel ('$arg')." >&2
+    echo "      The kani::cover! verdicts are read per harness out of Kani's" >&2
+    echo "      per-check listing, and parallel harnesses interleave it." >&2
+    exit 2
+    ;;
+  esac
+done
+
 eval "floor=\${FLOOR_$tier} timeout=\${TIMEOUT_$tier} cover_floor=\${COVERS_$tier}"
 
 packages=""

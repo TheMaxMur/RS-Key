@@ -120,7 +120,7 @@ def run(tmp_path):
     (binroot / "cargo").write_text(CARGO)
     (binroot / "cargo").chmod(0o755)
 
-    def go(harnesses, *, tier="pr", rc=0, raw=None, **kw):
+    def go(harnesses, *, tier="pr", rc=0, raw=None, args=(), **kw):
         fixture = tmp_path / "kani.log"
         if raw is None:
             raw = make_log(harnesses, **kw) if harnesses is not None else ""
@@ -130,7 +130,7 @@ def run(tmp_path):
         env["KANI_FIXTURE"] = str(fixture)
         env["KANI_RC"] = str(rc)
         return subprocess.run(
-            [str(RUNNER), tier], capture_output=True, text=True, env=env, cwd=tmp_path
+            [str(RUNNER), tier, *args], capture_output=True, text=True, env=env, cwd=tmp_path
         )
 
     return go
@@ -293,6 +293,32 @@ def test_the_verifier_s_own_failure_is_the_row_s(run):
     r = run(green(), rc=1)
     assert r.returncode != 0
     assert "covers reached" not in r.stdout
+
+
+# --- the arguments it will and will not pass through ---------------------------
+
+
+@pytest.mark.parametrize("arg", [["--jobs", "4"], ["--jobs=4"], ["-j"], ["-j4"]])
+def test_running_harnesses_in_parallel_is_refused(run, arg):
+    """`-Z unstable-options` is already on the command line, so this is one flag away.
+
+    Parallel harnesses interleave `Checking harness` with another one's checks, and
+    the cover groups are keyed by whichever printed last — a wrong verdict, quietly.
+    """
+    r = run(green(), args=arg)
+    assert r.returncode == 2
+    assert "parallel" in r.stderr
+    assert "covers reached" not in r.stdout
+
+
+def test_an_ordinary_pass_through_argument_still_runs(run):
+    """A guard that cries wolf on a legitimate flag is one someone deletes.
+
+    `--harness` takes a name, and a name is not a flag however it is spelled.
+    """
+    r = run(green(), args=["--harness", "jobs_roundtrip"])
+    assert r.returncode == 0, r.stderr
+    assert "covers reached" in r.stdout
 
 
 # --- the guard's own wiring ----------------------------------------------------

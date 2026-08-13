@@ -266,6 +266,12 @@ SATISFIED on the other, and the summary line says "2 of 3" over a cover that is
 genuinely reached. Reading the summary would have failed a correct harness and
 sent someone to repair it.
 
+That grouping is why `scripts/kani.sh` refuses `--jobs`. Extra arguments go
+through to `cargo kani`, `-Z unstable-options` is already on the command line, and
+parallel harnesses interleave `Checking harness` with another one's checks — the
+verdicts would then be filed under whichever harness printed last, quietly. The
+script exits 2 and says so rather than reading an interleaved log.
+
 The split is by measured cost, not by guess (kani 0.67.0, 18-core Apple Silicon
 under load, 2026-08-13; "solve" excludes compilation, which dominates a cold
 run):
