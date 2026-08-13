@@ -88,9 +88,10 @@ pub static mut SCRATCH: u8 = 0;
 pub const PAIR: [u8; 2] = [1,
     2];
 
-pub const DELIMS: [u8; 2] = [
-    b')',
-    b'(',
+pub const DELIMS: [&'static str; 3] = [
+    pick::<'static>(b')'),
+    lane::<'a, 'b>(b'('),
+    "end",
 ];
 """
 
@@ -516,10 +517,15 @@ def test_a_char_literal_does_not_end_a_definition(tree):
     The decoy is the *first* element, so a scanner that spends it closes `DELIMS`
     before reaching the edited one and the definition drops out of the report
     entirely — the false-negative direction, not the over-reading one the block
-    comment gives. A lifetime has no closing quote, which is what keeps this from
-    blanking `&'a str` and losing a definition the other way round.
+    comment gives.
+
+    The lifetimes are the other half, and review had to point out that the file
+    contained none at all: a rule that blanks from a tick to *any* later quote —
+    `.search` instead of `.match`, or `'[^']*'` — eats the `(` between `'a` and
+    `'b` and loses the definition the same way. Every mutation of that family now
+    fails on the second element.
     """
-    tree.edit("src/lib.rs", "    b'(',", "    b'{',")
+    tree.edit("src/lib.rs", '    "end",', '    "fin",')
     report = tree.report()
     assert sorted(report) == ["DELIMS"]
     assert report["DELIMS"] == ["src/other.rs:24"]
@@ -624,6 +630,37 @@ def test_a_definition_line_re_emitted_unchanged_is_a_rewrite_around_it(tree):
     assert tree.report() == {}
 
 
+def test_a_definition_moved_and_changed_in_one_commit_is_still_reported(tree):
+    """E203, the combination the two halves above leave open.
+
+    Move a constant *and* edit an element, and its own line is written on both
+    sides identically: in `gone` and in `born`, so `born - gone` excludes it and
+    the first clause cannot see it either. Read as `born.keys()` alone, the name
+    is "new" and the row disappears. Review found this survived.
+
+    It moves to the **end** of the file, not a few lines up: a short move is
+    cheaper for git to render as moving whatever sat between, and the diff then
+    never writes `TABLE`'s line at all — which is a case about `N`, not this one.
+    """
+    block = "pub const TABLE: [u8; 3] = [\n    1,\n    2,\n    3,\n];\n"
+    tree.edit("src/lib.rs", block, "")
+    path = tree.root / "src/lib.rs"
+    path.write_text(path.read_text() + "\n" + block.replace("    2,", "    7,"))
+    assert tree.names() == ["TABLE"]
+
+
+def test_a_deletion_at_the_head_of_a_definition_is_not_read_as_its_own_line(tree):
+    """E203. The anchor of a first-element deletion lands *on* the definition line.
+
+    `gone` and `born` both answer None for `TABLE` — nothing rewrote its own
+    line — so only `not below` keeps the identical-line guard from swallowing the
+    row. Deleting the *last* element (above) anchors below it and cannot show it.
+    """
+    tree.edit("src/lib.rs", "    1,\n", "")
+    report = tree.report()
+    assert sorted(report) == ["TABLE"]
+
+
 def test_another_files_definition_of_the_same_name_is_still_a_site(tree):
     """E203. `is_def` excuses the definition being changed, not every namesake.
 
@@ -657,6 +694,20 @@ def test_a_rev_range_is_sized_by_its_own_second_side(tree):
     path = tree.root / "src/lib.rs"
     path.write_text("// landed after\n" * 9 + path.read_text())
     assert sorted(tree.report(None, "HEAD~1..HEAD")) == ["TABLE"]
+
+
+def test_a_three_dot_range_takes_the_side_after_the_last_dots(tree):
+    """`A...B` is named in the comment over that line and driven by nothing.
+
+    `rsplit` is what makes `A.` and `B` of it; `split` makes `A` and `.B`, and
+    `git show .HEAD:…` then fails, `post_lines` answers `""`, and **every**
+    definition in the range goes unreported. The two-dot cases cannot see it.
+    """
+    tree.edit("src/lib.rs", "    2,\n", "    7,\n")
+    tree.land()
+    path = tree.root / "src/lib.rs"
+    path.write_text("// landed after\n" * 9 + path.read_text())
+    assert sorted(tree.report(None, "HEAD~1...HEAD")) == ["TABLE"]
 
 
 def test_an_open_ended_rev_range_ends_at_HEAD(tree):
@@ -743,7 +794,7 @@ def test_a_contentless_change_is_not_a_diff_nobody_could_parse(tree, shape):
 
     Read as a parse failure they spent the one alarm this tool has on the commit
     shapes it has least to say about, and this repo has both kinds: 23 tracked
-    binary assets and 17 executable scripts.
+    binary assets and 28 executable files.
     """
     if shape == "a new binary asset":
         (tree.root / "assets").mkdir()
@@ -756,17 +807,46 @@ def test_a_contentless_change_is_not_a_diff_nobody_could_parse(tree, shape):
     assert ALARM not in tree.err, tree.err
 
 
-def test_a_diff_whose_hunks_name_no_file_is_still_an_alarm(tree, tmp_path_factory):
-    """The direction that fix must not close: content nothing could file.
+@pytest.mark.parametrize(
+    "output",
+    [
+        pytest.param('lib.rs --- 1/2 --- Rust\\n1 const A = 1;   1 const A = 2;\\n', id="difftastic"),
+        pytest.param("@@ -1 +1 @@\\n-x\\n+y\\n", id="hunks with no header"),
+    ],
+)
+def test_an_external_differ_is_still_an_alarm(tree, tmp_path_factory, output):
+    """The direction the fix must not close, and the shape review showed it had.
 
-    `diff.external` hands git's whole output to another program — one of the very
-    `git config diff.*` settings the message sends the reader to look at, and the
-    only way a hunk reaches this parser with no file to its name.
+    `diff.external` hands git's whole output to another program — the very
+    `git config diff.*` setting the message sends the reader to look at. The
+    first case is what a real one prints: difftastic's own README sets exactly
+    this config, and it emits **no `@@` at all**. Asking "was there a hunk"
+    therefore went silent on the commonest way this parser is blinded, while the
+    second case — the only external output that keeps a `@@` — kept passing.
     """
     driver = tmp_path_factory.mktemp("ext") / "diff.sh"
-    driver.write_text('#!/bin/sh\nprintf "@@ -1 +1 @@\\n-x\\n+y\\n"\n')
+    driver.write_text(f'#!/bin/sh\nprintf "{output}"\n')
     driver.chmod(0o755)
     tree.git("config", "diff.external", str(driver))
+    widen(tree)
+    assert tree.report() == {}
+    assert ALARM in tree.err, tree.err
+
+
+def test_a_source_file_hidden_behind_binary_is_still_an_alarm(tree):
+    """`.gitattributes` `-diff` turns a `.rs` into `Binary files … differ`.
+
+    No `+++`, no hunk, and the definitions in it are invisible — which is the
+    alarm's other half: not "the format was strange" but "content this parser was
+    meant to read did not reach it". A real binary asset is the control above;
+    the extension is what tells the two apart.
+
+    The attribute is committed first on purpose: it is not the change under test,
+    and while it sits in the same diff that diff has a readable file in it, which
+    is `main()`'s own limit — the alarm is reached only when *nothing* was filed.
+    """
+    (tree.root / ".gitattributes").write_text("src/lib.rs -diff\n")
+    tree.land()
     widen(tree)
     assert tree.report() == {}
     assert ALARM in tree.err, tree.err

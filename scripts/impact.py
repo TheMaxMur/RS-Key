@@ -49,6 +49,23 @@ MAX_DEF_LINES = 200
 # this file exists to prevent one layer up.
 MAX_SITES = 20
 
+# The extensions [`defined`] can read. A diff entry naming one of these that this
+# parser filed nothing for is content it was meant to see and did not.
+LANGUAGES = (".rs", ".py")
+# `diff --git` entries that carry no content by design. `Binary files` is judged
+# separately: whether it is contentless depends on the path.
+CONTENTLESS = (
+    "old mode ",
+    "new mode ",
+    "new file mode ",
+    "deleted file mode ",
+    "rename from ",
+    "rename to ",
+)
+# `Binary files … differ` naming a file this parser was meant to read — what a
+# `.gitattributes` `-diff` (or `binary`) makes of a source file.
+HIDDEN_SOURCE = tuple(f"{ext} differ" for ext in LANGUAGES)
+
 # A definition line, per language. Group `name` is what gets searched for.
 RUST_DEF = re.compile(
     r"^\s*(?:pub\s*(?:\([^)]*\)\s*)?)?(?:const|static)\s+(?:mut\s+)?(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*:"
@@ -145,6 +162,33 @@ def parse(diff):
         side.setdefault(name, set()).add(line[1:].strip())
         where.setdefault(name, path)
     return touched, cut, gone, born, where
+
+
+def unfiled(diff):
+    """Whether `diff` carried content this parser was meant to read and did not.
+
+    Asked positively — every entry must be one that was read or is known to carry
+    no content — because the blacklist spelling ("was there a hunk?") goes silent
+    on most of the `git config diff.*` settings the alarm exists to name: an
+    external differ replaces git's output wholesale and emits no `@@` at all, and
+    a source file marked `-diff` comes back as `Binary files … differ`. Silence
+    where the parser is blind is the failure this alarm is the last guard against.
+    """
+    if not any(line.startswith("diff --git ") for line in diff.splitlines()):
+        return True  # not git's own format: an external differ, or an unmerged path
+    explained = True
+    for line in diff.splitlines():
+        if line.startswith("diff --git "):
+            if not explained:
+                return True
+            explained = False
+        elif line.startswith("+++ ") or line.startswith(CONTENTLESS):
+            explained = True
+        elif line.startswith("Binary files "):
+            # Contentless only for a file this parser could not have read anyway;
+            # a `.rs` behind that line is content hidden from it.
+            explained = not line.endswith(HIDDEN_SOURCE)
+    return not explained
 
 
 def item_line(code):
@@ -337,10 +381,10 @@ def main():
 
     touched, cut, gone, born, where = parse(diff)
     if not touched:
-        # A hunk the parser could file under no path is the failure this alarm is
-        # for. Without one there was no content to read: a binary, mode-only or
-        # rename-only change carries neither `+++` nor `@@`, by design.
-        if any(line.startswith("@@") for line in diff.splitlines()):
+        # Content the parser could file under no path is the failure this alarm is
+        # for; a binary, mode-only or rename-only change is contentless by design
+        # and is not one.
+        if unfiled(diff):
             print("impact.py: could not parse the diff — reporting nothing is NOT a "
                   "clean result here; check `git config diff.*`", file=sys.stderr)
         return 0
