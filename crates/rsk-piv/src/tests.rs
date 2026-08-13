@@ -4066,17 +4066,17 @@ fn key_cert_sign_is_asserted_only_on_a_ca() {
 fn policy_bytes_are_resolved_and_undefined_ones_refused() {
     use crate::keygen::resolved_policies;
 
-    // An explicit DEFAULT resolves exactly like an absent tag…
+    // An ABSENT tag is what "default" means…
     assert_eq!(
-        resolved_policies(0x9A, Some(PINPOLICY_DEFAULT), Some(TOUCHPOLICY_DEFAULT)),
-        resolved_policies(0x9A, None, None)
+        resolved_policies(0x9A, None, None).unwrap(),
+        [PINPOLICY_ONCE, TOUCHPOLICY_ALWAYS]
     );
     assert_eq!(
-        resolved_policies(SLOT_SIGNATURE, Some(PINPOLICY_DEFAULT), None).unwrap()[0],
+        resolved_policies(SLOT_SIGNATURE, None, None).unwrap()[0],
         PINPOLICY_ALWAYS
     );
-    // …and nothing undefined is ever stored.
-    for bad in [4u8, 0x42, 0xFF] {
+    // …and nothing undefined is ever stored — `DEFAULT` on the wire included (E80).
+    for bad in [PINPOLICY_DEFAULT, 4u8, 0x42, 0xFF] {
         assert!(
             resolved_policies(0x9A, Some(bad), None).is_err(),
             "pin {bad}"
@@ -4109,6 +4109,192 @@ fn generate_refuses_an_undefined_policy_byte() {
     assert_eq!(
         sw, WRONG_DATA,
         "an undefined touch policy must not be stored"
+    );
+}
+
+/// E80: "default" is expressed by OMITTING the policy tag. An explicit `AA 01 00`
+/// / `AB 01 00` is a value, and a YubiKey 5.7.4 refuses it exactly as it refuses
+/// `0xFF` — `6A80`, 3/3, on `9E` and `9A`, with and without the sibling tag. Ours
+/// mapped it onto `PINPOLICY_DEFAULT` and resolved it, so it accepted an input the
+/// reference rejects. Not to be confused with
+/// `a_legacy_default_pin_policy_byte_resolves_at_use_time`: a `0` already **stored**
+/// in a slot's metadata by an older build must go on resolving. Wire acceptance and
+/// stored resolution are two owners of the same byte, and only the wire one diverged.
+#[test]
+fn an_explicit_zero_policy_byte_is_refused_like_any_other_undefined_one() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    verify_pin(&mut app, &mut fs);
+
+    let template = |policies: &[u8]| {
+        let mut ac = vec![0x80, 0x01, ALGO_ECCP256];
+        ac.extend_from_slice(policies);
+        let mut t = vec![0xAC, ac.len() as u8];
+        t.extend_from_slice(&ac);
+        t
+    };
+    // The oracle's own row list, in its order: the three `0x00` spellings, then the
+    // accepted `0x01`s, then the undefined values that already matched.
+    let rows: [(&str, &[u8], Sw); 9] = [
+        ("no policy tags", &[], Sw::OK),
+        ("AA 01 00", &[0xAA, 0x01, 0x00], WRONG_DATA),
+        ("AB 01 00", &[0xAB, 0x01, 0x00], WRONG_DATA),
+        (
+            "AA 01 00 + AB 01 00",
+            &[0xAA, 0x01, 0x00, 0xAB, 0x01, 0x00],
+            WRONG_DATA,
+        ),
+        ("AA 01 01", &[0xAA, 0x01, PINPOLICY_NEVER], Sw::OK),
+        ("AB 01 01", &[0xAB, 0x01, TOUCHPOLICY_NEVER], Sw::OK),
+        ("AA 01 05", &[0xAA, 0x01, 0x05], WRONG_DATA),
+        ("AA 01 FF", &[0xAA, 0x01, 0xFF], WRONG_DATA),
+        ("AB 01 FF", &[0xAB, 0x01, 0xFF], WRONG_DATA),
+    ];
+    // What is in the slot: the sealed key bytes AND the metadata record. Neither
+    // alone is enough — `has_key` cannot tell a refusal that *replaced* the key from
+    // one that left it alone (run-36 is about the replacement), and the meta record
+    // is written last, so a refusal between key and meta leaves GET METADATA
+    // answering exactly what it answered before.
+    let identity = |app: &mut PivApplet, fs: &mut Fs<RamStorage>, slot: u8| {
+        let mut sealed = [0u8; 256];
+        let key = fs
+            .read_key(key_fid(slot), &mut sealed)
+            .map(|n| sealed[..n.min(sealed.len())].to_vec());
+        (key, run(app, fs, INS_GET_METADATA, 0, slot, &[]))
+    };
+    for slot in [SLOT_CARDAUTH, SLOT_AUTHENTICATION] {
+        // The first command on an untouched slot is a refusing one, so the guard
+        // below runs once against a genuinely empty slot as well as against a
+        // provisioned one.
+        for (label, policies, want) in rows.iter().rev().chain(rows.iter()) {
+            let before = identity(&mut app, &mut fs, slot);
+            let sw = run(
+                &mut app,
+                &mut fs,
+                INS_ASYM_KEYGEN,
+                0,
+                slot,
+                &template(policies),
+            )
+            .0;
+            assert_eq!(sw, *want, "GENERATE {slot:02X} with {label}");
+            if *want == WRONG_DATA {
+                assert_eq!(
+                    identity(&mut app, &mut fs, slot),
+                    before,
+                    "GENERATE {slot:02X} with {label} touched the slot"
+                );
+            }
+        }
+    }
+}
+
+/// IMPORT reads the same `AA`/`AB` tags through the same resolver, so it refuses
+/// the same byte. **Unmeasured on the reference** — no YubiKey reading exists for
+/// an imported `AA 01 00` — so this cell is taken by class, not by measurement:
+/// one byte must not mean two different things on two commands of one card.
+#[test]
+fn import_refuses_an_explicit_zero_policy_byte() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+
+    let import = |app: &mut PivApplet, fs: &mut Fs<RamStorage>, scalar: u8, policies: &[u8]| {
+        let mut imp = vec![0x06, 0x20];
+        imp.extend_from_slice(&[scalar; 32]);
+        imp.extend_from_slice(policies);
+        run(app, fs, INS_IMPORT_ASYM, ALGO_ECCP256, SLOT_KEYMGM, &imp).0
+    };
+    let identity = |app: &mut PivApplet, fs: &mut Fs<RamStorage>| {
+        let mut sealed = [0u8; 256];
+        let key = fs
+            .read_key(key_fid(SLOT_KEYMGM), &mut sealed)
+            .map(|n| sealed[..n.min(sealed.len())].to_vec());
+        (key, run(app, fs, INS_GET_METADATA, 0, SLOT_KEYMGM, &[]))
+    };
+
+    // Into an empty slot first, then over a provisioned one with a DIFFERENT key:
+    // `import` writes the key and drops the slot meta, so a refusal that came after
+    // it left the old key gone and the new one with no metadata to gate it.
+    assert_eq!(
+        import(&mut app, &mut fs, 0x77, &[0xAA, 0x01, 0x00]),
+        WRONG_DATA
+    );
+    assert!(
+        !fs.has_key(key_fid(SLOT_KEYMGM)),
+        "a refusal filled the slot"
+    );
+    assert_eq!(import(&mut app, &mut fs, 0x77, &[]), Sw::OK);
+
+    let before = identity(&mut app, &mut fs);
+    assert_eq!(before.1.0, Sw::OK);
+    for policies in [&[0xAA, 0x01, 0x00][..], &[0xAB, 0x01, 0x00][..]] {
+        assert_eq!(
+            import(&mut app, &mut fs, 0x55, policies),
+            WRONG_DATA,
+            "{policies:02X?}"
+        );
+        assert_eq!(
+            identity(&mut app, &mut fs),
+            before,
+            "a refused IMPORT {policies:02X?} replaced the slot"
+        );
+    }
+    // The control: a defined value still lands, and moves the metadata.
+    assert_eq!(
+        import(&mut app, &mut fs, 0x55, &[0xAA, 0x01, PINPOLICY_NEVER]),
+        Sw::OK
+    );
+    assert_ne!(identity(&mut app, &mut fs), before);
+}
+
+/// The touch twin of `a_legacy_default_pin_policy_byte_resolves_at_use_time`: a
+/// stored `0` needs no use-time resolution because `check_touch` fails closed —
+/// only `TOUCHPOLICY_NEVER` skips the prompt — so a pre-run-34 record behaves
+/// exactly like the ALWAYS an absent tag resolves to.
+#[test]
+fn a_legacy_default_touch_policy_byte_still_demands_a_touch() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(Scripted { confirm: true });
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    verify_pin(&mut app, &mut fs);
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            INS_ASYM_KEYGEN,
+            0,
+            SLOT_AUTHENTICATION,
+            &gen_template(ALGO_ECCP256)
+        )
+        .0,
+        Sw::OK
+    );
+    // Rewrite the stored touch byte to what an older build could have left there.
+    let mut meta = [0u8; 96];
+    let n = fs
+        .meta_find(key_fid(SLOT_AUTHENTICATION).get(), &mut meta)
+        .unwrap();
+    meta[2] = TOUCHPOLICY_DEFAULT;
+    fs.meta_add(key_fid(SLOT_AUTHENTICATION).get(), &meta[..n])
+        .unwrap();
+
+    assert_eq!(sign_p256(&mut app, &mut fs, SLOT_AUTHENTICATION), Sw::OK);
+    pres.borrow_mut().confirm = false;
+    assert_ne!(
+        sign_p256(&mut app, &mut fs, SLOT_AUTHENTICATION),
+        Sw::OK,
+        "a stored DEFAULT touch byte must not mean 'no touch'"
     );
 }
 

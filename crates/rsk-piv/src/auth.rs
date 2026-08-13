@@ -32,10 +32,10 @@ enum Dir {
 }
 
 /// Enforce the slot/management-key touch policy before a private-key operation.
-/// `ALWAYS` and `CACHED` require a physical touch (CACHED is treated as ALWAYS —
-/// with no wall clock the 15-second cache window cannot be honoured, so it errs
-/// strict); a non-confirmation fails the operation. `NEVER`/`DEFAULT`/`AUTO`
-/// pass through.
+/// `NEVER` passes through; every other byte — `ALWAYS`, `CACHED` (treated as
+/// ALWAYS: with no wall clock the 15-second window cannot be honoured, so it errs
+/// strict) and anything an older build stored — requires a physical touch, and a
+/// non-confirmation fails the operation.
 fn check_touch(policy: u8, presence: &mut dyn UserPresence) -> Result<(), Sw> {
     // `NEVER` is the only value that skips the prompt. Listing the values that
     // *require* one instead made every other byte — an explicit `DEFAULT`, or a

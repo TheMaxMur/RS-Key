@@ -90,13 +90,14 @@ pub(crate) fn rsa_size_from_algo(algo: u8) -> Option<usize> {
 /// Resolve the metadata policy bytes at store time: the signature slot defaults to
 /// PIN-always, everything else to PIN-once and touch-always.
 ///
-/// An explicit `DEFAULT` (`0`) resolves exactly like an absent tag, and an
-/// undefined value is refused. The old version only substituted when the tag was
-/// *missing*, so `AA 01 00` stored a literal 0 — and both gates read the byte with
-/// an equality test, so a value they did not recognise silently meant "no gate"
-/// while `info` still rendered "Default" and the attestation extension carried it
-/// verbatim. The doc comment claimed "the stored value is never DEFAULT"; the code
-/// did not enforce it (audit run-34 #18).
+/// "Default" is an **absent** tag; `DEFAULT` (`0`) on the wire is a value, and an
+/// undefined one — a YubiKey 5.7.4 answers `6A80` to `AA 01 00` and `AB 01 00`
+/// exactly as it does to `0xFF` (3/3, on `9E` and `9A`, E80). A literal 0 must not
+/// reach flash either way: both gates read the byte with an equality test, so a
+/// value they did not recognise silently meant "no gate" while `info` still
+/// rendered "Default" and the attestation extension carried it verbatim (audit
+/// run-34 #18). A `0` an older build already stored still resolves at use time —
+/// that is `crate::auth`'s job, not this one's.
 pub(crate) fn resolved_policies(
     slot: u8,
     req_pin: Option<u8>,
@@ -107,15 +108,15 @@ pub(crate) fn resolved_policies(
     } else {
         PINPOLICY_ONCE
     };
-    let pin = match req_pin.unwrap_or(PINPOLICY_DEFAULT) {
-        PINPOLICY_DEFAULT => def_pin,
-        p @ (PINPOLICY_NEVER | PINPOLICY_ONCE | PINPOLICY_ALWAYS) => p,
-        _ => return Err(WRONG_DATA),
+    let pin = match req_pin {
+        None => def_pin,
+        Some(p @ (PINPOLICY_NEVER | PINPOLICY_ONCE | PINPOLICY_ALWAYS)) => p,
+        Some(_) => return Err(WRONG_DATA),
     };
-    let touch = match req_touch.unwrap_or(TOUCHPOLICY_DEFAULT) {
-        TOUCHPOLICY_DEFAULT => TOUCHPOLICY_ALWAYS,
-        t @ (TOUCHPOLICY_NEVER | TOUCHPOLICY_ALWAYS | TOUCHPOLICY_CACHED) => t,
-        _ => return Err(WRONG_DATA),
+    let touch = match req_touch {
+        None => TOUCHPOLICY_ALWAYS,
+        Some(t @ (TOUCHPOLICY_NEVER | TOUCHPOLICY_ALWAYS | TOUCHPOLICY_CACHED)) => t,
+        Some(_) => return Err(WRONG_DATA),
     };
     Ok([pin, touch])
 }
@@ -343,13 +344,15 @@ pub(crate) fn generate_rsa_blocking<S: Storage>(
     let Some(nbytes) = rsa_size_from_algo(req.algo) else {
         return WRONG_DATA;
     };
-    let key = match generate_rsa(rng, nbytes * 8) {
-        Ok(k) => k,
-        Err(e) => return e,
-    };
+    // Judged before the prime search, not after: a refusable template used to buy
+    // a full RSA-4096 keygen before answering `6A80`.
     let pol = match resolved_policies(slot, req.pin_policy, req.touch_policy) {
         Ok(p) => p,
         Err(sw) => return sw,
+    };
+    let key = match generate_rsa(rng, nbytes * 8) {
+        Ok(k) => k,
+        Err(e) => return e,
     };
     finish_rsa(dev, fs, rng, slot, req.algo, pol, &key, res)
 }
@@ -567,6 +570,13 @@ pub(crate) fn import<S: Storage>(
     }
     let pin_policy = find_tag(data, TAG_PIN_POLICY).and_then(|v| v.first().copied());
     let touch_policy = find_tag(data, TAG_TOUCH_POLICY).and_then(|v| v.first().copied());
+    // Resolve BEFORE the first write, as `generate_ec` does and for the same
+    // reason (audit run-36): every import arm drops the slot meta and seals the new
+    // key, so refusing after left the old key gone and the new one un-gateable.
+    let pol = match resolved_policies(slot, pin_policy, touch_policy) {
+        Ok(p) => p,
+        Err(sw) => return sw,
+    };
     let stored = match algo {
         ALGO_RSA1024 | ALGO_RSA2048 | ALGO_RSA3072 | ALGO_RSA4096 => {
             import_rsa(dev, fs, rng, algo, slot, data)
@@ -578,10 +588,6 @@ pub(crate) fn import<S: Storage>(
     if let Err(sw) = stored {
         return sw;
     }
-    let pol = match resolved_policies(slot, pin_policy, touch_policy) {
-        Ok(p) => p,
-        Err(sw) => return sw,
-    };
     // Cache the public point for EC slots (import is not a hot path, so derive it
     // once from the freshly sealed key); RSA keeps the bare 4-byte record.
     let mut mbuf = [0u8; 4 + MAX_EC_POINT];

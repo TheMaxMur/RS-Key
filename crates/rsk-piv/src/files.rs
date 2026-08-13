@@ -52,8 +52,12 @@ pub const PINPOLICY_DEFAULT: u8 = 0;
 pub const PINPOLICY_NEVER: u8 = 1;
 pub const PINPOLICY_ONCE: u8 = 2;
 pub const PINPOLICY_ALWAYS: u8 = 3;
-/// `0` means "the card's default" on both axes; it is resolved at store time by
-/// `crate::keygen::resolved_policies` and never persisted.
+/// `0` on both axes is what a *stored* record from a pre-run-34 build can hold.
+/// Nothing persists it now, and no host may send it: "default" is an omitted
+/// `AA`/`AB` tag, and an explicit `0` is refused like any other undefined value
+/// (E80). A stored one is still honoured — the PIN axis resolves it by slot
+/// (`crate::auth::general_authenticate`), the touch axis needs no resolution
+/// because `check_touch` passes only `NEVER`.
 pub const TOUCHPOLICY_DEFAULT: u8 = 0;
 pub const TOUCHPOLICY_NEVER: u8 = 1;
 pub const TOUCHPOLICY_ALWAYS: u8 = 2;

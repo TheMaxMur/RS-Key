@@ -215,6 +215,34 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **An explicit `0` PIN- or touch-policy byte in a PIV key template is refused.**
+  On the wire, "default" is expressed by *omitting* the `AA` / `AB` tag. Sending
+  the tag with value `0x00` is a different thing, and a YubiKey 5.7.4 treats it as
+  an undefined value: `6A80`, indistinguishable from `0xFF` — measured 3/3 on `9E`
+  and `9A`, with and without the sibling tag, against controls (`0x01`, `0x05`,
+  `0xFF`) that behave identically on both cards. Ours mapped `0x00` onto "default"
+  and resolved it, so a template the reference rejects produced a key. It now
+  answers `6A80`. Nothing a host sends changes: `ykman` and `yubico-piv-tool`
+  express "default" by leaving the tag out, which is why the no-tag row is
+  byte-identical to the old `--pin-policy default` row. IMPORT reads the same two
+  tags through the same resolver and follows by class — no YubiKey reading exists
+  for an imported `AA 01 00`, and one byte must not mean two things on two commands
+  of one card.
+
+  Two orderings move with it, both audit run-36's rule that a refusable request is
+  judged before it is acted on. **IMPORT resolved the policies after storing the
+  key**, so a refused template — `0x05` or `0xFF` before this change, and now the
+  `0x00` a naive host is most likely to send — left the slot's previous key
+  overwritten, its metadata record deleted and never re-added, and every later
+  GENERAL AUTHENTICATE, GET METADATA and attestation on that slot answering `6A88`.
+  The resolution is hoisted above the first write, as GENERATE already did, so a
+  refusal now leaves key, certificate and metadata exactly as they were. And the
+  blocking RSA GENERATE resolved after the prime search, buying a full RSA-4096
+  keygen before answering `6A80`; it judges first now.
+  Unchanged and deliberate: a literal `0` an **older build already stored** in a
+  slot's metadata still resolves at use time, which is a different owner of the
+  same byte. **bcdDevice → 0x08F1.**
+
 - **A makeCredential or getAssertion that named an unsupported PIN/UV-auth
   protocol was told about something else.** The protocol was judged inside the
   PIN gate, which runs after the algorithm check, the option checks and the
