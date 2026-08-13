@@ -55,11 +55,25 @@ one() {
   mkdir -p out
   local want floor heap
   read -r want floor heap <<< "$(expect_for "$cfg")"
-  local t0 t1
+  local t0 t1 cov=()
+  # THE VACUITY QUESTION, and it is the same one `kani::cover!` answers: an
+  # action that never fires makes every clause guarding it free. COVERAGE=1
+  # asks TLC for the per-action firing counts and refuses on a zero.
+  [ "${COVERAGE:-0}" = 1 ] && cov=(-coverage 5)
   t0=$(date +%s)
   "$JAVA" -XX:+UseParallelGC -Xmx"${HEAP_OVERRIDE:-${heap:-$HEAP}}" -cp "$JAR" tlc2.TLC \
-      -nowarning -workers "$WORKERS" -config "$cfg" "$SPEC" > "$log" 2>&1
+      -nowarning -workers "$WORKERS" "${cov[@]+"${cov[@]}"}" -config "$cfg" "$SPEC" \
+      > "$log" 2>&1
   t1=$(date +%s)
+  if [ "${COVERAGE:-0}" = 1 ]; then
+    local dead
+    dead=$(grep -oE '^<[A-Za-z_][A-Za-z0-9_]* line [0-9]+.*>: [0-9]+:0$' "$log" \
+             | sed -E 's/^<([A-Za-z_][A-Za-z0-9_]*) .*/\1/' | sort -u | tr '\n' ' ')
+    if [ -n "$dead" ]; then
+      echo "run-tlc: DEAD ACTION in $cfg -- never fired: $dead" >&2
+      FAILED=$((FAILED + 1))
+    fi
+  fi
   local states distinct depth verdict
   states=$(grep -oE '^[0-9]+ states generated' "$log" | tail -1 | cut -d' ' -f1)
   distinct=$(grep -oE '[0-9]+ distinct states found' "$log" | tail -1 | cut -d' ' -f1)
@@ -121,6 +135,6 @@ else
 fi
 
 if [ "$FAILED" -gt 0 ]; then
-  echo "run-tlc: FAIL -- $FAILED row(s) did not produce what floors.txt requires" >&2
+  echo "run-tlc: FAIL -- $FAILED row(s) did not produce what was required of them" >&2
   exit 1
 fi
