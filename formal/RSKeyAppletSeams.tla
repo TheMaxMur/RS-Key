@@ -60,7 +60,12 @@ CONSTANTS
     BugUserStatusOpensAdmin,
     \* A refused OATH access-code VALIDATE that GRANTS the unlock. The refusal
     \* rule exempts that action entirely, so nothing could tell the two apart.
-    BugRefusedValidateGrants
+    BugRefusedValidateGrants,
+    \* A USER status writing the PW status byte -- PUT DATA C4 is PW3's
+    \* (crates/rsk-openpgp/src/putdata.rs:59-65). Its own switch rather than a
+    \* share of BugUserStatusOpensAdmin, for the reason BugUnscopedOtpCancel has
+    \* its own: a second gate on the same requirement, in a different function.
+    BugPwStatusIgnoresAdmin
 
 \* The three CCID applets that carry an in-RAM security status. `NoApplet` is
 \* `Dispatcher::current = None` (crates/rsk-sdk/src/applet.rs:145): nothing
@@ -357,18 +362,33 @@ PgpKeyOp(r) ==
     /\ psig'  = IF r = "pw1" /\ oneShotSig THEN FALSE ELSE psig
     /\ UNCHANGED << sel, fresh, pfresh, oneShotSig, oathCodeSet, refused >>
 
-\* PUT DATA C4 -- the PW status byte that makes PW1.81 one-shot. PW3-gated
-\* (crates/rsk-openpgp/src/pin.rs:833-835 is the same gate one DO over), and it
-\* is here because it is the only writer of that status.
+\* PUT DATA C4 -- the PW status byte that makes PW1.81 one-shot -- is an
+\* ADMINISTRATIVE write, gated on PW3 by `write_authorized`
+\* (crates/rsk-openpgp/src/putdata.rs:59-65, called at
+\* crates/rsk-openpgp/src/lib.rs:286-288), and it is the only writer of that
+\* status. The gate was `held["pw3"]` and nothing else: an enabling conjunct with
+\* no Policy, in the family this module's sibling README spends four sections on.
+\* Removing it left the reachable space BIT-IDENTICAL at 666 distinct states,
+\* while anyone who could select the applet could clear the one-shot flag and
+\* then sign for ever on a single PW1 VERIFY -- the requirement
+\* BugSigPinNotSpent exists to protect, taken from underneath rather than
+\* through the door it watches.
+PwStatusGuard  == IF BugPwStatusIgnoresAdmin
+                    THEN held["pw3"] \/ held["pw1"] \/ held["pw2"]
+                    ELSE held["pw3"]
+PwStatusPolicy == held["pw3"]
+
 PgpSetPwStatus(v) ==
     /\ sel = Pgp
-    /\ held["pw3"]
+    /\ PwStatusGuard
+    /\ viol' = IF PwStatusPolicy THEN viol
+                                 ELSE viol \cup {"NoKeyOpOnTheAdminStatus"}
     /\ oneShotSig' = v
     \* Parenthesised. `=` binds tighter than `/\`: without them this reads
     \* `(psig' = psig) /\ held["pw1"]`, an extra guard that disabled the action
     \* whenever PW1 was unverified -- and BugSigPinNotSpent went green over it.
     /\ psig' = (psig /\ held["pw1"])
-    /\ UNCHANGED << sel, held, fresh, pfresh, oathCodeSet, refused, viol >>
+    /\ UNCHANGED << sel, held, fresh, pfresh, oathCodeSet, refused >>
 
 \* THE ADMIN SURFACE, which the invariant named and the module did not have.
 \* PUT DATA of an administrative DO needs PW3 on OpenPGP and the 9B management

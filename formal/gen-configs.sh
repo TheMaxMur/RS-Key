@@ -194,7 +194,8 @@ echo "wrote Shipped.cfg, 2 historical configs, ${#BUGS[@]} mutant configs and ${
 SEAM_BUGS=(BugSelectKeepsOtherApplet BugReselectResetsStatus
            BugCardResetKeepsStatus BugAdminOpensKeyOps
            BugFailedChangeKeepsStatus BugPinFreshNotSpent BugSigPinNotSpent
-           BugUserStatusOpensAdmin BugRefusedValidateGrants)
+           BugUserStatusOpensAdmin BugRefusedValidateGrants
+           BugPwStatusIgnoresAdmin)
 
 seam_target() {
   case "$1" in
@@ -207,6 +208,7 @@ seam_target() {
     BugSigPinNotSpent)          echo NoKeyOpOnTheAdminStatus ;;
     BugUserStatusOpensAdmin)    echo NoKeyOpOnTheAdminStatus ;;
     BugRefusedValidateGrants)   echo NoStatusAfterARefusedAuth ;;
+    BugPwStatusIgnoresAdmin)    echo NoKeyOpOnTheAdminStatus ;;
   esac
 }
 SEAM_INV=(NoStatusOutsideItsSelection NoStatusAfterARefusedAuth
