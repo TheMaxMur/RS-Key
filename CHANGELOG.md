@@ -149,6 +149,19 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   while the key is idle still counts. The logic moved to `rsk_device::click`,
   where it is host-tested. **bcdDevice → 0x0902.**
 
+- **`rsk-emu --display` tells the host about the touch it is waiting for, and
+  takes a `CTAPHID_CANCEL`.** The panel kept `up_pending` and the cancel flag in
+  cells nothing else read, while the CTAPHID keepalive and the cancel path spoke
+  to the shared `Signals` — a third copy of the presence state, wired to neither
+  transport. A FIDO client was therefore told `PROCESSING` while the screen asked
+  a human to touch it (no "touch your security key" prompt), and a cancel on the
+  channel that owned the ceremony was ignored for the full 30 s presence timeout
+  before the wrong status code came back: `0x2F USER_ACTION_TIMEOUT` where a board
+  answers `0x2D KEEPALIVE_CANCEL` at once. All three hooks now go through
+  `Signals`, as a board routes them through its presence arbiter — and, as on a
+  board, the wait scope is lowered between dispatches, so a PIN typed on the panel
+  is not advertised to whichever transport asked last.
+
 - **An on-screen menu no longer starves the host under `rsk-emu --display`.** A
   board hands the parked worker its executor back on the first 16 ms poll once a
   host command has landed and the screen has been idle for `UI_YIELD_FLOOR_MS`,

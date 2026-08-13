@@ -303,7 +303,7 @@ pub fn run(
     // generic over it. With `--display` it is the trusted screen in a window,
     // driven by the same `rsk_display` flow the board runs.
     if cfg.display {
-        let (parts, quit) = crate::display::open(taps, jobs.queued());
+        let (parts, quit) = crate::display::open(taps, jobs.queued(), signals.clone());
         let _ = quit;
         serve_display(cfg, jobs, signals, fs, rng, parts);
     } else {
@@ -579,6 +579,10 @@ async fn serve<PR: rsk_device::UserPresence + 'static>(
                 Some(Vec::new())
             }
         };
+        // Nothing is in flight again, so a wait started from here on is an on-panel
+        // flow, which no host may claim or cancel. `firmware/src/worker.rs` lowers
+        // the scope at the same point and for the same reason.
+        signals.set_wait_scope(signals::SCOPE_NONE);
         // A disconnected client is not an error: it just stopped listening.
         let _ = req.reply.send(out);
 

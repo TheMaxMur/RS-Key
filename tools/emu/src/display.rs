@@ -17,8 +17,10 @@
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
+use std::sync::Arc;
 
 use crate::device::Queued;
+use crate::signals::Signals;
 use crate::taps::TapPad;
 
 use embedded_graphics::geometry::{Dimensions, Point as EgPoint, Size};
@@ -206,14 +208,11 @@ impl rsk_display::TouchPad for Touch {
 /// to read a secure-boot bit out of. The ones that are not — the LED status a
 /// ceremony borrows, the presence flags it shares with the transport — are real
 /// state here, because the flow reads back what it writes.
-#[derive(Default)]
 pub struct EmuDisplayHooks {
     /// Shared with [`Touch`], which is what actually applies it.
     duty: Rc<Cell<u16>>,
     wake: Rc<Cell<bool>>,
     led: Cell<u8>,
-    up_pending: Cell<bool>,
-    cancel: Cell<bool>,
     timeout_ms: Cell<u32>,
     reboot: Cell<bool>,
     /// A local PIN event the host side has to act on. Shared with [`EmuHooks`],
@@ -225,18 +224,31 @@ pub struct EmuDisplayHooks {
     /// Host requests the device thread has not picked up. A modal holds the single
     /// executor, so this is the only way the flow can learn one is waiting.
     queued: Queued,
+    /// The presence flags the ceremonies share with the transports — the same
+    /// object `hid.rs`'s keepalive reads and its `CTAPHID_CANCEL` writes. A board
+    /// routes the three hooks below into `presence::ARBITER` for the same reason:
+    /// a panel that keeps them to itself is a second copy nobody can see.
+    signals: Arc<Signals>,
     started: Option<std::time::Instant>,
 }
 
 impl EmuDisplayHooks {
-    pub fn new(duty: Rc<Cell<u16>>, wake: Rc<Cell<bool>>, queued: Queued) -> Self {
+    pub fn new(
+        duty: Rc<Cell<u16>>,
+        wake: Rc<Cell<bool>>,
+        queued: Queued,
+        signals: Arc<Signals>,
+    ) -> Self {
         Self {
             duty,
             wake,
-            queued,
+            led: Cell::default(),
             timeout_ms: Cell::new(30_000),
+            reboot: Cell::new(false),
+            pin_changed: Rc::new(Cell::new(false)),
+            queued,
+            signals,
             started: Some(std::time::Instant::now()),
-            ..Default::default()
         }
     }
 
@@ -292,13 +304,20 @@ impl rsk_display::Hooks for EmuDisplayHooks {
         self.pin_changed.set(true);
     }
     fn set_up_pending(&mut self, pending: bool) {
-        self.up_pending.set(pending);
+        self.signals.set_up_pending(pending);
     }
+    /// `rsk_display` only ever clears it; `true` is the transport's own verb, and
+    /// [`Signals::cancel_active`] is the scoping `hid.rs` already applies to a
+    /// `CTAPHID_CANCEL` — cancel what is in flight, and nothing when nothing is.
     fn set_cancel_requested(&mut self, requested: bool) {
-        self.cancel.set(requested);
+        if requested {
+            self.signals.cancel_active();
+        } else {
+            self.signals.clear_cancel();
+        }
     }
     fn cancel_requested(&self) -> bool {
-        self.cancel.get()
+        self.signals.cancelled()
     }
     fn presence_timeout_ms(&self) -> u32 {
         self.timeout_ms.get()
@@ -320,7 +339,11 @@ pub struct PanelParts<P, T> {
 
 /// Open the window and hand back those pieces, plus the quit flag the caller
 /// polls. `taps` replaces the mouse when a script was given.
-pub fn open(taps: Option<TapPad>, queued: Queued) -> (PanelParts<Panel, Touch>, Rc<Cell<bool>>) {
+pub fn open(
+    taps: Option<TapPad>,
+    queued: Queued,
+    signals: Arc<Signals>,
+) -> (PanelParts<Panel, Touch>, Rc<Cell<bool>>) {
     let panel = Panel::new();
     let quit = Rc::new(Cell::new(false));
     let duty = Rc::new(Cell::new(rsk_display::BL_TOP));
@@ -336,7 +359,7 @@ pub fn open(taps: Option<TapPad>, queued: Queued) -> (PanelParts<Panel, Touch>, 
         PanelParts {
             panel,
             touch,
-            hooks: EmuDisplayHooks::new(duty, wake, queued),
+            hooks: EmuDisplayHooks::new(duty, wake, queued, signals),
         },
         quit,
     )

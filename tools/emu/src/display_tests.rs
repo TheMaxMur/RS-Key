@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 use rsk_crypto::pinproto::{self, PinProto};
 use rsk_fido::CtapError;
 use rsk_fido::consts::{
-    CTAP_CLIENT_PIN, CTAP_CREDENTIAL_MGMT, CTAP_GET_INFO, MAX_PIN_RETRIES,
+    CTAP_CLIENT_PIN, CTAP_CREDENTIAL_MGMT, CTAP_GET_INFO, CTAP_SELECTION, MAX_PIN_RETRIES,
     PUAT_INITIAL_USAGE_LIMIT_MS,
 };
 
@@ -65,6 +65,16 @@ const MENU_YIELD_BOUND: Duration = Duration::from_secs(20);
 /// What the same command takes with the panel idle — the control that says the
 /// figure above is a modal holding the executor and not the emulator being slow.
 const IDLE_REPLY_BOUND: Duration = Duration::from_secs(1);
+
+/// How long the keepalive may wait to hear that a touch is pending. The ceremony
+/// starts within a poll or two of the dispatch; this is long enough to be sure and
+/// short enough to leave the 30 s presence timeout for the cancel below.
+const UP_PENDING_BOUND: Duration = Duration::from_secs(10);
+
+/// What a `CTAPHID_CANCEL` on the owning channel may take to end the ceremony. The
+/// wait polls every `TOUCH_POLL_MS`; one that cannot see the cancel at all runs to
+/// `presence_timeout_ms` (30 s) and then answers the wrong code.
+const CANCEL_BOUND: Duration = Duration::from_secs(5);
 
 /// Lifted samples before the consent hold, so the ambient status loop — which
 /// polls the pad every 100 ms while idle — cannot swallow the contact before the
@@ -292,6 +302,13 @@ fn get_info_req() -> Vec<u8> {
     vec![CTAP_GET_INFO]
 }
 
+/// `authenticatorSelection` — the one command that is nothing *but* a presence
+/// request, so what it answers is the ceremony's verdict and nothing else
+/// (`crates/rsk-fido/src/selection.rs`).
+fn selection_req() -> Vec<u8> {
+    vec![CTAP_SELECTION]
+}
+
 fn get_pin_retries_req() -> Vec<u8> {
     let mut v = vec![CTAP_CLIENT_PIN];
     v.extend(map(&[(1, u(PROTO_WIRE)), (2, u(1))]));
@@ -388,6 +405,11 @@ fn ask(jobs: &Jobs, data: Vec<u8>) -> Vec<u8> {
     let (reply, answer) = mpsc::channel();
     jobs.send(Job::Cbor { cid: CID, data }, reply)
         .expect("the device thread is alive");
+    answered(&answer)
+}
+
+/// The body of an already-queued command, bounded.
+fn answered(answer: &mpsc::Receiver<Option<Vec<u8>>>) -> Vec<u8> {
     answer
         .recv_timeout(REPLY_TIMEOUT)
         .expect("the device answered within the bound")
@@ -396,7 +418,7 @@ fn ask(jobs: &Jobs, data: Vec<u8>) -> Vec<u8> {
 
 /// The host and the finger, from a thread of their own: `serve_display` owns the
 /// caller's thread the way `device::run` owns the process's.
-fn drive(jobs: Jobs, taps: SyncSender<Tap>) {
+fn drive(jobs: Jobs, taps: SyncSender<Tap>, _signals: Arc<Signals>) {
     assert_eq!(
         PinProto::from_u64(PROTO_WIRE as u64),
         Some(PROTO),
@@ -492,7 +514,7 @@ fn drive(jobs: Jobs, taps: SyncSender<Tap>) {
 /// of its own — `serve_display` owns the caller's thread the way `device::run`
 /// owns the process's, and returns when the driver drops its sender, so a driver
 /// panic ends the run and `join` re-raises it.
-fn panel_bench(host: impl FnOnce(Jobs, SyncSender<Tap>) + Send + 'static) {
+fn panel_bench(host: impl FnOnce(Jobs, SyncSender<Tap>, Arc<Signals>) + Send + 'static) {
     let store = crate::store::open(None, None).expect("a memory-backed store");
     let fs: &'static RefCell<rsk_fs::Fs<crate::store::EmuStore>> =
         Box::leak(Box::new(RefCell::new(rsk_fs::Fs::new(store))));
@@ -516,14 +538,18 @@ fn panel_bench(host: impl FnOnce(Jobs, SyncSender<Tap>) + Send + 'static) {
 
     let (jobs_tx, jobs_rx) = job_queue();
     let queued = jobs_rx.queued();
+    let signals = Arc::new(Signals::default());
     // One slot, which is what makes the script self-pacing — see `push`.
     let (taps_tx, taps_rx) = mpsc::sync_channel(1);
-    let driver = std::thread::spawn(move || host(jobs_tx, taps_tx));
+    let driver = {
+        let signals = signals.clone();
+        std::thread::spawn(move || host(jobs_tx, taps_tx, signals))
+    };
 
     serve_display(
         cfg,
         jobs_rx,
-        Arc::new(Signals::default()),
+        signals.clone(),
         fs,
         rng,
         PanelParts {
@@ -535,6 +561,7 @@ fn panel_bench(host: impl FnOnce(Jobs, SyncSender<Tap>) + Send + 'static) {
                 Rc::new(Cell::new(rsk_display::BL_TOP)),
                 Rc::new(Cell::new(false)),
                 queued,
+                signals,
             ),
         },
     );
@@ -545,7 +572,7 @@ fn panel_bench(host: impl FnOnce(Jobs, SyncSender<Tap>) + Send + 'static) {
 /// host command lands, and not before [`UI_YIELD_FLOOR_MS`] has passed.
 ///
 /// [`UI_YIELD_FLOOR_MS`]: rsk_display::UI_YIELD_FLOOR_MS
-fn drive_menu_yield(jobs: Jobs, taps: SyncSender<Tap>) {
+fn drive_menu_yield(jobs: Jobs, taps: SyncSender<Tap>, _signals: Arc<Signals>) {
     let skip = target(|p| rsk_ui::hit_onboard(p) == Some(rsk_ui::OnboardChoice::Skip));
     push(&taps, Tap::at(skip.x, skip.y));
     settle(&taps);
@@ -588,4 +615,68 @@ fn a_wrong_clientpin_at_the_panel_ends_the_hosts_pin_token() {
 #[test]
 fn an_open_menu_hands_the_executor_back_when_a_host_command_lands() {
     panel_bench(drive_menu_yield);
+}
+
+/// Poll `ready` until it holds or `bound` runs out; `false` says it never did.
+fn wait_until(bound: Duration, ready: impl Fn() -> bool) -> bool {
+    let deadline = Instant::now() + bound;
+    while Instant::now() < deadline {
+        if ready() {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    false
+}
+
+/// The panel's presence flags are the transports', not the panel's own: the
+/// CTAPHID keepalive reports `UPNEEDED` off the same object a `CTAPHID_CANCEL`
+/// writes, which is what a board gets from `presence::ARBITER`.
+fn drive_panel_presence(jobs: Jobs, taps: SyncSender<Tap>, signals: Arc<Signals>) {
+    let skip = target(|p| rsk_ui::hit_onboard(p) == Some(rsk_ui::OnboardChoice::Skip));
+    push(&taps, Tap::at(skip.x, skip.y));
+    settle(&taps);
+
+    // Queued without waiting on it: both halves below are about what the transport
+    // can see while the ceremony is still on screen.
+    let (reply, answer) = mpsc::channel();
+    jobs.send(
+        Job::Cbor {
+            cid: CID,
+            data: selection_req(),
+        },
+        reply,
+    )
+    .expect("the device thread is alive");
+
+    let seen_up = wait_until(UP_PENDING_BOUND, || {
+        signals.up_pending_for(crate::signals::SCOPE_FIDO)
+    });
+    // What `hid.rs` does with a `CTAPHID_CANCEL` whose channel owns the command.
+    signals.request_cancel(CID);
+    let sent = Instant::now();
+    let body = answered(&answer);
+    let took = sent.elapsed();
+
+    assert_eq!(
+        body[0],
+        CtapError::KeepAliveCancel.as_u8(),
+        "a cancel on the owning channel must end the on-panel ceremony as \
+         KEEPALIVE_CANCEL, not run the presence timeout out into another code"
+    );
+    assert!(
+        took < CANCEL_BOUND,
+        "the ceremony took {took:?} to notice the cancel — the host has been told \
+         nothing on a channel it believes it cancelled"
+    );
+    assert!(
+        seen_up,
+        "the keepalive never saw a touch pending, so a FIDO client is told \
+         PROCESSING while the device is asking a human to touch it"
+    );
+}
+
+#[test]
+fn the_panels_presence_flags_are_the_transports() {
+    panel_bench(drive_panel_presence);
 }

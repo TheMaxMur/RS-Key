@@ -83,6 +83,14 @@ impl Signals {
         self.cancel_cid.store(cid, Ordering::Release);
     }
 
+    /// Drop a cancel no ceremony consumed. Every wait clears it on the way in and
+    /// on the way out — `rsk_device::presence::ButtonWait` does the same, so a
+    /// CANCEL that raced the end of one ceremony cannot end the next one.
+    pub fn clear_cancel(&self) {
+        self.cancel_cid.store(0, Ordering::Release);
+        self.otp_cancel.store(false, Ordering::Release);
+    }
+
     /// Cancel whatever command is in flight.
     ///
     /// `CtapHid`'s cancel hook is a `fn()` and carries no channel, but it is only

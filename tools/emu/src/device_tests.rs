@@ -56,7 +56,7 @@ fn use_counter(path: &Path) -> Option<u16> {
 /// A blank flash image holding one plain Yubico-OTP slot — every flag byte zero,
 /// which is the kind `power_up_bump` advances (HOTP / short / static it skips) —
 /// with the device thread running against it.
-fn bench(name: &str) -> (PathBuf, Jobs, JoinHandle<()>) {
+fn bench(name: &str) -> (PathBuf, Jobs, Arc<Signals>, JoinHandle<()>) {
     let path = std::env::temp_dir().join(format!("rsk-emu-{name}-{}.img", std::process::id()));
     let _ = std::fs::remove_file(&path);
 
@@ -93,9 +93,12 @@ fn bench(name: &str) -> (PathBuf, Jobs, JoinHandle<()>) {
         yubico: false,
         power_cut: None,
     };
-    let device =
-        std::thread::spawn(move || run(cfg, requests, Arc::new(Signals::default()), None, None));
-    (path, jobs, device)
+    let signals = Arc::new(Signals::default());
+    let device = {
+        let signals = signals.clone();
+        std::thread::spawn(move || run(cfg, requests, signals, None, None))
+    };
+    (path, jobs, signals, device)
 }
 
 /// Send one job and wait for its answer.
@@ -130,7 +133,7 @@ fn shut_down(path: PathBuf, jobs: Jobs, device: JoinHandle<()>) {
 /// its own crate, and exercising it here would leave both call sites unproven.
 #[test]
 fn a_power_cycle_advances_the_yubico_otp_use_counter() {
-    let (path, jobs, device) = bench("power-cycle");
+    let (path, jobs, _signals, device) = bench("power-cycle");
 
     // Answering anything proves the boot block is behind us.
     ask(&jobs, Job::OtpStatus);
@@ -157,7 +160,7 @@ fn a_power_cycle_advances_the_yubico_otp_use_counter() {
 /// side. `main.rs` states the rule as `if !pin_lock::was_warm_boot()`.
 #[test]
 fn a_warm_reboot_is_not_a_power_cycle() {
-    let (path, jobs, device) = bench("warm-reboot");
+    let (path, jobs, _signals, device) = bench("warm-reboot");
     ask(&jobs, Job::OtpStatus);
     assert_eq!(use_counter(&path), Some(1), "the boot bump");
 
@@ -218,4 +221,42 @@ fn a_queued_host_request_is_pending_only_until_the_device_takes_it() {
     assert!(!queued.any(), "an OTP frame is the board's own OTP_REQ");
     source.try_next().expect("the frame is there");
     assert!(!queued.any());
+}
+
+/// A wait raised once a dispatch is over belongs to nobody: it is an on-panel
+/// ceremony, and no transport may report or cancel it. `firmware/src/worker.rs`
+/// lowers the scope between dispatches for exactly this reason, and without it a
+/// local PIN entry is advertised to whichever transport asked last.
+#[test]
+fn a_wait_raised_after_a_dispatch_is_no_transports() {
+    let (path, jobs, signals, device) = bench("wait-scope");
+
+    ask(
+        &jobs,
+        Job::Cbor {
+            cid: 1,
+            data: vec![0x04],
+        },
+    );
+    assert!(
+        !signals.up_pending_for(signals::SCOPE_FIDO),
+        "nothing is waiting yet"
+    );
+
+    // The panel, raising its own: `TouchPresence::ceremony_begin` through
+    // `EmuDisplayHooks::set_up_pending`, which is this same call.
+    signals.set_up_pending(true);
+    // `up_pending_for` is `raised && scope == asked`, so the wait showing up under
+    // SCOPE_NONE is the same fact as no transport being able to claim it.
+    assert!(
+        signals.up_pending_for(signals::SCOPE_NONE),
+        "the panel's own wait is filed under the last command's transport"
+    );
+    assert!(
+        !signals.up_pending_for(signals::SCOPE_FIDO),
+        "a local ceremony would make the FIDO keepalive say UPNEEDED for a touch \
+         the host never asked for"
+    );
+
+    shut_down(path, jobs, device);
 }
