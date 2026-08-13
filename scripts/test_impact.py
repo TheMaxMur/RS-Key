@@ -338,6 +338,47 @@ def test_the_flood_does_not_hide_a_real_finding_beside_it(tree):
     assert tree.names() == ["WIDTH"], "the anonymous constant is back in the report"
 
 
+# --- the deletion anchor, and the side the line numbers belong to ---------------
+
+
+def test_a_deletion_inside_a_multi_line_definition_is_reported(tree):
+    """A pure deletion adds no post-side line, so it is anchored on the one above.
+
+    Dropping an element from a constant is a value change like any other; with no
+    anchor the hunk carries no line into `enclosing_def` and the edit is invisible.
+    """
+    tree.edit("src/lib.rs", "    2,\n", "")
+    report = tree.report()
+    assert sorted(report) == ["TABLE"]
+    assert report["TABLE"] == ["src/lib.rs:10", "src/lib.rs:15"]
+
+
+def test_a_deletion_below_a_definition_is_not_attributed_to_it(tree):
+    """The anchor sits on the line above, which may be the statement's *last* one.
+
+    `below` is what asks whether the definition continues past the anchor. Without
+    it, deleting the line after `];` reads as an edit to `TABLE`.
+    """
+    tree.edit("src/lib.rs", "const _: () = assert!(WIDTH <= 64);\n", "")
+    assert tree.report() == {}
+
+
+def test_the_search_is_sized_by_the_staged_side_not_the_worktree(tree):
+    """The hunk line numbers belong to the index, so `post_lines` reads the index.
+
+    Reading the worktree instead sizes the search by lines nobody staged: the
+    unstaged padding here pushes `TABLE` twenty lines down, and the staged hunk's
+    line number then lands in prose that encloses no definition at all.
+    """
+
+    def pad():
+        path = tree.root / "src/lib.rs"
+        path.write_text("// pad\n" * 20 + path.read_text())
+
+    tree.edit("src/lib.rs", "    2,\n", "    7,\n")
+    assert sorted(tree.report(unstaged=pad)) == ["TABLE"]
+
+
 # --- the two defects the audit found and no test did ---------------------------
 
 
