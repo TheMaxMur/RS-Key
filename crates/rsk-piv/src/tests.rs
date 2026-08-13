@@ -614,6 +614,123 @@ fn change_pin_and_puk() {
     assert_eq!(sw, Sw::OK);
 }
 
+/// CHANGE REFERENCE DATA and RESET RETRY COUNTER answer `6A88` — *reference not
+/// found* — to a key reference they do not have, and to a P1 that is not `00`.
+/// Not `6A86`: measured on a YubiKey 5.7.4 over P2 `00`/`01`/`04`/`82`/`9B`/`FF`
+/// (plus `81` on `2C`) and P1 `01`/`FF`, each with no body, a 16-byte body and a
+/// 4-byte one, 3 runs byte-identical.
+///
+/// The asymmetry is the point, and is why this cell had to be measured rather
+/// than derived: on the same card, in the same session, **`VERIFY`'s undefined
+/// reference is `6A80` and these two are `6A88`**. Both axes answer alike here —
+/// an undefined P1 is a reference that is not found, not a wrong parameter.
+#[test]
+fn an_undefined_pin_reference_is_not_found() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    let mut pair = DEFAULT_PIN.to_vec();
+    pair.extend_from_slice(&DEFAULT_PIN);
+    let bodies: [&[u8]; 3] = [&[], &pair, b"ABCD"];
+
+    for verified in [false, true] {
+        if verified {
+            verify_pin(&mut app, &mut fs);
+        }
+        for body in bodies {
+            for p2 in [0x00u8, 0x01, 0x04, 0x82, 0x9B, 0xFF] {
+                assert_eq!(
+                    run(&mut app, &mut fs, INS_CHANGE_PIN, 0, p2, body).0,
+                    Sw::REFERENCE_NOT_FOUND,
+                    "CHANGE P2={p2:02X} body={} verified={verified}",
+                    body.len()
+                );
+            }
+            // `2C` unblocks the PIN with the PUK, so `81` names no reference here
+            // even though `24` accepts it.
+            for p2 in [0x00u8, 0x01, 0x04, 0x81, 0x82, 0x9B, 0xFF] {
+                assert_eq!(
+                    run(&mut app, &mut fs, INS_RESET_RETRY, 0, p2, body).0,
+                    Sw::REFERENCE_NOT_FOUND,
+                    "RESET RETRY P2={p2:02X} body={} verified={verified}",
+                    body.len()
+                );
+            }
+            for p1 in [0x01u8, 0xFF] {
+                for p2 in [0x80u8, 0x55] {
+                    assert_eq!(
+                        run(&mut app, &mut fs, INS_CHANGE_PIN, p1, p2, body).0,
+                        Sw::REFERENCE_NOT_FOUND,
+                        "CHANGE P1={p1:02X} P2={p2:02X} verified={verified}"
+                    );
+                    assert_eq!(
+                        run(&mut app, &mut fs, INS_RESET_RETRY, p1, p2, body).0,
+                        Sw::REFERENCE_NOT_FOUND,
+                        "RESET RETRY P1={p1:02X} P2={p2:02X} verified={verified}"
+                    );
+                }
+            }
+            // Both halves of the measurement, after every body: on the oracle the
+            // counters stayed at `03 03` and a standing PIN status survived the
+            // whole sweep. The second is the one with teeth — `set_pin` also
+            // refreshes `pin_fresh`, so a refusal that set it would hand an
+            // unauthenticated caller a gate that PINPOLICY_ALWAYS slots, the Table 3
+            // objects and SET RETRIES all read.
+            for ref_ in [0x80u8, 0x81] {
+                let (sw, md) = run(&mut app, &mut fs, INS_GET_METADATA, 0, ref_, &[]);
+                assert_eq!(sw, Sw::OK);
+                assert_eq!(
+                    find_tag(&md, 0x06).unwrap(),
+                    &[3, 3],
+                    "retries at {ref_:02X} after body={}",
+                    body.len()
+                );
+            }
+            assert_eq!(
+                run(&mut app, &mut fs, INS_VERIFY, 0, 0x80, &[]).0,
+                if verified {
+                    Sw::OK
+                } else {
+                    Sw::new(0x63, 0xC3)
+                },
+                "standing PIN status after body={} verified={verified}",
+                body.len()
+            );
+        }
+        // A *defined* reference under the same malformed bodies is `6A80`, not
+        // `6A88` — measured on the oracle, both cells — so the two refusals stay
+        // tellable apart and the sweep above is not a blanket answer.
+        for (ins, p2) in [
+            (INS_CHANGE_PIN, 0x80u8),
+            (INS_CHANGE_PIN, 0x81),
+            (INS_RESET_RETRY, 0x80),
+        ] {
+            for body in [&[][..], b"ABCD"] {
+                assert_eq!(
+                    run(&mut app, &mut fs, ins, 0, p2, body).0,
+                    WRONG_DATA,
+                    "INS {ins:02X} P2={p2:02X} body={} verified={verified}",
+                    body.len()
+                );
+            }
+        }
+    }
+    let mut chg = DEFAULT_PIN.to_vec();
+    chg.extend_from_slice(b"00112233");
+    assert_eq!(
+        run(&mut app, &mut fs, INS_CHANGE_PIN, 0, 0x80, &chg).0,
+        Sw::OK
+    );
+    let mut unblock = DEFAULT_PUK.to_vec();
+    unblock.extend_from_slice(&DEFAULT_PIN);
+    assert_eq!(
+        run(&mut app, &mut fs, INS_RESET_RETRY, 0, 0x80, &unblock).0,
+        Sw::OK
+    );
+}
+
 /// A CHANGE REFERENCE DATA / RESET RETRY COUNTER body is two wire forms, and
 /// nothing else. Ours split at the *stored* length and handed the whole
 /// remainder over as the new value, so `8 ‖ 6` stored a six-byte reference that

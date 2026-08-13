@@ -49,6 +49,16 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **PIV `CHANGE REFERENCE DATA` / `RESET RETRY COUNTER` answer `6A88` for a key
+  reference they do not have.** Both answered `6A86`; a YubiKey 5.7.4 answers
+  `6A88` — *reference not found* — on the P2 axis (`00`, `01`, `04`, `82`, `9B`,
+  `FF`, plus `81` on `2C`) and on the P1 axis (`01`, `FF`) alike, at every body
+  length, measured 3 runs byte-identical. Note the card is **not** consistent
+  across its own PIN commands: `VERIFY`'s undefined reference is `6A80` on the
+  same card in the same session, which is why this cell had to be measured rather
+  than derived from its neighbour. No refusal on either command costs a retry,
+  there or here. `bcdDevice` → `0x0921`.
+
 - **A refused PIV `VERIFY` P1 answers `6A80`, the way the reference spells it.**
   `00 20 <P1> 80` with a P1 the command does not define answered `6A86`, and
   `00 20 FF 80` carrying a body — the status-reset form, which takes none —

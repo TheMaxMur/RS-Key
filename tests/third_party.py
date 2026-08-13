@@ -196,10 +196,12 @@ DIVERGENCES: dict[str, dict[str, str]] = {
         # command data field` is about the content. RS-Key answers 6A80 to both;
         # the rejection the test is named for happens either way.
         "::test_openpgp_rejects_invalid_algorithm_attributes": "6A80 (bad data field) rather than 6700, whose gloss is 'Lc and/or Le'",
-        # CHANGE REFERENCE DATA with P2 = 82. §7.2.3 defines exactly two: "P2 81
-        # (PW1) or 83 (PW3)". An undefined P2 is what `6B00 Wrong parameters P1-P2`
-        # is for; `6A88 Referenced data … not found` describes a defined reference
-        # that is absent. RS-Key answers 6B00 for 82 and for 84 alike.
+        # CHANGE REFERENCE DATA with P2 = 82, **on OpenPGP**. §7.2.3 defines exactly
+        # two: "P2 81 (PW1) or 83 (PW3)", and an undefined P2 there is what
+        # `6B00 Wrong parameters P1-P2` is for. Not a rule about the status word in
+        # general: PIV's own CHANGE REFERENCE DATA answers 6A88 to an undefined P2,
+        # because a YubiKey 5.7.4 does — measured, 3 runs. RS-Key answers 6B00 for
+        # OpenPGP's 82 and 84 alike.
         "::test_openpgp_reset_code_and_pw_status": "§7.2.3 defines P2 81/83 only, so 82 is 6B00 (wrong P1-P2), not 6A88",
         # Reported firmware version. RS-Key defaults to 5.7.4 (a current YubiKey 5,
         # `FW_VERSION=X.Y.Z` at build time); the suite hardcodes its own device's

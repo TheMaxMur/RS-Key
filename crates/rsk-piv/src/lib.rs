@@ -495,14 +495,20 @@ impl PivApplet<'_> {
     }
 
     /// CHANGE REFERENCE DATA (INS 0x24): `old ‖ new`, one wire form each.
+    ///
+    /// A reference this command does not have is `6A88`, on the P1 axis as well
+    /// as the P2 one — measured on a YubiKey 5.7.4 over P2 `00`/`01`/`04`/`82`/
+    /// `9B`/`FF` and P1 `01`/`FF`, 3 runs. It disagrees with `verify`'s `6A80`
+    /// for the same class; the card is not consistent across the two commands
+    /// and we follow the card, not the pattern.
     fn change_pin<S: Storage>(&mut self, dev: &Device, fs: &mut Fs<S>, apdu: &Apdu) -> Sw {
         if apdu.p1 != 0x00 {
-            return Sw::INCORRECT_P1P2;
+            return Sw::REFERENCE_NOT_FOUND;
         }
         let which = match apdu.p2 {
             REF_PIN => PinRef::Pin,
             REF_PUK => PinRef::Puk,
-            _ => return Sw::INCORRECT_P1P2,
+            _ => return Sw::REFERENCE_NOT_FOUND,
         };
         let Some((old, new)) = wire_reference_pair(apdu) else {
             return WRONG_DATA;
@@ -511,9 +517,12 @@ impl PivApplet<'_> {
     }
 
     /// RESET RETRY COUNTER (INS 0x2C): unblock/replace the PIN with the PUK.
+    /// `6A88` for anything but `P1 = 00, P2 = 80`, as on `change_pin` — and here
+    /// `81` names no reference either, since the PUK is the credential rather
+    /// than the target.
     fn reset_retry<S: Storage>(&mut self, dev: &Device, fs: &mut Fs<S>, apdu: &Apdu) -> Sw {
         if apdu.p1 != 0x00 || apdu.p2 != REF_PIN {
-            return Sw::INCORRECT_P1P2;
+            return Sw::REFERENCE_NOT_FOUND;
         }
         let Some((puk, new)) = wire_reference_pair(apdu) else {
             return WRONG_DATA;
