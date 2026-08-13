@@ -309,6 +309,18 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **`GET METADATA 9B` reports one PIN policy instead of two.** Slot `9B` is the
+  management key, not a key slot: `is_key(0x9B)` is false in both the PIN gate
+  and the freshness spend, so its stored pin-policy byte gates nothing. Two
+  writers filled the field in anyway and disagreed — first provisioning wrote
+  `ALWAYS`, the trusted display's *Protect mgmt key* wrote `NEVER` — so which one
+  a card reported depended on its history, and nothing in the tree tied them
+  together (`scripts/impact.py` cannot see this class: no constant's value moved).
+  A YubiKey 5.7.4 reports `0x00` there in every state — fresh, escrowed, after a
+  host rotation — measured two runs, which is also the honest value for a slot
+  with no policy to report. One named constant now, and a test that drives all
+  three paths into the record. **bcdDevice → 0x08D7.**
+
 - **A PIV key import takes a private scalar of exactly the field length.** The
   length was bounded from above only, so `IMPORT` accepted a one-byte P-256
   scalar, stored it, and then signed with it — `d = 1`, a key anyone can forge

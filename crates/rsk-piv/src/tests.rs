@@ -3793,9 +3793,72 @@ fn pin_metadata_shapes() {
     // Default management key ships touch-OFF (real-YubiKey behaviour).
     assert_eq!(
         find_tag(&md, 0x02).unwrap(),
-        &[PINPOLICY_ALWAYS, TOUCHPOLICY_NEVER]
+        &[PINPOLICY_DEFAULT, TOUCHPOLICY_NEVER]
     );
     assert_eq!(find_tag(&md, 0x05).unwrap(), &[1]);
+}
+
+/// Slot `9B` is not a key slot — `is_key(0x9B)` is false in both the PIN gate and
+/// the freshness spend — so its stored pin-policy byte gates nothing. Two writers
+/// filled it in anyway and disagreed: `scan_files` wrote ALWAYS, the panel's
+/// protect flow wrote NEVER, and which one a card carried depended on its
+/// history. `GET METADATA 9B` shows the byte, so the disagreement was on the
+/// wire. A YubiKey 5.7.4 reports `0x00` there in every state — fresh, escrowed,
+/// after a host rotation — measured 2 runs, and that is the honest value for a
+/// slot with no policy to report.
+#[test]
+fn the_management_slot_reports_one_pin_policy_in_every_state() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    let dev = Device {
+        serial_hash: &HASH,
+        serial_id: &SERIAL,
+        otp_key: None,
+    };
+    select(&mut app, &mut fs);
+    let policy = |app: &mut PivApplet, fs: &mut Fs<RamStorage>| -> Vec<u8> {
+        let (sw, md) = run(app, fs, INS_GET_METADATA, 0, SLOT_CARDMGM, &[]);
+        assert_eq!(sw, Sw::OK);
+        find_tag(&md, 0x02).unwrap().to_vec()
+    };
+    let fresh = policy(&mut app, &mut fs);
+    assert_eq!(fresh, [PINPOLICY_DEFAULT, TOUCHPOLICY_NEVER]);
+
+    // The panel's protect flow is the second writer.
+    assert_eq!(protect_mgm_key(&dev, &mut fs, &mut TestRng(42)), Sw::OK);
+    assert_eq!(policy(&mut app, &mut fs)[0], fresh[0], "protect_mgm_key");
+
+    // …and a host rotation is the third path through the same record.
+    let mut fs2 = new_fs();
+    let mut app2 = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    select(&mut app2, &mut fs2);
+    auth_mgm(&mut app2, &mut fs2);
+    let mut set_key = vec![ALGO_AES256, SLOT_CARDMGM, 32];
+    set_key.extend_from_slice(&[0x5Au8; 32]);
+    assert_eq!(
+        run(&mut app2, &mut fs2, INS_SET_MGMKEY, 0xFF, 0xFF, &set_key).0,
+        Sw::OK
+    );
+    assert_eq!(
+        policy(&mut app2, &mut fs2)[0],
+        fresh[0],
+        "SET MANAGEMENT KEY"
+    );
+
+    // The byte gates nothing, in either state — 9B is reached with no PIN at all.
+    let mut cold = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    select(&mut cold, &mut fs);
+    let (sw, _) = run(
+        &mut cold,
+        &mut fs,
+        INS_AUTHENTICATE,
+        ALGO_AES256,
+        SLOT_CARDMGM,
+        &[0x7C, 0x02, 0x80, 0x00],
+    );
+    assert_eq!(sw, Sw::OK, "9B is not PIN-gated by its own metadata byte");
 }
 
 #[test]

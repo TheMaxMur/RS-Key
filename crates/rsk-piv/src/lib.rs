@@ -1395,12 +1395,10 @@ pub fn protect_mgm_key<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn R
     if sealed.is_err() {
         return Sw::MEMORY_FAILURE;
     }
-    // pin-policy NEVER matches a real YubiKey's protected mgmt key (9B is not
-    // PIN-gated at the APDU level; `is_key(0x9B)` is false so auth ignores it).
     if fs
         .meta_add(
             key_fid(SLOT_CARDMGM).get(),
-            &[ALGO_AES256, PINPOLICY_NEVER, TOUCHPOLICY_NEVER],
+            &[ALGO_AES256, MGM_PIN_POLICY, TOUCHPOLICY_NEVER],
         )
         .is_err()
     {

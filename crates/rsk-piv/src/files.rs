@@ -52,13 +52,20 @@ pub const PINPOLICY_DEFAULT: u8 = 0;
 pub const PINPOLICY_NEVER: u8 = 1;
 pub const PINPOLICY_ONCE: u8 = 2;
 pub const PINPOLICY_ALWAYS: u8 = 3;
-/// `0` on both axes is what a *stored* record from a pre-run-34 build can hold.
-/// Nothing persists it now, and no host may send it: "default" is an omitted
-/// `AA`/`AB` tag, and an explicit `0` is refused like any other undefined value
-/// (E80). A stored one is still honoured — the PIN axis resolves it by slot
-/// (`crate::auth::general_authenticate`), the touch axis needs no resolution
-/// because `check_touch` passes only `NEVER`.
+/// `0` on both axes is what a *stored* record can hold: a pre-run-34 build could
+/// persist one, and slot `9B` stores it deliberately (see [`MGM_PIN_POLICY`] —
+/// it is not a key slot and has no pin policy to report). No host may send it:
+/// "default" is an omitted `AA`/`AB` tag, and an explicit `0` is refused like any
+/// other undefined value (E80). A stored one is still honoured — the PIN axis
+/// resolves it by slot (`crate::auth::general_authenticate`), the touch axis needs
+/// no resolution because `check_touch` passes only `NEVER`.
 pub const TOUCHPOLICY_DEFAULT: u8 = 0;
+
+/// The pin-policy byte `GET METADATA 9B` reports. `is_key(0x9B)` is false in both
+/// the PIN gate and the freshness spend, so the slot has no policy — two writers
+/// used to fill the field in with opposite guesses. A YubiKey 5.7.4 reports `0`
+/// in every state (fresh, escrowed, after a host rotation), measured.
+pub const MGM_PIN_POLICY: u8 = PINPOLICY_DEFAULT;
 pub const TOUCHPOLICY_NEVER: u8 = 1;
 pub const TOUCHPOLICY_ALWAYS: u8 = 2;
 pub const TOUCHPOLICY_CACHED: u8 = 3;
@@ -312,11 +319,8 @@ pub fn scan_files<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng) -
             }
         };
         if let Some((algo, touch)) = head {
-            fs.meta_add(
-                key_fid(SLOT_CARDMGM).get(),
-                &[algo, PINPOLICY_ALWAYS, touch],
-            )
-            .map_err(|_| Sw::MEMORY_FAILURE)?;
+            fs.meta_add(key_fid(SLOT_CARDMGM).get(), &[algo, MGM_PIN_POLICY, touch])
+                .map_err(|_| Sw::MEMORY_FAILURE)?;
         }
     }
     if !fs.has_key(key_fid(SLOT_ATTESTATION)) {
