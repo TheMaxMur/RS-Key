@@ -108,6 +108,18 @@ covers the security boundary. This page covers feature and hardware gaps.
   *Status: needs a fuse-rooted latch that closes the migration window once the
   device is provisioned; the analysis is audit run-27 #8, the decision is the
   maintainer's because it makes `lock-page58` load-bearing for boot correctness.*
+- **PIV data objects are access-gated, not sealed.** SP 800-73-4 pt1 Table 3
+  gives four of them a read condition of PIN — Cardholder Fingerprints
+  (`5FC103`), Facial Image (`5FC108`), Printed Information (`5FC109`) and Iris
+  Images (`5FC121`) — and RS-Key enforces exactly those four at the APDU layer.
+  It does not back them at rest: the seal rule covers key material, so a flash
+  dump of a provisioned device yields whatever a host put in them. Their names
+  are the standard's, not a capability of this firmware — there is no sensor, no
+  enrolment and no matching here, and the 1900-byte object ceiling is far under a
+  real FIPS 201 biometric template, so what they hold is whatever the owner chose
+  to store. *Status: won't fix. The read condition is an access rule, not a
+  confidentiality promise, and the device cannot produce the content a seal here
+  would be protecting.*
 - **XIP TOCTOU residual**: secure boot verifies the image in external QSPI
   flash, then executes from it. Nothing binds the bytes that were hashed to the
   bytes later fetched, so hardware interposing on the QSPI bus can serve the
