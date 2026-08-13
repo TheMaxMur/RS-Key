@@ -168,9 +168,9 @@ mutants nothing catches.
 
 | Mutation switch | Removes | Target property | Caught in |
 |---|---|---|---|
-| `BugAssertWedgesOnTimeout` | only a confirm completes a getAssertion | `EveryOpQuiesces` | 44 550 states |
-| `BugWaitScopeNotCleared` | `worker.rs:521` `set_wait_scope(SCOPE_NONE)` | `EveryWaitReleases` | 78 269 states |
-| `BugWalkNeverExpires` | `state.rs:613-619` `expire_stale_sequences` | `EveryWalkCloses` | 94 435 states |
+| `BugAssertWedgesOnTimeout` | only a confirm completes a getAssertion | `EveryOpQuiesces` | 78 022 states |
+| `BugWaitScopeNotCleared` | `worker.rs:521` `set_wait_scope(SCOPE_NONE)` | `EveryWaitReleases` | 71 841 states |
+| `BugWalkNeverExpires` | `state.rs:613-619` `expire_stale_sequences` | `EveryWalkCloses` | 91 295 states |
 
 **One mutant needs a companion, and that is a result.** `BugBackupSealedNotAGate`
 rebuilds audit run-36's class — the backup marker swept ahead of the seed it
@@ -388,8 +388,9 @@ than closed:
 | 18 × `Mut_*.cfg` | RED, each caught | 262 – 899 702 | 118 – 138 546 | 5 – 15 | ≤ 2 s |
 | 18 × `Solo_*.cfg` | RED, each on its **own** target | 226 – 874 472 | 125 – 135 329 | 5 – 15 | ≤ 2 s |
 | `Solo_NoAccessibleSecretWithoutGate.cfg` | RED, the repaired clause | 1 296 217 | 194 351 | 16 | 3 s |
-| `Liveness.cfg` (reduced constants) | **GREEN** | 6 030 147 | 805 268 | 43 | 120 s |
-| 3 × `LiveMut_*.cfg` | RED, each on its own property | 261 771 – 571 929 | 44 550 – 94 435 | — | ≤ 4 s |
+| `Liveness.cfg` (reduced constants) | **GREEN** | 6 030 147 | 805 268 | 42 | 128 s |
+| `Liveness_Full.cfg` (the safety matrix's constants) | **GREEN** | 55 988 607 | 6 664 764 | 49 | **1475 s** |
+| 3 × `LiveMut_*.cfg` | RED, each on its own property | 472 238 – 552 011 | 71 841 – 91 295 | — | ≤ 4 s |
 
 Only `ShippedFixed.cfg` is an exhaustive search; every RED row stops at the
 first counterexample, so its counts move a few percent between runs with the
@@ -565,10 +566,13 @@ promise; asserting it would need `WF(PowerCut)`, which is a claim about the user
 relying party, one channel, `MaxRetries` 2 : `MismatchLimit` 1 — and the
 reduction is a parameter of the same generator function, not a hand-edited file.
 `Liveness_Full.cfg` is the same three properties at the safety matrix's own
-constants, so the price is measured rather than assumed. TLC builds a behaviour
-graph on top of the state graph, so the two costs are not comparable: the
-reduced run is 120 s over 805 268 distinct states where the same reduction under
-an invariant is seconds.
+constants, so the price is measured rather than assumed — and the measurement is
+**15.7×**. Over the identical 6 664 764 distinct states, `Shipped.cfg` checks six
+invariants in 94 s and `Liveness_Full.cfg` checks three properties in **1475 s**;
+TLC builds a behaviour graph on top of the state graph (19 994 292 nodes here)
+and walks it for each temporal branch. Both are GREEN, so the reduction costs
+nothing in confidence at these constants — it costs 22 minutes of wall clock,
+which is why the routine configuration is the small one.
 
 There is still no `SYMMETRY` on `RPs`/`Channels`, which costs time and not
 soundness.
