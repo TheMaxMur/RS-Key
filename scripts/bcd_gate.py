@@ -536,10 +536,14 @@ def main():
         for line in problems:
             print(f"  {line}")
         print(
-            f"\nA firmware-behaviour change bumps `config.device_release` in {MAIN}\n"
-            "by +1 hex and says why in CHANGELOG.md. Read the current value from\n"
-            "that file — never from a document that quotes it — and add the entry\n"
-            "in the same change."
+            f"\nBump `config.device_release` in {MAIN} by +1 hex and say why in\n"
+            "CHANGELOG.md. Read the current value from that file — never from a\n"
+            "document that quotes it — and add the entry in the same change.\n"
+            "\nThis row asks whether a line can reach the image, not whether the\n"
+            "behaviour changed, so a behaviour-preserving refactor of shipped code\n"
+            "owes the bump too — bcdDevice counts builds. Let the entry say that:\n"
+            "`refactor, no behaviour change`. Do not write one that claims a\n"
+            "change the image did not make."
         )
         return 1
     print(summary)

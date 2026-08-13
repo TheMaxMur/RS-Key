@@ -474,6 +474,35 @@ def test_a_landing_debt_carries_exactly_its_own_span(tree):
     assert only(tree.problems(landed_over=("deadbee", "another span")), "pub const EXTRA")
 
 
+# --- what the guard tells whoever it stopped ----------------------------------
+
+
+def test_the_guidance_says_what_the_row_actually_asks(tree, monkeypatch, capsys):
+    """It read "a firmware-behaviour change bumps …", and that is not the rule.
+
+    The rule is reachability, and the docstring above says so — but a docstring
+    is not what a stopped developer reads. Measured over the 281 commits of this
+    batch: 9 are `refactor(`, 6 of those fire this row, and **not one bumped**.
+    Told they owe a bump for a behaviour change they did not make, an author
+    either skips it or writes a CHANGELOG entry that is false by construction.
+    """
+    tree.append("crates/rsk-a/src/lib.rs", "\npub const EXTRA: u8 = 1;\n")
+    monkeypatch.setattr(bcd_gate, "ROOT", tree.root)
+    assert bcd_gate.main() == 1
+    printed = capsys.readouterr().out
+    assert "behaviour-preserving refactor" in printed, printed
+    assert "refactor, no behaviour change" in printed, printed
+
+
+def test_a_green_run_says_nothing_but_its_summary(tree, monkeypatch, capsys):
+    """The control: guidance printed on a clean tree is guidance nobody reads."""
+    monkeypatch.setattr(bcd_gate, "ROOT", tree.root)
+    assert bcd_gate.main() == 0
+    printed = capsys.readouterr().out
+    assert printed.startswith("bcd-gate: ok"), printed
+    assert "refactor" not in printed, printed
+
+
 # --- the guard's own wiring ---------------------------------------------------
 
 
