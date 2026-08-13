@@ -2,6 +2,7 @@
 // Copyright (C) 2026 RS-Key contributors
 
 use super::*;
+use crate::dying_storage::DyingStorage;
 use rsk_fs::storage::ram::RamStorage;
 
 /// Deterministic counter RNG for tests.
@@ -281,54 +282,4 @@ fn a_refused_sex_repair_leaves_the_old_byte_and_retries() {
     assert_eq!(&b[..n], SEX_DEFAULT);
     budget.set(0);
     scan_files(&dev(), &mut fs, &mut CountRng(0)).unwrap();
-}
-
-/// `RamStorage` whose writes fail once `budget` runs out. A verbatim second copy
-/// of `pin_tests`\' own: hoisting it into a shared `#[cfg(test)]` module is a
-/// refactor of two other files, so it is left for one rather than folded in here.
-struct DyingStorage {
-    inner: RamStorage,
-    budget: std::rc::Rc<std::cell::Cell<usize>>,
-}
-
-impl DyingStorage {
-    fn new() -> (Self, std::rc::Rc<std::cell::Cell<usize>>) {
-        let budget = std::rc::Rc::new(std::cell::Cell::new(usize::MAX));
-        (
-            Self {
-                inner: RamStorage::new(),
-                budget: budget.clone(),
-            },
-            budget,
-        )
-    }
-    fn spend(&mut self) -> rsk_sdk::error::Result<()> {
-        match self.budget.get() {
-            0 => Err(rsk_sdk::error::Error::MemoryFatal),
-            n => {
-                self.budget.set(n - 1);
-                Ok(())
-            }
-        }
-    }
-}
-
-impl rsk_fs::Storage for DyingStorage {
-    fn read(&mut self, fid: u16, buf: &mut [u8]) -> Option<usize> {
-        self.inner.read(fid, buf)
-    }
-    fn write(&mut self, fid: u16, data: &[u8]) -> rsk_sdk::error::Result<()> {
-        self.spend()?;
-        self.inner.write(fid, data)
-    }
-    fn remove(&mut self, fid: u16) -> rsk_sdk::error::Result<()> {
-        self.spend()?;
-        self.inner.remove(fid)
-    }
-    fn size(&mut self, fid: u16) -> Option<usize> {
-        self.inner.size(fid)
-    }
-    fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) -> bool {
-        self.inner.for_each_key(f)
-    }
 }

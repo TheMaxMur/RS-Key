@@ -619,6 +619,10 @@ mod tests;
 mod serial_identity_tests;
 
 #[cfg(test)]
+#[path = "dying_storage.rs"]
+mod dying_storage;
+
+#[cfg(test)]
 #[path = "dispatch_getdata_tests.rs"]
 mod dispatch_getdata_tests;
 
