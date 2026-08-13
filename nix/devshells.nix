@@ -95,6 +95,12 @@
           ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
             pkgs.systemd
             pkgs.pcsclite
+            # check.sh's fuzz-liveness row executes the libFuzzer binaries, whose
+            # runtime is C++, and this shell — not `.#fuzz`, which already names
+            # it — is where that row runs. Without it every target dies on
+            # `libstdc++.so.6: cannot open shared object file` and the row reports
+            # 53 dead harnesses, which is a loader path, not a preamble.
+            pkgs.stdenv.cc.cc.lib
           ]
         )
       }''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
