@@ -169,6 +169,25 @@ SOLO=1 SOLO_INV=NoAccessibleSecretWithoutGate \
 for i in "${EXTRA_INV[@]}"; do
   SOLO=1 SOLO_INV="$i" emit "Solo_$i.cfg" "$(extra_mutant "$i")" FALSE TRUE
 done
+# ONE CONFIG PER CLAUSE. `Solo_*` names an invariant and never a clause, and all
+# four reset-family mutants reported ResetNeverWeakensSurvivingState on its THIRD
+# clause -- which fires at depth 8 where the other two need 16 and 18, so it
+# always got there first and two thirds of the invariant had no owner on record.
+# The grid behind these three lines is in formal/README.md.
+CLAUSE_INV=(ResetKeepsThePinGate ResetKeepsTheAlwaysUvGate ResetKeepsTheBackupSeal)
+clause_mutant() {
+  case "$1" in
+    # The phase order is the ONLY owner of the first two clauses.
+    ResetKeepsThePinGate)      echo BugResetGatesFirst ;;
+    ResetKeepsTheAlwaysUvGate) echo BugResetGatesFirst ;;
+    # The third has three; the marker's own is the one that names it.
+    ResetKeepsTheBackupSeal)   echo BugBackupSealedNotAGate ;;
+  esac
+}
+for i in "${CLAUSE_INV[@]}"; do
+  SOLO=1 SOLO_INV="$i" emit "SoloClause_$i.cfg" "$(clause_mutant "$i")" FALSE TRUE
+done
+
 # Liveness. Its own constants, and they are SMALLER on purpose -- TLC's
 # liveness check builds a behaviour graph on top of the state graph, so the cost
 # is not comparable to an invariant run. The reduction is stated here rather

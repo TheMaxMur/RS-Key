@@ -1579,14 +1579,33 @@ NoUnmanageableCredential == Idle => store.cred \subseteq store.rpent
 
 \* No prefix of an authenticatorReset -- torn or complete -- leaves a
 \* surviving usable secret whose gate has already gone (reset.rs:51-58).
-\* The third clause is the run-36 direction, and it is the one whose gate reads
-\* backwards: the OWNER's seed still live with EF_BACKUP_SEALED gone means the
-\* wipe re-opened a one-time export window over a seed it did not manage to
-\* destroy. Shipped twin: reset_tests.rs::a_torn_reset_never_unseals_a_surviving_seed.
-ResetNeverWeakensSurvivingState ==
+\* Shipped twin: reset_tests.rs::a_torn_reset_never_unseals_a_surviving_seed.
+\*
+\* THE THREE CLAUSES ARE NAMED because `Solo_*` names an INVARIANT and never a
+\* clause, and that turned out to matter: all four reset-family mutants reported
+\* this invariant and all four traces were the THIRD clause, so "caught by the
+\* invariant that names it" was true while two thirds of the invariant had no
+\* owner at all. A conjunction is only as tested as its weakest clause, and
+\* nothing in the apparatus could see which one that was. `SoloClause_*.cfg`
+\* names one clause and one mutant; formal/README.md carries the ownership grid
+\* those runs produced.
+ResetKeepsThePinGate ==
     (Idle /\ snap.seen) =>
-      /\ (snap.surv # {} /\ SeedReachable /\ snap.pin) => pin.set
-      /\ (snap.surv # {} /\ SeedReachable /\ snap.auv) => gate.alwaysUv
-      /\ (snap.seed /\ snap.sealed) => gate.backupSealed
+      ((snap.surv # {} /\ SeedReachable /\ snap.pin) => pin.set)
+
+ResetKeepsTheAlwaysUvGate ==
+    (Idle /\ snap.seen) =>
+      ((snap.surv # {} /\ SeedReachable /\ snap.auv) => gate.alwaysUv)
+
+\* The run-36 direction, and the one whose gate reads backwards: the OWNER's seed
+\* still live with EF_BACKUP_SEALED gone means the wipe re-opened a one-time
+\* export window over a seed it did not manage to destroy.
+ResetKeepsTheBackupSeal ==
+    (Idle /\ snap.seen) => ((snap.seed /\ snap.sealed) => gate.backupSealed)
+
+ResetNeverWeakensSurvivingState ==
+    /\ ResetKeepsThePinGate
+    /\ ResetKeepsTheAlwaysUvGate
+    /\ ResetKeepsTheBackupSeal
 
 =============================================================================
