@@ -239,6 +239,20 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   data, `'0'` was our own invention, and the alternative is a byte the card reads
   out and refuses back. **bcdDevice → 0x08F2.**
 
+- **PUT DATA judges the password before the tag.** The command carries its target
+  in P1P2, and ours resolved that target first: an **unauthenticated** caller got
+  `6B00` for a tag the card cannot write, `6985` for the signature counter and
+  `6982` only for a tag it can — so the writable-DO set could be enumerated
+  without a PIN by the codes alone. A YubiKey 5.7.4 answers a flat `6982` to every
+  tag until PW3 is verified, and only then tells `6B00` (not a writable target)
+  from `9000` — measured over `D5`, `C5`, `CD`, `7A`, `5E`, and two tags it does
+  not know at all, 3 auth states x 3 runs. The judgement moves ahead of the
+  resolution, so the pre-PW3 column is now flat here too, including the signature
+  counter the measurement never covered. Low impact — the writable set is public
+  in the card spec — but it is a wire divergence on unauthenticated input, and the
+  in-tree comment that recorded the `6B00` measurement said nothing about the
+  state it was taken in; it does now. **bcdDevice → 0x08F3.**
+
 - **An explicit `0` PIN- or touch-policy byte in a PIV key template is refused.**
   On the wire, "default" is expressed by *omitting* the `AA` / `AB` tag. Sending
   the tag with value `0x00` is a different thing, and a YubiKey 5.7.4 treats it as

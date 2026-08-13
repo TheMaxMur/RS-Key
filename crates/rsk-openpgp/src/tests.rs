@@ -2257,3 +2257,54 @@ fn the_private_use_dos_answer_to_the_password_that_owns_them() {
         }
     }
 }
+
+/// E81: PUT DATA carries its target in P1P2, and the card judges the PASSWORD
+/// before it says anything about the tag. Measured on a YubiKey 5.7.4, 7 tags ×
+/// 3 auth states × 3 runs: every tag is a flat `6982` until PW3, and only then
+/// does it tell `6B00` (not a writable target) from `9000`. Ours resolved the tag
+/// first, so an unauthenticated caller could enumerate the writable set by the
+/// `6B00`-vs-`6982` split.
+#[test]
+fn put_data_judges_the_password_before_the_tag() {
+    let rng = RefCell::new(LcgRng(29));
+    let mut fs = make_fs();
+    let presence = RefCell::new(crate::AlwaysConfirm);
+    let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
+
+    let denied = Sw::SECURITY_STATUS_NOT_SATISFIED;
+    // (tag, what PW3 gets). Everything before PW3 is `denied`, on every row.
+    let tags: [(u8, Sw); 8] = [
+        (0xD5, Sw::WRONG_P1P2),               // AES key
+        (0xC5, Sw::WRONG_P1P2),               // fingerprints, read-only
+        (0xCD, Sw::WRONG_P1P2),               // timestamps, read-only
+        (0x7A, Sw::WRONG_P1P2),               // security support, read-only
+        (0x42, Sw::WRONG_P1P2),               // wholly unknown
+        (0xFF, Sw::WRONG_P1P2),               // wholly unknown
+        (0x93, Sw::CONDITIONS_NOT_SATISFIED), // DS counter: write = never
+        (0x5E, Sw::OK),                       // login data, PW3-writable
+    ];
+    let none: &[u8] = &[];
+    for modes in [none, &[consts::PW1_MODE81], &[consts::PW1_MODE82]] {
+        app.deselect(&mut fs);
+        for &mode in modes {
+            verify_pin(&mut app, &mut fs, mode, consts::PW1_DEFAULT);
+        }
+        for (tag, _) in tags {
+            assert_eq!(
+                put(&mut app, &mut fs, 0x00, tag, &[0xAA]),
+                denied,
+                "PUT DATA {tag:02X} with {modes:02X?}"
+            );
+        }
+    }
+    // Only with PW3 does the card start distinguishing the tags at all.
+    app.deselect(&mut fs);
+    verify_pin(&mut app, &mut fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
+    for (tag, want) in tags {
+        assert_eq!(
+            put(&mut app, &mut fs, 0x00, tag, &[0xAA]),
+            want,
+            "PUT DATA {tag:02X} with PW3"
+        );
+    }
+}

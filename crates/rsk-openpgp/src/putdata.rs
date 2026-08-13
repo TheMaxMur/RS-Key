@@ -50,6 +50,16 @@ fn max_do_len(fid: u16) -> Option<usize> {
 /// PW2 — §4.4.1 gives the admin no override on them, and a YubiKey 5.7.4 refuses
 /// PW3 on both, 3/3 — everything else needs PW3.
 pub fn put_data<S: Storage>(fs: &mut Fs<S>, sess: &Session, fid: u16, data: &[u8]) -> Sw {
+    // The password is judged BEFORE the tag: a YubiKey 5.7.4 answers a flat `6982`
+    // to every tag until PW3 and only then tells `6B00` from `9000` (7 tags × 3
+    // states × 3 runs). Resolving first let an unauthenticated caller enumerate
+    // the writable set by the `6B00`-vs-`6982` split. `fid` is P1P2, not a lookup.
+    let priv13 = fid == EF_PRIV_DO_1 || fid == EF_PRIV_DO_3;
+    let authorized = if priv13 { sess.has_pw2 } else { sess.has_pw3 };
+    if !authorized {
+        return Sw::SECURITY_STATUS_NOT_SATISFIED;
+    }
+
     let target = match fid {
         // Routed away by the dispatch (put_reset_code / put_pw_status); rejected
         // here so a direct call cannot write them as raw DOs.
@@ -67,17 +77,12 @@ pub fn put_data<S: Storage>(fs: &mut Fs<S>, sess: &Session, fid: u16, data: &[u8
         f if matches!(source(f), DoSource::Flash) => f,
         // PUT DATA carries its target in P1P2, so a tag this command cannot write
         // is a wrong P1P2 and not a missing object: a YubiKey 5.7.4 answers `6B00`
-        // to `C5`, `C6`, `CD`, `7A` and to a tag it does not know at all (measured,
-        // 3/3). The computed aggregates are the ones a host actually reaches for —
-        // they are read from `6E`/`73` and only look writable.
+        // to `C5`, `C6`, `CD`, `7A` and to a tag it does not know at all — measured
+        // 3/3, and **only with PW3 verified**, which is the state this arm is now
+        // the only way to reach. The computed aggregates are the ones a host
+        // actually reaches for: they are read from `6E`/`73` and only look writable.
         _ => return Sw::WRONG_P1P2,
     };
-
-    let priv13 = fid == EF_PRIV_DO_1 || fid == EF_PRIV_DO_3;
-    let authorized = if priv13 { sess.has_pw2 } else { sess.has_pw3 };
-    if !authorized {
-        return Sw::SECURITY_STATUS_NOT_SATISFIED;
-    }
 
     // Only the algorithms DO 0xFA advertises. Unvalidated, `nbits` came straight off
     // the wire into `RsaKeygen`, which took any 32-byte multiple — so PW3 could set
