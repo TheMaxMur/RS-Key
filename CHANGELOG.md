@@ -250,6 +250,17 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   today, so nothing changes about what the hook prints — it is closed before the
   first one lands, because the report it would ruin is the one nobody then reads.
 
+- **A name too generic to grep no longer buries the finding beside it.** Some
+  redefined constants really are called `N`, `HEADER` or `UNION`, and the site
+  count under them is a whole-word `git grep` and nothing narrower — it crosses
+  languages and prose, which is the entire reason the tool catches a Rust
+  constant's Python and documentation copies. So the count cannot be made
+  precise, and scoping the search by language would break the founding case. What
+  can be fixed is the burial: the report is ordered narrowest-first instead of
+  alphabetically, so the six sites worth reading are no longer printed under
+  three hundred that are not, and the list says what the number is where it cuts
+  off at twenty.
+
 - **`bcdDevice` skips to `0x08F7`, past a number two branches had already
   spent.** The OpenPGP and PIV conformance work ran in parallel worktrees on
   reserved ranges — `0x08F0`–`0x08F6` and `0x08D0`–`0x08D9` — so that neither

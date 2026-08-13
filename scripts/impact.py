@@ -21,6 +21,14 @@ Everything else stays a human rule (AGENTS.md → "When you change X, also do Y"
 an invariant, an ownership rule or a comment can change a definition's meaning
 without changing a line this can match.
 
+A site count here is a whole-word `git grep` and nothing narrower, so a name as
+generic as `N`, `HEADER` or `UNION` answers with lines that are not references at
+all. That is not fixable from inside a grep, and scoping the search by language
+would break the tool's whole reason for being: the founding case, a Rust constant
+whose Python and prose copies drifted, is exactly the cross-language hit. So the
+report is ordered narrowest-first and says what the count is where it cuts a
+list, instead of claiming a precision it has not got.
+
 Usage:  scripts/impact.py [<rev-range>]     # default: staged, else worktree
 
 Prints nothing when every use site is inside the change. Always exits 0 — it
@@ -35,6 +43,11 @@ import sys
 # How far back a changed line will look for the definition it sits inside. Bounds
 # the scan; no definition in this tree spans anything close to it.
 MAX_DEF_LINES = 200
+
+# Sites printed per name before the list is cut. Also where the grep's limits are
+# said: past this the report has stopped being readable, which is the failure
+# this file exists to prevent one layer up.
+MAX_SITES = 20
 
 # A definition line, per language. Group `name` is what gets searched for.
 RUST_DEF = re.compile(
@@ -305,6 +318,10 @@ def main():
     if not report:
         return 0
 
+    # Narrowest first: a name too generic to grep answers with hundreds of lines
+    # that are not references, and in name order that flood printed *above* the
+    # finding worth reading — the failure `_` made, with a real name.
+    report.sort(key=lambda row: (len(row[2]), row[0]))
     print("\n== unreviewed users of a redefined constant ==")
     print(
         "These definitions changed meaning without changing shape, so nothing\n"
@@ -314,10 +331,15 @@ def main():
     )
     for name, path, unread in report:
         print(f"\n{name}  (redefined in {path}) — {len(unread)} site(s) not in this change:")
-        for f, n, text in unread[:20]:
+        for f, n, text in unread[:MAX_SITES]:
             print(f"  {f}:{n}: {text[:96]}")
-        if len(unread) > 20:
-            print(f"  … and {len(unread) - 20} more")
+        if len(unread) > MAX_SITES:
+            print(f"  … and {len(unread) - MAX_SITES} more")
+            print(
+                f"  (that count is `git grep -w {name}` and nothing narrower — it crosses\n"
+                "   languages and prose, so a name this generic matches lines that are\n"
+                "   not references at all. Read the list; the number is not a verdict.)"
+            )
     return 0
 
 

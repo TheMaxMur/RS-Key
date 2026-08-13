@@ -22,6 +22,7 @@ flood it exists to close. (`def keep(…)` would have been 253 sites.)
 """
 
 import pathlib
+import re
 import subprocess
 
 import pytest
@@ -29,6 +30,11 @@ import pytest
 import impact
 
 SCRIPT = pathlib.Path(impact.__file__).resolve()
+
+#: A printed use site, `  path:line: text`. Matched rather than split on `:`, so
+#: the report's own prose — the truncation line and the note beside it — cannot
+#: be read back as a site.
+SITE = re.compile(r"^ {2}(\S+:\d+): ")
 
 #: A crate-shaped file: named constants of every shape the tool must still see —
 #: single-line, multi-line, one-letter, underscore-prefixed — and the two shapes
@@ -101,6 +107,12 @@ pub fn spans() -> usize {
 """
 
 
+#: Prose that says `N` more times than a report will print. `N` is a real
+#: constant in `RUST` *and* an ordinary word here, and `git grep -w` cannot tell
+#: the two apart — which is the whole of E132, and why order beats precision.
+NOTES = "".join(f"Row {i}: the N in the table is the element count.\n" for i in range(1, 26))
+
+
 class Tree:
     """A git checkout with the change staged, which is what the hook reports on."""
 
@@ -109,6 +121,7 @@ class Tree:
         self.write("src/lib.rs", RUST)
         self.write("src/other.rs", USER)
         self.write("tool.py", PY)
+        self.write("docs/notes.md", NOTES)
         self.git("init", "-q")
         for key, value in config:
             self.git("config", key, value)
@@ -131,20 +144,35 @@ class Tree:
         assert text.count(old) == 1, f"{rel} does not say {old!r} exactly once"
         path.write_text(text.replace(old, new))
 
-    def report(self):
-        """`{name: [file:line, …]}` — what the hook prints, sites included."""
+    def run(self, unstaged=None):
+        """The hook's own output over the change as staged.
+
+        `unstaged` runs after `git add`, so the index and the worktree differ: the
+        hunk line numbers belong to the staged side, and sizing the search by the
+        other one measures lines nobody staged.
+        """
         self.git("add", "-A")
-        out = subprocess.run(
+        if unstaged:
+            unstaged()
+        self.text = subprocess.run(
             ["python3", str(SCRIPT)], cwd=self.root, capture_output=True, text=True, check=True
         ).stdout
+        return self.text
+
+    def report(self, unstaged=None):
+        """`{name: [file:line, …]}` — what the hook prints, in the order it prints.
+
+        The raw output stays on `self.text`, so a case can assert the report's
+        prose — the order, the truncation note — off the same single run.
+        """
         found, name = {}, None
-        for line in out.splitlines():
+        for line in self.run(unstaged).splitlines():
             if "(redefined in " in line:
                 name = line.split()[0]
                 found[name] = []
                 announced = int(line.split("—")[1].split()[0])
-            elif name and line.startswith("  ") and not line.lstrip().startswith("…"):
-                found[name].append(":".join(line.strip().split(":", 2)[:2]))
+            elif name and (site := SITE.match(line)):
+                found[name].append(site.group(1))
                 assert len(found[name]) <= announced, f"{name}: more sites than announced"
         return found
 
@@ -269,6 +297,26 @@ def test_a_const_generic_parameter_is_not_a_definition(tree):
     widen(tree)
     tree.edit("src/lib.rs", "    const N: usize,", "    const N: usize = 4,")
     assert tree.names() == ["WIDTH"]
+
+
+def test_a_wide_name_does_not_bury_the_finding_beside_it(tree):
+    """E132: some real names are too generic to grep, and that cannot be fixed.
+
+    `N` is a constant here and a word in the prose; `git grep -w` answers with
+    both. In name order the 28 lines printed above `WIDTH`'s six — the `_` flood
+    again, with a name that is real. Narrowest first, and the count says what it
+    is where the list is cut, which is where a reader of a flood is looking.
+    """
+    widen(tree)
+    tree.edit("src/lib.rs", "pub const N: usize = 4;", "pub const N: usize = 5;")
+    report = tree.report()
+    assert list(report) == ["WIDTH", "N"]
+    assert tree.text.index("WIDTH  (redefined") < tree.text.index("N  (redefined")
+    # Announced in full, printed cut: a list nobody reaches the end of is the
+    # shape this file exists to keep the report out of.
+    assert "— 28 site(s) not in this change" in tree.text
+    assert len(report["N"]) == impact.MAX_SITES
+    assert "that count is `git grep -w N`" in tree.text
 
 
 def test_a_bracket_in_a_string_or_a_comment_does_not_end_a_definition(tree):
