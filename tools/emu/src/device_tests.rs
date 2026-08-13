@@ -486,6 +486,70 @@ fn a_cancel_from_another_channel_leaves_a_u2f_ceremony_alone() {
     shut_down(path, jobs, device);
 }
 
+/// `tests/15_u2f_vendor_msg_isolation.py`'s two APDUs: the SELECT that sets the
+/// sticky MSG selection, and the U2F VERSION that must not inherit it.
+fn select_vendor() -> Vec<u8> {
+    let mut apdu = vec![0x00, 0xA4, 0x04, 0x00, VENDOR_AID.len() as u8];
+    apdu.extend_from_slice(&VENDOR_AID);
+    apdu
+}
+const U2F_VERSION: [u8; 5] = [0x00, 0x03, 0x00, 0x00, 0x00];
+const U2F_V2_OK: &[u8] = b"U2F_V2\x90\x00";
+
+/// A U2F command on a channel that did not make the selection does not inherit
+/// it. The MSG applet selection is one global for every CTAPHID channel and U2F
+/// has no SELECT of its own, so another process's vendor-AID SELECT would send
+/// this one's REGISTER/AUTHENTICATE to `INS_INCREMENT`/`INS_GET` — audit run-34
+/// #27, which `firmware/src/worker.rs` closes with `last_msg_cid`. The emulator
+/// dropped the selection on `CTAPHID_INIT` only, which is the half
+/// `tests/15_u2f_vendor_msg_isolation.py` drives.
+#[test]
+fn a_u2f_command_on_another_channel_drops_the_selection() {
+    let (path, jobs, _signals, device) = bench("u2f-channel-select");
+
+    let sel = ask(
+        &jobs,
+        Job::Msg {
+            cid: CID,
+            data: select_vendor(),
+        },
+    );
+    assert_eq!(
+        sel[sel.len() - 2..],
+        SW_OK,
+        "the vendor AID selects over MSG"
+    );
+
+    // The control, and the board's own behaviour: the channel that made the
+    // selection keeps it, so U2F there really is routed to the vendor applet.
+    let held = ask(
+        &jobs,
+        Job::Msg {
+            cid: CID,
+            data: U2F_VERSION.to_vec(),
+        },
+    );
+    assert_ne!(
+        held, U2F_V2_OK,
+        "the selection did not stick — nothing to inherit"
+    );
+
+    let fresh = ask(
+        &jobs,
+        Job::Msg {
+            cid: OTHER_CID,
+            data: U2F_VERSION.to_vec(),
+        },
+    );
+    assert_eq!(
+        fresh, U2F_V2_OK,
+        "a second channel's U2F command was answered by the applet the first \
+         channel had selected"
+    );
+
+    shut_down(path, jobs, device);
+}
+
 /// Why `Job::Vendor` is deliberately *not* bracketed with `begin`/`end`: no
 /// vendor command is presence-gated, so there is no wait to own, and
 /// `rsk_usb::ctaphid::run_vendor` streams no keepalive and watches for no CANCEL

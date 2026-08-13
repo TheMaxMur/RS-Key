@@ -504,6 +504,11 @@ async fn serve<PR: rsk_device::UserPresence + 'static>(
 
     eprintln!("emu: device ready — serial {}", hex(&serial_id));
 
+    // Which channel the last CTAPHID_MSG came in on, as `firmware/src/worker.rs`
+    // keeps it: the MSG applet selection is one global for every channel, so a
+    // change of channel has to drop it (audit run-34 #27).
+    let mut last_msg_cid: Option<u32> = None;
+
     loop {
         let req = match jobs.try_next() {
             Ok(req) => req,
@@ -546,6 +551,13 @@ async fn serve<PR: rsk_device::UserPresence + 'static>(
                 Some(body)
             }
             Job::Msg { cid, data } => {
+                // U2F has no SELECT of its own, so without this another process's
+                // SELECT of the vendor AID sends this one's REGISTER to
+                // `INS_INCREMENT`. `Job::DeselectMsg` is the other half — the
+                // board's `MSG_DESELECT`, set by every CTAPHID_INIT.
+                if last_msg_cid.replace(cid) != Some(cid) {
+                    ctap.deselect_msg();
+                }
                 signals.begin(cid);
                 let body = ctap.handle_msg(&data, now_ms).to_vec();
                 signals.end();
@@ -617,6 +629,7 @@ async fn serve<PR: rsk_device::UserPresence + 'static>(
                     devk_source,
                 );
                 ccid.refresh_enabled();
+                last_msg_cid = None;
                 links.attach.set(Instant::now());
                 eprintln!("emu: replugged — fresh session, reset window open");
                 Some(Vec::new())
@@ -660,6 +673,7 @@ async fn serve<PR: rsk_device::UserPresence + 'static>(
                 devk_source,
             );
             ccid.refresh_enabled();
+            last_msg_cid = None;
             eprintln!("emu: warm reboot — RAM state dropped, the reset window stays shut");
         }
     }
