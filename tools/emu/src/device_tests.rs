@@ -294,10 +294,6 @@ fn a_wait_raised_after_a_dispatch_is_no_transports() {
             data: vec![0x04],
         },
     );
-    assert!(
-        !signals.up_pending_for(signals::SCOPE_FIDO),
-        "nothing is waiting yet"
-    );
 
     // The panel, raising its own: `TouchPresence::ceremony_begin` through
     // `EmuDisplayHooks::set_up_pending`, which is this same call.

@@ -218,10 +218,10 @@ serial — is recognisable as emulator-made.
   screen, the tabs and menus answer taps, and a host ceremony paints over them —
   the panel's loop and the host's share one executor exactly as they do on the
   board. The backlight is applied by scaling the pixels on their way to the
-  window, and the **space bar is the wake button**. One behaviour is deliberately
-  *not* the board's: `host_request_pending` is always false here, so a host
-  command never closes an open menu. On a device that is a host-starvation guard;
-  on a desk it would shut the operator's menu because a browser sent `getInfo`.
+  window, and the **space bar is the wake button**. An open menu hands the parked
+  worker its executor back when a host command lands, as a board's does — after
+  `UI_YIELD_FLOOR_MS`, which is what stops a browser looping `getInfo` from
+  shutting the operator's screen.
 - **The vendor AID's hardware arms**: the applet itself runs (`crates/rsk-vendor`
   — the counter, the U2F/SELECT routing, the warm reboot), but SET/GET LED, the
   second core's statistics, the measurement benches and the drop to BOOTSEL all

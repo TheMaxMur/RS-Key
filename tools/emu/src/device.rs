@@ -336,14 +336,13 @@ pub fn run(
     // is a *type*, not a value — so the split is here and everything below is
     // generic over it. With `--display` it is the trusted screen in a window,
     // driven by the same `rsk_display` flow the board runs.
-    let links = PanelLinks::default();
     if cfg.display {
-        let (parts, quit) =
-            crate::display::open(taps, jobs.queued(), signals.clone(), links.clone());
+        let (parts, quit) = crate::display::open(taps, jobs.queued(), signals.clone());
         let _ = quit;
-        serve_display(cfg, jobs, signals, fs, rng, parts, links);
+        serve_display(cfg, jobs, signals, fs, rng, parts);
     } else {
         let presence = RefCell::new(EmuPresence::new(cfg.presence, lines, signals.clone()));
+        let links = PanelLinks::default();
         crate::park::block_on(serve(cfg, jobs, signals, links, fs, rng, &presence));
     }
 }
@@ -363,12 +362,14 @@ pub fn serve_display<P, T>(
     fs: &'static RefCell<Fs<crate::store::EmuStore>>,
     rng: &'static RefCell<EmuRng>,
     parts: crate::display::PanelParts<P, T>,
-    links: PanelLinks,
 ) where
     P: embedded_graphics::draw_target::DrawTarget<Color = embedded_graphics::pixelcolor::Rgb565>
         + 'static,
     T: rsk_display::TouchPad + 'static,
 {
+    // Read off the hooks, not passed in beside them: the panel and the worker must
+    // hold one pair, and two that do not match fail nothing.
+    let links = parts.hooks.links();
     let ui = Box::leak(Box::new(RefCell::new(rsk_display::Ui::new(
         parts.panel,
         parts.touch,
@@ -494,8 +495,7 @@ async fn serve<PR: rsk_device::UserPresence + 'static>(
 
     // Time is measured from the USB *attach*, not from process start: the CTAP 2.1
     // §6.6 reset window a host has to hit runs from the moment the device could
-    // answer at all, so a replug has to restart it (`usb_attach::elapsed_ms`). The
-    // panel reads the same cell, so both stamp on one clock.
+    // answer at all, so a replug has to restart it (`usb_attach::elapsed_ms`).
     links.attach.set(Instant::now());
 
     eprintln!("emu: device ready — serial {}", hex(&serial_id));

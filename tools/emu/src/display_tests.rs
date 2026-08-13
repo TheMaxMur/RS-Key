@@ -549,7 +549,18 @@ fn panel_bench(
     let (jobs_tx, jobs_rx) = job_queue();
     let queued = jobs_rx.queued();
     let signals = Arc::new(Signals::default());
-    let links = PanelLinks::default();
+    let hooks = EmuDisplayHooks::new(
+        // The backlight and wake handles are the window's; a headless run simply
+        // does not share them with one.
+        Rc::new(Cell::new(rsk_display::BL_TOP)),
+        Rc::new(Cell::new(false)),
+        queued,
+        signals.clone(),
+    );
+    // The same handle `serve_display` reads off those hooks, so this bench watches
+    // the seam rather than a second copy of it.
+    let links = hooks.links();
+    let built = links.attach.get();
     // One slot, which is what makes the script self-pacing — see `push`.
     let (taps_tx, taps_rx) = mpsc::sync_channel(1);
     let driver = {
@@ -560,25 +571,22 @@ fn panel_bench(
     serve_display(
         cfg,
         jobs_rx,
-        signals.clone(),
+        signals,
         fs,
         rng,
         PanelParts {
             panel: NullPanel,
             touch: TapPad::new(taps_rx),
-            // The backlight and wake handles are the window's; a headless run
-            // simply does not share them with one.
-            hooks: EmuDisplayHooks::new(
-                Rc::new(Cell::new(rsk_display::BL_TOP)),
-                Rc::new(Cell::new(false)),
-                queued,
-                signals,
-                links.clone(),
-            ),
+            hooks,
         },
-        links.clone(),
     );
     driver.join().expect("the host thread");
+    // The worker stamps the attach clock once it is ready to answer — after the
+    // boot block, not when the panel was built.
+    assert!(
+        links.attach.get() > built,
+        "the worker never stamped the attach clock it shares with the panel"
+    );
     links
 }
 
@@ -623,19 +631,19 @@ fn drive_menu_yield(jobs: Jobs, taps: SyncSender<Tap>, _signals: Arc<Signals>) {
 
 #[test]
 fn a_wrong_clientpin_at_the_panel_ends_the_hosts_pin_token() {
-    let _ = panel_bench(drive);
+    panel_bench(drive);
 }
 
 #[test]
 fn an_open_menu_hands_the_executor_back_when_a_host_command_lands() {
-    let _ = panel_bench(drive_menu_yield);
+    panel_bench(drive_menu_yield);
 }
 
 /// How long the driver below spends before the replug, and how fresh the clock
 /// must read afterwards. The gap between them is what says the clock restarted
 /// rather than having been running all along.
 const PRE_REPLUG_MS: u64 = 600;
-const FRESH_CLOCK_MS: u128 = 250;
+const FRESH_CLOCK_MS: u64 = 250;
 
 /// Burn a measurable amount of the attach clock, then power-cycle.
 fn drive_replug(jobs: Jobs, _taps: SyncSender<Tap>, _signals: Arc<Signals>) {
@@ -656,7 +664,7 @@ fn a_replug_restarts_the_clock_the_panel_stamps_with() {
     let links = panel_bench(drive_replug);
     let since = links.attach.get().elapsed().as_millis();
     assert!(
-        since < FRESH_CLOCK_MS,
+        since < FRESH_CLOCK_MS as u128,
         "the attach clock reads {since} ms after a replug — it never restarted"
     );
 }
@@ -665,23 +673,22 @@ fn a_replug_restarts_the_clock_the_panel_stamps_with() {
 /// of `Hooks::attach_elapsed_ms` is that both sides read one clock.
 #[test]
 fn the_panel_reads_the_workers_attach_clock() {
-    let links = PanelLinks::default();
     let hooks = EmuDisplayHooks::new(
         Rc::new(Cell::new(rsk_display::BL_TOP)),
         Rc::new(Cell::new(false)),
         crate::device::Queued::default(),
         Arc::new(Signals::default()),
-        links.clone(),
     );
-    std::thread::sleep(Duration::from_millis(FRESH_CLOCK_MS as u64));
+    let links = hooks.links();
+    std::thread::sleep(Duration::from_millis(FRESH_CLOCK_MS));
     assert!(
-        rsk_display::Hooks::attach_elapsed_ms(&hooks) >= FRESH_CLOCK_MS as u64,
+        rsk_display::Hooks::attach_elapsed_ms(&hooks) >= FRESH_CLOCK_MS,
         "the panel's clock is not running"
     );
     // What `serve` does on `Job::Replug`.
     links.attach.set(Instant::now());
     assert!(
-        rsk_display::Hooks::attach_elapsed_ms(&hooks) < FRESH_CLOCK_MS as u64,
+        rsk_display::Hooks::attach_elapsed_ms(&hooks) < FRESH_CLOCK_MS,
         "the worker restarted the clock and the panel did not notice"
     );
 }
@@ -703,7 +710,6 @@ fn the_panel_generates_the_rsa_key_the_wire_can() {
         Rc::new(Cell::new(false)),
         crate::device::Queued::default(),
         Arc::new(Signals::default()),
-        PanelLinks::default(),
     );
     let mut rng = crate::rng::EmuRng::from_seed(&[0xa7; 32]);
     let mut ticks = 0usize;
@@ -713,12 +719,15 @@ fn the_panel_generates_the_rsa_key_the_wire_can() {
             .expect("the panel has a single-core path to fall through to, as the wire does");
 
     // The applet's own encoder taking the key is what says it is a usable one of
-    // the size asked for, without this test learning the `rsa` crate's API.
+    // the size asked for, without this test learning the `rsa` crate's API:
+    // `7F49 82 len`, then `81 82 len` and the modulus, then `82 len` and the
+    // exponent. Exact, so a wrong size is caught in either direction.
     let mut out = [0u8; 1024];
     let n = rsk_openpgp::keys::make_rsa_response(&key, &mut out);
-    assert!(
-        n > RSA_BITS / 8,
-        "the response carries no {RSA_BITS}-bit modulus ({n} bytes)"
+    let want = 5 + 4 + RSA_BITS / 8 + 2 + rsk_openpgp::keys::RSA_PUB_EXP_BE.len();
+    assert_eq!(
+        n, want,
+        "the response is not a {RSA_BITS}-bit modulus and a standard exponent"
     );
     assert!(
         ticks > 1,
@@ -787,7 +796,7 @@ fn drive_panel_presence(jobs: Jobs, taps: SyncSender<Tap>, signals: Arc<Signals>
 
 #[test]
 fn the_panels_presence_flags_are_the_transports() {
-    let _ = panel_bench(drive_panel_presence);
+    panel_bench(drive_panel_presence);
 }
 
 // --- the class, not the site -----------------------------------------------
@@ -813,6 +822,20 @@ fn methods_in(src: &str, header: &str) -> Vec<String> {
         .unwrap_or_else(|| panic!("{header:?} is not in that source any more"))
         .1;
     let body = body.split_once("\n}\n").expect("the block never closes").0;
+    // The scan reads `    fn ` and nothing else, so a method wearing an attribute
+    // or a modifier would be counted as present while compiling to nothing — a
+    // `#[cfg]`-ed hook is E150 all over again, silently.
+    for shape in [
+        "\n    #[",
+        "\n    async fn ",
+        "\n    unsafe fn ",
+        "\n    const fn ",
+    ] {
+        assert!(
+            !body.contains(shape),
+            "{shape:?} in {header:?} is not a shape this scan can read"
+        );
+    }
     body.lines()
         .filter_map(|l| l.strip_prefix("    fn "))
         .filter_map(|l| l.split(['(', '<']).next())
@@ -832,16 +855,21 @@ fn every_display_hook_is_accounted_for() {
     );
     // A scan that quietly matched nothing would pass this test for ever, which is
     // the shape of guard this repo keeps finding broken.
+    // Anchored at both ends: a block cut short in the middle still satisfies a
+    // count and one name, and it would quietly stop demanding the hooks past the cut.
     assert!(
-        declared.len() > 10 && declared.contains(&"cancel_requested".to_owned()),
-        "the trait scan found {declared:?} — it is reading the wrong block"
+        declared.len() > 10
+            && declared.first().is_some_and(|f| f == "set_backlight")
+            && declared.last().is_some_and(|l| l == "rsa_search_progress"),
+        "the trait scan found {declared:?} — it is reading the wrong block, or part of one"
     );
     assert!(
         answered.len() > 10,
         "the impl scan found {answered:?} — it is reading the wrong block"
     );
 
-    for (name, _) in DEFAULTED_HOOKS {
+    for (name, why) in DEFAULTED_HOOKS {
+        assert!(!why.is_empty(), "{name:?} is exempted with no reason given");
         assert!(
             declared.iter().any(|d| d == name),
             "{name:?} is exempted but is not a hook — a stale exemption hides the \

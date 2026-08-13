@@ -203,16 +203,12 @@ impl rsk_display::TouchPad for Touch {
 }
 
 /// Every [`rsk_display::Hooks`] method this build leaves at the trait's default,
-/// and why it is the right answer here rather than an oversight.
+/// and why that is the right answer here rather than an oversight.
 ///
-/// The trait's defaults are exact no-ops so a board implements only what it has —
-/// which also means a method nobody implements diverges from the firmware
-/// **silently**. Four findings (E150–E153) were that one shape: `up_pending`, the
-/// cancel, the host-request yield and the RSA search each answered a default the
-/// board answers with real state, and nothing failed. So every method is now
-/// accounted for one way or the other, and `every_display_hook_is_accounted_for`
-/// refuses a trait method that is in neither column. That test is its only
-/// reader, so it is gated to one.
+/// The trait's defaults are exact no-ops, so a method nobody implements diverges
+/// from `firmware/src/display.rs` in silence — which is what E150–E153 each were.
+/// `every_display_hook_is_accounted_for` refuses a hook in neither column; it is
+/// this list's only reader, so the list is gated to a test build.
 #[cfg(test)]
 const DEFAULTED_HOOKS: &[(&str, &str)] = &[(
     "secure_boot_enabled",
@@ -253,7 +249,6 @@ impl EmuDisplayHooks {
         wake: Rc<Cell<bool>>,
         queued: Queued,
         signals: Arc<Signals>,
-        links: PanelLinks,
     ) -> Self {
         Self {
             duty,
@@ -261,10 +256,18 @@ impl EmuDisplayHooks {
             led: Cell::default(),
             timeout_ms: Cell::new(30_000),
             reboot: Cell::new(false),
-            links,
+            links: PanelLinks::default(),
             queued,
             signals,
         }
+    }
+
+    /// The two cells the worker half shares with the panel. Read from here rather
+    /// than passed in beside the panel, so the two ends cannot be handed different
+    /// ones — a pair that does not match is the defect this seam exists to prevent,
+    /// and it fails nothing.
+    pub fn links(&self) -> PanelLinks {
+        self.links.clone()
     }
 }
 
@@ -338,8 +341,11 @@ impl rsk_display::Hooks for EmuDisplayHooks {
     /// There is no accelerator here, but this trait's `None` means "no accelerator
     /// **and** no key" — where `rsk_device::Hooks::rsa_search`'s `None` means "fall
     /// through to the applet's own single-core path", which is why a generate over
-    /// the wire works on this build. Run that same path, one candidate per tick so
-    /// the on-screen spinner keeps moving.
+    /// the wire works on this build. Run that same path, one candidate per tick.
+    ///
+    /// The spinner those ticks paint does NOT reach the window: `Touch::present` is
+    /// only called from `TouchPad::read`, and this span never reads. A board writes
+    /// the panel directly, so there the arc really turns.
     fn rsa_search_progress(
         &mut self,
         nbits: usize,
@@ -348,14 +354,18 @@ impl rsk_display::Hooks for EmuDisplayHooks {
     ) -> Option<Box<rsk_openpgp::keys::RsaPrivateKey>> {
         let mut keygen = rsk_openpgp::keys::RsaKeygen::new(nbits);
         let mut sieve = rsk_rsa_asm::IncrementalSieve::new();
-        loop {
+        let found = loop {
             on_tick();
             match keygen.step(&mut sieve, rng) {
-                rsk_openpgp::keys::RsaStep::Done(key) => return Some(key),
-                rsk_openpgp::keys::RsaStep::Failed => return None,
+                rsk_openpgp::keys::RsaStep::Done(key) => break Some(key),
+                rsk_openpgp::keys::RsaStep::Failed => break None,
                 rsk_openpgp::keys::RsaStep::More => {}
             }
-        }
+        };
+        // The window still holds the last accepted candidate — a prime of the key
+        // just minted. `firmware/src/core1.rs` scrubs its own for the same reason.
+        sieve.scrub();
+        found
     }
 }
 
@@ -375,7 +385,6 @@ pub fn open(
     taps: Option<TapPad>,
     queued: Queued,
     signals: Arc<Signals>,
-    links: PanelLinks,
 ) -> (PanelParts<Panel, Touch>, Rc<Cell<bool>>) {
     let panel = Panel::new();
     let quit = Rc::new(Cell::new(false));
@@ -392,7 +401,7 @@ pub fn open(
         PanelParts {
             panel,
             touch,
-            hooks: EmuDisplayHooks::new(duty, wake, queued, signals, links),
+            hooks: EmuDisplayHooks::new(duty, wake, queued, signals),
         },
         quit,
     )
