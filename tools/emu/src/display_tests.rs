@@ -1,17 +1,21 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 RS-Key contributors
 
-//! The panel's PIN signal, end to end: a wrong clientPIN typed on the trusted
-//! display's own pad must end the `pinUvAuthToken` the host is holding (CTAP 2.1
-//! §6.5.5.6 — the pad's current-PIN prompt is `changePIN`'s old-PIN check, and
-//! over USB that check drops the token).
+//! What the panel shares with the rest of the device: the PIN event the worker
+//! consumes, the presence flags the transports read, the executor an open screen
+//! owes a queued command, the attach clock both stamp on, and the RSA search the
+//! flow asks the board for.
 //!
-//! `crates/rsk-display/src/gates_tests.rs` pins the *signal* against a test
-//! double; what is pinned here is the other half — that it reaches the worker and
-//! the token really stops authorizing. So this runs `serve_display`'s own wiring,
-//! the real `rsk_display` flow over a scripted finger and real CBOR on the real
+//! `crates/rsk-display/src/*_tests.rs` pin the flow itself against test doubles;
+//! what is pinned here is the seam under it — that each of those really reaches
+//! the other side. So these run `serve_display`'s own wiring, the real
+//! `rsk_display` flow over a scripted finger and real CBOR on the real
 //! `AppletHandler`; the panel is a sink instead of an SDL window and the finger a
 //! script instead of a mouse, which is what the wiring is generic over.
+//!
+//! The last test is about the class rather than one seam: every hook is answered
+//! or declared unanswered, because a hook nobody implements diverges from the
+//! board in silence.
 
 use std::convert::Infallible;
 use std::sync::Arc;
@@ -784,4 +788,76 @@ fn drive_panel_presence(jobs: Jobs, taps: SyncSender<Tap>, signals: Arc<Signals>
 #[test]
 fn the_panels_presence_flags_are_the_transports() {
     let _ = panel_bench(drive_panel_presence);
+}
+
+// --- the class, not the site -----------------------------------------------
+
+/// `rsk_display`'s source, for the trait's own method list. `tools/emu` is a
+/// detached workspace with no way to reflect over a trait, and the alternative —
+/// nothing — is what let four of these through.
+const HOOKS_TRAIT_SRC: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../crates/rsk-display/src/lib.rs"
+));
+/// This module's own source, for what [`EmuDisplayHooks`] answers.
+const EMU_HOOKS_SRC: &str = include_str!("display.rs");
+
+/// The `fn` names declared directly inside the `{ … }` that follows `header`.
+///
+/// Both blocks are rustfmt'd, so a method opens at exactly one level of
+/// indentation and the block closes at column 0 — which is what makes this a
+/// two-line scan rather than a parser.
+fn methods_in(src: &str, header: &str) -> Vec<String> {
+    let body = src
+        .split_once(header)
+        .unwrap_or_else(|| panic!("{header:?} is not in that source any more"))
+        .1;
+    let body = body.split_once("\n}\n").expect("the block never closes").0;
+    body.lines()
+        .filter_map(|l| l.strip_prefix("    fn "))
+        .filter_map(|l| l.split(['(', '<']).next())
+        .map(str::to_owned)
+        .collect()
+}
+
+/// Every hook the trait declares is either answered here or in [`DEFAULTED_HOOKS`]
+/// with a reason — the class behind E150, E151, E152 and E153, each of which was a
+/// method nobody implemented quietly taking a default the board does not.
+#[test]
+fn every_display_hook_is_accounted_for() {
+    let declared = methods_in(HOOKS_TRAIT_SRC, "pub trait Hooks {");
+    let answered = methods_in(
+        EMU_HOOKS_SRC,
+        "impl rsk_display::Hooks for EmuDisplayHooks {",
+    );
+    // A scan that quietly matched nothing would pass this test for ever, which is
+    // the shape of guard this repo keeps finding broken.
+    assert!(
+        declared.len() > 10 && declared.contains(&"cancel_requested".to_owned()),
+        "the trait scan found {declared:?} — it is reading the wrong block"
+    );
+    assert!(
+        answered.len() > 10,
+        "the impl scan found {answered:?} — it is reading the wrong block"
+    );
+
+    for (name, _) in DEFAULTED_HOOKS {
+        assert!(
+            declared.iter().any(|d| d == name),
+            "{name:?} is exempted but is not a hook — a stale exemption hides the \
+             next one"
+        );
+        assert!(
+            !answered.iter().any(|a| a == name),
+            "{name:?} is both answered and exempted"
+        );
+    }
+    for hook in &declared {
+        assert!(
+            answered.contains(hook) || DEFAULTED_HOOKS.iter().any(|(n, _)| n == hook),
+            "`{hook}` is neither implemented nor in DEFAULTED_HOOKS. The trait's \
+             default is an exact no-op, so leaving it is a silent divergence from \
+             `firmware/src/display.rs` — decide which it is and say so there."
+        );
+    }
 }

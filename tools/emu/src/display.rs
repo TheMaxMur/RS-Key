@@ -202,6 +202,24 @@ impl rsk_display::TouchPad for Touch {
     }
 }
 
+/// Every [`rsk_display::Hooks`] method this build leaves at the trait's default,
+/// and why it is the right answer here rather than an oversight.
+///
+/// The trait's defaults are exact no-ops so a board implements only what it has —
+/// which also means a method nobody implements diverges from the firmware
+/// **silently**. Four findings (E150–E153) were that one shape: `up_pending`, the
+/// cancel, the host-request yield and the RSA search each answered a default the
+/// board answers with real state, and nothing failed. So every method is now
+/// accounted for one way or the other, and `every_display_hook_is_accounted_for`
+/// refuses a trait method that is in neither column. That test is its only
+/// reader, so it is gated to one.
+#[cfg(test)]
+const DEFAULTED_HOOKS: &[(&str, &str)] = &[(
+    "secure_boot_enabled",
+    "read from OTP; there are no fuses here, and `false` is what a device without \
+     secure boot reports",
+)];
+
 /// The board verbs, for a board that is a window.
 ///
 /// Most are honest no-ops: there is no backlight to dim, no wake button, no OTP
