@@ -64,7 +64,10 @@ CONSTANTS
     BugPanelCancelable,           \* the panel's half of request_cancel's scope test
     BugUnscopedOtpCancel,         \* crates/rsk-device/src/presence.rs:125
     BugLocalPinKeepsToken,        \* crates/rsk-display/src/gates.rs:146
-    BugSetPinOverExisting         \* clientpin.rs:184-186 setPIN over a live PIN
+    BugSetPinOverExisting,        \* clientpin.rs:184-186 setPIN over a live PIN
+    BugHostPreemptsLocalWait,     \* the button's owner, taken by a host command
+    BugLocalPinIgnoresBudget,     \* crates/rsk-display/src/gates.rs:126-128
+    BugPpuatIsAGate               \* eab4b5c: EF_PAUTHTOKEN in the deferred phase
 
 (* Mutation switches for the LIVENESS properties. Kept apart from the set above *)
 (* because they break no invariant -- a wedge is a perfectly safe state -- so    *)
@@ -255,6 +258,23 @@ KeepSurv(sn, reach) == IF reach THEN sn
 
 Idle == op.kind = "none"
 WaitOpen == pres.scope # NoOwner /\ pres.granted = "none"
+
+\* ONE BUTTON, ONE CEREMONY: a host command may not open a wait over one that is
+\* already running. The worker is synchronous and the panel yields to a queued
+\* host command only outside a hold (crates/rsk-display/src/lib.rs:190-196), so
+\* the firmware never reassigns WAIT_SCOPE out from under a live ceremony.
+\*
+\* This was an enabling conjunct on all three *Start actions and nothing more,
+\* which is the family that hid the presence gate over 9 658 460 states: a step
+\* that is merely never ENABLED cannot notice a build that stopped refusing.
+\* Removing it let a host command take the button from a live on-panel ceremony
+\* and left the reachable space BIT-IDENTICAL at 79 985 500 -- zero new states,
+\* because OpenWaitFor overwrites scope, cancelReq, cancelBy and granted, so
+\* nothing was left to record who owned the wait first. That is E45's ruling
+\* having nothing to be true of, one layer up from the cancel.
+ButtonFreeGuard  == IF BugHostPreemptsLocalWait THEN TRUE
+                                                ELSE pres.scope = NoOwner
+ButtonFreePolicy == pres.scope = NoOwner
 
 \* ButtonWait::wait entry: crates/rsk-device/src/presence.rs:192-193 drops a
 \* cancel left over from an already-finished request, so each wait starts clean.
@@ -577,7 +597,16 @@ MintPpuat ==
 \* PinAttempt: the pad neither consults `lock.soft` nor arms it, and the
 \* persistent 8-try counter is the whole gate. A host-soft-locked device still
 \* takes PIN entry at the pad, which is the documented recovery.
-LocalPinEnabled == Idle /\ pin.set /\ pin.retries > 0
+\* The budget test is the gate, and the model's own comment called it "the real
+\* gate" while nothing could see it move: deleting it left the reachable space
+\* BIT-IDENTICAL at 79 985 500 states. `spend_and_verify_pin_at` refuses at zero
+\* before any compare and a correct PIN at zero must not refill
+\* (crates/rsk-fido/src/clientpin.rs:1053-1055), which is the same shape
+\* PinAttemptEnabled / PinAttemptPolicy carry for the wire path.
+LocalPinGuard  == IF BugLocalPinIgnoresBudget THEN pin.set
+                                              ELSE pin.set /\ pin.retries > 0
+LocalPinPolicy == pin.set /\ pin.retries > 0
+LocalPinEnabled == Idle /\ LocalPinGuard
 
 \* E66. A clientPIN refused at the pad is changePIN's failed old-PIN check
 \* performed locally, and over USB that check ends the host's outstanding
@@ -595,7 +624,10 @@ LocalPinEnabled == Idle /\ pin.set /\ pin.retries > 0
 \* it is a CBOR command and the flag is spent before the dispatch runs.
 LocalPinWrong ==
     /\ LocalPinEnabled
-    /\ pin'  = [pin EXCEPT !.retries = pin.retries - 1]
+    /\ viol' = IF LocalPinPolicy THEN viol
+                                 ELSE viol \cup {"NoAuthorizationBypass"}
+    /\ pin'  = [pin EXCEPT !.retries = IF pin.retries > 0
+                                         THEN pin.retries - 1 ELSE 0]
     /\ tok'  = IF BugLocalPinKeepsToken
                  THEN tok ELSE [live |-> FALSE, perms |-> {}, rp |-> NoRp]
     /\ plat' = [plat EXCEPT !.verifies = IF BugLocalPinKeepsToken
@@ -603,8 +635,7 @@ LocalPinWrong ==
                             !.revoked = TRUE]
     /\ walk' = IF BugLocalPinKeepsToken THEN walk
                                         ELSE [open |-> FALSE, chan |-> NoChan]
-    /\ UNCHANGED << gate, store, lock, pres, sys, op, snap, upSpent, viol,
-                    ram >>
+    /\ UNCHANGED << gate, store, lock, pres, sys, op, snap, upSpent, ram >>
 
 \* A correct PIN at the pad refills the persistent budget
 \* (crates/rsk-fido/src/clientpin.rs:1019-1026) and grants NOTHING host-visible:
@@ -612,9 +643,11 @@ LocalPinWrong ==
 \* armed, which fails closed -- the host stays blocked until a replug.
 LocalPinOk ==
     /\ LocalPinEnabled
+    /\ viol' = IF LocalPinPolicy THEN viol
+                                 ELSE viol \cup {"NoAuthorizationBypass"}
     /\ pin' = [pin EXCEPT !.retries = MaxRetries]
     /\ UNCHANGED << gate, store, lock, tok, plat, pres, walk, sys, op, snap,
-                    upSpent, viol, ram >>
+                    upSpent, ram >>
 
 (***************************************************************************)
 (* setPIN / changePIN -- multi-write, so a power cut has a position.        *)
@@ -725,7 +758,7 @@ StopUsingToken ==
 \* makecredential.rs:452-460. Needs PERM_MC and a touch.
 RegisterStart(r, t) ==
     /\ Idle
-    /\ pres.scope = NoOwner
+    /\ ButtonFreeGuard
     \* Every credential box is derived from the seed, so a registration without
     \* one cannot complete either. It was only ever AssertStart's conjunct, which
     \* let `store.cred` -- "the records that still open" -- hold a record with no
@@ -733,7 +766,8 @@ RegisterStart(r, t) ==
     /\ SeedReachable
     /\ ~(gate.alwaysUv /\ ~pin.set)          \* alwaysUv with no PIN fails closed
     /\ OpGuard("mc", r)
-    /\ viol' = IF OpPolicy("mc", r) THEN viol ELSE viol \cup TokenBypass
+    /\ viol' = (IF OpPolicy("mc", r) THEN viol ELSE viol \cup TokenBypass)
+         \cup (IF ButtonFreePolicy THEN {} ELSE {"NoAuthorizationBypass"})
     /\ pres' = OpenWaitFor(t)
     /\ op' = [kind |-> "register", t |-> t, rp |-> r, step |-> 0]
     /\ UNCHANGED << pin, gate, store, lock, tok, plat, walk, sys, snap,
@@ -793,12 +827,13 @@ RegisterWriteB ==
 \* getassertion.rs:382-390. Needs PERM_GA, the rpId binding, and a touch.
 AssertStart(r, t) ==
     /\ Idle
-    /\ pres.scope = NoOwner
+    /\ ButtonFreeGuard
     /\ r \in store.cred
     /\ SeedReachable                         \* a credential without the seed is dead
     /\ ~(gate.alwaysUv /\ ~pin.set)
     /\ OpGuard("ga", r)
-    /\ viol' = IF OpPolicy("ga", r) THEN viol ELSE viol \cup TokenBypass
+    /\ viol' = (IF OpPolicy("ga", r) THEN viol ELSE viol \cup TokenBypass)
+         \cup (IF ButtonFreePolicy THEN {} ELSE {"NoAuthorizationBypass"})
     /\ pres' = OpenWaitFor(t)
     /\ op' = [kind |-> "assert", t |-> t, rp |-> r, step |-> 0]
     /\ UNCHANGED << pin, gate, store, lock, tok, plat, walk, sys, snap,
@@ -995,9 +1030,9 @@ InResetWindowPolicy == ~sys.warmBoot /\ sys.clock <= ResetWindow
 
 ResetStart ==
     /\ Idle
-    /\ pres.scope = NoOwner
+    /\ ButtonFreeGuard
     /\ InResetWindowGuard
-    /\ viol' = IF InResetWindowPolicy
+    /\ viol' = IF InResetWindowPolicy /\ ButtonFreePolicy
                  THEN viol
                  ELSE viol \cup {"NoAuthorizationBypass"}
     /\ pres' = OpenWaitFor(Fido)
@@ -1072,8 +1107,20 @@ ResetConfirmed ==
 SealedIsAGate == ~BugBackupSealedNotAGate /\ gate.backupSealed
 SealedIsASecret == BugBackupSealedNotAGate /\ gate.backupSealed
 
+\* EF_PAUTHTOKEN is a SECRET, not a gate (eab4b5c). `is_fido_gate_fid`'s own rule
+\* is "records whose ABSENCE is permissive", and a grant is a permission, so its
+\* absence is restrictive -- it was the one member that never met the rule, and
+\* it sat there from cd87e8c until E82 read the predicate rather than the order.
+\* BugPpuatIsAGate is that tree. It matters because phase 2 cannot start until
+\* phase 1 is EMPTY, so with the grant in phase 1 the torn state is unreachable
+\* rather than merely refused at the consumer -- which is what the structural
+\* clause on NoAccessibleSecretWithoutGate can now say.
+PpuatIsAGate   == BugPpuatIsAGate /\ gate.ppuat
+PpuatIsASecret == ~BugPpuatIsAGate /\ gate.ppuat
+
 SecretsLive == store.seed \/ store.cred # {} \/ store.rpent # {} \/ SealedIsASecret
-GatesLive   == pin.set \/ gate.alwaysUv \/ gate.ppuat \/ SealedIsAGate
+               \/ PpuatIsASecret
+GatesLive   == pin.set \/ gate.alwaysUv \/ PpuatIsAGate \/ SealedIsAGate
 
 \* reset.rs:61-65 -- the seed goes in its own force_delete AHEAD of the batch, so
 \* nothing the sweep leaves behind still opens. Modelled as an ordering rule over
@@ -1115,6 +1162,11 @@ ResetSweepSecrets ==
                     /\ SeedLeadsTheWipe => ~store.seed
                     /\ gate' = [gate EXCEPT !.backupSealed = FALSE]
                     /\ UNCHANGED << store, snap >>
+                 \/ /\ PpuatIsASecret
+                    /\ SeedLeadsTheWipe => ~store.seed
+                    /\ gate' = [gate EXCEPT !.ppuat = FALSE,
+                                            !.ppuatStale = FALSE]
+                    /\ UNCHANGED << store, snap >>
               /\ UNCHANGED op
          ELSE /\ op' = [op EXCEPT !.step = IF BugResetGatesFirst THEN 3 ELSE 2]
               /\ UNCHANGED << store, snap, gate >>
@@ -1139,9 +1191,9 @@ ResetSweepGates ==
                               /\ UNCHANGED gate)
                  \/ (gate.alwaysUv /\ gate' = [gate EXCEPT !.alwaysUv = FALSE]
                                     /\ UNCHANGED pin)
-                 \/ (gate.ppuat /\ gate' = [gate EXCEPT !.ppuat = FALSE,
-                                                        !.ppuatStale = FALSE]
-                                 /\ UNCHANGED pin)
+                 \/ (PpuatIsAGate /\ gate' = [gate EXCEPT !.ppuat = FALSE,
+                                                         !.ppuatStale = FALSE]
+                                  /\ UNCHANGED pin)
                  \/ (SealedIsAGate /\ gate' = [gate EXCEPT !.backupSealed = FALSE]
                                     /\ UNCHANGED pin)
               /\ UNCHANGED op
@@ -1435,6 +1487,15 @@ NoTokenAfterInvalidation ==
 NoAccessibleSecretWithoutGate ==
     /\ "NoAccessibleSecretWithoutGate" \notin viol
     /\ Idle => ((store.cred # {} /\ SeedReachable /\ pin.everSet) => pin.set)
+    \* AND THE STRUCTURAL FORM, which this invariant could not carry until
+    \* eab4b5c: no stranded grant record may EXIST, not merely be refused. It was
+    \* a strictly stronger claim than the fix under consideration while
+    \* FixPpuatRequiresPin was the only defence -- that fix refuses the record and
+    \* leaves it stranded, so the clause would have called the accepted fix a
+    \* defect. With the grant swept in phase 1 the state is unreachable, because
+    \* phase 2 provably cannot start until phase 1 is empty, and unreachable is
+    \* the claim worth making. BugPpuatIsAGate is the tree that cannot make it.
+    /\ Idle => (gate.ppuat => pin.set)
 
 \* Every live credential is reachable by the management surface: enumerateRPs
 \* and the trusted-display Passkeys view both walk EF_RP, so a credential

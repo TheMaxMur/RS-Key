@@ -51,7 +51,16 @@ CONSTANTS
     BugFailedChangeKeepsStatus,
     \* crates/rsk-piv/src/auth.rs:114-118 -- the PIN-policy-ALWAYS slot spends
     \* its freshness, so one VERIFY authorises one key operation.
-    BugPinFreshNotSpent
+    BugPinFreshNotSpent,
+    \* The same shape one applet over: crates/rsk-openpgp/src/keys.rs:977-981,
+    \* `inc_sig_count` clearing has_pw1 under the one-shot PW status.
+    BugSigPinNotSpent,
+    \* A user status opening the ADMIN surface -- the reverse of
+    \* BugAdminOpensKeyOps, and unfalsifiable until the surface existed.
+    BugUserStatusOpensAdmin,
+    \* A refused OATH access-code VALIDATE that GRANTS the unlock. The refusal
+    \* rule exempts that action entirely, so nothing could tell the two apart.
+    BugRefusedValidateGrants
 
 \* The three CCID applets that carry an in-RAM security status. `NoApplet` is
 \* `Dispatcher::current = None` (crates/rsk-sdk/src/applet.rs:145): nothing
@@ -73,7 +82,7 @@ RefOwner(r) ==
     ELSE IF r \in {"pw1", "pw2", "pw3"} THEN Pgp
     ELSE Oath
 
-InvNames == { "NoKeyOpOnTheAdminStatus",
+InvNames == { "NoKeyOpOnTheAdminStatus", "NoStatusAfterARefusedAuth",
               "ReselectPreservesAccessStatus" }
 
 VARIABLES
@@ -88,6 +97,14 @@ VARIABLES
     \* a code-less applet is unlocked by design and only a provisioned one has a
     \* status a SELECT can take away.
     oathCodeSet,
+    \* Whether PW1 is the one-shot kind: EF_PW_PRIV[0] = 0 makes PW1.81 valid for
+    \* exactly one PSO:CDS (crates/rsk-openpgp/src/keys.rs:977-981), which is
+    \* `pin_fresh` on the other applet. Host-writable through PUT DATA C4.
+    oneShotSig,
+    \* Ghost: the PW1.81 freshness the requirement leaves behind, spent by every
+    \* signature while the one-shot status is set. Its `held` twin may be left
+    \* standing by a Bug* switch; this may not.
+    psig,
     \* Ghost: the freshness the REQUIREMENT leaves behind, always spent by a key
     \* operation. `fresh` is what the Rust holds and a Bug* switch may stop
     \* spending; this is what it should have been, and the two are equal in every
@@ -101,7 +118,8 @@ VARIABLES
     refused,
     viol    \* ghost: the set of invariant names some step has violated
 
-vars == << sel, held, fresh, pfresh, oathCodeSet, refused, viol >>
+vars == << sel, held, fresh, pfresh, oneShotSig, psig, oathCodeSet,
+           refused, viol >>
 
 NoRef == "noref"
 
@@ -110,6 +128,8 @@ TypeOK ==
     /\ held  \in [Refs -> BOOLEAN]
     /\ fresh \in BOOLEAN
     /\ pfresh \in BOOLEAN
+    /\ oneShotSig \in BOOLEAN
+    /\ psig \in BOOLEAN
     /\ oathCodeSet \in BOOLEAN
     /\ refused \in Refs \cup {NoRef}
     /\ viol  \in SUBSET InvNames
@@ -121,6 +141,8 @@ Init ==
     /\ held  = [r \in Refs |-> r = "oathCode"]
     /\ fresh = FALSE
     /\ pfresh = FALSE
+    /\ oneShotSig = FALSE
+    /\ psig = FALSE
     /\ oathCodeSet = FALSE
     /\ refused = NoRef
     /\ viol  = {}
@@ -160,7 +182,7 @@ Reselect(a) ==
     \* with everything standing; OATH is the recorded exception.
     /\ viol' = IF a = Oath \/ held' = held
                  THEN viol ELSE viol \cup {"ReselectPreservesAccessStatus"}
-    /\ UNCHANGED << sel, oathCodeSet, refused >>
+    /\ UNCHANGED << sel, oneShotSig, psig, oathCodeSet, refused >>
 
 \* A SELECT of a different AID: `applets[c].deselect(ctx)` runs on the applet
 \* that was current, THEN `current` moves. The new applet's own select clears
@@ -184,7 +206,7 @@ SelectOther(a) ==
     /\ fresh' = (held'["pivPin"] /\ fresh)
     /\ pfresh' = (held'["pivPin"] /\ pfresh)
     /\ sel' = a
-    /\ UNCHANGED << oathCodeSet, refused, viol >>
+    /\ UNCHANGED << oneShotSig, psig, oathCodeSet, refused, viol >>
 
 (***************************************************************************)
 (* Authentication. One shape per applet, because the applets genuinely      *)
@@ -201,7 +223,7 @@ PivVerify(ok) ==
     /\ pfresh' = ok
     /\ refused' = IF ok THEN (IF refused = "pivPin" THEN NoRef ELSE refused)
                         ELSE "pivPin"
-    /\ UNCHANGED << sel, oathCodeSet, viol >>
+    /\ UNCHANGED << sel, oneShotSig, psig, oathCodeSet, viol >>
 
 \* PIV CHANGE REFERENCE DATA / RESET RETRY COUNTER take no `&mut Session` at all
 \* (crates/rsk-piv/src/lib.rs:494-518), so a refused change costs the standing
@@ -221,8 +243,9 @@ PgpVerify(r, ok) ==
     /\ sel = Pgp
     /\ r \in {"pw1", "pw2", "pw3"}
     /\ held' = [held EXCEPT ![r] = ok]
+    /\ psig' = IF r = "pw1" THEN ok ELSE psig
     /\ refused' = IF ok THEN (IF refused = r THEN NoRef ELSE refused) ELSE r
-    /\ UNCHANGED << sel, fresh, pfresh, oathCodeSet, viol >>
+    /\ UNCHANGED << sel, fresh, pfresh, oneShotSig, oathCodeSet, viol >>
 
 \* A refused CHANGE clears the addressed reference too -- the same writer
 \* (crates/rsk-openpgp/src/pin.rs:229-231), which is where OpenPGP and PIV part
@@ -231,8 +254,9 @@ PgpChangeRefused(r) ==
     /\ sel = Pgp
     /\ r \in {"pw1", "pw2", "pw3"}
     /\ held' = [held EXCEPT ![r] = FALSE]
+    /\ psig' = IF r = "pw1" THEN FALSE ELSE psig
     /\ refused' = r
-    /\ UNCHANGED << sel, fresh, pfresh, oathCodeSet, viol >>
+    /\ UNCHANGED << sel, fresh, pfresh, oneShotSig, oathCodeSet, viol >>
 
 \* OATH VERIFY PIN (crates/rsk-oath/src/lib.rs:1172-1187) clears BOTH flags at
 \* entry and re-sets them only on success: `validated` is reachable THROUGH the
@@ -244,7 +268,7 @@ OathVerifyOtpPin(ok) ==
                             !["oathCode"] = ok \/ ~oathCodeSet]
     /\ refused' = IF ok THEN (IF refused = "oathOtpPin" THEN NoRef ELSE refused)
                         ELSE "oathOtpPin"
-    /\ UNCHANGED << sel, fresh, pfresh, oathCodeSet, viol >>
+    /\ UNCHANGED << sel, fresh, pfresh, oneShotSig, psig, oathCodeSet, viol >>
 
 \* aa47867: a refused CHANGE of the OTP PIN drops the standing authentication,
 \* both halves (crates/rsk-oath/src/lib.rs:1148-1149). Before it, `0xB2` VERIFY
@@ -258,7 +282,7 @@ OathChangeRefused ==
                  ELSE [held EXCEPT !["oathOtpPin"] = FALSE,
                                    !["oathCode"] = ~oathCodeSet]
     /\ refused' = "oathOtpPin"
-    /\ UNCHANGED << sel, fresh, pfresh, oathCodeSet, viol >>
+    /\ UNCHANGED << sel, fresh, pfresh, oneShotSig, psig, oathCodeSet, viol >>
 
 \* The access code is a MAC challenge-response with NO retry counter, so a wrong
 \* answer costs nothing and keeps the standing unlock
@@ -266,9 +290,19 @@ OathChangeRefused ==
 \* genuinely locked applet. Two failed-auth rules inside one applet, and this is
 \* the second: it must NOT write `refused`, because nothing was refused that had
 \* a budget to protect.
+\* It must not GRANT, either, and that needed saying: exempting the action from
+\* the refusal rule exempted it from everything, so a mutant that turned a
+\* refused VALIDATE into a successful one was invisible -- `refused` provably
+\* never takes the value "oathCode", so the ghost clause cannot reach that
+\* reference at all. This is the Guard/Policy pair that can.
 OathValidateRefused ==
     /\ sel = Oath
-    /\ UNCHANGED vars
+    /\ held' = IF BugRefusedValidateGrants
+                 THEN [held EXCEPT !["oathCode"] = TRUE] ELSE held
+    /\ viol' = IF held'["oathCode"] = held["oathCode"]
+                 THEN viol ELSE viol \cup {"NoStatusAfterARefusedAuth"}
+    /\ UNCHANGED << sel, fresh, pfresh, oneShotSig, psig, oathCodeSet,
+                    refused >>
 
 \* SET CODE provisions the access code and re-locks
 \* (crates/rsk-oath/src/lib.rs:405-410).
@@ -277,12 +311,12 @@ OathSetCode ==
     /\ ~oathCodeSet
     /\ oathCodeSet' = TRUE
     /\ held' = [held EXCEPT !["oathCode"] = FALSE, !["oathOtpPin"] = FALSE]
-    /\ UNCHANGED << sel, fresh, pfresh, refused, viol >>
+    /\ UNCHANGED << sel, fresh, pfresh, oneShotSig, psig, refused, viol >>
 
 OathValidateOk ==
     /\ sel = Oath
     /\ held' = [held EXCEPT !["oathCode"] = TRUE]
-    /\ UNCHANGED << sel, fresh, pfresh, oathCodeSet, refused, viol >>
+    /\ UNCHANGED << sel, fresh, pfresh, oneShotSig, psig, oathCodeSet, refused, viol >>
 
 \* PIV's 9B mutual authenticate. Its own status, and it authorises the admin
 \* surface only -- never a key operation, which is what `pin_satisfied`
@@ -292,7 +326,7 @@ PivMgmAuth(ok) ==
     /\ held' = [held EXCEPT !["pivMgm"] = ok]
     /\ refused' = IF ok THEN (IF refused = "pivMgm" THEN NoRef ELSE refused)
                         ELSE "pivMgm"
-    /\ UNCHANGED << sel, fresh, pfresh, oathCodeSet, viol >>
+    /\ UNCHANGED << sel, fresh, pfresh, oneShotSig, psig, oathCodeSet, viol >>
 
 (***************************************************************************)
 (* The key operations -- the only steps whose AUTHORIZATION is at stake.    *)
@@ -304,7 +338,13 @@ PivMgmAuth(ok) ==
 \* opened all three; a YubiKey 5.7.4 answers 6982 to PW3 alone on every one.
 PgpKeyOpGuard(r) ==
     IF BugAdminOpensKeyOps THEN held[r] \/ held["pw3"] ELSE held[r]
-PgpKeyOpPolicy(r) == held[r]
+\* PSO:CDS additionally needs PW1.81 UNSPENT while the one-shot status is set --
+\* OpenPGP 3.4.1's "PW1 valid for one PSO:CDS", which `inc_sig_count` implements
+\* by clearing has_pw1 after the signature (crates/rsk-openpgp/src/keys.rs:977-981).
+\* `psig` is the requirement's copy, so a switch that stops spending the real one
+\* cannot also satisfy the Policy that reads it -- the BugPinFreshNotSpent lesson,
+\* applied before the mutant rather than after.
+PgpKeyOpPolicy(r) == held[r] /\ (r = "pw1" /\ oneShotSig => psig)
 
 PgpKeyOp(r) ==
     /\ sel = Pgp
@@ -312,7 +352,44 @@ PgpKeyOp(r) ==
     /\ PgpKeyOpGuard(r)
     /\ viol' = IF PgpKeyOpPolicy(r) THEN viol
                                     ELSE viol \cup {"NoKeyOpOnTheAdminStatus"}
-    /\ UNCHANGED << sel, held, fresh, pfresh, oathCodeSet, refused >>
+    /\ held' = IF r = "pw1" /\ oneShotSig /\ ~BugSigPinNotSpent
+                 THEN [held EXCEPT !["pw1"] = FALSE] ELSE held
+    /\ psig'  = IF r = "pw1" /\ oneShotSig THEN FALSE ELSE psig
+    /\ UNCHANGED << sel, fresh, pfresh, oneShotSig, oathCodeSet, refused >>
+
+\* PUT DATA C4 -- the PW status byte that makes PW1.81 one-shot. PW3-gated
+\* (crates/rsk-openpgp/src/pin.rs:833-835 is the same gate one DO over), and it
+\* is here because it is the only writer of that status.
+PgpSetPwStatus(v) ==
+    /\ sel = Pgp
+    /\ held["pw3"]
+    /\ oneShotSig' = v
+    \* Parenthesised. `=` binds tighter than `/\`: without them this reads
+    \* `(psig' = psig) /\ held["pw1"]`, an extra guard that disabled the action
+    \* whenever PW1 was unverified -- and BugSigPinNotSpent went green over it.
+    /\ psig' = (psig /\ held["pw1"])
+    /\ UNCHANGED << sel, held, fresh, pfresh, oathCodeSet, refused, viol >>
+
+\* THE ADMIN SURFACE, which the invariant named and the module did not have.
+\* PUT DATA of an administrative DO needs PW3 on OpenPGP and the 9B management
+\* key on PIV -- never a user status. Without a step that reads `pivMgm` and
+\* `pw3` as GATES, "no key operation runs on the admin status" had no converse
+\* and a user status opening the admin surface was unfalsifiable.
+AdminOpGuard(a) ==
+    IF BugUserStatusOpensAdmin
+      THEN (IF a = Piv THEN held["pivMgm"] \/ held["pivPin"]
+                       ELSE held["pw3"] \/ held["pw1"] \/ held["pw2"])
+      ELSE (IF a = Piv THEN held["pivMgm"] ELSE held["pw3"])
+AdminOpPolicy(a) == IF a = Piv THEN held["pivMgm"] ELSE held["pw3"]
+
+AdminOp(a) ==
+    /\ sel = a
+    /\ a \in {Piv, Pgp}
+    /\ AdminOpGuard(a)
+    /\ viol' = IF AdminOpPolicy(a) THEN viol
+                                   ELSE viol \cup {"NoKeyOpOnTheAdminStatus"}
+    /\ UNCHANGED << sel, held, fresh, pfresh, oneShotSig, psig, oathCodeSet,
+                    refused >>
 
 \* A private-key GENERAL AUTHENTICATE at a PIN-policy-ALWAYS slot: `pin_satisfied`
 \* is `has_pin && pin_fresh` there, and the operation SPENDS the freshness
@@ -329,7 +406,7 @@ PivKeyOp ==
                                  ELSE viol \cup {"NoKeyOpOnTheAdminStatus"}
     /\ fresh' = IF BugPinFreshNotSpent THEN fresh ELSE FALSE
     /\ pfresh' = FALSE
-    /\ UNCHANGED << sel, held, oathCodeSet, refused >>
+    /\ UNCHANGED << sel, held, oneShotSig, psig, oathCodeSet, refused >>
 
 (***************************************************************************)
 (* The events that end a session from OUTSIDE any applet.                   *)
@@ -342,12 +419,14 @@ PivKeyOp ==
 \* fuzz target already watches, one layer down.
 CardReset ==
     /\ IF BugCardResetKeepsStatus
-         THEN /\ UNCHANGED << held, fresh >>
+         THEN /\ UNCHANGED << held, fresh, oneShotSig, psig >>
          ELSE /\ held' = AllCleared
               /\ fresh' = FALSE
+              /\ psig' = FALSE
+              /\ oneShotSig' = oneShotSig   \* a flash DO: it survives the reset
     /\ pfresh' = IF BugCardResetKeepsStatus THEN pfresh ELSE FALSE
     /\ sel' = NoApplet
-    /\ UNCHANGED << oathCodeSet, refused, viol >>
+    /\ UNCHANGED << oneShotSig, psig, oathCodeSet, refused, viol >>
 
 \* A power cycle or a host-requested warm reset rebuilds every struct from
 \* `new()`, so nothing in this module survives either. FIDO's clientPIN soft
@@ -359,7 +438,7 @@ PowerCycle ==
     /\ fresh' = FALSE
     /\ pfresh' = FALSE
     /\ refused' = NoRef
-    /\ UNCHANGED << oathCodeSet, viol >>
+    /\ UNCHANGED << oneShotSig, psig, oathCodeSet, viol >>
 
 \* `authenticatorReset` is FIDO's and reaches none of these: `is_fido_fid` is an
 \* explicit enumeration plus four credential ranges precisely because the applets
@@ -382,7 +461,7 @@ FactoryWipe ==
     /\ pfresh' = FALSE
     /\ oathCodeSet' = FALSE
     /\ refused' = NoRef
-    /\ UNCHANGED viol
+    /\ UNCHANGED << oneShotSig, psig, viol >>
 
 Next ==
     \/ \E a \in Applets : Reselect(a)
@@ -395,6 +474,8 @@ Next ==
     \/ \E r \in {"pw1", "pw2"} : PgpKeyOp(r)
     \/ \E ok \in BOOLEAN : OathVerifyOtpPin(ok)
     \/ OathChangeRefused \/ OathValidateRefused \/ OathValidateOk \/ OathSetCode
+    \/ \E a \in {Piv, Pgp} : AdminOp(a)
+    \/ \E v \in BOOLEAN : PgpSetPwStatus(v)
     \/ CardReset \/ PowerCycle \/ FidoReset \/ FactoryWipe
 
 Spec == Init /\ [][Next]_vars
@@ -428,7 +509,12 @@ NoStatusOutsideItsSelection ==
 \* refusal to protect. So there is NO single cross-applet rule here -- three
 \* applets, three rules, each settled by a different authority -- and writing one
 \* would have made the shipped tree red for two deliberate reasons.
-NoStatusAfterARefusedAuth == (refused # NoRef) => ~held[refused]
+\* The ghost half exists because "a refusal granted access" is a step, and its
+\* writers are exactly OathValidateRefused -- the one action the `refused` ghost
+\* cannot cover, since nothing ever names "oathCode" as refused.
+NoStatusAfterARefusedAuth ==
+    /\ "NoStatusAfterARefusedAuth" \notin viol
+    /\ (refused # NoRef) => ~held[refused]
 
 \* No key operation runs on a status its own specification does not name. The
 \* admin references -- OpenPGP's PW3 and PIV's 9B management key -- gate the

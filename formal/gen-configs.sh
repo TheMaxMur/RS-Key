@@ -17,7 +17,8 @@ BUGS=(BugResetGatesFirst BugCredBeforeRp BugTokenSurvivesPinChange
       BugConsumeKeepsMcGa BugNoDropStaleCancelAtEntry BugWrongPinKeepsToken
       BugSeedDoesNotLead BugNoTouchRequired BugStateResetAfterWipe
       BugPanelCancelable BugUnscopedOtpCancel BugLocalPinKeepsToken
-      BugSetPinOverExisting)
+      BugSetPinOverExisting BugHostPreemptsLocalWait BugLocalPinIgnoresBudget
+      BugPpuatIsAGate)
 
 # Mutants whose defect the shipped seed-lead makes unreachable: they rebuild a
 # pre-0x08BF ordering bug, so their configuration must be the pre-0x08BF tree.
@@ -56,6 +57,9 @@ target_inv() {
     BugUnscopedOtpCancel)       echo NoCrossTransportTouchConsumption ;;
     BugLocalPinKeepsToken)      echo NoTokenAfterInvalidation ;;
     BugSetPinOverExisting)      echo NoAuthorizationBypass ;;
+    BugHostPreemptsLocalWait)   echo NoAuthorizationBypass ;;
+    BugLocalPinIgnoresBudget)   echo NoAuthorizationBypass ;;
+    BugPpuatIsAGate)            echo NoAccessibleSecretWithoutGate ;;
   esac
 }
 
@@ -121,7 +125,11 @@ emit Shipped.cfg "" FALSE TRUE
 # The two findings this model produced, kept as regression configurations rather
 # than deleted: each is the tree with exactly the shipped fix taken back out.
 emit Historical_E76.cfg BugSeedDoesNotLead FALSE TRUE
-emit Historical_E77.cfg "" FALSE FALSE
+# E77 is closed at BOTH ends now: the consumer refuses the stranded record
+# (32b9fa3) and eab4b5c stopped the wipe producing one. So reproducing its
+# counterexample takes the producer back out too -- the record the consumer
+# fix still exists for is one an OLDER build already wrote to flash.
+emit Historical_E77.cfg BugPpuatIsAGate FALSE FALSE
 # Mutants run on the tree's own settings, so nothing pre-existing can mask them.
 for b in "${BUGS[@]}"; do emit "Mut_$b.cfg" "$b" FALSE TRUE; done
 # One config per mutant listing ONLY its target invariant.
@@ -180,7 +188,8 @@ echo "wrote Shipped.cfg, 2 historical configs, ${#BUGS[@]} mutant configs and ${
 # module's own and buy no new interleavings.
 SEAM_BUGS=(BugSelectKeepsOtherApplet BugReselectResetsStatus
            BugCardResetKeepsStatus BugAdminOpensKeyOps
-           BugFailedChangeKeepsStatus BugPinFreshNotSpent)
+           BugFailedChangeKeepsStatus BugPinFreshNotSpent BugSigPinNotSpent
+           BugUserStatusOpensAdmin BugRefusedValidateGrants)
 
 seam_target() {
   case "$1" in
@@ -190,6 +199,9 @@ seam_target() {
     BugAdminOpensKeyOps)        echo NoKeyOpOnTheAdminStatus ;;
     BugFailedChangeKeepsStatus) echo NoStatusAfterARefusedAuth ;;
     BugPinFreshNotSpent)        echo NoKeyOpOnTheAdminStatus ;;
+    BugSigPinNotSpent)          echo NoKeyOpOnTheAdminStatus ;;
+    BugUserStatusOpensAdmin)    echo NoKeyOpOnTheAdminStatus ;;
+    BugRefusedValidateGrants)   echo NoStatusAfterARefusedAuth ;;
   esac
 }
 SEAM_INV=(NoStatusOutsideItsSelection NoStatusAfterARefusedAuth
