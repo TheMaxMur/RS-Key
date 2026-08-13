@@ -290,7 +290,7 @@ impl rsk_display::Hooks for EmuDisplayHooks {
         self.queued.any()
     }
     /// The floor is the whole point and every modal exit poll uses this form: a
-    /// bare [`Self::host_request_pending`] lets a host close the owner's screen on
+    /// bare [`rsk_display::Hooks::host_request_pending`] lets a host close a screen on
     /// its first poll, so a loop of any ungated command denies the on-device
     /// browse layer entirely (audit run-35).
     fn host_request_pending_after(&self, since: embassy_time::Instant) -> bool {
