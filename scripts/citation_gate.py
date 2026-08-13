@@ -40,9 +40,12 @@ A citation carrying a `/` is a repo path and is taken literally.
 
 Both pages write a second reference to the same file as a bare `` `:251` ``, and
 a list as `presence.rs:259-266,288`. Those are read too, bound to the last file
-named **on the same line** — a bare one with no file before it on its line is a
-problem rather than a thing to skip, because skipping is how a citation stops
-being checked without anyone deciding that.
+named in the same **paragraph** — a bare one with no file before it is a problem
+rather than a thing to skip, because skipping is how a citation stops being
+checked without anyone deciding that. A paragraph, not a line, because a sentence
+in a markdown table wraps and the file it names is then one line up; not a page,
+because that is how a bare `` `:1` `` came to be checked against a file three
+hundred lines earlier.
 
 Every dash a prose editor leaves behind counts as a range separator, and so does
 a space either side of the colon. An en dash used to read as a single-line
@@ -58,6 +61,10 @@ in this tree shipped with. The floor is well under today's 104 and 58, and the
 count only goes up as the model grows.
 
 ## Limits
+
+[`PENDING`] is the debt this row landed with, not a permanent carve-out: three
+citations another agent's in-flight commits rotted while this guard was being
+written. Each names the commit that broke it and fails once it stops rotting.
 
 It does not read `.py`, `.md` or `.tla` citations, only `.rs` ones: those are all
 the pages carry. It cannot tell a citation that is merely *stale* from one that
@@ -98,6 +105,22 @@ AMBIGUOUS = {
         "980 lines, and its 894-901 / 962-968 are the BACKUP_FINALIZE and"
         " mark_backup_sealed the model describes; firmware/src/vendor.rs is 197",
     ),
+}
+
+#: The citations this row landed over, each with the commit that rotted it. They
+#: are `formal/`'s to re-point, not this change's — the model was being rewritten
+#: in the same hours this guard was written, and editing someone else's in-flight
+#: page to make my own row green is how a ratchet becomes a lie.
+#:
+#: Checked in both directions, like `kani_gate.py`'s exclusions: an entry that no
+#: longer fires is stale and fails, so each one ends when its citation is fixed.
+PENDING = {
+    "presence.rs": "4798668 lifted the arbitration into rsk-device; two rows of"
+    " README's mutation table still cite the bare name, which now resolves two ways",
+    "reset.rs:126-132": "a430f2d moved the wipe's seed handling; the range starts"
+    " on a blank line now",
+    "presence.rs:288": "4798668 again — 288 was the firmware file's `spent` latch,"
+    " and the device crate's is 249 lines long",
 }
 
 #: Below this a page is not citing, it is failing to be parsed. Today: 107 and 68.
@@ -157,26 +180,38 @@ def audit(root):
     # agent worktrees under `.claude/` and the generated `book/`, whole second
     # copies of the tree in which a citation would resolve to the wrong file.
     tracked = {str(rel) for rel in gate_lines.tree_files(root) if rel.suffix == ".rs"}
-    lengths, problems, total, said = {}, [], 0, set()
+    lengths, problems, total, said, carried = {}, [], 0, set(), set()
+
+    def note(key, complaint):
+        """A problem, unless it is one this row landed over and has not fixed."""
+        if key in PENDING:
+            carried.add(key)
+        else:
+            problems.append(complaint)
+
     for missing in (d for d in SEARCH if not (root / d).is_dir()):
         problems.append(f"{missing} is in SEARCH but is not a directory any more")
     for page in PAGES:
         if not (root / page).is_file():
             problems.append(f"{page} is gone; the model's citations are unchecked")
             continue
+        text = (root / page).read_text()
+        blank = {n for n, line in enumerate(text.splitlines(), 1) if not line.strip()}
         seen, at, here = None, 0, 0
-        for number, name, start, end, written in citations((root / page).read_text()):
+        for number, name, start, end, written in citations(text):
             here += 1
-            if number != at:
-                # A continuation binds to the file named on its OWN line. `seen`
-                # used to live for the whole page, so a bare `:1` bound to a file
-                # named hundreds of lines earlier and was checked against it.
-                seen, at = None, number
+            if any(n in blank for n in range(at + 1, number)):
+                # A continuation binds within its own PARAGRAPH. Page-wide, a
+                # bare `:1` bound to a file named hundreds of lines earlier and
+                # was checked against it; line-wide, a sentence that wraps in a
+                # markdown table loses the file it named one line up.
+                seen = None
+            at = number
             if name:
                 seen, complaint = resolve(name, tracked)
                 if complaint and complaint not in said:
                     said.add(complaint)
-                    problems.append(f"{page}: {complaint}")
+                    note(name, f"{page}: {complaint}")
                 if seen is None:
                     problems.append(f"{page} cites `{written}`, and no such file is in the tree")
                     continue
@@ -196,13 +231,12 @@ def audit(root):
             elif start > end:
                 problems.append(f"{page}: `{written}` runs backwards")
             elif end > len(body):
-                problems.append(
-                    f"{page}: `{written}` -> {seen}, which has {len(body)} lines"
-                )
+                note(written, f"{page}: `{written}` -> {seen}, which has {len(body)} lines")
             elif not body[start - 1].strip() or not body[end - 1].strip():
-                problems.append(
+                note(
+                    written,
                     f"{page}: `{written}` -> {seen}, whose cited line is blank;"
-                    " the code it named has moved"
+                    " the code it named has moved",
                 )
         if here < FLOOR:
             problems.append(
@@ -210,7 +244,14 @@ def audit(root):
                 " the page stopped citing, or this guard stopped reading it"
             )
         total += here
-    return problems, f"citation-gate: ok — {total} citations across {len(PAGES)} pages resolve"
+    for key in sorted(set(PENDING) - carried):
+        problems.append(
+            f"`{key}` is in PENDING ({PENDING[key]}) but no longer rots; delete the entry"
+        )
+    debt = f", {len(carried)} carried" if carried else ""
+    return problems, (
+        f"citation-gate: ok — {total} citations across {len(PAGES)} pages resolve{debt}"
+    )
 
 
 def main():

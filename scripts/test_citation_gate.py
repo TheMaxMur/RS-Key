@@ -72,14 +72,17 @@ class Tree:
         assert text.count(old) == 1, f"{rel} does not say {old!r} exactly once"
         path.write_text(text.replace(old, new))
 
-    def problems(self, floor=2):
-        """Audited with the floor lowered: the fixture is smaller than the tree."""
-        was = citation_gate.FLOOR
-        citation_gate.FLOOR = floor
+    def problems(self, floor=2, pending=None):
+        """Audited with the floor lowered and no landing debt: the fixture is
+        smaller than the tree and carries none of its history. A case that wants
+        a debt passes one.
+        """
+        was, debts = citation_gate.FLOOR, citation_gate.PENDING
+        citation_gate.FLOOR, citation_gate.PENDING = floor, pending or {}
         try:
             return citation_gate.audit(self.root)[0]
         finally:
-            citation_gate.FLOOR = was
+            citation_gate.FLOOR, citation_gate.PENDING = was, debts
 
 
 @pytest.fixture
@@ -224,6 +227,21 @@ def test_a_same_named_file_in_a_second_search_directory_is_reported(tree):
     """Not silently resolved by order: the pick has to be written down."""
     tree.write("firmware/src/state.rs", "one line\n")
     assert only(tree.problems(), "search directories")
+
+
+# --- the debt this row landed with --------------------------------------------
+
+
+def test_a_pending_entry_carries_its_citation(tree):
+    debt = {"state.rs:4-600": "someone else's to re-point"}
+    tree.edit(citation_gate.PAGES[0], "state.rs:4-6", "state.rs:4-600")
+    assert tree.problems(pending=debt) == []
+
+
+def test_a_pending_entry_that_no_longer_rots(tree):
+    """It ends when the citation is fixed, rather than living on as a carve-out."""
+    debt = {"state.rs:4-600": "someone else's to re-point"}
+    assert only(tree.problems(pending=debt), "no longer rots; delete the entry")
 
 
 # --- the guard's own blind spots ----------------------------------------------

@@ -146,8 +146,15 @@ class Tree:
     def note(self):
         self.append("CHANGELOG.md", "- a second entry\n")
 
-    def problems(self):
-        return bcd_gate.audit(self.root)[0]
+    def problems(self, landed_over=("", "")):
+        """Audited with no landing debt unless a case asks for one: the fixture
+        carries none of this tree's history."""
+        was = bcd_gate.LANDED_OVER
+        bcd_gate.LANDED_OVER = landed_over
+        try:
+            return bcd_gate.audit(self.root)[0]
+        finally:
+            bcd_gate.LANDED_OVER = was
 
 
 @pytest.fixture
@@ -441,6 +448,30 @@ def test_the_entry_may_arrive_in_the_next_commit(tree):
     assert only(tree.problems(), "has not moved since")
     tree.note()
     assert tree.problems() == []
+
+
+# --- the debt this row landed with --------------------------------------------
+
+
+def test_a_landing_debt_that_no_longer_fires(tree):
+    """It expires by itself: any bump moves the base and the entry must go."""
+    base, _, _ = bcd_gate.bump_commit(tree.root)
+    debt = (base[:8], "a span with nothing unbumped in it")
+    assert only(tree.problems(landed_over=debt), "nothing is unbumped there any more")
+
+
+def test_a_landing_debt_whose_base_has_moved(tree):
+    assert only(tree.problems(landed_over=("deadbee", "not our base")), "delete the entry")
+
+
+def test_a_landing_debt_carries_exactly_its_own_span(tree):
+    """Everything in the named span is carried, and only that span."""
+    base, _, _ = bcd_gate.bump_commit(tree.root)
+    debt = (base[:8], "the span under test")
+    tree.append("crates/rsk-a/src/lib.rs", "\npub const EXTRA: u8 = 1;\n")
+    assert tree.problems(landed_over=debt) == []
+    # The same change with the entry pointing elsewhere is not carried at all.
+    assert only(tree.problems(landed_over=("deadbee", "another span")), "pub const EXTRA")
 
 
 # --- the guard's own wiring ---------------------------------------------------

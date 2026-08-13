@@ -135,6 +135,17 @@ RELEASE = re.compile(r"let device_release: u16 = (0x[0-9A-Fa-f]+)")
 #: finds nothing and every commit reads as "never bumped".
 RELEASE_TEXT = "let device_release: u16 = 0x"
 
+#: The one unbumped span this ratchet landed over, and its owner. `4798668
+#: refactor(presence)` lifted the scope arbitration out of `firmware/src/
+#: presence.rs` into `crates/rsk-device/src/presence.rs` — behaviour unchanged by
+#: its own account, emitted image not, which is what this row asks about. It was
+#: in flight when the row landed and is not this change's to bump.
+#:
+#: Keyed on the BASE, so it expires by itself: any bump moves the base, this stops
+#: matching, and the guard says to delete the line. A debt with a name and an end,
+#: the way `kani_gate.py` records its own.
+LANDED_OVER = ("32b9fa32", "4798668 refactor(presence), in flight when this row landed")
+
 #: Everything the linker can pull into a firmware image, before the line filter.
 VISIBLE = ("firmware/", "crates/")
 #: Cargo's non-lib targets: compiled by `cargo test`/`cargo bench`, never by the
@@ -480,7 +491,7 @@ def audit(root):  # noqa: C901 — one clause per failure mode, each named
     if base is None:
         return [f"no commit in this history ever changed the counter in {MAIN}"], ""
 
-    problems = []
+    problems, carried = [], []
     tree_bumps = head is not None and now != head
     if tree_bumps:
         # The bump is in the working tree, so the span it has to cover is empty.
@@ -488,8 +499,20 @@ def audit(root):  # noqa: C901 — one clause per failure mode, each named
         was, span = head, "HEAD"
     else:
         was, span = before_base, parent(root, base)
+        landed, why = LANDED_OVER
+        # An empty entry is no entry — the fixtures run without one, and `""` is
+        # a prefix of every sha.
+        owns = bool(landed) and base.startswith(landed)
         for rel, line in image_changes(root, base):
-            problems.append(f"{rel} changed since {base[:8]} bumped the counter: {line}")
+            if owns:
+                carried.append(f"{rel}: {line}")
+            else:
+                problems.append(f"{rel} changed since {base[:8]} bumped the counter: {line}")
+        if landed and not carried:
+            problems.append(
+                f"LANDED_OVER names {landed} ({why}) but nothing is unbumped there"
+                f" any more — the base is {base[:8]}; delete the entry"
+            )
 
     if was is not None and now <= was:
         problems.append(
@@ -505,7 +528,10 @@ def audit(root):  # noqa: C901 — one clause per failure mode, each named
             " behaviour change and owes an [Unreleased] entry"
         )
     where = "the working tree" if tree_bumps else base[:8]
-    return problems, f"bcd-gate: ok — 0x{now:04X}, bumped by {where}, nothing unbumped since"
+    debt = f"; carried from {LANDED_OVER[1]}: {len(carried)} files" if carried else ""
+    return problems, (
+        f"bcd-gate: ok — 0x{now:04X}, bumped by {where}, nothing unbumped since{debt}"
+    )
 
 
 def main():
