@@ -181,6 +181,15 @@ fn rows() -> Vec<(&'static str, Vec<u8>, bool)> {
             vec![0x00, 0xEE, 0x00, 0x00, 0x00],
             false,
         ),
+        // The one-byte-body refusal returns from `process` before the dispatch,
+        // so it is the only command shape that could skip the ageing above it.
+        // A caller who could would keep an outstanding witness answerable for as
+        // long as it liked, which is the race the ageing exists to narrow.
+        (
+            "a one-byte body",
+            vec![0x00, 0xCB, 0x3F, 0xFF, 0x01, 0x41],
+            false,
+        ),
     ]
 }
 

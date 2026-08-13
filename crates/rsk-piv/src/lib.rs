@@ -232,8 +232,10 @@ impl<'a> PivApplet<'a> {
         p2: u8,
         data: &[u8],
     ) -> Option<(u8, usize, [u8; 2])> {
-        // The shortcut's copy of `process`'s first rule: a GENERATE served from
-        // here never reaches `process` at all. It is unobservable today and no
+        // The shortcut's copy of `process`'s challenge ageing: a GENERATE served
+        // from here never reaches `process` at all. Its `Lc = 1` refusal is not
+        // copied and does not need to be — a one-byte body cannot parse as a
+        // generate template, so the guard below declines and `process` answers. It is unobservable today and no
         // test can fail on it — `begin_handshake` drops `has_mgm`, so past the
         // guard below there is never a challenge left to age, and a *declined*
         // GENERATE falls through to `process`, which ages it there. Both facts
@@ -348,6 +350,16 @@ impl<S: Storage> Applet<Fs<S>> for PivApplet<'_> {
 
     fn process(&mut self, apdu: &Apdu, fs: &mut Fs<S>, res: &mut ResBuf) -> Sw {
         self.age_challenge(apdu.ins, apdu.p2);
+        // A body this short can be no command's — not one BER-TLV, not a PIN,
+        // not a key. A YubiKey 5.7.4 answers `6A80` to `Lc = 1` on every
+        // instruction and treats every other length exactly as `Lc = 0`,
+        // including on the two ungated reads that answer `9000` and ignore
+        // their body. It outranks the ACL there, which is sound because the
+        // answer depends on nothing: same for `41`, `00` and `5C`, with and
+        // without `Le`, short and extended.
+        if apdu.nc == 1 {
+            return WRONG_DATA;
+        }
         let (serial_hash, serial_id, mkek) = self.device_ids();
         let dev = Device {
             serial_hash: &serial_hash,
@@ -473,9 +485,11 @@ impl PivApplet<'_> {
         // SP 800-73-4 pt2 §2.4.3 fixes the reference at 8 bytes on the wire, so a
         // body that cannot be one is not a mismatch and must not cost a retry —
         // three of them blocked the PIN. A YubiKey answers 6A80 and still drops the
-        // standing status (measured 1-16, 24, 32; `Lc = 1` alone keeps it, a quirk
-        // we do not copy). Ahead of `check_ref` so it also precedes the blocked
-        // floor, which is the oracle's order too.
+        // standing status (measured 1-16, 24, 32). `Lc = 1` never reaches here on
+        // either card — `process` refuses it above the whole applet — so its
+        // keeping the status is that rule's consequence, not an exception to this
+        // one. Ahead of `check_ref` so it also precedes the blocked floor, which is
+        // the oracle's order too.
         if apdu.nc != PIN_WIRE_LEN {
             self.sess.set_pin(false);
             return WRONG_DATA;
@@ -598,19 +612,22 @@ impl PivApplet<'_> {
         apdu: &Apdu,
         res: &mut ResBuf,
     ) -> Sw {
-        if apdu.p1 != 0x00 {
-            return Sw::INCORRECT_P1P2;
-        }
-        if apdu.nc == 0 {
-            return Sw::WRONG_LENGTH;
-        }
-        if apdu.data[0] != TAG_GEN_TEMPLATE {
-            return WRONG_DATA;
-        }
+        // The management key outranks everything about the request — its body's
+        // length, its template's tag, and its P1P2. A YubiKey 5.7.4 answers
+        // `6982` to an unauthenticated GENERATE at every length 0..40, to a
+        // template with the wrong tag, to `P1 = 01` and to a P2 naming no slot;
+        // only once authenticated does it tell them apart. The same ordering PUT
+        // DATA took at `0x08F3`. Our P1P2 strictness is unchanged and sits below,
+        // where E140 kept it — the reference ignores both bytes there.
         if !self.sess.has_mgm {
             return Sw::SECURITY_STATUS_NOT_SATISFIED;
         }
-        if !is_key(apdu.p2) {
+        // A missing body is a bad request rather than a length error, the
+        // spelling the reference uses for every framing refusal on this command.
+        if apdu.nc == 0 || apdu.data[0] != TAG_GEN_TEMPLATE {
+            return WRONG_DATA;
+        }
+        if apdu.p1 != 0x00 || !is_key(apdu.p2) {
             return Sw::INCORRECT_P1P2;
         }
         let req = match keygen::parse_gen_template(apdu.data) {
@@ -1022,9 +1039,11 @@ impl PivApplet<'_> {
     /// MOVE KEY (INS 0xF6, Yubico 5.7, management-gated): move (or, to 0xFF,
     /// delete) a key with its certificate object and metadata.
     fn move_key<S: Storage>(&mut self, fs: &mut Fs<S>, apdu: &Apdu) -> Sw {
-        if apdu.nc != 0 {
-            return Sw::WRONG_LENGTH;
-        }
+        // The command's whole request is in P1P2, so a body says nothing and is
+        // ignored rather than refused — a YubiKey 5.7.4 answers `6982`
+        // unauthenticated and `6A88` for an empty source slot authenticated, at
+        // every length from 0 to 40 alike. Its own `6700` outranked the
+        // management key, which is the ordering E81 ended for PUT DATA.
         if !self.sess.has_mgm {
             return Sw::SECURITY_STATUS_NOT_SATISFIED;
         }

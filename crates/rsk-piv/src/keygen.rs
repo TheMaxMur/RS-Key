@@ -581,6 +581,13 @@ pub(crate) fn import<S: Storage>(
     slot: u8,
     data: &[u8],
 ) -> Sw {
+    // The management key first, as on the reference: `00 FE 06 01` with a body is
+    // `6982` there unauthenticated, not a P1P2 refusal. Which slots this command
+    // takes is a property of the card that a caller holding no credential has no
+    // business learning one refusal at a time.
+    if !sess.has_mgm {
+        return Sw::SECURITY_STATUS_NOT_SATISFIED;
+    }
     // `is_key` excludes F9, and that is a DELIBERATE divergence: a YubiKey lets a
     // host load its own attestation key there, which on this card — where F9 is
     // generated at first boot and never leaves — would let anyone holding the
@@ -588,9 +595,6 @@ pub(crate) fn import<S: Storage>(
     // one APDU. Pinned by a test and docs/limitations.md; do not "fix" it.
     if !is_key(slot) {
         return Sw::INCORRECT_P1P2;
-    }
-    if !sess.has_mgm {
-        return Sw::SECURITY_STATUS_NOT_SATISFIED;
     }
     // SP 800-131A: no RSA-1024 import under the FIPS-style profile either.
     if cfg!(feature = "fips-profile") && algo == ALGO_RSA1024 {

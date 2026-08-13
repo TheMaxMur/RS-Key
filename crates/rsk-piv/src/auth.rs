@@ -347,10 +347,12 @@ pub(crate) fn general_authenticate<S: Storage>(
     data: &[u8],
     res: &mut ResBuf,
 ) -> Sw {
-    if data.is_empty() {
-        return Sw::WRONG_LENGTH;
-    }
-    if data[0] != TAG_DYN_AUTH {
+    // One word for this command's whole framing. A YubiKey 5.7.4 answers `6A80`
+    // to an empty body, to a wrong template tag and to a one-byte body alike, and
+    // never `6700` — the same spelling `0x0920` gave VERIFY's P1 axis. This
+    // command has no ACL of its own, being the authentication, so its framing is
+    // all it can answer for.
+    if data.is_empty() || data[0] != TAG_DYN_AUTH {
         return WRONG_DATA;
     }
     let Some(dyn_auth) = find_tag(data, TAG_DYN_AUTH as u16) else {

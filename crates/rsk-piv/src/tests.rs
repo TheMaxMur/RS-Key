@@ -391,10 +391,13 @@ fn verify_of_an_undefined_reference_is_wrong_data() {
 /// a refusal to compare. Three malformed VERIFYs used to block our PIN.
 ///
 /// Also pins the two cells the refusal has to get right beyond the counter: it
-/// revokes the standing status (including at `Lc = 1`, where the oracle keeps it
-/// — the one divergence, and the stricter side of it), and it is judged ahead of
-/// the blocked floor, so a blocked PIN answers `6A80` and not `6983`. Both
-/// measured on the oracle, 2 runs.
+/// revokes the standing status, and it is judged ahead of the blocked floor, so a
+/// blocked PIN answers `6A80` and not `6983`. Both measured on the oracle, 2 runs.
+///
+/// `Lc = 1` is the exception on both cards now, for the reason E182 measured: it
+/// is refused above the whole applet, so VERIFY never runs and has no status to
+/// take. This note used to call that the one divergence and keep the stricter
+/// side of it — it was the rule's first sighting, one command wide.
 #[test]
 fn a_verify_body_that_is_not_the_wire_form_costs_no_retry() {
     let rng = RefCell::new(TestRng(7));
@@ -429,8 +432,8 @@ fn a_verify_body_that_is_not_the_wire_form_costs_no_retry() {
         Sw::retries(2)
     );
     assert_eq!(reference_retries_left(&mut fs, PinRef::Pin), Some(2));
-    // …and the standing status goes, as it does on a YubiKey for every refused
-    // length but one — `Lc = 1`, where it keeps it and we do not.
+    // …and the standing status goes, as it does on a YubiKey — except at
+    // `Lc = 1`, which never reaches this command on either card.
     for n in [6usize, 1] {
         verify_pin(&mut app, &mut fs);
         assert_eq!(run(&mut app, &mut fs, INS_VERIFY, 0, 0x80, &[]).0, Sw::OK);
@@ -440,8 +443,8 @@ fn a_verify_body_that_is_not_the_wire_form_costs_no_retry() {
         );
         assert_eq!(
             run(&mut app, &mut fs, INS_VERIFY, 0, 0x80, &[]).0,
-            Sw::retries(3),
-            "a refused {n}-byte body left the standing status up"
+            if n == 1 { Sw::OK } else { Sw::retries(3) },
+            "a refused {n}-byte body and the standing status"
         );
     }
     // A wrong P1 or P2 is refused too and does NOT revoke — measured, and the
@@ -7154,5 +7157,205 @@ fn the_pin_and_puk_metadata_carry_the_algorithm_tag() {
     assert_eq!(
         md,
         std::vec![0x01, 0x01, 0xFF, 0x05, 0x01, 0, 0x06, 0x02, 3, 2]
+    );
+}
+
+/// E182 said the reference judges framing before authorisation "with no single
+/// rule". It has one, and the cells that raised the finding are one row of it: a
+/// **one-byte body is `6A80` on every PIV command**, and every other length
+/// behaves exactly as `Lc = 0`. Measured on a YubiKey 5.7.4, `Lc` walked over
+/// 0..40 on eleven instructions and then separated three ways — the answer is the
+/// same for data bytes `41`, `00` and `5C`, with and without a trailing `Le`, and
+/// in the extended-length encoding. Eleven of the fourteen carry the full length
+/// axis; the other three — `FD VERSION`, `F8 SERIAL` and an undefined `EE` — were
+/// asked at `Lc` 0, 1 and 2 only, which is enough: they answer `9000`, `9000` and
+/// `6D00` at 0 and 2 and `6A80` at 1, so the rule outranks even "this instruction
+/// does not exist". So it is a length rule at the top of the applet, before the
+/// ACL and before the command exists. A body that short can be no command's, and
+/// the answer depends on nothing, so it enumerates nothing.
+///
+/// Below it, the reference's own order is authorisation first for the commands
+/// this leaves `6700` on: `F6` ignores its body entirely (`6982` unauthenticated
+/// at every length, `6A88` for the empty slot once authenticated), `47` answers
+/// `6982` at every length and every body shape, and `87` — which has no ACL of
+/// its own, being the authentication — answers `6A80` and never `6700`.
+#[test]
+fn a_one_byte_body_is_the_same_refusal_on_every_command() {
+    let rng = RefCell::new(TestRng(17));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+
+    // (INS, P1, P2) — every instruction `process` dispatches, gated and ungated
+    // alike, plus its `_ => 6D00` fall-through. `A4` is here at `P2 = 01`, the
+    // in-applet re-SELECT: the dispatcher intercepts `P2 = 00`/`04` before the
+    // applet, and the reference draws the same line — `00 A4 04 00 01 A0` is
+    // `9000` there while `00 A4 04 01 01 A0` is `6A80`. The rule is applet-local
+    // on both cards and must not be lifted to the dispatcher (`rsk-oath` takes a
+    // legitimate `Lc = 1`).
+    let cmds: [(u8, u8, u8); 18] = [
+        (INS_VERIFY, 0x00, 0x80),
+        (INS_CHANGE_PIN, 0x00, 0x80),
+        (INS_RESET_RETRY, 0x00, 0x80),
+        (INS_ASYM_KEYGEN, 0x00, 0x9A),
+        (INS_AUTHENTICATE, ALGO_AES192, SLOT_CARDMGM),
+        (INS_GET_DATA, 0x3F, 0xFF),
+        (INS_PUT_DATA, 0x3F, 0xFF),
+        (INS_MOVE_KEY, 0x9A, 0x9C),
+        (INS_GET_METADATA, 0x00, 0x9A),
+        (INS_YK_SERIAL, 0x00, 0x00),
+        (INS_ATTESTATION, 0x9A, 0x00),
+        (INS_SET_RETRIES, 0x03, 0x03),
+        (INS_RESET, 0x00, 0x00),
+        (INS_VERSION, 0x00, 0x00),
+        (INS_SET_MGMKEY, 0xFF, 0xFF),
+        (INS_IMPORT_ASYM, 0x06, 0x9A),
+        (INS_SELECT, 0x04, 0x01),
+        (0xEE, 0x00, 0x00),
+    ];
+    for authed in [false, true] {
+        if authed {
+            select(&mut app, &mut fs);
+            auth_mgm(&mut app, &mut fs);
+            verify_pin(&mut app, &mut fs);
+        }
+        for (ins, p1, p2) in cmds {
+            for byte in [0x41u8, 0x00, 0x5C] {
+                assert_eq!(
+                    run(&mut app, &mut fs, ins, p1, p2, &[byte]).0,
+                    WRONG_DATA,
+                    "INS {ins:02X} with the one byte {byte:02X}, authed={authed}"
+                );
+            }
+            // The control: two bytes is NOT this refusal on the ungated reads,
+            // which serve their answer and ignore the body. Without it a blanket
+            // `6A80` for every body would satisfy the loop above.
+            if matches!(ins, INS_VERSION | INS_YK_SERIAL) {
+                assert_eq!(
+                    run(&mut app, &mut fs, ins, p1, p2, &[0x41, 0x42]).0,
+                    Sw::OK,
+                    "INS {ins:02X} ignores a two-byte body"
+                );
+                assert_eq!(run(&mut app, &mut fs, ins, p1, p2, &[]).0, Sw::OK);
+            }
+        }
+    }
+
+    // The three commands E182 named, where a `6700` outranked the credential.
+    let long = [0x41u8; 8];
+    select(&mut app, &mut fs);
+    for body in [&[][..], &long[..]] {
+        assert_eq!(
+            run(&mut app, &mut fs, INS_MOVE_KEY, 0x9A, 0x9C, body).0,
+            Sw::SECURITY_STATUS_NOT_SATISFIED,
+            "MOVE KEY unauthenticated, {} body bytes",
+            body.len()
+        );
+        assert_eq!(
+            run(&mut app, &mut fs, INS_ASYM_KEYGEN, 0x00, 0x9A, body).0,
+            Sw::SECURITY_STATUS_NOT_SATISFIED,
+            "KEYGEN unauthenticated, {} body bytes",
+            body.len()
+        );
+        // GENERAL AUTHENTICATE has no ACL — it is the authentication — so its
+        // framing is all it can answer for, and `6700` was the wrong word.
+        assert_eq!(
+            run(
+                &mut app,
+                &mut fs,
+                INS_AUTHENTICATE,
+                ALGO_AES192,
+                SLOT_CARDMGM,
+                body
+            )
+            .0,
+            WRONG_DATA,
+            "GENERAL AUTHENTICATE, {} body bytes",
+            body.len()
+        );
+    }
+    // The credential outranks P1P2 as well as the body, on the same three
+    // commands plus IMPORT — measured on the reference, which answers `6982`
+    // unauthenticated to a bad P1, a P2 naming no slot, and a slot IMPORT
+    // refuses. Which slots a command takes is not something a caller with no
+    // credential learns one refusal at a time.
+    for (ins, p1, p2, body) in [
+        (
+            INS_ASYM_KEYGEN,
+            0x00u8,
+            0x01u8,
+            &[0xAC, 0x03, 0x80, 0x01, 0x11][..],
+        ),
+        (
+            INS_ASYM_KEYGEN,
+            0x01,
+            0x9A,
+            &[0xAC, 0x03, 0x80, 0x01, 0x11][..],
+        ),
+        (INS_MOVE_KEY, 0x01, 0x9C, &[][..]),
+        (INS_IMPORT_ASYM, 0x06, 0x01, &[0x41, 0x42, 0x43, 0x44][..]),
+    ] {
+        assert_eq!(
+            run(&mut app, &mut fs, ins, p1, p2, body).0,
+            Sw::SECURITY_STATUS_NOT_SATISFIED,
+            "INS {ins:02X} P1P2 {p1:02X}{p2:02X} unauthenticated"
+        );
+    }
+    // GENERAL AUTHENTICATE's template tag must OPEN the body, not merely appear
+    // in it. `80 00 7C 02 80 00` carries a real top-level `7C` in second place,
+    // which the tag search finds and would otherwise serve; the reference
+    // answers `6A80`, and so does `5C 00 7C 02 80 00`. Without the first-byte
+    // check ours would run the witness step from a body it never validated.
+    for body in [
+        &[0x80u8, 0x00, 0x7C, 0x02, 0x80, 0x00][..],
+        &[0x5C, 0x00, 0x7C, 0x02, 0x80, 0x00][..],
+    ] {
+        assert_eq!(
+            run(
+                &mut app,
+                &mut fs,
+                INS_AUTHENTICATE,
+                ALGO_AES192,
+                SLOT_CARDMGM,
+                body
+            )
+            .0,
+            WRONG_DATA,
+            "a dynamic-auth template that does not open the body"
+        );
+    }
+
+    // …and once authorised the same two commands answer for the request again,
+    // so the ACL was hoisted rather than the checks deleted.
+    auth_mgm(&mut app, &mut fs);
+    assert_eq!(
+        run(&mut app, &mut fs, INS_MOVE_KEY, 0x9A, 0x9C, &long).0,
+        Sw::FILE_NOT_FOUND,
+        "MOVE KEY authorised: the empty source slot, not the body"
+    );
+    assert_eq!(
+        run(&mut app, &mut fs, INS_ASYM_KEYGEN, 0x00, 0x9A, &[]).0,
+        WRONG_DATA,
+        "KEYGEN authorised: the missing template"
+    );
+    assert_eq!(
+        run(&mut app, &mut fs, INS_ASYM_KEYGEN, 0x00, 0x9A, &long).0,
+        WRONG_DATA,
+        "KEYGEN authorised: the wrong template tag"
+    );
+    // The P1P2 strictness E140 kept is still there, one gate lower.
+    let tmpl = [0xACu8, 0x03, 0x80, 0x01, 0x11];
+    for (p1, p2) in [(0x01u8, 0x9Au8), (0x00, 0x01)] {
+        assert_eq!(
+            run(&mut app, &mut fs, INS_ASYM_KEYGEN, p1, p2, &tmpl).0,
+            Sw::INCORRECT_P1P2,
+            "KEYGEN authorised: P1P2 {p1:02X}{p2:02X}"
+        );
+    }
+    assert_eq!(
+        run(&mut app, &mut fs, INS_MOVE_KEY, 0x01, 0x9C, &[]).0,
+        Sw::INCORRECT_P1P2,
+        "MOVE KEY authorised: a destination naming no slot"
     );
 }

@@ -49,6 +49,25 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **A one-byte body is one refusal on every PIV command, and the management key
+  outranks the request below it.** `MOVE KEY` answered `6700` to any body at all —
+  before looking at the management key — and `GENERATE ASYMMETRIC KEY PAIR` judged
+  its whole template before it, so a caller with no credential could tell a
+  well-formed request from a malformed one on two management-gated commands.
+  `GENERAL AUTHENTICATE` spelled an empty body `6700` where every other framing
+  refusal on that command is `6A80`. Measured on a YubiKey 5.7.4, `Lc` walked over
+  0-40 on eleven instructions: **`Lc = 1` is `6A80` on all of them, and every other
+  length behaves exactly as `Lc = 0`** — the same for data bytes `41`, `00` and
+  `5C`, with and without a trailing `Le`, and in the short and extended encodings.
+  It outranks even "this instruction does not exist": an undefined `INS` answers
+  `6A80` at `Lc = 1` and `6D00` at every other length, on both cards. That rule is
+  one check at the top of the applet now; `MOVE KEY` ignores its body as the
+  reference does, and `GENERATE`, `MOVE KEY` and `IMPORT` all ask for the
+  management key before judging `P1`/`P2` — the reference answers `6982` there
+  too, and our stricter `P1`/`P2` validation is unchanged, just one gate lower.
+  `docs/protocol.md` §5.1 documents the rule for third-party hosts, including that
+  it is PIV-only. `bcdDevice` → `0x0935`.
+
 - **An OpenPGP `PUT DATA` to a tag the card cannot write is `6B00` at every body
   length.** Past `MAX_DO_BYTES` it was `6A80`: the cap that DO `C0` announces sits
   above the routing split on purpose — the cardholder-certificate arm writes flash

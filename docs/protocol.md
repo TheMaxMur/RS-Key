@@ -451,8 +451,9 @@ The only RS-Key-specific bytes a config tool needs are §6 (Management config),
 
 ### 5.1 Where a standard command answers differently
 
-Two places where a host that works against other authenticators sees a status
-byte it may not expect. Both are spec-permitted strictness, not extensions.
+Three places where a host that works against other authenticators sees a status
+byte it may not expect. All are spec-permitted strictness, not extensions, and
+the third matches the reference this project is measured against.
 
 **`authenticatorReset` has a power-up window.** CTAP 2.1 §6.6 lets an
 authenticator with no display refuse a reset that does not follow a fresh
@@ -479,6 +480,15 @@ exactly that — it sends the reset, and only on `0x30` prints the unplug/replug
 prompt and retries in the new window (`tools/rsk/offboard.py`), so it stays
 correct against a display build and against pre-`0x0854` firmware, which both
 accept the first attempt.
+
+**PIV refuses a one-byte command body, whatever the instruction.** A PIV APDU
+carrying `Lc = 1` answers `6A80` before anything else — before the PIN or the
+management key, before `P1`/`P2`, and before the instruction is looked up, so
+even an unimplemented `INS` answers `6A80` rather than `6D00`. No PIV command
+takes a one-byte body, and a YubiKey 5.7.4 does the same on every instruction.
+The rule is **PIV-only**: OATH's `LIST` takes a legitimate `Lc = 1`, and
+SELECT-by-AID with a one-byte AID prefix is served by the transport before any
+applet sees it.
 
 **U2F AUTHENTICATE rejects a reserved P1.** U2F Raw Message Formats §7.2 assigns
 three control bytes; RS-Key accepts exactly those and answers `6A86`
