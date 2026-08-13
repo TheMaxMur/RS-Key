@@ -4789,6 +4789,147 @@ fn a_generated_key_takes_the_cards_touch_default_which_is_never() {
     );
 }
 
+/// `9E` is the Card Authentication Key — SP 800-73-4 makes it the slot usable
+/// *without* a PIN, for physical-access and contactless readers — and a YubiKey
+/// 5.7.4 defaults it to PIN `NEVER`. Ours defaulted it to `ONCE`, which made the
+/// slot useless for the one thing it is for. Measured 3 runs: a default `9E` key
+/// signs with no VERIFY at all, and its signature spends no ALWAYS freshness,
+/// while `9A` in the same state answers `6982` and does spend. An explicit
+/// `--pin-policy ONCE` is honoured identically on both cards, so nobody loses a
+/// gate they asked for.
+#[test]
+fn the_card_authentication_slot_needs_no_pin_by_default() {
+    use crate::keygen::resolved_policies;
+    for (slot, want) in [
+        (SLOT_AUTHENTICATION, PINPOLICY_ONCE),
+        (SLOT_SIGNATURE, PINPOLICY_ALWAYS),
+        (SLOT_KEYMGM, PINPOLICY_ONCE),
+        (SLOT_CARDAUTH, PINPOLICY_NEVER),
+        (SLOT_RETIRED_FIRST, PINPOLICY_ONCE),
+    ] {
+        assert_eq!(
+            resolved_policies(slot, None, None).unwrap()[0],
+            want,
+            "slot {slot:02X}"
+        );
+    }
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    for slot in [SLOT_AUTHENTICATION, SLOT_SIGNATURE, SLOT_CARDAUTH] {
+        assert_eq!(
+            run(
+                &mut app,
+                &mut fs,
+                INS_ASYM_KEYGEN,
+                0,
+                slot,
+                &gen_template(ALGO_ECCP256)
+            )
+            .0,
+            Sw::OK
+        );
+    }
+    // Nothing verified: the card-auth slot signs, the authentication slot does not.
+    assert_eq!(sign_p256(&mut app, &mut fs, SLOT_CARDAUTH), Sw::OK);
+    assert_eq!(
+        sign_p256(&mut app, &mut fs, SLOT_AUTHENTICATION),
+        Sw::SECURITY_STATUS_NOT_SATISFIED
+    );
+    // …and a NEVER-policy operation spends no freshness, where a ONCE one does.
+    verify_pin(&mut app, &mut fs);
+    assert_eq!(sign_p256(&mut app, &mut fs, SLOT_CARDAUTH), Sw::OK);
+    assert_eq!(sign_p256(&mut app, &mut fs, SLOT_SIGNATURE), Sw::OK);
+    verify_pin(&mut app, &mut fs);
+    assert_eq!(sign_p256(&mut app, &mut fs, SLOT_AUTHENTICATION), Sw::OK);
+    assert_eq!(
+        sign_p256(&mut app, &mut fs, SLOT_SIGNATURE),
+        Sw::SECURITY_STATUS_NOT_SATISFIED
+    );
+    // An explicit ONCE at 9E is still a gate.
+    let mut once = gen_template(ALGO_ECCP256);
+    once.extend_from_slice(&[0xAA, 0x01, PINPOLICY_ONCE]);
+    once[1] += 3;
+    auth_mgm(&mut app, &mut fs);
+    assert_eq!(
+        run(&mut app, &mut fs, INS_ASYM_KEYGEN, 0, SLOT_CARDAUTH, &once).0,
+        Sw::OK
+    );
+    let mut cold = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    select(&mut cold, &mut fs);
+    assert_eq!(
+        sign_p256(&mut cold, &mut fs, SLOT_CARDAUTH),
+        Sw::SECURITY_STATUS_NOT_SATISFIED
+    );
+    verify_pin(&mut cold, &mut fs);
+    assert_eq!(sign_p256(&mut cold, &mut fs, SLOT_CARDAUTH), Sw::OK);
+}
+
+/// A literal `0` policy byte in slot metadata is what an *older* build could
+/// store, and only the use-time path ever sees one. It has to mean the same
+/// thing the store-time resolver means, or a legacy record and a new one behave
+/// differently at the same slot with nothing to notice it — which is why both
+/// now go through `resolved_policies`.
+#[test]
+fn a_legacy_default_policy_byte_resolves_as_the_card_default() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    for slot in [SLOT_AUTHENTICATION, SLOT_SIGNATURE, SLOT_CARDAUTH] {
+        assert_eq!(
+            run(
+                &mut app,
+                &mut fs,
+                INS_ASYM_KEYGEN,
+                0,
+                slot,
+                &gen_template(ALGO_ECCP256)
+            )
+            .0,
+            Sw::OK
+        );
+        // Overwrite the resolved head with the unresolved byte an older build left.
+        fs.meta_add(
+            key_fid(slot).get(),
+            &[ALGO_ECCP256, PINPOLICY_DEFAULT, TOUCHPOLICY_NEVER],
+        )
+        .unwrap();
+    }
+    let mut cold = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    select(&mut cold, &mut fs);
+    // 9E resolves to NEVER, so it signs with nothing verified; 9A does not.
+    assert_eq!(sign_p256(&mut cold, &mut fs, SLOT_CARDAUTH), Sw::OK);
+    assert_eq!(
+        sign_p256(&mut cold, &mut fs, SLOT_AUTHENTICATION),
+        Sw::SECURITY_STATUS_NOT_SATISFIED
+    );
+    // 9C resolves to ALWAYS, so one VERIFY buys exactly one signature there.
+    verify_pin(&mut cold, &mut fs);
+    assert_eq!(sign_p256(&mut cold, &mut fs, SLOT_AUTHENTICATION), Sw::OK);
+    assert_eq!(
+        sign_p256(&mut cold, &mut fs, SLOT_SIGNATURE),
+        Sw::SECURITY_STATUS_NOT_SATISFIED
+    );
+    // An UNDEFINED byte is not resolvable and must stay fail-closed.
+    fs.meta_add(
+        key_fid(SLOT_CARDAUTH).get(),
+        &[ALGO_ECCP256, 0x42, TOUCHPOLICY_NEVER],
+    )
+    .unwrap();
+    let mut cold2 = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    select(&mut cold2, &mut fs);
+    assert_eq!(
+        sign_p256(&mut cold2, &mut fs, SLOT_CARDAUTH),
+        Sw::SECURITY_STATUS_NOT_SATISFIED
+    );
+}
+
 #[test]
 fn generate_refuses_an_undefined_policy_byte() {
     let rng = RefCell::new(TestRng(7));

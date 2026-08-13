@@ -97,7 +97,7 @@ box.
 | `9a` | PIV Authentication | system / domain login, SSH, client TLS | once per session |
 | `9c` | Digital Signature | document & email signing | **every operation** |
 | `9d` | Key Management | decryption, key agreement (ECDH) | once per session |
-| `9e` | Card Authentication | physical-access / contactless | once per session |
+| `9e` | Card Authentication | physical-access / contactless | **no PIN** |
 | `82`–`95` | Retired Key Management | 20 slots for old decryption keys | once per session |
 | `9b` | Management Key | admin auth (not an asymmetric key) | — |
 | `f9` | Attestation | signs slot attestation certs (on-card) | — |
@@ -108,10 +108,11 @@ VERIFY. A session ends when the card loses power or another application is
 selected on it — an OpenPGP or OATH tool reaching for the same key mid-session
 does exactly that. Selecting **PIV** again does not end it (SP 800-73-4 Part 2
 §3.1.1), so a tool that re-selects before each command keeps the PIN it already
-gave. `9e` carries no special default on this firmware. Like the other
-non-signature slots it defaults to PIN **once per session**, so a default-policy
-9e key still needs one VERIFY before use. For true card-auth / contactless
-no-PIN behaviour, generate the 9e key with an explicit `--pin-policy NEVER`.
+gave. `9e` is the exception at the other end: SP 800-73-4 makes the Card
+Authentication Key the one usable **without** a PIN, so a default-policy `9e` key
+signs with no VERIFY at all — which is what makes it usable for physical-access
+and contactless readers. Give it `--pin-policy ONCE` (or `ALWAYS`) at generate
+time if you want it gated like the rest.
 
 **Algorithms.** On-card generation and import accept **RSA-2048 / 3072 / 4096**,
 **RSA-1024** (disabled under the FIPS-style build, SP 800-131A), **ECC P-256 /
@@ -174,13 +175,13 @@ ykman piv keys generate --pin-policy ALWAYS --touch-policy ALWAYS 9a pub.pem
 
 | `--pin-policy` | Effect |
 |---|---|
-| `NEVER` | no PIN to use the key |
-| `ONCE` | PIN once per session (default for `9a`/`9d`/`9e`/retired) |
+| `NEVER` | no PIN to use the key (default for `9e`) |
+| `ONCE` | PIN once per session (default for `9a`/`9d`/retired) |
 | `ALWAYS` | PIN before every operation (default for `9c`) |
 
 `ALWAYS` means the VERIFY has to be the last thing before the operation: a
-private-key operation at **any** PIN-gated slot uses it up — including a
-default-policy `9e`, and including one that fails after reaching the key — so
+private-key operation at **any** PIN-gated slot uses it up — including one that
+fails after reaching the key — so
 `VERIFY` → sign at `9a` → sign at `9c` refuses the second signature with `6982`.
 Verify again between them. Nothing else is affected — the PIN itself stays
 verified, so a `9c` signature does not close the `ONCE` slots, the PIN-protected

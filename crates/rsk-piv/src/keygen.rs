@@ -87,8 +87,26 @@ pub(crate) fn rsa_size_from_algo(algo: u8) -> Option<usize> {
     })
 }
 
-/// Resolve the metadata policy bytes at store time: the signature slot defaults to
-/// PIN-always, everything else to PIN-once and touch-always.
+/// The PIN policy a slot has when the request names none. Shared with the use-time
+/// resolution in `crate::auth`, which is the other owner of the same question: a
+/// `0` byte an older build stored means "the card's default", and a legacy slot
+/// and a new one have to agree about what that is.
+pub(crate) fn default_pin_policy(slot: u8) -> u8 {
+    match slot {
+        SLOT_SIGNATURE => PINPOLICY_ALWAYS,
+        // SP 800-73-4 makes 9E the slot usable WITHOUT a PIN — physical access,
+        // contactless — and a YubiKey defaults it to NEVER (measured, 3 runs).
+        // ONCE made the slot useless for the one thing it is for.
+        SLOT_CARDAUTH => PINPOLICY_NEVER,
+        _ => PINPOLICY_ONCE,
+    }
+}
+
+/// Resolve the metadata policy bytes: the signature slot defaults to PIN-always,
+/// the card-authentication slot to PIN-never, everything else to PIN-once; touch
+/// defaults to never everywhere. The one owner — `auth.rs` resolves a legacy
+/// unresolved byte through here too, so a record an older build wrote and one
+/// this build writes mean the same thing at the same slot.
 ///
 /// "Default" is an **absent** tag; `DEFAULT` (`0`) on the wire is a value, and an
 /// undefined one — a YubiKey 5.7.4 answers `6A80` to `AA 01 00` and `AB 01 00`
@@ -103,13 +121,8 @@ pub(crate) fn resolved_policies(
     req_pin: Option<u8>,
     req_touch: Option<u8>,
 ) -> Result<[u8; 2], Sw> {
-    let def_pin = if slot == SLOT_SIGNATURE {
-        PINPOLICY_ALWAYS
-    } else {
-        PINPOLICY_ONCE
-    };
     let pin = match req_pin {
-        None => def_pin,
+        None => default_pin_policy(slot),
         Some(p @ (PINPOLICY_NEVER | PINPOLICY_ONCE | PINPOLICY_ALWAYS)) => p,
         Some(_) => return Err(WRONG_DATA),
     };

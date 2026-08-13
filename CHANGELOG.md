@@ -275,6 +275,22 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Changed
 
+- **Slot `9e`, the PIV Card Authentication Key, defaults to PIN `NEVER`.** It
+  defaulted to `ONCE`, so a key generated there needed a `VERIFY` before every
+  session — which is the one thing that slot is defined *not* to need.
+  SP 800-73-4 makes `9e` the key usable without a PIN, for physical-access and
+  contactless readers, and a YubiKey 5.7.4 defaults it accordingly: measured three
+  runs, a default-policy `9e` key signs with nothing verified at all, and its
+  signature spends none of the freshness a `pin-policy ALWAYS` slot reads, where
+  a `9a` signature in the same state answers `6982` and does spend. Ours matched
+  neither. An explicit `--pin-policy ONCE` or `ALWAYS` at `9e` is stored and
+  enforced exactly as before — identical on both cards, measured — so this costs
+  nobody a gate they asked for, and keys already on a card keep the policy they
+  were generated with. The use-time resolution of a legacy unresolved policy byte
+  now goes through the same resolver as the store-time one, so a record an older
+  build wrote and one this build writes mean the same thing at the same slot.
+  **bcdDevice → 0x08D5.**
+
 - **A PIV key generated without `--touch-policy` no longer demands a touch.** The
   card resolved an absent touch tag to `ALWAYS`, so a plain
   `ykman piv keys generate 9a pub.pem` minted a key that wanted a physical press

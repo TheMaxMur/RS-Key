@@ -379,14 +379,16 @@ pub(crate) fn general_authenticate<S: Storage>(
         mgm_key.zeroize();
         return Sw::INCORRECT_PARAMS;
     }
-    let mut pinpol = meta[1];
-    if pinpol == PINPOLICY_DEFAULT {
-        pinpol = if key_ref == SLOT_SIGNATURE {
-            PINPOLICY_ALWAYS
-        } else {
-            PINPOLICY_ONCE
-        };
-    }
+    // Only a record an OLDER build wrote can still hold an unresolved `0` here — no
+    // host may send one (E80) — and it has to mean what the store-time resolver
+    // means, or a legacy slot and a new one behave differently at the same slot
+    // with nothing to notice it. Hence one owner for the table. Any other byte is
+    // taken as stored, so an undefined one reaches `pin_satisfied`'s closed arm.
+    let pinpol = if meta[1] == PINPOLICY_DEFAULT {
+        keygen::default_pin_policy(key_ref)
+    } else {
+        meta[1]
+    };
     if is_key(key_ref) && !pin_satisfied(sess, pinpol) {
         mgm_key.zeroize();
         return Sw::SECURITY_STATUS_NOT_SATISFIED;
