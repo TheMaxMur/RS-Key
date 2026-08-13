@@ -38,14 +38,344 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+### TL;DR
+
+A conformance release, measured rather than argued: where an entry below names a
+reference, it is a YubiKey 5.7.4, three runs per cell. If you read nothing else:
+
+- **Four ways to damage a key are closed.** A PIV `VERIFY` whose body was not the
+  8-byte wire form spent a PIN retry, so three malformed commands blocked the PIN.
+  A short unpadded new reference was stored verbatim, and with the PUK shortened
+  too the only exit was `INS FB` RESET — which destroys every PIV key. A signature
+  at a PIN-always slot locked the card. And generating an OpenPGP keypair
+  destroyed an AES key the host had installed.
+- **Two defaults changed and you will see it.** PIV slot `9e` defaults to PIN
+  `NEVER`, which is what SP 800-73-4 makes the card-authentication key for, and a
+  key generated without `--touch-policy` no longer demands a touch on every
+  operation — that one used to hang scripted use with no diagnostic.
+- **One thing to know when upgrading.** The OpenPGP sex DO `5F35` narrows to the
+  codes the reference accepts; a device provisioned before this release is
+  migrated on its next boot, once, and needs nothing from you.
+- **The debug counter read is gone from shipping images.** Vendor `INS 12`
+  reported the prime-search statistics on every build; it is behind a feature now,
+  like its two neighbours.
+
+Everything else is status words, at-rest ordering, and the instruments — grouped
+below in the usual four sections, security last.
+
 ### Added
 
-- **`rsk-emu --taps <file>` drives the trusted display's keypad from a script.**
-  One contact per line (`x,y[,hold_ms[,gap_ms]]`, `#` comments), read back
-  through the same `TouchPad` the CST328 implements, so the flows behind the pad
-  — the unlock gate, the on-device PIN change — can be exercised without a
-  mouse. It replaces the mouse for the run and says so; a script that is empty or
-  points off the 240×320 glass is refused rather than silently ignored.
+- **A Kani proof over the APDU dispatcher's *sequences*, the first one in the
+  tree that applies more than a single call to a stateful object.**
+  `Dispatcher::process` carries three audit findings in its own comments —
+  run-34 #26 (a stranded `CLA 0x10` APDU prefixed the next command, so the
+  victim's own GENERAL AUTHENTICATE signed the injector's data under the
+  victim's touch), run-35 (fixing that for SELECT alone left every other
+  instruction absorbing it), run-37 (a mismatch-only test let a stranded segment
+  swallow the next client's SELECT, leaving the previous applet selected and
+  still PIN-verified) — each reachable in two or three APDUs, and every existing
+  harness was single-call, so the surface with three demonstrated bugs had no
+  proof at all. The new one drives the real dispatcher with a recording stub
+  applet over a selected card and **every pair of raw APDUs up to six bytes**,
+  and shows: it never panics; the chain buffer stays in bounds and a *dropped*
+  chain leaves no bytes behind, not merely a cleared flag; **the applet is never
+  handed a body from a command it did not itself terminate** — the `Nc` it sees
+  is the second command's own unless the pair is a legitimate ISO 7816-4 chain,
+  in which case it is exactly the sum, with no third possibility; a
+  secure-messaging class reaches no applet, SELECT included; and a well-formed
+  SELECT for a registered AID always reaches the applet, whatever chain state it
+  walks into. Reintroducing any of the three historical bugs makes it fail, and
+  the solver hands back the two-APDU witness. Proof-only (`cfg(kani)`): the
+  firmware image is byte-identical, so no `bcdDevice` is owed.
+
+- **Three Kani harnesses that prove things about *sequences* of security
+  states, not single calls.** The 53 harnesses this tree already had are all
+  single-call: a parser, a codec, one arithmetic step. RS-Key's dangerous
+  defects have not lived there — they have lived in orderings (a token
+  surviving a PIN change, one channel continuing another's enumerate walk, a
+  gate deleted before the key it guards). `rsk-fido` now carries a symbolic
+  four- to five-operation sequence over the **real** `FidoState`, checked after
+  every step: `NoTokenAfterInvalidation` (a pinUvAuthToken retired by
+  `stopUsingPinUvAuthToken`, a reroll, an `authenticatorReset`, a power cycle or
+  its own usage timer never authorizes again, and only a fresh issuance brings
+  one back) and `NoAuthorizationBypass` (a credentialManagement enumerate walk
+  is servable only to the channel whose *Begin* opened it — CTAP 2.1 §6.8
+  exempts the *Next* legs from carrying authorization of their own, so the
+  `(channel, counter)` pair **is** the check).
+
+  The third drives the real `verify_cm_token` with a `pinUvAuthParam` minted
+  while the grant was live and replayed after it died, and asserts two things:
+  the gate refuses, **and the replayed MAC still verifies**. `stop_using_token`
+  deliberately leaves the token bytes in place, and `config.rs` and
+  `credmgmt.rs` test the MAC and the permission bits and nothing else — so at
+  those two sites zeroing `permissions` is not defence in depth, it is the only
+  defence. That asymmetry is now pinned by a proof instead of by a comment.
+
+  **All eight clauses have been shown to be able to fail**, one isolated
+  mutation each, every one rebuilding a real defect or removing a defence the
+  tree relies on: `stop_using_token` keeping permissions or wiping the token
+  bytes, `may_walk_rps` ignoring the channel or losing its counter half,
+  `user_verified()` dropping the UV flag, and `consume_after_user_presence`
+  keeping permissions (GHSA-wqjm-653g-hgw3). Each turns exactly the clause that
+  names it red, and nothing else. Costs, on an 18-core Apple Silicon under load:
+  138 s, 43 s and 393 s. The invariant names are shared with the TLA+ model in
+  `formal/`, so one property reads model → code → harness. **cfg-gated code
+  never reaches the image, so no `bcdDevice` bump.**
+
+- **A TLA+ model of the security state, `formal/RSKeySecurityState.tla`.** 41
+  actions over PIN retries, the pinUvAuthToken and its permissions, the touch
+  and channel owners, the reset window, the persistent gate records and the
+  position at which power is lost inside a multi-write flash sequence. TLC
+  checks six named invariants — the same six the `rsk-fido` Kani harnesses use —
+  exhaustively over 13 232 120 distinct states at small constants. Fourteen
+  mutation switches rebuild real RS-Key defects and **all fourteen are caught by
+  the invariant that names them**, each proved solo so a mutant caught by a
+  sibling cannot pass for one that names its own; `-coverage` shows no dead
+  action. It has produced **two counterexamples on the shipped tree** (a torn
+  reset phase can strand an unmanageable credential, or a persistent
+  credentialManagement grant on a key whose PIN record is gone) — both LOW, both
+  awaiting a ruling, neither fixed.
+
+  It is a **design artefact, not an assurance layer**, and `docs/testing.md` →
+  "Formal claims" is the paragraph to quote: a green TLC run is a result about
+  the model, whose fidelity to the code is maintained by hand. An adversarial
+  review of the first revision proved why that wording matters — the green run
+  rested on an abstraction that made the model *narrower* than the firmware (a
+  power cut left the device permanently seedless, where every boot regenerates
+  the seed), and repairing it turned the run red until a device-lifetime ghost
+  in one invariant was retired at the right moment. Both are fixed, and the
+  measurement that the repaired invariant still catches its mutant is in
+  `formal/README.md`. Not in `flake.nix`, not in the gate, not in CI: the
+  2.2 MB `tla2tools.jar` plus a host JRE, run on demand.
+
+- **The CTAP 2.3 `largeBlob` extension, as an opt-in build
+  (`--features largeblob-ext`).** It carries the whole blob inside the
+  `getAssertion` that reads or writes it and keeps it with the credential,
+  instead of the CTAP 2.1 arrangement where the platform manages one array and
+  the device only hands out a per-credential key. Read it with
+  `largeBlob: {read: true}`, write it with `{write: <bytes>, originalSize: n}`
+  and a **non-empty allowList** — §12.4 makes naming the credential the
+  precondition for a write — and the answers come back in
+  `unsignedExtensionOutputs`.
+
+  It is not additive, and that is the spec's doing: §12.4 says
+  *"Authenticators MUST NOT support both extensions"*, so the build **withdraws**
+  the `largeBlobKey` extension, the `authenticatorLargeBlobs` command (`0x0C` now
+  answers `CTAP1_ERR_INVALID_COMMAND`), the `largeBlobs` option and
+  `maxSerializedLargeBlobArray`. Since every shipping browser drives the 2.1 pair
+  today and no client speaks the 2.3 extension yet, **the default build is
+  unchanged** — turning this on trades working WebAuthn `largeBlob` support for
+  a design nothing currently asks for. Up to 4046 bytes per credential
+  (discoverable only: a non-discoverable credential has no record to hang a blob
+  on, so `support: "required"` there is `CTAP2_ERR_LARGE_BLOB_STORAGE_FULL`).
+
+  One thing the spec does not ask for: each blob is sealed at rest under the
+  device seed with the credential id as AAD. The 2.1 array arrives already
+  encrypted by the platform, but a 2.3 blob arrives as compressed plaintext, so
+  without the seal it would sit readable in a flash dump — and the AAD is also
+  what stops a record left behind in a reused slot being served to the
+  credential that takes it next. **bcdDevice → 0x0881.**
+
+- **The Kani proofs run on pull requests now, split into tiers by measured
+  cost.** They used to run only in the daily `deep-checks` row, because one
+  harness in `rsk-rescue` costs ~80 minutes — so every proof sat a day away from
+  the change that broke it. Measured, they are not one population: 38 harnesses
+  over 12 crates discharge in 209 s of solving all told, and four crates hold
+  everything slow. `ci.yml` has a `proofs` job running the fast tier on any change
+  under `crates/`, plus the `rsk-fido` + `rsk-fs` sequence proofs (~13 min) when
+  the diff reaches `rsk-fido`, `rsk-fs`, `rsk-store` or `rsk-wipe` — the state
+  those proofs are about. The daily row still runs **all** of them; nothing was
+  dropped from it.
+
+  `scripts/kani.sh` owns tier → crates and is the only place a roster is written;
+  it also floors the number of harnesses each tier must prove, because a roster
+  that selects nothing prints a summary and exits 0 — the shape this repo has
+  now shipped three times. `kani_gate.py` reads that table back with `--tiers`
+  and holds it to the same contract as before (every crate carrying a proof on
+  the full tier, every tier run by a row CI actually executes, every tier on the
+  page a reader copies), and it finally has its own mutation table —
+  `scripts/test_kani_gate.py`, 27 cases, both directions.
+
+  ⚠️ `proofs` is a new job name. If `main`'s ruleset should require it, it has to
+  be added there; nothing in the repository can do that for itself.
+
+- The gate asserts a **stack floor** (`FIRMWARE_STACK_FLOOR_KIB`, alongside the
+  flash budget). Static RAM had grown 28.5 KiB since `0x082B`, taking the same
+  amount off the stack ceiling with nothing measuring it.
+
+- The gate seals a throwaway-keyed image and asserts its first metadata block is
+  `ignored`, so the sealing order above cannot silently regress. The real signing
+  key stays out of it.
+
+### Changed
+
+- **The presence-scope arbitration moved into `crates/rsk-device`.** Which
+  transport owns the one physical button, whose cancel may end its touch wait,
+  and the `spent` latch that stops one hold satisfying two ceremonies all lived
+  in `firmware/src/presence.rs` — a `no_std` embassy-rp binary for thumbv8m that
+  neither `cargo test` nor `cargo kani -p` can build, so the rule an unprivileged
+  FIDO-HID process must not be able to cancel an OpenPGP signature had no test
+  and no proof. It has both now: the arbitration is `rsk_device::presence`, with
+  the button, the clock and the blocking delay behind a `Board` trait, and
+  `firmware/src/presence.rs` keeps the board half and the seven `UserPresence`
+  impls. `NoCrossTransportTouchConsumption` — the fourth of the six TLA+
+  invariants, and the one `formal/README.md` said could not be proved where it
+  lived — now reaches a Kani harness, taking the traceability table from two of
+  six to three. Behaviour and wire surface unchanged; no `bcdDevice` bump.
+
+- **Slot `9e`, the PIV Card Authentication Key, defaults to PIN `NEVER`.** It
+  defaulted to `ONCE`, so a key generated there needed a `VERIFY` before every
+  session — which is the one thing that slot is defined *not* to need.
+  SP 800-73-4 makes `9e` the key usable without a PIN, for physical-access and
+  contactless readers, and a YubiKey 5.7.4 defaults it accordingly: measured three
+  runs, a default-policy `9e` key signs with nothing verified at all, and its
+  signature spends none of the freshness a `pin-policy ALWAYS` slot reads, where
+  a `9a` signature in the same state answers `6982` and does spend. Ours matched
+  neither. An explicit `--pin-policy ONCE` or `ALWAYS` at `9e` is stored and
+  enforced exactly as before — identical on both cards, measured — so this costs
+  nobody a gate they asked for, and keys already on a card keep the policy they
+  were generated with. The use-time resolution of a legacy unresolved policy byte
+  now goes through the same resolver as the store-time one, so a record an older
+  build wrote and one this build writes mean the same thing at the same slot.
+  **bcdDevice → 0x08D5.**
+
+- **A PIV key generated without `--touch-policy` no longer demands a touch.** The
+  card resolved an absent touch tag to `ALWAYS`, so a plain
+  `ykman piv keys generate 9a pub.pem` minted a key that wanted a physical press
+  before every sign, decrypt and ECDH — and every unattended consumer (`pkcs11`,
+  `age-plugin`, SSH with a PIV key) then hung on a prompt nobody was there to
+  answer, with no diagnostic beyond a timeout. The one flag that would have
+  avoided it is the one the user did not pass. A YubiKey 5.7.4 resolves the same
+  absent tag to `NEVER`, measured three runs across all four primary slots, both
+  through `ykman` and through a raw `GENERATE` carrying no `AC` policy tags at
+  all. Ours does now, on every slot including the retired ones and the
+  trusted-display's own retired-slot generation. **Nothing is silently
+  downgraded**: an explicit `--touch-policy ALWAYS` or `CACHED` is stored and
+  enforced exactly as before, and keys already on a card keep the policy they were
+  generated with — this is the default for *new* keys only. If you want the press,
+  ask for it, which is also how you ask a YubiKey. **bcdDevice → 0x08D4.**
+
+- **An unimplemented subcommand answers what a YubiKey answers.** CTAP 2.2 §8.1
+  makes `CTAP2_ERR_INVALID_SUBCOMMAND` a MUST here, and its own NOTE concedes
+  that implementations of earlier versions do not follow it. A YubiKey 5.7.4 is
+  one of them, so hosts are written against *its* codes and these now match it,
+  measured cell for cell: `authenticatorConfig` judges the subcommand **before**
+  the pinUvAuthParam — `0x00` is the absent-parameter sentinel
+  (`CTAP2_ERR_MISSING_PARAMETER`), an id the card does not implement is
+  `CTAP1_ERR_INVALID_PARAMETER` with or without a token, and only a known one
+  reaches `CTAP2_ERR_PUAT_REQUIRED`; `credentialManagement` keeps answering
+  `CTAP2_ERR_PUAT_REQUIRED` to every subcommand without a token and
+  `CTAP1_ERR_INVALID_PARAMETER` once one verifies. Previously
+  `authenticatorConfig` said `CTAP2_ERR_UNSUPPORTED_OPTION` and gated first.
+  `clientPIN` is the exception and is left on the spec's `0x3E`: the YubiKey has
+  no stable answer to copy there — the same key returns `0x01`, `0x33`, `0x02` or
+  `0x14` for the same undefined subcommand depending on `pinUvAuthProtocol` and
+  on what ran before it. That also covers `0x06`/`0x07` on a build with no PIN
+  pad, which used to report an unsupported *option*. **bcdDevice → 0x0886.**
+
+- **An abandoned `largeBlobs` write is dropped after 30 s.** CTAP 2.3 §6 names
+  four stateful sequences and bounds all of them the same way: "exclusively
+  preceded" by their own continuation, with "no more than 30 seconds" between
+  those commands. The command half was already enforced for all four; this
+  finishes the time half for the one sequence still missing it, and it is the one
+  that needed it most — a part-written array is the only sequence whose
+  continuation legs carry no authorization on a PIN-less key, so nothing but some
+  *other* command arriving could retire it. Send nothing and it sat in RAM for the
+  rest of the power cycle. The window is per fragment, not per array, so a slow
+  link transferring a full 4078-byte blob is unaffected; an expired transfer
+  answers `CTAP2_ERR_INVALID_SEQ` and leaves the stored array untouched, exactly
+  as an interrupted one already did. Inert on a `--features largeblob-ext` build,
+  which never arms this accumulator. **bcdDevice → 0x0885.**
+
+- **A credential-management enumerate walk now retires on a timer of its own.**
+  The cursor is dropped once 30 s pass with no leg served. That is the bound CTAP
+  2.3 §6 names for every stateful command — an authenticator may assume "no more
+  than 30 seconds will elapse between such commands" — and *between* is why the
+  timer is per leg rather than per walk: a platform drawing an account picker
+  cannot run out of it halfway down its own list. §6.3 step 7 says the same for
+  `getNextAssertion`, which already did it.
+
+  The same clause requires the state to die with the pinUvAuthToken that
+  authorized the opening call, and that part was already in place. It is not
+  enough on its own: the **persistent** `pcmr` token has no usage timer (§6.8.2),
+  so a walk opened with one had no bound at all and stayed continuable for the
+  whole power cycle as long as nothing else was sent. The *Next* legs carry no
+  authorization of their own (§6.8), which makes the cursor the authorization; it
+  is now bounded in time as well as to its channel. This is also the one row of
+  the YubiKey 5.7.4 comparison below that did not match. **bcdDevice → 0x0884.**
+
+- **A flash record now holds 4078 bytes instead of 2046.** Two things ride that
+  ceiling and doubled with it: the serialized large-blob array
+  (`maxSerializedLargeBlobArray` in `getInfo`, so a platform sees the new room
+  without being told) and an imported enterprise attestation chain
+  (`ATT_IMPORT`). No other applet sizes itself against it — PIV, OpenPGP and
+  OATH carry their own, lower caps and are unchanged. The number is not round
+  because a `sequential-storage` item must fit inside one 4096-byte flash page:
+  16 bytes of page and item headers come off the top, then the 2-byte FID that
+  shares the scratch with the value. **A provisioned key upgrades in place** —
+  only the size of the buffer the backend serializes through changed, not the
+  on-flash item format, so every existing record still reads. **bcdDevice →
+  0x0880.**
+
+- **The CTAP 2.3 `largeBlob` extension answered the wrong status for a mistyped
+  input** (`--features largeblob-ext` only). §12.4 says a CDDL violation is
+  `CTAP2_ERR_INVALID_CBOR` for both commands, but the parsers went through the
+  shared decode helper, which reports a wrong *type* as
+  `CTAP2_ERR_CBOR_UNEXPECTED_TYPE`. The extension's own inputs now map every
+  decode failure to `INVALID_CBOR`. The unit tests missed it because their
+  CDDL-violation cases were all well-typed — an external CTAP 2.3 conformance
+  runner driven against a `largeblob-ext` emulator caught it (large-blob F-4 and
+  F-5), and the regression test now covers the type axis too. That group is
+  12/12 green after the fix. **bcdDevice → 0x0883.**
+
+- **getInfo claimed a config subcommand that, by the spec's own definition, it
+  did not implement.** `authenticatorConfigCommands` (`0x1F`) listed
+  `vendorPrototype` (`0xFF`) while `vendorPrototypeConfigCommands` (`0x15`) was
+  absent — and CTAP 2.3 §6.11.3 makes the second the precondition for the first:
+  the subcommand "is only implemented if the `vendorPrototypeConfigCommands`
+  member in the authenticatorGetInfo response is present". So the two members
+  together said a supported subcommand was not implemented.
+
+  This finishes the `0x0875` fix rather than reversing it. Listing `0xFF` was
+  itself required (§6.11.7 makes it a MUST once the arm exists); what that change
+  left out was the companion member, on the reasoning that `0x15` is optional
+  "and a YubiKey hides it" — true, but a YubiKey hides `0xFF` along with it. Now
+  published: the six vendorCommandIds `authenticatorConfig` actually dispatches,
+  the soft-lock enable/disable pair and the four PicoForge phy writes. Nothing is
+  given away — [docs/protocol.md](docs/protocol.md) §9 already documents them,
+  and §6.11.7 says vendors "MUST NOT count on obscurity of the vendorCommandId
+  value as any sort of security".
+
+  Found by an external CTAP 2.3 conformance runner driven against a live board.
+  The rule is a cross-field constraint over getInfo, so nothing in the gate was
+  in a position to see it. **bcdDevice → 0x0882.**
+
+- **A multi-call sequence no longer survives an unrelated command in the middle
+  of it.** CTAP 2.2 §6 lets an authenticator assume each stateful command is
+  "exclusively preceded" by its own kind or by the command that initialized it —
+  "no other authenticator operation occurs in between" — and fail it with
+  `CTAP2_ERR_NOT_ALLOWED` otherwise. The device now takes that up for all four
+  sequences the spec names: the `getNextAssertion` walk, credentialManagement's
+  two enumerate cursors, and a part-written large-blob array. The clause is a
+  MAY, so the previous behaviour was conformant; what this buys is a smaller
+  state surface, and the large-blob buffer in particular had nothing else
+  bounding it — no timer, and on a PIN-less key no token — so an abandoned
+  transfer sat in RAM until some later `offset == 0`. A platform that interleaves
+  (a `getInfo` between `getAssertion` and `getNextAssertion`, say) now gets
+  `CTAP2_ERR_NOT_ALLOWED` where it used to be served; the spec asks platforms not
+  to.
+
+  The enumerate cursor goes further, because a shipped authenticator does:
+  measured on a YubiKey 5.7.4, its walk dies on an unrelated command, on a
+  `credentialManagement` subcommand that is not one of the two *Next* walkers, on
+  a `largeBlobs` command, and on a 35-second gap with the token still live. All
+  four are matched here, the timer as of `0x0884` above. Its large-blob write, by
+  contrast, survives all four — so on that one sequence this device is the
+  stricter of the two, kept that way because the failure modes are not
+  symmetric: a YubiKey drops the stored array on the *opening* fragment, so an
+  abandoned transfer destroys it, while this one accumulates in RAM and leaves
+  the previous array intact.
+  **bcdDevice → 0x087F.**
 
 ### Fixed
 
@@ -134,6 +464,7 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   DOs are unchanged and match the card password for password: unauthenticated
   both are `6982`, PW1-82 alone opens `0103`, PW3 alone opens `0104`.
   `bcdDevice` → `0x0930`.
+
 - **An on-device menu now yields to an OTP command too, not only to
   CTAPHID/CCID.** On a trusted-display build the worker runs on one thread, so a
   browse modal (Passkeys / Settings) hands it back the moment host work is queued
@@ -153,6 +484,7 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   when it does (a half-typed passkey nickname, a seed being copied to paper). That
   was already true for a CTAPHID command and is a separate finding.
   **bcdDevice → 0x0951.**
+
 - **A replayed vendor `SET LED` no longer writes flash.** `INS 10` on the vendor
   AID persisted `EF_LED_CONF` on every call, including one that changed nothing —
   the guard audit run-27 gave its FIDO twin (`CONFIG_WRITE`/`CONFIG_TARGET_LED`) in
@@ -173,43 +505,6 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   **both** writers of the record — `docs/protocol.md` §8 and
   `docs/threat-model.md` §1 record it as deliberate ykman parity — so it is left
   to the maintainer rather than half-applied here. **bcdDevice → 0x0950.**
-- **An open screen no longer holds up `rsk-emu`'s power cycle.** The harness's
-  replug — the emulator's stand-in for pulling the key out, and what a suite
-  needs to reopen the CTAP 2.1 §6.6 reset window — is answered by the device
-  thread, which an on-panel modal holds. It is not a host request, so nothing
-  made the modal yield to it: measured, **60.17 s** under an open Settings
-  screen, against `tests/emu.py`'s 5 s socket timeout, so a suite that resets
-  would have reported that it could not replug. It is counted apart from the
-  host requests now and the panel yields to it without the floor those wait —
-  the floor is against a host *repeating* a command, and there is no repetition
-  behind an operator pulling the key out. Nothing changes on a run without
-  `--display`.
-- **`rsk-emu --display` yields an open menu to an OTP frame, as the firmware now
-  does.** The emulator classified a keyboard-interface OTP frame as *not* one of
-  the sources a modal hands the executor back for, because the board's
-  `host_request_pending` named only the transports' signal — and said so citing
-  that file. The firmware fix above makes that mirror wrong, and the emulator's
-  own table asserted the old rule, so a green suite said nothing: measured,
-  **60.18 s** behind an open Settings screen. Both now name every host source the
-  worker races, and the emulator's floor-applying hook delegates to its bare one
-  instead of listing the sources twice — the second copy is what went stale on
-  the board. This makes E190 a measured result rather than a read one.
-
-- **An open browse screen no longer holds up `rsk-emu`'s power cycle.** The
-  harness's replug — the emulator's stand-in for pulling the key out, and what a
-  suite needs to reopen the CTAP 2.1 §6.6 reset window — is answered by the
-  device thread, which an on-panel modal holds. It is not a host request, so
-  nothing made the modal yield to it: measured, **60.17 s** under an open
-  Settings screen, against `tests/emu.py`'s 5 s socket timeout, so a suite that
-  resets would have reported that it could not replug. The menu, browse and
-  notice screens now hand the executor back for one within a poll, without the
-  floor a host command waits — that floor is against a host *repeating* a
-  command, and there is no repetition behind a person pulling the key out. A
-  USB/IP import queues the same power cycle and *is* repeatable, so it is
-  floored with the other host actions. What still holds a replug up is a screen
-  that polls no such hook — a PIN pad with a digit typed, or anything running
-  inside a dispatch — which on a board is answered by the power going away.
-  Nothing changes on a run without `--display`.
 
 - **A U2F command on a new CTAPHID channel no longer inherits another channel's
   applet selection under `rsk-emu`.** The MSG applet selection is one global for
@@ -221,43 +516,6 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   the board's `last_msg_cid` now. Its two CTAPHID transports still share one
   channel-id space, so a socket channel and a USB/IP one with the same id are not
   told apart; that is recorded, not fixed.
-
-- **`rsk-emu --display`'s window keeps drawing while the panel generates an RSA
-  key.** The panel is a *buffer* here where a board's is the glass: nothing the
-  flow paints is on screen until the window is pushed, and the only thing that
-  pushed it was a touch poll — which the prime search, a synchronous span, never
-  reaches. Watched with a window open and a scripted finger: at RSA-4096 the
-  window sat on the screen from *before* the generate for **2.1–3.0 s**, showing
-  neither the "generating" screen nor the arc that is there to say the device has
-  not hung. The search now pushes the window itself, at the 100 ms the arc turns
-  at: measured again, longest gap **125 ms**, 39 pushes across the search. (Each
-  search draws fresh candidates, so the two runs' *durations* are not comparable
-  — the gap between repaints is what the two figures above measure.) The seal
-  that follows still does not repaint; neither does a board's, because nothing
-  draws during it.
-
-- **A `CTAPHID_CANCEL` ends a U2F ceremony on `rsk-emu`, as it does on a board.**
-  `Job::Msg` was dispatched under channel 0 while the cancel check needs a real
-  one, so the CANCEL both emulator transports faithfully raised was dropped: a
-  cancelled U2F REGISTER ran the presence wait out and then **minted the
-  credential the host had already withdrawn**. On a board U2F runs under
-  `SCOPE_FIDO` and `Arbiter::request_cancel` ends it, with the CTAPHID transport
-  watching the reader for the frame throughout the touch wait. The U2F job now
-  carries the channel that asked, so the cancel is scoped exactly as the CBOR
-  path's already was — a second process's CANCEL still cannot end this one's
-  ceremony. Vendor commands are deliberately left alone: none is presence-gated
-  and the transport streams no keepalive for them, so a board cannot cancel one
-  either.
-
-- **`rsk-emu` reports the `bcdDevice` of the firmware it is built beside.** The
-  emulator's copy was written by hand and had drifted 172 releases behind by the
-  time anyone looked (`0x0879` against that day's `0x0925`), so the very first
-  descriptor it serves — over
-  `--usbip`, and the build the trusted display shows — named a firmware nobody
-  was running. It is read out of `firmware/src/main.rs` at compile time now,
-  under the same rule `scripts/bcd_gate.py` reads it by, so it cannot drift
-  again; a firmware that stops binding it fails the emulator's build with a
-  message saying so.
 
 - **A PIV object id resolves by its whole value, not its low sixteen bits.**
   `object_fid` matched `id & 0xFFFF` for the two Yubico objects, so the 2-byte id
@@ -359,58 +617,6 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   while the key is idle still counts. The logic moved to `rsk_device::click`,
   where it is host-tested. **bcdDevice → 0x0902.**
 
-- **The panel and the worker share one attach clock under `rsk-emu --display`.**
-  `Hooks::attach_elapsed_ms` exists so a panel-originated audit entry is stamped on
-  the same clock as a host-originated one; the emulator's panel measured from
-  process start while the worker measured from the attach, which `Job::Replug`
-  restarts. After a power cycle the two diverged by however long the session had
-  been running. On a board both read `usb_attach::elapsed_ms`.
-
-- **An RSA key can be generated from `rsk-emu --display`'s own screen.** The panel
-  asks the board for the prime search, and `rsk_display::Hooks`' default answer is
-  "no accelerator **and** no key" — so the emulator, which implemented none, failed
-  every on-screen PIV RSA generate as "generate failed" while the same generate
-  over the wire succeeded. The identically-named `rsk_device::Hooks` default means
-  the opposite (fall through to the applet's own single-core path), which is why
-  only the screen was affected. The panel now runs that same path. The spinner it
-  paints does not reach the emulator's window, which a board's does — the search is
-  a synchronous span and the window is only repainted from a touch poll.
-
-- **`rsk-emu --display` tells the host about the touch it is waiting for, and
-  takes a `CTAPHID_CANCEL`.** The panel kept `up_pending` and the cancel flag in
-  cells nothing else read, while the CTAPHID keepalive and the cancel path spoke
-  to the shared `Signals` — a third copy of the presence state, wired to neither
-  transport. A FIDO client was therefore told `PROCESSING` while the screen asked
-  a human to touch it (no "touch your security key" prompt), and a cancel on the
-  channel that owned the ceremony was ignored for the full 30 s presence timeout
-  before the wrong status code came back: `0x2F USER_ACTION_TIMEOUT` where a board
-  answers `0x2D KEEPALIVE_CANCEL` at once. All three hooks now go through
-  `Signals`, as a board routes them through its presence arbiter — and, as on a
-  board, the wait scope is lowered between dispatches, so a PIN typed on the panel
-  is not advertised to whichever transport asked last.
-
-- **An on-screen menu no longer starves the host under `rsk-emu --display`.** A
-  board hands the parked worker its executor back on the first 16 ms poll once a
-  host command has landed and the screen has been idle for `UI_YIELD_FLOOR_MS`,
-  so an open Settings or Passkeys screen costs a queued command a couple of
-  seconds. The emulator answered `Hooks::host_request_pending` with the trait's
-  `false` and yielded only when the 60 s inactivity backstop closed the screen —
-  **3750×** longer, in the direction that hides the problem, so any latency
-  measured through `--display` was the emulator's and not the firmware's. Both
-  that hook and its floor-gated sibling are now answered off the job queue's own
-  count of requests the device thread has not yet picked up.
-
-- **The emulator's trusted display no longer drops the host's session token on
-  the floor.** On a board, a clientPIN re-keyed *or refused* at the on-panel
-  keypad ends the platform's outstanding `pinUvAuthToken` before the next CBOR
-  command (CTAP 2.1 §6.5.5.6). `rsk-emu --display` raised neither event: the
-  panel's `note_local_pin_failed` was the trait's no-op and the flag its sibling
-  did set had no reader at all, so the same wrong PIN killed the token on
-  hardware and left it working under the emulator. Both events now reach the
-  worker, as they do on the board. The rule shipped long ago and this is the
-  first time it has been *seen* to fire anywhere — there was no way to type at
-  the pad until now.
-
 - **A PIV card whose `0x9B` metadata was lost no longer comes back demanding a
   touch.** `scan_files`' repair arm — the one that runs when the management key
   survived but its metadata head did not — wrote `TOUCHPOLICY_ALWAYS`, while all
@@ -484,316 +690,6 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   verified here. Each skip starts above every value the history has used, which
   ends it without renumbering landed commits off a moving base — the operation
   that caused the original collisions. Behaviour is unchanged by either.
-
-### Security
-
-- **The vendor applet's test counter no longer writes flash unauthenticated.**
-  `INS 01` (INCREMENT) on AID `F0 00 00 00 01` appended to flash with no PIN, no
-  touch and no rate limit, and the applet answers on **both** CCID and CTAPHID —
-  the transport an unprivileged process reaches without any smartcard service.
-  Measured on `tools/emu`, which runs the device's own `sequential-storage` over
-  the device's geometry: 391 increments/s sustained over the CCID socket and
-  411/s over CTAPHID_MSG, 16.0 bytes of the counter partition per increment, and
-  once that 128 KiB partition fills (~8 100 increments) the ring reclaims — 44
-  page erases counted over the next ~11 900 increments, a lower bound because a
-  page erased and refilled between two samples is not seen. The churn stays inside
-  the counter partition — the main partition did not move by a byte over 2 000
-  increments — so what a wear attack reaches is the signature counters, not the
-  credentials, and the erases spread across all 32 pages. A slow primitive, then;
-  what decides it is that this is a test hook with no product function, and it
-  should not be the thing that offers one. It takes a touch now, exactly like the
-  AID's reboot-to-BOOTSEL arm and for the same stated reason; `GET 02` reads and
-  stays ungated, and a no-touch build (what the on-device suites run against)
-  confirms on its own. Not a pure gain: an ungated command that raises a consent
-  ceremony lets a host hold the key in "awaiting touch", which is the shape the
-  reboot and Management-reset verbs already have — visible, and far slower than
-  the writes it replaces. The config-surface writes beside it (`SET LED`, the FIDO
-  `CONFIG_WRITE` twin) stay ungated by default; that is the deliberate ykman
-  admin-surface parity and a separate question. **bcdDevice → 0x0901.**
-
-- **A torn wipe can no longer leave a credential-management grant standing over
-  a deleted PIN.** The persistent `pcmr` token (`EF_PAUTHTOKEN`) was swept in the
-  same phase as `EF_PIN` by both wipes — `authenticatorReset` and the device-wide
-  factory wipe behind Management RESET and the on-screen "erase everything" — and
-  that phase deletes in flash-ring order, which on a freshly provisioned key puts
-  the PIN first. A cut between the two left the grant live with no PIN behind it,
-  and its holder could go on reading the credential directory of everything
-  registered afterwards. The grant is a *permission*, so unlike every other record
-  in that phase its absence is the restrictive state; it goes with the secrets now,
-  where no prefix of a wipe can do worse than revoke it early — and the ordering
-  stops depending on which record the ring happens to hold first. The refusal added
-  in `0x08C0` stays, for a record an older build already wrote to flash. The counter
-  skips to a fresh decade because parallel branches held `0x08F8`–`0x08FF`.
-  **bcdDevice → 0x0900.**
-
-- **The PIV data objects whose read condition is the PIN are no longer
-  world-readable.** SP 800-73-4 pt1 Table 3 gives four objects a contact read
-  condition of PIN — Cardholder Fingerprints (`5FC103`), Cardholder Facial Image
-  (`5FC108`), Printed Information (`5FC109`) and Cardholder Iris Images
-  (`5FC121`) — and a YubiKey 5.7.4 gates exactly those four and nothing else.
-  `GET DATA` applied a PIN check to `5FC109` alone, and then only once the
-  management key had been PIN-protected, so a card provisioned as a real PIV
-  credential handed its fingerprint templates, facial image and iris images to
-  any process that could open the reader. Measured three runs per card: the gate
-  is judged *before* the object is looked up, so an absent one answers `6982` and
-  not `6A82` and cannot be used to probe what a card holds, and the management
-  key does not stand in for the PIN. Writing them stays management-gated —
-  reading and writing are separate conditions. **bcdDevice → 0x08D2.**
-
-- **A PIV `CHANGE REFERENCE DATA` / `RESET RETRY COUNTER` body is two wire forms
-  or nothing.** The handlers split the body at the *stored* reference length and
-  handed the whole remainder over as the new value, and `put_pin_verifier` writes
-  the raw slice's length as the record's own — so `00 24 00 80` with an `8 ‖ 6`
-  body answered `9000` and stored a six-byte PIN. After that the padded `VERIFY`
-  every host sends burned retries while only the raw six-byte body passed, the
-  conformant `8 ‖ 8` change back was refused (the split had moved to six), and
-  with the PUK shortened the same way the only exit was `INS FB` RESET — which
-  destroys every PIV key and certificate. A YubiKey 5.7.4 answers `6A80` to every
-  body but sixteen bytes on all three commands (`00 24 00 80`, `00 24 00 81`,
-  `00 2C 00 80`), and judges the length *before* the old reference, so a wrong old
-  value inside a malformed body costs no retry either; measured three runs per
-  cell per card. `check_new_reference` is now the single owner of the value rule
-  — an exact eight bytes, not a bound — so the panel path and any future caller
-  are covered too, and the body is split at the wire form rather than at whatever
-  the card has stored. That split matters on a card an older build already
-  poisoned: sizing the gate off the stored length instead looks like it preserves
-  more, and in fact takes the last exit away, because the sixteen-byte unblock
-  every host sends would stop spending the PUK counter and `INS FB` RESET is gated
-  on both counters reaching zero. As shipped, all three configurations keep the
-  exits they had — a poisoned PIN is repaired by the PUK unblock and a poisoned
-  PUK by `SET RETRIES`, both with the keys intact, and a card poisoned on both
-  still reaches its reset. **bcdDevice → 0x08D1.**
-
-- **A PIV `VERIFY` whose body is not the 8-byte wire form no longer burns a PIN
-  retry.** SP 800-73-4 pt2 §2.4.3 fixes the PIN block at 8 bytes, `0xFF`-padded;
-  the handler tested only for the empty status query and then handed a body of
-  *any* length to the comparison, which missed and decremented. Three malformed
-  `VERIFY`s — a middleware that forgets to pad, a host that sends the six digits
-  raw, a fuzzer — blocked the PIV PIN, and recovery then needed the PUK. A
-  YubiKey 5.7.4 answers `6A80` with the counter untouched to every body length
-  taken in 1-16, 24 and 32 except 8; the 8-byte all-pad control burns on both
-  cards, which is what makes this a wire-form gate rather than a refusal to
-  compare. Measured three runs per length per card. The refusal still drops the
-  card's standing PIN status, as the YubiKey does for every length but one — an
-  `Lc = 1` body keeps it there, a quirk we do not copy, since revoking is the
-  stricter half. A wrong `P1` or `P2` is refused *without* revoking on both cards,
-  so this is a rule about the wire form and not about refusals in general. The
-  gate is judged ahead of the blocked floor, again as the oracle does: on a
-  blocked PIN a malformed body answers `6A80` where a well-formed one answers
-  `6983`. Note the *write* side of the same wire form is only closed by the entry
-  above it in this list; until that one, a card could still be given a short
-  reference by a non-conformant host, and this gate then refused the short
-  `VERIFY` that used to reach it — recoverable with `CHANGE REFERENCE DATA` or a
-  PUK unblock, but a state worth naming. **bcdDevice → 0x08D0.**
-- **The OpenPGP admin PIN no longer reaches the cardholder's private-use DOs.**
-  OpenPGP Card 3.4.1 §4.4.1 hands `0101` and `0103` to PW1 no. 82 — the
-  cardholder — and `0102`/`0104` to PW3, with no admin override on the first
-  pair. Ours let PW3 stand in for PW2 on three of those cells: reading `0103`,
-  writing `0103`, and writing `0101`. Whoever holds the admin PIN could therefore
-  read and overwrite the two objects the card sets aside for the owner, which is
-  the one pair of DOs whose whole purpose is that the admin credential is not
-  enough. A YubiKey 5.7.4 answers `6982` to `00CA010300`, `00DA0103…` and
-  `00DA0101…` with only PW3 verified — measured 3/3 across the full 4-DO × 4-state
-  matrix, with a fully-authenticated baseline write proving each DO writable
-  first, so a `6982` there means "this password may not" and not "this DO is
-  read-only". Nothing is lost: the values stay readable and writable to PW2, and a
-  tightening only turns some `9000`s into `6982`s. `gpg` never used the admin PIN
-  for these — it prompts for the cardholder PIN when it touches a private DO — so
-  no host flow changes. One thing the admin credential can still do to the
-  cardholder's pair is destroy it: `TERMINATE DF` wipes the whole applet, which is
-  §7.2.16's own model and not an exception to this rule. The Gnuk-derived
-  conformance suite expects the permissive behaviour and is listed as a deliberate
-  divergence (three tests, both KDF host modules). **bcdDevice → 0x08F0.**
-
-- **A persistent credential-management grant no longer outlives the PIN that
-  granted it.** CTAP 2.2 §6.8.2's `pcmr` token is a bearer secret in flash
-  (`EF_PAUTHTOKEN`): its holder drives getCredsMetadata, enumerateRPsBegin and
-  enumerateCredsBegin with no PIN check, because the record's presence *is* the
-  permission. That reasoning holds for every way the record can legitimately come
-  to exist — both issuance paths refuse without a PIN — and stops holding after a
-  torn `authenticatorReset`, whose gate phase can take `EF_PIN` and lose power
-  before `EF_PAUTHTOKEN`. The existing defence clears the leftover when a PIN is
-  next established; an owner who carries on with a touch-only key never does that,
-  and the old holder went on reading the credential directory — relying-party ids,
-  credential ids, user names — of everything registered afterwards. Not keys, not
-  assertions: deleteCredential and updateUserInformation never consulted the grant.
-  The three reads now refuse it when no PIN is set, which is the same
-  `PIN_AUTH_INVALID` a completed reset already answers, so a platform cannot tell
-  the torn case from the clean one. Found by a TLA+ model of the wipe
-  (`NoAccessibleSecretWithoutGate`, 102523 distinct states, depth 14). Nothing
-  changes for a device with a PIN. **bcdDevice → 0x08C0.**
-
-- **A wipe deletes the device seed first, so a power cut can no longer leave a
-  *usable* passkey behind.** `authenticatorReset`'s own comment promised "the seed
-  leads, so a surviving credential record is cryptographically dead" and nothing
-  implemented it: the sweep batches every non-gate FIDO file, and `for_each_key`
-  yields in flash-ring order rather than FID order, so `EF_RP` could go before
-  `EF_CRED`. Cut power in between and the key comes back with a live discoverable
-  credential whose relying-party entry is gone — `enumerateRPs` and the trusted
-  display's Passkeys view both walk `EF_RP`, so neither lists it;
-  `enumerateCredentials` is per relying party, so nothing can reach it to delete
-  it; and `getAssertion` scans `EF_CRED` and signs with it happily. A TLA+ model of
-  the wipe found it (`NoUnmanageableCredential`, 72128 distinct states, depth 13).
-  The seed now goes in its own flash write ahead of the batch — both of its shapes,
-  `EF_KEY_DEV` and the soft lock's `EF_KEY_DEV_ENC` — and the device-wide
-  `Fs::factory_wipe` behind the Management RESET and the on-screen factory reset
-  takes the same lead phase, since it bypasses the applet sweep entirely. **The
-  strand itself is not prevented**: a torn wipe can still leave an `EF_CRED` record
-  with no `EF_RP` entry, holding its credential slot until the next reset. What
-  changes is that the record no longer decrypts under the regenerated seed, so
-  nothing can authenticate with it — which is what the comment always claimed. A
-  wipe that completes behaves exactly as before; the cost is one extra flash-ring
-  walk per reset for whichever seed shape is absent. **bcdDevice → 0x08BF.**
-
-- **The vendor applet's core1 counter read (`INS 12`) is gone from the shipping
-  image.** `docs/protocol.md` has said all along that it "exist[s] only in
-  debug/bench builds"; the firmware implemented it unconditionally, so every key
-  answered it. What it hands out is the second core's prime-search telemetry —
-  candidates tried and primes found, per core — which is a timing oracle over RSA
-  key generation, read over an ungated CCID APDU with no touch and no PIN. Its two
-  neighbours on the same AID were already gated for exactly that reason
-  (`keygen-bench` for `INS 13`, `bench` for `INS 14`); this one is now behind
-  `core1-stats`, and a default build answers `6D00` from the `Platform` trait's own
-  default. Nothing host-side ever called it — not `tools/rsk`, not `tools/tui`, not
-  a `tests/*.py` — so no tool loses a command. The gate now reads the built image
-  and refuses any of the three debug commands in it, with a sibling method as the
-  positive control so a nameless artifact fails instead of passing.
-  **bcdDevice → 0x08BE.**
-
-- **The PIV PIN and PUK are spent before they are compared, and the counter is
-  read back.** `check_ref` compared first and wrote the retry counter after, and
-  it trusted the write. A flash write that *refuses* is caught — the card answers
-  `6581` to the right secret and a wrong one alike, so nothing leaks. One that
-  silently keeps nothing is not, and that is the failure the rest of this tree
-  already defends against (the FIDO clientPIN reads its counter back, citing a
-  glitch or a partial program; so do the OTP fuse writes). In that state a wrong
-  PIN answered `63Cx` and the right one `9000`, at full speed, with the counter
-  pinned at its starting value: the retry budget had stopped being a budget, on
-  VERIFY, CHANGE REFERENCE DATA and RESET RETRY COUNTER alike. The attempt is now
-  spent and confirmed *before* any comparison, so a store that is not storing
-  refuses ahead of learning anything. Reading the counter back is not enough on
-  its own and was not the fix: on a full counter the success path rewrites the
-  value already there, which a lying store satisfies — the ordering is what
-  closes it. **On a working device nothing changes**: the same status words, the
-  same counter, in the same order on the wire. The one cost is that a power cut
-  between the write and the answer spends a retry the holder did not use, which
-  is how the FIDO and OATH PINs have always behaved. OpenPGP's `check_pin` has
-  the same compare-then-spend shape and is deliberately untouched here.
-  **bcdDevice → 0x08B6.**
-
-- **A wrong FIDO PIN no longer leaves an outstanding `pinUvAuthToken`
-  working.** A platform that held a token — minted with the right PIN — kept it
-  usable across any number of failed PIN attempts by anything else plugged into
-  the same session, so the retry counter was the only thing an attacker's wrong
-  guesses cost them; the credential the *previous* holder was still using was
-  untouched. A YubiKey 5.7.4 invalidates the token on a failed PIN check, through
-  every door — `getPinUvAuthTokenUsingPinWithPermissions` (`0x09`), the legacy
-  `getPinToken` (`0x05`) and `changePIN`'s old-PIN check — measured four times
-  per door on both PIN/UV-auth protocols, with idle, `getKeyAgreement` and
-  `getPINRetries` as controls that leave it alive on both devices. CTAP 2.0
-  §5.6.6 and 2.1 name only the key-agreement regeneration in that branch, so we
-  were within the letter of the spec and the card does strictly more; parity
-  decides, and it is the safe direction — a token minted before someone started
-  guessing stops working, and a platform can always mint another. The reset sits
-  in the one function every *host* PIN check passes through — the on-screen PIN
-  pad is a second one and did not inherit it; see the entry below, which closes
-  that. Untouched, deliberately: the persistent `pcmr` token is a separate
-  flash-backed grant that survives replugs until a PIN change or a reset, and a
-  failed attempt is neither. **bcdDevice → 0x08B4.**
-
-- **A wrong FIDO PIN typed on the trusted display's own pad now ends the host's
-  outstanding `pinUvAuthToken` too.** The entry above landed the rule in
-  `spend_and_verify_pin_hash` and said the pad inherited it. It does not: the pad
-  verifies the same `EF_PIN` record through a second function, which by design
-  omits the CTAP-session side effects because the display task holds no CTAP
-  context. The panel's only clientPIN prompt is the current-PIN step of the
-  on-device *Change FIDO PIN* flow — `changePIN`'s old-PIN check, performed at the
-  pad — so on a display build the same wrong PIN killed a platform's token when it
-  arrived over USB and left it working when it was typed on the screen. The pad
-  now signals the worker, which drops the token before the next CBOR command, the
-  same path an on-device PIN *change* already used. It signals only for the
-  clientPIN — the device PIN gates the panel's own UI and is no CTAP credential —
-  and only when there was a retry budget to spend, because an entry that meets an
-  already-blocked PIN is turned away before any comparison and the host path
-  leaves a standing token alone there as well. No YubiKey has a pad, so this one
-  is class consistency with the wire rule rather than a measured cell.
-  **bcdDevice → 0x08B5.**
-
-- **OATH `SET CODE` installed an access code with no key material.** `73 01 01`
-  — an algorithm byte and nothing after it — answered `9000` and locked the
-  applet behind a key that is the empty string, so the VALIDATE response every
-  session wants is `HMAC("", challenge)`: a lock anyone can open, standing
-  between the owner and their accounts, and indistinguishable from a real one
-  from the outside. Anything up to 127 bytes was taken as well. A YubiKey 5.7.4
-  accepts an algorithm byte plus **14..=64 bytes** of key and answers `6A80`
-  outside that, which is the same range it enforces on a credential's secret —
-  one rule, two commands, and it is now one constant here too. Measured across
-  0, 1, 2, 3, 13, 14, 15, 16, 20, 32, 63, 64, 65 and up: on that card the
-  "protected but unopenable" state cannot be reached at all, because every
-  accepted `SET CODE` is one whose key the host proved it can HMAC with and
-  every refused one leaves the previous state untouched. Ours now refuses before
-  the proof is checked and before a byte is written, so a rejected `SET CODE`
-  from a validated session leaves the standing code opening the applet — checked
-  both ways. The bound is on what `SET CODE` takes, never on what `VALIDATE` can
-  read: a longer code stored by an older build still opens the applet, or the
-  upgrade would lock its owner out. Unchanged and deliberate: an empty `73` value
-  still removes the code. (This entry also kept a **body-less** `SET CODE` doing
-  the same, citing YKOATH's own text. That cell was reconsidered against the card
-  and is refused now — see below. It predates this entry, so relative to released
-  0.4.9 it is a live behaviour change for a host that followed the document
-  rather than the card.) **bcdDevice → 0x08B3.**
-
-### Changed
-
-- **The presence-scope arbitration moved into `crates/rsk-device`.** Which
-  transport owns the one physical button, whose cancel may end its touch wait,
-  and the `spent` latch that stops one hold satisfying two ceremonies all lived
-  in `firmware/src/presence.rs` — a `no_std` embassy-rp binary for thumbv8m that
-  neither `cargo test` nor `cargo kani -p` can build, so the rule an unprivileged
-  FIDO-HID process must not be able to cancel an OpenPGP signature had no test
-  and no proof. It has both now: the arbitration is `rsk_device::presence`, with
-  the button, the clock and the blocking delay behind a `Board` trait, and
-  `firmware/src/presence.rs` keeps the board half and the seven `UserPresence`
-  impls. `NoCrossTransportTouchConsumption` — the fourth of the six TLA+
-  invariants, and the one `formal/README.md` said could not be proved where it
-  lived — now reaches a Kani harness, taking the traceability table from two of
-  six to three. Behaviour and wire surface unchanged; no `bcdDevice` bump.
-
-### Changed
-
-- **Slot `9e`, the PIV Card Authentication Key, defaults to PIN `NEVER`.** It
-  defaulted to `ONCE`, so a key generated there needed a `VERIFY` before every
-  session — which is the one thing that slot is defined *not* to need.
-  SP 800-73-4 makes `9e` the key usable without a PIN, for physical-access and
-  contactless readers, and a YubiKey 5.7.4 defaults it accordingly: measured three
-  runs, a default-policy `9e` key signs with nothing verified at all, and its
-  signature spends none of the freshness a `pin-policy ALWAYS` slot reads, where
-  a `9a` signature in the same state answers `6982` and does spend. Ours matched
-  neither. An explicit `--pin-policy ONCE` or `ALWAYS` at `9e` is stored and
-  enforced exactly as before — identical on both cards, measured — so this costs
-  nobody a gate they asked for, and keys already on a card keep the policy they
-  were generated with. The use-time resolution of a legacy unresolved policy byte
-  now goes through the same resolver as the store-time one, so a record an older
-  build wrote and one this build writes mean the same thing at the same slot.
-  **bcdDevice → 0x08D5.**
-
-- **A PIV key generated without `--touch-policy` no longer demands a touch.** The
-  card resolved an absent touch tag to `ALWAYS`, so a plain
-  `ykman piv keys generate 9a pub.pem` minted a key that wanted a physical press
-  before every sign, decrypt and ECDH — and every unattended consumer (`pkcs11`,
-  `age-plugin`, SSH with a PIV key) then hung on a prompt nobody was there to
-  answer, with no diagnostic beyond a timeout. The one flag that would have
-  avoided it is the one the user did not pass. A YubiKey 5.7.4 resolves the same
-  absent tag to `NEVER`, measured three runs across all four primary slots, both
-  through `ykman` and through a raw `GENERATE` carrying no `AC` policy tags at
-  all. Ours does now, on every slot including the retired ones and the
-  trusted-display's own retired-slot generation. **Nothing is silently
-  downgraded**: an explicit `--touch-policy ALWAYS` or `CACHED` is stored and
-  enforced exactly as before, and keys already on a card keep the policy they were
-  generated with — this is the default for *new* keys only. If you want the press,
-  ask for it, which is also how you ask a YubiKey. **bcdDevice → 0x08D4.**
-
-### Fixed
 
 - **PIV `GENERAL AUTHENTICATE` dispatches on the first operation tag the body
   carries, and an empty `81` at a key slot is a private-key operation.** Three
@@ -892,6 +788,7 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   iris image or printed information off a card got the word that says they are
   gone while they were still there. Same class as the entry above, and after it
   those objects hold real data.
+
 - **The OpenPGP sex DO `5F35` now holds a code the card will take back.** We
   seeded `'0'` (ISO 5218 "not known") at first boot and accepted it on
   `PUT DATA`; a YubiKey 5.7.4 answers `6A80` to `'0'` and holds `'9'` ("not
@@ -1364,7 +1261,341 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   two are now tied by an assertion rather than by arithmetic in two places.
   **bcdDevice → 0x08A3.**
 
+- **`CTAPHID_LOCK` was advertised nowhere, and let a foreign `CTAPHID_INIT`
+  through.** Two halves of one command. The INIT reply's capability byte left
+  `CAPABILITY_LOCK` (0x02) clear although the lock is implemented, and a host
+  decides from that byte whether to attempt the command at all — so a working
+  feature was unreachable. Meanwhile the dispatch exempted *every* `CTAPHID_INIT`
+  from a held lock, though its own comment justified only the broadcast one
+  (asking for a channel id). An INIT aimed at another allocated channel is
+  §11.2.9.1.3's other function — it "discards the current transaction, buffers and
+  state" — which is precisely what the lock exists to withhold from a second
+  application. The bit is set now, and only a broadcast INIT survives someone
+  else's lock. **bcdDevice → 0x087D.**
+
+- **`docs/protocol.md` §4 invited a SELECT that fails for three of its ten
+  AIDs.** The section opens "SELECT an applet with `00 A4 04 00 Lc <AID> 00`" and
+  then tables FIDO2, the FIDO2 backup id and U2F beside the seven real card
+  applets — but those three are not CCID applets and answer `6A82`
+  (FILE_NOT_FOUND); CTAP1/U2F and CTAP2 ride CTAPHID and have no SELECT at all.
+  §4 is the third-party / PicoForge wire spec, so a reader building from it wrote
+  a probe that could not work and had nothing to tell that apart from a broken
+  key. The table gains a **Transport** column with all ten measured on both
+  transports, which also records the narrower half nobody had written down:
+  `CTAPHID_MSG` offers exactly one applet, the vendor one. Documentation only —
+  no wire change.
+
+- `metadata/README.md` called the attestation `basic_surrogate`; the statements
+  themselves declare `basic_full`, which is what the device sends — packed with a
+  self-signed per-device `x5c` leaf.
+
+- **A record the routing table no longer points at could not be deleted, and
+  `authenticatorReset` swept for it forever.** The store keeps two partitions and
+  routes each fid to one of them; `for_each_key` walks BOTH, but `remove` targeted
+  only the routed one. A fid whose routing changed between firmware versions
+  therefore sat in the other partition — invisible to every read, yielded on every
+  walk, deletable by nothing — and the reset sweep, which finishes only when its
+  range comes back empty, could never finish. `EF_CRED_CTR` is exactly such a fid:
+  0x081D wrote it to the main partition on every assertion and 0x0821 moved it to
+  the counter one, so a key flashed from source inside that window carries one (no
+  release does — 0.3.6 predates the record and 0.3.7 already routes it). `remove`
+  now clears both partitions. **bcdDevice → 0x087C.**
+
+- **`authenticatorReset` deleted the same record up to 64 times.** `for_each_key`
+  walks stored items, so an overwritten file yields its fid once per superseded
+  version until reclaim; the API says a batching caller must de-dup, and the reset
+  sweep did not. Its 64-slot batch filled with copies of one fid — the counters and
+  a re-registered credential are exactly what a busy key rewrites most — so a pass
+  spent its whole budget re-deleting a record already gone and left the rest of the
+  wipe to later passes. It de-dupes now, and carries the same progress backstop as
+  the PIV, OATH and OpenPGP wipes: a backend that keeps yielding a record it has
+  confirmed removed returns `CTAP2_ERR_OTHER` rather than holding the worker in
+  processing. **bcdDevice → 0x087B.**
+
+- **A signed release image did not boot on a secure-boot device.** `picotool
+  seal --sign` retires the image's own `IMAGE_DEF` — the linker's, carrying no
+  signature and no rollback version — only when it is handed the **ELF**. Given
+  a UF2 it appends its signed block and leaves that first one live, so a board
+  with `SECURE_BOOT_ENABLE` and `ROLLBACK_REQUIRED` meets it first and refuses
+  the image, while the host still prints `signature: verified`. The documented
+  ritual said UF2, so every signed image built that way since the partition
+  table landed (`0x0871`) would fail to boot — found by upgrading a provisioned
+  key, which then would not start until it was reflashed. All five sealing
+  snippets in the docs now seal the ELF and convert afterwards.
+
+- **The emulator stopped lying about the board.** `tools/emu` is what 48 of the
+  52 on-device suites run against, so a divergence there is a wrong answer given
+  confidently. Sixteen closed. An open menu starved a queued host command for
+  **60 s where a board yields in 16 ms**, and a queued OTP frame — which carries
+  no keepalive, so the host saw a failure rather than a delay — for as long. The
+  panel's presence flags reached neither transport, so `CTAPHID_CANCEL` was
+  ignored for the full ceremony and no `UPNEEDED` was ever sent. A U2F ceremony
+  could not be cancelled at all, and a cancelled REGISTER still minted the
+  credential the host had withdrawn. On-panel RSA generation was impossible where
+  a board manages it, and the window froze for the whole search. The reported
+  `bcdDevice` was a hand-copied constant **172 releases stale**, and is now read
+  out of `firmware/src/main.rs`. `--taps <file>` drives the keypad from a script,
+  which is how the trusted display's PIN rule came to be exercised for the first
+  time since it shipped; `--auto-touch-ms` makes delayed presence deterministic.
+
 ### Security
+
+- **The vendor applet's test counter no longer writes flash unauthenticated.**
+  `INS 01` (INCREMENT) on AID `F0 00 00 00 01` appended to flash with no PIN, no
+  touch and no rate limit, and the applet answers on **both** CCID and CTAPHID —
+  the transport an unprivileged process reaches without any smartcard service.
+  Measured on `tools/emu`, which runs the device's own `sequential-storage` over
+  the device's geometry: 391 increments/s sustained over the CCID socket and
+  411/s over CTAPHID_MSG, 16.0 bytes of the counter partition per increment, and
+  once that 128 KiB partition fills (~8 100 increments) the ring reclaims — 44
+  page erases counted over the next ~11 900 increments, a lower bound because a
+  page erased and refilled between two samples is not seen. The churn stays inside
+  the counter partition — the main partition did not move by a byte over 2 000
+  increments — so what a wear attack reaches is the signature counters, not the
+  credentials, and the erases spread across all 32 pages. A slow primitive, then;
+  what decides it is that this is a test hook with no product function, and it
+  should not be the thing that offers one. It takes a touch now, exactly like the
+  AID's reboot-to-BOOTSEL arm and for the same stated reason; `GET 02` reads and
+  stays ungated, and a no-touch build (what the on-device suites run against)
+  confirms on its own. Not a pure gain: an ungated command that raises a consent
+  ceremony lets a host hold the key in "awaiting touch", which is the shape the
+  reboot and Management-reset verbs already have — visible, and far slower than
+  the writes it replaces. The config-surface writes beside it (`SET LED`, the FIDO
+  `CONFIG_WRITE` twin) stay ungated by default; that is the deliberate ykman
+  admin-surface parity and a separate question. **bcdDevice → 0x0901.**
+
+- **A torn wipe can no longer leave a credential-management grant standing over
+  a deleted PIN.** The persistent `pcmr` token (`EF_PAUTHTOKEN`) was swept in the
+  same phase as `EF_PIN` by both wipes — `authenticatorReset` and the device-wide
+  factory wipe behind Management RESET and the on-screen "erase everything" — and
+  that phase deletes in flash-ring order, which on a freshly provisioned key puts
+  the PIN first. A cut between the two left the grant live with no PIN behind it,
+  and its holder could go on reading the credential directory of everything
+  registered afterwards. The grant is a *permission*, so unlike every other record
+  in that phase its absence is the restrictive state; it goes with the secrets now,
+  where no prefix of a wipe can do worse than revoke it early — and the ordering
+  stops depending on which record the ring happens to hold first. The refusal added
+  in `0x08C0` stays, for a record an older build already wrote to flash. The counter
+  skips to a fresh decade because parallel branches held `0x08F8`–`0x08FF`.
+  **bcdDevice → 0x0900.**
+
+- **The PIV data objects whose read condition is the PIN are no longer
+  world-readable.** SP 800-73-4 pt1 Table 3 gives four objects a contact read
+  condition of PIN — Cardholder Fingerprints (`5FC103`), Cardholder Facial Image
+  (`5FC108`), Printed Information (`5FC109`) and Cardholder Iris Images
+  (`5FC121`) — and a YubiKey 5.7.4 gates exactly those four and nothing else.
+  `GET DATA` applied a PIN check to `5FC109` alone, and then only once the
+  management key had been PIN-protected, so a card provisioned as a real PIV
+  credential handed its fingerprint templates, facial image and iris images to
+  any process that could open the reader. Measured three runs per card: the gate
+  is judged *before* the object is looked up, so an absent one answers `6982` and
+  not `6A82` and cannot be used to probe what a card holds, and the management
+  key does not stand in for the PIN. Writing them stays management-gated —
+  reading and writing are separate conditions. **bcdDevice → 0x08D2.**
+
+- **A PIV `CHANGE REFERENCE DATA` / `RESET RETRY COUNTER` body is two wire forms
+  or nothing.** The handlers split the body at the *stored* reference length and
+  handed the whole remainder over as the new value, and `put_pin_verifier` writes
+  the raw slice's length as the record's own — so `00 24 00 80` with an `8 ‖ 6`
+  body answered `9000` and stored a six-byte PIN. After that the padded `VERIFY`
+  every host sends burned retries while only the raw six-byte body passed, the
+  conformant `8 ‖ 8` change back was refused (the split had moved to six), and
+  with the PUK shortened the same way the only exit was `INS FB` RESET — which
+  destroys every PIV key and certificate. A YubiKey 5.7.4 answers `6A80` to every
+  body but sixteen bytes on all three commands (`00 24 00 80`, `00 24 00 81`,
+  `00 2C 00 80`), and judges the length *before* the old reference, so a wrong old
+  value inside a malformed body costs no retry either; measured three runs per
+  cell per card. `check_new_reference` is now the single owner of the value rule
+  — an exact eight bytes, not a bound — so the panel path and any future caller
+  are covered too, and the body is split at the wire form rather than at whatever
+  the card has stored. That split matters on a card an older build already
+  poisoned: sizing the gate off the stored length instead looks like it preserves
+  more, and in fact takes the last exit away, because the sixteen-byte unblock
+  every host sends would stop spending the PUK counter and `INS FB` RESET is gated
+  on both counters reaching zero. As shipped, all three configurations keep the
+  exits they had — a poisoned PIN is repaired by the PUK unblock and a poisoned
+  PUK by `SET RETRIES`, both with the keys intact, and a card poisoned on both
+  still reaches its reset. **bcdDevice → 0x08D1.**
+
+- **A PIV `VERIFY` whose body is not the 8-byte wire form no longer burns a PIN
+  retry.** SP 800-73-4 pt2 §2.4.3 fixes the PIN block at 8 bytes, `0xFF`-padded;
+  the handler tested only for the empty status query and then handed a body of
+  *any* length to the comparison, which missed and decremented. Three malformed
+  `VERIFY`s — a middleware that forgets to pad, a host that sends the six digits
+  raw, a fuzzer — blocked the PIV PIN, and recovery then needed the PUK. A
+  YubiKey 5.7.4 answers `6A80` with the counter untouched to every body length
+  taken in 1-16, 24 and 32 except 8; the 8-byte all-pad control burns on both
+  cards, which is what makes this a wire-form gate rather than a refusal to
+  compare. Measured three runs per length per card. The refusal still drops the
+  card's standing PIN status, as the YubiKey does for every length but one — an
+  `Lc = 1` body keeps it there, a quirk we do not copy, since revoking is the
+  stricter half. A wrong `P1` or `P2` is refused *without* revoking on both cards,
+  so this is a rule about the wire form and not about refusals in general. The
+  gate is judged ahead of the blocked floor, again as the oracle does: on a
+  blocked PIN a malformed body answers `6A80` where a well-formed one answers
+  `6983`. Note the *write* side of the same wire form is only closed by the entry
+  above it in this list; until that one, a card could still be given a short
+  reference by a non-conformant host, and this gate then refused the short
+  `VERIFY` that used to reach it — recoverable with `CHANGE REFERENCE DATA` or a
+  PUK unblock, but a state worth naming. **bcdDevice → 0x08D0.**
+
+- **The OpenPGP admin PIN no longer reaches the cardholder's private-use DOs.**
+  OpenPGP Card 3.4.1 §4.4.1 hands `0101` and `0103` to PW1 no. 82 — the
+  cardholder — and `0102`/`0104` to PW3, with no admin override on the first
+  pair. Ours let PW3 stand in for PW2 on three of those cells: reading `0103`,
+  writing `0103`, and writing `0101`. Whoever holds the admin PIN could therefore
+  read and overwrite the two objects the card sets aside for the owner, which is
+  the one pair of DOs whose whole purpose is that the admin credential is not
+  enough. A YubiKey 5.7.4 answers `6982` to `00CA010300`, `00DA0103…` and
+  `00DA0101…` with only PW3 verified — measured 3/3 across the full 4-DO × 4-state
+  matrix, with a fully-authenticated baseline write proving each DO writable
+  first, so a `6982` there means "this password may not" and not "this DO is
+  read-only". Nothing is lost: the values stay readable and writable to PW2, and a
+  tightening only turns some `9000`s into `6982`s. `gpg` never used the admin PIN
+  for these — it prompts for the cardholder PIN when it touches a private DO — so
+  no host flow changes. One thing the admin credential can still do to the
+  cardholder's pair is destroy it: `TERMINATE DF` wipes the whole applet, which is
+  §7.2.16's own model and not an exception to this rule. The Gnuk-derived
+  conformance suite expects the permissive behaviour and is listed as a deliberate
+  divergence (three tests, both KDF host modules). **bcdDevice → 0x08F0.**
+
+- **A persistent credential-management grant no longer outlives the PIN that
+  granted it.** CTAP 2.2 §6.8.2's `pcmr` token is a bearer secret in flash
+  (`EF_PAUTHTOKEN`): its holder drives getCredsMetadata, enumerateRPsBegin and
+  enumerateCredsBegin with no PIN check, because the record's presence *is* the
+  permission. That reasoning holds for every way the record can legitimately come
+  to exist — both issuance paths refuse without a PIN — and stops holding after a
+  torn `authenticatorReset`, whose gate phase can take `EF_PIN` and lose power
+  before `EF_PAUTHTOKEN`. The existing defence clears the leftover when a PIN is
+  next established; an owner who carries on with a touch-only key never does that,
+  and the old holder went on reading the credential directory — relying-party ids,
+  credential ids, user names — of everything registered afterwards. Not keys, not
+  assertions: deleteCredential and updateUserInformation never consulted the grant.
+  The three reads now refuse it when no PIN is set, which is the same
+  `PIN_AUTH_INVALID` a completed reset already answers, so a platform cannot tell
+  the torn case from the clean one. Found by a TLA+ model of the wipe
+  (`NoAccessibleSecretWithoutGate`, 102523 distinct states, depth 14). Nothing
+  changes for a device with a PIN. **bcdDevice → 0x08C0.**
+
+- **A wipe deletes the device seed first, so a power cut can no longer leave a
+  *usable* passkey behind.** `authenticatorReset`'s own comment promised "the seed
+  leads, so a surviving credential record is cryptographically dead" and nothing
+  implemented it: the sweep batches every non-gate FIDO file, and `for_each_key`
+  yields in flash-ring order rather than FID order, so `EF_RP` could go before
+  `EF_CRED`. Cut power in between and the key comes back with a live discoverable
+  credential whose relying-party entry is gone — `enumerateRPs` and the trusted
+  display's Passkeys view both walk `EF_RP`, so neither lists it;
+  `enumerateCredentials` is per relying party, so nothing can reach it to delete
+  it; and `getAssertion` scans `EF_CRED` and signs with it happily. A TLA+ model of
+  the wipe found it (`NoUnmanageableCredential`, 72128 distinct states, depth 13).
+  The seed now goes in its own flash write ahead of the batch — both of its shapes,
+  `EF_KEY_DEV` and the soft lock's `EF_KEY_DEV_ENC` — and the device-wide
+  `Fs::factory_wipe` behind the Management RESET and the on-screen factory reset
+  takes the same lead phase, since it bypasses the applet sweep entirely. **The
+  strand itself is not prevented**: a torn wipe can still leave an `EF_CRED` record
+  with no `EF_RP` entry, holding its credential slot until the next reset. What
+  changes is that the record no longer decrypts under the regenerated seed, so
+  nothing can authenticate with it — which is what the comment always claimed. A
+  wipe that completes behaves exactly as before; the cost is one extra flash-ring
+  walk per reset for whichever seed shape is absent. **bcdDevice → 0x08BF.**
+
+- **The vendor applet's core1 counter read (`INS 12`) is gone from the shipping
+  image.** `docs/protocol.md` has said all along that it "exist[s] only in
+  debug/bench builds"; the firmware implemented it unconditionally, so every key
+  answered it. What it hands out is the second core's prime-search telemetry —
+  candidates tried and primes found, per core — which is a timing oracle over RSA
+  key generation, read over an ungated CCID APDU with no touch and no PIN. Its two
+  neighbours on the same AID were already gated for exactly that reason
+  (`keygen-bench` for `INS 13`, `bench` for `INS 14`); this one is now behind
+  `core1-stats`, and a default build answers `6D00` from the `Platform` trait's own
+  default. Nothing host-side ever called it — not `tools/rsk`, not `tools/tui`, not
+  a `tests/*.py` — so no tool loses a command. The gate now reads the built image
+  and refuses any of the three debug commands in it, with a sibling method as the
+  positive control so a nameless artifact fails instead of passing.
+  **bcdDevice → 0x08BE.**
+
+- **The PIV PIN and PUK are spent before they are compared, and the counter is
+  read back.** `check_ref` compared first and wrote the retry counter after, and
+  it trusted the write. A flash write that *refuses* is caught — the card answers
+  `6581` to the right secret and a wrong one alike, so nothing leaks. One that
+  silently keeps nothing is not, and that is the failure the rest of this tree
+  already defends against (the FIDO clientPIN reads its counter back, citing a
+  glitch or a partial program; so do the OTP fuse writes). In that state a wrong
+  PIN answered `63Cx` and the right one `9000`, at full speed, with the counter
+  pinned at its starting value: the retry budget had stopped being a budget, on
+  VERIFY, CHANGE REFERENCE DATA and RESET RETRY COUNTER alike. The attempt is now
+  spent and confirmed *before* any comparison, so a store that is not storing
+  refuses ahead of learning anything. Reading the counter back is not enough on
+  its own and was not the fix: on a full counter the success path rewrites the
+  value already there, which a lying store satisfies — the ordering is what
+  closes it. **On a working device nothing changes**: the same status words, the
+  same counter, in the same order on the wire. The one cost is that a power cut
+  between the write and the answer spends a retry the holder did not use, which
+  is how the FIDO and OATH PINs have always behaved. OpenPGP's `check_pin` has
+  the same compare-then-spend shape and is deliberately untouched here.
+  **bcdDevice → 0x08B6.**
+
+- **A wrong FIDO PIN no longer leaves an outstanding `pinUvAuthToken`
+  working.** A platform that held a token — minted with the right PIN — kept it
+  usable across any number of failed PIN attempts by anything else plugged into
+  the same session, so the retry counter was the only thing an attacker's wrong
+  guesses cost them; the credential the *previous* holder was still using was
+  untouched. A YubiKey 5.7.4 invalidates the token on a failed PIN check, through
+  every door — `getPinUvAuthTokenUsingPinWithPermissions` (`0x09`), the legacy
+  `getPinToken` (`0x05`) and `changePIN`'s old-PIN check — measured four times
+  per door on both PIN/UV-auth protocols, with idle, `getKeyAgreement` and
+  `getPINRetries` as controls that leave it alive on both devices. CTAP 2.0
+  §5.6.6 and 2.1 name only the key-agreement regeneration in that branch, so we
+  were within the letter of the spec and the card does strictly more; parity
+  decides, and it is the safe direction — a token minted before someone started
+  guessing stops working, and a platform can always mint another. The reset sits
+  in the one function every *host* PIN check passes through — the on-screen PIN
+  pad is a second one and did not inherit it; see the entry below, which closes
+  that. Untouched, deliberately: the persistent `pcmr` token is a separate
+  flash-backed grant that survives replugs until a PIN change or a reset, and a
+  failed attempt is neither. **bcdDevice → 0x08B4.**
+
+- **A wrong FIDO PIN typed on the trusted display's own pad now ends the host's
+  outstanding `pinUvAuthToken` too.** The entry above landed the rule in
+  `spend_and_verify_pin_hash` and said the pad inherited it. It does not: the pad
+  verifies the same `EF_PIN` record through a second function, which by design
+  omits the CTAP-session side effects because the display task holds no CTAP
+  context. The panel's only clientPIN prompt is the current-PIN step of the
+  on-device *Change FIDO PIN* flow — `changePIN`'s old-PIN check, performed at the
+  pad — so on a display build the same wrong PIN killed a platform's token when it
+  arrived over USB and left it working when it was typed on the screen. The pad
+  now signals the worker, which drops the token before the next CBOR command, the
+  same path an on-device PIN *change* already used. It signals only for the
+  clientPIN — the device PIN gates the panel's own UI and is no CTAP credential —
+  and only when there was a retry budget to spend, because an entry that meets an
+  already-blocked PIN is turned away before any comparison and the host path
+  leaves a standing token alone there as well. No YubiKey has a pad, so this one
+  is class consistency with the wire rule rather than a measured cell.
+  **bcdDevice → 0x08B5.**
+
+- **OATH `SET CODE` installed an access code with no key material.** `73 01 01`
+  — an algorithm byte and nothing after it — answered `9000` and locked the
+  applet behind a key that is the empty string, so the VALIDATE response every
+  session wants is `HMAC("", challenge)`: a lock anyone can open, standing
+  between the owner and their accounts, and indistinguishable from a real one
+  from the outside. Anything up to 127 bytes was taken as well. A YubiKey 5.7.4
+  accepts an algorithm byte plus **14..=64 bytes** of key and answers `6A80`
+  outside that, which is the same range it enforces on a credential's secret —
+  one rule, two commands, and it is now one constant here too. Measured across
+  0, 1, 2, 3, 13, 14, 15, 16, 20, 32, 63, 64, 65 and up: on that card the
+  "protected but unopenable" state cannot be reached at all, because every
+  accepted `SET CODE` is one whose key the host proved it can HMAC with and
+  every refused one leaves the previous state untouched. Ours now refuses before
+  the proof is checked and before a byte is written, so a rejected `SET CODE`
+  from a validated session leaves the standing code opening the applet — checked
+  both ways. The bound is on what `SET CODE` takes, never on what `VALIDATE` can
+  read: a longer code stored by an older build still opens the applet, or the
+  upgrade would lock its owner out. Unchanged and deliberate: an empty `73` value
+  still removes the code. (This entry also kept a **body-less** `SET CODE` doing
+  the same, citing YKOATH's own text. That cell was reconsidered against the card
+  and is refused now — see below. It predates this entry, so relative to released
+  0.4.9 it is a live behaviour change for a host that followed the document
+  rather than the card.) **bcdDevice → 0x08B3.**
 
 - **An outstanding PIV management-key challenge no longer survives arbitrary
   traffic.** GENERAL AUTHENTICATE at 9B hands the host a challenge (or a witness)
@@ -1737,6 +1968,7 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   same change; a new end-to-end test drives the `A4` arm through the applet's
   dispatcher, which no test did before — that arm was the no-op, so nothing
   failed when it broke. **bcdDevice → 0x0894.**
+
 - **An OATH rename onto a name that is already taken is refused instead of
   minting a second credential with that name.** One credential per name is the
   store's rule, and only one of its two writers held it: PUT looks the name up
@@ -2059,132 +2291,6 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   scope as the DEVK change: nothing against code execution. Measured cost of the
   read: **48 µs**, against 8.9 ms for the cheapest crypto step it precedes.
 
-### Changed
-
-- **An unimplemented subcommand answers what a YubiKey answers.** CTAP 2.2 §8.1
-  makes `CTAP2_ERR_INVALID_SUBCOMMAND` a MUST here, and its own NOTE concedes
-  that implementations of earlier versions do not follow it. A YubiKey 5.7.4 is
-  one of them, so hosts are written against *its* codes and these now match it,
-  measured cell for cell: `authenticatorConfig` judges the subcommand **before**
-  the pinUvAuthParam — `0x00` is the absent-parameter sentinel
-  (`CTAP2_ERR_MISSING_PARAMETER`), an id the card does not implement is
-  `CTAP1_ERR_INVALID_PARAMETER` with or without a token, and only a known one
-  reaches `CTAP2_ERR_PUAT_REQUIRED`; `credentialManagement` keeps answering
-  `CTAP2_ERR_PUAT_REQUIRED` to every subcommand without a token and
-  `CTAP1_ERR_INVALID_PARAMETER` once one verifies. Previously
-  `authenticatorConfig` said `CTAP2_ERR_UNSUPPORTED_OPTION` and gated first.
-  `clientPIN` is the exception and is left on the spec's `0x3E`: the YubiKey has
-  no stable answer to copy there — the same key returns `0x01`, `0x33`, `0x02` or
-  `0x14` for the same undefined subcommand depending on `pinUvAuthProtocol` and
-  on what ran before it. That also covers `0x06`/`0x07` on a build with no PIN
-  pad, which used to report an unsupported *option*. **bcdDevice → 0x0886.**
-
-- **An abandoned `largeBlobs` write is dropped after 30 s.** CTAP 2.3 §6 names
-  four stateful sequences and bounds all of them the same way: "exclusively
-  preceded" by their own continuation, with "no more than 30 seconds" between
-  those commands. The command half was already enforced for all four; this
-  finishes the time half for the one sequence still missing it, and it is the one
-  that needed it most — a part-written array is the only sequence whose
-  continuation legs carry no authorization on a PIN-less key, so nothing but some
-  *other* command arriving could retire it. Send nothing and it sat in RAM for the
-  rest of the power cycle. The window is per fragment, not per array, so a slow
-  link transferring a full 4078-byte blob is unaffected; an expired transfer
-  answers `CTAP2_ERR_INVALID_SEQ` and leaves the stored array untouched, exactly
-  as an interrupted one already did. Inert on a `--features largeblob-ext` build,
-  which never arms this accumulator. **bcdDevice → 0x0885.**
-
-- **A credential-management enumerate walk now retires on a timer of its own.**
-  The cursor is dropped once 30 s pass with no leg served. That is the bound CTAP
-  2.3 §6 names for every stateful command — an authenticator may assume "no more
-  than 30 seconds will elapse between such commands" — and *between* is why the
-  timer is per leg rather than per walk: a platform drawing an account picker
-  cannot run out of it halfway down its own list. §6.3 step 7 says the same for
-  `getNextAssertion`, which already did it.
-
-  The same clause requires the state to die with the pinUvAuthToken that
-  authorized the opening call, and that part was already in place. It is not
-  enough on its own: the **persistent** `pcmr` token has no usage timer (§6.8.2),
-  so a walk opened with one had no bound at all and stayed continuable for the
-  whole power cycle as long as nothing else was sent. The *Next* legs carry no
-  authorization of their own (§6.8), which makes the cursor the authorization; it
-  is now bounded in time as well as to its channel. This is also the one row of
-  the YubiKey 5.7.4 comparison below that did not match. **bcdDevice → 0x0884.**
-
-- **A flash record now holds 4078 bytes instead of 2046.** Two things ride that
-  ceiling and doubled with it: the serialized large-blob array
-  (`maxSerializedLargeBlobArray` in `getInfo`, so a platform sees the new room
-  without being told) and an imported enterprise attestation chain
-  (`ATT_IMPORT`). No other applet sizes itself against it — PIV, OpenPGP and
-  OATH carry their own, lower caps and are unchanged. The number is not round
-  because a `sequential-storage` item must fit inside one 4096-byte flash page:
-  16 bytes of page and item headers come off the top, then the 2-byte FID that
-  shares the scratch with the value. **A provisioned key upgrades in place** —
-  only the size of the buffer the backend serializes through changed, not the
-  on-flash item format, so every existing record still reads. **bcdDevice →
-  0x0880.**
-
-- **The CTAP 2.3 `largeBlob` extension answered the wrong status for a mistyped
-  input** (`--features largeblob-ext` only). §12.4 says a CDDL violation is
-  `CTAP2_ERR_INVALID_CBOR` for both commands, but the parsers went through the
-  shared decode helper, which reports a wrong *type* as
-  `CTAP2_ERR_CBOR_UNEXPECTED_TYPE`. The extension's own inputs now map every
-  decode failure to `INVALID_CBOR`. The unit tests missed it because their
-  CDDL-violation cases were all well-typed — an external CTAP 2.3 conformance
-  runner driven against a `largeblob-ext` emulator caught it (large-blob F-4 and
-  F-5), and the regression test now covers the type axis too. That group is
-  12/12 green after the fix. **bcdDevice → 0x0883.**
-
-- **getInfo claimed a config subcommand that, by the spec's own definition, it
-  did not implement.** `authenticatorConfigCommands` (`0x1F`) listed
-  `vendorPrototype` (`0xFF`) while `vendorPrototypeConfigCommands` (`0x15`) was
-  absent — and CTAP 2.3 §6.11.3 makes the second the precondition for the first:
-  the subcommand "is only implemented if the `vendorPrototypeConfigCommands`
-  member in the authenticatorGetInfo response is present". So the two members
-  together said a supported subcommand was not implemented.
-
-  This finishes the `0x0875` fix rather than reversing it. Listing `0xFF` was
-  itself required (§6.11.7 makes it a MUST once the arm exists); what that change
-  left out was the companion member, on the reasoning that `0x15` is optional
-  "and a YubiKey hides it" — true, but a YubiKey hides `0xFF` along with it. Now
-  published: the six vendorCommandIds `authenticatorConfig` actually dispatches,
-  the soft-lock enable/disable pair and the four PicoForge phy writes. Nothing is
-  given away — [docs/protocol.md](docs/protocol.md) §9 already documents them,
-  and §6.11.7 says vendors "MUST NOT count on obscurity of the vendorCommandId
-  value as any sort of security".
-
-  Found by an external CTAP 2.3 conformance runner driven against a live board.
-  The rule is a cross-field constraint over getInfo, so nothing in the gate was
-  in a position to see it. **bcdDevice → 0x0882.**
-
-- **A multi-call sequence no longer survives an unrelated command in the middle
-  of it.** CTAP 2.2 §6 lets an authenticator assume each stateful command is
-  "exclusively preceded" by its own kind or by the command that initialized it —
-  "no other authenticator operation occurs in between" — and fail it with
-  `CTAP2_ERR_NOT_ALLOWED` otherwise. The device now takes that up for all four
-  sequences the spec names: the `getNextAssertion` walk, credentialManagement's
-  two enumerate cursors, and a part-written large-blob array. The clause is a
-  MAY, so the previous behaviour was conformant; what this buys is a smaller
-  state surface, and the large-blob buffer in particular had nothing else
-  bounding it — no timer, and on a PIN-less key no token — so an abandoned
-  transfer sat in RAM until some later `offset == 0`. A platform that interleaves
-  (a `getInfo` between `getAssertion` and `getNextAssertion`, say) now gets
-  `CTAP2_ERR_NOT_ALLOWED` where it used to be served; the spec asks platforms not
-  to.
-
-  The enumerate cursor goes further, because a shipped authenticator does:
-  measured on a YubiKey 5.7.4, its walk dies on an unrelated command, on a
-  `credentialManagement` subcommand that is not one of the two *Next* walkers, on
-  a `largeBlobs` command, and on a 35-second gap with the token still live. All
-  four are matched here, the timer as of `0x0884` above. Its large-blob write, by
-  contrast, survives all four — so on that one sequence this device is the
-  stricter of the two, kept that way because the failure modes are not
-  symmetric: a YubiKey drops the stored array on the *opening* fragment, so an
-  abandoned transfer destroys it, while this one accumulates in RAM and leaves
-  the previous array intact.
-  **bcdDevice → 0x087F.**
-
-### Security
-
 - **A second process could walk another channel's `getNextAssertion`, and its
   credential-management enumeration.** Both are multi-call sequences whose
   continuation legs carry no authorization of their own: `getNextAssertion` has
@@ -2201,257 +2307,6 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   re-verifies a token on every fragment, and the MSE handshake was already
   channel-bound. Found by porting Google OpenSK's `test_channel_interleaving`,
   which pins the same rule. **bcdDevice → 0x087E.**
-
-### Fixed
-
-- **`CTAPHID_LOCK` was advertised nowhere, and let a foreign `CTAPHID_INIT`
-  through.** Two halves of one command. The INIT reply's capability byte left
-  `CAPABILITY_LOCK` (0x02) clear although the lock is implemented, and a host
-  decides from that byte whether to attempt the command at all — so a working
-  feature was unreachable. Meanwhile the dispatch exempted *every* `CTAPHID_INIT`
-  from a held lock, though its own comment justified only the broadcast one
-  (asking for a channel id). An INIT aimed at another allocated channel is
-  §11.2.9.1.3's other function — it "discards the current transaction, buffers and
-  state" — which is precisely what the lock exists to withhold from a second
-  application. The bit is set now, and only a broadcast INIT survives someone
-  else's lock. **bcdDevice → 0x087D.**
-
-- **`tools/emu` could not see a `CTAPHID_CANCEL` while it waited for a touch.**
-  Its socket transport parks in the job wait for the whole of a command and reads
-  nothing meanwhile, so the cancel frame sat in the receive buffer until the
-  ceremony it was sent to abort had already ended: `authenticatorSelection` and a
-  presence-gated `makeCredential` both answered as though no cancel had come,
-  instead of `CTAP2_ERR_KEEPALIVE_CANCEL`. It now polls the connection during the
-  touch wait — the window `CtapHid` watches on the device, and only that window,
-  since off it the platform pipelines and a frame read there would be a swallowed
-  next command. Emulator only: the firmware and the emulator's `--usbip` path
-  (which runs the real transport) were never affected.
-
-- **`docs/protocol.md` §4 invited a SELECT that fails for three of its ten
-  AIDs.** The section opens "SELECT an applet with `00 A4 04 00 Lc <AID> 00`" and
-  then tables FIDO2, the FIDO2 backup id and U2F beside the seven real card
-  applets — but those three are not CCID applets and answer `6A82`
-  (FILE_NOT_FOUND); CTAP1/U2F and CTAP2 ride CTAPHID and have no SELECT at all.
-  §4 is the third-party / PicoForge wire spec, so a reader building from it wrote
-  a probe that could not work and had nothing to tell that apart from a broken
-  key. The table gains a **Transport** column with all ten measured on both
-  transports, which also records the narrower half nobody had written down:
-  `CTAPHID_MSG` offers exactly one applet, the vendor one. Documentation only —
-  no wire change.
-
-- **`tools/emu`'s power cycle skipped the Yubico-OTP use-counter bump, so the
-  bench could not test the replay defence.** `firmware/src/main.rs` runs
-  `power_up_bump` at every cold boot precisely because the RAM session counter
-  restarts at 0 on each power-up: if the persistent use counter stood still, the
-  `(use, session)` pair a Yubico validation server orders OTPs by would repeat.
-  The emulator had no reference to it at all — neither at process start nor on
-  the replug (`OP_REPLUG`, and the USB/IP attach that shares it), so it reset the
-  session half and left the persistent half exactly where it was: the one
-  arrangement the defence exists to prevent, on the bench built to test it. Both
-  power-ups bump now, and the ungated warm reboot still does not — a bump there
-  would hand any host a way to walk the counter to its ceiling. Emulator only.
-
-- **`tools/emu` had no CTAPHID inter-frame timeout, so an abandoned message
-  wedged the session for good.** The device transport races its frame read
-  against `RX_TIMEOUT_MS` and answers `CTAPHID_ERROR(MSG_TIMEOUT)`; the socket
-  loop blocked in `read_exact` with no deadline instead. Measured: after frame 1
-  of a 200-byte `CTAPHID_PING` and nothing more, a complete PING on a second
-  channel was refused `CHANNEL_BUSY` at t+0.6 s, t+2 s and t+5 s alike, and only
-  a `CTAPHID_INIT` on the abandoned channel ever cleared it. One TCP connection
-  is one HID interface, so a client had nowhere else to go — the emulator
-  modelled the wedge faithfully and never modelled the escape. It now shares the
-  transport's own constant and times the message out at 500 ms, carrying a
-  half-arrived report across the deadline (TCP may split one; USB never does).
-  Emulator only.
-
-- `metadata/README.md` called the attestation `basic_surrogate`; the statements
-  themselves declare `basic_full`, which is what the device sends — packed with a
-  self-signed per-device `x5c` leaf.
-
-- **A record the routing table no longer points at could not be deleted, and
-  `authenticatorReset` swept for it forever.** The store keeps two partitions and
-  routes each fid to one of them; `for_each_key` walks BOTH, but `remove` targeted
-  only the routed one. A fid whose routing changed between firmware versions
-  therefore sat in the other partition — invisible to every read, yielded on every
-  walk, deletable by nothing — and the reset sweep, which finishes only when its
-  range comes back empty, could never finish. `EF_CRED_CTR` is exactly such a fid:
-  0x081D wrote it to the main partition on every assertion and 0x0821 moved it to
-  the counter one, so a key flashed from source inside that window carries one (no
-  release does — 0.3.6 predates the record and 0.3.7 already routes it). `remove`
-  now clears both partitions. **bcdDevice → 0x087C.**
-
-- **`authenticatorReset` deleted the same record up to 64 times.** `for_each_key`
-  walks stored items, so an overwritten file yields its fid once per superseded
-  version until reclaim; the API says a batching caller must de-dup, and the reset
-  sweep did not. Its 64-slot batch filled with copies of one fid — the counters and
-  a re-registered credential are exactly what a busy key rewrites most — so a pass
-  spent its whole budget re-deleting a record already gone and left the rest of the
-  wipe to later passes. It de-dupes now, and carries the same progress backstop as
-  the PIV, OATH and OpenPGP wipes: a backend that keeps yielding a record it has
-  confirmed removed returns `CTAP2_ERR_OTHER` rather than holding the worker in
-  processing. **bcdDevice → 0x087B.**
-
-- **A signed release image did not boot on a secure-boot device.** `picotool
-  seal --sign` retires the image's own `IMAGE_DEF` — the linker's, carrying no
-  signature and no rollback version — only when it is handed the **ELF**. Given
-  a UF2 it appends its signed block and leaves that first one live, so a board
-  with `SECURE_BOOT_ENABLE` and `ROLLBACK_REQUIRED` meets it first and refuses
-  the image, while the host still prints `signature: verified`. The documented
-  ritual said UF2, so every signed image built that way since the partition
-  table landed (`0x0871`) would fail to boot — found by upgrading a provisioned
-  key, which then would not start until it was reflashed. All five sealing
-  snippets in the docs now seal the ELF and convert afterwards.
-
-### Added
-
-- **A Kani proof over the APDU dispatcher's *sequences*, the first one in the
-  tree that applies more than a single call to a stateful object.**
-  `Dispatcher::process` carries three audit findings in its own comments —
-  run-34 #26 (a stranded `CLA 0x10` APDU prefixed the next command, so the
-  victim's own GENERAL AUTHENTICATE signed the injector's data under the
-  victim's touch), run-35 (fixing that for SELECT alone left every other
-  instruction absorbing it), run-37 (a mismatch-only test let a stranded segment
-  swallow the next client's SELECT, leaving the previous applet selected and
-  still PIN-verified) — each reachable in two or three APDUs, and every existing
-  harness was single-call, so the surface with three demonstrated bugs had no
-  proof at all. The new one drives the real dispatcher with a recording stub
-  applet over a selected card and **every pair of raw APDUs up to six bytes**,
-  and shows: it never panics; the chain buffer stays in bounds and a *dropped*
-  chain leaves no bytes behind, not merely a cleared flag; **the applet is never
-  handed a body from a command it did not itself terminate** — the `Nc` it sees
-  is the second command's own unless the pair is a legitimate ISO 7816-4 chain,
-  in which case it is exactly the sum, with no third possibility; a
-  secure-messaging class reaches no applet, SELECT included; and a well-formed
-  SELECT for a registered AID always reaches the applet, whatever chain state it
-  walks into. Reintroducing any of the three historical bugs makes it fail, and
-  the solver hands back the two-APDU witness. Proof-only (`cfg(kani)`): the
-  firmware image is byte-identical, so no `bcdDevice` is owed.
-
-- **Three Kani harnesses that prove things about *sequences* of security
-  states, not single calls.** The 53 harnesses this tree already had are all
-  single-call: a parser, a codec, one arithmetic step. RS-Key's dangerous
-  defects have not lived there — they have lived in orderings (a token
-  surviving a PIN change, one channel continuing another's enumerate walk, a
-  gate deleted before the key it guards). `rsk-fido` now carries a symbolic
-  four- to five-operation sequence over the **real** `FidoState`, checked after
-  every step: `NoTokenAfterInvalidation` (a pinUvAuthToken retired by
-  `stopUsingPinUvAuthToken`, a reroll, an `authenticatorReset`, a power cycle or
-  its own usage timer never authorizes again, and only a fresh issuance brings
-  one back) and `NoAuthorizationBypass` (a credentialManagement enumerate walk
-  is servable only to the channel whose *Begin* opened it — CTAP 2.1 §6.8
-  exempts the *Next* legs from carrying authorization of their own, so the
-  `(channel, counter)` pair **is** the check).
-
-  The third drives the real `verify_cm_token` with a `pinUvAuthParam` minted
-  while the grant was live and replayed after it died, and asserts two things:
-  the gate refuses, **and the replayed MAC still verifies**. `stop_using_token`
-  deliberately leaves the token bytes in place, and `config.rs` and
-  `credmgmt.rs` test the MAC and the permission bits and nothing else — so at
-  those two sites zeroing `permissions` is not defence in depth, it is the only
-  defence. That asymmetry is now pinned by a proof instead of by a comment.
-
-  **All eight clauses have been shown to be able to fail**, one isolated
-  mutation each, every one rebuilding a real defect or removing a defence the
-  tree relies on: `stop_using_token` keeping permissions or wiping the token
-  bytes, `may_walk_rps` ignoring the channel or losing its counter half,
-  `user_verified()` dropping the UV flag, and `consume_after_user_presence`
-  keeping permissions (GHSA-wqjm-653g-hgw3). Each turns exactly the clause that
-  names it red, and nothing else. Costs, on an 18-core Apple Silicon under load:
-  138 s, 43 s and 393 s. The invariant names are shared with the TLA+ model in
-  `formal/`, so one property reads model → code → harness. **cfg-gated code
-  never reaches the image, so no `bcdDevice` bump.**
-
-- **A TLA+ model of the security state, `formal/RSKeySecurityState.tla`.** 41
-  actions over PIN retries, the pinUvAuthToken and its permissions, the touch
-  and channel owners, the reset window, the persistent gate records and the
-  position at which power is lost inside a multi-write flash sequence. TLC
-  checks six named invariants — the same six the `rsk-fido` Kani harnesses use —
-  exhaustively over 13 232 120 distinct states at small constants. Fourteen
-  mutation switches rebuild real RS-Key defects and **all fourteen are caught by
-  the invariant that names them**, each proved solo so a mutant caught by a
-  sibling cannot pass for one that names its own; `-coverage` shows no dead
-  action. It has produced **two counterexamples on the shipped tree** (a torn
-  reset phase can strand an unmanageable credential, or a persistent
-  credentialManagement grant on a key whose PIN record is gone) — both LOW, both
-  awaiting a ruling, neither fixed.
-
-  It is a **design artefact, not an assurance layer**, and `docs/testing.md` →
-  "Formal claims" is the paragraph to quote: a green TLC run is a result about
-  the model, whose fidelity to the code is maintained by hand. An adversarial
-  review of the first revision proved why that wording matters — the green run
-  rested on an abstraction that made the model *narrower* than the firmware (a
-  power cut left the device permanently seedless, where every boot regenerates
-  the seed), and repairing it turned the run red until a device-lifetime ghost
-  in one invariant was retired at the right moment. Both are fixed, and the
-  measurement that the repaired invariant still catches its mutant is in
-  `formal/README.md`. Not in `flake.nix`, not in the gate, not in CI: the
-  2.2 MB `tla2tools.jar` plus a host JRE, run on demand.
-
-- **The CTAP 2.3 `largeBlob` extension, as an opt-in build
-  (`--features largeblob-ext`).** It carries the whole blob inside the
-  `getAssertion` that reads or writes it and keeps it with the credential,
-  instead of the CTAP 2.1 arrangement where the platform manages one array and
-  the device only hands out a per-credential key. Read it with
-  `largeBlob: {read: true}`, write it with `{write: <bytes>, originalSize: n}`
-  and a **non-empty allowList** — §12.4 makes naming the credential the
-  precondition for a write — and the answers come back in
-  `unsignedExtensionOutputs`.
-
-  It is not additive, and that is the spec's doing: §12.4 says
-  *"Authenticators MUST NOT support both extensions"*, so the build **withdraws**
-  the `largeBlobKey` extension, the `authenticatorLargeBlobs` command (`0x0C` now
-  answers `CTAP1_ERR_INVALID_COMMAND`), the `largeBlobs` option and
-  `maxSerializedLargeBlobArray`. Since every shipping browser drives the 2.1 pair
-  today and no client speaks the 2.3 extension yet, **the default build is
-  unchanged** — turning this on trades working WebAuthn `largeBlob` support for
-  a design nothing currently asks for. Up to 4046 bytes per credential
-  (discoverable only: a non-discoverable credential has no record to hang a blob
-  on, so `support: "required"` there is `CTAP2_ERR_LARGE_BLOB_STORAGE_FULL`).
-
-  One thing the spec does not ask for: each blob is sealed at rest under the
-  device seed with the credential id as AAD. The 2.1 array arrives already
-  encrypted by the platform, but a 2.3 blob arrives as compressed plaintext, so
-  without the seal it would sit readable in a flash dump — and the AAD is also
-  what stops a record left behind in a reused slot being served to the
-  credential that takes it next. **bcdDevice → 0x0881.**
-
-- **The Kani proofs run on pull requests now, split into tiers by measured
-  cost.** They used to run only in the daily `deep-checks` row, because one
-  harness in `rsk-rescue` costs ~80 minutes — so every proof sat a day away from
-  the change that broke it. Measured, they are not one population: 38 harnesses
-  over 12 crates discharge in 209 s of solving all told, and four crates hold
-  everything slow. `ci.yml` has a `proofs` job running the fast tier on any change
-  under `crates/`, plus the `rsk-fido` + `rsk-fs` sequence proofs (~13 min) when
-  the diff reaches `rsk-fido`, `rsk-fs`, `rsk-store` or `rsk-wipe` — the state
-  those proofs are about. The daily row still runs **all** of them; nothing was
-  dropped from it.
-
-  `scripts/kani.sh` owns tier → crates and is the only place a roster is written;
-  it also floors the number of harnesses each tier must prove, because a roster
-  that selects nothing prints a summary and exits 0 — the shape this repo has
-  now shipped three times. `kani_gate.py` reads that table back with `--tiers`
-  and holds it to the same contract as before (every crate carrying a proof on
-  the full tier, every tier run by a row CI actually executes, every tier on the
-  page a reader copies), and it finally has its own mutation table —
-  `scripts/test_kani_gate.py`, 27 cases, both directions.
-
-  ⚠️ `proofs` is a new job name. If `main`'s ruleset should require it, it has to
-  be added there; nothing in the repository can do that for itself.
-
-- The gate asserts a **stack floor** (`FIRMWARE_STACK_FLOOR_KIB`, alongside the
-  flash budget). Static RAM had grown 28.5 KiB since `0x082B`, taking the same
-  amount off the stack ceiling with nothing measuring it.
-- The gate seals a throwaway-keyed image and asserts its first metadata block is
-  `ignored`, so the sealing order above cannot silently regress. The real signing
-  key stays out of it.
-- **Deterministic delayed presence for `rsk-emu`.** `--auto-touch-ms` exposes a
-  real pending-presence interval to CTAPHID clients, honours channel-scoped
-  cancellation, and then confirms automatically — the window a conformance
-  client needs in order to see a `KEEPALIVE` and send a `CTAPHID_CANCEL` at all.
-  It stays an *auto-confirming* authenticator, so the CTAP 2.1 §6.6 reset window
-  still applies to it. The emulator workspace also forwards the
-  `rsk-fido/fido-conformance` feature for unattended conformance runs against
-  the socket applet stack.
 
 ## [0.4.9] - 2026-08-09
 
