@@ -54,9 +54,6 @@ pub const PIV_AID: &[u8] = &[
 /// (default 5.7.4, `FW_VERSION`-overridable).
 pub const VERSION: (u8, u8, u8) = rsk_sdk::FIRMWARE_VERSION;
 
-/// Status 0x6A80 (wrong data).
-pub(crate) const WRONG_DATA: Sw = Sw::INCORRECT_PARAMS;
-
 const INS_VERIFY: u8 = 0x20;
 const INS_CHANGE_PIN: u8 = 0x24;
 const INS_RESET_RETRY: u8 = 0x2C;
@@ -358,7 +355,7 @@ impl<S: Storage> Applet<Fs<S>> for PivApplet<'_> {
         // answer depends on nothing: same for `41`, `00` and `5C`, with and
         // without `Le`, short and extended.
         if apdu.nc == 1 {
-            return WRONG_DATA;
+            return Sw::WRONG_DATA;
         }
         let (serial_hash, serial_id, mkek) = self.device_ids();
         let dev = Device {
@@ -448,7 +445,7 @@ impl PivApplet<'_> {
         // `FF` carrying a body, 3 runs each, and none of them moves the standing
         // status (only a malformed body at P1 `00` does, below).
         if apdu.p1 != 0x00 && apdu.p1 != 0xFF {
-            return WRONG_DATA;
+            return Sw::WRONG_DATA;
         }
         // SP 800-73-4's VERIFY response table has no `6A88` for an undefined key
         // reference: it is `6A80`, and that is what a YubiKey 5.7.4 answers to
@@ -456,7 +453,7 @@ impl PivApplet<'_> {
         // with an Le, 3/3). Only `80` names a reference this application has —
         // one it can still be *missing*, which is the `6A88` below.
         if apdu.p2 != REF_PIN {
-            return WRONG_DATA;
+            return Sw::WRONG_DATA;
         }
         if !fs.has_data(EF_PIN) {
             return Sw::REFERENCE_NOT_FOUND;
@@ -464,7 +461,7 @@ impl PivApplet<'_> {
         if apdu.p1 == 0xFF {
             // SP 800-73: reset the security status of the PIN.
             if apdu.nc != 0 {
-                return WRONG_DATA;
+                return Sw::WRONG_DATA;
             }
             self.sess.set_pin(false);
             return Sw::OK;
@@ -492,7 +489,7 @@ impl PivApplet<'_> {
         // the oracle's order too.
         if apdu.nc != PIN_WIRE_LEN {
             self.sess.set_pin(false);
-            return WRONG_DATA;
+            return Sw::WRONG_DATA;
         }
         // SP 800-73-4 Part 2 §3.2.1.1 on a mismatch: "the card command shall
         // fail, the PIV Card Application shall return the status word '63 CX',
@@ -525,7 +522,7 @@ impl PivApplet<'_> {
             _ => return Sw::REFERENCE_NOT_FOUND,
         };
         let Some((old, new)) = wire_reference_pair(apdu) else {
-            return WRONG_DATA;
+            return Sw::WRONG_DATA;
         };
         change_reference(dev, fs, which, old, new)
     }
@@ -539,7 +536,7 @@ impl PivApplet<'_> {
             return Sw::REFERENCE_NOT_FOUND;
         }
         let Some((puk, new)) = wire_reference_pair(apdu) else {
-            return WRONG_DATA;
+            return Sw::WRONG_DATA;
         };
         unblock_pin_with_puk(dev, fs, puk, new)
     }
@@ -557,7 +554,7 @@ impl PivApplet<'_> {
         // AGENTS.md's one parity carve-out (never adopt a behaviour that loses
         // user data), so this refusal stays. Pinned by a test; do not "fix" it.
         if apdu.p1 == 0 || apdu.p2 == 0 {
-            return Sw::INCORRECT_PARAMS;
+            return Sw::WRONG_DATA;
         }
         if fs
             .put(EF_RETRIES, &[apdu.p1, apdu.p1, apdu.p2, apdu.p2])
@@ -585,7 +582,7 @@ impl PivApplet<'_> {
             _ => return Sw::REFERENCE_NOT_FOUND,
         };
         if pin_left != 0 || puk_left != 0 {
-            return Sw::INCORRECT_PARAMS;
+            return Sw::WRONG_DATA;
         }
         let mut rng = self.rng.borrow_mut();
         if files::reset_files(dev, fs, &mut *rng).is_err() {
@@ -625,7 +622,7 @@ impl PivApplet<'_> {
         // A missing body is a bad request rather than a length error, the
         // spelling the reference uses for every framing refusal on this command.
         if apdu.nc == 0 || apdu.data[0] != TAG_GEN_TEMPLATE {
-            return WRONG_DATA;
+            return Sw::WRONG_DATA;
         }
         if apdu.p1 != 0x00 || !is_key(apdu.p2) {
             return Sw::INCORRECT_P1P2;
@@ -642,7 +639,7 @@ impl PivApplet<'_> {
             ALGO_RSA1024 | ALGO_RSA2048 | ALGO_RSA3072 | ALGO_RSA4096 => {
                 keygen::generate_rsa_blocking(dev, fs, &mut *rng, apdu.p2, &req, res)
             }
-            _ => WRONG_DATA,
+            _ => Sw::WRONG_DATA,
         }
     }
 
@@ -653,11 +650,11 @@ impl PivApplet<'_> {
         }
         let d = apdu.data;
         if d.len() < 3 || d[0] != TAG_DATA_PATH {
-            return WRONG_DATA;
+            return Sw::WRONG_DATA;
         }
         let l = d[1] as usize;
         if l == 0 || l > 3 || d.len() < 2 + l {
-            return WRONG_DATA;
+            return Sw::WRONG_DATA;
         }
         let mut id: u32 = 0;
         for &b in &d[2..2 + l] {
@@ -758,10 +755,10 @@ impl PivApplet<'_> {
             find_tag(apdu.data, TAG_DATA_PATH as u16),
             find_tag(apdu.data, TAG_DATA_OBJECT as u16),
         ) else {
-            return WRONG_DATA;
+            return Sw::WRONG_DATA;
         };
         if path.len() != 3 {
-            return WRONG_DATA;
+            return Sw::WRONG_DATA;
         }
         let fid = match (path[0], path[1], path[2]) {
             // ADMIN DATA (5FFF00): the protection flags. Plaintext (non-secret).
@@ -782,7 +779,7 @@ impl PivApplet<'_> {
             }
             (0x5F, 0xC1, b) => match data_object_fid(b) {
                 Some(fid) => fid,
-                None => return WRONG_DATA,
+                None => return Sw::WRONG_DATA,
             },
             // Everything else, and `5FFF01` in particular: the attestation
             // certificate is not host-writable. A YubiKey takes that write — one
@@ -790,7 +787,7 @@ impl PivApplet<'_> {
             // with it, unrecoverably — and pairing it with a host-loaded F9 key
             // would let the management key alone replace the device's attestation
             // identity. Deliberate; pinned by a test and docs/limitations.md.
-            _ => return WRONG_DATA,
+            _ => return Sw::WRONG_DATA,
         };
         if obj.is_empty() {
             return match fs.delete(fid) {
@@ -997,7 +994,7 @@ impl PivApplet<'_> {
         let tdes = cfg!(not(feature = "fips-profile"));
         let len_ok = mgm_key_len(algo) == Some(klen) && (tdes || algo != ALGO_3DES);
         if key_ref != SLOT_CARDMGM || !len_ok {
-            return WRONG_DATA;
+            return Sw::WRONG_DATA;
         }
         if apdu.nc != 3 + klen {
             return Sw::WRONG_LENGTH;
@@ -1289,13 +1286,13 @@ fn check_new_reference(new: &[u8]) -> Result<(), Sw> {
     // conformant host can ever present, i.e. the card wedged until a factory
     // reset. This is the one owner: panel callers reach it through [`pad_pin`].
     if new.len() != PIN_WIRE_LEN {
-        return Err(WRONG_DATA);
+        return Err(Sw::WRONG_DATA);
     }
     // Trailing padding is not part of the value. `0xFF` is unambiguous here even
     // though non-digits are allowed: it is the pad byte the wire form defines.
     let len = new.iter().rposition(|&b| b != PIN_PAD).map_or(0, |i| i + 1);
     if !(PIN_MIN_LEN..=PIN_WIRE_LEN).contains(&len) {
-        return Err(WRONG_DATA);
+        return Err(Sw::WRONG_DATA);
     }
     Ok(())
 }

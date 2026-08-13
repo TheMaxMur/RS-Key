@@ -78,14 +78,11 @@ fn mse_rejects_bad_p1p2_and_data() {
     );
     assert_eq!(
         mse(&mut s, &apdu(0x41, 0xA4, &[0x82, 0x01, 0x02])),
-        Sw::INCORRECT_PARAMS
+        Sw::WRONG_DATA
     );
     assert_eq!(
         mse(&mut s, &apdu(0x41, 0xA4, &[0x83, 0x01, 0x04])),
-        Sw::INCORRECT_PARAMS
+        Sw::WRONG_DATA
     );
-    assert_eq!(
-        mse(&mut s, &apdu(0x41, 0xA4, &[0x83])),
-        Sw::INCORRECT_PARAMS
-    );
+    assert_eq!(mse(&mut s, &apdu(0x41, 0xA4, &[0x83])), Sw::WRONG_DATA);
 }

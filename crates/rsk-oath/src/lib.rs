@@ -280,7 +280,7 @@ impl<'a> OathApplet<'a> {
         // it replaces a working credential with a dead one under `9000`, and the
         // secret is gone (worklog TRACK-oath §7.7a, measured against the card).
         let Some(f) = parse_put(data) else {
-            return Sw::INCORRECT_PARAMS;
+            return Sw::WRONG_DATA;
         };
 
         // Rebuild in normalised form: NAME, KEY, PROPERTY as a real TLV, the
@@ -338,7 +338,7 @@ impl<'a> OathApplet<'a> {
             return Sw::SECURITY_STATUS_NOT_SATISFIED;
         }
         let Some(name) = find_tag(&apdu.data[..apdu.nc], TAG_NAME as u16) else {
-            return Sw::INCORRECT_PARAMS;
+            return Sw::WRONG_DATA;
         };
         let mut scratch = [0u8; CRED_MAX];
         let mkek = read_fused(self.mkek_source);
@@ -362,7 +362,7 @@ impl<'a> OathApplet<'a> {
         // 0 is sent", and so is a `73` carrying key material with no proof after it.
         if let Some([key]) = parse_exact(data, [TAG_KEY]) {
             if !key.is_empty() {
-                return Sw::INCORRECT_PARAMS;
+                return Sw::WRONG_DATA;
             }
             let _ = fs.delete_key(EF_OATH_CODE);
             self.validated = true;
@@ -372,26 +372,26 @@ impl<'a> OathApplet<'a> {
         // which is ykman's and the YKOATH document's.
         let Some([key, chal, resp]) = parse_exact(data, [TAG_KEY, TAG_CHALLENGE, TAG_RESPONSE])
         else {
-            return Sw::INCORRECT_PARAMS;
+            return Sw::WRONG_DATA;
         };
         // An algorithm byte plus key material a YubiKey would take. Judged
         // before the proof, so a body outside it is a syntax error and not a
         // failed authentication, and before a byte is written, so the standing
         // code survives the refusal.
         if !(CODE_TLV_MIN..=CODE_TLV_MAX).contains(&key.len()) {
-            return Sw::INCORRECT_PARAMS;
+            return Sw::WRONG_DATA;
         }
         // Exactly the width of the challenge the card itself hands out, which is
         // what ykman and Yubico Authenticator send; a 5.7.4 answers `6A80` to
         // every other length. Narrower is the half that matters — those 8 bytes
         // are the whole margin the proof has.
         if chal.len() != CHALLENGE_LEN {
-            return Sw::INCORRECT_PARAMS;
+            return Sw::WRONG_DATA;
         }
         // The host proves it knows the new code: response = HMAC(key, challenge).
         let mut mac = [0u8; 64];
         let Some(size) = oath_hmac(key[0], &key[1..], chal, &mut mac) else {
-            return Sw::INCORRECT_PARAMS;
+            return Sw::WRONG_DATA;
         };
         if !ct_eq(resp, &mac[..size]) {
             return Sw::DATA_INVALID;
@@ -511,7 +511,7 @@ impl<'a> OathApplet<'a> {
         // RESPONSE then CHALLENGE — the order the YKOATH document lists and
         // ykman sends, and the only one the card takes.
         let Some([resp, chal]) = parse_exact(data, [TAG_RESPONSE, TAG_CHALLENGE]) else {
-            return Sw::INCORRECT_PARAMS;
+            return Sw::WRONG_DATA;
         };
         let mut code = [0u8; OATH_CODE_MAX];
         let mkek = read_fused(self.mkek_source);
@@ -532,17 +532,17 @@ impl<'a> OathApplet<'a> {
         }
         let mut mac = [0u8; 64];
         let Some(size) = oath_hmac(code[0], &code[1..], &self.challenge, &mut mac) else {
-            return Sw::INCORRECT_PARAMS;
+            return Sw::WRONG_DATA;
         };
         // A proof that does not match is `6A80` on a 5.7.4, which keeps `6984`
         // for "no code is installed" — the two branches above. One word for both
         // states left a host unable to tell a wrong password from no password.
         if !ct_eq(resp, &mac[..size]) {
-            return Sw::INCORRECT_PARAMS;
+            return Sw::WRONG_DATA;
         }
         // Mutual authentication: answer the host's challenge with the same key.
         let Some(size) = oath_hmac(code[0], &code[1..], chal, &mut mac) else {
-            return Sw::INCORRECT_PARAMS;
+            return Sw::WRONG_DATA;
         };
         self.validated = true;
         res.push(TAG_RESPONSE);
@@ -559,10 +559,10 @@ impl<'a> OathApplet<'a> {
         // NAME then CHALLENGE and nothing else, the way the card reads it and
         // the way ykman writes it.
         let Some([name, chal]) = parse_exact(data, [TAG_NAME, TAG_CHALLENGE]) else {
-            return Sw::INCORRECT_PARAMS;
+            return Sw::WRONG_DATA;
         };
         let Some(chal) = challenge_of(chal) else {
-            return Sw::INCORRECT_PARAMS;
+            return Sw::WRONG_DATA;
         };
         let mut scratch = [0u8; CRED_MAX];
         let mkek = read_fused(self.mkek_source);
@@ -573,10 +573,10 @@ impl<'a> OathApplet<'a> {
         // Ranges, not slices: the mark below rewrites the blob in place, and a
         // borrow held across that would have to be a second CRED_MAX buffer.
         let Some(key_at) = find_tag_range(&scratch[..n], TAG_KEY) else {
-            return Sw::INCORRECT_PARAMS;
+            return Sw::WRONG_DATA;
         };
         if key_at.len() < 2 {
-            return Sw::INCORRECT_PARAMS;
+            return Sw::WRONG_DATA;
         }
         let prop = cred_property(&scratch[..n]);
         // Touch-flagged credentials compute only after a confirmed press —
@@ -596,7 +596,7 @@ impl<'a> OathApplet<'a> {
         let imf = if hotp {
             match find_tag_range(&scratch[..n], TAG_IMF) {
                 Some(r) if r.len() >= 8 => Some(r),
-                _ => return Sw::INCORRECT_PARAMS,
+                _ => return Sw::WRONG_DATA,
             }
         } else {
             None
@@ -608,7 +608,7 @@ impl<'a> OathApplet<'a> {
         // TOTP only — HOTP ignores the challenge, and the card leaves it inert.
         if !hotp && prop & PROP_INCREASING != 0 {
             if !raise_mark(&mut scratch, &mut n, chal) {
-                return Sw::INCORRECT_PARAMS;
+                return Sw::WRONG_DATA;
             }
             if !seal::seal_put(
                 &dev,
@@ -657,7 +657,7 @@ impl<'a> OathApplet<'a> {
             return Sw::SECURITY_STATUS_NOT_SATISFIED;
         }
         let Some(chal) = calc_all_challenge(&apdu.data[..apdu.nc]) else {
-            return Sw::INCORRECT_PARAMS;
+            return Sw::WRONG_DATA;
         };
         // `only increasing` is settled for the whole store before a byte of the
         // response is built. The card fails the ENTIRE command at the first
@@ -720,7 +720,7 @@ impl<'a> OathApplet<'a> {
                 continue;
             }
             if !raise_mark(&mut scratch, &mut n, chal) {
-                return Err(Sw::INCORRECT_PARAMS);
+                return Err(Sw::WRONG_DATA);
             }
             if !seal::seal_put(
                 &dev,
@@ -829,7 +829,7 @@ impl<'a> OathApplet<'a> {
         }
         let data = &apdu.data[..apdu.nc];
         if find_tag(data, TAG_NAME as u16).is_none() {
-            return Sw::INCORRECT_PARAMS;
+            return Sw::WRONG_DATA;
         }
         // The named credential is ignored — slot 0 is always the one verified.
         let mut scratch = [0u8; CRED_MAX];
@@ -840,10 +840,10 @@ impl<'a> OathApplet<'a> {
         };
         let blob = &scratch[..n.min(CRED_MAX)];
         let Some(key) = find_tag(blob, TAG_KEY as u16) else {
-            return Sw::INCORRECT_PARAMS;
+            return Sw::WRONG_DATA;
         };
         if key.len() < 2 {
-            return Sw::INCORRECT_PARAMS;
+            return Sw::WRONG_DATA;
         }
         if key[0] & OATH_TYPE_MASK != OATH_TYPE_HOTP {
             return Sw::DATA_INVALID;
@@ -861,14 +861,14 @@ impl<'a> OathApplet<'a> {
             return Sw::SECURITY_STATUS_NOT_SATISFIED;
         }
         let Some(imf) = find_tag(blob, TAG_IMF as u16) else {
-            return Sw::INCORRECT_PARAMS;
+            return Sw::WRONG_DATA;
         };
         if imf.len() < 8 {
-            return Sw::INCORRECT_PARAMS;
+            return Sw::WRONG_DATA;
         }
         let code_int = match find_tag(data, TAG_RESPONSE as u16) {
             Some(v) if v.len() >= 4 => u32::from_be_bytes([v[0], v[1], v[2], v[3]]),
-            Some(_) => return Sw::INCORRECT_PARAMS,
+            Some(_) => return Sw::WRONG_DATA,
             None => 0,
         };
         let mut mac = [0u8; 64];
@@ -902,7 +902,7 @@ impl<'a> OathApplet<'a> {
         // The same 1..=64 bound PUT enforces — otherwise every stored name is
         // one RENAME away from a length no host can address.
         if new_name.is_empty() || new_name.len() > NAME_MAX {
-            return Sw::INCORRECT_PARAMS;
+            return Sw::WRONG_DATA;
         }
         let mut scratch = [0u8; CRED_MAX];
         let mkek = read_fused(self.mkek_source);
@@ -960,7 +960,7 @@ impl<'a> OathApplet<'a> {
         }
         let data = &apdu.data[..apdu.nc];
         if data.len() < 3 {
-            return Sw::INCORRECT_PARAMS;
+            return Sw::WRONG_DATA;
         }
         if data[0] != TAG_NAME {
             return SW_WRONG_DATA;
@@ -1074,7 +1074,7 @@ impl<'a> OathApplet<'a> {
             return Sw::CONDITIONS_NOT_SATISFIED;
         }
         let Some(pw) = find_tag(&apdu.data[..apdu.nc], TAG_PASSWORD as u16) else {
-            return Sw::INCORRECT_PARAMS;
+            return Sw::WRONG_DATA;
         };
         match fs.put(EF_OTP_PIN, &self.otp_pin_record_v1(pw)) {
             Ok(()) => Sw::OK,
@@ -1132,10 +1132,10 @@ impl<'a> OathApplet<'a> {
         };
         let data = &apdu.data[..apdu.nc];
         let Some(pw) = find_tag(data, TAG_PASSWORD as u16) else {
-            return Sw::INCORRECT_PARAMS;
+            return Sw::WRONG_DATA;
         };
         let Some(new_pw) = find_tag(data, TAG_NEW_PASSWORD as u16) else {
-            return Sw::INCORRECT_PARAMS;
+            return Sw::WRONG_DATA;
         };
         // A failed authentication drops the standing one — the rule E38 shipped
         // for OpenPGP and PIV, and the one this command's own sibling
@@ -1166,7 +1166,7 @@ impl<'a> OathApplet<'a> {
             _ => return Sw::CONDITIONS_NOT_SATISFIED,
         };
         let Some(pw) = find_tag(&apdu.data[..apdu.nc], TAG_PASSWORD as u16) else {
-            return Sw::INCORRECT_PARAMS;
+            return Sw::WRONG_DATA;
         };
         // Any attempt clears a prior unlock; only a correct PIN re-validates below.
         self.validated = false;

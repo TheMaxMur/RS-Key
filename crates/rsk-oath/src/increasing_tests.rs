@@ -33,7 +33,7 @@ fn calc_at(
     d.extend(tlv(TAG_CHALLENGE, chal));
     let (sw, body) = run(app, fs, &apdu(INS_CALCULATE, 0, p2, &d));
     if sw != Sw::OK {
-        assert_eq!(sw, Sw::INCORRECT_PARAMS, "a refusal must read as 6A80");
+        assert_eq!(sw, Sw::WRONG_DATA, "a refusal must read as 6A80");
         return None;
     }
     Some(u32::from_be_bytes([body[3], body[4], body[5], body[6]]) % 10u32.pow(body[2] as u32))
@@ -200,7 +200,7 @@ fn a_challenge_wider_than_the_card_accepts_is_refused() {
     let mut d = tlv(TAG_NAME, b"w");
     d.extend(tlv(TAG_CHALLENGE, &[0x01; 65]));
     let (sw, _) = run(&mut app, &mut fs, &apdu(INS_CALCULATE, 0, 0x01, &d));
-    assert_eq!(sw, Sw::INCORRECT_PARAMS, "65-byte challenge");
+    assert_eq!(sw, Sw::WRONG_DATA, "65-byte challenge");
 }
 
 #[test]
@@ -240,7 +240,7 @@ fn the_full_response_read_path_enforces_it_too() {
     let mut d = tlv(TAG_NAME, b"p0");
     d.extend(tlv(TAG_CHALLENGE, &400u64.to_be_bytes()));
     let (sw, _) = run(&mut app, &mut fs, &apdu(INS_CALCULATE, 0, 0, &d));
-    assert_eq!(sw, Sw::INCORRECT_PARAMS);
+    assert_eq!(sw, Sw::WRONG_DATA);
 }
 
 #[test]
@@ -261,11 +261,7 @@ fn calculate_all_fails_whole_and_leaves_the_prefix_advanced() {
 
     let chal = tlv(TAG_CHALLENGE, &1500u64.to_be_bytes());
     let (sw, body) = run(&mut app, &mut fs, &apdu(INS_CALC_ALL, 0, 0x01, &chal));
-    assert_eq!(
-        sw,
-        Sw::INCORRECT_PARAMS,
-        "bb is at 2000, above the challenge"
-    );
+    assert_eq!(sw, Sw::WRONG_DATA, "bb is at 2000, above the challenge");
     assert!(body.is_empty(), "the whole command fails, body {body:02X?}");
 
     // aa comes before bb in store order, so its mark already moved to 1500.
@@ -479,6 +475,6 @@ fn a_confirmed_press_advances_the_mark() {
     put_touched(&mut fs, &rng);
     assert_eq!(
         calc_touched(&mut fs, &rng, Presence::Confirmed, &[0x50, 0x40, 0x60]),
-        [Sw::OK, Sw::INCORRECT_PARAMS, Sw::OK],
+        [Sw::OK, Sw::WRONG_DATA, Sw::OK],
     );
 }

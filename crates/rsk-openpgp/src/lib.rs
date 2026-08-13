@@ -301,7 +301,7 @@ impl<'a> OpenpgpApplet<'a> {
         // `n mod 256` bytes, which is the one behaviour AGENTS.md says never to
         // copy.
         if apdu.data.len() > files::MAX_DO_BYTES {
-            return consts::WRONG_DATA;
+            return Sw::WRONG_DATA;
         }
         if fid == consts::EF_CH_CERT {
             // Cardholder certificate write (PW3, held by the gate above — this
@@ -384,7 +384,7 @@ impl<S: Storage> Applet<Fs<S>> for OpenpgpApplet<'_> {
             consts::INS_GET_DATA => self.handle_get_data(fid, fs, res),
             consts::INS_GET_NEXT_DATA => {
                 if apdu.nc > 0 {
-                    return consts::WRONG_DATA;
+                    return Sw::WRONG_DATA;
                 }
                 // OpenPGP 3.4 §7.2.7 gives GET NEXT DATA exactly one use: walking
                 // the 7F21 occurrences after a GET DATA of that DO anchored the
@@ -396,7 +396,7 @@ impl<S: Storage> Applet<Fs<S>> for OpenpgpApplet<'_> {
                     || self.current_ef != Some(consts::EF_CH_CERT)
                     || self.sess.cert_occ + 1 >= consts::CERT_OCCURRENCES
                 {
-                    return consts::WRONG_DATA;
+                    return Sw::WRONG_DATA;
                 }
                 self.sess.cert_occ += 1;
                 self.read_cert_occurrence(fs, res)
@@ -575,7 +575,7 @@ impl<S: Storage> Applet<Fs<S>> for OpenpgpApplet<'_> {
                     // under 9000 reads as a served challenge. `6A80`, the answer
                     // measured on a YubiKey 5.7.4; ISO case 1 is indistinguishable
                     // here because `Apdu::parse` defaults its Ne to 256.
-                    return consts::WRONG_DATA;
+                    return Sw::WRONG_DATA;
                 }
                 if ne > files::MAX_CHALLENGE_BYTES {
                     // No cell to copy: that card over-announces by ten, corrupts

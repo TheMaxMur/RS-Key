@@ -44,7 +44,7 @@ pub fn keypair_gen<S: Storage>(
         return (0, Sw::SECURITY_STATUS_NOT_SATISFIED);
     }
     let Some(fid) = data.first().and_then(|&t| crt_slot(t)) else {
-        return (0, WRONG_DATA);
+        return (0, Sw::WRONG_DATA);
     };
 
     let r = match p1 {
@@ -87,7 +87,7 @@ pub(crate) fn read_advertised_algo<'a, S: Storage>(
             if crate::dobj::advertised_algo(tag, algo) {
                 Ok(algo)
             } else {
-                Err(WRONG_DATA)
+                Err(Sw::WRONG_DATA)
             }
         }
         _ => Ok(DEFAULT_ALGO),
@@ -116,7 +116,7 @@ fn generate<S: Storage>(
             // before indexing — else the slice read panics (device reset). The
             // sibling reader `info::slot_algo` has the same `attr.len() >= 3` gate.
             if algo.len() < 3 {
-                return Err(WRONG_DATA);
+                return Err(Sw::WRONG_DATA);
             }
             let nbits = ((algo[1] as usize) << 8) | algo[2] as usize;
             let key = generate_rsa(rng, nbits)?;
@@ -232,7 +232,10 @@ pub fn rsa_generate_params<S: Storage>(
     if !sess.has_pw3 {
         return Err(Sw::SECURITY_STATUS_NOT_SATISFIED);
     }
-    let fid = data.first().and_then(|&t| crt_slot(t)).ok_or(WRONG_DATA)?;
+    let fid = data
+        .first()
+        .and_then(|&t| crt_slot(t))
+        .ok_or(Sw::WRONG_DATA)?;
     let mut algo_buf = [0u8; 16];
     let algo = read_advertised_algo(fs, fid, &mut algo_buf)?;
     if algo[0] != ALGO_RSA {
@@ -241,7 +244,7 @@ pub fn rsa_generate_params<S: Storage>(
     // Guard the modulus-size read against a short host-written attribute (see the
     // synchronous `generate`); indexing a 1/2-byte slice would panic (device reset).
     if algo.len() < 3 {
-        return Err(WRONG_DATA);
+        return Err(Sw::WRONG_DATA);
     }
     let nbits = ((algo[1] as usize) << 8) | algo[2] as usize;
     Ok(Some((fid, nbits)))

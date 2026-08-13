@@ -116,16 +116,13 @@ fn put_data_c4_cannot_move_the_announced_pw_maxima() {
 
     assert_eq!(
         put(&mut app, &mut fs, 0x00, 0xC4, &[0x01, 0x06, 0x06, 0x06]),
-        consts::WRONG_DATA
+        Sw::WRONG_DATA
     );
     assert_eq!(read_c4(&mut app, &mut fs), [0x01, 127, 127, 127, 3, 0, 3]);
     // The flag itself still moves, and only to a value the DO defines.
     assert_eq!(put(&mut app, &mut fs, 0x00, 0xC4, &[0x00]), Sw::OK);
     assert_eq!(read_c4(&mut app, &mut fs), [0x00, 127, 127, 127, 3, 0, 3]);
-    assert_eq!(
-        put(&mut app, &mut fs, 0x00, 0xC4, &[0x02]),
-        consts::WRONG_DATA
-    );
+    assert_eq!(put(&mut app, &mut fs, 0x00, 0xC4, &[0x02]), Sw::WRONG_DATA);
     assert_eq!(read_c4(&mut app, &mut fs), [0x00, 127, 127, 127, 3, 0, 3]);
 }
 
@@ -159,7 +156,7 @@ fn an_out_of_range_reset_code_is_wrong_data() {
     for n in [1usize, 5, 6, 7, consts::PIN_MAX_LEN + 1, 200] {
         assert_eq!(
             put(&mut app, &mut fs, 0x00, 0xD3, &vec![b'R'; n]),
-            consts::WRONG_DATA,
+            Sw::WRONG_DATA,
             "a {n}-byte resetting code"
         );
     }
@@ -252,7 +249,7 @@ fn get_challenge_serves_exactly_what_do_c0_announces() {
         &mut fs,
         &[0x00, consts::INS_CHALLENGE, 0x00, 0x00, 0x01, 0xAA],
     );
-    assert_eq!(sw, consts::WRONG_DATA);
+    assert_eq!(sw, Sw::WRONG_DATA);
     assert!(body.is_empty());
 }
 
@@ -639,7 +636,7 @@ fn put_data_refuses_an_unadvertised_algorithm_attribute() {
     ] {
         assert_eq!(
             put(&mut app, &mut fs, 0x00, 0xC1, attr),
-            crate::consts::WRONG_DATA,
+            Sw::WRONG_DATA,
             "accepted {attr:02x?}"
         );
         assert!(
@@ -741,12 +738,9 @@ fn permanent_uif_cannot_be_revoked_with_pw3() {
     assert_eq!(put(&mut app, &mut fs, 0x00, 0xD6, &[0x02, 0x20]), Sw::OK);
     assert_eq!(
         put(&mut app, &mut fs, 0x00, 0xD7, &[0x03, 0x20]),
-        consts::WRONG_DATA
+        Sw::WRONG_DATA
     );
-    assert_eq!(
-        put(&mut app, &mut fs, 0x00, 0xD7, &[0x01]),
-        consts::WRONG_DATA
-    );
+    assert_eq!(put(&mut app, &mut fs, 0x00, 0xD7, &[0x01]), Sw::WRONG_DATA);
 
     // A non-permanent policy is still freely revocable (the documented on/off flow).
     assert_eq!(put(&mut app, &mut fs, 0x00, 0xD8, &[0x01, 0x20]), Sw::OK);
@@ -1074,7 +1068,7 @@ fn import_rsa_holds_the_key_to_the_algorithm_attribute() {
         &mut fs,
         &rsa_import(0xB6, &[0x01, 0x00, 0x01], &hx(RSA_P), &hx(RSA_Q)),
     );
-    assert_eq!(sw, consts::WRONG_DATA);
+    assert_eq!(sw, Sw::WRONG_DATA);
     assert!(
         !fs.has_data(consts::EF_PK_SIG.get()),
         "nothing may be stored"
@@ -1111,7 +1105,7 @@ fn import_refuses_an_unadvertised_stored_algorithm_attribute() {
         &mut fs,
         &rsa_import(0xB6, &[0x01, 0x00, 0x01], &hx(RSA_P), &hx(RSA_Q)),
     );
-    assert_eq!(sw, consts::WRONG_DATA);
+    assert_eq!(sw, Sw::WRONG_DATA);
     assert!(!fs.has_data(consts::EF_PK_SIG.get()));
 }
 
@@ -1130,7 +1124,7 @@ fn import_rsa_rejects_non_65537_exponent() {
         &mut fs,
         &rsa_import(0xB6, &[0x03], &hx(RSA_P), &hx(RSA_Q)),
     );
-    assert_eq!(sw, consts::WRONG_DATA);
+    assert_eq!(sw, Sw::WRONG_DATA);
     assert!(!fs.has_data(consts::EF_PK_SIG.get()));
 
     // A leading-zero-padded 65537 MPI is still accepted (padding tolerated).
@@ -1564,13 +1558,13 @@ fn select_data_arms_the_walk_and_a_body_is_not_a_length_error() {
     // Control: the applet SELECT clears the anchor, so the walk really is armed
     // by what follows and not left over from the writes above.
     app.deselect(&mut fs);
-    assert_eq!(run(&mut app, &mut fs, &next).1, consts::WRONG_DATA);
+    assert_eq!(run(&mut app, &mut fs, &next).1, Sw::WRONG_DATA);
 
     // SELECT DATA alone arms it, from the occurrence it selected.
     assert_eq!(run(&mut app, &mut fs, &select_cert(0)).1, Sw::OK);
     assert_eq!(run(&mut app, &mut fs, &next), (certs[1].to_vec(), Sw::OK));
     assert_eq!(run(&mut app, &mut fs, &next), (certs[2].to_vec(), Sw::OK));
-    assert_eq!(run(&mut app, &mut fs, &next).1, consts::WRONG_DATA);
+    assert_eq!(run(&mut app, &mut fs, &next).1, Sw::WRONG_DATA);
 
     app.deselect(&mut fs);
     assert_eq!(run(&mut app, &mut fs, &select_cert(1)).1, Sw::OK);
@@ -1606,7 +1600,7 @@ fn select_data_arms_the_walk_and_a_body_is_not_a_length_error() {
             &[0x00, consts::INS_GET_NEXT_DATA, 0x7F, 0x21, 0x01, 0xAA]
         )
         .1,
-        consts::WRONG_DATA
+        Sw::WRONG_DATA
     );
     // …and refusing it moved nothing: the walk still starts where it was armed.
     assert_eq!(run(&mut app, &mut fs, &next), (certs[1].to_vec(), Sw::OK));
@@ -1724,7 +1718,7 @@ fn put_data_caps_the_cardholder_dos() {
         for n in [max + 1, max + 2, 254, 255] {
             assert_eq!(
                 put(&mut app, &mut fs, p1, p2, &vec![b'y'; n]),
-                consts::WRONG_DATA,
+                Sw::WRONG_DATA,
                 "PUT {p1:02X}{p2:02X} len {n}"
             );
             let (body, sw) = run(
@@ -1748,14 +1742,11 @@ fn put_data_caps_the_cardholder_dos() {
     for v in [b'0', b'A', b'3', b'm', 0x00] {
         assert_eq!(
             put(&mut app, &mut fs, 0x5F, 0x35, &[v]),
-            consts::WRONG_DATA,
+            Sw::WRONG_DATA,
             "sex {v:#04X}"
         );
     }
-    assert_eq!(
-        put(&mut app, &mut fs, 0x5F, 0x35, b"11"),
-        consts::WRONG_DATA
-    );
+    assert_eq!(put(&mut app, &mut fs, 0x5F, 0x35, b"11"), Sw::WRONG_DATA);
 }
 
 #[test]
@@ -1776,7 +1767,7 @@ fn put_data_polices_the_fixed_length_dos() {
             for n in [0, 1, want - 1, want + 1, want * 2, 60] {
                 assert_eq!(
                     put(&mut app, &mut fs, 0x00, tag, &vec![0xEE; n]),
-                    consts::WRONG_DATA,
+                    Sw::WRONG_DATA,
                     "PUT {tag:#04X} len {n}"
                 );
                 // …and the refusal changed nothing.
@@ -1832,15 +1823,15 @@ fn get_next_data_walks_the_cardholder_cert_occurrences() {
 
     // No anchor yet: a cold GET NEXT is wrong data, not a walk from occurrence 0.
     app.deselect(&mut fs);
-    assert_eq!(run(&mut app, &mut fs, &next).1, consts::WRONG_DATA);
+    assert_eq!(run(&mut app, &mut fs, &next).1, Sw::WRONG_DATA);
 
     // The whole walk with NOTHING verified — 7F21 READ is Always.
     assert_eq!(run(&mut app, &mut fs, &select_cert(0)).1, Sw::OK);
     assert_eq!(run(&mut app, &mut fs, &get), (certs[0].to_vec(), Sw::OK));
     assert_eq!(run(&mut app, &mut fs, &next), (certs[1].to_vec(), Sw::OK));
     assert_eq!(run(&mut app, &mut fs, &next), (certs[2].to_vec(), Sw::OK));
-    assert_eq!(run(&mut app, &mut fs, &next).1, consts::WRONG_DATA);
-    assert_eq!(run(&mut app, &mut fs, &next).1, consts::WRONG_DATA);
+    assert_eq!(run(&mut app, &mut fs, &next).1, Sw::WRONG_DATA);
+    assert_eq!(run(&mut app, &mut fs, &next).1, Sw::WRONG_DATA);
     // The exhausted step does not move the pointer on.
     assert_eq!(run(&mut app, &mut fs, &get), (certs[2].to_vec(), Sw::OK));
 
@@ -1851,7 +1842,7 @@ fn get_next_data_walks_the_cardholder_cert_occurrences() {
         run(&mut app, &mut fs, &[0x00, consts::INS_GET_DATA, 0x00, 0x5E]).1,
         Sw::OK
     );
-    assert_eq!(run(&mut app, &mut fs, &next).1, consts::WRONG_DATA);
+    assert_eq!(run(&mut app, &mut fs, &next).1, Sw::WRONG_DATA);
 
     // A GET NEXT of some other tag is refused and leaves the anchor alone.
     assert_eq!(run(&mut app, &mut fs, &get).1, Sw::OK);
@@ -1862,7 +1853,7 @@ fn get_next_data_walks_the_cardholder_cert_occurrences() {
             &[0x00, consts::INS_GET_NEXT_DATA, 0x01, 0x01]
         )
         .1,
-        consts::WRONG_DATA
+        Sw::WRONG_DATA
     );
     assert_eq!(run(&mut app, &mut fs, &next), (certs[1].to_vec(), Sw::OK));
 
@@ -1884,7 +1875,7 @@ fn get_next_data_walks_the_cardholder_cert_occurrences() {
                 &[0x00, consts::INS_GET_NEXT_DATA, tag[0], tag[1]]
             )
             .1,
-            consts::WRONG_DATA
+            Sw::WRONG_DATA
         );
     }
 }
@@ -2305,7 +2296,7 @@ fn put_data_judges_the_password_before_the_tag() {
         // `6B00` there because it has no AES DO at all, and we implement §7.2.11's
         // — so a one-byte body is a wrong length. Only the pre-PW3 cells are parity
         // (`put_data_d5_installs_the_key_the_aes_pso_uses` owns the rest).
-        (0xD5, consts::WRONG_DATA),           // AES key
+        (0xD5, Sw::WRONG_DATA),               // AES key
         (0xC5, Sw::WRONG_P1P2),               // fingerprints, read-only
         (0xCD, Sw::WRONG_P1P2),               // timestamps, read-only
         (0x7A, Sw::WRONG_P1P2),               // security support, read-only
@@ -2387,7 +2378,7 @@ fn put_data_judges_the_password_before_the_body_length() {
             // only those: they are past the ACL and meet the length gate instead.
             let want = if modes == [consts::PW1_MODE82] && p1 == 0x01 && (p2 == 0x01 || p2 == 0x03)
             {
-                consts::WRONG_DATA
+                Sw::WRONG_DATA
             } else {
                 Sw::SECURITY_STATUS_NOT_SATISFIED
             };
@@ -2422,7 +2413,7 @@ fn put_data_judges_the_password_before_the_body_length() {
         } else if !crate::putdata::writable(((p1 as u16) << 8) | p2 as u16) {
             Sw::WRONG_P1P2
         } else {
-            consts::WRONG_DATA
+            Sw::WRONG_DATA
         };
         assert_eq!(
             put_long(&mut app, &mut fs, p1, p2, &over),
@@ -2441,7 +2432,7 @@ fn put_data_judges_the_password_before_the_body_length() {
     // still there, whole, after the refusal.
     assert_eq!(
         put_long(&mut app, &mut fs, 0x00, 0x5E, &over),
-        consts::WRONG_DATA
+        Sw::WRONG_DATA
     );
     let (back, sw) = run_big(
         &mut app,
@@ -2499,7 +2490,7 @@ fn put_data_d5_installs_the_key_the_aes_pso_uses() {
     for len in [0usize, 1, 15, 17, 24, 31, 33, 64] {
         assert_eq!(
             d5(&mut app, &mut fs, &vec![0x22; len]),
-            consts::WRONG_DATA,
+            Sw::WRONG_DATA,
             "len {len}"
         );
         // A refused write must leave the standing key doing the work.
@@ -2698,7 +2689,7 @@ fn import_judges_the_password_before_the_key_slot() {
     // The controls: with PW3 the card tells the slots apart again, and the same
     // well-formed import lands.
     verify_pin(&mut app, &mut fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
-    assert_eq!(run(&mut app, &mut fs, &ehl(0x99)).1, consts::WRONG_DATA);
+    assert_eq!(run(&mut app, &mut fs, &ehl(0x99)).1, Sw::WRONG_DATA);
     assert_eq!(put(&mut app, &mut fs, 0x00, 0xC1, ATTR_P256), Sw::OK);
     assert_eq!(run(&mut app, &mut fs, &ec_import(0xB6, &scalar)).1, Sw::OK);
 }
@@ -2751,17 +2742,17 @@ fn put_data_judges_the_tag_before_the_body_length() {
     );
     assert_eq!(
         put_long(&mut app, &mut fs, 0x00, 0x5E, &vec![0x41u8; cap + 1]),
-        consts::WRONG_DATA
+        Sw::WRONG_DATA
     );
     // …and the routed arms, which the length gate exists to cover, answer for
     // their own contents rather than for the tag.
     assert_eq!(
         put_long(&mut app, &mut fs, 0x7F, 0x21, &vec![0x41u8; cap + 1]),
-        consts::WRONG_DATA
+        Sw::WRONG_DATA
     );
     assert_eq!(
         put_long(&mut app, &mut fs, 0x00, 0xD5, &vec![0x41u8; cap + 1]),
-        consts::WRONG_DATA
+        Sw::WRONG_DATA
     );
 
     // One owner: `writable` must answer for the whole 16-bit space exactly as the

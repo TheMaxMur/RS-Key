@@ -1267,7 +1267,7 @@ fn a_password_of_an_impossible_length_is_not_a_wrong_password() {
                 p2,
                 &vec![b'A'; *len],
             );
-            assert_eq!(sw, WRONG_DATA, "{p2:02X}: a {len}-byte value");
+            assert_eq!(sw, Sw::WRONG_DATA, "{p2:02X}: a {len}-byte value");
             assert_eq!(
                 state(&mut fs, &mut sess, p2, fid),
                 (PW_RETRIES_DEFAULT, Sw::OK),

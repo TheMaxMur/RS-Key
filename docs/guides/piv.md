@@ -276,7 +276,7 @@ ykman piv certificates export f9 attestation-ca.pem
 ```
 
 Attestation only works for **generated** keys; an imported key returns
-`6A80` / `INCORRECT PARAMS` (there is nothing to attest). For the FIDO side of
+`6A80` / `WRONG DATA` (there is nothing to attest). For the FIDO side of
 attestation (org-provisioned enterprise attestation) see
 [attestation.md](attestation.md).
 

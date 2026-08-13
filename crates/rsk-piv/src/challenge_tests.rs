@@ -202,11 +202,7 @@ fn an_outstanding_challenge_survives_only_two_commands() {
             "control: nothing intervened"
         );
         for (name, raw, survives) in rows() {
-            let want = if survives {
-                Sw::OK
-            } else {
-                Sw::INCORRECT_PARAMS
-            };
+            let want = if survives { Sw::OK } else { Sw::WRONG_DATA };
             assert_eq!(answer_after(flow, &[&raw]), want, "after {name}");
         }
     }
@@ -269,7 +265,7 @@ fn a_challenge_is_single_use() {
     assert_eq!(go(&mut applets, &step2).0, Sw::OK);
     assert_eq!(
         go(&mut applets, &step2).0,
-        Sw::INCORRECT_PARAMS,
+        Sw::WRONG_DATA,
         "the same challenge answered twice"
     );
 }

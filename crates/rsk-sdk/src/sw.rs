@@ -65,7 +65,7 @@ impl Sw {
     pub const CONDITIONS_NOT_SATISFIED: Sw = Sw::new(0x69, 0x85);
     pub const COMMAND_NOT_ALLOWED: Sw = Sw::new(0x69, 0x86);
     pub const APPLET_SELECT_FAILED: Sw = Sw::new(0x69, 0x99);
-    pub const INCORRECT_PARAMS: Sw = Sw::new(0x6A, 0x80);
+    pub const WRONG_DATA: Sw = Sw::new(0x6A, 0x80);
     pub const FUNC_NOT_SUPPORTED: Sw = Sw::new(0x6A, 0x81);
     pub const FILE_NOT_FOUND: Sw = Sw::new(0x6A, 0x82);
     pub const RECORD_NOT_FOUND: Sw = Sw::new(0x6A, 0x83);

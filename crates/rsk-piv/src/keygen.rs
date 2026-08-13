@@ -21,7 +21,7 @@ use zeroize::Zeroize;
 use crate::files::*;
 use crate::seal;
 use crate::x509;
-use crate::{Session, WRONG_DATA, wrap_cert_object};
+use crate::{Session, wrap_cert_object};
 
 // Yubico generation/import template policy tags.
 const TAG_PIN_POLICY: u16 = 0xAA;
@@ -39,18 +39,18 @@ pub(crate) fn parse_gen_template(data: &[u8]) -> Result<GenReq, Sw> {
         return Err(Sw::WRONG_LENGTH);
     }
     if data[0] != TAG_GEN_TEMPLATE {
-        return Err(WRONG_DATA);
+        return Err(Sw::WRONG_DATA);
     }
     let ac = find_tag(data, TAG_GEN_TEMPLATE as u16)
         .filter(|v| !v.is_empty())
-        .ok_or(WRONG_DATA)?;
+        .ok_or(Sw::WRONG_DATA)?;
     let algo = find_tag(ac, 0x80)
         .filter(|v| !v.is_empty())
-        .ok_or(WRONG_DATA)?[0];
+        .ok_or(Sw::WRONG_DATA)?[0];
     // SP 800-131A: no RSA-1024 generation under the FIPS-style profile. This is
     // the one template parser, so it also covers the firmware prime-search path.
     if cfg!(feature = "fips-profile") && algo == ALGO_RSA1024 {
-        return Err(WRONG_DATA);
+        return Err(Sw::WRONG_DATA);
     }
     let pin_policy = find_tag(ac, TAG_PIN_POLICY).and_then(|v| v.first().copied());
     let touch_policy = find_tag(ac, TAG_TOUCH_POLICY).and_then(|v| v.first().copied());
@@ -124,7 +124,7 @@ pub(crate) fn resolved_policies(
     let pin = match req_pin {
         None => default_pin_policy(slot),
         Some(p @ (PINPOLICY_NEVER | PINPOLICY_ONCE | PINPOLICY_ALWAYS)) => p,
-        Some(_) => return Err(WRONG_DATA),
+        Some(_) => return Err(Sw::WRONG_DATA),
     };
     let touch = match req_touch {
         // An ABSENT tag is "the card's default", and a YubiKey 5.7.4 resolves that
@@ -133,7 +133,7 @@ pub(crate) fn resolved_policies(
         // waiting for a press nobody asked for; ask with `--touch-policy ALWAYS`.
         None => TOUCHPOLICY_NEVER,
         Some(t @ (TOUCHPOLICY_NEVER | TOUCHPOLICY_ALWAYS | TOUCHPOLICY_CACHED)) => t,
-        Some(_) => return Err(WRONG_DATA),
+        Some(_) => return Err(Sw::WRONG_DATA),
     };
     Ok([pin, touch])
 }
@@ -163,7 +163,7 @@ fn store_slot_cert<S: Storage>(
     )?;
     let mut obj = [0u8; x509::MAX_CERT + 16];
     let on = wrap_cert_object(&cert[..n], &mut obj);
-    let fid = cert_fid_for_slot(slot).ok_or(WRONG_DATA)?;
+    let fid = cert_fid_for_slot(slot).ok_or(Sw::WRONG_DATA)?;
     fs.put(fid, &obj[..on]).map_err(|_| Sw::MEMORY_FAILURE)
 }
 
@@ -260,7 +260,7 @@ pub(crate) fn generate_ec<S: Storage>(
     res: &mut ResBuf,
 ) -> Sw {
     let Some(curve) = curve_for_algo(req.algo) else {
-        return WRONG_DATA;
+        return Sw::WRONG_DATA;
     };
     // Resolve BEFORE the first write, as `generate_rsa_blocking` and the firmware's
     // RSA fast path already do. Resolving after meant a request this firmware
@@ -359,7 +359,7 @@ pub(crate) fn generate_rsa_blocking<S: Storage>(
     res: &mut ResBuf,
 ) -> Sw {
     let Some(nbytes) = rsa_size_from_algo(req.algo) else {
-        return WRONG_DATA;
+        return Sw::WRONG_DATA;
     };
     // Judged before the prime search, not after: a refusable template used to buy
     // a full RSA-4096 keygen before answering `6A80`.
@@ -405,7 +405,7 @@ pub(crate) fn generate_retired_ec<S: Storage>(
     if !retired_slot_is_free(fs, slot) {
         return Err(Sw::SECURITY_STATUS_NOT_SATISFIED);
     }
-    let curve = curve_for_algo(algo).ok_or(WRONG_DATA)?;
+    let curve = curve_for_algo(algo).ok_or(Sw::WRONG_DATA)?;
     let Some(key) = PrivKey::generate(curve, rng) else {
         return Err(Sw::EXEC_ERROR);
     };
@@ -470,16 +470,16 @@ fn import_rsa<S: Storage>(
     let p = find_tag(data, 0x01).filter(|v| !v.is_empty());
     let q = find_tag(data, 0x02).filter(|v| !v.is_empty());
     let (Some(p), Some(q)) = (p, q) else {
-        return Err(WRONG_DATA);
+        return Err(Sw::WRONG_DATA);
     };
     let Some(key) = rsa_from_pqe(&[0x01, 0x00, 0x01], p, q) else {
         return Err(Sw::EXEC_ERROR);
     };
     let Some(want) = rsa_size_from_algo(algo) else {
-        return Err(WRONG_DATA);
+        return Err(Sw::WRONG_DATA);
     };
     if key.size() != want {
-        return Err(WRONG_DATA);
+        return Err(Sw::WRONG_DATA);
     }
     drop_slot_meta(fs, key_fid(slot).get())?;
     seal::store_rsa_key(dev, fs, rng, key_fid(slot), &key)
@@ -496,10 +496,10 @@ fn import_ec<S: Storage>(
     data: &[u8],
 ) -> Result<(), Sw> {
     let Some(scalar) = find_tag(data, 0x06).filter(|v| !v.is_empty()) else {
-        return Err(WRONG_DATA);
+        return Err(Sw::WRONG_DATA);
     };
     let Some(curve) = curve_for_algo(algo) else {
-        return Err(WRONG_DATA);
+        return Err(Sw::WRONG_DATA);
     };
     // Exactly the field length, not at most: a short scalar is a different key
     // from the one the host meant, and `06 01 01` was stored and signed with as
@@ -507,16 +507,16 @@ fn import_ec<S: Storage>(
     // length too, including 32 bytes offered as P-384 (measured, 3 runs).
     let field = if algo == ALGO_ECCP256 { 32 } else { 48 };
     if scalar.len() != field {
-        return Err(WRONG_DATA);
+        return Err(Sw::WRONG_DATA);
     }
     let Some(key) = PrivKey::from_scalar(curve, scalar) else {
-        return Err(WRONG_DATA);
+        return Err(Sw::WRONG_DATA);
     };
     // Reject the zero/invalid scalar early: deriving the public point fails for
     // out-of-range keys.
     let mut pt = [0u8; MAX_EC_POINT];
     if key.public_point(&mut pt).is_err() {
-        return Err(WRONG_DATA);
+        return Err(Sw::WRONG_DATA);
     }
     drop_slot_meta(fs, key_fid(slot).get())?;
     seal::store_ec_key(dev, fs, rng, key_fid(slot), &key)
@@ -539,12 +539,12 @@ fn import_edwards<S: Storage>(
         (0x08u16, Curve::X25519)
     };
     let Some(scalar) = find_tag(data, tag).filter(|v| !v.is_empty()) else {
-        return Err(WRONG_DATA);
+        return Err(Sw::WRONG_DATA);
     };
     // Exactly 32, as in `import_ec`: the Curve25519 seed and scalar are fixed
     // width, and a short one is a different key from the one the host meant.
     if scalar.len() != 32 {
-        return Err(WRONG_DATA);
+        return Err(Sw::WRONG_DATA);
     }
     // ykman / yubico-piv-tool import the X25519 private key little-endian
     // (RFC 8410 / RFC 7748); `PrivKey` keeps the scalar as a big-endian MPI
@@ -565,7 +565,7 @@ fn import_edwards<S: Storage>(
     let key = PrivKey::from_scalar(curve, scalar);
     flipped.zeroize();
     let Some(key) = key else {
-        return Err(WRONG_DATA);
+        return Err(Sw::WRONG_DATA);
     };
     drop_slot_meta(fs, key_fid(slot).get())?;
     seal::store_ec_key(dev, fs, rng, key_fid(slot), &key)
@@ -598,7 +598,7 @@ pub(crate) fn import<S: Storage>(
     }
     // SP 800-131A: no RSA-1024 import under the FIPS-style profile either.
     if cfg!(feature = "fips-profile") && algo == ALGO_RSA1024 {
-        return WRONG_DATA;
+        return Sw::WRONG_DATA;
     }
     let pin_policy = find_tag(data, TAG_PIN_POLICY).and_then(|v| v.first().copied());
     let touch_policy = find_tag(data, TAG_TOUCH_POLICY).and_then(|v| v.first().copied());
@@ -615,7 +615,7 @@ pub(crate) fn import<S: Storage>(
         }
         ALGO_ECCP256 | ALGO_ECCP384 => import_ec(dev, fs, rng, algo, slot, data),
         ALGO_ED25519 | ALGO_X25519 => import_edwards(dev, fs, rng, algo, slot, data),
-        _ => Err(WRONG_DATA),
+        _ => Err(Sw::WRONG_DATA),
     };
     if let Err(sw) = stored {
         return sw;
@@ -665,7 +665,7 @@ pub(crate) fn attest<S: Storage>(
         return Sw::REFERENCE_NOT_FOUND;
     };
     if meta_len < 4 || meta[3] != ORIGIN_GENERATED {
-        return Sw::INCORRECT_PARAMS;
+        return Sw::WRONG_DATA;
     }
     let f9 = match seal::load_ec_key(dev, fs, key_fid(SLOT_ATTESTATION)) {
         Ok(k) => k,
@@ -752,7 +752,7 @@ pub(crate) fn attest<S: Storage>(
                 &mut cert,
             )
         }
-        _ => return WRONG_DATA,
+        _ => return Sw::WRONG_DATA,
     };
     let n = match built {
         Ok(n) => n,

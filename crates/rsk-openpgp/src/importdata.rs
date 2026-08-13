@@ -74,17 +74,17 @@ pub fn import_data<S: Storage>(
 pub fn parse_ehl_head(data: &[u8]) -> Result<(KeyFid, usize), Sw> {
     let mut pos = 0usize;
     // 4D extended-header-list tag + its (ignored) length.
-    if *data.first().ok_or(WRONG_DATA)? != (EF_EXT_HEADER & 0xff) as u8 {
-        return Err(WRONG_DATA);
+    if *data.first().ok_or(Sw::WRONG_DATA)? != (EF_EXT_HEADER & 0xff) as u8 {
+        return Err(Sw::WRONG_DATA);
     }
     pos += 1;
-    tag_len(data, &mut pos).ok_or(WRONG_DATA)?;
+    tag_len(data, &mut pos).ok_or(Sw::WRONG_DATA)?;
 
     // Control-reference template tag selects the key slot.
-    let fid = crt_slot(*data.get(pos).ok_or(WRONG_DATA)?).ok_or(WRONG_DATA)?;
+    let fid = crt_slot(*data.get(pos).ok_or(Sw::WRONG_DATA)?).ok_or(Sw::WRONG_DATA)?;
     pos += 1;
     // Skip the CRT body: a 1-byte length followed by that many bytes.
-    let crt_body = *data.get(pos).ok_or(WRONG_DATA)? as usize;
+    let crt_body = *data.get(pos).ok_or(Sw::WRONG_DATA)? as usize;
     Ok((fid, pos + 1 + crt_body))
 }
 
@@ -93,30 +93,34 @@ pub fn parse_ehl_head(data: &[u8]) -> Result<(KeyFid, usize), Sw> {
 #[allow(clippy::type_complexity)]
 pub fn parse_ehl_body(data: &[u8], mut pos: usize) -> Result<([Option<usize>; 9], [usize; 9]), Sw> {
     // 7F48: the private-key template (tag-length pairs only).
-    if *data.get(pos).ok_or(WRONG_DATA)? != 0x7F || *data.get(pos + 1).ok_or(WRONG_DATA)? != 0x48 {
-        return Err(WRONG_DATA);
+    if *data.get(pos).ok_or(Sw::WRONG_DATA)? != 0x7F
+        || *data.get(pos + 1).ok_or(Sw::WRONG_DATA)? != 0x48
+    {
+        return Err(Sw::WRONG_DATA);
     }
     pos += 2;
-    let tmpl_len = tag_len(data, &mut pos).ok_or(WRONG_DATA)?;
-    let tmpl_end = pos.checked_add(tmpl_len).ok_or(WRONG_DATA)?;
+    let tmpl_len = tag_len(data, &mut pos).ok_or(Sw::WRONG_DATA)?;
+    let tmpl_end = pos.checked_add(tmpl_len).ok_or(Sw::WRONG_DATA)?;
     let mut len = [0usize; 9];
     while pos < tmpl_end {
-        let tag = *data.get(pos).ok_or(WRONG_DATA)?;
+        let tag = *data.get(pos).ok_or(Sw::WRONG_DATA)?;
         pos += 1;
         if (0x91..=0x97).contains(&tag) || tag == 0x99 {
-            len[(tag - 0x91) as usize] = tag_len(data, &mut pos).ok_or(WRONG_DATA)?;
+            len[(tag - 0x91) as usize] = tag_len(data, &mut pos).ok_or(Sw::WRONG_DATA)?;
         } else {
-            return Err(WRONG_DATA);
+            return Err(Sw::WRONG_DATA);
         }
     }
 
     // 5F48: the concatenated key data; carve out each element by its length.
-    if *data.get(pos).ok_or(WRONG_DATA)? != 0x5F || *data.get(pos + 1).ok_or(WRONG_DATA)? != 0x48 {
-        return Err(WRONG_DATA);
+    if *data.get(pos).ok_or(Sw::WRONG_DATA)? != 0x5F
+        || *data.get(pos + 1).ok_or(Sw::WRONG_DATA)? != 0x48
+    {
+        return Err(Sw::WRONG_DATA);
     }
     pos += 2;
-    let kd_len = tag_len(data, &mut pos).ok_or(WRONG_DATA)?;
-    let kd_end = pos.checked_add(kd_len).ok_or(WRONG_DATA)?;
+    let kd_len = tag_len(data, &mut pos).ok_or(Sw::WRONG_DATA)?;
+    let kd_end = pos.checked_add(kd_len).ok_or(Sw::WRONG_DATA)?;
     let mut off = [None::<usize>; 9];
     let mut sp = pos;
     for (t, l) in len.iter().enumerate() {
@@ -125,7 +129,7 @@ pub fn parse_ehl_body(data: &[u8], mut pos: usize) -> Result<([Option<usize>; 9]
         }
         if *l > 0 {
             off[t] = Some(sp);
-            sp = sp.checked_add(*l).ok_or(WRONG_DATA)?;
+            sp = sp.checked_add(*l).ok_or(Sw::WRONG_DATA)?;
         }
     }
     Ok((off, len))
@@ -151,19 +155,19 @@ fn try_import<S: Storage>(
         ALGO_RSA => {
             // Exponent (0x91), prime P (0x92) and prime Q (0x93) must all be present.
             let e = match off[0] {
-                Some(o) => data.get(o..o + len[0]).ok_or(WRONG_DATA)?,
-                None => return Err(WRONG_DATA),
+                Some(o) => data.get(o..o + len[0]).ok_or(Sw::WRONG_DATA)?,
+                None => return Err(Sw::WRONG_DATA),
             };
             let p = match off[1] {
-                Some(o) => data.get(o..o + len[1]).ok_or(WRONG_DATA)?,
-                None => return Err(WRONG_DATA),
+                Some(o) => data.get(o..o + len[1]).ok_or(Sw::WRONG_DATA)?,
+                None => return Err(Sw::WRONG_DATA),
             };
             let q = match off[2] {
-                Some(o) => data.get(o..o + len[2]).ok_or(WRONG_DATA)?,
-                None => return Err(WRONG_DATA),
+                Some(o) => data.get(o..o + len[2]).ok_or(Sw::WRONG_DATA)?,
+                None => return Err(Sw::WRONG_DATA),
             };
             if e.is_empty() || p.is_empty() || q.is_empty() {
-                return Err(WRONG_DATA);
+                return Err(Sw::WRONG_DATA);
             }
             // The CRT signer / DECIPHER hardcode e = 65537 (rsa_crt.rs); another
             // exponent signs with the wrong e while the public DO advertises the
@@ -174,7 +178,7 @@ fn try_import<S: Storage>(
                 .skip_while(|&b| b == 0)
                 .eq(RSA_PUB_EXP_BE.iter().copied())
             {
-                return Err(WRONG_DATA);
+                return Err(Sw::WRONG_DATA);
             }
             let key = rsa_from_pqe(e, p, q).ok_or(Sw::EXEC_ERROR)?;
             // §4.4.3.12: "The length of the key data shall match the values given
@@ -184,11 +188,11 @@ fn try_import<S: Storage>(
             // prints the attribute. Measured on a YubiKey 5.7.4: 1024, 3072 and
             // 4096 against a C1 of 2048 are all `6A80`.
             if algo.len() < 3 {
-                return Err(WRONG_DATA);
+                return Err(Sw::WRONG_DATA);
             }
             let nbits = ((algo[1] as usize) << 8) | algo[2] as usize;
             if key.size() * 8 != nbits {
-                return Err(WRONG_DATA);
+                return Err(Sw::WRONG_DATA);
             }
             // Before the key is committed, never after: a tear in between leaves
             // the slot reading as imported, which is the honest claim either way.
@@ -212,10 +216,10 @@ fn try_import<S: Storage>(
             let curve = curve_from_attr(algo).ok_or(Sw::FUNC_NOT_SUPPORTED)?;
             // The private scalar / seed is tag 0x92 (index 1).
             let scalar = match off[1] {
-                Some(o) => data.get(o..o + len[1]).ok_or(WRONG_DATA)?,
-                None => return Err(WRONG_DATA),
+                Some(o) => data.get(o..o + len[1]).ok_or(Sw::WRONG_DATA)?,
+                None => return Err(Sw::WRONG_DATA),
             };
-            let key = PrivKey::from_scalar(curve, scalar).ok_or(WRONG_DATA)?;
+            let key = PrivKey::from_scalar(curve, scalar).ok_or(Sw::WRONG_DATA)?;
 
             // Derive the public point BEFORE committing the key. `pad` bounds only
             // the length, so a zero or out-of-range scalar reaches this far and is

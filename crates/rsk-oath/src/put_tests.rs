@@ -62,7 +62,7 @@ fn put_takes_only_the_three_algorithm_nibbles_that_exist() {
             let want = if (1..=3).contains(&lo) {
                 Sw::OK
             } else {
-                Sw::INCORRECT_PARAMS
+                Sw::WRONG_DATA
             };
             assert_eq!(sw, want, "type {ty:#04x} algorithm nibble {lo:#x}");
         }
@@ -85,7 +85,7 @@ fn put_takes_only_the_hotp_and_totp_type_nibbles() {
         let want = if hi == OATH_TYPE_HOTP || hi == OATH_TYPE_TOTP {
             Sw::OK
         } else {
-            Sw::INCORRECT_PARAMS
+            Sw::WRONG_DATA
         };
         assert_eq!(sw, want, "type nibble {hi:#04x}");
     }
@@ -102,7 +102,7 @@ fn put_takes_only_six_seven_or_eight_digits() {
         let want = if (6..=8).contains(&d) {
             Sw::OK
         } else {
-            Sw::INCORRECT_PARAMS
+            Sw::WRONG_DATA
         };
         assert_eq!(sw, want, "digits {d}");
     }
@@ -125,7 +125,7 @@ fn put_bounds_the_key_tlv_to_sixteen_through_sixtysix() {
         let want = if (16..=66).contains(&klen) {
             Sw::OK
         } else {
-            Sw::INCORRECT_PARAMS
+            Sw::WRONG_DATA
         };
         assert_eq!(sw, want, "KEY TLV of {klen} bytes");
     }
@@ -133,7 +133,7 @@ fn put_bounds_the_key_tlv_to_sixteen_through_sixtysix() {
     // code for the same challenge, computable offline by anyone.
     let mut d = tlv(TAG_NAME, b"empty-secret");
     d.extend(tlv(TAG_KEY, &[0x21, 6]));
-    assert_eq!(put(&mut app, &mut fs, &d), Sw::INCORRECT_PARAMS);
+    assert_eq!(put(&mut app, &mut fs, &d), Sw::WRONG_DATA);
     assert!(
         !stored(&mut app, &mut fs)
             .iter()
@@ -151,7 +151,7 @@ fn put_bounds_the_name_to_one_through_sixtyfour() {
         let want = if (1..=64).contains(&len) {
             Sw::OK
         } else {
-            Sw::INCORRECT_PARAMS
+            Sw::WRONG_DATA
         };
         assert_eq!(sw, want, "name of {len} bytes");
     }
@@ -174,7 +174,7 @@ fn put_refuses_a_tag_it_would_not_serve_back() {
     ] {
         let mut d = body(b"junk", 0x21, 6, SECRET_SHA1);
         d.extend(extra);
-        assert_eq!(put(&mut app, &mut fs, &d), Sw::INCORRECT_PARAMS, "{label}");
+        assert_eq!(put(&mut app, &mut fs, &d), Sw::WRONG_DATA, "{label}");
     }
     assert!(stored(&mut app, &mut fs).is_empty());
 
@@ -246,7 +246,7 @@ fn put_refuses_duplicates_and_key_before_name() {
         }),
     ];
     for (label, d) in cases {
-        assert_eq!(put(&mut app, &mut fs, &d), Sw::INCORRECT_PARAMS, "{label}");
+        assert_eq!(put(&mut app, &mut fs, &d), Sw::WRONG_DATA, "{label}");
     }
     assert!(stored(&mut app, &mut fs).is_empty());
 }
@@ -266,7 +266,7 @@ fn put_refuses_trailing_junk_and_a_malformed_property() {
     ] {
         let mut d = body(b"tail", 0x21, 6, SECRET_SHA1);
         d.extend(tail);
-        assert_eq!(put(&mut app, &mut fs, &d), Sw::INCORRECT_PARAMS, "{label}");
+        assert_eq!(put(&mut app, &mut fs, &d), Sw::WRONG_DATA, "{label}");
     }
     assert!(stored(&mut app, &mut fs).is_empty());
     // The bare `78 vv` pair ykman really sends is the accepted form.
@@ -282,11 +282,7 @@ fn put_takes_an_imf_only_on_hotp_and_only_four_bytes() {
     for len in [0usize, 1, 2, 3, 4, 5, 8] {
         let mut d = body(b"h", 0x11, 6, SECRET_SHA1);
         d.extend(tlv(TAG_IMF, &vec![0x01; len]));
-        let want = if len == 4 {
-            Sw::OK
-        } else {
-            Sw::INCORRECT_PARAMS
-        };
+        let want = if len == 4 { Sw::OK } else { Sw::WRONG_DATA };
         assert_eq!(put(&mut app, &mut fs, &d), want, "HOTP, IMF of {len} bytes");
     }
     // No IMF at all is the ykman default and must stay accepted.
@@ -297,7 +293,7 @@ fn put_takes_an_imf_only_on_hotp_and_only_four_bytes() {
     // TOTP has no moving factor to seed.
     let mut d = body(b"t", 0x21, 6, SECRET_SHA1);
     d.extend(tlv(TAG_IMF, &[0, 0, 0, 1]));
-    assert_eq!(put(&mut app, &mut fs, &d), Sw::INCORRECT_PARAMS);
+    assert_eq!(put(&mut app, &mut fs, &d), Sw::WRONG_DATA);
 }
 
 #[test]
@@ -324,7 +320,7 @@ fn a_refused_put_leaves_the_working_credential_alone() {
             d
         }),
     ] {
-        assert_eq!(put(&mut app, &mut fs, &d), Sw::INCORRECT_PARAMS, "{label}");
+        assert_eq!(put(&mut app, &mut fs, &d), Sw::WRONG_DATA, "{label}");
         assert_eq!(
             calc_code(&mut app, &mut fs, b"atom", 1, 8),
             good,
@@ -347,7 +343,7 @@ fn rename_bounds_the_new_name_like_put() {
         let mut d = tlv(TAG_NAME, b"src");
         d.extend(tlv(TAG_NAME, &new));
         let (sw, _) = run(&mut app, &mut fs, &apdu(INS_RENAME, 0, 0, &d));
-        assert_eq!(sw, Sw::INCORRECT_PARAMS, "RENAME onto an {label} name");
+        assert_eq!(sw, Sw::WRONG_DATA, "RENAME onto an {label} name");
         assert_eq!(stored(&mut app, &mut fs), vec![b"src".to_vec()]);
     }
     let mut d = tlv(TAG_NAME, b"src");

@@ -228,7 +228,7 @@ fn write_config_rejects_oversized_blob() {
     ];
     cmd.extend_from_slice(&std::vec![0xAB; inner]);
     let (sw, _) = process(&mut app, &mut fs, &cmd);
-    assert_eq!(sw, Sw::INCORRECT_PARAMS);
+    assert_eq!(sw, Sw::WRONG_DATA);
     // Nothing was persisted.
     assert!(fs.read(EF_DEV_CONF, &mut [0u8; 8]).is_none());
 }
@@ -280,7 +280,7 @@ fn write_config_refuses_device_owned_and_malformed_tags() {
         ];
         cmd.extend_from_slice(blob);
         let (sw, _) = process(&mut app, &mut fs, &cmd);
-        assert_eq!(sw, Sw::INCORRECT_PARAMS, "accepted {blob:02x?}");
+        assert_eq!(sw, Sw::WRONG_DATA, "accepted {blob:02x?}");
         assert!(fs.read(EF_DEV_CONF, &mut [0u8; 8]).is_none());
     }
 
@@ -495,7 +495,7 @@ fn write_config_rejects_bad_length() {
         &mut fs,
         &[0x00, INS_WRITE_CONFIG, 0, 0, 0x03, 0x03, 0xAA, 0xBB],
     );
-    assert_eq!(sw, Sw::INCORRECT_PARAMS);
+    assert_eq!(sw, Sw::WRONG_DATA);
 }
 
 #[cfg(feature = "strict-config")]

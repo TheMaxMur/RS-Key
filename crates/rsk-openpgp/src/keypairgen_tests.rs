@@ -24,7 +24,7 @@ fn over_long_algo_do_does_not_panic() {
     // in full is how a slot ends up holding a key its own attribute misdescribes.
     assert_eq!(
         rsa_generate_params(&mut fs, &sess, 0x80, 0x00, &[0xB6, 0x00]),
-        Err(WRONG_DATA)
+        Err(Sw::WRONG_DATA)
     );
 }
 
@@ -44,7 +44,7 @@ fn generate_refuses_an_unadvertised_stored_algorithm_attribute() {
     sess.has_pw3 = true;
     assert_eq!(
         rsa_generate_params(&mut fs, &sess, 0x80, 0x00, &[0xB6, 0x00]),
-        Err(WRONG_DATA)
+        Err(Sw::WRONG_DATA)
     );
 
     // An advertised size is still generated normally.
@@ -70,7 +70,7 @@ fn short_algo_do_does_not_panic() {
         fs.put(EF_ALGO_PRIV1, short).unwrap();
         assert_eq!(
             rsa_generate_params(&mut fs, &sess, 0x80, 0x00, &[0xB6, 0x00]),
-            Err(WRONG_DATA)
+            Err(Sw::WRONG_DATA)
         );
     }
 }

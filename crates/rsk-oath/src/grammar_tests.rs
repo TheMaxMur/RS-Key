@@ -72,7 +72,7 @@ fn calculate_takes_the_name_then_the_challenge_and_nothing_else() {
     ] {
         assert_eq!(
             run(&mut app, &mut fs, &apdu(INS_CALCULATE, 0, 0x01, &body)).0,
-            Sw::INCORRECT_PARAMS,
+            Sw::WRONG_DATA,
             "{label}",
         );
     }
@@ -94,10 +94,10 @@ fn calculate_all_wants_the_challenge_first_and_ignores_the_rest() {
         (
             "an unknown tag first",
             [&[0xAAu8, 0x01, 0x00][..], &chal].concat(),
-            Sw::INCORRECT_PARAMS,
+            Sw::WRONG_DATA,
         ),
-        ("a name first", [name, chal].concat(), Sw::INCORRECT_PARAMS),
-        ("no challenge at all", vec![], Sw::INCORRECT_PARAMS),
+        ("a name first", [name, chal].concat(), Sw::WRONG_DATA),
+        ("no challenge at all", vec![], Sw::WRONG_DATA),
     ] {
         assert_eq!(
             run(&mut app, &mut fs, &apdu(INS_CALC_ALL, 0, 0x01, &body)).0,
@@ -140,7 +140,7 @@ fn validate_takes_the_response_then_the_challenge() {
     ] {
         assert_eq!(
             run(&mut app, &mut fs, &apdu(INS_VALIDATE, 0, 0, &body)).0,
-            Sw::INCORRECT_PARAMS,
+            Sw::WRONG_DATA,
             "{label}",
         );
     }
@@ -185,7 +185,7 @@ fn set_code_takes_the_key_then_the_proof_and_leaves_a_refusal_alone() {
     ] {
         assert_eq!(
             run(&mut app, &mut fs, &apdu(INS_SET_CODE, 0, 0, &body)).0,
-            Sw::INCORRECT_PARAMS,
+            Sw::WRONG_DATA,
             "{label}",
         );
         assert!(!code_set(&mut app, &mut fs), "{label} installed a code");

@@ -188,7 +188,7 @@ pub fn check_pin<S: Storage>(
     // answers `6A80`, spends no retry and leaves the standing access status up —
     // and it does so BEFORE the blocked check, as E47's precedence note has it.
     if offered_len_impossible(fs, fid, data.len()) {
-        return WRONG_DATA;
+        return Sw::WRONG_DATA;
     }
     // The retry-block floor comes next, as PIV `check_ref` and FIDO `clientpin` do:
     // deriving — and worse, migrating — ahead of it made a blocked reference do two
@@ -507,7 +507,7 @@ pub fn verify<S: Storage>(
 ) -> Sw {
     if p1 == 0xFF {
         if !data.is_empty() {
-            return Sw::INCORRECT_PARAMS;
+            return Sw::WRONG_DATA;
         }
         // §7.2.2 defines P2 = 81 / 82 / 83 and nothing else, so an undefined one
         // names a password reference that does not exist and there is nothing to
@@ -849,7 +849,7 @@ pub fn put_reset_code<S: Storage>(
         // The one caller whose refusal is not `6985`: this value arrives in PUT
         // DATA's data field, and a YubiKey 5.7.4 answers `6A80` there (3/3, at 1,
         // 5, 6, 7 and 128) where CHANGE and RESET RETRY both answer `6985`.
-        check_pin_len(EF_RC, data.len()).map_err(|_| WRONG_DATA)?;
+        check_pin_len(EF_RC, data.len()).map_err(|_| Sw::WRONG_DATA)?;
         stage_dek(dev, fs, rng, EF_DEK_RC, data, &dek)?;
         put_verifier(dev, fs, EF_RC, data)?;
         commit_staged_dek(fs, EF_DEK_RC)?;

@@ -125,7 +125,7 @@ fn try_pso<S: Storage>(
         Ok(n)
     } else {
         // DECIPHER (ECDH): extract the peer public point and agree.
-        let point = parse_ecdh_point(data).ok_or(WRONG_DATA)?;
+        let point = parse_ecdh_point(data).ok_or(Sw::WRONG_DATA)?;
         key.ecdh(point, out)
     }
 }

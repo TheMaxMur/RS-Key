@@ -708,14 +708,14 @@ impl<'a> ManagementApplet<'a> {
     /// TLV blob as `EF_DEV_CONF`.
     fn write_config<S: Storage>(&mut self, apdu: &Apdu, fs: &mut Fs<S>) -> Sw {
         if apdu.nc == 0 || apdu.data[0] as usize != apdu.nc - 1 {
-            return Sw::INCORRECT_PARAMS;
+            return Sw::WRONG_DATA;
         }
         // Request-side bound only. What actually reaches flash is bounded by
         // `persist_dev_conf` against `EF_DEV_CONF_MAX` *after* the lock tags are
         // stripped, so a legitimate `set-lock-code` (two 16-byte codes in one
         // request, neither stored) is not refused for the size of its request.
         if apdu.nc - 1 > DEV_CONF_WRITE_MAX {
-            return Sw::INCORRECT_PARAMS;
+            return Sw::WRONG_DATA;
         }
         // Rewriting the reported DeviceInfo is a privileged, sticky change. Under
         // `strict-config` gate it on operator presence (the CONFIG_LOCK byte is
@@ -729,7 +729,7 @@ impl<'a> ManagementApplet<'a> {
         }
         match persist_dev_conf(fs, &apdu.data[1..apdu.nc]) {
             Ok(()) => Sw::OK,
-            Err(DevConfError::TooLong | DevConfError::BadTlv) => Sw::INCORRECT_PARAMS,
+            Err(DevConfError::TooLong | DevConfError::BadTlv) => Sw::WRONG_DATA,
             Err(DevConfError::Store) => Sw::MEMORY_FAILURE,
         }
     }

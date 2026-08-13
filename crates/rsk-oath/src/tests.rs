@@ -622,19 +622,16 @@ fn put_validates_key_and_name() {
     let touch = RefCell::new(AlwaysConfirm);
     let mut app = OathApplet::new(SERIAL, [0x22; 32], None, &rng, &touch);
     // Missing key.
-    assert_eq!(
-        put(&mut app, &mut fs, &tlv(TAG_NAME, b"x")),
-        Sw::INCORRECT_PARAMS
-    );
+    assert_eq!(put(&mut app, &mut fs, &tlv(TAG_NAME, b"x")), Sw::WRONG_DATA);
     // Missing name.
     assert_eq!(
         put(&mut app, &mut fs, &tlv(TAG_KEY, &[0x21, 6, 1, 2])),
-        Sw::INCORRECT_PARAMS
+        Sw::WRONG_DATA
     );
     // Key shorter than [type, digits] is rejected.
     let mut d = tlv(TAG_NAME, b"x");
     d.extend(tlv(TAG_KEY, &[0x21]));
-    assert_eq!(put(&mut app, &mut fs, &d), Sw::INCORRECT_PARAMS);
+    assert_eq!(put(&mut app, &mut fs, &d), Sw::WRONG_DATA);
 }
 
 #[test]
@@ -903,13 +900,13 @@ fn set_code_and_validate_flow() {
     let mut d = tlv(TAG_RESPONSE, &[0u8; 20]);
     d.extend(tlv(TAG_CHALLENGE, &host_chal));
     let (sw, _) = run(&mut app, &mut fs, &apdu(INS_VALIDATE, 0, 0, &d));
-    assert_eq!(sw, Sw::INCORRECT_PARAMS);
+    assert_eq!(sw, Sw::WRONG_DATA);
     // …and a truncated (1-byte) response must not brute-force its way in.
     let full = hmac_sha1(&[0xAB; 16], &card_chal);
     let mut d = tlv(TAG_RESPONSE, &full[..1]);
     d.extend(tlv(TAG_CHALLENGE, &host_chal));
     let (sw, _) = run(&mut app, &mut fs, &apdu(INS_VALIDATE, 0, 0, &d));
-    assert_eq!(sw, Sw::INCORRECT_PARAMS);
+    assert_eq!(sw, Sw::WRONG_DATA);
 
     // Correct response unlocks and returns the mutual proof.
     let mut d = tlv(TAG_RESPONSE, &full);
@@ -1313,7 +1310,7 @@ fn put_rejects_two_byte_tag_form() {
     let mut app = OathApplet::new(SERIAL, [0x22; 32], None, &rng, &touch);
     let mut d = put_data(b"c", 0x21, 6, SECRET_SHA1, false, None);
     d.extend(tlv(0x7F, &[0xAA])); // low 5 bits == 0x1f
-    assert_eq!(put(&mut app, &mut fs, &d), Sw::INCORRECT_PARAMS);
+    assert_eq!(put(&mut app, &mut fs, &d), Sw::WRONG_DATA);
 }
 
 #[test]
@@ -1628,7 +1625,7 @@ fn calculate_all_mixes_response_kinds() {
     let (sw, _) = run(&mut app, &mut fs, &apdu(INS_CALC_ALL, 0, 0x02, &chal));
     assert_eq!(sw, Sw::WRONG_P1P2);
     let (sw, _) = run(&mut app, &mut fs, &apdu(INS_CALC_ALL, 0, 0x01, &[]));
-    assert_eq!(sw, Sw::INCORRECT_PARAMS);
+    assert_eq!(sw, Sw::WRONG_DATA);
 }
 
 #[test]
@@ -1648,7 +1645,7 @@ fn calculate_rejects_unknowns() {
         &mut fs,
         &apdu(INS_CALCULATE, 0, 1, &tlv(TAG_NAME, b"x")),
     );
-    assert_eq!(sw, Sw::INCORRECT_PARAMS);
+    assert_eq!(sw, Sw::WRONG_DATA);
     // Unknown algorithm nibble in a stored key fails cleanly. PUT refuses one
     // now (E34), so the fixture is planted the way a build before it stored one
     // — otherwise this asserts over an empty slot and proves nothing.
@@ -1658,7 +1655,7 @@ fn calculate_rejects_unknowns() {
             &mut fs,
             &put_data(b"bad", 0x29, 6, SECRET_SHA1, false, None)
         ),
-        Sw::INCORRECT_PARAMS,
+        Sw::WRONG_DATA,
     );
     let dev = Device {
         serial_hash: &[0x22; 32],

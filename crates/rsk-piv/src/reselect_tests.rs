@@ -139,7 +139,7 @@ fn status_after(sel: &[&[u8]]) -> (Sw, Sw) {
 
 #[test]
 fn a_reselect_of_the_piv_aid_keeps_the_security_status() {
-    let armed = (Sw::OK, WRONG_DATA);
+    let armed = (Sw::OK, Sw::WRONG_DATA);
     let cleared = (Sw::retries(3), Sw::SECURITY_STATUS_NOT_SATISFIED);
 
     assert_eq!(status_after(&[]), armed, "control: nothing intervened");

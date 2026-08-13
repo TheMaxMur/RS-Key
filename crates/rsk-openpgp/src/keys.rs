@@ -862,10 +862,10 @@ pub fn load_ec_key<S: Storage>(
     let r = (|| {
         let (pt, legacy) = dek_unseal(dev, fs, sess, &blob[..n], &mut kdata, legacy_ec_len)?;
         if pt < 2 {
-            return Err(WRONG_DATA);
+            return Err(Sw::WRONG_DATA);
         }
-        let curve = Curve::from_id(kdata[0]).ok_or(WRONG_DATA)?;
-        let key = PrivKey::from_scalar(curve, &kdata[1..pt]).ok_or(WRONG_DATA)?;
+        let curve = Curve::from_id(kdata[0]).ok_or(Sw::WRONG_DATA)?;
+        let key = PrivKey::from_scalar(curve, &kdata[1..pt]).ok_or(Sw::WRONG_DATA)?;
         Ok((key, legacy))
     })();
     kdata.zeroize();
@@ -921,7 +921,7 @@ pub fn store_aes_key<S: Storage>(
     key: &[u8],
 ) -> Result<(), Sw> {
     if !AES_KEY_LENS.contains(&key.len()) {
-        return Err(WRONG_DATA);
+        return Err(Sw::WRONG_DATA);
     }
     let mut blob = [0u8; 32 + DEK_SEAL_OVERHEAD];
     let r = (|| {
@@ -1303,10 +1303,11 @@ pub fn load_rsa_key<S: Storage>(
     let mut kdata = [0u8; MAX_RSA_KDATA];
     let res = (|| {
         let (n, legacy) = dek_unseal(dev, fs, sess, &blob[..bn], &mut kdata, legacy_rsa_len)?;
-        let (half, _) = rsa_crt::parse_rsa_blob(&kdata[..n]).map_err(|_| WRONG_DATA)?;
+        let (half, _) = rsa_crt::parse_rsa_blob(&kdata[..n]).map_err(|_| Sw::WRONG_DATA)?;
         let p = BigUint::from_bytes_be(&kdata[..half]);
         let q = BigUint::from_bytes_be(&kdata[half..2 * half]);
-        let key = RsaPrivateKey::from_p_q(p, q, BigUint::from(RSA_E)).map_err(|_| WRONG_DATA)?;
+        let key =
+            RsaPrivateKey::from_p_q(p, q, BigUint::from(RSA_E)).map_err(|_| Sw::WRONG_DATA)?;
         Ok((key, legacy))
     })();
     kdata.zeroize();
@@ -1455,7 +1456,7 @@ pub fn rsa_sign_crt(
         // fault-checked op, so no non-conformant caller sees a different path.
         None => {
             if data.len() > mlen {
-                return Err(WRONG_DATA);
+                return Err(Sw::WRONG_DATA);
             }
             em[mlen - data.len()..mlen].copy_from_slice(data);
         }
@@ -1503,7 +1504,7 @@ fn rsa_raw(
     use num_bigint_dig::ModInverse;
     let key_size = key.size();
     if data.len() > key_size {
-        return Err(WRONG_DATA);
+        return Err(Sw::WRONG_DATA);
     }
     let (n, e, d) = (key.n(), key.e(), key.d());
     let m = BigUint::from_bytes_be(data);
@@ -1539,7 +1540,7 @@ pub fn rsa_decipher(
     out: &mut [u8],
 ) -> Result<usize, Sw> {
     let key_size = key.size();
-    let ct = data.get(1..1 + key_size).ok_or(WRONG_DATA)?;
+    let ct = data.get(1..1 + key_size).ok_or(Sw::WRONG_DATA)?;
     let mut pt = key
         .decrypt_blinded(&mut RngAdapter(rng), Pkcs1v15Encrypt, ct)
         .map_err(|_| Sw::EXEC_ERROR)?;

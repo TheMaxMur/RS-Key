@@ -368,12 +368,12 @@ fn verify_of_an_undefined_reference_is_wrong_data() {
     for p2 in [0x00u8, 0x01, 0x04, 0x81, 0x82, 0x9B, 0xFF] {
         assert_eq!(
             run(&mut app, &mut fs, INS_VERIFY, 0, p2, &[]).0,
-            WRONG_DATA,
+            Sw::WRONG_DATA,
             "P2 {p2:02X}"
         );
         assert_eq!(
             run(&mut app, &mut fs, INS_VERIFY, 0, p2, &DEFAULT_PIN).0,
-            WRONG_DATA,
+            Sw::WRONG_DATA,
             "P2 {p2:02X} with data"
         );
     }
@@ -409,7 +409,7 @@ fn a_verify_body_that_is_not_the_wire_form_costs_no_retry() {
     for n in [1usize, 2, 4, 6, 7, 9, 16, 32] {
         assert_eq!(
             run(&mut app, &mut fs, INS_VERIFY, 0, 0x80, &body[..n]).0,
-            WRONG_DATA,
+            Sw::WRONG_DATA,
             "{n}-byte body"
         );
         assert_eq!(
@@ -439,7 +439,7 @@ fn a_verify_body_that_is_not_the_wire_form_costs_no_retry() {
         assert_eq!(run(&mut app, &mut fs, INS_VERIFY, 0, 0x80, &[]).0, Sw::OK);
         assert_eq!(
             run(&mut app, &mut fs, INS_VERIFY, 0, 0x80, &body[..n]).0,
-            WRONG_DATA
+            Sw::WRONG_DATA
         );
         assert_eq!(
             run(&mut app, &mut fs, INS_VERIFY, 0, 0x80, &[]).0,
@@ -476,7 +476,7 @@ fn a_verify_body_that_is_not_the_wire_form_costs_no_retry() {
     );
     assert_eq!(
         run(&mut app, &mut fs, INS_VERIFY, 0, 0x80, &body[..6]).0,
-        WRONG_DATA
+        Sw::WRONG_DATA
     );
     assert_eq!(
         run(&mut app, &mut fs, INS_VERIFY, 0, 0x80, &[]).0,
@@ -550,7 +550,7 @@ fn verify_refuses_its_own_framing_with_one_status_word() {
             for body in [&[][..], &DEFAULT_PIN[..]] {
                 assert_eq!(
                     run(&mut app, &mut fs, INS_VERIFY, p1, 0x80, body).0,
-                    WRONG_DATA,
+                    Sw::WRONG_DATA,
                     "VERIFY P1={p1:02X} with {} body bytes, verified={verified}",
                     body.len()
                 );
@@ -561,7 +561,7 @@ fn verify_refuses_its_own_framing_with_one_status_word() {
         for body in [&DEFAULT_PIN[..], &[0x41][..]] {
             assert_eq!(
                 run(&mut app, &mut fs, INS_VERIFY, 0xFF, 0x80, body).0,
-                WRONG_DATA,
+                Sw::WRONG_DATA,
                 "VERIFY P1=FF with {} body bytes, verified={verified}",
                 body.len()
             );
@@ -713,7 +713,7 @@ fn an_undefined_pin_reference_is_not_found() {
             for body in [&[][..], b"ABCD"] {
                 assert_eq!(
                     run(&mut app, &mut fs, ins, 0, p2, body).0,
-                    WRONG_DATA,
+                    Sw::WRONG_DATA,
                     "INS {ins:02X} P2={p2:02X} body={} verified={verified}",
                     body.len()
                 );
@@ -760,23 +760,23 @@ fn a_reference_change_takes_two_wire_forms_or_nothing() {
             msg.extend_from_slice(new);
             assert_eq!(
                 run(&mut app, &mut fs, ins, 0, p2, &msg).0,
-                WRONG_DATA,
+                Sw::WRONG_DATA,
                 "INS {ins:02X} P2 {p2:02X} with a {}-byte new value",
                 new.len()
             );
         }
         // The old half alone, and a short old half, are the same refusal.
-        assert_eq!(run(&mut app, &mut fs, ins, 0, p2, old).0, WRONG_DATA);
+        assert_eq!(run(&mut app, &mut fs, ins, 0, p2, old).0, Sw::WRONG_DATA);
         let mut msg = old[..6].to_vec();
         msg.extend_from_slice(full);
-        assert_eq!(run(&mut app, &mut fs, ins, 0, p2, &msg).0, WRONG_DATA);
+        assert_eq!(run(&mut app, &mut fs, ins, 0, p2, &msg).0, Sw::WRONG_DATA);
         // …and a WRONG old reference inside a malformed body costs no retry —
         // under the wire form and over it, since only the length gate can refuse
         // an over-long body before the comparison runs.
         for tail in [&short[..], b"654321\xff\xff\xff"] {
             let mut msg = [0x39u8; PIN_WIRE_LEN].to_vec();
             msg.extend_from_slice(tail);
-            assert_eq!(run(&mut app, &mut fs, ins, 0, p2, &msg).0, WRONG_DATA);
+            assert_eq!(run(&mut app, &mut fs, ins, 0, p2, &msg).0, Sw::WRONG_DATA);
         }
     }
     assert_eq!(reference_retries_left(&mut fs, PinRef::Pin), Some(3));
@@ -795,11 +795,11 @@ fn a_reference_change_takes_two_wire_forms_or_nothing() {
     };
     assert_eq!(
         change_reference(&dev, &mut fs, PinRef::Pin, &DEFAULT_PIN, short),
-        WRONG_DATA
+        Sw::WRONG_DATA
     );
     assert_eq!(
         unblock_pin_with_puk(&dev, &mut fs, &DEFAULT_PUK, short),
-        WRONG_DATA
+        Sw::WRONG_DATA
     );
 }
 
@@ -887,7 +887,7 @@ fn a_poisoned_reference_keeps_every_exit_it_had() {
     put_pin_verifier(&dev, &mut fs, EF_PUK, short).unwrap();
     assert_eq!(
         run(&mut app, &mut fs, INS_RESET, 0, 0, &[]).0,
-        Sw::INCORRECT_PARAMS,
+        Sw::WRONG_DATA,
         "RESET before the counters are spent"
     );
     assert!(
@@ -943,7 +943,7 @@ fn panel_pin_ops_match_host_wire() {
     // ...and the unpadded 6-byte form does NOT — padding is load-bearing. It is
     // refused on the wire form, so it costs the standing status but no retry.
     let (sw, _) = run(&mut app, &mut fs, INS_VERIFY, 0, 0x80, b"654321");
-    assert_eq!(sw, WRONG_DATA);
+    assert_eq!(sw, Sw::WRONG_DATA);
     assert_eq!(reference_retries_left(&mut fs, PinRef::Pin), Some(3));
     let (sw, _) = run(&mut app, &mut fs, INS_VERIFY, 0, 0x80, &new);
     assert_eq!(sw, Sw::OK);
@@ -1864,7 +1864,7 @@ fn mgm_encrypt_oracle_is_refused_and_cannot_forge_auth() {
     let mut orc = vec![0x7C, 0x12, 0x81, 0x10];
     orc.extend_from_slice(&r);
     let (sw, resp) = run(&mut app, &mut fs, INS_AUTHENTICATE, ALGO_AES256, 0x9B, &orc);
-    assert_eq!(sw, WRONG_DATA, "encrypt oracle must be refused");
+    assert_eq!(sw, Sw::WRONG_DATA, "encrypt oracle must be refused");
     assert!(
         resp.is_empty() || !resp.windows(2).any(|w| w == [0x82, 0x10]),
         "no E(mgm, .) may be returned"
@@ -1908,11 +1908,7 @@ fn mgm_challenge_bound_to_issuing_algorithm() {
     let mut d3 = vec![0x7C, 0x0A, 0x82, 0x08];
     d3.extend_from_slice(&[0u8; 8]);
     let (sw, _) = run(&mut app, &mut fs, INS_AUTHENTICATE, ALGO_3DES, 0x9B, &d3);
-    assert_eq!(
-        sw,
-        Sw::INCORRECT_PARAMS,
-        "cross-algo step-2 must be refused"
-    );
+    assert_eq!(sw, Sw::WRONG_DATA, "cross-algo step-2 must be refused");
     // has_mgm stays closed.
     let (sw, _) = run(&mut app, &mut fs, INS_SET_RETRIES, 5, 5, &[]);
     assert_eq!(sw, Sw::SECURITY_STATUS_NOT_SATISFIED);
@@ -2093,7 +2089,8 @@ fn a_key_slot_challenge_is_not_a_management_key_challenge() {
         &[0x7C, 0x02, 0x81, 0x00],
     );
     assert_eq!(
-        sw, WRONG_DATA,
+        sw,
+        Sw::WRONG_DATA,
         "measured on the oracle, 2 runs, all symmetric algos"
     );
     assert!(out.is_empty());
@@ -2109,7 +2106,7 @@ fn a_key_slot_challenge_is_not_a_management_key_challenge() {
     let (sw, _) = run(&mut app, &mut fs, INS_AUTHENTICATE, ALGO_AES192, 0x9B, &msg);
     assert_eq!(
         sw,
-        Sw::INCORRECT_PARAMS,
+        Sw::WRONG_DATA,
         "no challenge was issued, so none can be answered"
     );
 
@@ -2227,11 +2224,11 @@ fn fips_refuses_3des_mgm_and_rsa1024() {
     let mut msg = vec![ALGO_3DES, 0x9B, 24];
     msg.extend_from_slice(&DEFAULT_MGM);
     let (sw, _) = run(&mut app, &mut fs, INS_SET_MGMKEY, 0xFF, 0xFF, &msg);
-    assert_eq!(sw, WRONG_DATA);
+    assert_eq!(sw, Sw::WRONG_DATA);
     // …and so is RSA-1024 generation.
     let tmpl = [0xAC, 0x03, 0x80, 0x01, ALGO_RSA1024];
     let (sw, _) = run(&mut app, &mut fs, INS_ASYM_KEYGEN, 0x00, 0x9A, &tmpl);
-    assert_eq!(sw, WRONG_DATA);
+    assert_eq!(sw, Sw::WRONG_DATA);
     // AES management keys are unaffected.
     let mut msg = vec![ALGO_AES256, 0x9B, 32];
     msg.extend_from_slice(&[0x11; 32]);
@@ -2716,7 +2713,7 @@ fn a_general_authenticate_that_uses_no_key_spends_nothing() {
             SLOT_SIGNATURE,
             &body,
         );
-        assert_eq!(sw, WRONG_DATA, "body {body:02X?}");
+        assert_eq!(sw, Sw::WRONG_DATA, "body {body:02X?}");
         assert!(out.is_empty(), "body {body:02X?}");
     }
     assert_eq!(
@@ -2825,7 +2822,7 @@ fn general_authenticate_takes_the_first_operation_tag_in_the_body() {
         assert_eq!(sign_p256(&mut app, &mut fs, SLOT_SIGNATURE), Sw::OK);
         verify_pin(&mut app, &mut fs);
         let (sw, out) = ga(&mut app, &mut fs, SLOT_KEYMGM, wrap(bad.clone()));
-        assert_eq!(sw, WRONG_DATA, "body {bad:02X?}");
+        assert_eq!(sw, Sw::WRONG_DATA, "body {bad:02X?}");
         assert!(out.is_empty());
         assert_eq!(
             sign_p256(&mut app, &mut fs, SLOT_SIGNATURE),
@@ -2848,7 +2845,7 @@ fn general_authenticate_takes_the_first_operation_tag_in_the_body() {
             &wrap(at_9b)
         )
         .0,
-        WRONG_DATA
+        Sw::WRONG_DATA
     );
 
     // …and 9B keeps the arm this all started from: an empty 81 there is the
@@ -2961,7 +2958,7 @@ fn a_key_operation_that_fails_still_spends_the_freshness() {
 
     verify_pin(&mut app, &mut fs);
     let junk = [0x04u8; 65];
-    assert_eq!(ecdh_p256(&mut app, &mut fs, &junk), WRONG_DATA);
+    assert_eq!(ecdh_p256(&mut app, &mut fs, &junk), Sw::WRONG_DATA);
     assert_eq!(
         sign_p256(&mut app, &mut fs, SLOT_SIGNATURE),
         Sw::SECURITY_STATUS_NOT_SATISFIED,
@@ -2981,7 +2978,7 @@ fn a_key_operation_that_fails_still_spends_the_freshness() {
             &short
         )
         .0,
-        Sw::INCORRECT_PARAMS
+        Sw::WRONG_DATA
     );
     assert_eq!(
         sign_p256(&mut app, &mut fs, SLOT_SIGNATURE),
@@ -3003,7 +3000,7 @@ fn a_key_operation_that_fails_still_spends_the_freshness() {
             &wrong_algo
         )
         .0,
-        WRONG_DATA
+        Sw::WRONG_DATA
     );
     assert_eq!(
         sign_p256(&mut app, &mut fs, SLOT_SIGNATURE),
@@ -3025,7 +3022,7 @@ fn a_key_operation_that_fails_still_spends_the_freshness() {
             &wrong_algo
         )
         .0,
-        WRONG_DATA
+        Sw::WRONG_DATA
     );
     assert_eq!(
         sign_p256(&mut app, &mut fs, SLOT_SIGNATURE),
@@ -3293,7 +3290,7 @@ fn attestation_chains_to_f9() {
     let (sw, _) = run(&mut app, &mut fs, INS_IMPORT_ASYM, ALGO_ECCP256, 0x9D, &imp);
     assert_eq!(sw, Sw::OK);
     let (sw, _) = run(&mut app, &mut fs, INS_ATTESTATION, 0x9D, 0, &[]);
-    assert_eq!(sw, Sw::INCORRECT_PARAMS);
+    assert_eq!(sw, Sw::WRONG_DATA);
 }
 
 /// Generate an Ed25519 key, sign through GENERAL AUTHENTICATE and check the
@@ -3530,7 +3527,7 @@ fn an_imported_scalar_is_exactly_the_field_length() {
                     &imp(0x06, n)
                 )
                 .0,
-                WRONG_DATA,
+                Sw::WRONG_DATA,
                 "algo {algo:02X} with a {n}-byte scalar"
             );
         }
@@ -3553,7 +3550,7 @@ fn an_imported_scalar_is_exactly_the_field_length() {
         for n in [1usize, 31, 33] {
             assert_eq!(
                 run(&mut app, &mut fs, INS_IMPORT_ASYM, algo, 0x9E, &imp(tag, n)).0,
-                WRONG_DATA,
+                Sw::WRONG_DATA,
                 "algo {algo:02X} with a {n}-byte scalar"
             );
         }
@@ -3584,7 +3581,7 @@ fn an_imported_scalar_is_exactly_the_field_length() {
             &zero
         )
         .0,
-        WRONG_DATA
+        Sw::WRONG_DATA
     );
     // Audit run-36's rule, on the inputs this gate newly refuses: a refused import
     // leaves the slot exactly as it was. Every import arm drops the slot meta and
@@ -3600,7 +3597,7 @@ fn an_imported_scalar_is_exactly_the_field_length() {
         let tag = if algo == ALGO_ED25519 { 0x07 } else { 0x06 };
         assert_eq!(
             run(&mut app, &mut fs, INS_IMPORT_ASYM, algo, 0x9E, &imp(tag, n)).0,
-            WRONG_DATA
+            Sw::WRONG_DATA
         );
         assert_eq!(
             run(&mut app, &mut fs, INS_GET_METADATA, 0, 0x9E, &[]),
@@ -4520,7 +4517,7 @@ fn the_attestation_identity_is_not_host_replaceable() {
     cert.extend_from_slice(&[0x41, 0x42, 0x43]);
     assert_eq!(
         run(&mut app, &mut fs, INS_PUT_DATA, 0x3F, 0xFF, &cert).0,
-        WRONG_DATA,
+        Sw::WRONG_DATA,
         "PUT DATA 5FFF01"
     );
     // Neither refusal moved anything: the key, its metadata and the certificate
@@ -4720,7 +4717,7 @@ fn a_zero_retry_budget_is_refused_and_that_is_deliberate() {
     for (p1, p2) in [(0u8, 0u8), (0, 3), (3, 0)] {
         assert_eq!(
             run(&mut app, &mut fs, INS_SET_RETRIES, p1, p2, &[]).0,
-            Sw::INCORRECT_PARAMS,
+            Sw::WRONG_DATA,
             "P1 {p1} P2 {p2}"
         );
     }
@@ -4762,7 +4759,7 @@ fn set_retries_and_reset_card() {
     assert_eq!(find_tag(&md, 0x06).unwrap(), &[5, 5]);
     // Reset requires both references blocked.
     let (sw, _) = run(&mut app, &mut fs, INS_RESET, 0, 0, &[]);
-    assert_eq!(sw, Sw::INCORRECT_PARAMS);
+    assert_eq!(sw, Sw::WRONG_DATA);
     let wrong = [0x39u8; 8];
     for _ in 0..5 {
         let _ = run(&mut app, &mut fs, INS_VERIFY, 0, 0x80, &wrong);
@@ -4960,7 +4957,7 @@ fn the_bit_group_template_is_not_an_alias_of_a_data_object() {
     bad.extend_from_slice(&[TAG_DATA_OBJECT, 0x02, 0x42, 0x42]);
     assert_eq!(
         run(&mut app, &mut fs, INS_PUT_DATA, 0x3F, 0xFF, &bad).0,
-        WRONG_DATA
+        Sw::WRONG_DATA
     );
     // The wire cells above hold for any fid `7F61` cannot reach, so this last
     // pair is about the map itself: `7F61` owns no file at all, rather than a
@@ -5072,7 +5069,7 @@ fn an_object_id_is_its_whole_value() {
     over.extend_from_slice(b"XXX");
     assert_eq!(
         run(&mut app, &mut fs, INS_PUT_DATA, 0x3F, 0xFF, &over).0,
-        WRONG_DATA,
+        Sw::WRONG_DATA,
         "5FC1F1 must not be a second door to the attestation certificate"
     );
     let (sw, still) = run(&mut app, &mut fs, INS_GET_DATA, 0x3F, 0xFF, &exact);
@@ -6078,7 +6075,8 @@ fn generate_refuses_an_undefined_policy_byte() {
     let tmpl = [0xAC, 0x06, 0x80, 0x01, ALGO_ECCP256, 0xAB, 0x01, 0x42];
     let (sw, _) = run(&mut app, &mut fs, INS_ASYM_KEYGEN, 0, 0x9A, &tmpl);
     assert_eq!(
-        sw, WRONG_DATA,
+        sw,
+        Sw::WRONG_DATA,
         "an undefined touch policy must not be stored"
     );
 }
@@ -6112,18 +6110,18 @@ fn an_explicit_zero_policy_byte_is_refused_like_any_other_undefined_one() {
     // accepted `0x01`s, then the undefined values that already matched.
     let rows: [(&str, &[u8], Sw); 9] = [
         ("no policy tags", &[], Sw::OK),
-        ("AA 01 00", &[0xAA, 0x01, 0x00], WRONG_DATA),
-        ("AB 01 00", &[0xAB, 0x01, 0x00], WRONG_DATA),
+        ("AA 01 00", &[0xAA, 0x01, 0x00], Sw::WRONG_DATA),
+        ("AB 01 00", &[0xAB, 0x01, 0x00], Sw::WRONG_DATA),
         (
             "AA 01 00 + AB 01 00",
             &[0xAA, 0x01, 0x00, 0xAB, 0x01, 0x00],
-            WRONG_DATA,
+            Sw::WRONG_DATA,
         ),
         ("AA 01 01", &[0xAA, 0x01, PINPOLICY_NEVER], Sw::OK),
         ("AB 01 01", &[0xAB, 0x01, TOUCHPOLICY_NEVER], Sw::OK),
-        ("AA 01 05", &[0xAA, 0x01, 0x05], WRONG_DATA),
-        ("AA 01 FF", &[0xAA, 0x01, 0xFF], WRONG_DATA),
-        ("AB 01 FF", &[0xAB, 0x01, 0xFF], WRONG_DATA),
+        ("AA 01 05", &[0xAA, 0x01, 0x05], Sw::WRONG_DATA),
+        ("AA 01 FF", &[0xAA, 0x01, 0xFF], Sw::WRONG_DATA),
+        ("AB 01 FF", &[0xAB, 0x01, 0xFF], Sw::WRONG_DATA),
     ];
     // What is in the slot: the sealed key bytes AND the metadata record. Neither
     // alone is enough — `has_key` cannot tell a refusal that *replaced* the key from
@@ -6153,7 +6151,7 @@ fn an_explicit_zero_policy_byte_is_refused_like_any_other_undefined_one() {
             )
             .0;
             assert_eq!(sw, *want, "GENERATE {slot:02X} with {label}");
-            if *want == WRONG_DATA {
+            if *want == Sw::WRONG_DATA {
                 assert_eq!(
                     identity(&mut app, &mut fs, slot),
                     before,
@@ -6196,7 +6194,7 @@ fn import_refuses_an_explicit_zero_policy_byte() {
     // it left the old key gone and the new one with no metadata to gate it.
     assert_eq!(
         import(&mut app, &mut fs, 0x77, &[0xAA, 0x01, 0x00]),
-        WRONG_DATA
+        Sw::WRONG_DATA
     );
     assert!(
         !fs.has_key(key_fid(SLOT_KEYMGM)),
@@ -6209,7 +6207,7 @@ fn import_refuses_an_explicit_zero_policy_byte() {
     for policies in [&[0xAA, 0x01, 0x00][..], &[0xAB, 0x01, 0x00][..]] {
         assert_eq!(
             import(&mut app, &mut fs, 0x55, policies),
-            WRONG_DATA,
+            Sw::WRONG_DATA,
             "{policies:02X?}"
         );
         assert_eq!(
@@ -6286,7 +6284,7 @@ fn the_management_key_algorithm_is_enforced_at_use() {
         0x9B,
         &[0x7C, 0x02, 0x81, 0x00],
     );
-    assert_eq!(sw, Sw::INCORRECT_PARAMS, "3DES against an AES-192 key");
+    assert_eq!(sw, Sw::WRONG_DATA, "3DES against an AES-192 key");
     // …and the real algorithm still works.
     let (sw, _) = run(
         &mut app,
@@ -6715,7 +6713,7 @@ fn a_new_reference_shorter_than_the_minimum_is_refused() {
     ] {
         assert_eq!(
             change(&mut app, &mut fs, 0x80, &DEFAULT_PIN, new),
-            WRONG_DATA,
+            Sw::WRONG_DATA,
             "PIN <- {label}"
         );
         // …and the old PIN is untouched by the refusal.
@@ -6725,7 +6723,7 @@ fn a_new_reference_shorter_than_the_minimum_is_refused() {
         );
         assert_eq!(
             change(&mut app, &mut fs, 0x81, &DEFAULT_PUK, new),
-            WRONG_DATA,
+            Sw::WRONG_DATA,
             "PUK <- {label}"
         );
     }
@@ -6737,7 +6735,7 @@ fn a_new_reference_shorter_than_the_minimum_is_refused() {
     over.extend_from_slice(&[0xFF; 8]);
     assert_eq!(
         change(&mut app, &mut fs, 0x80, &DEFAULT_PIN, &over),
-        WRONG_DATA,
+        Sw::WRONG_DATA,
         "a 16-byte new value must not be stored"
     );
     assert_eq!(
@@ -6800,7 +6798,7 @@ fn a_new_reference_shorter_than_the_minimum_is_refused() {
     msg.extend_from_slice(&pad(b"777"));
     assert_eq!(
         run(&mut app, &mut fs, INS_RESET_RETRY, 0, 0x80, &msg).0,
-        WRONG_DATA
+        Sw::WRONG_DATA
     );
 }
 
@@ -7224,7 +7222,7 @@ fn a_one_byte_body_is_the_same_refusal_on_every_command() {
             for byte in [0x41u8, 0x00, 0x5C] {
                 assert_eq!(
                     run(&mut app, &mut fs, ins, p1, p2, &[byte]).0,
-                    WRONG_DATA,
+                    Sw::WRONG_DATA,
                     "INS {ins:02X} with the one byte {byte:02X}, authed={authed}"
                 );
             }
@@ -7270,7 +7268,7 @@ fn a_one_byte_body_is_the_same_refusal_on_every_command() {
                 body
             )
             .0,
-            WRONG_DATA,
+            Sw::WRONG_DATA,
             "GENERAL AUTHENTICATE, {} body bytes",
             body.len()
         );
@@ -7321,7 +7319,7 @@ fn a_one_byte_body_is_the_same_refusal_on_every_command() {
                 body
             )
             .0,
-            WRONG_DATA,
+            Sw::WRONG_DATA,
             "a dynamic-auth template that does not open the body"
         );
     }
@@ -7336,12 +7334,12 @@ fn a_one_byte_body_is_the_same_refusal_on_every_command() {
     );
     assert_eq!(
         run(&mut app, &mut fs, INS_ASYM_KEYGEN, 0x00, 0x9A, &[]).0,
-        WRONG_DATA,
+        Sw::WRONG_DATA,
         "KEYGEN authorised: the missing template"
     );
     assert_eq!(
         run(&mut app, &mut fs, INS_ASYM_KEYGEN, 0x00, 0x9A, &long).0,
-        WRONG_DATA,
+        Sw::WRONG_DATA,
         "KEYGEN authorised: the wrong template tag"
     );
     // The P1P2 strictness E140 kept is still there, one gate lower.

@@ -24,7 +24,7 @@ use crate::files::*;
 use crate::keygen;
 use crate::seal;
 use crate::x509;
-use crate::{ChallengeKind, Session, WRONG_DATA, ct_eq, dyn_auth_resp};
+use crate::{ChallengeKind, Session, ct_eq, dyn_auth_resp};
 
 enum Dir {
     Encrypt,
@@ -70,7 +70,7 @@ fn mgm_crypt(algo: u8, key: &[u8], data: &mut [u8], dir: Dir) -> Result<(), Sw> 
     match algo {
         ALGO_3DES => {
             let key: &[u8; 24] = key.try_into().map_err(|_| Sw::MEMORY_FAILURE)?;
-            let block: &mut [u8; 8] = data.try_into().map_err(|_| WRONG_DATA)?;
+            let block: &mut [u8; 8] = data.try_into().map_err(|_| Sw::WRONG_DATA)?;
             match dir {
                 Dir::Encrypt => des3_encrypt_block(key, block),
                 Dir::Decrypt => des3_decrypt_block(key, block),
@@ -78,7 +78,7 @@ fn mgm_crypt(algo: u8, key: &[u8], data: &mut [u8], dir: Dir) -> Result<(), Sw> 
             Ok(())
         }
         _ => {
-            let block: &mut [u8; 16] = data.try_into().map_err(|_| WRONG_DATA)?;
+            let block: &mut [u8; 16] = data.try_into().map_err(|_| Sw::WRONG_DATA)?;
             match dir {
                 Dir::Encrypt => aes_ecb_encrypt_block(key, block),
                 Dir::Decrypt => aes_ecb_decrypt_block(key, block),
@@ -126,9 +126,9 @@ impl<S: Storage> GenAuth<'_, S> {
         let key = seal::load_ec_key(self.dev, self.fs, key_fid(self.key_ref))?;
         // Defence in depth: [`Self::algo_is_the_keys`] already refused a mismatch
         // before this call, off the stored head rather than the sealed key.
-        let want = keygen::curve_for_algo(self.algo).ok_or(WRONG_DATA)?;
+        let want = keygen::curve_for_algo(self.algo).ok_or(Sw::WRONG_DATA)?;
         if key.curve() != want {
-            return Err(WRONG_DATA);
+            return Err(Sw::WRONG_DATA);
         }
         self.spend_pin();
         Ok(key)
@@ -147,7 +147,7 @@ impl<S: Storage> GenAuth<'_, S> {
         if self.algo == self.slot_algo {
             Ok(())
         } else {
-            Err(WRONG_DATA)
+            Err(Sw::WRONG_DATA)
         }
     }
 
@@ -176,7 +176,7 @@ impl<S: Storage> GenAuth<'_, S> {
             // requested here (the start of the handshake) so step 2 needs no
             // second one.
             if self.key_ref != SLOT_CARDMGM {
-                return Err(WRONG_DATA);
+                return Err(Sw::WRONG_DATA);
             }
             check_touch(self.touch_policy, self.presence)?;
             self.rng.fill(&mut self.sess.challenge[..self.chal_len]);
@@ -190,7 +190,7 @@ impl<S: Storage> GenAuth<'_, S> {
         // Mutual auth step 2: host returns the decrypted witness + its own
         // challenge; verify, then answer with the encrypted host challenge.
         if self.key_ref != SLOT_CARDMGM {
-            return Err(WRONG_DATA);
+            return Err(Sw::WRONG_DATA);
         }
         // Only a witness this device issued *encrypted* (mutual step 1) may be
         // verified here — never a plaintext single-auth challenge.
@@ -198,11 +198,9 @@ impl<S: Storage> GenAuth<'_, S> {
             || self.sess.chal_kind != ChallengeKind::MutualWitness
             || self.sess.chal_algo != self.algo
         {
-            return Err(Sw::INCORRECT_PARAMS);
+            return Err(Sw::WRONG_DATA);
         }
-        let host_chal = host_chal
-            .filter(|c| !c.is_empty())
-            .ok_or(Sw::INCORRECT_PARAMS)?;
+        let host_chal = host_chal.filter(|c| !c.is_empty()).ok_or(Sw::WRONG_DATA)?;
         self.sess.has_challenge = false;
         self.sess.chal_kind = ChallengeKind::None;
         if w.len() != self.chal_len || !ct_eq(w, &self.sess.challenge[..self.chal_len]) {
@@ -243,7 +241,7 @@ impl<S: Storage> GenAuth<'_, S> {
                 let crt = seal::load_rsa_crt(self.dev, self.fs, key_fid(self.key_ref))?;
                 self.spend_pin();
                 if c.len() != crt.modulus_len() {
-                    return Err(Sw::INCORRECT_PARAMS);
+                    return Err(Sw::WRONG_DATA);
                 }
                 let mut out = [0u8; rsa_crt::MAX_RSA_BYTES];
                 let n = rsa_crt::sign_crt(&crt, c, self.rng, &mut out)?;
@@ -276,9 +274,9 @@ impl<S: Storage> GenAuth<'_, S> {
                 // E(mgm, R) submitted as the 82 response decrypts back to R.
                 // The only sanctioned symmetric flows are mutual-witness (t80)
                 // and single-auth (t81-empty challenge -> t82 verify). Refuse.
-                return Err(WRONG_DATA);
+                return Err(Sw::WRONG_DATA);
             }
-            _ => return Err(WRONG_DATA),
+            _ => return Err(Sw::WRONG_DATA),
         }
         Ok(())
     }
@@ -287,13 +285,13 @@ impl<S: Storage> GenAuth<'_, S> {
     /// `SingleChallenge` this device issued in plaintext may be answered here.
     fn single_auth_verify(&mut self, mgm: &[u8], r: &[u8]) -> Result<(), Sw> {
         if self.key_ref != SLOT_CARDMGM {
-            return Err(WRONG_DATA);
+            return Err(Sw::WRONG_DATA);
         }
         if !self.sess.has_challenge
             || self.sess.chal_kind != ChallengeKind::SingleChallenge
             || self.sess.chal_algo != self.algo
         {
-            return Err(Sw::INCORRECT_PARAMS);
+            return Err(Sw::WRONG_DATA);
         }
         check_touch(self.touch_policy, self.presence)?;
         self.sess.has_challenge = false;
@@ -315,11 +313,11 @@ impl<S: Storage> GenAuth<'_, S> {
     /// X25519 (`ykman calculate_secret`). Enforces the key's touch policy first.
     fn ecdh_op(&mut self, pp: &[u8], res: &mut ResBuf) -> Result<(), Sw> {
         if !is_key(self.key_ref) {
-            return Err(WRONG_DATA);
+            return Err(Sw::WRONG_DATA);
         }
         self.algo_is_the_keys()?;
         if !matches!(self.algo, ALGO_ECCP256 | ALGO_ECCP384 | ALGO_X25519) {
-            return Err(WRONG_DATA);
+            return Err(Sw::WRONG_DATA);
         }
         check_touch(self.touch_policy, self.presence)?;
         // The point is judged by the curve, after the key is loaded and the
@@ -328,7 +326,7 @@ impl<S: Storage> GenAuth<'_, S> {
         // reached the key; what it cannot do is come back as anything but 6A80.
         let key = self.load_ec()?;
         let mut shared = [0u8; 48];
-        let n = key.ecdh(pp, &mut shared).map_err(|_| WRONG_DATA)?;
+        let n = key.ecdh(pp, &mut shared).map_err(|_| Sw::WRONG_DATA)?;
         dyn_auth_resp(res, TAG_AUTH_RESPONSE, &shared[..n])?;
         shared.zeroize();
         Ok(())
@@ -353,13 +351,13 @@ pub(crate) fn general_authenticate<S: Storage>(
     // command has no ACL of its own, being the authentication, so its framing is
     // all it can answer for.
     if data.is_empty() || data[0] != TAG_DYN_AUTH {
-        return WRONG_DATA;
+        return Sw::WRONG_DATA;
     }
     let Some(dyn_auth) = find_tag(data, TAG_DYN_AUTH as u16) else {
-        return WRONG_DATA;
+        return Sw::WRONG_DATA;
     };
     if dyn_auth.is_empty() {
-        return WRONG_DATA;
+        return Sw::WRONG_DATA;
     }
 
     // Management-key sanity (algo class + stored length).
@@ -370,7 +368,7 @@ pub(crate) fn general_authenticate<S: Storage>(
         // cell: a YubiKey answers 6A80 to any body at 9B under a non-9B algorithm
         // (measured, 2 runs, and E42 §6.9's sweep).
         let Some(want) = mgm_key_len(algo) else {
-            return WRONG_DATA;
+            return Sw::WRONG_DATA;
         };
         mgm_len = match seal::seal_read(dev, fs, key_fid(SLOT_CARDMGM), &mut mgm_key) {
             Ok(n) => n,
@@ -378,7 +376,7 @@ pub(crate) fn general_authenticate<S: Storage>(
         };
         if mgm_len != want {
             mgm_key.zeroize();
-            return WRONG_DATA;
+            return Sw::WRONG_DATA;
         }
     }
 
@@ -397,11 +395,11 @@ pub(crate) fn general_authenticate<S: Storage>(
     // its stored length was checked, and 3DES and AES-192 are both 24 bytes — so an
     // AES-192 key completed a full 3DES mutual authentication, the one algorithm
     // `fips-profile` provisioning refuses (audit run-34 #19).
-    // `INCORRECT_PARAMS`, the same status the `chal_algo` binding below answers, so
+    // `WRONG_DATA`, the same status the `chal_algo` binding below answers, so
     // one class of "this key is not that algorithm" has one status word.
     if key_ref == SLOT_CARDMGM && meta[0] != algo {
         mgm_key.zeroize();
-        return Sw::INCORRECT_PARAMS;
+        return Sw::WRONG_DATA;
     }
     // Only a record an OLDER build wrote can still hold an unresolved `0` here — no
     // host may send one (E80) — and it has to mean what the store-time resolver
@@ -454,7 +452,7 @@ pub(crate) fn general_authenticate<S: Storage>(
             // No operation tag the card recognises. A YubiKey answers 6A80 to
             // every such body — an unknown tag, a truncated TLV, a lone empty
             // response placeholder — where we used to answer 9000 and do nothing.
-            None => Err(WRONG_DATA),
+            None => Err(Sw::WRONG_DATA),
         }
     };
     mgm_key.zeroize();

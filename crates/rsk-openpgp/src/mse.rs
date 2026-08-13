@@ -19,7 +19,7 @@ pub fn mse(sess: &mut Session, apdu: &Apdu) -> Sw {
     let d = apdu.data;
     // CRT `83 01 <02|03>` — a key-reference template; a short field is wrong data.
     if d.len() < 3 || d[0] != 0x83 || d[1] != 0x01 || (d[2] != 0x02 && d[2] != 0x03) {
-        return WRONG_DATA;
+        return Sw::WRONG_DATA;
     }
     let (algo, pk) = if d[2] == 0x02 {
         (EF_ALGO_PRIV2, EF_PK_DEC)

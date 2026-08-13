@@ -410,6 +410,26 @@ below in the usual four sections, security last.
   smaller.
   **bcdDevice → 0x0954.**
 
+- **One name for `0x6A80` across the tree: `Sw::WRONG_DATA`.** The SDK called it
+  `INCORRECT_PARAMS`, one letter from its neighbour `INCORRECT_P1P2` (`0x6A86`)
+  — a different status word — so the name argued for the reading that belongs to
+  the other constant. Three crates had each worked around it on their own: PIV
+  and OpenPGP with a private `WRONG_DATA` alias, U2F by glossing its call sites
+  with `// 0x6A80 WRONG_DATA`. The tree had already voted 219 uses to 122; this
+  makes it official, and both aliases go, so the status word has one name and no
+  translation layer between crates. `docs/protocol.md`'s row moves with it, where
+  `6A80 | INCORRECT_PARAMS | bad data field` had been arguing with itself.
+
+  Proven a pure rename rather than assumed. Normalising every spelling of the
+  name to one token leaves 32 of the 39 files byte-identical to their old selves,
+  and the 7 that are not are exactly the two deleted aliases, the three imports
+  that pulled them in, and two comments that existed only to gloss the old name.
+  In the built image `.text` and `.data` are byte-identical and 47 bytes of
+  `.rodata` move — the line and column numbers in `core::panic::Location`
+  records, which shift because the aliases took their lines with them and `Sw::`
+  widens a call site by four characters.
+  **bcdDevice → 0x0955.**
+
 ### Fixed
 
 - **A one-byte body is one refusal on every PIV command, and the management key

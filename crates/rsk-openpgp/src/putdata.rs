@@ -127,23 +127,23 @@ pub fn put_data<S: Storage>(fs: &mut Fs<S>, sess: &Session, fid: u16, data: &[u8
         && !data.is_empty()
         && !crate::dobj::advertised_algo(fid, data)
     {
-        return WRONG_DATA;
+        return Sw::WRONG_DATA;
     }
 
     // Including the empty write, which would otherwise delete the DO: a YubiKey
     // refuses length 0 here too, and there is no way to express "no fingerprint"
     // in C5 anyway — an absent one already reads as zeroes.
     if fixed_do_len(fid).is_some_and(|want| data.len() != want) {
-        return WRONG_DATA;
+        return Sw::WRONG_DATA;
     }
     if max_do_len(fid).is_some_and(|max| data.len() > max) {
-        return WRONG_DATA;
+        return Sw::WRONG_DATA;
     }
     // §4.4.3.4 enumerates the sex DO's values rather than bounding them, so this
     // is a content gate, and the list is the card's rather than ISO 5218's: a
     // YubiKey answers `6A80` to `'A'` and to `'0'`, a code the standard defines.
     if fid == EF_SEX && !data.is_empty() && !SEX_VALUES.contains(&data[0]) {
-        return WRONG_DATA;
+        return Sw::WRONG_DATA;
     }
 
     // OpenPGP 3.4 §4.4.3.6 and the D6/D7/D8 DO table: UIF value 02 is "permanently
@@ -162,7 +162,7 @@ pub fn put_data<S: Storage>(fs: &mut Fs<S>, sess: &Session, fid: u16, data: &[u8
         // Reject undefined flag values and a wrong general-feature-management byte
         // rather than storing something the card would echo back as meaningful.
         if !data.is_empty() && (data.len() != 2 || data[0] > UIF_PERMANENT) {
-            return WRONG_DATA;
+            return Sw::WRONG_DATA;
         }
     }
 
@@ -207,7 +207,7 @@ pub fn put_pw_status<S: Storage>(fs: &mut Fs<S>, sess: &Session, data: &[u8]) ->
     // length and value with 6A80, leaving the DO alone; the flag is the whole
     // writable surface.
     if data.len() != 1 || data[0] > 1 {
-        return WRONG_DATA;
+        return Sw::WRONG_DATA;
     }
     let mut pw = [0u8; 7];
     let n = match fs.read(EF_PW_PRIV, &mut pw) {

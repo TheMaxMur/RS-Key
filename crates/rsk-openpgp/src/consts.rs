@@ -5,7 +5,6 @@
 //! status aliases, and DEK sizing.
 
 use rsk_fs::KeyFid;
-use rsk_sdk::Sw;
 
 /// OpenPGP application identifier.
 pub const OPENPGP_AID: &[u8] = &[0xD2, 0x76, 0x00, 0x01, 0x24, 0x01];
@@ -31,9 +30,6 @@ pub const ALGO_EDDSA: u8 = 0x16;
 /// RSA-2048, gpg's default. dobj.rs's C1/C2/C3 GET DATA fallback
 /// (`ATTR_RSA2K`) encodes the same default and must change with it.
 pub(crate) const DEFAULT_ALGO: &[u8] = &[ALGO_RSA, 0x08, 0x00, 0x00, 0x20, 0x00];
-
-/// Status 0x6A80 (wrong data).
-pub(crate) const WRONG_DATA: Sw = Sw::INCORRECT_PARAMS;
 
 /// ATR for the OpenPGP card.
 pub const ATR_OPENPGP: &[u8] = &[

@@ -248,7 +248,7 @@ pub fn sign_crt(crt: &RsaCrt, c: &[u8], rng: &mut dyn Rng, out: &mut [u8]) -> Re
     use num_bigint_dig::ModInverse;
     let mlen = crt.modulus_len();
     if c.len() != mlen {
-        return Err(Sw::INCORRECT_PARAMS);
+        return Err(Sw::WRONG_DATA);
     }
     // num-bigint-dig's BigUint has no zeroizing Drop (its heap limbs are freed
     // un-wiped), so every secret value here rides in a `Zeroizing` that scrubs it

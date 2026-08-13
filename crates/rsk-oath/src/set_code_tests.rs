@@ -73,7 +73,7 @@ fn a_code_with_no_key_material_is_refused() {
     let (mut fs, rng) = fixture();
     let touch = RefCell::new(AlwaysConfirm);
     let mut app = OathApplet::new(SERIAL, [0x22; 32], None, &rng, &touch);
-    assert_eq!(set_code(&mut app, &mut fs, &[]), Sw::INCORRECT_PARAMS);
+    assert_eq!(set_code(&mut app, &mut fs, &[]), Sw::WRONG_DATA);
     assert!(!code_installed(&mut app, &mut fs));
 }
 
@@ -88,11 +88,7 @@ fn the_key_material_bound_is_the_card_s_fourteen_to_sixty_four() {
         let accepted = (SECRET_MIN..=SECRET_MAX).contains(&len);
         assert_eq!(
             set_code(&mut app, &mut fs, &secret),
-            if accepted {
-                Sw::OK
-            } else {
-                Sw::INCORRECT_PARAMS
-            },
+            if accepted { Sw::OK } else { Sw::WRONG_DATA },
             "{len} bytes of key material",
         );
         assert_eq!(code_installed(&mut app, &mut fs), accepted, "{len} bytes");
@@ -149,11 +145,11 @@ fn a_refused_set_code_leaves_the_installed_one_alone() {
     assert_eq!(validate(&mut app, &mut fs, &good), Sw::OK);
 
     let short = [0xCDu8; 13];
-    assert_eq!(set_code(&mut app, &mut fs, &short), Sw::INCORRECT_PARAMS);
+    assert_eq!(set_code(&mut app, &mut fs, &short), Sw::WRONG_DATA);
     assert!(code_installed(&mut app, &mut fs));
     assert_eq!(
         validate(&mut app, &mut fs, &short),
-        Sw::INCORRECT_PARAMS,
+        Sw::WRONG_DATA,
         "the refused key must not open the applet",
     );
     assert_eq!(
@@ -171,7 +167,7 @@ fn only_the_card_s_spelling_removes_a_code() {
     // no functionality — the standing code survives the refusal either way.
     for (body, want, removed) in [
         (&tlv(TAG_KEY, &[])[..], Sw::OK, true),
-        (&[][..], Sw::INCORRECT_PARAMS, false),
+        (&[][..], Sw::WRONG_DATA, false),
     ] {
         let (mut fs, rng) = fixture();
         let touch = RefCell::new(AlwaysConfirm);
@@ -222,11 +218,7 @@ fn the_proof_is_carried_over_exactly_eight_bytes() {
         let accepted = len == CHALLENGE_LEN;
         assert_eq!(
             set_code_over(&mut app, &mut fs, &secret, &chal),
-            if accepted {
-                Sw::OK
-            } else {
-                Sw::INCORRECT_PARAMS
-            },
+            if accepted { Sw::OK } else { Sw::WRONG_DATA },
             "a {len}-byte challenge",
         );
         assert_eq!(code_installed(&mut app, &mut fs), accepted, "{len} bytes");
@@ -252,20 +244,20 @@ fn a_wrong_proof_is_not_the_word_for_no_code_at_all() {
     assert_eq!(set_code(&mut app, &mut fs, &good), Sw::OK);
     assert_eq!(
         validate(&mut app, &mut fs, &[0xCDu8; 16]),
-        Sw::INCORRECT_PARAMS,
+        Sw::WRONG_DATA,
         "a wrong key",
     );
     // A right key proved over the wrong bytes, and a truncated proof of the
     // right one: the card refuses both the same way.
     assert_eq!(
         validate_proof(&mut app, &mut fs, &hmac_sha1(&good, &[0u8; 8])),
-        Sw::INCORRECT_PARAMS,
+        Sw::WRONG_DATA,
         "the right key over a stale challenge",
     );
     let chal = card_challenge(&mut app, &mut fs);
     assert_eq!(
         validate_proof(&mut app, &mut fs, &hmac_sha1(&good, &chal)[..1]),
-        Sw::INCORRECT_PARAMS,
+        Sw::WRONG_DATA,
         "a one-byte proof",
     );
     assert_eq!(validate(&mut app, &mut fs, &good), Sw::OK);

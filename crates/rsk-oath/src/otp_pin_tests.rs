@@ -135,7 +135,7 @@ fn a_malformed_change_keeps_the_standing_authentication() {
     ] {
         assert_eq!(verify(&mut app, &mut fs, b"1234"), Sw::OK);
         let (sw, _) = run(&mut app, &mut fs, &apdu(INS_CHANGE_PIN, 0, 0, &body));
-        assert_eq!(sw, Sw::INCORRECT_PARAMS, "CHANGE with {label}");
+        assert_eq!(sw, Sw::WRONG_DATA, "CHANGE with {label}");
         assert!(safe_open(&mut app, &mut fs), "CHANGE with {label}");
     }
     // And the sibling agrees on that half.
@@ -145,7 +145,7 @@ fn a_malformed_change_keeps_the_standing_authentication() {
         &mut fs,
         &apdu(INS_VERIFY_PIN, 0, 0, &tlv(0x71, b"x")),
     );
-    assert_eq!(sw, Sw::INCORRECT_PARAMS);
+    assert_eq!(sw, Sw::WRONG_DATA);
     assert!(safe_open(&mut app, &mut fs));
 }
 

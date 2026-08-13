@@ -107,14 +107,8 @@ fn a_challenge_of_sixty_five_bytes_is_refused_on_both_paths() {
     let mut app = OathApplet::new(SERIAL, [0x22; 32], None, &rng, &touch);
     plain_totp(&mut app, &mut fs, b"c");
     // A plain credential: nothing else in the applet can refuse this for us.
-    assert_eq!(
-        calc(&mut app, &mut fs, b"c", &[0x01; 65]).0,
-        Sw::INCORRECT_PARAMS
-    );
-    assert_eq!(
-        calc_all(&mut app, &mut fs, &[0x01; 65]).0,
-        Sw::INCORRECT_PARAMS
-    );
+    assert_eq!(calc(&mut app, &mut fs, b"c", &[0x01; 65]).0, Sw::WRONG_DATA);
+    assert_eq!(calc_all(&mut app, &mut fs, &[0x01; 65]).0, Sw::WRONG_DATA);
     // …and 64 still computes, so the bound is where the card puts it.
     assert_eq!(calc(&mut app, &mut fs, b"c", &[0x01; 64]).0, Sw::OK);
     assert_eq!(calc_all(&mut app, &mut fs, &[0x01; 64]).0, Sw::OK);
@@ -134,10 +128,7 @@ fn the_bound_holds_for_hotp_which_ignores_the_challenge() {
         Sw::OK
     );
     assert_eq!(calc(&mut app, &mut fs, b"h", &[0x01; 64]).0, Sw::OK);
-    assert_eq!(
-        calc(&mut app, &mut fs, b"h", &[0x01; 65]).0,
-        Sw::INCORRECT_PARAMS
-    );
+    assert_eq!(calc(&mut app, &mut fs, b"h", &[0x01; 65]).0, Sw::WRONG_DATA);
 }
 
 #[test]
@@ -151,7 +142,7 @@ fn the_bound_is_judged_after_p1p2_and_before_the_credential() {
     // before the lookup, exactly as the card orders it.
     assert_eq!(
         calc(&mut app, &mut fs, b"nope", &[0x01; 65]).0,
-        Sw::INCORRECT_PARAMS
+        Sw::WRONG_DATA
     );
     assert_eq!(
         calc(&mut app, &mut fs, b"nope", &[0x01; 8]).0,
@@ -189,10 +180,7 @@ fn the_bulk_read_marks_the_challenge_it_computed_from() {
     assert_eq!(code, Some(expected(&chal)));
     // The mark now stands at all 16 bytes: the same challenge is refused, and
     // one greater only in the sixteenth byte still computes.
-    assert_eq!(
-        calc(&mut app, &mut fs, b"inc", &chal).0,
-        Sw::INCORRECT_PARAMS
-    );
+    assert_eq!(calc(&mut app, &mut fs, b"inc", &chal).0, Sw::WRONG_DATA);
     chal[15] = 0x23;
     assert_eq!(calc(&mut app, &mut fs, b"inc", &chal).0, Sw::OK);
 }
@@ -213,10 +201,7 @@ fn an_over_wide_challenge_advances_no_only_increasing_mark() {
     d.extend([TAG_PROPERTY, PROP_INCREASING]);
     assert_eq!(put(&mut app, &mut fs, &d), Sw::OK);
 
-    assert_eq!(
-        calc_all(&mut app, &mut fs, &[0xFF; 65]).0,
-        Sw::INCORRECT_PARAMS
-    );
+    assert_eq!(calc_all(&mut app, &mut fs, &[0xFF; 65]).0, Sw::WRONG_DATA);
     // The mark never moved: a modest challenge still computes.
     assert_eq!(calc(&mut app, &mut fs, b"inc", &[0x01; 8]).0, Sw::OK);
 }

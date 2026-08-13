@@ -160,7 +160,11 @@ fn put_pw_status_writes_only_the_flag() {
         &[0x01, 0x06, 0x06, 0x06, 0x03, 0x00, 0x03],
         &[0x01, 0x7F, 0x7F, 0x7F, 0, 0, 0],
     ] {
-        assert_eq!(put_pw_status(&mut fs, &sess, bad), WRONG_DATA, "{bad:02X?}");
+        assert_eq!(
+            put_pw_status(&mut fs, &sess, bad),
+            Sw::WRONG_DATA,
+            "{bad:02X?}"
+        );
         assert_eq!(fs.read(EF_PW_PRIV, &mut pw), Some(7));
         assert_eq!(pw, start, "a refused PUT C4 changed the DO: {bad:02X?}");
     }

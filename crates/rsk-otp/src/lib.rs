@@ -754,7 +754,7 @@ impl<'a> OtpApplet<'a> {
             return Sw::OK; // no config bytes → nothing to persist (status frame only)
         }
         if 1 + len > data.len() {
-            return Sw::INCORRECT_PARAMS;
+            return Sw::WRONG_DATA;
         }
         match rsk_mgmt::persist_dev_conf(fs, &data[1..1 + len]) {
             Ok(()) => {
@@ -765,9 +765,7 @@ impl<'a> OtpApplet<'a> {
                 self.config_seq = self.config_seq.wrapping_add(1);
                 Sw::OK
             }
-            Err(rsk_mgmt::DevConfError::TooLong | rsk_mgmt::DevConfError::BadTlv) => {
-                Sw::INCORRECT_PARAMS
-            }
+            Err(rsk_mgmt::DevConfError::TooLong | rsk_mgmt::DevConfError::BadTlv) => Sw::WRONG_DATA,
             Err(rsk_mgmt::DevConfError::Store) => Sw::MEMORY_FAILURE,
         }
     }

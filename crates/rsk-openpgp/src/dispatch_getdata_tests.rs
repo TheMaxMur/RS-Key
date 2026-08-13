@@ -255,7 +255,7 @@ fn a_do_the_card_announces_room_for_reads_back_whole() {
     too_long.push(0xFF);
     assert_eq!(
         write(&mut disp, &mut applets, &mut fs, &too_long),
-        crate::consts::WRONG_DATA,
+        Sw::WRONG_DATA,
         "one byte over the announced maximum must be refused, not truncated"
     );
     let (still, _) = read_cert(&mut disp, &mut applets, &mut fs);

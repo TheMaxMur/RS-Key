@@ -6,7 +6,7 @@
 
 use rsk_sdk::{Apdu, Sw};
 
-use crate::consts::{CERT_OCCURRENCES, EF_CH_CERT, OPENPGP_AID, WRONG_DATA};
+use crate::consts::{CERT_OCCURRENCES, EF_CH_CERT, OPENPGP_AID};
 use crate::files::{DoSource, source};
 use crate::pin::Session;
 
@@ -112,7 +112,7 @@ pub fn select_data(apdu: &Apdu, sess: &mut Session) -> Sw {
     }
     let taglen = d[3] as usize;
     if d[2] != 0x5C || taglen == 0 || taglen > 2 || d.len() < 4 + taglen {
-        return WRONG_DATA;
+        return Sw::WRONG_DATA;
     }
     let tag = if taglen == 2 {
         ((d[4] as u16) << 8) | d[5] as u16
