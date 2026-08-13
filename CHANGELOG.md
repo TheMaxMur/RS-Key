@@ -309,6 +309,37 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **PIV `GENERAL AUTHENTICATE` dispatches on the first operation tag the body
+  carries, and an empty `81` at a key slot is a private-key operation.** Three
+  faults in one dispatcher, all measured against a YubiKey 5.7.4 three runs each.
+  `7C 02 81 00` at a provisioned key slot returned sixteen random bytes under tag
+  `81` — a host that does not check the tag reads them as a signature — where the
+  card should sign; the oracle answers `7C 49 82 47 3045…`, a real ECDSA
+  signature, and spends the PIN freshness for it. Tag precedence was a fixed
+  table rather than body order, so an ordinary ECDH request that happened to
+  carry an empty `81` got those random bytes instead of the shared secret: the
+  oracle signs for `7C .. 82 00 81 00 85 <point>` and agrees for the same body
+  with `85` first, and now so do we. And a body carrying no operation the card
+  recognises — an unknown tag, a truncated TLV inside the template, a lone empty
+  response placeholder, or mutual auth asked at a key slot — answered `9000`
+  having done nothing, where the oracle answers `6A80`. An empty or unusable `85`
+  point now reaches the key before it is refused, which is both the oracle's
+  answer (`6A80`) and its accounting (the freshness is spent, because the request
+  got as far as the key). At `9B` an empty `81` is still the single-auth
+  challenge the arm exists for.
+
+  Swept with it, because the dispatcher stated the principle and then broke it:
+  every "this key is not that algorithm, or this operation is not for this slot"
+  refusal now answers `6A80` and spends nothing. Measured across nine cells, two
+  runs — a P-256 slot addressed as ECCP384, RSA-2048 or Ed25519; an ECDH asked at
+  `9B` or at an RSA/AES slot; an empty `81` at a key slot under any symmetric
+  algorithm; a mutual-auth step 2 whose tags arrive reversed — where ours answered
+  `6A86`, and `6581` on the RSA arm, whose seal read ran first. The check has one
+  owner now, ahead of the touch prompt and the key load, which also closes a hole
+  the RSA arm carried on its own: it had **no** algorithm check at all, so an
+  RSA-2048 request at an RSA-3072 slot loaded the 3072 key and spent the PIN
+  freshness before refusing on length. **bcdDevice → 0x08D9.**
+
 - **A key in a retired PIV slot is no longer a one-way trip, and
   `GET METADATA f9` answers.** Two narrow gates, both measured against a YubiKey
   5.7.4 three runs each. `MOVE KEY` refused retired → active with `6A86`, so a

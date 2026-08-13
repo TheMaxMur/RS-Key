@@ -1678,7 +1678,7 @@ fn mgm_encrypt_oracle_is_refused_and_cannot_forge_auth() {
     let mut orc = vec![0x7C, 0x12, 0x81, 0x10];
     orc.extend_from_slice(&r);
     let (sw, resp) = run(&mut app, &mut fs, INS_AUTHENTICATE, ALGO_AES256, 0x9B, &orc);
-    assert_eq!(sw, Sw::INCORRECT_P1P2, "encrypt oracle must be refused");
+    assert_eq!(sw, WRONG_DATA, "encrypt oracle must be refused");
     assert!(
         resp.is_empty() || !resp.windows(2).any(|w| w == [0x82, 0x10]),
         "no E(mgm, .) may be returned"
@@ -1884,7 +1884,21 @@ fn a_key_slot_challenge_is_not_a_management_key_challenge() {
     assert_eq!(sw, Sw::OK);
     assert_eq!(put(&mut app, &mut fs), Sw::OK, "control: 9B open");
 
-    let (sw, chal) = run(
+    // No challenge is issued outside 9B at all any more. Under the slot's own
+    // algorithm the empty-81 arm is a private-key operation and answers with a
+    // signature; under any other it is refused before the key. Both rows, so the
+    // property does not rest on the request dying somewhere earlier.
+    let (sw, out) = run(
+        &mut app,
+        &mut fs,
+        INS_AUTHENTICATE,
+        ALGO_ECCP256,
+        0x9A,
+        &[0x7C, 0x02, 0x81, 0x00],
+    );
+    assert_eq!(sw, Sw::OK);
+    assert_eq!(out[2], TAG_AUTH_RESPONSE, "a signature, not a challenge");
+    let (sw, out) = run(
         &mut app,
         &mut fs,
         INS_AUTHENTICATE,
@@ -1892,24 +1906,25 @@ fn a_key_slot_challenge_is_not_a_management_key_challenge() {
         0x9A,
         &[0x7C, 0x02, 0x81, 0x00],
     );
-    assert_eq!(sw, Sw::OK);
-    assert_eq!(&chal[..4], &[0x7C, 0x12, 0x81, 0x10]);
+    assert_eq!(
+        sw, WRONG_DATA,
+        "measured on the oracle, 2 runs, all symmetric algos"
+    );
+    assert!(out.is_empty());
     assert_eq!(
         put(&mut app, &mut fs),
         Sw::OK,
-        "a key-slot challenge must leave 9B alone"
+        "a key-slot request must leave 9B alone"
     );
-    // Answered at 9B with the right ciphertext it must still not authenticate —
-    // otherwise the failure above is a management-key attempt that cost nothing.
-    let mut r: [u8; 16] = chal[4..20].try_into().unwrap();
-    rsk_crypto::aes_ecb_encrypt_block(&DEFAULT_MGM, &mut r).unwrap();
+    // Nothing entered the session either, so there is no challenge at 9B to
+    // answer — which is the property this test was written for.
     let mut msg = vec![0x7C, 0x12, 0x82, 0x10];
-    msg.extend_from_slice(&r);
+    msg.extend_from_slice(&[0x42u8; 16]);
     let (sw, _) = run(&mut app, &mut fs, INS_AUTHENTICATE, ALGO_AES192, 0x9B, &msg);
     assert_eq!(
         sw,
         Sw::INCORRECT_PARAMS,
-        "a 9A challenge must not authenticate 9B"
+        "no challenge was issued, so none can be answered"
     );
 
     // Control in the same run: asked for at 9B, the identical request revokes.
@@ -2475,9 +2490,10 @@ fn a_key_operation_at_a_once_slot_spends_the_always_freshness() {
     );
 }
 
-/// A GENERAL AUTHENTICATE that reaches no key at all must spend nothing: the
-/// dispatcher's no-op arm is not an operation. (Its `9000` is itself a divergence
-/// — a YubiKey answers 6A80 to a body with no usable tag — recorded separately.)
+/// A GENERAL AUTHENTICATE that reaches no key at all is refused and spends
+/// nothing. A YubiKey 5.7.4 answers `6A80` to every body carrying no operation
+/// tag it recognises — 3 runs each on an unknown tag, a truncated TLV and a lone
+/// empty response placeholder — where we used to answer `9000` and do nothing.
 #[test]
 fn a_general_authenticate_that_uses_no_key_spends_nothing() {
     let rng = RefCell::new(TestRng(7));
@@ -2501,10 +2517,12 @@ fn a_general_authenticate_that_uses_no_key_spends_nothing() {
     );
     verify_pin(&mut app, &mut fs);
     for body in [
-        vec![0x7C, 0x02, 0x82, 0x00],
-        vec![0x7C, 0x03, 0x5F, 0x01, 0x00],
+        vec![0x7C, 0x02, 0x82, 0x00],       // the response placeholder, alone
+        vec![0x7C, 0x03, 0x5F, 0x01, 0x00], // a tag this card does not know
+        vec![0x7C, 0x01, 0x82],             // a truncated TLV inside the template
+        vec![0x7C, 0x02, 0x80, 0x00],       // mutual auth, which is 9B-only
     ] {
-        let (sw, _) = run(
+        let (sw, out) = run(
             &mut app,
             &mut fs,
             INS_AUTHENTICATE,
@@ -2512,13 +2530,153 @@ fn a_general_authenticate_that_uses_no_key_spends_nothing() {
             SLOT_SIGNATURE,
             &body,
         );
-        assert_eq!(sw, Sw::OK, "body {body:02X?}");
+        assert_eq!(sw, WRONG_DATA, "body {body:02X?}");
+        assert!(out.is_empty(), "body {body:02X?}");
     }
     assert_eq!(
         sign_p256(&mut app, &mut fs, SLOT_SIGNATURE),
         Sw::OK,
         "no key was used, so the PIN freshness must still stand"
     );
+}
+
+/// GENERAL AUTHENTICATE dispatches on the FIRST operation tag the body carries,
+/// and at a key slot an empty `81` is a private-key operation, not a request for
+/// a challenge. Measured on a YubiKey 5.7.4, 3 runs each:
+///
+/// | body at a provisioned key slot | answer |
+/// |---|---|
+/// | `7C 02 81 00` | a signature (`7C 49 82 47 30 45 …`), and it spends |
+/// | `7C .. 82 00 81 00 85 <point>` | a signature — `81` comes first |
+/// | `7C .. 82 00 85 <point> 81 00` | the shared secret — `85` comes first |
+/// | `7C 02 85 00` | `6A80`, and it spends: the request reached the key |
+///
+/// Ours minted 16 random bytes under tag `81` for the first two — a host that
+/// does not check the tag reads them as a signature — and answered `9000` doing
+/// nothing for the last. `find_tag` per tag is order-blind, so the third row was
+/// answered with random bytes as well. At `9B` an empty `81` is still the
+/// single-auth challenge this arm exists for.
+#[test]
+fn general_authenticate_takes_the_first_operation_tag_in_the_body() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    for slot in [SLOT_KEYMGM, SLOT_SIGNATURE] {
+        assert_eq!(
+            run(
+                &mut app,
+                &mut fs,
+                INS_ASYM_KEYGEN,
+                0,
+                slot,
+                &gen_template(ALGO_ECCP256)
+            )
+            .0,
+            Sw::OK
+        );
+    }
+    let point = {
+        let (sw, md) = run(&mut app, &mut fs, INS_GET_METADATA, 0, SLOT_KEYMGM, &[]);
+        assert_eq!(sw, Sw::OK);
+        let pk = find_tag(&md, 0x04).unwrap();
+        pk[2..2 + pk[1] as usize].to_vec()
+    };
+    let ga = |app: &mut PivApplet, fs: &mut Fs<RamStorage>, slot: u8, body: Vec<u8>| {
+        run(app, fs, INS_AUTHENTICATE, ALGO_ECCP256, slot, &body)
+    };
+    let wrap = |inner: Vec<u8>| {
+        let mut v = vec![0x7C, inner.len() as u8];
+        v.extend_from_slice(&inner);
+        v
+    };
+
+    // An empty 81 at a key slot signs, and spends the freshness a 9C read.
+    verify_pin(&mut app, &mut fs);
+    let (sw, out) = ga(&mut app, &mut fs, SLOT_KEYMGM, vec![0x7C, 0x02, 0x81, 0x00]);
+    assert_eq!(sw, Sw::OK);
+    assert_eq!(out[0], 0x7C);
+    assert_eq!(
+        out[2], TAG_AUTH_RESPONSE,
+        "tag 82, a signature, not a challenge"
+    );
+    assert_eq!(out[4], 0x30, "a DER SEQUENCE, not random bytes");
+    assert_eq!(
+        sign_p256(&mut app, &mut fs, SLOT_SIGNATURE),
+        Sw::SECURITY_STATUS_NOT_SATISFIED,
+        "the empty-81 operation reached the key, so it spends"
+    );
+
+    // Tag order decides between a signature and an agreement.
+    let mut sig_first = vec![0x82, 0x00, 0x81, 0x00, 0x85, point.len() as u8];
+    sig_first.extend_from_slice(&point);
+    let mut ecdh_first = vec![0x82, 0x00, 0x85, point.len() as u8];
+    ecdh_first.extend_from_slice(&point);
+    ecdh_first.extend_from_slice(&[0x81, 0x00]);
+    verify_pin(&mut app, &mut fs);
+    let (sw, out) = ga(&mut app, &mut fs, SLOT_KEYMGM, wrap(sig_first));
+    assert_eq!(sw, Sw::OK);
+    assert_eq!(out[2], TAG_AUTH_RESPONSE, "81 first: a signature");
+    assert_eq!(
+        out[4], 0x30,
+        "…in DER, not the first byte of a shared secret"
+    );
+    verify_pin(&mut app, &mut fs);
+    let (sw, out) = ga(&mut app, &mut fs, SLOT_KEYMGM, wrap(ecdh_first));
+    assert_eq!(sw, Sw::OK);
+    assert_eq!(
+        &out[..4],
+        &[0x7C, 0x22, 0x82, 0x20],
+        "85 first: 32 raw bytes"
+    );
+
+    // An 85 the curve cannot use is refused — after reaching the key, so it costs
+    // the freshness exactly as a good one does.
+    for bad in [vec![0x85, 0x00], vec![0x85, 0x02, 0x04, 0x05]] {
+        verify_pin(&mut app, &mut fs);
+        assert_eq!(sign_p256(&mut app, &mut fs, SLOT_SIGNATURE), Sw::OK);
+        verify_pin(&mut app, &mut fs);
+        let (sw, out) = ga(&mut app, &mut fs, SLOT_KEYMGM, wrap(bad.clone()));
+        assert_eq!(sw, WRONG_DATA, "body {bad:02X?}");
+        assert!(out.is_empty());
+        assert_eq!(
+            sign_p256(&mut app, &mut fs, SLOT_SIGNATURE),
+            Sw::SECURITY_STATUS_NOT_SATISFIED,
+            "body {bad:02X?} reached the key, so it spends"
+        );
+    }
+
+    // An ECDH asked at 9B is refused with the same word as every other "not for
+    // this slot / not this key's algorithm" cell — measured, 2 runs, `6A80`.
+    let mut at_9b = vec![0x85, point.len() as u8];
+    at_9b.extend_from_slice(&point);
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            INS_AUTHENTICATE,
+            ALGO_ECCP256,
+            SLOT_CARDMGM,
+            &wrap(at_9b)
+        )
+        .0,
+        WRONG_DATA
+    );
+
+    // …and 9B keeps the arm this all started from: an empty 81 there is the
+    // single-auth challenge, in plaintext under tag 81.
+    let (sw, out) = run(
+        &mut app,
+        &mut fs,
+        INS_AUTHENTICATE,
+        ALGO_AES192,
+        SLOT_CARDMGM,
+        &[0x7C, 0x02, 0x81, 0x00],
+    );
+    assert_eq!(sw, Sw::OK);
+    assert_eq!(&out[..4], &[0x7C, 0x12, 0x81, 0x10]);
 }
 
 /// The last cell of the same boundary: a *denied touch* stops the operation before
@@ -2617,7 +2775,7 @@ fn a_key_operation_that_fails_still_spends_the_freshness() {
 
     verify_pin(&mut app, &mut fs);
     let junk = [0x04u8; 65];
-    assert_eq!(ecdh_p256(&mut app, &mut fs, &junk), Sw::DATA_INVALID);
+    assert_eq!(ecdh_p256(&mut app, &mut fs, &junk), WRONG_DATA);
     assert_eq!(
         sign_p256(&mut app, &mut fs, SLOT_SIGNATURE),
         Sw::SECURITY_STATUS_NOT_SATISFIED,
@@ -2659,12 +2817,34 @@ fn a_key_operation_that_fails_still_spends_the_freshness() {
             &wrong_algo
         )
         .0,
-        Sw::INCORRECT_P1P2
+        WRONG_DATA
     );
     assert_eq!(
         sign_p256(&mut app, &mut fs, SLOT_SIGNATURE),
         Sw::OK,
         "a wrong algorithm never reaches the key"
+    );
+    // The RSA arm is the one that had no algorithm check at all: it loaded the
+    // slot's key and spent before refusing on the cryptogram length, so an
+    // RSA-2048 request at any other slot cost the freshness. Same word, same
+    // accounting, measured (a P-256 slot addressed as RSA-2048 is 6A80).
+    verify_pin(&mut app, &mut fs);
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            INS_AUTHENTICATE,
+            ALGO_RSA2048,
+            SLOT_AUTHENTICATION,
+            &wrong_algo
+        )
+        .0,
+        WRONG_DATA
+    );
+    assert_eq!(
+        sign_p256(&mut app, &mut fs, SLOT_SIGNATURE),
+        Sw::OK,
+        "the RSA arm's wrong algorithm never reaches the key either"
     );
 
     verify_pin(&mut app, &mut fs);

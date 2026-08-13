@@ -16,7 +16,7 @@ use rsk_fs::{Fs, Storage};
 use rsk_openpgp::keys::PrivKey;
 use rsk_openpgp::rsa_crt;
 use rsk_openpgp::{Presence, Rng, UserPresence};
-use rsk_sdk::tlv::find_tag;
+use rsk_sdk::tlv::{Tlv, find_tag};
 use rsk_sdk::{ResBuf, Sw};
 use zeroize::Zeroize;
 
@@ -99,6 +99,8 @@ struct GenAuth<'c, S: Storage> {
     rng: &'c mut dyn Rng,
     presence: &'c mut dyn UserPresence,
     algo: u8,
+    /// The algorithm the slot's key was stored under (`meta[0]`).
+    slot_algo: u8,
     key_ref: u8,
     pin_policy: u8,
     touch_policy: u8,
@@ -122,12 +124,31 @@ impl<S: Storage> GenAuth<'_, S> {
     /// unprovisioned slot or a denied touch never reaches it and costs nothing.
     fn load_ec(&mut self) -> Result<PrivKey, Sw> {
         let key = seal::load_ec_key(self.dev, self.fs, key_fid(self.key_ref))?;
-        let want = keygen::curve_for_algo(self.algo).ok_or(Sw::INCORRECT_P1P2)?;
+        // Defence in depth: [`Self::algo_is_the_keys`] already refused a mismatch
+        // before this call, off the stored head rather than the sealed key.
+        let want = keygen::curve_for_algo(self.algo).ok_or(WRONG_DATA)?;
         if key.curve() != want {
-            return Err(Sw::INCORRECT_P1P2);
+            return Err(WRONG_DATA);
         }
         self.spend_pin();
         Ok(key)
+    }
+
+    /// The requested algorithm must be the one the slot's key was stored under.
+    /// Judged before the touch and before the load, so a mismatch neither prompts
+    /// nor spends: measured on a YubiKey 5.7.4, 2 runs over nine cells — a P-256
+    /// slot addressed as ECCP384, RSA-2048 or Ed25519, an ECDH asked at `9B` or at
+    /// an RSA/AES slot, and an empty `81` at a key slot under any symmetric
+    /// algorithm — every one of them `6A80`, spending nothing. Ours answered
+    /// `6A86`, and `6581` for the RSA arm, whose seal read ran first. Without it
+    /// the RSA arm also had no algorithm check at all: an RSA-2048 request at an
+    /// RSA-3072 slot loaded the 3072 key and spent before refusing on length.
+    fn algo_is_the_keys(&self) -> Result<(), Sw> {
+        if self.algo == self.slot_algo {
+            Ok(())
+        } else {
+            Err(WRONG_DATA)
+        }
     }
 
     /// Start a management-key handshake: record the outstanding challenge and
@@ -155,7 +176,7 @@ impl<S: Storage> GenAuth<'_, S> {
             // requested here (the start of the handshake) so step 2 needs no
             // second one.
             if self.key_ref != SLOT_CARDMGM {
-                return Err(Sw::INCORRECT_P1P2);
+                return Err(WRONG_DATA);
             }
             check_touch(self.touch_policy, self.presence)?;
             self.rng.fill(&mut self.sess.challenge[..self.chal_len]);
@@ -169,7 +190,7 @@ impl<S: Storage> GenAuth<'_, S> {
         // Mutual auth step 2: host returns the decrypted witness + its own
         // challenge; verify, then answer with the encrypted host challenge.
         if self.key_ref != SLOT_CARDMGM {
-            return Err(Sw::INCORRECT_P1P2);
+            return Err(WRONG_DATA);
         }
         // Only a witness this device issued *encrypted* (mutual step 1) may be
         // verified here — never a plaintext single-auth challenge.
@@ -201,14 +222,6 @@ impl<S: Storage> GenAuth<'_, S> {
     /// t81 single auth step 1: issue a plaintext challenge for the host to
     /// encrypt and return (verified in [`Self::single_auth_verify`]).
     fn single_challenge(&mut self, res: &mut ResBuf) -> Result<(), Sw> {
-        // Step 2 is 9B-only, so a challenge asked for at a key slot may not enter
-        // the session: stored there it authenticates 9B without ever revoking it
-        // (step 2 binds kind and algo, not the slot) and wrecks a live handshake.
-        if self.key_ref != SLOT_CARDMGM {
-            let mut chal = [0u8; 16];
-            self.rng.fill(&mut chal[..self.chal_len]);
-            return dyn_auth_resp(res, TAG_AUTH_CHALLENGE, &chal[..self.chal_len]);
-        }
         self.rng.fill(&mut self.sess.challenge[..self.chal_len]);
         self.begin_handshake(ChallengeKind::SingleChallenge);
         dyn_auth_resp(
@@ -223,6 +236,7 @@ impl<S: Storage> GenAuth<'_, S> {
     /// RSA (blinded, CRT-fault-checked), ECDSA over the digest, or PureEdDSA over
     /// the message. Symmetric algos are refused — see the arm's oracle note.
     fn slot_key_op(&mut self, c: &[u8], res: &mut ResBuf) -> Result<(), Sw> {
+        self.algo_is_the_keys()?;
         match self.algo {
             ALGO_RSA1024 | ALGO_RSA2048 | ALGO_RSA3072 | ALGO_RSA4096 => {
                 check_touch(self.touch_policy, self.presence)?;
@@ -262,7 +276,7 @@ impl<S: Storage> GenAuth<'_, S> {
                 // E(mgm, R) submitted as the 82 response decrypts back to R.
                 // The only sanctioned symmetric flows are mutual-witness (t80)
                 // and single-auth (t81-empty challenge -> t82 verify). Refuse.
-                return Err(Sw::INCORRECT_P1P2);
+                return Err(WRONG_DATA);
             }
             _ => return Err(WRONG_DATA),
         }
@@ -273,7 +287,7 @@ impl<S: Storage> GenAuth<'_, S> {
     /// `SingleChallenge` this device issued in plaintext may be answered here.
     fn single_auth_verify(&mut self, mgm: &[u8], r: &[u8]) -> Result<(), Sw> {
         if self.key_ref != SLOT_CARDMGM {
-            return Err(Sw::INCORRECT_P1P2);
+            return Err(WRONG_DATA);
         }
         if !self.sess.has_challenge
             || self.sess.chal_kind != ChallengeKind::SingleChallenge
@@ -301,15 +315,20 @@ impl<S: Storage> GenAuth<'_, S> {
     /// X25519 (`ykman calculate_secret`). Enforces the key's touch policy first.
     fn ecdh_op(&mut self, pp: &[u8], res: &mut ResBuf) -> Result<(), Sw> {
         if !is_key(self.key_ref) {
-            return Err(Sw::INCORRECT_P1P2);
+            return Err(WRONG_DATA);
         }
+        self.algo_is_the_keys()?;
         if !matches!(self.algo, ALGO_ECCP256 | ALGO_ECCP384 | ALGO_X25519) {
-            return Err(Sw::INCORRECT_P1P2);
+            return Err(WRONG_DATA);
         }
         check_touch(self.touch_policy, self.presence)?;
+        // The point is judged by the curve, after the key is loaded and the
+        // freshness spent — including an empty one. Measured on a YubiKey 5.7.4:
+        // an unusable point still closes every ALWAYS slot, because the request
+        // reached the key; what it cannot do is come back as anything but 6A80.
         let key = self.load_ec()?;
         let mut shared = [0u8; 48];
-        let n = key.ecdh(pp, &mut shared)?;
+        let n = key.ecdh(pp, &mut shared).map_err(|_| WRONG_DATA)?;
         dyn_auth_resp(res, TAG_AUTH_RESPONSE, &shared[..n])?;
         shared.zeroize();
         Ok(())
@@ -345,8 +364,11 @@ pub(crate) fn general_authenticate<S: Storage>(
     let mut mgm_key = [0u8; 32];
     let mut mgm_len = 0usize;
     if key_ref == SLOT_CARDMGM {
+        // Same class, same word as every other "this key is not that algorithm"
+        // cell: a YubiKey answers 6A80 to any body at 9B under a non-9B algorithm
+        // (measured, 2 runs, and E42 §6.9's sweep).
         let Some(want) = mgm_key_len(algo) else {
-            return Sw::INCORRECT_P1P2;
+            return WRONG_DATA;
         };
         mgm_len = match seal::seal_read(dev, fs, key_fid(SLOT_CARDMGM), &mut mgm_key) {
             Ok(n) => n,
@@ -354,7 +376,7 @@ pub(crate) fn general_authenticate<S: Storage>(
         };
         if mgm_len != want {
             mgm_key.zeroize();
-            return Sw::INCORRECT_P1P2;
+            return WRONG_DATA;
         }
     }
 
@@ -397,10 +419,7 @@ pub(crate) fn general_authenticate<S: Storage>(
     let touch_policy = meta[2];
 
     let chal_len: usize = if algo == ALGO_3DES { 8 } else { 16 };
-    let t80 = find_tag(dyn_auth, TAG_AUTH_WITNESS as u16);
-    let t81 = find_tag(dyn_auth, TAG_AUTH_CHALLENGE as u16);
-    let t82 = find_tag(dyn_auth, TAG_AUTH_RESPONSE as u16);
-    let t85 = find_tag(dyn_auth, TAG_AUTH_EXPONENTIATION as u16);
+    let op = first_operation(dyn_auth);
 
     let sw = {
         let mut ga = GenAuth {
@@ -410,25 +429,30 @@ pub(crate) fn general_authenticate<S: Storage>(
             rng: &mut *rng,
             presence: &mut *presence,
             algo,
+            slot_algo: meta[0],
             key_ref,
             pin_policy: pinpol,
             touch_policy,
             chal_len,
         };
-        if let Some(w) = t80 {
-            ga.mutual_auth(&mgm_key[..mgm_len], w, t81, res)
-        } else if let Some(c) = t81 {
-            if c.is_empty() {
-                ga.single_challenge(res)
-            } else {
-                ga.slot_key_op(c, res)
+        match op {
+            Some((TAG_AUTH_WITNESS, w)) => {
+                let host_chal = find_tag(dyn_auth, TAG_AUTH_CHALLENGE as u16);
+                ga.mutual_auth(&mgm_key[..mgm_len], w, host_chal, res)
             }
-        } else if let Some(r) = t82.filter(|r| !r.is_empty()) {
-            ga.single_auth_verify(&mgm_key[..mgm_len], r)
-        } else if let Some(pp) = t85.filter(|p| !p.is_empty()) {
-            ga.ecdh_op(pp, res)
-        } else {
-            Ok(())
+            // Empty at 9B opens the single-auth handshake; at a key slot it is a
+            // private-key operation over an empty challenge, which is what the
+            // oracle answers with a signature where we answered random bytes.
+            Some((TAG_AUTH_CHALLENGE, c)) if c.is_empty() && key_ref == SLOT_CARDMGM => {
+                ga.single_challenge(res)
+            }
+            Some((TAG_AUTH_CHALLENGE, c)) => ga.slot_key_op(c, res),
+            Some((TAG_AUTH_RESPONSE, r)) => ga.single_auth_verify(&mgm_key[..mgm_len], r),
+            Some((TAG_AUTH_EXPONENTIATION, pp)) => ga.ecdh_op(pp, res),
+            // No operation tag the card recognises. A YubiKey answers 6A80 to
+            // every such body — an unknown tag, a truncated TLV, a lone empty
+            // response placeholder — where we used to answer 9000 and do nothing.
+            _ => Err(WRONG_DATA),
         }
     };
     mgm_key.zeroize();
@@ -437,4 +461,26 @@ pub(crate) fn general_authenticate<S: Storage>(
         Ok(()) => Sw::OK,
         Err(e) => e,
     }
+}
+
+/// The operation this dynamic-auth template asks for: the FIRST tag in body order
+/// that names one. Measured on a YubiKey 5.7.4, 3 runs: `7C .. 82 00 81 00 85 <pt>`
+/// signs and the same body with `85` before `81` agrees, so precedence is position
+/// and not a fixed table — `find_tag` per tag is order-blind, and an ordinary ECDH
+/// body carrying an empty `81` returned random bytes instead of a shared secret.
+///
+/// An EMPTY `82` is the response placeholder every conformant body opens with, not
+/// a request to verify one; a non-empty `82` is single-auth step 2.
+fn first_operation(dyn_auth: &[u8]) -> Option<(u8, &[u8])> {
+    const WITNESS: u16 = TAG_AUTH_WITNESS as u16;
+    const CHALLENGE: u16 = TAG_AUTH_CHALLENGE as u16;
+    const RESPONSE: u16 = TAG_AUTH_RESPONSE as u16;
+    const EXPONENTIATION: u16 = TAG_AUTH_EXPONENTIATION as u16;
+    Tlv::new(dyn_auth)
+        .find(|&(t, v)| match t {
+            WITNESS | CHALLENGE | EXPONENTIATION => true,
+            RESPONSE => !v.is_empty(),
+            _ => false,
+        })
+        .map(|(t, v)| (t as u8, v))
 }
