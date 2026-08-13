@@ -67,7 +67,8 @@ CONSTANTS
     BugSetPinOverExisting,        \* clientpin.rs:184-186 setPIN over a live PIN
     BugHostPreemptsLocalWait,     \* the button's owner, taken by a host command
     BugLocalPinIgnoresBudget,     \* crates/rsk-display/src/gates.rs:126-128
-    BugPpuatIsAGate               \* eab4b5c: EF_PAUTHTOKEN in the deferred phase
+    BugPpuatIsAGate,              \* eab4b5c: EF_PAUTHTOKEN in the deferred phase
+    BugPinWriteBeforeRevoke       \* clientpin.rs:213-217, :300-304 -- the order
 
 (* Mutation switches for the LIVENESS properties. Kept apart from the set above *)
 (* because they break no invariant -- a wedge is a perfectly safe state -- so    *)
@@ -694,27 +695,35 @@ SetPinStart ==
     /\ UNCHANGED << pin, gate, store, lock, tok, plat, pres, walk, sys, snap,
                     upSpent, ram >>
 
-\* clientpin.rs:213-217 / write_pin_verifier :824-828 -- revoke BEFORE the new
-\* verifier lands. A torn authenticatorReset can drop EF_PIN and lose power
-\* before EF_PAUTHTOKEN; establishing a PIN over that leftover would hand the
-\* old holder read access to the credentials created next.
+\* THE ORDER IS THE REQUIREMENT, at both PIN flows (clientpin.rs:213-217 and
+\* :300-304, step 15 of 6.5.5.6). Revoke the persistent grant BEFORE the new
+\* verifier lands, or a power cut between the two writes leaves the old holder
+\* authorized against a PIN they no longer know -- and with the new PIN in place
+\* FixPpuatRequiresPin's consumer check is satisfied too, so the one defence
+\* downstream agrees. It was step sequencing and nothing else: swapping the two
+\* writes left every invariant GREEN over 55 425 408 states.
+PinVerifierLandsPolicy == ~gate.ppuat
+
 SetPinClearPpuat ==
-    /\ op.kind = "setpin" /\ op.step = 0
+    /\ op.kind = "setpin"
+    /\ op.step = (IF BugPinWriteBeforeRevoke THEN 1 ELSE 0)
     /\ gate' = IF BugSetPinKeepsPpuat
                  THEN [gate EXCEPT !.ppuatStale = TRUE]
                  ELSE [gate EXCEPT !.ppuat = FALSE, !.ppuatStale = FALSE]
-    /\ op' = [op EXCEPT !.step = 1]
+    /\ op' = IF BugPinWriteBeforeRevoke THEN NoOp ELSE [op EXCEPT !.step = 1]
     /\ UNCHANGED << pin, store, lock, tok, plat, pres, walk, sys, snap,
                     upSpent, viol, ram >>
 
 SetPinWrite ==
-    /\ op.kind = "setpin" /\ op.step = 1
+    /\ op.kind = "setpin"
+    /\ op.step = (IF BugPinWriteBeforeRevoke THEN 0 ELSE 1)
+    /\ viol' = IF PinVerifierLandsPolicy THEN viol
+                                          ELSE viol \cup {"NoTokenAfterInvalidation"}
     /\ pin' = [set |-> TRUE, retries |-> MaxRetries, everSet |-> TRUE]
     /\ lock' = [lock EXCEPT !.soft = FALSE, !.mism = 0, !.policyMism = 0]
-    /\ op' = NoOp
+    /\ op' = IF BugPinWriteBeforeRevoke THEN [op EXCEPT !.step = 1] ELSE NoOp
     /\ snap' = NoSnap
-    /\ UNCHANGED << gate, store, tok, plat, pres, walk, sys, upSpent, viol,
-                    ram >>
+    /\ UNCHANGED << gate, store, tok, plat, pres, walk, sys, upSpent, ram >>
 
 ChangePinStart == \* clientpin.rs:235-276: gates, then spend-and-verify.
     /\ PinAttempt(TRUE)
@@ -726,22 +735,25 @@ ChangePinStart == \* clientpin.rs:235-276: gates, then spend-and-verify.
 \* the new verifier lands, or a power cut leaves the old holder authorized
 \* against a PIN they no longer know.
 ChangePinClearPpuat ==
-    /\ op.kind = "chpin" /\ op.step = 0
+    /\ op.kind = "chpin"
+    /\ op.step = (IF BugPinWriteBeforeRevoke THEN 1 ELSE 0)
     /\ gate' = IF BugChangePinKeepsPpuat
                  THEN [gate EXCEPT !.ppuatStale = TRUE]
                  ELSE [gate EXCEPT !.ppuat = FALSE, !.ppuatStale = FALSE]
-    /\ op' = [op EXCEPT !.step = 1]
+    /\ op' = [op EXCEPT !.step = IF BugPinWriteBeforeRevoke THEN 2 ELSE 1]
     /\ UNCHANGED << pin, store, lock, tok, plat, pres, walk, sys, snap,
                     upSpent, viol, ram >>
 
 ChangePinWrite == \* clientpin.rs:305 store_new_pin
-    /\ op.kind = "chpin" /\ op.step = 1
+    /\ op.kind = "chpin"
+    /\ op.step = (IF BugPinWriteBeforeRevoke THEN 0 ELSE 1)
+    /\ viol' = IF PinVerifierLandsPolicy THEN viol
+                                          ELSE viol \cup {"NoTokenAfterInvalidation"}
     /\ pin' = [pin EXCEPT !.retries = MaxRetries, !.everSet = TRUE]
     /\ lock' = [lock EXCEPT !.soft = FALSE, !.mism = 0, !.policyMism = 0]
-    /\ op' = [op EXCEPT !.step = 2]
+    /\ op' = [op EXCEPT !.step = IF BugPinWriteBeforeRevoke THEN 1 ELSE 2]
     /\ snap' = NoSnap
-    /\ UNCHANGED << gate, store, tok, plat, pres, walk, sys, upSpent, viol,
-                    ram >>
+    /\ UNCHANGED << gate, store, tok, plat, pres, walk, sys, upSpent, ram >>
 
 \* clientpin.rs:311 resetPinUvAuthToken -- RAM only, and it must end every
 \* session credential the old PIN authorized (state.rs:486-497).

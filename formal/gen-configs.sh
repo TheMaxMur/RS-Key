@@ -18,7 +18,7 @@ BUGS=(BugResetGatesFirst BugCredBeforeRp BugTokenSurvivesPinChange
       BugSeedDoesNotLead BugNoTouchRequired BugStateResetAfterWipe
       BugPanelCancelable BugUnscopedOtpCancel BugLocalPinKeepsToken
       BugSetPinOverExisting BugHostPreemptsLocalWait BugLocalPinIgnoresBudget
-      BugPpuatIsAGate)
+      BugPpuatIsAGate BugPinWriteBeforeRevoke)
 
 # Mutants whose defect the shipped seed-lead makes unreachable: they rebuild a
 # pre-0x08BF ordering bug, so their configuration must be the pre-0x08BF tree.
@@ -65,6 +65,7 @@ target_inv() {
     BugHostPreemptsLocalWait)   echo NoAuthorizationBypass ;;
     BugLocalPinIgnoresBudget)   echo NoAuthorizationBypass ;;
     BugPpuatIsAGate)            echo NoAccessibleSecretWithoutGate ;;
+    BugPinWriteBeforeRevoke)    echo NoTokenAfterInvalidation ;;
   esac
 }
 
