@@ -2563,8 +2563,11 @@ fn put_data_d5_installs_the_key_the_aes_pso_uses() {
         verify_pin(&mut app, &mut fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
     }
 
-    // READ = *Never* (§5), and the card must not call an object it just took
-    // "not found": `D5` is an internal EF like every other sealed slot.
+    // READ = *Never* (§5), and there is no cell to copy: a YubiKey 5.7.4 does
+    // not implement `D5` at all — `PUT DATA D5` is `6B00` under PW3 there and so
+    // is PSO:ENCIPHER — so this DO is ours and the spec decides. `6B00` is what
+    // that card answers for every DO it does not serve, which is what a DO that
+    // can never be read looks like on the wire.
     assert_eq!(
         run(
             &mut app,
@@ -2572,7 +2575,7 @@ fn put_data_d5_installs_the_key_the_aes_pso_uses() {
             &[0x00, consts::INS_GET_DATA, 0x00, 0xD5, 0x00]
         )
         .1,
-        Sw::SECURITY_STATUS_NOT_SATISFIED
+        Sw::WRONG_P1P2
     );
 }
 

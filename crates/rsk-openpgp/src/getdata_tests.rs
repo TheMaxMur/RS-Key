@@ -119,23 +119,28 @@ fn flash_do_returns_raw_no_strip() {
 }
 
 #[test]
-fn unknown_tag_is_reference_not_found() {
+fn unknown_tag_is_wrong_p1p2() {
     let mut fs = fs();
     let a = aid();
     let mut out = [0u8; 16];
     let mut cur = None;
     let (_, sw) = get_data(0x4242, false, false, &mut fs, &a, &mut cur, &mut out);
-    assert_eq!(sw, Sw::REFERENCE_NOT_FOUND);
+    assert_eq!(sw, Sw::WRONG_P1P2);
 }
 
+/// An internal EF is not a DO with a denied ACL — it is a P1P2 this command does
+/// not serve, and it answers what an absent one does. `6982` here told anyone
+/// which of the 65536 cells name a file.
 #[test]
-fn internal_ef_read_is_denied() {
+fn internal_ef_read_is_indistinguishable_from_an_absent_do() {
     let mut fs = fs();
     let a = aid();
     let mut out = [0u8; 16];
     let mut cur = None;
     let (_, sw) = get_data(EF_PW1, false, false, &mut fs, &a, &mut cur, &mut out);
-    assert_eq!(sw, Sw::SECURITY_STATUS_NOT_SATISFIED);
+    assert_eq!(sw, Sw::WRONG_P1P2);
+    let (_, absent) = get_data(0x4242, false, false, &mut fs, &a, &mut cur, &mut out);
+    assert_eq!(sw, absent);
 }
 
 #[test]

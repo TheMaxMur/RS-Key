@@ -49,6 +49,21 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **OpenPGP `GET DATA` and in-application `SELECT` stop telling an internal file
+  from an absent one.** `GET DATA` spoke three answers for "I do not serve this":
+  `6A88` for a tag it did not know, `6982` for one of the 28 internal storage
+  FIDs that the applet's `P1P2` space happens to address, and `9000` with an
+  empty body for the write-only reset-code DO `D3`, which no writer ever fills.
+  `SELECT` by fid had the same split. Either one named the applet's whole file
+  map to a caller holding no credential, and the `D3` cell made a reset code read
+  as "set to nothing". `GET DATA` answers `6B00` throughout now and `SELECT`
+  answers `6A88`, each matching what it already said for a tag that does not
+  exist. A YubiKey 5.7.4 answers `6B00` to 65513 of the 65536 `GET DATA` cells,
+  swept end to end; its only two `6982`s are `0103` and `0104`, the private DOs
+  it does serve, which is exactly the meaning `6982` keeps here. The two private
+  DOs are unchanged and match the card password for password: unauthenticated
+  both are `6982`, PW1-82 alone opens `0103`, PW3 alone opens `0104`.
+  `bcdDevice` → `0x0930`.
 - **An on-device menu now yields to an OTP command too, not only to
   CTAPHID/CCID.** On a trusted-display build the worker runs on one thread, so a
   browse modal (Passkeys / Settings) hands it back the moment host work is queued

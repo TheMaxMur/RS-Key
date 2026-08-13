@@ -65,7 +65,12 @@ pub fn cmd_select(apdu: &Apdu, out: &mut [u8]) -> (usize, Sw) {
     };
     let found = match p1 {
         0x00 if apdu.nc == 0 => true, // select MF / application root
-        0x00..=0x02 if apdu.nc == 2 => !matches!(source(fid), DoSource::None),
+        // Same rule GET DATA applies: an internal EF is not a file this command
+        // has, so it answers what an absent fid answers. Anything else made a
+        // second, unauthenticated way to locate the 28 storage FIDs the applet's
+        // own tag space exposes. (The reference has no SELECT-by-fid at all —
+        // `00 A4 P1<=03` is `6D00` there, over the whole 16-bit space.)
+        0x00..=0x02 if apdu.nc == 2 => !matches!(source(fid), DoSource::None | DoSource::Internal),
         // Same rule the dispatcher applies (ISO 7816-4 truncated select): the
         // requested AID must be a PREFIX of ours. This arm is reachable — the
         // dispatcher only intercepts P2 `00`/`04`, so a `P2 = 05` SELECT lands

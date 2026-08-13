@@ -136,6 +136,11 @@ pub fn source(fid: u16) -> DoSource {
         // them: `PUT DATA D5` writes it, so answering GET DATA "no such object"
         // would have the card contradict itself about an object it just took.
         || fid == EF_AES_KEY.get()
+        // `D3` is write-only for the same reason and by the same table, and
+        // `PUT DATA D3` is routed to `put_reset_code` — so no file ever lands
+        // here and the `Flash` arm served the DO as an empty object under
+        // `9000`, which is a reset code reading as "set to nothing".
+        || fid == EF_RESET_CODE
     {
         return DoSource::Internal;
     }
@@ -161,8 +166,8 @@ pub fn source(fid: u16) -> DoSource {
         // Flash-backed working DOs.
         EF_CH_NAME | EF_LOGIN_DATA | EF_LANG_PREF | EF_SEX | EF_URI_URL | EF_SIG_COUNT
         | EF_FP_SIG | EF_FP_DEC | EF_FP_AUT | EF_FP_CA1 | EF_FP_CA2 | EF_FP_CA3 | EF_TS_SIG
-        | EF_TS_DEC | EF_TS_AUT | EF_UIF_SIG | EF_UIF_DEC | EF_UIF_AUT | EF_KDF | EF_RESET_CODE
-        | EF_PRIV_DO_1 | EF_PRIV_DO_2 | EF_PRIV_DO_3 | EF_PRIV_DO_4 => DoSource::Flash,
+        | EF_TS_DEC | EF_TS_AUT | EF_UIF_SIG | EF_UIF_DEC | EF_UIF_AUT | EF_KDF | EF_PRIV_DO_1
+        | EF_PRIV_DO_2 | EF_PRIV_DO_3 | EF_PRIV_DO_4 => DoSource::Flash,
 
         // Internal EFs (PINs, public-key DOs, base/PWPIV DEK, algo-priv,
         // chaining): not GET-DATA-able. The private-key + PW-DEK slots are

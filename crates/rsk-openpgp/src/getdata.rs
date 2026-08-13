@@ -61,17 +61,21 @@ pub fn get_data<S: Storage>(
 ) -> (usize, Sw) {
     let src = source(fid);
     match src {
-        DoSource::None => return (0, Sw::REFERENCE_NOT_FOUND),
-        // Internal EFs (keys, PINs, DEK) are found but read is denied by their ACL.
-        DoSource::Internal => return (0, Sw::SECURITY_STATUS_NOT_SATISFIED),
+        // A P1P2 this command does not serve is a wrong P1P2, whether it names
+        // nothing at all or an internal EF: a YubiKey 5.7.4 answers `6B00` to
+        // 65513 of the 65536 cells and keeps `6982` for the two private DOs it
+        // does serve. Telling the two apart located every internal EF for a
+        // caller holding no credential.
+        DoSource::None | DoSource::Internal => return (0, Sw::WRONG_P1P2),
         _ => {}
     }
     // §5's access table gives the private DOs two different owners and no admin
-    // override: `0103` is the cardholder's (PW1 no. 82), `0104` the admin's.
-    // PW3 used to satisfy `0103` as well, which is one password reading the
-    // other's DO — a YubiKey 5.7.4 answers `6982` to `00CA010300` with only PW3
-    // verified, 3/3. It also serves `0104` unauthenticated, which §5 forbids and
-    // we do not copy.
+    // override: `0103` is the cardholder's (PW1 no. 82), `0104` the admin's. A
+    // YubiKey 5.7.4 implements exactly that, 3/3 from a genuine deselect —
+    // unauthenticated both are `6982`, PW1-82 alone opens `0103` and not `0104`,
+    // PW3 alone opens `0104` and not `0103`. (An earlier reading had it serving
+    // `0104` to anyone; that one was taken with PW3 still standing, since a
+    // re-SELECT of the same AID does not clear this card's PW state.)
     if fid == EF_PRIV_DO_3 && !has_pw2 {
         return (0, Sw::SECURITY_STATUS_NOT_SATISFIED);
     }
