@@ -65,9 +65,11 @@ pub const WIDTH_MAX: usize = 64;
 pub const WIDTH_MIN: usize = WIDTH_MAX / 2;
 
 pub struct Wide<
-    const N: usize,
-> {
+    const N: usize,  // element count; one per lane
+    const M: usize>
+{
     pub data: [u8; N],
+    pub more: [u8; M],
 }
 
 pub const SPANS: [&str; 3] = [
@@ -75,6 +77,16 @@ pub const SPANS: [&str; 3] = [
     "two",  // and one in a comment: )
     "three",
 ];
+
+pub const SLOTS: usize = 8; /* was 4 before the bank split,
+                               so this line ends on that comma */
+
+pub static WORDS: [&str; 1] = ["w"];
+pub(crate) const SERIAL_OFF: usize = 4;
+pub static mut SCRATCH: u8 = 0;
+
+pub const PAIR: [u8; 2] = [1,
+    2];
 """
 
 PY = """\
@@ -92,6 +104,15 @@ def _(value):
 
 def fixture_keep(value=FIXTURE_LIMIT):
     return value
+
+
+class FixtureHolder:
+    def fixture_method(self):
+        return fixture_keep(FIXTURE_LIMIT)
+
+
+def fixture_call(holder):
+    return holder.fixture_method()
 """
 
 USER = """\
@@ -103,6 +124,18 @@ pub fn other() -> usize {
 
 pub fn spans() -> usize {
     crate::SPANS.len()
+}
+
+pub fn sized() -> usize {
+    crate::SLOTS + crate::SERIAL_OFF + crate::WORDS.len()
+}
+
+pub fn scratch() -> u8 {
+    unsafe { crate::SCRATCH }
+}
+
+pub fn pair() -> u8 {
+    crate::PAIR[0]
 }
 """
 
@@ -272,6 +305,33 @@ def test_a_function_named_underscore_is_not_a_name(tree):
     assert tree.names() == ["FIXTURE_LIMIT"]
 
 
+def test_a_method_signature_is_not_a_module_level_definition(tree):
+    """E200. `\\s*def` matched an indented one, so every helper here was a flood.
+
+    It fired on this branch's own anti-flood commit: `Tree.report`'s signature
+    changed and the hook answered with 322 sites — as the *only* row, so E132's
+    narrowest-first had nothing to sort. `run` is 2568 lines here, `write` 1232.
+    The `NAME = …` half was anchored from the start; this is the same anchor.
+    """
+    tree.edit("tool.py", "FIXTURE_LIMIT = 7", "FIXTURE_LIMIT = 9")
+    tree.edit(
+        "tool.py", "    def fixture_method(self):", "    def fixture_method(self, extra=None):"
+    )
+    assert tree.names() == ["FIXTURE_LIMIT"]
+
+
+def test_a_module_level_def_signature_is_still_a_definition(tree):
+    """The over-fix: anchoring must not silence the shape this *is* scoped to."""
+    tree.edit(
+        "tool.py",
+        "def fixture_keep(value=FIXTURE_LIMIT):",
+        "def fixture_keep(value=FIXTURE_LIMIT, extra=None):",
+    )
+    report = tree.report()
+    assert sorted(report) == ["fixture_keep"]
+    assert report["fixture_keep"] == ["tool.py:19"]
+
+
 # --- and the names that only look like it --------------------------------------
 
 
@@ -287,16 +347,74 @@ def test_a_one_letter_name_is_still_a_name(tree):
     assert tree.names() == ["N"]
 
 
-def test_a_const_generic_parameter_is_not_a_definition(tree):
-    """A parameter list carries on with `,`; an item ends in `;`. E131.
+@pytest.mark.parametrize(
+    "old, new",
+    [
+        (
+            "    const N: usize,  // element count; one per lane",
+            "    const N: u32,  // element count; one per lane",
+        ),
+        ("    const M: usize>", "    const M: u32>"),
+    ],
+)
+def test_a_const_generic_parameter_is_not_a_definition(tree, old, new):
+    """E131. A parameter has neither a value nor a `;`; an item has one or both.
 
-    Giving the parameter a default is the diff shape a real edit makes, and the
-    name it would report is the one a `git grep -w` floods on — 323 lines in this
-    repo, where a proof harness's own `const N` makes `N` a real name too.
+    The name it would report is the one a `git grep -w` floods on — 323 lines in
+    this repo, where a proof harness's own `const N` makes `N` a real name too.
+    That trailing comment carries a `;` on purpose: read off the raw line rather
+    than `code_only`'s, the semicolon alone makes the parameter look like an item.
     """
     widen(tree)
-    tree.edit("src/lib.rs", "    const N: usize,", "    const N: usize = 4,")
+    tree.edit("src/lib.rs", old, new)
     assert tree.names() == ["WIDTH"]
+
+
+def test_an_item_whose_line_ends_on_a_comma_is_still_an_item(tree):
+    """The reason the discriminator is positive and not a list of endings.
+
+    `PAIR`'s first line really does end on `,`, with no comment involved — so the
+    blacklist spelling drops it while the scanner is working perfectly. Reading
+    what an item *has* cannot fail that way.
+    """
+    tree.edit("src/lib.rs", "pub const PAIR: [u8; 2] = [1,", "pub const PAIR: [u8; 2] = [3,")
+    assert tree.names() == ["PAIR"]
+
+
+def test_a_block_comment_does_not_hide_a_definition(tree):
+    """The regression E131's first spelling shipped, found by review.
+
+    `SLOTS` is an ordinary item whose line ends on a comma inside an unterminated
+    `/* … */`. Judged by what the line *ends with*, it vanishes from the report
+    entirely — a use site nobody is told to read, which is the one direction this
+    file must not fail in.
+    """
+    tree.edit("src/lib.rs", "pub const SLOTS: usize = 8;", "pub const SLOTS: usize = 9;")
+    report = tree.report()
+    assert sorted(report) == ["SLOTS"]
+    assert report["SLOTS"] == ["src/other.rs:12"]
+
+
+@pytest.mark.parametrize(
+    "old, new, name",
+    [
+        ('pub static WORDS: [&str; 1] = ["w"];', 'pub static WORDS: [&str; 1] = ["z"];', "WORDS"),
+        (
+            "pub(crate) const SERIAL_OFF: usize = 4;",
+            "pub(crate) const SERIAL_OFF: usize = 5;",
+            "SERIAL_OFF",
+        ),
+        ("pub static mut SCRATCH: u8 = 0;", "pub static mut SCRATCH: u8 = 1;", "SCRATCH"),
+    ],
+)
+def test_every_alternative_in_the_rust_pattern_is_reached(tree, old, new, name):
+    """`static`, `pub(crate)` and `static mut` were in the regex and in no fixture.
+
+    89 `static`, 101 restricted-visibility and 3 `static mut` definitions rest on
+    alternatives no case had ever driven.
+    """
+    tree.edit("src/lib.rs", old, new)
+    assert tree.names() == [name]
 
 
 def test_a_wide_name_does_not_bury_the_finding_beside_it(tree):
@@ -346,8 +464,11 @@ def test_a_deletion_inside_a_multi_line_definition_is_reported(tree):
 
     Dropping an element from a constant is a value change like any other; with no
     anchor the hunk carries no line into `enclosing_def` and the edit is invisible.
+
+    The *last* element on purpose: with a middle one, an anchor off by one still
+    lands inside the statement and the row asserts nothing about where it points.
     """
-    tree.edit("src/lib.rs", "    2,\n", "")
+    tree.edit("src/lib.rs", "    3,\n", "")
     report = tree.report()
     assert sorted(report) == ["TABLE"]
     assert report["TABLE"] == ["src/lib.rs:10", "src/lib.rs:15"]
@@ -366,17 +487,29 @@ def test_a_deletion_below_a_definition_is_not_attributed_to_it(tree):
 def test_the_search_is_sized_by_the_staged_side_not_the_worktree(tree):
     """The hunk line numbers belong to the index, so `post_lines` reads the index.
 
-    Reading the worktree instead sizes the search by lines nobody staged: the
-    unstaged padding here pushes `TABLE` twenty lines down, and the staged hunk's
-    line number then lands in prose that encloses no definition at all.
+    Two wrong sides to read, and the staged padding separates them. Reading the
+    *worktree* sizes the search by lines nobody staged; reading the diff's
+    *pre-image* misses the twenty staged lines above `TABLE`. Both land the hunk's
+    line number in padding that encloses no definition at all.
     """
 
-    def pad():
+    def decoy():
         path = tree.root / "src/lib.rs"
-        path.write_text("// pad\n" * 20 + path.read_text())
+        path.write_text("// unstaged\n" * 9 + path.read_text())
 
-    tree.edit("src/lib.rs", "    2,\n", "    7,\n")
-    assert sorted(tree.report(unstaged=pad)) == ["TABLE"]
+    tree.edit(
+        "src/lib.rs",
+        "pub struct Wide<\n    const N: usize,  // element count; one per lane\n"
+        "    const M: usize>\n{\n    pub data: [u8; N],\n    pub more: [u8; M],\n}\n\n",
+        "",
+    )
+    tree.edit("src/lib.rs", "pub static mut SCRATCH: u8 = 0;", "pub static mut SCRATCH: u8 = 1;")
+    report = tree.report(unstaged=decoy)
+    assert sorted(report) == ["SCRATCH"]
+    # Asserted, not just the name: a header over an empty list is the shape a
+    # reporter fails in. The sites are worktree line numbers — `uses()` greps the
+    # worktree while `touched` comes from the index, which is its own known limit.
+    assert report["SCRATCH"] == ["src/other.rs:16"]
 
 
 # --- the two defects the audit found and no test did ---------------------------

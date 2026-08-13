@@ -53,8 +53,11 @@ MAX_SITES = 20
 RUST_DEF = re.compile(
     r"^\s*(?:pub\s*(?:\([^)]*\)\s*)?)?(?:const|static)\s+(?:mut\s+)?(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*:"
 )
+# Both halves anchored at column 0. An indented `def` is a method or a closure,
+# not the module-level signature this is scoped to, and its name is the generic
+# kind `git grep -w` floods on — `run` is 2568 lines here, `write` 1232.
 PY_DEF = re.compile(
-    r"^(?:(?P<name>[A-Z_][A-Z0-9_]*)\s*=(?!=)|\s*def\s+(?P<fname>[A-Za-z_][A-Za-z0-9_]*)\s*\()"
+    r"^(?:(?P<name>[A-Z_][A-Z0-9_]*)\s*=(?!=)|def\s+(?P<fname>[A-Za-z_][A-Za-z0-9_]*)\s*\()"
 )
 HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(?P<start>\d+)(?:,(?P<count>\d+))? @@")
 
@@ -75,13 +78,15 @@ def defined(line, path):
     for, one layer up.
 
     A const *generic parameter* on a line of its own is spelled like an item and
-    is not one. Only a parameter list carries on past the type with `,` or `>`;
-    an item ends in `;`, or opens a bracket its value continues inside.
+    is not one. Told apart by [`item_line`], which asks what an item *has* rather
+    than what a parameter ends with: a blacklist of endings turns every comment
+    the scanner mis-reads into a dropped definition, which is the one direction
+    this file must not fail in.
     """
     if path.endswith(".rs"):
         m = RUST_DEF.match(line)
         name = m.group("name") if m else None
-        if name and code_only(line, path).rstrip().endswith((",", ">")):
+        if name and not item_line(code_only(line, path)):
             return None
     elif path.endswith(".py"):
         m = PY_DEF.match(line)
@@ -138,13 +143,28 @@ def parse(diff):
     return touched, cut, gone, born, where
 
 
+def item_line(code):
+    """Whether a `const`/`static` line, comments aside, is an item.
+
+    An item has a value or ends its declaration; a generic parameter has neither.
+    Asked positively on purpose: reading it as "ends with `,` or `>`" makes every
+    comment the scanner misses a *dropped* definition — `const SLOTS: usize = 8;
+    /* was 4 before the split,` is an item — and dropping one is the only
+    direction this file must not fail in. A parameter carrying a *default* has an
+    `=` and so over-reports, which is the harmless way round.
+    """
+    return ";" in code or "=" in code
+
+
 def code_only(line, path):
-    """`line` with its string bodies and its trailing comment blanked out.
+    """`line` with its string bodies and its comments blanked out.
 
     A `//`-commented `)` used to close a definition's span early, which drops the
     lines after it — and a dropped line is a use site nobody is told to read, the
     exact failure this file exists to prevent. Rust `'` is left alone (it is a
-    lifetime far more often than a char literal).
+    lifetime far more often than a char literal). A `/*` with no `*/` beside it
+    truncates, so a block comment's later lines still read as code — over-reading,
+    which is the safe way to be wrong here.
     """
     quotes = '"' if path.endswith(".rs") else "\"'"
     comment = "//" if path.endswith(".rs") else "#"
@@ -163,6 +183,13 @@ def code_only(line, path):
             out.append(" ")
         elif line.startswith(comment, i):
             break
+        elif path.endswith(".rs") and line.startswith("/*", i):
+            end = line.find("*/", i + 2)
+            if end < 0:
+                break
+            out.append(" " * (end + 2 - i))
+            i = end + 2
+            continue
         else:
             out.append(ch)
         i += 1
