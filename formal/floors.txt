@@ -1,0 +1,42 @@
+\* SPDX-License-Identifier: AGPL-3.0-only
+\* Copyright (C) 2026 RS-Key contributors
+\*
+\* WHAT EACH CONFIGURATION MUST PRODUCE, so that a run nobody watched cannot
+\* pass by getting SMALLER. `Seams.cfg` once came back GREEN over ONE distinct
+\* state -- every invariant holding vacuously, because a precedence slip had
+\* turned an assignment into a guard that disabled both SELECT actions (E164).
+\* A one-state GREEN is indistinguishable from a real one in the log, and the
+\* runner's `VACUOUS` heuristic only sees the collapse all the way to nothing.
+\*
+\* The floor is an ORDER OF MAGNITUDE, not a pin. It is set near a third of the
+\* measured count so that ordinary fidelity churn does not trip it -- this model
+\* has legitimately shrunk 23% in one round -- while a collapse cannot pass. A
+\* GREEN below its floor is reported as FLOOR and exits non-zero; re-measure and
+\* move the number deliberately, the way the gate's other ratchets move.
+\*
+\* The VERDICT column is the second half, and it catches the other silent pass:
+\* a mutant that stops firing. `BugSetPinKeepsPpuat` explored 40 459 667 states
+\* without a counterexample after a fix made its defect unreachable (E171) --
+\* far above any floor, and only visible because somebody read the matrix.
+\*
+\* Columns: <config or glob>  <GREEN|RED>  <min distinct, or - >  [heap]
+\* First match wins, so an exact name may precede its class glob.
+
+Shipped.cfg                          GREEN   20000000
+Seams.cfg                            GREEN   200
+\* The liveness layer builds a behaviour graph ON TOP of the state graph -- 23.7
+\* million nodes at these constants -- and runs out of memory at the 4 GB
+\* default after the state search has already completed (E172). The heap column
+\* is that one-line fix, kept beside the number that motivates it.
+Liveness.cfg                         GREEN   2000000   12g
+Liveness_Full.cfg                    GREEN   2000000   24g
+
+\* Every mutant must FIRE. A counterexample search halts at the first violation,
+\* so its state count is worker-scheduling dependent and carries no floor.
+Historical_*.cfg                     RED     -
+Mut_*.cfg                            RED     -
+Solo_*.cfg                           RED     -
+SoloClause_*.cfg                     RED     -
+SeamMut_*.cfg                        RED     -
+SeamSolo_*.cfg                       RED     -
+LiveMut_*.cfg                        RED     -

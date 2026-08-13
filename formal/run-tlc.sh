@@ -36,13 +36,28 @@ python3 tla-lint.py || exit 2
 # module's, and TLC takes the module name rather than reading it from the cfg.
 spec_for() { case "$1" in Seam*) echo RSKeyAppletSeams ;; *) echo RSKeySecurityState ;; esac; }
 
+# floors.txt: what each configuration must produce. First match wins.
+expect_for() {
+  local cfg=$1 pat rest
+  while read -r pat rest; do
+    case "$pat" in '\*'|''|'#'*) continue ;; esac
+    # shellcheck disable=SC2254 -- $pat is a glob on purpose
+    case "$cfg" in $pat) echo "$rest"; return ;; esac
+  done < floors.txt
+  echo ""
+}
+
+FAILED=0
+
 one() {
   local cfg=$1 log="out/${1%.cfg}.log" SPEC
   SPEC=$(spec_for "$cfg")
   mkdir -p out
+  local want floor heap
+  read -r want floor heap <<< "$(expect_for "$cfg")"
   local t0 t1
   t0=$(date +%s)
-  "$JAVA" -XX:+UseParallelGC -Xmx"$HEAP" -cp "$JAR" tlc2.TLC \
+  "$JAVA" -XX:+UseParallelGC -Xmx"${HEAP_OVERRIDE:-${heap:-$HEAP}}" -cp "$JAR" tlc2.TLC \
       -nowarning -workers "$WORKERS" -config "$cfg" "$SPEC" > "$log" 2>&1
   t1=$(date +%s)
   local states distinct depth verdict
@@ -59,6 +74,11 @@ one() {
     # judgement call: below it the Next relation fired nothing at all.
     if [ "${distinct:-0}" -lt 2 ] || [ "${depth:-0}" -lt 2 ]; then
       verdict="VACUOUS: nothing was enabled"
+    elif [ "${floor:--}" != "-" ] && [ -n "${floor:-}" ] \
+         && [ "${distinct:-0}" -lt "$floor" ]; then
+      # The VACUOUS rule above only sees the collapse all the way to nothing.
+      # A run that merely got SMALL is the same failure with a survivor.
+      verdict="FLOOR: $distinct < $floor"
     else
       verdict="GREEN"
     fi
@@ -67,8 +87,18 @@ one() {
                      | sed 's/Invariant //; s/ is violated//')"
     [ "$verdict" = "RED: " ] && verdict="RED: $(grep -m1 -E '^Error' "$log")"
   fi
-  printf '%-42s %-38s states=%-9s distinct=%-8s depth=%-3s %ss\n' \
-    "$cfg" "$verdict" "${states:-?}" "${distinct:-?}" "${depth:-?}" "$((t1-t0))"
+  # A mutant that stops firing is the one failure this apparatus exists to
+  # avoid, and it does not look like a failure: BugSetPinKeepsPpuat explored
+  # 40 459 667 states without a counterexample once a fix made its defect
+  # unreachable, and only a human reading the matrix noticed.
+  local mark="" got=${verdict%%:*}
+  if [ -n "${want:-}" ] && [ "$want" != "$got" ]; then
+    mark="  !! expected $want"
+    FAILED=$((FAILED + 1))
+  fi
+  printf '%-42s %-38s states=%-9s distinct=%-8s depth=%-3s %ss%s\n' \
+    "$cfg" "$verdict" "${states:-?}" "${distinct:-?}" "${depth:-?}" "$((t1-t0))" \
+    "$mark"
 }
 
 if [ "${1:-}" = "all" ]; then
@@ -86,4 +116,9 @@ if [ "${1:-}" = "all" ]; then
   # constants give in 139 s. Run it by hand when the reduction is questioned.
 else
   one "${1:?usage: run-tlc.sh <config.cfg> | all}"
+fi
+
+if [ "$FAILED" -gt 0 ]; then
+  echo "run-tlc: FAIL -- $FAILED row(s) did not produce what floors.txt requires" >&2
+  exit 1
 fi
