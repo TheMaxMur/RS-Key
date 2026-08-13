@@ -26,10 +26,6 @@ pub const ALGO_RSA: u8 = 0x01;
 pub const ALGO_ECDH: u8 = 0x12;
 pub const ALGO_ECDSA: u8 = 0x13;
 pub const ALGO_EDDSA: u8 = 0x16;
-pub const ALGO_AES: u8 = 0x70;
-pub const ALGO_AES_128: u8 = 0x71;
-pub const ALGO_AES_192: u8 = 0x72;
-pub const ALGO_AES_256: u8 = 0x74;
 
 /// Default algorithm attribute when the slot has no `EF_ALGO_PRIV*` —
 /// RSA-2048, gpg's default. dobj.rs's C1/C2/C3 GET DATA fallback

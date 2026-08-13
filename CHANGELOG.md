@@ -377,6 +377,23 @@ below in the usual four sections, security last.
   the previous array intact.
   **bcdDevice → 0x087F.**
 
+- **Four dead AES algorithm IDs dropped from the OpenPGP constants.**
+  `ALGO_AES`, `ALGO_AES_128`, `ALGO_AES_192` and `ALGO_AES_256` sat under a
+  comment calling them the first byte of an algorithm-attributes DO — a field
+  OpenPGP gives only to the three asymmetric keys (`C1`/`C2`/`C3`). **The card's
+  AES PSO is untouched and stays implemented**; it names its algorithm by key
+  width rather than by an ID byte, which is what `AES_KEY_LENS` next door
+  already says — 16 bytes is AES-128, 32 is AES-256, and §7.2.11 has nothing
+  between, so `ALGO_AES_192` named a mode the spec does not define. Nothing read
+  any of the four, anywhere in `crates/`, `tools/`, `firmware/`, `fuzz/` or
+  `tests/`, and the four that remain are now exactly the four the comment
+  describes. Measured, not assumed: the flashed image keeps the same SHA-256
+  over `objcopy -O binary`, with a verbatim rebuild and a live edit to the same
+  file as the two controls, so only non-loadable sections move. The bump is what
+  `scripts/bcd_gate.py` charges a `pub const` in a shipped crate, which cannot
+  tell a dead one from a live one; paying it beats teaching the guard a hole.
+  **bcdDevice → 0x0953.**
+
 ### Fixed
 
 - **A one-byte body is one refusal on every PIV command, and the management key
