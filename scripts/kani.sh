@@ -5,8 +5,8 @@
 # The Kani roster, in tiers, with one owner.
 #
 # The proofs used to run in one place — the daily `deep-checks` row — because one
-# harness in `rsk-rescue` costs ~80 minutes and nothing that expensive belongs on
-# a pull request. But that put every proof a day away from the change that broke
+# harness in `rsk-rescue` costs half an hour or more and nothing that expensive
+# belongs on a pull request. But that put every proof a day away from the change that broke
 # it, and the split is cheap once the cost is measured rather than assumed: the
 # whole fast tier discharges in ~212 s of solving (docs/testing.md carries the
 # table), while four crates hold everything slow.
@@ -42,10 +42,11 @@ cd "$(dirname "$0")/.."
 # wait, and the answer is to move its crate to SLOW, not to raise the cap.
 FAST="rsk-sdk rsk-fs rsk-crypto rsk-openpgp rsk-otp rsk-piv rsk-oath rsk-usb rsk-ui rsk-led rsk-slip39 rsk-bip39 rsk-device"
 
-# SLOW: the arithmetic and the state sequences. `rsk-rescue` carries the ~80 min
-# `serialize_parse_roundtrip`, `rsk-rsa-asm` the functional division spec and the
-# sieve, `rsk-mldsa` the rounding round-trips, `rsk-fido` the three sequence
-# proofs (~12 min together, and one of them peaks at 9.3 GiB).
+# SLOW: the arithmetic and the state sequences. `rsk-rescue` carries
+# `serialize_parse_roundtrip` (27m42s measured 2026-08-13; ~80 min was recorded
+# once), `rsk-rsa-asm` the functional division spec and the sieve, `rsk-mldsa` the
+# rounding round-trips, `rsk-fido` the three sequence proofs (~12 min together,
+# and one of them peaks at 9.3 GiB).
 SLOW="rsk-rescue rsk-rsa-asm rsk-mldsa rsk-fido"
 
 # STATEFUL: the crates whose proofs are about the security state a reset, a wipe
@@ -87,10 +88,13 @@ COVERS_all=31
 # being reachable for a reason nobody has looked at.
 DEAD_COVER_COPIES_MAX=1
 
-# The per-harness cap. Not per row — Kani runs the rest and fails at the end — so
-# it bounds one non-convergent proof, never the tier.
+# The per-harness cap. Kani runs the rest and fails at the end, so it bounds one
+# non-convergent proof rather than the tier — but the run then exits 1, `pipefail`
+# ends this script at the `tee`, and none of the checks below is reached (measured).
 TIMEOUT_pr=5m
 TIMEOUT_state=30m
+# 27m42s against this 30m, an 8% margin, and a slower box tips it — at which point
+# the row fails on a correct harness and `FLOOR_all` is never read at all.
 TIMEOUT_all=30m
 
 # The one owner of tier → crates. `--tiers` and the run path both come through

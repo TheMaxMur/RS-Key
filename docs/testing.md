@@ -280,7 +280,7 @@ run):
 |---|---|---|---|---|---|
 | `pr` | 13 | 50 | 23 | 199 s | `rsk-piv::set_protected_total_and_invariant`, 47 s |
 | `state` | 2 | 8 | 9 | ~10 min | `rsk-fido::…_at_call_site`, ~7 min (9.3 GiB peak) |
-| `all` | 17 | 66 | 31 | ~1 h 45 | `rsk-rescue::serialize_parse_roundtrip`, ~80 min |
+| `all` | 17 | 66 | 31 | ~1 h 45 | `rsk-rescue::serialize_parse_roundtrip`, 27 m 42 s |
 
 `pr` and `state` are measured runs. `all` has never been run end to end here:
 its cover count is the two measured tiers plus `rsk-rescue`'s one, so
@@ -299,6 +299,17 @@ still passed.
 the tripwire on the tier assignment: a fast-tier harness that grows past it
 fails the pull request instead of quietly making every one of them wait, and the
 answer is to move its crate to the slow list, never to raise the cap.
+
+A harness that trips its cap ends the whole row, and it ends it *above* the floor
+checks: `cargo kani` exits 1, `pipefail` makes that the pipeline's, and the script
+stops at the `tee`. Both measured on kani 0.67.0, 2026-08-13. That matters for
+`TIMEOUT_all=30m`, because the harness it is really about —
+`serialize_parse_roundtrip` — verified in **27 m 42 s** here, an 8% margin, on an
+18-core Apple Silicon under load. The `~80 min` this page carried for it is not
+reproduced; if it is right for a slower runner then the daily row has been failing
+on a correct harness, and `FLOOR_all` and `COVERS_all` have never been read. The
+`~1 h 45` in the Solve column above still includes the old figure and no one has
+re-composed it.
 
 Pin the version — a verdict belongs to the tool that gave it, and an unpinned
 install is not the one CI runs. `--harness-timeout` is experimental (hence the
