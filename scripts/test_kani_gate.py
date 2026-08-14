@@ -506,3 +506,78 @@ def test_a_reformatted_floor_is_still_read(tree, spelling):
     the number was `None` over a file that plainly prints it."""
     tree.edit(kani_gate.RUNNER, "FLOOR_all=3", spelling)
     assert tree.problems() == []
+
+
+def test_the_full_tier_may_be_split_across_two_rows(tree):
+    """`all` is the anchor, not a row: two halves that partition it satisfy it.
+
+    The daily run splits it because one half can exhaust a hosted runner's
+    memory, and a job that dies should cost only its own crates.
+    """
+    tree.edit(
+        kani_gate.RUNNER,
+        '    all) echo "$FAST $SLOW" ;;',
+        '    all) echo "$FAST $SLOW" ;;\n'
+        '    light) echo "$FAST" ;;\n'
+        '    heavy) echo "$SLOW" ;;',
+    )
+    tree.edit(kani_gate.RUNNER, 'TIERS="pr state all"', 'TIERS="pr state all light heavy"')
+    tree.edit(
+        kani_gate.RUNNER,
+        "FLOOR_all=3\n",
+        "FLOOR_all=3\nFLOOR_light=2\nFLOOR_heavy=1\n",
+    )
+    tree.edit(
+        kani_gate.RUNNER,
+        "COVERS_all=4\n",
+        "COVERS_all=4\nCOVERS_light=3\nCOVERS_heavy=1\n",
+    )
+    tree.edit(
+        kani_gate.PINNED_IN,
+        "        run: ./scripts/kani.sh all",
+        "        run: ./scripts/kani.sh light\n"
+        "      - name: prove the heavy half\n"
+        "        run: ./scripts/kani.sh heavy",
+    )
+    tree.edit(
+        kani_gate.DOCS,
+        "./scripts/kani.sh all\n",
+        "./scripts/kani.sh all\n./scripts/kani.sh light\n./scripts/kani.sh heavy\n",
+    )
+    tree.edit(
+        kani_gate.DOCS,
+        "| `all` | 3 | 3 | 4 | 2 s | `rsk-c::p`, 2 s |\n",
+        "| `all` | 3 | 3 | 4 | 2 s | `rsk-c::p`, 2 s |\n"
+        "| `light` | 2 | 2 | 3 | 1 s | `rsk-a::p`, 1 s |\n"
+        "| `heavy` | 1 | 1 | 1 | 2 s | `rsk-c::p`, 2 s |\n",
+    )
+    assert tree.problems() == []
+
+
+def test_a_split_that_leaves_a_crate_behind_still_fails(tree):
+    """The exemption is exact: halves that do not cover `all` are not a split."""
+    tree.edit(
+        kani_gate.RUNNER,
+        '    all) echo "$FAST $SLOW" ;;',
+        '    all) echo "$FAST $SLOW" ;;\n    light) echo "$FAST" ;;',
+    )
+    tree.edit(kani_gate.RUNNER, 'TIERS="pr state all"', 'TIERS="pr state all light"')
+    tree.edit(kani_gate.RUNNER, "FLOOR_all=3\n", "FLOOR_all=3\nFLOOR_light=2\n")
+    tree.edit(kani_gate.RUNNER, "COVERS_all=4\n", "COVERS_all=4\nCOVERS_light=3\n")
+    tree.edit(
+        kani_gate.PINNED_IN,
+        "        run: ./scripts/kani.sh all",
+        "        run: ./scripts/kani.sh light",
+    )
+    tree.edit(
+        kani_gate.DOCS,
+        "./scripts/kani.sh all\n",
+        "./scripts/kani.sh all\n./scripts/kani.sh light\n",
+    )
+    tree.edit(
+        kani_gate.DOCS,
+        "| `all` | 3 | 3 | 4 | 2 s | `rsk-c::p`, 2 s |\n",
+        "| `all` | 3 | 3 | 4 | 2 s | `rsk-c::p`, 2 s |\n"
+        "| `light` | 2 | 2 | 3 | 1 s | `rsk-a::p`, 1 s |\n",
+    )
+    assert only(tree.problems(), "no CI row runs the `all` tier")

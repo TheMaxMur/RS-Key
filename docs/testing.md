@@ -241,7 +241,9 @@ shell):
 cargo install --locked kani-verifier --version 0.67.0 && cargo kani setup
 ./scripts/kani.sh pr       # the fast tier — what every pull request runs
 ./scripts/kani.sh state    # rsk-fido + rsk-fs, the security-state sequences
-./scripts/kani.sh all      # every harness; what runs daily
+./scripts/kani.sh all      # every harness — the roster, and the local command
+./scripts/kani.sh light    # all but the heavy crate — one of the two daily rows
+./scripts/kani.sh heavy    # rsk-rescue alone — the other, in its own job
 ```
 
 `scripts/kani.sh` owns the tier → crate table and nothing else does, and it
@@ -286,6 +288,8 @@ run):
 | `pr` | 13 | 50 | 23 | 199 s | `rsk-piv::set_protected_total_and_invariant`, 47 s |
 | `state` | 2 | 8 | 9 | ~10 min | `rsk-fido::…_at_call_site`, ~7 min (9.3 GiB peak) |
 | `all` | 17 | 66 | 31 | ~1 h 45 | `rsk-rescue::serialize_parse_roundtrip`, 27 m 42 s |
+| `light` | 16 | 61 | 30 | ~1 h | `rsk-fido::…_at_call_site`, ~7 min (9.3 GiB peak) |
+| `heavy` | 1 | 5 | 1 | ~55 min | `rsk-rescue::serialize_parse_roundtrip`, 55 min (11.1 GB peak) |
 
 `pr` and `state` are measured runs. `all` has never been run end to end here:
 its cover count is the two measured tiers plus `rsk-rescue`'s one, so

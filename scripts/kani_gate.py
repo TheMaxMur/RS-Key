@@ -368,8 +368,16 @@ def audit(root):  # noqa: C901 — one clause per failure mode, each named
             problems.append(
                 f"{use.path} runs `scripts/kani.sh {use.tier}`, which is not a tier"
             )
+    run_by_ci = {u.tier for u in seen if u.executed and u.tier in table}
+    covered = frozenset().union(frozenset(), *(table[t] for t in run_by_ci))
     for tier in sorted(table):
-        if not [u for u in seen if u.tier == tier and u.executed]:
+        # FULL is the roster anchor, not a row of its own: the daily run splits it
+        # into halves so the one that can exhaust the runner's memory takes only
+        # its own crates down. It is satisfied when the rows that DO run prove
+        # every crate it names — and only then. Every other tier still owes a row,
+        # which is what keeps this from becoming a way to retire one quietly.
+        split = tier == FULL and table[tier] <= covered
+        if tier not in run_by_ci and not split:
             problems.append(
                 f"no CI row runs the `{tier}` tier: it is in no step's `run:`, or"
                 " that line is commented out — a tier nobody runs proves nothing"
