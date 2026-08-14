@@ -180,7 +180,8 @@ four failures are test-side, not firmware defects:
 - `test_lockout` / `test_pin_attempts` need a manual `device.reboot()`
   (conftest.py:205 human prompt, unanswered headless) → our spec-correct
   `PIN_AUTH_BLOCKED` correctly persists.
-- `test_option_up` calls `doGA(options=…)`, no such kwarg; broken upstream test.
+- `test_option_up` calls `doGA(options=…)`, no such kwarg — a broken upstream
+  test, since repaired in our fork of it (`third_party/README.md`); it passes.
 - `test_bad_auth` expects the upstream `0xE0` for an invalid `(0,0)` EC
   keyAgreement, where our `INVALID_PARAMETER` is spec-reasonable.
 - The 9 errors are `test_070_oath` fixture setup, not core CTAP2.

@@ -538,13 +538,18 @@ nix develop -c python tests/third_party.py openpgp   # over the emulator's card 
 nix develop -c python tests/third_party.py fido      # needs a board, or --usbip
 ```
 
-Nothing in those directories is edited. The run is steered from outside by a
+No assertion in those directories is edited. The run is steered from outside by a
 pytest plugin that supplies the power cycle the CTAP 2.1 §6.6 reset window needs,
 names every deliberate divergence as a strict `xfail`, and deselects the modules
 that exercise a vendor extension RS-Key does not implement. Both lists carry a
 spec citation per entry, and `strict` means a divergence that gets fixed *fails*
 the run instead of staying listed for ever — which is how the last refresh caught
 one that upstream had corrected.
+
+The one thing repaired in place is a suite's own harness: a test that raises in
+its own Python before a byte reaches the device measures nothing, so listing it
+would record only that it is broken. Those edits are marked at the site and in
+[third_party/README.md](https://github.com/TheMaxMur/RS-Key/blob/main/third_party/README.md).
 
 Running an upstream corpus shows conformance on the cases it covers; it is not a
 security audit.

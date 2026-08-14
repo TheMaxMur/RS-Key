@@ -6,9 +6,16 @@
 
 `third_party/` holds two ecosystems' own conformance suites — pico-fido's and
 pico-openpgp/Gnuk's. They are somebody else's tests under somebody else's
-license, so nothing here edits them: the run is steered from outside by a pytest
-plugin, and everything RS-Key deliberately does not do for them is listed in
-[`DIVERGENCES`] with its reason.
+license, so the run is steered from outside by a pytest plugin and everything
+RS-Key deliberately does not do for them is listed in [`DIVERGENCES`] with its
+reason.
+
+No assertion in those directories is ever edited — a disagreement about
+behaviour belongs in that list, where it stays visible. A defect in the suite's
+own harness is the other case: a test that raises in its own Python before a
+byte reaches the device measures nothing at all, and listing it only records
+that it is broken. Those are repaired in place, marked at the edit and in
+`third_party/README.md`.
 
 A listed test is `xfail(strict=True)`, not a skip. If it starts passing, the run
 *fails* and says which entry to delete — because an allow-list that silently
@@ -51,12 +58,6 @@ SUITES = {
 # wrong is a bug, and putting it here hides it.
 DIVERGENCES: dict[str, dict[str, str]] = {
     "fido": {
-        # Not about RS-Key at all: the suite calls its own `Device.doGA()` with an
-        # `options=` argument that helper does not take, so it raises TypeError
-        # before a byte reaches the device. (Its sibling `test_option_uv` never
-        # gets there — it is gated on the `uv` option, which this build does not
-        # advertise.) Upstream defect; nothing to fix here.
-        "test_021_authenticate.py::test_option_up": "the suite's own doGA() takes no options= argument",
         # The emulator answers faster than the transport's keepalive interval, so
         # there is nothing to count. A board doing on-card RSA does emit them —
         # `tests/50_touch_latency.py` is where that is measured.

@@ -31,10 +31,17 @@ linked into the firmware, and every upstream header is preserved verbatim, so
 the GPL/AGPL split above does not interact with RS-Key's own AGPL-3.0-only
 build.
 
-Local modifications are minimal and marked in-place; the notable one:
-`pico-fido-tests/conftest.py` filters the relying-party's allowed algorithms
-to those the installed python-fido2 can actually verify (the firmware can
-lead with ML-DSA-44, which older fido2 libraries parse but cannot check).
+Local modifications are minimal and marked in-place. **No assertion is ever
+edited** — a disagreement about behaviour goes in `tests/third_party.py`'s
+divergence list, where it stays visible and a strict xfail catches it being
+fixed. What is repaired here is the other case: a test that raises in its own
+Python before a byte reaches the device measures nothing, so listing it would
+only record that it is broken.
+
+| File | Change |
+|---|---|
+| `pico-fido-tests/conftest.py` | filters the relying-party's allowed algorithms to those the installed python-fido2 can actually verify (the firmware can lead with ML-DSA-44, which older fido2 libraries parse but cannot check) |
+| `pico-fido-tests/pico-fido/test_021_authenticate.py` | `test_option_up` / `test_option_uv` called `doGA(options=…)`; that helper is the WebAuthn-level one and takes no such argument, so both raised `TypeError`. They call `GA()` — the raw CTAP2 helper their neighbours use — with the credential named. Unreachable upstream, whose own getInfo omits `"up"` |
 
 ## Running them
 
@@ -46,8 +53,9 @@ python tests/third_party.py fido       # the pico-fido suite
 python tests/third_party.py openpgp    # the OpenPGP card suite
 ```
 
-It changes nothing in these directories — the run is steered from outside by a
-pytest plugin. Four things it supplies that the suites cannot ask for themselves:
+It touches nothing in these directories at run time — the run is steered from
+outside by a pytest plugin (the in-place repairs above are the separate, listed
+exception). Four things it supplies that the suites cannot ask for themselves:
 
 - **the power cycle.** RS-Key takes `authenticatorReset` only inside the CTAP 2.1
   §6.6 power-up window, which an operator reopens by unplugging. pico-fido has no

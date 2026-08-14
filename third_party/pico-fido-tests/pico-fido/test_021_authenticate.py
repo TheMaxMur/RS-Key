@@ -164,16 +164,26 @@ def test_unknown_option(device, MCRes):
             {"id": MCRes['res'].attestation_object.auth_data.credential_data.credential_id, "type": "public-key"}
         ])
 
-def test_option_uv(device, info, GARes):
+# Local fix (RS-Key), both tests: `doGA` is the WebAuthn-level helper and builds
+# its own options, so `options=` raised TypeError before a byte reached the
+# device. `GA` is the raw CTAP2 one the neighbours above call, and it wants the
+# credential named — an options map alone finds nothing on a device whose only
+# credential is not discoverable. Unreachable upstream, whose own getInfo omits
+# "up"; RS-Key and a YubiKey 5.7.4 both advertise it, so both walked into it.
+def test_option_uv(device, info, MCRes, GARes):
     if "uv" in info.options:
         if info.options["uv"]:
-            res = device.doGA(options={"uv": True})['res']
+            res = device.GA(options={"uv": True}, allow_list=[
+                {"id": MCRes['res'].attestation_object.auth_data.credential_data.credential_id, "type": "public-key"}
+            ])['res']
             assert res.auth_data.flags & (1 << 2)
 
-def test_option_up(device, info, GARes):
+def test_option_up(device, info, MCRes, GARes):
     if "up" in info.options:
         if info.options["up"]:
-            res = device.doGA(options={"up": True})['res']
+            res = device.GA(options={"up": True}, allow_list=[
+                {"id": MCRes['res'].attestation_object.auth_data.credential_data.credential_id, "type": "public-key"}
+            ])['res']
             assert res.auth_data.flags & (1 << 0)
 
 def test_allow_list_fake_item(device, MCRes):
