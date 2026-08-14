@@ -372,6 +372,14 @@ const TOUCH_HOLD_MS: u64 = 6_000;
 /// 50 ms; one that cannot see it at all waits out [`TOUCH_HOLD_MS`].
 const CANCEL_BOUND_MS: u64 = 2_000;
 const _: () = assert!(2 * CANCEL_BOUND_MS < TOUCH_HOLD_MS);
+/// What an *ungated* path may take — a different budget from the cancel one, and
+/// the reason it exists: a gated path cannot finish before [`TOUCH_HOLD_MS`], so
+/// half of that separates "did not wait" from "waited" with room on both sides.
+/// Borrowing [`CANCEL_BOUND_MS`] for it made a 2.9 % overshoot on a loaded runner
+/// read as a touch gate — 2.058 s against 2 s, where the thing being caught costs
+/// 6 s.
+const NO_TOUCH_BOUND_MS: u64 = TOUCH_HOLD_MS / 2;
+const _: () = assert!(CANCEL_BOUND_MS < NO_TOUCH_BOUND_MS && NO_TOUCH_BOUND_MS < TOUCH_HOLD_MS);
 
 fn touch_hold() -> Duration {
     Duration::from_millis(TOUCH_HOLD_MS)
@@ -602,7 +610,7 @@ fn a_vendor_command_asks_for_no_touch() {
     let took = sent.elapsed();
 
     assert!(
-        took < cancel_bound(),
+        took < Duration::from_millis(NO_TOUCH_BOUND_MS),
         "the vendor read waited {took:?} — something on that path asked for a touch"
     );
 
