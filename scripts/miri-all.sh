@@ -60,6 +60,12 @@ fi
 # Round-robin, and expressed as everything-but-mine: one Miri process per shard
 # instead of one per test, because Miri re-interprets std's startup on every
 # process and that cost would dwarf the tests on a shard this size.
+#
+# `--exact` is not decoration. `--skip` matches by SUBSTRING, and this roster has
+# four containment pairs — `miri_ctaphid` inside `miri_ctaphid_roundtrip`,
+# `miri_fido_cred` inside three more — so skipping a neighbouring shard's test
+# silently took two of this one's with it. Shard 1/3 selected 15 where it owed 17,
+# on the first run that reached a runner.
 skip=()
 mine=0
 for i in "${!tests[@]}"; do
@@ -84,11 +90,11 @@ echo "shard ${MIRI_SHARD}: ${mine} of ${#tests[@]} tests"
 # seed processes write to one stdout concurrently and shred each other's lines —
 # `test result: test result: okokokok. 0 passed;` is verbatim from a run that
 # passed. `scripts/kani.sh` refuses `--jobs` over the same hazard.
-selected="$(cargo miri test --manifest-path "$MANIFEST" -- --list ${skip[@]+"${skip[@]}"} 2>/dev/null | sed -n 's/: test$//p' | sort -u | wc -l | tr -d ' ')"
+selected="$(cargo miri test --manifest-path "$MANIFEST" -- --list --exact ${skip[@]+"${skip[@]}"} 2>/dev/null | sed -n 's/: test$//p' | sort -u | wc -l | tr -d ' ')"
 if [ "${selected:-0}" -ne "$mine" ]; then
   echo "::error::shard ${MIRI_SHARD} selects ${selected:-0} tests, expected ${mine} — a --skip name no longer matches"
   exit 1
 fi
 
-cargo miri test --manifest-path "$MANIFEST" -- ${skip[@]+"${skip[@]}"}
+cargo miri test --manifest-path "$MANIFEST" -- --exact ${skip[@]+"${skip[@]}"}
 echo "miri: shard ${MIRI_SHARD}, ${mine} of ${#tests[@]} tests, no UB"

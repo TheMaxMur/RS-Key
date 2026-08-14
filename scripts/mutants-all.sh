@@ -75,6 +75,13 @@ if ! [ "$shard_i" -ge 1 ] 2>/dev/null || ! [ "$shard_i" -le "$shard_n" ] 2>/dev/
   exit 1
 fi
 
+# cargo-mutants creates its output directory but not the parent, and on a runner
+# whose `target/` cache missed there is no parent to create it in: "create output
+# parent directory target/mutants: No such file or directory", five shards of the
+# first real run. The apparatus check below is what caught it — the row failed as
+# "no summary line" rather than passing with nothing tested.
+mkdir -p "$OUT"
+
 log="$(mktemp)"
 trap 'rm -f "$log"' EXIT
 # `|| true` deliberately: cargo-mutants exits non-zero when mutants survive, and

@@ -49,7 +49,15 @@ if [ "${#targets[@]}" -eq 0 ]; then
 fi
 # The numbers below are only as good as the corpus behind them, and in CI that
 # corpus is one evictable cache entry.
-inputs=$(find fuzz/corpus -type f 2>/dev/null | wc -l)
+# Guarded by `-d`, not by `2>/dev/null`. With no corpus directory at all `find`
+# exits 1, `pipefail` makes that the pipeline's status, and `set -e` killed this
+# script here — before the "no corpus" branch below could exit 0 politely. Silent,
+# because the redirect ate the only message. The branch below was written for an
+# EMPTY corpus; a MISSING one never reached it, and the two differ by `pipefail`.
+inputs=0
+if [ -d fuzz/corpus ]; then
+  inputs=$(find fuzz/corpus -type f | wc -l | tr -d ' ')
+fi
 echo "${#targets[@]} target(s), corpus: ${inputs} inputs"
 
 summary="${GITHUB_STEP_SUMMARY:-/dev/stdout}"
