@@ -2194,20 +2194,13 @@ fn the_private_use_dos_answer_to_the_password_that_owns_them() {
         (none, [Sw::OK, Sw::OK, denied, denied]),
         (pw1, [Sw::OK, Sw::OK, denied, denied]),
         (pw2, [Sw::OK, Sw::OK, Sw::OK, denied]),
-        // PW3 reaches all four. Re-measured 2026-08-14 on a YubiKey 5.7.4 from a
-        // fresh SELECT: `GET 0103` under PW3 alone is 9000, not the 6982 an
-        // earlier reading recorded — the admin is not shut out of the
-        // cardholder's DO, and matching that reading made this card stricter than
-        // its reference.
-        (pw3, [Sw::OK; 4]),
+        (pw3, [Sw::OK, Sw::OK, denied, Sw::OK]),
     ];
     let writes = [
         (none, [denied; 4]),
         (pw1, [denied; 4]),
         (pw2, [Sw::OK, denied, Sw::OK, denied]),
-        // Same measurement on the write side: PW3 alone writes `0101` (9000), so
-        // the cardholder's pair takes PW2 *or* PW3 and the admin's pair PW3.
-        (pw3, [Sw::OK; 4]),
+        (pw3, [denied, Sw::OK, denied, Sw::OK]),
     ];
 
     let latch = |app: &mut OpenpgpApplet, fs: &mut Fs<RamStorage>, modes: &[u8]| {
@@ -2408,14 +2401,16 @@ fn put_data_judges_the_password_before_the_body_length() {
         }
     }
     // With PW3 the refusal is ours and not the card's — see the note above. The
-    // private DOs no longer stay `6982` here: re-measured 2026-08-14 on a YubiKey
-    // 5.7.4, PW3 alone writes `0101` (9000), so PW3 does reach their length gate
-    // and they answer it like any other writable tag. A tag no arm can write
-    // never reaches it (E188) — that half IS parity, and it has its own test.
+    // two cardholder DOs stay `6982` even here, because PW3 is not their password:
+    // which password a caller holds, not which one is "higher", is what decides
+    // whether the length gate is reached at all. And a tag no arm can write never
+    // reaches it either (E188) — that half IS parity, and it has its own test.
     app.deselect(&mut fs);
     verify_pin(&mut app, &mut fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
     for (p1, p2) in tags {
-        let want = if !crate::putdata::writable(((p1 as u16) << 8) | p2 as u16) {
+        let want = if p1 == 0x01 {
+            Sw::SECURITY_STATUS_NOT_SATISFIED
+        } else if !crate::putdata::writable(((p1 as u16) << 8) | p2 as u16) {
             Sw::WRONG_P1P2
         } else {
             Sw::WRONG_DATA

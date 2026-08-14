@@ -442,19 +442,19 @@ below in the usual four sections, security last.
 
 ### Fixed
 
-- **The admin PIN reaches the private-use DOs again.** `0101` and `0103` took
-  PW2 and nothing else, so PW3 — the password an administrator actually holds —
-  was refused `6982` on a DO the card is meant to give it. That rule came from a
-  measurement recorded as "a YubiKey 5.7.4 refuses PW3 there, 3/3", and the
-  measurement was wrong: re-run 2026-08-14 from a fresh SELECT, a YubiKey answers
-  `9000` to `PUT 0101`, `PUT 0103`, `GET 0103` and `GET 0104` under PW3 alone. It
-  refuses only the unauthenticated and PW1.81 cells, which this card already
-  refused and still does. So the reference was stricter nowhere and this card was
-  stricter in four places. `0101`/`0103` now take PW2 **or** PW3; `0102`/`0104`
-  stay PW3; `0101` stays world-readable. Three stale divergence entries leave
-  `tests/third_party.py` with it, and the vendored OpenPGP suite goes from 6
-  failures to 0.
-  **bcdDevice → 0x0956.**
+- **The private-use DO access rules are unchanged — and this entry exists so the
+  next reading does not undo them.** `0101`/`0103` take PW1 no. 82, `0102`/`0104`
+  take PW3, and PW3 is not a master key over the cardholder's pair. A measurement
+  taken on 2026-08-14 appeared to show a YubiKey 5.7.4 serving `GET 0103` and
+  `PUT 0101` under PW3 alone, and the rule was briefly loosened to match. It was
+  an artefact of the probe: the cells were driven down one connection in rising
+  order of privilege, so PW1.82 from an earlier cell was **still standing** when
+  the PW3 cell ran. Re-measured with each state reached from its own reset, PW3
+  alone answers `6982` to both. The card does not clear PW state on a re-SELECT
+  of the same AID, which is what makes a rising-privilege probe lie — and the
+  same trap is already recorded in `getdata.rs` from a previous time. Any probe
+  of this table must power-cycle between cells.
+  **bcdDevice → 0x0957.**
 
 - **A one-byte body is one refusal on every PIV command, and the management key
   outranks the request below it.** `MOVE KEY` answered `6700` to any body at all —

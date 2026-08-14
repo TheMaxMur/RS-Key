@@ -73,13 +73,10 @@ pub fn get_data<S: Storage>(
     // override: `0103` is the cardholder's (PW1 no. 82), `0104` the admin's. A
     // YubiKey 5.7.4 implements exactly that, 3/3 from a genuine deselect —
     // unauthenticated both are `6982`, PW1-82 alone opens `0103` and not `0104`,
-    // PW3 alone opens BOTH — re-measured 2026-08-14 from a fresh SELECT, `GET
-    // 0103` and `GET 0104` are `9000` under PW3, so the admin is not shut out of
-    // the cardholder's DO and this card no longer pretends otherwise. Only
-    // unauthenticated and PW1.81 are refused. (An earlier reading had it serving
+    // PW3 alone opens `0104` and not `0103`. (An earlier reading had it serving
     // `0104` to anyone; that one was taken with PW3 still standing, since a
     // re-SELECT of the same AID does not clear this card's PW state.)
-    if fid == EF_PRIV_DO_3 && !has_pw2 && !has_pw3 {
+    if fid == EF_PRIV_DO_3 && !has_pw2 {
         return (0, Sw::SECURITY_STATUS_NOT_SATISFIED);
     }
     if fid == EF_PRIV_DO_4 && !has_pw3 {

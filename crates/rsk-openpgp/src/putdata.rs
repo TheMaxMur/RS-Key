@@ -50,19 +50,15 @@ fn max_do_len(fid: u16) -> Option<usize> {
 }
 
 /// Whether `sess` may write the DO addressed by `fid`. Private DOs 1/3 are the
-/// cardholder's, so PW2 opens them — and so does PW3. Re-measured on a YubiKey
-/// 5.7.4 from a fresh SELECT: PW3 alone writes `0101` and reads `0103`, both
-/// `9000`. The earlier note here claimed it refused PW3 with `6982` on both; that
-/// reading was wrong, and matching it made this card stricter than the reference
-/// on a DO the admin is meant to reach. Unauthenticated and PW1.81 stay refused,
-/// which is the half the oracle does enforce. Everything else is PW3.
+/// cardholder's and need PW2 — §5's access table gives the admin no override on
+/// them, and a YubiKey 5.7.4 refuses PW3 on both, 3/3 — everything else is PW3.
 ///
 /// One owner for PUT DATA's whole ACL: the dispatch asks first, so nothing about
 /// the request — not the tag, not the body's length — is judged ahead of the
 /// password, and the routed handlers below re-state it for a direct caller.
 pub fn write_authorized(sess: &Session, fid: u16) -> bool {
     if fid == EF_PRIV_DO_1 || fid == EF_PRIV_DO_3 {
-        sess.has_pw2 || sess.has_pw3
+        sess.has_pw2
     } else {
         sess.has_pw3
     }
