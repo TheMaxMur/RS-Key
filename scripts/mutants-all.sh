@@ -87,8 +87,14 @@ trap 'rm -f "$log"' EXIT
 # `|| true` deliberately: cargo-mutants exits non-zero when mutants survive, and
 # on this row that is the expected outcome rather than a failure. The summary line
 # below is what says the run happened, so a crash cannot pass as "none survived".
+# cargo-mutants numbers shards from ZERO — `--shard 8/8` is "invalid value: shard
+# k must be less than n". Passing this script's 1-based number straight through
+# therefore ran indices 1..7 and never index 0: an eighth of the tree silently
+# unmutated, while the last shard failed outright. Converted here so the shard
+# number means the same thing in every row (`FUZZ_SHARD`, `MIRI_SHARD`, this one)
+# and only the flag sees the tool's own convention.
 cargo-mutants mutants "${common[@]}" \
-  --shard "$MUTANTS_SHARD" -j "${MUTANTS_JOBS:-4}" --output "$OUT" 2>&1 | tee "$log" || true
+  --shard "$((shard_i - 1))/$shard_n" -j "${MUTANTS_JOBS:-4}" --output "$OUT" 2>&1 | tee "$log" || true
 
 summary="$(grep -E '^[0-9]+ mutants tested' "$log" | tail -1 || true)"
 if [ -z "$summary" ]; then
