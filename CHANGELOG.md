@@ -442,6 +442,21 @@ below in the usual four sections, security last.
 
 ### Fixed
 
+- **The proof runner can hash again on x86_64.** Kani has no model for inline
+  assembly, and `cpufeatures` writes its runtime CPU probe in it, so on an
+  x86_64 host any harness that hashes reached `core::arch::x86_64::__cpuid_count`
+  and was failed as an unsupported construct — a tool limit wearing the shape of
+  a property violation. It never showed on aarch64, where that call does not
+  exist, so the harness that hit it was green on the author's machine and red the
+  first time CI ran it. `poly1305` and `sha1` take a `--cfg` to drop the probe;
+  `sha2` 0.10 takes a Cargo feature, so `rsk-crypto` and `rsk-fido` gained an
+  opt-in `kani-soft` that only `scripts/kani.sh` turns on. It must stay opt-in:
+  forcing the soft backend swaps sha2's XIP-cache-sized compressor for its ~28 KB
+  unrolled one and moves the image, measured. With the feature off the image is
+  byte-identical, also measured, so this bump is the guard's charge on a Cargo
+  table it cannot see through rather than a change to what ships.
+  **bcdDevice → 0x0958.**
+
 - **The private-use DO access rules are unchanged — and this entry exists so the
   next reading does not undo them.** `0101`/`0103` take PW1 no. 82, `0102`/`0104`
   take PW3, and PW3 is not a master key over the cardholder's pair. A measurement

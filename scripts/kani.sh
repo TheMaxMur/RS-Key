@@ -161,6 +161,30 @@ for c in $crates; do
   packages="$packages -p $c"
 done
 
+# Kani has no model for inline assembly, and `cpufeatures`' runtime CPU probe is
+# written in it: on an x86_64 host any harness that hashes reaches
+# `core::arch::x86_64::__cpuid_count` and Kani fails it as an unsupported
+# construct — a tool limit wearing the shape of a property violation. Invisible on
+# aarch64, where that call does not exist, which is why the harness that hit this
+# was green on the maintainer's Mac and red the first time CI ran it.
+#
+# The soft backends remove the probe. Three take a `--cfg`; sha2 0.10 takes a
+# Cargo FEATURE, so the crates that verify carry an opt-in `kani-soft` and only
+# this script turns it on. It must never reach the firmware: forcing soft swaps
+# sha2's XIP-cache-sized compressor for its ~28 KB unrolled one, and the image
+# moves (measured, same size, different hash).
+#
+# Named per selected package, because `--features x/f` on a package this tier did
+# not select is a hard cargo error.
+features=""
+for c in $crates; do
+  if grep -q '^kani-soft = ' "crates/$c/Cargo.toml" 2>/dev/null; then
+    features="${features:+$features,}$c/kani-soft"
+  fi
+done
+[ -n "$features" ] && packages="$packages --features $features"
+export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }--cfg sha2_backend=\"soft\" --cfg poly1305_force_soft --cfg sha1_force_soft"
+
 log=$(mktemp)
 # `set -e` + `pipefail` end this script at the `tee` on any failing run, so an
 # explicit `rm` below it never runs — and a tripped --harness-timeout is now a

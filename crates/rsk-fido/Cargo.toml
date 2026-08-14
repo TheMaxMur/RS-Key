@@ -35,6 +35,12 @@ minicbor = { workspace = true }
 rsk-fs = { workspace = true, features = ["test-util"] }
 
 [features]
+# Kani cannot model the inline asm behind `cpufeatures`' runtime CPU
+# detection, so a harness that hashes reaches `__cpuid_count` and fails as
+# "unsupported construct". Only `scripts/kani.sh` turns this on; the firmware
+# never does, because forcing the soft backend swaps sha2's XIP-cache-sized
+# compressor for its ~28 KB unrolled one and moves the image (measured).
+kani-soft = ["sha2/force-soft", "rsk-crypto/kani-soft"]
 # Advertise ML-DSA-44 (-48) in getInfo `algorithms` (0x0A). OFF by default:
 # shipped Firefoxes (authenticator-rs before 2026-06-02) hard-fail the whole
 # getInfo parse on an unknown COSE id. The PQC capability itself is always on —
