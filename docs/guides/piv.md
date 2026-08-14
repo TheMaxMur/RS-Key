@@ -75,15 +75,33 @@ uses it with just the PIV PIN. `ykman piv info` shows it as protected and
 the PIV PIN **alone** grants management access (it unlocks the random key), so
 treat the PIN accordingly; the panel states this and gates the action behind the
 device PIN and a hold. (`ykman piv access change-management-key --generate
---protect` does the same thing from the host.)
+--protect` installs a random PIN-protected key from the host too.) If you had
+raised the management key's touch policy (`--touch`, below), **the panel action
+keeps it** — it replaces the key, not the gate, so admin actions still ask for a
+press. The host command does not: `ykman` sends the policy in the command itself
+and defaults it to off, so re-run it with `--touch` if you want the gate back.
 
 The panel manages PINs/PUKs that follow the standard PIV convention (**6–8
 digits, padded to 8 bytes with `0xFF`**), which is what `ykman`, `yubico-piv-tool`
-and OpenSC all use. A PIN or PUK provisioned *outside* that convention (e.g.
-hand-crafted raw `CHANGE REFERENCE DATA` / `RESET RETRY` APDUs that store an
-unpadded or sub-6-digit value) can't be verified on the panel; re-set it with
-`ykman` first. The factory defaults follow the convention, so the panel works
-out of the box.
+and OpenSC all use. Since firmware `0x088A` the card refuses to *store* a value
+shorter than six bytes at all, so a sub-6-digit reference can no longer be
+provisioned by any route. A reference stored **unpadded** by an older build is
+still possible, and it can't be verified on the panel; re-set it with `ykman`
+first. The factory defaults follow the convention, so the panel works out of the
+box.
+
+> **If an older build shortened *both* the PIN and the PUK, the only way back
+> destroys the keys.** Since `0x08D1` a `CHANGE REFERENCE DATA` / `RESET RETRY
+> COUNTER` body is sixteen bytes or nothing, so no build can enter this state any
+> more — but a card already in it has no non-destructive exit. A shortened PIN
+> alone is repaired by `ykman piv access unblock-pin` (the PUK still works), and a
+> shortened PUK alone by `ykman piv access set-retries` (the PIN still works),
+> both with every key intact. With both shortened, neither repair is presentable:
+> block both counters with wrong guesses and run `ykman piv reset`, which wipes
+> every PIV key and certificate. The state needed an older build *and* a host that
+> sent a fourteen-byte reference pair, which no shipped tool emits, so it is
+> unlikely you are here — but if you are, restore the slots from backup after the
+> reset rather than looking for a gentler command.
 
 > The defaults are public. Until you change the PIN, PUK and management key,
 > anyone with physical access can generate, import or delete keys. Treat a
@@ -96,17 +114,22 @@ out of the box.
 | `9a` | PIV Authentication | system / domain login, SSH, client TLS | once per session |
 | `9c` | Digital Signature | document & email signing | **every operation** |
 | `9d` | Key Management | decryption, key agreement (ECDH) | once per session |
-| `9e` | Card Authentication | physical-access / contactless | once per session |
+| `9e` | Card Authentication | physical-access / contactless | **no PIN** |
 | `82`–`95` | Retired Key Management | 20 slots for old decryption keys | once per session |
 | `9b` | Management Key | admin auth (not an asymmetric key) | — |
 | `f9` | Attestation | signs slot attestation certs (on-card) | — |
 
 The signature slot (`9c`) demands the PIN before **every** private-key
 operation; the other slots cache the PIN for the rest of the session after one
-VERIFY. `9e` carries no special default on this firmware. Like the other
-non-signature slots it defaults to PIN **once per session**, so a default-policy
-9e key still needs one VERIFY before use. For true card-auth / contactless
-no-PIN behaviour, generate the 9e key with an explicit `--pin-policy NEVER`.
+VERIFY. A session ends when the card loses power or another application is
+selected on it — an OpenPGP or OATH tool reaching for the same key mid-session
+does exactly that. Selecting **PIV** again does not end it (SP 800-73-4 Part 2
+§3.1.1), so a tool that re-selects before each command keeps the PIN it already
+gave. `9e` is the exception at the other end: SP 800-73-4 makes the Card
+Authentication Key the one usable **without** a PIN, so a default-policy `9e` key
+signs with no VERIFY at all — which is what makes it usable for physical-access
+and contactless readers. Give it `--pin-policy ONCE` (or `ALWAYS`) at generate
+time if you want it gated like the rest.
 
 **Algorithms.** On-card generation and import accept **RSA-2048 / 3072 / 4096**,
 **RSA-1024** (disabled under the FIPS-style build, SP 800-131A), **ECC P-256 /
@@ -169,25 +192,72 @@ ykman piv keys generate --pin-policy ALWAYS --touch-policy ALWAYS 9a pub.pem
 
 | `--pin-policy` | Effect |
 |---|---|
-| `NEVER` | no PIN to use the key |
-| `ONCE` | PIN once per session (default for `9a`/`9d`/`9e`/retired) |
+| `NEVER` | no PIN to use the key (default for `9e`) |
+| `ONCE` | PIN once per session (default for `9a`/`9d`/retired) |
 | `ALWAYS` | PIN before every operation (default for `9c`) |
+
+`ALWAYS` means the VERIFY has to be the last thing before the operation: a
+private-key operation at **any** PIN-gated slot uses it up — including one that
+fails after reaching the key — so
+`VERIFY` → sign at `9a` → sign at `9c` refuses the second signature with `6982`.
+Verify again between them. Nothing else is affected — the PIN itself stays
+verified, so a `9c` signature does not close the `ONCE` slots, the PIN-protected
+management key or a plain `VERIFY` status query, and a `NEVER`-policy key never
+uses anything up.
 
 | `--touch-policy` | Effect |
 |---|---|
-| `NEVER` | no button press (default for the `9b` management key) |
-| `ALWAYS` | a physical touch before every private-key operation (default for generated slot keys) |
+| `NEVER` | no button press — **the default**, for slot keys and the `9b` management key alike |
+| `ALWAYS` | a physical touch before every private-key operation |
 | `CACHED` | treated as `ALWAYS` on this device (see below) |
 
-Generated slot keys default to **touch ALWAYS**: each sign / decrypt / ECDH
-needs a button press. A declined touch fails the operation with `6982`. The
-management key ships **touch NEVER** so admin provisioning isn't gated; raise it
-with `ykman piv access change-management-key --touch` if you want admin actions
-to require a press too.
+Ask for the press and you get it on every sign / decrypt / ECDH, and a declined
+touch fails the operation with `6982`. Don't ask, and the key never prompts —
+which is what makes `pkcs11`, `age-plugin` and SSH usable unattended. Raise the
+management key's own policy with `ykman piv access change-management-key
+--touch` if you want admin actions gated too.
 
 > `CACHED` is treated as `ALWAYS`. The device has no wall clock, so it cannot
 > honour the 15-second touch cache a real YubiKey offers; it errs strict and
 > asks every time. If you set `CACHED`, expect `ALWAYS` behaviour.
+
+## Data objects that need the PIN to read
+
+Most `PUT DATA` objects are readable by anything that can open the reader — that
+is what SP 800-73-4 pt1 Table 3 says, and a certificate is public anyway. Four
+are not:
+
+| Object | Name |
+|---|---|
+| `5FC103` | Cardholder Fingerprints |
+| `5FC108` | Cardholder Facial Image |
+| `5FC109` | Printed Information |
+| `5FC121` | Cardholder Iris Images |
+
+`ykman piv objects export 5fc103 -` on one of those needs a `VERIFY` first, or
+the card answers `6982`. The refusal comes before the lookup, so an empty object
+and a populated one are indistinguishable without the PIN. The management key
+does **not** substitute for it: writing these is management-gated, reading them
+is PIN-gated, and the two are separate conditions.
+
+`5FC109` has a second job: it is where a PIN-protected management key is read
+back from. **While protection is on, PRINTED is that escrow and nothing else** —
+the read answers with the key, synthesized from slot `9b`, and a write of any
+other content is refused with `6985` rather than accepted and hidden underneath
+it. Revoke the protection first (`ykman piv access change-management-key`
+without `--protect`, or set a new key any other way) and it is ordinary storage
+again. Note that `ykman`'s own revoke clears PRINTED as its first step, so
+anything stored there before you turned protection on does not survive the round
+trip.
+
+The one write the card never keeps is a *PivmanProtectedData* body — exactly
+`88 L { 89 L <key> }`, what `--protect` sends — which is acknowledged and
+dropped, because the key it carries is already sealed in `9b` and a second copy
+would sit in flash in plaintext. The match is on that exact shape, so printed
+information that merely happens to contain those tags is stored like anything
+else. One consequence worth knowing: `--protect` fails on a card that already
+has other content in PRINTED, because `ykman` tries to parse it as an escrow
+record. Clear the object first.
 
 ## Attestation
 
@@ -206,7 +276,7 @@ ykman piv certificates export f9 attestation-ca.pem
 ```
 
 Attestation only works for **generated** keys; an imported key returns
-`6A80` / `INCORRECT PARAMS` (there is nothing to attest). For the FIDO side of
+`6A80` / `WRONG DATA` (there is nothing to attest). For the FIDO side of
 attestation (org-provisioned enterprise attestation) see
 [attestation.md](attestation.md).
 
@@ -227,8 +297,9 @@ ykman piv keys move 9a 82          # 9a → retired slot 82, cert + metadata fol
 ykman piv keys delete 9c           # wipe the signature slot's key
 ```
 
-A key in a retired slot cannot be moved back into an active slot. Both
-operations require management-key auth.
+Moves go both ways — a key parked in a retired slot can come back to an active
+one. Moving a key onto its own slot is refused, because the source-delete would
+erase what the move just wrote. Both operations require management-key auth.
 
 ## Use it
 

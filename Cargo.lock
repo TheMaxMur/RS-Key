@@ -861,6 +861,7 @@ dependencies = [
  "critical-section",
  "document-features",
  "embassy-time-driver",
+ "embassy-time-queue-utils",
  "embedded-hal 0.2.7",
  "embedded-hal 1.0.0",
  "embedded-hal-async",
@@ -2186,6 +2187,7 @@ dependencies = [
 name = "rsk-device"
 version = "0.1.0"
 dependencies = [
+ "minicbor",
  "rsa",
  "rsk-crypto",
  "rsk-fido",
@@ -2296,6 +2298,7 @@ dependencies = [
  "rsk-crypto",
  "rsk-fs",
  "rsk-sdk",
+ "rsk-usb",
  "zeroize",
 ]
 

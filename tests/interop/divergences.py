@@ -147,7 +147,10 @@ RULES = [
      ExpectDiff(None, r"rs-key-0001",
                 "RS-Key ships a fixed USB serial string; a real YubiKey exposes none (serial is via the mgmt applet)")),
     ("usb.bcdDevice",
-     ExpectDiff(None, r"(?i)0x08", "RS-Key bcdDevice is an internal build counter (0x08xx)")),
+     # Four hex digits, not a prefix: pinning `0x08` dated the assertion to one
+     # release series and it expired the day the counter reached `0x09`.
+     ExpectDiff(None, r"(?i)0x[0-9a-f]{4}",
+                "RS-Key bcdDevice is an internal build counter, not a firmware version")),
     ("usb.product", ExpectDiff(None, r"(?i)yubikey", "product strings differ; RS-Key carries 'RSK'")),
     ("usb.manufacturer", ExpectDiff(None, None, "manufacturer string may differ")),
     ("ccid.atr", ExpectDiff(None, None, "ATR historical bytes differ (real spells 'YubiKey')")),
@@ -169,9 +172,15 @@ RULES = [
      ExpectDiff(None, r"16", "RS-Key allows 16 vs real 8")),
     ("fido.getinfo.maxCredentialIdLength", ExpectDiff(None, None, "credential-id box length differs")),
     ("fido.getinfo.maxSerializedLargeBlobArray",
-     ExpectDiff(None, r"2046",
+     ExpectDiff(None, r"4078",
                 "RS-Key advertises its store's true per-value ceiling, rsk_fs::MAX_VALUE_BYTES")),
     ("fido.getinfo.maxCredBlobLength", ExpectDiff(None, r"128", "RS-Key 128 vs real 32")),
+    # A YubiKey publishes neither 0x15 nor the 0xFF entry in 0x1F; RS-Key
+    # implements the vendorPrototype arm, and CTAP 2.3 §6.11.3 ties the two, so it
+    # must publish both. Deliberate, not a fidelity gap.
+    ("fido.getinfo.vendorPrototypeConfigCommands",
+     ExpectDiff(None, None,
+                "RS-Key implements vendorPrototype, so §6.11.3 requires listing its ids")),
     ("fido.getinfo.maxRPIDsForSetMinPINLength", ExpectDiff(None, None, "RS-Key 8 vs real 1")),
 
     # ── FIDO getInfo option skew (build-config), each side pinned ──────────
@@ -211,7 +220,7 @@ RULES = [
     # ── OpenPGP structural divergences ────────────────────────────────────
     ("openpgp.secureMessaging",
      ExpectDiff(None, r"(?i)(<missing>|^0$|off|false)", "RS-Key does not implement OpenPGP secure messaging")),
-    ("openpgp.algoInfo", Superset("Ed448/X448 advertised-unimplemented; no Brainpool — set differences")),
+    ("openpgp.algoInfo", Superset("set differences: RS-Key adds RSA-1024 and offers no brainpoolP512r1")),
 
     # ── PIV structural ────────────────────────────────────────────────────
     ("piv.attestation.rootSelfSigned",

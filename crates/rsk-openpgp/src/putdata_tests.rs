@@ -128,26 +128,62 @@ fn put_pw_status_updates_flag_in_place() {
 }
 
 #[test]
-fn put_pw_status_cannot_overwrite_retry_counters() {
-    // A >=5-byte C4 field must update only the flag + 3 max-length bytes; the
-    // three retry counters that follow are read-only. A host writing a full
-    // 7-byte record must never zero them — that would block every PIN across a
-    // power cycle, recoverable only by a key-destroying TERMINATE DF.
+fn put_pw_status_writes_only_the_flag() {
+    // §4.4.2: the max-length bytes "should not be changed", and the three retry
+    // counters after them are read-only outright — zeroing those would block
+    // every PIN across a power cycle, recoverable only by a key-destroying
+    // TERMINATE DF. A YubiKey 5.7.4 enforces both by taking a ONE-byte write of
+    // 00 or 01 and nothing else. The DO must be unchanged after each refusal:
+    // an announced maximum the card does not enforce is a lie about itself.
     let (mut fs, mut sess) = setup();
     admin(&mut fs, &mut sess);
-    assert_eq!(
-        put_pw_status(&mut fs, &sess, &[0x01, 0x7F, 0x7F, 0x7F, 0, 0, 0]),
-        Sw::OK
-    );
+    let start = [
+        0x01,
+        PIN_MAX_LEN as u8,
+        PIN_MAX_LEN as u8,
+        PIN_MAX_LEN as u8,
+        3,
+        0,
+        3,
+    ];
     let mut pw = [0u8; 7];
-    let n = fs.read(EF_PW_PRIV, &mut pw).unwrap();
-    assert_eq!(n, 7);
+    assert_eq!(fs.read(EF_PW_PRIV, &mut pw), Some(7));
+    assert_eq!(pw, start);
+
+    for bad in [
+        &[][..],
+        &[0x02],
+        &[0x07],
+        &[0xFF],
+        &[0x01, 0x06],
+        &[0x01, 0x06, 0x06, 0x06],
+        &[0x01, 0x06, 0x06, 0x06, 0x03, 0x00, 0x03],
+        &[0x01, 0x7F, 0x7F, 0x7F, 0, 0, 0],
+    ] {
+        assert_eq!(
+            put_pw_status(&mut fs, &sess, bad),
+            Sw::WRONG_DATA,
+            "{bad:02X?}"
+        );
+        assert_eq!(fs.read(EF_PW_PRIV, &mut pw), Some(7));
+        assert_eq!(pw, start, "a refused PUT C4 changed the DO: {bad:02X?}");
+    }
+
+    // The one accepted form moves the flag and nothing else.
+    assert_eq!(put_pw_status(&mut fs, &sess, &[0x00]), Sw::OK);
+    assert_eq!(fs.read(EF_PW_PRIV, &mut pw), Some(7));
     assert_eq!(
-        &pw[0..4],
-        &[0x01, 0x7F, 0x7F, 0x7F],
-        "flag + max-lengths written"
+        pw,
+        [
+            0x00,
+            PIN_MAX_LEN as u8,
+            PIN_MAX_LEN as u8,
+            PIN_MAX_LEN as u8,
+            3,
+            0,
+            3
+        ]
     );
-    assert_eq!(&pw[4..7], &[3, 0, 3], "retry counters must be read-only");
 }
 
 #[test]
@@ -166,13 +202,18 @@ fn generic_put_data_does_not_handle_specials() {
 }
 
 #[test]
-fn unknown_tag_not_found() {
+fn an_unwritable_tag_is_a_wrong_p1p2() {
+    // The tag IS P1P2 for this command, so a tag PUT DATA cannot write is a wrong
+    // parameter and not a missing object — measured on a YubiKey 5.7.4, which
+    // answers `6B00` to an unknown tag and to the computed aggregates alike, **with
+    // PW3 verified**. Before that the card says only `6982`, which is why this test
+    // authenticates first and why the ordering is asserted separately (E81).
     let (mut fs, mut sess) = setup();
     admin(&mut fs, &mut sess);
-    assert_eq!(
-        put_data(&mut fs, &sess, 0x4242, b"x"),
-        Sw::REFERENCE_NOT_FOUND
-    );
+    assert_eq!(put_data(&mut fs, &sess, 0x4242, b"x"), Sw::WRONG_P1P2);
+    for tag in [EF_FP, EF_CA_FP, EF_TS_ALL] {
+        assert_eq!(put_data(&mut fs, &sess, tag, b"x"), Sw::WRONG_P1P2);
+    }
 }
 
 #[test]
@@ -189,4 +230,20 @@ fn an_overlong_pw_status_record_cannot_panic_put_pw_status() {
     let mut pw = [0u8; 7];
     assert_eq!(fs.read(EF_PW_PRIV, &mut pw), Some(7));
     assert_eq!(&pw[4..7], &[3, 0, 3], "retry counters preserved");
+}
+
+#[test]
+fn put_aes_key_is_pw3_gated_on_a_direct_call() {
+    // The dispatcher gates every PUT DATA before it routes here, so this arm's own
+    // `has_pw3` is dominated on the wire and nothing exercised it — the sibling
+    // handlers all have a direct-call test and this one did not. It is a `pub`
+    // function; its precondition is its own.
+    let (mut fs, mut sess) = setup();
+    let key = [0x11u8; 32];
+    assert_eq!(
+        put_aes_key(&dev(), &mut fs, &sess, &key),
+        Sw::SECURITY_STATUS_NOT_SATISFIED
+    );
+    admin(&mut fs, &mut sess);
+    assert_eq!(put_aes_key(&dev(), &mut fs, &sess, &key), Sw::OK);
 }

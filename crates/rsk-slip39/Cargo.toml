@@ -10,6 +10,12 @@ publish = false
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
 
+[features]
+# `scripts/kani.sh` only: forwards to the dependency that carries the switch.
+# What it buys, and why the firmware must never turn it on, is in
+# `crates/rsk-crypto/Cargo.toml`.
+kani-soft = ["rsk-crypto/kani-soft"]
+
 [dependencies]
 # SHA-256 (share digest, wordlist pin) and HMAC-SHA256 (PBKDF2 round function, digest)
 # — reuse the in-tree wrapper rather than add `pbkdf2`/`hmac` crates to the trust base.

@@ -90,7 +90,7 @@ pub(crate) fn sample_in_ball(tau: i32, c_tilde: &[u8]) -> Poly {
     c
 }
 
-/// RejNTTPoly (Alg 30): one matrix entry Â[r][s] in the NTT domain, seeded by
+/// RejNTTPoly (Alg 30): one matrix entry `Â[r][s]` in the NTT domain, seeded by
 /// `rho || s || r`. Regenerated on demand by the streaming matrix product.
 pub(crate) fn rej_ntt_poly(rho: &[u8; 32], s: u8, r: u8) -> Poly {
     let mut a = Poly::zero();
@@ -155,7 +155,7 @@ pub(crate) fn expand_mask<const L: usize>(gamma1: i32, rho: &[u8; 64], mu: u16) 
 
 /// Streaming matrix-vector product `w = Â·û` in the NTT domain (the pointwise
 /// products of `mat_vec_mul`, Alg 44/helpers). Instead of materializing the full
-/// k×l matrix Â, each Â[i][j] is regenerated on the fly via [`rej_ntt_poly`] —
+/// k×l matrix Â, each `Â[i][j]` is regenerated on the fly via [`rej_ntt_poly`] —
 /// one A-polynomial plus the SHAKE128 state resident, not k·l. This is the core
 /// stack saving over the by-value reference. `û` need not be in Montgomery form;
 /// it is lifted here (exactly one operand carries the 2^32 factor).

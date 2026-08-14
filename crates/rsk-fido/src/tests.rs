@@ -38,12 +38,16 @@ fn dispatch(data: &[u8], out: &mut [u8]) -> usize {
 
 #[test]
 fn dispatch_get_info_ok() {
-    let mut out = [0u8; 512];
+    // Sized well clear of the response: `advertise-pqc` adds two ML-DSA algorithm
+    // entries on top of the vendorPrototype id list, and `process_cbor` answers a
+    // short buffer with a status byte alone rather than a panic.
+    let mut out = [0u8; 1024];
     let n = dispatch(&[consts::CTAP_GET_INFO], &mut out);
     assert!(n > 1);
     assert_eq!(out[0], CTAP2_OK);
-    // The payload is the getInfo map (CBOR map header 0xB4 = map(20)).
-    assert_eq!(out[1], 0xB4);
+    // The payload is the getInfo map: 0xB5 = map(21), one less on a
+    // `largeblob-ext` build (no maxSerializedLargeBlobArray).
+    assert_eq!(out[1], 0xB5 - u8::from(consts::LARGE_BLOB_EXT));
 }
 
 #[test]

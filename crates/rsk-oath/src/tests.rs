@@ -4,6 +4,40 @@
 use super::*;
 use rsk_fs::storage::ram::RamStorage;
 
+/// PUT's body grammar — a rule per field, a measured card cell per rule. Hung
+/// off this module rather than the crate root so it inherits the helpers below.
+#[path = "put_tests.rs"]
+mod put_tests;
+
+/// The `only increasing` property's high-water mark, on both read paths.
+#[path = "increasing_tests.rs"]
+mod increasing_tests;
+
+/// The challenge itself: how wide it may be, and that both read paths HMAC all
+/// of it.
+#[path = "challenge_tests.rs"]
+mod challenge_tests;
+
+/// What a failed OTP-PIN attempt does to the standing authentication.
+#[path = "otp_pin_tests.rs"]
+mod otp_pin_tests;
+
+/// What SET CODE accepts as an access code, and what a refusal leaves behind.
+#[path = "set_code_tests.rs"]
+mod set_code_tests;
+
+/// The four bytes a truncated CALCULATE / CALCULATE ALL response carries.
+#[path = "code_tests.rs"]
+mod code_tests;
+
+/// Which `P1`/`P2` pair each command takes, across the whole table.
+#[path = "p1p2_tests.rs"]
+mod p1p2_tests;
+
+/// The TLV bodies the read and access-code commands accept, tag by tag.
+#[path = "grammar_tests.rs"]
+mod grammar_tests;
+
 /// RFC 6238 reference secrets.
 const SECRET_SHA1: &[u8] = b"12345678901234567890";
 const SECRET_SHA256: &[u8] = b"12345678901234567890123456789012";
@@ -29,6 +63,14 @@ impl UserPresence for StubPresence {
 }
 
 const SERIAL: [u8; 8] = [0x12, 0x34, 0x56, 0x78, 0, 0, 0, 0];
+
+/// A provisioned MKEK for the tests. The applet holds a way to READ the fuses, not
+/// the key, so a test source has to be a plain `fn` — a closure over a local could
+/// not coerce to one.
+const TEST_MKEK: [u8; 32] = [0x55; 32];
+fn test_mkek() -> Option<[u8; 32]> {
+    Some(TEST_MKEK)
+}
 
 fn new_fs() -> Fs<RamStorage> {
     let mut fs = Fs::new(RamStorage::new());
@@ -103,8 +145,8 @@ fn calc_code(
     challenge: u64,
     digits: u32,
 ) -> u32 {
-    let mut d = tlv(TAG_CHALLENGE, &challenge.to_be_bytes());
-    d.extend(tlv(TAG_NAME, name));
+    let mut d = tlv(TAG_NAME, name);
+    d.extend(tlv(TAG_CHALLENGE, &challenge.to_be_bytes()));
     let (sw, body) = run(app, fs, &apdu(INS_CALCULATE, 0, 0x01, &d));
     assert_eq!(sw, Sw::OK);
     // [tag=0x76][len=5][digits][4-byte code]
@@ -331,8 +373,8 @@ fn totp_full_response() {
         &mut fs,
         &put_data(b"t", 0x21, 6, SECRET_SHA1, false, None),
     );
-    let mut d = tlv(TAG_CHALLENGE, &1u64.to_be_bytes());
-    d.extend(tlv(TAG_NAME, b"t"));
+    let mut d = tlv(TAG_NAME, b"t");
+    d.extend(tlv(TAG_CHALLENGE, &1u64.to_be_bytes()));
     let (sw, body) = run(&mut app, &mut fs, &apdu(INS_CALCULATE, 0, 0x00, &d));
     assert_eq!(sw, Sw::OK);
     assert_eq!(body[0], TAG_RESPONSE);
@@ -390,8 +432,8 @@ fn calculate_touch_cred_requires_press() {
         &mut fs,
         &put_data(b"h", 0x11, 6, SECRET_SHA1, true, None),
     );
-    let mut d = tlv(TAG_CHALLENGE, &0u64.to_be_bytes());
-    d.extend(tlv(TAG_NAME, b"h"));
+    let mut d = tlv(TAG_NAME, b"h");
+    d.extend(tlv(TAG_CHALLENGE, &0u64.to_be_bytes()));
     let (sw, body) = run(&mut app, &mut fs, &apdu(INS_CALCULATE, 0, 0x01, &d));
     assert_eq!(sw, Sw::SECURITY_STATUS_NOT_SATISFIED);
     assert!(body.is_empty());
@@ -580,19 +622,16 @@ fn put_validates_key_and_name() {
     let touch = RefCell::new(AlwaysConfirm);
     let mut app = OathApplet::new(SERIAL, [0x22; 32], None, &rng, &touch);
     // Missing key.
-    assert_eq!(
-        put(&mut app, &mut fs, &tlv(TAG_NAME, b"x")),
-        Sw::INCORRECT_PARAMS
-    );
+    assert_eq!(put(&mut app, &mut fs, &tlv(TAG_NAME, b"x")), Sw::WRONG_DATA);
     // Missing name.
     assert_eq!(
         put(&mut app, &mut fs, &tlv(TAG_KEY, &[0x21, 6, 1, 2])),
-        Sw::INCORRECT_PARAMS
+        Sw::WRONG_DATA
     );
     // Key shorter than [type, digits] is rejected.
     let mut d = tlv(TAG_NAME, b"x");
     d.extend(tlv(TAG_KEY, &[0x21]));
-    assert_eq!(put(&mut app, &mut fs, &d), Sw::INCORRECT_PARAMS);
+    assert_eq!(put(&mut app, &mut fs, &d), Sw::WRONG_DATA);
 }
 
 #[test]
@@ -714,20 +753,90 @@ fn rename_replaces_name_in_place() {
     assert_eq!(sw, Sw::OK);
     // Old gone, new resolves and still calculates correctly.
     assert_eq!(calc_code(&mut app, &mut fs, b"newname", 1, 8), 94287082);
-    let mut d = tlv(TAG_CHALLENGE, &1u64.to_be_bytes());
-    d.extend(tlv(TAG_NAME, b"old"));
+    let mut d = tlv(TAG_NAME, b"old");
+    d.extend(tlv(TAG_CHALLENGE, &1u64.to_be_bytes()));
     let (sw, _) = run(&mut app, &mut fs, &apdu(INS_CALCULATE, 0, 1, &d));
     assert_eq!(sw, Sw::DATA_INVALID);
 
-    // Same old/new name is rejected; unknown name is DATA_INVALID.
+    // Same old/new name is the taken-target case; unknown name is DATA_INVALID.
     let mut d = tlv(TAG_NAME, b"newname");
     d.extend(tlv(TAG_NAME, b"newname"));
     let (sw, _) = run(&mut app, &mut fs, &apdu(INS_RENAME, 0, 0, &d));
-    assert_eq!(sw, SW_WRONG_DATA);
+    assert_eq!(sw, Sw::DATA_INVALID);
     let mut d = tlv(TAG_NAME, b"missing");
     d.extend(tlv(TAG_NAME, b"other"));
     let (sw, _) = run(&mut app, &mut fs, &apdu(INS_RENAME, 0, 0, &d));
     assert_eq!(sw, Sw::DATA_INVALID);
+}
+
+/// One credential per name is the store's rule — PUT keeps it by overwriting
+/// (`put_overwrites_same_name`), so RENAME keeps it by refusing. A YubiKey 5.7.4
+/// answers `6984` to a taken target, and nothing on the card moves.
+#[test]
+fn rename_onto_an_existing_name_is_refused() {
+    let mut fs = new_fs();
+    let rng = RefCell::new(CountRng(7));
+    let touch = RefCell::new(AlwaysConfirm);
+    let mut app = OathApplet::new(SERIAL, [0x22; 32], None, &rng, &touch);
+    put(
+        &mut app,
+        &mut fs,
+        &put_data(b"alpha", 0x21, 8, SECRET_SHA1, false, None),
+    );
+    put(
+        &mut app,
+        &mut fs,
+        &put_data(b"beta", 0x21, 8, b"beta-secret-01234567", false, None),
+    );
+    let alpha_code = calc_code(&mut app, &mut fs, b"alpha", 1, 8);
+    let beta_code = calc_code(&mut app, &mut fs, b"beta", 1, 8);
+    assert_ne!(alpha_code, beta_code);
+
+    let mut d = tlv(TAG_NAME, b"alpha");
+    d.extend(tlv(TAG_NAME, b"beta"));
+    let (sw, _) = run(&mut app, &mut fs, &apdu(INS_RENAME, 0, 0, &d));
+    assert_eq!(sw, Sw::DATA_INVALID);
+    // Refused means untouched: two rows, each still answering with its own secret.
+    // A second `beta` would shadow the first, and deleting it would silently change
+    // which code the surviving row produces.
+    let (_, body) = run(&mut app, &mut fs, &apdu(INS_LIST, 0, 0, &[]));
+    assert_eq!(
+        body,
+        [
+            vec![TAG_NAME_LIST, 6, 0x21],
+            b"alpha".to_vec(),
+            vec![TAG_NAME_LIST, 5, 0x21],
+            b"beta".to_vec(),
+        ]
+        .concat()
+    );
+    assert_eq!(calc_code(&mut app, &mut fs, b"alpha", 1, 8), alpha_code);
+    assert_eq!(calc_code(&mut app, &mut fs, b"beta", 1, 8), beta_code);
+
+    // Renaming onto itself is that same taken target, not a syntax error.
+    let mut d = tlv(TAG_NAME, b"beta");
+    d.extend(tlv(TAG_NAME, b"beta"));
+    let (sw, _) = run(&mut app, &mut fs, &apdu(INS_RENAME, 0, 0, &d));
+    assert_eq!(sw, Sw::DATA_INVALID);
+    // A taken target is judged first, so these two pin that the missing-source
+    // answer survives it: both refusals must stay the one status word, or the
+    // card's `6984` for a source it does not have turns into the target's.
+    for (from, to) in [(&b"nosuch"[..], &b"nosuch"[..]), (b"nosuch", b"beta")] {
+        let mut d = tlv(TAG_NAME, from);
+        d.extend(tlv(TAG_NAME, to));
+        let (sw, _) = run(&mut app, &mut fs, &apdu(INS_RENAME, 0, 0, &d));
+        assert_eq!(sw, Sw::DATA_INVALID);
+    }
+
+    // The collision predicate is the byte-exact one the source lookup already
+    // uses: a target differing only in case is free, and the rename carries the
+    // secret across.
+    let mut d = tlv(TAG_NAME, b"alpha");
+    d.extend(tlv(TAG_NAME, b"Beta"));
+    let (sw, _) = run(&mut app, &mut fs, &apdu(INS_RENAME, 0, 0, &d));
+    assert_eq!(sw, Sw::OK);
+    assert_eq!(calc_code(&mut app, &mut fs, b"Beta", 1, 8), alpha_code);
+    assert_eq!(calc_code(&mut app, &mut fs, b"beta", 1, 8), beta_code);
 }
 
 /// Drive the full access-code lifecycle the way ykman does.
@@ -788,20 +897,20 @@ fn set_code_and_validate_flow() {
 
     // VALIDATE with a wrong response stays locked…
     let host_chal = [9u8, 9, 9, 9, 8, 8, 8, 8];
-    let mut d = tlv(TAG_CHALLENGE, &host_chal);
-    d.extend(tlv(TAG_RESPONSE, &[0u8; 20]));
+    let mut d = tlv(TAG_RESPONSE, &[0u8; 20]);
+    d.extend(tlv(TAG_CHALLENGE, &host_chal));
     let (sw, _) = run(&mut app, &mut fs, &apdu(INS_VALIDATE, 0, 0, &d));
-    assert_eq!(sw, Sw::DATA_INVALID);
+    assert_eq!(sw, Sw::WRONG_DATA);
     // …and a truncated (1-byte) response must not brute-force its way in.
     let full = hmac_sha1(&[0xAB; 16], &card_chal);
-    let mut d = tlv(TAG_CHALLENGE, &host_chal);
-    d.extend(tlv(TAG_RESPONSE, &full[..1]));
+    let mut d = tlv(TAG_RESPONSE, &full[..1]);
+    d.extend(tlv(TAG_CHALLENGE, &host_chal));
     let (sw, _) = run(&mut app, &mut fs, &apdu(INS_VALIDATE, 0, 0, &d));
-    assert_eq!(sw, Sw::DATA_INVALID);
+    assert_eq!(sw, Sw::WRONG_DATA);
 
     // Correct response unlocks and returns the mutual proof.
-    let mut d = tlv(TAG_CHALLENGE, &host_chal);
-    d.extend(tlv(TAG_RESPONSE, &full));
+    let mut d = tlv(TAG_RESPONSE, &full);
+    d.extend(tlv(TAG_CHALLENGE, &host_chal));
     let (sw, body) = run(&mut app, &mut fs, &apdu(INS_VALIDATE, 0, 0, &d));
     assert_eq!(sw, Sw::OK);
     assert_eq!(
@@ -829,8 +938,8 @@ fn validate_without_code_reports_invalid() {
     let rng = RefCell::new(CountRng(7));
     let touch = RefCell::new(AlwaysConfirm);
     let mut app = OathApplet::new(SERIAL, [0x22; 32], None, &rng, &touch);
-    let mut d = tlv(TAG_CHALLENGE, &[0; 8]);
-    d.extend(tlv(TAG_RESPONSE, &[0; 20]));
+    let mut d = tlv(TAG_RESPONSE, &[0; 20]);
+    d.extend(tlv(TAG_CHALLENGE, &[0; 8]));
     let (sw, _) = run(&mut app, &mut fs, &apdu(INS_VALIDATE, 0, 0, &d));
     assert_eq!(sw, Sw::DATA_INVALID);
     // But the applet stays usable — no access code is set.
@@ -857,7 +966,7 @@ fn reset_clears_creds_code_and_pin() {
     assert_eq!(sw, Sw::OK);
 
     let (sw, _) = run(&mut app, &mut fs, &apdu(INS_RESET, 0, 0, &[]));
-    assert_eq!(sw, Sw::INCORRECT_P1P2);
+    assert_eq!(sw, Sw::WRONG_P1P2);
     let (sw, _) = run(&mut app, &mut fs, &apdu(INS_RESET, 0xDE, 0xAD, &[]));
     assert_eq!(sw, Sw::OK);
 
@@ -885,9 +994,8 @@ fn cred_sealed_before_otp_burn_survives_the_burn() {
         serial_id: &SERIAL,
         otp_key: None,
     };
-    let otp_key = [0x55u8; 32];
     let otp = Device {
-        otp_key: Some(&otp_key),
+        otp_key: Some(&TEST_MKEK),
         ..nootp
     };
     // Seal a credential blob under the pre-OTP arm (content is opaque to the
@@ -989,7 +1097,6 @@ fn otp_pin_set_before_burn_still_verifies_after_burn() {
     let mut fs = new_fs();
     let rng = RefCell::new(CountRng(7));
     let touch = RefCell::new(AlwaysConfirm);
-    let otp_key = [0x55u8; 32];
 
     // Pre-burn: set the OTP-PIN (v1 under the NO-OTP kbase).
     {
@@ -1003,7 +1110,7 @@ fn otp_pin_set_before_burn_still_verifies_after_burn() {
     }
 
     // Post-burn: the same PIN must still verify, via the without_otp fallback.
-    let mut app = OathApplet::new(SERIAL, [0x22; 32], Some(otp_key), &rng, &touch);
+    let mut app = OathApplet::new(SERIAL, [0x22; 32], Some(test_mkek), &rng, &touch);
     let (sw, _) = run(
         &mut app,
         &mut fs,
@@ -1015,7 +1122,7 @@ fn otp_pin_set_before_burn_still_verifies_after_burn() {
     let otp_dev = Device {
         serial_hash: &[0x22; 32],
         serial_id: &SERIAL,
-        otp_key: Some(&otp_key),
+        otp_key: Some(&TEST_MKEK),
     };
     let mut rec = [0u8; 34];
     assert_eq!(fs.read(EF_OTP_PIN, &mut rec), Some(34));
@@ -1203,7 +1310,7 @@ fn put_rejects_two_byte_tag_form() {
     let mut app = OathApplet::new(SERIAL, [0x22; 32], None, &rng, &touch);
     let mut d = put_data(b"c", 0x21, 6, SECRET_SHA1, false, None);
     d.extend(tlv(0x7F, &[0xAA])); // low 5 bits == 0x1f
-    assert_eq!(put(&mut app, &mut fs, &d), Sw::INCORRECT_PARAMS);
+    assert_eq!(put(&mut app, &mut fs, &d), Sw::WRONG_DATA);
 }
 
 #[test]
@@ -1429,8 +1536,8 @@ fn validate_fails_closed_on_unreadable_code() {
     ));
     app.validated = false;
     // VALIDATE must NOT unlock: the code cannot be read, so fail closed.
-    let mut d = tlv(TAG_CHALLENGE, &[0u8; 8]);
-    d.extend(tlv(TAG_RESPONSE, &[0u8; 20]));
+    let mut d = tlv(TAG_RESPONSE, &[0u8; 20]);
+    d.extend(tlv(TAG_CHALLENGE, &[0u8; 8]));
     let (sw, _) = run(&mut app, &mut fs, &apdu(INS_VALIDATE, 0, 0, &d));
     assert_eq!(sw, Sw::DATA_INVALID);
     assert!(!app.validated);
@@ -1502,12 +1609,11 @@ fn calculate_all_mixes_response_kinds() {
     let (sw, body) = run(&mut app, &mut fs, &apdu(INS_CALC_ALL, 0, 0x01, &chal));
     assert_eq!(sw, Sw::OK);
 
-    // Entry 1: full truncated TOTP response (RFC 6238 SHA-1 @ T=1).
+    // Entry 1: full truncated TOTP response (RFC 6238 SHA-1 @ T=1), the eight
+    // digits the credential was stored with.
     let mut expect = tlv(TAG_NAME, b"totp");
-    let h = hmac_sha1(SECRET_SHA1, &1u64.to_be_bytes());
-    let off = (h[19] & 0xF) as usize;
-    expect.extend([TAG_RESPONSE + 1, 5, 8, h[off] & 0x7F]);
-    expect.extend(&h[off + 1..off + 4]);
+    expect.extend([TAG_RESPONSE + 1, 5, 8]);
+    expect.extend(&94_287_082u32.to_be_bytes());
     // Entry 2: HOTP is not calculated in bulk.
     expect.extend(tlv(TAG_NAME, b"hotp"));
     expect.extend([TAG_NO_RESPONSE, 1, 6]);
@@ -1517,9 +1623,9 @@ fn calculate_all_mixes_response_kinds() {
     assert_eq!(body, expect);
 
     let (sw, _) = run(&mut app, &mut fs, &apdu(INS_CALC_ALL, 0, 0x02, &chal));
-    assert_eq!(sw, Sw::INCORRECT_P1P2);
+    assert_eq!(sw, Sw::WRONG_P1P2);
     let (sw, _) = run(&mut app, &mut fs, &apdu(INS_CALC_ALL, 0, 0x01, &[]));
-    assert_eq!(sw, Sw::INCORRECT_PARAMS);
+    assert_eq!(sw, Sw::WRONG_DATA);
 }
 
 #[test]
@@ -1529,8 +1635,8 @@ fn calculate_rejects_unknowns() {
     let touch = RefCell::new(AlwaysConfirm);
     let mut app = OathApplet::new(SERIAL, [0x22; 32], None, &rng, &touch);
     // Unknown credential name.
-    let mut d = tlv(TAG_CHALLENGE, &1u64.to_be_bytes());
-    d.extend(tlv(TAG_NAME, b"ghost"));
+    let mut d = tlv(TAG_NAME, b"ghost");
+    d.extend(tlv(TAG_CHALLENGE, &1u64.to_be_bytes()));
     let (sw, _) = run(&mut app, &mut fs, &apdu(INS_CALCULATE, 0, 1, &d));
     assert_eq!(sw, Sw::DATA_INVALID);
     // Missing challenge.
@@ -1539,15 +1645,36 @@ fn calculate_rejects_unknowns() {
         &mut fs,
         &apdu(INS_CALCULATE, 0, 1, &tlv(TAG_NAME, b"x")),
     );
-    assert_eq!(sw, Sw::INCORRECT_PARAMS);
-    // Unknown algorithm nibble in a stored key fails cleanly.
-    put(
-        &mut app,
-        &mut fs,
-        &put_data(b"bad", 0x29, 6, SECRET_SHA1, false, None),
+    assert_eq!(sw, Sw::WRONG_DATA);
+    // Unknown algorithm nibble in a stored key fails cleanly. PUT refuses one
+    // now (E34), so the fixture is planted the way a build before it stored one
+    // — otherwise this asserts over an empty slot and proves nothing.
+    assert_eq!(
+        put(
+            &mut app,
+            &mut fs,
+            &put_data(b"bad", 0x29, 6, SECRET_SHA1, false, None)
+        ),
+        Sw::WRONG_DATA,
     );
-    let mut d = tlv(TAG_CHALLENGE, &1u64.to_be_bytes());
-    d.extend(tlv(TAG_NAME, b"bad"));
+    let dev = Device {
+        serial_hash: &[0x22; 32],
+        serial_id: &SERIAL,
+        otp_key: None,
+    };
+    let mut blob = tlv(TAG_NAME, b"bad");
+    let mut key = vec![0x29u8, 6];
+    key.extend_from_slice(SECRET_SHA1);
+    blob.extend(tlv(TAG_KEY, &key));
+    assert!(seal::seal_put(
+        &dev,
+        &mut fs,
+        &mut CountRng(3),
+        KeyFid::new(EF_OATH_CRED),
+        &blob
+    ));
+    let mut d = tlv(TAG_NAME, b"bad");
+    d.extend(tlv(TAG_CHALLENGE, &1u64.to_be_bytes()));
     let (sw, _) = run(&mut app, &mut fs, &apdu(INS_CALCULATE, 0, 1, &d));
     assert_eq!(sw, Sw::EXEC_ERROR);
     // Bad CLA and unknown INS.
@@ -1585,11 +1712,17 @@ fn slots_fill_and_report_full() {
     );
 }
 
-/// The firmware hands OATH a `RESP_CAP - 2 = 2036`-byte response slice
-/// (firmware/src/ccid_handler.rs); the generic `run()` above uses 2048, which
-/// truncates at a slightly different count. Reproduce the exact on-device
-/// capacity so the enumeration cap matches the hardware.
-const FW_RESP_CAP: usize = 2036;
+/// The response slice the CCID layer hands an applet: one frame, less its
+/// header, less the two status bytes appended after. The generic `run()` above
+/// uses 2048, which truncates at a slightly different count, so the enumeration
+/// cap has to be measured against this one instead.
+///
+/// Derived from the transport rather than written out, because 2036 is the same
+/// number `rsk-device`'s `RESP_CAP - 2` and `rsk-openpgp`'s `MAX_DO_BYTES` are,
+/// and a fourth copy of it is what drifts (E72). `rsk-oath` cannot see
+/// `rsk-device`, but both of them can see where the frame size comes from.
+const FW_RESP_CAP: usize = rsk_usb::ccid::MAX_CCID_MSG - rsk_usb::ccid::HEADER - 2;
+const _: () = assert!(FW_RESP_CAP == 2036);
 
 fn run_fw(app: &mut OathApplet, fs: &mut Fs<RamStorage>, raw: &[u8]) -> (Sw, Vec<u8>) {
     let mut out = [0u8; FW_RESP_CAP];
@@ -1684,8 +1817,8 @@ fn list_and_calc_all_paginate_the_full_store() {
     // SEND REMAINING is an empty OK, not a stale resumed frame.
     let (sw, _) = run_fw(&mut app, &mut fs, &apdu(INS_LIST, 0, 0, &[]));
     assert_eq!(sw, Sw::BYTES_REMAINING_00);
-    let mut d = tlv(TAG_CHALLENGE, &1u64.to_be_bytes());
-    d.extend(tlv(TAG_NAME, &acct_name(0)));
+    let mut d = tlv(TAG_NAME, &acct_name(0));
+    d.extend(tlv(TAG_CHALLENGE, &1u64.to_be_bytes()));
     let (sw, _) = run_fw(&mut app, &mut fs, &apdu(INS_CALCULATE, 0, 0x01, &d));
     assert_eq!(sw, Sw::OK);
     let (sw, body) = run_fw(&mut app, &mut fs, &apdu(INS_SEND_REMAINING, 0, 0, &[]));
@@ -1792,7 +1925,7 @@ fn the_exported_lock_predicate_protects_the_device_wide_wipe() {
             fs.put(EF_OATH_CRED + i, &[0x11; 24]).unwrap();
         }
 
-        let _ = fs.factory_wipe(|_| false, is_oath_lock_fid);
+        let _ = fs.factory_wipe(|_| false, |_| false, is_oath_lock_fid);
 
         if (0..5u16).any(|i| fs.has_data(EF_OATH_CRED + i)) {
             assert!(
@@ -1816,4 +1949,109 @@ fn a_completed_reset_clears_credentials_and_the_code() {
     assert!(!fs.has_data(EF_OATH_CODE.get()));
     assert!(!fs.has_data(EF_OTP_PIN));
     assert!((0..5u16).all(|i| !fs.has_data(EF_OATH_CRED + i)));
+}
+
+/// An OTP PIN the owner set must be required before the password-safe secrets
+/// are served, on the code-less applet that is the shipping default.
+///
+/// `validated` was the only gate, and `select()` sets it unconditionally when no
+/// access code is configured — so the PIN gated nothing: a fresh session that
+/// presented no credential at all got the stored password back. `cmd_set_otp_pin`
+/// already reasoned about that hole and defended itself with a touch; the two
+/// commands that return secrets did not.
+#[test]
+fn an_otp_pin_is_required_before_the_password_safe_is_served() {
+    let mut fs = new_fs();
+    let rng = RefCell::new(CountRng(3));
+    let touch = RefCell::new(AlwaysConfirm);
+    let mut app = OathApplet::new(SERIAL, [0x22; 32], Some(test_mkek), &rng, &touch);
+    select(&mut app, &mut fs);
+
+    let mut cred = put_data(b"bank", 0x21, 6, SECRET_SHA1, false, None);
+    cred.extend(tlv(TAG_PWS_PASSWORD, b"hunter2"));
+    put(&mut app, &mut fs, &cred);
+    let get = apdu(INS_GET_CREDENTIAL, 0, 0, &tlv(TAG_NAME, b"bank"));
+
+    // No PIN and no code: an openly unprotected store, unchanged — YKOATH leaves
+    // a code-less applet open and this is the same choice, made visibly.
+    let (sw, body) = run(&mut app, &mut fs, &get);
+    assert_eq!(sw, Sw::OK);
+    assert!(find_tag(&body, TAG_PWS_PASSWORD as u16).is_some());
+
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            &apdu(INS_SET_PIN, 0, 0, &tlv(TAG_PASSWORD, b"1234"))
+        )
+        .0,
+        Sw::OK
+    );
+
+    // A new session: SELECT re-opens the code-less applet, but the PIN now exists
+    // and has not been presented.
+    let mut app = OathApplet::new(SERIAL, [0x22; 32], Some(test_mkek), &rng, &touch);
+    select(&mut app, &mut fs);
+    let (sw, body) = run(&mut app, &mut fs, &get);
+    assert_eq!(sw, Sw::SECURITY_STATUS_NOT_SATISFIED);
+    assert!(body.is_empty(), "a refusal carries no secret");
+
+    // VERIFY CODE (0xB1) is the other reader and gets the same gate.
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            &apdu(INS_VERIFY_CODE, 0, 0, &tlv(TAG_NAME, b"bank"))
+        )
+        .0,
+        Sw::SECURITY_STATUS_NOT_SATISFIED
+    );
+
+    // Present it, and the same session is served.
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            &apdu(INS_VERIFY_PIN, 0, 0, &tlv(TAG_PASSWORD, b"1234"))
+        )
+        .0,
+        Sw::OK
+    );
+    let (sw, body) = run(&mut app, &mut fs, &get);
+    assert_eq!(sw, Sw::OK);
+    assert_eq!(
+        find_tag(&body, TAG_PWS_PASSWORD as u16),
+        Some(&b"hunter2"[..])
+    );
+
+    // A wrong PIN revokes the unlock the correct one granted.
+    assert_ne!(
+        run(
+            &mut app,
+            &mut fs,
+            &apdu(INS_VERIFY_PIN, 0, 0, &tlv(TAG_PASSWORD, b"9999"))
+        )
+        .0,
+        Sw::OK
+    );
+    assert_eq!(
+        run(&mut app, &mut fs, &get).0,
+        Sw::SECURITY_STATUS_NOT_SATISFIED
+    );
+
+    // And a re-SELECT does not inherit it.
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            &apdu(INS_VERIFY_PIN, 0, 0, &tlv(TAG_PASSWORD, b"1234"))
+        )
+        .0,
+        Sw::OK
+    );
+    select(&mut app, &mut fs);
+    assert_eq!(
+        run(&mut app, &mut fs, &get).0,
+        Sw::SECURITY_STATUS_NOT_SATISFIED
+    );
 }

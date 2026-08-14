@@ -11,9 +11,12 @@
 #   fuzz-coverage — per-target libFuzzer region/line coverage over that
 #          accumulated corpus (scripts/fuzz-coverage.sh): a summary table on the
 #          step page and the per-target HTML uploaded. Advisory, not a gate.
-#   kani — the #[kani::proof] bounded model-checking harnesses (docs/
-#          testing.md). Kani is not in nixpkgs and its setup downloads a
-#          prebuilt CBMC bundle, so this one job is rustup-based, not nix.
+#   kani — every #[kani::proof] harness: the `all` tier of scripts/kani.sh
+#          (docs/testing.md). The fast tier of that same script runs per-PR in
+#          ci.yml; this row is the one that owes the whole roster, including the
+#          phy round-trip — ~80 min on a hosted runner (2637a20), 27m42s locally,
+#          against a 30m per-harness cap. Kani is not in nixpkgs and its setup
+#          downloads a prebuilt CBMC bundle, so this job is rustup-based, not nix.
 #   repro — `nix build .#firmware` twice (`--rebuild` diffs every output
 #          byte): proves the hermetic image is bit-reproducible and publishes
 #          the canonical sha256 for this flake.lock (docs/build.md).
@@ -30,8 +33,8 @@
 #   nix develop .#fuzz -c cargo miri test --manifest-path fuzz/Cargo.toml
 #   nix develop .#fuzz -c cargo fuzz run <target> -- -max_total_time=120
 #   nix develop .#fuzz -c ./scripts/fuzz-coverage.sh
-#   cargo kani -p rsk-sdk -p rsk-fs -p rsk-rsa-asm -p rsk-crypto -p rsk-mldsa -p rsk-rescue -p rsk-openpgp -p rsk-otp -p rsk-piv -p rsk-oath -p rsk-usb  (cargo install kani-verifier)
-#   nix develop -c cargo llvm-cov --summary-only --fail-under-lines 80 --target <host> -p rsk-sdk … -p rsk-slip39
+#   ./scripts/kani.sh all   (needs `cargo install kani-verifier` first — not nix)
+#   nix develop -c cargo llvm-cov --summary-only --fail-under-lines 80 --target <host> --workspace --exclude firmware --exclude rsk-wipe
 #   nix develop -c ./scripts/complexity_gate.sh
 
 name: deep-checks
@@ -125,8 +128,23 @@ jobs:
       - name: fuzz every target
         run: |
           nix develop .#fuzz -c bash -euo pipefail -c '
+            # `set -e` does not fire on an empty or failing $( ) used as a `for`
+            # word list, so a broken `cargo fuzz list` fuzzed zero targets and
+            # this job reported green — measured, rc=0. Floor the roster at today's
+            # count: unlike the firmware-size ratchet it needs no margin, because a
+            # target count has no build noise. Lower FUZZ_TARGET_FLOOR, and its two
+            # copies in scripts/fuzz-coverage.sh and scripts/check.sh, in the commit
+            # that removes a target.
+            mapfile -t targets < <(cargo fuzz list)
+            # The corpus lives in one LRU-evictable cache entry; on a restore
+            # miss every target starts from empty and the run still says DONE.
+            echo "roster: ${#targets[@]} targets (floor ${FUZZ_TARGET_FLOOR}), corpus: $(find fuzz/corpus -type f 2>/dev/null | wc -l) inputs restored"
+            if [ "${#targets[@]}" -lt "$FUZZ_TARGET_FLOOR" ]; then
+              echo "::error::cargo fuzz list yielded ${#targets[@]} targets, under the ${FUZZ_TARGET_FLOOR} floor — the roster shrank or the list failed"
+              exit 1
+            fi
             failed=""
-            for t in $(cargo fuzz list); do
+            for t in "${targets[@]}"; do
               echo "::group::${t} (${FUZZ_SECONDS}s)"
               if ! cargo fuzz run "$t" -- -max_total_time="$FUZZ_SECONDS" -print_final_stats=1; then
                 failed="$failed $t"
@@ -140,6 +158,7 @@ jobs:
           '
         env:
           FUZZ_SECONDS: ${{ inputs.fuzz_seconds || '120' }}
+          FUZZ_TARGET_FLOOR: "53"
 
       - name: upload crash artifacts
         if: failure()
@@ -222,8 +241,18 @@ jobs:
           command -v cargo-kani >/dev/null || cargo install --locked kani-verifier --version "$KANI_VERSION"
           cargo kani setup
 
+      # The `all` tier: every crate carrying a harness, `rsk-bench` aside
+      # (scripts/kani_gate.py holds that exclusion and its measured reason). The
+      # script also floors the harness count and the `kani::cover!` count, because
+      # a roster that selects nothing exits 0 and so does a cover nothing reaches.
+      # `--harness-timeout`, which it passes, is per harness and not per row —
+      # Kani runs the rest and fails at the end. It is set to this job's own 6 h,
+      # so `timeout-minutes` is the real bound and the per-harness cap exists only
+      # to keep the flag from being unset: a cap that fires on this tier costs more
+      # than it saves, because the non-zero exit ends the script at the `tee` and
+      # the harness and cover floors below it are never read.
       - name: prove every harness
-        run: cargo kani -p rsk-sdk -p rsk-fs -p rsk-rsa-asm -p rsk-crypto -p rsk-mldsa -p rsk-rescue -p rsk-openpgp -p rsk-otp -p rsk-piv -p rsk-oath -p rsk-usb
+        run: ./scripts/kani.sh all
   repro:
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -275,17 +304,17 @@ jobs:
           restore-keys: coverage-${{ runner.os }}-
 
       # Host crates only — the embedded firmware image is not host-measurable, so
-      # its coverage is 0 by construction and excluded. The 80% floor is a
-      # regression alarm (the host surface currently sits ~88% line), not a
-      # target: a real drop fails, normal fluctuation does not. Mirrors the host
-      # package set in scripts/check.sh.
+      # its coverage is 0 by construction. firmware and rsk-wipe are the two
+      # workspace members that are not under crates/ and the two that are
+      # thumbv8m-only, so the exclusion is the whole of it; scripts/roster_gate.py
+      # holds this row and the header's copy of it to that pair. The 80% floor is
+      # a regression alarm, not a target: 85.0% line over the 24 crates
+      # (aarch64-apple-darwin), so a real drop fails and noise does not.
       - name: llvm-cov — host-crate line coverage, floored at 80%
         run: |
           nix develop -c cargo llvm-cov --summary-only --fail-under-lines 80 \
             --target x86_64-unknown-linux-gnu \
-            -p rsk-sdk -p rsk-fs -p rsk-usb -p rsk-crypto -p rsk-fido -p rsk-openpgp \
-            -p rsk-rsa-asm -p rsk-sha512 -p rsk-ec -p rsk-mldsa -p rsk-mgmt -p rsk-oath -p rsk-otp -p rsk-piv \
-            -p rsk-rescue -p rsk-led -p rsk-ui -p rsk-bip39 -p rsk-slip39 -p rsk-bench
+            --workspace --exclude firmware --exclude rsk-wipe
 
   complexity:
     runs-on: ubuntu-latest

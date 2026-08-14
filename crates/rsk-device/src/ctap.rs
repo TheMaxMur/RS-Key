@@ -7,7 +7,7 @@
 
 use core::cell::RefCell;
 
-use rsk_crypto::Device;
+use rsk_crypto::{Device, FusedKey, read_fused};
 use rsk_fs::{Fs, Storage};
 use rsk_sdk::apdu::Apdu;
 use rsk_sdk::{Applet, Dispatcher, ResBuf};
@@ -19,6 +19,12 @@ use crate::Hooks;
 // Sized to the CTAPHID transport maximum (= getInfo's maxMsgSize): an ML-DSA-44
 // makeCredential response runs ~4 KB.
 const RESP_CAP: usize = rsk_usb::ctaphid::CTAP_MAX_MESSAGE;
+// getInfo advertises `maxMsgSize` from a LITERAL in `rsk-fido`, which does not
+// depend on `rsk-usb` — this crate is the only one that sees both, so nothing else
+// stops the two drifting. Over-declare it and a conforming platform sends a message
+// the transport drops before any CBOR is read; `MAX_FRAGMENT_LENGTH` (the
+// largeBlobs ceiling) is derived from the same literal and rides on this too.
+const _: () = assert!(rsk_fido::consts::MAX_MSG_SIZE as usize == RESP_CAP);
 
 pub struct AppletHandler<'a, S: Storage, R: crate::Rng + 'static, VP: rsk_vendor::Platform> {
     fs: &'a RefCell<Fs<S>>,
@@ -38,8 +44,9 @@ pub struct AppletHandler<'a, S: Storage, R: crate::Rng + 'static, VP: rsk_vendor
     presence: &'a RefCell<dyn rsk_fido::UserPresence>,
     serial_id: [u8; 8],
     serial_hash: [u8; 32],
-    /// The OTP MKEK, once provisioned.
-    otp_key: Option<[u8; 32]>,
+    /// How to read the OTP MKEK, once provisioned — never the key itself, so no
+    /// copy of it sits in this applet's memory between operations.
+    mkek_source: Option<FusedKey>,
     resp: [u8; RESP_CAP],
 }
 
@@ -52,14 +59,14 @@ impl<'a, S: Storage, R: crate::Rng + 'static, VP: rsk_vendor::Platform>
         rng: &'a RefCell<R>,
         hooks: &'a RefCell<dyn Hooks<S>>,
         // One physical presence source: CTAP user presence and the vendor applet's
-        // gated reboot-to-BOOTSEL (this transport also dispatches the vendor AID)
-        // are the same button behind two traits.
+        // gated arms (this transport also dispatches the vendor AID) are the same
+        // button behind two traits.
         presence: &'a RefCell<PR>,
         vendor_platform: VP,
         serial_id: [u8; 8],
         serial_hash: [u8; 32],
-        otp_key: Option<[u8; 32]>,
-        devk: Option<[u8; 32]>,
+        mkek_source: Option<FusedKey>,
+        devk: Option<fn() -> Option<[u8; 32]>>,
     ) -> Self {
         // The OTP DEVK signs audit-journal checkpoints (rsk_fido::journal); it
         // rides in FidoState so the pure FIDO logic stays caller-supplied.
@@ -71,7 +78,7 @@ impl<'a, S: Storage, R: crate::Rng + 'static, VP: rsk_vendor::Platform>
         let boot = hooks.borrow_mut().boot_state();
         fido_state.restore_pin_lock(boot.lock);
         fido_state.warm_boot = boot.warm;
-        fido_state.devk = devk;
+        fido_state.devk_source = devk;
         // Generate the clientPIN ephemeral key-agreement key at power-up (CTAP 2.1
         // §6.5.5.7), not lazily on the first clientPIN — so the first PIN entry
         // after plug-in doesn't pay the one-time ~40 ms `d·G`. The TRNG is seeded
@@ -87,7 +94,7 @@ impl<'a, S: Storage, R: crate::Rng + 'static, VP: rsk_vendor::Platform>
             presence,
             serial_id,
             serial_hash,
-            otp_key,
+            mkek_source,
             resp: [0; RESP_CAP],
         }
     }
@@ -125,10 +132,11 @@ impl<S: Storage, R: crate::Rng + 'static, VP: rsk_vendor::Platform> AppletHandle
             const INS_SELECT: u8 = 0xA4;
             if self.disp.current().is_none() && parsed.ins != INS_SELECT {
                 // Borrow only the serial fields so rng/state/resp stay free.
+                let mkek = read_fused(self.mkek_source);
                 let dev = Device {
                     serial_hash: &self.serial_hash,
                     serial_id: &self.serial_id,
-                    otp_key: self.otp_key.as_ref(),
+                    otp_key: mkek.as_deref(),
                 };
                 let (sw, n) = {
                     let mut fsb = self.fs.borrow_mut();
@@ -180,10 +188,11 @@ impl<S: Storage, R: crate::Rng + 'static, VP: rsk_vendor::Platform> AppletHandle
             // crate-private and leaving the RAM soft lock armed only fails closed
             // (host clientPIN stays blocked until a replug), so it stays as it is.
         }
+        let mkek = read_fused(self.mkek_source);
         let dev = Device {
             serial_hash: &self.serial_hash,
             serial_id: &self.serial_id,
-            otp_key: self.otp_key.as_ref(),
+            otp_key: mkek.as_deref(),
         };
         // Which CTAPHID channel is asking. Cross-message state a second process on
         // its own channel must not be able to ride — the seed-backup MSE key —
@@ -234,3 +243,7 @@ impl<S: Storage, R: crate::Rng + 'static, VP: rsk_vendor::Platform> AppletHandle
         &self.resp[..n]
     }
 }
+
+#[cfg(test)]
+#[path = "ctap_tests.rs"]
+mod tests;

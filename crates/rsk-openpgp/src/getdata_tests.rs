@@ -119,32 +119,41 @@ fn flash_do_returns_raw_no_strip() {
 }
 
 #[test]
-fn unknown_tag_is_reference_not_found() {
+fn unknown_tag_is_wrong_p1p2() {
     let mut fs = fs();
     let a = aid();
     let mut out = [0u8; 16];
     let mut cur = None;
     let (_, sw) = get_data(0x4242, false, false, &mut fs, &a, &mut cur, &mut out);
-    assert_eq!(sw, Sw::REFERENCE_NOT_FOUND);
+    assert_eq!(sw, Sw::WRONG_P1P2);
 }
 
+/// An internal EF is not a DO with a denied ACL — it is a P1P2 this command does
+/// not serve, and it answers what an absent one does. `6982` here told anyone
+/// which of the 65536 cells name a file.
 #[test]
-fn internal_ef_read_is_denied() {
+fn internal_ef_read_is_indistinguishable_from_an_absent_do() {
     let mut fs = fs();
     let a = aid();
     let mut out = [0u8; 16];
     let mut cur = None;
     let (_, sw) = get_data(EF_PW1, false, false, &mut fs, &a, &mut cur, &mut out);
-    assert_eq!(sw, Sw::SECURITY_STATUS_NOT_SATISFIED);
+    assert_eq!(sw, Sw::WRONG_P1P2);
+    let (_, absent) = get_data(0x4242, false, false, &mut fs, &a, &mut cur, &mut out);
+    assert_eq!(sw, absent);
 }
 
 #[test]
-fn priv_do_3_needs_pw2_or_pw3() {
+fn priv_do_3_needs_pw2_and_pw3_will_not_do() {
     let mut fs = fs();
     let a = aid();
     let mut out = [0u8; 16];
     let mut cur = None;
     let (_, sw) = get_data(EF_PRIV_DO_3, false, false, &mut fs, &a, &mut cur, &mut out);
+    assert_eq!(sw, Sw::SECURITY_STATUS_NOT_SATISFIED);
+    // The admin PIN is not the cardholder's: §5 gives `0103` READ to PW1 no. 82
+    // alone, and a YubiKey 5.7.4 refuses PW3 on it.
+    let (_, sw) = get_data(EF_PRIV_DO_3, false, true, &mut fs, &a, &mut cur, &mut out);
     assert_eq!(sw, Sw::SECURITY_STATUS_NOT_SATISFIED);
     // With PW2 it becomes readable (a plain flash DO).
     let (_, sw) = get_data(EF_PRIV_DO_3, true, false, &mut fs, &a, &mut cur, &mut out);
@@ -152,44 +161,21 @@ fn priv_do_3_needs_pw2_or_pw3() {
 }
 
 #[test]
-fn get_next_without_prior_get_data_is_record_not_found() {
-    let mut fs = fs();
-    let a = aid();
-    let mut out = [0u8; 16];
-    let mut cur = None;
-    let (_, sw) = get_next_data(EF_PRIV_DO_1, false, true, &mut fs, &a, &mut cur, &mut out);
-    assert_eq!(sw, Sw::RECORD_NOT_FOUND);
-}
-
-#[test]
-fn get_next_walks_to_following_priv_do() {
-    let mut fs = fs();
-    fs.put(EF_PRIV_DO_2, &[0xCA, 0xFE]).unwrap();
-    let a = aid();
-    let mut out = [0u8; 16];
-    let mut cur = Some(EF_PRIV_DO_1);
-    let (n, sw) = get_next_data(EF_PRIV_DO_1, false, true, &mut fs, &a, &mut cur, &mut out);
-    assert_eq!(sw, Sw::OK);
-    assert_eq!(&out[..n], &[0xCA, 0xFE]);
-    assert_eq!(cur, Some(EF_PRIV_DO_2));
-}
-
-#[test]
-fn oversized_algo_attr_truncates_without_panic() {
-    // run-3 #1 / run-2 F3 regression: Fs::read reports the value's FULL stored
-    // length; an over-long DO (here a 1500-byte C1 algorithm attribute) must
-    // clamp to the output buffer, never slice past it (which would panic-reset).
+fn oversized_do_is_refused_not_truncated() {
+    // run-3 #1 / run-2 F3 regression: `Fs::read` reports the value's FULL stored
+    // length, so an over-long DO (here a 1500-byte C1 algorithm attribute) must
+    // never be sliced past the output buffer — that would panic-reset the device.
+    // It used to clamp and answer `9000`, which is the same short-body-reported-
+    // as-complete lie PUT DATA's length bound now prevents at the source; only a
+    // value written by an older build can still get here, and it says so.
     let mut fs = fs();
     fs.put(EF_ALGO_PRIV1, &[0x01u8; 1500]).unwrap();
     let a = aid();
     let mut out = [0u8; 1024];
     let mut cur = None;
     let (n, sw) = get_data(EF_ALGO_SIG, false, false, &mut fs, &a, &mut cur, &mut out);
-    assert_eq!(sw, Sw::OK);
-    assert!(
-        n <= out.len(),
-        "returned length clamped to the output buffer"
-    );
+    assert_eq!(sw, Sw::MEMORY_FAILURE);
+    assert_eq!(n, 0, "an error carries no body");
 }
 
 /// Every attribute the card advertises must survive PUT DATA → GET DATA byte for

@@ -21,6 +21,14 @@ Everything else stays a human rule (AGENTS.md → "When you change X, also do Y"
 an invariant, an ownership rule or a comment can change a definition's meaning
 without changing a line this can match.
 
+A site count here is a whole-word `git grep` and nothing narrower, so a name as
+generic as `N`, `HEADER` or `UNION` answers with lines that are not references at
+all. That is not fixable from inside a grep, and scoping the search by language
+would break the tool's whole reason for being: the founding case, a Rust constant
+whose Python and prose copies drifted, is exactly the cross-language hit. So the
+report is ordered narrowest-first and says what the count is where it cuts a
+list, instead of claiming a precision it has not got.
+
 Usage:  scripts/impact.py [<rev-range>]     # default: staged, else worktree
 
 Prints nothing when every use site is inside the change. Always exits 0 — it
@@ -36,14 +44,43 @@ import sys
 # the scan; no definition in this tree spans anything close to it.
 MAX_DEF_LINES = 200
 
+# Sites printed per name before the list is cut. Also where the grep's limits are
+# said: past this the report has stopped being readable, which is the failure
+# this file exists to prevent one layer up.
+MAX_SITES = 20
+
+# The extensions [`defined`] can read. A diff entry naming one of these that this
+# parser filed nothing for is content it was meant to see and did not.
+LANGUAGES = (".rs", ".py")
+# `diff --git` entries that carry no content by design. `Binary files` is judged
+# separately: whether it is contentless depends on the path.
+CONTENTLESS = (
+    "old mode ",
+    "new mode ",
+    "new file mode ",
+    "deleted file mode ",
+    "rename from ",
+    "rename to ",
+)
+# `Binary files … differ` naming a file this parser was meant to read — what a
+# `.gitattributes` `-diff` (or `binary`) makes of a source file.
+HIDDEN_SOURCE = tuple(f"{ext} differ" for ext in LANGUAGES)
+
 # A definition line, per language. Group `name` is what gets searched for.
 RUST_DEF = re.compile(
     r"^\s*(?:pub\s*(?:\([^)]*\)\s*)?)?(?:const|static)\s+(?:mut\s+)?(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*:"
 )
+# Both halves anchored at column 0. An indented `def` is a method or a closure,
+# not the module-level signature this is scoped to, and its name is the generic
+# kind `git grep -w` floods on — `run` is 2568 lines here, `write` 1232.
 PY_DEF = re.compile(
-    r"^(?:(?P<name>[A-Z_][A-Z0-9_]*)\s*=(?!=)|\s*def\s+(?P<fname>[A-Za-z_][A-Za-z0-9_]*)\s*\()"
+    r"^(?:(?P<name>[A-Z_][A-Z0-9_]*)\s*=(?!=)|def\s+(?P<fname>[A-Za-z_][A-Za-z0-9_]*)\s*\()"
 )
 HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(?P<start>\d+)(?:,(?P<count>\d+))? @@")
+# A Rust char literal — `'x'`, `'\n'`, `b')'`. The closing quote is the whole
+# discriminator: a lifetime (`'a`) has none, and blanking one would shorten a
+# definition's span, which is the direction this file must not fail in.
+CHAR_LIT = re.compile(r"'(?:[^'\\]|\\.)'")
 
 
 def git(*args):
@@ -53,14 +90,31 @@ def git(*args):
 
 
 def defined(line, path):
-    """The name defined on `line`, or None. `path` picks the language."""
+    """The name defined on `line`, or None. `path` picks the language.
+
+    `_` is a hole, not a name: Rust's anonymous constant (`const _: () =
+    assert!(…)`, an idiom this tree uses ~80 times) and Python's throwaway
+    binding. Read as one, it answered `git grep -w _` with 2381 sites — and a
+    report nobody can read is not a report, which is the failure this file is
+    for, one layer up.
+
+    A const *generic parameter* on a line of its own is spelled like an item and
+    is not one. Told apart by [`item_line`], which asks what an item *has* rather
+    than what a parameter ends with: a blacklist of endings turns every comment
+    the scanner mis-reads into a dropped definition, which is the one direction
+    this file must not fail in.
+    """
     if path.endswith(".rs"):
         m = RUST_DEF.match(line)
-        return m.group("name") if m else None
-    if path.endswith(".py"):
+        name = m.group("name") if m else None
+        if name and not item_line(code_only(line, path)):
+            return None
+    elif path.endswith(".py"):
         m = PY_DEF.match(line)
-        return (m.group("name") or m.group("fname")) if m else None
-    return None
+        name = (m.group("name") or m.group("fname")) if m else None
+    else:
+        return None
+    return None if name == "_" else name
 
 
 def parse(diff):
@@ -110,35 +164,94 @@ def parse(diff):
     return touched, cut, gone, born, where
 
 
-def bracket_delta(line, path):
-    """`line`'s bracket balance, skipping strings and the trailing comment.
+def unfiled(diff):
+    """Whether `diff` carried content this parser was meant to read and did not.
+
+    Asked positively — every entry must be one that was read or is known to carry
+    no content — because the blacklist spelling ("was there a hunk?") goes silent
+    on most of the `git config diff.*` settings the alarm exists to name: an
+    external differ replaces git's output wholesale and emits no `@@` at all, and
+    a source file marked `-diff` comes back as `Binary files … differ`. Silence
+    where the parser is blind is the failure this alarm is the last guard against.
+    """
+    if not any(line.startswith("diff --git ") for line in diff.splitlines()):
+        return True  # not git's own format: an external differ, or an unmerged path
+    explained = True
+    for line in diff.splitlines():
+        if line.startswith("diff --git "):
+            if not explained:
+                return True
+            explained = False
+        elif line.startswith("+++ ") or line.startswith(CONTENTLESS):
+            explained = True
+        elif line.startswith("Binary files "):
+            # Contentless only for a file this parser could not have read anyway;
+            # a `.rs` behind that line is content hidden from it.
+            explained = not line.endswith(HIDDEN_SOURCE)
+    return not explained
+
+
+def item_line(code):
+    """Whether a `const`/`static` line, comments aside, is an item.
+
+    An item has a value or ends its declaration; a generic parameter has neither.
+    Asked positively on purpose: reading it as "ends with `,` or `>`" makes every
+    comment the scanner misses a *dropped* definition — `const SLOTS: usize = 8;
+    /* was 4 before the split,` is an item — and dropping one is the only
+    direction this file must not fail in. A parameter carrying a *default* has an
+    `=` and so over-reports, which is the harmless way round.
+    """
+    return ";" in code or "=" in code
+
+
+def code_only(line, path):
+    """`line` with its string bodies and its comments blanked out.
 
     A `//`-commented `)` used to close a definition's span early, which drops the
     lines after it — and a dropped line is a use site nobody is told to read, the
-    exact failure this file exists to prevent. Rust `'` is left alone (it is a
-    lifetime far more often than a char literal).
+    exact failure this file exists to prevent. A Rust `'` closes the same way when
+    it opens a char literal ([`CHAR_LIT`]): `b')'` spends a bracket the source
+    never had. A `/*` with no `*/` beside it truncates, so a block comment's later
+    lines still read as code — over-reading, which is the safe way to be wrong here.
     """
     quotes = '"' if path.endswith(".rs") else "\"'"
     comment = "//" if path.endswith(".rs") else "#"
-    delta, quote, i = 0, None, 0
+    out, quote, i = [], None, 0
     while i < len(line):
         ch = line[i]
         if quote:
-            if ch == "\\":
-                i += 2
-                continue
+            step = 2 if ch == "\\" else 1
             if ch == quote:
                 quote = None
-        elif ch in quotes:
+            out.append(" " * step)
+            i += step
+            continue
+        if ch in quotes:
             quote = ch
+            out.append(" ")
         elif line.startswith(comment, i):
             break
-        elif ch in "([{":
-            delta += 1
-        elif ch in ")]}":
-            delta -= 1
+        elif path.endswith(".rs") and line.startswith("/*", i):
+            end = line.find("*/", i + 2)
+            if end < 0:
+                break
+            out.append(" " * (end + 2 - i))
+            i = end + 2
+            continue
+        elif path.endswith(".rs") and (lit := CHAR_LIT.match(line, i)):
+            out.append(" " * (lit.end() - i))
+            i = lit.end()
+            continue
+        else:
+            out.append(ch)
         i += 1
-    return delta
+    return "".join(out)
+
+
+def bracket_delta(line, path):
+    """`line`'s bracket balance, strings and the trailing comment aside."""
+    code = code_only(line, path)
+    return sum(map(code.count, "([{")) - sum(map(code.count, ")]}"))
 
 
 def statement_end(lines, start, path):
@@ -268,8 +381,12 @@ def main():
 
     touched, cut, gone, born, where = parse(diff)
     if not touched:
-        print("impact.py: could not parse the diff — reporting nothing is NOT a "
-              "clean result here; check `git config diff.*`", file=sys.stderr)
+        # Content the parser could file under no path is the failure this alarm is
+        # for; a binary, mode-only or rename-only change is contentless by design
+        # and is not one.
+        if unfiled(diff):
+            print("impact.py: could not parse the diff — reporting nothing is NOT a "
+                  "clean result here; check `git config diff.*`", file=sys.stderr)
         return 0
     redefined = redefinitions(touched, cut, gone, born, where, post)
     report = []
@@ -284,6 +401,10 @@ def main():
     if not report:
         return 0
 
+    # Narrowest first: a name too generic to grep answers with hundreds of lines
+    # that are not references, and in name order that flood printed *above* the
+    # finding worth reading — the failure `_` made, with a real name.
+    report.sort(key=lambda row: (len(row[2]), row[0]))
     print("\n== unreviewed users of a redefined constant ==")
     print(
         "These definitions changed meaning without changing shape, so nothing\n"
@@ -293,10 +414,15 @@ def main():
     )
     for name, path, unread in report:
         print(f"\n{name}  (redefined in {path}) — {len(unread)} site(s) not in this change:")
-        for f, n, text in unread[:20]:
+        for f, n, text in unread[:MAX_SITES]:
             print(f"  {f}:{n}: {text[:96]}")
-        if len(unread) > 20:
-            print(f"  … and {len(unread) - 20} more")
+        if len(unread) > MAX_SITES:
+            print(f"  … and {len(unread) - MAX_SITES} more")
+            print(
+                f"  (that count is `git grep -w {name}` and nothing narrower — it crosses\n"
+                "   languages and prose, so a name this generic matches lines that are\n"
+                "   not references at all. Read the list; the number is not a verdict.)"
+            )
     return 0
 
 

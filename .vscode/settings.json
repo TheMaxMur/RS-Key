@@ -1,0 +1,20 @@
+{
+  // `.cargo/config.toml` makes thumbv8m the default target. That is right for
+  // `firmware/` and wrong for everything rust-analyzer actually spends its time
+  // on: every crate under `crates/` is `#![cfg_attr(not(test), no_std)]`, so
+  // analysing its test targets asks for `std` — which thumbv8m does not have and
+  // never will. Hence the pair of errors on any crate file, `core` and `std`
+  // together, whatever the editor's toolchain has installed.
+  //
+  // So point the analyser at the host, which is the same explicit `--target`
+  // AGENTS.md tells humans to pass for host clippy and tests.
+  //
+  // The cost: `firmware/` stops resolving here. Its embassy-rp dependencies are
+  // thumbv8m-only and `rp-pac` fails the host link outright ("invalid Mach-O
+  // section specifier"). It is one crate against twenty-four, and firmware is
+  // built inside `nix develop` anyway — but if you live in `firmware/`, drop
+  // this line and take the crate errors back instead.
+  //
+  // On Linux, change the triple to your own, e.g. "x86_64-unknown-linux-gnu".
+  "rust-analyzer.cargo.target": "aarch64-apple-darwin"
+}

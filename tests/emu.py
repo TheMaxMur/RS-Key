@@ -23,6 +23,9 @@ The suites in [`UNSUPPORTED`] are refused up front with their reason and exit 77
 rather than being allowed to fail somewhere in the middle. A harness that cannot
 tell "does not apply here" from "broken" makes the second one invisible, and each
 of them would otherwise be re-diagnosed by every person who runs a sweep.
+[`NEEDS_ARGS`] is the same refusal for the other reason a suite cannot start: it
+takes an argument nobody passed. Extra argv is forwarded to the suite, so those
+run normally once it is given.
 """
 import os
 import runpy
@@ -98,6 +101,20 @@ UNSUPPORTED = {
     # Hardware by definition.
     "54_sram_residue": "measures SRAM residue on a real chip",
     "90_otp_mkek_migration": "migrates the OTP MKEK; the emulator has no fuses",
+}
+
+# Suites that take a mandatory argument, and the flag each needs. Run without it
+# they exit 2 in argparse before touching the device, which a sweep reads as a
+# failure of the *device* — the same confusion [`UNSUPPORTED`] exists to prevent,
+# for the other reason. They do not belong in that table: both pass here once the
+# flag is given, so listing them would claim a capability the emulator has.
+# Defaulting the value is not the fix either — both want a clientPIN already set,
+# which is a fact about the store in front of you and not a constant.
+# `scripts/emu-suites.sh` gives them a session with that PIN; this is for the
+# hand-run, and it turns a suite it has not been told about into a skip.
+NEEDS_ARGS = {
+    "28_ctap_spec_alignment": "--pin",
+    "76_soft_lock": "--pin",
 }
 
 # What the fake enumeration reports. The product string carries an RSK marker so
@@ -468,6 +485,10 @@ def main():
     name = os.path.basename(target).removesuffix(".py")
     if name in UNSUPPORTED:
         print(f"SKIP: {name} — {UNSUPPORTED[name]}. Run it against a board.")
+        sys.exit(EXIT_SKIP)
+    flag = NEEDS_ARGS.get(name)
+    if flag and not any(a == flag or a.startswith(f"{flag}=") for a in sys.argv[2:]):
+        print(f"SKIP: {name} — it needs {flag}. Re-run as: {sys.argv[0]} {target} {flag} <value>")
         sys.exit(EXIT_SKIP)
     if name in NEEDS_YUBICO:
         atr = _card_identity()

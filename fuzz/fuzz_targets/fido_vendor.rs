@@ -20,6 +20,11 @@ use rsk_fido::{
 use rsk_fs::Fs;
 use rsk_fs::storage::ram::RamStorage;
 
+/// The OTP DEVK as `FidoState` takes it — a reader, not the key.
+fn devk() -> Option<[u8; 32]> {
+    Some([0x42; 32])
+}
+
 struct SeqRng(u64);
 impl Rng for SeqRng {
     fn fill(&mut self, buf: &mut [u8]) {
@@ -54,8 +59,10 @@ fuzz_target!(|data: &[u8]| {
     state.mse_active = true;
     state.mse_key = [0x5A; 32];
     state.mse_pub = [0x04; 65];
-    // A DEVK so AUDIT_CHECKPOINT's derive-and-sign path is reachable too.
-    state.devk = Some([0x42; 32]);
+    // A DEVK so AUDIT_CHECKPOINT's derive-and-sign path is reachable too. The state
+    // holds a READER, not the key: the OTP row is read on demand so an unrotatable
+    // signing key never sits in RAM for the whole power cycle.
+    state.devk_source = Some(devk);
 
     let mut out = [0u8; 2048];
     let mut presence = rsk_fido::AlwaysConfirm;

@@ -7,6 +7,7 @@ use crate::{AlwaysConfirm, FidoState, Presence, UserPresence};
 use rsk_crypto::Device;
 use rsk_crypto::MlKem768Pair;
 use rsk_crypto::mlkem::MLKEM768_SEED_LEN;
+use rsk_crypto::pinproto::PinProto;
 use rsk_fs::Fs;
 use rsk_fs::storage::ram::RamStorage;
 
@@ -74,6 +75,12 @@ fn call(
 }
 
 fn build_mse(buf: &mut [u8], hx: &[u8; 32], hy: &[u8; 32]) -> usize {
+    build_mse_coords(buf, hx, hy)
+}
+
+/// The same request with the coordinates carried as arbitrary byte strings, so a
+/// test can send one that is not 32 bytes long.
+fn build_mse_coords(buf: &mut [u8], hx: &[u8], hy: &[u8]) -> usize {
     let mut e = Encoder::new(Cursor::new(buf));
     e.map(2)
         .unwrap()
@@ -1936,4 +1943,128 @@ fn idempotent_phy_and_led_config_writes_append_no_journal_entry() {
     let mut cur = [0u8; rsk_led::CONF_LEN];
     assert_eq!(fs.read(EF_LED_CONF, &mut cur), Some(rsk_led::CONF_LEN));
     assert_eq!(cur, led);
+}
+
+/// A subcommand `0x41` does not implement answers INVALID_PARAMETER, mirroring
+/// credentialManagement — which is what a YubiKey 5.7.4 gives for its own `0x41`.
+/// Not INVALID_SUBCOMMAND: that stays the answer for an unknown `vendorCommandId`
+/// under `CONFIG_VENDOR`, where the spec names it explicitly.
+#[test]
+fn undefined_vendor_subcommand_is_invalid_parameter() {
+    let (mut fs, mut rng, mut st) = setup();
+    let mut req = [0u8; 32];
+    let mut out = [0u8; 64];
+    for subcmd in [0x00u64, 0x0F, 0x7F] {
+        let n = one_byte_req(&mut req, subcmd);
+        let e = call(
+            &mut fs,
+            &mut rng,
+            &mut st,
+            &mut AlwaysConfirm,
+            &req[..n],
+            &mut out,
+        );
+        assert_eq!(
+            e,
+            Err(CtapError::InvalidParameter),
+            "vendor subcommand {subcmd:#04x}"
+        );
+    }
+}
+
+/// E1's third site. The MSE channel parses a platform COSE key of its own, and it
+/// carried the same right-align: a host whose bignum drops a genuine leading zero
+/// sent 31 bytes and had them shifted into a *different* point. Mined so the
+/// stripped byte really is a leading zero — take one off an arbitrary coordinate
+/// and the point leaves the curve, so the request is refused either way and the
+/// probe proves nothing.
+#[test]
+fn mse_coordinate_must_be_exactly_32_bytes() {
+    let (mut hx, mut hy) = ([0u8; 32], [0u8; 32]);
+    for i in 1u32..100_000 {
+        let mut scalar = [0u8; 32];
+        scalar[28..].copy_from_slice(&i.to_be_bytes());
+        let (x, y) = P256Key::from_scalar(&scalar).unwrap().public_xy();
+        if x[0] == 0 {
+            (hx, hy) = (x, y);
+            break;
+        }
+    }
+    assert_eq!(hx[0], 0, "no scalar with a leading-zero x in range");
+
+    let mut req = [0u8; 200];
+    let mut out = [0u8; 200];
+
+    // Control: this very key at full width opens the channel, so each refusal
+    // below is the coordinate's length and not a failed key agreement.
+    let (mut fs, mut rng, mut state) = setup();
+    let n = build_mse_coords(&mut req, &hx, &hy);
+    call(
+        &mut fs,
+        &mut rng,
+        &mut state,
+        &mut AlwaysConfirm,
+        &req[..n],
+        &mut out,
+    )
+    .unwrap();
+
+    let padded = [&[0u8][..], &hx[..]].concat();
+    for (label, x) in [("stripped to 31", &hx[1..]), ("padded to 33", &padded[..])] {
+        let (mut fs, mut rng, mut state) = setup();
+        let n = build_mse_coords(&mut req, x, &hy);
+        assert_eq!(
+            call(
+                &mut fs,
+                &mut rng,
+                &mut state,
+                &mut AlwaysConfirm,
+                &req[..n],
+                &mut out
+            ),
+            Err(CtapError::InvalidParameter),
+            "x {label}"
+        );
+    }
+}
+
+/// The `0x41` channel's own copy of the protocol rule. No oracle exists for a
+/// vendor command, so the rule is its siblings': a present-but-unsupported
+/// `pinUvAuthProtocol` — `0` included — is INVALID_PARAMETER, judged before the
+/// token it belongs to is found missing.
+#[test]
+fn an_unsupported_protocol_is_judged_before_the_missing_token() {
+    for proto in [0u64, 3, 255] {
+        let (mut fs, mut rng, mut st) = setup();
+        fs.put(EF_PIN, &[8, 4, 1]).unwrap();
+        let _ = handshake(&mut fs, &mut rng, &mut st);
+        let mut req = [0u8; 32];
+        let n = {
+            let mut e = Encoder::new(Cursor::new(&mut req[..]));
+            e.map(2)
+                .unwrap()
+                .u8(1)
+                .unwrap()
+                .u64(VENDOR_BACKUP_EXPORT)
+                .unwrap()
+                .u8(3)
+                .unwrap()
+                .u64(proto)
+                .unwrap();
+            e.writer().position()
+        };
+        let mut out = [0u8; 128];
+        assert_eq!(
+            call(
+                &mut fs,
+                &mut rng,
+                &mut st,
+                &mut AlwaysConfirm,
+                &req[..n],
+                &mut out
+            ),
+            Err(CtapError::InvalidParameter),
+            "protocol {proto}"
+        );
+    }
 }

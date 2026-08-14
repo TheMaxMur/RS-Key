@@ -39,7 +39,7 @@ use embassy_usb::class::hid::{
 use embassy_usb::{Builder, Config as UsbConfig, UsbDevice};
 use static_cell::StaticCell;
 
-use rsk_crypto::Device;
+use rsk_crypto::{Device, FusedKey, read_fused};
 use rsk_fs::Fs;
 use rsk_usb::ccid::{ATR_RSKEY, ATR_YUBIKEY, Ccid};
 use rsk_usb::ctaphid::{CtapHid, FIDO_REPORT_DESCRIPTOR};
@@ -442,6 +442,25 @@ static UI: StaticCell<RefCell<display::Ui>> = StaticCell::new();
 struct SendUsb(UsbDevice<'static, Drv>);
 unsafe impl Send for SendUsb {}
 
+/// Hold core0's stack to the floor the linker gave it.
+///
+/// `flip-link` already puts this stack at the bottom of RAM, so running off it
+/// lands in unmapped space and faults — that is what guards it today, and it
+/// needs no help. What it does not do is say so in the code: drop the linker and
+/// the floor goes with it, silently, leaving the stack growing into `.bss`
+/// again. `MSPLIM` states the bound where it can be read, and traps the SP
+/// decrement rather than the write that follows it. Core1 arms its own — the
+/// register is per-core, and there the guard is load-bearing ([`core1`]).
+fn arm_stack_limit() {
+    // Provided by cortex-m-rt (and rewritten by flip-link when it inverts RAM).
+    unsafe extern "C" {
+        static _stack_end: u8;
+    }
+    // SAFETY: writes this core's stack-limit register, first thing in `main`,
+    // with the linker's own end-of-stack address — no live frame sits below it.
+    unsafe { cortex_m::register::msplim::write(&raw const _stack_end as u32) };
+}
+
 #[embassy_executor::task]
 async fn usb_task(mut device: SendUsb) {
     device.0.run().await;
@@ -488,6 +507,8 @@ fn kvcnt_range() -> core::ops::Range<u32> {
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
+    arm_stack_limit();
+
     let mut config = embassy_rp::config::Config::default();
     if let Some(xosc) = config.clocks.xosc.as_mut() {
         xosc.delay_multiplier = XOSC_DELAY_MULT;
@@ -503,7 +524,11 @@ async fn main(spawner: Spawner) {
     let serial_id = embassy_rp::otp::get_chipid().unwrap_or(0).to_le_bytes();
     let serial_hash = rsk_crypto::sha256(&serial_id);
 
-    let (otp_mkek, otp_devk) = otp_keys::read_keys();
+    // The applets carry these readers, not the keys: a fused key exists in RAM only
+    // for the operation that asked for it, so a bug that discloses adjacent memory
+    // has nothing to disclose — the OTP window is not RAM.
+    let mkek_source: Option<FusedKey> = Some(otp_keys::read_mkek);
+    let devk_source: Option<FusedKey> = Some(otp_keys::read_devk);
     otp_keys::sw_lock_key_page();
 
     let flash = Flash::<_, Blocking, FLASH_SIZE>::new_blocking(p.FLASH);
@@ -565,31 +590,37 @@ async fn main(spawner: Spawner) {
     let trng = Trng::new(p.TRNG, Irqs, trng_cfg);
     let mut rng = FidoRng::new(trng);
 
-    let dev = Device {
-        serial_hash: &serial_hash,
-        serial_id: &serial_id,
-        otp_key: otp_mkek.as_ref(),
-    };
-    let _ = rsk_fido::seed::migrate_keydev_boot(&dev, &mut fs);
-    rsk_rescue::keydev::migrate_kbase(&dev, &mut fs, &mut rng);
-    rsk_piv::migrate_kbase(&dev, &mut fs, &mut rng);
-    rsk_oath::migrate_seal(&dev, &mut fs, &mut rng);
-    rsk_otp::migrate_seal(&dev, &mut fs, &mut rng);
-    rsk_fido::credential::migrate_rp_seal(&dev, &mut fs);
-    let _ = rsk_fido::seed::ensure_seed(&dev, &mut fs, &mut rng);
-    let _ = rsk_openpgp::scan_files(&dev, &mut fs, &mut rng);
-    // One-shot at-rest hardening. The seal migrations above re-key every secret
-    // from the chip-serial root to the OTP root, but the log-structured store
-    // keeps the superseded chip-serial-sealed copies (notably the pre-OTP seed)
-    // recoverable from a flash dump until the page is reclaimed. Scrub them with
-    // a full GC lap the first time we boot with the OTP key present. Gated on a
-    // flash marker so it runs once and crash-safely: an interrupted lap leaves
-    // `EF_HARDENED` unset and re-runs next boot (the lap is idempotent), and a
-    // device provisioned OTP-first pays it once with nothing to scrub. It is a
-    // multi-second stall — deliberately before USB attach, at an attended
-    // provisioning boot. See `flash_storage::FlashStorage::compact`.
-    if otp_mkek.is_some() && !fs.has_data(rsk_fido::consts::EF_HARDENED) && fs.compact().is_ok() {
-        let _ = fs.put(rsk_fido::consts::EF_HARDENED, &[1u8]);
+    // Boot is the one place the firmware needs the MKEK's value rather than a way
+    // to read it, and this block is that place: the read dies at its closing brace,
+    // and everything past it carries only `mkek_source`.
+    {
+        let mkek = read_fused(mkek_source);
+        let dev = Device {
+            serial_hash: &serial_hash,
+            serial_id: &serial_id,
+            otp_key: mkek.as_deref(),
+        };
+        let _ = rsk_fido::seed::migrate_keydev_boot(&dev, &mut fs);
+        rsk_rescue::keydev::migrate_kbase(&dev, &mut fs, &mut rng);
+        rsk_piv::migrate_kbase(&dev, &mut fs, &mut rng);
+        rsk_oath::migrate_seal(&dev, &mut fs, &mut rng);
+        rsk_otp::migrate_seal(&dev, &mut fs, &mut rng);
+        rsk_fido::credential::migrate_rp_seal(&dev, &mut fs);
+        let _ = rsk_fido::seed::ensure_seed(&dev, &mut fs, &mut rng);
+        let _ = rsk_openpgp::scan_files(&dev, &mut fs, &mut rng);
+        // One-shot at-rest hardening. The seal migrations above re-key every secret
+        // from the chip-serial root to the OTP root, but the log-structured store
+        // keeps the superseded chip-serial-sealed copies (notably the pre-OTP seed)
+        // recoverable from a flash dump until the page is reclaimed. Scrub them with
+        // a full GC lap the first time we boot with the OTP key present. Gated on a
+        // flash marker so it runs once and crash-safely: an interrupted lap leaves
+        // `EF_HARDENED` unset and re-runs next boot (the lap is idempotent), and a
+        // device provisioned OTP-first pays it once with nothing to scrub. It is a
+        // multi-second stall — deliberately before USB attach, at an attended
+        // provisioning boot. See `flash_storage::FlashStorage::compact`.
+        if mkek.is_some() && !fs.has_data(rsk_fido::consts::EF_HARDENED) && fs.compact().is_ok() {
+            let _ = fs.put(rsk_fido::consts::EF_HARDENED, &[1u8]);
+        }
     }
     // PHY carries the boot-default LED brightness + steady (PicoForge's global LED
     // knobs) and the RS-Key wire-order tag. Apply them BEFORE `load_led_config` so
@@ -622,6 +653,12 @@ async fn main(spawner: Spawner) {
     // ceiling — where it saturates while the RAM session counter restarts at 0, so the
     // key re-emits (useCtr, sessionCtr) pairs a validation server rejects as replays.
     if !pin_lock::was_warm_boot() {
+        let mkek = read_fused(mkek_source);
+        let dev = Device {
+            serial_hash: &serial_hash,
+            serial_id: &serial_id,
+            otp_key: mkek.as_deref(),
+        };
         rsk_otp::power_up_bump(&dev, &mut fs, &mut rng);
     }
 
@@ -653,7 +690,7 @@ async fn main(spawner: Spawner) {
     config.max_power = 100;
     config.max_packet_size_0 = 64;
     // bcdDevice build counter; also surfaced on the trusted-display Firmware screen.
-    let device_release: u16 = 0x0876;
+    let device_release: u16 = 0x0959;
     config.device_release = device_release;
 
     let mut builder = Builder::new(
@@ -1068,7 +1105,7 @@ async fn main(spawner: Spawner) {
         let keys = display::DeviceKeys {
             serial_id,
             serial_hash,
-            otp_mkek,
+            mkek_source,
         };
         // Reborrow the `&'static mut` from the cell as a shared `&'static` so both
         // `status_task` and the `TouchPresence` backend can hold it (a shared
@@ -1108,8 +1145,8 @@ async fn main(spawner: Spawner) {
         hooks_ref,
         serial_id,
         serial_hash,
-        otp_mkek,
-        otp_devk,
+        mkek_source,
+        devk_source,
         kv_total,
         openpgp_mfr,
     );

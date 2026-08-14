@@ -129,9 +129,10 @@ Concretely:
 ```sh
 rsk secure-boot status         # read your floor, say "boot version 2/48"
 # build the fixed firmware, then seal it one step higher:
-picotool seal --sign --hash firmware.uf2 firmware-signed.uf2 \
+picotool seal --sign --hash firmware-pt.elf -t elf firmware-signed.elf -t elf \
     ~/.rs-key-secrets/secure_boot_key.pem ~/.rs-key-secrets/otp_secureboot.json \
     --major 1 --minor 0 --rollback 3        # 3 = counter (2) + 1
+picotool uf2 convert firmware-signed.elf -t elf firmware-signed.uf2
 # flash it; on boot the floor burns 2 → 3, and every image sealed ≤ 2 is now refused
 ```
 

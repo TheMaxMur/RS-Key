@@ -1,0 +1,319 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 RS-Key contributors
+#
+# Generate the TLC configurations: `Shipped.cfg` (every mutation switch off --
+# the tree as it stands) plus one `Mut_<Bug>.cfg` per switch. Each mutant lists
+# the invariant it is expected to break FIRST, because TLC reports the first
+# violated invariant and stops.
+set -euo pipefail
+cd "$(dirname "$0")"
+
+BUGS=(BugResetGatesFirst BugCredBeforeRp BugTokenSurvivesPinChange
+      BugSetPinKeepsPpuat BugChangePinKeepsPpuat BugStopUsingKeepsPerms
+      BugNoConsumeAfterUp BugUnscopedCancel BugTouchNotSpent
+      BugSoftLockLostOnWarmReset BugWarmResetReopensWindow
+      BugCmWalkIgnoresChannel BugDeleteRpBeforeCred BugBackupSealedNotAGate
+      BugConsumeKeepsMcGa BugNoDropStaleCancelAtEntry BugWrongPinKeepsToken
+      BugSeedDoesNotLead BugNoTouchRequired BugStateResetAfterWipe
+      BugPanelCancelable BugUnscopedOtpCancel BugLocalPinKeepsToken
+      BugSetPinOverExisting BugHostPreemptsLocalWait BugLocalPinIgnoresBudget
+      BugPpuatIsAGate BugPinWriteBeforeRevoke)
+
+# Mutants whose defect the shipped seed-lead makes unreachable: they rebuild a
+# pre-0x08BF ordering bug, so their configuration must be the pre-0x08BF tree.
+# That the list is not empty is the measured strength of that fix -- see README.
+companion_bug() {
+  case "$1" in
+    BugBackupSealedNotAGate) echo BugSeedDoesNotLead ;;
+    # eab4b5c moved EF_PAUTHTOKEN into the SECRETS phase, and phase 2 cannot
+    # start until phase 1 is empty -- so `~pin.set /\ gate.ppuat` is now
+    # unreachable, and setPIN can no longer meet a stranded grant to keep.
+    # The mutant explores the whole space and comes back GREEN without this.
+    BugSetPinKeepsPpuat)     echo BugPpuatIsAGate ;;
+    *) echo "" ;;
+  esac
+}
+
+# The invariant each mutant must break, so a silent mutant is visible as such.
+target_inv() {
+  case "$1" in
+    BugResetGatesFirst)         echo ResetNeverWeakensSurvivingState ;;
+    BugCredBeforeRp)            echo NoUnmanageableCredential ;;
+    BugTokenSurvivesPinChange)  echo NoTokenAfterInvalidation ;;
+    BugSetPinKeepsPpuat)        echo NoTokenAfterInvalidation ;;
+    BugChangePinKeepsPpuat)     echo NoTokenAfterInvalidation ;;
+    BugStopUsingKeepsPerms)     echo NoTokenAfterInvalidation ;;
+    BugNoConsumeAfterUp)        echo NoAuthorizationBypass ;;
+    BugUnscopedCancel)          echo NoCrossTransportTouchConsumption ;;
+    BugTouchNotSpent)           echo NoCrossTransportTouchConsumption ;;
+    BugSoftLockLostOnWarmReset) echo NoAuthorizationBypass ;;
+    BugWarmResetReopensWindow)  echo NoAuthorizationBypass ;;
+    BugCmWalkIgnoresChannel)    echo NoAuthorizationBypass ;;
+    BugDeleteRpBeforeCred)      echo NoUnmanageableCredential ;;
+    BugBackupSealedNotAGate)    echo ResetNeverWeakensSurvivingState ;;
+    BugConsumeKeepsMcGa)        echo NoAuthorizationBypass ;;
+    BugNoDropStaleCancelAtEntry) echo NoCrossTransportTouchConsumption ;;
+    BugWrongPinKeepsToken)      echo NoTokenAfterInvalidation ;;
+    BugSeedDoesNotLead)         echo NoUnmanageableCredential ;;
+    BugNoTouchRequired)         echo NoAuthorizationBypass ;;
+    BugStateResetAfterWipe)     echo ResetNeverWeakensSurvivingState ;;
+    BugPanelCancelable)         echo NoCrossTransportTouchConsumption ;;
+    BugUnscopedOtpCancel)       echo NoCrossTransportTouchConsumption ;;
+    BugLocalPinKeepsToken)      echo NoTokenAfterInvalidation ;;
+    BugSetPinOverExisting)      echo NoAuthorizationBypass ;;
+    BugHostPreemptsLocalWait)   echo NoAuthorizationBypass ;;
+    BugLocalPinIgnoresBudget)   echo NoAuthorizationBypass ;;
+    BugPpuatIsAGate)            echo NoAccessibleSecretWithoutGate ;;
+    BugPinWriteBeforeRevoke)    echo NoTokenAfterInvalidation ;;
+  esac
+}
+
+# Liveness switches: always FALSE in a safety configuration, and one at a time
+# in a LiveMut_*.cfg. They break no invariant by design.
+LIVE_BUGS=(BugAssertWedgesOnTimeout BugWaitScopeNotCleared BugWalkNeverExpires)
+
+live_target() {
+  case "$1" in
+    BugAssertWedgesOnTimeout) echo EveryOpQuiesces ;;
+    BugWaitScopeNotCleared)   echo EveryWaitReleases ;;
+    BugWalkNeverExpires)      echo EveryWalkCloses ;;
+  esac
+}
+ALL_PROP=(EveryOpQuiesces EveryWaitReleases EveryWalkCloses)
+
+# A switch on the SHAPE of a fairness assumption, not on a behaviour: it breaks
+# an invariant rather than a property, so it belongs to neither list above and
+# is emitted FALSE everywhere except its own configuration.
+SHAPE_BUGS=(BugFairnessFoldsLocalCeremony)
+
+ALL_INV=(NoAuthorizationBypass NoCrossTransportTouchConsumption
+         NoTokenAfterInvalidation NoAccessibleSecretWithoutGate
+         NoUnmanageableCredential ResetNeverWeakensSurvivingState)
+
+# Structural facts the model's own arguments rest on, asserted on the baseline
+# rather than argued in a comment. Deliberately NOT in ALL_INV: a mutant reports
+# the FIRST invariant it violates, so adding one to the 27 mutant configs would
+# move verdicts that are the record of which invariant names which defect. Each
+# gets its own Solo config against the mutant that falsifies it.
+EXTRA_INV=(RamNeverOutlivesFlashSeed NoLiveTokenWithoutPinRecord)
+extra_mutant() {
+  # ctx.state.reset() moved back behind the flash work leaves the RAM seed
+  # standing past the flash delete AND a live token past EF_PIN's deletion.
+  case "$1" in
+    RamNeverOutlivesFlashSeed)   echo BugStateResetAfterWipe ;;
+    NoLiveTokenWithoutPinRecord) echo BugStateResetAfterWipe ;;
+  esac
+}
+
+emit() { # $1 = cfg, $2 = bug switch (""), $3 = sweep fix, $4 = ppuat fix
+  local out=$1 on=${2:-} fix=${3:-TRUE} fix2=${4:-${3:-TRUE}}
+  {
+    echo "\\* Generated by formal/gen-configs.sh -- do not edit by hand."
+    echo "SPECIFICATION Spec"
+    echo "CONSTANTS"
+    echo "    RPs = {\"r1\", \"r2\"}"
+    echo "    Channels = {\"c1\", \"c2\"}"
+    echo "    MaxRetries = 3"
+    echo "    MismatchLimit = 2"
+    echo "    MaxClock = 1"
+    echo "    ResetWindow = 0"
+    for b in "${BUGS[@]}"; do
+      if [ "$b" = "$on" ] || { [ -n "$on" ] && [ "$b" = "$(companion_bug "$on")" ]; }
+      then echo "    $b = TRUE"; else echo "    $b = FALSE"; fi
+    done
+    for b in "${LIVE_BUGS[@]}" "${SHAPE_BUGS[@]}"; do
+      if [ "$b" = "$on" ]; then echo "    $b = TRUE"; else echo "    $b = FALSE"; fi
+    done
+    echo "    FixSweepDropsCredsBeforeRpEntries = $fix"
+    echo "    FixPpuatRequiresPin = $fix2"
+    echo "INVARIANTS"
+    echo "    TypeOK"
+    if [ -n "$on" ] && [ "${SOLO:-0}" = 1 ]; then
+      # Solo: ONLY the invariant this mutant must break, so a mutant caught by
+      # a sibling invariant cannot be mistaken for one that names its own.
+      echo "    ${SOLO_INV:-$(target_inv "$on")}"
+    elif [ -n "$on" ]; then
+      local t; t=$(target_inv "$on"); echo "    $t"
+      for i in "${ALL_INV[@]}"; do [ "$i" = "$t" ] || echo "    $i"; done
+    else
+      for i in "${ALL_INV[@]}" "${EXTRA_INV[@]}"; do echo "    $i"; done
+    fi
+  } > "$out"
+}
+
+# THE TREE AS IT STANDS, and it is the green baseline the mutants are measured
+# against. Two constants carry the history: `FixPpuatRequiresPin` shipped
+# verbatim at 0x08C0, so it is ON; `FixSweepDropsCredsBeforeRpEntries` is a
+# counterfactual the tree did NOT take -- 0x08BF made the seed lead the wipe
+# instead, which is the default (`BugSeedDoesNotLead = FALSE`), so it is OFF.
+emit Shipped.cfg "" FALSE TRUE
+# The two findings this model produced, kept as regression configurations rather
+# than deleted: each is the tree with exactly the shipped fix taken back out.
+emit Historical_E76.cfg BugSeedDoesNotLead FALSE TRUE
+# E77 is closed at BOTH ends now: the consumer refuses the stranded record
+# (32b9fa3) and eab4b5c stopped the wipe producing one. So reproducing its
+# counterexample takes the producer back out too -- the record the consumer
+# fix still exists for is one an OLDER build already wrote to flash.
+emit Historical_E77.cfg BugPpuatIsAGate FALSE FALSE
+# Mutants run on the tree's own settings, so nothing pre-existing can mask them.
+for b in "${BUGS[@]}"; do emit "Mut_$b.cfg" "$b" FALSE TRUE; done
+# One config per mutant listing ONLY its target invariant.
+for b in "${BUGS[@]}"; do SOLO=1 emit "Solo_$b.cfg" "$b" FALSE TRUE; done
+# NoAccessibleSecretWithoutGate is the one invariant no switch names as its
+# target. BugResetGatesFirst breaks it as well as its own, and this proves that
+# solo -- previously a hand-written file wearing this script's header.
+SOLO=1 SOLO_INV=NoAccessibleSecretWithoutGate \
+  emit Solo_NoAccessibleSecretWithoutGate.cfg BugResetGatesFirst FALSE TRUE
+# One per structural fact, against the mutant that makes it false. Without these
+# the two would be claims asserted only where nothing can break them.
+for i in "${EXTRA_INV[@]}"; do
+  SOLO=1 SOLO_INV="$i" emit "Solo_$i.cfg" "$(extra_mutant "$i")" FALSE TRUE
+done
+# ONE CONFIG PER CLAUSE. `Solo_*` names an invariant and never a clause, and all
+# four reset-family mutants reported ResetNeverWeakensSurvivingState on its THIRD
+# clause -- which fires at depth 8 where the other two need 16 and 18, so it
+# always got there first and two thirds of the invariant had no owner on record.
+# The grid behind these three lines is in formal/README.md.
+CLAUSE_INV=(ResetKeepsThePinGate ResetKeepsTheAlwaysUvGate ResetKeepsTheBackupSeal)
+clause_mutant() {
+  case "$1" in
+    # The phase order is the ONLY owner of the first two clauses.
+    ResetKeepsThePinGate)      echo BugResetGatesFirst ;;
+    ResetKeepsTheAlwaysUvGate) echo BugResetGatesFirst ;;
+    # The third has three; the marker's own is the one that names it.
+    ResetKeepsTheBackupSeal)   echo BugBackupSealedNotAGate ;;
+  esac
+}
+for i in "${CLAUSE_INV[@]}"; do
+  SOLO=1 SOLO_INV="$i" emit "SoloClause_$i.cfg" "$(clause_mutant "$i")" FALSE TRUE
+done
+
+# Liveness. Its own constants, and they are SMALLER on purpose -- TLC's
+# liveness check builds a behaviour graph on top of the state graph, so the cost
+# is not comparable to an invariant run. The reduction is stated here rather
+# than hidden: one relying party, one channel, MaxRetries 2 : MismatchLimit 1.
+emit_live() { # $1 = cfg, $2 = liveness bug switch (""), $3 = "full" for the
+              # safety matrix's own constants
+  local out=$1 on=${2:-} size=${3:-small}
+  local rps='{"r1"}' chans='{"c1"}' retries=2 mism=1
+  if [ "$size" = full ]; then
+    rps='{"r1", "r2"}'; chans='{"c1", "c2"}'; retries=3; mism=2
+  fi
+  {
+    echo "\\* Generated by formal/gen-configs.sh -- do not edit by hand."
+    echo "SPECIFICATION FairSpec"
+    echo "CONSTANTS"
+    echo "    RPs = $rps"
+    echo "    Channels = $chans"
+    echo "    MaxRetries = $retries"
+    echo "    MismatchLimit = $mism"
+    echo "    MaxClock = 1"
+    echo "    ResetWindow = 0"
+    for b in "${BUGS[@]}"; do echo "    $b = FALSE"; done
+    for b in "${LIVE_BUGS[@]}" "${SHAPE_BUGS[@]}"; do
+      if [ "$b" = "$on" ]; then echo "    $b = TRUE"; else echo "    $b = FALSE"; fi
+    done
+    echo "    FixSweepDropsCredsBeforeRpEntries = FALSE"
+    echo "    FixPpuatRequiresPin = TRUE"
+    echo "PROPERTIES"
+    if [ -n "$on" ]; then
+      echo "    $(live_target "$on")"
+    else
+      for pr in "${ALL_PROP[@]}"; do echo "    $pr"; done
+    fi
+  } > "$out"
+}
+# The fairness SHAPE check. `Spec`, not `FairSpec`: OpAdvancesIsOneActivity is a
+# safety invariant about what can be ENABLED, and it costs eighteen ENABLED
+# evaluations per state, so it runs at the liveness constants and alone.
+emit_shape() { # $1 = cfg, $2 = switch ("")
+  local out=$1 on=${2:-}
+  {
+    echo "\\* Generated by formal/gen-configs.sh -- do not edit by hand."
+    echo "SPECIFICATION Spec"
+    echo "CONSTANTS"
+    echo "    RPs = {\"r1\"}"
+    echo "    Channels = {\"c1\"}"
+    echo "    MaxRetries = 2"
+    echo "    MismatchLimit = 1"
+    echo "    MaxClock = 1"
+    echo "    ResetWindow = 0"
+    for b in "${BUGS[@]}" "${LIVE_BUGS[@]}"; do echo "    $b = FALSE"; done
+    for b in "${SHAPE_BUGS[@]}"; do
+      if [ "$b" = "$on" ]; then echo "    $b = TRUE"; else echo "    $b = FALSE"; fi
+    done
+    echo "    FixSweepDropsCredsBeforeRpEntries = FALSE"
+    echo "    FixPpuatRequiresPin = TRUE"
+    echo "INVARIANTS"
+    echo "    TypeOK"
+    echo "    OpAdvancesIsOneActivity"
+  } > "$out"
+}
+emit_shape Fairness.cfg ""
+for b in "${SHAPE_BUGS[@]}"; do emit_shape "FairMut_$b.cfg" "$b"; done
+
+emit_live Liveness.cfg ""
+for b in "${LIVE_BUGS[@]}"; do emit_live "LiveMut_$b.cfg" "$b"; done
+# The same three properties at the safety matrix's constants, so the price of
+# the reduction above is a measurement rather than an assertion.
+emit_live Liveness_Full.cfg "" full
+echo "wrote Shipped.cfg, 2 historical configs, ${#BUGS[@]} mutant configs and ${#LIVE_BUGS[@]} liveness configs"
+
+# ---------------------------------------------------------------------------
+# RSKeyAppletSeams -- the CCID applets' security statuses. A second module, not
+# more variables in the first: the two share no variable (`formal/README.md`
+# carries the measurement), so a product would multiply 17 M states by this
+# module's own and buy no new interleavings.
+SEAM_BUGS=(BugSelectKeepsOtherApplet BugReselectResetsStatus
+           BugCardResetKeepsStatus BugAdminOpensKeyOps
+           BugFailedChangeKeepsStatus BugPinFreshNotSpent BugSigPinNotSpent
+           BugUserStatusOpensAdmin BugRefusedValidateGrants
+           BugPwStatusIgnoresAdmin BugPivChangeResetsStatus
+           BugRefusedValidateDropsUnlock)
+
+seam_target() {
+  case "$1" in
+    BugSelectKeepsOtherApplet)  echo NoStatusOutsideItsSelection ;;
+    BugReselectResetsStatus)    echo ReselectPreservesAccessStatus ;;
+    BugCardResetKeepsStatus)    echo NoStatusOutsideItsSelection ;;
+    BugAdminOpensKeyOps)        echo NoKeyOpOnTheAdminStatus ;;
+    BugFailedChangeKeepsStatus) echo NoStatusAfterARefusedAuth ;;
+    BugPinFreshNotSpent)        echo NoKeyOpOnTheAdminStatus ;;
+    BugSigPinNotSpent)          echo NoKeyOpOnTheAdminStatus ;;
+    BugUserStatusOpensAdmin)    echo NoKeyOpOnTheAdminStatus ;;
+    BugRefusedValidateGrants)   echo NoStatusAfterARefusedAuth ;;
+    BugPwStatusIgnoresAdmin)    echo NoKeyOpOnTheAdminStatus ;;
+    BugPivChangeResetsStatus)   echo ExemptRefusalPreservesStatus ;;
+    BugRefusedValidateDropsUnlock) echo ExemptRefusalPreservesStatus ;;
+  esac
+}
+SEAM_INV=(NoStatusOutsideItsSelection NoStatusAfterARefusedAuth
+          NoKeyOpOnTheAdminStatus ReselectPreservesAccessStatus
+          ExemptRefusalPreservesStatus)
+
+emit_seam() { # $1 = cfg, $2 = switch (""), $3 = 1 for solo
+  local out=$1 on=${2:-} solo=${3:-0}
+  {
+    echo "\\* Generated by formal/gen-configs.sh -- do not edit by hand."
+    echo "SPECIFICATION Spec"
+    echo "CONSTANTS"
+    for b in "${SEAM_BUGS[@]}"; do
+      if [ "$b" = "$on" ]; then echo "    $b = TRUE"; else echo "    $b = FALSE"; fi
+    done
+    echo "INVARIANTS"
+    echo "    TypeOK"
+    if [ -n "$on" ] && [ "$solo" = 1 ]; then
+      echo "    $(seam_target "$on")"
+    elif [ -n "$on" ]; then
+      local t; t=$(seam_target "$on"); echo "    $t"
+      for i in "${SEAM_INV[@]}"; do [ "$i" = "$t" ] || echo "    $i"; done
+    else
+      for i in "${SEAM_INV[@]}"; do echo "    $i"; done
+    fi
+  } > "$out"
+}
+emit_seam Seams.cfg ""
+for b in "${SEAM_BUGS[@]}"; do emit_seam "SeamMut_$b.cfg" "$b"; done
+for b in "${SEAM_BUGS[@]}"; do emit_seam "SeamSolo_$b.cfg" "$b" 1; done
+echo "wrote Seams.cfg and ${#SEAM_BUGS[@]} x 2 seam configs"

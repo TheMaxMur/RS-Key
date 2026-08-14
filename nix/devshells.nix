@@ -68,6 +68,9 @@
     ];
 
     shellHook = ''
+      # flip-link (the embedded linker in .cargo/config.toml) shells out to
+      # `rust-lld`, which lives inside the rustc sysroot and is not on PATH.
+      export PATH="$(rustc --print sysroot)/lib/rustlib/$(rustc -vV | sed -n 's/^host: //p')/bin:$PATH"
       # rustc does not read buildInputs, so name SDL2's lib dir for the linker —
       # without it `tools/emu --display` fails with `ld: library 'SDL2' not found`.
       export LIBRARY_PATH="${pkgs.lib.getLib sdl2}/lib''${LIBRARY_PATH:+:$LIBRARY_PATH}"
@@ -92,6 +95,12 @@
           ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
             pkgs.systemd
             pkgs.pcsclite
+            # check.sh's fuzz-liveness row executes the libFuzzer binaries, whose
+            # runtime is C++, and this shell — not `.#fuzz`, which already names
+            # it — is where that row runs. Without it every target dies on
+            # `libstdc++.so.6: cannot open shared object file` and the row reports
+            # 53 dead harnesses, which is a loader path, not a preamble.
+            pkgs.stdenv.cc.cc.lib
           ]
         )
       }''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"

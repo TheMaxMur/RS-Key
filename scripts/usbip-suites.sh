@@ -81,7 +81,7 @@ if [ -z "$status" ]; then
   echo
   echo "FAIL: the guest never wrote a status — it did not reach the suites" >&2
   echo "--- the emulators' side" >&2
-  tail -20 "$WORK/default.log" "$WORK/yubico.log" >&2
+  tail -n 20 "$WORK/default.log" "$WORK/yubico.log" >&2
   exit 1
 fi
 
@@ -89,7 +89,7 @@ echo
 echo "guest exit: $status"
 [ "$status" -eq 0 ] || {
   echo "--- the emulators' side"
-  tail -20 "$WORK/default.log" "$WORK/yubico.log"
+  tail -n 20 "$WORK/default.log" "$WORK/yubico.log"
   exit 1
 }
 echo "USBIP SUITES PASSED"

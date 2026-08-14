@@ -13,10 +13,10 @@ use rsk_crypto::{
     Device, aes_ecb_decrypt_block, aes_ecb_encrypt_block, des3_decrypt_block, des3_encrypt_block,
 };
 use rsk_fs::{Fs, Storage};
-use rsk_openpgp::keys::Curve;
+use rsk_openpgp::keys::PrivKey;
 use rsk_openpgp::rsa_crt;
 use rsk_openpgp::{Presence, Rng, UserPresence};
-use rsk_sdk::tlv::find_tag;
+use rsk_sdk::tlv::{Tlv, find_tag};
 use rsk_sdk::{ResBuf, Sw};
 use zeroize::Zeroize;
 
@@ -24,7 +24,7 @@ use crate::files::*;
 use crate::keygen;
 use crate::seal;
 use crate::x509;
-use crate::{ChallengeKind, Session, WRONG_DATA, ct_eq, dyn_auth_resp};
+use crate::{ChallengeKind, Session, ct_eq, dyn_auth_resp};
 
 enum Dir {
     Encrypt,
@@ -32,10 +32,10 @@ enum Dir {
 }
 
 /// Enforce the slot/management-key touch policy before a private-key operation.
-/// `ALWAYS` and `CACHED` require a physical touch (CACHED is treated as ALWAYS —
-/// with no wall clock the 15-second cache window cannot be honoured, so it errs
-/// strict); a non-confirmation fails the operation. `NEVER`/`DEFAULT`/`AUTO`
-/// pass through.
+/// `NEVER` passes through; every other byte — `ALWAYS`, `CACHED` (treated as
+/// ALWAYS: with no wall clock the 15-second window cannot be honoured, so it errs
+/// strict) and anything an older build stored — requires a physical touch, and a
+/// non-confirmation fails the operation.
 fn check_touch(policy: u8, presence: &mut dyn UserPresence) -> Result<(), Sw> {
     // `NEVER` is the only value that skips the prompt. Listing the values that
     // *require* one instead made every other byte — an explicit `DEFAULT`, or a
@@ -52,12 +52,25 @@ fn check_touch(policy: u8, presence: &mut dyn UserPresence) -> Result<(), Sw> {
     }
 }
 
+/// Whether the session satisfies a key slot's resolved pin policy. `NEVER` is the
+/// only value that skips the PIN — naming the two that *require* one let an
+/// unrecognised byte mean "no PIN" (audit run-34 #18).
+fn pin_satisfied(sess: &Session, pinpol: u8) -> bool {
+    match pinpol {
+        PINPOLICY_NEVER => true,
+        // "verified every time immediately before" (SP 800-73-4 pt1 §3.2.1 Table 5):
+        // the VERIFY must also be unspent — see [`GenAuth::spend_pin`].
+        PINPOLICY_ALWAYS => sess.has_pin && sess.pin_fresh,
+        _ => sess.has_pin,
+    }
+}
+
 /// One ECB block under the management key; `data` is `chal_len` bytes.
 fn mgm_crypt(algo: u8, key: &[u8], data: &mut [u8], dir: Dir) -> Result<(), Sw> {
     match algo {
         ALGO_3DES => {
             let key: &[u8; 24] = key.try_into().map_err(|_| Sw::MEMORY_FAILURE)?;
-            let block: &mut [u8; 8] = data.try_into().map_err(|_| WRONG_DATA)?;
+            let block: &mut [u8; 8] = data.try_into().map_err(|_| Sw::WRONG_DATA)?;
             match dir {
                 Dir::Encrypt => des3_encrypt_block(key, block),
                 Dir::Decrypt => des3_decrypt_block(key, block),
@@ -65,7 +78,7 @@ fn mgm_crypt(algo: u8, key: &[u8], data: &mut [u8], dir: Dir) -> Result<(), Sw> 
             Ok(())
         }
         _ => {
-            let block: &mut [u8; 16] = data.try_into().map_err(|_| WRONG_DATA)?;
+            let block: &mut [u8; 16] = data.try_into().map_err(|_| Sw::WRONG_DATA)?;
             match dir {
                 Dir::Encrypt => aes_ecb_encrypt_block(key, block),
                 Dir::Decrypt => aes_ecb_decrypt_block(key, block),
@@ -86,12 +99,68 @@ struct GenAuth<'c, S: Storage> {
     rng: &'c mut dyn Rng,
     presence: &'c mut dyn UserPresence,
     algo: u8,
+    /// The algorithm the slot's key was stored under (`meta[0]`).
+    slot_algo: u8,
     key_ref: u8,
+    pin_policy: u8,
     touch_policy: u8,
     chal_len: usize,
 }
 
 impl<S: Storage> GenAuth<'_, S> {
+    /// Spend the PIN freshness an ALWAYS slot reads. Measured on a YubiKey 5.7.4: a
+    /// private-key operation at any PIN-gated slot closes every ALWAYS slot, and
+    /// nothing clears the PIN's own status — 9B included, hence `is_key`.
+    fn spend_pin(&mut self) {
+        if self.pin_policy != PINPOLICY_NEVER && is_key(self.key_ref) {
+            self.sess.pin_fresh = false;
+        }
+    }
+
+    /// The slot's EC key, bound to the algorithm the host asked for — and the point
+    /// of no return for [`Self::spend_pin`]. Measured on a YubiKey 5.7.4: once a
+    /// request reaches the key the freshness is gone whether the computation then
+    /// succeeds or not (a garbage ECDH point costs it), while a wrong algorithm, an
+    /// unprovisioned slot or a denied touch never reaches it and costs nothing.
+    fn load_ec(&mut self) -> Result<PrivKey, Sw> {
+        let key = seal::load_ec_key(self.dev, self.fs, key_fid(self.key_ref))?;
+        // Defence in depth: [`Self::algo_is_the_keys`] already refused a mismatch
+        // before this call, off the stored head rather than the sealed key.
+        let want = keygen::curve_for_algo(self.algo).ok_or(Sw::WRONG_DATA)?;
+        if key.curve() != want {
+            return Err(Sw::WRONG_DATA);
+        }
+        self.spend_pin();
+        Ok(key)
+    }
+
+    /// The requested algorithm must be the one the slot's key was stored under.
+    /// Judged before the touch and before the load, so a mismatch neither prompts
+    /// nor spends: measured on a YubiKey 5.7.4, 2 runs over nine cells — a P-256
+    /// slot addressed as ECCP384, RSA-2048 or Ed25519, an ECDH asked at `9B` or at
+    /// an RSA/AES slot, and an empty `81` at a key slot under any symmetric
+    /// algorithm — every one of them `6A80`, spending nothing. Ours answered
+    /// `6A86`, and `6581` for the RSA arm, whose seal read ran first. Without it
+    /// the RSA arm also had no algorithm check at all: an RSA-2048 request at an
+    /// RSA-3072 slot loaded the 3072 key and spent before refusing on length.
+    fn algo_is_the_keys(&self) -> Result<(), Sw> {
+        if self.algo == self.slot_algo {
+            Ok(())
+        } else {
+            Err(Sw::WRONG_DATA)
+        }
+    }
+
+    /// Start a management-key handshake: record the outstanding challenge and
+    /// drop any standing 9B status — measured on a YubiKey 5.7.4, a step 1
+    /// revokes and nothing else at 9B does. 9B-only; both callers check.
+    fn begin_handshake(&mut self, kind: ChallengeKind) {
+        self.sess.has_challenge = true;
+        self.sess.chal_kind = kind;
+        self.sess.chal_algo = self.algo;
+        self.sess.has_mgm = false;
+    }
+
     /// t80 mutual auth: step 1 (empty witness) returns an encrypted witness under
     /// the management key; step 2 verifies the returned witness and answers the
     /// host challenge. Only a `MutualWitness` this device issued may be verified.
@@ -107,23 +176,21 @@ impl<S: Storage> GenAuth<'_, S> {
             // requested here (the start of the handshake) so step 2 needs no
             // second one.
             if self.key_ref != SLOT_CARDMGM {
-                return Err(Sw::INCORRECT_P1P2);
+                return Err(Sw::WRONG_DATA);
             }
             check_touch(self.touch_policy, self.presence)?;
             self.rng.fill(&mut self.sess.challenge[..self.chal_len]);
             let mut enc = [0u8; 16];
             enc[..self.chal_len].copy_from_slice(&self.sess.challenge[..self.chal_len]);
             mgm_crypt(self.algo, mgm, &mut enc[..self.chal_len], Dir::Encrypt)?;
-            self.sess.has_challenge = true;
-            self.sess.chal_kind = ChallengeKind::MutualWitness;
-            self.sess.chal_algo = self.algo;
+            self.begin_handshake(ChallengeKind::MutualWitness);
             dyn_auth_resp(res, TAG_AUTH_WITNESS, &enc[..self.chal_len])?;
             return Ok(());
         }
         // Mutual auth step 2: host returns the decrypted witness + its own
         // challenge; verify, then answer with the encrypted host challenge.
         if self.key_ref != SLOT_CARDMGM {
-            return Err(Sw::INCORRECT_P1P2);
+            return Err(Sw::WRONG_DATA);
         }
         // Only a witness this device issued *encrypted* (mutual step 1) may be
         // verified here — never a plaintext single-auth challenge.
@@ -131,11 +198,9 @@ impl<S: Storage> GenAuth<'_, S> {
             || self.sess.chal_kind != ChallengeKind::MutualWitness
             || self.sess.chal_algo != self.algo
         {
-            return Err(Sw::INCORRECT_PARAMS);
+            return Err(Sw::WRONG_DATA);
         }
-        let host_chal = host_chal
-            .filter(|c| !c.is_empty())
-            .ok_or(Sw::INCORRECT_PARAMS)?;
+        let host_chal = host_chal.filter(|c| !c.is_empty()).ok_or(Sw::WRONG_DATA)?;
         self.sess.has_challenge = false;
         self.sess.chal_kind = ChallengeKind::None;
         if w.len() != self.chal_len || !ct_eq(w, &self.sess.challenge[..self.chal_len]) {
@@ -153,12 +218,10 @@ impl<S: Storage> GenAuth<'_, S> {
     }
 
     /// t81 single auth step 1: issue a plaintext challenge for the host to
-    /// encrypt and return (verified in [`single_auth_verify`]).
+    /// encrypt and return (verified in [`Self::single_auth_verify`]).
     fn single_challenge(&mut self, res: &mut ResBuf) -> Result<(), Sw> {
         self.rng.fill(&mut self.sess.challenge[..self.chal_len]);
-        self.sess.has_challenge = true;
-        self.sess.chal_kind = ChallengeKind::SingleChallenge;
-        self.sess.chal_algo = self.algo;
+        self.begin_handshake(ChallengeKind::SingleChallenge);
         dyn_auth_resp(
             res,
             TAG_AUTH_CHALLENGE,
@@ -171,12 +234,14 @@ impl<S: Storage> GenAuth<'_, S> {
     /// RSA (blinded, CRT-fault-checked), ECDSA over the digest, or PureEdDSA over
     /// the message. Symmetric algos are refused — see the arm's oracle note.
     fn slot_key_op(&mut self, c: &[u8], res: &mut ResBuf) -> Result<(), Sw> {
+        self.algo_is_the_keys()?;
         match self.algo {
             ALGO_RSA1024 | ALGO_RSA2048 | ALGO_RSA3072 | ALGO_RSA4096 => {
                 check_touch(self.touch_policy, self.presence)?;
                 let crt = seal::load_rsa_crt(self.dev, self.fs, key_fid(self.key_ref))?;
+                self.spend_pin();
                 if c.len() != crt.modulus_len() {
-                    return Err(Sw::INCORRECT_PARAMS);
+                    return Err(Sw::WRONG_DATA);
                 }
                 let mut out = [0u8; rsa_crt::MAX_RSA_BYTES];
                 let n = rsa_crt::sign_crt(&crt, c, self.rng, &mut out)?;
@@ -185,11 +250,7 @@ impl<S: Storage> GenAuth<'_, S> {
             }
             ALGO_ECCP256 | ALGO_ECCP384 => {
                 check_touch(self.touch_policy, self.presence)?;
-                let key = seal::load_ec_key(self.dev, self.fs, key_fid(self.key_ref))?;
-                let want = keygen::curve_for_algo(self.algo).ok_or(Sw::INCORRECT_P1P2)?;
-                if key.curve() != want {
-                    return Err(Sw::INCORRECT_P1P2);
-                }
+                let key = self.load_ec()?;
                 let mut raw = [0u8; 96];
                 let rn = key.sign(c, self.rng, &mut raw)?;
                 let mut der = [0u8; 112];
@@ -198,10 +259,7 @@ impl<S: Storage> GenAuth<'_, S> {
             }
             ALGO_ED25519 => {
                 check_touch(self.touch_policy, self.presence)?;
-                let key = seal::load_ec_key(self.dev, self.fs, key_fid(self.key_ref))?;
-                if key.curve() != Curve::Ed25519 {
-                    return Err(Sw::INCORRECT_P1P2);
-                }
+                let key = self.load_ec()?;
                 // PureEdDSA signs the raw message `c`; the 64-byte signature is
                 // returned bare (no ASN.1 wrapping).
                 let mut sig = [0u8; 64];
@@ -216,9 +274,9 @@ impl<S: Storage> GenAuth<'_, S> {
                 // E(mgm, R) submitted as the 82 response decrypts back to R.
                 // The only sanctioned symmetric flows are mutual-witness (t80)
                 // and single-auth (t81-empty challenge -> t82 verify). Refuse.
-                return Err(Sw::INCORRECT_P1P2);
+                return Err(Sw::WRONG_DATA);
             }
-            _ => return Err(WRONG_DATA),
+            _ => return Err(Sw::WRONG_DATA),
         }
         Ok(())
     }
@@ -227,13 +285,13 @@ impl<S: Storage> GenAuth<'_, S> {
     /// `SingleChallenge` this device issued in plaintext may be answered here.
     fn single_auth_verify(&mut self, mgm: &[u8], r: &[u8]) -> Result<(), Sw> {
         if self.key_ref != SLOT_CARDMGM {
-            return Err(Sw::INCORRECT_P1P2);
+            return Err(Sw::WRONG_DATA);
         }
         if !self.sess.has_challenge
             || self.sess.chal_kind != ChallengeKind::SingleChallenge
             || self.sess.chal_algo != self.algo
         {
-            return Err(Sw::INCORRECT_PARAMS);
+            return Err(Sw::WRONG_DATA);
         }
         check_touch(self.touch_policy, self.presence)?;
         self.sess.has_challenge = false;
@@ -255,19 +313,20 @@ impl<S: Storage> GenAuth<'_, S> {
     /// X25519 (`ykman calculate_secret`). Enforces the key's touch policy first.
     fn ecdh_op(&mut self, pp: &[u8], res: &mut ResBuf) -> Result<(), Sw> {
         if !is_key(self.key_ref) {
-            return Err(Sw::INCORRECT_P1P2);
+            return Err(Sw::WRONG_DATA);
         }
+        self.algo_is_the_keys()?;
         if !matches!(self.algo, ALGO_ECCP256 | ALGO_ECCP384 | ALGO_X25519) {
-            return Err(Sw::INCORRECT_P1P2);
+            return Err(Sw::WRONG_DATA);
         }
         check_touch(self.touch_policy, self.presence)?;
-        let key = seal::load_ec_key(self.dev, self.fs, key_fid(self.key_ref))?;
-        let want = keygen::curve_for_algo(self.algo).ok_or(Sw::INCORRECT_P1P2)?;
-        if key.curve() != want {
-            return Err(Sw::INCORRECT_P1P2);
-        }
+        // The point is judged by the curve, after the key is loaded and the
+        // freshness spent — including an empty one. Measured on a YubiKey 5.7.4:
+        // an unusable point still closes every ALWAYS slot, because the request
+        // reached the key; what it cannot do is come back as anything but 6A80.
+        let key = self.load_ec()?;
         let mut shared = [0u8; 48];
-        let n = key.ecdh(pp, &mut shared)?;
+        let n = key.ecdh(pp, &mut shared).map_err(|_| Sw::WRONG_DATA)?;
         dyn_auth_resp(res, TAG_AUTH_RESPONSE, &shared[..n])?;
         shared.zeroize();
         Ok(())
@@ -286,25 +345,30 @@ pub(crate) fn general_authenticate<S: Storage>(
     data: &[u8],
     res: &mut ResBuf,
 ) -> Sw {
-    if data.is_empty() {
-        return Sw::WRONG_LENGTH;
-    }
-    if data[0] != TAG_DYN_AUTH {
-        return WRONG_DATA;
+    // One word for this command's whole framing. A YubiKey 5.7.4 answers `6A80`
+    // to an empty body, to a wrong template tag and to a one-byte body alike, and
+    // never `6700` — the same spelling `0x0920` gave VERIFY's P1 axis. This
+    // command has no ACL of its own, being the authentication, so its framing is
+    // all it can answer for.
+    if data.is_empty() || data[0] != TAG_DYN_AUTH {
+        return Sw::WRONG_DATA;
     }
     let Some(dyn_auth) = find_tag(data, TAG_DYN_AUTH as u16) else {
-        return WRONG_DATA;
+        return Sw::WRONG_DATA;
     };
     if dyn_auth.is_empty() {
-        return WRONG_DATA;
+        return Sw::WRONG_DATA;
     }
 
     // Management-key sanity (algo class + stored length).
     let mut mgm_key = [0u8; 32];
     let mut mgm_len = 0usize;
     if key_ref == SLOT_CARDMGM {
+        // Same class, same word as every other "this key is not that algorithm"
+        // cell: a YubiKey answers 6A80 to any body at 9B under a non-9B algorithm
+        // (measured, 2 runs, and E42 §6.9's sweep).
         let Some(want) = mgm_key_len(algo) else {
-            return Sw::INCORRECT_P1P2;
+            return Sw::WRONG_DATA;
         };
         mgm_len = match seal::seal_read(dev, fs, key_fid(SLOT_CARDMGM), &mut mgm_key) {
             Ok(n) => n,
@@ -312,7 +376,7 @@ pub(crate) fn general_authenticate<S: Storage>(
         };
         if mgm_len != want {
             mgm_key.zeroize();
-            return Sw::INCORRECT_P1P2;
+            return Sw::WRONG_DATA;
         }
     }
 
@@ -331,24 +395,23 @@ pub(crate) fn general_authenticate<S: Storage>(
     // its stored length was checked, and 3DES and AES-192 are both 24 bytes — so an
     // AES-192 key completed a full 3DES mutual authentication, the one algorithm
     // `fips-profile` provisioning refuses (audit run-34 #19).
-    // `INCORRECT_PARAMS`, the same status the `chal_algo` binding below answers, so
+    // `WRONG_DATA`, the same status the `chal_algo` binding below answers, so
     // one class of "this key is not that algorithm" has one status word.
     if key_ref == SLOT_CARDMGM && meta[0] != algo {
         mgm_key.zeroize();
-        return Sw::INCORRECT_PARAMS;
+        return Sw::WRONG_DATA;
     }
-    let mut pinpol = meta[1];
-    if pinpol == PINPOLICY_DEFAULT {
-        pinpol = if key_ref == SLOT_SIGNATURE {
-            PINPOLICY_ALWAYS
-        } else {
-            PINPOLICY_ONCE
-        };
-    }
-    // `NEVER` is the only value that skips the PIN — the same fail-closed rule as
-    // `check_touch`. Naming the two values that *require* one let an unrecognised
-    // byte mean "no PIN" (audit run-34 #18).
-    if pinpol != PINPOLICY_NEVER && is_key(key_ref) && !sess.has_pin {
+    // Only a record an OLDER build wrote can still hold an unresolved `0` here — no
+    // host may send one (E80) — and it has to mean what the store-time resolver
+    // means, or a legacy slot and a new one behave differently at the same slot
+    // with nothing to notice it. Hence one owner for the table. Any other byte is
+    // taken as stored, so an undefined one reaches `pin_satisfied`'s closed arm.
+    let pinpol = if meta[1] == PINPOLICY_DEFAULT {
+        keygen::default_pin_policy(key_ref)
+    } else {
+        meta[1]
+    };
+    if is_key(key_ref) && !pin_satisfied(sess, pinpol) {
         mgm_key.zeroize();
         return Sw::SECURITY_STATUS_NOT_SATISFIED;
     }
@@ -356,10 +419,7 @@ pub(crate) fn general_authenticate<S: Storage>(
     let touch_policy = meta[2];
 
     let chal_len: usize = if algo == ALGO_3DES { 8 } else { 16 };
-    let t80 = find_tag(dyn_auth, TAG_AUTH_WITNESS as u16);
-    let t81 = find_tag(dyn_auth, TAG_AUTH_CHALLENGE as u16);
-    let t82 = find_tag(dyn_auth, TAG_AUTH_RESPONSE as u16);
-    let t85 = find_tag(dyn_auth, TAG_AUTH_EXPONENTIATION as u16);
+    let op = first_operation(dyn_auth);
 
     let sw = {
         let mut ga = GenAuth {
@@ -369,41 +429,81 @@ pub(crate) fn general_authenticate<S: Storage>(
             rng: &mut *rng,
             presence: &mut *presence,
             algo,
+            slot_algo: meta[0],
             key_ref,
+            pin_policy: pinpol,
             touch_policy,
             chal_len,
         };
-        if let Some(w) = t80 {
-            ga.mutual_auth(&mgm_key[..mgm_len], w, t81, res)
-        } else if let Some(c) = t81 {
-            if c.is_empty() {
-                ga.single_challenge(res)
-            } else {
-                ga.slot_key_op(c, res)
+        match op {
+            Some((Op::Witness, w)) => {
+                let host_chal = find_tag(dyn_auth, TAG_AUTH_CHALLENGE as u16);
+                ga.mutual_auth(&mgm_key[..mgm_len], w, host_chal, res)
             }
-        } else if let Some(r) = t82.filter(|r| !r.is_empty()) {
-            ga.single_auth_verify(&mgm_key[..mgm_len], r)
-        } else if let Some(pp) = t85.filter(|p| !p.is_empty()) {
-            ga.ecdh_op(pp, res)
-        } else {
-            Ok(())
+            // Empty at 9B opens the single-auth handshake; at a key slot it is a
+            // private-key operation over an empty challenge, which is what the
+            // oracle answers with a signature where we answered random bytes.
+            Some((Op::Challenge, c)) if c.is_empty() && key_ref == SLOT_CARDMGM => {
+                ga.single_challenge(res)
+            }
+            Some((Op::Challenge, c)) => ga.slot_key_op(c, res),
+            Some((Op::Response, r)) => ga.single_auth_verify(&mgm_key[..mgm_len], r),
+            Some((Op::Exponentiation, pp)) => ga.ecdh_op(pp, res),
+            // No operation tag the card recognises. A YubiKey answers 6A80 to
+            // every such body — an unknown tag, a truncated TLV, a lone empty
+            // response placeholder — where we used to answer 9000 and do nothing.
+            None => Err(Sw::WRONG_DATA),
         }
     };
     mgm_key.zeroize();
 
     match sw {
-        Ok(()) => {
-            // pin-policy ALWAYS re-locks the PIN after each use — but only for an
-            // actual key-slot sign, mirroring the `is_key` check that gated it
-            // above. The 9B management key also stores pin-policy ALWAYS, and its
-            // mutual auth is not a PIN-gated op, so it must not clear has_pin (else
-            // a VERIFY-then-mgmt-auth-then-sign client, e.g. age-plugin-yubikey,
-            // hits 6982 on the slot sign).
-            if pinpol == PINPOLICY_ALWAYS && is_key(key_ref) {
-                sess.has_pin = false;
-            }
-            Sw::OK
-        }
+        Ok(()) => Sw::OK,
         Err(e) => e,
+    }
+}
+
+/// The operation this dynamic-auth template asks for: the FIRST tag in body order
+/// that names one. Measured on a YubiKey 5.7.4, 3 runs: `7C .. 82 00 81 00 85 <pt>`
+/// signs and the same body with `85` before `81` agrees, so precedence is position
+/// and not a fixed table — `find_tag` per tag is order-blind, and an ordinary ECDH
+/// body carrying an empty `81` returned random bytes instead of a shared secret.
+///
+/// An EMPTY `82` is the response placeholder every conformant body opens with, not
+/// a request to verify one; a non-empty `82` is single-auth step 2.
+fn first_operation(dyn_auth: &[u8]) -> Option<(Op, &[u8])> {
+    Tlv::new(dyn_auth).find_map(|(t, v)| match Op::from_tag(t) {
+        Some(Op::Response) if v.is_empty() => None,
+        Some(op) => Some((op, v)),
+        None => None,
+    })
+}
+
+/// The operations a dynamic-auth template can name. `general_authenticate`
+/// dispatches on this rather than on a raw tag, so a variant added here without an
+/// arm there is a compile error — where the two hand-kept lists it replaces would
+/// have let the card accept the tag and then refuse the body with `6A80`.
+enum Op {
+    Witness,
+    Challenge,
+    Response,
+    Exponentiation,
+}
+
+impl Op {
+    /// Tags compare as `u16` because `Tlv` also yields two-byte ones, and matching
+    /// on a truncated low byte would let `0x0181` pass for `0x81`.
+    fn from_tag(tag: u16) -> Option<Self> {
+        const WITNESS: u16 = TAG_AUTH_WITNESS as u16;
+        const CHALLENGE: u16 = TAG_AUTH_CHALLENGE as u16;
+        const RESPONSE: u16 = TAG_AUTH_RESPONSE as u16;
+        const EXPONENTIATION: u16 = TAG_AUTH_EXPONENTIATION as u16;
+        match tag {
+            WITNESS => Some(Self::Witness),
+            CHALLENGE => Some(Self::Challenge),
+            RESPONSE => Some(Self::Response),
+            EXPONENTIATION => Some(Self::Exponentiation),
+            _ => None,
+        }
     }
 }

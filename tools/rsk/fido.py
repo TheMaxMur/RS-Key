@@ -12,11 +12,11 @@ from getpass import getpass
 from .common import add_pin_arg, device_has_pin, die, die_ctap_pin_error, resolve_pin, sanitize
 
 #: Largest attestation chain the device stores — `rsk_fido::cert::ATT_CHAIN_MAX`,
-#: i.e. `rsk_fs::MAX_VALUE_BYTES - 1 - 2 * ATT_CHAIN_MAX_CERTS` = 2046 − 1 − 8. It
+#: i.e. `rsk_fs::MAX_VALUE_BYTES - 1 - 2 * ATT_CHAIN_MAX_CERTS` = 4078 − 1 − 8. It
 #: used to be a flat 2048; when the ceiling moved to what a flash record actually
 #: holds, this pre-flight check kept the old number, so a chain in the 11-byte gap
 #: passed here and was refused by the device as a bare CTAP error.
-ATT_CHAIN_MAX = 2037
+ATT_CHAIN_MAX = 4069
 
 try:
     from fido2.ctap import CtapError

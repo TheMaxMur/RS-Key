@@ -14,9 +14,11 @@ use crate::consts::{
 /// The exact set of getInfo members this build advertises, in canonical order.
 /// A new member must land here *and* in `metadata/rs-key.metadata.json` +
 /// `docs/protocol.md` — this test is the tripwire.
-const GETINFO_KEYS: [u32; 20] = [
+/// 0x0B (maxSerializedLargeBlobArray) belongs to the `authenticatorLargeBlobs`
+/// command, which a `largeblob-ext` build does not serve (CTAP 2.3 §12.4).
+const GETINFO_KEYS: [u32; 21] = [
     0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10,
-    0x14, 0x16, 0x1D, 0x1F,
+    0x14, 0x15, 0x16, 0x1D, 0x1F,
 ];
 
 #[test]
@@ -26,7 +28,12 @@ fn getinfo_envelope_and_canonical() {
     // Keys strictly ascending + no trailing bytes (checked inside int_map_keys),
     // and exactly the advertised member set.
     let keys = int_map_keys(&r.body);
-    assert_eq!(keys, GETINFO_KEYS, "getInfo top-level members changed");
+    let expected: Vec<u32> = GETINFO_KEYS
+        .iter()
+        .copied()
+        .filter(|k| *k != 0x0B || !crate::consts::LARGE_BLOB_EXT)
+        .collect();
+    assert_eq!(keys, expected, "getInfo top-level members changed");
 }
 
 #[test]

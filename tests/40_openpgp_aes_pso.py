@@ -4,16 +4,25 @@
 
 """OpenPGP AES symmetric PSO test (encipher / decipher) over PC/SC.
 
-The OpenPGP card AES operation uses the symmetric key minted on the DEC slot
-(`EF_AES_KEY`, tag D5), in raw AES-CBC with a zero IV and no padding:
+The OpenPGP card AES operation uses the card's symmetric key at `EF_AES_KEY`
+(tag D5) — seeded by a DEC GENERATE when the DO is empty, or written by the host
+with `PUT DATA D5` — in raw AES-CBC with a zero IV and no padding:
 
     PSO:ENCIPHER (86 80)  plaintext            -> 0x02 || cryptogram
     PSO:DECIPHER (80 86)  0x02 || cryptogram   -> plaintext
 
-The key is sealed under the DEK and never leaves the card, so this verifies by
-round-trip (encipher then decipher must recover the plaintext). Needs PW2 (the
-DEC password, default "123456"); the DEC keypair is (re)generated each run to
-mint a fresh AES key, so the test is idempotent.
+A seeded key is sealed under the DEK and never leaves the card, so that half is
+verified by round-trip. A host-written key is known, so the second half checks the
+cryptogram byte-for-byte against an independent AES-CBC, and then that a DEC
+GENERATE leaves it standing (E98: `D5` is card-level, so no keygen owns it). The
+SIG and AUT slots are not re-generated here — `a_keygen_mints_the_aes_key_only_when
+_d5_is_empty` in `crates/rsk-openpgp/src/tests.rs` covers all three.
+Needs PW2 (the DEC password, default "123456") to use the key and PW3 to write it.
+
+⚠️ Not idempotent on a board any more, and deliberately so: the host key this
+writes at `D5` cannot be removed short of TERMINATE DF, so from the SECOND run on,
+the "seeded key" half above exercises that leftover host key and the seed-when-empty
+path goes unverified. Run it against a freshly reset applet to cover that half.
 
     nix develop -c python tests/40_openpgp_aes_pso.py
 """
@@ -24,6 +33,10 @@ try:
     from smartcard.util import toHexString
 except ImportError:
     sys.exit("missing dependency: pip install pyscard")
+try:
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+except ImportError:
+    sys.exit("missing dependency: pip install cryptography")
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _device import find_reader  # noqa: E402
@@ -59,14 +72,16 @@ def main():
 
     tx(SELECT, "SELECT OpenPGP AID")
     tx([0x00, INS_VERIFY, 0x00, MODE_PW3, len(PW3_DEFAULT)] + list(PW3_DEFAULT), "VERIFY PW3")
-    # Generate the DEC keypair — this mints the DEC slot's AES-256 key. PW3 (admin)
-    # also authorises the AES PSO (gate is `!has_pw3 && !has_pw2`), so no separate
-    # PW2 verify is needed — which also avoids depending on PW1's state.
+    # PW3 authorises GENERATE; the AES PSO itself takes PW1 no. 82 and nothing
+    # else (OpenPGP 3.4 §7.2.11), so verify that too.
+    tx([0x00, INS_VERIFY, 0x00, MODE_PW1_82, len(PW1_DEFAULT)] + list(PW1_DEFAULT),
+       "VERIFY PW1 (82)")
+    # Generate the DEC keypair — this seeds the card's AES-256 key if D5 is empty.
     tx([0x00, INS_PUT_DATA, 0x00, 0xC2, len(ATTR_P256_ECDH)] + list(ATTR_P256_ECDH),
        "PUT DEC algo-attr (P-256 ECDH)")
+    generate_dec = [0x00, INS_KEYPAIR_GEN, 0x80, 0x00, 0x00, 0x00, 0x02, CRT_DEC, 0x00, 0x00, 0x00]
     # Extended-length GENERATE (00 00 02 Lc | B8 00 | 00 00 Le), as in the keygen test.
-    tx([0x00, INS_KEYPAIR_GEN, 0x80, 0x00, 0x00, 0x00, 0x02, CRT_DEC, 0x00, 0x00, 0x00],
-       "GENERATE DEC (mints AES key)")
+    tx(generate_dec, "GENERATE DEC (seeds AES key)")
 
     pt = bytes(range(32))  # two AES blocks
     enc = tx([0x00, INS_PSO, 0x86, 0x80, len(pt)] + list(pt) + [0x00], "PSO:ENCIPHER (86 80)")
@@ -89,7 +104,41 @@ def main():
         fail(f"non-block-aligned ENCIPHER: SW {sw1:02X}{sw2:02X} != 6700")
     print("  block-alignment enforced (15-byte plaintext -> 6700)")
 
-    print("\nPASS (AES encipher/decipher round-trip)")
+    # PUT DATA D5: the host supplies the key itself (OpenPGP 3.4 §7.2.11), which
+    # is what Extended Capabilities b2 announces. AES-128 and AES-256 only.
+    for bad in (0, 1, 15, 17, 24, 31, 33):
+        _, sw1, sw2 = conn.transmit([0x00, INS_PUT_DATA, 0x00, 0xD5, bad] + [0x22] * bad)
+        if (sw1, sw2) != (0x6A, 0x80):
+            fail(f"PUT DATA D5 with {bad} bytes: SW {sw1:02X}{sw2:02X} != 6A80")
+    print("  PUT DATA D5 takes 16 or 32 bytes and nothing else")
+
+    for key in (bytes(range(16)), bytes(range(32))):
+        tx([0x00, INS_PUT_DATA, 0x00, 0xD5, len(key)] + list(key),
+           f"PUT DATA D5 ({len(key) * 8}-bit key)")
+        enc = tx([0x00, INS_PSO, 0x86, 0x80, len(pt)] + list(pt) + [0x00],
+                 "PSO:ENCIPHER under it")
+        enc_ctx = Cipher(algorithms.AES(key), modes.CBC(bytes(16))).encryptor()
+        want = enc_ctx.update(pt) + enc_ctx.finalize()
+        if enc[1:] != want:
+            fail(f"the D5 key is not the key the PSO used: {enc[1:].hex()} != {want.hex()}")
+        dec = tx([0x00, INS_PSO, 0x80, 0x86, len(enc)] + list(enc) + [0x00],
+                 "PSO:DECIPHER under it")
+        if dec != pt:
+            fail(f"round-trip under a host-supplied key: {dec.hex()} != {pt.hex()}")
+    print("  the host-supplied key is the key the PSO uses (AES-CBC, zero IV)")
+
+    # E98: no keygen owns D5. OpenPGP 3.4 §7.2.14 lets GENERATE reset the DS counter
+    # and "other related DO"; the card's one D5 is related to no key pair, and
+    # §7.2.12's PSO:ENCIPHER has no key reference at all. The DEC slot is the one
+    # that used to mint, so it is the one this drives over the wire.
+    standing = enc
+    tx(generate_dec, "GENERATE DEC again")
+    again = tx([0x00, INS_PSO, 0x86, 0x80, len(pt)] + list(pt) + [0x00], "PSO:ENCIPHER after it")
+    if again != standing:
+        fail(f"a DEC GENERATE destroyed the host's D5 key: {again.hex()} != {standing.hex()}")
+    print("  a DEC GENERATE leaves a host-installed D5 key standing")
+
+    print("\nPASS (AES encipher/decipher round-trip, host-supplied D5 key survives GENERATE)")
 
 
 if __name__ == "__main__":

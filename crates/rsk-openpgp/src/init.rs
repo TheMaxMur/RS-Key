@@ -25,7 +25,10 @@ pub enum Error {
 
 const KDF_DEFAULT: &[u8] = &[0x81, 0x01, 0x00];
 const UIF_DEFAULT: &[u8] = &[0x00, 0x20];
-const SEX_DEFAULT: &[u8] = &[0x30];
+/// ISO 5218 `9`, "not applicable" — a member of `SEX_VALUES`, and what a factory
+/// YubiKey holds. `'0'` was our own invention and is no longer accepted, so a card
+/// that kept it could read `5F35` and not write the byte back.
+const SEX_DEFAULT: &[u8] = &[0x39];
 const SIG_COUNT_ZERO: &[u8] = &[0x00, 0x00, 0x00];
 const PW_RETRIES_INIT: &[u8] = &[
     0x01,
@@ -55,11 +58,22 @@ pub fn scan_files<S: Storage>(
     fs: &mut Fs<S>,
     rng: &mut dyn Rng,
 ) -> Result<(), Error> {
-    // DEK: generate once when none of the wrapped copies exist.
+    // DEK: generate once, and judge BOTH wrapped copies together. One power cut
+    // between the two writes below used to be permanent — `has_key(EF_DEK_PW1)`
+    // alone made this guard false on the next boot, so PW3's copy was never
+    // created, while the verifier further down still went in. PW3 then verified
+    // for good and everything needing the DEK answered `6A88`, with TERMINATE DF
+    // the only way out. Same two-record class as the PIN update E29 closed.
+    //
+    // Only while NEITHER verifier exists: past that the card has been provisioned,
+    // and a missing copy is a lost record rather than an interrupted first boot —
+    // regenerating the DEK there would throw the keys away. Nothing can be lost in
+    // the window this does cover: no key can exist before the first boot finishes.
+    let provisioning = !fs.has_data(EF_PW1) && !fs.has_data(EF_PW3);
     let mut reset_dek = false;
-    if !fs.has_key(EF_DEK_PW1)
+    if provisioning
+        && (!fs.has_key(EF_DEK_PW1) || !fs.has_key(EF_DEK_PW3))
         && !fs.has_key(EF_DEK_RC)
-        && !fs.has_key(EF_DEK_PW3)
         && !fs.has_data(EF_DEK)
     {
         let mut random_dek = [0u8; DEK_SIZE];
@@ -116,14 +130,13 @@ pub fn scan_files<S: Storage>(
     if !fs.has_data(EF_KDF) {
         put(fs, EF_KDF, KDF_DEFAULT)?;
     }
-    if !fs.has_data(EF_SEX) {
-        put(fs, EF_SEX, SEX_DEFAULT)?;
-    }
     if !fs.has_data(EF_PW_RETRIES) {
         put(fs, EF_PW_RETRIES, PW_RETRIES_INIT)?;
     }
     neutralize_default_reset_code(dev, fs)?;
     settle_rc_retry_counter(fs)?;
+    settle_pw_status_maxima(fs)?;
+    settle_sex_code(fs)?;
     Ok(())
 }
 
@@ -172,6 +185,55 @@ fn settle_rc_retry_counter<S: Storage>(fs: &mut Fs<S>) -> Result<(), Error> {
     if idx < n && pw[idx] != 0 {
         pw[idx] = 0;
         put(fs, EF_PW_PRIV, &pw[..n])?;
+    }
+    Ok(())
+}
+
+/// Restore DO C4's three max-length bytes on a card an older build let move them.
+/// Firmware through bcdDevice 0x0897 copied a PUT DATA `0xC4` body across the
+/// flag *and* all three maxima, so `01 06 06 06` announced max 6 for good; the
+/// writer touches the flag only now, and nothing else in the applet ever rewrites
+/// those bytes — so without this a card carrying one is stuck announcing a limit
+/// `gpg` then refuses to let its owner exceed, with TERMINATE DF the only escape.
+/// Idempotent: the flash write happens only on repair.
+fn settle_pw_status_maxima<S: Storage>(fs: &mut Fs<S>) -> Result<(), Error> {
+    let mut pw = [0u8; 8];
+    let Some(n) = fs.read(EF_PW_PRIV, &mut pw) else {
+        return Ok(());
+    };
+    let n = n.min(pw.len());
+    let mut moved = false;
+    for (i, want) in PW_STATUS_DEFAULT
+        .iter()
+        .enumerate()
+        .take(PW1_RETRY_IDX)
+        .skip(1)
+    {
+        if i < n && pw[i] != *want {
+            pw[i] = *want;
+            moved = true;
+        }
+    }
+    if moved {
+        put(fs, EF_PW_PRIV, &pw[..n])?;
+    }
+    Ok(())
+}
+
+/// Seed DO `5F35` at first boot and settle a byte outside `SEX_VALUES`: firmware
+/// through bcdDevice 0x08F1 wrote `'0'`, which the list no longer takes, so such a
+/// card can read the DO out of `65` and not write it back. Any byte outside the
+/// list, not only `'0'` — the cost is the same and it settles a record some other
+/// build left. Idempotent: the flash write happens only on repair.
+///
+/// Runs LAST because it is the one write `scan_files` makes on an otherwise
+/// settled card, and a failing `put` must not skip the security repair above it.
+/// `Fs::read` cannot tell an absent file from a faulted read, so a transient fault
+/// reseeds the DO — the same trade every `has_data` seed here has always made.
+fn settle_sex_code<S: Storage>(fs: &mut Fs<S>) -> Result<(), Error> {
+    let mut sex = [0u8; 1];
+    if fs.read(EF_SEX, &mut sex) != Some(1) || !SEX_VALUES.contains(&sex[0]) {
+        put(fs, EF_SEX, SEX_DEFAULT)?;
     }
     Ok(())
 }

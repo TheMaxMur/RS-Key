@@ -10,6 +10,11 @@
 //! ranges and access control, so `Fs` is a plain typed KV store.
 
 pub mod fs;
+// The power-cut oracle. Its rules are `no_std` so `cargo kani` can prove them;
+// the driver that runs them against a real `Fs` needs a heap and is behind
+// `test-util`, which only `[dev-dependencies]` entries turn on.
+#[cfg(any(test, feature = "test-util", kani))]
+pub mod powercut;
 pub mod sealed;
 pub mod storage;
 
@@ -53,11 +58,11 @@ pub const EF_SCRUB_FILLER: u16 = 0xCEFE;
 
 /// Largest value one FID may hold, and the value every [`Storage`] backend
 /// declares as `MAX_VALUE`. The device backend serialises the 2-byte key and the
-/// value through one 2048-byte scratch buffer, so the real ceiling is 2 bytes
-/// under it. [`Fs::put`] enforces it, so no applet has to know the number — a cap
-/// picked independently is how ATT_IMPORT came to accept records the store could
-/// not hold (audit run-32).
-pub const MAX_VALUE_BYTES: usize = 2046;
+/// value through one scratch buffer sized to what a single flash page holds
+/// (`rsk_store::KV_BUF`), so the real ceiling is 2 bytes under it. [`Fs::put`]
+/// enforces it, so no applet has to know the number — a cap picked independently
+/// is how ATT_IMPORT came to accept records the store could not hold (audit run-32).
+pub const MAX_VALUE_BYTES: usize = 4078;
 
 /// Max number of dynamic (runtime-created) files — the shared budget across ALL
 /// applets (each FIDO cred, each PIV key + cert, each OATH cred, each OpenPGP DO, …).

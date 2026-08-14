@@ -20,7 +20,7 @@ use rsk_crypto::pinproto::{self, PinProto};
 use rsk_crypto::{Device, sha256};
 use rsk_fs::{Fs, Storage};
 
-use crate::cbordec::{cbor, def_map};
+use crate::cbordec::{cbor, def_map, skip_value};
 use crate::consts::{
     CP_GET_PIN_TOKEN, CP_GET_PIN_UV_TOKEN_USING_PIN, EF_DEVICE_PIN, EF_MINPINLEN, EF_PIN,
     MAX_MIN_PIN_RPIDS, MAX_PIN_RETRIES, MIN_PIN_LENGTH, PIN_MISMATCH_LIMIT,
@@ -44,7 +44,6 @@ pub const MAX_PIN_LENGTH: usize = PADDED_PIN_LEN - 1;
 struct Req<'a> {
     proto: u64,
     subcommand: u64,
-    alg: i64,
     key_agreement: bool,
     kax: &'a [u8],
     kay: &'a [u8],
@@ -78,10 +77,12 @@ fn parse(data: &[u8]) -> Result<Req<'_>, CtapError> {
                 let m = def_map(&mut d)?;
                 for _ in 0..m {
                     match cbor(d.i32())? {
-                        3 => req.alg = cbor(d.i64())?,
                         -2 => req.kax = cbor(d.bytes())?,
                         -3 => req.kay = cbor(d.bytes())?,
-                        _ => cbor(d.skip())?, // kty (1), crv (-1)
+                        // kty (1), crv (-1) and alg (3) are the platform's to get
+                        // right: a YubiKey 5.7.4 reads none of the three, and
+                        // answers SUCCESS to kty=6, crv=6 and alg=-7 alike.
+                        _ => skip_value(&mut d)?,
                     }
                 }
             }
@@ -90,20 +91,28 @@ fn parse(data: &[u8]) -> Result<Req<'_>, CtapError> {
             6 => req.pin_hash_enc = Some(cbor(d.bytes())?),
             9 => req.permissions = cbor(d.u32())? as u64,
             10 => req.rp_id = Some(cbor(d.str())?),
-            _ => cbor(d.skip())?,
+            _ => skip_value(&mut d)?,
         }
     }
     Ok(req)
 }
 
-/// Right-align a COSE coordinate into 32 bytes.
+/// A COSE P-256 coordinate: exactly 32 bytes, never left-padded. A short one used
+/// to be right-aligned, which rescued a platform whose bignum strips a leading
+/// zero — but a YubiKey 5.7.4 refuses 31 *and* 33 bytes with INVALID_PARAMETER at
+/// both COSE-parse sites, so the lenience only bought a divergence.
 fn coord(src: &[u8]) -> Result<[u8; 32], CtapError> {
-    if src.len() > 32 {
-        return Err(CtapError::InvalidParameter);
-    }
-    let mut out = [0u8; 32];
-    out[32 - src.len()..].copy_from_slice(src);
-    Ok(out)
+    src.try_into().map_err(|_| CtapError::InvalidParameter)
+}
+
+/// CTAP 2.1 §6.1.2 / §6.2.2 step 2's protocol gate, shared by makeCredential and
+/// getAssertion. A *present* `pinUvAuthProtocol` must name a protocol this build
+/// supports — `0` is such a value, not an absence — and a YubiKey 5.7.4 judges it
+/// ahead of step 1's selection gesture, with or without a `pinUvAuthParam`.
+pub(crate) fn checked_proto(proto: Option<u64>) -> Result<Option<PinProto>, CtapError> {
+    proto
+        .map(|p| PinProto::from_u64(p).ok_or(CtapError::InvalidParameter))
+        .transpose()
 }
 
 /// `authenticatorClientPIN`: dispatch the subcommand, writing the response CBOR
@@ -117,18 +126,26 @@ pub fn client_pin<S: Storage, R: Rng>(
     let req = parse(data)?;
     ctx.state.ensure_initialized(ctx.rng);
 
+    // One owner, ahead of the subcommand: a YubiKey 5.7.4 answers INVALID_PARAMETER
+    // to an unsupported protocol — `0` included — on getPINRetries, on subcommand
+    // `0` and on an undefined subcommand alike, i.e. before it has looked at which
+    // one was asked for. The parser has already made key 1 mandatory, so an absent
+    // protocol never reaches here.
+    let proto = PinProto::from_u64(req.proto).ok_or(CtapError::InvalidParameter)?;
+
     match req.subcommand {
         0x0 => Err(CtapError::MissingParameter),
         0x1 => get_pin_retries(ctx, out),
-        0x2 => get_key_agreement(ctx, &req, out),
-        0x3 => set_pin(ctx, &req, out),
-        0x4 => change_pin(ctx, &req, out),
-        CP_GET_PIN_TOKEN | CP_GET_PIN_UV_TOKEN_USING_PIN => get_pin_token(ctx, &req, out),
+        0x2 => get_key_agreement(ctx, out),
+        0x3 => set_pin(ctx, &req, proto, out),
+        0x4 => change_pin(ctx, &req, proto, out),
+        CP_GET_PIN_TOKEN | CP_GET_PIN_UV_TOKEN_USING_PIN => get_pin_token(ctx, &req, proto, out),
         // Built-in UV (0x06 token / 0x07 retries) exists only where the firmware can
-        // collect a PIN on its own UI; elsewhere it falls through to UnsupportedOption.
-        0x6 if ctx.presence.uv_available() => get_uv_token(ctx, &req, out),
+        // collect a PIN on its own UI; elsewhere it is a subcommand this build does
+        // not implement, which §8.1 covers along with every undefined value.
+        0x6 if ctx.presence.uv_available() => get_uv_token(ctx, &req, proto, out),
         0x7 if ctx.presence.uv_available() => get_uv_retries(ctx, out),
-        _ => Err(CtapError::UnsupportedOption),
+        _ => Err(CtapError::InvalidSubcommand),
     }
 }
 
@@ -145,18 +162,7 @@ fn get_pin_retries<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, out: &mut [u8]) -> C
     Ok(len)
 }
 
-fn get_key_agreement<S: Storage, R: Rng>(
-    ctx: &mut Ctx<S, R>,
-    req: &Req,
-    out: &mut [u8],
-) -> CtapResult {
-    if PinProto::from_u64(req.proto).is_none() {
-        return Err(if req.proto == 0 {
-            CtapError::MissingParameter
-        } else {
-            CtapError::InvalidParameter
-        });
-    }
+fn get_key_agreement<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, out: &mut [u8]) -> CtapResult {
     let (x, y) = ctx.state.ephemeral_public().ok_or(CtapError::Other)?;
     let len = encode(out, |e| {
         e.map(1)?.u8(1)?;
@@ -165,9 +171,14 @@ fn get_key_agreement<S: Storage, R: Rng>(
     Ok(len)
 }
 
-fn set_pin<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req, out: &mut [u8]) -> CtapResult {
+fn set_pin<S: Storage, R: Rng>(
+    ctx: &mut Ctx<S, R>,
+    req: &Req,
+    proto: PinProto,
+    out: &mut [u8],
+) -> CtapResult {
     let _ = out;
-    let proto = require_pin_inputs(req, true, false)?;
+    require_pin_inputs(req, true, false)?;
     // §6.5.5.5: "If a PIN has already been set, authenticator returns
     // CTAP2_ERR_PIN_AUTH_INVALID error" — changePIN is the only way to replace one.
     if ctx.fs.has_data(EF_PIN) {
@@ -199,10 +210,9 @@ fn set_pin<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req, out: &mut [u8]) -
     if dec.is_err() {
         return Err(CtapError::PinAuthInvalid);
     }
-    // No PIN was set, so no `pcmr` grant can be outstanding — except after a torn
-    // `authenticatorReset`, whose last phase can drop EF_PIN and lose power before
-    // EF_PAUTHTOKEN. Establishing a PIN over that leftover would hand the old
-    // holder read access to the credentials created next.
+    // No PIN was set, so no `pcmr` grant can be outstanding — except one a build
+    // whose wipe still deferred EF_PAUTHTOKEN left behind. Establishing a PIN over
+    // that leftover would hand the old holder the credentials created next.
     clear_ppuat(ctx.fs).map_err(|_| CtapError::Other)?;
     let res = store_new_pin(ctx, &padded);
     padded.zeroize();
@@ -211,9 +221,14 @@ fn set_pin<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req, out: &mut [u8]) -
     Ok(0)
 }
 
-fn change_pin<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req, out: &mut [u8]) -> CtapResult {
+fn change_pin<S: Storage, R: Rng>(
+    ctx: &mut Ctx<S, R>,
+    req: &Req,
+    proto: PinProto,
+    out: &mut [u8],
+) -> CtapResult {
     let _ = out;
-    let proto = require_pin_inputs(req, true, true)?;
+    require_pin_inputs(req, true, true)?;
     let pin_hash_enc = req.pin_hash_enc.unwrap();
     let new_pin_enc = req.new_pin_enc.unwrap();
     pin_set_and_unblocked(ctx)?;
@@ -298,8 +313,13 @@ fn change_pin<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req, out: &mut [u8]
     Ok(0)
 }
 
-fn get_pin_token<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req, out: &mut [u8]) -> CtapResult {
-    let proto = require_pin_inputs(req, false, true)?;
+fn get_pin_token<S: Storage, R: Rng>(
+    ctx: &mut Ctx<S, R>,
+    req: &Req,
+    proto: PinProto,
+    out: &mut [u8],
+) -> CtapResult {
+    require_pin_inputs(req, false, true)?;
     let permissions = req.permissions as u8;
     if req.subcommand == CP_GET_PIN_TOKEN {
         if req.permissions != 0 || req.rp_id.is_some() {
@@ -384,14 +404,18 @@ fn issue_token<S: Storage, R: Rng>(
     rp_id: Option<&str>,
     out: &mut [u8],
 ) -> CtapResult {
-    // §6.5.5.7.2/.3 step 14: a `pcmr` request is answered with the persistent token
-    // and stops there — it neither mints nor begins using a session token. Minting
-    // it here *is* the permission assignment: the record exists only while some
-    // platform holds the grant (`EF_PAUTHTOKEN`).
+    // §6.5.5.7.2 step 12 / .3 step 11: a `pcmr` request is answered with the
+    // persistent token and stops there — it neither mints nor begins using a
+    // session token. Minting it here *is* the permission assignment: the record
+    // exists only while some platform holds the grant (`EF_PAUTHTOKEN`).
     let mut pdata = if permissions & PERM_PCMR != 0 {
         ensure_ppuat(&ctx.dev, ctx.fs, ctx.rng).map_err(|_| CtapError::Other)?
     } else {
         ctx.state.reset_pin_uv_auth_token(ctx.rng);
+        // §6.5.5.7.3 steps 13/14 are an either/or, and their Note says which one
+        // applies "can vary between authenticators": always 14 here, because a
+        // `true` would make §6.1.2 step 14 skip the presence request — which on a
+        // display build is the screen that names the rp. Step 14's Note allows it.
         ctx.state.begin_using_token(false, ctx.now_ms);
         ctx.state.paut.permissions = permissions;
         match rp_id {
@@ -428,8 +452,13 @@ fn issue_token<S: Storage, R: Rng>(
 /// user verifies on the device's own UI (the trusted-display PIN pad) — the PIN
 /// never crosses the host — and the same EF_PIN verifier is checked locally. Only
 /// reached on a build that advertises `options.uv` (gated in the dispatch).
-fn get_uv_token<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req, out: &mut [u8]) -> CtapResult {
-    let proto = require_pin_inputs(req, false, false)?;
+fn get_uv_token<S: Storage, R: Rng>(
+    ctx: &mut Ctx<S, R>,
+    req: &Req,
+    proto: PinProto,
+    out: &mut [u8],
+) -> CtapResult {
+    require_pin_inputs(req, false, false)?;
     let permissions = req.permissions as u8;
     // WithPermissions: a non-zero permission set is mandatory; bio-enrollment (be)
     // is unsupported, and pcm-readonly (pcmr) may not be combined with anything else.
@@ -660,22 +689,16 @@ fn pin_set_and_unblocked<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>) -> Result<(), 
 /// Common presence checks for set/change/getToken; returns the protocol.
 /// `need_new_pin` (set/change) also requires `pinUvAuthParam`; getPinToken carries
 /// neither.
-fn require_pin_inputs(
-    req: &Req,
-    need_new_pin: bool,
-    need_pin_hash: bool,
-) -> Result<PinProto, CtapError> {
+fn require_pin_inputs(req: &Req, need_new_pin: bool, need_pin_hash: bool) -> Result<(), CtapError> {
     let missing = !req.key_agreement
         || req.kax.is_empty()
         || req.kay.is_empty()
-        || req.proto == 0
-        || req.alg == 0
         || (need_new_pin && (req.new_pin_enc.is_none() || req.pin_uv_auth_param.is_none()))
         || (need_pin_hash && req.pin_hash_enc.is_none());
     if missing {
         return Err(CtapError::MissingParameter);
     }
-    PinProto::from_u64(req.proto).ok_or(CtapError::InvalidParameter)
+    Ok(())
 }
 
 fn derive_shared<S: Storage, R: Rng>(
@@ -745,6 +768,14 @@ fn spend_and_verify_pin_hash<S: Storage, R: Rng>(
     }
     if !matched {
         ctx.state.regenerate(ctx.rng);
+        // A YubiKey 5.7.4 drops any outstanding pinUvAuthToken here too, through
+        // all three doors (0x05, 0x09, changePIN's old-PIN check) — measured ×4
+        // each, with getKeyAgreement / getPINRetries / idle as the controls that
+        // leave it alive. CTAP 2.0 §5.6.6 and 2.1 name only the key
+        // regeneration, so this is the card's rule, and the safe direction: a
+        // token minted before someone started guessing stops working, and a
+        // platform can always mint another.
+        ctx.state.reset_pin_uv_auth_token(ctx.rng);
         if retries == 0 {
             // The transition into the hard lockout (later attempts are turned
             // away before the verify, so this records exactly once).
@@ -889,7 +920,7 @@ pub fn min_pin_length<S: Storage>(fs: &mut Fs<S>) -> u8 {
     }
 }
 
-/// The pending forced-PIN-change flag (EF_MINPINLEN[1]).
+/// The pending forced-PIN-change flag (`EF_MINPINLEN[1]`).
 fn force_change_pending<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>) -> bool {
     let mut buf = [0u8; 2];
     matches!(ctx.fs.read(EF_MINPINLEN, &mut buf), Some(n) if n >= 2 && buf[1] != 0)
@@ -976,7 +1007,7 @@ fn retries_left_at<S: Storage>(fid: u16, fs: &mut Fs<S>) -> Option<u8> {
 
 /// Verify a PIN typed on the device's own pad for a display-initiated action (a
 /// local Passkeys delete — there is no host and no CTAP session). It reuses
-/// [`spend_and_verify_pin_hash`]'s persistent anti-bruteforce gate verbatim — the EF_PIN
+/// `spend_and_verify_pin_hash`'s persistent anti-bruteforce gate verbatim — the EF_PIN
 /// retry counter is decremented before the compare and read back fail-closed, a
 /// correct PIN resets it and migrates a legacy PIN-wrapped seed, a wrong attempt
 /// at zero is a hard block — but deliberately omits the CTAP-session side effects
@@ -1091,7 +1122,7 @@ fn spend_and_verify_pin_at<S: Storage>(
 /// clientPIN exactly as if it had been set over USB. It enforces both `minPINLength` and
 /// the host-representable [`MAX_PIN_LENGTH`] ceiling (so a panel-set PIN stays usable over
 /// USB). The flash-backed `pcmr` grant dies with the old PIN inside
-/// [`write_pin_verifier`]. What is left to the caller is the RAM session token: `FidoState`
+/// `write_pin_verifier`. What is left to the caller is the RAM session token: `FidoState`
 /// lives in the worker and outlives every dispatch, so a token minted under the old PIN
 /// would keep `PERM_CM` authority (and `deleteCredential` takes no touch) for up to
 /// `PUAT_MAX_USAGE_PERIOD_MS` after the owner believes they locked the host out. The

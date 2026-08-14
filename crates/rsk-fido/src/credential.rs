@@ -13,7 +13,7 @@
 //! credential id carries no device- or model-fingerprint an RP could link on
 //! (WebAuthn unlinkability — a YubiKey's ids look random for the same reason).
 //! The encryption key comes from a fixed internal `CRED_PROTO` label, never from
-//! an on-wire byte. [`verify_decrypt`] still opens the legacy `f1d00202`-prefixed
+//! an on-wire byte. `verify_decrypt` still opens the legacy `f1d00202`-prefixed
 //! boxes relying parties registered before this format — the poly1305 tag tells
 //! the framings apart, so old credentials keep working across the upgrade.
 //!
@@ -49,8 +49,8 @@ const RP_PROTO: &[u8] = b"RS-Key/EF_RP/rpId";
 /// box key is distinct from the rpId box and every cred-box key.
 const NICK_PROTO: &[u8] = b"RS-Key/EF_RPNICK/nick";
 const PROTO_LEN: usize = 4;
-const IV_LEN: usize = 12;
-const TAG_LEN: usize = 16;
+pub(crate) const IV_LEN: usize = 12;
+pub(crate) const TAG_LEN: usize = 16;
 const SILENT_TAG_LEN: usize = 16;
 /// Legacy header before the ciphertext on a prefixed box: proto + iv.
 const HEAD_LEN: usize = PROTO_LEN + IV_LEN; // 16
@@ -208,7 +208,7 @@ pub struct Credential<'a> {
 }
 
 /// The box encryption key: a SLIP-0022 HMAC chain over the device seed.
-fn derive_chacha_key(seed: &[u8; 32], proto: &[u8]) -> [u8; 32] {
+pub(crate) fn derive_chacha_key(seed: &[u8; 32], proto: &[u8]) -> [u8; 32] {
     let mut k = hmac_sha256(seed, b"SLIP-0022");
     k = hmac_sha256(&k, proto);
     hmac_sha256(&k, b"Encryption key")
@@ -285,8 +285,11 @@ fn encode_body<W: minicbor::encode::Write>(
     c: &CredInput,
 ) -> core::result::Result<(), minicbor::encode::Error<W::Error>> {
     let ext_n = c.ext.box_entries();
-    // alg/curve are stored only for non-default curves (P-256 boxes stay identical).
-    let store_alg = c.curve != CURVE_P256 as i64;
+    // alg/curve are stored only when the pair is not the default. A curve-explicit
+    // id on P-256 (ESP256, -9) is the one case where the curve alone is not enough
+    // to re-emit the COSE key credMgmt hands back; an absent key 9 still decodes as
+    // ES256/P-256, so a box an older build wrote reads the same as before.
+    let store_alg = c.curve != CURVE_P256 as i64 || c.alg != ALG_ES256;
     let mut n = 4u64; // rpId, userId, created, use_sign_count
     if !c.user_name.is_empty() {
         n += 1;
@@ -592,7 +595,7 @@ pub fn derive_large_blob_key(seed: &[u8; 32], cred_id: &[u8]) -> [u8; 32] {
     k
 }
 
-/// The key-derivation input for a credential's signing key ([`fido_load_key`]),
+/// The key-derivation input for a credential's signing key ([`crate::keyderiv::fido_load_key`]),
 /// hmac-secret ([`derive_hmac_key`]) and largeBlobKey ([`derive_large_blob_key`]).
 ///
 /// A **v2/v3/v4 resident** credential ([`resident_keys_off_id`]) keys off its
@@ -618,8 +621,8 @@ pub(crate) fn resident_key_input<'a>(
 
 /// A resident record is `rp_id_hash(32) ‖ resident_id(42) ‖ [pubkey trailer] ‖
 /// full_cred_id`. The trailer (`pubkey_len(1) ‖ pubkey`) is present for a v3 or v4
-/// resident id and is read/written through [`cred_record_box`] /
-/// [`cred_record_pubkey`] / [`compose_cred_record`]; legacy v1/v2 records have the
+/// resident id and is read/written through `cred_record_box` /
+/// `cred_record_pubkey` / `compose_cred_record`; legacy v1/v2 records have the
 /// box directly at `RECORD_PREFIX`.
 pub const RECORD_PREFIX: usize = 32 + CRED_RESIDENT_LEN;
 
@@ -812,6 +815,12 @@ pub fn credential_store<S: Storage>(
     if new_record {
         bump_rp(fs, seed, rp_id_hash, rp_id)?;
     }
+    // Whoever held this slot before is gone: a credential deleted by a torn
+    // `deleteCredential`, or the (rp, user) pair this call is re-registering with a
+    // fresh credential id. Either way its large blob is stale. The AAD binding
+    // already stops it being SERVED to the new credential, but leaving it behind
+    // costs a flash record per reuse.
+    crate::largeblobext::discard(fs, slot);
     if let Err(e) = fs.put(EF_CRED + slot, &rec[..total]) {
         if new_record {
             let _ = crate::credmgmt::decrement_rp(fs, rp_id_hash);

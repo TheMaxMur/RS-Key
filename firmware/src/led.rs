@@ -8,7 +8,7 @@
 //!
 //! The status engine is backend-agnostic — it keeps a colour/brightness per
 //! status in atomics. The render half is chosen at build time by `LED_KIND`:
-//! [`Blinker::tick`] computes the colour to show each tick, and one of the
+//! `Blinker::tick` computes the colour to show each tick, and one of the
 //! `*_task`s drives the hardware — `ws2812` (addressable RGB), `gpio` (a plain
 //! single-colour LED: hue collapsed to lit/unlit, brightness via software PWM),
 //! `pimoroni` (3-pin PWM RGB), or `none` (no indicator).

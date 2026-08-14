@@ -12,8 +12,9 @@ use rsk_crypto::pinproto::{self, PinProto, public_xy};
 
 use crate::Rng;
 use crate::consts::{
-    MAX_CREDENTIAL_COUNT_IN_LIST, MAX_LARGE_BLOB_SIZE, MAX_RESIDENT_CREDENTIALS,
-    PUAT_INITIAL_USAGE_LIMIT_MS, PUAT_MAX_USAGE_PERIOD_MS,
+    CTAP_CREDENTIAL_MGMT, CTAP_GET_NEXT_ASSERTION, CTAP_LARGE_BLOBS, MAX_CREDENTIAL_COUNT_IN_LIST,
+    MAX_LARGE_BLOB_SIZE, MAX_RESIDENT_CREDENTIALS, PUAT_INITIAL_USAGE_LIMIT_MS,
+    PUAT_MAX_USAGE_PERIOD_MS, STATEFUL_WALK_IDLE_MS,
 };
 use crate::hmacsecret::{SALT_AUTH_MAX, SALT_ENC_MAX};
 
@@ -34,6 +35,12 @@ pub const MAX_ASSERTION_CREDS: usize = MAX_CREDENTIAL_COUNT_IN_LIST as usize;
 /// first) rather than the credentials themselves; `getNextAssertion` re-reads them.
 pub struct AssertionState {
     pub active: bool,
+    /// The [`FidoState::channel`] the opening `getAssertion` arrived on. A walk
+    /// carries that request's clientDataHash and its presence/UV decision, so a
+    /// second process asking for the next leg on its own channel would collect an
+    /// assertion over a hash it never sent, behind a touch it never gave — the
+    /// scoping `mse_cid` below already applies, for the same reason.
+    pub channel: u32,
     pub rp_id_hash: [u8; 32],
     pub client_data_hash: [u8; 32],
     pub uv: bool,
@@ -64,6 +71,7 @@ impl AssertionState {
     const fn new() -> Self {
         Self {
             active: false,
+            channel: 0,
             rp_id_hash: [0; 32],
             client_data_hash: [0; 32],
             uv: false,
@@ -99,6 +107,16 @@ impl AssertionState {
 /// The *Begin* subcommands reset the counters; the *Next* variants read them.
 /// `FidoState::reset` clears it.
 pub struct CredMgmtState {
+    /// The [`FidoState::channel`] whose *Begin* opened the walk. §6.8 exempts the
+    /// *Next* subcommands from carrying a pinUvAuthParam of their own — they
+    /// inherit the Begin's authorization — so without this a second process reads
+    /// the relying-party ids that authorization bought, having shown no token.
+    pub channel: u32,
+    /// `now_ms` of the last leg this walk served, its *Begin* included — the
+    /// idle window in [`FidoState::expire_stale_sequences`] measures from here. It is
+    /// the only bound a walk opened under the persistent `pcmr` token has: that
+    /// token carries no usage timer of its own (CTAP 2.2 §6.8.2).
+    pub last_leg_ms: u64,
     // u16 so a fully-provisioned store (MAX_RESIDENT_CREDENTIALS = 256) can be
     // counted and walked to the last slot; a u8 saturated at 255, hiding the
     // 256th RP/credential from enumeration.
@@ -111,7 +129,9 @@ pub struct CredMgmtState {
     /// next getNextRP / getNextCredential, so each getNext is O(gap-to-next-match)
     /// rather than re-scanning from slot 0 (which made a full walk O(n^2)). The
     /// matching Begin resets it to 0. RP and credential enumerations keep separate
-    /// cursors so an interleaved walk of both does not corrupt either.
+    /// cursors, though only one walk is ever live: a Begin of either retires the
+    /// other (§6 "exclusively preceded", `retire_sequences_except`), so the split
+    /// buys isolation between consecutive walks rather than concurrent ones.
     pub rp_next_slot: u16,
     pub cred_next_slot: u16,
     /// Per-EF_CRED-slot cache of the credential's rpId-hash prefix (its first 4
@@ -131,6 +151,8 @@ pub struct CredMgmtState {
 impl CredMgmtState {
     const fn new() -> Self {
         Self {
+            channel: 0,
+            last_leg_ms: 0,
             rp_counter: 1,
             rp_total: 0,
             cred_counter: 1,
@@ -144,11 +166,30 @@ impl CredMgmtState {
         }
     }
 
+    /// Whether `channel` may take the next leg of the RP walk: it opened it, and
+    /// the walk has not run out. Both halves in one place because a *Next* carries
+    /// no authorization of its own (§6.8) — the pair IS the authorization check.
+    pub fn may_walk_rps(&self, channel: u32) -> bool {
+        self.channel == channel && self.rp_counter <= self.rp_total
+    }
+
+    /// [`Self::may_walk_rps`] for the credential walk.
+    pub fn may_walk_creds(&self, channel: u32) -> bool {
+        self.channel == channel && self.cred_counter <= self.cred_total
+    }
+
+    /// Whether either walk still has a leg to serve — the counter half of the two
+    /// above, so [`FidoState::expire_stale_sequences`] can tell a live cursor from a
+    /// spent one and leave `last_leg_ms` alone when there is nothing to retire.
+    fn walking(&self) -> bool {
+        self.rp_counter <= self.rp_total || self.cred_counter <= self.cred_total
+    }
+
     /// Drop the enumerate cursor back to its fail-closed start (`rp_counter >
     /// rp_total`), so a *Next* answers `NotAllowed` until the next authorized
     /// *Begin*. The slot→rpId-prefix cache stays: it is a `write_gen`-guarded perf
     /// index, holds no authorization, and never leaves the device.
-    fn reset(&mut self) {
+    pub fn reset(&mut self) {
         self.rp_counter = 1;
         self.rp_total = 0;
         self.cred_counter = 1;
@@ -166,6 +207,11 @@ impl CredMgmtState {
 pub struct LargeBlobState {
     pub expected_length: usize,
     pub expected_next_offset: usize,
+    /// `now_ms` of the last fragment accepted into `temp` — the idle window in
+    /// [`FidoState::expire_stale_sequences`] measures from here. Meaningful only
+    /// while `Self::in_flight`; an arming fragment that is then rejected leaves
+    /// it stale, which expires the abandoned transfer rather than preserving it.
+    pub last_fragment_ms: u64,
     pub temp: [u8; MAX_LARGE_BLOB_SIZE],
 }
 
@@ -174,8 +220,26 @@ impl LargeBlobState {
         Self {
             expected_length: 0,
             expected_next_offset: 0,
+            last_fragment_ms: 0,
             temp: [0; MAX_LARGE_BLOB_SIZE],
         }
+    }
+
+    /// Whether a multi-fragment write is part-way through. `expected_length` is
+    /// armed by the `offset == 0` fragment and cleared when the array commits, so
+    /// it is the whole in-flight condition; a `largeblob-ext` build never arms it
+    /// (it borrows only `temp`), which is why the timer is inert there.
+    fn in_flight(&self) -> bool {
+        self.expected_length != 0
+    }
+
+    /// Abandon a part-written array. Only the two counters: `temp` is refilled
+    /// wholesale by the `offset == 0` fragment that starts the next transfer, and
+    /// wiping 2 KiB on every unrelated command would cost more than it protects
+    /// (the buffer holds platform-supplied blob bytes, not device secrets).
+    fn reset(&mut self) {
+        self.expected_length = 0;
+        self.expected_next_offset = 0;
     }
 }
 
@@ -222,7 +286,7 @@ pub struct PinLock {
     /// clientPIN is locked until the authenticator is really power-cycled.
     pub engaged: bool,
     /// Consecutive wrong PINs this power cycle; the lock arms at
-    /// [`PIN_MISMATCH_LIMIT`].
+    /// [`crate::consts::PIN_MISMATCH_LIMIT`].
     pub mismatches: u8,
 }
 
@@ -272,10 +336,13 @@ pub struct FidoState {
     /// Soft-lock: the seed decrypted by a vendor `UNLOCK`. RAM-only — held until
     /// power-off, a reset, or an `AUT_DISABLE`; zeroized on `Drop` and on overwrite.
     pub keydev_dec: Option<[u8; 32]>,
-    /// The OTP DEVK (the reset-stable attestation root), set once by the
-    /// firmware at boot; `None` on an unprovisioned device and in most tests.
+    /// How to fetch the OTP DEVK (the reset-stable attestation root), rather than
+    /// the key itself: it is wanted by one opt-in command, and holding it would
+    /// park an unrotatable signing key in RAM for the whole power cycle. `None` on
+    /// an unprovisioned device and in most tests. A bare `fn` because there is no
+    /// state to carry — the same shape the transport's touch/cancel hooks use.
     /// Device identity, not session state — it survives [`Self::reset`].
-    pub devk: Option<[u8; 32]>,
+    pub devk_source: Option<fn() -> Option<[u8; 32]>>,
     /// Whether this power cycle's `EV_BOOT` journal entry has been written
     /// ([`crate::journal`]). Survives [`Self::reset`] — the cycle did not end.
     pub audit_boot_logged: bool,
@@ -315,7 +382,7 @@ impl FidoState {
             mse_key: [0; 32],
             mse_pub: [0; 65],
             keydev_dec: None,
-            devk: None,
+            devk_source: None,
             audit_boot_logged: false,
             warm_boot: false,
             channel: 0,
@@ -353,12 +420,12 @@ impl FidoState {
     /// flag and the warm-boot origin are device/power-cycle facts, not session
     /// state — they carry across, as does the in-flight request's channel.
     pub fn reset(&mut self) {
-        let devk = self.devk;
+        let devk_source = self.devk_source;
         let audit_boot_logged = self.audit_boot_logged;
         let warm_boot = self.warm_boot;
         let channel = self.channel;
         *self = Self::new();
-        self.devk = devk;
+        self.devk_source = devk_source;
         self.audit_boot_logged = audit_boot_logged;
         self.warm_boot = warm_boot;
         self.channel = channel;
@@ -488,6 +555,38 @@ impl FidoState {
         self.cm.reset();
     }
 
+    /// Abandon every multi-call sequence `cmd` does not continue — the assertion
+    /// walk, both credential-management enumerate cursors, and a part-written
+    /// large blob.
+    ///
+    /// CTAP 2.2 §6 lets an authenticator "maintain state based on the assumption
+    /// that each stateful command is exclusively preceded by either another
+    /// instance of the same command, or by the corresponding state initializing
+    /// command", where *exclusively preceded* means "no other authenticator
+    /// operation occurs in between", and fail the sequence with
+    /// `CTAP2_ERR_NOT_ALLOWED` when that is violated. The clause is a MAY, so the
+    /// permissive reading is conformant too; taking it up buys a smaller state
+    /// surface. It is the command half of the rule — the same clause's 30-second
+    /// half is [`Self::expire_stale_sequences`], which the large-blob buffer needs
+    /// most: on a PIN-less key it has no token bounding it either.
+    ///
+    /// Each slot names its own continuation, so an unrelated command retires all
+    /// three while a continuation retires only the other two. The enumerate cursor
+    /// is continued by just two of credentialManagement's subcommands, which this
+    /// cannot see — [`crate::credmgmt::cred_mgmt`] retires that one itself once it
+    /// has parsed the subcommand.
+    pub fn retire_sequences_except(&mut self, cmd: u8) {
+        if cmd != CTAP_GET_NEXT_ASSERTION {
+            self.gna.reset();
+        }
+        if cmd != CTAP_CREDENTIAL_MGMT {
+            self.cm.reset();
+        }
+        if cmd != CTAP_LARGE_BLOBS {
+            self.lba.reset();
+        }
+    }
+
     /// Expire an in-use token once its usage timer has run out (CTAP 2.1
     /// §6.5.5.7), checked before every CBOR command. Retires on either the
     /// rolling inactivity window or the absolute lifetime cap, whichever first.
@@ -502,12 +601,34 @@ impl FidoState {
         }
     }
 
+    /// Retire a stateful sequence left idle past [`STATEFUL_WALK_IDLE_MS`], checked
+    /// before every CBOR command beside [`Self::expire_stale_token`]. CTAP 2.3 §6
+    /// also *requires* the state to die with the token that authorized the opening
+    /// call, which [`Self::stop_using_token`] does — but a `pcmr` token never
+    /// expires and a PIN-less key's large-blob write has no token at all, so that
+    /// MUST alone left both live for the whole power cycle.
+    ///
+    /// The assertion walk is absent because it times itself, per §6.3 step 7, inside
+    /// [`crate::getassertion::get_next_assertion`].
+    pub fn expire_stale_sequences(&mut self, now_ms: u64) {
+        if self.cm.walking() && idle_past(now_ms, self.cm.last_leg_ms) {
+            self.cm.reset();
+        }
+        if self.lba.in_flight() && idle_past(now_ms, self.lba.last_fragment_ms) {
+            self.lba.reset();
+        }
+    }
+
     /// `getUserVerifiedFlagValue` — false unless a token is in use.
     pub fn user_verified(&self) -> bool {
         self.paut.in_use && self.paut.user_verified
     }
 
-    /// `getUserPresentFlagValue` — false unless a token is in use.
+    /// `getUserPresentFlagValue` — false unless a token is in use, and in practice
+    /// always false: no ceremony here mints a token carrying presence (see
+    /// [`crate::clientpin`]'s `issue_token` for why). The §6.1.2 step 14 / §6.2.2
+    /// step 9 presence gates deliberately do not consult it — reading it there is
+    /// only correct together with the decision that would set it.
     pub fn user_present(&self) -> bool {
         self.paut.in_use && self.paut.user_present
     }
@@ -516,6 +637,12 @@ impl FidoState {
     pub fn verify_token(&self, proto: PinProto, data: &[u8], param: &[u8]) -> bool {
         pinproto::verify(proto, &self.paut.token, data, param)
     }
+}
+
+/// Whether the gap since `since_ms` has reached the window CTAP 2.3 §6 lets an
+/// authenticator assume between the legs of a stateful command.
+fn idle_past(now_ms: u64, since_ms: u64) -> bool {
+    now_ms.saturating_sub(since_ms) >= STATEFUL_WALK_IDLE_MS
 }
 
 /// Build the pinUvAuthParam message `0xff×32 ‖ cmd ‖ subcommand ‖ params` into
@@ -536,12 +663,13 @@ impl Drop for FidoState {
         if let Some(k) = self.keydev_dec.as_mut() {
             k.zeroize();
         }
-        if let Some(k) = self.devk.as_mut() {
-            k.zeroize();
-        }
     }
 }
 
 #[cfg(test)]
 #[path = "state_tests.rs"]
 mod tests;
+
+#[cfg(kani)]
+#[path = "state_kani.rs"]
+mod proofs;

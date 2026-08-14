@@ -51,6 +51,24 @@ impl<'a> ResBuf<'a> {
             false
         }
     }
+    /// The unwritten tail, so a producer can fill the response **in place**
+    /// instead of building the body in a buffer of its own and copying it in.
+    /// A GET DATA that does the latter needs private RAM as large as the object
+    /// it may return, which on a 520 KiB part is the difference between serving
+    /// a 2 KiB data object and not. Commit what was written with [`Self::commit`].
+    pub fn spare_mut(&mut self) -> &mut [u8] {
+        &mut self.buf[self.len..]
+    }
+    /// Take `n` bytes written through [`Self::spare_mut`] into the body.
+    ///
+    /// Clamped to the capacity, which is the only thing this can check — it
+    /// cannot know how much the producer actually wrote. Committing more than
+    /// was written publishes whatever the backing array held, and that array is
+    /// reused across commands, so the bytes would be the tail of the PREVIOUS
+    /// response. Every caller must pass exactly what it wrote.
+    pub fn commit(&mut self, n: usize) {
+        self.len = self.buf.len().min(self.len + n);
+    }
     pub fn as_slice(&self) -> &[u8] {
         &self.buf[..self.len]
     }
@@ -67,8 +85,9 @@ impl<'a> ResBuf<'a> {
 /// `C` is a shared context (the file system in `firmware`) the dispatcher threads
 /// into every call, so applets hold no `static mut` device state.
 pub trait Applet<C> {
-    /// The application identifier, without a length prefix. SELECT matches when
-    /// this is a prefix of the requested AID.
+    /// The application identifier, without a length prefix, in FULL — SELECT
+    /// matches when the requested AID is a prefix of this (ISO 7816-4 truncated
+    /// select), so registering a shortened form makes the real AID unselectable.
     fn aid(&self) -> &'static [u8];
     /// Called on SELECT. `reselect` is true when this applet was already current.
     /// `res` receives the SELECT response body (e.g. an OpenPGP FCI); leave it
@@ -89,11 +108,26 @@ pub trait Applet<C> {
     }
 }
 
+/// Holds a command chain's accumulated segments. It is the CCID handler's
+/// body cap — one frame — and `docs/protocol.md` publishes that number to
+/// third-party hosts. `rsk-sdk` cannot see `rsk-usb`, so nothing but this
+/// sentence ties the two together; `rsk-device` holds the compile-time
+/// assertions for the constants it can reach.
+#[cfg(not(kani))]
 const CHAIN_BUF_SIZE: usize = 2038;
 /// Holds the unsent tail of a response while the host fetches it with GET
 /// RESPONSE. Sized to the largest response buffer a caller passes (the CCID
-/// handler's 2046-byte body cap).
+/// handler's 2038-byte body cap).
+#[cfg(not(kani))]
 const RESP_CHAIN_CAP: usize = 2048;
+
+// Proof-only: CBMC bit-blasts both arrays whole, and the sequence harness needs
+// 17.5 GiB at the real sizes. Sound because of the harness's window rather than
+// the size (`Nc <= 1` per command ⇒ `chain_len <= 2`) — see `applet_kani.rs`.
+#[cfg(kani)]
+const CHAIN_BUF_SIZE: usize = 16;
+#[cfg(kani)]
+const RESP_CHAIN_CAP: usize = 16;
 
 /// `61 XX` bytes-remaining; SW2 saturates to `00` (= 256+ left) per ISO 7816-4.
 const fn bytes_remaining(left: usize) -> Sw {
@@ -183,8 +217,8 @@ impl Dispatcher {
     }
 
     /// Return the card to a clean state after an ICC reset: deselect the current
-    /// applet — so it drops its security status, which [`clear_selection`] alone
-    /// does not — and discard any buffered chain or pending response.
+    /// applet — so it drops its security status, which [`Self::clear_selection`]
+    /// alone does not — and discard any buffered chain or pending response.
     ///
     /// `clear_selection` exists for CTAPHID_INIT, where only the *selection* is
     /// stale. A power transition is stronger: OpenPGP 3.4 (VERIFY) and NIST
@@ -215,6 +249,16 @@ impl Dispatcher {
             Ok(a) => a,
             Err(_) => return Sw::WRONG_LENGTH,
         };
+
+        // The class byte, one owner for every applet. A YubiKey 5.7.4 examines
+        // exactly two bits and in this order: chaining wins outright (`1C`, `90`
+        // and `FF` are plain segments there, so an SM refusal must not touch
+        // them), else a secure-messaging class is `6E00` — measured on PIV,
+        // OpenPGP and OATH alike. Serving it instead would hand a client that
+        // believes it negotiated SM an unprotected exchange it cannot tell apart.
+        if !apdu.is_chaining() && apdu.is_secure_messaging() {
+            return Sw::CLA_NOT_SUPPORTED;
+        }
 
         // GET RESPONSE (0xC0): hand back the next slice of a chained response
         // before touching the applets — it is a transport command, not theirs.
@@ -247,7 +291,10 @@ impl Dispatcher {
                 self.chain[..self.chain_len].zeroize();
                 self.chain_len = 0;
                 self.chaining = false;
-                return Sw::CLA_NOT_SUPPORTED;
+                // The same length error the final segment's overflow gives
+                // below: the command is too long, and the class byte that
+                // carried it was right. A YubiKey 5.7.4 answers `6700` here too.
+                return Sw::WRONG_LENGTH;
             }
             self.chain[self.chain_len..self.chain_len + apdu.nc].copy_from_slice(apdu.data);
             self.chain_len += apdu.nc;
@@ -320,12 +367,20 @@ impl Dispatcher {
             return self.maybe_chain(sw, apdu.ne, chain_ok, res);
         }
 
-        // SELECT by AID. A disabled applet is skipped, so its AID matches nothing
+        // SELECT by AID, ISO 7816-4 truncated: the candidate must be a PREFIX of
+        // a registered AID, and the first applet it matches wins. The test used
+        // to be the other way round — the candidate had to *start with* a
+        // registered AID — which selected an applet for `AID ‖ anything`, so PIV
+        // answered to the AID SP 800-85A-4 C.1.1.2 names as invalid. A YubiKey
+        // 5.7.4 matches by prefix on every applet it carries, measured, down to a
+        // one-byte candidate. An EMPTY candidate is refused rather than treated
+        // as "select the default": it is a prefix of everything, and nothing on
+        // this device should be reachable without naming it at all.
+        // A disabled applet is skipped, so its AID matches nothing
         // (→ FILE_NOT_FOUND) just as if it were never registered.
         if select {
             let found = applets.iter().enumerate().position(|(i, app)| {
-                let aid = app.aid();
-                self.selectable(i) && apdu.data.len() >= aid.len() && &apdu.data[..aid.len()] == aid
+                self.selectable(i) && !apdu.data.is_empty() && app.aid().starts_with(apdu.data)
             });
             return match found {
                 Some(i) => {
@@ -435,6 +490,11 @@ impl Dispatcher {
         bytes_remaining(tail_len)
     }
 }
+
+/// Kani proof harnesses (`cargo kani -p rsk-sdk`).
+#[cfg(kani)]
+#[path = "applet_kani.rs"]
+mod proofs;
 
 #[cfg(test)]
 #[path = "applet_tests.rs"]

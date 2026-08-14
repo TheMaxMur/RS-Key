@@ -3,7 +3,7 @@
 
 //! INTERNAL AUTHENTICATE (INS 0x88): signs the challenge with the
 //! authentication slot (`sess.pk_aut`/`sess.algo_aut`, repointed by MSE 0x22);
-//! needs PW2 (or PW3). Unlike PSO:CDS it does not touch the signature counter.
+//! needs PW1 no. 82. Unlike PSO:CDS it does not touch the signature counter.
 
 use rsk_crypto::Device;
 use rsk_fs::{Fs, Storage};
@@ -42,7 +42,9 @@ fn try_internal_aut<S: Storage>(
     if apdu.p1 != 0x00 || apdu.p2 != 0x00 {
         return Err(Sw::WRONG_P1P2);
     }
-    if !sess.has_pw3 && !sess.has_pw2 {
+    // §7.2.13 names PW1 no. 82 and nothing else; PW3 used to stand in, and a
+    // YubiKey 5.7.4 answers 6982 to PW3 alone (measured, three runs).
+    if !sess.has_pw2 {
         return Err(Sw::SECURITY_STATUS_NOT_SATISFIED);
     }
     // UIF (touch policy) of the slot actually used — follows an MSE repoint so

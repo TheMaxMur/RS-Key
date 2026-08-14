@@ -12,26 +12,7 @@
   cargoDeps,
 }:
 let
-  inherit (pkgs) lib;
   hostTarget = pkgs.stdenv.hostPlatform.rust.rustcTarget;
-
-  # The same host-testable crates scripts/check.sh runs (no_std libs whose unit
-  # tests build for the host). The on-device tests/ scripts need real hardware
-  # and stay out of the sandbox.
-  hostCrates = [
-    "rsk-sdk"
-    "rsk-fs"
-    "rsk-usb"
-    "rsk-crypto"
-    "rsk-fido"
-    "rsk-openpgp"
-    "rsk-rsa-asm"
-    "rsk-mgmt"
-    "rsk-oath"
-    "rsk-otp"
-    "rsk-piv"
-    "rsk-rescue"
-  ];
 in
 {
   # The check half of `nix fmt` — fails if any tracked .nix drifts from nixfmt.
@@ -41,7 +22,13 @@ in
   '';
 
   # Host cargo unit tests over the vendored deps — offline and pure. Matches
-  # check.sh's profile (default `test`, not --release) so it stays quick.
+  # check.sh's profile (default `test`, not --release) so it stays quick, and
+  # its selection: the whole workspace less `firmware` and `rsk-wipe`, the only
+  # two members outside crates/ and the only two that are thumbv8m-only. This
+  # was a hand-written crate list, complete the day it was written and never
+  # amended once — 12 of 24 by the time anyone checked, under a comment
+  # promising all of them. The on-device tests/ scripts need real hardware and
+  # stay out of the sandbox.
   cargo-test = pkgs.stdenv.mkDerivation {
     name = "rsk-cargo-test";
     src = firmwareSrc;
@@ -54,7 +41,7 @@ in
     buildPhase = ''
       runHook preBuild
       cargo test --offline --frozen --target ${hostTarget} \
-        ${lib.concatMapStringsSep " " (c: "-p ${c}") hostCrates}
+        --workspace --exclude firmware --exclude rsk-wipe
       runHook postBuild
     '';
     installPhase = "touch $out";

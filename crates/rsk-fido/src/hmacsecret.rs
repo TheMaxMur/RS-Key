@@ -15,23 +15,41 @@ use rsk_crypto::hmac_sha256;
 use rsk_crypto::pinproto::{self, IV_SIZE, PinProto};
 
 use crate::Rng;
-use crate::cbordec::{cbor, def_map};
+use crate::cbordec::{cbor, def_map, skip_value};
 use crate::credential::derive_hmac_key;
 use crate::error::CtapError;
 
 /// Max saltEnc: two 32-byte salts + the PIN-protocol-2 IV — also the max [`eval`]
 /// output length (`pinproto::encrypt` output = IV overhead + plaintext).
 pub const SALT_ENC_MAX: usize = 64 + 16;
-/// Headroom over the 32-byte protocol-2 saltAuth MAC — kept at the existing
-/// size, not a spec formula.
-pub const SALT_AUTH_MAX: usize = 48;
+/// Max saltAuth: protocol two's untruncated 32-byte MAC.
+pub const SALT_AUTH_MAX: usize = 32;
+
+/// Every `saltEnc` wire length §12.5 can produce: one or two 32-byte salts, with
+/// or without protocol two's 16-byte IV. Deliberately protocol-agnostic — a
+/// YubiKey 5.7.4 accepts all four under *both* protocols and leaves what the
+/// protocol actually allows to the post-decryption check below.
+const SALT_ENC_LENGTHS: [usize; 4] = [32, 48, 64, 80];
+// The gate above and the buffer below are one number: `FidoState`'s getNextAssertion
+// replay copy is sized by `SALT_ENC_MAX`, and a length this list accepts but that
+// buffer cannot hold would be truncated on the second assertion, not refused.
+const _: () = assert!(SALT_ENC_LENGTHS[SALT_ENC_LENGTHS.len() - 1] == SALT_ENC_MAX);
+/// `saltAuth` MAC lengths: protocol one truncates to 16 bytes, protocol two keeps
+/// 32. Also protocol-agnostic on the oracle, and also judged before the MAC.
+const SALT_AUTH_LENGTHS: [usize; 2] = [16, 32];
+// Same one-number rule as saltEnc above, and the reason this list may not be
+// widened alone: the replay copy truncates, so a longer length the gate accepted
+// would reach the MAC as a legal-length one.
+const _: () = assert!(SALT_AUTH_LENGTHS[SALT_AUTH_LENGTHS.len() - 1] == SALT_AUTH_MAX);
 
 /// A parsed hmac-secret / hmac-secret-mc request map.
 pub struct HmacSecretReq<'a> {
     pub peer_x: [u8; 32],
     pub peer_y: [u8; 32],
-    pub salt_enc: &'a [u8],
-    pub salt_auth: &'a [u8],
+    /// `None` = the sub-field was absent (MISSING_PARAMETER); a zero-length one
+    /// was sent and is simply the wrong length (INVALID_LENGTH).
+    pub salt_enc: Option<&'a [u8]>,
+    pub salt_auth: Option<&'a [u8]>,
     pub proto: u64,
     pub present: bool,
 }
@@ -41,21 +59,19 @@ impl Default for HmacSecretReq<'_> {
         Self {
             peer_x: [0; 32],
             peer_y: [0; 32],
-            salt_enc: &[],
-            salt_auth: &[],
+            salt_enc: None,
+            salt_auth: None,
             proto: 1,
             present: false,
         }
     }
 }
 
-/// Right-align a COSE coordinate (≤ 32 bytes, big-endian) into a 32-byte buffer.
+/// A COSE P-256 coordinate: exactly 32 bytes, big-endian, never left-padded —
+/// the twin of `clientpin::coord`, and measured on a YubiKey 5.7.4 at this site
+/// too (31 and 33 bytes both INVALID_PARAMETER).
 fn coord(dst: &mut [u8; 32], src: &[u8]) -> Result<(), CtapError> {
-    if src.len() > 32 {
-        return Err(CtapError::InvalidParameter);
-    }
-    *dst = [0; 32];
-    dst[32 - src.len()..].copy_from_slice(src);
+    *dst = src.try_into().map_err(|_| CtapError::InvalidParameter)?;
     Ok(())
 }
 
@@ -75,14 +91,14 @@ pub fn parse<'a>(d: &mut Decoder<'a>) -> Result<HmacSecretReq<'a>, CtapError> {
                     match cbor(d.i32())? {
                         -2 => coord(&mut req.peer_x, cbor(d.bytes())?)?,
                         -3 => coord(&mut req.peer_y, cbor(d.bytes())?)?,
-                        _ => cbor(d.skip())?,
+                        _ => skip_value(d)?,
                     }
                 }
             }
-            0x02 => req.salt_enc = cbor(d.bytes())?,
-            0x03 => req.salt_auth = cbor(d.bytes())?,
+            0x02 => req.salt_enc = Some(cbor(d.bytes())?),
+            0x03 => req.salt_auth = Some(cbor(d.bytes())?),
             0x04 => req.proto = cbor(d.u32())? as u64,
-            _ => cbor(d.skip())?,
+            _ => skip_value(d)?,
         }
     }
     Ok(req)
@@ -91,19 +107,6 @@ pub fn parse<'a>(d: &mut Decoder<'a>) -> Result<HmacSecretReq<'a>, CtapError> {
 /// Parse an hmac-secret extension map from raw CBOR bytes (test / fuzz entry).
 pub fn parse_bytes(data: &[u8]) -> Result<HmacSecretReq<'_>, CtapError> {
     parse(&mut Decoder::new(data))
-}
-
-/// Validate `salt_enc.len()` for `proto`, returning the plaintext salt length (32
-/// for one salt, 64 for two).
-fn salt_plaintext_len(proto: PinProto, salt_enc_len: usize) -> Option<usize> {
-    let off = proto.iv_overhead();
-    if salt_enc_len == 32 + off {
-        Some(32)
-    } else if salt_enc_len == 64 + off {
-        Some(64)
-    } else {
-        None
-    }
 }
 
 /// Evaluate hmac-secret for `cred_id`: write the encrypted HMAC output into `out`
@@ -120,19 +123,42 @@ pub fn eval<R: Rng>(
     out: &mut [u8],
 ) -> Result<usize, CtapError> {
     let proto = PinProto::from_u64(req.proto).ok_or(CtapError::InvalidParameter)?;
-    let n_salt = salt_plaintext_len(proto, req.salt_enc.len()).ok_or(CtapError::InvalidLength)?;
+    // The callers judge absence first so it lands ahead of their own extension
+    // rules (§12.5's up-refusal, hmac-secret-mc's flag); this keeps `eval` total.
+    let salt_enc = req.salt_enc.ok_or(CtapError::MissingParameter)?;
+    let salt_auth = req.salt_auth.ok_or(CtapError::MissingParameter)?;
+    // Both lengths before the MAC: cheap refusal on unauthenticated input, leaking
+    // nothing the wire length does not already show — and it is where a YubiKey
+    // 5.7.4 puts them (a 47-byte saltEnc with a good MAC is refused, a 32-byte one
+    // with a broken MAC is not).
+    if !SALT_ENC_LENGTHS.contains(&salt_enc.len()) || !SALT_AUTH_LENGTHS.contains(&salt_auth.len())
+    {
+        return Err(CtapError::InvalidLength);
+    }
 
     let mut shared = [0u8; 64];
     let slen = pinproto::ecdh(proto, ephemeral, &req.peer_x, &req.peer_y, &mut shared)
         .map_err(|_| CtapError::InvalidParameter)?;
 
-    if !pinproto::verify(proto, &shared[..slen], req.salt_enc, req.salt_auth) {
+    // §12.5: "Authenticator calls verify(shared secret, saltEnc, saltAuth) — if the
+    // verification fails, return CTAP2_ERR_PIN_AUTH_INVALID."
+    if !pinproto::verify(proto, &shared[..slen], salt_enc, salt_auth) {
         shared.zeroize();
-        return Err(CtapError::ExtensionFirst);
+        return Err(CtapError::PinAuthInvalid);
+    }
+
+    // §12.5: the decrypted result must be 32 or 64 bytes, else INVALID_PARAMETER.
+    // The wire gate above is the union over both protocols, so this is where a
+    // length the *sending* protocol cannot produce (48 bytes under protocol one)
+    // is refused — after the MAC, exactly as §12.5 orders it.
+    let n_salt = salt_enc.len() - proto.iv_overhead();
+    if n_salt != 32 && n_salt != 64 {
+        shared.zeroize();
+        return Err(CtapError::InvalidParameter);
     }
 
     let mut salt_dec = [0u8; 64];
-    let r = pinproto::decrypt(proto, &shared[..slen], req.salt_enc, &mut salt_dec);
+    let r = pinproto::decrypt(proto, &shared[..slen], salt_enc, &mut salt_dec);
     if r.is_err() {
         shared.zeroize();
         return Err(CtapError::InvalidParameter);

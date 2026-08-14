@@ -877,7 +877,7 @@ fn hold_label<D: DrawTarget<Color = Rgb565>>(
 /// The **static base** of a hold-to-confirm button: a solid `fill` card (the design's
 /// primary blue / danger red) with the centred white label. Painted once when the screen
 /// appears and again on a hold reset; [`render_hold_fill`] then grows the lighter
-/// [`hold_overlay`] wash over it without re-clearing the card, so the build-up never
+/// `hold_overlay` wash over it without re-clearing the card, so the build-up never
 /// flickers.
 pub fn render_hold_button<D: DrawTarget<Color = Rgb565>>(
     t: &mut D,
@@ -893,7 +893,7 @@ pub fn render_hold_button<D: DrawTarget<Color = Rgb565>>(
 
 /// Grow the hold wash from `prev_num/den` to `num/den` of the button width, drawn over the
 /// solid base with **no card clear**, so repainting each poll doesn't flicker. The wash —
-/// the lighter [`hold_overlay`] of the base `fill` — is the button's *own* rounded-rect
+/// the lighter `hold_overlay` of the base `fill` — is the button's *own* rounded-rect
 /// shape painted through a clip of only the advancing strip `[prev_w, w]`: so its rounded
 /// corners are exactly the base's (no square corner ever pokes past the card — the artifact
 /// the earlier left-rounded approach left when narrow widths clamped the radius), the

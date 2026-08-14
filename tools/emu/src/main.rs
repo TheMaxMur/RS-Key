@@ -13,6 +13,7 @@
 //! rsk-emu --store ./my.store --touch
 //! ```
 
+mod bcd;
 mod ccid;
 mod device;
 mod display;
@@ -25,6 +26,7 @@ mod rng;
 mod shots;
 mod signals;
 mod store;
+mod taps;
 mod usbip;
 mod usbip_driver;
 mod usbip_stack;
@@ -65,6 +67,8 @@ usage: rsk-emu [options]
   --auto-touch-ms <n> mark presence pending, then approve it after n milliseconds
   --display           open the trusted display in a window; presence is an
                       on-screen hold, exactly as on a screen board
+  --taps <file>       drive that panel from a script instead of the mouse: one
+                      contact per line, `x,y[,hold_ms[,gap_ms]]`, # comments
   --screenshots <dir> write the docs' display screens as PNGs and exit
   --usbip [addr]      serve USB/IP (default 127.0.0.1:3240) so a Linux host can
                       attach the emulator as a REAL USB device
@@ -99,6 +103,7 @@ fn main() {
     };
     let mut touch = false;
     let mut auto_touch = None;
+    let mut tap_script = None;
 
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -118,6 +123,7 @@ fn main() {
             "--touch" => touch = true,
             "--auto-touch-ms" => auto_touch = Some(parse_millis(&value("--auto-touch-ms"))),
             "--display" => cfg.display = true,
+            "--taps" => tap_script = Some(read_taps(&value("--taps"))),
             // Renders and exits: no store, no sockets, nothing to serve.
             "--screenshots" => shots::run(&value("--screenshots")),
             "--usbip" => {
@@ -144,6 +150,9 @@ fn main() {
     if auto_touch.is_some() && (touch || cfg.display) {
         die("--auto-touch-ms is mutually exclusive with --touch and --display");
     }
+    if tap_script.is_some() && !cfg.display {
+        die("--taps drives the trusted display's pad — add --display");
+    }
     cfg.presence = if touch {
         PresenceMode::Terminal
     } else if let Some(delay) = auto_touch {
@@ -155,7 +164,7 @@ fn main() {
         eprintln!("emu: DETERMINISTIC SEED — every key this run mints is predictable");
     }
 
-    let (jobs_tx, jobs_rx) = mpsc::channel();
+    let (jobs_tx, jobs_rx) = device::job_queue();
     let signals = Arc::new(Signals::default());
 
     // The terminal is the only input the prompt has, so it is read once, here,
@@ -218,7 +227,36 @@ fn main() {
         std::thread::spawn(move || usbip_stack::serve(addr, jobs, signals, yubico));
     }
 
-    device::run(cfg, jobs_rx, signals, lines);
+    // The script is queued whole and played back at the flow's own poll cadence,
+    // so a `--taps` run needs no writer thread behind it.
+    let taps = tap_script.map(|script| {
+        // The pad has no way to say "spent" — a finished script and a paused one
+        // read alike — so say it here, where it is still actionable.
+        eprintln!(
+            "emu: {} scripted contacts; the mouse is disabled for this run, and \
+             the panel stops responding once they are spent",
+            script.len()
+        );
+        let (tx, rx) = mpsc::channel();
+        for tap in script {
+            let _ = tx.send(tap);
+        }
+        taps::TapPad::new(rx)
+    });
+
+    device::run(cfg, jobs_rx, signals, lines, taps);
+}
+
+/// Read and parse a `--taps` script, refusing a malformed or empty one up front
+/// rather than handing back a panel nothing can ever touch.
+fn read_taps(path: &str) -> Vec<taps::Tap> {
+    let text = std::fs::read_to_string(path)
+        .unwrap_or_else(|e| die(&format!("cannot read the tap script {path:?}: {e}")));
+    let taps = taps::parse_script(&text).unwrap_or_else(|e| die(&e));
+    if taps.is_empty() {
+        die(&format!("the tap script {path:?} has no contacts"));
+    }
+    taps
 }
 
 fn listen_hid(listener: TcpListener, shared: Arc<hid::Shared>) {

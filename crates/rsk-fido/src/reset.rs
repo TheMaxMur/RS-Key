@@ -9,8 +9,8 @@
 use rsk_fs::Storage;
 
 use crate::consts::{
-    EF_ALWAYS_UV, EF_ATT_CHAIN, EF_ATT_KEY, EF_BACKUP_SEALED, EF_COUNTER, EF_CRED, EF_CRED_CTR,
-    EF_DEVICE_PIN, EF_EA_ENABLED, EF_EE_DEV, EF_KEY_DEV, EF_KEY_DEV_ENC, EF_LARGEBLOB,
+    EF_ALWAYS_UV, EF_ATT_CHAIN, EF_ATT_KEY, EF_BACKUP_SEALED, EF_COUNTER, EF_CRED, EF_CRED_BLOB,
+    EF_CRED_CTR, EF_DEVICE_PIN, EF_EA_ENABLED, EF_EE_DEV, EF_KEY_DEV, EF_KEY_DEV_ENC, EF_LARGEBLOB,
     EF_MINPINLEN, EF_PAUTHTOKEN, EF_PIN, EF_RP, EF_RPNICK, MAX_RESIDENT_CREDENTIALS,
     RESET_WINDOW_MS,
 };
@@ -19,13 +19,13 @@ use crate::journal;
 use crate::seed::ensure_seed;
 use crate::{Ctx, Rng};
 
-/// Progress backstop for one [`sweep`] phase: the FIDO predicate spans three
+/// Progress backstop for one [`sweep`] phase: the FIDO predicate spans four
 /// 256-slot ranges and 13 fixed records, so a converging sweep cannot exceed this.
-const RESET_MAX_DELETES: u32 = 3 * MAX_RESIDENT_CREDENTIALS as u32 + 13;
+const RESET_MAX_DELETES: u32 = 4 * MAX_RESIDENT_CREDENTIALS as u32 + 13;
 
 /// `authenticatorReset`: factory-reset the FIDO applet. Replies with only the
 /// status byte. Also the documented recovery from a soft lock with a lost lock
-/// key: `EF_KEY_DEV_ENC` is wiped with everything else and a fresh seed is
+/// key: `EF_KEY_DEV_ENC` leads the wipe with the seed it wraps and a fresh seed is
 /// generated (the old identity is gone — that is the design).
 pub fn reset<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>) -> CtapResult {
     if !ctx.presence.shows_confirm() && !in_reset_window(ctx) {
@@ -48,15 +48,24 @@ pub fn reset<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>) -> CtapResult {
     // ([`is_fido_fid`]) — a blind 0..256 EF_CRED/EF_RP sweep would write a
     // tombstone per absent slot, filling the partition and slowing the flash GC.
     //
-    // Two phases, for the reason `rsk_piv::files::wipe_piv` and `wipe_oath` state:
-    // `for_each_key` yields in flash-ring order, not FID order, so one combined
-    // sweep can reach `EF_PIN` before the credentials — and a power cut there
-    // leaves the owner's passkeys live with the PIN and `alwaysUv` gone, i.e.
-    // assertable on a touch alone. Secrets first (the seed leads, so a surviving
-    // credential record is cryptographically dead), gates last.
+    // Two phases for the sweeps, for the reason `rsk_piv::files::wipe_piv` and
+    // `wipe_oath` state: `for_each_key` yields in flash-ring order, not FID order,
+    // so one combined sweep can reach `EF_PIN` before the credentials — and a power
+    // cut there leaves the owner's passkeys live with the PIN and `alwaysUv` gone,
+    // i.e. assertable on a touch alone. Secrets first, gates last.
+    //
+    // The live session goes before any of it: `Ctx::load_keydev` prefers
+    // `state.keydev_dec`, so a sweep that fails after the flash seed is gone would
+    // otherwise leave the rest of the power cycle running on a seed nothing stores.
+    ctx.state.reset();
+    // And the seed leads the flash, in its own write ahead of the batch: ring order
+    // otherwise reaches `EF_RP` before `EF_CRED`, and what a cut leaves behind must
+    // at least be undecryptable. `EF_KEY_DEV_ENC` is the soft lock's copy of it.
+    for fid in FIDO_SEED_FIDS {
+        ctx.fs.force_delete(fid).map_err(|_| CtapError::Other)?;
+    }
     sweep(ctx, |fid| is_fido_fid(fid) && !is_fido_gate_fid(fid))?;
     sweep(ctx, is_fido_gate_fid)?;
-    ctx.state.reset();
     ensure_seed(&ctx.dev, ctx.fs, ctx.rng).map_err(|_| CtapError::Other)?;
     // Privacy: fold the journal window into the epoch (per-event details are
     // scrubbed, aggregate history stays attested), then record the reset.
@@ -102,6 +111,19 @@ fn sweep<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, pred: fn(u16) -> bool) -> Resu
     }
 }
 
+/// The two flash shapes of the device seed: the plain record, and the soft lock's
+/// wrapped copy. Every credential box, rpId box, credBlob, hmac-secret key and
+/// large-blob key is derived from it, so deleting it FIRST is what makes whatever a
+/// torn wipe leaves behind undecryptable.
+pub const FIDO_SEED_FIDS: [u16; 2] = [EF_KEY_DEV.get(), EF_KEY_DEV_ENC.get()];
+
+/// [`FIDO_SEED_FIDS`] as a predicate. Public because the device-wide
+/// `Fs::factory_wipe` bypasses [`reset`] and needs the same rule — it is the only
+/// other path that can leave a live credential over a live seed.
+pub fn is_fido_seed_fid(fid: u16) -> bool {
+    FIDO_SEED_FIDS.contains(&fid)
+}
+
 /// The FIDO records that *gate* the applet rather than being the secret itself.
 /// Deleted last by [`reset`], so no prefix of the wipe can leave live passkeys
 /// with their PIN and `alwaysUv` requirement already removed. Public because the
@@ -113,14 +135,17 @@ fn sweep<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, pred: fn(u16) -> bool) -> Resu
 /// display build, the on-device recovery-phrase reveal. It sat in the same phase as
 /// `EF_KEY_DEV`, so a torn wipe could take the marker first and re-open a window the
 /// owner had closed over a seed that was still live (audit run-36 class sweep).
+///
+/// `EF_PAUTHTOKEN` is deliberately **not** here, though it was until it produced
+/// the same class of tear from the other side: the `pcmr` grant is a permission, so
+/// its absence is the RESTRICTIVE state, and deferring it alongside `EF_PIN` meant a
+/// cut between the two left a live grant with no PIN behind it. It goes with the
+/// secrets, where a prefix can only ever revoke it early.
 pub fn is_fido_gate_fid(fid: u16) -> bool {
-    // EF_PAUTHTOKEN is a `KeyFid` (the sealed persistent pinUvAuthToken), so it
-    // can't sit in the `u16` match arm — compare its raw FID explicitly.
-    fid == EF_PAUTHTOKEN.get()
-        || matches!(
-            fid,
-            EF_PIN | EF_DEVICE_PIN | EF_ALWAYS_UV | EF_MINPINLEN | EF_BACKUP_SEALED
-        )
+    matches!(
+        fid,
+        EF_PIN | EF_DEVICE_PIN | EF_ALWAYS_UV | EF_MINPINLEN | EF_BACKUP_SEALED
+    )
 }
 
 /// CTAP 2.1 §6.6: a reset is honored only within [`RESET_WINDOW_MS`] of power-up,
@@ -132,7 +157,7 @@ fn in_reset_window<S: Storage, R: Rng>(ctx: &Ctx<S, R>) -> bool {
 }
 
 /// Whether `fid` is cleared by `authenticatorReset` — every FIDO-owned flash file plus
-/// the trusted-display device PIN. Never the OpenPGP applet's files (0x1081-0x10d6 /
+/// the trusted-display device PIN. Never the OpenPGP applet's files (0x1081-0x10de /
 /// 0x00xx / 0x5fxx / 0x1f2x — and note 0x10a0 inside that span is OATH's `EF_OTP_PIN`,
 /// not OpenPGP's, so the band is not contiguously one applet's) or the vendor counter
 /// (0xCC01). FIDO and OpenPGP interleave
@@ -163,6 +188,9 @@ fn is_fido_fid(fid: u16) -> bool {
         || (EF_CRED..EF_CRED + MAX_RESIDENT_CREDENTIALS).contains(&fid)
         || (EF_RP..EF_RP + MAX_RESIDENT_CREDENTIALS).contains(&fid)
         || (EF_RPNICK..EF_RPNICK + MAX_RESIDENT_CREDENTIALS).contains(&fid)
+        // Swept in EVERY build, not just `largeblob-ext`: a key that once ran that
+        // firmware must still be wipeable by the one it is flashed with next.
+        || (EF_CRED_BLOB..EF_CRED_BLOB + MAX_RESIDENT_CREDENTIALS).contains(&fid)
 }
 
 /// Whether `fid` survives an on-device **factory reset** (the trusted-display

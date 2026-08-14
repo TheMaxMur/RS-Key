@@ -51,7 +51,7 @@ pub const EV_PIN_SET: u8 = 0x05;
 pub const EV_PIN_CHANGE: u8 = 0x06;
 /// aux: 0 = retry counter exhausted, 1 = per-boot mismatch block.
 pub const EV_PIN_LOCKOUT: u8 = 0x07;
-/// aux = new minimum; detail[0] = forceChangePin flag.
+/// aux = new minimum; `detail[0]` = forceChangePin flag.
 pub const EV_CFG_MIN_PIN: u8 = 0x08;
 pub const EV_CFG_EA: u8 = 0x09;
 pub const EV_LOCK_ENGAGE: u8 = 0x0A;
@@ -180,7 +180,7 @@ pub(crate) fn is_enabled<S: Storage>(fs: &mut Fs<S>) -> bool {
 }
 
 /// Turn journalling on (write the flag) or off (delete it). Best-effort; the
-/// caller records the transition in the journal itself (see [`vendor`]).
+/// caller records the transition in the journal itself (see [`crate::vendor`]).
 pub(crate) fn set_enabled<S: Storage>(fs: &mut Fs<S>, on: bool) -> Result<(), ()> {
     if on {
         fs.put(EF_AUDIT_ENABLED, &[1]).map_err(|_| ())
@@ -191,7 +191,7 @@ pub(crate) fn set_enabled<S: Storage>(fs: &mut Fs<S>, on: bool) -> Result<(), ()
 
 /// Append one event, opening the power cycle with an [`EV_BOOT`] entry first.
 /// Errors are swallowed — the journal never fails the operation it records.
-/// A no-op while journalling is off (opt-in, [`is_enabled`]): no flash is written.
+/// A no-op while journalling is off (opt-in, `is_enabled`): no flash is written.
 pub fn append<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, ev: u8, aux: u8, detail: &[u8]) {
     if !is_enabled(ctx.fs) {
         return;
@@ -475,8 +475,14 @@ pub fn vendor_checkpoint<S: Storage, R: Rng>(
     if challenge.len() > 32 {
         return Err(CtapError::InvalidParameter);
     }
-    let devk = ctx.state.devk.ok_or(CtapError::NotAllowed)?;
-    let key = attestation_key(&devk, ctx.dev.serial_hash).ok_or(CtapError::Other)?;
+    // Fetched here rather than held: the DEVK is unrotatable, and this is the one
+    // command that wants it. Zeroize before the `?` so a failed derivation still
+    // wipes the copy.
+    let mut devk =
+        ctx.state.devk_source.ok_or(CtapError::NotAllowed)?().ok_or(CtapError::NotAllowed)?;
+    let key = attestation_key(&devk, ctx.dev.serial_hash);
+    devk.zeroize();
+    let key = key.ok_or(CtapError::Other)?;
     let (head, m) = chain_head(&ctx.dev, ctx.fs);
 
     let mut msg = [0u8; CKPT_TAG.len() + 32 + 4 + 32];

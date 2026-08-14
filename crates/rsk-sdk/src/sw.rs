@@ -36,7 +36,7 @@ impl Sw {
     }
 
     /// ISO 7816-4 `63Cx` — verification failed, `x` retries remaining, saturating
-    /// at [`RETRIES_REPORTED_MAX`]. Unclamped, `left` past the nibble sets stray
+    /// at `RETRIES_REPORTED_MAX`. Unclamped, `left` past the nibble sets stray
     /// SW2 bits and `0x40` collides with `63C0`, which every host reads as blocked.
     #[inline]
     pub const fn retries(left: u8) -> Self {
@@ -65,7 +65,7 @@ impl Sw {
     pub const CONDITIONS_NOT_SATISFIED: Sw = Sw::new(0x69, 0x85);
     pub const COMMAND_NOT_ALLOWED: Sw = Sw::new(0x69, 0x86);
     pub const APPLET_SELECT_FAILED: Sw = Sw::new(0x69, 0x99);
-    pub const INCORRECT_PARAMS: Sw = Sw::new(0x6A, 0x80);
+    pub const WRONG_DATA: Sw = Sw::new(0x6A, 0x80);
     pub const FUNC_NOT_SUPPORTED: Sw = Sw::new(0x6A, 0x81);
     pub const FILE_NOT_FOUND: Sw = Sw::new(0x6A, 0x82);
     pub const RECORD_NOT_FOUND: Sw = Sw::new(0x6A, 0x83);

@@ -912,6 +912,7 @@ const CEREMONY_TITLES: &[&str] = &[
     "Verify OATH code?",
     "Write device cert?",
     "Write device config?",
+    "Write test counter?",
 ];
 
 /// Titles still wider than [`CEREMONY_TITLE_BAND`]. Empty, and it must stay that way:

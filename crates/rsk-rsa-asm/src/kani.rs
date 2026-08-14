@@ -54,6 +54,12 @@ fn mod_small_matches_value() {
 /// [`has_small_factor`] does. Proved for EVERY seed of a 2-byte window
 /// (the carry/residue arithmetic is width-agnostic; wider windows are
 /// covered by the `incremental_matches_flat` differential test).
+///
+/// Both residue clauses sit inside the `Some` arm *and* the residue loop, and
+/// the verdict clause goes trivially true at `cnt == 0`, so a sieve that never
+/// steps or tracks no primes passes all three — measured: with `step` stubbed to
+/// `None` this harness still reported SUCCESSFUL. [`sieve_really_steps`] rules
+/// that out, and only while this harness stays `assume`-free at the same `half`.
 #[kani::proof]
 #[kani::unwind(258)]
 fn sieve_step_keeps_residues() {
@@ -69,4 +75,21 @@ fn sieve_step_keeps_residues() {
         }
         assert_eq!(pass, !composite);
     }
+}
+
+/// Non-vacuity for [`sieve_step_keeps_residues`], asserted rather than covered.
+/// A `kani::cover!` says this idiomatically but not here: on 0.67.0 an
+/// unsatisfiable cover prints "0 of 1 cover properties satisfied" and the harness
+/// still reports SUCCESSFUL, so it fails through `scripts/kani.sh`'s cover row or
+/// not at all. An assertion fails where it is written, which this one is worth.
+///
+/// Concrete seed, so this is 143 s against its neighbour's ~24 min.
+#[kani::proof]
+// 256 residues at `half = 2` (`sieve_count`), +1 for the unwinding assertion.
+#[kani::unwind(258)]
+fn sieve_really_steps() {
+    let mut s = IncrementalSieve::new();
+    s.reseed(2, &[0x00, 0x00]);
+    assert!(s.step().is_some(), "the window ended before the first step");
+    assert!(s.cnt > 0, "no primes tracked: the residue loop is empty");
 }

@@ -6,9 +6,16 @@
 
 `third_party/` holds two ecosystems' own conformance suites — pico-fido's and
 pico-openpgp/Gnuk's. They are somebody else's tests under somebody else's
-license, so nothing here edits them: the run is steered from outside by a pytest
-plugin, and everything RS-Key deliberately does not do for them is listed in
-[`DIVERGENCES`] with its reason.
+license, so the run is steered from outside by a pytest plugin and everything
+RS-Key deliberately does not do for them is listed in [`DIVERGENCES`] with its
+reason.
+
+No assertion in those directories is ever edited — a disagreement about
+behaviour belongs in that list, where it stays visible. A defect in the suite's
+own harness is the other case: a test that raises in its own Python before a
+byte reaches the device measures nothing at all, and listing it only records
+that it is broken. Those are repaired in place, marked at the edit and in
+`third_party/README.md`.
 
 A listed test is `xfail(strict=True)`, not a skip. If it starts passing, the run
 *fails* and says which entry to delete — because an allow-list that silently
@@ -51,16 +58,33 @@ SUITES = {
 # wrong is a bug, and putting it here hides it.
 DIVERGENCES: dict[str, dict[str, str]] = {
     "fido": {
-        # Not about RS-Key at all: the suite calls its own `Device.doGA()` with an
-        # `options=` argument that helper does not take, so it raises TypeError
-        # before a byte reaches the device. (Its sibling `test_option_uv` never
-        # gets there — it is gated on the `uv` option, which this build does not
-        # advertise.) Upstream defect; nothing to fix here.
-        "test_021_authenticate.py::test_option_up": "the suite's own doGA() takes no options= argument",
-        # The emulator answers faster than the transport's keepalive interval, so
-        # there is nothing to count. A board doing on-card RSA does emit them —
-        # `tests/50_touch_latency.py` is where that is measured.
-        "test_055_hid.py::TestHID::test_keep_alive": "no command here is slow enough to stream a keepalive",
+        # An empty `saltEnc` is a parameter that is present and the wrong length,
+        # not a missing one: §12.5 says to answer CTAP1_ERR_INVALID_LENGTH unless
+        # the length is 32 or 64, and reserves CTAP2_ERR_MISSING_PARAMETER for the
+        # key not being there at all. The suite sends `b""` and wants the latter.
+        "test_035_hmac_secret.py::test_make_credential_hmac_secret_mc_empty_salt": "an empty saltEnc is present-but-wrong-length: §12.5 gives INVALID_LENGTH",
+        # Both walk credentialManagement and interleave an unrelated command in
+        # the middle, then expect the walk to continue. It no longer does, and
+        # that is the reference behaviour: measured on a YubiKey 5.7.4, its
+        # enumerate walk dies on an unrelated command, on a credentialManagement
+        # subcommand that is not one of the two *Next* walkers, on a largeBlobs
+        # command, and on a 35-second gap. RS-Key matches all four.
+        "test_multiple_enumeration[12345678-_test_enumeration_interleaved]": "an interleaved command retires the enumerate walk, as it does on a YubiKey 5.7.4",
+        "test_multiple_enumeration_with_deletions[12345678-_test_enumeration_interleaved]": "an interleaved command retires the enumerate walk, as it does on a YubiKey 5.7.4",
+        # Not a behaviour difference — the stream is there and matches the
+        # reference. It is the no-touch build the suites require: on it this
+        # precanned makeCredential answers in 6 ms, well inside `KEEPALIVE_MS`, so
+        # there is no window to stream one in. The same emulator under `--touch`
+        # streams UPNEEDED every ~100 ms; a YubiKey 5.7.4 answers this exact
+        # request UPNEEDED at ~64 ms then KEEPALIVE_CANCEL at the test's 0.5 s
+        # deadline (both measured). The stream itself is asserted by `tools/emu`'s
+        # `hid_tests::a_cancel_reaches_a_job_waiting_for_a_touch`, in the gate.
+        #
+        # That 6 ms is the emulator's; nobody has timed it on a board. If a board's
+        # keygen-and-flash outlasts `KEEPALIVE_MS` this XPASSes there — then gate
+        # the entry on the serial (emulator `RSKEMU\0\1`, board `rs-key-0001`)
+        # rather than dropping it.
+        "test_055_hid.py::TestHID::test_keep_alive": "the no-touch build answers in 6 ms, inside KEEPALIVE_MS — no window to stream one (emulator; a slower board may XPASS)",
         # CTAP 2.1 §6.1.2: `up` is implicitly true for makeCredential and an
         # explicit `up: true` is accepted — only `up: false` is INVALID_OPTION.
         # The FIDO conformance tool checks both (MakeCredential Req-6, P-3/F-1)
@@ -91,19 +115,32 @@ DIVERGENCES: dict[str, dict[str, str]] = {
         # invalid-curve defence; reaching the saltAuth check first would mean doing
         # ECDH with an attacker-chosen off-curve point.
         "test_035_hmac_secret.py::test_bad_auth": "the off-curve keyAgreement is refused before the salt MAC is looked at",
-        # After the card reset the test performs, no applet is selected, so a bare
-        # LIST is 6A82 (file not found) rather than 6982. Dropping the selection on
-        # a power transition is deliberate — it is what makes a second local
-        # process re-authenticate (ApduHandler::reset_card).
-        "test_070_oath.py::test_auth": "a card reset deselects the applet, so LIST without SELECT is 6A82",
-        "test_070_oath.py::test_noauth": "a card reset deselects the applet, so LIST without SELECT is 6A82",
+        # Both reach `SET CODE` with a 13-byte secret, so its `73` value is 14
+        # bytes where a YubiKey 5.7.4 takes 15..=65 — that is where they fail now
+        # (E59). Behind it, and the reason they were listed: after the card reset
+        # the test performs, no applet is selected, so a bare LIST is 6A82 (file
+        # not found) rather than 6982. Dropping the selection on a power transition
+        # is deliberate — it is what makes a second local process re-authenticate
+        # (ApduHandler::reset_card).
+        "test_070_oath.py::test_auth": "a 13-byte access code; and a card reset deselects the applet, so LIST without SELECT is 6A82",
+        "test_070_oath.py::test_noauth": "a 13-byte access code; and a card reset deselects the applet, so LIST without SELECT is 6A82",
         # These send CALCULATE with a bare `74` tag — no length byte, no value —
         # which is not a TLV. With the encoded empty challenge `74 00` that ykman
-        # actually sends, RS-Key answers the suite's own expected codes byte for
-        # byte (`45 d9 0f 25` for the IMF case).
+        # actually sends, RS-Key computes the same truncation these expect. It no
+        # longer sends the same *bytes*: their literals (`45 d9 0f 25` for the IMF
+        # case) are the raw 31-bit truncation, and a YubiKey 5.7.4 reduces it to
+        # the credential's six digits, which RS-Key now does too (E65).
         "test_070_oath.py::test_bothoath": "the challenge TLV is sent truncated (`74` with no length)",
         "test_070_oath.py::test_imf_overwrite": "the challenge TLV is sent truncated (`74` with no length)",
         "test_070_oath.py::test_imf_more": "the challenge TLV is sent truncated (`74` with no length)",
+        # These enroll 7-byte and 9-byte HMAC secrets (`foo bar`, `blahonga!`).
+        # A YubiKey 5.7.4 answers `6A80` and stores nothing below a 16-byte KEY
+        # TLV — measured across the whole boundary — and RS-Key matches the card
+        # rather than pico-fido here (E34). `test_bothoath` and
+        # `test_imf_overwrite` above enroll short secrets too; they were already
+        # listed for the challenge TLV and now fail one step earlier.
+        "test_070_oath.py::test_rename_prefix_extension": "enrolls a 7-byte OATH secret; a YubiKey refuses a KEY TLV under 16 bytes",
+        "test_070_oath.py::test_delete": "enrolls a 9-byte OATH secret; a YubiKey refuses a KEY TLV under 16 bytes",
         # CTAP 2.3.1 §6.4 lists encCredStoreState (0x1E) as **Optional**, like its
         # sibling encIdentifier (0x19); RS-Key emits neither. Both are conveniences
         # for a platform holding the persistent pinUvAuthToken — a cache-invalidation
@@ -164,6 +201,34 @@ DIVERGENCES: dict[str, dict[str, str]] = {
         # The same wrapper question, reached through the new pcsc section: it reads
         # DO 6E and asserts the response *starts* with the child tag `4F`.
         "::test_openpgp_status_objects": "§4.4.1 vs §7.2.6: DO 6E arrives with its own tag, so it starts 6E, not 4F",
+        # Replacing or changing a password does not drop the security status the
+        # OLD one earned. Gnuk clears it, so this suite verifies PW1 no. 82 early,
+        # then resets PW1 through the admin, then expects the private DOs shut.
+        # Measured on a YubiKey 5.7.4, each phase from its own power cycle:
+        # VERIFY 82 -> GET 0103 9000 -> RESET RETRY COUNTER (admin, new PW1) ->
+        # GET 0103 still 9000; the same across CHANGE REFERENCE DATA. The
+        # reference keeps the latch, so RS-Key does. The `_fail_` name describes
+        # the state the suite believes it is in: no VERIFY appears in these cases.
+        "::test_private_do_0101_write_fail_with_pw1_81": "a replaced PW1 does not drop the old PW1.82 latch; a YubiKey 5.7.4 keeps it too",
+        "::test_private_do_0102_write_fail_with_pw1": "a replaced PW1 does not drop the old PW3 latch; a YubiKey 5.7.4 keeps it too",
+        "::test_private_do_0103_read_fail_without_auth": "a replaced PW1 does not drop the old PW1.82 latch; a YubiKey 5.7.4 keeps it too",
+        "::test_private_do_0103_read_fail_with_pw1_81": "a replaced PW1 does not drop the old PW1.82 latch; a YubiKey 5.7.4 keeps it too",
+        "::test_private_do_0104_read_fail_without_auth": "a replaced PW1 does not drop the old PW3 latch; a YubiKey 5.7.4 keeps it too",
+        "::test_private_do_0104_read_fail_with_pw1": "a replaced PW1 does not drop the old PW3 latch; a YubiKey 5.7.4 keeps it too",
+        # Gnuk's own capability bits. The pattern pins byte 1 to one of Gnuk's
+        # four values and the DO's shape to Gnuk's build; RS-Key advertises a
+        # different set (it has no secure messaging, a different maximum
+        # challenge, and its own DO lengths), so the string cannot match and
+        # nothing about the mismatch is a defect. The capabilities RS-Key does
+        # claim are pinned by its own tests, not by this one.
+        "test_000_initial_card.py::test_extended_capabilities": "the pattern pins Gnuk's own capability bits, which RS-Key does not claim",
+        # The three `_ok_with_pw3` cells are NOT listed: they pass, but not
+        # because PW3 has any authority over `0101`/`0103` — it does not, on this
+        # card or on a YubiKey 5.7.4 (VERIFY 83 alone answers 6982 to both, each
+        # phase measured from its own power cycle). They pass because the PW1.82
+        # the suite verified earlier is still standing, for the same reason the
+        # `_fail_` cells above are listed. Do not re-add them: strict xfail would
+        # turn a pass back into a failure, which is how they were found.
         # Both halves of this one are content errors, not length errors: an ECDSA
         # attribute whose OID is 16 zero bytes, and an RSA attribute truncated to
         # two. The spec's own gloss splits them — `6700 Wrong length (Lc and/or
@@ -171,10 +236,12 @@ DIVERGENCES: dict[str, dict[str, str]] = {
         # command data field` is about the content. RS-Key answers 6A80 to both;
         # the rejection the test is named for happens either way.
         "::test_openpgp_rejects_invalid_algorithm_attributes": "6A80 (bad data field) rather than 6700, whose gloss is 'Lc and/or Le'",
-        # CHANGE REFERENCE DATA with P2 = 82. §7.2.3 defines exactly two: "P2 81
-        # (PW1) or 83 (PW3)". An undefined P2 is what `6B00 Wrong parameters P1-P2`
-        # is for; `6A88 Referenced data … not found` describes a defined reference
-        # that is absent. RS-Key answers 6B00 for 82 and for 84 alike.
+        # CHANGE REFERENCE DATA with P2 = 82, **on OpenPGP**. §7.2.3 defines exactly
+        # two: "P2 81 (PW1) or 83 (PW3)", and an undefined P2 there is what
+        # `6B00 Wrong parameters P1-P2` is for. Not a rule about the status word in
+        # general: PIV's own CHANGE REFERENCE DATA answers 6A88 to an undefined P2,
+        # because a YubiKey 5.7.4 does — measured, 3 runs. RS-Key answers 6B00 for
+        # OpenPGP's 82 and 84 alike.
         "::test_openpgp_reset_code_and_pw_status": "§7.2.3 defines P2 81/83 only, so 82 is 6B00 (wrong P1-P2), not 6A88",
         # Reported firmware version. RS-Key defaults to 5.7.4 (a current YubiKey 5,
         # `FW_VERSION=X.Y.Z` at build time); the suite hardcodes its own device's
@@ -226,7 +293,8 @@ INAPPLICABLE: dict[str, dict[str, str]] = {
         # Clearing PW3 to the empty string — the doorway into admin-less mode, and
         # upstream's own comment used to read "Gnuk specific feature of clear PW3"
         # before the guard was dropped. §4.3.1 puts PW3 at "8 characters/digits
-        # minimum", so a zero-length new PW3 is 6700 here.
+        # minimum", so a zero-length new PW3 is 6985 here (the APDU is well
+        # formed; it is the value inside it the card will not take).
         "010_kdfnone/test_019_adminfull_kdfnone.py": "clearing PW3 to empty: §4.3.1 sets an 8-character minimum",
         "020_kdffull/05_finalize/test_059_adminfull_kdffull.py": "clearing PW3 to empty: §4.3.1 sets an 8-character minimum",
         "030_kdfsingle/test_066_adminfull_kdfsingle.py": "clearing PW3 to empty: §4.3.1 sets an 8-character minimum",

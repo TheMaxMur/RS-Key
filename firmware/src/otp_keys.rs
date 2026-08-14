@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 RS-Key contributors
 
-//! Boot-time, READ-ONLY view of the two provisioned OTP keys (all of page 58):
+//! READ-ONLY view of the two provisioned OTP keys (all of page 58):
 //!
 //!   DEVK @ rows 0xE80..=0xE8F — the rescue keydev secp256k1 scalar
 //!   MKEK @ rows 0xE90..=0xE9F — the kbase root (`Device.otp_key`)
@@ -32,23 +32,68 @@ const KEY_ROWS: usize = 16;
 /// The OTP page holding both keys and their chaff (0xE80 >> 6).
 const KEY_PAGE: usize = 58;
 
-/// Read the provisioned (MKEK, DEVK) pair. `None` per key when unprovisioned.
-pub fn read_keys() -> (Option<[u8; 32]>, Option<[u8; 32]>) {
-    let mkek = match option_env!("PK_FAKE_MKEK") {
+/// Read the provisioned MKEK. `None` when unprovisioned.
+///
+/// Handed to the applets as a `fn` and called per operation rather than held: the
+/// root every sealed record hangs off had eight resident copies, and the derived
+/// `kbase` never was one — it is recomputed and zeroized on each use. A read costs
+/// 48 µs against the milliseconds of crypto it precedes. Reading it late is only
+/// possible because [`sw_lock_key_page`] leaves the page's secure side open; see
+/// the note there.
+pub fn read_mkek() -> Option<[u8; 32]> {
+    match option_env!("PK_FAKE_MKEK") {
         Some(hex) => Some(parse_hex32(hex)),
         None => read_key(MKEK_ROW),
-    };
-    let devk = match option_env!("PK_FAKE_DEVK") {
+    }
+}
+
+/// Read the provisioned DEVK. `None` when unprovisioned.
+///
+/// Fetched per use rather than held: three rarely-run commands want it (the two
+/// rescue keydev ones and the opt-in audit checkpoint), and it is the one secret
+/// on the device that can never be rotated — it is fused. Passed around as this
+/// `fn` so no caller has to keep a copy. Reading it late is only possible because
+/// [`sw_lock_key_page`] leaves the page's secure side open; see the note there.
+pub fn read_devk() -> Option<[u8; 32]> {
+    match option_env!("PK_FAKE_DEVK") {
         Some(hex) => Some(parse_hex32(hex)),
         None => read_key(DEVK_ROW),
-    };
-    (mkek, devk)
+    }
+}
+
+/// What one provisioned [`read_key`] costs, for the latency harness (`rsk bench
+/// otp`). Deliberately not [`read_mkek`]: that short-circuits on a blank page
+/// after the presence loop, so an unprovisioned board would time half the work
+/// and under-report. Doing both halves unconditionally makes the number the same
+/// on any board. Returns a checksum for the caller to `black_box` — the reads
+/// have no other effect and would otherwise be optimized away.
+#[cfg(feature = "bench")]
+pub fn bench_key_read() -> u32 {
+    let mut acc = 0u32;
+    for i in 0..KEY_ROWS {
+        acc ^= otp::read_raw_word(MKEK_ROW + i).unwrap_or(0);
+    }
+    for i in 0..KEY_ROWS {
+        acc ^= otp::read_ecc_word(MKEK_ROW + i).unwrap_or(0) as u32;
+    }
+    acc
 }
 
 /// The volatile, every-boot half of the key-page lock: block non-secure access
 /// to the key page for this power cycle via SW_LOCK (secure access stays
 /// read-write — this firmware runs entirely secure). The irreversible LOCK1
 /// fuse below is the permanent counterpart.
+///
+/// Closing the *secure* side as well would deny a later code-execution bug any
+/// read of the fuses. Do not: [`read_mkek`] and [`read_devk`] are now called per
+/// operation, so it would break the running power cycle outright — every applet
+/// would drop to the pre-OTP arm and lose its own sealed records — and not only
+/// the next boot, which is how this read before the keys stopped being resident.
+/// The next boot is lost too: SW_LOCK is documented to re-initialise from the OTP
+/// lock pages "at reset", but measured on A4 it **survives `SCB::sys_reset`**
+/// (only the bootrom path clears it), so the vendor warm reboot comes back to an
+/// unreadable page. Making that reboot cold is not the way out either — the
+/// clientPIN soft lock keys on a power-on (`pin_lock`, CTAP 2.1 §6.5.5.6).
 pub fn sw_lock_key_page() {
     rp_pac::OTP.sw_lock(KEY_PAGE).write(|w| {
         w.set_nsec(rp_pac::otp::vals::SwLockNsec::Inaccessible);
@@ -80,7 +125,7 @@ pub fn apply_page58_lock() -> bool {
 /// Whether this image carries a baked test key instead of reading OTP.
 ///
 /// The rescue applet's precondition for both irreversible burns is
-/// `Device.otp_key`, which [`read_keys`] populates from `PK_FAKE_MKEK` **without
+/// `Device.otp_key`, which [`read_mkek`] populates from `PK_FAKE_MKEK` **without
 /// touching OTP** — so on a test image the guard whose whole job is to say "the real
 /// fuses are already written" is forged, and the page-58 lock could be burned on a
 /// board whose page 58 is blank. That is unrecoverable: `rsk otp burn`'s preflight

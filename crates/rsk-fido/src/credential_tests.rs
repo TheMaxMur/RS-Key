@@ -68,6 +68,40 @@ fn non_p256_alg_curve_roundtrip() {
 }
 
 #[test]
+fn curve_explicit_alg_on_p256_survives_the_box() {
+    use crate::consts::{ALG_ES256, ALG_ESP256, CURVE_P256};
+    let d = dev();
+    let rp_hash = sha256(b"example.com");
+    let mut out = [0u8; 512];
+    let mut scratch = [0u8; 512];
+
+    // P-256 is the default curve, so the alg used to be dropped on the way in and
+    // reconstructed as ES256 — which is right for -7 and wrong for -9. credMgmt
+    // re-emits the COSE key from the record, so a dropped -9 would come back as -7
+    // long after the RP was told otherwise.
+    let mut inp = input();
+    inp.alg = ALG_ESP256;
+    inp.curve = CURVE_P256 as i64;
+    let len = credential_create(&SEED, &d, &inp, &rp_hash, &IV, &mut out).unwrap();
+    let c = credential_load(&SEED, &out[..len], &rp_hash, &mut scratch).unwrap();
+    assert_eq!(c.alg, ALG_ESP256);
+    assert_eq!(c.curve, CURVE_P256 as i64);
+
+    // And the classic spelling still writes no alg at all, so a box an older build
+    // wrote — which carries no key 9 — keeps decoding as ES256/P-256.
+    let mut plain = input();
+    plain.alg = ALG_ES256;
+    plain.curve = CURVE_P256 as i64;
+    let plen = credential_create(&SEED, &d, &plain, &rp_hash, &IV, &mut out).unwrap();
+    let p = credential_load(&SEED, &out[..plen], &rp_hash, &mut scratch).unwrap();
+    assert_eq!(p.alg, ALG_ES256);
+    assert!(
+        plen < len,
+        "the default pair must still cost no record bytes"
+    );
+}
+
+#[test]
 fn extensions_roundtrip_through_box() {
     let d = dev();
     let rp_hash = sha256(b"example.com");

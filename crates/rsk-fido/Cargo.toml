@@ -7,6 +7,11 @@ publish = false
 
 # The FIDO2 (CTAP2) + U2F (CTAP1) applet. Pure and host-testable: device seed /
 # serial / RNG and flash come from the caller.
+
+# `cfg(kani)` guards the proof harnesses (set by `cargo kani`, unknown to rustc).
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
+
 [dependencies]
 minicbor = { workspace = true }
 p256 = { workspace = true }
@@ -30,6 +35,12 @@ minicbor = { workspace = true }
 rsk-fs = { workspace = true, features = ["test-util"] }
 
 [features]
+# Kani cannot model the inline asm behind `cpufeatures`' runtime CPU
+# detection, so a harness that hashes reaches `__cpuid_count` and fails as
+# "unsupported construct". Only `scripts/kani.sh` turns this on; the firmware
+# never does, because forcing the soft backend swaps sha2's XIP-cache-sized
+# compressor for its ~28 KB unrolled one and moves the image (measured).
+kani-soft = ["sha2/force-soft", "rsk-crypto/kani-soft"]
 # Advertise ML-DSA-44 (-48) in getInfo `algorithms` (0x0A). OFF by default:
 # shipped Firefoxes (authenticator-rs before 2026-06-02) hard-fail the whole
 # getInfo parse on an unknown COSE id. The PQC capability itself is always on —
@@ -88,6 +99,15 @@ always-uv = []
 # device config ungated (full YubiKey/ykman parity); `--features strict-config`
 # re-imposes the gate. See firmware's `strict-config`.
 strict-config = []
+# Serve the CTAP 2.3 §12.4 `largeBlob` extension INSTEAD OF the CTAP 2.1
+# large-blob design. Not additive, and not a choice this crate could dodge: §12.4
+# says "Authenticators MUST NOT support both extensions", so enabling it
+# WITHDRAWS the `largeBlobKey` extension, the `authenticatorLargeBlobs` command
+# (0x0C) and the `largeBlobs` option, and stores blobs per credential instead of
+# in one platform-managed array. OFF by default because the 2.1 pair is what every
+# shipping browser drives today; the 2.3 extension has no client implementations
+# yet. Build `--features largeblob-ext`.
+largeblob-ext = []
 # On-device latency-harness timing entrypoints (`bench` module). OFF by default,
 # NEVER shipped — enabling it exposes a vendor timing oracle over the crypto
 # primitives, like `keygen-bench`. Drives the real hot paths (variable-base P-256

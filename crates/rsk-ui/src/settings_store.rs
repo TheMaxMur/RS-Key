@@ -15,7 +15,7 @@
 //!
 //! [`DisplayConfig::apply_block`] overlays a stored block onto a default `self`,
 //! field by field, so a record written by an *older* firmware (the original
-//! [`CORE_LEN`]-byte block, no flags) or read by an *older* firmware (a future,
+//! `CORE_LEN`-byte block, no flags) or read by an *older* firmware (a future,
 //! longer block — only its known prefix is read) survives a firmware upgrade
 //! without losing or misreading a field; anything a shorter block omits keeps its
 //! current value. [`DisplayConfig::default`] mirrors the firmware's live defaults,
@@ -85,7 +85,7 @@ impl DisplayConfig {
     }
 
     /// Overlay a stored block onto `self`, field by field. The brightness + sleep
-    /// pair is read from any block at least [`CORE_LEN`] long (so the original
+    /// pair is read from any block at least `CORE_LEN` long (so the original
     /// flags-less record still loads, keeping `pin_declined` at its default); the
     /// flags byte is read only from a full [`CONF_LEN`] block. A future, longer
     /// block is read up to its known prefix. Anything shorter than `CORE_LEN` can

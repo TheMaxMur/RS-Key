@@ -20,7 +20,7 @@ returns from GENERATE (parsed from the 7F49 DO):
   * P-256 ECDSA  — GENERATE SIG, PSO:CDS, verify the signature.
   * Ed25519      — GENERATE AUT, INTERNAL AUTHENTICATE, verify the signature.
   * P-256 ECDH   — GENERATE DEC, PSO:DECIPHER, verify the shared secret (this
-                   also mints the DEC slot's AES key).
+                   also seeds the card's AES key, if DO D5 is still empty).
   * RSA-2048     — GENERATE SIG, **timed** (on-chip RSA keygen is slow), then
                    PSO:CDS verified. Use --skip-rsa to leave it out.
 
@@ -52,6 +52,7 @@ from _device import find_reader  # noqa: E402
 OPENPGP_AID = [0xD2, 0x76, 0x00, 0x01, 0x24, 0x01]
 SELECT = [0x00, 0xA4, 0x04, 0x00, len(OPENPGP_AID)] + OPENPGP_AID + [0x00]
 
+PW1_DEFAULT = b"123456"
 PW3_DEFAULT = b"12345678"
 
 INS_VERIFY = 0x20
@@ -59,6 +60,8 @@ INS_PSO = 0x2A
 INS_INTERNAL_AUT = 0x88
 INS_PUT_DATA = 0xDA
 INS_KEYPAIR_GEN = 0x47
+MODE_PW1_81 = 0x81
+MODE_PW1_82 = 0x82
 MODE_PW3 = 0x83
 
 OID_P256 = [0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07]
@@ -161,6 +164,8 @@ def main():
 
     tx(SELECT, "SELECT OpenPGP AID")
     tx(apdu(INS_VERIFY, 0x00, MODE_PW3, PW3_DEFAULT), "VERIFY PW3 (admin)")
+    tx(apdu(INS_VERIFY, 0x00, MODE_PW1_81, PW1_DEFAULT), "VERIFY PW1 (81, signing)")
+    tx(apdu(INS_VERIFY, 0x00, MODE_PW1_82, PW1_DEFAULT), "VERIFY PW1 (82, decrypt/auth)")
 
     # ---------------- P-256 ECDSA: GENERATE SIG + read-public + PSO:CDS --------
     tx(apdu(INS_PUT_DATA, 0x00, 0xC1, ATTR_P256_ECDSA), "PUT SIG algo-attr (C1, P-256)")
@@ -230,7 +235,7 @@ def main():
     expected = eph_priv.exchange(ec.ECDH(), dec_pub)
     if z != expected:
         fail(f"ECDH mismatch:\n  card={z.hex()}\n  host={expected.hex()}")
-    print("  P-256 ECDH shared secret MATCHES host (DEC + AES key generated)")
+    print("  P-256 ECDH shared secret MATCHES host (DEC key generated)")
 
     print("PASS")
 

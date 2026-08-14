@@ -19,6 +19,40 @@ enum ServiceResult {
     Leave(Option<NavTab>),
 }
 
+/// What a poll of a list screen came back with.
+enum Pick {
+    Row(u16),
+    /// The title-bar back chevron — what that means is the caller's to decide.
+    Back,
+    /// The modal is over: the power button, a queued host command, or inactivity.
+    Leave,
+}
+
+/// One relying party's accounts as the detail screen holds them: the page that is
+/// loaded, and the nickname the title tracks live through a rename.
+///
+/// The six values used to be loose locals, and the six-argument repaint that reads
+/// them appeared four times in one function — so every arm had to remember to
+/// reload before painting, and painting the previous page was a one-line mistake.
+struct ServiceView {
+    accts: [AccountRow; rsk_ui::PK_ROWS_MAX],
+    fids: [u16; rsk_ui::PK_ROWS_MAX],
+    page: u16,
+    /// Rows loaded for `page`, and the total across every page.
+    n: usize,
+    total: u16,
+    nick: Label,
+}
+
+/// The nickname if there is one, else the real relying-party id.
+fn service_title(rp_id: &Label, view: &ServiceView) -> Label {
+    if view.nick.is_empty() {
+        *rp_id
+    } else {
+        view.nick
+    }
+}
+
 impl<'a, P, T, H, S, R> Ui<'a, P, T, H, S, R>
 where
     P: DrawTarget<Color = Rgb565>,
@@ -30,7 +64,7 @@ where
     /// The Passkeys tab — list resident relying parties (read-only), with a drill-in to
     /// each RP's accounts. Enumerates from the shared flash store on entry (the worker is
     /// parked while this synchronous loop runs, so the borrow is safe). Returns the next
-    /// nav destination so the [`status_task`] dispatcher can switch tabs directly:
+    /// nav destination so the firmware's `status_task` dispatcher can switch tabs directly:
     /// `Some(tab)` opens that tab, `None` returns to the idle Home screen.
     pub(super) fn run_passkeys(&mut self) -> Option<NavTab> {
         // Snapshot the RP list and render first (so the switch feels instant), then let
@@ -110,29 +144,23 @@ where
 
     /// One RP's detail: show its name (the device-local nickname if set, else the rpId),
     /// list its resident accounts, let a tap on an account start the Confirm-Delete flow
-    /// ([`run_delete`]), and the title-bar pencil open the rename flow ([`run_rename`]).
+    /// ([`Self::run_delete`]), and the title-bar pencil open the rename flow ([`Self::run_rename`]).
     /// The back chevron (or a tap on the active Passkeys tab) returns to the list; another
     /// nav tab leaves the Passkeys tab; the back chevron only ever returns
     /// [`ServiceResult::Back`]. After a delete the set is reloaded — when the last account
     /// goes, the screen drops back to the list (whose RP row is gone too).
     fn run_service(&mut self, rp_id: &Label, nick0: &Label, hash: &[u8; 32]) -> ServiceResult {
         let idle_limit = Duration::from_millis(MENU_INACTIVITY_MS);
-        let mut accts = [AccountRow::default(); rsk_ui::PK_ROWS_MAX];
-        let mut fids = [0u16; rsk_ui::PK_ROWS_MAX];
-        let mut page: u16 = 0;
-        // The shown title tracks the nickname (Copy), so a rename updates it live.
-        let mut nick = *nick0;
-        let title = |nick: &Label| if nick.is_empty() { *rp_id } else { *nick };
-        let (mut n, mut total) = self.load_accts(hash, &mut accts, &mut fids, page);
-        let _ = rsk_ui::render_service(
-            &mut self.panel,
-            &title(&nick),
-            nick.is_empty(),
-            &accts[..n],
-            page,
-            total,
-        );
-        self.shown = None;
+        let mut view = ServiceView {
+            accts: [AccountRow::default(); rsk_ui::PK_ROWS_MAX],
+            fids: [0u16; rsk_ui::PK_ROWS_MAX],
+            page: 0,
+            n: 0,
+            total: 0,
+            nick: *nick0,
+        };
+        self.service_reload(hash, &mut view);
+        self.service_paint(rp_id, &view);
         self.touch.wait_release(Instant::now(), idle_limit);
 
         let mut last = Instant::now();
@@ -147,30 +175,9 @@ where
                     return ServiceResult::Back;
                 }
                 if rsk_ui::hit_title_edit(p) {
-                    // The pencil: rename this RP's device-local nickname, then repaint with
-                    // the (possibly changed) title. The credential box is untouched. Gated
-                    // by the device PIN like every other on-device write — the nickname is
-                    // what the browse screens show in place of the rpId, so an
-                    // unauthenticated relabel would be a lie told by the trusted display.
-                    if !self.local_pin_gate(PinScope::Device) {
-                        return ServiceResult::Back;
+                    if let Some(r) = self.service_edit(rp_id, hash, &mut view) {
+                        return r;
                     }
-                    if let Some(new_nick) = self.run_rename(&nick, hash) {
-                        nick = new_nick;
-                    }
-                    if self.asleep {
-                        return ServiceResult::Leave(None); // slept via the power button
-                    }
-                    let _ = rsk_ui::render_service(
-                        &mut self.panel,
-                        &title(&nick),
-                        nick.is_empty(),
-                        &accts[..n],
-                        page,
-                        total,
-                    );
-                    self.shown = None;
-                    self.touch.wait_release(Instant::now(), idle_limit);
                     last = Instant::now();
                     continue;
                 }
@@ -184,56 +191,17 @@ where
                     };
                 }
                 if let Some(k) = rsk_ui::hit_pager(p) {
-                    page = paged(page, total, k);
-                    let r = self.load_accts(hash, &mut accts, &mut fids, page);
-                    n = r.0;
-                    total = r.1;
-                    let _ = rsk_ui::render_service(
-                        &mut self.panel,
-                        &title(&nick),
-                        nick.is_empty(),
-                        &accts[..n],
-                        page,
-                        total,
-                    );
-                    self.shown = None;
+                    view.page = paged(view.page, view.total, k);
+                    self.service_reload(hash, &mut view);
+                    self.service_paint(rp_id, &view);
                     self.touch.wait_release(last, idle_limit);
                     last = Instant::now();
                     continue;
                 }
-                if let Some(i) = rsk_ui::hit_list(p, rsk_ui::PK_LIST_TOP, n as u16) {
-                    // The destructive card names the real relying party, never the
-                    // device-local nickname: a nickname is free text, so confirming a
-                    // delete against it would let a relabel aim the owner's own
-                    // PIN-gated ceremony at the wrong credential.
-                    self.run_delete(rp_id, &accts[i as usize].name, fids[i as usize]);
-                    if self.asleep {
-                        return ServiceResult::Leave(None); // slept via the power button
+                if let Some(i) = rsk_ui::hit_list(p, rsk_ui::PK_LIST_TOP, view.n as u16) {
+                    if let Some(r) = self.service_delete(rp_id, hash, &mut view, i as usize) {
+                        return r;
                     }
-                    let r = self.load_accts(hash, &mut accts, &mut fids, page);
-                    n = r.0;
-                    total = r.1;
-                    if total == 0 {
-                        return ServiceResult::Back; // last account gone — this RP vanished
-                    }
-                    // Clamp the page if the delete scrolled it off the end, then repaint.
-                    let clamped = page.min(rsk_ui::page_count(total).saturating_sub(1));
-                    if clamped != page {
-                        page = clamped;
-                        let r = self.load_accts(hash, &mut accts, &mut fids, page);
-                        n = r.0;
-                        total = r.1;
-                    }
-                    let _ = rsk_ui::render_service(
-                        &mut self.panel,
-                        &title(&nick),
-                        nick.is_empty(),
-                        &accts[..n],
-                        page,
-                        total,
-                    );
-                    self.shown = None;
-                    self.touch.wait_release(Instant::now(), idle_limit);
                     last = Instant::now();
                     continue;
                 }
@@ -248,11 +216,94 @@ where
         }
     }
 
+    /// The pencil: rename this RP's device-local nickname, then repaint with the
+    /// (possibly changed) title. The credential box is untouched. Gated by the
+    /// device PIN like every other on-device write — the nickname is what the browse
+    /// screens show in place of the rpId, so an unauthenticated relabel would be a
+    /// lie told by the trusted display.
+    ///
+    /// `Some` leaves the detail screen; `None` means handled, keep polling.
+    fn service_edit(
+        &mut self,
+        rp_id: &Label,
+        hash: &[u8; 32],
+        view: &mut ServiceView,
+    ) -> Option<ServiceResult> {
+        if !self.local_pin_gate(PinScope::Device) {
+            return Some(ServiceResult::Back);
+        }
+        if let Some(new_nick) = self.run_rename(&view.nick, hash) {
+            view.nick = new_nick;
+        }
+        if self.asleep {
+            return Some(ServiceResult::Leave(None)); // slept via the power button
+        }
+        self.service_paint(rp_id, view);
+        self.touch
+            .wait_release(Instant::now(), Duration::from_millis(MENU_INACTIVITY_MS));
+        None
+    }
+
+    /// A row: delete that credential. The destructive card names the real relying
+    /// party, never the device-local nickname — a nickname is free text, so
+    /// confirming a delete against it would let a relabel aim the owner's own
+    /// PIN-gated ceremony at the wrong credential.
+    fn service_delete(
+        &mut self,
+        rp_id: &Label,
+        hash: &[u8; 32],
+        view: &mut ServiceView,
+        i: usize,
+    ) -> Option<ServiceResult> {
+        self.run_delete(rp_id, &view.accts[i].name, view.fids[i]);
+        if self.asleep {
+            return Some(ServiceResult::Leave(None)); // slept via the power button
+        }
+        self.service_reload(hash, view);
+        if view.total == 0 {
+            return Some(ServiceResult::Back); // last account gone — this RP vanished
+        }
+        // Clamp the page if the delete scrolled it off the end, then repaint.
+        let clamped = view
+            .page
+            .min(rsk_ui::page_count(view.total).saturating_sub(1));
+        if clamped != view.page {
+            view.page = clamped;
+            self.service_reload(hash, view);
+        }
+        self.service_paint(rp_id, view);
+        self.touch
+            .wait_release(Instant::now(), Duration::from_millis(MENU_INACTIVITY_MS));
+        None
+    }
+
+    /// Re-read the accounts for `view.page`. Every arm that changes the page or the
+    /// credential set goes through here, so `n`/`total` can never describe a page
+    /// other than the one loaded.
+    fn service_reload(&mut self, hash: &[u8; 32], view: &mut ServiceView) {
+        let (n, total) = self.load_accts(hash, &mut view.accts, &mut view.fids, view.page);
+        view.n = n;
+        view.total = total;
+    }
+
+    fn service_paint(&mut self, rp_id: &Label, view: &ServiceView) {
+        let _ = rsk_ui::render_service(
+            &mut self.panel,
+            &service_title(rp_id, view),
+            view.nick.is_empty(),
+            &view.accts[..view.n],
+            view.page,
+            view.total,
+        );
+        self.shown = None;
+    }
+
     /// Snapshot the per-applet item counts for the Apps chooser. One borrow covers all
     /// three reads (the device is taken first, so the OATH unseal-walk and the `fs` borrow
     /// don't overlap). Borrow-safe like [`Self::load_rps`] — the worker is parked here.
     fn load_apps(&self) -> rsk_ui::AppsView {
-        let dev = self.keys.device();
+        let mkek = read_fused(self.keys.mkek_source);
+        let dev = self.keys.device(&mkek);
         let mut fs = self.fs.borrow_mut();
         let openpgp_keys = rsk_openpgp::info::read_info(&mut fs).key_count();
         let piv_slots = rsk_piv::info::read_info(&mut fs).populated();
@@ -722,88 +773,15 @@ where
     fn run_piv_generate(&mut self) {
         let idle_limit = Duration::from_millis(MENU_INACTIVITY_MS);
         self.touch.wait_release(Instant::now(), idle_limit);
-        let slot = match rsk_piv::info::next_free_retired(&mut self.fs.borrow_mut()) {
-            Some(s) => s,
-            None => return,
+        let Some(slot) = rsk_piv::info::next_free_retired(&mut self.fs.borrow_mut()) else {
+            return;
         };
         // PIN gate first (when set) so the chooser doesn't flash behind the pad.
         if !self.local_pin_gate(PinScope::Device) {
             return;
         }
-        // Algorithm chooser: the curves are instant; the RSA row drills into a size
-        // sub-picker (2048/3072/4096), each run by the firmware's dual-core prime search.
-        let algo = loop {
-            let _ = rsk_ui::render_piv_keygen_pick(&mut self.panel, slot);
-            self.shown = None;
-            self.touch.wait_release(Instant::now(), idle_limit);
-            let mut last = Instant::now();
-            // `None` selects the RSA row (open the size sub-picker); `Some` is a concrete algo.
-            let main_pick = loop {
-                if self.sleep_button_pressed() {
-                    return;
-                }
-                if let Some(p) = self.touch.read() {
-                    last = Instant::now();
-                    if rsk_ui::hit_title_back(p) {
-                        return;
-                    }
-                    if let Some(i) = rsk_ui::hit_list(
-                        p,
-                        rsk_ui::PIV_KEYGEN_PICK_TOP,
-                        rsk_ui::PIV_KEYGEN_PICK_ROWS,
-                    ) {
-                        break match i {
-                            0 => Some(rsk_piv::files::ALGO_ECCP256),
-                            1 => Some(rsk_piv::files::ALGO_ECCP384),
-                            2 => Some(rsk_piv::files::ALGO_ED25519),
-                            3 => Some(rsk_piv::files::ALGO_X25519),
-                            _ => None,
-                        };
-                    }
-                    self.touch.wait_release(last, idle_limit);
-                }
-                if self.hooks.host_request_pending_after(last) || last.elapsed() >= idle_limit {
-                    return;
-                }
-                block_for(Duration::from_millis(TOUCH_POLL_MS));
-            };
-            if let Some(a) = main_pick {
-                break a;
-            }
-            // RSA size sub-picker; its back chevron returns to the main chooser.
-            let _ = rsk_ui::render_piv_keygen_rsa_pick(&mut self.panel, slot);
-            self.shown = None;
-            self.touch.wait_release(Instant::now(), idle_limit);
-            let mut last = Instant::now();
-            let sub_pick = loop {
-                if self.sleep_button_pressed() {
-                    return;
-                }
-                if let Some(p) = self.touch.read() {
-                    last = Instant::now();
-                    if rsk_ui::hit_title_back(p) {
-                        break None;
-                    }
-                    if let Some(i) =
-                        rsk_ui::hit_list(p, rsk_ui::PIV_KEYGEN_PICK_TOP, rsk_ui::PIV_RSA_PICK_ROWS)
-                    {
-                        break Some(match i {
-                            0 => rsk_piv::files::ALGO_RSA2048,
-                            1 => rsk_piv::files::ALGO_RSA3072,
-                            _ => rsk_piv::files::ALGO_RSA4096,
-                        });
-                    }
-                    self.touch.wait_release(last, idle_limit);
-                }
-                if self.hooks.host_request_pending_after(last) || last.elapsed() >= idle_limit {
-                    return;
-                }
-                block_for(Duration::from_millis(TOUCH_POLL_MS));
-            };
-            if let Some(a) = sub_pick {
-                break a;
-            }
-            // Otherwise the user backed out of the sub-picker — re-show the main chooser.
+        let Some(algo) = self.piv_pick_algo(slot) else {
+            return;
         };
         // A deliberate hold before the write.
         let _ = rsk_ui::render_piv_keygen_confirm(
@@ -816,75 +794,140 @@ where
         if !self.hold_to_confirm("Hold to generate", rsk_ui::theme::ACCENT_FILL) {
             return;
         }
-        // The keygen + seal holds the dev/rng/fs borrows across a synchronous, no-await
-        // span, so the worker can't preempt and the borrows stay safe. The free slot is
-        // re-checked under the borrow in case state moved while the chooser was open.
+        if self.piv_store_generated(algo) {
+            self.show_success(SuccessKind::Generated, Some(SUCCESS_POP_MS));
+        }
+    }
+
+    /// Poll a list screen until a row is tapped, the title-bar back chevron is hit,
+    /// or the modal is over (the power button, a queued host command, inactivity).
+    /// The two levels of the keygen chooser polled identically and differed only in
+    /// what they did with the answer.
+    fn pick_row(&mut self, top: u16, rows: u16) -> Pick {
+        let idle_limit = Duration::from_millis(MENU_INACTIVITY_MS);
+        self.touch.wait_release(Instant::now(), idle_limit);
+        let mut last = Instant::now();
+        loop {
+            if self.sleep_button_pressed() {
+                return Pick::Leave;
+            }
+            if let Some(p) = self.touch.read() {
+                last = Instant::now();
+                if rsk_ui::hit_title_back(p) {
+                    return Pick::Back;
+                }
+                if let Some(i) = rsk_ui::hit_list(p, top, rows) {
+                    return Pick::Row(i);
+                }
+                self.touch.wait_release(last, idle_limit);
+            }
+            if self.hooks.host_request_pending_after(last) || last.elapsed() >= idle_limit {
+                return Pick::Leave;
+            }
+            block_for(Duration::from_millis(TOUCH_POLL_MS));
+        }
+    }
+
+    /// The algorithm chooser: the curves are instant, so they are one tap; the RSA
+    /// row drills into a size sub-picker whose back chevron returns here. `None`
+    /// when the user left without choosing.
+    fn piv_pick_algo(&mut self, slot: u8) -> Option<u8> {
+        loop {
+            let _ = rsk_ui::render_piv_keygen_pick(&mut self.panel, slot);
+            self.shown = None;
+            match self.pick_row(rsk_ui::PIV_KEYGEN_PICK_TOP, rsk_ui::PIV_KEYGEN_PICK_ROWS) {
+                Pick::Leave | Pick::Back => return None,
+                Pick::Row(0) => return Some(rsk_piv::files::ALGO_ECCP256),
+                Pick::Row(1) => return Some(rsk_piv::files::ALGO_ECCP384),
+                Pick::Row(2) => return Some(rsk_piv::files::ALGO_ED25519),
+                Pick::Row(3) => return Some(rsk_piv::files::ALGO_X25519),
+                // The RSA row: fall through to the size sub-picker.
+                Pick::Row(_) => {}
+            }
+            let _ = rsk_ui::render_piv_keygen_rsa_pick(&mut self.panel, slot);
+            self.shown = None;
+            match self.pick_row(rsk_ui::PIV_KEYGEN_PICK_TOP, rsk_ui::PIV_RSA_PICK_ROWS) {
+                Pick::Leave => return None,
+                // Backed out of the sub-picker — re-show the main chooser.
+                Pick::Back => continue,
+                Pick::Row(0) => return Some(rsk_piv::files::ALGO_RSA2048),
+                Pick::Row(1) => return Some(rsk_piv::files::ALGO_RSA3072),
+                Pick::Row(_) => return Some(rsk_piv::files::ALGO_RSA4096),
+            }
+        }
+    }
+
+    /// Generate into the next free retired slot and seal it. The free slot is
+    /// re-checked under the borrow, in case state moved while the chooser was open.
+    ///
+    /// The keygen + seal holds the dev/rng/fs borrows across a synchronous, no-await
+    /// span, so the worker cannot preempt and the borrows stay safe.
+    fn piv_store_generated(&mut self, algo: u8) -> bool {
         let rsa_nbits = match algo {
             rsk_piv::files::ALGO_RSA2048 => Some(2048usize),
             rsk_piv::files::ALGO_RSA3072 => Some(3072),
             rsk_piv::files::ALGO_RSA4096 => Some(4096),
             _ => None,
         };
-        let ok = if let Some(nbits) = rsa_nbits {
-            // RSA's prime search is slow (seconds for 2048, up to minutes for 4096): paint a
-            // "generating" screen, then run it dual-core. The search is a blocking busy-loop
-            // (no await), so the panel can't repaint on its own — instead the search's per-
-            // candidate hook spins the indicator arc (throttled to KEYGEN_SPIN_MS) so it reads
-            // as actively working, not hung. USB + CCID keepalives stay interrupt-driven.
-            let _ = rsk_ui::render_piv_keygen_working(&mut self.panel);
-            self.shown = None;
-            let key = {
-                let mut rng = self.rng.borrow_mut();
-                let panel = &mut self.panel;
-                let mut spin = rsk_ui::STATUS_ARC_START;
-                let mut last_paint = Instant::now();
-                let hooks = &mut self.hooks;
-                let mut tick = || {
-                    if last_paint.elapsed() >= Duration::from_millis(KEYGEN_SPIN_MS) {
-                        spin = spin.wrapping_add(SPIN_STEP_DEG);
-                        let _ = rsk_ui::render_status_arc(panel, StatusKind::Processing, spin);
-                        last_paint = Instant::now();
-                    }
-                };
-                hooks.rsa_search_progress(nbits, &mut *rng, &mut tick)
-            };
-            match key {
-                Some(key) => {
-                    let dev = self.keys.device();
-                    let mut rng = self.rng.borrow_mut();
-                    let mut fs = self.fs.borrow_mut();
-                    match rsk_piv::info::next_free_retired(&mut fs) {
-                        Some(s) => {
-                            rsk_piv::info::store_retired_rsa(&dev, &mut fs, &mut *rng, s, &key)
-                                .is_ok()
-                        }
-                        None => false,
-                    }
-                }
-                None => false,
-            }
-        } else {
+        let Some(nbits) = rsa_nbits else {
             // EC / Ed25519 / X25519 are instant.
-            let dev = self.keys.device();
+            let mkek = read_fused(self.keys.mkek_source);
+            let dev = self.keys.device(&mkek);
             let mut rng = self.rng.borrow_mut();
             let mut fs = self.fs.borrow_mut();
-            match rsk_piv::info::next_free_retired(&mut fs) {
+            return match rsk_piv::info::next_free_retired(&mut fs) {
                 Some(s) => {
                     rsk_piv::info::generate_slot_key(&dev, &mut fs, &mut *rng, s, algo).is_ok()
                 }
                 None => false,
+            };
+        };
+        let Some(key) = self.piv_search_rsa(nbits) else {
+            return false;
+        };
+        let mkek = read_fused(self.keys.mkek_source);
+        let dev = self.keys.device(&mkek);
+        let mut rng = self.rng.borrow_mut();
+        let mut fs = self.fs.borrow_mut();
+        match rsk_piv::info::next_free_retired(&mut fs) {
+            Some(s) => rsk_piv::info::store_retired_rsa(&dev, &mut fs, &mut *rng, s, &key).is_ok(),
+            None => false,
+        }
+    }
+
+    /// RSA's prime search is slow (seconds for 2048, up to minutes for 4096): paint
+    /// a "generating" screen, then run it dual-core. The search is a blocking
+    /// busy-loop (no await), so the panel cannot repaint on its own — instead the
+    /// search's per-candidate hook spins the indicator arc (throttled to
+    /// [`KEYGEN_SPIN_MS`]) so it reads as actively working, not hung. USB + CCID
+    /// keepalives stay interrupt-driven.
+    fn piv_search_rsa(
+        &mut self,
+        nbits: usize,
+    ) -> Option<alloc::boxed::Box<rsk_openpgp::keys::RsaPrivateKey>> {
+        let _ = rsk_ui::render_piv_keygen_working(&mut self.panel);
+        self.shown = None;
+        let mut rng = self.rng.borrow_mut();
+        let panel = &mut self.panel;
+        let mut spin = rsk_ui::STATUS_ARC_START;
+        let mut last_paint = Instant::now();
+        let hooks = &mut self.hooks;
+        let mut tick = || {
+            if last_paint.elapsed() >= Duration::from_millis(KEYGEN_SPIN_MS) {
+                spin = spin.wrapping_add(SPIN_STEP_DEG);
+                let _ = rsk_ui::render_status_arc(panel, StatusKind::Processing, spin);
+                last_paint = Instant::now();
             }
         };
-        if ok {
-            self.show_success(SuccessKind::Generated, Some(SUCCESS_POP_MS));
-        }
+        hooks.rsa_search_progress(nbits, &mut *rng, &mut tick)
     }
 
     /// Enumerate stored OATH credentials into `rows` (one page), returning the kept count
     /// and the true total. Each credential is device-unsealed inside the enumerator (the
     /// display never holds the secret); borrow-safe like [`Self::load_rps`].
     fn load_oath(&self, rows: &mut [rsk_ui::OathRow], page: u16) -> (usize, u16) {
-        let dev = self.keys.device();
+        let mkek = read_fused(self.keys.mkek_source);
+        let dev = self.keys.device(&mkek);
         let offset = page as usize * rsk_ui::PK_ROWS_MAX;
         let mut fs = self.fs.borrow_mut();
         let mut idx = 0usize;
@@ -973,7 +1016,8 @@ where
     /// Build one OATH credential's detail by its global list position. Re-enumerates (the
     /// display holds no secret), clamps the picked credential's metadata for display.
     fn load_oath_cred(&self, idx: usize) -> rsk_ui::OathDetailView {
-        let dev = self.keys.device();
+        let mkek = read_fused(self.keys.mkek_source);
+        let dev = self.keys.device(&mkek);
         let mut fs = self.fs.borrow_mut();
         let mut view = rsk_ui::OathDetailView::default();
         let mut i = 0usize;
@@ -1033,7 +1077,8 @@ where
     /// the kept count and the true total. Reads + decrypts from the shared store; the
     /// seed is loaded and zeroized inside the enumerator (the display never holds it).
     fn load_rps(&self, rows: &mut [RpRow], hashes: &mut [[u8; 32]], page: u16) -> (usize, u16) {
-        let dev = self.keys.device();
+        let mkek = read_fused(self.keys.mkek_source);
+        let dev = self.keys.device(&mkek);
         let offset = page as usize * rsk_ui::PK_ROWS_MAX;
         let mut store = self.fs.borrow_mut();
         let mut idx = 0usize;
@@ -1062,11 +1107,12 @@ where
     /// Snapshot the most recent journal events for the audit log, newest first. Each
     /// `EV_*` code maps to its display [`rsk_ui::AuditKind`], and an entry from the
     /// **current** power cycle also carries how long ago it happened — the journal
-    /// stamps [`crate::usb_attach::elapsed_ms`], which resets each boot, so a boot
+    /// stamps [`Hooks::attach_elapsed_ms`], which resets each boot, so a boot
     /// entry marks the session boundary and older rows show no time (no wall clock).
     /// Borrow-safe like [`Self::load_rps`] (the worker is parked while this modal runs).
     fn load_events(&self, rows: &mut [AuditRow], page: u16) -> (usize, u16) {
-        let dev = self.keys.device();
+        let mkek = read_fused(self.keys.mkek_source);
+        let dev = self.keys.device(&mkek);
         // Cap the live clock at the journal's own resolution: `build_entry` saturates the
         // stored `uptime_ms` to `u32::MAX`, so after ~49.7 days of continuous uptime both
         // sides saturate together and a just-logged event still reads "now" rather than a
@@ -1155,3 +1201,7 @@ where
         }
     }
 }
+
+#[cfg(test)]
+#[path = "applets_tests.rs"]
+mod tests;

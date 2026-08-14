@@ -9,6 +9,9 @@ use crate::error::{Error, Result};
 pub const NE_SHORT_MAX: usize = 256;
 /// ISO 7816-4: Ne when extended Le is encoded as 0.
 pub const NE_EXT_MAX: usize = 65536;
+/// ISO 7816-4 §5.4.1: b4b3 of a first-interindustry class byte carry the
+/// secure-messaging indication (`01` proprietary, `10`/`11` per §6).
+const CLA_SM_MASK: u8 = 0x0C;
 
 #[inline]
 fn be16(b: &[u8]) -> u16 {
@@ -60,6 +63,9 @@ impl<'a> Apdu<'a> {
                     n => n as usize,
                 };
             } else {
+                // The whole 16-bit Lc, never its low byte. A YubiKey 5.7.4 stores
+                // `Lc mod 256` here and answers `9000` — 300 bytes of PUT DATA
+                // become 44 — which is the one parity that loses a user's data.
                 nc = be16(&buf[5..7]) as usize;
                 let start = 7;
                 if start + nc > size {
@@ -104,6 +110,14 @@ impl<'a> Apdu<'a> {
     #[inline]
     pub fn is_chaining(&self) -> bool {
         self.cla & 0x10 != 0
+    }
+
+    /// True when the class byte asks for secure messaging, which this card does
+    /// not implement — OpenPGP Extended Capabilities announces SM off, and PIV
+    /// has no SM key. The caller answers `6E00`; see [`crate::Dispatcher`].
+    #[inline]
+    pub fn is_secure_messaging(&self) -> bool {
+        self.cla & CLA_SM_MASK != 0
     }
 }
 

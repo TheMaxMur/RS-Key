@@ -256,32 +256,46 @@ def test_openpgp_status_objects(card):
 
 def test_openpgp_fixed_width_status_dos_are_zero_padded(card):
     verify_pw3(card)
-    card.cmd_put_data(0x00, 0xC7, b"\xAA")
-    card.cmd_put_data(0x00, 0xC8, b"\xBB\xCC")
-    card.cmd_put_data(0x00, 0xC9, b"")
+    # C5/C6/CD republish C7..C9, CA..CC and CE..D0 as fixed-width slices, so a
+    # value of any other length would read back as two different things: itself
+    # standalone, and a truncation inside the aggregate. The card refuses the
+    # write instead and leaves the DO untouched — a YubiKey 5.7.4 does the same
+    # at every length, including the empty one, which is why this asserts the
+    # refusal rather than a zero-pad the card never performs.
+    for tag in (0xC7, 0xC8, 0xC9, 0xCA, 0xCB, 0xCC):
+        for short in (b"\xAA", b"\xBB\xCC", b""):
+            _, sw = raw(card, INS_PUT_DATA, 0x00, tag, short)
+            assert sw == b"\x6A\x80", f"PUT {tag:02X} of {len(short)} bytes"
+    for tag in (0xCE, 0xCF, 0xD0):
+        for short in (b"\x01", b"\x02\x03", b""):
+            _, sw = raw(card, INS_PUT_DATA, 0x00, tag, short)
+            assert sw == b"\x6A\x80", f"PUT {tag:02X} of {len(short)} bytes"
+
+    # Full width is accepted, and the aggregate is the slices in order at their
+    # fixed offsets — which is the property the fixed width exists to give.
+    fp1, fp3 = bytes(range(1, 21)), bytes(range(101, 121))
+    assert card.cmd_put_data(0x00, 0xC7, fp1)
+    assert card.cmd_put_data(0x00, 0xC9, fp3)
     fp = card.cmd_get_data(0x00, 0xC5)
     assert len(fp) == 60
-    assert fp[:20] == b"\xAA" + bytes(19)
-    assert fp[20:40] == b"\xBB\xCC" + bytes(18)
-    assert fp[40:] == bytes(20)
+    assert fp[:20] == fp1
+    assert fp[40:] == fp3
 
-    card.cmd_put_data(0x00, 0xCA, b"\x11")
-    card.cmd_put_data(0x00, 0xCB, b"")
-    card.cmd_put_data(0x00, 0xCC, b"\x22\x33")
+    ca1, ca3 = bytes(range(21, 41)), bytes(range(121, 141))
+    assert card.cmd_put_data(0x00, 0xCA, ca1)
+    assert card.cmd_put_data(0x00, 0xCC, ca3)
     cafp = card.cmd_get_data(0x00, 0xC6)
     assert len(cafp) == 60
-    assert cafp[:20] == b"\x11" + bytes(19)
-    assert cafp[20:40] == bytes(20)
-    assert cafp[40:] == b"\x22\x33" + bytes(18)
+    assert cafp[:20] == ca1
+    assert cafp[40:] == ca3
 
-    card.cmd_put_data(0x00, 0xCE, b"\x01")
-    card.cmd_put_data(0x00, 0xCF, b"")
-    card.cmd_put_data(0x00, 0xD0, b"\x02\x03")
+    ts1, ts3 = b"\x00\x00\x00\x11", b"\x00\x00\x00\x33"
+    assert card.cmd_put_data(0x00, 0xCE, ts1)
+    assert card.cmd_put_data(0x00, 0xD0, ts3)
     ts = card.cmd_get_data(0x00, 0xCD)
     assert len(ts) == 12
-    assert ts[:4] == b"\x01" + bytes(3)
-    assert ts[4:8] == bytes(4)
-    assert ts[8:] == b"\x02\x03" + bytes(2)
+    assert ts[:4] == ts1
+    assert ts[8:] == ts3
 
 
 def test_openpgp_rejects_invalid_algorithm_attributes(card):
@@ -463,7 +477,12 @@ def test_openpgp_mse_decipher_slot_swap(card):
     eph = ec.generate_private_key(ec.SECP256R1())
     peer = eph.public_key().public_bytes(serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint)
     z_dec = card.cmd_pso(0x80, 0x86, decipher_apdu_data(peer))
-    expect(card, INS_MSE, 0x41, 0xA4, b"\x83\x01\x03")
+    # `A4` is the ISO 7816-8 Authentication Template: it repoints INTERNAL
+    # AUTHENTICATE. PSO:DECIPHER is repointed by the Confidentiality Template,
+    # `B8` — OpenPGP 3.4 §7.2.18, and `mse.rs` follows it. This line said `A4`
+    # from when the applet had the two reversed, so it asked for a swap the card
+    # correctly did not make and then asserted the swap had happened.
+    expect(card, INS_MSE, 0x41, 0xB8, b"\x83\x01\x03")
     z_aut = card.cmd_pso(0x80, 0x86, decipher_apdu_data(peer))
     assert z_dec == dec_priv.exchange(ec.ECDH(), eph.public_key())
     assert z_aut == aut_priv.exchange(ec.ECDH(), eph.public_key())
@@ -532,8 +551,12 @@ def test_openpgp_cardholder_certificate_occurrences(card):
         assert card.cmd_get_data(0x7F, 0x21) == cert
     _, sw = raw(card, INS_SELECT_DATA, 0, 0x04, b"\x60\x04\x5C\x02\x00\x65")
     assert sw == b"\x6A\x88"
+    # An occurrence past the last one is a P1 error, not an absent object: a
+    # YubiKey 5.7.4 answers 6B00 to 3 and 4 where 0-2 are 9000, measured 3/3, and
+    # `select.rs` follows it. 6A88 above is the other failure — a tag that has no
+    # occurrences at all, which is named in the data field.
     _, sw = raw(card, INS_SELECT_DATA, 3, 0x04, b"\x60\x04\x5C\x02\x7F\x21")
-    assert sw == b"\x6A\x88"
+    assert sw == b"\x6B\x00"
     for occ in range(3):
         expect(card, INS_SELECT_DATA, occ, 0x04, b"\x60\x04\x5C\x02\x7F\x21")
         expect(card, INS_PUT_DATA, 0x7F, 0x21)

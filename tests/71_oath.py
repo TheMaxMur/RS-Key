@@ -113,7 +113,12 @@ class Oath:
         body = resp[2:]
         digits = body[0]
         if truncated:
-            code = struct.unpack(">I", body[1:5])[0] % (10 ** digits)
+            code = struct.unpack(">I", body[1:5])[0]
+            # The four bytes are the truncation already reduced to `digits`
+            # decimals, the way a YubiKey sends it. Reducing again here would
+            # hide a device that did not (E65).
+            if code >= 10 ** digits:
+                fail(f"CALCULATE {name!r}: {code} is wider than {digits} digits")
             return code
         return body[1:]
 
@@ -139,6 +144,28 @@ def main():
     body = oath.select()
     if tlv_get(body, TAG_CHALLENGE) is not None:
         fail("challenge TLV present after RESET — access code not cleared?")
+
+    # Parameter bytes, as a YubiKey judges them: `00 00` everywhere, the `01`
+    # that truncates on CALCULATE and CALCULATE ALL alone, `DE AD` on RESET, and
+    # `6B00` for the rest (E60). A RESET the card would refuse must not reach the
+    # wipe, and a PUT it would refuse must not reach the store.
+    for ins, p1, p2 in [
+        (INS_LIST, 1, 0), (INS_LIST, 0, 1), (INS_CALCULATE, 1, 0),
+        (INS_CALC_ALL, 0, 2), (INS_VALIDATE, 0x0A, 0x0A),
+        (INS_RESET, 0, 0), (INS_RESET, 0xDE, 0),
+    ]:
+        _, sw = oath.apdu(ins, p1, p2, want=None)
+        if sw != 0x6B00:
+            fail(f"INS {ins:02X} P1={p1:02X} P2={p2:02X}: SW {sw:04X} != 6B00")
+    _, sw = oath.apdu(
+        INS_PUT, 0, 1,
+        tlv(TAG_NAME, b"ghost") + tlv(TAG_KEY, bytes([TYPE_TOTP | ALG_SHA1, 6]) + SECRET_SHA1),
+        want=None,
+    )
+    if sw != 0x6B00:
+        fail(f"PUT with P2=01: SW {sw:04X} != 6B00")
+    if oath.apdu(INS_LIST, 0, 0)[0]:
+        fail("PUT with P2=01 reached the store")
 
     # HOTP first so it lands in slot 0 (VERIFY CODE always targets slot 0).
     oath.put(b"hotp6", TYPE_HOTP | ALG_SHA1, 6, SECRET_SHA1)
@@ -244,6 +271,18 @@ def main():
     code_key = bytes(range(16))
     chal = bytes([1, 2, 3, 4, 5, 6, 7, 8])
     proof = hmac_mod.new(code_key, chal, hashlib.sha1).digest()
+    # The proof is carried over exactly 8 bytes, as on a YubiKey — a narrower
+    # challenge would install a code on a proof with that much less margin (E63).
+    short = chal[:7]
+    _, sw = oath.apdu(
+        INS_SET_CODE, 0, 0,
+        tlv(TAG_KEY, bytes([ALG_SHA1]) + code_key) + tlv(TAG_CHALLENGE, short)
+        + tlv(TAG_RESPONSE, hmac_mod.new(code_key, short, hashlib.sha1).digest()), want=None,
+    )
+    if sw != 0x6A80:
+        fail(f"SET CODE over a 7-byte challenge: SW {sw:04X} != 6A80")
+    if tlv_get(oath.select(), TAG_CHALLENGE) is not None:
+        fail("SET CODE over a 7-byte challenge installed a code anyway")
     oath.apdu(
         INS_SET_CODE, 0, 0,
         tlv(TAG_KEY, bytes([ALG_SHA1]) + code_key) + tlv(TAG_CHALLENGE, chal) + tlv(TAG_RESPONSE, proof),
@@ -259,15 +298,25 @@ def main():
     host_chal = bytes([9] * 8)
     _, sw = oath.apdu(
         INS_VALIDATE, 0, 0,
-        tlv(TAG_CHALLENGE, host_chal) + tlv(TAG_RESPONSE, bytes(20)), want=None,
+        tlv(TAG_RESPONSE, bytes(20)) + tlv(TAG_CHALLENGE, host_chal), want=None,
     )
-    if sw != 0x6984:
-        fail(f"VALIDATE with wrong response: SW {sw:04X} != 6984")
+    # 6A80, as a YubiKey answers it: 6984 is that card's word for "no code is
+    # installed", and the two states have to stay tellable apart (E62).
+    if sw != 0x6A80:
+        fail(f"VALIDATE with wrong response: SW {sw:04X} != 6A80")
     # Correct response unlocks; card answers our challenge (mutual auth).
     resp = hmac_mod.new(code_key, bytes(card_chal), hashlib.sha1).digest()
     body, _ = oath.apdu(
-        INS_VALIDATE, 0, 0, tlv(TAG_CHALLENGE, host_chal) + tlv(TAG_RESPONSE, resp)
+        INS_VALIDATE, 0, 0, tlv(TAG_RESPONSE, resp) + tlv(TAG_CHALLENGE, host_chal)
     )
+    # The card reads VALIDATE by position — response first, as ykman sends it —
+    # so the other order is 6A80 whatever the proof says (E61).
+    _, sw = oath.apdu(
+        INS_VALIDATE, 0, 0,
+        tlv(TAG_CHALLENGE, host_chal) + tlv(TAG_RESPONSE, resp), want=None,
+    )
+    if sw != 0x6A80:
+        fail(f"VALIDATE with the TLVs reordered: SW {sw:04X} != 6A80")
     if tlv_get(body, TAG_RESPONSE) != hmac_mod.new(code_key, host_chal, hashlib.sha1).digest():
         fail("VALIDATE: mutual-auth response wrong")
     oath.apdu(INS_LIST, 0, 0)

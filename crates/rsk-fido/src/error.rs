@@ -46,7 +46,6 @@ pub enum CtapError {
     UvInvalid = 0x3f,              // CTAP2_ERR_UV_INVALID
     UnauthorizedPermission = 0x40, // CTAP2_ERR_UNAUTHORIZED_PERMISSION
     Other = 0x7f,                  // CTAP1_ERR_OTHER
-    ExtensionFirst = 0xe0,         // CTAP2_ERR_EXTENSION_FIRST (hmac-secret salt MAC)
 }
 
 impl CtapError {

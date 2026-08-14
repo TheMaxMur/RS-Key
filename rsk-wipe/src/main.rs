@@ -42,7 +42,7 @@ bind_interrupts!(struct Irqs {
 });
 
 /// Target QSPI flash size, resolved from the `FLASH_SIZE` build knob (default
-/// 4 MB) by [`build.rs`]. Erasing the whole chip — not a fixed 4 MB — is what
+/// 4 MB) by `build.rs`. Erasing the whole chip — not a fixed 4 MB — is what
 /// keeps a larger board (e.g. the 16 MiB display board) from retaining sealed
 /// secrets above the assumed size.
 const FLASH_SIZE: usize = parse_dec(env!("PK_FLASH_SIZE"));

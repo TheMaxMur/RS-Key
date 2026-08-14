@@ -5,6 +5,10 @@ license = "AGPL-3.0-only"
 edition = "2024"
 publish = false
 
+# `cfg(kani)` guards the proof harnesses (set by `cargo kani`, unknown to rustc).
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
+
 # The applet wiring both the firmware and `tools/emu` run: which applets exist, in
 # what order, what gates each, and how a CTAPHID or CCID message reaches one. It
 # was `firmware/src/{handler,ccid_handler}.rs` until the emulator needed a second
@@ -32,7 +36,19 @@ rsk-usb = { workspace = true }
 # dispatch, exactly as they were in `firmware/`.
 zeroize = { workspace = true }
 
+[dev-dependencies]
+# Reading a CTAP2 response back apart. Dev-only, and already in the tree via
+# rsk-fido — the applet that wrote the bytes.
+minicbor = { workspace = true }
+# The RAM `Storage` every applet crate's tests already run against — the routing
+# rules here are only meaningful over a real `Fs`.
+rsk-fs = { workspace = true, features = ["test-util"] }
+
 [features]
+# `scripts/kani.sh` only: forwards to the dependency that carries the switch.
+# What it buys, and why the firmware must never turn it on, is in
+# `crates/rsk-crypto/Cargo.toml`.
+kani-soft = ["rsk-crypto/kani-soft", "rsk-fido/kani-soft"]
 # The strict admin-write profile: see firmware's `strict-config`. It decides
 # whether CTAPHID carries WRITE CONFIG and whether Management RESET wipes.
 strict-config = ["rsk-mgmt/strict-config", "rsk-fido/strict-config", "rsk-otp/strict-config", "rsk-vendor/strict-config"]

@@ -87,10 +87,13 @@ def main():
     _, s1, s2 = conn.transmit([0x00, INS_SELECT_DATA, 0, 0x04, 0x06, 0x60, 0x04, 0x5C, 0x02, 0x00, 0x65])
     if (s1, s2) != (0x6A, 0x88):
         fail(f"SELECT DATA unknown tag: SW {s1:02X}{s2:02X} != 6A88")
+    # The occurrence is P1, so past-the-last is a wrong parameter (6B00); the tag
+    # above arrives in the data field, so an unknown one stays 6A88. A YubiKey
+    # 5.7.4 answers 6B00 to occurrences 3 and 4, measured, where 0-2 are 9000.
     _, s1, s2 = conn.transmit(select_data_cert(3))
-    if (s1, s2) != (0x6A, 0x88):
-        fail(f"SELECT DATA occ 3: SW {s1:02X}{s2:02X} != 6A88")
-    print("  SELECT DATA validation OK (bad tag / occ -> 6A88)")
+    if (s1, s2) != (0x6B, 0x00):
+        fail(f"SELECT DATA occ 3: SW {s1:02X}{s2:02X} != 6B00")
+    print("  SELECT DATA validation OK (bad tag -> 6A88, bad occurrence -> 6B00)")
 
     # Cleanup: delete all three (empty PUT).
     for occ in range(3):

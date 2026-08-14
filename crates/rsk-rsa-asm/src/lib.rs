@@ -86,7 +86,7 @@ pub fn mod_small(n_le: &[u8], m: u32) -> u32 {
 }
 
 /// Does `n` (little-endian) have a small prime factor among the first
-/// [`sieve_count`] primes for its length? Trial division only ever *rejects*,
+/// `sieve_count` primes for its length? Trial division only ever *rejects*,
 /// so it can never misclassify a composite as prime — at worst a too-shallow
 /// sieve just lets more composites through to the (vetted) strong-MR test.
 pub fn has_small_factor(n_le: &[u8]) -> bool {
@@ -177,7 +177,7 @@ impl IncrementalSieve {
     ///
     /// **Code and table both live in SRAM on the device.** This runs for every
     /// candidate the search draws — hundreds to thousands per prime — and walks
-    /// [`sieve_count`] table entries each time (1.8 KB at RSA-2048, 5 KB at
+    /// `sieve_count` table entries each time (1.8 KB at RSA-2048, 5 KB at
     /// RSA-4096). Left in XIP flash the loop and its table compete with each
     /// other and with whatever else the image put nearby for the small XIP
     /// cache, which makes keygen time a function of unrelated commits: v0.4.5

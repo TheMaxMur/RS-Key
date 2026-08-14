@@ -40,7 +40,18 @@ fuzz_target!(|data: &[u8]| {
             assert_eq!(&back[..m], &data[..blk]);
         }
 
-        // 4. verify must tolerate arbitrary signature bytes.
-        let _ = pinproto::verify(proto, &shared, data, data);
+        // 4. Two-sided MAC oracle. `verify` is the constant-time check behind every
+        //    pinUvAuthParam, so a `true`-wired one forges session tokens wholesale;
+        //    discarding its verdict here would let that through. The candidate is
+        //    the genuine MAC, never the fuzzer's bytes — betting a coverage-guided
+        //    mutator against a `ct_eq` is the wrong side of that race.
+        let mut mac = [0u8; 32];
+        let n = pinproto::authenticate(proto, &shared, data, &mut mac).expect("32-byte MAC buffer");
+        assert!(pinproto::verify(proto, &shared, data, &mac[..n]));
+        // The corrupted index comes off the input rather than being fixed at 0:
+        // a `verify` comparing only `mac[..1]` survived 300k executions of the
+        // byte-0 form, since that form corrupts the one byte it does compare.
+        mac[data.first().copied().unwrap_or(0) as usize % n] ^= 0xff;
+        assert!(!pinproto::verify(proto, &shared, data, &mac[..n]));
     }
 });

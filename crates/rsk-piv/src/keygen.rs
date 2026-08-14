@@ -21,7 +21,7 @@ use zeroize::Zeroize;
 use crate::files::*;
 use crate::seal;
 use crate::x509;
-use crate::{Session, WRONG_DATA, wrap_cert_object};
+use crate::{Session, wrap_cert_object};
 
 // Yubico generation/import template policy tags.
 const TAG_PIN_POLICY: u16 = 0xAA;
@@ -39,18 +39,18 @@ pub(crate) fn parse_gen_template(data: &[u8]) -> Result<GenReq, Sw> {
         return Err(Sw::WRONG_LENGTH);
     }
     if data[0] != TAG_GEN_TEMPLATE {
-        return Err(WRONG_DATA);
+        return Err(Sw::WRONG_DATA);
     }
     let ac = find_tag(data, TAG_GEN_TEMPLATE as u16)
         .filter(|v| !v.is_empty())
-        .ok_or(WRONG_DATA)?;
+        .ok_or(Sw::WRONG_DATA)?;
     let algo = find_tag(ac, 0x80)
         .filter(|v| !v.is_empty())
-        .ok_or(WRONG_DATA)?[0];
+        .ok_or(Sw::WRONG_DATA)?[0];
     // SP 800-131A: no RSA-1024 generation under the FIPS-style profile. This is
     // the one template parser, so it also covers the firmware prime-search path.
     if cfg!(feature = "fips-profile") && algo == ALGO_RSA1024 {
-        return Err(WRONG_DATA);
+        return Err(Sw::WRONG_DATA);
     }
     let pin_policy = find_tag(ac, TAG_PIN_POLICY).and_then(|v| v.first().copied());
     let touch_policy = find_tag(ac, TAG_TOUCH_POLICY).and_then(|v| v.first().copied());
@@ -87,35 +87,53 @@ pub(crate) fn rsa_size_from_algo(algo: u8) -> Option<usize> {
     })
 }
 
-/// Resolve the metadata policy bytes at store time: the signature slot defaults to
-/// PIN-always, everything else to PIN-once and touch-always.
+/// The PIN policy a slot has when the request names none. Shared with the use-time
+/// resolution in `crate::auth`, which is the other owner of the same question: a
+/// `0` byte an older build stored means "the card's default", and a legacy slot
+/// and a new one have to agree about what that is.
+pub(crate) fn default_pin_policy(slot: u8) -> u8 {
+    match slot {
+        SLOT_SIGNATURE => PINPOLICY_ALWAYS,
+        // SP 800-73-4 makes 9E the slot usable WITHOUT a PIN — physical access,
+        // contactless — and a YubiKey defaults it to NEVER (measured, 3 runs).
+        // ONCE made the slot useless for the one thing it is for.
+        SLOT_CARDAUTH => PINPOLICY_NEVER,
+        _ => PINPOLICY_ONCE,
+    }
+}
+
+/// Resolve the metadata policy bytes: the signature slot defaults to PIN-always,
+/// the card-authentication slot to PIN-never, everything else to PIN-once; touch
+/// defaults to never everywhere. The one owner — `auth.rs` resolves a legacy
+/// unresolved byte through here too, so a record an older build wrote and one
+/// this build writes mean the same thing at the same slot.
 ///
-/// An explicit `DEFAULT` (`0`) resolves exactly like an absent tag, and an
-/// undefined value is refused. The old version only substituted when the tag was
-/// *missing*, so `AA 01 00` stored a literal 0 — and both gates read the byte with
-/// an equality test, so a value they did not recognise silently meant "no gate"
-/// while `info` still rendered "Default" and the attestation extension carried it
-/// verbatim. The doc comment claimed "the stored value is never DEFAULT"; the code
-/// did not enforce it (audit run-34 #18).
+/// "Default" is an **absent** tag; `DEFAULT` (`0`) on the wire is a value, and an
+/// undefined one — a YubiKey 5.7.4 answers `6A80` to `AA 01 00` and `AB 01 00`
+/// exactly as it does to `0xFF` (3/3, on `9E` and `9A`, E80). A literal 0 must not
+/// reach flash either way: both gates read the byte with an equality test, so a
+/// value they did not recognise silently meant "no gate" while `info` still
+/// rendered "Default" and the attestation extension carried it verbatim (audit
+/// run-34 #18). A `0` an older build already stored still resolves at use time —
+/// that is `crate::auth`'s job, not this one's.
 pub(crate) fn resolved_policies(
     slot: u8,
     req_pin: Option<u8>,
     req_touch: Option<u8>,
 ) -> Result<[u8; 2], Sw> {
-    let def_pin = if slot == SLOT_SIGNATURE {
-        PINPOLICY_ALWAYS
-    } else {
-        PINPOLICY_ONCE
+    let pin = match req_pin {
+        None => default_pin_policy(slot),
+        Some(p @ (PINPOLICY_NEVER | PINPOLICY_ONCE | PINPOLICY_ALWAYS)) => p,
+        Some(_) => return Err(Sw::WRONG_DATA),
     };
-    let pin = match req_pin.unwrap_or(PINPOLICY_DEFAULT) {
-        PINPOLICY_DEFAULT => def_pin,
-        p @ (PINPOLICY_NEVER | PINPOLICY_ONCE | PINPOLICY_ALWAYS) => p,
-        _ => return Err(WRONG_DATA),
-    };
-    let touch = match req_touch.unwrap_or(TOUCHPOLICY_DEFAULT) {
-        TOUCHPOLICY_DEFAULT => TOUCHPOLICY_ALWAYS,
-        t @ (TOUCHPOLICY_NEVER | TOUCHPOLICY_ALWAYS | TOUCHPOLICY_CACHED) => t,
-        _ => return Err(WRONG_DATA),
+    let touch = match req_touch {
+        // An ABSENT tag is "the card's default", and a YubiKey 5.7.4 resolves that
+        // to NEVER on every slot (measured, 3 runs × 4 slots). ALWAYS here made a
+        // plain `ykman piv keys generate` mint a key that hangs every scripted use
+        // waiting for a press nobody asked for; ask with `--touch-policy ALWAYS`.
+        None => TOUCHPOLICY_NEVER,
+        Some(t @ (TOUCHPOLICY_NEVER | TOUCHPOLICY_ALWAYS | TOUCHPOLICY_CACHED)) => t,
+        Some(_) => return Err(Sw::WRONG_DATA),
     };
     Ok([pin, touch])
 }
@@ -145,7 +163,7 @@ fn store_slot_cert<S: Storage>(
     )?;
     let mut obj = [0u8; x509::MAX_CERT + 16];
     let on = wrap_cert_object(&cert[..n], &mut obj);
-    let fid = cert_fid_for_slot(slot).ok_or(WRONG_DATA)?;
+    let fid = cert_fid_for_slot(slot).ok_or(Sw::WRONG_DATA)?;
     fs.put(fid, &obj[..on]).map_err(|_| Sw::MEMORY_FAILURE)
 }
 
@@ -242,7 +260,7 @@ pub(crate) fn generate_ec<S: Storage>(
     res: &mut ResBuf,
 ) -> Sw {
     let Some(curve) = curve_for_algo(req.algo) else {
-        return WRONG_DATA;
+        return Sw::WRONG_DATA;
     };
     // Resolve BEFORE the first write, as `generate_rsa_blocking` and the firmware's
     // RSA fast path already do. Resolving after meant a request this firmware
@@ -341,15 +359,17 @@ pub(crate) fn generate_rsa_blocking<S: Storage>(
     res: &mut ResBuf,
 ) -> Sw {
     let Some(nbytes) = rsa_size_from_algo(req.algo) else {
-        return WRONG_DATA;
+        return Sw::WRONG_DATA;
+    };
+    // Judged before the prime search, not after: a refusable template used to buy
+    // a full RSA-4096 keygen before answering `6A80`.
+    let pol = match resolved_policies(slot, req.pin_policy, req.touch_policy) {
+        Ok(p) => p,
+        Err(sw) => return sw,
     };
     let key = match generate_rsa(rng, nbytes * 8) {
         Ok(k) => k,
         Err(e) => return e,
-    };
-    let pol = match resolved_policies(slot, req.pin_policy, req.touch_policy) {
-        Ok(p) => p,
-        Err(sw) => return sw,
     };
     finish_rsa(dev, fs, rng, slot, req.algo, pol, &key, res)
 }
@@ -385,7 +405,7 @@ pub(crate) fn generate_retired_ec<S: Storage>(
     if !retired_slot_is_free(fs, slot) {
         return Err(Sw::SECURITY_STATUS_NOT_SATISFIED);
     }
-    let curve = curve_for_algo(algo).ok_or(WRONG_DATA)?;
+    let curve = curve_for_algo(algo).ok_or(Sw::WRONG_DATA)?;
     let Some(key) = PrivKey::generate(curve, rng) else {
         return Err(Sw::EXEC_ERROR);
     };
@@ -450,16 +470,16 @@ fn import_rsa<S: Storage>(
     let p = find_tag(data, 0x01).filter(|v| !v.is_empty());
     let q = find_tag(data, 0x02).filter(|v| !v.is_empty());
     let (Some(p), Some(q)) = (p, q) else {
-        return Err(WRONG_DATA);
+        return Err(Sw::WRONG_DATA);
     };
     let Some(key) = rsa_from_pqe(&[0x01, 0x00, 0x01], p, q) else {
         return Err(Sw::EXEC_ERROR);
     };
     let Some(want) = rsa_size_from_algo(algo) else {
-        return Err(WRONG_DATA);
+        return Err(Sw::WRONG_DATA);
     };
     if key.size() != want {
-        return Err(WRONG_DATA);
+        return Err(Sw::WRONG_DATA);
     }
     drop_slot_meta(fs, key_fid(slot).get())?;
     seal::store_rsa_key(dev, fs, rng, key_fid(slot), &key)
@@ -476,23 +496,27 @@ fn import_ec<S: Storage>(
     data: &[u8],
 ) -> Result<(), Sw> {
     let Some(scalar) = find_tag(data, 0x06).filter(|v| !v.is_empty()) else {
-        return Err(WRONG_DATA);
+        return Err(Sw::WRONG_DATA);
     };
     let Some(curve) = curve_for_algo(algo) else {
-        return Err(WRONG_DATA);
+        return Err(Sw::WRONG_DATA);
     };
+    // Exactly the field length, not at most: a short scalar is a different key
+    // from the one the host meant, and `06 01 01` was stored and signed with as
+    // d = 1. Left-padding is the host's job — a YubiKey refuses every other
+    // length too, including 32 bytes offered as P-384 (measured, 3 runs).
     let field = if algo == ALGO_ECCP256 { 32 } else { 48 };
-    if scalar.len() > field {
-        return Err(WRONG_DATA);
+    if scalar.len() != field {
+        return Err(Sw::WRONG_DATA);
     }
     let Some(key) = PrivKey::from_scalar(curve, scalar) else {
-        return Err(WRONG_DATA);
+        return Err(Sw::WRONG_DATA);
     };
     // Reject the zero/invalid scalar early: deriving the public point fails for
     // out-of-range keys.
     let mut pt = [0u8; MAX_EC_POINT];
     if key.public_point(&mut pt).is_err() {
-        return Err(WRONG_DATA);
+        return Err(Sw::WRONG_DATA);
     }
     drop_slot_meta(fs, key_fid(slot).get())?;
     seal::store_ec_key(dev, fs, rng, key_fid(slot), &key)
@@ -515,10 +539,12 @@ fn import_edwards<S: Storage>(
         (0x08u16, Curve::X25519)
     };
     let Some(scalar) = find_tag(data, tag).filter(|v| !v.is_empty()) else {
-        return Err(WRONG_DATA);
+        return Err(Sw::WRONG_DATA);
     };
-    if scalar.len() > 32 {
-        return Err(WRONG_DATA);
+    // Exactly 32, as in `import_ec`: the Curve25519 seed and scalar are fixed
+    // width, and a short one is a different key from the one the host meant.
+    if scalar.len() != 32 {
+        return Err(Sw::WRONG_DATA);
     }
     // ykman / yubico-piv-tool import the X25519 private key little-endian
     // (RFC 8410 / RFC 7748); `PrivKey` keeps the scalar as a big-endian MPI
@@ -539,7 +565,7 @@ fn import_edwards<S: Storage>(
     let key = PrivKey::from_scalar(curve, scalar);
     flipped.zeroize();
     let Some(key) = key else {
-        return Err(WRONG_DATA);
+        return Err(Sw::WRONG_DATA);
     };
     drop_slot_meta(fs, key_fid(slot).get())?;
     seal::store_ec_key(dev, fs, rng, key_fid(slot), &key)
@@ -555,33 +581,45 @@ pub(crate) fn import<S: Storage>(
     slot: u8,
     data: &[u8],
 ) -> Sw {
-    if !is_key(slot) {
-        return Sw::INCORRECT_P1P2;
-    }
+    // The management key first, as on the reference: `00 FE 06 01` with a body is
+    // `6982` there unauthenticated, not a P1P2 refusal. Which slots this command
+    // takes is a property of the card that a caller holding no credential has no
+    // business learning one refusal at a time.
     if !sess.has_mgm {
         return Sw::SECURITY_STATUS_NOT_SATISFIED;
     }
+    // `is_key` excludes F9, and that is a DELIBERATE divergence: a YubiKey lets a
+    // host load its own attestation key there, which on this card — where F9 is
+    // generated at first boot and never leaves — would let anyone holding the
+    // management key replace the device's attestation identity irreversibly over
+    // one APDU. Pinned by a test and docs/limitations.md; do not "fix" it.
+    if !is_key(slot) {
+        return Sw::INCORRECT_P1P2;
+    }
     // SP 800-131A: no RSA-1024 import under the FIPS-style profile either.
     if cfg!(feature = "fips-profile") && algo == ALGO_RSA1024 {
-        return WRONG_DATA;
+        return Sw::WRONG_DATA;
     }
     let pin_policy = find_tag(data, TAG_PIN_POLICY).and_then(|v| v.first().copied());
     let touch_policy = find_tag(data, TAG_TOUCH_POLICY).and_then(|v| v.first().copied());
+    // Resolve BEFORE the first write, as `generate_ec` does and for the same
+    // reason (audit run-36): every import arm drops the slot meta and seals the new
+    // key, so refusing after left the old key gone and the new one un-gateable.
+    let pol = match resolved_policies(slot, pin_policy, touch_policy) {
+        Ok(p) => p,
+        Err(sw) => return sw,
+    };
     let stored = match algo {
         ALGO_RSA1024 | ALGO_RSA2048 | ALGO_RSA3072 | ALGO_RSA4096 => {
             import_rsa(dev, fs, rng, algo, slot, data)
         }
         ALGO_ECCP256 | ALGO_ECCP384 => import_ec(dev, fs, rng, algo, slot, data),
         ALGO_ED25519 | ALGO_X25519 => import_edwards(dev, fs, rng, algo, slot, data),
-        _ => Err(WRONG_DATA),
+        _ => Err(Sw::WRONG_DATA),
     };
     if let Err(sw) = stored {
         return sw;
     }
-    let pol = match resolved_policies(slot, pin_policy, touch_policy) {
-        Ok(p) => p,
-        Err(sw) => return sw,
-    };
     // Cache the public point for EC slots (import is not a hot path, so derive it
     // once from the freshly sealed key); RSA keeps the bare 4-byte record.
     let mut mbuf = [0u8; 4 + MAX_EC_POINT];
@@ -627,7 +665,7 @@ pub(crate) fn attest<S: Storage>(
         return Sw::REFERENCE_NOT_FOUND;
     };
     if meta_len < 4 || meta[3] != ORIGIN_GENERATED {
-        return Sw::INCORRECT_PARAMS;
+        return Sw::WRONG_DATA;
     }
     let f9 = match seal::load_ec_key(dev, fs, key_fid(SLOT_ATTESTATION)) {
         Ok(k) => k,
@@ -714,7 +752,7 @@ pub(crate) fn attest<S: Storage>(
                 &mut cert,
             )
         }
-        _ => return WRONG_DATA,
+        _ => return Sw::WRONG_DATA,
     };
     let n = match built {
         Ok(n) => n,

@@ -12,6 +12,103 @@ use super::*;
 /// rest to the 8-byte `0xFF` wire form so a host VERIFY (which always pads) matches.
 const PIV_PIN_MIN: usize = 6;
 
+/// The T9 text field behind the rename screen: the bytes already committed, plus
+/// the one character still cycling under the finger.
+///
+/// Six loose locals before — a buffer, a length, a pending char, its group, the
+/// position within that group, and the press clock — mutated from three places in
+/// one loop, where "commit the pending character" was written out three times and
+/// had to agree each time.
+struct T9 {
+    buf: [u8; rsk_fido::passkeys::RP_NICK_MAX_LEN],
+    len: usize,
+    /// The character being cycled; not yet part of the value.
+    pending: Option<u8>,
+    /// Which T9 group that character came from, and where in it.
+    group: Option<usize>,
+    cycle: usize,
+    pressed_at: Instant,
+}
+
+/// Auto-commit the pending character after this long without a same-key press.
+const T9_COMMIT_MS: u64 = 800;
+
+impl T9 {
+    fn new(current: &Label) -> Self {
+        let mut t9 = Self {
+            buf: [0u8; rsk_fido::passkeys::RP_NICK_MAX_LEN],
+            len: 0,
+            pending: None,
+            group: None,
+            cycle: 0,
+            pressed_at: Instant::now(),
+        };
+        for &b in current.as_str().as_bytes() {
+            if t9.len < t9.buf.len() {
+                t9.buf[t9.len] = b;
+                t9.len += 1;
+            }
+        }
+        t9
+    }
+
+    /// What the field currently reads, pending character excluded.
+    fn value(&self) -> Label {
+        Label::clamp(&self.buf[..self.len])
+    }
+
+    /// Move the pending character into the value, if there is room for it.
+    fn commit(&mut self) {
+        if let Some(ch) = self.pending
+            && self.len < self.buf.len()
+        {
+            self.buf[self.len] = ch;
+            self.len += 1;
+        }
+    }
+
+    /// A group key. The same group cycles within itself; a different one commits
+    /// whatever was pending first, which is what makes "abc" typable on one key.
+    fn press(&mut self, gi: usize) {
+        let group = rsk_ui::T9_GROUPS[gi];
+        if self.group == Some(gi) {
+            self.cycle = (self.cycle + 1) % group.len();
+        } else {
+            self.commit();
+            self.group = Some(gi);
+            self.cycle = 0;
+        }
+        self.pending = Some(group[self.cycle]);
+        self.pressed_at = Instant::now();
+    }
+
+    /// Backspace drops the pending character if there is one, and a committed byte
+    /// otherwise — so it always undoes the last thing the user saw appear.
+    fn backspace(&mut self) {
+        if self.pending.is_some() {
+            self.pending = None;
+            self.group = None;
+        } else {
+            self.len = self.len.saturating_sub(1);
+        }
+    }
+
+    /// Settle the pending character once the key has been quiet long enough.
+    /// Returns whether anything moved, i.e. whether the field wants a repaint.
+    fn settle(&mut self) -> bool {
+        if self.pending.is_none()
+            || self.group.is_none()
+            || self.pressed_at.elapsed() < Duration::from_millis(T9_COMMIT_MS)
+        {
+            return false;
+        }
+        self.commit();
+        self.pending = None;
+        self.group = None;
+        true
+    }
+}
+
 impl<'a, P, T, H, S, R> Ui<'a, P, T, H, S, R>
 where
     P: DrawTarget<Color = Rgb565>,
@@ -28,61 +125,21 @@ where
     /// success, `None` on cancel / sleep / timeout / failed store.
     pub(super) fn run_rename(&mut self, current: &Label, hash: &[u8; 32]) -> Option<Label> {
         let idle_limit = Duration::from_millis(MENU_INACTIVITY_MS);
-        let groups = rsk_ui::T9_GROUPS;
-        let mut buf = [0u8; rsk_fido::passkeys::RP_NICK_MAX_LEN];
-        let mut len = 0usize;
-        for &b in current.as_str().as_bytes() {
-            if len < buf.len() {
-                buf[len] = b;
-                len += 1;
-            }
-        }
-
-        // T9 state
-        let mut pending: Option<u8> = None; // char being cycled (not yet committed)
-        let mut active_group: Option<usize> = None; // which T9 group is active
-        let mut cycle_at: usize = 0; // position within the active group
-        let mut last_t9_press = Instant::now();
-        /// Auto-commit the pending character after this long without a same-key press.
-        const T9_COMMIT_MS: u64 = 800;
-
-        let val = |buf: &[u8], len: usize| -> Label { Label::clamp(&buf[..len]) };
+        let mut t9 = T9::new(current);
 
         // Initial full-frame paint.
-        let _ = rsk_ui::render_rename(
-            &mut self.panel,
-            val(&buf, len).as_str(),
-            pending,
-            active_group,
-        );
+        let _ = rsk_ui::render_rename(&mut self.panel, t9.value().as_str(), t9.pending, t9.group);
         self.shown = None;
         self.touch.wait_release(Instant::now(), idle_limit);
 
         let mut last = Instant::now();
-        let mut prev_active = active_group;
+        let mut painted_group = t9.group;
         loop {
             if self.sleep_button_pressed() {
                 return None;
             }
-
-            // Auto-commit pending char after T9 timeout
-            if pending.is_some()
-                && active_group.is_some()
-                && last_t9_press.elapsed() >= Duration::from_millis(T9_COMMIT_MS)
-            {
-                if len < buf.len() {
-                    buf[len] = pending.unwrap();
-                    len += 1;
-                }
-                pending = None;
-                active_group = None;
-                let _ =
-                    rsk_ui::render_rename_field(&mut self.panel, val(&buf, len).as_str(), pending);
-                if prev_active != active_group {
-                    let _ = rsk_ui::render_rename_keys(&mut self.panel, active_group);
-                    prev_active = active_group;
-                }
-                self.shown = None;
+            if t9.settle() {
+                self.repaint_rename(&t9, &mut painted_group);
             }
 
             if let Some(p) = self.touch.read() {
@@ -92,40 +149,13 @@ where
                 }
                 if let Some(k) = rsk_ui::hit_rename(p) {
                     match k {
-                        rsk_ui::RenameKey::Char(gi) => {
-                            let group = groups[gi];
-                            if active_group == Some(gi) {
-                                cycle_at = (cycle_at + 1) % group.len();
-                            } else {
-                                if let Some(ch) = pending
-                                    && len < buf.len()
-                                {
-                                    buf[len] = ch;
-                                    len += 1;
-                                }
-                                active_group = Some(gi);
-                                cycle_at = 0;
-                            }
-                            pending = Some(group[cycle_at]);
-                            last_t9_press = Instant::now();
-                        }
-                        rsk_ui::RenameKey::Backspace => {
-                            if pending.is_some() {
-                                pending = None;
-                                active_group = None;
-                            } else {
-                                len = len.saturating_sub(1);
-                            }
-                        }
+                        rsk_ui::RenameKey::Char(gi) => t9.press(gi),
+                        rsk_ui::RenameKey::Backspace => t9.backspace(),
                         rsk_ui::RenameKey::Save => {
-                            if let Some(ch) = pending
-                                && len < buf.len()
-                            {
-                                buf[len] = ch;
-                                len += 1;
-                            }
-                            let committed = val(&buf, len);
-                            let dev = self.keys.device();
+                            t9.commit();
+                            let committed = t9.value();
+                            let mkek = read_fused(self.keys.mkek_source);
+                            let dev = self.keys.device(&mkek);
                             let saved = rsk_fido::passkeys::set_rp_nickname(
                                 &dev,
                                 &mut self.fs.borrow_mut(),
@@ -135,17 +165,7 @@ where
                             return saved.then_some(committed);
                         }
                     }
-                    // Partial updates: field always, keys only if active group changed.
-                    let _ = rsk_ui::render_rename_field(
-                        &mut self.panel,
-                        val(&buf, len).as_str(),
-                        pending,
-                    );
-                    if prev_active != active_group {
-                        let _ = rsk_ui::render_rename_keys(&mut self.panel, active_group);
-                        prev_active = active_group;
-                    }
-                    self.shown = None;
+                    self.repaint_rename(&t9, &mut painted_group);
                     self.touch.wait_release(last, idle_limit);
                     last = Instant::now();
                     continue;
@@ -157,6 +177,18 @@ where
             }
             block_for(Duration::from_millis(TOUCH_POLL_MS));
         }
+    }
+
+    /// Partial repaint of the rename screen: the field always, the keypad only when
+    /// the active group moved. Repainting the keys on every character would flicker
+    /// the pad under the finger doing the typing.
+    fn repaint_rename(&mut self, t9: &T9, painted_group: &mut Option<usize>) {
+        let _ = rsk_ui::render_rename_field(&mut self.panel, t9.value().as_str(), t9.pending);
+        if *painted_group != t9.group {
+            let _ = rsk_ui::render_rename_keys(&mut self.panel, t9.group);
+            *painted_group = t9.group;
+        }
+        self.shown = None;
     }
 
     /// The on-device Firmware flow (Settings → Firmware): show the installed build and the
@@ -201,7 +233,7 @@ where
     }
 
     /// Enumerate the resident accounts under `hash` into `accts`, recording each one's
-    /// `EF_CRED` slot fid into the parallel `fids` (the key [`run_delete`] takes to
+    /// `EF_CRED` slot fid into the parallel `fids` (the key [`Self::run_delete`] takes to
     /// remove it). The label is the user name, else the display name, else a placeholder
     /// (a binary user id is not a legible label); credProtect ≥ 2 marks the row UV-gated.
     pub(super) fn load_accts(
@@ -211,7 +243,8 @@ where
         fids: &mut [u16],
         page: u16,
     ) -> (usize, u16) {
-        let dev = self.keys.device();
+        let mkek = read_fused(self.keys.mkek_source);
+        let dev = self.keys.device(&mkek);
         let offset = page as usize * rsk_ui::PK_ROWS_MAX;
         let mut store = self.fs.borrow_mut();
         let mut idx = 0usize;
@@ -239,17 +272,17 @@ where
 
     /// Collect a PIN on the on-screen pad (the trusted built-in-UV input). Renders the
     /// masked keypad, block-polls the CST328 accumulating ASCII digits into `out`, and
-    /// honours the same UP_PENDING / CANCEL_REQUESTED / timeout contract as the confirm
+    /// honours the same up-pending / cancel / timeout contract as the confirm
     /// wait. Owns the panel via `&mut self` (single thread executor → the worker is
-    /// parked), so both the host built-in-UV path ([`TouchPresence::collect_pin`]) and a
-    /// display-initiated gate ([`local_pin_gate`]) share one pad. Each key debounces to
+    /// parked), so both the host built-in-UV path (`TouchPresence::collect_pin`) and a
+    /// display-initiated gate ([`Self::local_pin_gate`]) share one pad. Each key debounces to
     /// release; OK commits only at/above `min_len`, Del backspaces, Cancel declines, and the
     /// eye toggle reveals/hides the typed digits (auto re-masking after a short idle). The
     /// entered digits are the caller's to zeroize after verifying.
     ///
     /// `yield_to_host`: on a *local* gate (delete / factory-reset / unlock) no host is
     /// waiting on this PIN, so a queued host command must not be starved while the user
-    /// types — set it `true` to abandon entry ([`PinEntry::Cancelled`], no retry burned)
+    /// types — set it `true` to abandon entry ([`rsk_fido::PinEntry::Cancelled`], no retry burned)
     /// the instant a command arrives, mirroring the browse modals. The host built-in-UV
     /// path sets it `false`: there the host *is* waiting on this exact PIN (its `REQ` is
     /// already consumed), so it blocks to the presence timeout as before.
@@ -633,6 +666,7 @@ where
                 .borrow_mut()
                 .factory_wipe(
                     rsk_fido::survives_factory_reset,
+                    rsk_fido::is_fido_seed_fid,
                     rsk_device::gates_wiped_last,
                 )
                 .is_ok();
@@ -660,7 +694,7 @@ where
     }
 
     /// The on-device Set / Change PIN flow for `target` (Settings → Security → Device/FIDO
-    /// PIN). When that PIN is already set it is verified first via [`local_pin_gate`] (so a
+    /// PIN). When that PIN is already set it is verified first via [`Self::local_pin_gate`] (so a
     /// change still proves knowledge of the current PIN; a first-time set returns at once
     /// with no prompt), then the new PIN is entered twice and the two must match before it
     /// is written with a fresh retry budget. The **device** PIN goes to its own
@@ -723,7 +757,8 @@ where
                 _ => break, // confirm declined / timeout / host yield
             };
             if n1 == n2 && rsk_crypto::ct_eq(&new[..n1], &confirm[..n2]) {
-                let dev = self.keys.device();
+                let mkek = read_fused(self.keys.mkek_source);
+                let dev = self.keys.device(&mkek);
                 // The pad already enforced the length floor; a flash error is the only
                 // realistic failure and leaves no PIN set — abandon either way. Route to the
                 // device PIN's own record or the FIDO clientPIN's by target.
@@ -783,7 +818,8 @@ where
         // / EF_RETRIES wouldn't exist for the gate to verify against (it would dead-end on the
         // missing retry counter). Idempotent: every step is has-data guarded.
         {
-            let dev = self.keys.device();
+            let mkek = read_fused(self.keys.mkek_source);
+            let dev = self.keys.device(&mkek);
             let mut rng = self.rng.borrow_mut();
             let mut fs = self.fs.borrow_mut();
             let _ = rsk_piv::files::scan_files(&dev, &mut fs, &mut *rng);
@@ -834,6 +870,11 @@ where
     /// spent. Returns the secret padded to the 8-byte PIV wire form on success (for the
     /// following change/unblock), or `None` on cancel / timeout / blocked (the latter shows
     /// the lockout notice). The retry counter is the PIV applet's own (`EF_RETRIES`).
+    ///
+    /// It reaches no `Session`, and must not: this is the old-secret check of a
+    /// CHANGE / RESET RETRY COUNTER, which a YubiKey lets a host's standing PIN
+    /// status outlive — blocking the reference here included (`rsk-piv`'s
+    /// `only_a_failed_verify_revokes_the_standing_one`).
     fn gate_piv_ref(&mut self, which: rsk_piv::PinRef, buf: &mut [u8]) -> Option<[u8; 8]> {
         let title = piv_ref_title(which);
         let mut caption = rsk_piv::reference_retries_left(&mut self.fs.borrow_mut(), which)
@@ -849,7 +890,8 @@ where
             // recovery secret), matching `run_set_pin` / `collect_new_piv_pin` hygiene.
             let mut pad = rsk_piv::pad_pin(&buf[..n])?;
             let sw = {
-                let dev = self.keys.device();
+                let mkek = read_fused(self.keys.mkek_source);
+                let dev = self.keys.device(&mkek);
                 rsk_piv::verify_reference(&dev, &mut self.fs.borrow_mut(), which, &pad)
             };
             if sw == rsk_sdk::Sw::OK {
@@ -933,7 +975,8 @@ where
         let applied = match self.collect_new_piv_pin(piv_ref_title(which)) {
             Some(mut new_pad) => {
                 let sw = {
-                    let dev = self.keys.device();
+                    let mkek = read_fused(self.keys.mkek_source);
+                    let dev = self.keys.device(&mkek);
                     rsk_piv::change_reference(
                         &dev,
                         &mut self.fs.borrow_mut(),
@@ -974,7 +1017,8 @@ where
         let applied = match self.collect_new_piv_pin(piv_ref_title(rsk_piv::PinRef::Pin)) {
             Some(mut new_pad) => {
                 let sw = {
-                    let dev = self.keys.device();
+                    let mkek = read_fused(self.keys.mkek_source);
+                    let dev = self.keys.device(&mkek);
                     rsk_piv::unblock_pin_with_puk(
                         &dev,
                         &mut self.fs.borrow_mut(),
@@ -1007,7 +1051,8 @@ where
         // Materialise the PIV defaults first (a never-host-selected display unit) so the host
         // can later VERIFY the PIN to read the protected key. Idempotent.
         {
-            let dev = self.keys.device();
+            let mkek = read_fused(self.keys.mkek_source);
+            let dev = self.keys.device(&mkek);
             let mut rng = self.rng.borrow_mut();
             let mut fs = self.fs.borrow_mut();
             let _ = rsk_piv::files::scan_files(&dev, &mut fs, &mut *rng);
@@ -1024,7 +1069,8 @@ where
         // The generate + seal holds the dev/rng/fs borrows across a synchronous, no-await span
         // (no key search — AES key gen is instant), so the worker can't preempt.
         let ok = {
-            let dev = self.keys.device();
+            let mkek = read_fused(self.keys.mkek_source);
+            let dev = self.keys.device(&mkek);
             let mut rng = self.rng.borrow_mut();
             let mut fs = self.fs.borrow_mut();
             rsk_piv::protect_mgm_key(&dev, &mut fs, &mut *rng) == rsk_sdk::Sw::OK
@@ -1036,3 +1082,7 @@ where
         }
     }
 }
+
+#[cfg(test)]
+#[path = "pin_tests.rs"]
+mod tests;

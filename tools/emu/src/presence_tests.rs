@@ -49,7 +49,11 @@ fn delayed_presence_marks_pending_and_auto_confirms() {
     assert_eq!(presence.ask(Confirm::titled("Test?")), Verdict::Confirmed);
     assert!(started.elapsed() >= delay);
     assert!(!signals.up_pending_for(SCOPE_FIDO));
-    assert!(rsk_fido::UserPresence::shows_confirm(&presence));
+    // A timer answered the prompt, so no one confirmed anything: this stays the
+    // auto-confirming kind of authenticator, which CTAP 2.1 §6.6 does NOT exempt
+    // from the reset window. Claiming otherwise let a reset through 13 s after
+    // power-on — see `EmuPresence::shows_confirm`.
+    assert!(!rsk_fido::UserPresence::shows_confirm(&presence));
 }
 
 #[test]

@@ -418,7 +418,7 @@ where
 
 /// The **recovery phrase** itself: the 24 BIP-39 words rendered on the trusted display so
 /// the seed never crosses USB. Twelve words per page in two numbered columns; the
-/// [pager](render_pager) walks the pages, the title-bar back chevron exits. `words` is the
+/// pager (`render_pager`) walks the pages, the title-bar back chevron exits. `words` is the
 /// full ordered list (held transiently by the firmware, never stored), `page` the 0-based
 /// page. The words are drawn bright with a dim index so a transcription error is unlikely.
 pub fn render_seed_phrase<D>(

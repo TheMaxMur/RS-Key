@@ -8,7 +8,7 @@
 //! and a packed EdDSA self-attestation fails on Windows/WinHello (issue #26).
 //! Resident keys (rk) are stored; non-resident credentials carry the full box in
 //! authData. A configured PIN requires a verified `pinUvAuthParam`
-//! ([`enforce_pin`]), which sets the `uv` flag — except for a non-discoverable
+//! (`enforce_pin`), which sets the `uv` flag — except for a non-discoverable
 //! credential, which `makeCredUvNotRqd` lets through on presence alone. Request
 //! extensions are sealed into the box and echoed in the authData extension
 //! output (ED flag); excludeList is credProtect-aware. Enterprise attestation
@@ -26,15 +26,16 @@ use rsk_crypto::pinproto::PinProto;
 use rsk_crypto::sha256;
 use rsk_fs::{Fs, Storage};
 
-use crate::cbordec::{cbor, def_arr, def_map, parse_credential_descriptors};
+use crate::cbordec::{cbor, def_arr, def_map, parse_credential_descriptors, skip_value};
 use crate::cert;
 use crate::clientpin::{UvOutcome, builtin_uv_enabled, builtin_uv_step};
 use crate::consts::{
     AAGUID, ALG_ED25519, ALG_EDDSA, ALG_ES256, ALG_ES256K, ALG_ES384, ALG_ES512, ALG_ESP256,
-    ALG_ESP384, ALG_ESP512, ALG_MLDSA44, ALG_MLDSA65, CRED_PROT_UV_REQUIRED, CURVE_ED25519,
-    CURVE_MLDSA44, CURVE_MLDSA65, CURVE_P256, CURVE_P256K1, CURVE_P384, CURVE_P521, EF_ATT_CHAIN,
-    EF_EA_ENABLED, EF_EE_DEV, EF_MINPINLEN, EF_PIN, FLAG_AT, FLAG_ED, FLAG_UP, FLAG_UV,
-    MAX_CREDBLOB_LENGTH, MAX_CREDENTIAL_COUNT_IN_LIST, MAX_MIN_PIN_RPIDS, MAX_RESIDENT_CREDENTIALS,
+    ALG_ESP384, ALG_ESP512, ALG_MLDSA44, ALG_MLDSA65, CRED_PROT_UV_OPTIONAL, CRED_PROT_UV_REQUIRED,
+    CURVE_ED25519, CURVE_MLDSA44, CURVE_MLDSA65, CURVE_P256, CURVE_P256K1, CURVE_P384, CURVE_P521,
+    EF_ATT_CHAIN, EF_EA_ENABLED, EF_EE_DEV, EF_MINPINLEN, EF_PIN, FLAG_AT, FLAG_ED, FLAG_UP,
+    FLAG_UV, LARGE_BLOB_EXT, MAX_CREDBLOB_LENGTH, MAX_CREDENTIAL_COUNT_IN_LIST, MAX_MIN_PIN_RPIDS,
+    MAX_RESIDENT_CREDENTIALS,
 };
 use crate::credential::{
     CRED_BOX_MAX, CRED_PUBKEY_MAX, CRED_REC_MAX, CRED_RESIDENT_LEN, CredExt, CredInput, Credential,
@@ -47,6 +48,7 @@ use crate::error::{CtapError, CtapResult};
 use crate::hmacsecret::{self, HmacSecretReq, SALT_ENC_MAX};
 use crate::journal;
 use crate::keyderiv::fido_load_key;
+use crate::largeblobext::{self, McInput};
 use crate::seed::load_att_key;
 use crate::state::PERM_MC;
 use crate::{Ctx, Rng};
@@ -71,17 +73,24 @@ const _: () = assert!(
     "authData buffer too small for the ML-DSA-65 worst case",
 );
 
-/// Map a requested COSE alg (incl. the curve-explicit aliases) to its canonical
-/// `(alg, curve)`, or `None` if unsupported.
+/// Map a requested COSE alg to the `(alg, curve)` the credential is created with,
+/// or `None` if unsupported. The alg returned is the one the platform **asked
+/// for**: the curve-explicit ids (`-9`/`-19`/`-51`/`-52`) share their key material
+/// with the classic spelling, and WebAuthn §7.1 has the RP match the attested
+/// key's alg against the list it sent, so folding one fails its own registration.
 fn alg_to_curve(alg: i64) -> Option<(i64, u8)> {
     match alg {
-        ALG_ES256 | ALG_ESP256 => Some((ALG_ES256, CURVE_P256)),
-        ALG_ES384 | ALG_ESP384 => Some((ALG_ES384, CURVE_P384)),
-        ALG_ES512 | ALG_ESP512 => Some((ALG_ES512, CURVE_P521)),
+        ALG_ES256 => Some((ALG_ES256, CURVE_P256)),
+        ALG_ESP256 => Some((ALG_ESP256, CURVE_P256)),
+        ALG_ES384 => Some((ALG_ES384, CURVE_P384)),
+        ALG_ESP384 => Some((ALG_ESP384, CURVE_P384)),
+        ALG_ES512 => Some((ALG_ES512, CURVE_P521)),
+        ALG_ESP512 => Some((ALG_ESP512, CURVE_P521)),
         // The FIPS-style profile keeps secp256k1 out of new credentials
         // (existing K1 credentials still assert — creation is the policy gate).
         ALG_ES256K if cfg!(not(feature = "fips-profile")) => Some((ALG_ES256K, CURVE_P256K1)),
-        ALG_EDDSA | ALG_ED25519 => Some((ALG_EDDSA, CURVE_ED25519)),
+        ALG_EDDSA => Some((ALG_EDDSA, CURVE_ED25519)),
+        ALG_ED25519 => Some((ALG_ED25519, CURVE_ED25519)),
         // ML-DSA-44 and -65 are backed; -50 (ML-DSA-87) falls through — its
         // response overruns the CTAPHID message ceiling.
         ALG_MLDSA44 => Some((ALG_MLDSA44, CURVE_MLDSA44)),
@@ -108,17 +117,23 @@ struct Request<'a> {
     up: Option<bool>,
     uv: bool,
     pin_uv_auth_param: Option<&'a [u8]>,
-    pin_uv_auth_protocol: u64,
-    ext_cred_protect: u64,
+    /// `None` = the platform sent no pinUvAuthProtocol. A numeric `0` is a value
+    /// it did send, and an unsupported one (§6.1.2 step 2).
+    pin_uv_auth_protocol: Option<u64>,
+    /// `None` = no credProtect extension. `Some(0)` is an out-of-range level.
+    ext_cred_protect: Option<u64>,
     ext_cred_blob: &'a [u8],
     ext_min_pin_length: bool,
     ext_third_party_payment: bool,
     ext_hmac_secret: bool,
     ext_large_blob_key: Option<bool>,
+    /// The CTAP 2.3 `largeBlob` extension input, on a `largeblob-ext` build.
+    ext_large_blob: McInput,
     hmac_secret_mc: HmacSecretReq<'a>,
-    /// enterpriseAttestation (request field 0x0A): 0 none, 1 vendor-facilitated,
-    /// 2 platform-managed (full attestation by the device key).
-    enterprise_attestation: u64,
+    /// enterpriseAttestation (request field 0x0A): 1 vendor-facilitated, 2
+    /// platform-managed (full attestation by the device key). §6.1.2 step 9 keys
+    /// on the field being **present**, so `None` and `Some(0)` differ.
+    enterprise_attestation: Option<u64>,
 }
 
 fn parse(data: &[u8]) -> Result<Request<'_>, CtapError> {
@@ -138,15 +153,16 @@ fn parse(data: &[u8]) -> Result<Request<'_>, CtapError> {
         up: None,
         uv: false,
         pin_uv_auth_param: None,
-        pin_uv_auth_protocol: 0,
-        ext_cred_protect: 0,
+        pin_uv_auth_protocol: None,
+        ext_cred_protect: None,
         ext_cred_blob: &[],
         ext_min_pin_length: false,
         ext_third_party_payment: false,
         ext_hmac_secret: false,
         ext_large_blob_key: None,
+        ext_large_blob: McInput::Absent,
         hmac_secret_mc: HmacSecretReq::default(),
-        enterprise_attestation: 0,
+        enterprise_attestation: None,
     };
 
     let n = def_map(&mut d)?;
@@ -170,9 +186,9 @@ fn parse(data: &[u8]) -> Result<Request<'_>, CtapError> {
             6 => parse_extensions(&mut d, &mut req)?,
             7 => parse_options(&mut d, &mut req)?,
             8 => req.pin_uv_auth_param = Some(cbor(d.bytes())?),
-            9 => req.pin_uv_auth_protocol = cbor(d.u32())? as u64,
-            10 => req.enterprise_attestation = cbor(d.u32())? as u64,
-            _ => cbor(d.skip())?,
+            9 => req.pin_uv_auth_protocol = Some(cbor(d.u32())? as u64),
+            10 => req.enterprise_attestation = Some(cbor(d.u32())? as u64),
+            _ => skip_value(&mut d)?,
         }
     }
     Ok(req)
@@ -190,7 +206,7 @@ fn parse_rp_entity<'a>(d: &mut Decoder<'a>, req: &mut Request<'a>) -> Result<(),
             "name" => {
                 let _: &str = cbor(d.str())?;
             }
-            _ => cbor(d.skip())?,
+            _ => skip_value(d)?,
         }
     }
     Ok(())
@@ -204,7 +220,7 @@ fn parse_user_entity<'a>(d: &mut Decoder<'a>, req: &mut Request<'a>) -> Result<(
             "id" => req.user_id = cbor(d.bytes())?,
             "name" => req.user_name = cbor(d.str())?,
             "displayName" => req.user_display_name = cbor(d.str())?,
-            _ => cbor(d.skip())?,
+            _ => skip_value(d)?,
         }
     }
     Ok(())
@@ -229,7 +245,7 @@ fn parse_pubkey_params(d: &mut Decoder<'_>, req: &mut Request<'_>) -> Result<(),
                     alg = cbor(d.i64())?;
                     alg_present = true;
                 }
-                _ => cbor(d.skip())?,
+                _ => skip_value(d)?,
             }
         }
         // Every entry is a PublicKeyCredentialParameters and must carry both
@@ -253,14 +269,18 @@ fn parse_extensions<'a>(d: &mut Decoder<'a>, req: &mut Request<'a>) -> Result<()
     let m = def_map(d)?;
     for _ in 0..m {
         match cbor(d.str())? {
-            "credProtect" => req.ext_cred_protect = cbor(d.u32())? as u64,
+            "credProtect" => req.ext_cred_protect = Some(cbor(d.u32())? as u64),
             "credBlob" => req.ext_cred_blob = cbor(d.bytes())?,
             "minPinLength" => req.ext_min_pin_length = cbor(d.bool())?,
             "thirdPartyPayment" => req.ext_third_party_payment = cbor(d.bool())?,
             "hmac-secret" => req.ext_hmac_secret = cbor(d.bool())?,
             "hmac-secret-mc" => req.hmac_secret_mc = hmacsecret::parse(d)?,
-            "largeBlobKey" => req.ext_large_blob_key = Some(cbor(d.bool())?),
-            _ => cbor(d.skip())?,
+            // Only one of the two large-blob designs is a recognized extension in
+            // a given build (§12.4); the other falls through to the skip arm like
+            // any unknown one, so its downstream checks stay inert.
+            "largeBlobKey" if !LARGE_BLOB_EXT => req.ext_large_blob_key = Some(cbor(d.bool())?),
+            "largeBlob" if LARGE_BLOB_EXT => req.ext_large_blob = largeblobext::parse_mc(d)?,
+            _ => skip_value(d)?,
         }
     }
     Ok(())
@@ -274,7 +294,7 @@ fn parse_options(d: &mut Decoder<'_>, req: &mut Request<'_>) -> Result<(), CtapE
             "rk" => req.rk = cbor(d.bool())?,
             "up" => req.up = Some(cbor(d.bool())?),
             "uv" => req.uv = cbor(d.bool())?,
-            _ => cbor(d.skip())?,
+            _ => skip_value(d)?,
         }
     }
     Ok(())
@@ -288,7 +308,6 @@ pub fn make_credential<S: Storage, R: Rng>(
     out: &mut [u8],
 ) -> CtapResult {
     let mut req = parse(data)?;
-
     if req.client_data_hash.len() != 32 || req.rp_id.is_empty() || req.user_id.is_empty() {
         return Err(CtapError::MissingParameter);
     }
@@ -314,12 +333,6 @@ pub fn make_credential<S: Storage, R: Rng>(
     // not an error.
     req.user_name = truncate_utf8(req.user_name, USER_NAME_MAX);
     req.user_display_name = truncate_utf8(req.user_display_name, USER_NAME_MAX);
-    if !req.has_pubkey_param {
-        return Err(CtapError::MissingParameter);
-    }
-    if req.sel_alg == 0 {
-        return Err(CtapError::UnsupportedAlgorithm);
-    }
     // §6.1.2 step 5: "pinUvAuthParam and the 'uv' option are processed as mutually
     // exclusive with pinUvAuthParam taking precedence" — a token request that also
     // carries uv:true is NOT an error, the option is simply treated as false.
@@ -330,11 +343,27 @@ pub fn make_credential<S: Storage, R: Rng>(
     // MakeCredential Req-6: P-3 up=true succeeds, F-1 up=false fails). `uv` is an
     // error only when there is no built-in user verification method, or it is not
     // presently configured — on a screenless build, always.
+    //
+    // Judged ABOVE step 2's protocol, which is where the oracle puts it and not
+    // where §6.1.2's numbering does: a YubiKey 5.7.4 answers INVALID_OPTION to
+    // up:false and to a bare uv:true whatever `pinUvAuthProtocol` says, and only
+    // the request map's own shape beats them there.
     if req.up == Some(false) {
         return Err(CtapError::InvalidOption);
     }
     if req.uv && !builtin_uv_enabled(ctx) {
         return Err(CtapError::InvalidOption);
+    }
+    // §6.1.2 step 2 ahead of every check below — where the oracle puts it: a
+    // present-but-unsupported protocol outranks a bad algorithm, an unchoosable
+    // `pubKeyCredParams`, the remaining options and the selection gesture. An
+    // absent one is `enforce_pin`'s business.
+    let proto = crate::clientpin::checked_proto(req.pin_uv_auth_protocol)?;
+    if !req.has_pubkey_param {
+        return Err(CtapError::MissingParameter);
+    }
+    if req.sel_alg == 0 {
+        return Err(CtapError::UnsupportedAlgorithm);
     }
     // largeBlobKey may not be requested as false and requires a resident key.
     if req.ext_large_blob_key == Some(false) || (req.ext_large_blob_key == Some(true) && !req.rk) {
@@ -344,34 +373,38 @@ pub fn make_credential<S: Storage, R: Rng>(
     if req.hmac_secret_mc.present && !req.ext_hmac_secret {
         return Err(CtapError::MissingParameter);
     }
-    // hmac-secret-mc carries the same salt fields as getAssertion's hmac-secret;
-    // reject an empty salt up front for parity with `get_assertion` rather than
-    // relying only on the downstream length check in `hmacsecret::eval`.
+    // hmac-secret-mc carries the same salt fields as getAssertion's hmac-secret, so
+    // an absent one is refused in the same place and with the same code. A
+    // zero-length one was sent, and is the length gate's business.
     if req.hmac_secret_mc.present
-        && (req.hmac_secret_mc.salt_enc.is_empty() || req.hmac_secret_mc.salt_auth.is_empty())
+        && (req.hmac_secret_mc.salt_enc.is_none() || req.hmac_secret_mc.salt_auth.is_none())
     {
         return Err(CtapError::MissingParameter);
     }
-    // credProtect (§12.1) defines only levels 1/2/3; reject an out-of-range value
-    // (CTAP2_ERR_INVALID_OPTION) instead of silently degrading it to no-protection.
-    if req.ext_cred_protect > CRED_PROT_UV_REQUIRED {
-        return Err(CtapError::InvalidOption);
+    // credProtect (§12.1) defines only levels 1/2/3 and names no error for anything
+    // else, so the oracle decides: a YubiKey 5.7.4 refuses 0, 4 and 255 alike with
+    // CTAP1_ERR_INVALID_PARAMETER. A level of `0` is a value the platform sent.
+    if let Some(level) = req.ext_cred_protect
+        && !(CRED_PROT_UV_OPTIONAL..=CRED_PROT_UV_REQUIRED).contains(&level)
+    {
+        return Err(CtapError::InvalidParameter);
     }
-    // Enterprise attestation (§6.1.2): only when enabled via authenticatorConfig,
-    // and only levels 1/2. Whether it is actually performed (and the `ep` flag set)
-    // is decided later: type 2 for any RP, type 1 only for a vendor-listed RP — see
-    // `rp_eligible_for_vendor_ea` and `full_ea` in `make_credential_inner`.
-    if req.enterprise_attestation > 0 {
+    // Enterprise attestation (§6.1.2 step 9) keys on the field being PRESENT: with
+    // EA disabled every present value is INVALID_PARAMETER — `0` included, measured
+    // — and with it enabled only 1/2 pass. Whether attestation is actually performed
+    // (and the `ep` flag set) is decided later: type 2 for any RP, type 1 only for a
+    // vendor-listed RP — see `rp_eligible_for_vendor_ea` in `make_credential_inner`.
+    if let Some(level) = req.enterprise_attestation {
         if !ctx.fs.has_data(EF_EA_ENABLED) {
             return Err(CtapError::InvalidParameter);
         }
-        if req.enterprise_attestation != 1 && req.enterprise_attestation != 2 {
+        if level != 1 && level != 2 {
             return Err(CtapError::InvalidOption);
         }
     }
 
     let rp_id_hash = sha256(req.rp_id.as_bytes());
-    let verified = enforce_pin(ctx, &req, &rp_id_hash)?;
+    let verified = enforce_pin(ctx, &req, &rp_id_hash, proto)?;
 
     let mut seed = ctx.load_keydev().ok_or(CtapError::Other)?;
     let result = make_credential_inner(ctx, &req, &rp_id_hash, &seed, verified, out);
@@ -399,6 +432,7 @@ fn enforce_pin<S: Storage, R: Rng>(
     ctx: &mut Ctx<S, R>,
     req: &Request,
     rp_id_hash: &[u8; 32],
+    proto: Option<PinProto>,
 ) -> Result<UvOutcome, CtapError> {
     let pin_set = ctx.fs.has_data(EF_PIN);
     match req.pin_uv_auth_param {
@@ -416,10 +450,7 @@ fn enforce_pin<S: Storage, R: Rng>(
             })
         }
         Some(param) => {
-            let proto = match req.pin_uv_auth_protocol {
-                0 => return Err(CtapError::MissingParameter),
-                p => PinProto::from_u64(p).ok_or(CtapError::InvalidParameter)?,
-            };
+            let proto = proto.ok_or(CtapError::MissingParameter)?;
             if !ctx.state.verify_token(proto, req.client_data_hash, param)
                 || ctx.state.paut.permissions & PERM_MC == 0
                 || (ctx.state.paut.has_rp_id && ctx.state.paut.rp_id_hash != *rp_id_hash)
@@ -501,7 +532,7 @@ fn make_credential_inner<S: Storage, R: Rng>(
         alg: req.sel_alg,
         curve: req.sel_curve,
         ext: CredExt {
-            cred_protect: req.ext_cred_protect,
+            cred_protect: req.ext_cred_protect.unwrap_or(0),
             cred_blob: req.ext_cred_blob,
             hmac_secret: req.ext_hmac_secret,
             large_blob_key: req.ext_large_blob_key == Some(true),
@@ -612,7 +643,8 @@ fn make_credential_inner<S: Storage, R: Rng>(
     }
     let cose_len = {
         let mut enc = Encoder::new(Cursor::new(&mut ad[p..]));
-        key.cose_public(&mut enc).map_err(|_| CtapError::Other)?;
+        key.cose_public(req.sel_alg, &mut enc)
+            .map_err(|_| CtapError::Other)?;
         enc.writer().position()
     };
     p += cose_len;
@@ -627,8 +659,8 @@ fn make_credential_inner<S: Storage, R: Rng>(
     // presents the org/EP cert and sets the `ep` flag. A type-1 request for a
     // non-listed RP is NOT enterprise: full attestation with the device's own
     // cert and no `ep` (CTAP2.1 §6.1.3, conformance Enterprise-Attestation F-6).
-    let ea_performed = req.enterprise_attestation == 2
-        || (req.enterprise_attestation == 1 && rp_eligible_for_vendor_ea(req.rp_id));
+    let ea_performed = req.enterprise_attestation == Some(2)
+        || (req.enterprise_attestation == Some(1) && rp_eligible_for_vendor_ea(req.rp_id));
     // Every credential ships packed **basic** attestation: the device key signs and
     // the x5c leaf is its cert. Both alternatives break clients — an empty
     // `fmt:"none"` statement is rejected by OpenSSH < 10.0, which verifies any
@@ -646,6 +678,19 @@ fn make_credential_inner<S: Storage, R: Rng>(
         None
     };
 
+    // §12.4 makeCredential: this device gives every DISCOVERABLE credential
+    // large-blob capability (the spec's "MAY choose to always create new
+    // credentials with large blob capability"), because the blob hangs off the
+    // resident record. A non-discoverable credential keeps no on-device state at
+    // all, so `support: "required"` is refused rather than silently unmet — and
+    // an absent input returns nothing, the "MUST NOT return unsolicited output".
+    let large_blob_supported = match req.ext_large_blob {
+        McInput::Absent => false,
+        _ if req.rk => true,
+        McInput::Required => return Err(CtapError::LargeBlobStorageFull),
+        McInput::Preferred => false,
+    };
+
     let resp_len = encode_mc_response(
         out,
         &ad[..ad_len],
@@ -657,6 +702,7 @@ fn make_credential_inner<S: Storage, R: Rng>(
             ea_performed,
         },
         large_blob_key,
+        large_blob_supported,
     )?;
 
     if req.rk
@@ -689,26 +735,32 @@ struct AttShape {
     ea_performed: bool,
 }
 
-/// Encode the makeCredential response:
-/// `{1: fmt, 2: authData, 3: attStmt [, 4: ep] [, 5: largeBlobKey]}`.
+/// Encode the makeCredential response: `{1: fmt, 2: authData, 3: attStmt
+/// [, 4: ep] [, 5: largeBlobKey] [, 6: unsignedExtensionOutputs]}`.
 ///
 /// `fmt` is always `"packed"` and attStmt is always `{alg, sig, x5c}` — basic
 /// attestation with the device cert, or the org chain when EA was performed. The
 /// three keys are already in CTAP2 canonical order. `ep` appears only when EA was
-/// actually performed.
+/// actually performed. Fields 5 and 6 are the two mutually exclusive large-blob
+/// designs, so at most one of them is ever present.
 fn encode_mc_response(
     out: &mut [u8],
     ad: &[u8],
     att: &AttBufs,
     shape: AttShape,
     large_blob_key: Option<[u8; 32]>,
+    large_blob_supported: bool,
 ) -> CtapResult {
     let mut enc = Encoder::new(Cursor::new(out));
-    enc.map(3 + u64::from(shape.ea_performed) + u64::from(large_blob_key.is_some()))
-        .and_then(|e| e.u8(1)?.str("packed"))
-        .and_then(|e| e.u8(2)?.bytes(ad))
-        .and_then(|e| e.u8(3))
-        .map_err(|_| CtapError::Other)?;
+    enc.map(
+        3 + u64::from(shape.ea_performed)
+            + u64::from(large_blob_key.is_some())
+            + u64::from(large_blob_supported),
+    )
+    .and_then(|e| e.u8(1)?.str("packed"))
+    .and_then(|e| e.u8(2)?.bytes(ad))
+    .and_then(|e| e.u8(3))
+    .map_err(|_| CtapError::Other)?;
     enc.map(3)
         .and_then(|e| e.str("alg")?.i64(ALG_ES256))
         .and_then(|e| e.str("sig")?.bytes(&att.sig[..shape.sig_len]))
@@ -723,6 +775,10 @@ fn encode_mc_response(
         enc.u8(5)
             .and_then(|e| e.bytes(&lbk))
             .map_err(|_| CtapError::Other)?;
+    }
+    if large_blob_supported {
+        enc.u8(6).map_err(|_| CtapError::Other)?;
+        largeblobext::write_mc_output(&mut enc).map_err(|_| CtapError::Other)?;
     }
     Ok(enc.writer().position())
 }
@@ -862,7 +918,7 @@ fn encode_mc_extensions<S: Storage>(
         0
     };
     let l = u64::from(blob_present)
-        + u64::from(req.ext_cred_protect != 0)
+        + u64::from(req.ext_cred_protect.is_some())
         + u64::from(req.ext_hmac_secret)
         + u64::from(min_pin > 0)
         + u64::from(!hmac_mc.is_empty());
@@ -878,9 +934,9 @@ fn encode_mc_extensions<S: Storage>(
             .and_then(|e| e.bool(req.ext_cred_blob.len() <= MAX_CREDBLOB_LENGTH))
             .map_err(|_| CtapError::Other)?;
     }
-    if req.ext_cred_protect != 0 {
+    if let Some(level) = req.ext_cred_protect {
         enc.str("credProtect")
-            .and_then(|e| e.u64(req.ext_cred_protect))
+            .and_then(|e| e.u64(level))
             .map_err(|_| CtapError::Other)?;
     }
     if req.ext_hmac_secret {

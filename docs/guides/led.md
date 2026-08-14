@@ -234,6 +234,12 @@ while your finger is still on the button, and the next queued request would then
 inherit that same press as its consent. `rsk hw` refuses anything below 10, and
 the firmware raises it anyway if some other host writes the record directly.
 
+It bounds the **whole** ceremony, not just the wait for a press: a key that
+confirms and then waits for the finger to lift stops waiting at the same
+deadline, so no one request occupies a button key for longer than the window.
+(A trusted-display key may add up to 3 s absorbing a finger already on the
+panel.)
+
 ### Reset to defaults
 
 ```sh
@@ -259,7 +265,8 @@ The firmware writes the block to `EF_LED_CONF` and reloads it on every boot,
 so your settings survive a power cycle but not an OpenPGP/FIDO factory reset
 (those don't touch this file). The `led.rs` module keeps per-status atomics
 that the render task reads live. SET LED updates them immediately, then
-persists the full block to flash.
+persists the full block to flash — unless the record already holds exactly that
+block, in which case it answers `9000` and leaves the flash alone.
 
 The touch rules above live in the block codec (`crates/rsk-led`), not in any one
 command handler, so they apply wherever a block is decoded: the CCID setter, the

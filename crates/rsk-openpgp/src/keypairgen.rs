@@ -15,6 +15,7 @@ use crate::keys::{
     MAX_EC_POINT, MAX_RSA_PUBDO, PrivKey, curve_from_attr, generate_rsa, make_ec_pubkey_do,
     make_rsa_response, reset_sig_count, store_aes_key, store_ec_key, store_rsa_key,
 };
+use crate::origin;
 use crate::pin::Session;
 use rsa::RsaPrivateKey;
 
@@ -43,7 +44,7 @@ pub fn keypair_gen<S: Storage>(
         return (0, Sw::SECURITY_STATUS_NOT_SATISFIED);
     }
     let Some(fid) = data.first().and_then(|&t| crt_slot(t)) else {
-        return (0, WRONG_DATA);
+        return (0, Sw::WRONG_DATA);
     };
 
     let r = match p1 {
@@ -57,7 +58,8 @@ pub fn keypair_gen<S: Storage>(
     }
 }
 
-/// The slot's algorithm attribute, refused unless DO `0xFA` advertises it.
+/// The slot's algorithm attribute, refused unless DO `0xFA` advertises it. Shared
+/// with IMPORT, which reaches the same slot by the other door.
 ///
 /// `put_data` gates the *writer*, but a value stored by a build that predates that
 /// gate survives a firmware upgrade untouched — `EF_ALGO_PRIV*` is `DoSource::Internal`
@@ -69,7 +71,7 @@ pub fn keypair_gen<S: Storage>(
 ///
 /// Clamps to the buffer: `Storage::read` reports the DO's full stored length and PUT
 /// DATA caps nothing, so an over-long C1/C2/C3 must not slice OOB = brick.
-fn read_advertised_algo<'a, S: Storage>(
+pub(crate) fn read_advertised_algo<'a, S: Storage>(
     fs: &mut Fs<S>,
     fid: KeyFid,
     buf: &'a mut [u8; 16],
@@ -85,7 +87,7 @@ fn read_advertised_algo<'a, S: Storage>(
             if crate::dobj::advertised_algo(tag, algo) {
                 Ok(algo)
             } else {
-                Err(WRONG_DATA)
+                Err(Sw::WRONG_DATA)
             }
         }
         _ => Ok(DEFAULT_ALGO),
@@ -114,7 +116,7 @@ fn generate<S: Storage>(
             // before indexing — else the slice read panics (device reset). The
             // sibling reader `info::slot_algo` has the same `attr.len() >= 3` gate.
             if algo.len() < 3 {
-                return Err(WRONG_DATA);
+                return Err(Sw::WRONG_DATA);
             }
             let nbits = ((algo[1] as usize) << 8) | algo[2] as usize;
             let key = generate_rsa(rng, nbits)?;
@@ -140,9 +142,15 @@ fn generate<S: Storage>(
     Ok(n)
 }
 
-/// The post-store tail shared by EC and RSA generate: reset the signature
-/// counter on the SIG slot; mint a fresh AES-256 key on the DEC slot (OpenPGP
-/// cannot generate a symmetric key directly; a storage failure is non-fatal).
+/// The post-store tail shared by EC and RSA generate: record the slot's origin
+/// for DO 0xDE; reset the signature counter on the SIG slot; seed `D5` on the DEC
+/// slot if it is empty (OpenPGP cannot generate a symmetric key directly; a
+/// storage failure is non-fatal).
+///
+/// The seed never **replaces** a standing key. §7.2.14 lets GENERATE reset the DS
+/// counter and "other related DO (e. g. certificates)", and `D5` is related to no
+/// key pair: §7.2.12 gives PSO:ENCIPHER no key reference at all, so one card-level
+/// AES key serves a command that never touches the DEC slot.
 fn keygen_tail<S: Storage>(
     dev: &Device,
     fs: &mut Fs<S>,
@@ -150,9 +158,14 @@ fn keygen_tail<S: Storage>(
     rng: &mut dyn Rng,
     fid: KeyFid,
 ) -> Result<(), Sw> {
+    // After the key is committed, never before: a tear in between leaves the
+    // slot reading as imported, which is the claim that cannot be too strong —
+    // and for that same reason a mark that does not persist is not worth failing
+    // a keygen the host already paid for.
+    let _ = origin::mark(fs, fid, origin::ORIGIN_GENERATED);
     if fid == EF_PK_SIG {
         reset_sig_count(fs)?;
-    } else if fid == EF_PK_DEC {
+    } else if fid == EF_PK_DEC && !fs.has_key(EF_AES_KEY) {
         let mut aes = [0u8; 32];
         rng.fill(&mut aes);
         let _ = store_aes_key(dev, fs, sess, &aes);
@@ -219,7 +232,10 @@ pub fn rsa_generate_params<S: Storage>(
     if !sess.has_pw3 {
         return Err(Sw::SECURITY_STATUS_NOT_SATISFIED);
     }
-    let fid = data.first().and_then(|&t| crt_slot(t)).ok_or(WRONG_DATA)?;
+    let fid = data
+        .first()
+        .and_then(|&t| crt_slot(t))
+        .ok_or(Sw::WRONG_DATA)?;
     let mut algo_buf = [0u8; 16];
     let algo = read_advertised_algo(fs, fid, &mut algo_buf)?;
     if algo[0] != ALGO_RSA {
@@ -228,7 +244,7 @@ pub fn rsa_generate_params<S: Storage>(
     // Guard the modulus-size read against a short host-written attribute (see the
     // synchronous `generate`); indexing a 1/2-byte slice would panic (device reset).
     if algo.len() < 3 {
-        return Err(WRONG_DATA);
+        return Err(Sw::WRONG_DATA);
     }
     let nbits = ((algo[1] as usize) << 8) | algo[2] as usize;
     Ok(Some((fid, nbits)))

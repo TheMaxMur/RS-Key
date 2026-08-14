@@ -41,6 +41,17 @@ this page is about — *a signature cannot be had without a tap on a screen nami
 the true relying party* — can be tried before deciding whether to buy the
 hardware.
 
+`--taps <file>` replaces the mouse with a script — one contact per line,
+`x,y[,hold_ms[,gap_ms]]` in panel pixels, `#` for a comment — so a sequence that
+takes six taps to reach can be replayed instead of performed:
+
+```text
+# Settings → Security → FIDO PIN
+209,301
+119,123
+119,123
+```
+
 The images themselves are regenerated with `rsk-emu --screenshots docs/images`
 when a screen changes.
 
@@ -221,7 +232,11 @@ Grouped into three domains, plus the journal / backup / reset actions:
   `EF_PHY`'s `PresenceTimeout`, the same field `rsk hw --touch-timeout` writes,
   so the panel and the host tool stay in sync.
 - **Security**: set / change the **device PIN** and the **FIDO clientPIN** (each
-  chosen entirely on the panel), and a **PIV PIN** sub-menu: change the PIV PIN,
+  chosen entirely on the panel). Changing the clientPIN asks for the current one
+  first, and that prompt *is* the card's `changePIN` check: a **wrong** entry
+  spends a retry **and** ends any `pinUvAuthToken` a plugged-in platform holds,
+  exactly as a wrong old PIN sent over USB does — the platform just asks for the
+  PIN again. Then a **PIV PIN** sub-menu: change the PIV PIN,
   change the PUK, unblock a blocked PIN with the PUK, or **protect the management
   key**. *Protect mgmt key* generates a random AES-256 management key, seals it
   and marks it PIN-protected, the ykman `--protect` scheme, so a host then uses

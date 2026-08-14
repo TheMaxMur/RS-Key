@@ -30,14 +30,14 @@ use zeroize::Zeroize;
 use rsk_crypto::chachapoly::{chacha20poly1305_decrypt, chacha20poly1305_encrypt};
 use rsk_crypto::mac::hkdf_sha256;
 use rsk_crypto::mlkem::{MLKEM768_CT_LEN, MLKEM768_EK_LEN, mlkem768_encapsulate};
-use rsk_crypto::pinproto::{PinProto, ecdh_raw};
+use rsk_crypto::pinproto::ecdh_raw;
 use rsk_crypto::sha256;
 use rsk_fs::Storage;
 use rsk_led::{CONF_LEN as LED_CONF_LEN, EF_LED_CONF};
 use rsk_mgmt::{DevConfError, persist_dev_conf};
 use rsk_rescue::phy;
 
-use crate::cbordec::{cbor, def_map};
+use crate::cbordec::{cbor, def_map, skip_value};
 use crate::cert;
 use crate::consts::{
     CONFIG_TARGET_DEV_CONF, CONFIG_TARGET_LED, CONFIG_TARGET_PHY, CTAP_VENDOR, EF_ATT_CHAIN,
@@ -89,6 +89,8 @@ struct Req<'a> {
     target: u64,
     raw_subpara: &'a [u8],
     proto: u64,
+    /// Whether key 3 was supplied — see `config::Req::proto_present`.
+    proto_present: bool,
     pin_uv_auth_param: Option<&'a [u8]>,
 }
 
@@ -115,7 +117,7 @@ fn parse(data: &[u8]) -> Result<Req<'_>, CtapError> {
                             match cbor(d.i32())? {
                                 -2 => req.kax = cbor(d.bytes())?,
                                 -3 => req.kay = cbor(d.bytes())?,
-                                _ => cbor(d.skip())?,
+                                _ => skip_value(&mut d)?,
                             }
                         }
                     } else if sk == 1
@@ -142,27 +144,27 @@ fn parse(data: &[u8]) -> Result<Req<'_>, CtapError> {
                     } else if sk == 2 && req.subcommand == VENDOR_CONFIG_WRITE {
                         req.blob = cbor(d.bytes())?;
                     } else {
-                        cbor(d.skip())?;
+                        skip_value(&mut d)?;
                     }
                 }
                 req.raw_subpara = &data[start..d.position()];
             }
-            3 => req.proto = cbor(d.u32())? as u64,
+            3 => {
+                req.proto = cbor(d.u32())? as u64;
+                req.proto_present = true;
+            }
             4 => req.pin_uv_auth_param = Some(cbor(d.bytes())?),
-            _ => cbor(d.skip())?,
+            _ => skip_value(&mut d)?,
         }
     }
     Ok(req)
 }
 
-/// Right-align a COSE coordinate into 32 bytes.
+/// A COSE P-256 coordinate: exactly 32 bytes, never left-padded — the same rule
+/// `clientpin::coord` and `hmacsecret::coord` apply to the platform key they
+/// parse. Every host that speaks this channel emits fixed-width coordinates.
 fn coord(src: &[u8]) -> Result<[u8; 32], CtapError> {
-    if src.len() > 32 {
-        return Err(CtapError::InvalidParameter);
-    }
-    let mut out = [0u8; 32];
-    out[32 - src.len()..].copy_from_slice(src);
-    Ok(out)
+    src.try_into().map_err(|_| CtapError::InvalidParameter)
 }
 
 fn encode<F>(out: &mut [u8], f: F) -> Result<usize, CtapError>
@@ -177,8 +179,8 @@ where
 }
 
 /// Whether a subcommand spends the seed-backup channel. Every one of these reads
-/// `mse_key`/`mse_pub` behind [`FidoState::mse_ready`], so the channel must not
-/// survive the call — see [`FidoState::mse_active`] for why it is one-shot.
+/// `mse_key`/`mse_pub` behind [`crate::state::FidoState::mse_ready`], so the channel must
+/// not survive the call — see [`crate::state::FidoState::mse_active`] for why it is one-shot.
 /// `AUT_ENABLE`'s twin lives in [`crate::config`], which clears it there.
 const fn consumes_mse(subcommand: u64) -> bool {
     matches!(
@@ -218,6 +220,9 @@ fn dispatch<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req, out: &mut [u8]) 
         VENDOR_ATT_STATE => att_state(ctx, out),
         VENDOR_CONFIG_WRITE => config_write(ctx, req),
         VENDOR_CONFIG_READ => config_read(ctx, req, out),
+        // Mirrors credentialManagement's answer, which is the YubiKey's for its own
+        // `0x41`. The `CONFIG_VENDOR` id check one level down keeps its
+        // INVALID_SUBCOMMAND: that is the spec's own rule for a vendorCommandId.
         _ => Err(CtapError::InvalidParameter),
     }
 }
@@ -719,8 +724,11 @@ fn gate<S: Storage, R: Rng>(
 /// pad, out of the host's reach.
 fn pin_gate<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> Result<(), CtapError> {
     if ctx.fs.has_data(EF_PIN) {
+        // A present-but-unsupported protocol is judged first — `0` is a value the
+        // platform sent — and an absent one only where the token needs it.
+        let proto = crate::clientpin::checked_proto(req.proto_present.then_some(req.proto))?;
         let param = req.pin_uv_auth_param.ok_or(CtapError::PuatRequired)?;
-        let proto = PinProto::from_u64(req.proto).ok_or(CtapError::MissingParameter)?;
+        let proto = proto.ok_or(CtapError::MissingParameter)?;
         if req.raw_subpara.len() > MAX_RAW_SUBPARA {
             return Err(CtapError::RequestTooLarge);
         }
@@ -919,7 +927,7 @@ fn backup_state<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, out: &mut [u8]) -> Ctap
 }
 
 /// The seed-backup status for the trusted-display Backup screen — the same
-/// `sealed` / `has_seed` bits [`backup_state`] reports to the host, plus whether
+/// `sealed` / `has_seed` bits `backup_state` reports to the host, plus whether
 /// this build can export at all.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct BackupStatus {
@@ -938,7 +946,7 @@ pub struct BackupStatus {
 }
 
 /// Read the seed-backup status from the store for the on-device Backup screen
-/// (Settings → Security → Backup). A lean, `Ctx`-free mirror of [`backup_state`]'s
+/// (Settings → Security → Backup). A lean, `Ctx`-free mirror of `backup_state`'s
 /// flags — no CBOR — so the display task can read it directly while the worker is parked.
 pub fn backup_status<S: Storage>(fs: &mut rsk_fs::Fs<S>) -> BackupStatus {
     BackupStatus {
@@ -950,12 +958,12 @@ pub fn backup_status<S: Storage>(fs: &mut rsk_fs::Fs<S>) -> BackupStatus {
 }
 
 /// Seal the one-time backup window on-device (Settings → Security → Backup → Seal),
-/// mirroring host [`BACKUP_FINALIZE`](backup_finalize) without the `Ctx` / journal:
-/// write the `EF_BACKUP_SEALED` marker so the seed can no longer be exported **or**
-/// shown as a recovery phrase until a factory reset reopens the window. The display
-/// task gates this behind the device PIN and a deliberate hold — the same rule its
-/// other irreversible actions follow, because sealing cannot be undone without a
-/// factory reset that destroys the seed it protects.
+/// mirroring host `BACKUP_FINALIZE` without the `Ctx` / journal: write the
+/// `EF_BACKUP_SEALED` marker so the seed can no longer be exported **or** shown as
+/// a recovery phrase until a factory reset reopens the window. The display task
+/// gates this behind the device PIN and a deliberate hold — the same rule its other
+/// irreversible actions follow, because sealing cannot be undone without a factory
+/// reset that destroys the seed it protects.
 pub fn mark_backup_sealed<S: Storage>(fs: &mut rsk_fs::Fs<S>) -> bool {
     fs.put(EF_BACKUP_SEALED, &[1]).is_ok()
 }

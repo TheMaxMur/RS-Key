@@ -16,6 +16,11 @@ returns a robust summary — a `median`/`MAD` over the warm samples plus a separ
 builds: measure + `--save a.json`, flash the other build, measure + `--save
 b.json`, then `rsk bench --compare a.json b.json`.
 
+The `otp` selector times an OTP key-page read (16 raw + 16 ECC rows) rather than a
+crypto primitive: it is what reading MKEK/DEVK on demand costs instead of holding
+them in RAM. A read is microseconds, so the device batches several into one sample
+— it reports how many — and the numbers print per read.
+
 Requires a `--features bench` image (never shipped). Reachable over CCID like the
 other vendor commands; the ECDH run takes a few seconds (one blocking APDU)."""
 import argparse
@@ -26,11 +31,14 @@ from . import ccid
 INS_BENCH = 0x14
 SUMMARY_LEN = 20
 
-# Selector name -> (P1, human label). Mirrors rsk_fido::bench::run.
+# Selector name -> (P1, human label). 0-2 mirror rsk_fido::bench::run; 3 is served
+# in firmware/src/vendor.rs, since OTP is board hardware that host-testable crate
+# cannot reach.
 PRIMITIVES = {
     "ecdh": (0, "variable-base P-256 ECDH (clientPIN key agreement)"),
     "sign": (1, "P-256 comb sign (getAssertion hot path)"),
     "ratchet": (2, "HKDF-SHA512 key-derivation ratchet"),
+    "otp": (3, "OTP key-page read — 16 raw + 16 ECC rows"),
 }
 
 
@@ -75,8 +83,26 @@ def parse_summary(data):
     return {"n": n, "cold": cold, "min": mn, "median": median, "mad": mad}
 
 
+def parse_response(data):
+    """Split a bench response into `(summary, reps)`.
+
+    A batched selector appends its rep count as a little-endian u32 after the
+    20-byte Summary; the single-op ones send the Summary alone. The device declares
+    the count so the host holds no copy of it to drift against the firmware."""
+    if len(data) == SUMMARY_LEN + 4:
+        reps = int.from_bytes(data[SUMMARY_LEN:], "little")
+        return parse_summary(data[:SUMMARY_LEN]), max(1, reps)
+    return parse_summary(data), 1
+
+
 def us_to_ms(us):
     return us / 1000.0
+
+
+def fmt_latency(us, reps):
+    """One operation's latency: microseconds when the device batched several ops
+    into a sample, milliseconds for the single-op crypto selectors."""
+    return f"{us / reps:.2f} us" if reps > 1 else f"{us_to_ms(us):.1f} ms"
 
 
 def cold_ratio(summary):
@@ -119,15 +145,18 @@ def measure(sel, warmup, conn=None):
         raise SystemExit(
             f"bench command failed (SW {s1:02X}{s2:02X}). Is this a `--features bench` image?"
         )
-    return parse_summary(data)
+    return parse_response(data)
 
 
-def _print_summary(name, label, summary):
+def _print_summary(name, label, summary, reps):
     print(f"{name}  ({label})   n={summary['n']} warm")
-    print(f"  cold   {us_to_ms(summary['cold']):8.1f} ms   (first op — cold XIP cache)")
-    print(f"  median {us_to_ms(summary['median']):8.1f} ms")
-    print(f"  min    {us_to_ms(summary['min']):8.1f} ms")
-    print(f"  MAD    {us_to_ms(summary['mad']):8.1f} ms   (spread; large = cache-refill straddle)")
+    print(f"  cold   {fmt_latency(summary['cold'], reps):>11}   (first op — cold XIP cache)")
+    print(f"  median {fmt_latency(summary['median'], reps):>11}")
+    print(f"  min    {fmt_latency(summary['min'], reps):>11}")
+    print(
+        f"  MAD    {fmt_latency(summary['mad'], reps):>11}"
+        "   (spread; large = cache-refill straddle)"
+    )
     ratio = cold_ratio(summary)
     if ratio is not None:
         print(f"  cold/warm {ratio:.2f}x")
@@ -135,14 +164,22 @@ def _print_summary(name, label, summary):
 
 def _print_compare(a, b):
     va = ab_verdict(a["summary"], b["summary"])
+    # Saved before the batched `otp` selector existed → one op per sample.
+    reps = a.get("reps", 1)
     for tag, rec in (("baseline", a), ("candidate", b)):
         s = rec["summary"]
         lbl = f" [{rec['label']}]" if rec.get("label") else ""
-        print(f"{tag}{lbl}: median {us_to_ms(s['median']):.1f} ms   MAD {us_to_ms(s['mad']):.1f} ms")
+        print(
+            f"{tag}{lbl}: median {fmt_latency(s['median'], reps)}   "
+            f"MAD {fmt_latency(s['mad'], reps)}"
+        )
+    delta = (
+        f"{va['delta_us'] / reps:+.2f} us" if reps > 1 else f"{us_to_ms(va['delta_us']):+.1f} ms"
+    )
     verb = "SIGNIFICANT" if va["significant"] else "within noise —"
     print(
-        f"Δ median {us_to_ms(va['delta_us']):+.1f} ms  "
-        f"(threshold ±{us_to_ms(va['threshold_us']):.1f} ms)  →  {verb} {va['direction']}"
+        f"Δ median {delta}  (threshold ±{fmt_latency(va['threshold_us'], reps)})  "
+        f"→  {verb} {va['direction']}"
     )
 
 
@@ -155,11 +192,21 @@ def run(args):
         _print_compare(a, b)
         return
     if not args.primitive:
-        raise SystemExit("give a primitive (ecdh|sign|ratchet) or --compare A.json B.json")
+        raise SystemExit(
+            f"give a primitive ({'|'.join(sorted(PRIMITIVES))}) or --compare A.json B.json"
+        )
     sel, label = PRIMITIVES[args.primitive]
-    summary = measure(sel, args.warmup)
-    _print_summary(args.primitive, label, summary)
+    summary, reps = measure(sel, args.warmup)
+    _print_summary(args.primitive, label, summary, reps)
     if args.save:
         with open(args.save, "w") as f:
-            json.dump({"primitive": args.primitive, "label": args.label, "summary": summary}, f)
+            json.dump(
+                {
+                    "primitive": args.primitive,
+                    "label": args.label,
+                    "summary": summary,
+                    "reps": reps,
+                },
+                f,
+            )
         print(f"saved → {args.save}")

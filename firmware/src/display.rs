@@ -179,6 +179,14 @@ impl rsk_display::Hooks for DisplayHooks {
         crate::handler::note_local_pin_changed();
     }
 
+    /// The same worker signal, because its whole effect is what both events need:
+    /// end the RAM `pinUvAuthToken` before the next CBOR command. They stay mapped
+    /// together only while that holds — a re-key-*specific* side effect added
+    /// there would then fire on a failed check too.
+    fn note_local_pin_failed(&mut self) {
+        crate::handler::note_local_pin_changed();
+    }
+
     fn secure_boot_enabled(&self) -> bool {
         use rsk_rescue::Platform as _;
         // A pure OTP read (no flash / no shared borrow) — true only on a fused,

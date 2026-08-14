@@ -28,6 +28,9 @@ pub fn is_openpgp_fid(fid: u16) -> bool {
         || fid == EF_DEK_PW1.get()
         || fid == EF_DEK_RC.get()
         || fid == EF_DEK_PW3.get()
+        || fid == EF_DEK_STAGE_PW1.get()
+        || fid == EF_DEK_STAGE_RC.get()
+        || fid == EF_DEK_STAGE_PW3.get()
     {
         return true;
     }
@@ -47,6 +50,7 @@ pub fn is_openpgp_fid(fid: u16) -> bool {
                 | EF_PB_SIG
                 | EF_PB_DEC
                 | EF_PB_AUT
+                | EF_KEY_ORIGIN
                 | EF_DEK
                 | EF_DEK_PWPIV
                 | EF_CH_1
@@ -99,7 +103,7 @@ pub fn terminate_df<S: Storage>(
 /// firmware so the applet that owns the knowledge owns the list (audit run-36: the
 /// list nobody could name from outside its crate was the one that got forgotten).
 ///
-/// [`wipe_openpgp`] itself is deliberately single-phase, and that stays justified
+/// `wipe_openpgp` itself is deliberately single-phase, and that stays justified
 /// for the *verifiers*: unlike PIV's, OpenPGP's private keys are sealed under a
 /// PIN-derived DEK, so a re-seeded default PW1 opens nothing that survived the same
 /// tear. It is **not** justified for the UIF flags, which [`scan_files`] re-seeds

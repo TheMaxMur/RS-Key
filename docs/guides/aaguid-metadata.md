@@ -60,7 +60,7 @@ embedded `authenticatorGetInfo` that mirrors exactly what the device returns to
 | Field | RS-Key value |
 |---|---|
 | `attestationTypes` | `["basic_full"]`: packed attestation with an `x5c` leaf |
-| `attestationRootCertificates` | `[]`: the leaf is per-device and self-signed, so there is no shareable root |
+| `attestationRootCertificates` | `[]`: the leaf is per-device and self-signed, so there is no shareable root — the statement's own `legalHeader` says so, since MDS defines this field as the anchors "for the batch chain" and an empty one otherwise reads as a broken chain rather than an absent one |
 | `authenticationAlgorithms` | secp256r1 / ed25519 / secp384r1 / secp521r1 / secp256k1 (ECDSA + EdDSA) |
 | `keyProtection` | `["hardware"]`: RP2350 flash/OTP, not a separate certified secure element |
 | `matcherProtection` | `["on_chip"]`: the PIN is verified on the device |
@@ -81,8 +81,10 @@ one). Run it by hand. It is not in the hardware gate.
   `authenticatorGetInfo` (and only on the `advertise-pqc` build). A strict MDS
   consumer will not see the PQC capability.
 - **One profile per statement.** The build features `advertise-pqc` (adds COSE
-  `-48` to the algorithm list) and `fips-profile` (drops secp256k1, raises the
-  PIN floor to 6) change `getInfo`. The shipped statement describes the
+  `-48` to the algorithm list), `fips-profile` (drops secp256k1, raises the
+  PIN floor to 6) and `largeblob-ext` (swaps the `largeBlobKey` extension,
+  the `largeBlobs` option and `maxSerializedLargeBlobArray` for the CTAP 2.3
+  `largeBlob` extension) change `getInfo`. The shipped statement describes the
   **default** build. A different profile needs its own statement.
 
 ## What this does — and does not — get you

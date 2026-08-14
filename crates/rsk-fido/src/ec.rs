@@ -104,7 +104,7 @@ impl P256Key {
 
     /// Deterministic ECDSA-SHA256 over `msg`, DER-encoded into `out`; returns the
     /// signature length. `out` must hold at least [`MAX_DER_SIG`] bytes. Signs via the
-    /// fixed-base comb ([`sign_p256_comb`]) — byte-identical to the crate's signer.
+    /// fixed-base comb (`sign_p256_comb`) — byte-identical to the crate's signer.
     pub fn sign_der(&self, msg: &[u8], out: &mut [u8]) -> usize {
         sign_p256_comb(self.signing.as_nonzero_scalar(), msg, out)
     }
@@ -116,7 +116,7 @@ pub enum CredKey {
     // All four Weierstrass curves hold the bare scalar, not a `SigningKey`: building a
     // `SigningKey` eagerly derives the public key (a fixed-base mul) that getAssertion
     // never needs — it only signs. Both signing's `k·G` and `cose_public`'s `d·G` go
-    // through the fixed-base comb (`comb_mul_p256`/`_p384`/`comb_mul`/`comb_mul_k256`),
+    // through the fixed-base comb (`comb_mul_p256`/`_p384`/`_p521`/`comb_mul_k256`),
     // which bypasses the crate's variable-time scalar-mul (slow on Cortex-M33).
     P256(p256::NonZeroScalar),
     P384(p384::NonZeroScalar),
@@ -274,10 +274,10 @@ impl CredKey {
     /// Sign `msg` (authData ‖ clientDataHash) into `out`; returns the length
     /// (≤ [`MAX_SIG_LEN`]). ECDSA curves emit DER using the curve's canonical
     /// digest: P-256 / P-384 / secp256k1 deterministic RFC 6979 (P-256 signs `k·G`
-    /// with the fixed-base [`comb_mul_p256`], see [`sign_p256_comb`]); P-521 a random
-    /// nonce from `rng`, with `k·G` via the fixed-base [`comb_mul`]. EdDSA
-    /// emits the raw 64 bytes; ML-DSA-44 the raw 2420-byte FIPS 204 signature,
-    /// hedged with 32 `rng` bytes.
+    /// with the fixed-base [`rsk_ec::comb_mul_p256`], see `sign_p256_comb`); P-521
+    /// a random nonce from `rng`, with `k·G` via the fixed-base
+    /// [`rsk_ec::comb_mul_p521`]. EdDSA emits the raw 64 bytes; ML-DSA-44 the raw
+    /// 2420-byte FIPS 204 signature, hedged with 32 `rng` bytes.
     pub fn sign(&self, msg: &[u8], rng: &mut impl Rng, out: &mut [u8]) -> usize {
         fn put(bytes: &[u8], out: &mut [u8]) -> usize {
             out[..bytes.len()].copy_from_slice(bytes);
@@ -312,60 +312,44 @@ impl CredKey {
     }
 
     /// Encode the COSE EC2 public key (`{1: 2, 3: alg, -1: crv, -2: x, -3: y}`).
-    pub fn cose_public<W: Write>(&self, enc: &mut Encoder<W>) -> Result<(), CborError<W::Error>> {
+    ///
+    /// `alg` is the id the request selected, not one derived from the variant: the
+    /// curve-explicit ids share their key material with the classic spelling, and
+    /// WebAuthn §7.1 has the RP match this field against the list it sent.
+    pub fn cose_public<W: Write>(
+        &self,
+        alg: i64,
+        enc: &mut Encoder<W>,
+    ) -> Result<(), CborError<W::Error>> {
         match self {
             Self::P256(d) => {
                 // Derive the public key d·G with the fixed-base comb (no SigningKey).
                 use p256::elliptic_curve::sec1::ToSec1Point;
                 let p = rsk_ec::comb_mul_p256(d).to_affine().to_sec1_point(false);
-                cose_key_ec2_var(
-                    enc,
-                    ALG_ES256,
-                    CURVE_P256,
-                    p.x().expect("x"),
-                    p.y().expect("y"),
-                )
+                cose_key_ec2_var(enc, alg, CURVE_P256, p.x().expect("x"), p.y().expect("y"))
             }
             Self::P384(d) => {
                 use p384::elliptic_curve::sec1::ToSec1Point;
                 let p = rsk_ec::comb_mul_p384(d).to_affine().to_sec1_point(false);
-                cose_key_ec2_var(
-                    enc,
-                    ALG_ES384,
-                    CURVE_P384,
-                    p.x().expect("x"),
-                    p.y().expect("y"),
-                )
+                cose_key_ec2_var(enc, alg, CURVE_P384, p.x().expect("x"), p.y().expect("y"))
             }
             Self::P521(d) => {
                 // Derive the public key d·G with the fixed-base comb (no SigningKey).
                 use p521::elliptic_curve::sec1::ToSec1Point;
                 let p = rsk_ec::comb_mul_p521(d).to_affine().to_sec1_point(false);
-                cose_key_ec2_var(
-                    enc,
-                    ALG_ES512,
-                    CURVE_P521,
-                    p.x().expect("x"),
-                    p.y().expect("y"),
-                )
+                cose_key_ec2_var(enc, alg, CURVE_P521, p.x().expect("x"), p.y().expect("y"))
             }
             Self::K256(d) => {
                 use k256::elliptic_curve::sec1::ToSec1Point;
                 let p = rsk_ec::comb_mul_k256(d).to_affine().to_sec1_point(false);
-                cose_key_ec2_var(
-                    enc,
-                    ALG_ES256K,
-                    CURVE_P256K1,
-                    p.x().expect("x"),
-                    p.y().expect("y"),
-                )
+                cose_key_ec2_var(enc, alg, CURVE_P256K1, p.x().expect("x"), p.y().expect("y"))
             }
             Self::Ed25519(k) => {
                 let pk = k.verifying_key().to_bytes();
-                cose_key_okp_var(enc, ALG_EDDSA, CURVE_ED25519, &pk)
+                cose_key_okp_var(enc, alg, CURVE_ED25519, &pk)
             }
-            Self::MlDsa44(k) => cose_key_akp(enc, ALG_MLDSA44, &k.public_key()),
-            Self::MlDsa65(k) => cose_key_akp(enc, ALG_MLDSA65, &k.public_key()),
+            Self::MlDsa44(k) => cose_key_akp(enc, alg, &k.public_key()),
+            Self::MlDsa65(k) => cose_key_akp(enc, alg, &k.public_key()),
         }
     }
 
@@ -447,6 +431,7 @@ pub fn cached_point_len(curve: i64) -> Option<usize> {
 /// here are defensive (a mismatch yields an encode error, not a bad key).
 pub fn cose_public_from_point<W: Write>(
     curve: i64,
+    alg: i64,
     point: &[u8],
     enc: &mut Encoder<W>,
 ) -> Result<(), CborError<W::Error>> {
@@ -464,12 +449,12 @@ pub fn cose_public_from_point<W: Write>(
         cose_key_ec2_var(enc, alg, crv, &body[..f], &body[f..])
     }
     match curve {
-        c if c == CURVE_P256 as i64 => ec2(enc, ALG_ES256, CURVE_P256, point, 32),
-        c if c == CURVE_P384 as i64 => ec2(enc, ALG_ES384, CURVE_P384, point, 48),
-        c if c == CURVE_P521 as i64 => ec2(enc, ALG_ES512, CURVE_P521, point, 66),
-        c if c == CURVE_P256K1 as i64 => ec2(enc, ALG_ES256K, CURVE_P256K1, point, 32),
+        c if c == CURVE_P256 as i64 => ec2(enc, alg, CURVE_P256, point, 32),
+        c if c == CURVE_P384 as i64 => ec2(enc, alg, CURVE_P384, point, 48),
+        c if c == CURVE_P521 as i64 => ec2(enc, alg, CURVE_P521, point, 66),
+        c if c == CURVE_P256K1 as i64 => ec2(enc, alg, CURVE_P256K1, point, 32),
         c if c == CURVE_ED25519 as i64 && point.len() == 32 => {
-            cose_key_okp_var(enc, ALG_EDDSA, CURVE_ED25519, point)
+            cose_key_okp_var(enc, alg, CURVE_ED25519, point)
         }
         _ => Err(CborError::message("uncacheable curve")),
     }

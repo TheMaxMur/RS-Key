@@ -8,6 +8,7 @@ use minicbor::Encoder;
 use minicbor::encode::write::Cursor;
 use rsk_crypto::Device;
 use rsk_crypto::pinproto;
+use rsk_crypto::pinproto::PinProto;
 use rsk_fs::Fs;
 use rsk_fs::storage::ram::RamStorage;
 
@@ -541,6 +542,33 @@ fn a_read_offset_beyond_usize_is_refused_not_wrapped() {
             run(&mut fs, &mut state, &get_request(1, off), &mut out),
             Err(CtapError::InvalidParameter),
             "offset {off} must be refused, not truncated"
+        );
+    }
+}
+
+/// Same protocol rule, same order, on the write path's own gate.
+#[test]
+fn an_unsupported_protocol_is_judged_before_the_missing_token() {
+    let blob = valid_blob(&[0x66; 40]);
+    for proto in [0u8, 3] {
+        let mut fs = seeded_fs();
+        fs.put(crate::consts::EF_ALWAYS_UV, &[1]).unwrap();
+        let mut state = FidoState::new();
+        let mut out = [0u8; 64];
+        let mut buf = [0u8; 1100];
+        let n = {
+            let mut e = Encoder::new(Cursor::new(&mut buf[..]));
+            e.map(4).unwrap();
+            e.u8(0x02).unwrap().bytes(&blob).unwrap();
+            e.u8(0x03).unwrap().u64(0).unwrap();
+            e.u8(0x04).unwrap().u64(blob.len() as u64).unwrap();
+            e.u8(0x06).unwrap().u64(proto as u64).unwrap();
+            e.writer().position()
+        };
+        assert_eq!(
+            run(&mut fs, &mut state, &buf[..n], &mut out),
+            Err(CtapError::InvalidParameter),
+            "protocol {proto}"
         );
     }
 }

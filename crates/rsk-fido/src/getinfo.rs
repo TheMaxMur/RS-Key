@@ -20,9 +20,11 @@ use minicbor::Encoder;
 use minicbor::encode::{Error, Write};
 
 use crate::consts::{
-    AAGUID, ALG_EDDSA, ALG_ES256, ALG_ES384, ALG_ES512, ALG_MLDSA44, ALG_MLDSA65, FIRMWARE_VERSION,
-    MAX_CRED_ID_LENGTH, MAX_CREDBLOB_LENGTH, MAX_CREDENTIAL_COUNT_IN_LIST, MAX_LARGE_BLOB_SIZE,
-    MAX_MIN_PIN_RPIDS, MAX_MSG_SIZE,
+    AAGUID, ALG_EDDSA, ALG_ES256, ALG_ES384, ALG_ES512, ALG_MLDSA44, ALG_MLDSA65,
+    CONFIG_AUT_DISABLE, CONFIG_AUT_ENABLE, CONFIG_PHY_LED_BRIGHTNESS, CONFIG_PHY_LED_GPIO,
+    CONFIG_PHY_OPTIONS, CONFIG_PHY_VIDPID, FIRMWARE_VERSION, LARGE_BLOB_EXT, MAX_CRED_ID_LENGTH,
+    MAX_CREDBLOB_LENGTH, MAX_CREDENTIAL_COUNT_IN_LIST, MAX_LARGE_BLOB_SIZE, MAX_MIN_PIN_RPIDS,
+    MAX_MSG_SIZE,
 };
 use crate::cose::cose_public_key;
 use crate::error::{CtapError, CtapResult};
@@ -82,8 +84,9 @@ fn write_info<W: Write>(
     remaining_rk: u16,
 ) -> Result<(), Error<W::Error>> {
     // Keys are ascending uints → CTAP canonical order (1-byte keys 0x01..0x16
-    // first, then the 2-byte keys 0x1D, 0x1F).
-    enc.map(20)?;
+    // first, then the 2-byte keys 0x1D, 0x1F). The `largeblob-ext` build drops
+    // 0x0B with the command it describes.
+    enc.map(20 + u64::from(!LARGE_BLOB_EXT))?;
 
     // 0x01 versions — advertise the full backward-compatible superset up to
     // FIDO_2_3 (the implemented surface: credMgmt, largeBlobs, credProtect,
@@ -113,13 +116,18 @@ fn write_info<W: Write>(
     }
     enc.str("FIDO_2_0")?.str("FIDO_2_1")?.str("FIDO_2_3")?;
 
-    // 0x02 extensions
+    // 0x02 extensions — exactly one of the two large-blob designs (CTAP 2.3
+    // §12.4 forbids both), so the list length does not change either way.
     enc.u8(0x02)?
         .array(7)?
         .str("credBlob")?
         .str("credProtect")?
         .str("hmac-secret")?
-        .str("largeBlobKey")?
+        .str(if LARGE_BLOB_EXT {
+            "largeBlob"
+        } else {
+            "largeBlobKey"
+        })?
         .str("minPinLength")?
         .str("hmac-secret-mc")?
         .str("thirdPartyPayment")?;
@@ -134,7 +142,13 @@ fn write_info<W: Write>(
     // display); "alwaysUv" sorts first among the 8-char keys (before "credMgmt");
     // "perCredMgmtRO" (13) lands between "largeBlobs" (10) and "pinUvAuthToken"
     // (14); "makeCredUvNotRqd" is the longest key, so it sorts last.
-    enc.u8(0x04)?.map(12 + u64::from(builtin_uv))?;
+    //
+    // `largeBlobs` goes away entirely on a `largeblob-ext` build: §6.4 spells it
+    // out — "This option MUST NOT be set to true if the largeBlob extension is
+    // supported instead" — and false and absent mean the same thing here, so the
+    // key is simply not emitted.
+    enc.u8(0x04)?
+        .map(11 + u64::from(!LARGE_BLOB_EXT) + u64::from(builtin_uv))?;
     enc.str("ep")?.bool(ea_enabled)?;
     enc.str("rk")?.bool(true)?;
     enc.str("up")?.bool(true)?;
@@ -147,7 +161,9 @@ fn write_info<W: Write>(
     enc.str("credMgmt")?.bool(true)?;
     enc.str("authnrCfg")?.bool(true)?;
     enc.str("clientPin")?.bool(pin_set)?;
-    enc.str("largeBlobs")?.bool(true)?;
+    if !LARGE_BLOB_EXT {
+        enc.str("largeBlobs")?.bool(true)?;
+    }
     // perCredMgmtRO (CTAP 2.2 §6.4): the `pcmr` permission may be requested, which
     // hands the platform the persistent pinUvAuthToken for read-only credential
     // management. Without this key §6.5.5.7.2/.3 require refusing `pcmr` outright.
@@ -197,7 +213,8 @@ fn write_info<W: Write>(
     //
     // ES256K (-47) stays unadvertised in EVERY profile for the same P-06 reason.
     // Both -8 and -47 remain fully implemented — makeCredential negotiates them
-    // from a request regardless of advertisement (like ML-DSA-44). Keep the
+    // from a request regardless of advertisement (like ML-DSA-44), and so are the
+    // curve-explicit ids -9/-19/-51/-52, which a request gets back verbatim. Keep the
     // advertised set in sync with the metadata (`authenticationAlgorithms` +
     // `authenticatorGetInfo.algorithms`); `tests/62` enforces it, and
     // `metadata/rs-key.conformance.metadata.json` is the EdDSA-free variant for
@@ -219,8 +236,13 @@ fn write_info<W: Write>(
         cose_public_key(enc, ALG_EDDSA)?;
     }
 
-    // 0x0B maxSerializedLargeBlobArray
-    enc.u8(0x0B)?.u64(MAX_LARGE_BLOB_SIZE as u64)?;
+    // 0x0B maxSerializedLargeBlobArray — describes the array the
+    // `authenticatorLargeBlobs` command serves, so it goes with that command.
+    // §12.4 defines no equivalent ceiling for the extension: an over-long write
+    // is answered by `written: false`, not by a published limit.
+    if !LARGE_BLOB_EXT {
+        enc.u8(0x0B)?.u64(MAX_LARGE_BLOB_SIZE as u64)?;
+    }
 
     // 0x0C forceChangePin (EF_MINPINLEN[1]); enforced at token issuance (clientpin).
     enc.u8(0x0C)?.bool(force_change)?;
@@ -241,6 +263,30 @@ fn write_info<W: Write>(
     // 0x14 remainingDiscoverableCredentials — live estimate of free resident-key
     // slots (capacity minus the occupied EF_CRED slots), supplied by the caller.
     enc.u8(0x14)?.u16(remaining_rk)?;
+
+    // 0x15 vendorPrototypeConfigCommands — the vendorCommandIds `config.rs`
+    // dispatches under authenticatorConfig's vendorPrototype (0xFF): the soft-lock
+    // enable/disable pair and the four PicoForge phy writes.
+    //
+    // It is not optional here, and hiding it was a defect: §6.11.3 says the
+    // vendorPrototype subcommand "is only implemented if the
+    // vendorPrototypeConfigCommands member in the authenticatorGetInfo response is
+    // present", while §6.11.7 makes listing 0xFF in `authenticatorConfigCommands`
+    // (below) a MUST once it IS implemented. Advertising 0xFF without this member
+    // therefore claimed a subcommand that, by the spec's own definition, was not
+    // implemented — caught by an external CTAP 2.3 conformance runner. A YubiKey
+    // omits both together; this device implements the arm, so it publishes both.
+    // Not an obscurity loss: `docs/protocol.md` §9 already documents these ids for
+    // PicoForge, and §6.11.7 says vendors "MUST NOT count on obscurity of the
+    // vendorCommandId value as any sort of security".
+    enc.u8(0x15)?
+        .array(6)?
+        .u64(CONFIG_AUT_ENABLE)?
+        .u64(CONFIG_AUT_DISABLE)?
+        .u64(CONFIG_PHY_VIDPID)?
+        .u64(CONFIG_PHY_LED_BRIGHTNESS)?
+        .u64(CONFIG_PHY_LED_GPIO)?
+        .u64(CONFIG_PHY_OPTIONS)?;
 
     // 0x16 attestationFormats — the attestation statement formats we emit. Only
     // "packed": makeCredential always carries basic attestation with the device x5c,
@@ -269,8 +315,8 @@ fn write_info<W: Write>(
     // arm was absent while the wire spec documented it. Not an obscurity measure
     // either way: §6.11.7 also says "Vendors MUST NOT count on obscurity of the
     // vendorCommandId value as any sort of security", and the arm needs an `acfg`
-    // token regardless. 0x15 (vendorPrototypeConfigCommands — *which* vendor command
-    // ids exist) stays unadvertised; that member is optional and a YubiKey hides it.
+    // token regardless. Its companion 0x15 lists the ids themselves — §6.11.3 ties
+    // the two, so neither is advertised without the other.
     enc.u8(0x1F)?
         .array(4)?
         .u8(0x01)?
@@ -278,8 +324,6 @@ fn write_info<W: Write>(
         .u8(0x03)?
         .u8(0xFF)?;
 
-    // 0x15 (vendorPrototypeConfigCommands) is never advertised; a real YubiKey
-    // hides it too, so the default Yubikey5 VID/PID stays consistent.
     Ok(())
 }
 

@@ -29,7 +29,7 @@ impl PinScope {
 }
 
 /// The PIN-screen header for a PIV reference (the application PIN or the PUK), the
-/// PIV analog of [`PinScope::pin_title`]. Also the CCID secure-PIN path's title source
+/// PIV analog of `PinScope::pin_title`. Also the CCID secure-PIN path's title source
 /// (`worker::secure_pin_meta`), so a host VERIFY and an on-panel change name the same thing.
 pub fn piv_ref_title(which: rsk_piv::PinRef) -> &'static str {
     match which {
@@ -50,7 +50,8 @@ where
     /// device-PIN gate (the `EF_DEVICE_PIN` retry ladder, same as the destructive-action
     /// gate): a correct PIN drops the lock, a wrong one re-prompts until the right PIN, a
     /// cancel / timeout, or the counter is spent — all of which leave it locked. Returns
-    /// the panel to [`status_task`], which then paints Home (unlocked) or Locked again.
+    /// the panel to the firmware's `status_task`, which then paints Home (unlocked) or
+    /// Locked again.
     pub(super) fn run_unlock(&mut self) {
         // Let the unlock tap's finger lift before the pad starts reading digits.
         self.touch
@@ -136,6 +137,13 @@ where
             (retries, expected)
         };
         let mut pin = [0u8; 64];
+        // A clientPIN refused here is `changePIN`'s failed old-PIN check performed
+        // at the pad, and over USB that check ends the host's outstanding
+        // pinUvAuthToken. Only this scope: the device PIN is no CTAP credential.
+        // The budget test is what tells a comparison from a refusal — `Blocked`
+        // with nothing left to spend was turned away before any compare, and the
+        // wire path leaves the token alone there too.
+        let ends_host_token = scope == PinScope::Fido && retries.is_some_and(|left| left > 0);
         // Show the remaining attempts up front (the design's enterpin "N tries
         // remaining"); a wrong entry then swaps it for the danger "Wrong PIN, N left".
         let mut caption = retries.map(|left| PinCaption::TriesRemaining { left });
@@ -146,7 +154,8 @@ where
             // before the policy was raised may be shorter than `expected`.)
             match self.collect_pin(title, caption, 4, expected, &mut pin, true) {
                 rsk_fido::PinEntry::Entered(len) => {
-                    let dev = self.keys.device();
+                    let mkek = read_fused(self.keys.mkek_source);
+                    let dev = self.keys.device(&mkek);
                     let verdict = match scope {
                         PinScope::Device => rsk_fido::passkeys::spend_and_verify_device_pin(
                             &dev,
@@ -163,11 +172,17 @@ where
                         rsk_fido::passkeys::LocalPin::Ok => break true,
                         // Re-prompt showing the remaining attempts until the budget runs out.
                         rsk_fido::passkeys::LocalPin::Wrong { retries_left } => {
+                            if ends_host_token {
+                                self.hooks.note_local_pin_failed();
+                            }
                             caption = Some(PinCaption::WrongPin { retries_left });
                         }
                         // Budget spent — note it and break; the notice is shown below, once
                         // the immutable `dev` borrow has been released.
                         rsk_fido::passkeys::LocalPin::Blocked => {
+                            if ends_host_token {
+                                self.hooks.note_local_pin_failed();
+                            }
                             blocked = true;
                             break false;
                         }
@@ -184,3 +199,7 @@ where
         proceed
     }
 }
+
+#[cfg(test)]
+#[path = "gates_tests.rs"]
+mod tests;

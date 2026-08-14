@@ -14,6 +14,10 @@ unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
 # the `hid` frame codec and the `ticket` typed-OTP generator (modhex / HOTP /
 # static password).
 [features]
+# `scripts/kani.sh` only: forwards to the dependency that carries the switch.
+# What it buys, and why the firmware must never turn it on, is in
+# `crates/rsk-crypto/Cargo.toml`.
+kani-soft = ["rsk-crypto/kani-soft"]
 # See firmware's `strict-config`. OFF by default: the default build serves the
 # OTP-HID admin writes (SET_DEVICE_INFO/DEVICE_CONFIG/SCAN_MAP/NDEF) as a real
 # YubiKey does; `--features strict-config` restores today's silent-OK no-op.

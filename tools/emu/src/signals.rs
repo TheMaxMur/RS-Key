@@ -26,7 +26,7 @@ pub struct Signals {
     /// whichever asked for it — a FIDO client saying "touch your security key"
     /// for an OpenPGP signature, and the OTP status byte announcing a wait
     /// `tests/77_otp_touch_wait.py` would then read as its own.
-    /// `firmware/src/presence.rs` keeps a `WAIT_SCOPE` for exactly this.
+    /// `rsk_device::presence::Arbiter` keeps a wait scope for exactly this.
     wait_scope: AtomicU8,
     /// The CTAPHID channel whose command the device thread is running; 0 = idle.
     active_cid: AtomicU32,
@@ -41,8 +41,8 @@ pub struct Signals {
     ///
     /// One presence backend serves every transport, so without a scope a FIDO
     /// `CTAPHID_CANCEL` would end an OTP challenge's touch wait and the OTP dummy
-    /// write would end a FIDO ceremony. `firmware/src/presence.rs` splits them the
-    /// same way, for the same reason.
+    /// write would end a FIDO ceremony. `rsk_device::presence::Arbiter` splits them
+    /// the same way, for the same reason.
     otp_wait: AtomicBool,
     /// The host asked to end that wait — the dummy write, or the next command.
     otp_cancel: AtomicBool,
@@ -83,12 +83,26 @@ impl Signals {
         self.cancel_cid.store(cid, Ordering::Release);
     }
 
+    /// Drop a cancel no ceremony consumed — both the channel's and the OTP
+    /// transport's, as the board's arbiter has one flag for the two. Every wait
+    /// clears it on the way in and on the way out, exactly as
+    /// `rsk_device::presence::ButtonWait` does, so a CANCEL that raced the end of
+    /// one ceremony cannot end the next.
+    pub fn clear_cancel(&self) {
+        self.cancel_cid.store(0, Ordering::Release);
+        self.otp_cancel.store(false, Ordering::Release);
+    }
+
     /// Cancel whatever command is in flight.
     ///
     /// `CtapHid`'s cancel hook is a `fn()` and carries no channel, but it is only
     /// called for a `CTAPHID_CANCEL` whose cid it has already matched against the
     /// in-flight one — so this is the same scoping the per-channel form gives, and
     /// with nothing in flight (`active_cid` 0) it cancels nothing.
+    ///
+    /// "In flight" is the *device's*, though, and `--usbip` and the socket share
+    /// one: a USB/IP client's CANCEL ends whichever ceremony is running, even one
+    /// the socket transport started. Two transports at once is the only way there.
     pub fn cancel_active(&self) {
         self.cancel_cid
             .store(self.active_cid.load(Ordering::Acquire), Ordering::Release);
@@ -115,12 +129,20 @@ impl Signals {
     /// Whether the in-flight command has been cancelled by its own transport: a
     /// FIDO `CTAPHID_CANCEL` on the channel that owns the ceremony, or the OTP
     /// host moving on from a challenge waiting for its press.
+    ///
+    /// The OTP arm is scoped as well, because `otp_wait` is raised by the
+    /// transport *before* the job is queued — so it is up while an OTP frame waits
+    /// behind somebody else's ceremony, and without the scope a dummy write would
+    /// end that one. `rsk_device::presence::Arbiter::cancel_otp_wait` gates the
+    /// same rule on the writing side.
     pub fn cancelled(&self) -> bool {
         let active = self.active_cid.load(Ordering::Acquire);
         if active != 0 && self.cancel_cid.load(Ordering::Acquire) == active {
             return true;
         }
-        self.otp_wait.load(Ordering::Acquire) && self.otp_cancel.load(Ordering::Acquire)
+        self.wait_scope.load(Ordering::Acquire) == SCOPE_OTP
+            && self.otp_wait.load(Ordering::Acquire)
+            && self.otp_cancel.load(Ordering::Acquire)
     }
 }
 

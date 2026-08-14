@@ -62,3 +62,27 @@ def test_ab_verdict_stable_runs_use_the_mad_floor():
     # Both perfectly stable (MAD 0): a 1 µs difference stays under the +1 floor.
     v = bench.ab_verdict({"median": 100000, "mad": 0}, {"median": 100001, "mad": 0})
     assert not v["significant"]
+
+
+def test_fmt_latency_divides_a_batched_sample_and_switches_unit():
+    # A single-op crypto selector: the sample IS the op, rendered in ms.
+    assert bench.fmt_latency(106000, 1) == "106.0 ms"
+    # A batch of 100 reads taking 470 µs is 4.70 µs per read — rendering that as
+    # "0.5 ms" would hide the whole quantity being measured.
+    assert bench.fmt_latency(470, 100) == "4.70 us"
+
+
+def test_parse_response_takes_the_batch_size_from_the_device():
+    body = _summary_bytes(31, 900, 460, 470, 4)
+    # Plain 20-byte Summary (the crypto selectors): one op per sample.
+    assert bench.parse_response(body) == (bench.parse_summary(body), 1)
+    # Batched selector: the trailing u32 is the divisor, so the host holds no copy
+    # of the firmware's OTP_READ_REPS to drift against it.
+    summary, reps = bench.parse_response(body + struct.pack("<I", 100))
+    assert reps == 100 and summary["median"] == 470
+
+
+def test_parse_response_refuses_a_zero_divisor():
+    # A garbled rep count must not turn the render into a divide-by-zero.
+    _, reps = bench.parse_response(_summary_bytes(1, 2, 3, 4, 5) + struct.pack("<I", 0))
+    assert reps == 1

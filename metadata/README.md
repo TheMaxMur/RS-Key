@@ -14,7 +14,13 @@ for the full rationale and the certification boundary.
 
 - **AAGUID:** `2479c7bf-6b30-5683-9ec8-0e8171a918b7`
   (`uuid5(NAMESPACE_URL, "https://github.com/TheMaxMur/RS-Key")`).
-- **Attestation:** `basic_surrogate` (packed self-attestation, no root chain).
+- **Attestation:** `basic_full` — packed with an `x5c` leaf, signed by the
+  device key rather than the credential key (so not `basic_surrogate`, which is
+  self-attestation and carries no `x5c` at all). That leaf is self-signed and
+  unique per device, so there is no shareable root and
+  `attestationRootCertificates` is empty: a relying party can check the leaf
+  against the AAGUID and the §8.2.1 subject rules, but cannot chain it to
+  anything. See [docs/guides/attestation.md](../docs/guides/attestation.md).
 - **Drift guard:** `python tests/62_metadata_statement.py` checks this file
   against the firmware source and a live device.
 

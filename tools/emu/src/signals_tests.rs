@@ -60,6 +60,7 @@ fn a_cancel_reaches_only_its_own_command() {
     assert!(s.cancelled());
 
     let s = Signals::default();
+    s.set_wait_scope(SCOPE_OTP);
     s.begin(0x1111_1111);
     s.cancel_otp();
     assert!(
@@ -69,4 +70,34 @@ fn a_cancel_reaches_only_its_own_command() {
     s.begin_otp();
     s.cancel_otp();
     assert!(s.cancelled());
+}
+
+/// …and the OTP dummy write reaches only the frame it is for.
+///
+/// `otp_wait` goes up in the transport *before* the job is queued and comes down
+/// after the reply, so it is raised while an OTP frame waits behind somebody
+/// else's ceremony. Unscoped, a `ykman otp` poll then ends that one — including a
+/// local on-panel PIN entry, which is no host's to cancel.
+/// `rsk_device::presence::Arbiter::cancel_otp_wait` gates the same rule on the
+/// writing side.
+#[test]
+fn an_otp_cancel_does_not_reach_another_transports_ceremony() {
+    let s = Signals::default();
+    s.begin_otp();
+    s.set_wait_scope(SCOPE_FIDO);
+    s.begin(0x1111_1111);
+    s.cancel_otp();
+    assert!(
+        !s.cancelled(),
+        "a queued OTP frame's dummy write ended a FIDO ceremony"
+    );
+
+    let s = Signals::default();
+    s.begin_otp();
+    s.set_wait_scope(SCOPE_NONE);
+    s.cancel_otp();
+    assert!(
+        !s.cancelled(),
+        "a queued OTP frame's dummy write ended the panel's own ceremony"
+    );
 }

@@ -246,7 +246,7 @@ fn credprotect3_box_refused_on_u2f_but_level1_signs() {
     ));
     assert_eq!(
         sw,
-        Sw::INCORRECT_PARAMS,
+        Sw::WRONG_DATA,
         "credProtect=3 box must be refused over U2F"
     );
     assert!(body.is_empty());

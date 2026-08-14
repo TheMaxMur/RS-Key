@@ -8,6 +8,7 @@
 
 use core::cell::RefCell;
 
+use rsk_crypto::FusedKey;
 use rsk_fs::{Fs, Storage};
 
 use rsk_mgmt::ManagementApplet;
@@ -28,6 +29,29 @@ use crate::Hooks;
 // one frame; sizing this to the full message let a large response (e.g. a long
 // OATH LIST) overrun the frame, and `run_xfr` silently dropped the tail incl. SW.
 const RESP_CAP: usize = 2038;
+const _: () = assert!(RESP_CAP == rsk_usb::ccid::MAX_CCID_MSG - rsk_usb::ccid::HEADER);
+
+// The frame is also the largest command APDU that ever reaches an applet, and
+// OpenPGP announces that number to the host in DO 7F66. It announced 2047 and
+// 2048 against a transport carrying 2038, so §7.7 licensed nine byte-lengths the
+// reader answers with an error before any applet sees them. Only this crate sees
+// both constants.
+const _: () = assert!(rsk_openpgp::files::MAX_APDU_BYTES == RESP_CAP);
+
+// OpenPGP announces a maximum DO length in its own crate, which cannot see this
+// one; this is the only place both are visible. A DO longer than the body an
+// applet is handed (`RESP_CAP - 2`, the status bytes being appended after) does
+// not truncate on the way out — `ResBuf::extend` writes nothing at all and its
+// `false` is discarded — so an announcement above this ceiling would make GET
+// DATA answer `9000` with an empty body. E3's class: two owners of one meaning,
+// no compiler between them.
+const _: () = assert!(rsk_openpgp::files::MAX_DO_BYTES <= RESP_CAP - 2);
+// Same cliff, same reason, for the other number DO C0 announces: GET CHALLENGE
+// serves `Le` bytes up to this maximum, and one byte over the body an applet is
+// handed would answer `9000` with nothing in it. Its sibling assertion in
+// `rsk-openpgp` bounds it by the scratch it is drawn into; that one cannot see
+// this ceiling.
+const _: () = assert!(rsk_openpgp::files::MAX_CHALLENGE_BYTES <= RESP_CAP - 2);
 
 /// Registration-order indices of the applets whose RSA keygen is fast-pathed.
 const IDX_OPENPGP: usize = 1;
@@ -131,8 +155,8 @@ impl<'a, S: Storage, R: crate::Rng + 'static, VP: rsk_vendor::Platform> CcidAppl
         vendor_platform: VP,
         serial_id: [u8; 8],
         serial_hash: [u8; 32],
-        otp_key: Option<[u8; 32]>,
-        devk: Option<[u8; 32]>,
+        mkek_source: Option<FusedKey>,
+        devk: Option<FusedKey>,
         kv_total: u32,
         flash_size: u32,
         openpgp_mfr: u16,
@@ -142,26 +166,26 @@ impl<'a, S: Storage, R: crate::Rng + 'static, VP: rsk_vendor::Platform> CcidAppl
             rng,
             hooks,
             disp: Dispatcher::new(),
-            // The vendor reboot-to-BOOTSEL (P1=01) is gated by the same presence
-            // as the rescue applet (one `&RefCell<Presence>` behind two traits),
-            // closing the cross-AID bypass of that gate.
+            // The vendor gates — reboot-to-BOOTSEL (P1=01) and the counter write —
+            // take the same presence as the rescue applet (one `&RefCell<Presence>`
+            // behind two traits), closing the cross-AID bypass of that gate.
             vendor: VendorApplet::new(vendor_platform, presence),
-            openpgp: OpenpgpApplet::new(serial_id, serial_hash, otp_key, rng, presence)
+            openpgp: OpenpgpApplet::new(serial_id, serial_hash, mkek_source, rng, presence)
                 .with_manufacturer(openpgp_mfr),
             management: ManagementApplet::new(serial_id, presence),
             // Touch-flagged OATH credentials gate CALCULATE on the same button.
-            oath: OathApplet::new(serial_id, serial_hash, otp_key, rng, presence),
-            otp: OtpApplet::new(serial_id, serial_hash, otp_key, rng, presence),
+            oath: OathApplet::new(serial_id, serial_hash, mkek_source, rng, presence),
+            otp: OtpApplet::new(serial_id, serial_hash, mkek_source, rng, presence),
             // PIV reuses the OpenPGP user-presence trait, so the same presence
             // source drives its slot/management touch policies.
-            piv: PivApplet::new(serial_id, serial_hash, otp_key, rng, presence),
+            piv: PivApplet::new(serial_id, serial_hash, mkek_source, rng, presence),
             // The recovery/provisioning interface: phy config, flash stats,
             // secure-boot status, session RTC, device-key attestation, reboot.
             // Registered last so the fast-path indices above stay valid.
             rescue: RescueApplet::new(
                 serial_id,
                 serial_hash,
-                otp_key,
+                mkek_source,
                 devk,
                 rng,
                 platform,
@@ -260,7 +284,11 @@ impl<'a, S: Storage, R: crate::Rng + 'static, VP: rsk_vendor::Platform> CcidAppl
     pub fn factory_wipe(&mut self) -> bool {
         self.fs
             .borrow_mut()
-            .factory_wipe(rsk_fido::survives_factory_reset, gates_wiped_last)
+            .factory_wipe(
+                rsk_fido::survives_factory_reset,
+                rsk_fido::is_fido_seed_fid,
+                gates_wiped_last,
+            )
             .is_ok()
     }
 
@@ -317,16 +345,22 @@ impl<'a, S: Storage, R: crate::Rng + 'static, VP: rsk_vendor::Platform> CcidAppl
     /// SW1 SW2). On-card RSA keygen is run to completion inline (see module docs);
     /// everything else goes straight to the applet dispatcher.
     pub fn handle_apdu(&mut self, apdu: &[u8]) -> &[u8] {
-        // The keygen fast paths bypass `Dispatcher::process`, which is what would
-        // normally drop a stale GET RESPONSE remainder and reset an interrupted
-        // command chain; a GENERATE is neither a 0xC0 nor a chain segment, so
-        // clearing both here matches the ordinary dispatch (applet.rs).
-        if let Some(n) = self.try_rsa_keygen(apdu) {
+        // The keygen fast paths bypass `Dispatcher::process`, so the class byte it
+        // judges has to be judged ahead of them: a chaining segment is not a command
+        // yet, and a secure-messaging class is refused. Falling through is what
+        // answers both — measured on a YubiKey 5.7.4, `04 47 00 9A …` is `6E00`
+        // where `00 47 …` is `6982`, and `10 47 …` is accumulated, never executed.
+        let dispatchable =
+            Apdu::parse(apdu).is_ok_and(|p| !p.is_chaining() && !p.is_secure_messaging());
+        // They also bypass the drop of a stale GET RESPONSE remainder and the reset
+        // of an interrupted command chain; a GENERATE is neither a 0xC0 nor a chain
+        // segment, so clearing both here matches the ordinary dispatch (applet.rs).
+        if dispatchable && let Some(n) = self.try_rsa_keygen(apdu) {
             self.disp.clear_pending();
             self.disp.clear_chaining();
             return &self.resp[..n];
         }
-        if let Some(n) = self.try_piv_rsa_keygen(apdu) {
+        if dispatchable && let Some(n) = self.try_piv_rsa_keygen(apdu) {
             self.disp.clear_pending();
             self.disp.clear_chaining();
             return &self.resp[..n];
@@ -521,3 +555,7 @@ impl<'a, S: Storage, R: crate::Rng + 'static, VP: rsk_vendor::Platform> CcidAppl
         Some(n + 2)
     }
 }
+
+#[cfg(test)]
+#[path = "ccid_tests.rs"]
+mod tests;

@@ -7,6 +7,7 @@ use minicbor::Encoder;
 use minicbor::encode::write::Cursor;
 use rsk_crypto::Device;
 use rsk_crypto::pinproto;
+use rsk_crypto::pinproto::PinProto;
 use rsk_fs::Fs;
 use rsk_fs::storage::ram::RamStorage;
 
@@ -50,6 +51,21 @@ fn subpara_min_pin(new_min: u64) -> std::vec::Vec<u8> {
 }
 
 // Build a config request, MACing over 0xff×32 ‖ 0x0d ‖ subcmd ‖ subpara.
+// A CBOR unsigned int: past 23 the value no longer fits the type byte.
+fn push_uint(out: &mut std::vec::Vec<u8>, v: u8) {
+    if v > 0x17 {
+        out.push(0x18);
+    }
+    out.push(v);
+}
+
+// `{1: subCommand}` and nothing else — no pinUvAuthParam, no params.
+fn bare_sub(subcmd: u8) -> std::vec::Vec<u8> {
+    let mut req = std::vec![0xA1u8, 0x01];
+    push_uint(&mut req, subcmd);
+    req
+}
+
 fn config_request(subcmd: u8, subpara: &[u8], token: &[u8; 32]) -> std::vec::Vec<u8> {
     let mut vp = std::vec![0xffu8; 32];
     vp.push(CTAP_CONFIG);
@@ -61,7 +77,8 @@ fn config_request(subcmd: u8, subpara: &[u8], token: &[u8; 32]) -> std::vec::Vec
     let mut req = std::vec::Vec::new();
     let fields = if subpara.is_empty() { 3u8 } else { 4 };
     req.push(0xA0 | fields); // map(fields)
-    req.extend_from_slice(&[0x01, subcmd]); // 1: subCommand
+    req.push(0x01); // 1: subCommand
+    push_uint(&mut req, subcmd);
     if !subpara.is_empty() {
         req.push(0x02); // 2: subCommandParams (raw)
         req.extend_from_slice(subpara);
@@ -413,4 +430,72 @@ fn unknown_vendor_config_id_rejected() {
         run(&mut st, &vendor_req(&sub, &TOKEN)),
         Err(CtapError::InvalidSubcommand)
     );
+}
+
+/// The subcommand is judged before the token, pinned to a YubiKey 5.7.4 cell for
+/// cell: `0` is the absent sentinel, an id the card does not implement is
+/// INVALID_PARAMETER whether or not a token came with it, and only a known one
+/// reaches PUAT_REQUIRED. Measured on 0x00 / 0x04 / 0x7F / 0xFF, stable across
+/// runs. Unlike `credentialManagement`, this command tells an unauthenticated
+/// caller which subcommands exist — so does the YubiKey, and getInfo's options
+/// name all three anyway.
+#[test]
+fn undefined_config_subcommand_matches_a_yubikey() {
+    for sub in [0x05u8, 0x7F] {
+        let mut st = armed(PERM_ACFG);
+        assert_eq!(
+            run(&mut st, &config_request(sub, &[], &TOKEN)),
+            Err(CtapError::InvalidParameter),
+            "config subcommand {sub:#04x} with a token"
+        );
+        let mut st = FidoState::new();
+        assert_eq!(
+            run(&mut st, &bare_sub(sub)),
+            Err(CtapError::InvalidParameter),
+            "config subcommand {sub:#04x} without one"
+        );
+    }
+    let mut st = armed(PERM_ACFG);
+    assert_eq!(
+        run(&mut st, &config_request(0x00, &[], &TOKEN)),
+        Err(CtapError::MissingParameter),
+        "subCommand 0 is the absent-parameter sentinel"
+    );
+    let mut st = FidoState::new();
+    assert_eq!(
+        run(&mut st, &bare_sub(CONFIG_SET_MIN_PIN as u8)),
+        Err(CtapError::PuatRequired),
+        "a KNOWN subcommand still reaches the auth gate"
+    );
+}
+
+/// `pinUvAuthProtocol: 0` is a value the platform sent, and a YubiKey 5.7.4 judges
+/// it before it has looked at the subcommand or missed the token: `0x02`, not the
+/// `0x36` a bare "no param" gets and not the `0x14` subcommand `0` gets.
+#[test]
+fn an_unsupported_protocol_is_judged_before_the_subcommand_and_the_token() {
+    for sub in [0x03u8, 0x00, 0x09] {
+        // {1: sub, 3: proto} — no pinUvAuthParam at all. 255 needs its own header.
+        for proto in [std::vec![0x00u8], std::vec![0x03], std::vec![0x18, 0xFF]] {
+            let mut req = std::vec![0xA2, 0x01, sub, 0x03];
+            req.extend_from_slice(&proto);
+            let mut state = armed(PERM_ACFG);
+            assert_eq!(
+                run(&mut state, &req),
+                Err(CtapError::InvalidParameter),
+                "subcommand {sub:#x} protocol {proto:?}"
+            );
+        }
+    }
+    // Control: the same requests with a supported protocol keep their own answers,
+    // so the rule above is the protocol's and not a blanket refusal.
+    for (sub, want) in [
+        (0x03u8, CtapError::PuatRequired),
+        (0x00, CtapError::MissingParameter),
+        (0x09, CtapError::InvalidParameter),
+    ] {
+        let req = std::vec![0xA2, 0x01, sub, 0x03, 0x02];
+        let mut state = armed(PERM_ACFG);
+        assert_eq!(run(&mut state, &req), Err(want), "subcommand {sub:#x}");
+    }
 }

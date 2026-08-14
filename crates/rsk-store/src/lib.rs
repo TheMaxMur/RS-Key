@@ -14,7 +14,9 @@
 //! a file behind `tools/emu`. A store that only the firmware could instantiate is
 //! a store nothing could test.
 
-#![no_std]
+// Host test builds link `std`: the RAM NOR flash the suite runs the store over
+// wants a heap, and no test code reaches the firmware image.
+#![cfg_attr(not(test), no_std)]
 
 use core::ops::Range;
 
@@ -26,8 +28,8 @@ use sequential_storage::map::{MapConfig, MapStorage};
 use rsk_fs::Storage;
 use rsk_sdk::error::{Error, Result};
 
-/// Scratch for one map op; must fit the largest stored key+value (EF_META ≤ 1 KiB).
-const KV_BUF: usize = 2048;
+/// Scratch for one map op; must fit the largest stored key+value.
+const KV_BUF: usize = 4080;
 
 // The 2-byte FID shares the scratch with the value, so the per-value ceiling the
 // `Storage` trait publishes is exactly two under it.
@@ -35,6 +37,14 @@ const _: () = assert!(rsk_fs::MAX_VALUE_BYTES == KV_BUF - 2);
 
 /// Flash erase-sector size (RP2350 QSPI), = one `sequential-storage` page.
 const SECTOR: usize = 4096;
+
+// A `sequential-storage` item lives inside ONE page, so the ceiling is the sector
+// minus the page and item headers — measured at 16 bytes, i.e. 4078 value bytes
+// plus the 2-byte FID. Nothing type-checks this: a larger `MAX_VALUE_BYTES`
+// compiles and then fails at runtime on the first write that big, which is how
+// the 4094 first tried here was caught (`the_published_ceiling_is_the_one_the_
+// scratch_can_hold`). Raise the sector, not this, if more is ever needed.
+const _: () = assert!(KV_BUF <= SECTOR - 16);
 
 /// Transient FID the [`Storage::compact`] lap churns to advance the main ring.
 /// Routed to main (not a counter FID), it never reaches `Fs` and is removed at
@@ -132,13 +142,18 @@ impl<F: NorFlash + MultiwriteNorFlash + Clone, CM: CacheImpl<u16>, CC: CacheImpl
         .map_err(|_| Error::MemoryFatal)
     }
 
+    /// Removes from BOTH partitions, not just the one [`is_counter_fid`] routes to.
+    /// `for_each_key` walks both, so a copy in the other partition is invisible to
+    /// `read` yet yielded on every pass — a record nothing can delete, and
+    /// `authenticatorReset`'s sweep loops on it until its progress bound gives up.
+    /// The routing has moved once already (`EF_CRED_CTR` 0xC001 joined the counter
+    /// set at 0x0821, after 0x081D had been writing it to main), so this is a state
+    /// the tree has produced, not a hypothetical. On a fid that was never misrouted
+    /// the second call finds nothing and costs one ring walk.
     fn remove(&mut self, fid: u16) -> Result<()> {
-        if is_counter_fid(fid) {
-            block_on(self.counter.remove_item(&mut self.buf, &fid))
-        } else {
-            block_on(self.main.remove_item(&mut self.buf, &fid))
-        }
-        .map_err(|_| Error::MemoryFatal)
+        let main = block_on(self.main.remove_item(&mut self.buf, &fid));
+        let counter = block_on(self.counter.remove_item(&mut self.buf, &fid));
+        main.and(counter).map_err(|_| Error::MemoryFatal)
     }
 
     fn size(&mut self, fid: u16) -> Option<usize> {
@@ -237,3 +252,6 @@ fn for_each_in<F: NorFlash + MultiwriteNorFlash, C: CacheImpl<u16>>(
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -3,7 +3,8 @@
 
 //! The firmware half of the vendor applet: the pending-reboot slot, and the
 //! [`rsk_vendor::Platform`] that gives the applet its hardware — the LED atomics,
-//! the second core's counters, the measurement benches and the reset.
+//! the reset, and (measurement builds only) the second core's counters and the
+//! timing benches.
 //!
 //! The applet itself (its AID, the counter, the APDU dispatch and the
 //! reboot-to-BOOTSEL gate) lives in `crates/rsk-vendor`, where it is host-tested
@@ -25,6 +26,16 @@ use rsk_sdk::{ResBuf, Sw};
 const BENCH_ITERS: u32 = 400;
 #[cfg(feature = "bench")]
 const BENCH_SAMPLES: usize = 32;
+/// Bench selector for the OTP key-page read. The crypto primitives are 0..=2 and
+/// live in `rsk_fido::bench`; this one is served here because OTP is board
+/// hardware that host-testable crate cannot reach.
+#[cfg(feature = "bench")]
+const SEL_OTP_READ: u8 = 3;
+/// Reads batched into one [`SEL_OTP_READ`] sample. A key read is microseconds and
+/// the timer ticks at 1 µs, so timing a single one would quantise it into noise;
+/// the host divides the sample by this.
+#[cfg(feature = "bench")]
+const OTP_READ_REPS: u32 = 100;
 
 /// Pending reboot request: 0 = none, 1 = warm reboot,
 /// 2 = secure reboot to the BOOTSEL bootloader. Set by the applet's REBOOT and
@@ -86,6 +97,11 @@ impl rsk_vendor::Platform for VendorPlatform {
         Some(crate::led::config_block())
     }
 
+    /// Behind `core1-stats` so it never ships, for the reason the two benches
+    /// below are gated: the per-core candidate/find counters are a timing oracle
+    /// over the RSA keygen prime search. Gated out, the trait default answers
+    /// `INS_NOT_SUPPORTED`.
+    #[cfg(feature = "core1-stats")]
     fn core1_stats(&self) -> Option<[u8; 32]> {
         Some(crate::core1::stats())
     }
@@ -127,7 +143,8 @@ impl rsk_vendor::Platform for VendorPlatform {
 
     /// P1 selects the primitive (0 = variable-base P-256 ECDH, the
     /// XIP-cache-sensitive clientPIN path; 1 = the getAssertion comb sign; 2 = the
-    /// HKDF-SHA512 ratchet), P2 = warmup samples dropped from the warm stats.
+    /// HKDF-SHA512 ratchet; 3 = an OTP key-page read, batched `OTP_READ_REPS` per
+    /// sample), P2 = warmup samples dropped from the warm stats.
     /// Computes a robust median/MAD + a cold sample on-device (via the Kani-proved
     /// `rsk-bench`) and returns the 20-byte Summary. Behind `bench` so it never
     /// ships — a timing oracle, like keygen-bench. The sample count is kept modest
@@ -136,7 +153,7 @@ impl rsk_vendor::Platform for VendorPlatform {
     #[cfg(feature = "bench")]
     fn latency_bench(&mut self, p1: u8, p2: u8, res: &mut ResBuf) -> Sw {
         use embassy_time::Instant;
-        if p1 > 2 {
+        if p1 > SEL_OTP_READ {
             return Sw::INCORRECT_P1P2;
         }
         let warmup = p2 as usize;
@@ -144,12 +161,26 @@ impl rsk_vendor::Platform for VendorPlatform {
         for slot in samples.iter_mut() {
             let t0 = Instant::now();
             // black_box so the compiler can't hoist/fold the timed call.
-            core::hint::black_box(rsk_fido::bench::run(p1));
+            match p1 {
+                SEL_OTP_READ => {
+                    for _ in 0..OTP_READ_REPS {
+                        core::hint::black_box(crate::otp_keys::bench_key_read());
+                    }
+                }
+                sel => {
+                    core::hint::black_box(rsk_fido::bench::run(sel));
+                }
+            }
             // Ops are 60–500 ms → microseconds fit u32 with room to spare.
             *slot = t0.elapsed().as_micros() as u32;
         }
         let summary = rsk_bench::summarize(&mut samples, warmup);
         res.extend(&summary.to_le_bytes());
+        // A batched selector declares its own divisor, so the host keeps no copy
+        // of `OTP_READ_REPS` to drift against this one.
+        if p1 == SEL_OTP_READ {
+            res.extend(&OTP_READ_REPS.to_le_bytes());
+        }
         Sw::OK
     }
 }

@@ -100,7 +100,7 @@ fuzz_target!(|data: &[u8]| {
             assert!(n <= MAX_SIG_LEN);
             let mut cbor = [0u8; 4096];
             let mut enc = Encoder::new(Cursor::new(&mut cbor[..]));
-            let _ = key.cose_public(&mut enc);
+            let _ = key.cose_public(key.alg(), &mut enc);
         }
     }
 });

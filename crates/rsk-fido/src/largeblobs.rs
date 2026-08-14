@@ -14,10 +14,9 @@ use minicbor::encode::{Error, Write};
 use minicbor::{Decoder, Encoder};
 use rsk_fs::Storage;
 
-use rsk_crypto::pinproto::PinProto;
 use rsk_crypto::sha256;
 
-use crate::cbordec::{cbor, def_map};
+use crate::cbordec::{cbor, def_map, skip_value};
 use crate::consts::{
     CTAP_LARGE_BLOBS, EF_LARGEBLOB, EF_PIN, LARGEBLOB_MIN, MAX_FRAGMENT_LENGTH, MAX_LARGE_BLOB_SIZE,
 };
@@ -78,7 +77,7 @@ fn parse(data: &[u8]) -> Result<Req<'_>, CtapError> {
                 req.proto = cbor(d.u64())?;
                 req.proto_present = true;
             }
-            _ => cbor(d.skip())?,
+            _ => skip_value(&mut d)?,
         }
     }
     Ok(req)
@@ -186,11 +185,11 @@ fn write_fragment<S: Storage, R: Rng>(
     // unverified write can destroy but never read.
     if ctx.fs.has_data(EF_PIN) || crate::config::always_uv_enabled(ctx.fs) {
         // pinUvAuthParam MAC over 0xff×32 ‖ 0x0c ‖ 0x00 ‖ offset_le(4) ‖ sha256(set).
+        // A present-but-unsupported protocol is judged first — `0` is a value the
+        // platform sent — and an absent one only where the token needs it.
+        let proto = crate::clientpin::checked_proto(req.proto_present.then_some(req.proto))?;
         let param = req.pin_uv_auth_param.ok_or(CtapError::PuatRequired)?;
-        if req.proto == 0 {
-            return Err(CtapError::MissingParameter);
-        }
-        let proto = PinProto::from_u64(req.proto).ok_or(CtapError::InvalidParameter)?;
+        let proto = proto.ok_or(CtapError::MissingParameter)?;
         let mut vd = [0u8; 70];
         vd[..32].fill(0xff);
         vd[32] = CTAP_LARGE_BLOBS;
@@ -212,6 +211,10 @@ fn write_fragment<S: Storage, R: Rng>(
     let next = ctx.state.lba.expected_next_offset;
     ctx.state.lba.temp[next..next + set.len()].copy_from_slice(set);
     ctx.state.lba.expected_next_offset += set.len();
+    // Per fragment, so a platform sending a large array over a slow link keeps its
+    // transfer alive; the window is the gap CTAP 2.3 §6 bounds "between such
+    // commands", not a budget for the whole array.
+    ctx.state.lba.last_fragment_ms = ctx.now_ms;
 
     if ctx.state.lba.expected_next_offset == ctx.state.lba.expected_length {
         let total = ctx.state.lba.expected_length;

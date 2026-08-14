@@ -5,8 +5,16 @@ use super::*;
 
 /// `parse` over EVERY byte string up to 12 bytes (past every tag/length
 /// form, with room for several TLVs including a truncated tail): never
-/// panics, never overreads, always terminates, and always materializes an
-/// interface mask — the boot path relies on that.
+/// panics, never overreads, always terminates, always materializes an
+/// interface mask — the boot path relies on that — and **always yields a record
+/// that serializes back into `PHY_MAX_SIZE`**.
+///
+/// The round-trip half is the one that is not a restatement of the parser. The
+/// rescue write is read-modify-write (`merge_save`): whatever `parse` returns
+/// for a host blob is what `serialize` has to put back, and a `None` there is
+/// a device that took a `PHY` write, answered, and stored nothing — or, on the
+/// boot path, one that can no longer rewrite its own configuration. The buffer
+/// is `PHY_MAX_SIZE` because that is the size the callers declare.
 #[kani::proof]
 #[kani::unwind(14)]
 fn parse_any_input() {
@@ -15,7 +23,15 @@ fn parse_any_input() {
     let n: usize = kani::any();
     kani::assume(n <= N);
     let phy = PhyData::parse(&data[..n]);
-    assert!(phy.enabled_usb_itf.is_some());
+    assert!(
+        phy.enabled_usb_itf.is_some(),
+        "no interface mask materialized"
+    );
+    let mut buf = [0u8; PHY_MAX_SIZE];
+    assert!(
+        phy.serialize(&mut buf).is_some(),
+        "a host blob parsed into a record that cannot be stored back"
+    );
 }
 
 /// A symbolic present-or-absent ≤4-byte, NUL-free string. The wire format is
@@ -167,13 +183,125 @@ fn serialize_max_fits() {
 
 /// `overlay` over any base record and any ≤12-byte host blob never panics or
 /// overreads — the merge write (`merge_save`) walks host-controlled bytes on top
-/// of the stored record, so it must be as total as `parse`.
+/// of the stored record, so it must be as total as `parse` — and, the claim its
+/// doc comment makes and this harness used to leave to prose, **omission never
+/// clears**: a blob that does not carry a tag leaves that field exactly as it
+/// was, and no blob at all can turn a stored scalar back into "absent".
+///
+/// This is the data-loss property. A PicoForge `PHY` write that sets one field
+/// sends one TLV; if the merge dropped the rest, a host that changes the LED
+/// count would silently erase the stored VID/PID, the product string and the
+/// interface mask — a bricked-looking key from a successful write. The two
+/// string fields are the deliberate exception: an explicit empty value clears
+/// them, so their clause is conditioned on the tag being absent from the blob
+/// rather than on the blob's shape (a sufficient condition, and one that needs
+/// no second TLV decoder to state).
 #[kani::proof]
 #[kani::unwind(14)]
-fn overlay_any_input() {
+fn overlay_never_drops_a_stored_field() {
     const N: usize = 12;
     let data: [u8; N] = kani::any();
     let n: usize = kani::any();
     kani::assume(n <= N);
-    let _ = PhyData::default().overlay(&data[..n]);
+    let blob = &data[..n];
+
+    // Every optional field present. The strings are concrete: the claim is about
+    // a field surviving, not about what it holds.
+    let base = PhyData {
+        vid_pid: Some((kani::any(), kani::any())),
+        led_gpio: Some(kani::any()),
+        led_brightness: Some(kani::any()),
+        opts: kani::any(),
+        presence_timeout: Some(kani::any()),
+        usb_product: Product::new(b"p"),
+        usb_manufacturer: Product::new(b"m"),
+        enabled_curves: Some(kani::any()),
+        enabled_usb_itf: Some(kani::any()),
+        led_driver: Some(kani::any()),
+        led_order: Some(kani::any()),
+        led_num: Some(kani::any()),
+    };
+    // Without this the two string clauses below would hold vacuously.
+    assert!(base.usb_product.is_some() && base.usb_manufacturer.is_some());
+
+    let merged = base.overlay(blob);
+
+    // No host blob can turn a stored scalar into "absent" — every arm that
+    // touches one writes a value.
+    assert!(merged.vid_pid.is_some(), "vid/pid cleared by a merge");
+    assert!(merged.led_gpio.is_some(), "led gpio cleared by a merge");
+    assert!(
+        merged.led_brightness.is_some(),
+        "led brightness cleared by a merge"
+    );
+    assert!(
+        merged.presence_timeout.is_some(),
+        "presence timeout cleared"
+    );
+    assert!(merged.enabled_curves.is_some(), "enabled curves cleared");
+    assert!(merged.enabled_usb_itf.is_some(), "interface mask cleared");
+    assert!(merged.led_driver.is_some(), "led driver cleared");
+    assert!(merged.led_order.is_some(), "led order cleared");
+    assert!(merged.led_num.is_some(), "led count cleared");
+
+    // A tag whose byte never appears in the blob cannot have been parsed as a
+    // TLV, so its field must come through untouched — value and all.
+    let absent = |tag: u8| !blob.contains(&tag);
+    assert!(
+        !absent(TAG_VIDPID) || merged.vid_pid == base.vid_pid,
+        "vid/pid moved"
+    );
+    assert!(
+        !absent(TAG_LED_GPIO) || merged.led_gpio == base.led_gpio,
+        "gpio moved"
+    );
+    assert!(
+        !absent(TAG_LED_BRIGHTNESS) || merged.led_brightness == base.led_brightness,
+        "brightness moved"
+    );
+    assert!(!absent(TAG_OPTS) || merged.opts == base.opts, "opts moved");
+    assert!(
+        !absent(TAG_PRESENCE_TIMEOUT) || merged.presence_timeout == base.presence_timeout,
+        "presence timeout moved"
+    );
+    assert!(
+        !absent(TAG_ENABLED_CURVES) || merged.enabled_curves == base.enabled_curves,
+        "curves moved"
+    );
+    assert!(
+        !absent(TAG_ENABLED_USB_ITF) || merged.enabled_usb_itf == base.enabled_usb_itf,
+        "interface mask moved"
+    );
+    assert!(
+        !absent(TAG_LED_DRIVER) || merged.led_driver == base.led_driver,
+        "led driver moved"
+    );
+    assert!(
+        !absent(TAG_LED_ORDER) || merged.led_order == base.led_order,
+        "order moved"
+    );
+    assert!(
+        !absent(TAG_LED_NUM) || merged.led_num == base.led_num,
+        "led count moved"
+    );
+
+    // The strings are asserted present, not equal. `Product` derives `PartialEq`
+    // over its full 32-byte buffer, so `==` on one is a 32-byte memcmp that
+    // pushes the unwind bound off the parser's depth and onto the buffer's —
+    // the cost `serialize_parse_roundtrip` documents, and measured here as no
+    // verdict in 20 minutes against 30 s for this form. Clearing is what the
+    // merge must not do by omission; which bytes survive is the round-trip
+    // harness's question.
+    assert!(
+        !absent(TAG_USB_PRODUCT) || merged.usb_product.is_some(),
+        "product string cleared without its tag"
+    );
+    assert!(
+        !absent(TAG_USB_MANUFACTURER) || merged.usb_manufacturer.is_some(),
+        "manufacturer string cleared without its tag"
+    );
+    kani::cover!(
+        merged.led_num != base.led_num,
+        "a blob that actually changed something"
+    );
 }

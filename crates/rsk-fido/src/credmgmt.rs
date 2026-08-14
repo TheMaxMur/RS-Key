@@ -8,7 +8,7 @@
 //! permission; the MAC covers the subcommand byte for 0x01/0x02 and
 //! `subcommand ‖ <raw subCommandParams>` for 0x04/0x06/0x07. The three read
 //! subcommands additionally accept the persistent token's `pcmr` grant
-//! (CTAP 2.2 §6.8.2/.3/.4); the two writers never do.
+//! (CTAP 2.2 §6.8.2/.3/.4) while a PIN is set; the two writers never do.
 //! enumerateCredentials emits the core 0x06–0x09 plus the extension fields
 //! 0x0A credProtect / 0x0B largeBlobKey (derived) / 0x0C thirdPartyPayment.
 
@@ -19,11 +19,12 @@ use zeroize::Zeroize;
 use rsk_crypto::pinproto::{self, PinProto};
 use rsk_fs::{Fs, Storage};
 
-use crate::cbordec::{cbor, def_arr, def_map};
+use crate::cbordec::{cbor, def_arr, def_map, skip_value};
 use crate::consts::{
     CM_DELETE_CREDENTIAL, CM_ENUMERATE_CREDS_BEGIN, CM_ENUMERATE_CREDS_NEXT,
     CM_ENUMERATE_RPS_BEGIN, CM_ENUMERATE_RPS_NEXT, CM_GET_CREDS_METADATA, CM_UPDATE_USER_INFO,
-    CRED_PROT_UV_OPTIONAL, EF_CRED, EF_RP, MAX_RAW_SUBPARA, MAX_RESIDENT_CREDENTIALS,
+    CRED_PROT_UV_OPTIONAL, EF_CRED, EF_PIN, EF_RP, LARGE_BLOB_EXT, MAX_RAW_SUBPARA,
+    MAX_RESIDENT_CREDENTIALS,
 };
 use crate::credential::{
     CRED_BOX_MAX, CRED_REC_MAX, CRED_RESIDENT_LEN, CredInput, RECORD_PREFIX, RP_PREFIX, RP_REC_MAX,
@@ -34,6 +35,7 @@ use crate::credential::{
 use crate::ec::{CredKey, cached_point_len, cose_public_from_point};
 use crate::error::{CtapError, CtapResult};
 use crate::keyderiv::fido_load_key;
+use crate::largeblobext;
 use crate::seed::load_ppuat;
 use crate::state::{FidoState, PERM_CM};
 use crate::{Ctx, Rng};
@@ -45,7 +47,7 @@ use crate::{Ctx, Rng};
 struct Req<'a> {
     subcommand: u64,
     raw_subpara: &'a [u8],
-    proto: u64,
+    proto: Option<u64>,
     param: Option<&'a [u8]>,
     rp_id_hash: Option<&'a [u8]>,
     cred_id: Option<&'a [u8]>,
@@ -59,7 +61,7 @@ fn parse(data: &[u8]) -> Result<Req<'_>, CtapError> {
     let mut req = Req {
         subcommand: 0,
         raw_subpara: &[],
-        proto: 0,
+        proto: None,
         param: None,
         rp_id_hash: None,
         cred_id: None,
@@ -82,9 +84,9 @@ fn parse(data: &[u8]) -> Result<Req<'_>, CtapError> {
         match key {
             1 => req.subcommand = cbor(d.u32())? as u64,
             2 => parse_subpara(data, &mut d, &mut req)?,
-            3 => req.proto = cbor(d.u32())? as u64,
+            3 => req.proto = Some(cbor(d.u32())? as u64),
             4 => req.param = Some(cbor(d.bytes())?),
-            _ => cbor(d.skip())?,
+            _ => skip_value(&mut d)?,
         }
     }
     Ok(req)
@@ -113,7 +115,7 @@ fn parse_subpara<'a>(
                                 cbor(d.str())?;
                             }
                         }
-                        _ => cbor(d.skip())?, // "type"
+                        _ => skip_value(d)?, // "type"
                     }
                 }
             }
@@ -124,11 +126,11 @@ fn parse_subpara<'a>(
                         "id" => req.user_id = Some(cbor(d.bytes())?),
                         "name" => req.user_name = cbor(d.str())?,
                         "displayName" => req.user_display_name = cbor(d.str())?,
-                        _ => cbor(d.skip())?,
+                        _ => skip_value(d)?,
                     }
                 }
             }
-            _ => cbor(d.skip())?,
+            _ => skip_value(d)?,
         }
     }
     req.raw_subpara = &data[start..d.position()];
@@ -154,12 +156,20 @@ pub fn cred_mgmt<S: Storage, R: Rng>(
         _ => {}
     }
 
-    // Every other subcommand requires a verified pinUvAuthParam.
+    // Past those two, this is a credentialManagement command that does NOT
+    // continue an enumerate walk, so §6's "exclusively preceded" ends the one in
+    // flight — `process_cbor` cannot do it, the subcommand is only known here. A
+    // YubiKey 5.7.4 behaves the same, measured: Begin, getCredsMetadata,
+    // getNextRP answers NOT_ALLOWED.
+    ctx.state.cm.reset();
+
+    // Every other subcommand requires a verified pinUvAuthParam — but the protocol
+    // is judged first, and absent is not the same as unsupported: a YubiKey 5.7.4
+    // answers INVALID_PARAMETER to `pinUvAuthProtocol: 0` with no param at all,
+    // and MISSING_PARAMETER when the param is there and the protocol is not.
+    let proto = crate::clientpin::checked_proto(req.proto)?;
     let param = req.param.ok_or(CtapError::PuatRequired)?;
-    if req.proto != 1 && req.proto != 2 {
-        return Err(CtapError::InvalidParameter);
-    }
-    let proto = PinProto::from_u64(req.proto).ok_or(CtapError::InvalidParameter)?;
+    let proto = proto.ok_or(CtapError::MissingParameter)?;
 
     match req.subcommand {
         CM_GET_CREDS_METADATA => {
@@ -209,6 +219,9 @@ pub fn cred_mgmt<S: Storage, R: Rng>(
             let (slot, _) = found.ok_or(CtapError::NoCredentials)?;
             update_user(ctx, slot, user_id, req.user_name, req.user_display_name)
         }
+        // §8.1 would have this be INVALID_SUBCOMMAND; a YubiKey 5.7.4 answers
+        // INVALID_PARAMETER here and hosts are written against it. Measured, both
+        // 0x0A and its 0x41 prototype, stable across runs.
         _ => Err(CtapError::InvalidParameter),
     }
 }
@@ -234,15 +247,21 @@ fn authorize_cm<S: Storage, R: Rng>(
 }
 
 /// Whether the MAC was made with the persistent token (CTAP 2.2 §6.8.2 step 4).
-/// A holder of it *is* the `pcmr` grant — the record exists only while the
-/// permission does — and a persistent token carries no rpId binding and no usage
-/// timer, so it authorizes on its own. Absent record: no grant, no match.
+/// A holder of it *is* the `pcmr` grant, and a persistent token carries no rpId
+/// binding and no usage timer, so it authorizes on its own. No record — or no
+/// `EF_PIN` behind it — is no grant.
 fn authorized_by_ppuat<S: Storage, R: Rng>(
     ctx: &mut Ctx<S, R>,
     proto: PinProto,
     payload: &[u8],
     param: &[u8],
 ) -> bool {
+    // Both issuance paths gate on `EF_PIN` (§6.5.5.7.2/.3), so a grant without one is
+    // a leftover from a build whose wipe deferred `EF_PAUTHTOKEN` past the PIN. The
+    // wipes revoke it with the secrets now; this refuses one already on flash.
+    if !ctx.fs.has_data(EF_PIN) {
+        return false;
+    }
     let Some(mut tok) = load_ppuat(&ctx.dev, ctx.fs) else {
         return false;
     };
@@ -318,10 +337,11 @@ fn enumerate_rps<S: Storage, R: Rng>(
     out: &mut [u8],
 ) -> CtapResult {
     if begin {
+        ctx.state.cm.channel = ctx.state.channel;
         ctx.state.cm.rp_counter = 1;
         ctx.state.cm.rp_total = 0;
         ctx.state.cm.rp_next_slot = 0;
-    } else if ctx.state.cm.rp_counter > ctx.state.cm.rp_total {
+    } else if !ctx.state.cm.may_walk_rps(ctx.state.channel) {
         return Err(CtapError::NotAllowed);
     }
     let target = ctx.state.cm.rp_counter;
@@ -366,6 +386,10 @@ fn enumerate_rps<S: Storage, R: Rng>(
         ctx.state.cm.rp_total = total;
     }
     ctx.state.cm.rp_counter = target.saturating_add(1);
+    // Per leg, not per walk — CTAP 2.3 §6 bounds the gap "between such commands",
+    // so a platform drawing an account picker cannot run out of the window halfway
+    // down its own list (§6.3 step 7 says the same for the assertion walk).
+    ctx.state.cm.last_leg_ms = ctx.now_ms;
 
     // The EF_RP tail is boxed under the device seed — recover the rpId domain.
     let mut rp_id_hash = [0u8; 32];
@@ -399,10 +423,11 @@ fn enumerate_creds<S: Storage, R: Rng>(
     out: &mut [u8],
 ) -> CtapResult {
     if begin {
+        ctx.state.cm.channel = ctx.state.channel;
         ctx.state.cm.cred_counter = 1;
         ctx.state.cm.cred_total = 0;
         ctx.state.cm.cred_next_slot = 0;
-    } else if ctx.state.cm.cred_counter > ctx.state.cm.cred_total {
+    } else if !ctx.state.cm.may_walk_creds(ctx.state.channel) {
         return Err(CtapError::NotAllowed);
     }
     let target = ctx.state.cm.cred_counter;
@@ -482,6 +507,7 @@ fn enumerate_creds<S: Storage, R: Rng>(
         ctx.state.cm.rp_id_hash = *rp_id_hash;
     }
     ctx.state.cm.cred_counter = target.saturating_add(1);
+    ctx.state.cm.last_leg_ms = ctx.now_ms;
     Ok(resp_len)
 }
 
@@ -523,8 +549,10 @@ fn enumerate_creds_response(
 
     // Extension response fields: 0x0A credProtect (always — defaults to level 1),
     // 0x0B largeBlobKey (derived, when the credential opted in), 0x0C
-    // thirdPartyPayment (always).
-    let large_blob_key = if cred.ext.large_blob_key {
+    // thirdPartyPayment (always). The stored opt-in outlives the design it belongs
+    // to — a credential created by a default build carries it, and a
+    // `largeblob-ext` build must still not serve half of the CTAP 2.1 pair.
+    let large_blob_key = if cred.ext.large_blob_key && !LARGE_BLOB_EXT {
         Some(derive_large_blob_key(seed, key_input))
     } else {
         None
@@ -573,8 +601,13 @@ fn enumerate_creds_response(
         .map_err(|_| CtapError::Other)?;
     enc.u8(8).map_err(|_| CtapError::Other)?;
     match &key {
-        Some(k) => k.cose_public(&mut enc),
-        None => cose_public_from_point(cred.curve, cached_pubkey.unwrap_or_default(), &mut enc),
+        Some(k) => k.cose_public(cred.alg, &mut enc),
+        None => cose_public_from_point(
+            cred.curve,
+            cred.alg,
+            cached_pubkey.unwrap_or_default(),
+            &mut enc,
+        ),
     }
     .map_err(|_| CtapError::Other)?;
 
@@ -637,6 +670,10 @@ fn delete_credential<S: Storage, R: Rng>(
     ctx.fs
         .delete(EF_CRED + slot)
         .map_err(|_| CtapError::NotAllowed)?;
+    // The credential's large blob goes with it. Best-effort and non-atomic: a
+    // power cut between the two leaves an orphan that the AAD binding stops the
+    // slot's next owner from opening, and `credential_store` clears anyway.
+    largeblobext::discard(ctx.fs, slot);
     decrement_rp(ctx.fs, rp_id_hash)?;
     Ok(0)
 }
@@ -723,7 +760,7 @@ fn update_user<S: Storage, R: Rng>(
 ///
 /// The credential's signing key, hmac-secret and largeBlobKey stay stable too:
 /// v2 credentials derive them from the preserved resident id
-/// ([`credential::resident_key_input`]), not the box, so the RP's stored pubkey
+/// ([`crate::credential::resident_key_input`]), not the box, so the RP's stored pubkey
 /// keeps verifying after an update. Legacy v1 credentials (created before that
 /// marker) still key off the box and so DO rotate on an update — the id derived
 /// from a v1 box is not re-issued, so this only affects passkeys made by older
@@ -796,3 +833,7 @@ fn reseal_user<S: Storage, R: Rng>(
 #[cfg(test)]
 #[path = "credmgmt_tests.rs"]
 mod tests;
+
+#[cfg(kani)]
+#[path = "credmgmt_kani.rs"]
+mod proofs;

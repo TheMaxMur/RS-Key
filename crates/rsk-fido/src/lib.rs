@@ -28,6 +28,7 @@ pub mod getinfo;
 pub mod hmacsecret;
 pub mod journal;
 pub mod keyderiv;
+pub mod largeblobext;
 pub mod largeblobs;
 pub mod makecredential;
 pub mod passkeys;
@@ -39,7 +40,7 @@ pub mod u2f;
 pub mod vendor;
 
 pub use error::{CTAP2_OK, CtapError, CtapResult};
-pub use reset::{is_fido_gate_fid, survives_factory_reset};
+pub use reset::{FIDO_SEED_FIDS, is_fido_gate_fid, is_fido_seed_fid, survives_factory_reset};
 
 use rsk_crypto::Device;
 use rsk_fs::{Fs, Storage};
@@ -200,9 +201,42 @@ pub fn process_cbor<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, data: &[u8], out: &
         return 1;
     };
 
-    // Retire a pinUvAuthToken whose usage timer has elapsed before it can
-    // authorize this command (CTAP 2.1 §6.5.5.7).
+    // Retire a pinUvAuthToken whose usage timer has elapsed before it can authorize
+    // this command (CTAP 2.1 §6.5.5.7), and any stateful sequence left idle past the
+    // window CTAP 2.3 §6 bounds — their continuation legs bring no token to expire.
     ctx.state.expire_stale_token(ctx.now_ms);
+    ctx.state.expire_stale_sequences(ctx.now_ms);
+
+    // CTAP 2.2 §6: a stateful sequence may assume it is "exclusively preceded" by
+    // its own kind or by the command that initialized it, so every sequence this
+    // command does not continue ends here. `getAssertion` continues nothing — it
+    // is an initializer, and arms its own walk after this clears the previous one.
+    ctx.state.retire_sequences_except(cmd);
+
+    // The canonical-form gate for the commands that parse a request body. getInfo,
+    // reset, selection and getNextAssertion take no parameters and never look at
+    // the bytes — the oracle likewise answers getInfo normally with a trailing byte.
+    //
+    // `largeBlobs` only where this build implements it: with the `largeBlob`
+    // extension served instead (§12.4), `0x0C` is a command we do not have, and a
+    // trailing byte must not turn its INVALID_COMMAND into INVALID_CBOR — a
+    // YubiKey answers `0x01` to every command it does not implement, body or no
+    // body. Same defect this commit fixes, one layer up: the body deciding what
+    // the command is.
+    if (matches!(
+        cmd,
+        consts::CTAP_MAKE_CREDENTIAL
+            | consts::CTAP_GET_ASSERTION
+            | consts::CTAP_CLIENT_PIN
+            | consts::CTAP_CONFIG
+            | consts::CTAP_CREDENTIAL_MGMT
+            | consts::CTAP_VENDOR
+    ) || (cmd == consts::CTAP_LARGE_BLOBS && !consts::LARGE_BLOB_EXT))
+        && let Err(e) = cbordec::one_cbor_item(params)
+    {
+        out[0] = e.as_u8();
+        return 1;
+    }
 
     let result = match cmd {
         consts::CTAP_GET_INFO => {
@@ -232,7 +266,11 @@ pub fn process_cbor<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, data: &[u8], out: &
         consts::CTAP_SELECTION => selection::selection(ctx),
         consts::CTAP_CONFIG => config::authenticator_config(ctx, params, &mut out[1..]),
         consts::CTAP_CREDENTIAL_MGMT => credmgmt::cred_mgmt(ctx, params, &mut out[1..]),
-        consts::CTAP_LARGE_BLOBS => largeblobs::large_blobs(ctx, params, &mut out[1..]),
+        // CTAP 2.3 §12.4: a build that serves the `largeBlob` extension must not
+        // also serve this command, and getInfo drops `largeBlobs` to match.
+        consts::CTAP_LARGE_BLOBS if !consts::LARGE_BLOB_EXT => {
+            largeblobs::large_blobs(ctx, params, &mut out[1..])
+        }
         consts::CTAP_VENDOR => vendor::vendor(ctx, params, &mut out[1..]),
         _ => Err(CtapError::InvalidCommand),
     };

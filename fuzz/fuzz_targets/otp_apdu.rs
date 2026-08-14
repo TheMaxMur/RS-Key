@@ -15,7 +15,10 @@ use libfuzzer_sys::fuzz_target;
 use rsk_fs::Fs;
 use rsk_fs::storage::ram::RamStorage;
 use rsk_otp::{AlwaysConfirm, OtpApplet, Rng};
-use rsk_sdk::{Apdu, Applet, ResBuf};
+use rsk_sdk::{Apdu, Applet, ResBuf, Sw};
+
+mod apdu_frame;
+use apdu_frame::{Frame, next_frame};
 
 struct CountRng(u8);
 impl Rng for CountRng {
@@ -27,12 +30,14 @@ impl Rng for CountRng {
     }
 }
 
-fn run(app: &mut OtpApplet, fs: &mut Fs<RamStorage>, raw: &[u8]) {
+fn run(app: &mut OtpApplet, fs: &mut Fs<RamStorage>, raw: &[u8]) -> Sw {
     if let Ok(apdu) = Apdu::parse(raw) {
         let mut buf = [0u8; 1024];
         let mut res = ResBuf::new(&mut buf);
-        let _ = app.process(&apdu, fs, &mut res);
+        return app.process(&apdu, fs, &mut res);
     }
+    // The status the dispatcher answers for an unparseable command.
+    Sw::WRONG_LENGTH
 }
 
 /// CRC16 X.25 (mirrors the applet's) for building one valid seed config.
@@ -68,20 +73,29 @@ fuzz_target!(|data: &[u8]| {
     let mut put = vec![0x00, 0x01, 0x01, 0x00, 58];
     put.extend_from_slice(&cfg);
     put.extend_from_slice(&[0; 6]); // access code
-    run(&mut app, &mut fs, &put);
+    // The seeding takes no fuzzer input, so asserting it worked cannot flake —
+    // and a seed that silently stops configuring the slot is invisible
+    // otherwise (a bad CRC here would just leave slot 1 unprogrammed).
+    assert_eq!(
+        run(&mut app, &mut fs, &put),
+        Sw::OK,
+        "seed slot-1 config must succeed"
+    );
 
-    // Replay attacker APDUs: [len][apdu bytes…]*, 0 = re-SELECT.
+    // Replay attacker APDUs: [len][apdu bytes…]*, 0 = re-SELECT, 0xFF = the
+    // extended-Lc escape (see `apdu_frame`).
     let mut rest = data;
-    while let Some((&n, tail)) = rest.split_first() {
-        if n == 0 {
-            let mut buf = [0u8; 256];
-            let mut res = ResBuf::new(&mut buf);
-            let _ = Applet::select(&mut app, false, &mut fs, &mut res);
-            rest = tail;
-            continue;
+    while let Some((frame, tail)) = next_frame(rest) {
+        rest = tail;
+        match frame {
+            Frame::Select => {
+                let mut buf = [0u8; 256];
+                let mut res = ResBuf::new(&mut buf);
+                let _ = Applet::select(&mut app, false, &mut fs, &mut res);
+            }
+            f => {
+                run(&mut app, &mut fs, f.as_slice());
+            }
         }
-        let n = (n as usize).min(tail.len());
-        run(&mut app, &mut fs, &tail[..n]);
-        rest = &tail[n..];
     }
 });

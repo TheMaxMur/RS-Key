@@ -11,7 +11,7 @@ mod seal;
 
 use core::cell::RefCell;
 
-use rsk_crypto::{Device, hmac_sha1, hmac_sha256, hmac_sha512};
+use rsk_crypto::{Device, FusedKey, FusedRead, hmac_sha1, hmac_sha256, hmac_sha512, read_fused};
 use rsk_fs::{Fs, KeyFid, Storage};
 pub use rsk_sdk::Confirm;
 use rsk_sdk::tlv::{find_tag, format_len};
@@ -60,14 +60,23 @@ impl UserPresence for AlwaysConfirm {
 // FIDs.
 const EF_OATH_CRED: u16 = 0xBA00; // 255 cred slots, 0xBA00..=0xBAFE (each a sealed KeyFid)
 const EF_OATH_CODE: KeyFid = KeyFid::new(0xBAFF); // SET CODE validation key, sealed
-/// Max stored access-code length. Bounds SET CODE so the code always fits the
-/// VALIDATE read buffer — otherwise an over-long code makes `seal_read` fail and
-/// (pre-fix) VALIDATE unlocked the applet without the code.
+/// VALIDATE's read buffer, and so the widest access code that can still be
+/// read back — otherwise `seal_read` fails and (pre-fix) VALIDATE unlocked the
+/// applet without the code. SET CODE bounds its input far tighter
+/// ([`CODE_TLV_MAX`]); this stays wide because a build before that rule stored
+/// up to this much, and such a key must go on opening.
 const OATH_CODE_MAX: usize = 128;
 const EF_OTP_PIN: u16 = 0x10A0;
 
 const MAX_OATH_CRED: u16 = 255;
+/// Width of the VALIDATE challenge SELECT offers — the one place YKOATH fixes a
+/// challenge length. A read path's challenge is [`CHALLENGE_MAX`] wide.
 const CHALLENGE_LEN: usize = 8;
+/// Widest challenge CALCULATE and CALCULATE ALL accept. A YubiKey 5.7.4 treats
+/// it as an opaque byte string, HMACs exactly what it was sent and answers
+/// `6A80` from 65 — on both read paths, before the credential lookup and
+/// whatever the credential's type (worklog ORACLE-oathfido §E58).
+const CHALLENGE_MAX: usize = 64;
 const MAX_OTP_COUNTER: u8 = 3;
 /// OTP-PIN record format tag. v1 = `[counter, 0x01, pin_derive_verifier(pin)]`
 /// roots the verifier in the OTP MKEK (identical to the OpenPGP/PIV PINs), so a
@@ -98,6 +107,10 @@ const TAG_NEW_PASSWORD: u8 = 0x81;
 const TAG_PWS_LOGIN: u8 = 0x83;
 const TAG_PWS_PASSWORD: u8 = 0x84;
 const TAG_PWS_METADATA: u8 = 0x85;
+/// Private to the stored blob: the `only increasing` high-water mark. Never on
+/// the wire — PUT refuses every tag outside [`PUT_TAGS`], so a host can neither
+/// plant one nor read one back, and neither can it on a YubiKey.
+const TAG_LAST_CHAL: u8 = 0xD0;
 
 const ALG_HMAC_SHA1: u8 = 0x01;
 const ALG_HMAC_SHA256: u8 = 0x02;
@@ -105,9 +118,44 @@ const ALG_HMAC_SHA512: u8 = 0x03;
 const ALG_MASK: u8 = 0x0F;
 
 const OATH_TYPE_HOTP: u8 = 0x10;
+const OATH_TYPE_TOTP: u8 = 0x20;
 const OATH_TYPE_MASK: u8 = 0xF0;
 
+/// What a YubiKey 5.7.4 takes as OATH key material — one rule for a
+/// credential's secret and for the access code, `6A80` and nothing stored
+/// outside it (worklog ORACLE-oathfido §E59).
+const SECRET_MIN: usize = 14;
+const SECRET_MAX: usize = 64;
+/// A credential's KEY TLV is `[type|alg, digits, secret…]`.
+const KEY_TLV_MIN: usize = SECRET_MIN + 2;
+const KEY_TLV_MAX: usize = SECRET_MAX + 2;
+/// SET CODE's KEY TLV is `[alg, secret…]`.
+const CODE_TLV_MIN: usize = SECRET_MIN + 1;
+const CODE_TLV_MAX: usize = SECRET_MAX + 1;
+/// Or SET CODE would take a code VALIDATE cannot read back — the protected-but-
+/// unopenable state this bound exists to close.
+const _: () = assert!(CODE_TLV_MAX <= OATH_CODE_MAX);
+const NAME_MAX: usize = 64;
+const DIGITS_MIN: u8 = 6;
+const DIGITS_MAX: u8 = 8;
+/// HOTP's initial moving factor, the one width ykman sends and the card takes.
+const IMF_LEN: usize = 4;
+/// Largest password-safe field (RS-Key's own extension). Its length has to fit
+/// the one byte GET CREDENTIAL writes, or the field would be stored unreadable.
+const PWS_MAX: usize = 255;
+
+/// YKOATH PROPERTIES bitmap. A YubiKey reads exactly these two bits and ignores
+/// 2..7 (`78 FC` computes, `78 FF` asks for a touch) — so we do too.
+const PROP_INCREASING: u8 = 0x01;
 const PROP_TOUCH: u8 = 0x02;
+
+/// Width of the stored high-water mark. Frozen, not derived: a stored `D0` is
+/// recognised by its length, so a value that followed [`CHALLENGE_MAX`] would
+/// make every mark an older build wrote unreadable. Right-zero-padded to it,
+/// which makes the comparison the card's own — see [`raise_mark`].
+const MARK_LEN: usize = 64;
+/// A mark has to hold any challenge a read path can compare against it.
+const _: () = assert!(CHALLENGE_MAX <= MARK_LEN);
 
 // Instructions.
 const INS_PUT: u8 = 0x01;
@@ -147,7 +195,7 @@ enum Chain {
     },
     CalcAll {
         p2: u8,
-        chal: [u8; CHALLENGE_LEN],
+        chal: [u8; CHALLENGE_MAX],
         chal_len: u8,
     },
 }
@@ -155,15 +203,21 @@ enum Chain {
 pub struct OathApplet<'a> {
     serial_id: [u8; 8],
     serial_hash: [u8; 32],
-    /// The OTP MKEK, once provisioned. OATH stores nothing under kbase today;
-    /// wired anyway so every applet shares one derivation truth.
-    otp_key: Option<[u8; 32]>,
+    /// How to read the OTP MKEK, once provisioned. OATH stores nothing under
+    /// kbase today; wired anyway so every applet shares one derivation truth.
+    mkek_source: Option<FusedKey>,
     rng: &'a RefCell<dyn Rng>,
     presence: &'a RefCell<dyn UserPresence>,
     /// Access-code session state. `true` when no code is set (everything
     /// allowed); with a code set, SELECT resets it and VALIDATE/VERIFY PIN
     /// flip it back.
     validated: bool,
+    /// Whether *this* session presented the OTP PIN. Distinct from `validated`,
+    /// which VERIFY PIN also sets (it doubles as VALIDATE for the nitropy flow)
+    /// and which SELECT sets unconditionally on a code-less applet — so
+    /// `validated` alone cannot tell "the owner proved the PIN" from "no access
+    /// code is configured", and the password-safe reads need the first.
+    otp_pin_verified: bool,
     /// Challenge the host must answer in VALIDATE; regenerated on SELECT and
     /// SET CODE.
     challenge: [u8; CHALLENGE_LEN],
@@ -177,28 +231,29 @@ impl<'a> OathApplet<'a> {
     pub fn new(
         serial_id: [u8; 8],
         serial_hash: [u8; 32],
-        otp_key: Option<[u8; 32]>,
+        mkek_source: Option<FusedKey>,
         rng: &'a RefCell<dyn Rng>,
         presence: &'a RefCell<dyn UserPresence>,
     ) -> Self {
         Self {
             serial_id,
             serial_hash,
-            otp_key,
+            mkek_source,
             rng,
             presence,
             validated: true,
+            otp_pin_verified: false,
             challenge: [0; CHALLENGE_LEN],
             chain: Chain::None,
             chain_at: 0,
         }
     }
 
-    fn device(&self) -> Device<'_> {
+    fn device<'k>(&'k self, mkek: &'k FusedRead) -> Device<'k> {
         Device {
             serial_hash: &self.serial_hash,
             serial_id: &self.serial_id,
-            otp_key: self.otp_key.as_ref(),
+            otp_key: mkek.as_deref(),
         }
     }
 
@@ -220,41 +275,21 @@ impl<'a> OathApplet<'a> {
             return Sw::SECURITY_STATUS_NOT_SATISFIED;
         }
         let data = &apdu.data[..apdu.nc];
-        let (mut name, mut key, mut imf, mut prop) = (None, None, None, None);
-        for (t, v) in PutIter::new(data) {
-            // The stored-blob walkers (find_tag_range/PutIter) decode 1-byte tags;
-            // reject the 2-byte tag form (tag&0x1f==0x1f) so a credential is never
-            // re-read differently by the SDK Tlv walker. No OATH tag uses that form.
-            if t & 0x1f == 0x1f {
-                return Sw::INCORRECT_PARAMS;
-            }
-            match t {
-                TAG_NAME if name.is_none() => name = Some(v),
-                TAG_KEY if key.is_none() => key = Some(v),
-                TAG_IMF if imf.is_none() => imf = Some(v),
-                TAG_PROPERTY if prop.is_none() => prop = v.first().copied(),
-                _ => {}
-            }
-        }
-        let Some(key) = key else {
-            return Sw::INCORRECT_PARAMS;
+        // Judged before a byte is written. PUT overwrites by name, so a body
+        // accepted here and found unusable later does not occupy a free slot —
+        // it replaces a working credential with a dead one under `9000`, and the
+        // secret is gone (worklog TRACK-oath §7.7a, measured against the card).
+        let Some(f) = parse_put(data) else {
+            return Sw::WRONG_DATA;
         };
-        // key = [type|alg, digits, secret…]; must hold at least those 2 bytes.
-        if key.len() < 2 {
-            return Sw::INCORRECT_PARAMS;
-        }
-        let Some(name) = name else {
-            return Sw::INCORRECT_PARAMS;
-        };
-        let hotp = key[0] & OATH_TYPE_MASK == OATH_TYPE_HOTP;
 
-        // Rebuild in normalised form: NAME, KEY, PROPERTY as a real TLV, other
-        // TLVs verbatim, and (HOTP) the IMF last, zero-padded to 8 bytes.
+        // Rebuild in normalised form: NAME, KEY, PROPERTY as a real TLV, the
+        // password-safe fields verbatim, and (HOTP) the IMF last as 8 bytes.
         let mut blob = [0u8; CRED_MAX];
         let mut n = 0;
-        let mut ok = emit_tlv(&mut blob, &mut n, TAG_NAME, name);
-        ok &= emit_tlv(&mut blob, &mut n, TAG_KEY, key);
-        if let Some(p) = prop {
+        let mut ok = emit_tlv(&mut blob, &mut n, TAG_NAME, f.name);
+        ok &= emit_tlv(&mut blob, &mut n, TAG_KEY, f.key);
+        if let Some(p) = f.prop {
             ok &= emit_tlv(&mut blob, &mut n, TAG_PROPERTY, &[p]);
         }
         for (t, v) in PutIter::new(data) {
@@ -263,25 +298,22 @@ impl<'a> OathApplet<'a> {
                 _ => ok &= emit_tlv(&mut blob, &mut n, t, v),
             }
         }
-        if hotp {
+        if f.hotp {
+            // The 4-byte initial moving factor is left-padded into the counter.
             let mut counter = [0u8; 8];
-            match imf {
-                // Short IMF values are left-padded (ykman sends 4 bytes).
-                Some(v) if v.len() <= 8 => counter[8 - v.len()..].copy_from_slice(v),
-                Some(v) => counter.copy_from_slice(&v[..8]),
-                None => {}
+            if let Some(v) = f.imf {
+                counter[8 - v.len()..].copy_from_slice(v);
             }
             ok &= emit_tlv(&mut blob, &mut n, TAG_IMF, &counter);
-        } else if let Some(v) = imf {
-            ok &= emit_tlv(&mut blob, &mut n, TAG_IMF, v);
         }
         if !ok {
             return Sw::FILE_FULL;
         }
 
         let mut scratch = [0u8; CRED_MAX];
-        let dev = self.device();
-        let fid = match find_cred(&dev, fs, name, &mut scratch) {
+        let mkek = read_fused(self.mkek_source);
+        let dev = self.device(&mkek);
+        let fid = match find_cred(&dev, fs, f.name, &mut scratch) {
             Some((fid, _)) => fid,
             None => match free_slot(fs) {
                 Some(fid) => fid,
@@ -306,10 +338,11 @@ impl<'a> OathApplet<'a> {
             return Sw::SECURITY_STATUS_NOT_SATISFIED;
         }
         let Some(name) = find_tag(&apdu.data[..apdu.nc], TAG_NAME as u16) else {
-            return Sw::INCORRECT_PARAMS;
+            return Sw::WRONG_DATA;
         };
         let mut scratch = [0u8; CRED_MAX];
-        let dev = self.device();
+        let mkek = read_fused(self.mkek_source);
+        let dev = self.device(&mkek);
         match find_cred(&dev, fs, name, &mut scratch) {
             Some((fid, _)) => {
                 let _ = fs.delete(fid);
@@ -324,40 +357,48 @@ impl<'a> OathApplet<'a> {
             return Sw::SECURITY_STATUS_NOT_SATISFIED;
         }
         let data = &apdu.data[..apdu.nc];
-        if data.is_empty() {
+        // `73 00` is the card's ONE spelling of "remove the access code" — the one
+        // ykman sends. A body-less APDU is `6A80` there despite YKOATH's "if length
+        // 0 is sent", and so is a `73` carrying key material with no proof after it.
+        if let Some([key]) = parse_exact(data, [TAG_KEY]) {
+            if !key.is_empty() {
+                return Sw::WRONG_DATA;
+            }
             let _ = fs.delete_key(EF_OATH_CODE);
             self.validated = true;
             return Sw::OK;
         }
-        let Some(key) = find_tag(data, TAG_KEY as u16) else {
-            return Sw::INCORRECT_PARAMS;
+        // KEY, CHALLENGE, RESPONSE and nothing else, in the card's order —
+        // which is ykman's and the YKOATH document's.
+        let Some([key, chal, resp]) = parse_exact(data, [TAG_KEY, TAG_CHALLENGE, TAG_RESPONSE])
+        else {
+            return Sw::WRONG_DATA;
         };
-        if key.is_empty() {
-            let _ = fs.delete_key(EF_OATH_CODE);
-            self.validated = true;
-            return Sw::OK;
+        // An algorithm byte plus key material a YubiKey would take. Judged
+        // before the proof, so a body outside it is a syntax error and not a
+        // failed authentication, and before a byte is written, so the standing
+        // code survives the refusal.
+        if !(CODE_TLV_MIN..=CODE_TLV_MAX).contains(&key.len()) {
+            return Sw::WRONG_DATA;
         }
-        // The code must fit the VALIDATE read buffer, else it becomes unreadable
-        // and (pre-fix) unlocked the applet without the code.
-        if key.len() > OATH_CODE_MAX {
-            return Sw::WRONG_LENGTH;
+        // Exactly the width of the challenge the card itself hands out, which is
+        // what ykman and Yubico Authenticator send; a 5.7.4 answers `6A80` to
+        // every other length. Narrower is the half that matters — those 8 bytes
+        // are the whole margin the proof has.
+        if chal.len() != CHALLENGE_LEN {
+            return Sw::WRONG_DATA;
         }
-        let Some(chal) = find_tag(data, TAG_CHALLENGE as u16) else {
-            return Sw::INCORRECT_PARAMS;
-        };
-        let Some(resp) = find_tag(data, TAG_RESPONSE as u16) else {
-            return Sw::INCORRECT_PARAMS;
-        };
         // The host proves it knows the new code: response = HMAC(key, challenge).
         let mut mac = [0u8; 64];
         let Some(size) = oath_hmac(key[0], &key[1..], chal, &mut mac) else {
-            return Sw::INCORRECT_PARAMS;
+            return Sw::WRONG_DATA;
         };
         if !ct_eq(resp, &mac[..size]) {
             return Sw::DATA_INVALID;
         }
         self.rng.borrow_mut().fill(&mut self.challenge);
-        let dev = self.device();
+        let mkek = read_fused(self.mkek_source);
+        let dev = self.device(&mkek);
         if !seal::seal_put(&dev, fs, &mut *self.rng.borrow_mut(), EF_OATH_CODE, key) {
             return Sw::MEMORY_FAILURE;
         }
@@ -370,10 +411,8 @@ impl<'a> OathApplet<'a> {
         Sw::OK
     }
 
-    fn cmd_reset<S: Storage>(&mut self, apdu: &Apdu, fs: &mut Fs<S>) -> Sw {
-        if apdu.p1 != 0xDE || apdu.p2 != 0xAD {
-            return Sw::INCORRECT_P1P2;
-        }
+    fn cmd_reset<S: Storage>(&mut self, _apdu: &Apdu, fs: &mut Fs<S>) -> Sw {
+        // `DE AD` is checked by `p1p2_ok`, ahead of the dispatch.
         // Prove the wipe rather than assume it. `present_creds` reads the in-RAM
         // present bitmap, which a boot scan truncated by a read fault leaves
         // *undecided* — so a live credential was skipped and the host still got
@@ -409,7 +448,8 @@ impl<'a> OathApplet<'a> {
         let start = self.chain_at as usize;
         let mut resume = None;
         {
-            let dev = self.device();
+            let mkek = read_fused(self.mkek_source);
+            let dev = self.device(&mkek);
             let mut fids = [0u16; MAX_OATH_CRED as usize];
             let nfids = present_creds(fs, &mut fids);
             let mut scratch = [0u8; CRED_MAX];
@@ -447,10 +487,7 @@ impl<'a> OathApplet<'a> {
                     {
                         props |= 0x4;
                     }
-                    if find_tag(blob, TAG_PROPERTY as u16)
-                        .and_then(|v| v.first())
-                        .is_some_and(|p| p & PROP_TOUCH != 0)
-                    {
+                    if cred_property(blob) & PROP_TOUCH != 0 {
                         props |= 0x1;
                     }
                     res.push(props);
@@ -471,14 +508,14 @@ impl<'a> OathApplet<'a> {
 
     fn cmd_validate<S: Storage>(&mut self, apdu: &Apdu, fs: &mut Fs<S>, res: &mut ResBuf) -> Sw {
         let data = &apdu.data[..apdu.nc];
-        let Some(chal) = find_tag(data, TAG_CHALLENGE as u16) else {
-            return Sw::INCORRECT_PARAMS;
-        };
-        let Some(resp) = find_tag(data, TAG_RESPONSE as u16) else {
-            return Sw::INCORRECT_PARAMS;
+        // RESPONSE then CHALLENGE — the order the YKOATH document lists and
+        // ykman sends, and the only one the card takes.
+        let Some([resp, chal]) = parse_exact(data, [TAG_RESPONSE, TAG_CHALLENGE]) else {
+            return Sw::WRONG_DATA;
         };
         let mut code = [0u8; OATH_CODE_MAX];
-        let dev = self.device();
+        let mkek = read_fused(self.mkek_source);
+        let dev = self.device(&mkek);
         // A present-but-unreadable code (over-long or corrupt) must keep the applet
         // LOCKED — a fail-open here unlocked it without the access code. A truly
         // absent code leaves the applet as select() set it (unlocked, no code).
@@ -495,14 +532,17 @@ impl<'a> OathApplet<'a> {
         }
         let mut mac = [0u8; 64];
         let Some(size) = oath_hmac(code[0], &code[1..], &self.challenge, &mut mac) else {
-            return Sw::INCORRECT_PARAMS;
+            return Sw::WRONG_DATA;
         };
+        // A proof that does not match is `6A80` on a 5.7.4, which keeps `6984`
+        // for "no code is installed" — the two branches above. One word for both
+        // states left a host unable to tell a wrong password from no password.
         if !ct_eq(resp, &mac[..size]) {
-            return Sw::DATA_INVALID;
+            return Sw::WRONG_DATA;
         }
         // Mutual authentication: answer the host's challenge with the same key.
         let Some(size) = oath_hmac(code[0], &code[1..], chal, &mut mac) else {
-            return Sw::INCORRECT_PARAMS;
+            return Sw::WRONG_DATA;
         };
         self.validated = true;
         res.push(TAG_RESPONSE);
@@ -512,36 +552,36 @@ impl<'a> OathApplet<'a> {
     }
 
     fn cmd_calculate<S: Storage>(&mut self, apdu: &Apdu, fs: &mut Fs<S>, res: &mut ResBuf) -> Sw {
-        if apdu.p2 != 0x00 && apdu.p2 != 0x01 {
-            return Sw::INCORRECT_P1P2;
-        }
         if !self.validated {
             return Sw::SECURITY_STATUS_NOT_SATISFIED;
         }
         let data = &apdu.data[..apdu.nc];
-        let Some(chal) = find_tag(data, TAG_CHALLENGE as u16) else {
-            return Sw::INCORRECT_PARAMS;
+        // NAME then CHALLENGE and nothing else, the way the card reads it and
+        // the way ykman writes it.
+        let Some([name, chal]) = parse_exact(data, [TAG_NAME, TAG_CHALLENGE]) else {
+            return Sw::WRONG_DATA;
         };
-        let Some(name) = find_tag(data, TAG_NAME as u16) else {
-            return Sw::INCORRECT_PARAMS;
+        let Some(chal) = challenge_of(chal) else {
+            return Sw::WRONG_DATA;
         };
         let mut scratch = [0u8; CRED_MAX];
-        let dev = self.device();
-        let Some((fid, n)) = find_cred(&dev, fs, name, &mut scratch) else {
+        let mkek = read_fused(self.mkek_source);
+        let dev = self.device(&mkek);
+        let Some((fid, mut n)) = find_cred(&dev, fs, name, &mut scratch) else {
             return Sw::DATA_INVALID;
         };
-        let blob = &scratch[..n];
-        let Some(key) = find_tag(blob, TAG_KEY as u16) else {
-            return Sw::INCORRECT_PARAMS;
+        // Ranges, not slices: the mark below rewrites the blob in place, and a
+        // borrow held across that would have to be a second CRED_MAX buffer.
+        let Some(key_at) = find_tag_range(&scratch[..n], TAG_KEY) else {
+            return Sw::WRONG_DATA;
         };
-        if key.len() < 2 {
-            return Sw::INCORRECT_PARAMS;
+        if key_at.len() < 2 {
+            return Sw::WRONG_DATA;
         }
+        let prop = cred_property(&scratch[..n]);
         // Touch-flagged credentials compute only after a confirmed press —
         // gated here, before the HOTP counter burns.
-        if find_tag(blob, TAG_PROPERTY as u16)
-            .and_then(|v| v.first())
-            .is_some_and(|p| p & PROP_TOUCH != 0)
+        if prop & PROP_TOUCH != 0
             && self
                 .presence
                 .borrow_mut()
@@ -550,23 +590,42 @@ impl<'a> OathApplet<'a> {
         {
             return Sw::SECURITY_STATUS_NOT_SATISFIED;
         }
-        let hotp = key[0] & OATH_TYPE_MASK == OATH_TYPE_HOTP;
+        let hotp = scratch[key_at.start] & OATH_TYPE_MASK == OATH_TYPE_HOTP;
         // HOTP ignores the host challenge: the stored 8-byte counter is the
         // moving factor.
         let imf = if hotp {
-            match find_tag_range(blob, TAG_IMF) {
+            match find_tag_range(&scratch[..n], TAG_IMF) {
                 Some(r) if r.len() >= 8 => Some(r),
-                _ => return Sw::INCORRECT_PARAMS,
+                _ => return Sw::WRONG_DATA,
             }
         } else {
             None
         };
+        // `only increasing`: the challenge must beat this credential's mark, and
+        // the raised mark is persisted BEFORE a code exists. The CCID layer puts
+        // `res` on the wire whatever the status word is, so a code pushed ahead
+        // of a failed write would be a replayable one the store never recorded.
+        // TOTP only — HOTP ignores the challenge, and the card leaves it inert.
+        if !hotp && prop & PROP_INCREASING != 0 {
+            if !raise_mark(&mut scratch, &mut n, chal) {
+                return Sw::WRONG_DATA;
+            }
+            if !seal::seal_put(
+                &dev,
+                fs,
+                &mut *self.rng.borrow_mut(),
+                KeyFid::new(fid),
+                &scratch[..n],
+            ) {
+                return Sw::MEMORY_FAILURE;
+            }
+        }
         res.push(TAG_RESPONSE + apdu.p2);
         let chal_eff = match &imf {
-            Some(r) => &blob[r.start..r.start + 8],
+            Some(r) => &scratch[r.start..r.start + 8],
             None => chal,
         };
-        if calculate(apdu.p2 == 0x01, key, chal_eff, res).is_none() {
+        if calculate(apdu.p2 == 0x01, &scratch[key_at], chal_eff, res).is_none() {
             return Sw::EXEC_ERROR;
         }
         if let Some(r) = imf {
@@ -594,27 +653,86 @@ impl<'a> OathApplet<'a> {
         fs: &mut Fs<S>,
         res: &mut ResBuf,
     ) -> Sw {
-        if apdu.p2 != 0x00 && apdu.p2 != 0x01 {
-            return Sw::INCORRECT_P1P2;
-        }
         if !self.validated {
             return Sw::SECURITY_STATUS_NOT_SATISFIED;
         }
-        let Some(chal) = find_tag(&apdu.data[..apdu.nc], TAG_CHALLENGE as u16) else {
-            return Sw::INCORRECT_PARAMS;
+        let Some(chal) = calc_all_challenge(&apdu.data[..apdu.nc]) else {
+            return Sw::WRONG_DATA;
         };
-        // Stash the (8-byte, per YKOATH) time challenge so SEND REMAINING pages
-        // recompute the same codes; a longer challenge is clamped (spec is 8).
-        let mut chal_buf = [0u8; CHALLENGE_LEN];
-        let chal_len = chal.len().min(CHALLENGE_LEN);
-        chal_buf[..chal_len].copy_from_slice(&chal[..chal_len]);
+        // `only increasing` is settled for the whole store before a byte of the
+        // response is built. The card fails the ENTIRE command at the first
+        // credential the challenge does not beat — empty body, plain credentials
+        // collateral — while the marks before it have already advanced. Our pages
+        // go out as they are built, so a refusal found on page 2 could not be
+        // taken back: the pass has to finish first.
+        if let Err(sw) = self.advance_marks(fs, chal) {
+            return sw;
+        }
+        // Stash the challenge whole so SEND REMAINING pages recompute the same
+        // codes — every byte of it, or a later page would answer a different
+        // code from the first under one 9000.
+        let mut chal_buf = [0u8; CHALLENGE_MAX];
+        chal_buf[..chal.len()].copy_from_slice(chal);
         self.chain = Chain::CalcAll {
             p2: apdu.p2,
             chal: chal_buf,
-            chal_len: chal_len as u8,
+            chal_len: chal.len() as u8,
         };
         self.chain_at = 0;
         self.calc_all_page(fs, res)
+    }
+
+    /// Raise every only-increasing credential's mark to `chal`, in store order,
+    /// stopping at the first one the challenge does not beat. The marks
+    /// committed before that offender stay raised — the card is not atomic here
+    /// either, measured twice plus a reversed-order control (worklog §6.4).
+    ///
+    /// Credentials CALCULATE ALL does not compute are skipped: HOTP, which
+    /// ignores the challenge, and touch-gated ones, which the bulk read only
+    /// advertises. The mark records the highest challenge at which a code was
+    /// actually produced, so advancing a touch credential's here would make the
+    /// individual CALCULATE the host sends next — at that same challenge —
+    /// refuse the press it just asked for.
+    fn advance_marks<S: Storage>(&self, fs: &mut Fs<S>, chal: &[u8]) -> Result<(), Sw> {
+        let mkek = read_fused(self.mkek_source);
+        let dev = self.device(&mkek);
+        let mut fids = [0u16; MAX_OATH_CRED as usize];
+        let nfids = present_creds(fs, &mut fids);
+        let mut scratch = [0u8; CRED_MAX];
+        for &fid in &fids[..nfids] {
+            let Some(mut n) = seal::seal_read(&dev, fs, KeyFid::new(fid), &mut scratch) else {
+                continue;
+            };
+            let prop = cred_property(&scratch[..n]);
+            if prop & PROP_INCREASING == 0 || prop & PROP_TOUCH != 0 {
+                continue;
+            }
+            match find_tag_range(&scratch[..n], TAG_KEY) {
+                Some(k) if k.len() >= 2 && scratch[k.start] & OATH_TYPE_MASK != OATH_TYPE_HOTP => {}
+                _ => continue,
+            }
+            // A blob an older build wrote can have no room for a mark, or carry
+            // a `D0` of another width — it kept unrecognised tags verbatim. One
+            // such record must not fail the bulk read for the whole store, so
+            // skip it here; `calc_all_page` gives it no code either, and its own
+            // CALCULATE still refuses.
+            if !mark_has_room(&scratch[..n]) {
+                continue;
+            }
+            if !raise_mark(&mut scratch, &mut n, chal) {
+                return Err(Sw::WRONG_DATA);
+            }
+            if !seal::seal_put(
+                &dev,
+                fs,
+                &mut *self.rng.borrow_mut(),
+                KeyFid::new(fid),
+                &scratch[..n],
+            ) {
+                return Err(Sw::MEMORY_FAILURE);
+            }
+        }
+        Ok(())
     }
 
     /// Emit CALCULATE ALL entries from `self.chain_at` until the frame fills
@@ -633,7 +751,8 @@ impl<'a> OathApplet<'a> {
         let start = self.chain_at as usize;
         let mut resume = None;
         {
-            let dev = self.device();
+            let mkek = read_fused(self.mkek_source);
+            let dev = self.device(&mkek);
             let mut fids = [0u16; MAX_OATH_CRED as usize];
             let nfids = present_creds(fs, &mut fids);
             let mut scratch = [0u8; CRED_MAX];
@@ -667,20 +786,22 @@ impl<'a> OathApplet<'a> {
                     res.push(TAG_NO_RESPONSE);
                     res.push(1);
                     res.push(key[1]);
-                } else if find_tag(blob, TAG_PROPERTY as u16)
-                    .and_then(|v| v.first())
-                    .is_some_and(|p| p & PROP_TOUCH != 0)
-                {
+                } else if cred_property(blob) & PROP_TOUCH != 0 {
                     res.push(TAG_TOUCH_RESPONSE);
                     res.push(1);
                     res.push(key[1]);
-                } else {
+                } else if bulk_computable(blob, key[0]) {
                     res.push(TAG_RESPONSE + p2);
-                    if calculate(p2 == 0x01, key, chal, res).is_none() {
-                        // Unknown algorithm: emit the digits byte only.
-                        res.push(1);
-                        res.push(key[1]);
-                    }
+                    // `alg_supported` is exactly `oath_hmac`'s domain.
+                    let _ = calculate(p2 == 0x01, key, chal, res);
+                } else {
+                    // A build before PUT's rule could store an algorithm nibble
+                    // that has no HMAC. There is no code — and a `0x76` TLV one
+                    // byte long is not one either, so say so with the protocol's
+                    // own "no response" rather than a malformed frame under 9000.
+                    res.push(TAG_NO_RESPONSE);
+                    res.push(1);
+                    res.push(key[1]);
                 }
             }
         }
@@ -703,22 +824,26 @@ impl<'a> OathApplet<'a> {
         if !self.validated {
             return Sw::SECURITY_STATUS_NOT_SATISFIED;
         }
+        if let Err(sw) = self.otp_pin_gate(fs) {
+            return sw;
+        }
         let data = &apdu.data[..apdu.nc];
         if find_tag(data, TAG_NAME as u16).is_none() {
-            return Sw::INCORRECT_PARAMS;
+            return Sw::WRONG_DATA;
         }
         // The named credential is ignored — slot 0 is always the one verified.
         let mut scratch = [0u8; CRED_MAX];
-        let dev = self.device();
+        let mkek = read_fused(self.mkek_source);
+        let dev = self.device(&mkek);
         let Some(n) = seal::seal_read(&dev, fs, KeyFid::new(EF_OATH_CRED), &mut scratch) else {
             return Sw::DATA_INVALID;
         };
         let blob = &scratch[..n.min(CRED_MAX)];
         let Some(key) = find_tag(blob, TAG_KEY as u16) else {
-            return Sw::INCORRECT_PARAMS;
+            return Sw::WRONG_DATA;
         };
         if key.len() < 2 {
-            return Sw::INCORRECT_PARAMS;
+            return Sw::WRONG_DATA;
         }
         if key[0] & OATH_TYPE_MASK != OATH_TYPE_HOTP {
             return Sw::DATA_INVALID;
@@ -726,9 +851,7 @@ impl<'a> OathApplet<'a> {
         // A touch-flagged credential is exercised only after a confirmed press —
         // else VERIFY CODE is a presence-free guessing oracle on its current OTP,
         // the same reason cmd_calculate gates here.
-        if find_tag(blob, TAG_PROPERTY as u16)
-            .and_then(|v| v.first())
-            .is_some_and(|p| p & PROP_TOUCH != 0)
+        if cred_property(blob) & PROP_TOUCH != 0
             && self
                 .presence
                 .borrow_mut()
@@ -738,14 +861,14 @@ impl<'a> OathApplet<'a> {
             return Sw::SECURITY_STATUS_NOT_SATISFIED;
         }
         let Some(imf) = find_tag(blob, TAG_IMF as u16) else {
-            return Sw::INCORRECT_PARAMS;
+            return Sw::WRONG_DATA;
         };
         if imf.len() < 8 {
-            return Sw::INCORRECT_PARAMS;
+            return Sw::WRONG_DATA;
         }
         let code_int = match find_tag(data, TAG_RESPONSE as u16) {
             Some(v) if v.len() >= 4 => u32::from_be_bytes([v[0], v[1], v[2], v[3]]),
-            Some(_) => return Sw::INCORRECT_PARAMS,
+            Some(_) => return Sw::WRONG_DATA,
             None => 0,
         };
         let mut mac = [0u8; 64];
@@ -754,7 +877,9 @@ impl<'a> OathApplet<'a> {
         };
         let off = (mac[size - 1] & 0xF) as usize;
         let trunc = u32::from_be_bytes([mac[off] & 0x7F, mac[off + 1], mac[off + 2], mac[off + 3]]);
-        let modulus = if key[1] == 6 { 1_000_000 } else { 100_000_000 };
+        let Some(modulus) = code_modulus(key[1]) else {
+            return Sw::DATA_INVALID;
+        };
         if trunc % modulus != code_int {
             return SW_WRONG_DATA;
         }
@@ -774,11 +899,20 @@ impl<'a> OathApplet<'a> {
         let (Some((_, name)), Some((_, new_name))) = (names.next(), names.next()) else {
             return SW_WRONG_DATA;
         };
-        if name == new_name {
-            return SW_WRONG_DATA;
+        // The same 1..=64 bound PUT enforces — otherwise every stored name is
+        // one RENAME away from a length no host can address.
+        if new_name.is_empty() || new_name.len() > NAME_MAX {
+            return Sw::WRONG_DATA;
         }
         let mut scratch = [0u8; CRED_MAX];
-        let dev = self.device();
+        let mkek = read_fused(self.mkek_source);
+        let dev = self.device(&mkek);
+        // One credential per name: PUT holds it by overwriting, RENAME by refusing
+        // a taken target (self-rename included, as on a YubiKey 5.7.4). Judged
+        // before the source, which stays invisible only while both answer this.
+        if find_cred(&dev, fs, new_name, &mut scratch).is_some() {
+            return Sw::DATA_INVALID;
+        }
         let Some((fid, n)) = find_cred(&dev, fs, name, &mut scratch) else {
             return Sw::DATA_INVALID;
         };
@@ -821,9 +955,12 @@ impl<'a> OathApplet<'a> {
         if !self.validated {
             return Sw::SECURITY_STATUS_NOT_SATISFIED;
         }
+        if let Err(sw) = self.otp_pin_gate(fs) {
+            return sw;
+        }
         let data = &apdu.data[..apdu.nc];
         if data.len() < 3 {
-            return Sw::INCORRECT_PARAMS;
+            return Sw::WRONG_DATA;
         }
         if data[0] != TAG_NAME {
             return SW_WRONG_DATA;
@@ -832,7 +969,8 @@ impl<'a> OathApplet<'a> {
             return SW_WRONG_DATA;
         };
         let mut scratch = [0u8; CRED_MAX];
-        let dev = self.device();
+        let mkek = read_fused(self.mkek_source);
+        let dev = self.device(&mkek);
         let Some((_, n)) = find_cred(&dev, fs, name, &mut scratch) else {
             return Sw::DATA_INVALID;
         };
@@ -861,7 +999,8 @@ impl<'a> OathApplet<'a> {
     /// hash (which [`Self::cmd_verify_otp_pin`] / [`Self::cmd_change_otp_pin`]
     /// upgrade to v1 on success).
     fn otp_pin_matches(&self, rec: &[u8], pw: &[u8]) -> bool {
-        let dev = self.device();
+        let mkek = read_fused(self.mkek_source);
+        let dev = self.device(&mkek);
         match rec.len() {
             OTP_PIN_REC_V1 if rec[1] == OTP_PIN_FMT_V1 => {
                 let stored = &rec[2..OTP_PIN_REC_V1];
@@ -885,8 +1024,30 @@ impl<'a> OathApplet<'a> {
         let mut rec = [0u8; OTP_PIN_REC_V1];
         rec[0] = MAX_OTP_COUNTER;
         rec[1] = OTP_PIN_FMT_V1;
-        rec[2..].copy_from_slice(&self.device().pin_derive_verifier(pw));
+        let mkek = read_fused(self.mkek_source);
+        rec[2..].copy_from_slice(&self.device(&mkek).pin_derive_verifier(pw));
         rec
+    }
+
+    /// The gate the two password-safe reads (`0xB1` VERIFY CODE, `0xB5` GET
+    /// CREDENTIAL) share: **once an OTP PIN exists it is required**, whether or
+    /// not an access code is also set.
+    ///
+    /// `validated` alone was the gate, and on a code-less applet — the shipping
+    /// default — `select()` sets it unconditionally, so a PIN the owner set
+    /// guarded nothing: a fresh connection that presented no credential at all
+    /// got the stored password back. `cmd_set_otp_pin` below already reasons
+    /// about exactly this hole and defends itself with a touch; the two commands
+    /// that actually return secrets never got the treatment.
+    ///
+    /// A store with neither a code nor a PIN stays open, as YKOATH intends for a
+    /// code-less applet — this only makes the credential the owner *did* create
+    /// mean something.
+    fn otp_pin_gate<S: Storage>(&self, fs: &mut Fs<S>) -> Result<(), Sw> {
+        if fs.has_data(EF_OTP_PIN) && !self.otp_pin_verified {
+            return Err(Sw::SECURITY_STATUS_NOT_SATISFIED);
+        }
+        Ok(())
     }
 
     fn cmd_set_otp_pin<S: Storage>(&mut self, apdu: &Apdu, fs: &mut Fs<S>) -> Sw {
@@ -913,7 +1074,7 @@ impl<'a> OathApplet<'a> {
             return Sw::CONDITIONS_NOT_SATISFIED;
         }
         let Some(pw) = find_tag(&apdu.data[..apdu.nc], TAG_PASSWORD as u16) else {
-            return Sw::INCORRECT_PARAMS;
+            return Sw::WRONG_DATA;
         };
         match fs.put(EF_OTP_PIN, &self.otp_pin_record_v1(pw)) {
             Ok(()) => Sw::OK,
@@ -971,11 +1132,21 @@ impl<'a> OathApplet<'a> {
         };
         let data = &apdu.data[..apdu.nc];
         let Some(pw) = find_tag(data, TAG_PASSWORD as u16) else {
-            return Sw::INCORRECT_PARAMS;
+            return Sw::WRONG_DATA;
         };
         let Some(new_pw) = find_tag(data, TAG_NEW_PASSWORD as u16) else {
-            return Sw::INCORRECT_PARAMS;
+            return Sw::WRONG_DATA;
         };
+        // A failed authentication drops the standing one — the rule E38 shipped
+        // for OpenPGP and PIV, and the one this command's own sibling
+        // (`cmd_verify_otp_pin`) already holds. Both flags, because `validated`
+        // is reachable *through* the OTP PIN: VERIFY sets it too, doubling as
+        // VALIDATE for the nitropy flow, so one bool carries both provenances and
+        // leaving it standing would leave a status the caller could have got by
+        // proving the very PIN it just failed. Placed like the sibling's — after
+        // the record and TLV checks, so a malformed request is not an attempt.
+        self.validated = false;
+        self.otp_pin_verified = false;
         // Same anti-bruteforce gate as VERIFY: refuse at the counter floor. After a
         // lock-out even a correct old-PIN cannot CHANGE (that floor "recovery" was
         // the run-6 unlimited-guessing oracle); recover with RESET instead.
@@ -995,10 +1166,11 @@ impl<'a> OathApplet<'a> {
             _ => return Sw::CONDITIONS_NOT_SATISFIED,
         };
         let Some(pw) = find_tag(&apdu.data[..apdu.nc], TAG_PASSWORD as u16) else {
-            return Sw::INCORRECT_PARAMS;
+            return Sw::WRONG_DATA;
         };
         // Any attempt clears a prior unlock; only a correct PIN re-validates below.
         self.validated = false;
+        self.otp_pin_verified = false;
         // Shared anti-bruteforce chokepoint: refuse at the counter floor, spend the
         // retry (persist + read-back), then constant-time compare.
         if let Err(sw) = self.spend_and_match_otp_pin(fs, &mut rec, size, pw) {
@@ -1012,6 +1184,7 @@ impl<'a> OathApplet<'a> {
         // (rsk-fs `EF_HARDENED` invariant; audit run-35).
         rsk_fs::request_rescrub(fs);
         self.validated = true;
+        self.otp_pin_verified = true;
         Sw::OK
     }
 }
@@ -1026,6 +1199,7 @@ impl<S: Storage> Applet<Fs<S>> for OathApplet<'_> {
     /// `select` recomputes `validated` from whether a code is set.
     fn deselect(&mut self, _fs: &mut Fs<S>) {
         self.validated = false;
+        self.otp_pin_verified = false;
         self.chain = Chain::None;
     }
 
@@ -1054,8 +1228,10 @@ impl<S: Storage> Applet<Fs<S>> for OathApplet<'_> {
         // A new SELECT abandons any pending LIST / CALCULATE ALL page.
         self.chain = Chain::None;
         // With a code set, every new SELECT must start locked: protected
-        // commands work only after VALIDATE (or VERIFY PIN).
+        // commands work only after VALIDATE (or VERIFY PIN). The PIN itself is
+        // never inherited across a SELECT, code or no code.
         self.validated = !code_set;
+        self.otp_pin_verified = false;
         Sw::OK
     }
 
@@ -1067,6 +1243,13 @@ impl<S: Storage> Applet<Fs<S>> for OathApplet<'_> {
         // SEND REMAINING continues one.
         if apdu.ins != INS_SEND_REMAINING {
             self.chain = Chain::None;
+        }
+        // Judged for every command, ahead of its body and its access-code gate,
+        // the way a 5.7.4 judges it. An instruction this applet does not
+        // implement passes through to `6D00`: ISO 7816-4 §5.3.4 puts INS before
+        // P1-P2.
+        if !p1p2_ok(apdu.ins, apdu.p1, apdu.p2) {
+            return Sw::WRONG_P1P2;
         }
         match apdu.ins {
             INS_PUT => self.cmd_put(apdu, fs),
@@ -1093,6 +1276,131 @@ impl<S: Storage> Applet<Fs<S>> for OathApplet<'_> {
             _ => Sw::INS_NOT_SUPPORTED,
         }
     }
+}
+
+/// Whether a command this applet implements takes this `P1`/`P2` pair, as a
+/// YubiKey 5.7.4 answers it — every row below is a measured cell, repeated
+/// (worklog TRACK-oath2 §E60). `00 00` is the rule; `01` in `P2` is the
+/// truncated read and **nothing else** — the card answers `6B00` to it on PUT,
+/// DELETE, SET CODE, RENAME and LIST — and RESET alone is `DE AD`.
+///
+/// One owner, consulted before every dispatch, because the alternative is each
+/// handler remembering: `P1` was read by no command at all, and `P2` by two.
+/// An instruction that is not ours answers `6D00` instead, so it is left alone.
+fn p1p2_ok(ins: u8, p1: u8, p2: u8) -> bool {
+    match ins {
+        INS_RESET => p1 == 0xDE && p2 == 0xAD,
+        // The one place `P2` carries a meaning: `01` selects the truncated form.
+        INS_CALCULATE | INS_CALC_ALL => p1 == 0x00 && matches!(p2, 0x00 | 0x01),
+        // The card's own asymmetry, and it is stable: VALIDATE refuses only when
+        // *both* bytes are set — `(00,02)`, `(01,00)`, `(02,00)`, `(00,FF)` and
+        // `(FF,00)` all reach its handler, where every sibling wants `00 00`.
+        INS_VALIDATE => p1 == 0x00 || p2 == 0x00,
+        INS_PUT | INS_DELETE | INS_SET_CODE | INS_RENAME | INS_LIST | INS_SEND_REMAINING
+        | INS_VERIFY_CODE | INS_VERIFY_PIN | INS_CHANGE_PIN | INS_SET_PIN | INS_GET_CREDENTIAL => {
+            p1 == 0x00 && p2 == 0x00
+        }
+        _ => true,
+    }
+}
+
+/// The width rule both read paths owe the challenge, or `None` where a YubiKey
+/// answers `6A80`. One owner for both of them: CALCULATE and CALCULATE ALL have
+/// to refuse the same widths and HMAC the same bytes, or a host reading one code
+/// two ways gets two answers.
+fn challenge_of(chal: &[u8]) -> Option<&[u8]> {
+    (chal.len() <= CHALLENGE_MAX).then_some(chal)
+}
+
+/// CALCULATE ALL's body: the challenge has to be the **first** TLV, and a 5.7.4
+/// ignores whatever follows it — the one command whose grammar is not
+/// positional throughout (§E61).
+fn calc_all_challenge(data: &[u8]) -> Option<&[u8]> {
+    let (t, v) = tlv_at(data, 0)?;
+    (t == TAG_CHALLENGE).then(|| challenge_of(&data[v]))?
+}
+
+/// A stored credential's YKOATH properties byte, or 0 when it carries none.
+/// The one place the bitmap is read, so both bits mean the same thing to every
+/// caller.
+fn cred_property(blob: &[u8]) -> u8 {
+    find_tag(blob, TAG_PROPERTY as u16)
+        .and_then(|v| v.first().copied())
+        .unwrap_or(0)
+}
+
+/// Compare `chal` against this credential's `only increasing` high-water mark
+/// and, when it is strictly greater, write the new mark into `blob` for the
+/// caller to persist. `false` = refuse the CALCULATE.
+///
+/// The mark is stored right-zero-padded to [`MARK_LEN`], which is both what lets
+/// it be rewritten in place (no second `CRED_MAX` buffer on the stack) and
+/// exactly the card's comparison: zero-extend both sides on the right and
+/// compare unsigned. That one rule reproduces all ten mixed-width rows measured
+/// on a 5.7.4 (worklog TRACK-oath §6.5), and at TOTP's 8-byte challenge it is
+/// plain numeric `>`. An absent mark is all-zero, so a fresh credential refuses
+/// challenge 0 and serves 1, as the card does.
+fn raise_mark(blob: &mut [u8], n: &mut usize, chal: &[u8]) -> bool {
+    if chal.len() > MARK_LEN {
+        return false;
+    }
+    let mut mark = [0u8; MARK_LEN];
+    mark[..chal.len()].copy_from_slice(chal);
+    match find_tag_range(&blob[..*n], TAG_LAST_CHAL) {
+        Some(r) if r.len() == MARK_LEN => {
+            if mark[..] <= blob[r.clone()] {
+                return false;
+            }
+            blob[r].copy_from_slice(&mark);
+            true
+        }
+        // A mark of another width can only be one a caller planted through an
+        // older build, which stored unrecognised tags verbatim. Refuse rather
+        // than append a second one the walker would never reach.
+        Some(_) => false,
+        None => mark != [0u8; MARK_LEN] && emit_tlv(blob, n, TAG_LAST_CHAL, &mark),
+    }
+}
+
+/// Whether [`raise_mark`] can keep a mark in this blob: a stored one already at
+/// [`MARK_LEN`], or room in a `CRED_MAX` buffer for a fresh one. Nothing this
+/// build stores can fail it — PUT's rule bounds a body well under that — but a
+/// record an older build wrote can, since it kept unrecognised tags verbatim.
+/// Mirrors [`emit_tlv`]'s arithmetic for a [`MARK_LEN`] value (1 tag + 1 length
+/// byte); `mark_has_room_matches_raise_mark` is the assertion tying the two.
+fn mark_has_room(blob: &[u8]) -> bool {
+    match find_tag_range(blob, TAG_LAST_CHAL) {
+        Some(r) => r.len() == MARK_LEN,
+        None => blob.len() + 2 + MARK_LEN <= CRED_MAX,
+    }
+}
+
+/// Whether CALCULATE ALL may serve this credential a code, rather than the
+/// protocol's "no response". False for an algorithm [`oath_hmac`] has no arm
+/// for, and for an `only increasing` credential whose mark cannot be kept —
+/// computing that one here would be the single path on which the property the
+/// owner asked for is not enforced.
+fn bulk_computable(blob: &[u8], ty_alg: u8) -> bool {
+    alg_supported(ty_alg) && (cred_property(blob) & PROP_INCREASING == 0 || mark_has_room(blob))
+}
+
+/// Whether [`oath_hmac`] has an arm for this key byte's algorithm nibble — the
+/// one owner of "which algorithms exist", shared by PUT's rule and the bulk
+/// read that has to frame a credential it cannot compute.
+fn alg_supported(ty_alg: u8) -> bool {
+    matches!(
+        ty_alg & ALG_MASK,
+        ALG_HMAC_SHA1 | ALG_HMAC_SHA256 | ALG_HMAC_SHA512
+    )
+}
+
+/// The decimal width a truncated HMAC is reduced to — one owner for the code
+/// CALCULATE sends and the code VERIFY CODE compares. PUT bounds `digits` to
+/// 6..=8, but a build before that stored anything the host sent and
+/// `10^digits` would overflow — so an out-of-range record is refused rather than
+/// silently compared at the wrong width.
+fn code_modulus(digits: u8) -> Option<u32> {
+    matches!(digits, DIGITS_MIN..=DIGITS_MAX).then(|| 10u32.pow(digits as u32))
 }
 
 /// HMAC with the credential's algorithm nibble; returns the digest size.
@@ -1124,10 +1432,13 @@ fn calculate(truncate: bool, key: &[u8], chal: &[u8], res: &mut ResBuf) -> Optio
         res.push(4 + 1);
         res.push(key[1]);
         let off = (mac[size - 1] & 0xF) as usize;
-        res.push(mac[off] & 0x7F);
-        res.push(mac[off + 1]);
-        res.push(mac[off + 2]);
-        res.push(mac[off + 3]);
+        let trunc = u32::from_be_bytes([mac[off] & 0x7F, mac[off + 1], mac[off + 2], mac[off + 3]]);
+        // RFC 4226 §5.3: the code is the truncation reduced to the credential's
+        // decimal width — what a 5.7.4 sends, and what VERIFY CODE compares. A
+        // width from before PUT bounded it has no modulus; the bare truncation
+        // keeps such a record readable instead of unanswerable.
+        let code = code_modulus(key[1]).map_or(trunc, |m| trunc % m);
+        res.extend(&code.to_be_bytes());
     } else {
         res.push((size + 1) as u8);
         res.push(key[1]);
@@ -1168,9 +1479,9 @@ fn is_oath_cred_fid(fid: u16) -> bool {
 }
 
 /// The two records that gate access: the access-code key and the OTP-PIN. Kept
-/// separate from [`is_oath_cred_fid`] so [`wipe_oath`] can delete them last.
+/// separate from `is_oath_cred_fid` so `wipe_oath` can delete them last.
 ///
-/// Public because the device-wide `Fs::factory_wipe` bypasses [`wipe_oath`] and
+/// Public because the device-wide `Fs::factory_wipe` bypasses `wipe_oath` and
 /// needs the same rule — it was private for a release, so the firmware could not
 /// name it and a torn device reset left the credentials live with no lock at all
 /// (audit run-36). OATH's failure mode is the sharper one of the family: its
@@ -1314,9 +1625,7 @@ pub fn for_each_cred<S: Storage>(
         let hotp = key[0] & OATH_TYPE_MASK == OATH_TYPE_HOTP;
         let algo = key[0] & ALG_MASK;
         let digits = key.get(1).copied().unwrap_or(0);
-        let touch = find_tag(blob, TAG_PROPERTY as u16)
-            .and_then(|v| v.first().copied())
-            .is_some_and(|p| p & PROP_TOUCH != 0);
+        let touch = cred_property(blob) & PROP_TOUCH != 0;
         let (period_prefix, label) = split_period(name);
         let period = if hotp { 0 } else { period_prefix.unwrap_or(30) };
         f(OathCredView {
@@ -1441,38 +1750,159 @@ fn free_slot<S: Storage>(fs: &mut Fs<S>) -> Option<u16> {
         .map(|i| EF_OATH_CRED + i as u16)
 }
 
+/// The BER-TLV starting at `blob[at..]`: its tag and the byte range of its
+/// value. `None` on a truncated or over-long one, which ends any walk.
+fn tlv_at(blob: &[u8], at: usize) -> Option<(u8, core::ops::Range<usize>)> {
+    let t = *blob.get(at)?;
+    let mut i = at + 1;
+    let l0 = *blob.get(i)?;
+    i += 1;
+    let len = match l0 {
+        0x82 => {
+            let v = ((*blob.get(i)? as usize) << 8) | *blob.get(i + 1)? as usize;
+            i += 2;
+            v
+        }
+        0x81 => {
+            let v = *blob.get(i)? as usize;
+            i += 1;
+            v
+        }
+        n => n as usize,
+    };
+    let end = i.checked_add(len)?;
+    (end <= blob.len()).then_some((t, i..end))
+}
+
 /// Byte range of the first `tag` value inside `blob` (so callers can mutate it
 /// in place — the HOTP counter bump).
 fn find_tag_range(blob: &[u8], tag: u8) -> Option<core::ops::Range<usize>> {
     let mut i = 0;
     while i < blob.len() {
-        let t = *blob.get(i)?;
-        i += 1;
-        let l0 = *blob.get(i)?;
-        i += 1;
-        let len = match l0 {
-            0x82 => {
-                let v = ((*blob.get(i)? as usize) << 8) | *blob.get(i + 1)? as usize;
-                i += 2;
-                v
-            }
-            0x81 => {
-                let v = *blob.get(i)? as usize;
-                i += 1;
-                v
-            }
-            n => n as usize,
-        };
-        let end = i.checked_add(len)?;
-        if end > blob.len() {
-            return None;
-        }
+        let (t, v) = tlv_at(blob, i)?;
         if t == tag {
-            return Some(i..end);
+            return Some(v);
         }
-        i = end;
+        i = v.end;
     }
     None
+}
+
+/// The body of a command a YubiKey 5.7.4 reads by position: exactly `tags`, in
+/// that order, with nothing before, between or after them. `None` is the card's
+/// `6A80` — a reordered, repeated or unknown tag, a missing field, or a byte
+/// left over (worklog ORACLE-oathfido §E61). The length octet is decoded as
+/// everywhere else here, so only the grammar is judged.
+fn parse_exact<const N: usize>(data: &[u8], tags: [u8; N]) -> Option<[&[u8]; N]> {
+    let mut out = [&[][..]; N];
+    let mut at = 0;
+    for (slot, &tag) in out.iter_mut().zip(tags.iter()) {
+        let (t, v) = tlv_at(data, at)?;
+        if t != tag {
+            return None;
+        }
+        at = v.end;
+        *slot = &data[v];
+    }
+    (at == data.len()).then_some(out)
+}
+
+/// Tags a credential body may carry, in the order a YubiKey requires them: the
+/// four YKOATH ones first, then RS-Key's password-safe extension (which no
+/// YubiKey implements, so the Nitrokey spec governs those three and they may sit
+/// anywhere). Position here is both the duplicate bitmask's bit and the sort key
+/// the order rule compares.
+///
+/// An allow-list rather than a skip-list, which also settles run-3 #6: no tag
+/// here uses the 2-byte BER form (`tag & 0x1f == 0x1f`), so a stored credential
+/// can never be re-read differently by the SDK's `Tlv` walker.
+const PUT_TAGS: [u8; 7] = [
+    TAG_NAME,
+    TAG_KEY,
+    TAG_PROPERTY,
+    TAG_IMF,
+    TAG_PWS_LOGIN,
+    TAG_PWS_PASSWORD,
+    TAG_PWS_METADATA,
+];
+/// How many of [`PUT_TAGS`] are the ordered YKOATH ones.
+const PUT_TAGS_ORDERED: usize = 4;
+
+/// A credential body PUT has accepted, field by field.
+struct PutFields<'d> {
+    name: &'d [u8],
+    key: &'d [u8],
+    imf: Option<&'d [u8]>,
+    prop: Option<u8>,
+    hotp: bool,
+}
+
+/// Split a PUT body into its fields, or `None` where a YubiKey 5.7.4 answers
+/// `6A80` and stores nothing: an unknown or repeated tag, KEY before NAME, a
+/// field outside its measured bounds, or anything left over after the last TLV.
+/// The card's grid is in the worklog (TRACK-oath §7); every bound here is a
+/// measured cell, not a guess.
+fn parse_put(data: &[u8]) -> Option<PutFields<'_>> {
+    let (mut name, mut key, mut imf, mut prop) = (None, None, None, None);
+    let (mut seen, mut order) = (0u8, 0usize);
+    let mut it = PutIter::new(data);
+    for (t, v) in it.by_ref() {
+        let idx = PUT_TAGS.iter().position(|&x| x == t)?;
+        if seen & (1 << idx) != 0 {
+            return None;
+        }
+        seen |= 1 << idx;
+        // PutIter yields in wire order, so the YKOATH tags climbing this index
+        // is the card's NAME, KEY, PROPERTY, IMF ordering.
+        if idx < PUT_TAGS_ORDERED {
+            if idx < order {
+                return None;
+            }
+            order = idx;
+        }
+        match t {
+            TAG_NAME => name = Some(v),
+            TAG_KEY => key = Some(v),
+            TAG_IMF => imf = Some(v),
+            TAG_PROPERTY => prop = Some(*v.first()?),
+            // A password-safe field longer than its one-byte length would be
+            // stored where GET CREDENTIAL could never serve it back.
+            _ if v.len() > PWS_MAX => return None,
+            _ => {}
+        }
+    }
+    // Whatever PutIter could not decode stays in `rest`: trailing junk, a
+    // truncated TLV, or a property tag with no byte after it.
+    if !it.rest.is_empty() {
+        return None;
+    }
+    let (name, key) = (name?, key?);
+    if name.is_empty() || name.len() > NAME_MAX {
+        return None;
+    }
+    // key = [type|alg, digits, secret…], so the length bound covers both bytes.
+    if !(KEY_TLV_MIN..=KEY_TLV_MAX).contains(&key.len())
+        || !(DIGITS_MIN..=DIGITS_MAX).contains(&key[1])
+        || !alg_supported(key[0])
+    {
+        return None;
+    }
+    let hotp = match key[0] & OATH_TYPE_MASK {
+        OATH_TYPE_HOTP => true,
+        OATH_TYPE_TOTP => false,
+        _ => return None,
+    };
+    // The IMF seeds HOTP's counter; TOTP has no moving factor to seed.
+    if imf.is_some_and(|v| !hotp || v.len() != IMF_LEN) {
+        return None;
+    }
+    Some(PutFields {
+        name,
+        key,
+        imf,
+        prop,
+        hotp,
+    })
 }
 
 /// TLV walk over PUT data. `TAG_PROPERTY` is special-cased per the YKOATH spec:

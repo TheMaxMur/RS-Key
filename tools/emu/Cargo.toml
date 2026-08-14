@@ -14,6 +14,9 @@ path = "src/main.rs"
 
 [features]
 fido-conformance = ["rsk-fido/fido-conformance"]
+# Run the emulator with the CTAP 2.3 `largeBlob` extension in place of the CTAP
+# 2.1 pair, so that swap can be driven over a socket with no board.
+largeblob-ext = ["rsk-fido/largeblob-ext"]
 
 # Only the in-tree crates: the emulator is the same applet code the firmware
 # runs, wired to a socket instead of USB. No external dependency joins an
@@ -26,6 +29,10 @@ rsk-usb = { path = "../../crates/rsk-usb" }
 rsk-crypto = { path = "../../crates/rsk-crypto" }
 rsk-fido = { path = "../../crates/rsk-fido" }
 rsk-openpgp = { path = "../../crates/rsk-openpgp" }
+# Named for one item: the prime sieve `RsaKeygen::step` takes, so the panel's own
+# RSA generate can run the applet's single-core search with a progress tick. It is
+# already in the graph under `rsk-openpgp`; this adds no code, only the name.
+rsk-rsa-asm = { path = "../../crates/rsk-rsa-asm" }
 rsk-mgmt = { path = "../../crates/rsk-mgmt" }
 rsk-oath = { path = "../../crates/rsk-oath" }
 rsk-otp = { path = "../../crates/rsk-otp" }

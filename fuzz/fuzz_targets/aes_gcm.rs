@@ -44,4 +44,23 @@ fuzz_target!(|data: &[u8]| {
     let mut dec2 = [0u8; 2048];
     dec2[..n].copy_from_slice(&buf[..n]);
     assert!(aes::aes256gcm_decrypt(&key, &nonce, aad, &mut dec2[..n], &bad).is_err());
+
+    // The good tag under a *different* AAD must be rejected too: AAD is what binds
+    // a sealed secret to its FID and generation, so a decrypt that ignores it
+    // cannot be allowed to pass this target. With no byte to flip, the length is
+    // the difference — `aad2` must never equal `aad` or the assertion inverts.
+    let mut alt = [0u8; 32];
+    alt[..aad_len].copy_from_slice(aad);
+    let aad2: &[u8] = if aad_len == 0 {
+        &[0u8]
+    } else {
+        // The index comes off the input rather than being fixed at 0: an AEAD
+        // that authenticated only `aad[..1]` passed every byte-0 flip ever
+        // generated — measured, 300k executions.
+        alt[nonce[0] as usize % aad_len] ^= 0xff;
+        &alt[..aad_len]
+    };
+    let mut dec3 = [0u8; 2048];
+    dec3[..n].copy_from_slice(&buf[..n]);
+    assert!(aes::aes256gcm_decrypt(&key, &nonce, aad2, &mut dec3[..n], &tag).is_err());
 });

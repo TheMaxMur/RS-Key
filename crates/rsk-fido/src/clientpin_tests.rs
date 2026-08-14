@@ -5,6 +5,7 @@ use super::*;
 use crate::FidoState;
 use crate::consts::EF_KEY_DEV;
 use crate::seed::{ensure_seed, load_keydev};
+use minicbor::encode::Write as _;
 use rsk_crypto::Device;
 use rsk_crypto::pinproto::public_xy;
 use rsk_fs::Fs;
@@ -148,6 +149,10 @@ enum V<'a> {
     U(u64),
     B(&'a [u8]),
     Cose(&'a [u8; 32], &'a [u8; 32]),
+    /// A keyAgreement whose coordinates go on the wire verbatim, however long.
+    CoseVar(&'a [u8], &'a [u8]),
+    /// Pre-encoded CBOR, written as the field's value.
+    Raw(&'a [u8]),
 }
 
 fn build(fields: &[(u8, V)]) -> std::vec::Vec<u8> {
@@ -165,6 +170,15 @@ fn build(fields: &[(u8, V)]) -> std::vec::Vec<u8> {
                     e.bytes(b).unwrap();
                 }
                 V::Cose(x, y) => cose_key_ecdh(&mut e, x, y).unwrap(),
+                V::Raw(b) => e.writer_mut().write_all(b).unwrap(),
+                V::CoseVar(x, y) => crate::cose::cose_key_ec2_var(
+                    &mut e,
+                    crate::consts::ALG_ECDH_ES_HKDF_256,
+                    crate::consts::CURVE_P256,
+                    x,
+                    y,
+                )
+                .unwrap(),
             }
         }
         e.writer().position()
@@ -275,12 +289,25 @@ impl Platform {
 
     // getPinUvAuthTokenUsingPinWithPermissions (subCommand 9) with `perms`.
     fn get_token_perms_req(&self, pin: &[u8], perms: u64) -> std::vec::Vec<u8> {
+        self.get_token_perms_req_coords(pin, perms, &self.x, &self.y)
+    }
+
+    // The same request with the keyAgreement coordinates written verbatim, so a
+    // test can send a coordinate that is not 32 bytes while the ECDH underneath
+    // stays correct.
+    fn get_token_perms_req_coords(
+        &self,
+        pin: &[u8],
+        perms: u64,
+        x: &[u8],
+        y: &[u8],
+    ) -> std::vec::Vec<u8> {
         let h = sha256(pin);
         let phe = self.enc(&h[..16]);
         build(&[
             (1, V::U(self.wire)),
             (2, V::U(9)),
-            (3, V::Cose(&self.x, &self.y)),
+            (3, V::CoseVar(x, y)),
             (6, V::B(&phe)),
             (9, V::U(perms)),
         ])
@@ -732,6 +759,32 @@ fn builtin_uv_token_success() {
     assert_eq!(ef_pin_retries(&mut fs), MAX_PIN_RETRIES);
 }
 
+/// The pad verifies the user; it does not stand in for the touch. §6.5.5.7.3 step
+/// 13 would let a built-in UV that "supplied evidence of user interaction" mint a
+/// token carrying presence, and §6.1.2 step 14 would then skip the presence
+/// request — deleting the one screen that names the rp, which is the whole point
+/// of the display. This device takes step 14, and this test keeps it there.
+#[test]
+fn builtin_uv_token_does_not_carry_user_presence() {
+    let (mut fs, mut rng, mut state, plat) = setup_with_pin(b"1234");
+    let mut out = [0u8; 256];
+    let mut pad = UvPad::typing(b"1234");
+    run_with(
+        &mut pad,
+        &mut fs,
+        &mut rng,
+        &mut state,
+        &plat.get_uv_token_req(PERM_GA as u64),
+        &mut out,
+    )
+    .unwrap();
+    assert!(state.user_verified(), "the pad did verify the user");
+    assert!(
+        !state.user_present(),
+        "a PIN typed on the pad must not stand in for the per-operation touch"
+    );
+}
+
 /// A wrong on-screen PIN is reported as UV_INVALID (the built-in-UV dialect of
 /// PIN_INVALID) and spends one of the shared retries.
 #[test]
@@ -875,9 +928,10 @@ fn builtin_uv_decline_denies_without_burning_a_retry() {
 }
 
 /// Without an on-device pad (the default backend), the built-in-UV subcommands
-/// answer UnsupportedOption — exactly as a standard key does.
+/// are ones this build does not implement, so §8.1's rule applies to them like
+/// any undefined value: CTAP2_ERR_INVALID_SUBCOMMAND.
 #[test]
-fn builtin_uv_subcommands_unsupported_without_a_pad() {
+fn builtin_uv_subcommands_are_invalid_subcommand_without_a_pad() {
     let (mut fs, mut rng, mut state, plat) = setup_with_pin(b"1234");
     let mut out = [0u8; 256];
     assert_eq!(
@@ -888,13 +942,31 @@ fn builtin_uv_subcommands_unsupported_without_a_pad() {
             &plat.get_uv_token_req(PERM_GA as u64),
             &mut out,
         ),
-        Err(CtapError::UnsupportedOption)
+        Err(CtapError::InvalidSubcommand)
     );
     let uv_retries = build(&[(1, V::U(plat.wire)), (2, V::U(7))]);
     assert_eq!(
         run(&mut fs, &mut rng, &mut state, &uv_retries, &mut out),
-        Err(CtapError::UnsupportedOption)
+        Err(CtapError::InvalidSubcommand)
     );
+}
+
+/// §8.1: "If the authenticator implements a command code having subcommands, but
+/// does not implement an invoked subcommand, it MUST return
+/// CTAP2_ERR_INVALID_SUBCOMMAND." 0x00 stays MISSING_PARAMETER — it is the
+/// absent-parameter sentinel, not a subcommand value (see the `0x0` arm).
+#[test]
+fn undefined_clientpin_subcommand_is_invalid_subcommand() {
+    let (mut fs, mut rng, mut state, plat) = setup_with_pin(b"1234");
+    let mut out = [0u8; 256];
+    for sub in [0x08u64, 0x0A, 0x7F, 0xFF] {
+        let req = build(&[(1, V::U(plat.wire)), (2, V::U(sub))]);
+        assert_eq!(
+            run(&mut fs, &mut rng, &mut state, &req, &mut out),
+            Err(CtapError::InvalidSubcommand),
+            "clientPIN subcommand {sub:#04x}"
+        );
+    }
 }
 
 /// getUVRetries (0x07) reports the shared budget that getPINRetries does, under
@@ -1798,3 +1870,205 @@ fn pcmr_consent_card_names_the_permission() {
     .unwrap();
     assert_eq!(pad2.titles, std::vec!["Always list passkeys?"]);
 }
+
+/// A platform scalar whose public key's `x` (`which = 0`) or `y` (`which = 1`)
+/// starts with a zero byte, with that public key. Stripping a byte off an
+/// arbitrary coordinate lands off the curve, so such a request is refused either
+/// way and a test built on one cannot tell the length rule from the failed ECDH —
+/// only a genuine leading-zero encoding exercises what the old left-pad rescued.
+fn scalar_with_leading_zero(which: usize) -> ([u8; 32], [u8; 32], [u8; 32]) {
+    for i in 1u32..100_000 {
+        let mut s = [0u8; 32];
+        s[28..].copy_from_slice(&i.to_be_bytes());
+        let (x, y) = public_xy(&s).unwrap();
+        if [x, y][which][0] == 0 {
+            return (s, x, y);
+        }
+    }
+    panic!("no P-256 scalar with a leading-zero coordinate in the search range");
+}
+
+/// Agree with the authenticator's current ephemeral key using `pscalar` instead
+/// of [`key_agreement`]'s fixed one.
+fn platform_from(state: &FidoState, proto: PinProto, wire: u64, pscalar: &[u8; 32]) -> Platform {
+    let (ax, ay) = state.ephemeral_public().unwrap();
+    let (x, y) = public_xy(pscalar).unwrap();
+    let mut shared = [0u8; 64];
+    let slen = pinproto::ecdh(proto, pscalar, &ax, &ay, &mut shared).unwrap();
+    Platform {
+        proto,
+        wire,
+        x,
+        y,
+        shared,
+        slen,
+    }
+}
+
+/// §6.5's keyAgreement is a P-256 COSE key, and a coordinate that is not exactly
+/// 32 bytes is not one. A short one used to be left-padded, so a platform whose
+/// bignum drops a leading zero still got a token; a YubiKey 5.7.4 answers
+/// INVALID_PARAMETER to 31 and to 33 bytes alike.
+#[test]
+fn key_agreement_coordinate_must_be_exactly_32_bytes() {
+    let (mut fs, mut rng) = setup();
+    let mut state = FidoState::new();
+    let mut out = [0u8; 256];
+    let plat = key_agreement(&mut fs, &mut rng, &mut state, PinProto::Two, 2);
+    run(
+        &mut fs,
+        &mut rng,
+        &mut state,
+        &plat.set_pin_req(b"1234"),
+        &mut out,
+    )
+    .unwrap();
+
+    for which in [0usize, 1] {
+        let (pscalar, x, y) = scalar_with_leading_zero(which);
+        // Control: this very key at full width mints a token, so each refusal
+        // below is the coordinate's length and not the key agreement.
+        let plat = platform_from(&state, PinProto::Two, 2, &pscalar);
+        run(
+            &mut fs,
+            &mut rng,
+            &mut state,
+            &plat.get_token_perms_req(b"1234", PERM_MC as u64),
+            &mut out,
+        )
+        .unwrap();
+
+        let short = [&x[1..], &y[1..]][which];
+        let padded = [&[0u8][..], [&x[..], &y[..]][which]].concat();
+        for (label, coord) in [("stripped to 31", short), ("padded to 33", &padded[..])] {
+            let (cx, cy) = if which == 0 {
+                (coord, &y[..])
+            } else {
+                (&x[..], coord)
+            };
+            let plat = platform_from(&state, PinProto::Two, 2, &pscalar);
+            let req = plat.get_token_perms_req_coords(b"1234", PERM_MC as u64, cx, cy);
+            assert_eq!(
+                run(&mut fs, &mut rng, &mut state, &req, &mut out),
+                Err(CtapError::InvalidParameter),
+                "coordinate {which} {label}"
+            );
+        }
+    }
+}
+
+// A platform keyAgreement whose `alg` is a chosen value, or omitted entirely.
+fn cose_with_alg(x: &[u8; 32], y: &[u8; 32], alg: Option<i64>) -> std::vec::Vec<u8> {
+    let mut buf = [0u8; 128];
+    let n = {
+        let mut e = Encoder::new(Cursor::new(&mut buf[..]));
+        e.map(if alg.is_some() { 5 } else { 4 }).unwrap();
+        e.u8(1).unwrap().u8(2).unwrap();
+        if let Some(a) = alg {
+            e.u8(3).unwrap().i64(a).unwrap();
+        }
+        e.i8(-1).unwrap().u8(1).unwrap();
+        e.i8(-2).unwrap().bytes(x).unwrap();
+        e.i8(-3).unwrap().bytes(y).unwrap();
+        e.writer().position()
+    };
+    buf[..n].to_vec()
+}
+
+/// clientPIN's own copies of the "numeric 0 means absent" sentinel. A
+/// `pinUvAuthProtocol` of 0 answered MISSING_PARAMETER on every subcommand, and a
+/// keyAgreement whose `alg` was 0 — or simply omitted — was refused the same way.
+/// Measured on a YubiKey 5.7.4: protocol 0 is INVALID_PARAMETER, and `alg` is
+/// never read (kty, crv and alg may say anything, including nothing).
+#[test]
+fn clientpin_protocol_zero_is_invalid_and_alg_is_not_read() {
+    let (mut fs, mut rng) = setup();
+    let mut state = FidoState::new();
+    let mut out = [0u8; 256];
+
+    // Every subcommand, defined or not, and the `0` sentinel with them: the
+    // protocol is judged before the dispatch, as on a YubiKey 5.7.4 — measured on
+    // getPINRetries, which is the one subcommand every host calls unauthenticated
+    // and which used to answer SUCCESS with a protocol it does not support.
+    for sub in [0u64, 1, 2, 3, 4, 5, 6, 7, 9, 0x99] {
+        for proto in [0u64, 3, 255] {
+            assert_eq!(
+                run(
+                    &mut fs,
+                    &mut rng,
+                    &mut state,
+                    &build(&[(1, V::U(proto)), (2, V::U(sub))]),
+                    &mut out
+                ),
+                Err(CtapError::InvalidParameter),
+                "subcommand {sub} with protocol {proto}"
+            );
+        }
+    }
+    // Control: with a supported protocol those same subcommands keep their own
+    // answers, so the rule above is the protocol's.
+    assert!(
+        run(
+            &mut fs,
+            &mut rng,
+            &mut state,
+            &build(&[(1, V::U(1)), (2, V::U(1))]),
+            &mut out
+        )
+        .is_ok(),
+        "getPINRetries under a supported protocol"
+    );
+    for (sub, want) in [
+        (0u64, CtapError::MissingParameter),
+        (0x99, CtapError::InvalidSubcommand),
+    ] {
+        assert_eq!(
+            run(
+                &mut fs,
+                &mut rng,
+                &mut state,
+                &build(&[(1, V::U(1)), (2, V::U(sub))]),
+                &mut out
+            ),
+            Err(want),
+            "subcommand {sub} under a supported protocol"
+        );
+    }
+
+    let plat = key_agreement(&mut fs, &mut rng, &mut state, PinProto::Two, 2);
+    run(
+        &mut fs,
+        &mut rng,
+        &mut state,
+        &plat.set_pin_req(b"1234"),
+        &mut out,
+    )
+    .unwrap();
+    // Every `alg` the platform can put in the COSE key — including the sentinel
+    // value and no key at all — still mints a token, because the ECDH is correct.
+    for alg in [
+        None,
+        Some(0),
+        Some(-7),
+        Some(crate::consts::ALG_ECDH_ES_HKDF_256),
+    ] {
+        let plat = key_agreement(&mut fs, &mut rng, &mut state, PinProto::Two, 2);
+        let h = sha256(b"1234");
+        let phe = plat.enc(&h[..16]);
+        let cose = cose_with_alg(&plat.x, &plat.y, alg);
+        let req = build(&[
+            (1, V::U(2)),
+            (2, V::U(9)),
+            (3, V::Raw(&cose)),
+            (6, V::B(&phe)),
+            (9, V::U(PERM_MC as u64)),
+        ]);
+        run(&mut fs, &mut rng, &mut state, &req, &mut out)
+            .unwrap_or_else(|e| panic!("alg {alg:?} refused with {e:?}"));
+    }
+}
+
+/// What a failed PIN check does to a pinUvAuthToken already in a platform's
+/// hands. Hung off this module so it inherits the Platform harness above.
+#[path = "pin_token_tests.rs"]
+mod pin_token_tests;

@@ -229,14 +229,14 @@ fn cmd_authenticate<S: Storage, R: Rng>(
     };
     // chal(32) ‖ appId(32) ‖ khLen(1) ‖ keyHandle
     if apdu.nc < 32 + 32 + 1 + 1 {
-        return (Sw::INCORRECT_PARAMS, 0);
+        return (Sw::WRONG_DATA, 0);
     }
     let chal = &apdu.data[..32];
     let mut app = [0u8; 32];
     app.copy_from_slice(&apdu.data[32..64]);
     let kh_len = apdu.data[64] as usize;
     if kh_len < KEY_HANDLE_LEN || 65 + kh_len > apdu.nc {
-        return (Sw::INCORRECT_PARAMS, 0);
+        return (Sw::WRONG_DATA, 0);
     }
     let key_handle = &apdu.data[65..65 + kh_len];
 
@@ -282,7 +282,7 @@ fn cmd_authenticate<S: Storage, R: Rng>(
     seed.zeroize();
     let mut scalar = match scalar {
         Some(s) => s,
-        None => return (Sw::INCORRECT_PARAMS, 0), // 0x6A80 WRONG_DATA — handle not ours
+        None => return (Sw::WRONG_DATA, 0), // 0x6A80 — handle not ours
     };
 
     // check-only (P1=0x07): a valid handle reports "would require user presence".

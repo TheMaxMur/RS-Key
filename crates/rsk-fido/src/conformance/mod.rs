@@ -28,12 +28,18 @@ mod extensions;
 mod getassertion;
 mod getinfo;
 mod hmac;
+// The two large-blob designs are mutually exclusive (CTAP 2.3 §12.4), so each
+// file only makes sense against the build that serves its side.
+#[cfg(feature = "largeblob-ext")]
+mod largeblobext;
+#[cfg(not(feature = "largeblob-ext"))]
 mod largeblobs;
 mod makecredential;
 mod multialg;
 mod pin;
 mod reset;
 mod selection;
+mod stateful;
 mod u2f;
 
 /// Deterministic RNG (copied per test file, matching the repo convention).
@@ -136,16 +142,23 @@ impl Authr {
         self.send(consts::CTAP_GET_INFO, &[])
     }
 
+    /// Mark a PIN configured, with a record of the length the verifier insists on:
+    /// a short stand-in reads as `CTAP2_ERR_OTHER` to any caller that goes past
+    /// `has_data` into `spend_and_verify_pin_hash`.
+    fn set_pin_file(&mut self) {
+        let mut pin_file = [0u8; crate::clientpin::PIN_FILE_LEN];
+        pin_file[0] = 8; // retries
+        pin_file[1] = 4; // min length
+        pin_file[2] = 1;
+        self.fs.put(consts::EF_PIN, &pin_file).unwrap();
+    }
+
     /// Arm a live pinUvAuthToken with `permissions` and mark a PIN configured;
     /// returns the token so a caller can MAC a message with [`pin_auth`]. Call
     /// AFTER any up-only registration — a configured PIN gates a bare
     /// makeCredential. Mirrors `getassertion_tests::arm_pin`.
     fn arm_token(&mut self, permissions: u8) -> [u8; 32] {
-        let mut pin_file = [0u8; 35];
-        pin_file[0] = 8; // retries
-        pin_file[1] = 4; // min length
-        pin_file[2] = 1;
-        self.fs.put(consts::EF_PIN, &pin_file).unwrap();
+        self.set_pin_file();
         let token = [0x99u8; 32];
         self.state.paut.token = token;
         self.state.paut.permissions = permissions;

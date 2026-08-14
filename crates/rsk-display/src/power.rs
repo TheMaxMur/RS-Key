@@ -126,9 +126,10 @@ where
 
     /// Poll the sleep/wake button from inside a modal: if pressed, sleep now (auto-locking
     /// like any sleep), wait for release, and return `true` so the caller abandons its wait
-    /// and unwinds to the now-asleep [`status_task`]. Called from every blocking on-device
-    /// loop — browse modals, the PIN pad, hold-to-confirm, and the host Approve/Deny prompts
-    /// — so the power button sleeps the device from *any* screen, not just Home. Each caller
+    /// and unwinds to the firmware's now-asleep `status_task`. Called from every blocking
+    /// on-device loop — browse modals, the PIN pad, hold-to-confirm, and the host
+    /// Approve/Deny prompts — so the power button sleeps the device from *any* screen, not
+    /// just Home. Each caller
     /// must, after a `true`, either return itself or check `self.asleep` so the sleep
     /// propagates up (a parent loop that keeps polling a blanked panel reads touches blind).
     pub(super) fn sleep_button_pressed(&mut self) -> bool {
@@ -141,3 +142,7 @@ where
         }
     }
 }
+
+#[cfg(test)]
+#[path = "power_tests.rs"]
+mod tests;

@@ -29,6 +29,10 @@ pub const ALGO_ECCP384: u8 = 0x14;
 pub const ALGO_RSA4096: u8 = 0x16;
 pub const ALGO_ED25519: u8 = 0xE0;
 pub const ALGO_X25519: u8 = 0xE1;
+/// The algorithm `GET METADATA` reports for the PIN and PUK — SP 800-78 has no
+/// identifier for a secret that is not a key, and a YubiKey 5.7.4 answers `FF`
+/// for both references.
+pub const ALGO_PIN: u8 = 0xFF;
 
 /// SEC1 uncompressed point: `0x04` + two 48-byte P-384 coordinates (the largest
 /// PIV curve).
@@ -52,9 +56,26 @@ pub const PINPOLICY_DEFAULT: u8 = 0;
 pub const PINPOLICY_NEVER: u8 = 1;
 pub const PINPOLICY_ONCE: u8 = 2;
 pub const PINPOLICY_ALWAYS: u8 = 3;
-/// `0` means "the card's default" on both axes; it is resolved at store time by
-/// [`crate::keygen::resolved_policies`] and never persisted.
+/// `0` on both axes is what a *stored* record can hold: a pre-run-34 build could
+/// persist one, and slot `9B` stores it deliberately (see [`MGM_PIN_POLICY`] —
+/// it is not a key slot and has no pin policy to report). No host may send it:
+/// "default" is an omitted `AA`/`AB` tag, and an explicit `0` is refused like any
+/// other undefined value (E80). A stored one is still honoured — the PIN axis
+/// resolves it by slot (`crate::auth::general_authenticate`), the touch axis needs
+/// no resolution because `check_touch` passes only `NEVER`.
 pub const TOUCHPOLICY_DEFAULT: u8 = 0;
+
+/// The pin-policy byte `GET METADATA 9B` reports. `is_key(0x9B)` is false in both
+/// the PIN gate and the freshness spend, so the slot has no policy — two writers
+/// used to fill the field in with opposite guesses. A YubiKey 5.7.4 reports `0`
+/// in every state (fresh, escrowed, after a host rotation), measured.
+pub const MGM_PIN_POLICY: u8 = PINPOLICY_DEFAULT;
+
+/// The pin-policy byte `GET METADATA F9` reports. Neither card PIN-gates the
+/// attestation slot — `ATTEST` answers with nothing verified on both — so the
+/// byte is descriptive only; a YubiKey 5.7.4 reports `ONCE` there and we match.
+pub const ATTESTATION_PIN_POLICY: u8 = PINPOLICY_ONCE;
+
 pub const TOUCHPOLICY_NEVER: u8 = 1;
 pub const TOUCHPOLICY_ALWAYS: u8 = 2;
 pub const TOUCHPOLICY_CACHED: u8 = 3;
@@ -102,7 +123,7 @@ pub fn is_key(slot: u8) -> bool {
 }
 
 /// Private-key file for a wire slot (also 9B and F9). A [`KeyFid`]: its contents
-/// are AES-256-GCM-sealed ([`seal`]), so the slot can only be reached through the
+/// are AES-256-GCM-sealed (`seal`), so the slot can only be reached through the
 /// typed key API, never the plaintext `Fs::put`/`read`.
 pub fn key_fid(slot: u8) -> KeyFid {
     KeyFid::new(0xD100 | slot as u16)
@@ -148,18 +169,29 @@ pub const EF_PIVMAN_DATA: u16 = 0xD2F0;
 
 /// Map a GET/PUT DATA object id (the `5C` tag value, 1–3 bytes big-endian) to
 /// its file — the GET DATA allow-list: the `5FC1xx` objects, the discovery
-/// object (`0x7E`, dynamic — `None` here), the BIT group template (`0x7F61`,
-/// never populated), the Yubico attestation cert (`5FFF01`) and the ADMIN DATA
-/// object (`5FFF00`). The PRINTED object (`5FC109`) is handled specially in
-/// GET/PUT DATA (the PIN-protected mgmt key), not through this generic table.
+/// object (`0x7E`, dynamic — `None` here), the Yubico attestation cert
+/// (`5FFF01`) and the ADMIN DATA object (`5FFF00`). The PRINTED object
+/// (`5FC109`) is handled specially in GET/PUT DATA (the PIN-protected mgmt key),
+/// not through this generic table.
+///
+/// An id resolves by its **whole value**. The second arm matched `id & 0xFFFF`,
+/// so the 2-byte `FF01` — and `00FF01`, `7FFF01`, `ABFF01` — all read the
+/// attestation certificate, and `FF00` the ADMIN-DATA object. A YubiKey 5.7.4
+/// resolves the exact three bytes and answers `6A82` to every masked spelling
+/// (measured, 3 runs). The first arm's mask is exact and stays.
+///
+/// The BIT group template `7F61` is deliberately absent for the same reason. It
+/// used to map to `0xD2B6` — which is `data_object_fid(0xB6)`, i.e. `5FC1B6`'s
+/// own file — so a `PUT DATA 5FC1B6` came back out of `GET DATA 7F61`. It is
+/// never populated, and an id with no file answers the `6A82` the card gives
+/// `7F61` in every state, so the entry bought an alias and nothing else.
 pub fn object_fid(id: u32) -> Option<u16> {
     if id & 0xFFFF00 == 0x5FC100 {
         return data_object_fid((id & 0xFF) as u8);
     }
-    match id & 0xFFFF {
-        0xFF01 => Some(EF_ATTESTATION_CERT),
-        0xFF00 => Some(EF_PIVMAN_DATA),
-        0x7F61 => Some(0xD2B6), // BITGT: a valid id with no data → 6A82
+    match id {
+        0x5F_FF_01 => Some(EF_ATTESTATION_CERT),
+        0x5F_FF_00 => Some(EF_PIVMAN_DATA),
         _ => None,
     }
 }
@@ -169,6 +201,28 @@ pub fn object_fid(id: u32) -> Option<u16> {
 /// attestation objects and must not be aliased.
 pub(crate) fn data_object_fid(low: u8) -> Option<u16> {
     (low < 0xF0).then_some(0xD200 | low as u16)
+}
+
+/// The four data objects SP 800-73-4 pt1 Table 3 gives a contact read condition
+/// of PIN. YubiKey "PRINTED INFORMATION" is one of them, and here it also backs
+/// the PIN-protected management key (see `get_protected_mgm`).
+pub const CARDHOLDER_FINGERPRINTS_ID: u32 = 0x5FC103;
+pub const CARDHOLDER_FACIAL_IMAGE_ID: u32 = 0x5FC108;
+pub const PRINTED_ID: u32 = 0x5FC109;
+pub const CARDHOLDER_IRIS_IMAGES_ID: u32 = 0x5FC121;
+
+/// Whether GET DATA for this object needs the PIN. Measured on a YubiKey 5.7.4,
+/// 3 runs: exactly Table 3's PIN set and nothing else, judged *before* the
+/// object's existence — so an absent one answers `6982`, not `6A82` — and the
+/// management key does not stand in for the PIN.
+pub(crate) fn read_needs_pin(id: u32) -> bool {
+    matches!(
+        id,
+        CARDHOLDER_FINGERPRINTS_ID
+            | CARDHOLDER_FACIAL_IMAGE_ID
+            | PRINTED_ID
+            | CARDHOLDER_IRIS_IMAGES_ID
+    )
 }
 
 pub const DISCOVERY_ID: u32 = 0x7E;
@@ -182,6 +236,13 @@ pub const DISCOVERY: &[u8] = &[
 
 /// SP 800-73 padded PIN-block wire length (PIN/PUK padded to 8 with `0xFF`).
 pub const PIN_WIRE_LEN: usize = 8;
+
+/// The pad byte that fills a reference out to [`PIN_WIRE_LEN`].
+pub const PIN_PAD: u8 = 0xFF;
+
+/// Shortest PIN or PUK the card will store — SP 800-73-4 §2.4.3 puts the
+/// reference at 6-8 bytes, and a YubiKey enforces that half of the rule.
+pub const PIN_MIN_LEN: usize = 6;
 
 /// Default credentials: PIN `123456` padded to 8 with `0xFF`, PUK `12345678`,
 /// management key `0102…08` ×3 typed as AES-192 (the YubiKey 5.7-era default
@@ -255,21 +316,21 @@ pub fn scan_files<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng) -
         let head = if minted_mgm {
             // A card we just provisioned takes the YubiKey 5 defaults: AES-192, touch
             // OFF (admin provisioning isn't touch-gated), still enforced if a host
-            // raises it via SET MGM KEY. Slot keys keep their ALWAYS default.
+            // raises it via SET MGM KEY.
             Some((ALGO_AES192, TOUCHPOLICY_NEVER))
         } else {
-            // A key that SURVIVED without its head must not be handed those: its
-            // algorithm is recoverable from the sealed length, its touch policy is
-            // not, so take the restrictive one rather than silently dropping a gate
-            // the owner raised — and never claim AES-192 over a 16- or 32-byte key,
-            // which would wedge the slot on `meta[0] != algo` instead of repairing it.
+            // A surviving key keeps its algorithm — the sealed length gives it, and
+            // claiming AES-192 over a 16- or 32-byte one wedges the slot on
+            // `meta[0] != algo`. Its touch policy is not recoverable, so it takes the
+            // published default like every other record here (E95): inventing ALWAYS
+            // gated management behind a touch whose only exit needs that same touch.
             let mut key = [0u8; 32];
             let n = seal::seal_read(dev, fs, key_fid(SLOT_CARDMGM), &mut key);
             key.zeroize();
             match n {
-                Ok(16) => Some((ALGO_AES128, TOUCHPOLICY_ALWAYS)),
-                Ok(24) => Some((ALGO_AES192, TOUCHPOLICY_ALWAYS)),
-                Ok(32) => Some((ALGO_AES256, TOUCHPOLICY_ALWAYS)),
+                Ok(16) => Some((ALGO_AES128, TOUCHPOLICY_NEVER)),
+                Ok(24) => Some((ALGO_AES192, TOUCHPOLICY_NEVER)),
+                Ok(32) => Some((ALGO_AES256, TOUCHPOLICY_NEVER)),
                 // Unreadable: GENERAL AUTHENTICATE reads the key through the same
                 // seal, so slot 9B is already dead. Leaving the head absent fails
                 // just that slot closed; erroring here fails the whole SELECT
@@ -279,11 +340,8 @@ pub fn scan_files<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng) -
             }
         };
         if let Some((algo, touch)) = head {
-            fs.meta_add(
-                key_fid(SLOT_CARDMGM).get(),
-                &[algo, PINPOLICY_ALWAYS, touch],
-            )
-            .map_err(|_| Sw::MEMORY_FAILURE)?;
+            fs.meta_add(key_fid(SLOT_CARDMGM).get(), &[algo, MGM_PIN_POLICY, touch])
+                .map_err(|_| Sw::MEMORY_FAILURE)?;
         }
     }
     if !fs.has_key(key_fid(SLOT_ATTESTATION)) {
@@ -325,7 +383,7 @@ pub(crate) fn is_piv_fid(fid: u16) -> bool {
 
 /// The records that *gate* the applet: the PIN and PUK verifiers, their retry
 /// state, and the 0x9B management key. Public because the device-wide
-/// `Fs::factory_wipe` bypasses [`wipe_piv`] and needs the same rule. [`wipe_piv`]
+/// `Fs::factory_wipe` bypasses `wipe_piv` and needs the same rule. `wipe_piv`
 /// deletes these last — `scan_files` re-creates every one of them at a *published*
 /// default, and PIV slot keys are sealed device-rooted rather than PIN-bound, so a
 /// sweep that took one first and then lost power would re-seed a published
@@ -350,7 +408,7 @@ fn is_piv_secret_fid(fid: u16) -> bool {
 const RESET_MAX_DELETES: u32 = 768;
 
 /// Factory-reset the applet: delete every PIV file and meta record
-/// ([`is_piv_fid`]), then re-create the defaults. Scoped to the PIV fid range —
+/// (`is_piv_fid`), then re-create the defaults. Scoped to the PIV fid range —
 /// the other applets' data must survive a PIV reset.
 pub fn reset_files<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng) -> Result<(), Sw> {
     let wiped = wipe_piv(fs);

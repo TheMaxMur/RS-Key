@@ -31,3 +31,11 @@ ml-kem = { workspace = true }
 # Stack-optimized ML-DSA (FIPS 204) — the ML-DSA-44 and -65 credential signing,
 # re-exported below.
 rsk-mldsa = { workspace = true }
+
+[features]
+# Kani cannot model the inline asm behind `cpufeatures`' runtime CPU
+# detection, so a harness that hashes reaches `__cpuid_count` and fails as
+# "unsupported construct". Only `scripts/kani.sh` turns this on; the firmware
+# never does, because forcing the soft backend swaps sha2's XIP-cache-sized
+# compressor for its ~28 KB unrolled one and moves the image (measured).
+kani-soft = ["sha2/force-soft", "sha1/force-soft"]

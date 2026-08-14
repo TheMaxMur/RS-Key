@@ -14,7 +14,6 @@
 //! this build has no button, so the keyboard's IN endpoint stays silent — which
 //! is also what a real key does until someone presses it.
 
-use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Waker};
 
@@ -23,7 +22,7 @@ use embassy_usb::control::OutResponse;
 
 use rsk_otp::hid::{OtpHid, PAYLOAD_SIZE, REPORT_SIZE, SetOutcome, status_frame};
 
-use crate::device::{Job, Req};
+use crate::device::{Job, Jobs};
 use crate::signals::Signals;
 
 /// The state machine plus whatever is waiting on it. One mutex, because the USB
@@ -32,7 +31,7 @@ use crate::signals::Signals;
 #[derive(Default)]
 struct Shared {
     hid: OtpHid,
-    /// Parked in [`next_request`]; woken when a whole frame lands.
+    /// Parked in `OtpKbd::next_request`; woken when a whole frame lands.
     waker: Option<Waker>,
 }
 
@@ -117,7 +116,7 @@ impl RequestHandler for OtpHandler {
 
 /// Run frames as they arrive, forever — the emulator's half of what the board's
 /// worker does when it wakes on `OTP_REQ`.
-pub async fn run(otp: OtpKbd, jobs: Sender<Req>, signals: Arc<Signals>) {
+pub async fn run(otp: OtpKbd, jobs: Jobs, signals: Arc<Signals>) {
     // Seed the status frame before the host's first poll. An idle GET_REPORT is
     // the very first thing `ykman` issues, and the machine's default is a
     // plausible record rather than this device's.

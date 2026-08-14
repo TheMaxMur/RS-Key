@@ -32,11 +32,9 @@ pub(crate) const ATTR_BP384R1: &[u8] = &[
 pub(crate) const ATTR_CV25519: &[u8] = &[
     11, ALGO_ECDH, 0x2b, 0x06, 0x01, 0x04, 0x01, 0x97, 0x55, 0x01, 0x05, 0x01,
 ];
-const ATTR_X448: &[u8] = &[4, ALGO_ECDH, 0x2b, 0x65, 0x6f];
 pub(crate) const ATTR_ED25519: &[u8] = &[
     10, ALGO_EDDSA, 0x2b, 0x06, 0x01, 0x04, 0x01, 0xda, 0x47, 0x0f, 0x01,
 ];
-const ATTR_ED448: &[u8] = &[4, ALGO_EDDSA, 0x2b, 0x65, 0x71];
 
 // The algorithms each slot supports. `emit_algoinfo` publishes these in DO `0xFA`
 // and `putdata` accepts nothing else into C1/C2/C3 — one definition, so the card
@@ -44,6 +42,12 @@ const ATTR_ED448: &[u8] = &[4, ALGO_EDDSA, 0x2b, 0x65, 0x71];
 // should reject unsupported values in the DO"). Without the check, `nbits` came
 // straight off the wire and `RsaKeygen::usable` took any 32-byte multiple, so a
 // PW3 holder could set 512 and have the *owner* generate a factorable key later.
+//
+// §4.4.3.9 also makes this the machine-readable contract a terminal is told to
+// use for key import, so an entry here is a promise, not a wish list: X448 and
+// Ed448 sat in it while GENERATE and IMPORT refused them, and the only thing a
+// host could do with the advertisement was store an attribute that left the slot
+// dead — `gpg --card-status` showing Ed448 for a slot where nothing works.
 pub(crate) const ALGO_SIG_SUPPORTED: &[&[u8]] = &[
     ATTR_RSA1K,
     ATTR_RSA2K,
@@ -56,7 +60,6 @@ pub(crate) const ALGO_SIG_SUPPORTED: &[&[u8]] = &[
     ATTR_BP256R1,
     ATTR_BP384R1,
     ATTR_ED25519,
-    ATTR_ED448,
 ];
 pub(crate) const ALGO_DEC_SUPPORTED: &[&[u8]] = &[
     ATTR_RSA1K,
@@ -70,14 +73,13 @@ pub(crate) const ALGO_DEC_SUPPORTED: &[&[u8]] = &[
     ATTR_BP256R1,
     ATTR_BP384R1,
     ATTR_CV25519,
-    ATTR_X448,
 ];
 pub(crate) const ALGO_AUT_SUPPORTED: &[&[u8]] = ALGO_SIG_SUPPORTED;
 
 /// Whether `data` is an algorithm attribute this card advertises for `fid`
 /// (C1/C2/C3). `data` is the DO *value*; the templates carry a leading TLV length
 /// byte, so compare against `attr[1..]` — after the same ECDSA→ECDH rewrite
-/// [`emit_algo`] applies to the DEC list, so what we accept is exactly what DO
+/// [`DoWriter::emit_algo`] applies to the DEC list, so what we accept is exactly what DO
 /// `0xFA` published.
 pub(crate) fn advertised_algo(fid: u16, data: &[u8]) -> bool {
     let set = match fid {
@@ -328,20 +330,20 @@ impl<'a, S: Storage> DoWriter<'a, S> {
 
     fn emit_fp(&mut self) -> usize {
         self.push((EF_FP & 0xff) as u8);
-        self.push(60);
-        self.emit_trium(EF_FP_SIG, 3, 20) + 2
+        self.push((KEY_SLOTS * FP_LEN) as u8);
+        self.emit_trium(EF_FP_SIG, KEY_SLOTS, FP_LEN) + 2
     }
 
     fn emit_cafp(&mut self) -> usize {
         self.push((EF_CA_FP & 0xff) as u8);
-        self.push(60);
-        self.emit_trium(EF_FP_CA1, 3, 20) + 2
+        self.push((KEY_SLOTS * FP_LEN) as u8);
+        self.emit_trium(EF_FP_CA1, KEY_SLOTS, FP_LEN) + 2
     }
 
     fn emit_ts(&mut self) -> usize {
         self.push((EF_TS_ALL & 0xff) as u8);
-        self.push(12);
-        self.emit_trium(EF_TS_SIG, 3, 4) + 2
+        self.push((KEY_SLOTS * TS_LEN) as u8);
+        self.emit_trium(EF_TS_SIG, KEY_SLOTS, TS_LEN) + 2
     }
 
     fn emit_keyinfo(&mut self) -> usize {
@@ -351,12 +353,17 @@ impl<'a, S: Storage> DoWriter<'a, S> {
             self.push(6);
         }
         // OpenPGP Card 3.4 §4.4.3.8: key-ref 01=SIG, 02=DEC, 03=AUT, then a status
-        // byte (00 = not present, 01 = present). ykman >= 5.2 keys its parse on
-        // these refs, so they must be the spec values, not 0-indexed.
+        // byte — 00 not present, 01 generated on card, 02 imported. ykman >= 5.2
+        // keys its parse on these refs, so they must be the spec values, not
+        // 0-indexed.
         for (key_ref, fid) in [(1u8, EF_PK_SIG), (2, EF_PK_DEC), (3, EF_PK_AUT)] {
             self.push(key_ref);
-            let present = self.fs.has_key(fid);
-            self.push(if present { 0x01 } else { 0x00 });
+            let status = if self.fs.has_key(fid) {
+                crate::origin::of(self.fs, fid)
+            } else {
+                0x00
+            };
+            self.push(status);
         }
         self.pos - init
     }

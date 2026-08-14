@@ -10,7 +10,7 @@ use rsk_crypto::{aes128_encrypt_block, hmac_sha1};
 use crate::{
     CFG_OATH_HOTP8, CFG_SHORT_TICKET, CFG_STATIC_TICKET, CONFIG_SIZE, FIXED_SIZE, KEY_SIZE,
     OFF_AES_KEY, OFF_CFG_FLAGS, OFF_TKT_FLAGS, OFF_UID, SLOT_SIZE, TKT_APPEND_CR, TKT_OATH_HOTP,
-    UID_SIZE, USE_COUNTER_MAX, crc16,
+    UID_SIZE, counter::next_use_counter, crc16,
 };
 
 /// The YubiKey modhex alphabet (keyboard-layout-independent).
@@ -163,11 +163,8 @@ pub fn build(
         len += 1;
     }
 
-    let new_session = session.wrapping_add(1);
-    if new_session == 0 && counter <= USE_COUNTER_MAX {
-        counter += 1;
-        update = true;
-    }
+    let (counter, new_session, bumped) = next_use_counter(counter, session);
+    update |= bumped;
     let new_tail = if update {
         let mut t = [0u8; SLOT_TAIL];
         t.copy_from_slice(tail);

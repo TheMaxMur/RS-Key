@@ -39,6 +39,11 @@ the delay the CTAPHID endpoint reports `UPNEEDED`; a `CANCEL` on the active
 channel ends the operation before it is approved. This mode is intended for
 deterministic conformance runs that need to observe keepalive and cancellation.
 
+A timer answers the prompt, so this remains an **auto-confirming** authenticator,
+not a confirm-showing one: the CTAP 2.1 §6.6 reset window still applies, exactly
+as under the default instant presence. `--touch`, where a person answers, is the
+mode that is exempt from it.
+
 Build the emulator with the conformance-specific FIDO feature and run it with
 delayed presence like this:
 
@@ -87,7 +92,10 @@ that the emulator grew the capability.
 
 `30` needs the Yubico card identity: start the emulator `--yubico` and it runs,
 otherwise the shim asks the card for its ATR and skips. `28` and `76` take `--pin` and want a PIN already set (`21_pin_webauthn` sets
-`1234`). `50` and `52` measure that a touch took time, so they only mean
+`1234`); given both, they pass. Without the flag the shim refuses them by name
+(`NEEDS_ARGS`) rather than letting them die in argparse, so a hand-run sweep reads
+them as not invoked instead of as a device failure. `50` and `52` measure that a
+touch took time, so they only mean
 something with `--touch` and a human at the keyboard.
 
 ## As a real USB device (`--usbip`)
@@ -176,8 +184,9 @@ response         len:u32 BE | payload
 ```
 
 `op` is `00` for a CCID message and `03` for a replug (a power cycle: RAM state
-is dropped and the CTAP 2.1 §6.6 reset window reopens — CCID has no message for
-that, because a power cycle is not a card reset). The payload of a `00` is a
+is dropped, the CTAP 2.1 §6.6 reset window reopens, and every plain Yubico-OTP
+slot's use counter advances — CCID has no message for that, because a power cycle
+is not a card reset, and a warm reboot is neither). The payload of a `00` is a
 whole `PC_to_RDR` message, header and all, and the answer is a whole `RDR_to_PC`:
 the same bytes a PC/SC driver puts on the bulk endpoints, so `rsk_usb::ccid` runs
 here rather than being bypassed. One request may draw several responses, as a
@@ -209,10 +218,10 @@ serial — is recognisable as emulator-made.
   screen, the tabs and menus answer taps, and a host ceremony paints over them —
   the panel's loop and the host's share one executor exactly as they do on the
   board. The backlight is applied by scaling the pixels on their way to the
-  window, and the **space bar is the wake button**. One behaviour is deliberately
-  *not* the board's: `host_request_pending` is always false here, so a host
-  command never closes an open menu. On a device that is a host-starvation guard;
-  on a desk it would shut the operator's menu because a browser sent `getInfo`.
+  window, and the **space bar is the wake button**. An open menu hands the parked
+  worker its executor back when a host command lands, as a board's does — after
+  `UI_YIELD_FLOOR_MS`, which is what stops a browser looping `getInfo` from
+  shutting the operator's screen.
 - **The vendor AID's hardware arms**: the applet itself runs (`crates/rsk-vendor`
   — the counter, the U2F/SELECT routing, the warm reboot), but SET/GET LED, the
   second core's statistics, the measurement benches and the drop to BOOTSEL all

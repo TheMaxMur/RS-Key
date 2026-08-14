@@ -296,7 +296,7 @@ pub enum DevConfError {
     /// fixed buffer (an over-length blob in flash is a sticky DoS).
     TooLong,
     /// Not well-formed TLV, or it carries a tag the device owns (see
-    /// [`writable_tag`]). Refused so a host cannot forge an identity field or
+    /// `writable_tag`). Refused so a host cannot forge an identity field or
     /// store a blob that makes the DeviceInfo response unparseable.
     BadTlv,
     /// The flash write failed.
@@ -641,7 +641,7 @@ pub fn take_dev_conf_dirty() -> bool {
 /// The enabled-applications mask from a persisted `EF_DEV_CONF` TLV blob — the
 /// `USB_ENABLED` (`0x03`) tag, clamped to [`SUPPORTED_CAPS`]. A blob without that
 /// tag, or none persisted at all, is the factory default: everything supported is
-/// enabled. Walks short-form TLVs like [`clamp_usb_enabled`]; a malformed length
+/// enabled. Walks short-form TLVs like `clamp_usb_enabled`; a malformed length
 /// stops the walk (→ default), never slicing out of bounds.
 pub fn enabled_from_conf(conf: &[u8]) -> u16 {
     let mut i = 0;
@@ -708,14 +708,14 @@ impl<'a> ManagementApplet<'a> {
     /// TLV blob as `EF_DEV_CONF`.
     fn write_config<S: Storage>(&mut self, apdu: &Apdu, fs: &mut Fs<S>) -> Sw {
         if apdu.nc == 0 || apdu.data[0] as usize != apdu.nc - 1 {
-            return Sw::INCORRECT_PARAMS;
+            return Sw::WRONG_DATA;
         }
         // Request-side bound only. What actually reaches flash is bounded by
         // `persist_dev_conf` against `EF_DEV_CONF_MAX` *after* the lock tags are
         // stripped, so a legitimate `set-lock-code` (two 16-byte codes in one
         // request, neither stored) is not refused for the size of its request.
         if apdu.nc - 1 > DEV_CONF_WRITE_MAX {
-            return Sw::INCORRECT_PARAMS;
+            return Sw::WRONG_DATA;
         }
         // Rewriting the reported DeviceInfo is a privileged, sticky change. Under
         // `strict-config` gate it on operator presence (the CONFIG_LOCK byte is
@@ -729,7 +729,7 @@ impl<'a> ManagementApplet<'a> {
         }
         match persist_dev_conf(fs, &apdu.data[1..apdu.nc]) {
             Ok(()) => Sw::OK,
-            Err(DevConfError::TooLong | DevConfError::BadTlv) => Sw::INCORRECT_PARAMS,
+            Err(DevConfError::TooLong | DevConfError::BadTlv) => Sw::WRONG_DATA,
             Err(DevConfError::Store) => Sw::MEMORY_FAILURE,
         }
     }

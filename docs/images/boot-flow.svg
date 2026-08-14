@@ -2,7 +2,7 @@
 <!-- Copyright (C) 2026 RS-Key contributors -->
 <svg viewBox="0 0 780 552" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="ttl dsc" font-family="'Segoe UI', system-ui, -apple-system, sans-serif">
   <title id="ttl">RS-Key boot sequence</title>
-  <desc id="dsc">Boot flows top to bottom in three phases. Bootrom verifies the signed image. Then the firmware provisions and recovers all persistent state — read OTP keys, mount the KV store, load the phy record, seed the TRNG, run the seal migrations and at-rest scrub — all before the USB pull-up. Only then does build() attach the bus, spawn the transport tasks, and let the worker dispatch applets.</desc>
+  <desc id="dsc">Boot flows top to bottom in three phases. Bootrom verifies the signed image. Then the firmware provisions and recovers all persistent state — read the MKEK for the seal migrations, mount the KV store, load the phy record, seed the TRNG, run the seal migrations and at-rest scrub — all before the USB pull-up. Only then does build() attach the bus, spawn the transport tasks, and let the worker dispatch applets.</desc>
   <defs>
     <style>
       .h1{font-size:23px;font-weight:700;fill:#2B2723}
@@ -55,7 +55,7 @@
 
   <circle cx="66" cy="222" r="12" fill="#C0562B"/>
   <text class="num" x="66" y="226" text-anchor="middle">3</text>
-  <text class="step" x="88" y="226">chip id → serial · read OTP keys (MKEK, DEVK) · lock the key page</text>
+  <text class="step" x="88" y="226">chip id → serial · lock the key page · read the MKEK for migrations</text>
 
   <circle cx="66" cy="252" r="12" fill="#C0562B"/>
   <text class="num" x="66" y="256" text-anchor="middle">4</text>

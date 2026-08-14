@@ -14,7 +14,7 @@
 //! ~4× faster end-to-end on a getAssertion, with the identical hash. SHA-384 is
 //! the same SHA-512 compression with a different IV and a 48-byte truncation.
 //!
-//! Only the compression ([`block::compress`]) is new; the SHA finalization, HMAC
+//! Only the compression (`block::compress`) is new; the SHA finalization, HMAC
 //! and HKDF constructions above it are the unchanged generic RustCrypto code, so
 //! byte-identity reduces to "does this compression equal FIPS 180-4", gated by a
 //! randomized differential against `sha2`/`hmac`/`hkdf` plus NIST/RFC KATs.

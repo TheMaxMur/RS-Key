@@ -3,7 +3,7 @@
 
 use super::*;
 use crate::FidoState;
-use crate::consts::{EF_CRED, EF_LARGEBLOB, EF_PIN, RESET_WINDOW_MS};
+use crate::consts::{EF_CRED, EF_LARGEBLOB, EF_PIN, EF_RP, RESET_WINDOW_MS};
 use crate::seed::{bump_sign_counter, get_sign_counter, load_keydev};
 use rsk_crypto::Device;
 use rsk_fs::Fs;
@@ -295,8 +295,14 @@ fn reset_wipes_false_absent_credential_without_looping() {
     assert!(load_keydev(&dev(), &mut fs).is_some());
 }
 
+/// Yields one fid many times per pass, the way the log-structured backend does for
+/// a file with superseded versions, and counts how often the sweep asks to remove
+/// it. `remove` succeeds every time — the real store's does, on a present key and
+/// on an absent one alike — so a sweep that failed to de-dup would still return
+/// `Ok` here. The count is what pins the contract.
 struct DuplicateVersions {
     live: bool,
+    removes: u32,
 }
 
 impl rsk_fs::Storage for DuplicateVersions {
@@ -307,9 +313,7 @@ impl rsk_fs::Storage for DuplicateVersions {
         Ok(())
     }
     fn remove(&mut self, _fid: u16) -> rsk_sdk::error::Result<()> {
-        if !self.live {
-            return Err(rsk_sdk::error::Error::MemoryFatal);
-        }
+        self.removes += 1;
         self.live = false;
         Ok(())
     }
@@ -326,9 +330,16 @@ impl rsk_fs::Storage for DuplicateVersions {
     }
 }
 
+/// `Fs::for_each_key` documents that one fid can be yielded more than once (one
+/// stored item per superseded version, until reclaim) and that a batching caller
+/// must de-dup. Without that, the 64-slot batch fills with copies of a single fid
+/// and the sweep asks to delete it 64 times.
 #[test]
 fn reset_sweep_de_dupes_stored_versions() {
-    let mut fs = Fs::new(DuplicateVersions { live: true });
+    let mut fs = Fs::new(DuplicateVersions {
+        live: true,
+        removes: 0,
+    });
     let mut rng = SeqRng(1);
     let mut state = FidoState::new();
     let mut presence = crate::AlwaysConfirm;
@@ -341,6 +352,11 @@ fn reset_sweep_de_dupes_stored_versions() {
         now_ms: 0,
     };
     assert_eq!(sweep(&mut ctx, is_fido_fid), Ok(()));
+    assert_eq!(
+        fs.into_storage().removes,
+        1,
+        "64 stored versions of one fid must cost one delete, not 64"
+    );
 }
 
 struct ReYielding;
@@ -381,6 +397,20 @@ fn reset_sweep_fails_when_storage_does_not_converge() {
     assert_eq!(sweep(&mut ctx, is_fido_fid), Err(CtapError::Other));
 }
 
+/// `RESET_MAX_DELETES` is written as `4 * MAX_RESIDENT_CREDENTIALS + 13`, and the
+/// 13 is a hand-count of `is_fido_fid`'s fixed arm. Count the predicate instead of
+/// trusting it: add a record there and the bound silently stops covering the
+/// applet, whose failure mode is a reset that gives up on a FULL device — the one
+/// place a stale constant costs the most.
+#[test]
+fn reset_bound_is_exactly_the_fid_space() {
+    let live = (0..=u16::MAX).filter(|&fid| is_fido_fid(fid)).count();
+    assert_eq!(
+        live as u32, RESET_MAX_DELETES,
+        "the bound must equal the number of fids the sweep can legitimately delete"
+    );
+}
+
 /// Audit run-36 class sweep: `is_fido_gate_fid` is the set `reset` defers to its
 /// second phase *and* the set the device-wide `Fs::factory_wipe` inherits, so a
 /// record that gates the applet but is missing from it gets deleted ahead of the
@@ -392,6 +422,10 @@ fn reset_sweep_fails_when_storage_does_not_converge() {
 /// on-device recovery-phrase reveal. It sat in the same phase as `EF_KEY_DEV`, so a
 /// torn wipe could take the marker first and re-open a window the owner had closed
 /// over a seed that was still live.
+///
+/// `EF_PAUTHTOKEN` is the record that was in the set without meeting its rule: a
+/// grant's absence is the RESTRICTIVE state, so deferring it produced a tear of the
+/// opposite kind — a live `pcmr` grant over a deleted PIN.
 #[test]
 fn the_gate_set_defers_every_record_whose_absence_is_permissive() {
     use crate::consts::{
@@ -402,7 +436,6 @@ fn the_gate_set_defers_every_record_whose_absence_is_permissive() {
         EF_DEVICE_PIN,
         EF_ALWAYS_UV,
         EF_MINPINLEN,
-        EF_PAUTHTOKEN.get(),
         EF_BACKUP_SEALED,
     ] {
         assert!(is_fido_gate_fid(fid), "{fid:#06x} gates the applet");
@@ -412,9 +445,17 @@ fn the_gate_set_defers_every_record_whose_absence_is_permissive() {
         );
     }
     // The secrets themselves must stay in phase 1 — deferring the seed would invert
-    // the rule and delete the gate first.
-    for fid in [EF_KEY_DEV.get(), EF_CRED, EF_LARGEBLOB] {
-        assert!(!is_fido_gate_fid(fid), "{fid:#06x} is a secret, not a gate");
+    // the rule and delete the gate first — and so must a grant, whose absence denies
+    // rather than permits.
+    for fid in [EF_KEY_DEV.get(), EF_CRED, EF_LARGEBLOB, EF_PAUTHTOKEN.get()] {
+        assert!(
+            !is_fido_gate_fid(fid),
+            "{fid:#06x} is a secret or a grant, not a gate"
+        );
+        assert!(
+            is_fido_fid(fid),
+            "{fid:#06x} is not deferred, so the sweep must own it"
+        );
     }
 }
 
@@ -533,5 +574,398 @@ fn a_torn_reset_never_unseals_a_surviving_seed() {
     assert!(
         saw_survivor,
         "vacuous: no tear point left the owner's seed behind, so nothing was proved"
+    );
+}
+
+/// One discoverable credential, written by the code that writes them in the field
+/// (`credential_store`, which also creates the `EF_RP` entry). Returns the rpIdHash.
+fn provision_passkey<S: rsk_fs::Storage>(fs: &mut Fs<S>, seed: &[u8; 32]) -> [u8; 32] {
+    use crate::consts::{ALG_ES256, CURVE_P256};
+    use crate::credential::{CredExt, CredInput, credential_create, credential_store};
+    use rsk_crypto::sha256;
+
+    let rp_id_hash = sha256(b"example.com");
+    let input = CredInput {
+        rp_id: "example.com",
+        user_id: &[0xDE, 0xAD, 0xBE, 0xEF],
+        user_name: "alice",
+        user_display_name: "Alice Smith",
+        use_sign_count: true,
+        rk: true,
+        created_ms: 1,
+        alg: ALG_ES256,
+        curve: CURVE_P256 as i64,
+        ext: CredExt::default(),
+    };
+    let mut cred_id = [0u8; 512];
+    let n =
+        credential_create(seed, &dev(), &input, &rp_id_hash, &[0x11; 12], &mut cred_id).unwrap();
+    credential_store(
+        seed,
+        &dev(),
+        fs,
+        &cred_id[..n],
+        &rp_id_hash,
+        "example.com",
+        input.user_id,
+        &[],
+    )
+    .unwrap();
+    rp_id_hash
+}
+
+/// The premise the wipe order rests on. `credential_load` is the chokepoint every
+/// reader of a stored record goes through — `getAssertion`, credMgmt's enumerate
+/// and `credential_store`'s own dedup — and its key is an HMAC chain over the seed,
+/// so a regenerated seed makes a record a torn wipe left behind unopenable.
+#[test]
+fn a_surviving_credential_is_dead_once_the_seed_is_replaced() {
+    use crate::consts::EF_KEY_DEV;
+    use crate::credential::{cred_record_box, credential_load};
+
+    let mut fs = Fs::new(RamStorage::new());
+    let mut rng = SeqRng(5);
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+    let owner = load_keydev(&dev(), &mut fs).unwrap();
+    let rp_id_hash = provision_passkey(&mut fs, &owner);
+
+    let mut rec = [0u8; 1024];
+    let n = fs.read(EF_CRED, &mut rec).unwrap();
+    let mut scratch = [0u8; 1024];
+    assert!(
+        credential_load(
+            &owner,
+            cred_record_box(&rec[..n]),
+            &rp_id_hash,
+            &mut scratch
+        )
+        .is_some(),
+        "the record must open under the seed that wrote it, or this proves nothing"
+    );
+
+    // Exactly the state the lead delete guarantees: seed gone, record left behind.
+    fs.force_delete(EF_KEY_DEV.get()).unwrap();
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+    let fresh = load_keydev(&dev(), &mut fs).unwrap();
+    assert_ne!(
+        fresh, owner,
+        "ensure_seed must mint a new seed, not reuse it"
+    );
+    assert!(
+        credential_load(
+            &fresh,
+            cred_record_box(&rec[..n]),
+            &rp_id_hash,
+            &mut scratch
+        )
+        .is_none(),
+        "a stranded credential must not open under the regenerated seed"
+    );
+}
+
+/// A provisioned store — seed, one discoverable credential, a PIN — with the seed
+/// moved to `seed_fid` and to the ring TAIL. That order is the field-reachable one
+/// the sibling test above argues for: page GC re-appends a live item at the head,
+/// and `migrate_keydev_pin` re-seals the seed on a PIN verify. Returns the store
+/// and the owner's seed record, which is what tells "survived" from "re-minted".
+fn provisioned_with_seed_last(seed_fid: u16) -> (TearAfter, Vec<u8>) {
+    use crate::consts::EF_KEY_DEV;
+
+    let mut fs = Fs::new(TearAfter {
+        items: Vec::new(),
+        budget: usize::MAX,
+    });
+    fs.scan();
+    let mut rng = SeqRng(11);
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+    let seed = load_keydev(&dev(), &mut fs).unwrap();
+    provision_passkey(&mut fs, &seed);
+    fs.put(EF_PIN, &[8, 4, 1, 0, 0]).unwrap();
+    let mut st = fs.into_storage();
+    let at = st
+        .items
+        .iter()
+        .position(|(k, _)| *k == EF_KEY_DEV.get())
+        .unwrap();
+    let (_, blob) = st.items.remove(at);
+    let owner_seed = blob.clone();
+    st.items.push((seed_fid, blob));
+    (st, owner_seed)
+}
+
+/// The fids `base` still holds, in ring order.
+fn fids(store: &TearAfter) -> Vec<u16> {
+    store.items.iter().map(|(k, _)| *k).collect()
+}
+
+/// The owner's seed record, if `seed_fid` still holds exactly it. A completed wipe
+/// re-mints a FRESH seed, and that one opens nothing, so only the owner's own bytes
+/// mean the credentials are still readable.
+fn owner_seed_survived<S: rsk_fs::Storage>(fs: &mut Fs<S>, seed_fid: u16, owner: &[u8]) -> bool {
+    let mut now = [0u8; 128];
+    let n = fs.read(seed_fid, &mut now).unwrap_or(0).min(now.len());
+    now[..n] == *owner
+}
+
+/// The wipe's own promise — "the seed leads, so a surviving credential record is
+/// cryptographically dead" — asserted instead of asserted-in-a-comment. Nothing
+/// used to order `EF_KEY_DEV` ahead of the batch: `for_each_key` yields in ring
+/// order, so a cut between the `EF_RP` delete and the `EF_CRED` one left a live
+/// discoverable passkey with no rp entry — one `enumerateRPs` and the display's
+/// Passkeys view cannot list, `enumerateCredentials` (per-rp) cannot reach, and
+/// `getAssertion` signs with happily (TLA+ `NoUnmanageableCredential`, depth 13).
+/// The strand itself still happens; what the order buys is that the survivor no
+/// longer opens.
+fn a_torn_reset_keeps_the_seed_ahead_of_the_wipe(seed_fid: u16) {
+    let (base, owner_seed) = provisioned_with_seed_last(seed_fid);
+    let live = base.items.len();
+
+    for budget in 0..live {
+        let mut fs = Fs::new(TearAfter {
+            budget,
+            ..base.clone()
+        });
+        fs.scan();
+        let mut rng = SeqRng(3);
+        let mut state = FidoState::new();
+        {
+            let mut presence = crate::AlwaysConfirm;
+            let mut ctx = Ctx {
+                presence: &mut presence,
+                dev: dev(),
+                fs: &mut fs,
+                rng: &mut rng,
+                state: &mut state,
+                now_ms: 0,
+            };
+            let _ = reset(&mut ctx);
+        }
+        if !owner_seed_survived(&mut fs, seed_fid, &owner_seed) {
+            continue;
+        }
+        assert_eq!(
+            fids(&fs.into_storage()),
+            fids(&base),
+            "tear at {budget} ({seed_fid:#06x}) deleted a record while the owner's seed \
+             was still readable — a survivor of that prefix still opens"
+        );
+    }
+
+    // The loop's subject has to be a wipe that really wipes, or every prefix would
+    // pass by doing nothing at all.
+    let mut fs = Fs::new(TearAfter {
+        budget: usize::MAX,
+        ..base.clone()
+    });
+    fs.scan();
+    let mut rng = SeqRng(3);
+    let mut state = FidoState::new();
+    {
+        let mut presence = crate::AlwaysConfirm;
+        let mut ctx = Ctx {
+            presence: &mut presence,
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 0,
+        };
+        reset(&mut ctx).unwrap();
+    }
+    assert!(!fs.has_data(EF_CRED), "the control run kept a credential");
+    assert!(
+        !owner_seed_survived(&mut fs, seed_fid, &owner_seed),
+        "the control run kept the owner's seed"
+    );
+}
+
+#[test]
+fn a_torn_reset_never_starts_while_the_seed_is_still_readable() {
+    use crate::consts::{EF_KEY_DEV, EF_KEY_DEV_ENC};
+    // Both shapes the seed takes on flash. `EF_KEY_DEV_ENC` is the soft lock's copy
+    // and is what a locked device's credentials still hang on, so a wipe that leads
+    // with `EF_KEY_DEV` alone would strand them there.
+    a_torn_reset_keeps_the_seed_ahead_of_the_wipe(EF_KEY_DEV.get());
+    a_torn_reset_keeps_the_seed_ahead_of_the_wipe(EF_KEY_DEV_ENC.get());
+}
+
+/// The device-wide `Fs::factory_wipe` — the Management RESET and the trusted
+/// display's factory reset — bypasses [`reset`] entirely, so the rule has to reach
+/// it through an exported predicate. Same shape audit run-36 settled on for OATH's
+/// access code (`rsk_oath::tests::the_exported_lock_predicate_protects_the_device_
+/// wide_wipe`): assert the predicate really buys the ordering on that path.
+#[test]
+fn the_exported_seed_predicate_protects_the_device_wide_wipe() {
+    use crate::consts::EF_KEY_DEV;
+
+    let (base, owner_seed) = provisioned_with_seed_last(EF_KEY_DEV.get());
+    let live = base.items.len();
+
+    for budget in 0..live {
+        let mut fs = Fs::new(TearAfter {
+            budget,
+            ..base.clone()
+        });
+        fs.scan();
+        let _ = fs.factory_wipe(survives_factory_reset, is_fido_seed_fid, is_fido_gate_fid);
+        if !owner_seed_survived(&mut fs, EF_KEY_DEV.get(), &owner_seed) {
+            continue;
+        }
+        assert_eq!(
+            fids(&fs.into_storage()),
+            fids(&base),
+            "budget {budget}: the device-wide wipe deleted a record while the seed that \
+             opens it was still on flash"
+        );
+    }
+
+    let mut fs = Fs::new(TearAfter {
+        budget: usize::MAX,
+        ..base.clone()
+    });
+    fs.scan();
+    fs.factory_wipe(survives_factory_reset, is_fido_seed_fid, is_fido_gate_fid)
+        .unwrap();
+    assert!(!fs.has_data(EF_CRED), "the control run kept a credential");
+    assert!(
+        !fs.has_data(EF_KEY_DEV.get()),
+        "the control run kept the seed"
+    );
+}
+
+/// `FIDO_SEED_FIDS` is the lead phase of both wipes, so a record missing from it
+/// gets deleted alongside the credentials it protects, and one wrongly IN it would
+/// be taken before the gates it should follow.
+#[test]
+fn the_seed_set_is_exactly_the_two_records_a_credential_hangs_on() {
+    use crate::consts::{EF_KEY_DEV, EF_KEY_DEV_ENC};
+    assert_eq!(FIDO_SEED_FIDS, [EF_KEY_DEV.get(), EF_KEY_DEV_ENC.get()]);
+    for fid in FIDO_SEED_FIDS {
+        assert!(is_fido_seed_fid(fid));
+        assert!(is_fido_fid(fid), "the sweep must own what the lead deletes");
+        assert!(!is_fido_gate_fid(fid), "a secret is not a gate");
+        assert!(
+            !survives_factory_reset(fid),
+            "the seed is not device identity"
+        );
+    }
+    for fid in [EF_CRED, EF_RP, EF_PIN, EF_LARGEBLOB] {
+        assert!(!is_fido_seed_fid(fid), "{fid:#06x} does not lead the wipe");
+    }
+}
+
+/// A provisioned store carrying the two records E77's torn state is made of, in the
+/// order the field writes them: the PIN is established first, and the `pcmr` grant
+/// is only minted on a later getPinToken, so the PIN is the older ring entry and a
+/// single-phase sweep reaches it first.
+fn provisioned_with_a_grant() -> TearAfter {
+    let mut fs = Fs::new(TearAfter {
+        items: Vec::new(),
+        budget: usize::MAX,
+    });
+    fs.scan();
+    let mut rng = SeqRng(17);
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+    let seed = load_keydev(&dev(), &mut fs).unwrap();
+    provision_passkey(&mut fs, &seed);
+    let mut pin_file = [0u8; crate::clientpin::PIN_FILE_LEN];
+    pin_file[0] = 8; // retries
+    pin_file[1] = 4; // min length
+    pin_file[2] = 1;
+    fs.put(EF_PIN, &pin_file).unwrap();
+    crate::seed::ensure_ppuat(&dev(), &mut fs, &mut rng).unwrap();
+    fs.into_storage()
+}
+
+/// The grant in `EF_PAUTHTOKEN` is a *permission*, so unlike every other record the
+/// wipe defers, its absence is the RESTRICTIVE state. Batched with `EF_PIN` it made
+/// both wipes producers of the torn state E77 closes at the consumer: a cut between
+/// the two leaves a live `pcmr` grant with no PIN behind it, and the holder goes on
+/// reading the credential directory of everything registered afterwards. `credmgmt`
+/// refusing it is one `if` on one build; no prefix of a wipe should be able to
+/// produce the state at all.
+fn no_wipe_prefix_leaves_a_grant_without_its_pin(
+    mut wipe: impl FnMut(&mut Fs<TearAfter>) -> bool,
+    what: &str,
+) {
+    use crate::consts::{EF_KEY_DEV, EF_PAUTHTOKEN};
+
+    let base = provisioned_with_a_grant();
+    let live = base.items.len();
+
+    let mut saw_grant = false;
+    // `reset`'s lead phase force-deletes both seed shapes whether or not they are
+    // there, and the harness charges budget for an absent one, so the tear points
+    // run past the number of items the store holds.
+    for budget in 0..live + FIDO_SEED_FIDS.len() {
+        let mut fs = Fs::new(TearAfter {
+            budget,
+            ..base.clone()
+        });
+        fs.scan();
+        wipe(&mut fs);
+        if !fs.has_data(EF_PAUTHTOKEN.get()) {
+            continue;
+        }
+        // Only a prefix that got as far as the lead delete counts as a tear point:
+        // budget 0 leaves the store untouched and would satisfy the guard below
+        // without proving the loop ever reached a partial wipe.
+        saw_grant |= !fs.has_data(EF_KEY_DEV.get());
+        assert!(
+            fs.has_data(EF_PIN),
+            "{what}: tear at {budget} left a credMgmt grant standing over a deleted PIN"
+        );
+    }
+    assert!(
+        saw_grant,
+        "vacuous: no partial wipe left the grant behind, so nothing was proved"
+    );
+
+    // The subject has to be a wipe that really wipes — and one that reaches its LAST
+    // phase, or the loop's property holds for the trivial reason that no PIN is ever
+    // deleted.
+    let mut fs = Fs::new(TearAfter {
+        budget: usize::MAX,
+        ..base.clone()
+    });
+    fs.scan();
+    assert!(wipe(&mut fs), "the control run did not report success");
+    assert!(!fs.has_data(EF_CRED), "the control run kept a credential");
+    assert!(
+        !fs.has_data(EF_PAUTHTOKEN.get()),
+        "the control run kept the grant"
+    );
+    assert!(!fs.has_data(EF_PIN), "the control run never reached a gate");
+}
+
+#[test]
+fn a_torn_reset_never_leaves_a_grant_without_its_pin() {
+    no_wipe_prefix_leaves_a_grant_without_its_pin(
+        |fs| {
+            let mut rng = SeqRng(3);
+            let mut state = FidoState::new();
+            let mut presence = crate::AlwaysConfirm;
+            let mut ctx = Ctx {
+                presence: &mut presence,
+                dev: dev(),
+                fs,
+                rng: &mut rng,
+                state: &mut state,
+                now_ms: 0,
+            };
+            reset(&mut ctx).is_ok()
+        },
+        "authenticatorReset",
+    );
+}
+
+#[test]
+fn a_torn_device_wide_wipe_never_leaves_a_grant_without_its_pin() {
+    no_wipe_prefix_leaves_a_grant_without_its_pin(
+        |fs| {
+            fs.factory_wipe(survives_factory_reset, is_fido_seed_fid, is_fido_gate_fid)
+                .is_ok()
+        },
+        "factory_wipe",
     );
 }

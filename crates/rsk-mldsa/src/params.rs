@@ -13,7 +13,7 @@ pub const Q: i32 = 8_380_417;
 pub const ZETA: i32 = 1753;
 /// Number of low bits of t dropped by `Power2Round` (Table 1).
 pub const D: u32 = 13;
-/// Coefficients per polynomial (ring R_q = Z_q[X]/(X^256+1)).
+/// Coefficients per polynomial (ring `R_q = Z_q[X]/(X^256+1)`).
 pub const N: usize = 256;
 /// Length of the key-generation seed ξ and of the per-signature hedge value `rnd`.
 pub const SEED_LEN: usize = 32;

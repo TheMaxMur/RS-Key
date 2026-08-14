@@ -1018,3 +1018,205 @@ fn a_mid_chain_header_change_drops_the_chain() {
         "the injected segments survived into the victim's command"
     );
 }
+
+/// SELECT-by-AID is ISO 7816-4 truncated matching: the requested AID must be a
+/// PREFIX of a registered one, first match wins. The test used to be the other
+/// way round — the candidate had to *start with* a registered AID — so every
+/// applet answered to `its AID followed by anything`, and on PIV that selected
+/// the AID SP 800-85A-4 C.1.1.2 names as invalid.
+#[test]
+fn select_matches_an_aid_by_prefix() {
+    const ECHO_AID: &[u8] = &[0xA0, 0x00, 0x00, 0x06, 0x47, 0x2F, 0x00, 0x01];
+    const OATH_AID: &[u8] = &[0xA0, 0x00, 0x00, 0x05, 0x27, 0x21, 0x01];
+    let mut echo = Echo { selected: false };
+    let mut oath = Oathish;
+    let mut apps: [&mut dyn Applet<()>; 2] = [&mut echo, &mut oath];
+    let mut d = Dispatcher::new();
+
+    fn sel(aid: &[u8]) -> std::vec::Vec<u8> {
+        let mut v = std::vec![0x00u8, 0xA4, 0x04, 0x00, aid.len() as u8];
+        v.extend_from_slice(aid);
+        v.push(0x00);
+        v
+    }
+    fn go(d: &mut Dispatcher, apps: &mut [&mut dyn Applet<()>], raw: &[u8]) -> Sw {
+        let mut buf = [0u8; 64];
+        let mut res = ResBuf::new(&mut buf);
+        d.process(raw, apps, &mut (), &mut res)
+    }
+
+    // The whole AID, and every prefix of it, select.
+    for n in 1..=ECHO_AID.len() {
+        assert_eq!(
+            go(&mut d, &mut apps, &sel(&ECHO_AID[..n])),
+            Sw::OK,
+            "a {n}-byte prefix must select"
+        );
+    }
+    // One byte MORE than the AID does not — the case that used to pass, and the
+    // shape that let PIV answer to the AID SP 800-85A-4 calls invalid.
+    let mut over = ECHO_AID.to_vec();
+    over.push(0xFF);
+    assert_eq!(go(&mut d, &mut apps, &sel(&over)), Sw::FILE_NOT_FOUND);
+    // Nor does a value that diverges inside the AID.
+    let mut wrong = ECHO_AID.to_vec();
+    let last = wrong.len() - 1;
+    wrong[last] ^= 0x01;
+    assert_eq!(go(&mut d, &mut apps, &sel(&wrong)), Sw::FILE_NOT_FOUND);
+    // An empty candidate is a prefix of everything, and is refused rather than
+    // treated as ISO's "select the default application".
+    assert_eq!(
+        go(&mut d, &mut apps, &[0x00, 0xA4, 0x04, 0x00, 0x00]),
+        Sw::FILE_NOT_FOUND
+    );
+    // A prefix both applets share resolves to the FIRST registered one, so the
+    // registration order in `rsk-device` decides — worth pinning, because it is
+    // the one thing about this rule a host cannot predict from its own AID.
+    assert_eq!(
+        ECHO_AID[..3],
+        OATH_AID[..3],
+        "the fixture needs a shared prefix"
+    );
+    assert_eq!(go(&mut d, &mut apps, &sel(&ECHO_AID[..3])), Sw::OK);
+    assert_eq!(d.current(), Some(0), "the lower index wins a shared prefix");
+}
+
+/// The class byte, measured on a YubiKey 5.7.4 across PIV, OpenPGP and OATH: a
+/// class asking for secure messaging is `6E00`, and the chaining bit is looked at
+/// FIRST — `1C`, `90` and `FF` are plain segments there, not SM refusals.
+#[test]
+fn a_secure_messaging_class_is_refused() {
+    let mut echo = Echo { selected: false };
+    let mut apps: [&mut dyn Applet<()>; 1] = [&mut echo];
+    let mut d = Dispatcher::new();
+
+    fn go(d: &mut Dispatcher, apps: &mut [&mut dyn Applet<()>], raw: &[u8]) -> (Sw, usize) {
+        let mut buf = [0u8; 64];
+        let mut res = ResBuf::new(&mut buf);
+        let sw = d.process(raw, apps, &mut (), &mut res);
+        (sw, res.len())
+    }
+    let mut sel = std::vec![0x00u8, 0xA4, 0x04, 0x00, 0x08];
+    sel.extend_from_slice(&[0xA0, 0x00, 0x00, 0x06, 0x47, 0x2F, 0x00, 0x01]);
+    assert_eq!(go(&mut d, &mut apps, &sel).0, Sw::OK);
+
+    // 04 and 84 are the two the oracle could be asked directly (macOS PC/SC
+    // refuses to transmit the rest); 0C and 8C are the ISO SM encodings the same
+    // rule covers, and the applet must never see any of them.
+    for cla in [0x04u8, 0x84, 0x0C, 0x8C, 0x4C] {
+        assert_eq!(
+            go(&mut d, &mut apps, &[cla, 0x10, 0, 0, 0x02, 0xAA, 0xBB]),
+            (Sw::CLA_NOT_SUPPORTED, 0),
+            "CLA {cla:02X} asks for secure messaging"
+        );
+    }
+    // A SELECT is not privileged: the class is judged before the command is.
+    let mut sm_sel = sel.clone();
+    sm_sel[0] = 0x04;
+    assert_eq!(
+        go(&mut d, &mut apps, &sm_sel).0,
+        Sw::CLA_NOT_SUPPORTED,
+        "SELECT at an SM class"
+    );
+
+    // Everything the oracle serves must still be served, byte for byte.
+    for cla in [0x00u8, 0x80, 0x40, 0xC0] {
+        assert_eq!(
+            go(&mut d, &mut apps, &[cla, 0x10, 0, 0, 0x02, 0xAA, 0xBB]),
+            (Sw::OK, 2),
+            "CLA {cla:02X} carries no SM indication"
+        );
+    }
+    // …and the chaining bit still wins over it. `1C` answered as `6882`/`6E00`
+    // would CREATE a divergence: the card takes it as an ordinary segment.
+    for cla in [0x1Cu8, 0x90, 0xFF] {
+        assert_eq!(
+            go(&mut d, &mut apps, &[cla, 0x10, 0, 0, 0x02, 0xAA, 0xBB]),
+            (Sw::OK, 0),
+            "CLA {cla:02X} is a chaining segment"
+        );
+        d.clear_chaining();
+    }
+}
+
+/// A chain that outgrows the reassembly buffer is a length error, and it is the
+/// same length error whichever segment reaches the ceiling. The intermediate
+/// segment answered `6E00` (CLA not supported) while the final one — fifty lines
+/// down, same condition — answered `6700`, so one command had two answers and one
+/// of them told the host its class byte was wrong. A YubiKey 5.7.4 answers `6700`
+/// on the intermediate segment too, measured on a chained OpenPGP `PUT DATA` at
+/// 3350 bytes and up (its own ceiling is around 3060 accumulated), both
+/// authenticated and not.
+#[test]
+fn a_chain_past_the_reassembly_buffer_is_a_length_error_at_either_end() {
+    let mut echo = Echo { selected: false };
+    let mut applets: [&mut dyn Applet<()>; 1] = [&mut echo];
+    let mut disp = Dispatcher::new();
+    let mut out = [0u8; 64];
+    let mut res = ResBuf::new(&mut out);
+
+    let mut sel = vec![0x00, 0xA4, 0x04, 0x00, 0x08];
+    sel.extend_from_slice(&[0xA0, 0x00, 0x00, 0x06, 0x47, 0x2F, 0x00, 0x01]);
+    assert_eq!(disp.process(&sel, &mut applets, &mut (), &mut res), Sw::OK);
+
+    // Fill the buffer with whole segments, then overflow it on the next one.
+    let seg = |n: usize| {
+        let mut a = vec![0x10u8, 0x10, 0, 0, n as u8];
+        a.extend(core::iter::repeat_n(0xA5, n));
+        a
+    };
+    let mut sent = 0usize;
+    while sent + 255 < CHAIN_BUF_SIZE {
+        assert_eq!(
+            disp.process(&seg(255), &mut applets, &mut (), &mut res),
+            Sw::OK,
+            "segment at {sent}"
+        );
+        sent += 255;
+    }
+    let over = CHAIN_BUF_SIZE - sent;
+    assert!(
+        over <= 255,
+        "the last whole segment left {over} bytes of room"
+    );
+    assert_eq!(
+        disp.process(&seg(over), &mut applets, &mut (), &mut res),
+        Sw::WRONG_LENGTH,
+        "an intermediate segment past the buffer"
+    );
+
+    // …and the chain is gone, so the next command starts clean rather than
+    // dispatching the abandoned prefix. The probe carries a DIFFERENT P1: with
+    // the segments' own header it masks to the chain's, so a dispatcher that
+    // kept `chaining` would absorb it as a legitimate terminator and answer the
+    // same `9000` with the same one byte — this assertion could not fail.
+    assert_eq!(
+        disp.process(
+            &[0x00, 0x10, 0x01, 0, 0x01, 0xEE],
+            &mut applets,
+            &mut (),
+            &mut res
+        ),
+        Sw::OK
+    );
+    assert_eq!(res.as_slice(), &[0xEE]);
+    assert!(!disp.chaining && disp.chain_len == 0, "no chain survives");
+
+    // The FINAL segment's overflow, which already answered `6700` — asserted so
+    // the two ends cannot drift apart again.
+    let mut sent = 0usize;
+    while sent + 255 < CHAIN_BUF_SIZE {
+        assert_eq!(
+            disp.process(&seg(255), &mut applets, &mut (), &mut res),
+            Sw::OK
+        );
+        sent += 255;
+    }
+    let mut last = vec![0x00u8, 0x10, 0, 0, 255];
+    last.extend(core::iter::repeat_n(0xA5, 255));
+    assert_eq!(
+        disp.process(&last, &mut applets, &mut (), &mut res),
+        Sw::WRONG_LENGTH,
+        "a final segment past the buffer"
+    );
+}

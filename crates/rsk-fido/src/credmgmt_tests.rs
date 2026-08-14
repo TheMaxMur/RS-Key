@@ -134,6 +134,22 @@ fn setup() -> (Fs<RamStorage>, SeqRng) {
     (fs, rng)
 }
 
+/// Mint a `pcmr` grant the way a platform can actually reach one: both issuance
+/// paths require a PIN (§6.5.5.7.2/.3), and the reads refuse a grant without one as
+/// a torn-reset leftover — so a harness that skips `EF_PIN` proves the refusal
+/// rather than the grant.
+fn grant_pcmr(fs: &mut Fs<RamStorage>, rng: &mut SeqRng) -> [u8; 32] {
+    // Full-length record, not a stand-in: the verifier answers `CTAP2_ERR_OTHER`
+    // to a short one, so a later test that drove a clientPIN command through this
+    // would get that instead of a PIN check.
+    let mut pin_file = [0u8; crate::clientpin::PIN_FILE_LEN];
+    pin_file[0] = 8; // retries
+    pin_file[1] = 4; // min length
+    pin_file[2] = 1;
+    fs.put(EF_PIN, &pin_file).unwrap();
+    ensure_ppuat(&dev(), fs, rng).unwrap()
+}
+
 // Encode a subCommandParams map, returning its raw CBOR bytes.
 fn subpara_rpidhash(rp_hash: &[u8; 32]) -> std::vec::Vec<u8> {
     let mut buf = [0u8; 64];
@@ -174,6 +190,14 @@ fn subpara_update(cred_id: &[u8], uid: &[u8], name: &str, dname: &str) -> std::v
     buf[..n].to_vec()
 }
 
+// A CBOR unsigned int: past 23 the value no longer fits the type byte.
+fn push_uint(out: &mut std::vec::Vec<u8>, v: u8) {
+    if v > 0x17 {
+        out.push(0x18);
+    }
+    out.push(v);
+}
+
 // Build a credMgmt request, MACing over `subcommand ‖ subpara` under `token`.
 fn cm_request(subcmd: u8, subpara: Option<&[u8]>, token: &[u8; 32]) -> std::vec::Vec<u8> {
     let mut payload = std::vec![subcmd];
@@ -186,7 +210,8 @@ fn cm_request(subcmd: u8, subpara: Option<&[u8]>, token: &[u8; 32]) -> std::vec:
     let mut req = std::vec::Vec::new();
     let fields = if subpara.is_some() { 4u8 } else { 3 };
     req.push(0xA0 | fields);
-    req.extend_from_slice(&[0x01, subcmd]); // 1: subCommand
+    req.push(0x01); // 1: subCommand
+    push_uint(&mut req, subcmd);
     if let Some(sp) = subpara {
         req.push(0x02); // 2: subCommandParams (raw)
         req.extend_from_slice(sp);
@@ -271,6 +296,44 @@ fn enumerate_rps_walks_then_not_allowed() {
     assert_eq!(
         run(&mut fs, &mut state, &cm_next(0x03), &mut out),
         Err(CtapError::NotAllowed)
+    );
+}
+
+/// An enumerate walk belongs to the channel whose *Begin* opened it. §6.8 exempts
+/// the *Next* subcommands from carrying a pinUvAuthParam of their own — they
+/// inherit the Begin's authorization — so without a channel check a second process
+/// can call `getNextRP` on its own channel and read the relying-party ids the
+/// first channel's token authorized, having presented no token at all.
+///
+/// Ported from OpenSK, which keeps every multi-call sequence in one slot that any
+/// other command clears (`StatefulCommand`); the sibling hole in the assertion
+/// walk is `get_next_assertion_refuses_a_second_channel`.
+#[test]
+fn enumerate_rps_refuses_a_second_channel() {
+    const CHANNEL_A: u32 = 0x0100_0000;
+    const CHANNEL_B: u32 = 0x0200_0000;
+
+    let (mut fs, mut rng) = setup();
+    register(&mut fs, &mut rng, "example.com", &[1, 1], "a");
+    register(&mut fs, &mut rng, "other.com", &[2, 2], "b");
+    let mut state = armed(PERM_CM);
+
+    state.channel = CHANNEL_A;
+    let mut out = [0u8; 256];
+    let n = run(
+        &mut fs,
+        &mut state,
+        &cm_request(0x02, None, &TOKEN),
+        &mut out,
+    )
+    .unwrap();
+    assert_eq!(parse_rp(&out[..n], true).2, Some(2), "a walk is open");
+
+    state.channel = CHANNEL_B;
+    assert_eq!(
+        run(&mut fs, &mut state, &cm_next(0x03), &mut out),
+        Err(CtapError::NotAllowed),
+        "another channel may not walk this one's enumeration"
     );
 }
 
@@ -366,10 +429,18 @@ fn enumerate_credentials_returns_matching_pubkey() {
 }
 
 #[test]
-fn rp_and_credential_cursors_are_independent_when_interleaved() {
-    // The slot cursors for the RP and credential walks are separate, so
-    // interleaving getNextRP and getNextCredential must advance each walk without
-    // corrupting the other (a regression guard for the cursor optimization).
+fn starting_a_credential_walk_ends_the_rp_walk() {
+    // Only one enumerate walk lives at a time: `enumerateCredentialsBegin` is a
+    // credentialManagement command that continues no RP walk, so §6's
+    // "exclusively preceded" retires it. Measured the same way on a YubiKey 5.7.4
+    // — Begin RPs, enumerateCredentialsBegin, getNextRP answers 0x30 — and OpenSK
+    // keeps every such sequence in one slot for the same reason.
+    //
+    // This replaces a test that interleaved the two walks and asserted both
+    // survived. That was the guard for the per-walk slot cursors, which are still
+    // separate fields; what it can still prove is the half that outlives the
+    // rule — the credential walk that took over runs to completion on its own
+    // cursor, so the RP walk's did not corrupt it on the way out.
     let (mut fs, mut rng) = setup();
     register(&mut fs, &mut rng, "example.com", &[1, 1], "alice");
     register(&mut fs, &mut rng, "example.com", &[2, 2], "bob");
@@ -398,24 +469,22 @@ fn rp_and_credential_cursors_are_independent_when_interleaved() {
     let (cu1, _, _, cred_total) = parse_cred(&out[..n], true);
     assert_eq!(cred_total, Some(2));
 
-    // Interleave the Next calls: RP walk and credential walk advance independently.
-    let n = run(&mut fs, &mut state, &cm_next(0x03), &mut out).unwrap();
-    let (rp2, _, _) = parse_rp(&out[..n], false);
-    let n = run(&mut fs, &mut state, &cm_next(0x05), &mut out).unwrap();
-    let (cu2, _, _, _) = parse_cred(&out[..n], false);
-
-    // Each walk returned two distinct entries — no cursor skipped or repeated.
-    assert_ne!(rp1, rp2);
-    assert_ne!(cu1, cu2);
-    // Both are exhausted.
+    // The RP walk did not survive the credential Begin.
     assert_eq!(
         run(&mut fs, &mut state, &cm_next(0x03), &mut out),
-        Err(CtapError::NotAllowed)
+        Err(CtapError::NotAllowed),
+        "enumerateCredentialsBegin continues no RP walk, so it ends the one open"
     );
+
+    // The credential walk that took over still runs to its end on its own cursor.
+    let n = run(&mut fs, &mut state, &cm_next(0x05), &mut out).unwrap();
+    let (cu2, _, _, _) = parse_cred(&out[..n], false);
+    assert_ne!(cu1, cu2, "no credential skipped or repeated");
     assert_eq!(
         run(&mut fs, &mut state, &cm_next(0x05), &mut out),
         Err(CtapError::NotAllowed)
     );
+    let _ = rp1;
 }
 
 fn parse_cred(resp: &[u8], begin: bool) -> (std::vec::Vec<u8>, [u8; 32], [u8; 32], Option<u8>) {
@@ -463,6 +532,9 @@ fn parse_cred(resp: &[u8], begin: bool) -> (std::vec::Vec<u8>, [u8; 32], [u8; 32
     (uid, x, y, total)
 }
 
+// The CTAP 2.1 large-blob design, which a `largeblob-ext` build withdraws
+// wholesale (§12.4: "Authenticators MUST NOT support both extensions").
+#[cfg(not(feature = "largeblob-ext"))]
 #[test]
 fn enumerate_emits_extension_fields() {
     let (mut fs, mut rng) = setup();
@@ -1319,6 +1391,7 @@ fn assert_ga_signs_under(fs: &mut Fs<RamStorage>, id: &[u8], x: &[u8; 32], y: &[
 }
 
 // The largeBlobKey (enumerate field 0x0B) of an enumerateCredentials response.
+#[cfg(not(feature = "largeblob-ext"))]
 fn enum_largeblobkey(resp: &[u8]) -> Option<std::vec::Vec<u8>> {
     let mut d = Decoder::new(resp);
     let fields = d.map().unwrap().unwrap();
@@ -1383,6 +1456,9 @@ fn update_preserves_signing_key_end_to_end() {
 }
 
 // The largeBlobKey likewise survives the reseal (v2 keys off the stable id).
+// The CTAP 2.1 large-blob design, which a `largeblob-ext` build withdraws
+// wholesale (§12.4: "Authenticators MUST NOT support both extensions").
+#[cfg(not(feature = "largeblob-ext"))]
 #[test]
 fn update_preserves_largeblobkey() {
     let (mut fs, mut rng) = setup();
@@ -1661,7 +1737,7 @@ fn enumerate_credentials_reads_are_linear_not_quadratic() {
 fn persistent_token_authorizes_the_reads_after_a_power_cycle() {
     let (mut fs, mut rng) = setup();
     register(&mut fs, &mut rng, "example.com", &[1, 1], "a");
-    let ppuat = ensure_ppuat(&dev(), &mut fs, &mut rng).unwrap();
+    let ppuat = grant_pcmr(&mut fs, &mut rng);
     let rp_hash = sha256(b"example.com");
     let subpara = subpara_rpidhash(&rp_hash);
 
@@ -1686,6 +1762,42 @@ fn persistent_token_authorizes_the_reads_after_a_power_cycle() {
     assert_eq!(state.paut.permissions, 0, "no session token was involved");
 }
 
+/// …but not past the PIN that granted it. A build whose wipe still deferred
+/// `EF_PAUTHTOKEN` alongside `EF_PIN` could take the PIN and lose power before the
+/// grant; `clientpin.rs` clears such a leftover when a PIN is next established, which
+/// an owner carrying on with a touch-only key never does. The old holder would go on
+/// reading the credential directory — rp ids, credential ids, user names — of
+/// everything registered after the reset. Both wipes revoke the grant with the
+/// secrets now (`reset.rs`), so this refusal covers what is already on flash.
+#[test]
+fn a_persistent_grant_does_not_outlive_its_pin() {
+    let (mut fs, mut rng) = setup();
+    register(&mut fs, &mut rng, "example.com", &[1, 1], "a");
+    let ppuat = grant_pcmr(&mut fs, &mut rng);
+    let rp_hash = sha256(b"example.com");
+    let subpara = subpara_rpidhash(&rp_hash);
+    fs.force_delete(EF_PIN).unwrap();
+
+    let mut state = FidoState::new();
+    let mut out = [0u8; 512];
+    for (subcmd, sp) in [
+        (0x01u8, None),
+        (0x02, None),
+        (0x04, Some(subpara.as_slice())),
+    ] {
+        assert_eq!(
+            run(
+                &mut fs,
+                &mut state,
+                &cm_request(subcmd, sp, &ppuat),
+                &mut out
+            ),
+            Err(CtapError::PinAuthInvalid),
+            "subcommand {subcmd:#04x} served a grant that outlived its PIN"
+        );
+    }
+}
+
 /// The permission is *read* only (§6.5.5.7 permissions table): deleteCredential and
 /// updateUserInformation never consult the persistent token, so the same MAC that
 /// just enumerated is rejected here.
@@ -1693,7 +1805,7 @@ fn persistent_token_authorizes_the_reads_after_a_power_cycle() {
 fn persistent_token_is_refused_by_the_writers() {
     let (mut fs, mut rng) = setup();
     let (cred_id, ..) = register(&mut fs, &mut rng, "example.com", &[1, 1], "a");
-    let ppuat = ensure_ppuat(&dev(), &mut fs, &mut rng).unwrap();
+    let ppuat = grant_pcmr(&mut fs, &mut rng);
     let del = subpara_cred(&cred_id);
     let upd = subpara_update(&cred_id, &[1, 1], "a", "A");
 
@@ -1720,7 +1832,7 @@ fn persistent_token_is_refused_by_the_writers() {
 fn clearing_the_persistent_token_revokes_the_grant() {
     let (mut fs, mut rng) = setup();
     register(&mut fs, &mut rng, "example.com", &[1, 1], "a");
-    let old = ensure_ppuat(&dev(), &mut fs, &mut rng).unwrap();
+    let old = grant_pcmr(&mut fs, &mut rng);
     clear_ppuat(&mut fs).unwrap();
 
     let mut state = FidoState::new();
@@ -1730,4 +1842,76 @@ fn clearing_the_persistent_token_revokes_the_grant() {
         Err(CtapError::PinAuthInvalid)
     );
     assert_ne!(ensure_ppuat(&dev(), &mut fs, &mut rng).unwrap(), old);
+}
+
+/// A subcommand this command does not implement. Pinned to a YubiKey 5.7.4,
+/// measured cell for cell and stable across runs: INVALID_PARAMETER once a token
+/// verifies, PUAT_REQUIRED for every subcommand without one — including the
+/// unknown ones, so a stranger cannot enumerate them. §8.1's INVALID_SUBCOMMAND
+/// is the spec's answer and neither device gives it.
+#[test]
+fn undefined_credmgmt_subcommand_matches_a_yubikey() {
+    let (mut fs, mut rng) = setup();
+    register(&mut fs, &mut rng, "example.com", &[1, 1], "a");
+    let mut out = [0u8; 512];
+    for subcmd in [0x00u8, 0x08, 0x7F] {
+        let mut state = armed(PERM_CM);
+        assert_eq!(
+            run(
+                &mut fs,
+                &mut state,
+                &cm_request(subcmd, None, &TOKEN),
+                &mut out
+            ),
+            Err(CtapError::InvalidParameter),
+            "credMgmt subcommand {subcmd:#04x} with a token"
+        );
+        // No token: the auth gate answers first, undefined subcommand or not.
+        let mut state = FidoState::new();
+        let mut bare = std::vec![0xA1u8, 0x01];
+        push_uint(&mut bare, subcmd);
+        assert_eq!(
+            run(&mut fs, &mut state, &bare, &mut out),
+            Err(CtapError::PuatRequired),
+            "credMgmt subcommand {subcmd:#04x} without a token"
+        );
+    }
+}
+
+/// The protocol rule again, and both halves of it. A YubiKey 5.7.4 answers
+/// INVALID_PARAMETER to `pinUvAuthProtocol: 0` on a request carrying no token at
+/// all, and MISSING_PARAMETER when the token is there and the protocol is not —
+/// which is the distinction this command used to collapse in both directions.
+#[test]
+fn the_protocol_is_judged_before_the_token_and_absent_is_not_zero() {
+    let mut out = [0u8; 64];
+    for proto in [std::vec![0x00u8], std::vec![0x03], std::vec![0x18, 0xFF]] {
+        // {1: getCredsMetadata, 3: proto} — no pinUvAuthParam.
+        let mut req = std::vec![0xA2, 0x01, 0x01, 0x03];
+        req.extend_from_slice(&proto);
+        let mut fs = Fs::new(RamStorage::new());
+        let mut state = armed(PERM_CM);
+        assert_eq!(
+            run(&mut fs, &mut state, &req, &mut out),
+            Err(CtapError::InvalidParameter),
+            "protocol {proto:?}"
+        );
+    }
+    // A param with no protocol beside it: the parameter that is missing is the
+    // protocol, not the token.
+    let mut req = std::vec![0xA2, 0x01, 0x01, 0x04, 0x50];
+    req.extend_from_slice(&[0xAA; 16]);
+    let mut fs = Fs::new(RamStorage::new());
+    let mut state = armed(PERM_CM);
+    assert_eq!(
+        run(&mut fs, &mut state, &req, &mut out),
+        Err(CtapError::MissingParameter)
+    );
+    // Control: neither present is still the token's own code.
+    let mut fs = Fs::new(RamStorage::new());
+    let mut state = armed(PERM_CM);
+    assert_eq!(
+        run(&mut fs, &mut state, &[0xA1, 0x01, 0x01], &mut out),
+        Err(CtapError::PuatRequired)
+    );
 }

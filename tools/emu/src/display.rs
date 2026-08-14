@@ -12,11 +12,16 @@
 //!
 //! Level, not edges. A real panel reports contact *continuously* while touched,
 //! which is what the flow's debounce and its 800 ms hold-to-approve are built on,
-//! so [`Touch::read`] reports the mouse button as held rather than as a click
+//! so `Touch::read` reports the mouse button as held rather than as a click
 //! event — press, hold, release maps onto press, hold, lift.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
+use std::sync::Arc;
+
+use crate::device::{PanelLinks, Queued};
+use crate::signals::Signals;
+use crate::taps::TapPad;
 
 use embedded_graphics::geometry::{Dimensions, Point as EgPoint, Size};
 use embedded_graphics::pixelcolor::Rgb565;
@@ -31,6 +36,14 @@ use embedded_graphics_simulator::{
 /// sized on a modern display, and the point of this window is that a person can
 /// read the relying party on it.
 const SCALE: u32 = 2;
+
+/// How often the on-panel RSA search pushes the panel to the window.
+///
+/// `rsk_display` turns its arc at its own (crate-private) `KEYGEN_SPIN_MS` = 100 ms,
+/// so a faster push uploads pixels that did not change — and at the ~630 candidates
+/// a second measured here, [`Presenter::present`]'s per-pixel dim path would cost
+/// more than the search it is drawing.
+const SPIN_PRESENT_MS: u64 = 100;
 
 /// The panel, shared between the flow (which draws into it) and the window (which
 /// shows it). `Ui` takes its panel by value, so the two ends share one buffer
@@ -81,41 +94,49 @@ impl DrawTarget for Panel {
     }
 }
 
-/// The mouse, presented as the panel's touch controller — and the window's pump.
+/// The window, the buffer it shows and the backlight it shows it at.
 ///
-/// Every wait in the flow polls `read()` on a ~16 ms cadence, so this is the one
-/// place guaranteed to be reached often enough to both repaint the window and
-/// drain SDL's event queue. Doing it here rather than on a timer is what keeps the
-/// emulator single-threaded, exactly like the firmware's thread executor.
-pub struct Touch {
+/// Held apart from [`Touch`] and shared, because the panel is a *buffer* here
+/// where a board's is the glass: nothing the flow paints is visible until this
+/// pushes it. Anything that paints during a span the pad is not polled in —
+/// the RSA prime search — has to reach this or the window stays on the screen
+/// before it.
+struct Presenter {
     win: Window,
     panel: Panel,
-    /// Where the button is currently held, or `None` when lifted.
-    held: Option<EgPoint>,
-    /// The window's close button was used; the caller ends the process.
-    quit: Rc<Cell<bool>>,
     /// The backlight the flow has asked for. There is no lamp to dim, so the
     /// pixels are scaled by it on the way to the window instead — otherwise the
     /// brightness setting is a number that changes nothing you can see, and
     /// display sleep looks identical to a black screen.
     duty: Rc<Cell<u16>>,
-    /// The wake button, held. A board has a real one (BAT_PWR); here it is the
-    /// space bar, so the "power button sleeps from any screen" behaviour is
-    /// reachable at all.
-    wake: Rc<Cell<bool>>,
 }
 
-impl Touch {
-    fn new(panel: Panel, quit: Rc<Cell<bool>>, duty: Rc<Cell<u16>>, wake: Rc<Cell<bool>>) -> Self {
+impl Presenter {
+    /// Open the window and hand back its two ends: the pad that pumps it, and the
+    /// handle anything painting outside a pad poll pushes it with. Minted together
+    /// because a `Touch` pumping one window while the search pushes another fails
+    /// nothing — it just restores E193, quietly.
+    fn split(
+        panel: Panel,
+        duty: Rc<Cell<u16>>,
+        quit: Rc<Cell<bool>>,
+        wake: Rc<Cell<bool>>,
+        taps: Option<TapPad>,
+    ) -> (Touch, Repaint) {
         let out = OutputSettingsBuilder::new().scale(SCALE).build();
-        Self {
+        let view = Rc::new(RefCell::new(Self {
             win: Window::new("RS-Key", &out),
             panel,
+            duty,
+        }));
+        let touch = Touch {
+            view: view.clone(),
             held: None,
             quit,
-            duty,
             wake,
-        }
+            taps,
+        };
+        (touch, Rc::new(move || view.borrow_mut().present()))
     }
 
     /// Push the panel to the window, scaled by the backlight.
@@ -145,10 +166,38 @@ impl Touch {
     }
 }
 
+/// Push whatever the flow has painted to whatever is showing it: the SDL window
+/// on a `--display` run, a counter under test. A board needs no such call — its
+/// `rsk_display` writes the ST7789 as it draws.
+pub type Repaint = Rc<dyn Fn()>;
+
+/// The mouse, presented as the panel's touch controller — and the window's pump.
+///
+/// Every wait in the flow polls `read()` on a ~16 ms cadence, so this is the one
+/// place guaranteed to be reached often enough to both repaint the window and
+/// drain SDL's event queue. Doing it here rather than on a timer is what keeps the
+/// emulator single-threaded, exactly like the firmware's thread executor.
+pub struct Touch {
+    view: Rc<RefCell<Presenter>>,
+    /// Where the button is currently held, or `None` when lifted.
+    held: Option<EgPoint>,
+    /// The window's close button was used; the caller ends the process.
+    quit: Rc<Cell<bool>>,
+    /// The wake button, held. A board has a real one (BAT_PWR); here it is the
+    /// space bar, so the "power button sleeps from any screen" behaviour is
+    /// reachable at all.
+    wake: Rc<Cell<bool>>,
+    /// `--taps`: a scripted finger *instead of* the mouse, so a flow behind the
+    /// keypad can be driven without a person. The window still repaints and still
+    /// takes its quit and wake keys, so the script is watchable.
+    taps: Option<TapPad>,
+}
+
 impl rsk_display::TouchPad for Touch {
     fn read(&mut self) -> Option<rsk_ui::Point> {
-        self.present();
-        for ev in self.win.events() {
+        let mut view = self.view.borrow_mut();
+        view.present();
+        for ev in view.win.events() {
             match ev {
                 SimulatorEvent::MouseButtonDown {
                     mouse_btn: MouseButton::Left,
@@ -176,6 +225,9 @@ impl rsk_display::TouchPad for Touch {
                 _ => {}
             }
         }
+        if let Some(taps) = &mut self.taps {
+            return taps.read();
+        }
         self.held.map(|p| rsk_ui::Point {
             x: p.x as u16,
             y: p.y as u16,
@@ -183,35 +235,78 @@ impl rsk_display::TouchPad for Touch {
     }
 }
 
+/// Every [`rsk_display::Hooks`] method this build leaves at the trait's default,
+/// and why that is the right answer here rather than an oversight.
+///
+/// The trait's defaults are exact no-ops, so a method nobody implements diverges
+/// from `firmware/src/display.rs` in silence — which is what E150–E153 each were.
+/// `every_display_hook_is_accounted_for` refuses a hook in neither column; it is
+/// this list's only reader, so the list is gated to a test build.
+#[cfg(test)]
+const DEFAULTED_HOOKS: &[(&str, &str)] = &[(
+    "secure_boot_enabled",
+    "read from OTP; there are no fuses here, and `false` is what a device without \
+     secure boot reports",
+)];
+
 /// The board verbs, for a board that is a window.
 ///
 /// Most are honest no-ops: there is no backlight to dim, no wake button, no OTP
 /// to read a secure-boot bit out of. The ones that are not — the LED status a
 /// ceremony borrows, the presence flags it shares with the transport — are real
 /// state here, because the flow reads back what it writes.
-#[derive(Default)]
 pub struct EmuDisplayHooks {
     /// Shared with [`Touch`], which is what actually applies it.
     duty: Rc<Cell<u16>>,
     wake: Rc<Cell<bool>>,
     led: Cell<u8>,
-    up_pending: Cell<bool>,
-    cancel: Cell<bool>,
     timeout_ms: Cell<u32>,
     reboot: Cell<bool>,
-    pin_changed: Cell<bool>,
-    started: Option<std::time::Instant>,
+    /// The local-PIN event and the attach clock, both shared with the worker half
+    /// — a board reaches the same two through `crate::handler` and
+    /// `crate::usb_attach`.
+    links: PanelLinks,
+    /// Host requests the device thread has not picked up. A modal holds the single
+    /// executor, so this is the only way the flow can learn one is waiting.
+    queued: Queued,
+    /// Push the panel to the window. The RSA search is the only span that can
+    /// reach it — `show_success`, the factory-reset notice and the boot splash
+    /// paint into spans that poll no hook this build can push from (E301).
+    repaint: Repaint,
+    /// The presence flags the ceremonies share with the transports — the same
+    /// object `hid.rs`'s keepalive reads and its `CTAPHID_CANCEL` writes. A board
+    /// routes the three hooks below into `presence::ARBITER` for the same reason:
+    /// a panel that keeps them to itself is a second copy nobody can see.
+    signals: Arc<Signals>,
 }
 
 impl EmuDisplayHooks {
-    fn new(duty: Rc<Cell<u16>>, wake: Rc<Cell<bool>>) -> Self {
+    pub fn new(
+        duty: Rc<Cell<u16>>,
+        wake: Rc<Cell<bool>>,
+        queued: Queued,
+        signals: Arc<Signals>,
+        repaint: Repaint,
+    ) -> Self {
         Self {
             duty,
             wake,
+            led: Cell::default(),
             timeout_ms: Cell::new(30_000),
-            started: Some(std::time::Instant::now()),
-            ..Default::default()
+            reboot: Cell::new(false),
+            links: PanelLinks::default(),
+            queued,
+            repaint,
+            signals,
         }
+    }
+
+    /// The two cells the worker half shares with the panel. Read from here rather
+    /// than passed in beside the panel, so the two ends cannot be handed different
+    /// ones — a pair that does not match is the defect this seam exists to prevent,
+    /// and it fails nothing.
+    pub fn links(&self) -> PanelLinks {
+        self.links.clone()
     }
 }
 
@@ -228,10 +323,31 @@ impl rsk_display::Hooks for EmuDisplayHooks {
     fn set_led_status(&mut self, status: u8) {
         self.led.set(status);
     }
+    /// The worker's clock, not one of the panel's own: `Job::Replug` restarts it,
+    /// and an audit entry stamped here has to sort against a host-stamped one.
     fn attach_elapsed_ms(&self) -> u64 {
-        self.started
-            .map(|s| s.elapsed().as_millis() as u64)
-            .unwrap_or(0)
+        self.links.attach.get().elapsed().as_millis() as u64
+    }
+    fn host_request_pending(&self) -> bool {
+        self.queued.any() || self.queued.unplug_pending()
+    }
+    /// The floor is the whole point and every modal exit poll uses this form: a
+    /// bare [`rsk_display::Hooks::host_request_pending`] lets a host close a screen on
+    /// its first poll, so a loop of any ungated command denies the on-device
+    /// browse layer entirely (audit run-35).
+    ///
+    /// An *operator's* power cycle skips it: the floor is against a host repeating
+    /// a command, and behind this one is a person pulling the key out, which on a
+    /// board takes the screen with it at once. A USB/IP import is a host's, so it
+    /// is floored with the rest.
+    ///
+    /// Everything else delegates rather than naming the sources a second time, as
+    /// `firmware/src/worker.rs`'s pair does — the copy is what went stale there.
+    fn host_request_pending_after(&self, since: embassy_time::Instant) -> bool {
+        self.queued.unplug_pending()
+            || (self.host_request_pending()
+                && since.elapsed()
+                    >= embassy_time::Duration::from_millis(rsk_display::UI_YIELD_FLOOR_MS))
     }
     fn request_reboot(&mut self, _bootsel: bool) {
         self.reboot.set(true);
@@ -240,16 +356,29 @@ impl rsk_display::Hooks for EmuDisplayHooks {
         self.reboot.get()
     }
     fn note_local_pin_changed(&mut self) {
-        self.pin_changed.set(true);
+        self.links.local_pin.set(true);
+    }
+    /// Both events mean the same thing to the worker — end the RAM
+    /// `pinUvAuthToken` before the next CBOR command — so they share one flag, as
+    /// `firmware/src/display.rs` maps them to one signal.
+    fn note_local_pin_failed(&mut self) {
+        self.links.local_pin.set(true);
     }
     fn set_up_pending(&mut self, pending: bool) {
-        self.up_pending.set(pending);
+        self.signals.set_up_pending(pending);
     }
+    /// `rsk_display` only ever clears it; `true` is the transport's own verb, and
+    /// [`Signals::cancel_active`] is the scoping `hid.rs` already applies to a
+    /// `CTAPHID_CANCEL` — cancel what is in flight, and nothing when nothing is.
     fn set_cancel_requested(&mut self, requested: bool) {
-        self.cancel.set(requested);
+        if requested {
+            self.signals.cancel_active();
+        } else {
+            self.signals.clear_cancel();
+        }
     }
     fn cancel_requested(&self) -> bool {
-        self.cancel.get()
+        self.signals.cancelled()
     }
     fn presence_timeout_ms(&self) -> u32 {
         self.timeout_ms.get()
@@ -257,15 +386,82 @@ impl rsk_display::Hooks for EmuDisplayHooks {
     fn set_presence_timeout_ms(&mut self, ms: u32) {
         self.timeout_ms.set(ms);
     }
+    /// There is no accelerator here, but this trait's `None` means "no accelerator
+    /// **and** no key" — where `rsk_device::Hooks::rsa_search`'s `None` means "fall
+    /// through to the applet's own single-core path", which is why a generate over
+    /// the wire works on this build. Run that same path, one candidate per tick.
+    ///
+    /// This span never polls the pad, so it is the one place that has to push the
+    /// window itself: the "generating" screen its caller painted, and then the arc
+    /// each tick turns. Measured with a window open, without this the window sat
+    /// on the screen from before the generate for 2.1–3.0 s at RSA-4096.
+    fn rsa_search_progress(
+        &mut self,
+        nbits: usize,
+        rng: &mut dyn rsk_openpgp::Rng,
+        on_tick: &mut dyn FnMut(),
+    ) -> Option<Box<rsk_openpgp::keys::RsaPrivateKey>> {
+        let mut keygen = rsk_openpgp::keys::RsaKeygen::new(nbits);
+        let mut sieve = rsk_rsa_asm::IncrementalSieve::new();
+        (self.repaint)();
+        let mut shown = std::time::Instant::now();
+        let found = loop {
+            on_tick();
+            if shown.elapsed() >= std::time::Duration::from_millis(SPIN_PRESENT_MS) {
+                (self.repaint)();
+                shown = std::time::Instant::now();
+            }
+            match keygen.step(&mut sieve, rng) {
+                rsk_openpgp::keys::RsaStep::Done(key) => break Some(key),
+                rsk_openpgp::keys::RsaStep::Failed => break None,
+                rsk_openpgp::keys::RsaStep::More => {}
+            }
+        };
+        // The window still holds the last accepted candidate — a prime of the key
+        // just minted. `firmware/src/core1.rs` scrubs its own for the same reason.
+        sieve.scrub();
+        found
+    }
 }
 
-/// Open the window and hand back the three pieces `rsk_display::Ui::new` wants,
-/// plus the quit flag the caller polls.
-pub fn open() -> (Panel, Touch, EmuDisplayHooks, Rc<Cell<bool>>) {
+/// The three pieces `rsk_display::Ui::new` takes from a board, as one handle: a
+/// panel to draw on, a pad to read, and the verbs neither of them covers. Kept
+/// together because they are substituted together — a window and a mouse here, a
+/// sink and a script under test.
+pub struct PanelParts<P, T> {
+    pub panel: P,
+    pub touch: T,
+    pub hooks: EmuDisplayHooks,
+}
+
+/// Open the window and hand back those pieces, plus the quit flag the caller
+/// polls. `taps` replaces the mouse when a script was given.
+pub fn open(
+    taps: Option<TapPad>,
+    queued: Queued,
+    signals: Arc<Signals>,
+) -> (PanelParts<Panel, Touch>, Rc<Cell<bool>>) {
     let panel = Panel::new();
     let quit = Rc::new(Cell::new(false));
     let duty = Rc::new(Cell::new(rsk_display::BL_TOP));
     let wake = Rc::new(Cell::new(false));
-    let touch = Touch::new(panel.clone(), quit.clone(), duty.clone(), wake.clone());
-    (panel, touch, EmuDisplayHooks::new(duty, wake), quit)
+    let (touch, repaint) = Presenter::split(
+        panel.clone(),
+        duty.clone(),
+        quit.clone(),
+        wake.clone(),
+        taps,
+    );
+    (
+        PanelParts {
+            panel,
+            touch,
+            hooks: EmuDisplayHooks::new(duty, wake, queued, signals, repaint),
+        },
+        quit,
+    )
 }
+
+#[cfg(test)]
+#[path = "display_tests.rs"]
+mod tests;

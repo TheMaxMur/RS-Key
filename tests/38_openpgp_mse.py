@@ -11,7 +11,8 @@ that MANAGE SECURITY ENVIRONMENT (0x22) repoints DECIPHER from the DEC key to th
 key:
 
     DECIPHER (default)  -> ECDH with the DEC key
-    MSE 41 A4 {83 01 03} -> point the DECIPHER template at key ref 3 (AUT slot)
+    MSE 41 B8 {83 01 03} -> point the confidentiality template (PSO:DECIPHER,
+                            ISO 7816-8 CT) at key ref 3 (AUT slot)
     DECIPHER again       -> ECDH with the AUT key  (different shared secret)
 
 Both shared secrets are checked against host ECDH with `cryptography`.
@@ -37,6 +38,7 @@ from _device import find_reader  # noqa: E402
 
 OPENPGP_AID = [0xD2, 0x76, 0x00, 0x01, 0x24, 0x01]
 SELECT = [0x00, 0xA4, 0x04, 0x00, len(OPENPGP_AID)] + OPENPGP_AID + [0x00]
+PW1_DEFAULT = b"123456"
 PW3_DEFAULT = b"12345678"
 
 INS_VERIFY = 0x20
@@ -44,6 +46,8 @@ INS_PSO = 0x2A
 INS_PUT_DATA = 0xDA
 INS_IMPORT = 0xDB
 INS_MSE = 0x22
+MODE_PW1_81 = 0x81
+MODE_PW1_82 = 0x82
 MODE_PW3 = 0x83
 
 OID_P256 = [0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07]
@@ -99,6 +103,7 @@ def main():
 
     tx(SELECT, "SELECT OpenPGP AID")
     tx(apdu(INS_VERIFY, 0x00, MODE_PW3, PW3_DEFAULT), "VERIFY PW3 (admin)")
+    tx(apdu(INS_VERIFY, 0x00, MODE_PW1_82, PW1_DEFAULT), "VERIFY PW1 (82, decrypt/auth)")
 
     # Two distinct P-256 ECDH keys, one per slot.
     dec_priv = ec.generate_private_key(ec.SECP256R1())
@@ -119,7 +124,7 @@ def main():
     z_dec, _, _ = tx(decipher_apdu(peer_point), "PSO:DECIPHER (default = DEC)")
     z_dec = bytes(z_dec)
 
-    tx(apdu(INS_MSE, 0x41, 0xA4, bytes([0x83, 0x01, 0x03])), "MSE DEC->ref3 (AUT slot)")
+    tx(apdu(INS_MSE, 0x41, CRT_DEC, bytes([0x83, 0x01, 0x03])), "MSE DEC->ref3 (AUT slot)")
 
     z_aut, _, _ = tx(decipher_apdu(peer_point), "PSO:DECIPHER (after MSE = AUT)")
     z_aut = bytes(z_aut)

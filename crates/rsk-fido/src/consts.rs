@@ -108,7 +108,8 @@ pub const ALG_ES512: i64 = -36;
 pub const ALG_ES256K: i64 = -47;
 pub const ALG_EDDSA: i64 = -8;
 pub const ALG_ECDH_ES_HKDF_256: i64 = -25; // clientPIN key agreement
-// Curve-explicit aliases also accepted in pubKeyCredParams.
+// Curve-explicit ids. Accepted in pubKeyCredParams and echoed back in the
+// attested key; unadvertised, like -8/-47 and ML-DSA (see `getinfo.rs`).
 pub const ALG_ESP256: i64 = -9; // ECDSA-SHA256 P-256
 pub const ALG_ED25519: i64 = -19; // EdDSA Ed25519
 pub const ALG_ESP384: i64 = -51; // ECDSA-SHA384 P-384
@@ -209,6 +210,15 @@ pub const MAX_RAW_SUBPARA: usize = 384;
 /// so the advertised number is one the device can actually commit — the sibling
 /// of the ATT_IMPORT cap mismatch (audit run-32).
 pub const MAX_LARGE_BLOB_SIZE: usize = rsk_fs::MAX_VALUE_BYTES;
+/// Which of the two mutually exclusive large-blob designs this build serves.
+/// CTAP 2.3 §12.4: "Authenticators MUST NOT support both extensions" — so the
+/// `largeblob-ext` build offers the 2.3 `largeBlob` extension and withdraws the
+/// 2.1 trio (the `largeBlobKey` extension, the `authenticatorLargeBlobs`
+/// command, and the `largeBlobs` option), while the default build does the
+/// reverse. Every site that implements either side branches on THIS rather than
+/// on `cfg`, so both shapes stay compiled — and linted, and testable — whichever
+/// way the feature is set.
+pub const LARGE_BLOB_EXT: bool = cfg!(feature = "largeblob-ext");
 /// Max bytes per `authenticatorLargeBlobs` fragment.
 pub const MAX_FRAGMENT_LENGTH: usize = MAX_MSG_SIZE as usize - 64;
 /// Initial serialized large-blob array: the empty CBOR array `0x80` followed
@@ -251,7 +261,7 @@ pub const EF_ATT_KEY: KeyFid = KeyFid::new(0xCE10); // org attestation P-256 sca
 pub const EF_ATT_CHAIN: u16 = 0xCE11; // packed DER chain: count ‖ (len LE ‖ der)*
 /// `enableEnterpriseAttestation` — persists until reset (CTAP 2.1), hence flash.
 pub const EF_EA_ENABLED: u16 = 0xCE12;
-/// `alwaysUv` state, read via [`crate::config::always_uv_enabled`] — tri-state:
+/// `alwaysUv` state, read via `crate::config::always_uv_enabled` — tri-state:
 /// absent = the compile default (`DEFAULT_ALWAYS_UV`), `[1]` = on, `[0]` = explicit
 /// off. Do NOT probe with `has_data` (a present `[0]` would read as on). Persists
 /// until authenticatorReset (flash, CTAP 2.1).
@@ -284,6 +294,13 @@ pub const EF_RP: u16 = 0xD000; // relying-party metadata, 0xD000..0xD0FF
 pub const EF_RPNICK: u16 = 0xD300;
 /// Longest device-local RP nickname (bytes) the trusted display stores + accepts.
 pub const RP_NICK_MAX_LEN: usize = 24;
+/// Per-credential large blobs (the CTAP 2.3 `largeBlob` extension), 0xD500..0xD5FF
+/// — one slot per EF_CRED slot, sealed at rest (see [`crate::largeblobext`]). PIV
+/// owns 0xD100..=0xD2FF and 0xD400..=0xD4FF, so this sits clear of it. Written
+/// only by the `largeblob-ext` build, but swept by `authenticatorReset` in EVERY
+/// build: a key that ran that firmware once must still be wipeable by the one it
+/// is flashed with next.
+pub const EF_CRED_BLOB: u16 = 0xD500;
 pub const EF_PIN: u16 = 0x1080; // PIN: [retries, len, format, verifier(32)]
 /// The **persistent** pinUvAuthToken (CTAP 2.2 §6.5.2.2): a bearer secret the
 /// platform keeps across power cycles, so it is kbase-sealed like the seed. Its
@@ -314,6 +331,12 @@ pub const PUAT_INITIAL_USAGE_LIMIT_MS: u64 = 30_000;
 /// the token can never outlive this from issuance, even under constant use, so
 /// it cannot linger for the whole power cycle.
 pub const PUAT_MAX_USAGE_PERIOD_MS: u64 = 600_000;
+
+/// How long a stateful sequence may sit idle before it retires. CTAP 2.3 §6 lets
+/// an authenticator assume "no more than 30 seconds will elapse between such
+/// commands" — between legs, not across the whole walk — and §6.3 step 7 spells
+/// the same out for getNextAssertion ("Reset the timer").
+pub const STATEFUL_WALK_IDLE_MS: u64 = 30_000;
 
 /// `authenticatorReset` power-up window (CTAP 2.1 §6.6): an authenticator with no
 /// display honors a reset only this long after power-up, so the wipe takes a

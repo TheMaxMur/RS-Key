@@ -10,13 +10,64 @@ use crate::consts::*;
 /// Historical bytes.
 pub const HISTORICAL_BYTES: &[u8] = &[0x00, 0x31, 0x84, 0x73, 0x80, 0x01, 0xC0, 0x05, 0x90, 0x00];
 
-/// Extended capabilities: no secure messaging, GET CHALLENGE (128), key import,
-/// PW-status puttable, private DO, changeable algo attrs, AES, KDF-DO.
-pub const EXTENDED_CAPABILITIES: &[u8] =
-    &[0x7f, 0x00, 0x00, 0x80, 0x08, 0x00, 0x08, 0x00, 0x00, 0x01];
+/// One CCID frame's payload — `MAX_CCID_MSG - 10` bytes — which is both the
+/// largest command APDU the transport delivers and the largest response APDU it
+/// carries back. §4.1.3.1 defines the DO 7F66 pair as "the total amount of bytes
+/// sent to or received from the card in any command", header and Lc and Le
+/// included, so this is exactly the number to announce there. `rsk-device` holds
+/// the compile-time assertion tying it to `rsk-usb`'s own constants; neither
+/// crate can see the other's.
+pub const MAX_APDU_BYTES: usize = 2038;
 
-/// Extended length information: max cmd 0x07ff, max rsp 0x0800.
-pub const EXLEN_INFO: &[u8] = &[0x02, 0x02, 0x07, 0xff, 0x02, 0x02, 0x08, 0x00];
+/// The largest value PUT DATA accepts and GET DATA returns whole, for both DO
+/// classes DO C0 sizes: the cardholder certificate (bytes 5-6) and the special
+/// DOs (bytes 7-8). One owner — C0 is built from it below and `SCRATCH` is it, so
+/// the announcement cannot drift from what the card can actually serve.
+///
+/// The value is the CCID transport's real body ceiling: the applet is handed one
+/// frame minus the two status bytes. Announcing the rounder 2048 a YubiKey does
+/// would put the cliff back, twelve bytes further out — `ResBuf::extend` writes
+/// *nothing* when the body does not fit and its `false` is discarded, so an
+/// over-long DO would read as empty with `9000`.
+pub const MAX_DO_BYTES: usize = MAX_APDU_BYTES - 2;
+
+/// The most random bytes GET CHALLENGE serves, and DO C0 bytes 3-4. One owner,
+/// for the same reason [`MAX_DO_BYTES`] is: C0 announced 128 while the command
+/// served anything up to the applet's 1024-byte scratch, so the number a host
+/// reads off the card said nothing about what the card would do. `rsk-openpgp`'s
+/// `SCRATCH` is the ceiling this may take, asserted at compile time there.
+pub const MAX_CHALLENGE_BYTES: usize = 1024;
+
+/// Extended capabilities: no secure messaging, GET CHALLENGE, key import,
+/// PW-status puttable, private DO, changeable algo attrs, AES, KDF-DO.
+pub const EXTENDED_CAPABILITIES: &[u8] = &[
+    0x7f,
+    0x00,
+    (MAX_CHALLENGE_BYTES >> 8) as u8,
+    MAX_CHALLENGE_BYTES as u8,
+    (MAX_DO_BYTES >> 8) as u8,
+    MAX_DO_BYTES as u8,
+    (MAX_DO_BYTES >> 8) as u8,
+    MAX_DO_BYTES as u8,
+    0x00,
+    0x01,
+];
+
+/// Extended length information (§4.1.3.1): maximum command APDU, then maximum
+/// response APDU. Both are [`MAX_APDU_BYTES`] — the transport carries one frame
+/// in each direction. Announcing more is not a rounding choice: §7.7 tells a host
+/// it may send exactly what this says, and the bytes past the frame never reach
+/// an applet at all.
+pub const EXLEN_INFO: &[u8] = &[
+    0x02,
+    0x02,
+    (MAX_APDU_BYTES >> 8) as u8,
+    MAX_APDU_BYTES as u8,
+    0x02,
+    0x02,
+    (MAX_APDU_BYTES >> 8) as u8,
+    MAX_APDU_BYTES as u8,
+];
 
 /// General feature management: button present.
 pub const FEATURE_MNGMNT: &[u8] = &[0x81, 0x01, 0x20];
@@ -76,6 +127,20 @@ pub fn source(fid: u16) -> DoSource {
         || fid == EF_DEK_PW1.get()
         || fid == EF_DEK_RC.get()
         || fid == EF_DEK_PW3.get()
+        || fid == EF_DEK_STAGE_PW1.get()
+        || fid == EF_DEK_STAGE_RC.get()
+        || fid == EF_DEK_STAGE_PW3.get()
+        // §5's access table gives `D5` WRITE = PW3, READ = *Never*; §4.4.2 has
+        // the DO, and §4.4.1 has no `D5` row at all, which is what write-only
+        // means there. Same shape as its neighbours above and it belongs with
+        // them: `PUT DATA D5` writes it, so answering GET DATA "no such object"
+        // would have the card contradict itself about an object it just took.
+        || fid == EF_AES_KEY.get()
+        // `D3` is write-only for the same reason and by the same table, and
+        // `PUT DATA D3` is routed to `put_reset_code` — so no file ever lands
+        // here and the `Flash` arm served the DO as an empty object under
+        // `9000`, which is a reset code reading as "set to nothing".
+        || fid == EF_RESET_CODE
     {
         return DoSource::Internal;
     }
@@ -101,15 +166,15 @@ pub fn source(fid: u16) -> DoSource {
         // Flash-backed working DOs.
         EF_CH_NAME | EF_LOGIN_DATA | EF_LANG_PREF | EF_SEX | EF_URI_URL | EF_SIG_COUNT
         | EF_FP_SIG | EF_FP_DEC | EF_FP_AUT | EF_FP_CA1 | EF_FP_CA2 | EF_FP_CA3 | EF_TS_SIG
-        | EF_TS_DEC | EF_TS_AUT | EF_UIF_SIG | EF_UIF_DEC | EF_UIF_AUT | EF_KDF | EF_RESET_CODE
-        | EF_PRIV_DO_1 | EF_PRIV_DO_2 | EF_PRIV_DO_3 | EF_PRIV_DO_4 => DoSource::Flash,
+        | EF_TS_DEC | EF_TS_AUT | EF_UIF_SIG | EF_UIF_DEC | EF_UIF_AUT | EF_KDF | EF_PRIV_DO_1
+        | EF_PRIV_DO_2 | EF_PRIV_DO_3 | EF_PRIV_DO_4 => DoSource::Flash,
 
         // Internal EFs (PINs, public-key DOs, base/PWPIV DEK, algo-priv,
         // chaining): not GET-DATA-able. The private-key + PW-DEK slots are
         // handled by the KeyFid guard above.
         EF_PW1 | EF_RC | EF_PW3 | EF_ALGO_PRIV1 | EF_ALGO_PRIV2 | EF_ALGO_PRIV3 | EF_PW_PRIV
-        | EF_PW_RETRIES | EF_PB_SIG | EF_PB_DEC | EF_PB_AUT | EF_DEK | EF_DEK_PWPIV | EF_CH_1
-        | EF_CH_2 | EF_CH_3 => DoSource::Internal,
+        | EF_PW_RETRIES | EF_PB_SIG | EF_PB_DEC | EF_PB_AUT | EF_KEY_ORIGIN | EF_DEK
+        | EF_DEK_PWPIV | EF_CH_1 | EF_CH_2 | EF_CH_3 => DoSource::Internal,
 
         _ => DoSource::None,
     }

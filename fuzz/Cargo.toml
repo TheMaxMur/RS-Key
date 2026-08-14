@@ -21,6 +21,14 @@ rsk-oath = { path = "../crates/rsk-oath" }
 rsk-otp = { path = "../crates/rsk-otp" }
 rsk-piv = { path = "../crates/rsk-piv" }
 rsk-rescue = { path = "../crates/rsk-rescue" }
+# The applet wiring the firmware and `tools/emu` both run — registration order,
+# the capability gating, reset_card/reset_chaining, the CTAPHID config surface.
+# cross_applet used to hand-roll a five-applet dispatcher of its own, and a second
+# copy of the routing rules is the drift this crate exists to prevent. `display`
+# only adds `pin_ref_ready` / `reset_chaining`; the dispatch path is unchanged.
+rsk-device = { path = "../crates/rsk-device", features = ["display"] }
+# The seventh applet's AID and its `Platform`, for the same target's applet set.
+rsk-vendor = { path = "../crates/rsk-vendor" }
 # The store the device runs. `power_cut` used to torture a hand-written mirror of
 # it; a mirror can only be as right as whoever last synced it, and this one had
 # already drifted (no `last_error`, no `compact`, one missing counter FID).

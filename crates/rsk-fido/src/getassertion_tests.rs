@@ -9,6 +9,7 @@ use minicbor::Decoder;
 use p256::Sec1Point;
 use p256::ecdsa::{Signature, VerifyingKey, signature::Verifier};
 use rsk_crypto::Device;
+use rsk_crypto::pinproto::PinProto;
 use rsk_fs::Fs;
 use rsk_fs::storage::ram::RamStorage;
 
@@ -1927,6 +1928,70 @@ fn get_next_assertion_expires_after_a_quiet_thirty_seconds() {
     );
 }
 
+/// A `getNextAssertion` belongs to the channel whose `getAssertion` opened the
+/// walk. A second process on its own CTAPHID channel asking for it gets
+/// `CTAP2_ERR_NOT_ALLOWED` — otherwise it collects an assertion signed over the
+/// FIRST channel's clientDataHash, under the first request's presence decision,
+/// having neither supplied the one nor satisfied the other.
+///
+/// Ported from OpenSK's `test_channel_interleaving`; the same scoping this state
+/// struct's neighbour `mse_cid` already applies, and the unscoped version of it
+/// is what audit run-31 filed as HIGH.
+#[test]
+fn get_next_assertion_refuses_a_second_channel() {
+    const CHANNEL_A: u32 = 0x0100_0000;
+    const CHANNEL_B: u32 = 0x0200_0000;
+
+    let (mut fs, mut rng) = setup();
+    let mut state = crate::FidoState::new();
+    for (uid, t) in [(&[9u8, 8, 7, 6][..], 10u64), (&[1u8, 1, 1, 1][..], 20u64)] {
+        let mut out = [0u8; 1024];
+        let mut presence = crate::AlwaysConfirm;
+        let mut ctx = Ctx {
+            presence: &mut presence,
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: t,
+        };
+        make_credential(&mut ctx, &mc_request_user(uid), &mut out).unwrap();
+    }
+
+    state.channel = CHANNEL_A;
+    let mut o1 = [0u8; 1024];
+    let n1 = {
+        let mut presence = crate::AlwaysConfirm;
+        let mut ctx = Ctx {
+            presence: &mut presence,
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 30,
+        };
+        get_assertion(&mut ctx, &ga_request(None), &mut o1).unwrap()
+    };
+    assert_eq!(user_and_count(&o1[..n1]).1, Some(2), "a walk is open");
+
+    state.channel = CHANNEL_B;
+    let mut o2 = [0u8; 1024];
+    let mut presence = crate::AlwaysConfirm;
+    let mut ctx = Ctx {
+        presence: &mut presence,
+        dev: dev(),
+        fs: &mut fs,
+        rng: &mut rng,
+        state: &mut state,
+        now_ms: 31,
+    };
+    assert_eq!(
+        get_next_assertion(&mut ctx, &mut o2),
+        Err(CtapError::NotAllowed),
+        "another channel may not walk this one's assertions"
+    );
+}
+
 #[test]
 fn get_next_assertion_uses_per_credential_counter() {
     // The getNextAssertion path must advance the walked credential's OWN counter
@@ -2427,7 +2492,7 @@ fn stored_box_and_seed(fs: &mut Fs<RamStorage>) -> (std::vec::Vec<u8>, [u8; 32])
     (cred_record_box(&rec[..n]).to_vec(), seed)
 }
 
-fn cose_xy(e: &mut Encoder<Cursor<&mut [u8]>>, x: &[u8; 32], y: &[u8; 32]) {
+fn cose_xy(e: &mut Encoder<Cursor<&mut [u8]>>, x: &[u8], y: &[u8]) {
     e.map(5).unwrap();
     e.u8(1).unwrap().u8(2).unwrap(); // kty EC2
     e.u8(3).unwrap().i64(-25).unwrap(); // alg ECDH
@@ -2436,13 +2501,7 @@ fn cose_xy(e: &mut Encoder<Cursor<&mut [u8]>>, x: &[u8; 32], y: &[u8; 32]) {
     e.i8(-3).unwrap().bytes(y).unwrap();
 }
 
-fn ga_request_hmac(
-    allow: &[u8],
-    px: &[u8; 32],
-    py: &[u8; 32],
-    se: &[u8],
-    sa: &[u8],
-) -> std::vec::Vec<u8> {
+fn ga_request_hmac(allow: &[u8], px: &[u8], py: &[u8], se: &[u8], sa: &[u8]) -> std::vec::Vec<u8> {
     let mut buf = [0u8; 512];
     let n = {
         let mut e = Encoder::new(Cursor::new(&mut buf[..]));
@@ -2739,6 +2798,9 @@ fn hmac_secret_survives_updateuserinfo_reseal_end_to_end() {
     assert_eq!(dec1, rsk_crypto::hmac_sha256(&cr[..32], &salt).to_vec());
 }
 
+// The CTAP 2.1 large-blob design, which a `largeblob-ext` build withdraws
+// wholesale (§12.4: "Authenticators MUST NOT support both extensions").
+#[cfg(not(feature = "largeblob-ext"))]
 #[test]
 fn large_blob_key_in_assertion() {
     let (mut fs, mut rng) = setup();
@@ -3865,4 +3927,494 @@ fn foreign_type_in_allow_list_neither_matches_nor_falls_through() {
         Err(CtapError::NoCredentials),
         "a foreign-typed descriptor must not match on its id"
     );
+}
+
+/// hmac-secret's `keyAgreement` is the second COSE-parse site, and it used to
+/// left-pad a short coordinate exactly as clientPIN's did — so a platform whose
+/// bignum drops a leading zero still had its salts evaluated. A YubiKey 5.7.4
+/// refuses 31 and 33 bytes here too (INVALID_PARAMETER).
+#[test]
+fn hmac_secret_coordinate_must_be_exactly_32_bytes() {
+    use rsk_crypto::pinproto::{authenticate, ecdh, encrypt, public_xy};
+    let (mut fs, mut rng) = setup();
+    let mut state = crate::FidoState::new();
+    state.regenerate(&mut rng);
+    let (ax, ay) = state.ephemeral_public().unwrap();
+    let mc = run_mc_state(&mut fs, &mut rng, &mut state, &mc_request_lbk_hmac());
+    let (resident_id, _x, _y) = parse_mc(&mc);
+
+    // A platform key whose x really starts with a zero byte: stripping a byte off
+    // an arbitrary coordinate lands off the curve and would be refused either
+    // way, so only this shape can tell the length rule from a failed ECDH.
+    let plat = (1u32..100_000)
+        .map(|i| {
+            let mut s = [0u8; 32];
+            s[28..].copy_from_slice(&i.to_be_bytes());
+            s
+        })
+        .find(|s| public_xy(s).unwrap().0[0] == 0)
+        .expect("no P-256 scalar with a leading-zero x in the search range");
+    let (px, py) = public_xy(&plat).unwrap();
+    let mut shared = [0u8; 64];
+    let slen = ecdh(PinProto::Two, &plat, &ax, &ay, &mut shared).unwrap();
+    let mut se = [0u8; 48];
+    let ne = encrypt(
+        PinProto::Two,
+        &shared[..slen],
+        &[0x01u8; 16],
+        &[0x77u8; 32],
+        &mut se,
+    )
+    .unwrap();
+    let mut sa = [0u8; 32];
+    let na = authenticate(PinProto::Two, &shared[..slen], &se[..ne], &mut sa).unwrap();
+
+    let mut run_ga = |req: &[u8]| {
+        let mut out = [0u8; 1024];
+        let mut presence = crate::AlwaysConfirm;
+        let mut ctx = Ctx {
+            presence: &mut presence,
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 20,
+        };
+        get_assertion(&mut ctx, req, &mut out).map(|_| ())
+    };
+    // Control: the same key at full width evaluates hmac-secret.
+    run_ga(&ga_request_hmac(
+        &resident_id,
+        &px,
+        &py,
+        &se[..ne],
+        &sa[..na],
+    ))
+    .unwrap();
+
+    let padded = [&[0u8][..], &px[..]].concat();
+    for (label, x) in [("stripped to 31", &px[1..]), ("padded to 33", &padded[..])] {
+        assert_eq!(
+            run_ga(&ga_request_hmac(&resident_id, x, &py, &se[..ne], &sa[..na])),
+            Err(CtapError::InvalidParameter),
+            "hmac-secret keyAgreement x {label}"
+        );
+    }
+}
+
+// getAssertion with `pinUvAuthParam` (key 6) and `pinUvAuthProtocol` (key 7) each
+// independently present or absent, and no allowList — §6.2.2 step 2 fires before
+// credential discovery, so the matrix needs no registered credential.
+fn ga_request_pin_opt(param: Option<&[u8]>, proto: Option<u64>) -> std::vec::Vec<u8> {
+    let mut buf = [0u8; 256];
+    let n = {
+        let mut e = Encoder::new(Cursor::new(&mut buf[..]));
+        e.map(2 + u64::from(param.is_some()) + u64::from(proto.is_some()))
+            .unwrap();
+        e.u8(1).unwrap().str("example.com").unwrap();
+        e.u8(2).unwrap().bytes(&CDH).unwrap();
+        if let Some(p) = param {
+            e.u8(6).unwrap().bytes(p).unwrap();
+        }
+        if let Some(v) = proto {
+            e.u8(7).unwrap().u64(v).unwrap();
+        }
+        e.writer().position()
+    };
+    buf[..n].to_vec()
+}
+
+/// The getAssertion half of §6.2.2 step 2 (word for word §6.1.2 step 2): a
+/// `pinUvAuthProtocol` of `0` is a protocol the platform sent and this build does
+/// not support — INVALID_PARAMETER — not an absent parameter. Measured on a
+/// YubiKey 5.7.4 with a param, without one, and ahead of the selection gesture.
+#[test]
+fn ga_pin_uv_auth_protocol_zero_is_a_value_not_an_absence() {
+    let (mut fs, mut rng) = setup();
+    let mut state = crate::FidoState::new();
+    let garbage = [0xEEu8; 32];
+    let mut err = |req: &[u8]| {
+        let mut out = [0u8; 1024];
+        let mut presence = crate::AlwaysConfirm;
+        let mut ctx = Ctx {
+            presence: &mut presence,
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 10,
+        };
+        get_assertion(&mut ctx, req, &mut out).unwrap_err()
+    };
+    for param in [Some(&garbage[..]), None, Some(&[][..])] {
+        assert_eq!(
+            err(&ga_request_pin_opt(param, Some(0))),
+            CtapError::InvalidParameter,
+            "protocol 0, param {:?}",
+            param.map(<[u8]>::len)
+        );
+        assert_eq!(
+            err(&ga_request_pin_opt(param, Some(3))),
+            CtapError::InvalidParameter
+        );
+    }
+    assert_eq!(
+        err(&ga_request_pin_opt(Some(&garbage), None)),
+        CtapError::MissingParameter
+    );
+    for proto in [1, 2] {
+        assert_eq!(
+            err(&ga_request_pin_opt(Some(&garbage), Some(proto))),
+            CtapError::PinAuthInvalid
+        );
+        // A supported protocol still reaches the gesture and the credential walk,
+        // so the gate discriminates rather than refusing everything that names one.
+        assert_eq!(
+            err(&ga_request_pin_opt(Some(&[]), Some(proto))),
+            CtapError::PinNotSet
+        );
+        assert_eq!(
+            err(&ga_request_pin_opt(None, Some(proto))),
+            CtapError::NoCredentials
+        );
+    }
+}
+
+// getAssertion with a `pinUvAuthParam` (6), a `pinUvAuthProtocol` (7) of `proto`,
+// and one extra fault written by `fault` into the keys between them.
+// Writes request keys into a half-built map.
+type Keys<'a> = &'a dyn Fn(&mut Encoder<Cursor<&mut [u8]>>);
+// One check-order row: label, the keys it writes, how many, and the code that
+// fault alone would get.
+type OrderRow<'a> = (&'a str, Keys<'a>, u64, CtapError);
+
+fn ga_request_faulty(proto: u64, nkeys: u64, fault: Keys) -> std::vec::Vec<u8> {
+    let mut buf = [0u8; 256];
+    let n = {
+        let mut e = Encoder::new(Cursor::new(&mut buf[..]));
+        e.map(4 + nkeys).unwrap();
+        e.u8(1).unwrap().str("example.com").unwrap();
+        e.u8(2).unwrap().bytes(&CDH).unwrap();
+        fault(&mut e);
+        e.u8(6).unwrap().bytes(&[0xEEu8; 32]).unwrap();
+        e.u8(7).unwrap().u64(proto).unwrap();
+        e.writer().position()
+    };
+    buf[..n].to_vec()
+}
+
+/// The getAssertion half of the check-order rule: §6.2.2 step 2 outranks the
+/// checks below it, not just step 1's selection gesture. Measured on a YubiKey
+/// 5.7.4 — a present-but-unsupported `pinUvAuthProtocol` is
+/// CTAP1_ERR_INVALID_PARAMETER alongside `options.rk`, an hmac-secret missing its
+/// salts, `up:false` and an allowList it holds no credential for. Ours judged it
+/// inside `enforce_pin`, after all of them.
+///
+/// Bounded at both ends. Above: an absent key 1 or 2 is refused by `parse` before
+/// key 7 is read. Below: `uv` is NOT in this set — see
+/// `ga_uv_option_outranks_the_protocol`. `rk` is, measured: that card answers
+/// INVALID_PARAMETER to `options.rk` under a bad protocol and UNSUPPORTED_OPTION
+/// under a good one, so the two options are judged in different places there.
+#[test]
+fn ga_unsupported_protocol_outranks_every_later_check() {
+    let (mut fs, mut rng) = setup();
+    let mut state = crate::FidoState::new();
+    let mut err = |req: &[u8]| {
+        let mut out = [0u8; 1024];
+        let mut presence = crate::AlwaysConfirm;
+        let mut ctx = Ctx {
+            presence: &mut presence,
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 10,
+        };
+        get_assertion(&mut ctx, req, &mut out).unwrap_err()
+    };
+    let rows: [OrderRow; 2] = [
+        (
+            "options.rk",
+            &|e| {
+                e.u8(5).unwrap().map(1).unwrap();
+                e.str("rk").unwrap().bool(true).unwrap();
+            },
+            1,
+            CtapError::UnsupportedOption,
+        ),
+        (
+            "hmac-secret with no salts",
+            &|e| {
+                e.u8(4).unwrap().map(1).unwrap();
+                e.str("hmac-secret").unwrap().map(1).unwrap();
+                e.u8(1).unwrap().map(0).unwrap();
+            },
+            1,
+            CtapError::MissingParameter,
+        ),
+    ];
+    for (label, fault, nkeys, alone) in rows {
+        assert_eq!(
+            err(&ga_request_faulty(3, nkeys, fault)),
+            CtapError::InvalidParameter,
+            "unsupported protocol must outrank: {label}"
+        );
+        // The control: a SUPPORTED protocol leaves the fault reporting itself.
+        assert_eq!(
+            err(&ga_request_faulty(1, nkeys, fault)),
+            alone,
+            "supported protocol must not mask: {label}"
+        );
+    }
+}
+
+/// `uv:true` on a build with no built-in user verification is judged BEFORE the
+/// protocol, the one place §6.2.2's step numbering and that card disagree — eight
+/// readings, protocol 0, 3 and 9 alike, and the same on makeCredential
+/// (`option_value_errors_outrank_the_protocol`). No `pinUvAuthParam` here: one
+/// present would make step 4 treat the option as false, which is the rule the
+/// card does NOT implement and we keep.
+#[test]
+fn ga_uv_option_outranks_the_protocol() {
+    let (mut fs, mut rng) = setup();
+    let mut state = crate::FidoState::new();
+    let mut err = |req: &[u8]| {
+        let mut out = [0u8; 1024];
+        let mut presence = crate::AlwaysConfirm;
+        let mut ctx = Ctx {
+            presence: &mut presence,
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 10,
+        };
+        get_assertion(&mut ctx, req, &mut out).unwrap_err()
+    };
+    let uv_true = |proto: Option<u64>| {
+        let mut buf = [0u8; 256];
+        let n = {
+            let mut e = Encoder::new(Cursor::new(&mut buf[..]));
+            e.map(3 + u64::from(proto.is_some())).unwrap();
+            e.u8(1).unwrap().str("example.com").unwrap();
+            e.u8(2).unwrap().bytes(&CDH).unwrap();
+            e.u8(5).unwrap().map(1).unwrap();
+            e.str("uv").unwrap().bool(true).unwrap();
+            if let Some(p) = proto {
+                e.u8(7).unwrap().u64(p).unwrap();
+            }
+            e.writer().position()
+        };
+        buf[..n].to_vec()
+    };
+    for proto in [None, Some(0), Some(3), Some(9)] {
+        assert_eq!(
+            err(&uv_true(proto)),
+            CtapError::InvalidOption,
+            "bare uv:true must outrank protocol {proto:?}"
+        );
+    }
+}
+
+// getAssertion + hmac-secret with the sub-fields under the test's control: each
+// salt independently present or absent, any length, and either protocol.
+fn ga_request_hmac_raw(
+    allow: &[u8],
+    px: &[u8; 32],
+    py: &[u8; 32],
+    se: Option<&[u8]>,
+    sa: Option<&[u8]>,
+    proto: u64,
+) -> std::vec::Vec<u8> {
+    let mut buf = [0u8; 512];
+    let n = {
+        let mut e = Encoder::new(Cursor::new(&mut buf[..]));
+        e.map(4).unwrap();
+        e.u8(1).unwrap().str("example.com").unwrap();
+        e.u8(2).unwrap().bytes(&CDH).unwrap();
+        e.u8(3).unwrap().array(1).unwrap().map(2).unwrap();
+        e.str("type").unwrap().str("public-key").unwrap();
+        e.str("id").unwrap().bytes(allow).unwrap();
+        e.u8(4).unwrap().map(1).unwrap();
+        e.str("hmac-secret")
+            .unwrap()
+            .map(2 + u64::from(se.is_some()) + u64::from(sa.is_some()))
+            .unwrap();
+        e.u8(1).unwrap();
+        cose_xy(&mut e, px, py);
+        if let Some(b) = se {
+            e.u8(2).unwrap().bytes(b).unwrap();
+        }
+        if let Some(b) = sa {
+            e.u8(3).unwrap().bytes(b).unwrap();
+        }
+        e.u8(4).unwrap().u64(proto).unwrap();
+        e.writer().position()
+    };
+    buf[..n].to_vec()
+}
+
+/// The three codes §12.5 names for hmac-secret, driven through getAssertion.
+/// A failed `saltAuth` verification used to be CTAP2_ERR_EXTENSION_FIRST — an
+/// ordering code that tells the platform to resend what just failed its MAC —
+/// where §12.5 says CTAP2_ERR_PIN_AUTH_INVALID. A `saltAuth` of the wrong *length*
+/// was folded into that same MAC compare, so it answered the MAC's code instead of
+/// CTAP1_ERR_INVALID_LENGTH; a YubiKey 5.7.4 refuses anything but 16 or 32 bytes,
+/// under either protocol, before the MAC. And the wire gate is the oracle's union
+/// of both protocols' lengths — {32, 48, 64, 80} — with the protocol's own rule
+/// applied after decryption, where §12.5 names CTAP1_ERR_INVALID_PARAMETER.
+#[test]
+fn hmac_secret_length_and_mac_codes() {
+    use rsk_crypto::pinproto::{authenticate, ecdh, encrypt, public_xy};
+    let (mut fs, mut rng) = setup();
+    let mut state = crate::FidoState::new();
+    state.regenerate(&mut rng);
+    let (ax, ay) = state.ephemeral_public().unwrap();
+    let mc = run_mc_state(&mut fs, &mut rng, &mut state, &mc_request_lbk_hmac());
+    let (id, _x, _y) = parse_mc(&mc);
+    let plat = {
+        let mut s = [0u8; 32];
+        s[0] = 0x22;
+        s[31] = 0x22;
+        s
+    };
+    let (px, py) = public_xy(&plat).unwrap();
+
+    for proto in [PinProto::One, PinProto::Two] {
+        let wire = if proto == PinProto::One { 1u64 } else { 2 };
+        let mut shared = [0u8; 64];
+        let slen = ecdh(proto, &plat, &ax, &ay, &mut shared).unwrap();
+        let secret = &shared[..slen];
+        // A saltEnc of `n` wire bytes, with the MAC that matches it.
+        let sealed = |n: usize| -> (std::vec::Vec<u8>, std::vec::Vec<u8>) {
+            let mut se = [0u8; SALT_ENC_MAX];
+            let pt = [0x77u8; SALT_ENC_MAX];
+            let body = n - proto.iv_overhead();
+            let ne = encrypt(proto, secret, &[0x01u8; 16], &pt[..body], &mut se).unwrap();
+            let mut sa = [0u8; 32];
+            let na = authenticate(proto, secret, &se[..ne], &mut sa).unwrap();
+            (se[..ne].to_vec(), sa[..na].to_vec())
+        };
+        let mut err = |req: &[u8]| {
+            let mut out = [0u8; 1024];
+            let mut presence = crate::AlwaysConfirm;
+            let mut ctx = Ctx {
+                presence: &mut presence,
+                dev: dev(),
+                fs: &mut fs,
+                rng: &mut rng,
+                state: &mut state,
+                now_ms: 20,
+            };
+            get_assertion(&mut ctx, req, &mut out).map(|_| ())
+        };
+
+        // Wire lengths: the four the oracle accepts pass the gate under BOTH
+        // protocols; a block multiple that is not one of them does not.
+        for n in [16usize, 96, 112] {
+            let (se, sa) = (std::vec![0u8; n], std::vec![0u8; 32]);
+            assert_eq!(
+                err(&ga_request_hmac_raw(
+                    &id,
+                    &px,
+                    &py,
+                    Some(&se),
+                    Some(&sa),
+                    wire
+                )),
+                Err(CtapError::InvalidLength),
+                "proto {wire} saltEnc {n}"
+            );
+        }
+        // A legal wire length this protocol could not have produced decrypts to 16,
+        // 48 or 80 bytes, which §12.5 refuses with INVALID_PARAMETER after the MAC.
+        for n in [32usize, 48, 64, 80] {
+            let (se, sa) = sealed(n);
+            let got = err(&ga_request_hmac_raw(
+                &id,
+                &px,
+                &py,
+                Some(&se),
+                Some(&sa),
+                wire,
+            ));
+            let salt = n - proto.iv_overhead();
+            if salt == 32 || salt == 64 {
+                got.unwrap_or_else(|e| panic!("proto {wire} saltEnc {n} refused with {e:?}"));
+            } else {
+                assert_eq!(
+                    got,
+                    Err(CtapError::InvalidParameter),
+                    "proto {wire} saltEnc {n}"
+                );
+            }
+        }
+        // saltAuth: only 16 and 32 bytes reach the MAC, and the MAC's own failure is
+        // PIN_AUTH_INVALID. (A 16-byte MAC under protocol two is length-legal and
+        // then cannot match, which is the same code.)
+        let (se, good) = sealed(32 + proto.iv_overhead());
+        // Past 32 the gate is the only thing standing between the wire and
+        // `AssertionState`'s replay copy, which is `SALT_AUTH_MAX` wide and
+        // truncates rather than refuses.
+        for n in [0usize, 8, 15, 17, 31, 33, 48, 64] {
+            let sa = std::vec![0u8; n];
+            assert_eq!(
+                err(&ga_request_hmac_raw(
+                    &id,
+                    &px,
+                    &py,
+                    Some(&se),
+                    Some(&sa),
+                    wire
+                )),
+                Err(CtapError::InvalidLength),
+                "proto {wire} saltAuth {n}"
+            );
+        }
+        for n in [16usize, 32] {
+            let sa = std::vec![0u8; n];
+            assert_eq!(
+                err(&ga_request_hmac_raw(
+                    &id,
+                    &px,
+                    &py,
+                    Some(&se),
+                    Some(&sa),
+                    wire
+                )),
+                Err(CtapError::PinAuthInvalid),
+                "proto {wire} saltAuth {n} with a wrong MAC"
+            );
+        }
+        // An absent sub-field is still MISSING_PARAMETER — a zero-length one is not.
+        assert_eq!(
+            err(&ga_request_hmac_raw(&id, &px, &py, None, Some(&good), wire)),
+            Err(CtapError::MissingParameter)
+        );
+        assert_eq!(
+            err(&ga_request_hmac_raw(&id, &px, &py, Some(&se), None, wire)),
+            Err(CtapError::MissingParameter)
+        );
+        assert_eq!(
+            err(&ga_request_hmac_raw(
+                &id,
+                &px,
+                &py,
+                Some(&[]),
+                Some(&good),
+                wire
+            )),
+            Err(CtapError::InvalidLength)
+        );
+        // The control: a well-formed request still evaluates the salts.
+        err(&ga_request_hmac_raw(
+            &id,
+            &px,
+            &py,
+            Some(&se),
+            Some(&good),
+            wire,
+        ))
+        .unwrap();
+    }
 }

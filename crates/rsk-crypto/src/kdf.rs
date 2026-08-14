@@ -6,7 +6,7 @@
 //! the GCM nonce is caller-supplied, so the module is pure and host-testable.
 //! Intermediate keys (`kbase`, `kver`, `kenc`) are zeroized after use.
 
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 use crate::aes::{aes256gcm_decrypt, aes256gcm_encrypt};
 use crate::mac::{hkdf_sha256, hmac_sha256};
@@ -32,6 +32,24 @@ const TAG_LEN: usize = 16;
 pub enum PinKdf {
     V1,
     V2,
+}
+
+/// How a holder obtains a fused device key at the moment it needs one: a read of
+/// the OTP fuses, not a copy kept in RAM. Carried instead of the key itself so a
+/// bug that discloses adjacent memory has nothing to disclose — the OTP window is
+/// not RAM. `None` on an unprovisioned device.
+pub type FusedKey = fn() -> Option<[u8; 32]>;
+
+/// One operation's copy of a fused key, or `None` when unprovisioned. Zeroized
+/// when the binding drops, so it must be a local of whoever builds the [`Device`]
+/// that borrows it — that lifetime IS the exposure window.
+pub type FusedRead = Option<Zeroizing<[u8; 32]>>;
+
+/// Read a fused key for one operation. The result is the only copy in RAM and is
+/// zeroized when the caller's binding drops, which is the whole point of holding a
+/// [`FusedKey`]: keep the live window as short as the operation that needs it.
+pub fn read_fused(src: Option<FusedKey>) -> FusedRead {
+    src.and_then(|read| read()).map(Zeroizing::new)
 }
 
 /// Device-specific key-derivation inputs, borrowed for the call.
@@ -151,7 +169,7 @@ impl Device<'_> {
         Ok(total)
     }
 
-    /// Inverse of [`encrypt_with_aad`]; writes the plaintext into `out` and
+    /// Inverse of [`Self::encrypt_with_aad`]; writes the plaintext into `out` and
     /// returns its length. `Err(Decrypt)` on auth failure.
     pub fn decrypt_with_aad(
         &self,

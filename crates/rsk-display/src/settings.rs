@@ -8,13 +8,70 @@ use super::status::{adjust_sleep, adjust_timeout};
 use super::*;
 
 /// Persisted display-settings record: the backlight level and display-sleep timeout
-/// edited in Settings → Display, read at boot ([`Ui::build`]) and rewritten on
+/// edited in Settings → Display, read at boot ([`Ui::new`]) and rewritten on
 /// Settings exit ([`Ui::persist_settings`]) so they survive a reboot. In the system
 /// config FID range next to `EF_PHY` (`0xE020`) / `EF_META`, outside every applet's
 /// reset scope; not reachable by any host APDU. The touch timeout is *not* here — it
 /// rides `EF_PHY`'s `PresenceTimeout` tag, the same record `rsk hw --touch-timeout`
 /// writes (see [`rsk_ui::DisplayConfig`]).
 pub(super) const EF_DISPLAY: u16 = 0xE030;
+
+/// What a Settings page did with a tap. The menu used to carry this as three
+/// separate mutable locals — a `repaint` flag, a reassigned `page`, and a `break`
+/// per exit — spread across six inline page arms, so what a tap could do was only
+/// visible by reading all of them.
+enum Nav {
+    /// Nothing was hit: no repaint, stay put.
+    Idle,
+    /// Handled on this page (a knob moved, a sub-modal ran) — repaint it.
+    Stay,
+    /// Go to another page and paint that.
+    Goto(SettingsPage),
+    /// Leave the menu, handing the ambient loop its next destination.
+    Leave(Option<NavTab>),
+}
+
+/// The −/+ of an adjust page, or `None` for Back / a miss — which [`adjust_exit`]
+/// then tells apart. Split out because all three adjust pages decode the same two
+/// keys and differ only in what they do with the step.
+fn adjust_step(p: rsk_ui::Point) -> Option<i8> {
+    match rsk_ui::hit_adjust(p) {
+        Some(AdjustKey::Minus) => Some(-1),
+        Some(AdjustKey::Plus) => Some(1),
+        _ => None,
+    }
+}
+
+/// Back returns to the Display list; anything else on an adjust page is a miss.
+fn adjust_exit(p: rsk_ui::Point) -> Nav {
+    if matches!(rsk_ui::hit_adjust(p), Some(AdjustKey::Back)) {
+        Nav::Goto(SettingsPage::Display)
+    } else {
+        Nav::Idle
+    }
+}
+
+/// Display: the back chevron, or a drill-down into one of the three knobs.
+fn settings_display(p: rsk_ui::Point) -> Nav {
+    if rsk_ui::hit_title_back(p) {
+        return Nav::Goto(SettingsPage::Root);
+    }
+    match rsk_ui::hit_display(p) {
+        Some(DisplayEntry::Brightness) => Nav::Goto(SettingsPage::Brightness),
+        Some(DisplayEntry::Sleep) => Nav::Goto(SettingsPage::Sleep),
+        Some(DisplayEntry::Timeout) => Nav::Goto(SettingsPage::Timeout),
+        None => Nav::Idle,
+    }
+}
+
+/// Display sleep: the blanking deadline, a plain atomic — no `self` in reach of it.
+fn settings_sleep(p: rsk_ui::Point, dirty: &mut bool) -> Nav {
+    let Some(step) = adjust_step(p) else {
+        return adjust_exit(p);
+    };
+    *dirty |= adjust_sleep(step);
+    Nav::Stay
+}
 
 impl<'a, P, T, H, S, R> Ui<'a, P, T, H, S, R>
 where
@@ -85,127 +142,22 @@ where
             }
             if let Some(p) = self.touch.read() {
                 last = Instant::now();
-                let mut repaint = true;
-                match page {
-                    SettingsPage::Root => {
-                        // The bottom nav switches tabs directly (Settings is a top-level tab
-                        // now): Home → idle, the others hand off to that tab's modal.
-                        if let Some(tab) = rsk_ui::hit_nav(p) {
-                            match tab {
-                                NavTab::Settings => repaint = false,
-                                NavTab::Home => break None,
-                                NavTab::Passkeys => break Some(NavTab::Passkeys),
-                                NavTab::Apps => break Some(NavTab::Apps),
-                            }
-                        } else {
-                            match rsk_ui::hit_settings_root(p) {
-                                // Display drills into the brightness / sleep / touch-timeout
-                                // panel knobs.
-                                Some(RootEntry::Display) => page = SettingsPage::Display,
-                                // Security drills into the Set/Change PIN + Factory reset
-                                // sub-page (the destructive reset now lives one tap deeper).
-                                Some(RootEntry::Security) => page = SettingsPage::Security,
-                                // Firmware (last): drill into the installed-version +
-                                // reboot-to-update sub-flow. A completed update hold queues a
-                                // reboot and returns `true` — break out of the menu so the
-                                // ambient loop can park and hand the executor to the worker,
-                                // which scrubs + resets. A cancel falls back to this list.
-                                Some(RootEntry::Firmware) => {
-                                    if self.run_firmware() {
-                                        break None;
-                                    }
-                                    last = Instant::now();
-                                }
-                                None => repaint = false,
-                            }
-                        }
+                let repaint = match match page {
+                    SettingsPage::Root => self.settings_root(p, &mut last),
+                    SettingsPage::Display => settings_display(p),
+                    SettingsPage::Security => self.settings_security(p, &mut last),
+                    SettingsPage::Brightness => self.settings_brightness(p, &mut display_dirty),
+                    SettingsPage::Timeout => self.settings_timeout(p, &mut presence_dirty),
+                    SettingsPage::Sleep => settings_sleep(p, &mut display_dirty),
+                } {
+                    Nav::Leave(next) => break next,
+                    Nav::Idle => false,
+                    Nav::Stay => true,
+                    Nav::Goto(next) => {
+                        page = next;
+                        true
                     }
-                    SettingsPage::Display => {
-                        // The title-bar back chevron returns to the Root list; each row drills
-                        // into its −/+ adjust page (which backs out to here).
-                        if rsk_ui::hit_title_back(p) {
-                            page = SettingsPage::Root;
-                        } else {
-                            match rsk_ui::hit_display(p) {
-                                Some(DisplayEntry::Brightness) => page = SettingsPage::Brightness,
-                                Some(DisplayEntry::Sleep) => page = SettingsPage::Sleep,
-                                Some(DisplayEntry::Timeout) => page = SettingsPage::Timeout,
-                                None => repaint = false,
-                            }
-                        }
-                    }
-                    SettingsPage::Security => {
-                        // The title-bar back chevron returns to the Root list.
-                        if rsk_ui::hit_title_back(p) {
-                            page = SettingsPage::Root;
-                        } else {
-                            match rsk_ui::hit_security(p) {
-                                Some(SecurityEntry::DevicePin) => {
-                                    self.run_set_pin(PinScope::Device);
-                                    last = Instant::now();
-                                }
-                                Some(SecurityEntry::FidoPin) => {
-                                    self.run_set_pin(PinScope::Fido);
-                                    last = Instant::now();
-                                }
-                                Some(SecurityEntry::PivPin) => {
-                                    self.run_piv_pins();
-                                    last = Instant::now();
-                                }
-                                Some(SecurityEntry::AuditLog) => {
-                                    self.run_auditlog();
-                                    last = Instant::now();
-                                }
-                                Some(SecurityEntry::Backup) => {
-                                    self.run_backup();
-                                    last = Instant::now();
-                                }
-                                // A confirmed reset queues the reboot and returns `true`
-                                // — break out so nothing runs between the wipe and the
-                                // reset (`persist_settings` below would otherwise
-                                // re-create EF_DISPLAY, carrying `pin_declined` across
-                                // the factory reset). A cancel falls back to this page.
-                                Some(SecurityEntry::FactoryReset) => {
-                                    if self.run_factory_reset() {
-                                        break None;
-                                    }
-                                    last = Instant::now();
-                                }
-                                None => repaint = false,
-                            }
-                        }
-                    }
-                    SettingsPage::Brightness => match rsk_ui::hit_adjust(p) {
-                        Some(AdjustKey::Minus) => {
-                            let was = self.brightness;
-                            self.set_brightness(rsk_ui::step_brightness(self.brightness, -1));
-                            display_dirty |= self.brightness != was;
-                        }
-                        Some(AdjustKey::Plus) => {
-                            let was = self.brightness;
-                            self.set_brightness(rsk_ui::step_brightness(self.brightness, 1));
-                            display_dirty |= self.brightness != was;
-                        }
-                        Some(AdjustKey::Back) => page = SettingsPage::Display,
-                        None => repaint = false,
-                    },
-                    SettingsPage::Timeout => match rsk_ui::hit_adjust(p) {
-                        Some(AdjustKey::Minus) => {
-                            presence_dirty |= adjust_timeout(&mut self.hooks, -1)
-                        }
-                        Some(AdjustKey::Plus) => {
-                            presence_dirty |= adjust_timeout(&mut self.hooks, 1)
-                        }
-                        Some(AdjustKey::Back) => page = SettingsPage::Display,
-                        None => repaint = false,
-                    },
-                    SettingsPage::Sleep => match rsk_ui::hit_adjust(p) {
-                        Some(AdjustKey::Minus) => display_dirty |= adjust_sleep(-1),
-                        Some(AdjustKey::Plus) => display_dirty |= adjust_sleep(1),
-                        Some(AdjustKey::Back) => page = SettingsPage::Display,
-                        None => repaint = false,
-                    },
-                }
+                };
                 // A sub-modal (e.g. the audit log) may have slept + locked via the power
                 // button; if so, unwind without repainting over the now-blanked panel —
                 // status_task owns the asleep/Locked state from here.
@@ -244,6 +196,88 @@ where
         next
     }
 
+    /// Root: the four-tab nav, or a drill-down into a sub-page.
+    fn settings_root(&mut self, p: rsk_ui::Point, last: &mut Instant) -> Nav {
+        // The bottom nav switches tabs directly (Settings is a top-level tab now):
+        // Home → idle, the others hand off to that tab's modal.
+        if let Some(tab) = rsk_ui::hit_nav(p) {
+            return match tab {
+                NavTab::Settings => Nav::Idle,
+                NavTab::Home => Nav::Leave(None),
+                NavTab::Passkeys => Nav::Leave(Some(NavTab::Passkeys)),
+                NavTab::Apps => Nav::Leave(Some(NavTab::Apps)),
+            };
+        }
+        match rsk_ui::hit_settings_root(p) {
+            // Display drills into the brightness / sleep / touch-timeout knobs.
+            Some(RootEntry::Display) => Nav::Goto(SettingsPage::Display),
+            // Security drills into Set/Change PIN + Factory reset (the destructive
+            // reset lives one tap deeper).
+            Some(RootEntry::Security) => Nav::Goto(SettingsPage::Security),
+            // Firmware: the installed-version + reboot-to-update sub-flow. A
+            // completed update hold queues a reboot and returns `true` — leave the
+            // menu so the ambient loop can park and hand the executor to the worker,
+            // which scrubs + resets. A cancel falls back to this list.
+            Some(RootEntry::Firmware) => {
+                if self.run_firmware() {
+                    return Nav::Leave(None);
+                }
+                *last = Instant::now();
+                Nav::Stay
+            }
+            None => Nav::Idle,
+        }
+    }
+
+    /// Security: each row runs its own modal, which may take many seconds — so the
+    /// inactivity clock restarts when one returns, not when the tap landed.
+    fn settings_security(&mut self, p: rsk_ui::Point, last: &mut Instant) -> Nav {
+        if rsk_ui::hit_title_back(p) {
+            return Nav::Goto(SettingsPage::Root);
+        }
+        match rsk_ui::hit_security(p) {
+            Some(SecurityEntry::DevicePin) => self.run_set_pin(PinScope::Device),
+            Some(SecurityEntry::FidoPin) => self.run_set_pin(PinScope::Fido),
+            Some(SecurityEntry::PivPin) => self.run_piv_pins(),
+            Some(SecurityEntry::AuditLog) => self.run_auditlog(),
+            Some(SecurityEntry::Backup) => self.run_backup(),
+            // A confirmed reset queues the reboot and returns `true` — leave at once
+            // so nothing runs between the wipe and the reset (`persist_settings`
+            // would otherwise re-create EF_DISPLAY, carrying `pin_declined` across
+            // the factory reset). A cancel falls back to this page.
+            Some(SecurityEntry::FactoryReset) => {
+                if self.run_factory_reset() {
+                    return Nav::Leave(None);
+                }
+            }
+            None => return Nav::Idle,
+        }
+        *last = Instant::now();
+        Nav::Stay
+    }
+
+    /// Brightness: −/+ applies live, and only a value that actually moved marks the
+    /// session dirty — a tap at a clamp boundary must not cost a flash write.
+    fn settings_brightness(&mut self, p: rsk_ui::Point, dirty: &mut bool) -> Nav {
+        let Some(step) = adjust_step(p) else {
+            return adjust_exit(p);
+        };
+        let was = self.brightness;
+        self.set_brightness(rsk_ui::step_brightness(self.brightness, step));
+        *dirty |= self.brightness != was;
+        Nav::Stay
+    }
+
+    /// Touch timeout: the presence wait, which rides `EF_PHY` rather than
+    /// `EF_DISPLAY` — hence its own dirty flag.
+    fn settings_timeout(&mut self, p: rsk_ui::Point, dirty: &mut bool) -> Nav {
+        let Some(step) = adjust_step(p) else {
+            return adjust_exit(p);
+        };
+        *dirty |= adjust_timeout(&mut self.hooks, step);
+        Nav::Stay
+    }
+
     /// Persist the display settings the user edited so they survive a reboot. Called
     /// once on Settings exit (every exit path — Back, a tab switch, the inactivity
     /// timeout, the power button), not per −/+ tap, so a tweak costs one flash write
@@ -280,3 +314,7 @@ where
         let _ = self.fs.borrow_mut().put(EF_DISPLAY, &cfg.encode());
     }
 }
+
+#[cfg(test)]
+#[path = "settings_tests.rs"]
+mod tests;

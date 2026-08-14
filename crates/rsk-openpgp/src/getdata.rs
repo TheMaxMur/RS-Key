@@ -61,13 +61,22 @@ pub fn get_data<S: Storage>(
 ) -> (usize, Sw) {
     let src = source(fid);
     match src {
-        DoSource::None => return (0, Sw::REFERENCE_NOT_FOUND),
-        // Internal EFs (keys, PINs, DEK) are found but read is denied by their ACL.
-        DoSource::Internal => return (0, Sw::SECURITY_STATUS_NOT_SATISFIED),
+        // A P1P2 this command does not serve is a wrong P1P2, whether it names
+        // nothing at all or an internal EF: a YubiKey 5.7.4 answers `6B00` to
+        // 65513 of the 65536 cells and keeps `6982` for the two private DOs it
+        // does serve. Telling the two apart located every internal EF for a
+        // caller holding no credential.
+        DoSource::None | DoSource::Internal => return (0, Sw::WRONG_P1P2),
         _ => {}
     }
-    // Private DOs 3/4 are gated on PW2/PW3.
-    if fid == EF_PRIV_DO_3 && !has_pw2 && !has_pw3 {
+    // §5's access table gives the private DOs two different owners and no admin
+    // override: `0103` is the cardholder's (PW1 no. 82), `0104` the admin's. A
+    // YubiKey 5.7.4 implements exactly that, 3/3 from a genuine deselect —
+    // unauthenticated both are `6982`, PW1-82 alone opens `0103` and not `0104`,
+    // PW3 alone opens `0104` and not `0103`. (An earlier reading had it serving
+    // `0104` to anyone; that one was taken with PW3 still standing, since a
+    // re-SELECT of the same AID does not clear this card's PW state.)
+    if fid == EF_PRIV_DO_3 && !has_pw2 {
         return (0, Sw::SECURITY_STATUS_NOT_SATISFIED);
     }
     if fid == EF_PRIV_DO_4 && !has_pw3 {
@@ -80,11 +89,13 @@ pub fn get_data<S: Storage>(
     };
     // `build` reports a DO's full stored length, which can exceed `out` when an
     // over-long object was stored (Fs::read returns the value's full length, the
-    // Func(AlgoInfo) C1/C2/C3 arm returns fs.size() directly). Clamp before any
-    // slice so an oversized object truncates instead of panicking here
-    // (`&out[..data_len]`) or upstream (`res.extend(&scratch[..n])`).
+    // Func(AlgoInfo) C1/C2/C3 arm returns fs.size() directly). PUT DATA bounds
+    // every write at MAX_DO_BYTES = out.len(), so reaching here means a value an
+    // older build wrote through the wider chaining buffer. Refuse rather than
+    // slice: a short body under `9000` is indistinguishable from a complete one,
+    // and the caller would panic on `&out[..data_len]` if we did not.
     if data_len > out.len() {
-        data_len = out.len();
+        return (0, Sw::MEMORY_FAILURE);
     }
     // GET DATA returns a PRIMITIVE DO's bare value (gpg/opensc want the value,
     // not its tag+length), but a CONSTRUCTED template DO keeps its outer
@@ -112,38 +123,6 @@ pub fn get_data<S: Storage>(
     }
     *current_ef = Some(fid);
     (data_len, Sw::OK)
-}
-
-/// Walk the private DOs (`0101`..`0104`): requires a prior GET DATA (sets
-/// `current_ef`), the same DO group, and PW3; then reads `current_ef + 1`.
-pub fn get_next_data<S: Storage>(
-    fid: u16,
-    has_pw2: bool,
-    has_pw3: bool,
-    fs: &mut Fs<S>,
-    full_aid: &[u8; 16],
-    current_ef: &mut Option<u16>,
-    out: &mut [u8],
-) -> (usize, Sw) {
-    let cur = match *current_ef {
-        Some(f) => f,
-        None => return (0, Sw::RECORD_NOT_FOUND),
-    };
-    if matches!(source(fid), DoSource::None) {
-        return (0, Sw::REFERENCE_NOT_FOUND);
-    }
-    // The next-DO walk is an update-class operation, gated on PW3.
-    if !has_pw3 {
-        return (0, Sw::SECURITY_STATUS_NOT_SATISFIED);
-    }
-    if (cur & 0x1ff0) != (fid & 0x1ff0) {
-        return (0, Sw::WRONG_P1P2);
-    }
-    let next = cur + 1;
-    if matches!(source(next), DoSource::None) {
-        return (0, Sw::REFERENCE_NOT_FOUND);
-    }
-    get_data(next, has_pw2, has_pw3, fs, full_aid, current_ef, out)
 }
 
 #[cfg(test)]

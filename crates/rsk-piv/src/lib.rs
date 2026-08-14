@@ -7,7 +7,7 @@
 //! Yubico extensions `ykman piv` / `yubico-piv-tool` exercise (metadata, serial,
 //! attestation, move/delete, set-mgm-key, set-retries, reset), reached over CCID.
 //! Pure and host-testable; key machinery comes from `rsk-openpgp`, private keys
-//! at rest are GCM-sealed ([`seal`]), and management operations (IMPORT KEY, PUT
+//! at rest are GCM-sealed (`seal`), and management operations (IMPORT KEY, PUT
 //! DATA, SET MGM KEY, MOVE KEY, SET RETRIES) require management-key auth.
 
 extern crate alloc;
@@ -22,7 +22,7 @@ mod x509;
 
 use core::cell::RefCell;
 
-use rsk_crypto::Device;
+use rsk_crypto::{Device, FusedKey, FusedRead, read_fused};
 use rsk_fs::{Fs, Sealed, Storage};
 pub use rsk_openpgp::Rng;
 use rsk_openpgp::keys::{MAX_RSA_BYTES, MAX_RSA_PUBDO, RSA_PUB_EXP_BE, make_rsa_pub_body};
@@ -39,14 +39,20 @@ use files::*;
 
 /// The PIV AID prefix the dispatcher matches. The full requested AID is
 /// `A0 00 00 03 08 00 00 10 00 01 00`.
-pub const PIV_AID: &[u8] = &[0xA0, 0x00, 0x00, 0x03, 0x08];
+/// The PIV application AID, SP 800-73-4 §2.2 in full: the NIST RID followed by
+/// the application identifier and its version. Registered whole rather than as
+/// the bare RID, because SELECT matches a candidate as a PREFIX of this — so the
+/// 9-byte version-agnostic prefix and the bare RID both still select, while
+/// `RID ‖ anything else` no longer does. SP 800-85A-4 C.1.1.2 names
+/// `A0 00 00 03 08 00 00 00 00` as an INVALID AID expecting `6A82`, and it is
+/// only invalid against the full value.
+pub const PIV_AID: &[u8] = &[
+    0xA0, 0x00, 0x00, 0x03, 0x08, 0x00, 0x00, 0x10, 0x00, 0x01, 0x00,
+];
 
 /// Reported PIV application version — the shared [`rsk_sdk::FIRMWARE_VERSION`]
 /// (default 5.7.4, `FW_VERSION`-overridable).
 pub const VERSION: (u8, u8, u8) = rsk_sdk::FIRMWARE_VERSION;
-
-/// Status 0x6A80 (wrong data).
-pub(crate) const WRONG_DATA: Sw = Sw::INCORRECT_PARAMS;
 
 const INS_VERIFY: u8 = 0x20;
 const INS_CHANGE_PIN: u8 = 0x24;
@@ -67,11 +73,6 @@ const INS_VERSION: u8 = 0xFD;
 const INS_IMPORT_ASYM: u8 = 0xFE;
 const INS_SET_MGMKEY: u8 = 0xFF;
 
-/// YubiKey "PRINTED INFORMATION" object — repurposed to hold the PIN-protected
-/// management key (readable only after a PIN VERIFY, and only once protection is
-/// enabled). The key itself is synthesized from the sealed 0x9B auth slot, never
-/// stored a second time.
-const PRINTED_ID: u32 = 0x5FC109;
 const CHUID_ID: u32 = 0x5FC102;
 /// PivmanData (ADMIN DATA) TLV: outer `0x80 { 0x81 = flags, 0x82 = derived-key
 /// salt, 0x83 = PIN-change timestamp }`; flag bit `0x02` means the management key
@@ -114,6 +115,10 @@ pub(crate) enum ChallengeKind {
 #[derive(Default)]
 pub(crate) struct Session {
     pub(crate) has_pin: bool,
+    /// The PIN verified *and* unspent since: a pin-policy ALWAYS slot needs both.
+    /// A private-key operation at any PIN-gated slot spends this one alone
+    /// ([`auth::general_authenticate`]), leaving the card's PIN status standing.
+    pub(crate) pin_fresh: bool,
     pub(crate) has_mgm: bool,
     pub(crate) has_challenge: bool,
     pub(crate) chal_kind: ChallengeKind,
@@ -126,21 +131,35 @@ pub(crate) struct Session {
 }
 
 impl Session {
-    fn reset(&mut self) {
-        self.has_pin = false;
-        self.has_mgm = false;
+    /// Set (or clear) the card's PIN security status. Freshness never outlives it,
+    /// so every writer of `has_pin` goes through here — only a key operation spends
+    /// freshness on its own.
+    fn set_pin(&mut self, verified: bool) {
+        self.has_pin = verified;
+        self.pin_fresh = verified;
+    }
+
+    /// Drop an outstanding GENERAL AUTHENTICATE challenge/witness.
+    fn clear_challenge(&mut self) {
         self.has_challenge = false;
         self.chal_kind = ChallengeKind::None;
         self.chal_algo = 0;
         self.challenge.zeroize();
+    }
+
+    fn reset(&mut self) {
+        self.set_pin(false);
+        self.has_mgm = false;
+        self.clear_challenge();
     }
 }
 
 pub struct PivApplet<'a> {
     serial_id: [u8; 8],
     serial_hash: [u8; 32],
-    /// The OTP MKEK, once provisioned.
-    otp_key: Option<[u8; 32]>,
+    /// How to read the OTP MKEK, once provisioned — never the key itself, so no
+    /// copy of it sits in this applet's memory between operations.
+    mkek_source: Option<FusedKey>,
     rng: &'a RefCell<dyn Rng>,
     presence: &'a RefCell<dyn UserPresence>,
     sess: Session,
@@ -157,14 +176,14 @@ impl<'a> PivApplet<'a> {
     pub fn new(
         serial_id: [u8; 8],
         serial_hash: [u8; 32],
-        otp_key: Option<[u8; 32]>,
+        mkek_source: Option<FusedKey>,
         rng: &'a RefCell<dyn Rng>,
         presence: &'a RefCell<dyn UserPresence>,
     ) -> Self {
         PivApplet {
             serial_id,
             serial_hash,
-            otp_key,
+            mkek_source,
             rng,
             presence,
             sess: Session::default(),
@@ -172,17 +191,37 @@ impl<'a> PivApplet<'a> {
         }
     }
 
+    /// Age an outstanding 9B challenge/witness against the command about to run.
+    /// Measured on a YubiKey 5.7.4, 3/3 over 10 slots: one survives another
+    /// GENERAL AUTHENTICATE (any P1/P2, success or failure) and a GET METADATA of
+    /// 9B itself; everything else drops it, including commands that fail. §3.2.4
+    /// does not give the lifetime, but it does say an interrupted GA chain "has no
+    /// effect on the PIV Card Application" — this is that principle one command
+    /// wider, and it narrows the race in which a host sharing the card completes
+    /// someone else's handshake.
+    fn age_challenge(&mut self, ins: u8, p2: u8) {
+        if ins == INS_AUTHENTICATE || (ins == INS_GET_METADATA && p2 == SLOT_CARDMGM) {
+            return;
+        }
+        self.sess.clear_challenge();
+    }
+
     /// Owned copies of the device identifiers, for building a [`Device`] that
-    /// does not hold a borrow of `self` across `&mut self` calls.
-    fn device_ids(&self) -> ([u8; 32], [u8; 8], Option<[u8; 32]>) {
-        (self.serial_hash, self.serial_id, self.otp_key)
+    /// does not hold a borrow of `self` across `&mut self` calls. The MKEK is read
+    /// from the fuses here, so it is live only while the caller holds the tuple.
+    fn device_ids(&self) -> ([u8; 32], [u8; 8], FusedRead) {
+        (
+            self.serial_hash,
+            self.serial_id,
+            read_fused(self.mkek_source),
+        )
     }
 
     /// If `apdu` is a PIV RSA GENERATE, validate it fully and return the slot,
     /// modulus size and resolved policy bytes so the firmware can run the slow
-    /// prime search itself (stepping [`RsaKeygen`] between CCID keepalives).
-    /// `None` falls through to normal dispatch — EC generate, or any error
-    /// (re-validated there so the right SW is reported).
+    /// prime search itself (stepping [`rsk_openpgp::keys::RsaKeygen`] between
+    /// CCID keepalives). `None` falls through to normal dispatch — EC generate,
+    /// or any error (re-validated there so the right SW is reported).
     pub fn rsa_generate_params<S: Storage>(
         &mut self,
         _fs: &mut Fs<S>,
@@ -190,6 +229,16 @@ impl<'a> PivApplet<'a> {
         p2: u8,
         data: &[u8],
     ) -> Option<(u8, usize, [u8; 2])> {
+        // The shortcut's copy of `process`'s challenge ageing: a GENERATE served
+        // from here never reaches `process` at all. Its `Lc = 1` refusal is not
+        // copied and does not need to be — a one-byte body cannot parse as a
+        // generate template, so the guard below declines and `process` answers. It is unobservable today and no
+        // test can fail on it — `begin_handshake` drops `has_mgm`, so past the
+        // guard below there is never a challenge left to age, and a *declined*
+        // GENERATE falls through to `process`, which ages it there. Both facts
+        // belong to other files (`auth.rs`, `rsk-device`'s `ccid.rs`); this line
+        // is what holds if either moves.
+        self.age_challenge(INS_ASYM_KEYGEN, p2);
         if p1 != 0x00 || !self.sess.has_mgm || !is_key(p2) {
             return None;
         }
@@ -213,10 +262,11 @@ impl<'a> PivApplet<'a> {
         let Some(algo) = keygen::rsa_algo_from_size(key.size()) else {
             return (0, Sw::EXEC_ERROR);
         };
+        let mkek = read_fused(self.mkek_source);
         let dev = Device {
             serial_hash: &self.serial_hash,
             serial_id: &self.serial_id,
-            otp_key: self.otp_key.as_ref(),
+            otp_key: mkek.as_deref(),
         };
         let mut res = ResBuf::new(resp);
         let sw = keygen::finish_rsa(&dev, fs, rng, slot, algo, pol, key, &mut res);
@@ -257,8 +307,18 @@ impl<S: Storage> Applet<Fs<S>> for PivApplet<'_> {
         true
     }
 
-    fn select(&mut self, _reselect: bool, fs: &mut Fs<S>, res: &mut ResBuf) -> Sw {
-        self.sess.reset();
+    /// SP 800-73-4 Part 2 §3.1.1 makes this a `shall`: when the requested AID is
+    /// the PIV AID "or the right-truncated version thereof" and PIV is already
+    /// current, "the setting of all security status indicators in the PIV Card
+    /// Application shall be unchanged" — §2.4.2 counting the PIN and the card
+    /// application administration key among them. A different valid AID and a
+    /// power cycle still clear it, through the dispatcher's `deselect`, and an
+    /// AID the ICC does not support never reaches an applet. Measured on a
+    /// YubiKey 5.7.4, 3/3, every paragraph of §3.1.1 reproduced.
+    fn select(&mut self, reselect: bool, fs: &mut Fs<S>, res: &mut ResBuf) -> Sw {
+        if !reselect {
+            self.sess.reset();
+        }
         // The default PIN/PUK/retry/mgmt/attestation files are provisioned once
         // and afterwards only ever removed by a path that recreates them (PIV
         // `reset_files`) or reboots (trusted-display factory wipe → `sys_reset`);
@@ -266,11 +326,11 @@ impl<S: Storage> Applet<Fs<S>> for PivApplet<'_> {
         // power-cycle they are present — skip the five flash `has_data` probes
         // scan_files would otherwise repeat on every re-SELECT.
         if !self.files_ensured {
-            let (serial_hash, serial_id, otp_key) = self.device_ids();
+            let (serial_hash, serial_id, mkek) = self.device_ids();
             let dev = Device {
                 serial_hash: &serial_hash,
                 serial_id: &serial_id,
-                otp_key: otp_key.as_ref(),
+                otp_key: mkek.as_deref(),
             };
             let mut rng = self.rng.borrow_mut();
             if files::scan_files(&dev, fs, &mut *rng).is_err() {
@@ -286,11 +346,22 @@ impl<S: Storage> Applet<Fs<S>> for PivApplet<'_> {
     }
 
     fn process(&mut self, apdu: &Apdu, fs: &mut Fs<S>, res: &mut ResBuf) -> Sw {
-        let (serial_hash, serial_id, otp_key) = self.device_ids();
+        self.age_challenge(apdu.ins, apdu.p2);
+        // A body this short can be no command's — not one BER-TLV, not a PIN,
+        // not a key. A YubiKey 5.7.4 answers `6A80` to `Lc = 1` on every
+        // instruction and treats every other length exactly as `Lc = 0`,
+        // including on the two ungated reads that answer `9000` and ignore
+        // their body. It outranks the ACL there, which is sound because the
+        // answer depends on nothing: same for `41`, `00` and `5C`, with and
+        // without `Le`, short and extended.
+        if apdu.nc == 1 {
+            return Sw::WRONG_DATA;
+        }
+        let (serial_hash, serial_id, mkek) = self.device_ids();
         let dev = Device {
             serial_hash: &serial_hash,
             serial_id: &serial_id,
-            otp_key: otp_key.as_ref(),
+            otp_key: mkek.as_deref(),
         };
         match apdu.ins {
             INS_VERSION => {
@@ -306,7 +377,7 @@ impl<S: Storage> Applet<Fs<S>> for PivApplet<'_> {
                 if apdu.p2 != 0x01 {
                     return Sw::WRONG_P1P2;
                 }
-                if apdu.data.len() >= PIV_AID.len() && &apdu.data[..PIV_AID.len()] == PIV_AID {
+                if !apdu.data.is_empty() && PIV_AID.starts_with(apdu.data) {
                     return apt(res);
                 }
                 Sw::OK
@@ -369,11 +440,20 @@ impl PivApplet<'_> {
         apdu: &Apdu,
         _res: &mut ResBuf,
     ) -> Sw {
+        // Both halves of VERIFY's own framing are `6A80` on a YubiKey 5.7.4, not
+        // `6A86` and not `6700`: measured over P1 `01`/`02`/`7F`/`FE` and over
+        // `FF` carrying a body, 3 runs each, and none of them moves the standing
+        // status (only a malformed body at P1 `00` does, below).
         if apdu.p1 != 0x00 && apdu.p1 != 0xFF {
-            return Sw::INCORRECT_P1P2;
+            return Sw::WRONG_DATA;
         }
+        // SP 800-73-4's VERIFY response table has no `6A88` for an undefined key
+        // reference: it is `6A80`, and that is what a YubiKey 5.7.4 answers to
+        // `00`, `01`, `04`, `81`, `82`, `9B` and `FF` alike (measured, case 1 and
+        // with an Le, 3/3). Only `80` names a reference this application has —
+        // one it can still be *missing*, which is the `6A88` below.
         if apdu.p2 != REF_PIN {
-            return Sw::REFERENCE_NOT_FOUND;
+            return Sw::WRONG_DATA;
         }
         if !fs.has_data(EF_PIN) {
             return Sw::REFERENCE_NOT_FOUND;
@@ -381,9 +461,9 @@ impl PivApplet<'_> {
         if apdu.p1 == 0xFF {
             // SP 800-73: reset the security status of the PIN.
             if apdu.nc != 0 {
-                return Sw::WRONG_LENGTH;
+                return Sw::WRONG_DATA;
             }
-            self.sess.has_pin = false;
+            self.sess.set_pin(false);
             return Sw::OK;
         }
         if apdu.nc == 0 {
@@ -399,50 +479,66 @@ impl PivApplet<'_> {
             }
             return Sw::retries(left);
         }
-        match check_ref(dev, fs, EF_PIN, RETRY_PIN, apdu.data) {
-            Sw::OK => {
-                self.sess.has_pin = true;
-                Sw::OK
-            }
-            sw => sw,
+        // SP 800-73-4 pt2 §2.4.3 fixes the reference at 8 bytes on the wire, so a
+        // body that cannot be one is not a mismatch and must not cost a retry —
+        // three of them blocked the PIN. A YubiKey answers 6A80 and still drops the
+        // standing status (measured 1-16, 24, 32). `Lc = 1` never reaches here on
+        // either card — `process` refuses it above the whole applet — so its
+        // keeping the status is that rule's consequence, not an exception to this
+        // one. Ahead of `check_ref` so it also precedes the blocked floor, which is
+        // the oracle's order too.
+        if apdu.nc != PIN_WIRE_LEN {
+            self.sess.set_pin(false);
+            return Sw::WRONG_DATA;
         }
+        // SP 800-73-4 Part 2 §3.2.1.1 on a mismatch: "the card command shall
+        // fail, the PIV Card Application shall return the status word '63 CX',
+        // **the security status of the key reference shall be set to FALSE**, and
+        // the retry counter … shall be decremented by one." A YubiKey 5.7.4 does
+        // exactly that, measured: sign, one wrong VERIFY, and the next signature
+        // is 6982. Ours kept signing, so a user who blocked the card by typing
+        // wrong PINs — the human reflex, and the standard advice for a card they
+        // think is compromised — did not stop an attacker who already had a live
+        // verified session.
+        let sw = check_ref(dev, fs, EF_PIN, RETRY_PIN, apdu.data);
+        self.sess.set_pin(sw.is_ok());
+        sw
     }
 
-    /// CHANGE REFERENCE DATA (INS 0x24): `old ‖ new`, old length taken from
-    /// the stored record.
+    /// CHANGE REFERENCE DATA (INS 0x24): `old ‖ new`, one wire form each.
+    ///
+    /// A reference this command does not have is `6A88`, on the P1 axis as well
+    /// as the P2 one — measured on a YubiKey 5.7.4 over P2 `00`/`01`/`04`/`82`/
+    /// `9B`/`FF` and P1 `01`/`FF`, 3 runs. It disagrees with `verify`'s `6A80`
+    /// for the same class; the card is not consistent across the two commands
+    /// and we follow the card, not the pattern.
     fn change_pin<S: Storage>(&mut self, dev: &Device, fs: &mut Fs<S>, apdu: &Apdu) -> Sw {
         if apdu.p1 != 0x00 {
-            return Sw::INCORRECT_P1P2;
+            return Sw::REFERENCE_NOT_FOUND;
         }
         let which = match apdu.p2 {
             REF_PIN => PinRef::Pin,
             REF_PUK => PinRef::Puk,
-            _ => return Sw::INCORRECT_P1P2,
+            _ => return Sw::REFERENCE_NOT_FOUND,
         };
-        let (fid, _) = which.fid_retry();
-        let old_len = match stored_pin_len(fs, fid) {
-            Ok(n) => n,
-            Err(sw) => return sw,
+        let Some((old, new)) = wire_reference_pair(apdu) else {
+            return Sw::WRONG_DATA;
         };
-        if apdu.nc <= old_len {
-            return Sw::WRONG_LENGTH;
-        }
-        change_reference(dev, fs, which, &apdu.data[..old_len], &apdu.data[old_len..])
+        change_reference(dev, fs, which, old, new)
     }
 
     /// RESET RETRY COUNTER (INS 0x2C): unblock/replace the PIN with the PUK.
+    /// `6A88` for anything but `P1 = 00, P2 = 80`, as on `change_pin` — and here
+    /// `81` names no reference either, since the PUK is the credential rather
+    /// than the target.
     fn reset_retry<S: Storage>(&mut self, dev: &Device, fs: &mut Fs<S>, apdu: &Apdu) -> Sw {
         if apdu.p1 != 0x00 || apdu.p2 != REF_PIN {
-            return Sw::INCORRECT_P1P2;
+            return Sw::REFERENCE_NOT_FOUND;
         }
-        let puk_len = match stored_pin_len(fs, EF_PUK) {
-            Ok(n) => n,
-            Err(sw) => return sw,
+        let Some((puk, new)) = wire_reference_pair(apdu) else {
+            return Sw::WRONG_DATA;
         };
-        if apdu.nc <= puk_len {
-            return Sw::WRONG_LENGTH;
-        }
-        unblock_pin_with_puk(dev, fs, &apdu.data[..puk_len], &apdu.data[puk_len..])
+        unblock_pin_with_puk(dev, fs, puk, new)
     }
 
     /// SET RETRIES (INS 0xFA): resets both references to their defaults with the
@@ -452,8 +548,13 @@ impl PivApplet<'_> {
         if !self.sess.has_mgm || !self.sess.has_pin {
             return Sw::SECURITY_STATUS_NOT_SATISFIED;
         }
+        // A DELIBERATE divergence, not an oversight: `00 FA 00 00` on a YubiKey
+        // 5.7.4 answers 9000 and sets both counters to 0/0, permanently blocking
+        // the card — only a factory reset recovers, and it takes the keys. That is
+        // AGENTS.md's one parity carve-out (never adopt a behaviour that loses
+        // user data), so this refusal stays. Pinned by a test; do not "fix" it.
         if apdu.p1 == 0 || apdu.p2 == 0 {
-            return Sw::INCORRECT_PARAMS;
+            return Sw::WRONG_DATA;
         }
         if fs
             .put(EF_RETRIES, &[apdu.p1, apdu.p1, apdu.p2, apdu.p2])
@@ -466,7 +567,7 @@ impl PivApplet<'_> {
         {
             return Sw::MEMORY_FAILURE;
         }
-        self.sess.has_pin = false;
+        self.sess.set_pin(false);
         Sw::OK
     }
 
@@ -481,7 +582,7 @@ impl PivApplet<'_> {
             _ => return Sw::REFERENCE_NOT_FOUND,
         };
         if pin_left != 0 || puk_left != 0 {
-            return Sw::INCORRECT_PARAMS;
+            return Sw::WRONG_DATA;
         }
         let mut rng = self.rng.borrow_mut();
         if files::reset_files(dev, fs, &mut *rng).is_err() {
@@ -508,19 +609,22 @@ impl PivApplet<'_> {
         apdu: &Apdu,
         res: &mut ResBuf,
     ) -> Sw {
-        if apdu.p1 != 0x00 {
-            return Sw::INCORRECT_P1P2;
-        }
-        if apdu.nc == 0 {
-            return Sw::WRONG_LENGTH;
-        }
-        if apdu.data[0] != TAG_GEN_TEMPLATE {
-            return WRONG_DATA;
-        }
+        // The management key outranks everything about the request — its body's
+        // length, its template's tag, and its P1P2. A YubiKey 5.7.4 answers
+        // `6982` to an unauthenticated GENERATE at every length 0..40, to a
+        // template with the wrong tag, to `P1 = 01` and to a P2 naming no slot;
+        // only once authenticated does it tell them apart. The same ordering PUT
+        // DATA took at `0x08F3`. Our P1P2 strictness is unchanged and sits below,
+        // where E140 kept it — the reference ignores both bytes there.
         if !self.sess.has_mgm {
             return Sw::SECURITY_STATUS_NOT_SATISFIED;
         }
-        if !is_key(apdu.p2) {
+        // A missing body is a bad request rather than a length error, the
+        // spelling the reference uses for every framing refusal on this command.
+        if apdu.nc == 0 || apdu.data[0] != TAG_GEN_TEMPLATE {
+            return Sw::WRONG_DATA;
+        }
+        if apdu.p1 != 0x00 || !is_key(apdu.p2) {
             return Sw::INCORRECT_P1P2;
         }
         let req = match keygen::parse_gen_template(apdu.data) {
@@ -535,7 +639,7 @@ impl PivApplet<'_> {
             ALGO_RSA1024 | ALGO_RSA2048 | ALGO_RSA3072 | ALGO_RSA4096 => {
                 keygen::generate_rsa_blocking(dev, fs, &mut *rng, apdu.p2, &req, res)
             }
-            _ => WRONG_DATA,
+            _ => Sw::WRONG_DATA,
         }
     }
 
@@ -546,21 +650,29 @@ impl PivApplet<'_> {
         }
         let d = apdu.data;
         if d.len() < 3 || d[0] != TAG_DATA_PATH {
-            return WRONG_DATA;
+            return Sw::WRONG_DATA;
         }
         let l = d[1] as usize;
         if l == 0 || l > 3 || d.len() < 2 + l {
-            return WRONG_DATA;
+            return Sw::WRONG_DATA;
         }
         let mut id: u32 = 0;
         for &b in &d[2..2 + l] {
             id = id << 8 | b as u32;
         }
+        // Before the object is looked up: an absent one must answer the same
+        // 6982 a present one does, or the gate becomes a probe for what the card
+        // holds (measured on a YubiKey, both cells, 3 runs).
+        if read_needs_pin(id) && !self.sess.has_pin {
+            return Sw::SECURITY_STATUS_NOT_SATISFIED;
+        }
         if id == DISCOVERY_ID {
             res.extend(DISCOVERY);
             return Sw::OK;
         }
-        if id == PRINTED_ID {
+        // An escrowed card reads its management key back here, synthesized from
+        // the sealed 0x9B slot; otherwise PRINTED is an ordinary data object.
+        if id == PRINTED_ID && mgm_is_protected(fs) {
             return self.get_protected_mgm(fs, res);
         }
         let Some(fid) = object_fid(id) else {
@@ -590,22 +702,20 @@ impl PivApplet<'_> {
         Sw::OK
     }
 
-    /// GET DATA for the PRINTED object (`5FC109`) — the PIN-protected management
-    /// key. Returns it only when protection is enabled (the ADMIN-DATA flag) AND
-    /// the PIN is verified; a default or plain mgmt key reads as absent, so the
-    /// key is never PIN-disclosed unless the user opted in. The key is synthesized
-    /// from the sealed 0x9B auth slot — there is no second copy at rest.
+    /// GET DATA for the PRINTED object (`5FC109`) once protection is enabled (the
+    /// caller checks the ADMIN-DATA flag): the PIN-protected management key,
+    /// synthesized from the sealed 0x9B auth slot, so there is no second copy at
+    /// rest. Never reached without the flag, so the key is not disclosed unless
+    /// the user opted in.
     fn get_protected_mgm<S: Storage>(&mut self, fs: &mut Fs<S>, res: &mut ResBuf) -> Sw {
-        if !mgm_is_protected(fs) {
-            return Sw::FILE_NOT_FOUND;
-        }
         if !self.sess.has_pin {
             return Sw::SECURITY_STATUS_NOT_SATISFIED;
         }
+        let mkek = read_fused(self.mkek_source);
         let dev = Device {
             serial_hash: &self.serial_hash,
             serial_id: &self.serial_id,
-            otp_key: self.otp_key.as_ref(),
+            otp_key: mkek.as_deref(),
         };
         let mut key = [0u8; 32];
         let klen = match seal::seal_read(&dev, fs, key_fid(SLOT_CARDMGM), &mut key) {
@@ -645,28 +755,45 @@ impl PivApplet<'_> {
             find_tag(apdu.data, TAG_DATA_PATH as u16),
             find_tag(apdu.data, TAG_DATA_OBJECT as u16),
         ) else {
-            return WRONG_DATA;
+            return Sw::WRONG_DATA;
         };
         if path.len() != 3 {
-            return WRONG_DATA;
+            return Sw::WRONG_DATA;
         }
         let fid = match (path[0], path[1], path[2]) {
             // ADMIN DATA (5FFF00): the protection flags. Plaintext (non-secret).
             (0x5F, 0xFF, 0x00) => EF_PIVMAN_DATA,
-            // PRINTED (5FC109): the PIN-protected mgmt key is virtual — backed by
-            // the sealed 0x9B auth slot (set via SET MANAGEMENT KEY); the host's
-            // copy isn't persisted (GET DATA synthesizes it), so acknowledge the
-            // write without storing the key plaintext at rest.
-            (0x5F, 0xC1, 0x09) => return Sw::OK,
+            // PRINTED (5FC109) carrying an escrow record: the key it holds is
+            // already sealed in the 0x9B slot that GET DATA synthesizes from, and
+            // storing the host's copy would leave a management key in plaintext at
+            // rest. Acknowledged, not persisted. Ordinary printed information
+            // falls through to the generic object below and round-trips.
+            (0x5F, 0xC1, 0x09) if is_mgm_escrow(obj) => return Sw::OK,
+            // While the escrow is live, PRINTED *is* the escrow: GET DATA answers
+            // with the synthesized key, so other content stored under it could
+            // never be read back. Refused rather than acknowledged and hidden —
+            // and a YubiKey's alternative, overwriting the escrow, loses the only
+            // copy of a management key the owner may never have seen.
+            (0x5F, 0xC1, 0x09) if !obj.is_empty() && mgm_is_protected(fs) => {
+                return Sw::CONDITIONS_NOT_SATISFIED;
+            }
             (0x5F, 0xC1, b) => match data_object_fid(b) {
                 Some(fid) => fid,
-                None => return WRONG_DATA,
+                None => return Sw::WRONG_DATA,
             },
-            _ => return WRONG_DATA,
+            // Everything else, and `5FFF01` in particular: the attestation
+            // certificate is not host-writable. A YubiKey takes that write — one
+            // probe pass in this project destroyed a real YubiKey's factory chain
+            // with it, unrecoverably — and pairing it with a host-loaded F9 key
+            // would let the management key alone replace the device's attestation
+            // identity. Deliberate; pinned by a test and docs/limitations.md.
+            _ => return Sw::WRONG_DATA,
         };
         if obj.is_empty() {
-            let _ = fs.delete(fid);
-            return Sw::OK;
+            return match fs.delete(fid) {
+                Ok(()) => Sw::OK,
+                Err(_) => Sw::MEMORY_FAILURE,
+            };
         }
         if obj.len() > MAX_OBJECT {
             return Sw::WRONG_LENGTH;
@@ -685,6 +812,14 @@ impl PivApplet<'_> {
         apdu: &Apdu,
         res: &mut ResBuf,
     ) -> Sw {
+        // Kept strict on purpose. A YubiKey 5.7.4 ignores P1 here entirely and
+        // serves the full record for `01`, `02`, `80` and `FF` alike (measured,
+        // 3 runs) — and ignores P1P2 on INS `47`, `FA`, `FF`, `F6`, `FE`, `FB`,
+        // `F9` and `CB` too: the PIN commands' key reference and this command's
+        // P2 are the only P1P2 that card judges. Parity does not run this
+        // direction — the standing ruling keeps our strictness where the
+        // reference is *looser*. (`FD` and `FE` are P1P2-blind on our side as
+        // well, so this is the majority of the applet, not all of it.)
         if apdu.p1 != 0x00 {
             return Sw::INCORRECT_P1P2;
         }
@@ -705,6 +840,9 @@ impl PivApplet<'_> {
                     Ok(t) => t,
                     Err(sw) => return sw,
                 };
+                // The algorithm tag every other slot carries, so the record a
+                // host parses has one shape whichever reference it named.
+                res.extend(&[0x01, 0x01, ALGO_PIN]);
                 res.extend(&[0x05, 0x01, is_default as u8]);
                 res.extend(&[0x06, 0x02, total, left]);
                 Sw::OK
@@ -724,6 +862,19 @@ impl PivApplet<'_> {
                     Err(sw) => return sw,
                 };
                 key.zeroize();
+                // Tag `05` answers "is this slot as it left the factory", not
+                // "are these the factory key bytes" — a YubiKey 5.7.4 clears it
+                // when the FACTORY key is written back with `P2 = 0xFE`,
+                // measured 2 runs.
+                //
+                // The touch byte only. `meta[1]` looks like the same argument,
+                // but `0x0875` shipped `PINPOLICY_ALWAYS` there and `0x08D7`
+                // changed the mint without repairing what was written, so folding
+                // it in would clear the flag on every upgraded card still holding
+                // the factory key — losing a true warning to make a byte no
+                // reference varies agree. `&`, not `&&`: the key compare is
+                // `ct_eq` and this must not reintroduce a branch on its result.
+                let is_default = is_default & (meta[2] == TOUCHPOLICY_NEVER);
                 res.extend(&[0x01, 0x01, meta[0]]);
                 res.extend(&[0x02, 0x02, meta[1], meta[2]]);
                 res.extend(&[0x05, 0x01, is_default as u8]);
@@ -747,6 +898,17 @@ impl PivApplet<'_> {
                 res.extend(&[0x02, 0x02, meta[1], meta[2]]);
                 res.extend(&[0x03, 0x01, meta[3]]);
                 self.slot_pubkey_tlv(dev, fs, s, &meta[..n], res)
+            }
+            // F9 keeps no metadata record — `scan_files` mints the key, its
+            // cached point and its certificate, and nothing needed a head. The
+            // head is therefore synthesized rather than stored, so a card an
+            // older build provisioned answers the same as a fresh one. Every
+            // field is fixed by construction: on-card ECCP384, always generated.
+            SLOT_ATTESTATION if fs.has_key(key_fid(SLOT_ATTESTATION)) => {
+                res.extend(&[0x01, 0x01, ALGO_ECCP384]);
+                res.extend(&[0x02, 0x02, ATTESTATION_PIN_POLICY, TOUCHPOLICY_NEVER]);
+                res.extend(&[0x03, 0x01, ORIGIN_GENERATED]);
+                self.slot_pubkey_tlv(dev, fs, SLOT_ATTESTATION, &[ALGO_ECCP384], res)
             }
             _ => Sw::REFERENCE_NOT_FOUND,
         }
@@ -832,7 +994,7 @@ impl PivApplet<'_> {
         let tdes = cfg!(not(feature = "fips-profile"));
         let len_ok = mgm_key_len(algo) == Some(klen) && (tdes || algo != ALGO_3DES);
         if key_ref != SLOT_CARDMGM || !len_ok {
-            return WRONG_DATA;
+            return Sw::WRONG_DATA;
         }
         if apdu.nc != 3 + klen {
             return Sw::WRONG_LENGTH;
@@ -874,9 +1036,11 @@ impl PivApplet<'_> {
     /// MOVE KEY (INS 0xF6, Yubico 5.7, management-gated): move (or, to 0xFF,
     /// delete) a key with its certificate object and metadata.
     fn move_key<S: Storage>(&mut self, fs: &mut Fs<S>, apdu: &Apdu) -> Sw {
-        if apdu.nc != 0 {
-            return Sw::WRONG_LENGTH;
-        }
+        // The command's whole request is in P1P2, so a body says nothing and is
+        // ignored rather than refused — a YubiKey 5.7.4 answers `6982`
+        // unauthenticated and `6A88` for an empty source slot authenticated, at
+        // every length from 0 to 40 alike. Its own `6700` outranked the
+        // management key, which is the ordering E81 ended for PUT DATA.
         if !self.sess.has_mgm {
             return Sw::SECURITY_STATUS_NOT_SATISFIED;
         }
@@ -887,9 +1051,6 @@ impl PivApplet<'_> {
         // A self-move would write the key back then delete the source — the same
         // slot — destroying it; reject before any write, as real hardware does.
         if to == from {
-            return Sw::INCORRECT_P1P2;
-        }
-        if is_retired(from) && is_active(to) {
             return Sw::INCORRECT_P1P2;
         }
         // The sealed blob is bound to the device, not the fid, so it moves
@@ -998,12 +1159,14 @@ fn reset_counter<S: Storage>(fs: &mut Fs<S>, idx: usize) -> Sw {
     }
 }
 
-fn stored_pin_len<S: Storage>(fs: &mut Fs<S>, fid: u16) -> Result<usize, Sw> {
-    let mut rec = [0u8; PIN_REC_LEN];
-    let Some(PIN_REC_LEN) = fs.read(fid, &mut rec) else {
-        return Err(Sw::MEMORY_FAILURE);
-    };
-    Ok(rec[0] as usize)
+/// The `old ‖ new` body of CHANGE REFERENCE DATA / RESET RETRY COUNTER: exactly
+/// two [`PIN_WIRE_LEN`] blocks, split at the wire form and not at whatever length
+/// the card happens to have stored. Splitting at the stored length is what let an
+/// `8 ‖ 6` body mint a reference the wire form cannot present, and sizing the
+/// gate off it would leave a card poisoned that way unable to spend its PUK
+/// counter — the one precondition `INS FB` RESET has.
+fn wire_reference_pair<'a>(apdu: &'a Apdu) -> Option<(&'a [u8], &'a [u8])> {
+    (apdu.nc == 2 * PIN_WIRE_LEN).then(|| apdu.data.split_at(PIN_WIRE_LEN))
 }
 
 /// Boot-pass migration: re-seal every sealed PIV key slot under the OTP kbase
@@ -1027,6 +1190,24 @@ fn check_ref<S: Storage>(dev: &Device, fs: &mut Fs<S>, fid: u16, retry: usize, p
     let Some(PIN_REC_LEN) = fs.read(fid, &mut rec) else {
         return Sw::MEMORY_FAILURE;
     };
+    // Spend the attempt BEFORE comparing, and read the counter back before
+    // trusting it — `rsk-fido`'s `spend_and_verify_pin_hash` and the OTP fuse
+    // writes do the same. This single write is the anti-bruteforce gate, and
+    // comparing first left a window in which a write that *silently* did not
+    // land (a glitch, a partial program) answered `63Cx` to a wrong PIN and
+    // `9000` to the right one with the counter frozen — unlimited guesses at
+    // full speed. Ordering is what closes it, not the read-back alone: on a
+    // full counter the success path rewrites the value it already holds, so a
+    // read-back after the comparison is satisfied by a store that stored
+    // nothing. The cost is that a power cut here spends a retry the holder did
+    // not use, which is the direction to fail in.
+    if set_retries_left(fs, retry, left - 1).is_err() {
+        return Sw::MEMORY_FAILURE;
+    }
+    match retries_left(fs, retry) {
+        Ok(n) if n == left - 1 => {}
+        _ => return Sw::MEMORY_FAILURE,
+    }
     let ver = dev.pin_derive_verifier(pin);
     let mut matched = ct_eq(&ver, &rec[2..PIN_REC_LEN]);
     if !matched
@@ -1055,9 +1236,6 @@ fn check_ref<S: Storage>(dev: &Device, fs: &mut Fs<S>, fid: u16, retry: usize, p
         return Sw::OK;
     }
     let left = left - 1;
-    if set_retries_left(fs, retry, left).is_err() {
-        return Sw::MEMORY_FAILURE;
-    }
     if left == 0 {
         Sw::PIN_BLOCKED
     } else {
@@ -1094,6 +1272,31 @@ pub fn pad_pin(entered: &[u8]) -> Option<[u8; PIN_WIRE_LEN]> {
     Some(out)
 }
 
+/// The rule for a NEW PIN or PUK value: SP 800-73-4 §2.4.3 puts the reference at
+/// 6-8 bytes, `0xFF`-padded to 8. Only the length half is enforced, and that is
+/// deliberate — a YubiKey 5.7.4 accepts a non-digit reference on both the PIN and
+/// the PUK (measured), hosts are written against it, and the length is the half
+/// that matters anyway: it is what makes the search space larger than the retry
+/// counter. Without it the card accepted a 3-digit PIN as its own credential —
+/// 1000 candidates against three tries.
+fn check_new_reference(new: &[u8]) -> Result<(), Sw> {
+    // The RAW slice is what gets stored: `put_pin_verifier` takes its length as
+    // the record's own. So the wire form is the rule, not a bound — anything
+    // shorter or longer is stored at that length and becomes a reference no
+    // conformant host can ever present, i.e. the card wedged until a factory
+    // reset. This is the one owner: panel callers reach it through [`pad_pin`].
+    if new.len() != PIN_WIRE_LEN {
+        return Err(Sw::WRONG_DATA);
+    }
+    // Trailing padding is not part of the value. `0xFF` is unambiguous here even
+    // though non-digits are allowed: it is the pad byte the wire form defines.
+    let len = new.iter().rposition(|&b| b != PIN_PAD).map_or(0, |i| i + 1);
+    if !(PIN_MIN_LEN..=PIN_WIRE_LEN).contains(&len) {
+        return Err(Sw::WRONG_DATA);
+    }
+    Ok(())
+}
+
 /// Change a PIN or PUK: verify `old` (burns a retry on mismatch, exactly like the
 /// CHANGE REFERENCE DATA APDU), then store `new`. Shared by that handler and the
 /// on-device panel flow; panel callers pad both via [`pad_pin`] first so the
@@ -1105,13 +1308,17 @@ pub fn change_reference<S: Storage>(
     old: &[u8],
     new: &[u8],
 ) -> Sw {
-    if new.is_empty() || new.len() > PIN_WIRE_LEN {
-        return Sw::WRONG_LENGTH;
-    }
     let (fid, retry) = which.fid_retry();
+    // The OLD reference is judged first: a YubiKey spends a retry on a wrong one
+    // whether or not the new value is well formed, and only a correct old value
+    // reaches the format check. SP 800-85A-4 C.2.2.1's "the retry counter remains
+    // unchanged" is about exactly that case, and it holds.
     match check_ref(dev, fs, fid, retry, old) {
         Sw::OK => {}
         sw => return sw,
+    }
+    if let Err(sw) = check_new_reference(new) {
+        return sw;
     }
     if put_pin_verifier(dev, fs, fid, new).is_err() {
         return Sw::MEMORY_FAILURE;
@@ -1127,12 +1334,12 @@ pub fn unblock_pin_with_puk<S: Storage>(
     puk: &[u8],
     new: &[u8],
 ) -> Sw {
-    if new.is_empty() || new.len() > PIN_WIRE_LEN {
-        return Sw::WRONG_LENGTH;
-    }
     match check_ref(dev, fs, EF_PUK, RETRY_PUK, puk) {
         Sw::OK => {}
         sw => return sw,
+    }
+    if let Err(sw) = check_new_reference(new) {
+        return sw;
     }
     if put_pin_verifier(dev, fs, EF_PIN, new).is_err() {
         return Sw::MEMORY_FAILURE;
@@ -1150,9 +1357,35 @@ pub fn reference_retries_left<S: Storage>(fs: &mut Fs<S>, which: PinRef) -> Opti
 /// mismatch → `63Cx` / `6983`, resets on success). For the on-panel change/unblock flows to
 /// gate on the *current* secret before collecting the new one; the host VERIFY APDU stays
 /// its own path. Callers mirroring the host wire pad via [`pad_pin`] first.
+///
+/// It takes no session state on purpose: this is the *old-secret* check of a
+/// CHANGE REFERENCE DATA / RESET RETRY COUNTER, and a YubiKey 5.7.4 keeps the
+/// card's standing PIN status through a failed one — even the attempt that blocks
+/// the reference. Only VERIFY revokes; the pair is pinned by
+/// `only_a_failed_verify_revokes_the_standing_one`.
 pub fn verify_reference<S: Storage>(dev: &Device, fs: &mut Fs<S>, which: PinRef, pin: &[u8]) -> Sw {
     let (fid, retry) = which.fid_retry();
     check_ref(dev, fs, fid, retry, pin)
+}
+
+/// Whether a PRINTED body is exactly a PivmanProtectedData escrow record —
+/// `88 L1 { 89 L2 <key> }`, nothing around it, `L2` a management-key length.
+/// Matched exactly rather than scanned for: a `find_tag` scan swallows ordinary
+/// printed information that happens to carry those tags, which is the very
+/// defect this arm sits beside, and misses a `88` the host nested one level down.
+fn is_mgm_escrow(obj: &[u8]) -> bool {
+    let [PROTECTED_TAG, outer, PROTECTED_MGM_TAG, klen, ..] = *obj else {
+        return false;
+    };
+    let (outer, klen) = (outer as usize, klen as usize);
+    obj.len() == 2 + outer && outer == 2 + klen && is_mgm_key_len(klen)
+}
+
+/// A length a 9B management key can have — [`mgm_key_len`]'s image.
+fn is_mgm_key_len(len: usize) -> bool {
+    [ALGO_3DES, ALGO_AES128, ALGO_AES192, ALGO_AES256]
+        .iter()
+        .any(|&algo| mgm_key_len(algo) == Some(len))
 }
 
 /// Whether the management key is marked PIN-protected (the ADMIN-DATA `0x02`
@@ -1210,12 +1443,13 @@ fn mgm_clear_protected<S: Storage>(fs: &mut Fs<S>) -> Result<(), Sw> {
 ///
 /// Power-cut ordering: the key+meta are written before the ADMIN flag, so a torn
 /// write leaves the flag clear → PRINTED reads absent (fail-closed, no half-key
-/// disclosure). Re-running this (or a PIV factory reset) recovers — it depends on
-/// no prior state, just overwriting the slot.
+/// disclosure). Re-running this (or a PIV factory reset) recovers: the only prior
+/// state it reads is the touch byte, and an absent one resolves to the default.
 ///
 /// The ADMIN-DATA record is rebuilt from any prior host-written one
-/// ([`pivman_set_protected`]): the PIN-change timestamp and unrelated flag bits
-/// survive, so on-panel protect no longer discards a host's PivmanData.
+/// (`pivman_set_protected`): the PIN-change timestamp and unrelated flag bits
+/// survive, so on-panel protect no longer discards a host's PivmanData. A touch
+/// gate raised with `SET MGM KEY P2 = 0xFE` survives too — see below.
 pub fn protect_mgm_key<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng) -> Sw {
     // Read any existing PivmanData up front (before the writes below), so the new
     // record can carry its timestamp / flags forward.
@@ -1227,6 +1461,17 @@ pub fn protect_mgm_key<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn R
     let mut admin = [0u8; PIVMAN_MAX];
     let admin_len = pivman_set_protected(prior, &mut admin);
 
+    // The one thing about the slot this action was not asked to change. Only
+    // `SET MGM KEY P2 = 0xFE` raises the gate, and it is a setting rather than a
+    // property of the key bytes, so re-keying does not retire it; anything but a
+    // stored ALWAYS resolves to the published default, which keeps a spurious or
+    // torn record from inventing one.
+    let mut cur = [0u8; 8];
+    let touch = match fs.meta_find(key_fid(SLOT_CARDMGM).get(), &mut cur) {
+        Some(n) if n >= 3 && cur[2] == TOUCHPOLICY_ALWAYS => TOUCHPOLICY_ALWAYS,
+        _ => TOUCHPOLICY_NEVER,
+    };
+
     let mut key = [0u8; 32];
     rng.fill(&mut key);
     let sealed = seal::seal_put(dev, fs, rng, key_fid(SLOT_CARDMGM), &key);
@@ -1234,12 +1479,10 @@ pub fn protect_mgm_key<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn R
     if sealed.is_err() {
         return Sw::MEMORY_FAILURE;
     }
-    // pin-policy NEVER matches a real YubiKey's protected mgmt key (9B is not
-    // PIN-gated at the APDU level; `is_key(0x9B)` is false so auth ignores it).
     if fs
         .meta_add(
             key_fid(SLOT_CARDMGM).get(),
-            &[ALGO_AES256, PINPOLICY_NEVER, TOUCHPOLICY_NEVER],
+            &[ALGO_AES256, MGM_PIN_POLICY, touch],
         )
         .is_err()
     {
@@ -1358,3 +1601,15 @@ mod proofs;
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "reselect_tests.rs"]
+mod reselect_tests;
+
+#[cfg(test)]
+#[path = "challenge_tests.rs"]
+mod challenge_tests;
+
+#[cfg(test)]
+#[path = "dying_tests.rs"]
+mod dying_tests;

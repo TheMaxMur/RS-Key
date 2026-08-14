@@ -10,6 +10,7 @@
 //!      raw DECIPHER body.
 //!   2. `PrivKey::ecdh` — P-256 key agreement against the attacker-chosen peer
 //!      point (SEC1 decode + off-curve rejection).
+//!
 //! Neither may panic; the agreement may only return a status word.
 
 use libfuzzer_sys::fuzz_target;

@@ -6,7 +6,7 @@
 
 use rsk_sdk::{Apdu, Sw};
 
-use crate::consts::{EF_CH_CERT, OPENPGP_AID, WRONG_DATA};
+use crate::consts::{CERT_OCCURRENCES, EF_CH_CERT, OPENPGP_AID};
 use crate::files::{DoSource, source};
 use crate::pin::Session;
 
@@ -65,11 +65,19 @@ pub fn cmd_select(apdu: &Apdu, out: &mut [u8]) -> (usize, Sw) {
     };
     let found = match p1 {
         0x00 if apdu.nc == 0 => true, // select MF / application root
-        0x00..=0x02 if apdu.nc == 2 => !matches!(source(fid), DoSource::None),
-        0x04 => {
-            let aid = OPENPGP_AID;
-            apdu.nc >= aid.len() && &apdu.data[..aid.len()] == aid
-        }
+        // Same rule GET DATA applies: an internal EF is not a file this command
+        // has, so it answers what an absent fid answers. Anything else made a
+        // second, unauthenticated way to locate the 28 storage FIDs the applet's
+        // own tag space exposes. (The reference has no SELECT-by-fid at all —
+        // `00 A4 P1<=03` is `6D00` there, over the whole 16-bit space.)
+        0x00..=0x02 if apdu.nc == 2 => !matches!(source(fid), DoSource::None | DoSource::Internal),
+        // Same rule the dispatcher applies (ISO 7816-4 truncated select): the
+        // requested AID must be a PREFIX of ours. This arm is reachable — the
+        // dispatcher only intercepts P2 `00`/`04`, so a `P2 = 05` SELECT lands
+        // here — and it used to ask the opposite question, accepting
+        // `AID ‖ anything` that the dispatcher had just started refusing. Two
+        // paths, one rule.
+        0x04 => !apdu.data.is_empty() && OPENPGP_AID.starts_with(apdu.data),
         _ => false,
     };
     if !found {
@@ -104,7 +112,7 @@ pub fn select_data(apdu: &Apdu, sess: &mut Session) -> Sw {
     }
     let taglen = d[3] as usize;
     if d[2] != 0x5C || taglen == 0 || taglen > 2 || d.len() < 4 + taglen {
-        return WRONG_DATA;
+        return Sw::WRONG_DATA;
     }
     let tag = if taglen == 2 {
         ((d[4] as u16) << 8) | d[5] as u16
@@ -112,8 +120,14 @@ pub fn select_data(apdu: &Apdu, sess: &mut Session) -> Sw {
         d[4] as u16
     };
     // Only the cardholder certificate has occurrences; three of them (EF_CH_1/2/3).
-    if tag != EF_CH_CERT || apdu.p1 >= 3 {
+    // The two failures are different bytes: an occurrence past the last one is P1
+    // (a YubiKey 5.7.4 answers `6B00` to 3 and 4, measured 3/3, where 0-2 are
+    // `9000`), while a tag with no occurrences at all is named in the data field.
+    if tag != EF_CH_CERT {
         return Sw::REFERENCE_NOT_FOUND;
+    }
+    if apdu.p1 >= CERT_OCCURRENCES {
+        return Sw::WRONG_P1P2;
     }
     sess.cert_occ = apdu.p1;
     Sw::OK

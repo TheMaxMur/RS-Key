@@ -94,6 +94,24 @@ status not satisfied" and **nothing is computed**. For HOTP this gate sits
 press leaves the account exactly where it was. The button is the same physical
 press used by FIDO and OpenPGP UIF; only one prompt is outstanding at a time.
 
+## Accounts that only go forward
+
+The YKOATH protocol has a second per-account property beside touch, *only
+increasing*, and the firmware enforces it the way a YubiKey does. A TOTP account
+carrying it remembers the highest challenge it has served and refuses anything at
+or below that, so its codes can only move forward in time. That is worth having
+against brief physical access: nobody can walk your clock backwards and harvest
+the windows you already used, and if someone does read a *future* window, your
+next legitimate code fails — which is how you find out.
+
+The cost is that the account is only as usable as your clock. If the host's time
+jumps backwards (a bad NTP correction, a timezone-confused VM, a dual-boot
+machine with a local-time RTC), the account stops answering until real time
+catches up, and there is no way to lower the mark short of re-adding the account.
+`ykman` does not expose the property today; a client that does will say so.
+Ordinary accounts are unaffected — the mark exists only where the property was
+set at enrollment.
+
 ## The OATH access password
 
 By default the credential list and codes are readable by anything that can
@@ -132,6 +150,31 @@ Footguns:
 - `--touch` per account and the access password are independent hardenings.
   Use either, both, or neither.
 
+### The OTP PIN and the password safe
+
+Alongside the OATH accounts the applet can store a login, a password and a note
+per credential — the password-safe extension `nitropy` speaks. Those fields are
+secrets in a way a TOTP code is not: a code expires, a stored password does not.
+
+They are read by `GET CREDENTIAL`, and **the rule is that an OTP PIN, once set,
+is always required for it** — on a fresh connection, whether or not an access
+password is also configured, and again after every re-select. `VERIFY CODE` is
+gated the same way. Set the PIN with `nitropy nk3 secrets set-pin`; the card
+demands a touch when it mints one, so a PIN cannot be planted on a key someone
+briefly picked up.
+
+With **neither** a PIN nor an access password the store is open to anything on
+the CCID interface, exactly as the credential list is — that is the code-less
+default this applet shares with a YubiKey, not an oversight. If you keep
+passwords on the key, set one of the two.
+
+A failed PIN attempt shuts the safe again, whether it arrives as a verify or as
+a PIN *change* with the wrong old PIN, and either way it spends a retry. So
+walking away mid-session no longer leaves the safe readable to whoever tries the
+PIN next: the three failed guesses that lock the card also close what the last
+correct PIN opened. A malformed request is not an attempt — it costs no retry
+and changes nothing.
+
 ## Manage
 
 ```sh
@@ -161,6 +204,14 @@ wipe the whole key instead, see `rsk offboard`.
 - HOTP counters are persisted across reboots and continue from where they were.
   Touch-required HOTP accounts only advance the counter *after* the touch, so
   there are no drive-by increments.
+- Enrollment is checked before anything is written, the way a YubiKey checks it:
+  the secret is 14–64 bytes, the name 1–64, the code 6/7/8 digits, the hash one
+  of SHA1/SHA256/SHA512. A client that sends anything else gets `6A80` and
+  **nothing is stored** — in particular, a rejected `add` over an existing
+  account leaves that account working instead of replacing it with one that can
+  never produce a code. `ykman` and Yubico Authenticator stay inside these
+  bounds; a client that does not was writing an account no authenticator app
+  could ever use.
 - OATH interop (add → list → calculate → delete, plus TOTP crypto-verified
   against RFC vectors, via both `ykman oath` and Yubico Authenticator) is
   tracked in [interop.md](../interop.md#oath--otp).

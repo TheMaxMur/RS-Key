@@ -15,7 +15,7 @@ pub mod rollback;
 
 use core::cell::RefCell;
 
-use rsk_crypto::Device;
+use rsk_crypto::{Device, FusedKey, FusedRead, read_fused};
 use rsk_fs::{Fs, Storage};
 pub use rsk_sdk::Confirm;
 use rsk_sdk::{Apdu, Applet, ResBuf, Sw};
@@ -103,10 +103,13 @@ pub trait UserPresence {
 pub struct RescueApplet<'a> {
     serial_id: [u8; 8],
     serial_hash: [u8; 32],
-    /// The OTP MKEK, once provisioned.
-    otp_key: Option<[u8; 32]>,
-    /// The OTP DEVK: the keydev secp256k1 scalar itself.
-    devk: Option<[u8; 32]>,
+    /// How to read the OTP MKEK, once provisioned — never the key itself, so no
+    /// copy of it sits in this applet's memory between operations.
+    mkek_source: Option<FusedKey>,
+    /// How to fetch the OTP DEVK (the keydev secp256k1 scalar), rather than the
+    /// scalar itself: two rarely-run commands want it, and it is fused, so it is
+    /// not one to park in RAM for the power cycle.
+    devk: Option<FusedKey>,
     rng: &'a RefCell<dyn Rng>,
     platform: &'a RefCell<dyn Platform>,
     /// Touch/approval gate for the runtime-reachable privileged commands.
@@ -122,8 +125,8 @@ impl<'a> RescueApplet<'a> {
     pub fn new(
         serial_id: [u8; 8],
         serial_hash: [u8; 32],
-        otp_key: Option<[u8; 32]>,
-        devk: Option<[u8; 32]>,
+        mkek_source: Option<FusedKey>,
+        devk: Option<FusedKey>,
         rng: &'a RefCell<dyn Rng>,
         platform: &'a RefCell<dyn Platform>,
         presence: &'a RefCell<dyn UserPresence>,
@@ -133,7 +136,7 @@ impl<'a> RescueApplet<'a> {
         Self {
             serial_id,
             serial_hash,
-            otp_key,
+            mkek_source,
             devk,
             rng,
             platform,
@@ -143,11 +146,11 @@ impl<'a> RescueApplet<'a> {
         }
     }
 
-    fn device(&self) -> Device<'_> {
+    fn device<'k>(&'k self, mkek: &'k FusedRead) -> Device<'k> {
         Device {
             serial_hash: &self.serial_hash,
             serial_id: &self.serial_id,
-            otp_key: self.otp_key.as_ref(),
+            otp_key: mkek.as_deref(),
         }
     }
 
@@ -171,9 +174,13 @@ impl<'a> RescueApplet<'a> {
                     return Sw::CONDITIONS_NOT_SATISFIED;
                 }
                 let mut rng = self.rng.borrow_mut();
-                let Some(key) =
-                    keydev::load_or_generate(&self.device(), self.devk.as_ref(), fs, &mut *rng)
-                else {
+                // Both fuses are read for this command alone: each local is the
+                // only copy in RAM and dies at the end of this arm.
+                let fused = read_fused(self.devk);
+                let mkek = read_fused(self.mkek_source);
+                let dev = self.device(&mkek);
+                let key = keydev::load_or_generate(&dev, fused.as_deref(), fs, &mut *rng);
+                let Some(key) = key else {
                     return Sw::EXEC_ERROR;
                 };
                 let mut digest = [0u8; 32];
@@ -191,9 +198,13 @@ impl<'a> RescueApplet<'a> {
                     return Sw::WRONG_LENGTH;
                 }
                 let mut rng = self.rng.borrow_mut();
-                let Some(key) =
-                    keydev::load_or_generate(&self.device(), self.devk.as_ref(), fs, &mut *rng)
-                else {
+                // Both fuses are read for this command alone: each local is the
+                // only copy in RAM and dies at the end of this arm.
+                let fused = read_fused(self.devk);
+                let mkek = read_fused(self.mkek_source);
+                let dev = self.device(&mkek);
+                let key = keydev::load_or_generate(&dev, fused.as_deref(), fs, &mut *rng);
+                let Some(key) = key else {
                     return Sw::EXEC_ERROR;
                 };
                 res.extend(&keydev::public_uncompressed(&key));
@@ -260,8 +271,18 @@ impl<'a> RescueApplet<'a> {
                 self.platform.borrow_mut().set_time(epoch);
                 Sw::OK
             }
-            // An unknown P1 is a no-op OK.
-            _ => Sw::OK,
+            // Refuse a selector this build does not implement. The comment here
+            // used to read "an unknown P1 is a no-op OK", framed as forward
+            // compatibility — but for a WRITE that is backwards. This is the
+            // PROVISIONING path: P1=0x01 writes the phy record, i.e. VID/PID, the
+            // USB interfaces and the LED, the device's identity. A newer `rsk` or
+            // PicoForge against older firmware sends a selector that firmware does
+            // not know, is told the write landed, and the operator moves on
+            // believing the device is provisioned. Silent success is exactly what
+            // stops a host detecting the version mismatch, which is what 0x6A86
+            // exists for — and the inner P2 dispatch and `keydev_sign` right above
+            // already answer that way, so only this one arm disagreed.
+            _ => Sw::INCORRECT_P1P2,
         }
     }
 
@@ -375,7 +396,11 @@ impl<'a> RescueApplet<'a> {
         if apdu.data != OTP_LOCK_MAGIC {
             return Sw::DATA_INVALID;
         }
-        if self.otp_key.is_none() {
+        // Reads the fuses, not the source: firmware always wires a reader, so
+        // testing the `Option` would answer "is a reader present" instead of "are
+        // the keys provisioned" — and this guard is the whole reason the lock
+        // cannot be burnt over a blank page (audit run-36).
+        if read_fused(self.mkek_source).is_none() {
             return Sw::CONDITIONS_NOT_SATISFIED;
         }
         let Some(cur) = self.platform.borrow().read_page58_lock_raw() else {

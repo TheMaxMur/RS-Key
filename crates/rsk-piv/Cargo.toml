@@ -38,6 +38,10 @@ x25519-dalek = { workspace = true }
 x509-parser = "0.16"
 
 [features]
+# `scripts/kani.sh` only: forwards to the dependency that carries the switch.
+# What it buys, and why the firmware must never turn it on, is in
+# `crates/rsk-crypto/Cargo.toml`.
+kani-soft = ["sha2/force-soft", "rsk-crypto/kani-soft"]
 # FIPS-style policy profile, OFF by default — the default build is unchanged.
 # When enabled: no new 3DES management keys and no RSA-1024 generation/import
 # (SP 800-131A); an existing 3DES key still authenticates so it can be

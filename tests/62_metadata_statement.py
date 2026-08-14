@@ -210,7 +210,10 @@ def part_b(stmt):
         "maxCredentialCountInList": m[0x07],
         "maxCredentialIdLength": m[0x08],
         "algorithms": [{"alg": a["alg"], "type": a["type"]} for a in m[0x0A]],
-        "maxSerializedLargeBlobArray": m[0x0B],
+        # 0x0B and 0x15 are profile-dependent: a `largeblob-ext` build withdraws the
+        # first with the command it describes, so read both leniently and decide
+        # below rather than dying on a KeyError.
+        "maxSerializedLargeBlobArray": m.get(0x0B),
         "forcePINChange": m[0x0C],
         "minPINLength": m[0x0D],
         "firmwareVersion": m[0x0E],
@@ -218,10 +221,23 @@ def part_b(stmt):
         "transports": m[0x09],
         "maxRPIDsForSetMinPINLength": m[0x10],
         "remainingDiscoverableCredentials": m[0x14],
+        # 0x15 is u64-valued; `10_fido_getinfo`'s decoder needs its 8-byte-uint
+        # arm for this to parse at all. A member missing from THIS map reads as a
+        # drift against the statement, not as an oversight — add both together.
+        "vendorPrototypeConfigCommands": m[0x15],
         "attestationFormats": m[0x16],
         "maxPINLength": m[0x1D],
         "authenticatorConfigCommands": m[0x1F],
     }
+    # The shipped statements describe builds that serve the CTAP 2.1 large-blob
+    # design. A `largeblob-ext` build swaps it for the 2.3 extension (§12.4 forbids
+    # both), so its getInfo is a different profile — say so instead of reporting
+    # every withdrawn member as drift.
+    if "largeBlob" in live["extensions"]:
+        print("NOTE: live device is a largeblob-ext build (CTAP 2.3 largeBlob in place "
+              "of largeBlobKey); the statements target the 2.1 profile — comparison skipped.")
+        return
+
     live_algs = {a["alg"] for a in live["algorithms"]}
     if COSE_MLDSA44 in live_algs:
         print("NOTE: live device is an advertise-pqc build (COSE -48 present); "

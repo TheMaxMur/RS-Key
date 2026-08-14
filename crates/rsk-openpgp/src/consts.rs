@@ -5,7 +5,6 @@
 //! status aliases, and DEK sizing.
 
 use rsk_fs::KeyFid;
-use rsk_sdk::Sw;
 
 /// OpenPGP application identifier.
 pub const OPENPGP_AID: &[u8] = &[0xD2, 0x76, 0x00, 0x01, 0x24, 0x01];
@@ -26,18 +25,11 @@ pub const ALGO_RSA: u8 = 0x01;
 pub const ALGO_ECDH: u8 = 0x12;
 pub const ALGO_ECDSA: u8 = 0x13;
 pub const ALGO_EDDSA: u8 = 0x16;
-pub const ALGO_AES: u8 = 0x70;
-pub const ALGO_AES_128: u8 = 0x71;
-pub const ALGO_AES_192: u8 = 0x72;
-pub const ALGO_AES_256: u8 = 0x74;
 
 /// Default algorithm attribute when the slot has no `EF_ALGO_PRIV*` —
 /// RSA-2048, gpg's default. dobj.rs's C1/C2/C3 GET DATA fallback
 /// (`ATTR_RSA2K`) encodes the same default and must change with it.
 pub(crate) const DEFAULT_ALGO: &[u8] = &[ALGO_RSA, 0x08, 0x00, 0x00, 0x20, 0x00];
-
-/// Status 0x6A80 (wrong data).
-pub(crate) const WRONG_DATA: Sw = Sw::INCORRECT_PARAMS;
 
 /// ATR for the OpenPGP card.
 pub const ATR_OPENPGP: &[u8] = &[
@@ -79,14 +71,40 @@ pub const EF_PK_AUT: KeyFid = KeyFid::new(0x10d3); // private AUT key, DEK-seale
 pub const EF_PB_SIG: u16 = 0x10d4; // public-key DO = EF_PK_SIG + 3 (not secret)
 pub const EF_PB_DEC: u16 = 0x10d5;
 pub const EF_PB_AUT: u16 = 0x10d6;
+/// Per-slot key origin backing DO `0xDE`'s status byte — `0x1000 | tag`, the
+/// same private-companion convention `algo_tag_to_priv` uses for C1/C2/C3.
+pub const EF_KEY_ORIGIN: u16 = 0x10de;
+/// Asymmetric key slots (SIG, DEC, AUT) — the pairs DO `0xDE` reports and the
+/// length of the `EF_KEY_ORIGIN` record.
+pub const KEY_SLOTS: usize = 3;
 pub const EF_DEK: u16 = 0x1099;
 pub const EF_DEK_PW1: KeyFid = KeyFid::new(0x109a); // DEK wrapped under PW1
 pub const EF_DEK_RC: KeyFid = KeyFid::new(0x109b); // DEK wrapped under reset code
 pub const EF_DEK_PW3: KeyFid = KeyFid::new(0x109c); // DEK wrapped under PW3
 pub const EF_DEK_PWPIV: u16 = 0x109d;
+/// Staging slots for a DEK re-wrap, so that updating a PIN — two flash records,
+/// the verifier and the DEK copy sealed under it — survives losing power between
+/// them. Each holds `[target FID low byte] ‖ [the record the target takes]`.
+///
+/// **One slot per target, not one shared slot.** A shared one is silently
+/// destroyed by the next PIN update of any kind: a PW3 change that tore leaves a
+/// stage pending, and the very next PW1 change — even one the card *refuses* —
+/// overwrites it, taking the recovery with it. Only the update that owns a slot
+/// ever writes it. Retired by [`crate::pin::load_dek`] or by the commit that
+/// completes the update.
+pub const EF_DEK_STAGE_PW1: KeyFid = KeyFid::new(0x109e);
+pub const EF_DEK_STAGE_RC: KeyFid = KeyFid::new(0x109f);
+pub const EF_DEK_STAGE_PW3: KeyFid = KeyFid::new(0x10a1);
 pub const EF_CH_1: u16 = 0x1f21;
 pub const EF_CH_2: u16 = 0x1f22;
 pub const EF_CH_3: u16 = 0x1f23;
+/// How many occurrences DO 7F21 has (`EF_CH_1..EF_CH_3`) — the range SELECT DATA
+/// accepts and the point GET NEXT DATA's walk stops at.
+pub const CERT_OCCURRENCES: u8 = 3;
+// Raising the count without adding the file compiles: the walk would reach FID
+// 0x1f24, which `files::source` classifies as no DO at all and TERMINATE DF does
+// not wipe. The occurrences are a contiguous range and this is what says so.
+const _: () = assert!(EF_CH_1 + CERT_OCCURRENCES as u16 - 1 == EF_CH_3);
 
 // ---------------- Data-object FIDs / tags (tag == FID) ----------------
 // `//C` = computed/composite DO, `//S` = stored DO.
@@ -106,6 +124,23 @@ pub const EF_ALGO_AUT: u16 = 0x00c3; // S
 pub const EF_PW_STATUS: u16 = 0x00c4; // S — PW status bytes (7)
 pub const EF_FP: u16 = 0x00c5; // S — fingerprints (3×20)
 pub const EF_CA_FP: u16 = 0x00c6; // S — CA fingerprints (3×20)
+/// OpenPGP 3.4 §4.4.1 fixes a fingerprint at 20 bytes and a key-generation
+/// timestamp at 4; `C5`/`C6`/`CD` are read-only concatenations of `KEY_SLOTS` of
+/// them, so the writer's length gate and the reader's stride are one value.
+pub const FP_LEN: usize = 20;
+pub const TS_LEN: usize = 4;
+
+/// The maxima OpenPGP 3.4 §4.4.1 gives the cardholder DOs it caps: the name `5B`
+/// at 39 bytes, the language preference `5F2D` at 8 (four two-letter codes). The
+/// sex DO `5F35` is one byte from the ISO 5218 code set; §4.4.3.4 enumerates it
+/// rather than bounding it, which is why it is a value list and not a length.
+///
+/// The set is male / female / not-applicable. ISO 5218's fourth code, `'0'` (not
+/// known), is **not** in it: a YubiKey 5.7.4 answers `6A80` to `PUT DATA 5F35 30`
+/// and holds `'9'` itself (3/3, twice, across two independent resets).
+pub const NAME_MAX: usize = 39;
+pub const LANG_MAX: usize = 8;
+pub const SEX_VALUES: &[u8] = b"129";
 pub const EF_FP_SIG: u16 = 0x00c7; // S
 pub const EF_FP_DEC: u16 = 0x00c8; // S
 pub const EF_FP_AUT: u16 = 0x00c9; // S
@@ -117,7 +152,18 @@ pub const EF_TS_SIG: u16 = 0x00ce; // S
 pub const EF_TS_DEC: u16 = 0x00cf; // S
 pub const EF_TS_AUT: u16 = 0x00d0; // S
 pub const EF_RESET_CODE: u16 = 0x00d3; // S — PUT redirects to EF_RC
-pub const EF_AES_KEY: KeyFid = KeyFid::new(0x00d5); // S — symmetric key for DEC slot, DEK-sealed
+/// The AES key for PSO:ENC/DEC — **card-level, not the DEC slot's**. 3.4 names it
+/// by its commands, gives it no Key-Ref (§5 gives those to the three private keys
+/// only), and §7.2.12's PSO:ENCIPHER takes no key reference at all, so this one DO
+/// is the whole key material of a command that never touches the DEC slot.
+pub const EF_AES_KEY: KeyFid = KeyFid::new(0x00d5); // S — DEK-sealed
+
+/// The key widths DO `D5` takes, and the only widths `store_aes_key` will seal.
+/// OpenPGP 3.4 §7.2.11 gives PSO:DEC/ENC an AES-128 or an AES-256 key and nothing
+/// between. `load_aes_key`'s legacy predicate is wider (it also passes 24), which
+/// is slack rather than history: no build ever wrote a record of that width.
+pub const AES_KEY_LENS: [usize; 2] = [16, 32];
+
 pub const EF_UIF_SIG: u16 = 0x00d6; // S — user-interaction flag (touch)
 pub const EF_UIF_DEC: u16 = 0x00d7; // S
 pub const EF_UIF_AUT: u16 = 0x00d8; // S

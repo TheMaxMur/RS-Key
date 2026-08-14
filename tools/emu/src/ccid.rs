@@ -35,7 +35,7 @@ use rsk_usb::ccid::{
     xfr_apdu,
 };
 
-use crate::device::{Job, Req};
+use crate::device::{Job, Jobs, Unplug};
 
 /// A CCID message.
 const OP_CCID: u8 = 0x00;
@@ -48,7 +48,7 @@ const OP_REPLUG: u8 = 0x03;
 /// exceed the class descriptor's `dwMaxCCIDMessageLength`.
 const MAX_REQUEST: usize = MAX_CCID_MSG;
 
-pub fn serve(mut stream: TcpStream, jobs: mpsc::Sender<Req>, atr: &'static [u8]) -> io::Result<()> {
+pub fn serve(mut stream: TcpStream, jobs: Jobs, atr: &'static [u8]) -> io::Result<()> {
     // Slot status is transport state — a field of `Ccid` on the device, so one
     // per connection here, a connection being one host's handle on the card.
     let mut status = STATUS_INACTIVE;
@@ -72,7 +72,7 @@ pub fn serve(mut stream: TcpStream, jobs: mpsc::Sender<Req>, atr: &'static [u8])
 
         match op {
             OP_REPLUG => {
-                run(&jobs, Job::Replug)?;
+                run(&jobs, Job::Replug(Unplug::Operator))?;
                 status = STATUS_INACTIVE; // the card comes back unpowered
                 send(&mut stream, &[])?;
             }
@@ -88,7 +88,7 @@ pub fn serve(mut stream: TcpStream, jobs: mpsc::Sender<Req>, atr: &'static [u8])
 #[allow(clippy::too_many_arguments)] // one call site; every argument is state it needs
 fn serve_message(
     stream: &mut TcpStream,
-    jobs: &mpsc::Sender<Req>,
+    jobs: &Jobs,
     msg: &[u8],
     atr: &[u8],
     status: &mut u8,
@@ -153,13 +153,13 @@ fn framed(msg: &[u8]) -> bool {
 /// reason the host's transaction survives either.
 fn run_with_wtx(
     stream: &mut TcpStream,
-    jobs: &mpsc::Sender<Req>,
+    jobs: &Jobs,
     job: Job,
     seq: u8,
     status: u8,
 ) -> io::Result<Vec<u8>> {
     let (tx, rx) = mpsc::channel();
-    jobs.send(Req { job, reply: tx })
+    jobs.send(job, tx)
         .map_err(|_| io::Error::other("the device thread is gone"))?;
     loop {
         match rx.recv_timeout(Duration::from_millis(WTX_INTERVAL_MS)) {
@@ -180,9 +180,9 @@ fn run_with_wtx(
     }
 }
 
-fn run(jobs: &mpsc::Sender<Req>, job: Job) -> io::Result<Vec<u8>> {
+fn run(jobs: &Jobs, job: Job) -> io::Result<Vec<u8>> {
     let (tx, rx) = mpsc::channel();
-    jobs.send(Req { job, reply: tx })
+    jobs.send(job, tx)
         .map_err(|_| io::Error::other("the device thread is gone"))?;
     match rx.recv() {
         Ok(out) => Ok(out.unwrap_or_default()),
@@ -197,7 +197,7 @@ fn send(stream: &mut TcpStream, payload: &[u8]) -> io::Result<()> {
 }
 
 /// Accept forever, one thread per client.
-pub fn listen(listener: std::net::TcpListener, jobs: mpsc::Sender<Req>, atr: &'static [u8]) {
+pub fn listen(listener: std::net::TcpListener, jobs: Jobs, atr: &'static [u8]) {
     for stream in listener.incoming() {
         let Ok(stream) = stream else { continue };
         let jobs = jobs.clone();

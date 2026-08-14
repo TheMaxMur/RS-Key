@@ -40,7 +40,8 @@ type Mock = MockFlashBase<PAGES, WORD, PAGE_WORDS>;
 const SECTOR: usize = 4096;
 const PARTITION_LEN: usize = PAGES * SECTOR;
 const RANGE: core::ops::Range<u32> = 0..(PARTITION_LEN as u32);
-const KV_BUF: usize = 2048;
+// See `kv_durability`: derived from the published ceiling, never a literal.
+const KV_BUF: usize = rsk_fs::MAX_VALUE_BYTES + 2;
 type Cache =
     SsCache<ArrayPageStates<PAGES>, ArrayPagePointers<PAGES>, ArrayKeyPointers<u16, 16>, u16>;
 type Store = MapStorage<u16, SharedMock, Cache>;
@@ -134,10 +135,10 @@ fn churn_lap_physically_scrubs_superseded_secret() {
     // The append-only log still holds the weaker pre-OTP copy: this is the
     // remnant a flash dump would recover (the bug being fixed).
     assert!(
-        contains(&flash.borrow().as_bytes(), pre_otp),
+        contains(flash.borrow().as_bytes(), pre_otp),
         "pre-condition: the superseded pre-OTP seed must exist in raw flash"
     );
-    assert!(contains(&flash.borrow().as_bytes(), otp));
+    assert!(contains(flash.borrow().as_bytes(), otp));
 
     churn_full_lap(&mut map, &mut buf);
 
@@ -149,7 +150,7 @@ fn churn_lap_physically_scrubs_superseded_secret() {
 
     // …and the weaker remnant physically erased from flash.
     assert!(
-        !contains(&flash.borrow().as_bytes(), pre_otp),
+        !contains(flash.borrow().as_bytes(), pre_otp),
         "the pre-OTP seed remnant must be physically scrubbed from raw flash"
     );
 }

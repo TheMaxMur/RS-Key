@@ -34,6 +34,11 @@ The firmware runs a click counter: clicks landing within **1 second** of each
 other count toward one gesture. The gesture types that slot when the window
 closes.
 
+A press the key **asked** for — a touch confirming a signature, a PIN change, a
+reset — is not a click, even if you keep holding it after the operation finishes:
+its release belongs to that ceremony. Only a press made while the key is idle
+counts toward a gesture.
+
 | Clicks | Slot | `ykman otp` |
 |---|---|---|
 | 1 (short) | 1 | yes |

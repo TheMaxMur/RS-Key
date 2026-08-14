@@ -9,12 +9,13 @@
 
 use core::cell::RefCell;
 
-use rsk_crypto::{Device, aes128_encrypt_block, ct_eq, hmac_sha1};
+use rsk_crypto::{Device, FusedKey, FusedRead, aes128_encrypt_block, ct_eq, hmac_sha1, read_fused};
 use rsk_fs::{Fs, KeyFid, Storage};
 pub use rsk_sdk::Confirm;
 use rsk_sdk::{Apdu, Applet, ResBuf, Sw};
 use zeroize::Zeroize;
 
+mod counter;
 pub mod hid;
 pub mod seal;
 pub mod ticket;
@@ -227,8 +228,9 @@ const SW_WRONG_DATA: Sw = Sw::WRONG_LENGTH;
 pub struct OtpApplet<'a> {
     serial_id: [u8; 8],
     serial_hash: [u8; 32],
-    /// The OTP MKEK, once provisioned — roots the slot seal in the hardware fuse.
-    otp_key: Option<[u8; 32]>,
+    /// How to read the OTP MKEK that roots the slot seal — never the key itself,
+    /// so no copy of it sits in this applet's memory between operations.
+    mkek_source: Option<FusedKey>,
     rng: &'a RefCell<dyn Rng>,
     presence: &'a RefCell<dyn UserPresence>,
     /// Status-record sequence number; bumped on every config write, reset on
@@ -243,14 +245,14 @@ impl<'a> OtpApplet<'a> {
     pub fn new(
         serial_id: [u8; 8],
         serial_hash: [u8; 32],
-        otp_key: Option<[u8; 32]>,
+        mkek_source: Option<FusedKey>,
         rng: &'a RefCell<dyn Rng>,
         presence: &'a RefCell<dyn UserPresence>,
     ) -> Self {
         Self {
             serial_id,
             serial_hash,
-            otp_key,
+            mkek_source,
             rng,
             presence,
             config_seq: 1,
@@ -258,11 +260,11 @@ impl<'a> OtpApplet<'a> {
         }
     }
 
-    fn device(&self) -> Device<'_> {
+    fn device<'k>(&'k self, mkek: &'k FusedRead) -> Device<'k> {
         Device {
             serial_hash: &self.serial_hash,
             serial_id: &self.serial_id,
-            otp_key: self.otp_key.as_ref(),
+            otp_key: mkek.as_deref(),
         }
     }
 
@@ -275,13 +277,15 @@ impl<'a> OtpApplet<'a> {
         fid: u16,
         buf: &mut [u8; SLOT_SIZE],
     ) -> Option<usize> {
-        read_slot(&self.device(), fs, fid, buf)
+        let mkek = read_fused(self.mkek_source);
+        read_slot(&self.device(&mkek), fs, fid, buf)
     }
 
     /// Seal+write a slot record. `false` on a storage failure.
     fn put_slot<S: Storage>(&self, fs: &mut Fs<S>, fid: u16, data: &[u8]) -> bool {
+        let mkek = read_fused(self.mkek_source);
         seal::seal_put(
-            &self.device(),
+            &self.device(&mkek),
             fs,
             &mut *self.rng.borrow_mut(),
             KeyFid::new(fid),
@@ -750,7 +754,7 @@ impl<'a> OtpApplet<'a> {
             return Sw::OK; // no config bytes → nothing to persist (status frame only)
         }
         if 1 + len > data.len() {
-            return Sw::INCORRECT_PARAMS;
+            return Sw::WRONG_DATA;
         }
         match rsk_mgmt::persist_dev_conf(fs, &data[1..1 + len]) {
             Ok(()) => {
@@ -761,9 +765,7 @@ impl<'a> OtpApplet<'a> {
                 self.config_seq = self.config_seq.wrapping_add(1);
                 Sw::OK
             }
-            Err(rsk_mgmt::DevConfError::TooLong | rsk_mgmt::DevConfError::BadTlv) => {
-                Sw::INCORRECT_PARAMS
-            }
+            Err(rsk_mgmt::DevConfError::TooLong | rsk_mgmt::DevConfError::BadTlv) => Sw::WRONG_DATA,
             Err(rsk_mgmt::DevConfError::Store) => Sw::MEMORY_FAILURE,
         }
     }
@@ -953,7 +955,8 @@ pub fn migrate_seal<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng)
         }
         if let Some(n) = fs.read_key(fid, &mut raw) {
             // Only re-seal a genuine plaintext config; anything longer is not a
-            // legacy record (the smallest sealed blob is already > SLOT_SIZE).
+            // legacy record — the smallest sealed blob is already > SLOT_SIZE,
+            // asserted at compile time in `seal.rs`.
             if (CONFIG_SIZE..=SLOT_SIZE).contains(&n) {
                 let _ = seal::seal_put(dev, fs, rng, fid, &raw[..n]);
             }
@@ -984,8 +987,8 @@ pub fn power_up_bump<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng
         if n < SLOT_SIZE {
             rec[CONFIG_SIZE..].fill(0);
         }
-        let counter = u16::from_be_bytes([rec[CONFIG_SIZE], rec[CONFIG_SIZE + 1]]).wrapping_add(1);
-        if counter <= USE_COUNTER_MAX {
+        let stored = u16::from_be_bytes([rec[CONFIG_SIZE], rec[CONFIG_SIZE + 1]]);
+        if let Some(counter) = counter::boot_use_counter(stored) {
             rec[CONFIG_SIZE..CONFIG_SIZE + 2].copy_from_slice(&counter.to_be_bytes());
             let _ = seal::seal_put(dev, fs, rng, KeyFid::new(fid), &rec);
         }

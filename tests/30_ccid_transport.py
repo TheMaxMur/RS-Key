@@ -13,6 +13,9 @@ bulk -> rsk_usb::ccid -> APDU dispatch -> vendor applet. Powers the card on
 (FIDO ATR), SELECTs the vendor applet by AID, and increments/reads the
 persisted counter — the same applet tests/01 drives over CTAPHID_MSG.
 
+INCREMENT is user-presence-gated, so on a board with a button this waits for a
+touch; the no-touch test image and `tools/emu` confirm on their own.
+
 Needs pyscard and a running PC/SC daemon (built in on macOS).
 """
 import os
@@ -36,6 +39,9 @@ VENDOR_AID = [0xF0, 0x00, 0x00, 0x00, 0x01]
 SELECT = [0x00, 0xA4, 0x04, 0x00, len(VENDOR_AID)] + VENDOR_AID
 INCREMENT = [0x00, 0x01, 0x00, 0x00]
 GET = [0x00, 0x02, 0x00, 0x00, 0x00]  # Le = 0 (case 2)
+# CORE1_STATS: core1's prime-search counters, a timing oracle over RSA keygen.
+# Behind `--features core1-stats`, so a shipped image must not answer it.
+CORE1_STATS = [0x00, 0x12, 0x00, 0x00, 0x00]
 
 
 def fail(msg):
@@ -77,6 +83,15 @@ def main():
         fail(f"counter mismatch: INC returned {inc}, GET returned {cur}")
 
     print(f"counter = {cur} (consistent across INC/GET over CCID)")
+
+    # A board assertion, not an emulator one: `tools/emu`'s `EmuVendorPlatform`
+    # never implemented `core1_stats`, so the shim answers 6D00 either way. What
+    # this catches is a firmware built with the debug feature reaching a key.
+    data, sw1, sw2 = conn.transmit(CORE1_STATS)
+    print("CORE1_STATS -> %s %02X%02X" % (toHexString(data), sw1, sw2))
+    if (sw1, sw2) != (0x6D, 0x00) or data:
+        fail("INS 12 (core1 stats) answered on a shipping image — a keygen timing oracle")
+
     print("PASS")
     return 0
 

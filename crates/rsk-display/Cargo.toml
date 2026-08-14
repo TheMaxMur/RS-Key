@@ -41,6 +41,17 @@ embedded-graphics = { workspace = true }
 embassy-time = { workspace = true }
 zeroize = { workspace = true }
 
+[dev-dependencies]
+# The tests drive the flow's real deadlines, debounces and busy-waits, so the
+# host build needs a time driver: `std` is the one that supplies it (the same
+# feature `tools/emu` turns on). NOT `mock-driver` — its clock only moves when a
+# test advances it, and `block_for` busy-waits on `Instant::now()`, so every poll
+# loop in this crate would spin for ever under it.
+embassy-time = { workspace = true, features = ["std"] }
+# The RAM `Storage` every other applet crate's tests already run against, so a
+# flow that reads or writes flash is exercised against the real `Fs`.
+rsk-fs = { workspace = true, features = ["test-util"] }
+
 [features]
 # Mirrors the firmware feature: the PIN pad's trivial-PIN reject.
 strict-config = ["rsk-mgmt/strict-config", "rsk-fido/strict-config", "rsk-otp/strict-config", "rsk-vendor/strict-config", "rsk-device/strict-config"]

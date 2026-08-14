@@ -12,11 +12,10 @@ use minicbor::Decoder;
 use rsk_fs::{Fs, Sealed, Storage};
 use zeroize::Zeroize;
 
-use rsk_crypto::pinproto::PinProto;
 use rsk_crypto::sha256;
 use rsk_rescue::phy;
 
-use crate::cbordec::{cbor, def_arr, def_map};
+use crate::cbordec::{cbor, def_arr, def_map, skip_value};
 use crate::consts::{
     CONFIG_AUT_DISABLE, CONFIG_AUT_ENABLE, CONFIG_ENABLE_EA, CONFIG_PHY_LED_BRIGHTNESS,
     CONFIG_PHY_LED_GPIO, CONFIG_PHY_OPTIONS, CONFIG_PHY_VIDPID, CONFIG_SET_MIN_PIN,
@@ -61,6 +60,9 @@ struct Req<'a> {
     subcommand: u64,
     raw_subpara: &'a [u8],
     proto: u64,
+    /// Whether key 3 was supplied: `0` is a protocol the platform named, not one
+    /// it omitted, and the two answer different codes (§6.11 → §6.1.2 step 2).
+    proto_present: bool,
     pin_uv_auth_param: Option<&'a [u8]>,
     new_min_pin: u64,
     force_change: bool,
@@ -84,6 +86,7 @@ fn parse(data: &[u8]) -> Result<Req<'_>, CtapError> {
         subcommand: 0,
         raw_subpara: &[],
         proto: 0,
+        proto_present: false,
         pin_uv_auth_param: None,
         new_min_pin: 0,
         force_change: false,
@@ -109,9 +112,12 @@ fn parse(data: &[u8]) -> Result<Req<'_>, CtapError> {
         match key {
             1 => req.subcommand = cbor(d.u32())? as u64,
             2 => parse_subparams(&mut d, &mut req, data)?,
-            3 => req.proto = cbor(d.u32())? as u64,
+            3 => {
+                req.proto = cbor(d.u32())? as u64;
+                req.proto_present = true;
+            }
             4 => req.pin_uv_auth_param = Some(cbor(d.bytes())?),
-            _ => cbor(d.skip())?,
+            _ => skip_value(&mut d)?,
         }
     }
     Ok(req)
@@ -134,7 +140,7 @@ fn parse_subparams<'a>(
         } else if req.subcommand == CONFIG_VENDOR {
             parse_vendor_sub(d, req, sk)?;
         } else {
-            cbor(d.skip())?;
+            skip_value(d)?;
         }
     }
     req.raw_subpara = &data[start..d.position()];
@@ -159,7 +165,7 @@ fn parse_min_pin_sub<'a>(d: &mut Decoder<'a>, req: &mut Req<'a>, sk: u64) -> Res
             }
         }
         3 => req.force_change = cbor(d.bool())?,
-        _ => cbor(d.skip())?,
+        _ => skip_value(d)?,
     }
     Ok(())
 }
@@ -171,7 +177,7 @@ fn parse_vendor_sub<'a>(d: &mut Decoder<'a>, req: &mut Req<'a>, sk: u64) -> Resu
         1 => req.vendor_id = cbor(d.u64())?,
         2 => req.vendor_param = cbor(d.bytes())?,
         3 => req.vendor_param_int = cbor(d.u64())?,
-        _ => cbor(d.skip())?,
+        _ => skip_value(d)?,
     }
     Ok(())
 }
@@ -186,11 +192,25 @@ pub fn authenticator_config<S: Storage, R: Rng>(
     let _ = out;
     let req = parse(data)?;
 
-    let param = req.pin_uv_auth_param.ok_or(CtapError::PuatRequired)?;
-    if req.proto == 0 {
-        return Err(CtapError::MissingParameter);
+    // The subcommand is judged before the token, matching a YubiKey 5.7.4 cell for
+    // cell: 0 is the absent-parameter sentinel (`0x14`), an id we do not implement
+    // is `0x02` with or without a token, and only a *known* one reaches the
+    // authorization and its `0x36`. Nothing is disclosed by this ordering — the
+    // three subcommands are already named in getInfo's options.
+    // …and a protocol that is *present and unsupported* is judged before even that,
+    // as on that card: it answers INVALID_PARAMETER to `pinUvAuthProtocol: 0`
+    // whether the subcommand is one it implements or the `0` sentinel, i.e. before
+    // it has looked at which was asked. An *absent* one is a different rule and
+    // stays below, where the token it belongs to is required.
+    let proto = crate::clientpin::checked_proto(req.proto_present.then_some(req.proto))?;
+    match req.subcommand {
+        0 => return Err(CtapError::MissingParameter),
+        CONFIG_ENABLE_EA | CONFIG_TOGGLE_ALWAYS_UV | CONFIG_SET_MIN_PIN | CONFIG_VENDOR => {}
+        _ => return Err(CtapError::InvalidParameter),
     }
-    let proto = PinProto::from_u64(req.proto).ok_or(CtapError::InvalidParameter)?;
+
+    let param = req.pin_uv_auth_param.ok_or(CtapError::PuatRequired)?;
+    let proto = proto.ok_or(CtapError::MissingParameter)?;
     if req.raw_subpara.len() > MAX_RAW_SUBPARA {
         return Err(CtapError::RequestTooLarge);
     }
@@ -247,7 +267,8 @@ pub fn authenticator_config<S: Storage, R: Rng>(
             CONFIG_PHY_OPTIONS => set_phy(ctx, |p| p.opts = req.vendor_param_int as u16),
             _ => Err(CtapError::InvalidSubcommand),
         },
-        _ => Err(CtapError::UnsupportedOption),
+        // Unreachable: the pre-auth match above admits exactly these four.
+        _ => Err(CtapError::InvalidParameter),
     }
 }
 
@@ -348,7 +369,7 @@ fn aut_enable<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, param: &[u8]) -> CtapResu
 ///
 /// The gate is that the seed was unlocked this power cycle, which proves *someone*
 /// presented the lock key. It does not prove it was this caller: unlike
-/// [`FidoState::mse_cid`] two fields above it, `keydev_dec` carries no channel,
+/// [`crate::state::FidoState::mse_cid`] two fields above it, `keydev_dec` carries no channel,
 /// token or timer and lives until power-off (audit run-34 #28). That is accepted —
 /// the lock key **is** the authorisation, and an attacker positioned to abuse the
 /// window already meets `BACKUP_EXPORT`'s prerequisites, which hand over the seed

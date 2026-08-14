@@ -516,13 +516,13 @@ fn check_only_and_bad_handle() {
         Sw::CONDITIONS_NOT_SATISFIED
     );
 
-    // A bogus handle (wrong tag) → INCORRECT_PARAMS.
+    // A bogus handle (wrong tag) → WRONG_DATA.
     let mut bad = ad.clone();
     let l = bad.len();
     bad[l - 1] ^= 0xFF; // corrupt the handle's HMAC tag
     let bad_bytes = ext_apdu(CTAP_AUTHENTICATE, U2F_AUTH_ENFORCE, &bad);
     let badc = Apdu::parse(&bad_bytes).unwrap();
-    assert_eq!(process_u2f(&mut ctx, &badc, &mut o).0, Sw::INCORRECT_PARAMS);
+    assert_eq!(process_u2f(&mut ctx, &badc, &mut o).0, Sw::WRONG_DATA);
 }
 
 #[test]
@@ -560,7 +560,7 @@ fn enforce_auth_rejects_unknown_handle_without_touch() {
         now_ms: 0,
     };
     let (sw, n) = process_u2f(&mut ctx, &apdu, &mut o);
-    assert_eq!(sw, Sw::INCORRECT_PARAMS); // 0x6A80 WRONG_DATA, not 0x6985
+    assert_eq!(sw, Sw::WRONG_DATA); // 0x6A80, not 0x6985
     assert_eq!(n, 0);
     assert_eq!(
         presence.calls, 0,

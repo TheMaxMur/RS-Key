@@ -110,11 +110,11 @@ static CORE1_STACK: StaticCell<Stack<16384>> = StaticCell::new();
 static mut CORE0_SIEVE: IncrementalSieve = IncrementalSieve::new();
 static mut CORE1_SIEVE: IncrementalSieve = IncrementalSieve::new();
 
-/// Liveness counters, readable over the vendor applet (INS 0x12) — the only
-/// window into core1, which has no debugger and no UART: idle-loop wakes and
-/// jobs taken on core1, then candidates tried / primes found per core (the
-/// per-core rates expose cross-core XIP/bus contention). Relaxed throughout —
-/// monotonic telemetry, not synchronization.
+/// Liveness counters, readable over the vendor applet (INS 0x12) on a
+/// `core1-stats` build — the only window into core1, which has no debugger and no
+/// UART: idle-loop wakes and jobs taken on core1, then candidates tried / primes
+/// found per core (the per-core rates expose cross-core XIP/bus contention).
+/// Relaxed throughout — monotonic telemetry, not synchronization.
 static WAKES: AtomicU32 = AtomicU32::new(0);
 static JOBS: AtomicU32 = AtomicU32::new(0);
 static C1_TRIES: AtomicU32 = AtomicU32::new(0);
@@ -124,6 +124,7 @@ static C0_FINDS: AtomicU32 = AtomicU32::new(0);
 
 /// The seven counters plus the live flags (busy, stop, job-pending, degraded),
 /// little-endian packed for the vendor read.
+#[cfg(feature = "core1-stats")]
 pub fn stats() -> [u8; 32] {
     let mut out = [0u8; 32];
     let counters = [
@@ -143,7 +144,9 @@ pub fn stats() -> [u8; 32] {
 /// from that point embassy-rp's flash driver pauses/resumes core1 around every
 /// erase/program.
 pub fn spawn(core1: Peri<'static, CORE1>) {
-    spawn_core1(core1, CORE1_STACK.init_with(Stack::new), || core1_main());
+    let stack = CORE1_STACK.init_with(Stack::new);
+    let floor = stack.mem.as_ptr() as u32;
+    spawn_core1(core1, stack, move || core1_main(floor));
 }
 
 /// Scrub and drop any primes still sitting in the mailbox.
@@ -241,7 +244,15 @@ const SCRUB_WAIT_ITERS: u32 = 2_000_000;
 // --------------------------------------------------------------- core1 side --
 
 /// Core1 entry: wait for a job, search until satisfied or told to stop, repeat.
-fn core1_main() -> ! {
+fn core1_main(stack_floor: u32) -> ! {
+    // This stack is a plain array in `.bss`, so an overflow lands in whatever the
+    // linker put below it — flip-link only guards core0's, the one at the edge of
+    // RAM. MSPLIM traps the SP decrement itself, so a frame big enough to step
+    // over a guard band cannot slip past.
+    // SAFETY: writes the stack-limit register of the core that owns this stack,
+    // before anything has pushed; the value is that stack's own base.
+    unsafe { cortex_m::register::msplim::write(stack_floor) };
+
     // Whether the late-find scrub already ran for the current STOP edge.
     let mut stop_scrubbed = false;
     loop {

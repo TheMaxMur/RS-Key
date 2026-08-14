@@ -21,7 +21,10 @@ use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
-use std::sync::mpsc::{Receiver, Sender};
+use std::sync::atomic::{AtomicU32, Ordering};
+#[cfg(test)]
+use std::sync::mpsc::RecvError;
+use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 use std::time::Instant;
 
 use rsk_crypto::Device;
@@ -68,13 +71,21 @@ impl rsk_vendor::Platform for EmuVendorPlatform {
 
 /// What `rsk-device` reaches back into the board for. The emulator has none of
 /// that hardware, so every method keeps the trait's default — except the warm
-/// boot, which it *can* report, because a warm reboot is a thing it really does.
-#[derive(Default)]
+/// boot, which it *can* report, because a warm reboot is a thing it really does,
+/// and the panel's PIN signal, which it can report on a `--display` run.
 pub struct EmuHooks {
     warm: bool,
+    /// Set by `EmuDisplayHooks` when the panel re-keyed or refused the clientPIN.
+    local_pin: Rc<Cell<bool>>,
 }
 
 impl Hooks<EmuStore> for EmuHooks {
+    /// Consumed once, exactly as the firmware swaps its `LOCAL_PIN_CHANGED`: the
+    /// token dies before the next CBOR command, not before every later one.
+    fn local_pin_changed(&mut self) -> bool {
+        self.local_pin.replace(false)
+    }
+
     /// The phy record was rewritten. A real key re-enumerates under its new USB
     /// identity here; this one can only say so.
     fn request_reboot(&mut self) {
@@ -117,8 +128,12 @@ pub struct Config {
 pub enum Job {
     /// CTAPHID_CBOR: a CTAP2 message on channel `cid`.
     Cbor { cid: u32, data: Vec<u8> },
-    /// CTAPHID_MSG: a U2F APDU.
-    Msg(Vec<u8>),
+    /// CTAPHID_MSG: a U2F APDU on channel `cid`.
+    ///
+    /// The channel is carried for the same reason [`Job::Cbor`] carries it: a U2F
+    /// REGISTER or AUTHENTICATE waits for a touch, and only the owning channel's
+    /// `CTAPHID_CANCEL` may end that wait (CTAP 2.1 §11.2.9.1.4).
+    Msg { cid: u32, data: Vec<u8> },
     /// A CTAPHID vendor command (the ykman Management reads).
     Vendor { cmd: u8, data: Vec<u8> },
     /// A CCID APDU.
@@ -136,13 +151,197 @@ pub enum Job {
     /// applet's security status, so a reconnect really does re-authenticate.
     ResetCard,
     /// The device was unplugged and plugged back in.
-    Replug,
+    Replug(Unplug),
+}
+
+/// Who pulled the plug.
+///
+/// A board cannot tell the two apart — power is power — but the emulator has two
+/// senders and only one of them is an operator: a USB/IP import is a *host*
+/// action, and a host can repeat it as fast as it can open a socket.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Unplug {
+    /// The harness's `OP_REPLUG`, which is a person pulling the key out.
+    Operator,
+    /// A USB/IP client attaching. Queued at TCP-connect rate if it wants to be.
+    Host,
+}
+
+impl Job {
+    /// Whether this is one of the sources `firmware/src/worker.rs`'s
+    /// `host_request_pending` names — the set an on-panel modal yields to. That is
+    /// every host-request source the worker races: the `REQ` transports **and** the
+    /// keyboard interface's OTP frames, its separate `OTP_REQ`. The `CTAPHID_INIT`
+    /// deselect is an atomic there and the tick is the worker's own, so neither is
+    /// one; an operator's power cycle has no host behind it and is counted apart.
+    /// The board's sixth `REQ` member, a CCID pinpad `Secure`, has no [`Job`] here
+    /// — there is no pad to collect on — so it joins this set the day one appears.
+    fn is_host_request(&self) -> bool {
+        matches!(
+            self,
+            Job::Cbor { .. }
+                | Job::Msg { .. }
+                | Job::Vendor { .. }
+                | Job::Apdu(_)
+                | Job::ResetCard
+                | Job::OtpHid { .. }
+                | Job::Replug(Unplug::Host)
+        )
+    }
 }
 
 pub struct Req {
     pub job: Job,
     /// `None` means "no response" (an unsupported vendor command).
     pub reply: Sender<Option<Vec<u8>>>,
+}
+
+/// How many host requests are queued for the device thread but not picked up yet,
+/// and whether an operator's power cycle is.
+///
+/// The board reads the same fact off `firmware/src/worker.rs`'s `REQ.signaled()`,
+/// and an on-panel modal polls it to hand the parked worker its executor back
+/// (`rsk_display::Hooks::host_request_pending`). An `mpsc::Receiver` cannot be
+/// peeked, so the count is kept by the queue itself rather than by each of the
+/// four transports — a fifth one cannot forget what it never had to remember.
+#[derive(Clone, Default)]
+pub struct Queued {
+    hosts: Arc<AtomicU32>,
+    /// The operator's power cycle, counted apart: a board has no such job at all
+    /// — an unplug is not a request, it is the power going away, and what it does
+    /// to an open modal is end it at once. So the panel yields to this one without
+    /// `UI_YIELD_FLOOR_MS`, which exists to stop a host *repeating* a command from
+    /// holding the owner's screen shut. [`Unplug::Host`] is a host and is counted
+    /// with them, floor and all.
+    unplugs: Arc<AtomicU32>,
+}
+
+impl Queued {
+    /// Is a host request waiting for the device thread?
+    pub fn any(&self) -> bool {
+        self.hosts.load(Ordering::Acquire) > 0
+    }
+
+    /// Is an operator's power cycle?
+    pub fn unplug_pending(&self) -> bool {
+        self.unplugs.load(Ordering::Acquire) > 0
+    }
+
+    /// Which count `job` belongs to, if either. One owner per job, so a modal
+    /// cannot be told the same one twice.
+    fn slot(&self, job: &Job) -> Option<&AtomicU32> {
+        if job.is_host_request() {
+            Some(&self.hosts)
+        } else if matches!(job, Job::Replug(Unplug::Operator)) {
+            Some(&self.unplugs)
+        } else {
+            None
+        }
+    }
+
+    fn claim(&self, job: &Job) {
+        if let Some(n) = self.slot(job) {
+            n.fetch_add(1, Ordering::Release);
+        }
+    }
+
+    /// Saturating: a release with nothing outstanding would wrap the count and
+    /// leave every modal closing the moment it opened.
+    fn release(&self, job: &Job) {
+        if let Some(n) = self.slot(job) {
+            let _ = n.fetch_update(Ordering::Release, Ordering::Acquire, |n| {
+                Some(n.saturating_sub(1))
+            });
+        }
+    }
+}
+
+/// The two handles the panel and the worker hold jointly, where a board has two
+/// globals: the local-PIN event `EmuHooks` consumes before the next CBOR command
+/// (`firmware/src/handler.rs`'s `LOCAL_PIN_CHANGED`), and the USB attach clock a
+/// power cycle restarts (`crate::usb_attach`). One clock, not two, is what stops a
+/// panel-originated audit entry and a host-originated one from being stamped on
+/// different ones — which is the whole point of `Hooks::attach_elapsed_ms`.
+#[derive(Clone)]
+pub struct PanelLinks {
+    pub local_pin: Rc<Cell<bool>>,
+    pub attach: Rc<Cell<Instant>>,
+}
+
+impl Default for PanelLinks {
+    fn default() -> Self {
+        Self {
+            local_pin: Rc::new(Cell::new(false)),
+            attach: Rc::new(Cell::new(Instant::now())),
+        }
+    }
+}
+
+/// The transports' end of the device thread's queue.
+#[derive(Clone)]
+pub struct Jobs {
+    tx: Sender<Req>,
+    queued: Queued,
+}
+
+impl Jobs {
+    /// Queue `job`, to be answered on `reply`. `Err` once the device thread is
+    /// gone, which is the only way a send fails.
+    pub fn send(&self, job: Job, reply: Sender<Option<Vec<u8>>>) -> Result<(), ()> {
+        self.queued.claim(&job);
+        // The refused send hands the job back, so the release is the same claim
+        // undone rather than a second reading of what was counted.
+        self.tx
+            .send(Req { job, reply })
+            .map_err(|e| self.queued.release(&e.0.job))
+    }
+}
+
+/// The device thread's end.
+pub struct JobSource {
+    rx: Receiver<Req>,
+    queued: Queued,
+}
+
+impl JobSource {
+    /// The next queued job, if one is waiting.
+    pub fn try_next(&self) -> Result<Req, TryRecvError> {
+        self.rx.try_recv().map(|req| self.took(req))
+    }
+
+    /// The next queued job, waiting for one. The device loop uses
+    /// [`Self::try_next`] because it has a panel loop to interleave with; a
+    /// transport's own test has nothing to do between jobs and blocks instead.
+    #[cfg(test)]
+    pub fn next(&self) -> Result<Req, RecvError> {
+        self.rx.recv().map(|req| self.took(req))
+    }
+
+    /// Taking a job drops its claim on [`Queued`] — the pickup that clears `REQ`
+    /// on the board.
+    fn took(&self, req: Req) -> Req {
+        self.queued.release(&req.job);
+        req
+    }
+
+    pub fn queued(&self) -> Queued {
+        self.queued.clone()
+    }
+}
+
+/// The two ends of the device thread's queue, sharing one [`Queued`]. There is no
+/// other way to build either, which is what makes the count structural rather than
+/// a convention every transport has to keep.
+pub fn job_queue() -> (Jobs, JobSource) {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let queued = Queued::default();
+    (
+        Jobs {
+            tx,
+            queued: queued.clone(),
+        },
+        JobSource { rx, queued },
+    )
 }
 
 /// Build the device and answer jobs until every sender is gone.
@@ -152,9 +351,10 @@ pub struct Req {
 /// reason.
 pub fn run(
     cfg: Config,
-    jobs: Receiver<Req>,
+    jobs: JobSource,
     signals: Arc<Signals>,
     lines: Option<Receiver<String>>,
+    taps: Option<crate::taps::TapPad>,
 ) {
     let store = match crate::store::open(cfg.store.clone(), cfg.power_cut) {
         Ok(s) => s,
@@ -185,36 +385,60 @@ pub fn run(
     // generic over it. With `--display` it is the trusted screen in a window,
     // driven by the same `rsk_display` flow the board runs.
     if cfg.display {
-        let (panel, touch, hooks, quit) = crate::display::open();
-        let ui = Box::leak(Box::new(RefCell::new(rsk_display::Ui::new(
-            panel,
-            touch,
-            hooks,
-            rsk_display::DeviceInfo {
-                version: crate::usbip_stack::BCD_DEVICE,
-                chipid: u64::from_le_bytes(cfg.serial),
-            },
-            fs,
-            rsk_display::DeviceKeys {
-                serial_id: cfg.serial,
-                serial_hash: rsk_crypto::sha256(&cfg.serial),
-                otp_mkek: None,
-            },
-            rng,
-        ))));
+        let (parts, quit) = crate::display::open(taps, jobs.queued(), signals.clone());
         let _ = quit;
-        let presence = RefCell::new(rsk_display::TouchPresence::new(ui));
-        // The panel's own loop and the host's, on one executor — the same shape
-        // the firmware has, and the reason neither needs a lock: they only ever
-        // interleave where the other is not holding a borrow.
-        crate::park::block_on(embassy_futures::select::select(
-            rsk_display::status_loop(ui),
-            serve(cfg, jobs, signals, fs, rng, &presence),
-        ));
+        serve_display(cfg, jobs, signals, fs, rng, parts);
     } else {
         let presence = RefCell::new(EmuPresence::new(cfg.presence, lines, signals.clone()));
-        crate::park::block_on(serve(cfg, jobs, signals, fs, rng, &presence));
+        let links = PanelLinks::default();
+        crate::park::block_on(serve(cfg, jobs, signals, links, fs, rng, &presence));
     }
+}
+
+/// The `--display` build's wiring: the panel's own loop and the host's, on one
+/// executor — the same shape the firmware has, and the reason neither needs a
+/// lock: they only ever interleave where the other is not holding a borrow.
+///
+/// Generic over the panel and the pad because that is what the emulator's own
+/// tests substitute (a recording panel, a scripted finger) — the wiring itself,
+/// including the `EmuDisplayHooks` → `EmuHooks` PIN signal, stays the one a
+/// `--display` run uses.
+pub fn serve_display<P, T>(
+    cfg: Config,
+    jobs: JobSource,
+    signals: Arc<Signals>,
+    fs: &'static RefCell<Fs<crate::store::EmuStore>>,
+    rng: &'static RefCell<EmuRng>,
+    parts: crate::display::PanelParts<P, T>,
+) where
+    P: embedded_graphics::draw_target::DrawTarget<Color = embedded_graphics::pixelcolor::Rgb565>
+        + 'static,
+    T: rsk_display::TouchPad + 'static,
+{
+    // Read off the hooks, not passed in beside them: the panel and the worker must
+    // hold one pair, and two that do not match fail nothing.
+    let links = parts.hooks.links();
+    let ui = Box::leak(Box::new(RefCell::new(rsk_display::Ui::new(
+        parts.panel,
+        parts.touch,
+        parts.hooks,
+        rsk_display::DeviceInfo {
+            version: crate::bcd::BCD_DEVICE,
+            chipid: u64::from_le_bytes(cfg.serial),
+        },
+        fs,
+        rsk_display::DeviceKeys {
+            serial_id: cfg.serial,
+            serial_hash: rsk_crypto::sha256(&cfg.serial),
+            mkek_source: None,
+        },
+        rng,
+    ))));
+    let presence = RefCell::new(rsk_display::TouchPresence::new(ui));
+    crate::park::block_on(embassy_futures::select::select(
+        rsk_display::status_loop(ui),
+        serve(cfg, jobs, signals, links, fs, rng, &presence),
+    ));
 }
 
 /// Everything downstream of the presence backend, generic over it.
@@ -225,8 +449,9 @@ pub fn run(
 /// other's await points.
 async fn serve<PR: rsk_device::UserPresence + 'static>(
     cfg: Config,
-    jobs: Receiver<Req>,
+    jobs: JobSource,
     signals: Arc<Signals>,
+    links: PanelLinks,
     fs: &'static RefCell<Fs<crate::store::EmuStore>>,
     rng: &'static RefCell<EmuRng>,
     presence: &RefCell<PR>,
@@ -238,8 +463,8 @@ async fn serve<PR: rsk_device::UserPresence + 'static>(
     // No OTP block and no device key: an emulator has no fuses to hold them, so
     // records are sealed under the chip-serial-only root — the same context a
     // device that has never been provisioned uses.
-    let otp_key: Option<[u8; 32]> = None;
-    let devk: Option<[u8; 32]> = None;
+    let mkek_source: Option<rsk_crypto::FusedKey> = None;
+    let devk_source: Option<rsk_crypto::FusedKey> = None;
     let dev = || Device {
         serial_hash: &serial_hash,
         serial_id: &serial_id,
@@ -269,10 +494,24 @@ async fn serve<PR: rsk_device::UserPresence + 'static>(
         fido_state.ensure_initialized(&mut *rngb);
     }
 
+    // The other half of `main.rs`'s boot, and the half a warm reboot must not
+    // repeat: advance every plain Yubico-OTP slot's use counter, so the
+    // `(use, session)` pair a validation server orders OTPs by cannot recur —
+    // the session half restarts at 0 on every power-up. The emulator's power-ups
+    // are process start and `Job::Replug`; the warm reboot below skips this, as
+    // `!pin_lock::was_warm_boot()` makes the device skip it.
+    let power_up_bump = || {
+        rsk_otp::power_up_bump(&dev(), &mut fs.borrow_mut(), &mut *rng.borrow_mut());
+    };
+    power_up_bump();
+
     // The wiring itself: the same two handlers `firmware`'s worker owns. One vendor
     // platform handle, cloned into both, because the reboot they queue is the same
     // device's — one static there, one `Rc<Cell>` here.
-    let hooks = RefCell::new(EmuHooks::default());
+    let hooks = RefCell::new(EmuHooks {
+        warm: false,
+        local_pin: links.local_pin,
+    });
     let vendor_platform = EmuVendorPlatform::default();
     let reboot_requested = vendor_platform.reboot.clone();
     let mut ctap = AppletHandler::new(
@@ -283,8 +522,8 @@ async fn serve<PR: rsk_device::UserPresence + 'static>(
         vendor_platform.clone(),
         serial_id,
         serial_hash,
-        otp_key,
-        devk,
+        mkek_source,
+        devk_source,
     );
     let mut ccid = CcidApplets::new(
         fs,
@@ -295,8 +534,8 @@ async fn serve<PR: rsk_device::UserPresence + 'static>(
         vendor_platform,
         serial_id,
         serial_hash,
-        otp_key,
-        devk,
+        mkek_source,
+        devk_source,
         cfg.kv_total,
         cfg.flash_size,
         openpgp_mfr(cfg.yubico),
@@ -305,31 +544,36 @@ async fn serve<PR: rsk_device::UserPresence + 'static>(
     // Time is measured from the USB *attach*, not from process start: the CTAP 2.1
     // §6.6 reset window a host has to hit runs from the moment the device could
     // answer at all, so a replug has to restart it (`usb_attach::elapsed_ms`).
-    let mut attach = Instant::now();
+    links.attach.set(Instant::now());
 
     eprintln!("emu: device ready — serial {}", hex(&serial_id));
 
+    // Which channel the last CTAPHID_MSG came in on, as `firmware/src/worker.rs`
+    // keeps it: the MSG applet selection is one global for every channel, so a
+    // change of channel has to drop it (audit run-34 #27).
+    let mut last_msg_cid: Option<u32> = None;
+
     loop {
-        let req = match jobs.try_recv() {
+        let req = match jobs.try_next() {
             Ok(req) => req,
             // Nothing queued: yield, so a display loop selected against this one
             // gets to run. 1 ms keeps the socket latency invisible.
-            Err(std::sync::mpsc::TryRecvError::Empty) => {
+            Err(TryRecvError::Empty) => {
                 embassy_time::Timer::after_millis(1).await;
                 continue;
             }
-            Err(std::sync::mpsc::TryRecvError::Disconnected) => break,
+            Err(TryRecvError::Disconnected) => break,
         };
-        let now_ms = attach.elapsed().as_millis() as u64;
+        let now_ms = links.attach.get().elapsed().as_millis() as u64;
         // Whose a touch wait this job starts would be. One presence backend serves
         // every transport, so without this the FIDO keepalive and the OTP status
         // frame both announce whichever wait is running — `firmware/src/worker.rs`
         // sets the same scope per job kind, for the same reason.
         signals.set_wait_scope(match req.job {
-            Job::Cbor { .. } | Job::Msg(_) | Job::Vendor { .. } => signals::SCOPE_FIDO,
+            Job::Cbor { .. } | Job::Msg { .. } | Job::Vendor { .. } => signals::SCOPE_FIDO,
             Job::Apdu(_) | Job::ResetCard => signals::SCOPE_CCID,
             Job::OtpHid { .. } => signals::SCOPE_OTP,
-            Job::OtpStatus | Job::DeselectMsg | Job::Replug => signals::SCOPE_NONE,
+            Job::OtpStatus | Job::DeselectMsg | Job::Replug(_) => signals::SCOPE_NONE,
         });
         let out = match req.job {
             Job::Cbor { cid, data } => {
@@ -350,13 +594,23 @@ async fn serve<PR: rsk_device::UserPresence + 'static>(
                 }
                 Some(body)
             }
-            Job::Msg(data) => {
-                signals.begin(0);
+            Job::Msg { cid, data } => {
+                // U2F has no SELECT of its own, so without this another process's
+                // SELECT of the vendor AID sends this one's REGISTER to
+                // `INS_INCREMENT`. The two transports share one id space, though,
+                // so a socket channel and a USB/IP one can still collide (E302).
+                if last_msg_cid.replace(cid) != Some(cid) {
+                    ctap.deselect_msg();
+                }
+                signals.begin(cid);
                 let body = ctap.handle_msg(&data, now_ms).to_vec();
                 signals.end();
                 ctap.scrub();
                 Some(body)
             }
+            // No `begin`/`end`: no vendor command is presence-gated, and
+            // `rsk_usb::ctaphid::run_vendor` streams no keepalive and watches for
+            // no CANCEL — so a board cannot cancel one either.
             Job::Vendor { cmd, data } => {
                 let body = ccid.ctap_mgmt(cmd, &data).map(<[u8]>::to_vec);
                 ccid.scrub();
@@ -401,8 +655,9 @@ async fn serve<PR: rsk_device::UserPresence + 'static>(
             // A power cycle: the store is flash and survives, everything in RAM
             // does not, and the attach clock restarts — which is what reopens the
             // §6.6 reset window that a warm reboot deliberately does not.
-            Job::Replug => {
+            Job::Replug(_) => {
                 ccid.reset_card();
+                power_up_bump();
                 hooks.borrow_mut().warm = false;
                 ctap = AppletHandler::new(
                     fs,
@@ -414,15 +669,20 @@ async fn serve<PR: rsk_device::UserPresence + 'static>(
                     },
                     serial_id,
                     serial_hash,
-                    otp_key,
-                    devk,
+                    mkek_source,
+                    devk_source,
                 );
                 ccid.refresh_enabled();
-                attach = Instant::now();
+                last_msg_cid = None;
+                links.attach.set(Instant::now());
                 eprintln!("emu: replugged — fresh session, reset window open");
                 Some(Vec::new())
             }
         };
+        // Nothing is in flight again, so a wait started from here on is an on-panel
+        // flow, which no host may claim or cancel. `firmware/src/worker.rs` lowers
+        // the scope at the same point and for the same reason.
+        signals.set_wait_scope(signals::SCOPE_NONE);
         // A disconnected client is not an error: it just stopped listening.
         let _ = req.reply.send(out);
 
@@ -453,10 +713,11 @@ async fn serve<PR: rsk_device::UserPresence + 'static>(
                 },
                 serial_id,
                 serial_hash,
-                otp_key,
-                devk,
+                mkek_source,
+                devk_source,
             );
             ccid.refresh_enabled();
+            last_msg_cid = None;
             eprintln!("emu: warm reboot — RAM state dropped, the reset window stays shut");
         }
     }
@@ -465,3 +726,7 @@ async fn serve<PR: rsk_device::UserPresence + 'static>(
 fn hex(b: &[u8]) -> String {
     b.iter().map(|x| format!("{x:02x}")).collect()
 }
+
+#[cfg(test)]
+#[path = "device_tests.rs"]
+mod tests;

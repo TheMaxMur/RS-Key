@@ -5,7 +5,7 @@
 //! (resident-id lookup or a non-resident box) or, if the allowList is absent, by
 //! scanning resident credentials for the rp; sign authData ‖ clientDataHash
 //! with the credential key. A verified `pinUvAuthParam` sets the `uv` flag
-//! ([`enforce_pin`]); credProtect visibility is enforced in [`Best::consider`].
+//! (`enforce_pin`); credProtect visibility is enforced in `Best::consider`.
 //! When resident discovery finds more than one credential, the sorted EF_CRED
 //! slots are saved so [`get_next_assertion`] can return the rest one at a time.
 
@@ -13,14 +13,16 @@ use minicbor::encode::write::Cursor;
 use minicbor::{Decoder, Encoder};
 use zeroize::Zeroize;
 
+use rsk_crypto::pinproto::PinProto;
 use rsk_crypto::sha256;
 use rsk_fs::Storage;
 
-use crate::cbordec::{cbor, def_map, parse_credential_descriptors};
+use crate::cbordec::{cbor, def_map, parse_credential_descriptors, skip_value};
 use crate::clientpin::{UvOutcome, builtin_uv_enabled, builtin_uv_step};
 use crate::consts::{
     CRED_PROT_UV_OPTIONAL_WITH_LIST, CRED_PROT_UV_REQUIRED, CURVE_P256, EF_CRED, EF_PIN, FLAG_ED,
-    FLAG_UP, FLAG_UV, MAX_CREDENTIAL_COUNT_IN_LIST, MAX_RESIDENT_CREDENTIALS,
+    FLAG_UP, FLAG_UV, LARGE_BLOB_EXT, MAX_CREDENTIAL_COUNT_IN_LIST, MAX_RESIDENT_CREDENTIALS,
+    STATEFUL_WALK_IDLE_MS,
 };
 use crate::credential::{
     CRED_BOX_MAX, CRED_REC_MAX, CRED_RESIDENT_LEN, Credential, RECORD_PREFIX, USER_ID_MAX,
@@ -32,10 +34,10 @@ use crate::error::{CtapError, CtapResult};
 use crate::hmacsecret::{self, HmacSecretReq, SALT_AUTH_MAX, SALT_ENC_MAX};
 use crate::journal;
 use crate::keyderiv::{KEY_HANDLE_LEN, fido_load_key, verify_key};
+use crate::largeblobext::{self, GaInput};
 use crate::seed::{cred_sign_counter, get_sign_counter, set_cred_sign_counter};
 use crate::state::{AssertionState, MAX_ASSERTION_CREDS, PERM_GA};
 use crate::{Ctx, Rng};
-use rsk_crypto::pinproto::PinProto;
 
 const MAX_ALLOW: usize = MAX_CREDENTIAL_COUNT_IN_LIST as usize;
 /// Sized by the create-side ceiling so no creatable box is ever skipped
@@ -63,10 +65,14 @@ struct Request<'a> {
     /// `get_assertion_inner` and the `strict-up` feature.
     up: bool,
     pin_uv_auth_param: Option<&'a [u8]>,
-    pin_uv_auth_protocol: u64,
+    /// `None` = the platform sent no pinUvAuthProtocol. A numeric `0` is a value
+    /// it did send, and an unsupported one (§6.2.2 step 2).
+    pin_uv_auth_protocol: Option<u64>,
     ext_cred_blob: bool,
     ext_third_party_payment: bool,
     ext_large_blob_key: Option<bool>,
+    /// The CTAP 2.3 `largeBlob` extension input, on a `largeblob-ext` build.
+    ext_large_blob: GaInput<'a>,
     hmac_secret: HmacSecretReq<'a>,
 }
 
@@ -82,10 +88,11 @@ fn parse(data: &[u8]) -> Result<Request<'_>, CtapError> {
         uv: false,
         up: true,
         pin_uv_auth_param: None,
-        pin_uv_auth_protocol: 0,
+        pin_uv_auth_protocol: None,
         ext_cred_blob: false,
         ext_third_party_payment: false,
         ext_large_blob_key: None,
+        ext_large_blob: GaInput::Absent,
         hmac_secret: HmacSecretReq::default(),
     };
     let n = def_map(&mut d)?;
@@ -110,8 +117,8 @@ fn parse(data: &[u8]) -> Result<Request<'_>, CtapError> {
             5 => parse_options(&mut d, &mut req)?,
             4 => parse_extensions(&mut d, &mut req)?,
             6 => req.pin_uv_auth_param = Some(cbor(d.bytes())?),
-            7 => req.pin_uv_auth_protocol = cbor(d.u32())? as u64,
-            _ => cbor(d.skip())?,
+            7 => req.pin_uv_auth_protocol = Some(cbor(d.u32())? as u64),
+            _ => skip_value(&mut d)?,
         }
     }
     Ok(req)
@@ -124,9 +131,13 @@ fn parse_extensions<'a>(d: &mut Decoder<'a>, req: &mut Request<'a>) -> Result<()
         match cbor(d.str())? {
             "credBlob" => req.ext_cred_blob = cbor(d.bool())?,
             "thirdPartyPayment" => req.ext_third_party_payment = cbor(d.bool())?,
-            "largeBlobKey" => req.ext_large_blob_key = Some(cbor(d.bool())?),
+            // Only one of the two large-blob designs is a recognized extension in
+            // a given build (§12.4); the other falls through to the skip arm like
+            // any unknown one, so its downstream checks stay inert.
+            "largeBlobKey" if !LARGE_BLOB_EXT => req.ext_large_blob_key = Some(cbor(d.bool())?),
+            "largeBlob" if LARGE_BLOB_EXT => req.ext_large_blob = largeblobext::parse_ga(d)?,
             "hmac-secret" => req.hmac_secret = hmacsecret::parse(d)?,
-            _ => cbor(d.skip())?,
+            _ => skip_value(d)?,
         }
     }
     Ok(())
@@ -140,7 +151,7 @@ fn parse_options(d: &mut Decoder<'_>, req: &mut Request<'_>) -> Result<(), CtapE
             "rk" => req.rk_option = cbor(d.bool())?,
             "uv" => req.uv = cbor(d.bool())?,
             "up" => req.up = cbor(d.bool())?,
-            _ => cbor(d.skip())?,
+            _ => skip_value(d)?,
         }
     }
     Ok(())
@@ -271,12 +282,21 @@ pub fn get_assertion<S: Storage, R: Rng>(
     // is not an error, the option is simply treated as false. Otherwise `uv` is an
     // error only when there is no built-in user verification method, or it is not
     // presently configured — on a screenless build, always.
+    //
+    // Judged above step 2's protocol, where the oracle puts it: a bare uv:true is
+    // INVALID_OPTION there whatever `pinUvAuthProtocol` says. `rk` is NOT in that
+    // class and stays below — measured, it loses to the protocol on that card.
     if req.pin_uv_auth_param.is_some() {
         req.uv = false;
     }
     if req.uv && !builtin_uv_enabled(ctx) {
         return Err(CtapError::InvalidOption);
     }
+    // §6.2.2 step 2 ahead of every check below — where the oracle puts it: a
+    // present-but-unsupported protocol outranks `options.rk`, an hmac-secret
+    // missing its salts and the selection gesture. An absent one is
+    // `enforce_pin`'s business.
+    let proto = crate::clientpin::checked_proto(req.pin_uv_auth_protocol)?;
     if req.rk_option {
         return Err(CtapError::UnsupportedOption);
     }
@@ -284,8 +304,11 @@ pub fn get_assertion<S: Storage, R: Rng>(
     if req.ext_large_blob_key == Some(false) {
         return Err(CtapError::InvalidOption);
     }
+    // §12.5's saltEnc / saltAuth are mandatory when the extension is present, and a
+    // YubiKey 5.7.4 answers MISSING_PARAMETER for an absent one ahead of its own
+    // up-rule. A zero-length one was sent, and is the length gate's business.
     if req.hmac_secret.present
-        && (req.hmac_secret.salt_enc.is_empty() || req.hmac_secret.salt_auth.is_empty())
+        && (req.hmac_secret.salt_enc.is_none() || req.hmac_secret.salt_auth.is_none())
     {
         return Err(CtapError::MissingParameter);
     }
@@ -297,7 +320,7 @@ pub fn get_assertion<S: Storage, R: Rng>(
     }
 
     let rp_id_hash = sha256(req.rp_id.as_bytes());
-    let verified = enforce_pin(ctx, &req, &rp_id_hash)?;
+    let verified = enforce_pin(ctx, &req, &rp_id_hash, proto)?;
     // §6.2.2 step 8: a built-in UV ceremony IS the evidence of user interaction, so
     // the response asserts presence. Normalising `up` here carries that through the
     // UP flag and the getNextAssertion legs; the poll itself is skipped below.
@@ -341,6 +364,7 @@ fn enforce_pin<S: Storage, R: Rng>(
     ctx: &mut Ctx<S, R>,
     req: &Request,
     rp_id_hash: &[u8; 32],
+    proto: Option<PinProto>,
 ) -> Result<UvOutcome, CtapError> {
     match req.pin_uv_auth_param {
         // Zero-length probe (selection gesture): touch, then report PIN state.
@@ -356,10 +380,7 @@ fn enforce_pin<S: Storage, R: Rng>(
             })
         }
         Some(param) => {
-            let proto = match req.pin_uv_auth_protocol {
-                0 => return Err(CtapError::MissingParameter),
-                p => PinProto::from_u64(p).ok_or(CtapError::InvalidParameter)?,
-            };
+            let proto = proto.ok_or(CtapError::MissingParameter)?;
             if !ctx.state.verify_token(proto, req.client_data_hash, param)
                 || !ctx.state.user_verified()
                 || ctx.state.paut.permissions & PERM_GA == 0
@@ -525,6 +546,7 @@ fn resolve_by_discovery<S: Storage, R: Rng>(
             rp_id_hash,
             uv,
             ctx.now_ms,
+            ctx.state.channel,
         );
     }
 }
@@ -540,9 +562,11 @@ fn arm_get_next_assertion(
     rp_id_hash: &[u8; 32],
     uv: bool,
     now_ms: u64,
+    channel: u32,
 ) {
     cands.sort_unstable_by_key(|c| core::cmp::Reverse(c.1));
     gna.active = true;
+    gna.channel = channel;
     gna.rp_id_hash = *rp_id_hash;
     gna.client_data_hash.copy_from_slice(req.client_data_hash);
     gna.uv = uv;
@@ -562,15 +586,13 @@ fn arm_get_next_assertion(
         gna.hmac_proto = req.hmac_secret.proto;
         gna.hmac_peer_x = req.hmac_secret.peer_x;
         gna.hmac_peer_y = req.hmac_secret.peer_y;
-        let se = req.hmac_secret.salt_enc.len().min(gna.hmac_salt_enc.len());
-        gna.hmac_salt_enc[..se].copy_from_slice(&req.hmac_secret.salt_enc[..se]);
+        let salt_enc = req.hmac_secret.salt_enc.unwrap_or_default();
+        let se = salt_enc.len().min(gna.hmac_salt_enc.len());
+        gna.hmac_salt_enc[..se].copy_from_slice(&salt_enc[..se]);
         gna.hmac_salt_enc_len = se as u8;
-        let sa = req
-            .hmac_secret
-            .salt_auth
-            .len()
-            .min(gna.hmac_salt_auth.len());
-        gna.hmac_salt_auth[..sa].copy_from_slice(&req.hmac_secret.salt_auth[..sa]);
+        let salt_auth = req.hmac_secret.salt_auth.unwrap_or_default();
+        let sa = salt_auth.len().min(gna.hmac_salt_auth.len());
+        gna.hmac_salt_auth[..sa].copy_from_slice(&salt_auth[..sa]);
         gna.hmac_salt_auth_len = sa as u8;
     }
     gna.ext_cred_blob = req.ext_cred_blob;
@@ -705,6 +727,19 @@ fn get_assertion_inner<S: Storage, R: Rng>(
     // assertion loses its permission.
     ctx.state.consume_after_user_presence_if(req.up);
 
+    // CTAP 2.3 §12.4 largeBlob, run here so the gesture the assertion asked for is
+    // already spent before any flash is touched. The rules themselves live with the
+    // extension.
+    let large_blob = largeblobext::process_ga(
+        ctx,
+        seed,
+        req.ext_large_blob,
+        &best.resident_id,
+        best.slot,
+        req.allow_len > 0,
+        req.up,
+    );
+
     // authData = rpIdHash | flags([UP][,UV][,ED]) | counter [| ext] — no attestedCredentialData.
     // Per-credential signature counter: a resident credential reports (and then
     // advances) its own EF_CRED_CTR entry, so an RP can't correlate this key's
@@ -729,7 +764,9 @@ fn get_assertion_inner<S: Storage, R: Rng>(
     let mut sig = [0u8; MAX_SIG_LEN];
     let sig_len = key.sign(&ad[..ad_len + 32], ctx.rng, &mut sig);
 
-    // Response: { 1: {id,type}, 2: authData, 3: sig [, 4: user] [, 5: count] [, 7: largeBlobKey] }.
+    // Response: { 1: {id,type}, 2: authData, 3: sig [, 4: user] [, 5: count]
+    // [, 7: largeBlobKey] [, 8: unsignedExtensionOutputs] }. Fields 7 and 8 are
+    // the two mutually exclusive large-blob designs, so at most one appears.
     // A resident credential's id is its STORED 42-byte resident id (stable across
     // updateUserInformation); a non-resident's is the box itself.
     let cred_id: &[u8] = if best.resident {
@@ -751,6 +788,7 @@ fn get_assertion_inner<S: Storage, R: Rng>(
     if large_blob_key.is_some() {
         fields += 1; // largeBlobKey
     }
+    fields += u64::from(large_blob.emits()); // unsignedExtensionOutputs
 
     let mut enc = Encoder::new(Cursor::new(&mut *out));
     enc.map(fields)
@@ -797,6 +835,8 @@ fn get_assertion_inner<S: Storage, R: Rng>(
             .and_then(|e| e.bytes(&lbk))
             .map_err(|_| CtapError::Other)?;
     }
+    largeblobext::write_ga_output(&mut enc, &large_blob, &ctx.state.lba.temp)
+        .map_err(|_| CtapError::Other)?;
     let resp_len = enc.writer().position();
 
     // Advance the per-credential counter AFTER building the response (so a torn
@@ -850,10 +890,16 @@ fn encode_ga_extensions(
 /// `NotAllowed` if there is no carry-over, it is exhausted, or the 30 s window
 /// elapsed.
 pub fn get_next_assertion<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, out: &mut [u8]) -> CtapResult {
-    if !ctx.state.gna.active || ctx.state.gna.counter >= ctx.state.gna.total {
+    // The walk belongs to the channel that opened it (`AssertionState::channel`):
+    // its legs are signed over that request's clientDataHash and ride its
+    // presence/UV decision, so a second process must not be able to continue it.
+    if !ctx.state.gna.active
+        || ctx.state.gna.channel != ctx.state.channel
+        || ctx.state.gna.counter >= ctx.state.gna.total
+    {
         return Err(CtapError::NotAllowed);
     }
-    if ctx.now_ms.saturating_sub(ctx.state.gna.started_ms) > 30_000 {
+    if ctx.now_ms.saturating_sub(ctx.state.gna.started_ms) > STATEFUL_WALK_IDLE_MS {
         ctx.state.gna.reset();
         return Err(CtapError::NotAllowed);
     }
@@ -953,8 +999,8 @@ fn next_assertion_response<S: Storage, R: Rng>(
             proto: g.hmac_proto,
             peer_x: g.hmac_peer_x,
             peer_y: g.hmac_peer_y,
-            salt_enc: &salt_enc[..se],
-            salt_auth: &salt_auth[..sa],
+            salt_enc: Some(&salt_enc[..se]),
+            salt_auth: Some(&salt_auth[..sa]),
         };
         let ephemeral = *ctx.state.ephemeral_scalar();
         hmacsecret::eval(&req, &ephemeral, seed, key_input, uv, ctx.rng, &mut hs)?

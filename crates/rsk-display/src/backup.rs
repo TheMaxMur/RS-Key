@@ -153,7 +153,8 @@ where
             return;
         }
         // Read + derive. The seed lives only long enough to compute the indices, then is wiped.
-        let dev = self.keys.device();
+        let mkek = read_fused(self.keys.mkek_source);
+        let dev = self.keys.device(&mkek);
         let mut seed_opt = {
             let mut fs = self.fs.borrow_mut();
             rsk_fido::passkeys::load_keydev(&dev, &mut fs)
@@ -272,7 +273,8 @@ where
 
         // Read the seed and split it on-device; the seed lives only long enough to generate the
         // shares, then is wiped (both the copied-out seed and the original `Option`).
-        let dev = self.keys.device();
+        let mkek = read_fused(self.keys.mkek_source);
+        let dev = self.keys.device(&mkek);
         let mut seed_opt = {
             let mut fs = self.fs.borrow_mut();
             rsk_fido::passkeys::load_keydev(&dev, &mut fs)

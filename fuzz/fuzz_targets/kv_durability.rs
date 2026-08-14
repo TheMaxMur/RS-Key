@@ -40,7 +40,10 @@ const WORD: usize = 4;
 const PAGE_WORDS: usize = 1024;
 type Mock = MockFlashBase<8, WORD, PAGE_WORDS>;
 const RANGE: core::ops::Range<u32> = 0..(8 * 4096);
-const KV_BUF: usize = 2048;
+// The device's scratch, derived rather than copied: `rsk-store` asserts
+// `MAX_VALUE_BYTES == KV_BUF - 2`, so a literal here silently stops mirroring the
+// store the moment that ceiling moves (it did, 2046 -> 4078).
+const KV_BUF: usize = rsk_fs::MAX_VALUE_BYTES + 2;
 type Cache = SsCache<ArrayPageStates<8>, ArrayPagePointers<8>, ArrayKeyPointers<u16, 16>, u16>;
 
 // Key 0 is the "hot" key (EF_META analog); the rest are cold occupants that make

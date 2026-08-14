@@ -29,7 +29,11 @@
 //! the interrupt executor preempts the busy-wait throughout, so keepalives keep
 //! flowing and a full-frame repaint never stalls enumeration.
 
-#![no_std]
+// Host test builds link `std`: the doubles the flow runs against (a recording
+// panel, a scripted touch pad) want a heap and a mutex, and the crates the tests
+// borrow from — `rsk-fs`'s RAM storage, `embassy-time`'s `std` driver — are std
+// too. The firmware build is untouched, and no test code reaches the image.
+#![cfg_attr(not(test), no_std)]
 
 extern crate alloc;
 
@@ -47,7 +51,7 @@ use embedded_graphics::{
 };
 use zeroize::Zeroize;
 
-use rsk_crypto::Device;
+use rsk_crypto::{Device, FusedKey, FusedRead, read_fused};
 use rsk_fs::Fs;
 use rsk_sdk::Confirm;
 use rsk_ui::{
@@ -111,6 +115,11 @@ pub trait Hooks {
     /// A device PIN was re-keyed from the panel: the host side must end every
     /// session credential the old PIN authorized (CTAP 2.1 §6.5.5.6).
     fn note_local_pin_changed(&mut self) {}
+    /// A clientPIN comparison *failed* at the panel's pad. Same consequence — the
+    /// host's outstanding `pinUvAuthToken` ends — for the other reason: the pad's
+    /// current-PIN prompt is `changePIN`'s old-PIN check, and over USB that check
+    /// drops the token on a mismatch.
+    fn note_local_pin_failed(&mut self) {}
     /// Whether the boot ROM actually verifies the image signature (read from OTP),
     /// shown read-only on Settings → Firmware.
     fn secure_boot_enabled(&self) -> bool {
@@ -173,7 +182,7 @@ const SETTINGS_PERSIST_QUIET_MS: u64 = 1_500;
 /// backstop so a walked-away device doesn't leave the passkey list (or a menu) on
 /// screen indefinitely. It is **not** the host-starvation guard: while a tab is open
 /// the worker is parked (single thread executor), but the browse loops poll
-/// [`crate::worker::host_request_pending`] and yield the instant a host command
+/// [`Hooks::host_request_pending`] and yield the instant a host command
 /// arrives, so this bound can be generous (a comfortable browse) without making the
 /// host wait for it.
 const MENU_INACTIVITY_MS: u64 = 60_000;
@@ -251,20 +260,21 @@ pub struct DeviceInfo {
 
 /// The device key material the read-only passkey enumerator needs to load and unbox
 /// the resident-credential seed from `EF_KEY_DEV` — the same identity the worker's
-/// `Ctx` carries, kept as owned copies so the display task can build a [`Device`] on
-/// demand (when the Passkeys tab is open) without holding the seed itself.
+/// `Ctx` carries. The serials are owned copies; the MKEK is a way to read the fuses,
+/// so the display task builds a [`Device`] on demand (when the Passkeys tab is open)
+/// while holding neither the seed nor the root key.
 pub struct DeviceKeys {
     pub serial_id: [u8; 8],
     pub serial_hash: [u8; 32],
-    pub otp_mkek: Option<[u8; 32]>,
+    pub mkek_source: Option<FusedKey>,
 }
 
 impl DeviceKeys {
-    fn device(&self) -> Device<'_> {
+    fn device<'k>(&'k self, mkek: &'k FusedRead) -> Device<'k> {
         Device {
             serial_hash: &self.serial_hash,
             serial_id: &self.serial_id,
-            otp_key: self.otp_mkek.as_ref(),
+            otp_key: mkek.as_deref(),
         }
     }
 }
@@ -485,7 +495,8 @@ where
     /// panel, the lesson the PIV `has_data` lag taught. Borrow-safe like [`Self::load_rps`]
     /// (the worker is parked while this thread-executor task runs).
     fn refresh_home_stats(&mut self) {
-        let dev = self.keys.device();
+        let mkek = read_fused(self.keys.mkek_source);
+        let dev = self.keys.device(&mkek);
         let mut store = self.fs.borrow_mut();
         self.home_pin_set = rsk_fido::passkeys::device_pin_is_set(&mut store);
         let mut creds = 0u16;
@@ -525,11 +536,6 @@ where
         let _ = panel.fill_contiguous(&area, colors);
     }
 
-    /// Hand the panel back to the ambient loop on a modal's exit. Closing a tab back to
-    /// idle is repainted *immediately* by [`status_task`]'s dispatcher, and a tab → next
-    /// tab hand-off renders the new tab directly, so neither needs the ambient-quiet
-    /// window (that is only for the pad → confirm gap, set in `confirm_wait` /
-    /// `collect_pin`). So this just clears the last-shown marker.
     /// Record a panel-originated action in the on-device audit journal.
     ///
     /// The panel renders the journal as its evidence surface, yet nothing under
@@ -539,12 +545,21 @@ where
     /// impact but does not remove it — the gap silently omitted the device's
     /// highest-value actions from the log of a user who deliberately turned it on.
     fn journal_local(&self, ev: u8) {
-        let dev = self.keys.device();
+        let mkek = read_fused(self.keys.mkek_source);
+        let dev = self.keys.device(&mkek);
         let now = self.hooks.attach_elapsed_ms();
         rsk_fido::journal::append_local(&dev, &mut self.fs.borrow_mut(), now, ev, 0);
     }
 
+    /// Hand the panel back to the ambient loop on a modal's exit. Closing a tab back to
+    /// idle is repainted *immediately* by the firmware's `status_task` dispatcher, and a
+    /// tab → next tab hand-off renders the new tab directly, so neither needs the ambient-quiet
+    /// window (that is only for the pad → confirm gap, set in `confirm_wait` /
+    /// `collect_pin`). So this just clears the last-shown marker.
     fn end_modal(&mut self) {
         self.shown = None;
     }
 }
+
+#[cfg(test)]
+mod tests;

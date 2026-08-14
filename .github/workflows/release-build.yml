@@ -208,6 +208,36 @@ jobs:
           if [ ! -s release-notes.md ]; then
             echo "RS-Key ${{ steps.tag.outputs.tag }}" > release-notes.md
           fi
+          # A release body is capped at 125000 characters and `gh release create`
+          # fails the whole job on 422 — after the tag is pushed, and a v* tag can
+          # neither move nor be reused, so an oversized section burns a version.
+          # Prefer the section's own TL;DR: cutting at a byte count would drop
+          # whole kinds (### Security last of all) and read as if they were empty.
+          if [ "$(wc -c < release-notes.md)" -gt 118000 ]; then
+            awk '
+              /^### / && $0 !~ /^### TL;DR/ { exit }
+              { print }
+            ' release-notes.md > release-notes.short
+            # No TL;DR to fall back on: keep whole entries up to the cap instead.
+            if [ "$(wc -c < release-notes.short)" -lt 200 ]; then
+              awk '
+                { total += length($0) + 1 }
+                total > 115000 { exit }
+                /^- \*\*/ { last = NR }
+                { line[NR] = $0; kept = NR }
+                END {
+                  stop = (last > 1) ? last - 1 : kept
+                  for (i = 1; i <= stop; i++) print line[i]
+                }
+              ' release-notes.md > release-notes.short
+            fi
+            mv release-notes.short release-notes.md
+            {
+              echo
+              echo "_Shortened to fit GitHub's release-body limit._"
+              echo "_Every entry is in [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/${{ steps.tag.outputs.tag }}/CHANGELOG.md) at this tag._"
+            } >> release-notes.md
+          fi
           {
             echo
             echo "---"

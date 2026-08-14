@@ -21,8 +21,11 @@ fuzz_target!(|data: &[u8]| {
     let _ = dev.hash_multi(data);
     let _ = dev.double_hash_pin(data);
     let _ = dev.derive_kver(data);
-    let _ = dev.pin_derive_verifier(data);
-    let _ = dev.pin_derive_session(data);
+
+    // Domain separation: the at-rest verifier and the bearer session token expand
+    // the same kver and must never coincide for any PIN — a collapsed `info` would
+    // publish the token in the PIN record.
+    assert_ne!(dev.pin_derive_verifier(data), dev.pin_derive_session(data));
 
     // Device-key AEAD round-trip on a bounded plaintext.
     let token = [0x33u8; 32];

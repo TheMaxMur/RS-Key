@@ -52,11 +52,36 @@ fn clamp_domain_sanitizes_bounds_and_keeps_tail() {
     }
 }
 
-/// The Allow and Deny hit regions are disjoint, so no tap can select both.
+/// `hit_confirm` — the shipped consent hit-test — answers Allow for exactly the
+/// taps inside [`ALLOW_RECT`], Deny for exactly the taps inside [`DENY_RECT`],
+/// and `None` everywhere else on the panel.
+///
+/// The rect-only claim this replaces (`!(ALLOW.contains(p) && DENY.contains(p))`)
+/// already followed from the compile-time layout block in `lib.rs`, and it said
+/// nothing about the function the firmware calls. The clause that earns the
+/// proof is the last one: the space around the buttons is security margin — the
+/// consent screen exists so that a brush against the panel cannot approve an
+/// assertion — and only the dispatch function, not the geometry, can promise a
+/// tap landing there selects nothing.
 #[kani::proof]
-fn confirm_buttons_disjoint() {
+fn confirm_hit_selects_at_most_one_button() {
     let p = Point::new(kani::any(), kani::any());
-    assert!(!(ALLOW_RECT.contains(p) && DENY_RECT.contains(p)));
+    let hit = hit_confirm(p);
+    assert!(
+        (hit == Some(Button::Allow)) == ALLOW_RECT.contains(p),
+        "Allow is not exactly the Allow rect"
+    );
+    assert!(
+        (hit == Some(Button::Deny)) == DENY_RECT.contains(p),
+        "Deny is not exactly the Deny rect"
+    );
+    assert!(
+        hit.is_none() == !(ALLOW_RECT.contains(p) || DENY_RECT.contains(p)),
+        "a tap in the security margin still selected a button"
+    );
+    kani::cover!(hit == Some(Button::Allow), "a tap that approves");
+    kani::cover!(hit == Some(Button::Deny), "a tap that denies");
+    kani::cover!(hit.is_none(), "a tap in the security margin");
 }
 
 /// No tap selects two PIN-pad keys at once: the Cancel target is disjoint from
@@ -102,14 +127,32 @@ fn settings_keys_disjoint() {
     assert!(!(ADJ_PLUS_RECT.contains(p) && TITLE_BACK_RECT.contains(p)));
 }
 
-/// No tap selects two nav tabs at once, and no tap selects two list rows at once
-/// (for any first-row offset) — so the design-system navigation can't misfire.
+/// No tap selects two nav tabs at once, no tap selects two list rows at once (for
+/// any first-row offset), and what the renderer paints is what [`hit_nav`] routes —
+/// so the design-system navigation can't misfire.
 #[kani::proof]
 fn nav_and_rows_disjoint() {
     let p = Point::new(kani::any(), kani::any());
     let (i, j): (u16, u16) = (kani::any(), kani::any());
-    kani::assume(i < 3 && j < 3 && i != j);
+    let tabs = NAV_TABS.len() as u16;
+    kani::assume(i < tabs && j < tabs && i != j);
     assert!(!(nav_tab_rect(i).contains(p) && nav_tab_rect(j).contains(p)));
+
+    // Paint ⇒ hit, for EVERY tap: a tab rect is on-panel by construction, so the cell
+    // the renderer fills for tab `i` is exactly the one `hit_nav` routes there.
+    assert!(!nav_tab_rect(i).contains(p) || hit_nav(p) == Some(NAV_TABS[i as usize]));
+    // Nothing above the nav band routes anywhere at all.
+    assert!(p.y >= NAV_TOP || hit_nav(p).is_none());
+
+    // Hit ⇒ paint only holds for an on-panel tap: `hit_nav` clamps x with `.min()`
+    // while `nav_tab_rect` does not, and the touch path never clamps its raw 12-bit
+    // coordinate — so an off-panel x routes to Settings with no rect under it.
+    let q = Point::new(kani::any(), kani::any());
+    kani::assume(q.x < PANEL_W && q.y < PANEL_H);
+    assert_eq!(
+        nav_tab_rect(i).contains(q),
+        hit_nav(q) == Some(NAV_TABS[i as usize])
+    );
 
     let y0: u16 = kani::any();
     kani::assume(y0 <= PANEL_H);

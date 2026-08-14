@@ -24,11 +24,29 @@ YubiKey" ([build.md](../build.md)).
 | Admin PIN (PW3) | `12345678` | 8–127 | key import/generation, card settings |
 | Reset Code (RC) | unset | 8–127 | unblocking PW1 without PW3 |
 
+Those columns are exclusive: the admin PIN authorises no key operation. It
+cannot sign, decrypt or authenticate, however recently it was entered — that is
+the card spec's rule and what a YubiKey does. (Earlier RS-Key builds let PW3
+stand in for PW1 here. If you have a script that unlocks signing with the admin
+PIN, it needs the user PIN now.)
+
+The same split governs the four private-use data objects: `0101` and `0103` are
+the cardholder's and open to the **user** PIN, `0102` and `0104` are the admin's.
+There is no admin override on the cardholder's pair — `0101` and `0103` answer
+`6982` to PW3, as a YubiKey does. (Earlier RS-Key builds took the admin PIN on
+those two as well; a script that stashes data there needs the user PIN now.)
+
 The card enforces those lengths itself: a `CHANGE REFERENCE DATA` or `RESET
-RETRY COUNTER` carrying a new value outside the range is refused with `6700`,
+RETRY COUNTER` carrying a new value outside the range is refused with `6985`,
 whatever the host's own policy is. gpg applies the same `≥ 6` / `≥ 8` minima
 before it ever reaches the card. A shorter reference stored by an older firmware
 keeps verifying; only new ones are checked.
+
+A **verify** of a value outside the range is refused the same way, with `6A80` —
+and it costs **no retry** and leaves an already-entered PIN standing, because a
+password the reference could not be is a malformed request rather than a wrong
+guess. On a card still holding a legacy out-of-range reference the check is off,
+so that reference stays verifiable.
 
 A fresh card has **no** Reset Code. It stays deactivated until an admin sets one
 (`passwd` option 4, below), so `RESET RETRY COUNTER` in its RC form cannot run
@@ -78,14 +96,18 @@ gpg read back):
 |---|---|---|
 | ECC (sign/auth) | **Ed25519**, NIST **P-256 / P-384 / P-521**, **secp256k1**, **brainpoolP256r1 / P384r1** | EdDSA on Ed25519; ECDSA on the Weierstrass curves |
 | ECC (encrypt) | **Cv25519** (X25519), NIST **P-256 / P-384 / P-521**, **secp256k1**, **brainpoolP256r1 / P384r1** | ECDH; the DEC slot only |
-| RSA | **2048 / 3072 / 4096** | exponent fixed at 65537 (what gpg imports) |
+| RSA | **2048 / 3072 / 4096**, plus **1024** | exponent fixed at 65537 (what gpg imports) |
 
-Not supported. gpg will offer them, and the card even accepts the `key-attr`
-write, but **GENERATE / keytocard** then refuses with `0x6A81` "Function not
-supported": **X448**, **Ed448**, and **brainpoolP512r1**. (X448 and Ed448 still
-appear in the `0xFA` advertisement but are non-functional; brainpoolP512r1 is not
-advertised.) No mature `no_std` Rust arithmetic exists for those yet, so shipping
-them would mean unaudited curve math.
+**RSA-1024 is advertised and it works** — a YubiKey does not offer it at all.
+It is below every current guidance (NIST SP 800-131A retired it in 2013) and it
+is here only so a key generated under an older build keeps working. Do not pick
+it for a new key.
+
+Not supported: **X448**, **Ed448** and **brainpoolP512r1**. gpg will offer them;
+the card advertises none of the three in DO `0xFA` and refuses the `key-attr`
+write with `0x6A80`, so a slot cannot end up announcing a curve it will not use.
+No mature `no_std` Rust arithmetic exists for those yet, so shipping them would
+mean unaudited curve math.
 
 On-card generation means the private keys never existed anywhere else, and
 **cannot be backed up**. gpg's "make an off-card backup" prompt covers the
@@ -122,7 +144,10 @@ gpg> save
 `keytocard` *moves* the selected subkey onto the card, replacing the on-disk
 copy with a stub that points at the device. Set `key-attr` to match the
 incoming key's algorithm **before** `keytocard`, or the card refuses the import.
-A mismatched algorithm/curve returns "Wrong data" / "Function not supported"
+The **size** counts as much as the family: a 2048-bit key offered to a slot
+announcing RSA-4096 is refused, because the attribute is what `gpg
+--card-status` and every other host reads back as the truth about that slot.
+A mismatched algorithm/curve/size returns "Wrong data" / "Function not supported"
 and a missing admin (PW3) session returns "Security status not satisfied". gpg
 surfaces one of these as a card refusal.
 
@@ -130,6 +155,13 @@ Importing keeps an off-card copy in your keyring until you delete it. Your call
 which way the trade-off goes. The usual recoverable setup: generate the master
 key **offline**, move only the three subkeys to the card, and store the master
 key material on encrypted offline media.
+
+The card records which way each slot was filled and reports it in DO `0xDE`,
+because that is the difference between a key that can only exist here and one
+that has a copy somewhere. A slot filled by a build older than this one, or one
+whose GENERATE lost power partway, reads as **imported**: the card will not
+claim on-card generation it cannot prove. Generate into the slot again if you
+want the stronger claim back.
 
 ## Daily use
 
@@ -145,8 +177,13 @@ gpg drives the slots automatically: the SIG slot signs, the DEC slot decrypts.
 Encryption *to* a recipient is a public-key operation and never touches the
 card. Only **decryption** does.
 
-By default PW1 stays valid for the session after the first signature. To force
-a PIN on **every** signature, flip the PW1 status byte:
+By default PW1 stays valid for the session after the first signature. That
+session ends when the key is unplugged or another application is selected on the
+card — a PIV or OATH tool reaching for the same key mid-session does exactly
+that. Selecting **OpenPGP** again does not end it (§4.2 spends its rule on "a
+SELECT to a *different* DF"), so a tool that re-selects before each command keeps
+the PIN it already gave. To force a PIN on **every** signature, flip the PW1
+status byte:
 
 ```sh
 gpg/card> admin
@@ -203,11 +240,22 @@ cannot turn your signatures touchless. Clearing it takes `TERMINATE DF` +
 
 ## AES encryption (PSO)
 
-The DEC slot carries an on-card **AES-256** key, minted automatically whenever
-the encryption keypair is generated. Tools that expose the card's symmetric
-PSO (e.g. `gpg-card`) can `ENCIPHER` / `DECIPHER` arbitrary block-aligned data
-with it (raw AES-CBC, zero IV; output is `0x02 || cryptogram`). It needs PW1
-(PW2). Most users never touch this. Public-key encryption is the normal path.
+The card carries one **AES** key, in DO `D5`. It belongs to the card, not to a key
+slot — the spec names it by the commands it serves, and `ENCIPHER` uses no key
+slot at all. The card seeds it as AES-256 the first time you generate an
+encryption keypair, so the feature works out of the box. Tools that expose the
+card's symmetric PSO (e.g. `gpg-card`) can `ENCIPHER` / `DECIPHER` arbitrary
+block-aligned data with it (raw AES-CBC, zero IV; output is `0x02 ||
+cryptogram`). It needs PW1 (PW2). Most users never touch this. Public-key
+encryption is the normal path.
+
+A host can also supply the key itself, with `PUT DATA` on DO `D5` under the
+**admin** PIN: 16 bytes for AES-128 or 32 for AES-256, and no other length.
+
+Once a key is there nothing replaces it but another `PUT DATA D5` — generating or
+importing a keypair leaves it alone, on every slot. There is **no way to remove**
+it short of `TERMINATE DF` + `ACTIVATE FILE`, which wipes the applet, and the card
+cannot tell you a key is there: DO `D5` is write-only.
 
 ## Recovery and reset
 
@@ -226,6 +274,47 @@ gpg/card> passwd            # menu option 2: "unblock PIN" via Reset Code
 ```
 
 Both reset PW1's retry counter and re-seal its key material under the new PIN.
+
+### A PIN change interrupted by unplugging the key
+
+Changing a PIN rewrites two things: the PIN's verifier, and the copy of the key
+that PIN unwraps. Pull the key out of the port between the two — during
+`gpg --change-pin` — and the card reports a memory error.
+
+Since firmware `0x0889` the card finishes the interrupted change itself on the
+next `VERIFY`, so there is nothing to do. **On an older build the card comes back
+in a state that looks fatal and is not:** the affected PIN verifies, and every
+operation that needs a key answers *"Card error"*. Do **not** factory-reset it.
+
+The card keeps one copy of the key per PIN and only the copy belonging to the PIN
+you changed was damaged, so the repair is to reach the key through a *different*
+PIN. Which one depends on which PIN you were changing, and the two recipes are
+not interchangeable:
+
+**The admin PIN (PW3) was being changed** — verify the user PIN first, in the
+same session, then change PW3 again:
+
+```sh
+gpg --card-edit
+gpg/card> verify            # PW1 — its copy of the key is untouched
+gpg/card> admin
+gpg/card> passwd            # change PW3 again; the card is repaired
+```
+
+**The user PIN (PW1) was being changed** — use the admin unblock, and do **not**
+verify PW1 anywhere in that session:
+
+```sh
+gpg --card-edit
+gpg/card> admin
+gpg/card> passwd            # menu option 1, "unblock PIN" — sets PW1 via PW3
+```
+
+The order matters for a reason worth knowing: the card reaches for PW1's copy of
+the key whenever PW1 is verified, ahead of the admin's. So for a torn PW1 change,
+verifying PW1 — even with the PIN that now works — puts the damaged copy back in
+front and the repair fails. `unblock` never verifies PW1, which is why it is the
+one that works there.
 
 ### Factory reset (OpenPGP only)
 

@@ -7,7 +7,7 @@
 //! serial_hash, ikm = kbase, info = "OATH/KEYS"), blob = `nonce(12) ‖ ct ‖
 //! tag(16)`, AAD = serial_hash. Device-sealed (no OATH PIN in the key): the
 //! credentials must compute without a separate at-rest unlock, exactly like the
-//! PIV slot keys ([`rsk_piv`]). With the OTP MKEK provisioned, `kbase` — and so
+//! PIV slot keys (`rsk_piv`). With the OTP MKEK provisioned, `kbase` — and so
 //! this seal — roots in the hardware fuse key.
 //!
 //! This closes the one applet that stored its secrets in the clear: FIDO / PIV /

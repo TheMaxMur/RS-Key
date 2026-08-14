@@ -16,7 +16,10 @@ use libfuzzer_sys::fuzz_target;
 use rsk_fs::Fs;
 use rsk_fs::storage::ram::RamStorage;
 use rsk_oath::{OathApplet, Rng};
-use rsk_sdk::{Apdu, Applet, ResBuf};
+use rsk_sdk::{Apdu, Applet, ResBuf, Sw};
+
+mod apdu_frame;
+use apdu_frame::{Frame, next_frame};
 
 struct CountRng(u8);
 impl Rng for CountRng {
@@ -28,12 +31,14 @@ impl Rng for CountRng {
     }
 }
 
-fn run(app: &mut OathApplet, fs: &mut Fs<RamStorage>, raw: &[u8]) {
+fn run(app: &mut OathApplet, fs: &mut Fs<RamStorage>, raw: &[u8]) -> Sw {
     if let Ok(apdu) = Apdu::parse(raw) {
         let mut buf = [0u8; 4096];
         let mut res = ResBuf::new(&mut buf);
-        let _ = app.process(&apdu, fs, &mut res);
+        return app.process(&apdu, fs, &mut res);
     }
+    // The status the dispatcher answers for an unparseable command.
+    Sw::WRONG_LENGTH
 }
 
 fuzz_target!(|data: &[u8]| {
@@ -43,7 +48,9 @@ fuzz_target!(|data: &[u8]| {
     let touch = RefCell::new(rsk_oath::AlwaysConfirm);
     let mut app = OathApplet::new([1, 2, 3, 4, 5, 6, 7, 8], [0x22; 32], None, &rng, &touch);
 
-    // Seed one TOTP and one HOTP credential through the real PUT path.
+    // Seed one TOTP and one HOTP credential through the real PUT path. The
+    // seeding takes no fuzzer input, so asserting it worked cannot flake — and
+    // a seed that silently stops storing is invisible otherwise.
     for put in [
         &[
             0x00, 0x01, 0, 0, 0x1E, // PUT, Lc = 30
@@ -53,29 +60,32 @@ fuzz_target!(|data: &[u8]| {
             b'5', b'6', b'7', b'8', b'9', b'0',
         ][..],
         &[
-            0x00, 0x01, 0, 0, 0x16, // PUT, Lc = 22
+            0x00, 0x01, 0, 0, 0x20, // PUT, Lc = 32
             0x71, 0x04, b'h', b'o', b't', b'p', // NAME
-            0x73, 0x08, 0x11, 6, b'k', b'e', b'y', b'k', b'e', b'y', // KEY: HOTP|SHA1
+            0x73, 0x10, 0x11, 6, // KEY: HOTP|SHA1, 6 digits, KEY_TLV_MIN long
+            b'k', b'e', b'y', b'k', b'e', b'y', b'k', b'e', b'y', b'k', b'e', b'y', b'k', b'e',
             0x78, 0x02, // bare property pair (touch)
-            0x7A, 0x02, 0x00, 0x05, // IMF, short (padded by PUT)
+            0x7A, 0x04, 0x00, 0x00, 0x00, 0x05, // IMF, the one width the card takes
         ][..],
     ] {
-        run(&mut app, &mut fs, put);
+        assert_eq!(run(&mut app, &mut fs, put), Sw::OK, "seed PUT must succeed");
     }
 
-    // Replay attacker APDUs: [len][apdu bytes…]*, with a SELECT between them.
+    // Replay attacker APDUs: [len][apdu bytes…]*, with a SELECT between them
+    // and 0xFF as the extended-Lc escape (see `apdu_frame`).
     let mut rest = data;
-    while let Some((&n, tail)) = rest.split_first() {
-        if n == 0 {
+    while let Some((frame, tail)) = next_frame(rest) {
+        rest = tail;
+        match frame {
             // Re-SELECT: regenerates the challenge / re-locks if a code is set.
-            let mut buf = [0u8; 256];
-            let mut res = ResBuf::new(&mut buf);
-            let _ = Applet::select(&mut app, false, &mut fs, &mut res);
-            rest = tail;
-            continue;
+            Frame::Select => {
+                let mut buf = [0u8; 256];
+                let mut res = ResBuf::new(&mut buf);
+                let _ = Applet::select(&mut app, false, &mut fs, &mut res);
+            }
+            f => {
+                run(&mut app, &mut fs, f.as_slice());
+            }
         }
-        let n = (n as usize).min(tail.len());
-        run(&mut app, &mut fs, &tail[..n]);
-        rest = &tail[n..];
     }
 });

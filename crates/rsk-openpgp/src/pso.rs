@@ -30,12 +30,6 @@ fn algo_id<S: Storage>(fs: &mut Fs<S>, algo_fid: u16, buf: &mut [u8; 16]) -> u8 
     }
 }
 
-/// Is the card configured "PW1 valid for ONE signature" (gpg's `forcesig`)? That is
-/// `EF_PW_PRIV[0] == 0`; a missing record reads as not-forced, matching the default.
-fn forcesig<S: Storage>(fs: &mut Fs<S>) -> bool {
-    let mut pw = [0u8; 8];
-    fs.read(EF_PW_PRIV, &mut pw).is_some() && pw[0] == 0
-}
 /// PERFORM SECURITY OPERATION (INS 0x2A).
 pub fn pso<S: Storage>(
     dev: &Device,
@@ -63,8 +57,8 @@ fn try_pso<S: Storage>(
 ) -> Result<usize, Sw> {
     let (p1, p2, data) = (apdu.p1, apdu.p2, apdu.data);
 
-    // AES symmetric PSO over `EF_AES_KEY` (the DEC slot's AES key, minted by
-    // GENERATE on the DEC keypair). DECIPHER carries the OpenPGP `0x02` padding
+    // AES symmetric PSO over `EF_AES_KEY` — the card's AES key, seeded by a DEC
+    // GENERATE and set by `PUT DATA D5`. DECIPHER carries the `0x02` padding
     // indicator — unambiguous against RSA's `0x00` / ECDH's `0xA6` — so it routes
     // here; ENCIPHER (`86 80`) is AES-only per the card spec (input = plaintext,
     // output = `0x02 || cryptogram`). Both need the DEC password (PW2/PW3) and
@@ -72,7 +66,10 @@ fn try_pso<S: Storage>(
     let aes_enc = (p1, p2) == (0x86, 0x80);
     let aes_dec = (p1, p2) == (0x80, 0x86) && data.first() == Some(&0x02);
     if aes_enc || aes_dec {
-        if !sess.has_pw3 && !sess.has_pw2 {
+        // §7.2.11 names PW1 no. 82, and only that. A YubiKey has no AES DO to
+        // measure here, but it refuses PW3 on every other key operation, so this
+        // arm follows the same rule as its siblings rather than the odd one out.
+        if !sess.has_pw2 {
             return Err(Sw::SECURITY_STATUS_NOT_SATISFIED);
         }
         check_uif(fs, EF_UIF_DEC, presence)?;
@@ -81,20 +78,18 @@ fn try_pso<S: Storage>(
 
     let (algo_fid, pk_fid) = match (p1, p2) {
         (0x9E, 0x9A) => {
-            // OpenPGP Card 3.4 §7.2.10 gives PSO:CDS the access condition PW1 (No. 81);
-            // PW3 is accepted here for parity with the cards in the field. But when the
-            // card is configured "PW1 valid for ONE signature" (`EF_PW_PRIV[0] == 0`,
-            // gpg's `forcesig`), PW3 must not stand in: `inc_sig_count` can only clear
-            // PW1, so a single admin-PIN entry would otherwise authorise unlimited
-            // signatures — silently, since the user's own PW1 keeps working.
-            let pw1_only = forcesig(fs);
-            if !sess.has_pw1 && (pw1_only || !sess.has_pw3) {
+            // §7.2.10 gives PSO:CDS the access condition PW1 (No. 81) and names no
+            // other. The admin PIN used to stand in "for parity with the cards in
+            // the field"; the only card in the field we can measure refuses it —
+            // 6982 across three runs of the whole 8x3 matrix on a YubiKey 5.7.4.
+            if !sess.has_pw1 {
                 return Err(Sw::SECURITY_STATUS_NOT_SATISFIED);
             }
             (EF_ALGO_PRIV1, EF_PK_SIG)
         }
         (0x80, 0x86) => {
-            if !sess.has_pw3 && !sess.has_pw2 {
+            // §7.2.11: PW1 no. 82. Same measurement, same rule as CDS above.
+            if !sess.has_pw2 {
                 return Err(Sw::SECURITY_STATUS_NOT_SATISFIED);
             }
             (sess.algo_dec, sess.pk_dec)
@@ -130,7 +125,7 @@ fn try_pso<S: Storage>(
         Ok(n)
     } else {
         // DECIPHER (ECDH): extract the peer public point and agree.
-        let point = parse_ecdh_point(data).ok_or(WRONG_DATA)?;
+        let point = parse_ecdh_point(data).ok_or(Sw::WRONG_DATA)?;
         key.ecdh(point, out)
     }
 }

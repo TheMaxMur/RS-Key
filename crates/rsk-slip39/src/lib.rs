@@ -29,7 +29,7 @@ use zeroize::Zeroize;
 
 /// The master-secret length this crate splits (256-bit seed).
 pub const SECRET_LEN: usize = 32;
-/// Words per share for a 256-bit secret: metadata (7) + value (26). See [`VALUE_WORDS`].
+/// Words per share for a 256-bit secret: metadata (7) + value (26). See `VALUE_WORDS`.
 pub const WORDS_PER_SHARE: usize = 33;
 /// `MAX_SHARE_COUNT` from SLIP-0039 — the most shares one group can hold.
 pub const MAX_SHARES: usize = 16;
@@ -71,7 +71,7 @@ pub enum Error {
 }
 
 /// One generated share: its [`WORDS_PER_SHARE`] ten-bit word indices (each `< 1024`, so it
-/// always indexes [`WORDS`] in bounds — proven by the `indices_in_range` Kani harness). The
+/// always indexes `WORDS` in bounds — proven by the `indices_in_range` Kani harness). The
 /// shares are secret (any `threshold` of them reconstruct the seed); zeroize after rendering.
 pub type ShareWords = [u16; WORDS_PER_SHARE];
 
