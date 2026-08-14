@@ -47,8 +47,43 @@ if [ "${#targets[@]}" -lt "$FUZZ_TARGET_FLOOR" ]; then
   exit 1
 fi
 
+# FUZZ_SHARD=i/k — this runner's slice of the roster, so the row's wall time is
+# the slowest shard's rather than the sum of every target's. Sliced only AFTER the
+# floor above has been checked against the whole list: a per-shard floor would be
+# a second number to re-balance, and the guard it replaced is the one that catches
+# `cargo fuzz list` failing outright.
+FUZZ_SHARD="${FUZZ_SHARD:-1/1}"
+shard_i="${FUZZ_SHARD%%/*}"
+shard_n="${FUZZ_SHARD##*/}"
+if ! [ "$shard_i" -ge 1 ] 2>/dev/null || ! [ "$shard_i" -le "$shard_n" ] 2>/dev/null; then
+  echo "::error::FUZZ_SHARD=$FUZZ_SHARD is not i/k with 1 <= i <= k"
+  exit 1
+fi
+
+# Round-robin over the list, which is balanced by construction. Hashing the name
+# would keep a target on the same shard when the roster changes — the corpus is
+# cached per shard, so a reshuffle costs the moved targets their accumulated
+# inputs — but no cheap hash divides 54 names evenly into both 3 and 4 buckets:
+# `cksum` low bits track the shared prefixes (7/12/10/25 measured), and the safe
+# mixes traded one bad split for another (15/14/20/5). Balance is what this row is
+# sharded for; the corpus is best-effort anyway, living in one LRU-evictable cache
+# entry that has already been dropped once.
+mine=()
+for i in "${!targets[@]}"; do
+  if [ $((i % shard_n)) -eq $((shard_i - 1)) ]; then
+    mine+=("${targets[$i]}")
+  fi
+done
+# A shard with nothing in it exits 0 having fuzzed nothing — the same green-on-zero
+# this script exists to refuse, just one runner at a time.
+if [ "${#mine[@]}" -eq 0 ]; then
+  echo "::error::shard ${FUZZ_SHARD} selected no targets from ${#targets[@]}"
+  exit 1
+fi
+echo "shard ${FUZZ_SHARD}: ${#mine[@]} of ${#targets[@]} targets"
+
 failed=""
-for t in "${targets[@]}"; do
+for t in "${mine[@]}"; do
   echo "::group::${t} (${FUZZ_SECONDS}s)"
   if ! cargo fuzz run "$t" -- -max_total_time="$FUZZ_SECONDS" -print_final_stats=1; then
     failed="$failed $t"
@@ -60,4 +95,4 @@ if [ -n "$failed" ]; then
   echo "::error::crashing targets:$failed"
   exit 1
 fi
-echo "fuzz: ${#targets[@]} targets, ${FUZZ_SECONDS}s each, no crashes"
+echo "fuzz: shard ${FUZZ_SHARD}, ${#mine[@]} of ${#targets[@]} targets, ${FUZZ_SECONDS}s each, no crashes"
