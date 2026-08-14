@@ -242,8 +242,10 @@ cargo install --locked kani-verifier --version 0.67.0 && cargo kani setup
 ./scripts/kani.sh pr       # the fast tier — what every pull request runs
 ./scripts/kani.sh state    # rsk-fido + rsk-fs, the security-state sequences
 ./scripts/kani.sh all      # every harness — the roster, and the local command
-./scripts/kani.sh light    # all but the heavy crate — one of the two daily rows
-./scripts/kani.sh heavy    # rsk-rescue alone — the other, in its own job
+./scripts/kani.sh light1   # one of the three weekly shards of "all but heavy"
+./scripts/kani.sh light2
+./scripts/kani.sh light3
+./scripts/kani.sh heavy    # rsk-rescue alone, in its own job
 ```
 
 `scripts/kani.sh` owns the tier → crate table and nothing else does, and it
@@ -288,7 +290,9 @@ run):
 | `pr` | 13 | 50 | 23 | 199 s | `rsk-piv::set_protected_total_and_invariant`, 47 s |
 | `state` | 2 | 8 | 9 | ~10 min | `rsk-fido::…_at_call_site`, ~7 min (9.3 GiB peak) |
 | `all` | 17 | 66 | 31 | ~1 h 45 | `rsk-rescue::serialize_parse_roundtrip`, 27 m 42 s |
-| `light` | 16 | 61 | 30 | ~1 h | `rsk-fido::…_at_call_site`, ~7 min (9.3 GiB peak) |
+| `light1` | 4 | 17 | 11 | not yet run | `rsk-fido::…_at_call_site`, ~7 min (9.3 GiB peak) |
+| `light2` | 5 | 21 | 3 | not yet run | `rsk-rsa-asm`'s division spec and sieve |
+| `light3` | 7 | 23 | 16 | not yet run | `rsk-mldsa`'s rounding round-trips |
 | `heavy` | 1 | 5 | 1 | ~55 min | `rsk-rescue::serialize_parse_roundtrip`, 55 min (11.1 GB peak) |
 
 `pr` and `state` are measured runs. `all` has never been run end to end here:
@@ -379,8 +383,8 @@ CI runs the tiers above, from this same script (rustup-based, version pinned,
 `proofs` job runs `pr` on any change under `crates/`, and adds `state` when the
 diff reaches `rsk-fido`, `rsk-fs`, `rsk-store` or `rsk-wipe` — the surface those
 sequence proofs are about (`scripts/ci-scope.sh`, `PROOFS` / `PROOFS_STATE`,
-both covered by its `--self-test`). `deep-checks.yml`'s daily `kani` job runs
-`all`.
+both covered by its `--self-test`). `deep-checks.yml`'s weekly `kani` job runs the
+three `light*` shards and `heavy`, one runner each, which together are `all`.
 
 `scripts/kani_gate.py` is in the merge gate and holds the tiers to their word:
 the `all` tier must be exactly the crates carrying a `#[kani::proof]` less the
@@ -731,18 +735,19 @@ third reader of our CTAP replies, and the only one that claims 2.3.
 `nix develop -c ./scripts/check.sh` plus the `proofs` job — `scripts/kani.sh`,
 which cannot join `check.sh` because Kani is not in the dev shell — plus, on a
 runner with the board attached, the `tests/` scripts. The scheduled
-`deep-checks` workflow is the Miri, fuzz and full-tier Kani commands from this
-page, daily, plus a `repro` job that builds the hermetic firmware twice and
-requires bit-identical outputs
-([build.md](build.md#nix-build-hermetic-no-dev-shell)), an `llvm-cov` job that
-floors host-crate line coverage, and a `complexity` job that ratchets
-crate-library cognitive complexity. No hidden state.
+`deep-checks` workflow runs on two cadences. Daily: the Miri and fuzz commands
+from this page, both sharded across runners, a `repro` job that builds the
+hermetic firmware twice and requires bit-identical outputs
+([build.md](build.md#nix-build-hermetic-no-dev-shell)), and an `llvm-cov` job
+that floors host-crate line coverage. Weekly, on Sunday: the full Kani roster,
+one runner per tier, and an advisory `cargo-mutants` sweep. No hidden state.
 
 ```mermaid
 flowchart TB
     a["Merge gate — every commit / PR<br/>check.sh: fmt · clippy · host tests · firmware builds · size ratchet · audit · deny · vet · gitleaks<br/>proofs: Kani pr tier (+ state tier when the diff reaches it)"]
-    b["Daily — deep-checks<br/>Miri · timed libFuzzer · Kani (all tiers) · repro (bit-identical build) · llvm-cov (coverage floor) · complexity (cognitive ratchet)"]
-    a ~~~ b
+    b["Daily — deep-checks<br/>Miri (3 shards) · timed libFuzzer (4 shards) · repro (bit-identical build) · llvm-cov (coverage floor)"]
+    c["Weekly — deep-checks<br/>Kani: light1 · light2 · light3 · heavy — together the all roster<br/>cargo-mutants (8 shards, advisory)"]
+    a ~~~ b ~~~ c
 ```
 
 ## Refactor metrics (advisory)
@@ -764,7 +769,8 @@ cognitive is a flat serializer (a long `match` that just encodes), not a
 refactor target.
 
 The same signal has a ratcheted, automated sibling. `scripts/complexity_gate.sh`
-runs in `deep-checks` and fails if any crate-library function crosses a
+runs inside `check.sh`, on every pull request, and fails if any crate-library
+function crosses a
 cognitive-complexity ceiling (`COGNITIVE_CEILING`), catching a new hotspot the
 day it lands. Lower the ceiling as the peak falls; raise it only for a justified
 growth, in the same commit. `firmware/` is out of scope: it is embedded glue plus

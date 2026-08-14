@@ -2,24 +2,24 @@
 # Copyright (C) 2026 RS-Key contributors
 
 # Scheduled deep checks — the slow adversarial suites that are deliberately
-# not part of the merge gate (docs/testing.md):
+# not part of the merge gate (docs/testing.md).
+#
+# Two cadences, because the suites no longer fit one. Every row that answers
+# "did today's tree break something" runs daily; the two that answer "how well is
+# this tree tested at all" are weeks-scale questions and run on Sunday, where
+# their runners do not compete with the daily rows.
+#
+# DAILY
 #   miri — fuzz/tests/miri.rs: every fuzz target's logic under Miri's UB
-#          checker. MIRIFLAGS policy comes from the .#fuzz dev shell.
-#   fuzz — a timed libFuzzer pass over every cargo-fuzz target. The corpus
-#          is carried between runs via the actions cache, so its coverage
-#          accumulates day over day; crash artifacts are uploaded.
+#          checker, sharded (scripts/miri-all.sh). MIRIFLAGS policy comes from
+#          the .#fuzz dev shell.
+#   fuzz — a timed libFuzzer pass over every cargo-fuzz target, sharded
+#          (scripts/fuzz-all.sh). The corpus is carried between runs via the
+#          actions cache, so its coverage accumulates day over day; crash
+#          artifacts are uploaded.
 #   fuzz-coverage — per-target libFuzzer region/line coverage over that
 #          accumulated corpus (scripts/fuzz-coverage.sh): a summary table on the
 #          step page and the per-target HTML uploaded. Advisory, not a gate.
-#   kani / kani-heavy — every #[kani::proof] harness, as the `light` and `heavy`
-#          tiers of scripts/kani.sh, which partition its `all` roster
-#          (docs/testing.md). The fast tier of that same script runs per-PR in
-#          ci.yml; these two owe the whole roster between them. They are two jobs
-#          because `rsk-rescue`'s phy round-trip peaks at 11.1 GB and takes the
-#          runner down with it (~80 min on a hosted runner, 2637a20; 55 min and
-#          that peak measured 2026-08-14), so its death costs its own crates only.
-#          Kani is not in nixpkgs and its setup downloads a prebuilt CBMC bundle,
-#          so these jobs are rustup-based, not nix.
 #   repro — `nix build .#firmware` twice (`--rebuild` diffs every output
 #          byte): proves the hermetic image is bit-reproducible and publishes
 #          the canonical sha256 for this flake.lock (docs/build.md).
@@ -27,25 +27,46 @@
 #          a regression alarm on the host-testable surface (the embedded
 #          firmware image is not host-measurable). scripts/metrics.sh is the
 #          separate, un-gated refactor-reconnaissance tool.
-#   complexity — scripts/complexity_gate.sh: cognitive-complexity ceiling over
-#          the crate libraries (rust-code-analysis). A ratchet that catches a
-#          new hotspot the day it lands; the coverage floor's sibling.
 #
-# Runs daily, on demand (workflow_dispatch, with a per-target time knob),
-# and self-tests on any push that edits this file. Local equivalents:
-#   nix develop .#fuzz -c cargo miri test --manifest-path fuzz/Cargo.toml
+# WEEKLY (Sunday)
+#   kani — every #[kani::proof] harness, one runner per tier: the three `light*`
+#          shards and `heavy`, which together are the `all` roster of
+#          `scripts/kani.sh` (docs/testing.md). The fast tier of that same script runs
+#          per-PR in ci.yml; these four owe the whole roster between them. They
+#          are separate jobs for two measured reasons — `rsk-rescue`'s phy
+#          round-trip peaks at 11.1 GB and takes the runner down with it, so its
+#          death costs its own crate only; and the rest, run in one job, cost the
+#          sum of every crate's solving rather than the slowest shard's. Kani is
+#          not in nixpkgs and its setup downloads a prebuilt CBMC bundle, so
+#          these jobs are rustup-based, not nix.
+#   mutants — cargo-mutants over the host crates, sharded
+#          (scripts/mutants-all.sh). Coverage says a line ran; this says a test
+#          would notice if it changed. **Advisory**, for the reason that script
+#          states at length: most survivors are not defects, so a gating row
+#          would be red every week.
+#
+# `complexity` used to be here and is gone: scripts/check.sh already runs
+# scripts/complexity_gate.sh on every pull request, so the row re-proved a merge
+# gate a day later.
+#
+# Runs on both schedules, on demand (workflow_dispatch, with a per-target time
+# knob), and self-tests on any push that edits this file — a dispatch or a push
+# runs BOTH cadences, which is what makes an edit here self-testing. Local
+# equivalents:
+#   nix develop .#fuzz -c ./scripts/miri-all.sh   (MIRI_SHARD=2/3 for one shard)
 #   nix develop .#fuzz -c ./scripts/fuzz-all.sh   (FUZZ_SECONDS=30 to shorten)
 #   nix develop .#fuzz -c ./scripts/fuzz-coverage.sh
 #   ./scripts/kani.sh all   (needs `cargo install kani-verifier` first — not nix)
-#   ./scripts/kani.sh light   ./scripts/kani.sh heavy   # what the two rows run
+#   ./scripts/kani.sh light1   ./scripts/kani.sh heavy   # what the weekly rows run
+#   nix develop -c ./scripts/mutants-all.sh   (MUTANTS_SHARD=2/8 for one shard)
 #   nix develop -c cargo llvm-cov --summary-only --fail-under-lines 80 --target <host> --workspace --exclude firmware --exclude rsk-wipe
-#   nix develop -c ./scripts/complexity_gate.sh
 
 name: deep-checks
 
 on:
   schedule:
     - cron: "17 5 * * *" # 05:17 UTC daily
+    - cron: "41 5 * * 0" # 05:41 UTC Sunday — the weeks-scale rows
   workflow_dispatch:
     inputs:
       fuzz_seconds:
@@ -60,6 +81,9 @@ on:
         "nix/firmware.nix",
         "scripts/fuzz-coverage.sh",
         "scripts/fuzz-all.sh",
+        "scripts/miri-all.sh",
+        "scripts/mutants-all.sh",
+        "scripts/kani.sh",
       ]
 
 permissions:
@@ -69,10 +93,18 @@ concurrency:
   group: deep-checks
   cancel-in-progress: true
 
+# Each job names the cadence it is NOT, rather than the one it is: a scheduled run
+# carries the cron that started it, and a dispatch or a push carries none, so
+# "not the other one" runs everything by hand and everything on an edit.
 jobs:
   miri:
+    if: github.event.schedule != '41 5 * * 0'
     runs-on: ubuntu-latest
-    timeout-minutes: 360
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -95,11 +127,18 @@ jobs:
           restore-keys: miri-${{ runner.os }}-
 
       - name: miri — every fuzz target's logic under the UB checker
-        run: nix develop .#fuzz -c cargo miri test --manifest-path fuzz/Cargo.toml
+        run: nix develop .#fuzz -c ./scripts/miri-all.sh
+        env:
+          MIRI_SHARD: ${{ matrix.shard }}/3
 
   fuzz:
+    if: github.event.schedule != '41 5 * * 0'
     runs-on: ubuntu-latest
     timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -121,11 +160,16 @@ jobs:
           key: fuzz-${{ runner.os }}-${{ hashFiles('fuzz/Cargo.lock', 'flake.lock') }}
           restore-keys: fuzz-${{ runner.os }}-
 
+      # One corpus entry per shard: four jobs cannot write one key, and a shard
+      # only ever fuzzes its own slice of the roster. The slice is positional, so
+      # adding a target shifts the ones after it into a neighbouring shard and
+      # costs them their accumulated inputs once — see the comment in
+      # scripts/fuzz-all.sh for why balance won that trade.
       - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: fuzz/corpus
-          key: fuzz-corpus-${{ github.run_id }}
-          restore-keys: fuzz-corpus-
+          key: fuzz-corpus-s${{ matrix.shard }}-${{ github.run_id }}
+          restore-keys: fuzz-corpus-s${{ matrix.shard }}-
 
       - name: build every fuzz target
         run: nix develop .#fuzz -c cargo fuzz build
@@ -136,16 +180,17 @@ jobs:
       # same image, same minute — the `fuzz-coverage` row below, which already
       # calls its script this way, listed 53 targets while this one listed 0 and
       # tripped its own roster floor. The floor did its job; the shape was wrong.
-      - name: fuzz every target
+      - name: fuzz this shard's targets
         run: nix develop .#fuzz -c ./scripts/fuzz-all.sh
         env:
           FUZZ_SECONDS: ${{ inputs.fuzz_seconds || '120' }}
+          FUZZ_SHARD: ${{ matrix.shard }}/4
 
       - name: upload crash artifacts
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: fuzz-artifacts-${{ github.run_id }}
+          name: fuzz-artifacts-${{ github.run_id }}-s${{ matrix.shard }}
           path: fuzz/artifacts/
           if-no-files-found: ignore
 
@@ -153,9 +198,10 @@ jobs:
         if: always()
         with:
           path: fuzz/corpus
-          key: fuzz-corpus-${{ github.run_id }}
+          key: fuzz-corpus-s${{ matrix.shard }}-${{ github.run_id }}
 
   fuzz-coverage:
+    if: github.event.schedule != '41 5 * * 0'
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
@@ -181,13 +227,32 @@ jobs:
           key: fuzz-cov-${{ runner.os }}-${{ hashFiles('fuzz/Cargo.lock', 'flake.lock') }}
           restore-keys: fuzz-cov-${{ runner.os }}-
 
-      # Read (never write) the corpus the `fuzz` job accumulated on the previous
-      # run: coverage measures those saved inputs, not a fresh fuzzing pass.
+      # Read (never write) the corpora the `fuzz` shards accumulated on the
+      # previous run: coverage measures those saved inputs, not a fresh fuzzing
+      # pass. One restore per shard, because that is how they are stored; they
+      # extract into the same tree and the per-target directories are disjoint.
+      # Restoring only one would measure a quarter of the roster against a floor
+      # written for all of it.
       - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: fuzz/corpus
-          key: fuzz-corpus-${{ github.run_id }}
-          restore-keys: fuzz-corpus-
+          key: fuzz-corpus-s1-${{ github.run_id }}
+          restore-keys: fuzz-corpus-s1-
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: fuzz/corpus
+          key: fuzz-corpus-s2-${{ github.run_id }}
+          restore-keys: fuzz-corpus-s2-
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: fuzz/corpus
+          key: fuzz-corpus-s3-${{ github.run_id }}
+          restore-keys: fuzz-corpus-s3-
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: fuzz/corpus
+          key: fuzz-corpus-s4-${{ github.run_id }}
+          restore-keys: fuzz-corpus-s4-
 
       - name: per-target libFuzzer coverage over the accumulated corpus
         run: nix develop .#fuzz -c ./scripts/fuzz-coverage.sh
@@ -200,74 +265,8 @@ jobs:
           path: fuzz/coverage/*/html
           if-no-files-found: ignore
 
-  kani:
-    runs-on: ubuntu-latest
-    timeout-minutes: 360
-    env:
-      KANI_VERSION: "0.67.0"
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            ~/.kani
-            ~/.cargo/bin/cargo-kani
-            ~/.cargo/bin/kani
-            ~/.cargo/registry
-          key: kani-${{ runner.os }}-${{ env.KANI_VERSION }}
-
-      - name: install kani (rustup-based — not packaged in nixpkgs)
-        run: |
-          command -v cargo-kani >/dev/null || cargo install --locked kani-verifier --version "$KANI_VERSION"
-          cargo kani setup
-
-      # `light` + `heavy` = the `all` roster: every crate carrying a harness,
-      # `rsk-bench` aside (scripts/kani_gate.py holds that exclusion and its
-      # measured reason). They are two jobs because `rsk-rescue`'s phy round-trip
-      # peaks at 11.1 GB and takes the runner with it — twice, at 50-58 min,
-      # against this 6 h cap and with the run's other jobs still going. Split, a
-      # death there costs its own crates and not the other sixteen's verdicts.
-      #
-      # The script floors the harness count and the `kani::cover!` count, because
-      # a roster that selects nothing exits 0 and so does a cover nothing reaches.
-      # `--harness-timeout`, which it passes, is per harness and not per row —
-      # Kani runs the rest and fails at the end. It is set to this job's own 6 h,
-      # so `timeout-minutes` is the real bound and the per-harness cap exists only
-      # to keep the flag from being unset: a cap that fires on this tier costs more
-      # than it saves, because the non-zero exit ends the script at the `tee` and
-      # the harness and cover floors below it are never read.
-      - name: prove every harness but the heavy crate
-        run: ./scripts/kani.sh light
-
-  # The half that can exhaust the runner. Its own job so its death is its own:
-  # see the `HEAVY` comment in `scripts/kani.sh` for the measurement that drew
-  # line, and `rsk-fido`'s 9.3 GiB on the other side of it.
-  kani-heavy:
-    runs-on: ubuntu-latest
-    timeout-minutes: 360
-    env:
-      KANI_VERSION: "0.67.0"
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            ~/.kani
-            ~/.cargo/bin/cargo-kani
-            ~/.cargo/bin/kani
-            ~/.cargo/registry
-          key: kani-${{ runner.os }}-${{ env.KANI_VERSION }}
-
-      - name: install kani (rustup-based — not packaged in nixpkgs)
-        run: |
-          command -v cargo-kani >/dev/null || cargo install --locked kani-verifier --version "$KANI_VERSION"
-          cargo kani setup
-
-      - name: prove the heavy crate
-        run: ./scripts/kani.sh heavy
   repro:
+    if: github.event.schedule != '41 5 * * 0'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -296,6 +295,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   coverage:
+    if: github.event.schedule != '41 5 * * 0'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -330,9 +330,56 @@ jobs:
             --target x86_64-unknown-linux-gnu \
             --workspace --exclude firmware --exclude rsk-wipe
 
-  complexity:
+  kani:
+    if: github.event.schedule != '17 5 * * *'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 360
+    env:
+      KANI_VERSION: "0.67.0"
+    strategy:
+      fail-fast: false
+      matrix:
+        tier: [light1, light2, light3, heavy]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.kani
+            ~/.cargo/bin/cargo-kani
+            ~/.cargo/bin/kani
+            ~/.cargo/registry
+          key: kani-${{ runner.os }}-${{ env.KANI_VERSION }}
+
+      - name: install kani (rustup-based — not packaged in nixpkgs)
+        run: |
+          command -v cargo-kani >/dev/null || cargo install --locked kani-verifier --version "$KANI_VERSION"
+          cargo kani setup
+
+      # The tier names come from the matrix and the crates from `scripts/kani.sh`;
+      # scripts/kani_gate.py resolves the one to reach the other, and refuses a
+      # `-p` roster written anywhere but that script.
+      #
+      # The script floors the harness count and the `kani::cover!` count, because
+      # a roster that selects nothing exits 0 and so does a cover nothing reaches.
+      # `--harness-timeout`, which it passes, is per harness and not per row —
+      # Kani runs the rest and fails at the end. It is set to this job's own 6 h,
+      # so `timeout-minutes` is the real bound and the per-harness cap exists only
+      # to keep the flag from being unset: a cap that fires on these tiers costs
+      # more than it saves, because the non-zero exit ends the script at the `tee`
+      # and the harness and cover floors below it are never read.
+      - name: prove this tier's harnesses
+        run: ./scripts/kani.sh ${{ matrix.tier }}
+
+  mutants:
+    if: github.event.schedule != '17 5 * * *'
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -343,8 +390,22 @@ jobs:
           primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock') }}
           restore-prefixes-first-match: nix-${{ runner.os }}-
 
-      # Cognitive-complexity ratchet over the crate libraries — fails on a new
-      # hotspot above the ceiling in scripts/complexity_gate.sh. rust-code-analysis
-      # is pulled ad-hoc (nix shell) and never joins the pinned shell / SBOM.
-      - name: complexity — crate-library cognitive ceiling
-        run: nix develop -c ./scripts/complexity_gate.sh
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: mutants-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: mutants-${{ runner.os }}-
+
+      # 8 shards and 3 jobs each is a first estimate, not a measurement: the sweep
+      # that produced these numbers took 3 h over 13 232 mutants on 18 cores, and
+      # a hosted runner has a small fraction of that. Re-tune both from the first
+      # run's wall time rather than trusting the arithmetic.
+      - name: mutants — would a test notice if this line changed?
+        run: nix develop -c ./scripts/mutants-all.sh
+        env:
+          MUTANTS_SHARD: ${{ matrix.shard }}/8
+          MUTANTS_JOBS: "3"
+          HOST_TARGET: x86_64-unknown-linux-gnu
