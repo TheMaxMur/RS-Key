@@ -13,7 +13,7 @@
 #
 # So: `pr` on every pull request that touches the crates, `state` additionally
 # when the change reaches the security-state surface those proofs are about, and
-# `all` — the union, nothing dropped — daily.
+# `all` — the union, nothing dropped — weekly, as the four shards below.
 #
 # The tier membership lives here and nowhere else. It used to be a hand-written
 # `-p` list repeated in the workflow, in the workflow's own header comment and in
@@ -49,17 +49,55 @@ FAST="rsk-sdk rsk-fs rsk-crypto rsk-openpgp rsk-otp rsk-piv rsk-oath rsk-usb rsk
 # and one of them peaks at 9.3 GiB).
 SLOW="rsk-rescue rsk-rsa-asm rsk-mldsa rsk-fido"
 
-# HEAVY: the crates the daily row runs in a job of their own, because their peak
+# HEAVY: the crates that get a job of their own, because their peak
 # solver memory is near what a hosted runner has left over. Measured 2026-08-14:
 # `rsk-rescue`'s phy round-trip peaks at 11.1 GB and the runner dies under it
 # ("received a shutdown signal" at 50-58 min, twice, against a 6 h job cap and
 # with the run's other jobs still going, so neither a timeout nor a cancel);
 # `rsk-fido`'s 9.3 GiB fits, which the `state` row demonstrates on every run. The
 # ceiling therefore sits between the two, and the split is drawn by that number
-# rather than by how long a crate takes. `light` is the rest of `all`: together
-# they are `all`, so nothing stops being proved — one job can now die without
-# taking the other sixteen crates' verdicts with it.
+# rather than by how long a crate takes. The LIGHT shards below are the rest of
+# `all`, so nothing stops being proved — this job can die without taking the other
+# sixteen crates' verdicts with it.
 HEAVY="rsk-rescue"
+
+# `all` less HEAVY, split three ways, one runner each. It used to be a single row
+# whose wall time was the sum of every crate's solving; three make it the slowest
+# shard's instead, and a shard that dies costs its own crates only — the reasoning
+# that drew HEAVY, applied to time rather than to memory.
+#
+# Balanced by cost, not by crate count: the three expensive crates left after
+# HEAVY (`rsk-fido`'s sequence proofs ~12 min, `rsk-rsa-asm`'s division spec and
+# sieve, `rsk-mldsa`'s rounding round-trips) go one per shard, and the fast crates
+# fill in around them.
+LIGHT1="rsk-fido rsk-ui rsk-piv rsk-oath"
+LIGHT2="rsk-rsa-asm rsk-device rsk-fs rsk-crypto rsk-bip39"
+LIGHT3="rsk-mldsa rsk-led rsk-sdk rsk-openpgp rsk-usb rsk-otp rsk-slip39"
+
+# Three hand-written lists can drift the way `without_heavy()`'s one could not: a
+# crate that gains its first harness joins FAST, and `all`, and no shard at all —
+# proved by nothing, while every floor still adds up because the floors are the
+# shards' own. Refuse to run rather than trust that arithmetic.
+assert_light_partition() {
+  local want got
+  # `sort -u` on the shards, so this compares sets and leaves the duplicate case
+  # to the count below. Without it a repeated crate makes the strings differ here
+  # and that check never runs — it was dead code the first time this was written.
+  want="$(without_heavy | tr ' ' '\n' | grep -v '^$' | sort)"
+  got="$(echo "$LIGHT1 $LIGHT2 $LIGHT3" | tr ' ' '\n' | grep -v '^$' | sort -u)"
+  if [ "$want" != "$got" ]; then
+    echo "FAIL: LIGHT1+LIGHT2+LIGHT3 is not \`all\` less HEAVY." >&2
+    echo "      only in all-less-heavy: $(comm -23 <(echo "$want") <(echo "$got") | xargs)" >&2
+    echo "      only in shards:        $(comm -13 <(echo "$want") <(echo "$got") | xargs)" >&2
+    exit 2
+  fi
+  # `comm` above is blind to a crate listed in two shards: the sorted sets still
+  # match while one shard proves it twice and its sibling's floor comes up short.
+  if [ "$(echo "$LIGHT1 $LIGHT2 $LIGHT3" | wc -w)" -ne "$(echo "$want" | wc -w)" ]; then
+    echo "FAIL: a crate appears in more than one LIGHT shard." >&2
+    exit 2
+  fi
+}
 
 # STATEFUL: the crates whose proofs are about the security state a reset, a wipe
 # or a torn write can leave behind -- a cross-cut of the two tiers above
@@ -81,10 +119,13 @@ STATEFUL="rsk-fido rsk-fs"
 FLOOR_pr=50
 FLOOR_state=8
 FLOOR_all=66
-# `light` + `heavy` = `all`, so these two sum to FLOOR_all and the guard checks
-# each against the tree the same way. They are the numbers the daily rows read.
-FLOOR_light=61
+# The four weekly rows partition `all`, so these sum to FLOOR_all and the guard
+# checks each against the tree the same way. A harness that moves between shards
+# has to move a number with it.
 FLOOR_heavy=5
+FLOOR_light1=17
+FLOOR_light2=21
+FLOOR_light3=23
 
 # Source-level `kani::cover!`s each tier must report on. Kani 0.67.0 has no
 # `--fail-uncoverable`, so an unsatisfiable cover prints "N of M cover properties
@@ -96,8 +137,10 @@ FLOOR_heavy=5
 COVERS_pr=23
 COVERS_state=9
 COVERS_all=31
-COVERS_light=30
 COVERS_heavy=1
+COVERS_light1=11
+COVERS_light2=3
+COVERS_light3=16
 
 # `kani::cover!` properties CBMC may report unsatisfied while their source-level
 # cover is still reached. One `cover!` becomes several properties wherever the
@@ -122,10 +165,12 @@ TIMEOUT_state=30m
 # runner (`2637a20` measured it there). The trade this makes is that one
 # non-convergent proof now consumes the whole 6 h job instead of its own slot.
 TIMEOUT_all=6h
-# Both daily halves inherit that reasoning: a cap that fires costs the row its
+# Every weekly row inherits that reasoning: a cap that fires costs the row its
 # floors, and the job's own `timeout-minutes` is the real bound either way.
-TIMEOUT_light=6h
 TIMEOUT_heavy=6h
+TIMEOUT_light1=6h
+TIMEOUT_light2=6h
+TIMEOUT_light3=6h
 
 # `all` less `HEAVY`, so the two daily tiers partition it by construction rather
 # than by a second hand-written list that could drift out of step with the first.
@@ -146,12 +191,19 @@ crates_of() {
     state) echo "$STATEFUL" ;;
     all) echo "$FAST $SLOW" ;;
     heavy) echo "$HEAVY" ;;
-    light) echo "$(without_heavy)" ;;
+    light1) echo "$LIGHT1" ;;
+    light2) echo "$LIGHT2" ;;
+    light3) echo "$LIGHT3" ;;
     *) return 1 ;;
   esac
 }
 
-TIERS="pr state all light heavy"
+# Unconditionally, not from inside `crates_of`: there it would run in the `$( )`
+# of the `--tiers` loop, whose exit status that line discards — the guard reads
+# `--tiers`, so a broken partition has to fail it too.
+assert_light_partition
+
+TIERS="pr state all light1 light2 light3 heavy"
 
 usage() {
   echo "usage: $0 {${TIERS// /|}} [cargo-kani args…]" >&2

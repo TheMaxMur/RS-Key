@@ -38,6 +38,27 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+### Changed
+
+- **`deep-checks` runs on two cadences and across matrices.** Miri (3 shards) and
+  the libFuzzer pass (4 shards) stay daily; Kani moves to Sunday as four jobs —
+  the three `light*` shards of `scripts/kani.sh` plus `heavy` — so the roster's
+  wall time is the slowest shard's rather than the sum of seventeen crates'. The
+  `complexity` row is gone: `scripts/check.sh` already runs
+  `scripts/complexity_gate.sh` on every pull request, so it re-proved a merge
+  gate a day later.
+
+- **A weekly `cargo-mutants` sweep, advisory.** Line coverage says a line ran;
+  this says a test would notice if it changed. The first full sweep — 13 232
+  mutants over `crates/` — found `rsk-fido`'s `require_pin_inputs` replaceable by
+  `Ok(())` with the gate green (its removal turns a missing parameter into a
+  panic, and no host test drives that path), and the trusted display's four
+  applet loaders exercised by no test at all. It reports rather than gates:
+  most survivors are not defects — code behind an off `cfg`, a guard a deeper
+  guard masks, a coordinate no test pins on purpose — so a gating row would be
+  red every week. `scripts/mutants-all.sh` fails on its own apparatus instead: a
+  shard that tested nothing, or a run that produced no summary.
+
 ### Fixed
 
 - **An RSA-3072 or RSA-4096 PIV key is usable again under Windows' own smart-card

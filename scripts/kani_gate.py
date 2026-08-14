@@ -96,7 +96,16 @@ PINNED = re.compile(r'KANI_VERSION:\s*"([\d.]+)"')
 DOC_PIN = re.compile(r"kani-verifier --version ([\d.]+)")
 
 #: An invocation of the tier runner, with or without a `./` and whatever drives it.
-INVOKED = re.compile(r"(?<![\w/-])(?:\./)?scripts/kani\.sh\s+(\S+)")
+#: The tier may be spelled out or come from a matrix — `${{ … }}` is captured
+#: whole so it can be resolved below rather than read as a tier named `${{`.
+INVOKED = re.compile(r"(?<![\w/-])(?:\./)?scripts/kani\.sh\s+(\$\{\{[^}]*\}\}|\S+)")
+
+#: The matrix reference the weekly row names its tier with.
+MATRIX_REF = re.compile(r"\$\{\{\s*matrix\.(\w+)\s*\}\}\Z")
+#: `key: [a, b]`, and the `key:` / `- a` block form, inside a `matrix:` block.
+MATRIX_INLINE = re.compile(r"^(\w+):\s*\[([^\]]*)\]\s*$")
+MATRIX_KEY = re.compile(r"^(\w+):\s*$")
+MATRIX_ITEM = re.compile(r"^-\s*[\"']?([\w.-]+)[\"']?\s*$")
 
 #: The two shapes the floors are counts of. Every one in this tree is written
 #: exactly like this, `#[kani::proof]` alone on its line.
@@ -155,18 +164,86 @@ def statements(text, yaml):
             yield body, False
 
 
+def matrices(text):
+    """(key → the values a `strategy.matrix` gives it, keys declared twice over).
+
+    Syntactic, like the rest of this guard: the dev shell has no YAML parser, and
+    a second way of reading a workflow would be a second answer to what CI runs.
+    A key declared twice with different values is reported rather than merged —
+    the wrong guess is a tier counted as proved by a job that does not prove it.
+
+    `include:` entries (`- tier: light1`) are deliberately not read: they carry a
+    colon, no rule below matches them, and the tier then reads as run by nobody.
+    That is the safe direction — it fails loudly instead of passing quietly.
+    """
+    table, conflicts = {}, set()
+    block, matrix_indent, key = {}, None, None
+
+    def close():
+        # One `matrix:` block at a time, merged only when it ends: reading the
+        # accumulating `- item` form straight into `table` would make a second
+        # job's differing matrix look like a continuation of the first's.
+        for name, values in block.items():
+            if name in table and table[name] != values:
+                conflicts.add(name)
+            table[name] = values
+        block.clear()
+
+    for indent, body in gate_lines.logical_lines(text):
+        if not body or body.startswith("#"):
+            continue
+        if matrix_indent is not None and indent <= matrix_indent:
+            close()
+            matrix_indent, key = None, None
+        if body.rstrip() == "matrix:":
+            matrix_indent, key = indent, None
+            continue
+        if matrix_indent is None:
+            continue
+        if found := MATRIX_INLINE.match(body):
+            key = found.group(1)
+            block[key] = tuple(
+                v.strip().strip("\"'") for v in found.group(2).split(",") if v.strip()
+            )
+        elif found := MATRIX_KEY.match(body):
+            key = found.group(1)
+        elif (found := MATRIX_ITEM.match(body)) and key:
+            block[key] = block.get(key, ()) + (found.group(1),)
+    close()
+    return table, conflicts
+
+
+def referenced_keys(text):
+    """The `matrix.<key>` names a tier runner on `text` takes its tier from."""
+    return {
+        ref.group(1)
+        for found in INVOKED.finditer(text)
+        if (ref := MATRIX_REF.match(found.group(1)))
+    }
+
+
 def uses(rel, text, yaml):
     """Every `scripts/kani.sh <tier>` on `text`, flagged executed or not.
 
     Executed means inside a step's `run:` scalar *and* left of the `#` — the only
     copy a job runs. A prose or comment copy is a quotation of it. Documentation
     is never executed, whatever it looks like.
+
+    A tier named `${{ matrix.<key> }}` expands to that key's values: the weekly
+    row proves one tier per runner, and which tiers those are is in the matrix,
+    not on the `run:` line.
     """
+    table = matrices(text)[0] if yaml else {}
     for body, in_run in statements(text, yaml):
         live, quoted = gate_lines.split_at_comment(body)
         for segment, executed in ((live, in_run), (quoted, False)):
             for found in INVOKED.finditer(segment):
-                yield Use(rel, found.group(1), executed)
+                ref = MATRIX_REF.match(found.group(1))
+                if ref is None:
+                    yield Use(rel, found.group(1), executed)
+                    continue
+                for value in table.get(ref.group(1), ()):
+                    yield Use(rel, value, executed)
 
 
 def handwritten(rel, text, yaml):
@@ -350,6 +427,17 @@ def audit(root):  # noqa: C901 — one clause per failure mode, each named
     harnesses, covers, orphans, unseen = crates_with_proofs(root)
     proven = set(harnesses)
     problems = []
+    # Only for a key a `scripts/kani.sh ${{ matrix.… }}` actually names: the fuzz,
+    # miri and mutants rows all shard on a `matrix.shard` of their own, and their
+    # differing lists say nothing about what Kani proves.
+    for rel, text, yaml in found:
+        if yaml:
+            conflicts = matrices(text)[1] & referenced_keys(text)
+            for key in sorted(conflicts):
+                problems.append(
+                    f"{rel} declares `matrix.{key}` twice with different values; "
+                    "which tiers a row proves would be a guess"
+                )
 
     for line in unseen:
         problems.append(

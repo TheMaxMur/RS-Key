@@ -35,6 +35,10 @@
       pkgs.cargo-cyclonedx # CycloneDX SBOM generation (release provenance)
       pkgs.cargo-vet # supply-chain: provenance-of-review (audited dependency set)
       pkgs.cargo-llvm-cov # host-crate line-coverage floor for the daily deep-checks
+      # Mutation testing (scripts/mutants-all.sh, weekly + `--in-diff` by hand).
+      # Coverage says a line ran; this says a test would notice if it changed —
+      # which is the property the `require_pin_inputs` gap was invisible to.
+      pkgs.cargo-mutants
 
       # Documentation site (see scripts/docs.sh): the GitHub Pages source is the
       # docs/ tree rendered by mdBook; mdbook-mermaid renders the diagrams; lychee

@@ -249,6 +249,84 @@ def test_the_header_comment_alone_does_not_count(tree):
     assert only(tree.problems(), "no CI row runs the `all` tier")
 
 
+def split_tiers(tree, rows):
+    """Give the fixture a `light`/`heavy` partition of `all`, run by `rows`.
+
+    The matrix tests below all need the same two-tier tree and differ only in the
+    workflow that drives it, which is the thing under test.
+    """
+    tree.edit(
+        kani_gate.RUNNER,
+        '    all) echo "$FAST $SLOW" ;;',
+        '    all) echo "$FAST $SLOW" ;;\n'
+        '    light) echo "$FAST" ;;\n'
+        '    heavy) echo "$SLOW" ;;',
+    )
+    tree.edit(kani_gate.RUNNER, 'TIERS="pr state all"', 'TIERS="pr state all light heavy"')
+    tree.edit(kani_gate.RUNNER, "FLOOR_all=3\n", "FLOOR_all=3\nFLOOR_light=2\nFLOOR_heavy=1\n")
+    tree.edit(kani_gate.RUNNER, "COVERS_all=4\n", "COVERS_all=4\nCOVERS_light=3\nCOVERS_heavy=1\n")
+    tree.edit(kani_gate.PINNED_IN, "        run: ./scripts/kani.sh all", rows)
+    tree.edit(
+        kani_gate.DOCS,
+        "./scripts/kani.sh all\n",
+        "./scripts/kani.sh all\n./scripts/kani.sh light\n./scripts/kani.sh heavy\n",
+    )
+    tree.edit(
+        kani_gate.DOCS,
+        "| `all` | 3 | 3 | 4 | 2 s | `rsk-c::p`, 2 s |\n",
+        "| `all` | 3 | 3 | 4 | 2 s | `rsk-c::p`, 2 s |\n"
+        "| `light` | 2 | 2 | 3 | 1 s | `rsk-a::p`, 1 s |\n"
+        "| `heavy` | 1 | 1 | 1 | 2 s | `rsk-c::p`, 2 s |\n",
+    )
+
+
+MATRIX_ROW = (
+    "        run: ./scripts/kani.sh ${{ matrix.tier }}\n"
+    "    strategy:\n"
+    "      matrix:\n"
+    "        tier: [light, heavy]"
+)
+
+
+def test_a_tier_named_by_a_matrix_counts_as_run(tree):
+    """One runner per tier: the tier is in the matrix, not on the `run:` line.
+
+    Read literally, that line names a tier called `${{` and every real tier reads
+    as run by nobody — the guard would fail a workflow that proves everything.
+    """
+    split_tiers(tree, MATRIX_ROW)
+    assert tree.problems() == []
+
+
+def test_a_tier_the_matrix_omits_is_not_run(tree):
+    """The expansion is the roster: dropping a value drops the tier with it."""
+    split_tiers(tree, MATRIX_ROW.replace("[light, heavy]", "[light]"))
+    assert "no CI row runs the `heavy` tier" in " ".join(tree.problems())
+
+
+def test_a_matrix_key_declared_twice_is_refused(tree):
+    """Two rows, two meanings for `matrix.tier`, and no way to tell which proves what."""
+    split_tiers(
+        tree,
+        MATRIX_ROW + "\n  other:\n    strategy:\n      matrix:\n        tier: [pr]",
+    )
+    assert "declares `matrix.tier` twice" in " ".join(tree.problems())
+
+
+def test_an_unrelated_matrix_key_may_differ_between_rows(tree):
+    """Only a key a tier runner names is a tier: the fuzz, miri and mutants rows
+    each shard on a `matrix.shard` of their own, and their differing lists say
+    nothing about what Kani proves. Reported as a conflict, they made a correct
+    workflow fail — measured on the real one, which has three."""
+    split_tiers(
+        tree,
+        MATRIX_ROW
+        + "\n  fuzz:\n    strategy:\n      matrix:\n        shard: [1, 2]"
+        + "\n  miri:\n    strategy:\n      matrix:\n        shard: [1, 2, 3]",
+    )
+    assert tree.problems() == []
+
+
 def test_a_row_naming_a_tier_that_does_not_exist(tree):
     tree.edit(
         kani_gate.WORKFLOWS / "ci.yml",
