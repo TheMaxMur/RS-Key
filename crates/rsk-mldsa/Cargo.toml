@@ -16,6 +16,12 @@ publish = false
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
 
+[features]
+# `scripts/kani.sh` only, and empty here — this crate pulls no hashing
+# backend. It exists because `cargo kani` re-invokes cargo once per selected
+# package, so the feature must name something on every crate a tier selects.
+kani-soft = []
+
 [dependencies]
 # SHAKE128/256 XOF (the FIPS 204 H/G functions and the samplers). Already in the
 # dependency tree via ml-kem; pinned here to the same 0.10 line.

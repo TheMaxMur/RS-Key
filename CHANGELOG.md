@@ -442,6 +442,21 @@ below in the usual four sections, security last.
 
 ### Fixed
 
+- **…and then the proof runner could not start at all.** The fix below landed as
+  `--features rsk-crypto/kani-soft`, which survives the pass where `cargo kani`
+  compiles the whole selection and dies on the one where it re-invokes cargo once
+  per selected package: there, a feature the package does not have is a hard
+  error, whatever a sibling in the same run declares. The fast tier failed at
+  `rsk-fs` having proved nothing, and it could not be reproduced with a plain
+  `cargo check`, which has no second pass. Every crate a tier selects now declares
+  `kani-soft` — forwarding to the dependency that hashes, empty where there is
+  none — and `scripts/kani.sh` asserts that roster rather than assuming it, so a
+  crate added to a tier is told what it is missing. `rsk-piv` pulls `sha2`
+  directly and had been missed. Verified on real x86_64: the fast tier proves 50
+  of 50, the security-state tier 8 of 8. The image is byte-identical with the new
+  manifests and without them, measured, so this is again the guard charging for a
+  Cargo table it cannot see through. **bcdDevice → 0x0959.**
+
 - **The proof runner can hash again on x86_64.** Kani has no model for inline
   assembly, and `cpufeatures` writes its runtime CPU probe in it, so on an
   x86_64 host any harness that hashes reached `core::arch::x86_64::__cpuid_count`

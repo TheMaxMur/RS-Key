@@ -174,15 +174,26 @@ done
 # sha2's XIP-cache-sized compressor for its ~28 KB unrolled one, and the image
 # moves (measured, same size, different hash).
 #
-# Named per selected package, because `--features x/f` on a package this tier did
-# not select is a hard cargo error.
-features=""
+# Named bare, and every selected crate has to declare it. `cargo kani` compiles
+# the whole selection in one cargo pass and then re-invokes cargo ONCE PER
+# SELECTED PACKAGE — and there a feature the package does not have is a hard
+# error, whatever its siblings in the same run declare. So `rsk-crypto/kani-soft`
+# survives the first pass and dies on the second, at `rsk-fs`; a bare name dies
+# the same way. Asserted rather than assumed, because the roster is the thing
+# that drifts: add a crate to a tier and this says what it is missing.
+missing=""
 for c in $crates; do
-  if grep -q '^kani-soft = ' "crates/$c/Cargo.toml" 2>/dev/null; then
-    features="${features:+$features,}$c/kani-soft"
-  fi
+  grep -q '^kani-soft = ' "crates/$c/Cargo.toml" 2>/dev/null || missing="$missing $c"
 done
-[ -n "$features" ] && packages="$packages --features $features"
+if [ -n "$missing" ]; then
+  echo "FAIL: tier '$tier' selects crates that do not declare 'kani-soft':" >&2
+  echo "       $missing" >&2
+  echo "      cargo kani re-invokes cargo per selected package, so --features must" >&2
+  echo "      name something every one of them has. Give each an empty" >&2
+  echo "      'kani-soft = []', or a forward to the dependency that hashes." >&2
+  exit 2
+fi
+packages="$packages --features kani-soft"
 export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }--cfg sha2_backend=\"soft\" --cfg poly1305_force_soft --cfg sha1_force_soft"
 
 log=$(mktemp)
