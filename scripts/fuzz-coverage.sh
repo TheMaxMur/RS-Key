@@ -49,10 +49,28 @@ if [ "${#targets[@]}" -eq 0 ]; then
 fi
 # The numbers below are only as good as the corpus behind them, and in CI that
 # corpus is one evictable cache entry.
-echo "${#targets[@]} target(s), corpus: $(find fuzz/corpus -type f 2>/dev/null | wc -l) inputs"
+inputs=$(find fuzz/corpus -type f 2>/dev/null | wc -l)
+echo "${#targets[@]} target(s), corpus: ${inputs} inputs"
 
 summary="${GITHUB_STEP_SUMMARY:-/dev/stdout}"
-printf '### libFuzzer per-target coverage\n\n| target | regions | lines |\n|---|---|---|\n' >> "$summary"
+printf '### libFuzzer per-target coverage\n\n' >> "$summary"
+
+# Said once, up front, instead of 53 identical `(coverage failed)` rows: with no
+# corpus `cargo fuzz coverage` refuses per target — "The corpus does not contain
+# program-input files" — and a table of nothing but failures reads as a broken
+# instrument rather than a missing input. The corpus is a `fuzz-corpus-` cache
+# entry restored by prefix, and the repository's 10 GB budget is mostly three
+# multi-GiB nix/cargo entries, so LRU evicts this one first. Advisory row: it
+# says so and stops, rather than failing a job that gates nothing.
+if [ "$inputs" -eq 0 ]; then
+  echo "no corpus restored — nothing to measure, so no coverage was run" >&2
+  printf '_No corpus was restored, so nothing was measured._ The `fuzz-corpus-`\n' >> "$summary"
+  printf 'cache entry is missing (evicted, or never saved because the `fuzz` row\n' >> "$summary"
+  printf 'failed). The next successful `fuzz` run seeds it again.\n' >> "$summary"
+  exit 0
+fi
+
+printf '| target | regions | lines |\n|---|---|---|\n' >> "$summary"
 
 for t in "${targets[@]}"; do
   echo "== coverage: $t =="
