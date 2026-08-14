@@ -38,6 +38,34 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+### Fixed
+
+- **An RSA-3072 or RSA-4096 PIV key is usable again under Windows' own smart-card
+  minidriver.** 0.4.10 began requiring GENERAL AUTHENTICATE's algorithm byte to
+  equal the one the slot's key was stored under — the reference behaviour, and
+  the fix for a slot whose key the request never named. But SP 800-73 has no id
+  for RSA-3072 or RSA-4096: `0x05` and `0x16` are Yubico's, so a host holding
+  only the standard table cannot name such a key with any byte the card would
+  take. `msclmd.dll`, the PIV minidriver Windows uses when Yubico's is not
+  installed, is exactly that host, and BitLocker unlock through it stopped
+  working ([#79](https://github.com/TheMaxMur/RS-Key/issues/79)).
+
+  Inside the RSA family the byte may now differ. It still chooses neither the key
+  nor its size — both come from the slot — so the body is pinned to the *slot's*
+  modulus, before the touch and before the load: a request naming the family
+  reaches the key, one naming a different key is refused without prompting or
+  spending the PIN freshness. Across families, and between the two EC curves
+  (both of which the standard does name), the exact byte is still required.
+
+  A deliberate divergence, measured on both sides rather than argued: a YubiKey
+  5.7.4 insists on the exact byte — nine P1 values at a provisioned slot, only
+  its own is `9000` — and is itself unusable for an RSA-4096 key under that
+  minidriver, failing with the same `SCARD_E_INVALID_PARAMETER` on the same test.
+  So this is RS-Key working where the reference does not. Found by bisecting six
+  firmware builds against `certutil -scinfo` on real hardware.
+  **bcdDevice → 0x095A.**
+
+
 ## [0.4.10] - 2026-08-14
 
 The conformance release: every applet swept against a real YubiKey 5.7.4, three

@@ -7357,3 +7357,216 @@ fn a_one_byte_body_is_the_same_refusal_on_every_command() {
         "MOVE KEY authorised: a destination naming no slot"
     );
 }
+
+/// A GENERAL AUTHENTICATE body: `7C { 82 00, 81 <cryptogram> }`, with whichever
+/// length form the size needs — the RSA cases below straddle the 128-byte
+/// boundary where BER stops using the short form.
+fn rsa_ga_body(cryptogram: &[u8]) -> Vec<u8> {
+    let mut inner = vec![0x82, 0x00, 0x81];
+    if cryptogram.len() < 0x80 {
+        inner.push(cryptogram.len() as u8);
+    } else if cryptogram.len() < 0x100 {
+        inner.extend_from_slice(&[0x81, cryptogram.len() as u8]);
+    } else {
+        inner.extend_from_slice(&[0x82, (cryptogram.len() >> 8) as u8, cryptogram.len() as u8]);
+    }
+    inner.extend_from_slice(cryptogram);
+    let mut out = vec![0x7C];
+    if inner.len() < 0x80 {
+        out.push(inner.len() as u8);
+    } else if inner.len() < 0x100 {
+        out.extend_from_slice(&[0x81, inner.len() as u8]);
+    } else {
+        out.extend_from_slice(&[0x82, (inner.len() >> 8) as u8, inner.len() as u8]);
+    }
+    out.extend_from_slice(&inner);
+    out
+}
+
+/// Naming an RSA key by another RSA algorithm id is accepted; the key and its
+/// size still come from the slot.
+///
+/// SP 800-73 has no id for RSA-3072 or RSA-4096, so a host with only the standard
+/// table cannot name such a key at all — Windows' own PIV minidriver could not,
+/// and answered SCARD_E_INVALID_PARAMETER (issue #79). A YubiKey 5.7.4 insists on
+/// the exact byte and is unusable there for the same reason; this is the
+/// deliberate divergence. The pairing is exercised at RSA-1024 rather than 4096
+/// because the rule is about the family, and a 4096 keygen would put a minute
+/// into every run of this suite.
+#[test]
+fn an_rsa_key_answers_to_another_rsa_algorithm_id() {
+    let rng = RefCell::new(TestRng(11));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    verify_pin(&mut app, &mut fs);
+    for (slot, algo) in [
+        (SLOT_AUTHENTICATION, ALGO_RSA1024),
+        // 9C is PIN-policy ALWAYS, so whether it still signs is how the
+        // freshness is read back below.
+        (SLOT_SIGNATURE, ALGO_ECCP256),
+    ] {
+        assert_eq!(
+            run(
+                &mut app,
+                &mut fs,
+                INS_ASYM_KEYGEN,
+                0,
+                slot,
+                &gen_template(algo)
+            )
+            .0,
+            Sw::OK
+        );
+    }
+
+    // The slot's own id: unchanged, and the control for the two below.
+    verify_pin(&mut app, &mut fs);
+    let (sw, _) = run(
+        &mut app,
+        &mut fs,
+        INS_AUTHENTICATE,
+        ALGO_RSA1024,
+        SLOT_AUTHENTICATION,
+        &rsa_ga_body(&[0x42u8; 128]),
+    );
+    assert_eq!(sw, Sw::OK, "the slot's own algorithm id still works");
+
+    // Another RSA id, and a cryptogram the size of THIS slot's key: accepted.
+    verify_pin(&mut app, &mut fs);
+    let (sw, _) = run(
+        &mut app,
+        &mut fs,
+        INS_AUTHENTICATE,
+        ALGO_RSA2048,
+        SLOT_AUTHENTICATION,
+        &rsa_ga_body(&[0x42u8; 128]),
+    );
+    assert_eq!(
+        sw,
+        Sw::OK,
+        "an RSA id from the same family must reach the slot's key"
+    );
+
+    // Another RSA id with that id's OWN size: refused. The relaxation admits a
+    // host that names the family, not one that names a different key — the body
+    // is pinned to the slot's modulus, not to the byte.
+    verify_pin(&mut app, &mut fs);
+    let (sw, _) = run(
+        &mut app,
+        &mut fs,
+        INS_AUTHENTICATE,
+        ALGO_RSA2048,
+        SLOT_AUTHENTICATION,
+        &rsa_ga_body(&[0x42u8; 256]),
+    );
+    assert_eq!(
+        sw,
+        Sw::WRONG_DATA,
+        "a cryptogram sized for the named algorithm rather than the slot's key"
+    );
+    // The status word alone does not pin this: without the length check the
+    // request passes the algorithm gate, loads the slot's key and refuses on the
+    // length one line later — same `6A80`, but it has reached the key by then and
+    // spent the freshness (and prompted for a touch). That is what the check buys
+    // and what this reads back. Mutating the pin away turns this line red and
+    // nothing else does.
+    assert_eq!(
+        sign_p256(&mut app, &mut fs, SLOT_SIGNATURE),
+        Sw::OK,
+        "a body refused on length must not have reached the key"
+    );
+}
+
+/// The relaxation is inside the RSA family and nowhere else: it must not let an
+/// RSA request reach an EC key, an EC request reach an RSA key, or one curve
+/// answer for another — and a refusal must still cost neither a touch nor the
+/// PIN freshness, which is the property the exact check was added for.
+#[test]
+fn the_rsa_relaxation_does_not_cross_a_family_or_a_curve() {
+    let rng = RefCell::new(TestRng(13));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    verify_pin(&mut app, &mut fs);
+    for (slot, algo) in [
+        (SLOT_AUTHENTICATION, ALGO_RSA1024),
+        (SLOT_SIGNATURE, ALGO_ECCP256),
+        (SLOT_KEYMGM, ALGO_ECCP384),
+    ] {
+        assert_eq!(
+            run(
+                &mut app,
+                &mut fs,
+                INS_ASYM_KEYGEN,
+                0,
+                slot,
+                &gen_template(algo)
+            )
+            .0,
+            Sw::OK
+        );
+    }
+
+    // An RSA id at an EC slot, with the EC slot's own digest length.
+    verify_pin(&mut app, &mut fs);
+    let mut ec_body = vec![0x7C, 0x24, 0x82, 0x00, 0x81, 0x20];
+    ec_body.extend_from_slice(&[0x42u8; 32]);
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            INS_AUTHENTICATE,
+            ALGO_RSA2048,
+            SLOT_SIGNATURE,
+            &ec_body
+        )
+        .0,
+        Sw::WRONG_DATA,
+        "an RSA id must not reach an EC key"
+    );
+
+    // An EC id at the RSA slot, with that slot's modulus length — the length
+    // agreeing must not carry a request across the family boundary.
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            INS_AUTHENTICATE,
+            ALGO_ECCP256,
+            SLOT_AUTHENTICATION,
+            &rsa_ga_body(&[0x42u8; 128])
+        )
+        .0,
+        Sw::WRONG_DATA,
+        "an EC id must not reach an RSA key"
+    );
+
+    // One curve for another stays exact: both ids are in SP 800-73, so no host
+    // needs the leniency and the reference's strictness costs nothing.
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            INS_AUTHENTICATE,
+            ALGO_ECCP256,
+            SLOT_KEYMGM,
+            &ec_body
+        )
+        .0,
+        Sw::WRONG_DATA,
+        "P-256 must not answer for a P-384 slot"
+    );
+
+    // None of the three reached a key, so the freshness an ALWAYS slot reads is
+    // still standing.
+    assert_eq!(
+        sign_p256(&mut app, &mut fs, SLOT_SIGNATURE),
+        Sw::OK,
+        "a refused algorithm must not spend the freshness"
+    );
+}
