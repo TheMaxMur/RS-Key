@@ -49,6 +49,18 @@ FAST="rsk-sdk rsk-fs rsk-crypto rsk-openpgp rsk-otp rsk-piv rsk-oath rsk-usb rsk
 # and one of them peaks at 9.3 GiB).
 SLOW="rsk-rescue rsk-rsa-asm rsk-mldsa rsk-fido"
 
+# HEAVY: the crates the daily row runs in a job of their own, because their peak
+# solver memory is near what a hosted runner has left over. Measured 2026-08-14:
+# `rsk-rescue`'s phy round-trip peaks at 11.1 GB and the runner dies under it
+# ("received a shutdown signal" at 50-58 min, twice, against a 6 h job cap and
+# with the run's other jobs still going, so neither a timeout nor a cancel);
+# `rsk-fido`'s 9.3 GiB fits, which the `state` row demonstrates on every run. The
+# ceiling therefore sits between the two, and the split is drawn by that number
+# rather than by how long a crate takes. `light` is the rest of `all`: together
+# they are `all`, so nothing stops being proved — one job can now die without
+# taking the other sixteen crates' verdicts with it.
+HEAVY="rsk-rescue"
+
 # STATEFUL: the crates whose proofs are about the security state a reset, a wipe
 # or a torn write can leave behind -- a cross-cut of the two tiers above
 # (rsk-fido is SLOW, rsk-fs is FAST), selected by subject, not by cost. A change
@@ -69,6 +81,10 @@ STATEFUL="rsk-fido rsk-fs"
 FLOOR_pr=50
 FLOOR_state=8
 FLOOR_all=66
+# `light` + `heavy` = `all`, so these two sum to FLOOR_all and the guard checks
+# each against the tree the same way. They are the numbers the daily rows read.
+FLOOR_light=61
+FLOOR_heavy=5
 
 # Source-level `kani::cover!`s each tier must report on. Kani 0.67.0 has no
 # `--fail-uncoverable`, so an unsatisfiable cover prints "N of M cover properties
@@ -80,6 +96,8 @@ FLOOR_all=66
 COVERS_pr=23
 COVERS_state=9
 COVERS_all=31
+COVERS_light=30
+COVERS_heavy=1
 
 # `kani::cover!` properties CBMC may report unsatisfied while their source-level
 # cover is still reached. One `cover!` becomes several properties wherever the
@@ -104,6 +122,21 @@ TIMEOUT_state=30m
 # runner (`2637a20` measured it there). The trade this makes is that one
 # non-convergent proof now consumes the whole 6 h job instead of its own slot.
 TIMEOUT_all=6h
+# Both daily halves inherit that reasoning: a cap that fires costs the row its
+# floors, and the job's own `timeout-minutes` is the real bound either way.
+TIMEOUT_light=6h
+TIMEOUT_heavy=6h
+
+# `all` less `HEAVY`, so the two daily tiers partition it by construction rather
+# than by a second hand-written list that could drift out of step with the first.
+without_heavy() {
+  for c in $FAST $SLOW; do
+    case " $HEAVY " in
+      *" $c "*) ;;
+      *) printf '%s ' "$c" ;;
+    esac
+  done
+}
 
 # The one owner of tier → crates. `--tiers` and the run path both come through
 # here, so a tier the guard is shown is a tier that would actually run.
@@ -112,11 +145,13 @@ crates_of() {
     pr) echo "$FAST" ;;
     state) echo "$STATEFUL" ;;
     all) echo "$FAST $SLOW" ;;
+    heavy) echo "$HEAVY" ;;
+    light) echo "$(without_heavy)" ;;
     *) return 1 ;;
   esac
 }
 
-TIERS="pr state all"
+TIERS="pr state all light heavy"
 
 usage() {
   echo "usage: $0 {${TIERS// /|}} [cargo-kani args…]" >&2

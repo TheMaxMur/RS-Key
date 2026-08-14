@@ -11,12 +11,15 @@
 #   fuzz-coverage — per-target libFuzzer region/line coverage over that
 #          accumulated corpus (scripts/fuzz-coverage.sh): a summary table on the
 #          step page and the per-target HTML uploaded. Advisory, not a gate.
-#   kani — every #[kani::proof] harness: the `all` tier of scripts/kani.sh
+#   kani / kani-heavy — every #[kani::proof] harness, as the `light` and `heavy`
+#          tiers of scripts/kani.sh, which partition its `all` roster
 #          (docs/testing.md). The fast tier of that same script runs per-PR in
-#          ci.yml; this row is the one that owes the whole roster, including the
-#          phy round-trip — ~80 min on a hosted runner (2637a20), 27m42s locally,
-#          against a 30m per-harness cap. Kani is not in nixpkgs and its setup
-#          downloads a prebuilt CBMC bundle, so this job is rustup-based, not nix.
+#          ci.yml; these two owe the whole roster between them. They are two jobs
+#          because `rsk-rescue`'s phy round-trip peaks at 11.1 GB and takes the
+#          runner down with it (~80 min on a hosted runner, 2637a20; 55 min and
+#          that peak measured 2026-08-14), so its death costs its own crates only.
+#          Kani is not in nixpkgs and its setup downloads a prebuilt CBMC bundle,
+#          so these jobs are rustup-based, not nix.
 #   repro — `nix build .#firmware` twice (`--rebuild` diffs every output
 #          byte): proves the hermetic image is bit-reproducible and publishes
 #          the canonical sha256 for this flake.lock (docs/build.md).
@@ -34,6 +37,7 @@
 #   nix develop .#fuzz -c ./scripts/fuzz-all.sh   (FUZZ_SECONDS=30 to shorten)
 #   nix develop .#fuzz -c ./scripts/fuzz-coverage.sh
 #   ./scripts/kani.sh all   (needs `cargo install kani-verifier` first — not nix)
+#   ./scripts/kani.sh light   ./scripts/kani.sh heavy   # what the two rows run
 #   nix develop -c cargo llvm-cov --summary-only --fail-under-lines 80 --target <host> --workspace --exclude firmware --exclude rsk-wipe
 #   nix develop -c ./scripts/complexity_gate.sh
 
@@ -218,9 +222,14 @@ jobs:
           command -v cargo-kani >/dev/null || cargo install --locked kani-verifier --version "$KANI_VERSION"
           cargo kani setup
 
-      # The `all` tier: every crate carrying a harness, `rsk-bench` aside
-      # (scripts/kani_gate.py holds that exclusion and its measured reason). The
-      # script also floors the harness count and the `kani::cover!` count, because
+      # `light` + `heavy` = the `all` roster: every crate carrying a harness,
+      # `rsk-bench` aside (scripts/kani_gate.py holds that exclusion and its
+      # measured reason). They are two jobs because `rsk-rescue`'s phy round-trip
+      # peaks at 11.1 GB and takes the runner with it — twice, at 50-58 min,
+      # against this 6 h cap and with the run's other jobs still going. Split, a
+      # death there costs its own crates and not the other sixteen's verdicts.
+      #
+      # The script floors the harness count and the `kani::cover!` count, because
       # a roster that selects nothing exits 0 and so does a cover nothing reaches.
       # `--harness-timeout`, which it passes, is per harness and not per row —
       # Kani runs the rest and fails at the end. It is set to this job's own 6 h,
@@ -228,8 +237,36 @@ jobs:
       # to keep the flag from being unset: a cap that fires on this tier costs more
       # than it saves, because the non-zero exit ends the script at the `tee` and
       # the harness and cover floors below it are never read.
-      - name: prove every harness
-        run: ./scripts/kani.sh all
+      - name: prove every harness but the heavy crate
+        run: ./scripts/kani.sh light
+
+  # The half that can exhaust the runner. Its own job so its death is its own:
+  # see the `HEAVY` comment in `scripts/kani.sh` for the measurement that drew
+  # line, and `rsk-fido`'s 9.3 GiB on the other side of it.
+  kani-heavy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      KANI_VERSION: "0.67.0"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.kani
+            ~/.cargo/bin/cargo-kani
+            ~/.cargo/bin/kani
+            ~/.cargo/registry
+          key: kani-${{ runner.os }}-${{ env.KANI_VERSION }}
+
+      - name: install kani (rustup-based — not packaged in nixpkgs)
+        run: |
+          command -v cargo-kani >/dev/null || cargo install --locked kani-verifier --version "$KANI_VERSION"
+          cargo kani setup
+
+      - name: prove the heavy crate
+        run: ./scripts/kani.sh heavy
   repro:
     runs-on: ubuntu-latest
     timeout-minutes: 60
