@@ -225,8 +225,8 @@ release_image_retires_its_unsigned_image_def() {
 # target on the empty file. Liveness only — no sanitizer, no coverage, no
 # fuzzing; those stay in deep-checks.
 #
-# Same floor, and the same reason, as scripts/fuzz-coverage.sh and the
-# deep-checks fuzz loop: a `for` over an empty word list runs nothing and exits
+# Same floor, and the same reason, as scripts/fuzz-coverage.sh and
+# scripts/fuzz-all.sh: a `for` over an empty word list runs nothing and exits
 # 0. Lower all three in the commit that removes a target.
 FUZZ_TARGET_FLOOR=53
 fuzz_targets_are_alive() {

@@ -32,7 +32,7 @@ covbuild="fuzz/coverage/.build"
 # report — we measure OUR parser/dispatch surface, not the glue around it.
 ign='(fuzz/fuzz_targets/|/\.cargo/registry/|/rustc/|/library/|/rustlib/)'
 
-# Same floor and same reason as the deep-checks fuzz loop: `set -e` does not fire
+# Same floor and same reason as `scripts/fuzz-all.sh`: `set -e` does not fire
 # on an empty or failing $( ) in a `for` word list, so a broken `cargo fuzz list`
 # printed an empty table and exited 0. The third copy is the `fuzz targets alive`
 # row in scripts/check.sh; lower all three in the same commit.

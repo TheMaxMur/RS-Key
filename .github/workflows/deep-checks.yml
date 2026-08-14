@@ -31,7 +31,7 @@
 # Runs daily, on demand (workflow_dispatch, with a per-target time knob),
 # and self-tests on any push that edits this file. Local equivalents:
 #   nix develop .#fuzz -c cargo miri test --manifest-path fuzz/Cargo.toml
-#   nix develop .#fuzz -c cargo fuzz run <target> -- -max_total_time=120
+#   nix develop .#fuzz -c ./scripts/fuzz-all.sh   (FUZZ_SECONDS=30 to shorten)
 #   nix develop .#fuzz -c ./scripts/fuzz-coverage.sh
 #   ./scripts/kani.sh all   (needs `cargo install kani-verifier` first — not nix)
 #   nix develop -c cargo llvm-cov --summary-only --fail-under-lines 80 --target <host> --workspace --exclude firmware --exclude rsk-wipe
@@ -55,6 +55,7 @@ on:
         "nix/devshells.nix",
         "nix/firmware.nix",
         "scripts/fuzz-coverage.sh",
+        "scripts/fuzz-all.sh",
       ]
 
 permissions:
@@ -125,40 +126,16 @@ jobs:
       - name: build every fuzz target
         run: nix develop .#fuzz -c cargo fuzz build
 
+      # A script, not an inline `-c bash -c '…'`: that form loses the dev shell's
+      # PATH here and `cargo` falls through to the image's rustup shim, which
+      # syncs stable and answers "no such command: fuzz". Measured in one run,
+      # same image, same minute — the `fuzz-coverage` row below, which already
+      # calls its script this way, listed 53 targets while this one listed 0 and
+      # tripped its own roster floor. The floor did its job; the shape was wrong.
       - name: fuzz every target
-        run: |
-          nix develop .#fuzz -c bash -euo pipefail -c '
-            # `set -e` does not fire on an empty or failing $( ) used as a `for`
-            # word list, so a broken `cargo fuzz list` fuzzed zero targets and
-            # this job reported green — measured, rc=0. Floor the roster at today's
-            # count: unlike the firmware-size ratchet it needs no margin, because a
-            # target count has no build noise. Lower FUZZ_TARGET_FLOOR, and its two
-            # copies in scripts/fuzz-coverage.sh and scripts/check.sh, in the commit
-            # that removes a target.
-            mapfile -t targets < <(cargo fuzz list)
-            # The corpus lives in one LRU-evictable cache entry; on a restore
-            # miss every target starts from empty and the run still says DONE.
-            echo "roster: ${#targets[@]} targets (floor ${FUZZ_TARGET_FLOOR}), corpus: $(find fuzz/corpus -type f 2>/dev/null | wc -l) inputs restored"
-            if [ "${#targets[@]}" -lt "$FUZZ_TARGET_FLOOR" ]; then
-              echo "::error::cargo fuzz list yielded ${#targets[@]} targets, under the ${FUZZ_TARGET_FLOOR} floor — the roster shrank or the list failed"
-              exit 1
-            fi
-            failed=""
-            for t in "${targets[@]}"; do
-              echo "::group::${t} (${FUZZ_SECONDS}s)"
-              if ! cargo fuzz run "$t" -- -max_total_time="$FUZZ_SECONDS" -print_final_stats=1; then
-                failed="$failed $t"
-              fi
-              echo "::endgroup::"
-            done
-            if [ -n "$failed" ]; then
-              echo "::error::crashing targets:$failed"
-              exit 1
-            fi
-          '
+        run: nix develop .#fuzz -c ./scripts/fuzz-all.sh
         env:
           FUZZ_SECONDS: ${{ inputs.fuzz_seconds || '120' }}
-          FUZZ_TARGET_FLOOR: "53"
 
       - name: upload crash artifacts
         if: failure()
