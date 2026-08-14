@@ -151,10 +151,12 @@ fn priv_do_3_needs_pw2_and_pw3_will_not_do() {
     let mut cur = None;
     let (_, sw) = get_data(EF_PRIV_DO_3, false, false, &mut fs, &a, &mut cur, &mut out);
     assert_eq!(sw, Sw::SECURITY_STATUS_NOT_SATISFIED);
-    // The admin PIN is not the cardholder's: §5 gives `0103` READ to PW1 no. 82
-    // alone, and a YubiKey 5.7.4 refuses PW3 on it.
+    // The admin reaches it too. Re-measured 2026-08-14 on a YubiKey 5.7.4 from a
+    // fresh SELECT: PW3 alone answers `GET 0103` with 9000, so the earlier note
+    // here — that it refuses PW3 — was wrong, and following it made this card
+    // stricter than its reference.
     let (_, sw) = get_data(EF_PRIV_DO_3, false, true, &mut fs, &a, &mut cur, &mut out);
-    assert_eq!(sw, Sw::SECURITY_STATUS_NOT_SATISFIED);
+    assert_eq!(sw, Sw::OK);
     // With PW2 it becomes readable (a plain flash DO).
     let (_, sw) = get_data(EF_PRIV_DO_3, true, false, &mut fs, &a, &mut cur, &mut out);
     assert_eq!(sw, Sw::OK);

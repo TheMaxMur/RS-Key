@@ -442,6 +442,20 @@ below in the usual four sections, security last.
 
 ### Fixed
 
+- **The admin PIN reaches the private-use DOs again.** `0101` and `0103` took
+  PW2 and nothing else, so PW3 — the password an administrator actually holds —
+  was refused `6982` on a DO the card is meant to give it. That rule came from a
+  measurement recorded as "a YubiKey 5.7.4 refuses PW3 there, 3/3", and the
+  measurement was wrong: re-run 2026-08-14 from a fresh SELECT, a YubiKey answers
+  `9000` to `PUT 0101`, `PUT 0103`, `GET 0103` and `GET 0104` under PW3 alone. It
+  refuses only the unauthenticated and PW1.81 cells, which this card already
+  refused and still does. So the reference was stricter nowhere and this card was
+  stricter in four places. `0101`/`0103` now take PW2 **or** PW3; `0102`/`0104`
+  stay PW3; `0101` stays world-readable. Three stale divergence entries leave
+  `tests/third_party.py` with it, and the vendored OpenPGP suite goes from 6
+  failures to 0.
+  **bcdDevice → 0x0956.**
+
 - **A one-byte body is one refusal on every PIV command, and the management key
   outranks the request below it.** `MOVE KEY` answered `6700` to any body at all —
   before looking at the management key — and `GENERATE ASYMMETRIC KEY PAIR` judged
