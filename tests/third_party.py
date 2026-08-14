@@ -60,6 +60,19 @@ DIVERGENCES: dict[str, dict[str, str]] = {
         # The emulator answers faster than the transport's keepalive interval, so
         # there is nothing to count. A board doing on-card RSA does emit them —
         # `tests/50_touch_latency.py` is where that is measured.
+        # An empty `saltEnc` is a parameter that is present and the wrong length,
+        # not a missing one: §12.5 says to answer CTAP1_ERR_INVALID_LENGTH unless
+        # the length is 32 or 64, and reserves CTAP2_ERR_MISSING_PARAMETER for the
+        # key not being there at all. The suite sends `b""` and wants the latter.
+        "test_035_hmac_secret.py::test_make_credential_hmac_secret_mc_empty_salt": "an empty saltEnc is present-but-wrong-length: §12.5 gives INVALID_LENGTH",
+        # Both walk credentialManagement and interleave an unrelated command in
+        # the middle, then expect the walk to continue. It no longer does, and
+        # that is the reference behaviour: measured on a YubiKey 5.7.4, its
+        # enumerate walk dies on an unrelated command, on a credentialManagement
+        # subcommand that is not one of the two *Next* walkers, on a largeBlobs
+        # command, and on a 35-second gap. RS-Key matches all four.
+        "test_multiple_enumeration[12345678-_test_enumeration_interleaved]": "an interleaved command retires the enumerate walk, as it does on a YubiKey 5.7.4",
+        "test_multiple_enumeration_with_deletions[12345678-_test_enumeration_interleaved]": "an interleaved command retires the enumerate walk, as it does on a YubiKey 5.7.4",
         "test_055_hid.py::TestHID::test_keep_alive": "no command here is slow enough to stream a keepalive",
         # CTAP 2.1 §6.1.2: `up` is implicitly true for makeCredential and an
         # explicit `up: true` is accepted — only `up: false` is INVALID_OPTION.
@@ -177,19 +190,34 @@ DIVERGENCES: dict[str, dict[str, str]] = {
         # The same wrapper question, reached through the new pcsc section: it reads
         # DO 6E and asserts the response *starts* with the child tag `4F`.
         "::test_openpgp_status_objects": "§4.4.1 vs §7.2.6: DO 6E arrives with its own tag, so it starts 6E, not 4F",
-        # The three private-use DO cells where Gnuk gives the admin an override
-        # §5's access table does not: `0101` and `0103` belong to PW1 no. 82,
-        # `0102`/`0104` to
-        # PW3, and the spec grants no PW3 fallback on the cardholder's pair. A
-        # YubiKey 5.7.4 refuses all three with 6982 — measured 3/3 over the full
-        # 4-DO x 4-state matrix — so the spec and the reference agree against this
-        # suite, and RS-Key follows them (E21). The neighbouring cells in the same
-        # module still pass, which is what keeps these three honest: `0101` under
-        # PW1.82 writes, `0102`/`0104` under PW3 write, and `0103` under PW1.81 is
-        # refused.
-        "::test_private_do_0101_write_ok_with_pw3": "§5 gives 0101 to PW1 no. 82; a YubiKey refuses PW3 there (6982)",
-        "::test_private_do_0103_write_ok_with_pw3": "§5 gives 0103 to PW1 no. 82; a YubiKey refuses PW3 there (6982)",
-        "::test_private_do_0103_read_ok_with_pw3": "§5 gives 0103 to PW1 no. 82; a YubiKey refuses PW3 there (6982)",
+        # Replacing or changing a password does not drop the security status the
+        # OLD one earned. Gnuk clears it, so this suite verifies PW1 no. 82 early,
+        # then resets PW1 through the admin, then expects the private DOs shut.
+        # Measured on a YubiKey 5.7.4, each phase from its own power cycle:
+        # VERIFY 82 -> GET 0103 9000 -> RESET RETRY COUNTER (admin, new PW1) ->
+        # GET 0103 still 9000; the same across CHANGE REFERENCE DATA. The
+        # reference keeps the latch, so RS-Key does. The `_fail_` name describes
+        # the state the suite believes it is in: no VERIFY appears in these cases.
+        "::test_private_do_0101_write_fail_with_pw1_81": "a replaced PW1 does not drop the old PW1.82 latch; a YubiKey 5.7.4 keeps it too",
+        "::test_private_do_0102_write_fail_with_pw1": "a replaced PW1 does not drop the old PW3 latch; a YubiKey 5.7.4 keeps it too",
+        "::test_private_do_0103_read_fail_without_auth": "a replaced PW1 does not drop the old PW1.82 latch; a YubiKey 5.7.4 keeps it too",
+        "::test_private_do_0103_read_fail_with_pw1_81": "a replaced PW1 does not drop the old PW1.82 latch; a YubiKey 5.7.4 keeps it too",
+        "::test_private_do_0104_read_fail_without_auth": "a replaced PW1 does not drop the old PW3 latch; a YubiKey 5.7.4 keeps it too",
+        "::test_private_do_0104_read_fail_with_pw1": "a replaced PW1 does not drop the old PW3 latch; a YubiKey 5.7.4 keeps it too",
+        # Gnuk's own capability bits. The pattern pins byte 1 to one of Gnuk's
+        # four values and the DO's shape to Gnuk's build; RS-Key advertises a
+        # different set (it has no secure messaging, a different maximum
+        # challenge, and its own DO lengths), so the string cannot match and
+        # nothing about the mismatch is a defect. The capabilities RS-Key does
+        # claim are pinned by its own tests, not by this one.
+        "test_000_initial_card.py::test_extended_capabilities": "the pattern pins Gnuk's own capability bits, which RS-Key does not claim",
+        # The three `_ok_with_pw3` cells are NOT listed: they pass, but not
+        # because PW3 has any authority over `0101`/`0103` — it does not, on this
+        # card or on a YubiKey 5.7.4 (VERIFY 83 alone answers 6982 to both, each
+        # phase measured from its own power cycle). They pass because the PW1.82
+        # the suite verified earlier is still standing, for the same reason the
+        # `_fail_` cells above are listed. Do not re-add them: strict xfail would
+        # turn a pass back into a failure, which is how they were found.
         # Both halves of this one are content errors, not length errors: an ECDSA
         # attribute whose OID is 16 zero bytes, and an RSA attribute truncated to
         # two. The spec's own gloss splits them — `6700 Wrong length (Lc and/or
