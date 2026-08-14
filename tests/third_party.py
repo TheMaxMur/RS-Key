@@ -58,9 +58,6 @@ SUITES = {
 # wrong is a bug, and putting it here hides it.
 DIVERGENCES: dict[str, dict[str, str]] = {
     "fido": {
-        # The emulator answers faster than the transport's keepalive interval, so
-        # there is nothing to count. A board doing on-card RSA does emit them —
-        # `tests/50_touch_latency.py` is where that is measured.
         # An empty `saltEnc` is a parameter that is present and the wrong length,
         # not a missing one: §12.5 says to answer CTAP1_ERR_INVALID_LENGTH unless
         # the length is 32 or 64, and reserves CTAP2_ERR_MISSING_PARAMETER for the
@@ -74,7 +71,20 @@ DIVERGENCES: dict[str, dict[str, str]] = {
         # command, and on a 35-second gap. RS-Key matches all four.
         "test_multiple_enumeration[12345678-_test_enumeration_interleaved]": "an interleaved command retires the enumerate walk, as it does on a YubiKey 5.7.4",
         "test_multiple_enumeration_with_deletions[12345678-_test_enumeration_interleaved]": "an interleaved command retires the enumerate walk, as it does on a YubiKey 5.7.4",
-        "test_055_hid.py::TestHID::test_keep_alive": "no command here is slow enough to stream a keepalive",
+        # Not a behaviour difference — the stream is there and matches the
+        # reference. It is the no-touch build the suites require: on it this
+        # precanned makeCredential answers in 6 ms, well inside `KEEPALIVE_MS`, so
+        # there is no window to stream one in. The same emulator under `--touch`
+        # streams UPNEEDED every ~100 ms; a YubiKey 5.7.4 answers this exact
+        # request UPNEEDED at ~64 ms then KEEPALIVE_CANCEL at the test's 0.5 s
+        # deadline (both measured). The stream itself is asserted by `tools/emu`'s
+        # `hid_tests::a_cancel_reaches_a_job_waiting_for_a_touch`, in the gate.
+        #
+        # That 6 ms is the emulator's; nobody has timed it on a board. If a board's
+        # keygen-and-flash outlasts `KEEPALIVE_MS` this XPASSes there — then gate
+        # the entry on the serial (emulator `RSKEMU\0\1`, board `rs-key-0001`)
+        # rather than dropping it.
+        "test_055_hid.py::TestHID::test_keep_alive": "the no-touch build answers in 6 ms, inside KEEPALIVE_MS — no window to stream one (emulator; a slower board may XPASS)",
         # CTAP 2.1 §6.1.2: `up` is implicitly true for makeCredential and an
         # explicit `up: true` is accepted — only `up: false` is INVALID_OPTION.
         # The FIDO conformance tool checks both (MakeCredential Req-6, P-3/F-1)
