@@ -143,11 +143,33 @@ impl<S: Storage> GenAuth<'_, S> {
     /// `6A86`, and `6581` for the RSA arm, whose seal read ran first. Without it
     /// the RSA arm also had no algorithm check at all: an RSA-2048 request at an
     /// RSA-3072 slot loaded the 3072 key and spent before refusing on length.
-    fn algo_is_the_keys(&self) -> Result<(), Sw> {
+    ///
+    /// Inside the RSA family the byte may differ, and has to. SP 800-73 has no id
+    /// for RSA-3072 or RSA-4096 — `0x05`/`0x16` are Yubico's — so a host holding
+    /// only the standard table can name such a key by no byte the card would
+    /// accept, and Windows' own PIV minidriver is exactly that host: it answers
+    /// `SCARD_E_INVALID_PARAMETER` and the key is unusable, which is what issue
+    /// #79 turned out to be. A YubiKey 5.7.4 insists on the exact byte (measured,
+    /// nine cells at a provisioned slot: only its own id is `9000`) and is itself
+    /// unusable for an RSA-4096 key under that minidriver — measured on one, same
+    /// error. So this diverges from the reference deliberately, in the direction
+    /// of the key working.
+    ///
+    /// What the byte still never chooses is the key or its size: both come from
+    /// the slot. That is why the body is pinned to the SLOT's modulus here — the
+    /// relaxation admits a host that names the family, not one that names a
+    /// different key — and why it is judged here rather than at the load, so a
+    /// mismatch still neither prompts for a touch nor spends the freshness.
+    fn algo_is_the_keys(&self, body: &[u8]) -> Result<(), Sw> {
         if self.algo == self.slot_algo {
-            Ok(())
-        } else {
-            Err(Sw::WRONG_DATA)
+            return Ok(());
+        }
+        match (
+            keygen::rsa_size_from_algo(self.algo),
+            keygen::rsa_size_from_algo(self.slot_algo),
+        ) {
+            (Some(_), Some(want)) if body.len() == want => Ok(()),
+            _ => Err(Sw::WRONG_DATA),
         }
     }
 
@@ -234,7 +256,7 @@ impl<S: Storage> GenAuth<'_, S> {
     /// RSA (blinded, CRT-fault-checked), ECDSA over the digest, or PureEdDSA over
     /// the message. Symmetric algos are refused — see the arm's oracle note.
     fn slot_key_op(&mut self, c: &[u8], res: &mut ResBuf) -> Result<(), Sw> {
-        self.algo_is_the_keys()?;
+        self.algo_is_the_keys(c)?;
         match self.algo {
             ALGO_RSA1024 | ALGO_RSA2048 | ALGO_RSA3072 | ALGO_RSA4096 => {
                 check_touch(self.touch_policy, self.presence)?;
@@ -315,7 +337,7 @@ impl<S: Storage> GenAuth<'_, S> {
         if !is_key(self.key_ref) {
             return Err(Sw::WRONG_DATA);
         }
-        self.algo_is_the_keys()?;
+        self.algo_is_the_keys(pp)?;
         if !matches!(self.algo, ALGO_ECCP256 | ALGO_ECCP384 | ALGO_X25519) {
             return Err(Sw::WRONG_DATA);
         }
