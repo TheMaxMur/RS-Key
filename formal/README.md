@@ -1019,6 +1019,66 @@ post-`scan` state together with the durability of `val`/`meta` that `Reboot`
 gives structurally. That obligation had no object while the store was unmodelled;
 this module is it.
 
+## The fourth module — `RSKeyRetryLattice.tla`
+
+The seam module has the applets' status *lifetime* — who holds which access
+status, what a SELECT or a refusal does to it. It does not have the arithmetic
+*behind* establishing that status: the finite retry counter on each reference,
+the recovery reference that can refill it, and the rule that a wrong attempt
+costs exactly one try from a budget that refuses at zero. That is this module —
+PIV's PIN and PUK, OpenPGP's PW1, PW3 and RC — one layer beneath the seam.
+
+**It is the applet surface with no safe oracle, which is the whole reason to
+model it.** The wire behaviour of these applets was attacked with a real YubiKey
+(the ~47 group-E findings). The retry ladder cannot be: measuring a real PUK
+ladder to exhaustion *blocks the card*, and once blocked the only way back takes
+the keys. So the one place an exhaustive check of every verify/block/recover
+interleaving runs at all is here. A fourth module and not more of the seam one
+for the measured reason the seam gave for being a second: the two share no
+variable — the seam has statuses and selections, this has counters — so a
+product multiplies state and buys no new interleaving.
+
+**Three invariants, all honestly ghosts.** The counter arithmetic erases its own
+history — a success refills to `Max`, so no reachable *state* shows the
+exhaustion a bad grant rode past — which makes each of these a fact about a
+*step*, not a state, exactly as the seam module's mostly are:
+
+- `NoAuthWhenBlocked` — no reference authenticates on an exhausted budget,
+  neither a direct VERIFY at zero nor a RESET RETRY leaning on a recovery
+  reference already at zero;
+- `WrongAttemptIsCharged` — a wrong attempt against an unblocked reference spends
+  *exactly one*, the anti-bruteforce gate (a wrong VERIFY charges the target, a
+  wrong RESET RETRY charges the recovery reference);
+- `BudgetRisesOnlyWithItsSecret` — a counter rises only on a correct secret, its
+  own or its recovery reference's, never out of nothing.
+
+**Three mutants, one per defended code site** — the discipline the store and
+seam modules keep, so a switch is one real thing a reviewer could break:
+
+| Mutation switch | Removes | Target invariant | Caught in |
+|---|---|---|---|
+| `BugUseWhenBlocked` | the `left == 0 => PIN_BLOCKED` floor (`crates/rsk-piv/src/lib.rs:1186-1188` / `crates/rsk-openpgp/src/pin.rs:200-202`), which guards a direct verify AND a recovery reference | `NoAuthWhenBlocked` | 30 states |
+| `BugWrongDoesNotSpend` | the decrement that IS the gate (`crates/rsk-piv/src/lib.rs:1204` / `crates/rsk-openpgp/src/pin.rs:108`) | `WrongAttemptIsCharged` | 2 states |
+| `BugRecoveryWithoutSecret` | the recovery secret verified before the refill (`crates/rsk-piv/src/lib.rs:1337` / `crates/rsk-openpgp/src/pin.rs:766`) | `BudgetRisesOnlyWithItsSecret` | 9 states |
+
+`Lattice.cfg` is **GREEN, exhaustive** over 243 distinct states at depth 11, with
+no dead action; every `LatSolo_*.cfg` is RED on its own target. The all-blocked
+state — a locked-out card — is not a deadlock: a blocked card still *answers*
+every VERIFY (it returns `PIN_BLOCKED` and changes nothing), so a blocked
+reference's verify is a no-op refusal here, an enabled step rather than a dead
+end. That was a real bug in the first draft, caught by TLC's deadlock check.
+
+**What it does NOT cover, stated.** The OATH access code and the OTP slot code
+are absent: a MAC / equality challenge-response has *no retry counter*, so a
+wrong answer costs nothing — the seam module's exempt-refusal territory, and
+their acceptance is the group-E oracle's. OpenPGP's admin path to PW1 (RESET
+RETRY `P1 = 0x02`) is out too: it gates on a live PW3 *session*, which is the
+seam module's status, not a secret presented in the call. And the co-refutation
+apparatus does not reach these mutants yet — a naive injection measures a `u8`
+underflow rather than a blocked reference authenticating (the floor and the
+counter's type are two layers), so `LatMut_*` is stated as excluded in
+`comutate.py` rather than silently skipped.
+
 ## What now catches a run nobody watched
 
 That `VACUOUS` rule was one heuristic and a **reporting** guard: it printed a

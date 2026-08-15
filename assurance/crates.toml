@@ -47,22 +47,22 @@ gap = "Dispatcher::current is the seam module's sel; APDU chaining state is unmo
 [crate.rsk-piv]
 class = "state-partial"
 model = "RSKeyAppletSeams"
-gap = "status lifetime only; the retry/PUK lattice and slot policies are unmodelled — roadmap M4."
+gap = "status lifetime is RSKeyAppletSeams; the PIN/PUK retry & recovery budget lattice is now RSKeyRetryLattice (M4). What remains unmodelled is the slot key-policy matrix (PIN-always/once/never) — roadmap M4's second slice."
 
 [crate.rsk-openpgp]
 class = "state-partial"
 model = "RSKeyAppletSeams"
-gap = "status lifetime only; PW1/PW3/RC budgets and key-attribute invalidation are unmodelled — roadmap M4."
+gap = "status lifetime is RSKeyAppletSeams; the PW1/PW3/RC retry & recovery budgets are now RSKeyRetryLattice (M4). Key-attribute invalidation (a new key clearing the DEK/verifier) is still unmodelled — roadmap M4's second slice."
 
 [crate.rsk-oath]
 class = "state-partial"
 model = "RSKeyAppletSeams"
-gap = "status lifetime only; the access-code removal hole is recorded in the model's own abstractions list — roadmap M4 closes it as AccessCodeRemovalNeedsTheCode."
+gap = "status lifetime is RSKeyAppletSeams. NOT in RSKeyRetryLattice: the access code is a MAC challenge-response with no retry counter, so a wrong answer costs nothing — the exempt-refusal territory the seam model already carries, and its wire acceptance is the group-E oracle's. AccessCodeRemovalNeedsTheCode (removing the code requires the validated status) is the one gate still unmodelled."
 
 [crate.rsk-otp]
 class = "state-partial"
 model = "RSKeyAppletSeams"
-gap = "one door (oathOtpPin) only; slot configure/swap/delete and the slot access code are unmodelled — roadmap M4."
+gap = "one door (oathOtpPin) in the seam model. NOT in RSKeyRetryLattice for the same reason as OATH — the slot access code is a bare equality check with no counter. Slot configure/swap/delete under that code stay unmodelled."
 
 [crate.rsk-vendor]
 class = "state-partial"

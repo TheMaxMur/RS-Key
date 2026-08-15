@@ -188,6 +188,29 @@ status = "MODELLED-ONLY"
 statement = "A meta_add of one FID never drops another FID's committed metadata record — the 'torn meta_add wiped every existing record' crash, where a faulted EF_META read was rebuilt from empty."
 source = ["docs/threat-model.md"]
 
+# ---- RSKeyRetryLattice — the PIV/OpenPGP retry & recovery budget lattice -----
+
+[[property]]
+id = "SEC-LAT-001"
+name = "NoAuthWhenBlocked"
+status = "MODELLED-ONLY"
+statement = "No reference authenticates on an exhausted budget: neither a direct VERIFY at zero retries, nor a RESET RETRY leaning on a recovery reference already at zero. The blocked floor holds before the comparison."
+source = ["PIV SP 800-73-4", "OpenPGP card 3.4", "docs/threat-model.md"]
+
+[[property]]
+id = "SEC-LAT-002"
+name = "WrongAttemptIsCharged"
+status = "MODELLED-ONLY"
+statement = "Every wrong attempt against an unblocked reference spends exactly one from its retry counter — the anti-bruteforce gate. A wrong VERIFY charges the target; a wrong RESET RETRY charges the recovery reference."
+source = ["PIV SP 800-73-4", "OpenPGP card 3.4", "docs/threat-model.md"]
+
+[[property]]
+id = "SEC-LAT-003"
+name = "BudgetRisesOnlyWithItsSecret"
+status = "MODELLED-ONLY"
+statement = "A reference's retry counter rises only on a correct presentation of a secret — its own (a correct VERIFY) or its designated recovery reference's (a correct RESET RETRY) — never out of nothing."
+source = ["PIV SP 800-73-4", "OpenPGP card 3.4", "docs/threat-model.md"]
+
 # ---- Accepted risks — ruled by the maintainer, visible here so their absence
 # ---- from the evidence table reads as a decision, not a hole ----------------
 

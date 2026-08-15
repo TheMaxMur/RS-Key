@@ -13,7 +13,7 @@ cost — lives in `formal/README.md` next to the model itself.
 so. What exists is narrower and it is measured: the paragraph to quote is in
 [Testing](testing.md), under "Formal claims — what is and is not verified".
 
-## The three modules
+## The four modules
 
 `RSKeySecurityState.tla` models the FIDO security state: PIN retries, the
 `pinUvAuthToken` and its permissions, which transport owns the touch, which
@@ -31,6 +31,14 @@ file's metadata, and whether the in-RAM present-cache can read a committed key
 as absent. It is a lift of the Rust power-cut oracle (`powercut.rs`) that had
 been reachable only by the fuzzer, and it is the store model the roadmap's
 refinement pilot inducts its persistent-state invariant over.
+
+`RSKeyRetryLattice.tla` models the retry & recovery budget lattice of the two
+applets that have one — PIV (PIN, PUK) and OpenPGP (PW1, PW3, RC): the finite
+counter behind each reference, the recovery reference that refills it, and the
+anti-bruteforce arithmetic that is identical at every one. It is the part of the
+applet surface with no safe oracle — exhausting a real PUK ladder blocks the
+card and the only way back takes the keys — so an exhaustive check of every
+verify/block/recover interleaving can run only in a model.
 
 ## The checks of the checks
 

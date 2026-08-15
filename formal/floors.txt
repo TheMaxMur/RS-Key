@@ -27,6 +27,9 @@ Seams.cfg                            GREEN   200
 \* The flash layer (RSKeyStore): a small exhaustive space -- 272 distinct at
 \* depth 7 -- so its floor is set near a third, the same rule as its siblings.
 Store.cfg                            GREEN   90
+\* The retry/recovery lattice (RSKeyRetryLattice): 243 distinct at depth 11, five
+\* budgeted references over a ceiling of two -- a third is the floor here too.
+Lattice.cfg                          GREEN   80
 \* The liveness layer builds a behaviour graph ON TOP of the state graph -- 23.7
 \* million nodes at these constants -- and runs out of memory at the 4 GB
 \* default after the state search has already completed (E172). The heap column
@@ -48,5 +51,7 @@ SeamMut_*.cfg                        RED     -
 SeamSolo_*.cfg                       RED     -
 StoreMut_*.cfg                       RED     -
 StoreSolo_*.cfg                      RED     -
+LatMut_*.cfg                         RED     -
+LatSolo_*.cfg                        RED     -
 LiveMut_*.cfg                        RED     -
 FairMut_*.cfg                        RED     -

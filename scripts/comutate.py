@@ -10,12 +10,21 @@ catches them too. Three green checkers over three slightly different systems is
 the failure mode this whole apparatus exists for, and the difference between
 the two answers is a measured abstraction gap with a file and line attached.
 
-The roster is `Mut_*` plus `StoreMut_*`, and `SeamMut_*` is DELIBERATELY not in
-it: the seam mutants rebuild applet-status defects whose shipped fixes carry
-their own regression tests measured against a YubiKey oracle (group E), and
-their co-refutation belongs to M4, when the applet retry/authorization lattice
-is modelled. An exclusion stated here is a plan; one implied by a glob would be
-a hole.
+The roster is `Mut_*` plus `StoreMut_*`. Two mutant families are DELIBERATELY
+out of it, because an exclusion stated here is a plan and one implied by a glob
+is a hole:
+
+* `SeamMut_*` — applet-status defects whose shipped fixes carry their own
+  regression tests, measured against a YubiKey oracle (group E). The status
+  lifetime is exercised at the wire, not by a `cargo test` on one function.
+* `LatMut_*` — the retry-ladder mutants. Injecting one naively measures the
+  wrong thing: removing the `left == 0` floor lets `left - 1` underflow a `u8`
+  and the test panics on the arithmetic, not on a blocked reference
+  authenticating — the floor and the counter's own type are two layers, so a
+  faithful co-refutation needs the both-layers patch the store's
+  revoke-before-write already taught (find3). Until that analysis is done the
+  ladders' regression coverage is the applets' own `check_ref` / `check_pin`
+  unit tests.
 
 `formal/comutants.toml` holds one entry per mutant: a `patch` (exact-snippet
 find/replace — the defect, re-made in today's code), `unreachable` (the defect
