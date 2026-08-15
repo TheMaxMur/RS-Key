@@ -5533,10 +5533,18 @@ fn kbase_migration_reseals_slots_and_pin_falls_back() {
     // authenticates, the default PIN verifies via the fallback (and once
     // more directly against the re-stored verifier), and slot 9A signs with
     // the SAME key it had before the migration.
+    // The at-rest lap has already run on this device: the fallback verify
+    // below re-keys the PIN verifier, superseding a chip-serial-sealed copy,
+    // so it must re-arm the lap (request_rescrub) — audit run-35's rule.
+    fs.put(rsk_fs::EF_HARDENED, &[1]).unwrap();
     let mut app2 = PivApplet::new(SERIAL, HASH, Some(otp_source as FusedKey), &rng, &pres);
     select(&mut app2, &mut fs);
     auth_mgm(&mut app2, &mut fs);
     verify_pin(&mut app2, &mut fs);
+    assert!(
+        !fs.has_data(rsk_fs::EF_HARDENED),
+        "the fallback verify re-keyed the verifier and must re-arm the at-rest lap"
+    );
     verify_pin(&mut app2, &mut fs);
     let digest: [u8; 32] = sha2::Sha256::digest(b"kbase migration").into();
     let mut msg = vec![0x7C, 0x24, 0x82, 0x00, 0x81, 0x20];

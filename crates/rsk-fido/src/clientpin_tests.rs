@@ -1438,6 +1438,11 @@ fn pin_verifier_and_pinwrapped_seed_migrate_at_verify() {
     let mut raw = [0u8; 61];
     assert_eq!(fs.read(EF_KEY_DEV.get(), &mut raw), Some(61));
     assert_eq!(raw[0], 0x03);
+    // The one-shot at-rest lap has already run on this device: the migration
+    // below supersedes a chip-serial-sealed copy AFTER it, so it must re-arm
+    // the lap (request_rescrub) or that copy stays readable in a raw flash
+    // dump forever — audit run-35 found four of five lazy re-keys skipping it.
+    fs.put(rsk_fs::EF_HARDENED, &[1]).unwrap();
 
     // The OTP build: first verify migrates the verifier and unwraps the
     // seed straight to a plain 0x12, costing no retry.
@@ -1458,6 +1463,11 @@ fn pin_verifier_and_pinwrapped_seed_migrate_at_verify() {
     assert_eq!(ctx.fs.read(EF_KEY_DEV.get(), &mut raw), Some(61));
     assert_eq!(raw[0], 0x12);
     assert_eq!(load_keydev(&otp_dev(), ctx.fs), Some(seed0));
+    assert!(
+        !ctx.fs.has_data(rsk_fs::EF_HARDENED),
+        "a lazy re-key must re-arm the at-rest lap: the copy it superseded is \
+         sealed under a root the public chip serial derives"
+    );
 
     // Second verify takes the direct path (verifier already re-stored).
     let mut state3 = FidoState::new();

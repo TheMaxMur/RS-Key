@@ -38,6 +38,9 @@ Admin.cfg                            GREEN   3
 \* the third-rule stops serving -- losing even one state means an action died --
 \* so the floor sits one under the measurement instead.
 Display.cfg                          GREEN   4
+\* The cross-boot hardening (RSKeyBootHardening): 24 distinct at depth 5, the
+\* marker/weak/lock product across the reset line -- a third, as usual.
+Boot.cfg                             GREEN   8
 \* The liveness layer builds a behaviour graph ON TOP of the state graph -- 23.7
 \* million nodes at these constants -- and runs out of memory at the 4 GB
 \* default after the state search has already completed (E172). The heap column
@@ -65,5 +68,7 @@ AdminMut_*.cfg                       RED     -
 AdminSolo_*.cfg                      RED     -
 DispMut_*.cfg                        RED     -
 DispSolo_*.cfg                       RED     -
+BootMut_*.cfg                        RED     -
+BootSolo_*.cfg                       RED     -
 LiveMut_*.cfg                        RED     -
 FairMut_*.cfg                        RED     -

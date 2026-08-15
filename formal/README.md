@@ -1187,6 +1187,69 @@ security module's fourth door; the menus and settings flows are navigation over
 the same armed-touch chokepoint, not separate security state; and the screens'
 rendering geometry (paint == hit-test) is `rsk-ui`'s reviewed, tested territory.
 
+## The seventh module — `RSKeyBootHardening.tla`
+
+`firmware/` is the one workspace member with **no host tests by construction**:
+its checks run at build time and on hardware, nowhere in between. "Model where
+you cannot measure" is this tree's stated rule, and the two machines living at
+the reset line are its purest case — the model is the only instrument that can
+exercise their interleavings at all.
+
+**The one-shot at-rest lap.** Seal migrations re-key secrets from the pre-OTP
+(chip-serial) root to the OTP root, and the log-structured store keeps the
+superseded weak copy readable in a raw flash dump until a compaction lap pushes
+it off the medium. `EF_HARDENED` says the lap has run
+(`crates/rsk-fs/src/lib.rs:26-46`); the boot runs it iff the marker is absent
+and writes the marker only after `compact()` returns Ok
+(`firmware/src/main.rs:611-622`) — marker AFTER scrub, the same write-order
+family as the store's delete and the PIN flows' revoke. Every *lazy* re-key
+after the lap must re-arm it: **audit run-35 found four of five sites skipping
+exactly that**, and the swept sites are the module's citations.
+
+**The scratch-word lock carry.** The clientPIN soft lock rides a warm reset in
+`WATCHDOG.scratch2` so a host-requestable reboot cannot launder the
+three-strikes batch, and the rule the file itself states is THE WHOLE LOCK
+MOVES (`firmware/src/pin_lock.rs:18-21`): carrying the engaged flag without the
+mismatch batch lets a host stop at two wrong PINs and reboot — the budget
+laundered two attempts at a time. The security module owns the *total* drop
+(`BugSoftLockLostOnWarmReset`); this module owns the *partial* one, which that
+mutant cannot express.
+
+**Two invariants, both structural — deliberately no `viol` ghost**: a liar
+marker and a half-carried lock are *states* the machine sits in, not steps it
+erases, so the strong form is available.
+
+| Mutation switch | Rebuilds | Target invariant | Caught in |
+|---|---|---|---|
+| `BugRekeyKeepsTheMarker` | **audit run-35, shipped at 4 of 5 sites**: the lazy re-key leaves the marker standing over its new weak leftover — no future boot ever scrubs it | `MarkerNeverLies` | 2 states |
+| `BugMarkerBeforeScrub` | the `compact().is_ok()` short-circuit dropped: a torn lap claims completion, and the weak copies it left ride under a set marker forever | `MarkerNeverLies` | 26 states |
+| `BugPartialLockCarry` | the half carry `pin_lock.rs` names as the laundering: engaged rides, the batch is dropped | `TheWholeLockRides` | 26 states |
+
+`Boot.cfg` is **GREEN, exhaustive over 24 distinct states at depth 5**, no dead
+action.
+
+**Co-refutation is deliberately out for this module and the exclusion is
+load-bearing**: two of the three defended sites live in `firmware/`, which
+`cargo test` cannot reach — that is M7's point, not its weakness. The one
+host-testable family — the lazy re-keys — got direct code-level closure
+instead: `pin_verifier_and_pinwrapped_seed_migrate_at_verify` (rsk-fido) and
+`kbase_migration_reseals_slots_and_pin_falls_back` (rsk-piv) now pin
+`EF_HARDENED` cleared after the migration, and each was proved able to fail by
+removing its own site's re-arm in a worktree — the first probe removed the
+*panel* site by mistake and the fido test rightly stayed green, which doubles
+as the asserts' specificity check. The panel path's own twin
+(`spend_and_verify_pin_at`, the fourth PIN door) and the OATH/OpenPGP site
+asserts remain open, recorded here rather than implied.
+
+**What it does NOT cover, stated.** The device is OTP-provisioned (`mkek`
+present — a pre-OTP board never laps and has nothing to scrub); the scratch TAG
+magic is taken as its contract (a cold boot restores a clear lock; the 0x0854
+legacy-canary aliasing that motivated the derived-engaged decode is below this
+floor); `ensure_seed`, the reset window's warm keying and the full BootState
+carry are the security module's; the seal migrations' own torn-write safety is
+the store module's and the power-cut oracle's; TRNG health gating and USB
+bring-up order are M8's transport territory.
+
 ## What now catches a run nobody watched
 
 That `VACUOUS` rule was one heuristic and a **reporting** guard: it printed a

@@ -39,7 +39,7 @@ fi
 
 # Which module a configuration belongs to: the seam configs are the second
 # module's, and TLC takes the module name rather than reading it from the cfg.
-spec_for() { case "$1" in Seam*) echo RSKeyAppletSeams ;; Store*) echo RSKeyStore ;; Lat*) echo RSKeyRetryLattice ;; Admin*) echo RSKeyAdminSurface ;; Disp*) echo RSKeyTrustedDisplay ;; *) echo RSKeySecurityState ;; esac; }
+spec_for() { case "$1" in Seam*) echo RSKeyAppletSeams ;; Store*) echo RSKeyStore ;; Lat*) echo RSKeyRetryLattice ;; Admin*) echo RSKeyAdminSurface ;; Disp*) echo RSKeyTrustedDisplay ;; Boot*) echo RSKeyBootHardening ;; *) echo RSKeySecurityState ;; esac; }
 
 # floors.txt: what each configuration must produce. First match wins.
 expect_for() {
@@ -159,6 +159,9 @@ list_safety() {
   echo Display.cfg             # the sixth module: the trusted-display ceremony
   ls DispMut_*.cfg
   ls DispSolo_*.cfg
+  echo Boot.cfg                # the seventh module: the cross-boot hardening
+  ls BootMut_*.cfg
+  ls BootSolo_*.cfg
 }
 
 list_liveness() {

@@ -276,6 +276,22 @@ status = "MODELLED-ONLY"
 statement = "No ceremony exit but a deliberate Allow reads as Confirmed: Deny, the power button, timeout and CTAPHID cancel all end as Cancelled — no signature is ever produced without the on-screen approval."
 source = ["docs/threat-model.md"]
 
+# ---- RSKeyBootHardening — the cross-boot at-rest lap and the lock carry -----
+
+[[property]]
+id = "SEC-BOOT-001"
+name = "MarkerNeverLies"
+status = "MODELLED-ONLY"
+statement = "EF_HARDENED present means no superseded weak-sealed copy awaits the scrub: the lap sets the marker only after a completed compaction, and every lazy re-key re-arms it — audit run-35 found four of five sites skipping the re-arm."
+source = ["docs/threat-model.md"]
+
+[[property]]
+id = "SEC-BOOT-002"
+name = "TheWholeLockRides"
+status = "MODELLED-ONLY"
+statement = "A warm reset carries the clientPIN soft lock atomically — the engaged flag AND the mismatch batch. Carrying half lets a host stop one short of the limit and reboot, laundering the budget two attempts at a time."
+source = ["CTAP 2.3 §6.5.5.6", "docs/threat-model.md"]
+
 # ---- Accepted risks — ruled by the maintainer, visible here so their absence
 # ---- from the evidence table reads as a decision, not a hole ----------------
 

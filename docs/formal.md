@@ -13,7 +13,7 @@ cost — lives in `formal/README.md` next to the model itself.
 so. What exists is narrower and it is measured: the paragraph to quote is in
 [Testing](testing.md), under "Formal claims — what is and is not verified".
 
-## The six modules
+## The seven modules
 
 `RSKeySecurityState.tla` models the FIDO security state: PIN retries, the
 `pinUvAuthToken` and its permissions, which transport owns the touch, which
@@ -54,6 +54,13 @@ machine-checkable rules: an RP-naming operation completes only through the card
 that names it, a press that predates the card approves nothing, and no exit but
 a deliberate Allow ever reads as Confirmed. Two of its three mutants are
 shipped display-build defects.
+
+`RSKeyBootHardening.tla` models the two machines at the reset line — the
+one-shot at-rest scrub lap (`EF_HARDENED` never lies about superseded
+weak-sealed copies, and every lazy re-key re-arms it) and the scratch-word
+lock carry (a warm reset moves the whole soft lock, never half of it). It
+exists because `firmware/` has no host tests by construction: the model is
+the only instrument that exercises these interleavings.
 
 ## The checks of the checks
 

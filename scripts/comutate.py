@@ -25,6 +25,15 @@ a plan and one implied by a glob is a hole:
   revoke-before-write already taught (find3). Until that analysis is done the
   ladders' regression coverage is the applets' own `check_ref` / `check_pin`
   unit tests.
+* `BootMut_*` — two of its three defended sites live in `firmware/` (the
+  marker-after-lap order in main.rs:621-622, the scratch-word carry in
+  pin_lock.rs), which has no host tests by construction: `cargo test` cannot
+  exercise them, and modelling exactly that gap is M7's stated point. The one
+  host-testable site family — the lazy re-keys' `request_rescrub` re-arm —
+  carries direct asserts in the migration tests instead
+  (`pin_verifier_and_pinwrapped_seed_migrate_at_verify` and PIV's
+  `kbase_migration_reseals_slots_and_pin_falls_back` pin EF_HARDENED cleared;
+  each proved able to fail by removing its own site's re-arm in a worktree).
 
 `formal/comutants.toml` holds one entry per mutant: a `patch` (exact-snippet
 find/replace — the defect, re-made in today's code), `unreachable` (the defect
