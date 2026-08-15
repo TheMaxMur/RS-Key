@@ -681,6 +681,78 @@ a_partial_write_config_keeps_the_fields_it_does_not_mention and
 trimming_an_over_cap_record_never_evicts_the_enabled_applications_policy — the
 first admin batch to measure 4/4 with no gap."""
 
+# ---- RSKeyTrustedDisplay: the confirm ceremony -------------------------------
+
+[comutant.BugPadSubstitutesForCard]
+status = "patch"
+file = "crates/rsk-fido/src/clientpin.rs"
+find = """
+    pub fn needs_confirm(self, shows_confirm: bool) -> bool {
+        !self.up_collected || shows_confirm
+    }
+"""
+replace = """
+    pub fn needs_confirm(self, shows_confirm: bool) -> bool {
+        let _ = shows_confirm;
+        !self.up_collected
+    }
+"""
+slice = ["cargo", "test", "-p", "rsk-fido"]
+expect = "killed"
+note = "audit run-28 F1 verbatim: built-in UV deletes the RP card — the pad's collected presence completes the operation and the display build never shows who is being authenticated to."
+
+[comutant.BugPreScreenTouchApproves]
+status = "patch"
+file = "crates/rsk-display/src/power.rs"
+find = """
+        match self.touch.read() {
+            None => {
+                self.touch_armed = true;
+                None
+            }
+            Some(p) if self.touch_armed => Some(p),
+            // Still the contact that predates this screen: ignore, stay disarmed.
+            Some(_) => None,
+        }
+"""
+replace = """
+        match self.touch.read() {
+            None => {
+                self.touch_armed = true;
+                None
+            }
+            Some(p) => Some(p),
+        }
+"""
+slice = ["cargo", "test", "-p", "rsk-display"]
+expect = "killed"
+note = """audit run-33's class: the level-not-edges controller reads a finger
+already down as a tap on whatever just painted. This patch removes the ambient
+chokepoint (armed_touch); the ceremonies carry a SECOND edge of their own
+(wait_release_ceremony at card entry), so the layers are two and this measures
+the chokepoint's — the ceremony layer's own kill is
+a_finger_still_down_when_the_prompt_appears_cannot_approve_it."""
+
+[comutant.BugAnyTapApproves]
+status = "patch"
+file = "crates/rsk-ui/src/lib.rs"
+find = """
+    if ALLOW_RECT.contains(p) {
+        Some(Button::Allow)
+    } else if DENY_RECT.contains(p) {
+        Some(Button::Deny)
+    } else {
+        None
+    }
+"""
+replace = """
+    let _ = p;
+    Some(Button::Allow)
+"""
+slice = ["cargo", "test", "-p", "rsk-display", "-p", "rsk-ui"]
+expect = "killed"
+note = "the Allow/Deny separation collapsed: every tap anywhere on the confirm screen reads as the approval — a deny is an approve and a stray brush above the band signs."
+
 # ---- rsk-display: the on-panel PIN gate ------------------------------------
 
 [comutant.BugLocalPinIgnoresBudget]

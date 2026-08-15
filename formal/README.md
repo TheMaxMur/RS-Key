@@ -1129,6 +1129,64 @@ echo) is data handling inside one write, carried by
 The rescue commands' payloads — phy records, KEYDEV signing, the fuse and
 rollback machinery — are single-step and live in that crate's five test files.
 
+## The sixth module — `RSKeyTrustedDisplay.tla`
+
+The display build's whole reason to exist is one promise —
+**WhatIsConfirmedIsWhatIsShown** — and until now it had no model. The ledger
+carried it as `rsk-display`'s named gap; this module is the discharge,
+decomposed into the three rules a model checker can actually hold, because the
+umbrella sentence is a conjunction and a registered property nothing checks is
+what the registry refuses:
+
+- `ConfirmNamesTheOperation` — an operation that names a relying party
+  completes only through the card that names it. The PIN pad cannot substitute:
+  its title is `'static`, *never* RP data
+  (`crates/rsk-fido/src/clientpin.rs:536-537`, consumed at
+  `getassertion.rs:616-617`, `makecredential.rs:601-602`, `u2f.rs:93`);
+- `StaleTouchApprovesNothing` — the touch controller reports *level, not
+  edges*, so a finger already down when the card paints would read as a tap on
+  it; the release edge is the whole defence, and it is two layers — the ambient
+  chokepoint (`crates/rsk-display/src/power.rs:55-65`) and the ceremony's own
+  release wait (`crates/rsk-display/src/presence.rs:190`);
+- `OnlyAllowConfirms` — Deny, the power button, timeout and CTAPHID cancel all
+  end as Cancelled (`crates/rsk-display/src/presence.rs:120-124`); the
+  Allow/Deny rectangles are disjoint and a stray touch above the band is no
+  button at all (`crates/rsk-ui/src/lib.rs:248-256`).
+
+All three are ghosts, and the module says why plainly: a completed ceremony
+leaves nothing on the glass, so no reachable *state* distinguishes a phished
+Confirmed from an honest one — the property lives entirely at the step that
+produced the outcome.
+
+**Two of the three mutants are shipped display-build defects.**
+
+| Mutation switch | Rebuilds | Target invariant | Caught in |
+|---|---|---|---|
+| `BugPadSubstitutesForCard` | **audit run-28 F1, shipped**: built-in UV deleted the RP card — `up_collected` from the pad skipped the confirm on the very build whose point is showing WHO you authenticate to | `ConfirmNamesTheOperation` | 6 states |
+| `BugPreScreenTouchApproves` | **audit run-33's class, shipped**: the onboarding choice committed by a pre-screen touch; the level-not-edges hazard, ambient chokepoint removed | `StaleTouchApprovesNothing` | 6 states |
+| `BugAnyTapApproves` | the `hit_confirm` separation collapsed — a deny is an approve, a stray brush signs | `OnlyAllowConfirms` | 6 states |
+
+`Display.cfg` is **GREEN, exhaustive over 5 distinct states** — the ceremony is
+modal (the worker blocks in `confirm_wait`), so the space is genuinely this
+small and the floor sits one under it rather than at a third: at this size
+losing even one state means an action died.
+
+**All three are co-refuted, the second consecutive zero-gap batch**: run-28
+F1's own regressions kill the `needs_confirm` collapse (3 tests), the ambient
+chokepoint falls to `a_finger_already_down_is_not_a_tap_on_what_just_appeared`
+(with the ceremony layer's own kill,
+`a_finger_still_down_when_the_prompt_appears_cannot_approve_it`, recorded as
+the second edge), and the zone collapse to `a_deny_tap_is_a_real_decline` and
+its siblings.
+
+**What it does NOT cover, stated.** Card-swap mid-wait is structurally absent —
+the ceremony is modal and single-threaded, so "the card's content" is honestly
+one bit here; the day a second painter can reach the glass mid-ceremony, that
+abstraction is the first thing to attack. The PIN pad's own arithmetic is the
+security module's fourth door; the menus and settings flows are navigation over
+the same armed-touch chokepoint, not separate security state; and the screens'
+rendering geometry (paint == hit-test) is `rsk-ui`'s reviewed, tested territory.
+
 ## What now catches a run nobody watched
 
 That `VACUOUS` rule was one heuristic and a **reporting** guard: it printed a

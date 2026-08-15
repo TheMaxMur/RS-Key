@@ -34,6 +34,10 @@ Lattice.cfg                          GREEN   80
 \* mask whose properties are step ghosts, so the space IS the mask's power set.
 \* A third rounds to 3; below it the mask itself has collapsed.
 Admin.cfg                            GREEN   3
+\* The trusted-display ceremony (RSKeyTrustedDisplay): 5 distinct. At this size
+\* the third-rule stops serving -- losing even one state means an action died --
+\* so the floor sits one under the measurement instead.
+Display.cfg                          GREEN   4
 \* The liveness layer builds a behaviour graph ON TOP of the state graph -- 23.7
 \* million nodes at these constants -- and runs out of memory at the 4 GB
 \* default after the state search has already completed (E172). The heap column
@@ -59,5 +63,7 @@ LatMut_*.cfg                         RED     -
 LatSolo_*.cfg                        RED     -
 AdminMut_*.cfg                       RED     -
 AdminSolo_*.cfg                      RED     -
+DispMut_*.cfg                        RED     -
+DispSolo_*.cfg                       RED     -
 LiveMut_*.cfg                        RED     -
 FairMut_*.cfg                        RED     -

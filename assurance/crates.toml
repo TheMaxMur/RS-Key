@@ -71,13 +71,13 @@ gap = "ConfigOp/plat in the security model; the config-write pipeline it shares 
 
 [crate.rsk-display]
 class = "state-partial"
-model = "RSKeySecurityState"
-gap = "wait owner and the fourth PIN door only; the anti-phishing promise (WhatIsConfirmedIsWhatIsShown) has no model — roadmap M6."
+model = "RSKeyTrustedDisplay"
+gap = "the confirm ceremony (WhatIsConfirmedIsWhatIsShown, decomposed as SEC-DISP-001..003) is modelled; the wait owner and the fourth PIN door stay in RSKeySecurityState. The menus, settings flows and the device-PIN screens are navigation over that same armed-touch chokepoint, not separate security state."
 
 [crate.rsk-ui]
-class = "state-unmodelled"
-planned = "M6"
-note = "second-largest crate in the tree; 12 Kani proofs, all on codecs and labels, none on screen transitions."
+class = "state-partial"
+model = "RSKeyTrustedDisplay"
+gap = "hit_confirm's disjoint Allow/Deny zones are the modelled seam (OnlyAllowConfirms's Rust owner); rendering, fonts and the settings codec are pure functions under their own 12 Kani proofs and render tests — no screen-transition state lives in this crate (the ceremony state machine is rsk-display's)."
 
 [crate.rsk-usb]
 class = "state-unmodelled"

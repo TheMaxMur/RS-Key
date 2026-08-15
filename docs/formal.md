@@ -13,7 +13,7 @@ cost — lives in `formal/README.md` next to the model itself.
 so. What exists is narrower and it is measured: the paragraph to quote is in
 [Testing](testing.md), under "Formal claims — what is and is not verified".
 
-## The five modules
+## The six modules
 
 `RSKeySecurityState.tla` models the FIDO security state: PIN retries, the
 `pinUvAuthToken` and its permissions, which transport owns the touch, which
@@ -47,6 +47,13 @@ enabled-applications mask, the always-on carve-out that keeps `ykman config usb
 commands. Two of its four mutants rebuild defects that actually shipped — the
 mask that was a DeviceInfo report rather than an enforcement, and the lock-code
 write that silently re-enabled every disabled application.
+
+`RSKeyTrustedDisplay.tla` models the confirm ceremony — the display build's
+anti-phishing promise, *what is confirmed is what is shown*, as three
+machine-checkable rules: an RP-naming operation completes only through the card
+that names it, a press that predates the card approves nothing, and no exit but
+a deliberate Allow ever reads as Confirmed. Two of its three mutants are
+shipped display-build defects.
 
 ## The checks of the checks
 

@@ -248,6 +248,34 @@ status = "MODELLED-ONLY"
 statement = "An application disabled in the persisted USB_ENABLED mask never serves a command: the mask is enforcement, not a DeviceInfo report (the pre-0x084A tree shipped it cosmetic)."
 source = ["docs/threat-model.md"]
 
+# ---- RSKeyTrustedDisplay — the confirm ceremony ------------------------------
+# WhatIsConfirmedIsWhatIsShown, the display build's anti-phishing promise,
+# decomposed into the three rules a model checker can hold. The umbrella name is
+# not registered on its own: nothing checks a conjunction the modules spell out
+# as three invariants, and a registered property nothing checks is what this
+# registry refuses.
+
+[[property]]
+id = "SEC-DISP-001"
+name = "ConfirmNamesTheOperation"
+status = "MODELLED-ONLY"
+statement = "An operation that names a relying party completes only through the card that names it — the PIN pad (whose title is 'static, never RP data) cannot substitute, whatever presence it collected. Audit run-28 F1 shipped the violation."
+source = ["docs/threat-model.md"]
+
+[[property]]
+id = "SEC-DISP-002"
+name = "StaleTouchApprovesNothing"
+status = "MODELLED-ONLY"
+statement = "A press that began before the card was painted approves nothing; the touch controller reports level, not edges, so the release edge is the whole defence. Audit run-33 shipped the violation on the ambient-screen class."
+source = ["docs/threat-model.md"]
+
+[[property]]
+id = "SEC-DISP-003"
+name = "OnlyAllowConfirms"
+status = "MODELLED-ONLY"
+statement = "No ceremony exit but a deliberate Allow reads as Confirmed: Deny, the power button, timeout and CTAPHID cancel all end as Cancelled — no signature is ever produced without the on-screen approval."
+source = ["docs/threat-model.md"]
+
 # ---- Accepted risks — ruled by the maintainer, visible here so their absence
 # ---- from the evidence table reads as a decision, not a hole ----------------
 
