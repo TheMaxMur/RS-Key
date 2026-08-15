@@ -3,12 +3,19 @@
 # Copyright (C) 2026 RS-Key contributors
 """Co-refutation: inject each model mutant's defect into the Rust, expect red.
 
-The model's 28 `Bug*` switches each rebuild a real RS-Key defect, and the TLC
-matrix proves the MODEL catches every one. Nothing measured whether the code
-level — the unit tests, on the same defect — catches them too. Three green
-checkers over three slightly different systems is the failure mode this whole
-apparatus exists for, and the difference between the two answers is a measured
-abstraction gap with a file and line attached.
+The security module's 28 `Bug*` switches and the store module's 5 each rebuild
+a real RS-Key defect, and the TLC matrix proves the MODEL catches every one.
+Nothing measured whether the code level — the unit tests, on the same defect —
+catches them too. Three green checkers over three slightly different systems is
+the failure mode this whole apparatus exists for, and the difference between
+the two answers is a measured abstraction gap with a file and line attached.
+
+The roster is `Mut_*` plus `StoreMut_*`, and `SeamMut_*` is DELIBERATELY not in
+it: the seam mutants rebuild applet-status defects whose shipped fixes carry
+their own regression tests measured against a YubiKey oracle (group E), and
+their co-refutation belongs to M4, when the applet retry/authorization lattice
+is modelled. An exclusion stated here is a plan; one implied by a glob would be
+a hole.
 
 `formal/comutants.toml` holds one entry per mutant: a `patch` (exact-snippet
 find/replace — the defect, re-made in today's code), `unreachable` (the defect
@@ -56,13 +63,34 @@ def load(root: pathlib.Path):
     return data.get("pending_floor", 0), data.get("comutant", {})
 
 
-def roster(root: pathlib.Path) -> set[str]:
-    return {p.stem.removeprefix("Mut_") for p in (root / "formal").glob("Mut_*.cfg")}
+#: The mutant-config prefixes this file's closed world covers, and the Solo
+#: prefix each pairs with. `SeamMut_`/`SeamSolo_` are deliberately absent — see
+#: the module docstring.
+PREFIXES = (("Mut_", "Solo_"), ("StoreMut_", "StoreSolo_"))
+
+
+def roster(root: pathlib.Path) -> dict[str, str]:
+    """bug name -> its mutant configuration's filename, over both prefixes.
+
+    `startswith` is anchored, so `Mut_` does not swallow `StoreMut_*.cfg` (an 'S'
+    is not an 'M') and neither prefix matches `SeamMut_`, `LiveMut_` or
+    `FairMut_`.
+    """
+    out: dict[str, str] = {}
+    for p in sorted((root / "formal").glob("*.cfg")):
+        for mut_pre, _ in PREFIXES:
+            if p.name.startswith(mut_pre):
+                out[p.stem.removeprefix(mut_pre)] = p.name
+    return out
 
 
 def solo_invariant(root: pathlib.Path, bug: str) -> str | None:
-    solo = root / "formal" / f"Solo_{bug}.cfg"
-    if not solo.is_file():
+    solo = None
+    for _, solo_pre in PREFIXES:
+        candidate = root / "formal" / f"{solo_pre}{bug}.cfg"
+        if candidate.is_file():
+            solo = candidate
+    if solo is None:
         return None
     names = [
         line.strip()
@@ -85,10 +113,10 @@ def lint(root: pathlib.Path) -> list[str]:
     floor, entries = load(root)
     cfgs = roster(root)
 
-    for bug in sorted(cfgs - set(entries)):
-        problems.append(f"Mut_{bug}.cfg has no comutant entry")
-    for bug in sorted(set(entries) - cfgs):
-        problems.append(f"comutant {bug} has no Mut_{bug}.cfg — stale entry")
+    for bug in sorted(set(cfgs) - set(entries)):
+        problems.append(f"{cfgs[bug]} has no comutant entry")
+    for bug in sorted(set(entries) - set(cfgs)):
+        problems.append(f"comutant {bug} has no mutant configuration — stale entry")
 
     pending = 0
     for bug, entry in sorted(entries.items()):

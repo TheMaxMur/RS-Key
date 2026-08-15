@@ -987,6 +987,18 @@ about a second; every `StoreSolo_*.cfg` — the run that checks *only* the mutan
 own target — is RED, so no mutant here is caught by a sibling. The counts are an
 order of magnitude, not a pin, the same as everywhere else.
 
+**And all five are co-refuted** (`scripts/comutate.py`, whose roster now covers
+`StoreMut_*`): each defect re-injected into `fs.rs` reddens `cargo test -p
+rsk-fs` too. The measurement surfaced ONE gap on the way, which is the point of
+running it: `meta_add_keeps_records_when_ef_meta_unknown` drives the
+unknown-cache door, and nothing drove a `meta_add` over an `EF_META` read that
+*faults* — the mutant that treats the fault as an empty blob stayed green.
+`a_faulted_ef_meta_read_never_rebuilds_the_blob_from_empty` closes it,
+re-measured killed. `SeamMut_*` stays outside the co-refutation roster
+deliberately — the seam defects' fixes carry their own YubiKey-measured
+regression tests, and their co-refutation is M4's work; the exclusion is stated
+in `comutate.py`'s docstring rather than implied by a glob.
+
 **What it abstracts, stated in the risk direction.** Values are two opaque
 tokens: the model sees "which of two values, or absent", never a length or a
 byte, so a defect that corrupts *content* while preserving presence is out of its

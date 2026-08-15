@@ -348,6 +348,30 @@ fn meta_add_keeps_records_when_ef_meta_unknown() {
 }
 
 #[test]
+fn a_faulted_ef_meta_read_never_rebuilds_the_blob_from_empty() {
+    // The same databug's OTHER door: not an unknown cache but a read that
+    // FAILS. `meta_add` must refuse (the blob's true contents are unknowable),
+    // never treat the fault as an empty blob — that rewrite drops every other
+    // FID's committed record in one write.
+    let mut fs = fs();
+    fs.meta_add(0xB000, b"keep-me").unwrap();
+    let ram = fs.into_storage();
+    // Rebuild without scan(), over a backend whose first read faults: the
+    // meta_add cannot answer from the cache and meets the fault head-on.
+    let mut fs2 = Fs::new(FailFirstRead {
+        inner: ram,
+        remaining: 1,
+        err: false,
+    });
+    assert!(
+        fs2.meta_add(0xB004, b"new").is_err(),
+        "a meta_add over a faulted EF_META read must refuse, not rebuild from empty"
+    );
+    // The committed record survived the refusal; the next, clean read sees it.
+    assert_eq!(fs2.meta_find(0xB000, &mut [0u8; 16]), Some(7));
+}
+
+#[test]
 fn absent_delete_never_touches_the_backend() {
     // A backend `remove` of an absent FID scans the whole flash partition
     // (and writes a tombstone) on sequential-storage. The present-cache MUST

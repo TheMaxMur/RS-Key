@@ -489,6 +489,104 @@ note = """the clientPIN soft lock dropped across a warm reset a host can
 request ungated, freeing the retry budget. Was a measured gap — nothing drove
 boot_state() with a live lock — closed by a_warm_boot_carries_the_soft_lock_in."""
 
+# ---- RSKeyStore: the flash layer (rsk-fs) -----------------------------------
+
+[comutant.BugDeleteValueBeforeMeta]
+status = "patch"
+file = "crates/rsk-fs/src/fs.rs"
+find = """
+        let _ = self.meta_delete(fid);
+        if self.present_bit(fid) {
+            self.storage.remove(fid)?;
+            self.mark_absent(fid);
+            self.write_gen = self.write_gen.wrapping_add(1);
+        }
+        self.dynamic.retain(|&f| f != fid);
+"""
+replace = """
+        if self.present_bit(fid) {
+            self.storage.remove(fid)?;
+            self.mark_absent(fid);
+            self.write_gen = self.write_gen.wrapping_add(1);
+        }
+        let _ = self.meta_delete(fid);
+        self.dynamic.retain(|&f| f != fid);
+"""
+slice = ["cargo", "test", "-p", "rsk-fs"]
+expect = "killed"
+note = """Fs::delete's two backend writes reversed: the value goes first, so a
+cut between them leaves metadata naming a file that is gone — the state
+delete_landed forbids. The completed end state is identical either way; only
+the power-cut oracle's torn sweeps see the order."""
+
+[comutant.BugDeleteMetaOnlyUnderPresent]
+status = "patch"
+file = "crates/rsk-fs/src/fs.rs"
+find = """
+        let _ = self.meta_delete(fid);
+        if self.present_bit(fid) {
+            self.storage.remove(fid)?;
+"""
+replace = """
+        if self.present_bit(fid) {
+            let _ = self.meta_delete(fid);
+            self.storage.remove(fid)?;
+"""
+slice = ["cargo", "test", "-p", "rsk-fs"]
+expect = "killed"
+note = "the 0x077C databug verbatim: the metadata drop gated on the file's own present bit, so a meta-only file (meta_add with no put) keeps its record through its deletion and it reads back alive."
+
+[comutant.BugCacheFaultAsAbsent]
+status = "patch"
+file = "crates/rsk-fs/src/fs.rs"
+find = """
+        if !self.storage.last_error() {
+            self.record(fid, present);
+        }
+"""
+replace = """
+        self.record(fid, present);
+"""
+slice = ["cargo", "test", "-p", "rsk-fs"]
+expect = "killed"
+note = "audit run-36: record_unless_faulted caches unconditionally, so one transient backend fault becomes a decided absence for the rest of the boot and every gate that reads has_data opens."
+
+[comutant.BugTruncatedScanDecidesAll]
+status = "patch"
+file = "crates/rsk-fs/src/fs.rs"
+find = """
+        if complete {
+            decided.fill(0xFF);
+        }
+"""
+replace = """
+        let _ = complete;
+        decided.fill(0xFF);
+"""
+slice = ["cargo", "test", "-p", "rsk-fs"]
+expect = "killed"
+note = "scan decides the whole FID space after a TRUNCATED walk: a committed key the read-fault hid is confirmed absent without ever probing the reliable backend."
+
+[comutant.BugMetaAddDropsOnFault]
+status = "patch"
+file = "crates/rsk-fs/src/fs.rs"
+find = """
+            if r.is_none() && self.storage.last_error() {
+                return Err(Error::MemoryFatal);
+            }
+            r.unwrap_or(0).min(scratch.len())
+"""
+replace = """
+            r.unwrap_or(0).min(scratch.len())
+"""
+slice = ["cargo", "test", "-p", "rsk-fs"]
+expect = "killed"
+note = """the 0x077C databug's meta half: a FAILED EF_META read treated as an
+empty blob, so the rewrite drops every other FID's record. Was a measured GAP —
+meta_add_keeps_records_when_ef_meta_unknown drives the UNKNOWN-cache path, and
+nothing drove meta_add over a read that FAULTS — closed by
+a_faulted_ef_meta_read_never_rebuilds_the_blob_from_empty, re-measured killed."""
+
 # ---- rsk-display: the on-panel PIN gate ------------------------------------
 
 [comutant.BugLocalPinIgnoresBudget]

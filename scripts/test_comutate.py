@@ -36,6 +36,10 @@ evidence = "measured in the fixture's own matrix"
 
 [comutant.BugGamma]
 status = "pending"
+
+[comutant.BugStore]
+status = "unreachable"
+evidence = "fixture: the StoreMut_ prefix walks the same closed world"
 """
 
 
@@ -49,6 +53,14 @@ def build(root: pathlib.Path) -> pathlib.Path:
         (formal / f"Solo_{bug}.cfg").write_text(
             "SPECIFICATION Spec\nINVARIANTS\n    TypeOK\n    FooHolds\n"
         )
+    # The second roster prefix. Its Solo names a DIFFERENT invariant, so the
+    # resolution test below can tell which file solo_invariant actually read.
+    (formal / "StoreMut_BugStore.cfg").write_text(
+        "SPECIFICATION Spec\nINVARIANTS\n    TypeOK\n    BarHolds\n"
+    )
+    (formal / "StoreSolo_BugStore.cfg").write_text(
+        "SPECIFICATION Spec\nINVARIANTS\n    TypeOK\n    BarHolds\n"
+    )
     (formal / "comutants.toml").write_text(SPEC)
     src = root / "src"
     src.mkdir()
@@ -83,7 +95,29 @@ def test_cfg_without_entry_fails(tree):
 
 def test_stale_entry_fails(tree):
     (tree / "formal" / "Mut_BugAlpha.cfg").unlink()
-    red(tree, "no Mut_BugAlpha.cfg — stale entry")
+    red(tree, "comutant BugAlpha has no mutant configuration — stale entry")
+
+
+def test_store_cfg_without_entry_fails(tree):
+    # The second prefix is part of the closed world: a StoreMut_ configuration
+    # with no entry must be named by its REAL filename, not a Mut_ guess.
+    (tree / "formal" / "StoreMut_BugEpsilon.cfg").write_text(
+        "INVARIANTS\n    TypeOK\n"
+    )
+    red(tree, "StoreMut_BugEpsilon.cfg has no comutant entry")
+
+
+def test_a_stale_store_entry_fails(tree):
+    (tree / "formal" / "StoreMut_BugStore.cfg").unlink()
+    red(tree, "comutant BugStore has no mutant configuration — stale entry")
+
+
+def test_store_solo_names_the_invariant(tree):
+    # Resolution must go through StoreSolo_ for a store bug — the fixture's
+    # StoreSolo names BarHolds where every Solo_ names FooHolds, so a wrong
+    # lookup cannot pass by accident.
+    assert comutate.solo_invariant(tree, "BugStore") == "BarHolds"
+    assert comutate.solo_invariant(tree, "BugAlpha") == "FooHolds"
 
 
 def test_vanished_anchor_fails(tree):
