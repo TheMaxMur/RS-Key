@@ -140,15 +140,12 @@ replace2 = """
     Ok(0)
 """
 slice = ["cargo", "test", "-p", "rsk-fido"]
-expect = "gap"
-note = """MEASURED GAP. The model catches this (Solo_BugDeleteRpBeforeCred RED);
-no host test does. The registration twin BugCredBeforeRp is killed by
-a_failed_registration_never_leaves_a_credential_without_its_rp, but that harness
-tears a WRITE sequence; deleteCredential is delete(EF_CRED) then decrement_rp,
-and `Fs::delete` interleaves a swallowed EF_META write with the backend remove,
-so a discriminating tear needs a mutating-op-budget storage over a sole-credential
-RP. Filed as a harness task rather than written in haste. This is the first
-measured fidelity gap of the co-refutation pass — recorded, not hidden."""
+expect = "killed"
+note = """deleteCredential drops the RP entry first: a torn delete strands the
+credential. Was batch 1's one measured GAP — the registration twin's harness
+tears writes, and no harness tore a delete — closed by
+a_torn_delete_never_leaves_a_credential_without_its_rp (a mutating-op-budget
+tear over a sole-credential RP), re-measured killed."""
 
 [comutant.BugUnscopedCancel]
 status = "patch"

@@ -229,7 +229,12 @@ fn cm_next(subcmd: u8) -> std::vec::Vec<u8> {
     std::vec![0xA1, 0x01, subcmd]
 }
 
-fn run(fs: &mut Fs<RamStorage>, state: &mut FidoState, req: &[u8], out: &mut [u8]) -> CtapResult {
+fn run<S: rsk_fs::Storage>(
+    fs: &mut Fs<S>,
+    state: &mut FidoState,
+    req: &[u8],
+    out: &mut [u8],
+) -> CtapResult {
     let mut rng = SeqRng(7);
     let mut presence = crate::AlwaysConfirm;
     let mut ctx = Ctx {
@@ -1914,4 +1919,95 @@ fn the_protocol_is_judged_before_the_token_and_absent_is_not_zero() {
         run(&mut fs, &mut state, &[0xA1, 0x01, 0x01], &mut out),
         Err(CtapError::PuatRequired)
     );
+}
+
+/// `Storage` whose MUTATING ops — `write` and `remove` both — start failing after
+/// `budget` successes and never recover: a power cut inside `deleteCredential`,
+/// which is two records' worth of them. The registration twin
+/// (`credential_tests::FailWriteAfter`) fails writes only; a delete's tear points
+/// are removes, and `Fs::delete` interleaves a *swallowed* `EF_META` write with
+/// the backend remove, so a write-only budget never lands between the two deletes.
+struct TearMutatingAfter {
+    inner: RamStorage,
+    budget: usize,
+}
+
+impl TearMutatingAfter {
+    fn spend(&mut self) -> rsk_sdk::error::Result<()> {
+        if self.budget == 0 {
+            return Err(rsk_sdk::error::Error::NoMemory);
+        }
+        self.budget -= 1;
+        Ok(())
+    }
+}
+
+impl rsk_fs::Storage for TearMutatingAfter {
+    fn read(&mut self, fid: u16, buf: &mut [u8]) -> Option<usize> {
+        self.inner.read(fid, buf)
+    }
+    fn write(&mut self, fid: u16, data: &[u8]) -> rsk_sdk::error::Result<()> {
+        self.spend()?;
+        self.inner.write(fid, data)
+    }
+    fn remove(&mut self, fid: u16) -> rsk_sdk::error::Result<()> {
+        self.spend()?;
+        self.inner.remove(fid)
+    }
+    fn size(&mut self, fid: u16) -> Option<usize> {
+        self.inner.size(fid)
+    }
+    fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) -> bool {
+        self.inner.for_each_key(f)
+    }
+}
+
+/// A torn `deleteCredential` must never strand a live credential whose `EF_RP`
+/// entry is already gone: the shipped order deletes `EF_CRED` first, so every
+/// tear leaves at worst an orphan RP record — invisible and reclaimed — never an
+/// unmanageable credential. Asserted for EVERY mutating-op budget, over a
+/// sole-credential RP so `decrement_rp` takes its delete path.
+///
+/// Co-refutation measured this as the pass's one GAP: the model's
+/// `BugDeleteRpBeforeCred` (`NoUnmanageableCredential`, RED at 111 503 states)
+/// flipped the order and every host test stayed green — the registration twin
+/// tears writes, and no harness tore a delete. This is that harness.
+#[test]
+fn a_torn_delete_never_leaves_a_credential_without_its_rp() {
+    let (mut fs, mut rng) = setup();
+    let (cred_id, ..) = register(&mut fs, &mut rng, "example.com", &[1, 1], "alice");
+    let base = fs.into_storage();
+
+    let mut saw_torn = false;
+    for budget in 0..8 {
+        let mut fs = Fs::new(TearMutatingAfter {
+            inner: base.clone(),
+            budget,
+        });
+        fs.scan();
+        let mut state = armed(PERM_CM);
+        let mut out = [0u8; 256];
+        let r = run(
+            &mut fs,
+            &mut state,
+            &cm_request(0x06, Some(&subpara_cred(&cred_id)), &TOKEN),
+            &mut out,
+        );
+        if r.is_err() {
+            saw_torn = true;
+        }
+        // Power back on: same medium, fresh caches, no more failures.
+        let mut medium = fs.into_storage();
+        medium.budget = usize::MAX;
+        let mut fs = Fs::new(medium);
+        fs.scan();
+        if fs.has_data(EF_CRED) {
+            assert!(
+                fs.has_data(EF_RP),
+                "budget {budget} left a live credential with no EF_RP record — \
+                 unmanageable by every enumeration and revocation surface"
+            );
+        }
+    }
+    assert!(saw_torn, "vacuous: no budget tore the delete");
 }

@@ -50,17 +50,24 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   reads killed before a commit) and demands the recorded verdict, while
   `--lint` (a `check.sh` row) holds the file against the `Mut_*.cfg` roster and
   resolves every patch anchor against today's code. Batch 1, ten mutants
-  measured: **seven killed, two unreachable, one measured gap**.
+  measured: **eight killed, two unreachable — after closing the two gaps the
+  measurement itself surfaced**, which is the point of the pass:
 
-  The gap is the point of the pass. `BugTokenSurvivesPinChange` — changePIN
-  leaving the in-RAM session token alive — was caught by the model and by
-  *nothing* at the code level: the existing test covers the persistent `pcmr`
-  grant through a different door. Closed with
-  `change_pin_revokes_the_session_token`, re-measured killed.
-  `BugDeleteRpBeforeCred` (a torn deleteCredential stranding a credential) is
-  recorded as a measured gap and filed for a torn-delete harness — the first
-  fidelity number the model→code direction has ever carried, recorded rather
-  than hidden.
+  - `BugTokenSurvivesPinChange` — changePIN leaving the in-RAM session token
+    alive — was caught by the model and by *nothing* at the code level: the
+    existing test covers the persistent `pcmr` grant through a different door.
+    Closed with `change_pin_revokes_the_session_token`.
+  - `BugDeleteRpBeforeCred` — a torn deleteCredential stranding a credential
+    whose `EF_RP` entry is gone — same shape: the registration twin's harness
+    tears writes, and nothing tore a delete. Closed with
+    `a_torn_delete_never_leaves_a_credential_without_its_rp`, a
+    mutating-op-budget tear (`write` and `remove` both count; `Fs::delete`
+    interleaves a swallowed `EF_META` write with the backend remove) over a
+    sole-credential RP, asserting at every tear point that a live credential
+    implies a live `EF_RP` record.
+
+  Both re-measured killed. These are the first fidelity numbers the
+  model→code direction has ever carried.
 
 - **A security-property registry, held against the tree by a gate.**
   `assurance/properties.toml` names every property TLC checks — 22 entries:
