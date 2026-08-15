@@ -654,7 +654,7 @@ Round two's "no, in two independent ways" was exact.
 | `Fairness.cfg` (`ENABLED OpAdvances => ~Idle`, liveness constants) | **GREEN** | 85 388 061 | 7 903 336 | 43 | 117 s |
 | `FairMut_BugFairnessFoldsLocalCeremony.cfg` | RED `OpAdvancesIsOneActivity` | 57 | 36 | 4 | < 1 s |
 | `Seams.cfg` (the second module) | **GREEN, exhaustive** | 9 617 | 662 | 12 | 1 s |
-| 12 × `SeamMut_*.cfg` / 12 × `SeamSolo_*.cfg` | RED, each on its own target | 77 – 3 523 | 27 – 381 | 4 – 8 | ≤ 1 s |
+| 13 × `SeamMut_*.cfg` / 13 × `SeamSolo_*.cfg` | RED, each on its own target | 77 – 3 523 | 27 – 381 | 4 – 8 | ≤ 1 s |
 | `Liveness.cfg` (reduced constants, `HEAP=12g` from `floors.txt`) | **GREEN** | 85 388 061 | 7 903 336 | 43 | **1591 s** |
 | `Liveness.cfg` at the old 4 GB default | **out of memory** in the temporal check, state search complete | 85 388 061 | 7 903 336 | 43 | 1500 s |
 | 3 × `LiveMut_*.cfg` | RED, each on its own property | 579 360 – 733 606 | 79 706 – 100 162 | — | ≤ 4 s |
@@ -816,6 +816,7 @@ share — one flash, one button — appears here as events (`FactoryWipe`,
 | `NoStatusAfterARefusedAuth` | A reference whose authentication was just refused is not authenticated | `crates/rsk-piv/src/lib.rs:140-143` · `crates/rsk-openpgp/src/pin.rs:158-170` · `crates/rsk-oath/src/lib.rs:1148-1149` |
 | `NoKeyOpOnTheAdminStatus` | No key operation runs on a status its own specification does not name | `crates/rsk-openpgp/src/pso.rs:80-92` · `crates/rsk-openpgp/src/internalaut.rs:45-48` · `crates/rsk-piv/src/auth.rs:58-66`, `:114-118` |
 | `ReselectPreservesAccessStatus` | A re-SELECT of the same AID changes no access status. **A conformance claim, labelled as one** | `crates/rsk-piv/src/lib.rs:319-322` · `crates/rsk-openpgp/src/lib.rs:372-375` |
+| `AccessCodeRemovalNeedsTheCode` | Removing the OATH access code needs the validated status the code bought. **A step rule — its violation produces exactly the exempt code-less state, so no state predicate can see it** | `crates/rsk-oath/src/lib.rs:356-358` (the shared gate) · `:363-369` (the removal path) |
 
 The fourth one points the other way from the first three and that is why it is
 separate: `637ed98` **widened** the authentication window, so no safety
@@ -866,9 +867,10 @@ it.
 | `BugPwStatusIgnoresAdmin` | a *user* status writing the PW status byte — PUT DATA `0xC4` is PW3's (`crates/rsk-openpgp/src/putdata.rs:181-183`, and the ACL one layer up at `:59-65`) | `NoKeyOpOnTheAdminStatus` | 49 states |
 | `BugPivChangeResetsStatus` | PIV's refused `CHANGE REFERENCE DATA` clearing the standing status | `ExemptRefusalPreservesStatus` | 46 states |
 | `BugRefusedValidateDropsUnlock` | a refused OATH access-code `VALIDATE` dropping the standing unlock | `ExemptRefusalPreservesStatus` | 46 states |
+| `BugRemoveCodeUnvalidated` | the access-code removal (`73 00`) reached without the validated status (`crates/rsk-oath/src/lib.rs:356-358`) — the hole the abstractions list carried for two revisions as definitionally invisible to any state predicate | `AccessCodeRemovalNeedsTheCode` | 77 states |
 
-`Seams.cfg` is **GREEN, exhaustive, 9 617 states generated / 662 distinct at
-depth 12**, and 12 of 12 mutants are caught by the invariant that names them.
+`Seams.cfg` is **GREEN, exhaustive, 9 665 states generated / 662 distinct at
+depth 12**, and 13 of 13 mutants are caught by the invariant that names them.
 It went DOWN by 4 when `PowerCycle` and `FactoryWipe` started retiring the
 `psig` ghost with the status it belongs to, and those four are states the
 firmware cannot be in — the third time on this pair of modules that being more
@@ -1325,14 +1327,18 @@ than a settled abstraction.
   not check — the most obvious place to extend it.
 - **Two transports** (CTAPHID, CCID). `SCOPE_OTP` and the on-panel
   `SCOPE_NONE` ceremonies are not modelled.
-- **OATH's `SET CODE` is modelled; its access-code REMOVAL is not.**
-  `cmd_set_code` is gated at `crates/rsk-oath/src/lib.rs:355-358`, and an
-  ungated removal added to the model is **GREEN over 666 states,
-  bit-identical** — because `NoStatusOutsideItsSelection`'s `oathCode` exemption
-  fires exactly when `~oathCodeSet`, which a removal sets. An unauthenticated
-  access-code removal is *definitionally* invisible to the invariant as written.
-  Found by the reviewer; recorded rather than repaired, because closing it needs
-  a decision about what the exemption should say, not a switch.
+- **OATH's access-code REMOVAL is modelled now — CLOSED, and the closure proves
+  the diagnosis.** The hole stood recorded for two revisions: an ungated removal
+  is *definitionally* invisible to `NoStatusOutsideItsSelection`, whose
+  `oathCode` exemption fires exactly when `~oathCodeSet` — the very state the
+  removal produces. The repair is therefore a recorder at the STEP, not a change
+  to the exemption: `OathRemoveCode` carries the gate
+  (`crates/rsk-oath/src/lib.rs:356-358`) as a Guard/Policy pair and
+  `AccessCodeRemovalNeedsTheCode` is its own invariant. Measured exactly as the
+  diagnosis predicted: the action added is **bit-identical at 662 distinct
+  states** (+48 transitions, all into already-reachable states), while
+  `BugRemoveCodeUnvalidated` still falls RED in 77 — a violation no state
+  predicate could ever have seen, caught by the step recorder.
 - **`pin_fresh` never outliving `has_pin` is written as an ASSIGNMENT**
   (`fresh' = (held'["pivPin"] /\ fresh)`), so breaking it is invisible: the
   reviewer's mutant is GREEN at 1 056 against 666, and the consequence is masked

@@ -57,7 +57,7 @@ gap = "status lifetime is RSKeyAppletSeams; the PW1/PW3/RC retry & recovery budg
 [crate.rsk-oath]
 class = "state-partial"
 model = "RSKeyAppletSeams"
-gap = "status lifetime is RSKeyAppletSeams. NOT in RSKeyRetryLattice: the access code is a MAC challenge-response with no retry counter, so a wrong answer costs nothing — the exempt-refusal territory the seam model already carries, and its wire acceptance is the group-E oracle's. AccessCodeRemovalNeedsTheCode (removing the code requires the validated status) is the one gate still unmodelled."
+gap = "status lifetime and the access-code removal gate (AccessCodeRemovalNeedsTheCode, SEC-SEAM-006) are RSKeyAppletSeams. NOT in RSKeyRetryLattice: the access code is a MAC challenge-response with no retry counter, so a wrong answer costs nothing — the exempt-refusal territory the seam model carries, and its wire acceptance is the group-E oracle's."
 
 [crate.rsk-otp]
 class = "state-partial"

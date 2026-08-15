@@ -23,7 +23,8 @@ TLC checks its invariants exhaustively at small constants.
 
 `RSKeyAppletSeams.tla` models what the first module deliberately leaves out:
 the applets' access statuses — PIV, OpenPGP and OATH's seven doors, what a
-SELECT means for each, and what a refused authentication costs.
+SELECT means for each, what a refused authentication costs, and the
+access-code removal gate.
 
 `RSKeyStore.tla` models the flash layer one level beneath both — `rsk-fs`'s
 key/value store over a `Storage` backend: whether a torn `delete` can orphan a

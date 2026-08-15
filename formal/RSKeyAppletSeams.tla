@@ -72,7 +72,16 @@ CONSTANTS
     \* access-code VALIDATE dropping the standing unlock, where a MAC
     \* challenge-response has no retry counter for a refusal to protect.
     BugPivChangeResetsStatus,
-    BugRefusedValidateDropsUnlock
+    BugRefusedValidateDropsUnlock,
+    \* The access-code REMOVAL (`73 00`) reached without the validated status.
+    \* cmd_set_code's whole body -- install and remove alike -- sits behind one
+    \* gate (crates/rsk-oath/src/lib.rs:356-358); this is the remove half taken
+    \* out from under it. The hole was RECORDED for two revisions as
+    \* definitionally invisible: NoStatusOutsideItsSelection's oathCode
+    \* exemption fires exactly when ~oathCodeSet, which the removal itself sets,
+    \* so no state the removal produces can ever trip it. Closing it needed a
+    \* recorder at the STEP, not a change to the exemption.
+    BugRemoveCodeUnvalidated
 
 \* The three CCID applets that carry an in-RAM security status. `NoApplet` is
 \* `Dispatcher::current = None` (crates/rsk-sdk/src/applet.rs:145): nothing
@@ -96,7 +105,8 @@ RefOwner(r) ==
 
 InvNames == { "NoKeyOpOnTheAdminStatus", "NoStatusAfterARefusedAuth",
               "ReselectPreservesAccessStatus",
-              "ExemptRefusalPreservesStatus" }
+              "ExemptRefusalPreservesStatus",
+              "AccessCodeRemovalNeedsTheCode" }
 
 VARIABLES
     sel,    \* Dispatcher::current            (crates/rsk-sdk/src/applet.rs:145)
@@ -352,6 +362,25 @@ OathValidateOk ==
     /\ held' = [held EXCEPT !["oathCode"] = TRUE]
     /\ UNCHANGED << sel, fresh, pfresh, oneShotSig, psig, oathCodeSet, refused, viol >>
 
+\* `73 00` -- remove the access code (crates/rsk-oath/src/lib.rs:363-369): drop
+\* EF_OATH_CODE and leave the applet default-open (the Rust sets `validated =
+\* true` on the way out at :368, which over no code is the same TRUE). The one
+\* gate is the command's own validated test at :356-358, shared with the install
+\* half; the install-over-existing (replace) path stands behind the SAME gate, so
+\* this action carries the rule for every code-set mutation.
+RemoveCodeGuard  == IF BugRemoveCodeUnvalidated THEN TRUE ELSE held["oathCode"]
+RemoveCodePolicy == held["oathCode"]
+
+OathRemoveCode ==
+    /\ sel = Oath
+    /\ oathCodeSet
+    /\ RemoveCodeGuard
+    /\ viol' = IF RemoveCodePolicy
+                 THEN viol ELSE viol \cup {"AccessCodeRemovalNeedsTheCode"}
+    /\ oathCodeSet' = FALSE
+    /\ held' = [held EXCEPT !["oathCode"] = TRUE]
+    /\ UNCHANGED << sel, fresh, pfresh, oneShotSig, psig, refused >>
+
 \* PIV's 9B mutual authenticate. Its own status, and it authorises the admin
 \* surface only -- never a key operation, which is what `pin_satisfied`
 \* (crates/rsk-piv/src/auth.rs:58-66) tests instead.
@@ -535,6 +564,7 @@ Next ==
     \/ \E r \in {"pw1", "pw2"} : PgpKeyOp(r)
     \/ \E ok \in BOOLEAN : OathVerifyOtpPin(ok)
     \/ OathChangeRefused \/ OathValidateRefused \/ OathValidateOk \/ OathSetCode
+    \/ OathRemoveCode
     \/ \E a \in {Piv, Pgp} : AdminOp(a)
     \/ \E v \in BOOLEAN : PgpSetPwStatus(v)
     \/ CardReset \/ PowerCycle \/ FidoReset \/ FactoryWipe
@@ -615,5 +645,14 @@ ExemptRefusalPreservesStatus == "ExemptRefusalPreservesStatus" \notin viol
 \* Ghost, one writer: Reselect. OATH is exempt in the writer rather than here,
 \* because its exemption is a property of that applet and not of the rule.
 ReselectPreservesAccessStatus == "ReselectPreservesAccessStatus" \notin viol
+
+\* THE REPAIR OF A RECORDED HOLE. Removing the access code (`73 00`) is a
+\* code-set mutation and needs the validated status the code bought
+\* (crates/rsk-oath/src/lib.rs:356-358) -- but an unauthenticated removal is
+\* DEFINITIONALLY invisible to NoStatusOutsideItsSelection: its oathCode
+\* exemption fires exactly when ~oathCodeSet, and the removal itself sets that.
+\* No state the violation produces can trip a state predicate, so the rule
+\* lives at the step, as its own recorder. Ghost, one writer: OathRemoveCode.
+AccessCodeRemovalNeedsTheCode == "AccessCodeRemovalNeedsTheCode" \notin viol
 
 =============================================================================

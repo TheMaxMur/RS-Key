@@ -270,7 +270,7 @@ SEAM_BUGS=(BugSelectKeepsOtherApplet BugReselectResetsStatus
            BugFailedChangeKeepsStatus BugPinFreshNotSpent BugSigPinNotSpent
            BugUserStatusOpensAdmin BugRefusedValidateGrants
            BugPwStatusIgnoresAdmin BugPivChangeResetsStatus
-           BugRefusedValidateDropsUnlock)
+           BugRefusedValidateDropsUnlock BugRemoveCodeUnvalidated)
 
 seam_target() {
   case "$1" in
@@ -286,11 +286,12 @@ seam_target() {
     BugPwStatusIgnoresAdmin)    echo NoKeyOpOnTheAdminStatus ;;
     BugPivChangeResetsStatus)   echo ExemptRefusalPreservesStatus ;;
     BugRefusedValidateDropsUnlock) echo ExemptRefusalPreservesStatus ;;
+    BugRemoveCodeUnvalidated)   echo AccessCodeRemovalNeedsTheCode ;;
   esac
 }
 SEAM_INV=(NoStatusOutsideItsSelection NoStatusAfterARefusedAuth
           NoKeyOpOnTheAdminStatus ReselectPreservesAccessStatus
-          ExemptRefusalPreservesStatus)
+          ExemptRefusalPreservesStatus AccessCodeRemovalNeedsTheCode)
 
 emit_seam() { # $1 = cfg, $2 = switch (""), $3 = 1 for solo
   local out=$1 on=${2:-} solo=${3:-0}
