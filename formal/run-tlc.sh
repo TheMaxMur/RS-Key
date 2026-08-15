@@ -8,23 +8,23 @@
 # a slow one. Timings printed here were taken under that load -- they are an
 # upper bound, not a benchmark.
 #
-# TLA+ is deliberately NOT in flake.nix (208 MB, and that is the maintainer's
-# call). Only the 2.2 MB tla2tools.jar is needed; the JRE comes from the host:
-#
-#   nix build --no-link --print-out-paths \
-#     "$(nix eval --raw nixpkgs#tlaplus.src.drvPath 2>/dev/null || true)"
-#
-# The jar below was realized with the exact command recorded in FORMAL-L2.md.
+# TLA+ comes from the dev shell now, which is what lets a workflow run this at
+# all: the jar path and its JVM are `nix develop`'s to supply, not this file's.
+# It used to name a /nix/store path realized by hand on one machine -- correct
+# there, unreadable anywhere else, and so the whole matrix was a ratchet only
+# its author could pull. The pinned jar is byte-identical to that one
+# (sha256 936a2620...), so `floors.txt` still describes the TLC that measured it.
 set -uo pipefail
 cd "$(dirname "$0")"
 
-JAR=${TLA2TOOLS_JAR:-/nix/store/kvrhq0951riz03ffwiskcyr0dymg6k5g-tla2tools.jar}
+JAR=${TLA2TOOLS_JAR:-}
 JAVA=${JAVA:-$(command -v java)}
 WORKERS=${WORKERS:-2}
 HEAP=${HEAP:-4g}
 
-[ -r "$JAR" ] || { echo "tla2tools.jar not found at $JAR" >&2; exit 2; }
-[ -n "$JAVA" ] || { echo "no java on PATH" >&2; exit 2; }
+[ -n "$JAR" ] || { echo "TLA2TOOLS_JAR unset -- run inside \`nix develop\`" >&2; exit 2; }
+[ -r "$JAR" ] || { echo "tla2tools.jar not readable at $JAR" >&2; exit 2; }
+[ -n "$JAVA" ] || { echo "no java on PATH -- run inside \`nix develop\`" >&2; exit 2; }
 
 # Two TLA+ traps that leave a spec well-formed and a run GREEN -- a precedence
 # slip that turns an assignment into a guard, and an action pinned to a no-op by
@@ -115,7 +115,17 @@ one() {
     "$mark"
 }
 
-if [ "${1:-}" = "all" ]; then
+# --- the tiers -------------------------------------------------------------
+#
+# Membership lives here and nowhere else, the way scripts/kani.sh owns its own.
+# The split is drawn by HEAP, not by taste: everything in `safety` runs at the
+# 4g default, while `Liveness.cfg` needs the 12g `floors.txt` gives it -- and a
+# hosted runner is where kani's 11.1 GB harness already died twice. So `safety`
+# is the weekly CI row and `liveness` is run by hand, or wherever 12g is real.
+#
+# `all` is still the union, so a local `./run-tlc.sh all` means what it always did.
+
+run_safety() {
   one Shipped.cfg              # the tree as it stands -- expected GREEN
   one Historical_E76.cfg       # each shipped fix taken back out, so the
   one Historical_E77.cfg       # counterexample it closed stays reproducible
@@ -124,16 +134,24 @@ if [ "${1:-}" = "all" ]; then
   for f in SoloClause_*.cfg; do one "$f"; done  # and vs ONE clause of it
   one Fairness.cfg                        # the one fairness assumption that is
   for f in FairMut_*.cfg; do one "$f"; done # a disjunction, and E160 verbatim
-  one Liveness.cfg                        # the three temporal properties, and
-  for f in LiveMut_*.cfg; do one "$f"; done # one mutant per property
   one Seams.cfg                           # the second module: the applet seams
   for f in SeamMut_*.cfg; do one "$f"; done
   for f in SeamSolo_*.cfg; do one "$f"; done
+}
+
+run_liveness() {
+  one Liveness.cfg                        # the three temporal properties, and
+  for f in LiveMut_*.cfg; do one "$f"; done # one mutant per property
   # Liveness_Full.cfg is NOT here: 1475 s for the same verdict the reduced
   # constants give in 139 s. Run it by hand when the reduction is questioned.
-else
-  one "${1:?usage: run-tlc.sh <config.cfg> | all}"
-fi
+}
+
+case "${1:-}" in
+  safety)   run_safety ;;
+  liveness) run_liveness ;;
+  all)      run_safety; run_liveness ;;
+  *)        one "${1:?usage: run-tlc.sh <config.cfg> | safety | liveness | all}" ;;
+esac
 
 if [ "$FAILED" -gt 0 ]; then
   echo "run-tlc: FAIL -- $FAILED row(s) did not produce what was required of them" >&2

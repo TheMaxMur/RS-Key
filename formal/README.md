@@ -33,28 +33,33 @@ revision found a fidelity gap that had been holding the green run up (see
 
 ## Running it
 
-TLA+ is deliberately **not** in `flake.nix` — the `tlaplus` package is 208 MB
-and that is a maintainer decision. Only the 2.2 MB `tla2tools.jar` is needed;
-the JRE comes from the host. Realize just the jar:
+`tlaplus` is in the dev shell, which exports `TLA2TOOLS_JAR`; run everything
+through `nix develop`. It used to be out of the flake, with the jar realized by
+hand and named by a `/nix/store` path in `run-tlc.sh` — correct on one machine,
+unreadable everywhere else, and the reason no workflow could run any of this.
+The 208 MB people quote is the *closure*: the tool is 2.2 MB and the rest is the
+JDK it wraps, which is the point — `java` used to come from the host PATH, so
+the prover's runtime differed per contributor. The pinned jar is byte-identical
+to the hand-realized one (sha256 `936a2620…`), so `floors.txt` still describes
+the TLC that measured it.
 
 ```console
-$ nix build --no-link --print-out-paths \
-    '/nix/store/58f325n6n42bn2iqb6ssqj2rgcakwwlx-tla2tools.jar.drv^out'
-/nix/store/kvrhq0951riz03ffwiskcyr0dymg6k5g-tla2tools.jar
+$ nix develop
+$ ./gen-configs.sh            # regenerate every .cfg
+$ ./run-tlc.sh safety         # the CI tier: model + mutants + floors, ~30 min
+$ ./run-tlc.sh liveness       # the temporal properties — needs a 12g heap
+$ ./run-tlc.sh all            # both, sequentially
+$ ./run-tlc.sh Shipped.cfg    # one configuration; log lands in out/
+$ python3 tla-lint.py         # the two source traps, standalone
 ```
 
-That drv is `nixpkgs#tlaplus`'s own `tla2tools.jar` input — a fixed-output
-download of the upstream v1.7.4 release, `sha256-k2omIGHJFGlN/…` — so the path
-is reproducible under the pinned nixpkgs. Point `TLA2TOOLS_JAR` at your own
-copy if you have one. `nix run nixpkgs#tlaplus -- …` also works and needs no
-jar path, but pulls the full 208 MB closure for a JRE the host already has.
-
-```console
-$ ./gen-configs.sh          # regenerate every .cfg
-$ ./run-tlc.sh all          # the whole matrix, sequentially
-$ ./run-tlc.sh Shipped.cfg  # one configuration; log lands in out/
-$ python3 tla-lint.py       # the two source traps, standalone
-```
+The tiers are drawn by heap, not by taste, and their membership lives in
+`run-tlc.sh` and nowhere else. `deep-checks.yml`'s weekly `formal` row runs
+`safety`; `liveness` is not in CI because `Liveness.cfg` needs the 12g
+`floors.txt` gives it, and 11.1 GB is where that workflow's `kani` `heavy`
+runner has already died twice. The row also fires on any push touching
+`formal/`, so a change to the model is checked at once rather than up to a week
+later.
 
 `run-tlc.sh` runs `tla-lint.py` first and refuses (exit 2) if it fails, and
 checks every row against `floors.txt` — the verdict each configuration must

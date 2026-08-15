@@ -44,6 +44,12 @@
 #          would notice if it changed. **Advisory**, for the reason that script
 #          states at length: most survivors are not defects, so a gating row
 #          would be red every week.
+#   formal — TLC over formal/: the model, its 44 mutants, their floors and the
+#          vacuity check (formal/run-tlc.sh `safety`). Gating. It also runs on
+#          any push touching formal/, so an edit to the model is checked at once
+#          rather than up to a week later. The `liveness` tier is deliberately
+#          not here — it needs a 12g heap, and 11.1 GB is where the kani `heavy`
+#          runner already died twice.
 #
 # `complexity` used to be here and is gone: scripts/check.sh already runs
 # scripts/complexity_gate.sh on every pull request, so the row re-proved a merge
@@ -84,6 +90,7 @@ on:
         "scripts/miri-all.sh",
         "scripts/mutants-all.sh",
         "scripts/kani.sh",
+        "formal/**",
       ]
 
 permissions:
@@ -409,3 +416,65 @@ jobs:
           MUTANTS_SHARD: ${{ matrix.shard }}/8
           MUTANTS_JOBS: "3"
           HOST_TARGET: x86_64-unknown-linux-gnu
+
+  # The TLA+ model checker. It ran in no workflow at all until now: `floors.txt`,
+  # the vacuity check and the 44-mutant matrix were ratchets whose only puller was
+  # whoever remembered `./formal/run-tlc.sh`, on the one machine that had a jar at
+  # a hardcoded store path. The tool is pinned in the dev shell now, which is what
+  # makes this row possible.
+  #
+  # `safety`, not `all`: the liveness family needs the 12g heap `floors.txt` gives
+  # it, and 11.1 GB is where the kani `heavy` runner already died twice. The tier
+  # membership lives in formal/run-tlc.sh and nowhere else, so this row cannot
+  # drift from it — see that file for what `liveness` costs and where to run it.
+  #
+  # The row fails on RED (a mutant that should fire and did not, or an invariant
+  # that broke), on FLOOR (a GREEN that got smaller than its recorded floor) and
+  # on VACUOUS (a spec nothing enabled). Four breakages were checked by making
+  # them: an unreadable jar and an unset TLA2TOOLS_JAR exit 2; a floor raised
+  # above the measured count reports `FLOOR: 662 < 999999` and exits 1; a mutant
+  # switch flipped back to FALSE reports `GREEN !! expected RED` and exits 1.
+  # VACUOUS is NOT among them — that arm predates this row and is the one the
+  # `Seams.cfg` one-state incident already exercised, so it is inherited, not
+  # re-tested here.
+  formal:
+    if: github.event.schedule != '17 5 * * *'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+
+      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+
+      # Shipped.cfg alone is 61 M distinct states at 1137 s on the author's
+      # machine; the rest of the matrix is seconds apiece. Two workers is what
+      # run-tlc.sh caps at, and the runner has four cores.
+      # `set -o pipefail` is load-bearing: a `run:` block is `bash -e` WITHOUT it,
+      # so the pipe below would report tee's exit code and a RED matrix would pass
+      # as green — the exact hole this row exists to close, in the row itself.
+      - name: formal — TLC over the model, its mutants and their floors
+        run: |
+          set -o pipefail
+          nix develop -c ./formal/run-tlc.sh safety | tee "$RUNNER_TEMP/formal.log"
+
+      - name: publish the matrix
+        if: always()
+        run: |
+          {
+            echo "### TLA+ — safety tier"
+            echo '```'
+            cat "$RUNNER_TEMP/formal.log"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: failure()
+        with:
+          name: formal-logs-${{ github.run_id }}
+          path: formal/out/
+          if-no-files-found: ignore

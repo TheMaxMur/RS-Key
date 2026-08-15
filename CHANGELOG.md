@@ -38,6 +38,30 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+### Added
+
+- **The TLA+ model is checked by CI.** `deep-checks` gained a weekly `formal`
+  row running `formal/run-tlc.sh safety` — the model, its 44 mutants, their
+  `floors.txt` verdicts and the vacuity check. Until now none of that ran in any
+  workflow: the matrix was a ratchet whose only puller was whoever remembered
+  the command, on the one machine holding a jar at a hardcoded `/nix/store`
+  path. The row also fires on any push touching `formal/`, so an edit to the
+  model is checked at once rather than up to a week later.
+
+  `tlaplus` therefore joins the pinned dev shell, which exports
+  `TLA2TOOLS_JAR`. Advisory measurement tools are still pulled ad-hoc and stay
+  out of it; a **gating** tool belongs in the shell beside `cargo-audit`,
+  `cargo-deny` and `gitleaks`. The 208 MB is the closure — the tool is 2.2 MB
+  and the rest is the JDK it wraps, which is the gain: `run-tlc.sh` took `java`
+  from the host PATH before, so the prover's runtime differed per contributor.
+  The pinned jar is byte-identical to the hand-realized one, so `floors.txt`
+  still describes the TLC that measured it.
+
+  `run-tlc.sh` grew tiers (`safety` / `liveness` / `all`), drawn by heap rather
+  than taste. `liveness` is deliberately not in CI: `Liveness.cfg` needs the 12g
+  `floors.txt` gives it, and 11.1 GB is where the same workflow's `kani` `heavy`
+  runner has already died twice.
+
 ### Changed
 
 - **`deep-checks` runs on two cadences and across matrices.** Miri (3 shards) and

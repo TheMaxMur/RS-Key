@@ -420,8 +420,14 @@ counterexamples it has produced on the shipped tree. Read that before quoting a
 result from it.
 
 ```sh
-cd formal && ./gen-configs.sh && ./run-tlc.sh all   # needs tla2tools.jar + a JRE
+nix develop            # exports TLA2TOOLS_JAR; the JVM comes with it
+cd formal && ./gen-configs.sh && ./run-tlc.sh safety   # the tier CI runs
 ```
+
+`safety` is the model, its 44 mutants, their floors and the vacuity check —
+`deep-checks.yml`'s weekly `formal` row, which also fires on any push touching
+`formal/`. `liveness` is the temporal half and is not in CI: it needs a 12g
+heap. `all` is both. Tier membership lives in `formal/run-tlc.sh`.
 
 ## Formal claims — what is and is not verified
 
