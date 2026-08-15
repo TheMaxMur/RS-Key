@@ -969,3 +969,56 @@ fn a_torn_device_wide_wipe_never_leaves_a_grant_without_its_pin() {
         "factory_wipe",
     );
 }
+
+/// The live session dies BEFORE the first flash write of the wipe: `reset` calls
+/// `ctx.state.reset()` ahead of the seed deletion, so a cut at ANY point of the
+/// flash work leaves no RAM copy of a seed nothing stores. Asserted for every
+/// tear budget including 0 — the E76 regression moved the state reset behind the
+/// flash work, where the earliest tear returns with the session still live, and
+/// co-refutation measured that nothing at the code level noticed: the torn-reset
+/// harness tears the flash but never asked when the SESSION died.
+#[test]
+fn a_torn_reset_never_leaves_the_session_running_on_a_wiped_seed() {
+    let base = {
+        let mut fs = Fs::new(TearAfter {
+            items: Vec::new(),
+            budget: usize::MAX,
+        });
+        fs.scan();
+        let mut rng = SeqRng(11);
+        ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+        fs.put(EF_CRED, &[0u8; 100]).unwrap();
+        fs.into_storage()
+    };
+    let live = base.items.len();
+
+    for budget in 0..=live {
+        let mut fs = Fs::new(TearAfter {
+            budget,
+            ..base.clone()
+        });
+        fs.scan();
+        let mut rng = SeqRng(3);
+        let mut state = FidoState::new();
+        // The RAM copy the wipe must not leave behind, planted the way
+        // `Ctx::load_keydev` caches it.
+        state.keydev_dec = Some([0x5A; 32]);
+        {
+            let mut presence = crate::AlwaysConfirm;
+            let mut ctx = Ctx {
+                presence: &mut presence,
+                dev: dev(),
+                fs: &mut fs,
+                rng: &mut rng,
+                state: &mut state,
+                now_ms: 0,
+            };
+            let _ = reset(&mut ctx);
+        }
+        assert!(
+            state.keydev_dec.is_none(),
+            "tear at {budget} returned with the session still holding the seed \
+             the wipe was destroying"
+        );
+    }
+}

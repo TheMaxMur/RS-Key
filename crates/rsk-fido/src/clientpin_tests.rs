@@ -36,8 +36,8 @@ fn setup() -> (Fs<RamStorage>, SeqRng) {
     (fs, rng)
 }
 
-fn run(
-    fs: &mut Fs<RamStorage>,
+fn run<S: rsk_fs::Storage>(
+    fs: &mut Fs<S>,
     rng: &mut SeqRng,
     state: &mut FidoState,
     data: &[u8],
@@ -196,8 +196,8 @@ struct Platform {
     slen: usize,
 }
 
-fn key_agreement(
-    fs: &mut Fs<RamStorage>,
+fn key_agreement<S: rsk_fs::Storage>(
+    fs: &mut Fs<S>,
     rng: &mut SeqRng,
     state: &mut FidoState,
     proto: PinProto,
@@ -2109,3 +2109,152 @@ fn clientpin_protocol_zero_is_invalid_and_alg_is_not_read() {
 /// hands. Hung off this module so it inherits the Platform harness above.
 #[path = "pin_token_tests.rs"]
 mod pin_token_tests;
+
+/// §6.5.5.6 step 15's implementation is the record's deletion: `EF_PAUTHTOKEN`'s
+/// presence IS the grant, so after a successful changePIN the record itself must
+/// be gone — not merely re-minted on the next request. Co-refutation measured
+/// this as a gap: dropping `clear_ppuat` from `change_pin` broke no test, because
+/// the sibling asserts the NEXT grant differs, a property the re-seal satisfies
+/// through a different door. This one asserts the deletion itself.
+#[test]
+fn change_pin_deletes_the_persistent_grant_record() {
+    use crate::consts::EF_PAUTHTOKEN;
+    let (mut fs, mut rng, mut state, plat) = setup_with_pin(b"1234");
+    let mut out = [0u8; 256];
+    run(
+        &mut fs,
+        &mut rng,
+        &mut state,
+        &plat.get_token_perms_req(b"1234", PERM_PCMR as u64),
+        &mut out,
+    )
+    .unwrap();
+    assert!(
+        fs.has_data(EF_PAUTHTOKEN.get()),
+        "the pcmr issuance mints the flash grant"
+    );
+
+    run(
+        &mut fs,
+        &mut rng,
+        &mut state,
+        &plat.change_pin_req(b"1234", b"5678"),
+        &mut out,
+    )
+    .unwrap();
+    assert!(
+        !fs.has_data(EF_PAUTHTOKEN.get()),
+        "changePIN left the persistent grant record on flash"
+    );
+}
+
+/// `Storage` whose mutating ops — `write` and `remove` both — start failing after
+/// `budget` successes and never recover: a power cut inside changePIN's two-record
+/// sequence. Per-file double by the tree's convention (`reset_tests::TearAfter`,
+/// `credential_tests::FailWriteAfter`, `credmgmt_tests::TearMutatingAfter`).
+struct TearPinFlowAfter {
+    inner: RamStorage,
+    budget: usize,
+}
+
+impl TearPinFlowAfter {
+    fn spend(&mut self) -> rsk_sdk::error::Result<()> {
+        if self.budget == 0 {
+            return Err(rsk_sdk::error::Error::NoMemory);
+        }
+        self.budget -= 1;
+        Ok(())
+    }
+}
+
+impl rsk_fs::Storage for TearPinFlowAfter {
+    fn read(&mut self, fid: u16, buf: &mut [u8]) -> Option<usize> {
+        self.inner.read(fid, buf)
+    }
+    fn write(&mut self, fid: u16, data: &[u8]) -> rsk_sdk::error::Result<()> {
+        self.spend()?;
+        self.inner.write(fid, data)
+    }
+    fn remove(&mut self, fid: u16) -> rsk_sdk::error::Result<()> {
+        self.spend()?;
+        self.inner.remove(fid)
+    }
+    fn size(&mut self, fid: u16) -> Option<usize> {
+        self.inner.size(fid)
+    }
+    fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) -> bool {
+        self.inner.for_each_key(f)
+    }
+}
+
+/// The order inside changePIN is the property: the grant is revoked BEFORE the
+/// new verifier lands, so no tear point leaves both a changed `EF_PIN` and a live
+/// `EF_PAUTHTOKEN` — a grant minted under a PIN its holder no longer knows.
+/// Co-refutation measured the reorder as a gap: the end state of a completed
+/// changePIN is identical either way, so only a torn sequence distinguishes them,
+/// and no harness tore this flow.
+#[test]
+fn a_torn_change_pin_never_leaves_the_grant_under_the_new_pin() {
+    use crate::consts::EF_PAUTHTOKEN;
+    let mut pin_before = [0u8; PIN_FILE_LEN];
+    let base = {
+        let (mut fs, mut rng, mut state, plat) = setup_with_pin(b"1234");
+        let mut out = [0u8; 256];
+        run(
+            &mut fs,
+            &mut rng,
+            &mut state,
+            &plat.get_token_perms_req(b"1234", PERM_PCMR as u64),
+            &mut out,
+        )
+        .unwrap();
+        assert!(fs.has_data(EF_PAUTHTOKEN.get()));
+        assert_eq!(fs.read(EF_PIN, &mut pin_before), Some(PIN_FILE_LEN));
+        fs.into_storage()
+    };
+
+    let (mut saw_torn, mut saw_landed) = (false, false);
+    for budget in 0..12 {
+        let mut fs = Fs::new(TearPinFlowAfter {
+            inner: base.clone(),
+            budget,
+        });
+        fs.scan();
+        let mut rng = SeqRng(5);
+        let mut state = FidoState::new();
+        // The DH handshake writes nothing, so the platform double survives any budget.
+        let plat = key_agreement(&mut fs, &mut rng, &mut state, PinProto::Two, 2);
+        let mut out = [0u8; 256];
+        let r = run(
+            &mut fs,
+            &mut rng,
+            &mut state,
+            &plat.change_pin_req(b"1234", b"5678"),
+            &mut out,
+        );
+        if r.is_err() {
+            saw_torn = true;
+        }
+        // Power back on: same medium, fresh caches, no more failures.
+        let mut medium = fs.into_storage();
+        medium.budget = usize::MAX;
+        let mut fs = Fs::new(medium);
+        fs.scan();
+        let mut pin_now = [0u8; PIN_FILE_LEN];
+        // Byte 0 is the retry budget, and the old-PIN verify spends and restores
+        // it — a write that lands BEFORE either record this property is about.
+        // The verifier region is the rest; only store_new_pin changes it.
+        let changed =
+            fs.read(EF_PIN, &mut pin_now) != Some(PIN_FILE_LEN) || pin_now[1..] != pin_before[1..];
+        if changed {
+            saw_landed = true;
+            assert!(
+                !fs.has_data(EF_PAUTHTOKEN.get()),
+                "budget {budget}: the new verifier landed with the old holder's \
+                 grant still live"
+            );
+        }
+    }
+    assert!(saw_torn, "vacuous: no budget tore the change");
+    assert!(saw_landed, "vacuous: no budget landed the new verifier");
+}

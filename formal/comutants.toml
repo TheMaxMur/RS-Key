@@ -205,14 +205,21 @@ replace = """
     res?;
     // The new PIN met minPINLength (store_new_pin), so the change satisfies a
 """
+find2 = """
+    if fid == EF_PIN {
+        clear_ppuat(fs).map_err(|_| CtapError::Other)?;
+    }
+"""
+replace2 = ""
 slice = ["cargo", "test", "-p", "rsk-fido"]
-expect = "gap"
-note = """MEASURED GAP. Dropping clear_ppuat from change_pin breaks no host
-test: change_pin_revokes_the_persistent_token still passes, so the persistent
-grant is invalidated by another step of the flow and this clear_ppuat is
-redundant defence the model — which lacks that step — still requires. The
-model is stricter here. Filed: a harness asserting the surviving EF_PAUTHTOKEN
-no longer authorizes would either close it or prove the redundancy."""
+expect = "killed"
+note = """changePIN keeps the persistent pcmr grant. TWO layers must go: the
+authoritative revoke lives in write_pin_verifier (the run-37 fix moved it into
+the storage core), and change_pin's own clear_ppuat is a redundant second line.
+The first patch removed only the outer layer and measured exactly that
+redundancy — every test stayed green because the inner revoke held. That
+finding is worth the note: the property is enforced twice, and a single-layer
+mutant cannot re-create the model's defect."""
 
 [comutant.BugPinWriteBeforeRevoke]
 status = "patch"
@@ -228,15 +235,35 @@ replace = """
     let res = store_new_pin(ctx, &padded);
     padded.zeroize();
     res?;
-    clear_ppuat(ctx.fs).map_err(|_| CtapError::Other)?;
     // The new PIN met minPINLength (store_new_pin), so the change satisfies a
 """
+find2 = """
+    // Before the new verifier lands, never after: a power cut the other way round
+    // leaves the old holder's grant live against a PIN they no longer know.
+    if fid == EF_PIN {
+        clear_ppuat(fs).map_err(|_| CtapError::Other)?;
+    }
+"""
+replace2 = ""
+find3 = """
+    fs.put(fid, &pin_data).map_err(|_| CtapError::Other)
+}
+"""
+replace3 = """
+    fs.put(fid, &pin_data).map_err(|_| CtapError::Other)?;
+    if fid == EF_PIN {
+        clear_ppuat(fs).map_err(|_| CtapError::Other)?;
+    }
+    Ok(())
+}
+"""
 slice = ["cargo", "test", "-p", "rsk-fido"]
-expect = "gap"
-note = """MEASURED GAP. The new-verifier-before-revoke order only matters
-under a power cut between the two writes, and no host test tears the changePIN
-sequence (the reset family has a tear harness; the PIN flows do not). Filed:
-a torn-changePIN harness over a mutating-op budget, like the torn-delete one."""
+expect = "killed"
+note = """the revoke moved AFTER the verifier write at the authoritative site
+(write_pin_verifier), with change_pin's redundant outer layer removed so the
+reorder is real: a cut between the two writes leaves the old holder's grant
+live under a PIN they no longer know. The completed end state is identical
+either way — only the torn-changePIN harness distinguishes the orders."""
 
 [comutant.BugCmWalkIgnoresChannel]
 status = "patch"
@@ -321,12 +348,12 @@ replace2 = """
     ctx.state.reset();
 """
 slice = ["cargo", "test", "-p", "rsk-fido"]
-expect = "gap"
-note = """MEASURED GAP (E76 regression). Moving ctx.state.reset() behind the
-flash wipe breaks no host test: reset_tests tears the flash sequence but does
-not assert the live session key is dropped BEFORE the seed it caches is gone,
-so a cut mid-wipe running on a stale keydev is unmodelled at the code level.
-Filed: extend the torn-reset harness to assert the session is reset first."""
+expect = "killed"
+note = """E76 regression: the live session reset moved behind the flash work.
+Was a measured gap — the torn-reset harness tore the flash but never asked when
+the SESSION died — closed by
+a_torn_reset_never_leaves_the_session_running_on_a_wiped_seed, which plants the
+RAM seed copy and asserts it is gone at EVERY tear budget, including 0."""
 
 [comutant.BugWarmResetReopensWindow]
 status = "patch"
@@ -457,12 +484,10 @@ replace = """
         fido_state.warm_boot = boot.warm;
 """
 slice = ["cargo", "test", "-p", "rsk-device"]
-expect = "gap"
-note = """MEASURED GAP. Dropping restore_pin_lock across the warm-boot path
-breaks no rsk-device test: nothing drives boot_state() with a live lock and a
-warm origin and asserts the lock carried. A clean missing test. Filed: a
-ctap-boot harness that arms the soft lock, rebuilds through a warm boot, and
-checks the retry budget is still spent."""
+expect = "killed"
+note = """the clientPIN soft lock dropped across a warm reset a host can
+request ungated, freeing the retry budget. Was a measured gap — nothing drove
+boot_state() with a live lock — closed by a_warm_boot_carries_the_soft_lock_in."""
 
 # ---- rsk-display: the on-panel PIN gate ------------------------------------
 

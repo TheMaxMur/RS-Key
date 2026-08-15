@@ -50,20 +50,31 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   reads killed before a commit) and demands the recorded verdict, while
   `--lint` (a `check.sh` row) holds the file against the `Mut_*.cfg` roster and
   resolves every patch anchor against today's code. **The whole roster is
-  measured: 28 mutants — 22 killed, 4 measured gaps, 2 unreachable.** A kill
-  must carry real test output: a patch that fails to *compile* scores
-  `build-broke`, never killed — the trap the first `BugPpuatIsAGate` patch fell
-  into (`EF_PAUTHTOKEN` is a `KeyFid`, not a `u16`) and the reason the verdict
-  logic tells the two apart.
+  measured and closed: 28 mutants — 26 killed, 2 unreachable, zero open gaps,
+  every kill carrying real test output.** A patch that fails to *compile*
+  scores `build-broke`, never killed — the trap the first `BugPpuatIsAGate`
+  patch fell into (`EF_PAUTHTOKEN` is a `KeyFid`, not a `u16`) and the reason
+  the verdict logic tells the two apart.
 
-  The four gaps are recorded with their mechanism and a filed harness each,
-  cargo-mutants-style — a MISSED means "no unit test kills it", not "nothing
-  does": the two PIN-flow orders (`clear_ppuat` dropped or reordered around
-  `store_new_pin`) are observable only under a torn changePIN, and no harness
-  tears that flow; the warm-boot `PinLock` carry has no boot-path test; and the
-  torn-reset harness does not assert the live session is dropped before the
-  flash work. Two more gaps were surfaced and CLOSED during batch 1,
-  which is the point of the pass:
+  Six gaps were surfaced by the measurement and every one was closed with a
+  harness in the same pass. Beyond batch 1's two: the warm-boot `PinLock`
+  carry had no boot-path test (`a_warm_boot_carries_the_soft_lock_in`); the
+  torn-reset harness tore the flash but never asked when the SESSION died
+  (`a_torn_reset_never_leaves_the_session_running_on_a_wiped_seed`, asserted
+  at every tear budget including 0 — the E76 regression's exact shape); the
+  changePIN grant revocation
+  (`change_pin_deletes_the_persistent_grant_record`) and the revoke-before-
+  write order (`a_torn_change_pin_never_leaves_the_grant_under_the_new_pin`,
+  a mutating-op tear over the PIN flow).
+
+  The last two carried a finding of their own: the revoke is enforced
+  **twice** — authoritatively inside `write_pin_verifier` (the run-37 fix
+  moved it into the storage core) and redundantly in each caller — so the
+  first single-layer patches measured the depth of that defence rather than
+  a gap: everything stayed green because the inner revoke held. The faithful
+  mutants remove both layers, and the torn-changePIN harness is the one
+  instrument that distinguishes the write orders (exactly one test fails
+  under the reorder). Batch 1's two, for the record:
 
   - `BugTokenSurvivesPinChange` — changePIN leaving the in-RAM session token
     alive — was caught by the model and by *nothing* at the code level: the

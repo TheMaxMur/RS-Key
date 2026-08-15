@@ -99,6 +99,30 @@ fn a_warm_boot_is_inherited_from_the_board() {
 }
 
 #[test]
+fn a_warm_boot_carries_the_soft_lock_in() {
+    // The other half of the hand-over the first test pins: a lock the board
+    // persisted must be RESTORED at build, or a host-requestable warm reset
+    // frees the retry budget CTAP 2.1 §6.5.5.6 spends across it. Co-refutation
+    // measured this as a gap — nothing drove boot_state() with a live lock and
+    // asked whether it carried.
+    let env = Env::new();
+    env.board.borrow_mut().boot = crate::BootState {
+        warm: true,
+        lock: rsk_fido::state::PinLock {
+            engaged: true,
+            mismatches: 3,
+        },
+    };
+    let ctap = env.ctap();
+    let carried = ctap.fido_state.pin_lock();
+    assert!(
+        carried.engaged,
+        "the soft lock did not survive the warm reset"
+    );
+    assert_eq!(carried.mismatches, 3, "the mismatch count was dropped");
+}
+
+#[test]
 fn a_cold_boot_is_the_default() {
     // A build with nothing to remember a warm reset with sees every boot as a first
     // one, which is the safe reading of both clauses.

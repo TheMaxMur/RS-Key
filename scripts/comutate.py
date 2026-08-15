@@ -75,8 +75,9 @@ def solo_invariant(root: pathlib.Path, bug: str) -> str | None:
 
 def patch_pairs(entry: dict):
     yield entry["find"], entry.get("replace", "")
-    if "find2" in entry:
-        yield entry["find2"], entry.get("replace2", "")
+    for n in ("2", "3"):
+        if f"find{n}" in entry:
+            yield entry[f"find{n}"], entry.get(f"replace{n}", "")
 
 
 def lint(root: pathlib.Path) -> list[str]:
