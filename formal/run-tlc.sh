@@ -22,15 +22,20 @@ JAVA=${JAVA:-$(command -v java)}
 WORKERS=${WORKERS:-2}
 HEAP=${HEAP:-4g}
 
-[ -n "$JAR" ] || { echo "TLA2TOOLS_JAR unset -- run inside \`nix develop\`" >&2; exit 2; }
-[ -r "$JAR" ] || { echo "tla2tools.jar not readable at $JAR" >&2; exit 2; }
-[ -n "$JAVA" ] || { echo "no java on PATH -- run inside \`nix develop\`" >&2; exit 2; }
+# `--tiers` is a pure query -- scripts/assurance_gate.py reads it to hold every
+# .cfg against the tier union -- so it must answer without a jar, a JVM or a
+# lint pass. Everything else pays the toll.
+if [ "${1:-}" != "--tiers" ]; then
+  [ -n "$JAR" ] || { echo "TLA2TOOLS_JAR unset -- run inside \`nix develop\`" >&2; exit 2; }
+  [ -r "$JAR" ] || { echo "tla2tools.jar not readable at $JAR" >&2; exit 2; }
+  [ -n "$JAVA" ] || { echo "no java on PATH -- run inside \`nix develop\`" >&2; exit 2; }
 
-# Two TLA+ traps that leave a spec well-formed and a run GREEN -- a precedence
-# slip that turns an assignment into a guard, and an action pinned to a no-op by
-# its own UNCHANGED. Both have bitten this model. Checking anything before the
-# source is clean would be checking the wrong spec.
-python3 tla-lint.py || exit 2
+  # Two TLA+ traps that leave a spec well-formed and a run GREEN -- a precedence
+  # slip that turns an assignment into a guard, and an action pinned to a no-op
+  # by its own UNCHANGED. Both have bitten this model. Checking anything before
+  # the source is clean would be checking the wrong spec.
+  python3 tla-lint.py || exit 2
+fi
 
 # Which module a configuration belongs to: the seam configs are the second
 # module's, and TLC takes the module name rather than reading it from the cfg.
@@ -124,33 +129,43 @@ one() {
 # is the weekly CI row and `liveness` is run by hand, or wherever 12g is real.
 #
 # `all` is still the union, so a local `./run-tlc.sh all` means what it always did.
+#
+# Each tier is a LIST function, and the run functions iterate it -- so `--tiers`
+# prints exactly what a run would execute, the way scripts/kani.sh does it, and
+# scripts/assurance_gate.py can hold every .cfg against the union without a
+# second copy of the membership.
 
-run_safety() {
-  one Shipped.cfg              # the tree as it stands -- expected GREEN
-  one Historical_E76.cfg       # each shipped fix taken back out, so the
-  one Historical_E77.cfg       # counterexample it closed stays reproducible
-  for f in Mut_*.cfg; do one "$f"; done   # mutant vs the whole invariant set
-  for f in Solo_*.cfg; do one "$f"; done  # mutant vs its own target only
-  for f in SoloClause_*.cfg; do one "$f"; done  # and vs ONE clause of it
-  one Fairness.cfg                        # the one fairness assumption that is
-  for f in FairMut_*.cfg; do one "$f"; done # a disjunction, and E160 verbatim
-  one Seams.cfg                           # the second module: the applet seams
-  for f in SeamMut_*.cfg; do one "$f"; done
-  for f in SeamSolo_*.cfg; do one "$f"; done
+list_safety() {
+  echo Shipped.cfg              # the tree as it stands -- expected GREEN
+  echo Historical_E76.cfg       # each shipped fix taken back out, so the
+  echo Historical_E77.cfg       # counterexample it closed stays reproducible
+  ls Mut_*.cfg                  # mutant vs the whole invariant set
+  ls Solo_*.cfg                 # mutant vs its own target only
+  ls SoloClause_*.cfg           # and vs ONE clause of it
+  echo Fairness.cfg             # the one fairness assumption that is
+  ls FairMut_*.cfg              # a disjunction, and E160 verbatim
+  echo Seams.cfg                # the second module: the applet seams
+  ls SeamMut_*.cfg
+  ls SeamSolo_*.cfg
 }
 
-run_liveness() {
-  one Liveness.cfg                        # the three temporal properties, and
-  for f in LiveMut_*.cfg; do one "$f"; done # one mutant per property
+list_liveness() {
+  echo Liveness.cfg             # the three temporal properties, and
+  ls LiveMut_*.cfg              # one mutant per property
   # Liveness_Full.cfg is NOT here: 1475 s for the same verdict the reduced
   # constants give in 139 s. Run it by hand when the reduction is questioned.
 }
 
+run_tier() { local f; for f in $($1); do one "$f"; done; }
+
 case "${1:-}" in
-  safety)   run_safety ;;
-  liveness) run_liveness ;;
-  all)      run_safety; run_liveness ;;
-  *)        one "${1:?usage: run-tlc.sh <config.cfg> | safety | liveness | all}" ;;
+  --tiers)  echo "safety: $(list_safety | tr '\n' ' ')"
+            echo "liveness: $(list_liveness | tr '\n' ' ')"
+            exit 0 ;;
+  safety)   run_tier list_safety ;;
+  liveness) run_tier list_liveness ;;
+  all)      run_tier list_safety; run_tier list_liveness ;;
+  *)        one "${1:?usage: run-tlc.sh <config.cfg> | safety | liveness | all | --tiers}" ;;
 esac
 
 if [ "$FAILED" -gt 0 ]; then

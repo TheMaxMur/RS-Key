@@ -1,0 +1,143 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 RS-Key contributors
+#
+# The coverage ledger: every [workspace] member, classified. The rule this file
+# exists for: NO CRATE FALLS OUT SILENTLY. The first two drafts of the formal-
+# verification roadmap enumerated subsystems from memory of findings and missed
+# four crates — including the second-largest in the tree. A ledger written from
+# memory is how that happens; scripts/assurance_gate.py holds this one against
+# Cargo.toml in both directions instead.
+#
+# Classes and what each obliges:
+#   state-modelled    holds security state, a formal/ module models it (model=)
+#   state-partial     modelled in part; the gap and its roadmap module are named
+#   state-unmodelled  holds security state no module covers yet; planned= names
+#                     the roadmap module so the hole is a plan, not an oversight
+#   pure              pure functions; evidence= names the differential/KAT/proof
+#                     files, and the gate checks they exist
+#   out-of-scope      not part of the security argument; reason= says why
+#   embedded-binary   thumbv8m-only, not host-checkable; reason= names coverage
+#
+# "Modelled" here means state-machine modelling. Kani totality proofs and fuzz
+# targets exist across most crates regardless of class — this ledger tracks the
+# one evidence kind that is either present or silently absent.
+
+[crate.firmware]
+class = "embedded-binary"
+reason = "no_std binary: boot, worker sequencing, board halves of Hooks/Platform. Boot path is roadmap M7; the FIDO state it builds is reconstructed host-side in rsk-device (ctap.rs:73-86)."
+
+[crate.rsk-wipe]
+class = "out-of-scope"
+reason = "flash-erase utility, runs once in a maintainer's hands; not part of the runtime security argument."
+
+[crate.rsk-fido]
+class = "state-modelled"
+model = "RSKeySecurityState"
+
+[crate.rsk-device]
+class = "state-partial"
+model = "RSKeySecurityState"
+gap = "presence arbitration is modelled and Kani-proved; the applet wiring and capability gating are not — roadmap M5 (capability lock) and M8 (transport)."
+
+[crate.rsk-sdk]
+class = "state-partial"
+model = "RSKeyAppletSeams"
+gap = "Dispatcher::current is the seam module's sel; APDU chaining state is unmodelled — roadmap M8."
+
+[crate.rsk-piv]
+class = "state-partial"
+model = "RSKeyAppletSeams"
+gap = "status lifetime only; the retry/PUK lattice and slot policies are unmodelled — roadmap M4."
+
+[crate.rsk-openpgp]
+class = "state-partial"
+model = "RSKeyAppletSeams"
+gap = "status lifetime only; PW1/PW3/RC budgets and key-attribute invalidation are unmodelled — roadmap M4."
+
+[crate.rsk-oath]
+class = "state-partial"
+model = "RSKeyAppletSeams"
+gap = "status lifetime only; the access-code removal hole is recorded in the model's own abstractions list — roadmap M4 closes it as AccessCodeRemovalNeedsTheCode."
+
+[crate.rsk-otp]
+class = "state-partial"
+model = "RSKeyAppletSeams"
+gap = "one door (oathOtpPin) only; slot configure/swap/delete and the slot access code are unmodelled — roadmap M4."
+
+[crate.rsk-vendor]
+class = "state-partial"
+model = "RSKeySecurityState"
+gap = "ConfigOp/plat only, and UNLOCK is modelled wider than the real gate; the admin surface is roadmap M5."
+
+[crate.rsk-display]
+class = "state-partial"
+model = "RSKeySecurityState"
+gap = "wait owner and the fourth PIN door only; the anti-phishing promise (WhatIsConfirmedIsWhatIsShown) has no model — roadmap M6."
+
+[crate.rsk-ui]
+class = "state-unmodelled"
+planned = "M6"
+note = "second-largest crate in the tree; 12 Kani proofs, all on codecs and labels, none on screen transitions."
+
+[crate.rsk-usb]
+class = "state-unmodelled"
+planned = "M8"
+
+[crate.rsk-fs]
+class = "state-unmodelled"
+planned = "M3"
+note = "already carries the tree's only Rust abstract model (powercut_model.rs) with its own Kani rules; M3 lifts it to TLA+ and ties R0p to it."
+
+[crate.rsk-store]
+class = "state-unmodelled"
+planned = "M3"
+
+[crate.rsk-rescue]
+class = "state-unmodelled"
+planned = "M5"
+note = "highest privilege in the tree: phy identity writes, KEYDEV signing, seed export."
+
+[crate.rsk-mgmt]
+class = "state-unmodelled"
+planned = "M5"
+note = "TAG_USB_ENABLED decides which applets exist; zero Kani proofs today."
+
+[crate.rsk-crypto]
+class = "pure"
+evidence = ["crates/rsk-crypto/src/base64url_kani.rs", "fuzz/fuzz_targets/aes_gcm.rs", "fuzz/fuzz_targets/chachapoly.rs"]
+
+[crate.rsk-mldsa]
+class = "pure"
+evidence = ["crates/rsk-mldsa/src/round_kani.rs", "fuzz/fuzz_targets/mldsa_roundtrip.rs", "fuzz/fuzz_targets/mldsa_verify.rs"]
+note = "byte-exact vs ACVP KATs; -87 is a recorded stack dead-end, not a gap."
+
+[crate.rsk-rsa-asm]
+class = "pure"
+evidence = ["crates/rsk-rsa-asm/src/kani.rs"]
+note = "functional division spec + the sieve, proved."
+
+[crate.rsk-ec]
+class = "pure"
+evidence = ["crates/rsk-ec/src/tests.rs"]
+note = "zero Kani proofs and NOT a gap: byte-identical differential vs p256/p384/k256/p521 — a differential against a reference beats a proof here."
+
+[crate.rsk-sha512]
+class = "pure"
+evidence = ["fuzz/fuzz_targets/sha512_diff.rs"]
+note = "zero Kani proofs and NOT a gap: differential vs the sha2 crate."
+
+[crate.rsk-led]
+class = "pure"
+evidence = ["crates/rsk-led/src/kani.rs"]
+
+[crate.rsk-bip39]
+class = "pure"
+evidence = ["crates/rsk-bip39/src/kani.rs"]
+
+[crate.rsk-slip39]
+class = "pure"
+evidence = ["crates/rsk-slip39/src/kani.rs", "crates/rsk-slip39/src/tests.rs"]
+
+[crate.rsk-bench]
+class = "out-of-scope"
+reason = "latency statistics for the on-device harness; not part of the security argument."

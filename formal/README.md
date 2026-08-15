@@ -1011,8 +1011,18 @@ strongest result in the set.
 
 The point of naming the invariants was that one property should be greppable
 from this model to the Rust that implements it, to the Kani harness that proves
-a bounded slice of it, to the fuzz target that hammers it. Grepped over the
-whole tree (untracked files included) on 2026-08-12:
+a bounded slice of it, to the fuzz target that hammers it.
+
+**The measurement is continuous now, not a dated snapshot:** every property
+has an entry in `assurance/properties.toml` (id, statement, source, status —
+nothing else is hand-written), and `scripts/assurance_gate.py`, a `check.sh`
+row, derives the rest per run — defining module, checking configurations,
+targeting mutants, Kani harnesses, fuzz targets, Rust files, device tests —
+and holds the graph closed in both directions. The tables below are the
+2026-08-12 hand grep that motivated it, kept for the prose around them; the
+gate's output is the current truth.
+
+Grepped over the whole tree (untracked files included) on 2026-08-12:
 
 | Invariant | `.tla` | non-test Rust | Kani harness | fuzz target |
 |---|---|---|---|---|

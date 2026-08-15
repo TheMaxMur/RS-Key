@@ -1,0 +1,185 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 RS-Key contributors
+#
+# The security-property registry. HAND-WRITTEN FIELDS ONLY: id, name, status,
+# statement, source (+ ruling for accepted risks, clause_of for clauses).
+# Everything else — which module defines a property, which configurations check
+# it, which mutants target it, which Kani harnesses, fuzz targets, Rust files
+# and device tests carry its name — is DERIVED by scripts/assurance_gate.py and
+# printed, never stored. A hand-written copy of derivable evidence rotted in
+# three of six fields before a line of code existed; that experiment is not
+# repeated here.
+#
+# The gate holds this file against the tree in both directions: every invariant
+# any formal/*.cfg checks must have exactly one entry, and every entry must name
+# an invariant some configuration actually checks (accepted risks exempt — they
+# carry a ruling instead). A status must match the evidence ceiling: a Kani
+# harness on the property forces BOUNDED, none allows only MODELLED-ONLY.
+# PROVEN and OBSERVED are rejected until the tree grows evidence of those
+# classes — a status rule nothing can trip is a check that cannot fail.
+
+# ---- RSKeySecurityState — the FIDO security state ---------------------------
+
+[[property]]
+id = "SEC-FIDO-001"
+name = "NoAuthorizationBypass"
+status = "BOUNDED"
+statement = "No protected operation completes without the live authorization its own gate requires."
+source = ["CTAP 2.3 §6.5", "docs/threat-model.md"]
+
+[[property]]
+id = "SEC-FIDO-002"
+name = "NoCrossTransportTouchConsumption"
+status = "BOUNDED"
+statement = "A presence decision produced for one transport is never applied to another — neither a confirm nor a cancel."
+source = ["docs/threat-model.md"]
+
+[[property]]
+id = "SEC-FIDO-003"
+name = "NoTokenAfterInvalidation"
+status = "BOUNDED"
+statement = "A grant invalidated by a PIN change, PIN set, reset, stopUsingPinUvAuthToken or power cycle never authorizes again."
+source = ["CTAP 2.3 §6.5.5.7", "docs/threat-model.md"]
+
+[[property]]
+id = "SEC-FIDO-004"
+name = "NoAccessibleSecretWithoutGate"
+status = "MODELLED-ONLY"
+statement = "No live secret is reachable while the gate record that protects it is gone."
+source = ["docs/threat-model.md"]
+
+[[property]]
+id = "SEC-FIDO-005"
+name = "NoUnmanageableCredential"
+status = "MODELLED-ONLY"
+statement = "Every live credential is reachable by the management surface: its EF_RP entry exists."
+source = ["CTAP 2.3 §6.8", "docs/threat-model.md"]
+
+[[property]]
+id = "SEC-FIDO-006"
+name = "ResetNeverWeakensSurvivingState"
+status = "MODELLED-ONLY"
+statement = "No prefix of an authenticatorReset — torn or complete — leaves a surviving usable secret whose gate has already gone; the RAM copy of the seed counts as surviving."
+source = ["CTAP 2.3 §6.6", "docs/threat-model.md"]
+
+[[property]]
+id = "SEC-FIDO-006A"
+name = "ResetKeepsThePinGate"
+status = "MODELLED-ONLY"
+clause_of = "SEC-FIDO-006"
+statement = "A torn reset never leaves secrets standing with the PIN record already destroyed."
+source = ["CTAP 2.3 §6.6"]
+
+[[property]]
+id = "SEC-FIDO-006B"
+name = "ResetKeepsTheAlwaysUvGate"
+status = "MODELLED-ONLY"
+clause_of = "SEC-FIDO-006"
+statement = "A torn reset never leaves secrets standing with the alwaysUv gate already destroyed."
+source = ["CTAP 2.3 §6.6"]
+
+[[property]]
+id = "SEC-FIDO-006C"
+name = "ResetKeepsTheBackupSeal"
+status = "MODELLED-ONLY"
+clause_of = "SEC-FIDO-006"
+statement = "A torn reset never re-opens the one-time seed-export window over a seed it did not destroy: EF_BACKUP_SEALED is the gate that reads backwards."
+source = ["docs/threat-model.md"]
+
+[[property]]
+id = "SEC-FIDO-007"
+name = "RamNeverOutlivesFlashSeed"
+status = "MODELLED-ONLY"
+statement = "The RAM copy of the device seed never survives the flash record: ram implies store.seed. Structural fact the model asserts rather than argues from."
+source = ["docs/threat-model.md"]
+
+[[property]]
+id = "SEC-FIDO-008"
+name = "NoLiveTokenWithoutPinRecord"
+status = "MODELLED-ONLY"
+statement = "A live pinUvAuthToken implies EF_PIN exists. Structural fact; refuted once when only half of state reset was modelled, asserted ever since."
+source = ["CTAP 2.3 §6.5"]
+
+[[property]]
+id = "SEC-FIDO-009"
+name = "OpAdvancesIsOneActivity"
+status = "MODELLED-ONLY"
+statement = "The fairness disjunction names exactly one enabled activity at a time: ENABLED OpAdvances implies the device is not idle."
+source = ["formal/README.md — the fairness audit"]
+
+[[property]]
+id = "SEC-FIDO-L01"
+name = "EveryOpQuiesces"
+status = "MODELLED-ONLY"
+statement = "Every begun operation eventually returns the device to idle, under weak fairness of the worker only."
+source = ["CTAP 2.3 §6"]
+
+[[property]]
+id = "SEC-FIDO-L02"
+name = "EveryWaitReleases"
+status = "MODELLED-ONLY"
+statement = "Every open touch wait is eventually released: the presence timeout is real."
+source = ["CTAP 2.3 §6.5.5.7"]
+
+[[property]]
+id = "SEC-FIDO-L03"
+name = "EveryWalkCloses"
+status = "MODELLED-ONLY"
+statement = "Every stateful enumeration cursor eventually closes: the walk idle timer is real."
+source = ["CTAP 2.3 §6.8"]
+
+# ---- RSKeyAppletSeams — the applets' access statuses ------------------------
+
+[[property]]
+id = "SEC-SEAM-001"
+name = "NoStatusOutsideItsSelection"
+status = "MODELLED-ONLY"
+statement = "No applet security status survives outside that applet's selection."
+source = ["ISO 7816-4", "docs/threat-model.md"]
+
+[[property]]
+id = "SEC-SEAM-002"
+name = "NoStatusAfterARefusedAuth"
+status = "MODELLED-ONLY"
+statement = "A refused authentication revokes the status it failed to earn — the wire-path rule E15/E38 shipped, as a model invariant."
+source = ["PIV SP 800-73-4", "OpenPGP card 3.4"]
+
+[[property]]
+id = "SEC-SEAM-003"
+name = "NoKeyOpOnTheAdminStatus"
+status = "MODELLED-ONLY"
+statement = "An admin authentication never opens user key operations: PW3 is not PW1, the PIV mgm key is not the PIN."
+source = ["PIV SP 800-73-4", "OpenPGP card 3.4"]
+
+[[property]]
+id = "SEC-SEAM-004"
+name = "ReselectPreservesAccessStatus"
+status = "MODELLED-ONLY"
+statement = "Re-selecting the same applet preserves its access status; selecting another clears it."
+source = ["ISO 7816-4"]
+
+[[property]]
+id = "SEC-SEAM-005"
+name = "ExemptRefusalPreservesStatus"
+status = "MODELLED-ONLY"
+statement = "The two refusals exempt from revocation — the ones a conformant host can produce in normal use — preserve exactly the status they held, no more."
+source = ["formal/README.md — what a refused authentication costs"]
+
+# ---- Accepted risks — ruled by the maintainer, visible here so their absence
+# ---- from the evidence table reads as a decision, not a hole ----------------
+
+[[property]]
+id = "SEC-RISK-001"
+name = "PerDeviceAttestationCertIsACorrelationHandle"
+status = "ACCEPTED-RISK"
+statement = "The per-device self-signed attestation certificate is a stable cross-RP correlation handle when an RP requests direct attestation; batch attestation exists to prevent exactly this."
+source = ["docs/threat-model.md"]
+ruling = "Maintainer, 2026-08-10, asked twice and declined twice: the empty attestationRootCertificates stays. Options weighed: public batch key in the image, provisioning-time CA, leave it. Left."
+
+[[property]]
+id = "SEC-RISK-002"
+name = "FlashSnapshotRollsBackPinRetries"
+status = "ACCEPTED-RISK"
+statement = "picotool save/load restores PIN-retry counters: a physical attacker with flash access replays the budget."
+source = ["issue #37", "docs/threat-model.md"]
+ruling = "Mitigated by the strong-pin feature and a threat-model block; full defence needs anti-rollback state outside the image, which is a release-time OTP decision."

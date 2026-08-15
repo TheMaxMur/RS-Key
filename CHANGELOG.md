@@ -40,6 +40,28 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Added
 
+- **A security-property registry, held against the tree by a gate.**
+  `assurance/properties.toml` names every property TLC checks — 22 entries:
+  20 invariants and temporal properties across both modules, plus the two
+  maintainer-ruled accepted risks, so a ruled-away risk reads as a decision
+  rather than a hole. Hand-written fields are only id, statement, source and
+  status; everything else — defining module, checking configurations, targeting
+  mutants, Kani harnesses, fuzz targets, Rust files and device tests carrying
+  the name — `scripts/assurance_gate.py` derives and prints. The registry's own
+  worked example is why: a hand-written evidence record for the tree's
+  best-documented property was wrong in three of six fields before any code
+  existed.
+
+  The gate closes the graph in both directions: nothing TLC checks may be
+  unregistered, nothing registered may be unchecked, a status must equal the
+  evidence ceiling (a Kani harness forces BOUNDED; PROVEN is refused until that
+  evidence class exists), every `formal/*.cfg` must sit in a `run-tlc.sh` tier
+  or carry a named exemption, and `assurance/crates.toml` classifies all 26
+  workspace members — the ledger exists because two roadmap drafts enumerated
+  crates from memory and missed four, including the second-largest in the tree.
+  New `check.sh` row `assurance registry`; mutation table in
+  `scripts/test_assurance_gate.py`, 19 cases.
+
 - **The TLA+ model is checked by CI.** `deep-checks` gained a weekly `formal`
   row running `formal/run-tlc.sh safety` — the model, its 44 mutants, their
   `floors.txt` verdicts and the vacuity check. Until now none of that ran in any
