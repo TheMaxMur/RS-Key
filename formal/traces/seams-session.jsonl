@@ -1,0 +1,13 @@
+{"ev": "select", "app": "piv", "sw": "9000"}
+{"ev": "verify", "app": "piv", "ref": "pivPin", "sw": "63C2"}
+{"ev": "verify", "app": "piv", "ref": "pivPin", "sw": "9000"}
+{"ev": "select", "app": "oath", "sw": "9000"}
+{"ev": "select", "app": "piv", "sw": "9000"}
+{"ev": "select", "app": "piv", "sw": "9000"}
+{"ev": "select", "app": "pgp", "sw": "9000"}
+{"ev": "verify", "app": "pgp", "ref": "pw1", "sw": "9000"}
+{"ev": "verify", "app": "pgp", "ref": "pw3", "sw": "63C2"}
+{"ev": "card_reset"}
+{"ev": "select", "app": "piv", "sw": "9000"}
+{"ev": "power_cycle"}
+{"ev": "select", "app": "pgp", "sw": "9000"}

@@ -1297,6 +1297,52 @@ interface wedge (0x075D, `TX_TIMEOUT_MS`) is a liveness property of the async
 and the `secure_pin`
 codec are single-step, Kani-proved and unit-tested.
 
+## Phase 4 — trace validation: recorded sessions replayed against the model
+
+Everything above keeps model↔code fidelity by hand — citations name the code
+each action claims to abstract, mutants prove the model *can* catch defects,
+co-refutation proves the code level catches the same defects. What none of it
+measures is whether the code **as it runs** stays inside the model's behaviors.
+Phase 4 adds that empirical half, MongoDB-style: record a real session, force
+the model through it step by step, and let TLC judge.
+
+The pipeline, each stage falsifiable:
+
+1. **Record** — `formal/record-seam-trace.py` drives a scripted CCID session
+   against a live `tools/emu` (SELECTs across all three applets, a failed and a
+   successful PIV VERIFY, PW1/PW3, a card reset, a power cycle) and writes
+   `formal/traces/seams-session.jsonl`: wire-level events with the *observed*
+   status words. The committed trace really was recorded — the `63C2` in it is
+   the emulator's own retry counter answering a wrong PIN.
+2. **Map** — `scripts/trace_map.py` turns wire events into model actions, and
+   is deliberately STRICT: an unknown event, an unmappable status word, a
+   verify against an unselected applet are hard errors, never silent stutters —
+   a mapper that skips what it does not understand is a checker that stopped
+   checking. The one state it keeps is the current selection, which decides
+   `Reselect` vs `SelectOther` exactly as the Dispatcher's `reselect` flag
+   does. A `check.sh` row holds the committed `TraceSeamsData.tla` against the
+   committed trace (neither can drift alone), and the mapper carries its own
+   12-case mutation table.
+3. **Replay** — `TraceSeams.tla` extends the seam model with a position index:
+   `TraceNext` at step `i` takes *exactly* the recorded action, so the whole
+   behavior space is the one linear run and a step the model refuses leaves no
+   successor — **a divergence is a TLC deadlock at the exact step**. The
+   model's own invariants are checked along the way. The committed session
+   replays GREEN: 13 actions, distinct = 14 = length + 1.
+4. **Refuse** — `TraceSeamsBad.tla` replays a hand-written session the model
+   must reject (a PIV key operation with no VERIFY behind it) and `floors.txt`
+   requires that row **RED**: it deadlocks at step 2, which is the harness
+   demonstrating it can reject a session at all. Both rows are in the weekly
+   `safety` tier.
+
+**What a GREEN row claims, precisely.** "These recorded sessions are behaviors
+of the model" — evidence about the sessions, not a proof about all runs.
+Coverage grows by recording richer sessions (the OATH doors, the refused
+CHANGE flows, longer interleavings); regenerating is three commands, documented
+at the top of the recorder. The two harness modules duplicate ~15 lines because
+`EXTENDS` cannot be parameterized by a configuration — kept in lockstep, said
+in both.
+
 ## What now catches a run nobody watched
 
 That `VACUOUS` rule was one heuristic and a **reporting** guard: it printed a

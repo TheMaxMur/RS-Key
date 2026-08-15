@@ -44,6 +44,13 @@ Boot.cfg                             GREEN   8
 \* The CTAPHID reassembler (RSKeyTransport): 13 distinct at depth 4, the
 \* owner/seq/got/need product over two channels -- a third rounds to 4.
 Transport.cfg                        GREEN   4
+\* Phase 4, trace validation: a replay is LINEAR (distinct = trace length + 1),
+\* and the length changes whenever the session is re-recorded -- so the floor
+\* is low and the real guarantee is the verdict pair: a divergence in the
+\* recorded session deadlocks (GREEN row goes RED), and the Bad row is the
+\* harness proven able to refuse a session at all.
+TraceSeams.cfg                       GREEN   5
+TraceSeamsBad.cfg                    RED     -
 \* The liveness layer builds a behaviour graph ON TOP of the state graph -- 23.7
 \* million nodes at these constants -- and runs out of memory at the 4 GB
 \* default after the state search has already completed (E172). The heap column

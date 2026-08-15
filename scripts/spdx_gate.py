@@ -99,6 +99,7 @@ UNCHECKED = {
     ".md": "the tree is split — 21 of 57 carry it, the docs/ pages do not",
     ".toml": "12 of 44; a cargo manifest carries no header by convention",
     ".json": "data",
+    ".jsonl": "data (recorded traces; strict JSON carries no comment to hold a header)",
     ".txt": "data",
     ".cfg": "data (kani/proptest knobs and board fragments)",
     ".lock": "generated",

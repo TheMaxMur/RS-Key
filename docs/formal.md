@@ -70,6 +70,18 @@ never overruns the buffer. It is already unit-tested and fuzzed per frame;
 the model checks the invariants that live in the interleaving, which those
 do not assert.
 
+## Trace validation
+
+The models' fidelity to the code is kept by hand — citations, mutants,
+co-refutation — and one thing none of that measures is whether the code *as
+it runs* stays inside a model's behaviors. `TraceSeams.tla` closes that
+empirically: a real session recorded from the software emulator is replayed
+against the applet-seams model step by step, and a step the model refuses is
+a TLC deadlock at that exact position. A second, hand-written session the
+model must *reject* is required to go red, so the replay harness is proven
+able to refuse. A green replay is evidence about the recorded sessions, not
+a proof about all runs; coverage grows by recording richer sessions.
+
 ## The checks of the checks
 
 An invariant no defect can violate is the TLA+ analogue of a test that cannot

@@ -39,7 +39,7 @@ fi
 
 # Which module a configuration belongs to: the seam configs are the second
 # module's, and TLC takes the module name rather than reading it from the cfg.
-spec_for() { case "$1" in Seam*) echo RSKeyAppletSeams ;; Store*) echo RSKeyStore ;; Lat*) echo RSKeyRetryLattice ;; Admin*) echo RSKeyAdminSurface ;; Disp*) echo RSKeyTrustedDisplay ;; Boot*) echo RSKeyBootHardening ;; Trans*) echo RSKeyTransport ;; *) echo RSKeySecurityState ;; esac; }
+spec_for() { case "$1" in TraceSeamsBad*) echo TraceSeamsBad ;; TraceSeams*) echo TraceSeams ;; Seam*) echo RSKeyAppletSeams ;; Store*) echo RSKeyStore ;; Lat*) echo RSKeyRetryLattice ;; Admin*) echo RSKeyAdminSurface ;; Disp*) echo RSKeyTrustedDisplay ;; Boot*) echo RSKeyBootHardening ;; Trans*) echo RSKeyTransport ;; *) echo RSKeySecurityState ;; esac; }
 
 # floors.txt: what each configuration must produce. First match wins.
 expect_for() {
@@ -165,6 +165,8 @@ list_safety() {
   echo Transport.cfg           # the eighth module: the CTAPHID reassembler
   ls TransMut_*.cfg
   ls TransSolo_*.cfg
+  echo TraceSeams.cfg          # phase 4: a recorded session replayed -- GREEN
+  echo TraceSeamsBad.cfg       # and one the model must refuse -- RED
 }
 
 list_liveness() {
