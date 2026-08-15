@@ -185,9 +185,19 @@ def run_one(root: pathlib.Path, bug: str, entry: dict, host: str) -> tuple[str, 
             },
         )
         if r.returncode != 0:
-            tail = (r.stdout + r.stderr).strip().splitlines()
-            failed = [l for l in tail if "FAILED" in l or "test result" in l]
-            return "killed", (failed[-1] if failed else "slice exited nonzero")
+            out = r.stdout + r.stderr
+            # A compile error is not a kill: the tests never ran, so a broken
+            # patch would masquerade as "the tests caught the defect". A real
+            # test failure prints "test result:" / "FAILED"; a build break
+            # prints "error[E" / "error:" and no test line. Tell them apart, or
+            # a patch that does not compile scores a false killed — which is how
+            # BugPpuatIsAGate first read (EF_PAUTHTOKEN is a KeyFid, not a u16).
+            ran = [l for l in out.splitlines() if "FAILED" in l or "test result" in l]
+            if ran:
+                return "killed", ran[-1]
+            if re.search(r"^error(\[E\d+\])?:", out, re.M):
+                return "build-broke", "patch does not compile — not a kill"
+            return "killed", "slice exited nonzero (no test output)"
         return "gap", "every slice command stayed green"
     finally:
         subprocess.run(

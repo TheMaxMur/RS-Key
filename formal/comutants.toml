@@ -28,7 +28,7 @@
 # from the mutant's own Solo_*.cfg, so this file cannot disagree with the
 # matrix about who catches what.
 
-pending_floor = 18
+pending_floor = 0
 
 # ---- batch 1: the token/PIN family and the two write orders -----------------
 
@@ -187,58 +187,299 @@ evidence = "formal/README.md — once the seed leads the wipe unconditionally (0
 status = "unreachable"
 evidence = "formal/README.md — under eab4b5c the grant is swept in phase 1 and EF_PIN in phase 2, so ~pin.set /\\ gate.ppuat is unreachable; the mutant explored 40M+ states without a counterexample (E171), which floors.txt records as its verdict."
 
-# ---- batch 2+: derived later; the floor above only goes down ----------------
+# ---- batch 2: the rest, floor now 0 ----------------------------------------
 
 [comutant.BugChangePinKeepsPpuat]
-status = "pending"
-
-[comutant.BugCmWalkIgnoresChannel]
-status = "pending"
-
-[comutant.BugConsumeKeepsMcGa]
-status = "pending"
-
-[comutant.BugHostPreemptsLocalWait]
-status = "pending"
-
-[comutant.BugLocalPinIgnoresBudget]
-status = "pending"
-
-[comutant.BugLocalPinKeepsToken]
-status = "pending"
-
-[comutant.BugNoConsumeAfterUp]
-status = "pending"
-
-[comutant.BugNoDropStaleCancelAtEntry]
-status = "pending"
-
-[comutant.BugNoTouchRequired]
-status = "pending"
-
-[comutant.BugPanelCancelable]
-status = "pending"
+status = "patch"
+file = "crates/rsk-fido/src/clientpin.rs"
+find = """
+    clear_ppuat(ctx.fs).map_err(|_| CtapError::Other)?;
+    let res = store_new_pin(ctx, &padded);
+    padded.zeroize();
+    res?;
+    // The new PIN met minPINLength (store_new_pin), so the change satisfies a
+"""
+replace = """
+    let res = store_new_pin(ctx, &padded);
+    padded.zeroize();
+    res?;
+    // The new PIN met minPINLength (store_new_pin), so the change satisfies a
+"""
+slice = ["cargo", "test", "-p", "rsk-fido"]
+expect = "gap"
+note = """MEASURED GAP. Dropping clear_ppuat from change_pin breaks no host
+test: change_pin_revokes_the_persistent_token still passes, so the persistent
+grant is invalidated by another step of the flow and this clear_ppuat is
+redundant defence the model — which lacks that step — still requires. The
+model is stricter here. Filed: a harness asserting the surviving EF_PAUTHTOKEN
+no longer authorizes would either close it or prove the redundancy."""
 
 [comutant.BugPinWriteBeforeRevoke]
-status = "pending"
+status = "patch"
+file = "crates/rsk-fido/src/clientpin.rs"
+find = """
+    clear_ppuat(ctx.fs).map_err(|_| CtapError::Other)?;
+    let res = store_new_pin(ctx, &padded);
+    padded.zeroize();
+    res?;
+    // The new PIN met minPINLength (store_new_pin), so the change satisfies a
+"""
+replace = """
+    let res = store_new_pin(ctx, &padded);
+    padded.zeroize();
+    res?;
+    clear_ppuat(ctx.fs).map_err(|_| CtapError::Other)?;
+    // The new PIN met minPINLength (store_new_pin), so the change satisfies a
+"""
+slice = ["cargo", "test", "-p", "rsk-fido"]
+expect = "gap"
+note = """MEASURED GAP. The new-verifier-before-revoke order only matters
+under a power cut between the two writes, and no host test tears the changePIN
+sequence (the reset family has a tear harness; the PIN flows do not). Filed:
+a torn-changePIN harness over a mutating-op budget, like the torn-delete one."""
 
-[comutant.BugPpuatIsAGate]
-status = "pending"
+[comutant.BugCmWalkIgnoresChannel]
+status = "patch"
+file = "crates/rsk-fido/src/state.rs"
+find = "self.channel == channel && self.rp_counter <= self.rp_total"
+replace = "self.rp_counter <= self.rp_total"
+slice = ["cargo", "test", "-p", "rsk-fido"]
+expect = "killed"
+note = "the RP walk ignores which channel opened it — any channel continues it."
+
+[comutant.BugNoConsumeAfterUp]
+status = "patch"
+file = "crates/rsk-fido/src/state.rs"
+find = """
+        if self.paut.in_use {
+            self.paut.permissions &= PERM_LBW;
+            self.paut.user_present = false;
+"""
+replace = """
+        if self.paut.in_use {
+            self.paut.user_present = false;
+"""
+slice = ["cargo", "test", "-p", "rsk-fido"]
+expect = "killed"
+note = "mc/ga survive one user presence (GHSA-wqjm-653g-hgw3): the narrowing to largeBlobWrite is gone."
+
+[comutant.BugConsumeKeepsMcGa]
+status = "patch"
+file = "crates/rsk-fido/src/state.rs"
+find = "self.paut.permissions &= PERM_LBW;"
+replace = "self.paut.permissions &= PERM_LBW | PERM_MC | PERM_GA;"
+slice = ["cargo", "test", "-p", "rsk-fido"]
+expect = "killed"
+note = "the §6.5.5.7 triad kept instead of narrowed — mc/ga persist past the presence they were spent on."
 
 [comutant.BugResetGatesFirst]
-status = "pending"
+status = "patch"
+file = "crates/rsk-fido/src/reset.rs"
+find = """
+    sweep(ctx, |fid| is_fido_fid(fid) && !is_fido_gate_fid(fid))?;
+    sweep(ctx, is_fido_gate_fid)?;
+"""
+replace = """
+    sweep(ctx, is_fido_gate_fid)?;
+    sweep(ctx, |fid| is_fido_fid(fid) && !is_fido_gate_fid(fid))?;
+"""
+slice = ["cargo", "test", "-p", "rsk-fido"]
+expect = "killed"
+note = "gates swept before secrets: a torn reset can strand a passkey with its PIN gate already gone."
 
 [comutant.BugSeedDoesNotLead]
-status = "pending"
-
-[comutant.BugSoftLockLostOnWarmReset]
-status = "pending"
+status = "patch"
+file = "crates/rsk-fido/src/reset.rs"
+find = """
+    for fid in FIDO_SEED_FIDS {
+        ctx.fs.force_delete(fid).map_err(|_| CtapError::Other)?;
+    }
+    sweep(ctx, |fid| is_fido_fid(fid) && !is_fido_gate_fid(fid))?;
+"""
+replace = """
+    sweep(ctx, |fid| is_fido_fid(fid) && !is_fido_gate_fid(fid))?;
+"""
+slice = ["cargo", "test", "-p", "rsk-fido"]
+expect = "killed"
+note = "the pre-0x08BF wipe: the seed is swept in ring order instead of leading, so a cut can leave a decryptable credential behind a live seed."
 
 [comutant.BugStateResetAfterWipe]
-status = "pending"
-
-[comutant.BugTouchNotSpent]
-status = "pending"
+status = "patch"
+file = "crates/rsk-fido/src/reset.rs"
+find = """
+    ctx.state.reset();
+    // And the seed leads the flash, in its own write ahead of the batch: ring order
+"""
+replace = """
+    // And the seed leads the flash, in its own write ahead of the batch: ring order
+"""
+find2 = """
+    ensure_seed(&ctx.dev, ctx.fs, ctx.rng).map_err(|_| CtapError::Other)?;
+"""
+replace2 = """
+    ensure_seed(&ctx.dev, ctx.fs, ctx.rng).map_err(|_| CtapError::Other)?;
+    ctx.state.reset();
+"""
+slice = ["cargo", "test", "-p", "rsk-fido"]
+expect = "gap"
+note = """MEASURED GAP (E76 regression). Moving ctx.state.reset() behind the
+flash wipe breaks no host test: reset_tests tears the flash sequence but does
+not assert the live session key is dropped BEFORE the seed it caches is gone,
+so a cut mid-wipe running on a stale keydev is unmodelled at the code level.
+Filed: extend the torn-reset harness to assert the session is reset first."""
 
 [comutant.BugWarmResetReopensWindow]
-status = "pending"
+status = "patch"
+file = "crates/rsk-fido/src/reset.rs"
+find = "!ctx.state.warm_boot && ctx.now_ms <= RESET_WINDOW_MS"
+replace = "ctx.now_ms <= RESET_WINDOW_MS"
+slice = ["cargo", "test", "-p", "rsk-fido"]
+expect = "killed"
+note = "a warm reset re-opens the reset window a host-requestable sys_reset can restart at will."
+
+[comutant.BugPpuatIsAGate]
+status = "patch"
+file = "crates/rsk-fido/src/reset.rs"
+find = """
+    matches!(
+        fid,
+        EF_PIN | EF_DEVICE_PIN | EF_ALWAYS_UV | EF_MINPINLEN | EF_BACKUP_SEALED
+    )
+}
+"""
+replace = """
+    matches!(
+        fid,
+        EF_PIN | EF_DEVICE_PIN | EF_ALWAYS_UV | EF_MINPINLEN | EF_BACKUP_SEALED
+    ) || fid == EF_PAUTHTOKEN.get()
+}
+"""
+slice = ["cargo", "test", "-p", "rsk-fido"]
+expect = "killed"
+note = "eab4b5c reverted: EF_PAUTHTOKEN back in the deferred gate phase (it is a KeyFid, so `.get()`, not a match arm), where a torn wipe strands a grant with no PIN behind it."
+
+# ---- rsk-device: presence arbitration + the PinLock carry -------------------
+
+[comutant.BugNoDropStaleCancelAtEntry]
+status = "patch"
+file = "crates/rsk-device/src/presence.rs"
+find = """
+        arb.set_cancel_requested(false);
+        arb.set_up_pending(true);
+"""
+replace = """
+        arb.set_up_pending(true);
+"""
+slice = ["cargo", "test", "-p", "rsk-device"]
+expect = "killed"
+note = "the wait-entry cancel drop removed: a cancel latched by a dispatch that never entered wait is consumed by the next one."
+
+[comutant.BugTouchNotSpent]
+status = "patch"
+file = "crates/rsk-device/src/presence.rs"
+find = """
+                if !self.spent {
+                    break Outcome::Confirmed;
+                }
+"""
+replace = """
+                break Outcome::Confirmed;
+"""
+slice = ["cargo", "test", "-p", "rsk-device"]
+expect = "killed"
+note = "the spent latch gone: a press the previous ceremony consumed satisfies the next one."
+
+[comutant.BugPanelCancelable]
+status = "patch"
+file = "crates/rsk-device/src/presence.rs"
+find = """
+        if self.wait_scope.load(Ordering::Acquire) == SCOPE_FIDO {
+            self.cancel_requested.store(true, Ordering::Release);
+        }
+"""
+replace = """
+        if self.wait_scope.load(Ordering::Acquire) != SCOPE_OTP {
+            self.cancel_requested.store(true, Ordering::Release);
+        }
+"""
+slice = ["cargo", "test", "-p", "rsk-device"]
+expect = "killed"
+note = "E45: request_cancel lands during a panel (SCOPE_NONE) ceremony, not just a FIDO wait. The model splits the scope test three ways; the code fuses it into one guard, so this and BugUnscopedCancel share a site."
+
+[comutant.BugNoTouchRequired]
+status = "patch"
+file = "crates/rsk-device/src/presence.rs"
+find = """
+            if board.pressed() {
+                // A press the previous ceremony already consumed is not consent
+                // for this one; it stays spent until the finger actually lifts.
+                if !self.spent {
+                    break Outcome::Confirmed;
+                }
+            } else {
+"""
+replace = """
+            if true {
+                break Outcome::Confirmed;
+            } else if board.pressed() {
+            } else {
+"""
+slice = ["cargo", "test", "-p", "rsk-device"]
+expect = "killed"
+note = "the wait confirms without a press at all."
+
+[comutant.BugHostPreemptsLocalWait]
+status = "patch"
+file = "crates/rsk-device/src/presence.rs"
+find = """
+    pub fn set_wait_scope(&self, scope: u8) {
+        self.wait_scope.store(scope, Ordering::Release);
+    }
+"""
+replace = """
+    pub fn set_wait_scope(&self, scope: u8) {
+        let scope = if scope == SCOPE_NONE { SCOPE_FIDO } else { scope };
+        self.wait_scope.store(scope, Ordering::Release);
+    }
+"""
+slice = ["cargo", "test", "-p", "rsk-device"]
+expect = "killed"
+note = "a host command claims the button over a live on-panel ceremony: SCOPE_NONE (the panel's) is overwritten with a host scope."
+
+[comutant.BugSoftLockLostOnWarmReset]
+status = "patch"
+file = "crates/rsk-device/src/ctap.rs"
+find = """
+        fido_state.restore_pin_lock(boot.lock);
+        fido_state.warm_boot = boot.warm;
+"""
+replace = """
+        fido_state.warm_boot = boot.warm;
+"""
+slice = ["cargo", "test", "-p", "rsk-device"]
+expect = "gap"
+note = """MEASURED GAP. Dropping restore_pin_lock across the warm-boot path
+breaks no rsk-device test: nothing drives boot_state() with a live lock and a
+warm origin and asserts the lock carried. A clean missing test. Filed: a
+ctap-boot harness that arms the soft lock, rebuilds through a warm boot, and
+checks the retry budget is still spent."""
+
+# ---- rsk-display: the on-panel PIN gate ------------------------------------
+
+[comutant.BugLocalPinIgnoresBudget]
+status = "patch"
+file = "crates/rsk-display/src/gates.rs"
+find = "                PinScope::Fido => rsk_fido::passkeys::pin_retries_left(&mut fs),"
+replace = "                PinScope::Fido => Some(255),"
+slice = ["cargo", "test", "-p", "rsk-display"]
+expect = "killed"
+note = "the on-pad PIN pad ignores the exhausted EF_PIN counter, offering unlimited attempts past the lockout."
+
+[comutant.BugLocalPinKeepsToken]
+status = "patch"
+file = "crates/rsk-display/src/gates.rs"
+find = "        let ends_host_token = scope == PinScope::Fido && retries.is_some_and(|left| left > 0);"
+replace = "        let ends_host_token = false;"
+slice = ["cargo", "test", "-p", "rsk-display"]
+expect = "killed"
+note = "E66: the panel's PIN pad no longer ends the host token — a fourth door that leaves a host session live."

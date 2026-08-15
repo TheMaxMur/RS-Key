@@ -151,6 +151,34 @@ def test_drifted_anchor_in_run_is_named(tmp_path):
     assert verdict == "anchor-gone"
 
 
+def test_compile_break_is_not_a_kill(tmp_path):
+    # A slice that exits nonzero with a compiler-shaped error but no test line
+    # is a broken patch, not a caught defect. Scoring it killed is how a patch
+    # that does not compile passes as "the tests noticed" — the trap
+    # BugPpuatIsAGate first fell into.
+    root = git_tree(tmp_path)
+    entry = {
+        "file": "src/lib.rs",
+        "find": "GUARD_LINE\n",
+        "slice": ["sh", "-c", 'echo "error[E0308]: mismatched types" >&2; exit 1'],
+    }
+    verdict, _ = comutate.run_one(root, "BugAlpha", entry, "any-host")
+    assert verdict == "build-broke", verdict
+
+
+def test_test_failure_is_a_kill_even_with_error_word(tmp_path):
+    # A real test failure line wins over a stray "error:" in the log — the tests
+    # ran and caught it.
+    root = git_tree(tmp_path)
+    entry = {
+        "file": "src/lib.rs",
+        "find": "GUARD_LINE\n",
+        "slice": ["sh", "-c", 'echo "test result: FAILED. 1 failed"; echo "error: x" >&2; exit 1'],
+    }
+    verdict, _ = comutate.run_one(root, "BugAlpha", entry, "any-host")
+    assert verdict == "killed", verdict
+
+
 def test_run_flags_a_verdict_that_differs_from_the_record(tmp_path, capsys):
     # The fixture records BugAlpha as expect="gap" over a `true` slice, which is
     # a gap. Point its slice at `false` without touching `expect`: the run now

@@ -49,9 +49,21 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   in a throwaway worktree (carrying the working-tree diff, so a just-closed gap
   reads killed before a commit) and demands the recorded verdict, while
   `--lint` (a `check.sh` row) holds the file against the `Mut_*.cfg` roster and
-  resolves every patch anchor against today's code. Batch 1, ten mutants
-  measured: **eight killed, two unreachable — after closing the two gaps the
-  measurement itself surfaced**, which is the point of the pass:
+  resolves every patch anchor against today's code. **The whole roster is
+  measured: 28 mutants — 22 killed, 4 measured gaps, 2 unreachable.** A kill
+  must carry real test output: a patch that fails to *compile* scores
+  `build-broke`, never killed — the trap the first `BugPpuatIsAGate` patch fell
+  into (`EF_PAUTHTOKEN` is a `KeyFid`, not a `u16`) and the reason the verdict
+  logic tells the two apart.
+
+  The four gaps are recorded with their mechanism and a filed harness each,
+  cargo-mutants-style — a MISSED means "no unit test kills it", not "nothing
+  does": the two PIN-flow orders (`clear_ppuat` dropped or reordered around
+  `store_new_pin`) are observable only under a torn changePIN, and no harness
+  tears that flow; the warm-boot `PinLock` carry has no boot-path test; and the
+  torn-reset harness does not assert the live session is dropped before the
+  flash work. Two more gaps were surfaced and CLOSED during batch 1,
+  which is the point of the pass:
 
   - `BugTokenSurvivesPinChange` — changePIN leaving the in-RAM session token
     alive — was caught by the model and by *nothing* at the code level: the
