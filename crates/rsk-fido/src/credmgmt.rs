@@ -250,6 +250,7 @@ fn authorize_cm<S: Storage, R: Rng>(
 /// A holder of it *is* the `pcmr` grant, and a persistent token carries no rpId
 /// binding and no usage timer, so it authorizes on its own. No record — or no
 /// `EF_PIN` behind it — is no grant.
+/// Refines `RSKeySecurityState!NoAccessibleSecretWithoutGate` — SEC-FIDO-004.
 fn authorized_by_ppuat<S: Storage, R: Rng>(
     ctx: &mut Ctx<S, R>,
     proto: PinProto,
@@ -682,6 +683,7 @@ fn delete_credential<S: Storage, R: Rng>(
 /// zero. Shared by the CTAP `deleteCredential` (0x06) and the trusted-display
 /// [`crate::passkeys::delete_cred`] so both keep the RP index consistent the same
 /// way. Touches only the flash store, never the session state.
+/// Refines `RSKeySecurityState!NoUnmanageableCredential` — SEC-FIDO-005.
 pub(crate) fn decrement_rp<S: Storage>(
     fs: &mut Fs<S>,
     rp_id_hash: &[u8; 32],

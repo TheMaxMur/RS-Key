@@ -759,6 +759,7 @@ pub(crate) fn remaining_rk<S: Storage>(fs: &mut Fs<S>, used_ef_cred: u16) -> u16
 // box, rpIdHash, rpId, userId, cached pubkey); a struct would add indirection for
 // the single makeCredential call site.
 #[allow(clippy::too_many_arguments)]
+/// Refines `RSKeySecurityState!NoUnmanageableCredential` — SEC-FIDO-005.
 pub fn credential_store<S: Storage>(
     seed: &[u8; 32],
     dev: &Device,

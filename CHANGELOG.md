@@ -62,6 +62,16 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   New `check.sh` row `assurance registry`; mutation table in
   `scripts/test_assurance_gate.py`, 19 cases.
 
+- **Property tags in production Rust.** The 24 owner functions the model's
+  ownership table documents now carry a doc line —
+  `` Refines `RSKeySecurityState!<Invariant>` — SEC-FIDO-NNN. `` — so a
+  property greps from the model to the code that owns it in both directions,
+  which was the one all-zero column of the traceability table. The gate
+  validates every tag (module exists, id registered, id↔invariant pairing
+  matches) and ratchets the other way: every invariant `Shipped.cfg` checks
+  must be named in production Rust somewhere. Doc comments only — nothing
+  reaches the image, no `bcdDevice` bump.
+
 - **The TLA+ model is checked by CI.** `deep-checks` gained a weekly `formal`
   row running `formal/run-tlc.sh safety` — the model, its 44 mutants, their
   `floors.txt` verdicts and the vacuity check. Until now none of that ran in any

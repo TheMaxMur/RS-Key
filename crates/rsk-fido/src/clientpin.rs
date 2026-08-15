@@ -171,6 +171,7 @@ fn get_key_agreement<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, out: &mut [u8]) ->
     Ok(len)
 }
 
+/// Refines `RSKeySecurityState!NoTokenAfterInvalidation` — SEC-FIDO-003.
 fn set_pin<S: Storage, R: Rng>(
     ctx: &mut Ctx<S, R>,
     req: &Req,
@@ -221,6 +222,7 @@ fn set_pin<S: Storage, R: Rng>(
     Ok(0)
 }
 
+/// Refines `RSKeySecurityState!NoTokenAfterInvalidation` — SEC-FIDO-003.
 fn change_pin<S: Storage, R: Rng>(
     ctx: &mut Ctx<S, R>,
     req: &Req,
@@ -396,6 +398,7 @@ fn get_pin_token<S: Storage, R: Rng>(
 /// write the clientPIN response. Shared by the PIN (0x05/0x09) and the built-in-UV
 /// (0x06) token paths once verification has already succeeded — the token itself
 /// is identical; only *how* the user verified differs.
+/// Refines `RSKeySecurityState!NoLiveTokenWithoutPinRecord` — SEC-FIDO-008.
 fn issue_token<S: Storage, R: Rng>(
     ctx: &mut Ctx<S, R>,
     proto: PinProto,
@@ -715,6 +718,7 @@ fn derive_shared<S: Storage, R: Rng>(
 
 /// Compare a candidate 16-byte PIN hash against the stored verifier. Decrements
 /// the retry counter first; on mismatch applies the lockout ladder.
+/// Refines `RSKeySecurityState!NoAuthorizationBypass` — SEC-FIDO-001.
 fn spend_and_verify_pin_hash<S: Storage, R: Rng>(
     ctx: &mut Ctx<S, R>,
     pin_hash: &[u8],

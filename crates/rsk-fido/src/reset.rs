@@ -27,6 +27,7 @@ const RESET_MAX_DELETES: u32 = 4 * MAX_RESIDENT_CREDENTIALS as u32 + 13;
 /// status byte. Also the documented recovery from a soft lock with a lost lock
 /// key: `EF_KEY_DEV_ENC` leads the wipe with the seed it wraps and a fresh seed is
 /// generated (the old identity is gone — that is the design).
+/// Refines `RSKeySecurityState!ResetNeverWeakensSurvivingState` — SEC-FIDO-006.
 pub fn reset<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>) -> CtapResult {
     if !ctx.presence.shows_confirm() && !in_reset_window(ctx) {
         return Err(CtapError::NotAllowed);
@@ -78,6 +79,7 @@ pub fn reset<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>) -> CtapResult {
 /// reporting success only when the enumeration provably completed over an empty
 /// range. Batched because `for_each_key` cannot delete mid-iteration, and de-duped
 /// because the flash walk can yield multiple stored versions of one fid.
+/// Refines `RSKeySecurityState!ResetNeverWeakensSurvivingState` — SEC-FIDO-006.
 fn sweep<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, pred: fn(u16) -> bool) -> Result<(), CtapError> {
     let mut deleted = 0u32;
     loop {
@@ -141,6 +143,7 @@ pub fn is_fido_seed_fid(fid: u16) -> bool {
 /// its absence is the RESTRICTIVE state, and deferring it alongside `EF_PIN` meant a
 /// cut between the two left a live grant with no PIN behind it. It goes with the
 /// secrets, where a prefix can only ever revoke it early.
+/// Refines `RSKeySecurityState!NoAccessibleSecretWithoutGate` — SEC-FIDO-004.
 pub fn is_fido_gate_fid(fid: u16) -> bool {
     matches!(
         fid,
@@ -199,6 +202,7 @@ fn is_fido_fid(fid: u16) -> bool {
 /// is device identity, not user data, and `authenticatorReset` preserves it too.
 /// The fused OTP / secure-boot state is untouched by a flash wipe regardless. The
 /// display passes this predicate to [`rsk_fs::Fs::factory_wipe`].
+/// Refines `RSKeySecurityState!ResetNeverWeakensSurvivingState` — SEC-FIDO-006.
 pub fn survives_factory_reset(fid: u16) -> bool {
     fid == EF_ATT_KEY.get() || fid == EF_ATT_CHAIN
 }

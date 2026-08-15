@@ -169,6 +169,7 @@ impl CredMgmtState {
     /// Whether `channel` may take the next leg of the RP walk: it opened it, and
     /// the walk has not run out. Both halves in one place because a *Next* carries
     /// no authorization of its own (§6.8) — the pair IS the authorization check.
+    /// Refines `RSKeySecurityState!NoAuthorizationBypass` — SEC-FIDO-001.
     pub fn may_walk_rps(&self, channel: u32) -> bool {
         self.channel == channel && self.rp_counter <= self.rp_total
     }
@@ -282,6 +283,7 @@ impl PinUvAuthToken {
 /// batch, spending the whole flash retry budget with no power cycle (CTAP 2.1
 /// §6.5.5.6).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+/// Refines `RSKeySecurityState!NoAuthorizationBypass` — SEC-FIDO-001.
 pub struct PinLock {
     /// clientPIN is locked until the authenticator is really power-cycled.
     pub engaged: bool,
@@ -419,6 +421,8 @@ impl FidoState {
     /// token / session key / ephemeral scalar). The DEVK, the journal's boot-entry
     /// flag and the warm-boot origin are device/power-cycle facts, not session
     /// state — they carry across, as does the in-flight request's channel.
+    ///
+    /// Refines `RSKeySecurityState!ResetNeverWeakensSurvivingState` — SEC-FIDO-006.
     pub fn reset(&mut self) {
         let devk_source = self.devk_source;
         let audit_boot_logged = self.audit_boot_logged;
@@ -483,6 +487,7 @@ impl FidoState {
 
     /// `resetPinUvAuthToken`: new random token, cleared permissions / flags. The
     /// credMgmt cursor goes with it, like [`Self::stop_using_token`].
+    /// Refines `RSKeySecurityState!NoTokenAfterInvalidation` — SEC-FIDO-003.
     pub fn reset_pin_uv_auth_token(&mut self, rng: &mut impl Rng) {
         self.cm.reset();
         rng.fill(&mut self.paut.token);
@@ -542,6 +547,7 @@ impl FidoState {
     /// `stopUsingPinUvAuthToken` — drop the in-use state, permissions, and
     /// presence/rpId binding. The token bytes stay put; `in_use == false` and
     /// zero permissions make every downstream check fail closed.
+    /// Refines `RSKeySecurityState!NoTokenAfterInvalidation` — SEC-FIDO-003.
     pub fn stop_using_token(&mut self) {
         self.paut.in_use = false;
         self.paut.permissions = 0;
@@ -590,6 +596,7 @@ impl FidoState {
     /// Expire an in-use token once its usage timer has run out (CTAP 2.1
     /// §6.5.5.7), checked before every CBOR command. Retires on either the
     /// rolling inactivity window or the absolute lifetime cap, whichever first.
+    /// Refines `RSKeySecurityState!NoTokenAfterInvalidation` — SEC-FIDO-003.
     pub fn expire_stale_token(&mut self, now_ms: u64) {
         if !self.paut.in_use {
             return;

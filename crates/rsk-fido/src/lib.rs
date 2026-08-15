@@ -180,6 +180,7 @@ impl<S: Storage, R: Rng> Ctx<'_, S, R> {
     /// The device seed for FIDO operations: the RAM copy a vendor `UNLOCK` left
     /// behind wins over flash; on a soft-locked device with no unlock this
     /// session, both fail and the operation errors out — that is the lock.
+    /// Refines `RSKeySecurityState!ResetNeverWeakensSurvivingState` — SEC-FIDO-006.
     pub fn load_keydev(&mut self) -> Option<[u8; 32]> {
         self.state
             .keydev_dec

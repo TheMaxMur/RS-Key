@@ -65,6 +65,14 @@ EXEMPT_CFG = {
 #: add the evidence class to the derivation, then admit the status.
 STATUSES = {"BOUNDED", "MODELLED-ONLY", "ACCEPTED-RISK"}
 
+#: A property tag in production Rust: `Refines \`Module!Invariant\` — SEC-X-NNN.`
+#: Both halves are validated — the module against formal/, the name and the id
+#: against the registry, and the pairing against itself, so a copy-pasted tag
+#: whose id names one property and whose invariant names another is a finding
+#: rather than two half-truths.
+TAG = re.compile(r"Refines\s+`([A-Za-z0-9]+)!([A-Za-z0-9]+)`\s+—\s+(SEC-[A-Z]+-[0-9A-Z]+)")
+SEC_ID = re.compile(r"\bSEC-[A-Z]+-[0-9A-Z]+\b")
+
 CFG_KEYWORDS = re.compile(
     r"^(SPECIFICATION|CONSTANTS?|INVARIANTS?|PROPERT(?:Y|IES)|CONSTRAINTS?|"
     r"INIT|NEXT|SYMMETRY|VIEW|CHECK_DEADLOCK|ALIAS)\b"
@@ -241,6 +249,53 @@ def check_properties(root: pathlib.Path, findings: list[str]) -> list[dict]:
     return rows
 
 
+def check_tags(root: pathlib.Path, findings: list[str], entries: list[dict]) -> None:
+    """Every property tag in production Rust names real registry rows.
+
+    And the other direction, scoped to where owners exist: every invariant the
+    tree-as-it-stands configuration (Shipped.cfg) checks must be named in
+    production Rust at least once. That set is derived from the cfg, not kept
+    by hand — it is exactly the invariants whose Rust owners formal/README.md
+    documents, and the column that measured 0-for-all until these tags landed.
+    """
+    by_id = {e.get("id"): e.get("name") for e in entries}
+    modules = {p.stem for p in (root / "formal").glob("*.tla")}
+    rust_files = [
+        f
+        for f in sorted((root / "crates").glob("*/src/**/*.rs"))
+        if "kani" not in f.name and "tests" not in f.name
+    ]
+    for f in rust_files:
+        text = f.read_text(errors="ignore")
+        tagged_ids = set()
+        for module, name, pid in TAG.findall(text):
+            tagged_ids.add(pid)
+            where = f"{f.name}: `{module}!{name}` — {pid}"
+            if module not in modules:
+                findings.append(f"{where}: no such formal/ module")
+            if pid not in by_id:
+                findings.append(f"{where}: id not in the registry")
+            elif by_id[pid] != name:
+                findings.append(
+                    f"{where}: id belongs to {by_id[pid]!r} — mismatched pairing"
+                )
+        for pid in set(SEC_ID.findall(text)) - tagged_ids:
+            if pid not in by_id:
+                findings.append(f"{f.name}: {pid} is not in the registry")
+
+    shipped = root / "formal" / "Shipped.cfg"
+    if shipped.is_file():
+        for name in cfg_checked(shipped):
+            if not any(
+                re.search(r"\b" + re.escape(name) + r"\b", f.read_text(errors="ignore"))
+                for f in rust_files
+            ):
+                findings.append(
+                    f"{name}: checked by Shipped.cfg but named nowhere in "
+                    "production Rust — its owner lost the tag"
+                )
+
+
 def check_tiers(root: pathlib.Path, findings: list[str]) -> int:
     formal = root / "formal"
     tiered = tier_union(formal)
@@ -298,6 +353,7 @@ def audit(root: pathlib.Path):
     root = pathlib.Path(root)
     findings: list[str] = []
     rows = check_properties(root, findings)
+    check_tags(root, findings, [r["e"] for r in rows])
     tiered = check_tiers(root, findings)
     tally = check_crates(root, findings)
 

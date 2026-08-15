@@ -307,6 +307,7 @@ pub fn ensure_ppuat<S: Storage>(
 /// `resetPersistentPinUvAuthToken` (§6.5.4): drop the token, which clears its
 /// permissions with it. `force_delete`, not `delete` — this revokes a capability,
 /// so a false-absent present bit must not leave the record live in the backend.
+/// Refines `RSKeySecurityState!NoTokenAfterInvalidation` — SEC-FIDO-003.
 pub fn clear_ppuat<S: Storage>(fs: &mut Fs<S>) -> Result<()> {
     fs.force_delete(EF_PAUTHTOKEN.get())
 }
@@ -431,6 +432,7 @@ pub fn migrate_keydev_pin<S: Storage>(dev: &Device, fs: &mut Fs<S>, pin_hash: &[
 /// seed is NOT regenerated — the wrapped blob *is* the seed — and the
 /// attestation step is skipped (the cert already exists from before the lock;
 /// the seed is unreadable here anyway).
+/// Refines `RSKeySecurityState!RamNeverOutlivesFlashSeed` — SEC-FIDO-007.
 pub fn ensure_seed<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut impl Rng) -> Result<()> {
     let locked = lock_engaged(fs);
     if !fs.has_key(EF_KEY_DEV) && !locked {

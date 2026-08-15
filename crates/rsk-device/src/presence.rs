@@ -106,6 +106,7 @@ impl Arbiter {
 
     /// Is a touch pending *for `scope`*? Every transport hook needs the
     /// conjunction, never the bare flag.
+    /// Refines `RSKeySecurityState!NoCrossTransportTouchConsumption` — SEC-FIDO-002.
     pub fn pending_for(&self, scope: u8) -> bool {
         self.up_pending.load(Ordering::Acquire) && self.wait_scope.load(Ordering::Acquire) == scope
     }
@@ -113,6 +114,7 @@ impl Arbiter {
     /// The CTAPHID cancel hook: request that an in-flight touch wait be
     /// abandoned. Only ever ends a FIDO ceremony — the wait it aborts must be
     /// the one the cancelling channel owns.
+    /// Refines `RSKeySecurityState!NoCrossTransportTouchConsumption` — SEC-FIDO-002.
     pub fn request_cancel(&self) {
         if self.wait_scope.load(Ordering::Acquire) == SCOPE_FIDO {
             self.cancel_requested.store(true, Ordering::Release);
@@ -123,6 +125,7 @@ impl Arbiter {
     /// that aborts (`0x8f`), or a new frame — a YubiKey lets either supersede
     /// the wait, and without that every later command reads "would block" until
     /// the wait times out.
+    /// Refines `RSKeySecurityState!NoCrossTransportTouchConsumption` — SEC-FIDO-002.
     pub fn cancel_otp_wait(&self) {
         if self.wait_scope.load(Ordering::Acquire) == SCOPE_OTP {
             self.cancel_requested.store(true, Ordering::Relaxed);

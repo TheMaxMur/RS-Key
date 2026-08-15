@@ -96,7 +96,11 @@ def build(root: pathlib.Path) -> pathlib.Path:
 
     a = root / "crates" / "rsk-a" / "src"
     a.mkdir(parents=True)
-    (a / "lib.rs").write_text("// FooStaysClosed is owned here\n")
+    (a / "lib.rs").write_text(
+        "/// Refines `Mini!FooStaysClosed` — SEC-T-001.\n"
+        "fn foo() {}\n"
+        "// BarNeverOpens is maintained by bar()\n"
+    )
     (a / "state_kani.rs").write_text("fn foo_stays_closed() {}\n")
     b = root / "crates" / "rsk-b" / "src"
     b.mkdir(parents=True)
@@ -235,6 +239,43 @@ def test_risk_that_is_actually_checked_fails(tree, capsys):
 def test_entry_without_tla_definition_fails(tree, capsys):
     edit(tree / "formal" / "Mini.tla", "BarNeverOpens == bar = FALSE\n", "")
     red(tree, capsys, "no definition in any formal/*.tla")
+
+
+# ---- tags in production Rust ---------------------------------------------------
+
+
+def test_tag_with_ghost_module_fails(tree, capsys):
+    edit(tree / "crates" / "rsk-a" / "src" / "lib.rs", "`Mini!", "`Atlantis!")
+    red(tree, capsys, "no such formal/ module")
+
+
+def test_tag_with_unregistered_id_fails(tree, capsys):
+    edit(tree / "crates" / "rsk-a" / "src" / "lib.rs", "SEC-T-001", "SEC-T-666")
+    red(tree, capsys, "id not in the registry")
+
+
+def test_tag_pairing_mismatch_fails(tree, capsys):
+    edit(
+        tree / "crates" / "rsk-a" / "src" / "lib.rs",
+        "`Mini!FooStaysClosed` — SEC-T-001",
+        "`Mini!FooStaysClosed` — SEC-T-002",
+    )
+    red(tree, capsys, "mismatched pairing")
+
+
+def test_bare_unregistered_id_fails(tree, capsys):
+    with open(tree / "crates" / "rsk-a" / "src" / "lib.rs", "a") as fh:
+        fh.write("// see SEC-T-777 for the story\n")
+    red(tree, capsys, "SEC-T-777 is not in the registry")
+
+
+def test_shipped_invariant_without_an_owner_fails(tree, capsys):
+    edit(
+        tree / "crates" / "rsk-a" / "src" / "lib.rs",
+        "// BarNeverOpens is maintained by bar()\n",
+        "",
+    )
+    red(tree, capsys, "named nowhere in production Rust")
 
 
 # ---- every cfg runs somewhere ------------------------------------------------

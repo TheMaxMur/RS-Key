@@ -86,6 +86,7 @@ pub struct AccountView<'a> {
 /// called. Returns the true total of RPs visited — even if the visitor keeps only
 /// the first few (so a screen can show "N items" while listing a subset). Records
 /// whose domain fails to unseal are skipped.
+/// Refines `RSKeySecurityState!NoUnmanageableCredential` — SEC-FIDO-005.
 pub fn for_each_rp<S, F>(dev: &Device, fs: &mut Fs<S>, mut f: F) -> usize
 where
     S: Storage,
