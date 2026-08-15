@@ -1081,6 +1081,54 @@ underflow rather than a blocked reference authenticating (the floor and the
 counter's type are two layers), so `LatMut_*` is stated as excluded in
 `comutate.py` rather than silently skipped.
 
+## The fifth module — `RSKeyAdminSurface.tla`
+
+The surface that decides which applets EXIST and who may touch device identity:
+the enabled-applications mask (`rsk-mgmt`, ykman's `config usb` set), the
+always-on carve-out that keeps a disable reversible, and the operator-presence
+gate on the privileged `rsk-rescue` commands. A fifth module because it shares
+no variable with the other four, and because its central claim is a *sequence*
+property — "no series of config writes can strand the device unable to
+re-enable an applet" is about the reachable space of the mask, not about one
+write.
+
+Four invariants, three of them ghosts and one structural, each with a mutant on
+a real defended site — and two of the four mutants are **shipped defects**, not
+removed defences:
+
+| Mutation switch | Rebuilds | Target invariant | Caught in |
+|---|---|---|---|
+| `BugMaskIsCosmetic` | **the pre-`0x084A` tree, shipped**: `USB_ENABLED` echoed in DeviceInfo while SELECT and dispatch never consulted it — `ykman config usb --disable` disabled nothing (`crates/rsk-sdk/src/applet.rs:208-210`, fed at `crates/rsk-device/src/ccid.rs:217-225`, consulted at `:313`) | `DisabledAppletNeverDispatches` | 10 states |
+| `BugLockWriteResetsCaps` | **audit run-35, shipped**: a lock-code-only write strips to zero bytes, stored verbatim as an EMPTY record that `read_enabled_caps` reads as `SUPPORTED_CAPS` — every disabled application silently re-enabled (`crates/rsk-mgmt/src/lib.rs:333-346`, the merge) | `DisableSetSurvivesLockWrite` | 9 states |
+| `BugAdminGateable` | the `APPLET_CAPS` cap-`0` carve-out removed (`crates/rsk-device/src/ccid.rs:64-71`): management/vendor/rescue gated by the mask, so one disable-everything write is irreversible | `AdminSurfaceAlwaysReachable` | 2 states |
+| `BugPrivilegedOpUngated` | `require_presence` removed (`crates/rsk-rescue/src/lib.rs:161-163`): keydev signing, cert/config writes, BOOTSEL reboot and fuse burns driven by the USB host alone | `PrivilegedOpNeedsPresence` | 10 states |
+
+`Admin.cfg` is **GREEN, exhaustive over 8 distinct states** — honestly tiny,
+because the state *is* the 3-capability mask's power set and every property
+beyond reachability is a step ghost. The structural one is the interesting
+shape: `AdminSurfaceAlwaysReachable` is `TRUE` in every state on the shipped
+tree precisely because the admin channel is *not* a function of the mask; the
+mutant ties it to the mask and the empty set falls out immediately.
+
+**All four are co-refuted** — the first batch to measure **4/4 killed with no
+gap**: the enforcement pair falls to
+`a_disabled_application_is_invisible_not_just_unreported` and
+`set_enabled_hides_a_disabled_applet`, the carve-out to
+`the_recovery_applets_can_never_be_disabled`, the presence gate to the rescue
+suite's denied-presence cases, and the run-35 merge to its own regression pair
+(`a_partial_write_config_keeps_the_fields_it_does_not_mention`,
+`trimming_an_over_cap_record_never_evicts_the_enabled_applications_policy`).
+
+**What it does NOT cover, stated.** The config write is modelled ungated
+because the default build ships it ungated — ykman parity, a maintainer ruling,
+and a documented *reversible* DoS in the threat model; the `strict-config`
+presence gate is a build flag orthogonal to every invariant here. The
+config-lock code's unsealed-disclosure hole (audit run-30: never persist, never
+echo) is data handling inside one write, carried by
+`config_lock_code_is_stripped_and_not_echoed` rather than by a state machine.
+The rescue commands' payloads — phy records, KEYDEV signing, the fuse and
+rollback machinery — are single-step and live in that crate's five test files.
+
 ## What now catches a run nobody watched
 
 That `VACUOUS` rule was one heuristic and a **reporting** guard: it printed a

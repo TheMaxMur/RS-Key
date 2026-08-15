@@ -127,6 +127,7 @@ def solo_target_counts(formal: pathlib.Path) -> dict[str, int]:
                 "SeamSolo_",
                 "StoreSolo_",
                 "LatSolo_",
+                "AdminSolo_",
                 "SoloClause_",
                 "LiveMut_",
                 "FairMut_",

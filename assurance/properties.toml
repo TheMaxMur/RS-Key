@@ -218,6 +218,36 @@ status = "MODELLED-ONLY"
 statement = "A reference's retry counter rises only on a correct presentation of a secret — its own (a correct VERIFY) or its designated recovery reference's (a correct RESET RETRY) — never out of nothing."
 source = ["PIV SP 800-73-4", "OpenPGP card 3.4", "docs/threat-model.md"]
 
+# ---- RSKeyAdminSurface — the mask, its carve-out, the rescue gate -----------
+
+[[property]]
+id = "SEC-ADM-001"
+name = "AdminSurfaceAlwaysReachable"
+status = "MODELLED-ONLY"
+statement = "The administrative channel (management/vendor/rescue) is reachable in every state: no sequence of config writes can strand the device unable to re-enable a disabled applet. The APPLET_CAPS cap-0 carve-out as an invariant."
+source = ["docs/threat-model.md"]
+
+[[property]]
+id = "SEC-ADM-002"
+name = "PrivilegedOpNeedsPresence"
+status = "MODELLED-ONLY"
+statement = "No privileged rescue command — device-key signing, cert/config writes, reboot-to-BOOTSEL, fuse burns — completes without a Confirmed operator presence; a USB host alone cannot drive them."
+source = ["docs/threat-model.md"]
+
+[[property]]
+id = "SEC-ADM-003"
+name = "DisableSetSurvivesLockWrite"
+status = "MODELLED-ONLY"
+statement = "A config write that changes only the lock code leaves the enabled-applications set exactly as it was — the audit run-35 empty-record path (read back as SUPPORTED_CAPS) never recurs."
+source = ["docs/threat-model.md"]
+
+[[property]]
+id = "SEC-ADM-004"
+name = "DisabledAppletNeverDispatches"
+status = "MODELLED-ONLY"
+statement = "An application disabled in the persisted USB_ENABLED mask never serves a command: the mask is enforcement, not a DeviceInfo report (the pre-0x084A tree shipped it cosmetic)."
+source = ["docs/threat-model.md"]
+
 # ---- Accepted risks — ruled by the maintainer, visible here so their absence
 # ---- from the evidence table reads as a decision, not a hole ----------------
 

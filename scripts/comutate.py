@@ -10,9 +10,9 @@ catches them too. Three green checkers over three slightly different systems is
 the failure mode this whole apparatus exists for, and the difference between
 the two answers is a measured abstraction gap with a file and line attached.
 
-The roster is `Mut_*` plus `StoreMut_*`. Two mutant families are DELIBERATELY
-out of it, because an exclusion stated here is a plan and one implied by a glob
-is a hole:
+The roster is `Mut_*` plus `StoreMut_*` plus `AdminMut_*`. Two mutant families
+are DELIBERATELY out of it, because an exclusion stated here is a plan and one
+implied by a glob is a hole:
 
 * `SeamMut_*` — applet-status defects whose shipped fixes carry their own
   regression tests, measured against a YubiKey oracle (group E). The status
@@ -73,9 +73,13 @@ def load(root: pathlib.Path):
 
 
 #: The mutant-config prefixes this file's closed world covers, and the Solo
-#: prefix each pairs with. `SeamMut_`/`SeamSolo_` are deliberately absent — see
-#: the module docstring.
-PREFIXES = (("Mut_", "Solo_"), ("StoreMut_", "StoreSolo_"))
+#: prefix each pairs with. `SeamMut_`/`SeamSolo_` and `LatMut_`/`LatSolo_` are
+#: deliberately absent — see the module docstring.
+PREFIXES = (
+    ("Mut_", "Solo_"),
+    ("StoreMut_", "StoreSolo_"),
+    ("AdminMut_", "AdminSolo_"),
+)
 
 
 def roster(root: pathlib.Path) -> dict[str, str]:

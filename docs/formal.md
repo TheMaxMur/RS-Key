@@ -13,7 +13,7 @@ cost — lives in `formal/README.md` next to the model itself.
 so. What exists is narrower and it is measured: the paragraph to quote is in
 [Testing](testing.md), under "Formal claims — what is and is not verified".
 
-## The four modules
+## The five modules
 
 `RSKeySecurityState.tla` models the FIDO security state: PIN retries, the
 `pinUvAuthToken` and its permissions, which transport owns the touch, which
@@ -40,6 +40,13 @@ anti-bruteforce arithmetic that is identical at every one. It is the part of the
 applet surface with no safe oracle — exhausting a real PUK ladder blocks the
 card and the only way back takes the keys — so an exhaustive check of every
 verify/block/recover interleaving can run only in a model.
+
+`RSKeyAdminSurface.tla` models the surface above all of them: the
+enabled-applications mask, the always-on carve-out that keeps `ykman config usb
+--disable` reversible, and the operator-presence gate on the privileged rescue
+commands. Two of its four mutants rebuild defects that actually shipped — the
+mask that was a DeviceInfo report rather than an enforcement, and the lock-code
+write that silently re-enabled every disabled application.
 
 ## The checks of the checks
 

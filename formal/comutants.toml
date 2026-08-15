@@ -587,6 +587,100 @@ meta_add_keeps_records_when_ef_meta_unknown drives the UNKNOWN-cache path, and
 nothing drove meta_add over a read that FAULTS — closed by
 a_faulted_ef_meta_read_never_rebuilds_the_blob_from_empty, re-measured killed."""
 
+# ---- RSKeyAdminSurface: the mask, its carve-out, the rescue gate ------------
+
+[comutant.BugMaskIsCosmetic]
+status = "patch"
+file = "crates/rsk-sdk/src/applet.rs"
+find = """
+    fn selectable(&self, i: usize) -> bool {
+        i >= 32 || self.enabled & (1 << i) != 0
+    }
+"""
+replace = """
+    fn selectable(&self, i: usize) -> bool {
+        let _ = i;
+        true
+    }
+"""
+slice = ["cargo", "test", "-p", "rsk-sdk", "-p", "rsk-device"]
+expect = "killed"
+note = "the pre-0x084A tree: USB_ENABLED reported in DeviceInfo while SELECT and dispatch never consulted it — `ykman config usb --disable` disabled nothing."
+
+[comutant.BugAdminGateable]
+status = "patch"
+file = "crates/rsk-device/src/ccid.rs"
+find = """
+const APPLET_CAPS: [u16; 7] = [
+    0,
+    rsk_mgmt::CAP_OPENPGP,
+    0,
+    rsk_mgmt::CAP_OATH,
+    rsk_mgmt::CAP_OTP,
+    rsk_mgmt::CAP_PIV,
+    0,
+];
+"""
+replace = """
+const APPLET_CAPS: [u16; 7] = [
+    rsk_mgmt::CAP_PIV,
+    rsk_mgmt::CAP_OPENPGP,
+    rsk_mgmt::CAP_PIV,
+    rsk_mgmt::CAP_OATH,
+    rsk_mgmt::CAP_OTP,
+    rsk_mgmt::CAP_PIV,
+    rsk_mgmt::CAP_PIV,
+];
+"""
+slice = ["cargo", "test", "-p", "rsk-device"]
+expect = "killed"
+note = "the always-on carve-out removed: management/vendor/rescue gated behind CAP_PIV, so one `--disable PIV` closes the re-enable path and the disable is irreversible."
+
+[comutant.BugPrivilegedOpUngated]
+status = "patch"
+file = "crates/rsk-rescue/src/lib.rs"
+find = """
+    fn require_presence(&self, confirm: Confirm<'_>) -> bool {
+        self.presence.borrow_mut().request(confirm) == Presence::Confirmed
+    }
+"""
+replace = """
+    fn require_presence(&self, confirm: Confirm<'_>) -> bool {
+        let _ = confirm;
+        true
+    }
+"""
+slice = ["cargo", "test", "-p", "rsk-rescue"]
+expect = "killed"
+note = "the operator gate removed from every privileged rescue command — keydev signing, cert/config writes, BOOTSEL reboot, fuse burns — so a USB host alone drives them."
+
+[comutant.BugLockWriteResetsCaps]
+status = "patch"
+file = "crates/rsk-mgmt/src/lib.rs"
+find = """
+    let mut merged = [0u8; DEV_CONF_MERGE_MAX];
+    let m = merged_dev_conf(fs, &stripped[..n], &mut merged)?;
+    if m > EF_DEV_CONF_MAX {
+        return Err(DevConfError::TooLong);
+    }
+"""
+replace = """
+    let merged = stripped;
+    let m = n;
+    if m > EF_DEV_CONF_MAX {
+        return Err(DevConfError::TooLong);
+    }
+"""
+slice = ["cargo", "test", "-p", "rsk-mgmt"]
+expect = "killed"
+note = """audit run-35 verbatim: the merge replaced with a verbatim store, so a
+`config set-lock-code` write (strips to zero bytes) leaves an EMPTY record that
+`read_enabled_caps` reads as SUPPORTED_CAPS — every disabled application
+silently re-enabled. Killed outright by the fix's own regression pair,
+a_partial_write_config_keeps_the_fields_it_does_not_mention and
+trimming_an_over_cap_record_never_evicts_the_enabled_applications_policy — the
+first admin batch to measure 4/4 with no gap."""
+
 # ---- rsk-display: the on-panel PIN gate ------------------------------------
 
 [comutant.BugLocalPinIgnoresBudget]
