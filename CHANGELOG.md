@@ -40,6 +40,28 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Added
 
+- **Co-refutation: the model's mutants, re-made as code defects, measured
+  against the unit tests.** The TLC matrix proves the *model* catches all 28
+  `Bug*` defects; nothing measured whether the *code level* catches the same
+  ones. `formal/comutants.toml` records one entry per mutant — an exact-snippet
+  patch that re-injects the defect, `unreachable` (with the evidence a shipped
+  fix made it so), or floored `pending`; `scripts/comutate.py run` applies each
+  in a throwaway worktree (carrying the working-tree diff, so a just-closed gap
+  reads killed before a commit) and demands the recorded verdict, while
+  `--lint` (a `check.sh` row) holds the file against the `Mut_*.cfg` roster and
+  resolves every patch anchor against today's code. Batch 1, ten mutants
+  measured: **seven killed, two unreachable, one measured gap**.
+
+  The gap is the point of the pass. `BugTokenSurvivesPinChange` — changePIN
+  leaving the in-RAM session token alive — was caught by the model and by
+  *nothing* at the code level: the existing test covers the persistent `pcmr`
+  grant through a different door. Closed with
+  `change_pin_revokes_the_session_token`, re-measured killed.
+  `BugDeleteRpBeforeCred` (a torn deleteCredential stranding a credential) is
+  recorded as a measured gap and filed for a torn-delete harness — the first
+  fidelity number the model→code direction has ever carried, recorded rather
+  than hidden.
+
 - **A security-property registry, held against the tree by a gate.**
   `assurance/properties.toml` names every property TLC checks — 22 entries:
   20 invariants and temporal properties across both modules, plus the two

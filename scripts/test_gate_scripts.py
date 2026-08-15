@@ -28,7 +28,11 @@ GATES = sorted(p.name for p in HERE.glob("*_gate.py") if not p.name.startswith("
 #: rather than by glob: `impact.py` is run by the pre-commit hook and not by
 #: `check.sh`, and `kani.sh` is a shell script. Both once had no table at all,
 #: which is the same blind spot one file over.
-NAMED = {"impact.py": "test_impact.py", "kani.sh": "test_kani_sh.py"}
+NAMED = {
+    "impact.py": "test_impact.py",
+    "kani.sh": "test_kani_sh.py",
+    "comutate.py": "test_comutate.py",
+}
 #: The pytest invocation that has to reach the tests, wherever it is spelled.
 COLLECTS = re.compile(r"pytest\s+([^\n|;&]*)")
 

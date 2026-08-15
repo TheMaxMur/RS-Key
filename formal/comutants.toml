@@ -1,0 +1,247 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 RS-Key contributors
+#
+# Co-refutation: every model mutant, re-made as the code defect it models.
+# The model's 28 Bug* switches each rebuild a real RS-Key defect and MUST go
+# RED in TLC — that is measured weekly. This file asks the other half of the
+# question: does the SAME defect, injected into the production Rust, go red
+# at the code level too? A mutant the model catches and the code level does
+# not is a measured abstraction gap — the exact place where "TLA+ green AND
+# tests green" stops meaning "the same system was checked twice".
+#
+# scripts/comutate.py owns the mechanics: `--lint` (a check.sh row) holds this
+# file against the Mut_*.cfg roster in both directions, resolves every patch
+# anchor against the current tree, and floors the pending count; `run` applies
+# a patch in a throwaway worktree, runs the slice, and compares the verdict to
+# `expect`. Anchors are exact source snippets, not diff line numbers — code
+# drift makes the lint fail loudly instead of the patch applying somewhere else.
+#
+# Statuses:
+#   patch        find/replace below; `expect` records the measured verdict
+#                (killed | gap). A killed that becomes gap is a regression.
+#   unreachable  the defect became unreachable by construction after a shipped
+#                fix; the model measured it (evidence names where). No patch.
+#   pending      batch not yet derived. The count is FLOORED by --lint: it can
+#                only go down, so "later" stays a plan rather than a hole.
+#
+# The invariant each mutant targets is NOT recorded here — the lint derives it
+# from the mutant's own Solo_*.cfg, so this file cannot disagree with the
+# matrix about who catches what.
+
+pending_floor = 18
+
+# ---- batch 1: the token/PIN family and the two write orders -----------------
+
+[comutant.BugTokenSurvivesPinChange]
+status = "patch"
+file = "crates/rsk-fido/src/clientpin.rs"
+find = """
+    clear_force_change(ctx.fs)?;
+    ctx.state.reset_pin_uv_auth_token(ctx.rng);
+"""
+replace = """
+    clear_force_change(ctx.fs)?;
+"""
+slice = ["cargo", "test", "-p", "rsk-fido"]
+expect = "killed"
+note = "changePIN keeps the session token: §6.5.5.6 step 15 skipped."
+
+[comutant.BugStopUsingKeepsPerms]
+status = "patch"
+file = "crates/rsk-fido/src/state.rs"
+find = """
+        self.paut.in_use = false;
+        self.paut.permissions = 0;
+"""
+replace = """
+        self.paut.in_use = false;
+"""
+slice = ["cargo", "test", "-p", "rsk-fido"]
+expect = "killed"
+note = "stopUsingPinUvAuthToken keeps the permission bits."
+
+[comutant.BugWrongPinKeepsToken]
+status = "patch"
+file = "crates/rsk-fido/src/clientpin.rs"
+find = """
+        // platform can always mint another.
+        ctx.state.reset_pin_uv_auth_token(ctx.rng);
+"""
+replace = """
+        // platform can always mint another.
+"""
+slice = ["cargo", "test", "-p", "rsk-fido"]
+expect = "killed"
+note = "the pre-E38 tree: a PIN mismatch leaves the outstanding token alive."
+
+[comutant.BugSetPinOverExisting]
+status = "patch"
+file = "crates/rsk-fido/src/clientpin.rs"
+find = """
+    if ctx.fs.has_data(EF_PIN) {
+        return Err(CtapError::PinAuthInvalid);
+    }
+"""
+replace = ""
+slice = ["cargo", "test", "-p", "rsk-fido"]
+expect = "killed"
+note = "setPIN overwrites a live PIN instead of refusing (§6.5.5.5)."
+
+[comutant.BugCredBeforeRp]
+status = "patch"
+file = "crates/rsk-fido/src/credential.rs"
+find = """
+    if new_record {
+        bump_rp(fs, seed, rp_id_hash, rp_id)?;
+    }
+"""
+replace = """
+    let _defer_bump = new_record;
+"""
+find2 = """
+    if let Err(e) = fs.put(EF_CRED + slot, &rec[..total]) {
+        if new_record {
+            let _ = crate::credmgmt::decrement_rp(fs, rp_id_hash);
+        }
+        return Err(e);
+    }
+"""
+replace2 = """
+    fs.put(EF_CRED + slot, &rec[..total])?;
+    if _defer_bump {
+        bump_rp(fs, seed, rp_id_hash, rp_id)?;
+    }
+"""
+slice = ["cargo", "test", "-p", "rsk-fido"]
+expect = "killed"
+note = "registration writes EF_CRED before EF_RP: a torn write strands a live credential no enumeration surface can reach."
+
+[comutant.BugDeleteRpBeforeCred]
+status = "patch"
+file = "crates/rsk-fido/src/credmgmt.rs"
+find = """
+    ctx.fs
+        .delete(EF_CRED + slot)
+        .map_err(|_| CtapError::NotAllowed)?;
+"""
+replace = """
+    decrement_rp(ctx.fs, rp_id_hash)?;
+    ctx.fs
+        .delete(EF_CRED + slot)
+        .map_err(|_| CtapError::NotAllowed)?;
+"""
+find2 = """
+    largeblobext::discard(ctx.fs, slot);
+    decrement_rp(ctx.fs, rp_id_hash)?;
+    Ok(0)
+"""
+replace2 = """
+    largeblobext::discard(ctx.fs, slot);
+    Ok(0)
+"""
+slice = ["cargo", "test", "-p", "rsk-fido"]
+expect = "gap"
+note = """MEASURED GAP. The model catches this (Solo_BugDeleteRpBeforeCred RED);
+no host test does. The registration twin BugCredBeforeRp is killed by
+a_failed_registration_never_leaves_a_credential_without_its_rp, but that harness
+tears a WRITE sequence; deleteCredential is delete(EF_CRED) then decrement_rp,
+and `Fs::delete` interleaves a swallowed EF_META write with the backend remove,
+so a discriminating tear needs a mutating-op-budget storage over a sole-credential
+RP. Filed as a harness task rather than written in haste. This is the first
+measured fidelity gap of the co-refutation pass — recorded, not hidden."""
+
+[comutant.BugUnscopedCancel]
+status = "patch"
+file = "crates/rsk-device/src/presence.rs"
+find = """
+        if self.wait_scope.load(Ordering::Acquire) == SCOPE_FIDO {
+            self.cancel_requested.store(true, Ordering::Release);
+        }
+"""
+replace = """
+        self.cancel_requested.store(true, Ordering::Release);
+"""
+slice = ["cargo", "test", "-p", "rsk-device"]
+expect = "killed"
+note = "a CTAPHID cancel lands whatever transport owns the touch."
+
+[comutant.BugUnscopedOtpCancel]
+status = "patch"
+file = "crates/rsk-device/src/presence.rs"
+find = """
+        if self.wait_scope.load(Ordering::Acquire) == SCOPE_OTP {
+            self.cancel_requested.store(true, Ordering::Relaxed);
+"""
+replace = """
+        {
+            self.cancel_requested.store(true, Ordering::Relaxed);
+"""
+slice = ["cargo", "test", "-p", "rsk-device"]
+expect = "killed"
+note = "the second writer of the same cancel flag, unscoped."
+
+# ---- unreachable by construction — measured, not assumed --------------------
+
+[comutant.BugBackupSealedNotAGate]
+status = "unreachable"
+evidence = "formal/README.md — once the seed leads the wipe unconditionally (0x08BF), the window this re-opens is over a seed that is already gone; not falsifiable on its own, and NoAccessibleSecretWithoutGate's structural clause asserts the same fact."
+
+[comutant.BugSetPinKeepsPpuat]
+status = "unreachable"
+evidence = "formal/README.md — under eab4b5c the grant is swept in phase 1 and EF_PIN in phase 2, so ~pin.set /\\ gate.ppuat is unreachable; the mutant explored 40M+ states without a counterexample (E171), which floors.txt records as its verdict."
+
+# ---- batch 2+: derived later; the floor above only goes down ----------------
+
+[comutant.BugChangePinKeepsPpuat]
+status = "pending"
+
+[comutant.BugCmWalkIgnoresChannel]
+status = "pending"
+
+[comutant.BugConsumeKeepsMcGa]
+status = "pending"
+
+[comutant.BugHostPreemptsLocalWait]
+status = "pending"
+
+[comutant.BugLocalPinIgnoresBudget]
+status = "pending"
+
+[comutant.BugLocalPinKeepsToken]
+status = "pending"
+
+[comutant.BugNoConsumeAfterUp]
+status = "pending"
+
+[comutant.BugNoDropStaleCancelAtEntry]
+status = "pending"
+
+[comutant.BugNoTouchRequired]
+status = "pending"
+
+[comutant.BugPanelCancelable]
+status = "pending"
+
+[comutant.BugPinWriteBeforeRevoke]
+status = "pending"
+
+[comutant.BugPpuatIsAGate]
+status = "pending"
+
+[comutant.BugResetGatesFirst]
+status = "pending"
+
+[comutant.BugSeedDoesNotLead]
+status = "pending"
+
+[comutant.BugSoftLockLostOnWarmReset]
+status = "pending"
+
+[comutant.BugStateResetAfterWipe]
+status = "pending"
+
+[comutant.BugTouchNotSpent]
+status = "pending"
+
+[comutant.BugWarmResetReopensWindow]
+status = "pending"

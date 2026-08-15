@@ -1741,6 +1741,43 @@ fn pcmr_issues_a_persistent_token_that_survives_a_power_cycle() {
     assert_eq!(plat2.decrypt_token(&out[..n]), ppuat);
 }
 
+/// §6.5.5.6 step 15 also resets the *in-RAM* pinUvAuthToken, not just the
+/// persistent grant the sibling below covers: a session token issued before a
+/// changePIN must be dead after it. Co-refutation surfaced this as a gap — the
+/// model's `BugTokenSurvivesPinChange` (`NoTokenAfterInvalidation`) is RED, but
+/// dropping `reset_pin_uv_auth_token` from `change_pin` left every unit test
+/// green because the persistent-token test exercises `clear_ppuat`, a different
+/// door. The RAM session token had no host test at all.
+#[test]
+fn change_pin_revokes_the_session_token() {
+    let (mut fs, mut rng, mut state, plat) = setup_with_pin(b"1234");
+    let mut out = [0u8; 256];
+    run(
+        &mut fs,
+        &mut rng,
+        &mut state,
+        &plat.get_token_perms_req(b"1234", (PERM_MC | PERM_GA) as u64),
+        &mut out,
+    )
+    .unwrap();
+    assert!(state.paut.in_use, "the token is in use after issuance");
+    assert_eq!(state.paut.permissions, PERM_MC | PERM_GA);
+
+    run(
+        &mut fs,
+        &mut rng,
+        &mut state,
+        &plat.change_pin_req(b"1234", b"5678"),
+        &mut out,
+    )
+    .unwrap();
+
+    assert!(
+        !state.paut.in_use && state.paut.permissions == 0,
+        "changePIN left the pre-change session token live"
+    );
+}
+
 /// §6.5.5.6 step 15 calls resetPersistentPinUvAuthToken — "all persistent
 /// permissions are cleared on pin change" — so the old holder's grant dies with
 /// the old PIN and the next grant mints different bytes.
