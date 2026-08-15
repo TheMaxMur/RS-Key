@@ -62,6 +62,13 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   New `check.sh` row `assurance registry`; mutation table in
   `scripts/test_assurance_gate.py`, 19 cases.
 
+- **A "Formal model" page in the book** (`docs/formal.md`, Security section):
+  the map of `formal/` — the two modules, the checks-of-the-checks (mutants,
+  floors, vacuity, lint), the property registry and tags, how to run each tier
+  and where CI runs them. The deep prose stays in `formal/README.md`; the page
+  says what is and is not claimed and points at the measured paragraph in
+  Testing.
+
 - **Property tags in production Rust.** The 24 owner functions the model's
   ownership table documents now carry a doc line —
   `` Refines `RSKeySecurityState!<Invariant>` — SEC-FIDO-NNN. `` — so a

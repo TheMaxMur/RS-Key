@@ -50,6 +50,7 @@
 - [Limitations](limitations.md)
 - [`unsafe` audit](unsafe.md)
 - [Constant-time audit](ct-audit.md)
+- [Formal model](formal.md)
 
 # Internals
 

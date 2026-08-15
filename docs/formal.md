@@ -1,0 +1,88 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 RS-Key contributors -->
+
+# Formal model
+
+`formal/` in the repository holds a TLA+ model of the authenticator's security
+state, the mutation matrix that keeps it falsifiable, and the registry that
+ties its properties to the code. This page is the map; the deep prose — every
+abstraction with its direction, every hole a review found and what closing it
+cost — lives in `formal/README.md` next to the model itself.
+
+**RS-Key is not formally verified**, and the model's own page opens by saying
+so. What exists is narrower and it is measured: the paragraph to quote is in
+[Testing](testing.md), under "Formal claims — what is and is not verified".
+
+## The two modules
+
+`RSKeySecurityState.tla` models the FIDO security state: PIN retries, the
+`pinUvAuthToken` and its permissions, which transport owns the touch, which
+channel owns a stateful walk, the reset window, the persistent gate records,
+and the position at which power is lost inside a multi-write flash sequence.
+TLC checks its invariants exhaustively at small constants.
+
+`RSKeyAppletSeams.tla` models what the first module deliberately leaves out:
+the applets' access statuses — PIV, OpenPGP and OATH's seven doors, what a
+SELECT means for each, and what a refused authentication costs.
+
+## The checks of the checks
+
+An invariant no defect can violate is the TLA+ analogue of a test that cannot
+fail, and this tree has been bitten by that class enough times to check for it
+mechanically:
+
+- **every invariant carries mutants** — each `Bug*` switch rebuilds a real
+  RS-Key defect or removes a defence the tree has, and its `Solo_*.cfg` run
+  must come back RED;
+- **every green run has a floor** (`formal/floors.txt`) — a GREEN that got
+  smaller than its recorded distinct-state count is reported as FLOOR, because
+  a collapsed state space passes every invariant vacuously and once did;
+- **a vacuous run is named** — a spec nothing enabled exits non-zero rather
+  than reading as a pass;
+- **the source is linted first** — two TLA+ traps that leave a spec
+  well-formed and meaningless (a precedence slip turning an assignment into a
+  guard, an action pinned to a no-op by its own `UNCHANGED`) are refused
+  before TLC runs.
+
+## The registry
+
+Every property TLC checks has an entry in `assurance/properties.toml` — id,
+statement, source and status, nothing else hand-written. A `check.sh` row,
+`scripts/assurance_gate.py`, derives the rest per run: which module defines
+the property, which configurations check it, which mutants target it, which
+Kani harnesses, fuzz targets, Rust files and device tests carry its name. The
+gate holds the graph closed in both directions — nothing TLC checks may be
+unregistered, nothing registered may be unchecked — and a status must equal
+the evidence ceiling: a Kani harness carrying the property's name forces
+BOUNDED, and PROVEN is refused until that evidence class exists in the tree.
+
+The owner functions carry the property back into the code: a doc line of the
+form ``Refines `RSKeySecurityState!NoTokenAfterInvalidation` — SEC-FIDO-003``
+sits on each function the model's ownership table names, the gate validates
+every tag, and every invariant the shipping configuration checks must be
+named in production Rust somewhere.
+
+`assurance/crates.toml` is the same discipline one level up: all 26 workspace
+members classified — state modelled, modelled in part with the gap named,
+unmodelled with the roadmap module named, pure with the differential or proof
+files named, or out of scope with a reason. The ledger exists because
+enumerating crates from memory has already missed four of them.
+
+## Running it
+
+```sh
+nix develop                       # pins TLC and exports TLA2TOOLS_JAR
+cd formal
+./run-tlc.sh safety               # model + mutants + floors, ~30 min
+./run-tlc.sh liveness             # the temporal half — needs a 12g heap
+./run-tlc.sh all                  # both
+./run-tlc.sh Shipped.cfg          # one configuration
+./run-tlc.sh --tiers              # what each tier runs, for the gate
+python3 ../scripts/assurance_gate.py   # the registry, held against the tree
+```
+
+CI runs the `safety` tier weekly (`deep-checks.yml`, the `formal` job) and on
+any push touching `formal/`, so an edit to the model is checked at once. The
+`liveness` tier is deliberately not in CI: `Liveness.cfg` needs the 12 GB heap
+`floors.txt` records for it, and a hosted runner has already died under less.
+The registry gate runs on every pull request as part of `check.sh`.
