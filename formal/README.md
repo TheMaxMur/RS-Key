@@ -926,6 +926,87 @@ actions. `run-tlc.sh` now reports `VACUOUS: nothing was enabled` instead of
 Two is not a judgement call: below it the `Next` relation fired nothing at all.
 Mutation-tested by putting the parentheses back and watching the row change.
 
+## The third module — `RSKeyStore.tla`
+
+The security model has a `PowerCut`, but it abstracts the store to per-record
+present/absent flags and asserts its flash invariants over quiescent states.
+There are two questions one layer beneath that abstraction it cannot ask: does a
+torn `delete` leave metadata naming a file whose value is gone, and can the
+in-RAM present-cache read a *committed* key as absent? Both are `rsk-fs`'s `Fs`
+contract, not the security state machine's; both have shipped as defects; and
+both are what the roadmap's refinement pilot inducts its persistent envelope
+over. So the store gets its own module, for the reason the seams got theirs — a
+product with the first module would multiply its state space and buy no new
+interleavings, because the two share no variable.
+
+It is a lift of the Rust abstract model that already sits beside the code:
+`powercut.rs`'s four `*_landed` predicates and `powercut_model.rs`'s reboot loop,
+which were reachable only by `cargo fuzz` until they became `cargo test`. The
+model's variables are the committed store (`val`, `meta`), the tri-state present-
+cache (`present`, `decided`) and a `dead` flag for the window a torn write leaves
+the device in. `Fids` is two and `Vals` is two — the smallest sizes that
+exercise every invariant: one FID to delete, one whose record a `meta_add` of the
+other must not wipe, and two values so an overwrite is observable.
+
+**The three named oracle properties, mapped onto three invariants.**
+`powercut.rs` names Atomicity, Durability and Enumeration.
+
+- **Atomicity** — a torn write lands the old value or the new one, never a third
+  thing — is a property of the log-structured backend's *append*, so it is a
+  **modelling assumption** here (`Put` and `MetaAdd` land atomically) rather than
+  a falsifiable invariant. The Rust oracle's `Tear::Garbage` control is what
+  checks it at the code level; there is no code path that produces a third value,
+  so there is no mutant that can, and an invariant no mutant can break is a test
+  that cannot fail. Stated, not asserted.
+- **Durability** is two invariants. `NoFalseAbsent` is the reader half — the
+  confirmed-absent cache bit is set only over a genuinely absent FID, because a
+  false-absent *is* the "committed key lost" disaster and it opens every gate
+  that reads `has_data` (audit run-36). It is **structural**: it reads straight
+  out of the cache and the store, needing no cooperation from any action.
+  `NoRecordLostToMetaWrite` is the writer half — a `meta_add` of one FID never
+  drops another's record, the "torn `meta_add` wiped every existing record"
+  crash.
+- **Enumeration** is `NoOrphanedMetadata` — no `delete` leaves a metadata record
+  for the file it removed. It cannot be a plain state predicate: a meta-only file
+  (a `meta_add` with no `put`) legally has metadata and no value, so the
+  violation is a record *outliving a delete*, which is a step. It is a `viol`
+  ghost with one writer, `Delete`.
+
+**Five mutants, each a shipped defect, each RED on the invariant that names it.**
+
+| Mutation switch | Rebuilds | Target invariant | Caught in |
+|---|---|---|---|
+| `BugDeleteValueBeforeMeta` | `fs.rs:419-424` — the two backend writes reversed, so a torn delete leaves value-gone-meta-alive (`delete_landed`) | `NoOrphanedMetadata` | 54 states |
+| `BugDeleteMetaOnlyUnderPresent` | the 0x077C databug — `delete` dropping `EF_META` only under `if present_bit`, so a meta-only file keeps its record | `NoOrphanedMetadata` | 55 states |
+| `BugCacheFaultAsAbsent` | audit run-36 — `record` in place of `record_unless_faulted`, caching a faulted read as a decided absence | `NoFalseAbsent` | 23 states |
+| `BugTruncatedScanDecidesAll` | `fs.rs:196-198` — `scan` deciding the whole FID space after a *truncated* walk, so a missed live key reads absent | `NoFalseAbsent` | 24 states |
+| `BugMetaAddDropsOnFault` | the 0x077C databug's meta half — a faulted `EF_META` read rebuilt from empty, dropping every other record | `NoRecordLostToMetaWrite` | 51 states |
+
+`Store.cfg` is **GREEN, exhaustive** over 272 distinct states at depth 7 in
+about a second; every `StoreSolo_*.cfg` — the run that checks *only* the mutant's
+own target — is RED, so no mutant here is caught by a sibling. The counts are an
+order of magnitude, not a pin, the same as everywhere else.
+
+**What it abstracts, stated in the risk direction.** Values are two opaque
+tokens: the model sees "which of two values, or absent", never a length or a
+byte, so a defect that corrupts *content* while preserving presence is out of its
+reach (`powercut_kani.rs` proves the byte-level `*_landed` rules Kani-side). The
+`rsk-store` backend beneath `Storage` — the two-partition counter/main ring, the
+`is_counter_fid` routing, wear and page reclaim, and `compact` — is a modelling
+assumption: the model takes `Storage`'s contract (atomic append, a completeness
+flag on enumeration) as given and does not re-derive it. `Fs::factory_wipe`'s
+two-phase sweep is **not** modelled here — its ordering lives in the security
+module (`SeedLeadsTheWipe`), and its own truncation guard is named as an M5/M7
+gap in `crates.toml`. So `rsk-fs` and `rsk-store` are `state-partial`, not
+`state-modelled`, and the ledger says exactly where the line is.
+
+**Why it is the pilot's precondition.** The refinement pilot's persistent-
+envelope obligation (R0p in the roadmap) inducts an invariant over the store's
+committed state across a boot — precisely `NoFalseAbsent` restricted to a
+post-`scan` state together with the durability of `val`/`meta` that `Reboot`
+gives structurally. That obligation had no object while the store was unmodelled;
+this module is it.
+
 ## What now catches a run nobody watched
 
 That `VACUOUS` rule was one heuristic and a **reporting** guard: it printed a

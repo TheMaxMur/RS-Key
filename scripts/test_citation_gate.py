@@ -100,12 +100,27 @@ class Tree:
         smaller than the tree and carries none of its history. A case that wants
         a debt passes one.
         """
-        was, debts = citation_gate.FLOOR, citation_gate.PENDING
-        citation_gate.FLOOR, citation_gate.PENDING = floor, pending or {}
+        was, debts, per = (
+            citation_gate.FLOOR,
+            citation_gate.PENDING,
+            citation_gate.FLOOR_BY_PAGE,
+        )
+        # The per-page overrides are cleared too: the fixture writes a 2-citation
+        # stub to every page, so a page with a real-tree floor of its own would
+        # fail the fixture for a reason that has nothing to do with the case.
+        citation_gate.FLOOR, citation_gate.PENDING, citation_gate.FLOOR_BY_PAGE = (
+            floor,
+            pending or {},
+            {},
+        )
         try:
             return citation_gate.audit(self.root)[0]
         finally:
-            citation_gate.FLOOR, citation_gate.PENDING = was, debts
+            citation_gate.FLOOR, citation_gate.PENDING, citation_gate.FLOOR_BY_PAGE = (
+                was,
+                debts,
+                per,
+            )
 
 
 @pytest.fixture
@@ -285,10 +300,22 @@ def test_a_search_directory_that_moved(tree):
 
 
 def test_the_real_floor_is_met_by_the_real_pages():
-    """The fixture lowers it; nothing else may."""
+    """The fixture lowers it; nothing else may. Each page clears its OWN floor —
+    the default, or its `FLOOR_BY_PAGE` override where it has one."""
     for page in citation_gate.PAGES:
         text = (citation_gate.ROOT / page).read_text()
-        assert len(list(citation_gate.citations(text))) >= citation_gate.FLOOR
+        assert len(list(citation_gate.citations(text))) >= citation_gate.floor_for(page)
+
+
+def test_a_per_page_floor_is_honoured_and_is_lower_than_the_default():
+    """The override exists because the flash-layer model is a tight one; a page
+    with an override takes it, and it is strictly under the default so it can only
+    ever RELAX the floor, never tighten one silently."""
+    store = _page("RSKeyStore.tla")
+    default_page = _page("RSKeySecurityState.tla")
+    assert citation_gate.floor_for(store) == citation_gate.FLOOR_BY_PAGE["RSKeyStore.tla"]
+    assert citation_gate.floor_for(store) < citation_gate.FLOOR
+    assert citation_gate.floor_for(default_page) == citation_gate.FLOOR
 
 
 # --- the guard's own wiring ---------------------------------------------------

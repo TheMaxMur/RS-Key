@@ -24,6 +24,9 @@
 
 Shipped.cfg                          GREEN   20000000
 Seams.cfg                            GREEN   200
+\* The flash layer (RSKeyStore): a small exhaustive space -- 272 distinct at
+\* depth 7 -- so its floor is set near a third, the same rule as its siblings.
+Store.cfg                            GREEN   90
 \* The liveness layer builds a behaviour graph ON TOP of the state graph -- 23.7
 \* million nodes at these constants -- and runs out of memory at the 4 GB
 \* default after the state search has already completed (E172). The heap column
@@ -43,5 +46,7 @@ Solo_*.cfg                           RED     -
 SoloClause_*.cfg                     RED     -
 SeamMut_*.cfg                        RED     -
 SeamSolo_*.cfg                       RED     -
+StoreMut_*.cfg                       RED     -
+StoreSolo_*.cfg                      RED     -
 LiveMut_*.cfg                        RED     -
 FairMut_*.cfg                        RED     -

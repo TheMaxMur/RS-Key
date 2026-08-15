@@ -122,7 +122,7 @@ def solo_target_counts(formal: pathlib.Path) -> dict[str, int]:
     counts: dict[str, int] = {}
     for cfg in formal.glob("*.cfg"):
         if not cfg.name.startswith(
-            ("Solo_", "SeamSolo_", "SoloClause_", "LiveMut_", "FairMut_")
+            ("Solo_", "SeamSolo_", "StoreSolo_", "SoloClause_", "LiveMut_", "FairMut_")
         ):
             continue
         names = cfg_checked(cfg)

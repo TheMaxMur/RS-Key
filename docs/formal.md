@@ -13,7 +13,7 @@ cost — lives in `formal/README.md` next to the model itself.
 so. What exists is narrower and it is measured: the paragraph to quote is in
 [Testing](testing.md), under "Formal claims — what is and is not verified".
 
-## The two modules
+## The three modules
 
 `RSKeySecurityState.tla` models the FIDO security state: PIN retries, the
 `pinUvAuthToken` and its permissions, which transport owns the touch, which
@@ -24,6 +24,13 @@ TLC checks its invariants exhaustively at small constants.
 `RSKeyAppletSeams.tla` models what the first module deliberately leaves out:
 the applets' access statuses — PIV, OpenPGP and OATH's seven doors, what a
 SELECT means for each, and what a refused authentication costs.
+
+`RSKeyStore.tla` models the flash layer one level beneath both — `rsk-fs`'s
+key/value store over a `Storage` backend: whether a torn `delete` can orphan a
+file's metadata, and whether the in-RAM present-cache can read a committed key
+as absent. It is a lift of the Rust power-cut oracle (`powercut.rs`) that had
+been reachable only by the fuzzer, and it is the store model the roadmap's
+refinement pilot inducts its persistent-state invariant over.
 
 ## The checks of the checks
 

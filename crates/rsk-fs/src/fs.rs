@@ -107,6 +107,8 @@ impl<S: Storage> Fs<S> {
     /// absent. An unknown FID returns false so the caller falls through to the
     /// reliable backend (and then caches the result) — this is what prevents a
     /// post-power-cut false-absent. Confirmed-absent stays O(1).
+    ///
+    /// Refines `RSKeyStore!NoFalseAbsent` — SEC-STORE-002.
     #[inline]
     fn known_absent(&self, fid: u16) -> bool {
         self.decided_bit(fid) && !self.present_bit(fid)
@@ -152,7 +154,10 @@ impl<S: Storage> Fs<S> {
     }
 
     /// Rebuild the dynamic-file set from what's already in storage (run once
-    /// after a reboot).
+    /// after a reboot). The `if complete` guard on the decided-fill is the
+    /// owner of the truncated-scan half of the cache-soundness property.
+    ///
+    /// Refines `RSKeyStore!NoFalseAbsent` — SEC-STORE-002.
     pub fn scan(&mut self) {
         // Disjoint field borrows so the `for_each_key` closure can update all
         // three while `self.storage` drives the pass.
@@ -408,6 +413,8 @@ impl<S: Storage> Fs<S> {
     /// drop: `meta_delete` has its own EF_META present-cache guard and skips the
     /// rewrite when `fid` had no record.
     ///
+    /// Refines `RSKeyStore!NoOrphanedMetadata` — SEC-STORE-001.
+    ///
     /// Unlike the read paths, the backend `remove` keys off the *raw* present bit
     /// rather than `known_absent`: an UNKNOWN FID is skipped, not confirmed. This
     /// deliberately keeps the cold-boot reset sweep O(1) (confirming 128 unknown
@@ -513,6 +520,8 @@ impl<S: Storage> Fs<S> {
     /// records: PIV writes an optional cached public point this way, reserving
     /// space for every slot's 4-byte head so the cache can never crowd a head out
     /// (which would fail provisioning). `reserve == 0` is the plain add.
+    ///
+    /// Refines `RSKeyStore!NoRecordLostToMetaWrite` — SEC-STORE-003.
     pub fn meta_add_reserve(&mut self, fid: u16, data: &[u8], reserve: usize) -> Result<()> {
         let mut scratch = [0u8; META_MAX];
         // Read the existing blob unless EF_META is *confirmed* absent. Treating

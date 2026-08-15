@@ -165,6 +165,29 @@ status = "MODELLED-ONLY"
 statement = "The two refusals exempt from revocation — the ones a conformant host can produce in normal use — preserve exactly the status they held, no more."
 source = ["formal/README.md — what a refused authentication costs"]
 
+# ---- RSKeyStore — the flash layer (rsk-fs's Fs over Storage) ----------------
+
+[[property]]
+id = "SEC-STORE-001"
+name = "NoOrphanedMetadata"
+status = "MODELLED-ONLY"
+statement = "No delete — torn or complete — leaves a metadata record for the file it removed; value-gone-while-metadata-survives is the state the write order (metadata first) forbids."
+source = ["docs/threat-model.md"]
+
+[[property]]
+id = "SEC-STORE-002"
+name = "NoFalseAbsent"
+status = "MODELLED-ONLY"
+statement = "The present-cache never reads a committed key as absent: a confirmed-absent bit is set only over a genuinely absent FID. A false-absent is the 'seed lost, regenerate' disaster and opens every gate that reads has_data."
+source = ["docs/threat-model.md"]
+
+[[property]]
+id = "SEC-STORE-003"
+name = "NoRecordLostToMetaWrite"
+status = "MODELLED-ONLY"
+statement = "A meta_add of one FID never drops another FID's committed metadata record — the 'torn meta_add wiped every existing record' crash, where a faulted EF_META read was rebuilt from empty."
+source = ["docs/threat-model.md"]
+
 # ---- Accepted risks — ruled by the maintainer, visible here so their absence
 # ---- from the evidence table reads as a decision, not a hole ----------------
 

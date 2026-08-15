@@ -39,7 +39,7 @@ fi
 
 # Which module a configuration belongs to: the seam configs are the second
 # module's, and TLC takes the module name rather than reading it from the cfg.
-spec_for() { case "$1" in Seam*) echo RSKeyAppletSeams ;; *) echo RSKeySecurityState ;; esac; }
+spec_for() { case "$1" in Seam*) echo RSKeyAppletSeams ;; Store*) echo RSKeyStore ;; *) echo RSKeySecurityState ;; esac; }
 
 # floors.txt: what each configuration must produce. First match wins.
 expect_for() {
@@ -147,6 +147,9 @@ list_safety() {
   echo Seams.cfg                # the second module: the applet seams
   ls SeamMut_*.cfg
   ls SeamSolo_*.cfg
+  echo Store.cfg                # the third module: the flash layer
+  ls StoreMut_*.cfg
+  ls StoreSolo_*.cfg
 }
 
 list_liveness() {

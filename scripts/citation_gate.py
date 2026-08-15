@@ -3,7 +3,7 @@
 # Copyright (C) 2026 RS-Key contributors
 """Assert the TLA+ model still points at the code it says it models.
 
-`formal/RSKeySecurityState.tla` and `formal/README.md` carry ~160 `file.rs:line`
+The three `formal/*.tla` modules and `formal/README.md` carry ~180 `file.rs:line`
 citations — the whole bridge between the model and the implementation it claims
 to abstract. They were checked once, by hand, in a review pass. Code moves; a
 model whose citations have rotted is worse than no model, because it reads as
@@ -55,10 +55,13 @@ outright.
 
 ## The floor
 
-Each page must carry at least [`FLOOR`] citations. A regex that has stopped
+Each page must carry at least its [`FLOOR`] citations — [`FLOOR_BY_PAGE`] where a
+page legitimately cites fewer, the default otherwise. A regex that has stopped
 matching finds nothing, loops over nothing and exits 0 — the shape four guards
-in this tree shipped with. The floor is well under today's 104 and 58, and the
-count only goes up as the model grows.
+in this tree shipped with. The floor is well under each page's real count (104,
+58, 18) and only rises as the model grows; the per-page override is there so a
+tight model is not mistaken for a broken regex, and so no page is ever padded
+with citations it does not mean just to clear one number.
 
 ## Limits
 
@@ -82,11 +85,13 @@ import gate_lines
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
-#: The pages that carry citations. Both, because the README's invariant table is
-#: what a reader consults first and it cites more finely than the model does.
+#: The pages that carry citations: the three model modules and the README, whose
+#: invariant table a reader consults first and which cites more finely than the
+#: modules do. `RSKeyStore.tla` is the flash layer, added when M3 landed.
 PAGES = (
     pathlib.Path("formal/RSKeySecurityState.tla"),
     pathlib.Path("formal/RSKeyAppletSeams.tla"),
+    pathlib.Path("formal/RSKeyStore.tla"),
     pathlib.Path("formal/README.md"),
 )
 
@@ -122,6 +127,17 @@ PENDING: dict[str, str] = {}
 
 #: Below this a page is not citing, it is failing to be parsed. Today: 111, 40, 82.
 FLOOR = 25
+
+#: Pages that legitimately cite fewer than the default — a smaller model is not a
+#: broken regex, and padding a page to clear a floor is the failure this guard's
+#: own docstring warns against. `RSKeyStore.tla` is the flash layer, a tight model
+#: with 18 load-bearing citations; a floor of 9 still trips a regex that has
+#: stopped matching (it finds ~0) without demanding the page be inflated.
+FLOOR_BY_PAGE = {"RSKeyStore.tla": 9}
+
+
+def floor_for(page):
+    return FLOOR_BY_PAGE.get(page.name, FLOOR)
 
 #: `path.rs:12`, `path.rs:12-20`, `path.rs:12-20, 44`, and the continuation
 #: `` `:44` `` that both pages use for a second reference to the same file. The
@@ -235,9 +251,10 @@ def audit(root):
                     f"{page}: `{written}` -> {seen}, whose cited line is blank;"
                     " the code it named has moved",
                 )
-        if here < FLOOR:
+        floor = floor_for(page)
+        if here < floor:
             problems.append(
-                f"{page} yielded {here} citations, under the floor of {FLOOR}:"
+                f"{page} yielded {here} citations, under the floor of {floor}:"
                 " the page stopped citing, or this guard stopped reading it"
             )
         total += here

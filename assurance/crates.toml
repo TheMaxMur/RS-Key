@@ -84,13 +84,14 @@ class = "state-unmodelled"
 planned = "M8"
 
 [crate.rsk-fs]
-class = "state-unmodelled"
-planned = "M3"
-note = "already carries the tree's only Rust abstract model (powercut_model.rs) with its own Kani rules; M3 lifts it to TLA+ and ties R0p to it."
+class = "state-partial"
+model = "RSKeyStore"
+gap = "the committed store, the delete write-order and the present-cache soundness are modelled (M3 lifted powercut_model.rs to TLA+ and ties R0p to it); values are two opaque tokens so a content-corrupting defect is out of reach, and Fs::factory_wipe's two-phase sweep is the security module's ordering (SeedLeadsTheWipe), not this one's — its own truncation guard is roadmap M5/M7."
 
 [crate.rsk-store]
-class = "state-unmodelled"
-planned = "M3"
+class = "state-partial"
+model = "RSKeyStore"
+gap = "the Storage contract it implements — atomic append, an enumeration-completeness flag — is taken as RSKeyStore's backend assumption; the two-partition counter/main ring, is_counter_fid routing, wear and page reclaim, and compact are backend mechanics the model abstracts."
 
 [crate.rsk-rescue]
 class = "state-unmodelled"
