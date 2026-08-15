@@ -130,6 +130,7 @@ def solo_target_counts(formal: pathlib.Path) -> dict[str, int]:
                 "AdminSolo_",
                 "DispSolo_",
                 "BootSolo_",
+                "TransSolo_",
                 "SoloClause_",
                 "LiveMut_",
                 "FairMut_",

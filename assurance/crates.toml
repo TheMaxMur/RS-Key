@@ -80,8 +80,9 @@ model = "RSKeyTrustedDisplay"
 gap = "hit_confirm's disjoint Allow/Deny zones are the modelled seam (OnlyAllowConfirms's Rust owner); rendering, fonts and the settings codec are pure functions under their own 12 Kani proofs and render tests — no screen-transition state lives in this crate (the ceremony state machine is rsk-display's)."
 
 [crate.rsk-usb]
-class = "state-unmodelled"
-planned = "M8"
+class = "state-partial"
+model = "RSKeyTransport"
+gap = "the CTAPHID reassembler's channel/sequence/length state machine is modelled (M8); the async transport loop's bounded-write liveness (the 0x075D wedge fix) is guarded by the FrameSink seam's own mutation-tested regression, and the CCID/keyboard framing and secure_pin codec are single-step, Kani-proved and unit-tested."
 
 [crate.rsk-fs]
 class = "state-partial"

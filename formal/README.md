@@ -1250,6 +1250,53 @@ carry are the security module's; the seal migrations' own torn-write safety is
 the store module's and the power-cut oracle's; TRNG health gating and USB
 bring-up order are M8's transport territory.
 
+## The eighth module — `RSKeyTransport.tla`
+
+`rsk-usb` was the last workspace member no module covered, and the CTAPHID
+frame reassembler (`crates/rsk-usb/src/ctaphid.rs:386-456`) is a genuine
+sequence machine — `in_tx` carries across the frames of a multi-frame message.
+It is already unit-tested and fuzzed, and that is exactly the point of also
+modelling it: every one of those exercises a *single* `feed`, or a fuzzer's
+random stream checked for "no panic". The security properties are not about one
+frame — they are about what an interleaving of channels can *assemble*, which is
+an invariant over a transaction's reachable space that a per-frame test does not
+assert and a sampling fuzzer does not prove.
+
+- `NoCrossChannelSplice` — a continuation on a channel other than the
+  in-progress transaction's is `CHANNEL_BUSY`, the owner's transaction left
+  intact (`crates/rsk-usb/src/ctaphid.rs:433-435`); one host application's bytes
+  must never assemble into another's message;
+- `NoSequenceGap` — an out-of-order continuation aborts rather than filling the
+  gap (`:437-440`); the reassembler never completes a message the host did not
+  send in that order;
+- `NoBufferOverrun` — an INIT declaring more than `CTAP_MAX_MESSAGE` is refused
+  (`:417-419`), and the chunk count never passes the ceiling; in a `no_std`
+  image passing it is an out-of-bounds write, so this one is **structural** (the
+  other two are ghosts — a splice and a desync leave no trace in the completed
+  message, they are steps).
+
+| Mutation switch | Removes | Target invariant | Caught in |
+|---|---|---|---|
+| `BugContIgnoresChannel` | the `cid != self.cid` busy check on a continuation | `NoCrossChannelSplice` | 11 states |
+| `BugContIgnoresSeq` | the `seq != self.seq` abort | `NoSequenceGap` | 10 states |
+| `BugInitLenUnchecked` | the `bcnt > CTAP_MAX_MESSAGE` refusal | `NoBufferOverrun` | 8 states |
+
+`Transport.cfg` is **GREEN, exhaustive over 13 distinct states at depth 4**, no
+dead action — `CTAPHID_INIT` always resyncs, so `Init` is enabled in every state
+and the graph never dead-ends. **All three are co-refuted, the third
+consecutive zero-gap batch**: `cont_wrong_cid_busy`, `wrong_seq_aborts` and
+`bcnt_too_large` each catch their mutant in `cargo test -p rsk-usb`.
+
+**What it does NOT cover, stated.** A chunk is one bit of provenance, not 57/59
+payload bytes — the three properties never look at contents; a `CTAPHID_INIT`
+mid-transaction is a legal resync (a takeover, not a splice: B's fresh buffer
+holds B's chunks). The bounded IN-endpoint write that fixed the runtime
+interface wedge (0x075D, `TX_TIMEOUT_MS`) is a liveness property of the async
+`run` loop (`crates/rsk-usb/src/ctaphid.rs:565`), already guarded by the
+`FrameSink` seam's own mutation-tested regression; the CCID and keyboard framing
+and the `secure_pin`
+codec are single-step, Kani-proved and unit-tested.
+
 ## What now catches a run nobody watched
 
 That `VACUOUS` rule was one heuristic and a **reporting** guard: it printed a

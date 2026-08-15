@@ -41,6 +41,9 @@ Display.cfg                          GREEN   4
 \* The cross-boot hardening (RSKeyBootHardening): 24 distinct at depth 5, the
 \* marker/weak/lock product across the reset line -- a third, as usual.
 Boot.cfg                             GREEN   8
+\* The CTAPHID reassembler (RSKeyTransport): 13 distinct at depth 4, the
+\* owner/seq/got/need product over two channels -- a third rounds to 4.
+Transport.cfg                        GREEN   4
 \* The liveness layer builds a behaviour graph ON TOP of the state graph -- 23.7
 \* million nodes at these constants -- and runs out of memory at the 4 GB
 \* default after the state search has already completed (E172). The heap column
@@ -70,5 +73,7 @@ DispMut_*.cfg                        RED     -
 DispSolo_*.cfg                       RED     -
 BootMut_*.cfg                        RED     -
 BootSolo_*.cfg                       RED     -
+TransMut_*.cfg                       RED     -
+TransSolo_*.cfg                      RED     -
 LiveMut_*.cfg                        RED     -
 FairMut_*.cfg                        RED     -

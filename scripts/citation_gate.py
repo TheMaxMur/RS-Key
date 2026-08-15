@@ -3,7 +3,7 @@
 # Copyright (C) 2026 RS-Key contributors
 """Assert the TLA+ model still points at the code it says it models.
 
-The seven `formal/*.tla` modules and `formal/README.md` carry ~220 `file.rs:line`
+The eight `formal/*.tla` modules and `formal/README.md` carry ~230 `file.rs:line`
 citations — the whole bridge between the model and the implementation it claims
 to abstract. They were checked once, by hand, in a review pass. Code moves; a
 model whose citations have rotted is worse than no model, because it reads as
@@ -59,8 +59,8 @@ Each page must carry at least its [`FLOOR`] citations — [`FLOOR_BY_PAGE`] wher
 page legitimately cites fewer, the default otherwise. A regex that has stopped
 matching finds nothing, loops over nothing and exits 0 — the shape four guards
 in this tree shipped with. The floor is well under each page's real count (104,
-58, 18, 12, 10, 11, 12) and only rises as the model grows; the per-page override
-is there so a
+58, 18, 12, 10, 11, 12, 8) and only rises as the model grows; the per-page
+override is there so a
 tight model is not mistaken for a broken regex, and so no page is ever padded
 with citations it does not mean just to clear one number.
 
@@ -97,6 +97,7 @@ PAGES = (
     pathlib.Path("formal/RSKeyAdminSurface.tla"),
     pathlib.Path("formal/RSKeyTrustedDisplay.tla"),
     pathlib.Path("formal/RSKeyBootHardening.tla"),
+    pathlib.Path("formal/RSKeyTransport.tla"),
     pathlib.Path("formal/README.md"),
 )
 
@@ -144,6 +145,7 @@ FLOOR_BY_PAGE = {
     "RSKeyAdminSurface.tla": 5,
     "RSKeyTrustedDisplay.tla": 6,
     "RSKeyBootHardening.tla": 6,
+    "RSKeyTransport.tla": 5,
 }
 
 

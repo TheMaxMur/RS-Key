@@ -13,7 +13,7 @@ cost — lives in `formal/README.md` next to the model itself.
 so. What exists is narrower and it is measured: the paragraph to quote is in
 [Testing](testing.md), under "Formal claims — what is and is not verified".
 
-## The seven modules
+## The eight modules
 
 `RSKeySecurityState.tla` models the FIDO security state: PIN retries, the
 `pinUvAuthToken` and its permissions, which transport owns the touch, which
@@ -61,6 +61,14 @@ weak-sealed copies, and every lazy re-key re-arms it) and the scratch-word
 lock carry (a warm reset moves the whole soft lock, never half of it). It
 exists because `firmware/` has no host tests by construction: the model is
 the only instrument that exercises these interleavings.
+
+`RSKeyTransport.tla` models the CTAPHID frame reassembler — the channel,
+sequence and length checks a multi-frame message passes before dispatch: one
+host application's continuation never assembles into another's message, an
+out-of-order frame aborts rather than fills the gap, and a declared length
+never overruns the buffer. It is already unit-tested and fuzzed per frame;
+the model checks the invariants that live in the interleaving, which those
+do not assert.
 
 ## The checks of the checks
 

@@ -292,6 +292,29 @@ status = "MODELLED-ONLY"
 statement = "A warm reset carries the clientPIN soft lock atomically — the engaged flag AND the mismatch batch. Carrying half lets a host stop one short of the limit and reboot, laundering the budget two attempts at a time."
 source = ["CTAP 2.3 §6.5.5.6", "docs/threat-model.md"]
 
+# ---- RSKeyTransport — the CTAPHID frame reassembler --------------------------
+
+[[property]]
+id = "SEC-TRANS-001"
+name = "NoCrossChannelSplice"
+status = "MODELLED-ONLY"
+statement = "No host application's continuation frame is assembled into another channel's message: a continuation on a channel other than the in-progress transaction's is CHANNEL_BUSY, the owner's transaction left intact."
+source = ["FIDO CTAP §11.2", "docs/threat-model.md"]
+
+[[property]]
+id = "SEC-TRANS-002"
+name = "NoSequenceGap"
+status = "MODELLED-ONLY"
+statement = "No message completes out of the order the host sent it: an out-of-sequence continuation aborts the transaction (INVALID_SEQ) rather than filling the gap with a frame that arrived early or late."
+source = ["FIDO CTAP §11.2", "docs/threat-model.md"]
+
+[[property]]
+id = "SEC-TRANS-003"
+name = "NoBufferOverrun"
+status = "MODELLED-ONLY"
+statement = "The assembled length never exceeds the buffer: an INIT declaring more than CTAP_MAX_MESSAGE is refused, and the chunk count never passes the ceiling — an out-of-bounds write in a no_std image."
+source = ["FIDO CTAP §11.2", "docs/threat-model.md"]
+
 # ---- Accepted risks — ruled by the maintainer, visible here so their absence
 # ---- from the evidence table reads as a decision, not a hole ----------------
 

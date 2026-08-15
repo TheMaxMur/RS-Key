@@ -753,6 +753,58 @@ slice = ["cargo", "test", "-p", "rsk-display", "-p", "rsk-ui"]
 expect = "killed"
 note = "the Allow/Deny separation collapsed: every tap anywhere on the confirm screen reads as the approval — a deny is an approve and a stray brush above the band signs."
 
+# ---- RSKeyTransport: the CTAPHID frame reassembler --------------------------
+
+[comutant.BugContIgnoresChannel]
+status = "patch"
+file = "crates/rsk-usb/src/ctaphid.rs"
+find = """
+            if cid != self.cid {
+                return Outcome::Error(cid, ERR_CHANNEL_BUSY);
+            }
+            let seq = type_byte & !TYPE_INIT;
+"""
+replace = """
+            let seq = type_byte & !TYPE_INIT;
+"""
+slice = ["cargo", "test", "-p", "rsk-usb"]
+expect = "killed"
+note = "a continuation on a channel other than the in-progress transaction's is appended instead of refused — one host application's bytes spliced into another's message."
+
+[comutant.BugContIgnoresSeq]
+status = "patch"
+file = "crates/rsk-usb/src/ctaphid.rs"
+find = """
+            let seq = type_byte & !TYPE_INIT;
+            if seq != self.seq {
+                self.in_tx = false;
+                return Outcome::Error(cid, ERR_INVALID_SEQ);
+            }
+"""
+replace = """
+            let seq = type_byte & !TYPE_INIT;
+            let _ = seq;
+"""
+slice = ["cargo", "test", "-p", "rsk-usb"]
+expect = "killed"
+note = "an out-of-order continuation is appended instead of aborting the transaction — the reassembler completes a message the host never sent in that order."
+
+[comutant.BugInitLenUnchecked]
+status = "patch"
+file = "crates/rsk-usb/src/ctaphid.rs"
+find = """
+            let bcnt = ((f[5] as usize) << 8) | f[6] as usize;
+            if bcnt > CTAP_MAX_MESSAGE {
+                return Outcome::Error(cid, ERR_INVALID_LEN);
+            }
+"""
+replace = """
+            let bcnt = (((f[5] as usize) << 8) | f[6] as usize).min(CTAP_MAX_MESSAGE);
+"""
+slice = ["cargo", "test", "-p", "rsk-usb"]
+expect = "killed"
+note = "the INIT length ceiling clamped-away instead of refused: a header declaring more than CTAP_MAX_MESSAGE is silently truncated rather than answered ERR_INVALID_LEN, so bcnt_too_large's error verdict is gone. (A bare removal would index past `msg`; the clamp keeps the patch compiling while still dropping the checked behaviour.)"
+
 # ---- rsk-display: the on-panel PIN gate ------------------------------------
 
 [comutant.BugLocalPinIgnoresBudget]
