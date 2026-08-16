@@ -126,6 +126,30 @@ pub fn is_fido_seed_fid(fid: u16) -> bool {
     FIDO_SEED_FIDS.contains(&fid)
 }
 
+/// The persistent phases of [`reset`]. Verification code uses the same
+/// classifier as the real sweep, so its ordering proof cannot silently drift to
+/// a second hand-written gate list.
+#[cfg(any(test, kani, feature = "assurance-trace"))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ResetPhase {
+    Seed,
+    Secret,
+    Gate,
+}
+
+#[cfg(any(test, kani, feature = "assurance-trace"))]
+pub(crate) fn reset_phase(fid: u16) -> Option<ResetPhase> {
+    if is_fido_seed_fid(fid) {
+        Some(ResetPhase::Seed)
+    } else if !is_fido_fid(fid) {
+        None
+    } else if is_fido_gate_record(fid) {
+        Some(ResetPhase::Gate)
+    } else {
+        Some(ResetPhase::Secret)
+    }
+}
+
 /// The FIDO records that *gate* the applet rather than being the secret itself.
 /// Deleted last by [`reset`], so no prefix of the wipe can leave live passkeys
 /// with their PIN and `alwaysUv` requirement already removed. Public because the
@@ -145,6 +169,10 @@ pub fn is_fido_seed_fid(fid: u16) -> bool {
 /// secrets, where a prefix can only ever revoke it early.
 /// Refines `RSKeySecurityState!NoAccessibleSecretWithoutGate` — SEC-FIDO-004.
 pub fn is_fido_gate_fid(fid: u16) -> bool {
+    is_fido_gate_record(fid)
+}
+
+fn is_fido_gate_record(fid: u16) -> bool {
     matches!(
         fid,
         EF_PIN | EF_DEVICE_PIN | EF_ALWAYS_UV | EF_MINPINLEN | EF_BACKUP_SEALED

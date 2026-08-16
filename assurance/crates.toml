@@ -87,7 +87,7 @@ gap = "the CTAPHID reassembler's channel/sequence/length state machine is modell
 [crate.rsk-fs]
 class = "state-partial"
 model = "RSKeyStore"
-gap = "the committed store, the delete write-order and the present-cache soundness are modelled (M3 lifted powercut_model.rs to TLA+ and ties R0p to it); values are two opaque tokens so a content-corrupting defect is out of reach, and Fs::factory_wipe's two-phase sweep is the security module's ordering (SeedLeadsTheWipe), not this one's — its own truncation guard is roadmap M5/M7."
+gap = "the committed store, the delete write-order and the present-cache soundness are modelled (M3 lifted powercut_model.rs to TLA+ and ties R0p to it); phase 6 composes the FIDO reset projection with delete_landed and the real byte-cuttable Fs stack. Values are still two opaque tokens, so a content-corrupting defect is out of reach, and Fs::factory_wipe's two-phase sweep remains the security module's ordering (SeedLeadsTheWipe), not this one's."
 
 [crate.rsk-store]
 class = "state-partial"

@@ -86,14 +86,14 @@ source = ["CTAP 2.3 §6.8", "docs/threat-model.md"]
 [[property]]
 id = "SEC-FIDO-006"
 name = "ResetNeverWeakensSurvivingState"
-status = "MODELLED-ONLY"
+status = "BOUNDED"
 statement = "No prefix of an authenticatorReset — torn or complete — leaves a surviving usable secret whose gate has already gone; the RAM copy of the seed counts as surviving."
 source = ["CTAP 2.3 §6.6", "docs/threat-model.md"]
 
 [[property]]
 id = "SEC-FIDO-006A"
 name = "ResetKeepsThePinGate"
-status = "MODELLED-ONLY"
+status = "BOUNDED"
 clause_of = "SEC-FIDO-006"
 statement = "A torn reset never leaves secrets standing with the PIN record already destroyed."
 source = ["CTAP 2.3 §6.6"]
@@ -101,7 +101,7 @@ source = ["CTAP 2.3 §6.6"]
 [[property]]
 id = "SEC-FIDO-006B"
 name = "ResetKeepsTheAlwaysUvGate"
-status = "MODELLED-ONLY"
+status = "BOUNDED"
 clause_of = "SEC-FIDO-006"
 statement = "A torn reset never leaves secrets standing with the alwaysUv gate already destroyed."
 source = ["CTAP 2.3 §6.6"]
@@ -109,7 +109,7 @@ source = ["CTAP 2.3 §6.6"]
 [[property]]
 id = "SEC-FIDO-006C"
 name = "ResetKeepsTheBackupSeal"
-status = "MODELLED-ONLY"
+status = "BOUNDED"
 clause_of = "SEC-FIDO-006"
 statement = "A torn reset never re-opens the one-time seed-export window over a seed it did not destroy: EF_BACKUP_SEALED is the gate that reads backwards."
 source = ["docs/threat-model.md"]

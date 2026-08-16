@@ -40,6 +40,15 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Added
 
+- **Formal-verification phase 6 adds a cross-reset refinement pilot over the
+  real `rsk-fs` power-cut stack.** `ResetNeverWeakensSurvivingState` and its
+  PIN, alwaysUv and backup-seal clauses now have bounded one-step Kani proofs,
+  byte-granular reset/reboot fuzz coverage, and a destructive real-power HIL
+  harness. A measured full-`FidoState` Kani expansion established the tool
+  boundary; the security-visible projection solves in under a second, so
+  Verus/Creusot is deferred. Verification-only refactor, no firmware behaviour
+  change. **bcdDevice → 0x095E.**
+
 - **Formal-verification phase 5 adds a bounded token-lifecycle refinement
   chain.** A canonical outcome-labelled TLA+ relation now drives native B→A
   state/outcome refinement and the generated exhaustive Rust edge table used by

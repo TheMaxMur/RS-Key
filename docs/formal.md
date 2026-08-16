@@ -79,6 +79,17 @@ never overruns the buffer. It is already unit-tested and fuzzed per frame;
 the model checks the invariants that live in the interleaving, which those
 do not assert.
 
+## Refinement pilots
+
+The [token pilot](token-refinement.md) connects a small abstract token machine
+to the detailed FIDO model and a bounded projection of `FidoState`. The
+[cross-reset pilot](reset-refinement.md) closes the deliberately deferred reboot
+seam for `ResetNeverWeakensSurvivingState`: concrete reset phases share the
+production FID classifier, Kani proves the finite projection inductive, and the
+existing `rsk-fs` oracle drives the full reset through byte-granular power cuts.
+The real-board script is a destructive witness, not a proof, and its presence in
+the evidence graph does not assert that a current hardware run passed.
+
 ## Trace validation
 
 The models' fidelity to the code is kept by hand — citations, mutants,

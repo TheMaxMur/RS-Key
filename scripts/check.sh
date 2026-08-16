@@ -134,7 +134,8 @@ assurance_trace_is_image_neutral() {
   elf_before="$dir/target-before/thumbv8m.main-none-eabihf/release/firmware"
   arm-none-eabi-objcopy -O binary "$elf_before" "$dir/before.bin"
 
-  for f in generated_token_edges.rs state_assurance.rs state_refinement_kani.rs; do
+  for f in generated_token_edges.rs state_assurance.rs state_refinement_kani.rs \
+      reset_assurance.rs reset_refinement_kani.rs; do
     printf '\ncompile_error!("assurance source reached production");\n' \
       >> "$src/crates/rsk-fido/src/$f"
   done

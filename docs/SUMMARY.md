@@ -52,6 +52,7 @@
 - [Constant-time audit](ct-audit.md)
 - [Formal model](formal.md)
   - [Token refinement pilot](token-refinement.md)
+  - [Cross-reset refinement pilot](reset-refinement.md)
 
 # Internals
 

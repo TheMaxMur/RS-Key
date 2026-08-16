@@ -41,6 +41,8 @@ pub mod vendor;
 
 #[cfg(any(test, kani, feature = "assurance-trace"))]
 pub mod generated_token_edges;
+#[cfg(any(test, kani, feature = "assurance-trace"))]
+pub mod reset_assurance;
 
 #[cfg(any(test, kani, feature = "assurance-trace"))]
 pub use generated_token_edges::{AState, AbstractOp, AbstractOutcome};

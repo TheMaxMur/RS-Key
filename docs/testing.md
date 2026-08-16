@@ -121,7 +121,10 @@ multi-step):
   garbage; a torn `delete` never leaves the value gone but its metadata
   alive), durability (every committed file reads back exactly; a spurious
   "absent" is the on-device "seed lost" disaster), and the key set. Cuts
-  landing inside the next mount's own repair are survived by dying again.
+  landing inside the next mount's own repair are survived by dying again. A
+  dedicated input class also runs the real FIDO reset on that same store,
+  checks `ResetNeverWeakensSurvivingState` after boot-time seed provisioning,
+  then mounts a second time to cross the reboot boundary again.
 
 ```sh
 nix develop .#fuzz -c cargo fuzz list
@@ -231,7 +234,10 @@ crypto-critical helpers, where a proof genuinely beats a sample:
   credentialManagement enumerate walk is servable only to the channel whose
   *Begin* opened it (`NoAuthorizationBypass`). The names are the ones
   `formal/RSKeySecurityState.tla` uses, so one property can be traced model →
-  code → harness by grep.
+  code → harness by grep. Phase 6 adds four one-step induction harnesses over
+  the reset's security-visible concrete projection: initialization and every
+  begin/delete/advance/abort/finish/power-cut step preserve
+  `ResetNeverWeakensSurvivingState` and its three independently named clauses.
 
 Kani is **not** in nixpkgs and its setup downloads a prebuilt CBMC bundle, so
 this is the one deliberately non-nix tool (install once, outside the dev
@@ -288,9 +294,9 @@ run):
 | Tier | Crates | Harnesses | Covers | Solve | Slowest harness |
 |---|---|---|---|---|---|
 | `pr` | 13 | 50 | 23 | 199 s | `rsk-piv::set_protected_total_and_invariant`, 47 s |
-| `state` | 2 | 14 | 17 | ~10 min | `rsk-fido::…_at_call_site`, ~7 min (9.3 GiB peak) |
-| `all` | 17 | 72 | 39 | ~1 h 45 | `rsk-rescue::serialize_parse_roundtrip`, 27 m 42 s |
-| `light1` | 4 | 23 | 19 | not yet run | `rsk-fido::…_at_call_site`, ~7 min (9.3 GiB peak) |
+| `state` | 2 | 18 | 21 | ~10 min | `rsk-fido::…_at_call_site`, ~7 min (9.3 GiB peak) |
+| `all` | 17 | 76 | 43 | ~1 h 45 | `rsk-rescue::serialize_parse_roundtrip`, 27 m 42 s |
+| `light1` | 4 | 27 | 23 | not yet run | `rsk-fido::…_at_call_site`, ~7 min (9.3 GiB peak) |
 | `light2` | 5 | 21 | 3 | not yet run | `rsk-rsa-asm`'s division spec and sieve |
 | `light3` | 7 | 23 | 16 | not yet run | `rsk-mldsa`'s rounding round-trips |
 | `heavy` | 1 | 5 | 1 | ~55 min | `rsk-rescue::serialize_parse_roundtrip`, 55 min (11.1 GB peak) |
@@ -442,6 +448,14 @@ B→A, Kani checks bounded C→A obligations, and the emulator carries raw outco
 through a consensus validator. See [Token refinement pilot](token-refinement.md)
 for the exact InitC/wf boundary and the reset evidence table.
 
+Phase 6 closes that pilot's reset/reboot seam for
+`ResetNeverWeakensSurvivingState`. The bounded C→B projection uses the shipped
+reset classifier, the existing `rsk-fs` torn-delete rules compose underneath
+it, the `power_cut` target runs the real reset over byte-cuttable flash, and a
+destructive HIL script performs the same check across physical USB power loss.
+See [Cross-reset refinement pilot](reset-refinement.md) for the abstraction
+boundary, measurements, and the still-required per-board HIL witness.
+
 The companion co-refutation run asks whether production tests reject those
 same semantic defects. The original phase-2 baseline is fixed at 28 rows:
 26 are killed by code-level harnesses, two are unreachable by construction,
@@ -469,7 +483,11 @@ is measured; nothing in it is an aspiration.
 > again, and a `credentialManagement` enumerate walk is servable only to the
 > channel whose *Begin* opened it. Those hold for every four- or five-operation
 > sequence from one starting state; longer sequences, other starting states and
-> the flash-backed persistent grant are outside them. On top of that sits a
+> the flash-backed persistent grant are outside them. Four more harnesses prove
+> initialization and one-step preservation of a finite reset projection across
+> reset phases, abort and reboot; the complete `FidoState` and byte-level flash
+> are linked by unit tests and sampled power-cut fuzz, not by that proof. On top
+> of that sits a
 > **TLA+ model** of the authenticator's security state. TLC checks six named
 > invariants exhaustively over 60,020,016 states at small constants. **That
 > is a result about the model, not about the firmware binary**: it is only as
