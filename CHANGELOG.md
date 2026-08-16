@@ -51,7 +51,12 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   `--lint` (a `check.sh` row) holds the file against the `Mut_*.cfg` roster and
   resolves every patch anchor against today's code. **The whole roster is
   measured and closed: 28 mutants — 26 killed, 2 unreachable, zero open gaps,
-  every kill carrying real test output.** A patch that fails to *compile*
+  every kill carrying real test output.** A complete measured run can publish
+  the generated 28-row model↔code table in `formal/README.md`; ordinary lint
+  rejects a stale table and refuses to publish one from a partial run. The
+  weekly `deep-checks` workflow now measures the expanded 43-entry roster next
+  to `cargo-mutants`: all 41 executable patches are killed and two are
+  unreachable. A patch that fails to *compile*
   scores `build-broke`, never killed — the trap the first `BugPpuatIsAGate`
   patch fell into (`EF_PAUTHTOKEN` is a `KeyFid`, not a `u16`) and the reason
   the verdict logic tells the two apart.

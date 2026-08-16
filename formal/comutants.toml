@@ -29,6 +29,7 @@
 # matrix about who catches what.
 
 pending_floor = 0
+phase2_count = 28
 
 # ---- batch 1: the token/PIN family and the two write orders -----------------
 

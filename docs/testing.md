@@ -411,13 +411,12 @@ small constants; the names are the ones the `rsk-fido` Kani harnesses use, so
 one property reads model → code → harness by grep.
 
 It exists because Kani proves a property over *one call* and RS-Key's dangerous
-defects have lived in *orderings*. It is a **design artefact, not an assurance
-layer**: it is not in `flake.nix`, not in the gate and not in CI, and a green
-run is a statement about the model. `formal/README.md` is its scope statement —
-what it covers, where it departs from the firmware **and in which direction**,
-the mutation experiment that keeps its invariants falsifiable, and the two
-counterexamples it has produced on the shipped tree. Read that before quoting a
-result from it.
+defects have lived in *orderings*. It is a **design artefact, not a proof of the
+firmware**: a green run is a statement about the model. `formal/README.md` is
+its scope statement — what it covers, where it departs from the firmware **and
+in which direction**, the mutation experiment that keeps its invariants
+falsifiable, and the counterexamples it has produced on the shipped tree. Read
+that before quoting a result from it.
 
 ```sh
 nix develop            # exports TLA2TOOLS_JAR; the JVM comes with it
@@ -428,6 +427,18 @@ cd formal && ./gen-configs.sh && ./run-tlc.sh safety   # the tier CI runs
 `deep-checks.yml`'s weekly `formal` row, which also fires on any push touching
 `formal/`. `liveness` is the temporal half and is not in CI: it needs a 12g
 heap. `all` is both. Tier membership lives in `formal/run-tlc.sh`.
+
+The companion co-refutation run asks whether production tests reject those
+same semantic defects. The original phase-2 baseline is fixed at 28 rows:
+26 are killed by code-level harnesses, two are unreachable by construction,
+and none remains a gap. Its generated table is in `formal/README.md`; ordinary
+`check.sh` rejects drift, while the full 43-entry live roster runs weekly:
+
+```sh
+python scripts/comutate.py --lint
+python scripts/comutate.py run
+python scripts/comutate.py run --write-readme  # full run, then refresh 28 rows
+```
 
 ## Formal claims — what is and is not verified
 
@@ -746,13 +757,14 @@ from this page, both sharded across runners, a `repro` job that builds the
 hermetic firmware twice and requires bit-identical outputs
 ([build.md](build.md#nix-build-hermetic-no-dev-shell)), and an `llvm-cov` job
 that floors host-crate line coverage. Weekly, on Sunday: the full Kani roster,
-one runner per tier, and an advisory `cargo-mutants` sweep. No hidden state.
+one runner per tier, an advisory `cargo-mutants` sweep, the semantic
+co-refutation roster and TLC's formal safety tier. No hidden state.
 
 ```mermaid
 flowchart TB
     a["Merge gate — every commit / PR<br/>check.sh: fmt · clippy · host tests · firmware builds · size ratchet · audit · deny · vet · gitleaks<br/>proofs: Kani pr tier (+ state tier when the diff reaches it)"]
     b["Daily — deep-checks<br/>Miri (3 shards) · timed libFuzzer (4 shards) · repro (bit-identical build) · llvm-cov (coverage floor)"]
-    c["Weekly — deep-checks<br/>Kani: light1 · light2 · light3 · heavy — together the all roster<br/>cargo-mutants (8 shards, advisory)"]
+    c["Weekly — deep-checks<br/>Kani all roster · cargo-mutants (advisory)<br/>semantic co-refutation · TLC safety tier"]
     a ~~~ b ~~~ c
 ```
 

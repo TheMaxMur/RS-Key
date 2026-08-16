@@ -21,6 +21,7 @@ import comutate
 
 SPEC = """\
 pending_floor = 1
+phase2_count = 3
 
 [comutant.BugAlpha]
 status = "patch"
@@ -65,6 +66,10 @@ def build(root: pathlib.Path) -> pathlib.Path:
     src = root / "src"
     src.mkdir()
     (src / "lib.rs").write_text("GUARD_LINE\nfn f() {}\n")
+    _, _, entries = comutate.load(root)
+    (formal / "README.md").write_text(
+        "# Fixture\n\n" + comutate.phase2_block(root, entries) + "\n"
+    )
     return root
 
 
@@ -85,6 +90,48 @@ def red(tree, needle: str) -> None:
 
 
 def test_green_fixture_passes(tree):
+    assert comutate.lint(tree) == []
+
+
+def test_phase2_table_excludes_later_module_mutants(tree):
+    text = (tree / "formal" / "README.md").read_text()
+    assert "BugAlpha" in text
+    assert "BugBeta" in text
+    assert "BugGamma" in text
+    assert "BugStore" not in text
+    assert "0/3 code-level kills" in text
+    assert "1 unreachable" in text
+    assert "1 open gaps" in text
+    assert "1 pending" in text
+
+
+def test_stale_phase2_table_fails(tree):
+    edit(tree / "formal" / "README.md", "`BugAlpha`", "`BugStale`")
+    red(tree, "phase-2 fidelity table is stale")
+
+
+def test_phase2_roster_wrong_count_fails(tree):
+    edit(tree / "formal" / "comutants.toml", "phase2_count = 3", "phase2_count = 4")
+    red(tree, "phase-2 roster has 3 mutants")
+
+
+def test_phase2_table_maps_a_measured_kill_to_co_refuted(tree):
+    _, _, entries = comutate.load(tree)
+    block = comutate.phase2_block(tree, entries, {"BugAlpha": "killed"})
+    assert "| `BugAlpha` | `FooHolds` | RED | **co-refuted** |" in block
+    assert "1/3 code-level kills" in block
+
+
+def test_write_readme_requires_every_patch_measurement(tree, capsys):
+    _, _, entries = comutate.load(tree)
+    assert comutate.write_readme(tree, entries, {}) == 1
+    assert "refusing an unmeasured" in capsys.readouterr().err
+
+
+def test_write_readme_publishes_a_complete_measurement(tree):
+    edit(tree / "formal" / "README.md", "`BugAlpha`", "`BugStale`")
+    _, _, entries = comutate.load(tree)
+    assert comutate.write_readme(tree, entries, {"BugAlpha": "gap"}) == 0
     assert comutate.lint(tree) == []
 
 

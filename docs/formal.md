@@ -106,6 +106,28 @@ gate. Its four artificial corruptions are a broken jar, a Solo invariant that
 misses its mutant, a one-state VACUOUS run, and a muted Mut switch. Direct RED
 and FLOOR cases keep all three job verdict boundaries explicit.
 
+## Co-refutation
+
+TLC proving that a model invariant rejects a defect does not show that the
+production tests reject the same defect. `scripts/comutate.py` closes that gap:
+each model mutant is an exact patch that re-injects the same semantic defect
+into Rust, then runs the smallest relevant host-test slice in a throwaway git
+worktree. A failing test is `co-refuted`; a green slice is an abstraction gap;
+a defect made impossible by a shipped structural fix is `unreachable` only
+with recorded evidence. A compile failure is never counted as a kill.
+
+The roadmap's fixed phase-2 denominator is the original 28 FIDO mutants. The
+generated table in `formal/README.md` records all 28, their target invariant,
+model verdict and code-level verdict: **26/28 are co-refuted, two are
+unreachable, and none is a gap**. Deriving that roster found six real coverage
+gaps; each now has a regression harness. Later modules extend the live roster
+to 43 entries: all 41 executable patches are killed and two are unreachable.
+
+The merge gate cheaply checks the closed roster, patch anchors, expectations,
+floors and generated table freshness. The expensive full measurement runs
+weekly next to `cargo-mutants`; `run --write-readme` publishes the 28-row table
+only after measuring every executable phase-2 patch.
+
 ## The registry
 
 Every property TLC checks has an entry in `assurance/properties.toml` — id,
@@ -147,10 +169,14 @@ cd formal
 ./run-tlc.sh --tiers              # what each tier runs, for the gate
 python3 ../scripts/assurance_gate.py   # the registry, held against the tree
 python3 ../scripts/assurance_gate.py --write-readme  # refresh its README table
+python3 ../scripts/comutate.py --lint  # closed roster + patch/table freshness
+python3 ../scripts/comutate.py run     # re-inject the whole live defect roster
+python3 ../scripts/comutate.py run --write-readme  # measure + refresh 28 rows
 ```
 
 CI runs the `safety` tier weekly (`deep-checks.yml`, the `formal` job) and on
 any push touching `formal/`, so an edit to the model is checked at once. The
 `liveness` tier is deliberately not in CI: `Liveness.cfg` needs the 12 GB heap
 `floors.txt` records for it, and a hosted runner has already died under less.
-The registry gate runs on every pull request as part of `check.sh`.
+The registry and co-refutation lint gates run on every pull request as part of
+`check.sh`; the full co-refutation roster runs weekly.

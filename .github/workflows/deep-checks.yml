@@ -5,9 +5,8 @@
 # not part of the merge gate (docs/testing.md).
 #
 # Two cadences, because the suites no longer fit one. Every row that answers
-# "did today's tree break something" runs daily; the two that answer "how well is
-# this tree tested at all" are weeks-scale questions and run on Sunday, where
-# their runners do not compete with the daily rows.
+# "did today's tree break something" runs daily; the slower assurance sweeps run
+# on Sunday, where their runners do not compete with the daily rows.
 #
 # DAILY
 #   miri — fuzz/tests/miri.rs: every fuzz target's logic under Miri's UB
@@ -44,6 +43,9 @@
 #          would notice if it changed. **Advisory**, for the reason that script
 #          states at length: most survivors are not defects, so a gating row
 #          would be red every week.
+#   comutants — the semantic model mutants re-injected into production Rust
+#          (`scripts/comutate.py run`). Gating: every recorded code-level kill
+#          must still go red, and a new GAP is an abstraction-fidelity finding.
 #   formal — TLC over formal/: the model, its 44 mutants, their floors and the
 #          vacuity check (formal/run-tlc.sh `safety`). Gating. It also runs on
 #          any push touching formal/, so an edit to the model is checked at once
@@ -65,6 +67,7 @@
 #   ./scripts/kani.sh all   (needs `cargo install kani-verifier` first — not nix)
 #   ./scripts/kani.sh light1   ./scripts/kani.sh heavy   # what the weekly rows run
 #   nix develop -c ./scripts/mutants-all.sh   (MUTANTS_SHARD=2/8 for one shard)
+#   nix develop -c python scripts/comutate.py run
 #   nix develop -c cargo llvm-cov --summary-only --fail-under-lines 80 --target <host> --workspace --exclude firmware --exclude rsk-wipe
 
 name: deep-checks
@@ -89,6 +92,7 @@ on:
         "scripts/fuzz-all.sh",
         "scripts/miri-all.sh",
         "scripts/mutants-all.sh",
+        "scripts/comutate.py",
         "scripts/kani.sh",
         "formal/**",
       ]
@@ -416,6 +420,44 @@ jobs:
           MUTANTS_SHARD: ${{ matrix.shard }}/8
           MUTANTS_JOBS: "3"
           HOST_TARGET: x86_64-unknown-linux-gnu
+
+  comutants:
+    if: github.event.schedule != '17 5 * * *'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+
+      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: comutants-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'formal/comutants.toml') }}
+          restore-keys: comutants-${{ runner.os }}-
+
+      - name: co-refutation — inject every semantic defect into production Rust
+        run: |
+          set -o pipefail
+          nix develop -c python scripts/comutate.py run | tee "$RUNNER_TEMP/comutants.log"
+
+      - name: publish the fidelity matrix
+        if: always()
+        run: |
+          {
+            echo "### Co-refutation — model defects at code level"
+            echo '```'
+            cat "$RUNNER_TEMP/comutants.log"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
   # The TLA+ model checker. It ran in no workflow at all until now: `floors.txt`,
   # the vacuity check and the 44-mutant matrix were ratchets whose only puller was
