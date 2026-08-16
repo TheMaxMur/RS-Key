@@ -11,6 +11,11 @@ authoritative and sends the next reader to a line that no longer says what it
 claims. Same failure as a stale CHANGELOG or an unbumped counter, so it lives
 beside them.
 
+The phase-1 `Refines Module!Invariant — SEC-*` tags are the semantic-address
+half of the same bridge. This gate shares their assurance check: every tag must
+resolve to its defining module and registry row, and every invariant in the two
+code-owning configurations must have a production tag.
+
 ## What is decidable, and what is not
 
 That `clientpin.rs:35` still *means* what the model says is a review question.
@@ -82,6 +87,7 @@ import pathlib
 import re
 import sys
 
+import assurance_gate
 import gate_lines
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -275,9 +281,11 @@ def audit(root):
         problems.append(
             f"`{key}` is in PENDING ({PENDING[key]}) but no longer rots; delete the entry"
         )
+    assurance_gate.check_property_tags(root, problems)
     debt = f", {len(carried)} carried" if carried else ""
     return problems, (
-        f"citation-gate: ok — {total} citations across {len(PAGES)} pages resolve{debt}"
+        f"citation-gate: ok — {total} citations across {len(PAGES)} pages resolve; "
+        f"phase-1 property tags close both ways{debt}"
     )
 
 
@@ -290,7 +298,8 @@ def main():
         print(
             "\nThe model's `file.rs:line` citations are the only bridge between it\n"
             "and the code it abstracts. One that no longer resolves sends the next\n"
-            "reader somewhere the claim was never true. Re-point it, or drop it."
+            "reader somewhere the claim was never true. Its phase-1 property tags\n"
+            "must also resolve model→code and code→model. Repair or drop the claim."
         )
         return 1
     print(summary)

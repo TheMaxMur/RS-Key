@@ -23,9 +23,14 @@ pub const RETRIES: u8 = 8;
 pub fn judge(byte: u8) -> bool {
     byte < 0x80
 }
-
+/// Refines `RSKeySecurityState!NoDrift` — SEC-T-001.
 pub fn spend() {}
 """
+
+UNTAGGED_CODE = CODE.replace(
+    "/// Refines `RSKeySecurityState!NoDrift` — SEC-T-001.",
+    "// no property owner in this fixture file",
+)
 
 MODEL = """---- MODULE Probe ----
 VARIABLES
@@ -34,7 +39,17 @@ VARIABLES
 
 \\* the spend latch (clientpin.rs:8), the firmware half (firmware/src/main.rs:2)
 \\* and a list, clientpin.rs:2,4-6
+NoDrift == TRUE
 ====
+"""
+
+PROPERTIES = """\
+[[property]]
+id = "SEC-T-001"
+name = "NoDrift"
+status = "MODELLED-ONLY"
+statement = "The fixture does not drift."
+source = ["fixture"]
 """
 
 #: Every page `PAGES` names that a case does not drive. It has to clear the
@@ -72,15 +87,20 @@ class Tree:
     def __init__(self, root):
         self.root = root
         self.write("crates/rsk-fido/src/clientpin.rs", CODE)
-        self.write("crates/rsk-fido/src/state.rs", CODE)
-        self.write("crates/rsk-device/src/ctap.rs", CODE)
-        self.write("crates/rsk-usb/src/ctaphid.rs", CODE)
-        self.write("crates/rsk-fs/src/lib.rs", CODE)
-        self.write("firmware/src/main.rs", CODE)
+        self.write("crates/rsk-fido/src/state.rs", UNTAGGED_CODE)
+        self.write("crates/rsk-device/src/ctap.rs", UNTAGGED_CODE)
+        self.write("crates/rsk-usb/src/ctaphid.rs", UNTAGGED_CODE)
+        self.write("crates/rsk-fs/src/lib.rs", UNTAGGED_CODE)
+        self.write("firmware/src/main.rs", UNTAGGED_CODE)
         for page in citation_gate.PAGES:
             self.write(page, STUB)
         self.write(MODEL_PAGE, MODEL)
         self.write(PROSE_PAGE, PAGE)
+        self.write("assurance/properties.toml", PROPERTIES)
+        self.write(
+            "formal/Shipped.cfg",
+            "SPECIFICATION Spec\nINVARIANTS\n    TypeOK\n    NoDrift\n",
+        )
         subprocess.run(["git", "-C", str(root), "init", "-q"], check=True)
 
     def write(self, rel, text):
@@ -143,6 +163,27 @@ def test_clean_tree_is_green(tree):
 def test_this_checkout_is_green():
     """The control the fixture cannot be: the model these rules were written for."""
     assert citation_gate.audit(citation_gate.ROOT)[0] == []
+
+
+# --- phase-1 property tags, both directions ---------------------------------
+
+
+def test_a_tag_that_points_to_no_registry_row_fails(tree):
+    tree.edit(
+        "crates/rsk-fido/src/clientpin.rs",
+        "SEC-T-001",
+        "SEC-T-666",
+    )
+    assert only(tree.problems(), "id not in the registry")
+
+
+def test_an_owner_invariant_without_a_production_tag_fails(tree):
+    tree.edit(
+        "crates/rsk-fido/src/clientpin.rs",
+        "/// Refines `RSKeySecurityState!NoDrift` — SEC-T-001.",
+        "// property tag removed",
+    )
+    assert only(tree.problems(), "checked by Shipped.cfg but has no Refines tag")
 
 
 # --- citations that no longer resolve -----------------------------------------

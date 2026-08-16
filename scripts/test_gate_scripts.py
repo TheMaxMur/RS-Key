@@ -29,6 +29,7 @@ GATES = sorted(p.name for p in HERE.glob("*_gate.py") if not p.name.startswith("
 #: `check.sh`, and `kani.sh` is a shell script. Both once had no table at all,
 #: which is the same blind spot one file over.
 NAMED = {
+    "../formal/run-tlc.sh": "test_run_tlc.py",
     "impact.py": "test_impact.py",
     "kani.sh": "test_kani_sh.py",
     "comutate.py": "test_comutate.py",

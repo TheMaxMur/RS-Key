@@ -430,13 +430,10 @@ jobs:
   #
   # The row fails on RED (a mutant that should fire and did not, or an invariant
   # that broke), on FLOOR (a GREEN that got smaller than its recorded floor) and
-  # on VACUOUS (a spec nothing enabled). Four breakages were checked by making
-  # them: an unreadable jar and an unset TLA2TOOLS_JAR exit 2; a floor raised
-  # above the measured count reports `FLOOR: 662 < 999999` and exits 1; a mutant
-  # switch flipped back to FALSE reports `GREEN !! expected RED` and exits 1.
-  # VACUOUS is NOT among them — that arm predates this row and is the one the
-  # `Seams.cfg` one-state incident already exercised, so it is inherited, not
-  # re-tested here.
+  # on VACUOUS (a spec nothing enabled). `scripts/test_run_tlc.py`, collected by
+  # the merge gate, keeps the roadmap's four corruptions: broken jar, a Solo
+  # invariant that misses its mutant, one-state VACUOUS, and a muted Mut switch.
+  # Direct RED and FLOOR cases make all three job verdict boundaries explicit.
   formal:
     if: github.event.schedule != '17 5 * * *'
     runs-on: ubuntu-latest

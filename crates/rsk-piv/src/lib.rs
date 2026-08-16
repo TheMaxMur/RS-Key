@@ -311,10 +311,10 @@ impl<S: Storage> Applet<Fs<S>> for PivApplet<'_> {
     /// the PIV AID "or the right-truncated version thereof" and PIV is already
     /// current, "the setting of all security status indicators in the PIV Card
     /// Application shall be unchanged" — §2.4.2 counting the PIN and the card
-    /// application administration key among them. A different valid AID and a
-    /// power cycle still clear it, through the dispatcher's `deselect`, and an
-    /// AID the ICC does not support never reaches an applet. Measured on a
-    /// YubiKey 5.7.4, 3/3, every paragraph of §3.1.1 reproduced.
+    /// application administration key among them. Another AID or a power cycle
+    /// clears it through dispatcher deselect; unsupported AID never reaches it.
+    /// A YubiKey 5.7.4 kept every status on re-SELECT.
+    /// Refines `RSKeyAppletSeams!ReselectPreservesAccessStatus` — SEC-SEAM-004.
     fn select(&mut self, reselect: bool, fs: &mut Fs<S>, res: &mut ResBuf) -> Sw {
         if !reselect {
             self.sess.reset();

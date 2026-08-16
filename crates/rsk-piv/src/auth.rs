@@ -52,9 +52,9 @@ fn check_touch(policy: u8, presence: &mut dyn UserPresence) -> Result<(), Sw> {
     }
 }
 
-/// Whether the session satisfies a key slot's resolved pin policy. `NEVER` is the
-/// only value that skips the PIN — naming the two that *require* one let an
-/// unrecognised byte mean "no PIN" (audit run-34 #18).
+/// Refines `RSKeyAppletSeams!NoKeyOpOnTheAdminStatus` — SEC-SEAM-003.
+/// Whether the session satisfies a slot's resolved PIN policy. Only `NEVER`
+/// skips the PIN; listing known gated values made unknown bytes ungated.
 fn pin_satisfied(sess: &Session, pinpol: u8) -> bool {
     match pinpol {
         PINPOLICY_NEVER => true,

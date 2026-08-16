@@ -351,7 +351,7 @@ impl<'a> OathApplet<'a> {
             None => Sw::DATA_INVALID,
         }
     }
-
+    /// Refines `RSKeyAppletSeams!AccessCodeRemovalNeedsTheCode` — SEC-SEAM-006.
     fn cmd_set_code<S: Storage>(&mut self, apdu: &Apdu, fs: &mut Fs<S>) -> Sw {
         if !self.validated {
             return Sw::SECURITY_STATUS_NOT_SATISFIED;
@@ -505,7 +505,7 @@ impl<'a> OathApplet<'a> {
             }
         }
     }
-
+    /// Refines `RSKeyAppletSeams!ExemptRefusalPreservesStatus` — SEC-SEAM-005.
     fn cmd_validate<S: Storage>(&mut self, apdu: &Apdu, fs: &mut Fs<S>, res: &mut ResBuf) -> Sw {
         let data = &apdu.data[..apdu.nc];
         // RESPONSE then CHALLENGE — the order the YKOATH document lists and

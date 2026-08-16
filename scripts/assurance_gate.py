@@ -52,6 +52,13 @@ import tomllib
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
+README_START = "<!-- assurance-table:start -->"
+README_END = "<!-- assurance-table:end -->"
+
+# Phase 1's code-owning models. Later modules may model hardware seams with no
+# single production owner; these configurations have ownership tables instead.
+OWNER_CFGS = ("Shipped.cfg", "Seams.cfg")
+
 #: Configurations no tier runs, each with the reason a reader needs. Anything
 #: else outside every tier is a matrix row nobody pulls, and fails the gate.
 EXEMPT_CFG = {
@@ -243,7 +250,7 @@ def check_properties(root: pathlib.Path, findings: list[str]) -> list[dict]:
                     f"{where}: filed as a risk but checked by "
                     f"{checked[name][0]} — a checked invariant is not a ruling"
                 )
-            rows.append({"e": e, "d": None})
+            rows.append({"e": e, "d": None, "module": None, "cfgs": 0})
             continue
         if name not in defs:
             findings.append(f"{where}: no definition in any formal/*.tla module")
@@ -257,7 +264,14 @@ def check_properties(root: pathlib.Path, findings: list[str]) -> list[dict]:
             findings.append(
                 f"{where}: BOUNDED with no Kani harness carrying the name"
             )
-        rows.append({"e": e, "d": d, "cfgs": len(checked.get(name, []))})
+        rows.append(
+            {
+                "e": e,
+                "d": d,
+                "module": defs.get(name),
+                "cfgs": len(checked.get(name, [])),
+            }
+        )
     return rows
 
 
@@ -265,26 +279,32 @@ def check_tags(root: pathlib.Path, findings: list[str], entries: list[dict]) -> 
     """Every property tag in production Rust names real registry rows.
 
     And the other direction, scoped to where owners exist: every invariant the
-    tree-as-it-stands configuration (Shipped.cfg) checks must be named in
-    production Rust at least once. That set is derived from the cfg, not kept
-    by hand — it is exactly the invariants whose Rust owners formal/README.md
-    documents, and the column that measured 0-for-all until these tags landed.
+    phase-1 owner configurations check must carry a validated production tag.
+    That set is derived from the cfgs, not kept by hand.
     """
     by_id = {e.get("id"): e.get("name") for e in entries}
+    definitions = tla_definitions(root / "formal")
     modules = {p.stem for p in (root / "formal").glob("*.tla")}
     rust_files = [
         f
         for f in sorted((root / "crates").glob("*/src/**/*.rs"))
         if "kani" not in f.name and "tests" not in f.name
     ]
+    tagged_names: set[str] = set()
     for f in rust_files:
         text = f.read_text(errors="ignore")
         tagged_ids = set()
         for module, name, pid in TAG.findall(text):
             tagged_ids.add(pid)
+            tagged_names.add(name)
             where = f"{f.name}: `{module}!{name}` — {pid}"
             if module not in modules:
                 findings.append(f"{where}: no such formal/ module")
+            elif definitions.get(name) != module:
+                findings.append(
+                    f"{where}: {name!r} is defined by "
+                    f"{definitions.get(name, 'no module')}, not {module}"
+                )
             if pid not in by_id:
                 findings.append(f"{where}: id not in the registry")
             elif by_id[pid] != name:
@@ -295,17 +315,89 @@ def check_tags(root: pathlib.Path, findings: list[str], entries: list[dict]) -> 
             if pid not in by_id:
                 findings.append(f"{f.name}: {pid} is not in the registry")
 
-    shipped = root / "formal" / "Shipped.cfg"
-    if shipped.is_file():
-        for name in cfg_checked(shipped):
-            if not any(
-                re.search(r"\b" + re.escape(name) + r"\b", f.read_text(errors="ignore"))
-                for f in rust_files
-            ):
+    for cfg_name in OWNER_CFGS:
+        cfg = root / "formal" / cfg_name
+        if cfg.is_file():
+            for name in cfg_checked(cfg):
+                if name in tagged_names:
+                    continue
                 findings.append(
-                    f"{name}: checked by Shipped.cfg but named nowhere in "
-                    "production Rust — its owner lost the tag"
+                    f"{name}: checked by {cfg_name} but has no Refines tag in "
+                    "production Rust"
                 )
+
+
+def check_property_tags(root: pathlib.Path, findings: list[str]) -> None:
+    """Load the registry and hold its production tags in both directions."""
+    path = root / "assurance" / "properties.toml"
+    if not path.is_file():
+        findings.append("assurance/properties.toml is missing — tags are unchecked")
+        return
+    with open(path, "rb") as fh:
+        entries = tomllib.load(fh).get("property", [])
+    check_tags(root, findings, entries)
+
+
+def markdown_table(rows: list[dict]) -> str:
+    """The generated traceability table embedded in formal/README.md."""
+    lines = [
+        "| ID | Property | Status | Model | Rust | Mutants | Kani | Fuzz | Runtime |",
+        "|---|---|---|---|---:|---:|---:|---:|---:|",
+    ]
+    for row in rows:
+        e, d = row["e"], row["d"]
+        if d is None:
+            evidence = ("—", "—", "—", "—", "—", "—")
+        else:
+            evidence = (
+                f"`{row['module']}`",
+                str(len(d["rust"])),
+                str(d["mutants"]),
+                str(len(d["kani"])),
+                str(len(d["fuzz"])),
+                str(len(d["tests"])),
+            )
+        lines.append(
+            f"| `{e['id']}` | `{e['name']}` | {e['status']} | "
+            + " | ".join(evidence)
+            + " |"
+        )
+    return "\n".join(lines)
+
+
+def readme_block(rows: list[dict]) -> str:
+    return (
+        f"{README_START}\n"
+        "<!-- Generated by scripts/assurance_gate.py --write-readme; do not edit. -->\n"
+        f"{markdown_table(rows)}\n"
+        f"{README_END}"
+    )
+
+
+def replace_readme_block(text: str, block: str) -> str:
+    if text.count(README_START) != 1 or text.count(README_END) != 1:
+        raise ValueError("formal/README.md needs exactly one assurance table marker pair")
+    start = text.index(README_START)
+    end = text.index(README_END, start) + len(README_END)
+    return text[:start] + block + text[end:]
+
+
+def check_readme(root: pathlib.Path, rows: list[dict], findings: list[str]) -> None:
+    path = root / "formal" / "README.md"
+    if not path.is_file():
+        findings.append("formal/README.md is missing — no published traceability table")
+        return
+    text = path.read_text()
+    try:
+        want = replace_readme_block(text, readme_block(rows))
+    except ValueError as error:
+        findings.append(str(error))
+        return
+    if text != want:
+        findings.append(
+            "formal/README.md traceability table is stale — run "
+            "python scripts/assurance_gate.py --write-readme"
+        )
 
 
 def check_tiers(root: pathlib.Path, findings: list[str]) -> int:
@@ -360,14 +452,16 @@ def check_crates(root: pathlib.Path, findings: list[str]) -> dict[str, int]:
     return tally
 
 
-def audit(root: pathlib.Path):
+def audit(root: pathlib.Path, check_generated_readme: bool = True):
     """(problems, evidence table, one-line summary) for this checkout."""
     root = pathlib.Path(root)
     findings: list[str] = []
     rows = check_properties(root, findings)
-    check_tags(root, findings, [r["e"] for r in rows])
+    check_property_tags(root, findings)
     tiered = check_tiers(root, findings)
     tally = check_crates(root, findings)
+    if check_generated_readme:
+        check_readme(root, rows, findings)
 
     table: list[str] = []
     for r in rows:
@@ -409,7 +503,38 @@ def run(root: pathlib.Path) -> int:
     return 0
 
 
+def write_readme(root: pathlib.Path) -> int:
+    root = pathlib.Path(root)
+    findings, _, _ = audit(root, check_generated_readme=False)
+    if findings:
+        print(
+            "assurance-gate: refusing to publish a table from an invalid tree",
+            file=sys.stderr,
+        )
+        for finding in findings:
+            print(f"  {finding}", file=sys.stderr)
+        return 1
+    property_findings: list[str] = []
+    rows = check_properties(root, property_findings)
+    if property_findings:
+        raise AssertionError(property_findings)
+    path = root / "formal" / "README.md"
+    try:
+        text = replace_readme_block(path.read_text(), readme_block(rows))
+    except (FileNotFoundError, ValueError) as error:
+        print(f"assurance-gate: {error}", file=sys.stderr)
+        return 1
+    path.write_text(text)
+    print(f"assurance-gate: wrote {len(rows)} properties to formal/README.md")
+    return 0
+
+
 def main():
+    if sys.argv[1:] == ["--write-readme"]:
+        return write_readme(ROOT)
+    if sys.argv[1:]:
+        print("usage: assurance_gate.py [--write-readme]", file=sys.stderr)
+        return 2
     return run(ROOT)
 
 

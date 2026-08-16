@@ -234,9 +234,9 @@ impl Dispatcher {
         self.clear_chaining();
     }
 
-    /// Process one raw command APDU against `applets` (in registration order),
-    /// threading the shared `ctx` into the dispatched applet, writing the
-    /// response body into `res` and returning the status word.
+    /// Refines `RSKeyAppletSeams!NoStatusOutsideItsSelection` — SEC-SEAM-001.
+    /// Process one raw APDU against `applets` in registration order, threading
+    /// `ctx` into the selected applet and returning its response status.
     pub fn process<C>(
         &mut self,
         raw: &[u8],

@@ -101,6 +101,11 @@ mechanically:
   guard, an action pinned to a no-op by its own `UNCHANGED`) are refused
   before TLC runs.
 
+`scripts/test_run_tlc.py` keeps the runner itself falsifiable in the merge
+gate. Its four artificial corruptions are a broken jar, a Solo invariant that
+misses its mutant, a one-state VACUOUS run, and a muted Mut switch. Direct RED
+and FLOOR cases keep all three job verdict boundaries explicit.
+
 ## The registry
 
 Every property TLC checks has an entry in `assurance/properties.toml` — id,
@@ -116,8 +121,13 @@ BOUNDED, and PROVEN is refused until that evidence class exists in the tree.
 The owner functions carry the property back into the code: a doc line of the
 form ``Refines `RSKeySecurityState!NoTokenAfterInvalidation` — SEC-FIDO-003``
 sits on each function the model's ownership table names, the gate validates
-every tag, and every invariant the shipping configuration checks must be
-named in production Rust somewhere.
+every tag, and every invariant the phase-1 owner configurations (`Shipped.cfg`
+and `Seams.cfg`) check must be named in production Rust somewhere. The shared
+check runs from both `assurance_gate.py` and `citation_gate.py`.
+
+The six-axis evidence table in `formal/README.md` is generated from that same
+audit. The ordinary gate rejects a stale table; regenerate it after evidence
+moves with `python scripts/assurance_gate.py --write-readme`.
 
 `assurance/crates.toml` is the same discipline one level up: all 26 workspace
 members classified — state modelled, modelled in part with the gap named,
@@ -136,6 +146,7 @@ cd formal
 ./run-tlc.sh Shipped.cfg          # one configuration
 ./run-tlc.sh --tiers              # what each tier runs, for the gate
 python3 ../scripts/assurance_gate.py   # the registry, held against the tree
+python3 ../scripts/assurance_gate.py --write-readme  # refresh its README table
 ```
 
 CI runs the `safety` tier weekly (`deep-checks.yml`, the `formal` job) and on

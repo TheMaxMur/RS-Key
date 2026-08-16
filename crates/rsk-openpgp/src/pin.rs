@@ -155,9 +155,9 @@ fn set_pin_retry_counter<S: Storage>(fs: &mut Fs<S>, fid: u16, value: u8) -> Res
     fs.put(EF_PW_PRIV, &pw[..n]).map_err(|_| Sw::MEMORY_FAILURE)
 }
 
-/// Drop the access status of the reference `check_pin` was comparing. Keyed on
-/// `fid`, never on `p2`: RESET RETRY COUNTER checks `EF_RC` while passing
-/// `p2 = 0x81`, and a wrong resetting code must leave PW1.81 standing.
+/// Refines `RSKeyAppletSeams!NoStatusAfterARefusedAuth` — SEC-SEAM-002.
+/// Drop the compared reference's status by `fid`, never `p2`: RESET RETRY checks
+/// `EF_RC` with `p2 = 0x81`, and a wrong resetting code leaves PW1.81 standing.
 fn clear_access_status(sess: &mut Session, fid: u16, p2: u8) {
     if fid == EF_PW1 {
         if p2 == PW1_MODE81 {

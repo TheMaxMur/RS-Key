@@ -56,7 +56,7 @@ evidence = ["crates/rsk-b/src/kani.rs"]
 TIERS = """\
 #!/usr/bin/env bash
 if [ "${1:-}" = "--tiers" ]; then
-  echo "safety: Shipped.cfg Solo_BugFooOpens.cfg"
+  echo "safety: Shipped.cfg Seams.cfg Solo_BugFooOpens.cfg"
   echo "liveness:"
   exit 0
 fi
@@ -71,7 +71,10 @@ def build(root: pathlib.Path) -> pathlib.Path:
         "FooStaysClosed == foo = FALSE\nBarNeverOpens == bar = FALSE\n"
     )
     (formal / "Shipped.cfg").write_text(
-        "SPECIFICATION Spec\nINVARIANTS\n    TypeOK\n    FooStaysClosed\n    BarNeverOpens\n"
+        "SPECIFICATION Spec\nINVARIANTS\n    TypeOK\n    FooStaysClosed\n"
+    )
+    (formal / "Seams.cfg").write_text(
+        "SPECIFICATION Spec\nINVARIANTS\n    TypeOK\n    BarNeverOpens\n"
     )
     (formal / "Solo_BugFooOpens.cfg").write_text(
         "SPECIFICATION Spec\nINVARIANTS\n    TypeOK\n    FooStaysClosed\n"
@@ -99,7 +102,8 @@ def build(root: pathlib.Path) -> pathlib.Path:
     (a / "lib.rs").write_text(
         "/// Refines `Mini!FooStaysClosed` — SEC-T-001.\n"
         "fn foo() {}\n"
-        "// BarNeverOpens is maintained by bar()\n"
+        "/// Refines `Mini!BarNeverOpens` — SEC-T-002.\n"
+        "fn bar() {}\n"
     )
     (a / "state_kani.rs").write_text("fn foo_stays_closed() {}\n")
     b = root / "crates" / "rsk-b" / "src"
@@ -109,6 +113,12 @@ def build(root: pathlib.Path) -> pathlib.Path:
     (root / "fuzz" / "fuzz_targets" / "t.rs").write_text("// FooStaysClosed\n")
     (root / "tests").mkdir()
     (root / "tests" / "t.py").write_text("# nothing named here\n")
+    table_findings = []
+    rows = assurance_gate.check_properties(root, table_findings)
+    assert not table_findings
+    (formal / "README.md").write_text(
+        "# Fixture\n\n" + assurance_gate.readme_block(rows) + "\n"
+    )
     return root
 
 
@@ -230,8 +240,8 @@ def test_risk_without_ruling_fails(tree, capsys):
 def test_risk_that_is_actually_checked_fails(tree, capsys):
     edit(
         tree / "formal" / "Shipped.cfg",
-        "    BarNeverOpens\n",
-        "    BarNeverOpens\n    RuledAwayRisk\n",
+        "    FooStaysClosed\n",
+        "    FooStaysClosed\n    RuledAwayRisk\n",
     )
     red(tree, capsys, "a checked invariant is not a ruling")
 
@@ -269,13 +279,38 @@ def test_bare_unregistered_id_fails(tree, capsys):
     red(tree, capsys, "SEC-T-777 is not in the registry")
 
 
-def test_shipped_invariant_without_an_owner_fails(tree, capsys):
+def test_owner_config_invariant_without_a_tag_fails(tree, capsys):
     edit(
         tree / "crates" / "rsk-a" / "src" / "lib.rs",
-        "// BarNeverOpens is maintained by bar()\n",
+        "/// Refines `Mini!BarNeverOpens` — SEC-T-002.\n",
         "",
     )
-    red(tree, capsys, "named nowhere in production Rust")
+    red(tree, capsys, "checked by Seams.cfg but has no Refines tag")
+
+
+def test_tag_must_name_the_module_that_defines_the_property(tree, capsys):
+    (tree / "formal" / "Other.tla").write_text("OtherThing == TRUE\n")
+    edit(
+        tree / "crates" / "rsk-a" / "src" / "lib.rs",
+        "`Mini!FooStaysClosed`",
+        "`Other!FooStaysClosed`",
+    )
+    red(tree, capsys, "is defined by Mini, not Other")
+
+
+# ---- the README table is generated, never hand-maintained ------------------
+
+
+def test_stale_readme_table_fails(tree, capsys):
+    edit(tree / "formal" / "README.md", "| `SEC-T-001`", "| `SEC-T-STALE`")
+    red(tree, capsys, "traceability table is stale")
+
+
+def test_write_readme_repairs_the_generated_block(tree, capsys):
+    edit(tree / "formal" / "README.md", "| `SEC-T-001`", "| `SEC-T-STALE`")
+    assert assurance_gate.write_readme(tree) == 0
+    capsys.readouterr()
+    assert assurance_gate.run(tree) == 0
 
 
 # ---- every cfg runs somewhere ------------------------------------------------

@@ -112,7 +112,9 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   workspace members — the ledger exists because two roadmap drafts enumerated
   crates from memory and missed four, including the second-largest in the tree.
   New `check.sh` row `assurance registry`; mutation table in
-  `scripts/test_assurance_gate.py`, 19 cases.
+  `scripts/test_assurance_gate.py`, now 27 cases. Its measured six-axis
+  traceability table is generated into `formal/README.md`; the ordinary gate
+  rejects a stale block instead of trusting a hand-maintained baseline.
 
 - **A "Formal model" page in the book** (`docs/formal.md`, Security section):
   the map of `formal/` — the two modules, the checks-of-the-checks (mutants,
@@ -121,15 +123,16 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   says what is and is not claimed and points at the measured paragraph in
   Testing.
 
-- **Property tags in production Rust.** The 24 owner functions the model's
-  ownership table documents now carry a doc line —
+- **Property tags in production Rust.** The owner functions the phase-1 models'
+  ownership tables document now carry a doc line —
   `` Refines `RSKeySecurityState!<Invariant>` — SEC-FIDO-NNN. `` — so a
   property greps from the model to the code that owns it in both directions,
   which was the one all-zero column of the traceability table. The gate
-  validates every tag (module exists, id registered, id↔invariant pairing
-  matches) and ratchets the other way: every invariant `Shipped.cfg` checks
-  must be named in production Rust somewhere. Doc comments only — nothing
-  reaches the image, no `bcdDevice` bump.
+  validates every tag (module exists, defines the invariant, id is registered,
+  and id↔invariant pairing matches) and ratchets the other way: every invariant
+  `Shipped.cfg` or `Seams.cfg` checks must be named in production Rust
+  somewhere. The shared rule runs from both the assurance and citation gates.
+  Doc comments only — nothing reaches the image, no `bcdDevice` bump.
 
 - **The TLA+ model is checked by CI.** `deep-checks` gained a weekly `formal`
   row running `formal/run-tlc.sh safety` — the model, its 44 mutants, their
@@ -151,7 +154,9 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   `run-tlc.sh` grew tiers (`safety` / `liveness` / `all`), drawn by heap rather
   than taste. `liveness` is deliberately not in CI: `Liveness.cfg` needs the 12g
   `floors.txt` gives it, and 11.1 GB is where the same workflow's `kani` `heavy`
-  runner has already died twice.
+  runner has already died twice. `scripts/test_run_tlc.py` keeps the row's
+  verdict boundary reproducible in the merge gate: the roadmap's four
+  artificial corruptions, plus direct RED and FLOOR cases, are persistent.
 
 ### Changed
 
