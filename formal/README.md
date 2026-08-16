@@ -1435,6 +1435,38 @@ at the top of the recorder. The two harness modules duplicate ~15 lines because
 `EXTENDS` cannot be parameterized by a configuration — kept in lockstep, said
 in both.
 
+That seam replay is supplemental evidence. The roadmap's R4a/R4b target is the
+full `RSKeySecurityState`, and that pipeline is separate:
+
+1. `tools/emu --security-trace` emits only raw, non-secret C-state fields around
+   each CBOR boundary: record sizes/presence, retry and permission bytes, token
+   flags, slot counts, cursor counters, lock and boot flags. It never exports a
+   PIN verifier, token, seed, credential, or rpId hash. `action_hint` and the
+   implementation's `abstract_token()` result travel beside the raw fields but
+   are explicitly untrusted.
+2. `scripts/security_trace.py` independently infers B micro-actions from raw
+   before/after differences. Unknown state changes are fatal. Each instrumentation
+   point declares `coarse, k=8`; a no-change command maps to an explicit B
+   stutter, while setPIN, token issuance, makeCredential and getAssertion expand
+   to their real `RSKeySecurityState` action paths.
+3. `TraceSecurity.tla` computes β from the raw record and compares it with B at
+   every boundary (R4a). It also compares the untrusted Rust α with
+   `RSKeyTokenView!TokenGamma(B)` (R4b). `RSKeyTokenView.tla` is the one γ
+   definition the phase-5 INSTANCE will consume too.
+4. The committed `21_pin_webauthn` trace has 12 CBOR boundaries, 30 B steps and
+   13 distinct model actions. Those are enforced floors, and every run prints
+   both the reached set and the model actions no real traffic reached. The same
+   validation runs inside the socket emulator-suites CI row.
+5. `TraceSecurityBadBeta.cfg` shifts one raw retry field and is RED under R4a.
+   `TraceSecurityBadAlpha.cfg` shifts α's `live` field and is RED under R4b;
+   `TraceSecurityBadAlphaNoR4b.cfg` is GREEN, demonstrating that only R4b catches
+   that second divergence.
+
+The first real replay found a fidelity defect: B consumed permissions after
+makeCredential but failed to retain Rust's first-use rpId binding.
+`BoundConsumedTok` is the resulting model correction. This is empirical
+conformance of the recorded traffic, not a proof that unrecorded code refines B.
+
 ## What now catches a run nobody watched
 
 That `VACUOUS` rule was one heuristic and a **reporting** guard: it printed a
@@ -1549,6 +1581,9 @@ evidence columns and validated cross-model support edges below on every gate run
 | `SEC-FIDO-L01` | `EveryOpQuiesces` | MODELLED-ONLY | `RSKeySecurityState` | — | 0 | 1 | 0 | 0 | 0 |
 | `SEC-FIDO-L02` | `EveryWaitReleases` | MODELLED-ONLY | `RSKeySecurityState` | — | 0 | 1 | 0 | 0 | 0 |
 | `SEC-FIDO-L03` | `EveryWalkCloses` | MODELLED-ONLY | `RSKeySecurityState` | — | 0 | 1 | 0 | 0 | 0 |
+| `SEC-TRACE-001` | `R4aRawRefinesB` | MODELLED-ONLY | `TraceSecurity` | — | 0 | 0 | 0 | 0 | 0 |
+| `SEC-TRACE-002` | `R4bAlphaMatchesGamma` | MODELLED-ONLY | `TraceSecurity` | — | 0 | 0 | 0 | 0 | 0 |
+| `SEC-TRACE-003` | `TraceComplete` | MODELLED-ONLY | `TraceSecurity` | — | 0 | 0 | 0 | 0 | 0 |
 | `SEC-SEAM-001` | `NoStatusOutsideItsSelection` | MODELLED-ONLY | `RSKeyAppletSeams` | — | 1 | 2 | 0 | 0 | 0 |
 | `SEC-SEAM-002` | `NoStatusAfterARefusedAuth` | MODELLED-ONLY | `RSKeyAppletSeams` | — | 1 | 2 | 0 | 0 | 0 |
 | `SEC-SEAM-003` | `NoKeyOpOnTheAdminStatus` | MODELLED-ONLY | `RSKeyAppletSeams` | — | 1 | 6 | 0 | 0 | 0 |

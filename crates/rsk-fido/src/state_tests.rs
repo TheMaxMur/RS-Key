@@ -28,6 +28,31 @@ fn dev() -> Device<'static> {
     }
 }
 
+#[test]
+fn abstract_token_exposes_only_the_security_projection() {
+    let mut state = FidoState::new();
+    state.paut.in_use = true;
+    state.paut.permissions = PERM_MC | PERM_ACFG | PERM_LBW;
+    state.paut.has_rp_id = true;
+
+    assert_eq!(
+        state.abstract_token(TokenPersistentView {
+            pin_set: true,
+            persistent_grant: false,
+        }),
+        AbstractTokenState {
+            live: true,
+            permission_mc: true,
+            permission_ga: false,
+            permission_cm: false,
+            permission_acfg: true,
+            rp_bound: true,
+            pin_set: true,
+            persistent_grant: false,
+        }
+    );
+}
+
 const LOCKED: PinLock = PinLock {
     engaged: true,
     mismatches: PIN_MISMATCH_LIMIT,

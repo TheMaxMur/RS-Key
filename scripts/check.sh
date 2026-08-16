@@ -470,6 +470,7 @@ run "cargo-audit (tui SCA)"    cargo audit --file tools/tui/Cargo.lock
 # the Linux kernel's and whose framing rule decides how many bytes come off the
 # socket next; both fail silently on the wire rather than loudly.
 run_tests "test (emu)"               cargo test --manifest-path tools/emu/Cargo.toml --target "$HOST"
+run_tests "test (emu security trace)" cargo test --manifest-path tools/emu/Cargo.toml --target "$HOST" --features security-trace
 run_tests "test (emu conformance)"   cargo test --manifest-path tools/emu/Cargo.toml --target "$HOST" --features fido-conformance
 run "cargo-audit (emu SCA)"    cargo audit --file tools/emu/Cargo.lock --ignore RUSTSEC-2023-0071
 run "cargo-deny"               cargo deny check
@@ -514,6 +515,7 @@ run "formal citations"         python scripts/citation_gate.py
 run "assurance registry"       python scripts/assurance_gate.py
 run "comutants lint"           python scripts/comutate.py --lint
 run "seam trace map"           python scripts/trace_map.py
+run "security trace refinement" python scripts/security_trace.py --check-data formal/TraceSecurityData.tla formal/traces/security-phase4.jsonl
 # The two guards above decide whether the gate covers the tree, and neither had
 # a single test while five commits rewrote them by hand. This is that hand
 # battery kept: a fixture workspace, one mutation per case, both directions.

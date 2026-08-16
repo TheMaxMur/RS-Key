@@ -542,6 +542,7 @@ fn panel_bench(
         kv_total: crate::KV_TOTAL,
         flash_size: crate::FLASH_SIZE,
         trace: false,
+        security_trace: None,
         yubico: false,
         power_cut: None,
     };

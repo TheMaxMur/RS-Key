@@ -17,6 +17,9 @@ fido-conformance = ["rsk-fido/fido-conformance"]
 # Run the emulator with the CTAP 2.3 `largeBlob` extension in place of the CTAP
 # 2.1 pair, so that swap can be driven over a socket with no board.
 largeblob-ext = ["rsk-fido/largeblob-ext"]
+# Raw security-state snapshots consumed by the formal trace validator. This is
+# emulator instrumentation; firmware never enables the corresponding feature.
+security-trace = ["rsk-device/security-trace"]
 
 # Only the in-tree crates: the emulator is the same applet code the firmware
 # runs, wired to a socket instead of USB. No external dependency joins an

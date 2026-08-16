@@ -39,7 +39,7 @@ fi
 
 # Which module a configuration belongs to: the seam configs are the second
 # module's, and TLC takes the module name rather than reading it from the cfg.
-spec_for() { case "$1" in TraceSeamsBad*) echo TraceSeamsBad ;; TraceSeams*) echo TraceSeams ;; Seam*) echo RSKeyAppletSeams ;; Store*) echo RSKeyStore ;; Lat*) echo RSKeyRetryLattice ;; Polic*) echo RSKeyAppletPolicies ;; Admin*) echo RSKeyAdminSurface ;; Disp*) echo RSKeyTrustedDisplay ;; Boot*) echo RSKeyBootHardening ;; Trans*) echo RSKeyTransport ;; *) echo RSKeySecurityState ;; esac; }
+spec_for() { case "$1" in TraceSecurity*) echo TraceSecurity ;; TraceSeamsBad*) echo TraceSeamsBad ;; TraceSeams*) echo TraceSeams ;; Seam*) echo RSKeyAppletSeams ;; Store*) echo RSKeyStore ;; Lat*) echo RSKeyRetryLattice ;; Polic*) echo RSKeyAppletPolicies ;; Admin*) echo RSKeyAdminSurface ;; Disp*) echo RSKeyTrustedDisplay ;; Boot*) echo RSKeyBootHardening ;; Trans*) echo RSKeyTransport ;; *) echo RSKeySecurityState ;; esac; }
 
 # floors.txt: what each configuration must produce. First match wins.
 expect_for() {
@@ -170,6 +170,10 @@ list_safety() {
   ls TransSolo_*.cfg
   echo TraceSeams.cfg          # phase 4: a recorded session replayed -- GREEN
   echo TraceSeamsBad.cfg       # and one the model must refuse -- RED
+  echo TraceSecurity.cfg       # raw C-state --beta--> B and alpha == gamma(B)
+  echo TraceSecurityBadBeta.cfg # shifting one raw retry field is refused
+  echo TraceSecurityBadAlpha.cfg # shifting alpha is refused by R4b
+  echo TraceSecurityBadAlphaNoR4b.cfg # and no other observer catches that shift
 }
 
 list_liveness() {

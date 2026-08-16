@@ -54,6 +54,13 @@ Transport.cfg                        GREEN   4
 \* harness proven able to refuse a session at all.
 TraceSeams.cfg                       GREEN   5
 TraceSeamsBad.cfg                    RED     -
+\* Full RSKeySecurityState refinement replay: 30 inferred B micro-steps from
+\* 12 real CBOR boundaries. The α mutant's GREEN control, with R4b disabled,
+\* proves that the corresponding RED row is caught by R4b alone.
+TraceSecurity.cfg                    GREEN   30
+TraceSecurityBadBeta.cfg             RED     -
+TraceSecurityBadAlpha.cfg            RED     -
+TraceSecurityBadAlphaNoR4b.cfg       GREEN   30
 \* The liveness layer builds a behaviour graph ON TOP of the state graph -- 23.7
 \* million nodes at these constants -- and runs out of memory at the 4 GB
 \* default after the state search has already completed (E172). The heap column

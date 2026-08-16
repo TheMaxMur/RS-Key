@@ -26,6 +26,39 @@ const RESP_CAP: usize = rsk_usb::ctaphid::CTAP_MAX_MESSAGE;
 // largeBlobs ceiling) is derived from the same literal and rides on this too.
 const _: () = assert!(rsk_fido::consts::MAX_MSG_SIZE as usize == RESP_CAP);
 
+/// Raw, non-secret implementation fields exported only by the host emulator.
+/// The phase-4 validator owns β; this type must not pre-interpret the fields as
+/// model state.
+#[cfg(feature = "security-trace")]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct SecurityTraceSnapshot {
+    pub pin_record_len: Option<u8>,
+    pub pin_retries_raw: Option<u8>,
+    pub always_uv_record_len: Option<u8>,
+    pub always_uv_raw: Option<u8>,
+    pub persistent_grant_record: bool,
+    pub backup_sealed_record: bool,
+    pub seed_plain_record: bool,
+    pub seed_encrypted_record: bool,
+    pub credential_slots_raw: u16,
+    pub rp_slots_raw: u16,
+    pub token_in_use_raw: bool,
+    pub token_permissions_raw: u8,
+    pub token_has_rp_id_raw: bool,
+    pub token_user_present_raw: bool,
+    pub token_user_verified_raw: bool,
+    pub soft_lock_raw: bool,
+    pub pin_mismatches_raw: u8,
+    pub cm_channel_raw: u32,
+    pub cm_rp_counter_raw: u16,
+    pub cm_rp_total_raw: u16,
+    pub cm_cred_counter_raw: u16,
+    pub cm_cred_total_raw: u16,
+    pub warm_boot_raw: bool,
+    pub channel_raw: u32,
+    pub keydev_ram_raw: bool,
+}
+
 pub struct AppletHandler<'a, S: Storage, R: crate::Rng + 'static, VP: rsk_vendor::Platform> {
     fs: &'a RefCell<Fs<S>>,
     hooks: &'a RefCell<dyn Hooks<S>>,
@@ -117,6 +150,74 @@ impl<'a, S: Storage, R: crate::Rng + 'static, VP: rsk_vendor::Platform>
 // Synchronous dispatch called by the worker (`crate::worker`) on the thread
 // executor; the CTAPHID transport reaches it through the worker handshake.
 impl<S: Storage, R: crate::Rng + 'static, VP: rsk_vendor::Platform> AppletHandler<'_, S, R, VP> {
+    /// Capture the raw fields consumed by the phase-4 β mapper. This is compiled
+    /// only into the emulator's trace build and contains no verifier, token, seed,
+    /// credential, or rpId bytes.
+    #[cfg(feature = "security-trace")]
+    pub fn security_trace_snapshot(&mut self) -> SecurityTraceSnapshot {
+        use rsk_fido::consts::{
+            EF_ALWAYS_UV, EF_BACKUP_SEALED, EF_CRED, EF_KEY_DEV, EF_KEY_DEV_ENC, EF_PAUTHTOKEN,
+            EF_PIN, EF_RP, MAX_RESIDENT_CREDENTIALS,
+        };
+
+        let mut fs = self.fs.borrow_mut();
+        let pin_size = fs.size(EF_PIN).and_then(|n| u8::try_from(n).ok());
+        let pin_retries = rsk_fido::clientpin::pin_retries_left(&mut fs);
+        let mut always_uv = [0u8; 1];
+        let always_uv_size = fs.size(EF_ALWAYS_UV).and_then(|n| u8::try_from(n).ok());
+        let always_uv_raw = match fs.read(EF_ALWAYS_UV, &mut always_uv) {
+            Some(1) => Some(always_uv[0]),
+            _ => None,
+        };
+        let mut credentials = [false; MAX_RESIDENT_CREDENTIALS as usize];
+        let mut rps = [false; MAX_RESIDENT_CREDENTIALS as usize];
+        fs.present_slots(EF_CRED, &mut credentials);
+        fs.present_slots(EF_RP, &mut rps);
+        let lock = self.fido_state.pin_lock();
+
+        SecurityTraceSnapshot {
+            pin_record_len: pin_size,
+            pin_retries_raw: pin_retries,
+            always_uv_record_len: always_uv_size,
+            always_uv_raw,
+            persistent_grant_record: fs.has_key(EF_PAUTHTOKEN),
+            backup_sealed_record: fs.has_data(EF_BACKUP_SEALED),
+            seed_plain_record: fs.has_key(EF_KEY_DEV),
+            seed_encrypted_record: fs.has_key(EF_KEY_DEV_ENC),
+            credential_slots_raw: credentials.iter().filter(|present| **present).count() as u16,
+            rp_slots_raw: rps.iter().filter(|present| **present).count() as u16,
+            token_in_use_raw: self.fido_state.paut.in_use,
+            token_permissions_raw: self.fido_state.paut.permissions,
+            token_has_rp_id_raw: self.fido_state.paut.has_rp_id,
+            token_user_present_raw: self.fido_state.paut.user_present,
+            token_user_verified_raw: self.fido_state.paut.user_verified,
+            soft_lock_raw: lock.engaged,
+            pin_mismatches_raw: lock.mismatches,
+            cm_channel_raw: self.fido_state.cm.channel,
+            cm_rp_counter_raw: self.fido_state.cm.rp_counter,
+            cm_rp_total_raw: self.fido_state.cm.rp_total,
+            cm_cred_counter_raw: self.fido_state.cm.cred_counter,
+            cm_cred_total_raw: self.fido_state.cm.cred_total,
+            warm_boot_raw: self.fido_state.warm_boot,
+            channel_raw: self.fido_state.channel,
+            keydev_ram_raw: self.fido_state.keydev_dec.is_some(),
+        }
+    }
+
+    /// α from the same implementation state. Unlike the raw snapshot, this is a
+    /// claimed abstraction and is therefore checked rather than trusted.
+    #[cfg(feature = "security-trace")]
+    pub fn security_trace_abstract_token(&mut self) -> rsk_fido::AbstractTokenState {
+        use rsk_fido::consts::{EF_PAUTHTOKEN, EF_PIN};
+
+        let mut fs = self.fs.borrow_mut();
+        self.fido_state
+            .abstract_token(rsk_fido::TokenPersistentView {
+                pin_set: fs.has_data(EF_PIN),
+                persistent_grant: fs.has_key(EF_PAUTHTOKEN),
+            })
+    }
+
     /// Drop any applet selected over CTAPHID_MSG. Called (via the worker) on a
     /// CTAPHID_INIT so a fresh session starts with nothing selected — U2F has no
     /// SELECT and must not inherit a prior vendor-AID selection.

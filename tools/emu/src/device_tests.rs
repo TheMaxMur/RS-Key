@@ -105,6 +105,7 @@ fn bench_with(name: &str, presence: PresenceMode) -> (PathBuf, Jobs, Arc<Signals
         kv_total: crate::KV_TOTAL,
         flash_size: crate::FLASH_SIZE,
         trace: false,
+        security_trace: None,
         yubico: false,
         power_cut: None,
     };

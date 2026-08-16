@@ -23,6 +23,8 @@ mod park;
 mod platform;
 mod presence;
 mod rng;
+#[cfg(feature = "security-trace")]
+mod security_trace;
 mod shots;
 mod signals;
 mod store;
@@ -73,6 +75,8 @@ usage: rsk-emu [options]
   --usbip [addr]      serve USB/IP (default 127.0.0.1:3240) so a Linux host can
                       attach the emulator as a REAL USB device
   --trace             log every command and its status
+  --security-trace <file>
+                      write raw security snapshots as JSONL for formal replay
   --yubico            present the Yubico identity: USB VID/PID and descriptor
                       strings, the ATR, and the OpenPGP AID vendor, as the
                       VIDPID=Yubikey5 build does. ykman looks for that VID.
@@ -98,6 +102,7 @@ fn main() {
         kv_total: KV_TOTAL,
         flash_size: FLASH_SIZE,
         trace: false,
+        security_trace: None,
         yubico: false,
         power_cut: None,
     };
@@ -133,6 +138,7 @@ fn main() {
                 })
             }
             "--trace" => cfg.trace = true,
+            "--security-trace" => cfg.security_trace = Some(value("--security-trace").into()),
             "--yubico" => cfg.yubico = true,
             "--power-cut" => cfg.power_cut = Some(parse_u32(&value("--power-cut"))),
             "--seed" => cfg.seed = Some(parse_hex(&value("--seed"), None)),

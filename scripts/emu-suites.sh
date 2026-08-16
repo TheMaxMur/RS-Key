@@ -26,7 +26,8 @@ failed=()
 # A blank store per session is what keeps one suite's leftovers out of the next
 # session's assertions.
 start_emu() {
-  "$EMU" --store "$WORK/$1.store" "${@:2}" >"$WORK/$1.log" 2>&1 &
+  "$EMU" --store "$WORK/$1.store" --security-trace "$WORK/$1.security.jsonl" \
+    "${@:2}" >"$WORK/$1.log" 2>&1 &
   for _ in $(seq 50); do
     grep -q "device ready" "$WORK/$1.log" && return 0
     sleep 0.2
@@ -62,7 +63,8 @@ run_suite() {
 }
 
 echo "== building the emulator"
-cargo build --release --manifest-path tools/emu/Cargo.toml --target "$HOST"
+cargo build --release --manifest-path tools/emu/Cargo.toml --target "$HOST" \
+  --features security-trace
 
 echo
 echo "== on-device suites (socket transports)"
@@ -76,6 +78,20 @@ for t in tests/[0-9]*.py; do
   esac
 done
 stop_emu
+
+# A bounded, security-dense slice of the real suite is replayed against the full
+# RSKeySecurityState model. Other sessions are traced too, but this one owns the
+# explicit commands/steps/distinct-actions floors in security_trace.py.
+echo
+echo "== formal security-state trace (21_pin_webauthn)"
+start_emu security --auto-touch-ms 1
+python tests/emu.py tests/21_pin_webauthn.py >"$WORK/security-suite.out" 2>&1 || {
+  echo "FAIL: the security trace suite failed"
+  cat "$WORK/security-suite.out"
+  exit 1
+}
+stop_emu
+python scripts/security_trace.py "$WORK/security.security.jsonl"
 
 # `28` and `76` need a PIN on the device, and `21_pin_webauthn` is what sets it.
 # Their own session, because several suites in between reset the authenticator —

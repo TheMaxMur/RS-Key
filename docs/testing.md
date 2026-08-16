@@ -428,6 +428,14 @@ cd formal && ./gen-configs.sh && ./run-tlc.sh safety   # the tier CI runs
 `formal/`. `liveness` is the temporal half and is not in CI: it needs a 12g
 heap. `all` is both. Tier membership lives in `formal/run-tlc.sh`.
 
+The emulator CI also records raw security-state snapshots from the real
+`21_pin_webauthn` suite and replays them against `RSKeySecurityState`. R4a
+independently computes β from the raw fields; R4b compares the implementation's
+untrusted `abstract_token()` hint with the canonical TLA+ γ. The gate floors the
+trace at 10 commands, 20 B steps and 12 distinct actions, reports model actions
+not reached by traffic, and keeps one β mutation plus one α-only mutation RED.
+See `formal/README.md` for the exact boundary and claim.
+
 The companion co-refutation run asks whether production tests reject those
 same semantic defects. The original phase-2 baseline is fixed at 28 rows:
 26 are killed by code-level harnesses, two are unreachable by construction,
@@ -457,12 +465,14 @@ is measured; nothing in it is an aspiration.
 > sequence from one starting state; longer sequences, other starting states and
 > the flash-backed persistent grant are outside them. On top of that sits a
 > **TLA+ model** of the authenticator's security state. TLC checks six named
-> invariants exhaustively over ~13.2 million states at small constants. **That
+> invariants exhaustively over 60,020,016 states at small constants. **That
 > is a result about the model, not about the firmware binary**: it is only as
-> good as the model's fidelity to the code, which is maintained by hand. Every
+> good as the model's fidelity to the code. Citations and co-refutation are
+> maintained by hand; a bounded emulator trace also checks raw C-state → B and
+> α(C) = γ(B) at recorded boundaries, but says nothing about unrecorded runs. Every
 > invariant has been shown to be breakable by an injected defect, so none of
 > them is a check that cannot fail — and the model has already produced two
-> counterexamples on the shipped tree, both awaiting a ruling.
+> counterexamples on the shipped tree, both fixed and co-refuted since.
 
 The hedging is load-bearing, and the tree's own history is why. The model's
 green run once rested on an abstraction that made it **narrower** than the

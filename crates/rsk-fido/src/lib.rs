@@ -46,7 +46,7 @@ use rsk_crypto::Device;
 use rsk_fs::{Fs, Storage};
 pub use rsk_sdk::{Confirm, ConfirmKind};
 
-pub use state::FidoState;
+pub use state::{AbstractTokenState, FidoState, TokenPersistentView};
 
 /// A source of random bytes — the device TRNG in `firmware`, a deterministic
 /// stream in tests. Decouples the FIDO logic from any specific `rand_core` version.

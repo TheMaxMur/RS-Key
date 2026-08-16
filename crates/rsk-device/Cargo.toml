@@ -54,3 +54,5 @@ kani-soft = ["rsk-crypto/kani-soft", "rsk-fido/kani-soft"]
 strict-config = ["rsk-mgmt/strict-config", "rsk-fido/strict-config", "rsk-otp/strict-config", "rsk-vendor/strict-config"]
 # The trusted-display build: adds the on-pad PIN paths the screen drives.
 display = []
+# Host-emulator-only raw state snapshots for the phase-4 trace/refinement gate.
+security-trace = []

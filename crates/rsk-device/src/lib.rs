@@ -40,6 +40,8 @@ pub use ccid::CcidApplets;
 #[cfg(any(not(feature = "strict-config"), feature = "display"))]
 pub use ccid::gates_wiped_last;
 pub use ctap::AppletHandler;
+#[cfg(feature = "security-trace")]
+pub use ctap::SecurityTraceSnapshot;
 
 /// What [`Hooks::rsa_search`] answers. Named so an implementor can spell it
 /// without taking `rsa` and `alloc` into its own scope.

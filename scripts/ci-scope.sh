@@ -29,7 +29,7 @@ FIRMWARE='^(firmware/|crates/|Cargo\.(toml|lock)$|rust-toolchain|nix/(firmware|d
 
 # What the emulator runs, and what it runs against. `crates/` is in because the
 # emulator IS those crates; `tests/` and `third_party/` are the suites themselves.
-EMULATOR='^(tools/emu/|tests/|third_party/|crates/|firmware/|scripts/(emu-suites|usbip-suites|usbip-guest|check)\.sh$|nix/|flake\.(nix|lock)$|Cargo\.(toml|lock)$|\.github/workflows/emulator\.yml$)'
+EMULATOR='^(tools/emu/|tests/|third_party/|crates/|firmware/|formal/|scripts/(emu-suites|usbip-suites|usbip-guest|security_trace|check)\.(sh|py)$|nix/|flake\.(nix|lock)$|Cargo\.(toml|lock)$|\.github/workflows/emulator\.yml$)'
 
 # What the Kani proofs are about: the crate libraries they run over, the manifests
 # that decide what is compiled into them, and the tier script itself. Not

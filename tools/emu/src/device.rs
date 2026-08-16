@@ -114,6 +114,8 @@ pub struct Config {
     pub kv_total: u32,
     pub flash_size: u32,
     pub trace: bool,
+    /// Raw JSONL security snapshots for the phase-4 refinement gate.
+    pub security_trace: Option<PathBuf>,
     /// Present the Yubico identity: the USB VID/PID and descriptor strings over
     /// `--usbip`, the ATR, and the OpenPGP AID's manufacturer — as the
     /// `VIDPID=Yubikey5` build does. One identity or none: `ykman` finds a device
@@ -456,6 +458,25 @@ async fn serve<PR: rsk_device::UserPresence + 'static>(
     rng: &'static RefCell<EmuRng>,
     presence: &RefCell<PR>,
 ) {
+    #[cfg(not(feature = "security-trace"))]
+    if cfg.security_trace.is_some() {
+        eprintln!("emu: --security-trace requires --features security-trace");
+        return;
+    }
+    #[cfg(feature = "security-trace")]
+    let mut security_trace = match cfg.security_trace.as_ref() {
+        Some(path) => match crate::security_trace::Writer::open(path) {
+            Ok(writer) => Some(writer),
+            Err(error) => {
+                eprintln!(
+                    "emu: cannot open security trace {}: {error}",
+                    path.display()
+                );
+                return;
+            }
+        },
+        None => None,
+    };
     let platform = RefCell::new(EmuPlatform::new());
 
     let serial_id = cfg.serial;
@@ -577,9 +598,38 @@ async fn serve<PR: rsk_device::UserPresence + 'static>(
         });
         let out = match req.job {
             Job::Cbor { cid, data } => {
+                #[cfg(feature = "security-trace")]
+                let trace_pre = if security_trace.is_some() {
+                    Some((
+                        ctap.security_trace_snapshot(),
+                        ctap.security_trace_abstract_token(),
+                    ))
+                } else {
+                    None
+                };
                 signals.begin(cid);
                 let body = ctap.handle_cbor(cid, &data, now_ms).to_vec();
                 signals.end();
+                #[cfg(feature = "security-trace")]
+                if let (Some(writer), Some((pre, abstract_pre))) =
+                    (security_trace.as_mut(), trace_pre)
+                {
+                    let post = ctap.security_trace_snapshot();
+                    let abstract_post = ctap.security_trace_abstract_token();
+                    if let Err(error) = writer.record(
+                        now_ms,
+                        cid,
+                        data.first().copied().unwrap_or(0),
+                        body.first().copied().unwrap_or(0),
+                        pre,
+                        post,
+                        abstract_pre,
+                        abstract_post,
+                    ) {
+                        eprintln!("emu: cannot write security trace: {error}");
+                        return;
+                    }
+                }
                 // The response buffer can hold a PIN token; the device scrubs it
                 // once the worker has handed the bytes off, so do it here.
                 ctap.scrub();

@@ -40,6 +40,19 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Added
 
+- **Formal-verification phase 4 now checks real emulator state against the full
+  security model.** A host-only `--security-trace` mode exports non-secret raw
+  FIDO state; an independent β mapper replays real `21_pin_webauthn` traffic
+  through `RSKeySecurityState`, while the implementation's untrusted α is
+  compared with a single canonical TLA+ γ. CI floors commands, model steps and
+  distinct actions and reports every model action not reached. Two artificial
+  divergences are pinned: shifting one raw retry field is caught by R4a, and
+  shifting α is caught only by R4b. The first replay found and corrected a real
+  model-fidelity gap: B had failed to retain Rust's first-use rpId binding after
+  makeCredential consumed the token permissions. The production path gains only
+  the abstraction surface consumed by host instrumentation: refactor, no
+  behaviour change. **bcdDevice → 0x095C.**
+
 - **Formal-verification phase 3 is closed across the stateful workspace.** Six
   roadmap modules now cover the flash layer, PIV/OpenPGP retry lattice,
   management/rescue surface, trusted display, cross-boot hardening and CTAPHID
