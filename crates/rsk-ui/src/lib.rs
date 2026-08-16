@@ -245,6 +245,7 @@ const _: () = {
 /// prompt area above the button band returns `None` (no accidental approval from a
 /// stray touch). The two rectangles are disjoint by construction, so at most one
 /// matches.
+/// Refines `RSKeyTrustedDisplay!OnlyAllowConfirms` — SEC-DISP-003.
 pub fn hit_confirm(p: Point) -> Option<Button> {
     if ALLOW_RECT.contains(p) {
         Some(Button::Allow)

@@ -12,7 +12,7 @@ the failure mode this whole apparatus exists for, and the difference between
 the two answers is a measured abstraction gap with a file and line attached.
 
 The roster is `Mut_*`, `StoreMut_*`, `AdminMut_*`, `DispMut_*` and `TransMut_*`.
-Two mutant families are DELIBERATELY out of it, because an exclusion stated here
+Four mutant families are DELIBERATELY out of it, because an exclusion stated here
 is a plan and one implied by a glob is a hole:
 
 * `SeamMut_*` — applet-status defects whose shipped fixes carry their own
@@ -26,6 +26,10 @@ is a plan and one implied by a glob is a hole:
   revoke-before-write already taught (find3). Until that analysis is done the
   ladders' regression coverage is the applets' own `check_ref` / `check_pin`
   unit tests.
+* `PolicyMut_*` — the four-app policy model spans six independent code sites.
+  Its OpenPGP attribute-invalidation finding has a direct regression test; the
+  remaining gates retain their applet-level tests until exact code patches are
+  derived as a later co-refutation batch.
 * `BootMut_*` — two of its three defended sites live in `firmware/` (the
   marker-after-lap order in main.rs:621-622, the scratch-word carry in
   pin_lock.rs), which has no host tests by construction: `cargo test` cannot
@@ -93,7 +97,7 @@ def load(root: pathlib.Path):
 
 
 #: The mutant-config prefixes this file's closed world covers, and the Solo
-#: prefix each pairs with. `SeamMut_`/`SeamSolo_` and `LatMut_`/`LatSolo_` are
+#: prefix each pairs with. Seam, lattice, policy and boot prefixes are
 #: deliberately absent — see the module docstring.
 PREFIXES = (
     ("Mut_", "Solo_"),

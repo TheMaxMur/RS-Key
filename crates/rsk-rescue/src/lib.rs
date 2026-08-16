@@ -158,6 +158,7 @@ impl<'a> RescueApplet<'a> {
     /// runtime operation. On the display build this renders a named Approve/Deny
     /// prompt; the BOOTSEL backend waits for a press. `true` only on Confirmed —
     /// a hostile USB host cannot drive these commands without the operator.
+    /// Refines `RSKeyAdminSurface!PrivilegedOpNeedsPresence` — SEC-ADM-002.
     fn require_presence(&self, confirm: Confirm<'_>) -> bool {
         self.presence.borrow_mut().request(confirm) == Presence::Confirmed
     }

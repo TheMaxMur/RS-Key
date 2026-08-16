@@ -61,6 +61,7 @@ const IDX_PIV: usize = 5;
 /// `[vendor, openpgp, management, oath, otp, piv, rescue]`. `0` = always
 /// available: management (the re-enable path), vendor and rescue (recovery) must
 /// never be gated off, or `ykman config usb --disable` would be irreversible.
+/// Refines `RSKeyAdminSurface!AdminSurfaceAlwaysReachable` — SEC-ADM-001.
 const APPLET_CAPS: [u16; 7] = [
     0,
     rsk_mgmt::CAP_OPENPGP,
@@ -368,6 +369,7 @@ impl<'a, S: Storage, R: crate::Rng + 'static, VP: rsk_vendor::Platform> CcidAppl
         // A disabled application's applet is invisible: SELECT (and any command to
         // it) returns FILE_NOT_FOUND, so `ykman config usb --disable X` really
         // removes X over CCID, not just from the DeviceInfo report.
+        // Refines `RSKeyAdminSurface!DisabledAppletNeverDispatches` — SEC-ADM-004.
         self.disp.set_enabled(self.applet_enable_mask());
         let (sw, n) = {
             let mut res = ResBuf::new(&mut self.resp[..RESP_CAP - 2]);

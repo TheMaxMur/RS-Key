@@ -308,6 +308,7 @@ pub enum DevConfError {
 /// FIDO vendor config-write ([`crate::ManagementApplet`] / `rsk-fido`). `blob` is
 /// the enabled-applications TLV *without* any transport length prefix; the caller
 /// applies its own auth gate (CCID presence, FIDO PIN + touch) before this.
+/// Refines `RSKeyAdminSurface!DisableSetSurvivesLockWrite` — SEC-ADM-003.
 pub fn persist_dev_conf<S: Storage>(fs: &mut Fs<S>, blob: &[u8]) -> Result<(), DevConfError> {
     if blob.len() > DEV_CONF_WRITE_MAX {
         return Err(DevConfError::TooLong);

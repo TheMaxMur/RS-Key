@@ -85,6 +85,25 @@ fn algo_attr_redirects_to_priv_storage() {
 }
 
 #[test]
+fn changing_algo_attr_invalidates_the_key_pair() {
+    let (mut fs, mut sess) = setup();
+    admin(&mut fs, &mut sess);
+    let p256 = [0x13, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07];
+    let ed25519 = [0x16, 0x2B, 0x06, 0x01, 0x04, 0x01, 0xDA, 0x47, 0x0F, 0x01];
+    assert_eq!(put_data(&mut fs, &sess, EF_ALGO_SIG, &p256), Sw::OK);
+    fs.put(EF_PK_SIG.get(), &[0xAA; 16]).unwrap();
+    fs.put(EF_PB_SIG, &[0xBB; 16]).unwrap();
+
+    assert_eq!(put_data(&mut fs, &sess, EF_ALGO_SIG, &p256), Sw::OK);
+    assert!(fs.has_data(EF_PK_SIG.get()));
+    assert!(fs.has_data(EF_PB_SIG));
+
+    assert_eq!(put_data(&mut fs, &sess, EF_ALGO_SIG, &ed25519), Sw::OK);
+    assert!(!fs.has_data(EF_PK_SIG.get()));
+    assert!(!fs.has_data(EF_PB_SIG));
+}
+
+#[test]
 fn priv_do_1_accepts_pw2() {
     let (mut fs, mut sess) = setup();
     // PW2 (PW1 in mode 82) authorizes private DO 1.

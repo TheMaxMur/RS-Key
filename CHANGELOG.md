@@ -40,6 +40,22 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Added
 
+- **Formal-verification phase 3 is closed across the stateful workspace.** Six
+  roadmap modules now cover the flash layer, PIV/OpenPGP retry lattice,
+  management/rescue surface, trusted display, cross-boot hardening and CTAPHID
+  reassembly; `RSKeyAppletPolicies.tla` adds the remaining four-app operation
+  policies without inventing retry counters for OATH/OTP codes. Its single
+  exhaustive graph is 2,268 distinct states at depth 14, and all seven mutants
+  hit their named invariant. The three pre-existing shape holes are structural
+  now (`pin_fresh`, one-shot PW1 and OATH code removal), with recorded firing
+  counts. `PowerOnClearsScratch2` is an explicit open hardware assumption.
+
+  The assurance gate now requires production `Refines` tags for every shipped
+  model (including `firmware/`), validates cross-model `Supports` edges from
+  `RSKeyStore` to the two FIDO persistent-state properties, and generates the
+  full 26-crate coverage ledger beside the property table. A workspace member,
+  model property or owner can no longer disappear silently.
+
 - **Co-refutation: the model's mutants, re-made as code defects, measured
   against the unit tests.** The TLC matrix proves the *model* catches all 28
   `Bug*` defects; nothing measured whether the *code level* catches the same
@@ -98,8 +114,8 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   model→code direction has ever carried.
 
 - **A security-property registry, held against the tree by a gate.**
-  `assurance/properties.toml` names every property TLC checks — 22 entries:
-  20 invariants and temporal properties across both modules, plus the two
+  `assurance/properties.toml` names every property TLC checks — 47 entries:
+  45 invariants and temporal properties across nine modules, plus the two
   maintainer-ruled accepted risks, so a ruled-away risk reads as a decision
   rather than a hole. Hand-written fields are only id, statement, source and
   status; everything else — defining module, checking configurations, targeting
@@ -117,12 +133,12 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   workspace members — the ledger exists because two roadmap drafts enumerated
   crates from memory and missed four, including the second-largest in the tree.
   New `check.sh` row `assurance registry`; mutation table in
-  `scripts/test_assurance_gate.py`, now 27 cases. Its measured six-axis
-  traceability table is generated into `formal/README.md`; the ordinary gate
+  `scripts/test_assurance_gate.py`, now 31 cases. Its measured evidence table
+  and crate ledger are generated into `formal/README.md`; the ordinary gate
   rejects a stale block instead of trusting a hand-maintained baseline.
 
 - **A "Formal model" page in the book** (`docs/formal.md`, Security section):
-  the map of `formal/` — the two modules, the checks-of-the-checks (mutants,
+  the map of `formal/` — the nine modules, the checks-of-the-checks (mutants,
   floors, vacuity, lint), the property registry and tags, how to run each tier
   and where CI runs them. The deep prose stays in `formal/README.md`; the page
   says what is and is not claimed and points at the measured paragraph in
@@ -135,12 +151,11 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   which was the one all-zero column of the traceability table. The gate
   validates every tag (module exists, defines the invariant, id is registered,
   and id↔invariant pairing matches) and ratchets the other way: every invariant
-  `Shipped.cfg` or `Seams.cfg` checks must be named in production Rust
-  somewhere. The shared rule runs from both the assurance and citation gates.
-  Doc comments only — nothing reaches the image, no `bcdDevice` bump.
+  in all shipped baselines must be named in production Rust somewhere. The
+  shared rule runs from both the assurance and citation gates.
 
 - **The TLA+ model is checked by CI.** `deep-checks` gained a weekly `formal`
-  row running `formal/run-tlc.sh safety` — the model, its 44 mutants, their
+  row running `formal/run-tlc.sh safety` — nine models, 71 mutation switches, their
   `floors.txt` verdicts and the vacuity check. Until now none of that ran in any
   workflow: the matrix was a ratchet whose only puller was whoever remembered
   the command, on the one machine holding a jar at a hardcoded `/nix/store`
@@ -164,6 +179,13 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   artificial corruptions, plus direct RED and FLOOR cases, are persistent.
 
 ### Changed
+
+- **Changing an OpenPGP C1/C2/C3 algorithm attribute now invalidates that
+  slot's old private/public key pair before publishing the new attribute.**
+  Keeping the old key made the slot advertise one algorithm while operations
+  could still reach material created under another. Same-value writes preserve
+  the key; a changed value deletes both records, with a regression that fails
+  on the old behavior. **bcdDevice → 0x095B.**
 
 - **`deep-checks` runs on two cadences and across matrices.** Miri (3 shards) and
   the libFuzzer pass (4 shards) stay daily; Kani moves to Sunday as four jobs —

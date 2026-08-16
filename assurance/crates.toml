@@ -24,7 +24,7 @@
 
 [crate.firmware]
 class = "embedded-binary"
-reason = "no_std binary: boot, worker sequencing, board halves of Hooks/Platform. The boot path's cross-boot state — the EF_HARDENED at-rest lap and the scratch-word lock carry — is RSKeyBootHardening (M7), modelled precisely because this crate has no host tests; the FIDO state it builds is reconstructed host-side in rsk-device (ctap.rs:73-86). Remaining unmodelled: worker sequencing and USB bring-up — roadmap M8."
+reason = "no_std binary: boot, worker sequencing, board halves of Hooks/Platform. The boot path's cross-boot state — the EF_HARDENED lap and scratch-word lock carry — is RSKeyBootHardening (M7), precisely because this crate has no host tests; the FIDO state it builds is reconstructed host-side in rsk-device (ctap.rs:73-86). Worker scheduling and USB bring-up remain implementation mechanics, with transport state owned by RSKeyTransport."
 
 [crate.rsk-wipe]
 class = "out-of-scope"
@@ -37,32 +37,32 @@ model = "RSKeySecurityState"
 [crate.rsk-device]
 class = "state-partial"
 model = "RSKeySecurityState"
-gap = "presence arbitration is modelled and Kani-proved; the capability gating (APPLET_CAPS, the enable mask, the always-on carve-out) is RSKeyAdminSurface now. The applet wiring/transport remains — roadmap M8."
+gap = "presence arbitration is modelled and Kani-proved; capability gating is RSKeyAdminSurface. Dispatcher selection/reset semantics are RSKeyAppletSeams; the remaining fast-path wiring is single-dispatch glue rather than a separately modelled state machine."
 
 [crate.rsk-sdk]
 class = "state-partial"
 model = "RSKeyAppletSeams"
-gap = "Dispatcher::current is the seam module's sel; APDU chaining state is unmodelled — roadmap M8."
+gap = "Dispatcher::current is the seam module's sel. APDU command chaining remains outside RSKeyTransport, which covers CTAPHID framing rather than the SDK's per-applet chain buffer."
 
 [crate.rsk-piv]
 class = "state-partial"
 model = "RSKeyAppletSeams"
-gap = "status lifetime is RSKeyAppletSeams; the PIN/PUK retry & recovery budget lattice is now RSKeyRetryLattice (M4). What remains unmodelled is the slot key-policy matrix (PIN-always/once/never) — roadmap M4's second slice."
+gap = "status lifetime is RSKeyAppletSeams; PIN/PUK budgets are RSKeyRetryLattice; NEVER/ONCE/ALWAYS slot policy and freshness spending are RSKeyAppletPolicies. Key material and touch I/O stay below these state abstractions."
 
 [crate.rsk-openpgp]
 class = "state-partial"
 model = "RSKeyAppletSeams"
-gap = "status lifetime is RSKeyAppletSeams; the PW1/PW3/RC retry & recovery budgets are now RSKeyRetryLattice (M4). Key-attribute invalidation (a new key clearing the DEK/verifier) is still unmodelled — roadmap M4's second slice."
+gap = "status lifetime is RSKeyAppletSeams; PW1/PW3/RC budgets are RSKeyRetryLattice; algorithm-attribute changes invalidating the old key pair are RSKeyAppletPolicies. MSE repointing and the per-slot UIF value space remain below the abstraction."
 
 [crate.rsk-oath]
 class = "state-partial"
 model = "RSKeyAppletSeams"
-gap = "status lifetime and the access-code removal gate (AccessCodeRemovalNeedsTheCode, SEC-SEAM-006) are RSKeyAppletSeams. NOT in RSKeyRetryLattice: the access code is a MAC challenge-response with no retry counter, so a wrong answer costs nothing — the exempt-refusal territory the seam model carries, and its wire acceptance is the group-E oracle's."
+gap = "status lifetime and access-code removal are RSKeyAppletSeams; calculation's access-code and touch gates are RSKeyAppletPolicies. The MAC access code has no retry budget, so its byte-level mutual-auth acceptance remains differential-oracle territory rather than a fabricated lattice counter."
 
 [crate.rsk-otp]
 class = "state-partial"
 model = "RSKeyAppletSeams"
-gap = "one door (oathOtpPin) in the seam model. NOT in RSKeyRetryLattice for the same reason as OATH — the slot access code is a bare equality check with no counter. Slot configure/swap/delete under that code stay unmodelled."
+gap = "oathOtpPin status is in RSKeyAppletSeams; protected-slot configure/update/delete/swap and the combined use/session anti-replay step are RSKeyAppletPolicies. The six-byte slot code has no retry counter; four physical slots collapse to one symmetric lifecycle in the model."
 
 [crate.rsk-vendor]
 class = "state-partial"

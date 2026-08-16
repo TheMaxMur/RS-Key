@@ -551,6 +551,7 @@ impl<'a> OathApplet<'a> {
         Sw::OK
     }
 
+    /// Refines `RSKeyAppletPolicies!OathCredentialNeedsItsGates` — SEC-POL-004.
     fn cmd_calculate<S: Storage>(&mut self, apdu: &Apdu, fs: &mut Fs<S>, res: &mut ResBuf) -> Sw {
         if !self.validated {
             return Sw::SECURITY_STATUS_NOT_SATISFIED;

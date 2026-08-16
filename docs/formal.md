@@ -13,7 +13,7 @@ cost — lives in `formal/README.md` next to the model itself.
 so. What exists is narrower and it is measured: the paragraph to quote is in
 [Testing](testing.md), under "Formal claims — what is and is not verified".
 
-## The eight modules
+## The nine modules
 
 `RSKeySecurityState.tla` models the FIDO security state: PIN retries, the
 `pinUvAuthToken` and its permissions, which transport owns the touch, which
@@ -41,6 +41,13 @@ applet surface with no safe oracle — exhausting a real PUK ladder blocks the
 card and the only way back takes the keys — so an exhaustive check of every
 verify/block/recover interleaving can run only in a model.
 
+`RSKeyAppletPolicies.tla` covers the four applets' remaining stateful doors:
+PIV NEVER/ONCE/ALWAYS slot policy and freshness spending, OpenPGP algorithm-
+attribute invalidation, OATH access-code plus touch gates, and Yubico OTP slot-
+code mutation plus its combined use/session replay position. OATH and OTP codes
+have no retry counter; keeping this separate avoids proving invented budgets.
+All four fit in one exhaustive graph: 2,268 distinct states at depth 14.
+
 `RSKeyAdminSurface.tla` models the surface above all of them: the
 enabled-applications mask, the always-on carve-out that keeps `ykman config usb
 --disable` reversible, and the operator-presence gate on the privileged rescue
@@ -60,7 +67,9 @@ one-shot at-rest scrub lap (`EF_HARDENED` never lies about superseded
 weak-sealed copies, and every lazy re-key re-arms it) and the scratch-word
 lock carry (a warm reset moves the whole soft lock, never half of it). It
 exists because `firmware/` has no host tests by construction: the model is
-the only instrument that exercises these interleavings.
+the only instrument that exercises these interleavings. Its
+`PowerOnClearsScratch2` assumption is deliberately explicit and still awaits
+an RP2350 hardware measurement; TLC does not turn it into a hardware fact.
 
 `RSKeyTransport.tla` models the CTAPHID frame reassembler — the channel,
 sequence and length checks a multi-frame message passes before dispatch: one
@@ -143,12 +152,15 @@ BOUNDED, and PROVEN is refused until that evidence class exists in the tree.
 The owner functions carry the property back into the code: a doc line of the
 form ``Refines `RSKeySecurityState!NoTokenAfterInvalidation` — SEC-FIDO-003``
 sits on each function the model's ownership table names, the gate validates
-every tag, and every invariant the phase-1 owner configurations (`Shipped.cfg`
-and `Seams.cfg`) check must be named in production Rust somewhere. The shared
-check runs from both `assurance_gate.py` and `citation_gate.py`.
+every tag, and every invariant in all nine shipped baseline configurations must
+be named in production Rust somewhere. Firmware sources count as owners for the
+boot module. The shared check runs from both `assurance_gate.py` and
+`citation_gate.py`.
 
-The six-axis evidence table in `formal/README.md` is generated from that same
-audit. The ordinary gate rejects a stale table; regenerate it after evidence
+The evidence table and 26-member workspace coverage ledger in
+`formal/README.md` are generated from that same audit. Cross-model `Supports`
+tags close the two FIDO properties whose persistent half is owned by the store
+module. The ordinary gate rejects a stale block; regenerate it after evidence
 moves with `python scripts/assurance_gate.py --write-readme`.
 
 `assurance/crates.toml` is the same discipline one level up: all 26 workspace

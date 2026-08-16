@@ -98,6 +98,10 @@ gpg read back):
 | ECC (encrypt) | **Cv25519** (X25519), NIST **P-256 / P-384 / P-521**, **secp256k1**, **brainpoolP256r1 / P384r1** | ECDH; the DEC slot only |
 | RSA | **2048 / 3072 / 4096**, plus **1024** | exponent fixed at 65537 (what gpg imports) |
 
+Changing a slot's algorithm after a key exists invalidates that slot's old
+private/public key pair. Re-select the intended attribute before generating or
+importing the replacement; writing the same attribute leaves the key intact.
+
 **RSA-1024 is advertised and it works** — a YubiKey does not offer it at all.
 It is below every current guidance (NIST SP 800-131A retired it in 2013) and it
 is here only so a key generated under an older build keeps working. Do not pick

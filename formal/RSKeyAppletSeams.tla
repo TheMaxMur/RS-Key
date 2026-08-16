@@ -12,7 +12,7 @@
 (* RSKeySecurityState.tla. Those two state machines share no variable, and   *)
 (* that is a measured claim rather than a convenience: the CCID side owns a  *)
 (* Dispatcher and the only instances of openpgp / oath / piv / otp /         *)
-(* management / rescue / vendor (crates/rsk-device/src/ccid.rs:86-102),      *)
+(* management / rescue / vendor (crates/rsk-device/src/ccid.rs:87-102),      *)
 (* while the CTAPHID side owns a SEPARATE Dispatcher whose applet array is   *)
 (* literally one element, its own VendorApplet                               *)
 (* (crates/rsk-device/src/ctap.rs:160-164). PIV, OpenPGP and OATH are not    *)
@@ -40,7 +40,7 @@ CONSTANTS
     \* 637ed98 taken back out: PIV and OpenPGP used to reset on EVERY select,
     \* ignoring the `reselect` flag the trait hands them.
     BugReselectResetsStatus,
-    \* crates/rsk-device/src/ccid.rs:327-342 -- the ICC power transition.
+    \* crates/rsk-device/src/ccid.rs:328-342 -- the ICC power transition.
     BugCardResetKeepsStatus,
     \* e5da38b taken back out: PW3, the admin PIN, standing in for PW1/PW2 on
     \* PSO:CDS, PSO:DECIPHER and INTERNAL AUTHENTICATE.
@@ -52,6 +52,9 @@ CONSTANTS
     \* crates/rsk-piv/src/auth.rs:114-118 -- the PIN-policy-ALWAYS slot spends
     \* its freshness, so one VERIFY authorises one key operation.
     BugPinFreshNotSpent,
+    \* The selection clamp removed: `pin_fresh` outlives the `has_pin` status it
+    \* refines. `pfresh` remains the requirement-side copy that exposes the split.
+    BugPinFreshOutlivesPin,
     \* The same shape one applet over: crates/rsk-openpgp/src/keys.rs:977-981,
     \* `inc_sig_count` clearing has_pw1 under the one-shot PW status.
     BugSigPinNotSpent,
@@ -199,7 +202,8 @@ Reselect(a) ==
     \* Parenthesised: `=` binds TIGHTER than `/\` in TLA+, so without them
     \* this reads `(fresh' = held'["pivPin"]) /\ fresh` -- an extra guard
     \* requiring `fresh`, which disabled both SELECT actions outright.
-    /\ fresh' = (held'["pivPin"] /\ fresh)
+    /\ fresh' = IF BugPinFreshOutlivesPin THEN fresh
+                  ELSE (held'["pivPin"] /\ fresh)
     /\ pfresh' = (held'["pivPin"] /\ pfresh)
     \* The conformance recorder. PIV and OpenPGP must come through a re-SELECT
     \* with everything standing; OATH is the recorded exception.
@@ -226,10 +230,12 @@ SelectOther(a) ==
     \* Parenthesised: `=` binds TIGHTER than `/\` in TLA+, so without them
     \* this reads `(fresh' = held'["pivPin"]) /\ fresh` -- an extra guard
     \* requiring `fresh`, which disabled both SELECT actions outright.
-    /\ fresh' = (held'["pivPin"] /\ fresh)
+    /\ fresh' = IF BugPinFreshOutlivesPin THEN fresh
+                  ELSE (held'["pivPin"] /\ fresh)
     /\ pfresh' = (held'["pivPin"] /\ pfresh)
+    /\ psig' = (held'["pw1"] /\ psig)
     /\ sel' = a
-    /\ UNCHANGED << oneShotSig, psig, oathCodeSet, refused, viol >>
+    /\ UNCHANGED << oneShotSig, oathCodeSet, refused, viol >>
 
 (***************************************************************************)
 (* Authentication. One shape per applet, because the applets genuinely      *)
@@ -401,13 +407,7 @@ PivMgmAuth(ok) ==
 \* opened all three; a YubiKey 5.7.4 answers 6982 to PW3 alone on every one.
 PgpKeyOpGuard(r) ==
     IF BugAdminOpensKeyOps THEN held[r] \/ held["pw3"] ELSE held[r]
-\* PSO:CDS additionally needs PW1.81 UNSPENT while the one-shot status is set --
-\* OpenPGP 3.4.1's "PW1 valid for one PSO:CDS", which `inc_sig_count` implements
-\* by clearing has_pw1 after the signature (crates/rsk-openpgp/src/keys.rs:977-981).
-\* `psig` is the requirement's copy, so a switch that stops spending the real one
-\* cannot also satisfy the Policy that reads it -- the BugPinFreshNotSpent lesson,
-\* applied before the mutant rather than after.
-PgpKeyOpPolicy(r) == held[r] /\ (r = "pw1" /\ oneShotSig => psig)
+PgpKeyOpPolicy(r) == held[r]
 
 PgpKeyOp(r) ==
     /\ sel = Pgp
@@ -475,13 +475,10 @@ AdminOp(a) ==
 \* management-key status opens nothing here -- it is the admin surface's.
 PivKeyOpGuard  == IF BugPinFreshNotSpent THEN held["pivPin"]
                                          ELSE held["pivPin"] /\ fresh
-PivKeyOpPolicy == held["pivPin"] /\ pfresh
-
 PivKeyOp ==
     /\ sel = Piv
     /\ PivKeyOpGuard
-    /\ viol' = IF PivKeyOpPolicy THEN viol
-                                 ELSE viol \cup {"NoKeyOpOnTheAdminStatus"}
+    /\ viol' = viol
     /\ fresh' = IF BugPinFreshNotSpent THEN fresh ELSE FALSE
     /\ pfresh' = FALSE
     /\ UNCHANGED << sel, held, oneShotSig, psig, oathCodeSet, refused >>
@@ -492,7 +489,7 @@ PivKeyOp ==
 
 \* SCardDisconnect(SCARD_RESET_CARD) / CCID_POWER_OFF / CCID_POWER_ON:
 \* `Dispatcher::reset_card` deselects, which drops the selected applet's
-\* security status (crates/rsk-device/src/ccid.rs:327-342,
+\* security status (crates/rsk-device/src/ccid.rs:328-342,
 \* crates/rsk-sdk/src/applet.rs:222-230). This is the one the `cross_applet`
 \* fuzz target already watches, one layer down.
 \* Its own trailing UNCHANGED named `psig` while the ELSE branch assigned it, so
@@ -612,9 +609,13 @@ NoStatusAfterARefusedAuth ==
 \* administrative surface and nothing else; PIV's PIN-policy-ALWAYS slots need
 \* the UNSPENT half of the PIN status, so one VERIFY buys one operation.
 \*
-\* Ghost half, writers enumerated: PgpKeyOp and PivKeyOp. No other action is
-\* gated by an authorization in this module.
-NoKeyOpOnTheAdminStatus == "NoKeyOpOnTheAdminStatus" \notin viol
+\* The first clause's writers are PgpKeyOp, PgpSetPwStatus and AdminOp. The two
+\* structural clauses compare implementation state with independent requirement
+\* state, so the spend mutants cannot repair the property they are meant to break.
+NoKeyOpOnTheAdminStatus ==
+    /\ "NoKeyOpOnTheAdminStatus" \notin viol
+    /\ fresh = pfresh
+    /\ (sel = Pgp /\ oneShotSig) => (held["pw1"] = psig)
 
 \* THE OTHER HALF OF THE REFUSAL RULE, and it points the opposite way: two
 \* refusals must cost NOTHING, and each is settled by its own authority rather

@@ -416,6 +416,7 @@ impl<'a> OtpApplet<'a> {
     }
 
     /// P1 = 0x01/0x03: write or delete a slot config.
+    /// Refines `RSKeyAppletPolicies!OtpSlotMutationNeedsItsCode` — SEC-POL-005.
     fn cmd_configure<S: Storage>(&mut self, apdu: &Apdu, fs: &mut Fs<S>, res: &mut ResBuf) -> Sw {
         if apdu.p1 == P1_CONFIG_SLOT2 && apdu.p2 != 0 {
             return Sw::INCORRECT_P1P2;
@@ -465,6 +466,7 @@ impl<'a> OtpApplet<'a> {
 
     /// P1 = 0x04/0x05: update the flag bytes of an existing config, keeping its
     /// fixed part / UID / key.
+    /// Refines `RSKeyAppletPolicies!OtpSlotMutationNeedsItsCode` — SEC-POL-005.
     fn cmd_update<S: Storage>(&mut self, apdu: &Apdu, fs: &mut Fs<S>, res: &mut ResBuf) -> Sw {
         if apdu.p1 == P1_UPDATE_SLOT2 && apdu.p2 != 0 {
             return Sw::INCORRECT_P1P2;
@@ -536,6 +538,7 @@ impl<'a> OtpApplet<'a> {
     /// satisfied by the default, so a plain `ykman otp swap` of unprotected slots
     /// is unchanged. Out-of-range offsets are rejected so a swap can never orphan a
     /// slot outside the 4-slot range.
+    /// Refines `RSKeyAppletPolicies!OtpSlotMutationNeedsItsCode` — SEC-POL-005.
     fn cmd_swap<S: Storage>(&mut self, apdu: &Apdu, fs: &mut Fs<S>, res: &mut ResBuf) -> Sw {
         let (mut fid1, mut fid2) = (EF_OTP_SLOT1, EF_OTP_SLOT2);
         let mut code = [0u8; ACC_CODE_SIZE];

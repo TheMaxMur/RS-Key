@@ -88,6 +88,8 @@ where
     /// the up-pending flag so the CTAPHID keepalive reports `UPNEEDED`, and polls
     /// the cancel flag each iteration — the same cross-executor contract the
     /// BOOTSEL wait honours through `rsk_device::presence::Arbiter`.
+    /// Refines `RSKeyTrustedDisplay!ConfirmNamesTheOperation` — SEC-DISP-001.
+    /// Refines `RSKeyTrustedDisplay!StaleTouchApprovesNothing` — SEC-DISP-002.
     fn confirm_wait(&mut self, confirm: Confirm<'_>) -> Outcome {
         let saved = self.ui.borrow_mut().ceremony_begin();
 

@@ -423,7 +423,7 @@ nix develop            # exports TLA2TOOLS_JAR; the JVM comes with it
 cd formal && ./gen-configs.sh && ./run-tlc.sh safety   # the tier CI runs
 ```
 
-`safety` is the model, its 44 mutants, their floors and the vacuity check —
+`safety` is the nine shipped models, their 71 mutation switches, floors and the vacuity check —
 `deep-checks.yml`'s weekly `formal` row, which also fires on any push touching
 `formal/`. `liveness` is the temporal half and is not in CI: it needs a 12g
 heap. `all` is both. Tier membership lives in `formal/run-tlc.sh`.

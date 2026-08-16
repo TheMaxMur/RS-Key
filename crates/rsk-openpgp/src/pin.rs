@@ -174,6 +174,8 @@ fn clear_access_status(sess: &mut Session, fid: u16, p2: u8) {
 /// the retry counter and sets the matching `has_pw*` flag + session key; on
 /// failure decrements the counter, clears that reference's access status and
 /// returns `63 Cx` / blocked.
+/// Refines `RSKeyRetryLattice!NoAuthWhenBlocked` — SEC-LAT-001.
+/// Refines `RSKeyRetryLattice!WrongAttemptIsCharged` — SEC-LAT-002.
 pub fn check_pin<S: Storage>(
     dev: &Device,
     fs: &mut Fs<S>,
@@ -740,6 +742,7 @@ pub fn change_pin<S: Storage>(
 /// RESET RETRY COUNTER (INS 0x2C): reset PW1 to a new value, either via the
 /// resetting code (P1=0x00) or via a verified admin PIN (P1=0x02). Both re-seal
 /// the DEK under the new PW1 and reset its retry counter.
+/// Refines `RSKeyRetryLattice!BudgetRisesOnlyWithItsSecret` — SEC-LAT-003.
 pub fn reset_retry<S: Storage>(
     dev: &Device,
     fs: &mut Fs<S>,

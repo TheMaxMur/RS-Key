@@ -39,7 +39,7 @@ fi
 
 # Which module a configuration belongs to: the seam configs are the second
 # module's, and TLC takes the module name rather than reading it from the cfg.
-spec_for() { case "$1" in TraceSeamsBad*) echo TraceSeamsBad ;; TraceSeams*) echo TraceSeams ;; Seam*) echo RSKeyAppletSeams ;; Store*) echo RSKeyStore ;; Lat*) echo RSKeyRetryLattice ;; Admin*) echo RSKeyAdminSurface ;; Disp*) echo RSKeyTrustedDisplay ;; Boot*) echo RSKeyBootHardening ;; Trans*) echo RSKeyTransport ;; *) echo RSKeySecurityState ;; esac; }
+spec_for() { case "$1" in TraceSeamsBad*) echo TraceSeamsBad ;; TraceSeams*) echo TraceSeams ;; Seam*) echo RSKeyAppletSeams ;; Store*) echo RSKeyStore ;; Lat*) echo RSKeyRetryLattice ;; Polic*) echo RSKeyAppletPolicies ;; Admin*) echo RSKeyAdminSurface ;; Disp*) echo RSKeyTrustedDisplay ;; Boot*) echo RSKeyBootHardening ;; Trans*) echo RSKeyTransport ;; *) echo RSKeySecurityState ;; esac; }
 
 # floors.txt: what each configuration must produce. First match wins.
 expect_for() {
@@ -153,6 +153,9 @@ list_safety() {
   echo Lattice.cfg             # the fourth module: the retry/recovery lattice
   ls LatMut_*.cfg
   ls LatSolo_*.cfg
+  echo Policies.cfg            # the four applets' stateful operation policies
+  ls PolicyMut_*.cfg
+  ls PolicySolo_*.cfg
   echo Admin.cfg               # the fifth module: the administrative surface
   ls AdminMut_*.cfg
   ls AdminSolo_*.cfg

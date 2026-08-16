@@ -218,6 +218,50 @@ status = "MODELLED-ONLY"
 statement = "A reference's retry counter rises only on a correct presentation of a secret — its own (a correct VERIFY) or its designated recovery reference's (a correct RESET RETRY) — never out of nothing."
 source = ["PIV SP 800-73-4", "OpenPGP card 3.4", "docs/threat-model.md"]
 
+# ---- RSKeyAppletPolicies — four applets' stateful operation doors -----------
+
+[[property]]
+id = "SEC-POL-001"
+name = "PivOperationNeedsSlotPolicy"
+status = "MODELLED-ONLY"
+statement = "A PIV private-key operation satisfies the slot's resolved NEVER, ONCE or ALWAYS PIN policy."
+source = ["NIST SP 800-73-4 pt1 §3.2.1 Table 5"]
+
+[[property]]
+id = "SEC-POL-002"
+name = "PivAlwaysSpendsFreshness"
+status = "MODELLED-ONLY"
+statement = "A successful PIV operation at an ALWAYS slot spends the freshness established by VERIFY, so one VERIFY buys one operation."
+source = ["NIST SP 800-73-4 pt1 §3.2.1 Table 5"]
+
+[[property]]
+id = "SEC-POL-003"
+name = "AttributeChangeInvalidatesTheKey"
+status = "MODELLED-ONLY"
+statement = "Changing an OpenPGP slot's algorithm attribute invalidates the old private/public key pair before the new attribute becomes visible."
+source = ["OpenPGP Card 3.4 §4.4.3.12"]
+
+[[property]]
+id = "SEC-POL-004"
+name = "OathCredentialNeedsItsGates"
+status = "MODELLED-ONLY"
+statement = "OATH credential calculation requires the provisioned access-code session and, for a touch credential, a confirmed physical press."
+source = ["Yubico YKOATH protocol", "docs/threat-model.md"]
+
+[[property]]
+id = "SEC-POL-005"
+name = "OtpSlotMutationNeedsItsCode"
+status = "MODELLED-ONLY"
+statement = "Configure, update, delete or swap never mutates an existing protected Yubico OTP slot without its stored access code."
+source = ["Yubico OTP USB protocol", "docs/threat-model.md"]
+
+[[property]]
+id = "SEC-POL-006"
+name = "OtpCounterNeverRepeats"
+status = "MODELLED-ONLY"
+statement = "Every emitted counter-based Yubico OTP advances the combined persisted-use and RAM-session replay position before the next output can reuse it."
+source = ["Yubico OTP USB protocol", "docs/threat-model.md"]
+
 # ---- RSKeyAdminSurface — the mask, its carve-out, the rescue gate -----------
 
 [[property]]

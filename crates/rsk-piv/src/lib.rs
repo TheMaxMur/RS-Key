@@ -1178,6 +1178,8 @@ pub fn migrate_kbase<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng
 
 /// Verify a PIN/PUK against its stored verifier, with the retry dance —
 /// decrement on mismatch (`63Cx`, `6983` at zero), reset on success.
+/// Refines `RSKeyRetryLattice!NoAuthWhenBlocked` — SEC-LAT-001.
+/// Refines `RSKeyRetryLattice!WrongAttemptIsCharged` — SEC-LAT-002.
 fn check_ref<S: Storage>(dev: &Device, fs: &mut Fs<S>, fid: u16, retry: usize, pin: &[u8]) -> Sw {
     let (total, left) = match retries(fs, retry) {
         Ok(t) => t,
@@ -1328,6 +1330,7 @@ pub fn change_reference<S: Storage>(
 
 /// Unblock the PIN with the PUK (RESET RETRY COUNTER): verify `puk`, set the PIN to
 /// `new`, and reset the PIN retry counter. Shared by the APDU handler and the panel.
+/// Refines `RSKeyRetryLattice!BudgetRisesOnlyWithItsSecret` — SEC-LAT-003.
 pub fn unblock_pin_with_puk<S: Storage>(
     dev: &Device,
     fs: &mut Fs<S>,

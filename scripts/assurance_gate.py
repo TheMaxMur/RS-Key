@@ -55,9 +55,19 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 README_START = "<!-- assurance-table:start -->"
 README_END = "<!-- assurance-table:end -->"
 
-# Phase 1's code-owning models. Later modules may model hardware seams with no
-# single production owner; these configurations have ownership tables instead.
-OWNER_CFGS = ("Shipped.cfg", "Seams.cfg")
+# Every shipped model has production owners. A baseline added here automatically
+# turns each of its checked properties into a required, validated Rust tag.
+OWNER_CFGS = (
+    "Shipped.cfg",
+    "Seams.cfg",
+    "Store.cfg",
+    "Lattice.cfg",
+    "Policies.cfg",
+    "Admin.cfg",
+    "Display.cfg",
+    "Boot.cfg",
+    "Transport.cfg",
+)
 
 #: Configurations no tier runs, each with the reason a reader needs. Anything
 #: else outside every tier is a matrix row nobody pulls, and fails the gate.
@@ -78,6 +88,9 @@ STATUSES = {"BOUNDED", "MODELLED-ONLY", "ACCEPTED-RISK"}
 #: whose id names one property and whose invariant names another is a finding
 #: rather than two half-truths.
 TAG = re.compile(r"Refines\s+`([A-Za-z0-9]+)!([A-Za-z0-9]+)`\s+—\s+(SEC-[A-Z]+-[0-9A-Z]+)")
+SUPPORT_TAG = re.compile(
+    r"Supports\s+`([A-Za-z0-9]+)!([A-Za-z0-9]+)`\s+—\s+(SEC-[A-Z]+-[0-9A-Z]+)"
+)
 SEC_ID = re.compile(r"\bSEC-[A-Z]+-[0-9A-Z]+\b")
 
 CFG_KEYWORDS = re.compile(
@@ -134,6 +147,7 @@ def solo_target_counts(formal: pathlib.Path) -> dict[str, int]:
                 "SeamSolo_",
                 "StoreSolo_",
                 "LatSolo_",
+                "PolicySolo_",
                 "AdminSolo_",
                 "DispSolo_",
                 "BootSolo_",
@@ -155,14 +169,20 @@ def grep_word(files: list[pathlib.Path], word: str) -> list[str]:
     return [f.name for f in files if pat.search(f.read_text(errors="ignore"))]
 
 
+def production_rust(root: pathlib.Path) -> list[pathlib.Path]:
+    files = list((root / "crates").glob("*/src/**/*.rs"))
+    files.extend((root / "firmware" / "src").glob("**/*.rs"))
+    return [
+        f
+        for f in sorted(files)
+        if "kani" not in f.name and "tests" not in f.name
+    ]
+
+
 def derive(root: pathlib.Path, name: str, solo: dict[str, int]) -> dict:
     crates = root / "crates"
     kani_files = sorted(crates.glob("*/src/*kani*.rs"))
-    rust_files = [
-        f
-        for f in sorted(crates.glob("*/src/**/*.rs"))
-        if "kani" not in f.name and "tests" not in f.name
-    ]
+    rust_files = production_rust(root)
     fuzz_files = sorted((root / "fuzz" / "fuzz_targets").glob("*.rs"))
     test_files = sorted((root / "tests").glob("**/*.py"))
     sn = snake(name)
@@ -179,6 +199,37 @@ def derive(root: pathlib.Path, name: str, solo: dict[str, int]) -> dict:
         "rust": grep_word(rust_files, name),
         "tests": grep_word(test_files, name) + grep_word(test_files, sn),
     }
+
+
+def formal_supports(
+    root: pathlib.Path,
+    entries: list[dict],
+    definitions: dict[str, str],
+    findings: list[str],
+) -> dict[str, list[str]]:
+    """Validated cross-model support edges, derived from formal source tags."""
+    by_id = {e.get("id"): e.get("name") for e in entries}
+    modules = {p.stem for p in (root / "formal").glob("*.tla")}
+    supports: dict[str, list[str]] = {}
+    for tla in sorted((root / "formal").glob("*.tla")):
+        for module, name, pid in SUPPORT_TAG.findall(tla.read_text(errors="ignore")):
+            where = f"{tla.name}: Supports `{module}!{name}` — {pid}"
+            if module not in modules:
+                findings.append(f"{where}: no such formal/ module")
+            elif definitions.get(name) != module:
+                findings.append(
+                    f"{where}: {name!r} is defined by "
+                    f"{definitions.get(name, 'no module')}, not {module}"
+                )
+            if pid not in by_id:
+                findings.append(f"{where}: id not in the registry")
+            elif by_id[pid] != name:
+                findings.append(
+                    f"{where}: id belongs to {by_id[pid]!r} — mismatched pairing"
+                )
+            if module in modules and definitions.get(name) == module and by_id.get(pid) == name:
+                supports.setdefault(name, []).append(tla.stem)
+    return {name: sorted(set(owners)) for name, owners in supports.items()}
 
 
 def tier_union(formal: pathlib.Path) -> set[str]:
@@ -209,6 +260,7 @@ def check_properties(root: pathlib.Path, findings: list[str]) -> list[dict]:
     checked = checked_names(formal)
     defs = tla_definitions(formal)
     solo = solo_target_counts(formal)
+    supports = formal_supports(root, entries, defs, findings)
 
     ids = [e.get("id", "?") for e in entries]
     names = [e.get("name", "?") for e in entries]
@@ -250,7 +302,7 @@ def check_properties(root: pathlib.Path, findings: list[str]) -> list[dict]:
                     f"{where}: filed as a risk but checked by "
                     f"{checked[name][0]} — a checked invariant is not a ruling"
                 )
-            rows.append({"e": e, "d": None, "module": None, "cfgs": 0})
+            rows.append({"e": e, "d": None, "module": None, "support": [], "cfgs": 0})
             continue
         if name not in defs:
             findings.append(f"{where}: no definition in any formal/*.tla module")
@@ -269,6 +321,7 @@ def check_properties(root: pathlib.Path, findings: list[str]) -> list[dict]:
                 "e": e,
                 "d": d,
                 "module": defs.get(name),
+                "support": supports.get(name, []),
                 "cfgs": len(checked.get(name, [])),
             }
         )
@@ -285,11 +338,7 @@ def check_tags(root: pathlib.Path, findings: list[str], entries: list[dict]) -> 
     by_id = {e.get("id"): e.get("name") for e in entries}
     definitions = tla_definitions(root / "formal")
     modules = {p.stem for p in (root / "formal").glob("*.tla")}
-    rust_files = [
-        f
-        for f in sorted((root / "crates").glob("*/src/**/*.rs"))
-        if "kani" not in f.name and "tests" not in f.name
-    ]
+    rust_files = production_rust(root)
     tagged_names: set[str] = set()
     for f in rust_files:
         text = f.read_text(errors="ignore")
@@ -341,16 +390,17 @@ def check_property_tags(root: pathlib.Path, findings: list[str]) -> None:
 def markdown_table(rows: list[dict]) -> str:
     """The generated traceability table embedded in formal/README.md."""
     lines = [
-        "| ID | Property | Status | Model | Rust | Mutants | Kani | Fuzz | Runtime |",
-        "|---|---|---|---|---:|---:|---:|---:|---:|",
+        "| ID | Property | Status | Model | Support | Rust | Mutants | Kani | Fuzz | Runtime |",
+        "|---|---|---|---|---|---:|---:|---:|---:|---:|",
     ]
     for row in rows:
         e, d = row["e"], row["d"]
         if d is None:
-            evidence = ("—", "—", "—", "—", "—", "—")
+            evidence = ("—", "—", "—", "—", "—", "—", "—")
         else:
             evidence = (
                 f"`{row['module']}`",
+                ", ".join(f"`{m}`" for m in row["support"]) or "—",
                 str(len(d["rust"])),
                 str(d["mutants"]),
                 str(len(d["kani"])),
@@ -365,11 +415,39 @@ def markdown_table(rows: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def readme_block(rows: list[dict]) -> str:
+def crate_ledger(root: pathlib.Path) -> dict[str, dict]:
+    with open(root / "assurance" / "crates.toml", "rb") as fh:
+        return tomllib.load(fh).get("crate", {})
+
+
+def crate_ledger_table(ledger: dict[str, dict]) -> str:
+    lines = [
+        "### Workspace coverage ledger — generated",
+        "",
+        "| Crate | Class | Model / evidence | Named gap / disposition |",
+        "|---|---|---|---|",
+    ]
+    for name, entry in sorted(ledger.items()):
+        if model := entry.get("model"):
+            evidence = f"`{model}`"
+        else:
+            evidence = "<br>".join(f"`{p}`" for p in entry.get("evidence", [])) or "—"
+        disposition = (
+            entry.get("gap")
+            or entry.get("planned")
+            or entry.get("reason")
+            or "—"
+        )
+        lines.append(f"| `{name}` | {entry.get('class', '?')} | {evidence} | {disposition} |")
+    return "\n".join(lines)
+
+
+def readme_block(rows: list[dict], ledger: dict[str, dict]) -> str:
     return (
         f"{README_START}\n"
         "<!-- Generated by scripts/assurance_gate.py --write-readme; do not edit. -->\n"
-        f"{markdown_table(rows)}\n"
+        f"{markdown_table(rows)}\n\n"
+        f"{crate_ledger_table(ledger)}\n"
         f"{README_END}"
     )
 
@@ -382,14 +460,19 @@ def replace_readme_block(text: str, block: str) -> str:
     return text[:start] + block + text[end:]
 
 
-def check_readme(root: pathlib.Path, rows: list[dict], findings: list[str]) -> None:
+def check_readme(
+    root: pathlib.Path,
+    rows: list[dict],
+    ledger: dict[str, dict],
+    findings: list[str],
+) -> None:
     path = root / "formal" / "README.md"
     if not path.is_file():
         findings.append("formal/README.md is missing — no published traceability table")
         return
     text = path.read_text()
     try:
-        want = replace_readme_block(text, readme_block(rows))
+        want = replace_readme_block(text, readme_block(rows, ledger))
     except ValueError as error:
         findings.append(str(error))
         return
@@ -413,9 +496,8 @@ def check_tiers(root: pathlib.Path, findings: list[str]) -> int:
     return len(tiered)
 
 
-def check_crates(root: pathlib.Path, findings: list[str]) -> dict[str, int]:
-    with open(root / "assurance" / "crates.toml", "rb") as fh:
-        ledger = tomllib.load(fh).get("crate", {})
+def check_crates(root: pathlib.Path, findings: list[str]) -> tuple[dict[str, int], dict[str, dict]]:
+    ledger = crate_ledger(root)
     members = workspace_members(root)
     modules = {p.stem for p in (root / "formal").glob("*.tla")}
 
@@ -449,7 +531,7 @@ def check_crates(root: pathlib.Path, findings: list[str]) -> dict[str, int]:
                 findings.append(f"{where}: {cls} without a reason")
         else:
             findings.append(f"{where}: unknown class {cls!r}")
-    return tally
+    return tally, ledger
 
 
 def audit(root: pathlib.Path, check_generated_readme: bool = True):
@@ -459,9 +541,9 @@ def audit(root: pathlib.Path, check_generated_readme: bool = True):
     rows = check_properties(root, findings)
     check_property_tags(root, findings)
     tiered = check_tiers(root, findings)
-    tally = check_crates(root, findings)
+    tally, ledger = check_crates(root, findings)
     if check_generated_readme:
-        check_readme(root, rows, findings)
+        check_readme(root, rows, ledger, findings)
 
     table: list[str] = []
     for r in rows:
@@ -520,7 +602,9 @@ def write_readme(root: pathlib.Path) -> int:
         raise AssertionError(property_findings)
     path = root / "formal" / "README.md"
     try:
-        text = replace_readme_block(path.read_text(), readme_block(rows))
+        text = replace_readme_block(
+            path.read_text(), readme_block(rows, crate_ledger(root))
+        )
     except (FileNotFoundError, ValueError) as error:
         print(f"assurance-gate: {error}", file=sys.stderr)
         return 1

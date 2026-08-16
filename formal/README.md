@@ -697,14 +697,18 @@ Round two's "no, in two independent ways" was exact.
 | 3 × `SoloClause_*.cfg` | RED, each on **one clause** | 25 216 – 22 897 118 | 5 867 – 2 231 576 | 8 – 18 | ≤ 30 s |
 | `Fairness.cfg` (`ENABLED OpAdvances => ~Idle`, liveness constants) | **GREEN** | 85 388 061 | 7 903 336 | 43 | 117 s |
 | `FairMut_BugFairnessFoldsLocalCeremony.cfg` | RED `OpAdvancesIsOneActivity` | 57 | 36 | 4 | < 1 s |
-| `Seams.cfg` (the second module) | **GREEN, exhaustive** | 9 617 | 662 | 12 | 1 s |
-| 13 × `SeamMut_*.cfg` / 13 × `SeamSolo_*.cfg` | RED, each on its own target | 77 – 3 523 | 27 – 381 | 4 – 8 | ≤ 1 s |
+| `Seams.cfg` (the second module) | **GREEN, exhaustive** | 6 045 | 410 | 11 | 1 s |
+| 14 × `SeamMut_*.cfg` / 14 × `SeamSolo_*.cfg` | RED, each on its own target | — | 27 – 381 | 3 – 8 | ≤ 1 s |
+| `Store.cfg` | **GREEN, exhaustive** | 3 041 | 272 | 7 | < 1 s |
+| `Lattice.cfg` | **GREEN, exhaustive** | 2 431 | 243 | 11 | < 1 s |
+| `Policies.cfg` (all four applets in one module) | **GREEN, exhaustive** | 45 253 | 2 268 | 14 | 1 s |
+| `Admin.cfg` / `Display.cfg` / `Boot.cfg` / `Transport.cfg` | **GREEN, exhaustive** | 15 – 127 | 5 – 24 | 3 – 5 | < 1 s each |
 | `Liveness.cfg` (reduced constants, `HEAP=12g` from `floors.txt`) | **GREEN** | 85 388 061 | 7 903 336 | 43 | **1591 s** |
 | `Liveness.cfg` at the old 4 GB default | **out of memory** in the temporal check, state search complete | 85 388 061 | 7 903 336 | 43 | 1500 s |
 | 3 × `LiveMut_*.cfg` | RED, each on its own property | 579 360 – 733 606 | 79 706 – 100 162 | — | ≤ 4 s |
 
-`Shipped.cfg`, `Seams.cfg`, `Fairness.cfg` and `Liveness.cfg` are the exhaustive
-searches and their counts are reproducible; every RED row stops at the first
+Every named baseline above, plus `Fairness.cfg` and `Liveness.cfg`, is an exhaustive
+search and its count is reproducible; every RED row stops at the first
 counterexample, so its count is **worker-scheduling dependent** and moves between
 runs of the identical command. TLC's reported *depth* is not quite deterministic
 under 2 workers either. The verdict and the invariant are the result; the count
@@ -843,7 +847,7 @@ command sets is in it, because the defects have not been in the command sets.
 Because the two state machines share no variable, and that is measured rather
 than assumed. The CCID side owns a `Dispatcher` and the only instances of
 openpgp / oath / piv / otp / management / rescue / vendor
-(`crates/rsk-device/src/ccid.rs:86-102`); the CTAPHID side owns a **separate**
+(`crates/rsk-device/src/ccid.rs:87-102`); the CTAPHID side owns a **separate**
 `Dispatcher` whose applet array is literally one element, its own `VendorApplet`
 (`crates/rsk-device/src/ctap.rs:160-164`). PIV, OpenPGP and OATH are not
 reachable over CTAPHID at all, so no status can be established on one transport
@@ -856,7 +860,7 @@ share — one flash, one button — appears here as events (`FactoryWipe`,
 
 | Invariant | What it asserts | The Rust that owns it |
 |---|---|---|
-| `NoStatusOutsideItsSelection` | An applet holds a security status only while it is the **selected** applet. Structural — it reads straight out of the state | `crates/rsk-sdk/src/applet.rs:374-390` (the one place that decides what a selection does to the applet that was current) · `crates/rsk-piv/src/lib.rs:153-157` · `crates/rsk-openpgp/src/pin.rs:67-80` · `crates/rsk-oath/src/lib.rs:1200-1204` · `crates/rsk-device/src/ccid.rs:327-342` (the ICC power transition) |
+| `NoStatusOutsideItsSelection` | An applet holds a security status only while it is the **selected** applet. Structural — it reads straight out of the state | `crates/rsk-sdk/src/applet.rs:374-390` (the one place that decides what a selection does to the applet that was current) · `crates/rsk-piv/src/lib.rs:153-157` · `crates/rsk-openpgp/src/pin.rs:67-80` · `crates/rsk-oath/src/lib.rs:1200-1204` · `crates/rsk-device/src/ccid.rs:328-342` (the ICC power transition) |
 | `NoStatusAfterARefusedAuth` | A reference whose authentication was just refused is not authenticated | `crates/rsk-piv/src/lib.rs:140-143` · `crates/rsk-openpgp/src/pin.rs:158-170` · `crates/rsk-oath/src/lib.rs:1148-1149` |
 | `NoKeyOpOnTheAdminStatus` | No key operation runs on a status its own specification does not name | `crates/rsk-openpgp/src/pso.rs:80-92` · `crates/rsk-openpgp/src/internalaut.rs:45-48` · `crates/rsk-piv/src/auth.rs:58-66`, `:114-118` |
 | `ReselectPreservesAccessStatus` | A re-SELECT of the same AID changes no access status. **A conformance claim, labelled as one** | `crates/rsk-piv/src/lib.rs:319-322` · `crates/rsk-openpgp/src/lib.rs:372-375` |
@@ -901,34 +905,34 @@ it.
 |---|---|---|---|
 | `BugSelectKeepsOtherApplet` | `crates/rsk-sdk/src/applet.rs:379-387` — the `deselect` a select of a *different* AID runs | `NoStatusOutsideItsSelection` | 27 states |
 | `BugReselectResetsStatus` | `637ed98` taken back out: PIV and OpenPGP resetting on every select | `ReselectPreservesAccessStatus` | 42 states |
-| `BugCardResetKeepsStatus` | `crates/rsk-device/src/ccid.rs:327-342` — the ICC power transition | `NoStatusOutsideItsSelection` | 29 states |
+| `BugCardResetKeepsStatus` | `crates/rsk-device/src/ccid.rs:328-342` — the ICC power transition | `NoStatusOutsideItsSelection` | 29 states |
 | `BugAdminOpensKeyOps` | `e5da38b` taken back out: PW3 standing in for PW1/PW2 | `NoKeyOpOnTheAdminStatus` | 67 states |
 | `BugFailedChangeKeepsStatus` | `aa47867` taken back out: a refused OTP-PIN change that leaves the safe open | `NoStatusAfterARefusedAuth` | 74 states |
-| `BugPinFreshNotSpent` | `crates/rsk-piv/src/auth.rs:114-118` — one VERIFY, one key operation | `NoKeyOpOnTheAdminStatus` | 79 states |
-| `BugSigPinNotSpent` | `crates/rsk-openpgp/src/keys.rs:977-981` — the same shape one applet over, PW1 valid for one PSO:CDS | `NoKeyOpOnTheAdminStatus` | 361 states |
+| `BugPinFreshNotSpent` | `crates/rsk-piv/src/auth.rs:114-118` — one VERIFY, one key operation | `NoKeyOpOnTheAdminStatus` | 45 states |
+| `BugPinFreshOutlivesPin` | the selection clamp removed, so `pin_fresh` survives after `has_pin` is cleared | `NoKeyOpOnTheAdminStatus` | 42 states |
+| `BugSigPinNotSpent` | `crates/rsk-openpgp/src/keys.rs:977-981` — the same shape one applet over, PW1 valid for one PSO:CDS | `NoKeyOpOnTheAdminStatus` | 212 states |
 | `BugUserStatusOpensAdmin` | a *user* status opening the admin surface — the converse `BugAdminOpensKeyOps` cannot express | `NoKeyOpOnTheAdminStatus` | 48 states |
 | `BugRefusedValidateGrants` | a refused OATH access-code `VALIDATE` that grants the unlock | `NoStatusAfterARefusedAuth` | 73 states |
 | `BugPwStatusIgnoresAdmin` | a *user* status writing the PW status byte — PUT DATA `0xC4` is PW3's (`crates/rsk-openpgp/src/putdata.rs:181-183`, and the ACL one layer up at `:59-65`) | `NoKeyOpOnTheAdminStatus` | 49 states |
 | `BugPivChangeResetsStatus` | PIV's refused `CHANGE REFERENCE DATA` clearing the standing status | `ExemptRefusalPreservesStatus` | 46 states |
 | `BugRefusedValidateDropsUnlock` | a refused OATH access-code `VALIDATE` dropping the standing unlock | `ExemptRefusalPreservesStatus` | 46 states |
-| `BugRemoveCodeUnvalidated` | the access-code removal (`73 00`) reached without the validated status (`crates/rsk-oath/src/lib.rs:356-358`) — the hole the abstractions list carried for two revisions as definitionally invisible to any state predicate | `AccessCodeRemovalNeedsTheCode` | 77 states |
+| `BugRemoveCodeUnvalidated` | the access-code removal (`73 00`) reached without the validated status (`crates/rsk-oath/src/lib.rs:356-358`) — the hole the abstractions list carried for two revisions as definitionally invisible to any state predicate | `AccessCodeRemovalNeedsTheCode` | 71 states |
 
-`Seams.cfg` is **GREEN, exhaustive, 9 665 states generated / 662 distinct at
-depth 12**, and 13 of 13 mutants are caught by the invariant that names them.
-It went DOWN by 4 when `PowerCycle` and `FactoryWipe` started retiring the
-`psig` ghost with the status it belongs to, and those four are states the
-firmware cannot be in — the third time on this pair of modules that being more
-faithful has made one smaller.
+`Seams.cfg` is **GREEN, exhaustive, 6 045 states generated / 410 distinct at
+depth 11**, and 14 of 14 mutants are caught by the invariant that names them.
+The final reduction comes from keeping `psig`, the requirement-side one-shot
+status, scoped to the OpenPGP selection just like the status it shadows.
 
-**One of those six needed the property repaired first, and it is the useful
-result.** `BugPinFreshNotSpent` ran **green** as written: stopping `pin_fresh`
+**The shape holes are structural now.** `BugPinFreshNotSpent` ran **green** as written:
+stopping `pin_fresh`
 from being spent also leaves the Policy that reads `pin_fresh` satisfied, so a
 second key operation on one VERIFY looked legal to the invariant that was meant
 to forbid it. The repair is a ghost `pfresh` — the freshness the *requirement*
 leaves behind, always spent — beside the `fresh` the Rust holds. The two are
-equal in every state of the shipped tree (`Seams.cfg`'s 205 distinct states are
-bit-identical before and after), and they diverge only under the mutant, which
-now falls in 83.
+equal in every state of the shipped tree, and they diverge under both the spend
+mutant (45 states) and the selection-clamp mutant (42). OpenPGP's `psig` twin
+does the same for one-shot PW1 (212). The OATH removal is the third shape: its
+step recorder falls in 71 despite the resulting state already being reachable.
 
 ### The four gaps a second review found, and the two it could not close
 
@@ -1125,13 +1129,52 @@ underflow rather than a blocked reference authenticating (the floor and the
 counter's type are two layers), so `LatMut_*` is stated as excluded in
 `comutate.py` rather than silently skipped.
 
-## The fifth module — `RSKeyAdminSurface.tla`
+## The fifth module — `RSKeyAppletPolicies.tla`
+
+The lattice above contains every applet reference that actually has a retry
+counter. OATH's YKOATH MAC access code and Yubico OTP's six-byte slot code do
+not; assigning them invented counters would prove a different protocol. The
+remaining M4 work therefore lives in a separate stateful-policy module:
+
+- PIV `NEVER` / `ONCE` / `ALWAYS` slot policy and the freshness an `ALWAYS`
+  operation spends;
+- OpenPGP algorithm-attribute changes invalidating the old private/public key
+  pair before the new attribute is visible;
+- OATH access-code and per-credential touch gates;
+- Yubico OTP configure/update/delete/swap under the stored slot code, plus the
+  combined persisted-use/RAM-session replay position.
+
+The four applets **fit in one module**: `Policies.cfg` is GREEN and exhaustive
+over **45 253 generated / 2 268 distinct states at depth 14**, with a floor of
+750. Seven solo mutants each break their own target:
+
+| Mutation switch | Target invariant | Distinct before counterexample |
+|---|---|---:|
+| `BugPivPolicyIgnored` | `PivOperationNeedsSlotPolicy` | 14 |
+| `BugPivAlwaysDoesNotSpend` | `PivAlwaysSpendsFreshness` | 107 |
+| `BugPgpAttributeKeepsKey` | `AttributeChangeInvalidatesTheKey` | 49 |
+| `BugOathCodeIgnored` | `OathCredentialNeedsItsGates` | 61 |
+| `BugOathTouchIgnored` | `OathCredentialNeedsItsGates` | 65 |
+| `BugOtpCodeIgnored` | `OtpSlotMutationNeedsItsCode` | 71 |
+| `BugOtpCounterRepeats` | `OtpCounterNeverRepeats` | 69 |
+
+The OpenPGP mutant exposed a real implementation gap: PUT DATA C1/C2/C3 could
+change an attribute while the old key pair remained. The tree now deletes the
+private and public slot records before publishing a changed attribute; the
+host regression `changing_algo_attr_invalidates_the_key_pair` fails on the old
+ordering. This is a firmware behaviour change, hence `bcdDevice` 0x095B.
+
+`PolicyMut_*` is explicitly outside the current co-refutation roster. The
+OpenPGP finding has its direct regression above; exact source patches for the
+other six are a later co-refutation batch, not an implied glob.
+
+## The sixth module — `RSKeyAdminSurface.tla`
 
 The surface that decides which applets EXIST and who may touch device identity:
 the enabled-applications mask (`rsk-mgmt`, ykman's `config usb` set), the
 always-on carve-out that keeps a disable reversible, and the operator-presence
-gate on the privileged `rsk-rescue` commands. A fifth module because it shares
-no variable with the other four, and because its central claim is a *sequence*
+gate on the privileged `rsk-rescue` commands. A separate module because it shares
+no variable with the others, and because its central claim is a *sequence*
 property — "no series of config writes can strand the device unable to
 re-enable an applet" is about the reachable space of the mask, not about one
 write.
@@ -1173,7 +1216,7 @@ echo) is data handling inside one write, carried by
 The rescue commands' payloads — phy records, KEYDEV signing, the fuse and
 rollback machinery — are single-step and live in that crate's five test files.
 
-## The sixth module — `RSKeyTrustedDisplay.tla`
+## The seventh module — `RSKeyTrustedDisplay.tla`
 
 The display build's whole reason to exist is one promise —
 **WhatIsConfirmedIsWhatIsShown** — and until now it had no model. The ledger
@@ -1231,7 +1274,7 @@ security module's fourth door; the menus and settings flows are navigation over
 the same armed-touch chokepoint, not separate security state; and the screens'
 rendering geometry (paint == hit-test) is `rsk-ui`'s reviewed, tested territory.
 
-## The seventh module — `RSKeyBootHardening.tla`
+## The eighth module — `RSKeyBootHardening.tla`
 
 `firmware/` is the one workspace member with **no host tests by construction**:
 its checks run at build time and on hardware, nowhere in between. "Model where
@@ -1285,16 +1328,21 @@ as the asserts' specificity check. The panel path's own twin
 (`spend_and_verify_pin_at`, the fourth PIN door) and the OATH/OpenPGP site
 asserts remain open, recorded here rather than implied.
 
+**Open hardware assumption.** `PowerOnClearsScratch2` is a named Boolean
+`ASSUME` in the module and every generated Boot configuration assigns it
+`TRUE`. It is not proved here: an RP2350 board measurement still has to confirm
+that a real power-on clears `WATCHDOG.scratch2`. Until then, the cold-reset arm
+is explicitly conditional evidence, not a firmware guarantee inferred from TLC.
+
 **What it does NOT cover, stated.** The device is OTP-provisioned (`mkek`
-present — a pre-OTP board never laps and has nothing to scrub); the scratch TAG
-magic is taken as its contract (a cold boot restores a clear lock; the 0x0854
+present — a pre-OTP board never laps and has nothing to scrub); the 0x0854
 legacy-canary aliasing that motivated the derived-engaged decode is below this
-floor); `ensure_seed`, the reset window's warm keying and the full BootState
+floor; `ensure_seed`, the reset window's warm keying and the full BootState
 carry are the security module's; the seal migrations' own torn-write safety is
 the store module's and the power-cut oracle's; TRNG health gating and USB
 bring-up order are M8's transport territory.
 
-## The eighth module — `RSKeyTransport.tla`
+## The ninth module — `RSKeyTransport.tla`
 
 `rsk-usb` was the last workspace member no module covered, and the CTAPHID
 frame reassembler (`crates/rsk-usb/src/ctaphid.rs:386-456`) is a genuine
@@ -1415,9 +1463,10 @@ would be noise — and a GREEN below it is reported `FLOOR` with a non-zero exit
 pass: a mutant that stops firing. `BugSetPinKeepsPpuat` explored **40 459 667
 states without a counterexample** after a fix made its defect unreachable, and
 the only thing that noticed was a human reading the matrix. Every `Mut_*`,
-`Solo_*`, `SeamMut_*`, `SeamSolo_*`, `LiveMut_*`, `FairMut_*` and `Historical_*`
-row must be RED; `Shipped.cfg`, `Seams.cfg`, `Fairness.cfg` and `Liveness.cfg`
-must be GREEN. `run-tlc.sh` exits 1 on any row that is not.
+`Solo_*` and every module's mutant/solo rows must be RED; every named baseline
+(`Shipped`, `Seams`, `Store`, `Lattice`, `Policies`, `Admin`, `Display`, `Boot`,
+`Transport`) plus `Fairness` and `Liveness` must be GREEN. `run-tlc.sh` exits 1
+on any row that is not.
 
 Measured end to end on E164 itself, with the parentheses taken back out:
 
@@ -1479,53 +1528,90 @@ strongest result in the set.
 One property should be greppable from its model to the Rust that owns it, the
 mutants that challenge it, and every stronger evidence layer that exists. The
 registry stores only the requirement; `scripts/assurance_gate.py` derives the
-six evidence columns below on every gate run.
+evidence columns and validated cross-model support edges below on every gate run.
 
 <!-- assurance-table:start -->
 <!-- Generated by scripts/assurance_gate.py --write-readme; do not edit. -->
-| ID | Property | Status | Model | Rust | Mutants | Kani | Fuzz | Runtime |
-|---|---|---|---|---:|---:|---:|---:|---:|
-| `SEC-FIDO-001` | `NoAuthorizationBypass` | BOUNDED | `RSKeySecurityState` | 2 | 9 | 1 | 0 | 0 |
-| `SEC-FIDO-002` | `NoCrossTransportTouchConsumption` | BOUNDED | `RSKeySecurityState` | 1 | 5 | 2 | 0 | 0 |
-| `SEC-FIDO-003` | `NoTokenAfterInvalidation` | BOUNDED | `RSKeySecurityState` | 3 | 7 | 2 | 1 | 0 |
-| `SEC-FIDO-004` | `NoAccessibleSecretWithoutGate` | MODELLED-ONLY | `RSKeySecurityState` | 2 | 2 | 0 | 0 | 0 |
-| `SEC-FIDO-005` | `NoUnmanageableCredential` | MODELLED-ONLY | `RSKeySecurityState` | 3 | 3 | 0 | 0 | 0 |
-| `SEC-FIDO-006` | `ResetNeverWeakensSurvivingState` | MODELLED-ONLY | `RSKeySecurityState` | 3 | 3 | 0 | 0 | 0 |
-| `SEC-FIDO-006A` | `ResetKeepsThePinGate` | MODELLED-ONLY | `RSKeySecurityState` | 0 | 1 | 0 | 0 | 0 |
-| `SEC-FIDO-006B` | `ResetKeepsTheAlwaysUvGate` | MODELLED-ONLY | `RSKeySecurityState` | 0 | 1 | 0 | 0 | 0 |
-| `SEC-FIDO-006C` | `ResetKeepsTheBackupSeal` | MODELLED-ONLY | `RSKeySecurityState` | 0 | 1 | 0 | 0 | 0 |
-| `SEC-FIDO-007` | `RamNeverOutlivesFlashSeed` | MODELLED-ONLY | `RSKeySecurityState` | 1 | 1 | 0 | 0 | 0 |
-| `SEC-FIDO-008` | `NoLiveTokenWithoutPinRecord` | MODELLED-ONLY | `RSKeySecurityState` | 1 | 1 | 0 | 0 | 0 |
-| `SEC-FIDO-009` | `OpAdvancesIsOneActivity` | MODELLED-ONLY | `RSKeySecurityState` | 0 | 1 | 0 | 0 | 0 |
-| `SEC-FIDO-L01` | `EveryOpQuiesces` | MODELLED-ONLY | `RSKeySecurityState` | 0 | 1 | 0 | 0 | 0 |
-| `SEC-FIDO-L02` | `EveryWaitReleases` | MODELLED-ONLY | `RSKeySecurityState` | 0 | 1 | 0 | 0 | 0 |
-| `SEC-FIDO-L03` | `EveryWalkCloses` | MODELLED-ONLY | `RSKeySecurityState` | 0 | 1 | 0 | 0 | 0 |
-| `SEC-SEAM-001` | `NoStatusOutsideItsSelection` | MODELLED-ONLY | `RSKeyAppletSeams` | 1 | 2 | 0 | 0 | 0 |
-| `SEC-SEAM-002` | `NoStatusAfterARefusedAuth` | MODELLED-ONLY | `RSKeyAppletSeams` | 1 | 2 | 0 | 0 | 0 |
-| `SEC-SEAM-003` | `NoKeyOpOnTheAdminStatus` | MODELLED-ONLY | `RSKeyAppletSeams` | 1 | 5 | 0 | 0 | 0 |
-| `SEC-SEAM-004` | `ReselectPreservesAccessStatus` | MODELLED-ONLY | `RSKeyAppletSeams` | 1 | 1 | 0 | 0 | 0 |
-| `SEC-SEAM-005` | `ExemptRefusalPreservesStatus` | MODELLED-ONLY | `RSKeyAppletSeams` | 1 | 2 | 0 | 0 | 0 |
-| `SEC-SEAM-006` | `AccessCodeRemovalNeedsTheCode` | MODELLED-ONLY | `RSKeyAppletSeams` | 1 | 1 | 0 | 0 | 0 |
-| `SEC-STORE-001` | `NoOrphanedMetadata` | MODELLED-ONLY | `RSKeyStore` | 2 | 2 | 0 | 0 | 0 |
-| `SEC-STORE-002` | `NoFalseAbsent` | MODELLED-ONLY | `RSKeyStore` | 1 | 2 | 0 | 0 | 0 |
-| `SEC-STORE-003` | `NoRecordLostToMetaWrite` | MODELLED-ONLY | `RSKeyStore` | 1 | 1 | 0 | 0 | 0 |
-| `SEC-LAT-001` | `NoAuthWhenBlocked` | MODELLED-ONLY | `RSKeyRetryLattice` | 0 | 1 | 0 | 0 | 0 |
-| `SEC-LAT-002` | `WrongAttemptIsCharged` | MODELLED-ONLY | `RSKeyRetryLattice` | 0 | 1 | 0 | 0 | 0 |
-| `SEC-LAT-003` | `BudgetRisesOnlyWithItsSecret` | MODELLED-ONLY | `RSKeyRetryLattice` | 0 | 1 | 0 | 0 | 0 |
-| `SEC-ADM-001` | `AdminSurfaceAlwaysReachable` | MODELLED-ONLY | `RSKeyAdminSurface` | 0 | 1 | 0 | 0 | 0 |
-| `SEC-ADM-002` | `PrivilegedOpNeedsPresence` | MODELLED-ONLY | `RSKeyAdminSurface` | 0 | 1 | 0 | 0 | 0 |
-| `SEC-ADM-003` | `DisableSetSurvivesLockWrite` | MODELLED-ONLY | `RSKeyAdminSurface` | 0 | 1 | 0 | 0 | 0 |
-| `SEC-ADM-004` | `DisabledAppletNeverDispatches` | MODELLED-ONLY | `RSKeyAdminSurface` | 0 | 1 | 0 | 0 | 0 |
-| `SEC-DISP-001` | `ConfirmNamesTheOperation` | MODELLED-ONLY | `RSKeyTrustedDisplay` | 0 | 1 | 0 | 0 | 0 |
-| `SEC-DISP-002` | `StaleTouchApprovesNothing` | MODELLED-ONLY | `RSKeyTrustedDisplay` | 0 | 1 | 0 | 0 | 0 |
-| `SEC-DISP-003` | `OnlyAllowConfirms` | MODELLED-ONLY | `RSKeyTrustedDisplay` | 0 | 1 | 0 | 0 | 0 |
-| `SEC-BOOT-001` | `MarkerNeverLies` | MODELLED-ONLY | `RSKeyBootHardening` | 0 | 2 | 0 | 0 | 0 |
-| `SEC-BOOT-002` | `TheWholeLockRides` | MODELLED-ONLY | `RSKeyBootHardening` | 0 | 1 | 0 | 0 | 0 |
-| `SEC-TRANS-001` | `NoCrossChannelSplice` | MODELLED-ONLY | `RSKeyTransport` | 0 | 1 | 0 | 0 | 0 |
-| `SEC-TRANS-002` | `NoSequenceGap` | MODELLED-ONLY | `RSKeyTransport` | 0 | 1 | 0 | 0 | 0 |
-| `SEC-TRANS-003` | `NoBufferOverrun` | MODELLED-ONLY | `RSKeyTransport` | 0 | 1 | 0 | 0 | 0 |
-| `SEC-RISK-001` | `PerDeviceAttestationCertIsACorrelationHandle` | ACCEPTED-RISK | — | — | — | — | — | — |
-| `SEC-RISK-002` | `FlashSnapshotRollsBackPinRetries` | ACCEPTED-RISK | — | — | — | — | — | — |
+| ID | Property | Status | Model | Support | Rust | Mutants | Kani | Fuzz | Runtime |
+|---|---|---|---|---|---:|---:|---:|---:|---:|
+| `SEC-FIDO-001` | `NoAuthorizationBypass` | BOUNDED | `RSKeySecurityState` | — | 2 | 9 | 1 | 0 | 0 |
+| `SEC-FIDO-002` | `NoCrossTransportTouchConsumption` | BOUNDED | `RSKeySecurityState` | — | 2 | 5 | 2 | 0 | 0 |
+| `SEC-FIDO-003` | `NoTokenAfterInvalidation` | BOUNDED | `RSKeySecurityState` | — | 3 | 7 | 2 | 1 | 0 |
+| `SEC-FIDO-004` | `NoAccessibleSecretWithoutGate` | MODELLED-ONLY | `RSKeySecurityState` | `RSKeyStore` | 2 | 2 | 0 | 0 | 0 |
+| `SEC-FIDO-005` | `NoUnmanageableCredential` | MODELLED-ONLY | `RSKeySecurityState` | `RSKeyStore` | 3 | 3 | 0 | 0 | 0 |
+| `SEC-FIDO-006` | `ResetNeverWeakensSurvivingState` | MODELLED-ONLY | `RSKeySecurityState` | — | 3 | 3 | 0 | 0 | 0 |
+| `SEC-FIDO-006A` | `ResetKeepsThePinGate` | MODELLED-ONLY | `RSKeySecurityState` | — | 0 | 1 | 0 | 0 | 0 |
+| `SEC-FIDO-006B` | `ResetKeepsTheAlwaysUvGate` | MODELLED-ONLY | `RSKeySecurityState` | — | 0 | 1 | 0 | 0 | 0 |
+| `SEC-FIDO-006C` | `ResetKeepsTheBackupSeal` | MODELLED-ONLY | `RSKeySecurityState` | — | 0 | 1 | 0 | 0 | 0 |
+| `SEC-FIDO-007` | `RamNeverOutlivesFlashSeed` | MODELLED-ONLY | `RSKeySecurityState` | — | 1 | 1 | 0 | 0 | 0 |
+| `SEC-FIDO-008` | `NoLiveTokenWithoutPinRecord` | MODELLED-ONLY | `RSKeySecurityState` | — | 1 | 1 | 0 | 0 | 0 |
+| `SEC-FIDO-009` | `OpAdvancesIsOneActivity` | MODELLED-ONLY | `RSKeySecurityState` | — | 0 | 1 | 0 | 0 | 0 |
+| `SEC-FIDO-L01` | `EveryOpQuiesces` | MODELLED-ONLY | `RSKeySecurityState` | — | 0 | 1 | 0 | 0 | 0 |
+| `SEC-FIDO-L02` | `EveryWaitReleases` | MODELLED-ONLY | `RSKeySecurityState` | — | 0 | 1 | 0 | 0 | 0 |
+| `SEC-FIDO-L03` | `EveryWalkCloses` | MODELLED-ONLY | `RSKeySecurityState` | — | 0 | 1 | 0 | 0 | 0 |
+| `SEC-SEAM-001` | `NoStatusOutsideItsSelection` | MODELLED-ONLY | `RSKeyAppletSeams` | — | 1 | 2 | 0 | 0 | 0 |
+| `SEC-SEAM-002` | `NoStatusAfterARefusedAuth` | MODELLED-ONLY | `RSKeyAppletSeams` | — | 1 | 2 | 0 | 0 | 0 |
+| `SEC-SEAM-003` | `NoKeyOpOnTheAdminStatus` | MODELLED-ONLY | `RSKeyAppletSeams` | — | 1 | 6 | 0 | 0 | 0 |
+| `SEC-SEAM-004` | `ReselectPreservesAccessStatus` | MODELLED-ONLY | `RSKeyAppletSeams` | — | 1 | 1 | 0 | 0 | 0 |
+| `SEC-SEAM-005` | `ExemptRefusalPreservesStatus` | MODELLED-ONLY | `RSKeyAppletSeams` | — | 1 | 2 | 0 | 0 | 0 |
+| `SEC-SEAM-006` | `AccessCodeRemovalNeedsTheCode` | MODELLED-ONLY | `RSKeyAppletSeams` | — | 1 | 1 | 0 | 0 | 0 |
+| `SEC-STORE-001` | `NoOrphanedMetadata` | MODELLED-ONLY | `RSKeyStore` | — | 2 | 2 | 0 | 0 | 0 |
+| `SEC-STORE-002` | `NoFalseAbsent` | MODELLED-ONLY | `RSKeyStore` | — | 1 | 2 | 0 | 0 | 0 |
+| `SEC-STORE-003` | `NoRecordLostToMetaWrite` | MODELLED-ONLY | `RSKeyStore` | — | 1 | 1 | 0 | 0 | 0 |
+| `SEC-LAT-001` | `NoAuthWhenBlocked` | MODELLED-ONLY | `RSKeyRetryLattice` | — | 2 | 1 | 0 | 0 | 0 |
+| `SEC-LAT-002` | `WrongAttemptIsCharged` | MODELLED-ONLY | `RSKeyRetryLattice` | — | 2 | 1 | 0 | 0 | 0 |
+| `SEC-LAT-003` | `BudgetRisesOnlyWithItsSecret` | MODELLED-ONLY | `RSKeyRetryLattice` | — | 2 | 1 | 0 | 0 | 0 |
+| `SEC-POL-001` | `PivOperationNeedsSlotPolicy` | MODELLED-ONLY | `RSKeyAppletPolicies` | — | 1 | 1 | 0 | 0 | 0 |
+| `SEC-POL-002` | `PivAlwaysSpendsFreshness` | MODELLED-ONLY | `RSKeyAppletPolicies` | — | 1 | 1 | 0 | 0 | 0 |
+| `SEC-POL-003` | `AttributeChangeInvalidatesTheKey` | MODELLED-ONLY | `RSKeyAppletPolicies` | — | 1 | 1 | 0 | 0 | 0 |
+| `SEC-POL-004` | `OathCredentialNeedsItsGates` | MODELLED-ONLY | `RSKeyAppletPolicies` | — | 1 | 2 | 0 | 0 | 0 |
+| `SEC-POL-005` | `OtpSlotMutationNeedsItsCode` | MODELLED-ONLY | `RSKeyAppletPolicies` | — | 1 | 1 | 0 | 0 | 0 |
+| `SEC-POL-006` | `OtpCounterNeverRepeats` | MODELLED-ONLY | `RSKeyAppletPolicies` | — | 1 | 1 | 0 | 0 | 0 |
+| `SEC-ADM-001` | `AdminSurfaceAlwaysReachable` | MODELLED-ONLY | `RSKeyAdminSurface` | — | 1 | 1 | 0 | 0 | 0 |
+| `SEC-ADM-002` | `PrivilegedOpNeedsPresence` | MODELLED-ONLY | `RSKeyAdminSurface` | — | 1 | 1 | 0 | 0 | 0 |
+| `SEC-ADM-003` | `DisableSetSurvivesLockWrite` | MODELLED-ONLY | `RSKeyAdminSurface` | — | 1 | 1 | 0 | 0 | 0 |
+| `SEC-ADM-004` | `DisabledAppletNeverDispatches` | MODELLED-ONLY | `RSKeyAdminSurface` | — | 1 | 1 | 0 | 0 | 0 |
+| `SEC-DISP-001` | `ConfirmNamesTheOperation` | MODELLED-ONLY | `RSKeyTrustedDisplay` | — | 1 | 1 | 0 | 0 | 0 |
+| `SEC-DISP-002` | `StaleTouchApprovesNothing` | MODELLED-ONLY | `RSKeyTrustedDisplay` | — | 1 | 1 | 0 | 0 | 0 |
+| `SEC-DISP-003` | `OnlyAllowConfirms` | MODELLED-ONLY | `RSKeyTrustedDisplay` | — | 1 | 1 | 0 | 0 | 0 |
+| `SEC-BOOT-001` | `MarkerNeverLies` | MODELLED-ONLY | `RSKeyBootHardening` | — | 1 | 2 | 0 | 0 | 0 |
+| `SEC-BOOT-002` | `TheWholeLockRides` | MODELLED-ONLY | `RSKeyBootHardening` | — | 1 | 1 | 0 | 0 | 0 |
+| `SEC-TRANS-001` | `NoCrossChannelSplice` | MODELLED-ONLY | `RSKeyTransport` | — | 1 | 1 | 0 | 0 | 0 |
+| `SEC-TRANS-002` | `NoSequenceGap` | MODELLED-ONLY | `RSKeyTransport` | — | 1 | 1 | 0 | 0 | 0 |
+| `SEC-TRANS-003` | `NoBufferOverrun` | MODELLED-ONLY | `RSKeyTransport` | — | 1 | 1 | 0 | 0 | 0 |
+| `SEC-RISK-001` | `PerDeviceAttestationCertIsACorrelationHandle` | ACCEPTED-RISK | — | — | — | — | — | — | — |
+| `SEC-RISK-002` | `FlashSnapshotRollsBackPinRetries` | ACCEPTED-RISK | — | — | — | — | — | — | — |
+
+### Workspace coverage ledger — generated
+
+| Crate | Class | Model / evidence | Named gap / disposition |
+|---|---|---|---|
+| `firmware` | embedded-binary | — | no_std binary: boot, worker sequencing, board halves of Hooks/Platform. The boot path's cross-boot state — the EF_HARDENED lap and scratch-word lock carry — is RSKeyBootHardening (M7), precisely because this crate has no host tests; the FIDO state it builds is reconstructed host-side in rsk-device (ctap.rs:73-86). Worker scheduling and USB bring-up remain implementation mechanics, with transport state owned by RSKeyTransport. |
+| `rsk-bench` | out-of-scope | — | latency statistics for the on-device harness; not part of the security argument. |
+| `rsk-bip39` | pure | `crates/rsk-bip39/src/kani.rs` | — |
+| `rsk-crypto` | pure | `crates/rsk-crypto/src/base64url_kani.rs`<br>`fuzz/fuzz_targets/aes_gcm.rs`<br>`fuzz/fuzz_targets/chachapoly.rs` | — |
+| `rsk-device` | state-partial | `RSKeySecurityState` | presence arbitration is modelled and Kani-proved; capability gating is RSKeyAdminSurface. Dispatcher selection/reset semantics are RSKeyAppletSeams; the remaining fast-path wiring is single-dispatch glue rather than a separately modelled state machine. |
+| `rsk-display` | state-partial | `RSKeyTrustedDisplay` | the confirm ceremony (WhatIsConfirmedIsWhatIsShown, decomposed as SEC-DISP-001..003) is modelled; the wait owner and the fourth PIN door stay in RSKeySecurityState. The menus, settings flows and the device-PIN screens are navigation over that same armed-touch chokepoint, not separate security state. |
+| `rsk-ec` | pure | `crates/rsk-ec/src/tests.rs` | — |
+| `rsk-fido` | state-modelled | `RSKeySecurityState` | — |
+| `rsk-fs` | state-partial | `RSKeyStore` | the committed store, the delete write-order and the present-cache soundness are modelled (M3 lifted powercut_model.rs to TLA+ and ties R0p to it); values are two opaque tokens so a content-corrupting defect is out of reach, and Fs::factory_wipe's two-phase sweep is the security module's ordering (SeedLeadsTheWipe), not this one's — its own truncation guard is roadmap M5/M7. |
+| `rsk-led` | pure | `crates/rsk-led/src/kani.rs` | — |
+| `rsk-mgmt` | state-partial | `RSKeyAdminSurface` | the enabled-set lifecycle is modelled (mask writes, the lock-code-only write, the clamp as a construction). The TLV codec itself — well-formedness, merge widths, the two-parsers refusal — is single-step and carried by the crate's tests; still zero Kani proofs. |
+| `rsk-mldsa` | pure | `crates/rsk-mldsa/src/round_kani.rs`<br>`fuzz/fuzz_targets/mldsa_roundtrip.rs`<br>`fuzz/fuzz_targets/mldsa_verify.rs` | — |
+| `rsk-oath` | state-partial | `RSKeyAppletSeams` | status lifetime and access-code removal are RSKeyAppletSeams; calculation's access-code and touch gates are RSKeyAppletPolicies. The MAC access code has no retry budget, so its byte-level mutual-auth acceptance remains differential-oracle territory rather than a fabricated lattice counter. |
+| `rsk-openpgp` | state-partial | `RSKeyAppletSeams` | status lifetime is RSKeyAppletSeams; PW1/PW3/RC budgets are RSKeyRetryLattice; algorithm-attribute changes invalidating the old key pair are RSKeyAppletPolicies. MSE repointing and the per-slot UIF value space remain below the abstraction. |
+| `rsk-otp` | state-partial | `RSKeyAppletSeams` | oathOtpPin status is in RSKeyAppletSeams; protected-slot configure/update/delete/swap and the combined use/session anti-replay step are RSKeyAppletPolicies. The six-byte slot code has no retry counter; four physical slots collapse to one symmetric lifecycle in the model. |
+| `rsk-piv` | state-partial | `RSKeyAppletSeams` | status lifetime is RSKeyAppletSeams; PIN/PUK budgets are RSKeyRetryLattice; NEVER/ONCE/ALWAYS slot policy and freshness spending are RSKeyAppletPolicies. Key material and touch I/O stay below these state abstractions. |
+| `rsk-rescue` | state-partial | `RSKeyAdminSurface` | the operator-presence gate on every privileged command is modelled (PrivilegedOpNeedsPresence); the commands' own payloads — phy identity records, KEYDEV signing, the fuse/rollback state machines — are single-step data handling carried by the crate's five test files, not a state machine. |
+| `rsk-rsa-asm` | pure | `crates/rsk-rsa-asm/src/kani.rs` | — |
+| `rsk-sdk` | state-partial | `RSKeyAppletSeams` | Dispatcher::current is the seam module's sel. APDU command chaining remains outside RSKeyTransport, which covers CTAPHID framing rather than the SDK's per-applet chain buffer. |
+| `rsk-sha512` | pure | `fuzz/fuzz_targets/sha512_diff.rs` | — |
+| `rsk-slip39` | pure | `crates/rsk-slip39/src/kani.rs`<br>`crates/rsk-slip39/src/tests.rs` | — |
+| `rsk-store` | state-partial | `RSKeyStore` | the Storage contract it implements — atomic append, an enumeration-completeness flag — is taken as RSKeyStore's backend assumption; the two-partition counter/main ring, is_counter_fid routing, wear and page reclaim, and compact are backend mechanics the model abstracts. |
+| `rsk-ui` | state-partial | `RSKeyTrustedDisplay` | hit_confirm's disjoint Allow/Deny zones are the modelled seam (OnlyAllowConfirms's Rust owner); rendering, fonts and the settings codec are pure functions under their own 12 Kani proofs and render tests — no screen-transition state lives in this crate (the ceremony state machine is rsk-display's). |
+| `rsk-usb` | state-partial | `RSKeyTransport` | the CTAPHID reassembler's channel/sequence/length state machine is modelled (M8); the async transport loop's bounded-write liveness (the 0x075D wedge fix) is guarded by the FrameSink seam's own mutation-tested regression, and the CCID/keyboard framing and secure_pin codec are single-step, Kani-proved and unit-tested. |
+| `rsk-vendor` | state-partial | `RSKeySecurityState` | ConfigOp/plat in the security model; the config-write pipeline it shares with rsk-mgmt (persist_dev_conf) is RSKeyAdminSurface now. Still open: UNLOCK is modelled wider than its real gate (mse_ready + lock_engaged). |
+| `rsk-wipe` | out-of-scope | — | flash-erase utility, runs once in a maintainer's hands; not part of the runtime security argument. |
 <!-- assurance-table:end -->
 
 `python scripts/assurance_gate.py --write-readme` regenerates the table. The
@@ -1624,21 +1710,15 @@ than a settled abstraction.
   to the exemption: `OathRemoveCode` carries the gate
   (`crates/rsk-oath/src/lib.rs:356-358`) as a Guard/Policy pair and
   `AccessCodeRemovalNeedsTheCode` is its own invariant. Measured exactly as the
-  diagnosis predicted: the action added is **bit-identical at 662 distinct
-  states** (+48 transitions, all into already-reachable states), while
-  `BugRemoveCodeUnvalidated` still falls RED in 77 — a violation no state
+  diagnosis predicted: the action adds no new kind of state, while
+  `BugRemoveCodeUnvalidated` falls RED in 71 — a violation no state
   predicate could ever have seen, caught by the step recorder.
-- **`pin_fresh` never outliving `has_pin` is written as an ASSIGNMENT**
-  (`fresh' = (held'["pivPin"] /\ fresh)`), so breaking it is invisible: the
-  reviewer's mutant is GREEN at 1 056 against 666, and the consequence is masked
-  because `PivKeyOpGuard` also tests `held["pivPin"]`. The same shape as
-  `RamNeverOutlivesFlashSeed` before it was asserted, one module over, and the
-  same repair would close it.
-- **`NoKeyOpOnTheAdminStatus` rests entirely on two assignments.** Deleting the
-  single `viol` write from `AdminOp`, `PgpKeyOp` or `OathChangeRefused` makes
-  their own mutants GREEN at bit-identical counts. That is what a ghost-only
-  invariant means and it is expected — but the sibling module has moved half its
-  ghosts to structural clauses and this one has not.
+- **The two assignment-shaped holes are closed.** `NoKeyOpOnTheAdminStatus`
+  now asserts `fresh = pfresh` and, while OpenPGP is selected under one-shot
+  PW1, `held["pw1"] = psig`. `BugPinFreshOutlivesPin`,
+  `BugPinFreshNotSpent` and `BugSigPinNotSpent` therefore fall structurally in
+  42, 45 and 212 distinct states; they no longer depend on their own `viol`
+  assignment to report the defect.
 - **Three of `is_fido_gate_fid`'s FIVE records are modelled** — `EF_PIN`,
   `EF_ALWAYS_UV` and `EF_BACKUP_SEALED`. `EF_DEVICE_PIN` and `EF_MINPINLEN` are
   absent. It was six until `eab4b5c` moved `EF_PAUTHTOKEN` out: the predicate's

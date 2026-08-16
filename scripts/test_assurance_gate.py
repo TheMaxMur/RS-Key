@@ -117,7 +117,9 @@ def build(root: pathlib.Path) -> pathlib.Path:
     rows = assurance_gate.check_properties(root, table_findings)
     assert not table_findings
     (formal / "README.md").write_text(
-        "# Fixture\n\n" + assurance_gate.readme_block(rows) + "\n"
+        "# Fixture\n\n"
+        + assurance_gate.readme_block(rows, assurance_gate.crate_ledger(root))
+        + "\n"
     )
     return root
 
@@ -298,6 +300,39 @@ def test_tag_must_name_the_module_that_defines_the_property(tree, capsys):
     red(tree, capsys, "is defined by Mini, not Other")
 
 
+def test_firmware_tag_counts_as_a_production_owner(tree, capsys):
+    edit(
+        tree / "crates" / "rsk-a" / "src" / "lib.rs",
+        "/// Refines `Mini!BarNeverOpens` — SEC-T-002.\n",
+        "",
+    )
+    firmware = tree / "firmware" / "src"
+    firmware.mkdir(parents=True)
+    (firmware / "main.rs").write_text(
+        "// Refines `Mini!BarNeverOpens` — SEC-T-002.\n"
+    )
+    assert assurance_gate.run(tree) == 0
+    assert "assurance-gate: ok" in capsys.readouterr().out
+
+
+def test_cross_model_support_is_generated_and_validated(tree):
+    (tree / "formal" / "Helper.tla").write_text(
+        "\\* Supports `Mini!BarNeverOpens` — SEC-T-002.\n"
+    )
+    findings = []
+    rows = assurance_gate.check_properties(tree, findings)
+    assert not findings
+    row = next(row for row in rows if row["e"]["name"] == "BarNeverOpens")
+    assert row["support"] == ["Helper"]
+
+
+def test_cross_model_support_pairing_mismatch_fails(tree, capsys):
+    (tree / "formal" / "Helper.tla").write_text(
+        "\\* Supports `Mini!BarNeverOpens` — SEC-T-001.\n"
+    )
+    red(tree, capsys, "mismatched pairing")
+
+
 # ---- the README table is generated, never hand-maintained ------------------
 
 
@@ -311,6 +346,11 @@ def test_write_readme_repairs_the_generated_block(tree, capsys):
     assert assurance_gate.write_readme(tree) == 0
     capsys.readouterr()
     assert assurance_gate.run(tree) == 0
+
+
+def test_stale_generated_crate_ledger_fails(tree, capsys):
+    edit(tree / "formal" / "README.md", "| `rsk-a` |", "| `rsk-stale` |")
+    red(tree, capsys, "traceability table is stale")
 
 
 # ---- every cfg runs somewhere ------------------------------------------------

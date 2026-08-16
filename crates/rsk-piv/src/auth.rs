@@ -52,6 +52,7 @@ fn check_touch(policy: u8, presence: &mut dyn UserPresence) -> Result<(), Sw> {
     }
 }
 
+/// Refines `RSKeyAppletPolicies!PivOperationNeedsSlotPolicy` — SEC-POL-001.
 /// Refines `RSKeyAppletSeams!NoKeyOpOnTheAdminStatus` — SEC-SEAM-003.
 /// Whether the session satisfies a slot's resolved PIN policy. Only `NEVER`
 /// skips the PIN; listing known gated values made unknown bytes ungated.
@@ -111,6 +112,7 @@ impl<S: Storage> GenAuth<'_, S> {
     /// Spend the PIN freshness an ALWAYS slot reads. Measured on a YubiKey 5.7.4: a
     /// private-key operation at any PIN-gated slot closes every ALWAYS slot, and
     /// nothing clears the PIN's own status — 9B included, hence `is_key`.
+    /// Refines `RSKeyAppletPolicies!PivAlwaysSpendsFreshness` — SEC-POL-002.
     fn spend_pin(&mut self) {
         if self.pin_policy != PINPOLICY_NEVER && is_key(self.key_ref) {
             self.sess.pin_fresh = false;

@@ -42,9 +42,10 @@
 (* WHAT IS ABSTRACTED. The device is OTP-provisioned (`mkek.is_some()` --    *)
 (* a pre-OTP board never laps and has nothing to scrub). `weak` counts       *)
 (* superseded weak-sealed copies without naming which record each shadows.   *)
-(* The scratch TAG magic is taken as given: a cold boot restores a clear     *)
-(* lock, which is the tag's whole contract (an undefined register cannot     *)
-(* read as locked or warm, firmware/src/pin_lock.rs:36-37) -- and the 0x0854 *)
+(* Cold power clearing WATCHDOG.scratch2 is an explicit named assumption     *)
+(* below, not a conclusion of this model. The TAG still makes an unrelated  *)
+(* undefined value read as clear (firmware/src/pin_lock.rs:36-37).           *)
+(* The 0x0854                                                            *)
 (* legacy-canary aliasing that motivated the derived-engaged rule is a       *)
 (* decode compatibility fact below this model's floor. Both invariants are   *)
 (* STRUCTURAL -- no viol ghost in this module: the liar marker and the       *)
@@ -53,6 +54,7 @@
 EXTENDS Naturals
 
 CONSTANTS
+    PowerOnClearsScratch2,
     MaxWeak,  \* saturation bound on the counted superseded copies (>= 1)
     \* Audit run-35's shape: a lazy re-key that leaves the marker standing, so
     \* the copy it superseded -- sealed under a root the PUBLIC chip serial
@@ -74,6 +76,10 @@ CONSTANTS
     \* module's BugSoftLockLostOnWarmReset drops BOTH; this drops one half,
     \* which that mutant cannot express.
     BugPartialLockCarry
+
+\* OPEN HARDWARE ASSUMPTION: confirm on RP2350 silicon that a real power-on
+\* clears WATCHDOG.scratch2. The model may use ColdReset only under this fact.
+ASSUME PowerOnClearsScratch2
 
 \* The soft-lock states the scratch word distinguishes: no strikes, a live
 \* mismatch batch below the limit, and the engaged lock. One value stands for

@@ -30,6 +30,9 @@ Store.cfg                            GREEN   90
 \* The retry/recovery lattice (RSKeyRetryLattice): 243 distinct at depth 11, five
 \* budgeted references over a ceiling of two -- a third is the floor here too.
 Lattice.cfg                          GREEN   80
+\* Four-app operation policies (RSKeyAppletPolicies): 2268 distinct at depth 14;
+\* one third is the floor, separate from the real PIV/OpenPGP retry counters.
+Policies.cfg                         GREEN   750
 \* The administrative surface (RSKeyAdminSurface): 8 distinct -- a 3-capability
 \* mask whose properties are step ghosts, so the space IS the mask's power set.
 \* A third rounds to 3; below it the mask itself has collapsed.
@@ -74,6 +77,8 @@ StoreMut_*.cfg                       RED     -
 StoreSolo_*.cfg                      RED     -
 LatMut_*.cfg                         RED     -
 LatSolo_*.cfg                        RED     -
+PolicyMut_*.cfg                      RED     -
+PolicySolo_*.cfg                     RED     -
 AdminMut_*.cfg                       RED     -
 AdminSolo_*.cfg                      RED     -
 DispMut_*.cfg                        RED     -

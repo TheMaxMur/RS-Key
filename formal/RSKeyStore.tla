@@ -43,6 +43,9 @@
 (*****************************************************************************)
 EXTENDS Naturals
 
+\* Supports `RSKeySecurityState!NoAccessibleSecretWithoutGate` — SEC-FIDO-004.
+\* Supports `RSKeySecurityState!NoUnmanageableCredential` — SEC-FIDO-005.
+
 (* Mutation switches. All FALSE is the shipped tree. *)
 CONSTANTS
     \* crates/rsk-fs/src/fs.rs:425-434 -- `Fs::delete` drops the metadata FIRST,

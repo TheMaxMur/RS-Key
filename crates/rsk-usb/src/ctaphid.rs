@@ -381,6 +381,10 @@ impl Reassembler {
         self.bcnt = 0;
     }
 
+    // Refines `RSKeyTransport!NoCrossChannelSplice` — SEC-TRANS-001.
+    // Refines `RSKeyTransport!NoSequenceGap` — SEC-TRANS-002.
+    // Refines `RSKeyTransport!NoBufferOverrun` — SEC-TRANS-003.
+
     /// Consume one HID report. `f` is always a full 64-byte report; the caller
     /// drops short USB reads before calling.
     pub fn feed(&mut self, f: &[u8; HID_RPT_SIZE]) -> Outcome {

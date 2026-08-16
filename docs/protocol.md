@@ -444,7 +444,10 @@ needs only the identifiers above. RS-Key implements:
   so the Windows minidriver can enumerate the card; a host-written CHUID overrides it.
 - **OATH**: Yubico OATH (TOTP/HOTP).
 - **OTP**: Yubico OTP / HOTP keyboard + CCID.
-- **OpenPGP card 3.x.**
+- **OpenPGP card 3.x.** PUT DATA C1/C2/C3 changes a slot's algorithm
+  attribute; when the value changes, RS-Key invalidates that slot's existing
+  private/public key pair before the new attribute becomes visible. An
+  idempotent same-value write preserves the pair.
 
 The only RS-Key-specific bytes a config tool needs are §6 (Management config),
 §7 (Rescue), §8 (Vendor/LED) and §9 (CTAPHID `0x41`).
