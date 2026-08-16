@@ -39,6 +39,14 @@ pub mod state;
 pub mod u2f;
 pub mod vendor;
 
+#[cfg(any(test, kani, feature = "assurance-trace"))]
+pub mod generated_token_edges;
+
+#[cfg(any(test, kani, feature = "assurance-trace"))]
+pub use generated_token_edges::{AState, AbstractOp, AbstractOutcome};
+#[cfg(any(test, kani, feature = "assurance-trace"))]
+pub type AbstractTokenState = AState;
+
 pub use error::{CTAP2_OK, CtapError, CtapResult};
 pub use reset::{FIDO_SEED_FIDS, is_fido_gate_fid, is_fido_seed_fid, survives_factory_reset};
 
@@ -46,7 +54,9 @@ use rsk_crypto::Device;
 use rsk_fs::{Fs, Storage};
 pub use rsk_sdk::{Confirm, ConfirmKind};
 
-pub use state::{AbstractTokenState, FidoState, TokenPersistentView};
+pub use state::FidoState;
+#[cfg(any(test, kani, feature = "assurance-trace"))]
+pub use state::{TOKEN_PERSISTENT_FIDS, TokenPersistentView};
 
 /// A source of random bytes — the device TRNG in `firmware`, a deterministic
 /// stream in tests. Decouples the FIDO logic from any specific `rand_core` version.

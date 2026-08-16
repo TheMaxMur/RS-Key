@@ -21,6 +21,34 @@
 # ---- RSKeySecurityState — the FIDO security state ---------------------------
 
 [[property]]
+id = "SEC-REF-001"
+name = "R1sTokenStateRefinement"
+status = "MODELLED-ONLY"
+statement = "Every behavior of the reduced detailed security model maps through gamma to a behavior of the token abstraction."
+source = ["docs/token-refinement.md"]
+
+[[property]]
+id = "SEC-REF-002"
+name = "R1oTokenOutcomes"
+status = "MODELLED-ONLY"
+statement = "Every labelled token outcome produced by the detailed model is an AllowedEvent of the token abstraction."
+source = ["docs/token-refinement.md"]
+
+[[property]]
+id = "SEC-REF-003"
+name = "R1oOutcomeCoverage"
+status = "MODELLED-ONLY"
+statement = "Every security-visible detailed-model action has an owned R1o outcome clause."
+source = ["docs/token-refinement.md"]
+
+[[property]]
+id = "SEC-REF-004"
+name = "R4bEventConsensus"
+status = "MODELLED-ONLY"
+statement = "At an unambiguous recorded boundary, all independently inferred B actions agree with the raw concrete outcome."
+source = ["docs/token-refinement.md"]
+
+[[property]]
 id = "SEC-FIDO-001"
 name = "NoAuthorizationBypass"
 status = "BOUNDED"

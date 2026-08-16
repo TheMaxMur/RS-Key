@@ -40,6 +40,15 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Added
 
+- **Formal-verification phase 5 adds a bounded token-lifecycle refinement
+  chain.** A canonical outcome-labelled TLA+ relation now drives native B→A
+  state/outcome refinement and the generated exhaustive Rust edge table used by
+  Kani for R0/R2/R3. Emulator traces record the raw wire outcome and reject
+  ambiguous B classifications; tree-derived completeness gates cover volatile
+  writers, persistent writers and outcome producers. The host-only projection
+  is excluded from firmware and a poison-control gate proves its source cannot
+  affect loadable bytes: refactor, no behaviour change. **bcdDevice → 0x095D.**
+
 - **Formal-verification phase 4 now checks real emulator state against the full
   security model.** A host-only `--security-trace` mode exports non-secret raw
   FIDO state; an independent β mapper replays real `21_pin_webauthn` traffic

@@ -71,6 +71,23 @@ MODEL_ACTIONS = {
     "ResetAborts", "PowerCut", "WarmReset", "Tick", "WalkExpires",
 }
 
+OUTCOME_BY_ACTION = {
+    "GetPinToken": "Authorized",
+    "MintPpuat": "Authorized",
+    "SetPinWrite": "Authorized",
+    "RegisterWriteB": "Authorized",
+    "AssertFinish": "Authorized",
+    "ConfigOp": "Authorized",
+    "CmBeginViaToken": "Authorized",
+    "CmBeginViaPpuat": "Authorized",
+    "CmNext": "Authorized",
+    "DeleteCredStart": "Authorized",
+    "RegisterRefused": "Rejected",
+    "ResetRefused": "Rejected",
+}
+
+AMBIGUOUS_RATCHET = "@TraceSecurityAmbiguousMax"
+
 
 def die(message: str) -> None:
     raise SystemExit(f"security-trace: {message}")
@@ -85,7 +102,7 @@ def load_events(paths: list[Path]) -> list[dict]:
                     event = json.loads(line)
                 except json.JSONDecodeError as error:
                     die(f"{path}:{line_no}: invalid JSON: {error}")
-                if event.get("schema") != 1:
+                if event.get("schema") != 2:
                     die(f"{path}:{line_no}: unsupported schema")
                 if event.get("boundary") != {"mode": "coarse", "k": 8}:
                     die(f"{path}:{line_no}: boundary must be coarse with k=8")
@@ -97,6 +114,8 @@ def load_events(paths: list[Path]) -> list[dict]:
                     die(f"{path}:{line_no}: abstract pre fields changed")
                 if set(event.get("abstract_post", {})) != set(ABSTRACT_FIELDS):
                     die(f"{path}:{line_no}: abstract post fields changed")
+                if not isinstance(event.get("outcome_raw"), int):
+                    die(f"{path}:{line_no}: outcome_raw must be the real integer response code")
                 events.append(event)
     if not events:
         die("no trace events")
@@ -186,6 +205,34 @@ def presence_path(kind: str) -> list[tuple[str, str]]:
     return middle + [("PressUp", "PressUp")]
 
 
+def delta_c(outcome_raw: int) -> str:
+    return "Authorized" if outcome_raw == 0 else "Rejected"
+
+
+def inferred_outcomes(action_names: set[str], command: int) -> set[str]:
+    outcomes = {OUTCOME_BY_ACTION[name] for name in action_names if name in OUTCOME_BY_ACTION}
+    if action_names == {"Stutter"} and command in {0x01, 0x02, 0x07, 0x0A, 0x0D}:
+        outcomes.update({"Authorized", "Rejected"})
+    return outcomes
+
+
+def event_consensus(event: dict, action_names: set[str]) -> str:
+    outcomes = inferred_outcomes(action_names, event["command_raw"])
+    if len(outcomes) > 1:
+        return "AMBIGUOUS"
+    if outcomes != {delta_c(event["outcome_raw"])}:
+        return "VIOLATION"
+    return "OK"
+
+
+def ambiguous_limit() -> int:
+    for line in (FORMAL / "floors.txt").read_text(encoding="utf-8").splitlines():
+        parts = line.split()
+        if parts[:1] == [AMBIGUOUS_RATCHET] and len(parts) == 2:
+            return int(parts[1])
+    die(f"floors.txt has no {AMBIGUOUS_RATCHET} ratchet")
+
+
 def tla_value(value: object) -> str:
     if value is None:
         return "-1"
@@ -219,11 +266,25 @@ def generate(events: list[dict], output: Path) -> dict:
     ]
     beta_boundary = None
     alpha_boundary = None
+    outcome_boundaries: list[tuple[int, str, str]] = []
+    ambiguous = 0
     for event in events:
         inferred = infer(event)
         actions.extend(inferred)
         pc = len(actions)
         boundaries.append((pc, event["post"], event["abstract_post"]))
+        action_names = {name for name, _ in inferred}
+        outcomes_b = inferred_outcomes(action_names, event["command_raw"])
+        consensus = event_consensus(event, action_names)
+        if consensus == "AMBIGUOUS":
+            ambiguous += 1
+        elif outcomes_b:
+            if consensus != "OK":
+                die(
+                    f"event {event['sequence']}: R4b-event {consensus.lower()} — "
+                    f"B={sorted(outcomes_b)}, C={delta_c(event['outcome_raw'])}"
+                )
+            outcome_boundaries.append((pc, delta_c(event["outcome_raw"]), next(iter(outcomes_b))))
         if beta_boundary is None and event["pre"]["pin_record_len"] is None \
                 and event["post"]["pin_record_len"] == 35:
             beta_boundary = pc
@@ -238,6 +299,8 @@ def generate(events: list[dict], output: Path) -> dict:
         (pc, tla_record(abstract, ABSTRACT_FIELDS)) for pc, _, abstract in boundaries
     ]
     action_values = [(index, expression) for index, (_, expression) in enumerate(actions)]
+    outcome_raw_values = [(pc, f'"{raw}"') for pc, raw, _ in outcome_boundaries]
+    outcome_b_values = [(pc, f'"{model}"') for pc, _, model in outcome_boundaries]
     reached = {name for name, _ in actions if name != "Stutter"}
     if len(events) < 10 or len(actions) < 20 or len(reached) < 12:
         die(
@@ -258,12 +321,18 @@ def generate(events: list[dict], output: Path) -> dict:
         "BoundaryPcs == {" + ", ".join(str(pc) for pc, _, _ in boundaries) + "}",
         f"BetaMutationBoundary == {beta_boundary}",
         f"AlphaMutationBoundary == {alpha_boundary}",
+        "OutcomeBoundaryPcs == {" + ", ".join(str(pc) for pc, _, _ in outcome_boundaries) + "}",
+        f"OutcomeMutationBoundary == {outcome_boundaries[0][0]}",
         "",
         "TraceStutter == UNCHANGED vars",
         "",
         case_operator("BoundaryRaw", raw_values),
         "",
         case_operator("BoundaryAbstract", abstract_values),
+        "",
+        case_operator("BoundaryOutcomeRaw", outcome_raw_values),
+        "",
+        case_operator("BoundaryOutcomeB", outcome_b_values),
         "",
         case_operator("TraceAction", action_values),
         "",
@@ -276,6 +345,7 @@ def generate(events: list[dict], output: Path) -> dict:
         "steps": len(actions),
         "reached": sorted(reached),
         "unreached": sorted(MODEL_ACTIONS - reached),
+        "ambiguous": ambiguous,
     }
 
 
@@ -333,8 +403,11 @@ def validate(
                 die(f"{config}: TLC exit {rc}, expected {expected}")
         print(
             f"security-trace: GREEN commands={report['commands']} steps={report['steps']} "
-            f"distinct_actions={len(report['reached'])}"
+            f"distinct_actions={len(report['reached'])} ambiguous={report['ambiguous']}"
         )
+        limit = ambiguous_limit()
+        if report["ambiguous"] > limit:
+            die(f"AMBIGUOUS ratchet missed: {report['ambiguous']} > {limit}")
         print("security-trace: reached: " + " ".join(report["reached"]))
         print("security-trace: model actions not reached: " + " ".join(report["unreached"]))
 

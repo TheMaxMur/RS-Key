@@ -785,6 +785,7 @@ ChangePinRotateToken ==
 \* downstream check fail closed. Modelled as always enabled -- an
 \* over-approximation of the 30 s / 600 s timers.
 StopUsingToken ==
+    /\ Idle
     /\ tok.live
     /\ tok'  = IF BugStopUsingKeepsPerms
                  THEN [tok EXCEPT !.live = FALSE]
@@ -1375,6 +1376,15 @@ Next ==
     \/ PowerCut \/ WarmReset \/ Tick
 
 Spec == Init /\ [][Next]_vars
+
+\* Canonical roster for phase-5 R1o. The refinement module owns one outcome
+\* clause per name; adding a producer here without a clause fails its guard.
+TokenOutcomeActions ==
+    {"GetPinToken", "WrongPin", "MintPpuat", "LocalPinWrong", "LocalPinOk",
+     "SetPinWrite", "ChangePinWrite", "RegisterTouched", "RegisterRefused",
+     "RegisterWriteB", "AssertFinish", "ConfigOp", "BackupFinalize",
+     "DeviceUnlock", "CmBeginViaToken", "CmBeginViaPpuat", "CmNext",
+     "DeleteCredStart", "ResetRefused", "ResetFinish", "ResetAborts"}
 
 (***************************************************************************)
 (* LIVENESS. All six invariants are safety -- "the bad thing does not        *)

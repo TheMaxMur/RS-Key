@@ -115,6 +115,51 @@ firmware_stack_floor() {
   fi
 }
 
+# `assurance-trace` exposes α and generated proof domains to host tooling only.
+# Build two clean default images in one throwaway source tree, poisoning every
+# assurance-only module before the second. The poison must break a feature build
+# while remaining absent from firmware; compare loadable bytes, not ELF metadata.
+assurance_trace_is_image_neutral() {
+  local dir src elf_before elf_poison control
+  dir=$(mktemp -d)
+  src="$dir/src"
+  rsync -a --exclude .git --exclude target --exclude result --exclude formal/out ./ "$src/"
+
+  if cargo tree -p firmware -e features | grep -q 'rsk-fido feature "assurance-trace"'; then
+    echo "FAIL: firmware enables rsk-fido/assurance-trace." >&2
+    exit 1
+  fi
+
+  CARGO_TARGET_DIR="$dir/target-before" cargo build --manifest-path "$src/Cargo.toml" --release -p firmware
+  elf_before="$dir/target-before/thumbv8m.main-none-eabihf/release/firmware"
+  arm-none-eabi-objcopy -O binary "$elf_before" "$dir/before.bin"
+
+  for f in generated_token_edges.rs state_assurance.rs state_refinement_kani.rs; do
+    printf '\ncompile_error!("assurance source reached production");\n' \
+      >> "$src/crates/rsk-fido/src/$f"
+  done
+  CARGO_TARGET_DIR="$dir/target-poison" cargo build --manifest-path "$src/Cargo.toml" --release -p firmware
+  elf_poison="$dir/target-poison/thumbv8m.main-none-eabihf/release/firmware"
+  arm-none-eabi-objcopy -O binary "$elf_poison" "$dir/poison.bin"
+
+  control="$dir/feature-control.log"
+  if CARGO_TARGET_DIR="$dir/target-control" cargo check --manifest-path "$src/Cargo.toml" \
+      -p rsk-fido --features assurance-trace > "$control" 2>&1; then
+    echo "FAIL: the assurance poison did not reach an assurance-trace build." >&2
+    exit 1
+  fi
+  if ! grep -q "assurance source reached production" "$control"; then
+    echo "FAIL: the assurance feature control failed for the wrong reason." >&2
+    tail -10 "$control" >&2
+    exit 1
+  fi
+  if ! cmp -s "$dir/before.bin" "$dir/poison.bin"; then
+    echo "FAIL: assurance-only source changed the firmware's loadable bytes." >&2
+    exit 1
+  fi
+  echo "assurance sources are absent from firmware; poisoned/default images are byte-identical"
+}
+
 # The vendor AID's three debug commands (INS 12/13/14) are timing oracles — over
 # the RSA keygen prime search and the EC/KDF hot paths — so each is feature-gated
 # and none may reach a shipped image. A `#[cfg]` is only as good as the default
@@ -413,6 +458,7 @@ run "clippy (display strong-pin)" env LED_KIND=none cargo clippy -p firmware --f
 run_tests "test (display wiring)"    cargo test -p rsk-device --features display --target "$HOST"
 run "clippy (display wiring)"  cargo clippy -p rsk-device --features display --target "$HOST" --all-targets -- -D warnings
 run "build firmware (release)" cargo build --release -p firmware
+run "assurance-trace image identity" assurance_trace_is_image_neutral
 run "firmware size budget"     firmware_size_budget
 run "firmware stack floor"     firmware_stack_floor
 run "no debug vendor command in the image" debug_vendor_commands_absent
@@ -516,6 +562,8 @@ run "assurance registry"       python scripts/assurance_gate.py
 run "comutants lint"           python scripts/comutate.py --lint
 run "seam trace map"           python scripts/trace_map.py
 run "security trace refinement" python scripts/security_trace.py --check-data formal/TraceSecurityData.tla formal/traces/security-phase4.jsonl
+run "token refinement export" ./scripts/token_refinement.sh --check
+run "token refinement completeness" python scripts/token_refinement_gate.py
 # The two guards above decide whether the gate covers the tree, and neither had
 # a single test while five commits rewrote them by hand. This is that hand
 # battery kept: a fixture workspace, one mutation per case, both directions.

@@ -35,6 +35,9 @@ minicbor = { workspace = true }
 rsk-fs = { workspace = true, features = ["test-util"] }
 
 [features]
+# Verification-only α/domain/table surface used by the emulator trace and the
+# phase-5 Kani bridge. Additive and never enabled by the shipping firmware.
+assurance-trace = []
 # Kani cannot model the inline asm behind `cpufeatures`' runtime CPU
 # detection, so a harness that hashes reaches `__cpuid_count` and fails as
 # "unsupported construct". Only `scripts/kani.sh` turns this on; the firmware

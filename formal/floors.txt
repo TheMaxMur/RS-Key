@@ -61,6 +61,15 @@ TraceSecurity.cfg                    GREEN   30
 TraceSecurityBadBeta.cfg             RED     -
 TraceSecurityBadAlpha.cfg            RED     -
 TraceSecurityBadAlphaNoR4b.cfg       GREEN   30
+TraceSecurityBadOutcome.cfg          RED     -
+@TraceSecurityAmbiguousMax 2
+\* Phase 5. Reduced constants keep the labelled action check separate from the
+\* 60-million-state shipped safety row. Floors are calibrated after the first
+\* successful run; the non-vacuity guard still requires at least two states.
+TokenRefinement.cfg                  GREEN   2500000
+TokenRefinementBadMap.cfg            RED     -
+TokenRefinementOutcome.cfg           GREEN   2500000
+TokenRefinementDeadToken.cfg         RED     -
 \* The liveness layer builds a behaviour graph ON TOP of the state graph -- 23.7
 \* million nodes at these constants -- and runs out of memory at the 4 GB
 \* default after the state search has already completed (E172). The heap column

@@ -39,11 +39,12 @@ impl Writer {
         self.sequence += 1;
         write!(
             self.out,
-            "{{\"schema\":1,\"sequence\":{},\"boundary\":{{\"mode\":\"coarse\",\"k\":8}},\"now_ms\":{},\"cid\":{},\"command_raw\":{},\"status_raw\":{},\"action_hint\":\"{}\",\"pre\":",
+            "{{\"schema\":2,\"sequence\":{},\"boundary\":{{\"mode\":\"coarse\",\"k\":8}},\"now_ms\":{},\"cid\":{},\"command_raw\":{},\"status_raw\":{},\"outcome_raw\":{},\"action_hint\":\"{}\",\"pre\":",
             self.sequence,
             now_ms,
             cid,
             command,
+            status,
             status,
             action_hint(command),
         )?;

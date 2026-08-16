@@ -9,7 +9,7 @@
 (***************************************************************************)
 EXTENDS TraceSecurityData, RSKeyTokenView
 
-CONSTANTS MutateBeta, MutateAlpha, CheckR4b
+CONSTANTS MutateBeta, MutateAlpha, MutateOutcome, CheckR4b
 
 VARIABLE tracePc
 traceVars == << vars, tracePc >>
@@ -90,6 +90,15 @@ R4aRawRefinesB ==
 R4bAlphaMatchesGamma ==
     ~CheckR4b \/ tracePc \notin BoundaryPcs \/
       AbstractAtBoundary = TokenGamma(pin, gate, tok, NoRp)
+
+OutcomeAtBoundary ==
+    IF MutateOutcome /\ tracePc = OutcomeMutationBoundary
+      THEN IF BoundaryOutcomeRaw(tracePc) = "Authorized"
+             THEN "Rejected" ELSE "Authorized"
+      ELSE BoundaryOutcomeRaw(tracePc)
+
+R4bEventConsensus ==
+    tracePc \in OutcomeBoundaryPcs => OutcomeAtBoundary = BoundaryOutcomeB(tracePc)
 
 TraceComplete == tracePc <= TraceSteps
 

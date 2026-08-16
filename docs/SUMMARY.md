@@ -51,6 +51,7 @@
 - [`unsafe` audit](unsafe.md)
 - [Constant-time audit](ct-audit.md)
 - [Formal model](formal.md)
+  - [Token refinement pilot](token-refinement.md)
 
 # Internals
 
@@ -65,4 +66,3 @@
      root and are linked from the Introduction page. They are intentionally not
      nav entries: mdBook does not support external URLs in SUMMARY.md (it rewrites
      .md -> .html and creates broken local stub files). -->
-

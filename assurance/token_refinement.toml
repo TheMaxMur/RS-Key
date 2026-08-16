@@ -1,0 +1,112 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 RS-Key contributors
+
+# Human-reviewed δC/Step ownership. scripts/token_refinement_gate.py derives
+# domains and flash keys, then refuses any unowned writer/outcome producer.
+
+[[volatile_writer]]
+file = "crates/rsk-fido/src/state.rs"
+function = "reset_pin_uv_auth_token"
+op = "RevokeToken"
+
+[[volatile_writer]]
+file = "crates/rsk-fido/src/state.rs"
+function = "begin_using_token"
+op = "IssueToken"
+
+[[volatile_writer]]
+file = "crates/rsk-fido/src/state.rs"
+function = "consume_after_user_presence"
+op = "UseMc"
+
+[[volatile_writer]]
+file = "crates/rsk-fido/src/state.rs"
+function = "stop_using_token"
+op = "RevokeToken"
+
+[[volatile_writer]]
+file = "crates/rsk-fido/src/clientpin.rs"
+function = "issue_token"
+op = "IssueToken"
+
+[[volatile_writer]]
+file = "crates/rsk-fido/src/makecredential.rs"
+function = "enforce_pin"
+op = "UseMc"
+
+[[volatile_writer]]
+file = "crates/rsk-fido/src/getassertion.rs"
+function = "enforce_pin"
+op = "UseGa"
+
+[[volatile_writer]]
+file = "crates/rsk-fido/src/conformance/mod.rs"
+function = "arm_token"
+op = "IssueToken"
+
+[[persistent_writer]]
+file = "crates/rsk-fido/src/clientpin.rs"
+function = "spend_and_verify_pin_hash"
+op = "SetPin"
+
+[[persistent_writer]]
+file = "crates/rsk-fido/src/clientpin.rs"
+function = "write_pin_verifier"
+op = "SetPin"
+
+[[persistent_writer]]
+file = "crates/rsk-fido/src/clientpin.rs"
+function = "spend_and_verify_pin_at"
+op = "Noop"
+generic = true
+
+[[persistent_writer]]
+file = "crates/rsk-fido/src/seed.rs"
+function = "ensure_ppuat"
+op = "MintGrant"
+
+[[persistent_writer]]
+file = "crates/rsk-fido/src/seed.rs"
+function = "clear_ppuat"
+op = "RevokeGrant"
+
+[[persistent_writer]]
+file = "crates/rsk-fido/src/conformance/mod.rs"
+function = "set_pin_file"
+op = "SetPin"
+
+[[persistent_writer]]
+file = "crates/rsk-fido/src/reset.rs"
+function = "sweep"
+op = "ClearPin"
+generic = true
+
+[[outcome_producer]]
+file = "crates/rsk-fido/src/makecredential.rs"
+function = "enforce_pin"
+op = "UseMc"
+
+[[outcome_producer]]
+file = "crates/rsk-fido/src/getassertion.rs"
+function = "enforce_pin"
+op = "UseGa"
+
+[[outcome_producer]]
+file = "crates/rsk-fido/src/credmgmt.rs"
+function = "verify_cm_token"
+op = "UseCm"
+
+[[outcome_producer]]
+file = "crates/rsk-fido/src/credmgmt.rs"
+function = "authorized_by_ppuat"
+op = "UseCm"
+
+[[outcome_producer]]
+file = "crates/rsk-fido/src/config.rs"
+function = "authenticator_config"
+op = "UseAcfg"
+
+[[outcome_producer]]
+file = "crates/rsk-fido/src/vendor.rs"
+function = "pin_gate"
+op = "UseAcfg"

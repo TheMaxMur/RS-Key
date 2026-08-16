@@ -5,7 +5,7 @@ use super::*;
 use crate::consts::{CM_ENUMERATE_RPS_NEXT, PIN_MISMATCH_LIMIT};
 use crate::credmgmt::cred_mgmt;
 use crate::error::{CtapError, CtapResult};
-use crate::{AlwaysConfirm, Ctx};
+use crate::{AState, AlwaysConfirm, Ctx};
 use rsk_crypto::Device;
 use rsk_fs::Fs;
 use rsk_fs::storage::ram::RamStorage;
@@ -40,7 +40,7 @@ fn abstract_token_exposes_only_the_security_projection() {
             pin_set: true,
             persistent_grant: false,
         }),
-        AbstractTokenState {
+        AState {
             live: true,
             permission_mc: true,
             permission_ga: false,
@@ -51,6 +51,55 @@ fn abstract_token_exposes_only_the_security_projection() {
             persistent_grant: false,
         }
     );
+}
+
+#[test]
+fn generated_token_relation_is_exact_over_the_full_product() {
+    crate::generated_token_edges::exhaustive_table_self_test();
+}
+
+fn live_mc_state() -> AState {
+    AState {
+        live: true,
+        permission_mc: true,
+        permission_ga: true,
+        pin_set: true,
+        ..AState::default()
+    }
+}
+
+#[test]
+fn r3b_refuses_stop_using_token_mutant() {
+    let pre = live_mc_state();
+    let post = AState { live: false, ..pre };
+    assert!(!crate::generated_token_edges::allowed_event(
+        pre,
+        crate::AbstractOp::RevokeToken,
+        crate::AbstractOutcome::Silent,
+        post,
+    ));
+}
+
+#[test]
+fn r3b_refuses_authorized_dead_token_stutter() {
+    let dead = AState::default();
+    assert!(!crate::generated_token_edges::allowed_event(
+        dead,
+        crate::AbstractOp::UseAcfg,
+        crate::AbstractOutcome::Authorized,
+        dead,
+    ));
+}
+
+#[test]
+fn exact_table_refuses_an_extra_generated_edge() {
+    let dead = AState::default();
+    assert!(!crate::generated_token_edges::allowed_event(
+        dead,
+        crate::AbstractOp::IssueToken,
+        crate::AbstractOutcome::Rejected,
+        dead,
+    ));
 }
 
 const LOCKED: PinLock = PinLock {

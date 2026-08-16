@@ -74,6 +74,8 @@ OWNER_CFGS = (
 EXEMPT_CFG = {
     "Liveness_Full.cfg": "1475 s for the verdict the reduced constants give in 139 s; "
     "run by hand when the reduction is questioned (run-tlc.sh)",
+    "TokenExport.cfg": "serialization-only TLC input consumed by "
+    "scripts/export_token_relation.py; it is not a model-checking verdict row",
 }
 
 #: The one status per evidence class that exists in the tree today. PROVEN

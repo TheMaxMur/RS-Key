@@ -86,6 +86,7 @@ def build(root: pathlib.Path) -> pathlib.Path:
     (formal / "Liveness_Full.cfg").write_text(
         "SPECIFICATION Spec\nINVARIANTS\n    TypeOK\n    FooStaysClosed\n"
     )
+    (formal / "TokenExport.cfg").write_text("SPECIFICATION Spec\n")
     runner = formal / "run-tlc.sh"
     runner.write_text(TIERS)
     runner.chmod(0o755)

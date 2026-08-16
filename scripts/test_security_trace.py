@@ -23,6 +23,7 @@ def test_recorded_trace_meets_all_three_coverage_floors(tmp_path):
     assert report["commands"] == 12
     assert report["steps"] == 30
     assert len(report["reached"]) == 13
+    assert report["ambiguous"] == 2
     assert "WrongPin" in report["unreached"]
 
 
@@ -56,3 +57,10 @@ def test_a_shifted_action_hint_cannot_select_another_transition():
     event["action_hint"] = "makeCredential"
     with pytest.raises(SystemExit, match="action_hint disagrees"):
         security_trace.infer(event)
+
+
+def test_r4b_event_reports_ambiguous_instead_of_choosing_a_witness():
+    event = copy.deepcopy(events()[4])
+    assert security_trace.event_consensus(
+        event, {"RegisterWriteB", "RegisterRefused"}
+    ) == "AMBIGUOUS"

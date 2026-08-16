@@ -1,0 +1,224 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 RS-Key contributors
+
+"""Generate Rust token domains and the exact A transition bitset."""
+
+from __future__ import annotations
+
+import argparse
+import re
+import shutil
+import subprocess
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+SOURCE = ROOT / "formal" / "generated" / "token_relation.txt"
+OUTPUT = ROOT / "crates" / "rsk-fido" / "src" / "generated_token_edges.rs"
+
+
+def die(message: str) -> None:
+    raise SystemExit(f"token-codegen: {message}")
+
+
+def rust_name(value: str) -> str:
+    if not re.fullmatch(r"[A-Z][A-Za-z0-9]*", value):
+        die(f"TLA+ value {value!r} is not a Rust enum variant")
+    return value
+
+
+def load(path: Path) -> tuple[list[str], list[str], list[str], list[tuple[str, str, str, str]]]:
+    schema: list[str] | None = None
+    states: set[str] = set()
+    ops: set[str] = set()
+    outcomes: set[str] = set()
+    edges: set[tuple[str, str, str, str]] = set()
+    for line_no, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        parts = line.split("|")
+        if parts[:2] == ["TOKEN", "SCHEMA"] and len(parts) == 3:
+            fields = []
+            for item in parts[2].split(","):
+                name, separator, kind = item.partition(":")
+                if separator != ":" or kind != "bool" or not name.isidentifier():
+                    die(f"{path}:{line_no}: unsupported schema field {item!r}")
+                fields.append(name)
+            if schema is not None and schema != fields:
+                die("multiple incompatible schemas")
+            schema = fields
+        elif parts[:2] == ["TOKEN", "STATE"] and len(parts) == 3:
+            states.add(parts[2])
+        elif parts[:2] == ["TOKEN", "OP"] and len(parts) == 3:
+            ops.add(rust_name(parts[2]))
+        elif parts[:2] == ["TOKEN", "OUTCOME"] and len(parts) == 3:
+            outcomes.add(rust_name(parts[2]))
+        elif parts[:2] == ["TOKEN", "EDGE"] and len(parts) == 6:
+            edges.add((parts[2], rust_name(parts[3]), rust_name(parts[4]), parts[5]))
+        else:
+            die(f"{path}:{line_no}: malformed export record")
+    if schema is None or not states or not ops or not outcomes:
+        die("export is missing schema or a domain")
+    width = len(schema)
+    if any(len(state) != width or set(state) - {"0", "1"} for state in states):
+        die("state code does not match the exported boolean schema")
+    if any(pre not in states or post not in states for pre, _, _, post in edges):
+        die("edge names a state outside the exported domain")
+    if any(op not in ops or outcome not in outcomes for _, op, outcome, _ in edges):
+        die("edge names an operation/outcome outside the exported domain")
+    return schema, sorted(states), sorted(ops), sorted(outcomes), sorted(edges)
+
+
+def enum_block(name: str, values: list[str]) -> str:
+    variants = "\n".join(f"    {value} = {index}," for index, value in enumerate(values))
+    return f"""#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u8)]
+pub enum {name} {{
+{variants}
+}}
+"""
+
+
+def generate(path: Path) -> tuple[str, dict[str, int]]:
+    schema, states, ops, outcomes, edges = load(path)
+    state_index = {state: index for index, state in enumerate(states)}
+    op_index = {op: index for index, op in enumerate(ops)}
+    outcome_index = {outcome: index for index, outcome in enumerate(outcomes)}
+    tuples = len(states) * len(ops) * len(outcomes) * len(states)
+    table = bytearray((tuples + 7) // 8)
+    encoded_edges: list[tuple[int, int, int, int]] = []
+    for pre, op, outcome, post in edges:
+        indices = (
+            state_index[pre],
+            op_index[op],
+            outcome_index[outcome],
+            state_index[post],
+        )
+        encoded_edges.append(indices)
+        index = (((indices[0] * len(ops) + indices[1]) * len(outcomes) + indices[2])
+                 * len(states) + indices[3])
+        table[index // 8] |= 1 << (index % 8)
+
+    fields = "\n".join(f"    pub {field}: bool," for field in schema)
+    raw_terms = []
+    for index, field in enumerate(schema):
+        shift = len(schema) - index - 1
+        term = f"u8::from(self.{field})"
+        raw_terms.append(f"{term} << {shift}" if shift else term)
+    raw_expr = " | ".join(raw_terms)
+    lookup = [-1] * (1 << len(schema))
+    for index, state in enumerate(states):
+        lookup[int(state, 2)] = index
+    lookup_text = ", ".join(str(value) for value in lookup)
+    table_lines = []
+    for offset in range(0, len(table), 16):
+        table_lines.append("    " + ", ".join(f"0x{x:02x}" for x in table[offset:offset + 16]) + ",")
+    edges_lines = "\n".join(
+        f"    ({pre}, {op}, {outcome}, {post}),"
+        for pre, op, outcome, post in encoded_edges
+    )
+    text = f"""// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 RS-Key contributors
+
+// @generated by scripts/generate_token_edges.py from the TLA+ export.
+// Do not edit: `nix develop -c scripts/token_refinement.sh --generate`.
+
+{enum_block("AbstractOp", ops)}
+{enum_block("AbstractOutcome", outcomes)}
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub struct AState {{
+{fields}
+}}
+
+impl AState {{
+    #[cfg(any(test, kani))]
+    fn domain_index(self) -> Option<usize> {{
+        let raw = {raw_expr};
+        let index = STATE_INDEX[usize::from(raw)];
+        (index >= 0).then_some(index as usize)
+    }}
+}}
+
+pub const STATE_COUNT: usize = {len(states)};
+pub const OP_COUNT: usize = {len(ops)};
+pub const OUTCOME_COUNT: usize = {len(outcomes)};
+pub const TUPLES_CHECKED: usize = {tuples};
+
+#[cfg(any(test, kani))]
+const STATE_INDEX: [i8; {len(lookup)}] = [{lookup_text}];
+
+#[cfg(any(test, kani))]
+const ALLOWED_BITS: [u8; {len(table)}] = [
+{chr(10).join(table_lines)}
+];
+
+#[cfg(any(test, kani))]
+pub fn allowed_event(
+    pre: AState,
+    op: AbstractOp,
+    outcome: AbstractOutcome,
+    post: AState,
+) -> bool {{
+    let Some(pre) = pre.domain_index() else {{ return false }};
+    let Some(post) = post.domain_index() else {{ return false }};
+    let index = ((pre * OP_COUNT + op as usize) * OUTCOME_COUNT + outcome as usize)
+        * STATE_COUNT + post;
+    ALLOWED_BITS[index / 8] & (1 << (index % 8)) != 0
+}}
+
+#[cfg(test)]
+const EXPORTED_EDGES: &[(usize, usize, usize, usize)] = &[
+{edges_lines}
+];
+
+#[cfg(test)]
+pub(crate) fn exhaustive_table_self_test() {{
+    let mut expected = [false; TUPLES_CHECKED];
+    for &(pre, op, outcome, post) in EXPORTED_EDGES {{
+        let index = ((pre * OP_COUNT + op) * OUTCOME_COUNT + outcome) * STATE_COUNT + post;
+        expected[index] = true;
+    }}
+    for (index, expected) in expected.into_iter().enumerate() {{
+        let actual = ALLOWED_BITS[index / 8] & (1 << (index % 8)) != 0;
+        assert_eq!(actual, expected, "generated token edge mismatch at tuple {{index}}");
+    }}
+}}
+"""
+    rustfmt = shutil.which("rustfmt")
+    if rustfmt is None:
+        die("rustfmt unavailable; run inside `nix develop`")
+    formatted = subprocess.run(
+        [rustfmt, "--emit", "stdout", "--edition", "2024"],
+        input=text,
+        text=True,
+        check=True,
+        stdout=subprocess.PIPE,
+    ).stdout
+    return formatted, {
+        "states": len(states),
+        "ops": len(ops),
+        "outcomes": len(outcomes),
+        "tuples": tuples,
+        "edges": len(edges),
+    }
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--source", type=Path, default=SOURCE)
+    parser.add_argument("--output", type=Path, default=OUTPUT)
+    parser.add_argument("--check", action="store_true")
+    args = parser.parse_args()
+    text, counts = generate(args.source)
+    if args.check:
+        if not args.output.exists() or args.output.read_text(encoding="utf-8") != text:
+            die(f"{args.output} is stale; regenerate without --check")
+    else:
+        args.output.write_text(text, encoding="utf-8")
+    print(
+        "token-codegen: GREEN "
+        f"states={counts['states']} ops={counts['ops']} outcomes={counts['outcomes']} "
+        f"tuples_checked={counts['tuples']} allowed_edges={counts['edges']}"
+    )
+
+
+if __name__ == "__main__":
+    main()

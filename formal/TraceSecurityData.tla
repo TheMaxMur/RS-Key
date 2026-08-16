@@ -10,6 +10,8 @@ TraceSteps == 30
 BoundaryPcs == {0, 1, 2, 5, 6, 13, 14, 21, 22, 27, 28, 29, 30}
 BetaMutationBoundary == 5
 AlphaMutationBoundary == 6
+OutcomeBoundaryPcs == {5, 6, 13, 14, 21, 22, 27}
+OutcomeMutationBoundary == 5
 
 TraceStutter == UNCHANGED vars
 
@@ -446,6 +448,26 @@ BoundaryAbstract(i) ==
         rpBound |-> TRUE,
         pinSet |-> TRUE,
         persistentGrant |-> FALSE ]
+      [] OTHER -> CHOOSE x : FALSE
+
+BoundaryOutcomeRaw(i) ==
+    CASE i = 5 -> "Authorized"
+      [] i = 6 -> "Authorized"
+      [] i = 13 -> "Authorized"
+      [] i = 14 -> "Authorized"
+      [] i = 21 -> "Authorized"
+      [] i = 22 -> "Authorized"
+      [] i = 27 -> "Authorized"
+      [] OTHER -> CHOOSE x : FALSE
+
+BoundaryOutcomeB(i) ==
+    CASE i = 5 -> "Authorized"
+      [] i = 6 -> "Authorized"
+      [] i = 13 -> "Authorized"
+      [] i = 14 -> "Authorized"
+      [] i = 21 -> "Authorized"
+      [] i = 22 -> "Authorized"
+      [] i = 27 -> "Authorized"
       [] OTHER -> CHOOSE x : FALSE
 
 TraceAction(i) ==

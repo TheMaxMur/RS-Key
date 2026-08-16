@@ -39,7 +39,7 @@ fi
 
 # Which module a configuration belongs to: the seam configs are the second
 # module's, and TLC takes the module name rather than reading it from the cfg.
-spec_for() { case "$1" in TraceSecurity*) echo TraceSecurity ;; TraceSeamsBad*) echo TraceSeamsBad ;; TraceSeams*) echo TraceSeams ;; Seam*) echo RSKeyAppletSeams ;; Store*) echo RSKeyStore ;; Lat*) echo RSKeyRetryLattice ;; Polic*) echo RSKeyAppletPolicies ;; Admin*) echo RSKeyAdminSurface ;; Disp*) echo RSKeyTrustedDisplay ;; Boot*) echo RSKeyBootHardening ;; Trans*) echo RSKeyTransport ;; *) echo RSKeySecurityState ;; esac; }
+spec_for() { case "$1" in TokenRefinement*) echo RSKeyTokenRefinement ;; TraceSecurity*) echo TraceSecurity ;; TraceSeamsBad*) echo TraceSeamsBad ;; TraceSeams*) echo TraceSeams ;; Seam*) echo RSKeyAppletSeams ;; Store*) echo RSKeyStore ;; Lat*) echo RSKeyRetryLattice ;; Polic*) echo RSKeyAppletPolicies ;; Admin*) echo RSKeyAdminSurface ;; Disp*) echo RSKeyTrustedDisplay ;; Boot*) echo RSKeyBootHardening ;; Trans*) echo RSKeyTransport ;; *) echo RSKeySecurityState ;; esac; }
 
 # floors.txt: what each configuration must produce. First match wins.
 expect_for() {
@@ -174,6 +174,11 @@ list_safety() {
   echo TraceSecurityBadBeta.cfg # shifting one raw retry field is refused
   echo TraceSecurityBadAlpha.cfg # shifting alpha is refused by R4b
   echo TraceSecurityBadAlphaNoR4b.cfg # and no other observer catches that shift
+  echo TraceSecurityBadOutcome.cfg # outcome_raw disagreement is refused
+  echo TokenRefinement.cfg       # phase 5: native B -> A state refinement
+  echo TokenRefinementBadMap.cfg # a wrong gamma must be refused
+  echo TokenRefinementOutcome.cfg # labelled B outcomes refine A events
+  echo TokenRefinementDeadToken.cfg # state stutter is GREEN; R1o is RED
 }
 
 list_liveness() {
