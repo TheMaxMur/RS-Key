@@ -141,7 +141,15 @@ generated table in `formal/README.md` records all 28, their target invariant,
 model verdict and code-level verdict: **26/28 are co-refuted, two are
 unreachable, and none is a gap**. Deriving that roster found six real coverage
 gaps; each now has a regression harness. Later modules extend the live roster
-to 43 entries: all 41 executable patches are killed and two are unreachable.
+to 67 entries: all 65 executable patches are killed and two are unreachable.
+
+The applet batch — the 24 seam, retry-lattice and policy mutants — was added
+because the roster had a measurable skew: 31 of its first 43 patches sat in
+three crates, and the four applet crates four of the nine modules are written
+about held none. Measuring them found **five more coverage gaps**, including the
+Rust half of SEC-SEAM-006 (whose model half had been closed two revisions
+earlier) and a PW3 gate that no test could tell from the outer gate covering it.
+All five are closed by regression harnesses.
 
 The merge gate cheaply checks the closed roster, patch anchors, expectations,
 floors and generated table freshness. The expensive full measurement runs

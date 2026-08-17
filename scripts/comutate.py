@@ -11,25 +11,16 @@ catches them too. Three green checkers over three slightly different systems is
 the failure mode this whole apparatus exists for, and the difference between
 the two answers is a measured abstraction gap with a file and line attached.
 
-The roster is `Mut_*`, `StoreMut_*`, `AdminMut_*`, `DispMut_*` and `TransMut_*`.
-Four mutant families are DELIBERATELY out of it, because an exclusion stated here
-is a plan and one implied by a glob is a hole:
+The roster is `Mut_*`, `StoreMut_*`, `AdminMut_*`, `DispMut_*`, `TransMut_*` and —
+since the applet batch — `SeamMut_*`, `LatMut_*` and `PolicyMut_*`. That batch was
+the answer to a measured skew: 31 of the first 43 patches landed in `rsk-fido`,
+`rsk-device` and `rsk-fs`, and the four applet crates that four of the nine
+modules are written about held ZERO. "TLC is green over the applets" was
+therefore fidelity nobody had measured, not fidelity measured and found good.
 
-* `SeamMut_*` — applet-status defects whose shipped fixes carry their own
-  regression tests, measured against a YubiKey oracle (group E). The status
-  lifetime is exercised at the wire, not by a `cargo test` on one function.
-* `LatMut_*` — the retry-ladder mutants. Injecting one naively measures the
-  wrong thing: removing the `left == 0` floor lets `left - 1` underflow a `u8`
-  and the test panics on the arithmetic, not on a blocked reference
-  authenticating — the floor and the counter's own type are two layers, so a
-  faithful co-refutation needs the both-layers patch the store's
-  revoke-before-write already taught (find3). Until that analysis is done the
-  ladders' regression coverage is the applets' own `check_ref` / `check_pin`
-  unit tests.
-* `PolicyMut_*` — the four-app policy model spans six independent code sites.
-  Its OpenPGP attribute-invalidation finding has a direct regression test; the
-  remaining gates retain their applet-level tests until exact code patches are
-  derived as a later co-refutation batch.
+Two families remain DELIBERATELY out, because an exclusion stated here is a plan
+and one implied by a glob is a hole:
+
 * `BootMut_*` — two of its three defended sites live in `firmware/` (the
   marker-after-lap order in main.rs:621-622, the scratch-word carry in
   pin_lock.rs), which has no host tests by construction: `cargo test` cannot
@@ -39,6 +30,12 @@ is a plan and one implied by a glob is a hole:
   (`pin_verifier_and_pinwrapped_seed_migrate_at_verify` and PIV's
   `kbase_migration_reseals_slots_and_pin_falls_back` pin EF_HARDENED cleared;
   each proved able to fail by removing its own site's re-arm in a worktree).
+* `LiveMut_*` and `FairMut_*` — these are not defect switches. They break a
+  LIVENESS property or the fairness shape under it, and the code-level question
+  co-refutation asks ("does the same defect fail a host test?") has no meaning
+  for a temporal property no unit test states. Named here rather than left to
+  the glob, because the glob was how they were out before: `roster()` simply did
+  not match them, which is the shape of hole this file exists to refuse.
 
 `formal/comutants.toml` holds one entry per mutant: a `patch` (exact-snippet
 find/replace — the defect, re-made in today's code), `unreachable` (the defect
@@ -97,29 +94,61 @@ def load(root: pathlib.Path):
 
 
 #: The mutant-config prefixes this file's closed world covers, and the Solo
-#: prefix each pairs with. Seam, lattice, policy and boot prefixes are
-#: deliberately absent — see the module docstring.
+#: prefix each pairs with. Boot, liveness and fairness prefixes are deliberately
+#: absent — see the module docstring.
 PREFIXES = (
     ("Mut_", "Solo_"),
     ("StoreMut_", "StoreSolo_"),
     ("AdminMut_", "AdminSolo_"),
     ("DispMut_", "DispSolo_"),
     ("TransMut_", "TransSolo_"),
+    ("SeamMut_", "SeamSolo_"),
+    ("LatMut_", "LatSolo_"),
+    ("PolicyMut_", "PolicySolo_"),
 )
 
 
 def roster(root: pathlib.Path) -> dict[str, str]:
-    """bug name -> its mutant configuration's filename, over both prefixes.
+    """bug name -> its mutant configuration's filename, over every prefix.
 
-    `startswith` is anchored, so `Mut_` does not swallow `StoreMut_*.cfg` (an 'S'
-    is not an 'M') and neither prefix matches `SeamMut_`, `LiveMut_` or
-    `FairMut_`.
+    `startswith` is anchored, so `Mut_` does not swallow `StoreMut_*.cfg` or
+    `SeamMut_*.cfg` (an 'S' is not an 'M'), and no prefix matches `BootMut_`,
+    `LiveMut_` or `FairMut_`.
+
+    The keys are bug names with the prefix stripped, so two families sharing a
+    bug name would silently collapse to one entry — see `prefix_collisions`,
+    which the lint runs before trusting anything this returns.
     """
     out: dict[str, str] = {}
     for p in sorted((root / "formal").glob("*.cfg")):
         for mut_pre, _ in PREFIXES:
             if p.name.startswith(mut_pre):
                 out[p.stem.removeprefix(mut_pre)] = p.name
+    return out
+
+
+def prefix_collisions(stems) -> list[str]:
+    """Configuration stems that two prefixes would map onto ONE roster key.
+
+    Eight families share one name space, and `roster` keys on the name with its
+    prefix stripped: a second `BugX` under another prefix does not collide
+    loudly, it OVERWRITES. Both closed-world directions then stay green over a
+    roster holding one fewer mutant — the exact silent-shrink shape floors.txt
+    exists for, one layer up. The families are disjoint today; this is what
+    keeps them so when a tenth module reuses a good name.
+    """
+    seen: dict[str, str] = {}
+    out: list[str] = []
+    for stem in sorted(stems):
+        for mut_pre, _ in PREFIXES:
+            if stem.startswith(mut_pre):
+                bug = stem.removeprefix(mut_pre)
+                if bug in seen:
+                    out.append(
+                        f"{stem}.cfg and {seen[bug]}.cfg are one roster key "
+                        f"({bug}) — rename one"
+                    )
+                seen[bug] = stem
     return out
 
 
@@ -225,6 +254,11 @@ def check_readme(root: pathlib.Path, entries: dict, problems: list[str]) -> None
 def lint(root: pathlib.Path, check_generated_readme: bool = True) -> list[str]:
     problems: list[str] = []
     floor, phase2_count, entries = load(root)
+    # Before the closed world, the name space it is closed over: a collision
+    # makes both directions below agree about a roster that is one short.
+    problems.extend(
+        prefix_collisions(p.stem for p in (root / "formal").glob("*.cfg"))
+    )
     cfgs = roster(root)
 
     for bug in sorted(set(cfgs) - set(entries)):

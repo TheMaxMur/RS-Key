@@ -1046,10 +1046,11 @@ running it: `meta_add_keeps_records_when_ef_meta_unknown` drives the
 unknown-cache door, and nothing drove a `meta_add` over an `EF_META` read that
 *faults* — the mutant that treats the fault as an empty blob stayed green.
 `a_faulted_ef_meta_read_never_rebuilds_the_blob_from_empty` closes it,
-re-measured killed. `SeamMut_*` stays outside the co-refutation roster
-deliberately — the seam defects' fixes carry their own YubiKey-measured
-regression tests, and their co-refutation is M4's work; the exclusion is stated
-in `comutate.py`'s docstring rather than implied by a glob.
+re-measured killed. `SeamMut_*` joined the roster with the applet batch below;
+until then it was excluded on the argument that the seam defects' fixes carry
+their own YubiKey-measured regression tests — which was true of the fixes and
+said nothing about the rules, three of which turned out to be asserted by the
+model alone.
 
 **What it abstracts, stated in the risk direction.** Values are two opaque
 tokens: the model sees "which of two values, or absent", never a length or a
@@ -1125,11 +1126,13 @@ are absent: a MAC / equality challenge-response has *no retry counter*, so a
 wrong answer costs nothing — the seam module's exempt-refusal territory, and
 their acceptance is the group-E oracle's. OpenPGP's admin path to PW1 (RESET
 RETRY `P1 = 0x02`) is out too: it gates on a live PW3 *session*, which is the
-seam module's status, not a secret presented in the call. And the co-refutation
-apparatus does not reach these mutants yet — a naive injection measures a `u8`
-underflow rather than a blocked reference authenticating (the floor and the
-counter's type are two layers), so `LatMut_*` is stated as excluded in
-`comutate.py` rather than silently skipped.
+seam module's status, not a secret presented in the call. `LatMut_*` is
+co-refuted since the applet batch below, and the exclusion it carried until then
+had a real reason: a naive injection measures a `u8` underflow rather than a
+blocked reference authenticating, because the floor and the counter's type are
+two layers. The patch that resolves it is one substitution — rebinding `left` to
+`left.max(1)` removes the floor AND keeps the arithmetic under it in range, so
+what the slice fails on is the property rather than a panic.
 
 ## The fifth module — `RSKeyAppletPolicies.tla`
 
@@ -1166,9 +1169,44 @@ private and public slot records before publishing a changed attribute; the
 host regression `changing_algo_attr_invalidates_the_key_pair` fails on the old
 ordering. This is a firmware behaviour change, hence `bcdDevice` 0x095B.
 
-`PolicyMut_*` is explicitly outside the current co-refutation roster. The
-OpenPGP finding has its direct regression above; exact source patches for the
-other six are a later co-refutation batch, not an implied glob.
+All seven `PolicyMut_*` are co-refuted since the applet batch below — the
+"later batch" this paragraph used to promise. Each of the other six reddens its
+own crate's slice: PIV's two at `auth.rs`, OATH's two at `cmd_calculate`, and
+OTP's at the configure/update gate and at `next_use_counter`.
+
+### The applet batch — 24 mutants, and the five rules nothing held
+
+The first 43 co-refutation patches put 31 of themselves in `rsk-fido`,
+`rsk-device` and `rsk-fs`. `rsk-piv`, `rsk-openpgp`, `rsk-oath` and `rsk-otp` —
+33 773 lines, and the subject of four of the nine modules — held **none**. So
+"the applet models are green" was fidelity nobody had measured, and each of the
+three exclusions above was an argument rather than a measurement. Extending the
+roster over `SeamMut_*`, `LatMut_*` and `PolicyMut_*` measured them: **19 of 24
+were co-refuted on the first run, and five came back `gap`.**
+
+| Gap | What the code level could not see |
+|---|---|
+| `BugSigPinNotSpent` | `inc_sig_count` clearing PW1 under the one-shot PW status — the §7.2.10 rule that one VERIFY signs once. No host test presented C4 `00` at all. |
+| `BugPwStatusIgnoresAdmin` | `put_pw_status`'s own PW3 gate. The only session the tests ever gave it was a VIRGIN one, which the dispatch's `write_authorized` refuses anyway — so the inner gate could be deleted with everything green. |
+| `BugRemoveCodeUnvalidated` | SEC-SEAM-006's own defect. The model's blindness here was closed two revisions ago; the Rust half was asserted by nobody, so `73 00` past the gate was a green run. |
+| `BugRefusedValidateGrants` | A refused OATH VALIDATE that *unlocks* while still answering `6A80`. |
+| `BugRefusedValidateDropsUnlock` | And the other direction — a refused VALIDATE dropping a standing unlock, which costs availability and protects no counter. |
+
+Three regressions close all five —
+`the_one_shot_pw_status_spends_pw1_at_the_signature`,
+`the_pw_status_byte_refuses_a_user_status`,
+`the_removal_is_behind_the_same_gate_as_the_install` and
+`a_refused_validate_neither_grants_nor_drops_the_unlock` — each re-measured
+killed with the mutant applied, and each failing on exactly one assertion rather
+than taking a suite down with it. The live roster is **67 entries: 65 executable
+patches killed, two unreachable, zero gaps.**
+
+Two of the five are worth reading twice. `BugPwStatusIgnoresAdmin` is not a
+missing test of a rule, it is a defence in depth *no test could distinguish from
+its neighbour*: an outer gate covered it, so the inner one was free to rot. And
+`BugRemoveCodeUnvalidated` is the same shape one layer up — the model's hole and
+the code's hole were the same rule, found two revisions apart, and closing the
+model's half did nothing for the Rust's.
 
 ## The sixth module — `RSKeyAdminSurface.tla`
 

@@ -2791,3 +2791,54 @@ fn put_data_judges_the_tag_before_the_body_length() {
         "the writable set, in full"
     );
 }
+
+// Derived by co-refutation (`scripts/comutate.py`): re-injecting the model's
+// `BugSigPinNotSpent` left every host test green. The one-shot rule was carried
+// by `RSKeyAppletSeams` and by nothing under it.
+#[test]
+fn the_one_shot_pw_status_spends_pw1_at_the_signature() {
+    // OpenPGP 3.4 §7.2.10: with DO C4's first byte at 0x00, "PW1 valid for one
+    // PSO:CDS" — the second signature must ask again. `inc_sig_count` is where
+    // that is enforced, *after* the signature, and the flag's only writer is a
+    // PW3 PUT DATA C4 (which is why the two live or die together).
+    let rng = RefCell::new(CountRng(7));
+    let mut fs = make_fs();
+    let presence = RefCell::new(crate::AlwaysConfirm);
+    let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
+    verify_pin(&mut app, &mut fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
+    assert_eq!(put(&mut app, &mut fs, 0x00, 0xC1, ATTR_P256), Sw::OK);
+    assert_eq!(
+        run(&mut app, &mut fs, &ec_import(0xB6, &[0x11u8; 32])).1,
+        Sw::OK
+    );
+
+    let digest = [0x42u8; 32];
+    let mut sign = vec![0x00, consts::INS_PSO, 0x9E, 0x9A, digest.len() as u8];
+    sign.extend_from_slice(&digest);
+
+    // Default (0x01) is "valid for several": both signatures pass on one VERIFY.
+    verify_pin(&mut app, &mut fs, consts::PW1_MODE81, consts::PW1_DEFAULT);
+    assert_eq!(run(&mut app, &mut fs, &sign).1, Sw::OK);
+    assert_eq!(
+        run(&mut app, &mut fs, &sign).1,
+        Sw::OK,
+        "0x01 is not one-shot"
+    );
+
+    // One-shot (0x00): the first passes, the second is 6982 until PW1 is
+    // presented again — and then it is one-shot once more.
+    assert_eq!(put(&mut app, &mut fs, 0x00, 0xC4, &[0x00]), Sw::OK);
+    verify_pin(&mut app, &mut fs, consts::PW1_MODE81, consts::PW1_DEFAULT);
+    assert_eq!(run(&mut app, &mut fs, &sign).1, Sw::OK);
+    assert_eq!(
+        run(&mut app, &mut fs, &sign).1,
+        Sw::SECURITY_STATUS_NOT_SATISFIED,
+        "the one-shot PW status did not spend PW1",
+    );
+    verify_pin(&mut app, &mut fs, consts::PW1_MODE81, consts::PW1_DEFAULT);
+    assert_eq!(run(&mut app, &mut fs, &sign).1, Sw::OK);
+    assert_eq!(
+        run(&mut app, &mut fs, &sign).1,
+        Sw::SECURITY_STATUS_NOT_SATISFIED,
+    );
+}

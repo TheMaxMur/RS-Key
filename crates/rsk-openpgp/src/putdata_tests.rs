@@ -266,3 +266,39 @@ fn put_aes_key_is_pw3_gated_on_a_direct_call() {
     admin(&mut fs, &mut sess);
     assert_eq!(put_aes_key(&dev(), &mut fs, &sess, &key), Sw::OK);
 }
+
+fn user(fs: &mut Fs<RamStorage>, sess: &mut Session) {
+    for mode in [PW1_MODE81, PW1_MODE82] {
+        assert_eq!(
+            verify(&dev(), fs, sess, &mut CountRng(0), 0x00, mode, PW1_DEFAULT),
+            Sw::OK
+        );
+    }
+}
+
+#[test]
+fn the_pw_status_byte_refuses_a_user_status() {
+    // Co-refutation found this one: `put_pw_status`'s own PW3 gate could be
+    // removed with every test still green, because the only session the file
+    // ever offered it was a VIRGIN one — which the dispatch's `write_authorized`
+    // refuses anyway. A defence in depth nothing distinguishes from its
+    // neighbour is a defence nothing measures, so this presents the case the
+    // outer gate does not cover: PW1 and PW2 up, PW3 down.
+    //
+    // It matters because C4 is the one-shot flag's only writer: a user status
+    // that could clear it would sign for ever on a single PW1 VERIFY — the rule
+    // `the_one_shot_pw_status_spends_pw1_at_the_signature` pins, taken from
+    // underneath rather than through the door it watches.
+    let (mut fs, mut sess) = setup();
+    user(&mut fs, &mut sess);
+    assert!(sess.has_pw1 && sess.has_pw2 && !sess.has_pw3);
+    assert_eq!(
+        put_pw_status(&mut fs, &sess, &[0x00]),
+        Sw::SECURITY_STATUS_NOT_SATISFIED
+    );
+    let mut pw = [0u8; 7];
+    let n = fs.read(EF_PW_PRIV, &mut pw).unwrap();
+    assert_eq!(pw[..n][0], 0x01, "the flag moved on a user status");
+    admin(&mut fs, &mut sess);
+    assert_eq!(put_pw_status(&mut fs, &sess, &[0x00]), Sw::OK);
+}

@@ -286,3 +286,20 @@ def test_run_carries_uncommitted_work(tmp_path):
     }
     verdict, _ = comutate.run_one(root, "BugAlpha", entry, "any-host")
     assert verdict == "gap", "the uncommitted edit was not carried into the worktree"
+
+
+def test_a_prefix_collision_is_named():
+    # The guard's own falsification. Two families, one bug name: `roster` keys
+    # on the stripped name, so the second silently overwrites the first and the
+    # closed world stays green over a roster one mutant short.
+    clashes = comutate.prefix_collisions(["Mut_BugX", "SeamMut_BugX", "Mut_BugY"])
+    assert len(clashes) == 1, clashes
+    assert "BugX" in clashes[0]
+
+
+def test_the_shipped_families_share_no_bug_name():
+    # And the same guard over the real tree, which is what the lint runs. It is
+    # green today because the eight families are disjoint — not because the
+    # check is toothless; the case above proves it bites.
+    stems = [p.stem for p in (comutate.ROOT / "formal").glob("*.cfg")]
+    assert comutate.prefix_collisions(stems) == []

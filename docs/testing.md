@@ -460,7 +460,7 @@ The companion co-refutation run asks whether production tests reject those
 same semantic defects. The original phase-2 baseline is fixed at 28 rows:
 26 are killed by code-level harnesses, two are unreachable by construction,
 and none remains a gap. Its generated table is in `formal/README.md`; ordinary
-`check.sh` rejects drift, while the full 43-entry live roster runs weekly:
+`check.sh` rejects drift, while the full 67-entry live roster runs weekly:
 
 ```sh
 python scripts/comutate.py --lint
