@@ -2842,3 +2842,25 @@ fn the_one_shot_pw_status_spends_pw1_at_the_signature() {
         Sw::SECURITY_STATUS_NOT_SATISFIED,
     );
 }
+
+// The wire half of `the_pw_status_byte_refuses_a_user_status`. PUT DATA is gated
+// twice — `write_authorized` at the dispatch and `put_pw_status`'s own
+// restatement — and co-refutation showed why both need asserting: widening only
+// the inner one still answered 6982 at the command, so the kill measured a
+// defence in depth rather than the modelled defect.
+#[test]
+fn put_data_c4_refuses_a_user_status() {
+    let rng = RefCell::new(CountRng(7));
+    let mut fs = make_fs();
+    let presence = RefCell::new(crate::AlwaysConfirm);
+    let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
+    verify_pin(&mut app, &mut fs, consts::PW1_MODE81, consts::PW1_DEFAULT);
+    verify_pin(&mut app, &mut fs, consts::PW1_MODE82, consts::PW1_DEFAULT);
+    assert_eq!(
+        put(&mut app, &mut fs, 0x00, 0xC4, &[0x00]),
+        Sw::SECURITY_STATUS_NOT_SATISFIED,
+        "a user status wrote the one-shot flag",
+    );
+    verify_pin(&mut app, &mut fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
+    assert_eq!(put(&mut app, &mut fs, 0x00, 0xC4, &[0x00]), Sw::OK);
+}

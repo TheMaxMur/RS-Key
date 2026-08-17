@@ -40,18 +40,21 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Added
 
-- **Co-refutation now covers the applet models, and found five rules the host
+- **Co-refutation now covers the applet models, and found four rules the host
   tests could not hold.** The roster gains the 24 seam, retry-lattice and policy
   mutants — the three families excluded until now — taking it to 67 entries with
-  65 executable patches killed and two unreachable. Nineteen were co-refuted on
-  the first run; the five gaps were the one-shot PW1 rule at PSO:CDS, PUT DATA
-  C4's own PW3 gate, the OATH access-code removal gate (SEC-SEAM-006's Rust
+  63 executable patches killed and four unreachable. The gaps were the one-shot
+  PW1 rule at PSO:CDS, the OATH access-code removal gate (SEC-SEAM-006's Rust
   half, whose model half was closed two revisions earlier) and both directions of
-  a refused OATH VALIDATE. Three regression tests close them, each re-measured
-  killed under its mutant. The lint also gains a name-collision guard: the eight
-  mutant families share one roster key space, and a reused bug name would have
-  overwritten an entry rather than colliding loudly. Tests and tooling only, no
-  firmware behaviour change.
+  a refused OATH VALIDATE; five regression tests close them and assert the PW
+  status byte's outer gate at the wire. An adversarial review of the batch found
+  two further verdicts were kills for the wrong reason — the patches modelled the
+  inverse or a wider defect than their switch — and their faithful versions are
+  recorded `unreachable` with evidence. The lint gains two closed-world guards:
+  a name collision across the eight mutant families (which would overwrite a
+  roster entry instead of colliding) and a Solo configuration with no mutant of
+  its own family (which steals the invariant that mutant is judged by). Tests and
+  tooling only, no firmware behaviour change.
 
 - **Formal-verification phase 6 adds a cross-reset refinement pilot over the
   real `rsk-fs` power-cut stack.** `ResetNeverWeakensSurvivingState` and its

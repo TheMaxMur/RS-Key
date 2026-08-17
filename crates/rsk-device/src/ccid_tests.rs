@@ -289,8 +289,9 @@ fn an_empty_slot_types_nothing_either() {
 
 #[test]
 fn a_card_reset_drops_the_selection() {
-    // `SCardDisconnect(SCARD_RESET_CARD)` must really force re-selection and
-    // re-authentication instead of leaving a verified PIN for whoever connects next.
+    // `SCardDisconnect(SCARD_RESET_CARD)` must really force re-selection. This is
+    // the load-bearing half: everything else about re-authentication follows from
+    // the fresh SELECT it forces — see the sibling below, which measures that.
     let env = Env::new();
     let mut ccid = env.ccid();
     assert_eq!(
@@ -501,4 +502,42 @@ mod pinpad {
         assert!(!ccid.pin_ref_ready(0x00));
         assert!(!ccid.pin_ref_ready(0xFF));
     }
+}
+
+#[test]
+fn a_card_reset_drops_the_verified_pin_too() {
+    // The end-to-end half `a_card_reset_drops_the_selection` claimed in prose and
+    // never checked: after a reset the card must ask for the PIN again.
+    //
+    // What HOLDS it is worth saying, because it is not the applets' `deselect`.
+    // Co-refutation measured that: skip the deselect and this stays green, since
+    // dropping `self.current` sends every later command through a fresh
+    // `select(reselect = false)`, and all three status-carrying applets re-lock
+    // there anyway. So the deselect is defence in depth and the SELECTION is the
+    // load-bearing half — which is why the sibling above keeps asserting it.
+    let env = Env::new();
+    let mut ccid = env.ccid();
+    let verify = apdu(0x00, 0x20, 0x00, 0x80, &rsk_piv::files::DEFAULT_PIN);
+    // VERIFY with no body is SP 800-73-4's "am I verified" probe: 9000 while the
+    // status stands, 63Cx once it is gone.
+    let status = apdu(0x00, 0x20, 0x00, 0x80, &[]);
+
+    assert_eq!(
+        sw(ccid.handle_apdu(&select(rsk_piv::PIV_AID))),
+        rsk_sdk::Sw::OK
+    );
+    assert_eq!(sw(ccid.handle_apdu(&verify)), rsk_sdk::Sw::OK);
+    assert_eq!(sw(ccid.handle_apdu(&status)), rsk_sdk::Sw::OK);
+
+    ccid.reset_card();
+
+    assert_eq!(
+        sw(ccid.handle_apdu(&select(rsk_piv::PIV_AID))),
+        rsk_sdk::Sw::OK
+    );
+    assert_ne!(
+        sw(ccid.handle_apdu(&status)),
+        rsk_sdk::Sw::OK,
+        "the card reset left a verified PIN for whoever connects next",
+    );
 }

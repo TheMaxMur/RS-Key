@@ -861,7 +861,7 @@ replace = """
 """
 slice = ["cargo", "test", "-p", "rsk-piv"]
 expect = "killed"
-note = "check_ref's blocked floor removed: an exhausted PIN/PUK compares and authenticates. OpenPGP's twin floor (pin.rs:200-202) is the same switch's other half and is not in this entry — one entry, one file."
+note = "check_ref's blocked floor removed: an exhausted PIN/PUK compares and authenticates. OpenPGP's twin floor (pin.rs:202-206) is the same switch's other half and is not in this entry — one entry, one file."
 
 [comutant.BugWrongDoesNotSpend]
 status = "patch"
@@ -875,7 +875,7 @@ replace = """
 """
 slice = ["cargo", "test", "-p", "rsk-openpgp"]
 expect = "killed"
-note = "pin_wrong_retry stops charging the attempt: unlimited PW1/PW3/RC guesses at full speed. Deliberately the OpenPGP half of this switch, so the lattice's three entries cover both applets rather than PIV three times."
+note = "pin_wrong_retry stops charging the attempt: unlimited PW1/PW3/RC guesses at full speed. Deliberately the OpenPGP half of this switch, so the lattice's three entries cover both applets rather than PIV three times; PIV's twin is the `set_retries_left(fs, retry, left - 1)` at crates/rsk-piv/src/lib.rs:1206."
 
 [comutant.BugRecoveryWithoutSecret]
 status = "patch"
@@ -891,7 +891,7 @@ replace = """
 """
 slice = ["cargo", "test", "-p", "rsk-piv"]
 expect = "killed"
-note = "RESET RETRY COUNTER refills the PIN budget without proving the PUK — a budget raised out of nothing. OpenPGP's RC twin is pin.rs:766."
+note = "RESET RETRY COUNTER refills the PIN budget without proving the PUK — a budget raised out of nothing. OpenPGP's RC twin is pin.rs:769."
 
 # ---- RSKeyAppletPolicies: slot policy, attributes, gates, counter ----------
 
@@ -1006,7 +1006,7 @@ replace2 = """
 """
 slice = ["cargo", "test", "-p", "rsk-otp"]
 expect = "killed"
-note = "a programmed slot is overwritten (find) or updated (find2) without its six-byte access code. Two anchors because the gate is written twice — the model has ONE OtpMutate switch, so patching one site would leave the other half of the switch unmeasured. The swap path states it a third time (lib.rs:564-569)."
+note = "a programmed slot is overwritten (find) or updated (find2) without its six-byte access code. Two anchors because the gate is written twice — the model has ONE OtpMutate switch, so patching one site would leave the other half of the switch unmeasured. The swap path states the same rule a THIRD time, at lib.rs:570-574, and is left unpatched — three anchors is this schema's ceiling."
 
 [comutant.BugOtpCounterRepeats]
 status = "patch"
@@ -1056,19 +1056,22 @@ expect = "killed"
 note = "637ed98 taken back out on the PIV half: every SELECT resets, including the re-SELECT SP 800-73-4 pt2 §3.1.1 says shall leave every indicator unchanged. OpenPGP's twin is lib.rs:372-375."
 
 [comutant.BugCardResetKeepsStatus]
-status = "patch"
-file = "crates/rsk-device/src/ccid.rs"
-find = """
-        let mut fsb = self.fs.borrow_mut();
-        self.disp.reset_card(&mut applets, &mut *fsb);
-"""
-replace = """
-        let mut fsb = self.fs.borrow_mut();
-        let _ = (&mut applets, &mut *fsb);
-"""
-slice = ["cargo", "test", "-p", "rsk-device"]
-expect = "killed"
-note = "an ICC power transition stops clearing the applets' access status, so SCardDisconnect(SCARD_RESET_CARD) leaves a verified PIN for whoever connects next."
+status = "unreachable"
+evidence = """the applets' deselect is redundant with their own fresh SELECT, so
+removing it from the ICC power transition changes nothing observable. Three
+applets carry an access status and implement deselect — rsk-piv/src/lib.rs:1006
+(sess.reset), rsk-openpgp/src/lib.rs:381 (reset_session), rsk-oath/src/lib.rs:1198
+(validated + otp_pin_verified) — and all three ALSO re-lock in select: piv and
+openpgp on `if !reselect`, oath by recomputing `validated = !code_set` and clearing
+otp_pin_verified unconditionally (lib.rs:1234-1235). After Dispatcher::reset_card
+takes `self.current` (rsk-sdk/src/applet.rs:227) every route back to an applet is a
+`select(reselect = false)`, so no reachable command sees an inherited status.
+The first patch here neutered the WHOLE reset_card call and scored a false kill:
+the only test that fell was `a_card_reset_drops_the_selection`, which asserts the
+selection and never verifies a PIN. The faithful mutant — an empty applet slice,
+selection still dropped — is GREEN over 68 tests. What keeps this argument true is
+the selection half, and that IS asserted, here and by rsk-sdk's
+`reset_card_clears_selection_and_security_status`."""
 
 [comutant.BugAdminOpensKeyOps]
 status = "patch"
@@ -1085,9 +1088,21 @@ replace = """
             }
             (EF_ALGO_PRIV1, EF_PK_SIG)
 """
+find2 = """
+            if !sess.has_pw2 {
+                return Err(Sw::SECURITY_STATUS_NOT_SATISFIED);
+            }
+            (sess.algo_dec, sess.pk_dec)
+"""
+replace2 = """
+            if !sess.has_pw2 && !sess.has_pw3 {
+                return Err(Sw::SECURITY_STATUS_NOT_SATISFIED);
+            }
+            (sess.algo_dec, sess.pk_dec)
+"""
 slice = ["cargo", "test", "-p", "rsk-openpgp"]
 expect = "killed"
-note = "e5da38b taken back out on PSO:CDS: the admin PIN signs. §7.2.10 names PW1 no. 81 and nothing else, and a YubiKey 5.7.4 answers 6982 to PW3 alone."
+note = "e5da38b taken back out: the admin PIN signs and deciphers. The switch quantifies over r in {pw1, pw2} and its comment names PSO:CDS (§7.2.10, find) and PSO:DECIPHER (§7.2.11, find2); a YubiKey 5.7.4 answers 6982 to PW3 alone on both. Two more sites carry the same rule and are NOT patched here, because one entry holds at most three anchors and each is its own gate: INTERNAL AUTHENTICATE at crates/rsk-openpgp/src/internalaut.rs:46-48 (§7.2.13, PW1 no. 82) and the AES PSO arm at crates/rsk-openpgp/src/pso.rs:72-74."
 
 [comutant.BugFailedChangeKeepsStatus]
 status = "patch"
@@ -1122,18 +1137,8 @@ expect = "killed"
 note = "both layers, as the model's switch has them: the ALWAYS arm stops reading freshness AND the operation stops spending it. Its policy sibling BugPivAlwaysDoesNotSpend takes only the spend, so the two are not the same patch twice."
 
 [comutant.BugPinFreshOutlivesPin]
-status = "patch"
-file = "crates/rsk-piv/src/lib.rs"
-find = """
-        self.has_pin = verified;
-        self.pin_fresh = verified;
-"""
-replace = """
-        self.has_pin = verified;
-"""
-slice = ["cargo", "test", "-p", "rsk-piv"]
-expect = "killed"
-note = "the clamp removed: pin_fresh outlives the has_pin status it refines, so a cleared PIN status leaves an ALWAYS slot's freshness standing behind it."
+status = "unreachable"
+evidence = "the clamp is unobservable in today's Rust. `pin_fresh` has exactly one reader — crates/rsk-piv/src/auth.rs:64, `PINPOLICY_ALWAYS => sess.has_pin && sess.pin_fresh` — and it is CONJOINED with the status it refines, so a freshness that outlives `has_pin` authorises nothing: the guard is already false on the other half. `Session::set_pin` (lib.rs:137-140) is the only writer that sets it TRUE, and `GenAuth::spend_pin` (auth.rs:114-120) only ever sets it false. The first patch here scored a false kill by taking `self.pin_fresh = verified` out of `set_pin`, which is the INVERSE defect — it makes freshness unreachable rather than immortal, fail-closed rather than fail-open, and all 11 failures were 9000-expected-got-6982. The faithful mutant (`if verified { self.pin_fresh = true; }` — grant kept, clamp dropped) measures GREEN over 130 tests. The model keeps `pfresh` as a second requirement-side copy precisely to expose a split the Rust does not have."
 
 [comutant.BugSigPinNotSpent]
 status = "patch"
@@ -1171,7 +1176,7 @@ replace = """
 """
 slice = ["cargo", "test", "-p", "rsk-openpgp"]
 expect = "killed"
-note = "the converse of BugAdminOpensKeyOps: a USER status opens PUT DATA's administrative surface. PIV's twin is the 9B management key."
+note = "the converse of BugAdminOpensKeyOps: a USER status opens PUT DATA's administrative surface. PIV states the same rule at seven separate 9B management-key gates (crates/rsk-piv/src/lib.rs:242, 548, 619, 747, 984, 1044 and keygen.rs:588), none of them patched here."
 
 [comutant.BugRefusedValidateGrants]
 status = "patch"
@@ -1195,16 +1200,32 @@ note = "a refused VALIDATE grants the unlock while still answering 6A80 — the 
 status = "patch"
 file = "crates/rsk-openpgp/src/putdata.rs"
 find = """
+    if fid == EF_PRIV_DO_1 || fid == EF_PRIV_DO_3 {
+        sess.has_pw2
+    } else {
+        sess.has_pw3
+    }
+"""
+replace = """
+    if fid == EF_PRIV_DO_1 || fid == EF_PRIV_DO_3 {
+        sess.has_pw2
+    } else if fid == EF_PW_STATUS {
+        sess.has_pw3 || sess.has_pw1 || sess.has_pw2
+    } else {
+        sess.has_pw3
+    }
+"""
+find2 = """
 pub fn put_pw_status<S: Storage>(fs: &mut Fs<S>, sess: &Session, data: &[u8]) -> Sw {
     if !sess.has_pw3 {
 """
-replace = """
+replace2 = """
 pub fn put_pw_status<S: Storage>(fs: &mut Fs<S>, sess: &Session, data: &[u8]) -> Sw {
     if !sess.has_pw3 && !sess.has_pw1 && !sess.has_pw2 {
 """
 slice = ["cargo", "test", "-p", "rsk-openpgp"]
 expect = "killed"
-note = "PUT DATA C4 taken off PW3: a user status clears the one-shot flag and then signs for ever on a single PW1 VERIFY — BugSigPinNotSpent's requirement removed from underneath rather than through the door it watches."
+note = "PUT DATA C4 taken off PW3: a user status clears the one-shot flag and then signs for ever on a single PW1 VERIFY — BugSigPinNotSpent's requirement removed from underneath rather than through the door it watches. BOTH layers, because C4 is double-gated: the model's own comment names `write_authorized` (called at lib.rs:286-288) as the guard, and widening only put_pw_status's inner restatement left the wire command still answering 6982 — a kill that measured a defence in depth rather than the modelled defect. Its sibling BugUserStatusOpensAdmin widens the same function's whole else-arm; this one widens the C4 case alone, which is the door PgpSetPwStatus watches."
 
 [comutant.BugPivChangeResetsStatus]
 status = "patch"

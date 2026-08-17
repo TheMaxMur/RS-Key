@@ -298,8 +298,35 @@ def test_a_prefix_collision_is_named():
 
 
 def test_the_shipped_families_share_no_bug_name():
-    # And the same guard over the real tree, which is what the lint runs. It is
-    # green today because the eight families are disjoint — not because the
-    # check is toothless; the case above proves it bites.
+    # The same guard over the real tree. NOT what the lint runs — the lint builds
+    # its own glob inside `lint()`, and saying otherwise here is what would
+    # convince a reviewer the wiring is covered; `test_a_collision_reddens_the_lint`
+    # is the one that covers it. Green today because the eight families are
+    # disjoint, not because the check is toothless: the case above proves it bites.
     stems = [p.stem for p in (comutate.ROOT / "formal").glob("*.cfg")]
     assert comutate.prefix_collisions(stems) == []
+    assert comutate.orphan_solos(stems) == []
+
+
+def test_a_collision_reddens_the_lint(tree):
+    # The WIRING, not the function. Both guards passed their own falsification
+    # while the lines that call them from `lint()` were covered by nothing: delete
+    # those and the suite stayed green over a roster one mutant short, and the
+    # weekly co-refutation job — which runs `run`, never pytest — would have
+    # measured it and reported success. Driven through `lint()`, like every other
+    # closed-world case in this file.
+    (tree / "formal" / "SeamMut_BugAlpha.cfg").write_text(
+        "SPECIFICATION Spec\nINVARIANTS\n    TypeOK\n    FooHolds\n"
+    )
+    red(tree, "are one roster key")
+
+
+def test_an_unpaired_solo_reddens_the_lint(tree):
+    # A Solo file whose family has no mutant of that name. `solo_invariant` keeps
+    # the LAST family whose Solo exists, so this steals the invariant BugStore is
+    # judged by — and `roster` cannot see it, because the stem matches no `Mut_`
+    # prefix. Also driven through `lint()`.
+    (tree / "formal" / "SeamSolo_BugStore.cfg").write_text(
+        "SPECIFICATION Spec\nINVARIANTS\n    TypeOK\n    StolenHolds\n"
+    )
+    red(tree, "has no SeamMut_BugStore.cfg")

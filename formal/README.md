@@ -1181,32 +1181,63 @@ The first 43 co-refutation patches put 31 of themselves in `rsk-fido`,
 33 773 lines, and the subject of four of the nine modules — held **none**. So
 "the applet models are green" was fidelity nobody had measured, and each of the
 three exclusions above was an argument rather than a measurement. Extending the
-roster over `SeamMut_*`, `LatMut_*` and `PolicyMut_*` measured them: **19 of 24
-were co-refuted on the first run, and five came back `gap`.**
+roster over `SeamMut_*`, `LatMut_*` and `PolicyMut_*` measured them.
+
+**Nineteen of the 24 were co-refuted on the first run. Five came back `gap` —
+and an adversarial review of the batch then found that two of those five were
+not the tree's fault but the batch's:** the patch modelled a different defect
+from the switch it was named after. Both halves are worth recording, because the
+first is what co-refutation is for and the second is what it costs.
+
+**Three real gaps, each closed by a regression:**
 
 | Gap | What the code level could not see |
 |---|---|
-| `BugSigPinNotSpent` | `inc_sig_count` clearing PW1 under the one-shot PW status — the §7.2.10 rule that one VERIFY signs once. No host test presented C4 `00` at all. |
-| `BugPwStatusIgnoresAdmin` | `put_pw_status`'s own PW3 gate. The only session the tests ever gave it was a VIRGIN one, which the dispatch's `write_authorized` refuses anyway — so the inner gate could be deleted with everything green. |
+| `BugSigPinNotSpent` | `inc_sig_count` clearing PW1 under the one-shot PW status — the §7.2.10 rule that one VERIFY signs once. No host test wrote C4 = `00` at all. |
 | `BugRemoveCodeUnvalidated` | SEC-SEAM-006's own defect. The model's blindness here was closed two revisions ago; the Rust half was asserted by nobody, so `73 00` past the gate was a green run. |
-| `BugRefusedValidateGrants` | A refused OATH VALIDATE that *unlocks* while still answering `6A80`. |
-| `BugRefusedValidateDropsUnlock` | And the other direction — a refused VALIDATE dropping a standing unlock, which costs availability and protects no counter. |
+| `BugRefusedValidateGrants` / `BugRefusedValidateDropsUnlock` | Both directions of a refused OATH VALIDATE — one that *unlocks* while answering `6A80`, and one that drops a standing unlock a MAC challenge-response has no counter to protect. |
 
-Three regressions close all five —
 `the_one_shot_pw_status_spends_pw1_at_the_signature`,
-`the_pw_status_byte_refuses_a_user_status`,
 `the_removal_is_behind_the_same_gate_as_the_install` and
-`a_refused_validate_neither_grants_nor_drops_the_unlock` — each re-measured
-killed with the mutant applied, and each failing on exactly one assertion rather
-than taking a suite down with it. The live roster is **67 entries: 65 executable
-patches killed, two unreachable, zero gaps.**
+`a_refused_validate_neither_grants_nor_drops_the_unlock` close them, each
+re-measured killed with its mutant applied and each failing on exactly one
+assertion rather than taking a suite down with it.
 
-Two of the five are worth reading twice. `BugPwStatusIgnoresAdmin` is not a
-missing test of a rule, it is a defence in depth *no test could distinguish from
-its neighbour*: an outer gate covered it, so the inner one was free to rot. And
-`BugRemoveCodeUnvalidated` is the same shape one layer up — the model's hole and
-the code's hole were the same rule, found two revisions apart, and closing the
-model's half did nothing for the Rust's.
+**Two were the batch's own defects, and both resolve to `unreachable`:**
+
+- `BugPinFreshOutlivesPin` was patched by deleting `self.pin_fresh = verified`
+  from `Session::set_pin` — which is the **inverse** defect. That writer is the
+  only one that ever sets freshness true, so the patch makes an ALWAYS slot
+  permanently unusable: fail-closed, where the switch is fail-open. All eleven
+  failures read "expected 9000, got 6982" — not one was an operation that should
+  have been refused succeeding. The faithful mutant is green, and the reason is
+  the finding: `pin_fresh` has exactly one reader,
+  `crates/rsk-piv/src/auth.rs:64`, **conjoined** with the status it refines, so a freshness that outlives `has_pin` authorises
+  nothing.
+- `BugCardResetKeepsStatus` was patched by neutering the whole `reset_card`
+  call, which also stops the SELECTION being dropped — and the only test that
+  fell asserts the selection and never verifies a PIN. With the faithful mutant
+  (an empty applet slice; the selection still goes) the slice is green, because
+  every route back to an applet after a card reset is a fresh
+  `select(reselect = false)` and all three status-carrying applets re-lock there.
+
+Neither is a hole in the tests: both are defence in depth whose removal changes
+no observable behaviour, which is a stronger answer than a gap and a weaker one
+than a kill. The lesson is the one this file keeps relearning one layer at a
+time — **a red run is not evidence until you read WHY it went red.** A kill for
+the wrong reason is the same failure as a green that proves nothing, wearing
+the opposite colour. Two of 24 patches had it, and no amount of staring at
+verdict columns would have shown it; reading the panic messages did.
+
+A third entry needed re-deriving without changing its verdict:
+`BugPwStatusIgnoresAdmin` widened `put_pw_status`'s inner PW3 gate, which the
+dispatch's `write_authorized` shadows — the wire command still answered `6982`,
+so the kill measured a defence in depth rather than the modelled defect. It now
+widens both layers, and `put_data_c4_refuses_a_user_status` drives the command
+so the outer gate is asserted too.
+
+The live roster is **67 entries: 63 executable patches killed, four unreachable
+with recorded evidence, zero gaps.**
 
 ## The sixth module — `RSKeyAdminSurface.tla`
 

@@ -18,8 +18,8 @@ the answer to a measured skew: 31 of the first 43 patches landed in `rsk-fido`,
 modules are written about held ZERO. "TLC is green over the applets" was
 therefore fidelity nobody had measured, not fidelity measured and found good.
 
-Two families remain DELIBERATELY out, because an exclusion stated here is a plan
-and one implied by a glob is a hole:
+Three families remain DELIBERATELY out, because an exclusion stated here is a
+plan and one implied by a glob is a hole:
 
 * `BootMut_*` — two of its three defended sites live in `firmware/` (the
   marker-after-lap order in main.rs:621-622, the scratch-word carry in
@@ -127,8 +127,34 @@ def roster(root: pathlib.Path) -> dict[str, str]:
     return out
 
 
+def orphan_solos(stems) -> list[str]:
+    """`Bug*` Solo configurations with no mutant of their own family.
+
+    The other half of the same closed world. `solo_invariant` resolves a bug by
+    walking the families and keeping the LAST Solo file that exists, so a stray
+    `<Family>Solo_<Bug>.cfg` — a leftover rename, or a Solo written ahead of its
+    mutant — silently STEALS the invariant another family's mutant is judged by,
+    and `roster` never sees it because the stem matches no `Mut_` prefix. Only
+    `Bug*` stems are paired: `Solo_<Invariant>.cfg` and `SoloClause_*.cfg` are
+    solo runs of an invariant or a clause, which have no mutant by design.
+    """
+    have = set(stems)
+    out: list[str] = []
+    for stem in sorted(have):
+        for mut_pre, solo_pre in PREFIXES:
+            if stem.startswith(solo_pre):
+                bug = stem.removeprefix(solo_pre)
+                if bug.startswith("Bug") and f"{mut_pre}{bug}" not in have:
+                    out.append(
+                        f"{stem}.cfg has no {mut_pre}{bug}.cfg — a Solo without "
+                        "its own mutant steals the invariant that mutant is "
+                        "judged by"
+                    )
+    return out
+
+
 def prefix_collisions(stems) -> list[str]:
-    """Configuration stems that two prefixes would map onto ONE roster key.
+    """Problem lines for configuration stems two prefixes map onto ONE key.
 
     Eight families share one name space, and `roster` keys on the name with its
     prefix stripped: a second `BugX` under another prefix does not collide
@@ -255,10 +281,11 @@ def lint(root: pathlib.Path, check_generated_readme: bool = True) -> list[str]:
     problems: list[str] = []
     floor, phase2_count, entries = load(root)
     # Before the closed world, the name space it is closed over: a collision
-    # makes both directions below agree about a roster that is one short.
-    problems.extend(
-        prefix_collisions(p.stem for p in (root / "formal").glob("*.cfg"))
-    )
+    # makes both directions below agree about a roster that is one short, and an
+    # unpaired Solo hands a mutant an invariant that is not its own.
+    stems = [p.stem for p in (root / "formal").glob("*.cfg")]
+    problems.extend(prefix_collisions(stems))
+    problems.extend(orphan_solos(stems))
     cfgs = roster(root)
 
     for bug in sorted(set(cfgs) - set(entries)):
