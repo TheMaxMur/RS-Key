@@ -63,6 +63,21 @@ project — see [README.md](README.md) and
 - **Never report unverified success.** Don't claim a fix works, a command
   succeeded, or the gate is green unless you observed it. If something couldn't
   be verified (e.g. it needs hardware), say exactly what remains unchecked.
+- **A red run is not evidence until you know why it went red.** A check that
+  fails for the wrong reason proves as little as one that cannot fail — it just
+  wears the opposite colour, and a verdict column hides it either way. So when a
+  mutation, a fuzz oracle or a deliberately broken input reports failure, read
+  *which* assertion fell and in *which* direction, and ask whether that describes
+  the defect or its inverse. (Measured: 2 of 24 co-refutation patches modelled the
+  inverse defect and scored a kill; the tell was that every failure said "should
+  have succeeded" and none said "should have been refused".)
+- **A new guard is falsified through the row that runs it, not just its own
+  function.** Prove the *gate* goes red — the `check.sh` row, the CI step — and
+  not only that the helper returns a problem when called directly. A guard whose
+  wiring nothing exercises can be deleted with the suite still green, and the
+  weekly rows that call a script rather than pytest are then unprotected. This is
+  the same rule as "a guard's mutation table goes in the diff", one layer out,
+  and it is where that rule has actually failed.
 
 ## Code style
 
