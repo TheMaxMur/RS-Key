@@ -330,3 +330,77 @@ def test_an_unpaired_solo_reddens_the_lint(tree):
         "SPECIFICATION Spec\nINVARIANTS\n    TypeOK\n    StolenHolds\n"
     )
     red(tree, "has no SeamMut_BugStore.cfg")
+
+
+def test_a_gap_in_the_anchor_numbering_reddens_the_lint(tree):
+    # The walk stops at the first missing number, so a `find3` written without a
+    # `find2` never applies and the entry still reads as covering three sites.
+    # Impossible while the cap was three-by-construction; in reach the moment it
+    # was lifted, which is why the guard ships with the lift.
+    edit(
+        tree / "formal" / "comutants.toml",
+        'find = "GUARD_LINE\\n"',
+        'find = "GUARD_LINE\\n"\nfind3 = "fn f"',
+    )
+    red(tree, "not contiguous from 2")
+
+
+def test_a_replacement_without_its_anchor_reddens_the_lint(tree):
+    # `replace2` whose `find2` was renamed away: edits nothing, silently.
+    edit(
+        tree / "formal" / "comutants.toml",
+        'find = "GUARD_LINE\\n"',
+        'find = "GUARD_LINE\\n"\nreplace2 = "whatever"',
+    )
+    red(tree, "replace2 has no find2")
+
+
+def test_carrying_both_anchor_forms_reddens_the_lint(tree):
+    # A `[[site]]` array wins outright, so a flat `find` left beside it is dead
+    # text that still reads like a patch.
+    edit(
+        tree / "formal" / "comutants.toml",
+        'slice = ["true"]\nexpect = "gap"',
+        'slice = ["true"]\nexpect = "gap"\n\n[[comutant.BugAlpha.site]]\n'
+        'file = "src/lib.rs"\nfind = "GUARD_LINE\\n"',
+    )
+    red(tree, "carries both a [[site]] array")
+
+
+def test_a_site_missing_its_file_reddens_the_lint(tree):
+    edit(
+        tree / "formal" / "comutants.toml",
+        'status = "patch"\nfile = "src/lib.rs"\nfind = "GUARD_LINE\\n"\nreplace = ""',
+        'status = "patch"\n\n[[comutant.BugAlpha.site]]\nfind = "GUARD_LINE\\n"',
+    )
+    red(tree, "site 1 has no 'file'")
+
+
+def test_one_entry_patches_several_files(tmp_path):
+    # The feature itself, and its falsification. The slice is green ONLY when
+    # BOTH guards are gone, so a `gap` verdict means both files were patched and
+    # a `killed` means one was not — which is exactly what the one-site variant
+    # below measures. Before the `[[site]]` array a switch spanning two files had
+    # to patch what fitted and name the rest in prose.
+    root = git_tree(tmp_path)
+    (root / "src" / "other.rs").write_text("GUARD_B\n")
+    subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+    subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "b"],
+        cwd=root,
+        check=True,
+    )
+    slice_ = ["sh", "-c", "! grep -q GUARD_LINE src/lib.rs && ! grep -q GUARD_B src/other.rs"]
+    both = {
+        "site": [
+            {"file": "src/lib.rs", "find": "GUARD_LINE\n", "replace": ""},
+            {"file": "src/other.rs", "find": "GUARD_B\n", "replace": ""},
+        ],
+        "slice": slice_,
+    }
+    verdict, detail = comutate.run_one(root, "BugAlpha", both, "any-host")
+    assert verdict == "gap", f"one of the two files was not patched: {detail}"
+
+    one = {"site": [both["site"][0]], "slice": slice_}
+    verdict, _ = comutate.run_one(root, "BugAlpha", one, "any-host")
+    assert verdict == "killed", "the slice cannot tell one patched file from two"

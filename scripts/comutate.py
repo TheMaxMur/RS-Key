@@ -205,11 +205,68 @@ def solo_invariant(root: pathlib.Path, bug: str) -> str | None:
     return names[-1] if names else None
 
 
-def patch_pairs(entry: dict):
-    yield entry["find"], entry.get("replace", "")
-    for n in ("2", "3"):
-        if f"find{n}" in entry:
-            yield entry[f"find{n}"], entry.get(f"replace{n}", "")
+def patch_sites(entry: dict):
+    """(file, find, replace) for every site the entry patches, in order.
+
+    Two forms. The flat one — `file` plus `find`/`replace`, `find2`/`replace2`, …
+    with no ceiling — is ONE file with several anchors, which is what most
+    switches need. A switch that guards one rule at call sites in DIFFERENT files
+    uses the `[[comutant.X.site]]` array instead: `BugAdminOpensKeyOps` is
+    quantified over PW1 and PW2 and lands on four gates across two files, and
+    while an entry could name only one file it patched what fitted and left the
+    rest in prose — honest, and still unmeasured.
+
+    `anchor_shape_problems` refuses the ways either form goes quietly wrong.
+    """
+    if "site" in entry:
+        for site in entry["site"]:
+            yield site["file"], site["find"], site.get("replace", "")
+        return
+    yield entry["file"], entry["find"], entry.get("replace", "")
+    n = 2
+    while f"find{n}" in entry:
+        yield entry["file"], entry[f"find{n}"], entry.get(f"replace{n}", "")
+        n += 1
+
+
+def anchor_shape_problems(bug: str, entry: dict) -> list[str]:
+    """The ways an entry's anchors are silently not applied.
+
+    Every one of these leaves a patch that reads as covering its switch and does
+    less: the numbering walk stops at the first gap, so a `find3` written without
+    a `find2` never runs; a `replace4` whose `find4` was renamed away edits
+    nothing; and an entry carrying both forms would have its flat half ignored
+    entirely. A cap of three anchors used to make the first two impossible by
+    construction — lifting it is what puts them in reach.
+    """
+    where = f"comutants.toml [{bug}]"
+    out: list[str] = []
+    numbered = {
+        int(k.removeprefix("find")) for k in entry if re.fullmatch(r"find\d+", k)
+    }
+    replaces = {
+        int(k.removeprefix("replace")) for k in entry if re.fullmatch(r"replace\d+", k)
+    }
+    if "site" in entry:
+        for key in ("file", "find", "replace", *(f"find{n}" for n in numbered)):
+            if key in entry:
+                out.append(
+                    f"{where}: carries both a [[site]] array and a top-level "
+                    f"{key!r} — the flat half would never be applied"
+                )
+        for i, site in enumerate(entry["site"], 1):
+            for key in ("file", "find"):
+                if not site.get(key):
+                    out.append(f"{where}: site {i} has no {key!r}")
+        return out
+    if numbered and sorted(numbered) != list(range(2, max(numbered) + 1)):
+        out.append(
+            f"{where}: anchors {sorted(numbered)} are not contiguous from 2 — "
+            "the walk stops at the first gap, so the rest never applies"
+        )
+    for n in sorted(replaces - numbered):
+        out.append(f"{where}: replace{n} has no find{n} — it edits nothing")
+    return out
 
 
 def code_status(entry: dict, measured: str | None = None) -> str:
@@ -312,16 +369,19 @@ def lint(root: pathlib.Path, check_generated_readme: bool = True) -> list[str]:
             problems.append(f"{where}: patch without a slice")
         if entry.get("expect") not in ("killed", "gap"):
             problems.append(f"{where}: expect must be 'killed' or 'gap'")
-        target = root / entry.get("file", "")
-        if not target.is_file():
-            problems.append(f"{where}: no such file {entry.get('file')}")
+        shape = anchor_shape_problems(bug, entry)
+        problems.extend(shape)
+        if shape:
             continue
-        text = target.read_text()
-        for i, (find, _) in enumerate(patch_pairs(entry), 1):
-            n = text.count(find)
+        for i, (path, find, _) in enumerate(patch_sites(entry), 1):
+            target = root / path
+            if not target.is_file():
+                problems.append(f"{where}: anchor {i} names no such file {path}")
+                continue
+            n = target.read_text().count(find)
             if n != 1:
                 problems.append(
-                    f"{where}: anchor {i} resolves {n} times in {entry['file']} — "
+                    f"{where}: anchor {i} resolves {n} times in {path} — "
                     "the code it names has moved; re-derive the patch"
                 )
     if pending > floor:
@@ -376,13 +436,17 @@ def run_one(root: pathlib.Path, bug: str, entry: dict, host: str) -> tuple[str, 
                 text=True,
                 check=True,
             )
-        target = wt / entry["file"]
-        text = target.read_text()
-        for find, replace in patch_pairs(entry):
+        # Grouped by file, so an entry may patch several: one read and one write
+        # each, with every anchor counted BEFORE any of them is applied.
+        edits: dict[pathlib.Path, str] = {}
+        for path, find, replace in patch_sites(entry):
+            target = wt / path
+            text = edits.get(target, target.read_text())
             if text.count(find) != 1:
-                return "anchor-gone", f"anchor resolves {text.count(find)}×"
-            text = text.replace(find, replace)
-        target.write_text(text)
+                return "anchor-gone", f"anchor resolves {text.count(find)}× in {path}"
+            edits[target] = text.replace(find, replace)
+        for target, text in edits.items():
+            target.write_text(text)
         cmd = list(entry["slice"]) + ["--target", host]
         r = subprocess.run(
             cmd,

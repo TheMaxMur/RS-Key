@@ -833,11 +833,13 @@ note = "E66: the panel's PIN pad no longer ends the host token — a fourth door
 # 31 of them in rsk-fido, rsk-device and rsk-fs. So "the applet models are green"
 # was fidelity NOBODY HAD MEASURED. These 24 measure it.
 #
-# One entry patches one file, and the seam/lattice switches often guard the same
-# rule in two applets (`check_ref` and `check_pin` are the same floor twice over).
-# Where a switch has two code twins the entry names the one it patches and says
-# which sibling carries the other, so the half that is NOT measured is stated
-# rather than implied.
+# The seam/lattice switches often guard the same rule in two applets (`check_ref`
+# and `check_pin` are the same floor twice over). An entry may patch SEVERAL
+# files — the `[[comutant.X.site]]` array — and BugAdminOpensKeyOps does, over
+# four gates in two. Where an entry still leaves a twin unpatched it names that
+# twin and why, so the half that is NOT measured is stated rather than implied.
+# The rule this file keeps: an entry that reads as covering its switch either
+# covers it or says which part it does not.
 # =============================================================================
 
 # ---- RSKeyRetryLattice: the retry/recovery ladder ---------------------------
@@ -1006,7 +1008,7 @@ replace2 = """
 """
 slice = ["cargo", "test", "-p", "rsk-otp"]
 expect = "killed"
-note = "a programmed slot is overwritten (find) or updated (find2) without its six-byte access code. Two anchors because the gate is written twice — the model has ONE OtpMutate switch, so patching one site would leave the other half of the switch unmeasured. The swap path states the same rule a THIRD time, at lib.rs:570-574, and is left unpatched — three anchors is this schema's ceiling."
+note = "a programmed slot is overwritten (find) or updated (find2) without its six-byte access code. Two anchors because the gate is written twice — the model has ONE OtpMutate switch, so patching one site would leave the other half of the switch unmeasured. The swap path states the same rule a THIRD time, at lib.rs:570-574, and is left unpatched: its gate is a swap's own move/delete rule rather than the configure/update pair OtpMutate models."
 
 [comutant.BugOtpCounterRepeats]
 status = "patch"
@@ -1075,6 +1077,11 @@ the selection half, and that IS asserted, here and by rsk-sdk's
 
 [comutant.BugAdminOpensKeyOps]
 status = "patch"
+slice = ["cargo", "test", "-p", "rsk-openpgp"]
+expect = "killed"
+note = "e5da38b taken back out at every gate the switch covers: the admin PIN signs, deciphers, authenticates and runs the AES PSO. PgpKeyOpGuard is quantified over r in {pw1, pw2} and its comment names PSO:CDS (§7.2.10, PW1 no. 81), PSO:DECIPHER and INTERNAL AUTHENTICATE (§7.2.11 and §7.2.13, PW1 no. 82); the AES arm follows its siblings by the tree's own decision. A YubiKey 5.7.4 answers 6982 to PW3 alone on all of them. Four sites in two files — the first version of this entry patched PSO:CDS alone and named the other three in prose, which measured a quarter of the switch while reading as covering it. Each gate was then measured ALONE and each is killed on its own (2/1/1/1 failing tests), so no site rides on a sibling's coverage; the combined run shows two failures rather than five only because the same matrix tests span several gates."
+
+[[comutant.BugAdminOpensKeyOps.site]]
 file = "crates/rsk-openpgp/src/pso.rs"
 find = """
             if !sess.has_pw1 {
@@ -1088,21 +1095,49 @@ replace = """
             }
             (EF_ALGO_PRIV1, EF_PK_SIG)
 """
-find2 = """
+
+[[comutant.BugAdminOpensKeyOps.site]]
+file = "crates/rsk-openpgp/src/pso.rs"
+find = """
             if !sess.has_pw2 {
                 return Err(Sw::SECURITY_STATUS_NOT_SATISFIED);
             }
             (sess.algo_dec, sess.pk_dec)
 """
-replace2 = """
+replace = """
             if !sess.has_pw2 && !sess.has_pw3 {
                 return Err(Sw::SECURITY_STATUS_NOT_SATISFIED);
             }
             (sess.algo_dec, sess.pk_dec)
 """
-slice = ["cargo", "test", "-p", "rsk-openpgp"]
-expect = "killed"
-note = "e5da38b taken back out: the admin PIN signs and deciphers. The switch quantifies over r in {pw1, pw2} and its comment names PSO:CDS (§7.2.10, find) and PSO:DECIPHER (§7.2.11, find2); a YubiKey 5.7.4 answers 6982 to PW3 alone on both. Two more sites carry the same rule and are NOT patched here, because one entry holds at most three anchors and each is its own gate: INTERNAL AUTHENTICATE at crates/rsk-openpgp/src/internalaut.rs:46-48 (§7.2.13, PW1 no. 82) and the AES PSO arm at crates/rsk-openpgp/src/pso.rs:72-74."
+
+[[comutant.BugAdminOpensKeyOps.site]]
+file = "crates/rsk-openpgp/src/pso.rs"
+find = """
+        if !sess.has_pw2 {
+            return Err(Sw::SECURITY_STATUS_NOT_SATISFIED);
+        }
+        check_uif(fs, EF_UIF_DEC, presence)?;
+"""
+replace = """
+        if !sess.has_pw2 && !sess.has_pw3 {
+            return Err(Sw::SECURITY_STATUS_NOT_SATISFIED);
+        }
+        check_uif(fs, EF_UIF_DEC, presence)?;
+"""
+
+[[comutant.BugAdminOpensKeyOps.site]]
+file = "crates/rsk-openpgp/src/internalaut.rs"
+find = """
+    if !sess.has_pw2 {
+        return Err(Sw::SECURITY_STATUS_NOT_SATISFIED);
+    }
+"""
+replace = """
+    if !sess.has_pw2 && !sess.has_pw3 {
+        return Err(Sw::SECURITY_STATUS_NOT_SATISFIED);
+    }
+"""
 
 [comutant.BugFailedChangeKeepsStatus]
 status = "patch"
