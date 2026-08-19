@@ -51,7 +51,7 @@ CONSTANTS
     BugUnscopedCancel,            \* crates/rsk-device/src/presence.rs:118-122
     BugTouchNotSpent,             \* crates/rsk-device/src/presence.rs:203-211,226
     BugSoftLockLostOnWarmReset,   \* ctap.rs:215-222   PinLock across sys_reset
-    BugWarmResetReopensWindow,    \* reset.rs:132-134  in_reset_window
+    BugWarmResetReopensWindow,    \* reset.rs:186-187  in_reset_window
     BugCmWalkIgnoresChannel,      \* state.rs:169-180  may_walk_rps
     BugDeleteRpBeforeCred,        \* credmgmt.rs:665-672 deleteCredential order
     BugBackupSealedNotAGate,      \* reset.rs:112-125  is_fido_gate_fid (run-36)
@@ -1067,7 +1067,7 @@ DeleteCredWriteB ==
 (* order WITHIN a phase is not controlled and is modelled as arbitrary.     *)
 (***************************************************************************)
 
-\* reset.rs:151-156. A warm boot CLOSES the window rather than opening one:
+\* reset.rs:182-187. A warm boot CLOSES the window rather than opening one:
 \* sys_reset is host-requestable ungated, so a window the host can restart at
 \* will is no window at all. Modelled on a button build, where
 \* presence.shows_confirm() is FALSE and the window therefore applies.
@@ -1325,7 +1325,7 @@ PowerCut ==
 
 \* A host-requestable warm reset (SCB::sys_reset -- vendor 0x1F P1=0, the
 \* rescue twin, the phy config-write auto-reboot). ctap.rs:215-222 carries the
-\* PinLock across it; reset.rs:132 makes it CLOSE the reset window.
+\* PinLock across it; reset.rs:187 makes it CLOSE the reset window.
 WarmReset ==
     /\ VolatileCleared
     /\ BootEnsuresSeed                 \* sys_reset re-enters main: same boot path
