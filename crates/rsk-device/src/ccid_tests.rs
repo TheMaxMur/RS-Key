@@ -15,6 +15,37 @@ const AIDS: [(&str, &[u8]); 7] = [
     ("rescue", rsk_rescue::RESCUE_AID),
 ];
 
+/// The CCID wrapper's return value is what the caller turns into a reboot that
+/// looks like success, and it was asserted by nothing (the reverse mutation
+/// pass, D2): replacing the whole function with `true` or with `false` left the
+/// suite green. Audit run-32 is what the `true` direction costs — a wipe that
+/// reports a range clear it never enumerated, with the trusted display painting
+/// "RS-Key erased" over live credentials.
+///
+/// This pins the honest direction only: a wipe that really happened answers
+/// `true`. The other one needs a backend that can fail, and `Env` is wired to
+/// `RamStorage` — the layer below already has it
+/// (`rsk-fs::factory_wipe_fails_on_a_truncated_enumeration`); the wrapper's
+/// laundering of that refusal is still unowned.
+// `factory_wipe` is a DEFAULT-build entry point; the strict-config image has
+// no management RESET at all.
+#[cfg(not(feature = "strict-config"))]
+#[test]
+fn a_completed_factory_wipe_reports_true_and_leaves_nothing() {
+    let env = Env::new();
+    env.fs
+        .borrow_mut()
+        .put(rsk_fido::consts::EF_CRED, &[0xC0; 32])
+        .unwrap();
+    assert!(env.fs.borrow_mut().has_data(rsk_fido::consts::EF_CRED));
+    let wiped = env.ccid().factory_wipe();
+    assert!(wiped, "a wipe that completed must report it");
+    assert!(
+        !env.fs.borrow_mut().has_data(rsk_fido::consts::EF_CRED),
+        "and must actually have erased the credential it reported clear"
+    );
+}
+
 #[test]
 fn every_applet_is_selectable_on_a_fresh_device() {
     // No `EF_DEV_CONF` yet, so the mask defaults to every supported application.

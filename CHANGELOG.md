@@ -40,6 +40,21 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Added
 
+- **The CCID wipe wrapper's answer was asserted by nothing.**
+  `CcidApplets::factory_wipe` returns whether the wipe completed and its caller
+  turns that into a reboot; replacing the whole function with `true` or with
+  `false` left the suite green, and the `true` direction is audit run-32 — a
+  wipe reporting a range clear it never enumerated, with the trusted display
+  painting "RS-Key erased" over live credentials. The honest direction is pinned
+  now; the laundering direction needs a backend that can fail, and the shared
+  `Env` fixture is wired to `RamStorage`, so it stays open. The same pass closed
+  two rows as non-gaps rather than defects: the five `|` → `^` mutations on
+  `SUPPORTED_CAPS` are equivalent because the capability bits are disjoint
+  powers of two, and `persist_dev_conf`'s merged-size check is unreachable — the
+  cap is 42 bytes and the APDU layer refuses an unknown-tag blob outright, so no
+  merge the current tag vocabulary can build reaches it. No firmware behaviour
+  change.
+
 - **Every slot index in `decrement_rp` could have had the wrong sign.** Read,
   delete, nickname-delete and write-back all address `EF_RP + j`, and the suite
   killed none of them — nor the match beside them relaxed to `||`, which would
