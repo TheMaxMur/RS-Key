@@ -300,6 +300,11 @@ fn write_info<W: Write>(
     // the metadata statements.
     enc.u8(0x16)?.array(1)?.str(ATT_FMT_PACKED)?;
 
+    // 0x17 uvCountSinceLastPinEntry is deliberately ABSENT: it counts internal UV
+    // that was NOT a PIN entry, so a platform can force a PIN before the user forgets
+    // it — a biometric's problem. Built-in UV here IS the PIN (`builtin_uv` collects
+    // it on the pad and verifies EF_PIN on clientPIN's own counter), so no gap opens.
+
     // 0x18 longTouchForReset — false: a reset takes the same touch every other
     // presence check takes. CTAP 2.3 §6.4 cut the long-touch hold from 2.2's 10 s to
     // 5 s, so implementing the gesture is a UX decision, not an unresolved duration.
