@@ -434,7 +434,9 @@ needs only the identifiers above. RS-Key implements:
   build that refuses a PIN beyond the length floor — the `strong-pin` and
   `fips-profile` images block a repeated code point and a ±1 run; the default
   build answers `false`, and the optional `pinComplexityPolicyURL` (`0x1C`) is
-  never emitted.
+  never emitted. `longTouchForReset` (`0x18`) is `false`: a reset takes the same
+  touch as any other presence check — CTAP 2.3 cut the long-touch hold from 2.2's
+  10 s to 5 s, and RS-Key implements neither gesture.
   Supported COSE algorithms:
   ES256 `-7`, ES384 `-35`, ES512 `-36`, ES256K `-47`, EdDSA `-8`,
   ML-DSA-44 `-48`, ML-DSA-65 `-49` (both negotiable via `pubKeyCredParams`;

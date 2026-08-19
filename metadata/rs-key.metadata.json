@@ -98,6 +98,7 @@
       8550182048006734589, 8879174565946325320, 2783008008553857119
     ],
     "attestationFormats": ["packed"],
+    "longTouchForReset": false,
     "transportsForReset": ["usb"],
     "pinComplexityPolicy": false,
     "maxPINLength": 63,

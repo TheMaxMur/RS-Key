@@ -84,9 +84,9 @@ fn write_info<W: Write>(
     remaining_rk: u16,
 ) -> Result<(), Error<W::Error>> {
     // Keys are ascending uints → CTAP canonical order (1-byte keys 0x01..0x16
-    // first, then the 2-byte keys 0x1A, 0x1B, 0x1D, 0x1F — 24 and up need the extra
-    // byte). The `largeblob-ext` build drops 0x0B with the command it describes.
-    enc.map(22 + u64::from(!LARGE_BLOB_EXT))?;
+    // first, then the 2-byte keys 0x18, 0x1A, 0x1B, 0x1D, 0x1F — 24 and up need the
+    // extra byte). The `largeblob-ext` build drops 0x0B with the command it describes.
+    enc.map(23 + u64::from(!LARGE_BLOB_EXT))?;
 
     // 0x01 versions — advertise the full backward-compatible superset up to
     // FIDO_2_3 (the implemented surface: credMgmt, largeBlobs, credProtect,
@@ -294,6 +294,11 @@ fn write_info<W: Write>(
     // and an enterprise request swaps in the org chain. Keep in sync with the
     // metadata statements.
     enc.u8(0x16)?.array(1)?.str("packed")?;
+
+    // 0x18 longTouchForReset — false: a reset takes the same touch every other
+    // presence check takes. CTAP 2.3 §6.4 cut the long-touch hold from 2.2's 10 s to
+    // 5 s, so implementing the gesture is a UX decision, not an unresolved duration.
+    enc.u8(0x18)?.bool(false)?;
 
     // 0x1A transportsForReset — where authenticatorReset is accepted: an array of
     // AuthenticatorTransport strings, not the bit field Yubico's page describes.

@@ -53,6 +53,20 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Added
 
+- **getInfo did not say whether a reset needs a long touch, and the answer was
+  believed to be contested.** CTAP 2.2's `longTouchForReset` (`0x18`) is a boolean
+  a platform reads to know whether the reset ceremony wants a held touch rather
+  than a tap. RS-Key requires no such gesture, so it now answers `false` —
+  explicit, and one line away from `true` if the gesture is ever built.
+  The reason this sat unanswered was a supposed standard-versus-implementation
+  conflict: CTAP 2.2 specifies a 10-second hold while a shipping YubiKey holds 5.
+  There is no conflict. **CTAP 2.3 itself reduced the hold from 10 seconds to 5**,
+  so the 5-second device is conformant to the version it implements and the
+  10-second figure is superseded text. RS-Key advertises `FIDO_2_3`, so 5 s is the
+  number that would apply here too — recorded now so the question does not have to
+  be re-opened if the gesture is ever wanted.
+  `bcdDevice` 0x0963 → 0x0964.
+
 - **A `strong-pin` build enforced a PIN policy it never told anyone about.**
   CTAP 2.2's `pinComplexityPolicy` (`0x1B`) reports whether the authenticator
   applies a PIN rule *beyond* `minPINLength` — which `0x0D` already carries, so a

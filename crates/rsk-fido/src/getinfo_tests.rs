@@ -86,7 +86,7 @@ fn get_info_fields() {
     let mut d = Decoder::new(&buf[..n]);
 
     let entries = d.map().unwrap().unwrap();
-    assert_eq!(entries, 23);
+    assert_eq!(entries, 24);
 
     // 0x01 versions
     assert_eq!(d.u8().unwrap(), 0x01);
@@ -245,6 +245,10 @@ fn get_info_fields() {
     assert_eq!(d.u8().unwrap(), 0x16);
     assert_eq!(d.array().unwrap().unwrap(), 1);
     assert_eq!(d.str().unwrap(), "packed");
+
+    // 0x18 longTouchForReset — false, and the first of the 2-byte keys.
+    assert_eq!(d.u8().unwrap(), 0x18);
+    assert!(!d.bool().unwrap());
 
     // 0x1A transportsForReset — a 2-byte key (26 > 23), so it sorts after every
     // 1-byte key and before 0x1D.
