@@ -20,10 +20,10 @@ use minicbor::Encoder;
 use minicbor::encode::{Error, Write};
 
 use crate::consts::{
-    AAGUID, ALG_EDDSA, ALG_ES256, ALG_ES384, ALG_ES512, ALG_MLDSA44, ALG_MLDSA65, ATT_FMT_PACKED,
-    CONFIG_AUT_DISABLE, CONFIG_AUT_ENABLE, CONFIG_EA_RPIDS, CONFIG_PHY_LED_BRIGHTNESS,
-    CONFIG_PHY_LED_GPIO, CONFIG_PHY_OPTIONS, CONFIG_PHY_VIDPID, ENC_IDENTIFIER_LEN,
-    FIRMWARE_VERSION, LARGE_BLOB_EXT, MAX_CRED_ID_LENGTH, MAX_CREDBLOB_LENGTH,
+    AAGUID, ALG_EDDSA, ALG_ES256, ALG_ES384, ALG_ES512, ALG_MLDSA44, ALG_MLDSA65, ALG_MLDSA87,
+    ATT_FMT_PACKED, CONFIG_AUT_DISABLE, CONFIG_AUT_ENABLE, CONFIG_EA_RPIDS,
+    CONFIG_PHY_LED_BRIGHTNESS, CONFIG_PHY_LED_GPIO, CONFIG_PHY_OPTIONS, CONFIG_PHY_VIDPID,
+    ENC_IDENTIFIER_LEN, FIRMWARE_VERSION, LARGE_BLOB_EXT, MAX_CRED_ID_LENGTH, MAX_CREDBLOB_LENGTH,
     MAX_CREDENTIAL_COUNT_IN_LIST, MAX_LARGE_BLOB_SIZE, MAX_MIN_PIN_RPIDS, MAX_MSG_SIZE,
     PIN_COMPLEXITY_POLICY, TRANSPORTS,
 };
@@ -227,11 +227,13 @@ fn write_info<W: Write>(
     // the `fido-conformance` build.
     let pqc = cfg!(feature = "advertise-pqc");
     let eddsa = cfg!(not(feature = "fido-conformance"));
-    // Under `advertise-pqc` both ML-DSA sets are advertised, -65 (-49) before -44
-    // (-48) so a relying party that ranks by list order prefers the stronger set.
+    // Under `advertise-pqc` all three ML-DSA sets are advertised in descending
+    // security order — -87 (-50), -65 (-49), -44 (-48) — so a relying party that
+    // ranks by list order prefers the stronger set.
     enc.u8(0x0A)?
-        .array(3 + 2 * u64::from(pqc) + u64::from(eddsa))?;
+        .array(3 + 3 * u64::from(pqc) + u64::from(eddsa))?;
     if pqc {
+        cose_public_key(enc, ALG_MLDSA87)?;
         cose_public_key(enc, ALG_MLDSA65)?;
         cose_public_key(enc, ALG_MLDSA44)?;
     }

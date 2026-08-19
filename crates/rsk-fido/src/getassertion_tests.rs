@@ -3178,6 +3178,45 @@ fn mldsa44_register_then_login_verifies() {
     );
 }
 
+fn mldsa87_verify(pk: &[u8], msg: &[u8], sig: &[u8]) -> bool {
+    let pk: [u8; rsk_crypto::MLDSA87_PK_LEN] = pk.try_into().expect("AKP pk length");
+    let sig: [u8; rsk_crypto::MLDSA87_SIG_LEN] = sig.try_into().expect("ML-DSA sig length");
+    rsk_crypto::mldsa87_verify(&pk, msg, &sig)
+}
+
+/// ML-DSA-87 is the widest credential the device makes: a 2592-byte AKP key and
+/// a 4627-byte assertion. Both cross the buffers that the narrower sets leave
+/// slack in (`AD_BUF`, `MAX_SIG_LEN`), so this round-trip is what proves those
+/// ceilings were raised together rather than one of them silently truncating.
+#[test]
+fn mldsa87_register_then_login_verifies() {
+    use crate::consts::ALG_MLDSA87;
+    let (mut fs, mut rng) = setup();
+
+    let mc = call(&mut fs, &mut rng, 10, |ctx, out| {
+        make_credential(ctx, &mc_request_alg(ALG_MLDSA87), out)
+    })
+    .unwrap();
+    let (cred_id, alg, pk) = parse_mc_akp(&mc);
+    assert_eq!(alg, ALG_MLDSA87);
+    assert_eq!(pk.len(), rsk_crypto::MLDSA87_PK_LEN);
+    assert_basic_att_stmt(&mc);
+
+    let ga = call(&mut fs, &mut rng, 20, |ctx, out| {
+        get_assertion(ctx, &ga_request(Some(&cred_id)), out)
+    })
+    .unwrap();
+    let ad = assertion_auth_data(&ga);
+    let sig = assertion_sig(&ga);
+    assert_eq!(sig.len(), rsk_crypto::MLDSA87_SIG_LEN);
+    let mut signed = ad;
+    signed.extend_from_slice(&CDH);
+    assert!(
+        mldsa87_verify(&pk, &signed, &sig),
+        "ML-DSA-87 assertion verifies under the credential key"
+    );
+}
+
 fn mldsa65_verify(pk: &[u8], msg: &[u8], sig: &[u8]) -> bool {
     let pk: [u8; rsk_crypto::MLDSA65_PK_LEN] = pk.try_into().expect("AKP pk length");
     let sig: [u8; rsk_crypto::MLDSA65_SIG_LEN] = sig.try_into().expect("ML-DSA sig length");

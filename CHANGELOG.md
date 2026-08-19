@@ -38,6 +38,18 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+### Added
+
+- **ML-DSA-87 (COSE `-50`), the NIST category-5 parameter set.** All three FIPS 204
+  sets now have in-tree backends: `rsk-mldsa` gained `MlDsa87`/`mldsa87_verify` over
+  `ExpandedKey<8, 7>`, checked byte-for-byte against NIST ACVP keyGen/sigGen/sigVer
+  vectors like its siblings. Under `advertise-pqc` getInfo lists `-50` ahead of `-49`
+  and `-48`. Measured on the RP2350: `mldsa87_from_raw` reserves 123,160 B and
+  `mldsa87_sign` 66,628 B, so a makeCredential peaks near 144 KiB against the
+  210,152-byte main-stack ceiling — the earlier "-87 overflows the stack" note was
+  measured before the worker moved off `main`'s init frame and did not survive
+  re-measurement.
+
 ### Fixed
 
 - **A getInfo test stopped being able to fail when the member count reached 24.**

@@ -1734,13 +1734,14 @@ fn first_supported_alg_wins() {
         selected_alg(&[crate::consts::ALG_ES384, ALG_ES256]),
         Ok(crate::consts::ALG_ES384)
     );
-    // -50 (ML-DSA-87) is a recognized id without a backend: alone it is
-    // unsupported; alongside a classic alg the classic one is selected.
-    assert_eq!(
-        selected_alg(&[ALG_MLDSA87]),
-        Err(CtapError::UnsupportedAlgorithm)
-    );
-    assert_eq!(selected_alg(&[ALG_MLDSA87, ALG_ES256]), Ok(ALG_ES256));
+    // -50 (ML-DSA-87) has a backend since the ML-DSA-87 branch, so it follows
+    // the same first-supported-wins rule as every other id — including against
+    // its own siblings.
+    assert_eq!(selected_alg(&[ALG_MLDSA87]), Ok(ALG_MLDSA87));
+    assert_eq!(selected_alg(&[ALG_MLDSA87, ALG_ES256]), Ok(ALG_MLDSA87));
+    assert_eq!(selected_alg(&[ALG_ES256, ALG_MLDSA87]), Ok(ALG_ES256));
+    assert_eq!(selected_alg(&[ALG_MLDSA87, ALG_MLDSA65]), Ok(ALG_MLDSA87));
+    assert_eq!(selected_alg(&[ALG_MLDSA65, ALG_MLDSA87]), Ok(ALG_MLDSA65));
 }
 
 // ---- Enterprise attestation ----

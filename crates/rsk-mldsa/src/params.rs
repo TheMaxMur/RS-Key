@@ -81,10 +81,22 @@ pub const ML_DSA_65: Params = Params {
     w1_len: 32 * 6 * 4,
 };
 
-// ML-DSA-87 (COSE −50, k=8, l=7) is deliberately NOT provided: measured on the
-// host stack probe, its keygen+sign needs ~176–192 KiB (vs ~84 for ML-DSA-65) —
-// ≈ ~276 KiB once mapped onto the RP2350's in-order/opt="s" core, over the
-// ~222 KiB main-stack ceiling. Streaming A is not enough at (8,7); ML-DSA-87
-// needs a bigger-RAM part (RP2354 / external PSRAM). (Its makeCredential response
-// also overruns the 7609-byte CTAPHID ceiling for non-resident + heavy-extension
-// credentials.)
+/// ML-DSA-87 (COSE −50), NIST category 5. k=8, l=7.
+///
+/// λ = 256 ⇒ c̃ is 64 bytes; γ2 matches ML-DSA-65 so w1Encode still packs 4 bits
+/// per coefficient. Fitting this on the RP2350 is the open question — see the
+/// stack measurements in the branch that introduced it.
+pub const ML_DSA_87: Params = Params {
+    k: 8,
+    l: 7,
+    eta: 2,
+    gamma1: 1 << 19,
+    gamma2: (Q - 1) / 32,
+    tau: 60,
+    omega: 75,
+    beta: 60 * 2,
+    lambda_div4: 256 / 4,
+    pk_len: 2592,
+    sig_len: 4627,
+    w1_len: 32 * 8 * 4,
+};

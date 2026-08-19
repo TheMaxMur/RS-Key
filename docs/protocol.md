@@ -466,9 +466,14 @@ needs only the identifiers above. RS-Key implements:
   enterprise attestation is enabled.
   Supported COSE algorithms:
   ES256 `-7`, ES384 `-35`, ES512 `-36`, ES256K `-47`, EdDSA `-8`,
-  ML-DSA-44 `-48`, ML-DSA-65 `-49` (both negotiable via `pubKeyCredParams`;
-  advertised in getInfo only under the `advertise-pqc` build). ML-DSA-87 `-50`
-  is recognised but unsupported: its response overruns `maxMsgSize`. The
+  ML-DSA-44 `-48`, ML-DSA-65 `-49`, ML-DSA-87 `-50` (all three negotiable via
+  `pubKeyCredParams`; advertised in getInfo only under the `advertise-pqc` build,
+  in descending security order). **ML-DSA-87 carries a size caveat:** its 2592-byte
+  public key and 4627-byte signature fit the buffers, but a maximal
+  makeCredential — a non-resident credential box at `CRED_BOX_MAX`, full
+  extensions and a four-certificate enterprise attestation chain — can exceed the
+  7609-byte `maxMsgSize` response cap. Ordinary registrations are far below it.
+  The
   curve-explicit ids ESP256 `-9`, Ed25519 `-19`, ESP384 `-51` and ESP512 `-52`
   are negotiable and unadvertised on the same terms, and the attested key
   carries the id the request selected rather than the classic spelling of the

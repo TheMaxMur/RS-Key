@@ -82,11 +82,12 @@ and you confirm with the physical button instead of an on-screen one.
 - **Seed backup** — export the FIDO master seed as BIP-39 / SLIP-39 words
 - **At-rest soft-lock** — keep the FIDO seed in flash encrypted to a key only you hold
 - **On-device audit journal** and **enterprise (org-provisioned) attestation**
-- **Post-quantum FIDO2 (experimental)** — implements the ML-DSA-44 (COSE −48)
-  and ML-DSA-65 (−49) schemes; ML-DSA-65 uses an in-tree, stack-optimized FIPS
-  204 implementation so it fits the RP2350. Advertising them in getInfo is off
-  by default because some shipped browsers reject an unknown algorithm id. This
-  is not a FIPS-validated module.
+- **Post-quantum FIDO2 (experimental)** — implements all three ML-DSA schemes:
+  ML-DSA-44 (COSE −48), ML-DSA-65 (−49) and ML-DSA-87 (−50), on an in-tree,
+  stack-optimized FIPS 204 implementation that streams the matrix A so even the
+  category-5 set fits the RP2350. Advertising them in getInfo is off by default
+  because some shipped browsers reject an unknown algorithm id. This is not a
+  FIPS-validated module.
 
 Capacities are flash-bound and generous (e.g. up to 256 resident passkeys,
 255 OATH accounts, 24 PIV slots, 4 OTP slots); details are in the

@@ -21,7 +21,7 @@ use minicbor::encode::write::Cursor;
 use minicbor::{Decoder, Encoder};
 use zeroize::Zeroize;
 
-use rsk_crypto::MLDSA65_PK_LEN;
+use rsk_crypto::MLDSA87_PK_LEN;
 use rsk_crypto::pinproto::PinProto;
 use rsk_crypto::sha256;
 use rsk_fs::{Fs, Storage};
@@ -31,12 +31,12 @@ use crate::cert;
 use crate::clientpin::{UvOutcome, builtin_uv_enabled, builtin_uv_step};
 use crate::consts::{
     AAGUID, ALG_ED25519, ALG_EDDSA, ALG_ES256, ALG_ES256K, ALG_ES384, ALG_ES512, ALG_ESP256,
-    ALG_ESP384, ALG_ESP512, ALG_MLDSA44, ALG_MLDSA65, ATT_FMT_NONE, ATT_FMT_PACKED,
+    ALG_ESP384, ALG_ESP512, ALG_MLDSA44, ALG_MLDSA65, ALG_MLDSA87, ATT_FMT_NONE, ATT_FMT_PACKED,
     CRED_PROT_UV_OPTIONAL, CRED_PROT_UV_REQUIRED, CURVE_ED25519, CURVE_MLDSA44, CURVE_MLDSA65,
-    CURVE_P256, CURVE_P256K1, CURVE_P384, CURVE_P521, EF_ATT_CHAIN, EF_EA_ENABLED, EF_EA_RPIDS,
-    EF_EE_DEV, EF_MINPINLEN, EF_PIN, FLAG_AT, FLAG_ED, FLAG_UP, FLAG_UV, LARGE_BLOB_EXT,
-    MAX_CREDBLOB_LENGTH, MAX_CREDENTIAL_COUNT_IN_LIST, MAX_EA_RPIDS, MAX_MIN_PIN_RPIDS,
-    MAX_RESIDENT_CREDENTIALS,
+    CURVE_MLDSA87, CURVE_P256, CURVE_P256K1, CURVE_P384, CURVE_P521, EF_ATT_CHAIN, EF_EA_ENABLED,
+    EF_EA_RPIDS, EF_EE_DEV, EF_MINPINLEN, EF_PIN, FLAG_AT, FLAG_ED, FLAG_UP, FLAG_UV,
+    LARGE_BLOB_EXT, MAX_CREDBLOB_LENGTH, MAX_CREDENTIAL_COUNT_IN_LIST, MAX_EA_RPIDS,
+    MAX_MIN_PIN_RPIDS, MAX_RESIDENT_CREDENTIALS,
 };
 use crate::credential::{
     CRED_BOX_MAX, CRED_PUBKEY_MAX, CRED_REC_MAX, CRED_RESIDENT_LEN, CredExt, CredInput, Credential,
@@ -61,17 +61,17 @@ const MAX_EXCLUDE: usize = MAX_CREDENTIAL_COUNT_IN_LIST as usize;
 const AUTH_DATA_HEADER: usize = 32 + 1 + 4 + 16 + 2;
 /// Ceiling of `encode_mc_extensions`' output (its scratch buffer, below).
 const MC_EXT_MAX: usize = 192;
-/// Largest AKP COSE public key `cose_public` emits — the ML-DSA-65 case: a
-/// 3-entry map (1) with kty (1+1), alg −49 (1+2) and the 1952-byte pk wrapped as
-/// key −1 (1) + a >255-byte CBOR byte-string header (3) → 10 + pk = 1962.
-const COSE_AKP_MLDSA65_MAX: usize = 1 + (1 + 1) + (1 + 2) + (1 + 3) + MLDSA65_PK_LEN;
-/// authData scratch, sized for the ML-DSA-65 worst case (a non-resident box at
+/// Largest AKP COSE public key `cose_public` emits — the ML-DSA-87 case: a
+/// 3-entry map (1) with kty (1+1), alg −50 (1+2) and the 2592-byte pk wrapped as
+/// key −1 (1) + a >255-byte CBOR byte-string header (3) → 10 + pk = 2602.
+const COSE_AKP_MLDSA87_MAX: usize = 1 + (1 + 1) + (1 + 2) + (1 + 3) + MLDSA87_PK_LEN;
+/// authData scratch, sized for the ML-DSA-87 worst case (a non-resident box at
 /// `CRED_BOX_MAX` + the AKP COSE key + full extensions) plus the 32-byte
 /// clientDataHash appended in place for the attestation signature.
-const AD_BUF: usize = 3072;
+const AD_BUF: usize = 3840;
 const _: () = assert!(
-    AUTH_DATA_HEADER + CRED_BOX_MAX + COSE_AKP_MLDSA65_MAX + MC_EXT_MAX + 32 <= AD_BUF,
-    "authData buffer too small for the ML-DSA-65 worst case",
+    AUTH_DATA_HEADER + CRED_BOX_MAX + COSE_AKP_MLDSA87_MAX + MC_EXT_MAX + 32 <= AD_BUF,
+    "authData buffer too small for the ML-DSA-87 worst case",
 );
 
 /// Map a requested COSE alg to the `(alg, curve)` the credential is created with,
@@ -96,6 +96,7 @@ fn alg_to_curve(alg: i64) -> Option<(i64, u8)> {
         // response overruns the CTAPHID message ceiling.
         ALG_MLDSA44 => Some((ALG_MLDSA44, CURVE_MLDSA44)),
         ALG_MLDSA65 => Some((ALG_MLDSA65, CURVE_MLDSA65)),
+        ALG_MLDSA87 => Some((ALG_MLDSA87, CURVE_MLDSA87)),
         _ => None,
     }
 }

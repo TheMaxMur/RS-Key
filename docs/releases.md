@@ -14,7 +14,7 @@ It builds every artifact reproducibly, hashes it, and signs the manifest.
   | flavor | flags | use |
   |---|---|---|
   | `default` | touch | the normal build; start here |
-  | `pqc` | + advertise-pqc | advertises ML-DSA-65 and ML-DSA-44 in getInfo (breaks old Firefox) |
+  | `pqc` | + advertise-pqc | advertises all three ML-DSA sets in getInfo (breaks old Firefox) |
   | `fips` | + fips-profile | the locked FIPS-style policy ([guides/fips.md](guides/fips.md)) |
   | `fips-pqc` | + both | |
   | `strong-pin` | + strong-pin | 6-code-point PIN floor + trivial-PIN block ([build.md](build.md), [threat-model.md](threat-model.md)) |

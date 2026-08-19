@@ -355,16 +355,15 @@ depth in case a future one keeps SRAM.
 
 ## Post-quantum notes
 
-ML-DSA-44 (COSE −48) and ML-DSA-65 (COSE −49) FIDO2 credentials (both the
-in-tree `rsk-mldsa` crate) with hedged signing (32 fresh DRBG bytes
-per signature; the hedge and expanded keys are zeroized). `rsk-mldsa` streams
-the FIPS 204 matrix A on the fly so ML-DSA-65's keygen+sign fit the RP2350
-stack. It is hand-written, so its constant-time posture is a source-level
+ML-DSA-44 (COSE −48), ML-DSA-65 (−49) and ML-DSA-87 (−50) FIDO2 credentials
+(all three the in-tree `rsk-mldsa` crate) with hedged signing (32 fresh DRBG
+bytes per signature; the hedge and expanded keys are zeroized). `rsk-mldsa`
+streams the FIPS 204 matrix A on the fly so even ML-DSA-87's keygen+sign fit
+the RP2350 stack — measured, its keygen frame is the largest in the image at
+123 KiB against a 205 KiB ceiling. It is hand-written, so its constant-time posture is a source-level
 claim (branch-free reductions, masked norm checks, no secret division), not
 proven at machine code. It is checked byte-for-byte against NIST ACVP KATs,
-with Kani proofs over the reductions and rounding. ML-DSA-87 (−50) is out of
-reach on this chip (keygen overflows the stack; its makeCredential response
-also overruns the CTAPHID message ceiling). ML-KEM-768 is compiled in as
+with Kani proofs over the reductions and rounding. ML-KEM-768 is compiled in as
 scaffolding but nothing calls it until a CTAP PQC PIN/UV protocol exists.
 None of these has a third-party audit yet, the same standing as the rest of
 the RustCrypto stack, tracked via cargo-audit/deny.

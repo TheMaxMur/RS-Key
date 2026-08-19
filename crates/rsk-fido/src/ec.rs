@@ -17,16 +17,20 @@ use zeroize::Zeroize;
 
 use crate::Rng;
 use crate::consts::{
-    ALG_EDDSA, ALG_ES256, ALG_ES256K, ALG_ES384, ALG_ES512, ALG_MLDSA44, ALG_MLDSA65,
-    CURVE_ED25519, CURVE_MLDSA44, CURVE_MLDSA65, CURVE_P256, CURVE_P256K1, CURVE_P384, CURVE_P521,
+    ALG_EDDSA, ALG_ES256, ALG_ES256K, ALG_ES384, ALG_ES512, ALG_MLDSA44, ALG_MLDSA65, ALG_MLDSA87,
+    CURVE_ED25519, CURVE_MLDSA44, CURVE_MLDSA65, CURVE_MLDSA87, CURVE_P256, CURVE_P256K1,
+    CURVE_P384, CURVE_P521,
 };
 use crate::cose::{cose_key_akp, cose_key_ec2_var, cose_key_okp_var};
 
 /// Maximum DER-encoded P-256 ECDSA signature length.
 pub const MAX_DER_SIG: usize = 72;
-/// Max signature length across all credential schemes — an ML-DSA-65
-/// signature; ML-DSA-44 is 2420 and the EC curves top out at 141 (P-521 DER).
-pub const MAX_SIG_LEN: usize = rsk_crypto::MLDSA65_SIG_LEN; // 3309
+/// Max signature length across all credential schemes — an ML-DSA-87
+/// signature; ML-DSA-65 is 3309, ML-DSA-44 is 2420 and the EC curves top out at
+/// 141 (P-521 DER). Load-bearing: `MlDsa*::sign` refuses a short `out`, so a
+/// stale value here makes the widest scheme's signing path fold to a silent
+/// `Ok(0)` at compile time rather than fail loudly.
+pub const MAX_SIG_LEN: usize = rsk_crypto::MLDSA87_SIG_LEN; // 4627
 /// Bytes the key-derivation ratchet must produce — a P-521 scalar is 66 bytes
 /// (the ML-DSA-44 seed needs only the first 32).
 pub const RATCHET_LEN: usize = 66;
@@ -133,6 +137,8 @@ pub enum CredKey {
     MlDsa44(Box<rsk_crypto::MlDsa44>),
     // ML-DSA-65's ~23 KB expanded key, same crate and boxing rationale as -44.
     MlDsa65(Box<rsk_crypto::MlDsa65>),
+    /// ML-DSA-87 (COSE −50) — same boxing rationale as [`CredKey::MlDsa44`].
+    MlDsa87(Box<rsk_crypto::MlDsa87>),
 }
 
 // The bare Weierstrass scalars need explicit zeroize (`NonZeroScalar` has no `Drop`);
@@ -174,6 +180,17 @@ fn mldsa65_from_raw(raw: &[u8]) -> Option<CredKey> {
     Some(CredKey::MlDsa65(key))
 }
 
+/// Boxed ML-DSA-87 credential key from the ratchet seed — same
+/// stack-isolation rationale as [`mldsa44_from_raw`].
+#[inline(never)]
+fn mldsa87_from_raw(raw: &[u8]) -> Option<CredKey> {
+    let mut xi = [0u8; 32];
+    xi.copy_from_slice(raw.get(..32)?);
+    let key = Box::new(rsk_crypto::MlDsa87::from_seed(&xi));
+    xi.zeroize();
+    Some(CredKey::MlDsa87(key))
+}
+
 /// Hedged FIPS 204 ML-DSA-44 signing (32 fresh RNG bytes per signature), kept
 /// `#[inline(never)]` for the same reason as [`mldsa44_from_raw`]: the streaming
 /// sign has a ~50 KiB frame that must not be folded into [`CredKey::sign`]'s frame
@@ -190,6 +207,16 @@ fn mldsa44_sign<R: Rng>(k: &rsk_crypto::MlDsa44, msg: &[u8], rng: &mut R, out: &
 /// ML-DSA-65 counterpart of [`mldsa44_sign`].
 #[inline(never)]
 fn mldsa65_sign<R: Rng>(k: &rsk_crypto::MlDsa65, msg: &[u8], rng: &mut R, out: &mut [u8]) -> usize {
+    let mut rnd = [0u8; 32];
+    rng.fill(&mut rnd);
+    let n = k.sign(msg, &rnd, out).unwrap_or(0);
+    rnd.zeroize();
+    n
+}
+
+/// ML-DSA-87 counterpart of [`mldsa44_sign`].
+#[inline(never)]
+fn mldsa87_sign<R: Rng>(k: &rsk_crypto::MlDsa87, msg: &[u8], rng: &mut R, out: &mut [u8]) -> usize {
     let mut rnd = [0u8; 32];
     rng.fill(&mut rnd);
     let n = k.sign(msg, &rnd, out).unwrap_or(0);
@@ -254,6 +281,7 @@ impl CredKey {
             // overflow the worker stack. See [`mldsa44_from_raw`].
             c if c == CURVE_MLDSA44 as i64 => mldsa44_from_raw(raw),
             c if c == CURVE_MLDSA65 as i64 => mldsa65_from_raw(raw),
+            c if c == CURVE_MLDSA87 as i64 => mldsa87_from_raw(raw),
             _ => None,
         }
     }
@@ -268,6 +296,7 @@ impl CredKey {
             Self::Ed25519(_) => ALG_EDDSA,
             Self::MlDsa44(_) => ALG_MLDSA44,
             Self::MlDsa65(_) => ALG_MLDSA65,
+            Self::MlDsa87(_) => ALG_MLDSA87,
         }
     }
 
@@ -308,6 +337,7 @@ impl CredKey {
             // not folded into this function's frame (paid by every EC assertion).
             Self::MlDsa44(k) => mldsa44_sign(k, msg, rng, out),
             Self::MlDsa65(k) => mldsa65_sign(k, msg, rng, out),
+            Self::MlDsa87(k) => mldsa87_sign(k, msg, rng, out),
         }
     }
 
@@ -350,6 +380,7 @@ impl CredKey {
             }
             Self::MlDsa44(k) => cose_key_akp(enc, alg, &k.public_key()),
             Self::MlDsa65(k) => cose_key_akp(enc, alg, &k.public_key()),
+            Self::MlDsa87(k) => cose_key_akp(enc, alg, &k.public_key()),
         }
     }
 
@@ -406,7 +437,7 @@ impl CredKey {
                 )
             }
             Self::Ed25519(k) => put(&k.verifying_key().to_bytes(), out),
-            Self::MlDsa44(_) | Self::MlDsa65(_) => None,
+            Self::MlDsa44(_) | Self::MlDsa65(_) | Self::MlDsa87(_) => None,
         }
     }
 }

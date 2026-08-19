@@ -77,7 +77,7 @@ credMgmt, U2F, extensions, large blobs, the vendor backup/lock commands,
 half that corpus runs soft-locked), OpenPGP dispatch + the EC/RSA crypto
 parsers, OATH/OTP/PIV/management/rescue dispatch, the keyboard frame codec,
 the phy TLV codec (parse∘serialize round-trip is an asserted invariant), the
-PIN protocols, AEADs, the DRBG, ML-DSA (both parameter sets: attacker-shaped
+PIN protocols, AEADs, the DRBG, ML-DSA (all three parameter sets: attacker-shaped
 verify decode, plus a keygen→sign→verify property that a one-bit tamper must
 break) / ML-KEM decoding, the FIDO post-quantum credential path (the
 `(alg, curve)` box codec + `CredKey` dispatch → sign / COSE-AKP encode), the

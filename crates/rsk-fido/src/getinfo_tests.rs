@@ -170,17 +170,19 @@ fn get_info_fields() {
 
     // 0x0A algorithms: [{alg, type:"public-key"} …] — the NIST ECDSA curves,
     // then EdDSA (-8) unless `fido-conformance` suppresses it; `advertise-pqc`
-    // prepends ML-DSA-65 (-49) then ML-DSA-44 (-48) (default stays without them:
-    // Firefox authenticator-rs strict parse).
+    // prepends all three ML-DSA sets in descending security order, -87 (-50),
+    // -65 (-49), -44 (-48) (default stays without them: Firefox
+    // authenticator-rs strict parse).
     assert_eq!(d.u8().unwrap(), 0x0A);
     let pqc = cfg!(feature = "advertise-pqc");
     let eddsa = cfg!(not(feature = "fido-conformance"));
     assert_eq!(
         d.array().unwrap().unwrap(),
-        3 + 2 * u64::from(pqc) + u64::from(eddsa)
+        3 + 3 * u64::from(pqc) + u64::from(eddsa)
     );
     let mut algs = vec![];
     if pqc {
+        algs.push(ALG_MLDSA87);
         algs.push(ALG_MLDSA65);
         algs.push(ALG_MLDSA44);
     }

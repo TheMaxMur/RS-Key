@@ -33,13 +33,13 @@ pub use kdf::{Device, FusedKey, FusedRead, PinKdf, read_fused};
 pub use mac::{ct_eq, hkdf_sha256, hkdf_sha512, hmac_sha1, hmac_sha256, hmac_sha512};
 pub use mlkem::{MlKem768Pair, mlkem768_encapsulate};
 pub use pinproto::PinProto;
-// ML-DSA-44 and -65 both come from the in-tree stack-optimized `rsk-mldsa`: it
+// ML-DSA-44, -65 and -87 all come from the in-tree stack-optimized `rsk-mldsa`: it
 // streams the matrix A so signing fits the RP2350 stack (the by-value fips204
 // crate's -65 overflowed it). Re-exported so downstream keeps the `rsk_crypto::`
 // path.
 pub use rsk_mldsa::{
-    MLDSA44_PK_LEN, MLDSA44_SIG_LEN, MLDSA65_PK_LEN, MLDSA65_SIG_LEN, MlDsa44, MlDsa65,
-    mldsa44_verify, mldsa65_verify,
+    MLDSA44_PK_LEN, MLDSA44_SIG_LEN, MLDSA65_PK_LEN, MLDSA65_SIG_LEN, MLDSA87_PK_LEN,
+    MLDSA87_SIG_LEN, MlDsa44, MlDsa65, MlDsa87, mldsa44_verify, mldsa65_verify, mldsa87_verify,
 };
 
 /// Errors from the fallible crypto operations.
