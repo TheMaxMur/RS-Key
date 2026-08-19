@@ -285,6 +285,80 @@ fn management_auth_preserves_pin_verification() {
 }
 
 #[test]
+fn a_wrong_pin_is_refused_on_the_kbase_fallback_path() {
+    // The whole PIN gate hangs on `!matched && otp_key.is_some() && ct_eq(..)`.
+    // Written `!matched && otp_key.is_some() || ct_eq(..)` it short-circuits on
+    // ANY wrong PIN straight into the migration body, which calls
+    // `put_pin_verifier` with the PIN just offered and sets `matched = true` —
+    // wrong PIN accepted AND stored as the new one. Killed by no test, because
+    // the fallback is only reachable on an OTP-provisioned device and every PIV
+    // test that offers a wrong PIN runs without one (found by the reverse
+    // mutation pass, D2). Its FIDO twin at `clientpin.rs:761` is not the same
+    // shape: there the `ct_eq` sits inside the block, so a widened guard still
+    // cannot write.
+    const OTP: [u8; 32] = [0x44; 32];
+    fn otp_source() -> Option<[u8; 32]> {
+        Some(OTP)
+    }
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    let dev_new = Device {
+        serial_hash: &HASH,
+        serial_id: &SERIAL,
+        otp_key: Some(&OTP),
+    };
+    migrate_kbase(&dev_new, &mut fs, &mut TestRng(9));
+
+    let mut app2 = PivApplet::new(SERIAL, HASH, Some(otp_source as FusedKey), &rng, &pres);
+    select(&mut app2, &mut fs);
+    let wrong: [u8; 8] = [b'9', b'9', b'9', b'9', b'9', b'9', 0xFF, 0xFF];
+    // Twice, because the retry counter moves between them — what must NOT move
+    // is which PIN the record holds.
+    for attempt in 0..2 {
+        assert_ne!(
+            run(&mut app2, &mut fs, INS_VERIFY, 0, 0x80, &wrong).0,
+            Sw::OK,
+            "a wrong PIN must never verify on the fallback path (attempt {attempt})"
+        );
+    }
+    assert_eq!(
+        run(&mut app2, &mut fs, INS_VERIFY, 0, 0x80, &DEFAULT_PIN).0,
+        Sw::OK,
+        "the real PIN must still verify — the wrong one must not have been stored"
+    );
+}
+
+#[test]
+fn a_deselect_drops_the_pin_status() {
+    // `RSKeyAppletSeams!NoStatusOutsideItsSelection` — SEC-SEAM-001 at the code
+    // level. The model catches an applet keeping its status across a deselect
+    // (`BugSelectKeepsOtherApplet`); emptying this applet's `deselect` was killed
+    // by no test, so selecting another application and coming back would have
+    // inherited a verified PIN. VERIFY with an empty body is the status query:
+    // `9000` while verified, `63Cx` once it is not.
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    verify_pin(&mut app, &mut fs);
+    assert_eq!(
+        run(&mut app, &mut fs, INS_VERIFY, 0, 0x80, &[]).0,
+        Sw::OK,
+        "the status query must report the PIN verified inside its own selection"
+    );
+    Applet::deselect(&mut app, &mut fs);
+    assert_ne!(
+        run(&mut app, &mut fs, INS_VERIFY, 0, 0x80, &[]).0,
+        Sw::OK,
+        "the PIN status must not outlive the selection that earned it"
+    );
+}
+
+#[test]
 fn select_returns_apt() {
     let rng = RefCell::new(TestRng(7));
     let pres = RefCell::new(AlwaysConfirm);

@@ -296,6 +296,32 @@ fn a_code_an_older_build_stored_still_opens_the_applet() {
 // both directions of a refused VALIDATE were held by the model alone.
 
 #[test]
+fn a_deselect_drops_the_validate_unlock() {
+    // `RSKeyAppletSeams!NoStatusOutsideItsSelection` — SEC-SEAM-001 at the code
+    // level. The model catches an applet that keeps its status across a
+    // deselect (`BugSelectKeepsOtherApplet`); emptying this applet's `deselect`
+    // was killed by no test, so a second application selected in between would
+    // have inherited an unlocked store.
+    let (mut fs, rng) = fixture();
+    let touch = RefCell::new(AlwaysConfirm);
+    let mut app = OathApplet::new(SERIAL, [0x22; 32], None, &rng, &touch);
+    let secret = [0xABu8; 20];
+    assert_eq!(set_code(&mut app, &mut fs, &secret), Sw::OK);
+    assert_eq!(validate(&mut app, &mut fs, &secret), Sw::OK);
+    assert_eq!(
+        run(&mut app, &mut fs, &apdu(INS_LIST, 0, 0, &[])).0,
+        Sw::OK,
+        "the unlock must hold inside its own selection"
+    );
+    Applet::deselect(&mut app, &mut fs);
+    assert_eq!(
+        run(&mut app, &mut fs, &apdu(INS_LIST, 0, 0, &[])).0,
+        Sw::SECURITY_STATUS_NOT_SATISFIED,
+        "the unlock must not outlive the selection that earned it"
+    );
+}
+
+#[test]
 fn the_removal_is_behind_the_same_gate_as_the_install() {
     // `RSKeyAppletSeams!AccessCodeRemovalNeedsTheCode` — SEC-SEAM-006, at the
     // code level. `73 00` is the card's one spelling of "remove the access

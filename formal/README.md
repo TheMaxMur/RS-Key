@@ -313,6 +313,113 @@ separates them: under the defect it is not registered, so the budget moves. The
 count-only version would have shipped as a test that cannot fail, and only
 driving the mutation said so.
 
+#### Batch two, and the first measured answer to "what does the model buy"
+
+The same pass over the other 23 property-tagged files — 4 357 mutants, 3 124
+measured before the run was interrupted — returned **572 MISSED, of which 78 sit
+on a line the model cites**. The whole 78 are not triaged; three were, chosen
+because each maps onto an invariant this page already claims, and all three came
+back the same way:
+
+| Site | The defect | The model's own mutant |
+|---|---|---|
+| `crates/rsk-fs/src/lib.rs:46` | `request_rescrub` → `()`: the at-rest lap is never re-armed | `BugRekeyKeepsTheMarker`, RED on `MarkerNeverLies` |
+| `crates/rsk-oath/src/lib.rs:1202` | `deselect` → `()`: the VALIDATE unlock outlives its selection | `BugSelectKeepsOtherApplet`, RED on `NoStatusOutsideItsSelection` |
+| `crates/rsk-piv/src/lib.rs:345` | `deselect` → `()`: the verified PIN outlives its selection | the same |
+
+That is **model-catches** three times: a defect the suite could not tell from
+correct code, on a line carrying the property's own tag, which the model reddens.
+It is the first quantitative thing this apparatus has said about its own worth,
+and it is worth exactly three rows — not a claim about the other 75.
+
+All three code halves are closed now, each proved by driving its real mutation
+with the whole suite watched: `requesting_a_rescrub_clears_the_hardened_marker`,
+`a_deselect_drops_the_validate_unlock`, `a_deselect_drops_the_pin_status`, one
+failure each, always the intended test. Note what the first one means for M7's
+recorded exclusion: co-refutation skips `RSKeyBootHardening` because `firmware/`
+has no host tests, and that is still true — but `request_rescrub` lives in
+`crates/rsk-fs`, is host-testable, and had no test. The exclusion was reasoned
+about the module and quietly covered a crate it did not have to.
+
+The completed sweep is 4 357 mutants, **716 MISSED, 98 on a cited line**. Eight
+of the 98 are triaged so far, taken from the PIN and selection paths because
+those are where a hole costs the most:
+
+| Mutation | Verdict | Owned by |
+|---|---|---|
+| `crates/rsk-sdk/src/applet.rs:387` `==` → `!=` — the dispatcher's reselect decision | **model-catches**: `BugReselectResetsStatus` / `ReselectPreservesAccessStatus` | `reselect_is_true_only_for_the_applet_already_current` |
+| `clientpin.rs:238` `+` → `*` — the padded-length bound | **model-blind, real** | `change_pin_over_protocol_one` |
+| `clientpin.rs:327` `\|\|` → `&&` — the legacy token's argument check | **model-blind, real** | `the_legacy_get_pin_token_refuses_an_rp_id` |
+| `clientpin.rs:388` `\|` → `^` on `PERM_MC \| PERM_GA` | equivalent — `0x01` and `0x02` are disjoint | — |
+| `clientpin.rs:761` `&&` → `\|\|` — the kbase-migration fallback | equivalent by construction: the inner `ct_eq` cannot match in either case the widened guard admits | — |
+| `clientpin.rs:238` `>` → `<` | conformance only — the `!=` two lines down still refuses; the status word moves from `PinPolicyViolation` to `InvalidParameter` | recorded |
+| `clientpin.rs:242` `\|\|` → `&&` | survived; the consequence is not yet determined | **open** |
+
+Two of those are real defects the suite could not see, and the second one names
+a whole missing dimension rather than a line: **`PinProto::One` appears once in
+`clientpin_tests.rs` against twenty-five uses of `Two`**, so every length rule in
+`changePIN` was measured at `PADDED_PIN_LEN + 16` and never at `+ 0`. Written
+`*` instead of `+`, that expression turns the over-long guard into "refuse every
+changePIN" on protocol 1 — a complete denial of the command, invisible to a
+suite that only speaks protocol 2. The legacy-token one is the same shape one
+door over: `issue_token` is handed `req.rp_id` whatever the subcommand, so
+relaxing the guard mints a **subCommand-5 token bound to an rp the caller
+named**, which CTAP 2.1 §6.5.5.7 does not allow.
+
+The dispatcher row is the third `model-catches`, and the cleanest: every fake
+applet in `applet_tests.rs` took `_reselect` and ignored it, so the flag the
+whole seam module is about was handed to nobody who looked.
+
+#### The ninth row, and the column number that decided it
+
+`crates/rsk-piv/src/lib.rs:1217` `&&` → `||` is the sharpest thing this pass has
+produced. The PIV PIN gate ends in
+
+```rust
+if !matched && dev.otp_key.is_some() && ct_eq(&dev.without_otp().pin_derive_verifier(pin), stored)
+```
+
+and `&&` binds tighter than `||`, so relaxing the **second** one leaves
+`(!matched && otp_key.is_some()) || ct_eq(..)`. On an OTP-provisioned device any
+**wrong** PIN satisfies the left side, short-circuits past the comparison, and
+falls into the migration body — which calls `put_pin_verifier` with the PIN just
+offered and sets `matched = true`. Wrong PIN accepted, and stored as the new one.
+
+Why no test saw it: the fallback is only reachable when `otp_key.is_some()`, and
+every PIV test that offers a **wrong** PIN runs on a device without one. The one
+test that does provision an OTP key only ever offers the correct PIN.
+`a_wrong_pin_is_refused_on_the_kbase_fallback_path` closes it — proved by driving
+the real mutation, one failure, the intended test.
+
+**And the first attempt at that proof was a red for the wrong reason.** The
+report reads `1217:9`; the *first* `&&` is `1216:9`. Mutating 1216 turns eighteen
+existing tests red, which reads as "cargo-mutants was wrong about this being
+MISSED" — it is not, they are different mutants one line apart. The column
+number is what separated them, and nothing but re-reading the report would have.
+The FIDO twin at `clientpin.rs:761` looks identical and is **not**: there the
+`ct_eq` sits inside the block rather than in the condition, so a widened guard
+still cannot write. Same shape, opposite verdict, and only reading both bodies
+says which.
+
+#### Seven more, and two of them the tree had already tested one applet over
+
+| Mutation | Verdict | Owned by |
+|---|---|---|
+| `crates/rsk-fido/src/reset.rs:89` `<` → `<=` — `sweep`'s 64-key batch bound | test gap; the mutation indexes past `keys` | `a_reset_sweeps_more_secrets_than_one_batch_holds` |
+| `crates/rsk-openpgp/src/pin.rs:208` `&&` → `\|\|`, and the same guard → `true` | test gap; a record too short to be `[len, fmt, verifier]`, or with a zeroed length, read as a verifier | `a_malformed_pw_record_is_reference_not_found_not_a_verifier` |
+| `crates/rsk-openpgp/src/pin.rs:202` `<` → `<=` | fail-safe — a short `EF_PW_PRIV` makes a live reference answer `PIN_BLOCKED`; wrong, but in the refusing direction | recorded |
+| `crates/rsk-openpgp/src/pin.rs:763` guard → `true` | effectively equivalent — an empty `EF_RC` yields `rc_len = 0`, and the `check_pin` below re-reads `EF_RC` and refuses on its own guard | recorded |
+| `crates/rsk-fido/src/reset.rs:104` `>` → `>=` | conformance — the runaway valve trips one delete early | recorded |
+| `crates/rsk-fido/src/reset.rs:104` `>` → `==` | **the valve stops guarding**: `deleted` rises a whole batch at a time and can step past the threshold without ever equalling it. Not drivable in a unit test at `RESET_MAX_DELETES = 4 × 256 + 13` | **open** |
+
+Both closures are the tree's own rule about sweeping by class rather than by
+site, and both were one applet away from being closed already. PIV has
+`reset_sweeps_more_files_than_one_batch` for its reset; FIDO's `sweep` is the
+same 64-key loop and had nothing. PIV has
+`a_poisoned_reference_keeps_every_exit_it_had` for a zeroed PIN record; OpenPGP's
+`check_pin` reads the same shape and had nothing. Neither gap needed a new idea
+— only the question "who else does this".
+
 <!-- phase2-comutants:start -->
 <!-- Generated by scripts/comutate.py run --write-readme; do not edit. -->
 | # | Mutant | Target invariant | Model | Code level |

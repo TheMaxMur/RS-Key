@@ -1022,3 +1022,38 @@ fn a_torn_reset_never_leaves_the_session_running_on_a_wiped_seed() {
         );
     }
 }
+
+#[test]
+fn a_reset_sweeps_more_secrets_than_one_batch_holds() {
+    // `sweep` deletes in 64-key batches, and nothing drove it past the first
+    // one: the bound that keeps `keys[n]` in range was untested, and the
+    // mutation that breaks it is an out-of-bounds index, not a wrong answer.
+    // PIV has this test for its own reset (`reset_sweeps_more_files_than_one_batch`);
+    // FIDO's sweep is the same shape and had none — sweep by class, not by site.
+    let mut fs = Fs::new(RamStorage::new());
+    let mut rng = SeqRng(3);
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+    for i in 0..80u16 {
+        fs.put(EF_CRED + i, &[0xC0; 8]).unwrap();
+    }
+    let mut state = FidoState::new();
+    {
+        let mut presence = crate::AlwaysConfirm;
+        let mut ctx = Ctx {
+            presence: &mut presence,
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 0,
+        };
+        reset(&mut ctx).unwrap();
+    }
+    for i in 0..80u16 {
+        assert!(
+            !fs.has_data(EF_CRED + i),
+            "0x{:04X} survived a reset that spans two batches",
+            EF_CRED + i
+        );
+    }
+}

@@ -40,6 +40,66 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Added
 
+- **Two paths the tree already tested one applet over.** `rsk-fido`'s
+  `reset::sweep` deletes in 64-key batches exactly as PIV's reset does, and PIV
+  has `reset_sweeps_more_files_than_one_batch` while FIDO's had nothing — the
+  bound that keeps the batch index in range was untested, and the mutation that
+  breaks it indexes past the array. Likewise `rsk-openpgp`'s `check_pin` accepts
+  a PIN record only at `n >= 3 && rec[0] != 0`, the same poisoned-record shape
+  PIV pins with `a_poisoned_reference_keeps_every_exit_it_had`, and neither half
+  of the guard was tested: a record too short to hold `[len, fmt, verifier]`, or
+  with a zeroed length byte, was read as a verifier. Both closed with tests
+  proved by driving their real mutations. Neither gap needed a new idea, only the
+  question "who else does this". No firmware behaviour change.
+
+- **The PIV PIN gate's last `&&` was held by no test, and the path behind it
+  accepts a wrong PIN *and stores it*.** `check_ref` ends in `!matched &&
+  otp_key.is_some() && ct_eq(without_otp_verifier, stored)`; because `&&` binds
+  tighter than `||`, relaxing the **second** one leaves `(!matched &&
+  otp_key.is_some()) || ct_eq(..)` — on an OTP-provisioned device any wrong PIN
+  satisfies the left side, skips the comparison, and lands in the migration body,
+  which calls `put_pin_verifier` with the PIN just offered. Nothing caught it
+  because the fallback needs `otp_key.is_some()` and every PIV test that offers a
+  wrong PIN runs without one; the single test that does provision an OTP key only
+  ever offers the correct PIN. `a_wrong_pin_is_refused_on_the_kbase_fallback_path`
+  closes it. The FIDO twin at `clientpin.rs:761` reads identically and is not the
+  same shape — its `ct_eq` is inside the block, so a widened guard still cannot
+  write. The tree as shipped is correct; this is the test that was missing. No
+  firmware behaviour change.
+
+- **The clientPIN suite spoke one protocol, and two PIN-path defects hid behind
+  that.** `PinProto::One` appeared once in `clientpin_tests.rs` against
+  twenty-five uses of `Two`, so every length rule in `changePIN` was measured at
+  `PADDED_PIN_LEN + 16` and never at `+ 0` — where the same expression written
+  `*` instead of `+` refuses **every** protocol-1 changePIN. The second: the
+  legacy `getPinToken` (subCommand 5) takes neither permissions nor an rpId, and
+  `issue_token` is handed `req.rp_id` whatever the subcommand, so relaxing that
+  one guard mints a legacy token bound to an rp the caller named — CTAP 2.1
+  §6.5.5.7 does not allow it and nothing tested the refusal. Both now have tests.
+  A third, in `rsk-sdk`: every fake applet took `_reselect` and ignored it, so
+  the dispatcher's `current == Some(i)` — the flag PIV and OpenPGP branch on to
+  keep or drop a session — was handed to nobody who looked; inverting it is what
+  the model calls `BugReselectResetsStatus`. Each proved by driving its real
+  mutation, one failure each, always the intended test. The tree as shipped is
+  correct throughout. No firmware behaviour change.
+
+- **Three defects the test suite could not tell from correct code, on lines the
+  model already covers.** The reverse pass reached the other 23 property-tagged
+  files (4 357 mutants, 3 124 measured, 572 MISSED, 78 of them on a cited line).
+  Three were triaged, chosen because each maps onto an invariant the model
+  claims: `request_rescrub` emptied — the at-rest scrub is never re-armed, which
+  `BugRekeyKeepsTheMarker` reddens; and OATH's and PIV's `deselect` emptied — a
+  VALIDATE unlock and a verified PIN outliving their selection, which
+  `BugSelectKeepsOtherApplet` reddens. All three now have tests
+  (`requesting_a_rescrub_clears_the_hardened_marker`,
+  `a_deselect_drops_the_validate_unlock`, `a_deselect_drops_the_pin_status`),
+  each proved by driving its real mutation with the whole suite watched — one
+  failure each, always the intended test. The first also narrows a recorded
+  exclusion: co-refutation skips the boot module because `firmware/` has no host
+  tests, but `request_rescrub` is in `crates/rsk-fs`, host-testable, and was
+  covered by nothing. The tree as shipped is correct throughout. No firmware
+  behaviour change.
+
 - **Five more `rsk-fs` paths the suite could not tell from broken.** The same
   reverse pass that found the `meta_delete` guard flagged the boot scan's
   dynamic-file registry (three separate mutations), `has_data`'s zero-length
@@ -91,9 +151,10 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   smaller; nothing watched whether the scope it ran over was big enough to hold
   the defect. `BugCmWalkIgnoresChannel` explores 43 M+ distinct states at one
   CTAPHID channel without a counterexample and falls at two, and
-  `BugContIgnoresChannel` is the same shape at the reassembler. The transport's `Channels` and the
-  admin `Caps` were literals inside their modules until now, so no configuration
-  could say what scope it ran at; both are CONSTANTS now, emitted by
+  `BugContIgnoresChannel` is the same shape at the reassembler. The transport's
+  `Channels` and the admin `Caps` were literals inside their modules until now,
+  so no configuration could say what scope it ran at; both are CONSTANTS now,
+  emitted by
   `gen-configs.sh`, and every count is unchanged. `formal/scopes.txt` records
   two hand-written columns per constant — the measured minimum and the invariant
   it was measured against — and `scripts/scope_gate.py` derives everything else,

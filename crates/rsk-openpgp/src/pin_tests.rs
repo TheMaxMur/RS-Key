@@ -166,6 +166,41 @@ fn verify_default_pw1_and_load_dek() {
 }
 
 #[test]
+fn a_malformed_pw_record_is_reference_not_found_not_a_verifier() {
+    // `check_pin` accepts a record only at `n >= 3 && rec[0] != 0`. Neither half
+    // was tested: a short record and a zeroed-length record both survived the
+    // suite (the reverse mutation pass, D2). Both must exit
+    // REFERENCE_NOT_FOUND — a record too short to hold `[len, fmt, verifier]`
+    // reaches `size - 2` below, and a zero first byte is the poisoned shape PIV
+    // already pins with `a_poisoned_reference_keeps_every_exit_it_had`. Sweep by
+    // class, not by site.
+    for (label, rec) in [
+        ("empty", &[][..]),
+        ("one byte", &[0x20][..]),
+        ("two bytes", &[0x20, 0x01][..]),
+        ("zeroed length", &[0x00, 0x01, 0xAB][..]),
+    ] {
+        let mut fs = setup();
+        let mut sess = Session::new();
+        fs.put(EF_PW1, rec).unwrap();
+        assert_eq!(
+            verify(
+                &dev(),
+                &mut fs,
+                &mut sess,
+                &mut CountRng(0),
+                0x00,
+                PW1_MODE81,
+                PW1_DEFAULT,
+            ),
+            Sw::REFERENCE_NOT_FOUND,
+            "a {label} PW1 record must not be read as a verifier"
+        );
+        assert!(!sess.has_pw1, "{label}: nothing may be authorised");
+    }
+}
+
+#[test]
 fn verify_wrong_pin_decrements_then_blocks() {
     let mut fs = setup();
     let mut sess = Session::new();

@@ -1293,6 +1293,91 @@ fn wrong_pin_decrements_then_locks_out() {
 }
 
 #[test]
+fn the_legacy_get_pin_token_refuses_an_rp_id() {
+    // CTAP 2.1 §6.5.5.7: subCommand 5 takes neither permissions nor an rpId —
+    // it grants the fixed mc|ga set and no rp binding. The refusal was held by
+    // nothing: `:392` hands `req.rp_id` to `issue_token` whatever the
+    // subcommand, so relaxing the guard mints a legacy token BOUND to an rp the
+    // caller named. Found by the reverse mutation pass (D2).
+    let (mut fs, mut rng) = setup();
+    let mut state = FidoState::new();
+    let plat = key_agreement(&mut fs, &mut rng, &mut state, PinProto::Two, 2);
+    let mut out = [0u8; 256];
+    run(
+        &mut fs,
+        &mut rng,
+        &mut state,
+        &plat.set_pin_req(b"1234"),
+        &mut out,
+    )
+    .unwrap();
+
+    let h = sha256(b"1234");
+    let phe = plat.enc(&h[..16]);
+    let rp_id = [0x62u8, b'r', b'p']; // CBOR text(2) "rp"
+    let req = build(&[
+        (1, V::U(plat.wire)),
+        (2, V::U(5)),
+        (3, V::Cose(&plat.x, &plat.y)),
+        (6, V::B(&phe)),
+        (10, V::Raw(&rp_id)),
+    ]);
+    assert_eq!(
+        run(&mut fs, &mut rng, &mut state, &req, &mut out),
+        Err(CtapError::InvalidParameter),
+        "subCommand 5 must refuse an rpId rather than bind the token to it"
+    );
+    assert!(
+        !state.paut.in_use,
+        "a refused request must not have minted a token"
+    );
+}
+
+#[test]
+fn change_pin_over_protocol_one() {
+    // The whole clientPIN suite ran on PIN protocol TWO except one setPIN case,
+    // so every length rule in changePIN was measured at `PADDED_PIN_LEN + 16`
+    // and never at `+ 0` — where the same expression written wrong turns the
+    // over-long guard into "refuse every changePIN". Found by the reverse
+    // mutation pass (D2): protocol 1 is still in CTAP 2.1 and this firmware
+    // still speaks it.
+    let (mut fs, mut rng) = setup();
+    let mut state = FidoState::new();
+    let plat = key_agreement(&mut fs, &mut rng, &mut state, PinProto::One, 1);
+    let mut out = [0u8; 256];
+    run(
+        &mut fs,
+        &mut rng,
+        &mut state,
+        &plat.set_pin_req(b"1234"),
+        &mut out,
+    )
+    .unwrap();
+
+    let n = run(
+        &mut fs,
+        &mut rng,
+        &mut state,
+        &plat.change_pin_req(b"1234", b"5678"),
+        &mut out,
+    )
+    .unwrap();
+    assert_eq!(n, 0, "changePIN over protocol 1 must be accepted");
+
+    assert!(
+        run(
+            &mut fs,
+            &mut rng,
+            &mut state,
+            &plat.get_token_req(b"5678"),
+            &mut out
+        )
+        .is_ok(),
+        "the new PIN must work over protocol 1"
+    );
+}
+
+#[test]
 fn change_pin_then_new_pin_works_and_old_fails() {
     let (mut fs, mut rng) = setup();
     let mut state = FidoState::new();
