@@ -64,6 +64,7 @@ EVENTS = {
     0x14: "CFG_ALWAYS_UV",
     0x15: "CONFIG_WRITE",
     0x16: "AUDIT_CFG",
+    0x17: "CFG_EA_RPIDS",
 }
 
 

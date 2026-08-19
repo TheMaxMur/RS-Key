@@ -71,6 +71,10 @@ pub const EV_CONFIG_WRITE: u8 = 0x15;
 /// aux: 1 = journalling turned on, 0 = turned off (the off entry is the last one
 /// written, recorded before the flag flips, so the trail shows when it stopped).
 pub const EV_AUDIT_CFG: u8 = 0x16;
+/// aux = how many RP ids the vendor-facilitated enterprise-attestation list now
+/// holds; `0` is the clear. Its own event, not [`EV_CFG_EA`]: enabling EA and
+/// naming who gets type 1 are separate admin acts, and a log that merges them lies.
+pub const EV_CFG_EA_RPIDS: u8 = 0x17;
 
 /// Entry: `seq(4 LE) ‖ uptime_ms(4 LE) ‖ event(1) ‖ aux(1) ‖ detail(8) ‖ repeats(2 LE)`.
 pub const ENTRY_LEN: usize = 20;

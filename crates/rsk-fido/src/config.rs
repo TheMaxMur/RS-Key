@@ -17,11 +17,11 @@ use rsk_rescue::phy;
 
 use crate::cbordec::{cbor, def_arr, def_map, skip_value};
 use crate::consts::{
-    CONFIG_AUT_DISABLE, CONFIG_AUT_ENABLE, CONFIG_ENABLE_EA, CONFIG_PHY_LED_BRIGHTNESS,
-    CONFIG_PHY_LED_GPIO, CONFIG_PHY_OPTIONS, CONFIG_PHY_VIDPID, CONFIG_SET_MIN_PIN,
-    CONFIG_TARGET_PHY, CONFIG_TOGGLE_ALWAYS_UV, CONFIG_VENDOR, CTAP_CONFIG, EF_ALWAYS_UV,
-    EF_EA_ENABLED, EF_KEY_DEV, EF_KEY_DEV_ENC, EF_MINPINLEN, EF_PIN, MAX_MIN_PIN_RPIDS,
-    MAX_RAW_SUBPARA, MIN_PIN_LENGTH,
+    CONFIG_AUT_DISABLE, CONFIG_AUT_ENABLE, CONFIG_EA_RPIDS, CONFIG_ENABLE_EA,
+    CONFIG_PHY_LED_BRIGHTNESS, CONFIG_PHY_LED_GPIO, CONFIG_PHY_OPTIONS, CONFIG_PHY_VIDPID,
+    CONFIG_SET_MIN_PIN, CONFIG_TARGET_PHY, CONFIG_TOGGLE_ALWAYS_UV, CONFIG_VENDOR, CTAP_CONFIG,
+    EF_ALWAYS_UV, EF_EA_ENABLED, EF_EA_RPIDS, EF_KEY_DEV, EF_KEY_DEV_ENC, EF_MINPINLEN, EF_PIN,
+    MAX_EA_RPIDS, MAX_MIN_PIN_RPIDS, MAX_RAW_SUBPARA, MIN_PIN_LENGTH,
 };
 use crate::error::{CtapError, CtapResult};
 use crate::journal;
@@ -73,11 +73,17 @@ struct Req<'a> {
     /// after the pinUvAuthParam check, so it is not an unauthenticated probe.
     rp_ids_overflow: bool,
     /// Vendor (0xFF) subCommandParams: `{1: vendorCommandId, 2: byte param,
-    /// 3: int param}`. The soft-lock ids use the byte param; the PicoForge
-    /// physical-config ids use the integer param.
+    /// 3: int param, 4: rpId array}`. The soft-lock ids use the byte param; the
+    /// PicoForge physical-config ids use the integer param; CONFIG_EA_RPIDS the array.
     vendor_id: u64,
     vendor_param: &'a [u8],
     vendor_param_int: u64,
+    /// Its own array, not setMinPINLength's: the two lists have separate bounds
+    /// and `MAX_MIN_PIN_RPIDS` is published in getInfo (0x10) as a promise about a
+    /// different command.
+    ea_rp_ids: [&'a str; MAX_EA_RPIDS],
+    ea_rp_ids_len: usize,
+    ea_rp_ids_overflow: bool,
 }
 
 fn parse(data: &[u8]) -> Result<Req<'_>, CtapError> {
@@ -96,6 +102,9 @@ fn parse(data: &[u8]) -> Result<Req<'_>, CtapError> {
         vendor_id: 0,
         vendor_param: &[],
         vendor_param_int: 0,
+        ea_rp_ids: [""; MAX_EA_RPIDS],
+        ea_rp_ids_len: 0,
+        ea_rp_ids_overflow: false,
     };
     let n = def_map(&mut d)?;
     let mut expected = 1u64;
@@ -171,12 +180,25 @@ fn parse_min_pin_sub<'a>(d: &mut Decoder<'a>, req: &mut Req<'a>, sk: u64) -> Res
 }
 
 /// One vendor (0xFF) subCommandParam: vendorCommandId (1), its byte param (2,
-/// soft-lock), or its integer param (3, PicoForge physical config).
+/// soft-lock), its integer param (3, PicoForge physical config), or its rpId array
+/// (4, the enterprise-attestation list).
 fn parse_vendor_sub<'a>(d: &mut Decoder<'a>, req: &mut Req<'a>, sk: u64) -> Result<(), CtapError> {
     match sk {
         1 => req.vendor_id = cbor(d.u64())?,
         2 => req.vendor_param = cbor(d.bytes())?,
         3 => req.vendor_param_int = cbor(d.u64())?,
+        4 => {
+            let a = def_arr(d)?;
+            for _ in 0..a {
+                let id = cbor(d.str())?;
+                if req.ea_rp_ids_len < MAX_EA_RPIDS {
+                    req.ea_rp_ids[req.ea_rp_ids_len] = id;
+                    req.ea_rp_ids_len += 1;
+                } else {
+                    req.ea_rp_ids_overflow = true;
+                }
+            }
+        }
         _ => skip_value(d)?,
     }
     Ok(())
@@ -265,6 +287,8 @@ pub fn authenticator_config<S: Storage, R: Rng>(
                 set_phy(ctx, |p| p.led_brightness = Some(req.vendor_param_int as u8))
             }
             CONFIG_PHY_OPTIONS => set_phy(ctx, |p| p.opts = req.vendor_param_int as u16),
+            CONFIG_EA_RPIDS if req.ea_rp_ids_overflow => Err(CtapError::KeyStoreFull),
+            CONFIG_EA_RPIDS => set_ea_rpids(ctx, &req.ea_rp_ids[..req.ea_rp_ids_len]),
             _ => Err(CtapError::InvalidSubcommand),
         },
         // Unreachable: the pre-auth match above admits exactly these four.
@@ -394,6 +418,27 @@ fn aut_disable<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>) -> CtapResult {
         .map_err(|_| CtapError::Other)?;
     ctx.state.clear_keydev_dec();
     journal::append(ctx, journal::EV_LOCK_RELEASE, 0, &[]);
+    Ok(0)
+}
+
+/// `CONFIG_EA_RPIDS`: replace the vendor-facilitated (type 1) enterprise-attestation
+/// RP list with `rp_ids`, packed as `sha256(rpId)`. Hashed here rather than on the
+/// host so the stored form and `makecredential`'s lookup cannot drift apart, and
+/// an empty list deletes the record — the shipped state, where no RP qualifies.
+fn set_ea_rpids<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, rp_ids: &[&str]) -> CtapResult {
+    if rp_ids.is_empty() {
+        ctx.fs.delete(EF_EA_RPIDS).map_err(|_| CtapError::Other)?;
+        journal::append(ctx, journal::EV_CFG_EA_RPIDS, 0, &[]);
+        return Ok(0);
+    }
+    let mut data = [0u8; 32 * MAX_EA_RPIDS];
+    for (slot, id) in data.chunks_exact_mut(32).zip(rp_ids) {
+        slot.copy_from_slice(&sha256(id.as_bytes()));
+    }
+    ctx.fs
+        .put(EF_EA_RPIDS, &data[..rp_ids.len() * 32])
+        .map_err(|_| CtapError::Other)?;
+    journal::append(ctx, journal::EV_CFG_EA_RPIDS, rp_ids.len() as u8, &[]);
     Ok(0)
 }
 

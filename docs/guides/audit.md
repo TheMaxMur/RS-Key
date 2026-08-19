@@ -26,6 +26,7 @@ the log is real. Use `log` for a quick glance, `verify` when the answer matters.
 | `PIN_SET` / `PIN_CHANGE` / `PIN_LOCKOUT` | lockout aux: 0 = retries exhausted, 1 = per-boot block |
 | `CFG_MIN_PIN` | aux = new minimum; detail[0] = forceChangePin |
 | `CFG_ENTERPRISE_ATT` | no aux/detail (flag-only) |
+| `CFG_EA_RPIDS` | the vendor-facilitated [enterprise](attestation.md) RP list was rewritten; aux = how many RPs it now holds, `0` = cleared |
 | `LOCK_ENGAGE` / `LOCK_RELEASE` | [soft-lock](soft-lock.md) engage/release |
 | `BACKUP_EXPORT` / `BACKUP_LOAD` / `BACKUP_FINALIZE` | [seed-backup](seed-backup.md) lifecycle |
 | `ATT_IMPORT` / `ATT_CLEAR` | [org attestation](attestation.md) provisioning |

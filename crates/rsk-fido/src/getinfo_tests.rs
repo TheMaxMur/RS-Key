@@ -77,8 +77,8 @@ fn algorithms_advertisement_policy() {
 #[cfg(not(feature = "largeblob-ext"))]
 fn get_info_fields() {
     use crate::consts::{
-        CONFIG_AUT_DISABLE, CONFIG_AUT_ENABLE, CONFIG_PHY_LED_BRIGHTNESS, CONFIG_PHY_LED_GPIO,
-        CONFIG_PHY_OPTIONS, CONFIG_PHY_VIDPID,
+        CONFIG_AUT_DISABLE, CONFIG_AUT_ENABLE, CONFIG_EA_RPIDS, CONFIG_PHY_LED_BRIGHTNESS,
+        CONFIG_PHY_LED_GPIO, CONFIG_PHY_OPTIONS, CONFIG_PHY_VIDPID,
     };
 
     let mut buf = [0u8; 1024];
@@ -225,9 +225,9 @@ fn get_info_fields() {
     // 0x15 vendorPrototypeConfigCommands — the ids `config.rs` dispatches. §6.11.3
     // ties this member to the 0xFF entry in 0x1F below: neither may appear alone.
     assert_eq!(d.u8().unwrap(), 0x15);
-    assert_eq!(d.array().unwrap().unwrap(), 6);
+    assert_eq!(d.array().unwrap().unwrap(), 7);
     assert_eq!(
-        (0..6)
+        (0..7)
             .map(|_| d.u64().unwrap())
             .collect::<std::vec::Vec<_>>(),
         std::vec![
@@ -237,6 +237,7 @@ fn get_info_fields() {
             CONFIG_PHY_LED_BRIGHTNESS,
             CONFIG_PHY_LED_GPIO,
             CONFIG_PHY_OPTIONS,
+            CONFIG_EA_RPIDS,
         ]
     );
 

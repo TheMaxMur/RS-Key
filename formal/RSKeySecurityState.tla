@@ -31,10 +31,10 @@ EXTENDS Naturals, FiniteSets, TLC
 CONSTANTS
     RPs,                \* relying parties (>= 2 to exercise rpId binding)
     Channels,           \* CTAPHID channel ids (>= 2 to exercise walk ownership)
-    MaxRetries,         \* models MAX_PIN_RETRIES = 8   (consts.rs:330)
-    MismatchLimit,      \* models PIN_MISMATCH_LIMIT = 3 (consts.rs:334)
+    MaxRetries,         \* models MAX_PIN_RETRIES = 8   (consts.rs:345)
+    MismatchLimit,      \* models PIN_MISMATCH_LIMIT = 3 (consts.rs:349)
     MaxClock,           \* coarse tick ceiling
-    ResetWindow         \* models RESET_WINDOW_MS = 10_000 (consts.rs:366)
+    ResetWindow         \* models RESET_WINDOW_MS = 10_000 (consts.rs:381)
 
 (* Mutation switches. All FALSE is the shipped tree. Each rebuilds one real  *)
 (* defect; `formal/README.md` maps every switch to its commit or audit id.   *)
@@ -469,10 +469,10 @@ OtpCancelWait ==
 (***************************************************************************)
 
 \* THE FOUR CALL SITES DO NOT TEST THE SAME THING, and the difference is
-\* load-bearing. makeCredential (makecredential.rs:488-491) and getAssertion
+\* load-bearing. makeCredential (makecredential.rs:496-499) and getAssertion
 \* (getassertion.rs:384-387) test the MAC, `user_verified()` -- which is
 \* `in_use && user_verified` (state.rs:666-668) -- the permission bit and the
-\* rpId binding. authenticatorConfig (config.rs:222-224) and
+\* rpId binding. authenticatorConfig (config.rs:244-246) and
 \* credentialManagement (credmgmt.rs:278) test the MAC and the permission bit
 \* ONLY: neither consults `in_use`.
 \*
@@ -487,7 +487,7 @@ TokenGuardUv(p, rp) ==
     /\ p \in tok.perms
     /\ (tok.rp = NoRp \/ tok.rp = rp)      \* getassertion.rs:387 rpId binding
 
-\* config.rs:222-224 / credmgmt.rs:278 -- no `in_use` conjunct exists here.
+\* config.rs:244-246 / credmgmt.rs:278 -- no `in_use` conjunct exists here.
 TokenGuardBare(p, rp) ==
     /\ plat.held /\ plat.verifies
     /\ p \in tok.perms
@@ -537,7 +537,7 @@ ConsumedTok ==
              ELSE [tok EXCEPT !.perms = {}]
 
 \* makeCredential/getAssertion bind an unbound pinUvAuthToken to the request's
-\* rpId before consuming its permissions (makecredential.rs:496-498,
+\* rpId before consuming its permissions (makecredential.rs:504-506,
 \* getassertion.rs:394-396).
 BoundConsumedTok(r) ==
     LET consumed == ConsumedTok IN
@@ -805,7 +805,7 @@ StopUsingToken ==
 (* makeCredential / getAssertion.                                          *)
 (***************************************************************************)
 
-\* makecredential.rs:486-494. Needs PERM_MC and a touch.
+\* makecredential.rs:494-502. Needs PERM_MC and a touch.
 RegisterStart(r, t) ==
     /\ Idle
     /\ ButtonFreeGuard
@@ -905,13 +905,13 @@ AssertFinish ==
     /\ UNCHANGED << pin, gate, store, lock, plat, walk, sys, snap, ram >>
 
 (***************************************************************************)
-(* authenticatorConfig -- no touch of its own. config.rs:223.              *)
+(* authenticatorConfig -- no touch of its own. config.rs:245.              *)
 (***************************************************************************)
 
 \* The requirement GHSA-wqjm-653g-hgw3 states: an acfg operation may not be
 \* authorized by a token whose user-presence test some other command already
 \* spent.
-\* config.rs:222-224 tests the MAC and PERM_ACFG and NOTHING else -- no `in_use`,
+\* config.rs:244-246 tests the MAC and PERM_ACFG and NOTHING else -- no `in_use`,
 \* and no rpId binding either. The shared TokenGuardBare carries the binding
 \* because credentialManagement's check_rp_binding does; here it is a guard the
 \* Rust does not have, and it was inert only because it stood in the policy too.
@@ -919,7 +919,7 @@ ConfigGuard  == plat.held /\ plat.verifies /\ "acfg" \in tok.perms
 ConfigPolicy == plat.held /\ ~plat.revoked /\ tok.live /\ "acfg" \in tok.perms
                 /\ ~upSpent
 
-\* No `pin.set` conjunct: config.rs:222-224 tests the MAC and PERM_ACFG and
+\* No `pin.set` conjunct: config.rs:244-246 tests the MAC and PERM_ACFG and
 \* nothing else. It carried one until the review measured it inert (a live token
 \* implies a PIN was set on every reachable path) -- inert or not, a model whose
 \* selling point is that its guards are what the Rust tests may not carry a
@@ -960,7 +960,7 @@ BackupFinalize ==
 \* WIDER than the firmware in two directions, both sound: the model has no device
 \* lock, so it does not require the seed to be stored WRAPPED (only a locked
 \* device has an EF_KEY_DEV_ENC to open), and it omits AUT_DISABLE
-\* (config.rs:394-395), which only ever CLEARS the copy.
+\* (config.rs:418-419), which only ever CLEARS the copy.
 DeviceUnlock ==
     /\ Idle
     /\ store.seed
@@ -1597,7 +1597,7 @@ NoAccessibleSecretWithoutGate ==
 \* regression that made the disjunct necessary.
 RamNeverOutlivesFlashSeed == ram => store.seed
 
-\* ConfigGuard carries no `pin.set` conjunct because config.rs:222-224 does not,
+\* ConfigGuard carries no `pin.set` conjunct because config.rs:244-246 does not,
 \* and the justification for the model's own `~(gate.alwaysUv /\ ~pin.set)` on
 \* makeCredential and getAssertion is the same sentence: a live token implies a
 \* PIN was set on every reachable path. That sentence was refuted once already --

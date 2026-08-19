@@ -1953,13 +1953,94 @@ fn enterprise_type1_non_eligible_ignores_org_key() {
 
 #[test]
 fn vendor_ea_eligibility() {
-    // No RP qualifies for vendor-facilitated EA by default; the FIDO conformance
-    // test RPID qualifies only under the `ea-conformance-rpid` feature.
-    assert!(!rp_eligible_for_vendor_ea("example.com"));
+    // No RP qualifies for vendor-facilitated EA on a device with no stored list —
+    // an absent EF_EA_RPIDS is the empty list, which is what an already-provisioned
+    // device upgraded to this firmware reads. The FIDO conformance test RPID
+    // qualifies only under the `ea-conformance-rpid` feature.
+    let mut fs = Fs::new(RamStorage::new());
+    assert!(!rp_eligible_for_vendor_ea(&mut fs, &sha256(b"example.com")));
     assert_eq!(
-        rp_eligible_for_vendor_ea("enterprisetest.certinfra.fidoalliance.org"),
+        rp_eligible_for_vendor_ea(
+            &mut fs,
+            &sha256(b"enterprisetest.certinfra.fidoalliance.org")
+        ),
         cfg!(feature = "ea-conformance-rpid")
     );
+
+    // A stored list admits exactly its own entries, at any position.
+    let mut list = [0u8; 64];
+    list[..32].copy_from_slice(&sha256(b"first.example"));
+    list[32..].copy_from_slice(&sha256(b"corp.example.com"));
+    fs.put(EF_EA_RPIDS, &list).unwrap();
+    assert!(rp_eligible_for_vendor_ea(
+        &mut fs,
+        &sha256(b"first.example")
+    ));
+    assert!(rp_eligible_for_vendor_ea(
+        &mut fs,
+        &sha256(b"corp.example.com")
+    ));
+    assert!(!rp_eligible_for_vendor_ea(&mut fs, &sha256(b"example.com")));
+}
+
+#[test]
+fn enterprise_type1_listed_rp_uses_org_key() {
+    // The twin of `enterprise_type1_non_eligible_ignores_org_key`: the SAME request
+    // and the same org key, differing only in that the RP is on the stored list.
+    // It must now come back with `ep` and the org/EP cert — otherwise the storage
+    // is wired to nothing and the negative test above passes for the wrong reason.
+    let mut fs = Fs::new(RamStorage::new());
+    let mut rng = SeqRng(1);
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+    crate::seed::store_att_key(&dev(), &mut fs, &[0x21u8; 32]).unwrap();
+    let c1 = [0x30u8, 0x03, 1, 2, 3];
+    let mut packed = [0u8; 64];
+    let plen = crate::cert::att_chain_pack(&c1, &mut packed).unwrap();
+    fs.put(EF_ATT_CHAIN, &packed[..plen]).unwrap();
+    fs.put(EF_EA_ENABLED, &[1]).unwrap();
+    fs.put(EF_EA_RPIDS, &sha256(b"example.com")).unwrap();
+
+    let req = build_request_ea(1); // rp_id "example.com" — now listed
+    let mut out = [0u8; 1024];
+    let mut state = crate::FidoState::new();
+    let resp = {
+        let mut presence = crate::AlwaysConfirm;
+        let mut ctx = Ctx {
+            presence: &mut presence,
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 1000,
+        };
+        let len = make_credential(&mut ctx, &req, &mut out).unwrap();
+        out[..len].to_vec()
+    };
+    let mut d = Decoder::new(&resp);
+    assert_eq!(
+        d.map().unwrap().unwrap(),
+        4,
+        "a listed type-1 RP gets the `ep` field"
+    );
+    assert_eq!(d.u8().unwrap(), 1);
+    assert_eq!(d.str().unwrap(), "packed");
+    assert_eq!(d.u8().unwrap(), 2);
+    d.bytes().unwrap();
+    assert_eq!(d.u8().unwrap(), 3);
+    assert_eq!(d.map().unwrap().unwrap(), 3);
+    assert_eq!(d.str().unwrap(), "alg");
+    d.i64().unwrap();
+    assert_eq!(d.str().unwrap(), "sig");
+    d.bytes().unwrap();
+    assert_eq!(d.str().unwrap(), "x5c");
+    assert_eq!(d.array().unwrap().unwrap(), 1);
+    assert_eq!(
+        d.bytes().unwrap(),
+        &c1,
+        "a listed type-1 RP gets the org/EP cert"
+    );
+    assert_eq!(d.u8().unwrap(), 4);
+    assert!(d.bool().unwrap(), "ep = true");
 }
 
 /// A trusted-display backend: it collects a PIN on its own pad **and** paints the

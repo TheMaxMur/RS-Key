@@ -10,8 +10,8 @@ use rsk_fs::Storage;
 
 use crate::consts::{
     EF_ALWAYS_UV, EF_ATT_CHAIN, EF_ATT_KEY, EF_BACKUP_SEALED, EF_COUNTER, EF_CRED, EF_CRED_BLOB,
-    EF_CRED_CTR, EF_DEVICE_PIN, EF_EA_ENABLED, EF_EE_DEV, EF_KEY_DEV, EF_KEY_DEV_ENC, EF_LARGEBLOB,
-    EF_MINPINLEN, EF_PAUTHTOKEN, EF_PIN, EF_RP, EF_RPNICK, MAX_RESIDENT_CREDENTIALS,
+    EF_CRED_CTR, EF_DEVICE_PIN, EF_EA_ENABLED, EF_EA_RPIDS, EF_EE_DEV, EF_KEY_DEV, EF_KEY_DEV_ENC,
+    EF_LARGEBLOB, EF_MINPINLEN, EF_PAUTHTOKEN, EF_PIN, EF_RP, EF_RPNICK, MAX_RESIDENT_CREDENTIALS,
     RESET_WINDOW_MS,
 };
 use crate::error::{CtapError, CtapResult};
@@ -20,8 +20,8 @@ use crate::seed::ensure_seed;
 use crate::{Ctx, Rng};
 
 /// Progress backstop for one [`sweep`] phase: the FIDO predicate spans four
-/// 256-slot ranges and 13 fixed records, so a converging sweep cannot exceed this.
-const RESET_MAX_DELETES: u32 = 4 * MAX_RESIDENT_CREDENTIALS as u32 + 13;
+/// 256-slot ranges and 14 fixed records, so a converging sweep cannot exceed this.
+const RESET_MAX_DELETES: u32 = 4 * MAX_RESIDENT_CREDENTIALS as u32 + 14;
 
 /// `authenticatorReset`: factory-reset the FIDO applet. Replies with only the
 /// status byte. Also the documented recovery from a soft lock with a lost lock
@@ -210,6 +210,10 @@ fn is_fido_fid(fid: u16) -> bool {
                 | EF_MINPINLEN
                 | EF_LARGEBLOB
                 | EF_EA_ENABLED
+                // With the secrets, not the gates: the list is PERMISSIVE, so a
+                // torn prefix can only ever revoke type-1 EA early — the rule
+                // `EF_PAUTHTOKEN` is here for, stated below.
+                | EF_EA_RPIDS
                 | EF_ALWAYS_UV
                 // The trusted-display device PIN: a host reset clears it too, so a
                 // forgotten device PIN is recoverable (the lock gates on-device Settings,

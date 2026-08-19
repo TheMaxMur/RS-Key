@@ -79,6 +79,12 @@ pub const CONFIG_PHY_LED_BRIGHTNESS: u64 = 0x76a85945985d02fd; // param = bright
 pub const CONFIG_PHY_LED_GPIO: u64 = 0x7b392a394de9f948; // param = gpio u8
 pub const CONFIG_PHY_OPTIONS: u64 = 0x269f3b09eceb805f; // param = opts u16 bitmask
 
+/// The vendor-facilitated (type 1) enterprise-attestation RP list — rp ids as text
+/// at `subCommandParams` key 4, hashed on the device, empty clearing the record.
+/// A *vendor* arm because that list is vendor-facilitated by definition (CTAP 2.1
+/// §6.1.2); the standard subcommand numbers are the spec's to assign, not ours.
+pub const CONFIG_EA_RPIDS: u64 = 0x0e6841934e719be7;
+
 // authenticatorClientPIN subcommands compared at more than one site (the rest
 // are dispatched once as literals).
 pub const CP_GET_PIN_TOKEN: u64 = 0x05;
@@ -252,6 +258,10 @@ pub const MAX_RESIDENT_CREDENTIALS: u16 = 256;
 /// Max RP-id hashes the setMinPINLength `minPinLengthRPIDs` list keeps (getInfo
 /// `maxRPIDsForSetMinPINLength`, 0x10).
 pub const MAX_MIN_PIN_RPIDS: usize = 8;
+/// Max RP-id hashes the vendor-facilitated enterprise-attestation list keeps.
+/// Yubico's 5.8 holds 16; eight is what [`MAX_RAW_SUBPARA`] leaves room for once
+/// the ids are text on the wire, and the list is refused — never truncated — past it.
+pub const MAX_EA_RPIDS: usize = 8;
 
 // FIDO flash file ids (device-local; fids never cross the wire).
 // Audit journal (journal.rs) — deliberately outside every reset range: FIDO's
@@ -277,6 +287,11 @@ pub const EF_ATT_KEY: KeyFid = KeyFid::new(0xCE10); // org attestation P-256 sca
 pub const EF_ATT_CHAIN: u16 = 0xCE11; // packed DER chain: count ‖ (len LE ‖ der)*
 /// `enableEnterpriseAttestation` — persists until reset (CTAP 2.1), hence flash.
 pub const EF_EA_ENABLED: u16 = 0xCE12;
+/// The vendor-facilitated (type 1) enterprise-attestation RP list: packed
+/// `sha256(rpId)`, `n * 32` bytes, `n <= MAX_EA_RPIDS`. **Absent = empty**, which is
+/// what every already-provisioned device reads and is exactly today's behaviour.
+/// 0xCE14 is `rsk_fs::EF_HARDENED`, hence the gap.
+pub const EF_EA_RPIDS: u16 = 0xCE15;
 /// `alwaysUv` state, read via `crate::config::always_uv_enabled` — tri-state:
 /// absent = the compile default (`DEFAULT_ALWAYS_UV`), `[1]` = on, `[0]` = explicit
 /// off. Do NOT probe with `has_data` (a present `[0]` would read as on). Persists

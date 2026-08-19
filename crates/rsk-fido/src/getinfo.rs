@@ -21,10 +21,11 @@ use minicbor::encode::{Error, Write};
 
 use crate::consts::{
     AAGUID, ALG_EDDSA, ALG_ES256, ALG_ES384, ALG_ES512, ALG_MLDSA44, ALG_MLDSA65, ATT_FMT_PACKED,
-    CONFIG_AUT_DISABLE, CONFIG_AUT_ENABLE, CONFIG_PHY_LED_BRIGHTNESS, CONFIG_PHY_LED_GPIO,
-    CONFIG_PHY_OPTIONS, CONFIG_PHY_VIDPID, ENC_IDENTIFIER_LEN, FIRMWARE_VERSION, LARGE_BLOB_EXT,
-    MAX_CRED_ID_LENGTH, MAX_CREDBLOB_LENGTH, MAX_CREDENTIAL_COUNT_IN_LIST, MAX_LARGE_BLOB_SIZE,
-    MAX_MIN_PIN_RPIDS, MAX_MSG_SIZE, PIN_COMPLEXITY_POLICY, TRANSPORTS,
+    CONFIG_AUT_DISABLE, CONFIG_AUT_ENABLE, CONFIG_EA_RPIDS, CONFIG_PHY_LED_BRIGHTNESS,
+    CONFIG_PHY_LED_GPIO, CONFIG_PHY_OPTIONS, CONFIG_PHY_VIDPID, ENC_IDENTIFIER_LEN,
+    FIRMWARE_VERSION, LARGE_BLOB_EXT, MAX_CRED_ID_LENGTH, MAX_CREDBLOB_LENGTH,
+    MAX_CREDENTIAL_COUNT_IN_LIST, MAX_LARGE_BLOB_SIZE, MAX_MIN_PIN_RPIDS, MAX_MSG_SIZE,
+    PIN_COMPLEXITY_POLICY, TRANSPORTS,
 };
 use crate::cose::cose_public_key;
 use crate::error::{CtapError, CtapResult};
@@ -285,13 +286,14 @@ fn write_info<W: Write>(
     // PicoForge, and §6.11.7 says vendors "MUST NOT count on obscurity of the
     // vendorCommandId value as any sort of security".
     enc.u8(0x15)?
-        .array(6)?
+        .array(7)?
         .u64(CONFIG_AUT_ENABLE)?
         .u64(CONFIG_AUT_DISABLE)?
         .u64(CONFIG_PHY_VIDPID)?
         .u64(CONFIG_PHY_LED_BRIGHTNESS)?
         .u64(CONFIG_PHY_LED_GPIO)?
-        .u64(CONFIG_PHY_OPTIONS)?;
+        .u64(CONFIG_PHY_OPTIONS)?
+        .u64(CONFIG_EA_RPIDS)?;
 
     // 0x16 attestationFormats — the formats we CHOOSE from. Only "packed": an
     // `attestationFormatsPreference` of exactly ["none"] still yields an empty

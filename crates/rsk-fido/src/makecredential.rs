@@ -33,9 +33,10 @@ use crate::consts::{
     AAGUID, ALG_ED25519, ALG_EDDSA, ALG_ES256, ALG_ES256K, ALG_ES384, ALG_ES512, ALG_ESP256,
     ALG_ESP384, ALG_ESP512, ALG_MLDSA44, ALG_MLDSA65, ATT_FMT_NONE, ATT_FMT_PACKED,
     CRED_PROT_UV_OPTIONAL, CRED_PROT_UV_REQUIRED, CURVE_ED25519, CURVE_MLDSA44, CURVE_MLDSA65,
-    CURVE_P256, CURVE_P256K1, CURVE_P384, CURVE_P521, EF_ATT_CHAIN, EF_EA_ENABLED, EF_EE_DEV,
-    EF_MINPINLEN, EF_PIN, FLAG_AT, FLAG_ED, FLAG_UP, FLAG_UV, LARGE_BLOB_EXT, MAX_CREDBLOB_LENGTH,
-    MAX_CREDENTIAL_COUNT_IN_LIST, MAX_MIN_PIN_RPIDS, MAX_RESIDENT_CREDENTIALS,
+    CURVE_P256, CURVE_P256K1, CURVE_P384, CURVE_P521, EF_ATT_CHAIN, EF_EA_ENABLED, EF_EA_RPIDS,
+    EF_EE_DEV, EF_MINPINLEN, EF_PIN, FLAG_AT, FLAG_ED, FLAG_UP, FLAG_UV, LARGE_BLOB_EXT,
+    MAX_CREDBLOB_LENGTH, MAX_CREDENTIAL_COUNT_IN_LIST, MAX_EA_RPIDS, MAX_MIN_PIN_RPIDS,
+    MAX_RESIDENT_CREDENTIALS,
 };
 use crate::credential::{
     CRED_BOX_MAX, CRED_PUBKEY_MAX, CRED_REC_MAX, CRED_RESIDENT_LEN, CredExt, CredInput, Credential,
@@ -446,19 +447,26 @@ pub fn make_credential<S: Storage, R: Rng>(
     result
 }
 
-/// Whether `rp_id` is on the built-in vendor-facilitated (type 1) enterprise
-/// attestation list. Shipping firmware carries an EMPTY list — no RP qualifies,
-/// so type-1 EA never fires by default. The `ea-conformance-rpid` feature adds the
-/// FIDO Conformance Tool's fixed test RPID so its Enterprise-Attestation type-1
-/// case can be exercised; it is never enabled in a shipped image.
-fn rp_eligible_for_vendor_ea(rp_id: &str) -> bool {
-    let _ = rp_id;
+/// Whether the RP is on the vendor-facilitated (type 1) enterprise attestation
+/// list — `EF_EA_RPIDS`, written by `config::set_ea_rpids`. An absent record is an
+/// empty list, so a device that has never been provisioned (or upgraded from a
+/// firmware without the record) qualifies no RP and type-1 EA never fires.
+/// The `ea-conformance-rpid` feature adds the FIDO Conformance Tool's fixed test
+/// RPID so its Enterprise-Attestation type-1 case can be exercised with no
+/// provisioning step; it is never enabled in a shipped image.
+fn rp_eligible_for_vendor_ea<S: Storage>(fs: &mut Fs<S>, rp_id_hash: &[u8; 32]) -> bool {
     #[cfg(feature = "ea-conformance-rpid")]
-    if rp_id == "enterprisetest.certinfra.fidoalliance.org" {
+    if *rp_id_hash == sha256(EA_CONFORMANCE_RPID.as_bytes()) {
         return true;
     }
-    false
+    let mut buf = [0u8; 32 * MAX_EA_RPIDS];
+    let n = fs.read(EF_EA_RPIDS, &mut buf).unwrap_or(0);
+    buf[..n].chunks_exact(32).any(|h| h == rp_id_hash)
 }
+
+/// The FIDO Conformance Tool's fixed Enterprise-Attestation RPID.
+#[cfg(feature = "ea-conformance-rpid")]
+const EA_CONFORMANCE_RPID: &str = "enterprisetest.certinfra.fidoalliance.org";
 
 /// CTAP2.1 PIN/UV enforcement (§6.1.2 steps 6–11): verifies a `pinUvAuthParam`
 /// against the token, or runs built-in UV, and reports what the response carries.
@@ -689,12 +697,12 @@ fn make_credential_inner<S: Storage, R: Rng>(
     // Attestation over authData ‖ clientDataHash.
     ad[ad_len..ad_len + 32].copy_from_slice(req.client_data_hash);
     // `ea_performed` — platform-managed (type 2), or vendor-facilitated (type 1)
-    // for an RP on the built-in enterprise list (empty in shipping firmware) —
+    // for an RP on the stored enterprise list (`EF_EA_RPIDS`, empty until written) —
     // presents the org/EP cert and sets the `ep` flag. A type-1 request for a
     // non-listed RP is NOT enterprise: full attestation with the device's own
     // cert and no `ep` (CTAP2.1 §6.1.3, conformance Enterprise-Attestation F-6).
     let ea_performed = req.enterprise_attestation == Some(2)
-        || (req.enterprise_attestation == Some(1) && rp_eligible_for_vendor_ea(req.rp_id));
+        || (req.enterprise_attestation == Some(1) && rp_eligible_for_vendor_ea(ctx.fs, rp_id_hash));
     // Every credential ships packed **basic** attestation: the device key signs and
     // the x5c leaf is its cert. Both alternatives break clients — an empty
     // `fmt:"none"` statement is rejected by OpenSSH < 10.0, which verifies any

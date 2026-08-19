@@ -63,6 +63,22 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Added
 
+- **Enterprise attestation could be switched on, but never aimed at anyone.**
+  Vendor-facilitated (type 1) enterprise attestation matched a list that was
+  hardcoded and empty outside the conformance build, so `enterpriseAttestation: 1`
+  never produced an `ep` flag on a shipping key no matter how it was configured —
+  only type 2, which grants any RP at once. The list is now a stored record
+  (`EF_EA_RPIDS`, up to **8** `sha256(rpId)` entries), written by a new
+  `authenticatorConfig` vendorPrototype command `0x0e6841934e719be7` taking the
+  rpIds as text at subCommandParams key 4 and hashing them on the device, so the
+  stored form and the makeCredential lookup cannot drift apart. `rsk fido
+  attestation rpids` drives it. **An absent record is an empty list**, which is
+  what every already-provisioned device reads: type-1 keeps qualifying nobody
+  until an administrator writes the list, and nothing else changes across the
+  upgrade. A list past 8 entries is refused with `CTAP2_ERR_KEY_STORE_FULL` rather
+  than stored truncated, and `authenticatorReset` clears the list along with the
+  enterprise-attestation flag itself. `bcdDevice` 0x0966 → 0x0967.
+
 - **A platform that asked for no attestation got one anyway, and paid for it.**
   CTAP 2.2's `attestationFormatsPreference` (makeCredential request `0x0B`) was
   ignored. It is now honoured in the one way a single-format authenticator can: a

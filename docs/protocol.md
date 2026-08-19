@@ -451,6 +451,19 @@ needs only the identifiers above. RS-Key implements:
   choosing by lowest supported index needs more than one supported format and
   `attestationFormats` (`0x16`) stays `["packed"]`. An enterprise attestation that
   was actually performed outranks the preference and is still returned in full.
+  **Vendor-facilitated (type 1) enterprise attestation reads a stored RP list.**
+  `enterpriseAttestation: 1` returns `ep` and the org certificate only for an RP on
+  that list; any other RP gets the ordinary `packed` statement with the device's own
+  certificate and no `ep`. The list holds up to **8** `sha256(rpId)` entries and is
+  **empty until written**, so a device upgraded from firmware without it behaves
+  exactly as before; `authenticatorReset` clears it. Write it with
+  `authenticatorConfig` (`0x0D`) subCommand `vendorPrototype` (`0xFF`) and
+  subCommandParams `{1: 0x0e6841934e719be7, 4: [rpId…]}` — the ids as **text**,
+  hashed on the device — gated by an `acfg` pinUvAuthToken and no touch, the same
+  authorization `enableEnterpriseAttestation` itself takes. An empty array clears the
+  list; more than 8 entries is refused with `CTAP2_ERR_KEY_STORE_FULL`, never
+  truncated. Type 2 (platform-managed) is unaffected — it applies to any RP once
+  enterprise attestation is enabled.
   Supported COSE algorithms:
   ES256 `-7`, ES384 `-35`, ES512 `-36`, ES256K `-47`, EdDSA `-8`,
   ML-DSA-44 `-48`, ML-DSA-65 `-49` (both negotiable via `pubKeyCredParams`;
@@ -1133,8 +1146,11 @@ SET     00 10 40 11        # P1=0x40 brightness, P2 = color 1 | status 1<<4 = 0x
    `authenticatorConfigCommands` (`0x1F`) lists `0xFF` and
    `vendorPrototypeConfigCommands` (`0x15`) enumerates the IDs below, so the arm
    and its commands are both detectable without probing — §6.11.3 ties the two,
-   so a build that hides one hides both. The supported
-   IDs, the ones PicoForge writes, set the phy record and take effect on the
+   so a build that hides one hides both. That array is the whole vendor arm, not
+   only its hardware half — `0x0e6841934e719be7` is the enterprise-attestation RP
+   list (§5), which takes an rpId array at key 4 and writes no hardware; treat an
+   unrecognised id as one you do not drive. The phy IDs, the ones PicoForge
+   writes, set the phy record and take effect on the
    next boot: `PhysicalVidPid 0x6fcb19b0cbe3acfa` (value `(vid<<16)|pid`),
    `PhysicalLedGpio 0x7b392a394de9f948`, `PhysicalLedBrightness 0x76a85945985d02fd`,
    `PhysicalOptions 0x269f3b09eceb805f` (bitmask `0x2` dimmable / `0x4`
