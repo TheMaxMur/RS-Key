@@ -342,3 +342,100 @@ fn otp_wrapped_seed_migrates_to_plain_at_verify() {
     assert_eq!(g[0], FORMAT_G1_OTP);
     assert_eq!(load_keydev(&otp_dev(), &mut fs), Some(seed));
 }
+
+/// Recover the identifier the way a platform holding the persistent token would:
+/// re-derive the AES key from the token, split `iv ‖ ct`, decrypt one block.
+fn open_enc_identifier(token: &[u8; 32], blob: &[u8; ENC_IDENTIFIER_LEN]) -> [u8; 16] {
+    let mut key = [0u8; 16];
+    hkdf_sha256(&ENCID_SALT, token, INFO_ENCID, &mut key).unwrap();
+    let mut iv = [0u8; 16];
+    iv.copy_from_slice(&blob[..16]);
+    let mut pt = [0u8; 16];
+    pt.copy_from_slice(&blob[16..]);
+    aes_decrypt(&key, &iv, Mode::Cbc, &mut pt).unwrap();
+    pt
+}
+
+/// The member is keyed by the persistent token and names the seed, so it cannot be
+/// built without both. Neither absence is an error — 0x19 is optional, and emitting
+/// something derived from a stand-in would be a claim nothing could falsify.
+#[test]
+fn enc_identifier_needs_both_a_token_and_a_readable_seed() {
+    let (d, mut f, mut rng) = (dev(), fs(), SeqRng(7));
+    ensure_seed(&d, &mut f, &mut rng).unwrap();
+    assert!(
+        enc_identifier(&d, &mut f, &mut rng).is_none(),
+        "no persistent token yet — nothing to key it with"
+    );
+
+    ensure_ppuat(&d, &mut f, &mut rng).unwrap();
+    assert!(enc_identifier(&d, &mut f, &mut rng).is_some());
+
+    // A soft lock moves the seed into EF_KEY_DEV_ENC and deletes the plain record.
+    f.delete_key(EF_KEY_DEV).unwrap();
+    assert!(
+        enc_identifier(&d, &mut f, &mut rng).is_none(),
+        "seed unreadable behind a soft lock — no identifier to encrypt"
+    );
+}
+
+/// The security property the member lives or dies by: **the bytes must differ on
+/// every call** — a repeating IV would serve a stable cross-origin fingerprint to
+/// anyone who asks — **while the identifier underneath stays the same**, or a
+/// platform holding the token could never recognize the device twice. Asserting
+/// only the first half would pass for a random blob that identifies nothing;
+/// asserting only the second would pass for the fingerprint.
+#[test]
+fn enc_identifier_is_fresh_per_call_but_stable_underneath() {
+    let (d, mut f, mut rng) = (dev(), fs(), SeqRng(11));
+    ensure_seed(&d, &mut f, &mut rng).unwrap();
+    let token = ensure_ppuat(&d, &mut f, &mut rng).unwrap();
+
+    let first = enc_identifier(&d, &mut f, &mut rng).unwrap();
+    let second = enc_identifier(&d, &mut f, &mut rng).unwrap();
+    assert_ne!(first, second, "a repeated blob is a device fingerprint");
+    assert_ne!(first[..16], second[..16], "the IV itself must be fresh");
+
+    let id = open_enc_identifier(&token, &first);
+    assert_eq!(
+        id,
+        open_enc_identifier(&token, &second),
+        "the same device must decrypt to the same identifier"
+    );
+    assert_ne!(id, [0u8; 16], "an all-zero identifier identifies nothing");
+}
+
+/// `authenticatorReset` mints a fresh seed, and the identifier is derived from it,
+/// so a reset device stops being linkable to its pre-reset self. That is the reason
+/// the seed is the root rather than the silicon key, which a reset cannot touch.
+#[test]
+fn enc_identifier_follows_the_seed_across_a_reseed() {
+    let (d, mut f, mut rng) = (dev(), fs(), SeqRng(13));
+    ensure_seed(&d, &mut f, &mut rng).unwrap();
+    let token = ensure_ppuat(&d, &mut f, &mut rng).unwrap();
+    let before = open_enc_identifier(&token, &enc_identifier(&d, &mut f, &mut rng).unwrap());
+
+    f.delete_key(EF_KEY_DEV).unwrap();
+    ensure_seed(&d, &mut f, &mut rng).unwrap();
+    let after = open_enc_identifier(&token, &enc_identifier(&d, &mut f, &mut rng).unwrap());
+
+    assert_ne!(before, after, "a new seed must mean a new identity");
+}
+
+/// The identifier is HKDF'd from the seed under its own label, so it must not equal
+/// the seed, nor any other value derived from it — the label is what stops a leaked
+/// identifier from saying anything about the key material behind it.
+#[test]
+fn enc_identifier_is_not_the_seed_nor_the_at_rest_key() {
+    let (d, mut f, mut rng) = (dev(), fs(), SeqRng(17));
+    ensure_seed(&d, &mut f, &mut rng).unwrap();
+    let token = ensure_ppuat(&d, &mut f, &mut rng).unwrap();
+    let id = open_enc_identifier(&token, &enc_identifier(&d, &mut f, &mut rng).unwrap());
+
+    let seed = load_keydev(&d, &mut f).unwrap();
+    assert_ne!(id, seed[..16], "the identifier must not expose the seed");
+
+    let mut sibling = [0u8; 16];
+    hkdf_sha256(d.serial_hash, &seed, INFO_SEED_ENC, &mut sibling).unwrap();
+    assert_ne!(id, sibling, "labels must separate the domains");
+}

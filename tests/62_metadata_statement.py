@@ -226,6 +226,10 @@ def part_b(stmt):
         # drift against the statement, not as an oversight — add both together.
         "vendorPrototypeConfigCommands": m[0x15],
         "attestationFormats": m[0x16],
+        # 0x19 encIdentifier is deliberately NOT mirrored: it only appears once a
+        # persistent pinUvAuthToken exists, and its value is re-encrypted under a
+        # fresh IV on every getInfo, so no static statement can carry it. Absent
+        # here on purpose, not by oversight.
         "longTouchForReset": m[0x18],
         "transportsForReset": m[0x1A],
         "pinComplexityPolicy": m[0x1B],

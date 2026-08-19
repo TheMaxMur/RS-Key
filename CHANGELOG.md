@@ -40,6 +40,16 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **A getInfo test stopped being able to fail when the member count reached 24.**
+  `dispatch_get_info_ok` pinned the response's map size by comparing one raw byte
+  against `0xA0 + count`. That formula holds only to 23: from 24 upward CBOR writes
+  `0xB8` followed by a separate length byte, so the first byte reads `0xB8` for
+  every count from 24 to 255. The roster crossed 24 one commit earlier, and the
+  assertion went green on the new number while no longer distinguishing it from any
+  larger one. It now decodes the header instead of comparing a byte — verified by
+  declaring 25 members while writing 24, which the byte comparison accepted and the
+  decode rejects.
+
 - **A doc comment in `rsk-fs` described the function below the one it sat on.**
   `mark_absent`'s one-line doc and its `#[inline]` had both landed on
   `record_unless_faulted` during an earlier edit, leaving `mark_absent`
@@ -52,6 +62,28 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   `bcdDevice` 0x0960 → 0x0961: refactor, no behaviour change.
 
 ### Added
+
+- **A paired platform had no way to tell one RS-Key from another.** CTAP 2.2's
+  `encIdentifier` (`0x19`) is how an authenticator lets a platform that already
+  holds its persistent pinUvAuthToken recognise it again, without handing every
+  caller a stable serial to track. RS-Key now emits it: 32 bytes of
+  `iv ‖ AES-128-CBC(k, id)`, where `id` is a 128-bit device identifier and `k` is
+  `HKDF-SHA-256(salt = 32 zero bytes, IKM = the persistent token,
+  info = "encIdentifier", L = 16)`.
+  **The IV is regenerated on every getInfo.** A fixed one would have turned the
+  member into precisely the cross-origin fingerprint it exists to avoid — served
+  to anyone who asks, since getInfo needs no authentication. The test that guards
+  this asserts both halves at once: consecutive responses must differ, *and* must
+  decrypt to the same identifier. Either half alone passes for the wrong thing —
+  random noise identifies nobody, a constant identifies everybody.
+  The identifier is HKDF-derived from the device master seed under its own label,
+  which decides one user-visible behaviour: `authenticatorReset` mints a fresh
+  seed, so a reset device stops being linkable to its pre-reset self. Deriving it
+  from the silicon root instead would have survived the reset and quietly defeated
+  it. The member is **absent** until a persistent token exists, and while a soft
+  lock keeps the seed unreadable — it is optional, and a placeholder built from
+  some other value would be a claim no platform could detect as false.
+  `bcdDevice` 0x0964 → 0x0965.
 
 - **getInfo did not say whether a reset needs a long touch, and the answer was
   believed to be contested.** CTAP 2.2's `longTouchForReset` (`0x18`) is a boolean

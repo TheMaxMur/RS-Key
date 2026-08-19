@@ -436,7 +436,15 @@ needs only the identifiers above. RS-Key implements:
   build answers `false`, and the optional `pinComplexityPolicyURL` (`0x1C`) is
   never emitted. `longTouchForReset` (`0x18`) is `false`: a reset takes the same
   touch as any other presence check — CTAP 2.3 cut the long-touch hold from 2.2's
-  10 s to 5 s, and RS-Key implements neither gesture.
+  10 s to 5 s, and RS-Key implements neither gesture. `encIdentifier` (`0x19`) is
+  present **only once a persistent pinUvAuthToken has been issued**, and carries
+  `iv ‖ AES-128-CBC(k, id)` — 32 bytes — where `id` is a 128-bit device identifier
+  and `k = HKDF-SHA-256(salt = 32 zero bytes, IKM = that token, info =
+  "encIdentifier", L = 16)`. **The IV is regenerated on every getInfo**, so the
+  bytes differ each time while the identifier under them does not: a tool holding
+  the token recognises the device across sessions, and one without it learns
+  nothing. The identifier is derived from the device seed, so `authenticatorReset`
+  changes it.
   Supported COSE algorithms:
   ES256 `-7`, ES384 `-35`, ES512 `-36`, ES256K `-47`, EdDSA `-8`,
   ML-DSA-44 `-48`, ML-DSA-65 `-49` (both negotiable via `pubKeyCredParams`;

@@ -28,7 +28,6 @@
 
 use zeroize::Zeroize;
 
-#[cfg(test)]
 use rsk_crypto::aes_encrypt;
 use rsk_crypto::chachapoly::{chacha20poly1305_decrypt, chacha20poly1305_encrypt};
 use rsk_crypto::{Device, Mode, PinKdf, aes_decrypt, hkdf_sha256, hmac_sha256};
@@ -39,7 +38,7 @@ use crate::Rng;
 use crate::cert::{build_attestation_cert, matches_template as cert_matches_template};
 use crate::consts::{
     EF_ATT_KEY, EF_COUNTER, EF_CRED_CTR, EF_EE_DEV, EF_KEY_DEV, EF_KEY_DEV_ENC, EF_LARGEBLOB,
-    EF_PAUTHTOKEN, LARGEBLOB_INITIAL, MAX_RESIDENT_CREDENTIALS,
+    EF_PAUTHTOKEN, ENC_IDENTIFIER_LEN, LARGEBLOB_INITIAL, MAX_RESIDENT_CREDENTIALS,
 };
 use crate::ec::P256Key;
 
@@ -63,6 +62,14 @@ const KEYDEV_F3_LEN: usize = 61; // legacy PIN-wrapped: format(1) + AEAD(nonce 1
 /// HKDF `info` labels (off the arm's kbase, salt = serial_hash).
 const INFO_SEED_ENC: &[u8] = b"KEYDEV/CHACHA";
 const INFO_SEED_NONCE: &[u8] = b"KEYDEV/NONCE";
+/// Our label for the 128-bit device identifier behind getInfo's `encIdentifier`.
+/// Its own domain, so the identifier is independent of every other value derived
+/// from the seed and reveals nothing about it.
+const INFO_ENCID_DEVICE: &[u8] = b"KEYDEV/ENCID";
+/// Fixed by CTAP 2.2, not by us: the `encIdentifier` key is
+/// HKDF-SHA256(salt = 32 zero bytes, IKM = persistent pinUvAuthToken, L = 16).
+const INFO_ENCID: &[u8] = b"encIdentifier";
+const ENCID_SALT: [u8; 32] = [0u8; 32];
 
 /// `EF_KEY_DEV_ENC` layout: nonce(12) ‖ ChaCha20-Poly1305(seed value, 32) ‖ tag(16).
 ///
@@ -310,6 +317,72 @@ pub fn ensure_ppuat<S: Storage>(
 /// Refines `RSKeySecurityState!NoTokenAfterInvalidation` — SEC-FIDO-003.
 pub fn clear_ppuat<S: Storage>(fs: &mut Fs<S>) -> Result<()> {
     fs.force_delete(EF_PAUTHTOKEN.get())
+}
+
+/// getInfo's `encIdentifier` (0x19): `iv ‖ AES-128-CBC(k, id)`, where `id` is this
+/// device's 128-bit identifier and `k` is HKDF-SHA256 over the persistent
+/// pinUvAuthToken, under the salt and label CTAP 2.2 fixes for it. Only a holder of
+/// that token can decrypt it, which is the whole point: the device stays recognizable
+/// to a platform it has been paired with and opaque to everyone else.
+///
+/// **The IV is fresh per call.** A fixed or repeating one would turn this member
+/// into a stable cross-origin fingerprint served to anyone who asks — the exact
+/// tracking vector the member is designed to avoid.
+///
+/// `id` is derived from the master seed under its own label, so it follows the
+/// seed across `authenticatorReset`: a reset mints a new seed, and the device
+/// stops being linkable to its pre-reset self. Deriving it from the silicon root
+/// instead would have survived the reset and defeated that.
+///
+/// `None` when no persistent token has been issued yet, or the seed is unreadable
+/// behind a soft lock. The member is optional, and a placeholder built from some
+/// other value would be a claim no platform could detect as false.
+pub fn enc_identifier<S: Storage>(
+    dev: &Device,
+    fs: &mut Fs<S>,
+    rng: &mut impl Rng,
+) -> Option<[u8; ENC_IDENTIFIER_LEN]> {
+    // The token is the gate, so it is read FIRST: a device that has never issued one
+    // is the common case, and opening the seal on the seed only to discard it would
+    // be a ChaCha20-Poly1305 open on every getInfo for nothing.
+    let mut token = load_ppuat(dev, fs)?;
+    let mut key = [0u8; 16];
+    let derived = hkdf_sha256(&ENCID_SALT, &token, INFO_ENCID, &mut key);
+    token.zeroize();
+    if derived.is_err() {
+        key.zeroize();
+        return None;
+    }
+
+    let Some(mut seed) = load_keydev(dev, fs) else {
+        key.zeroize();
+        return None;
+    };
+    let mut id = [0u8; 16];
+    let derived = hkdf_sha256(dev.serial_hash, &seed, INFO_ENCID_DEVICE, &mut id);
+    seed.zeroize();
+    if derived.is_err() {
+        id.zeroize();
+        key.zeroize();
+        return None;
+    }
+
+    let mut iv = [0u8; 16];
+    rng.fill(&mut iv);
+    let mut block = id;
+    id.zeroize();
+    let sealed = aes_encrypt(&key, &iv, Mode::Cbc, &mut block);
+    key.zeroize();
+    if sealed.is_err() {
+        block.zeroize();
+        return None;
+    }
+
+    let mut out = [0u8; ENC_IDENTIFIER_LEN];
+    out[..16].copy_from_slice(&iv);
+    out[16..].copy_from_slice(&block);
+    block.zeroize();
+    Some(out)
 }
 
 /// Read and unseal a 32-byte value from any supported at-rest form (read-both).

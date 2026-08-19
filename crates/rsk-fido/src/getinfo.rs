@@ -22,9 +22,9 @@ use minicbor::encode::{Error, Write};
 use crate::consts::{
     AAGUID, ALG_EDDSA, ALG_ES256, ALG_ES384, ALG_ES512, ALG_MLDSA44, ALG_MLDSA65,
     CONFIG_AUT_DISABLE, CONFIG_AUT_ENABLE, CONFIG_PHY_LED_BRIGHTNESS, CONFIG_PHY_LED_GPIO,
-    CONFIG_PHY_OPTIONS, CONFIG_PHY_VIDPID, FIRMWARE_VERSION, LARGE_BLOB_EXT, MAX_CRED_ID_LENGTH,
-    MAX_CREDBLOB_LENGTH, MAX_CREDENTIAL_COUNT_IN_LIST, MAX_LARGE_BLOB_SIZE, MAX_MIN_PIN_RPIDS,
-    MAX_MSG_SIZE, PIN_COMPLEXITY_POLICY, TRANSPORTS,
+    CONFIG_PHY_OPTIONS, CONFIG_PHY_VIDPID, ENC_IDENTIFIER_LEN, FIRMWARE_VERSION, LARGE_BLOB_EXT,
+    MAX_CRED_ID_LENGTH, MAX_CREDBLOB_LENGTH, MAX_CREDENTIAL_COUNT_IN_LIST, MAX_LARGE_BLOB_SIZE,
+    MAX_MIN_PIN_RPIDS, MAX_MSG_SIZE, PIN_COMPLEXITY_POLICY, TRANSPORTS,
 };
 use crate::cose::cose_public_key;
 use crate::error::{CtapError, CtapResult};
@@ -55,6 +55,7 @@ pub fn get_info(
     always_uv: bool,
     builtin_uv: bool,
     remaining_rk: u16,
+    enc_identifier: Option<&[u8; ENC_IDENTIFIER_LEN]>,
     out: &mut [u8],
 ) -> CtapResult {
     let mut enc = Encoder::new(minicbor::encode::write::Cursor::new(out));
@@ -67,6 +68,7 @@ pub fn get_info(
         always_uv,
         builtin_uv,
         remaining_rk,
+        enc_identifier,
     )
     .map_err(|_| CtapError::Other)?;
     Ok(enc.writer().position())
@@ -82,11 +84,13 @@ fn write_info<W: Write>(
     always_uv: bool,
     builtin_uv: bool,
     remaining_rk: u16,
+    enc_identifier: Option<&[u8; ENC_IDENTIFIER_LEN]>,
 ) -> Result<(), Error<W::Error>> {
     // Keys are ascending uints → CTAP canonical order (1-byte keys 0x01..0x16
-    // first, then the 2-byte keys 0x18, 0x1A, 0x1B, 0x1D, 0x1F — 24 and up need the
-    // extra byte). The `largeblob-ext` build drops 0x0B with the command it describes.
-    enc.map(23 + u64::from(!LARGE_BLOB_EXT))?;
+    // first, then the 2-byte keys 0x18, 0x19, 0x1A, 0x1B, 0x1D, 0x1F — 24 and up need
+    // the extra byte). Two members are conditional: `largeblob-ext` drops 0x0B with
+    // the command it describes, and 0x19 needs a persistent token to key it.
+    enc.map(23 + u64::from(!LARGE_BLOB_EXT) + u64::from(enc_identifier.is_some()))?;
 
     // 0x01 versions — advertise the full backward-compatible superset up to
     // FIDO_2_3 (the implemented surface: credMgmt, largeBlobs, credProtect,
@@ -299,6 +303,13 @@ fn write_info<W: Write>(
     // presence check takes. CTAP 2.3 §6.4 cut the long-touch hold from 2.2's 10 s to
     // 5 s, so implementing the gesture is a UX decision, not an unresolved duration.
     enc.u8(0x18)?.bool(false)?;
+
+    // 0x19 encIdentifier — iv ‖ AES-128-CBC(HKDF(persistent pinUvAuthToken), device
+    // identifier), built in `seed::enc_identifier`. Absent until such a token exists:
+    // only its holder can decrypt, and that gate is the whole privacy story.
+    if let Some(id) = enc_identifier {
+        enc.u8(0x19)?.bytes(id)?;
+    }
 
     // 0x1A transportsForReset — where authenticatorReset is accepted: an array of
     // AuthenticatorTransport strings, not the bit field Yubico's page describes.

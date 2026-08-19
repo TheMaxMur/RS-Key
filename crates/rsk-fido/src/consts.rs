@@ -204,6 +204,11 @@ pub const PUBLIC_KEY_TYPE: &str = "public-key";
 /// reset is reachable exactly where the applet is. No FIDO AID is routed onto CCID.
 pub const TRANSPORTS: [&str; 1] = ["usb"];
 
+/// Length of getInfo's `encIdentifier` (0x19): a 16-byte IV followed by one
+/// AES-128-CBC block. The plaintext is a 128-bit device identifier, so the
+/// ciphertext is exactly one block — `aes_encrypt` pads nothing.
+pub const ENC_IDENTIFIER_LEN: usize = 16 + 16;
+
 // pinUvAuthParam MAC covers subCommand ‖ subCommandParams; cap on the raw bytes
 // (vendor.rs deliberately overrides with its own larger cap). A maximal legal
 // updateUserInformation — 42-byte resident credId + 64-byte user.id + 64-byte
