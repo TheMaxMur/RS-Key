@@ -469,7 +469,7 @@ OtpCancelWait ==
 (***************************************************************************)
 
 \* THE FOUR CALL SITES DO NOT TEST THE SAME THING, and the difference is
-\* load-bearing. makeCredential (makecredential.rs:496-499) and getAssertion
+\* load-bearing. makeCredential (makecredential.rs:513-516) and getAssertion
 \* (getassertion.rs:384-387) test the MAC, `user_verified()` -- which is
 \* `in_use && user_verified` (state.rs:666-668) -- the permission bit and the
 \* rpId binding. authenticatorConfig (config.rs:244-246) and
@@ -537,7 +537,7 @@ ConsumedTok ==
              ELSE [tok EXCEPT !.perms = {}]
 
 \* makeCredential/getAssertion bind an unbound pinUvAuthToken to the request's
-\* rpId before consuming its permissions (makecredential.rs:504-506,
+\* rpId before consuming its permissions (makecredential.rs:521-523,
 \* getassertion.rs:394-396).
 BoundConsumedTok(r) ==
     LET consumed == ConsumedTok IN
@@ -805,7 +805,7 @@ StopUsingToken ==
 (* makeCredential / getAssertion.                                          *)
 (***************************************************************************)
 
-\* makecredential.rs:494-502. Needs PERM_MC and a touch.
+\* makecredential.rs:511-519. Needs PERM_MC and a touch.
 RegisterStart(r, t) ==
     /\ Idle
     /\ ButtonFreeGuard
@@ -934,12 +934,12 @@ ConfigOp ==
                     ram >>
 
 (***************************************************************************)
-(* Vendor BACKUP_FINALIZE -- vendor.rs:894-901, and its on-device twin      *)
-(* mark_backup_sealed (vendor.rs:962-968).                                  *)
+(* Vendor BACKUP_FINALIZE -- vendor.rs:901-908, and its on-device twin      *)
+(* mark_backup_sealed (vendor.rs:969-975).                                  *)
 (***************************************************************************)
 
 \* Writing EF_BACKUP_SEALED closes the one-time seed-export window: after it,
-\* BACKUP_EXPORT refuses (vendor.rs:799) and the display's recovery-phrase
+\* BACKUP_EXPORT refuses (vendor.rs:806) and the display's recovery-phrase
 \* reveal is gone, until a reset reopens the window. Modelled UNGATED -- the
 \* real one carries the PIN half and a deliberate hold -- which widens only the
 \* states the marker can be SET in, never the states it can be LOST in, and it
@@ -951,7 +951,7 @@ BackupFinalize ==
     /\ UNCHANGED << pin, store, lock, tok, plat, pres, walk, sys, op, snap,
                     upSpent, viol, ram >>
 
-\* Vendor UNLOCK (vendor.rs:543-566): the host presents the 32-byte lock key over
+\* Vendor UNLOCK (vendor.rs:550-573): the host presents the 32-byte lock key over
 \* the MSE channel, the wrapped seed on flash decrypts, and `state.keydev_dec`
 \* holds it until power-off. No PIN and no touch -- knowing the lock key IS the
 \* authorization -- so this is not modelled as a gate, only as the one door

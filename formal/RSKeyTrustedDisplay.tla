@@ -50,7 +50,7 @@ CONSTANTS
     \* never carry RP data; only the card can. The fix is
     \* `needs_confirm = !up_collected || shows_confirm`
     \* (crates/rsk-fido/src/clientpin.rs:536-537), consumed at
-    \* getassertion.rs:616-617, makecredential.rs:643-644 and u2f.rs:93. The
+    \* getassertion.rs:616-617, makecredential.rs:660-661 and u2f.rs:93. The
     \* switch restores the pre-fix gate.
     BugPadSubstitutesForCard,
     \* Audit run-33, SHIPPED (the onboarding "Continue without PIN" committed by

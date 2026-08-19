@@ -96,7 +96,7 @@ fn issue_token(st: &mut FidoState, rng: &mut StepRng, permissions: u8, now_ms: u
 /// a symbolic five-operation sequence, against the two guard shapes the call
 /// sites actually use:
 ///
-/// - the **UV** shape — `getassertion.rs:376-379`, `makecredential.rs:437-441` —
+/// - the **UV** shape — `getassertion.rs:376-379`, `makecredential.rs:454-458` —
 ///   whose distinguishing conjunct is `user_verified()`;
 /// - the **bare** shape — `config.rs:222-224`, `credmgmt.rs:277` — which tests
 ///   the MAC and the permission bits and *nothing else*. For those two the only
@@ -201,8 +201,8 @@ fn no_token_after_invalidation() {
             _ => {}
         }
 
-        // A1 — the UV-shaped call sites (getassertion.rs:377,
-        // makecredential.rs:440): their `user_verified()` conjunct is false after
+        // A1 — the UV-shaped call sites (getassertion.rs:376-379,
+        // makecredential.rs:454-458): their `user_verified()` conjunct is false after
         // an invalidation and true after an issuance, and at no other time.
         kani::assert(
             verified == st.user_verified(),
