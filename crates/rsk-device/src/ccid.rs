@@ -58,11 +58,14 @@ const IDX_OPENPGP: usize = 1;
 const IDX_PIV: usize = 5;
 
 /// The YubiKey capability bit that gates each applet, in registration order
-/// `[vendor, openpgp, management, oath, otp, piv, rescue]`. `0` = always
+/// `[vendor, openpgp, management, oath, otp, piv, rescue, fido]`. `0` = always
 /// available: management (the re-enable path), vendor and rescue (recovery) must
 /// never be gated off, or `ykman config usb --disable` would be irreversible.
+/// FIDO carries two applications behind one AID, and `cap_enabled` is an ANY test,
+/// so its SELECT survives either being on and the applet gates the two commands
+/// apart.
 /// Refines `RSKeyAdminSurface!AdminSurfaceAlwaysReachable` — SEC-ADM-001.
-const APPLET_CAPS: [u16; 7] = [
+const APPLET_CAPS: [u16; 8] = [
     0,
     rsk_mgmt::CAP_OPENPGP,
     0,
@@ -70,6 +73,7 @@ const APPLET_CAPS: [u16; 7] = [
     rsk_mgmt::CAP_OTP,
     rsk_mgmt::CAP_PIV,
     0,
+    rsk_mgmt::CAP_FIDO2 | rsk_mgmt::CAP_U2F,
 ];
 
 /// YubiKey Management vendor commands carried over CTAPHID (logical, i.e.
@@ -96,6 +100,9 @@ pub struct CcidApplets<'a, S: Storage, R: crate::Rng + 'static, VP: rsk_vendor::
     otp: OtpApplet<'a>,
     piv: PivApplet<'a>,
     rescue: RescueApplet<'a>,
+    /// CTAP2 and U2F as ISO 7816 APDUs. Registered last, so the fast-path indices
+    /// above stay valid; it holds no FIDO state of its own.
+    fido: crate::ccid_fido::FidoCcidApplet<'a, R>,
     /// Cached enabled-applications mask from `EF_DEV_CONF`; reloaded when a config
     /// write sets the dirty latch. Gates CCID SELECT, the OTP keyboard interface
     /// and (via the worker) the FIDO2/U2F transports.
@@ -152,6 +159,9 @@ impl<'a, S: Storage, R: crate::Rng + 'static, VP: rsk_vendor::Platform> CcidAppl
         rng: &'a RefCell<R>,
         hooks: &'a RefCell<dyn Hooks<S>>,
         presence: &'a RefCell<PR>,
+        // The device's one FIDO session state, shared with the CTAPHID handler that
+        // initialises it — see `FidoCcidApplet::state`.
+        fido_state: &'a RefCell<rsk_fido::FidoState>,
         platform: &'a RefCell<dyn rsk_rescue::Platform>,
         vendor_platform: VP,
         serial_id: [u8; 8],
@@ -193,6 +203,14 @@ impl<'a, S: Storage, R: crate::Rng + 'static, VP: rsk_vendor::Platform> CcidAppl
                 presence,
                 kv_total,
                 flash_size,
+            ),
+            fido: crate::ccid_fido::FidoCcidApplet::new(
+                fido_state,
+                rng,
+                presence,
+                serial_id,
+                serial_hash,
+                mkek_source,
             ),
             enabled_caps: rsk_mgmt::read_enabled_caps(&mut fs.borrow_mut()),
             resp: [0; RESP_CAP],
@@ -329,7 +347,7 @@ impl<'a, S: Storage, R: crate::Rng + 'static, VP: rsk_vendor::Platform> CcidAppl
     /// `SCardDisconnect(SCARD_RESET_CARD)` really does force re-authentication
     /// instead of leaving a verified PIN for whoever connects next.
     pub fn reset_card(&mut self) {
-        let mut applets: [&mut dyn Applet<Fs<S>>; 7] = [
+        let mut applets: [&mut dyn Applet<Fs<S>>; 8] = [
             &mut self.vendor,
             &mut self.openpgp,
             &mut self.management,
@@ -337,6 +355,7 @@ impl<'a, S: Storage, R: crate::Rng + 'static, VP: rsk_vendor::Platform> CcidAppl
             &mut self.otp,
             &mut self.piv,
             &mut self.rescue,
+            &mut self.fido,
         ];
         let mut fsb = self.fs.borrow_mut();
         self.disp.reset_card(&mut applets, &mut *fsb);
@@ -345,7 +364,12 @@ impl<'a, S: Storage, R: crate::Rng + 'static, VP: rsk_vendor::Platform> CcidAppl
     /// Dispatch one CCID APDU synchronously, returning the response APDU (body +
     /// SW1 SW2). On-card RSA keygen is run to completion inline (see module docs);
     /// everything else goes straight to the applet dispatcher.
-    pub fn handle_apdu(&mut self, apdu: &[u8]) -> &[u8] {
+    pub fn handle_apdu(&mut self, apdu: &[u8], now_ms: u64) -> &[u8] {
+        // The FIDO applet's context is the filesystem alone, like every other
+        // applet's, so the two things it needs and cannot reach — the transport's
+        // clock and the enabled-applications mask — are stamped on here, one
+        // dispatch before they are read.
+        self.fido.stamp(now_ms, self.enabled_caps);
         // The keygen fast paths bypass `Dispatcher::process`, so the class byte it
         // judges has to be judged ahead of them: a chaining segment is not a command
         // yet, and a secure-messaging class is refused. Falling through is what
@@ -373,7 +397,7 @@ impl<'a, S: Storage, R: crate::Rng + 'static, VP: rsk_vendor::Platform> CcidAppl
         self.disp.set_enabled(self.applet_enable_mask());
         let (sw, n) = {
             let mut res = ResBuf::new(&mut self.resp[..RESP_CAP - 2]);
-            let mut applets: [&mut dyn Applet<Fs<S>>; 7] = [
+            let mut applets: [&mut dyn Applet<Fs<S>>; 8] = [
                 &mut self.vendor,
                 &mut self.openpgp,
                 &mut self.management,
@@ -381,6 +405,7 @@ impl<'a, S: Storage, R: crate::Rng + 'static, VP: rsk_vendor::Platform> CcidAppl
                 &mut self.otp,
                 &mut self.piv,
                 &mut self.rescue,
+                &mut self.fido,
             ];
             let mut fsb = self.fs.borrow_mut();
             let sw = self.disp.process(apdu, &mut applets, &mut *fsb, &mut res);

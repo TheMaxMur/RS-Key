@@ -92,6 +92,37 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Added
 
+- **FIDO answered on one transport, and `ykman`/`python-fido2` could reach the
+  other one.** CTAP2 and U2F are now served over CCID as well as CTAPHID, as ISO
+  7816 APDUs — the CTAP 2.1 §11.2.1 encoding `python-fido2`'s `CtapPcscDevice`
+  speaks, and PC/SC does not distinguish an NFC reader from the device's own CCID
+  interface, so it works over plain USB. SELECT `A0000006472F0001` answers
+  `U2F_V2`; `80 10` carries a CTAP2 command; interindustry-class APDUs take the
+  CTAP1 path. Chaining runs both ways and a client needs both — a bare getInfo is
+  ~520 bytes, so it arrives over `61xx` + GET RESPONSE.
+
+  **The two transports share one `FidoState`, and that is the load-bearing part.**
+  Giving the new one its own would have been the obvious shape and a security
+  regression: the per-boot PIN-mismatch batch lives in that state, so a second copy
+  hands a host six guesses per power cycle instead of three — the restart-by-reboot
+  attack `restore_pin_lock` exists to close. It is now borrowed rather than owned,
+  from the worker, by both handlers; forking it is what
+  `both_transports_answer_from_one_session_state` fails on. One PIN/UV token, one
+  credential-management walk, one soft lock.
+
+  Both applications stay separately gated: `ykman config usb --disable fido2` and
+  `--disable u2f` name them apart, so the *commands* are gated rather than the
+  SELECT — the AID stays selectable for whichever half is still on, and the
+  disabled half answers `6986`. With neither enabled the AID is gone. No `91 00`
+  keep-alive is emitted: a touch blocks inside the exchange under T=1 time
+  extensions, as OATH's touch-flagged CALCULATE and OpenPGP's UIF already do.
+  The transport ceiling is one CCID frame (2038 bytes) against CTAPHID's 4078, so
+  an ML-DSA credential's attestation stays CTAPHID-only.
+  **Reachability changed, so [threat-model.md](docs/threat-model.md) says so.**
+  ⚠️ On the default `0x1209:0x0001` identity most hosts never bind the CCID
+  interface, so none of this appears there — a `VIDPID=Yubikey5` build or the
+  `ccid-rs-key` overlay is what makes it visible. `bcdDevice` 0x096A → 0x096B.
+
 - **A platform had no way to know its credential cache was stale.**
   CTAP 2.3's `encCredStoreState` (getInfo `0x1E`) was absent, so a platform that had
   enumerated a key's discoverable credentials could only find out whether anything

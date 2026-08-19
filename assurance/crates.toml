@@ -24,7 +24,7 @@
 
 [crate.firmware]
 class = "embedded-binary"
-reason = "no_std binary: boot, worker sequencing, board halves of Hooks/Platform. The boot path's cross-boot state — the EF_HARDENED lap and scratch-word lock carry — is RSKeyBootHardening (M7), precisely because this crate has no host tests; the FIDO state it builds is reconstructed host-side in rsk-device (ctap.rs:73-86). Worker scheduling and USB bring-up remain implementation mechanics, with transport state owned by RSKeyTransport."
+reason = "no_std binary: boot, worker sequencing, board halves of Hooks/Platform. The boot path's cross-boot state — the EF_HARDENED lap and scratch-word lock carry — is RSKeyBootHardening (M7), precisely because this crate has no host tests; the FIDO state it builds is reconstructed host-side in rsk-device (ctap.rs:76-89). Worker scheduling and USB bring-up remain implementation mechanics, with transport state owned by RSKeyTransport."
 
 [crate.rsk-wipe]
 class = "out-of-scope"

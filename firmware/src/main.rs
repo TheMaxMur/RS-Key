@@ -419,6 +419,10 @@ static RESCUE_PLATFORM: StaticCell<RefCell<rescue_platform::RescuePlatform>> = S
 /// lock's watchdog register, the dual-core prime search). Same RefCell invariant
 /// as the cells above: thread-executor only.
 static DEVICE_HOOKS: StaticCell<RefCell<handler::DeviceHooks>> = StaticCell::new();
+/// The device's one FIDO session state. Static because both the CTAPHID handler and
+/// the CCID transport's FIDO applet borrow it for the whole run — a second copy
+/// would hand a host a second per-boot PIN-mismatch budget.
+static FIDO_STATE: StaticCell<RefCell<rsk_fido::FidoState>> = StaticCell::new();
 // Same RefCell invariant as FS/RNG above — thread-executor only.
 // Sized for a 32-byte phy product plus the appended YubiKey interface-token
 // suffix (`normalize_usb_product`), so a masquerade name is never truncated.
@@ -690,7 +694,7 @@ async fn main(spawner: Spawner) {
     config.max_power = 100;
     config.max_packet_size_0 = 64;
     // bcdDevice build counter; also surfaced on the trusted-display Firmware screen.
-    let device_release: u16 = 0x096A;
+    let device_release: u16 = 0x096B;
     config.device_release = device_release;
 
     let mut builder = Builder::new(
@@ -1137,12 +1141,14 @@ async fn main(spawner: Spawner) {
     let hooks_ref = DEVICE_HOOKS.init(RefCell::new(handler::DeviceHooks));
     let (kvm, kvc) = (kvmain_range(), kvcnt_range());
     let kv_total = (kvm.end - kvm.start) + (kvc.end - kvc.start);
+    let fido_state_ref = FIDO_STATE.init(RefCell::new(rsk_fido::FidoState::new()));
     let worker = Worker::new(
         fs_ref,
         rng_ref,
         presence_ref,
         platform_ref,
         hooks_ref,
+        fido_state_ref,
         serial_id,
         serial_hash,
         mkek_source,

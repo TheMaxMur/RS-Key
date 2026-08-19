@@ -319,6 +319,9 @@ impl<'a> Worker<'a> {
         presence: &'a RefCell<Presence>,
         platform: &'a RefCell<crate::rescue_platform::RescuePlatform>,
         hooks: &'a RefCell<DeviceHooks>,
+        // The device's one FIDO session state. Both handlers below borrow it: two
+        // copies would give a host two per-boot PIN-mismatch budgets.
+        fido_state: &'a RefCell<rsk_fido::FidoState>,
         serial_id: [u8; 8],
         serial_hash: [u8; 32],
         mkek_source: Option<FusedKey>,
@@ -332,6 +335,7 @@ impl<'a> Worker<'a> {
                 rng,
                 hooks,
                 presence,
+                fido_state,
                 crate::vendor::VendorPlatform,
                 serial_id,
                 serial_hash,
@@ -343,6 +347,7 @@ impl<'a> Worker<'a> {
                 rng,
                 hooks,
                 presence,
+                fido_state,
                 platform,
                 crate::vendor::VendorPlatform,
                 serial_id,
@@ -486,7 +491,9 @@ impl<'a> Worker<'a> {
                         self.ctap
                             .handle_msg(&req[..*req_len], crate::usb_attach::elapsed_ms())
                     }
-                    Kind::Apdu => self.ccid.handle_apdu(&req[..*req_len]),
+                    Kind::Apdu => self
+                        .ccid
+                        .handle_apdu(&req[..*req_len], crate::usb_attach::elapsed_ms()),
                     Kind::ResetCard => {
                         self.ccid.reset_card();
                         &[]
@@ -601,7 +608,9 @@ impl<'a> Worker<'a> {
                     // Ensure the pad VERIFY dispatches as a standalone command — a prior
                     // host chaining segment must not concatenate the PIN onto itself.
                     self.ccid.reset_chaining();
-                    let body = self.ccid.handle_apdu(&apdu[..len]);
+                    let body = self
+                        .ccid
+                        .handle_apdu(&apdu[..len], crate::usb_attach::elapsed_ms());
                     let m = body.len().min(ex.resp.len());
                     ex.resp[..m].copy_from_slice(&body[..m]);
                     ex.resp_len = m;

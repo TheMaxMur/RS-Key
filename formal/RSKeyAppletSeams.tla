@@ -12,10 +12,10 @@
 (* RSKeySecurityState.tla. Those two state machines share no variable, and   *)
 (* that is a measured claim rather than a convenience: the CCID side owns a  *)
 (* Dispatcher and the only instances of openpgp / oath / piv / otp /         *)
-(* management / rescue / vendor (crates/rsk-device/src/ccid.rs:87-102),      *)
+(* management / rescue / vendor (crates/rsk-device/src/ccid.rs:91-109),      *)
 (* while the CTAPHID side owns a SEPARATE Dispatcher whose applet array is   *)
 (* literally one element, its own VendorApplet                               *)
-(* (crates/rsk-device/src/ctap.rs:160-164). PIV, OpenPGP and OATH are not    *)
+(* (crates/rsk-device/src/ctap.rs:171-175). PIV, OpenPGP and OATH are not    *)
 (* reachable over CTAPHID at all, so no status can be established on one     *)
 (* transport and honoured on the other. A product of the two models would    *)
 (* therefore multiply 17 million states by this module's own and buy exactly *)
@@ -40,7 +40,7 @@ CONSTANTS
     \* 637ed98 taken back out: PIV and OpenPGP used to reset on EVERY select,
     \* ignoring the `reselect` flag the trait hands them.
     BugReselectResetsStatus,
-    \* crates/rsk-device/src/ccid.rs:328-342 -- the ICC power transition.
+    \* crates/rsk-device/src/ccid.rs:346-361 -- the ICC power transition.
     BugCardResetKeepsStatus,
     \* e5da38b taken back out: PW3, the admin PIN, standing in for PW1/PW2 on
     \* PSO:CDS, PSO:DECIPHER and INTERNAL AUTHENTICATE.
@@ -489,7 +489,7 @@ PivKeyOp ==
 
 \* SCardDisconnect(SCARD_RESET_CARD) / CCID_POWER_OFF / CCID_POWER_ON:
 \* `Dispatcher::reset_card` deselects, which drops the selected applet's
-\* security status (crates/rsk-device/src/ccid.rs:328-342,
+\* security status (crates/rsk-device/src/ccid.rs:346-361,
 \* crates/rsk-sdk/src/applet.rs:222-230). This is the one the `cross_applet`
 \* fuzz target already watches, one layer down.
 \* Its own trailing UNCHANGED named `psig` while the ELSE branch assigned it, so
@@ -536,7 +536,7 @@ FidoReset == UNCHANGED vars
 \* `Fs::factory_wipe` (crates/rsk-fs/src/fs.rs:326-373) is FLASH-only: it never
 \* sees an applet, so every in-RAM status here stands over freshly-defaulted
 \* verifiers until the reboot both callers queue immediately after
-\* (crates/rsk-device/src/ccid.rs:284-293, crates/rsk-display/src/pin.rs:663-671).
+\* (crates/rsk-device/src/ccid.rs:302-311, crates/rsk-display/src/pin.rs:663-671).
 \* Modelled as the wipe AND its reboot in one step, which is what makes the
 \* window unobservable -- and that is exactly the assumption to attack if anyone
 \* ever separates them.

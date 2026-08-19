@@ -14,7 +14,7 @@
 (*    dump until a compaction lap pushes it off the medium. `EF_HARDENED`    *)
 (*    is the marker that says the lap has run (crates/rsk-fs/src/lib.rs:26-46);*)
 (*    the boot runs the lap iff the marker is ABSENT and sets it only after  *)
-(*    `compact()` returns Ok (firmware/src/main.rs:611-622) -- marker AFTER  *)
+(*    `compact()` returns Ok (firmware/src/main.rs:615-626) -- marker AFTER  *)
 (*    scrub, so a torn lap re-runs. Every LAZY re-key after the lap must     *)
 (*    re-arm it (`request_rescrub`) or its superseded copy stays readable    *)
 (*    forever: audit run-35 found FOUR OF FIVE lazy re-keys skipping that,   *)
@@ -62,7 +62,7 @@ CONSTANTS
     \* no future boot will ever scrub it. The shipped tree clears the marker at
     \* every one of the five sites; the switch removes the re-arm.
     BugRekeyKeepsTheMarker,
-    \* The marker written on a lap that did NOT complete: firmware/src/main.rs:621
+    \* The marker written on a lap that did NOT complete: firmware/src/main.rs:625
     \* short-circuits `fs.compact().is_ok()` BEFORE the `fs.put(EF_HARDENED)`,
     \* so a torn or failed lap leaves the marker absent and the next boot
     \* retries. The switch sets the marker regardless -- the same
@@ -200,7 +200,7 @@ Spec == Init /\ [][Next]_vars
 \* the marker standing over its new leftover, and the lap that claims completion
 \* it did not earn. While it holds, "marker absent => a future boot scrubs" is
 \* the liveness half, carried by the boot gate's own retry (a failed compact
-\* leaves the marker unset, firmware/src/main.rs:621).
+\* leaves the marker unset, firmware/src/main.rs:625).
 MarkerNeverLies == ~(marker /\ weak > 0)
 
 \* THE WHOLE LOCK RIDES: while serving, the in-RAM lock equals the scratch word.

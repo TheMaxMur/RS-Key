@@ -535,11 +535,15 @@ async fn serve<PR: rsk_device::UserPresence + 'static>(
     });
     let vendor_platform = EmuVendorPlatform::default();
     let reboot_requested = vendor_platform.reboot.clone();
+    // One FIDO session state for the whole device, as the firmware worker holds it:
+    // the CTAPHID handler and the CCID FIDO applet borrow the same cell.
+    let fido_state = RefCell::new(rsk_fido::FidoState::new());
     let mut ctap = AppletHandler::new(
         fs,
         rng,
         &hooks,
         presence,
+        &fido_state,
         vendor_platform.clone(),
         serial_id,
         serial_hash,
@@ -551,6 +555,7 @@ async fn serve<PR: rsk_device::UserPresence + 'static>(
         rng,
         &hooks,
         presence,
+        &fido_state,
         &platform,
         vendor_platform,
         serial_id,
@@ -667,7 +672,7 @@ async fn serve<PR: rsk_device::UserPresence + 'static>(
                 body
             }
             Job::Apdu(data) => {
-                let body = ccid.handle_apdu(&data).to_vec();
+                let body = ccid.handle_apdu(&data, now_ms).to_vec();
                 ccid.scrub();
                 if cfg.trace {
                     eprintln!(
@@ -724,6 +729,7 @@ async fn serve<PR: rsk_device::UserPresence + 'static>(
                     rng,
                     &hooks,
                     presence,
+                    &fido_state,
                     EmuVendorPlatform {
                         reboot: reboot_requested.clone(),
                     },
@@ -785,6 +791,7 @@ async fn serve<PR: rsk_device::UserPresence + 'static>(
                 rng,
                 &hooks,
                 presence,
+                &fido_state,
                 EmuVendorPlatform {
                     reboot: reboot_requested.clone(),
                 },

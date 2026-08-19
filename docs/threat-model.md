@@ -40,7 +40,8 @@ bulk stream, ISO-7816 APDUs, CTAP2 CBOR. Defenses:
   USB *identity* (serial, strings) is cosmetic — never proof a device is genuine,
   attestation is (§3). The **enabled-applications mask is enforced**, though: a
   disabled application's applet stops answering (PIV/OpenPGP/OATH/OTP over CCID,
-  FIDO2/U2F over CTAPHID, the OTP keyboard), so a hostile host can turn one off.
+  FIDO2/U2F over **both** CTAPHID and CCID, the OTP keyboard), so a hostile host
+  can turn one off.
   That is a **reversible denial-of-service**, not a confidentiality or integrity
   break — the Management applet, the FIDO vendor command, and the OTP-HID
   identify/config slots are never gated, so any single transport can re-enable it,
@@ -56,6 +57,27 @@ bulk stream, ISO-7816 APDUs, CTAP2 CBOR. Defenses:
   build/flash **`firmware-strict-config`**, which restores the presence/PIN gates
   and refuses the ungated transport writes ([build.md](build.md)). It is not the
   runtime flash flag `EF_HARDENED`.
+- **The FIDO applet answers on two transports, and the second one is easier to
+  reach.** CTAP2 and U2F are served over CCID as well as CTAPHID
+  ([protocol.md §5.2](protocol.md#52-ctap-over-ccid)), so any process that can talk
+  to `pcscd` can drive the whole CTAP surface — no exclusive HID handle, and none
+  of the platform gatekeeping a browser or the Windows WebAuthn stack applies to
+  its own FIDO path. **What that does and does not buy an attacker:** nothing a
+  credential gate would have stopped. Every operation still spends the same PIN,
+  the same pinUvAuthToken and the same physical touch, because the two transports
+  run the *same* applet over the **same `FidoState`** — one PIN/UV token, one
+  credential-management walk, and crucially **one** per-boot PIN-mismatch budget.
+  A second session state would have handed a host `PIN_MISMATCH_LIMIT` guesses per
+  transport instead of per power cycle, which is the restart-by-reboot attack
+  §6.5.5.6 exists to stop; that it is shared is enforced by construction (one
+  `&RefCell<FidoState>` reaches both) and pinned by
+  `both_transports_answer_from_one_session_state`. What it *does* buy is
+  **reachability**: a process that could not open the HID device can now open the
+  card. Treat FIDO as available to anything with card access, and use
+  `ykman config usb --disable fido2` (or `--disable u2f`) if that is not wanted —
+  the mask gates the two applications apart, over both transports. On the default
+  `0x1209:0x0001` identity most hosts never bind the CCID interface at all, so the
+  surface is absent there for an unrelated reason, not by design.
 - **The residual gap is *intent*. The trusted-display flavor closes it.** Because
   a standard key attests presence and possession, a malicious page can silently
   drive an authorized key over WebUSB to phish a real sign-in ([demonstrated

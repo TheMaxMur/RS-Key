@@ -5,7 +5,7 @@
 
 //! Stateful cross-applet fuzzing over the *shipped* wiring. Every other applet
 //! target drives ONE applet from a fresh state; this one builds the real
-//! [`rsk_device::CcidApplets`] — the same seven-applet registration, in the same
+//! [`rsk_device::CcidApplets`] — the same eight-applet registration, in the same
 //! order, that the firmware and `tools/emu` run — over one shared flash `Fs`, RNG
 //! and presence source, then replays an attacker-chosen sequence of transport
 //! verbs against it. Selection, chaining, each applet's PIN/MSE/auth state, the
@@ -80,11 +80,13 @@ const PIN_REFS: [u8; 4] = [
     rsk_usb::secure_pin::PIV_PIN_P2,
 ];
 
-/// The seven applets in **registration order** — the order `CcidApplets` builds
+/// The eight applets in **registration order** — the order `CcidApplets` builds
 /// them in, which is what the dispatcher's enable mask is indexed by — each with
 /// the capability bit that gates it. `0` = ungated: management is the re-enable
 /// path and vendor/rescue are the recovery ones, so a disable is never final.
-const APPLETS: [(&[u8], u16); 7] = [
+/// FIDO's entry carries two bits because one AID serves two applications, and
+/// `cap_enabled` is an ANY test.
+const APPLETS: [(&[u8], u16); 8] = [
     (rsk_vendor::VENDOR_AID, 0),
     (rsk_openpgp::consts::OPENPGP_AID, rsk_mgmt::CAP_OPENPGP),
     (rsk_mgmt::MANAGEMENT_AID, 0),
@@ -92,9 +94,13 @@ const APPLETS: [(&[u8], u16); 7] = [
     (rsk_otp::OTP_AID, rsk_mgmt::CAP_OTP),
     (rsk_piv::PIV_AID, rsk_mgmt::CAP_PIV),
     (rsk_rescue::RESCUE_AID, 0),
+    (
+        rsk_fido::consts::FIDO_AID,
+        rsk_mgmt::CAP_FIDO2 | rsk_mgmt::CAP_U2F,
+    ),
 ];
 
-const OP_SELECT_MAX: u8 = 6;
+const OP_SELECT_MAX: u8 = 7;
 const OP_CTAP_MGMT: u8 = 0xF0;
 const OP_RESET_CARD: u8 = 0xF1;
 const OP_RESET_CHAINING: u8 = 0xF2;
@@ -109,7 +115,7 @@ const OP_SET_CAPS: u8 = 0xF6;
 struct Board;
 impl Hooks<RamStorage> for Board {}
 
-/// One physical button behind all seven applet traits, as on the device. Confirms
+/// One physical button behind all eight applet traits, as on the device. Confirms
 /// instantly so the presence-gated commands stay reachable for the fuzzer.
 struct Finger;
 
@@ -247,12 +253,15 @@ fuzz_target!(|data: &[u8]| {
     let board = RefCell::new(Board);
     let finger = RefCell::new(Finger);
     let rescue = RefCell::new(RescueBoard::default());
+    // The device's one FIDO session state, as the worker holds it.
+    let fido_state = RefCell::new(rsk_fido::FidoState::new());
 
     let mut ccid = CcidApplets::new(
         &fs,
         &rng,
         &board,
         &finger,
+        &fido_state,
         &rescue,
         VendorBoard,
         SERIAL_ID,
@@ -277,7 +286,7 @@ fuzz_target!(|data: &[u8]| {
                 sel[4] = aid.len() as u8;
                 sel[5..5 + aid.len()].copy_from_slice(aid);
                 let enabled = ccid.caps_enabled(cap);
-                let sw = status(ccid.handle_apdu(&sel[..5 + aid.len()]));
+                let sw = status(ccid.handle_apdu(&sel[..5 + aid.len()], 0));
                 // No applet's own `select` answers FILE_NOT_FOUND, so this is
                 // exactly the gate: `ykman config usb --disable X` really removes
                 // X, and the three ungated applets can never be removed at all.
@@ -372,7 +381,7 @@ fuzz_target!(|data: &[u8]| {
                 if matches!(Apdu::parse(raw), Ok(p) if p.ins == INS_GENERATE) {
                     continue;
                 }
-                let _ = status(ccid.handle_apdu(raw));
+                let _ = status(ccid.handle_apdu(raw, 0));
             }
         }
     }

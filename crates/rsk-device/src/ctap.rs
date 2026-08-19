@@ -69,8 +69,11 @@ pub struct AppletHandler<'a, S: Storage, R: crate::Rng + 'static, VP: rsk_vendor
     /// `.await`), like the flash `Fs`.
     rng: &'a RefCell<R>,
     /// Cross-message PIN/UV-auth state (PIN token, the ephemeral ECDH key …);
-    /// lives for one power cycle.
-    fido_state: rsk_fido::FidoState,
+    /// lives for one power cycle. **Borrowed, not owned**: the CCID transport
+    /// reaches the same FIDO applet, and a second copy of this would hand a host a
+    /// second per-boot [`rsk_fido::consts::PIN_MISMATCH_LIMIT`] budget — the
+    /// restart-by-reboot attack `restore_pin_lock` exists to close.
+    fido_state: &'a RefCell<rsk_fido::FidoState>,
     /// Physical user presence (BOOTSEL by default, optionally a GPIO button),
     /// shared with the OpenPGP applet through a
     /// `RefCell`; borrowed only for a touch wait inside one dispatch.
@@ -95,6 +98,9 @@ impl<'a, S: Storage, R: crate::Rng + 'static, VP: rsk_vendor::Platform>
         // gated arms (this transport also dispatches the vendor AID) are the same
         // button behind two traits.
         presence: &'a RefCell<PR>,
+        // The one FIDO session state of the device, shared with the CCID transport's
+        // FIDO applet. Initialised here, where the boot canary and the TRNG are.
+        fido_state: &'a RefCell<rsk_fido::FidoState>,
         vendor_platform: VP,
         serial_id: [u8; 8],
         serial_hash: [u8; 32],
@@ -103,20 +109,25 @@ impl<'a, S: Storage, R: crate::Rng + 'static, VP: rsk_vendor::Platform>
     ) -> Self {
         // The OTP DEVK signs audit-journal checkpoints (rsk_fido::journal); it
         // rides in FidoState so the pure FIDO logic stays caller-supplied.
-        let mut fido_state = rsk_fido::FidoState::new();
+        // A fresh session, because building the handler IS the power-up: the state is
+        // borrowed now rather than owned, so it has to be cleared here instead of by
+        // its own construction. Its `Drop` zeroizes whatever the last one held.
+        let mut st = fido_state.borrow_mut();
+        *st = rsk_fido::FidoState::new();
         // Restore the clientPIN soft lock if the last boot was a warm reset: the
         // canary survives `sys_reset` but not a real power cycle, which is the
         // distinction CTAP 2.1 §6.5.5.6 draws. The same canary reports the warm
         // boot itself, which §6.6's reset window keys on.
         let boot = hooks.borrow_mut().boot_state();
-        fido_state.restore_pin_lock(boot.lock);
-        fido_state.warm_boot = boot.warm;
-        fido_state.devk_source = devk;
+        st.restore_pin_lock(boot.lock);
+        st.warm_boot = boot.warm;
+        st.devk_source = devk;
         // Generate the clientPIN ephemeral key-agreement key at power-up (CTAP 2.1
         // §6.5.5.7), not lazily on the first clientPIN — so the first PIN entry
         // after plug-in doesn't pay the one-time ~40 ms `d·G`. The TRNG is seeded
         // by the time the worker builds the handler.
-        fido_state.ensure_initialized(&mut *rng.borrow_mut());
+        st.ensure_initialized(&mut *rng.borrow_mut());
+        drop(st);
         Self {
             fs,
             hooks,
@@ -143,7 +154,7 @@ impl<'a, S: Storage, R: crate::Rng + 'static, VP: rsk_vendor::Platform>
     /// ECDH scalar via their `Drop` impls.
     pub fn scrub_secrets(&mut self) {
         self.resp.zeroize();
-        self.fido_state.reset();
+        self.fido_state.borrow_mut().reset();
     }
 }
 
@@ -173,7 +184,8 @@ impl<S: Storage, R: crate::Rng + 'static, VP: rsk_vendor::Platform> AppletHandle
         let mut rps = [false; MAX_RESIDENT_CREDENTIALS as usize];
         fs.present_slots(EF_CRED, &mut credentials);
         fs.present_slots(EF_RP, &mut rps);
-        let lock = self.fido_state.pin_lock();
+        let st = self.fido_state.borrow();
+        let lock = st.pin_lock();
 
         SecurityTraceSnapshot {
             pin_record_len: pin_size,
@@ -186,21 +198,21 @@ impl<S: Storage, R: crate::Rng + 'static, VP: rsk_vendor::Platform> AppletHandle
             seed_encrypted_record: fs.has_key(EF_KEY_DEV_ENC),
             credential_slots_raw: credentials.iter().filter(|present| **present).count() as u16,
             rp_slots_raw: rps.iter().filter(|present| **present).count() as u16,
-            token_in_use_raw: self.fido_state.paut.in_use,
-            token_permissions_raw: self.fido_state.paut.permissions,
-            token_has_rp_id_raw: self.fido_state.paut.has_rp_id,
-            token_user_present_raw: self.fido_state.paut.user_present,
-            token_user_verified_raw: self.fido_state.paut.user_verified,
+            token_in_use_raw: st.paut.in_use,
+            token_permissions_raw: st.paut.permissions,
+            token_has_rp_id_raw: st.paut.has_rp_id,
+            token_user_present_raw: st.paut.user_present,
+            token_user_verified_raw: st.paut.user_verified,
             soft_lock_raw: lock.engaged,
             pin_mismatches_raw: lock.mismatches,
-            cm_channel_raw: self.fido_state.cm.channel,
-            cm_rp_counter_raw: self.fido_state.cm.rp_counter,
-            cm_rp_total_raw: self.fido_state.cm.rp_total,
-            cm_cred_counter_raw: self.fido_state.cm.cred_counter,
-            cm_cred_total_raw: self.fido_state.cm.cred_total,
-            warm_boot_raw: self.fido_state.warm_boot,
-            channel_raw: self.fido_state.channel,
-            keydev_ram_raw: self.fido_state.keydev_dec.is_some(),
+            cm_channel_raw: st.cm.channel,
+            cm_rp_counter_raw: st.cm.rp_counter,
+            cm_rp_total_raw: st.cm.rp_total,
+            cm_cred_counter_raw: st.cm.cred_counter,
+            cm_cred_total_raw: st.cm.cred_total,
+            warm_boot_raw: st.warm_boot,
+            channel_raw: st.channel,
+            keydev_ram_raw: st.keydev_dec.is_some(),
         }
     }
 
@@ -212,6 +224,7 @@ impl<S: Storage, R: crate::Rng + 'static, VP: rsk_vendor::Platform> AppletHandle
 
         let mut fs = self.fs.borrow_mut();
         self.fido_state
+            .borrow_mut()
             .abstract_token(rsk_fido::TokenPersistentView {
                 pin_set: fs.has_data(EF_PIN),
                 persistent_grant: fs.has_key(EF_PAUTHTOKEN),
@@ -243,11 +256,12 @@ impl<S: Storage, R: crate::Rng + 'static, VP: rsk_vendor::Platform> AppletHandle
                     let mut fsb = self.fs.borrow_mut();
                     let mut rngb = self.rng.borrow_mut();
                     let mut presence = self.presence.borrow_mut();
+                    let mut stb = self.fido_state.borrow_mut();
                     let mut ctx = rsk_fido::Ctx {
                         dev,
                         fs: &mut *fsb,
                         rng: &mut *rngb,
-                        state: &mut self.fido_state,
+                        state: &mut stb,
                         now_ms,
                         presence: &mut *presence,
                     };
@@ -284,7 +298,9 @@ impl<S: Storage, R: crate::Rng + 'static, VP: rsk_vendor::Platform> AppletHandle
         // now revoked inside the write that installs the new verifier.
         if self.hooks.borrow_mut().local_pin_changed() {
             let mut rngb = self.rng.borrow_mut();
-            self.fido_state.reset_pin_uv_auth_token(&mut *rngb);
+            self.fido_state
+                .borrow_mut()
+                .reset_pin_uv_auth_token(&mut *rngb);
             // The host path also clears `needs_power_cycle` here; that field is
             // crate-private and leaving the RAM soft lock armed only fails closed
             // (host clientPIN stays blocked until a replug), so it stays as it is.
@@ -298,16 +314,17 @@ impl<S: Storage, R: crate::Rng + 'static, VP: rsk_vendor::Platform> AppletHandle
         // Which CTAPHID channel is asking. Cross-message state a second process on
         // its own channel must not be able to ride — the seed-backup MSE key —
         // binds to this (see `FidoState::mse_ready`).
-        self.fido_state.channel = cid;
+        self.fido_state.borrow_mut().channel = cid;
         let n = {
             let mut fsb = self.fs.borrow_mut();
             let mut rngb = self.rng.borrow_mut();
             let mut presence = self.presence.borrow_mut();
+            let mut stb = self.fido_state.borrow_mut();
             let mut ctx = rsk_fido::Ctx {
                 dev,
                 fs: &mut *fsb,
                 rng: &mut *rngb,
-                state: &mut self.fido_state,
+                state: &mut stb,
                 now_ms,
                 presence: &mut *presence,
             };
@@ -320,7 +337,7 @@ impl<S: Storage, R: crate::Rng + 'static, VP: rsk_vendor::Platform> AppletHandle
         // §6.5.5.6's power-cycle requirement exists to prevent.
         self.hooks
             .borrow_mut()
-            .store_pin_lock(self.fido_state.pin_lock());
+            .store_pin_lock(self.fido_state.borrow().pin_lock());
         // A vendor (0x41) CONFIG_WRITE with the LED target persists EF_LED_CONF,
         // but the LED atomics live here in the firmware — reload the block after
         // any 0x41 command to apply it live, matching the CCID SET_LED. 0x41 is

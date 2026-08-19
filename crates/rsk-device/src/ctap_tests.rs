@@ -95,7 +95,7 @@ fn a_warm_boot_is_inherited_from_the_board() {
         1,
         "read once, at build"
     );
-    assert!(ctap.fido_state.warm_boot);
+    assert!(ctap.fido_state.borrow().warm_boot);
 }
 
 #[test]
@@ -114,7 +114,7 @@ fn a_warm_boot_carries_the_soft_lock_in() {
         },
     };
     let ctap = env.ctap();
-    let carried = ctap.fido_state.pin_lock();
+    let carried = ctap.fido_state.borrow().pin_lock();
     assert!(
         carried.engaged,
         "the soft lock did not survive the warm reset"
@@ -128,7 +128,7 @@ fn a_cold_boot_is_the_default() {
     // one, which is the safe reading of both clauses.
     let env = Env::new();
     let ctap = env.ctap();
-    assert!(!ctap.fido_state.warm_boot);
+    assert!(!ctap.fido_state.borrow().warm_boot);
 }
 
 #[test]
@@ -138,9 +138,9 @@ fn the_channel_asking_is_recorded_on_every_command() {
     let env = Env::new();
     let mut ctap = env.ctap();
     ctap.handle_cbor(0xDEAD_BEEF, &GET_INFO, 0);
-    assert_eq!(ctap.fido_state.channel, 0xDEAD_BEEF);
+    assert_eq!(ctap.fido_state.borrow().channel, 0xDEAD_BEEF);
     ctap.handle_cbor(0x0000_0001, &GET_INFO, 0);
-    assert_eq!(ctap.fido_state.channel, 0x0000_0001);
+    assert_eq!(ctap.fido_state.borrow().channel, 0x0000_0001);
 }
 
 // --- the trusted display's hand-off ----------------------------------------
@@ -219,7 +219,7 @@ fn a_secure_reboot_drops_the_auth_state_but_not_the_boot_verdict() {
     ctap.handle_cbor(0xABCD, &GET_INFO, 0);
     ctap.scrub_secrets();
     assert!(ctap.resp.iter().all(|&b| b == 0));
-    assert!(ctap.fido_state.warm_boot);
+    assert!(ctap.fido_state.borrow().warm_boot);
 }
 
 /// The number getInfo puts ON THE WIRE has to be the number the transport

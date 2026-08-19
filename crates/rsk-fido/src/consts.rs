@@ -213,6 +213,11 @@ pub const PUBLIC_KEY_TYPE: &str = "public-key";
 /// reset is reachable exactly where the applet is. No FIDO AID is routed onto CCID.
 pub const TRANSPORTS: [&str; 1] = ["usb"];
 
+/// The version string U2F 1.2 §3.1.1 fixes: the answer to the CTAP1 VERSION command
+/// and to a SELECT of [`FIDO_AID`]. A host reads it as "CTAP1 is served here" —
+/// `python-fido2`'s `CtapPcscDevice` sets its NMSG capability on exactly these bytes.
+pub const U2F_VERSION: &[u8] = b"U2F_V2";
+
 /// Length of getInfo's two encrypted members — `encIdentifier` (0x19) and
 /// `encCredStoreState` (0x1E): a 16-byte IV followed by one AES-128-CBC block.
 /// Both plaintexts are 128 bits, so the ciphertext is exactly one block —

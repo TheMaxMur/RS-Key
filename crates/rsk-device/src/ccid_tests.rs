@@ -2,10 +2,10 @@
 // Copyright (C) 2026 RS-Key contributors
 
 use super::*;
-use crate::tests::{Env, apdu, dev_conf, select, sw};
+use crate::tests::{Env, TestRng, VendorBoard, apdu, dev_conf, select, sw};
 
-/// The seven AIDs in registration order, so a test can walk the whole set.
-const AIDS: [(&str, &[u8]); 7] = [
+/// The eight AIDs in registration order, so a test can walk the whole set.
+const AIDS: [(&str, &[u8]); 8] = [
     ("vendor", rsk_vendor::VENDOR_AID),
     ("openpgp", rsk_openpgp::consts::OPENPGP_AID),
     ("management", rsk_mgmt::MANAGEMENT_AID),
@@ -13,6 +13,7 @@ const AIDS: [(&str, &[u8]); 7] = [
     ("otp", rsk_otp::OTP_AID),
     ("piv", rsk_piv::PIV_AID),
     ("rescue", rsk_rescue::RESCUE_AID),
+    ("fido", rsk_fido::consts::FIDO_AID),
 ];
 
 /// The CCID wrapper's return value is what the caller turns into a reboot that
@@ -52,7 +53,7 @@ fn every_applet_is_selectable_on_a_fresh_device() {
     let env = Env::new();
     let mut ccid = env.ccid();
     for (name, aid) in AIDS {
-        let res = ccid.handle_apdu(&select(aid)).to_vec();
+        let res = ccid.handle_apdu(&select(aid), 0).to_vec();
         assert_eq!(sw(&res), rsk_sdk::Sw::OK, "{name} did not select");
     }
 }
@@ -74,13 +75,13 @@ fn a_disabled_application_is_invisible_not_just_unreported() {
     ] {
         let env = Env::new();
         let mut ccid = env.ccid();
-        assert_eq!(sw(ccid.handle_apdu(&select(aid))), rsk_sdk::Sw::OK);
+        assert_eq!(sw(ccid.handle_apdu(&select(aid), 0)), rsk_sdk::Sw::OK);
 
         let blob = dev_conf(rsk_mgmt::CAP_FIDO2); // everything else off
         rsk_mgmt::persist_dev_conf(&mut env.fs.borrow_mut(), &blob[1..]).unwrap();
         assert!(!ccid.refresh_enabled() & cap != 0 || !ccid.caps_enabled(cap));
 
-        let res = ccid.handle_apdu(&select(aid)).to_vec();
+        let res = ccid.handle_apdu(&select(aid), 0).to_vec();
         assert_eq!(
             sw(&res),
             rsk_sdk::Sw::FILE_NOT_FOUND,
@@ -104,7 +105,7 @@ fn the_recovery_applets_can_never_be_disabled() {
         ("vendor", rsk_vendor::VENDOR_AID),
         ("rescue", rsk_rescue::RESCUE_AID),
     ] {
-        let res = ccid.handle_apdu(&select(aid)).to_vec();
+        let res = ccid.handle_apdu(&select(aid), 0).to_vec();
         assert_eq!(sw(&res), rsk_sdk::Sw::OK, "{name} was gated off");
     }
 }
@@ -326,7 +327,7 @@ fn a_card_reset_drops_the_selection() {
     let env = Env::new();
     let mut ccid = env.ccid();
     assert_eq!(
-        sw(ccid.handle_apdu(&select(rsk_piv::PIV_AID))),
+        sw(ccid.handle_apdu(&select(rsk_piv::PIV_AID), 0)),
         rsk_sdk::Sw::OK
     );
     assert_eq!(ccid.disp.current(), Some(5));
@@ -343,7 +344,7 @@ fn scrub_wipes_the_response_buffer() {
     // It can hold a deciphered session key or a PIN token after a dispatch.
     let env = Env::new();
     let mut ccid = env.ccid();
-    ccid.handle_apdu(&select(rsk_mgmt::MANAGEMENT_AID));
+    ccid.handle_apdu(&select(rsk_mgmt::MANAGEMENT_AID), 0);
     assert!(ccid.resp.iter().any(|&b| b != 0), "a response was written");
     ccid.scrub();
     assert!(ccid.resp.iter().all(|&b| b == 0));
@@ -357,7 +358,7 @@ fn a_response_always_fits_one_ccid_frame() {
     const { assert!(RESP_CAP + 10 <= rsk_usb::ccid::MAX_CCID_MSG) };
     let env = Env::new();
     let mut ccid = env.ccid();
-    let res = ccid.handle_apdu(&select(rsk_openpgp::consts::OPENPGP_AID));
+    let res = ccid.handle_apdu(&select(rsk_openpgp::consts::OPENPGP_AID), 0);
     assert!(res.len() <= RESP_CAP);
 }
 
@@ -368,7 +369,7 @@ fn a_keygen_fast_path_never_fires_for_the_wrong_applet() {
     // selected and then disabled.
     let env = Env::new();
     let mut ccid = env.ccid();
-    ccid.handle_apdu(&select(rsk_piv::PIV_AID));
+    ccid.handle_apdu(&select(rsk_piv::PIV_AID), 0);
     let generate = apdu(
         0x00,
         rsk_openpgp::consts::INS_KEYPAIR_GEN,
@@ -389,7 +390,7 @@ fn a_host_build_falls_through_to_the_applets_own_keygen() {
     // difference between `None` and `Some(None)` is load-bearing.
     let env = Env::new();
     let mut ccid = env.ccid();
-    ccid.handle_apdu(&select(rsk_openpgp::consts::OPENPGP_AID));
+    ccid.handle_apdu(&select(rsk_openpgp::consts::OPENPGP_AID), 0);
     let generate = apdu(
         0x00,
         rsk_openpgp::consts::INS_KEYPAIR_GEN,
@@ -415,12 +416,15 @@ fn a_keygen_fast_path_judges_the_class_byte_too() {
     env.board.borrow_mut().accelerator = true;
     let mut ccid = env.ccid();
     assert_eq!(
-        sw(ccid.handle_apdu(&select(rsk_piv::PIV_AID))),
+        sw(ccid.handle_apdu(&select(rsk_piv::PIV_AID), 0)),
         rsk_sdk::Sw::OK
     );
     // The management key, so GENERATE is refused for its class and not for auth.
     let step1 = ccid
-        .handle_apdu(&apdu(0x00, 0x87, AES192, 0x9B, &[0x7C, 0x02, 0x81, 0x00]))
+        .handle_apdu(
+            &apdu(0x00, 0x87, AES192, 0x9B, &[0x7C, 0x02, 0x81, 0x00]),
+            0,
+        )
         .to_vec();
     assert_eq!(sw(&step1), rsk_sdk::Sw::OK);
     let mut block: [u8; 16] = step1[4..20].try_into().unwrap();
@@ -428,7 +432,7 @@ fn a_keygen_fast_path_judges_the_class_byte_too() {
     let mut answer = std::vec![0x7Cu8, 0x12, 0x82, 0x10];
     answer.extend_from_slice(&block);
     assert_eq!(
-        sw(ccid.handle_apdu(&apdu(0x00, 0x87, AES192, 0x9B, &answer))),
+        sw(ccid.handle_apdu(&apdu(0x00, 0x87, AES192, 0x9B, &answer), 0)),
         rsk_sdk::Sw::OK
     );
     // RSA-2048 into 9A: the one command the firmware runs off the dispatcher.
@@ -444,16 +448,16 @@ fn a_keygen_fast_path_judges_the_class_byte_too() {
     // The control: with an accelerator the fast path really does fire and answer
     // for itself, so a class that still reaches it is visible here.
     assert_eq!(
-        sw(ccid.handle_apdu(&generate(0x00))),
+        sw(ccid.handle_apdu(&generate(0x00), 0)),
         rsk_sdk::Sw::EXEC_ERROR,
         "the fast path did not fire, so this test proves nothing"
     );
     assert_eq!(
-        sw(ccid.handle_apdu(&generate(0x04))),
+        sw(ccid.handle_apdu(&generate(0x04), 0)),
         rsk_sdk::Sw::CLA_NOT_SUPPORTED,
         "a secure-messaging class generated a key"
     );
-    let seg = ccid.handle_apdu(&generate(0x10)).to_vec();
+    let seg = ccid.handle_apdu(&generate(0x10), 0).to_vec();
     assert_eq!(
         (sw(&seg), seg.len()),
         (rsk_sdk::Sw::OK, 2),
@@ -491,7 +495,7 @@ mod pinpad {
     fn a_pin_reference_belongs_to_the_applet_that_is_selected() {
         let env = Env::new();
         let mut ccid = env.ccid();
-        ccid.handle_apdu(&select(rsk_openpgp::consts::OPENPGP_AID));
+        ccid.handle_apdu(&select(rsk_openpgp::consts::OPENPGP_AID), 0);
         for p2 in OPENPGP_REFS {
             assert!(ccid.pin_ref_ready(p2), "OpenPGP {p2:#04x}");
         }
@@ -500,7 +504,7 @@ mod pinpad {
             "the PIV PIN is not OpenPGP's to collect"
         );
 
-        ccid.handle_apdu(&select(rsk_piv::PIV_AID));
+        ccid.handle_apdu(&select(rsk_piv::PIV_AID), 0);
         assert!(ccid.pin_ref_ready(rsk_usb::secure_pin::PIV_PIN_P2));
         for p2 in OPENPGP_REFS {
             assert!(
@@ -516,7 +520,7 @@ mod pinpad {
         // authenticate against.
         let env = Env::new();
         let mut ccid = env.ccid();
-        ccid.handle_apdu(&select(rsk_openpgp::consts::OPENPGP_AID));
+        ccid.handle_apdu(&select(rsk_openpgp::consts::OPENPGP_AID), 0);
         assert!(ccid.pin_ref_ready(rsk_openpgp::consts::PW1_MODE81));
 
         let blob = dev_conf(rsk_mgmt::CAP_FIDO2);
@@ -529,7 +533,7 @@ mod pinpad {
     fn an_unknown_pin_reference_paints_nothing() {
         let env = Env::new();
         let mut ccid = env.ccid();
-        ccid.handle_apdu(&select(rsk_openpgp::consts::OPENPGP_AID));
+        ccid.handle_apdu(&select(rsk_openpgp::consts::OPENPGP_AID), 0);
         assert!(!ccid.pin_ref_ready(0x00));
         assert!(!ccid.pin_ref_ready(0xFF));
     }
@@ -554,21 +558,190 @@ fn a_card_reset_drops_the_verified_pin_too() {
     let status = apdu(0x00, 0x20, 0x00, 0x80, &[]);
 
     assert_eq!(
-        sw(ccid.handle_apdu(&select(rsk_piv::PIV_AID))),
+        sw(ccid.handle_apdu(&select(rsk_piv::PIV_AID), 0)),
         rsk_sdk::Sw::OK
     );
-    assert_eq!(sw(ccid.handle_apdu(&verify)), rsk_sdk::Sw::OK);
-    assert_eq!(sw(ccid.handle_apdu(&status)), rsk_sdk::Sw::OK);
+    assert_eq!(sw(ccid.handle_apdu(&verify, 0)), rsk_sdk::Sw::OK);
+    assert_eq!(sw(ccid.handle_apdu(&status, 0)), rsk_sdk::Sw::OK);
 
     ccid.reset_card();
 
     assert_eq!(
-        sw(ccid.handle_apdu(&select(rsk_piv::PIV_AID))),
+        sw(ccid.handle_apdu(&select(rsk_piv::PIV_AID), 0)),
         rsk_sdk::Sw::OK
     );
     assert_ne!(
-        sw(ccid.handle_apdu(&status)),
+        sw(ccid.handle_apdu(&status, 0)),
         rsk_sdk::Sw::OK,
         "the card reset left a verified PIN for whoever connects next",
+    );
+}
+
+// ── FIDO over CCID ──────────────────────────────────────────────────────────
+
+/// CTAP-over-ISO7816 (CTAP 2.1 §11.2.1): `80 10` carries one CTAP2 command.
+fn ctap_msg(body: &[u8]) -> Vec<u8> {
+    apdu(0x80, 0x10, 0x00, 0x00, body)
+}
+
+/// Drive one command the way `CtapPcscDevice._chain_apdus` does: send it, then
+/// follow `61xx` with GET RESPONSE until the body is whole. A getInfo is ~400
+/// bytes, so nothing about this member is observable without it.
+fn exchange_chained(
+    ccid: &mut CcidApplets<'_, rsk_fs::storage::ram::RamStorage, TestRng, VendorBoard>,
+    command: &[u8],
+) -> (Vec<u8>, rsk_sdk::Sw) {
+    let mut body = Vec::new();
+    let mut res = ccid.handle_apdu(command, 0).to_vec();
+    loop {
+        let status = sw(&res);
+        body.extend_from_slice(&res[..res.len() - 2]);
+        if status.sw1() != 0x61 {
+            return (body, status);
+        }
+        res = ccid
+            .handle_apdu(&apdu(0x00, 0xC0, 0x00, 0x00, &[]), 0)
+            .to_vec();
+    }
+}
+
+/// `getInfo` — the shortest CTAP2 command there is, and the one every host sends
+/// first.
+const GET_INFO: &[u8] = &[rsk_fido::consts::CTAP_GET_INFO];
+/// `clientPIN { pinUvAuthProtocol: 2, subCommand: getKeyAgreement }`.
+const GET_KEY_AGREEMENT: &[u8] = &[
+    rsk_fido::consts::CTAP_CLIENT_PIN,
+    0xA2,
+    0x01,
+    0x02,
+    0x02,
+    0x02,
+];
+
+#[test]
+fn selecting_fido_over_ccid_answers_the_u2f_version_string() {
+    // `CtapPcscDevice._select` raises unless SELECT returns 9000, and sets its
+    // NMSG (CTAP1) capability on exactly this body.
+    let env = Env::new();
+    let mut ccid = env.ccid();
+    let res = ccid
+        .handle_apdu(&select(rsk_fido::consts::FIDO_AID), 0)
+        .to_vec();
+    assert_eq!(sw(&res), rsk_sdk::Sw::OK);
+    assert_eq!(&res[..res.len() - 2], rsk_fido::consts::U2F_VERSION);
+}
+
+#[test]
+fn a_ctap2_command_over_ccid_reaches_the_real_applet() {
+    let env = Env::new();
+    let mut ccid = env.ccid();
+    assert_eq!(
+        sw(ccid.handle_apdu(&select(rsk_fido::consts::FIDO_AID), 0)),
+        rsk_sdk::Sw::OK
+    );
+    let (body, status) = exchange_chained(&mut ccid, &ctap_msg(GET_INFO));
+    assert_eq!(status, rsk_sdk::Sw::OK);
+    assert_eq!(body[0], 0x00, "CTAP2_OK leads the response");
+    // A getInfo map, not an error byte alone: 0xA0 | n for n < 24, else 0xB8.
+    assert!(body.len() > 100, "a getInfo body is hundreds of bytes");
+    assert!(
+        body[1] == 0xB8 || body[1] & 0xE0 == 0xA0,
+        "the body after the status byte is a CBOR map, got {:#04x}",
+        body[1]
+    );
+}
+
+/// The reason the two transports share one `FidoState` rather than owning one
+/// each. `getKeyAgreement` returns the ephemeral clientPIN key that lives in RAM
+/// state and is generated once per power-up: two states would generate two, and
+/// this would return different keys. A separate state would also give a host a
+/// second per-boot `PIN_MISMATCH_LIMIT` budget, which is the part that matters and
+/// the part no cheap test can see — this is its observable shadow.
+#[test]
+fn both_transports_answer_from_one_session_state() {
+    let env = Env::new();
+    let mut ctap = env.ctap();
+    let mut ccid = env.ccid();
+    assert_eq!(
+        sw(ccid.handle_apdu(&select(rsk_fido::consts::FIDO_AID), 0)),
+        rsk_sdk::Sw::OK
+    );
+
+    let over_hid = ctap.handle_cbor(1, GET_KEY_AGREEMENT, 0).to_vec();
+    assert_eq!(over_hid[0], 0x00, "clientPIN over CTAPHID");
+    let (over_ccid, status) = exchange_chained(&mut ccid, &ctap_msg(GET_KEY_AGREEMENT));
+    assert_eq!(status, rsk_sdk::Sw::OK);
+
+    assert_eq!(
+        over_hid.as_slice(),
+        over_ccid.as_slice(),
+        "the same power cycle must have exactly one clientPIN key agreement"
+    );
+}
+
+#[test]
+fn u2f_over_ccid_answers_its_version_command() {
+    let env = Env::new();
+    let mut ccid = env.ccid();
+    assert_eq!(
+        sw(ccid.handle_apdu(&select(rsk_fido::consts::FIDO_AID), 0)),
+        rsk_sdk::Sw::OK
+    );
+    // U2F VERSION: interindustry class, so it takes the CTAP1 arm.
+    let res = ccid
+        .handle_apdu(
+            &apdu(0x00, rsk_fido::consts::CTAP_VERSION, 0x00, 0x00, &[]),
+            0,
+        )
+        .to_vec();
+    assert_eq!(sw(&res), rsk_sdk::Sw::OK);
+    assert_eq!(&res[..res.len() - 2], rsk_fido::consts::U2F_VERSION);
+}
+
+/// One AID carries two applications that `ykman config usb --disable` names
+/// separately, so disabling one must not leave the other's commands reachable
+/// behind it — the cross-AID bypass in miniature, inside a single applet.
+#[test]
+fn disabling_one_fido_application_does_not_leave_the_other_reachable() {
+    for (name, cap, probe) in [
+        ("fido2", rsk_mgmt::CAP_FIDO2, ctap_msg(GET_INFO)),
+        (
+            "u2f",
+            rsk_mgmt::CAP_U2F,
+            apdu(0x00, rsk_fido::consts::CTAP_VERSION, 0x00, 0x00, &[]),
+        ),
+    ] {
+        let env = Env::new();
+        let mut ccid = env.ccid();
+        // Everything on except this one.
+        let blob = dev_conf(rsk_mgmt::SUPPORTED_CAPS & !cap);
+        rsk_mgmt::persist_dev_conf(&mut env.fs.borrow_mut(), &blob[1..]).unwrap();
+        ccid.refresh_enabled();
+
+        // The AID still selects — its sibling application is still on.
+        assert_eq!(
+            sw(ccid.handle_apdu(&select(rsk_fido::consts::FIDO_AID), 0)),
+            rsk_sdk::Sw::OK,
+            "{name}: the AID must stay selectable for the half still enabled"
+        );
+        assert_eq!(
+            sw(ccid.handle_apdu(&probe, 0)),
+            rsk_sdk::Sw::COMMAND_NOT_ALLOWED,
+            "{name} is disabled but its commands still answer"
+        );
+    }
+}
+
+#[test]
+fn disabling_both_fido_applications_removes_the_aid() {
+    let env = Env::new();
+    let mut ccid = env.ccid();
+    let blob = dev_conf(rsk_mgmt::SUPPORTED_CAPS & !(rsk_mgmt::CAP_FIDO2 | rsk_mgmt::CAP_U2F));
+    rsk_mgmt::persist_dev_conf(&mut env.fs.borrow_mut(), &blob[1..]).unwrap();
+    ccid.refresh_enabled();
+    assert_eq!(
+        sw(ccid.handle_apdu(&select(rsk_fido::consts::FIDO_AID), 0)),
+        rsk_sdk::Sw::FILE_NOT_FOUND,
+        "with neither application enabled the applet is not there at all"
     );
 }

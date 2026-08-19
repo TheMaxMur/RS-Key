@@ -70,7 +70,7 @@ impl Hooks<RamStorage> for Board {
     }
 }
 
-/// Physical presence, behind all seven applet traits at once — one button, as on
+/// Physical presence, behind all eight applet traits at once — one button, as on
 /// the device. Confirms by default; a test that needs a refusal flips `answer`.
 pub struct Finger {
     pub answer: bool,
@@ -200,6 +200,9 @@ pub struct Env {
     pub board: RefCell<Board>,
     pub finger: RefCell<Finger>,
     pub rescue: RefCell<RescueBoard>,
+    /// The device's one FIDO session state, as the worker holds it: both
+    /// transports that reach the applet borrow this same cell.
+    pub fido_state: RefCell<rsk_fido::FidoState>,
 }
 
 impl Default for Env {
@@ -215,17 +218,19 @@ impl Env {
             rng: RefCell::new(TestRng(0x0DDB_A11C_0FFE_E1E5)),
             board: RefCell::new(Board::default()),
             finger: RefCell::new(Finger::default()),
+            fido_state: RefCell::new(rsk_fido::FidoState::new()),
             rescue: RefCell::new(RescueBoard::default()),
         }
     }
 
-    /// The CCID side: the full seven-applet set behind the dispatcher.
+    /// The CCID side: the full eight-applet set behind the dispatcher.
     pub fn ccid(&self) -> CcidApplets<'_, RamStorage, TestRng, VendorBoard> {
         CcidApplets::new(
             &self.fs,
             &self.rng,
             &self.board,
             &self.finger,
+            &self.fido_state,
             &self.rescue,
             VendorBoard,
             SERIAL_ID,
@@ -245,6 +250,7 @@ impl Env {
             &self.rng,
             &self.board,
             &self.finger,
+            &self.fido_state,
             VendorBoard,
             SERIAL_ID,
             SERIAL_HASH,

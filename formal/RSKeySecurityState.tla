@@ -31,10 +31,10 @@ EXTENDS Naturals, FiniteSets, TLC
 CONSTANTS
     RPs,                \* relying parties (>= 2 to exercise rpId binding)
     Channels,           \* CTAPHID channel ids (>= 2 to exercise walk ownership)
-    MaxRetries,         \* models MAX_PIN_RETRIES = 8   (consts.rs:356)
-    MismatchLimit,      \* models PIN_MISMATCH_LIMIT = 3 (consts.rs:360)
+    MaxRetries,         \* models MAX_PIN_RETRIES = 8   (consts.rs:361)
+    MismatchLimit,      \* models PIN_MISMATCH_LIMIT = 3 (consts.rs:365)
     MaxClock,           \* coarse tick ceiling
-    ResetWindow         \* models RESET_WINDOW_MS = 10_000 (consts.rs:392)
+    ResetWindow         \* models RESET_WINDOW_MS = 10_000 (consts.rs:397)
 
 (* Mutation switches. All FALSE is the shipped tree. Each rebuilds one real  *)
 (* defect; `formal/README.md` maps every switch to its commit or audit id.   *)
@@ -50,7 +50,7 @@ CONSTANTS
     \* also resolves to firmware/src/presence.rs since the arbitration was lifted
     BugUnscopedCancel,            \* crates/rsk-device/src/presence.rs:118-122
     BugTouchNotSpent,             \* crates/rsk-device/src/presence.rs:203-211,226
-    BugSoftLockLostOnWarmReset,   \* ctap.rs:215-222   PinLock across sys_reset
+    BugSoftLockLostOnWarmReset,   \* ctap.rs:228-235   PinLock across sys_reset
     BugWarmResetReopensWindow,    \* reset.rs:186-187  in_reset_window
     BugCmWalkIgnoresChannel,      \* state.rs:169-180  may_walk_rps
     BugDeleteRpBeforeCred,        \* credmgmt.rs:665-673 deleteCredential order
@@ -75,7 +75,7 @@ CONSTANTS
 (* listing them in the safety matrix would mean 3 mutants nothing catches.       *)
 CONSTANTS
     BugAssertWedgesOnTimeout,     \* getassertion.rs: only a confirm completes it
-    BugWaitScopeNotCleared,       \* worker.rs:521  set_wait_scope(SCOPE_NONE)
+    BugWaitScopeNotCleared,       \* worker.rs:528  set_wait_scope(SCOPE_NONE)
     BugWalkNeverExpires           \* state.rs:657-663 expire_stale_sequences
 
 (* A switch on the SHAPE of the fairness assumption rather than on a behaviour: *)
@@ -351,7 +351,7 @@ HostCancel ==
     /\ UNCHANGED << pin, gate, store, lock, tok, plat, walk, sys, op, snap,
                     upSpent, viol, ram >>
 
-\* WAIT_SCOPE is set around the whole DISPATCH (worker.rs:429, :521), not around
+\* WAIT_SCOPE is set around the whole DISPATCH (worker.rs:434, :521), not around
 \* the touch wait, so Arbiter::request_cancel accepts a cancel during a FIDO
 \* command that never opens one -- getInfo, a denied CBOR, getAssertion up:false.
 \* Nothing clears `cancel_requested` when that dispatch ends, so the latch
@@ -413,8 +413,8 @@ TouchTimeout ==
 \* THE PANEL AND THE OTP FRAME PROTOCOL ALSO OPEN WAITS, and neither is a host's
 \* to cancel. An on-panel ceremony -- Settings, Backup's reveal-recovery hold,
 \* the Passkeys delete -- runs BETWEEN dispatches, where the worker has left
-\* WAIT_SCOPE at SCOPE_NONE (firmware/src/worker.rs:519-521); an OTP frame's wait
-\* runs under SCOPE_OTP (firmware/src/worker.rs:652-654). Both clear a stale
+\* WAIT_SCOPE at SCOPE_NONE (firmware/src/worker.rs:526-528); an OTP frame's wait
+\* runs under SCOPE_OTP (firmware/src/worker.rs:661-663). Both clear a stale
 \* cancel at their own wait's entry -- the panel in its own loop
 \* (crates/rsk-display/src/presence.rs:45-48), not in ButtonWait::wait -- so
 \* OpenWaitFor stands for two different drops here and
@@ -556,7 +556,7 @@ PinAttemptEnabled == pin.set /\ pin.retries > 0 /\ ~lock.soft
 \* The requirement the soft lock encodes: after MismatchLimit consecutive
 \* mismatches no further attempt is accepted until a REAL power cycle. The
 \* policy counter is cleared only by PowerCut, never by a host-requested warm
-\* reset -- which is the whole point of ctap.rs:215-222.
+\* reset -- which is the whole point of ctap.rs:228-235.
 PinAttemptPolicy == pin.set /\ pin.retries > 0 /\ lock.policyMism < MismatchLimit
 
 \* clientpin.rs:742-808. The lockout ladder: spend, read back, compare.
@@ -657,7 +657,7 @@ LocalPinEnabled == Idle /\ LocalPinGuard
 \* turned away before any compare -- which `LocalPinEnabled` already excludes.
 \*
 \* Modelled as taking effect at once. The hook is consumed at the head of the
-\* next CBOR dispatch (crates/rsk-device/src/ctap.rs:184-187), not inside
+\* next CBOR dispatch (crates/rsk-device/src/ctap.rs:196-199), not inside
 \* gates.rs, but nothing can use the token in between: every command that reads
 \* it is a CBOR command and the flag is spent before the dispatch runs.
 LocalPinWrong ==
@@ -1301,7 +1301,7 @@ VolatileCleared ==
     /\ upSpent' = FALSE
 
 \* EVERY boot runs ensure_seed, not just the one at the end of a reset:
-\* firmware/src/main.rs:609 and tools/emu/src/device.rs:264. A cut that stranded
+\* firmware/src/main.rs:613 and tools/emu/src/device.rs:264. A cut that stranded
 \* the device mid-wipe therefore comes back WITH a seed and can hold usable
 \* credentials again. Leaving it out made the model less permissive than the
 \* firmware -- the one direction a safety argument cannot absorb.
@@ -1324,7 +1324,7 @@ PowerCut ==
     /\ UNCHANGED << gate, viol >>
 
 \* A host-requestable warm reset (SCB::sys_reset -- vendor 0x1F P1=0, the
-\* rescue twin, the phy config-write auto-reboot). ctap.rs:215-222 carries the
+\* rescue twin, the phy config-write auto-reboot). ctap.rs:228-235 carries the
 \* PinLock across it; reset.rs:187 makes it CLOSE the reset window.
 WarmReset ==
     /\ VolatileCleared
@@ -1409,7 +1409,7 @@ TokenOutcomeActions ==
 \* strong fairness would buy nothing and would assert more than the code does.
 \*
 \* The worker is synchronous -- one `Exchange` at a time, under a lock, and the
-\* dispatch runs to completion before the next is accepted (worker.rs:637-660).
+\* dispatch runs to completion before the next is accepted (worker.rs:646-669).
 \* So every step that ADVANCES an in-flight sequence eventually happens: nothing
 \* in the firmware can park one. What it cannot survive is a power cut, and
 \* PowerCut is not fair, so "eventually" here still admits the cut.
@@ -1450,7 +1450,7 @@ OpAdvances ==
 \* button, but setPIN and changePIN need only `Idle`. So a panel wait that had
 \* taken its confirm sat open for ever while the PIN ladder kept OpAdvances
 \* satisfied on its own, and EveryWaitReleases failed in 423 900 states.
-\* Justified the same way worker.rs:519-521 justifies the FIDO half: the
+\* Justified the same way worker.rs:526-528 justifies the FIDO half: the
 \* ceremony's own dispatch runs to completion and puts WAIT_SCOPE back.
 FairSpec == Spec /\ WF_vars(OpAdvances)
                  /\ WF_vars(TouchTimeout)
@@ -1515,7 +1515,7 @@ NoAuthorizationBypass ==
     \* the authenticatorConfig the advisory named and not a second assertion.
     /\ (upSpent /\ tok.live) => tok.perms = {}
     \* The RAM soft lock must reflect the policy it stands for: MismatchLimit
-    \* consecutive mismatches and no real power cycle since (ctap.rs:215-222).
+    \* consecutive mismatches and no real power cycle since (ctap.rs:228-235).
     /\ (lock.policyMism >= MismatchLimit) => lock.soft
 
 \* A presence decision produced for one transport is never applied to

@@ -366,11 +366,13 @@ it is not a prefix — a real YubiKey refuses it too); and a prefix short enough
 match several applets resolves by registration order, which is the order of the
 table below, so probe with the full AID unless you mean to.
 
-**Where that SELECT works.** The recipe above is CCID's (§1.1), and three of the
-ten rows below are not CCID applets: **FIDO2, the FIDO2 backup id and U2F answer
-`6A82` (FILE_NOT_FOUND)**. CTAP1/U2F and CTAP2 ride CTAPHID and have no SELECT at
-all (§1.2), so those three are registered identifiers rather than anything this
-build dispatches to. The other transport is narrower still: `CTAPHID_MSG` offers
+**Where that SELECT works.** The recipe above is CCID's (§1.1), and two of the ten
+rows below are not CCID applets: **the FIDO2 backup id and the standalone U2F AID
+answer `6A82` (FILE_NOT_FOUND)** — registered identifiers rather than anything this
+build dispatches to. **The FIDO2 AID is selectable over CCID** and carries CTAP2
+*and* U2F there (§5.2); over CTAPHID the same applet has no SELECT at all (§1.2),
+which is why its row names both. The other transport is narrower still:
+`CTAPHID_MSG` offers
 exactly one applet, the vendor one, and every other AID answers `6A82` there —
 which is why a U2F command arriving after a vendor SELECT on the same session was
 a real bug (`tests/15_u2f_vendor_msg_isolation.py`). Measured on both transports,
@@ -378,9 +380,9 @@ all ten AIDs, and recorded in the **Transport** column.
 
 | Applet | AID | Transport | Spec status | Config-relevant? |
 |---|---|---|---|---|
-| FIDO2 | `A0 00 00 06 47 2F 00 01` | none — CTAPHID, no SELECT | Standard (CTAP2) | identity only |
-| FIDO2 (backup id) | `B0 00 00 06 47 2F 00 01` | none — CTAPHID, no SELECT | RS-Key | — |
-| U2F | `A0 00 00 05 27 10 02` | none — CTAPHID, no SELECT | Standard (CTAP1/U2F) | — |
+| **FIDO2 / U2F** | `A0 00 00 06 47 2F 00 01` | CCID (§5.2) + CTAPHID (no SELECT) | Standard (CTAP2 + CTAP1) | identity only |
+| FIDO2 (backup id) | `B0 00 00 06 47 2F 00 01` | none — unregistered | RS-Key | — |
+| U2F (standalone id) | `A0 00 00 05 27 10 02` | none — unregistered; U2F rides the FIDO2 AID | Standard (CTAP1/U2F) | — |
 | **Management** | `A0 00 00 05 27 47 11 17` | CCID | Yubico-compatible | **yes — §6** |
 | OATH | `A0 00 00 05 27 21 01` | CCID | Yubico OATH | data only |
 | OTP | `A0 00 00 05 27 20 01` | CCID | Yubico OTP | data only |
@@ -556,6 +558,51 @@ three control bytes; RS-Key accepts exactly those and answers `6A86`
 | `08` | don't-enforce-user-presence-and-sign | signs with no touch, TUP flag clear; **rejected with `6A86` under `--features strict-up`**, which promises a touch on every assertion |
 
 ---
+
+### 5.2 CTAP over CCID
+
+The FIDO applet answers on the CCID interface as well as on CTAPHID, as ISO 7816
+APDUs — the encoding CTAP 2.1 §11.2.1 defines for ISO7816 readers, which
+`python-fido2`'s `CtapPcscDevice` (and therefore `ykman` over PC/SC) speaks
+unchanged. PC/SC does not distinguish an NFC reader from the device's own CCID
+interface, so this is reachable over plain USB.
+
+| Step | APDU | Answer |
+|---|---|---|
+| Select | `00 A4 04 00 08 A0000006472F0001 00` | `9000` with body `U2F_V2` |
+| CTAP2 | `80 10 00 00 Lc <cmd ‖ CBOR> 00` | `9000` (or `61xx`, below) with `<status ‖ CBOR>` |
+| U2F | any interindustry-class APDU (`00 01/02/03 …`) | the CTAP1 answer |
+| Cancel | `80 11 11 00` | `9000` |
+
+**Chaining runs in both directions and a host needs both.** A CTAP2 command longer
+than 255 bytes arrives in `CLA|0x10` segments; a response longer than the short
+`Le` ships its first chunk with `61xx` and the rest through GET RESPONSE
+(`00 C0 00 00 <Le>`). A bare getInfo is already ~520 bytes, so a client that does
+not follow `61xx` sees nothing useful. Extended-length APDUs work too, in one
+exchange each way.
+
+**No `91 00` keep-alive is ever returned.** A touch wait blocks inside the
+exchange while the CCID transport streams T=1 time extensions, exactly as an OATH
+touch-flagged CALCULATE and an OpenPGP UIF signature already do, so the
+`NFCCTAP_GETRESPONSE` poll loop never runs. The cancel is still answered, because a
+host that gave up on a wait sends it regardless.
+
+**The transport is smaller than CTAPHID.** One CCID frame carries 2038 bytes, so
+that is the ceiling on a command *and* on a response here, against the 4078 that
+getInfo's `maxMsgSize` reports for CTAPHID. Commands stay well inside it; a
+response that does not fit comes back as a CTAP error rather than truncated. An
+ML-DSA credential's attestation does not fit and is CTAPHID-only in practice.
+
+**Both applications are gated separately.** One AID serves CTAP2 and U2F, and
+`ykman config usb --disable fido2` / `--disable u2f` name them apart, so the
+*commands* are gated rather than the SELECT: disabling one leaves the AID
+selectable for the other and answers the disabled half `6986`. With neither
+enabled the AID is gone (`6A82`).
+
+**⚠️ On the default `0x1209:0x0001` identity most hosts never bind the CCID
+interface at all** — the `ccid` driver whitelists USB ids and that one is not
+listed — so none of this is reachable there. A `VIDPID=Yubikey5` build, or a host
+carrying the `ccid-rs-key` overlay, is what makes the interface appear.
 
 ## 6. Management applet (Yubico-compatible) — applet enable/disable
 
