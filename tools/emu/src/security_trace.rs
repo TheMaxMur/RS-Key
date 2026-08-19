@@ -39,7 +39,7 @@ impl Writer {
         self.sequence += 1;
         write!(
             self.out,
-            "{{\"schema\":2,\"sequence\":{},\"boundary\":{{\"mode\":\"coarse\",\"k\":8}},\"now_ms\":{},\"cid\":{},\"command_raw\":{},\"status_raw\":{},\"outcome_raw\":{},\"action_hint\":\"{}\",\"pre\":",
+            "{{\"schema\":3,\"sequence\":{},\"boundary\":{{\"mode\":\"coarse\",\"k\":8}},\"now_ms\":{},\"cid\":{},\"command_raw\":{},\"status_raw\":{},\"outcome_raw\":{},\"action_hint\":\"{}\",\"pre\":",
             self.sequence,
             now_ms,
             cid,
@@ -60,8 +60,14 @@ impl Writer {
     }
 }
 
+/// The pseudo-command a power cycle is recorded under. Outside the CTAP command
+/// space (§6 tops out at `0x0D`, and `0x40..` is the vendor range) so the replayer
+/// can key on it without colliding with a real command byte.
+pub const POWER_CYCLE: u8 = 0xFF;
+
 fn action_hint(command: u8) -> &'static str {
     match command {
+        POWER_CYCLE => "powerCycle",
         0x01 => "makeCredential",
         0x02 => "getAssertion",
         0x06 => "clientPin",

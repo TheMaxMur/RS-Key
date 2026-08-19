@@ -62,6 +62,14 @@ TraceSecurityBadBeta.cfg             RED     -
 TraceSecurityBadAlpha.cfg            RED     -
 TraceSecurityBadAlphaNoR4b.cfg       GREEN   30
 TraceSecurityBadOutcome.cfg          RED     -
+\* The recorded session's coverage, ratcheted so a re-record cannot quietly cover
+\* less. Unlike the distinct-state floors above these are PINS at the measured
+\* value, not a third of it: a trace is a fixed recording, so it cannot shrink by
+\* fidelity churn -- only by someone recording a shorter session. Raise them when
+\* a richer session lands; never lower one without saying which flow was dropped.
+@TraceSecurityCommandsMin 21
+@TraceSecurityStepsMin 58
+@TraceSecurityActionsMin 20
 @TraceSecurityAmbiguousMax 2
 \* Phase 5. Reduced constants keep the labelled action check separate from the
 \* 60-million-state shipped safety row. Floors are calibrated after the first

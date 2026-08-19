@@ -1899,11 +1899,24 @@ full `RSKeySecurityState`, and that pipeline is separate:
    every boundary (R4a). It also compares the untrusted Rust α with
    `RSKeyTokenView!TokenGamma(B)` (R4b). `RSKeyTokenView.tla` is the one γ
    definition the phase-5 INSTANCE will consume too.
-4. The committed `21_pin_webauthn` trace has 12 CBOR boundaries, 30 B steps and
-   13 distinct model actions. Those are enforced floors, and every run prints
-   both the reached set and the model actions no real traffic reached. The same
-   validation runs inside the socket emulator-suites CI row.
-5. `TraceSecurityBadBeta.cfg` shifts one raw retry field and is RED under R4a.
+4. The committed trace is three suites through one emulator lifetime —
+   `21_pin_webauthn`, `20_clientpin`, `27_reset_window` — and has 21 CBOR
+   boundaries, 58 B steps and 20 distinct model actions. Those are ratchets in
+   `floors.txt` beside every other one, not literals in the script, and every run
+   prints both the reached set and the model actions no real traffic reached. The
+   same validation runs inside the socket emulator-suites CI row.
+5. A **power cycle is a recorded boundary** (`command_raw` `0xFF`, schema 3).
+   Without it the replug between suites moved security state outside every
+   boundary and the replay saw a discontinuity it could not explain — which is
+   why the trace used to be one suite. It is also the only way `PowerCut` is
+   reached.
+6. The reset sweeps run once per live record, so their length is **B's** count,
+   not the device's: `RegisterStart("rp1", …)` folds every real credential of one
+   relying party onto one model element, and the raw slot counters cannot say how
+   many that is. `scripts/security_trace.py` therefore keeps a small ledger of
+   what B holds, updated only from the actions it has itself emitted — never read
+   back from the trace.
+7. `TraceSecurityBadBeta.cfg` shifts one raw retry field and is RED under R4a.
    `TraceSecurityBadAlpha.cfg` shifts α's `live` field and is RED under R4b;
    `TraceSecurityBadAlphaNoR4b.cfg` is GREEN, demonstrating that only R4b catches
    that second divergence.
@@ -2353,10 +2366,17 @@ establishes that named steps preserve it. The complete InitC, older-firmware
 persistent boundary, reset-class evidence table, `EF_ALWAYS_UV` decision, and
 the strict scope of the claim are in `docs/token-refinement.md`.
 
-Trace schema 2 adds `outcome_raw` from the response byte. R4b-event uses
+Trace schema 3 adds `outcome_raw` from the response byte and the power-cycle
+boundary. R4b-event uses
 consensus over all inferred B interpretations; it never picks a convenient
 witness. Two coarse recorded boundaries are currently `AMBIGUOUS`, held by the
-`@TraceSecurityAmbiguousMax 2` ratchet in `floors.txt`. The fifth falsification
+`@TraceSecurityAmbiguousMax 2` ratchet in `floors.txt`. Both are the same shape,
+and it is not a mapping that could be sharpened: a `makeCredential` for a
+**non-discoverable** credential writes nothing, so a success and a refusal have
+identical raw footprints. Inferring which one it was from `outcome_raw` would be
+reading the answer off the C side and then confirming it, which is the one thing
+this check must not do. Reaching 0 needs a projection field B can also predict,
+not a cleverer inference. The fifth falsification
 feeds one Authorized and one Rejected interpretation for the same boundary and
 requires `AMBIGUOUS`.
 

@@ -87,6 +87,13 @@ OUTCOME_BY_ACTION = {
 }
 
 AMBIGUOUS_RATCHET = "@TraceSecurityAmbiguousMax"
+COMMANDS_RATCHET = "@TraceSecurityCommandsMin"
+STEPS_RATCHET = "@TraceSecurityStepsMin"
+ACTIONS_RATCHET = "@TraceSecurityActionsMin"
+
+# The pseudo-command `tools/emu` records a power cycle under — outside the CTAP
+# command space, so it cannot collide with a real command byte.
+POWER_CYCLE = 0xFF
 
 
 def die(message: str) -> None:
@@ -102,7 +109,7 @@ def load_events(paths: list[Path]) -> list[dict]:
                     event = json.loads(line)
                 except json.JSONDecodeError as error:
                     die(f"{path}:{line_no}: invalid JSON: {error}")
-                if event.get("schema") != 2:
+                if event.get("schema") != 3:
                     die(f"{path}:{line_no}: unsupported schema")
                 if event.get("boundary") != {"mode": "coarse", "k": 8}:
                     die(f"{path}:{line_no}: boundary must be coarse with k=8")
@@ -134,7 +141,39 @@ def raw_changes(event: dict) -> set[str]:
     }
 
 
-def infer(event: dict) -> list[tuple[str, str]]:
+def new_ledger() -> dict:
+    """What B's store holds, tracked from the actions the replayer itself emits.
+
+    The reset sweeps run once per live record, so their length is B's count, not
+    the device's: `RegisterStart("rp1", …)` folds every real credential of one
+    relying party onto one model element, and the raw slot counters cannot say
+    how many that is. Nothing here is read back from the trace.
+    """
+    return {"seed": True, "cred": set(), "rpent": set(), "pin_set": False,
+            "always_uv": False, "ppuat": False, "sealed": False}
+
+
+def reset_path(ledger: dict) -> list[tuple[str, str]]:
+    """`ResetStart` through `ResetFinish`, one sweep step per live record.
+
+    Each phase ends with one extra step: the `ELSE` arm that advances `op.step`
+    once nothing is left to delete.
+    """
+    secrets = int(ledger["seed"]) + len(ledger["cred"]) + len(ledger["rpent"]) \
+        + int(ledger["ppuat"])
+    gates = int(ledger["pin_set"]) + int(ledger["always_uv"]) + int(ledger["sealed"])
+    steps = [
+        ("ResetStart", "ResetStart"),
+        ("PressDown", "PressDown"),
+        ("TouchConfirm", "/\\ TouchConfirm /\\ pres'.pressing = TRUE"),
+        ("ResetConfirmed", "ResetConfirmed"),
+    ]
+    steps += [("ResetSweepSecrets", "ResetSweepSecrets")] * (secrets + 1)
+    steps += [("ResetSweepGates", "ResetSweepGates")] * (gates + 1)
+    return steps + [("ResetFinish", "ResetFinish"), ("PressUp", "PressUp")]
+
+
+def infer(event: dict, ledger: dict) -> list[tuple[str, str]]:
     """Infer B actions from raw before/after state; action_hint is diagnostic."""
     before, after = event["pre"], event["post"]
     changed = raw_changes(event)
@@ -146,6 +185,7 @@ def infer(event: dict) -> list[tuple[str, str]]:
             ("SetPinClearPpuat", "SetPinClearPpuat"),
             ("SetPinWrite", "SetPinWrite"),
         ]
+        ledger["pin_set"] = True
     elif (
         command == 0x06
         and after["token_in_use_raw"]
@@ -160,12 +200,32 @@ def infer(event: dict) -> list[tuple[str, str]]:
         actions = [("GetPinToken", 'GetPinToken({"mc", "ga"}, NoRp)')]
     elif command == 0x01 and after["credential_slots_raw"] > before["credential_slots_raw"]:
         actions = presence_path("register")
+        ledger["cred"].add("rp1")
+        ledger["rpent"].add("rp1")
     elif (
         command == 0x02
         and before["token_permissions_raw"] == 3
         and after["token_permissions_raw"] == 0
     ):
         actions = presence_path("assert")
+    elif (
+        command == 0x06
+        and before["pin_retries_raw"] is not None
+        and after["pin_retries_raw"] < before["pin_retries_raw"]
+        and after["pin_mismatches_raw"] > before["pin_mismatches_raw"]
+    ):
+        # Both counters move together only on a comparison that failed; a correct
+        # PIN restores the retry budget and leaves the mismatch count alone.
+        actions = [("WrongPin", "WrongPin")]
+    elif command == 0x07 and after["credential_slots_raw"] == 0 \
+            and after["pin_record_len"] is None and after["rp_slots_raw"] == 0:
+        actions = reset_path(ledger)
+        ledger.update(new_ledger())
+    elif command == POWER_CYCLE:
+        # The event kind is the signature, not any state difference: the replayer
+        # is told a power cycle happened and R4a then checks that the raw state
+        # matches what `PowerCut` says one does.
+        actions = [("PowerCut", "PowerCut")]
     elif not changed or changed == {"channel_raw"}:
         actions = [("Stutter", "TraceStutter")]
     else:
@@ -225,12 +285,18 @@ def event_consensus(event: dict, action_names: set[str]) -> str:
     return "OK"
 
 
-def ambiguous_limit() -> int:
+def ratchet(name: str) -> int:
+    """One `@Name value` line from `floors.txt`.
+
+    The coverage floors live beside every other ratchet rather than as literals
+    here, for the reason that file's own header gives: a number nobody has to
+    open a script to change is a number that gets changed in passing.
+    """
     for line in (FORMAL / "floors.txt").read_text(encoding="utf-8").splitlines():
         parts = line.split()
-        if parts[:1] == [AMBIGUOUS_RATCHET] and len(parts) == 2:
+        if parts[:1] == [name] and len(parts) == 2:
             return int(parts[1])
-    die(f"floors.txt has no {AMBIGUOUS_RATCHET} ratchet")
+    die(f"floors.txt has no {name} ratchet")
 
 
 def tla_value(value: object) -> str:
@@ -268,8 +334,9 @@ def generate(events: list[dict], output: Path) -> dict:
     alpha_boundary = None
     outcome_boundaries: list[tuple[int, str, str]] = []
     ambiguous = 0
+    ledger = new_ledger()
     for event in events:
-        inferred = infer(event)
+        inferred = infer(event, ledger)
         actions.extend(inferred)
         pc = len(actions)
         boundaries.append((pc, event["post"], event["abstract_post"]))
@@ -302,11 +369,14 @@ def generate(events: list[dict], output: Path) -> dict:
     outcome_raw_values = [(pc, f'"{raw}"') for pc, raw, _ in outcome_boundaries]
     outcome_b_values = [(pc, f'"{model}"') for pc, _, model in outcome_boundaries]
     reached = {name for name, _ in actions if name != "Stutter"}
-    if len(events) < 10 or len(actions) < 20 or len(reached) < 12:
-        die(
-            "coverage floor missed: require traces>=1, commands>=10, "
-            f"steps>=20, distinct-actions>=12; got 1/{len(events)}/{len(actions)}/{len(reached)}"
-        )
+    floors = [
+        ("commands", len(events), ratchet(COMMANDS_RATCHET)),
+        ("steps", len(actions), ratchet(STEPS_RATCHET)),
+        ("distinct-actions", len(reached), ratchet(ACTIONS_RATCHET)),
+    ]
+    short = [f"{what}={got} < {want}" for what, got, want in floors if got < want]
+    if short:
+        die("coverage ratchet missed: " + ", ".join(short))
 
     text = "\n".join([
         "------------------------- MODULE TraceSecurityData -------------------------",
@@ -405,7 +475,7 @@ def validate(
             f"security-trace: GREEN commands={report['commands']} steps={report['steps']} "
             f"distinct_actions={len(report['reached'])} ambiguous={report['ambiguous']}"
         )
-        limit = ambiguous_limit()
+        limit = ratchet(AMBIGUOUS_RATCHET)
         if report["ambiguous"] > limit:
             die(f"AMBIGUOUS ratchet missed: {report['ambiguous']} > {limit}")
         print("security-trace: reached: " + " ".join(report["reached"]))

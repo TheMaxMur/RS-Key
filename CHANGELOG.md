@@ -40,6 +40,24 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Added
 
+- **The formal trace went from one demo suite to a session, and its coverage is a
+  ratchet.** The phase-4 replay ran `21_pin_webauthn` alone and reached 13 of the
+  model's 50 actions, because a second suite could not be added: the replug
+  between suites moves security state outside every CBOR boundary, and the
+  replayer — correctly — refused the discontinuity. `tools/emu` now records the
+  power cycle as its own boundary (`command_raw` `0xFF`, trace schema 3), which is
+  also the only way `PowerCut` is ever reached. With the reset path mapped, the
+  committed trace is three suites through one emulator lifetime: **21 boundaries,
+  58 B steps, 20 distinct actions**, all four TLC configurations behaving as
+  before. The reset sweeps run once per live record, and that count is B's, not
+  the device's — one relying party's real credentials fold onto one model element
+  — so the replayer keeps a small ledger of what B holds, updated only from
+  actions it has itself emitted. The three coverage floors moved out of the script
+  into `floors.txt` beside every other ratchet, where the file's own header says
+  how to move one deliberately; each was driven red on its own, and deleting a
+  ratchet line is fatal rather than permissive. Host tooling and formal
+  artefacts only.
+
 - **`FidoState`'s zeroize-on-drop roster is exhaustive at compile time.** The
   `Drop` impl scrubs four secret fields, and no host test can observe it: reading
   a value whose destructor has run is the very thing Miri reports as a defect, so

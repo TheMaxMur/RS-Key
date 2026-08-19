@@ -706,6 +706,16 @@ async fn serve<PR: rsk_device::UserPresence + 'static>(
             // does not, and the attach clock restarts — which is what reopens the
             // §6.6 reset window that a warm reboot deliberately does not.
             Job::Replug(_) => {
+                // A power cycle moves security state outside any CBOR boundary, so
+                // the trace has to carry it or the replay sees a discontinuity it
+                // cannot explain — and `PowerCut` is a model action either way.
+                #[cfg(feature = "security-trace")]
+                let trace_pre = security_trace.as_ref().map(|_| {
+                    (
+                        ctap.security_trace_snapshot(),
+                        ctap.security_trace_abstract_token(),
+                    )
+                });
                 ccid.reset_card();
                 power_up_bump();
                 hooks.borrow_mut().warm = false;
@@ -725,6 +735,23 @@ async fn serve<PR: rsk_device::UserPresence + 'static>(
                 ccid.refresh_enabled();
                 last_msg_cid = None;
                 links.attach.set(Instant::now());
+                #[cfg(feature = "security-trace")]
+                if let (Some(writer), Some((pre, abstract_pre))) =
+                    (security_trace.as_mut(), trace_pre)
+                    && let Err(error) = writer.record(
+                        now_ms,
+                        0,
+                        crate::security_trace::POWER_CYCLE,
+                        0,
+                        pre,
+                        ctap.security_trace_snapshot(),
+                        abstract_pre,
+                        ctap.security_trace_abstract_token(),
+                    )
+                {
+                    eprintln!("emu: cannot write security trace: {error}");
+                    return;
+                }
                 eprintln!("emu: replugged — fresh session, reset window open");
                 Some(Vec::new())
             }
