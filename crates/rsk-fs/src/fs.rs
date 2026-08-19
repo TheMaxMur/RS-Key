@@ -18,7 +18,22 @@ const META_REC_HDR: usize = 4;
 
 /// One bit per 16-bit FID: the full `0x0000..=0xFFFF` space as a present/absent
 /// bitmap (8 KiB). Backs the fast-negative cache in [`Fs`].
+#[cfg(not(kani))]
 const FID_PRESENT_BYTES: usize = (u16::MAX as usize + 1) / 8;
+/// Three bytes under `cfg(kani)`: a symbolic index into 8 KiB costs CBMC 2.5 to
+/// 13 minutes per writing harness (measured — two of the six were over
+/// `scripts/kani.sh`'s 5-minute FAST cap), while the cache clauses are uniform in
+/// `fid`, and three bytes keep every within-byte and cross-byte neighbour
+/// reachable. What the shrink stops proving is stated below instead.
+#[cfg(kani)]
+const FID_PRESENT_BYTES: usize = 3;
+
+/// No `fid` can index past the map — the fact that lets every cache primitive
+/// skip a bound check. Compile-time and about the SHIPPED width, so it holds
+/// where the shrunk proofs no longer look, and it is the stronger statement
+/// anyway: a proof would only have covered the FIDs a harness enumerated.
+#[cfg(not(kani))]
+const _: () = assert!(((u16::MAX >> 3) as usize) < FID_PRESENT_BYTES);
 
 /// The file system: the set of live dynamic FIDs and a present-cache over a
 /// [`Storage`] backend.
@@ -622,9 +637,17 @@ fn rebuild_meta(blob: &[u8], fid: u16, new: Option<&[u8]>, out: &mut [u8]) -> Re
 }
 
 /// Kani proof harnesses (`cargo kani -p rsk-fs`).
+#[cfg(any(kani, test))]
+#[path = "store_assurance.rs"]
+pub mod store_assurance;
+
 #[cfg(kani)]
 #[path = "fs_kani.rs"]
 mod proofs;
+
+#[cfg(kani)]
+#[path = "store_refinement_kani.rs"]
+mod store_refinement_proofs;
 
 #[cfg(test)]
 #[path = "fs_tests.rs"]

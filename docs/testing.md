@@ -293,11 +293,11 @@ run):
 
 | Tier | Crates | Harnesses | Covers | Solve | Slowest harness |
 |---|---|---|---|---|---|
-| `pr` | 13 | 50 | 23 | 199 s | `rsk-piv::set_protected_total_and_invariant`, 47 s |
-| `state` | 2 | 18 | 21 | ~10 min | `rsk-fido::…_at_call_site`, ~7 min (9.3 GiB peak) |
-| `all` | 17 | 76 | 43 | ~1 h 45 | `rsk-rescue::serialize_parse_roundtrip`, 27 m 42 s |
+| `pr` | 13 | 56 | 28 | 208 s | `rsk-piv::set_protected_total_and_invariant`, 47 s |
+| `state` | 2 | 24 | 26 | ~10 min | `rsk-fido::…_at_call_site`, ~7 min (9.3 GiB peak) |
+| `all` | 17 | 82 | 48 | ~1 h 45 | `rsk-rescue::serialize_parse_roundtrip`, 27 m 42 s |
 | `light1` | 4 | 27 | 23 | not yet run | `rsk-fido::…_at_call_site`, ~7 min (9.3 GiB peak) |
-| `light2` | 5 | 21 | 3 | not yet run | `rsk-rsa-asm`'s division spec and sieve |
+| `light2` | 5 | 27 | 8 | not yet run | `rsk-rsa-asm`'s division spec and sieve |
 | `light3` | 7 | 23 | 16 | not yet run | `rsk-mldsa`'s rounding round-trips |
 | `heavy` | 1 | 5 | 1 | ~55 min | `rsk-rescue::serialize_parse_roundtrip`, 55 min (11.1 GB peak) |
 

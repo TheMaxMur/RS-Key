@@ -880,3 +880,76 @@ fn the_scrub_filler_never_costs_a_dynamic_slot() {
             .unwrap_or_else(|_| panic!("{:#06x} lost its registration to the filler", 0x2000 + i));
     }
 }
+
+/// The store-refinement pilot's clauses at concrete FIDs, so the PR gate carries
+/// them too: `cargo kani` proves them over a symbolic pair once a week, and a
+/// rename or a deleted hook there would otherwise take them away silently.
+///
+/// A window is walked rather than a pair checked, for the reason the panel's key
+/// grids needed the same: a pair only collides under SOME wrong shift. `>> 3`
+/// mistyped as `>> 2` and `& 7` as `& 3` alias different pairs, and a test that
+/// names two FIDs catches whichever of them its two happen to meet. Twenty-four
+/// consecutive FIDs span three bytes, so every within-byte and cross-byte
+/// neighbour is present and any aliasing shows up as a second FID moving.
+#[test]
+fn a_cache_write_moves_one_fid_and_no_other_across_three_bytes() {
+    use crate::fs::store_assurance::{CacheView, fresh};
+
+    const BASE: u16 = 0x0100;
+    const N: u16 = 24;
+    for victim in BASE..BASE + N {
+        let mut fs = fresh(false);
+        for f in BASE..BASE + N {
+            fs.step_put(f);
+        }
+        fs.step_delete(victim);
+        for f in BASE..BASE + N {
+            let want = if f == victim {
+                CacheView::ABSENT
+            } else {
+                CacheView::LIVE
+            };
+            assert_eq!(
+                fs.cache_view(f),
+                want,
+                "deleting {victim:#06x} moved {f:#06x}"
+            );
+        }
+        assert!(fs.reads_absent(victim));
+        assert!(!fs.reads_absent(BASE + (victim + 1 - BASE) % N));
+    }
+}
+
+/// The rest of the pilot's clauses, which are about one FID rather than the map:
+/// what `Init` decides (nothing), what a clean confirm caches (the answer), and
+/// what a faulted one caches (nothing at all — audit run-36, one transient error
+/// made permanent for the boot).
+#[test]
+fn a_faulted_confirm_caches_nothing_and_a_clean_one_caches_the_answer() {
+    use crate::fs::store_assurance::{CacheView, fresh};
+
+    const F: u16 = 0x0107;
+    const G: u16 = 0x0108;
+    let mut fs = fresh(false);
+    assert_eq!(fs.cache_view(F), CacheView::CLEAR, "Init decided something");
+    assert!(
+        !fs.reads_absent(F),
+        "an unprobed FID read as a decided absence"
+    );
+
+    fs.step_confirm(F, true);
+    assert_eq!(fs.cache_view(F), CacheView::LIVE);
+    fs.step_confirm(F, false);
+    assert_eq!(fs.cache_view(F), CacheView::ABSENT);
+
+    let mut fs = fresh(true);
+    fs.step_put(G);
+    fs.step_confirm(F, false);
+    assert_eq!(
+        fs.cache_view(F),
+        CacheView::CLEAR,
+        "a fault was cached as a decision"
+    );
+    assert!(!fs.reads_absent(F));
+    assert_eq!(fs.cache_view(G), CacheView::LIVE);
+}

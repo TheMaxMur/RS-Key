@@ -235,7 +235,7 @@ source = ["docs/threat-model.md"]
 [[property]]
 id = "SEC-STORE-002"
 name = "NoFalseAbsent"
-status = "MODELLED-ONLY"
+status = "BOUNDED"
 statement = "The present-cache never reads a committed key as absent: a confirmed-absent bit is set only over a genuinely absent FID. A false-absent is the 'seed lost, regenerate' disaster and opens every gate that reads has_data."
 source = ["docs/threat-model.md"]
 

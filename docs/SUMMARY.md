@@ -53,6 +53,7 @@
 - [Formal model](formal.md)
   - [Token refinement pilot](token-refinement.md)
   - [Cross-reset refinement pilot](reset-refinement.md)
+  - [Store refinement pilot](store-refinement.md)
 
 # Internals
 

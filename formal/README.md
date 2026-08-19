@@ -274,16 +274,16 @@ split three ways, and the split is the point.
 | | |
 |---|---|
 | **Equivalent, not a defect** | `ctaphid.rs:420` `\|` → `^` on `(f[5] << 8) \| f[6]` — disjoint bits, the two operators agree |
-| **Fail-safe direction** | `ctaphid.rs:431` `>` → `>=` refuses an exactly-maximum message: stricter, so `NoBufferOverrun` still holds. `fs.rs:132,175` `\|=` → `&=` clear *decided* bits, which sends more reads to the reliable backend |
-| **Model-blind** | the dynamic-file registry in `scan` (`fs.rs:180,183`, three mutants), `has_data`'s zero-length test (`:235`), `factory_wipe`'s 64-key batch bound (`:348`), the registry retain in `delete` (`:432`), and **`meta_delete`'s fault guard (`:563`)** |
+| **Fail-safe direction** | `ctaphid.rs:431` `>` → `>=` refuses an exactly-maximum message: stricter, so `NoBufferOverrun` still holds. `fs.rs:147` and `fs.rs:190` `\|=` → `&=` clear *decided* bits, which sends more reads to the reliable backend |
+| **Model-blind** | the dynamic-file registry in `scan` (`fs.rs:195` and `fs.rs:198`, three mutants), `has_data`'s zero-length test (`fs.rs:250`), `factory_wipe`'s 64-key batch bound (`fs.rs:363`), the registry retain in `delete` (`fs.rs:447`), and **`meta_delete`'s fault guard (`fs.rs:578`)** |
 
 The last one was worth the exercise on its own. `Fs::meta_add_reserve` refuses a
 FAILED EF_META read and the model carries that as `BugMetaAddDropsOnFault`; its
-sibling `Fs::meta_delete` has the identical guard at `fs.rs:565`, and **nothing
+sibling `Fs::meta_delete` has the identical guard at `fs.rs:580`, and **nothing
 held it at either level**. No test killed it, and `MetaDelete` was modelled as an
 unconditional single write with no read to fail. Worse than a lost delete: the
 mutant caches EF_META as *absent*, and the next `meta_add` legitimately trusts
-`known_absent` and rebuilds the blob from empty (`fs.rs:531`), so the records go
+`known_absent` and rebuilds the blob from empty (`fs.rs:546`), so the records go
 on the write **after** the defect. That is why it is `NoFalseMetaAbsent`,
 SEC-STORE-004, a step recorder — once the cache has lied, the losing write is
 correct code and no state predicate over `meta` can tell the two apart.
@@ -928,7 +928,7 @@ counterexample stays reproducible and the fix stays demonstrably load-bearing.
 `Shipped.cfg` (every switch off) is **RED**, and that is the result, not a
 broken model. Both findings are one class: **the two-phase wipe controls the
 order *between* phases but nothing controls the order *within* a phase.**
-`sweep` batches whatever `for_each_key` yields, and `fs.rs:238-241` documents
+`sweep` batches whatever `for_each_key` yields, and `fs.rs:253-256` documents
 that walk as log-structured *store* order, not FID order; each `force_delete`
 is its own flash write, so a power cut can land between any two of them.
 
@@ -1403,10 +1403,10 @@ other must not wipe, and two values so an overwrite is observable.
 
 | Mutation switch | Rebuilds | Target invariant | Caught in |
 |---|---|---|---|
-| `BugDeleteValueBeforeMeta` | `fs.rs:419-424` — the two backend writes reversed, so a torn delete leaves value-gone-meta-alive (`delete_landed`) | `NoOrphanedMetadata` | 54 states |
+| `BugDeleteValueBeforeMeta` | `fs.rs:434-439` — the two backend writes reversed, so a torn delete leaves value-gone-meta-alive (`delete_landed`) | `NoOrphanedMetadata` | 54 states |
 | `BugDeleteMetaOnlyUnderPresent` | the 0x077C databug — `delete` dropping `EF_META` only under `if present_bit`, so a meta-only file keeps its record | `NoOrphanedMetadata` | 55 states |
 | `BugCacheFaultAsAbsent` | audit run-36 — `record` in place of `record_unless_faulted`, caching a faulted read as a decided absence | `NoFalseAbsent` | 23 states |
-| `BugTruncatedScanDecidesAll` | `fs.rs:196-198` — `scan` deciding the whole FID space after a *truncated* walk, so a missed live key reads absent | `NoFalseAbsent` | 24 states |
+| `BugTruncatedScanDecidesAll` | `fs.rs:211-213` — `scan` deciding the whole FID space after a *truncated* walk, so a missed live key reads absent | `NoFalseAbsent` | 24 states |
 | `BugMetaAddDropsOnFault` | the 0x077C databug's meta half — a faulted `EF_META` read rebuilt from empty, dropping every other record | `NoRecordLostToMetaWrite` | 51 states |
 
 `Store.cfg` is **GREEN, exhaustive** over 272 distinct states at depth 7 in
@@ -2114,7 +2114,7 @@ evidence columns and validated cross-model support edges below on every gate run
 | `SEC-SEAM-005` | `ExemptRefusalPreservesStatus` | MODELLED-ONLY | `RSKeyAppletSeams` | — | 1 | 2 | 0 | 0 | 0 |
 | `SEC-SEAM-006` | `AccessCodeRemovalNeedsTheCode` | MODELLED-ONLY | `RSKeyAppletSeams` | — | 1 | 1 | 0 | 0 | 0 |
 | `SEC-STORE-001` | `NoOrphanedMetadata` | MODELLED-ONLY | `RSKeyStore` | — | 2 | 2 | 0 | 0 | 0 |
-| `SEC-STORE-002` | `NoFalseAbsent` | MODELLED-ONLY | `RSKeyStore` | — | 1 | 2 | 0 | 0 | 0 |
+| `SEC-STORE-002` | `NoFalseAbsent` | BOUNDED | `RSKeyStore` | — | 2 | 2 | 3 | 0 | 0 |
 | `SEC-STORE-003` | `NoRecordLostToMetaWrite` | MODELLED-ONLY | `RSKeyStore` | — | 1 | 1 | 0 | 0 | 0 |
 | `SEC-STORE-004` | `NoFalseMetaAbsent` | MODELLED-ONLY | `RSKeyStore` | — | 1 | 1 | 0 | 0 | 0 |
 | `SEC-LAT-001` | `NoAuthWhenBlocked` | MODELLED-ONLY | `RSKeyRetryLattice` | — | 2 | 1 | 0 | 0 | 0 |
@@ -2213,7 +2213,7 @@ abstractions producing traces the firmware cannot follow.
   cryptographically dead. The reset snapshot's `snap.seed` *does* make that
   distinction, but only for the backup-marker clause.
 - **The order within a sweep phase is arbitrary.** `for_each_key` yields in
-  flash-ring order (`fs.rs:238-241`), which is *a* fixed order per device state,
+  flash-ring order (`fs.rs:253-256`), which is *a* fixed order per device state,
   not a free choice. Both findings below need only that some reachable ring
   order puts one delete before another.
 - **`DeviceUnlock` is ungated and needs no device lock.** The real vendor
@@ -2437,3 +2437,49 @@ The exact C→B map, limits, run commands and destructive real-power procedure
 are in `docs/reset-refinement.md`. `tests/29_reset_power_cut.py` is intentionally
 unsupported by the emulator and requires a maintainer-operated throwaway board;
 its existence is not a recorded hardware PASS.
+
+
+## Phase 7: the store's cache half, and the FID next door
+
+`RSKeyStore` has seven variables, and five of them were already covered: `val`,
+`meta`, `dead`, `metaAbsent` and the FID map are the persistent side, which is
+where `powercut.rs`'s four `*_landed` predicates, their Kani proofs and the
+`power_cut` fuzz target already live — the module was lifted from them. The
+in-RAM pair, `present` and `decided`, had nothing. They are private to `fs.rs`,
+so no other crate's test reaches them; no power-cut oracle sees RAM; and their
+clauses read as obvious. One of those obvious clauses — a faulted read cached as
+a decided absence — is audit run-36, and it shipped.
+
+Six harnesses in `crates/rsk-fs/src/store_refinement_kani.rs` close that half,
+one per model action, over a projection (`store_assurance.rs`) that reads the
+**real** bitmaps and calls the **real** primitives — a `#[path]` child of `fs.rs`,
+so the private methods are reachable without widening them.
+
+The content is the **second symbolic FID** every harness carries. The model says
+`[present EXCEPT ![f] = …]` — one element moves, every other stands — while the
+code reaches its bit through `fid >> 3` and `1 << (fid & 7)`. A shift that
+disagreed would alias two files onto one bit, and a `mark_absent` on one would
+read as a decided absence for the other: `NoFalseAbsent`'s disaster reached
+through arithmetic instead of through a fault, and invisible to any single-FID
+harness.
+
+`FID_PRESENT_BYTES` is 3 under `cfg(kani)` and 8 KiB shipped. That is a measured
+decision, not a convenience: at full width the writing harnesses cost 149, 273,
+302, 520 and 794 seconds, two of them past `scripts/kani.sh`'s five-minute FAST
+cap — whose own rule is to move the crate to SLOW, which would have taxed the
+four half-second `powercut` rules for this pilot's arithmetic. At three bytes each
+runs in 0.04–0.08 s. Three is the smallest width with both a within-byte and a
+cross-byte neighbour, which is exactly what the aliasing clause needs, and the
+harnesses take their domain from the constant rather than restating it.
+
+What the shrink stops proving — that no FID can index past the map, which fell
+out of the full-width runs as a discharged bounds check — is a compile-time
+assertion now, and that is the stronger form: it is about the *shipped* width,
+where a proof would only have covered the FIDs a harness enumerated.
+
+`SEC-STORE-002` is `BOUNDED` on the strength of three of these; the other three
+store properties stay `MODELLED-ONLY`, because their evidence is the power-cut
+oracle's and connecting *that* to the model is the next increment. `Scan`'s
+truncated-walk clause needs a medium that can truncate rather than a bitmap, so
+it stays a unit test. The full map and its limits are in
+`docs/store-refinement.md`.

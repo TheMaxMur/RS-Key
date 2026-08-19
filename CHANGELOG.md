@@ -40,6 +40,29 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Added
 
+- **The store model's in-RAM half had no evidence at all, and its clauses are
+  the ones that read as obvious.** `RSKeyStore`'s persistent variables were
+  already covered — `powercut.rs`'s four `*_landed` predicates, their Kani
+  proofs and the `power_cut` fuzz target are what the module was lifted from —
+  but `present` and `decided` are private to `fs.rs`, invisible to a power-cut
+  oracle, and one of their obvious clauses (a faulted read cached as a decided
+  absence) is audit run-36 and shipped. Six harnesses now carry them, one per
+  model action, against a projection that reads the real bitmaps and calls the
+  real primitives. Each carries a **second symbolic FID**: the model says one
+  element moves and every other stands, while the code reaches its bit through
+  `fid >> 3` and `1 << (fid & 7)`, so a mismatched shift would alias two files
+  onto one bit and a delete on one would read as a decided absence for the other.
+  `FID_PRESENT_BYTES` is 3 under `cfg(kani)` — measured: at full width two of the
+  six ran past the 5-minute FAST cap (520 s and 794 s), at three bytes all six
+  run in 0.04–0.08 s — and what the shrink stops proving is a compile-time
+  assertion instead, which is the stronger form because it is about the shipped
+  width. `SEC-STORE-002` rises to BOUNDED; the other three store properties stay
+  MODELLED-ONLY and say why. The verification code is `cfg`-excluded from every
+  firmware image; what the production build gained is one compile-time assertion
+  and one `cfg` attribute, so `bcdDevice` 0x095F → 0x0960 is a refactor with no
+  behaviour change — the emitted image does the same thing with the same 8 KiB
+  map.
+
 - **The model's one hardware assumption was an axiom nothing could vary, and
   running it the other way says what it actually buys.**
   `PowerOnClearsScratch2` — whether a real RP2350 power-on clears
