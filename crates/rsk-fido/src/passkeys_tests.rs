@@ -170,6 +170,40 @@ fn true_total_even_when_visitor_keeps_fewer() {
     assert_eq!(kept, 1, "visitor may keep a subset");
 }
 
+/// `for_each_rp` skips a slot at `n < RP_PREFIX || buf[0] == 0`, and neither half
+/// was tested (the reverse mutation pass, D2). Both shapes are reachable from a
+/// torn write, and neither may be read as a relying party: a record too short
+/// for its own header would have its rpIdHash copied out of the buffer's stale
+/// tail, and a zero count is the emptied slot every enumeration must pass over.
+///
+/// The boundary itself is deliberately NOT pinned here. A record of exactly
+/// `RP_PREFIX` bytes — header, no payload — is enumerated today, because
+/// `unseal_rp_id` falls through to its legacy cleartext domain and an empty tail
+/// decodes as the empty string. Measured, not assumed: it arrives as a relying
+/// party whose `rp_id` is `""`. Whether that should be skipped is a decision,
+/// and a test that pinned either side would cement an accident.
+#[test]
+fn a_malformed_rp_slot_is_skipped_by_the_enumeration() {
+    for (label, rec) in [
+        ("empty", std::vec![]),
+        ("one byte", std::vec![1u8]),
+        ("one short of the header", std::vec![1u8; RP_PREFIX - 1]),
+        ("zero count", {
+            let mut v = std::vec![0u8; RP_PREFIX + 8];
+            v[0] = 0;
+            v
+        }),
+    ] {
+        let (mut fs, seed) = provisioned();
+        add(&mut fs, &seed, 1, "good.example", b"u", "n", "N", 0);
+        fs.put(EF_RP + 1, &rec).unwrap();
+        let mut calls = 0;
+        let total = for_each_rp(&dev(), &mut fs, |_| calls += 1);
+        assert_eq!(total, 1, "{label}: the malformed slot must not be counted");
+        assert_eq!(calls, 1, "{label}: nor visited");
+    }
+}
+
 #[test]
 fn empty_when_unprovisioned() {
     let mut fs = Fs::new(RamStorage::new());

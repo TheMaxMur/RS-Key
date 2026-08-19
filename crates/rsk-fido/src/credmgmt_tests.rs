@@ -1972,6 +1972,109 @@ impl rsk_fs::Storage for TearMutatingAfter {
 /// `BugDeleteRpBeforeCred` (`NoUnmanageableCredential`, RED at 111 503 states)
 /// flipped the order and every host test stayed green — the registration twin
 /// tears writes, and no harness tore a delete. This is that harness.
+/// The other half of the same slot: an RP with TWO credentials takes
+/// `decrement_rp`'s write-back path rather than its delete path, and that `put`
+/// is a fourth `EF_RP + j` nothing exercised — the sole-credential tests never
+/// reach it, and at one slot the sign would not matter anyway.
+#[test]
+fn deleting_one_of_two_credentials_writes_back_to_its_own_rp_slot() {
+    let (mut fs, mut rng) = setup();
+    register(&mut fs, &mut rng, "first.example", &[1, 1], "alice");
+    register(&mut fs, &mut rng, "second.example", &[2, 2], "bob");
+    let (cred_id, ..) = register(&mut fs, &mut rng, "second.example", &[3, 3], "carol");
+    let count_before = {
+        let mut buf = [0u8; 256];
+        let n = fs.read(EF_RP + 1, &mut buf).unwrap();
+        assert!(n >= 1);
+        buf[0]
+    };
+    assert!(
+        count_before >= 2,
+        "the second relying party holds two credentials"
+    );
+
+    let mut state = armed(PERM_CM);
+    let mut out = [0u8; 256];
+    run(
+        &mut fs,
+        &mut state,
+        &cm_request(0x06, Some(&subpara_cred(&cred_id)), &TOKEN),
+        &mut out,
+    )
+    .unwrap();
+
+    let mut buf = [0u8; 256];
+    let n = fs
+        .read(EF_RP + 1, &mut buf)
+        .expect("one credential of two went, so the slot must survive");
+    assert_eq!(
+        buf[0],
+        count_before - 1,
+        "the write-back must land on slot 1, decremented by exactly one"
+    );
+    assert!(n >= 1);
+    assert!(fs.has_data(EF_RP), "the first relying party is untouched");
+}
+
+/// Every index in `decrement_rp` is `EF_RP + j`, and every one of them survived
+/// the suite (the reverse mutation pass, D2): read, delete, nickname-delete and
+/// write-back alike could be `EF_RP - j` and nothing noticed. The reason is the
+/// same one `formal/scopes.txt` records one layer up — the tests ran at
+/// cardinality ONE, where `EF_RP + 0` and `EF_RP - 0` are the same file. So does
+/// the match: `m >= RP_PREFIX && hash == wanted` relaxed to `||` matches on
+/// LENGTH alone, which at one slot is still the right slot.
+///
+/// Two relying parties, and the delete must land on the second.
+#[test]
+fn deleting_a_credential_decrements_its_own_rp_slot_and_no_other() {
+    let (mut fs, mut rng) = setup();
+    register(&mut fs, &mut rng, "first.example", &[1, 1], "alice");
+    let (cred_id, ..) = register(&mut fs, &mut rng, "second.example", &[2, 2], "bob");
+    assert!(fs.has_data(EF_RP), "slot 0 holds the first relying party");
+    assert!(fs.has_data(EF_RP + 1), "slot 1 holds the second");
+    let first_before = {
+        let mut buf = [0u8; 256];
+        let n = fs.read(EF_RP, &mut buf).unwrap();
+        buf[..n].to_vec()
+    };
+    // A device-local nickname on each slot: its delete rides the RP delete and
+    // carries the same index, so it needs a second slot to be wrong in.
+    fs.put(crate::consts::EF_RPNICK, &[0xAA; 16]).unwrap();
+    fs.put(crate::consts::EF_RPNICK + 1, &[0xBB; 16]).unwrap();
+
+    let mut state = armed(PERM_CM);
+    let mut out = [0u8; 256];
+    run(
+        &mut fs,
+        &mut state,
+        &cm_request(0x06, Some(&subpara_cred(&cred_id)), &TOKEN),
+        &mut out,
+    )
+    .unwrap();
+
+    assert!(
+        !fs.has_data(EF_RP + 1),
+        "the sole credential of the second relying party went, so its slot must"
+    );
+    let mut buf = [0u8; 256];
+    let n = fs
+        .read(EF_RP, &mut buf)
+        .expect("slot 0 must still be there");
+    assert_eq!(
+        &buf[..n],
+        &first_before[..],
+        "the first relying party's record must be untouched, byte for byte"
+    );
+    assert!(
+        !fs.has_data(crate::consts::EF_RPNICK + 1),
+        "the gone relying party's nickname must go with it"
+    );
+    assert!(
+        fs.has_data(crate::consts::EF_RPNICK),
+        "and the surviving one must keep its own"
+    );
+}
+
 #[test]
 fn a_torn_delete_never_leaves_a_credential_without_its_rp() {
     let (mut fs, mut rng) = setup();

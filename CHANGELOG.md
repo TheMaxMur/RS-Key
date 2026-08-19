@@ -40,6 +40,20 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Added
 
+- **Every slot index in `decrement_rp` could have had the wrong sign.** Read,
+  delete, nickname-delete and write-back all address `EF_RP + j`, and the suite
+  killed none of them — nor the match beside them relaxed to `||`, which would
+  decrement whichever slot matched on length alone. The cause is the same one
+  the model's scope record names one layer up: the credential-management tests
+  ran at cardinality one, where `EF_RP + 0` and `EF_RP - 0` are the same file.
+  Two relying parties in distinct slots, one holding two credentials so the
+  write-back path is reached, and a nickname planted on each, close four; a
+  malformed-slot case closes two more in `for_each_rp`'s skip. One row stays
+  open as a decision rather than a test: a record of exactly `RP_PREFIX` bytes
+  is enumerated today as a relying party with an empty `rp_id`, because
+  `unseal_rp_id` falls through to its legacy cleartext domain. No firmware
+  behaviour change.
+
 - **Two paths the tree already tested one applet over.** `rsk-fido`'s
   `reset::sweep` deletes in 64-key batches exactly as PIV's reset does, and PIV
   has `reset_sweeps_more_files_than_one_batch` while FIDO's had nothing — the
