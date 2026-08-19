@@ -38,6 +38,19 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+### Fixed
+
+- **A doc comment in `rsk-fs` described the function below the one it sat on.**
+  `mark_absent`'s one-line doc and its `#[inline]` had both landed on
+  `record_unless_faulted` during an earlier edit, leaving `mark_absent`
+  undocumented and its neighbour carrying someone else's description ahead of its
+  own. Only what was displaced moved back: `record_unless_faulted` gains no
+  `#[inline]`, because the evidence says the attribute belongs to `mark_absent` —
+  the doc above it names `mark_absent` — while nothing says the other ever had
+  one, and inventing it would be an optimizer hint smuggled into a comment fix.
+  Found while reading the cache primitives for the store refinement pilot.
+  `bcdDevice` 0x0960 → 0x0961: refactor, no behaviour change.
+
 ### Added
 
 - **The store model's in-RAM half had no evidence at all, and its clauses are

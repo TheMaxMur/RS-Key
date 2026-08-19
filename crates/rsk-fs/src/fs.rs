@@ -147,8 +147,6 @@ impl<S: Storage> Fs<S> {
         self.decided[i] |= m;
     }
 
-    /// Mark `fid` known absent (sets the authority bit, clears present).
-    #[inline]
     /// [`record`](Self::record), but only when the backend actually answered.
     ///
     /// `Storage::read`/`size` return `None` both for "absent" and for "the read
@@ -162,6 +160,8 @@ impl<S: Storage> Fs<S> {
         }
     }
 
+    /// Mark `fid` known absent (sets the authority bit, clears present).
+    #[inline]
     fn mark_absent(&mut self, fid: u16) {
         let (i, m) = ((fid >> 3) as usize, 1u8 << (fid & 7));
         self.present[i] &= !m;

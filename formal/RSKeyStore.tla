@@ -62,7 +62,7 @@ CONSTANTS
     \* record after deletion and read back alive -- the metadata cleanup is
     \* unconditional now (fs.rs:441). The switch gates it on the value again.
     BugDeleteMetaOnlyUnderPresent,
-    \* audit run-36: `record_unless_faulted` (fs.rs:159-163) refuses to cache a
+    \* audit run-36: `record_unless_faulted` (fs.rs:157-161) refuses to cache a
     \* read that FAILED, because `Storage::read` returns None for both "absent"
     \* and "the read faulted" and caching the second as a decided absence turns
     \* one transient fault into a permanent false-absent. The switch caches it.
