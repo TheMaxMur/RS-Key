@@ -31,11 +31,11 @@ use crate::cert;
 use crate::clientpin::{UvOutcome, builtin_uv_enabled, builtin_uv_step};
 use crate::consts::{
     AAGUID, ALG_ED25519, ALG_EDDSA, ALG_ES256, ALG_ES256K, ALG_ES384, ALG_ES512, ALG_ESP256,
-    ALG_ESP384, ALG_ESP512, ALG_MLDSA44, ALG_MLDSA65, CRED_PROT_UV_OPTIONAL, CRED_PROT_UV_REQUIRED,
-    CURVE_ED25519, CURVE_MLDSA44, CURVE_MLDSA65, CURVE_P256, CURVE_P256K1, CURVE_P384, CURVE_P521,
-    EF_ATT_CHAIN, EF_EA_ENABLED, EF_EE_DEV, EF_MINPINLEN, EF_PIN, FLAG_AT, FLAG_ED, FLAG_UP,
-    FLAG_UV, LARGE_BLOB_EXT, MAX_CREDBLOB_LENGTH, MAX_CREDENTIAL_COUNT_IN_LIST, MAX_MIN_PIN_RPIDS,
-    MAX_RESIDENT_CREDENTIALS,
+    ALG_ESP384, ALG_ESP512, ALG_MLDSA44, ALG_MLDSA65, ATT_FMT_NONE, ATT_FMT_PACKED,
+    CRED_PROT_UV_OPTIONAL, CRED_PROT_UV_REQUIRED, CURVE_ED25519, CURVE_MLDSA44, CURVE_MLDSA65,
+    CURVE_P256, CURVE_P256K1, CURVE_P384, CURVE_P521, EF_ATT_CHAIN, EF_EA_ENABLED, EF_EE_DEV,
+    EF_MINPINLEN, EF_PIN, FLAG_AT, FLAG_ED, FLAG_UP, FLAG_UV, LARGE_BLOB_EXT, MAX_CREDBLOB_LENGTH,
+    MAX_CREDENTIAL_COUNT_IN_LIST, MAX_MIN_PIN_RPIDS, MAX_RESIDENT_CREDENTIALS,
 };
 use crate::credential::{
     CRED_BOX_MAX, CRED_PUBKEY_MAX, CRED_REC_MAX, CRED_RESIDENT_LEN, CredExt, CredInput, Credential,
@@ -134,6 +134,19 @@ struct Request<'a> {
     /// platform-managed (full attestation by the device key). §6.1.2 step 9 keys
     /// on the field being **present**, so `None` and `Some(0)` differ.
     enterprise_attestation: Option<u64>,
+    /// attestationFormatsPreference (request field 0x0B), already reduced to the
+    /// only decision it can drive here.
+    att_fmt_pref: AttFmtPref,
+}
+
+/// What `attestationFormatsPreference` asks of an authenticator that emits exactly
+/// one format. CTAP 2.2: a list of exactly `["none"]` means omit attestation, while
+/// the lowest-index-supported rule needs two formats to choose between — so every
+/// other list, and an absent field, leave `packed`.
+#[derive(PartialEq, Eq)]
+enum AttFmtPref {
+    Packed,
+    NoneOnly,
 }
 
 fn parse(data: &[u8]) -> Result<Request<'_>, CtapError> {
@@ -163,6 +176,7 @@ fn parse(data: &[u8]) -> Result<Request<'_>, CtapError> {
         ext_large_blob: McInput::Absent,
         hmac_secret_mc: HmacSecretReq::default(),
         enterprise_attestation: None,
+        att_fmt_pref: AttFmtPref::Packed,
     };
 
     let n = def_map(&mut d)?;
@@ -188,10 +202,30 @@ fn parse(data: &[u8]) -> Result<Request<'_>, CtapError> {
             8 => req.pin_uv_auth_param = Some(cbor(d.bytes())?),
             9 => req.pin_uv_auth_protocol = Some(cbor(d.u32())? as u64),
             10 => req.enterprise_attestation = Some(cbor(d.u32())? as u64),
+            11 => req.att_fmt_pref = parse_att_fmt_pref(&mut d)?,
             _ => skip_value(&mut d)?,
         }
     }
     Ok(req)
+}
+
+/// Reduce `attestationFormatsPreference` (request key 0x0B) to the decision this
+/// authenticator can act on. The array is walked whole either way — the caller's key
+/// walk resumes immediately after it, so a partly-read value would desynchronise it.
+fn parse_att_fmt_pref(d: &mut Decoder<'_>) -> Result<AttFmtPref, CtapError> {
+    let n = def_arr(d)?;
+    let mut first = "";
+    for i in 0..n {
+        let fmt = cbor(d.str())?;
+        if i == 0 {
+            first = fmt;
+        }
+    }
+    Ok(if n == 1 && first == ATT_FMT_NONE {
+        AttFmtPref::NoneOnly
+    } else {
+        AttFmtPref::Packed
+    })
 }
 
 /// Parse the `rp` PublicKeyCredentialRpEntity (request key 2) into `req`.
@@ -667,9 +701,18 @@ fn make_credential_inner<S: Storage, R: Rng>(
     // x5c-less credential unconditionally, and a packed EdDSA self-attestation fails
     // on Windows/WinHello (issue #26). Basic attestation signs with ES256 whatever
     // the credential algorithm is, so neither path is reached.
+    // CTAP 2.2 `attestationFormatsPreference` of exactly ["none"]: the platform
+    // asked for no attestation, so none is *computed* — the ES256 signature and the
+    // cert read are skipped, not produced and dropped. Enterprise attestation still
+    // wins when it was actually performed: it is explicitly configured and strictly
+    // stronger, and answering it with an empty statement would discard it.
+    let omit_att = req.att_fmt_pref == AttFmtPref::NoneOnly && !ea_performed;
     let mut att = AttBufs::new();
-    let (sig_len, chain_len, certs) =
-        make_attestation(ctx, seed, &ad[..ad_len + 32], ea_performed, &mut att)?;
+    let (sig_len, chain_len, certs) = if omit_att {
+        (0, 0, 0)
+    } else {
+        make_attestation(ctx, seed, &ad[..ad_len + 32], ea_performed, &mut att)?
+    };
 
     // largeBlobKey response field (0x05) — resident credentials only.
     let large_blob_key = if req.ext_large_blob_key == Some(true) && req.rk {
@@ -700,6 +743,7 @@ fn make_credential_inner<S: Storage, R: Rng>(
             chain_len,
             certs,
             ea_performed,
+            omitted: omit_att,
         },
         large_blob_key,
         large_blob_supported,
@@ -733,15 +777,20 @@ struct AttShape {
     certs: u8,
     /// Enterprise attestation was actually performed, so `ep` (field 4) is set.
     ea_performed: bool,
+    /// The platform asked for `none`, so `fmt` is "none" and attStmt is empty.
+    omitted: bool,
 }
 
 /// Encode the makeCredential response: `{1: fmt, 2: authData, 3: attStmt
 /// [, 4: ep] [, 5: largeBlobKey] [, 6: unsignedExtensionOutputs]}`.
 ///
-/// `fmt` is always `"packed"` and attStmt is always `{alg, sig, x5c}` — basic
-/// attestation with the device cert, or the org chain when EA was performed. The
-/// three keys are already in CTAP2 canonical order. `ep` appears only when EA was
-/// actually performed. Fields 5 and 6 are the two mutually exclusive large-blob
+/// `fmt` is `"packed"` with attStmt `{alg, sig, x5c}` — basic attestation with the
+/// device cert, or the org chain when EA was performed — unless the request asked
+/// for `none`, which is `fmt:"none"` and an EMPTY attStmt. The empty map is written,
+/// not omitted: field 3 is required, and a reader that finds no attStmt at all sees
+/// an incomplete attestation object rather than a none-format one. The three keys
+/// are already in CTAP2 canonical order. `ep` appears only when EA was actually
+/// performed. Fields 5 and 6 are the two mutually exclusive large-blob
 /// designs, so at most one of them is ever present.
 fn encode_mc_response(
     out: &mut [u8],
@@ -757,15 +806,25 @@ fn encode_mc_response(
             + u64::from(large_blob_key.is_some())
             + u64::from(large_blob_supported),
     )
-    .and_then(|e| e.u8(1)?.str("packed"))
+    .and_then(|e| {
+        e.u8(1)?.str(if shape.omitted {
+            ATT_FMT_NONE
+        } else {
+            ATT_FMT_PACKED
+        })
+    })
     .and_then(|e| e.u8(2)?.bytes(ad))
     .and_then(|e| e.u8(3))
     .map_err(|_| CtapError::Other)?;
-    enc.map(3)
-        .and_then(|e| e.str("alg")?.i64(ALG_ES256))
-        .and_then(|e| e.str("sig")?.bytes(&att.sig[..shape.sig_len]))
-        .map_err(|_| CtapError::Other)?;
-    encode_x5c(&mut enc, &att.chain[..shape.chain_len], shape.certs)?;
+    if shape.omitted {
+        enc.map(0).map_err(|_| CtapError::Other)?;
+    } else {
+        enc.map(3)
+            .and_then(|e| e.str("alg")?.i64(ALG_ES256))
+            .and_then(|e| e.str("sig")?.bytes(&att.sig[..shape.sig_len]))
+            .map_err(|_| CtapError::Other)?;
+        encode_x5c(&mut enc, &att.chain[..shape.chain_len], shape.certs)?;
+    }
     if shape.ea_performed {
         enc.u8(4)
             .and_then(|e| e.bool(true)) // ep: enterprise attestation used

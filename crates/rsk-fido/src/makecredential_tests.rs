@@ -674,13 +674,51 @@ fn out_of_order_optional_keys_rejected() {
 
 #[test]
 fn unknown_top_level_key_ignored() {
-    // An unrecognized top-level key (0x0B) is skipped, not an error — the map
-    // still parses and the credential is created.
+    // An unrecognized top-level key is skipped, not an error — the map still parses
+    // and the credential is created. This used to send 0x0B, which CTAP 2.2 defines
+    // as `attestationFormatsPreference`; 0x0C is the first key still unassigned, and
+    // the type check that now guards 0x0B is pinned separately below.
     let req = mc_build(5, |e| {
         good_params(e);
-        e.u8(11).unwrap().u8(0).unwrap();
+        e.u8(12).unwrap().u8(0).unwrap();
     });
     assert!(!run(&req).0.is_empty());
+}
+
+/// `attestationFormatsPreference` is typed — "Array of String" — so a request that
+/// puts something else there is malformed, and is refused the same way every other
+/// mistyped field in this parser is. It is not treated as an ignorable hint: the
+/// key stopped being unassigned the moment CTAP 2.2 gave it a meaning, and a client
+/// sending an integer has a bug worth surfacing rather than silently absorbing.
+///
+/// The status is `CTAP2_ERR_CBOR_UNEXPECTED_TYPE`, which is what a wrong major type
+/// earns; `INVALID_CBOR` is what an indefinite-length array would earn instead.
+#[test]
+fn attestation_formats_preference_must_be_an_array() {
+    for tail in [
+        (|e: &mut Encoder<Cursor<&mut [u8]>>| {
+            e.u8(11).unwrap().u8(0).unwrap();
+        }) as fn(&mut Encoder<Cursor<&mut [u8]>>),
+        |e| {
+            e.u8(11).unwrap().str("none").unwrap();
+        },
+        |e| {
+            e.u8(11).unwrap().map(0).unwrap();
+        },
+    ] {
+        let req = mc_build(5, |e| {
+            good_params(e);
+            tail(e);
+        });
+        assert_eq!(run_err(&req), CtapError::CborUnexpectedType);
+    }
+
+    // A non-string INSIDE the array is the same mistake one level down.
+    let req = mc_build(5, |e| {
+        good_params(e);
+        e.u8(11).unwrap().array(1).unwrap().u8(0).unwrap();
+    });
+    assert_eq!(run_err(&req), CtapError::CborUnexpectedType);
 }
 
 #[test]
@@ -2414,4 +2452,95 @@ fn enterprise_attestation_zero_is_a_value_not_an_absence() {
                 .is_empty()
         );
     }
+}
+
+// ---- attestationFormatsPreference (request 0x0B, CTAP 2.2) ----
+
+/// A response's `fmt` (1) and the SIZE of its attStmt (3), for a request whose
+/// `attestationFormatsPreference` is `formats` — absent when `None`.
+fn att_shape_for(formats: Option<&[&str]>) -> (std::string::String, u64) {
+    let req = mc_build(4 + u64::from(formats.is_some()), |e| {
+        good_params(e);
+        if let Some(list) = formats {
+            e.u8(11).unwrap().array(list.len() as u64).unwrap();
+            for f in list {
+                e.str(f).unwrap();
+            }
+        }
+    });
+    let (resp, _) = run(&req);
+    let mut d = Decoder::new(&resp);
+    d.map().unwrap();
+    assert_eq!(d.u8().unwrap(), 1);
+    let fmt = d.str().unwrap().to_string();
+    assert_eq!(d.u8().unwrap(), 2);
+    d.bytes().unwrap();
+    assert_eq!(d.u8().unwrap(), 3);
+    (fmt, d.map().unwrap().unwrap())
+}
+
+/// CTAP 2.2 `attestationFormatsPreference`: for an authenticator that emits exactly
+/// one format, a list of exactly `["none"]` is the ONLY shape that changes anything.
+/// The lowest-index-supported rule needs two formats to choose between, so a longer
+/// list — even one containing "none" — leaves the packed statement untouched. That
+/// containment is the safety property: `fmt:"none"` broke OpenSSH < 10.0 when this
+/// device emitted it unasked, and it is now reachable only on explicit request.
+#[test]
+fn attestation_formats_preference_omits_only_for_none_alone() {
+    for formats in [
+        None,
+        Some(&[] as &[&str]),
+        Some(&["packed"][..]),
+        Some(&["none", "packed"][..]),
+        Some(&["packed", "none"][..]),
+        Some(&["tpm"][..]),
+        Some(&["none", "none"][..]),
+    ] {
+        let (fmt, stmt) = att_shape_for(formats);
+        assert_eq!(fmt, "packed", "{formats:?} must not change the format");
+        assert_eq!(stmt, 3, "{formats:?} must keep the full {{alg, sig, x5c}}");
+    }
+
+    let (fmt, stmt) = att_shape_for(Some(&["none"]));
+    assert_eq!(fmt, "none");
+    // Present and empty, not absent: field 3 is required, and a reader that finds no
+    // attStmt sees an incomplete attestation object rather than a none-format one.
+    assert_eq!(
+        stmt, 0,
+        "the none statement is an EMPTY map, and it is written"
+    );
+}
+
+/// An enterprise attestation that was actually performed outranks the preference.
+/// It is explicitly enabled in flash and requested per credential, and it is the
+/// stronger claim; honouring `["none"]` over it would silently discard what an
+/// administrator turned on.
+#[test]
+fn enterprise_attestation_outranks_a_none_preference() {
+    let mut buf = [0u8; 512];
+    let n = {
+        let mut e = Encoder::new(Cursor::new(&mut buf[..]));
+        e.map(6).unwrap();
+        e.u8(1).unwrap().bytes(&[0xCDu8; 32]).unwrap();
+        e.u8(2).unwrap().map(1).unwrap();
+        e.str("id").unwrap().str("example.com").unwrap();
+        e.u8(3).unwrap().map(2).unwrap();
+        e.str("id").unwrap().bytes(&[1, 2, 3, 4]).unwrap();
+        e.str("name").unwrap().str("alice").unwrap();
+        e.u8(4).unwrap().array(1).unwrap().map(2).unwrap();
+        e.str("alg").unwrap().i64(ALG_ES256).unwrap();
+        e.str("type").unwrap().str("public-key").unwrap();
+        e.u8(10).unwrap().u64(2).unwrap();
+        e.u8(11).unwrap().array(1).unwrap().str("none").unwrap();
+        e.writer().position()
+    };
+    let (resp, _) = run_ea(&buf[..n], true).unwrap();
+    let mut d = Decoder::new(&resp);
+    d.map().unwrap();
+    assert_eq!(d.u8().unwrap(), 1);
+    assert_eq!(d.str().unwrap(), "packed", "EA must still be attested");
+    assert_eq!(d.u8().unwrap(), 2);
+    d.bytes().unwrap();
+    assert_eq!(d.u8().unwrap(), 3);
+    assert_eq!(d.map().unwrap().unwrap(), 3, "the full statement survives");
 }

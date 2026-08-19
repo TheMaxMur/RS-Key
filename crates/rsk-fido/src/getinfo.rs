@@ -20,7 +20,7 @@ use minicbor::Encoder;
 use minicbor::encode::{Error, Write};
 
 use crate::consts::{
-    AAGUID, ALG_EDDSA, ALG_ES256, ALG_ES384, ALG_ES512, ALG_MLDSA44, ALG_MLDSA65,
+    AAGUID, ALG_EDDSA, ALG_ES256, ALG_ES384, ALG_ES512, ALG_MLDSA44, ALG_MLDSA65, ATT_FMT_PACKED,
     CONFIG_AUT_DISABLE, CONFIG_AUT_ENABLE, CONFIG_PHY_LED_BRIGHTNESS, CONFIG_PHY_LED_GPIO,
     CONFIG_PHY_OPTIONS, CONFIG_PHY_VIDPID, ENC_IDENTIFIER_LEN, FIRMWARE_VERSION, LARGE_BLOB_EXT,
     MAX_CRED_ID_LENGTH, MAX_CREDBLOB_LENGTH, MAX_CREDENTIAL_COUNT_IN_LIST, MAX_LARGE_BLOB_SIZE,
@@ -293,11 +293,12 @@ fn write_info<W: Write>(
         .u64(CONFIG_PHY_LED_GPIO)?
         .u64(CONFIG_PHY_OPTIONS)?;
 
-    // 0x16 attestationFormats — the attestation statement formats we emit. Only
-    // "packed": makeCredential always carries basic attestation with the device x5c,
-    // and an enterprise request swaps in the org chain. Keep in sync with the
-    // metadata statements.
-    enc.u8(0x16)?.array(1)?.str("packed")?;
+    // 0x16 attestationFormats — the formats we CHOOSE from. Only "packed": an
+    // `attestationFormatsPreference` of exactly ["none"] still yields an empty
+    // statement (CTAP 2.2), but "none" is the absence of one, and listing it would
+    // make us multi-format and subject to the lowest-index rule. Keep in sync with
+    // the metadata statements.
+    enc.u8(0x16)?.array(1)?.str(ATT_FMT_PACKED)?;
 
     // 0x18 longTouchForReset — false: a reset takes the same touch every other
     // presence check takes. CTAP 2.3 §6.4 cut the long-touch hold from 2.2's 10 s to

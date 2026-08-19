@@ -209,6 +209,12 @@ pub const TRANSPORTS: [&str; 1] = ["usb"];
 /// ciphertext is exactly one block — `aes_encrypt` pads nothing.
 pub const ENC_IDENTIFIER_LEN: usize = 16 + 16;
 
+/// The attestation statement format identifiers this device names on the wire:
+/// `packed` for every credential it attests (getInfo 0x16 and makeCredential `fmt`),
+/// `none` for the empty statement `attestationFormatsPreference` can ask for.
+pub const ATT_FMT_PACKED: &str = "packed";
+pub const ATT_FMT_NONE: &str = "none";
+
 // pinUvAuthParam MAC covers subCommand ‖ subCommandParams; cap on the raw bytes
 // (vendor.rs deliberately overrides with its own larger cap). A maximal legal
 // updateUserInformation — 42-byte resident credId + 64-byte user.id + 64-byte

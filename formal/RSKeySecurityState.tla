@@ -31,10 +31,10 @@ EXTENDS Naturals, FiniteSets, TLC
 CONSTANTS
     RPs,                \* relying parties (>= 2 to exercise rpId binding)
     Channels,           \* CTAPHID channel ids (>= 2 to exercise walk ownership)
-    MaxRetries,         \* models MAX_PIN_RETRIES = 8   (consts.rs:324)
-    MismatchLimit,      \* models PIN_MISMATCH_LIMIT = 3 (consts.rs:328)
+    MaxRetries,         \* models MAX_PIN_RETRIES = 8   (consts.rs:330)
+    MismatchLimit,      \* models PIN_MISMATCH_LIMIT = 3 (consts.rs:334)
     MaxClock,           \* coarse tick ceiling
-    ResetWindow         \* models RESET_WINDOW_MS = 10_000 (consts.rs:360)
+    ResetWindow         \* models RESET_WINDOW_MS = 10_000 (consts.rs:366)
 
 (* Mutation switches. All FALSE is the shipped tree. Each rebuilds one real  *)
 (* defect; `formal/README.md` maps every switch to its commit or audit id.   *)
@@ -469,7 +469,7 @@ OtpCancelWait ==
 (***************************************************************************)
 
 \* THE FOUR CALL SITES DO NOT TEST THE SAME THING, and the difference is
-\* load-bearing. makeCredential (makecredential.rs:454-457) and getAssertion
+\* load-bearing. makeCredential (makecredential.rs:488-491) and getAssertion
 \* (getassertion.rs:384-387) test the MAC, `user_verified()` -- which is
 \* `in_use && user_verified` (state.rs:666-668) -- the permission bit and the
 \* rpId binding. authenticatorConfig (config.rs:222-224) and
@@ -537,7 +537,7 @@ ConsumedTok ==
              ELSE [tok EXCEPT !.perms = {}]
 
 \* makeCredential/getAssertion bind an unbound pinUvAuthToken to the request's
-\* rpId before consuming its permissions (makecredential.rs:462-464,
+\* rpId before consuming its permissions (makecredential.rs:496-498,
 \* getassertion.rs:394-396).
 BoundConsumedTok(r) ==
     LET consumed == ConsumedTok IN
@@ -805,7 +805,7 @@ StopUsingToken ==
 (* makeCredential / getAssertion.                                          *)
 (***************************************************************************)
 
-\* makecredential.rs:452-460. Needs PERM_MC and a touch.
+\* makecredential.rs:486-494. Needs PERM_MC and a touch.
 RegisterStart(r, t) ==
     /\ Idle
     /\ ButtonFreeGuard

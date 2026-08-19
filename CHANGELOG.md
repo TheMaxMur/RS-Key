@@ -63,6 +63,31 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Added
 
+- **A platform that asked for no attestation got one anyway, and paid for it.**
+  CTAP 2.2's `attestationFormatsPreference` (makeCredential request `0x0B`) was
+  ignored. It is now honoured in the one way a single-format authenticator can: a
+  list of exactly `["none"]` yields `fmt:"none"` with an empty attStmt, and the
+  ES256 attestation signature and the device-certificate read are **skipped**, not
+  computed and discarded. Measured on the host, a registration drops from 450.6 µs
+  to 293.4 µs — 34.9% — though the split on the RP2350 will differ, where the
+  signature costs relatively more.
+  Every other shape is unchanged: absent, empty, `["packed"]`, and any list of two
+  or more — including `["none","packed"]` — still return the full packed statement,
+  because choosing by lowest supported index needs more than one supported format.
+  `attestationFormats` (getInfo `0x16`) therefore stays `["packed"]`: "none" is the
+  absence of a statement, and listing it would make this a multi-format
+  authenticator subject to that rule. An enterprise attestation that was actually
+  performed outranks the preference — it is explicitly enabled in flash, strictly
+  stronger, and answering it with an empty statement would discard what an
+  administrator turned on.
+  **Why this is safe when `fmt:"none"` was withdrawn before:** an empty statement
+  broke OpenSSH < 10.0, which verifies any x5c-less credential unconditionally. It
+  was withdrawn because this device emitted it *unasked*. It is now reachable only
+  when the platform names it, and a client that does not send `0x0B` cannot observe
+  any change. The empty attStmt is written rather than omitted: field 3 is
+  required, and a reader that finds none sees an incomplete attestation object.
+  `bcdDevice` 0x0965 → 0x0966.
+
 - **A paired platform had no way to tell one RS-Key from another.** CTAP 2.2's
   `encIdentifier` (`0x19`) is how an authenticator lets a platform that already
   holds its persistent pinUvAuthToken recognise it again, without handing every

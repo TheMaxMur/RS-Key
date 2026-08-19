@@ -444,7 +444,13 @@ needs only the identifiers above. RS-Key implements:
   bytes differ each time while the identifier under them does not: a tool holding
   the token recognises the device across sessions, and one without it learns
   nothing. The identifier is derived from the device seed, so `authenticatorReset`
-  changes it.
+  changes it. **makeCredential accepts `attestationFormatsPreference` (request
+  `0x0B`)**: a list of exactly `["none"]` is answered with `fmt:"none"` and an
+  **empty — but present —** `attStmt`, and nothing is signed. Any other list, an
+  empty one, or an absent field leaves the usual `packed` statement, because
+  choosing by lowest supported index needs more than one supported format and
+  `attestationFormats` (`0x16`) stays `["packed"]`. An enterprise attestation that
+  was actually performed outranks the preference and is still returned in full.
   Supported COSE algorithms:
   ES256 `-7`, ES384 `-35`, ES512 `-36`, ES256K `-47`, EdDSA `-8`,
   ML-DSA-44 `-48`, ML-DSA-65 `-49` (both negotiable via `pubKeyCredParams`;
