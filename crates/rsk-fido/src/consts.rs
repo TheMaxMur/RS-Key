@@ -328,6 +328,11 @@ pub const MIN_PIN_LENGTH: u8 = 4;
 #[cfg(any(feature = "fips-profile", feature = "strong-pin"))]
 pub const MIN_PIN_LENGTH: u8 = 6;
 
+/// Whether this build enforces a PIN rule BEYOND the length floor — getInfo's
+/// `pinComplexityPolicy` (0x1B). True where `clientpin::pin_is_trivial` refuses a
+/// repeated code point or a ±1 run; a raised `MIN_PIN_LENGTH` alone is not one.
+pub const PIN_COMPLEXITY_POLICY: bool = cfg!(any(feature = "fips-profile", feature = "strong-pin"));
+
 /// pinUvAuthToken rolling inactivity window (CTAP 2.1 §6.5.5.7 initial usage
 /// time limit): each use of the token pushes its deadline out by this much; if
 /// the window elapses with no use, the token is retired. 30 s matches USB.

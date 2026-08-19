@@ -430,7 +430,11 @@ needs only the identifiers above. RS-Key implements:
   `transportsForReset` (`0x1A`) is `["usb"]` — identical to `transports`
   (`0x09`), because the FIDO applet is on USB-HID only and a reset is reachable
   exactly where the applet is; it is an array of `AuthenticatorTransport`
-  strings, not a bit field.
+  strings, not a bit field. `pinComplexityPolicy` (`0x1B`) is `true` only on a
+  build that refuses a PIN beyond the length floor — the `strong-pin` and
+  `fips-profile` images block a repeated code point and a ±1 run; the default
+  build answers `false`, and the optional `pinComplexityPolicyURL` (`0x1C`) is
+  never emitted.
   Supported COSE algorithms:
   ES256 `-7`, ES384 `-35`, ES512 `-36`, ES256K `-47`, EdDSA `-8`,
   ML-DSA-44 `-48`, ML-DSA-65 `-49` (both negotiable via `pubKeyCredParams`;

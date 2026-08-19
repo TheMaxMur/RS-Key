@@ -97,6 +97,7 @@
     ],
     "attestationFormats": ["packed"],
     "transportsForReset": ["usb"],
+    "pinComplexityPolicy": false,
     "maxPINLength": 63,
     "authenticatorConfigCommands": [1, 2, 3, 255]
   }

@@ -45,9 +45,9 @@ fn dispatch_get_info_ok() {
     let n = dispatch(&[consts::CTAP_GET_INFO], &mut out);
     assert!(n > 1);
     assert_eq!(out[0], CTAP2_OK);
-    // The payload is the getInfo map: 0xB6 = map(22), one less on a
+    // The payload is the getInfo map: 0xB7 = map(23), one less on a
     // `largeblob-ext` build (no maxSerializedLargeBlobArray).
-    assert_eq!(out[1], 0xB6 - u8::from(consts::LARGE_BLOB_EXT));
+    assert_eq!(out[1], 0xB7 - u8::from(consts::LARGE_BLOB_EXT));
 }
 
 #[test]

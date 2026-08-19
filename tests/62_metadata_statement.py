@@ -227,6 +227,7 @@ def part_b(stmt):
         "vendorPrototypeConfigCommands": m[0x15],
         "attestationFormats": m[0x16],
         "transportsForReset": m[0x1A],
+        "pinComplexityPolicy": m[0x1B],
         "maxPINLength": m[0x1D],
         "authenticatorConfigCommands": m[0x1F],
     }

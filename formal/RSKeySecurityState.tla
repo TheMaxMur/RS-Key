@@ -34,7 +34,7 @@ CONSTANTS
     MaxRetries,         \* models MAX_PIN_RETRIES = 8   (consts.rs:319)
     MismatchLimit,      \* models PIN_MISMATCH_LIMIT = 3 (consts.rs:323)
     MaxClock,           \* coarse tick ceiling
-    ResetWindow         \* models RESET_WINDOW_MS = 10_000 (consts.rs:350)
+    ResetWindow         \* models RESET_WINDOW_MS = 10_000 (consts.rs:355)
 
 (* Mutation switches. All FALSE is the shipped tree. Each rebuilds one real  *)
 (* defect; `formal/README.md` maps every switch to its commit or audit id.   *)

@@ -53,6 +53,22 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Added
 
+- **A `strong-pin` build enforced a PIN policy it never told anyone about.**
+  CTAP 2.2's `pinComplexityPolicy` (`0x1B`) reports whether the authenticator
+  applies a PIN rule *beyond* `minPINLength` — which `0x0D` already carries, so a
+  raised floor is not one. The `strong-pin` and `fips-profile` images do apply
+  one: on top of the six-code-point floor they refuse a repeated code point and a
+  ±1 run (`123456`, `654321`), on the host `setPIN` path and on the trusted-display
+  PIN pad alike. Nothing in getInfo said so, so a platform could not distinguish
+  those builds from a default one with a longer minimum. `0x1B` now answers
+  `true` there and `false` on the default build. Its optional companion
+  `pinComplexityPolicyURL` (`0x1C`) is deliberately not emitted — a documentation
+  link that rots is worse than none, and the member is optional.
+  The advertisement is tied to the behaviour by a test that drives `setPIN` with
+  the exact ±1 run the rule is about and requires the two to agree, so a build
+  cannot claim a policy it does not enforce, nor enforce one it does not claim.
+  `bcdDevice` 0x0962 → 0x0963.
+
 - **getInfo never said where a reset can be driven.** CTAP 2.2's
   `transportsForReset` (`0x1A`) tells a platform which transports will accept an
   `authenticatorReset`, so a platform that can only reach the key over a transport

@@ -86,7 +86,7 @@ fn get_info_fields() {
     let mut d = Decoder::new(&buf[..n]);
 
     let entries = d.map().unwrap().unwrap();
-    assert_eq!(entries, 22);
+    assert_eq!(entries, 23);
 
     // 0x01 versions
     assert_eq!(d.u8().unwrap(), 0x01);
@@ -251,6 +251,15 @@ fn get_info_fields() {
     assert_eq!(d.u8().unwrap(), 0x1A);
     assert_eq!(d.array().unwrap().unwrap(), 1);
     assert_eq!(d.str().unwrap(), "usb");
+
+    // 0x1B pinComplexityPolicy — false unless a build refuses a trivial PIN. Read
+    // from the features rather than from the const the encoder uses, so the two
+    // have to agree; what it must MEAN is pinned in `clientpin_tests.rs`.
+    assert_eq!(d.u8().unwrap(), 0x1B);
+    assert_eq!(
+        d.bool().unwrap(),
+        cfg!(any(feature = "fips-profile", feature = "strong-pin"))
+    );
 
     // 0x1D maxPINLength
     assert_eq!(d.u8().unwrap(), 0x1D);

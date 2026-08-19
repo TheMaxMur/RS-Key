@@ -24,7 +24,7 @@ use crate::consts::{
     CONFIG_AUT_DISABLE, CONFIG_AUT_ENABLE, CONFIG_PHY_LED_BRIGHTNESS, CONFIG_PHY_LED_GPIO,
     CONFIG_PHY_OPTIONS, CONFIG_PHY_VIDPID, FIRMWARE_VERSION, LARGE_BLOB_EXT, MAX_CRED_ID_LENGTH,
     MAX_CREDBLOB_LENGTH, MAX_CREDENTIAL_COUNT_IN_LIST, MAX_LARGE_BLOB_SIZE, MAX_MIN_PIN_RPIDS,
-    MAX_MSG_SIZE, TRANSPORTS,
+    MAX_MSG_SIZE, PIN_COMPLEXITY_POLICY, TRANSPORTS,
 };
 use crate::cose::cose_public_key;
 use crate::error::{CtapError, CtapResult};
@@ -84,9 +84,9 @@ fn write_info<W: Write>(
     remaining_rk: u16,
 ) -> Result<(), Error<W::Error>> {
     // Keys are ascending uints → CTAP canonical order (1-byte keys 0x01..0x16
-    // first, then the 2-byte keys 0x1A, 0x1D, 0x1F — 24 and up need the extra
+    // first, then the 2-byte keys 0x1A, 0x1B, 0x1D, 0x1F — 24 and up need the extra
     // byte). The `largeblob-ext` build drops 0x0B with the command it describes.
-    enc.map(21 + u64::from(!LARGE_BLOB_EXT))?;
+    enc.map(22 + u64::from(!LARGE_BLOB_EXT))?;
 
     // 0x01 versions — advertise the full backward-compatible superset up to
     // FIDO_2_3 (the implemented surface: credMgmt, largeBlobs, credProtect,
@@ -300,6 +300,11 @@ fn write_info<W: Write>(
     // Same list as 0x09, because a reset is reachable exactly where the applet is.
     enc.u8(0x1A)?;
     transports(enc)?;
+
+    // 0x1B pinComplexityPolicy — a PIN rule BEYOND minPINLength, which 0x0D already
+    // reports; a raised floor alone is length, not complexity. Its optional URL
+    // companion (0x1C) stays absent — a docs link that rots is worse than none.
+    enc.u8(0x1B)?.bool(PIN_COMPLEXITY_POLICY)?;
 
     // 0x1D maxPINLength — max PIN length in Unicode code points. The PIN is padded
     // to 64 bytes on the wire, so the content is at most 63. A 2-byte CBOR key

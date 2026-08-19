@@ -1091,6 +1091,52 @@ fn strong_pin_rejects_trivial() {
     }
 }
 
+/// getInfo's `pinComplexityPolicy` (0x1B) claims a PIN rule beyond `minPINLength`,
+/// and is worth something only if it tracks what `store_new_pin` actually refuses.
+/// So drive the ±1 run the rule is about and require the two to agree. There is no
+/// `cfg` in the expectation: a build that advertises a policy it does not enforce,
+/// or enforces one it does not advertise, fails this from whichever side broke.
+///
+/// The name carries `strong_pin` on purpose — `check.sh`'s strong-pin row is a
+/// NAME FILTER, and it is the only gate row where this reaches its `true` arm.
+#[test]
+fn pin_complexity_policy_tracks_the_strong_pin_rule() {
+    // Six code points clears BOTH length floors, so only the trivial-PIN rule can
+    // reject it — which is what 0x1B is claiming to describe.
+    let (mut fs, mut rng) = setup();
+    let mut state = FidoState::new();
+    let plat = key_agreement(&mut fs, &mut rng, &mut state, PinProto::Two, 2);
+    let mut out = [0u8; 256];
+    let refused = matches!(
+        run(
+            &mut fs,
+            &mut rng,
+            &mut state,
+            &plat.set_pin_req(b"123456"),
+            &mut out
+        ),
+        Err(CtapError::PinPolicyViolation)
+    );
+
+    let mut info = [0u8; 1024];
+    let n = crate::getinfo::get_info(false, 4, false, false, false, false, 256, &mut info).unwrap();
+    let mut d = minicbor::Decoder::new(&info[..n]);
+    let entries = d.map().unwrap().unwrap();
+    let mut advertised = None;
+    for _ in 0..entries {
+        if d.u32().unwrap() == 0x1B {
+            advertised = Some(d.bool().unwrap());
+        } else {
+            d.skip().unwrap();
+        }
+    }
+    assert_eq!(
+        advertised,
+        Some(refused),
+        "0x1B must say exactly whether a trivial PIN is refused"
+    );
+}
+
 #[test]
 fn forced_pin_change_blocks_tokens_until_change_pin() {
     let (mut fs, mut rng) = setup();
