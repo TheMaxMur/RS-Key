@@ -46,8 +46,13 @@ EXTENDS Naturals
 \* Supports `RSKeySecurityState!NoAccessibleSecretWithoutGate` — SEC-FIDO-004.
 \* Supports `RSKeySecurityState!NoUnmanageableCredential` — SEC-FIDO-005.
 
-(* Mutation switches. All FALSE is the shipped tree. *)
+(* Mutation switches, and the one scope constant. All FALSE is the shipped
+   tree. *)
 CONSTANTS
+    \* The FID domain. Two is the MEASURED minimum, not an argument:
+    \* `BugMetaAddDropsOnFault` is GREEN over one FID and RED from two, and
+    \* no mutant in this roster needs a third (formal/scopes.txt).
+    Fids,
     \* crates/rsk-fs/src/fs.rs:425-434 -- `Fs::delete` drops the metadata FIRST,
     \* then the value, so no cut inside it can leave value-gone-meta-alive
     \* (powercut.rs:43-51 `delete_landed`). The switch reverses the two writes.
@@ -72,17 +77,20 @@ CONSTANTS
     \* a FAILED EF_META read as fatal, because rebuilding the blob from an empty
     \* scratch would drop every other applet's record. The switch treats the
     \* faulted read as an empty blob, wiping them.
-    BugMetaAddDropsOnFault
+    BugMetaAddDropsOnFault,
+    \* fs.rs:565 -- `meta_delete` refuses a FAILED EF_META read (MemoryFatal)
+    \* rather than caching it as absence. The switch caches it, and the damage is
+    \* the write AFTER: `meta_add` trusts `known_absent` and rebuilds from empty.
+    BugMetaDeleteDropsOnFault
 
-\* Two FIDs is the smallest set that exercises every invariant: one to delete,
-\* one whose record a `meta_add` of the other must not wipe. Two VALUES so an
-\* overwrite is observable. `NoVal` is the absent sentinel -- distinct from both
-\* stored values, so "reads back absent" and "reads back v1" never collide.
-Fids  == {"a", "b"}
+\* Two VALUES so an overwrite is observable. `NoVal` is the absent sentinel --
+\* distinct from both stored values, so "reads back absent" and "reads back v1"
+\* never collide.
 Vals  == {"v1", "v2"}
 NoVal == "none"
 
-InvNames == { "NoOrphanedMetadata", "NoFalseAbsent", "NoRecordLostToMetaWrite" }
+InvNames == { "NoOrphanedMetadata", "NoFalseAbsent", "NoRecordLostToMetaWrite",
+              "NoFalseMetaAbsent" }
 
 VARIABLES
     val,      \* [Fids -> Vals \cup {NoVal}]: the value committed to flash
@@ -98,9 +106,13 @@ VARIABLES
     \* powercut_model.rs:47. Only `Delete` can set it (it is the only op with a
     \* cut point between two backend writes); a clean `Reboot` clears it.
     dead,
+    \* `known_absent(EF_META)`: EF_META's own presence cache, which the record
+    \* map above does not carry -- EF_META is the blob, not one of its records.
+    \* A `meta_add` trusts this bit and rebuilds from empty when it is set.
+    metaAbsent,
     viol      \* ghost: the set of invariant names some step has violated
 
-vars == << val, meta, present, decided, dead, viol >>
+vars == << val, meta, present, decided, dead, metaAbsent, viol >>
 
 TypeOK ==
     /\ val     \in [Fids -> Vals \cup {NoVal}]
@@ -108,6 +120,7 @@ TypeOK ==
     /\ present \in [Fids -> BOOLEAN]
     /\ decided \in [Fids -> BOOLEAN]
     /\ dead    \in BOOLEAN
+    /\ metaAbsent \in BOOLEAN
     /\ viol    \in SUBSET InvNames
 
 Live(f)  == val[f] # NoVal
@@ -121,6 +134,8 @@ Init ==
     /\ present = [f \in Fids |-> FALSE]
     /\ decided = [f \in Fids |-> FALSE]
     /\ dead    = FALSE
+    \* An empty store really has no EF_META, so the cache is honestly absent.
+    /\ metaAbsent = TRUE
     /\ viol    = {}
 
 (***************************************************************************)
@@ -136,7 +151,7 @@ Put(f, v) ==
     /\ val'     = [val     EXCEPT ![f] = v]
     /\ present' = [present EXCEPT ![f] = TRUE]
     /\ decided' = [decided EXCEPT ![f] = TRUE]
-    /\ UNCHANGED << meta, dead, viol >>
+    /\ UNCHANGED << meta, dead, metaAbsent, viol >>
 
 \* `Fs::meta_add_reserve` (fs.rs:525-551): rewrite EF_META with `fid`'s record
 \* added, EVERY OTHER record preserved. The one shape that must not happen is a
@@ -146,19 +161,37 @@ Put(f, v) ==
 \* offers it (a faulted `meta_add` on the shipped tree returns an error and
 \* changes nothing, so it is not a transition).
 MetaAdd(f) ==
-    \/ /\ meta' = [meta EXCEPT ![f] = TRUE]
-       /\ UNCHANGED << val, present, decided, dead, viol >>
+    \* The SHIPPED read: a cache that says EF_META is absent is trusted, and the
+    \* blob is rebuilt from empty (fs.rs:531-533). Correct while the cache is
+    \* honest -- which is what NoFalseMetaAbsent is for.
+    \/ /\ meta' = IF metaAbsent THEN [g \in Fids |-> g = f]
+                                 ELSE [meta EXCEPT ![f] = TRUE]
+       /\ metaAbsent' = FALSE
+       /\ viol' = viol \cup
+            (IF metaAbsent /\ \E g \in Fids : (g # f) /\ meta[g]
+               THEN {"NoRecordLostToMetaWrite"} ELSE {})
+       /\ UNCHANGED << val, present, decided, dead >>
     \/ /\ BugMetaAddDropsOnFault
        /\ meta' = [g \in Fids |-> g = f]
+       /\ metaAbsent' = FALSE
        /\ viol' = viol \cup
             (IF \E g \in Fids : (g # f) /\ meta[g]
                THEN {"NoRecordLostToMetaWrite"} ELSE {})
        /\ UNCHANGED << val, present, decided, dead >>
 
-\* `Fs::meta_delete` (fs.rs:554-584): drop `fid`'s record. A single backend op.
+\* `Fs::meta_delete` (fs.rs:556-586): drop `fid`'s record, and clear EF_META
+\* once the last one goes. A FAILED read of EF_META must refuse (fs.rs:565) --
+\* the switch caches it as absence instead, which is the door `meta_add`'s twin
+\* mutant does not reach: the loss happens on the NEXT write, not this one.
 MetaDelete(f) ==
-    /\ meta' = [meta EXCEPT ![f] = FALSE]
-    /\ UNCHANGED << val, present, decided, dead, viol >>
+    \/ /\ meta' = [meta EXCEPT ![f] = FALSE]
+       /\ metaAbsent' = \A g \in Fids : ~meta'[g]
+       /\ UNCHANGED << val, present, decided, dead, viol >>
+    \/ /\ BugMetaDeleteDropsOnFault
+       /\ metaAbsent' = TRUE
+       /\ viol' = viol \cup
+            (IF \E g \in Fids : meta[g] THEN {"NoFalseMetaAbsent"} ELSE {})
+       /\ UNCHANGED << val, meta, present, decided, dead >>
 
 (***************************************************************************)
 (* Delete -- the only op with a cut point, because it is two backend        *)
@@ -200,7 +233,7 @@ Delete(f) ==
                 (IF (meta'[f] = TRUE) /\ (val'[f] = NoVal)
                    THEN {"NoOrphanedMetadata"} ELSE {})
            /\ dead' = (k = 1)
-           /\ UNCHANGED decided
+           /\ UNCHANGED << decided, metaAbsent >>
 
 (***************************************************************************)
 (* The reader's cache maintenance, and the boot that rebuilds it. These are  *)
@@ -224,7 +257,7 @@ Confirm(f) ==
              \* a clean read caches the backend's real answer for `f`
              ELSE /\ present' = [present EXCEPT ![f] = Live(f)]
                   /\ decided' = [decided EXCEPT ![f] = TRUE]
-        /\ UNCHANGED << val, meta, dead, viol >>
+        /\ UNCHANGED << val, meta, dead, metaAbsent, viol >>
 
 \* `Fs::scan` (fs.rs:161-204): clear the caches, then walk the backend. `seen`
 \* is the set the walk yielded; `complete` is `for_each_key`'s completeness flag
@@ -242,7 +275,7 @@ Scan ==
               IF (complete \/ BugTruncatedScanDecidesAll)
                 THEN TRUE
                 ELSE f \in seen]
-        /\ UNCHANGED << val, meta, dead, viol >>
+        /\ UNCHANGED << val, meta, dead, metaAbsent, viol >>
 
 \* A power cycle: the medium survives, the RAM caches do not, the device is
 \* alive again. Durability is structural here -- Reboot never touches `val` or
@@ -252,6 +285,9 @@ Reboot ==
     /\ present' = [f \in Fids |-> FALSE]
     /\ decided' = [f \in Fids |-> FALSE]
     /\ dead'    = FALSE
+    \* `Fs::new` decides nothing, so `known_absent(EF_META)` is FALSE until a
+    \* read answers -- the fallback direction, never a carried-over absence.
+    /\ metaAbsent' = FALSE
     /\ UNCHANGED << val, meta, viol >>
 
 Next ==
@@ -294,5 +330,12 @@ NoFalseAbsent ==
 \* MetaAdd. (MetaDelete of `f` legitimately touches only `f`, so it is not a
 \* writer here.)
 NoRecordLostToMetaWrite == "NoRecordLostToMetaWrite" \notin viol
+
+\* SEC-STORE-004. EF_META's presence cache may say "absent" only when it really
+\* is: `meta_add` TRUSTS this bit and rebuilds the blob from empty (fs.rs:531),
+\* so a false absent here loses every record on the next write rather than this
+\* one. A step recorder, because the losing write is legitimate once the cache
+\* has lied -- no state predicate over `meta` can tell the two apart.
+NoFalseMetaAbsent == "NoFalseMetaAbsent" \notin viol
 
 =============================================================================

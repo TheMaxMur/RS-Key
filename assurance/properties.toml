@@ -249,6 +249,13 @@ source = ["docs/threat-model.md"]
 # ---- RSKeyRetryLattice — the PIV/OpenPGP retry & recovery budget lattice -----
 
 [[property]]
+id = "SEC-STORE-004"
+name = "NoFalseMetaAbsent"
+status = "MODELLED-ONLY"
+statement = "EF_META's own presence cache reports absence only when no metadata record exists."
+source = ["docs/architecture.md"]
+
+[[property]]
 id = "SEC-LAT-001"
 name = "NoAuthWhenBlocked"
 status = "MODELLED-ONLY"

@@ -40,6 +40,37 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Added
 
+- **Five more `rsk-fs` paths the suite could not tell from broken.** The same
+  reverse pass that found the `meta_delete` guard flagged the boot scan's
+  dynamic-file registry (three separate mutations), `has_data`'s zero-length
+  test, `factory_wipe`'s 64-key batch bound and `delete`'s registry retain — all
+  on lines the model cites, none killed by any test. These are closed as test
+  gaps rather than model gaps on purpose: the capacity budget's bookkeeping and a
+  loop bound are not what `RSKeyStore` carries. Four tests own them, each proved
+  by driving its real mutation with the whole suite watched — six for six,
+  exactly one failure each, always the intended test. One of the six SURVIVED the
+  first attempt because the new test asserted a *count*: the inverted retain
+  keeps one entry too, just the wrong one, so the registry listed a deleted key
+  and had dropped a live one while the number held. Re-writing the survivor is
+  what separates them. No firmware behaviour change.
+
+- **A faulted `meta_delete` could cache EF_META as absent, and nothing at either
+  level held it.** `Fs::meta_add_reserve` refuses a FAILED EF_META read; its
+  sibling `Fs::meta_delete` has the identical guard and no test killed its
+  removal, while the model's `MetaDelete` was an unconditional write with no read
+  to fail. The damage lands on the *next* write, not the delete: a cached false
+  absence makes `meta_add` trust `known_absent` and rebuild the blob from empty,
+  dropping every other applet's record. Closed at both levels — the model gains
+  `metaAbsent`, the fault disjunct and `NoFalseMetaAbsent` (SEC-STORE-004, a step
+  recorder, because once the cache has lied the losing write is correct code),
+  and `a_faulted_ef_meta_read_never_caches_the_blob_as_absent` closes the Rust
+  half with the co-refutation patch measured `killed`. Found by running
+  co-refutation **backwards** for the first time: `cargo-mutants`' MISSED set
+  intersected with the lines the model itself cites — 394 mutants, 88 missed, 12
+  on a modelled line, of which this was the sharpest. The tree as shipped is
+  correct; this closes the hole that let a regression through unseen. No firmware
+  behaviour change.
+
 - **The FIDO security model runs at the firmware's own PIN constants now.**
   `MaxRetries` : `MismatchLimit` was 3 : 2 against a shipped `MAX_PIN_RETRIES`
   8 : `PIN_MISMATCH_LIMIT` 3, and the gap was the largest recorded caveat on the

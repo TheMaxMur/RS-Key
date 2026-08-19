@@ -5,13 +5,15 @@
 \* green by being too SMALL TO EXPRESS the defect it claims to catch.
 \*
 \* `floors.txt` asks whether a run shrank. This asks the question one level out,
-\* and it is not hypothetical: TWO of the mutants measured here are
+\* and it is not hypothetical: THREE of the fifty-three mutants measured here are
 \* GREEN one element below the shipped scope and RED at it.
 \*
 \*   BugCmWalkIgnoresChannel  needs a second CTAPHID channel -- the credential
 \*                            walk it hijacks has to belong to someone else
 \*   BugContIgnoresChannel    needs a second channel for the same reason one
 \*                            layer down, at the reassembler
+\*   BugMetaAddDropsOnFault   needs a second FID: one to `meta_add`, one whose
+\*                            record must survive it
 \*
 \* Until this file nothing stopped those domains being narrowed to a singleton,
 \* and all three rows would have stayed GREEN over a live defect.
@@ -59,7 +61,8 @@ RSKeySecurityState     MismatchLimit          -   -
 \* Already at its floor: the reset window is modelled at its narrowest.
 RSKeySecurityState     ResetWindow            0   NoAuthorizationBypass
 
-\* --- the module that carries the other witness ------------------------------
+\* --- the modules that carry the other two witnesses -------------------------
+RSKeyStore             Fids                   2   NoRecordLostToMetaWrite
 RSKeyTransport         Channels               2   NoCrossChannelSplice
 \* The module's own precondition is Cap >= 2, and all three mutants fire there.
 RSKeyTransport         Cap                    2   NoBufferOverrun

@@ -552,6 +552,23 @@ slice = ["cargo", "test", "-p", "rsk-fs"]
 expect = "killed"
 note = "audit run-36: record_unless_faulted caches unconditionally, so one transient backend fault becomes a decided absence for the rest of the boot and every gate that reads has_data opens."
 
+[comutant.BugMetaDeleteDropsOnFault]
+status = "patch"
+file = "crates/rsk-fs/src/fs.rs"
+find = """
+            None if self.storage.last_error() => return Err(Error::MemoryFatal),
+            None => {
+                self.mark_absent(EF_META);
+"""
+replace = """
+            None if false => return Err(Error::MemoryFatal),
+            None => {
+                self.mark_absent(EF_META);
+"""
+slice = ["cargo", "test", "-p", "rsk-fs"]
+expect = "killed"
+note = "found by the reverse direction (D2): cargo-mutants reported this guard MISSED on a line the model itself cites, and the model had no MetaDelete fault branch to catch it either. A faulted EF_META read cached as absence loses every record on the NEXT meta_add, which trusts known_absent and rebuilds from empty."
+
 [comutant.BugTruncatedScanDecidesAll]
 status = "patch"
 file = "crates/rsk-fs/src/fs.rs"

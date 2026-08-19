@@ -372,6 +372,125 @@ fn a_faulted_ef_meta_read_never_rebuilds_the_blob_from_empty() {
 }
 
 #[test]
+fn requesting_a_rescrub_clears_the_hardened_marker() {
+    // `MarkerNeverLies` — SEC-BOOT-001 at the code level. Every lazy re-key must
+    // re-arm the at-rest lap, and run-35 found four of five sites skipping it.
+    // The model catches the removal (`BugRekeyKeepsTheMarker`); nothing here did,
+    // so the one place the re-arm actually happens was asserted by no test.
+    let mut fs = fs();
+    fs.put(crate::EF_HARDENED, b"\x01").unwrap();
+    assert!(fs.has_data(crate::EF_HARDENED));
+    crate::request_rescrub(&mut fs);
+    assert!(
+        !fs.has_data(crate::EF_HARDENED),
+        "a rescrub request must clear the marker, or the lap never runs again"
+    );
+}
+
+#[test]
+fn a_boot_scan_registers_every_dynamic_key_and_neither_shared_record() {
+    // The registry `scan` rebuilds is the capacity budget every later `put`
+    // spends. Three mutations of this loop survived the suite (D2): an inverted
+    // EF_META test, and two ways of never reaching the `push`. All three leave
+    // the budget claiming the store is empty, so the cap stops binding.
+    let mut st = RamStorage::new();
+    st.write(0xCC10, b"one").unwrap();
+    st.write(0xCC11, b"two").unwrap();
+    st.write(EF_META, b"\x00").unwrap();
+    st.write(EF_SCRUB_FILLER, b"filler").unwrap();
+    let mut fs = Fs::new(st);
+    fs.scan();
+    assert_eq!(
+        fs.free_dynamic(),
+        MAX_DYNAMIC_FILES - 2,
+        "scan must register both dynamic keys and neither shared record"
+    );
+}
+
+#[test]
+fn a_delete_frees_its_own_registration_and_no_other() {
+    // `retain(|f| f != fid)` inverted keeps ONLY the deleted key and drops every
+    // other registration — the budget then reads as free while the keys are live.
+    let mut fs = fs();
+    fs.put(0xCC10, b"one").unwrap();
+    fs.put(0xCC11, b"two").unwrap();
+    assert_eq!(fs.free_dynamic(), MAX_DYNAMIC_FILES - 2);
+    fs.delete(0xCC10).unwrap();
+    // Counting is not enough: the inverted retain keeps exactly one entry too,
+    // just the WRONG one. Re-writing the survivor is what tells them apart —
+    // it must already be registered, so the budget does not move.
+    fs.put(0xCC11, b"again").unwrap();
+    assert_eq!(
+        fs.free_dynamic(),
+        MAX_DYNAMIC_FILES - 1,
+        "the surviving key must keep its registration, not be re-registered"
+    );
+}
+
+#[test]
+fn an_empty_record_is_not_data() {
+    // `has_data` is the gate several applets read as "provisioned". A zero-length
+    // record is a record, not data — audit run-35 is what an empty record read as
+    // content costs one layer up.
+    let mut fs = fs();
+    fs.put(0xCC10, b"").unwrap();
+    assert!(
+        !fs.has_data(0xCC10),
+        "a zero-length record must not read as data"
+    );
+    fs.put(0xCC10, b"x").unwrap();
+    assert!(fs.has_data(0xCC10), "a one-byte record must");
+}
+
+#[test]
+fn a_factory_wipe_clears_more_keys_than_one_batch_holds() {
+    // `factory_wipe` deletes in 64-key batches. Nothing drove it past the first
+    // one, so the bound that keeps `batch[n]` in range was untested — and the
+    // mutation that breaks it is an out-of-bounds index, not a wrong answer.
+    let mut fs = fs();
+    for i in 0..150u16 {
+        fs.put(0xCC00 + i, b"x").unwrap();
+    }
+    fs.factory_wipe(|_| false, |_| false, |_| false).unwrap();
+    for i in 0..150u16 {
+        assert!(
+            !fs.has_data(0xCC00 + i),
+            "0x{:04X} survived the wipe",
+            0xCC00 + i
+        );
+    }
+    assert_eq!(fs.free_dynamic(), MAX_DYNAMIC_FILES);
+}
+
+#[test]
+fn a_faulted_ef_meta_read_never_caches_the_blob_as_absent() {
+    // `meta_delete`'s half of the same rule, and the one nothing held: a FAILED
+    // EF_META read must refuse, never `mark_absent(EF_META)`. Caching that
+    // false-absent is worse than losing the delete — the NEXT `meta_add` trusts
+    // `known_absent` and rebuilds the blob from empty, dropping every record.
+    let mut fs = fs();
+    fs.meta_add(0xB000, b"keep-me").unwrap();
+    let ram = fs.into_storage();
+    let mut fs2 = Fs::new(FailFirstRead {
+        inner: ram,
+        remaining: 1,
+        err: false,
+    });
+    assert!(
+        fs2.meta_delete(0xB004).is_err(),
+        "a meta_delete over a faulted EF_META read must refuse, not cache absence"
+    );
+    // The false-absent would show here: a clean meta_add after the fault must
+    // still find the committed record, not rebuild over it.
+    fs2.meta_add(0xB008, b"new").unwrap();
+    assert_eq!(
+        fs2.meta_find(0xB000, &mut [0u8; 16]),
+        Some(7),
+        "the record must survive a faulted meta_delete and the write after it"
+    );
+}
+
+#[test]
 fn absent_delete_never_touches_the_backend() {
     // A backend `remove` of an absent FID scans the whole flash partition
     // (and writes a tombstone) on sequential-storage. The present-cache MUST

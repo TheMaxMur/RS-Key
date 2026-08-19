@@ -551,6 +551,8 @@ impl<S: Storage> Fs<S> {
     }
 
     /// Remove the metadata for `fid` (clears EF_META once empty).
+    ///
+    /// Refines `RSKeyStore!NoFalseMetaAbsent` — SEC-STORE-004.
     pub fn meta_delete(&mut self, fid: u16) -> Result<()> {
         if self.known_absent(EF_META) {
             return Ok(()); // confirmed no meta blob → nothing to drop
