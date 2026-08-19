@@ -170,16 +170,44 @@ pub fn build_attestation_cert(key: &P256Key, serial: &[u8; 16], out: &mut [u8]) 
 
 /// Caps for an org-provisioned attestation chain (vendor ATT_IMPORT).
 ///
-/// Derived from the store's own per-value ceiling, not picked: the packed record
-/// is what lands in flash, so a cap chosen independently lets an in-spec import
-/// fail at the write and strand a key with no chain (audit run-32).
+/// **Three independent ceilings bind a stored chain, and the cap is the tightest
+/// of them.** Naming only one is how this went wrong twice: audit run-32 found a
+/// hand-picked cap letting an in-spec import fail at the flash write, and tying
+/// the cap to the store alone then let it drift past two ceilings nothing else
+/// expressed — when `MAX_VALUE_BYTES` doubled for reasons internal to the store,
+/// the accepted chain doubled with it. Add a ceiling here rather than guarding it
+/// at one call site: a limit enforced on one path only becomes a limit that
+/// depends on how the caller authenticated.
 pub(crate) const ATT_CHAIN_MAX_CERTS: usize = 4;
-pub(crate) const ATT_CHAIN_MAX: usize = rsk_fs::MAX_VALUE_BYTES - 1 - 2 * ATT_CHAIN_MAX_CERTS;
+
+/// It has to land in one store value — the packed record is what reaches flash.
+const CHAIN_CAP_STORE: usize = rsk_fs::MAX_VALUE_BYTES - 1 - 2 * ATT_CHAIN_MAX_CERTS;
+/// It has to fit the pinUvAuth MAC scratch, or a PIN-protected import is refused
+/// `RequestTooLarge` for a chain a PIN-less one would take.
+const CHAIN_CAP_MAC: usize = crate::vendor::MAX_RAW_SUBPARA - crate::vendor::ATT_SUBPARA_OVERHEAD;
+/// Every credential it attests has to fit one CTAPHID message.
+const CHAIN_CAP_RESPONSE: usize =
+    crate::consts::MAX_MSG_SIZE as usize - crate::makecredential::MC_RESPONSE_SANS_CHAIN;
+
+const fn min3(a: usize, b: usize, c: usize) -> usize {
+    let ab = if a < b { a } else { b };
+    if ab < c { ab } else { c }
+}
+
+pub(crate) const ATT_CHAIN_MAX: usize = min3(CHAIN_CAP_STORE, CHAIN_CAP_MAC, CHAIN_CAP_RESPONSE);
 
 /// Max packed `EF_ATT_CHAIN` record: `count(1) ‖ (len(2 LE) ‖ der)*`.
 pub(crate) const ATT_CHAIN_REC_MAX: usize = ATT_CHAIN_MAX + 1 + 2 * ATT_CHAIN_MAX_CERTS;
 
 const _: () = assert!(ATT_CHAIN_REC_MAX <= rsk_fs::MAX_VALUE_BYTES);
+// The response ceiling is the one with no runtime guard behind it: a chain that
+// overshoots it mints a reply CTAPHID cannot carry, and the platform sees only
+// `CTAP1_ERR_OTHER`. Fail the build instead.
+const _: () = assert!(
+    crate::makecredential::MC_RESPONSE_SANS_CHAIN + ATT_CHAIN_MAX
+        <= crate::consts::MAX_MSG_SIZE as usize,
+    "worst-case makeCredential no longer fits the CTAPHID message ceiling",
+);
 
 /// Total length of the DER TLV at the head of `b` (SEQUENCE tag), or `None`.
 fn der_seq_len(b: &[u8]) -> Option<usize> {
@@ -223,6 +251,17 @@ pub(crate) fn att_chain_pack(chain: &[u8], out: &mut [u8]) -> Option<usize> {
 /// Number of certificates in a packed chain.
 pub(crate) fn att_chain_count(blob: &[u8]) -> u8 {
     blob.first().copied().unwrap_or(0)
+}
+
+/// Whether every certificate the count promises actually resolves inside `blob`.
+///
+/// A record stored under an older, larger `ATT_CHAIN_MAX` reads back truncated
+/// into today's buffer with its original count intact, so the count alone says
+/// nothing. Checking the ranges lets the caller fall back to device attestation
+/// instead of failing the registration outright.
+pub(crate) fn att_chain_intact(blob: &[u8]) -> bool {
+    let n = att_chain_count(blob);
+    n > 0 && (0..n).all(|i| att_chain_cert_range(blob, i).is_some())
 }
 
 /// Byte range of the `i`-th certificate in a packed chain.

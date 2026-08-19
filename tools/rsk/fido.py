@@ -12,12 +12,14 @@ from getpass import getpass
 
 from .common import add_pin_arg, device_has_pin, die, die_ctap_pin_error, resolve_pin, sanitize
 
-#: Largest attestation chain the device stores — `rsk_fido::cert::ATT_CHAIN_MAX`,
-#: i.e. `rsk_fs::MAX_VALUE_BYTES - 1 - 2 * ATT_CHAIN_MAX_CERTS` = 4078 − 1 − 8. It
-#: used to be a flat 2048; when the ceiling moved to what a flash record actually
-#: holds, this pre-flight check kept the old number, so a chain in the 11-byte gap
-#: passed here and was refused by the device as a bare CTAP error.
-ATT_CHAIN_MAX = 4069
+#: Largest attestation chain the device accepts — `rsk_fido::cert::ATT_CHAIN_MAX`,
+#: the tightest of three ceilings: the store's per-value cap, the pinUvAuth MAC
+#: scratch (`MAX_RAW_SUBPARA - ATT_SUBPARA_OVERHEAD`), and what leaves room for the
+#: worst-case makeCredential inside `maxMsgSize`. The MAC scratch binds today. Kept
+#: here so `attestation import` refuses an over-long chain before it touches the
+#: device; `test_att_chain_max_still_matches_the_firmware` re-derives it from the
+#: Rust sources so this number cannot drift.
+ATT_CHAIN_MAX = 2132
 
 #: authenticatorConfig vendorPrototype id for the vendor-facilitated (type 1)
 #: enterprise-attestation RP list — `rsk_fido::consts::CONFIG_EA_RPIDS`.

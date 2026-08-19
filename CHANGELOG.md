@@ -38,6 +38,23 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+### Fixed
+
+- **The accepted attestation-chain length depended on whether a PIN was set.**
+  `MAX_RAW_SUBPARA` is scratch for the pinUvAuth MAC, so its length check sits on
+  the PIN branch — a PIN-less `ATT_IMPORT` accepted chains a PIN-protected one
+  refused `CTAP2_ERR_REQUEST_TOO_LARGE`. `ATT_CHAIN_MAX` had been tied to the
+  store's per-value ceiling alone (audit run-32's fix), so when `MAX_VALUE_BYTES`
+  later doubled for reasons internal to the store, the accepted chain doubled with
+  it — past that MAC buffer and, once ML-DSA-87 widened the COSE key by 640 bytes,
+  past the CTAPHID response ceiling too. It is now the tightest of its three real
+  ceilings (store, MAC scratch, worst-case makeCredential response), applied in
+  `att_chain_pack` where both paths pass, and held by a build-time assert. The cap
+  falls 4069 → 2132 bytes. A device already holding a longer chain keeps
+  registering: the chain now has to parse intact to be used, so a truncated read
+  falls back to device attestation instead of failing the registration —
+  re-import within the new cap, or `ATT_CLEAR`, to restore org attestation.
+
 ### Added
 
 - **ML-DSA-87 (COSE `-50`), the NIST category-5 parameter set.** All three FIPS 204

@@ -70,9 +70,16 @@ pub fn take_phy_written() -> bool {
     PHY_WRITTEN.swap(false, Ordering::Relaxed)
 }
 
-// Sized for ATT_IMPORT's wrapped key + a full cert chain (≤ 2048 B); every
-// other subcommand stays tiny. The pinUvAuth MAC covers these bytes verbatim.
-const MAX_RAW_SUBPARA: usize = 2200;
+/// Scratch for the pinUvAuth MAC message, which covers `subCommandParams`
+/// verbatim — so it caps how long those params may be. **This is a buffer guard,
+/// and it only exists on the PIN branch**; for years that made the accepted
+/// attestation-chain length depend on whether a PIN was set. `cert::ATT_CHAIN_MAX`
+/// now folds this ceiling in, so the limit is applied where BOTH paths pass.
+pub(crate) const MAX_RAW_SUBPARA: usize = 2200;
+/// What `att_import`'s `subCommandParams` costs around the chain itself: map
+/// header, both keys, the 60-byte wrapped scalar and its header, and a
+/// long-form byte-string header for the chain.
+pub(crate) const ATT_SUBPARA_OVERHEAD: usize = 1 + 1 + 2 + 60 + 1 + 3;
 
 #[derive(Default)]
 struct Req<'a> {

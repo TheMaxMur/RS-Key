@@ -74,6 +74,22 @@ const _: () = assert!(
     "authData buffer too small for the ML-DSA-87 worst case",
 );
 
+/// The worst-case makeCredential response **minus** the attestation chain: every
+/// byte the chain must share `maxMsgSize` with. [`cert::ATT_CHAIN_MAX`] subtracts
+/// this from the transport ceiling, so growing any term here shrinks the chain the
+/// device accepts rather than letting it mint a response CTAPHID cannot carry.
+/// ML-DSA-87's 2592-byte key is what made this tight: at ML-DSA-65 there were 640
+/// bytes of slack and the arithmetic never had to be written down.
+pub(crate) const MC_RESPONSE_SANS_CHAIN: usize = 1 // response map header
+    + 8 // 1: fmt "packed"
+    + 4 // 2: key + authData byte-string header
+    + AUTH_DATA_HEADER + CRED_BOX_MAX + COSE_AKP_MLDSA87_MAX + MC_EXT_MAX
+    + 1 + 1 // 3: key + attStmt map header
+    + 7 // "alg" + value
+    + 4 + 2 + crate::ec::MAX_DER_SIG // "sig" + header + signature
+    + 4 + 1 // "x5c" + array header
+    + 3 * cert::ATT_CHAIN_MAX_CERTS; // one byte-string header per certificate
+
 /// Map a requested COSE alg to the `(alg, curve)` the credential is created with,
 /// or `None` if unsupported. The alg returned is the one the platform **asked
 /// for**: the curve-explicit ids (`-9`/`-19`/`-51`/`-52`) share their key material
@@ -907,7 +923,11 @@ fn make_attestation<S: Storage, R: Rng>(
             .fs
             .read(EF_ATT_CHAIN, &mut att.chain[..])
             .map(|n| n.min(att.chain.len()))
-            .filter(|&n| cert::att_chain_count(&att.chain[..n]) > 0)
+            // Intact, not merely non-empty: a chain stored under an older, larger
+            // cap reads back truncated with its count intact, and emitting it would
+            // fail the whole registration. Falling through here attests with the
+            // device key instead, so an upgraded device still registers.
+            .filter(|&n| cert::att_chain_intact(&att.chain[..n]))
             .ok_or(CtapError::Other)?;
         let count = cert::att_chain_count(&att.chain[..cl]);
         Ok((sl, cl, count))

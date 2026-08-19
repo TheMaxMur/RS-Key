@@ -416,6 +416,74 @@ fn att_import_state_clear_roundtrip() {
     );
 }
 
+/// Build `n` fake DER SEQUENCEs of `body` bytes each, long-form length.
+fn fake_chain(n: usize, body: usize, out: &mut [u8]) -> usize {
+    let mut dst = 0;
+    for _ in 0..n {
+        out[dst] = 0x30;
+        out[dst + 1] = 0x82;
+        out[dst + 2..dst + 4].copy_from_slice(&(body as u16).to_be_bytes());
+        out[dst + 4..dst + 4 + body].fill(0x41);
+        dst += 4 + body;
+    }
+    dst
+}
+
+/// **Regression for the PIN-dependent chain cap.** `MAX_RAW_SUBPARA` is a scratch
+/// buffer for the pinUvAuth MAC, so its length check lived on the PIN branch only:
+/// a PIN-less device accepted chains a PIN-protected one refused `RequestTooLarge`,
+/// and a long enough one minted a makeCredential reply CTAPHID could not carry.
+/// `ATT_CHAIN_MAX` now folds that ceiling in, and `att_chain_pack` runs before
+/// either gate — so the answer no longer depends on how the caller authenticated.
+/// Both halves assert the SAME verdict on the SAME request; that is the point.
+#[test]
+fn oversized_chain_is_refused_the_same_with_and_without_a_pin() {
+    let mut chain = [0u8; 3600];
+    let clen = fake_chain(3, 1196, &mut chain);
+    assert!(
+        clen > crate::cert::ATT_CHAIN_MAX,
+        "the probe must exceed the cap"
+    );
+
+    for pin in [false, true] {
+        let (mut fs, mut rng, mut st) = setup();
+        let host = handshake(&mut fs, &mut rng, &mut st);
+        let blob = wrap32(&host, &[0x21u8; 32]);
+        if pin {
+            fs.put(EF_PIN, &[8, 4, 1]).unwrap();
+        }
+        let mut req = [0u8; 4096];
+        let n = att_import_req(&mut req, &blob, &chain[..clen]);
+        let mut out = [0u8; 128];
+        let r = call(
+            &mut fs,
+            &mut rng,
+            &mut st,
+            &mut AlwaysConfirm,
+            &req[..n],
+            &mut out,
+        );
+        assert_eq!(
+            r,
+            Err(CtapError::InvalidParameter),
+            "chain of {clen} B, pin={pin}: refused by att_chain_pack either way"
+        );
+    }
+}
+
+/// The cap is the tightest of three ceilings, so the worst-case makeCredential
+/// reply fits one CTAPHID message with room to spare. A build-time assert in
+/// `cert.rs` holds the invariant; this states the margin in one place a reader
+/// will find it.
+#[test]
+fn the_widest_credential_fits_one_ctaphid_message() {
+    let worst = crate::makecredential::MC_RESPONSE_SANS_CHAIN + crate::cert::ATT_CHAIN_MAX;
+    assert!(
+        worst <= crate::consts::MAX_MSG_SIZE as usize,
+        "worst-case makeCredential {worst} B exceeds maxMsgSize"
+    );
+}
+
 #[test]
 fn att_import_without_pin_demands_the_named_confirmation() {
     // A PIN-less device waives `gate`'s PIN half, and MSE is ungated — so the whole
