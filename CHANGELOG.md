@@ -40,6 +40,21 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Added
 
+- **The device-config cap's arithmetic is 18 bytes of slack, and the test that
+  looked like it pinned it measured the cap against itself.**
+  `EF_DEV_CONF_MAX = MIN_CONFIG_RES_CAP - CONFIG_TLV_FIXED` is documented as
+  making the writer's cap and the smallest transport's response meet exactly, and
+  nineteen mutations of that arithmetic all survived. Five are equivalent — the
+  capability bits are disjoint, so `|` and `^` agree. The other fourteen move the
+  cap only within 28..46, and every one of them is above the widest record the
+  writer's *own* validator accepts: since `well_formed_writable` gained per-tag
+  widths (run-34 #25) that is 24 bytes against a 42-byte cap. The existing edge
+  test sizes its blob **by the cap**, so it can only observe that the cap equals
+  itself, and its over-wide entry fails the read gate and routes to the
+  synthesised fallback rather than the echo path it means to exercise. The new
+  test scans the writable tag set instead, so the record widens with it, and
+  asserts both halves against it. No firmware behaviour change.
+
 - **The panel's key grids and the certificate date helper were both untested.**
   Thirteen `rsk-ui` rows are the touch hit-test — loop bounds in `hit_pin` and
   `hit_rename`, both `+` in `t9_key_rect`, the centring in `T9_LEFT`, and

@@ -109,7 +109,9 @@ const EF_DEV_CONF: u16 = 0x1122;
 /// bytes — minus the fixed part of the DeviceInfo TLV, so a stored blob can never
 /// be one a consumer must silently drop. Sizing the writer against its own scratch
 /// instead is what let a 43-byte config wedge OTP-HID READ CONFIG into an empty
-/// success response, persistently (audit run-33).
+/// success response, persistently (audit run-33). It is slack rather than a bound
+/// today: `well_formed_writable`'s per-tag widths (run-34 #25) hold a storable
+/// record to 24 bytes, so only an unbounded writable tag makes this bind again.
 const EF_DEV_CONF_MAX: usize = MIN_CONFIG_RES_CAP - CONFIG_TLV_FIXED;
 
 /// Largest WRITE CONFIG request accepted, before the lock tags are stripped. A

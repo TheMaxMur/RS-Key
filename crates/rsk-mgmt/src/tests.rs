@@ -948,3 +948,67 @@ fn a_full_width_legacy_record_still_accepts_a_write_that_adds_a_tag() {
         "a full-width stored record vetoed the owner's write"
     );
 }
+
+/// `EF_DEV_CONF_MAX` is derived from the smallest response buffer so that "a stored
+/// blob can never be one a consumer must silently drop" — a claim that only holds
+/// while the cap is at or above the widest record the *writer's own validator*
+/// accepts. That side was never checked, and it is the side that moves: since
+/// `well_formed_writable` gained a per-tag width table (audit run-34 #25) the widest
+/// storable record is 24 bytes against a 42-byte cap, so the cap's arithmetic can
+/// drift 18 bytes in either direction unobserved. The tag set is scanned rather than
+/// listed, so a new writable tag joins the record instead of ageing beside it.
+#[test]
+fn the_widest_record_the_validator_accepts_is_stored_and_echoed_whole() {
+    let widest: Vec<u8> = (0u8..=255)
+        .filter(|&t| writable_tag(t))
+        // The lock tags never reach flash (`strip_config_lock`), so they cannot
+        // widen the stored record however wide the request is.
+        .filter(|&t| t != TAG_CONFIG_LOCK && t != TAG_CONFIG_UNLOCK)
+        .flat_map(|t| {
+            let len = match max_value_len(t) {
+                Some(max) => max,
+                // `USB_ENABLED` carries its exact width at the call site instead of
+                // in the table. Any *other* unbounded writable tag makes the stored
+                // record as wide as a host cares to send, which is the one way the
+                // cap becomes the binding constraint again.
+                None if t == TAG_USB_ENABLED => 2,
+                None => panic!("writable tag {t:#04x} has no width bound"),
+            };
+            let mut e = vec![t, len as u8];
+            e.extend(core::iter::repeat_n(0u8, len));
+            e
+        })
+        .collect();
+    assert!(well_formed_writable(&widest));
+    assert!(
+        widest.len() <= EF_DEV_CONF_MAX,
+        "cap {EF_DEV_CONF_MAX} is below the {}-byte record the validator accepts",
+        widest.len()
+    );
+
+    let mut fs = fs();
+    persist_dev_conf(&mut fs, &widest).unwrap();
+    let mut stored = [0u8; EF_DEV_CONF_READ_MAX];
+    let n = fs.read(EF_DEV_CONF, &mut stored).unwrap();
+    assert_eq!(
+        &stored[..n],
+        &widest[..],
+        "the cap trimmed a record its own validator accepts"
+    );
+
+    // …and the smallest transport still echoes every entry of it.
+    let mut body = [0u8; MIN_CONFIG_RES_CAP];
+    let mut res = ResBuf::new(&mut body);
+    assert_eq!(config_tlv(&[0; 4], &mut fs, &mut res), Sw::OK);
+    let echoed = &res.as_slice()[1..];
+    let mut i = 0;
+    while i + 2 <= widest.len() {
+        let (tag, len) = (widest[i], widest[i + 1] as usize);
+        assert_eq!(
+            tlv_get(echoed, tag).map(<[u8]>::len),
+            Some(len),
+            "the smallest response dropped tag {tag:#04x}"
+        );
+        i += 2 + len;
+    }
+}
