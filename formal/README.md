@@ -491,6 +491,23 @@ shipped semantics is *replacement*, not merging. Reading the stored record
 directly (`tests.rs` is a `#[path]` child module, so the applet's own
 `read_slot_m` is in reach) and asserting the byte stands alone kills both.
 
+`rsk-otp` is fully triaged now — all 25 of its rows on cited lines. **20 killed**
+by four tests, **3 equivalent**, **2 unviable** (they do not compile, which is
+the verdict `cargo-mutants` gives them too). The eight that closed together are
+UPDATE's own validation: the slot bound, the length floor, both RFU bytes, the
+CRC and the `base + p2` that decides which slot is addressed at all. Every one
+of those rules is already pinned on the CONFIGURE path by
+`configure_validates_crc_and_rfu`, and UPDATE repeats all of them and had none —
+**the third time in this pass that a rule was tested one door over and not
+here.**
+
+The three equivalents are worth their own line, because they look like the
+dangerous kind. `merged[X] = (stored[X] & !MASK) | (data[X] & MASK)` folds two
+operands that live on **complementary bit sets**, so `|` and `^` cannot
+disagree; the mutation is real, the behaviour is not. All three of the crate's
+`| → ^` rows are that shape, and the three `delete !` rows beside them — which
+break the complement and therefore the disjointness — all fall.
+
 One more from the same crate, and it is the conjunction rather than the mask:
 `cfg & CFG_CHAL_YUBICO != 0 && tkt & TKT_CHAL_RESP != 0` is what makes a
 challenge-response slot type nothing on a press. Relaxed to `||` it silences a

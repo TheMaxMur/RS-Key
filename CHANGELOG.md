@@ -40,6 +40,16 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Added
 
+- **`SLOT_UPDATE` repeated every CONFIGURE validation rule and had none of
+  them.** The slot bound, the length floor, both RFU bytes, the CRC and the
+  `base + p2` that decides which slot is addressed — eight mutations, all
+  surviving, every rule already pinned on the CONFIGURE path by
+  `configure_validates_crc_and_rfu`. One test closes all eight. That completes
+  `rsk-otp`: all 25 of its rows on cited lines are triaged — 20 killed by four
+  tests, 3 equivalent (`(stored & !MASK) | (data & MASK)` folds complementary
+  bit sets, so `|` and `^` cannot disagree), 2 unviable. No firmware behaviour
+  change.
+
 - **The OTP slot's third flag merge was observable nowhere.** `SLOT_UPDATE`
   merges `ext`, `tkt` and `cfg` each under its own update mask, and the existing
   test pins two of them through `status-ext` — which carries no ext byte, so

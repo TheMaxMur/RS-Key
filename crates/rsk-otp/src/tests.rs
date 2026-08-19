@@ -485,6 +485,70 @@ fn update_merges_flag_masks_only() {
 }
 
 #[test]
+fn update_validates_slot_bounds_crc_and_rfu() {
+    // `configure_validates_crc_and_rfu` pins these rules on the CONFIGURE path.
+    // UPDATE repeats every one of them — slot bound, length floor, both RFU
+    // bytes, the CRC — and had none of them: seven mutations of that validation
+    // survived the suite (the reverse pass, D2). The third time this session
+    // that a rule was already tested one door over.
+    let mut fs = new_fs();
+    let presence = RefCell::new(AlwaysConfirm);
+    let rng = RefCell::new(CountRng(7));
+    let mut app = OtpApplet::new(SERIAL, SERIAL_HASH, None, &rng, &presence);
+    let good = build_config(b"public", &[3; 6], &[4; 16], &[0; 6], 0, TKT_APPEND_CR, 0);
+    let with_acc = |c: &[u8; CONFIG_SIZE]| {
+        let mut d = c.to_vec();
+        d.extend_from_slice(&[0; 6]);
+        d
+    };
+
+    // Past the last slot, and exactly at it: the bound is `>`, not `>=`.
+    let (sw, _) = run(
+        &mut app,
+        &mut fs,
+        &otp_apdu(0x04, SLOT_COUNT as u8, &with_acc(&good)),
+    );
+    assert_eq!(sw, Sw::INCORRECT_P1P2, "one past the last slot");
+    let (sw, _) = run(
+        &mut app,
+        &mut fs,
+        &otp_apdu(0x04, SLOT_COUNT as u8 - 1, &with_acc(&good)),
+    );
+    assert_ne!(sw, Sw::INCORRECT_P1P2, "the last slot is addressable");
+
+    // The length floor is `<`: exactly CONFIG_SIZE is enough.
+    let (sw, _) = run(&mut app, &mut fs, &otp_apdu(0x04, 0, &[0u8; 20]));
+    assert_eq!(sw, Sw::WRONG_LENGTH, "a body under CONFIG_SIZE");
+    let (sw, _) = run(&mut app, &mut fs, &otp_apdu(0x04, 0, &good[..]));
+    assert_ne!(sw, Sw::WRONG_LENGTH, "exactly CONFIG_SIZE is a body");
+
+    // Each RFU byte alone, and the CRC alone, must refuse.
+    for (label, idx) in [("first", OFF_RFU), ("second", OFF_RFU + 1)] {
+        let mut bad = good;
+        bad[idx] = 1;
+        let crc = !crc16(&bad[..CONFIG_SIZE - 2]);
+        bad[CONFIG_SIZE - 2..].copy_from_slice(&crc.to_le_bytes());
+        let (sw, _) = run(&mut app, &mut fs, &otp_apdu(0x04, 0, &with_acc(&bad)));
+        assert_eq!(sw, SW_WRONG_DATA, "{label} RFU byte set");
+    }
+    let mut bad = good;
+    bad[10] ^= 0xFF;
+    let (sw, _) = run(&mut app, &mut fs, &otp_apdu(0x04, 0, &with_acc(&bad)));
+    assert_eq!(sw, SW_WRONG_DATA, "a broken CRC");
+
+    // And the slot the update lands on is `base + p2`: configure slot 1, update
+    // slot 1, and the merged flags must appear there.
+    configure(&mut app, &mut fs, 0x01, 1, &good, &[0; 6]);
+    let upd = build_config(b"public", &[3; 6], &[4; 16], &[0; 6], 0, 0x02, 0);
+    let (sw, _) = run(&mut app, &mut fs, &otp_apdu(0x04, 1, &with_acc(&upd)));
+    assert_eq!(sw, Sw::OK);
+    let mut stored = [0u8; SLOT_SIZE];
+    app.read_slot_m(&mut fs, EF_OTP_SLOT1 + 1, &mut stored)
+        .expect("the update must land on the slot its P2 names");
+    assert_eq!(stored[OFF_TKT_FLAGS], 0x02);
+}
+
+#[test]
 fn only_a_slot_that_is_both_chal_resp_and_yubico_stays_silent_on_a_press() {
     // `cfg & CFG_CHAL_YUBICO != 0 && tkt & TKT_CHAL_RESP != 0` is what decides
     // that a challenge-response slot types nothing when the button is pressed.
