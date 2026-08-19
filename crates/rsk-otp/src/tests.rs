@@ -485,6 +485,84 @@ fn update_merges_flag_masks_only() {
 }
 
 #[test]
+fn only_a_slot_that_is_both_chal_resp_and_yubico_stays_silent_on_a_press() {
+    // `cfg & CFG_CHAL_YUBICO != 0 && tkt & TKT_CHAL_RESP != 0` is what decides
+    // that a challenge-response slot types nothing when the button is pressed.
+    // Relaxed to `||` it silences a slot that has only one of the two bits — a
+    // press that should have typed an OTP produces nothing. Nothing tested the
+    // conjunction (the reverse pass, D2), because no slot carried one bit alone.
+    let mut fs = new_fs();
+    let presence = RefCell::new(AlwaysConfirm);
+    let rng = RefCell::new(CountRng(7));
+    let mut app = OtpApplet::new(SERIAL, SERIAL_HASH, None, &rng, &presence);
+    let mut out = [0u8; 64];
+
+    // One bit each, on two slots: both must still type.
+    let yubico_only = build_config(b"public", &[3; 6], &[4; 16], &[0; 6], 0, 0, CFG_CHAL_YUBICO);
+    configure(&mut app, &mut fs, 0x01, 0, &yubico_only, &[0; 6]);
+    assert!(
+        app.button_ticket(1, 0, [0, 0], &mut fs, &mut out).is_some(),
+        "a slot with the Yubico bit but no chal-resp bit must still type"
+    );
+
+    let cr_only = build_config(b"public", &[3; 6], &[4; 16], &[0; 6], 0, TKT_CHAL_RESP, 0);
+    configure(&mut app, &mut fs, 0x03, 0, &cr_only, &[0; 6]);
+    assert!(
+        app.button_ticket(2, 0, [0, 0], &mut fs, &mut out).is_some(),
+        "a slot with the chal-resp bit but no Yubico bit must still type"
+    );
+}
+
+#[test]
+fn update_replaces_the_whole_ext_flag_byte() {
+    // `EXTFLAG_UPDATE_MASK` is 0xFF — every extended-flag bit is updateable, so
+    // an UPDATE REPLACES the byte rather than merging into it. The tkt and cfg
+    // halves of that merge are pinned by `update_merges_flag_masks_only`
+    // through `status-ext`, which carries no ext byte; this half was observable
+    // nowhere and both of its mutations survived (the reverse pass, D2).
+    // Read the stored record directly, the way the applet does.
+    let mut fs = new_fs();
+    let presence = RefCell::new(AlwaysConfirm);
+    let rng = RefCell::new(CountRng(7));
+    let mut app = OtpApplet::new(SERIAL, SERIAL_HASH, None, &rng, &presence);
+    let orig = build_config(
+        b"public",
+        &[3; 6],
+        &[4; 16],
+        &[0; 6],
+        0xA5,
+        TKT_APPEND_CR,
+        0,
+    );
+    configure(&mut app, &mut fs, 0x01, 0, &orig, &[0; 6]);
+
+    let upd = build_config(
+        b"other!",
+        &[9; 6],
+        &[9; 16],
+        &[0; 6],
+        0x5A,
+        TKT_APPEND_CR,
+        0,
+    );
+    let mut d = upd.to_vec();
+    d.extend_from_slice(&[0; 6]);
+    let (sw, _) = run(&mut app, &mut fs, &otp_apdu(0x04, 0, &d));
+    assert_eq!(sw, Sw::OK);
+
+    let mut stored = [0u8; SLOT_SIZE];
+    app.read_slot_m(&mut fs, EF_OTP_SLOT1, &mut stored)
+        .expect("the slot is configured");
+    assert_eq!(
+        stored[OFF_EXT_FLAGS], 0x5A,
+        "every ext bit is updateable, so the update's byte must stand alone — \
+         not ORed with what was there, and not masked to nothing"
+    );
+    // The neighbours the same merge must NOT have touched.
+    assert_eq!(&stored[..OFF_ACC_CODE.min(6)], b"public");
+}
+
+#[test]
 fn update_preserves_use_counter_tail() {
     // audit run-30: SLOT_UPDATE built a 52-byte (CONFIG_SIZE) record, dropping the
     // 8-byte tail — so the Yubico-OTP use counter / HOTP moving factor silently

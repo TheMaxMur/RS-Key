@@ -40,6 +40,16 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Added
 
+- **The OTP slot's third flag merge was observable nowhere.** `SLOT_UPDATE`
+  merges `ext`, `tkt` and `cfg` each under its own update mask, and the existing
+  test pins two of them through `status-ext` — which carries no ext byte, so
+  both mutations of that merge survived. `EXTFLAG_UPDATE_MASK` is `0xFF`, so the
+  shipped semantics is replacement rather than merging; reading the stored
+  record directly and asserting the byte stands alone closes it. A second row in
+  the same crate is the conjunction that keeps a challenge-response slot silent
+  on a press: relaxed to `||` it silences a slot carrying only one of the two
+  bits, and no slot in the suite carried one alone. No firmware behaviour change.
+
 - **The CCID wipe wrapper's answer was asserted by nothing.**
   `CcidApplets::factory_wipe` returns whether the wipe completed and its caller
   turns that into a reboot; replacing the whole function with `true` or with
