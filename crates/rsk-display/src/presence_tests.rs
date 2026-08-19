@@ -70,6 +70,34 @@ fn a_completed_hold_approves() {
     assert!(start.elapsed() >= Duration::from_millis(HOLD_MS));
 }
 
+/// Every ceremony opens by dropping a cancel an earlier wait left behind and by
+/// noting the LED status its exit restores. `Board::cancel_in` exists *because* of
+/// the first half — a test cannot deliver a mid-wait cancel any other way — yet
+/// neither half was ever read back, so the whole entry could be skipped unnoticed.
+#[test]
+fn a_ceremony_drops_a_stale_cancel_and_restores_the_led_it_found() {
+    let env = Env::new();
+    let mut ui = env.ui(Pad::hold(allow()));
+    ui.hooks.presence_ms = 4_000;
+    ui.hooks.cancel = true;
+    // Anything but the touch indicator the ceremony switches to, so a restore of
+    // the wrong status cannot pass by coincidence.
+    ui.hooks.led = rsk_led::STATUS_BOOT;
+    let ui = RefCell::new(ui);
+
+    let got = ask_fido(&ui, sign_in());
+    assert_eq!(
+        got,
+        rsk_fido::Presence::Confirmed,
+        "a cancel from an earlier wait aborted this one"
+    );
+    assert_eq!(
+        ui.borrow().hooks.led,
+        rsk_led::STATUS_BOOT,
+        "the exit restored an LED status the entry never found"
+    );
+}
+
 #[test]
 fn a_hold_that_is_released_starts_over() {
     // Two three-quarter holds are not one whole one: lifting the finger resets the

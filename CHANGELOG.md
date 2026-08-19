@@ -40,6 +40,33 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Added
 
+- **`FidoState`'s zeroize-on-drop roster is exhaustive at compile time.** The
+  `Drop` impl scrubs four secret fields, and no host test can observe it: reading
+  a value whose destructor has run is the very thing Miri reports as a defect, so
+  replacing the whole body with `()` survives every suite. The risk that mutant
+  stands for is a *new* secret field added without a scrub line, which is a
+  compile-time question — `drop` now destructures `self` naming all eighteen
+  fields with no `..`, each non-secret one bound to `_` beside the reason it is
+  not one. A nineteenth field stops the crate compiling. Same four scrubs, and
+  `fs_usage`'s 512-file window is a named constant beside it: refactor, no
+  behaviour change — `bcdDevice` 0x095E → 0x095F because both lines reach the
+  image.
+
+- **A 512-file window, a dispatch arm and a ceremony entry, none of them ever
+  crossed.** `fs_usage` sums the first 512 files and counts them all; no test had
+  ever held more than two, so relaxing its bound to `<=` — an out-of-bounds write
+  on the 513th file — survived. `process_cbor`'s dispatch is a second roster over
+  the same commands as its canonical-form gate, and every vendor test calls
+  `vendor()` directly while the gate's own row for `0x41` sends a malformed body
+  that never reaches the match: deleting the arm left the suite green with the
+  command answering INVALID_COMMAND. And a touch ceremony opens by dropping a
+  cancel an earlier wait left behind — the fake board's own comment says so, which
+  is why `cancel_in` exists — but nothing read it back, so the whole entry could
+  be skipped. The model does hold that last rule
+  (`NoCrossTransportTouchConsumption`), and its co-mutant patches the BOOTSEL
+  wait in `rsk-device`; the display half is a second implementation of the same
+  rule and had no cover at either level. No firmware behaviour change.
+
 - **The device-config cap's arithmetic is 18 bytes of slack, and the test that
   looked like it pinned it measured the cap against itself.**
   `EF_DEV_CONF_MAX = MIN_CONFIG_RES_CAP - CONFIG_TLV_FIXED` is documented as

@@ -664,10 +664,41 @@ pub(crate) fn puat_subcommand_msg(buf: &mut [u8], cmd: u8, subcommand: u8, param
 
 impl Drop for FidoState {
     fn drop(&mut self) {
-        self.ephemeral.zeroize();
-        self.paut.token.zeroize();
-        self.mse_key.zeroize();
-        if let Some(k) = self.keydev_dec.as_mut() {
+        // Exhaustive on purpose: a field added later stops this pattern compiling
+        // until someone decides whether it is a secret. Nothing else would catch a
+        // new key that misses the scrub — a dropped value has no test that reads it.
+        let Self {
+            ephemeral,
+            ephemeral_set: _,
+            // `d·G` — what getKeyAgreement hands to the host.
+            ephemeral_pub: _,
+            paut,
+            needs_power_cycle: _,
+            new_pin_mismatches: _,
+            // Session carry-over, all of it the host's own bytes or a cursor into
+            // flash: the clientDataHash and both hmac-secret salts arrive encrypted
+            // under the platform's key, and the enumerate positions are slot numbers.
+            gna: _,
+            cm: _,
+            // Large-blob fragments — CTAP 2.1 §11.5 makes the array the platform's
+            // ciphertext, keyed by a largeBlobKey this device never holds in RAM.
+            lba: _,
+            mse_active: _,
+            mse_cid: _,
+            mse_key,
+            // The device ephemeral public key, sent to the host as the AEAD AAD.
+            mse_pub: _,
+            keydev_dec,
+            // How to fetch the DEVK, not the DEVK.
+            devk_source: _,
+            audit_boot_logged: _,
+            warm_boot: _,
+            channel: _,
+        } = self;
+        ephemeral.zeroize();
+        paut.token.zeroize();
+        mse_key.zeroize();
+        if let Some(k) = keydev_dec.as_mut() {
             k.zeroize();
         }
     }

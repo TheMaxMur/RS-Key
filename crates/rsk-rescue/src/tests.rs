@@ -609,6 +609,45 @@ fn flash_info_layout() {
     assert_eq!(w(4), FLASH_SIZE);
 }
 
+/// The size window is the one place FLASH INFO indexes a fixed array from a
+/// caller-driven count, and no test had ever crossed it: the 513th file is the one
+/// that lands on `fids[FS_USAGE_WINDOW]`. Both halves of the window's contract are
+/// asserted — the count stays exact past it, the sum stops at it.
+#[test]
+fn flash_info_counts_every_file_past_the_size_window() {
+    let rng = RefCell::new(LcgRng(7));
+    let platform = RefCell::new(FakePlatform::default());
+    let presence = RefCell::new(AlwaysConfirm);
+    let mut app = RescueApplet::new(
+        SERIAL_ID,
+        SERIAL_HASH,
+        None,
+        None,
+        &rng,
+        &platform,
+        &presence,
+        KV_TOTAL,
+        FLASH_SIZE,
+    );
+    let mut fs = Fs::new(RamStorage::new());
+    // Equal payloads, so the sum does not depend on which files `for_each_key`
+    // happens to reach first.
+    let n = FS_USAGE_WINDOW + 1;
+    for i in 0..n {
+        fs.put(0x4000 + i as u16, &[0u8; 2]).unwrap();
+    }
+
+    let (sw, body) = run(&mut app, &mut fs, &apdu(0x80, INS_READ, 0x02, 0, &[]));
+    assert_eq!(sw, Sw::OK);
+    let w = |i: usize| u32::from_be_bytes(body[i * 4..i * 4 + 4].try_into().unwrap());
+    assert_eq!(w(3), n as u32, "a file past the window went uncounted");
+    assert_eq!(
+        w(1),
+        (FS_USAGE_WINDOW * 2) as u32,
+        "the sum left the window"
+    );
+}
+
 #[test]
 fn secure_boot_status() {
     let rng = RefCell::new(LcgRng(7));

@@ -498,10 +498,14 @@ impl<S: Storage> Applet<Fs<S>> for RescueApplet<'_> {
     }
 }
 
+/// How many files FLASH INFO sums the sizes of. A window, not a limit: the store
+/// holds `MAX_DYNAMIC_FILES` and the count below is always exact.
+const FS_USAGE_WINDOW: usize = 512;
+
 /// File count + summed payload bytes for FLASH INFO. Sizes are summed for the
-/// first 512 files; the count is always exact.
+/// first [`FS_USAGE_WINDOW`] files; the count is always exact.
 fn fs_usage<S: Storage>(fs: &mut Fs<S>) -> (u32, u32) {
-    let mut fids = [0u16; 512];
+    let mut fids = [0u16; FS_USAGE_WINDOW];
     let mut nfiles = 0u32;
     fs.for_each_key(&mut |fid| {
         if (nfiles as usize) < fids.len() {

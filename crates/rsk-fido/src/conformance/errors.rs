@@ -250,6 +250,39 @@ fn trailing_bytes_after_the_request_map_are_invalid_cbor() {
     );
 }
 
+/// The dispatch match is a second roster over the same commands as the canonical-form
+/// gate above, and nothing tied the two together: every vendor test calls `vendor()`
+/// directly, and the gate's own row for `0x41` sends a *malformed* body, which is
+/// refused before the match is reached. Dropping an arm therefore left the suite
+/// green while the command answered INVALID_COMMAND — the status a YubiKey keeps for
+/// a command it does not implement at all.
+#[test]
+fn every_command_behind_the_gate_is_still_reachable_in_the_dispatch() {
+    let mut cmds = vec![
+        CTAP_MAKE_CREDENTIAL,
+        CTAP_GET_ASSERTION,
+        CTAP_CLIENT_PIN,
+        crate::consts::CTAP_CONFIG,
+        CTAP_CREDENTIAL_MGMT,
+        crate::consts::CTAP_VENDOR,
+    ];
+    // `0x0C` is behind the gate only on a build that implements it (§12.4);
+    // `LARGE_BLOB_EXT` is a const rather than a `cfg` so both shapes stay compiled.
+    if !crate::consts::LARGE_BLOB_EXT {
+        cmds.push(crate::consts::CTAP_LARGE_BLOBS);
+    }
+    for cmd in cmds {
+        // An empty map is canonical, so it clears the gate and whatever comes back is
+        // the handler's own answer to a request missing everything.
+        let r = Authr::fresh().send(cmd, &[0xA0]);
+        assert_ne!(
+            r.status,
+            CtapError::InvalidCommand.as_u8(),
+            "command {cmd:#04x} is gated but no longer dispatched"
+        );
+    }
+}
+
 /// §8's canonical form has no CBOR tags, and a decoder that steps over one lets
 /// two readers of the same message disagree about what was asked — the shape the
 /// one-item rule above exists for. Measured on a YubiKey 5.7.4, which answers
