@@ -2135,9 +2135,9 @@ evidence columns and validated cross-model support edges below on every gate run
 | `SEC-DISP-003` | `OnlyAllowConfirms` | MODELLED-ONLY | `RSKeyTrustedDisplay` | — | 1 | 1 | 0 | 0 | 0 |
 | `SEC-BOOT-001` | `MarkerNeverLies` | MODELLED-ONLY | `RSKeyBootHardening` | — | 1 | 2 | 0 | 0 | 0 |
 | `SEC-BOOT-002` | `TheWholeLockRides` | MODELLED-ONLY | `RSKeyBootHardening` | — | 1 | 1 | 0 | 0 | 0 |
-| `SEC-TRANS-001` | `NoCrossChannelSplice` | MODELLED-ONLY | `RSKeyTransport` | — | 1 | 1 | 0 | 0 | 0 |
-| `SEC-TRANS-002` | `NoSequenceGap` | MODELLED-ONLY | `RSKeyTransport` | — | 1 | 1 | 0 | 0 | 0 |
-| `SEC-TRANS-003` | `NoBufferOverrun` | MODELLED-ONLY | `RSKeyTransport` | — | 1 | 1 | 0 | 0 | 0 |
+| `SEC-TRANS-001` | `NoCrossChannelSplice` | BOUNDED | `RSKeyTransport` | — | 1 | 1 | 2 | 0 | 0 |
+| `SEC-TRANS-002` | `NoSequenceGap` | BOUNDED | `RSKeyTransport` | — | 1 | 1 | 1 | 0 | 0 |
+| `SEC-TRANS-003` | `NoBufferOverrun` | BOUNDED | `RSKeyTransport` | — | 2 | 1 | 1 | 0 | 0 |
 | `SEC-RISK-001` | `PerDeviceAttestationCertIsACorrelationHandle` | ACCEPTED-RISK | — | — | — | — | — | — | — |
 | `SEC-RISK-002` | `FlashSnapshotRollsBackPinRetries` | ACCEPTED-RISK | — | — | — | — | — | — | — |
 
@@ -2438,6 +2438,54 @@ are in `docs/reset-refinement.md`. `tests/29_reset_power_cut.py` is intentionall
 unsupported by the emulator and requires a maintainer-operated throwaway board;
 its existence is not a recorded hardware PASS.
 
+
+## Phase 8: the reassembler, and the mutant a proof had to name
+
+`RSKeyTransport` was the eighth module and the ninth to get a code bridge — five
+harnesses in `crates/rsk-usb/src/transport_refinement_kani.rs` over a projection
+(`transport_assurance.rs`) that reads the real `Reassembler` fields and drives the
+real `feed`. What the model counts in chunks the code counts in bytes; that is the
+whole abstraction, and `Cap` chunks is `INIT_DATA + Cap * CONT_DATA` here.
+
+`CTAP_MAX_MESSAGE` is `INIT_DATA + 2 * CONT_DATA` under `cfg(kani)` against the
+shipped 128 continuations. Unlike the store's shrink this one was not a choice
+between fast and slow: at the shipped width CBMC **ran out of memory**, so
+bounding the posed pre-state while keeping the 7609-byte buffer was a dead end
+rather than a slower road. The definition stays an EXPRESSION, so
+`scripts/docs_constants.py` indexes no literal and the 7609 in `docs/protocol.md`,
+`docs/interop.md` and the frame diagram is untouched — the coupling the store
+pilot walked into an hour earlier. `rsk-device`'s only harnesses are the presence
+arbitration and `firmware` does not build under Kani, so the shrink reaches
+nothing else. What it stops covering is carried by a compile-time assertion about
+the SHIPPED width: the buffer is a whole number of frames, which is what lets an
+assembled message land exactly on `bcnt` instead of straddling it.
+
+The five run in 0.18, 1.76, 3.03, 10.94 and 52.3 seconds, so `rsk-usb` stays in
+the FAST tier with room.
+
+### The mutant the tests could not reach, and why
+
+Six mutations of `feed`'s guards, and the first pass killed five. The survivor was
+the copy bound — `CONT_DATA.min(bcnt - cur)` relaxed to `CONT_DATA` — and the
+reason is worth stating, because it is a property of the constant rather than of
+the tests: **`CTAP_MAX_MESSAGE - INIT_DATA` divides by `CONT_DATA` exactly.** Every
+continuation of a maximum-length message is therefore full, `bcnt - cur` is never
+below `CONT_DATA`, and the `min` never bites. The edge test that drives a
+full-size message is blind to it by construction.
+
+Kani killed it, on two checks: the projection's own `cur <= bcnt` and a slice-index
+panic. Only the first is at a state the machine reaches — a 100-byte message with
+`cur = 57` leaves a 43-byte remainder, and without the bound `cur` steps to 116
+past a `bcnt` of 100. The panic comes from a posed pre-state the reachable
+`cur \in {57, 116, 175, …}` may never occupy. That is sound for a safety claim —
+proving over a superset is stronger — but it means a counterexample can be
+spurious, and the reachable half is the one that names the defect.
+
+So the fix was a test, not a narrowing: `a_partial_last_frame_advances_by_its_
+remainder_and_no_further` drives a message whose last frame is part-full, and the
+mutation table is 6 of 6 at the PR gate. This is the first measured case in this
+tree of the weekly proof catching what the pull-request suite could not, rather
+than restating it.
 
 ## Phase 7: the store's cache half, and the FID next door
 

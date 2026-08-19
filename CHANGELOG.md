@@ -57,6 +57,25 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Added
 
+- **The CTAPHID reassembler's three properties are proved against the real
+  `feed`, and the proof found a test the suite was missing.** `RSKeyTransport` was
+  modelled but unbridged; five Kani harnesses now drive the real `Reassembler`
+  from a symbolic live transaction. Six mutations of `feed`'s guards, and the
+  survivor is the interesting one: the copy bound `CONT_DATA.min(bcnt - cur)`
+  relaxed to `CONT_DATA` was killed by nothing, because
+  `CTAP_MAX_MESSAGE - INIT_DATA` divides by `CONT_DATA` **exactly** — every
+  continuation of a maximum-length message is full, so the `min` never bites and
+  the edge test is blind by construction. Kani caught it; the fix was the test it
+  pointed at, a message whose last frame is part-full, and the table is 6 of 6 at
+  the PR gate. First measured case here of the weekly proof catching what the
+  pull-request suite could not. `CTAP_MAX_MESSAGE` is two continuations under
+  `cfg(kani)` — at the shipped width CBMC ran out of memory, not merely slowed —
+  and the definition stays an expression, so the documented 7609 is untouched.
+  `SEC-TRANS-001/002/003` rise to BOUNDED. The verification code is `cfg`-excluded
+  from every firmware image; what the production build gained is one compile-time
+  assertion and one `cfg` attribute, so `bcdDevice` 0x096B → 0x096C is a refactor
+  with no behaviour change.
+
 - **ML-DSA-87 (COSE `-50`), the NIST category-5 parameter set.** All three FIPS 204
   sets now have in-tree backends: `rsk-mldsa` gained `MlDsa87`/`mldsa87_verify` over
   `ExpandedKey<8, 7>`, checked byte-for-byte against NIST ACVP keyGen/sigGen/sigVer

@@ -206,7 +206,22 @@ pub const DEVICE_UUID: [u8; 16] = [
 ];
 
 /// Maximum CTAPHID message: one INIT frame + up to 128 CONT frames.
+#[cfg(not(kani))]
 pub const CTAP_MAX_MESSAGE: usize = INIT_DATA + 128 * CONT_DATA; // 7609
+/// Two continuation frames under `cfg(kani)`. `feed` copies through
+/// `msg[cur..cur + n]` with a symbolic `cur`, and at the shipped width CBMC runs
+/// out of memory rather than merely slowing down — measured. The shape is
+/// unchanged (an INIT plus a whole number of continuations) and `feed` is uniform
+/// in the frame count, so what the harnesses check is the same decision at every
+/// arm; the assertion below carries the part of that shape the shrink cannot.
+#[cfg(kani)]
+pub const CTAP_MAX_MESSAGE: usize = INIT_DATA + 2 * CONT_DATA;
+
+/// The buffer holds a whole number of frames, which is what lets an assembled
+/// message land exactly on `bcnt` instead of straddling it. Compile-time and
+/// about the SHIPPED width, so the shrink cannot move it.
+#[cfg(not(kani))]
+const _: () = assert!((CTAP_MAX_MESSAGE - INIT_DATA).is_multiple_of(CONT_DATA));
 
 /// Standard FIDO U2F / CTAPHID HID report descriptor (usage page 0xF1D0,
 /// 64-byte IN/OUT reports).
@@ -874,6 +889,14 @@ async fn write_message<'d, D: Driver<'d>>(
     })
     .await;
 }
+
+#[cfg(any(kani, test))]
+#[path = "transport_assurance.rs"]
+pub mod transport_assurance;
+
+#[cfg(kani)]
+#[path = "transport_refinement_kani.rs"]
+mod transport_refinement_proofs;
 
 #[cfg(test)]
 #[path = "ctaphid_tests.rs"]
