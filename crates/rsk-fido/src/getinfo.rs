@@ -24,7 +24,7 @@ use crate::consts::{
     CONFIG_AUT_DISABLE, CONFIG_AUT_ENABLE, CONFIG_PHY_LED_BRIGHTNESS, CONFIG_PHY_LED_GPIO,
     CONFIG_PHY_OPTIONS, CONFIG_PHY_VIDPID, FIRMWARE_VERSION, LARGE_BLOB_EXT, MAX_CRED_ID_LENGTH,
     MAX_CREDBLOB_LENGTH, MAX_CREDENTIAL_COUNT_IN_LIST, MAX_LARGE_BLOB_SIZE, MAX_MIN_PIN_RPIDS,
-    MAX_MSG_SIZE,
+    MAX_MSG_SIZE, TRANSPORTS,
 };
 use crate::cose::cose_public_key;
 use crate::error::{CtapError, CtapResult};
@@ -84,9 +84,9 @@ fn write_info<W: Write>(
     remaining_rk: u16,
 ) -> Result<(), Error<W::Error>> {
     // Keys are ascending uints → CTAP canonical order (1-byte keys 0x01..0x16
-    // first, then the 2-byte keys 0x1D, 0x1F). The `largeblob-ext` build drops
-    // 0x0B with the command it describes.
-    enc.map(20 + u64::from(!LARGE_BLOB_EXT))?;
+    // first, then the 2-byte keys 0x1A, 0x1D, 0x1F — 24 and up need the extra
+    // byte). The `largeblob-ext` build drops 0x0B with the command it describes.
+    enc.map(21 + u64::from(!LARGE_BLOB_EXT))?;
 
     // 0x01 versions — advertise the full backward-compatible superset up to
     // FIDO_2_3 (the implemented surface: credMgmt, largeBlobs, credProtect,
@@ -195,7 +195,8 @@ fn write_info<W: Write>(
     // 0x09 transports — the FIDO interface is reachable over USB-HID only. (The
     // device also presents a PC/SC smartcard interface, but the FIDO applet is on
     // HID, so the FIDO transport list is just "usb".)
-    enc.u8(0x09)?.array(1)?.str("usb")?;
+    enc.u8(0x09)?;
+    transports(enc)?;
 
     // 0x0A algorithms — ES256 (-7), ES384 (-35), ES512 (-36), then EdDSA (-8).
     // `advertise-pqc` prepends ML-DSA-44 (off by default: shipped Firefoxes reject
@@ -294,6 +295,12 @@ fn write_info<W: Write>(
     // metadata statements.
     enc.u8(0x16)?.array(1)?.str("packed")?;
 
+    // 0x1A transportsForReset — where authenticatorReset is accepted: an array of
+    // AuthenticatorTransport strings, not the bit field Yubico's page describes.
+    // Same list as 0x09, because a reset is reachable exactly where the applet is.
+    enc.u8(0x1A)?;
+    transports(enc)?;
+
     // 0x1D maxPINLength — max PIN length in Unicode code points. The PIN is padded
     // to 64 bytes on the wire, so the content is at most 63. A 2-byte CBOR key
     // (29 > 23), so it sorts after the 1-byte keys but before 0x1F → canonical.
@@ -324,6 +331,16 @@ fn write_info<W: Write>(
         .u8(0x03)?
         .u8(0xFF)?;
 
+    Ok(())
+}
+
+/// `transports` (0x09) and `transportsForReset` (0x1A) carry the same array; one
+/// writer so the two cannot drift apart.
+fn transports<W: Write>(enc: &mut Encoder<W>) -> Result<(), Error<W::Error>> {
+    enc.array(TRANSPORTS.len() as u64)?;
+    for t in TRANSPORTS {
+        enc.str(t)?;
+    }
     Ok(())
 }
 

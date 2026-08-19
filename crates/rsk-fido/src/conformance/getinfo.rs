@@ -16,9 +16,9 @@ use crate::consts::{
 /// `docs/protocol.md` — this test is the tripwire.
 /// 0x0B (maxSerializedLargeBlobArray) belongs to the `authenticatorLargeBlobs`
 /// command, which a `largeblob-ext` build does not serve (CTAP 2.3 §12.4).
-const GETINFO_KEYS: [u32; 21] = [
+const GETINFO_KEYS: [u32; 22] = [
     0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10,
-    0x14, 0x15, 0x16, 0x1D, 0x1F,
+    0x14, 0x15, 0x16, 0x1A, 0x1D, 0x1F,
 ];
 
 #[test]
@@ -155,6 +155,14 @@ fn getinfo_limits_and_formats() {
     assert!(
         str_array(&r.body, 0x09).iter().any(|s| s == "usb"),
         "transports must include usb"
+    );
+    // transportsForReset is what a platform reads to decide whether a reset it can
+    // reach exists at all; claiming a transport the applet does not answer on would
+    // send it looking for one that is not there.
+    assert_eq!(
+        str_array(&r.body, 0x1A),
+        str_array(&r.body, 0x09),
+        "transportsForReset must match the transports the applet answers on"
     );
     assert!(
         str_array(&r.body, 0x16).iter().any(|s| s == "packed"),

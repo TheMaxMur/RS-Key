@@ -1103,7 +1103,7 @@ second time on this model that being *more* faithful has made it *smaller*.
 
 Constants: `RPs = {r1,r2}`, `Channels = {c1,c2}`, **`MaxRetries = 8`,
 `MismatchLimit = 3`** — the firmware's own `MAX_PIN_RETRIES` and
-`PIN_MISMATCH_LIMIT` (`consts.rs:314,318`) — `MaxClock = 1`, `ResetWindow = 0`.
+`PIN_MISMATCH_LIMIT` (`consts.rs:319,323`) — `MaxClock = 1`, `ResetWindow = 0`.
 
 They used to be 3 : 2, and the reduction was the largest standing question on
 this page. `SYMMETRY` is what answered it. Relying parties and channels are

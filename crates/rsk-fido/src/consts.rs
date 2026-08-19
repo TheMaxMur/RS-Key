@@ -199,6 +199,11 @@ pub const MAX_CREDENTIAL_COUNT_IN_LIST: u64 = 16;
 /// and excludeList parsers drop it rather than match on its id.
 pub const PUBLIC_KEY_TYPE: &str = "public-key";
 
+/// The `AuthenticatorTransport` values the FIDO applet answers on: getInfo's
+/// `transports` (0x09) and `transportsForReset` (0x1A) are the same list, because a
+/// reset is reachable exactly where the applet is. No FIDO AID is routed onto CCID.
+pub const TRANSPORTS: [&str; 1] = ["usb"];
+
 // pinUvAuthParam MAC covers subCommand ‖ subCommandParams; cap on the raw bytes
 // (vendor.rs deliberately overrides with its own larger cap). A maximal legal
 // updateUserInformation — 42-byte resident credId + 64-byte user.id + 64-byte

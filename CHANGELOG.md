@@ -53,6 +53,19 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Added
 
+- **getInfo never said where a reset can be driven.** CTAP 2.2's
+  `transportsForReset` (`0x1A`) tells a platform which transports will accept an
+  `authenticatorReset`, so a platform that can only reach the key over a transport
+  the authenticator refuses resets on learns that before it prompts. The member was
+  absent entirely, leaving the platform to assume. RS-Key is USB-HID only, so the
+  answer is `["usb"]` — the same list `transports` (`0x09`) already carried, and
+  both now come from one `TRANSPORTS` const through one writer, so the two cannot
+  drift into saying different things. Note the wire type: an **array of
+  AuthenticatorTransport strings**, not the bit field Yubico's capability page
+  describes (that is their pre-personalization storage). The metadata statements
+  and their drift guard (`tests/62_metadata_statement.py`) carry it too.
+  `bcdDevice` 0x0961 → 0x0962.
+
 - **The store model's in-RAM half had no evidence at all, and its clauses are
   the ones that read as obvious.** `RSKeyStore`'s persistent variables were
   already covered — `powercut.rs`'s four `*_landed` predicates, their Kani

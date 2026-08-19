@@ -226,6 +226,7 @@ def part_b(stmt):
         # drift against the statement, not as an oversight — add both together.
         "vendorPrototypeConfigCommands": m[0x15],
         "attestationFormats": m[0x16],
+        "transportsForReset": m[0x1A],
         "maxPINLength": m[0x1D],
         "authenticatorConfigCommands": m[0x1F],
     }

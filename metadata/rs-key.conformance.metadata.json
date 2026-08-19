@@ -96,6 +96,7 @@
       8550182048006734589, 8879174565946325320, 2783008008553857119
     ],
     "attestationFormats": ["packed"],
+    "transportsForReset": ["usb"],
     "maxPINLength": 63,
     "authenticatorConfigCommands": [1, 2, 3, 255]
   }

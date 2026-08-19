@@ -427,6 +427,10 @@ needs only the identifiers above. RS-Key implements:
   from the *Begin* if it stalls. The same 30 s applies **between the fragments of a
   `largeBlobs` set**; there an abandoned transfer answers `CTAP2_ERR_INVALID_SEQ`
   and the previously stored array is left intact. `maxMsgSize` = `7609`.
+  `transportsForReset` (`0x1A`) is `["usb"]` — identical to `transports`
+  (`0x09`), because the FIDO applet is on USB-HID only and a reset is reachable
+  exactly where the applet is; it is an array of `AuthenticatorTransport`
+  strings, not a bit field.
   Supported COSE algorithms:
   ES256 `-7`, ES384 `-35`, ES512 `-36`, ES256K `-47`, EdDSA `-8`,
   ML-DSA-44 `-48`, ML-DSA-65 `-49` (both negotiable via `pubKeyCredParams`;

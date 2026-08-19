@@ -31,10 +31,10 @@ EXTENDS Naturals, FiniteSets, TLC
 CONSTANTS
     RPs,                \* relying parties (>= 2 to exercise rpId binding)
     Channels,           \* CTAPHID channel ids (>= 2 to exercise walk ownership)
-    MaxRetries,         \* models MAX_PIN_RETRIES = 8   (consts.rs:314)
-    MismatchLimit,      \* models PIN_MISMATCH_LIMIT = 3 (consts.rs:318)
+    MaxRetries,         \* models MAX_PIN_RETRIES = 8   (consts.rs:319)
+    MismatchLimit,      \* models PIN_MISMATCH_LIMIT = 3 (consts.rs:323)
     MaxClock,           \* coarse tick ceiling
-    ResetWindow         \* models RESET_WINDOW_MS = 10_000 (consts.rs:345)
+    ResetWindow         \* models RESET_WINDOW_MS = 10_000 (consts.rs:350)
 
 (* Mutation switches. All FALSE is the shipped tree. Each rebuilds one real  *)
 (* defect; `formal/README.md` maps every switch to its commit or audit id.   *)

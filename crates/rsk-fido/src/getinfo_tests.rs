@@ -86,7 +86,7 @@ fn get_info_fields() {
     let mut d = Decoder::new(&buf[..n]);
 
     let entries = d.map().unwrap().unwrap();
-    assert_eq!(entries, 21);
+    assert_eq!(entries, 22);
 
     // 0x01 versions
     assert_eq!(d.u8().unwrap(), 0x01);
@@ -246,6 +246,12 @@ fn get_info_fields() {
     assert_eq!(d.array().unwrap().unwrap(), 1);
     assert_eq!(d.str().unwrap(), "packed");
 
+    // 0x1A transportsForReset — a 2-byte key (26 > 23), so it sorts after every
+    // 1-byte key and before 0x1D.
+    assert_eq!(d.u8().unwrap(), 0x1A);
+    assert_eq!(d.array().unwrap().unwrap(), 1);
+    assert_eq!(d.str().unwrap(), "usb");
+
     // 0x1D maxPINLength
     assert_eq!(d.u8().unwrap(), 0x1D);
     assert_eq!(d.u8().unwrap(), 63);
@@ -261,6 +267,41 @@ fn get_info_fields() {
 
     // Map fully consumed.
     assert!(d.datatype().is_err());
+}
+
+/// Read a string-array member out of a getInfo response; empty if absent.
+fn str_member(key: u32) -> std::vec::Vec<std::string::String> {
+    let mut out = [0u8; 1024];
+    let n = get_info(false, 4, false, false, false, false, 256, &mut out).unwrap();
+    let mut d = Decoder::new(&out[..n]);
+    let entries = d.map().unwrap().unwrap();
+    for _ in 0..entries {
+        if d.u32().unwrap() == key {
+            let m = d.array().unwrap().unwrap();
+            return (0..m).map(|_| d.str().unwrap().to_string()).collect();
+        }
+        d.skip().unwrap();
+    }
+    std::vec::Vec::new()
+}
+
+/// `transportsForReset` (0x1A) tells a platform where a reset can be driven. One
+/// const feeds it and `transports` (0x09): the literal below pins the value, the
+/// equality catches the two drifting apart. The spec's "no duplicates, not empty"
+/// needs no assertion of its own — either would change the list the literal pins.
+#[test]
+fn transports_for_reset_matches_transports() {
+    let reset = str_member(0x1A);
+    assert_eq!(
+        reset,
+        std::vec!["usb"],
+        "USB-HID is the only FIDO transport"
+    );
+    assert_eq!(
+        reset,
+        str_member(0x09),
+        "a reset is reachable exactly where the applet is"
+    );
 }
 
 /// Read the `options` (0x04) map as `(key, value)` pairs.
