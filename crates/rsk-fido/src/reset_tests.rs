@@ -42,6 +42,9 @@ fn reset_wipes_state_and_regenerates() {
     // The enterprise-attestation RP list is enterprise policy, and a reset is what
     // hands the key to someone else — it goes with the rest of the FIDO state.
     fs.put(crate::consts::EF_EA_RPIDS, &[0x11u8; 32]).unwrap();
+    // The credential-store tag summarises what the reset is erasing, so it goes too:
+    // a surviving tag would tell a platform its cache of the old store is still good.
+    fs.put(crate::consts::EF_CRED_STATE, &[0x22u8; 16]).unwrap();
     // An OpenPGP file (EF_PW3 = 0x1083) shares the Fs and must survive a FIDO
     // reset — it sits in the 0x10xx range right next to FIDO's own files.
     fs.put(0x1083, &[0xAB; 34]).unwrap();
@@ -74,6 +77,7 @@ fn reset_wipes_state_and_regenerates() {
     // The device PIN is cleared by the reset (so a forgotten one is recoverable).
     assert!(!fs.has_data(EF_DEVICE_PIN));
     assert!(!fs.has_data(crate::consts::EF_EA_RPIDS));
+    assert!(!fs.has_data(crate::consts::EF_CRED_STATE));
     // The OpenPGP file is untouched by the FIDO reset.
     assert!(
         fs.has_data(0x1083),
@@ -401,8 +405,8 @@ fn reset_sweep_fails_when_storage_does_not_converge() {
     assert_eq!(sweep(&mut ctx, is_fido_fid), Err(CtapError::Other));
 }
 
-/// `RESET_MAX_DELETES` is written as `4 * MAX_RESIDENT_CREDENTIALS + 14`, and the
-/// 14 is a hand-count of `is_fido_fid`'s fixed arm. Count the predicate instead of
+/// `RESET_MAX_DELETES` is written as `4 * MAX_RESIDENT_CREDENTIALS + 15`, and the
+/// 15 is a hand-count of `is_fido_fid`'s fixed arm. Count the predicate instead of
 /// trusting it: add a record there and the bound silently stops covering the
 /// applet, whose failure mode is a reset that gives up on a FULL device — the one
 /// place a stale constant costs the most.
@@ -458,6 +462,7 @@ fn the_gate_set_defers_every_record_whose_absence_is_permissive() {
         EF_LARGEBLOB,
         EF_PAUTHTOKEN.get(),
         EF_EA_RPIDS,
+        crate::consts::EF_CRED_STATE,
     ] {
         assert!(
             !is_fido_gate_fid(fid),

@@ -116,7 +116,7 @@ emit() { # $1 = cfg, $2 = bug switch (""), $3 = sweep fix, $4 = ppuat fix
     # symmetry is what pays for the two constants below being the firmware's
     # own. Quotienting the interchangeable relying parties and channels takes
     # 61 215 504 distinct states to 25 829 584, so MAX_PIN_RETRIES = 8 and
-    # PIN_MISMATCH_LIMIT = 3 (consts.rs:345,334) cost 48 679 968 -- still
+    # PIN_MISMATCH_LIMIT = 3 (consts.rs:356,334) cost 48 679 968 -- still
     # fewer than the reduced 3 : 2 explored before, with all thirty mutants
     # still RED. The README's "an argument, not a proof" is now a measurement.
     echo "    RPs = {r1, r2}"

@@ -780,6 +780,124 @@ fn delete_credential_drops_count_and_rp() {
     assert!(!rp_present(&mut fs, &mut state, &other));
 }
 
+/// getInfo's `encCredStoreState` (0x1E) is only worth anything if the tag under it
+/// moves on **every** change to the discoverable set — a platform that trusts a
+/// stale tag keeps a cache the device has already invalidated. This drives the real
+/// commands rather than the bump helper: the helper being correct says nothing about
+/// whether the three host paths call it. The on-device delete is the fourth path and
+/// has its own test, in `passkeys_tests.rs`.
+#[test]
+fn every_credential_mutation_moves_the_store_tag() {
+    use crate::credential::cred_store_state;
+
+    let (mut fs, mut rng) = setup();
+    let empty = cred_store_state(&mut fs);
+    assert_eq!(empty, [0u8; 16], "a store nothing has written to is zero");
+
+    let (id_a, ..) = register(&mut fs, &mut rng, "example.com", &[1, 1], "alice");
+    let after_create = cred_store_state(&mut fs);
+    assert_ne!(after_create, empty, "makeCredential must move the tag");
+
+    let mut state = armed(PERM_CM);
+    let mut out = [0u8; 512];
+
+    // A read is not a change: enumerating must leave the tag exactly where it was.
+    let rp_hash = sha256(b"example.com");
+    run(
+        &mut fs,
+        &mut state,
+        &cm_request(0x04, Some(&subpara_rpidhash(&rp_hash)), &TOKEN),
+        &mut out,
+    )
+    .unwrap();
+    assert_eq!(
+        cred_store_state(&mut fs),
+        after_create,
+        "enumerateCredentials changed nothing and must say so"
+    );
+
+    run(
+        &mut fs,
+        &mut state,
+        &cm_request(
+            0x07,
+            Some(&subpara_update(&id_a, &[1, 1], "alice2", "Alice Two")),
+            &TOKEN,
+        ),
+        &mut out,
+    )
+    .unwrap();
+    let after_update = cred_store_state(&mut fs);
+    assert_ne!(
+        after_update, after_create,
+        "updateUserInformation leaves the slot count alone, so nothing but the tag reports it"
+    );
+
+    run(
+        &mut fs,
+        &mut state,
+        &cm_request(0x06, Some(&subpara_cred(&id_a)), &TOKEN),
+        &mut out,
+    )
+    .unwrap();
+    assert_ne!(
+        cred_store_state(&mut fs),
+        after_update,
+        "deleteCredential must move the tag"
+    );
+}
+
+/// The tag must be *stored*, not counted in RAM. `Fs::write_gen` — the candidate the
+/// plan named — restarts at zero on every boot, so a store that changed across a
+/// replug would read as unchanged and a platform would keep a cache the device had
+/// already invalidated. A remount is that boot: the tag is read back by a filesystem
+/// that has never seen the write.
+#[test]
+fn the_store_tag_survives_a_remount() {
+    use crate::credential::cred_store_state;
+
+    let (mut fs, mut rng) = setup();
+    register(&mut fs, &mut rng, "example.com", &[1, 1], "alice");
+    let live = cred_store_state(&mut fs);
+    assert_ne!(live, [0u8; 16]);
+
+    let mut fs = Fs::new(fs.into_storage());
+    assert_eq!(
+        cred_store_state(&mut fs),
+        live,
+        "power is what a platform's cache has to survive"
+    );
+}
+
+/// A refused mutation must not leave the tag where a successful one would have — but
+/// it may move it, and that is the direction to be wrong in: the bump is written
+/// ahead of the change it describes, so what a failure (or a power cut) leaves is a
+/// tag that over-reports. The platform re-enumerates once; the alternative is a
+/// cache nothing corrects.
+#[test]
+fn a_refused_delete_never_under_reports() {
+    use crate::credential::cred_store_state;
+
+    let (mut fs, mut rng) = setup();
+    register(&mut fs, &mut rng, "example.com", &[1, 1], "alice");
+    let before = cred_store_state(&mut fs);
+    let mut state = armed(PERM_CM);
+    let mut out = [0u8; 256];
+    let bogus = [0u8; CRED_RESIDENT_LEN];
+    assert_eq!(
+        run(
+            &mut fs,
+            &mut state,
+            &cm_request(0x06, Some(&subpara_cred(&bogus)), &TOKEN),
+            &mut out
+        ),
+        Err(CtapError::NoCredentials)
+    );
+    // It never reached the bump — the lookup refused first — so the tag stands. What
+    // matters is the direction: it must not have moved *backwards*.
+    assert_eq!(cred_store_state(&mut fs), before);
+}
+
 #[test]
 fn delete_unknown_credential_is_no_credentials() {
     let (mut fs, mut rng) = setup();

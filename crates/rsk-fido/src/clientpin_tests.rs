@@ -1119,8 +1119,10 @@ fn pin_complexity_policy_tracks_the_strong_pin_rule() {
     );
 
     let mut info = [0u8; 1024];
-    let n = crate::getinfo::get_info(false, 4, false, false, false, false, 256, None, &mut info)
-        .unwrap();
+    let n = crate::getinfo::get_info(
+        false, 4, false, false, false, false, 256, None, None, &mut info,
+    )
+    .unwrap();
     let mut d = minicbor::Decoder::new(&info[..n]);
     let entries = d.map().unwrap().unwrap();
     let mut advertised = None;

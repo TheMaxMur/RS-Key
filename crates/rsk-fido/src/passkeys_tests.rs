@@ -275,6 +275,40 @@ fn delete_last_cred_removes_rp() {
     assert_eq!(seen, std::vec!["keep.example".to_string()]);
 }
 
+/// The fourth path that changes the discoverable set, and the one the roadmap for
+/// `encCredStoreState` did not list: a delete driven from the trusted display, not
+/// from a host. A platform holding the persistent token must see the same tag move
+/// it would have seen for `deleteCredential`, or its cache outlives a credential the
+/// owner removed on the device itself.
+#[test]
+fn an_on_device_delete_moves_the_store_tag() {
+    use crate::credential::cred_store_state;
+
+    let (mut fs, seed) = provisioned();
+    add(&mut fs, &seed, 1, "github.com", b"u", "n", "N", 0);
+    let before = cred_store_state(&mut fs);
+
+    let gh = fids_under(&mut fs, "github.com");
+    assert_eq!(gh.len(), 1);
+    assert!(delete_cred(&mut fs, gh[0]));
+    assert_ne!(cred_store_state(&mut fs), before);
+}
+
+/// A refused on-device delete must not move the tag either way it can be refused —
+/// out of range, or an empty slot. Both return before the bump, so nothing is
+/// written and nothing is claimed.
+#[test]
+fn a_refused_on_device_delete_leaves_the_tag_alone() {
+    use crate::credential::cred_store_state;
+
+    let (mut fs, seed) = provisioned();
+    add(&mut fs, &seed, 1, "github.com", b"u", "n", "N", 0);
+    let before = cred_store_state(&mut fs);
+    assert!(!delete_cred(&mut fs, EF_CRED - 1));
+    assert!(!delete_cred(&mut fs, EF_CRED + 200));
+    assert_eq!(cred_store_state(&mut fs), before);
+}
+
 #[test]
 fn delete_bad_fid_is_noop() {
     let (mut fs, seed) = provisioned();

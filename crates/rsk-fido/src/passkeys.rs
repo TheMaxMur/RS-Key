@@ -270,6 +270,11 @@ pub fn delete_cred<S: Storage>(fs: &mut Fs<S>, ef_cred_fid: u16) -> bool {
     }
     let mut rp_id_hash = [0u8; 32];
     rp_id_hash.copy_from_slice(&buf[..32]);
+    // Ahead of the delete, as on the host path: a tag that over-reports costs the
+    // platform one re-enumeration, one that under-reports costs it a stale cache.
+    if crate::credential::bump_cred_store_state(fs).is_err() {
+        return false;
+    }
     if fs.delete(ef_cred_fid).is_err() {
         return false;
     }

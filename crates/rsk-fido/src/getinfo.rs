@@ -23,9 +23,9 @@ use crate::consts::{
     AAGUID, ALG_EDDSA, ALG_ES256, ALG_ES384, ALG_ES512, ALG_MLDSA44, ALG_MLDSA65, ALG_MLDSA87,
     ATT_FMT_PACKED, CONFIG_AUT_DISABLE, CONFIG_AUT_ENABLE, CONFIG_EA_RPIDS,
     CONFIG_PHY_LED_BRIGHTNESS, CONFIG_PHY_LED_GPIO, CONFIG_PHY_OPTIONS, CONFIG_PHY_VIDPID,
-    ENC_IDENTIFIER_LEN, FIRMWARE_VERSION, LARGE_BLOB_EXT, MAX_CRED_ID_LENGTH, MAX_CREDBLOB_LENGTH,
-    MAX_CREDENTIAL_COUNT_IN_LIST, MAX_LARGE_BLOB_SIZE, MAX_MIN_PIN_RPIDS, MAX_MSG_SIZE,
-    PIN_COMPLEXITY_POLICY, TRANSPORTS,
+    ENC_GETINFO_MEMBER_LEN, FIRMWARE_VERSION, LARGE_BLOB_EXT, MAX_CRED_ID_LENGTH,
+    MAX_CREDBLOB_LENGTH, MAX_CREDENTIAL_COUNT_IN_LIST, MAX_LARGE_BLOB_SIZE, MAX_MIN_PIN_RPIDS,
+    MAX_MSG_SIZE, PIN_COMPLEXITY_POLICY, TRANSPORTS,
 };
 use crate::cose::cose_public_key;
 use crate::error::{CtapError, CtapResult};
@@ -56,7 +56,8 @@ pub fn get_info(
     always_uv: bool,
     builtin_uv: bool,
     remaining_rk: u16,
-    enc_identifier: Option<&[u8; ENC_IDENTIFIER_LEN]>,
+    enc_identifier: Option<&[u8; ENC_GETINFO_MEMBER_LEN]>,
+    enc_cred_store_state: Option<&[u8; ENC_GETINFO_MEMBER_LEN]>,
     out: &mut [u8],
 ) -> CtapResult {
     let mut enc = Encoder::new(minicbor::encode::write::Cursor::new(out));
@@ -70,6 +71,7 @@ pub fn get_info(
         builtin_uv,
         remaining_rk,
         enc_identifier,
+        enc_cred_store_state,
     )
     .map_err(|_| CtapError::Other)?;
     Ok(enc.writer().position())
@@ -85,13 +87,19 @@ fn write_info<W: Write>(
     always_uv: bool,
     builtin_uv: bool,
     remaining_rk: u16,
-    enc_identifier: Option<&[u8; ENC_IDENTIFIER_LEN]>,
+    enc_identifier: Option<&[u8; ENC_GETINFO_MEMBER_LEN]>,
+    enc_cred_store_state: Option<&[u8; ENC_GETINFO_MEMBER_LEN]>,
 ) -> Result<(), Error<W::Error>> {
     // Keys are ascending uints → CTAP canonical order (1-byte keys 0x01..0x16
-    // first, then the 2-byte keys 0x18, 0x19, 0x1A, 0x1B, 0x1D, 0x1F — 24 and up need
-    // the extra byte). Two members are conditional: `largeblob-ext` drops 0x0B with
-    // the command it describes, and 0x19 needs a persistent token to key it.
-    enc.map(23 + u64::from(!LARGE_BLOB_EXT) + u64::from(enc_identifier.is_some()))?;
+    // first, then the 2-byte keys 0x18, 0x19, 0x1A, 0x1B, 0x1D, 0x1E, 0x1F — 24 and up
+    // need the extra byte). Three members are conditional: `largeblob-ext` drops 0x0B
+    // with the command it describes, and 0x19 / 0x1E each need a persistent token to
+    // key them.
+    enc.map(
+        23 + u64::from(!LARGE_BLOB_EXT)
+            + u64::from(enc_identifier.is_some())
+            + u64::from(enc_cred_store_state.is_some()),
+    )?;
 
     // 0x01 versions — advertise the full backward-compatible superset up to
     // FIDO_2_3 (the implemented surface: credMgmt, largeBlobs, credProtect,
@@ -336,6 +344,14 @@ fn write_info<W: Write>(
     // to 64 bytes on the wire, so the content is at most 63. A 2-byte CBOR key
     // (29 > 23), so it sorts after the 1-byte keys but before 0x1F → canonical.
     enc.u8(0x1D)?.u8(crate::clientpin::MAX_PIN_LENGTH as u8)?;
+
+    // 0x1E encCredStoreState — the 0x19 construction under its own label, over a tag
+    // that changes whenever the discoverable-credential set does. A platform holding
+    // the persistent token caches the plaintext and re-enumerates only when it moves;
+    // one without the token sees a value that differs on every call and says nothing.
+    if let Some(state) = enc_cred_store_state {
+        enc.u8(0x1E)?.bytes(state)?;
+    }
 
     // 0x1F authenticatorConfigCommands — the authenticatorConfig (0x0D) subcommands
     // we support: enableEnterpriseAttestation (0x01), toggleAlwaysUv (0x02),

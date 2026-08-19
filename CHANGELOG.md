@@ -92,6 +92,24 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Added
 
+- **A platform had no way to know its credential cache was stale.**
+  CTAP 2.3's `encCredStoreState` (getInfo `0x1E`) was absent, so a platform that had
+  enumerated a key's discoverable credentials could only find out whether anything
+  had changed by enumerating them all again. It now carries the same
+  `iv ‖ AES-128-CBC(HKDF-SHA-256(persistent pinUvAuthToken, "encCredStoreState"))`
+  construction `encIdentifier` uses, over a 128-bit tag that moves on **every** change
+  to the discoverable set: a create, a `deleteCredential`, an `updateUserInformation`,
+  and the delete driven from the trusted display — that fourth path is a real one and
+  was not in the plan. Reads never move it. Two properties earn the member its keep
+  and both are tested: the tag lives in flash rather than in `Fs::write_gen`, which
+  restarts at zero on every boot and would let a changed store read as unchanged
+  across a replug; and it is written *ahead of* the change it describes, so a torn
+  write leaves a tag that over-reports (one wasted re-enumeration) instead of one
+  that under-reports (a cache nothing corrects). Absent until a persistent
+  pinUvAuthToken exists, like `encIdentifier` — only its holder can read it, which is
+  the whole privacy story — and cleared by `authenticatorReset` with the credentials
+  it summarises. `bcdDevice` 0x0969 → 0x096A.
+
 - **Enterprise attestation could be switched on, but never aimed at anyone.**
   Vendor-facilitated (type 1) enterprise attestation matched a list that was
   hardcoded and empty outside the conformance build, so `enterpriseAttestation: 1`

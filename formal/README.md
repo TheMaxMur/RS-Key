@@ -87,10 +87,10 @@ match more than one file in the tree.
 |---|---|---|
 | `NoAuthorizationBypass` | No protected operation completes without the live authorization its own gate requires | `crates/rsk-fido/src/`: `getassertion.rs:384-387` · `makecredential.rs:513-516` · `config.rs:244-246` · `credmgmt.rs:278` · retry ladder `clientpin.rs:723-808` · soft lock `state.rs:285-293` + `crates/rsk-device/src/ctap.rs:215-222` · reset window `reset.rs:182-188` · walk owner `state.rs:169-180`, `credmgmt.rs:339` |
 | `NoCrossTransportTouchConsumption` | A presence decision produced for one transport is never applied to another — neither a confirm nor a cancel | `crates/rsk-device/src/presence.rs`: `Arbiter::pending_for` · `::request_cancel` / `::cancel_otp_wait` (the scope guards) · `ButtonWait::wait` (the `spent` latch). `firmware/src/presence.rs` keeps only the board half. **The stale-cancel drop that carries this property is the one at the wait's ENTRY.** The exit clear cannot substitute for it — a cancel latched by a dispatch that never entered `wait` is never seen by the exit — see "The cancel that no wait was open for" |
-| `NoTokenAfterInvalidation` | A grant invalidated by a PIN change, PIN set, reset, `stopUsingPinUvAuthToken` or power cycle never authorizes again | `crates/rsk-fido/src/`: `state.rs:488-502` (`reset_pin_uv_auth_token`) · `state.rs:547-562` (`stop_using_token`) · `state.rs:596-609` (`expire_stale_token`) · `clientpin.rs:302-313` · `seed.rs:311-312` (`clear_ppuat`) |
+| `NoTokenAfterInvalidation` | A grant invalidated by a PIN change, PIN set, reset, `stopUsingPinUvAuthToken` or power cycle never authorizes again | `crates/rsk-fido/src/`: `state.rs:488-502` (`reset_pin_uv_auth_token`) · `state.rs:547-562` (`stop_using_token`) · `state.rs:596-609` (`expire_stale_token`) · `clientpin.rs:302-313` · `seed.rs:312-313` (`clear_ppuat`) |
 | `NoAccessibleSecretWithoutGate` | No live secret is reachable while the gate record that protects it is gone | `crates/rsk-fido/src/`: `reset.rs:153-180` (`is_fido_gate_fid`) · `reset.rs:52-67` (phase order) · `credmgmt.rs:249-266` (`authorized_by_ppuat`) · `clientpin.rs:214-218`, `:824-828` |
 | `NoUnmanageableCredential` | Every live credential is reachable by the management surface (its `EF_RP` entry exists) | `crates/rsk-fido/src/`: `credential.rs:805-827` (registration write order) · `credmgmt.rs:658-713` (`delete_credential` / `decrement_rp`) · `passkeys.rs:90-152` (`for_each_rp`, the `EF_RP` walk the display lists from) |
-| `ResetNeverWeakensSurvivingState` | No prefix of an `authenticatorReset` — torn or complete — leaves a surviving usable secret whose gate has already gone, where "surviving" counts the RAM copy of the seed as well as the flash record | `crates/rsk-fido/src/`: `reset.rs:31-76` (`reset`, session then seed then two phases) · `reset.rs:58-61` (`ctx.state.reset()` ahead of every flash write) · `reset.rs:78-114` (`sweep`, and the `Err` at `:95-99` that leaves the device running) · `reset.rs:153-180` (`is_fido_gate_fid`, incl. `EF_BACKUP_SEALED`) · `reset.rs:231-239` (`survives_factory_reset`) · `crates/rsk-fido/src/lib.rs:183-187` (`Ctx::load_keydev`, the RAM copy that wins) · `state.rs:426-436` (`FidoState::reset`, what drops it). Shipped twin for its third clause: `reset_tests.rs::a_torn_reset_never_unseals_a_surviving_seed` |
+| `ResetNeverWeakensSurvivingState` | No prefix of an `authenticatorReset` — torn or complete — leaves a surviving usable secret whose gate has already gone, where "surviving" counts the RAM copy of the seed as well as the flash record | `crates/rsk-fido/src/`: `reset.rs:31-76` (`reset`, session then seed then two phases) · `reset.rs:58-61` (`ctx.state.reset()` ahead of every flash write) · `reset.rs:78-114` (`sweep`, and the `Err` at `:95-99` that leaves the device running) · `reset.rs:153-180` (`is_fido_gate_fid`, incl. `EF_BACKUP_SEALED`) · `reset.rs:234-242` (`survives_factory_reset`) · `crates/rsk-fido/src/lib.rs:183-187` (`Ctx::load_keydev`, the RAM copy that wins) · `state.rs:426-436` (`FidoState::reset`, what drops it). Shipped twin for its third clause: `reset_tests.rs::a_torn_reset_never_unseals_a_surviving_seed` |
 
 ### Two more that are not among the six, and three clauses that now have names
 
@@ -189,7 +189,7 @@ says how deep TLC had to go to find it, roughly.
 | `BugResetGatesFirst` | `reset.rs:68-69` phase order | `ResetNeverWeakensSurvivingState` | 2 352 states |
 | `BugBackupSealedNotAGate` | `reset.rs:158-179` — `EF_BACKUP_SEALED` back in phase 1 (audit run-36) | `ResetNeverWeakensSurvivingState` | 2 347 states |
 | `BugCredBeforeRp` | `credential.rs:808-827` write order | `NoUnmanageableCredential` | 820 states |
-| `BugDeleteRpBeforeCred` | `credmgmt.rs:665-672` — `decrement_rp` ahead of the `EF_CRED` delete | `NoUnmanageableCredential` | 111 503 states |
+| `BugDeleteRpBeforeCred` | `credmgmt.rs:665-673` — `decrement_rp` ahead of the `EF_CRED` delete | `NoUnmanageableCredential` | 111 503 states |
 | `BugTokenSurvivesPinChange` | `clientpin.rs:313` | `NoTokenAfterInvalidation` | 15 299 states |
 | `BugSetPinKeepsPpuat` | `clientpin.rs:214-218` | `NoTokenAfterInvalidation` | 416 314 states |
 | `BugChangePinKeepsPpuat` | `clientpin.rs:302-306` | `NoTokenAfterInvalidation` | 11 183 states |
@@ -410,7 +410,7 @@ says which.
 | `crates/rsk-openpgp/src/pin.rs:202` `<` → `<=` | fail-safe — a short `EF_PW_PRIV` makes a live reference answer `PIN_BLOCKED`; wrong, but in the refusing direction | recorded |
 | `crates/rsk-openpgp/src/pin.rs:763` guard → `true` | effectively equivalent — an empty `EF_RC` yields `rc_len = 0`, and the `check_pin` below re-reads `EF_RC` and refuses on its own guard | recorded |
 | `crates/rsk-fido/src/reset.rs:104` `>` → `>=` | conformance — the runaway valve trips one delete early | recorded |
-| `crates/rsk-fido/src/reset.rs:104` `>` → `==` | **the valve stops guarding**: `deleted` rises a whole batch at a time and can step past the threshold without ever equalling it. Not drivable in a unit test at `RESET_MAX_DELETES = 4 × 256 + 14` | **open** |
+| `crates/rsk-fido/src/reset.rs:104` `>` → `==` | **the valve stops guarding**: `deleted` rises a whole batch at a time and can step past the threshold without ever equalling it. Not drivable in a unit test at `RESET_MAX_DELETES = 4 × 256 + 15` | **open** |
 
 Both closures are the tree's own rule about sweeping by class rather than by
 site, and both were one applet away from being closed already. PIV has
@@ -944,7 +944,7 @@ the seed still present — a usable discoverable passkey that `enumerateRPs` and
 the trusted-display Passkeys view cannot list (both walk `EF_RP`) and that
 `enumerateCredentials` therefore cannot reach to delete, while `getAssertion`
 (which scans `EF_CRED`) authenticates with it happily. That is precisely the
-state `credential.rs:805-812` orders registration to avoid and that audit
+state `credential.rs:829-836` orders registration to avoid and that audit
 run-35 recorded as one that "never self-heals" — reached here from the *other*
 direction, the wipe rather than the write.
 
@@ -1103,7 +1103,7 @@ second time on this model that being *more* faithful has made it *smaller*.
 
 Constants: `RPs = {r1,r2}`, `Channels = {c1,c2}`, **`MaxRetries = 8`,
 `MismatchLimit = 3`** — the firmware's own `MAX_PIN_RETRIES` and
-`PIN_MISMATCH_LIMIT` (`consts.rs:345,334`) — `MaxClock = 1`, `ResetWindow = 0`.
+`PIN_MISMATCH_LIMIT` (`consts.rs:356,334`) — `MaxClock = 1`, `ResetWindow = 0`.
 
 They used to be 3 : 2, and the reduction was the largest standing question on
 this page. `SYMMETRY` is what answered it. Relying parties and channels are

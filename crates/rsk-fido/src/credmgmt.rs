@@ -668,6 +668,7 @@ fn delete_credential<S: Storage, R: Rng>(
     slot: u16,
     rp_id_hash: &[u8; 32],
 ) -> CtapResult {
+    crate::credential::bump_cred_store_state(ctx.fs).map_err(|_| CtapError::NotAllowed)?;
     ctx.fs
         .delete(EF_CRED + slot)
         .map_err(|_| CtapError::NotAllowed)?;
@@ -826,6 +827,7 @@ fn reseal_user<S: Storage, R: Rng>(
         &mut rec,
     )
     .ok_or(CtapError::KeyStoreFull)?;
+    crate::credential::bump_cred_store_state(ctx.fs).map_err(|_| CtapError::NotAllowed)?;
     ctx.fs
         .put(EF_CRED + slot, &rec[..total])
         .map_err(|_| CtapError::NotAllowed)?;

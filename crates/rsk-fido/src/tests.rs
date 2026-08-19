@@ -93,12 +93,12 @@ fn dispatch_get_assertion_routes_to_handler() {
     assert_eq!(out[0], CtapError::InvalidCbor.as_u8());
 }
 
-/// The 0x19 payload is built in `seed::enc_identifier` but assembled at the
-/// dispatch site, where the seed, the token and the RNG live. This drives the real
-/// command so the wiring is covered too: an encoder test passing `Some(..)` by hand
-/// would stay green if `process_cbor` never asked for the value.
+/// The 0x19 and 0x1E payloads are built in `seed::` but assembled at the dispatch
+/// site, where the seed, the token and the RNG live. This drives the real command so
+/// the wiring is covered too: an encoder test passing `Some(..)` by hand would stay
+/// green if `process_cbor` never asked for either value.
 #[test]
-fn dispatch_get_info_carries_enc_identifier_once_a_token_exists() {
+fn dispatch_get_info_carries_the_encrypted_members_once_a_token_exists() {
     let mut plain = [0u8; 1024];
     let n = dispatch_seeded(&[consts::CTAP_GET_INFO], &mut plain, false);
     let mut with = [0u8; 1024];
@@ -111,19 +111,25 @@ fn dispatch_get_info_carries_enc_identifier_once_a_token_exists() {
     let entries = d.map().unwrap().unwrap();
     assert_eq!(
         entries,
-        without.map().unwrap().unwrap() + 1,
-        "the map must grow by exactly one member"
+        without.map().unwrap().unwrap() + 2,
+        "a persistent token adds exactly encIdentifier and encCredStoreState"
     );
 
-    let mut found = None;
+    let mut found = std::vec::Vec::new();
     for _ in 0..entries {
-        if d.u32().unwrap() == 0x19 {
-            found = Some(d.bytes().unwrap().len());
-        } else {
-            d.skip().unwrap();
+        match d.u32().unwrap() {
+            k @ (0x19 | 0x1E) => found.push((k, d.bytes().unwrap().len())),
+            _ => d.skip().unwrap(),
         }
     }
-    assert_eq!(found, Some(consts::ENC_IDENTIFIER_LEN), "iv(16) ‖ ct(16)");
+    assert_eq!(
+        found,
+        std::vec![
+            (0x19, consts::ENC_GETINFO_MEMBER_LEN),
+            (0x1E, consts::ENC_GETINFO_MEMBER_LEN)
+        ],
+        "both are iv(16) ‖ ct(16), and 0x19 sorts before 0x1E"
+    );
     assert!(
         d.datatype().is_err(),
         "the declared count must consume the map"

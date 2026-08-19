@@ -345,7 +345,7 @@ fn otp_wrapped_seed_migrates_to_plain_at_verify() {
 
 /// Recover the identifier the way a platform holding the persistent token would:
 /// re-derive the AES key from the token, split `iv ‖ ct`, decrypt one block.
-fn open_enc_identifier(token: &[u8; 32], blob: &[u8; ENC_IDENTIFIER_LEN]) -> [u8; 16] {
+fn open_enc_identifier(token: &[u8; 32], blob: &[u8; ENC_GETINFO_MEMBER_LEN]) -> [u8; 16] {
     let mut key = [0u8; 16];
     hkdf_sha256(&ENCID_SALT, token, INFO_ENCID, &mut key).unwrap();
     let mut iv = [0u8; 16];
@@ -403,6 +403,107 @@ fn enc_identifier_is_fresh_per_call_but_stable_underneath() {
         "the same device must decrypt to the same identifier"
     );
     assert_ne!(id, [0u8; 16], "an all-zero identifier identifies nothing");
+}
+
+/// The 0x1E twin of [`open_enc_identifier`], differing only in the HKDF label —
+/// which is the whole reason the two members do not decrypt to each other.
+fn open_enc_cred_store_state(token: &[u8; 32], blob: &[u8; ENC_GETINFO_MEMBER_LEN]) -> [u8; 16] {
+    let mut key = [0u8; 16];
+    hkdf_sha256(&ENCID_SALT, token, INFO_ENCCSS, &mut key).unwrap();
+    let mut iv = [0u8; 16];
+    iv.copy_from_slice(&blob[..16]);
+    let mut pt = [0u8; 16];
+    pt.copy_from_slice(&blob[16..]);
+    aes_decrypt(&key, &iv, Mode::Cbc, &mut pt).unwrap();
+    pt
+}
+
+/// The token is the whole gate, exactly as for 0x19. Unlike 0x19 the seed is NOT:
+/// the tag is bookkeeping, and a soft-locked device must still be able to tell a
+/// platform its credential set is unchanged.
+#[test]
+fn enc_cred_store_state_needs_a_token_but_not_the_seed() {
+    let (d, mut f, mut rng) = (dev(), fs(), SeqRng(17));
+    ensure_seed(&d, &mut f, &mut rng).unwrap();
+    assert!(
+        enc_cred_store_state(&d, &mut f, &mut rng).is_none(),
+        "no persistent token yet — nothing to key it with"
+    );
+
+    ensure_ppuat(&d, &mut f, &mut rng).unwrap();
+    assert!(enc_cred_store_state(&d, &mut f, &mut rng).is_some());
+
+    f.delete_key(EF_KEY_DEV).unwrap();
+    assert!(
+        enc_cred_store_state(&d, &mut f, &mut rng).is_some(),
+        "a soft lock hides the seed, which this member never reads"
+    );
+}
+
+/// Same two-sided property 0x19 lives by: fresh bytes every call, stable plaintext
+/// underneath — and the plaintext must be the tag the store actually holds, or the
+/// member reports a change the credential set never had (and misses ones it did).
+#[test]
+fn enc_cred_store_state_is_fresh_per_call_and_carries_the_stored_tag() {
+    let (d, mut f, mut rng) = (dev(), fs(), SeqRng(19));
+    ensure_seed(&d, &mut f, &mut rng).unwrap();
+    let token = ensure_ppuat(&d, &mut f, &mut rng).unwrap();
+
+    let first = enc_cred_store_state(&d, &mut f, &mut rng).unwrap();
+    let second = enc_cred_store_state(&d, &mut f, &mut rng).unwrap();
+    assert_ne!(first[..16], second[..16], "the IV itself must be fresh");
+    assert_ne!(first, second, "a repeated blob is a fingerprint");
+    assert_eq!(
+        open_enc_cred_store_state(&token, &first),
+        open_enc_cred_store_state(&token, &second),
+        "an unchanged store must decrypt to an unchanged tag"
+    );
+    assert_eq!(
+        open_enc_cred_store_state(&token, &first),
+        [0u8; 16],
+        "a store nothing has written to is the zero tag"
+    );
+
+    crate::credential::bump_cred_store_state(&mut f).unwrap();
+    let after = enc_cred_store_state(&d, &mut f, &mut rng).unwrap();
+    assert_ne!(
+        open_enc_cred_store_state(&token, &after),
+        open_enc_cred_store_state(&token, &first),
+        "a bumped tag must reach the platform"
+    );
+    assert_eq!(
+        open_enc_cred_store_state(&token, &after),
+        crate::credential::cred_store_state(&mut f),
+        "and it must be the tag the record holds, not some other value"
+    );
+}
+
+/// The two members share every byte of their construction except the HKDF label, so
+/// this is the one thing that keeps them apart. Decrypting one under the other's
+/// label must not yield the other's plaintext — a copy-paste that reused
+/// `INFO_ENCID` would otherwise pass every test above.
+#[test]
+fn the_two_encrypted_members_do_not_decrypt_to_each_other() {
+    let (d, mut f, mut rng) = (dev(), fs(), SeqRng(23));
+    ensure_seed(&d, &mut f, &mut rng).unwrap();
+    let token = ensure_ppuat(&d, &mut f, &mut rng).unwrap();
+
+    let id_blob = enc_identifier(&d, &mut f, &mut rng).unwrap();
+    let state_blob = enc_cred_store_state(&d, &mut f, &mut rng).unwrap();
+    let id = open_enc_identifier(&token, &id_blob);
+    let state = open_enc_cred_store_state(&token, &state_blob);
+
+    assert_ne!(id, state, "the identifier is not the store tag");
+    assert_ne!(
+        open_enc_cred_store_state(&token, &id_blob),
+        id,
+        "the identifier must not open under the encCredStoreState label"
+    );
+    assert_ne!(
+        open_enc_identifier(&token, &state_blob),
+        state,
+        "the store tag must not open under the encIdentifier label"
+    );
 }
 
 /// `authenticatorReset` mints a fresh seed, and the identifier is derived from it,

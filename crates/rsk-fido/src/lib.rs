@@ -263,6 +263,7 @@ pub fn process_cbor<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, data: &[u8], out: &
             // Re-encrypted under a fresh IV on every getInfo, so the member cannot
             // become a stable fingerprint (`seed::enc_identifier`).
             let enc_id = seed::enc_identifier(&ctx.dev, ctx.fs, ctx.rng);
+            let enc_css = seed::enc_cred_store_state(&ctx.dev, ctx.fs, ctx.rng);
             getinfo::get_info(
                 ctx.fs.has_data(consts::EF_PIN),
                 min_pin,
@@ -272,6 +273,7 @@ pub fn process_cbor<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, data: &[u8], out: &
                 ctx.presence.uv_available(),
                 remaining_rk,
                 enc_id.as_ref(),
+                enc_css.as_ref(),
                 &mut out[1..],
             )
         }

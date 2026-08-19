@@ -444,7 +444,19 @@ needs only the identifiers above. RS-Key implements:
   bytes differ each time while the identifier under them does not: a tool holding
   the token recognises the device across sessions, and one without it learns
   nothing. The identifier is derived from the device seed, so `authenticatorReset`
-  changes it. **makeCredential accepts `attestationFormatsPreference` (request
+  changes it.
+  **`encCredStoreState` (`0x1E`) is that same construction under the label
+  `encCredStoreState`**, over a 128-bit tag that moves whenever the set of
+  discoverable credentials does — a create, a `deleteCredential`, an
+  `updateUserInformation`, or a delete driven from the trusted display. Reads never
+  move it. A platform holding the token caches the plaintext and re-enumerates only
+  when it differs; one without the token sees bytes that change every call and learns
+  nothing. The tag is **stored**, not counted in RAM, so a power cycle does not reset
+  it — and it is written *ahead of* the change it describes, so what a torn write
+  leaves is a tag that over-reports (one wasted re-enumeration) rather than one that
+  under-reports (a stale cache). `authenticatorReset` clears it back to zero along
+  with the credentials it summarises.
+  **makeCredential accepts `attestationFormatsPreference` (request
   `0x0B`)**: a list of exactly `["none"]` is answered with `fmt:"none"` and an
   **empty — but present —** `attStmt`, and nothing is signed. Any other list, an
   empty one, or an absent field leaves the usual `packed` statement, because

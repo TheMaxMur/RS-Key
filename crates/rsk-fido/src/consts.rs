@@ -213,10 +213,17 @@ pub const PUBLIC_KEY_TYPE: &str = "public-key";
 /// reset is reachable exactly where the applet is. No FIDO AID is routed onto CCID.
 pub const TRANSPORTS: [&str; 1] = ["usb"];
 
-/// Length of getInfo's `encIdentifier` (0x19): a 16-byte IV followed by one
-/// AES-128-CBC block. The plaintext is a 128-bit device identifier, so the
-/// ciphertext is exactly one block — `aes_encrypt` pads nothing.
-pub const ENC_IDENTIFIER_LEN: usize = 16 + 16;
+/// Length of getInfo's two encrypted members — `encIdentifier` (0x19) and
+/// `encCredStoreState` (0x1E): a 16-byte IV followed by one AES-128-CBC block.
+/// Both plaintexts are 128 bits, so the ciphertext is exactly one block —
+/// `aes_encrypt` pads nothing.
+pub const ENC_GETINFO_MEMBER_LEN: usize = 16 + 16;
+
+/// The `encCredStoreState` plaintext: a 128-bit tag over the discoverable-credential
+/// set, advanced once per create / delete / updateUserInformation. Read as its own
+/// record so it survives a power cycle — `Fs::write_gen` restarts at 0 on every boot
+/// and would let a changed store read as unchanged.
+pub const CRED_STATE_LEN: usize = 16;
 
 /// The attestation statement format identifiers this device names on the wire:
 /// `packed` for every credential it attests (getInfo 0x16 and makeCredential `fmt`),
@@ -295,6 +302,10 @@ pub const EF_EA_ENABLED: u16 = 0xCE12;
 /// what every already-provisioned device reads and is exactly today's behaviour.
 /// 0xCE14 is `rsk_fs::EF_HARDENED`, hence the gap.
 pub const EF_EA_RPIDS: u16 = 0xCE15;
+/// Where the [`CRED_STATE_LEN`] credential-store tag lives. **Absent reads as
+/// all-zero**, which is the state of a store nothing has ever written to — a fresh
+/// device, and one just reset.
+pub const EF_CRED_STATE: u16 = 0xCE16;
 /// `alwaysUv` state, read via `crate::config::always_uv_enabled` — tri-state:
 /// absent = the compile default (`DEFAULT_ALWAYS_UV`), `[1]` = on, `[0]` = explicit
 /// off. Do NOT probe with `has_data` (a present `[0]` would read as on). Persists

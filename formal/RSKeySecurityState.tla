@@ -31,16 +31,16 @@ EXTENDS Naturals, FiniteSets, TLC
 CONSTANTS
     RPs,                \* relying parties (>= 2 to exercise rpId binding)
     Channels,           \* CTAPHID channel ids (>= 2 to exercise walk ownership)
-    MaxRetries,         \* models MAX_PIN_RETRIES = 8   (consts.rs:345)
-    MismatchLimit,      \* models PIN_MISMATCH_LIMIT = 3 (consts.rs:349)
+    MaxRetries,         \* models MAX_PIN_RETRIES = 8   (consts.rs:356)
+    MismatchLimit,      \* models PIN_MISMATCH_LIMIT = 3 (consts.rs:360)
     MaxClock,           \* coarse tick ceiling
-    ResetWindow         \* models RESET_WINDOW_MS = 10_000 (consts.rs:381)
+    ResetWindow         \* models RESET_WINDOW_MS = 10_000 (consts.rs:392)
 
 (* Mutation switches. All FALSE is the shipped tree. Each rebuilds one real  *)
 (* defect; `formal/README.md` maps every switch to its commit or audit id.   *)
 CONSTANTS
     BugResetGatesFirst,           \* reset.rs:58-59   two-phase wipe order
-    BugCredBeforeRp,              \* credential.rs:808-827 registration order
+    BugCredBeforeRp,              \* credential.rs:832-852 registration order
     BugTokenSurvivesPinChange,    \* clientpin.rs:313  resetPinUvAuthToken
     BugSetPinKeepsPpuat,          \* clientpin.rs:214-218
     BugChangePinKeepsPpuat,       \* clientpin.rs:302-306
@@ -53,7 +53,7 @@ CONSTANTS
     BugSoftLockLostOnWarmReset,   \* ctap.rs:215-222   PinLock across sys_reset
     BugWarmResetReopensWindow,    \* reset.rs:186-187  in_reset_window
     BugCmWalkIgnoresChannel,      \* state.rs:169-180  may_walk_rps
-    BugDeleteRpBeforeCred,        \* credmgmt.rs:665-672 deleteCredential order
+    BugDeleteRpBeforeCred,        \* credmgmt.rs:665-673 deleteCredential order
     BugBackupSealedNotAGate,      \* reset.rs:112-125  is_fido_gate_fid (run-36)
     BugConsumeKeepsMcGa,          \* state.rs:566-571  a narrowed 6.5.5.7 triad
     BugNoDropStaleCancelAtEntry,  \* crates/rsk-device/src/presence.rs:195-196
@@ -614,7 +614,7 @@ WrongPin ==
 
 \* getPinUvAuthTokenUsingPinWithPermissions with `pcmr`: mints the PERSISTENT
 \* token, a flash record that outlives the power cycle (clientpin.rs:411-416,
-\* seed.rs:290-301). Holding it IS the grant (credmgmt.rs:249-266).
+\* seed.rs:291-302). Holding it IS the grant (credmgmt.rs:249-266).
 MintPpuat ==
     /\ PinAttempt(TRUE)
     /\ gate' = [gate EXCEPT !.ppuat = TRUE, !.ppuatStale = FALSE]
@@ -851,7 +851,7 @@ RegisterRefused ==
     /\ UNCHANGED << pin, gate, store, lock, tok, plat, walk, sys, snap,
                     upSpent, viol, ram >>
 
-\* credential.rs:805-827. Order so that any truncation leaves an RP entry
+\* credential.rs:829-852. Order so that any truncation leaves an RP entry
 \* without a credential -- invisible but harmless -- never a credential
 \* without an RP entry, which enumerateRPs and the display can neither list
 \* nor delete while getAssertion authenticates with it happily (audit run-35).
@@ -1021,7 +1021,7 @@ CmNext(ch) ==
     /\ UNCHANGED << pin, gate, store, lock, tok, plat, pres, walk, sys, op,
                     snap, upSpent, ram >>
 
-\* 0x06 deleteCredential (credmgmt.rs:658-713). It calls verify_cm_token
+\* 0x06 deleteCredential (credmgmt.rs:658-714). It calls verify_cm_token
 \* DIRECTLY rather than going through authorize_cm, so the persistent grant
 \* authorizes no writes -- which is why CmBeginViaPpuat has no delete twin.
 DeleteCredStart(r) ==
@@ -1611,7 +1611,7 @@ NoLiveTokenWithoutPinRecord == tok.live => pin.set
 \* Every live credential is reachable by the management surface: enumerateRPs
 \* and the trusted-display Passkeys view both walk EF_RP, so a credential
 \* without its RP entry can be authenticated with but neither listed nor
-\* deleted (credential.rs:805-812, audit run-35).
+\* deleted (credential.rs:829-836, audit run-35).
 NoUnmanageableCredential == Idle => store.cred \subseteq store.rpent
 
 \* No prefix of an authenticatorReset -- torn or complete -- leaves a

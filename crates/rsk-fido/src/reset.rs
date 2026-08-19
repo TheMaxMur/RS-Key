@@ -10,9 +10,9 @@ use rsk_fs::Storage;
 
 use crate::consts::{
     EF_ALWAYS_UV, EF_ATT_CHAIN, EF_ATT_KEY, EF_BACKUP_SEALED, EF_COUNTER, EF_CRED, EF_CRED_BLOB,
-    EF_CRED_CTR, EF_DEVICE_PIN, EF_EA_ENABLED, EF_EA_RPIDS, EF_EE_DEV, EF_KEY_DEV, EF_KEY_DEV_ENC,
-    EF_LARGEBLOB, EF_MINPINLEN, EF_PAUTHTOKEN, EF_PIN, EF_RP, EF_RPNICK, MAX_RESIDENT_CREDENTIALS,
-    RESET_WINDOW_MS,
+    EF_CRED_CTR, EF_CRED_STATE, EF_DEVICE_PIN, EF_EA_ENABLED, EF_EA_RPIDS, EF_EE_DEV, EF_KEY_DEV,
+    EF_KEY_DEV_ENC, EF_LARGEBLOB, EF_MINPINLEN, EF_PAUTHTOKEN, EF_PIN, EF_RP, EF_RPNICK,
+    MAX_RESIDENT_CREDENTIALS, RESET_WINDOW_MS,
 };
 use crate::error::{CtapError, CtapResult};
 use crate::journal;
@@ -20,8 +20,8 @@ use crate::seed::ensure_seed;
 use crate::{Ctx, Rng};
 
 /// Progress backstop for one [`sweep`] phase: the FIDO predicate spans four
-/// 256-slot ranges and 14 fixed records, so a converging sweep cannot exceed this.
-const RESET_MAX_DELETES: u32 = 4 * MAX_RESIDENT_CREDENTIALS as u32 + 14;
+/// 256-slot ranges and 15 fixed records, so a converging sweep cannot exceed this.
+const RESET_MAX_DELETES: u32 = 4 * MAX_RESIDENT_CREDENTIALS as u32 + 15;
 
 /// `authenticatorReset`: factory-reset the FIDO applet. Replies with only the
 /// status byte. Also the documented recovery from a soft lock with a lost lock
@@ -206,6 +206,9 @@ fn is_fido_fid(fid: u16) -> bool {
                 | EF_EE_DEV
                 | EF_COUNTER
                 | EF_CRED_CTR
+                // Goes with the credentials it summarises: absent reads as the
+                // zero tag, which is exactly the state of the store a reset leaves.
+                | EF_CRED_STATE
                 | EF_PIN
                 | EF_MINPINLEN
                 | EF_LARGEBLOB

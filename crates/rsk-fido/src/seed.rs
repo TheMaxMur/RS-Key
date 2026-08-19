@@ -38,7 +38,7 @@ use crate::Rng;
 use crate::cert::{build_attestation_cert, matches_template as cert_matches_template};
 use crate::consts::{
     EF_ATT_KEY, EF_COUNTER, EF_CRED_CTR, EF_EE_DEV, EF_KEY_DEV, EF_KEY_DEV_ENC, EF_LARGEBLOB,
-    EF_PAUTHTOKEN, ENC_IDENTIFIER_LEN, LARGEBLOB_INITIAL, MAX_RESIDENT_CREDENTIALS,
+    EF_PAUTHTOKEN, ENC_GETINFO_MEMBER_LEN, LARGEBLOB_INITIAL, MAX_RESIDENT_CREDENTIALS,
 };
 use crate::ec::P256Key;
 
@@ -69,6 +69,7 @@ const INFO_ENCID_DEVICE: &[u8] = b"KEYDEV/ENCID";
 /// Fixed by CTAP 2.2, not by us: the `encIdentifier` key is
 /// HKDF-SHA256(salt = 32 zero bytes, IKM = persistent pinUvAuthToken, L = 16).
 const INFO_ENCID: &[u8] = b"encIdentifier";
+const INFO_ENCCSS: &[u8] = b"encCredStoreState";
 const ENCID_SALT: [u8; 32] = [0u8; 32];
 
 /// `EF_KEY_DEV_ENC` layout: nonce(12) ‖ ChaCha20-Poly1305(seed value, 32) ‖ tag(16).
@@ -341,7 +342,7 @@ pub fn enc_identifier<S: Storage>(
     dev: &Device,
     fs: &mut Fs<S>,
     rng: &mut impl Rng,
-) -> Option<[u8; ENC_IDENTIFIER_LEN]> {
+) -> Option<[u8; ENC_GETINFO_MEMBER_LEN]> {
     // The token is the gate, so it is read FIRST: a device that has never issued one
     // is the common case, and opening the seal on the seed only to discard it would
     // be a ChaCha20-Poly1305 open on every getInfo for nothing.
@@ -367,20 +368,61 @@ pub fn enc_identifier<S: Storage>(
         return None;
     }
 
+    let out = seal_getinfo_member(&key, &mut id, rng);
+    key.zeroize();
+    out
+}
+
+/// getInfo's `encCredStoreState` (0x1E): the same `iv ‖ AES-128-CBC(k, block)` as
+/// [`enc_identifier`] under its own label, over a 128-bit tag that changes whenever
+/// the discoverable-credential set does. A platform holding the persistent token
+/// compares it with what it cached and re-enumerates only when it differs.
+///
+/// The master seed is not touched: the tag is bookkeeping, not derived material, and
+/// the token is sealed under the device root rather than the seed. So unlike
+/// [`enc_identifier`] this member survives a soft lock.
+///
+/// `None` when no persistent token has been issued yet: the member is optional, and
+/// a value under a key nobody holds says nothing to anyone.
+pub fn enc_cred_store_state<S: Storage>(
+    dev: &Device,
+    fs: &mut Fs<S>,
+    rng: &mut impl Rng,
+) -> Option<[u8; ENC_GETINFO_MEMBER_LEN]> {
+    let mut token = load_ppuat(dev, fs)?;
+    let mut key = [0u8; 16];
+    let derived = hkdf_sha256(&ENCID_SALT, &token, INFO_ENCCSS, &mut key);
+    token.zeroize();
+    if derived.is_err() {
+        key.zeroize();
+        return None;
+    }
+    let mut block = crate::credential::cred_store_state(fs);
+    let out = seal_getinfo_member(&key, &mut block, rng);
+    key.zeroize();
+    out
+}
+
+/// `iv ‖ AES-128-CBC(k, block)` with a **fresh IV per call** — the shape CTAP 2.3
+/// fixes for both encrypted getInfo members. A fixed or repeating IV would turn
+/// either one into a stable fingerprint served to anyone who asks, which is the
+/// tracking vector they exist to avoid. `block` is spent: it is zeroized here.
+fn seal_getinfo_member(
+    key: &[u8; 16],
+    block: &mut [u8; 16],
+    rng: &mut impl Rng,
+) -> Option<[u8; ENC_GETINFO_MEMBER_LEN]> {
     let mut iv = [0u8; 16];
     rng.fill(&mut iv);
-    let mut block = id;
-    id.zeroize();
-    let sealed = aes_encrypt(&key, &iv, Mode::Cbc, &mut block);
-    key.zeroize();
+    let sealed = aes_encrypt(key, &iv, Mode::Cbc, block);
     if sealed.is_err() {
         block.zeroize();
         return None;
     }
 
-    let mut out = [0u8; ENC_IDENTIFIER_LEN];
+    let mut out = [0u8; ENC_GETINFO_MEMBER_LEN];
     out[..16].copy_from_slice(&iv);
-    out[16..].copy_from_slice(&block);
+    out[16..].copy_from_slice(block);
     block.zeroize();
     Some(out)
 }

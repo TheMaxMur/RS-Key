@@ -19,9 +19,9 @@ use crate::consts::{
 /// 0x19 (encIdentifier) is listed but never expected here: it needs a persistent
 /// pinUvAuthToken to key it, and `Authr::fresh()` has none. Its presence is proved
 /// where a token exists — `tests::dispatch_get_info_carries_enc_identifier_once_a_token_exists`.
-const GETINFO_KEYS: [u32; 25] = [
+const GETINFO_KEYS: [u32; 26] = [
     0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10,
-    0x14, 0x15, 0x16, 0x18, 0x19, 0x1A, 0x1B, 0x1D, 0x1F,
+    0x14, 0x15, 0x16, 0x18, 0x19, 0x1A, 0x1B, 0x1D, 0x1E, 0x1F,
 ];
 
 #[test]
@@ -35,7 +35,9 @@ fn getinfo_envelope_and_canonical() {
         .iter()
         .copied()
         .filter(|k| *k != 0x0B || !crate::consts::LARGE_BLOB_EXT)
-        .filter(|k| *k != 0x19)
+        // 0x19 and 0x1E are both keyed by the persistent pinUvAuthToken, which an
+        // `Authr::fresh()` has never issued.
+        .filter(|k| *k != 0x19 && *k != 0x1E)
         .collect();
     assert_eq!(keys, expected, "getInfo top-level members changed");
 }
