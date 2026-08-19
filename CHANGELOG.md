@@ -40,6 +40,19 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Added
 
+- **The panel's key grids and the certificate date helper were both untested.**
+  Thirteen `rsk-ui` rows are the touch hit-test — loop bounds in `hit_pin` and
+  `hit_rename`, both `+` in `t9_key_rect`, the centring in `T9_LEFT`, and
+  `hit_del_hold` replaced outright; nine fall to one grid-walking test and four
+  do not compile. The obvious test cannot fail: a key's own centre hits that key
+  even under a wrong rect formula, because the centre moves with it. What bites
+  is checked from outside — keys inside the panel, columns and rows advancing by
+  exactly one gap, the block centred — plus taps past the last row AND the last
+  column, without which both column bounds survive. And `days_from_civil` had
+  four free operators including the `- yoe / 100` Gregorian century rule, which
+  only differs once the year-of-era reaches 100, so the table carries 1900 and
+  2100 as well as two February 29ths. No firmware behaviour change.
+
 - **`SLOT_UPDATE` repeated every CONFIGURE validation rule and had none of
   them.** The slot bound, the length floor, both RFU bytes, the CRC and the
   `base + p2` that decides which slot is addressed — eight mutations, all

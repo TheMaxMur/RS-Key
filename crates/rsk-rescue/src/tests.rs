@@ -879,3 +879,28 @@ fn an_unimplemented_write_selector_is_refused() {
         );
     }
 }
+
+/// `days_from_civil` is Hinnant's algorithm, and four of its operators were
+/// held by nothing (the reverse mutation pass, D2): the `m > 2` that picks the
+/// March-based month shift, the `+ 2` inside the day-of-year numerator, and the
+/// `- yoe / 100` that is the Gregorian century rule. The last one only differs
+/// once the year-of-era reaches 100, so a table that stops at recent dates
+/// cannot see it — 1900 and 2100 are here for exactly that.
+#[test]
+fn days_from_civil_matches_the_calendar_across_era_and_leap_boundaries() {
+    for (y, m, d, want) in [
+        (1970, 1, 1, 0),
+        (1969, 12, 31, -1),
+        // February: the branch the `m > 2` test chooses, and the one that
+        // underflows if it is taken with `>=`.
+        (2000, 2, 29, 11016),
+        (2000, 3, 1, 11017),
+        (2024, 2, 29, 19782),
+        (2026, 8, 19, 20684),
+        // yoe >= 100, where the century rule stops being a no-op.
+        (2100, 1, 1, 47482),
+        (1900, 1, 1, -25567),
+    ] {
+        assert_eq!(days_from_civil(y, m, d), want, "{y:04}-{m:02}-{d:02}");
+    }
+}

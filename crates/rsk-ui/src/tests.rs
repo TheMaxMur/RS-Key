@@ -532,3 +532,125 @@ fn t9_groups_are_printable_and_have_distinct_chars() {
         }
     }
 }
+
+/// Every key grid on the panel is `origin + index * (size + gap)`, and thirteen
+/// of those operators were held by nothing (the reverse mutation pass, D2): the
+/// loop bounds in `hit_pin` and `hit_rename`, both `+` in `t9_key_rect`, the
+/// centring arithmetic in `T9_LEFT`, and `hit_del_hold` replaced outright.
+///
+/// Asserting that a key's own centre hits that key is NOT enough — a rect
+/// formula that is wrong consistently stays self-consistent, and the test moves
+/// with it. So the properties here are the ones a wrong formula breaks from the
+/// outside: every key lies inside the panel, columns advance left to right by
+/// exactly one gap, rows likewise, and a tap past the last row hits nothing.
+#[test]
+fn the_key_grids_stay_inside_the_panel_and_hit_only_their_own_key() {
+    let centre = |r: Rect| Point {
+        x: r.x + r.w / 2,
+        y: r.y + r.h / 2,
+    };
+
+    // --- the PIN pad -------------------------------------------------------
+    for row in 0..PIN_ROWS {
+        for col in 0..PIN_COLS {
+            let r = pin_key_rect(col, row);
+            assert!(
+                r.x + r.w <= PANEL_W,
+                "pin key ({row},{col}) runs off the panel"
+            );
+            assert_eq!(
+                hit_pin(centre(r)),
+                Some(pin_grid_key(col, row)),
+                "the centre of pin key ({row},{col}) must select it"
+            );
+            if col > 0 {
+                let prev = pin_key_rect(col - 1, row);
+                assert_eq!(
+                    r.x,
+                    prev.x + prev.w + PIN_GAP_X,
+                    "pin columns must advance by exactly one gap"
+                );
+            }
+            if row > 0 {
+                let prev = pin_key_rect(col, row - 1);
+                assert_eq!(
+                    r.y,
+                    prev.y + prev.h + PIN_GAP_Y,
+                    "pin rows must advance by exactly one gap"
+                );
+            }
+        }
+    }
+    let last = pin_key_rect(PIN_COLS - 1, PIN_ROWS - 1);
+    assert_eq!(
+        hit_pin(Point {
+            x: centre(last).x,
+            y: last.y + last.h + PIN_GAP_Y + 1,
+        }),
+        None,
+        "a tap below the last pin row must select nothing"
+    );
+    assert_eq!(
+        hit_pin(Point {
+            x: last.x + last.w + PIN_GAP_X + 1,
+            y: centre(last).y,
+        }),
+        None,
+        "nor one to the right of the last pin column"
+    );
+
+    // --- the T9 rename keyboard -------------------------------------------
+    assert_eq!(
+        T9_LEFT,
+        (PANEL_W - (T9_COLS * T9_KEY_W + (T9_COLS - 1) * T9_GAP_X)) / 2,
+        "the T9 grid must be centred on the panel"
+    );
+    for row in 0..T9_ROWS {
+        for col in 0..T9_COLS {
+            let r = t9_key_rect(row, col);
+            assert!(
+                r.x + r.w <= PANEL_W,
+                "t9 key ({row},{col}) runs off the panel"
+            );
+            assert!(
+                hit_rename(centre(r)).is_some(),
+                "the centre of t9 key ({row},{col}) must select a key"
+            );
+            if col > 0 {
+                let prev = t9_key_rect(row, col - 1);
+                assert_eq!(r.x, prev.x + prev.w + T9_GAP_X, "t9 columns");
+            }
+            if row > 0 {
+                let prev = t9_key_rect(row - 1, col);
+                assert_eq!(r.y, prev.y + prev.h + T9_GAP_Y, "t9 rows");
+            }
+        }
+    }
+    let last = t9_key_rect(T9_ROWS - 1, T9_COLS - 1);
+    assert_eq!(
+        hit_rename(Point {
+            x: centre(last).x,
+            y: last.y + last.h + T9_GAP_Y + 1,
+        }),
+        None,
+        "a tap below the last t9 row must select nothing"
+    );
+    assert_eq!(
+        hit_rename(Point {
+            x: last.x + last.w + T9_GAP_X + 1,
+            y: centre(last).y,
+        }),
+        None,
+        "nor one to the right of the last t9 column"
+    );
+
+    // --- the hold-to-delete band ------------------------------------------
+    assert!(hit_del_hold(centre(DEL_HOLD_RECT)), "its own centre");
+    assert!(
+        !hit_del_hold(Point {
+            x: DEL_HOLD_RECT.x,
+            y: DEL_HOLD_RECT.y + DEL_HOLD_RECT.h + 1,
+        }),
+        "a point below the band is not the band"
+    );
+}
