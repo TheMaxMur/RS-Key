@@ -43,8 +43,13 @@
 (*****************************************************************************)
 EXTENDS Naturals, FiniteSets
 
-(* Mutation switches. All FALSE is the shipped tree. *)
+(* Mutation switches, and the one scope constant. All FALSE is the shipped
+   tree. *)
 CONSTANTS
+    \* The gateable capability domain. Every mutant here fires over ONE cap,
+    \* so three is padding the measurement does not need -- kept because it
+    \* is the shipped vocabulary, now visible as a scope (formal/scopes.txt).
+    Caps,
     \* crates/rsk-device/src/ccid.rs:64-71 -- APPLET_CAPS marks management,
     \* vendor and rescue as cap `0` (always available), because gating them off
     \* would make `ykman config usb --disable` irreversible. The switch ties the
@@ -77,7 +82,6 @@ CONSTANTS
 \* applets -- management, vendor, rescue -- are DELIBERATELY not in here: they are
 \* the always-on carve-out, represented by `WriteConfig` being unconditionally
 \* enabled rather than by a capability in the mask.
-Caps == {"piv", "oath", "otp"}
 
 InvNames == { "PrivilegedOpNeedsPresence", "DisableSetSurvivesLockWrite",
               "DisabledAppletNeverDispatches" }

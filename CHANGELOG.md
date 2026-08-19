@@ -40,6 +40,37 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Added
 
+- **The FIDO security model runs at the firmware's own PIN constants now.**
+  `MaxRetries` : `MismatchLimit` was 3 : 2 against a shipped `MAX_PIN_RETRIES`
+  8 : `PIN_MISMATCH_LIMIT` 3, and the gap was the largest recorded caveat on the
+  model — "an argument, not a proof". `SYMMETRY` closed it: relying parties and
+  channels are interchangeable, so TLC may quotient by `Permutations`, which
+  takes the reduced-constant run from 61 215 504 distinct states to 25 829 584.
+  The real constants then cost **48 679 968 — fewer than the reduced scope
+  explored before** — GREEN and exhaustive at depth 55 in 539 s, with all 28
+  mutants and both historical configurations still RED on their own invariant.
+  Applied to the safety configurations only, because TLC's liveness check is not
+  sound under symmetry; `Liveness*` and `Fairness*` keep their smaller constants.
+  `Shipped.cfg`'s floor is unchanged at 20 000 000 — still under the measurement,
+  and stricter than the "near a third" rule. Model and tooling only, no firmware
+  behaviour change.
+
+- **The model's CONSTANTS are under a gate now — two mutants were GREEN one
+  element below the shipped scope.** `floors.txt` watches whether a run got
+  smaller; nothing watched whether the scope it ran over was big enough to hold
+  the defect. `BugCmWalkIgnoresChannel` explores 43 M+ distinct states at one
+  CTAPHID channel without a counterexample and falls at two, and
+  `BugContIgnoresChannel` is the same shape at the reassembler. The transport's `Channels` and the
+  admin `Caps` were literals inside their modules until now, so no configuration
+  could say what scope it ran at; both are CONSTANTS now, emitted by
+  `gen-configs.sh`, and every count is unchanged. `formal/scopes.txt` records
+  two hand-written columns per constant — the measured minimum and the invariant
+  it was measured against — and `scripts/scope_gate.py` derives everything else,
+  including which module owns a configuration. The profile also shows every one
+  of the thirty security configurations firing with a *single* relying party,
+  against a module comment asking for two. Tests and tooling only, no firmware
+  behaviour change.
+
 - **Co-refutation now covers the applet models, and found four rules the host
   tests could not hold.** The roster gains the 24 seam, retry-lattice and policy
   mutants — the three families excluded until now — taking it to 67 entries with

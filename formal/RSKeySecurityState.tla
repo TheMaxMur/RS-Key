@@ -26,7 +26,7 @@
 (* counterexample. An invariant no mutant can break is a test that cannot    *)
 (* fail.                                                                     *)
 (*****************************************************************************)
-EXTENDS Naturals, FiniteSets
+EXTENDS Naturals, FiniteSets, TLC
 
 CONSTANTS
     RPs,                \* relying parties (>= 2 to exercise rpId binding)
@@ -121,6 +121,12 @@ Owners     == Transports \cup {Otp, Panel, NoOwner}
 
 NoRp   == "norp"           \* PinUvAuthToken.has_rp_id = FALSE (state.rs:253)
 NoChan == "nochan"
+
+\* Relying parties and channels are interchangeable: no action, invariant or
+\* initial state names a particular one, so a permutation maps behaviours to
+\* behaviours and TLC may quotient by it. Safety configurations only -- its
+\* liveness check is not sound under symmetry.
+Symm == Permutations(RPs) \cup Permutations(Channels)
 
 (* PERM_* bits, state.rs:22-28. Restricted to the sets a host actually asks  *)
 (* for, which keeps the token's value space at 5 instead of 16: getPinToken  *)

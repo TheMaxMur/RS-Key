@@ -51,6 +51,10 @@
 EXTENDS Naturals
 
 CONSTANTS
+    \* The channel domain. Two is the MEASURED minimum:
+    \* `BugContIgnoresChannel` is GREEN over one channel and RED from two,
+    \* and no mutant needs a third (formal/scopes.txt).
+    Channels,
     Cap,   \* the message buffer's capacity in chunks (>= 2); CTAP_MAX_MESSAGE
     \* crates/rsk-usb/src/ctaphid.rs:433-435 -- a continuation whose channel is
     \* not the in-progress transaction's is CHANNEL_BUSY, and the owning
@@ -70,9 +74,7 @@ CONSTANTS
     \* memory corruption in a no_std image.
     BugInitLenUnchecked
 
-\* Two channels are enough to exercise the splice: one owns the transaction, the
-\* other tries to feed it. `NoChan` is `in_tx = false` (no transaction open).
-Channels == {"a", "b"}
+\* `NoChan` is `in_tx = false` -- no transaction open.
 NoChan   == "none"
 
 InvNames == { "NoCrossChannelSplice", "NoSequenceGap" }

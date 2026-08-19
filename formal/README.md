@@ -691,7 +691,7 @@ Round two's "no, in two independent ways" was exact.
 
 | Configuration | Verdict | States generated | Distinct | Depth | Wall |
 |---|---|---|---|---|---|
-| `Shipped.cfg` (the tree as it stands) | **GREEN, exhaustive** | 813 099 753 | 61 215 504 | 50 | **1137 s** |
+| `Shipped.cfg` (the tree as it stands, `SYMMETRY` on, firmware constants) | **GREEN, exhaustive** | 699 350 223 | 48 679 968 | 55 | **539 s** |
 | `Historical_E76.cfg` (the seed-lead taken back out) | RED `NoUnmanageableCredential` | 2 286 995 | 246 718 | 13 | 4 s |
 | `Historical_E77.cfg` (the grant back in phase 2 **and** the consumer fix out) | RED `NoAccessibleSecretWithoutGate` | 2 060 496 | 221 977 | 13 | 3 s |
 | 28 × `Mut_*.cfg` | RED, each caught | 65 – 3 926 726 | 40 – 410 556 | 4 – 14 | ≤ 6 s |
@@ -730,18 +730,32 @@ persistent retry budget without clearing the RAM soft lock is the expensive one,
 because it makes `(retries, lock)` pairs reachable that were not, and it is a
 state the device really is in.
 
-Then it went **down** to 61 215 504, by 23%, while gaining four Policies. Two
+Then it went **down** to 61 215 504, by 23%, while gaining four Policies. (Every
+count in this section and the two experiments above it was taken at the old
+3 : 2 constants with no symmetry, which is why they do not match the Results
+table.) Two
 fidelity repairs did that: `ctx.state.reset()` modelled in full rather than only
 its `keydev_dec` half, and `makeCredential` requiring the seed as `getAssertion`
 already did. Every state they removed was one the firmware cannot be in — the
 same shape as the boot-time `ensure_seed` repair two revisions ago, and the
 second time on this model that being *more* faithful has made it *smaller*.
 
-Constants: `RPs = {r1,r2}`, `Channels = {c1,c2}`, `MaxRetries = 3`,
-`MismatchLimit = 2`, `MaxClock = 1`, `ResetWindow = 0`. `MaxRetries` must
-exceed `MismatchLimit` or the soft lock is unreachable — the shipped ratio is
-8 : 3 (`consts.rs:314,318`). Measured on an 18-core Apple Silicon under load
-from four other workstreams, 2 TLC workers, 4 GB heap.
+Constants: `RPs = {r1,r2}`, `Channels = {c1,c2}`, **`MaxRetries = 8`,
+`MismatchLimit = 3`** — the firmware's own `MAX_PIN_RETRIES` and
+`PIN_MISMATCH_LIMIT` (`consts.rs:314,318`) — `MaxClock = 1`, `ResetWindow = 0`.
+
+They used to be 3 : 2, and the reduction was the largest standing question on
+this page. `SYMMETRY` is what answered it. Relying parties and channels are
+interchangeable — no action, invariant or initial state names one — so TLC may
+quotient by `Permutations`, and doing so takes the reduced-constant run from
+61 215 504 distinct to 25 829 584. The firmware's real constants then cost
+**48 679 968, still fewer than the 61 215 504 the reduced scope explored
+before**, at depth 55 rather than 50, and all thirty mutants stay RED on their
+own invariant. Symmetry is applied to the safety configurations only: TLC's
+liveness check is not sound under it, so `Liveness*` and `Fairness*` keep their
+own smaller constants and no symmetry. The floor did not move — 20 000 000 is
+still under the measurement, and stricter than the "near a third" rule, which is
+the safe direction to be wrong in.
 
 ### What the review's repairs cost
 
@@ -1541,7 +1555,7 @@ conformance of the recorded traffic, not a proof that unrecorded code refines B.
 ## What now catches a run nobody watched
 
 That `VACUOUS` rule was one heuristic and a **reporting** guard: it printed a
-word and returned 0, and it only sees the collapse all the way to nothing. Three
+word and returned 0, and it only sees the collapse all the way to nothing. Four
 things stand between this model and a pass it did not earn now, and each is
 mutation-tested rather than argued.
 
@@ -1562,7 +1576,39 @@ check a spec the lint rejects.
 measured count — this model has legitimately shrunk 23% in one round, so a pin
 would be noise — and a GREEN below it is reported `FLOOR` with a non-zero exit.
 
-**3. An expected verdict per configuration**, which catches the other silent
+**3. A measured minimum per scope constant** (`scopes.txt`), because the two
+guards above both watch the *search* and neither watches the CONSTANTS the
+search runs over. A configuration can sit far above its floor, fire every action
+and still be blind, because the domain it quantifies over is too small to hold
+the defect. Measured on this tree, three of the fifty-three mutants are GREEN one
+element below the shipped scope:
+
+| Mutant | GREEN at | RED at | Why it needs the second element |
+|---|---|---|---|
+| `BugCmWalkIgnoresChannel` | `Channels = {c1}`, 43 M+ distinct, no counterexample | `{c1,c2}` | the credential walk it hijacks has to belong to somebody else |
+| `BugContIgnoresChannel` | `Channels = {a}` | `{a,b}` | the same shape at the reassembler: one channel owns the transaction, one splices |
+| `BugMetaAddDropsOnFault` | `Fids = {a}` | `{a,b}` | one FID to `meta_add`, one whose record must survive it |
+
+Nothing stopped those domains being narrowed to a singleton before this file —
+and `Fids`, `Channels` (transport) and `Caps` were not even configuration
+constants; they were literals inside the modules, so no configuration *could*
+have said what scope it ran at. `scripts/scope_gate.py` derives which constants
+exist, which module owns each configuration and what each one assigns; two
+columns are written by hand, the minimum and **the invariant it was measured
+against**, because a minimum only binds configurations that check that
+invariant. `Fairness.cfg` is in the safety tier, runs one channel deliberately
+and checks `OpAdvancesIsOneActivity`; holding it to a number measured on
+`NoAuthorizationBypass` would be a red for the wrong reason.
+
+What the profile also says, and it is not flattering: **every one of the thirty
+security configurations fires with a single relying party**, including both
+registration-order mutants. The module asks for `RPs >= 2` "to exercise rpId
+binding" and no mutant in the roster backs that. The record says 1 rather than
+repeating the claim. Above two, nothing in the roster probes at all — a minimum
+equal to the shipped value means "nothing here looks higher", never "higher is
+safe".
+
+**4. An expected verdict per configuration**, which catches the other silent
 pass: a mutant that stops firing. `BugSetPinKeepsPpuat` explored **40 459 667
 states without a counterexample** after a fix made its defect unreachable, and
 the only thing that noticed was a human reading the matrix. Every `Mut_*`,
@@ -1788,10 +1834,15 @@ Anything here can hide a real defect, so each one is a standing question rather
 than a settled abstraction.
 
 - **One credential per relying party**, `MAX_RESIDENT_CREDENTIALS` = 2 rather
-  than 256, two RPs, two channels, `MaxRetries` 3 : `MismatchLimit` 2 against a
-  shipped 8 : 3. A defect that needs a third credential, a third channel or the
-  sixth retry is out of reach. Nothing in these six invariants depends on the
-  slot count, but that is an argument, not a proof.
+  than 256, two RPs, two channels. The retry pair is **no longer** narrower:
+  `MaxRetries` : `MismatchLimit` is the shipped 8 : 3 now, bought with symmetry,
+  so "a defect that needs the sixth retry" is in reach and finds nothing. What
+  remains narrow is the cardinality: a defect needing a third credential or a
+  third channel is still out of reach, and `formal/scopes.txt` records what the
+  roster actually needs — two channels (`BugCmWalkIgnoresChannel` is GREEN at
+  one), and, measured rather than assumed, **one** relying party, which every
+  mutant here fires at. Nothing in the roster probes above two anywhere. That is
+  a measurement of the roster, not a proof about defects it does not contain.
 - **Permission sets are the five a host actually requests**, not all 16 subsets
   (`PermSets`); `largeBlobWrite` is modelled as the empty set that
   `consume_after_user_presence` leaves behind. A defect reachable only from an

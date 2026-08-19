@@ -116,6 +116,12 @@ mechanically:
   a collapsed state space passes every invariant vacuously and once did;
 - **a vacuous run is named** — a spec nothing enabled exits non-zero rather
   than reading as a pass;
+- **every scope constant carries a measured minimum** (`formal/scopes.txt`) —
+  the floor watches the search, this watches the CONSTANTS the search runs
+  over. Three mutants are GREEN one element below the shipped scope: two need a
+  second channel to have somebody to splice into, one needs a second FID to
+  have a record worth losing. A configuration below its recorded minimum is
+  refused;
 - **the source is linted first** — two TLA+ traps that leave a spec
   well-formed and meaningless (a precedence slip turning an assignment into a
   guard, an action pinned to a no-op by its own `UNCHANGED`) are refused

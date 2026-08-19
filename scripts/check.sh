@@ -560,6 +560,10 @@ run "bcd bump + CHANGELOG"     python scripts/bcd_gate.py
 run "SPDX headers"             python scripts/spdx_gate.py
 run "formal citations"         python scripts/citation_gate.py
 run "assurance registry"       python scripts/assurance_gate.py
+# `floors.txt` catches a run that got smaller; this catches one whose
+# CONSTANTS are too small to express the defect its own mutants rebuild.
+# Two of the twenty-five module mutants go GREEN one element down.
+run "formal scopes"            python scripts/scope_gate.py
 run "comutants lint"           python scripts/comutate.py --lint
 run "seam trace map"           python scripts/trace_map.py
 run "security trace refinement" python scripts/security_trace.py --check-data formal/TraceSecurityData.tla formal/traces/security-phase4.jsonl

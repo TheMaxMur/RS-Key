@@ -1,0 +1,95 @@
+\* SPDX-License-Identifier: AGPL-3.0-only
+\* Copyright (C) 2026 RS-Key contributors
+\*
+\* THE SCOPE EACH MODULE'S OWN MUTANTS NEED, so that a configuration cannot go
+\* green by being too SMALL TO EXPRESS the defect it claims to catch.
+\*
+\* `floors.txt` asks whether a run shrank. This asks the question one level out,
+\* and it is not hypothetical: TWO of the mutants measured here are
+\* GREEN one element below the shipped scope and RED at it.
+\*
+\*   BugCmWalkIgnoresChannel  needs a second CTAPHID channel -- the credential
+\*                            walk it hijacks has to belong to someone else
+\*   BugContIgnoresChannel    needs a second channel for the same reason one
+\*                            layer down, at the reassembler
+\*
+\* Until this file nothing stopped those domains being narrowed to a singleton,
+\* and all three rows would have stayed GREEN over a live defect.
+\*
+\* TWO columns are written by hand: the measured minimum, and THE INVARIANT IT
+\* WAS MEASURED AGAINST. The second is not decoration -- a minimum only binds
+\* configurations that check that invariant. The fairness row sits in the safety
+\* tier and runs one channel deliberately, checking `OpAdvancesIsOneActivity`;
+\* holding it to a number measured on `NoAuthorizationBypass` would be a red for
+\* the wrong reason. Everything else -- which constants exist, which module owns
+\* a configuration, what each one assigns -- is derived by scripts/scope_gate.py,
+\* because a hand-kept copy of a derivable fact is the rot this tree has paid for
+\* twice already.
+\*
+\* A minimum EQUAL to the shipped value does not mean bigger is unnecessary. It
+\* means nothing in the roster probes above it. Reading it the other way is the
+\* same mistake as reading a floor as a proof.
+\*
+\* Columns: <module>  <scope constant>  <measured minimum, or - >  <invariant, or - >
+
+\* --- RSKeySecurityState ----------------------------------------------------
+\* Measured over the 28 mutants and 2 historical configurations, one constant
+\* reduced at a time with the rest left shipped.
+\* The witness: BugCmWalkIgnoresChannel explores the whole space at one channel
+\* without a counterexample, and falls at two.
+RSKeySecurityState     Channels               2   NoAuthorizationBypass
+\* Every one of the thirty fires with a SINGLE relying party -- including the two
+\* registration-order mutants. The module comment asks for ">= 2 to exercise
+\* rpId binding"; no mutant in the roster backs that, and the honest record says
+\* so rather than repeating the claim.
+RSKeySecurityState     RPs                    1   NoUnmanageableCredential
+\* All thirty fire at MaxClock = 0 as well, but that scope is degenerate: the
+\* clock has one value, `Tick` is never enabled, and COVERAGE=1 names it
+\* (DEAD ACTION, measured GREEN over 29 512 104 distinct). 1 is the smallest
+\* scope at which the constant means anything, so 1 is what is recorded.
+RSKeySecurityState     MaxClock               1   NoAuthorizationBypass
+\* NOT measured, and the reason is worth keeping: neither can be reduced on its
+\* own, because the soft lock is unreachable unless MaxRetries exceeds
+\* MismatchLimit. The real constraint is a relation between two constants, which
+\* a per-constant minimum cannot express -- so `-` rather than a number that
+\* would read as measured. The fairness configuration runs the pair at 2 : 1,
+\* which is the same relation one size down.
+RSKeySecurityState     MaxRetries             -   -
+RSKeySecurityState     MismatchLimit          -   -
+\* Already at its floor: the reset window is modelled at its narrowest.
+RSKeySecurityState     ResetWindow            0   NoAuthorizationBypass
+
+\* --- the module that carries the other witness ------------------------------
+RSKeyTransport         Channels               2   NoCrossChannelSplice
+\* The module's own precondition is Cap >= 2, and all three mutants fire there.
+RSKeyTransport         Cap                    2   NoBufferOverrun
+
+\* --- where a single element is enough ---------------------------------------
+\* Every mutant of these four fires over one element; the shipped values are the
+\* domain's real vocabulary, not a measurement.
+RSKeyAdminSurface      Caps                   1   DisabledAppletNeverDispatches
+RSKeyAppletPolicies    CounterMax             1   OtpCounterNeverRepeats
+RSKeyRetryLattice      Max                    1   NoAuthWhenBlocked
+RSKeyBootHardening     MaxWeak                1   MarkerNeverLies
+\* Not a size. `ASSUME PowerOnClearsScratch2` is the open RP2350 question
+\* (M7-Q1), pinned TRUE in all seven boot configurations -- which is why it is
+\* listed at all: an assumption nothing ever runs the other way is visible here
+\* rather than only in the module's own comment.
+RSKeyBootHardening     PowerOnClearsScratch2  -   -
+
+\* --- tiers whose properties these minima were not measured against ----------
+\* The refinement tier runs the smallest scope that still has a token; the trace
+\* tier replays a recorded session at the firmware's real constants. Both are
+\* deliberate, and neither is checked against a roster minimum.
+RSKeyTokenRefinement   RPs                    -   -
+RSKeyTokenRefinement   Channels               -   -
+RSKeyTokenRefinement   MaxClock               -   -
+RSKeyTokenRefinement   MaxRetries             -   -
+RSKeyTokenRefinement   MismatchLimit          -   -
+RSKeyTokenRefinement   ResetWindow            -   -
+TraceSecurity          RPs                    -   -
+TraceSecurity          Channels               -   -
+TraceSecurity          MaxClock               -   -
+TraceSecurity          MaxRetries             -   -
+TraceSecurity          MismatchLimit          -   -
+TraceSecurity          ResetWindow            -   -
