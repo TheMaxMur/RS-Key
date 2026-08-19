@@ -163,6 +163,7 @@ list_safety() {
   ls DispMut_*.cfg
   ls DispSolo_*.cfg
   echo Boot.cfg                # the seventh module: the cross-boot hardening
+  echo BootCarry.cfg           # …and its open hardware assumption's other arm
   ls BootMut_*.cfg
   ls BootSolo_*.cfg
   echo Transport.cfg           # the eighth module: the CTAPHID reassembler

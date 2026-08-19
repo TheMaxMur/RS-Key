@@ -77,9 +77,11 @@ CONSTANTS
     \* which that mutant cannot express.
     BugPartialLockCarry
 
-\* OPEN HARDWARE ASSUMPTION: confirm on RP2350 silicon that a real power-on
-\* clears WATCHDOG.scratch2. The model may use ColdReset only under this fact.
-ASSUME PowerOnClearsScratch2
+\* OPEN HARDWARE ASSUMPTION, MODELLED BOTH WAYS: whether a real RP2350 power-on
+\* clears WATCHDOG.scratch2 is unconfirmed on silicon. It was an `ASSUME` that
+\* nothing branched on -- deleting the line left every Boot configuration
+\* bit-identical -- so it named the question without letting anyone ask it.
+\* `ColdReset` reads the constant now and `BootCarry.cfg` runs the FALSE arm.
 
 \* The soft-lock states the scratch word distinguishes: no strikes, a live
 \* mismatch batch below the limit, and the engaged lock. One value stands for
@@ -149,7 +151,11 @@ WarmReset ==
 ColdReset ==
     /\ phase = "serving"
     /\ phase' = "down"
-    /\ recorded' = "clear"
+    \* FALSE is a chip whose power-on leaves the word standing, which makes a
+    \* cold reset indistinguishable from a warm one -- and the TAG cannot tell
+    \* them apart either, because a carried word carries a valid tag. The tag
+    \* defends against UNDEFINED, which is a third case and reads as clear.
+    /\ recorded' = IF PowerOnClearsScratch2 THEN "clear" ELSE recorded
     /\ UNCHANGED << marker, weak, lock >>
 
 (***************************************************************************)

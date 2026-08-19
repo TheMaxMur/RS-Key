@@ -1774,11 +1774,39 @@ as the asserts' specificity check. The panel path's own twin
 (`spend_and_verify_pin_at`, the fourth PIN door) and the OATH/OpenPGP site
 asserts remain open, recorded here rather than implied.
 
-**Open hardware assumption.** `PowerOnClearsScratch2` is a named Boolean
-`ASSUME` in the module and every generated Boot configuration assigns it
-`TRUE`. It is not proved here: an RP2350 board measurement still has to confirm
-that a real power-on clears `WATCHDOG.scratch2`. Until then, the cold-reset arm
-is explicitly conditional evidence, not a firmware guarantee inferred from TLC.
+**The open hardware assumption, and what running it the other way cost.**
+`PowerOnClearsScratch2` was a named Boolean `ASSUME` that every generated Boot
+configuration assigned `TRUE` — and that no action read. Deleting the `ASSUME`
+line left `Boot.cfg` bit-identical: 77 states, 24 distinct, depth 5, before and
+after. It named the open question in a way that made it impossible to ask.
+
+`ColdReset` reads the constant now, and `BootCarry.cfg` runs the `FALSE` arm — a
+chip whose power-on leaves the word standing, which makes a cold reset
+indistinguishable from a warm one. (The tag cannot separate them either: a
+carried word carries a valid tag. The tag defends against an *undefined*
+register, which is a third case and reads as clear.) Both arms are in the safety
+tier, and the measurement is this:
+
+| | states | distinct | `MarkerNeverLies` | `TheWholeLockRides` |
+|---|---:|---:|---|---|
+| `Boot.cfg` — clears | 77 | 24 | GREEN | GREEN |
+| `BootCarry.cfg` — carries | 67 | 18 | GREEN | GREEN |
+
+All three boot mutants redden on **both** arms, and on the same invariant each
+time. So the assumption buys **reachability, not safety**: six distinct states go
+unreachable without it, and no invariant this module checks — nor the detection
+of any defect it models — rests on the silicon fact. The board measurement is
+still worth taking, and `assurance/assumptions.toml` says what would settle it;
+but its risk direction is *usability*, not security, because a word that rides a
+power cycle carries the mismatch batch with it, which locks harder rather than
+softer.
+
+**And the rule that came out of it.** `scripts/assumption_gate.py` refuses an
+assumption that every configuration pins the same way, and one no action reads —
+the two halves of the shape above, each checked directly rather than inferred
+from a state count nobody would think to compare. Driven against the pre-change
+model it reports both. A defect switch (`Bug*`, `Fix*`, `Mutate*`, `Check*`) is
+*meant* to be pinned per configuration and is excluded by name.
 
 **What it does NOT cover, stated.** The device is OTP-provisioned (`mkek`
 present — a pre-OTP board never laps and has nothing to scrub); the 0x0854

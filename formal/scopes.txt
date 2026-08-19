@@ -74,10 +74,10 @@ RSKeyAdminSurface      Caps                   1   DisabledAppletNeverDispatches
 RSKeyAppletPolicies    CounterMax             1   OtpCounterNeverRepeats
 RSKeyRetryLattice      Max                    1   NoAuthWhenBlocked
 RSKeyBootHardening     MaxWeak                1   MarkerNeverLies
-\* Not a size. `ASSUME PowerOnClearsScratch2` is the open RP2350 question
-\* (M7-Q1), pinned TRUE in all seven boot configurations -- which is why it is
-\* listed at all: an assumption nothing ever runs the other way is visible here
-\* rather than only in the module's own comment.
+\* Not a size. The open RP2350 question (M7-Q1) is a standing assumption now,
+\* two-armed and registered: `assurance/assumptions.toml` carries it and
+\* scripts/assumption_gate.py holds it against the tree. It stays listed here so
+\* a reader of the scope record is not left thinking it is one.
 RSKeyBootHardening     PowerOnClearsScratch2  -   -
 
 \* --- tiers whose properties these minima were not measured against ----------

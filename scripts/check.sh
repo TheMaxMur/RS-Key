@@ -560,6 +560,10 @@ run "bcd bump + CHANGELOG"     python scripts/bcd_gate.py
 run "SPDX headers"             python scripts/spdx_gate.py
 run "formal citations"         python scripts/citation_gate.py
 run "assurance registry"       python scripts/assurance_gate.py
+# A model constant that stands for a fact about the world, not a defect switch.
+# `PowerOnClearsScratch2` was TRUE in all seven Boot configurations and read by
+# no action: deleting its `ASSUME` left every run bit-identical.
+run "standing assumptions"     python scripts/assumption_gate.py
 # `floors.txt` catches a run that got smaller; this catches one whose
 # CONSTANTS are too small to express the defect its own mutants rebuild.
 # Two of the twenty-five module mutants go GREEN one element down.

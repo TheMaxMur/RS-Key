@@ -40,6 +40,23 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Added
 
+- **The model's one hardware assumption was an axiom nothing could vary, and
+  running it the other way says what it actually buys.**
+  `PowerOnClearsScratch2` — whether a real RP2350 power-on clears
+  `WATCHDOG.scratch2` — was an `ASSUME` that all seven Boot configurations
+  pinned `TRUE` and that no action read: deleting the line left `Boot.cfg`
+  bit-identical at 77 states, 24 distinct, depth 5. `ColdReset` reads it now and
+  `BootCarry.cfg` runs the `FALSE` arm in the safety tier. Both arms are GREEN on
+  both invariants, and all three boot mutants redden on both and on the same
+  invariant — so the assumption buys **reachability, not safety**: six distinct
+  states, and no verdict. Its risk direction is usability rather than security,
+  because a scratch word that rides a power cycle carries the PIN mismatch batch
+  with it and locks harder, not softer. `assurance/assumptions.toml` records what
+  would discharge it, and `scripts/assumption_gate.py` is a new gate row refusing
+  an assumption every configuration pins the same way or that no action reads —
+  driven against the pre-change model, it reports both. Formal artefacts and host
+  tooling only.
+
 - **The formal trace went from one demo suite to a session, and its coverage is a
   ratchet.** The phase-4 replay ran `21_pin_webauthn` alone and reached 13 of the
   model's 50 actions, because a second suite could not be added: the replug
