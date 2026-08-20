@@ -57,7 +57,9 @@ fn refuses_a_key_that_is_not_one() {
     assert!(RsaKey::from_p_q(p.clone(), p.clone(), e65537()).is_none());
     // Exponent out of the accepted range, at both ends.
     assert!(RsaKey::from_p_q(p.clone(), q.clone(), big(1)).is_none());
-    assert!(RsaKey::from_p_q(p.clone(), q.clone(), BigUint::from(1u64 << 33)).is_none());
+    assert!(
+        RsaKey::from_p_q(p.clone(), q.clone(), BigUint::from(PUB_EXP_RANGE.end() + 1)).is_none()
+    );
     // Even exponent, and one that is not coprime to λ(n) so `d` does not exist.
     assert!(RsaKey::from_p_q(p.clone(), q.clone(), big(4)).is_none());
     assert!(RsaKey::from_p_q(big(11), big(23), big(5)).is_none()); // 5 | lcm(10, 22)
@@ -89,7 +91,7 @@ fn private_op_reproduces_openssl_signatures() {
     let k = test_key();
     for (i, (digest, want)) in SIGN_SHA256.iter().enumerate() {
         let hash = hex(digest);
-        let mlen = 256;
+        let mlen = k.size();
         let dlen = crate::pkcs1v15::DI_SHA256.len() + hash.len();
         let mut em = [0xffu8; MAX_RSA_BYTES];
         em[0] = 0x00;
@@ -122,7 +124,7 @@ fn private_op_takes_the_non_crt_branch_to_the_same_answer() {
     };
     let (digest, want) = SIGN_SHA256[1];
     let hash = hex(digest);
-    let mlen = 256;
+    let mlen = plain.size();
     let dlen = crate::pkcs1v15::DI_SHA256.len() + hash.len();
     let mut em = [0xffu8; MAX_RSA_BYTES];
     em[0] = 0x00;

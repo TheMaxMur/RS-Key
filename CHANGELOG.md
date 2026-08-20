@@ -40,6 +40,34 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Internal
 
+- **The new RSA test oracle could not be made to say "no".** `verify_pkcs1v15`
+  arrived with five call sites and not one negative case, so a version hard-wired
+  to `true` left the suite green — and the generated-key half of both applets'
+  RSA tests had nothing else checking them. It now has its own mutation table
+  (`crates/rsk-rsa/src/verify_tests.rs`): a flipped signature bit, a flipped
+  digest bit, another message's signature, the wrong modulus, the wrong exponent,
+  three wrong lengths, `s = n`, and over-wide data. Falsified by stubbing the
+  function to `true` and reading which assertions fell.
+
+  Three more from the same review. The EMSA-PKCS1-v1_5 block builder had been
+  copied into both signers rather than shared, so the PKCS#1 padding rule lived
+  in two places; it is one `emsa_block` now. `rsa_sign`'s DigestInfo arm maps
+  every failure back to `Failed`, which is the single status word the `rsa`
+  crate's `sign_with_rng` could answer there — the new width errors were
+  unreachable through `rsk-piv`'s certificate path, but "unreachable" is not
+  "identical". And three `mod_inverse` results — the private exponent, `qInv`,
+  and each blinding factor's inverse — were signed intermediates dropped without
+  scrubbing, where the crate they replaced wiped its own; they ride in
+  `Zeroizing` now.
+
+  Two comments were narrower than the truth they defend. The Garner
+  recombination is underflow-safe for *any* `p` and `q` — `m1 < p` is a `modpow`
+  postcondition — not only for the unbalanced pair the comment named; and
+  PSO:DECIPHER's legacy arm collapses every failure to `EXEC_ERROR` where the asm
+  arm answers the four-variant table first, which the comment read as identical.
+  A safety argument stated narrower than it is invites the next reader to weaken
+  it.
+
 - **`rsk-rsa` owns the RSA key type, so nothing above tier 0 names a foreign
   one.** `rsa::RsaPrivateKey` used to cross from an algorithm crate into both
   card applets, `rsk-device` and `firmware` — five manifests and eleven source
@@ -71,8 +99,8 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   tier for all of it — `rsk_openpgp::rsa_crt`, `keys::rsa_sign`,
   `keys::RsaKeygen`, `keys::MAX_RSA_BYTES` and four more — and reaches down for
   it now instead; the applets keep only what is theirs, the APDU framing and the
-  seal I/O. Behaviour-preserving: the `rsa` crate rides along with the code that
-  uses it (dropping it is the next step), and no wire byte moves.
+  seal I/O. Behaviour-preserving: the `rsa` crate rode along with the code that
+  used it (the entry above has since dropped it), and no wire byte moves.
 
   The status words could not ride along, because a tier-0 crate must not name
   `rsk_sdk::Sw`. `rsk-rsa` returns its own four-variant `RsaError` and each
@@ -142,7 +170,8 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   one's. One arm still reaches the crate on purpose — a legacy `P‖Q` key whose
   prime width is not a 32-multiple, which no current firmware can store and which
   cannot sign either, would otherwise lose the ability to decrypt its own
-  archived messages.
+  archived messages — and the entry above has since taken that arm too, so the
+  crate is gone from the tree entirely.
 
   This does not close the padding oracle, and nothing can: DECIPHER must either
   return a session key or report failure, so the status word itself separates
@@ -156,8 +185,9 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   moved onto `rsk_rsa`: three of the five private-RSA paths never enter the
   crate at all, and `rsa::hazmat` is referenced nowhere in the tree. The feature
   is dropped — a smaller API surface for a dependency inside an authenticator's
-  trust base — and the two paths that do reach the crate are now named in
-  `deny.toml` and in [limitations](docs/limitations.md), together with the
+  trust base — and the two paths that do reach the crate (both since taken over
+  by `rsk-rsa`, see above) are named in `deny.toml` and in
+  [limitations](docs/limitations.md), together with the
   residual risk on PSO:DECIPHER. No behaviour change, measured: no loadable
   section moves or changes size and every symbol keeps its size — the only image
   delta is mangled-name hashes and a reordering of three anonymous constants,

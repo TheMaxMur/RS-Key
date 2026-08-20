@@ -76,6 +76,20 @@ pub fn rsa_sign_em(data: &[u8], em: &mut [u8; MAX_RSA_DIGESTINFO]) -> Option<usi
     Some(dlen)
 }
 
+/// Write the EMSA-PKCS1-v1_5 block `00 01 PS 00 ‖ di` for an `mlen`-byte modulus
+/// into the pre-zeroed `em` (RFC 8017 §9.2). `PS` is `0xFF`·(mlen−dlen−3), and
+/// the width check is what holds it to the mandatory eight bytes.
+fn emsa_block(di: &[u8], mlen: usize, em: &mut [u8]) -> Result<(), RsaError> {
+    if mlen < di.len() + 11 {
+        return Err(RsaError::BadWidth);
+    }
+    let ps_end = mlen - di.len() - 1;
+    em[1] = 0x01;
+    em[2..ps_end].fill(0xff);
+    em[ps_end + 1..mlen].copy_from_slice(di);
+    Ok(())
+}
+
 /// PKCS#1 v1.5 sign over the supplied data with the cached CRT params on the
 /// UMAAL asm. If `data` is a DigestInfo (or a bare hash whose length names the
 /// algorithm), build the EMSA-PKCS1-v1_5 encoding and sign that; otherwise treat
@@ -91,16 +105,7 @@ pub fn rsa_sign_crt(
     let mut em = [0u8; MAX_RSA_BYTES];
     let mut di = [0u8; MAX_RSA_DIGESTINFO];
     match rsa_sign_em(data, &mut di) {
-        Some(dlen) => {
-            // EM = 00 01 PS 00 ‖ DigestInfo, PS = 0xFF·(mlen−dlen−3), at least 8.
-            if mlen < dlen + 11 {
-                return Err(RsaError::BadWidth);
-            }
-            let ps_end = mlen - dlen - 1;
-            em[1] = 0x01;
-            em[2..ps_end].fill(0xff);
-            em[ps_end + 1..mlen].copy_from_slice(&di[..dlen]);
-        }
+        Some(dlen) => emsa_block(&di[..dlen], mlen, &mut em)?,
         // gpg never reaches this — it always sends a DigestInfo — but a raw block
         // still signs (left-padded to the modulus width) through the same blinded,
         // fault-checked op, so no non-conformant caller sees a different path.
@@ -131,17 +136,16 @@ pub fn rsa_sign(
         return rsa_raw(key, data, out, rng);
     };
     let mlen = key.size();
-    // EM = 00 01 PS 00 ‖ DigestInfo, PS = 0xFF·(mlen−dlen−3), at least 8 —
-    // RFC 8017 §9.2, the block `rsa_sign_crt` builds for the asm core.
-    if mlen > MAX_RSA_BYTES || mlen < dlen + 11 {
-        return Err(RsaError::BadWidth);
+    if mlen > MAX_RSA_BYTES {
+        return Err(RsaError::Failed);
     }
     let mut em = [0u8; MAX_RSA_BYTES];
-    let ps_end = mlen - dlen - 1;
-    em[1] = 0x01;
-    em[2..ps_end].fill(0xff);
-    em[ps_end + 1..mlen].copy_from_slice(&di[..dlen]);
+    // Every failure past the DigestInfo parse is `Failed` — the one status word
+    // (`EXEC_ERROR`) the `rsa` crate's `sign_with_rng` could answer here, and
+    // `rsk-piv`'s certificate path still keys off it.
+    emsa_block(&di[..dlen], mlen, &mut em).map_err(|_| RsaError::Failed)?;
     key.private_op(&em[..mlen], rng, out)
+        .map_err(|_| RsaError::Failed)
 }
 
 /// PKCS#1 v1.5 decryption with a full [`RsaKey`], on the software private op —

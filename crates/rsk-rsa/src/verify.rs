@@ -38,3 +38,7 @@ pub fn verify_pkcs1v15(n_be: &[u8], e_be: &[u8], data: &[u8], sig: &[u8]) -> boo
     want[k - data.len()..].copy_from_slice(data);
     s.modpow(&e, &n) == BigUint::from_bytes_be(&want)
 }
+
+#[cfg(test)]
+#[path = "verify_tests.rs"]
+mod tests;

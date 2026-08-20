@@ -5,7 +5,7 @@
 //! them, the cached CRT parameters, and the blinded, Bellcore-fault-checked
 //! private operation over the pair.
 //!
-//! This is what the `rsa` crate's `RsaPrivateKey` was here until 0.4.11. That
+//! This is what the `rsa` crate's `RsaPrivateKey` was here until 0.4.12. That
 //! crate carries RUSTSEC-2023-0071 with no fixed release, and its key type was
 //! its last foothold: it crossed out of this tier into both card applets,
 //! `rsk-device` and `firmware`. [`RsaKey`]'s own surface is bytes — nothing
@@ -19,6 +19,11 @@ use num_integer::Integer;
 use zeroize::{Zeroize, Zeroizing};
 
 use crate::{MAX_RSA_BYTES, Rng, RsaError};
+
+/// Accepted public exponents, `rsa`'s `MIN_PUB_EXPONENT`/`MAX_PUB_EXPONENT`. The
+/// ceiling is what makes an exponent's width bounded at all, so it is policy and
+/// belongs under a name rather than inline at the one place that enforces it.
+const PUB_EXP_RANGE: core::ops::RangeInclusive<u64> = 2..=(1 << 33) - 1;
 
 /// `dP`, `dQ` and `qInv` — what a CRT private operation needs beyond the primes.
 /// Optional because `q⁻¹ mod p` does not exist for two "primes" sharing a
@@ -76,11 +81,13 @@ impl RsaKey {
         let p1 = Zeroizing::new(&p - &one);
         let q1 = Zeroizing::new(&q - &one);
         let lam = Zeroizing::new(p1.lcm(&q1));
-        let d = (&e).mod_inverse(&*lam)?.to_biguint()?;
+        // num-bigint's `mod_inverse` hands back a signed intermediate with no
+        // scrubbing `Drop` of its own, and this one is `d`.
+        let d = Zeroizing::new((&e).mod_inverse(&*lam)?).to_biguint()?;
         // The `rsa` crate's `check_public` and `validate`, both of which every
         // key it built had passed: an exponent in range, odd and below an odd
         // modulus, and `d·e ≡ 1` modulo each prime less one.
-        if e < BigUint::from(2u8) || e > BigUint::from((1u64 << 33) - 1) {
+        if e < BigUint::from(*PUB_EXP_RANGE.start()) || e > BigUint::from(*PUB_EXP_RANGE.end()) {
             return None;
         }
         if e >= n || n.is_even() || e.is_even() {
@@ -92,6 +99,7 @@ impl RsaKey {
         }
         let crt = (&q)
             .mod_inverse(&p)
+            .map(Zeroizing::new)
             .and_then(|i| i.to_biguint())
             .map(|qinv| CrtParams {
                 dp: &d % &*p1,
@@ -170,9 +178,10 @@ impl RsaKey {
             Some(crt) => {
                 let m1 = Zeroizing::new(blinded.modpow(&crt.dp, &self.p));
                 let m2 = Zeroizing::new(blinded.modpow(&crt.dq, &self.q));
-                // Garner's recombination. `m2` is reduced mod `p` first so the
-                // difference cannot underflow for an imported key whose `q` is
-                // more than twice its `p` — a balanced pair never gets there.
+                // Garner's recombination, in unsigned arithmetic where the
+                // `rsa` crate used signed. `m1 < p` and `m2 % p < p` by
+                // construction, so `m1 + p - (m2 % p)` cannot underflow — for
+                // any `p` and `q`, not only a balanced pair.
                 let diff = Zeroizing::new((&*m1 + &self.p - (&*m2 % &self.p)) % &self.p);
                 let h = Zeroizing::new((&crt.qinv * &*diff) % &self.p);
                 Zeroizing::new(&*m2 + &*h * &self.q)
@@ -207,7 +216,11 @@ pub(crate) fn blind_pair(
         rng.fill(&mut rb[..width]);
         let mut cand = BigUint::from_bytes_be(&rb[..width]) % n;
         rb.zeroize();
-        match (&cand).mod_inverse(n).and_then(|i| i.to_biguint()) {
+        match (&cand)
+            .mod_inverse(n)
+            .map(Zeroizing::new)
+            .and_then(|i| i.to_biguint())
+        {
             Some(inv) => return (Zeroizing::new(cand), Zeroizing::new(inv)),
             None => cand.zeroize(),
         }

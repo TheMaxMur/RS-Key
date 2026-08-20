@@ -1142,8 +1142,9 @@ pub fn rsa_decipher_legacy(
 ) -> Result<usize, Sw> {
     let key_size = key.size();
     let ct = data.get(1..1 + key_size).ok_or(Sw::WRONG_DATA)?;
-    // A malformed block answered `EXEC_ERROR` when the `rsa` crate owned this
-    // path; keep that status word, as the asm arm above does.
+    // Every failure here is `EXEC_ERROR`, which is what the `rsa` crate's
+    // `decrypt_blinded` collapsed to. Deliberately coarser than the asm arm,
+    // which answers `rsa_sw` for the private op and only collapses on the unpad.
     rsk_rsa::pkcs1v15::rsa_decrypt(key, ct, rng, out).map_err(|_| Sw::EXEC_ERROR)
 }
 

@@ -10,10 +10,9 @@ use num_bigint_dig::BigUint;
 use num_bigint_dig::prime::probably_prime_lucas;
 use zeroize::Zeroize;
 
-use crate::key::RsaKey;
 use crate::{
-    IncrementalSieve, MAX_RSA_BYTES, RSA_E, Rng, RsaError, mod_small, passes_strong_mr_base2,
-    self_test,
+    IncrementalSieve, MAX_RSA_BYTES, RSA_E, Rng, RsaError, RsaKey, mod_small,
+    passes_strong_mr_base2, self_test,
 };
 
 /// Build the RSA key from the imported exponent / primes (OpenPGP tags
@@ -34,7 +33,8 @@ pub fn rsa_from_pqe(e: &[u8], p: &[u8], q: &[u8]) -> Option<RsaKey> {
 /// assembled into an [`RsaKey`]. The primality decision is
 /// Baillie-PSW split across backends: the strong Miller-Rabin base-2 half on
 /// the KAT-gated asm modexp (ours, differentially tested against the library),
-/// the strong Lucas half and key assembly the vetted library routines.
+/// the strong Lucas half still the vetted library routine. Key assembly is ours
+/// now — [`RsaKey`], checked against OpenSSL vectors rather than a second crate.
 ///
 /// `step` decomposes into [`try_candidate`](RsaKeygen::try_candidate) (one
 /// draw + test, stateless) and [`offer`](RsaKeygen::offer) (the two-prime

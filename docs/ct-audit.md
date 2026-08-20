@@ -73,7 +73,7 @@ The assurance result. Sites checked and found **correct**:
 - **The `pinUvAuthToken` MAC verify, OATH access-code/HOTP verifies, and PIV
   mutual-auth** all route through the constant-time comparator (PIV against a
   single-use per-session challenge, not the persistent management key).
-- **The RSA sign/decipher mainline is blinded** — `rsk_rsa::key::blind_pair`
+- **The RSA sign/decipher mainline is blinded** — one helper inside `rsk-rsa`
   draws a fresh `r` around every secret-exponent modexp, asm CRT and software
   alike, and with the fix above so is the raw fallback. (Re-checked at 0.4.12,
   when the operation moved off `rsa` 0.9.10's own `blind`/`unblind`.)

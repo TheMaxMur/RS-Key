@@ -7,8 +7,8 @@
 //! Generic over `S: Storage`; the device seed / serial / RNG and the flash file
 //! system are threaded in by the caller, so the applet is pure and host-testable.
 
-// The `rsa` crate returns `alloc::vec::Vec` from its sign/decrypt API; the
-// firmware provides a heap. Only the RSA path allocates — the rest stays no-alloc.
+// `rsk-rsa` returns the modulus and exponent as `Vec`s and its bignum allocates;
+// the firmware provides a heap. Only the RSA path allocates, the rest does not.
 extern crate alloc;
 
 pub mod consts;
