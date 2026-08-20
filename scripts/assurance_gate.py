@@ -44,6 +44,7 @@ the graph is closed — nothing checked is unnamed, nothing named is unchecked,
 nothing ships silently unclassified.
 """
 
+import functools
 import pathlib
 import re
 import subprocess
@@ -181,6 +182,37 @@ def production_rust(root: pathlib.Path) -> list[pathlib.Path]:
     ]
 
 
+@functools.cache
+def co_refuted(root: pathlib.Path) -> dict[str, list[str]]:
+    """invariant -> the comutants that patch real code for it and expect a kill.
+
+    A model mutant whose CODE twin was driven against the real suite and caught is
+    evidence about the code, not only about the model — and the status ladder
+    cannot see it, because BOUNDED keys on a Kani harness name. Twenty of the
+    forty-two MODELLED-ONLY rows carried one, which reads in the table as "no
+    evidence at all". Derived here rather than hand-recorded, like every other
+    column; `scripts/comutate.py` owns the invariant lookup and is reused.
+    """
+    src = root / "formal" / "comutants.toml"
+    if not src.is_file():
+        # Absence is "no co-refutation evidence", not a failure: whether the file
+        # must exist is `comutate.py --lint`'s row, and duplicating that here
+        # would be a second owner for one rule.
+        return {}
+    sys.path.insert(0, str(root / "scripts"))
+    import comutate
+
+    entries = tomllib.loads(src.read_text())["comutant"]
+    out: dict[str, list[str]] = {}
+    for bug, entry in sorted(entries.items()):
+        if entry.get("status") != "patch" or entry.get("expect") != "killed":
+            continue
+        inv = comutate.solo_invariant(root, bug)
+        if inv:
+            out.setdefault(inv, []).append(bug)
+    return out
+
+
 def derive(root: pathlib.Path, name: str, solo: dict[str, int]) -> dict:
     crates = root / "crates"
     kani_files = sorted(crates.glob("*/src/*kani*.rs"))
@@ -196,6 +228,7 @@ def derive(root: pathlib.Path, name: str, solo: dict[str, int]) -> dict:
     ]
     return {
         "mutants": solo.get(name, 0),
+        "co": co_refuted(root).get(name, []),
         "kani": harnesses,
         "fuzz": grep_word(fuzz_files, name),
         "rust": grep_word(rust_files, name),
@@ -392,19 +425,20 @@ def check_property_tags(root: pathlib.Path, findings: list[str]) -> None:
 def markdown_table(rows: list[dict]) -> str:
     """The generated traceability table embedded in formal/README.md."""
     lines = [
-        "| ID | Property | Status | Model | Support | Rust | Mutants | Kani | Fuzz | Runtime |",
-        "|---|---|---|---|---|---:|---:|---:|---:|---:|",
+        "| ID | Property | Status | Model | Support | Rust | Mutants | Co-refuted | Kani | Fuzz | Runtime |",
+        "|---|---|---|---|---|---:|---:|---:|---:|---:|---:|",
     ]
     for row in rows:
         e, d = row["e"], row["d"]
         if d is None:
-            evidence = ("—", "—", "—", "—", "—", "—", "—")
+            evidence = ("—", "—", "—", "—", "—", "—", "—", "—")
         else:
             evidence = (
                 f"`{row['module']}`",
                 ", ".join(f"`{m}`" for m in row["support"]) or "—",
                 str(len(d["rust"])),
                 str(d["mutants"]),
+                str(len(d["co"])),
                 str(len(d["kani"])),
                 str(len(d["fuzz"])),
                 str(len(d["tests"])),
@@ -555,7 +589,8 @@ def audit(root: pathlib.Path, check_generated_readme: bool = True):
             continue
         table.append(
             f"  {e['id']:<14} {e['name']:<40} {e['status']:<13}"
-            f" cfgs={r['cfgs']:<3} mut={d['mutants']:<2} kani={len(d['kani'])}"
+            f" cfgs={r['cfgs']:<3} mut={d['mutants']:<2} co={len(d['co'])}"
+            f" kani={len(d['kani'])}"
             f" fuzz={len(d['fuzz'])} rust={len(d['rust'])} test={len(d['tests'])}"
         )
 

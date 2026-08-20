@@ -412,3 +412,44 @@ def test_unknown_class_fails(tree, capsys):
 def test_model_must_be_a_real_module(tree, capsys):
     edit(tree / "assurance" / "crates.toml", 'model = "Mini"', 'model = "Atlantis"')
     red(tree, capsys, "no formal/ module")
+
+
+def test_a_driven_code_mutant_shows_as_evidence_the_status_ladder_cannot(tree):
+    """The column exists because MODELLED-ONLY was reading as "nothing below the
+    model" for 27 of 42 rows that had a code twin driven against the real suite."""
+    root, _ = tree if isinstance(tree, tuple) else (tree, None)
+    assurance_gate.co_refuted.cache_clear()
+    assert assurance_gate.co_refuted(pathlib.Path(__file__).parents[1])["NoAuthWhenBlocked"] == [
+        "BugUseWhenBlocked"
+    ]
+
+
+def test_a_comutant_that_is_not_a_driven_kill_is_not_evidence(tmp_path, monkeypatch):
+    formal = tmp_path / "formal"
+    formal.mkdir()
+    (formal / "comutants.toml").write_text(
+        '[comutant.BugX]\nstatus = "unreachable"\nexpect = "killed"\n', encoding="utf-8")
+    assurance_gate.co_refuted.cache_clear()
+    assert assurance_gate.co_refuted(tmp_path) == {}
+
+
+def test_a_missing_comutants_file_is_no_evidence_rather_than_a_crash(tmp_path):
+    assurance_gate.co_refuted.cache_clear()
+    assert assurance_gate.co_refuted(tmp_path) == {}
+
+
+def test_a_patch_the_suite_is_not_expected_to_catch_is_not_evidence(tmp_path):
+    """Every entry in the tree today is `patch` + `killed`, so the second half of
+    the filter is unfalsifiable against it — this poses the case that makes it
+    bite. A patch nobody expects the suite to catch says nothing about the code."""
+    formal = tmp_path / "formal"
+    formal.mkdir()
+    (formal / "comutants.toml").write_text(
+        '[comutant.BugX]\nstatus = "patch"\nexpect = "survived"\n', encoding="utf-8")
+    # …and a Solo configuration, so the invariant lookup resolves and the `expect`
+    # filter is what decides. Without it the entry is dropped one step earlier and
+    # the test passes for the wrong reason.
+    (formal / "Solo_BugX.cfg").write_text(
+        "SPECIFICATION Spec\nINVARIANTS\n    TypeOK\n    SomeInvariant\n", encoding="utf-8")
+    assurance_gate.co_refuted.cache_clear()
+    assert assurance_gate.co_refuted(tmp_path) == {}

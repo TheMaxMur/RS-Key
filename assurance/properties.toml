@@ -10,6 +10,13 @@
 # three of six fields before a line of code existed; that experiment is not
 # repeated here.
 #
+# One derived column is worth naming because it changes how a status reads.
+# `Co-refuted` counts this property's model mutants whose CODE twin was patched
+# into the real tree and caught by the real suite (`formal/comutants.toml`). That
+# is evidence about the code, and the status ladder cannot see it — BOUNDED keys
+# on a Kani harness name. 27 of the 42 MODELLED-ONLY rows carry one, so
+# MODELLED-ONLY means "no Kani harness", never "untested".
+#
 # The gate holds this file against the tree in both directions: every invariant
 # any formal/*.cfg checks must have exactly one entry, and every entry must name
 # an invariant some configuration actually checks (accepted risks exempt — they

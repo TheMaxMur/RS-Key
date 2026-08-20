@@ -57,6 +57,19 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Added
 
+- **`MODELLED-ONLY` was reading as "no evidence below the model", and for 27 of
+  42 rows that was wrong.** The status ladder's only code-facing rung is
+  `BOUNDED`, which a Kani harness sets — so a property whose concrete face is
+  carried by an exhaustive unit suite looked identical to one carried by nothing.
+  Measured from the other side: 27 of the 42 modelled-only properties have a model
+  mutant whose **code twin** was patched into the real tree and caught by the real
+  suite. The whole retry lattice is one — and driving five further mutations of
+  PIV's `check_ref` counter arithmetic by hand killed five of five, one by a test
+  module written for precisely the glitch its read-back guards. A derived
+  `Co-refuted` column now states this, reusing `comutate.py`'s own invariant
+  lookup rather than a second copy; whether it deserves a rung of its own is left
+  as a maintainer decision. Host tooling and formal artefacts only.
+
 - **The CTAPHID reassembler's three properties are proved against the real
   `feed`, and the proof found a test the suite was missing.** `RSKeyTransport` was
   modelled but unbridged; five Kani harnesses now drive the real `Reassembler`
