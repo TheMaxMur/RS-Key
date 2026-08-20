@@ -21,7 +21,9 @@ WithPermissions` with the `pcmr` permission (0x40) — and then decrypts.
 
 Step 3 and step 4 only mean something together: differing bytes alone are what a
 random blob does, and a stable plaintext alone is what a fingerprint does.
-Self-contained and idempotent: resets at the start. Needs `cryptography`.
+Self-contained and idempotent: resets at both ends. Needs `cryptography`.
+The closing reset is load-bearing: `emu-suites.sh` runs the sweep against one
+session, so a PIN left behind here is the PIN `20`/`21` then fail to use.
 """
 import hashlib
 import os
@@ -103,6 +105,8 @@ def main():
         assert one != aaguid, "the AAGUID is public and identical across RS-Keys"
         assert one not in (token[:16], token[16:]), "must not expose the token"
         print("5. identifier is not zero, not the AAGUID, not the token")
+
+        replug.reset(dev, "the cleanup reset")
     finally:
         dev.close()
     print("\nPASS")
