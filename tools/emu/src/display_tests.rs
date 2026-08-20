@@ -868,7 +868,7 @@ fn the_panel_generates_the_rsa_key_the_wire_can() {
     let took = started.elapsed();
 
     // The applet's own encoder taking the key is what says it is a usable one of
-    // the size asked for, without this test learning the `rsa` crate's API:
+    // the size asked for, without this test learning the key type's own API:
     // `7F49 82 len`, then `81 82 len` and the modulus, then `82 len` and the
     // exponent. Exact, so a wrong size is caught in either direction.
     let mut out = [0u8; 1024];

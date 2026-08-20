@@ -65,6 +65,18 @@ signatures and ciphertexts under three fixed keys, and every signature the card
 produces is compared to them byte for byte. `scripts/rsa_vectors.py` regenerates
 that file from python-cryptography; run it inside `nix develop`.
 
+Fixed vectors cannot say which imported `(p, q, e)` a key assembly *refuses*, so
+that half is settled by a differential against `rsa` 0.9.10 in a throwaway crate
+**outside** the workspace — `rsk-rsa` by path with `test-util`, plus
+`rsa = "=0.9.10"` — because the crate must not come back into any lockfile the
+SCA rows read. Rebuild it whenever the key assembly moves. Two things it teaches
+about itself: the comparison has to be *reachable* (a first attempt gated it
+behind `ra.is_ok() || ra.is_err()`, which is always true, and reported zero
+mismatches over zero comparisons — falsify each arm by perturbing one side), and
+upstream cannot be asked about an unbalanced key at all, because its CRT
+recombination is `while m.is_negative() { m += p }` and for `q ≫ p` that does not
+return.
+
 `rsk-display` is the odd one: its subject is a *screen*, and it is tested by
 giving the flow a panel that records what was drawn, a touch pad that reads back
 a scripted sequence of samples, and a board whose backlight, wake button and

@@ -80,12 +80,40 @@ fn refuses_everything_that_is_not_that_signature() {
     // `s ≥ n` at the right width — the modulus itself.
     assert!(!verify_pkcs1v15(&n, E, &di, &n), "s = n must fail");
 
-    // Data too wide for the block it would have to sit in (`|PS| ≥ 8`).
-    let wide = alloc::vec![0x42u8; n.len() - 10];
+    // …and `s = sig + n`, which is where the range test earns its keep. `s = n`
+    // above reduces to 0 and fails the EM comparison anyway, so deleting
+    // `s >= n` leaves it green; an alias of a real signature is the same residue
+    // and only the range test can refuse it (RFC 8017 §8.2.2 step 1). It exists
+    // only when `sig + n` still fits in `k` bytes, so search rather than assume.
+    let ni = BigUint::from_bytes_be(&n);
+    let mut aliases = 0;
+    for i in 0..SIGN_SHA256.len() {
+        let (adi, asig) = signed(i);
+        let alias = (BigUint::from_bytes_be(&asig) + &ni).to_bytes_be();
+        if alias.len() != n.len() {
+            continue;
+        }
+        aliases += 1;
+        assert!(
+            !verify_pkcs1v15(&n, E, &adi, &alias),
+            "signature {i} + n is a second representative and must fail"
+        );
+    }
     assert!(
-        !verify_pkcs1v15(&n, E, &wide, &sig),
-        "over-wide data must fail"
+        aliases > 0,
+        "no vector admits an in-width s + n — nothing was tested"
     );
+
+    // Data too wide for the block it would have to sit in (`|PS| ≥ 8`), then as
+    // wide as the modulus and wider: there the width test is also what stops the
+    // EM construction from indexing past its own buffer.
+    for len in [n.len() - 10, n.len(), n.len() + 1, n.len() + 40] {
+        let wide = alloc::vec![0x42u8; len];
+        assert!(
+            !verify_pkcs1v15(&n, E, &wide, &sig),
+            "over-wide data ({len} bytes) must fail"
+        );
+    }
 }
 
 /// The bare-hash spelling and the DigestInfo spelling are different messages, so

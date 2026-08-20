@@ -2028,7 +2028,8 @@ fn rsa_generate_params_accepts_rsa3072() {
 #[ignore = "full on-host RSA-4096 keygen — slow (num-bigint, no asm); run with --ignored"]
 fn rsa4096_generate_path_produces_signable_key() {
     // End-to-end proof the 4096 path is correct: generate a real RSA-4096 key
-    // through the keepalive path, then sign + verify with the rsa crate.
+    // through the keepalive path, then sign and check the signature with the
+    // public operation — the only thing here that shares no code with the signer.
     let rng = RefCell::new(LcgRng(0xCAFE_F00D));
     let mut fs = make_fs();
     let presence = RefCell::new(crate::AlwaysConfirm);

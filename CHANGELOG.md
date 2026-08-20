@@ -40,6 +40,26 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Internal
 
+- **Two rows of that mutation table asserted the right outcome for the wrong
+  reason.** Measured one mutant at a time: deleting the `s ≥ n` refusal
+  (RFC 8017 §8.2.2 step 1) left the whole suite green, because the `s = n` case
+  reduces to zero and fails the EM comparison anyway — and without that refusal
+  the oracle accepts `sig + n`, a second representative of a signature it has
+  already seen. The over-wide-data case had the same shape: it sat ten bytes
+  short of the width where the check is what stops the EM construction indexing
+  past its own buffer. Both mutants now die, each on the assertion that names it
+  and in the direction that describes the defect.
+
+  Three comments outlived the crate they described. `firmware/Cargo.toml` still
+  blamed the 128 KiB heap on the `rsa` crate; two RSA tests still said they
+  verified through it. And one citation did not follow the shift its neighbours
+  did — `formal/comutants.toml` pointed `Session::set_pin` at the function after
+  it. `docs/testing.md` now records how the differential against `rsa` 0.9.10 is
+  rebuilt, since the crate cannot come back into the tree to hold it: including
+  that a comparison gated behind `is_ok() || is_err()` compares nothing, and that
+  upstream cannot be asked about an unbalanced key because its CRT recombination
+  does not terminate for `q ≫ p`.
+
 - **The new RSA test oracle could not be made to say "no".** `verify_pkcs1v15`
   arrived with five call sites and not one negative case, so a version hard-wired
   to `true` left the suite green — and the generated-key half of both applets'
