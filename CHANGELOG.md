@@ -40,6 +40,17 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Internal
 
+- **Why the RSA status-word table is allowed to exist twice.** `rsa_sw` maps
+  `RsaError` to a status word in both card applets, and the comment defending
+  that named the orphan rule — which in fact permits the shared
+  `impl From<RsaError> for Sw`, because `Sw` is `rsk-sdk`'s own type and the
+  `rsk-sdk` → `rsk-rsa` edge it needs points downward. What rules it out is the
+  cost: `rsk-sdk` is the seam every applet depends on, so that impl puts
+  `rsk-rsa` in FIDO's, OATH's, OTP's, mgmt's, rescue's, fs's and usb's
+  dependency closures, none of which do RSA. Both halves measured; both copies
+  stay, each pinned arm by arm. Comments only — refactor, no behaviour change,
+  and the counter moves because a bump counts builds.
+
 - **The RSA layer moved out of the OpenPGP applet and into `rsk-rsa`.** The CRT
   parameter layout and its blinded, Bellcore-fault-checked private operation,
   PKCS#1 v1.5 (the DigestInfo encoding, both signers, the constant-time decrypt

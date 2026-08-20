@@ -7,9 +7,15 @@
 //! surface and `rsk-sdk` sits two tiers above an algorithm crate. So each
 //! variant below names the status word its callers must answer with, and
 //! `rsk-openpgp` (`keys::rsa_sw`) and `rsk-piv` (`rsa_sw`) each reproduce that
-//! table at their APDU boundary, pinned by a test. The two copies are forced,
-//! not chosen: `RsaError` and `Sw` are both foreign to those crates, so no
-//! shared `From` impl exists that does not point a dependency upward.
+//! table at their APDU boundary, pinned arm by arm by a test.
+//!
+//! The orphan rule is not what forces those two copies: `Sw` is `rsk-sdk`'s own
+//! type, so `impl From<RsaError> for Sw` compiles there, and the edge it needs
+//! (`rsk-sdk` → `rsk-rsa`) points *downward*. What rules it out is who pays —
+//! `rsk-sdk` is the seam every applet depends on, so that impl would put the RSA
+//! crate in FIDO's, OATH's and OTP's dependency closure. Handing `RsaError` a
+//! raw `sw_code()` instead only moves the same four wire numbers down here, into
+//! the crate whose `lib.rs` opens by saying it names none.
 
 /// Why an RSA operation refused. The variants are exhaustive on purpose — a new
 /// one must break both applets' mappings rather than fall into a `_` arm and

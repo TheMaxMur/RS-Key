@@ -56,9 +56,9 @@ pub const VERSION: (u8, u8, u8) = rsk_sdk::FIRMWARE_VERSION;
 
 /// The status word each [`RsaError`] answers with. This table **is** wire
 /// surface — `rsa_sw_reproduces_every_status_word` pins all four arms — and
-/// `rsk-openpgp` carries its own copy of it: both types are foreign to both
-/// applets, so no shared `From` impl exists that does not point a dependency
-/// upward.
+/// `rsk-openpgp` carries its own copy: the one crate that could host a shared
+/// mapping is `rsk-sdk`, and paying for it there would put the RSA crate in
+/// every applet's dependency closure. Whole argument: `rsk-rsa/src/error.rs`.
 pub(crate) fn rsa_sw(e: RsaError) -> Sw {
     match e {
         RsaError::BadWidth => Sw::WRONG_LENGTH,

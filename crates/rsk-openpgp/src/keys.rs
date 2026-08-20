@@ -21,9 +21,9 @@ use rsa::traits::PublicKeyParts;
 use rsa::{BigUint, Pkcs1v15Encrypt};
 use rsk_rsa::{MAX_CRT_PLAIN, MAX_RSA_BYTES, RngAdapter, RsaCrt, RsaError};
 
-// Re-exported so `rsk-display` and the firmware can name the keygen result type
-// without an `rsk-rsa` dependency of their own (the dual-core search returns
-// `Box<RsaPrivateKey>`).
+// Re-exported for `rsk-display`, the only caller that names the keygen result
+// type (`Box<RsaPrivateKey>`, in its `Hooks`) without an `rsk-rsa` dependency of
+// its own; the firmware and the emulator have one and go direct.
 pub use rsk_rsa::RsaPrivateKey;
 
 use crate::Rng;
@@ -996,8 +996,9 @@ pub fn inc_sig_count<S: Storage>(fs: &mut Fs<S>, sess: &mut Session) -> Result<(
 
 /// The status word each [`RsaError`] answers with. This table **is** wire
 /// surface — `rsa_sw_reproduces_every_status_word` pins all four arms — and
-/// `rsk-piv` carries its own copy of it: both types are foreign to both applets,
-/// so no shared `From` impl exists that does not point a dependency upward.
+/// `rsk-piv` carries its own copy: the one crate that could host a shared
+/// mapping is `rsk-sdk`, and paying for it there would put the RSA crate in
+/// every applet's dependency closure. Whole argument: `rsk-rsa/src/error.rs`.
 pub(crate) fn rsa_sw(e: RsaError) -> Sw {
     match e {
         RsaError::BadWidth => Sw::WRONG_LENGTH,
