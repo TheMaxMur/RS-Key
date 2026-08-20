@@ -40,6 +40,23 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Security
 
+- **PSO:DECIPHER no longer runs its private operation on the `rsa` crate.** It
+  takes the same blinded, Bellcore-fault-checked asm CRT core as PSO:CDS
+  (`rsk_rsa_asm::sign_crt`) and unpads PKCS#1 v1.5 with the applet's own
+  constant-time `pkcs1v15`, so RUSTSEC-2023-0071 — which has no fixed release —
+  no longer sits under the one command that decrypts a ciphertext the host chose.
+  The wire surface does not move with the implementation: a malformed block still
+  answers `EXEC_ERROR`, and a test pins the new path's status word to the old
+  one's. One arm still reaches the crate on purpose — a legacy `P‖Q` key whose
+  prime width is not a 32-multiple, which no current firmware can store and which
+  cannot sign either, would otherwise lose the ability to decrypt its own
+  archived messages.
+
+  This does not close the padding oracle, and nothing can: DECIPHER must either
+  return a session key or report failure, so the status word itself separates
+  well-formed from malformed. What the constant-time unpad buys is that the
+  *reason* for a refusal does not leak on top of the refusal.
+
 - **The `rsa` crate's RUSTSEC-2023-0071 carve-out now describes the code that
   actually exists.** Its justification still claimed the crate was "the OpenPGP
   RSA backend" and that the `hazmat` feature was there because PIV GENERAL

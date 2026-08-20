@@ -24,6 +24,7 @@ pub mod keys;
 pub mod mse;
 pub mod origin;
 pub mod pin;
+pub mod pkcs1v15;
 pub mod pso;
 pub mod putdata;
 pub mod rsa_crt;

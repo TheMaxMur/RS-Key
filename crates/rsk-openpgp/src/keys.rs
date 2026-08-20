@@ -34,6 +34,7 @@ use crate::dobj::{
     ATTR_P521R1,
 };
 use crate::pin::{Session, load_dek};
+use crate::pkcs1v15;
 use crate::rsa_crt::{self, RsaCrt};
 
 /// Largest raw ECDSA signature: P-521 `r ‖ s` = 2×66 bytes.
@@ -1530,10 +1531,35 @@ fn rsa_raw(
     Ok(key_size)
 }
 
-/// PSO:DECIPHER for RSA: strip the leading OpenPGP padding-indicator byte, then
-/// PKCS#1 v1.5 decrypt exactly `key_size` bytes of ciphertext (blinded). `data`
-/// is the raw command data field (`apdu.data`).
+/// PSO:DECIPHER for RSA: strip the leading OpenPGP padding-indicator byte, run
+/// `cᵈ mod n` on the asm CRT core — blinded and Bellcore-fault-checked, the same
+/// private op PSO:CDS uses — then unpad PKCS#1 v1.5 in constant time. `data` is
+/// the raw command data field (`apdu.data`).
 pub fn rsa_decipher(
+    crt: &RsaCrt,
+    rng: &mut dyn Rng,
+    data: &[u8],
+    out: &mut [u8],
+) -> Result<usize, Sw> {
+    let key_size = crt.modulus_len();
+    let ct = data.get(1..1 + key_size).ok_or(Sw::WRONG_DATA)?;
+    let mut em = [0u8; MAX_RSA_BYTES];
+    // A malformed block answered `EXEC_ERROR` when the `rsa` crate owned this
+    // path; keep that status word, so moving the implementation does not move the
+    // wire surface with it.
+    let res = rsa_crt::sign_crt(crt, ct, rng, &mut em[..key_size])
+        .and_then(|_| pkcs1v15::unpad_encrypt(&em[..key_size], out).map_err(|_| Sw::EXEC_ERROR));
+    em.zeroize();
+    res
+}
+
+/// [`rsa_decipher`] for a key the asm CRT core cannot take: a legacy `P‖Q` blob
+/// whose prime width is not a 32-multiple, which older firmware could store and
+/// which [`rsa_crt::crt_from_plain`] refuses. Such a key already cannot sign; it
+/// would lose the ability to decrypt its own archived messages too, so it keeps
+/// the `rsa` crate's blinded decrypt — the one place RUSTSEC-2023-0071 still
+/// touches this applet (`docs/limitations.md`).
+pub fn rsa_decipher_legacy(
     key: &RsaPrivateKey,
     rng: &mut dyn Rng,
     data: &[u8],

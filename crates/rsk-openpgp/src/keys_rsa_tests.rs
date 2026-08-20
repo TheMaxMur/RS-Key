@@ -185,8 +185,44 @@ fn decipher_roundtrip() {
     let mut data = vec![0x00u8];
     data.extend_from_slice(&ct);
     let mut out = [0u8; MAX_RSA_BYTES];
-    let n = rsa_decipher(&key, &mut SeqRng(8), &data, &mut out).unwrap();
+    let n = rsa_decipher(&crt_of(&key), &mut SeqRng(8), &data, &mut out).unwrap();
     assert_eq!(&out[..n], msg);
+
+    // The legacy fallback must return the same plaintext, or a key that took it
+    // would silently decrypt to something else than the asm path.
+    let mut slow = [0u8; MAX_RSA_BYTES];
+    let sn = rsa_decipher_legacy(&key, &mut SeqRng(9), &data, &mut slow).unwrap();
+    assert_eq!(&slow[..sn], &out[..n]);
+}
+
+#[test]
+fn decipher_refuses_a_ciphertext_that_is_not_a_padded_block() {
+    // `sign_crt`'s Bellcore check passes — this really is cᵈ — so the refusal has
+    // to come from the unpad, which is the half being replaced here.
+    let key = test_key();
+    let crt = crt_of(&key);
+    let mut data = vec![0x00u8];
+    data.extend(core::iter::repeat_n(0x5Au8, crt.modulus_len()));
+    let mut out = [0u8; MAX_RSA_BYTES];
+    // Same status word the `rsa` crate's failure produced, so a host that keyed
+    // off it before sees no change.
+    let new = rsa_decipher(&crt, &mut SeqRng(12), &data, &mut out);
+    let old = rsa_decipher_legacy(&key, &mut SeqRng(12), &data, &mut out);
+    assert_eq!(new, Err(Sw::EXEC_ERROR));
+    assert_eq!(new, old);
+}
+
+#[test]
+fn decipher_refuses_a_short_command_field() {
+    let key = test_key();
+    let crt = crt_of(&key);
+    let mut out = [0u8; MAX_RSA_BYTES];
+    // One byte short of the indicator plus a full modulus-width cryptogram.
+    let data = vec![0x00u8; crt.modulus_len()];
+    assert_eq!(
+        rsa_decipher(&crt, &mut SeqRng(13), &data, &mut out),
+        Err(Sw::WRONG_DATA)
+    );
 }
 
 #[test]

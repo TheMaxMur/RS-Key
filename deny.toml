@@ -4,14 +4,16 @@
 # Unmaintained transitive crates pulled in by embassy/cortex-m; no fix upstream.
 # The sole *vulnerability* ignored below (rsa) is a deliberate, documented
 # exception. No fixed release exists — OSV gives `introduced: 0.0.0-0` with no
-# `fixed` event, so every version is affected. Three of the five private-RSA
-# paths never enter the crate: PIV GENERAL AUTHENTICATE, PSO:CDS and INTERNAL
-# AUTHENTICATE all sign through `rsk_rsa_asm::sign_crt`. The two that do are
-# `rsk-piv/src/x509.rs` (cert signing at keygen, over a digest the device built
-# itself — no chosen-ciphertext oracle) and `rsa_decipher` in
-# `rsk-openpgp/src/keys.rs` (PSO:DECIPHER, PW1-gated), which calls the crate's
-# blinded API over its constant-time PKCS#1 v1.5 unpad. Rationale and the
-# residual risk: docs/limitations.md → "RSA decryption timing".
+# `fixed` event, so every version is affected. Every hot private-RSA path now
+# runs on `rsk_rsa_asm::sign_crt` instead: PIV GENERAL AUTHENTICATE, PSO:CDS,
+# INTERNAL AUTHENTICATE and — since 0.4.11 — PSO:DECIPHER, which unpads with the
+# applet's own constant-time `pkcs1v15`. Two private uses are left. `rsk-piv/src/
+# x509.rs` signs a certificate at key generation over a digest the device built
+# itself, so there is no chosen-ciphertext oracle to drive; and
+# `rsa_decipher_legacy` in `rsk-openpgp/src/keys.rs` serves only a legacy `P‖Q`
+# key of non-32-multiple width, which no current firmware can store and which
+# would otherwise lose the ability to decrypt its own archived messages.
+# Rationale and residual risk: docs/limitations.md → "RSA (RUSTSEC-2023-0071)".
 # Everything else here is merely "unmaintained".
 ignore = [
     "RUSTSEC-2024-0436", # paste — unmaintained, via pio-core
