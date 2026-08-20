@@ -30,10 +30,6 @@ fn make_rsa_pub_body_matches_make_rsa_response_inner() {
     let mut full_out = [0u8; MAX_RSA_PUBDO];
     let full = make_rsa_response(&key, &mut full_out);
     let mut body_out = [0u8; MAX_RSA_PUBDO];
-    let body = make_rsa_pub_body(
-        &key.n().to_bytes_be(),
-        &key.e().to_bytes_be(),
-        &mut body_out,
-    );
+    let body = make_rsa_pub_body(&key.n_be(), &key.e_be(), &mut body_out);
     assert_eq!(&body_out[..body], &full_out[5..full]);
 }

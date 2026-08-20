@@ -45,8 +45,8 @@ pub use ctap::AppletHandler;
 pub use ctap::SecurityTraceSnapshot;
 
 /// What [`Hooks::rsa_search`] answers. Named so an implementor can spell it
-/// without taking `rsa` and `alloc` into its own scope.
-pub type SearchResult = Option<Option<Box<rsa::RsaPrivateKey>>>;
+/// without taking `rsk_rsa` and `alloc` into its own scope.
+pub type SearchResult = Option<Option<Box<rsk_rsa::RsaKey>>>;
 
 /// What the reset that started this power cycle left behind.
 ///

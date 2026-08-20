@@ -2,8 +2,8 @@
 // Copyright (C) 2026 RS-Key contributors
 
 use super::*;
-use crate::fixtures::{SeqRng, crt_of, test_key};
-use rsa::RsaPublicKey;
+use crate::fixtures::{SeqRng, crt_of, test_key, test_key_640};
+use crate::vectors::{ENCRYPT, SIGN_SHA256, hex};
 
 /// `00 ‖ 02 ‖ PS(ps_len non-zero) ‖ 00 ‖ msg`.
 fn em(ps_len: usize, msg: &[u8]) -> Vec<u8> {
@@ -88,82 +88,70 @@ fn refuses_a_message_longer_than_the_caller_buffer() {
 }
 
 #[test]
-fn agrees_with_the_rsa_crate_on_a_real_encryption() {
-    // The reference implementation builds the EM; ours must read it back. This is
-    // the differential that matters — a hand-rolled unpad is only worth having if
-    // it accepts exactly what a conforming encrypter produces.
-    use rsa::traits::PrivateKeyParts;
-    use rsa::{BigUint, Pkcs1v15Encrypt};
-
-    let key = RsaPrivateKey::new(&mut RngAdapter(&mut SeqRng(3)), 1024).unwrap();
+fn decrypts_an_openssl_ciphertext_on_both_arms() {
+    // OpenSSL built the padded block; both DECIPHER arms must read it back. This
+    // is the differential that matters — a hand-rolled unpad is only worth having
+    // if it accepts exactly what a conforming encrypter produces.
+    let key = test_key();
+    let crt = crt_of(&key);
     let k = key.size();
-    for (i, msg) in [b"".as_slice(), b"x", b"a-32-byte-openpgp-session-key!!!"]
-        .into_iter()
-        .enumerate()
-    {
-        let ct = RsaPublicKey::from(&key)
-            .encrypt(
-                &mut RngAdapter(&mut SeqRng(17 + i as u64)),
-                Pkcs1v15Encrypt,
-                msg,
-            )
-            .unwrap();
-        // Raw private op, so what reaches our unpad is the reference EM itself.
-        let raw = BigUint::from_bytes_be(&ct)
-            .modpow(key.d(), key.n())
-            .to_bytes_be();
-        let mut block = vec![0u8; k];
-        block[k - raw.len()..].copy_from_slice(&raw);
-        assert_eq!(unpad(&block).unwrap(), msg, "message {i}");
+    for (i, (msg, ct)) in ENCRYPT.iter().enumerate() {
+        let (msg, ct) = (hex(msg), hex(ct));
+        // The software arm, whole: private op then unpad.
+        let mut soft = [0u8; MAX_RSA_BYTES];
+        let sn = rsa_decrypt(&key, &ct, &mut SeqRng(17 + i as u64), &mut soft).unwrap();
+        assert_eq!(&soft[..sn], msg.as_slice(), "software arm, message {i}");
+        // The asm CRT arm the applet takes for a key of a width it can handle.
+        let mut em = [0u8; MAX_RSA_BYTES];
+        crate::crt::private_op(&crt, &ct, &mut SeqRng(23 + i as u64), &mut em[..k]).unwrap();
+        assert_eq!(unpad(&em[..k]).unwrap(), msg, "asm arm, message {i}");
     }
 }
 
 #[test]
-fn sign_digestinfo_verifies() {
+fn sign_digestinfo_matches_openssl() {
     let key = test_key();
-    // A SHA-256 DigestInfo (what gpg sends for an RSA signature).
-    let mut di = DI_SHA256.to_vec();
-    di.extend_from_slice(&[0x42u8; 32]);
-    let mut sig = [0u8; MAX_RSA_BYTES];
-    let n = rsa_sign(&key, &di, &mut SeqRng(1), &mut sig).unwrap();
-    assert_eq!(n, 256);
-    RsaPublicKey::from(&key)
-        .verify(Pkcs1v15Sign::new_unprefixed(), &di, &sig[..n])
-        .unwrap();
+    for (i, (digest, want)) in SIGN_SHA256.iter().enumerate() {
+        // A SHA-256 DigestInfo (what gpg sends for an RSA signature).
+        let mut di = DI_SHA256.to_vec();
+        di.extend_from_slice(&hex(digest));
+        let mut sig = [0u8; MAX_RSA_BYTES];
+        let n = rsa_sign(&key, &di, &mut SeqRng(1 + i as u64), &mut sig).unwrap();
+        assert_eq!(n, 256);
+        assert_eq!(&sig[..n], hex(want).as_slice(), "signature {i}");
+    }
 }
 
 #[test]
 fn sign_bare_hash_infers_alg() {
     // A bare 32-byte hash is treated as SHA-256 (length inference), so it must
-    // verify against the same DigestInfo signature.
+    // produce the same signature the DigestInfo spelling does.
     let key = test_key();
-    let hash = [0x37u8; 32];
-    let mut sig = [0u8; MAX_RSA_BYTES];
-    let n = rsa_sign(&key, &hash, &mut SeqRng(2), &mut sig).unwrap();
-    let mut di = DI_SHA256.to_vec();
-    di.extend_from_slice(&hash);
-    RsaPublicKey::from(&key)
-        .verify(Pkcs1v15Sign::new_unprefixed(), &di, &sig[..n])
-        .unwrap();
+    for (i, (digest, want)) in SIGN_SHA256.iter().enumerate() {
+        let mut sig = [0u8; MAX_RSA_BYTES];
+        let n = rsa_sign(&key, &hex(digest), &mut SeqRng(2 + i as u64), &mut sig).unwrap();
+        assert_eq!(&sig[..n], hex(want).as_slice(), "signature {i}");
+    }
 }
 
 #[test]
-fn sign_crt_digestinfo_verifies() {
-    // The applets' asm CRT signer must produce the same verifiable PKCS#1 v1.5
-    // signature as the `rsa`-crate path, over the CRT view built at seal time.
+fn sign_crt_digestinfo_matches_openssl() {
+    // The applets' asm CRT signer, over the CRT view built at seal time, must
+    // produce OpenSSL's signature — and the software signer's, since PKCS#1 v1.5
+    // is deterministic and the two paths are only allowed to differ in speed.
     let key = test_key();
-    let mut di = DI_SHA256.to_vec();
-    di.extend_from_slice(&[0x42u8; 32]);
-    let mut asm = [0u8; MAX_RSA_BYTES];
-    let n = rsa_sign_crt(&crt_of(&key), &di, &mut SeqRng(1), &mut asm).unwrap();
-    assert_eq!(n, 256);
-    RsaPublicKey::from(&key)
-        .verify(Pkcs1v15Sign::new_unprefixed(), &di, &asm[..n])
-        .unwrap();
-    // PKCS#1 v1.5 is deterministic, so it is byte-identical to the crate signer.
-    let mut crate_sig = [0u8; MAX_RSA_BYTES];
-    let cn = rsa_sign(&key, &di, &mut SeqRng(2), &mut crate_sig).unwrap();
-    assert_eq!(&asm[..n], &crate_sig[..cn]);
+    let crt = crt_of(&key);
+    for (i, (digest, want)) in SIGN_SHA256.iter().enumerate() {
+        let mut di = DI_SHA256.to_vec();
+        di.extend_from_slice(&hex(digest));
+        let mut asm = [0u8; MAX_RSA_BYTES];
+        let n = rsa_sign_crt(&crt, &di, &mut SeqRng(1 + i as u64), &mut asm).unwrap();
+        assert_eq!(n, 256);
+        assert_eq!(&asm[..n], hex(want).as_slice(), "signature {i}");
+        let mut soft = [0u8; MAX_RSA_BYTES];
+        let cn = rsa_sign(&key, &di, &mut SeqRng(2 + i as u64), &mut soft).unwrap();
+        assert_eq!(&asm[..n], &soft[..cn], "asm and software arms disagree");
+    }
 }
 
 #[test]
@@ -183,9 +171,8 @@ fn sign_crt_refuses_a_raw_block_wider_than_the_modulus() {
 /// exactly, independent of the blinding factor (CT-audit finding #1).
 #[test]
 fn rsa_raw_blinded_equals_unblinded() {
-    use rsa::BigUint;
-    use rsa::traits::PrivateKeyParts;
-    let key = RsaPrivateKey::new(&mut RngAdapter(&mut SeqRng(7)), 512).unwrap();
+    use num_bigint_dig::BigUint;
+    let key = test_key_640();
     let ks = key.size();
     let data = [0x2au8; 40];
     let mut out = [0u8; MAX_RSA_BYTES];

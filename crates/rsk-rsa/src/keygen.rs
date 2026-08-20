@@ -6,10 +6,11 @@
 //! host-supplied `e`/`p`/`q`.
 
 use alloc::boxed::Box;
+use num_bigint_dig::BigUint;
 use num_bigint_dig::prime::probably_prime_lucas;
-use rsa::{BigUint, RsaPrivateKey};
 use zeroize::Zeroize;
 
+use crate::key::RsaKey;
 use crate::{
     IncrementalSieve, MAX_RSA_BYTES, RSA_E, Rng, RsaError, mod_small, passes_strong_mr_base2,
     self_test,
@@ -17,16 +18,12 @@ use crate::{
 
 /// Build the RSA key from the imported exponent / primes (OpenPGP tags
 /// 0x91/0x92/0x93, PIV's `01`/`02` import template).
-pub fn rsa_from_pqe(e: &[u8], p: &[u8], q: &[u8]) -> Option<RsaPrivateKey> {
-    let p = BigUint::from_bytes_be(p);
-    let q = BigUint::from_bytes_be(q);
-    // from_p_q derives the totient via (p-1)(q-1); a zero prime MPI underflows
-    // num-bigint's unsigned subtraction (a panic, not an Err) and halts the device
-    // on import, so reject it here and let the caller's ok_or(EXEC_ERROR) do its job.
-    if p < BigUint::from(2u8) || q < BigUint::from(2u8) {
-        return None;
-    }
-    RsaPrivateKey::from_p_q(p, q, BigUint::from_bytes_be(e)).ok()
+pub fn rsa_from_pqe(e: &[u8], p: &[u8], q: &[u8]) -> Option<RsaKey> {
+    RsaKey::from_p_q(
+        BigUint::from_bytes_be(p),
+        BigUint::from_bytes_be(q),
+        BigUint::from_bytes_be(e),
+    )
 }
 
 /// The RSA prime search as a *stepper*, so the CCID transport can yield — and
@@ -34,7 +31,7 @@ pub fn rsa_from_pqe(e: &[u8], p: &[u8], q: &[u8]) -> Option<RsaPrivateKey> {
 /// [`step`](RsaKeygen::step) tests ONE random candidate (a bounded chunk: one
 /// `probably_prime`, ~tens of ms on-device), matching the `rsa` crate's keygen:
 /// two `nbits/2`-bit primes with the top two bits set and `gcd(e, prime − 1) = 1`,
-/// assembled with `RsaPrivateKey::from_p_q`. The primality decision is
+/// assembled into an [`RsaKey`]. The primality decision is
 /// Baillie-PSW split across backends: the strong Miller-Rabin base-2 half on
 /// the KAT-gated asm modexp (ours, differentially tested against the library),
 /// the strong Lucas half and key assembly the vetted library routines.
@@ -69,7 +66,7 @@ pub enum RsaStep {
     /// Candidate rejected, or the first prime was just found — call `step` again.
     More,
     /// Both primes found and the private key assembled.
-    Done(Box<RsaPrivateKey>),
+    Done(Box<RsaKey>),
     /// Unusable parameters (unsupported modulus size) or a key-assembly failure.
     Failed,
 }
@@ -168,9 +165,9 @@ impl RsaKeygen {
                 cand.zeroize();
                 RsaStep::More
             }
-            Some(p) => match RsaPrivateKey::from_p_q(p, cand, self.e.clone()) {
-                Ok(k) => RsaStep::Done(Box::new(k)),
-                Err(_) => RsaStep::Failed,
+            Some(p) => match RsaKey::from_p_q(p, cand, self.e.clone()) {
+                Some(k) => RsaStep::Done(Box::new(k)),
+                None => RsaStep::Failed,
             },
         }
     }
@@ -227,7 +224,7 @@ impl RsaKeygen {
 /// Blocking RSA keygen — drives [`RsaKeygen`] to completion on one core. Used
 /// by the synchronous `keypair_gen` (host tests, the non-CCID path); on the
 /// device the firmware races `try_candidate` on both cores instead.
-pub fn generate_rsa(rng: &mut dyn Rng, nbits: usize) -> Result<RsaPrivateKey, RsaError> {
+pub fn generate_rsa(rng: &mut dyn Rng, nbits: usize) -> Result<RsaKey, RsaError> {
     let mut kg = RsaKeygen::new(nbits);
     let mut sieve = IncrementalSieve::new();
     loop {

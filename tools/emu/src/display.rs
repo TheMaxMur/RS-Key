@@ -400,7 +400,7 @@ impl rsk_display::Hooks for EmuDisplayHooks {
         nbits: usize,
         rng: &mut dyn rsk_openpgp::Rng,
         on_tick: &mut dyn FnMut(),
-    ) -> Option<Box<rsk_rsa::RsaPrivateKey>> {
+    ) -> Option<Box<rsk_rsa::RsaKey>> {
         let mut keygen = rsk_rsa::RsaKeygen::new(nbits);
         let mut sieve = rsk_rsa::IncrementalSieve::new();
         (self.repaint)();

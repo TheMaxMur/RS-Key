@@ -23,19 +23,17 @@ covers the security boundary. This page covers feature and hardware gaps.
   of the refusal itself, but the message copy that follows a success is
   length-proportional, as in every conforming implementation.
   *Status: inherent to the OpenPGP card command.*
-- **`rsa` (RUSTSEC-2023-0071) still has one reachable private path.** No fixed
-  release exists — OSV marks every version affected. All of PIV GENERAL
-  AUTHENTICATE, PSO:CDS, INTERNAL AUTHENTICATE and PSO:DECIPHER now run their
-  private operation on `rsk_rsa::crt::private_op`, blinded and
-  Bellcore-fault-checked; the crate is left holding key assembly, parsing and
-  the bignum type. Two
-  private uses remain. PIV certificate signing runs once at key generation over a
-  digest the device built itself, so there is no chosen-ciphertext oracle to
-  drive. And a legacy `P‖Q` key whose prime width is not a 32-multiple — which
-  only firmware older than 0.4.11 could store, and which cannot sign at all —
-  keeps the crate's blinded decrypt, because the alternative is losing the
-  ability to read its own archived messages. *Status: accepted; the legacy arm
-  goes away when such keys are re-provisioned.*
+- **The RSA private paths are our own code, and it is unaudited.** The `rsa`
+  crate is gone from the tree (0.4.12), and with it RUSTSEC-2023-0071 — the
+  Marvin timing side channel, which never had a fixed release. What replaced it
+  is `rsk-rsa`: its own key type, `RsaKey`, and a software private operation for
+  the two paths the asm CRT core cannot serve (PIV certificate signing, and a
+  legacy `P‖Q` key whose prime width is not a multiple of 32). Both are
+  base-blinded and Bellcore-fault-checked like the asm path, and every signature
+  and decryption is checked byte-for-byte against OpenSSL vectors in the host
+  tests. It is still ours, still single-maintainer, and still unaudited — the
+  advisory is closed, the class of bug it names is not. *Status: accepted;
+  see the [constant-time audit](ct-audit.md) for what has been looked at.*
 - **RSA-3072/4096 on-card generation is slow.** The prime search dominates the
   cost: *rejecting* hundreds of composite candidates, each one asm-modexp-bound.
   Both cores run the search with the modexp hot path in SRAM

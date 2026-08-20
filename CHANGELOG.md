@@ -40,6 +40,18 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Internal
 
+- **`rsk-rsa` owns the RSA key type, so nothing above tier 0 names a foreign
+  one.** `rsa::RsaPrivateKey` used to cross from an algorithm crate into both
+  card applets, `rsk-device` and `firmware` — five manifests and eleven source
+  files spelling a dependency's type in their own signatures. `rsk_rsa::RsaKey`
+  replaces it, and its public surface is bytes: `size()`, `n_be()`, `e_be()`, and
+  a `from_p_q` reached through the byte-taking `rsa_from_pqe`. `rsk-piv` and
+  `rsk-openpgp` no longer name a bignum at all; `rsk-rsa` still has no `rsk-*`
+  dependency. Three PKCS#1 v1.5 helpers moved with it — the software private
+  operation, `rsa_sign` and a new `rsa_decrypt` — each a port of what the `rsa`
+  crate ran, arm for arm, including which of `check_public` and `validate`
+  refuses an imported key, because an applet's status word follows that.
+
 - **Why the RSA status-word table is allowed to exist twice.** `rsa_sw` maps
   `RsaError` to a status word in both card applets, and the comment defending
   that named the orphan rule — which in fact permits the shared
@@ -86,6 +98,39 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   rename, no code moved yet.
 
 ### Security
+
+- **The `rsa` crate is out of the tree, and with it RUSTSEC-2023-0071.** The
+  Marvin timing side channel has **no fixed release** — OSV gives
+  `introduced: 0.0.0-0` with no `fixed` event, so every version is affected —
+  and the crate sat inside an authenticator's trust base behind a documented
+  carve-out. The two paths that still reached it are `rsk-rsa`'s own now: PIV
+  certificate signing at key generation, and PSO:DECIPHER for a legacy `P‖Q` key
+  whose prime width is not a multiple of 32 (which the asm CRT core cannot take).
+  Both run the same base-blinded, Bellcore-fault-checked private operation the
+  rest of the tree already used, and both end in the same constant-time unpad.
+
+  **The carve-out is deleted, not relocated.** `cargo audit` runs with no
+  `--ignore` on either lockfile, `deny.toml`'s `[advisories].ignore` carries no
+  vulnerability at all (only three "unmaintained" entries), and the `rsa`
+  exemption is gone from `supply-chain/config.toml`.
+
+  No wire byte moves: every status word is what it was, including PSO:DECIPHER's
+  deliberate `EXEC_ERROR` on a malformed block and `pso.rs`'s `WRONG_LENGTH`
+  fallback onto the legacy arm. The sealed `P‖Q‖dP‖dQ‖qInv` blob is byte-identical
+  — `dP`, `dQ` and `qInv` do not depend on which totient `d` was derived from —
+  so an already-provisioned key keeps signing and deciphering across the upgrade.
+
+  **What this does not close is the padding oracle.** PSO:DECIPHER still tells a
+  malformed block from a well-formed one by response code, because the command's
+  specification requires it to either return a session key or report failure.
+  Removing the dependency changes nothing about that; see
+  [limitations](docs/limitations.md).
+
+  The tests lost their oracle with the crate, so they gained a better one:
+  `crates/rsk-rsa/src/vectors.rs` holds OpenSSL 3.6.2 known-answer vectors
+  (regenerate with `scripts/rsa_vectors.py`), and every signature the card
+  produces is now compared to OpenSSL's byte for byte rather than merely
+  round-tripped against our own verifier.
 
 - **PSO:DECIPHER no longer runs its private operation on the `rsa` crate.** It
   takes the same blinded, Bellcore-fault-checked asm CRT core as PSO:CDS

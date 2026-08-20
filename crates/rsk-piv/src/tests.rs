@@ -4053,11 +4053,15 @@ fn rsa1024_keygen_sign_verify_and_metadata() {
     let dyn_auth = find_tag(&out, 0x7C).unwrap();
     let sig = find_tag(dyn_auth, 0x82).unwrap().to_vec();
     assert_eq!(sig.len(), 128);
-    // Verify the raw op: sig^e mod n must reproduce the EM (the leading
-    // 0x00 is dropped by to_bytes_be).
-    let n = rsa::BigUint::from_bytes_be(n_bytes);
-    let m = rsa::BigUint::from_bytes_be(&sig).modpow(&rsa::BigUint::from(65537u32), &n);
-    assert_eq!(m.to_bytes_be(), em[1..]);
+    // Verify the raw op: sig^e mod n must reproduce the EM the host built.
+    let mut signed = di.to_vec();
+    signed.extend_from_slice(&digest);
+    assert!(rsk_rsa::verify::verify_pkcs1v15(
+        n_bytes,
+        rsk_rsa::RSA_PUB_EXP_BE,
+        &signed,
+        &sig
+    ));
     // Metadata exposes the same modulus.
     let (sw, md) = run(&mut app, &mut fs, INS_GET_METADATA, 0, 0x9A, &[]);
     assert_eq!(sw, Sw::OK);
@@ -4105,14 +4109,10 @@ fn rsa_import_and_sign() {
     select(&mut app, &mut fs);
     auth_mgm(&mut app, &mut fs);
     verify_pin(&mut app, &mut fs);
-    let key = {
-        let mut krng = TestRng(99);
-        rsk_rsa::generate_rsa(&mut krng, 1024).unwrap()
-    };
-    use rsa::traits::PrivateKeyParts as _;
-    let primes = key.primes();
-    let p = primes[0].to_bytes_be();
-    let q = primes[1].to_bytes_be();
+    // A fixed RSA-1024 key, so the import path is checked against a modulus
+    // OpenSSL computed rather than against whatever our own keygen just made.
+    use rsk_rsa::vectors::{N1024_HEX, P1024_HEX, Q1024_HEX, hex};
+    let (p, q) = (hex(P1024_HEX), hex(Q1024_HEX));
     let mut imp = vec![0x01, p.len() as u8];
     imp.extend_from_slice(&p);
     imp.push(0x02);
@@ -4123,10 +4123,9 @@ fn rsa_import_and_sign() {
     let (sw, md) = run(&mut app, &mut fs, INS_GET_METADATA, 0, 0x9E, &[]);
     assert_eq!(sw, Sw::OK);
     assert_eq!(find_tag(&md, 0x03).unwrap(), &[ORIGIN_IMPORTED]);
-    use rsa::traits::PublicKeyParts as _;
     assert_eq!(
         find_tag(find_tag(&md, 0x04).unwrap(), 0x81).unwrap(),
-        key.n().to_bytes_be()
+        hex(N1024_HEX)
     );
 }
 

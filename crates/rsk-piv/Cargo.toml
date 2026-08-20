@@ -22,12 +22,13 @@ rsk-mgmt = { workspace = true }
 # The RSA family: keygen, the sealed CRT layout and its blinded, fault-checked
 # private op (UMAAL asm on device), PKCS#1 v1.5, the public-key DO.
 rsk-rsa = { workspace = true }
-# `RsaPrivateKey` and the bignum the seal path multiplies `N = p·q` with.
-rsa = { workspace = true }
 zeroize = { workspace = true }
 
 [dev-dependencies]
 rsk-fs = { workspace = true, features = ["test-util"] }
+# The KAT vectors and the PKCS#1 v1.5 verifier the RSA tests check a
+# card-produced signature against — the oracle the `rsa` crate used to be.
+rsk-rsa = { workspace = true, features = ["test-util"] }
 p256 = { workspace = true }
 p384 = { workspace = true }
 sha2 = { workspace = true }

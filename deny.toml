@@ -2,25 +2,16 @@
 
 [advisories]
 # Unmaintained transitive crates pulled in by embassy/cortex-m; no fix upstream.
-# The sole *vulnerability* ignored below (rsa) is a deliberate, documented
-# exception. No fixed release exists — OSV gives `introduced: 0.0.0-0` with no
-# `fixed` event, so every version is affected. Every hot private-RSA path now
-# runs on `rsk_rsa::crt::private_op` instead: PIV GENERAL AUTHENTICATE, PSO:CDS,
-# INTERNAL AUTHENTICATE and — since 0.4.11 — PSO:DECIPHER, which unpads with our
-# own constant-time `rsk_rsa::pkcs1v15`. Two private uses are left.
-# `rsk_rsa::pkcs1v15::rsa_sign`, which `rsk-piv/src/x509.rs` calls, signs a
-# certificate at key generation over a digest the device built itself, so there
-# is no chosen-ciphertext oracle to drive; and `rsa_decipher_legacy` in
-# `rsk-openpgp/src/keys.rs` serves only a legacy `P‖Q` key of non-32-multiple
-# width, which no current firmware can store and which would otherwise lose the
-# ability to decrypt its own archived messages.
-# Rationale and residual risk: docs/limitations.md → "RSA (RUSTSEC-2023-0071)".
-# Everything else here is merely "unmaintained".
+# **No vulnerability is ignored here.** The one that used to be —
+# RUSTSEC-2023-0071, the `rsa` crate's Marvin timing side channel, which has no
+# fixed release at all — went away with the crate in 0.4.12: `rsk-rsa` owns the
+# key type and both private paths now, so there is nothing left to carve out.
+# Adding a vulnerability to this list needs a written justification and an entry
+# in docs/limitations.md; everything below is merely "unmaintained".
 ignore = [
     "RUSTSEC-2024-0436", # paste — unmaintained, via pio-core
     "RUSTSEC-2026-0110", # bare-metal — deprecated, via cortex-m
     "RUSTSEC-2026-0173", # proc-macro-error2 — unmaintained, build-time only (pio-proc -> embassy-rp)
-    "RUSTSEC-2023-0071", # rsa — Marvin timing side-channel; no fix upstream, mitigated by blinding (see above)
 ]
 
 [licenses]

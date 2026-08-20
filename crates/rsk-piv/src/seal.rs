@@ -8,14 +8,13 @@
 //! import) must reach the keys without a PIN session. With the OTP MKEK
 //! provisioned, `kbase` — and so this seal — roots in the hardware fuse key.
 
-use rsa::{BigUint, RsaPrivateKey};
 use rsk_crypto::{Device, aes256gcm_decrypt, aes256gcm_encrypt, hkdf_sha256};
 use rsk_fs::{Fs, KeyFid, Sealed, Storage};
 use rsk_openpgp::Rng;
 use rsk_openpgp::keys::{Curve, PrivKey};
-use rsk_rsa::crt;
+use rsk_rsa::{RSA_PUB_EXP_BE, RsaKey, crt};
 use rsk_sdk::Sw;
-use zeroize::{Zeroize, Zeroizing};
+use zeroize::Zeroize;
 
 pub use rsk_rsa::RsaCrt;
 
@@ -190,7 +189,7 @@ pub fn store_rsa_key<S: Storage>(
     fs: &mut Fs<S>,
     rng: &mut dyn Rng,
     fid: KeyFid,
-    key: &RsaPrivateKey,
+    key: &RsaKey,
 ) -> Result<(), Sw> {
     let mut plain = [0u8; MAX_PLAIN];
     let r = (|| {
@@ -202,12 +201,10 @@ pub fn store_rsa_key<S: Storage>(
 }
 
 /// Load a sealed RSA key and return ONLY its public modulus `N = p·q`, big-endian
-/// into `out`, returning `N`'s length. Skips [`RsaPrivateKey::from_p_q`]'s CRT
-/// precompute — the `dP/dQ/qInv` modular inverses that cost ~50 ms on RSA-4096 —
-/// because GET METADATA needs only `N` and the fixed 65537 exponent, never the
-/// private key. `p`/`q` ride in [`Zeroizing`] (num-bigint has no scrubbing `Drop`,
-/// the recorded RSA hygiene lesson); the product `N` is public. Byte-identical to
-/// `load_rsa_key(..)?.n().to_bytes_be()`, just without the key rebuild.
+/// into `out`, returning `N`'s length. Skips the CRT precompute a key rebuild
+/// pays — the `dP/dQ/qInv` modular inverses cost ~50 ms on RSA-4096 — because GET
+/// METADATA needs only `N` and the fixed 65537 exponent, never the private key.
+/// Byte-identical to `load_rsa_key(..)?.n_be()`, just without the key rebuild.
 pub fn load_rsa_modulus<S: Storage>(
     dev: &Device,
     fs: &mut Fs<S>,
@@ -220,35 +217,23 @@ pub fn load_rsa_modulus<S: Storage>(
         // Only `half` and the first `2*half` bytes are read, so the 2-vs-5-field
         // length classification (the `_` bool) cannot change `N` — collision-immune.
         let (half, _) = crt::parse_rsa_blob(&plain[..n]).map_err(rsa_sw)?;
-        let p = Zeroizing::new(BigUint::from_bytes_be(&plain[..half]));
-        let q = Zeroizing::new(BigUint::from_bytes_be(&plain[half..2 * half]));
-        let nb = (&*p * &*q).to_bytes_be();
-        if nb.len() > out.len() {
-            return Err(Sw::WRONG_LENGTH);
-        }
-        out[..nb.len()].copy_from_slice(&nb);
-        Ok(nb.len())
+        rsk_rsa::modulus_be(&plain[..half], &plain[half..2 * half], out).map_err(rsa_sw)
     })();
     plain.zeroize();
     r
 }
 
 /// Load an RSA key sealed by [`store_rsa_key`] (either layout) into an
-/// [`RsaPrivateKey`] (`E` fixed at 65537). Used by the cert-build path (the retired
+/// [`RsaKey`] (`E` fixed at 65537). Used by the cert-build path (the retired
 /// on-device RSA finish); signing uses [`load_rsa_crt`] and GET METADATA uses
 /// [`load_rsa_modulus`], both of which skip the full key rebuild.
-pub fn load_rsa_key<S: Storage>(
-    dev: &Device,
-    fs: &mut Fs<S>,
-    fid: KeyFid,
-) -> Result<RsaPrivateKey, Sw> {
+pub fn load_rsa_key<S: Storage>(dev: &Device, fs: &mut Fs<S>, fid: KeyFid) -> Result<RsaKey, Sw> {
     let mut plain = [0u8; MAX_PLAIN];
     let n = seal_read(dev, fs, fid, &mut plain)?;
     let r = (|| {
         let (half, _) = crt::parse_rsa_blob(&plain[..n]).map_err(rsa_sw)?;
-        let p = BigUint::from_bytes_be(&plain[..half]);
-        let q = BigUint::from_bytes_be(&plain[half..2 * half]);
-        RsaPrivateKey::from_p_q(p, q, crt::rsa_e()).map_err(|_| Sw::MEMORY_FAILURE)
+        rsk_rsa::rsa_from_pqe(RSA_PUB_EXP_BE, &plain[..half], &plain[half..2 * half])
+            .ok_or(Sw::MEMORY_FAILURE)
     })();
     plain.zeroize();
     r

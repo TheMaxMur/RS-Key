@@ -55,8 +55,15 @@ it had rotted to 16 crates here, 20 on the nightly coverage row and 12 in
 `nix flake check`. `scripts/roster_gate.py` now holds every copy of the
 selection to that pair, and finds the copies rather than being told where they
 are.) Crypto tests pin NIST/RFC vectors; applet tests drive full protocol flows
-(register → assert, PIN lockout ladders, OpenPGP import → sign → verify against
-`RustCrypto`, PIV generate → attest → parse with `x509-parser`).
+(register → assert, PIN lockout ladders, OpenPGP import → sign → verify, PIV
+generate → attest → parse with `x509-parser`).
+
+RSA has no second implementation in the tree to check itself against — the `rsa`
+crate that used to serve as one left with RUSTSEC-2023-0071 — so its ground
+truth is frozen instead: `crates/rsk-rsa/src/vectors.rs` holds OpenSSL
+signatures and ciphertexts under three fixed keys, and every signature the card
+produces is compared to them byte for byte. `scripts/rsa_vectors.py` regenerates
+that file from python-cryptography; run it inside `nix develop`.
 
 `rsk-display` is the odd one: its subject is a *screen*, and it is tested by
 giving the flow a panel that records what was drawn, a touch pad that reads back

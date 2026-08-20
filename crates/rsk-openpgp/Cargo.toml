@@ -37,13 +37,14 @@ ecdsa = { workspace = true }
 elliptic-curve = { workspace = true }
 ed25519-dalek = { workspace = true }
 x25519-dalek = { workspace = true }
-# Three leftovers, now that the algorithm is rsk-rsa's: `RsaPrivateKey` rebuilt
-# from `P‖Q` on load, `key.size()` on the import size check, and the `rsa`-crate
-# decrypt the legacy PSO:DECIPHER arm keeps.
-rsa = { workspace = true }
+# The RSA family: the key type rebuilt from `P‖Q` on load, the sealed CRT layout
+# and its blinded, fault-checked private op, PKCS#1 v1.5, the public-key DO.
 rsk-rsa = { workspace = true }
 # Shared fixed-base comb ECDSA signers + d·G (k·G for sign, public-key derivation).
 rsk-ec = { workspace = true }
 
 [dev-dependencies]
 rsk-fs = { workspace = true, features = ["test-util"] }
+# The KAT vectors and the PKCS#1 v1.5 verifier the RSA tests check a
+# card-produced signature against — the oracle the `rsa` crate used to be.
+rsk-rsa = { workspace = true, features = ["test-util"] }

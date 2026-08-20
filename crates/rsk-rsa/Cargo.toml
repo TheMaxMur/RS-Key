@@ -23,18 +23,23 @@ unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
 # backend. It exists because `cargo kani` re-invokes cargo once per selected
 # package, so the feature must name something on every crate a tier selects.
 kani-soft = []
+# The KAT vectors and the PKCS#1 v1.5 verifier the two card applets' tests check
+# a card-produced signature with; the `rsa` crate used to be that oracle. Turned
+# on from their `[dev-dependencies]`, so it never reaches the firmware image.
+test-util = []
 
 [dependencies]
 # The modexp working buffers and the CRT fields hold prime-candidate / key state;
 # `alloc` for the bignum `Vec`s the key paths marshal through.
 zeroize = { workspace = true, features = ["alloc"] }
-# The key type, keygen assembly and PKCS#1 signing above the asm. Rides here with
-# the RSA layer it belongs to; replacing it is the next step of the tier work.
-rsa = { workspace = true }
-# rsa's bignum (re-exported as `rsa::BigUint`): the blinding and fault-check
-# arithmetic here, the strong-Lucas half of the prime test, and — on the host,
-# where there is no ARM assembler — the modexp fallback itself.
+# The bignum the whole crate is arithmetic over: key assembly, the blinding and
+# fault-check arithmetic, the strong-Lucas half of the prime test, and — on the
+# host, where there is no ARM assembler — the modexp fallback itself.
 num-bigint-dig = { workspace = true }
+# λ(n) = lcm(p−1, q−1), which the private exponent is derived from, plus the
+# parity tests on `n` and `e`. num-bigint-dig's own arithmetic base, already in
+# the tree underneath it; it re-exports the `BigUint` impls but not the trait.
+num-integer = { workspace = true }
 
 [build-dependencies]
 cc = "1"

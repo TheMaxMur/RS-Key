@@ -896,7 +896,7 @@ replace = """
 """
 slice = ["cargo", "test", "-p", "rsk-openpgp"]
 expect = "killed"
-note = "pin_wrong_retry stops charging the attempt: unlimited PW1/PW3/RC guesses at full speed. Deliberately the OpenPGP half of this switch, so the lattice's three entries cover both applets rather than PIV three times; PIV's twin is the `set_retries_left(fs, retry, left - 1)` at crates/rsk-piv/src/lib.rs:1220."
+note = "pin_wrong_retry stops charging the attempt: unlimited PW1/PW3/RC guesses at full speed. Deliberately the OpenPGP half of this switch, so the lattice's three entries cover both applets rather than PIV three times; PIV's twin is the `set_retries_left(fs, retry, left - 1)` at crates/rsk-piv/src/lib.rs:1218."
 
 [comutant.BugRecoveryWithoutSecret]
 status = "patch"
@@ -1080,7 +1080,7 @@ note = "637ed98 taken back out on the PIV half: every SELECT resets, including t
 status = "unreachable"
 evidence = """the applets' deselect is redundant with their own fresh SELECT, so
 removing it from the ICC power transition changes nothing observable. Three
-applets carry an access status and implement deselect — rsk-piv/src/lib.rs:1020
+applets carry an access status and implement deselect — rsk-piv/src/lib.rs:1018
 (sess.reset), rsk-openpgp/src/lib.rs:379 (reset_session), rsk-oath/src/lib.rs:1198
 (validated + otp_pin_verified) — and all three ALSO re-lock in select: piv and
 openpgp on `if !reselect`, oath by recomputing `validated = !code_set` and clearing
@@ -1230,7 +1230,7 @@ replace = """
 """
 slice = ["cargo", "test", "-p", "rsk-openpgp"]
 expect = "killed"
-note = "the converse of BugAdminOpensKeyOps: a USER status opens PUT DATA's administrative surface. PIV states the same rule at seven separate 9B management-key gates (crates/rsk-piv/src/lib.rs:256, 562, 633, 761, 998, 1058 and keygen.rs:587), none of them patched here."
+note = "the converse of BugAdminOpensKeyOps: a USER status opens PUT DATA's administrative surface. PIV states the same rule at seven separate 9B management-key gates (crates/rsk-piv/src/lib.rs:254, 560, 631, 759, 996, 1056 and keygen.rs:585), none of them patched here."
 
 [comutant.BugRefusedValidateGrants]
 status = "patch"

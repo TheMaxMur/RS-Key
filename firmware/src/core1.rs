@@ -37,7 +37,7 @@ use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use rsk_crypto::HmacDrbg;
 use rsk_openpgp::Rng;
-use rsk_rsa::{IncrementalSieve, RsaKeygen, RsaPrivateKey, RsaStep};
+use rsk_rsa::{IncrementalSieve, RsaKey, RsaKeygen, RsaStep};
 use static_cell::StaticCell;
 use zeroize::Zeroize;
 
@@ -349,7 +349,7 @@ fn search(job: &Job) {
 /// keeps USB + keepalives flowing); core1 is parked again by the time this
 /// returns. `None` is the old `RsaStep::Failed`: an unusable size / failed
 /// modexp self-test, or key assembly failure.
-pub fn run_rsa_search(nbits: usize, rng: &mut dyn Rng) -> Option<Box<RsaPrivateKey>> {
+pub fn run_rsa_search(nbits: usize, rng: &mut dyn Rng) -> Option<Box<RsaKey>> {
     run_rsa_search_progress(nbits, rng, &mut || {})
 }
 
@@ -364,7 +364,7 @@ pub fn run_rsa_search_progress(
     nbits: usize,
     rng: &mut dyn Rng,
     on_tick: &mut dyn FnMut(),
-) -> Option<Box<RsaPrivateKey>> {
+) -> Option<Box<RsaKey>> {
     let mut kg = RsaKeygen::new(nbits);
     if !kg.usable() {
         return None;
@@ -423,7 +423,7 @@ pub fn run_rsa_search_progress(
     sieve.scrub();
 
     // `Some(Some(key))` = assembled, `Some(None)` = the old `Failed`.
-    let mut outcome: Option<Option<Box<RsaPrivateKey>>> = None;
+    let mut outcome: Option<Option<Box<RsaKey>>> = None;
     while outcome.is_none() {
         // Observation hook (display spinner); time-gated by the caller, off the keygen state.
         on_tick();

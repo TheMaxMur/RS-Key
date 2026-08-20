@@ -2,20 +2,17 @@
 // Copyright (C) 2026 RS-Key contributors
 
 //! PKCS#1 v1.5 (RFC 8017): the DigestInfo encoding the signature paths build,
-//! the two signers over it — one on the asm CRT core ([`crate::crt`]), one on
-//! the `rsa` crate for the PIV certificate path — and the constant-time
-//! decryption unpadding PSO:DECIPHER reads back.
+//! the two signers over it — one on the asm CRT core ([`crate::crt`]), one on a
+//! full [`RsaKey`] for the PIV certificate path — the decryption both DECIPHER
+//! arms end in, and the constant-time unpadding they read the block back with.
 //!
-//! The unpad exists so DECIPHER can run its private operation on the asm CRT
-//! core instead of the `rsa` crate, which carries RUSTSEC-2023-0071 with no
-//! fixed release. Every structural test in it is a mask, never a branch: which
-//! of the four ways an EM can be malformed must not be timeable, or the status
-//! word's padding oracle gains a finer-grained sibling.
+//! Every structural test in that unpad is a mask, never a branch: which of the
+//! four ways an EM can be malformed must not be timeable, or the status word's
+//! padding oracle gains a finer-grained sibling.
 
-use rsa::traits::PublicKeyParts;
-use rsa::{Pkcs1v15Sign, RsaPrivateKey};
+use zeroize::Zeroize;
 
-use crate::{MAX_RSA_BYTES, Rng, RngAdapter, RsaError};
+use crate::{MAX_RSA_BYTES, Rng, RsaError, RsaKey};
 
 /// PKCS#1 DigestInfo prefixes (`SEQ { SEQ { OID, NULL }, OCTET STRING }` header,
 /// without the trailing hash) for the five hashes `rsa_sign_em` recognises.
@@ -117,30 +114,56 @@ pub fn rsa_sign_crt(
     crate::crt::private_op(crt, &em[..mlen], rng, out)
 }
 
-/// PKCS#1 v1.5 over the supplied data with a full [`RsaPrivateKey`] on the `rsa`
-/// crate. Used by the PIV x509 cert-signing path (`rsk_piv::x509`); the OpenPGP
-/// applet's own PSO:CDS / INTERNAL AUTHENTICATE use [`rsa_sign_crt`] (asm). If it
-/// is a DigestInfo (or a bare hash whose length names the algorithm), sign that
-/// digest; otherwise fall back to the raw private operation.
+/// PKCS#1 v1.5 over the supplied data with a full [`RsaKey`], on the software
+/// private op. Used by the PIV x509 cert-signing path (`rsk_piv::x509`), whose
+/// key may be any width an IMPORT accepted; the OpenPGP applet's own PSO:CDS /
+/// INTERNAL AUTHENTICATE use [`rsa_sign_crt`] (asm). If it is a DigestInfo (or a
+/// bare hash whose length names the algorithm), sign that digest; otherwise fall
+/// back to the raw private operation.
 pub fn rsa_sign(
-    key: &RsaPrivateKey,
+    key: &RsaKey,
     data: &[u8],
     rng: &mut dyn Rng,
     out: &mut [u8],
 ) -> Result<usize, RsaError> {
-    let mut em = [0u8; MAX_RSA_DIGESTINFO];
-    let Some(dlen) = rsa_sign_em(data, &mut em) else {
+    let mut di = [0u8; MAX_RSA_DIGESTINFO];
+    let Some(dlen) = rsa_sign_em(data, &mut di) else {
         return rsa_raw(key, data, out, rng);
     };
-    let sig = key
-        .sign_with_rng(
-            &mut RngAdapter(rng),
-            Pkcs1v15Sign::new_unprefixed(),
-            &em[..dlen],
-        )
-        .map_err(|_| RsaError::Failed)?;
-    out[..sig.len()].copy_from_slice(&sig);
-    Ok(sig.len())
+    let mlen = key.size();
+    // EM = 00 01 PS 00 ‖ DigestInfo, PS = 0xFF·(mlen−dlen−3), at least 8 —
+    // RFC 8017 §9.2, the block `rsa_sign_crt` builds for the asm core.
+    if mlen > MAX_RSA_BYTES || mlen < dlen + 11 {
+        return Err(RsaError::BadWidth);
+    }
+    let mut em = [0u8; MAX_RSA_BYTES];
+    let ps_end = mlen - dlen - 1;
+    em[1] = 0x01;
+    em[2..ps_end].fill(0xff);
+    em[ps_end + 1..mlen].copy_from_slice(&di[..dlen]);
+    key.private_op(&em[..mlen], rng, out)
+}
+
+/// PKCS#1 v1.5 decryption with a full [`RsaKey`], on the software private op —
+/// the arm PSO:DECIPHER falls back to for a legacy `P‖Q` key whose prime width
+/// the asm CRT core cannot take. Same blinded, Bellcore-fault-checked operation
+/// and the same constant-time [`unpad_encrypt`] as the asm arm.
+pub fn rsa_decrypt(
+    key: &RsaKey,
+    ct: &[u8],
+    rng: &mut dyn Rng,
+    out: &mut [u8],
+) -> Result<usize, RsaError> {
+    let mlen = key.size();
+    if mlen > MAX_RSA_BYTES {
+        return Err(RsaError::BadWidth);
+    }
+    let mut em = [0u8; MAX_RSA_BYTES];
+    let res = key
+        .private_op(ct, rng, &mut em[..mlen])
+        .and_then(|_| unpad_encrypt(&em[..mlen], out));
+    em.zeroize();
+    res
 }
 
 /// Run the raw RSA private operation `m^d mod n` (no padding scheme). gpg never
@@ -149,32 +172,24 @@ pub fn rsa_sign(
 /// non-conformant caller cannot turn `num-bigint-dig`'s variable-time
 /// exponentiation into a Marvin-style timing oracle on the private exponent.
 fn rsa_raw(
-    key: &RsaPrivateKey,
+    key: &RsaKey,
     data: &[u8],
     out: &mut [u8],
     rng: &mut dyn Rng,
 ) -> Result<usize, RsaError> {
-    use num_bigint_dig::ModInverse;
-    use rsa::BigUint;
-    use rsa::traits::PrivateKeyParts;
+    use num_bigint_dig::BigUint;
     let key_size = key.size();
+    if key_size > MAX_RSA_BYTES {
+        return Err(RsaError::BadWidth);
+    }
     if data.len() > key_size {
         return Err(RsaError::BadBlock);
     }
     let (n, e, d) = (key.n(), key.e(), key.d());
     let m = BigUint::from_bytes_be(data);
-    // Fresh blinding factor r, invertible mod n (retry on the negligible chance
-    // r shares a factor with n).
-    let (r, r_inv) = loop {
-        let mut rb = [0u8; MAX_RSA_BYTES];
-        rng.fill(&mut rb[..key_size]);
-        let cand = BigUint::from_bytes_be(&rb[..key_size]) % n;
-        if let Some(inv) = (&cand).mod_inverse(n).and_then(|i| i.to_biguint()) {
-            break (cand, inv);
-        }
-    };
+    let (r, r_inv) = crate::key::blind_pair(n, key_size, rng);
     let blinded = (&m * r.modpow(e, n)) % n;
-    let res = (blinded.modpow(d, n) * r_inv) % n;
+    let res = (blinded.modpow(d, n) * &*r_inv) % n;
     let rb = res.to_bytes_be();
     if rb.len() > key_size {
         return Err(RsaError::Failed);

@@ -904,7 +904,7 @@ where
     fn piv_search_rsa(
         &mut self,
         nbits: usize,
-    ) -> Option<alloc::boxed::Box<rsk_openpgp::keys::RsaPrivateKey>> {
+    ) -> Option<alloc::boxed::Box<rsk_openpgp::keys::RsaKey>> {
         let _ = rsk_ui::render_piv_keygen_working(&mut self.panel);
         self.shown = None;
         let mut rng = self.rng.borrow_mut();

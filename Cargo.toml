@@ -127,14 +127,15 @@ cfb-mode = { version = "0.8", default-features = false }
 aes-gcm = { version = "0.10", default-features = false, features = ["aes"] }
 chacha20poly1305 = { version = "0.10", default-features = false }
 zeroize = { version = "1", default-features = false }
-# RSA for the PIV and OpenPGP applets: `from_p_q` key assembly, the CRT
-# accessors `rsk_rsa` signs through, and PSO:DECIPHER. no_std but needs
-# `alloc` (firmware provides a heap); we pass our own RNG.
-rsa = { version = "0.9", default-features = false }
-# num-bigint-dig is rsa's bignum (re-exported as `rsa::BigUint`). On-card RSA
-# keygen drives `prime::probably_prime` directly so the prime search can yield
-# between candidates (the CCID keepalive). Features match rsa's own selection.
+# The bignum `rsk-rsa` is arithmetic over. On-card RSA keygen drives
+# `prime::probably_prime` directly so the prime search can yield between
+# candidates (the CCID keepalive); `zeroize` because every key path here holds
+# secret limbs. Features are what the `rsa` crate selected before it was dropped.
 num-bigint-dig = { version = "0.8.6", default-features = false, features = ["i128", "prime", "zeroize"] }
+# `Integer::lcm` / `is_even` over that bignum: num-bigint-dig implements the
+# trait for `BigUint` but does not re-export it, so naming it needs the crate.
+# Already in the tree — it is num-bigint-dig's own dependency.
+num-integer = { version = "0.1", default-features = false }
 
 [profile.release]
 codegen-units = 1

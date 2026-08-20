@@ -73,9 +73,10 @@ The assurance result. Sites checked and found **correct**:
 - **The `pinUvAuthToken` MAC verify, OATH access-code/HOTP verifies, and PIV
   mutual-auth** all route through the constant-time comparator (PIV against a
   single-use per-session challenge, not the persistent management key).
-- **The RSA sign/decipher mainline is blinded** (verified through `rsa`
-  0.9.10's `blind`/`unblind` around the secret-exponent CRT modexp), and with
-  the fix above, so is the raw fallback.
+- **The RSA sign/decipher mainline is blinded** — `rsk_rsa::key::blind_pair`
+  draws a fresh `r` around every secret-exponent modexp, asm CRT and software
+  alike, and with the fix above so is the raw fallback. (Re-checked at 0.4.12,
+  when the operation moved off `rsa` 0.9.10's own `blind`/`unblind`.)
 - **RustCrypto primitives are CT-by-library and not wrapped non-CT:** k256,
   ed25519-dalek, x25519-dalek, ML-KEM/ML-DSA, and the HMAC/HKDF/SHA-2 KDF.
 - **Keygen primality primitives are not an attacker oracle:** they operate on
@@ -94,10 +95,11 @@ today.
 
 ## Documented residuals
 
-- **RUSTSEC-2023-0071 "Marvin"** timing channel in the `rsa` crate, accepted as
-  mitigated by per-operation base blinding on **all** private-key paths (the
-  finding above closed the one path the blinding did not previously cover). See
-  [threat-model.md](threat-model.md).
+- **The RSA private operation is now entirely in-tree.** The `rsa` crate left in
+  0.4.12 and RUSTSEC-2023-0071 ("Marvin") with it, so that residual is closed as
+  a dependency question — but the mitigation it named is what remains load-bearing:
+  every private-key path, asm CRT and software alike, is base-blinded per
+  operation, and none of them is exempt. See [threat-model.md](threat-model.md).
 - **`rsk-rsa` keygen modexp secret-indexed window lookup**: a genuine
   secret-dependent *memory-access pattern* over bits of the generated prime, but
   it is **keygen-only, one-shot, and not USB-timing-observable**. On the
@@ -127,6 +129,7 @@ lookups; and status-word/error-path oracles.
 - **Physical side channels (power/EM/fault) are explicitly out of scope** and
   unverified here, including the keygen access pattern and any DPA on the
   secure-boot AES, both already noted in the threat model.
-- **Third-party crate internals** (RustCrypto, `rsa`/`num-bigint-dig`) were
-  audited only at the *usage* boundary. Their own CT properties are inherited
-  from upstream and the documented RUSTSEC residual.
+- **Third-party crate internals** (RustCrypto, `num-bigint-dig`) were audited
+  only at the *usage* boundary. Their own CT properties are inherited from
+  upstream — `num-bigint-dig`'s exponentiation is variable-time, which is what
+  the blinding above exists to answer for.

@@ -8,10 +8,7 @@
 //! the encoder lives once, below both. It is pure byte-building: no status word,
 //! no key state, nothing an applet has to own.
 
-use rsa::RsaPrivateKey;
-use rsa::traits::PublicKeyParts;
-
-use crate::MAX_RSA_BYTES;
+use crate::{MAX_RSA_BYTES, RsaKey};
 
 /// Largest RSA public-key DO `7F49 82 LL { 81 82 <N> · 82 <Elen> <E> }`.
 pub const MAX_RSA_PUBDO: usize = 5 + 4 + MAX_RSA_BYTES + 2 + 8;
@@ -36,17 +33,13 @@ pub fn make_rsa_pub_body(n: &[u8], e: &[u8], out: &mut [u8]) -> usize {
 
 /// Build the whole public-key DO `7F49 82 LL { 81 82 <N> · 82 <Elen> <E> }`
 /// (modulus tag 0x81 with a 2-byte length, exponent tag 0x82 with a 1-byte one).
-pub fn make_rsa_response(key: &RsaPrivateKey, out: &mut [u8]) -> usize {
+pub fn make_rsa_response(key: &RsaKey, out: &mut [u8]) -> usize {
     out[0] = 0x7f;
     out[1] = 0x49;
     out[2] = 0x82; // 2-byte inner length, back-patched below
     // e stays sourced from the key: an imported OpenPGP key may carry a non-65537
     // exponent, so only the PIV metadata caller is allowed to hardcode 65537.
-    let body = make_rsa_pub_body(
-        &key.n().to_bytes_be(),
-        &key.e().to_bytes_be(),
-        &mut out[5..],
-    );
+    let body = make_rsa_pub_body(&key.n_be(), &key.e_be(), &mut out[5..]);
     out[3..5].copy_from_slice(&(body as u16).to_be_bytes());
     5 + body
 }

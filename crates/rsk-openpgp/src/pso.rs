@@ -115,8 +115,8 @@ fn try_pso<S: Storage>(
         // OpenPGP padding-indicator byte, on the same asm CRT core as PSO:CDS.
         // `WRONG_LENGTH` is `rsk_rsa::crt::crt_from_plain`'s one refusal — a
         // legacy `P‖Q` blob whose prime width is not a 32-multiple — and only
-        // such a key, which cannot sign either, falls back to the `rsa` crate
-        // rather than lose the ability to decrypt its own archived messages.
+        // such a key, which cannot sign either, falls back to the software
+        // private op rather than lose the ability to read its own messages.
         return match load_rsa_crt(dev, fs, sess, pk_fid) {
             Ok(crt) => rsa_decipher(&crt, rng, data, out),
             Err(e) if e == Sw::WRONG_LENGTH => {

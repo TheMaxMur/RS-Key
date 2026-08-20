@@ -6,7 +6,6 @@
 //! The CRT tag picks the slot; the algorithm comes from the slot's
 //! algorithm-attribute DO (`EF_ALGO_PRIV{1,2,3}`), set beforehand via PUT DATA.
 
-use rsa::traits::PublicKeyParts;
 use rsk_crypto::Device;
 use rsk_fs::{Fs, KeyFid, Storage};
 use rsk_sdk::Sw;

@@ -25,11 +25,9 @@ use core::cell::RefCell;
 use rsk_crypto::{Device, FusedKey, FusedRead, read_fused};
 use rsk_fs::{Fs, Sealed, Storage};
 pub use rsk_openpgp::Rng;
-use rsk_rsa::{MAX_RSA_BYTES, MAX_RSA_PUBDO, RSA_PUB_EXP_BE, RsaError, make_rsa_pub_body};
+use rsk_rsa::{MAX_RSA_BYTES, MAX_RSA_PUBDO, RSA_PUB_EXP_BE, RsaError, RsaKey, make_rsa_pub_body};
 // PIV reuses the OpenPGP user-presence trait, so the firmware's existing
 // `impl rsk_openpgp::UserPresence for ButtonPresence` already drives PIV touch.
-use rsa::RsaPrivateKey;
-use rsa::traits::PublicKeyParts;
 pub use rsk_openpgp::{AlwaysConfirm, Presence, UserPresence};
 use rsk_sdk::tlv::{find_tag, format_len};
 use rsk_sdk::{Apdu, Applet, ResBuf, Sw};
@@ -270,7 +268,7 @@ impl<'a> PivApplet<'a> {
         rng: &mut dyn Rng,
         slot: u8,
         pol: [u8; 2],
-        key: &RsaPrivateKey,
+        key: &RsaKey,
         resp: &mut [u8],
     ) -> (usize, Sw) {
         let Some(algo) = keygen::rsa_algo_from_size(key.size()) else {

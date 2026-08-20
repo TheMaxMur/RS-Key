@@ -17,14 +17,12 @@ use rsk_sdk::Sw;
 use p256::ecdsa::signature::hazmat::PrehashSigner;
 use p256::elliptic_curve::sec1::FromSec1Point;
 
-use rsa::traits::PublicKeyParts;
-use rsa::{BigUint, Pkcs1v15Encrypt};
-use rsk_rsa::{MAX_CRT_PLAIN, MAX_RSA_BYTES, RngAdapter, RsaCrt, RsaError};
+use rsk_rsa::{MAX_CRT_PLAIN, MAX_RSA_BYTES, RsaCrt, RsaError};
 
 // Re-exported for `rsk-display`, the only caller that names the keygen result
-// type (`Box<RsaPrivateKey>`, in its `Hooks`) without an `rsk-rsa` dependency of
-// its own; the firmware and the emulator have one and go direct.
-pub use rsk_rsa::RsaPrivateKey;
+// type (`Box<RsaKey>`, in its `Hooks`) without an `rsk-rsa` dependency of its
+// own; the firmware and the emulator have one and go direct.
+pub use rsk_rsa::RsaKey;
 
 use crate::Rng;
 use crate::consts::*;
@@ -1015,7 +1013,7 @@ pub fn store_rsa_key<S: Storage>(
     fs: &mut Fs<S>,
     sess: &Session,
     fid: KeyFid,
-    key: &RsaPrivateKey,
+    key: &RsaKey,
 ) -> Result<(), Sw> {
     let mut kdata = [0u8; MAX_CRT_PLAIN];
     let mut blob = [0u8; MAX_CRT_PLAIN + DEK_SEAL_OVERHEAD];
@@ -1040,7 +1038,7 @@ pub fn load_rsa_key<S: Storage>(
     fs: &mut Fs<S>,
     sess: &Session,
     fid: KeyFid,
-) -> Result<RsaPrivateKey, Sw> {
+) -> Result<RsaKey, Sw> {
     let mut blob = [0u8; MAX_CRT_PLAIN + DEK_SEAL_OVERHEAD];
     let bn = fs.read_key(fid, &mut blob).ok_or(Sw::REFERENCE_NOT_FOUND)?;
     let bn = bn.min(blob.len());
@@ -1048,10 +1046,12 @@ pub fn load_rsa_key<S: Storage>(
     let res = (|| {
         let (n, legacy) = dek_unseal(dev, fs, sess, &blob[..bn], &mut kdata, legacy_rsa_len)?;
         let (half, _) = rsk_rsa::crt::parse_rsa_blob(&kdata[..n]).map_err(|_| Sw::WRONG_DATA)?;
-        let p = BigUint::from_bytes_be(&kdata[..half]);
-        let q = BigUint::from_bytes_be(&kdata[half..2 * half]);
-        let key =
-            RsaPrivateKey::from_p_q(p, q, rsk_rsa::crt::rsa_e()).map_err(|_| Sw::WRONG_DATA)?;
+        let key = rsk_rsa::rsa_from_pqe(
+            rsk_rsa::RSA_PUB_EXP_BE,
+            &kdata[..half],
+            &kdata[half..2 * half],
+        )
+        .ok_or(Sw::WRONG_DATA)?;
         Ok((key, legacy))
     })();
     kdata.zeroize();
@@ -1091,12 +1091,13 @@ pub fn load_rsa_crt<S: Storage>(
     if legacy
         && crt.is_ok()
         && let Ok((half, _)) = rsk_rsa::crt::parse_rsa_blob(&kdata[..n])
+        && let Some(key) = rsk_rsa::rsa_from_pqe(
+            rsk_rsa::RSA_PUB_EXP_BE,
+            &kdata[..half],
+            &kdata[half..2 * half],
+        )
     {
-        let p = BigUint::from_bytes_be(&kdata[..half]);
-        let q = BigUint::from_bytes_be(&kdata[half..2 * half]);
-        if let Ok(key) = RsaPrivateKey::from_p_q(p, q, rsk_rsa::crt::rsa_e()) {
-            let _ = store_rsa_key(dev, fs, sess, fid, &key);
-        }
+        let _ = store_rsa_key(dev, fs, sess, fid, &key);
     }
     kdata.zeroize();
     crt.map_err(rsa_sw)
@@ -1131,23 +1132,19 @@ pub fn rsa_decipher(
 /// whose prime width is not a 32-multiple, which older firmware could store and
 /// which [`rsk_rsa::crt::crt_from_plain`] refuses. Such a key already cannot
 /// sign; it would lose the ability to decrypt its own archived messages too, so
-/// it keeps the `rsa` crate's blinded decrypt — the one place RUSTSEC-2023-0071
-/// still touches this applet (`docs/limitations.md`).
+/// it takes the software private op instead — blinded and Bellcore-fault-checked
+/// like the asm one, and ending in the same constant-time unpad.
 pub fn rsa_decipher_legacy(
-    key: &RsaPrivateKey,
+    key: &RsaKey,
     rng: &mut dyn Rng,
     data: &[u8],
     out: &mut [u8],
 ) -> Result<usize, Sw> {
     let key_size = key.size();
     let ct = data.get(1..1 + key_size).ok_or(Sw::WRONG_DATA)?;
-    let mut pt = key
-        .decrypt_blinded(&mut RngAdapter(rng), Pkcs1v15Encrypt, ct)
-        .map_err(|_| Sw::EXEC_ERROR)?;
-    out[..pt.len()].copy_from_slice(&pt);
-    let n = pt.len();
-    pt.zeroize();
-    Ok(n)
+    // A malformed block answered `EXEC_ERROR` when the `rsa` crate owned this
+    // path; keep that status word, as the asm arm above does.
+    rsk_rsa::pkcs1v15::rsa_decrypt(key, ct, rng, out).map_err(|_| Sw::EXEC_ERROR)
 }
 
 #[cfg(test)]

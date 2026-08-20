@@ -4,7 +4,6 @@
 use super::*;
 use crate::RSA_PUB_EXP_BE;
 use crate::fixtures::{N_HEX, P_HEX, Q_HEX, SeqRng, hex};
-use rsa::traits::PublicKeyParts;
 
 #[test]
 fn import_rejects_degenerate_primes() {

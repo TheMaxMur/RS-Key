@@ -23,17 +23,24 @@ pub mod pkcs1v15;
 pub mod pubdo;
 
 mod error;
+mod key;
 mod rng;
+
+/// Known-answer vectors and the public-key verifier the host tests check this
+/// crate against. Dev-only — `rsk-openpgp` and `rsk-piv` turn `test-util` on
+/// from their `[dev-dependencies]`, so none of it reaches the firmware image.
+#[cfg(any(test, feature = "test-util"))]
+pub mod vectors;
+#[cfg(any(test, feature = "test-util"))]
+pub mod verify;
 
 pub use crt::{MAX_CRT_PLAIN, RsaCrt};
 pub use error::RsaError;
+pub use key::{RsaKey, modulus_be};
 pub use keygen::{RsaKeygen, RsaStep, generate_rsa, rsa_from_pqe};
 pub use pkcs1v15::MAX_RSA_DIGESTINFO;
 pub use pubdo::{MAX_RSA_PUBDO, make_rsa_pub_body, make_rsa_response};
-pub use rng::{Rng, RngAdapter};
-/// The RSA private-key type. Re-exported so callers name the RSA vocabulary
-/// through this crate; still the `rsa` crate's own type until it is replaced.
-pub use rsa::RsaPrivateKey;
+pub use rng::Rng;
 
 /// Largest modulus this handles: an RSA-4096 prime is 2048 bits = 256 bytes. The
 /// asm requires the modulus length to be a multiple of 32 bytes — every standard

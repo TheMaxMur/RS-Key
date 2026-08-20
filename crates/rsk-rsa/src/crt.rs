@@ -13,11 +13,11 @@
 //! feed a decrypted plaintext to [`crt_from_plain`] / hand a key to
 //! [`crt_plaintext`] and seal the result.
 
-use rsa::traits::PrivateKeyParts;
-use rsa::{BigUint, RsaPrivateKey};
+use num_bigint_dig::BigUint;
 use zeroize::{Zeroize, Zeroizing};
 
-use crate::{MAX_RSA_BYTES, Rng, RsaError};
+use crate::key::blind_pair;
+use crate::{MAX_RSA_BYTES, Rng, RsaError, RsaKey};
 
 /// A single fixed-width CRT field buffer (a prime's max width, RSA-4096 = 256 B).
 const CRT_FIELD: usize = crate::MAX_MOD;
@@ -26,7 +26,7 @@ pub const MAX_CRT_PLAIN: usize = 5 * crate::MAX_MOD;
 
 /// The RSA public exponent [`crate::RSA_E`] as a bignum — what every stored key
 /// is rebuilt with.
-pub fn rsa_e() -> BigUint {
+pub(crate) fn rsa_e() -> BigUint {
     BigUint::from(crate::RSA_E)
 }
 
@@ -93,27 +93,17 @@ fn five_field_consistent(plain: &[u8], half: usize) -> bool {
 /// Caching the CRT parameters next to the primes lets [`crt_from_plain`] feed the
 /// asm CRT signer directly, so a signature no longer rebuilds `d`, `dP`, `dQ` and
 /// `qInv` (two modular inversions) every time.
-pub fn crt_plaintext(key: &RsaPrivateKey, out: &mut [u8]) -> Result<usize, RsaError> {
-    let primes = key.primes();
-    if primes.len() != 2 {
-        return Err(RsaError::Failed);
-    }
-    // `from_p_q` (how every stored key is built) already precomputes; clone +
-    // precompute defensively so dP/dQ/qInv are always present.
-    let mut k = key.clone();
-    let _ = k.precompute();
-    let (dp, dq, qinv) = match (k.dp(), k.dq(), k.qinv()) {
-        (Some(dp), Some(dq), Some(qinv)) => (dp, dq, qinv),
-        _ => return Err(RsaError::Failed),
-    };
-    let mut pb = primes[0].to_bytes_be();
-    let mut qb = primes[1].to_bytes_be();
+pub fn crt_plaintext(key: &RsaKey, out: &mut [u8]) -> Result<usize, RsaError> {
+    // Absent only for a key whose primes share a factor — an IMPORT can offer
+    // such a pair, and it is refused here rather than sealed unusable.
+    let (dp, dq, qinv) = key.crt().ok_or(RsaError::Failed)?;
+    let mut pb = key.p().to_bytes_be();
+    let mut qb = key.q().to_bytes_be();
     let half = pb.len().max(qb.len());
     let n = 5 * half;
     let mut dpb = dp.to_bytes_be();
     let mut dqb = dq.to_bytes_be();
-    let qi = Zeroizing::new(qinv.to_biguint().ok_or(RsaError::Failed)?);
-    let mut qib = qi.to_bytes_be();
+    let mut qib = qinv.to_bytes_be();
     let r = (|| {
         // The asm CRT signer processes 32-bit words in 32-byte groups, so a
         // non-32-multiple prime width has no fast path — reject it at seal time
@@ -212,24 +202,18 @@ pub fn crt_from_plain(plain: &[u8]) -> Result<RsaCrt, RsaError> {
     } else {
         let p = BigUint::from_bytes_be(&plain[..half]);
         let q = BigUint::from_bytes_be(&plain[half..2 * half]);
-        let mut k = RsaPrivateKey::from_p_q(p, q, rsa_e()).map_err(|_| RsaError::BadBlob)?;
-        let _ = k.precompute();
-        match (k.dp(), k.dq(), k.qinv()) {
-            (Some(dp), Some(dq), Some(qinv)) => {
-                let mut dpb = dp.to_bytes_be();
-                let mut dqb = dq.to_bytes_be();
-                let qi = Zeroizing::new(qinv.to_biguint().ok_or(RsaError::Failed)?);
-                let mut qib = qi.to_bytes_be();
-                let put = put_field(&mut crt.dp[..half], &dpb)
-                    .and(put_field(&mut crt.dq[..half], &dqb))
-                    .and(put_field(&mut crt.qinv[..half], &qib));
-                dpb.zeroize();
-                dqb.zeroize();
-                qib.zeroize();
-                put?;
-            }
-            _ => return Err(RsaError::Failed),
-        }
+        let k = RsaKey::from_p_q(p, q, rsa_e()).ok_or(RsaError::BadBlob)?;
+        let (dp, dq, qinv) = k.crt().ok_or(RsaError::Failed)?;
+        let mut dpb = dp.to_bytes_be();
+        let mut dqb = dq.to_bytes_be();
+        let mut qib = qinv.to_bytes_be();
+        let put = put_field(&mut crt.dp[..half], &dpb)
+            .and(put_field(&mut crt.dq[..half], &dqb))
+            .and(put_field(&mut crt.qinv[..half], &qib));
+        dpb.zeroize();
+        dqb.zeroize();
+        qib.zeroize();
+        put?;
     }
     Ok(crt)
 }
@@ -249,7 +233,6 @@ pub fn private_op(
     rng: &mut dyn Rng,
     out: &mut [u8],
 ) -> Result<usize, RsaError> {
-    use num_bigint_dig::ModInverse;
     let mlen = crt.modulus_len();
     if c.len() != mlen {
         return Err(RsaError::BadBlock);
@@ -285,19 +268,7 @@ pub fn private_op(
         out
     };
 
-    // Fresh blinding factor r, invertible mod n (retry on the negligible chance
-    // r shares a factor with n — that candidate is a multiple of p or q, so wipe
-    // it too rather than free a value that reveals a prime factor).
-    let (r, r_inv) = loop {
-        let mut rb = [0u8; MAX_RSA_BYTES];
-        rng.fill(&mut rb[..mlen]);
-        let mut cand = BigUint::from_bytes_be(&rb[..mlen]) % &n;
-        rb.zeroize();
-        match (&cand).mod_inverse(&n).and_then(|i| i.to_biguint()) {
-            Some(inv) => break (Zeroizing::new(cand), Zeroizing::new(inv)),
-            None => cand.zeroize(),
-        }
-    };
+    let (r, r_inv) = blind_pair(&n, mlen, rng);
     let blinded = Zeroizing::new((&m * pub_pow(&r).ok_or(RsaError::Failed)?) % &n);
 
     // CRT private op on the blinded message, then unblind.

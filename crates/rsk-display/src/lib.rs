@@ -148,7 +148,7 @@ pub trait Hooks {
         _nbits: usize,
         _rng: &mut dyn rsk_openpgp::Rng,
         _on_tick: &mut dyn FnMut(),
-    ) -> Option<alloc::boxed::Box<rsk_openpgp::keys::RsaPrivateKey>> {
+    ) -> Option<alloc::boxed::Box<rsk_openpgp::keys::RsaKey>> {
         None
     }
 }

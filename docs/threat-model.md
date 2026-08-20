@@ -327,8 +327,10 @@ when it returns. That is what puts them out of reach of a parser bug — parsing
 runs before any store access, so at that moment neither key is anywhere in
 memory. It buys nothing against code execution, which can drive the same reads.
 Accepted residuals: `Copy` temporaries inside RustCrypto curve arithmetic, digest
-internals, and heap temporaries inside the `rsa` crate. Short-lived,
-library-internal, not wipeable without forking the crates.
+internals, and heap limbs inside `num-bigint-dig` (which has no zeroizing `Drop`
+of its own — every value `rsk-rsa` owns rides in a `Zeroizing`, but a temporary
+the library allocates internally does not). Short-lived, library-internal, not
+wipeable without forking the crates.
 
 A WebAuthn **large-blob key is obtainable without user interaction**. CTAP 2.1
 §12.3 puts no UP/UV precondition on the `largeBlobKey` extension output — unlike
@@ -368,12 +370,14 @@ depth in case a future one keeps SRAM.
   policy) and `gitleaks` run in `scripts/check.sh` and the pre-commit hook.
 - Dependencies are pinned (`Cargo.lock`). The git dependencies are restricted
   to the embassy organization.
-- One known-unfixed advisory is accepted deliberately: RUSTSEC-2023-0071
-  (Marvin timing side channel in `rsa`), the OpenPGP RSA backend. It is
-  mitigated by per-operation base blinding on **every** private-key path
-  (PKCS#1 v1.5 sign, decipher, and the raw fallback `rsa_raw`). Rationale in
-  `deny.toml`. The [constant-time audit](ct-audit.md) verified that this
-  blinding leaves no unblinded private-exponent path.
+- **No vulnerability advisory is ignored.** The one that used to be —
+  RUSTSEC-2023-0071, the Marvin timing side channel in the `rsa` crate, which
+  has no fixed release — went away with the crate itself in 0.4.12; `rsk-rsa`
+  owns the key type and both private paths now. The mitigation that carve-out
+  rested on is still in force and is now the whole defence: per-operation base
+  blinding on **every** private-key path (PKCS#1 v1.5 sign, decipher, and the
+  raw fallback `rsa_raw`). The [constant-time audit](ct-audit.md) verified that
+  this blinding leaves no unblinded private-exponent path.
 
 ## Post-quantum notes
 

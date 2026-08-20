@@ -6,13 +6,11 @@
 //! slot's certificate object (`70/71/FE`-wrapped, as `ykman` expects) so GET
 //! DATA serves one immediately; IMPORT requires management-key auth.
 
-use rsa::RsaPrivateKey;
-use rsa::traits::PublicKeyParts;
 use rsk_crypto::Device;
 use rsk_fs::{Fs, Storage};
 use rsk_openpgp::Rng;
 use rsk_openpgp::keys::{Curve, PrivKey, make_ec_pubkey_do};
-use rsk_rsa::{MAX_RSA_PUBDO, generate_rsa, make_rsa_response, rsa_from_pqe};
+use rsk_rsa::{MAX_RSA_PUBDO, RsaKey, generate_rsa, make_rsa_response, rsa_from_pqe};
 use rsk_sdk::tlv::find_tag;
 use rsk_sdk::{ResBuf, Sw};
 use zeroize::Zeroize;
@@ -61,7 +59,7 @@ pub(crate) fn parse_gen_template(data: &[u8]) -> Result<GenReq, Sw> {
 }
 
 /// The PIV algorithm id for an RSA key, keyed off its modulus length in bytes
-/// (`RsaPrivateKey::size()`): 128→1024, 256→2048, 384→3072, 512→4096. The single
+/// ([`RsaKey::size`]): 128→1024, 256→2048, 384→3072, 512→4096. The single
 /// source of truth for size→algo, shared by the firmware fast-path and the
 /// display retired-slot store so they cannot drift.
 pub(crate) fn rsa_algo_from_size(modulus_bytes: usize) -> Option<u8> {
@@ -312,11 +310,11 @@ pub(crate) fn finish_rsa<S: Storage>(
     slot: u8,
     algo: u8,
     pol: [u8; 2],
-    key: &RsaPrivateKey,
+    key: &RsaKey,
     res: &mut ResBuf,
 ) -> Sw {
-    let n = key.n().to_bytes_be();
-    let e = key.e().to_bytes_be();
+    let n = key.n_be();
+    let e = key.e_be();
     if let Err(sw) = store_slot_cert(
         fs,
         rng,
@@ -428,7 +426,7 @@ pub(crate) fn store_retired_rsa<S: Storage>(
     fs: &mut Fs<S>,
     rng: &mut dyn Rng,
     slot: u8,
-    key: &RsaPrivateKey,
+    key: &RsaKey,
 ) -> Result<(), Sw> {
     if !is_retired(slot) {
         return Err(Sw::INCORRECT_P1P2);
@@ -437,8 +435,8 @@ pub(crate) fn store_retired_rsa<S: Storage>(
         return Err(Sw::SECURITY_STATUS_NOT_SATISFIED);
     }
     let algo = rsa_algo_from_size(key.size()).ok_or(Sw::EXEC_ERROR)?;
-    let n = key.n().to_bytes_be();
-    let e = key.e().to_bytes_be();
+    let n = key.n_be();
+    let e = key.e_be();
     store_slot_cert(
         fs,
         rng,
@@ -684,8 +682,8 @@ pub(crate) fn attest<S: Storage>(
                 Ok(k) => k,
                 Err(e) => return e,
             };
-            let n = key.n().to_bytes_be();
-            let e = key.e().to_bytes_be();
+            let n = key.n_be();
+            let e = key.e_be();
             x509::build_cert(
                 &x509::CertParams {
                     subject_slot: slot,

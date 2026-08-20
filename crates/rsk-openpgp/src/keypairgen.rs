@@ -17,7 +17,7 @@ use crate::keys::{
 };
 use crate::origin;
 use crate::pin::Session;
-use rsk_rsa::{MAX_RSA_PUBDO, RsaPrivateKey, generate_rsa, make_rsa_response};
+use rsk_rsa::{MAX_RSA_PUBDO, RsaKey, generate_rsa, make_rsa_response};
 
 /// GENERATE ASYMMETRIC KEY PAIR (INS 0x47). Returns `(response_len, status)`;
 /// the response (written to `out`) is the public-key DO `7F49 { … }`.
@@ -259,7 +259,7 @@ pub fn rsa_generate_finish<S: Storage>(
     sess: &Session,
     rng: &mut dyn Rng,
     fid: KeyFid,
-    key: &RsaPrivateKey,
+    key: &RsaKey,
     out: &mut [u8],
 ) -> (usize, Sw) {
     let r = (|| {

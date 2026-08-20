@@ -78,8 +78,8 @@ executor and embassy keeps the trait object `!Send`.
 unsafe { HEAP.init(core::ptr::addr_of_mut!(HEAP_MEM) as usize, HEAP_SIZE) }
 ```
 
-A 128 KiB heap exists solely for the `rsa` crate's big integers (the only
-allocating dependency). `init`'s contract (call once, with exclusive access
+A 128 KiB heap exists solely for `rsk-rsa`'s big integers (`num-bigint-dig`,
+the only allocating dependency). `init`'s contract (call once, with exclusive access
 to the region) is met: it runs once at the top of `main`, on a dedicated
 static buffer used by nothing else.
 *Safe alternative:* none; every embedded allocator initializes this way.

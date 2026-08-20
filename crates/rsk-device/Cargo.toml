@@ -25,10 +25,11 @@ rsk-otp = { workspace = true }
 rsk-piv = { workspace = true }
 rsk-rescue = { workspace = true }
 rsk-vendor = { workspace = true }
-# `RsaPrivateKey` names the result of the keygen hook — the dual-core prime search
-# the firmware runs in place of the applet's own. Already in the tree via
-# rsk-openpgp and rsk-piv, which is where the key goes next.
-rsa = { workspace = true }
+# `RsaKey` names the result of the keygen hook — the dual-core prime search the
+# firmware runs in place of the applet's own. A composition root may reach an
+# algorithm crate directly, and this one did before (via `rsa`); going through
+# `rsk-openpgp`'s re-export instead would only hide the same edge.
+rsk-rsa = { workspace = true }
 # The CTAPHID message ceiling sizes the response buffer, and the transport that
 # enforces it is the one that defines it.
 rsk-usb = { workspace = true }

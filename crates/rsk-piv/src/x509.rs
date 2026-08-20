@@ -14,11 +14,10 @@
 //! version), .3.7 (serial, raw little-endian), .3.8 (pin/touch policy) and
 //! .3.9 (form factor).
 
-use rsa::RsaPrivateKey;
-use rsa::traits::PublicKeyParts;
 use rsk_crypto::{sha1, sha256, sha384};
 use rsk_openpgp::Rng;
 use rsk_openpgp::keys::{Curve, PrivKey};
+use rsk_rsa::RsaKey;
 use rsk_rsa::pkcs1v15::rsa_sign;
 use rsk_sdk::Sw;
 
@@ -146,7 +145,7 @@ pub enum Spki<'a> {
 /// Who signs: the slot's own key (self-signed) or the F9 attestation key.
 pub enum Signer<'a> {
     Ec(&'a PrivKey),
-    Rsa(&'a RsaPrivateKey),
+    Rsa(&'a RsaKey),
     /// A pure-Ed25519 signer (PureEdDSA over the whole TBS, never a digest).
     Ed25519(&'a PrivKey),
 }
@@ -414,8 +413,8 @@ pub fn build_cert(
             sha1(&pt[..n])
         }
         Signer::Rsa(k) => {
-            let n = k.n().to_bytes_be();
-            let e = k.e().to_bytes_be();
+            let n = k.n_be();
+            let e = k.e_be();
             pub_hash(&Spki::Rsa { n: &n, e: &e })?
         }
     };

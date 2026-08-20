@@ -29,7 +29,7 @@ extern crate alloc;
 use alloc::boxed::Box;
 
 use rsk_display::{BL_TOP, TouchPad};
-use rsk_rsa::RsaPrivateKey;
+use rsk_rsa::RsaKey;
 
 use crate::flash_storage::FlashStorage;
 use crate::handler::{FidoRng, Store};
@@ -222,7 +222,7 @@ impl rsk_display::Hooks for DisplayHooks {
         nbits: usize,
         rng: &mut dyn rsk_openpgp::Rng,
         on_tick: &mut dyn FnMut(),
-    ) -> Option<Box<RsaPrivateKey>> {
+    ) -> Option<Box<RsaKey>> {
         crate::core1::run_rsa_search_progress(nbits, rng, on_tick)
     }
 }

@@ -2,8 +2,10 @@
 // Copyright (C) 2026 RS-Key contributors
 
 use super::*;
-use crate::fixtures::{P_HEX, Q_HEX, SeqRng, crt_of, hex, modulus, test_key};
-use rsa::RsaPublicKey;
+use crate::fixtures::{
+    P_HEX, Q_HEX, SeqRng, crt_of, hex, modulus, test_key, test_key_640, test_key_1024,
+};
+use crate::vectors::SIGN_SHA256;
 
 // A 256-byte PKCS#1-shaped block guaranteed < n (leads 00 01), so the raw private
 // op is well-defined and the fault check passes.
@@ -93,33 +95,30 @@ fn private_op_legacy_two_field_recomputes_and_matches() {
 }
 
 #[test]
-fn private_op_verifies_a_pkcs1_signature() {
-    // End-to-end against the `rsa` crate's PKCS#1 v1.5 verifier: build a full EM
-    // (00 01 FF..00 ‖ DigestInfo), sign the raw block, and verify.
-    use rsa::Pkcs1v15Sign;
+fn private_op_reproduces_an_openssl_signature() {
+    // The asm CRT core, driven exactly as PSO:CDS drives it, against OpenSSL's
+    // own PKCS#1 v1.5 signatures over the same key. Byte-for-byte, not
+    // "verifies": a signer that is merely self-consistent passes the latter.
     let key = test_key();
     let mut plain = [0u8; MAX_CRT_PLAIN];
     let n = crt_plaintext(&key, &mut plain).unwrap();
     let crt = crt_from_plain(&plain[..n]).unwrap();
 
-    let hash = [0x42u8; 32];
-    let dlen = crate::pkcs1v15::DI_SHA256.len() + hash.len();
-    let mlen = 256;
-    let mut em = [0xffu8; MAX_RSA_BYTES];
-    em[0] = 0x00;
-    em[1] = 0x01;
-    em[mlen - dlen - 1] = 0x00;
-    em[mlen - dlen..mlen - hash.len()].copy_from_slice(crate::pkcs1v15::DI_SHA256);
-    em[mlen - hash.len()..mlen].copy_from_slice(&hash);
+    for (i, (digest, want)) in SIGN_SHA256.iter().enumerate() {
+        let hash = hex(digest);
+        let dlen = crate::pkcs1v15::DI_SHA256.len() + hash.len();
+        let mlen = 256;
+        let mut em = [0xffu8; MAX_RSA_BYTES];
+        em[0] = 0x00;
+        em[1] = 0x01;
+        em[mlen - dlen - 1] = 0x00;
+        em[mlen - dlen..mlen - hash.len()].copy_from_slice(crate::pkcs1v15::DI_SHA256);
+        em[mlen - hash.len()..mlen].copy_from_slice(&hash);
 
-    let mut sig = [0u8; MAX_RSA_BYTES];
-    let sn = private_op(&crt, &em[..mlen], &mut SeqRng(3), &mut sig).unwrap();
-
-    let mut di = crate::pkcs1v15::DI_SHA256.to_vec();
-    di.extend_from_slice(&hash);
-    RsaPublicKey::from(&key)
-        .verify(Pkcs1v15Sign::new_unprefixed(), &di, &sig[..sn])
-        .unwrap();
+        let mut sig = [0u8; MAX_RSA_BYTES];
+        let sn = private_op(&crt, &em[..mlen], &mut SeqRng(3 + i as u64), &mut sig).unwrap();
+        assert_eq!(&sig[..sn], hex(want).as_slice(), "signature {i}");
+    }
 }
 
 #[test]
@@ -141,7 +140,7 @@ fn parse_disambiguates_320_byte_collision() {
     // n=320 reads as both 5·64 (RSA-1024 CRT) and 2·160 (RSA-2560 P‖Q). A genuine
     // 5-field blob is recognised via qInv·Q ≡ 1 mod P; a legacy P‖Q blob is not,
     // so an already-provisioned RSA-2560 key still loads as 2-field after upgrade.
-    let k = RsaPrivateKey::new(&mut crate::RngAdapter(&mut SeqRng(5)), 1024).unwrap();
+    let k = test_key_1024();
     let mut five = [0u8; MAX_CRT_PLAIN];
     let fl = crt_plaintext(&k, &mut five).unwrap();
     assert_eq!(fl, 320);
@@ -159,7 +158,7 @@ fn parse_disambiguates_320_byte_collision() {
 fn crt_plaintext_rejects_non_mult32_width() {
     // A non-32-multiple prime width (RSA-640 → 40-byte primes) has no asm CRT
     // path; sealing must fail loud, not seal a blob the loader would refuse.
-    let k = RsaPrivateKey::new(&mut crate::RngAdapter(&mut SeqRng(11)), 640).unwrap();
+    let k = test_key_640();
     let mut buf = [0u8; MAX_CRT_PLAIN];
     assert_eq!(crt_plaintext(&k, &mut buf), Err(RsaError::BadWidth));
 }

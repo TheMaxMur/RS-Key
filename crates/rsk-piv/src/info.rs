@@ -8,10 +8,10 @@
 //! key bytes are sealed and never surfaced; the public point is *not* read (that
 //! is the management-key-gated GET METADATA path, deliberately out of scope).
 
-use rsa::RsaPrivateKey;
 use rsk_crypto::Device;
 use rsk_fs::{Fs, Storage};
 use rsk_openpgp::Rng;
+use rsk_rsa::RsaKey;
 use rsk_sdk::Sw;
 
 use crate::files::*;
@@ -219,7 +219,7 @@ pub fn store_retired_rsa<S: Storage>(
     fs: &mut Fs<S>,
     rng: &mut dyn Rng,
     slot: u8,
-    key: &RsaPrivateKey,
+    key: &RsaKey,
 ) -> Result<(), Sw> {
     crate::keygen::store_retired_rsa(dev, fs, rng, slot, key)
 }

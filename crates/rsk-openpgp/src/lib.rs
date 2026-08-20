@@ -198,7 +198,7 @@ impl<'a> OpenpgpApplet<'a> {
         fs: &mut Fs<S>,
         rng: &mut dyn Rng,
         fid: KeyFid,
-        key: &rsk_rsa::RsaPrivateKey,
+        key: &rsk_rsa::RsaKey,
         out: &mut [u8],
     ) -> (usize, Sw) {
         let mkek = read_fused(self.mkek_source);

@@ -950,8 +950,9 @@ fn import_ed25519_aut_then_internal_authenticate() {
 // ---- RSA IMPORT + PSO + INTERNAL AUTHENTICATE ----------------------------
 
 // The same fixed RSA-2048 key as keys::rsa_tests (primes sans the sign byte).
-const RSA_P: &str = "f05c23060effc422e4310c13b5aecda74744925c97c17d202aa9ed306941fa1e942e61c8d9c80961cf90459af36b9e7d529610f5165d60836de5aef2aeb47ea500c5a61bb96fd3bb4aca36d45464cce24ff0b67bb3ba382d9bdd95b7133eab86125800f10b0627fe1bd7689802d767dd9911eefb60d76e2ec860163f3077a5bd";
-const RSA_Q: &str = "c6a96b4a9b7bdd654152f3302dd23bd7b18e62f999cf0d44d01c6ce18cfdfb1c29e523edebe5e6df8967f49afe38d6a9345bc6f4f966e0de2902bddc7caf5a4a1761d18b070cd4cda287388cbdf523c39e246c220af3292fee181b4bb1c3f533b74de89c586e6f9d47ae4bb7f8735d3f0b377a76a7ca6c81324833c2b78b737d";
+// The RSA-2048 key OpenSSL's frozen ciphertexts and signatures are over.
+const RSA_P: &str = rsk_rsa::vectors::P_HEX;
+const RSA_Q: &str = rsk_rsa::vectors::Q_HEX;
 // SHA-256 DigestInfo prefix (what gpg sends ahead of the 32-byte hash).
 const DI_SHA256: &[u8] = &[
     0x30, 0x31, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01, 0x05,
@@ -1007,9 +1008,11 @@ fn rsa_import(crt: u8, e: &[u8], p: &[u8], q: &[u8]) -> Vec<u8> {
     a
 }
 
-fn rsa_pubkey() -> rsa::RsaPublicKey {
+/// Would a relying party accept this signature under the imported key? The
+/// public operation only — it shares no code with the signer under test.
+fn rsa_verify(di: &[u8], sig: &[u8]) -> bool {
     let key = rsk_rsa::rsa_from_pqe(&[0x01, 0x00, 0x01], &hx(RSA_P), &hx(RSA_Q)).unwrap();
-    rsa::RsaPublicKey::from(&key)
+    rsk_rsa::verify::verify_pkcs1v15(&key.n_be(), &key.e_be(), di, sig)
 }
 
 #[test]
@@ -1037,9 +1040,7 @@ fn import_rsa_sig_then_pso_sign_verifies() {
     let (sig, sw) = run(&mut app, &mut fs, &a);
     assert_eq!(sw, Sw::OK);
     assert_eq!(sig.len(), 256);
-    rsa_pubkey()
-        .verify(rsa::Pkcs1v15Sign::new_unprefixed(), &di, &sig)
-        .unwrap();
+    assert!(rsa_verify(&di, &sig));
 
     // The signature counter advanced 0 → 1.
     let mut c = [0u8; 3];
@@ -1152,15 +1153,9 @@ fn import_rsa_dec_then_pso_decipher() {
 
     verify_pin(&mut app, &mut fs, consts::PW1_MODE82, consts::PW1_DEFAULT);
 
-    // Encrypt a "session key" to the imported public key; the card recovers it.
-    let msg = b"a-32-byte-openpgp-session-key!!!";
-    let ct = rsa_pubkey()
-        .encrypt(
-            &mut rsk_rsa::RngAdapter(&mut CountRng(3)),
-            rsa::Pkcs1v15Encrypt,
-            msg,
-        )
-        .unwrap();
+    // A "session key" OpenSSL encrypted to this public key; the card recovers it.
+    let (msg, ct) = rsk_rsa::vectors::ENCRYPT[2];
+    let (msg, ct) = (hx(msg), hx(ct));
     let mut data = vec![0x00u8]; // OpenPGP padding-indicator byte
     data.extend_from_slice(&ct);
     let mut a = vec![0x00, consts::INS_PSO, 0x80, 0x86, 0x00];
@@ -1169,7 +1164,7 @@ fn import_rsa_dec_then_pso_decipher() {
     a.extend_from_slice(&data);
     let (pt, sw) = run(&mut app, &mut fs, &a);
     assert_eq!(sw, Sw::OK);
-    assert_eq!(&pt, msg);
+    assert_eq!(pt, msg);
 }
 
 #[test]
@@ -1195,9 +1190,7 @@ fn import_rsa_aut_then_internal_authenticate() {
     let (sig, sw) = run(&mut app, &mut fs, &a);
     assert_eq!(sw, Sw::OK);
     assert_eq!(sig.len(), 256);
-    rsa_pubkey()
-        .verify(rsa::Pkcs1v15Sign::new_unprefixed(), &di, &sig)
-        .unwrap();
+    assert!(rsa_verify(&di, &sig));
 }
 
 // ---- Cv25519 (X25519) ECDH -----------------------------------------------
@@ -1926,11 +1919,6 @@ fn generate_rsa_sig_sign_verifies() {
     assert_eq!(sw, Sw::OK);
     let (n, e) = rsa_n_e(&do_);
     assert_eq!(n.len(), 128); // RSA-1024 modulus
-    let pk = rsa::RsaPublicKey::new(
-        rsa::BigUint::from_bytes_be(&n),
-        rsa::BigUint::from_bytes_be(&e),
-    )
-    .unwrap();
 
     verify_pin(&mut app, &mut fs, consts::PW1_MODE81, consts::PW1_DEFAULT);
     let mut di = DI_SHA256.to_vec();
@@ -1940,8 +1928,7 @@ fn generate_rsa_sig_sign_verifies() {
     let (sig, sw) = run(&mut app, &mut fs, &a);
     assert_eq!(sw, Sw::OK);
     assert_eq!(sig.len(), 128);
-    pk.verify(rsa::Pkcs1v15Sign::new_unprefixed(), &di, &sig)
-        .unwrap();
+    assert!(rsk_rsa::verify::verify_pkcs1v15(&n, &e, &di, &sig));
 }
 
 #[test]
@@ -1979,11 +1966,6 @@ fn rsa_keepalive_generate_path_produces_signable_key() {
     assert_eq!(sw, Sw::OK);
     let (modn, e) = rsa_n_e(&out[..n]);
     assert_eq!(modn.len(), 128); // RSA-1024 modulus
-    let pk = rsa::RsaPublicKey::new(
-        rsa::BigUint::from_bytes_be(&modn),
-        rsa::BigUint::from_bytes_be(&e),
-    )
-    .unwrap();
 
     verify_pin(&mut app, &mut fs, consts::PW1_MODE81, consts::PW1_DEFAULT);
     let mut di = DI_SHA256.to_vec();
@@ -1992,8 +1974,7 @@ fn rsa_keepalive_generate_path_produces_signable_key() {
     a.extend_from_slice(&di);
     let (sig, sw) = run(&mut app, &mut fs, &a);
     assert_eq!(sw, Sw::OK);
-    pk.verify(rsa::Pkcs1v15Sign::new_unprefixed(), &di, &sig)
-        .unwrap();
+    assert!(rsk_rsa::verify::verify_pkcs1v15(&modn, &e, &di, &sig));
 }
 
 #[test]
@@ -2078,11 +2059,6 @@ fn rsa4096_generate_path_produces_signable_key() {
     assert_eq!(sw, Sw::OK);
     let (modn, e) = rsa_n_e(&out[..n]);
     assert_eq!(modn.len(), 512); // RSA-4096 modulus
-    let pk = rsa::RsaPublicKey::new(
-        rsa::BigUint::from_bytes_be(&modn),
-        rsa::BigUint::from_bytes_be(&e),
-    )
-    .unwrap();
 
     verify_pin(&mut app, &mut fs, consts::PW1_MODE81, consts::PW1_DEFAULT);
     let mut di = DI_SHA256.to_vec();
@@ -2091,8 +2067,7 @@ fn rsa4096_generate_path_produces_signable_key() {
     a.extend_from_slice(&di);
     let (sig, sw) = run(&mut app, &mut fs, &a);
     assert_eq!(sw, Sw::OK);
-    pk.verify(rsa::Pkcs1v15Sign::new_unprefixed(), &di, &sig)
-        .unwrap();
+    assert!(rsk_rsa::verify::verify_pkcs1v15(&modn, &e, &di, &sig));
 }
 
 // E40. §7.2.10/§7.2.11/§7.2.13 give PSO:CDS the access condition PW1 no. 81 and

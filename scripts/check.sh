@@ -507,19 +507,17 @@ run "rsk-wipe refuses an unknown flash size" sh -c '
   }'
 run "flake.lock in sync"       lock_in_sync
 run "one embassy for all"      embassy_revs_match
-# RUSTSEC-2023-0071: rsa Marvin timing side-channel — no fixed release. Only PIV
-# cert signing and a legacy-width key's decipher reach it now. See deny.toml.
-run "cargo-audit (SCA)"        cargo audit --ignore RUSTSEC-2023-0071
+# No `--ignore`: the tree carries no vulnerability advisory. RUSTSEC-2023-0071
+# (the `rsa` crate, no fixed release) was the last one and left with the crate.
+run "cargo-audit (SCA)"        cargo audit
 run "cargo-audit (tui SCA)"    cargo audit --file tools/tui/Cargo.lock
-# Same RUSTSEC-2023-0071 carve-out as the workspace run above: the emulator pulls
-# the OpenPGP and PIV applets, and with them `rsa`.
 # The emulator's own host tests — today the USB/IP codec, whose struct layouts are
 # the Linux kernel's and whose framing rule decides how many bytes come off the
 # socket next; both fail silently on the wire rather than loudly.
 run_tests "test (emu)"               cargo test --manifest-path tools/emu/Cargo.toml --target "$HOST"
 run_tests "test (emu security trace)" cargo test --manifest-path tools/emu/Cargo.toml --target "$HOST" --features security-trace
 run_tests "test (emu conformance)"   cargo test --manifest-path tools/emu/Cargo.toml --target "$HOST" --features fido-conformance
-run "cargo-audit (emu SCA)"    cargo audit --file tools/emu/Cargo.lock --ignore RUSTSEC-2023-0071
+run "cargo-audit (emu SCA)"    cargo audit --file tools/emu/Cargo.lock
 run "cargo-deny"               cargo deny check
 # Supply-chain provenance-of-review: every dependency must be covered by an
 # imported audit (mozilla/google/isrg/zcash) or a recorded exemption. Fails when

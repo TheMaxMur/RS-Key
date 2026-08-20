@@ -2,20 +2,9 @@
 // Copyright (C) 2026 RS-Key contributors
 
 use super::*;
-use rsa::RsaPublicKey;
 use rsk_rsa::crt::{crt_from_plain, crt_plaintext};
 use rsk_rsa::rsa_from_pqe;
-
-// A fixed RSA-2048 key (openssl genrsa), primes sans the DER sign byte.
-const P_HEX: &str = "f05c23060effc422e4310c13b5aecda74744925c97c17d202aa9ed306941fa1e942e61c8d9c80961cf90459af36b9e7d529610f5165d60836de5aef2aeb47ea500c5a61bb96fd3bb4aca36d45464cce24ff0b67bb3ba382d9bdd95b7133eab86125800f10b0627fe1bd7689802d767dd9911eefb60d76e2ec860163f3077a5bd";
-const Q_HEX: &str = "c6a96b4a9b7bdd654152f3302dd23bd7b18e62f999cf0d44d01c6ce18cfdfb1c29e523edebe5e6df8967f49afe38d6a9345bc6f4f966e0de2902bddc7caf5a4a1761d18b070cd4cda287388cbdf523c39e246c220af3292fee181b4bb1c3f533b74de89c586e6f9d47ae4bb7f8735d3f0b377a76a7ca6c81324833c2b78b737d";
-
-fn hex(s: &str) -> Vec<u8> {
-    (0..s.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
-        .collect()
-}
+use rsk_rsa::vectors::{ENCRYPT, P_HEX, Q_HEX, hex};
 
 struct SeqRng(u64);
 impl Rng for SeqRng {
@@ -27,13 +16,13 @@ impl Rng for SeqRng {
     }
 }
 
-fn test_key() -> RsaPrivateKey {
+fn test_key() -> RsaKey {
     rsa_from_pqe(&[0x01, 0x00, 0x01], &hex(P_HEX), &hex(Q_HEX)).unwrap()
 }
 
 /// The CRT signing view the applet builds at seal time, so the tests drive
 /// the same path production does.
-fn crt_of(key: &RsaPrivateKey) -> RsaCrt {
+fn crt_of(key: &RsaKey) -> RsaCrt {
     let mut plain = [0u8; MAX_CRT_PLAIN];
     let n = crt_plaintext(key, &mut plain).unwrap();
     crt_from_plain(&plain[..n]).unwrap()
@@ -67,18 +56,18 @@ fn rsa_sw_reproduces_every_status_word() {
 }
 
 #[test]
-fn decipher_roundtrip() {
+fn decipher_recovers_an_openssl_session_key() {
+    // OpenSSL built the padded block (`rsk_rsa::vectors`), so what the applet is
+    // asked to read back is what a real gpg peer would have sent.
     let key = test_key();
-    let msg = b"a-32-byte-openpgp-session-key!!!";
-    let ct = RsaPublicKey::from(&key)
-        .encrypt(&mut RngAdapter(&mut SeqRng(7)), Pkcs1v15Encrypt, msg)
-        .unwrap();
+    let (msg, ct) = ENCRYPT[2];
+    let (msg, ct) = (hex(msg), hex(ct));
     // The DECIPHER command prepends the OpenPGP padding-indicator byte.
     let mut data = vec![0x00u8];
     data.extend_from_slice(&ct);
     let mut out = [0u8; MAX_RSA_BYTES];
     let n = rsa_decipher(&crt_of(&key), &mut SeqRng(8), &data, &mut out).unwrap();
-    assert_eq!(&out[..n], msg);
+    assert_eq!(&out[..n], msg.as_slice());
 
     // The legacy fallback must return the same plaintext, or a key that took it
     // would silently decrypt to something else than the asm path.
