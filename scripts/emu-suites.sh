@@ -81,15 +81,24 @@ stop_emu
 
 # A bounded, security-dense slice of the real suite is replayed against the full
 # RSKeySecurityState model. Other sessions are traced too, but this one owns the
-# explicit commands/steps/distinct-actions floors in security_trace.py.
+# commands/steps/distinct-actions ratchets in formal/floors.txt.
+#
+# These three suites in ONE emulator lifetime are what those ratchets were
+# measured on (formal/README.md, phase 4) — the replug between them is a recorded
+# boundary, and it is the only way `PowerCut` is reached. Recording fewer misses
+# the floors; keep this list and the committed trace moving together.
+SECURITY_TRACE_SUITES=(21_pin_webauthn 20_clientpin 27_reset_window)
+
 echo
-echo "== formal security-state trace (21_pin_webauthn)"
+echo "== formal security-state trace (${SECURITY_TRACE_SUITES[*]})"
 start_emu security --auto-touch-ms 1
-python tests/emu.py tests/21_pin_webauthn.py >"$WORK/security-suite.out" 2>&1 || {
-  echo "FAIL: the security trace suite failed"
-  cat "$WORK/security-suite.out"
-  exit 1
-}
+for suite in "${SECURITY_TRACE_SUITES[@]}"; do
+  python tests/emu.py "tests/$suite.py" >"$WORK/security-$suite.out" 2>&1 || {
+    echo "FAIL: the security trace suite $suite failed"
+    cat "$WORK/security-$suite.out"
+    exit 1
+  }
+done
 stop_emu
 python scripts/security_trace.py "$WORK/security.security.jsonl"
 
