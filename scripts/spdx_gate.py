@@ -43,14 +43,14 @@ would have left every future workflow unchecked in order to excuse three forms.
 
 Vendored code keeps its own notice; stamping AGPL on someone else's file would be
 a false statement about it. So `third_party/` and the BSD-licensed bignum sources
-under `crates/rsk-rsa-asm/csrc/` are exempt — and the exemption is checked, the
+under `crates/rsk-rsa/csrc/` are exempt — and the exemption is checked, the
 way `kani_gate.py` checks its own: an exempt file must carry a `Copyright` line of
 its own **or** sit under a directory holding a `LICENCE`/`LICENSE` file. An
 exemption that covers a file with no notice at all is not an exemption, it is an
 unlicensed file. A prefix that matches nothing is stale and fails too.
 
 The directory half is a statement about the directory, so anything beside a
-`LICENSE` inherits it — `crates/rsk-rsa-asm/csrc/LICENSE.txt` covers the four
+`LICENSE` inherits it — `crates/rsk-rsa/csrc/LICENSE.txt` covers the four
 files there. That is the right reading for a vendored tree, and the reason the
 repo's own top-level `LICENSE` is excluded from the walk: it would otherwise
 cover the whole checkout.
@@ -113,7 +113,7 @@ UNCHECKED = {
 #: a prefix matching nothing is stale, and a file it covers still owes a notice.
 EXEMPT = {
     "third_party/": "vendored upstream trees, each under its own licence",
-    "crates/rsk-rsa-asm/csrc/": "Emil Lenngren's BSD-2-Clause bignum C and asm",
+    "crates/rsk-rsa/csrc/": "Emil Lenngren's BSD-2-Clause bignum C and asm",
 }
 
 #: Files of a checked type that carry no header for a stated reason. Listed one

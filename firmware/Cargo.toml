@@ -58,7 +58,7 @@ rp-pac = { workspace = true }
 rsk-crypto = { workspace = true }
 # core1's prime search owns an IncrementalSieve per core, and the keygen-bench
 # vendor command times the primitives directly.
-rsk-rsa-asm = { workspace = true }
+rsk-rsa = { workspace = true }
 # Robust summary stats for the `bench` latency-harness vendor command. Optional —
 # pulled in only by `--features bench`, never the shipped image.
 rsk-bench = { workspace = true, optional = true }

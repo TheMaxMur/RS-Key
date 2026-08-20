@@ -39,7 +39,7 @@ ed25519-dalek = { workspace = true }
 x25519-dalek = { workspace = true }
 rsa = { workspace = true }
 num-bigint-dig = { workspace = true }
-rsk-rsa-asm = { workspace = true }
+rsk-rsa = { workspace = true }
 # Shared fixed-base comb ECDSA signers + d·G (k·G for sign, public-key derivation).
 rsk-ec = { workspace = true }
 

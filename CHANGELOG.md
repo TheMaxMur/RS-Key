@@ -38,11 +38,21 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+### Internal
+
+- **`rsk-rsa-asm` is now `rsk-rsa`.** The crate held the vendored UMAAL assembly
+  and nothing else, while the RSA layer above it — CRT parameters, PKCS#1 v1.5,
+  the key type, keygen — lived inside the OpenPGP *applet*, which is why PIV
+  reaches across a tier to sign. RSA was the only algorithm family in the tree
+  without a crate of its own. The rename comes first and alone: a crate called
+  `-asm` cannot honestly hold pure Rust, and the moves land on top of it. Pure
+  rename, no code moved yet.
+
 ### Security
 
 - **PSO:DECIPHER no longer runs its private operation on the `rsa` crate.** It
   takes the same blinded, Bellcore-fault-checked asm CRT core as PSO:CDS
-  (`rsk_rsa_asm::sign_crt`) and unpads PKCS#1 v1.5 with the applet's own
+  (`rsk_rsa::sign_crt`) and unpads PKCS#1 v1.5 with the applet's own
   constant-time `pkcs1v15`, so RUSTSEC-2023-0071 — which has no fixed release —
   no longer sits under the one command that decrypts a ciphertext the host chose.
   The wire surface does not move with the implementation: a malformed block still
@@ -61,7 +71,7 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   actually exists.** Its justification still claimed the crate was "the OpenPGP
   RSA backend" and that the `hazmat` feature was there because PIV GENERAL
   AUTHENTICATE needed the raw private op. Both stopped being true when signing
-  moved onto `rsk_rsa_asm`: three of the five private-RSA paths never enter the
+  moved onto `rsk_rsa`: three of the five private-RSA paths never enter the
   crate at all, and `rsa::hazmat` is referenced nowhere in the tree. The feature
   is dropped — a smaller API surface for a dependency inside an authenticator's
   trust base — and the two paths that do reach the crate are now named in

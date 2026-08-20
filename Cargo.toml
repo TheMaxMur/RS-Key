@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["firmware", "rsk-wipe", "crates/rsk-sdk", "crates/rsk-fs", "crates/rsk-usb", "crates/rsk-crypto", "crates/rsk-fido", "crates/rsk-openpgp", "crates/rsk-rsa-asm", "crates/rsk-ec", "crates/rsk-sha512", "crates/rsk-mgmt", "crates/rsk-oath", "crates/rsk-otp", "crates/rsk-piv", "crates/rsk-rescue", "crates/rsk-vendor", "crates/rsk-device", "crates/rsk-display", "crates/rsk-store", "crates/rsk-led", "crates/rsk-ui", "crates/rsk-bip39", "crates/rsk-slip39", "crates/rsk-mldsa", "crates/rsk-bench"]
+members = ["firmware", "rsk-wipe", "crates/rsk-sdk", "crates/rsk-fs", "crates/rsk-usb", "crates/rsk-crypto", "crates/rsk-fido", "crates/rsk-openpgp", "crates/rsk-rsa", "crates/rsk-ec", "crates/rsk-sha512", "crates/rsk-mgmt", "crates/rsk-oath", "crates/rsk-otp", "crates/rsk-piv", "crates/rsk-rescue", "crates/rsk-vendor", "crates/rsk-device", "crates/rsk-display", "crates/rsk-store", "crates/rsk-led", "crates/rsk-ui", "crates/rsk-bip39", "crates/rsk-slip39", "crates/rsk-mldsa", "crates/rsk-bench"]
 
 # Embassy crates are versioned together; pin them all to the same git source so
 # they stay mutually compatible. We track `branch = "main"`, not a crates.io
@@ -28,7 +28,7 @@ rsk-usb = { path = "crates/rsk-usb" }
 rsk-crypto = { path = "crates/rsk-crypto" }
 rsk-fido = { path = "crates/rsk-fido" }
 rsk-openpgp = { path = "crates/rsk-openpgp" }
-rsk-rsa-asm = { path = "crates/rsk-rsa-asm" }
+rsk-rsa = { path = "crates/rsk-rsa" }
 rsk-ec = { path = "crates/rsk-ec" }
 # Fast byte-identical SHA-512/384 for the Cortex-M33 — a compact rolled
 # compression that fits the XIP cache, replacing `sha2`'s ~28 KB unrolled soft
@@ -128,7 +128,7 @@ aes-gcm = { version = "0.10", default-features = false, features = ["aes"] }
 chacha20poly1305 = { version = "0.10", default-features = false }
 zeroize = { version = "1", default-features = false }
 # RSA for the PIV and OpenPGP applets: `from_p_q` key assembly, the CRT
-# accessors `rsk_rsa_asm` signs through, and PSO:DECIPHER. no_std but needs
+# accessors `rsk_rsa` signs through, and PSO:DECIPHER. no_std but needs
 # `alloc` (firmware provides a heap); we pass our own RNG.
 rsa = { version = "0.9", default-features = false }
 # num-bigint-dig is rsa's bignum (re-exported as `rsa::BigUint`). On-card RSA

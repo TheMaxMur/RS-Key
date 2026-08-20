@@ -1119,7 +1119,7 @@ dependencies = [
  "rsk-otp",
  "rsk-piv",
  "rsk-rescue",
- "rsk-rsa-asm",
+ "rsk-rsa",
  "rsk-sdk",
  "rsk-slip39",
  "rsk-store",
@@ -2321,7 +2321,7 @@ dependencies = [
  "rsk-ec",
  "rsk-fs",
  "rsk-mgmt",
- "rsk-rsa-asm",
+ "rsk-rsa",
  "rsk-sdk",
  "x25519-dalek",
  "zeroize",
@@ -2352,7 +2352,7 @@ dependencies = [
  "rsk-fs",
  "rsk-mgmt",
  "rsk-openpgp",
- "rsk-rsa-asm",
+ "rsk-rsa",
  "rsk-sdk",
  "sha2 0.10.9",
  "x25519-dalek",
@@ -2372,7 +2372,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "rsk-rsa-asm"
+name = "rsk-rsa"
 version = "0.1.0"
 dependencies = [
  "cc",

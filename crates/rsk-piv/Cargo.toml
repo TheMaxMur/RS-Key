@@ -20,7 +20,7 @@ rsk-crypto = { workspace = true }
 rsk-openpgp = { workspace = true }
 rsk-mgmt = { workspace = true }
 # Fast constant-time RSA CRT private op (UMAAL asm on device) for slot signing.
-rsk-rsa-asm = { workspace = true }
+rsk-rsa = { workspace = true }
 rsa = { workspace = true }
 # rsa's bignum, used directly for the sign path's blinding (mod_inverse/modpow).
 num-bigint-dig = { workspace = true }

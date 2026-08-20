@@ -5,7 +5,7 @@
 # The sole *vulnerability* ignored below (rsa) is a deliberate, documented
 # exception. No fixed release exists — OSV gives `introduced: 0.0.0-0` with no
 # `fixed` event, so every version is affected. Every hot private-RSA path now
-# runs on `rsk_rsa_asm::sign_crt` instead: PIV GENERAL AUTHENTICATE, PSO:CDS,
+# runs on `rsk_rsa::sign_crt` instead: PIV GENERAL AUTHENTICATE, PSO:CDS,
 # INTERNAL AUTHENTICATE and — since 0.4.11 — PSO:DECIPHER, which unpads with the
 # applet's own constant-time `pkcs1v15`. Two private uses are left. `rsk-piv/src/
 # x509.rs` signs a certificate at key generation over a digest the device built

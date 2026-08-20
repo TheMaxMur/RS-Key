@@ -679,7 +679,7 @@ pub fn self_test() -> bool {
         && !passes_strong_mr_base2(&KAT_COMPOSITE_LE)
 }
 
-/// Kani proof harnesses (`cargo kani -p rsk-rsa-asm`): exhaustive over every
+/// Kani proof harnesses (`cargo kani -p rsk-rsa`): exhaustive over every
 /// input up to the stated bound, where `incremental_matches_flat` below only
 /// samples random seeds.
 #[cfg(kani)]

@@ -1966,7 +1966,7 @@ fn rsa_keepalive_generate_path_produces_signable_key() {
     assert_eq!(fid, consts::EF_PK_SIG);
 
     let mut kg = keys::RsaKeygen::new(nbits);
-    let mut sieve = rsk_rsa_asm::IncrementalSieve::new();
+    let mut sieve = rsk_rsa::IncrementalSieve::new();
     let key = loop {
         match kg.step(&mut sieve, &mut *rng.borrow_mut()) {
             keys::RsaStep::Done(k) => break k,
@@ -2065,7 +2065,7 @@ fn rsa4096_generate_path_produces_signable_key() {
     assert_eq!(nbits, 4096);
 
     let mut kg = keys::RsaKeygen::new(nbits);
-    let mut sieve = rsk_rsa_asm::IncrementalSieve::new();
+    let mut sieve = rsk_rsa::IncrementalSieve::new();
     let key = loop {
         match kg.step(&mut sieve, &mut *rng.borrow_mut()) {
             keys::RsaStep::Done(k) => break k,

@@ -26,7 +26,7 @@ covers the security boundary. This page covers feature and hardware gaps.
 - **`rsa` (RUSTSEC-2023-0071) still has one reachable private path.** No fixed
   release exists — OSV marks every version affected. All of PIV GENERAL
   AUTHENTICATE, PSO:CDS, INTERNAL AUTHENTICATE and PSO:DECIPHER now run their
-  private operation on `rsk_rsa_asm::sign_crt`, blinded and Bellcore-fault-checked;
+  private operation on `rsk_rsa::sign_crt`, blinded and Bellcore-fault-checked;
   the crate is left holding key assembly, parsing and the bignum type. Two
   private uses remain. PIV certificate signing runs once at key generation over a
   digest the device built itself, so there is no chosen-ciphertext oracle to

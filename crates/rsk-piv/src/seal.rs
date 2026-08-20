@@ -29,7 +29,7 @@ const TAG_LEN: usize = 16;
 /// fields (the CRT parameters cached alongside the primes so signing skips the
 /// per-op key rebuild). Older `P ‖ Q` blobs (two fields) still load — the real
 /// length rides in the record and [`rsa_crt::parse_rsa_blob`] tells them apart.
-const MAX_PLAIN: usize = 5 * rsk_rsa_asm::MAX_MOD;
+const MAX_PLAIN: usize = 5 * rsk_rsa::MAX_MOD;
 /// Largest sealed-record length (`nonce ‖ ct ‖ tag`). Public so other PIV paths
 /// that move a sealed blob verbatim (MOVE KEY) can size their buffer to it.
 pub const MAX_BLOB: usize = NONCE_LEN + MAX_PLAIN + TAG_LEN;

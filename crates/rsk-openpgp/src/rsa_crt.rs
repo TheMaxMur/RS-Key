@@ -4,7 +4,7 @@
 //! Shared RSA-CRT signing core for the PIV and OpenPGP applets: the sealed CRT
 //! parameter layout (`P ‖ Q ‖ dP ‖ dQ ‖ qInv`), its length-discriminated parse,
 //! and the blinded, Bellcore-fault-checked private operation on the UMAAL asm
-//! ([`rsk_rsa_asm::sign_crt`] / [`rsk_rsa_asm::modexp_pub`]). Both applets store
+//! ([`rsk_rsa::sign_crt`] / [`rsk_rsa::modexp_pub`]). Both applets store
 //! the same plaintext and sign through the same [`sign_crt`], so this
 //! security-critical path (blinding, fault check, zeroization) lives once.
 //!
@@ -21,11 +21,11 @@ use zeroize::{Zeroize, Zeroizing};
 use crate::Rng;
 
 /// A single fixed-width CRT field buffer (a prime's max width, RSA-4096 = 256 B).
-const CRT_FIELD: usize = rsk_rsa_asm::MAX_MOD;
+const CRT_FIELD: usize = rsk_rsa::MAX_MOD;
 /// Largest RSA modulus (`2·half`) — the signature / challenge length.
-pub const MAX_RSA_BYTES: usize = 2 * rsk_rsa_asm::MAX_MOD;
+pub const MAX_RSA_BYTES: usize = 2 * rsk_rsa::MAX_MOD;
 /// Largest CRT plaintext: `P ‖ Q ‖ dP ‖ dQ ‖ qInv`, five `half`-byte fields.
-pub const MAX_CRT_PLAIN: usize = 5 * rsk_rsa_asm::MAX_MOD;
+pub const MAX_CRT_PLAIN: usize = 5 * rsk_rsa::MAX_MOD;
 
 /// The RSA public exponent, fixed at 65537 for every stored key.
 pub fn rsa_e() -> BigUint {
@@ -237,7 +237,7 @@ pub fn crt_from_plain(plain: &[u8]) -> Result<RsaCrt, Sw> {
 }
 
 /// Raw RSA private-key operation `sig = cᵈ mod n`, computed over the cached CRT
-/// parameters with the UMAAL asm ([`rsk_rsa_asm::sign_crt`]). Base-blinded
+/// parameters with the UMAAL asm ([`rsk_rsa::sign_crt`]). Base-blinded
 /// `(c·rᵉ)ᵈ·r⁻¹ mod n` with a fresh random `r`, so the variable-time modexp
 /// cannot become a timing oracle; then Bellcore fault-checked (`sigᵉ ≡ c mod n`)
 /// so a faulted CRT half — or an asm/marshaling bug — can never leave as a valid
@@ -270,7 +270,7 @@ pub fn sign_crt(crt: &RsaCrt, c: &[u8], rng: &mut dyn Rng, out: &mut [u8]) -> Re
         let bb = base.to_bytes_le();
         b_le[..bb.len()].copy_from_slice(&bb);
         let mut o_le = [0u8; MAX_RSA_BYTES];
-        let ok = rsk_rsa_asm::modexp_pub(&b_le[..mlen], &e_be, &n_le[..mlen], &mut o_le[..mlen]);
+        let ok = rsk_rsa::modexp_pub(&b_le[..mlen], &e_be, &n_le[..mlen], &mut o_le[..mlen]);
         let out = ok.then(|| BigUint::from_bytes_le(&o_le[..mlen]));
         b_le.zeroize();
         o_le.zeroize();
@@ -298,7 +298,7 @@ pub fn sign_crt(crt: &RsaCrt, c: &[u8], rng: &mut dyn Rng, out: &mut [u8]) -> Re
     base_le[..bl.len()].copy_from_slice(&bl);
     bl.zeroize();
     let mut sig_le = [0u8; MAX_RSA_BYTES];
-    rsk_rsa_asm::sign_crt(
+    rsk_rsa::sign_crt(
         &base_le[..mlen],
         crt.dp(),
         crt.dq(),

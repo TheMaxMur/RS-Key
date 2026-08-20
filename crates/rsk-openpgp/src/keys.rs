@@ -21,7 +21,7 @@ use p256::elliptic_curve::sec1::FromSec1Point;
 use num_bigint_dig::prime::probably_prime_lucas;
 use rsa::traits::{PrivateKeyParts, PublicKeyParts};
 use rsa::{BigUint, Pkcs1v15Encrypt, Pkcs1v15Sign};
-use rsk_rsa_asm::{IncrementalSieve, mod_small, passes_strong_mr_base2, self_test};
+use rsk_rsa::{IncrementalSieve, mod_small, passes_strong_mr_base2, self_test};
 
 // Re-exported so the firmware can name the keygen result type without its own
 // `rsa` dependency (the dual-core search returns `Box<RsaPrivateKey>`).

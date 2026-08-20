@@ -1,5 +1,5 @@
 [package]
-name = "rsk-rsa-asm"
+name = "rsk-rsa"
 version = "0.1.0"
 license = "AGPL-3.0-only"
 edition = "2024"

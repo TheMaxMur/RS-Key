@@ -22,7 +22,7 @@
       pkgs.picotool # ELF -> UF2 + BOOTSEL flashing, no probe needed
       pkgs.pkg-config
       pkgs.gcc-arm-embedded
-      # arm-none-eabi-gcc — builds rsk-rsa-asm's C+ARM-asm
+      # arm-none-eabi-gcc — builds rsk-rsa's C+ARM-asm
       # fast RSA modexp. `cc` auto-detects it.
 
       pkgs.yubikey-manager # ykman CLI (device management, guides)

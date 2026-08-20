@@ -9,7 +9,7 @@ secret-dependent comparison, branch, memory access, and private-key arithmetic
 operation that an attacker holding the device can probe over USB (CCID /
 ISO-7816 APDUs and CTAPHID / CTAP2): PIN/PUK/password verifiers, the FIDO
 `pinUvAuthToken` MAC, OATH and OTP access codes, RSA private operations, and the
-hand-written `rsk-rsa-asm` keygen primitives.
+hand-written `rsk-rsa` keygen primitives.
 
 > **What this is and isn't.** This is a *source/disassembly* audit: it
 > establishes that the generated machine code has no secret-dependent
@@ -98,7 +98,7 @@ today.
   mitigated by per-operation base blinding on **all** private-key paths (the
   finding above closed the one path the blinding did not previously cover). See
   [threat-model.md](threat-model.md).
-- **`rsk-rsa-asm` keygen modexp secret-indexed window lookup**: a genuine
+- **`rsk-rsa` keygen modexp secret-indexed window lookup**: a genuine
   secret-dependent *memory-access pattern* over bits of the generated prime, but
   it is **keygen-only, one-shot, and not USB-timing-observable**. On the
   cacheless Cortex-M33 there is no microarchitectural channel. Exploitable only
@@ -111,7 +111,7 @@ today.
 **Covered:** all hand-rolled comparator definitions and call sites; every
 PIN/PUK/password/MAC/verifier comparison across FIDO, PIV, OpenPGP, OATH; OTP
 slot access-code compares; HOTP/TOTP; RSA private sign/decrypt/raw paths; the
-`rsk-rsa-asm` C/asm modexp, sieve, and primality primitives; secret-indexed
+`rsk-rsa` C/asm modexp, sieve, and primality primitives; secret-indexed
 lookups; and status-word/error-path oracles.
 
 **What a source/disassembly audit cannot prove:**

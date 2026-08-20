@@ -402,7 +402,7 @@ impl rsk_display::Hooks for EmuDisplayHooks {
         on_tick: &mut dyn FnMut(),
     ) -> Option<Box<rsk_openpgp::keys::RsaPrivateKey>> {
         let mut keygen = rsk_openpgp::keys::RsaKeygen::new(nbits);
-        let mut sieve = rsk_rsa_asm::IncrementalSieve::new();
+        let mut sieve = rsk_rsa::IncrementalSieve::new();
         (self.repaint)();
         let mut shown = std::time::Instant::now();
         let found = loop {

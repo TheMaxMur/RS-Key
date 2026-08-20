@@ -44,10 +44,10 @@ FAST="rsk-sdk rsk-fs rsk-crypto rsk-openpgp rsk-otp rsk-piv rsk-oath rsk-usb rsk
 
 # SLOW: the arithmetic and the state sequences. `rsk-rescue` carries
 # `serialize_parse_roundtrip` (27m42s measured 2026-08-13; ~80 min was recorded
-# once), `rsk-rsa-asm` the functional division spec and the sieve, `rsk-mldsa` the
+# once), `rsk-rsa` the functional division spec and the sieve, `rsk-mldsa` the
 # rounding round-trips, `rsk-fido` the three sequence proofs (~12 min together,
 # and one of them peaks at 9.3 GiB).
-SLOW="rsk-rescue rsk-rsa-asm rsk-mldsa rsk-fido"
+SLOW="rsk-rescue rsk-rsa rsk-mldsa rsk-fido"
 
 # HEAVY: the crates that get a job of their own, because their peak
 # solver memory is near what a hosted runner has left over. Measured 2026-08-14:
@@ -67,11 +67,11 @@ HEAVY="rsk-rescue"
 # that drew HEAVY, applied to time rather than to memory.
 #
 # Balanced by cost, not by crate count: the three expensive crates left after
-# HEAVY (`rsk-fido`'s sequence proofs ~12 min, `rsk-rsa-asm`'s division spec and
+# HEAVY (`rsk-fido`'s sequence proofs ~12 min, `rsk-rsa`'s division spec and
 # sieve, `rsk-mldsa`'s rounding round-trips) go one per shard, and the fast crates
 # fill in around them.
 LIGHT1="rsk-fido rsk-ui rsk-piv rsk-oath"
-LIGHT2="rsk-rsa-asm rsk-device rsk-fs rsk-crypto rsk-bip39"
+LIGHT2="rsk-rsa rsk-device rsk-fs rsk-crypto rsk-bip39"
 LIGHT3="rsk-mldsa rsk-led rsk-sdk rsk-openpgp rsk-usb rsk-otp rsk-slip39"
 
 # Three hand-written lists can drift the way `without_heavy()`'s one could not: a

@@ -2162,7 +2162,7 @@ evidence columns and validated cross-model support edges below on every gate run
 | `rsk-otp` | state-partial | `RSKeyAppletSeams` | oathOtpPin status is in RSKeyAppletSeams; protected-slot configure/update/delete/swap and the combined use/session anti-replay step are RSKeyAppletPolicies. The six-byte slot code has no retry counter; four physical slots collapse to one symmetric lifecycle in the model. |
 | `rsk-piv` | state-partial | `RSKeyAppletSeams` | status lifetime is RSKeyAppletSeams; PIN/PUK budgets are RSKeyRetryLattice; NEVER/ONCE/ALWAYS slot policy and freshness spending are RSKeyAppletPolicies. Key material and touch I/O stay below these state abstractions. |
 | `rsk-rescue` | state-partial | `RSKeyAdminSurface` | the operator-presence gate on every privileged command is modelled (PrivilegedOpNeedsPresence); the commands' own payloads — phy identity records, KEYDEV signing, the fuse/rollback state machines — are single-step data handling carried by the crate's five test files, not a state machine. |
-| `rsk-rsa-asm` | pure | `crates/rsk-rsa-asm/src/kani.rs` | — |
+| `rsk-rsa` | pure | `crates/rsk-rsa/src/kani.rs` | — |
 | `rsk-sdk` | state-partial | `RSKeyAppletSeams` | Dispatcher::current is the seam module's sel. APDU command chaining remains outside RSKeyTransport, which covers CTAPHID framing rather than the SDK's per-applet chain buffer. |
 | `rsk-sha512` | pure | `fuzz/fuzz_targets/sha512_diff.rs` | — |
 | `rsk-slip39` | pure | `crates/rsk-slip39/src/kani.rs`<br>`crates/rsk-slip39/src/tests.rs` | — |

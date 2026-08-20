@@ -113,9 +113,9 @@ class = "pure"
 evidence = ["crates/rsk-mldsa/src/round_kani.rs", "fuzz/fuzz_targets/mldsa_roundtrip.rs", "fuzz/fuzz_targets/mldsa_verify.rs"]
 note = "byte-exact vs ACVP KATs; -87 is a recorded stack dead-end, not a gap."
 
-[crate.rsk-rsa-asm]
+[crate.rsk-rsa]
 class = "pure"
-evidence = ["crates/rsk-rsa-asm/src/kani.rs"]
+evidence = ["crates/rsk-rsa/src/kani.rs"]
 note = "functional division spec + the sieve, proved."
 
 [crate.rsk-ec]

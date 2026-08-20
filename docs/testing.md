@@ -196,7 +196,7 @@ crypto-critical helpers, where a proof genuinely beats a sample:
   `meta_add`'s replace both mean. Stated by feeding the output back through the
   same function rather than by a second decoder, which would only prove two
   copies of one walk agree.
-- `rsk-rsa-asm`: `mod_small` proven *functionally* (`== v % m`, every
+- `rsk-rsa`: `mod_small` proven *functionally* (`== v % m`, every
   dividend up to 2 bytes and every modulus) and panic-free / `< m` for every
   input up to 8 bytes; the `IncrementalSieve` residue invariant
   (`res[i] == cand mod p_i` after a step, verdict identical to the flat
@@ -297,7 +297,7 @@ run):
 | `state` | 2 | 24 | 26 | ~10 min | `rsk-fido::…_at_call_site`, ~7 min (9.3 GiB peak) |
 | `all` | 17 | 87 | 51 | ~1 h 46 | `rsk-rescue::serialize_parse_roundtrip`, 27 m 42 s |
 | `light1` | 4 | 27 | 23 | not yet run | `rsk-fido::…_at_call_site`, ~7 min (9.3 GiB peak) |
-| `light2` | 5 | 27 | 8 | not yet run | `rsk-rsa-asm`'s division spec and sieve |
+| `light2` | 5 | 27 | 8 | not yet run | `rsk-rsa`'s division spec and sieve |
 | `light3` | 7 | 28 | 19 | not yet run | `rsk-mldsa`'s rounding round-trips |
 | `heavy` | 1 | 5 | 1 | ~55 min | `rsk-rescue::serialize_parse_roundtrip`, 55 min (11.1 GB peak) |
 

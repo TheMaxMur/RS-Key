@@ -127,12 +127,12 @@ impl rsk_vendor::Platform for VendorPlatform {
         match p1 {
             0 => {
                 for _ in 0..BENCH_ITERS {
-                    black_box(rsk_rsa_asm::passes_strong_mr_base2(black_box(data)));
+                    black_box(rsk_rsa::passes_strong_mr_base2(black_box(data)));
                 }
             }
             1 => {
                 for _ in 0..BENCH_ITERS {
-                    black_box(rsk_rsa_asm::has_small_factor(black_box(data)));
+                    black_box(rsk_rsa::has_small_factor(black_box(data)));
                 }
             }
             _ => return Sw::INCORRECT_P1P2,
