@@ -116,7 +116,7 @@ fn a_typed_pin_is_committed_by_ok() {
     let mut ui = env.ui(Pad::taps(&pin_entry(PIN)));
     let mut out = [0u8; 64];
     let got = ui.collect_pin(title(), None, FLOOR, FLOOR as u8, &mut out, false);
-    assert!(matches!(got, rsk_fido::PinEntry::Entered(n) if n == PIN.len()));
+    assert!(matches!(got, rsk_sdk::PinEntry::Entered(n) if n == PIN.len()));
     assert_eq!(&out[..PIN.len()], PIN);
 }
 
@@ -129,7 +129,7 @@ fn backspace_drops_the_last_digit() {
     let mut ui = env.ui(Pad::taps(&taps));
     let mut out = [0u8; 64];
     let got = ui.collect_pin(title(), None, FLOOR, FLOOR as u8, &mut out, false);
-    assert!(matches!(got, rsk_fido::PinEntry::Entered(n) if n == PIN.len()));
+    assert!(matches!(got, rsk_sdk::PinEntry::Entered(n) if n == PIN.len()));
     assert_eq!(&out[..PIN.len()], PIN);
 }
 
@@ -143,7 +143,7 @@ fn the_eye_toggle_is_not_a_digit() {
     let mut ui = env.ui(Pad::taps(&taps));
     let mut out = [0u8; 64];
     let got = ui.collect_pin(title(), None, FLOOR, FLOOR as u8, &mut out, false);
-    assert!(matches!(got, rsk_fido::PinEntry::Entered(n) if n == PIN.len()));
+    assert!(matches!(got, rsk_sdk::PinEntry::Entered(n) if n == PIN.len()));
     assert_eq!(&out[..PIN.len()], PIN);
 }
 
@@ -161,7 +161,7 @@ fn ok_below_the_floor_does_not_commit() {
     let mut out = [0u8; 64];
     let got = ui.collect_pin(title(), None, FLOOR, FLOOR as u8, &mut out, false);
     assert!(
-        matches!(got, rsk_fido::PinEntry::Timeout),
+        matches!(got, rsk_sdk::PinEntry::Timeout),
         "the pad stays open"
     );
 }
@@ -172,7 +172,7 @@ fn cancel_is_a_deliberate_decline() {
     let mut ui = env.ui(Pad::taps(&[center(rsk_ui::PIN_CANCEL_RECT)]));
     let mut out = [0u8; 64];
     let got = ui.collect_pin(title(), None, FLOOR, FLOOR as u8, &mut out, false);
-    assert!(matches!(got, rsk_fido::PinEntry::Declined));
+    assert!(matches!(got, rsk_sdk::PinEntry::Declined));
 }
 
 #[test]
@@ -181,7 +181,7 @@ fn an_untouched_pad_times_out() {
     let mut ui = env.ui(Pad::idle());
     let mut out = [0u8; 64];
     let got = ui.collect_pin(title(), None, FLOOR, FLOOR as u8, &mut out, false);
-    assert!(matches!(got, rsk_fido::PinEntry::Timeout));
+    assert!(matches!(got, rsk_sdk::PinEntry::Timeout));
 }
 
 #[test]
@@ -191,7 +191,7 @@ fn a_host_cancel_ends_the_pad() {
     ui.hooks.cancel_in.set(Some(2));
     let mut out = [0u8; 64];
     let got = ui.collect_pin(title(), None, FLOOR, FLOOR as u8, &mut out, false);
-    assert!(matches!(got, rsk_fido::PinEntry::Cancelled));
+    assert!(matches!(got, rsk_sdk::PinEntry::Cancelled));
 }
 
 #[test]
@@ -245,7 +245,7 @@ fn a_queued_host_command_cannot_shut_the_pad_at_once() {
     ui.hooks.presence_ms = (UI_YIELD_FLOOR_MS / 4) as u32;
     let mut out = [0u8; 64];
     let got = ui.collect_pin(title(), None, FLOOR, FLOOR as u8, &mut out, true);
-    assert!(matches!(got, rsk_fido::PinEntry::Timeout));
+    assert!(matches!(got, rsk_sdk::PinEntry::Timeout));
 }
 
 #[test]
@@ -259,7 +259,7 @@ fn a_queued_host_command_closes_an_untouched_pad_after_the_floor() {
     let mut out = [0u8; 64];
     let start = Instant::now();
     let got = ui.collect_pin(title(), None, FLOOR, FLOOR as u8, &mut out, true);
-    assert!(matches!(got, rsk_fido::PinEntry::Cancelled));
+    assert!(matches!(got, rsk_sdk::PinEntry::Cancelled));
     assert!(start.elapsed() >= Duration::from_millis(UI_YIELD_FLOOR_MS));
 }
 
@@ -274,7 +274,7 @@ fn the_pad_never_yields_mid_entry() {
     let mut out = [0u8; 64];
     let got = ui.collect_pin(title(), None, FLOOR, FLOOR as u8, &mut out, true);
     assert!(
-        matches!(got, rsk_fido::PinEntry::Timeout),
+        matches!(got, rsk_sdk::PinEntry::Timeout),
         "an entry in progress outlives the yield floor"
     );
 }

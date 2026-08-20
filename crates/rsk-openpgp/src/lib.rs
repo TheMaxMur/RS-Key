@@ -37,45 +37,14 @@ use core::cell::RefCell;
 
 use rsk_crypto::{Device, FusedKey, read_fused};
 use rsk_fs::{Fs, KeyFid, Storage};
-pub use rsk_sdk::Confirm;
+// The randomness and the UIF (touch-policy) check are `rsk-sdk`'s seams, shared
+// with every sibling applet; `rsk-rsa` declares its own identical `Rng` two tiers
+// down, so the private-key calls bridge the two through [`keys::RsaRng`].
+pub use rsk_sdk::{AlwaysConfirm, Confirm, Presence, Rng, UserPresence};
 use rsk_sdk::{Apdu, Applet, ResBuf, Sw};
 
 pub use init::{Error, scan_files};
 pub use pin::Session;
-
-/// Random-byte source. `firmware` backs this with the RP2350 TRNG; tests use a
-/// deterministic counter. Declared by `rsk-rsa`, whose private-key paths need it
-/// and which sits below every crate that could otherwise host it — re-exported
-/// here so the applet's callers keep naming it `rsk_openpgp::Rng`.
-pub use rsk_rsa::Rng;
-
-/// Outcome of asking for a physical touch.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Presence {
-    Confirmed,
-    Timeout,
-    Declined,
-}
-
-/// Physical user presence for the UIF (touch-policy) DOs. `firmware` polls the
-/// BOOTSEL button; with no button configured it confirms instantly, like
-/// [`AlwaysConfirm`] (which tests use). Shared with the FIDO applet — the firmware
-/// type implements both `rsk_fido::UserPresence` and this.
-pub trait UserPresence {
-    /// Ask for presence. `confirm` names the pending operation for a trusted
-    /// on-screen Approve/Deny prompt; the BOOTSEL-button backend ignores it.
-    fn request(&mut self, confirm: Confirm<'_>) -> Presence;
-}
-
-/// A [`UserPresence`] that confirms instantly — the no-button default and the
-/// host-test stand-in.
-pub struct AlwaysConfirm;
-
-impl UserPresence for AlwaysConfirm {
-    fn request(&mut self, _confirm: Confirm<'_>) -> Presence {
-        Presence::Confirmed
-    }
-}
 
 /// If the UIF DO `fid` (`0xD6/D7/D8`) is present with a non-zero first byte,
 /// require a touch; a non-confirmation maps to `SECURE_MESSAGE_EXEC_ERROR`

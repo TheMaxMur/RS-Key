@@ -13,8 +13,10 @@ use core::cell::RefCell;
 
 use rsk_crypto::{Device, FusedKey, FusedRead, hmac_sha1, hmac_sha256, hmac_sha512, read_fused};
 use rsk_fs::{Fs, KeyFid, Storage};
-pub use rsk_sdk::Confirm;
+// The VALIDATE challenge's randomness and the `PROP_TOUCH` presence check are
+// `rsk-sdk`'s seams, shared with every sibling applet.
 use rsk_sdk::tlv::{find_tag, format_len};
+pub use rsk_sdk::{AlwaysConfirm, Confirm, Presence, Rng, UserPresence};
 use rsk_sdk::{Apdu, Applet, ResBuf, Sw};
 use zeroize::Zeroize;
 
@@ -25,37 +27,6 @@ pub const OATH_AID: &[u8] = &[0xA0, 0x00, 0x00, 0x05, 0x27, 0x21, 0x01];
 /// [`rsk_sdk::FIRMWARE_VERSION`]. ykman gates protocol features (rename, touch)
 /// on this; the full 5.x set is implemented.
 pub const VERSION: (u8, u8, u8) = rsk_sdk::FIRMWARE_VERSION;
-
-/// Random-byte source for the VALIDATE challenge. Same shape as
-/// `rsk_openpgp::Rng`; the firmware TRNG wrapper implements both.
-pub trait Rng {
-    fn fill(&mut self, buf: &mut [u8]);
-}
-
-/// Outcome of a touch request (credentials stored with `PROP_TOUCH`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Presence {
-    Confirmed,
-    Timeout,
-    Declined,
-}
-
-/// Physical user presence; the firmware backs this with the BOOTSEL button
-/// (same shape as `rsk_openpgp::UserPresence`).
-pub trait UserPresence {
-    /// Ask for presence. `confirm` names the operation for a trusted on-screen
-    /// Approve/Deny prompt; the BOOTSEL-button backend ignores it.
-    fn request(&mut self, confirm: Confirm<'_>) -> Presence;
-}
-
-/// Test/no-button stand-in: confirms instantly.
-pub struct AlwaysConfirm;
-
-impl UserPresence for AlwaysConfirm {
-    fn request(&mut self, _confirm: Confirm<'_>) -> Presence {
-        Presence::Confirmed
-    }
-}
 
 // FIDs.
 const EF_OATH_CRED: u16 = 0xBA00; // 255 cred slots, 0xBA00..=0xBAFE (each a sealed KeyFid)

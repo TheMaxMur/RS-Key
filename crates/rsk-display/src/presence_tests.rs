@@ -6,17 +6,15 @@ use std::vec;
 use super::*;
 use crate::tests::{Env, Pad, TestUi, center};
 
-// Seven applets implement `UserPresence` for this one backend, so `request` is
-// ambiguous by name alone — each side is asked for through its own trait.
-fn ask_fido<'a>(ui: &'a RefCell<TestUi<'a>>, confirm: Confirm<'_>) -> rsk_fido::Presence {
-    rsk_fido::UserPresence::request(&mut TouchPresence::new(ui), confirm)
+// The two asks this one backend answers differently: a CTAP2 ceremony (the
+// registration card, the closing "Approved" pop, a reportable cancel) and a
+// smartcard touch policy (the bare Approve/Deny prompt).
+fn ask_fido<'a>(ui: &'a RefCell<TestUi<'a>>, confirm: Confirm<'_>) -> rsk_sdk::Presence {
+    rsk_sdk::UserPresence::request_ceremony(&mut TouchPresence::new(ui), confirm)
 }
 
-fn ask_card<'a>(
-    ui: &'a RefCell<TestUi<'a>>,
-    confirm: rsk_openpgp::Confirm<'_>,
-) -> rsk_openpgp::Presence {
-    rsk_openpgp::UserPresence::request(&mut TouchPresence::new(ui), confirm)
+fn ask_card<'a>(ui: &'a RefCell<TestUi<'a>>, confirm: Confirm<'_>) -> rsk_sdk::Presence {
+    rsk_sdk::UserPresence::request(&mut TouchPresence::new(ui), confirm)
 }
 
 /// The anti-phishing prompt as an applet asks for it: a trusted title plus the
@@ -47,7 +45,7 @@ fn a_deny_tap_is_a_real_decline() {
     let env = Env::new();
     let ui = prompt(&env, Pad::taps(&[deny()]), 2_000);
     let got = ask_fido(&ui, sign_in());
-    assert_eq!(got, rsk_fido::Presence::Declined);
+    assert_eq!(got, rsk_sdk::Presence::Declined);
 }
 
 #[test]
@@ -57,7 +55,7 @@ fn a_brush_on_allow_does_not_approve() {
     let env = Env::new();
     let ui = prompt(&env, Pad::taps(&[allow()]), 400);
     let got = ask_fido(&ui, sign_in());
-    assert_eq!(got, rsk_fido::Presence::Timeout);
+    assert_eq!(got, rsk_sdk::Presence::Timeout);
 }
 
 #[test]
@@ -66,7 +64,7 @@ fn a_completed_hold_approves() {
     let ui = prompt(&env, Pad::hold(allow()), 4_000);
     let start = Instant::now();
     let got = ask_fido(&ui, sign_in());
-    assert_eq!(got, rsk_fido::Presence::Confirmed);
+    assert_eq!(got, rsk_sdk::Presence::Confirmed);
     assert!(start.elapsed() >= Duration::from_millis(HOLD_MS));
 }
 
@@ -88,7 +86,7 @@ fn a_ceremony_drops_a_stale_cancel_and_restores_the_led_it_found() {
     let got = ask_fido(&ui, sign_in());
     assert_eq!(
         got,
-        rsk_fido::Presence::Confirmed,
+        rsk_sdk::Presence::Confirmed,
         "a cancel from an earlier wait aborted this one"
     );
     assert_eq!(
@@ -110,7 +108,7 @@ fn a_hold_that_is_released_starts_over() {
     let env = Env::new();
     let ui = prompt(&env, Pad::script(&script), 1_800);
     let got = ask_fido(&ui, sign_in());
-    assert_eq!(got, rsk_fido::Presence::Timeout);
+    assert_eq!(got, rsk_sdk::Presence::Timeout);
 }
 
 #[test]
@@ -123,7 +121,7 @@ fn a_finger_still_down_when_the_prompt_appears_cannot_approve_it() {
     let env = Env::new();
     let ui = prompt(&env, Pad::held_for(allow(), polls), 1_500);
     let got = ask_fido(&ui, sign_in());
-    assert_eq!(got, rsk_fido::Presence::Timeout);
+    assert_eq!(got, rsk_sdk::Presence::Timeout);
 }
 
 #[test]
@@ -132,7 +130,7 @@ fn a_host_cancel_ends_the_prompt() {
     let ui = prompt(&env, Pad::idle(), 5_000);
     ui.borrow_mut().hooks.cancel_in.set(Some(2));
     let got = ask_fido(&ui, sign_in());
-    assert_eq!(got, rsk_fido::Presence::Cancelled);
+    assert_eq!(got, rsk_sdk::Presence::Cancelled);
 }
 
 #[test]
@@ -140,7 +138,7 @@ fn an_untouched_prompt_times_out() {
     let env = Env::new();
     let ui = prompt(&env, Pad::idle(), 300);
     let got = ask_fido(&ui, sign_in());
-    assert_eq!(got, rsk_fido::Presence::Timeout);
+    assert_eq!(got, rsk_sdk::Presence::Timeout);
 }
 
 #[test]
@@ -168,7 +166,7 @@ fn a_registration_card_saves_on_a_single_tap() {
     let env = Env::new();
     let ui = prompt(&env, Pad::taps(&[allow()]), 2_000);
     let got = ask_fido(&ui, Confirm::register(b"example.com", b"alex"));
-    assert_eq!(got, rsk_fido::Presence::Confirmed);
+    assert_eq!(got, rsk_sdk::Presence::Confirmed);
 }
 
 #[test]
@@ -176,7 +174,7 @@ fn a_registration_card_declines_on_cancel() {
     let env = Env::new();
     let ui = prompt(&env, Pad::taps(&[deny()]), 2_000);
     let got = ask_fido(&ui, Confirm::register(b"example.com", b"alex"));
-    assert_eq!(got, rsk_fido::Presence::Declined);
+    assert_eq!(got, rsk_sdk::Presence::Declined);
 }
 
 #[test]
@@ -189,7 +187,7 @@ fn an_expired_registration_card_ignores_a_leftover_press() {
     let env = Env::new();
     let ui = prompt(&env, Pad::held(allow()), 400);
     let got = ask_fido(&ui, Confirm::register(b"example.com", b"alex"));
-    assert_eq!(got, rsk_fido::Presence::Timeout);
+    assert_eq!(got, rsk_sdk::Presence::Timeout);
 }
 
 #[test]
@@ -200,7 +198,7 @@ fn a_ccid_applet_reads_a_cancel_as_a_timeout() {
     let ui = prompt(&env, Pad::idle(), 5_000);
     ui.borrow_mut().hooks.cancel_in.set(Some(2));
     let got = ask_card(&ui, rsk_openpgp::Confirm::titled("Sign?"));
-    assert_eq!(got, rsk_openpgp::Presence::Timeout);
+    assert_eq!(got, rsk_sdk::Presence::Timeout);
 }
 
 #[test]
@@ -208,7 +206,7 @@ fn a_ccid_applet_still_hears_a_deny() {
     let env = Env::new();
     let ui = prompt(&env, Pad::taps(&[deny()]), 2_000);
     let got = ask_card(&ui, rsk_openpgp::Confirm::titled("Sign?"));
-    assert_eq!(got, rsk_openpgp::Presence::Declined);
+    assert_eq!(got, rsk_sdk::Presence::Declined);
 }
 
 #[test]
@@ -218,8 +216,8 @@ fn a_ceremony_names_the_operation_it_approves() {
     let env = Env::new();
     let ui = prompt(&env, Pad::idle(), 300);
     let presence = TouchPresence::new(&ui);
-    assert!(rsk_fido::UserPresence::shows_confirm(&presence));
-    assert!(rsk_fido::UserPresence::uv_available(&presence));
+    assert!(rsk_sdk::UserPresence::shows_confirm(&presence));
+    assert!(rsk_sdk::UserPresence::uv_available(&presence));
 }
 
 #[test]
@@ -227,4 +225,37 @@ fn the_screen_has_no_bootsel_click_counter() {
     let env = Env::new();
     let ui = prompt(&env, Pad::idle(), 300);
     assert!(!TouchPresence::new(&ui).poll_pressed());
+}
+
+/// The two asks exist so the display can answer them differently, and the whole
+/// difference is invisible to every other case in this file: a merge that made
+/// `request` run the ceremony body would leave the suite green while every
+/// OpenPGP/PIV signature — one presence ask *each* — paid the closing pop.
+/// Frames, not wall time: the pop is a painted screen, and `Panel` counts those.
+#[test]
+fn only_the_ceremony_ask_pops_the_approved_card() {
+    // Two holds on one pad: `Pad::hold`'s finger never lifts, so a second ask
+    // behind it would sit in its opening release wait until the timeout.
+    let polls = (HOLD_MS / TOUCH_POLL_MS) as usize * 2;
+    let mut script = vec![None];
+    for _ in 0..2 {
+        script.extend(std::iter::repeat_n(Some(allow()), polls));
+        script.extend([None; 4]);
+    }
+    let env = Env::new();
+    let ui = prompt(&env, Pad::script(&script), 4_000);
+
+    let before = ui.borrow().panel.frames;
+    assert_eq!(ask_card(&ui, sign_in()), rsk_sdk::Presence::Confirmed);
+    let card = ui.borrow().panel.frames - before;
+
+    let before = ui.borrow().panel.frames;
+    assert_eq!(ask_fido(&ui, sign_in()), rsk_sdk::Presence::Confirmed);
+    let ceremony = ui.borrow().panel.frames - before;
+
+    assert!(
+        ceremony > card,
+        "ceremony painted {ceremony} frames, touch policy {card}: either the \
+         ceremony lost its Approved pop, or a card signature is now paying it"
+    );
 }

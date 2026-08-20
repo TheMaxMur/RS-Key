@@ -10,9 +10,9 @@
 
 use rsk_crypto::{Device, aes256gcm_decrypt, aes256gcm_encrypt, hkdf_sha256};
 use rsk_fs::{Fs, KeyFid, Sealed, Storage};
-use rsk_openpgp::Rng;
 use rsk_openpgp::keys::{Curve, PrivKey};
 use rsk_rsa::{RSA_PUB_EXP_BE, RsaKey, crt};
+use rsk_sdk::Rng;
 use rsk_sdk::Sw;
 use zeroize::Zeroize;
 

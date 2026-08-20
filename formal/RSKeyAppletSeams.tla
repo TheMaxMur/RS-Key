@@ -40,7 +40,7 @@ CONSTANTS
     \* 637ed98 taken back out: PIV and OpenPGP used to reset on EVERY select,
     \* ignoring the `reselect` flag the trait hands them.
     BugReselectResetsStatus,
-    \* crates/rsk-device/src/ccid.rs:346-361 -- the ICC power transition.
+    \* crates/rsk-device/src/ccid.rs:348-363 -- the ICC power transition.
     BugCardResetKeepsStatus,
     \* e5da38b taken back out: PW3, the admin PIN, standing in for PW1/PW2 on
     \* PSO:CDS, PSO:DECIPHER and INTERNAL AUTHENTICATE.
@@ -49,13 +49,13 @@ CONSTANTS
     \* authentication open, so the budget can be burned through the door that
     \* does not close.
     BugFailedChangeKeepsStatus,
-    \* crates/rsk-piv/src/auth.rs:114-118 -- the PIN-policy-ALWAYS slot spends
+    \* crates/rsk-piv/src/auth.rs:113-117 -- the PIN-policy-ALWAYS slot spends
     \* its freshness, so one VERIFY authorises one key operation.
     BugPinFreshNotSpent,
     \* The selection clamp removed: `pin_fresh` outlives the `has_pin` status it
     \* refines. `pfresh` remains the requirement-side copy that exposes the split.
     BugPinFreshOutlivesPin,
-    \* The same shape one applet over: crates/rsk-openpgp/src/keys.rs:972-976,
+    \* The same shape one applet over: crates/rsk-openpgp/src/keys.rs:984-988,
     \* `inc_sig_count` clearing has_pw1 under the one-shot PW status.
     BugSigPinNotSpent,
     \* A user status opening the ADMIN surface -- the reverse of
@@ -78,7 +78,7 @@ CONSTANTS
     BugRefusedValidateDropsUnlock,
     \* The access-code REMOVAL (`73 00`) reached without the validated status.
     \* cmd_set_code's whole body -- install and remove alike -- sits behind one
-    \* gate (crates/rsk-oath/src/lib.rs:356-358); this is the remove half taken
+    \* gate (crates/rsk-oath/src/lib.rs:327-329); this is the remove half taken
     \* out from under it. The hole was RECORDED for two revisions as
     \* definitionally invisible: NoStatusOutsideItsSelection's oathCode
     \* exemption fires exactly when ~oathCodeSet, which the removal itself sets,
@@ -98,7 +98,7 @@ Applets  == {Piv, Pgp, Oath}
 \* The authentication references, per applet. PIV's PIN and its 9B management
 \* key; OpenPGP's three (PW1 no. 81 signs, PW1 no. 82 deciphers, PW3 administers
 \* -- crates/rsk-openpgp/src/pin.rs:19-38); OATH's access-code unlock and its
-\* separate OTP PIN (crates/rsk-oath/src/lib.rs:212-220).
+\* separate OTP PIN (crates/rsk-oath/src/lib.rs:183-191).
 Refs == {"pivPin", "pivMgm", "pw1", "pw2", "pw3", "oathCode", "oathOtpPin"}
 
 RefOwner(r) ==
@@ -115,16 +115,16 @@ VARIABLES
     sel,    \* Dispatcher::current            (crates/rsk-sdk/src/applet.rs:145)
     held,   \* [Refs -> BOOLEAN]: the in-RAM security statuses
     \* PIV's `pin_fresh` -- the UNSPENT half of `has_pin`, which a PIN-policy
-    \* ALWAYS key operation consumes (crates/rsk-piv/src/lib.rs:131-145). The
+    \* ALWAYS key operation consumes (crates/rsk-piv/src/lib.rs:143-157). The
     \* only status here that is a two-part thing.
     fresh,
     \* Whether OATH has an access code provisioned. It decides what a SELECT
-    \* means: `validated = !code_set` (crates/rsk-oath/src/lib.rs:1230-1234), so
+    \* means: `validated = !code_set` (crates/rsk-oath/src/lib.rs:1201-1205), so
     \* a code-less applet is unlocked by design and only a provisioned one has a
     \* status a SELECT can take away.
     oathCodeSet,
     \* Whether PW1 is the one-shot kind: EF_PW_PRIV[0] = 0 makes PW1.81 valid for
-    \* exactly one PSO:CDS (crates/rsk-openpgp/src/keys.rs:972-976), which is
+    \* exactly one PSO:CDS (crates/rsk-openpgp/src/keys.rs:984-988), which is
     \* `pin_fresh` on the other applet. Host-writable through PUT DATA C4.
     oneShotSig,
     \* Ghost: the PW1.81 freshness the requirement leaves behind, spent by every
@@ -161,7 +161,7 @@ TypeOK ==
     /\ viol  \in SUBSET InvNames
 
 \* `oathCode` starts TRUE and stays TRUE while no code is provisioned: OATH is
-\* default-OPEN, unlike the other two (crates/rsk-oath/src/lib.rs:243-244).
+\* default-OPEN, unlike the other two (crates/rsk-oath/src/lib.rs:214-215).
 Init ==
     /\ sel   = NoApplet
     /\ held  = [r \in Refs |-> r = "oathCode"]
@@ -174,9 +174,9 @@ Init ==
     /\ viol  = {}
 
 \* Every status an applet owns, gone. This is `Session::reset`
-\* (crates/rsk-piv/src/lib.rs:165-169), `pin::Session::reset`
+\* (crates/rsk-piv/src/lib.rs:177-181), `pin::Session::reset`
 \* (crates/rsk-openpgp/src/pin.rs:67-80) and OATH's `deselect`
-\* (crates/rsk-oath/src/lib.rs:1200-1204) -- three functions, one meaning.
+\* (crates/rsk-oath/src/lib.rs:1171-1175) -- three functions, one meaning.
 ClearedFor(h, a) ==
     [r \in Refs |-> IF RefOwner(r) = a
                       THEN (r = "oathCode" /\ ~oathCodeSet) ELSE h[r]]
@@ -193,7 +193,7 @@ AllCleared == [r \in Refs |-> r = "oathCode" /\ ~oathCodeSet]
 \* 800-73-4 pt2 3.1.1 makes it a `shall`, OpenPGP 3.4.1 4.2 says access status
 \* holds until a select to a DIFFERENT DF, and a YubiKey 5.7.4 was measured
 \* keeping all of it). OATH does not: it ignores the flag and re-locks
-\* (crates/rsk-oath/src/lib.rs:1208), which is a recorded, deliberate asymmetry
+\* (crates/rsk-oath/src/lib.rs:1179), which is a recorded, deliberate asymmetry
 \* rather than an oversight -- it has no oracle reading behind it.
 Reselect(a) ==
     /\ sel = a
@@ -242,9 +242,9 @@ SelectOther(a) ==
 (* disagree about what a refusal costs -- see the invariant's comment.      *)
 (***************************************************************************)
 
-\* PIV VERIFY (crates/rsk-piv/src/lib.rs:487-501): success sets has_pin AND
+\* PIV VERIFY (crates/rsk-piv/src/lib.rs:499-513): success sets has_pin AND
 \* pin_fresh, refusal clears both, through `Session::set_pin`
-\* (crates/rsk-piv/src/lib.rs:149-152) which is the only writer of either.
+\* (crates/rsk-piv/src/lib.rs:161-164) which is the only writer of either.
 PivVerify(ok) ==
     /\ sel = Piv
     /\ held' = [held EXCEPT !["pivPin"] = ok]
@@ -255,7 +255,7 @@ PivVerify(ok) ==
     /\ UNCHANGED << sel, oneShotSig, psig, oathCodeSet, viol >>
 
 \* PIV CHANGE REFERENCE DATA / RESET RETRY COUNTER take no `&mut Session` at all
-\* (crates/rsk-piv/src/lib.rs:509-543), so a refused change costs the standing
+\* (crates/rsk-piv/src/lib.rs:521-555), so a refused change costs the standing
 \* status NOTHING. Deliberate, and settled by measurement rather than taste:
 \* SP 800-73-4 pt2 3.2.2/3.2.3 say the security status is unchanged and a real
 \* YubiKey keeps it.
@@ -298,7 +298,7 @@ PgpChangeRefused(r) ==
     /\ refused' = r
     /\ UNCHANGED << sel, fresh, pfresh, oneShotSig, oathCodeSet, viol >>
 
-\* OATH VERIFY PIN (crates/rsk-oath/src/lib.rs:1172-1187) clears BOTH flags at
+\* OATH VERIFY PIN (crates/rsk-oath/src/lib.rs:1143-1158) clears BOTH flags at
 \* entry and re-sets them only on success: `validated` is reachable THROUGH the
 \* OTP PIN as well as through the access code, so one bool carries two
 \* provenances and both have to fall.
@@ -311,7 +311,7 @@ OathVerifyOtpPin(ok) ==
     /\ UNCHANGED << sel, fresh, pfresh, oneShotSig, psig, oathCodeSet, viol >>
 
 \* aa47867: a refused CHANGE of the OTP PIN drops the standing authentication,
-\* both halves (crates/rsk-oath/src/lib.rs:1148-1149). Before it, `0xB2` VERIFY
+\* both halves (crates/rsk-oath/src/lib.rs:1119-1120). Before it, `0xB2` VERIFY
 \* closed the safe on a wrong PIN and `0xB3` CHANGE did not -- so the whole retry
 \* budget could be burned through CHANGE while GET CREDENTIAL went on serving
 \* the stored password.
@@ -326,7 +326,7 @@ OathChangeRefused ==
 
 \* The access code is a MAC challenge-response with NO retry counter, so a wrong
 \* answer costs nothing and keeps the standing unlock
-\* (crates/rsk-oath/src/lib.rs:539-541) -- measured on a YubiKey 5.7.4 from a
+\* (crates/rsk-oath/src/lib.rs:510-512) -- measured on a YubiKey 5.7.4 from a
 \* genuinely locked applet. Two failed-auth rules inside one applet, and this is
 \* the second: it must NOT write `refused`, because nothing was refused that had
 \* a budget to protect.
@@ -355,7 +355,7 @@ OathValidateRefused ==
                     refused >>
 
 \* SET CODE provisions the access code and re-locks
-\* (crates/rsk-oath/src/lib.rs:405-410).
+\* (crates/rsk-oath/src/lib.rs:376-381).
 OathSetCode ==
     /\ sel = Oath
     /\ ~oathCodeSet
@@ -368,7 +368,7 @@ OathValidateOk ==
     /\ held' = [held EXCEPT !["oathCode"] = TRUE]
     /\ UNCHANGED << sel, fresh, pfresh, oneShotSig, psig, oathCodeSet, refused, viol >>
 
-\* `73 00` -- remove the access code (crates/rsk-oath/src/lib.rs:363-369): drop
+\* `73 00` -- remove the access code (crates/rsk-oath/src/lib.rs:334-340): drop
 \* EF_OATH_CODE and leave the applet default-open (the Rust sets `validated =
 \* true` on the way out at :368, which over no code is the same TRUE). The one
 \* gate is the command's own validated test at :356-358, shared with the install
@@ -389,7 +389,7 @@ OathRemoveCode ==
 
 \* PIV's 9B mutual authenticate. Its own status, and it authorises the admin
 \* surface only -- never a key operation, which is what `pin_satisfied`
-\* (crates/rsk-piv/src/auth.rs:58-66) tests instead.
+\* (crates/rsk-piv/src/auth.rs:57-65) tests instead.
 PivMgmAuth(ok) ==
     /\ sel = Piv
     /\ held' = [held EXCEPT !["pivMgm"] = ok]
@@ -423,7 +423,7 @@ PgpKeyOp(r) ==
 \* PUT DATA C4 -- the PW status byte that makes PW1.81 one-shot -- is an
 \* ADMINISTRATIVE write, gated on PW3 by `write_authorized`
 \* (crates/rsk-openpgp/src/putdata.rs:59-65, called at
-\* crates/rsk-openpgp/src/lib.rs:284-286), and it is the only writer of that
+\* crates/rsk-openpgp/src/lib.rs:253-255), and it is the only writer of that
 \* status. The gate was `held["pw3"]` and nothing else: an enabling conjunct with
 \* no Policy, in the family this module's sibling README spends four sections on.
 \* Removing it left the reachable space BIT-IDENTICAL at 666 distinct states,
@@ -471,7 +471,7 @@ AdminOp(a) ==
 
 \* A private-key GENERAL AUTHENTICATE at a PIN-policy-ALWAYS slot: `pin_satisfied`
 \* is `has_pin && pin_fresh` there, and the operation SPENDS the freshness
-\* (crates/rsk-piv/src/auth.rs:114-118) so one VERIFY buys one signature. The
+\* (crates/rsk-piv/src/auth.rs:113-117) so one VERIFY buys one signature. The
 \* management-key status opens nothing here -- it is the admin surface's.
 PivKeyOpGuard  == IF BugPinFreshNotSpent THEN held["pivPin"]
                                          ELSE held["pivPin"] /\ fresh
@@ -489,7 +489,7 @@ PivKeyOp ==
 
 \* SCardDisconnect(SCARD_RESET_CARD) / CCID_POWER_OFF / CCID_POWER_ON:
 \* `Dispatcher::reset_card` deselects, which drops the selected applet's
-\* security status (crates/rsk-device/src/ccid.rs:346-361,
+\* security status (crates/rsk-device/src/ccid.rs:348-363,
 \* crates/rsk-sdk/src/applet.rs:222-230). This is the one the `cross_applet`
 \* fuzz target already watches, one layer down.
 \* Its own trailing UNCHANGED named `psig` while the ELSE branch assigned it, so
@@ -536,7 +536,7 @@ FidoReset == UNCHANGED vars
 \* `Fs::factory_wipe` (crates/rsk-fs/src/fs.rs:326-373) is FLASH-only: it never
 \* sees an applet, so every in-RAM status here stands over freshly-defaulted
 \* verifiers until the reboot both callers queue immediately after
-\* (crates/rsk-device/src/ccid.rs:302-311, crates/rsk-display/src/pin.rs:663-671).
+\* (crates/rsk-device/src/ccid.rs:304-313, crates/rsk-display/src/pin.rs:663-671).
 \* Modelled as the wipe AND its reboot in one step, which is what makes the
 \* window unobservable -- and that is exactly the assumption to attack if anyone
 \* ever separates them.
@@ -578,7 +578,7 @@ Spec == Init /\ [][Next]_vars
 \* all, so no status may outlive the selection that bought it.
 \*
 \* `oathCode` is exempt while no access code is provisioned, because OATH is
-\* default-OPEN there (crates/rsk-oath/src/lib.rs:243-244) -- an unlocked
+\* default-OPEN there (crates/rsk-oath/src/lib.rs:214-215) -- an unlocked
 \* code-less applet is not a status anybody authenticated for.
 NoStatusOutsideItsSelection ==
     \A r \in Refs :
@@ -620,9 +620,9 @@ NoKeyOpOnTheAdminStatus ==
 \* THE OTHER HALF OF THE REFUSAL RULE, and it points the opposite way: two
 \* refusals must cost NOTHING, and each is settled by its own authority rather
 \* than by a cross-applet principle. PIV's CHANGE REFERENCE DATA takes no
-\* `&mut Session` at all (crates/rsk-piv/src/lib.rs:509-543) -- SP 800-73-4 pt2
+\* `&mut Session` at all (crates/rsk-piv/src/lib.rs:521-555) -- SP 800-73-4 pt2
 \* 3.2.2/3.2.3, plus a measured YubiKey 5.7.4. OATH's access-code VALIDATE keeps
-\* the standing unlock (crates/rsk-oath/src/lib.rs:539-541), because a MAC
+\* the standing unlock (crates/rsk-oath/src/lib.rs:510-512), because a MAC
 \* challenge-response has no retry counter for a refusal to protect.
 \*
 \* So THREE APPLETS KEEP THREE RULES and no single one can be written: OpenPGP's
@@ -649,7 +649,7 @@ ReselectPreservesAccessStatus == "ReselectPreservesAccessStatus" \notin viol
 
 \* THE REPAIR OF A RECORDED HOLE. Removing the access code (`73 00`) is a
 \* code-set mutation and needs the validated status the code bought
-\* (crates/rsk-oath/src/lib.rs:356-358) -- but an unauthenticated removal is
+\* (crates/rsk-oath/src/lib.rs:327-329) -- but an unauthenticated removal is
 \* DEFINITIONALLY invisible to NoStatusOutsideItsSelection: its oathCode
 \* exemption fires exactly when ~oathCodeSet, and the removal itself sets that.
 \* No state the violation produces can trip a state predicate, so the rule

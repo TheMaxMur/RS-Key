@@ -88,7 +88,7 @@ const CTAP_READ_CONFIG: u8 = 0x42;
 #[cfg(not(feature = "strict-config"))]
 const CTAP_WRITE_CONFIG: u8 = 0x43;
 
-pub struct CcidApplets<'a, S: Storage, R: crate::Rng + 'static, VP: rsk_vendor::Platform> {
+pub struct CcidApplets<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform> {
     fs: &'a RefCell<Fs<S>>,
     rng: &'a RefCell<R>,
     hooks: &'a RefCell<dyn Hooks<S>>,
@@ -146,15 +146,17 @@ pub fn gates_wiped_last(fid: u16) -> bool {
         || rsk_openpgp::terminate::is_openpgp_gate_fid(fid)
 }
 
-impl<'a, S: Storage, R: crate::Rng + 'static, VP: rsk_vendor::Platform> CcidApplets<'a, S, R, VP> {
+impl<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform>
+    CcidApplets<'a, S, R, VP>
+{
     /// `serial_id` is the device chip id (its BCD-encoded 8-digit serial goes into
     /// the OpenPGP full AID); `rng` is the hardware TRNG, shared with the CTAPHID
     /// handler. `presence` is the one physical presence source (BOOTSEL by
     /// default, optionally a GPIO button, or the screen): it was five parameters
-    /// of the same `&RefCell` because each applet names its own trait, and the
-    /// caller's concrete type coerces to every one of them here instead.
+    /// of the same `&RefCell` back when each applet named its own trait, and the
+    /// caller's concrete type coerces to `rsk_sdk::UserPresence` here instead.
     #[allow(clippy::too_many_arguments)] // one-time wiring from the worker
-    pub fn new<PR: crate::UserPresence + 'static>(
+    pub fn new<PR: rsk_sdk::UserPresence + 'static>(
         fs: &'a RefCell<Fs<S>>,
         rng: &'a RefCell<R>,
         hooks: &'a RefCell<dyn Hooks<S>>,
@@ -476,7 +478,7 @@ impl<'a, S: Storage, R: crate::Rng + 'static, VP: rsk_vendor::Platform> CcidAppl
         let mut rnd = [0u8; 2];
         {
             let mut r = self.rng.borrow_mut();
-            rsk_fido::Rng::fill(&mut *r, &mut rnd);
+            rsk_sdk::Rng::fill(&mut *r, &mut rnd);
         }
         let mut out = [0u8; rsk_otp::ticket::MAX_TICKET];
         let mut fsb = self.fs.borrow_mut();

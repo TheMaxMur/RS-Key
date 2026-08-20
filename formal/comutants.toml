@@ -896,7 +896,7 @@ replace = """
 """
 slice = ["cargo", "test", "-p", "rsk-openpgp"]
 expect = "killed"
-note = "pin_wrong_retry stops charging the attempt: unlimited PW1/PW3/RC guesses at full speed. Deliberately the OpenPGP half of this switch, so the lattice's three entries cover both applets rather than PIV three times; PIV's twin is the `set_retries_left(fs, retry, left - 1)` at crates/rsk-piv/src/lib.rs:1218."
+note = "pin_wrong_retry stops charging the attempt: unlimited PW1/PW3/RC guesses at full speed. Deliberately the OpenPGP half of this switch, so the lattice's three entries cover both applets rather than PIV three times; PIV's twin is the `set_retries_left(fs, retry, left - 1)` at crates/rsk-piv/src/lib.rs:1230."
 
 [comutant.BugRecoveryWithoutSecret]
 status = "patch"
@@ -1027,7 +1027,7 @@ replace2 = """
 """
 slice = ["cargo", "test", "-p", "rsk-otp"]
 expect = "killed"
-note = "a programmed slot is overwritten (find) or updated (find2) without its six-byte access code. Two anchors because the gate is written twice — the model has ONE OtpMutate switch, so patching one site would leave the other half of the switch unmeasured. The swap path states the same rule a THIRD time, at crates/rsk-otp/src/lib.rs:570-574, and is left unpatched: its gate is a swap's own move/delete rule rather than the configure/update pair OtpMutate models."
+note = "a programmed slot is overwritten (find) or updated (find2) without its six-byte access code. Two anchors because the gate is written twice — the model has ONE OtpMutate switch, so patching one site would leave the other half of the switch unmeasured. The swap path states the same rule a THIRD time, at crates/rsk-otp/src/lib.rs:541-545, and is left unpatched: its gate is a swap's own move/delete rule rather than the configure/update pair OtpMutate models."
 
 [comutant.BugOtpCounterRepeats]
 status = "patch"
@@ -1074,17 +1074,17 @@ replace = """
 """
 slice = ["cargo", "test", "-p", "rsk-piv"]
 expect = "killed"
-note = "637ed98 taken back out on the PIV half: every SELECT resets, including the re-SELECT SP 800-73-4 pt2 §3.1.1 says shall leave every indicator unchanged. OpenPGP's twin is crates/rsk-openpgp/src/lib.rs:371-374."
+note = "637ed98 taken back out on the PIV half: every SELECT resets, including the re-SELECT SP 800-73-4 pt2 §3.1.1 says shall leave every indicator unchanged. OpenPGP's twin is crates/rsk-openpgp/src/lib.rs:340-343."
 
 [comutant.BugCardResetKeepsStatus]
 status = "unreachable"
 evidence = """the applets' deselect is redundant with their own fresh SELECT, so
 removing it from the ICC power transition changes nothing observable. Three
-applets carry an access status and implement deselect — crates/rsk-piv/src/lib.rs:356-358
-(sess.reset), crates/rsk-openpgp/src/lib.rs:353-355 (reset_session), crates/rsk-oath/src/lib.rs:1198-1205
+applets carry an access status and implement deselect — crates/rsk-piv/src/lib.rs:368-370
+(sess.reset), crates/rsk-openpgp/src/lib.rs:322-324 (reset_session), crates/rsk-oath/src/lib.rs:1169-1176
 (validated + otp_pin_verified) — and all three ALSO re-lock in select: piv and
 openpgp on `if !reselect`, oath by recomputing `validated = !code_set` and clearing
-otp_pin_verified unconditionally (crates/rsk-oath/src/lib.rs:1234-1235). After Dispatcher::reset_card
+otp_pin_verified unconditionally (crates/rsk-oath/src/lib.rs:1205-1206). After Dispatcher::reset_card
 takes `self.current` (crates/rsk-sdk/src/applet.rs:227) every route back to an applet is a
 `select(reselect = false)`, so no reachable command sees an inherited status.
 The first patch here neutered the WHOLE reset_card call and scored a false kill:
@@ -1192,7 +1192,7 @@ note = "both layers, as the model's switch has them: the ALWAYS arm stops readin
 
 [comutant.BugPinFreshOutlivesPin]
 status = "unreachable"
-evidence = "the clamp is unobservable in today's Rust. `pin_fresh` has exactly one reader — crates/rsk-piv/src/auth.rs:64, `PINPOLICY_ALWAYS => sess.has_pin && sess.pin_fresh` — and it is CONJOINED with the status it refines, so a freshness that outlives `has_pin` authorises nothing: the guard is already false on the other half. `Session::set_pin` (crates/rsk-piv/src/lib.rs:149-152) is the only writer that sets it TRUE, and `GenAuth::spend_pin` (crates/rsk-piv/src/auth.rs:116-120) only ever sets it false. The first patch here scored a false kill by taking `self.pin_fresh = verified` out of `set_pin`, which is the INVERSE defect — it makes freshness unreachable rather than immortal, fail-closed rather than fail-open, and all 11 failures were 9000-expected-got-6982. The faithful mutant (`if verified { self.pin_fresh = true; }` — grant kept, clamp dropped) measures GREEN over 130 tests. The model keeps `pfresh` as a second requirement-side copy precisely to expose a split the Rust does not have."
+evidence = "the clamp is unobservable in today's Rust. `pin_fresh` has exactly one reader — crates/rsk-piv/src/auth.rs:63, `PINPOLICY_ALWAYS => sess.has_pin && sess.pin_fresh` — and it is CONJOINED with the status it refines, so a freshness that outlives `has_pin` authorises nothing: the guard is already false on the other half. `Session::set_pin` (crates/rsk-piv/src/lib.rs:161-164) is the only writer that sets it TRUE, and `GenAuth::spend_pin` (crates/rsk-piv/src/auth.rs:115-119) only ever sets it false. The first patch here scored a false kill by taking `self.pin_fresh = verified` out of `set_pin`, which is the INVERSE defect — it makes freshness unreachable rather than immortal, fail-closed rather than fail-open, and all 11 failures were 9000-expected-got-6982. The faithful mutant (`if verified { self.pin_fresh = true; }` — grant kept, clamp dropped) measures GREEN over 130 tests. The model keeps `pfresh` as a second requirement-side copy precisely to expose a split the Rust does not have."
 
 [comutant.BugSigPinNotSpent]
 status = "patch"
@@ -1230,7 +1230,7 @@ replace = """
 """
 slice = ["cargo", "test", "-p", "rsk-openpgp"]
 expect = "killed"
-note = "the converse of BugAdminOpensKeyOps: a USER status opens PUT DATA's administrative surface. PIV states the same rule at seven separate 9B management-key gates (crates/rsk-piv/src/lib.rs:254, 560, 631, 759, 996, 1056 and crates/rsk-piv/src/keygen.rs:585), none of them patched here."
+note = "the converse of BugAdminOpensKeyOps: a USER status opens PUT DATA's administrative surface. PIV states the same rule at seven separate 9B management-key gates (crates/rsk-piv/src/lib.rs:266, 572, 643, 771, 1008, 1068 and crates/rsk-piv/src/keygen.rs:585), none of them patched here."
 
 [comutant.BugRefusedValidateGrants]
 status = "patch"
@@ -1279,7 +1279,7 @@ pub fn put_pw_status<S: Storage>(fs: &mut Fs<S>, sess: &Session, data: &[u8]) ->
 """
 slice = ["cargo", "test", "-p", "rsk-openpgp"]
 expect = "killed"
-note = "PUT DATA C4 taken off PW3: a user status clears the one-shot flag and then signs for ever on a single PW1 VERIFY — BugSigPinNotSpent's requirement removed from underneath rather than through the door it watches. BOTH layers, because C4 is double-gated: the model's own comment names `write_authorized` (called at crates/rsk-openpgp/src/lib.rs:285-287) as the guard, and widening only put_pw_status's inner restatement left the wire command still answering 6982 — a kill that measured a defence in depth rather than the modelled defect. Its sibling BugUserStatusOpensAdmin widens the same function's whole else-arm; this one widens the C4 case alone, which is the door PgpSetPwStatus watches."
+note = "PUT DATA C4 taken off PW3: a user status clears the one-shot flag and then signs for ever on a single PW1 VERIFY — BugSigPinNotSpent's requirement removed from underneath rather than through the door it watches. BOTH layers, because C4 is double-gated: the model's own comment names `write_authorized` (called at crates/rsk-openpgp/src/lib.rs:254-256) as the guard, and widening only put_pw_status's inner restatement left the wire command still answering 6982 — a kill that measured a defence in depth rather than the modelled defect. Its sibling BugUserStatusOpensAdmin widens the same function's whole else-arm; this one widens the C4 case alone, which is the door PgpSetPwStatus watches."
 
 [comutant.BugPivChangeResetsStatus]
 status = "patch"

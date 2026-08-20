@@ -56,31 +56,7 @@ impl Rng for SeqRng {
 }
 
 struct CountRng(u8);
-impl rsk_oath::Rng for CountRng {
-    fn fill(&mut self, b: &mut [u8]) {
-        for x in b.iter_mut() {
-            *x = self.0;
-            self.0 = self.0.wrapping_add(1);
-        }
-    }
-}
-impl rsk_openpgp::Rng for CountRng {
-    fn fill(&mut self, b: &mut [u8]) {
-        for x in b.iter_mut() {
-            *x = self.0;
-            self.0 = self.0.wrapping_add(1);
-        }
-    }
-}
-impl rsk_rescue::Rng for CountRng {
-    fn fill(&mut self, b: &mut [u8]) {
-        for x in b.iter_mut() {
-            *x = self.0;
-            self.0 = self.0.wrapping_add(1);
-        }
-    }
-}
-impl rsk_otp::Rng for CountRng {
+impl rsk_sdk::Rng for CountRng {
     fn fill(&mut self, b: &mut [u8]) {
         for x in b.iter_mut() {
             *x = self.0;
@@ -1005,23 +981,7 @@ fn miri_cross_applet() {
     use rsk_sdk::Dispatcher;
 
     struct R(u64);
-    impl rsk_openpgp::Rng for R {
-        fn fill(&mut self, b: &mut [u8]) {
-            for x in b.iter_mut() {
-                self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1);
-                *x = (self.0 >> 33) as u8;
-            }
-        }
-    }
-    impl rsk_oath::Rng for R {
-        fn fill(&mut self, b: &mut [u8]) {
-            for x in b.iter_mut() {
-                self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1);
-                *x = (self.0 >> 33) as u8;
-            }
-        }
-    }
-    impl rsk_otp::Rng for R {
+    impl rsk_sdk::Rng for R {
         fn fill(&mut self, b: &mut [u8]) {
             for x in b.iter_mut() {
                 self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1);
@@ -1303,17 +1263,10 @@ fn miri_piv_apdu() {
 #[test]
 fn miri_rescue_apdu() {
     use rsk_rescue::rollback::{ROLLBACK_REQUIRED_BIT, RollbackRaw};
-    use rsk_rescue::{Confirm, Platform, Presence, RescueApplet, SecureBootStatus, UserPresence};
+    use rsk_rescue::{AlwaysConfirm, Platform, RescueApplet, SecureBootStatus};
 
     const SERIAL_ID: [u8; 8] = [0xAA, 0xBB, 0xCC, 0xDD, 5, 6, 7, 8];
     const SERIAL_HASH: [u8; 32] = [0x22; 32];
-
-    struct AlwaysConfirm;
-    impl UserPresence for AlwaysConfirm {
-        fn request(&mut self, _c: Confirm<'_>) -> Presence {
-            Presence::Confirmed
-        }
-    }
 
     struct FakePlatform {
         time: Option<u32>,

@@ -222,129 +222,38 @@ impl ButtonPresence {
 }
 
 #[cfg(not(feature = "display"))]
-impl rsk_fido::UserPresence for ButtonPresence {
-    fn request(&mut self, _confirm: rsk_fido::Confirm<'_>) -> rsk_fido::Presence {
+impl rsk_sdk::UserPresence for ButtonPresence {
+    /// A smartcard touch policy (OpenPGP UIF, a PIV slot, OATH/OTP, management,
+    /// rescue, vendor). Those applets are reached over CCID, which carries no
+    /// `CTAPHID_CANCEL`, so a cancel is just a non-confirmation here.
+    fn request(&mut self, _confirm: rsk_sdk::Confirm<'_>) -> rsk_sdk::Presence {
         #[cfg(not(feature = "no-touch"))]
         {
             match self.wait() {
-                Outcome::Confirmed => rsk_fido::Presence::Confirmed,
-                Outcome::Timeout => rsk_fido::Presence::Timeout,
-                Outcome::Cancelled => rsk_fido::Presence::Cancelled,
+                Outcome::Confirmed => rsk_sdk::Presence::Confirmed,
+                Outcome::Timeout | Outcome::Cancelled => rsk_sdk::Presence::Timeout,
             }
         }
         #[cfg(feature = "no-touch")]
         {
-            rsk_fido::Presence::Confirmed
+            rsk_sdk::Presence::Confirmed
         }
     }
-}
 
-#[cfg(not(feature = "display"))]
-impl rsk_openpgp::UserPresence for ButtonPresence {
-    fn request(&mut self, _confirm: rsk_openpgp::Confirm<'_>) -> rsk_openpgp::Presence {
+    /// A CTAP2 ceremony, which *can* be cancelled mid-wait — the in-flight
+    /// command owes `CTAP2_ERR_KEEPALIVE_CANCEL`, so report it.
+    fn request_ceremony(&mut self, _confirm: rsk_sdk::Confirm<'_>) -> rsk_sdk::Presence {
         #[cfg(not(feature = "no-touch"))]
         {
             match self.wait() {
-                Outcome::Confirmed => rsk_openpgp::Presence::Confirmed,
-                // OpenPGP UIF runs over CCID, which carries no CTAPHID_CANCEL, so
-                // Cancelled is unreachable here; treat it as a non-confirmation.
-                Outcome::Timeout | Outcome::Cancelled => rsk_openpgp::Presence::Timeout,
+                Outcome::Confirmed => rsk_sdk::Presence::Confirmed,
+                Outcome::Timeout => rsk_sdk::Presence::Timeout,
+                Outcome::Cancelled => rsk_sdk::Presence::Cancelled,
             }
         }
         #[cfg(feature = "no-touch")]
         {
-            rsk_openpgp::Presence::Confirmed
-        }
-    }
-}
-
-#[cfg(not(feature = "display"))]
-impl rsk_otp::UserPresence for ButtonPresence {
-    fn request(&mut self, _confirm: rsk_otp::Confirm<'_>) -> rsk_otp::Presence {
-        #[cfg(not(feature = "no-touch"))]
-        {
-            match self.wait() {
-                Outcome::Confirmed => rsk_otp::Presence::Confirmed,
-                // CCID-only applet: no CTAPHID_CANCEL reaches it.
-                Outcome::Timeout | Outcome::Cancelled => rsk_otp::Presence::Timeout,
-            }
-        }
-        #[cfg(feature = "no-touch")]
-        {
-            rsk_otp::Presence::Confirmed
-        }
-    }
-}
-
-#[cfg(not(feature = "display"))]
-impl rsk_oath::UserPresence for ButtonPresence {
-    fn request(&mut self, _confirm: rsk_oath::Confirm<'_>) -> rsk_oath::Presence {
-        #[cfg(not(feature = "no-touch"))]
-        {
-            match self.wait() {
-                Outcome::Confirmed => rsk_oath::Presence::Confirmed,
-                // CCID-only applet: no CTAPHID_CANCEL reaches it.
-                Outcome::Timeout | Outcome::Cancelled => rsk_oath::Presence::Timeout,
-            }
-        }
-        #[cfg(feature = "no-touch")]
-        {
-            rsk_oath::Presence::Confirmed
-        }
-    }
-}
-
-#[cfg(not(feature = "display"))]
-impl rsk_rescue::UserPresence for ButtonPresence {
-    fn request(&mut self, _confirm: rsk_rescue::Confirm<'_>) -> rsk_rescue::Presence {
-        #[cfg(not(feature = "no-touch"))]
-        {
-            match self.wait() {
-                Outcome::Confirmed => rsk_rescue::Presence::Confirmed,
-                // CCID-only applet: no CTAPHID_CANCEL reaches it.
-                Outcome::Timeout | Outcome::Cancelled => rsk_rescue::Presence::Timeout,
-            }
-        }
-        #[cfg(feature = "no-touch")]
-        {
-            rsk_rescue::Presence::Confirmed
-        }
-    }
-}
-
-#[cfg(not(feature = "display"))]
-impl rsk_vendor::UserPresence for ButtonPresence {
-    fn request(&mut self, _confirm: rsk_vendor::Confirm<'_>) -> rsk_vendor::Presence {
-        #[cfg(not(feature = "no-touch"))]
-        {
-            match self.wait() {
-                Outcome::Confirmed => rsk_vendor::Presence::Confirmed,
-                // Reachable over both transports, but a cancel is a decline here
-                // either way — the reboot gate has nothing to resume.
-                Outcome::Timeout | Outcome::Cancelled => rsk_vendor::Presence::Timeout,
-            }
-        }
-        #[cfg(feature = "no-touch")]
-        {
-            rsk_vendor::Presence::Confirmed
-        }
-    }
-}
-
-#[cfg(not(feature = "display"))]
-impl rsk_mgmt::UserPresence for ButtonPresence {
-    fn request(&mut self, _confirm: rsk_mgmt::Confirm<'_>) -> rsk_mgmt::Presence {
-        #[cfg(not(feature = "no-touch"))]
-        {
-            match self.wait() {
-                Outcome::Confirmed => rsk_mgmt::Presence::Confirmed,
-                // CCID-only applet: no CTAPHID_CANCEL reaches it.
-                Outcome::Timeout | Outcome::Cancelled => rsk_mgmt::Presence::Timeout,
-            }
-        }
-        #[cfg(feature = "no-touch")]
-        {
-            rsk_mgmt::Presence::Confirmed
+            rsk_sdk::Presence::Confirmed
         }
     }
 }

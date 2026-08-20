@@ -1955,7 +1955,7 @@ fn rsa_keepalive_generate_path_produces_signable_key() {
     let mut kg = rsk_rsa::RsaKeygen::new(nbits);
     let mut sieve = rsk_rsa::IncrementalSieve::new();
     let key = loop {
-        match kg.step(&mut sieve, &mut *rng.borrow_mut()) {
+        match kg.step(&mut sieve, &mut crate::keys::RsaRng(&mut *rng.borrow_mut())) {
             rsk_rsa::RsaStep::Done(k) => break k,
             rsk_rsa::RsaStep::Failed => panic!("keygen failed"),
             rsk_rsa::RsaStep::More => {}
@@ -2049,7 +2049,7 @@ fn rsa4096_generate_path_produces_signable_key() {
     let mut kg = rsk_rsa::RsaKeygen::new(nbits);
     let mut sieve = rsk_rsa::IncrementalSieve::new();
     let key = loop {
-        match kg.step(&mut sieve, &mut *rng.borrow_mut()) {
+        match kg.step(&mut sieve, &mut crate::keys::RsaRng(&mut *rng.borrow_mut())) {
             rsk_rsa::RsaStep::Done(k) => break k,
             rsk_rsa::RsaStep::Failed => panic!("keygen failed"),
             rsk_rsa::RsaStep::More => {}

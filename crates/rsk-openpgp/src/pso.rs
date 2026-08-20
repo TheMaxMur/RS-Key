@@ -107,7 +107,8 @@ fn try_pso<S: Storage>(
     if algo0 == ALGO_RSA {
         if (p1, p2) == (0x9E, 0x9A) {
             let crt = load_rsa_crt(dev, fs, sess, pk_fid)?;
-            let n = rsk_rsa::pkcs1v15::rsa_sign_crt(&crt, data, rng, out).map_err(rsa_sw)?;
+            let n = rsk_rsa::pkcs1v15::rsa_sign_crt(&crt, data, &mut crate::keys::RsaRng(rng), out)
+                .map_err(rsa_sw)?;
             inc_sig_count(fs, sess)?;
             return Ok(n);
         }

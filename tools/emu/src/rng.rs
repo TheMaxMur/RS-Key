@@ -40,33 +40,9 @@ impl EmuRng {
     }
 }
 
-// One backend behind each applet crate's own `Rng`, exactly as `firmware`'s
-// `FidoRng` does — the crates deliberately don't share a trait.
-impl rsk_fido::Rng for EmuRng {
-    fn fill(&mut self, buf: &mut [u8]) {
-        self.draw(buf);
-    }
-}
-
-impl rsk_openpgp::Rng for EmuRng {
-    fn fill(&mut self, buf: &mut [u8]) {
-        self.draw(buf);
-    }
-}
-
-impl rsk_oath::Rng for EmuRng {
-    fn fill(&mut self, buf: &mut [u8]) {
-        self.draw(buf);
-    }
-}
-
-impl rsk_otp::Rng for EmuRng {
-    fn fill(&mut self, buf: &mut [u8]) {
-        self.draw(buf);
-    }
-}
-
-impl rsk_rescue::Rng for EmuRng {
+// One impl for every applet, exactly as `firmware`'s `FidoRng` does — the
+// randomness seam is `rsk-sdk`'s, declared once for the whole applet tier.
+impl rsk_sdk::Rng for EmuRng {
     fn fill(&mut self, buf: &mut [u8]) {
         self.draw(buf);
     }

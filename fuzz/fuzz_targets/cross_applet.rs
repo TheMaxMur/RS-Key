@@ -115,29 +115,15 @@ const OP_SET_CAPS: u8 = 0xF6;
 struct Board;
 impl Hooks<RamStorage> for Board {}
 
-/// One physical button behind all eight applet traits, as on the device. Confirms
-/// instantly so the presence-gated commands stay reachable for the fuzzer.
+/// One physical button behind every applet, as on the device. Confirms instantly
+/// so the presence-gated commands stay reachable for the fuzzer.
 struct Finger;
 
-macro_rules! impl_presence {
-    ($($m:ident),+ $(,)?) => {$(
-        impl $m::UserPresence for Finger {
-            fn request(&mut self, _confirm: $m::Confirm<'_>) -> $m::Presence {
-                $m::Presence::Confirmed
-            }
-        }
-    )+};
+impl rsk_sdk::UserPresence for Finger {
+    fn request(&mut self, _confirm: rsk_sdk::Confirm<'_>) -> rsk_sdk::Presence {
+        rsk_sdk::Presence::Confirmed
+    }
 }
-
-impl_presence!(
-    rsk_fido,
-    rsk_openpgp,
-    rsk_oath,
-    rsk_otp,
-    rsk_mgmt,
-    rsk_rescue,
-    rsk_vendor,
-);
 
 /// Deterministic host RNG; one instance feeds every applet, mirroring the single
 /// shared TRNG on device.
@@ -152,23 +138,11 @@ impl SeqRng {
     }
 }
 
-macro_rules! impl_rng {
-    ($($t:path),+ $(,)?) => {$(
-        impl $t for SeqRng {
-            fn fill(&mut self, buf: &mut [u8]) {
-                self.next(buf)
-            }
-        }
-    )+};
+impl rsk_sdk::Rng for SeqRng {
+    fn fill(&mut self, buf: &mut [u8]) {
+        self.next(buf)
+    }
 }
-
-impl_rng!(
-    rsk_fido::Rng,
-    rsk_openpgp::Rng,
-    rsk_oath::Rng,
-    rsk_otp::Rng,
-    rsk_rescue::Rng,
-);
 
 /// The rescue applet's board: no secure boot, no fuse this may burn, a session
 /// clock. Its deep OTP-lock / rollback arms belong to the dedicated `rescue_apdu`

@@ -30,7 +30,7 @@ const P1_CANCEL: u8 = 0x11;
 
 /// FIDO over CCID. Holds no FIDO state of its own; every field is a handle the
 /// CTAPHID transport also holds.
-pub struct FidoCcidApplet<'a, R: crate::Rng + 'static> {
+pub struct FidoCcidApplet<'a, R: rsk_sdk::Rng + 'static> {
     /// **The device's one FIDO session state**, borrowed from the worker. A second
     /// copy would give a host a second per-boot [`rsk_fido::consts::PIN_MISMATCH_LIMIT`]
     /// budget — six PIN guesses per power cycle instead of three — which is exactly
@@ -39,7 +39,7 @@ pub struct FidoCcidApplet<'a, R: crate::Rng + 'static> {
     /// soft lock's RAM seed, none of which may fork per transport.
     state: &'a RefCell<rsk_fido::FidoState>,
     rng: &'a RefCell<R>,
-    presence: &'a RefCell<dyn rsk_fido::UserPresence>,
+    presence: &'a RefCell<dyn rsk_sdk::UserPresence>,
     serial_id: [u8; 8],
     serial_hash: [u8; 32],
     mkek_source: Option<FusedKey>,
@@ -55,8 +55,8 @@ pub struct FidoCcidApplet<'a, R: crate::Rng + 'static> {
     enabled_caps: u16,
 }
 
-impl<'a, R: crate::Rng + 'static> FidoCcidApplet<'a, R> {
-    pub fn new<PR: crate::UserPresence + 'static>(
+impl<'a, R: rsk_sdk::Rng + 'static> FidoCcidApplet<'a, R> {
+    pub fn new<PR: rsk_sdk::UserPresence + 'static>(
         state: &'a RefCell<rsk_fido::FidoState>,
         rng: &'a RefCell<R>,
         presence: &'a RefCell<PR>,
@@ -113,7 +113,7 @@ impl<'a, R: crate::Rng + 'static> FidoCcidApplet<'a, R> {
     }
 }
 
-impl<S: Storage, R: crate::Rng + 'static> Applet<Fs<S>> for FidoCcidApplet<'_, R> {
+impl<S: Storage, R: rsk_sdk::Rng + 'static> Applet<Fs<S>> for FidoCcidApplet<'_, R> {
     fn aid(&self) -> &'static [u8] {
         rsk_fido::consts::FIDO_AID
     }

@@ -83,7 +83,7 @@ platform libraries. The per-crate detail is in the table. The shape is:
 | Crate | Contents |
 |---|---|
 | `firmware` | the only crate that touches the HAL: board bring-up, USB descriptors, executors, the worker, OTP fuse access, LED, BOOTSEL touch |
-| `rsk-sdk` | APDU parsing (cases 1–4, short + extended), BER-TLV, status words, the `Applet` trait + dispatcher |
+| `rsk-sdk` | APDU parsing (cases 1–4, short + extended), BER-TLV, status words, the `Applet` trait + dispatcher, and the seams a board hands every applet: `Rng`, `UserPresence`/`Presence` |
 | `rsk-fs` | the flash filesystem: 16-bit file ids over two `sequential-storage` KV partitions (main + high-churn counters), ACLs, metadata records |
 | `rsk-crypto` | one wrapper over RustCrypto: hashes, HMAC/HKDF, AES-CBC/CFB/GCM, ChaCha20-Poly1305, PIN KDFs, HMAC-DRBG, ML-DSA-44/-65/-87 (`rsk-mldsa`) / ML-KEM, base64url, CRC |
 | `rsk-mldsa` | stack-optimized ML-DSA (FIPS 204) for all three parameter sets: streams the matrix A on the fly (one polynomial resident, not the full k×l) so even ML-DSA-87 fits the RP2350 stack where the by-value `fips204` crate's -65 overflowed it. `no_std`, no alloc, no `unsafe`; checked byte-for-byte vs NIST ACVP KATs, with Kani proofs over the reductions and rounding |
@@ -184,10 +184,14 @@ reader name.
 ## User presence
 
 One presence button (BOOTSEL by default, or `PRESENCE_PIN`), shared by all
-applets through a `UserPresence` trait the firmware implements once: FIDO
-operations, OpenPGP UIF, PIV touch policies, OATH touch accounts, and OTP slot
-typing (1–4 presses select the slot) all gate on it. The no-touch build
-(`--features no-touch`) auto-confirms. For test rigs, not for daily use.
+applets through `rsk_sdk::UserPresence`, which the firmware implements once:
+FIDO operations, OpenPGP UIF, PIV touch policies, OATH touch accounts, and OTP
+slot typing (1–4 presses select the slot) all gate on it. The trait has two
+asks, because a screen answers them differently: `request` for a smartcard
+touch policy, and `request_ceremony` for a CTAP2 ceremony — which alone can be
+cancelled mid-wait (`CTAPHID_CANCEL`) and so alone can answer
+`Presence::Cancelled`. The no-touch build (`--features no-touch`)
+auto-confirms. For test rigs, not for daily use.
 
 ## Provenance
 

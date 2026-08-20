@@ -18,7 +18,7 @@ fn instant_presence_confirms_without_pending_signal() {
 
     assert_eq!(presence.ask(Confirm::titled("Test?")), Verdict::Confirmed);
     assert!(!signals.up_pending_for(SCOPE_FIDO));
-    assert!(!rsk_fido::UserPresence::shows_confirm(&presence));
+    assert!(!rsk_sdk::UserPresence::shows_confirm(&presence));
 }
 
 #[test]
@@ -33,7 +33,7 @@ fn terminal_presence_accepts_and_declines_lines() {
         );
 
         assert_eq!(presence.ask(Confirm::titled("Test?")), want);
-        assert!(rsk_fido::UserPresence::shows_confirm(&presence));
+        assert!(rsk_sdk::UserPresence::shows_confirm(&presence));
     }
 }
 
@@ -53,7 +53,7 @@ fn delayed_presence_marks_pending_and_auto_confirms() {
     // auto-confirming kind of authenticator, which CTAP 2.1 §6.6 does NOT exempt
     // from the reset window. Claiming otherwise let a reset through 13 s after
     // power-on — see `EmuPresence::shows_confirm`.
-    assert!(!rsk_fido::UserPresence::shows_confirm(&presence));
+    assert!(!rsk_sdk::UserPresence::shows_confirm(&presence));
 }
 
 #[test]

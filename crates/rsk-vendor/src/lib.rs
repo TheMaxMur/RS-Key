@@ -20,7 +20,10 @@ use rsk_fs::{Fs, Storage};
 // The LED config-block FID (sticky, outside both reset scopes) is single-sourced
 // in `rsk_led` so the FIDO CONFIG_WRITE/READ LED target agrees on it.
 use rsk_led::{CONF_LEN, EF_LED_CONF};
-pub use rsk_sdk::Confirm;
+// The presence check gating reboot-to-BOOTSEL, the counter write and the LED
+// write is `rsk-sdk`'s seam — the same source rescue uses, deliberately: this
+// applet is on *both* CCID and CTAPHID, so an ungated twin is a cross-AID bypass.
+pub use rsk_sdk::{AlwaysConfirm, Confirm, Presence, UserPresence};
 use rsk_sdk::{Apdu, Applet, ResBuf, Sw};
 
 #[cfg(test)]
@@ -53,32 +56,6 @@ const INS_KEYGEN_BENCH: u8 = 0x13;
 const INS_BENCH: u8 = 0x14;
 /// REBOOT. P1: 0 = warm reboot, 1 = secure reboot to BOOTSEL.
 const INS_REBOOT: u8 = 0x1F;
-
-/// Outcome of asking for a physical touch. Same shape as the sibling applets'.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Presence {
-    Confirmed,
-    Timeout,
-    Declined,
-}
-
-/// Physical user presence, gating reboot-to-BOOTSEL, the counter write, and —
-/// under `strict-config` — the LED write. The firmware backs this with the same
-/// source the rescue applet uses, deliberately: this applet is reachable over
-/// *both* CCID and CTAPHID, so an ungated twin here would be a cross-AID bypass.
-pub trait UserPresence {
-    fn request(&mut self, confirm: Confirm<'_>) -> Presence;
-}
-
-/// A [`UserPresence`] that confirms instantly — the no-button default and the
-/// host-test stand-in.
-pub struct AlwaysConfirm;
-
-impl UserPresence for AlwaysConfirm {
-    fn request(&mut self, _confirm: Confirm<'_>) -> Presence {
-        Presence::Confirmed
-    }
-}
 
 /// The hardware this applet reaches for, none of which a crate can have. Every
 /// method defaults to "this build has none", which the applet reports as

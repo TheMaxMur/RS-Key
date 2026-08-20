@@ -8,9 +8,9 @@
 
 use rsk_crypto::Device;
 use rsk_fs::{Fs, Storage};
-use rsk_openpgp::Rng;
 use rsk_openpgp::keys::{Curve, PrivKey, make_ec_pubkey_do};
 use rsk_rsa::{MAX_RSA_PUBDO, RsaKey, generate_rsa, make_rsa_response, rsa_from_pqe};
+use rsk_sdk::Rng;
 use rsk_sdk::tlv::find_tag;
 use rsk_sdk::{ResBuf, Sw};
 use zeroize::Zeroize;
@@ -364,7 +364,7 @@ pub(crate) fn generate_rsa_blocking<S: Storage>(
         Ok(p) => p,
         Err(sw) => return sw,
     };
-    let key = match generate_rsa(rng, nbytes * 8) {
+    let key = match generate_rsa(&mut crate::RsaRng(&mut *rng), nbytes * 8) {
         Ok(k) => k,
         Err(e) => return crate::rsa_sw(e),
     };

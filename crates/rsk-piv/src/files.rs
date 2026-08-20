@@ -8,8 +8,8 @@
 
 use rsk_crypto::Device;
 use rsk_fs::{Fs, KeyFid, Storage};
-use rsk_openpgp::Rng;
 use rsk_openpgp::keys::{Curve, PrivKey};
+use rsk_sdk::Rng;
 use rsk_sdk::Sw;
 use zeroize::Zeroize;
 

@@ -10,8 +10,8 @@
 
 use rsk_crypto::Device;
 use rsk_fs::{Fs, Storage};
-use rsk_openpgp::Rng;
 use rsk_rsa::RsaKey;
+use rsk_sdk::Rng;
 use rsk_sdk::Sw;
 
 use crate::files::*;

@@ -17,7 +17,10 @@ use core::cell::RefCell;
 
 use rsk_crypto::{Device, FusedKey, FusedRead, read_fused};
 use rsk_fs::{Fs, Storage};
-pub use rsk_sdk::Confirm;
+// The randomness and the presence check gating the privileged rescue commands
+// (attestation sign, cert write, phy/identity write, reboot-to-BOOTSEL) against
+// a hostile USB host are `rsk-sdk`'s seams, shared with every sibling applet.
+pub use rsk_sdk::{AlwaysConfirm, Confirm, Presence, Rng, UserPresence};
 use rsk_sdk::{Apdu, Applet, ResBuf, Sw};
 
 /// Rescue applet AID.
@@ -76,28 +79,6 @@ pub trait Platform {
     /// The implementation fixes both the rows and the bit, so a caller can
     /// never redirect this write. IRREVERSIBLE; returns whether it succeeded.
     fn set_rollback_required(&mut self) -> bool;
-}
-
-pub trait Rng {
-    fn fill(&mut self, buf: &mut [u8]);
-}
-
-/// Outcome of a user-presence request for a privileged rescue operation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Presence {
-    Confirmed,
-    Timeout,
-    Declined,
-}
-
-/// Physical user presence, gating the runtime-reachable privileged rescue
-/// commands (attestation sign, cert write, phy/identity write, reboot-to-
-/// BOOTSEL) against a hostile USB host. On the trusted-display build the
-/// `confirm` names the operation for an on-screen Approve/Deny prompt; the
-/// BOOTSEL-button backend just waits for a press. Same shape as the sibling
-/// applets' `UserPresence`.
-pub trait UserPresence {
-    fn request(&mut self, confirm: Confirm<'_>) -> Presence;
 }
 
 pub struct RescueApplet<'a> {

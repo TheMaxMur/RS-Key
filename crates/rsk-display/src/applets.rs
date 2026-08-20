@@ -59,7 +59,7 @@ where
     T: TouchPad,
     H: Hooks,
     S: rsk_fs::Storage,
-    R: rsk_device::Rng,
+    R: rsk_sdk::Rng,
 {
     /// The Passkeys tab — list resident relying parties (read-only), with a drill-in to
     /// each RP's accounts. Enumerates from the shared flash store on entry (the worker is

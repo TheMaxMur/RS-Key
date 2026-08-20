@@ -8,7 +8,9 @@
 
 use core::cell::RefCell;
 use rsk_fs::{Fs, Storage};
-pub use rsk_sdk::Confirm;
+// The user-presence seam gating WRITE CONFIG against a hostile USB host is
+// `rsk-sdk`'s, shared with every sibling applet — the board has one button.
+pub use rsk_sdk::{AlwaysConfirm, Confirm, Presence, UserPresence};
 use rsk_sdk::{Apdu, Applet, ResBuf, Sw};
 
 /// Management applet AID.
@@ -146,30 +148,6 @@ const CONFIG_TLV_FIXED: usize = 1 + (2 + 2) + (2 + 4) + (2 + 1) + (2 + 3) + CONF
 
 /// The trailing `CONFIG_LOCK` entry `config_tlv` always appends after the echo.
 const CONFIG_LOCK_TLV_LEN: usize = 2 + 1;
-
-/// Outcome of a user-presence request for a privileged management operation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Presence {
-    Confirmed,
-    Timeout,
-    Declined,
-}
-
-/// Physical user presence, gating WRITE CONFIG against a hostile USB host —
-/// same shape as the sibling applets' `UserPresence`. On the trusted-display
-/// build the `confirm` names the operation; the BOOTSEL backend waits for a press.
-pub trait UserPresence {
-    fn request(&mut self, confirm: Confirm<'_>) -> Presence;
-}
-
-/// A [`UserPresence`] that confirms instantly — the host-test / fuzz stand-in.
-pub struct AlwaysConfirm;
-
-impl UserPresence for AlwaysConfirm {
-    fn request(&mut self, _confirm: Confirm<'_>) -> Presence {
-        Presence::Confirmed
-    }
-}
 
 pub struct ManagementApplet<'a> {
     /// First 4 bytes of the chip id → the 8-digit serial.

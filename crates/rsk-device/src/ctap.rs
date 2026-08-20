@@ -59,7 +59,7 @@ pub struct SecurityTraceSnapshot {
     pub keydev_ram_raw: bool,
 }
 
-pub struct AppletHandler<'a, S: Storage, R: crate::Rng + 'static, VP: rsk_vendor::Platform> {
+pub struct AppletHandler<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform> {
     fs: &'a RefCell<Fs<S>>,
     hooks: &'a RefCell<dyn Hooks<S>>,
     disp: Dispatcher,
@@ -77,7 +77,7 @@ pub struct AppletHandler<'a, S: Storage, R: crate::Rng + 'static, VP: rsk_vendor
     /// Physical user presence (BOOTSEL by default, optionally a GPIO button),
     /// shared with the OpenPGP applet through a
     /// `RefCell`; borrowed only for a touch wait inside one dispatch.
-    presence: &'a RefCell<dyn rsk_fido::UserPresence>,
+    presence: &'a RefCell<dyn rsk_sdk::UserPresence>,
     serial_id: [u8; 8],
     serial_hash: [u8; 32],
     /// How to read the OTP MKEK, once provisioned — never the key itself, so no
@@ -86,11 +86,11 @@ pub struct AppletHandler<'a, S: Storage, R: crate::Rng + 'static, VP: rsk_vendor
     resp: [u8; RESP_CAP],
 }
 
-impl<'a, S: Storage, R: crate::Rng + 'static, VP: rsk_vendor::Platform>
+impl<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform>
     AppletHandler<'a, S, R, VP>
 {
     #[allow(clippy::too_many_arguments)] // one-time wiring from the worker
-    pub fn new<PR: crate::UserPresence + 'static>(
+    pub fn new<PR: rsk_sdk::UserPresence + 'static>(
         fs: &'a RefCell<Fs<S>>,
         rng: &'a RefCell<R>,
         hooks: &'a RefCell<dyn Hooks<S>>,
@@ -160,7 +160,7 @@ impl<'a, S: Storage, R: crate::Rng + 'static, VP: rsk_vendor::Platform>
 
 // Synchronous dispatch called by the worker (`crate::worker`) on the thread
 // executor; the CTAPHID transport reaches it through the worker handshake.
-impl<S: Storage, R: crate::Rng + 'static, VP: rsk_vendor::Platform> AppletHandler<'_, S, R, VP> {
+impl<S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform> AppletHandler<'_, S, R, VP> {
     /// Capture the raw fields consumed by the phase-4 β mapper. This is compiled
     /// only into the emulator's trace build and contains no verifier, token, seed,
     /// credential, or rpId bytes.

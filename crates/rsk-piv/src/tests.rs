@@ -3881,7 +3881,7 @@ fn on_device_rsa_stores_into_empty_retired_slot() {
         serial_id: &SERIAL,
         otp_key: None,
     };
-    let key = rsk_rsa::generate_rsa(&mut TestRng(99), 1024).unwrap();
+    let key = rsk_rsa::generate_rsa(&mut crate::RsaRng(&mut TestRng(99)), 1024).unwrap();
     let slot = info::next_free_retired(&mut fs).unwrap();
     assert!(info::store_retired_rsa(&dev, &mut fs, &mut TestRng(5), slot, &key).is_ok());
     // Reads back like a host-generated RSA slot: key + cert present, RSA meta, generated.
@@ -3915,7 +3915,7 @@ fn on_device_rsa4096_buffers_round_trip() {
         serial_id: &SERIAL,
         otp_key: None,
     };
-    let key = rsk_rsa::generate_rsa(&mut TestRng(99), 4096).unwrap();
+    let key = rsk_rsa::generate_rsa(&mut crate::RsaRng(&mut TestRng(99)), 4096).unwrap();
     let slot = info::next_free_retired(&mut fs).unwrap();
     assert!(info::store_retired_rsa(&dev, &mut fs, &mut TestRng(5), slot, &key).is_ok());
     let mut meta = [0u8; 8];

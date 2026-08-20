@@ -65,13 +65,13 @@ impl Hooks<RamStorage> for Board {
     // `None` — no accelerator — is what a host build is, and the fall-through it
     // causes is itself under test in `ccid_tests`; `accelerator` opts into the
     // other answer so a test can tell a fast path that fired from one that did not.
-    fn rsa_search(&mut self, _nbits: usize, _rng: &mut dyn rsk_openpgp::Rng) -> SearchResult {
+    fn rsa_search(&mut self, _nbits: usize, _rng: &mut dyn rsk_sdk::Rng) -> SearchResult {
         if self.accelerator { Some(None) } else { None }
     }
 }
 
-/// Physical presence, behind all eight applet traits at once — one button, as on
-/// the device. Confirms by default; a test that needs a refusal flips `answer`.
+/// Physical presence — one button, as on the device. Confirms by default; a
+/// test that needs a refusal flips `answer`.
 pub struct Finger {
     pub answer: bool,
     pub requests: usize,
@@ -86,30 +86,16 @@ impl Default for Finger {
     }
 }
 
-macro_rules! impl_presence {
-    ($($m:ident),+ $(,)?) => {$(
-        impl $m::UserPresence for Finger {
-            fn request(&mut self, _confirm: $m::Confirm<'_>) -> $m::Presence {
-                self.requests += 1;
-                if self.answer {
-                    $m::Presence::Confirmed
-                } else {
-                    $m::Presence::Declined
-                }
-            }
+impl rsk_sdk::UserPresence for Finger {
+    fn request(&mut self, _confirm: rsk_sdk::Confirm<'_>) -> rsk_sdk::Presence {
+        self.requests += 1;
+        if self.answer {
+            rsk_sdk::Presence::Confirmed
+        } else {
+            rsk_sdk::Presence::Declined
         }
-    )+};
+    }
 }
-
-impl_presence!(
-    rsk_fido,
-    rsk_openpgp,
-    rsk_oath,
-    rsk_otp,
-    rsk_mgmt,
-    rsk_rescue,
-    rsk_vendor,
-);
 
 /// A deterministic stand-in for the device TRNG (xorshift64*).
 pub struct TestRng(u64);
@@ -123,27 +109,15 @@ impl TestRng {
     }
 }
 
-macro_rules! impl_rng {
-    ($($t:path),+ $(,)?) => {$(
-        impl $t for TestRng {
-            fn fill(&mut self, buf: &mut [u8]) {
-                for chunk in buf.chunks_mut(8) {
-                    let n = self.next().to_le_bytes();
-                    let len = chunk.len();
-                    chunk.copy_from_slice(&n[..len]);
-                }
-            }
+impl rsk_sdk::Rng for TestRng {
+    fn fill(&mut self, buf: &mut [u8]) {
+        for chunk in buf.chunks_mut(8) {
+            let n = self.next().to_le_bytes();
+            let len = chunk.len();
+            chunk.copy_from_slice(&n[..len]);
         }
-    )+};
+    }
 }
-
-impl_rng!(
-    rsk_fido::Rng,
-    rsk_openpgp::Rng,
-    rsk_oath::Rng,
-    rsk_otp::Rng,
-    rsk_rescue::Rng,
-);
 
 /// The rescue applet's board: no secure boot, no OTP, a session clock.
 #[derive(Default)]

@@ -17,7 +17,7 @@ where
     T: TouchPad,
     H: Hooks,
     S: rsk_fs::Storage,
-    R: rsk_device::Rng,
+    R: rsk_sdk::Rng,
 {
     /// The read-only on-device backup status (Settings → Security → Backup): snapshot the
     /// seed-backup flags and show them until the back chevron, the power button (sleeps +
@@ -284,7 +284,7 @@ where
             Some(mut seed) => {
                 let r = {
                     let mut rng = self.rng.borrow_mut();
-                    let mut fill = |b: &mut [u8]| rsk_fido::Rng::fill(&mut *rng, b);
+                    let mut fill = |b: &mut [u8]| rsk_sdk::Rng::fill(&mut *rng, b);
                     rsk_slip39::generate(&seed, threshold, total, &mut fill, &mut shares)
                 };
                 seed.zeroize();

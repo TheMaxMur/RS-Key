@@ -15,10 +15,10 @@
 //! .3.9 (form factor).
 
 use rsk_crypto::{sha1, sha256, sha384};
-use rsk_openpgp::Rng;
 use rsk_openpgp::keys::{Curve, PrivKey};
 use rsk_rsa::RsaKey;
 use rsk_rsa::pkcs1v15::rsa_sign;
+use rsk_sdk::Rng;
 use rsk_sdk::Sw;
 
 use crate::files::{ALGO_ECCP384, MAX_EC_POINT, SLOT_ATTESTATION};
@@ -473,7 +473,9 @@ pub fn build_cert(
             let rn = k.sign(digest, rng, &mut raw)?;
             ecdsa_der(&raw[..rn], &mut sig)?
         }
-        Signer::Rsa(k) => rsa_sign(k, digest, rng, &mut sig).map_err(crate::rsa_sw)?,
+        Signer::Rsa(k) => {
+            rsa_sign(k, digest, &mut crate::RsaRng(&mut *rng), &mut sig).map_err(crate::rsa_sw)?
+        }
         // PureEdDSA signs the whole TBS, not a digest; the 64-byte signature
         // goes straight into the BIT STRING (no ASN.1 wrapping).
         Signer::Ed25519(k) => k.sign(tbs_bytes, rng, &mut sig)?,

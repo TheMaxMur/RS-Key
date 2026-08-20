@@ -32,6 +32,18 @@ use crate::dobj::{
 };
 use crate::pin::{Session, load_dek};
 
+/// Hands the applet-tier randomness seam ([`rsk_sdk::Rng`]) to `rsk-rsa`, which
+/// declares its own identical one: it is an algorithm crate two tiers down and
+/// naming `rsk-sdk` would invert the dependency. Same bytes, one more vtable hop
+/// on the paths that draw a blinding factor or PKCS#1 padding, not per limb.
+pub(crate) struct RsaRng<'a>(pub(crate) &'a mut dyn Rng);
+
+impl rsk_rsa::Rng for RsaRng<'_> {
+    fn fill(&mut self, buf: &mut [u8]) {
+        self.0.fill(buf);
+    }
+}
+
 /// Largest raw ECDSA signature: P-521 `r ‖ s` = 2×66 bytes.
 pub const MAX_EC_SIG: usize = 132;
 /// Largest EC public point: P-521 uncompressed `04 ‖ x ‖ y` = 1 + 2×66 bytes.
@@ -1119,7 +1131,7 @@ pub fn rsa_decipher(
     // A malformed block answered `EXEC_ERROR` when the `rsa` crate owned this
     // path; keep that status word, so moving the implementation does not move the
     // wire surface with it.
-    let res = rsk_rsa::crt::private_op(crt, ct, rng, &mut em[..key_size])
+    let res = rsk_rsa::crt::private_op(crt, ct, &mut RsaRng(rng), &mut em[..key_size])
         .map_err(rsa_sw)
         .and_then(|_| {
             rsk_rsa::pkcs1v15::unpad_encrypt(&em[..key_size], out).map_err(|_| Sw::EXEC_ERROR)
@@ -1145,7 +1157,7 @@ pub fn rsa_decipher_legacy(
     // Every failure here is `EXEC_ERROR`, which is what the `rsa` crate's
     // `decrypt_blinded` collapsed to. Deliberately coarser than the asm arm,
     // which answers `rsa_sw` for the private op and only collapses on the unpad.
-    rsk_rsa::pkcs1v15::rsa_decrypt(key, ct, rng, out).map_err(|_| Sw::EXEC_ERROR)
+    rsk_rsa::pkcs1v15::rsa_decrypt(key, ct, &mut RsaRng(rng), out).map_err(|_| Sw::EXEC_ERROR)
 }
 
 #[cfg(test)]

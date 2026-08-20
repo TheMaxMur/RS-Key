@@ -220,7 +220,7 @@ impl rsk_display::Hooks for DisplayHooks {
     fn rsa_search_progress(
         &mut self,
         nbits: usize,
-        rng: &mut dyn rsk_openpgp::Rng,
+        rng: &mut dyn rsk_sdk::Rng,
         on_tick: &mut dyn FnMut(),
     ) -> Option<Box<RsaKey>> {
         crate::core1::run_rsa_search_progress(nbits, rng, on_tick)

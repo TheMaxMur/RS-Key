@@ -37,7 +37,7 @@ pub fn reset<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>) -> CtapResult {
     // repeat"), a silent timeout is USER_ACTION_TIMEOUT ("the platform MAY repeat").
     match ctx
         .presence
-        .request(crate::Confirm::titled("Erase everything?"))
+        .request_ceremony(crate::Confirm::titled("Erase everything?"))
     {
         crate::Presence::Confirmed => {}
         crate::Presence::Declined => return Err(CtapError::OperationDenied),

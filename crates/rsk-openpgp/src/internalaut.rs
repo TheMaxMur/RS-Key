@@ -58,7 +58,13 @@ fn try_internal_aut<S: Storage>(
     };
     if algo0 == ALGO_RSA {
         let crt = load_rsa_crt(dev, fs, sess, sess.pk_aut)?;
-        return rsk_rsa::pkcs1v15::rsa_sign_crt(&crt, apdu.data, rng, out).map_err(rsa_sw);
+        return rsk_rsa::pkcs1v15::rsa_sign_crt(
+            &crt,
+            apdu.data,
+            &mut crate::keys::RsaRng(rng),
+            out,
+        )
+        .map_err(rsa_sw);
     }
     let key = load_ec_key(dev, fs, sess, sess.pk_aut)?;
     key.sign(apdu.data, rng, out)

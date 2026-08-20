@@ -112,7 +112,7 @@ where
     T: TouchPad,
     H: Hooks,
     S: rsk_fs::Storage,
-    R: rsk_device::Rng,
+    R: rsk_sdk::Rng,
 {
     /// Paint `screen` and remember it as the one on the panel. The pair is never
     /// useful apart: a repaint whose `shown` is not updated repaints for ever, and
@@ -361,7 +361,7 @@ where
     T: TouchPad,
     H: Hooks,
     S: rsk_fs::Storage,
-    R: rsk_device::Rng,
+    R: rsk_sdk::Rng,
 {
     Timer::after_millis(600).await; // let the boot splash linger
     note_local_activity(); // the fresh boot counts as activity, so the sleep clock starts now

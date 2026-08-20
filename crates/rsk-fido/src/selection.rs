@@ -14,7 +14,7 @@ use crate::{Ctx, Presence, Rng};
 pub fn selection<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>) -> CtapResult {
     match ctx
         .presence
-        .request(crate::Confirm::titled("Use this key?"))
+        .request_ceremony(crate::Confirm::titled("Use this key?"))
     {
         Presence::Confirmed => Ok(0),
         Presence::Timeout => Err(CtapError::UserActionTimeout),

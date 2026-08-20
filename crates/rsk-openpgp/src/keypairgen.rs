@@ -119,7 +119,8 @@ fn generate<S: Storage>(
                 return Err(Sw::WRONG_DATA);
             }
             let nbits = ((algo[1] as usize) << 8) | algo[2] as usize;
-            let key = generate_rsa(rng, nbits).map_err(crate::keys::rsa_sw)?;
+            let key =
+                generate_rsa(&mut crate::keys::RsaRng(rng), nbits).map_err(crate::keys::rsa_sw)?;
             store_rsa_key(dev, fs, sess, fid, &key)?;
             let mut pub_do = [0u8; MAX_RSA_PUBDO];
             let n = make_rsa_response(&key, &mut pub_do);

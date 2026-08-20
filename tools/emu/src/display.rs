@@ -310,6 +310,17 @@ impl EmuDisplayHooks {
     }
 }
 
+/// Hands the applet-tier randomness seam ([`rsk_sdk::Rng`]) to `rsk-rsa`, which
+/// declares its own identical one two tiers down — the same bridge `firmware`'s
+/// `core1::SdkRng` is.
+struct EmuRsaRng<'a>(&'a mut dyn rsk_sdk::Rng);
+
+impl rsk_rsa::Rng for EmuRsaRng<'_> {
+    fn fill(&mut self, buf: &mut [u8]) {
+        self.0.fill(buf);
+    }
+}
+
 impl rsk_display::Hooks for EmuDisplayHooks {
     fn set_backlight(&mut self, duty: u16) {
         self.duty.set(duty);
@@ -398,9 +409,12 @@ impl rsk_display::Hooks for EmuDisplayHooks {
     fn rsa_search_progress(
         &mut self,
         nbits: usize,
-        rng: &mut dyn rsk_openpgp::Rng,
+        rng: &mut dyn rsk_sdk::Rng,
         on_tick: &mut dyn FnMut(),
     ) -> Option<Box<rsk_rsa::RsaKey>> {
+        // `rsk-rsa` declares its own `Rng`: it is an algorithm crate two tiers
+        // below the applet seam and may not reach up for `rsk_sdk::Rng`.
+        let rng = &mut EmuRsaRng(rng);
         let mut keygen = rsk_rsa::RsaKeygen::new(nbits);
         let mut sieve = rsk_rsa::IncrementalSieve::new();
         (self.repaint)();

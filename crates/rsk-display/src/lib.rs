@@ -146,7 +146,7 @@ pub trait Hooks {
     fn rsa_search_progress(
         &mut self,
         _nbits: usize,
-        _rng: &mut dyn rsk_openpgp::Rng,
+        _rng: &mut dyn rsk_sdk::Rng,
         _on_tick: &mut dyn FnMut(),
     ) -> Option<alloc::boxed::Box<rsk_openpgp::keys::RsaKey>> {
         None
@@ -420,7 +420,7 @@ where
     T: TouchPad,
     H: Hooks,
     S: rsk_fs::Storage,
-    R: rsk_device::Rng,
+    R: rsk_sdk::Rng,
 {
     /// Take an already-initialized panel and touch controller, show the boot
     /// splash, restore the persisted display settings and raise the backlight.

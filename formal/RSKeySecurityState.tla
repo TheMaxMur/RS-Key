@@ -183,7 +183,7 @@ VARIABLES
     \* `state.keydev_dec` (state.rs:360-362): the seed a vendor UNLOCK decrypted
     \* into RAM on a soft-locked device. NOT a second seed -- it is the SAME
     \* owner's seed by another route, and `Ctx::load_keydev` PREFERS it
-    \* (crates/rsk-fido/src/lib.rs:183-187), so deleting the flash record does
+    \* (crates/rsk-fido/src/lib.rs:91-95), so deleting the flash record does
     \* not end reachability
     \* while this stands. That preference is the whole of E110: the model used to
     \* have only the flash record, so a wipe whose flash half succeeded read as
@@ -249,7 +249,7 @@ Init ==
 (* The seed's TWO homes. Every credential box, rpId box, credBlob,          *)
 (* hmac-secret key and large-blob key is derived from the device seed       *)
 (* (reset.rs:116-120), and `Ctx::load_keydev` reads it from RAM first and   *)
-(* flash second (crates/rsk-fido/src/lib.rs:183-187). So "the records still  *)
+(* flash second (crates/rsk-fido/src/lib.rs:91-95). So "the records still  *)
 (* open" is a claim                                                         *)
 (* about BOTH, and the wipe's own claim -- that what a tear leaves behind is *)
 (* undecryptable -- holds only once the last copy is gone.                   *)

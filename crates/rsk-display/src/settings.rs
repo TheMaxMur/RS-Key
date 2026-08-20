@@ -79,7 +79,7 @@ where
     T: TouchPad,
     H: Hooks,
     S: rsk_fs::Storage,
-    R: rsk_device::Rng,
+    R: rsk_sdk::Rng,
 {
     /// Paint a settings page, snapshotting the live brightness/timeout/identity into
     /// the view. Clears `shown` so the ambient loop repaints once the menu releases

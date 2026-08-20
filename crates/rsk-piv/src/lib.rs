@@ -24,12 +24,12 @@ use core::cell::RefCell;
 
 use rsk_crypto::{Device, FusedKey, FusedRead, read_fused};
 use rsk_fs::{Fs, Sealed, Storage};
-pub use rsk_openpgp::Rng;
 use rsk_rsa::{MAX_RSA_BYTES, MAX_RSA_PUBDO, RSA_PUB_EXP_BE, RsaError, RsaKey, make_rsa_pub_body};
-// PIV reuses the OpenPGP user-presence trait, so the firmware's existing
-// `impl rsk_openpgp::UserPresence for ButtonPresence` already drives PIV touch.
-pub use rsk_openpgp::{AlwaysConfirm, Presence, UserPresence};
+// The randomness and the slot touch-policy check are `rsk-sdk`'s seams, shared
+// with every sibling applet; `rsk-rsa` declares its own identical `Rng` two tiers
+// down, so the private-key calls bridge the two through [`RsaRng`].
 use rsk_sdk::tlv::{find_tag, format_len};
+pub use rsk_sdk::{AlwaysConfirm, Presence, Rng, UserPresence};
 use rsk_sdk::{Apdu, Applet, ResBuf, Sw};
 use zeroize::Zeroize;
 
@@ -63,6 +63,18 @@ pub(crate) fn rsa_sw(e: RsaError) -> Sw {
         RsaError::BadBlock => Sw::WRONG_DATA,
         RsaError::BadBlob => Sw::MEMORY_FAILURE,
         RsaError::Failed => Sw::EXEC_ERROR,
+    }
+}
+
+/// Hands the applet-tier randomness seam ([`rsk_sdk::Rng`]) to `rsk-rsa`, which
+/// declares its own identical one: it is an algorithm crate two tiers down and
+/// naming `rsk-sdk` would invert the dependency. Same bytes, one more vtable hop
+/// on the paths that draw a blinding factor or PKCS#1 padding, not per limb.
+pub(crate) struct RsaRng<'a>(pub(crate) &'a mut dyn Rng);
+
+impl rsk_rsa::Rng for RsaRng<'_> {
+    fn fill(&mut self, buf: &mut [u8]) {
+        self.0.fill(buf);
     }
 }
 

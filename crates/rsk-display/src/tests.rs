@@ -301,27 +301,15 @@ impl TestRng {
     }
 }
 
-macro_rules! impl_rng {
-    ($($t:path),+ $(,)?) => {$(
-        impl $t for TestRng {
-            fn fill(&mut self, buf: &mut [u8]) {
-                for chunk in buf.chunks_mut(8) {
-                    let n = self.next().to_le_bytes();
-                    let len = chunk.len();
-                    chunk.copy_from_slice(&n[..len]);
-                }
-            }
+impl rsk_sdk::Rng for TestRng {
+    fn fill(&mut self, buf: &mut [u8]) {
+        for chunk in buf.chunks_mut(8) {
+            let n = self.next().to_le_bytes();
+            let len = chunk.len();
+            chunk.copy_from_slice(&n[..len]);
         }
-    )+};
+    }
 }
-
-impl_rng!(
-    rsk_fido::Rng,
-    rsk_openpgp::Rng,
-    rsk_oath::Rng,
-    rsk_otp::Rng,
-    rsk_rescue::Rng,
-);
 
 /// The device identity every test seals against. Fixed, so a record written by one
 /// helper unseals for another.

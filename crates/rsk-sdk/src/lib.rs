@@ -5,12 +5,16 @@
 
 //! `rsk-sdk` — core smartcard machinery: ISO-7816 APDU parsing ([`apdu`]),
 //! status words ([`sw`]), BER-TLV ([`tlv`]), the `Applet` trait with AID
-//! registry/dispatch ([`applet`]), and internal error codes ([`error`]).
+//! registry/dispatch ([`applet`]), internal error codes ([`error`]), and the
+//! two seams a composition root hands every applet: randomness ([`rng`]) and
+//! user presence ([`presence`]).
 
 pub mod apdu;
 pub mod applet;
 pub mod confirm;
 pub mod error;
+pub mod presence;
+pub mod rng;
 pub mod sw;
 pub mod tlv;
 
@@ -18,6 +22,8 @@ pub use apdu::Apdu;
 pub use applet::{Applet, Dispatcher, ResBuf};
 pub use confirm::{Confirm, ConfirmKind};
 pub use error::{Error, Result};
+pub use presence::{AlwaysConfirm, PinEntry, Presence, UserPresence};
+pub use rng::Rng;
 pub use sw::Sw;
 
 /// Parse a clean decimal env string to `u8` in const context (build.rs has

@@ -23,12 +23,6 @@ impl Rng for LcgRng {
     }
 }
 
-struct AlwaysConfirm;
-impl UserPresence for AlwaysConfirm {
-    fn request(&mut self, _c: Confirm<'_>) -> Presence {
-        Presence::Confirmed
-    }
-}
 struct DenyPresence;
 impl UserPresence for DenyPresence {
     fn request(&mut self, _c: Confirm<'_>) -> Presence {

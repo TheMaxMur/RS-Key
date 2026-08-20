@@ -16,7 +16,7 @@ use libfuzzer_sys::fuzz_target;
 use rsk_fs::Fs;
 use rsk_fs::storage::ram::RamStorage;
 use rsk_rescue::rollback::{ROLLBACK_REQUIRED_BIT, RollbackRaw};
-use rsk_rescue::{Confirm, Platform, Presence, RescueApplet, Rng, SecureBootStatus, UserPresence};
+use rsk_rescue::{AlwaysConfirm, Platform, RescueApplet, Rng, SecureBootStatus};
 use rsk_sdk::{Apdu, Applet, ResBuf};
 
 mod apdu_frame;
@@ -35,14 +35,8 @@ impl Rng for CountRng {
     }
 }
 
-// Always confirm so the presence-gated commands (attestation sign / cert / phy
+// `AlwaysConfirm` so the presence-gated commands (attestation sign / cert / phy
 // write / BOOTSEL) stay reachable for the fuzzer.
-struct AlwaysConfirm;
-impl UserPresence for AlwaysConfirm {
-    fn request(&mut self, _c: Confirm<'_>) -> Presence {
-        Presence::Confirmed
-    }
-}
 
 struct FakePlatform {
     time: Option<u32>,

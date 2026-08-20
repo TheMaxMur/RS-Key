@@ -40,6 +40,37 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Internal
 
+- **Seven applets each declared the same presence seam, and the board answered
+  all seven.** `Rng`, `UserPresence`, `Presence`, `PinEntry` and `AlwaysConfirm`
+  were 29 declarations across the applet tier, byte-identical apart from FIDO's
+  fourth `Presence::Cancelled`; `rsk-device` carried two supertrait blocks and
+  their blanket impls purely to reconcile them, and `firmware`, `tools/emu` and
+  `rsk-display` wrote the same impl five and seven times over. They are declared
+  once now, in `rsk-sdk` — the crate every applet already depended on, so the
+  move added no dependency edge — and the glue is gone: `firmware` and the
+  emulator implement one `Rng` and one `UserPresence` each.
+
+  The seven presence impls were **not** actually identical, which is the part a
+  straight merge would have broken. The trusted display closes an approved
+  WebAuthn ceremony with a ~0.4 s "Approved" card and runs a registration screen
+  for `makeCredential`, and its own comment says paying that on OpenPGP/PIV —
+  which ask for presence once *per signature* — would be a latency regression.
+  A cancel differs too: only CTAP2 can be cancelled mid-wait, so only FIDO could
+  answer `Presence::Cancelled`; the six card applets got `Timeout`. The shared
+  trait keeps both apart by asking two questions rather than one — `request` for
+  a smartcard touch policy, `request_ceremony` for a CTAP2 ceremony, the latter
+  defaulting to the former — so every status word, every CTAP error and the pop's
+  scope are what they were.
+
+  The randomness seam stays split in two on purpose. `rsk-rsa` is an algorithm
+  crate below `rsk-sdk` and may not reach up for it, so it keeps its own `Rng`
+  and the two are bridged where they meet (`rsk_openpgp::keys::RsaRng`,
+  `rsk_piv::RsaRng`, `firmware`'s `core1::SdkRng`, the emulator's `EmuRsaRng`).
+  The alternative — `rsk-sdk` re-exporting `rsk_rsa::Rng` — was measured rather
+  than argued: `rsk-sdk` has 14 direct dependents and `rsk-rsa` has 4, so that
+  edge would pull `rsk-rsa` and `num-bigint-dig` into the closure of ten crates
+  that do no RSA. Same reasoning that kept the `RsaError → Sw` table duplicated.
+
 - **Two rows of that mutation table asserted the right outcome for the wrong
   reason.** Measured one mutant at a time: deleting the `s ≥ n` refusal
   (RFC 8017 §8.2.2 step 1) left the whole suite green, because the `s = n` case

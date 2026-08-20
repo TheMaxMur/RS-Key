@@ -11,7 +11,9 @@ use core::cell::RefCell;
 
 use rsk_crypto::{Device, FusedKey, FusedRead, aes128_encrypt_block, ct_eq, hmac_sha1, read_fused};
 use rsk_fs::{Fs, KeyFid, Storage};
-pub use rsk_sdk::Confirm;
+// The at-rest seal nonces' randomness and the `CHAL_BTN_TRIG` touch check are
+// `rsk-sdk`'s seams, shared with every sibling applet.
+pub use rsk_sdk::{AlwaysConfirm, Confirm, Presence, Rng, UserPresence};
 use rsk_sdk::{Apdu, Applet, ResBuf, Sw};
 use zeroize::Zeroize;
 
@@ -19,12 +21,6 @@ mod counter;
 pub mod hid;
 pub mod seal;
 pub mod ticket;
-
-/// Randomness source for at-rest seal nonces (the firmware backs it with the
-/// hardware TRNG). Mirrors the sibling applets' `Rng` traits.
-pub trait Rng {
-    fn fill(&mut self, buf: &mut [u8]);
-}
 
 #[cfg(test)]
 mod tests_support;
@@ -35,31 +31,6 @@ pub const OTP_AID: &[u8] = &[0xA0, 0x00, 0x00, 0x05, 0x27, 0x20, 0x01];
 /// Version reported in the status record — the shared
 /// [`rsk_sdk::FIRMWARE_VERSION`].
 pub const VERSION: (u8, u8, u8) = rsk_sdk::FIRMWARE_VERSION;
-
-/// Outcome of a touch request (CHAL_BTN_TRIG slots).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Presence {
-    Confirmed,
-    Timeout,
-    Declined,
-}
-
-/// Physical user presence; the firmware backs this with the BOOTSEL button
-/// (same shape as `rsk_openpgp::UserPresence`).
-pub trait UserPresence {
-    /// Ask for presence. `confirm` names the operation for a trusted on-screen
-    /// Approve/Deny prompt; the BOOTSEL-button backend ignores it.
-    fn request(&mut self, confirm: Confirm<'_>) -> Presence;
-}
-
-/// Test/no-button stand-in: confirms instantly.
-pub struct AlwaysConfirm;
-
-impl UserPresence for AlwaysConfirm {
-    fn request(&mut self, _confirm: Confirm<'_>) -> Presence {
-        Presence::Confirmed
-    }
-}
 
 // FIDs: four contiguous slots — 1/2 (the classic short/long press) plus 3/4
 // (0xBB02/0xBB03), addressed everywhere as `EF_OTP_SLOT1 + (slot - 1)`. Slots 3/4

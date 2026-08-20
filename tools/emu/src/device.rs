@@ -449,7 +449,7 @@ pub fn serve_display<P, T>(
 /// display's ambient loop can share this thread the way `status_task` shares the
 /// firmware's thread executor — two futures, one executor, interleaving at each
 /// other's await points.
-async fn serve<PR: rsk_device::UserPresence + 'static>(
+async fn serve<PR: rsk_sdk::UserPresence + 'static>(
     cfg: Config,
     jobs: JobSource,
     signals: Arc<Signals>,
