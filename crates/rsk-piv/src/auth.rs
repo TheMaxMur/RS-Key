@@ -14,8 +14,8 @@ use rsk_crypto::{
 };
 use rsk_fs::{Fs, Storage};
 use rsk_openpgp::keys::PrivKey;
-use rsk_openpgp::rsa_crt;
 use rsk_openpgp::{Presence, Rng, UserPresence};
+use rsk_rsa::crt;
 use rsk_sdk::tlv::{Tlv, find_tag};
 use rsk_sdk::{ResBuf, Sw};
 use zeroize::Zeroize;
@@ -267,8 +267,8 @@ impl<S: Storage> GenAuth<'_, S> {
                 if c.len() != crt.modulus_len() {
                     return Err(Sw::WRONG_DATA);
                 }
-                let mut out = [0u8; rsa_crt::MAX_RSA_BYTES];
-                let n = rsa_crt::sign_crt(&crt, c, self.rng, &mut out)?;
+                let mut out = [0u8; rsk_rsa::MAX_RSA_BYTES];
+                let n = crt::private_op(&crt, c, self.rng, &mut out).map_err(crate::rsa_sw)?;
                 dyn_auth_resp(res, TAG_AUTH_RESPONSE, &out[..n])?;
                 out.zeroize();
             }

@@ -37,8 +37,7 @@ use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use rsk_crypto::HmacDrbg;
 use rsk_openpgp::Rng;
-use rsk_openpgp::keys::{RsaKeygen, RsaPrivateKey, RsaStep};
-use rsk_rsa::IncrementalSieve;
+use rsk_rsa::{IncrementalSieve, RsaKeygen, RsaPrivateKey, RsaStep};
 use static_cell::StaticCell;
 use zeroize::Zeroize;
 

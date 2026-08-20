@@ -1689,7 +1689,6 @@ dependencies = [
  "ed25519-dalek",
  "elliptic-curve",
  "k256",
- "num-bigint-dig",
  "p256",
  "p384",
  "p521",
@@ -1719,7 +1718,6 @@ dependencies = [
 name = "rsk-piv"
 version = "0.1.0"
 dependencies = [
- "num-bigint-dig",
  "rsa",
  "rsk-crypto",
  "rsk-fs",
@@ -1747,6 +1745,7 @@ version = "0.1.0"
 dependencies = [
  "cc",
  "num-bigint-dig",
+ "rsa",
  "zeroize",
 ]
 

@@ -400,8 +400,8 @@ impl rsk_display::Hooks for EmuDisplayHooks {
         nbits: usize,
         rng: &mut dyn rsk_openpgp::Rng,
         on_tick: &mut dyn FnMut(),
-    ) -> Option<Box<rsk_openpgp::keys::RsaPrivateKey>> {
-        let mut keygen = rsk_openpgp::keys::RsaKeygen::new(nbits);
+    ) -> Option<Box<rsk_rsa::RsaPrivateKey>> {
+        let mut keygen = rsk_rsa::RsaKeygen::new(nbits);
         let mut sieve = rsk_rsa::IncrementalSieve::new();
         (self.repaint)();
         let mut shown = std::time::Instant::now();
@@ -412,9 +412,9 @@ impl rsk_display::Hooks for EmuDisplayHooks {
                 shown = std::time::Instant::now();
             }
             match keygen.step(&mut sieve, rng) {
-                rsk_openpgp::keys::RsaStep::Done(key) => break Some(key),
-                rsk_openpgp::keys::RsaStep::Failed => break None,
-                rsk_openpgp::keys::RsaStep::More => {}
+                rsk_rsa::RsaStep::Done(key) => break Some(key),
+                rsk_rsa::RsaStep::Failed => break None,
+                rsk_rsa::RsaStep::More => {}
             }
         };
         // The window still holds the last accepted candidate — a prime of the key

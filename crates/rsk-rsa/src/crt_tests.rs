@@ -2,42 +2,8 @@
 // Copyright (C) 2026 RS-Key contributors
 
 use super::*;
+use crate::fixtures::{P_HEX, Q_HEX, SeqRng, crt_of, hex, modulus, test_key};
 use rsa::RsaPublicKey;
-
-// The same fixed RSA-2048 key as keys_rsa_tests (primes sans the DER sign byte),
-// so the CRT layout is exercised against a known modulus.
-const P_HEX: &str = "f05c23060effc422e4310c13b5aecda74744925c97c17d202aa9ed306941fa1e942e61c8d9c80961cf90459af36b9e7d529610f5165d60836de5aef2aeb47ea500c5a61bb96fd3bb4aca36d45464cce24ff0b67bb3ba382d9bdd95b7133eab86125800f10b0627fe1bd7689802d767dd9911eefb60d76e2ec860163f3077a5bd";
-const Q_HEX: &str = "c6a96b4a9b7bdd654152f3302dd23bd7b18e62f999cf0d44d01c6ce18cfdfb1c29e523edebe5e6df8967f49afe38d6a9345bc6f4f966e0de2902bddc7caf5a4a1761d18b070cd4cda287388cbdf523c39e246c220af3292fee181b4bb1c3f533b74de89c586e6f9d47ae4bb7f8735d3f0b377a76a7ca6c81324833c2b78b737d";
-
-fn hex(s: &str) -> Vec<u8> {
-    (0..s.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
-        .collect()
-}
-
-struct SeqRng(u64);
-impl Rng for SeqRng {
-    fn fill(&mut self, buf: &mut [u8]) {
-        for b in buf.iter_mut() {
-            self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1);
-            *b = (self.0 >> 33) as u8;
-        }
-    }
-}
-
-fn test_key() -> RsaPrivateKey {
-    RsaPrivateKey::from_p_q(
-        BigUint::from_bytes_be(&hex(P_HEX)),
-        BigUint::from_bytes_be(&hex(Q_HEX)),
-        rsa_e(),
-    )
-    .unwrap()
-}
-
-fn modulus() -> BigUint {
-    BigUint::from_bytes_be(&hex(P_HEX)) * BigUint::from_bytes_be(&hex(Q_HEX))
-}
 
 // A 256-byte PKCS#1-shaped block guaranteed < n (leads 00 01), so the raw private
 // op is well-defined and the fault check passes.
@@ -61,9 +27,10 @@ fn parse_rsa_blob_discriminates_layouts() {
     // A non-standard even width (RSA-1600, half=100) reads as 2-field so it can
     // still DECIPHER on num-bigint; the asm sign path rejects it separately.
     assert_eq!(parse_rsa_blob(&[0u8; 200]).unwrap(), (100, false));
-    // Out of range fails closed.
-    assert!(parse_rsa_blob(&[0u8; 0]).is_err());
-    assert!(parse_rsa_blob(&[0u8; 5 * 257]).is_err()); // half > CRT_FIELD
+    // Out of range fails closed — as `BadBlob`, which the applets answer
+    // `MEMORY_FAILURE` to. The variant is the wire surface: pin it, not `is_err`.
+    assert_eq!(parse_rsa_blob(&[0u8; 0]), Err(RsaError::BadBlob));
+    assert_eq!(parse_rsa_blob(&[0u8; 5 * 257]), Err(RsaError::BadBlob)); // half > CRT_FIELD
 }
 
 #[test]
@@ -84,16 +51,16 @@ fn crt_plaintext_is_five_fields_and_reloads() {
 }
 
 #[test]
-fn sign_crt_five_field_satisfies_bellcore() {
-    // crt_plaintext (cached CRT) → sign_crt → sigᵉ ≡ c (mod n): the same invariant
-    // the in-op Bellcore check enforces, verified independently here.
+fn private_op_five_field_satisfies_bellcore() {
+    // crt_plaintext (cached CRT) → private_op → sigᵉ ≡ c (mod n): the same
+    // invariant the in-op Bellcore check enforces, verified independently here.
     let key = test_key();
     let mut plain = [0u8; MAX_CRT_PLAIN];
     let n = crt_plaintext(&key, &mut plain).unwrap();
     let crt = crt_from_plain(&plain[..n]).unwrap();
     let c = sample_block();
     let mut sig = [0u8; MAX_RSA_BYTES];
-    let sn = sign_crt(&crt, &c, &mut SeqRng(1), &mut sig).unwrap();
+    let sn = private_op(&crt, &c, &mut SeqRng(1), &mut sig).unwrap();
     assert_eq!(sn, 256);
     let m = BigUint::from_bytes_be(&c);
     let s = BigUint::from_bytes_be(&sig[..sn]);
@@ -101,7 +68,7 @@ fn sign_crt_five_field_satisfies_bellcore() {
 }
 
 #[test]
-fn sign_crt_legacy_two_field_recomputes_and_matches() {
+fn private_op_legacy_two_field_recomputes_and_matches() {
     // An old `P‖Q` blob (no cached dP/dQ/qInv) must recompute them and produce a
     // byte-identical signature to the 5-field path.
     let mut two = [0u8; 256];
@@ -117,8 +84,8 @@ fn sign_crt_legacy_two_field_recomputes_and_matches() {
 
     let c = sample_block();
     let (mut a, mut b) = ([0u8; MAX_RSA_BYTES], [0u8; MAX_RSA_BYTES]);
-    let an = sign_crt(&crt_legacy, &c, &mut SeqRng(9), &mut a).unwrap();
-    let bn = sign_crt(&crt_cached, &c, &mut SeqRng(9), &mut b).unwrap();
+    let an = private_op(&crt_legacy, &c, &mut SeqRng(9), &mut a).unwrap();
+    let bn = private_op(&crt_cached, &c, &mut SeqRng(9), &mut b).unwrap();
     assert_eq!(&a[..an], &b[..bn]);
     // And it verifies under the public exponent.
     let s = BigUint::from_bytes_be(&a[..an]);
@@ -126,7 +93,7 @@ fn sign_crt_legacy_two_field_recomputes_and_matches() {
 }
 
 #[test]
-fn sign_crt_verifies_a_pkcs1_signature() {
+fn private_op_verifies_a_pkcs1_signature() {
     // End-to-end against the `rsa` crate's PKCS#1 v1.5 verifier: build a full EM
     // (00 01 FF..00 ‖ DigestInfo), sign the raw block, and verify.
     use rsa::Pkcs1v15Sign;
@@ -135,27 +102,71 @@ fn sign_crt_verifies_a_pkcs1_signature() {
     let n = crt_plaintext(&key, &mut plain).unwrap();
     let crt = crt_from_plain(&plain[..n]).unwrap();
 
-    // SHA-256 DigestInfo prefix + a fixed 32-byte hash.
-    let di_sha256: &[u8] = &[
-        0x30, 0x31, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01,
-        0x05, 0x00, 0x04, 0x20,
-    ];
     let hash = [0x42u8; 32];
-    let dlen = di_sha256.len() + hash.len();
+    let dlen = crate::pkcs1v15::DI_SHA256.len() + hash.len();
     let mlen = 256;
     let mut em = [0xffu8; MAX_RSA_BYTES];
     em[0] = 0x00;
     em[1] = 0x01;
     em[mlen - dlen - 1] = 0x00;
-    em[mlen - dlen..mlen - hash.len()].copy_from_slice(di_sha256);
+    em[mlen - dlen..mlen - hash.len()].copy_from_slice(crate::pkcs1v15::DI_SHA256);
     em[mlen - hash.len()..mlen].copy_from_slice(&hash);
 
     let mut sig = [0u8; MAX_RSA_BYTES];
-    let sn = sign_crt(&crt, &em[..mlen], &mut SeqRng(3), &mut sig).unwrap();
+    let sn = private_op(&crt, &em[..mlen], &mut SeqRng(3), &mut sig).unwrap();
 
-    let mut di = di_sha256.to_vec();
+    let mut di = crate::pkcs1v15::DI_SHA256.to_vec();
     di.extend_from_slice(&hash);
     RsaPublicKey::from(&key)
         .verify(Pkcs1v15Sign::new_unprefixed(), &di, &sig[..sn])
         .unwrap();
+}
+
+#[test]
+fn private_op_refuses_a_block_of_the_wrong_width() {
+    // Not the modulus width — `BadBlock`, which the applets answer `WRONG_DATA`
+    // to. PIV's GENERAL AUTHENTICATE relies on that word for a short challenge.
+    let key = test_key();
+    let crt = crt_of(&key);
+    let mut out = [0u8; MAX_RSA_BYTES];
+    let short = [0u8; 255];
+    assert_eq!(
+        private_op(&crt, &short, &mut SeqRng(4), &mut out),
+        Err(RsaError::BadBlock)
+    );
+}
+
+#[test]
+fn parse_disambiguates_320_byte_collision() {
+    // n=320 reads as both 5·64 (RSA-1024 CRT) and 2·160 (RSA-2560 P‖Q). A genuine
+    // 5-field blob is recognised via qInv·Q ≡ 1 mod P; a legacy P‖Q blob is not,
+    // so an already-provisioned RSA-2560 key still loads as 2-field after upgrade.
+    let k = RsaPrivateKey::new(&mut crate::RngAdapter(&mut SeqRng(5)), 1024).unwrap();
+    let mut five = [0u8; MAX_CRT_PLAIN];
+    let fl = crt_plaintext(&k, &mut five).unwrap();
+    assert_eq!(fl, 320);
+    assert_eq!(parse_rsa_blob(&five[..fl]).unwrap(), (64, true));
+    // A 320-byte P‖Q blob (varied bytes, top bit set so P ≥ 2) reads as 2-field.
+    let mut two = [0u8; 320];
+    for (i, b) in two.iter_mut().enumerate() {
+        *b = (i as u8).wrapping_mul(7).wrapping_add(3);
+    }
+    two[0] |= 0x80;
+    assert_eq!(parse_rsa_blob(&two).unwrap(), (160, false));
+}
+
+#[test]
+fn crt_plaintext_rejects_non_mult32_width() {
+    // A non-32-multiple prime width (RSA-640 → 40-byte primes) has no asm CRT
+    // path; sealing must fail loud, not seal a blob the loader would refuse.
+    let k = RsaPrivateKey::new(&mut crate::RngAdapter(&mut SeqRng(11)), 640).unwrap();
+    let mut buf = [0u8; MAX_CRT_PLAIN];
+    assert_eq!(crt_plaintext(&k, &mut buf), Err(RsaError::BadWidth));
+}
+
+#[test]
+fn crt_from_plain_rejects_non_mult32_width() {
+    // The loader half of the same rule, and the one PSO:CDS reports: a legacy
+    // `P‖Q` blob of a width the asm cannot take answers `WRONG_LENGTH`.
+    assert_eq!(crt_from_plain(&[0u8; 200]).err(), Some(RsaError::BadWidth));
 }

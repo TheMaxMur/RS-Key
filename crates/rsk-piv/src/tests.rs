@@ -149,6 +149,34 @@ fn ec_point_of(resp: &[u8]) -> Vec<u8> {
 }
 
 #[test]
+fn rsa_sw_reproduces_every_status_word() {
+    // The applet's whole share of the RSA wire surface is this table, and it must
+    // stay identical to the OpenPGP applet's copy — `rsk-rsa` names the target in
+    // each variant's doc. Assert the four arms one by one, so a swapped pair
+    // cannot pass by covering for each other.
+    assert_eq!(
+        rsa_sw(RsaError::BadWidth),
+        Sw::WRONG_LENGTH,
+        "a bad width must stay 6700"
+    );
+    assert_eq!(
+        rsa_sw(RsaError::BadBlock),
+        Sw::WRONG_DATA,
+        "a bad input block must stay 6A80"
+    );
+    assert_eq!(
+        rsa_sw(RsaError::BadBlob),
+        Sw::MEMORY_FAILURE,
+        "an unreadable stored blob must stay 6581"
+    );
+    assert_eq!(
+        rsa_sw(RsaError::Failed),
+        Sw::EXEC_ERROR,
+        "a failed computation must stay 6400"
+    );
+}
+
+#[test]
 fn touch_policy_enforced_on_slot_sign() {
     let rng = RefCell::new(TestRng(7));
     let pres = RefCell::new(Scripted { confirm: true });
@@ -3853,7 +3881,7 @@ fn on_device_rsa_stores_into_empty_retired_slot() {
         serial_id: &SERIAL,
         otp_key: None,
     };
-    let key = rsk_openpgp::keys::generate_rsa(&mut TestRng(99), 1024).unwrap();
+    let key = rsk_rsa::generate_rsa(&mut TestRng(99), 1024).unwrap();
     let slot = info::next_free_retired(&mut fs).unwrap();
     assert!(info::store_retired_rsa(&dev, &mut fs, &mut TestRng(5), slot, &key).is_ok());
     // Reads back like a host-generated RSA slot: key + cert present, RSA meta, generated.
@@ -3887,7 +3915,7 @@ fn on_device_rsa4096_buffers_round_trip() {
         serial_id: &SERIAL,
         otp_key: None,
     };
-    let key = rsk_openpgp::keys::generate_rsa(&mut TestRng(99), 4096).unwrap();
+    let key = rsk_rsa::generate_rsa(&mut TestRng(99), 4096).unwrap();
     let slot = info::next_free_retired(&mut fs).unwrap();
     assert!(info::store_retired_rsa(&dev, &mut fs, &mut TestRng(5), slot, &key).is_ok());
     let mut meta = [0u8; 8];
@@ -4079,7 +4107,7 @@ fn rsa_import_and_sign() {
     verify_pin(&mut app, &mut fs);
     let key = {
         let mut krng = TestRng(99);
-        rsk_openpgp::keys::generate_rsa(&mut krng, 1024).unwrap()
+        rsk_rsa::generate_rsa(&mut krng, 1024).unwrap()
     };
     use rsa::traits::PrivateKeyParts as _;
     let primes = key.primes();

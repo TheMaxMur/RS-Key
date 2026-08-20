@@ -872,8 +872,8 @@ fn the_panel_generates_the_rsa_key_the_wire_can() {
     // `7F49 82 len`, then `81 82 len` and the modulus, then `82 len` and the
     // exponent. Exact, so a wrong size is caught in either direction.
     let mut out = [0u8; 1024];
-    let n = rsk_openpgp::keys::make_rsa_response(&key, &mut out);
-    let want = 5 + 4 + RSA_BITS / 8 + 2 + rsk_openpgp::keys::RSA_PUB_EXP_BE.len();
+    let n = rsk_rsa::make_rsa_response(&key, &mut out);
+    let want = 5 + 4 + RSA_BITS / 8 + 2 + rsk_rsa::RSA_PUB_EXP_BE.len();
     assert_eq!(
         n, want,
         "the response is not a {RSA_BITS}-bit modulus and a standard exponent"

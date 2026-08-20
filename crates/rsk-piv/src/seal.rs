@@ -13,23 +13,24 @@ use rsk_crypto::{Device, aes256gcm_decrypt, aes256gcm_encrypt, hkdf_sha256};
 use rsk_fs::{Fs, KeyFid, Sealed, Storage};
 use rsk_openpgp::Rng;
 use rsk_openpgp::keys::{Curve, PrivKey};
-use rsk_openpgp::rsa_crt;
+use rsk_rsa::crt;
 use rsk_sdk::Sw;
 use zeroize::{Zeroize, Zeroizing};
 
-pub use rsk_openpgp::rsa_crt::RsaCrt;
+pub use rsk_rsa::RsaCrt;
 
 use crate::files::{
     SLOT_ATTESTATION, SLOT_AUTHENTICATION, SLOT_CARDAUTH, SLOT_RETIRED_FIRST, SLOT_RETIRED_LAST,
 };
+use crate::rsa_sw;
 
 const NONCE_LEN: usize = 12;
 const TAG_LEN: usize = 16;
 /// Largest sealed plaintext: RSA-4096 `P ‖ Q ‖ dP ‖ dQ ‖ qInv`, five 256-byte
 /// fields (the CRT parameters cached alongside the primes so signing skips the
 /// per-op key rebuild). Older `P ‖ Q` blobs (two fields) still load — the real
-/// length rides in the record and [`rsa_crt::parse_rsa_blob`] tells them apart.
-const MAX_PLAIN: usize = 5 * rsk_rsa::MAX_MOD;
+/// length rides in the record and [`crt::parse_rsa_blob`] tells them apart.
+const MAX_PLAIN: usize = rsk_rsa::MAX_CRT_PLAIN;
 /// Largest sealed-record length (`nonce ‖ ct ‖ tag`). Public so other PIV paths
 /// that move a sealed blob verbatim (MOVE KEY) can size their buffer to it.
 pub const MAX_BLOB: usize = NONCE_LEN + MAX_PLAIN + TAG_LEN;
@@ -182,7 +183,7 @@ pub fn load_ec_key<S: Storage>(dev: &Device, fs: &mut Fs<S>, fid: KeyFid) -> Res
 }
 
 /// Seal an RSA key as `P ‖ Q ‖ dP ‖ dQ ‖ qInv` (the shared CRT layout — see
-/// [`rsa_crt::crt_plaintext`]), so a signature no longer rebuilds `d`, `dP`, `dQ`
+/// [`crt::crt_plaintext`]), so a signature no longer rebuilds `d`, `dP`, `dQ`
 /// and `qInv` (two modular inversions) every time.
 pub fn store_rsa_key<S: Storage>(
     dev: &Device,
@@ -193,7 +194,7 @@ pub fn store_rsa_key<S: Storage>(
 ) -> Result<(), Sw> {
     let mut plain = [0u8; MAX_PLAIN];
     let r = (|| {
-        let n = rsa_crt::crt_plaintext(key, &mut plain)?;
+        let n = crt::crt_plaintext(key, &mut plain).map_err(rsa_sw)?;
         seal_put(dev, fs, rng, fid, &plain[..n])
     })();
     plain.zeroize();
@@ -218,7 +219,7 @@ pub fn load_rsa_modulus<S: Storage>(
     let r = (|| {
         // Only `half` and the first `2*half` bytes are read, so the 2-vs-5-field
         // length classification (the `_` bool) cannot change `N` — collision-immune.
-        let (half, _) = rsa_crt::parse_rsa_blob(&plain[..n])?;
+        let (half, _) = crt::parse_rsa_blob(&plain[..n]).map_err(rsa_sw)?;
         let p = Zeroizing::new(BigUint::from_bytes_be(&plain[..half]));
         let q = Zeroizing::new(BigUint::from_bytes_be(&plain[half..2 * half]));
         let nb = (&*p * &*q).to_bytes_be();
@@ -244,10 +245,10 @@ pub fn load_rsa_key<S: Storage>(
     let mut plain = [0u8; MAX_PLAIN];
     let n = seal_read(dev, fs, fid, &mut plain)?;
     let r = (|| {
-        let (half, _) = rsa_crt::parse_rsa_blob(&plain[..n])?;
+        let (half, _) = crt::parse_rsa_blob(&plain[..n]).map_err(rsa_sw)?;
         let p = BigUint::from_bytes_be(&plain[..half]);
         let q = BigUint::from_bytes_be(&plain[half..2 * half]);
-        RsaPrivateKey::from_p_q(p, q, rsa_crt::rsa_e()).map_err(|_| Sw::MEMORY_FAILURE)
+        RsaPrivateKey::from_p_q(p, q, crt::rsa_e()).map_err(|_| Sw::MEMORY_FAILURE)
     })();
     plain.zeroize();
     r
@@ -255,11 +256,11 @@ pub fn load_rsa_key<S: Storage>(
 
 /// Load the CRT signing parameters of an RSA key — new `P‖Q‖dP‖dQ‖qInv` blobs
 /// slice directly, older `P‖Q` blobs recompute once (see
-/// [`rsa_crt::crt_from_plain`]).
+/// [`crt::crt_from_plain`]).
 pub fn load_rsa_crt<S: Storage>(dev: &Device, fs: &mut Fs<S>, fid: KeyFid) -> Result<RsaCrt, Sw> {
     let mut plain = [0u8; MAX_PLAIN];
     let n = seal_read(dev, fs, fid, &mut plain)?;
-    let r = rsa_crt::crt_from_plain(&plain[..n]);
+    let r = crt::crt_from_plain(&plain[..n]).map_err(rsa_sw);
     plain.zeroize();
     r
 }

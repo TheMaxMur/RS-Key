@@ -7,8 +7,8 @@ publish = false
 
 # The PIV applet (NIST SP 800-73-4 subset + the Yubico extensions ykman
 # speaks), reached over CCID. Pure and host-testable like the other applet
-# crates; reuses rsk-openpgp's key machinery (PrivKey, RsaKeygen) with its
-# own kbase-rooted sealing.
+# crates; RSA comes from rsk-rsa and the EC key type still from rsk-openpgp,
+# with its own kbase-rooted sealing.
 # `cfg(kani)` guards the proof harnesses (set by `cargo kani`, unknown to rustc).
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
@@ -19,11 +19,11 @@ rsk-fs = { workspace = true }
 rsk-crypto = { workspace = true }
 rsk-openpgp = { workspace = true }
 rsk-mgmt = { workspace = true }
-# Fast constant-time RSA CRT private op (UMAAL asm on device) for slot signing.
+# The RSA family: keygen, the sealed CRT layout and its blinded, fault-checked
+# private op (UMAAL asm on device), PKCS#1 v1.5, the public-key DO.
 rsk-rsa = { workspace = true }
+# `RsaPrivateKey` and the bignum the seal path multiplies `N = p·q` with.
 rsa = { workspace = true }
-# rsa's bignum, used directly for the sign path's blinding (mod_inverse/modpow).
-num-bigint-dig = { workspace = true }
 zeroize = { workspace = true }
 
 [dev-dependencies]

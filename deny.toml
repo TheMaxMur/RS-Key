@@ -5,14 +5,15 @@
 # The sole *vulnerability* ignored below (rsa) is a deliberate, documented
 # exception. No fixed release exists — OSV gives `introduced: 0.0.0-0` with no
 # `fixed` event, so every version is affected. Every hot private-RSA path now
-# runs on `rsk_rsa::sign_crt` instead: PIV GENERAL AUTHENTICATE, PSO:CDS,
-# INTERNAL AUTHENTICATE and — since 0.4.11 — PSO:DECIPHER, which unpads with the
-# applet's own constant-time `pkcs1v15`. Two private uses are left. `rsk-piv/src/
-# x509.rs` signs a certificate at key generation over a digest the device built
-# itself, so there is no chosen-ciphertext oracle to drive; and
-# `rsa_decipher_legacy` in `rsk-openpgp/src/keys.rs` serves only a legacy `P‖Q`
-# key of non-32-multiple width, which no current firmware can store and which
-# would otherwise lose the ability to decrypt its own archived messages.
+# runs on `rsk_rsa::crt::private_op` instead: PIV GENERAL AUTHENTICATE, PSO:CDS,
+# INTERNAL AUTHENTICATE and — since 0.4.11 — PSO:DECIPHER, which unpads with our
+# own constant-time `rsk_rsa::pkcs1v15`. Two private uses are left.
+# `rsk_rsa::pkcs1v15::rsa_sign`, which `rsk-piv/src/x509.rs` calls, signs a
+# certificate at key generation over a digest the device built itself, so there
+# is no chosen-ciphertext oracle to drive; and `rsa_decipher_legacy` in
+# `rsk-openpgp/src/keys.rs` serves only a legacy `P‖Q` key of non-32-multiple
+# width, which no current firmware can store and which would otherwise lose the
+# ability to decrypt its own archived messages.
 # Rationale and residual risk: docs/limitations.md → "RSA (RUSTSEC-2023-0071)".
 # Everything else here is merely "unmaintained".
 ignore = [

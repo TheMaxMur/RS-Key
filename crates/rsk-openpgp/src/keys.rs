@@ -7,7 +7,6 @@
 //! see [`crate::pin`]). EC blobs are `[curve_id] ‖ scalar`; signatures are raw
 //! `r ‖ s` (fixed field width), NOT DER.
 
-use alloc::boxed::Box;
 use zeroize::{Zeroize, Zeroizing};
 
 use rsk_crypto::aes::aes_decrypt_cfb_256;
@@ -18,14 +17,14 @@ use rsk_sdk::Sw;
 use p256::ecdsa::signature::hazmat::PrehashSigner;
 use p256::elliptic_curve::sec1::FromSec1Point;
 
-use num_bigint_dig::prime::probably_prime_lucas;
-use rsa::traits::{PrivateKeyParts, PublicKeyParts};
-use rsa::{BigUint, Pkcs1v15Encrypt, Pkcs1v15Sign};
-use rsk_rsa::{IncrementalSieve, mod_small, passes_strong_mr_base2, self_test};
+use rsa::traits::PublicKeyParts;
+use rsa::{BigUint, Pkcs1v15Encrypt};
+use rsk_rsa::{MAX_CRT_PLAIN, MAX_RSA_BYTES, RngAdapter, RsaCrt, RsaError};
 
-// Re-exported so the firmware can name the keygen result type without its own
-// `rsa` dependency (the dual-core search returns `Box<RsaPrivateKey>`).
-pub use rsa::RsaPrivateKey;
+// Re-exported so `rsk-display` and the firmware can name the keygen result type
+// without an `rsk-rsa` dependency of their own (the dual-core search returns
+// `Box<RsaPrivateKey>`).
+pub use rsk_rsa::RsaPrivateKey;
 
 use crate::Rng;
 use crate::consts::*;
@@ -34,8 +33,6 @@ use crate::dobj::{
     ATTR_P521R1,
 };
 use crate::pin::{Session, load_dek};
-use crate::pkcs1v15;
-use crate::rsa_crt::{self, RsaCrt};
 
 /// Largest raw ECDSA signature: P-521 `r ‖ s` = 2×66 bytes.
 pub const MAX_EC_SIG: usize = 132;
@@ -163,7 +160,7 @@ fn legacy_aes_len(n: usize) -> bool {
 }
 
 /// Legal widths of a pre-GCM **RSA** record: `P‖Q`, or the five CRT fields, for a
-/// half that [`rsa_crt::parse_rsa_blob`] would accept (32..=256, a multiple of 32).
+/// half that [`rsk_rsa::crt::parse_rsa_blob`] would accept (32..=256, a multiple of 32).
 fn legacy_rsa_len(n: usize) -> bool {
     let half_ok = |h: usize| (32..=256).contains(&h) && h.is_multiple_of(32);
     (n.is_multiple_of(2) && half_ok(n / 2)) || (n.is_multiple_of(5) && half_ok(n / 5))
@@ -991,282 +988,27 @@ pub fn inc_sig_count<S: Storage>(fs: &mut Fs<S>, sess: &mut Session) -> Result<(
 
 // ---------------------------------------------------------------------- RSA --
 //
-// Keygen, cert signing, and the public paths use the `rsa` crate (heap-backed);
-// the applet's own PSO:CDS / INTERNAL AUTHENTICATE run the CRT private op on the
-// UMAAL asm ([`rsa_crt`]). The stored blob is `P ‖ Q ‖ dP ‖ dQ ‖ qInv` (older
-// `P ‖ Q` blobs still load); on load the exponent is forced to 65537 — gpg only
-// ever imports e = 65537.
+// The algorithm lives in [`rsk_rsa`]; what stays here is the applet's own half —
+// sealing a key into the DEK-protected store, loading it back, and the
+// PSO:DECIPHER command framing. The stored blob is `P ‖ Q ‖ dP ‖ dQ ‖ qInv`
+// (older `P ‖ Q` blobs still load); on load the exponent is forced to 65537 —
+// gpg only ever imports e = 65537.
 
-/// Largest RSA modulus handled (RSA-4096 = 512 bytes).
-pub const MAX_RSA_BYTES: usize = 512;
-/// Largest stored RSA blob: `P ‖ Q ‖ dP ‖ dQ ‖ qInv` for RSA-4096 (five 256-byte
-/// fields — the CRT params cached alongside the primes; see [`rsa_crt`]).
-const MAX_RSA_KDATA: usize = rsa_crt::MAX_CRT_PLAIN;
-/// Largest RSA public-key DO `7F49 82 LL { 81 82 <N> · 82 <Elen> <E> }`.
-pub const MAX_RSA_PUBDO: usize = 5 + 4 + MAX_RSA_BYTES + 2 + 8;
-
-/// PKCS#1 DigestInfo prefixes (`SEQ { SEQ { OID, NULL }, OCTET STRING }` header,
-/// without the trailing hash) for the five hashes `rsa_sign_em` recognises.
-const DI_SHA1: &[u8] = &[
-    0x30, 0x21, 0x30, 0x09, 0x06, 0x05, 0x2b, 0x0e, 0x03, 0x02, 0x1a, 0x05, 0x00, 0x04, 0x14,
-];
-const DI_SHA224: &[u8] = &[
-    0x30, 0x2d, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x04, 0x05,
-    0x00, 0x04, 0x1c,
-];
-const DI_SHA256: &[u8] = &[
-    0x30, 0x31, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01, 0x05,
-    0x00, 0x04, 0x20,
-];
-const DI_SHA384: &[u8] = &[
-    0x30, 0x41, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x02, 0x05,
-    0x00, 0x04, 0x30,
-];
-const DI_SHA512: &[u8] = &[
-    0x30, 0x51, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x03, 0x05,
-    0x00, 0x04, 0x40,
-];
-const DIGESTINFOS: [(&[u8], usize); 5] = [
-    (DI_SHA1, 20),
-    (DI_SHA224, 28),
-    (DI_SHA256, 32),
-    (DI_SHA384, 48),
-    (DI_SHA512, 64),
-];
-
-/// Build the RSA key from the imported exponent / primes (tags 0x91/0x92/0x93).
-pub fn rsa_from_pqe(e: &[u8], p: &[u8], q: &[u8]) -> Option<RsaPrivateKey> {
-    let p = BigUint::from_bytes_be(p);
-    let q = BigUint::from_bytes_be(q);
-    // from_p_q derives the totient via (p-1)(q-1); a zero prime MPI underflows
-    // num-bigint's unsigned subtraction (a panic, not an Err) and halts the device
-    // on import, so reject it here and let the caller's ok_or(EXEC_ERROR) do its job.
-    if p < BigUint::from(2u8) || q < BigUint::from(2u8) {
-        return None;
-    }
-    RsaPrivateKey::from_p_q(p, q, BigUint::from_bytes_be(e)).ok()
-}
-
-/// The RSA public exponent, fixed at 65537 (what `load_rsa_key` assumes).
-const RSA_E: u32 = 65_537;
-
-/// 65537 big-endian — the fixed PIV/generated RSA public exponent as bytes, so a
-/// caller that already has the modulus (PIV GET METADATA) can build the public-key
-/// DO without a `BigUint` or a magic literal. Equals `BigUint::from(RSA_E)` serialized.
-pub const RSA_PUB_EXP_BE: &[u8] = &[0x01, 0x00, 0x01];
-
-/// The RSA prime search as a *stepper*, so the CCID transport can yield — and
-/// send time-extension keepalives — between candidates. Each
-/// [`step`](RsaKeygen::step) tests ONE random candidate (a bounded chunk: one
-/// `probably_prime`, ~tens of ms on-device), matching the `rsa` crate's keygen:
-/// two `nbits/2`-bit primes with the top two bits set and `gcd(e, prime − 1) = 1`,
-/// assembled with `RsaPrivateKey::from_p_q`. The primality decision is
-/// Baillie-PSW split across backends: the strong Miller-Rabin base-2 half on
-/// the KAT-gated asm modexp (ours, differentially tested against the library),
-/// the strong Lucas half and key assembly the vetted library routines.
-///
-/// `step` decomposes into [`try_candidate`](RsaKeygen::try_candidate) (one
-/// draw + test, stateless) and [`offer`](RsaKeygen::offer) (the two-prime
-/// pool): the firmware runs `try_candidate` on BOTH RP2350 cores — each with
-/// its own RNG stream — and funnels every find through one `offer` pool, so
-/// the cores race for `p` and `q` and the expected search time roughly halves.
-pub struct RsaKeygen {
-    half_bytes: usize,
-    e: BigUint,
-    p: Option<BigUint>,
-    /// Result of the asm modexp known-answer test, checked once up front: if the
-    /// fast modexp is wrong on this build/silicon, refuse to generate (rather than
-    /// emit a weak key). Always true on the host (num-bigint backend).
-    asm_ok: bool,
-}
-
-// A keygen abandoned between steps still holds the first found prime.
-impl Drop for RsaKeygen {
-    fn drop(&mut self) {
-        if let Some(p) = &mut self.p {
-            p.zeroize();
-        }
-    }
-}
-
-/// The outcome of one [`RsaKeygen::step`]. The `Done` key is boxed so the enum
-/// stays pointer-sized (it is returned up the call stack each step).
-pub enum RsaStep {
-    /// Candidate rejected, or the first prime was just found — call `step` again.
-    More,
-    /// Both primes found and the private key assembled.
-    Done(Box<RsaPrivateKey>),
-    /// Unusable parameters (unsupported modulus size) or a key-assembly failure.
-    Failed,
-}
-
-impl RsaKeygen {
-    /// Prepare to generate an `nbits`-bit modulus (only byte-aligned half-sizes —
-    /// every real OpenPGP size, 2048/3072/4096, qualifies).
-    pub fn new(nbits: usize) -> Self {
-        RsaKeygen {
-            half_bytes: nbits / 16,
-            e: BigUint::from(RSA_E),
-            p: None,
-            asm_ok: self_test(),
-        }
-    }
-
-    /// Whether this keygen can run at all: the modulus size is supported (the
-    /// asm modexp needs the prime length to be a multiple of 32 bytes — every
-    /// standard RSA size qualifies) and the modexp known-answer test passed
-    /// (a broken fast modexp must never yield a key).
-    pub fn usable(&self) -> bool {
-        let half = self.half_bytes;
-        self.asm_ok && half != 0 && half <= MAX_RSA_BYTES / 2 && half.is_multiple_of(32)
-    }
-
-    /// One prime's size in bytes (half the modulus).
-    pub fn half_bytes(&self) -> usize {
-        self.half_bytes
-    }
-
-    /// Draw and test ONE prime candidate of `half_bytes` — the bounded unit of
-    /// search work. Stateless (an associated fn), so a second core can run it
-    /// concurrently with its own RNG stream. The pipeline is Baillie-PSW split
-    /// across backends: the cheap rejections (the small-prime sieve, the
-    /// `gcd(e, n−1)` check), then the strong Miller-Rabin base-2 gate on the
-    /// KAT-gated asm modexp, then the vetted software strong Lucas test for
-    /// the final accept. Admitting a composite would take a simultaneous
-    /// failure of both halves — the same combined guarantee
-    /// `probably_prime(_, 0)` gives, with the modexp-heavy half on the fast
-    /// path. The caller is responsible for the
-    /// [`usable`](RsaKeygen::usable) gate.
-    ///
-    /// `sieve` is a running [`IncrementalSieve`] owned by the caller (one per
-    /// core in the dual-core search): each call advances it by one candidate.
-    /// A call that lands on a composite, or that reseeds an exhausted window,
-    /// returns `None` cheaply; only a sieve survivor pays the modexp + Lucas.
-    pub fn try_candidate(
-        sieve: &mut IncrementalSieve,
-        rng: &mut dyn Rng,
-        half_bytes: usize,
-    ) -> Option<BigUint> {
-        match sieve.step() {
-            None => {
-                // Window exhausted (or never seeded) — draw a fresh random odd
-                // top-two-bits start; this call yields no candidate.
-                let mut seed = [0u8; MAX_RSA_BYTES / 2];
-                rng.fill(&mut seed[..half_bytes]);
-                sieve.reseed(half_bytes, &seed[..half_bytes]);
-                seed.zeroize();
-                return None;
-            }
-            Some(false) => return None, // composite by a small prime — cheap
-            Some(true) => {}            // sieve survivor — run the dear tests
-        }
-        let n = sieve.candidate();
-        // gcd(e, n − 1) == 1  ⇔  n ≢ 1 (mod e), since e is prime.
-        if mod_small(n, RSA_E) == 1 {
-            return None;
-        }
-        // The strong Miller-Rabin half of Baillie-PSW, on the asm modexp.
-        if !passes_strong_mr_base2(n) {
-            return None;
-        }
-        let cand = BigUint::from_bytes_le(n);
-        // The strong Lucas half (vetted library code). Together with the MR
-        // gate above this is exactly `probably_prime(_, 0)` — see the
-        // `keygen_bpsw_split_matches_library` test.
-        if !probably_prime_lucas(&cand) {
-            return None;
-        }
-        Some(cand)
-    }
-
-    /// Feed a found prime into the two-prime pool: the first is held, a second
-    /// *distinct* one completes the key (a duplicate is rejected and the held
-    /// prime kept — the search just continues). Accepts primes found by any
-    /// core, in any order.
-    pub fn offer(&mut self, mut cand: BigUint) -> RsaStep {
-        match self.p.take() {
-            None => {
-                self.p = Some(cand);
-                RsaStep::More
-            }
-            Some(p) if p == cand => {
-                self.p = Some(p);
-                cand.zeroize();
-                RsaStep::More
-            }
-            Some(p) => match RsaPrivateKey::from_p_q(p, cand, self.e.clone()) {
-                Ok(k) => RsaStep::Done(Box::new(k)),
-                Err(_) => RsaStep::Failed,
-            },
-        }
-    }
-
-    /// [`try_candidate`](RsaKeygen::try_candidate), returning the prime as
-    /// little-endian bytes in `out` — the inter-core transport format (the
-    /// second core ships raw bytes, not bignums, so the zeroize discipline
-    /// stays in this crate). `out` must hold `half_bytes`; the candidate's top
-    /// bits are set, so a find is always exactly `half_bytes` long.
-    pub fn try_candidate_le(
-        sieve: &mut IncrementalSieve,
-        rng: &mut dyn Rng,
-        half_bytes: usize,
-        out: &mut [u8],
-    ) -> Option<usize> {
-        let mut p = Self::try_candidate(sieve, rng, half_bytes)?;
-        let mut v = p.to_bytes_le();
-        p.zeroize();
-        let n = v.len();
-        out[..n].copy_from_slice(&v);
-        v.zeroize();
-        Some(n)
-    }
-
-    /// [`offer`](RsaKeygen::offer) from little-endian bytes (the inter-core
-    /// transport format); scrubs `bytes` after the conversion.
-    pub fn offer_le(&mut self, bytes: &mut [u8]) -> RsaStep {
-        // Belt-and-suspenders: a byte-transport find must be exactly this key's
-        // half size — a wrong length is a stale prime from a prior different-size
-        // job (mailbox scrubbed on engage, so never fires today); pooling corrupts n.
-        if bytes.len() != self.half_bytes {
-            bytes.zeroize();
-            return RsaStep::More;
-        }
-        let cand = BigUint::from_bytes_le(bytes);
-        bytes.zeroize();
-        self.offer(cand)
-    }
-
-    /// Draw and test one prime candidate, feeding any find into the pool — the
-    /// single-core step: [`try_candidate`](RsaKeygen::try_candidate) then
-    /// [`offer`](RsaKeygen::offer). `sieve` is the caller's running window.
-    pub fn step(&mut self, sieve: &mut IncrementalSieve, rng: &mut dyn Rng) -> RsaStep {
-        if !self.usable() {
-            return RsaStep::Failed;
-        }
-        match Self::try_candidate(sieve, rng, self.half_bytes) {
-            None => RsaStep::More,
-            Some(cand) => self.offer(cand),
-        }
-    }
-}
-
-/// Blocking RSA keygen — drives [`RsaKeygen`] to completion on one core. Used
-/// by the synchronous `keypair_gen` (host tests, the non-CCID path); on the
-/// device the firmware races `try_candidate` on both cores instead.
-pub fn generate_rsa(rng: &mut dyn Rng, nbits: usize) -> Result<RsaPrivateKey, Sw> {
-    let mut kg = RsaKeygen::new(nbits);
-    let mut sieve = IncrementalSieve::new();
-    loop {
-        match kg.step(&mut sieve, rng) {
-            RsaStep::Done(k) => return Ok(*k),
-            RsaStep::Failed => return Err(Sw::EXEC_ERROR),
-            RsaStep::More => {}
-        }
+/// The status word each [`RsaError`] answers with. This table **is** wire
+/// surface — `rsa_sw_reproduces_every_status_word` pins all four arms — and
+/// `rsk-piv` carries its own copy of it: both types are foreign to both applets,
+/// so no shared `From` impl exists that does not point a dependency upward.
+pub(crate) fn rsa_sw(e: RsaError) -> Sw {
+    match e {
+        RsaError::BadWidth => Sw::WRONG_LENGTH,
+        RsaError::BadBlock => Sw::WRONG_DATA,
+        RsaError::BadBlob => Sw::MEMORY_FAILURE,
+        RsaError::Failed => Sw::EXEC_ERROR,
     }
 }
 
 /// Seal the RSA key's CRT params `P ‖ Q ‖ dP ‖ dQ ‖ qInv` under the DEK and write
-/// it to `fid`, so signing skips the per-op key rebuild (see [`rsa_crt`]).
+/// it to `fid`, so signing skips the per-op key rebuild (see [`rsk_rsa::crt`]).
 pub fn store_rsa_key<S: Storage>(
     dev: &Device,
     fs: &mut Fs<S>,
@@ -1274,10 +1016,10 @@ pub fn store_rsa_key<S: Storage>(
     fid: KeyFid,
     key: &RsaPrivateKey,
 ) -> Result<(), Sw> {
-    let mut kdata = [0u8; MAX_RSA_KDATA];
-    let mut blob = [0u8; MAX_RSA_KDATA + DEK_SEAL_OVERHEAD];
+    let mut kdata = [0u8; MAX_CRT_PLAIN];
+    let mut blob = [0u8; MAX_CRT_PLAIN + DEK_SEAL_OVERHEAD];
     let r = (|| {
-        let n = rsa_crt::crt_plaintext(key, &mut kdata)?;
+        let n = rsk_rsa::crt::crt_plaintext(key, &mut kdata).map_err(rsa_sw)?;
         let bn = dek_seal(dev, fs, sess, fid, &kdata[..n], &mut blob)?;
         fs.put_key(fid, Sealed::wrap(&blob[..bn]))
             .map_err(|_| Sw::MEMORY_FAILURE)
@@ -1298,17 +1040,17 @@ pub fn load_rsa_key<S: Storage>(
     sess: &Session,
     fid: KeyFid,
 ) -> Result<RsaPrivateKey, Sw> {
-    let mut blob = [0u8; MAX_RSA_KDATA + DEK_SEAL_OVERHEAD];
+    let mut blob = [0u8; MAX_CRT_PLAIN + DEK_SEAL_OVERHEAD];
     let bn = fs.read_key(fid, &mut blob).ok_or(Sw::REFERENCE_NOT_FOUND)?;
     let bn = bn.min(blob.len());
-    let mut kdata = [0u8; MAX_RSA_KDATA];
+    let mut kdata = [0u8; MAX_CRT_PLAIN];
     let res = (|| {
         let (n, legacy) = dek_unseal(dev, fs, sess, &blob[..bn], &mut kdata, legacy_rsa_len)?;
-        let (half, _) = rsa_crt::parse_rsa_blob(&kdata[..n]).map_err(|_| Sw::WRONG_DATA)?;
+        let (half, _) = rsk_rsa::crt::parse_rsa_blob(&kdata[..n]).map_err(|_| Sw::WRONG_DATA)?;
         let p = BigUint::from_bytes_be(&kdata[..half]);
         let q = BigUint::from_bytes_be(&kdata[half..2 * half]);
         let key =
-            RsaPrivateKey::from_p_q(p, q, BigUint::from(RSA_E)).map_err(|_| Sw::WRONG_DATA)?;
+            RsaPrivateKey::from_p_q(p, q, rsk_rsa::crt::rsa_e()).map_err(|_| Sw::WRONG_DATA)?;
         Ok((key, legacy))
     })();
     kdata.zeroize();
@@ -1321,19 +1063,19 @@ pub fn load_rsa_key<S: Storage>(
 }
 
 /// Load the CRT signing parameters of an RSA key — new `P‖Q‖dP‖dQ‖qInv` blobs
-/// slice directly, older `P‖Q` blobs recompute once (see [`rsa_crt::crt_from_plain`]).
-/// A key still in the legacy CFB seal is re-sealed forward, upgrading it straight
-/// to the 5-field authenticated layout.
+/// slice directly, older `P‖Q` blobs recompute once (see
+/// [`rsk_rsa::crt::crt_from_plain`]). A key still in the legacy CFB seal is
+/// re-sealed forward, upgrading it straight to the 5-field authenticated layout.
 pub fn load_rsa_crt<S: Storage>(
     dev: &Device,
     fs: &mut Fs<S>,
     sess: &Session,
     fid: KeyFid,
 ) -> Result<RsaCrt, Sw> {
-    let mut blob = [0u8; MAX_RSA_KDATA + DEK_SEAL_OVERHEAD];
+    let mut blob = [0u8; MAX_CRT_PLAIN + DEK_SEAL_OVERHEAD];
     let bn = fs.read_key(fid, &mut blob).ok_or(Sw::REFERENCE_NOT_FOUND)?;
     let bn = bn.min(blob.len());
-    let mut kdata = [0u8; MAX_RSA_KDATA];
+    let mut kdata = [0u8; MAX_CRT_PLAIN];
     let unsealed = dek_unseal(dev, fs, sess, &blob[..bn], &mut kdata, legacy_rsa_len);
     blob.zeroize();
     let (n, legacy) = match unsealed {
@@ -1343,192 +1085,20 @@ pub fn load_rsa_crt<S: Storage>(
             return Err(e);
         }
     };
-    let crt = rsa_crt::crt_from_plain(&kdata[..n]);
+    let crt = rsk_rsa::crt::crt_from_plain(&kdata[..n]);
     // Migrate a legacy CFB key forward — now straight to the 5-field GCM layout.
     if legacy
         && crt.is_ok()
-        && let Ok((half, _)) = rsa_crt::parse_rsa_blob(&kdata[..n])
+        && let Ok((half, _)) = rsk_rsa::crt::parse_rsa_blob(&kdata[..n])
     {
         let p = BigUint::from_bytes_be(&kdata[..half]);
         let q = BigUint::from_bytes_be(&kdata[half..2 * half]);
-        if let Ok(key) = RsaPrivateKey::from_p_q(p, q, BigUint::from(RSA_E)) {
+        if let Ok(key) = RsaPrivateKey::from_p_q(p, q, rsk_rsa::crt::rsa_e()) {
             let _ = store_rsa_key(dev, fs, sess, fid, &key);
         }
     }
     kdata.zeroize();
-    crt
-}
-
-/// Build the public-key DO `7F49 82 LL { 81 82 <N> · 82 <Elen> <E> }` (modulus
-/// tag 0x81 with a 2-byte length, exponent tag 0x82 with a 1-byte one).
-/// The inner RSA public-key body `81 82 <nlen:u16-be> N 82 <elen:u8> E` (no `7F49`
-/// wrapper), from the modulus and exponent bytes. Returns its length
-/// (`4 + n.len() + 2 + e.len()`). Shared by [`make_rsa_response`] and the PIV
-/// GET METADATA path, which has `N` and `e` directly and must not rebuild the key.
-pub fn make_rsa_pub_body(n: &[u8], e: &[u8], out: &mut [u8]) -> usize {
-    out[0] = 0x81;
-    out[1] = 0x82;
-    out[2..4].copy_from_slice(&(n.len() as u16).to_be_bytes());
-    let mut p = 4;
-    out[p..p + n.len()].copy_from_slice(n);
-    p += n.len();
-    out[p] = 0x82;
-    out[p + 1] = e.len() as u8;
-    p += 2;
-    out[p..p + e.len()].copy_from_slice(e);
-    p + e.len()
-}
-
-pub fn make_rsa_response(key: &RsaPrivateKey, out: &mut [u8]) -> usize {
-    out[0] = 0x7f;
-    out[1] = 0x49;
-    out[2] = 0x82; // 2-byte inner length, back-patched below
-    // e stays sourced from the key: an imported OpenPGP key may carry a non-65537
-    // exponent, so only the PIV metadata caller is allowed to hardcode 65537.
-    let body = make_rsa_pub_body(
-        &key.n().to_bytes_be(),
-        &key.e().to_bytes_be(),
-        &mut out[5..],
-    );
-    out[3..5].copy_from_slice(&(body as u16).to_be_bytes());
-    5 + body
-}
-
-/// Find the recognised DigestInfo prefix + hash for a canonical PKCS#1 DigestInfo
-/// (`SEQ { SEQ { OID, NULL }, OCTET STRING }`). gpg always sends the canonical
-/// form, so a prefix + exact-length match identifies it without a full DER walk.
-fn match_digestinfo(data: &[u8]) -> Option<(&'static [u8], &[u8])> {
-    for (prefix, hlen) in DIGESTINFOS {
-        if data.len() == prefix.len() + hlen && data.starts_with(prefix) {
-            return Some((prefix, &data[prefix.len()..]));
-        }
-    }
-    None
-}
-
-/// Largest DigestInfo `rsa_sign_em` builds: 19-byte prefix (SHA-512) + 64-byte hash.
-pub const MAX_RSA_DIGESTINFO: usize = 19 + 64;
-
-/// Decide what PKCS#1 v1.5 should sign: write the canonical DigestInfo
-/// (`prefix ‖ hash`) for a recognised DigestInfo or a bare hash whose length
-/// names the algorithm into `em`, returning its length; `None` means neither (the
-/// raw private-op fallback). Pure (no key / modexp), so the `openpgp_rsa_sign`
-/// fuzz target exercises the parser + buffer construction at full speed.
-pub fn rsa_sign_em(data: &[u8], em: &mut [u8; MAX_RSA_DIGESTINFO]) -> Option<usize> {
-    let (prefix, hash): (&[u8], &[u8]) = if let Some(di) = match_digestinfo(data) {
-        di
-    } else {
-        let &(prefix, _) = DIGESTINFOS.iter().find(|&&(_, hlen)| hlen == data.len())?;
-        (prefix, data)
-    };
-    let dlen = prefix.len() + hash.len();
-    em[..prefix.len()].copy_from_slice(prefix);
-    em[prefix.len()..dlen].copy_from_slice(hash);
-    Some(dlen)
-}
-
-/// PKCS#1 v1.5 sign over the supplied data with the cached CRT params on the
-/// UMAAL asm. If `data` is a DigestInfo (or a bare hash whose length names the
-/// algorithm), build the EMSA-PKCS1-v1_5 encoding and sign that; otherwise treat
-/// `data` as a raw block. Either way the block runs through the blinded,
-/// Bellcore-fault-checked private op ([`rsa_crt::sign_crt`]).
-pub fn rsa_sign_crt(
-    crt: &RsaCrt,
-    data: &[u8],
-    rng: &mut dyn Rng,
-    out: &mut [u8],
-) -> Result<usize, Sw> {
-    let mlen = crt.modulus_len();
-    let mut em = [0u8; MAX_RSA_BYTES];
-    let mut di = [0u8; MAX_RSA_DIGESTINFO];
-    match rsa_sign_em(data, &mut di) {
-        Some(dlen) => {
-            // EM = 00 01 PS 00 ‖ DigestInfo, PS = 0xFF·(mlen−dlen−3), at least 8.
-            if mlen < dlen + 11 {
-                return Err(Sw::WRONG_LENGTH);
-            }
-            let ps_end = mlen - dlen - 1;
-            em[1] = 0x01;
-            em[2..ps_end].fill(0xff);
-            em[ps_end + 1..mlen].copy_from_slice(&di[..dlen]);
-        }
-        // gpg never reaches this — it always sends a DigestInfo — but a raw block
-        // still signs (left-padded to the modulus width) through the same blinded,
-        // fault-checked op, so no non-conformant caller sees a different path.
-        None => {
-            if data.len() > mlen {
-                return Err(Sw::WRONG_DATA);
-            }
-            em[mlen - data.len()..mlen].copy_from_slice(data);
-        }
-    }
-    rsa_crt::sign_crt(crt, &em[..mlen], rng, out)
-}
-
-/// PKCS#1 v1.5 over the supplied data with a full [`RsaPrivateKey`] on the `rsa`
-/// crate. Used by the PIV x509 cert-signing path (`rsk_piv::x509`); the OpenPGP
-/// applet's own PSO:CDS / INTERNAL AUTHENTICATE use [`rsa_sign_crt`] (asm). If it
-/// is a DigestInfo (or a bare hash whose length names the algorithm), sign that
-/// digest; otherwise fall back to the raw private operation.
-pub fn rsa_sign(
-    key: &RsaPrivateKey,
-    data: &[u8],
-    rng: &mut dyn Rng,
-    out: &mut [u8],
-) -> Result<usize, Sw> {
-    let mut em = [0u8; MAX_RSA_DIGESTINFO];
-    let Some(dlen) = rsa_sign_em(data, &mut em) else {
-        return rsa_raw(key, data, out, rng);
-    };
-    let sig = key
-        .sign_with_rng(
-            &mut RngAdapter(rng),
-            Pkcs1v15Sign::new_unprefixed(),
-            &em[..dlen],
-        )
-        .map_err(|_| Sw::EXEC_ERROR)?;
-    out[..sig.len()].copy_from_slice(&sig);
-    Ok(sig.len())
-}
-
-/// Run the raw RSA private operation `m^d mod n` (no padding scheme). gpg never
-/// reaches this — it always sends a DigestInfo — but the operation is
-/// base-blinded `(m·rᵉ)ᵈ·r⁻¹ mod n` with a fresh random `r`, so even a
-/// non-conformant caller cannot turn `num-bigint-dig`'s variable-time
-/// exponentiation into a Marvin-style timing oracle on the private exponent.
-fn rsa_raw(
-    key: &RsaPrivateKey,
-    data: &[u8],
-    out: &mut [u8],
-    rng: &mut dyn Rng,
-) -> Result<usize, Sw> {
-    use num_bigint_dig::ModInverse;
-    let key_size = key.size();
-    if data.len() > key_size {
-        return Err(Sw::WRONG_DATA);
-    }
-    let (n, e, d) = (key.n(), key.e(), key.d());
-    let m = BigUint::from_bytes_be(data);
-    // Fresh blinding factor r, invertible mod n (retry on the negligible chance
-    // r shares a factor with n).
-    let (r, r_inv) = loop {
-        let mut rb = [0u8; MAX_RSA_BYTES];
-        rng.fill(&mut rb[..key_size]);
-        let cand = BigUint::from_bytes_be(&rb[..key_size]) % n;
-        if let Some(inv) = (&cand).mod_inverse(n).and_then(|i| i.to_biguint()) {
-            break (cand, inv);
-        }
-    };
-    let blinded = (&m * r.modpow(e, n)) % n;
-    let res = (blinded.modpow(d, n) * r_inv) % n;
-    let rb = res.to_bytes_be();
-    if rb.len() > key_size {
-        return Err(Sw::EXEC_ERROR);
-    }
-    let off = key_size - rb.len();
-    out[..off].fill(0);
-    out[off..key_size].copy_from_slice(&rb);
-    Ok(key_size)
+    crt.map_err(rsa_sw)
 }
 
 /// PSO:DECIPHER for RSA: strip the leading OpenPGP padding-indicator byte, run
@@ -1547,18 +1117,21 @@ pub fn rsa_decipher(
     // A malformed block answered `EXEC_ERROR` when the `rsa` crate owned this
     // path; keep that status word, so moving the implementation does not move the
     // wire surface with it.
-    let res = rsa_crt::sign_crt(crt, ct, rng, &mut em[..key_size])
-        .and_then(|_| pkcs1v15::unpad_encrypt(&em[..key_size], out).map_err(|_| Sw::EXEC_ERROR));
+    let res = rsk_rsa::crt::private_op(crt, ct, rng, &mut em[..key_size])
+        .map_err(rsa_sw)
+        .and_then(|_| {
+            rsk_rsa::pkcs1v15::unpad_encrypt(&em[..key_size], out).map_err(|_| Sw::EXEC_ERROR)
+        });
     em.zeroize();
     res
 }
 
 /// [`rsa_decipher`] for a key the asm CRT core cannot take: a legacy `P‖Q` blob
 /// whose prime width is not a 32-multiple, which older firmware could store and
-/// which [`rsa_crt::crt_from_plain`] refuses. Such a key already cannot sign; it
-/// would lose the ability to decrypt its own archived messages too, so it keeps
-/// the `rsa` crate's blinded decrypt — the one place RUSTSEC-2023-0071 still
-/// touches this applet (`docs/limitations.md`).
+/// which [`rsk_rsa::crt::crt_from_plain`] refuses. Such a key already cannot
+/// sign; it would lose the ability to decrypt its own archived messages too, so
+/// it keeps the `rsa` crate's blinded decrypt — the one place RUSTSEC-2023-0071
+/// still touches this applet (`docs/limitations.md`).
 pub fn rsa_decipher_legacy(
     key: &RsaPrivateKey,
     rng: &mut dyn Rng,
@@ -1575,33 +1148,6 @@ pub fn rsa_decipher_legacy(
     pt.zeroize();
     Ok(n)
 }
-
-/// Adapts the crate [`Rng`] to the `rsa` crate's `rand_core` (still 0.6, distinct
-/// from the EC stack's 0.10) for RSA blinding / signing. The EC curves no longer
-/// need it — deterministic signers, and keygen reject-samples raw bytes.
-/// `pub(crate)` so the applet tests can drive the `rsa` crate's randomized APIs.
-pub(crate) struct RngAdapter<'a>(pub(crate) &'a mut dyn Rng);
-
-impl rsa::rand_core::RngCore for RngAdapter<'_> {
-    fn next_u32(&mut self) -> u32 {
-        let mut b = [0u8; 4];
-        self.0.fill(&mut b);
-        u32::from_le_bytes(b)
-    }
-    fn next_u64(&mut self) -> u64 {
-        let mut b = [0u8; 8];
-        self.0.fill(&mut b);
-        u64::from_le_bytes(b)
-    }
-    fn fill_bytes(&mut self, dst: &mut [u8]) {
-        self.0.fill(dst);
-    }
-    fn try_fill_bytes(&mut self, dst: &mut [u8]) -> Result<(), rsa::rand_core::Error> {
-        self.0.fill(dst);
-        Ok(())
-    }
-}
-impl rsa::rand_core::CryptoRng for RngAdapter<'_> {}
 
 #[cfg(test)]
 #[path = "keys_tests.rs"]

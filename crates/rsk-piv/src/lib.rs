@@ -25,7 +25,7 @@ use core::cell::RefCell;
 use rsk_crypto::{Device, FusedKey, FusedRead, read_fused};
 use rsk_fs::{Fs, Sealed, Storage};
 pub use rsk_openpgp::Rng;
-use rsk_openpgp::keys::{MAX_RSA_BYTES, MAX_RSA_PUBDO, RSA_PUB_EXP_BE, make_rsa_pub_body};
+use rsk_rsa::{MAX_RSA_BYTES, MAX_RSA_PUBDO, RSA_PUB_EXP_BE, RsaError, make_rsa_pub_body};
 // PIV reuses the OpenPGP user-presence trait, so the firmware's existing
 // `impl rsk_openpgp::UserPresence for ButtonPresence` already drives PIV touch.
 use rsa::RsaPrivateKey;
@@ -53,6 +53,20 @@ pub const PIV_AID: &[u8] = &[
 /// Reported PIV application version — the shared [`rsk_sdk::FIRMWARE_VERSION`]
 /// (default 5.7.4, `FW_VERSION`-overridable).
 pub const VERSION: (u8, u8, u8) = rsk_sdk::FIRMWARE_VERSION;
+
+/// The status word each [`RsaError`] answers with. This table **is** wire
+/// surface — `rsa_sw_reproduces_every_status_word` pins all four arms — and
+/// `rsk-openpgp` carries its own copy of it: both types are foreign to both
+/// applets, so no shared `From` impl exists that does not point a dependency
+/// upward.
+pub(crate) fn rsa_sw(e: RsaError) -> Sw {
+    match e {
+        RsaError::BadWidth => Sw::WRONG_LENGTH,
+        RsaError::BadBlock => Sw::WRONG_DATA,
+        RsaError::BadBlob => Sw::MEMORY_FAILURE,
+        RsaError::Failed => Sw::EXEC_ERROR,
+    }
+}
 
 const INS_VERIFY: u8 = 0x20;
 const INS_CHANGE_PIN: u8 = 0x24;
@@ -219,7 +233,7 @@ impl<'a> PivApplet<'a> {
 
     /// If `apdu` is a PIV RSA GENERATE, validate it fully and return the slot,
     /// modulus size and resolved policy bytes so the firmware can run the slow
-    /// prime search itself (stepping [`rsk_openpgp::keys::RsaKeygen`] between
+    /// prime search itself (stepping [`rsk_rsa::RsaKeygen`] between
     /// CCID keepalives). `None` falls through to normal dispatch — EC generate,
     /// or any error (re-validated there so the right SW is reported).
     pub fn rsa_generate_params<S: Storage>(

@@ -12,12 +12,12 @@ use rsk_sdk::Sw;
 use crate::Rng;
 use crate::consts::*;
 use crate::keys::{
-    MAX_EC_POINT, MAX_RSA_PUBDO, PrivKey, curve_from_attr, generate_rsa, make_ec_pubkey_do,
-    make_rsa_response, reset_sig_count, store_aes_key, store_ec_key, store_rsa_key,
+    MAX_EC_POINT, PrivKey, curve_from_attr, make_ec_pubkey_do, reset_sig_count, store_aes_key,
+    store_ec_key, store_rsa_key,
 };
 use crate::origin;
 use crate::pin::Session;
-use rsa::RsaPrivateKey;
+use rsk_rsa::{MAX_RSA_PUBDO, RsaPrivateKey, generate_rsa, make_rsa_response};
 
 /// GENERATE ASYMMETRIC KEY PAIR (INS 0x47). Returns `(response_len, status)`;
 /// the response (written to `out`) is the public-key DO `7F49 { … }`.
@@ -119,7 +119,7 @@ fn generate<S: Storage>(
                 return Err(Sw::WRONG_DATA);
             }
             let nbits = ((algo[1] as usize) << 8) | algo[2] as usize;
-            let key = generate_rsa(rng, nbits)?;
+            let key = generate_rsa(rng, nbits).map_err(crate::keys::rsa_sw)?;
             store_rsa_key(dev, fs, sess, fid, &key)?;
             let mut pub_do = [0u8; MAX_RSA_PUBDO];
             let n = make_rsa_response(&key, &mut pub_do);
@@ -205,7 +205,7 @@ fn read_public<S: Storage>(fs: &mut Fs<S>, fid: KeyFid, out: &mut [u8]) -> Resul
 // --- CCID keepalive path: split RSA generate so the slow keygen can run async ---
 //
 // RSA key generation runs for seconds and would exceed the CCID transaction
-// timeout, so the firmware drives the [`crate::keys::RsaKeygen`] prime search
+// timeout, so the firmware drives the [`rsk_rsa::RsaKeygen`] prime search
 // itself (on both RP2350 cores), the transport sending time-extensions between
 // candidates. These two helpers are the bookends; EC generate and read-public
 // stay synchronous in [`keypair_gen`].
@@ -251,7 +251,7 @@ pub fn rsa_generate_params<S: Storage>(
 }
 
 /// Finish an RSA GENERATE once the key has been produced (by stepping
-/// [`crate::keys::RsaKeygen`]): seal it, store + return the public-key DO, and run
+/// [`rsk_rsa::RsaKeygen`]): seal it, store + return the public-key DO, and run
 /// the shared SIG/DEC tail. Mirrors the RSA branch + tail of [`keypair_gen`].
 pub fn rsa_generate_finish<S: Storage>(
     dev: &Device,

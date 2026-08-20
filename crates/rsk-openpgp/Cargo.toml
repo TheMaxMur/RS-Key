@@ -37,8 +37,9 @@ ecdsa = { workspace = true }
 elliptic-curve = { workspace = true }
 ed25519-dalek = { workspace = true }
 x25519-dalek = { workspace = true }
+# `RsaPrivateKey` (via rsk-rsa), the public-key accessors the DO builder reads,
+# and the legacy PSO:DECIPHER arm. The RSA algorithm itself is rsk-rsa's.
 rsa = { workspace = true }
-num-bigint-dig = { workspace = true }
 rsk-rsa = { workspace = true }
 # Shared fixed-base comb ECDSA signers + d·G (k·G for sign, public-key derivation).
 rsk-ec = { workspace = true }

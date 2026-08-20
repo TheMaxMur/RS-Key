@@ -6,12 +6,14 @@ edition = "2024"
 publish = false
 build = "build.rs"
 
-# Fast RSA bignum modular exponentiation for ARMv7E-M (Cortex-M33 + DSP), wrapping
-# the vendored C + hand-written ARM assembly from rsa-armv7 (Emil Lenngren,
-# BSD-2-Clause; see csrc/LICENSE.txt). Used by rsk-openpgp's on-card RSA key
-# generation: the Miller-Rabin / Fermat modexp is ~10x faster than the pure-Rust
-# bignum, turning a ~150 s keygen into a few seconds. On the host (no ARM asm) it
-# falls back to num-bigint-dig so the prime-search logic stays testable.
+# The RSA algorithm family — key generation, the CRT layout and its blinded
+# private operation, PKCS#1 v1.5, the public-key DO — over fast bignum modular
+# exponentiation for ARMv7E-M (Cortex-M33 + DSP), wrapping the vendored C +
+# hand-written ARM assembly from rsa-armv7 (Emil Lenngren, BSD-2-Clause; see
+# csrc/LICENSE.txt). The Miller-Rabin / Fermat modexp is ~10x faster than the
+# pure-Rust bignum, turning a ~150 s keygen into a few seconds. On the host (no
+# ARM asm) it falls back to num-bigint-dig so the logic stays testable. Used by
+# the OpenPGP and PIV applets, which add their own APDU framing and seal I/O.
 # `cfg(kani)` guards the proof harnesses (set by `cargo kani`, unknown to rustc).
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
@@ -23,12 +25,16 @@ unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
 kani-soft = []
 
 [dependencies]
-# The modexp working buffers hold prime-candidate state.
-zeroize = { workspace = true }
+# The modexp working buffers and the CRT fields hold prime-candidate / key state;
+# `alloc` for the bignum `Vec`s the key paths marshal through.
+zeroize = { workspace = true, features = ["alloc"] }
+# The key type, keygen assembly and PKCS#1 signing above the asm. Rides here with
+# the RSA layer it belongs to; replacing it is the next step of the tier work.
+rsa = { workspace = true }
+# rsa's bignum (re-exported as `rsa::BigUint`): the blinding and fault-check
+# arithmetic here, the strong-Lucas half of the prime test, and — on the host,
+# where there is no ARM assembler — the modexp fallback itself.
+num-bigint-dig = { workspace = true }
 
 [build-dependencies]
 cc = "1"
-
-# Host-only: the modexp fallback + the cross-checks in the unit tests.
-[target.'cfg(not(target_os = "none"))'.dependencies]
-num-bigint-dig = { workspace = true }

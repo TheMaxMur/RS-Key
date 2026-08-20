@@ -24,10 +24,8 @@ pub mod keys;
 pub mod mse;
 pub mod origin;
 pub mod pin;
-pub mod pkcs1v15;
 pub mod pso;
 pub mod putdata;
-pub mod rsa_crt;
 pub mod select;
 pub mod terminate;
 
@@ -46,10 +44,10 @@ pub use init::{Error, scan_files};
 pub use pin::Session;
 
 /// Random-byte source. `firmware` backs this with the RP2350 TRNG; tests use a
-/// deterministic counter.
-pub trait Rng {
-    fn fill(&mut self, buf: &mut [u8]);
-}
+/// deterministic counter. Declared by `rsk-rsa`, whose private-key paths need it
+/// and which sits below every crate that could otherwise host it — re-exported
+/// here so the applet's callers keep naming it `rsk_openpgp::Rng`.
+pub use rsk_rsa::Rng;
 
 /// Outcome of asking for a physical touch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -181,7 +179,7 @@ impl<'a> OpenpgpApplet<'a> {
 
     /// CCID keepalive path: if this GENERATE (0x47) command targets an RSA slot,
     /// return `(fid, nbits)` so the caller can run the slow keygen asynchronously
-    /// (stepping [`keys::RsaKeygen`] + sending time-extensions). `Ok(None)` =
+    /// (stepping [`rsk_rsa::RsaKeygen`] + sending time-extensions). `Ok(None)` =
     /// non-RSA generate / read-public → use the synchronous [`Applet::process`].
     pub fn rsa_generate_params<S: Storage>(
         &self,
@@ -200,7 +198,7 @@ impl<'a> OpenpgpApplet<'a> {
         fs: &mut Fs<S>,
         rng: &mut dyn Rng,
         fid: KeyFid,
-        key: &rsa::RsaPrivateKey,
+        key: &rsk_rsa::RsaPrivateKey,
         out: &mut [u8],
     ) -> (usize, Sw) {
         let mkek = read_fused(self.mkek_source);

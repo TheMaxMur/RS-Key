@@ -40,6 +40,32 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Internal
 
+- **The RSA layer moved out of the OpenPGP applet and into `rsk-rsa`.** The CRT
+  parameter layout and its blinded, Bellcore-fault-checked private operation,
+  PKCS#1 v1.5 (the DigestInfo encoding, both signers, the constant-time decrypt
+  unpad), the key type, keygen, and the `7F49` public-key DO now live in the
+  crate that already held the assembly under them. PIV was reaching across a
+  tier for all of it — `rsk_openpgp::rsa_crt`, `keys::rsa_sign`,
+  `keys::RsaKeygen`, `keys::MAX_RSA_BYTES` and four more — and reaches down for
+  it now instead; the applets keep only what is theirs, the APDU framing and the
+  seal I/O. Behaviour-preserving: the `rsa` crate rides along with the code that
+  uses it (dropping it is the next step), and no wire byte moves.
+
+  The status words could not ride along, because a tier-0 crate must not name
+  `rsk_sdk::Sw`. `rsk-rsa` returns its own four-variant `RsaError` and each
+  applet maps it at its APDU edge, reproducing every status word the old code
+  answered — including PSO:DECIPHER's deliberate `EXEC_ERROR` on a malformed
+  block. Both mappings are pinned arm by arm, and both pins were checked by
+  breaking an arm and reading which assertion fell.
+
+  Two constants that were written out twice collapsed on the way:
+  `MAX_RSA_BYTES` (`512` in `keys.rs`, `2 * MAX_MOD` in `rsa_crt.rs`) and the
+  maximum sealed plaintext (`5 * MAX_MOD` in `rsa_crt.rs` and again in
+  `rsk-piv/src/seal.rs`). Both survivors derive from `rsk_rsa::MAX_MOD`, so
+  neither can drift from the width the assembly actually accepts, and every
+  remaining user of both was read. `num-bigint-dig` left the OpenPGP and PIV
+  manifests, where nothing referenced it any more.
+
 - **`rsk-rsa-asm` is now `rsk-rsa`.** The crate held the vendored UMAAL assembly
   and nothing else, while the RSA layer above it — CRT parameters, PKCS#1 v1.5,
   the key type, keygen — lived inside the OpenPGP *applet*, which is why PIV

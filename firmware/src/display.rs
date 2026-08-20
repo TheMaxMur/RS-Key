@@ -29,7 +29,7 @@ extern crate alloc;
 use alloc::boxed::Box;
 
 use rsk_display::{BL_TOP, TouchPad};
-use rsk_openpgp::keys::RsaPrivateKey;
+use rsk_rsa::RsaPrivateKey;
 
 use crate::flash_storage::FlashStorage;
 use crate::handler::{FidoRng, Store};

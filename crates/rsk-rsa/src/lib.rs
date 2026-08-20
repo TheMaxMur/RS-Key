@@ -3,16 +3,56 @@
 
 #![cfg_attr(not(test), no_std)]
 
-//! Fast RSA bignum modular exponentiation for ARMv7E-M (Cortex-M33 + DSP),
-//! wrapping the vendored rsa-armv7 C + ARM assembly (Emil Lenngren, BSD-2-Clause
-//! — see `csrc/LICENSE.txt`). The host build (no ARM assembler) falls back to a
-//! num-bigint-dig modexp, keeping the prime-search logic testable. All multi-byte
-//! values are **little-endian** except the modexp exponent (big-endian, per the C API).
+//! The RSA algorithm family: key generation, the CRT parameter layout and its
+//! blinded private operation, PKCS#1 v1.5, and the public-key DO both card
+//! applets answer with — over fast bignum modular exponentiation for ARMv7E-M
+//! (Cortex-M33 + DSP), wrapping the vendored rsa-armv7 C + ARM assembly (Emil
+//! Lenngren, BSD-2-Clause — see `csrc/LICENSE.txt`). The host build (no ARM
+//! assembler) falls back to a num-bigint-dig modexp, keeping the prime-search
+//! logic testable. All multi-byte values in this file are **little-endian**
+//! except the modexp exponent (big-endian, per the C API).
+//!
+//! Nothing here names a status word or a filesystem: `rsk-openpgp` and `rsk-piv`
+//! own the APDU framing and the seal I/O, and map [`RsaError`] at their edge.
+
+extern crate alloc;
+
+pub mod crt;
+pub mod keygen;
+pub mod pkcs1v15;
+pub mod pubdo;
+
+mod error;
+mod rng;
+
+pub use crt::{MAX_CRT_PLAIN, RsaCrt};
+pub use error::RsaError;
+pub use keygen::{RsaKeygen, RsaStep, generate_rsa, rsa_from_pqe};
+pub use pkcs1v15::MAX_RSA_DIGESTINFO;
+pub use pubdo::{MAX_RSA_PUBDO, make_rsa_pub_body, make_rsa_response};
+pub use rng::{Rng, RngAdapter};
+/// The RSA private-key type. Re-exported so callers name the RSA vocabulary
+/// through this crate; still the `rsa` crate's own type until it is replaced.
+pub use rsa::RsaPrivateKey;
 
 /// Largest modulus this handles: an RSA-4096 prime is 2048 bits = 256 bytes. The
 /// asm requires the modulus length to be a multiple of 32 bytes — every standard
 /// RSA prime size (512/1024/1536/2048-bit) qualifies.
 pub const MAX_MOD: usize = 256;
+
+/// Largest RSA modulus in bytes (RSA-4096 = 512) — a signature, a challenge and
+/// a DECIPHER cryptogram are all exactly this wide. Two primes, by definition, so
+/// it is derived from [`MAX_MOD`] rather than written out again.
+pub const MAX_RSA_BYTES: usize = 2 * MAX_MOD;
+
+/// The RSA public exponent, fixed at 65537 for every key this generates and every
+/// key the CRT signer / DECIPHER assume.
+pub const RSA_E: u32 = 65_537;
+
+/// [`RSA_E`] big-endian, so a caller that already has the modulus (PIV GET
+/// METADATA) can build the public-key DO without a `BigUint` or a magic literal.
+/// `rsa_pub_exp_be_is_65537` pins the two spellings together.
+pub const RSA_PUB_EXP_BE: &[u8] = &[0x01, 0x00, 0x01];
 
 // ----------------------------------------------------------- small primes ----
 
@@ -305,7 +345,12 @@ fn words_to_bytes_le(src: &[u32], dst: &mut [u8]) {
 /// shorter (it is zero-extended). On the device this calls the ARM-assembly
 /// routine; on the host it uses num-bigint-dig.
 #[cfg(target_os = "none")]
-pub fn modexp_priv(base_le: &[u8], exponent_be: &[u8], modulus_le: &[u8], out_le: &mut [u8]) {
+pub(crate) fn modexp_priv(
+    base_le: &[u8],
+    exponent_be: &[u8],
+    modulus_le: &[u8],
+    out_le: &mut [u8],
+) {
     let mod_len = modulus_le.len();
     debug_assert!(mod_len.is_multiple_of(32) && mod_len <= MAX_MOD);
     let words = mod_len / 4;
@@ -354,7 +399,12 @@ pub fn modexp_priv(base_le: &[u8], exponent_be: &[u8], modulus_le: &[u8], out_le
 
 /// Host fallback (no ARM assembly): the same operation via num-bigint-dig.
 #[cfg(not(target_os = "none"))]
-pub fn modexp_priv(base_le: &[u8], exponent_be: &[u8], modulus_le: &[u8], out_le: &mut [u8]) {
+pub(crate) fn modexp_priv(
+    base_le: &[u8],
+    exponent_be: &[u8],
+    modulus_le: &[u8],
+    out_le: &mut [u8],
+) {
     use num_bigint_dig::BigUint;
     let r = BigUint::from_bytes_le(base_le).modpow(
         &BigUint::from_bytes_be(exponent_be),
@@ -388,7 +438,7 @@ fn be_bytes_to_words_le(be: &[u8], dst: &mut [u32]) {
 /// result (`out^e == base`), so a wrong asm result can never leave as a signature.
 #[cfg(target_os = "none")]
 #[inline(never)]
-pub fn sign_crt(
+pub(crate) fn sign_crt(
     base_le: &[u8],
     dp_be: &[u8],
     dq_be: &[u8],
@@ -446,7 +496,7 @@ pub fn sign_crt(
 
 /// Host fallback for [`sign_crt`]: the same CRT combine via num-bigint-dig.
 #[cfg(not(target_os = "none"))]
-pub fn sign_crt(
+pub(crate) fn sign_crt(
     base_le: &[u8],
     dp_be: &[u8],
     dq_be: &[u8],
@@ -491,7 +541,12 @@ pub fn sign_crt(
 /// on the host it uses num-bigint-dig.
 #[cfg(target_os = "none")]
 #[inline(never)]
-pub fn modexp_pub(base_le: &[u8], exp_be: &[u8], modulus_le: &[u8], out_le: &mut [u8]) -> bool {
+pub(crate) fn modexp_pub(
+    base_le: &[u8],
+    exp_be: &[u8],
+    modulus_le: &[u8],
+    out_le: &mut [u8],
+) -> bool {
     use zeroize::Zeroize;
     let mod_len = modulus_le.len();
     debug_assert!(mod_len.is_multiple_of(32) && mod_len <= 2 * MAX_MOD);
@@ -532,7 +587,12 @@ pub fn modexp_pub(base_le: &[u8], exp_be: &[u8], modulus_le: &[u8], out_le: &mut
 
 /// Host fallback for [`modexp_pub`]: the same operation via num-bigint-dig.
 #[cfg(not(target_os = "none"))]
-pub fn modexp_pub(base_le: &[u8], exp_be: &[u8], modulus_le: &[u8], out_le: &mut [u8]) -> bool {
+pub(crate) fn modexp_pub(
+    base_le: &[u8],
+    exp_be: &[u8],
+    modulus_le: &[u8],
+    out_le: &mut [u8],
+) -> bool {
     use num_bigint_dig::BigUint;
     let r = BigUint::from_bytes_le(base_le).modpow(
         &BigUint::from_bytes_be(exp_be),
@@ -685,6 +745,9 @@ pub fn self_test() -> bool {
 #[cfg(kani)]
 #[path = "kani.rs"]
 mod proofs;
+
+#[cfg(test)]
+mod fixtures;
 
 #[cfg(test)]
 mod tests;

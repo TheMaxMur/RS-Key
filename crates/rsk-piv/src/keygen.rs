@@ -11,9 +11,8 @@ use rsa::traits::PublicKeyParts;
 use rsk_crypto::Device;
 use rsk_fs::{Fs, Storage};
 use rsk_openpgp::Rng;
-use rsk_openpgp::keys::{
-    Curve, MAX_RSA_PUBDO, PrivKey, generate_rsa, make_ec_pubkey_do, make_rsa_response, rsa_from_pqe,
-};
+use rsk_openpgp::keys::{Curve, PrivKey, make_ec_pubkey_do};
+use rsk_rsa::{MAX_RSA_PUBDO, generate_rsa, make_rsa_response, rsa_from_pqe};
 use rsk_sdk::tlv::find_tag;
 use rsk_sdk::{ResBuf, Sw};
 use zeroize::Zeroize;
@@ -369,7 +368,7 @@ pub(crate) fn generate_rsa_blocking<S: Storage>(
     };
     let key = match generate_rsa(rng, nbytes * 8) {
         Ok(k) => k,
-        Err(e) => return e,
+        Err(e) => return crate::rsa_sw(e),
     };
     finish_rsa(dev, fs, rng, slot, req.algo, pol, &key, res)
 }

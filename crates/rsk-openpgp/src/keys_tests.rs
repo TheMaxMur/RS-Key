@@ -67,25 +67,6 @@ fn p521_raw_sign_verifies() {
     sign_and_verify(Curve::P521, &scalar, 132);
 }
 
-/// The raw RSA fallback must be base-blinded yet still compute `m^d mod n`
-/// exactly, independent of the blinding factor (CT-audit finding #1).
-#[test]
-fn rsa_raw_blinded_equals_unblinded() {
-    let key = RsaPrivateKey::new(&mut RngAdapter(&mut SeqRng(7)), 512).unwrap();
-    let ks = key.size();
-    let data = [0x2au8; 40];
-    let mut out = [0u8; MAX_RSA_BYTES];
-    let n = rsa_raw(&key, &data, &mut out, &mut SeqRng(99)).unwrap();
-    assert_eq!(n, ks);
-    let got = BigUint::from_bytes_be(&out[..ks]);
-    let want = BigUint::from_bytes_be(&data).modpow(key.d(), key.n());
-    assert_eq!(got, want, "blinded raw RSA must equal m^d mod n");
-    // The result must not depend on the random blinding factor.
-    let mut out2 = [0u8; MAX_RSA_BYTES];
-    rsa_raw(&key, &data, &mut out2, &mut SeqRng(424242)).unwrap();
-    assert_eq!(out[..ks], out2[..ks], "blinding must cancel");
-}
-
 /// ECDH Diffie-Hellman symmetry: `ECDH(a, B_pub) == ECDH(b, A_pub)` proves the
 /// new Weierstrass agreements (P-384/P-521/secp256k1) compute the right shared
 /// x-coordinate of the field width. P-256 + X25519 have their own vectors.

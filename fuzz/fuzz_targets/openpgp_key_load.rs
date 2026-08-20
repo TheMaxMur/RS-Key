@@ -4,7 +4,7 @@
 #![no_main]
 
 //! Fuzz OpenPGP RSA key reconstruction from imported MPIs
-//! (`rsk_openpgp::keys::rsa_from_pqe`): the attacker-chosen `e`/`p`/`q` an
+//! (`rsk_rsa::rsa_from_pqe`): the attacker-chosen `e`/`p`/`q` an
 //! authenticated PW3 IMPORT feeds into `RsaPrivateKey::from_p_q`. Must never
 //! panic; and any key it accepts must have modulus exactly `p * q` and the
 //! supplied exponent — a differential against a plain big-integer multiply, so a
@@ -13,7 +13,7 @@
 use libfuzzer_sys::fuzz_target;
 use rsa::BigUint;
 use rsa::traits::PublicKeyParts;
-use rsk_openpgp::keys::rsa_from_pqe;
+use rsk_rsa::rsa_from_pqe;
 
 fuzz_target!(|data: &[u8]| {
     if data.len() < 3 {

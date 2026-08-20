@@ -1008,7 +1008,7 @@ fn rsa_import(crt: u8, e: &[u8], p: &[u8], q: &[u8]) -> Vec<u8> {
 }
 
 fn rsa_pubkey() -> rsa::RsaPublicKey {
-    let key = keys::rsa_from_pqe(&[0x01, 0x00, 0x01], &hx(RSA_P), &hx(RSA_Q)).unwrap();
+    let key = rsk_rsa::rsa_from_pqe(&[0x01, 0x00, 0x01], &hx(RSA_P), &hx(RSA_Q)).unwrap();
     rsa::RsaPublicKey::from(&key)
 }
 
@@ -1156,7 +1156,7 @@ fn import_rsa_dec_then_pso_decipher() {
     let msg = b"a-32-byte-openpgp-session-key!!!";
     let ct = rsa_pubkey()
         .encrypt(
-            &mut keys::RngAdapter(&mut CountRng(3)),
+            &mut rsk_rsa::RngAdapter(&mut CountRng(3)),
             rsa::Pkcs1v15Encrypt,
             msg,
         )
@@ -1965,13 +1965,13 @@ fn rsa_keepalive_generate_path_produces_signable_key() {
         .expect("RSA generate params");
     assert_eq!(fid, consts::EF_PK_SIG);
 
-    let mut kg = keys::RsaKeygen::new(nbits);
+    let mut kg = rsk_rsa::RsaKeygen::new(nbits);
     let mut sieve = rsk_rsa::IncrementalSieve::new();
     let key = loop {
         match kg.step(&mut sieve, &mut *rng.borrow_mut()) {
-            keys::RsaStep::Done(k) => break k,
-            keys::RsaStep::Failed => panic!("keygen failed"),
-            keys::RsaStep::More => {}
+            rsk_rsa::RsaStep::Done(k) => break k,
+            rsk_rsa::RsaStep::Failed => panic!("keygen failed"),
+            rsk_rsa::RsaStep::More => {}
         }
     };
     let mut out = [0u8; 600];
@@ -2064,13 +2064,13 @@ fn rsa4096_generate_path_produces_signable_key() {
         .expect("RSA generate params");
     assert_eq!(nbits, 4096);
 
-    let mut kg = keys::RsaKeygen::new(nbits);
+    let mut kg = rsk_rsa::RsaKeygen::new(nbits);
     let mut sieve = rsk_rsa::IncrementalSieve::new();
     let key = loop {
         match kg.step(&mut sieve, &mut *rng.borrow_mut()) {
-            keys::RsaStep::Done(k) => break k,
-            keys::RsaStep::Failed => panic!("keygen failed"),
-            keys::RsaStep::More => {}
+            rsk_rsa::RsaStep::Done(k) => break k,
+            rsk_rsa::RsaStep::Failed => panic!("keygen failed"),
+            rsk_rsa::RsaStep::More => {}
         }
     };
     let mut out = [0u8; 600]; // >= MAX_RSA_PUBDO (531 for RSA-4096)

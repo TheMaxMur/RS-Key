@@ -13,11 +13,12 @@ use rsk_sdk::Sw;
 
 use crate::consts::*;
 use crate::keys::{
-    MAX_EC_POINT, MAX_RSA_PUBDO, PrivKey, RSA_PUB_EXP_BE, curve_from_attr, make_ec_pubkey_do,
-    make_rsa_response, reset_sig_count, rsa_from_pqe, store_ec_key, store_rsa_key,
+    MAX_EC_POINT, PrivKey, curve_from_attr, make_ec_pubkey_do, reset_sig_count, store_ec_key,
+    store_rsa_key,
 };
 use crate::origin;
 use crate::pin::Session;
+use rsk_rsa::{MAX_RSA_PUBDO, RSA_PUB_EXP_BE, make_rsa_response, rsa_from_pqe};
 
 /// BER length: a byte < 0x80 is the length; `0x81` introduces a 1-byte length,
 /// `0x82` a 2-byte one. Advances `pos`.
@@ -169,7 +170,7 @@ fn try_import<S: Storage>(
             if e.is_empty() || p.is_empty() || q.is_empty() {
                 return Err(Sw::WRONG_DATA);
             }
-            // The CRT signer / DECIPHER hardcode e = 65537 (rsa_crt.rs); another
+            // The CRT signer / DECIPHER hardcode e = 65537 (rsk_rsa::crt); another
             // exponent signs with the wrong e while the public DO advertises the
             // real one -- silently unusable. gpg only ever imports e = 65537.
             if !e
