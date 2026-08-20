@@ -507,12 +507,12 @@ run "rsk-wipe refuses an unknown flash size" sh -c '
   }'
 run "flake.lock in sync"       lock_in_sync
 run "one embassy for all"      embassy_revs_match
-# RUSTSEC-2023-0071: rsa Marvin timing side-channel — no fixed release; it is the
-# OpenPGP RSA backend, mitigated by blinding. Justification in deny.toml.
+# RUSTSEC-2023-0071: rsa Marvin timing side-channel — no fixed release. Only
+# PSO:DECIPHER and PIV cert signing reach the crate; blinded. See deny.toml.
 run "cargo-audit (SCA)"        cargo audit --ignore RUSTSEC-2023-0071
 run "cargo-audit (tui SCA)"    cargo audit --file tools/tui/Cargo.lock
 # Same RUSTSEC-2023-0071 carve-out as the workspace run above: the emulator pulls
-# the OpenPGP applet, and with it `rsa`.
+# the OpenPGP and PIV applets, and with them `rsa`.
 # The emulator's own host tests — today the USB/IP codec, whose struct layouts are
 # the Linux kernel's and whose framing rule decides how many bytes come off the
 # socket next; both fail silently on the wire rather than loudly.

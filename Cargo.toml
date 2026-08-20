@@ -127,11 +127,10 @@ cfb-mode = { version = "0.8", default-features = false }
 aes-gcm = { version = "0.10", default-features = false, features = ["aes"] }
 chacha20poly1305 = { version = "0.10", default-features = false }
 zeroize = { version = "1", default-features = false }
-# RSA for the OpenPGP applet. no_std but needs `alloc` (firmware provides
-# a heap). PKCS#1 v1.5 sign/decrypt + from_p_q import; we pass our own RNG.
-# `hazmat` exposes the blinded raw private op (`rsa_decrypt_and_check`) that PIV
-# GENERAL AUTHENTICATE needs — the host supplies pre-padded messages.
-rsa = { version = "0.9", default-features = false, features = ["hazmat"] }
+# RSA for the PIV and OpenPGP applets: `from_p_q` key assembly, the CRT
+# accessors `rsk_rsa_asm` signs through, and PSO:DECIPHER. no_std but needs
+# `alloc` (firmware provides a heap); we pass our own RNG.
+rsa = { version = "0.9", default-features = false }
 # num-bigint-dig is rsa's bignum (re-exported as `rsa::BigUint`). On-card RSA
 # keygen drives `prime::probably_prime` directly so the prime search can yield
 # between candidates (the CCID keepalive). Features match rsa's own selection.

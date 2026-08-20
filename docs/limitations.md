@@ -13,6 +13,24 @@ covers the security boundary. This page covers feature and hardware gaps.
 - **X448 / Ed448 (OpenPGP)**: not offered, same reason. RustCrypto coverage
   of Curve448 is thin and unaudited. Cv25519/Ed25519 plus the NIST curves and
   secp256k1 cover practical use. *Status: until a serious crate exists.*
+- **RSA decryption timing (OpenPGP PSO:DECIPHER)**: the `rsa` crate carries
+  RUSTSEC-2023-0071 (the Marvin attack) and no fixed release exists — OSV marks
+  every version affected. Most private-RSA work never reaches it: PIV GENERAL
+  AUTHENTICATE, PSO:CDS and INTERNAL AUTHENTICATE all sign through
+  `rsk_rsa_asm::sign_crt`, blinded and Bellcore-fault-checked. Two paths do.
+  PIV certificate signing runs once at key generation over a digest the device
+  built itself, so there is no chosen-ciphertext oracle to drive. PSO:DECIPHER
+  is the real one — it PKCS#1 v1.5-decrypts a ciphertext the host chose. It goes
+  through the crate's blinded API over a constant-time unpad, so what is left is
+  `num-bigint-dig`'s variable-time arithmetic, behind the PW1 gate.
+
+  Separately, and regardless of timing: DECIPHER answers malformed padding with
+  a distinct status word and well-formed padding with plaintext. That is a
+  padding oracle by response code, and it is inherent to the command — the card
+  must either hand back a session key or report failure — not specific to this
+  implementation. Assume a host that can drive DECIPHER at will with PW1
+  verified can mount Bleichenbacher-class attacks on ciphertexts of its
+  choosing. *Status: accepted; revisit if DECIPHER moves onto `rsk_rsa_asm`.*
 - **RSA-3072/4096 on-card generation is slow.** The prime search dominates the
   cost: *rejecting* hundreds of composite candidates, each one asm-modexp-bound.
   Both cores run the search with the modexp hot path in SRAM

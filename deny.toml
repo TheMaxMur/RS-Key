@@ -3,10 +3,16 @@
 [advisories]
 # Unmaintained transitive crates pulled in by embassy/cortex-m; no fix upstream.
 # The sole *vulnerability* ignored below (rsa) is a deliberate, documented
-# exception: no fixed release exists, it is the chosen OpenPGP RSA backend,
-# we already use its blinded sign/decrypt APIs, and the Marvin attack
-# needs precise decryption-timing measurements over many queries — outside this
-# local-USB-token threat model. Everything else here is merely "unmaintained".
+# exception. No fixed release exists — OSV gives `introduced: 0.0.0-0` with no
+# `fixed` event, so every version is affected. Three of the five private-RSA
+# paths never enter the crate: PIV GENERAL AUTHENTICATE, PSO:CDS and INTERNAL
+# AUTHENTICATE all sign through `rsk_rsa_asm::sign_crt`. The two that do are
+# `rsk-piv/src/x509.rs` (cert signing at keygen, over a digest the device built
+# itself — no chosen-ciphertext oracle) and `rsa_decipher` in
+# `rsk-openpgp/src/keys.rs` (PSO:DECIPHER, PW1-gated), which calls the crate's
+# blinded API over its constant-time PKCS#1 v1.5 unpad. Rationale and the
+# residual risk: docs/limitations.md → "RSA decryption timing".
+# Everything else here is merely "unmaintained".
 ignore = [
     "RUSTSEC-2024-0436", # paste — unmaintained, via pio-core
     "RUSTSEC-2026-0110", # bare-metal — deprecated, via cortex-m

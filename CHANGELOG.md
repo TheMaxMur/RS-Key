@@ -38,6 +38,22 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+### Security
+
+- **The `rsa` crate's RUSTSEC-2023-0071 carve-out now describes the code that
+  actually exists.** Its justification still claimed the crate was "the OpenPGP
+  RSA backend" and that the `hazmat` feature was there because PIV GENERAL
+  AUTHENTICATE needed the raw private op. Both stopped being true when signing
+  moved onto `rsk_rsa_asm`: three of the five private-RSA paths never enter the
+  crate at all, and `rsa::hazmat` is referenced nowhere in the tree. The feature
+  is dropped — a smaller API surface for a dependency inside an authenticator's
+  trust base — and the two paths that do reach the crate are now named in
+  `deny.toml` and in [limitations](docs/limitations.md), together with the
+  residual risk on PSO:DECIPHER. No behaviour change, measured: no loadable
+  section moves or changes size and every symbol keeps its size — the only image
+  delta is mangled-name hashes and a reordering of three anonymous constants,
+  which is what feeding a different feature set to `-C metadata` looks like.
+
 ### Fixed
 
 - **The accepted attestation-chain length depended on whether a PIN was set.**
