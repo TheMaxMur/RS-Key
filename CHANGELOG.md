@@ -99,6 +99,18 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   operation, `rsa_sign` and a new `rsa_decrypt` — each a port of what the `rsa`
   crate ran, arm for arm, including which of `check_public` and `validate`
   refuses an imported key, because an applet's status word follows that.
+- **The citation gate said `ok` over 75 rotted citations, and one whole page was
+  outside it.** `formal/citations.lock` now records what each of the 423
+  `file.rs:line` citations pointed at, and a locked line found ELSEWHERE in its
+  file is reported with the line it moved to. A line edited *in place* still
+  passes: that false alarm is what the row was deliberately built without, and
+  both halves are pinned. `formal/comutants.toml` joins the guarded pages — 13
+  of its 16 citations named a file nothing could resolve, and two landed on
+  unrelated code, one of them wrong the day it was written. Pages that reason
+  about several applets at once must now write a repo path, because `lib.rs:1020`
+  decides nothing for this gate or for a reader. Four more citations were wrong
+  and are re-pointed, including `Ctx::load_keydev`, which named `require_presence`.
+  Host-side only: no firmware behaviour, so no bcdDevice bump.
 
 - **Why the RSA status-word table is allowed to exist twice.** `rsa_sw` maps
   `RsaError` to a status word in both card applets, and the comment defending

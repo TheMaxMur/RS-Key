@@ -244,7 +244,7 @@ SelectOther(a) ==
 
 \* PIV VERIFY (crates/rsk-piv/src/lib.rs:487-501): success sets has_pin AND
 \* pin_fresh, refusal clears both, through `Session::set_pin`
-\* (crates/rsk-piv/src/lib.rs:152-155) which is the only writer of either.
+\* (crates/rsk-piv/src/lib.rs:149-152) which is the only writer of either.
 PivVerify(ok) ==
     /\ sel = Piv
     /\ held' = [held EXCEPT !["pivPin"] = ok]

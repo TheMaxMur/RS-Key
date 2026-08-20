@@ -57,6 +57,11 @@ source = ["fixture"]
 STUB = """\\* a page this case does not drive (clientpin.rs:2, clientpin.rs:4-6)
 """
 
+#: The same stub for a `PATHS_ONLY` page, which may not write a bare name.
+PATH_STUB = """\\* a page this case does not drive
+\\* (crates/rsk-fido/src/clientpin.rs:2, crates/rsk-fido/src/clientpin.rs:4-6)
+"""
+
 PAGE = """# The model
 
 | invariant | where |
@@ -93,7 +98,7 @@ class Tree:
         self.write("crates/rsk-fs/src/lib.rs", UNTAGGED_CODE)
         self.write("firmware/src/main.rs", UNTAGGED_CODE)
         for page in citation_gate.PAGES:
-            self.write(page, STUB)
+            self.write(page, PATH_STUB if page.name in citation_gate.PATHS_ONLY else STUB)
         self.write(MODEL_PAGE, MODEL)
         self.write(PROSE_PAGE, PAGE)
         self.write("assurance/properties.toml", PROPERTIES)
@@ -115,7 +120,11 @@ class Tree:
         assert text.count(old) == 1, f"{rel} does not say {old!r} exactly once"
         path.write_text(text.replace(old, new))
 
-    def problems(self, floor=2, pending=None):
+    def lock(self):
+        """Lock the citations as they stand — the state a case then perturbs."""
+        self.problems(relock=True)
+
+    def problems(self, floor=2, pending=None, relock=False):
         """Audited with the floor lowered and no landing debt: the fixture is
         smaller than the tree and carries none of its history. A case that wants
         a debt passes one.
@@ -134,7 +143,7 @@ class Tree:
             {},
         )
         try:
-            return citation_gate.audit(self.root)[0]
+            return citation_gate.audit(self.root, relock=relock)[0]
         finally:
             citation_gate.FLOOR, citation_gate.PENDING, citation_gate.FLOOR_BY_PAGE = (
                 was,
@@ -371,3 +380,119 @@ def test_the_tests_are_named_after_the_guard():
     """`check.sh` collects `scripts` wholesale, so the name is the registration."""
     here = pathlib.Path(__file__).name
     assert here == f"test_{pathlib.Path(citation_gate.__file__).stem}.py"
+
+
+# --- the lock: drift is decidable, an edit in place is not --------------------
+
+
+def test_a_citation_that_drifted_onto_another_line(tree):
+    """The failure this row shipped without: 75 citations rotted while it said ok."""
+    tree.lock()
+    tree.edit("crates/rsk-fido/src/clientpin.rs", "pub const RETRIES", "// pushed down\npub const RETRIES")
+    found = only(tree.problems(), "drifted")
+    assert found, tree.problems()
+    assert "is now at :3" in found[0], found[0]
+
+
+def test_an_edit_inside_a_cited_line_still_passes_under_the_lock(tree):
+    """The false alarm that would get this row switched off: nothing moved."""
+    tree.lock()
+    tree.edit("crates/rsk-fido/src/clientpin.rs", "RETRIES: u8 = 8", "RETRIES: u8 = 3")
+    assert tree.problems() == []
+
+
+def test_an_edit_below_every_cited_line_still_passes_under_the_lock(tree):
+    tree.lock()
+    tree.edit("crates/rsk-fido/src/clientpin.rs", "pub fn spend() {}", "pub fn spend() {\n    // work\n}")
+    assert tree.problems() == []
+
+
+def test_a_citation_the_lock_does_not_carry(tree):
+    tree.lock()
+    tree.write(PROSE_PAGE, PAGE + "\nand also `clientpin.rs:2`\n")
+    assert only(tree.problems(), "is not in")
+
+
+def test_a_lock_entry_nothing_cites_any_more(tree):
+    tree.lock()
+    tree.write(PROSE_PAGE, "# The model\n\n`clientpin.rs:2` · `clientpin.rs:4-6`\n")
+    assert only(tree.problems(), "still locks")
+
+
+def test_no_lock_file_means_no_lock_rules(tree):
+    """A tree that was never locked is not lying; the real-tree case below is
+    what keeps the file from being deleted to silence this."""
+    assert not (tree.root / citation_gate.LOCK).exists()
+    assert tree.problems() == []
+
+
+def test_relock_writes_a_line_per_citation(tree):
+    tree.lock()
+    body = [
+        l for l in (tree.root / citation_gate.LOCK).read_text().splitlines()
+        if l and not l.startswith("#")
+    ]
+    assert body and all(len(l.split("\t")) == 5 for l in body)
+
+
+# --- the pages that must write a path ----------------------------------------
+
+
+def test_a_bare_name_on_a_paths_only_page(tree):
+    page = next(p for p in citation_gate.PAGES if p.name in citation_gate.PATHS_ONLY)
+    tree.write(page, "note = \"a bare one: clientpin.rs:2, clientpin.rs:4-6\"\n")
+    assert only(tree.problems(), "must write a repo path")
+
+
+def test_a_path_on_a_paths_only_page_is_fine(tree):
+    page = next(p for p in citation_gate.PAGES if p.name in citation_gate.PATHS_ONLY)
+    tree.write(page, PATH_STUB)
+    assert tree.problems() == []
+
+
+# --- the real checkout --------------------------------------------------------
+
+
+def test_the_real_lock_covers_every_real_citation():
+    """Deleting the lock would switch the drift rule off silently; this is what
+    stops that, since `audit` cannot tell a deleted lock from a fresh tree."""
+    problems, _ = citation_gate.audit(citation_gate.ROOT)
+    assert (citation_gate.ROOT / citation_gate.LOCK).is_file()
+    assert not [p for p in problems if "is not in" in p or "still locks" in p]
+
+
+# --- the two defects the row's own falsification run exposed ------------------
+
+#: A file whose cited line is NOT unique: `pub fn spend() {}` reads the same at
+#: :2 and :8, which is the shape that made the first report name the wrong one.
+DUPE_CODE = """// SPDX-License-Identifier: AGPL-3.0-only
+pub fn spend() {}
+pub const RETRIES: u8 = 8;
+pub fn judge(byte: u8) -> bool {
+    byte < 0x80
+}
+/// Refines `RSKeySecurityState!NoDrift` — SEC-T-001.
+pub fn spend() {}
+"""
+
+
+def test_drift_names_the_nearest_line_not_the_first(tree):
+    """`pub fn reset(&mut self) {` is in the real state.rs three times, and
+    first-match sent a reader to :98 for a citation that had moved to :428."""
+    tree.write("crates/rsk-fido/src/clientpin.rs", DUPE_CODE)
+    tree.lock()
+    tree.edit("crates/rsk-fido/src/clientpin.rs", "// SPDX-License-Identifier: AGPL-3.0-only", "// SPDX-License-Identifier: AGPL-3.0-only\n// pushed everything down")
+    drift = [p for p in tree.problems() if "drifted" in p and "`clientpin.rs:8`" in p]
+    assert drift, tree.problems()
+    assert "is now at :9" in drift[0], drift[0]
+    assert "other line(s) read the same" in drift[0], drift[0]
+
+
+def test_a_citation_that_trips_another_rule_is_not_also_an_orphaned_lock(tree):
+    """One cause must not wear two messages: the blank-line rule fires, and the
+    lock reconciliation used to report the same citation as uncited as well."""
+    tree.lock()
+    tree.edit("crates/rsk-fido/src/clientpin.rs", "pub const RETRIES: u8 = 8;", "   ")
+    problems = tree.problems()
+    assert only(problems, "cited line is blank"), problems
+    assert only(problems, "still locks") == [], problems
