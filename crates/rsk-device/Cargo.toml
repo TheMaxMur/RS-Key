@@ -19,6 +19,7 @@ rsk-fs = { workspace = true }
 rsk-crypto = { workspace = true }
 rsk-fido = { workspace = true }
 rsk-openpgp = { workspace = true }
+rsk-devconf = { workspace = true }
 rsk-mgmt = { workspace = true }
 rsk-oath = { workspace = true }
 rsk-otp = { workspace = true }

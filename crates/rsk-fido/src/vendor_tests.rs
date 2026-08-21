@@ -1354,7 +1354,7 @@ fn config_write_req(target: u64, blob: &[u8], authed: bool, buf: &mut [u8]) -> u
 fn dev_conf_readback(fs: &mut Fs<RamStorage>) -> std::vec::Vec<u8> {
     let mut out = [0u8; 128];
     let mut res = rsk_sdk::ResBuf::new(&mut out);
-    rsk_mgmt::config_tlv(&[0u8; 4], fs, &mut res);
+    rsk_devconf::config_tlv(&[0u8; 4], fs, &mut res);
     res.as_slice().to_vec()
 }
 

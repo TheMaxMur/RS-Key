@@ -393,7 +393,7 @@ impl<S: Storage> Applet<Fs<S>> for PivApplet<'_> {
                 Sw::OK
             }
             INS_YK_SERIAL => {
-                res.extend(&rsk_mgmt::serial4(self.serial_id));
+                res.extend(&rsk_sdk::serial4(self.serial_id));
                 Sw::OK
             }
             INS_SELECT => {
@@ -442,7 +442,7 @@ impl<S: Storage> Applet<Fs<S>> for PivApplet<'_> {
                     fs,
                     &mut *rng,
                     apdu.p1,
-                    rsk_mgmt::serial4(self.serial_id),
+                    rsk_sdk::serial4(self.serial_id),
                     res,
                 )
             }

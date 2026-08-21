@@ -771,7 +771,7 @@ async fn serve<PR: rsk_sdk::UserPresence + 'static>(
 
         // The worker's own sequencing, mirrored: a config write flips the dirty
         // latch and every gate has to see the new set before the next request.
-        if rsk_mgmt::take_dev_conf_dirty() {
+        if rsk_devconf::take_dev_conf_dirty() {
             ccid.refresh_enabled();
         }
         // Both reboot paths — the vendor applet's INS_REBOOT and the rescue

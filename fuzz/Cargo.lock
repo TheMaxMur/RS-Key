@@ -1382,10 +1382,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "rsk-devconf"
+version = "0.1.0"
+dependencies = [
+ "rsk-fs",
+ "rsk-sdk",
+]
+
+[[package]]
 name = "rsk-device"
 version = "0.1.0"
 dependencies = [
  "rsk-crypto",
+ "rsk-devconf",
  "rsk-fido",
  "rsk-fs",
  "rsk-mgmt",
@@ -1426,10 +1435,10 @@ dependencies = [
  "p384",
  "p521",
  "rsk-crypto",
+ "rsk-devconf",
  "rsk-ec",
  "rsk-fs",
  "rsk-led",
- "rsk-mgmt",
  "rsk-phy",
  "rsk-sdk",
  "sha2 0.10.9",
@@ -1456,6 +1465,7 @@ dependencies = [
  "minicbor",
  "num-bigint-dig",
  "rsk-crypto",
+ "rsk-devconf",
  "rsk-device",
  "rsk-fido",
  "rsk-fs",
@@ -1485,6 +1495,7 @@ version = "0.1.0"
 name = "rsk-mgmt"
 version = "0.1.0"
 dependencies = [
+ "rsk-devconf",
  "rsk-fs",
  "rsk-sdk",
 ]
@@ -1523,7 +1534,6 @@ dependencies = [
  "rsk-crypto",
  "rsk-ec",
  "rsk-fs",
- "rsk-mgmt",
  "rsk-rsa",
  "rsk-sdk",
  "x25519-dalek",
@@ -1535,8 +1545,8 @@ name = "rsk-otp"
 version = "0.1.0"
 dependencies = [
  "rsk-crypto",
+ "rsk-devconf",
  "rsk-fs",
- "rsk-mgmt",
  "rsk-sdk",
  "zeroize",
 ]
@@ -1555,7 +1565,6 @@ version = "0.1.0"
 dependencies = [
  "rsk-crypto",
  "rsk-fs",
- "rsk-mgmt",
  "rsk-openpgp",
  "rsk-rsa",
  "rsk-sdk",

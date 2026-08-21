@@ -631,25 +631,25 @@ file = "crates/rsk-device/src/ccid.rs"
 find = """
 const APPLET_CAPS: [u16; 8] = [
     0,
-    rsk_mgmt::CAP_OPENPGP,
+    rsk_devconf::CAP_OPENPGP,
     0,
-    rsk_mgmt::CAP_OATH,
-    rsk_mgmt::CAP_OTP,
-    rsk_mgmt::CAP_PIV,
+    rsk_devconf::CAP_OATH,
+    rsk_devconf::CAP_OTP,
+    rsk_devconf::CAP_PIV,
     0,
-    rsk_mgmt::CAP_FIDO2 | rsk_mgmt::CAP_U2F,
+    rsk_devconf::CAP_FIDO2 | rsk_devconf::CAP_U2F,
 ];
 """
 replace = """
 const APPLET_CAPS: [u16; 8] = [
-    rsk_mgmt::CAP_PIV,
-    rsk_mgmt::CAP_OPENPGP,
-    rsk_mgmt::CAP_PIV,
-    rsk_mgmt::CAP_OATH,
-    rsk_mgmt::CAP_OTP,
-    rsk_mgmt::CAP_PIV,
-    rsk_mgmt::CAP_PIV,
-    rsk_mgmt::CAP_FIDO2 | rsk_mgmt::CAP_U2F,
+    rsk_devconf::CAP_PIV,
+    rsk_devconf::CAP_OPENPGP,
+    rsk_devconf::CAP_PIV,
+    rsk_devconf::CAP_OATH,
+    rsk_devconf::CAP_OTP,
+    rsk_devconf::CAP_PIV,
+    rsk_devconf::CAP_PIV,
+    rsk_devconf::CAP_FIDO2 | rsk_devconf::CAP_U2F,
 ];
 """
 slice = ["cargo", "test", "-p", "rsk-device"]
@@ -676,7 +676,7 @@ note = "the operator gate removed from every privileged rescue command — keyde
 
 [comutant.BugLockWriteResetsCaps]
 status = "patch"
-file = "crates/rsk-mgmt/src/lib.rs"
+file = "crates/rsk-devconf/src/lib.rs"
 find = """
     let mut merged = [0u8; DEV_CONF_MERGE_MAX];
     let m = merged_dev_conf(fs, &stripped[..n], &mut merged)?;
@@ -691,7 +691,7 @@ replace = """
         return Err(DevConfError::TooLong);
     }
 """
-slice = ["cargo", "test", "-p", "rsk-mgmt"]
+slice = ["cargo", "test", "-p", "rsk-devconf"]
 expect = "killed"
 note = """audit run-35 verbatim: the merge replaced with a verbatim store, so a
 `config set-lock-code` write (strips to zero bytes) leaves an EMPTY record that

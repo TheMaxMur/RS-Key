@@ -40,6 +40,33 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Internal
 
+- **Four applets reached into the management applet for a config record and a
+  serial.** `EF_DEV_CONF` — the Yubico DeviceInfo record `ykman config usb`
+  writes, and the READ CONFIG response built around it — lived inside
+  `rsk-mgmt`, so `rsk-fido` and `rsk-otp` depended on the management applet to
+  write it, while `rsk-openpgp` and `rsk-piv` depended on it for five lines that
+  derive the 8-digit serial from the chip id. Those are two different things and
+  they went to two different places. The record is its own crate now,
+  `rsk-devconf`, in the shape `rsk-led` and `rsk-phy` already had — below the
+  applets, depending only on `rsk-fs` and `rsk-sdk`. `serial4` is
+  `rsk_sdk::serial4`, beside `FIRMWARE_VERSION`: the same device identity four
+  applets report for four unrelated reasons, declared once where every applet
+  already looks. `git grep -c rsk_mgmt` over `rsk-fido`, `rsk-otp`,
+  `rsk-openpgp` and `rsk-piv` goes 3/7/5/3 → **0**, and all four drop the
+  dependency.
+
+  **No byte of the record moved**, and that is checked rather than intended:
+  every moved span of the codec is byte-identical to its old self bar nineteen
+  lines — sixteen `pub` keywords on the record's own wire vocabulary (the FID,
+  two size caps, the thirteen DeviceInfo tags), the version tag naming
+  `rsk_sdk::FIRMWARE_VERSION` directly, and two doc clauses that named the
+  applet the codec no longer lives in. All 37 tests moved byte-identical, 21
+  to the record and 16 to the applet, none rewritten and none lost.
+  `EF_DEV_CONF = 0x1122` and every size constant keep their values, so a key
+  provisioned by an older build reads the same record through the same parser
+  and there is nothing to migrate. `docs/protocol.md` §6 describes the same
+  TLV; only the "Source:" pointers follow the file.
+
 - **FIDO reached across the applet tier for a config record, and only the crate
   graph said so.** `EF_PHY` — the PicoForge-compatible device-config TLV that
   carries USB identity, LED wiring and the interface mask — lived inside the

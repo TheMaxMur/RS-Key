@@ -2,7 +2,8 @@
 # page, cited file, span, and the first and last line as they read when
 # locked. Read the diff — a changed line here is a citation changing what
 # it points at, which is the thing this file exists to make visible.
-formal/README.md	crates/rsk-device/src/ccid.rs	67-74	/// Refines `RSKeyAdminSurface!AdminSurfaceAlwaysReachable` — SEC-ADM-001.	rsk_mgmt::CAP_PIV,
+formal/README.md	crates/rsk-devconf/src/lib.rs	264-277	// and `read_enabled_caps` reads empty as "no record" and returns	return Ok(());
+formal/README.md	crates/rsk-device/src/ccid.rs	67-74	/// Refines `RSKeyAdminSurface!AdminSurfaceAlwaysReachable` — SEC-ADM-001.	rsk_devconf::CAP_PIV,
 formal/README.md	crates/rsk-device/src/ccid.rs	91-109	pub struct CcidApplets<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform> {	enabled_caps: u16,
 formal/README.md	crates/rsk-device/src/ccid.rs	237-245	/// bit `i` set → applet `i` (in `APPLET_CAPS` order) is selectable.	mask
 formal/README.md	crates/rsk-device/src/ccid.rs	334-334	self.disp.current() == Some(idx) && self.caps_enabled(APPLET_CAPS[idx])	self.disp.current() == Some(idx) && self.caps_enabled(APPLET_CAPS[idx])
@@ -113,7 +114,6 @@ formal/README.md	crates/rsk-fs/src/fs.rs	578-578	// Absent means there is nothin
 formal/README.md	crates/rsk-fs/src/fs.rs	580-580	None if self.storage.last_error() => return Err(Error::MemoryFatal),	None if self.storage.last_error() => return Err(Error::MemoryFatal),
 formal/README.md	crates/rsk-fs/src/lib.rs	26-46	/// Set (`[1]`) once the post-OTP-provisioning at-rest hardening pass has run: the seal	let _ = fs.delete(EF_HARDENED);
 formal/README.md	crates/rsk-fs/src/lib.rs	46-46	let _ = fs.delete(EF_HARDENED);	let _ = fs.delete(EF_HARDENED);
-formal/README.md	crates/rsk-mgmt/src/lib.rs	311-324	// and `read_enabled_caps` reads empty as "no record" and returns	return Ok(());
 formal/README.md	crates/rsk-oath/src/lib.rs	327-329	if !self.validated {	}
 formal/README.md	crates/rsk-oath/src/lib.rs	334-340	if let Some([key]) = parse_exact(data, [TAG_KEY]) {	return Sw::OK;
 formal/README.md	crates/rsk-oath/src/lib.rs	510-512	// states left a host unable to tell a wrong password from no password.	return Sw::WRONG_DATA;
@@ -171,13 +171,13 @@ formal/README.md	firmware/src/worker.rs	528-528	crate::presence::set_wait_scope(
 formal/README.md	firmware/src/worker.rs	646-669	/// dirty latch, so the CCID / FIDO2 / U2F / OTP gates all act on the new set	// confirms on an already-held button — so without this the release edge of
 formal/README.md	firmware/src/worker.rs	661-663	// Scope any touch wait this command starts to the OTP transport, so a host	crate::presence::set_wait_scope(crate::presence::SCOPE_OTP);
 formal/README.md	tools/emu/src/device.rs	264-264	/// power cycle restarts (`crate::usb_attach`). One clock, not two, is what stops a	/// power cycle restarts (`crate::usb_attach`). One clock, not two, is what stops a
-formal/RSKeyAdminSurface.tla	crates/rsk-device/src/ccid.rs	67-74	/// Refines `RSKeyAdminSurface!AdminSurfaceAlwaysReachable` — SEC-ADM-001.	rsk_mgmt::CAP_PIV,
+formal/RSKeyAdminSurface.tla	crates/rsk-devconf/src/lib.rs	242-242	/// the enabled-applications TLV *without* any transport length prefix; the caller	/// the enabled-applications TLV *without* any transport length prefix; the caller
+formal/RSKeyAdminSurface.tla	crates/rsk-devconf/src/lib.rs	253-267	// the lock, and READ CONFIG echoes this blob to any unauthenticated host, so a	let mut merged = [0u8; DEV_CONF_MERGE_MAX];
+formal/RSKeyAdminSurface.tla	crates/rsk-devconf/src/lib.rs	588-588	return u16::from_be_bytes([conf[i + 2], conf[i + 3]]) & SUPPORTED_CAPS;	return u16::from_be_bytes([conf[i + 2], conf[i + 3]]) & SUPPORTED_CAPS;
+formal/RSKeyAdminSurface.tla	crates/rsk-devconf/src/lib.rs	592-592	SUPPORTED_CAPS	SUPPORTED_CAPS
+formal/RSKeyAdminSurface.tla	crates/rsk-device/src/ccid.rs	67-74	/// Refines `RSKeyAdminSurface!AdminSurfaceAlwaysReachable` — SEC-ADM-001.	rsk_devconf::CAP_PIV,
 formal/RSKeyAdminSurface.tla	crates/rsk-device/src/ccid.rs	237-245	/// bit `i` set → applet `i` (in `APPLET_CAPS` order) is selectable.	mask
 formal/RSKeyAdminSurface.tla	crates/rsk-device/src/ccid.rs	334-334	self.disp.current() == Some(idx) && self.caps_enabled(APPLET_CAPS[idx])	self.disp.current() == Some(idx) && self.caps_enabled(APPLET_CAPS[idx])
-formal/RSKeyAdminSurface.tla	crates/rsk-mgmt/src/lib.rs	289-289	/// the enabled-applications TLV *without* any transport length prefix; the caller	/// the enabled-applications TLV *without* any transport length prefix; the caller
-formal/RSKeyAdminSurface.tla	crates/rsk-mgmt/src/lib.rs	300-314	// the lock, and READ CONFIG echoes this blob to any unauthenticated host, so a	let mut merged = [0u8; DEV_CONF_MERGE_MAX];
-formal/RSKeyAdminSurface.tla	crates/rsk-mgmt/src/lib.rs	632-632	break;	break;
-formal/RSKeyAdminSurface.tla	crates/rsk-mgmt/src/lib.rs	636-636	}	}
 formal/RSKeyAdminSurface.tla	crates/rsk-rescue/src/lib.rs	141-143	/// Refines `RSKeyAdminSurface!PrivilegedOpNeedsPresence` — SEC-ADM-002.	self.presence.borrow_mut().request(confirm) == Presence::Confirmed
 formal/RSKeyAdminSurface.tla	crates/rsk-sdk/src/applet.rs	203-205	pub fn set_enabled(&mut self, mask: u32) {	}
 formal/RSKeyAppletSeams.tla	crates/rsk-device/src/ccid.rs	91-109	pub struct CcidApplets<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform> {	enabled_caps: u16,

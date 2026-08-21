@@ -148,7 +148,9 @@ impl<S: Storage, R: rsk_sdk::Rng + 'static> Applet<Fs<S>> for FidoCcidApplet<'_,
     fn process(&mut self, apdu: &Apdu, fs: &mut Fs<S>, res: &mut ResBuf) -> Sw {
         if apdu.cla == CLA_PROPRIETARY {
             return match apdu.ins {
-                INS_CTAP_MSG if !rsk_mgmt::cap_enabled(self.enabled_caps, rsk_mgmt::CAP_FIDO2) => {
+                INS_CTAP_MSG
+                    if !rsk_devconf::cap_enabled(self.enabled_caps, rsk_devconf::CAP_FIDO2) =>
+                {
                     Sw::COMMAND_NOT_ALLOWED
                 }
                 INS_CTAP_MSG => {
@@ -165,7 +167,7 @@ impl<S: Storage, R: rsk_sdk::Rng + 'static> Applet<Fs<S>> for FidoCcidApplet<'_,
                 _ => Sw::INS_NOT_SUPPORTED,
             };
         }
-        if !rsk_mgmt::cap_enabled(self.enabled_caps, rsk_mgmt::CAP_U2F) {
+        if !rsk_devconf::cap_enabled(self.enabled_caps, rsk_devconf::CAP_U2F) {
             return Sw::COMMAND_NOT_ALLOWED;
         }
         let (sw, n) = self.with_ctx(fs, |ctx| {

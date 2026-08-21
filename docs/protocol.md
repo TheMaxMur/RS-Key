@@ -392,7 +392,7 @@ all ten AIDs, and recorded in the **Transport** column.
 | **Vendor / LED** | `F0 00 00 00 01` | CCID + `CTAPHID_MSG` | **RS-Key-specific** | **yes — §8** |
 
 Sources: `crates/rsk-fido/src/consts.rs`,
-`crates/rsk-mgmt`,
+`crates/rsk-mgmt` (+ `crates/rsk-devconf` for the DeviceInfo record),
 `crates/rsk-oath`,
 `crates/rsk-otp`,
 `crates/rsk-piv`,
@@ -608,8 +608,9 @@ carrying the `ccid-rs-key` overlay, is what makes the interface appear.
 
 **AID `A0 00 00 05 27 47 11 17`. CLA `00`.** This is what `ykman` / Yubico
 Authenticator SELECT first to identify the key and to read/write which
-applications are enabled. Source:
-`crates/rsk-mgmt/src/lib.rs`.
+applications are enabled. Source: `crates/rsk-mgmt/src/lib.rs` for the command
+surface, `crates/rsk-devconf/src/lib.rs` for the `EF_DEV_CONF` record it reads
+and writes.
 
 **SELECT** returns the firmware version as an ASCII string, e.g. `35 2E 37 2E 34`
 (`"5.7.4"`).

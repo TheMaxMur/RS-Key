@@ -24,7 +24,7 @@ rsk-ec = { workspace = true }
 rsk-crypto = { workspace = true }
 rsk-fs = { workspace = true }
 rsk-led = { workspace = true }
-rsk-mgmt = { workspace = true }
+rsk-devconf = { workspace = true }
 rsk-phy = { workspace = true }
 rsk-sdk = { workspace = true }
 sha2 = { workspace = true }

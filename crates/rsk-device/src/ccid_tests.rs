@@ -67,18 +67,18 @@ fn a_disabled_application_is_invisible_not_just_unreported() {
         (
             "openpgp",
             rsk_openpgp::consts::OPENPGP_AID,
-            rsk_mgmt::CAP_OPENPGP,
+            rsk_devconf::CAP_OPENPGP,
         ),
-        ("oath", rsk_oath::OATH_AID, rsk_mgmt::CAP_OATH),
-        ("otp", rsk_otp::OTP_AID, rsk_mgmt::CAP_OTP),
-        ("piv", rsk_piv::PIV_AID, rsk_mgmt::CAP_PIV),
+        ("oath", rsk_oath::OATH_AID, rsk_devconf::CAP_OATH),
+        ("otp", rsk_otp::OTP_AID, rsk_devconf::CAP_OTP),
+        ("piv", rsk_piv::PIV_AID, rsk_devconf::CAP_PIV),
     ] {
         let env = Env::new();
         let mut ccid = env.ccid();
         assert_eq!(sw(ccid.handle_apdu(&select(aid), 0)), rsk_sdk::Sw::OK);
 
-        let blob = dev_conf(rsk_mgmt::CAP_FIDO2); // everything else off
-        rsk_mgmt::persist_dev_conf(&mut env.fs.borrow_mut(), &blob[1..]).unwrap();
+        let blob = dev_conf(rsk_devconf::CAP_FIDO2); // everything else off
+        rsk_devconf::persist_dev_conf(&mut env.fs.borrow_mut(), &blob[1..]).unwrap();
         assert!(!ccid.refresh_enabled() & cap != 0 || !ccid.caps_enabled(cap));
 
         let res = ccid.handle_apdu(&select(aid), 0).to_vec();
@@ -98,7 +98,7 @@ fn the_recovery_applets_can_never_be_disabled() {
     let env = Env::new();
     let mut ccid = env.ccid();
     let blob = dev_conf(0); // every capability off
-    rsk_mgmt::persist_dev_conf(&mut env.fs.borrow_mut(), &blob[1..]).unwrap();
+    rsk_devconf::persist_dev_conf(&mut env.fs.borrow_mut(), &blob[1..]).unwrap();
     ccid.refresh_enabled();
     for (name, aid) in [
         ("management", rsk_mgmt::MANAGEMENT_AID),
@@ -112,7 +112,10 @@ fn the_recovery_applets_can_never_be_disabled() {
 
 #[test]
 fn an_ungated_applet_is_enabled_whatever_the_mask_says() {
-    assert!(rsk_mgmt::cap_enabled(0, 0), "cap 0 means always available");
+    assert!(
+        rsk_devconf::cap_enabled(0, 0),
+        "cap 0 means always available"
+    );
     let env = Env::new();
     let ccid = env.ccid();
     assert!(ccid.caps_enabled(0));
@@ -125,16 +128,16 @@ fn a_config_write_is_only_seen_after_a_refresh() {
     // refresh a required step rather than an optimisation.
     let env = Env::new();
     let mut ccid = env.ccid();
-    assert!(ccid.caps_enabled(rsk_mgmt::CAP_OATH));
-    let blob = dev_conf(rsk_mgmt::CAP_FIDO2);
-    rsk_mgmt::persist_dev_conf(&mut env.fs.borrow_mut(), &blob[1..]).unwrap();
+    assert!(ccid.caps_enabled(rsk_devconf::CAP_OATH));
+    let blob = dev_conf(rsk_devconf::CAP_FIDO2);
+    rsk_devconf::persist_dev_conf(&mut env.fs.borrow_mut(), &blob[1..]).unwrap();
     assert!(
-        ccid.caps_enabled(rsk_mgmt::CAP_OATH),
+        ccid.caps_enabled(rsk_devconf::CAP_OATH),
         "still the cached mask"
     );
     let mask = ccid.refresh_enabled();
-    assert!(!rsk_mgmt::cap_enabled(mask, rsk_mgmt::CAP_OATH));
-    assert!(!ccid.caps_enabled(rsk_mgmt::CAP_OATH));
+    assert!(!rsk_devconf::cap_enabled(mask, rsk_devconf::CAP_OATH));
+    assert!(!ccid.caps_enabled(rsk_devconf::CAP_OATH));
 }
 
 // --- the device-wide wipe's gate set ---------------------------------------
@@ -242,11 +245,11 @@ fn write_config_over_the_fido_transport_round_trips() {
     // and the card does another.
     let env = Env::new();
     let mut ccid = env.ccid();
-    let blob = dev_conf(rsk_mgmt::CAP_FIDO2 | rsk_mgmt::CAP_PIV);
+    let blob = dev_conf(rsk_devconf::CAP_FIDO2 | rsk_devconf::CAP_PIV);
     assert!(ccid.ctap_mgmt(0x43, &blob).is_some());
     assert_eq!(
-        rsk_mgmt::read_enabled_caps(&mut env.fs.borrow_mut()),
-        rsk_mgmt::CAP_FIDO2 | rsk_mgmt::CAP_PIV
+        rsk_devconf::read_enabled_caps(&mut env.fs.borrow_mut()),
+        rsk_devconf::CAP_FIDO2 | rsk_devconf::CAP_PIV
     );
     assert!(
         ccid.ctap_mgmt(0x42, &[]).is_some(),
@@ -265,8 +268,8 @@ fn a_write_config_whose_length_byte_lies_is_refused() {
         "a length past the end of the payload"
     );
     assert_eq!(
-        rsk_mgmt::read_enabled_caps(&mut env.fs.borrow_mut()),
-        rsk_mgmt::SUPPORTED_CAPS,
+        rsk_devconf::read_enabled_caps(&mut env.fs.borrow_mut()),
+        rsk_devconf::SUPPORTED_CAPS,
         "and nothing was persisted"
     );
 }
@@ -280,8 +283,8 @@ fn disabling_otp_stops_the_function_slots_but_not_the_identify_ones() {
     // ungated applets avoid.
     let env = Env::new();
     let mut ccid = env.ccid();
-    let blob = dev_conf(rsk_mgmt::CAP_FIDO2);
-    rsk_mgmt::persist_dev_conf(&mut env.fs.borrow_mut(), &blob[1..]).unwrap();
+    let blob = dev_conf(rsk_devconf::CAP_FIDO2);
+    rsk_devconf::persist_dev_conf(&mut env.fs.borrow_mut(), &blob[1..]).unwrap();
     ccid.refresh_enabled();
 
     let payload = [0u8; 64];
@@ -300,8 +303,8 @@ fn disabling_otp_stops_the_function_slots_but_not_the_identify_ones() {
 fn a_button_press_types_nothing_while_otp_is_disabled() {
     let env = Env::new();
     let mut ccid = env.ccid();
-    let blob = dev_conf(rsk_mgmt::CAP_FIDO2);
-    rsk_mgmt::persist_dev_conf(&mut env.fs.borrow_mut(), &blob[1..]).unwrap();
+    let blob = dev_conf(rsk_devconf::CAP_FIDO2);
+    rsk_devconf::persist_dev_conf(&mut env.fs.borrow_mut(), &blob[1..]).unwrap();
     ccid.refresh_enabled();
     assert!(ccid.otp_button_ticket(1, 0).is_none());
     assert!(ccid.otp_button_ticket(2, 0).is_none());
@@ -523,8 +526,8 @@ mod pinpad {
         ccid.handle_apdu(&select(rsk_openpgp::consts::OPENPGP_AID), 0);
         assert!(ccid.pin_ref_ready(rsk_openpgp::consts::PW1_MODE81));
 
-        let blob = dev_conf(rsk_mgmt::CAP_FIDO2);
-        rsk_mgmt::persist_dev_conf(&mut env.fs.borrow_mut(), &blob[1..]).unwrap();
+        let blob = dev_conf(rsk_devconf::CAP_FIDO2);
+        rsk_devconf::persist_dev_conf(&mut env.fs.borrow_mut(), &blob[1..]).unwrap();
         ccid.refresh_enabled();
         assert!(!ccid.pin_ref_ready(rsk_openpgp::consts::PW1_MODE81));
     }
@@ -704,18 +707,18 @@ fn u2f_over_ccid_answers_its_version_command() {
 #[test]
 fn disabling_one_fido_application_does_not_leave_the_other_reachable() {
     for (name, cap, probe) in [
-        ("fido2", rsk_mgmt::CAP_FIDO2, ctap_msg(GET_INFO)),
+        ("fido2", rsk_devconf::CAP_FIDO2, ctap_msg(GET_INFO)),
         (
             "u2f",
-            rsk_mgmt::CAP_U2F,
+            rsk_devconf::CAP_U2F,
             apdu(0x00, rsk_fido::consts::CTAP_VERSION, 0x00, 0x00, &[]),
         ),
     ] {
         let env = Env::new();
         let mut ccid = env.ccid();
         // Everything on except this one.
-        let blob = dev_conf(rsk_mgmt::SUPPORTED_CAPS & !cap);
-        rsk_mgmt::persist_dev_conf(&mut env.fs.borrow_mut(), &blob[1..]).unwrap();
+        let blob = dev_conf(rsk_devconf::SUPPORTED_CAPS & !cap);
+        rsk_devconf::persist_dev_conf(&mut env.fs.borrow_mut(), &blob[1..]).unwrap();
         ccid.refresh_enabled();
 
         // The AID still selects — its sibling application is still on.
@@ -736,8 +739,9 @@ fn disabling_one_fido_application_does_not_leave_the_other_reachable() {
 fn disabling_both_fido_applications_removes_the_aid() {
     let env = Env::new();
     let mut ccid = env.ccid();
-    let blob = dev_conf(rsk_mgmt::SUPPORTED_CAPS & !(rsk_mgmt::CAP_FIDO2 | rsk_mgmt::CAP_U2F));
-    rsk_mgmt::persist_dev_conf(&mut env.fs.borrow_mut(), &blob[1..]).unwrap();
+    let blob =
+        dev_conf(rsk_devconf::SUPPORTED_CAPS & !(rsk_devconf::CAP_FIDO2 | rsk_devconf::CAP_U2F));
+    rsk_devconf::persist_dev_conf(&mut env.fs.borrow_mut(), &blob[1..]).unwrap();
     ccid.refresh_enabled();
     assert_eq!(
         sw(ccid.handle_apdu(&select(rsk_fido::consts::FIDO_AID), 0)),

@@ -67,7 +67,7 @@ gap = "oathOtpPin status is in RSKeyAppletSeams; protected-slot configure/update
 [crate.rsk-vendor]
 class = "state-partial"
 model = "RSKeySecurityState"
-gap = "ConfigOp/plat in the security model; the config-write pipeline it shares with rsk-mgmt (persist_dev_conf) is RSKeyAdminSurface now. Still open: UNLOCK is modelled wider than its real gate (mse_ready + lock_engaged)."
+gap = "ConfigOp/plat in the security model; the config-write pipeline it shares with rsk-devconf (persist_dev_conf) is RSKeyAdminSurface now. Still open: UNLOCK is modelled wider than its real gate (mse_ready + lock_engaged)."
 
 [crate.rsk-display]
 class = "state-partial"
@@ -102,7 +102,12 @@ gap = "the operator-presence gate on every privileged command is modelled (Privi
 [crate.rsk-mgmt]
 class = "state-partial"
 model = "RSKeyAdminSurface"
-gap = "the enabled-set lifecycle is modelled (mask writes, the lock-code-only write, the clamp as a construction). The TLV codec itself — well-formedness, merge widths, the two-parsers refusal — is single-step and carried by the crate's tests; still zero Kani proofs."
+gap = "what is left after the EF_DEV_CONF codec moved to rsk-devconf: the CCID command surface (INS 0x1C/0x1D/0x1E/0x1F), the strict-config presence gate on WRITE CONFIG, and the process-global DEVICE_RESET latch the firmware drains after the SW_OK. AdminSurfaceAlwaysReachable models this applet as the always-on carve-out; the wipe the latch requests is the firmware's own factory_wipe, which this crate cannot observe, and the applet holds no flash state of its own."
+
+[crate.rsk-devconf]
+class = "state-partial"
+model = "RSKeyAdminSurface"
+gap = "the enabled-set lifecycle is modelled (mask writes, the lock-code-only write, the clamp as a construction). This crate DOES touch flash — it owns EF_DEV_CONF end to end (validate, merge onto the stored record, trim to cap, put) and the DEV_CONF_DIRTY latch the composition roots drain to reload their cached mask; who may drive a write is the four callers' gate, not this crate's. The TLV codec itself — well-formedness, merge widths, the two-parsers refusal — is single-step and carried by the crate's tests; still zero Kani proofs."
 
 [crate.rsk-crypto]
 class = "pure"

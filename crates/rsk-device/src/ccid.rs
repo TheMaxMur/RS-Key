@@ -67,13 +67,13 @@ const IDX_PIV: usize = 5;
 /// Refines `RSKeyAdminSurface!AdminSurfaceAlwaysReachable` — SEC-ADM-001.
 const APPLET_CAPS: [u16; 8] = [
     0,
-    rsk_mgmt::CAP_OPENPGP,
+    rsk_devconf::CAP_OPENPGP,
     0,
-    rsk_mgmt::CAP_OATH,
-    rsk_mgmt::CAP_OTP,
-    rsk_mgmt::CAP_PIV,
+    rsk_devconf::CAP_OATH,
+    rsk_devconf::CAP_OTP,
+    rsk_devconf::CAP_PIV,
     0,
-    rsk_mgmt::CAP_FIDO2 | rsk_mgmt::CAP_U2F,
+    rsk_devconf::CAP_FIDO2 | rsk_devconf::CAP_U2F,
 ];
 
 /// YubiKey Management vendor commands carried over CTAPHID (logical, i.e.
@@ -214,23 +214,23 @@ impl<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform>
                 serial_hash,
                 mkek_source,
             ),
-            enabled_caps: rsk_mgmt::read_enabled_caps(&mut fs.borrow_mut()),
+            enabled_caps: rsk_devconf::read_enabled_caps(&mut fs.borrow_mut()),
             resp: [0; RESP_CAP],
         }
     }
 
     /// Reload the cached enabled-applications mask from flash — called after a
-    /// config write flips [`rsk_mgmt::take_dev_conf_dirty`], so the next gated
+    /// config write flips [`rsk_devconf::take_dev_conf_dirty`], so the next gated
     /// command sees the new set. Returns the reloaded mask.
     pub fn refresh_enabled(&mut self) -> u16 {
-        self.enabled_caps = rsk_mgmt::read_enabled_caps(&mut self.fs.borrow_mut());
+        self.enabled_caps = rsk_devconf::read_enabled_caps(&mut self.fs.borrow_mut());
         self.enabled_caps
     }
 
     /// Whether the applet/transport guarded by capability bit `cap` is enabled.
     /// The worker consults this to gate the FIDO2 (CBOR) and U2F (MSG) transports.
     pub fn caps_enabled(&self, cap: u16) -> bool {
-        rsk_mgmt::cap_enabled(self.enabled_caps, cap)
+        rsk_devconf::cap_enabled(self.enabled_caps, cap)
     }
 
     /// The `Dispatcher::set_enabled` index-mask derived from the current cap mask:
@@ -238,7 +238,7 @@ impl<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform>
     fn applet_enable_mask(&self) -> u32 {
         let mut mask = 0u32;
         for (i, &cap) in APPLET_CAPS.iter().enumerate() {
-            if rsk_mgmt::cap_enabled(self.enabled_caps, cap) {
+            if rsk_devconf::cap_enabled(self.enabled_caps, cap) {
                 mask |= 1 << i;
             }
         }
@@ -278,7 +278,7 @@ impl<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform>
                 }
                 let ok = {
                     let mut fsb = self.fs.borrow_mut();
-                    rsk_mgmt::persist_dev_conf(&mut *fsb, &_data[1..1 + len]).is_ok()
+                    rsk_devconf::persist_dev_conf(&mut *fsb, &_data[1..1 + len]).is_ok()
                 };
                 // An empty body is the ykman-expected acknowledgement.
                 if ok { Some(&self.resp[..0]) } else { None }
@@ -431,7 +431,7 @@ impl<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform>
         // OTP disabled: the function slots (program/update/swap/challenge-response)
         // go inert, but the identify/config slots (serial, READ/WRITE CONFIG,
         // status) stay live so the host can still read DeviceInfo and re-enable OTP.
-        if !self.caps_enabled(rsk_mgmt::CAP_OTP) && rsk_otp::is_function_slot(slot_id) {
+        if !self.caps_enabled(rsk_devconf::CAP_OTP) && rsk_otp::is_function_slot(slot_id) {
             let status = self.otp.hid_status_frame(&mut self.fs.borrow_mut());
             return ([0u8; 64], 0, status);
         }
@@ -472,7 +472,7 @@ impl<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform>
         slot: u8,
         ts_secs: u32,
     ) -> Option<([u8; rsk_otp::ticket::MAX_TICKET], usize, bool)> {
-        if !self.caps_enabled(rsk_mgmt::CAP_OTP) {
+        if !self.caps_enabled(rsk_devconf::CAP_OTP) {
             return None; // OTP disabled — a button press types nothing.
         }
         let mut rnd = [0u8; 2];
@@ -497,7 +497,8 @@ impl<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform>
     fn try_rsa_keygen(&mut self, apdu: &[u8]) -> Option<usize> {
         // The cap check closes the contrived window where OpenPGP was selected and
         // then disabled — the fast path bypasses the dispatcher's own gate.
-        if self.disp.current() != Some(IDX_OPENPGP) || !self.caps_enabled(rsk_mgmt::CAP_OPENPGP) {
+        if self.disp.current() != Some(IDX_OPENPGP) || !self.caps_enabled(rsk_devconf::CAP_OPENPGP)
+        {
             return None;
         }
         let p = Apdu::parse(apdu).ok()?;
@@ -546,7 +547,7 @@ impl<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform>
     /// the CCID transport can stream time-extensions. Validation errors fall
     /// through to normal dispatch for the right status word.
     fn try_piv_rsa_keygen(&mut self, apdu: &[u8]) -> Option<usize> {
-        if self.disp.current() != Some(IDX_PIV) || !self.caps_enabled(rsk_mgmt::CAP_PIV) {
+        if self.disp.current() != Some(IDX_PIV) || !self.caps_enabled(rsk_devconf::CAP_PIV) {
             return None;
         }
         let p = Apdu::parse(apdu).ok()?;

@@ -4,13 +4,14 @@
 (* Copyright (C) 2026 RS-Key contributors                                    *)
 (*                                                                           *)
 (* THE ADMINISTRATIVE & RECOVERY SURFACE: the enabled-applications mask      *)
-(* (`rsk-mgmt`, the ykman `config usb` capability set), the always-on carve- *)
-(* out that keeps it reversible (the `APPLET_CAPS` table in `rsk-device`),   *)
-(* and the operator-presence gate on the privileged `rsk-rescue` commands    *)
-(* (device-key signing, cert/config writes, reboot-to-BOOTSEL, fuse burns).  *)
-(* Not the applets' own command sets, not the seal, not the CTAP state --    *)
-(* those are the other four modules'. This is the surface that decides which *)
-(* applets EXIST and who may touch device identity, one layer above them.    *)
+(* (`rsk-devconf`, the ykman `config usb` capability set), the always-on     *)
+(* carve-out that keeps it reversible (the `APPLET_CAPS` table in            *)
+(* `rsk-device`), and the operator-presence gate on the privileged           *)
+(* `rsk-rescue` commands (device-key signing, cert/config writes,            *)
+(* reboot-to-BOOTSEL, fuse burns). Not the applets' own command sets, not    *)
+(* the seal, not the CTAP state -- those are the other four modules'. This   *)
+(* is the surface that decides which applets EXIST and who may touch device  *)
+(* identity, one layer above them.                                           *)
 (*                                                                           *)
 (* WHY A FIFTH MODULE. It shares no variable with the other four: the mask   *)
 (* is neither an applet status (RSKeyAppletSeams) nor a retry counter        *)
@@ -30,16 +31,16 @@
 (*                                                                           *)
 (* WHAT IS ABSTRACTED. The mask is a set of opaque capabilities, not the     *)
 (* 16-bit USB_ENABLED bitmask -- the clamp to SUPPORTED_CAPS                 *)
-(* (crates/rsk-mgmt/src/lib.rs:632) is modelled as "the mask stays a subset  *)
-(* of the gateable caps" and enforced by construction. The config-lock TLV   *)
-(* is present only as the class of write that carries no capability change   *)
-(* (`LockCodeWrite`); its unsealed-disclosure hole (audit run-30) is a       *)
-(* data-handling property, not a state-machine one, and stays in the strip   *)
-(* function's own unit tests. The strict-config presence gate on the CONFIG  *)
-(* write is a build flag ORTHOGONAL to every invariant here: its absence on  *)
-(* the default build is a documented, reversible DoS, so the config write is *)
-(* modelled ungated and the presence property covers only the rescue         *)
-(* commands, which gate unconditionally on both builds.                      *)
+(* (crates/rsk-devconf/src/lib.rs:588) is modelled as "the mask stays a      *)
+(* subset of the gateable caps" and enforced by construction. The            *)
+(* config-lock TLV is present only as the class of write that carries no     *)
+(* capability change (`LockCodeWrite`); its unsealed-disclosure hole (audit  *)
+(* run-30) is a data-handling property, not a state-machine one, and stays   *)
+(* in the strip function's own unit tests. The strict-config presence gate   *)
+(* on the CONFIG write is a build flag ORTHOGONAL to every invariant here:   *)
+(* its absence on the default build is a documented, reversible DoS, so the  *)
+(* config write is modelled ungated and the presence property covers only    *)
+(* the rescue commands, which gate unconditionally on both builds.           *)
 (*****************************************************************************)
 EXTENDS Naturals, FiniteSets
 
@@ -65,7 +66,8 @@ CONSTANTS
     \* zero bytes; storing that verbatim left an EMPTY record, and
     \* `read_enabled_caps` reads empty as SUPPORTED_CAPS, so a lock-code write
     \* silently re-enabled every disabled application. The fix MERGES onto the
-    \* stored record (crates/rsk-mgmt/src/lib.rs:300-314); the switch replaces it.
+    \* stored record (crates/rsk-devconf/src/lib.rs:253-267); the switch
+    \* replaces it.
     BugLockWriteResetsCaps,
     \* The pre-0x084A tree, shipped and fixed: USB_ENABLED was REPORTING-ONLY --
     \* the persisted mask echoed in DeviceInfo while SELECT and dispatch never
@@ -97,7 +99,7 @@ TypeOK ==
     /\ viol \in SUBSET InvNames
 
 \* A factory device: every gateable application enabled (the default record's
-\* USB_ENABLED is SUPPORTED_CAPS, crates/rsk-mgmt/src/lib.rs:636).
+\* USB_ENABLED is SUPPORTED_CAPS, crates/rsk-devconf/src/lib.rs:592).
 Init ==
     /\ enabled = Caps
     /\ viol = {}
@@ -110,13 +112,13 @@ AdminChannelOpen ==
     IF BugAdminGateable THEN enabled # {} ELSE TRUE
 
 (***************************************************************************)
-(* WRITE CONFIG. crates/rsk-mgmt/src/lib.rs:289 (persist_dev_conf) via the   *)
-(* CCID applet and the FIDO vendor config-write. Sets the enabled set to any  *)
-(* subset of the gateable caps. Modelled UNCONDITIONALLY enabled: the default *)
-(* build does not presence-gate it (a documented, reversible DoS), and the    *)
-(* management applet that carries it is the always-on carve-out, so the write *)
-(* is reachable from every state -- which is exactly what keeps a disable      *)
-(* reversible.                                                                *)
+(* WRITE CONFIG. crates/rsk-devconf/src/lib.rs:242 (persist_dev_conf) via    *)
+(* the CCID applet and the FIDO vendor config-write. Sets the enabled set to *)
+(* any subset of the gateable caps. Modelled UNCONDITIONALLY enabled: the    *)
+(* default build does not presence-gate it (a documented, reversible DoS),   *)
+(* and the management applet that carries it is the always-on carve-out, so  *)
+(* the write is reachable from every state -- which is exactly what keeps a  *)
+(* disable reversible.                                                       *)
 (***************************************************************************)
 WriteConfig ==
     \E new \in SUBSET Caps :

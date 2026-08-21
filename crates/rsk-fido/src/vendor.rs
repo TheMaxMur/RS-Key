@@ -32,9 +32,9 @@ use rsk_crypto::mac::hkdf_sha256;
 use rsk_crypto::mlkem::{MLKEM768_CT_LEN, MLKEM768_EK_LEN, mlkem768_encapsulate};
 use rsk_crypto::pinproto::ecdh_raw;
 use rsk_crypto::sha256;
+use rsk_devconf::{DevConfError, persist_dev_conf};
 use rsk_fs::Storage;
 use rsk_led::{CONF_LEN as LED_CONF_LEN, EF_LED_CONF};
-use rsk_mgmt::{DevConfError, persist_dev_conf};
 
 use crate::cbordec::{cbor, def_map, skip_value};
 use crate::cert;
@@ -313,7 +313,7 @@ fn config_write<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> CtapResul
     }
     match req.target {
         CONFIG_TARGET_DEV_CONF => {
-            if rsk_mgmt::dev_conf_unchanged(ctx.fs, req.blob) {
+            if rsk_devconf::dev_conf_unchanged(ctx.fs, req.blob) {
                 return Ok(0);
             }
             persist_dev_conf(ctx.fs, req.blob).map_err(|e| match e {

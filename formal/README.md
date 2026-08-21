@@ -474,7 +474,7 @@ nowhere to be observed. The layer below is covered
 (`rsk-fs::factory_wipe_fails_on_a_truncated_enumeration`); this is the one seam
 between them, and closing it means making `Env` generic over its backend.
 
-Two size-arithmetic rows in `rsk-mgmt` (`CONFIG_TLV_FIXED`, and the room
+Two size-arithmetic rows in `rsk-devconf` (`CONFIG_TLV_FIXED`, and the room
 computation in `config_tlv`) survive because no test is tight against the
 response buffer's edge. Recorded, untriaged.
 
@@ -544,7 +544,7 @@ that reason, alongside two February 29ths for the month branch.
 
 #### The last nineteen, and a cap that stopped being a cap
 
-The rows left at the end are `rsk-mgmt`'s size arithmetic, and every one of them
+The rows left at the end are `rsk-devconf`'s size arithmetic, and every one of them
 survives. That is the answer, not a gap in it.
 
 Five are equivalent by inspection: `SUPPORTED_CAPS` folds six capability bits
@@ -1617,7 +1617,7 @@ with recorded evidence, zero gaps.**
 ## The sixth module — `RSKeyAdminSurface.tla`
 
 The surface that decides which applets EXIST and who may touch device identity:
-the enabled-applications mask (`rsk-mgmt`, ykman's `config usb` set), the
+the enabled-applications mask (`rsk-devconf`, ykman's `config usb` set), the
 always-on carve-out that keeps a disable reversible, and the operator-presence
 gate on the privileged `rsk-rescue` commands. A separate module because it shares
 no variable with the others, and because its central claim is a *sequence*
@@ -1632,7 +1632,7 @@ removed defences:
 | Mutation switch | Rebuilds | Target invariant | Caught in |
 |---|---|---|---|
 | `BugMaskIsCosmetic` | **the pre-`0x084A` tree, shipped**: `USB_ENABLED` echoed in DeviceInfo while SELECT and dispatch never consulted it — `ykman config usb --disable` disabled nothing (`crates/rsk-sdk/src/applet.rs:208-210`, fed at `crates/rsk-device/src/ccid.rs:237-245`, consulted at `:334`) | `DisabledAppletNeverDispatches` | 10 states |
-| `BugLockWriteResetsCaps` | **audit run-35, shipped**: a lock-code-only write strips to zero bytes, stored verbatim as an EMPTY record that `read_enabled_caps` reads as `SUPPORTED_CAPS` — every disabled application silently re-enabled (`crates/rsk-mgmt/src/lib.rs:311-324`, the merge) | `DisableSetSurvivesLockWrite` | 9 states |
+| `BugLockWriteResetsCaps` | **audit run-35, shipped**: a lock-code-only write strips to zero bytes, stored verbatim as an EMPTY record that `read_enabled_caps` reads as `SUPPORTED_CAPS` — every disabled application silently re-enabled (`crates/rsk-devconf/src/lib.rs:264-277`, the merge) | `DisableSetSurvivesLockWrite` | 9 states |
 | `BugAdminGateable` | the `APPLET_CAPS` cap-`0` carve-out removed (`crates/rsk-device/src/ccid.rs:67-74`): management/vendor/rescue gated by the mask, so one disable-everything write is irreversible | `AdminSurfaceAlwaysReachable` | 2 states |
 | `BugPrivilegedOpUngated` | `require_presence` removed (`crates/rsk-rescue/src/lib.rs:141-143`): keydev signing, cert/config writes, BOOTSEL reboot and fuse burns driven by the USB host alone | `PrivilegedOpNeedsPresence` | 10 states |
 
@@ -2149,13 +2149,14 @@ evidence columns and validated cross-model support edges below on every gate run
 | `rsk-bench` | out-of-scope | — | latency statistics for the on-device harness; not part of the security argument. |
 | `rsk-bip39` | pure | `crates/rsk-bip39/src/kani.rs` | — |
 | `rsk-crypto` | pure | `crates/rsk-crypto/src/base64url_kani.rs`<br>`fuzz/fuzz_targets/aes_gcm.rs`<br>`fuzz/fuzz_targets/chachapoly.rs` | — |
+| `rsk-devconf` | state-partial | `RSKeyAdminSurface` | the enabled-set lifecycle is modelled (mask writes, the lock-code-only write, the clamp as a construction). This crate DOES touch flash — it owns EF_DEV_CONF end to end (validate, merge onto the stored record, trim to cap, put) and the DEV_CONF_DIRTY latch the composition roots drain to reload their cached mask; who may drive a write is the four callers' gate, not this crate's. The TLV codec itself — well-formedness, merge widths, the two-parsers refusal — is single-step and carried by the crate's tests; still zero Kani proofs. |
 | `rsk-device` | state-partial | `RSKeySecurityState` | presence arbitration is modelled and Kani-proved; capability gating is RSKeyAdminSurface. Dispatcher selection/reset semantics are RSKeyAppletSeams; the remaining fast-path wiring is single-dispatch glue rather than a separately modelled state machine. |
 | `rsk-display` | state-partial | `RSKeyTrustedDisplay` | the confirm ceremony (WhatIsConfirmedIsWhatIsShown, decomposed as SEC-DISP-001..003) is modelled; the wait owner and the fourth PIN door stay in RSKeySecurityState. The menus, settings flows and the device-PIN screens are navigation over that same armed-touch chokepoint, not separate security state. |
 | `rsk-ec` | pure | `crates/rsk-ec/src/tests.rs` | — |
 | `rsk-fido` | state-modelled | `RSKeySecurityState` | — |
 | `rsk-fs` | state-partial | `RSKeyStore` | the committed store, the delete write-order and the present-cache soundness are modelled (M3 lifted powercut_model.rs to TLA+ and ties R0p to it); phase 6 composes the FIDO reset projection with delete_landed and the real byte-cuttable Fs stack. Values are still two opaque tokens, so a content-corrupting defect is out of reach, and Fs::factory_wipe's two-phase sweep remains the security module's ordering (SeedLeadsTheWipe), not this one's. |
 | `rsk-led` | pure | `crates/rsk-led/src/kani.rs` | — |
-| `rsk-mgmt` | state-partial | `RSKeyAdminSurface` | the enabled-set lifecycle is modelled (mask writes, the lock-code-only write, the clamp as a construction). The TLV codec itself — well-formedness, merge widths, the two-parsers refusal — is single-step and carried by the crate's tests; still zero Kani proofs. |
+| `rsk-mgmt` | state-partial | `RSKeyAdminSurface` | what is left after the EF_DEV_CONF codec moved to rsk-devconf: the CCID command surface (INS 0x1C/0x1D/0x1E/0x1F), the strict-config presence gate on WRITE CONFIG, and the process-global DEVICE_RESET latch the firmware drains after the SW_OK. AdminSurfaceAlwaysReachable models this applet as the always-on carve-out; the wipe the latch requests is the firmware's own factory_wipe, which this crate cannot observe, and the applet holds no flash state of its own. |
 | `rsk-mldsa` | pure | `crates/rsk-mldsa/src/round_kani.rs`<br>`fuzz/fuzz_targets/mldsa_roundtrip.rs`<br>`fuzz/fuzz_targets/mldsa_verify.rs` | — |
 | `rsk-oath` | state-partial | `RSKeyAppletSeams` | status lifetime and access-code removal are RSKeyAppletSeams; calculation's access-code and touch gates are RSKeyAppletPolicies. The MAC access code has no retry budget, so its byte-level mutual-auth acceptance remains differential-oracle territory rather than a fabricated lattice counter. |
 | `rsk-openpgp` | state-partial | `RSKeyAppletSeams` | status lifetime is RSKeyAppletSeams; PW1/PW3/RC budgets are RSKeyRetryLattice; algorithm-attribute changes invalidating the old key pair are RSKeyAppletPolicies. MSE repointing and the per-slot UIF value space remain below the abstraction. |
@@ -2170,7 +2171,7 @@ evidence columns and validated cross-model support edges below on every gate run
 | `rsk-store` | state-partial | `RSKeyStore` | the Storage contract it implements — atomic append, an enumeration-completeness flag — is taken as RSKeyStore's backend assumption; the two-partition counter/main ring, is_counter_fid routing, wear and page reclaim, and compact are backend mechanics the model abstracts. |
 | `rsk-ui` | state-partial | `RSKeyTrustedDisplay` | hit_confirm's disjoint Allow/Deny zones are the modelled seam (OnlyAllowConfirms's Rust owner); rendering, fonts and the settings codec are pure functions under their own 12 Kani proofs and render tests — no screen-transition state lives in this crate (the ceremony state machine is rsk-display's). |
 | `rsk-usb` | state-partial | `RSKeyTransport` | the CTAPHID reassembler's channel/sequence/length state machine is modelled (M8); the async transport loop's bounded-write liveness (the 0x075D wedge fix) is guarded by the FrameSink seam's own mutation-tested regression, and the CCID/keyboard framing and secure_pin codec are single-step, Kani-proved and unit-tested. |
-| `rsk-vendor` | state-partial | `RSKeySecurityState` | ConfigOp/plat in the security model; the config-write pipeline it shares with rsk-mgmt (persist_dev_conf) is RSKeyAdminSurface now. Still open: UNLOCK is modelled wider than its real gate (mse_ready + lock_engaged). |
+| `rsk-vendor` | state-partial | `RSKeySecurityState` | ConfigOp/plat in the security model; the config-write pipeline it shares with rsk-devconf (persist_dev_conf) is RSKeyAdminSurface now. Still open: UNLOCK is modelled wider than its real gate (mse_ready + lock_engaged). |
 | `rsk-wipe` | out-of-scope | — | flash-erase utility, runs once in a maintainer's hands; not part of the runtime security argument. |
 <!-- assurance-table:end -->
 

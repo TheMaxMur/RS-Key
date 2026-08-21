@@ -280,7 +280,7 @@ board while `usbSupported = 0x023b` — the enabled mask carries bits (`0x3800`)
 the supported mask does not, so `enabled ⊄ supported`. A real YubiKey guarantees
 `enabled ⊆ supported` (both were `0x033f` on the reference).
 
-Root cause was not the default: `config_tlv` (`crates/rsk-mgmt/src/lib.rs`) sets
+Root cause was not the default: `config_tlv` (`crates/rsk-devconf/src/lib.rs`) sets
 the default `USB_ENABLED` to `SUPPORTED_CAPS` (`0x023b`), which is correct. But
 once a host had written an enabled-applications config, READ CONFIG echoed the
 persisted `EF_DEV_CONF` blob **verbatim** without clamping the mask. A host that

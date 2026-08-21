@@ -94,7 +94,7 @@ fn getdata_aid_case2_via_dispatcher_returns_aid_not_6d00() {
     );
     assert_eq!(
         &aid[10..14],
-        &crate::files::serial_bcd(&rsk_mgmt::serial4(SERIAL_ID)),
+        &crate::files::serial_bcd(&rsk_sdk::serial4(SERIAL_ID)),
         "BCD device serial spliced at offset 10 (YubiKey convention)"
     );
 

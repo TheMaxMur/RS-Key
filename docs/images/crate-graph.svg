@@ -2,7 +2,7 @@
 <!-- Copyright (C) 2026 RS-Key contributors -->
 <svg viewBox="0 0 780 396" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="ttl dsc" font-family="'Segoe UI', system-ui, -apple-system, sans-serif">
   <title id="ttl">RS-Key crate dependency layers</title>
-  <desc id="dsc">The firmware binary sits on top of seven applet crates (fido, openpgp, piv, oath, otp, mgmt, rescue), which in turn build on the platform libraries (sdk, fs, crypto, usb, rsa, led). Each tier depends on the tier below. Extra edges: piv depends on openpgp, otp on mgmt, openpgp and piv on rsa, and fs and usb on sdk. The display build adds ui, bip39 and slip39.</desc>
+  <desc id="dsc">The firmware binary sits on top of seven applet crates (fido, openpgp, piv, oath, otp, mgmt, rescue), which in turn build on the platform libraries (sdk, fs, crypto, usb, rsa, led). Each tier depends on the tier below. Extra edges: piv depends on openpgp, openpgp and piv on rsa, and fs and usb on sdk. The display build adds ui, bip39 and slip39.</desc>
   <defs>
     <style>
       .h1{font-size:23px;font-weight:700;fill:#2B2723}
@@ -69,10 +69,9 @@
     <text x="585" y="175">rsk-mgmt</text>
     <text x="684" y="175">rsk-rescue</text>
   </g>
-  <!-- intra-applet edges: piv->openpgp, otp->mgmt -->
+  <!-- intra-applet edge: piv->openpgp -->
   <g fill="none" stroke="#A9764F" stroke-width="1.5" marker-end="url(#ar)">
     <path d="M270 186 Q239 204 208 187"/>
-    <path d="M468 186 Q537 204 566 187"/>
   </g>
 
   <!-- platform -->
@@ -100,7 +99,7 @@
 
   <!-- notes -->
   <text class="note" x="34" y="330">Every applet builds on <tspan class="notek">rsk-sdk</tspan> (dispatch) · <tspan class="notek">rsk-fs</tspan> (storage) · <tspan class="notek">rsk-crypto</tspan>.  Extra edges beyond the tiers:</text>
-  <text class="note" x="34" y="348"><tspan class="notek">rsk-piv → rsk-openpgp</tspan> · <tspan class="notek">rsk-otp → rsk-mgmt</tspan> · <tspan class="notek">rsk-openpgp &amp; rsk-piv → rsk-rsa</tspan> · <tspan class="notek">rsk-fs &amp; rsk-usb → rsk-sdk</tspan>.</text>
+  <text class="note" x="34" y="348"><tspan class="notek">rsk-piv → rsk-openpgp</tspan> · <tspan class="notek">rsk-openpgp &amp; rsk-piv → rsk-rsa</tspan> · <tspan class="notek">rsk-fs &amp; rsk-usb → rsk-sdk</tspan>.</text>
 
   <text class="foot" x="34" y="378">Source: workspace Cargo.toml manifests · firmware/ is the thin glue that wires the applets onto the transports.</text>
 </svg>

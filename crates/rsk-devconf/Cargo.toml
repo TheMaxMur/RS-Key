@@ -1,0 +1,19 @@
+[package]
+name = "rsk-devconf"
+version = "0.1.0"
+license = "AGPL-3.0-only"
+edition = "2024"
+publish = false
+
+[dependencies]
+# The record lives in flash and its READ CONFIG response is built into an
+# `rsk-sdk` `ResBuf`, so the codec owns the read-modify-write instead of it
+# being re-typed in the four command surfaces that write it. Both are the
+# platform tier, so the edge points down — the pair `rsk-phy` and `rsk-store`
+# take.
+rsk-fs = { workspace = true }
+rsk-sdk = { workspace = true }
+
+[dev-dependencies]
+# RamStorage for the host tests (the same backend the applet crates use).
+rsk-fs = { workspace = true, features = ["test-util"] }

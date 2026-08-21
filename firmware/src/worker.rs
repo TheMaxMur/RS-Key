@@ -446,8 +446,8 @@ impl<'a> Worker<'a> {
                 // does nothing until re-enabled. The re-enable path — CCID management
                 // and the FIDO Management vendor command (`Kind::Vendor`) — is never
                 // gated, so a disable is always reversible.
-                let fido2_on = self.ccid.caps_enabled(rsk_mgmt::CAP_FIDO2);
-                let u2f_on = self.ccid.caps_enabled(rsk_mgmt::CAP_U2F);
+                let fido2_on = self.ccid.caps_enabled(rsk_devconf::CAP_FIDO2);
+                let u2f_on = self.ccid.caps_enabled(rsk_devconf::CAP_U2F);
                 let cbor_denied = [rsk_fido::CtapError::OperationDenied as u8];
                 let u2f_denied = rsk_sdk::Sw::CONDITIONS_NOT_SATISFIED.to_bytes();
                 let Exchange {
@@ -647,7 +647,7 @@ impl<'a> Worker<'a> {
     /// before the next request. Cheap (one relaxed atomic) on the common no-change
     /// path; a flash re-read only right after `ykman config usb` changed it.
     fn refresh_caps_if_dirty(&mut self) {
-        if rsk_mgmt::take_dev_conf_dirty() {
+        if rsk_devconf::take_dev_conf_dirty() {
             self.ccid.refresh_enabled();
         }
     }

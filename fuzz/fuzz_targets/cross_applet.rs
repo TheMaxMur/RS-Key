@@ -49,6 +49,9 @@
 use core::cell::RefCell;
 
 use libfuzzer_sys::fuzz_target;
+// DeviceInfo's `USB_ENABLED` tag — the one writable field that decides which
+// applets exist.
+use rsk_devconf::TAG_USB_ENABLED;
 use rsk_device::{CcidApplets, Hooks};
 use rsk_fs::Fs;
 use rsk_fs::storage::ram::RamStorage;
@@ -69,9 +72,6 @@ const INS_GENERATE: u8 = 0x47;
 /// answer, and WRITE CONFIG is its ungated twin on the default build.
 const CTAP_READ_CONFIG: u8 = 0x42;
 const CTAP_WRITE_CONFIG: u8 = 0x43;
-/// DeviceInfo's `USB_ENABLED` tag — mirrors `rsk-mgmt`'s crate-private
-/// `TAG_USB_ENABLED`, the one writable field that decides which applets exist.
-const TAG_USB_ENABLED: u8 = 0x03;
 /// The four PIN references the trusted display's pad can be asked to collect.
 const PIN_REFS: [u8; 4] = [
     rsk_openpgp::consts::PW1_MODE81,
@@ -88,15 +88,15 @@ const PIN_REFS: [u8; 4] = [
 /// `cap_enabled` is an ANY test.
 const APPLETS: [(&[u8], u16); 8] = [
     (rsk_vendor::VENDOR_AID, 0),
-    (rsk_openpgp::consts::OPENPGP_AID, rsk_mgmt::CAP_OPENPGP),
+    (rsk_openpgp::consts::OPENPGP_AID, rsk_devconf::CAP_OPENPGP),
     (rsk_mgmt::MANAGEMENT_AID, 0),
-    (rsk_oath::OATH_AID, rsk_mgmt::CAP_OATH),
-    (rsk_otp::OTP_AID, rsk_mgmt::CAP_OTP),
-    (rsk_piv::PIV_AID, rsk_mgmt::CAP_PIV),
+    (rsk_oath::OATH_AID, rsk_devconf::CAP_OATH),
+    (rsk_otp::OTP_AID, rsk_devconf::CAP_OTP),
+    (rsk_piv::PIV_AID, rsk_devconf::CAP_PIV),
     (rsk_rescue::RESCUE_AID, 0),
     (
         rsk_fido::consts::FIDO_AID,
-        rsk_mgmt::CAP_FIDO2 | rsk_mgmt::CAP_U2F,
+        rsk_devconf::CAP_FIDO2 | rsk_devconf::CAP_U2F,
     ),
 ];
 
@@ -297,7 +297,7 @@ fuzz_target!(|data: &[u8]| {
             OP_REFRESH => {
                 let mask = ccid.refresh_enabled();
                 assert_eq!(
-                    mask & !rsk_mgmt::SUPPORTED_CAPS,
+                    mask & !rsk_devconf::SUPPORTED_CAPS,
                     0,
                     "the mask enables a capability this build does not have"
                 );
@@ -307,8 +307,8 @@ fuzz_target!(|data: &[u8]| {
                     // The wipe is not allowed to spare `EF_DEV_CONF`, or an owner
                     // who disabled every application has no way back.
                     assert_eq!(
-                        rsk_mgmt::read_enabled_caps(&mut fs.borrow_mut()),
-                        rsk_mgmt::SUPPORTED_CAPS,
+                        rsk_devconf::read_enabled_caps(&mut fs.borrow_mut()),
+                        rsk_devconf::SUPPORTED_CAPS,
                         "a factory wipe left the enabled-applications record behind"
                     );
                 }
@@ -319,7 +319,7 @@ fuzz_target!(|data: &[u8]| {
                 let mut payload = [0u8; 64];
                 let n = body.len().min(payload.len());
                 payload[..n].copy_from_slice(&body[..n]);
-                let otp_on = ccid.caps_enabled(rsk_mgmt::CAP_OTP);
+                let otp_on = ccid.caps_enabled(rsk_devconf::CAP_OTP);
                 let (_, len, _) = ccid.handle_otp_hid(slot, &payload);
                 if !otp_on && rsk_otp::is_function_slot(slot) {
                     assert_eq!(

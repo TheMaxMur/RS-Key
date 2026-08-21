@@ -261,7 +261,7 @@ pub fn sw(res: &[u8]) -> rsk_sdk::Sw {
 /// wire form: a leading length byte, then TLV `0x03 len usb_enabled_be`.
 pub fn dev_conf(caps: u16) -> Vec<u8> {
     let be = caps.to_be_bytes();
-    let tlv = std::vec![0x03u8, 2, be[0], be[1]];
+    let tlv = std::vec![rsk_devconf::TAG_USB_ENABLED, 2, be[0], be[1]];
     let mut blob = std::vec![tlv.len() as u8];
     blob.extend_from_slice(&tlv);
     blob

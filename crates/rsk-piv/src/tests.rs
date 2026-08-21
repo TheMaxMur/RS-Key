@@ -454,7 +454,7 @@ fn version_and_serial() {
     assert_eq!(v, vec![5, 7, 4]);
     let (sw, s) = run(&mut app, &mut fs, INS_YK_SERIAL, 0, 0, &[]);
     assert_eq!(sw, Sw::OK);
-    assert_eq!(s, rsk_mgmt::serial4(SERIAL).to_vec());
+    assert_eq!(s, rsk_sdk::serial4(SERIAL).to_vec());
 }
 
 /// SP 800-73-4 lists `6A80` for an undefined key reference and no `6A88` anywhere

@@ -55,6 +55,18 @@ pub const FIRMWARE_VERSION_U32: u32 = ((FIRMWARE_VERSION.0 as u32) << 16)
     | ((FIRMWARE_VERSION.1 as u32) << 8)
     | (FIRMWARE_VERSION.2 as u32);
 
+/// First 4 bytes of the chip id with the top 6 bits cleared (`&= ~0xFC`) — the
+/// 8-digit Yubico serial. The same device identity four applets report for four
+/// unrelated reasons (the OpenPGP AID, PIV `INS 0xF8`, OTP GET SERIAL, the
+/// management DeviceInfo `SERIAL` tag), so it is declared once here beside
+/// [`FIRMWARE_VERSION`] rather than owned by whichever applet reports it first.
+pub fn serial4(serial_id: [u8; 8]) -> [u8; 4] {
+    let mut serial = [0u8; 4];
+    serial.copy_from_slice(&serial_id[..4]);
+    serial[0] &= 0x03;
+    serial
+}
+
 #[cfg(test)]
 #[path = "tests.rs"]
-mod version_tests;
+mod tests;

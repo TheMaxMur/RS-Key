@@ -685,10 +685,10 @@ impl<'a> OtpApplet<'a> {
             P1_UPDATE_SLOT1 | P1_UPDATE_SLOT2 => self.cmd_update(apdu, fs, res),
             P1_SWAP => self.cmd_swap(apdu, fs, res),
             0x10 => {
-                res.extend(&rsk_mgmt::serial4(self.serial_id));
+                res.extend(&rsk_sdk::serial4(self.serial_id));
                 Sw::OK
             }
-            0x13 => rsk_mgmt::config_tlv(&rsk_mgmt::serial4(self.serial_id), fs, res),
+            0x13 => rsk_devconf::config_tlv(&rsk_sdk::serial4(self.serial_id), fs, res),
             0x14 => self.cmd_status_ext(fs, res),
             P1_CHAL_OTP_SLOT1 | P1_CHAL_OTP_SLOT2 | P1_CHAL_HMAC_SLOT1 | P1_CHAL_HMAC_SLOT2 => {
                 self.cmd_calculate(apdu, fs, res)
@@ -730,7 +730,7 @@ impl<'a> OtpApplet<'a> {
         if 1 + len > data.len() {
             return Sw::WRONG_DATA;
         }
-        match rsk_mgmt::persist_dev_conf(fs, &data[1..1 + len]) {
+        match rsk_devconf::persist_dev_conf(fs, &data[1..1 + len]) {
             Ok(()) => {
                 // ykman/yubikit confirm an OTP-transport write by the program-
                 // sequence byte in the status frame advancing (`_is_sequence_updated`),
@@ -739,8 +739,10 @@ impl<'a> OtpApplet<'a> {
                 self.config_seq = self.config_seq.wrapping_add(1);
                 Sw::OK
             }
-            Err(rsk_mgmt::DevConfError::TooLong | rsk_mgmt::DevConfError::BadTlv) => Sw::WRONG_DATA,
-            Err(rsk_mgmt::DevConfError::Store) => Sw::MEMORY_FAILURE,
+            Err(rsk_devconf::DevConfError::TooLong | rsk_devconf::DevConfError::BadTlv) => {
+                Sw::WRONG_DATA
+            }
+            Err(rsk_devconf::DevConfError::Store) => Sw::MEMORY_FAILURE,
         }
     }
 

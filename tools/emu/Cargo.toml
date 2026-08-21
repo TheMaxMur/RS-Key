@@ -36,6 +36,7 @@ rsk-openpgp = { path = "../../crates/rsk-openpgp" }
 # tick, and the public-key DO its test reads the result back from. It is already
 # in the graph under `rsk-openpgp`; this adds no code, only the name.
 rsk-rsa = { path = "../../crates/rsk-rsa" }
+rsk-devconf = { path = "../../crates/rsk-devconf" }
 rsk-mgmt = { path = "../../crates/rsk-mgmt" }
 rsk-oath = { path = "../../crates/rsk-oath" }
 rsk-otp = { path = "../../crates/rsk-otp" }

@@ -16,6 +16,8 @@ strict-config = []
 [dependencies]
 rsk-sdk = { workspace = true }
 rsk-fs = { workspace = true }
+# The `EF_DEV_CONF` record this applet's READ/WRITE CONFIG is a transport for.
+rsk-devconf = { workspace = true }
 
 [dev-dependencies]
 # RamStorage for the host tests (the same backend rsk-fido/rsk-openpgp use).

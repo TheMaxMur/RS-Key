@@ -18,7 +18,6 @@ rsk-sdk = { workspace = true }
 rsk-fs = { workspace = true }
 rsk-crypto = { workspace = true }
 rsk-openpgp = { workspace = true }
-rsk-mgmt = { workspace = true }
 # The RSA family: keygen, the sealed CRT layout and its blinded, fault-checked
 # private op (UMAAL asm on device), PKCS#1 v1.5, the public-key DO.
 rsk-rsa = { workspace = true }
