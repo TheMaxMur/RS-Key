@@ -37,6 +37,11 @@
 
 name: release-build
 
+# Deny by default at the workflow level. A job's own `permissions:` REPLACES this
+# block rather than intersecting it, so the build job's write scopes below still
+# apply in full.
+permissions: {}
+
 on:
   workflow_call:
     inputs:

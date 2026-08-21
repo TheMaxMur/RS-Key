@@ -16,6 +16,10 @@
 
 name: release
 
+# Deny by default at the workflow level; the release job below grants exactly the
+# scopes the reusable builder needs, and nothing else in this file runs.
+permissions: {}
+
 on:
   push:
     tags: ["v*"]
