@@ -3,13 +3,14 @@
 # Copyright (C) 2026 RS-Key contributors
 """Assert the TLA+ model still points at the code it says it models.
 
-The eight `formal/*.tla` modules and `formal/README.md` carry ~230 `file.rs:line`
-citations — the whole bridge between the model and the implementation it claims
-to abstract. They were checked once, by hand, in a review pass. Code moves; a
-model whose citations have rotted is worse than no model, because it reads as
-authoritative and sends the next reader to a line that no longer says what it
-claims. Same failure as a stale CHANGELOG or an unbumped counter, so it lives
-beside them.
+The `formal/*.tla` modules, `formal/README.md` and `formal/comutants.toml` carry
+the `file.rs:line` citations — the whole bridge between the model and the
+implementation it claims to abstract. [`PAGES`] is the list and the success line
+counts them, so neither number is written down here to go stale. They were
+checked once, by hand, in a review pass. Code moves; a model whose citations
+have rotted is worse than no model, because it reads as authoritative and sends
+the next reader to a line that no longer says what it claims. Same failure as a
+stale CHANGELOG or an unbumped counter, so it lives beside them.
 
 The phase-1 `Refines Module!Invariant — SEC-*` tags are the semantic-address
 half of the same bridge. This gate shares their assurance check: every tag must
@@ -21,8 +22,8 @@ code-owning configurations must have a production tag.
 That `clientpin.rs:35` still *means* what the model says is a review question.
 That the file exists, that the line is inside it, and that a range runs forwards
 are not, so those are the rules — plus one drift signal that costs nothing: a
-citation whose first or last line is **blank**. Measured over all 175 citations
-in the tree today, none lands on a blank line, and a line that has drifted onto
+citation whose first or last line is **blank**. Measured over every citation the
+gate reads, none lands on a blank line, and a line that has drifted onto
 one has stopped being the code that was cited. It is not a blanket
 content check, for the reason such a rule deserves: one that fires whenever
 anything above a cited line moves gets switched off inside a week. What *is*
@@ -69,11 +70,10 @@ outright.
 Each page must carry at least its [`FLOOR`] citations — [`FLOOR_BY_PAGE`] where a
 page legitimately cites fewer, the default otherwise. A regex that has stopped
 matching finds nothing, loops over nothing and exits 0 — the shape four guards
-in this tree shipped with. The floor is well under each page's real count (104,
-58, 18, 12, 10, 11, 12, 8) and only rises as the model grows; the per-page
-override is there so a
-tight model is not mistaken for a broken regex, and so no page is ever padded
-with citations it does not mean just to clear one number.
+in this tree shipped with. Every floor sits well under its page's real count, so
+it trips a regex that has stopped matching and nothing else; the per-page
+override is there so a tight model is not mistaken for a broken regex, and so no
+page is ever padded with citations it does not mean just to clear one number.
 
 ## Limits
 
@@ -99,9 +99,11 @@ import gate_lines
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
-#: The pages that carry citations: the three model modules and the README, whose
-#: invariant table a reader consults first and which cites more finely than the
-#: modules do. `RSKeyStore.tla` is the flash layer, added when M3 landed.
+#: The pages that carry citations: the model modules, the README — whose
+#: invariant table a reader consults first, and which cites more finely than the
+#: modules do — and the co-refutation ledger. A page absent here is not checked
+#: at all, which is the one failure this list can have, so it is the thing to
+#: extend when a module starts citing.
 PAGES = (
     pathlib.Path("formal/RSKeySecurityState.tla"),
     pathlib.Path("formal/RSKeyAppletSeams.tla"),
@@ -111,17 +113,30 @@ PAGES = (
     pathlib.Path("formal/RSKeyTrustedDisplay.tla"),
     pathlib.Path("formal/RSKeyBootHardening.tla"),
     pathlib.Path("formal/RSKeyTransport.tla"),
+    # The applet-policy module was the ninth `.tla` carrying citations and the
+    # only one this tuple did not name, so all four of its citations were
+    # unchecked — and one had rotted: `rsk-otp/src/lib.rs:564-569` was the swap's
+    # write-back tail ending on a blank line, not the access-code gate it claims.
+    pathlib.Path("formal/RSKeyAppletPolicies.tla"),
     pathlib.Path("formal/README.md"),
     # The co-refutation ledger cites as finely as the modules and was guarded by
     # nothing: 13 of its 16 citations named a file this gate could not resolve,
     # and two landed on unrelated code — one of them wrong the day it was written.
     pathlib.Path("formal/comutants.toml"),
+    # Not a model page but the config generator, and it makes the same kind of
+    # model-to-code claim: the two firmware constants its SYMMETRY argument is
+    # priced against. Both had moved — `consts.rs:361,334` named `EF_LARGEBLOB`
+    # and a doc comment, not MAX_PIN_RETRIES and PIN_MISMATCH_LIMIT.
+    pathlib.Path("formal/gen-configs.sh"),
 )
 
 #: Pages that must write a repo path, never a bare basename. `comutants.toml`
 #: reasons about five applets at once, so `lib.rs:1020` names nothing decidable —
 #: for a reader either. SEARCH cannot fix that; only the page can.
-PATHS_ONLY = frozenset({"comutants.toml"})
+#: `RSKeyAppletPolicies.tla` is the same shape over four applets: its bare
+#: `keypairgen.rs` named a crate outside SEARCH, and `lib.rs` would have named
+#: two of them. Widening SEARCH instead would make `lib.rs` ambiguous AND cited.
+PATHS_ONLY = frozenset({"comutants.toml", "RSKeyAppletPolicies.tla"})
 
 #: Where a bare basename is looked up, in order. The model's subject first.
 SEARCH = (
@@ -158,14 +173,14 @@ PENDING: dict[str, str] = {}
 #: read — this file records an assertion, it does not prove one.
 LOCK = pathlib.Path("formal/citations.lock")
 
-#: Below this a page is not citing, it is failing to be parsed. Today: 111, 40, 82.
+#: Below this a page is not citing, it is failing to be parsed.
 FLOOR = 25
 
 #: Pages that legitimately cite fewer than the default — a smaller model is not a
 #: broken regex, and padding a page to clear a floor is the failure this guard's
 #: own docstring warns against. `RSKeyStore.tla` is the flash layer, a tight model
-#: with 18 load-bearing citations; a floor of 9 still trips a regex that has
-#: stopped matching (it finds ~0) without demanding the page be inflated.
+#: whose floor of 9 still trips a regex that has stopped matching (it finds 0)
+#: without demanding the page be inflated.
 FLOOR_BY_PAGE = {
     "RSKeyStore.tla": 9,
     "RSKeyRetryLattice.tla": 6,
@@ -174,6 +189,14 @@ FLOOR_BY_PAGE = {
     "RSKeyBootHardening.tla": 6,
     "RSKeyTransport.tla": 5,
     "comutants.toml": 8,
+    # The tightest page here, and deliberately so: it defers the PIV/OpenPGP retry
+    # counters to RSKeyRetryLattice. A floor of 3 still trips a regex that has
+    # stopped matching, which finds 0.
+    "RSKeyAppletPolicies.tla": 3,
+    # One `consts.rs:a,b` pair, priced into the SYMMETRY argument beside it. A
+    # floor of 1 is thin, but the failure it exists for — a regex that has
+    # stopped matching — still finds 0, and this page cannot grow much.
+    "gen-configs.sh": 1,
 }
 
 

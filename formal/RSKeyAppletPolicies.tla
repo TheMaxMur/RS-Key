@@ -86,9 +86,9 @@ Init ==
     /\ viol = {}
 
 (***************************************************************************)
-(* PIV. `pin_satisfied` resolves NEVER/ONCE/ALWAYS, and `spend_pin` clears   *)
-(* freshness after a PIN-gated key operation (rsk-piv/src/auth.rs:58-66,    *)
-(* 114-118).                                                                *)
+(* PIV. `pin_satisfied` resolves NEVER/ONCE/ALWAYS, and `spend_pin` clears *)
+(* freshness after a PIN-gated key operation                               *)
+(* (crates/rsk-piv/src/auth.rs:58-66, 114-118).                            *)
 (***************************************************************************)
 PivAllowed ==
     CASE pivPolicy = "never"  -> TRUE
@@ -126,9 +126,10 @@ PivKeyOp ==
                        otpPresent, otpProtected, otpCounter >>
 
 (***************************************************************************)
-(* OpenPGP. A generated/imported key records its algorithm attribute; an     *)
-(* operation must agree with that stored metadata (keypairgen.rs:79-117 and  *)
-(* keys.rs' algorithm checks), even if the public C1/C2/C3 DO later changes. *)
+(* OpenPGP. A generated/imported key records its algorithm attribute; an   *)
+(* operation must agree with that stored metadata                          *)
+(* (crates/rsk-openpgp/src/keypairgen.rs:79-117 and keys.rs' algorithm     *)
+(* checks), even if the public C1/C2/C3 DO later changes.                  *)
 (***************************************************************************)
 PgpSetAttribute(a) ==
     /\ pgpAttribute' = a
@@ -154,8 +155,9 @@ PgpDelete ==
                     otpPresent, otpProtected, otpCounter, viol >>
 
 (***************************************************************************)
-(* OATH. `cmd_calculate` first requires the access-code session, then a       *)
-(* confirmed touch for PROP_TOUCH credentials (rsk-oath/src/lib.rs:555-587). *)
+(* OATH. `cmd_calculate` first requires the access-code session, then a    *)
+(* confirmed touch for PROP_TOUCH credentials                              *)
+(* (crates/rsk-oath/src/lib.rs:555-587).                                   *)
 (***************************************************************************)
 OathSetCode ==
     /\ oathCodeSet' = TRUE
@@ -193,9 +195,10 @@ OathCalculate(touched) ==
                        otpPresent, otpProtected, otpCounter >>
 
 (***************************************************************************)
-(* Yubico OTP. Existing-slot configure/update/delete/swap all require the    *)
-(* stored six-byte code (rsk-otp/src/lib.rs:438-450, 564-569), while each    *)
-(* emitted OTP advances the combined persisted-use/RAM-session position.     *)
+(* Yubico OTP. Existing-slot configure/update/delete/swap all require the  *)
+(* stored six-byte code                                                    *)
+(* (crates/rsk-otp/src/lib.rs:438-450, 538-545), while each emitted OTP    *)
+(* advances the combined persisted-use/RAM-session position.               *)
 (***************************************************************************)
 OtpConfigure(protected) ==
     /\ ~otpPresent
