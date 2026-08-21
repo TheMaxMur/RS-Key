@@ -40,6 +40,31 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Internal
 
+- **Nothing in the tree parsed `.github/workflows`, and a workflow that does not
+  parse breaks a check that is not about workflows at all.** OpenSSF Scorecard's
+  SAST row runs actionlint over *every* file in that directory, so one malformed
+  sibling returns score **-1** for the whole check rather than merely failing
+  detection — a single tab in `codeql.yml` was enough. Eight workflow files
+  rested on a tool nobody ran: no actionlint, yamllint, zizmor or
+  action-validator anywhere in the tree, and no `check.sh` row that read the
+  directory at all. `actionlint` joins the dev shell (`nix/devshells.nix` — a
+  toolchain addition, so it is maintainer-visible), and `workflow lint` is now
+  the **first** row of `check.sh`, ahead of `fmt`: it costs ~0.2 s, and a class
+  that makes another check lie should fail in the first second rather than the
+  fourteenth minute. It takes no file arguments on purpose — actionlint
+  discovers the workflows from the git root, which covers `.yaml` as well as
+  `.yml` (a `*.yml` glob does not) and which turns an empty or missing directory
+  into an error (`no YAML file was found`, exit 3) rather than the silent pass
+  over nothing this repo keeps rediscovering. `ci.yml`'s always-on `docs` job
+  runs the same command for the reason it already runs gitleaks: `pages.yml`
+  sits inside `ci-scope.sh`'s DOCS_ONLY set, so a change to that workflow alone
+  skips `check` entirely. Falsified through the row rather than the binary, exit
+  codes taken with no pipe: an unknown runner label, a bad `matrix.<prop>`, a tab
+  in the indentation and an unquoted `$var` in a `run:` block each stop the gate
+  at row 1 of 1 with rc 1 and its own message — and with the row deleted that
+  same tab left all 98 rows green, which is what makes it load-bearing rather
+  than decorative. Host tooling and CI only, so no `bcdDevice` bump.
+
 - **Two hand-written curve rosters bounded a buffer size, and nothing said so.**
   `rsk-piv`'s `MAX_EC_POINT` is 97 — a P-384 point — while
   `rsk_ec::PrivKey::public_point` writes up to 133 for P-521 and writes with

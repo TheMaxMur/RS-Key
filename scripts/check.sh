@@ -303,6 +303,27 @@ fuzz_targets_are_alive() {
   fi
 }
 
+# First because it is the cheapest row in the file (~0.2 s over eight files) and
+# because the class it catches makes a *different* check silently wrong: OpenSSF
+# Scorecard's SAST row parses EVERY file under `.github/workflows` with this same
+# actionlint, so one workflow that will not parse returns score -1 for the whole
+# check rather than merely failing detection — measured, a single tab in
+# `codeql.yml` did it. Nothing in the tree read that directory until now.
+#
+# No file arguments on purpose. actionlint discovers the workflows from the git
+# root itself, which covers `.yaml` as well as `.yml` (a `*.yml` glob does not),
+# and which is what makes an empty or missing directory an ERROR — `no YAML file
+# was found`, exit 3 — instead of the silent pass over nothing that this repo
+# keeps rediscovering. The nixpkgs package wraps shellcheck and pyflakes, so the
+# `run:` blocks are linted too even though neither is on PATH.
+#
+# Mutation table, each driven through THIS row and each exit code taken with no
+# pipe. Red, all stopping at row 1 of 1 with rc 1: `runs-on: ubunut-latest` →
+# `runner-label`; `${{ matrix.lang }}` → `expression`; a tab after `jobs:` →
+# `syntax-check`; an unquoted `$var` in a `run:` block → shellcheck SC2086. And
+# the direction that matters — with this row deleted, that same tab left all 98
+# rows green (`ALL CHECKS PASSED`, rc 0), so nothing else here reads a workflow.
+run "workflow lint"            actionlint -no-color -oneline
 run "fmt"                      cargo fmt --all --check
 # `BOARD` because `rsk-wipe`'s build script refuses to guess a flash size (see
 # the rsk-wipe steps below); `waveshare-one` is the reference board, whose

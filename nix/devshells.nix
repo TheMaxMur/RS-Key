@@ -40,6 +40,14 @@
       # which is the property the `require_pin_inputs` gap was invisible to.
       pkgs.cargo-mutants
 
+      # Workflow linting (the `workflows parse + lint` row in scripts/check.sh).
+      # Nothing in the tree parsed `.github/workflows` at all, and a workflow
+      # that does not parse is not merely a job that will not start: OpenSSF
+      # Scorecard's SAST check runs actionlint over EVERY file in that directory,
+      # so one bad sibling errors the whole check. The package wraps shellcheck
+      # and pyflakes, which is what lints the `run:` blocks.
+      pkgs.actionlint
+
       # TLA+ model checking (formal/, scripts run by the weekly `formal` row).
       # The model, its 44 mutants and `floors.txt` were ratchets nobody pulled
       # automatically: no workflow ran TLC, and `run-tlc.sh` reached a jar by a
