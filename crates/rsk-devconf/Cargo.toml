@@ -5,6 +5,12 @@ license = "AGPL-3.0-only"
 edition = "2024"
 publish = false
 
+[features]
+# Exposes the record's raw vocabulary (`raw`) to other crates' tests and to the
+# fuzz targets, which seed records no accepted write can produce. Only
+# `[dev-dependencies]` entries turn it on, so it never reaches a firmware image.
+test-util = []
+
 [dependencies]
 # The record lives in flash and its READ CONFIG response is built into an
 # `rsk-sdk` `ResBuf`, so the codec owns the read-modify-write instead of it

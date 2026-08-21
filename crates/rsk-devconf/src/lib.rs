@@ -28,21 +28,21 @@ pub const CAP_PIV: u16 = 0x10;
 pub const SUPPORTED_CAPS: u16 = CAP_FIDO2 | CAP_U2F | CAP_OPENPGP | CAP_OATH | CAP_OTP | CAP_PIV;
 
 // DeviceInfo TLV tags.
-pub const TAG_USB_SUPPORTED: u8 = 0x01;
-pub const TAG_SERIAL: u8 = 0x02;
-pub const TAG_USB_ENABLED: u8 = 0x03;
-pub const TAG_FORM_FACTOR: u8 = 0x04;
-pub const TAG_VERSION: u8 = 0x05;
-pub const TAG_DEVICE_FLAGS: u8 = 0x08;
-pub const TAG_CONFIG_LOCK: u8 = 0x0A;
-pub const TAG_CONFIG_UNLOCK: u8 = 0x0B;
+const TAG_USB_SUPPORTED: u8 = 0x01;
+const TAG_SERIAL: u8 = 0x02;
+const TAG_USB_ENABLED: u8 = 0x03;
+const TAG_FORM_FACTOR: u8 = 0x04;
+const TAG_VERSION: u8 = 0x05;
+const TAG_DEVICE_FLAGS: u8 = 0x08;
+const TAG_CONFIG_LOCK: u8 = 0x0A;
+const TAG_CONFIG_UNLOCK: u8 = 0x0B;
 // The rest of ykman's writable DeviceConfig set (`DeviceConfig.get_bytes`). We do
 // not act on these, but a host may legitimately send them, so they round-trip.
-pub const TAG_AUTO_EJECT_TIMEOUT: u8 = 0x06;
-pub const TAG_CHALRESP_TIMEOUT: u8 = 0x07;
-pub const TAG_REBOOT: u8 = 0x0C;
-pub const TAG_NFC_ENABLED: u8 = 0x0E;
-pub const TAG_NFC_RESTRICTED: u8 = 0x17;
+const TAG_AUTO_EJECT_TIMEOUT: u8 = 0x06;
+const TAG_CHALRESP_TIMEOUT: u8 = 0x07;
+const TAG_REBOOT: u8 = 0x0C;
+const TAG_NFC_ENABLED: u8 = 0x0E;
+const TAG_NFC_RESTRICTED: u8 = 0x17;
 
 /// Whether a host may write this DeviceInfo tag. The complement — `USB_SUPPORTED`,
 /// `SERIAL`, `FORM_FACTOR`, `VERSION` — is device-owned and emitted by
@@ -73,7 +73,7 @@ const FORM_FACTOR_USB_A_KEYCHAIN: u8 = 0x01;
 
 /// EF holding the persisted enabled-applications TLV. Outside both the FIDO and
 /// OpenPGP reset scopes, so the capability config is sticky.
-pub const EF_DEV_CONF: u16 = 0x1122;
+const EF_DEV_CONF: u16 = 0x1122;
 
 /// Bytes of `EF_DEV_CONF` that READ CONFIG can echo back. Derived from the
 /// *smallest* response buffer any transport gives us — the OTP-HID frame's 64
@@ -83,13 +83,13 @@ pub const EF_DEV_CONF: u16 = 0x1122;
 /// success response, persistently (audit run-33). It is slack rather than a bound
 /// today: `well_formed_writable`'s per-tag widths (run-34 #25) hold a storable
 /// record to 24 bytes, so only an unbounded writable tag makes this bind again.
-pub const EF_DEV_CONF_MAX: usize = MIN_CONFIG_RES_CAP - CONFIG_TLV_FIXED;
+const EF_DEV_CONF_MAX: usize = MIN_CONFIG_RES_CAP - CONFIG_TLV_FIXED;
 
 /// Largest WRITE CONFIG request accepted, before the lock tags are stripped. A
 /// request may legitimately be larger than what it stores — `set-lock-code` sends
 /// a 16-byte UNLOCK *and* a 16-byte CONFIG_LOCK, neither of which is kept — so the
-/// request bound is the transport's own limit and [`EF_DEV_CONF_MAX`] is applied
-/// to the stripped result.
+/// request bound is the transport's own limit and the crate-private
+/// `EF_DEV_CONF_MAX` is applied to the stripped result.
 pub const DEV_CONF_WRITE_MAX: usize = 128;
 
 /// Smallest `ResBuf` a READ CONFIG response is built into (the OTP-HID transport).
@@ -648,6 +648,33 @@ fn push_tlv(buf: &mut [u8], n: &mut usize, tag: u8, val: &[u8]) {
     buf[*n + 1] = val.len() as u8;
     buf[*n + 2..*n + 2 + val.len()].copy_from_slice(val);
     *n += 2 + val.len();
+}
+
+/// The record's raw vocabulary — the FID, the stored-size cap and the DeviceInfo
+/// tag numbers — for tests and fuzz harnesses that must seed a record no accepted
+/// write can produce (a pre-cap legacy blob, a device-owned tag).
+///
+/// Dev-only, so no firmware image can name the FID: this codec stays the only
+/// writer of a record that survives `authenticatorReset`, which an unparseable
+/// value would hide the device behind for good (audit run-33). `rsk-phy` keeps
+/// its own tag set crate-private for the same reason.
+#[cfg(any(test, feature = "test-util"))]
+pub mod raw {
+    pub const EF_DEV_CONF: u16 = super::EF_DEV_CONF;
+    pub const EF_DEV_CONF_MAX: usize = super::EF_DEV_CONF_MAX;
+    pub const TAG_USB_SUPPORTED: u8 = super::TAG_USB_SUPPORTED;
+    pub const TAG_SERIAL: u8 = super::TAG_SERIAL;
+    pub const TAG_USB_ENABLED: u8 = super::TAG_USB_ENABLED;
+    pub const TAG_FORM_FACTOR: u8 = super::TAG_FORM_FACTOR;
+    pub const TAG_VERSION: u8 = super::TAG_VERSION;
+    pub const TAG_DEVICE_FLAGS: u8 = super::TAG_DEVICE_FLAGS;
+    pub const TAG_CONFIG_LOCK: u8 = super::TAG_CONFIG_LOCK;
+    pub const TAG_CONFIG_UNLOCK: u8 = super::TAG_CONFIG_UNLOCK;
+    pub const TAG_AUTO_EJECT_TIMEOUT: u8 = super::TAG_AUTO_EJECT_TIMEOUT;
+    pub const TAG_CHALRESP_TIMEOUT: u8 = super::TAG_CHALRESP_TIMEOUT;
+    pub const TAG_REBOOT: u8 = super::TAG_REBOOT;
+    pub const TAG_NFC_ENABLED: u8 = super::TAG_NFC_ENABLED;
+    pub const TAG_NFC_RESTRICTED: u8 = super::TAG_NFC_RESTRICTED;
 }
 
 #[cfg(test)]

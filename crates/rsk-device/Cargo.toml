@@ -46,6 +46,9 @@ minicbor = { workspace = true }
 # The RAM `Storage` every applet crate's tests already run against — the routing
 # rules here are only meaningful over a real `Fs`.
 rsk-fs = { workspace = true, features = ["test-util"] }
+# `rsk_devconf::raw::TAG_USB_ENABLED` — the wire tag the `dev_conf` test helper
+# builds its enabled-applications blob from.
+rsk-devconf = { workspace = true, features = ["test-util"] }
 
 [features]
 # `scripts/kani.sh` only: forwards to the dependency that carries the switch.

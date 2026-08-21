@@ -8,6 +8,11 @@
 //! registry/dispatch ([`applet`]), internal error codes ([`error`]), and the
 //! two seams a composition root hands every applet: randomness ([`rng`]) and
 //! user presence ([`presence`]).
+//!
+//! Plus the device identity every applet echoes but none owns —
+//! [`FIRMWARE_VERSION`] and [`serial4`]. They are here for the same reason the
+//! seams are: four applets report each of them for four unrelated reasons, so
+//! whichever applet reported it first is the wrong home.
 
 pub mod apdu;
 pub mod applet;

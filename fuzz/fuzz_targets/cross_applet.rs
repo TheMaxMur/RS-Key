@@ -51,7 +51,7 @@ use core::cell::RefCell;
 use libfuzzer_sys::fuzz_target;
 // DeviceInfo's `USB_ENABLED` tag — the one writable field that decides which
 // applets exist.
-use rsk_devconf::TAG_USB_ENABLED;
+use rsk_devconf::raw::TAG_USB_ENABLED;
 use rsk_device::{CcidApplets, Hooks};
 use rsk_fs::Fs;
 use rsk_fs::storage::ram::RamStorage;

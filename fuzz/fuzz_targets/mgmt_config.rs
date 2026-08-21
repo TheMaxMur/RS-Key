@@ -27,7 +27,7 @@
 
 use core::cell::RefCell;
 use libfuzzer_sys::fuzz_target;
-use rsk_devconf::EF_DEV_CONF;
+use rsk_devconf::raw::EF_DEV_CONF;
 use rsk_fs::Fs;
 use rsk_fs::storage::ram::RamStorage;
 use rsk_mgmt::{AlwaysConfirm, ManagementApplet};

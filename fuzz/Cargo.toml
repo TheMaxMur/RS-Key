@@ -19,7 +19,7 @@ rsk-openpgp = { path = "../crates/rsk-openpgp" }
 # The RSA layer the two openpgp_* RSA targets now fuzz directly: the DigestInfo
 # parser (`rsa_sign_em`) and the import-side key rebuild (`rsa_from_pqe`).
 rsk-rsa = { path = "../crates/rsk-rsa" }
-rsk-devconf = { path = "../crates/rsk-devconf" }
+rsk-devconf = { path = "../crates/rsk-devconf", features = ["test-util"] }
 rsk-mgmt = { path = "../crates/rsk-mgmt" }
 rsk-oath = { path = "../crates/rsk-oath" }
 rsk-otp = { path = "../crates/rsk-otp" }

@@ -55,10 +55,28 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   `rsk-openpgp` and `rsk-piv` goes 3/7/5/3 → **0**, and all four drop the
   dependency.
 
+  Crossing a crate boundary did **not** publish the record's vocabulary. Inside
+  `rsk-mgmt` the FID was crate-private, which is what let the FIDO vendor
+  `CONFIG_WRITE` say "ask the codec, you cannot reach the record"; a `pub const`
+  would have demoted that to a convention on a record which survives
+  `authenticatorReset` and which one unparseable byte hides the device behind
+  for good (audit run-33). So the FID, the stored-size cap and the thirteen
+  DeviceInfo tags stay private — as `rsk-phy` keeps its own twelve tags — and
+  are re-exported as `rsk_devconf::raw` only under `test-util`, which just the
+  applet tests and two fuzz targets turn on. Naming `rsk_devconf::EF_DEV_CONF`
+  from an applet is `error[E0603]`, and `raw` does not exist in an image build.
+  One constant is genuinely shared and genuinely public: `DEV_CONF_WRITE_MAX`,
+  the request bound the CCID WRITE CONFIG applies before the codec strips.
+  Visibility is compile-time only and `raw` is `cfg`-gated out, so the image
+  does not move — measured, not assumed: `objcopy -O binary` over the release
+  build before and after is the same `bc04bca3…`, and only the debug sections
+  differ, because a new `[features]` table changes the crate's `-Cmetadata`
+  fingerprint. The second `bcdDevice` step is a build counter, not a behaviour
+  change.
+
   **No byte of the record moved**, and that is checked rather than intended:
-  every moved span of the codec is byte-identical to its old self bar nineteen
-  lines — sixteen `pub` keywords on the record's own wire vocabulary (the FID,
-  two size caps, the thirteen DeviceInfo tags), the version tag naming
+  every moved span of the codec is byte-identical to its old self bar eight
+  lines — that one `pub`, the import and the version tag naming
   `rsk_sdk::FIRMWARE_VERSION` directly, and two doc clauses that named the
   applet the codec no longer lives in. All 37 tests moved byte-identical, 21
   to the record and 16 to the applet, none rewritten and none lost.
