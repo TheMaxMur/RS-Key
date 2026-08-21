@@ -438,15 +438,26 @@ def test_relock_writes_a_line_per_citation(tree):
 # --- the pages that must write a path ----------------------------------------
 
 
+#: Every `PATHS_ONLY` page, not the first one `PAGES` happens to hold. `next()`
+#: is positional selection wearing a filter: `RSKeyAppletPolicies.tla` landing
+#: ahead of `comutants.toml` re-pointed both cases below at a different page and
+#: neither said so — the same silent move the `_page` helper above exists for.
+def _paths_only_pages():
+    pages = [p for p in citation_gate.PAGES if p.name in citation_gate.PATHS_ONLY]
+    assert pages, "no PATHS_ONLY page is in PAGES, so neither case below asserts"
+    return pages
+
+
 def test_a_bare_name_on_a_paths_only_page(tree):
-    page = next(p for p in citation_gate.PAGES if p.name in citation_gate.PATHS_ONLY)
-    tree.write(page, "note = \"a bare one: clientpin.rs:2, clientpin.rs:4-6\"\n")
-    assert only(tree.problems(), "must write a repo path")
+    for page in _paths_only_pages():
+        tree.write(page, "note = \"a bare one: clientpin.rs:2, clientpin.rs:4-6\"\n")
+        assert only(tree.problems(), "must write a repo path"), page
+        tree.write(page, PATH_STUB)
 
 
 def test_a_path_on_a_paths_only_page_is_fine(tree):
-    page = next(p for p in citation_gate.PAGES if p.name in citation_gate.PATHS_ONLY)
-    tree.write(page, PATH_STUB)
+    for page in _paths_only_pages():
+        tree.write(page, PATH_STUB)
     assert tree.problems() == []
 
 
