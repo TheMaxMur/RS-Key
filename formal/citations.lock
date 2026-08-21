@@ -41,8 +41,8 @@ formal/README.md	crates/rsk-fido/src/clientpin.rs	783-783	if retries == 0 {	if r
 formal/README.md	crates/rsk-fido/src/clientpin.rs	824-828	/// here rather than in each caller: the `pcmr` grant is a flash record that no PIN	fn write_pin_verifier<S: Storage>(
 formal/README.md	crates/rsk-fido/src/clientpin.rs	1017-1021	/// at zero is a hard block — but deliberately omits the CTAP-session side effects	/// opens no faster path to grind the PIN than USB already does. The caller
 formal/README.md	crates/rsk-fido/src/clientpin.rs	1023-1029	pub fn spend_and_verify_local_pin<S: Storage>(	}
-formal/README.md	crates/rsk-fido/src/config.rs	244-246	if !ctx.state.verify_token(proto, &vp[..vp_len], param)	{
-formal/README.md	crates/rsk-fido/src/config.rs	418-419	.map_err(|_| CtapError::Other)?;	ctx.state.clear_keydev_dec();
+formal/README.md	crates/rsk-fido/src/config.rs	243-245	if !ctx.state.verify_token(proto, &vp[..vp_len], param)	{
+formal/README.md	crates/rsk-fido/src/config.rs	417-418	.map_err(|_| CtapError::Other)?;	ctx.state.clear_keydev_dec();
 formal/README.md	crates/rsk-fido/src/consts.rs	334-334	/// absent slot entry means a credential created before this region existed: its	/// absent slot entry means a credential created before this region existed: its
 formal/README.md	crates/rsk-fido/src/consts.rs	361-361	pub const EF_LARGEBLOB: u16 = 0x1101; // serialized large-blob array	pub const EF_LARGEBLOB: u16 = 0x1101; // serialized large-blob array
 formal/README.md	crates/rsk-fido/src/credential.rs	805-827	if !occupied[i as usize] {	let slot = slot.ok_or(Error::NoMemory)?; // KEY_STORE_FULL
@@ -96,8 +96,8 @@ formal/README.md	crates/rsk-fido/src/state.rs	552-553	self.paut.in_use = false;	
 formal/README.md	crates/rsk-fido/src/state.rs	596-609	/// Expire an in-use token once its usage timer has run out (CTAP 2.1	}
 formal/README.md	crates/rsk-fido/src/state.rs	620-626	pub fn expire_stale_sequences(&mut self, now_ms: u64) {	}
 formal/README.md	crates/rsk-fido/src/u2f.rs	94-94	crate::clientpin::UvOutcome::BUILTIN.needs_confirm(ctx.presence.shows_confirm());	crate::clientpin::UvOutcome::BUILTIN.needs_confirm(ctx.presence.shows_confirm());
-formal/README.md	crates/rsk-fido/src/vendor.rs	550-573	fn unlock<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> CtapResult {	None => Err(CtapError::InvalidParameter),
-formal/README.md	crates/rsk-fido/src/vendor.rs	896-908	fn backup_finalize<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> CtapResult {	.map_err(|_| CtapError::Other)?;
+formal/README.md	crates/rsk-fido/src/vendor.rs	549-572	fn unlock<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> CtapResult {	None => Err(CtapError::InvalidParameter),
+formal/README.md	crates/rsk-fido/src/vendor.rs	895-907	fn backup_finalize<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> CtapResult {	.map_err(|_| CtapError::Other)?;
 formal/README.md	crates/rsk-fs/src/fs.rs	147-147	self.decided[i] |= m;	self.decided[i] |= m;
 formal/README.md	crates/rsk-fs/src/fs.rs	190-190	decided[i] |= m;	decided[i] |= m;
 formal/README.md	crates/rsk-fs/src/fs.rs	195-195	if fid == EF_META || fid == EF_SCRUB_FILLER {	if fid == EF_META || fid == EF_SCRUB_FILLER {
@@ -147,7 +147,7 @@ formal/README.md	crates/rsk-piv/src/lib.rs	1210-1212	Err(sw) => return sw,	if le
 formal/README.md	crates/rsk-piv/src/lib.rs	1228-1228	// nothing. The cost is that a power cut here spends a retry the holder did	// nothing. The cost is that a power cut here spends a retry the holder did
 formal/README.md	crates/rsk-piv/src/lib.rs	1241-1241	&& ct_eq(	&& ct_eq(
 formal/README.md	crates/rsk-piv/src/lib.rs	1361-1361	puk: &[u8],	puk: &[u8],
-formal/README.md	crates/rsk-rescue/src/lib.rs	142-144	/// Refines `RSKeyAdminSurface!PrivilegedOpNeedsPresence` — SEC-ADM-002.	self.presence.borrow_mut().request(confirm) == Presence::Confirmed
+formal/README.md	crates/rsk-rescue/src/lib.rs	141-143	/// Refines `RSKeyAdminSurface!PrivilegedOpNeedsPresence` — SEC-ADM-002.	self.presence.borrow_mut().request(confirm) == Presence::Confirmed
 formal/README.md	crates/rsk-sdk/src/applet.rs	208-210	fn selectable(&self, i: usize) -> bool {	}
 formal/README.md	crates/rsk-sdk/src/applet.rs	374-390	// answered to the AID SP 800-85A-4 C.1.1.2 names as invalid. A YubiKey	{
 formal/README.md	crates/rsk-sdk/src/applet.rs	379-387	// A disabled applet is skipped, so its AID matches nothing	let reselect = self.current == Some(i);
@@ -178,7 +178,7 @@ formal/RSKeyAdminSurface.tla	crates/rsk-mgmt/src/lib.rs	289-289	/// the enabled-
 formal/RSKeyAdminSurface.tla	crates/rsk-mgmt/src/lib.rs	300-314	// the lock, and READ CONFIG echoes this blob to any unauthenticated host, so a	let mut merged = [0u8; DEV_CONF_MERGE_MAX];
 formal/RSKeyAdminSurface.tla	crates/rsk-mgmt/src/lib.rs	632-632	break;	break;
 formal/RSKeyAdminSurface.tla	crates/rsk-mgmt/src/lib.rs	636-636	}	}
-formal/RSKeyAdminSurface.tla	crates/rsk-rescue/src/lib.rs	142-144	/// Refines `RSKeyAdminSurface!PrivilegedOpNeedsPresence` — SEC-ADM-002.	self.presence.borrow_mut().request(confirm) == Presence::Confirmed
+formal/RSKeyAdminSurface.tla	crates/rsk-rescue/src/lib.rs	141-143	/// Refines `RSKeyAdminSurface!PrivilegedOpNeedsPresence` — SEC-ADM-002.	self.presence.borrow_mut().request(confirm) == Presence::Confirmed
 formal/RSKeyAdminSurface.tla	crates/rsk-sdk/src/applet.rs	203-205	pub fn set_enabled(&mut self, mask: u32) {	}
 formal/RSKeyAppletSeams.tla	crates/rsk-device/src/ccid.rs	91-109	pub struct CcidApplets<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform> {	enabled_caps: u16,
 formal/RSKeyAppletSeams.tla	crates/rsk-device/src/ccid.rs	304-313	#[cfg(not(feature = "strict-config"))]	.is_ok()
@@ -287,9 +287,9 @@ formal/RSKeySecurityState.tla	crates/rsk-fido/src/clientpin.rs	802-803	ctx.state
 formal/RSKeySecurityState.tla	crates/rsk-fido/src/clientpin.rs	1017-1021	/// at zero is a hard block — but deliberately omits the CTAP-session side effects	/// opens no faster path to grind the PIN than USB already does. The caller
 formal/RSKeySecurityState.tla	crates/rsk-fido/src/clientpin.rs	1023-1029	pub fn spend_and_verify_local_pin<S: Storage>(	}
 formal/RSKeySecurityState.tla	crates/rsk-fido/src/clientpin.rs	1057-1059	return LocalPin::Blocked;	if n != PIN_FILE_LEN || pin_data[0] == 0 {
-formal/RSKeySecurityState.tla	crates/rsk-fido/src/config.rs	244-246	if !ctx.state.verify_token(proto, &vp[..vp_len], param)	{
-formal/RSKeySecurityState.tla	crates/rsk-fido/src/config.rs	245-245	|| ctx.state.paut.permissions & PERM_ACFG == 0	|| ctx.state.paut.permissions & PERM_ACFG == 0
-formal/RSKeySecurityState.tla	crates/rsk-fido/src/config.rs	418-419	.map_err(|_| CtapError::Other)?;	ctx.state.clear_keydev_dec();
+formal/RSKeySecurityState.tla	crates/rsk-fido/src/config.rs	243-245	if !ctx.state.verify_token(proto, &vp[..vp_len], param)	{
+formal/RSKeySecurityState.tla	crates/rsk-fido/src/config.rs	244-244	|| ctx.state.paut.permissions & PERM_ACFG == 0	|| ctx.state.paut.permissions & PERM_ACFG == 0
+formal/RSKeySecurityState.tla	crates/rsk-fido/src/config.rs	417-418	.map_err(|_| CtapError::Other)?;	ctx.state.clear_keydev_dec();
 formal/RSKeySecurityState.tla	crates/rsk-fido/src/consts.rs	361-361	pub const EF_LARGEBLOB: u16 = 0x1101; // serialized large-blob array	pub const EF_LARGEBLOB: u16 = 0x1101; // serialized large-blob array
 formal/RSKeySecurityState.tla	crates/rsk-fido/src/consts.rs	365-365	/// Consecutive wrong PINs allowed per power cycle before clientPIN soft-locks and	/// Consecutive wrong PINs allowed per power cycle before clientPIN soft-locks and
 formal/RSKeySecurityState.tla	crates/rsk-fido/src/consts.rs	397-397	/// display honors a reset only this long after power-up, so the wipe takes a	/// display honors a reset only this long after power-up, so the wipe takes a
@@ -352,10 +352,10 @@ formal/RSKeySecurityState.tla	crates/rsk-fido/src/state.rs	584-599	pub fn retire
 formal/RSKeySecurityState.tla	crates/rsk-fido/src/state.rs	589-590	self.cm.reset();	}
 formal/RSKeySecurityState.tla	crates/rsk-fido/src/state.rs	657-663	pub(crate) fn puat_subcommand_msg(buf: &mut [u8], cmd: u8, subcommand: u8, params: &[u8]) -> usize {	}
 formal/RSKeySecurityState.tla	crates/rsk-fido/src/state.rs	666-668	fn drop(&mut self) {	// until someone decides whether it is a secret. Nothing else would catch a
-formal/RSKeySecurityState.tla	crates/rsk-fido/src/vendor.rs	550-573	fn unlock<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> CtapResult {	None => Err(CtapError::InvalidParameter),
-formal/RSKeySecurityState.tla	crates/rsk-fido/src/vendor.rs	806-806	if ctx.fs.has_data(EF_BACKUP_SEALED) {	if ctx.fs.has_data(EF_BACKUP_SEALED) {
-formal/RSKeySecurityState.tla	crates/rsk-fido/src/vendor.rs	901-908	// no MSE handshake — and say what the touch actually authorises.	.map_err(|_| CtapError::Other)?;
-formal/RSKeySecurityState.tla	crates/rsk-fido/src/vendor.rs	969-975	/// `EF_BACKUP_SEALED` marker so the seed can no longer be exported **or** shown as	fs.put(EF_BACKUP_SEALED, &[1]).is_ok()
+formal/RSKeySecurityState.tla	crates/rsk-fido/src/vendor.rs	549-572	fn unlock<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> CtapResult {	None => Err(CtapError::InvalidParameter),
+formal/RSKeySecurityState.tla	crates/rsk-fido/src/vendor.rs	805-805	if ctx.fs.has_data(EF_BACKUP_SEALED) {	if ctx.fs.has_data(EF_BACKUP_SEALED) {
+formal/RSKeySecurityState.tla	crates/rsk-fido/src/vendor.rs	900-907	// no MSE handshake — and say what the touch actually authorises.	.map_err(|_| CtapError::Other)?;
+formal/RSKeySecurityState.tla	crates/rsk-fido/src/vendor.rs	968-974	/// `EF_BACKUP_SEALED` marker so the seed can no longer be exported **or** shown as	fs.put(EF_BACKUP_SEALED, &[1]).is_ok()
 formal/RSKeySecurityState.tla	crates/rsk-fs/src/fs.rs	258-261	/// A FID can be yielded MORE THAN ONCE — the log-structured backend walks	/// below does).
 formal/RSKeySecurityState.tla	crates/rsk-usb/src/ctaphid.rs	757-762	// frames during fast/crypto processing would consume — and then	if up_pending() {
 formal/RSKeySecurityState.tla	firmware/src/main.rs	613-613	let _ = rsk_fido::seed::ensure_seed(&dev, &mut fs, &mut rng);	let _ = rsk_fido::seed::ensure_seed(&dev, &mut fs, &mut rng);

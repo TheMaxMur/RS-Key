@@ -10,7 +10,6 @@
 
 pub mod keydev;
 pub mod otp_lock;
-pub mod phy;
 pub mod rollback;
 
 use core::cell::RefCell;
@@ -223,7 +222,7 @@ impl<'a> RescueApplet<'a> {
                 }
                 // Read-modify-write merge: a partial record overlays the stored one
                 // (a host that sends only changed tags can't wipe the rest).
-                if phy::merge_save(fs, apdu.data).is_err() {
+                if rsk_phy::merge_save(fs, apdu.data).is_err() {
                     return Sw::EXEC_ERROR;
                 }
                 Sw::OK
@@ -275,8 +274,8 @@ impl<'a> RescueApplet<'a> {
         match apdu.p1 {
             0x01 => {
                 // A never-written phy serializes to just the zeroed OPTS TLV.
-                let data = phy::load(fs).unwrap_or_default();
-                let mut buf = [0u8; phy::PHY_MAX_SIZE];
+                let data = rsk_phy::load(fs).unwrap_or_default();
+                let mut buf = [0u8; rsk_phy::PHY_MAX_SIZE];
                 match data.serialize(&mut buf) {
                     Some(n) => {
                         res.extend(&buf[..n]);

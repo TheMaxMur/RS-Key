@@ -30,7 +30,7 @@ use rsk_openpgp::keys::{Curve, PrivKey, curve_from_attr};
 use rsk_openpgp::pso::parse_ecdh_point;
 use rsk_openpgp::{OpenpgpApplet, scan_files};
 use rsk_otp::hid::{FrameRx, FrameTx, REPORT_SIZE, RxOutcome};
-use rsk_rescue::phy::{PHY_MAX_SIZE, PhyData};
+use rsk_phy::{PHY_MAX_SIZE, PhyData};
 use rsk_rsa::MAX_RSA_DIGESTINFO;
 use rsk_rsa::pkcs1v15::rsa_sign_em;
 use rsk_sdk::apdu::Apdu;

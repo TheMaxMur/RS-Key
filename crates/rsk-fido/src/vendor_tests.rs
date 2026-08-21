@@ -1520,11 +1520,11 @@ fn config_write_persists_phy_over_fido() {
     let (mut fs, mut rng, mut st) = setup();
     // A phy record setting the touch-wait timeout (tag 0x08) — the same record
     // the CCID rescue WRITE 0x1C persists.
-    let phy = rsk_rescue::phy::PhyData {
+    let phy = rsk_phy::PhyData {
         presence_timeout: Some(45),
         ..Default::default()
     };
-    let mut blob = [0u8; rsk_rescue::phy::PHY_MAX_SIZE];
+    let mut blob = [0u8; rsk_phy::PHY_MAX_SIZE];
     let blen = phy.serialize(&mut blob).unwrap();
     let mut req = [0u8; 128];
     let n = config_write_req(CONFIG_TARGET_PHY, &blob[..blen], false, &mut req);
@@ -1541,10 +1541,7 @@ fn config_write_persists_phy_over_fido() {
         Ok(0)
     );
     // The FIDO write lands in EF_PHY; boot / the CCID rescue READ path sees it.
-    assert_eq!(
-        rsk_rescue::phy::load(&mut fs).unwrap().presence_timeout,
-        Some(45)
-    );
+    assert_eq!(rsk_phy::load(&mut fs).unwrap().presence_timeout, Some(45));
 }
 
 /// Build a `VENDOR_CONFIG_READ` request `{1: subcmd, 2: {1: target}}` (ungated).
@@ -1567,11 +1564,11 @@ fn config_read_req(target: u64, buf: &mut [u8]) -> usize {
 fn config_read_returns_the_phy_record_ungated() {
     let (mut fs, mut rng, mut st) = setup();
     // Seed a phy record through the write path.
-    let phy = rsk_rescue::phy::PhyData {
+    let phy = rsk_phy::PhyData {
         presence_timeout: Some(30),
         ..Default::default()
     };
-    let mut blob = [0u8; rsk_rescue::phy::PHY_MAX_SIZE];
+    let mut blob = [0u8; rsk_phy::PHY_MAX_SIZE];
     let blen = phy.serialize(&mut blob).unwrap();
     let mut wreq = [0u8; 128];
     let wn = config_write_req(CONFIG_TARGET_PHY, &blob[..blen], false, &mut wreq);
@@ -1607,10 +1604,7 @@ fn config_read_returns_the_phy_record_ungated() {
     assert_eq!(d.map().unwrap(), Some(2));
     assert_eq!(d.u8().unwrap(), 1);
     let got = d.bytes().unwrap();
-    assert_eq!(
-        rsk_rescue::phy::PhyData::parse(got).presence_timeout,
-        Some(30)
-    );
+    assert_eq!(rsk_phy::PhyData::parse(got).presence_timeout, Some(30));
     assert_eq!(d.u8().unwrap(), 2);
     assert_eq!(d.map().unwrap(), Some(0));
 }
@@ -1837,7 +1831,7 @@ fn config_write_flood_cannot_evict_the_audit_ring() {
     assert_eq!(journal_state(&mut fs).1, 2);
 
     let mut led = [0u8; rsk_led::CONF_LEN];
-    let mut blob = [0u8; rsk_rescue::phy::PHY_MAX_SIZE];
+    let mut blob = [0u8; rsk_phy::PHY_MAX_SIZE];
     for i in 0..200u8 {
         led[0] = i;
         let n = config_write_req(CONFIG_TARGET_LED, &led, false, &mut req);
@@ -1851,7 +1845,7 @@ fn config_write_flood_cannot_evict_the_audit_ring() {
         )
         .unwrap();
 
-        let phy = rsk_rescue::phy::PhyData {
+        let phy = rsk_phy::PhyData {
             presence_timeout: Some(i + 1),
             ..Default::default()
         };
@@ -1889,10 +1883,7 @@ fn config_write_flood_cannot_evict_the_audit_ring() {
     let mut cur = [0u8; rsk_led::CONF_LEN];
     assert_eq!(fs.read(EF_LED_CONF, &mut cur), Some(rsk_led::CONF_LEN));
     assert_eq!(cur, led);
-    assert_eq!(
-        rsk_rescue::phy::load(&mut fs).unwrap().presence_timeout,
-        Some(200)
-    );
+    assert_eq!(rsk_phy::load(&mut fs).unwrap().presence_timeout, Some(200));
 }
 
 #[test]
@@ -1901,10 +1892,8 @@ fn phy_config_write_repairs_an_unreadable_record() {
     // or unreadable EF_PHY reads as `None`, and a host writing the default values to
     // repair it would otherwise be answered `Ok` with nothing stored.
     let (mut fs, mut rng, mut st) = setup();
-    let mut blob = [0u8; rsk_rescue::phy::PHY_MAX_SIZE];
-    let blen = rsk_rescue::phy::PhyData::default()
-        .serialize(&mut blob)
-        .unwrap();
+    let mut blob = [0u8; rsk_phy::PHY_MAX_SIZE];
+    let blen = rsk_phy::PhyData::default().serialize(&mut blob).unwrap();
     let mut req = [0u8; 128];
     let n = config_write_req(CONFIG_TARGET_PHY, &blob[..blen], false, &mut req);
     let mut out = [0u8; 16];
@@ -1919,7 +1908,7 @@ fn phy_config_write_repairs_an_unreadable_record() {
         ),
         Ok(0)
     );
-    assert!(rsk_rescue::phy::load(&mut fs).is_some(), "record written");
+    assert!(rsk_phy::load(&mut fs).is_some(), "record written");
 }
 
 #[test]
@@ -1932,11 +1921,11 @@ fn idempotent_phy_and_led_config_writes_append_no_journal_entry() {
     fs.put(crate::consts::EF_AUDIT_ENABLED, &[1]).unwrap();
     let mut out = [0u8; 16];
 
-    let phy = rsk_rescue::phy::PhyData {
+    let phy = rsk_phy::PhyData {
         presence_timeout: Some(45),
         ..Default::default()
     };
-    let mut blob = [0u8; rsk_rescue::phy::PHY_MAX_SIZE];
+    let mut blob = [0u8; rsk_phy::PHY_MAX_SIZE];
     let blen = phy.serialize(&mut blob).unwrap();
     let mut req = [0u8; 128];
     let n = config_write_req(CONFIG_TARGET_PHY, &blob[..blen], false, &mut req);
@@ -1960,10 +1949,7 @@ fn idempotent_phy_and_led_config_writes_append_no_journal_entry() {
     )
     .unwrap();
     assert_eq!(journal_state(&mut fs), before);
-    assert_eq!(
-        rsk_rescue::phy::load(&mut fs).unwrap().presence_timeout,
-        Some(45)
-    );
+    assert_eq!(rsk_phy::load(&mut fs).unwrap().presence_timeout, Some(45));
 
     let mut led = [0u8; rsk_led::CONF_LEN];
     for (i, b) in led.iter_mut().enumerate() {

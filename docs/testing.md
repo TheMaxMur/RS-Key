@@ -227,7 +227,7 @@ crypto-critical helpers, where a proof genuinely beats a sample:
   `len % 3` tail, with and without preceding full chunks); `decode` panic-free
   over every byte string up to 8 chars and writing exactly the length it
   reports, never a byte past it.
-- `rsk-rescue`: the `phy` device-configuration record: `parse` total over
+- `rsk-phy`: the `EF_PHY` device-configuration record: `parse` total over
   every byte string up to 12 bytes, always materializing an interface mask and
   always yielding a record that serializes back into `PHY_MAX_SIZE` (the
   read-modify-write the rescue interface performs); `overlay` never turning a
@@ -270,7 +270,7 @@ cargo install --locked kani-verifier --version 0.67.0 && cargo kani setup
 ./scripts/kani.sh light1   # one of the three weekly shards of "all but heavy"
 ./scripts/kani.sh light2
 ./scripts/kani.sh light3
-./scripts/kani.sh heavy    # rsk-rescue alone, in its own job
+./scripts/kani.sh heavy    # rsk-phy alone, in its own job
 ```
 
 `scripts/kani.sh` owns the tier → crate table and nothing else does, and it
@@ -314,14 +314,14 @@ run):
 |---|---|---|---|---|---|
 | `pr` | 13 | 61 | 31 | 276 s | `rsk-piv::set_protected_total_and_invariant`, 47 s |
 | `state` | 2 | 24 | 26 | ~10 min | `rsk-fido::…_at_call_site`, ~7 min (9.3 GiB peak) |
-| `all` | 17 | 87 | 51 | ~1 h 46 | `rsk-rescue::serialize_parse_roundtrip`, 27 m 42 s |
+| `all` | 17 | 87 | 51 | ~1 h 46 | `rsk-phy::serialize_parse_roundtrip`, 27 m 42 s |
 | `light1` | 4 | 27 | 23 | not yet run | `rsk-fido::…_at_call_site`, ~7 min (9.3 GiB peak) |
 | `light2` | 5 | 27 | 8 | not yet run | `rsk-rsa`'s division spec and sieve |
 | `light3` | 7 | 28 | 19 | not yet run | `rsk-mldsa`'s rounding round-trips |
-| `heavy` | 1 | 5 | 1 | ~55 min | `rsk-rescue::serialize_parse_roundtrip`, 55 min (11.1 GB peak) |
+| `heavy` | 1 | 5 | 1 | ~55 min | `rsk-phy::serialize_parse_roundtrip`, 55 min (11.1 GB peak) |
 
 `pr` and `state` are measured runs. `all` has never been run end to end here:
-its cover count is the two measured tiers plus `rsk-rescue`'s one, so
+its cover count is the two measured tiers plus `rsk-phy`'s one, so
 **`FLOOR_all` is a number no run has reached**.
 
 None of the six figures in the Harnesses and Covers columns is kept by hand, and

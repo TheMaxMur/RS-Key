@@ -32,7 +32,7 @@
 #          shards and `heavy`, which together are the `all` roster of
 #          `scripts/kani.sh` (docs/testing.md). The fast tier of that same script runs
 #          per-PR in ci.yml; these four owe the whole roster between them. They
-#          are separate jobs for two measured reasons — `rsk-rescue`'s phy
+#          are separate jobs for two measured reasons — `rsk-phy`'s
 #          round-trip peaks at 11.1 GB and takes the runner down with it, so its
 #          death costs its own crate only; and the rest, run in one job, cost the
 #          sum of every crate's solving rather than the slowest shard's. Kani is

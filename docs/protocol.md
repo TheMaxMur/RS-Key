@@ -319,7 +319,7 @@ product looks like a YubiKey (`yubikey`, any case) but omits the smartcard `CCID
 token, the firmware appends ` OTP+FIDO+CCID` before enumerating — a token-less
 `Yubico YubiKey` reader name otherwise crashes `ykman` / Yubico Authenticator on
 Windows (`_pid_from_name` → `PID.of` → `KeyError('YK4_')`, which aborts the whole
-PC/SC scan). Source: `normalize_usb_product` in `phy.rs`.
+PC/SC scan). Source: `normalize_usb_product` in `crates/rsk-phy/src/lib.rs`.
 
 Each string is resolved in precedence order: an **explicit phy tag** (`0x0F` /
 `0x09`) wins; otherwise the **effective VID** picks a default — a Yubico VID
@@ -788,7 +788,7 @@ above, to detect a firmware that predates a selector you send.
 
 The phy record is the device-config TLV blob. **It is the same format PicoForge
 already writes**, so an existing PicoForge config path largely works
-as-is. Source: `crates/rsk-rescue/src/phy.rs`.
+as-is. Source: `crates/rsk-phy/src/lib.rs`.
 
 Wire format: a flat sequence of `TAG(1) LEN(1) VALUE(LEN)` records, any order, all
 optional. An unknown tag is skipped; a record whose length runs past the buffer

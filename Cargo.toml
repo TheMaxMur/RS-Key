@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["firmware", "rsk-wipe", "crates/rsk-sdk", "crates/rsk-fs", "crates/rsk-usb", "crates/rsk-crypto", "crates/rsk-fido", "crates/rsk-openpgp", "crates/rsk-rsa", "crates/rsk-ec", "crates/rsk-sha512", "crates/rsk-mgmt", "crates/rsk-oath", "crates/rsk-otp", "crates/rsk-piv", "crates/rsk-rescue", "crates/rsk-vendor", "crates/rsk-device", "crates/rsk-display", "crates/rsk-store", "crates/rsk-led", "crates/rsk-ui", "crates/rsk-bip39", "crates/rsk-slip39", "crates/rsk-mldsa", "crates/rsk-bench"]
+members = ["firmware", "rsk-wipe", "crates/rsk-sdk", "crates/rsk-fs", "crates/rsk-usb", "crates/rsk-crypto", "crates/rsk-fido", "crates/rsk-openpgp", "crates/rsk-rsa", "crates/rsk-ec", "crates/rsk-sha512", "crates/rsk-mgmt", "crates/rsk-oath", "crates/rsk-otp", "crates/rsk-piv", "crates/rsk-rescue", "crates/rsk-vendor", "crates/rsk-device", "crates/rsk-display", "crates/rsk-store", "crates/rsk-led", "crates/rsk-phy", "crates/rsk-ui", "crates/rsk-bip39", "crates/rsk-slip39", "crates/rsk-mldsa", "crates/rsk-bench"]
 
 # Embassy crates are versioned together; pin them all to the same git source so
 # they stay mutually compatible. We track `branch = "main"`, not a crates.io
@@ -48,6 +48,10 @@ rsk-display = { path = "crates/rsk-display" }
 # The two-partition sequential-storage backend the device runs.
 rsk-store = { path = "crates/rsk-store" }
 rsk-led = { path = "crates/rsk-led" }
+# The `EF_PHY` TLV record — USB identity, LED wiring, the interface mask. Shared
+# by the rescue and FIDO applets, rsk-device, rsk-display and the boot path; it
+# lived inside rsk-rescue and was the one applet→applet edge FIDO still took.
+rsk-phy = { path = "crates/rsk-phy" }
 rsk-ui = { path = "crates/rsk-ui" }
 # On-device BIP-39 encode for the trusted-display recovery-phrase screen (display-gated).
 rsk-bip39 = { path = "crates/rsk-bip39" }

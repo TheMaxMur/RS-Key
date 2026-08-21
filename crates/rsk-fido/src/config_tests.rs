@@ -479,7 +479,7 @@ fn picoforge_config_sets_vidpid_in_phy() {
     let sub = subpara_vendor_int(CONFIG_PHY_VIDPID, vidpid);
     assert_eq!(run_fs(&mut fs, &mut st, &vendor_req(&sub, &TOKEN)), Ok(0));
     assert_eq!(
-        rsk_rescue::phy::load(&mut fs).unwrap().vid_pid,
+        rsk_phy::load(&mut fs).unwrap().vid_pid,
         Some((0x1050, 0x0407))
     );
 }
@@ -494,7 +494,7 @@ fn picoforge_config_sets_led_gpio_and_options_in_phy() {
     let o = subpara_vendor_int(CONFIG_PHY_OPTIONS, 0x0A);
     let mut st2 = armed(PERM_ACFG);
     assert_eq!(run_fs(&mut fs, &mut st2, &vendor_req(&o, &TOKEN)), Ok(0));
-    let p = rsk_rescue::phy::load(&mut fs).unwrap();
+    let p = rsk_phy::load(&mut fs).unwrap();
     assert_eq!(p.led_gpio, Some(22));
     assert_eq!(p.opts, 0x0A);
 }

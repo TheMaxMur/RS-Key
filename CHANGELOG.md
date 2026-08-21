@@ -40,6 +40,29 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Internal
 
+- **FIDO reached across the applet tier for a config record, and only the crate
+  graph said so.** `EF_PHY` — the PicoForge-compatible device-config TLV that
+  carries USB identity, LED wiring and the interface mask — lived inside the
+  rescue applet, so everything that reads it depended on `rsk-rescue`: 19
+  references from `rsk-fido` alone, plus `rsk-device`, `rsk-display`,
+  `firmware`, `tools/emu`, a fuzz target and the Miri harness. It is its own
+  crate now, `rsk-phy`, in the shape `rsk-led` already had for `EF_LED_CONF` —
+  below the applets, depending only on `rsk-fs` and `rsk-sdk`. `rsk-fido` and
+  `rsk-display` no longer name `rsk-rescue` at all.
+
+  **No byte of the record moved**, and that is checked rather than intended:
+  the codec is line-for-line its old self — `diff` against the parent moves the
+  crate header and the trailing `#[path]` module hooks and not one line between
+  them — and its tests and Kani harnesses are byte-identical files, wire
+  vectors included. A key provisioned by an older build reads the same
+  `EF_PHY = 0xE020` through the same parser, so there is nothing to migrate.
+  `docs/protocol.md` §7.1 and `rsk hw` describe the same tags; only the
+  "Source:" pointers follow the file.
+
+  The Kani `heavy` tier moves with the proofs — it was `rsk-rescue` because of
+  this record's 11.1 GB round-trip, and is `rsk-phy` now; the harness and cover
+  floors are unchanged because nothing was added or dropped.
+
 - **Seven applets each declared the same presence seam, and the board answered
   all seven.** `Rng`, `UserPresence`, `Presence`, `PinEntry` and `AlwaysConfirm`
   were 29 declarations across the applet tier, byte-identical apart from FIDO's

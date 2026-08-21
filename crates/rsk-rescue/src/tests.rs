@@ -566,10 +566,10 @@ fn phy_write_read_roundtrip() {
     assert_eq!(sw, Sw::OK);
     let (sw, body) = run(&mut app, &mut fs, &apdu(0x80, INS_READ, 0x01, 0, &[]));
     assert_eq!(sw, Sw::OK);
-    let phy = phy::PhyData::parse(&body);
+    let phy = rsk_phy::PhyData::parse(&body);
     assert_eq!(phy.vid_pid, Some((0x1050, 0x0407)));
     assert_eq!(phy.led_brightness, Some(99));
-    assert_eq!(phy.enabled_usb_itf, Some(phy::USB_ITF_ALL));
+    assert_eq!(phy.enabled_usb_itf, Some(rsk_phy::USB_ITF_ALL));
 }
 
 #[test]

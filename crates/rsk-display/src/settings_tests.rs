@@ -144,17 +144,17 @@ fn persisting_the_touch_timeout_keeps_the_rest_of_the_phy_record() {
     let mut ui = env.ui(Pad::idle());
     {
         let mut fs = env.fs.borrow_mut();
-        let phy = rsk_rescue::phy::PhyData {
+        let phy = rsk_phy::PhyData {
             vid_pid: Some((0x1234, 0x5678)),
             led_gpio: Some(21),
             ..Default::default()
         };
-        rsk_rescue::phy::save(&mut fs, &phy).expect("EF_PHY");
+        rsk_phy::save(&mut fs, &phy).expect("EF_PHY");
     }
     ui.hooks.presence_ms = 20_000;
     ui.persist_settings(false, true);
 
-    let stored = rsk_rescue::phy::load(&mut env.fs.borrow_mut()).expect("EF_PHY");
+    let stored = rsk_phy::load(&mut env.fs.borrow_mut()).expect("EF_PHY");
     assert_eq!(stored.presence_timeout, Some(20));
     assert_eq!(stored.vid_pid, Some((0x1234, 0x5678)));
     assert_eq!(stored.led_gpio, Some(21));

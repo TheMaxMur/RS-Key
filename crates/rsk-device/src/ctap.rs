@@ -352,8 +352,8 @@ impl<S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform> AppletHand
             // manual replug (fixes the "config doesn't take effect" report). The
             // reset runs in the worker after this response flushes.
             if rsk_fido::vendor::take_phy_written() {
-                let phy = rsk_rescue::phy::load(&mut fsb).unwrap_or_default();
-                if phy.opts & rsk_rescue::phy::OPT_DISABLE_POWER_RESET == 0 {
+                let phy = rsk_phy::load(&mut fsb).unwrap_or_default();
+                if phy.opts & rsk_phy::OPT_DISABLE_POWER_RESET == 0 {
                     self.hooks.borrow_mut().request_reboot();
                 }
             }

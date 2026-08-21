@@ -472,7 +472,7 @@ OtpCancelWait ==
 \* load-bearing. makeCredential (makecredential.rs:513-516) and getAssertion
 \* (getassertion.rs:384-387) test the MAC, `user_verified()` -- which is
 \* `in_use && user_verified` (state.rs:666-668) -- the permission bit and the
-\* rpId binding. authenticatorConfig (config.rs:244-246) and
+\* rpId binding. authenticatorConfig (config.rs:243-245) and
 \* credentialManagement (credmgmt.rs:278) test the MAC and the permission bit
 \* ONLY: neither consults `in_use`.
 \*
@@ -487,7 +487,7 @@ TokenGuardUv(p, rp) ==
     /\ p \in tok.perms
     /\ (tok.rp = NoRp \/ tok.rp = rp)      \* getassertion.rs:387 rpId binding
 
-\* config.rs:244-246 / credmgmt.rs:278 -- no `in_use` conjunct exists here.
+\* config.rs:243-245 / credmgmt.rs:278 -- no `in_use` conjunct exists here.
 TokenGuardBare(p, rp) ==
     /\ plat.held /\ plat.verifies
     /\ p \in tok.perms
@@ -905,13 +905,13 @@ AssertFinish ==
     /\ UNCHANGED << pin, gate, store, lock, plat, walk, sys, snap, ram >>
 
 (***************************************************************************)
-(* authenticatorConfig -- no touch of its own. config.rs:245.              *)
+(* authenticatorConfig -- no touch of its own. config.rs:244.              *)
 (***************************************************************************)
 
 \* The requirement GHSA-wqjm-653g-hgw3 states: an acfg operation may not be
 \* authorized by a token whose user-presence test some other command already
 \* spent.
-\* config.rs:244-246 tests the MAC and PERM_ACFG and NOTHING else -- no `in_use`,
+\* config.rs:243-245 tests the MAC and PERM_ACFG and NOTHING else -- no `in_use`,
 \* and no rpId binding either. The shared TokenGuardBare carries the binding
 \* because credentialManagement's check_rp_binding does; here it is a guard the
 \* Rust does not have, and it was inert only because it stood in the policy too.
@@ -919,7 +919,7 @@ ConfigGuard  == plat.held /\ plat.verifies /\ "acfg" \in tok.perms
 ConfigPolicy == plat.held /\ ~plat.revoked /\ tok.live /\ "acfg" \in tok.perms
                 /\ ~upSpent
 
-\* No `pin.set` conjunct: config.rs:244-246 tests the MAC and PERM_ACFG and
+\* No `pin.set` conjunct: config.rs:243-245 tests the MAC and PERM_ACFG and
 \* nothing else. It carried one until the review measured it inert (a live token
 \* implies a PIN was set on every reachable path) -- inert or not, a model whose
 \* selling point is that its guards are what the Rust tests may not carry a
@@ -934,12 +934,12 @@ ConfigOp ==
                     ram >>
 
 (***************************************************************************)
-(* Vendor BACKUP_FINALIZE -- vendor.rs:901-908, and its on-device twin      *)
-(* mark_backup_sealed (vendor.rs:969-975).                                  *)
+(* Vendor BACKUP_FINALIZE -- vendor.rs:900-907, and its on-device twin      *)
+(* mark_backup_sealed (vendor.rs:968-974).                                  *)
 (***************************************************************************)
 
 \* Writing EF_BACKUP_SEALED closes the one-time seed-export window: after it,
-\* BACKUP_EXPORT refuses (vendor.rs:806) and the display's recovery-phrase
+\* BACKUP_EXPORT refuses (vendor.rs:805) and the display's recovery-phrase
 \* reveal is gone, until a reset reopens the window. Modelled UNGATED -- the
 \* real one carries the PIN half and a deliberate hold -- which widens only the
 \* states the marker can be SET in, never the states it can be LOST in, and it
@@ -951,7 +951,7 @@ BackupFinalize ==
     /\ UNCHANGED << pin, store, lock, tok, plat, pres, walk, sys, op, snap,
                     upSpent, viol, ram >>
 
-\* Vendor UNLOCK (vendor.rs:550-573): the host presents the 32-byte lock key over
+\* Vendor UNLOCK (vendor.rs:549-572): the host presents the 32-byte lock key over
 \* the MSE channel, the wrapped seed on flash decrypts, and `state.keydev_dec`
 \* holds it until power-off. No PIN and no touch -- knowing the lock key IS the
 \* authorization -- so this is not modelled as a gate, only as the one door
@@ -960,7 +960,7 @@ BackupFinalize ==
 \* WIDER than the firmware in two directions, both sound: the model has no device
 \* lock, so it does not require the seed to be stored WRAPPED (only a locked
 \* device has an EF_KEY_DEV_ENC to open), and it omits AUT_DISABLE
-\* (config.rs:418-419), which only ever CLEARS the copy.
+\* (config.rs:417-418), which only ever CLEARS the copy.
 DeviceUnlock ==
     /\ Idle
     /\ store.seed
@@ -1597,7 +1597,7 @@ NoAccessibleSecretWithoutGate ==
 \* regression that made the disjunct necessary.
 RamNeverOutlivesFlashSeed == ram => store.seed
 
-\* ConfigGuard carries no `pin.set` conjunct because config.rs:244-246 does not,
+\* ConfigGuard carries no `pin.set` conjunct because config.rs:243-245 does not,
 \* and the justification for the model's own `~(gate.alwaysUv /\ ~pin.set)` on
 \* makeCredential and getAssertion is the same sentence: a live token implies a
 \* PIN was set on every reachable path. That sentence was refuted once already --

@@ -24,7 +24,7 @@ the mdBook site.
 | `flash-map-sizes.svg` | 4 MB vs 16 MB layout (how `FLASH_SIZE` scales it) | original — from `firmware/build.rs` |
 | `ctaphid-frame.svg` | CTAPHID 64-byte init + continuation frame layout | original — from `protocol.md` §1.2 / `tools/rsk/ctaphid.py` |
 | `apdu-cases.svg` | ISO-7816 short-APDU cases 1–4 (header, Lc, data, Le) | original — from `protocol.md` §1.1 / `tools/rsk/ccid.py` |
-| `phy-record.svg` | EF_PHY TLV record + a worked three-record example | original — from `crates/rsk-rescue/src/phy.rs` |
+| `phy-record.svg` | EF_PHY TLV record + a worked three-record example | original — from `crates/rsk-phy/src/lib.rs` |
 | `cred-box.svg` | FIDO credential box + 42-byte resident id byte layout | original — from `crates/rsk-fido/src/credential.rs` |
 | `boot-flow.svg` | Boot sequence: bootrom → provision (pre-attach) → serve | original — from `firmware/src/main.rs` |
 | `crate-graph.svg` | Crate dependency layers (binary → applets → platform libs) | original — from the workspace `Cargo.toml` manifests |

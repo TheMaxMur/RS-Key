@@ -13,7 +13,6 @@ use rsk_fs::{Fs, Sealed, Storage};
 use zeroize::Zeroize;
 
 use rsk_crypto::sha256;
-use rsk_rescue::phy;
 
 use crate::cbordec::{cbor, def_arr, def_map, skip_value};
 use crate::consts::{
@@ -301,11 +300,11 @@ pub fn authenticator_config<S: Storage, R: Rng>(
 /// and journal it. The auth was already verified by the caller.
 fn set_phy<S: Storage, R: Rng>(
     ctx: &mut Ctx<S, R>,
-    f: impl FnOnce(&mut phy::PhyData),
+    f: impl FnOnce(&mut rsk_phy::PhyData),
 ) -> CtapResult {
-    let mut p = phy::load(ctx.fs).unwrap_or_default();
+    let mut p = rsk_phy::load(ctx.fs).unwrap_or_default();
     f(&mut p);
-    phy::save(ctx.fs, &p).map_err(|_| CtapError::Other)?;
+    rsk_phy::save(ctx.fs, &p).map_err(|_| CtapError::Other)?;
     journal::append_config_write(ctx, CONFIG_TARGET_PHY as u8);
     Ok(0)
 }

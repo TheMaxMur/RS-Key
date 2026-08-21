@@ -35,7 +35,6 @@ use rsk_crypto::sha256;
 use rsk_fs::Storage;
 use rsk_led::{CONF_LEN as LED_CONF_LEN, EF_LED_CONF};
 use rsk_mgmt::{DevConfError, persist_dev_conf};
-use rsk_rescue::phy;
 
 use crate::cbordec::{cbor, def_map, skip_value};
 use crate::cert;
@@ -241,10 +240,10 @@ fn dispatch<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req, out: &mut [u8]) 
 fn config_read<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req, out: &mut [u8]) -> CtapResult {
     match req.target {
         CONFIG_TARGET_PHY => {
-            let mut buf = [0u8; phy::PHY_MAX_SIZE];
+            let mut buf = [0u8; rsk_phy::PHY_MAX_SIZE];
             let n = ctx
                 .fs
-                .read(phy::EF_PHY, &mut buf)
+                .read(rsk_phy::EF_PHY, &mut buf)
                 .unwrap_or(0)
                 .min(buf.len());
             // Key 1: the raw stored record (overrides only) for read-modify-write.
@@ -334,10 +333,10 @@ fn config_write<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> CtapResul
             // Only a record that actually loaded can be unchanged — an absent or
             // unreadable EF_PHY must take the write, or a host sending the default
             // values to repair it would be answered `Ok` with nothing stored.
-            if phy::load(ctx.fs).is_some_and(|cur| cur.overlay(req.blob) == cur) {
+            if rsk_phy::load(ctx.fs).is_some_and(|cur| cur.overlay(req.blob) == cur) {
                 return Ok(0);
             }
-            phy::merge_save(ctx.fs, req.blob).map_err(|_| CtapError::Other)?;
+            rsk_phy::merge_save(ctx.fs, req.blob).map_err(|_| CtapError::Other)?;
             PHY_WRITTEN.store(true, Ordering::Relaxed);
         }
         // The LED config block; persisted here and applied *live* by the firmware

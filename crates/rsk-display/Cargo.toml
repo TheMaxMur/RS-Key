@@ -23,7 +23,6 @@ rsk-oath = { workspace = true }
 rsk-otp = { workspace = true }
 rsk-piv = { workspace = true }
 rsk-mgmt = { workspace = true }
-rsk-rescue = { workspace = true }
 rsk-vendor = { workspace = true }
 rsk-device = { workspace = true }
 # The screens themselves, plus the untrusted-string sanitizing and the Allow/Deny
@@ -31,6 +30,9 @@ rsk-device = { workspace = true }
 rsk-ui = { workspace = true }
 # The STATUS_* indices a ceremony borrows and restores.
 rsk-led = { workspace = true }
+# The `EF_PHY` record whose `PresenceTimeout` tag the touch-timeout screen
+# read-modify-writes; nothing here touches the rest of it.
+rsk-phy = { workspace = true }
 # On-device seed reveal (BIP-39 words) and the SLIP-39 Shamir split behind it.
 rsk-bip39 = { workspace = true }
 rsk-slip39 = { workspace = true }

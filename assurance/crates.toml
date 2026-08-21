@@ -97,7 +97,7 @@ gap = "the Storage contract it implements — atomic append, an enumeration-comp
 [crate.rsk-rescue]
 class = "state-partial"
 model = "RSKeyAdminSurface"
-gap = "the operator-presence gate on every privileged command is modelled (PrivilegedOpNeedsPresence); the commands' own payloads — phy identity records, KEYDEV signing, the fuse/rollback state machines — are single-step data handling carried by the crate's five test files, not a state machine."
+gap = "the operator-presence gate on every privileged command is modelled (PrivilegedOpNeedsPresence); the commands' own payloads — the phy identity record (its codec is rsk-phy now), KEYDEV signing, the fuse/rollback state machines — are single-step data handling carried by the crate's four test files, not a state machine."
 
 [crate.rsk-mgmt]
 class = "state-partial"
@@ -131,6 +131,11 @@ note = "zero Kani proofs and NOT a gap: differential vs the sha2 crate."
 [crate.rsk-led]
 class = "pure"
 evidence = ["crates/rsk-led/src/kani.rs"]
+
+[crate.rsk-phy]
+class = "pure"
+evidence = ["crates/rsk-phy/src/kani.rs", "fuzz/fuzz_targets/phy_tlv.rs"]
+note = "the EF_PHY codec, lifted out of rsk-rescue: parse/overlay/serialize are total functions over host- and flash-reachable bytes, with no state of their own."
 
 [crate.rsk-bip39]
 class = "pure"

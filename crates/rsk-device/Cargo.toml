@@ -22,6 +22,7 @@ rsk-openpgp = { workspace = true }
 rsk-mgmt = { workspace = true }
 rsk-oath = { workspace = true }
 rsk-otp = { workspace = true }
+rsk-phy = { workspace = true }
 rsk-piv = { workspace = true }
 rsk-rescue = { workspace = true }
 rsk-vendor = { workspace = true }

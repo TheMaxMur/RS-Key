@@ -85,7 +85,7 @@ match more than one file in the tree.
 
 | Invariant | What it asserts here | The Rust construct that owns it |
 |---|---|---|
-| `NoAuthorizationBypass` | No protected operation completes without the live authorization its own gate requires | `crates/rsk-fido/src/`: `getassertion.rs:384-387` · `makecredential.rs:513-516` · `config.rs:244-246` · `credmgmt.rs:278` · retry ladder `clientpin.rs:723-808` · soft lock `state.rs:285-293` + `crates/rsk-device/src/ctap.rs:228-235` · reset window `reset.rs:182-188` · walk owner `state.rs:169-180`, `credmgmt.rs:339` |
+| `NoAuthorizationBypass` | No protected operation completes without the live authorization its own gate requires | `crates/rsk-fido/src/`: `getassertion.rs:384-387` · `makecredential.rs:513-516` · `config.rs:243-245` · `credmgmt.rs:278` · retry ladder `clientpin.rs:723-808` · soft lock `state.rs:285-293` + `crates/rsk-device/src/ctap.rs:228-235` · reset window `reset.rs:182-188` · walk owner `state.rs:169-180`, `credmgmt.rs:339` |
 | `NoCrossTransportTouchConsumption` | A presence decision produced for one transport is never applied to another — neither a confirm nor a cancel | `crates/rsk-device/src/presence.rs`: `Arbiter::pending_for` · `::request_cancel` / `::cancel_otp_wait` (the scope guards) · `ButtonWait::wait` (the `spent` latch). `firmware/src/presence.rs` keeps only the board half. **The stale-cancel drop that carries this property is the one at the wait's ENTRY.** The exit clear cannot substitute for it — a cancel latched by a dispatch that never entered `wait` is never seen by the exit — see "The cancel that no wait was open for" |
 | `NoTokenAfterInvalidation` | A grant invalidated by a PIN change, PIN set, reset, `stopUsingPinUvAuthToken` or power cycle never authorizes again | `crates/rsk-fido/src/`: `state.rs:488-502` (`reset_pin_uv_auth_token`) · `state.rs:547-562` (`stop_using_token`) · `state.rs:596-609` (`expire_stale_token`) · `clientpin.rs:302-313` · `seed.rs:312-313` (`clear_ppuat`) |
 | `NoAccessibleSecretWithoutGate` | No live secret is reachable while the gate record that protects it is gone | `crates/rsk-fido/src/`: `reset.rs:153-180` (`is_fido_gate_fid`) · `reset.rs:52-67` (phase order) · `credmgmt.rs:249-266` (`authorized_by_ppuat`) · `clientpin.rs:214-218`, `:824-828` |
@@ -666,7 +666,7 @@ One mutant was **not** caught on the first attempt, and that mattered more than
 the eleven that were. `BugStopUsingKeepsPerms` ran green over 6 275 376 distinct states
 because the model gave every call site one uniform guard including "the token
 is in use". The code does not: `getassertion.rs:385` and `makecredential.rs:516`
-test `user_verified()`, but `config.rs:244-246` and `credmgmt.rs:278` test the
+test `user_verified()`, but `config.rs:243-245` and `credmgmt.rs:278` test the
 MAC and the permission bits **only**. For those two the single thing standing
 between a stopped or expired token and a live authorization is that
 `stop_using_token` also zeroes `permissions` — `verify_token` is a MAC over
@@ -1027,7 +1027,7 @@ separately:
 
 - **The RAM copy.** `ram` is `state.keydev_dec` (`state.rs:338-340`);
   `SeedReachable == store.seed \/ ram` is what "the owner's seed is still
-  reachable" means; `DeviceUnlock` is the vendor `UNLOCK` (`vendor.rs:550-573`)
+  reachable" means; `DeviceUnlock` is the vendor `UNLOCK` (`vendor.rs:549-572`)
   that is its only door. `KeepOpen` / `KeepSurv` move the wipe's own claim — that
   what a tear leaves behind is undecryptable — from the flash delete to the
   moment the **last** copy dies.
@@ -1634,7 +1634,7 @@ removed defences:
 | `BugMaskIsCosmetic` | **the pre-`0x084A` tree, shipped**: `USB_ENABLED` echoed in DeviceInfo while SELECT and dispatch never consulted it — `ykman config usb --disable` disabled nothing (`crates/rsk-sdk/src/applet.rs:208-210`, fed at `crates/rsk-device/src/ccid.rs:237-245`, consulted at `:334`) | `DisabledAppletNeverDispatches` | 10 states |
 | `BugLockWriteResetsCaps` | **audit run-35, shipped**: a lock-code-only write strips to zero bytes, stored verbatim as an EMPTY record that `read_enabled_caps` reads as `SUPPORTED_CAPS` — every disabled application silently re-enabled (`crates/rsk-mgmt/src/lib.rs:311-324`, the merge) | `DisableSetSurvivesLockWrite` | 9 states |
 | `BugAdminGateable` | the `APPLET_CAPS` cap-`0` carve-out removed (`crates/rsk-device/src/ccid.rs:67-74`): management/vendor/rescue gated by the mask, so one disable-everything write is irreversible | `AdminSurfaceAlwaysReachable` | 2 states |
-| `BugPrivilegedOpUngated` | `require_presence` removed (`crates/rsk-rescue/src/lib.rs:142-144`): keydev signing, cert/config writes, BOOTSEL reboot and fuse burns driven by the USB host alone | `PrivilegedOpNeedsPresence` | 10 states |
+| `BugPrivilegedOpUngated` | `require_presence` removed (`crates/rsk-rescue/src/lib.rs:141-143`): keydev signing, cert/config writes, BOOTSEL reboot and fuse burns driven by the USB host alone | `PrivilegedOpNeedsPresence` | 10 states |
 
 `Admin.cfg` is **GREEN, exhaustive over 8 distinct states** — honestly tiny,
 because the state *is* the 3-capability mask's power set and every property
@@ -2160,8 +2160,9 @@ evidence columns and validated cross-model support edges below on every gate run
 | `rsk-oath` | state-partial | `RSKeyAppletSeams` | status lifetime and access-code removal are RSKeyAppletSeams; calculation's access-code and touch gates are RSKeyAppletPolicies. The MAC access code has no retry budget, so its byte-level mutual-auth acceptance remains differential-oracle territory rather than a fabricated lattice counter. |
 | `rsk-openpgp` | state-partial | `RSKeyAppletSeams` | status lifetime is RSKeyAppletSeams; PW1/PW3/RC budgets are RSKeyRetryLattice; algorithm-attribute changes invalidating the old key pair are RSKeyAppletPolicies. MSE repointing and the per-slot UIF value space remain below the abstraction. |
 | `rsk-otp` | state-partial | `RSKeyAppletSeams` | oathOtpPin status is in RSKeyAppletSeams; protected-slot configure/update/delete/swap and the combined use/session anti-replay step are RSKeyAppletPolicies. The six-byte slot code has no retry counter; four physical slots collapse to one symmetric lifecycle in the model. |
+| `rsk-phy` | pure | `crates/rsk-phy/src/kani.rs`<br>`fuzz/fuzz_targets/phy_tlv.rs` | — |
 | `rsk-piv` | state-partial | `RSKeyAppletSeams` | status lifetime is RSKeyAppletSeams; PIN/PUK budgets are RSKeyRetryLattice; NEVER/ONCE/ALWAYS slot policy and freshness spending are RSKeyAppletPolicies. Key material and touch I/O stay below these state abstractions. |
-| `rsk-rescue` | state-partial | `RSKeyAdminSurface` | the operator-presence gate on every privileged command is modelled (PrivilegedOpNeedsPresence); the commands' own payloads — phy identity records, KEYDEV signing, the fuse/rollback state machines — are single-step data handling carried by the crate's five test files, not a state machine. |
+| `rsk-rescue` | state-partial | `RSKeyAdminSurface` | the operator-presence gate on every privileged command is modelled (PrivilegedOpNeedsPresence); the commands' own payloads — the phy identity record (its codec is rsk-phy now), KEYDEV signing, the fuse/rollback state machines — are single-step data handling carried by the crate's four test files, not a state machine. |
 | `rsk-rsa` | pure | `crates/rsk-rsa/src/kani.rs` | — |
 | `rsk-sdk` | state-partial | `RSKeyAppletSeams` | Dispatcher::current is the seam module's sel. APDU command chaining remains outside RSKeyTransport, which covers CTAPHID framing rather than the SDK's per-applet chain buffer. |
 | `rsk-sha512` | pure | `fuzz/fuzz_targets/sha512_diff.rs` | — |
@@ -2204,7 +2205,7 @@ abstractions producing traces the firmware cannot follow.
   not permit; `PowerCut` reaches the same flash states and is the realistic
   interrupter.
 - **`BackupFinalize` is ungated.** The real `BACKUP_FINALIZE` carries the PIN
-  half of the gate and a deliberate hold (`vendor.rs:896-908`). Widening where
+  half of the gate and a deliberate hold (`vendor.rs:895-907`). Widening where
   the marker can be **set** never widens where it can be **lost**, and the loss
   is what the invariant is about.
 - **A regenerated seed still opens the credentials made under the old one.**
@@ -2217,10 +2218,10 @@ abstractions producing traces the firmware cannot follow.
   not a free choice. Both findings below need only that some reachable ring
   order puts one delete before another.
 - **`DeviceUnlock` is ungated and needs no device lock.** The real vendor
-  `UNLOCK` (`vendor.rs:550-573`) requires the seed to be stored *wrapped* — only
+  `UNLOCK` (`vendor.rs:549-572`) requires the seed to be stored *wrapped* — only
   a soft-locked device has an `EF_KEY_DEV_ENC` to open — and the host to present
   the 32-byte lock key. The model requires only a live flash seed. It also omits
-  `AUT_DISABLE` (`config.rs:418-419`), which only ever *clears* the RAM copy.
+  `AUT_DISABLE` (`config.rs:417-418`), which only ever *clears* the RAM copy.
   Both widen where `ram` can be TRUE, never where it must be FALSE, and it is
   the RAM copy **surviving** that the invariant is about.
 - **`ResetAborts` fires at any of the wipe's three positions** and models every

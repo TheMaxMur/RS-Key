@@ -39,6 +39,7 @@ rsk-rsa = { path = "../../crates/rsk-rsa" }
 rsk-mgmt = { path = "../../crates/rsk-mgmt" }
 rsk-oath = { path = "../../crates/rsk-oath" }
 rsk-otp = { path = "../../crates/rsk-otp" }
+rsk-phy = { path = "../../crates/rsk-phy" }
 rsk-piv = { path = "../../crates/rsk-piv" }
 rsk-rescue = { path = "../../crates/rsk-rescue" }
 rsk-vendor = { path = "../../crates/rsk-vendor" }

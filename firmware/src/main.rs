@@ -124,10 +124,10 @@ const YUBICO_PRODUCT: &str = "YubiKey RSK OTP+FIDO+CCID";
 // enumeration, and nothing recovers it in software — so catch a bad build-time
 // override here rather than on the bench. Byte length is the conservative proxy:
 // non-ASCII costs at least as many bytes as code units.
-const _: () = assert!(USB_MANUFACTURER.len() <= rsk_rescue::phy::USB_STR_MAX);
-const _: () = assert!(USB_PRODUCT.len() <= rsk_rescue::phy::USB_STR_MAX);
-const _: () = assert!(YUBICO_MANUFACTURER.len() <= rsk_rescue::phy::USB_STR_MAX);
-const _: () = assert!(YUBICO_PRODUCT.len() <= rsk_rescue::phy::USB_STR_MAX);
+const _: () = assert!(USB_MANUFACTURER.len() <= rsk_phy::USB_STR_MAX);
+const _: () = assert!(USB_PRODUCT.len() <= rsk_phy::USB_STR_MAX);
+const _: () = assert!(YUBICO_MANUFACTURER.len() <= rsk_phy::USB_STR_MAX);
+const _: () = assert!(YUBICO_PRODUCT.len() <= rsk_phy::USB_STR_MAX);
 
 /// OpenPGP AID manufacturer id for an effective USB VID: the Yubico id when the
 /// key presents the Yubico VID (so hosts show the same vendor as a real YubiKey),
@@ -543,7 +543,7 @@ async fn main(spawner: Spawner) {
 
     let mut usb_vid = USB_VID;
     let mut usb_pid = USB_PID;
-    let mut usb_itf = rsk_rescue::phy::USB_ITF_ALL;
+    let mut usb_itf = rsk_phy::USB_ITF_ALL;
     // Explicit phy string overrides; `None` ⇒ the VID-derived default, then the
     // build const, are chosen at the identity assembly below. The product is
     // normalized against the ykman YK4_ crash; the manufacturer is copied verbatim
@@ -552,24 +552,24 @@ async fn main(spawner: Spawner) {
     // drives the LED hardware, applied at the spawn site below.
     let mut phy_product: Option<&str> = None;
     let mut phy_manufacturer: Option<&str> = None;
-    let phy = rsk_rescue::phy::load(&mut fs);
+    let phy = rsk_phy::load(&mut fs);
     if let Some(phy) = &phy {
         if let Some((vid, pid)) = phy.vid_pid {
             (usb_vid, usb_pid) = (vid, pid);
         }
         if let Some(s) = phy.usb_product.as_ref().and_then(|prod| prod.as_str()) {
             let buf = PHY_PRODUCT.init([0; 64]);
-            let n = rsk_rescue::phy::normalize_usb_product(s.as_bytes(), buf);
+            let n = rsk_phy::normalize_usb_product(s.as_bytes(), buf);
             phy_product = core::str::from_utf8(&buf[..n]).ok();
         }
         if let Some(s) = phy.usb_manufacturer.as_ref().and_then(|m| m.as_str()) {
             // Clamp to the descriptor ceiling, not the buffer: the binding limit is
             // the 64-byte USB control buffer (USB_STR_MAX code units), not this cell.
             let buf = PHY_MANUFACTURER.init([0; 64]);
-            let n = rsk_rescue::phy::clamp_usb_string(s.as_bytes(), buf);
+            let n = rsk_phy::clamp_usb_string(s.as_bytes(), buf);
             phy_manufacturer = core::str::from_utf8(&buf[..n]).ok();
         }
-        usb_itf = rsk_rescue::phy::effective_usb_itf(phy);
+        usb_itf = rsk_phy::effective_usb_itf(phy);
         // Touch-wait timeout (phy tag 0x08, seconds; 0/absent = default).
         presence::set_timeout_secs(phy.presence_timeout.unwrap_or(0));
     }
@@ -635,12 +635,12 @@ async fn main(spawner: Spawner) {
         // OPT_DIMM ("LED Dimmable") gates the global brightness override: without
         // it, the boot brightness is not forced and the per-status EF_LED_CONF /
         // defaults stand, so the toggle actually means something.
-        if phy.opts & rsk_rescue::phy::OPT_DIMM != 0
+        if phy.opts & rsk_phy::OPT_DIMM != 0
             && let Some(b) = phy.led_brightness
         {
             led::set_all_brightness(b);
         }
-        led::set_steady(phy.opts & rsk_rescue::phy::OPT_LED_STEADY != 0);
+        led::set_steady(phy.opts & rsk_phy::OPT_LED_STEADY != 0);
         if let Some(order) = phy.led_order {
             led::set_rg_swap(order != 0);
         }
@@ -694,7 +694,7 @@ async fn main(spawner: Spawner) {
     config.max_power = 100;
     config.max_packet_size_0 = 64;
     // bcdDevice build counter; also surfaced on the trusted-display Firmware screen.
-    let device_release: u16 = 0x0974;
+    let device_release: u16 = 0x0975;
     config.device_release = device_release;
 
     let mut builder = Builder::new(
@@ -709,7 +709,7 @@ async fn main(spawner: Spawner) {
     // The keyboard (OTP) interface is built FIRST so it lands on interface 0 like a
     // stock YubiKey: the libusb backend ykpers/ykcore ships — KeePassXC, ykchalresp,
     // pam_yubico — claims interface 0 and sends the OTP frame reports there blind.
-    let otp_enabled = usb_itf & rsk_rescue::phy::USB_ITF_KB != 0;
+    let otp_enabled = usb_itf & rsk_phy::USB_ITF_KB != 0;
     let kbd = otp_enabled.then(|| {
         HidWriter::<_, 8>::new(
             &mut builder,
@@ -730,7 +730,7 @@ async fn main(spawner: Spawner) {
     // fixed issue #55. Serving the frame protocol on the FIDO interface too gains no
     // host that needs it and only removes the macOS Input Monitoring gate (see
     // OTP_HID_HANDLER_KBD), so keep this interface CTAP-only (audit run-30).
-    let hid = (usb_itf & rsk_rescue::phy::USB_ITF_HID != 0).then(|| {
+    let hid = (usb_itf & rsk_phy::USB_ITF_HID != 0).then(|| {
         HidReaderWriter::<_, 64, 64>::new(
             &mut builder,
             HID_STATE.init(HidState::new()),
@@ -765,7 +765,7 @@ async fn main(spawner: Spawner) {
     } else {
         ATR_RSKEY
     };
-    let ccid = (usb_itf & rsk_rescue::phy::USB_ITF_CCID != 0)
+    let ccid = (usb_itf & rsk_phy::USB_ITF_CCID != 0)
         .then(|| Ccid::new(&mut builder, ClientCcid, card_atr, ccid_pin_support));
 
     // Go green (idle) the moment the host configures us, not on the first applet

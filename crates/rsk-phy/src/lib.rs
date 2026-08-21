@@ -8,6 +8,12 @@
 //! brightness/steady, and the WS2812 wire order (`led_order`). The tags below
 //! match PicoForge; `led_order` (`0x0D`), `led_num` (`0x0E`) and
 //! `usb_manufacturer` (`0x0F`) are RS-Key extensions PicoForge skips as unknown.
+//!
+//! Its own crate, like `rsk-led`'s `EF_LED_CONF`, because five callers across
+//! three tiers read it — the rescue and FIDO applets, `rsk-device`'s CTAPHID
+//! reset gate, `rsk-display`'s settings flow, and the firmware's boot path.
+
+#![cfg_attr(not(test), no_std)]
 
 use rsk_fs::{Fs, Storage};
 
@@ -430,15 +436,14 @@ pub fn normalize_usb_product(name: &[u8], out: &mut [u8]) -> usize {
     n
 }
 
-/// Kani proof harnesses (`cargo kani -p rsk-rescue`): the phy record is parsed
+/// Kani proof harnesses (`cargo kani -p rsk-phy`): the phy record is parsed
 /// from flash at every boot and round-trips through the rescue applet's
 /// read-modify-write — both directions are small total functions over
 /// attacker-/corruption-reachable bytes, so prove them outright (the house
 /// rule from docs/testing.md).
 #[cfg(kani)]
-#[path = "phy_kani.rs"]
+#[path = "kani.rs"]
 mod proofs;
 
 #[cfg(test)]
-#[path = "phy_tests.rs"]
 mod tests;

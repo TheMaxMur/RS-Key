@@ -86,11 +86,11 @@ const CONTROL_BUF_LEN: usize = 64;
 /// which is why the phy record clamps to it — so the emulator borrows the same
 /// ceiling and the same compile-time check the firmware has, rather than
 /// discovering it from a host that stopped enumerating.
-const _: () = assert!(PRODUCT.len() <= rsk_rescue::phy::USB_STR_MAX);
-const _: () = assert!(YUBICO_PRODUCT.len() <= rsk_rescue::phy::USB_STR_MAX);
-const _: () = assert!(MANUFACTURER.len() <= rsk_rescue::phy::USB_STR_MAX);
-const _: () = assert!(YUBICO_MANUFACTURER.len() <= rsk_rescue::phy::USB_STR_MAX);
-const _: () = assert!(SERIAL.len() <= rsk_rescue::phy::USB_STR_MAX);
+const _: () = assert!(PRODUCT.len() <= rsk_phy::USB_STR_MAX);
+const _: () = assert!(YUBICO_PRODUCT.len() <= rsk_phy::USB_STR_MAX);
+const _: () = assert!(MANUFACTURER.len() <= rsk_phy::USB_STR_MAX);
+const _: () = assert!(YUBICO_MANUFACTURER.len() <= rsk_phy::USB_STR_MAX);
+const _: () = assert!(SERIAL.len() <= rsk_phy::USB_STR_MAX);
 
 /// The keyboard interface's report size (the boot-keyboard 8-byte report).
 const KBD_RPT_SIZE: usize = 8;

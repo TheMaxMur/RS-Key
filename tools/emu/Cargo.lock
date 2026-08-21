@@ -1477,6 +1477,7 @@ dependencies = [
  "rsk-oath",
  "rsk-openpgp",
  "rsk-otp",
+ "rsk-phy",
  "rsk-piv",
  "rsk-rescue",
  "rsk-rsa",
@@ -1502,8 +1503,8 @@ dependencies = [
  "rsk-oath",
  "rsk-openpgp",
  "rsk-otp",
+ "rsk-phy",
  "rsk-piv",
- "rsk-rescue",
  "rsk-sdk",
  "rsk-slip39",
  "rsk-ui",
@@ -1544,6 +1545,7 @@ dependencies = [
  "rsk-oath",
  "rsk-openpgp",
  "rsk-otp",
+ "rsk-phy",
  "rsk-piv",
  "rsk-rescue",
  "rsk-rsa",
@@ -1570,7 +1572,7 @@ dependencies = [
  "rsk-fs",
  "rsk-led",
  "rsk-mgmt",
- "rsk-rescue",
+ "rsk-phy",
  "rsk-sdk",
  "sha2 0.10.9",
  "zeroize",
@@ -1649,6 +1651,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "rsk-phy"
+version = "0.1.0"
+dependencies = [
+ "rsk-fs",
+ "rsk-sdk",
+]
+
+[[package]]
 name = "rsk-piv"
 version = "0.1.0"
 dependencies = [
@@ -1668,6 +1678,7 @@ dependencies = [
  "k256",
  "rsk-crypto",
  "rsk-fs",
+ "rsk-phy",
  "rsk-sdk",
  "zeroize",
 ]

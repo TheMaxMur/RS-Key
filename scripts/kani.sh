@@ -5,7 +5,7 @@
 # The Kani roster, in tiers, with one owner.
 #
 # The proofs used to run in one place — the daily `deep-checks` row — because one
-# harness in `rsk-rescue` costs half an hour or more and nothing that expensive
+# harness in `rsk-phy` costs half an hour or more and nothing that expensive
 # belongs on a pull request. But that put every proof a day away from the change that broke
 # it, and the split is cheap once the cost is measured rather than assumed: the
 # whole fast tier discharges in ~212 s of solving (docs/testing.md carries the
@@ -42,16 +42,16 @@ cd "$(dirname "$0")/.."
 # wait, and the answer is to move its crate to SLOW, not to raise the cap.
 FAST="rsk-sdk rsk-fs rsk-crypto rsk-openpgp rsk-otp rsk-piv rsk-oath rsk-usb rsk-ui rsk-led rsk-slip39 rsk-bip39 rsk-device"
 
-# SLOW: the arithmetic and the state sequences. `rsk-rescue` carries
+# SLOW: the arithmetic and the state sequences. `rsk-phy` carries
 # `serialize_parse_roundtrip` (27m42s measured 2026-08-13; ~80 min was recorded
 # once), `rsk-rsa` the functional division spec and the sieve, `rsk-mldsa` the
 # rounding round-trips, `rsk-fido` the three sequence proofs (~12 min together,
 # and one of them peaks at 9.3 GiB).
-SLOW="rsk-rescue rsk-rsa rsk-mldsa rsk-fido"
+SLOW="rsk-phy rsk-rsa rsk-mldsa rsk-fido"
 
 # HEAVY: the crates that get a job of their own, because their peak
 # solver memory is near what a hosted runner has left over. Measured 2026-08-14:
-# `rsk-rescue`'s phy round-trip peaks at 11.1 GB and the runner dies under it
+# `rsk-phy`'s round-trip peaks at 11.1 GB and the runner dies under it
 # ("received a shutdown signal" at 50-58 min, twice, against a 6 h job cap and
 # with the run's other jobs still going, so neither a timeout nor a cancel);
 # `rsk-fido`'s 9.3 GiB fits, which the `state` row demonstrates on every run. The
@@ -59,7 +59,7 @@ SLOW="rsk-rescue rsk-rsa rsk-mldsa rsk-fido"
 # rather than by how long a crate takes. The LIGHT shards below are the rest of
 # `all`, so nothing stops being proved — this job can die without taking the other
 # sixteen crates' verdicts with it.
-HEAVY="rsk-rescue"
+HEAVY="rsk-phy"
 
 # `all` less HEAVY, split three ways, one runner each. It used to be a single row
 # whose wall time was the sum of every crate's solving; three make it the slowest
