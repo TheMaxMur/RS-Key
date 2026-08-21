@@ -292,12 +292,12 @@ where
         };
         match outcome {
             Outcome::Confirmed => {
-                // A granted WebAuthn approval gets the design's brief "Approved" pop.
-                // Scoped to the FIDO ceremony ask (one request per make/getAssertion),
-                // NOT the shared `confirm_wait`: OpenPGP/PIV touch policies come in
-                // through `request` once per signature, and paying this ~0.4 s there
-                // would be a latency regression. The ceremony borrow is already
-                // released, so this re-borrow is safe.
+                // A granted host ceremony gets the design's brief "Approved" pop.
+                // Scoped to the ceremony ask — one per make/getAssertion, or per
+                // pinpad gate — NOT the shared `confirm_wait`: OpenPGP/PIV touch
+                // policies come in through `request` once per signature, and paying
+                // this ~0.4 s there would be a latency regression. The ceremony
+                // borrow is already released, so this re-borrow is safe.
                 self.ui
                     .borrow_mut()
                     .show_success(SuccessKind::Approved, Some(150));

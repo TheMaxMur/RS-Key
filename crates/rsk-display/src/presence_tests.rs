@@ -197,7 +197,7 @@ fn a_ccid_applet_reads_a_cancel_as_a_timeout() {
     let env = Env::new();
     let ui = prompt(&env, Pad::idle(), 5_000);
     ui.borrow_mut().hooks.cancel_in.set(Some(2));
-    let got = ask_card(&ui, rsk_openpgp::Confirm::titled("Sign?"));
+    let got = ask_card(&ui, Confirm::titled("Sign?"));
     assert_eq!(got, rsk_sdk::Presence::Timeout);
 }
 
@@ -205,7 +205,7 @@ fn a_ccid_applet_reads_a_cancel_as_a_timeout() {
 fn a_ccid_applet_still_hears_a_deny() {
     let env = Env::new();
     let ui = prompt(&env, Pad::taps(&[deny()]), 2_000);
-    let got = ask_card(&ui, rsk_openpgp::Confirm::titled("Sign?"));
+    let got = ask_card(&ui, Confirm::titled("Sign?"));
     assert_eq!(got, rsk_sdk::Presence::Declined);
 }
 

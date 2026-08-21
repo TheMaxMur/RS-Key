@@ -45,9 +45,9 @@ const POLL_MS: u64 = 16;
 
 const US_PER_MS: u64 = 1_000;
 
-/// Neutral wait result, mapped to each applet's own `Presence` enum by the
-/// backend. The button has no "declined" gesture; `Cancelled` comes from a
-/// transport-scoped cancel observed mid-wait.
+/// Neutral wait result, mapped to `rsk_sdk::Presence` by the backend — and a
+/// `Cancelled` only survives that mapping on the ceremony ask. The button has no
+/// "declined" gesture; `Cancelled` is a transport-scoped cancel seen mid-wait.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Outcome {
     Confirmed,

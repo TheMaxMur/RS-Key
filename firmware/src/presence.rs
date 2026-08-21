@@ -158,8 +158,8 @@ impl Board for Button {
 /// time so the worker wiring stays backend-agnostic. The standard key confirms
 /// with the BOOTSEL button (or a `PRESENCE_PIN` GPIO); the `display` build swaps
 /// this alias to the `crate::display::TouchPresence` that renders on-screen
-/// Approve/Deny and returns a real `Declined` — every applet's `UserPresence`
-/// trait is satisfied by whichever backend this names, so only this alias changes.
+/// Approve/Deny and returns a real `Declined`. Both satisfy the one
+/// `rsk_sdk::UserPresence` every applet asks through, so only this alias changes.
 #[cfg(not(feature = "display"))]
 pub type Presence = ButtonPresence;
 #[cfg(feature = "display")]

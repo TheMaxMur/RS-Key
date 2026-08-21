@@ -258,6 +258,32 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **The pinpad's "Allow host PIN entry?" gate lost its Approved card when the
+  presence seam moved.** `handle_secure_req` — the CCID `PC_to_RDR_Secure` path
+  behind an OpenPGP/PIV pinpad VERIFY on a trusted-display build — asked for
+  presence through `rsk_fido::UserPresence`, the only presence trait its scope
+  imported. Splitting the merged trait into `request` (a per-signature smartcard
+  touch policy) and `request_ceremony` (a host-raised ceremony) re-pointed that
+  one call at the leaner ask, silently: it still compiled, because the FIDO name
+  is now a re-export of the shared trait. The hold still approved the same thing
+  and every CCID status byte was unchanged, but the ~0.43 s "Approved" card that
+  told the holder their tap had landed stopped playing before the pad appeared.
+  It asks `request_ceremony` now — the same ask its twin, clientPIN built-in UV,
+  has always used — and names the seam `rsk_sdk::` so the resolution is a choice
+  rather than whichever trait happened to be in scope.
+
+  Nothing could have caught it: the path is `display`-gated firmware, which no
+  host test executes and which the emulator has no counterpart for (its CCID
+  answers `PC_to_RDR_Secure` with the no-pad default). So the thing that is
+  checkable is checked instead — `ASK_CENSUS` lists every production presence
+  ask in `crates/` and `firmware/src` with which of the two it is, and
+  `every_presence_ask_is_the_one_its_caller_means` fails when a call changes
+  column. Falsified four ways, one at a time: putting the defect back reports
+  `worker.rs` as `(0 ceremony, 1 touch)` against a census of `(1, 0)`; the
+  inverse — PIV's slot policy taking the ceremony ask — reports `auth.rs` the
+  other way round; and blinding either half of the walk fails on the anchor
+  (`the scan missed …`) rather than passing over an empty scan.
+
 - **The accepted attestation-chain length depended on whether a PIN was set.**
   `MAX_RAW_SUBPARA` is scratch for the pinUvAuth MAC, so its length check sits on
   the PIN branch — a PIN-less `ATT_IMPORT` accepted chains a PIN-protected one

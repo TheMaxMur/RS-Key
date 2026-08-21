@@ -188,8 +188,9 @@ applets through `rsk_sdk::UserPresence`, which the firmware implements once:
 FIDO operations, OpenPGP UIF, PIV touch policies, OATH touch accounts, and OTP
 slot typing (1–4 presses select the slot) all gate on it. The trait has two
 asks, because a screen answers them differently: `request` for a smartcard
-touch policy, and `request_ceremony` for a CTAP2 ceremony — which alone can be
-cancelled mid-wait (`CTAPHID_CANCEL`) and so alone can answer
+touch policy, one per signature, and `request_ceremony` for a ceremony a host
+raised — a CTAP2 command, or the pinpad's "Allow host PIN entry?" gate — which
+alone can be cancelled mid-wait (`CTAPHID_CANCEL`) and so alone can answer
 `Presence::Cancelled`. The no-touch build (`--features no-touch`)
 auto-confirms. For test rigs, not for daily use.
 

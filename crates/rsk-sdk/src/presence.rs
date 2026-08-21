@@ -60,8 +60,10 @@ pub trait UserPresence {
     /// one reports it here as [`Presence::Timeout`].
     fn request(&mut self, confirm: Confirm<'_>) -> Presence;
 
-    /// Ask for presence as part of a CTAP2/WebAuthn ceremony. Split from
-    /// [`request`](Self::request) because a screen answers the two differently:
+    /// Ask for presence to open a ceremony a host raised: a CTAP2/WebAuthn
+    /// command, or the trusted display's gate before it collects a CCID pinpad
+    /// PIN. One ask per command, where [`request`](Self::request) is one per
+    /// signature. Split from it because a screen answers the two differently:
     /// the trusted display runs the registration card for
     /// [`ConfirmKind::Register`](crate::ConfirmKind::Register) and closes an
     /// approved ceremony with a brief "Approved" pop, which on a per-signature

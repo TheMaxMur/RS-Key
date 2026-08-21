@@ -310,8 +310,8 @@ impl<'a> Worker<'a> {
     /// `presence` is the one BOOTSEL button, shared (through its `RefCell`) by the
     /// FIDO handler (CTAP user presence), the OpenPGP applet (the UIF DOs), the
     /// OTP applet (CHAL_BTN_TRIG) and the OATH applet (PROP_TOUCH credentials) —
-    /// the `&RefCell<ButtonPresence>` coerces to each applet's `UserPresence`
-    /// trait.
+    /// they all ask through the one `rsk_sdk::UserPresence` that the
+    /// `&RefCell<ButtonPresence>` coerces to.
     #[allow(clippy::too_many_arguments)] // one-time wiring from main
     pub fn new(
         fs: &'a RefCell<Store>,
@@ -556,7 +556,7 @@ impl<'a> Worker<'a> {
     /// so it is borrow-disjoint from `self.ccid`/`fs`.
     #[cfg(feature = "display")]
     fn handle_secure_req(&mut self, ex: &mut Exchange) {
-        use rsk_fido::UserPresence as _;
+        use rsk_sdk::UserPresence as _;
         use rsk_usb::ccid::{SECURE_ERR_CANCELLED, SECURE_ERR_TIMEOUT, SECURE_STATUS_FAILED};
         let failed = |ex: &mut Exchange, err: u8| {
             ex.resp_len = 0;
@@ -571,14 +571,14 @@ impl<'a> Worker<'a> {
         if req.operation != 0x00 {
             return failed(ex, 0);
         }
-        // The pad is a trusted-display ceremony, so it gets the contract the rest of
-        // them have. Its direct twin — clientPIN built-in UV, the other way a host
-        // makes this panel paint a PIN pad — runs a readiness check that refuses
-        // WITHOUT painting and then an explicit "Allow host access?" hold, and audit
-        // run-28 already ruled a bare host-raised prompt a defect. This path had
-        // neither: any local PC/SC client could raise "OpenPGP Admin PIN" at a moment
-        // of its choosing, and OpenPGP's UIF default is touch-off, so a typed PW3 was
-        // spendable from the attacker's own session with no further prompt.
+        // The pad is a host-raised ceremony — so `request_ceremony`, one ask per pinpad
+        // VERIFY, and not `request`, which OpenPGP/PIV spend once per signature. Its
+        // direct twin, clientPIN built-in UV (the other way a host makes this panel
+        // paint a PIN pad), runs a readiness check that refuses WITHOUT painting and
+        // then an explicit "Allow host access?" hold, and audit run-28 already ruled a
+        // bare host-raised prompt a defect. This path had neither: any local PC/SC
+        // client could raise "OpenPGP Admin PIN" when it chose, and OpenPGP's UIF
+        // default is touch-off, so a typed PW3 was spendable from that same session.
         let p2 = req.apdu_template.get(3).copied().unwrap_or(0);
         if !self.ccid.pin_ref_ready(p2) {
             return failed(ex, 0);
@@ -589,8 +589,8 @@ impl<'a> Worker<'a> {
         if !matches!(
             self.presence
                 .borrow_mut()
-                .request(rsk_fido::Confirm::titled("Allow host PIN entry?")),
-            rsk_fido::Presence::Confirmed
+                .request_ceremony(rsk_sdk::Confirm::titled("Allow host PIN entry?")),
+            rsk_sdk::Presence::Confirmed
         ) {
             return failed(ex, SECURE_ERR_CANCELLED);
         }
@@ -600,7 +600,7 @@ impl<'a> Worker<'a> {
             .borrow_mut()
             .collect_pin_titled(title, min_len, &mut pin);
         match entry {
-            rsk_fido::PinEntry::Entered(n) => {
+            rsk_sdk::PinEntry::Entered(n) => {
                 let mut apdu = [0u8; 5 + rsk_usb::secure_pin::MAX_PIN];
                 if let Some(len) =
                     rsk_usb::secure_pin::assemble_verify(req.apdu_template, &pin[..n], &mut apdu)
@@ -621,11 +621,11 @@ impl<'a> Worker<'a> {
                 }
                 apdu.zeroize();
             }
-            rsk_fido::PinEntry::Cancelled | rsk_fido::PinEntry::Declined => {
+            rsk_sdk::PinEntry::Cancelled | rsk_sdk::PinEntry::Declined => {
                 failed(ex, SECURE_ERR_CANCELLED)
             }
-            rsk_fido::PinEntry::Timeout => failed(ex, SECURE_ERR_TIMEOUT),
-            rsk_fido::PinEntry::Unsupported => failed(ex, 0),
+            rsk_sdk::PinEntry::Timeout => failed(ex, SECURE_ERR_TIMEOUT),
+            rsk_sdk::PinEntry::Unsupported => failed(ex, 0),
         }
         pin.zeroize();
     }

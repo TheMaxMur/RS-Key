@@ -35,9 +35,6 @@ impl Rng for CountRng {
     }
 }
 
-// `AlwaysConfirm` so the presence-gated commands (attestation sign / cert / phy
-// write / BOOTSEL) stay reachable for the fuzzer.
-
 struct FakePlatform {
     time: Option<u32>,
     flags0: [u32; 3],
@@ -87,6 +84,8 @@ fuzz_target!(|data: &[u8]| {
         time: None,
         flags0: [0; 3],
     });
+    // Confirm instantly, so the presence-gated commands (attestation sign / cert /
+    // phy write / BOOTSEL) stay reachable for the fuzzer.
     let presence = RefCell::new(AlwaysConfirm);
     let mut app = RescueApplet::new(
         SERIAL_ID,
