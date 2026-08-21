@@ -180,7 +180,7 @@ CONTRIBUTING.md → "Code".
 | Path | What |
 |---|---|
 | `firmware/` | The binary: boot, USB, the worker's sequencing, LED, presence, and the board halves of `rsk-device`'s `Hooks` / `rsk-vendor`'s `Platform`. `no_std`, embedded-only. |
-| `crates/rsk-*` | The libraries (fido, piv, openpgp, oath, otp, mgmt, vendor, device, fs, store, crypto, rescue, sdk, usb, led, rsa-asm). Host-tested. |
+| `crates/rsk-*` | The libraries, and the one thing that separates them from `firmware/`: they are **host-tested**, so host-testable logic belongs here. Which crates exist is [`docs/architecture.md`](docs/architecture.md#crates) — `scripts/crate_graph.py` holds that table to the workspace members, so it is the list that cannot go stale. Naming them here instead is what drifted across four refactors. |
 | `tools/rsk/` | The Python host CLI (`rsk …`). Match the neighbouring modules: `register(sub)`, `die()`, flake-provided deps (no pip). |
 | `tools/tui/` | The Rust TUI cockpit — **its own workspace** (build/clippy/test via its own manifest). |
 | `tools/emu/` | The software emulator — **its own workspace**. Runs the applet crates on the host over TCP, so `tests/*.py` need no board. |
