@@ -2211,7 +2211,6 @@ dependencies = [
  "rsk-led",
  "rsk-phy",
  "rsk-sdk",
- "sha2 0.10.9",
  "zeroize",
 ]
 

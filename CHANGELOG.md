@@ -40,6 +40,47 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Internal
 
+- **The FIDO applet declared the hash backend the crypto facade exists to hide,
+  and compiled not one line against it.** `crates/rsk-fido/Cargo.toml` carried
+  `sha2` in `[dependencies]`, while every digest the applet takes goes through
+  `rsk_crypto::{sha256, hmac_sha256, hkdf_sha256, hkdf_sha512}`: no `sha2::`
+  path, no `use sha2`, no `Sha256`/`Sha384`/`Sha512`/`Digest`/`FixedOutput`
+  anywhere under its `src/` — and the same grep, pointed at `rsk-crypto/src`,
+  returns 17 lines, so it can see one when there is one to see. That edge is
+  what the facade's own receipt is against:
+  `5fbeeb3` swapped SHA-512 from `sha2` to `rsk-sha512` by editing
+  `rsk-crypto/src/hash.rs` and `mac.rs` and no applet file at all. The
+  `kani-soft` feature's `sha2/force-soft` came down with the dependency and was
+  redundant next to `rsk-crypto/kani-soft`, which already sets it — which is
+  what `rsk-openpgp`, `rsk-oath` and `rsk-otp` forward and nothing else, along
+  with `rsk-bip39` and `rsk-slip39`. (`rsk-piv` still names its own beside that
+  one. Different shape, and left alone: its `sha2` is a dev-dependency its
+  `src/tests.rs` hashes with seven times.) Both are gone, and the dependency's
+  five-line explanation with them — the three-line pointer at `rsk-crypto` that
+  every other forwarder carries says it now. `cargo tree -p rsk-fido --features
+  kani-soft` still resolves `sha2 v0.10.9|force-soft`, and the SLOW and LIGHT1
+  tier selections still `cargo check` one package at a time, which is how
+  `cargo kani` re-invokes them — worth doing by hand, because **no row in
+  `check.sh` ever builds with `--features kani-soft`**; only the weekly Kani
+  tiers do. Refactor, no behaviour change — but the image moves, so the counter
+  does. Nothing grew: all 28 workspace members' normal-dependency closures
+  (`cargo tree --edges normal`) are identical before and after, and the
+  comparator was falsified first — pointed at an injected `rsk-oath → rsk-ec`
+  it names the 12 crates that edge would add. `sha2 0.10.9` still reaches
+  `rsk-fido` through `rsk-crypto` and `ed25519-dalek`. And the default shipping
+  image — `cargo build --release -p firmware`, no features, taken before the
+  16M/display/no-touch rebuilds overwrite the ELF — is the same program:
+  `.text` 810 500 and `.bss` 337 556 bytes on both sides, 1343 function labels
+  on both sides, 264 254 instructions on both sides, and **81 of those
+  instructions differ**, every one of them a relocated immediate — 79 `movw`
+  low halves of `movw`/`movt` address pairs, and 2 `d4d4` inter-function
+  padding half-words objdump renders as `bmi.n`, each sitting after a diverging
+  instruction and before the next function's symbol. Byte-identity is not
+  reachable for a manifest edit at all — dropping a dependency changes the
+  crate's `-C metadata` hash and with it the symbol and `.rodata` numbering — so
+  the bar is instead: same instruction count, same mnemonic profile, and every
+  difference enumerated and accounted for.
+
 - **The shared EC public-key DO chose both of its length forms from the point
   width, and one of them measures something else.** `make_ec_pubkey_do` builds
   `7F49 { 86 <point> }`: the inner length counts the point, the outer one counts
