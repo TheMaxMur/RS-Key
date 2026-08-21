@@ -7753,3 +7753,51 @@ fn the_rsa_relaxation_does_not_cross_a_family_or_a_curve() {
         "a refused algorithm must not spend the freshness"
     );
 }
+
+/// `MAX_EC_POINT` is 97 — a P-384 point — and `PrivKey::public_point` writes with
+/// `copy_from_slice`, so a wider curve is a panic, not an error. Nothing tied the
+/// two hand-written curve rosters to that number; this does, from both ends.
+#[test]
+fn every_curve_piv_accepts_fits_its_point_buffer() {
+    let mut rng = TestRng(0x5EA1_C0DE);
+    let mut seen = 0;
+
+    // Both rosters over their whole input domain, so widening either one without
+    // raising `MAX_EC_POINT` fails here rather than on a device.
+    type Roster = (&'static str, fn(u8) -> Option<Curve>);
+    let rosters: [Roster; 2] = [
+        ("curve_from_id", crate::seal::curve_from_id),
+        ("curve_for_algo", crate::keygen::curve_for_algo),
+    ];
+
+    for (roster, decode) in rosters {
+        for byte in 0..=u8::MAX {
+            let Some(curve) = decode(byte) else { continue };
+            seen += 1;
+            let key = PrivKey::generate(curve, &mut crate::EcRng(&mut rng))
+                .unwrap_or_else(|| panic!("{roster}({byte:#04x}) -> {curve:?}: no key"));
+
+            // Measured in a buffer that cannot overflow, so the failure is this
+            // assertion and not a slice panic three frames down.
+            let mut wide = [0u8; rsk_ec::MAX_EC_POINT];
+            let n = key
+                .public_point(&mut wide)
+                .unwrap_or_else(|_| panic!("{roster}({byte:#04x}) -> {curve:?}: no point"));
+            assert!(
+                n <= MAX_EC_POINT,
+                "{roster}({byte:#04x}) accepts {curve:?}, whose point is {n} bytes, \
+                 but PIV sizes its buffers MAX_EC_POINT = {MAX_EC_POINT}: raise it \
+                 or drop the curve"
+            );
+
+            // …and then the real one, because the assertion above is about a
+            // length while the ten call sites are about this array.
+            let mut real = [0u8; MAX_EC_POINT];
+            assert_eq!(key.public_point(&mut real).unwrap(), n);
+            assert_eq!(&real[..n], &wide[..n]);
+        }
+    }
+
+    // A roster this loop failed to read would pass every assertion above.
+    assert_eq!(seen, 8, "expected 4 curves from each roster, walked {seen}");
+}

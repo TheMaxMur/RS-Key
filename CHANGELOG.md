@@ -40,6 +40,20 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Internal
 
+- **Two hand-written curve rosters bounded a buffer size, and nothing said so.**
+  `rsk-piv`'s `MAX_EC_POINT` is 97 — a P-384 point — while
+  `rsk_ec::PrivKey::public_point` writes up to 133 for P-521 and writes with
+  `copy_from_slice`, so a curve one byte too wide is a panic on the first key
+  operation, not an error. 97 was safe only because `curve_for_algo` and
+  `curve_from_id` each accept four curves and no wider one; no test tied either
+  roster to the number. One now walks both over their whole `u8` domain and
+  asserts the point fits. Falsified three ways: `5 => Curve::P521` fails on the
+  width assertion naming P-521 at 133 against 97; dropping a curve and blinding
+  the walk each fail on the roster count, so a loop that reads nothing cannot
+  pass. `curve_from_id` is `pub(crate)` to be reachable, matching its sibling —
+  refactor, no behaviour change, and the counter moves because bcdDevice counts
+  builds.
+
 - **The crate tiers were true and nothing could tell.** Applet-to-applet edges
   reached zero over the tier refactor — six manifest edges (`fido→mgmt`,
   `fido→rescue`, `openpgp→mgmt`, `piv→mgmt`, `piv→openpgp`, `otp→mgmt`) down to

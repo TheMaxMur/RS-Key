@@ -254,7 +254,7 @@ pub fn load_rsa_crt<S: Storage>(dev: &Device, fs: &mut Fs<S>, fid: KeyFid) -> Re
 /// The read side is narrower than [`Curve::id`] on purpose: PIV stores only
 /// P-256/P-384 and the 25519 pair, so a blob tagged with any other curve is a
 /// record this applet never wrote and must not decode.
-fn curve_from_id(b: u8) -> Option<Curve> {
+pub(crate) fn curve_from_id(b: u8) -> Option<Curve> {
     Some(match b {
         3 => Curve::P256,
         4 => Curve::P384,
