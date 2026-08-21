@@ -36,8 +36,8 @@ the gap between "no suffix" and "not classified".
 
 A checked type may still be excused file by file — [`UNHEADERED`] — and only file
 by file. The three `.github/ISSUE_TEMPLATE/*.yml` forms carry no header while the
-eight workflow files and `dependabot.yml` all do, so excusing the *extension*
-would have left every future workflow unchecked in order to excuse three forms.
+workflow files and `dependabot.yml` all do, so excusing the *extension* would
+have left every future workflow unchecked in order to excuse three forms.
 
 ## The exemptions, and their debt
 
@@ -117,8 +117,8 @@ EXEMPT = {
 }
 
 #: Files of a checked type that carry no header for a stated reason. Listed one
-#: by one, never by directory: `.yml` is checked because the eight workflow files
-#: and `dependabot.yml` all carry the header, and blanket-excusing the extension
+#: by one, never by directory: `.yml` is checked because the workflow files and
+#: `dependabot.yml` all carry the header, and blanket-excusing the extension
 #: would have left every FUTURE workflow unchecked to excuse these three. Also
 #: checked for staleness — one naming a file that is gone, or that has since
 #: grown a header, fails.
