@@ -55,7 +55,7 @@ CONSTANTS
     \* The selection clamp removed: `pin_fresh` outlives the `has_pin` status it
     \* refines. `pfresh` remains the requirement-side copy that exposes the split.
     BugPinFreshOutlivesPin,
-    \* The same shape one applet over: crates/rsk-openpgp/src/keys.rs:984-988,
+    \* The same shape one applet over: crates/rsk-openpgp/src/keys.rs:405-409,
     \* `inc_sig_count` clearing has_pw1 under the one-shot PW status.
     BugSigPinNotSpent,
     \* A user status opening the ADMIN surface -- the reverse of
@@ -115,7 +115,7 @@ VARIABLES
     sel,    \* Dispatcher::current            (crates/rsk-sdk/src/applet.rs:145)
     held,   \* [Refs -> BOOLEAN]: the in-RAM security statuses
     \* PIV's `pin_fresh` -- the UNSPENT half of `has_pin`, which a PIN-policy
-    \* ALWAYS key operation consumes (crates/rsk-piv/src/lib.rs:143-157). The
+    \* ALWAYS key operation consumes (crates/rsk-piv/src/lib.rs:165-179). The
     \* only status here that is a two-part thing.
     fresh,
     \* Whether OATH has an access code provisioned. It decides what a SELECT
@@ -124,7 +124,7 @@ VARIABLES
     \* status a SELECT can take away.
     oathCodeSet,
     \* Whether PW1 is the one-shot kind: EF_PW_PRIV[0] = 0 makes PW1.81 valid for
-    \* exactly one PSO:CDS (crates/rsk-openpgp/src/keys.rs:984-988), which is
+    \* exactly one PSO:CDS (crates/rsk-openpgp/src/keys.rs:405-409), which is
     \* `pin_fresh` on the other applet. Host-writable through PUT DATA C4.
     oneShotSig,
     \* Ghost: the PW1.81 freshness the requirement leaves behind, spent by every
@@ -174,7 +174,7 @@ Init ==
     /\ viol  = {}
 
 \* Every status an applet owns, gone. This is `Session::reset`
-\* (crates/rsk-piv/src/lib.rs:177-181), `pin::Session::reset`
+\* (crates/rsk-piv/src/lib.rs:199-203), `pin::Session::reset`
 \* (crates/rsk-openpgp/src/pin.rs:67-80) and OATH's `deselect`
 \* (crates/rsk-oath/src/lib.rs:1171-1175) -- three functions, one meaning.
 ClearedFor(h, a) ==
@@ -242,9 +242,9 @@ SelectOther(a) ==
 (* disagree about what a refusal costs -- see the invariant's comment.      *)
 (***************************************************************************)
 
-\* PIV VERIFY (crates/rsk-piv/src/lib.rs:499-513): success sets has_pin AND
+\* PIV VERIFY (crates/rsk-piv/src/lib.rs:521-535): success sets has_pin AND
 \* pin_fresh, refusal clears both, through `Session::set_pin`
-\* (crates/rsk-piv/src/lib.rs:161-164) which is the only writer of either.
+\* (crates/rsk-piv/src/lib.rs:183-186) which is the only writer of either.
 PivVerify(ok) ==
     /\ sel = Piv
     /\ held' = [held EXCEPT !["pivPin"] = ok]
@@ -255,7 +255,7 @@ PivVerify(ok) ==
     /\ UNCHANGED << sel, oneShotSig, psig, oathCodeSet, viol >>
 
 \* PIV CHANGE REFERENCE DATA / RESET RETRY COUNTER take no `&mut Session` at all
-\* (crates/rsk-piv/src/lib.rs:521-555), so a refused change costs the standing
+\* (crates/rsk-piv/src/lib.rs:543-577), so a refused change costs the standing
 \* status NOTHING. Deliberate, and settled by measurement rather than taste:
 \* SP 800-73-4 pt2 3.2.2/3.2.3 say the security status is unchanged and a real
 \* YubiKey keeps it.
@@ -423,7 +423,7 @@ PgpKeyOp(r) ==
 \* PUT DATA C4 -- the PW status byte that makes PW1.81 one-shot -- is an
 \* ADMINISTRATIVE write, gated on PW3 by `write_authorized`
 \* (crates/rsk-openpgp/src/putdata.rs:59-65, called at
-\* crates/rsk-openpgp/src/lib.rs:253-255), and it is the only writer of that
+\* crates/rsk-openpgp/src/lib.rs:249-251), and it is the only writer of that
 \* status. The gate was `held["pw3"]` and nothing else: an enabling conjunct with
 \* no Policy, in the family this module's sibling README spends four sections on.
 \* Removing it left the reachable space BIT-IDENTICAL at 666 distinct states,
@@ -620,7 +620,7 @@ NoKeyOpOnTheAdminStatus ==
 \* THE OTHER HALF OF THE REFUSAL RULE, and it points the opposite way: two
 \* refusals must cost NOTHING, and each is settled by its own authority rather
 \* than by a cross-applet principle. PIV's CHANGE REFERENCE DATA takes no
-\* `&mut Session` at all (crates/rsk-piv/src/lib.rs:521-555) -- SP 800-73-4 pt2
+\* `&mut Session` at all (crates/rsk-piv/src/lib.rs:543-577) -- SP 800-73-4 pt2
 \* 3.2.2/3.2.3, plus a measured YubiKey 5.7.4. OATH's access-code VALIDATE keeps
 \* the standing unlock (crates/rsk-oath/src/lib.rs:510-512), because a MAC
 \* challenge-response has no retry counter for a refusal to protect.

@@ -29,10 +29,6 @@ pub mod putdata;
 pub mod select;
 pub mod terminate;
 
-#[cfg(test)]
-#[path = "bp_kat.rs"]
-mod bp_kat;
-
 use core::cell::RefCell;
 
 use rsk_crypto::{Device, FusedKey, read_fused};

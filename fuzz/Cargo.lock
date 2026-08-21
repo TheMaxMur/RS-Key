@@ -1415,12 +1415,17 @@ dependencies = [
 name = "rsk-ec"
 version = "0.1.0"
 dependencies = [
+ "bp256",
+ "bp384",
  "ecdsa",
+ "ed25519-dalek",
+ "elliptic-curve",
  "k256",
  "p256",
  "p384",
  "p521",
  "rfc6979",
+ "x25519-dalek",
  "zeroize",
 ]
 
@@ -1467,6 +1472,7 @@ dependencies = [
  "rsk-crypto",
  "rsk-devconf",
  "rsk-device",
+ "rsk-ec",
  "rsk-fido",
  "rsk-fs",
  "rsk-mgmt",
@@ -1522,21 +1528,11 @@ dependencies = [
 name = "rsk-openpgp"
 version = "0.1.0"
 dependencies = [
- "bp256",
- "bp384",
- "ecdsa",
- "ed25519-dalek",
- "elliptic-curve",
- "k256",
- "p256",
- "p384",
- "p521",
  "rsk-crypto",
  "rsk-ec",
  "rsk-fs",
  "rsk-rsa",
  "rsk-sdk",
- "x25519-dalek",
  "zeroize",
 ]
 
@@ -1564,8 +1560,8 @@ name = "rsk-piv"
 version = "0.1.0"
 dependencies = [
  "rsk-crypto",
+ "rsk-ec",
  "rsk-fs",
- "rsk-openpgp",
  "rsk-rsa",
  "rsk-sdk",
  "zeroize",

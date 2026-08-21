@@ -40,6 +40,84 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Internal
 
+- **The PIV applet borrowed the OpenPGP applet's elliptic-curve key type, and
+  that was the last applet reaching sideways.** `Curve`, `PrivKey` and
+  `make_ec_pubkey_do` lived in `rsk-openpgp/src/keys.rs`, so `rsk-piv` — which
+  shares none of OpenPGP's DO model, PW1/PW3 sessions or DEK seal — depended on
+  the whole applet for a key type, an eight-value curve tag and a TLV wrapper.
+  Six `use rsk_openpgp::keys::…` sites and one manifest dependency; both are
+  now zero, and with them the last applet→applet edge in the tree. Measured
+  over all 56 ordered applet pairs: **0 manifest edges, 0 `rsk_x::` uses in
+  code**. Six `rsk_<applet>::` references survive, every one inside a comment
+  where one applet explains its ordering by pointing at a sibling that does the
+  same thing — prose, not a dependency. Both halves are a `git grep` anyone can
+  re-run — `^rsk-<b> = ` in `crates/rsk-<a>/Cargo.toml`, and `rsk_<b>::` under
+  `crates/rsk-<a>/src` — and the counter was falsified before it was believed:
+  pointed at `rsk-sdk` the same two greps find the edge from all eight applets,
+  2 to 48 uses each.
+
+  The key type went to `rsk-ec`, beside the fixed-base comb it already signs
+  through, and the crate's charter grew to match: it is the EC layer now, not
+  just the comb. `Curve::id` — the persisted `[curve_id]` byte both applets tag
+  a sealed key with — became public, which deleted PIV's byte-identical hand
+  copy of the same eight-arm table. `MAX_EC_SIG` / `MAX_EC_POINT` followed the
+  operations whose output they bound. What did **not** follow: `curve_from_attr`
+  maps an OpenPGP *algorithm attribute* to a curve and stays with the DO model
+  that defines those attributes, and `store_ec_key` / `load_ec_key` stay with
+  the DEK seal they are I/O for. All 17 tests of the moved code went with it or
+  stayed with what they test — 14 to `rsk-ec` (4 raw-signature, 3 X25519, 7
+  brainpool KAT), 3 kept in `rsk-openpgp` (the attribute mapping, and the two
+  DEK-seal tests, in a file that no longer calls itself `keys_x25519_tests`) —
+  none rewritten, none lost, and 8 new ones on top.
+
+  `make_ec_pubkey_do` is not curve vocabulary — it is the `7F49 { 86 <point> }`
+  data object both applets answer GENERATE and IMPORT with. It went to
+  `rsk-ec/src/pubdo.rs`, which is where `rsk_rsa::pubdo` already holds
+  `7F49 { 81 <N> · 82 <E> }` for exactly the same reason; splitting the two
+  halves of one DO family across two crates would have been the worse answer.
+  `rsk-sdk::tlv` was the other candidate and is the wrong one: it holds generic
+  BER primitives, not named objects. Its new `MAX_EC_PUBDO` replaces PIV's
+  `[0u8; 110]` and OpenPGP's twice-written `8 + MAX_EC_POINT`.
+
+  `rsk-ec` is tier 0 and gained **no** `rsk-*` dependency (`cargo tree -p rsk-ec
+  -e normal --depth 1`: twelve third-party crates, not one of them `rsk-*`).
+  Two things had to be cut for that, both along seams `rsk-rsa` had already
+  cut. `Sw` became `EcError` — three variants, each naming the status word its
+  callers answer with, reproduced at each applet's APDU edge by `ec_sw` and
+  pinned arm by arm (`ec_sw_reproduces_every_status_word`, in both crates). The
+  split between `Failed` and `BadPoint` is load-bearing: it is what keeps a
+  refused signature at `6400` while a malformed ECDH peer point stays `6984`.
+  And `PrivKey::generate` takes `rsk_ec::Rng`, bridged by an `EcRng` beside each
+  applet's existing `RsaRng`. `PrivKey::sign` needed no bridge at all — its
+  `_rng` parameter had been dead since every curve here became deterministic,
+  and carrying it would have meant building an adapter for an argument nobody
+  reads.
+
+  **Nothing an already-provisioned key depends on moved**, and that is measured
+  rather than intended. Undo the one mechanical substitution the tier boundary
+  forced — `Sw::EXEC_ERROR`/`DATA_INVALID`/`FUNC_NOT_SUPPORTED` → the matching
+  `EcError` variant, and `rsk_ec::` → `crate::` — and the three moved spans
+  differ from their parent (`868653b`) **only** in the crate header, the module
+  docs, the test hooks, two `pub`s and `sign`'s signature. No arithmetic, no
+  control flow, no buffer width and no error direction moved. The
+  sealed blob is still `[curve_id] ‖ scalar`, the eight tags are written out
+  one by one in a test rather than round-tripped (a renumbering would move both
+  sides of a round-trip together), and four real records sealed by the
+  `868653b` build — P-256, P-384, Ed25519, X25519 — are checked into
+  `rsk-piv`'s tests and must still load. Falsified: remapping PIV's
+  `curve_from_id` fails that test with "P256 decoded as the wrong curve",
+  flipping one fixture byte with "record from the old build refused". Remapping
+  `rsk_ec::Curve::from_id` leaves it GREEN — PIV reads through its own,
+  deliberately narrower table — and is caught by `rsk-ec`'s own two tests
+  instead. `docs/protocol.md` describes neither of these: the curve tag is
+  at-rest only, and the `7F49` DO is the public spec's, byte-unchanged.
+
+  The image is **not** byte-identical this time, and should not be: dropping a
+  fat pointer from the six `sign` call sites in shipped code, narrowing a returned `Sw` to a
+  one-byte error and deleting PIV's duplicate tag table take the flashable
+  image from 811 504 to **810 584 bytes, 920 smaller** (same with `bcdDevice`
+  pinned, so the counter is not the difference).
+
 - **Four applets reached into the management applet for a config record and a
   serial.** `EF_DEV_CONF` — the Yubico DeviceInfo record `ykman config usb`
   writes, and the READ CONFIG response built around it — lived inside

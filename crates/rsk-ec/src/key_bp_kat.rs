@@ -1,16 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 RS-Key contributors
 
-//! Brainpool known-answer tests: drive the real applet key API
-//! (`PrivKey::from_scalar` → `public_point` / `ecdh` / `sign`) and check it
-//! byte-exact against independent OpenSSL 3.6 vectors (public point + ECDH), plus
-//! a deterministic sign → verify roundtrip. Vectors were generated with
+//! Brainpool known-answer tests: drive the real key API (`PrivKey::from_scalar`
+//! → `public_point` / `ecdh` / `sign`) and check it byte-exact against
+//! independent OpenSSL 3.6 vectors (public point + ECDH), plus a deterministic
+//! sign → verify roundtrip. Vectors were generated with
 //! `openssl genpkey …:brainpoolP256r1/P384r1` + `openssl pkeyutl -derive`.
 
-use alloc::vec::Vec;
-
-use crate::Rng;
-use crate::keys::{Curve, PrivKey};
+use super::*;
 
 fn unhex(s: &str) -> Vec<u8> {
     (0..s.len())
@@ -76,7 +73,7 @@ fn bp256_sign_roundtrip() {
     let k = PrivKey::from_scalar(Curve::Bp256, &unhex(BP256_A_PRIV)).unwrap();
     let prehash = [0x42u8; 32];
     let mut sig = [0u8; 132];
-    let n = k.sign(&prehash, &mut FixedRng(0), &mut sig).unwrap();
+    let n = k.sign(&prehash, &mut sig).unwrap();
     assert_eq!(n, 64);
     let vk = ecdsa::VerifyingKey::<bp256::BrainpoolP256r1>::from_sec1_bytes(&unhex(BP256_A_PUB))
         .unwrap();
@@ -90,7 +87,7 @@ fn bp384_sign_roundtrip() {
     let k = PrivKey::from_scalar(Curve::Bp384, &unhex(BP384_A_PRIV)).unwrap();
     let prehash = [0x42u8; 48];
     let mut sig = [0u8; 132];
-    let n = k.sign(&prehash, &mut FixedRng(0), &mut sig).unwrap();
+    let n = k.sign(&prehash, &mut sig).unwrap();
     assert_eq!(n, 96);
     let vk = ecdsa::VerifyingKey::<bp384::BrainpoolP384r1>::from_sec1_bytes(&unhex(BP384_A_PUB))
         .unwrap();
@@ -106,7 +103,7 @@ fn bp256_generate_then_sign_verifies() {
     let pn = k.public_point(&mut pub_pt).unwrap();
     let prehash = [0x7bu8; 32];
     let mut sig = [0u8; 132];
-    let n = k.sign(&prehash, &mut FixedRng(0), &mut sig).unwrap();
+    let n = k.sign(&prehash, &mut sig).unwrap();
     let vk = ecdsa::VerifyingKey::<bp256::BrainpoolP256r1>::from_sec1_bytes(&pub_pt[..pn]).unwrap();
     let s = bp256::r1::ecdsa::Signature::from_slice(&sig[..n]).unwrap();
     vk.verify_prehash(&prehash, &s).unwrap();

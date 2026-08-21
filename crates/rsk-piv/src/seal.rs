@@ -9,8 +9,8 @@
 //! provisioned, `kbase` — and so this seal — roots in the hardware fuse key.
 
 use rsk_crypto::{Device, aes256gcm_decrypt, aes256gcm_encrypt, hkdf_sha256};
+use rsk_ec::{Curve, PrivKey};
 use rsk_fs::{Fs, KeyFid, Sealed, Storage};
-use rsk_openpgp::keys::{Curve, PrivKey};
 use rsk_rsa::{RSA_PUB_EXP_BE, RsaKey, crt};
 use rsk_sdk::Rng;
 use rsk_sdk::Sw;
@@ -149,7 +149,8 @@ pub fn migrate_kbase<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng
     }
 }
 
-/// Seal an EC key as `[curve_id] ‖ scalar` (the OpenPGP blob layout).
+/// Seal an EC key as `[curve_id] ‖ scalar` — the same blob layout the OpenPGP
+/// applet writes, under a different key (see the module doc).
 pub fn store_ec_key<S: Storage>(
     dev: &Device,
     fs: &mut Fs<S>,
@@ -159,7 +160,7 @@ pub fn store_ec_key<S: Storage>(
 ) -> Result<(), Sw> {
     let scalar = key.scalar();
     let mut plain = [0u8; 1 + 66];
-    plain[0] = curve_id(key.curve());
+    plain[0] = key.curve().id();
     plain[1..1 + scalar.len()].copy_from_slice(scalar);
     let r = seal_put(dev, fs, rng, fid, &plain[..1 + scalar.len()]);
     plain.zeroize();
@@ -250,22 +251,9 @@ pub fn load_rsa_crt<S: Storage>(dev: &Device, fs: &mut Fs<S>, fid: KeyFid) -> Re
     r
 }
 
-/// Our internal curve tags (shared values with rsk-openpgp's blob format).
-fn curve_id(c: Curve) -> u8 {
-    match c {
-        Curve::P256 => 3,
-        Curve::P384 => 4,
-        Curve::P521 => 5,
-        Curve::K256 => 12,
-        // Shared tags with rsk-openpgp Curve::id(); PIV never generates brainpool
-        // but the exhaustive match must cover every variant.
-        Curve::Bp256 => 6,
-        Curve::Bp384 => 7,
-        Curve::Ed25519 => 30,
-        Curve::X25519 => 31,
-    }
-}
-
+/// The read side is narrower than [`Curve::id`] on purpose: PIV stores only
+/// P-256/P-384 and the 25519 pair, so a blob tagged with any other curve is a
+/// record this applet never wrote and must not decode.
 fn curve_from_id(b: u8) -> Option<Curve> {
     Some(match b {
         3 => Curve::P256,

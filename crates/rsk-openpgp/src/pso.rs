@@ -15,7 +15,7 @@ use zeroize::Zeroize;
 use crate::consts::*;
 use crate::importdata::tag_len;
 use crate::keys::{
-    inc_sig_count, load_aes_key, load_ec_key, load_rsa_crt, load_rsa_key, rsa_decipher,
+    ec_sw, inc_sig_count, load_aes_key, load_ec_key, load_rsa_crt, load_rsa_key, rsa_decipher,
     rsa_decipher_legacy, rsa_sw,
 };
 use crate::pin::Session;
@@ -131,13 +131,13 @@ fn try_pso<S: Storage>(
     let key = load_ec_key(dev, fs, sess, pk_fid)?;
     if (p1, p2) == (0x9E, 0x9A) {
         // COMPUTE SIGNATURE over the supplied digest / message.
-        let n = key.sign(data, rng, out)?;
+        let n = key.sign(data, out).map_err(ec_sw)?;
         inc_sig_count(fs, sess)?;
         Ok(n)
     } else {
         // DECIPHER (ECDH): extract the peer public point and agree.
         let point = parse_ecdh_point(data).ok_or(Sw::WRONG_DATA)?;
-        key.ecdh(point, out)
+        key.ecdh(point, out).map_err(ec_sw)
     }
 }
 

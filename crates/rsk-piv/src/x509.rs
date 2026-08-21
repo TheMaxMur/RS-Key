@@ -15,7 +15,7 @@
 //! .3.9 (form factor).
 
 use rsk_crypto::{sha1, sha256, sha384};
-use rsk_openpgp::keys::{Curve, PrivKey};
+use rsk_ec::{Curve, PrivKey};
 use rsk_rsa::RsaKey;
 use rsk_rsa::pkcs1v15::rsa_sign;
 use rsk_sdk::Rng;
@@ -409,7 +409,7 @@ pub fn build_cert(
     let issuer_hash = match signer {
         Signer::Ec(k) | Signer::Ed25519(k) => {
             let mut pt = [0u8; MAX_EC_POINT];
-            let n = k.public_point(&mut pt)?;
+            let n = k.public_point(&mut pt).map_err(crate::ec_sw)?;
             sha1(&pt[..n])
         }
         Signer::Rsa(k) => {
@@ -470,7 +470,7 @@ pub fn build_cert(
     let sig_len = match signer {
         Signer::Ec(k) => {
             let mut raw = [0u8; 96];
-            let rn = k.sign(digest, rng, &mut raw)?;
+            let rn = k.sign(digest, &mut raw).map_err(crate::ec_sw)?;
             ecdsa_der(&raw[..rn], &mut sig)?
         }
         Signer::Rsa(k) => {
@@ -478,7 +478,7 @@ pub fn build_cert(
         }
         // PureEdDSA signs the whole TBS, not a digest; the 64-byte signature
         // goes straight into the BIT STRING (no ASN.1 wrapping).
-        Signer::Ed25519(k) => k.sign(tbs_bytes, rng, &mut sig)?,
+        Signer::Ed25519(k) => k.sign(tbs_bytes, &mut sig).map_err(crate::ec_sw)?,
     };
 
     // --- Certificate = SEQ { tbs, sigalg, BIT STRING sig }.

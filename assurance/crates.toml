@@ -125,8 +125,8 @@ note = "functional division spec + the sieve, proved."
 
 [crate.rsk-ec]
 class = "pure"
-evidence = ["crates/rsk-ec/src/tests.rs"]
-note = "zero Kani proofs and NOT a gap: byte-identical differential vs p256/p384/k256/p521 — a differential against a reference beats a proof here."
+evidence = ["crates/rsk-ec/src/tests.rs", "crates/rsk-ec/src/key_tests.rs", "crates/rsk-ec/src/key_x25519_tests.rs", "crates/rsk-ec/src/key_bp_kat.rs", "crates/rsk-ec/src/curve_tests.rs", "crates/rsk-ec/src/pubdo_tests.rs"]
+note = "the crate is the comb signers AND, since the key type came down out of rsk-openpgp, the PrivKey/Curve both card applets seal plus the 7F49 public-key DO. Still pure — no flash, no status word, no session. Zero Kani proofs and NOT a gap: every operation is checked against an independent reference rather than a model — byte-identical differential vs p256/p384/k256/p521 for the comb, OpenSSL 3.6 vectors for brainpool, RFC 7748 for X25519, and a re-parse of the DO for the wrapper. The one thing no differential can catch is a renumbered curve tag, because both sides would move together: curve_tests.rs writes the eight persisted bytes out one by one instead."
 
 [crate.rsk-sha512]
 class = "pure"

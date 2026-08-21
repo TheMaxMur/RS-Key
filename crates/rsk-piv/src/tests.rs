@@ -2,8 +2,8 @@
 // Copyright (C) 2026 RS-Key contributors
 
 use super::*;
+use rsk_ec::{Curve, PrivKey};
 use rsk_fs::storage::ram::RamStorage;
-use rsk_openpgp::keys::{Curve, PrivKey};
 
 use std::cell::Cell;
 use std::collections::HashMap;
@@ -174,6 +174,80 @@ fn rsa_sw_reproduces_every_status_word() {
         Sw::EXEC_ERROR,
         "a failed computation must stay 6400"
     );
+}
+
+#[test]
+fn ec_sw_reproduces_every_status_word() {
+    // The EC twin of the table above, and it must stay identical to the other
+    // applet's copy — `rsk-ec` names the target in each variant's doc. Assert
+    // the three arms one by one, so a swapped pair cannot pass by covering for
+    // each other.
+    assert_eq!(
+        ec_sw(EcError::Failed),
+        Sw::EXEC_ERROR,
+        "a failed computation must stay 6400"
+    );
+    assert_eq!(
+        ec_sw(EcError::BadPoint),
+        Sw::DATA_INVALID,
+        "an unusable point or scalar must stay 6984"
+    );
+    assert_eq!(
+        ec_sw(EcError::Unsupported),
+        Sw::FUNC_NOT_SUPPORTED,
+        "an operation the curve does not offer must stay 6A81"
+    );
+}
+
+#[test]
+fn keys_sealed_by_the_previous_build_still_load() {
+    // Real records, produced by the build at 868653b — the commit before the EC
+    // key type left `rsk-openpgp` for `rsk-ec` — with this Device, this scalar
+    // and TestRng(0xC0FFEE). They are the whole cross-version surface of the
+    // move: `[curve_id] ‖ scalar` under the kbase seal, read back through
+    // `Curve::from_id` and `PrivKey::from_scalar`. A renumbered tag or a changed
+    // scalar width would leave a provisioned key unloadable, and neither a
+    // round-trip within one build nor a differential against RustCrypto can see
+    // that, because both sides would move together. (All four were sealed by one
+    // fixed test RNG and so share a nonce — a fixture artifact over four public
+    // plaintexts, never a device property.)
+    let dev = Device {
+        serial_hash: &HASH,
+        serial_id: &SERIAL,
+        otp_key: None,
+    };
+    let fid = key_fid(SLOT_AUTHENTICATION);
+    let cases: [(&str, Curve, &[u8]); 4] = [
+        (
+            "82ffe4b5fee89f055612b6d84ae7f6864dfb7a69929400c0fc086a11f66bbb852febb70601032f2b25fa1cbdba01d5126056f1790abb1d1e955584d720",
+            Curve::P256,
+            &[0x11u8; 32],
+        ),
+        (
+            "82ffe4b5fee89f055612b6d84dd4c5b57ec8495aa1a733f3cf3b5922c55888b61cd8843532301c1816c92f8e899fbf96a62813a9d3dbed14d231fd87e22c7bfe7ff949a95a1ed5e1fd946a1f18",
+            Curve::P384,
+            &[0x22u8; 48],
+        ),
+        (
+            "82ffe4b5fee89f055612b6d857c5d4a46fd9584bb0b622e2de2a4833d44999a70dc9952423210d0907d83e9f98164012f379dae4d7a307be0e76c35848",
+            Curve::Ed25519,
+            &[0x33u8; 32],
+        ),
+        (
+            "82ffe4b5fee89f055612b6d856b2a3d318ae2f3cc7c15595a95d3f44a33eeed07abee25354567a7e70af49e8ef736acf46f9ed19aab1c57b4abe656413",
+            Curve::X25519,
+            &[0x44u8; 32],
+        ),
+    ];
+    for (blob_hex, curve, scalar) in cases {
+        let blob = rsk_rsa::vectors::hex(blob_hex);
+        let mut fs = new_fs();
+        fs.put_key(fid, Sealed::wrap(&blob)).unwrap();
+        let key = seal::load_ec_key(&dev, &mut fs, fid)
+            .unwrap_or_else(|e| panic!("{curve:?} record from the old build refused: {e:?}"));
+        assert_eq!(key.curve(), curve, "{curve:?} decoded as the wrong curve");
+        assert_eq!(key.scalar(), scalar, "{curve:?} scalar came back changed");
+    }
 }
 
 #[test]

@@ -19,6 +19,7 @@
 
 use rsk_crypto::{Device, HmacDrbg, MlKem768Pair, base64url, chachapoly, sha256};
 use rsk_crypto::{kdf::PinKdf, mldsa44_verify, mlkem768_encapsulate, pinproto};
+use rsk_ec::{Curve, PrivKey};
 use rsk_fido::credential::{CredExt, CredInput, credential_create, credential_load};
 use rsk_fido::hmacsecret;
 use rsk_fido::seed::{ensure_seed, load_keydev};
@@ -26,7 +27,7 @@ use rsk_fido::{Ctx, FidoState, Rng};
 use rsk_fs::Fs;
 use rsk_fs::storage::ram::RamStorage;
 use rsk_openpgp::consts::{PW1_DEFAULT, PW1_MODE81, PW1_MODE82, PW3_DEFAULT, PW3_MODE83};
-use rsk_openpgp::keys::{Curve, PrivKey, curve_from_attr};
+use rsk_openpgp::keys::curve_from_attr;
 use rsk_openpgp::pso::parse_ecdh_point;
 use rsk_openpgp::{OpenpgpApplet, scan_files};
 use rsk_otp::hid::{FrameRx, FrameTx, REPORT_SIZE, RxOutcome};

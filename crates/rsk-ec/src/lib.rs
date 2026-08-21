@@ -3,10 +3,21 @@
 
 #![cfg_attr(not(test), no_std)]
 
-//! Fixed-base Lim–Lee comb scalar multiplication and comb-based ECDSA signing for
-//! the NIST/secp Weierstrass curves (P-256, P-384, P-521, secp256k1), shared by
-//! every applet that signs on the generator `G` — FIDO credentials, PIV GENERAL
-//! AUTHENTICATE, OpenPGP PSO:CDS.
+//! The elliptic-curve layer: the private key both card applets seal
+//! ([`PrivKey`] over [`Curve`]) with its signing / public-point / ECDH
+//! operations, the public-key DO they answer with ([`pubdo`]), and — underneath
+//! all of it — fixed-base Lim–Lee comb scalar multiplication and comb-based
+//! ECDSA signing for the NIST/secp Weierstrass curves (P-256, P-384, P-521,
+//! secp256k1), shared by every applet that signs on the generator `G`: FIDO
+//! credentials, PIV GENERAL AUTHENTICATE, OpenPGP PSO:CDS.
+//!
+//! The key type covers more curves than the comb does — Ed25519 (signing) and
+//! X25519 (ECDH) are Montgomery/Edwards and brainpool has no comb table — because
+//! what the applets share is the *stored blob*, `[curve_id] ‖ scalar`, and that
+//! is one type or it is two copies. The comb is an implementation detail of the
+//! four curves that have one.
+//!
+//! Nothing here names a status word or a filesystem; see [`EcError`].
 //!
 //! `k·G` (the ECDSA nonce commitment) and `d·G` (public-key derivation) are both
 //! *fixed-base* on `G`, so a width-4 comb over a `build.rs`-precomputed table runs
@@ -18,6 +29,19 @@
 //! comb spliced in for `R = k·G`, so their output is byte-for-byte the crate's — the
 //! caller supplies the message digest (a prehash) and encodes the returned
 //! `Signature` (DER for FIDO, raw `r‖s` for PIV/OpenPGP).
+
+pub mod pubdo;
+
+mod curve;
+mod error;
+mod key;
+mod rng;
+
+pub use curve::Curve;
+pub use error::EcError;
+pub use key::{MAX_EC_POINT, MAX_EC_SIG, PrivKey};
+pub use pubdo::{MAX_EC_PUBDO, make_ec_pubkey_do};
+pub use rng::Rng;
 
 // Fixed-base comb tables (`build.rs`-generated): 16 entries `T[i]`, affine `(x, y)`
 // big-endian; `T[0]` is an unused identity sentinel.

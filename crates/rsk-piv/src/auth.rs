@@ -12,8 +12,8 @@
 use rsk_crypto::{
     Device, aes_ecb_decrypt_block, aes_ecb_encrypt_block, des3_decrypt_block, des3_encrypt_block,
 };
+use rsk_ec::PrivKey;
 use rsk_fs::{Fs, Storage};
-use rsk_openpgp::keys::PrivKey;
 use rsk_rsa::crt;
 use rsk_sdk::tlv::{Tlv, find_tag};
 use rsk_sdk::{Presence, ResBuf, Rng, Sw, UserPresence};
@@ -276,7 +276,7 @@ impl<S: Storage> GenAuth<'_, S> {
                 check_touch(self.touch_policy, self.presence)?;
                 let key = self.load_ec()?;
                 let mut raw = [0u8; 96];
-                let rn = key.sign(c, self.rng, &mut raw)?;
+                let rn = key.sign(c, &mut raw).map_err(crate::ec_sw)?;
                 let mut der = [0u8; 112];
                 let dn = x509::ecdsa_sig_der(&raw[..rn], &mut der)?;
                 dyn_auth_resp(res, TAG_AUTH_RESPONSE, &der[..dn])?;
@@ -287,7 +287,7 @@ impl<S: Storage> GenAuth<'_, S> {
                 // PureEdDSA signs the raw message `c`; the 64-byte signature is
                 // returned bare (no ASN.1 wrapping).
                 let mut sig = [0u8; 64];
-                let n = key.sign(c, self.rng, &mut sig)?;
+                let n = key.sign(c, &mut sig).map_err(crate::ec_sw)?;
                 dyn_auth_resp(res, TAG_AUTH_RESPONSE, &sig[..n])?;
             }
             ALGO_3DES | ALGO_AES128 | ALGO_AES192 | ALGO_AES256 => {

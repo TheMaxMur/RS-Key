@@ -6,9 +6,9 @@
 //! `rsk-piv` — the PIV card applet: the NIST SP 800-73-4 command subset plus the
 //! Yubico extensions `ykman piv` / `yubico-piv-tool` exercise (metadata, serial,
 //! attestation, move/delete, set-mgm-key, set-retries, reset), reached over CCID.
-//! Pure and host-testable; key machinery comes from `rsk-openpgp`, private keys
-//! at rest are GCM-sealed (`seal`), and management operations (IMPORT KEY, PUT
-//! DATA, SET MGM KEY, MOVE KEY, SET RETRIES) require management-key auth.
+//! Pure and host-testable; the key types come from `rsk-ec` / `rsk-rsa`, private
+//! keys at rest are GCM-sealed (`seal`), and management operations (IMPORT KEY,
+//! PUT DATA, SET MGM KEY, MOVE KEY, SET RETRIES) require management-key auth.
 
 extern crate alloc;
 
@@ -23,6 +23,7 @@ mod x509;
 use core::cell::RefCell;
 
 use rsk_crypto::{Device, FusedKey, FusedRead, read_fused};
+use rsk_ec::EcError;
 use rsk_fs::{Fs, Sealed, Storage};
 use rsk_rsa::{MAX_RSA_BYTES, MAX_RSA_PUBDO, RSA_PUB_EXP_BE, RsaError, RsaKey, make_rsa_pub_body};
 // The randomness and the slot touch-policy check are `rsk-sdk`'s seams, shared
@@ -73,6 +74,27 @@ pub(crate) fn rsa_sw(e: RsaError) -> Sw {
 pub(crate) struct RsaRng<'a>(pub(crate) &'a mut dyn Rng);
 
 impl rsk_rsa::Rng for RsaRng<'_> {
+    fn fill(&mut self, buf: &mut [u8]) {
+        self.0.fill(buf);
+    }
+}
+
+/// The status word each [`EcError`] answers with — the EC twin of [`rsa_sw`],
+/// and `rsk-openpgp` (`keys::ec_sw`) carries the same three arms for the same
+/// reason. `ec_sw_reproduces_every_status_word` pins them.
+pub(crate) fn ec_sw(e: EcError) -> Sw {
+    match e {
+        EcError::Failed => Sw::EXEC_ERROR,
+        EcError::BadPoint => Sw::DATA_INVALID,
+        EcError::Unsupported => Sw::FUNC_NOT_SUPPORTED,
+    }
+}
+
+/// The same bridge as [`RsaRng`] for `rsk-ec`, which declares its own `Rng` for
+/// the same reason. Only [`rsk_ec::PrivKey::generate`] draws from it.
+pub(crate) struct EcRng<'a>(pub(crate) &'a mut dyn Rng);
+
+impl rsk_ec::Rng for EcRng<'_> {
     fn fill(&mut self, buf: &mut [u8]) {
         self.0.fill(buf);
     }
@@ -978,7 +1000,7 @@ impl PivApplet<'_> {
                     };
                     let plen = match key.public_point(&mut point) {
                         Ok(p) => p,
-                        Err(e) => return e,
+                        Err(e) => return ec_sw(e),
                     };
                     &point[..plen]
                 };

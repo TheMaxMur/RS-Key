@@ -16,6 +16,9 @@ rsk-usb = { path = "../crates/rsk-usb" }
 rsk-crypto = { path = "../crates/rsk-crypto" }
 rsk-fido = { path = "../crates/rsk-fido" }
 rsk-openpgp = { path = "../crates/rsk-openpgp" }
+# The EC key type the two openpgp_ec* targets drive directly (`PrivKey` over
+# `Curve`); the applet no longer owns it, only its algorithm-attribute mapping.
+rsk-ec = { path = "../crates/rsk-ec" }
 # The RSA layer the two openpgp_* RSA targets now fuzz directly: the DigestInfo
 # parser (`rsa_sign_em`) and the import-side key rebuild (`rsa_from_pqe`).
 rsk-rsa = { path = "../crates/rsk-rsa" }

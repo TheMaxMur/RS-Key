@@ -12,11 +12,11 @@ use rsk_sdk::Sw;
 use crate::Rng;
 use crate::consts::*;
 use crate::keys::{
-    MAX_EC_POINT, PrivKey, curve_from_attr, make_ec_pubkey_do, reset_sig_count, store_aes_key,
-    store_ec_key, store_rsa_key,
+    EcRng, curve_from_attr, ec_sw, reset_sig_count, store_aes_key, store_ec_key, store_rsa_key,
 };
 use crate::origin;
 use crate::pin::Session;
+use rsk_ec::{MAX_EC_POINT, MAX_EC_PUBDO, PrivKey, make_ec_pubkey_do};
 use rsk_rsa::{MAX_RSA_PUBDO, RsaKey, generate_rsa, make_rsa_response};
 
 /// GENERATE ASYMMETRIC KEY PAIR (INS 0x47). Returns `(response_len, status)`;
@@ -128,11 +128,11 @@ fn generate<S: Storage>(
         }
         ALGO_ECDSA | ALGO_ECDH | ALGO_EDDSA => {
             let curve = curve_from_attr(algo).ok_or(Sw::FUNC_NOT_SUPPORTED)?;
-            let key = PrivKey::generate(curve, rng).ok_or(Sw::EXEC_ERROR)?;
+            let key = PrivKey::generate(curve, &mut EcRng(rng)).ok_or(Sw::EXEC_ERROR)?;
             store_ec_key(dev, fs, sess, fid, &key)?;
             let mut point = [0u8; MAX_EC_POINT];
-            let plen = key.public_point(&mut point)?;
-            let mut pub_do = [0u8; 8 + MAX_EC_POINT];
+            let plen = key.public_point(&mut point).map_err(ec_sw)?;
+            let mut pub_do = [0u8; MAX_EC_PUBDO];
             let n = make_ec_pubkey_do(&point[..plen], &mut pub_do);
             store_public(fs, fid, &pub_do[..n], out)?
         }

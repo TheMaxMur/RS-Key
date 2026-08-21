@@ -23,25 +23,22 @@ rsk-fs = { workspace = true }
 rsk-crypto = { workspace = true }
 # `alloc` for the Vec impls (RSA prime bytes + decipher plaintext).
 zeroize = { workspace = true, features = ["alloc"] }
-p256 = { workspace = true }
-p384 = { workspace = true }
-p521 = { workspace = true }
-k256 = { workspace = true }
-# Brainpool P-256 / P-384 for the OpenPGP applet — see the workspace note.
-bp256 = { workspace = true }
-bp384 = { workspace = true }
-ecdsa = { workspace = true }
-elliptic-curve = { workspace = true }
-ed25519-dalek = { workspace = true }
-x25519-dalek = { workspace = true }
 # The RSA family: the key type rebuilt from `P‖Q` on load, the sealed CRT layout
 # and its blinded, fault-checked private op, PKCS#1 v1.5, the public-key DO.
 rsk-rsa = { workspace = true }
-# Shared fixed-base comb ECDSA signers + d·G (k·G for sign, public-key derivation).
+# The EC family: the `[curve_id] ‖ scalar` key type this applet DEK-seals, its
+# sign / d·G / ECDH operations, and the `7F49 { 86 }` public-key DO — over the
+# fixed-base comb. Ten RustCrypto curve crates left this manifest with it; two
+# come back under [dev-dependencies] as the tests' independent oracle, and the
+# applet names none of them in code it ships.
 rsk-ec = { workspace = true }
 
 [dev-dependencies]
 rsk-fs = { workspace = true, features = ["test-util"] }
+# Independent P-256 / Ed25519 to verify card-produced signatures and agreements
+# in the applet tests — the oracle, never a code path.
+p256 = { workspace = true }
+ed25519-dalek = { workspace = true }
 # The KAT vectors and the PKCS#1 v1.5 verifier the RSA tests check a
 # card-produced signature against — the oracle the `rsa` crate used to be.
 rsk-rsa = { workspace = true, features = ["test-util"] }
