@@ -416,14 +416,6 @@ fn has_tag(blob: &[u8], tag: u8) -> bool {
     false
 }
 
-/// Copy `blob` minus any CONFIG_LOCK (0x0A) / UNLOCK (0x0B) TLV entry into `out`,
-/// returning the stripped length. We do not implement the config lock, and READ
-/// CONFIG echoes this blob verbatim to any unauthenticated host over three transports,
-/// so retaining a 16-byte lock code would hand back a secret the user typed — real
-/// hardware treats 0x0A as write-only. If the TLV does not parse cleanly the blob is
-/// copied unchanged, so a config we do not understand is never corrupted (an attacker's
-/// own malformed write is readable by them regardless). `out` must be at least
-/// `blob.len()` bytes.
 /// Whether `blob` is a clean run of TLV entries whose every tag a host may write.
 /// Empty is fine (it clears the record). Rejecting here rather than sanitizing on
 /// read keeps one definition of "what a host may store" and means READ CONFIG can
@@ -505,6 +497,14 @@ fn whole_tlvs(blob: &[u8]) -> usize {
     i
 }
 
+/// Copy `blob` minus any CONFIG_LOCK (0x0A) / UNLOCK (0x0B) TLV entry into `out`,
+/// returning the stripped length. We do not implement the config lock, and READ
+/// CONFIG echoes this blob verbatim to any unauthenticated host over three transports,
+/// so retaining a 16-byte lock code would hand back a secret the user typed — real
+/// hardware treats 0x0A as write-only. If the TLV does not parse cleanly the blob is
+/// copied unchanged, so a config we do not understand is never corrupted (an attacker's
+/// own malformed write is readable by them regardless). `out` must be at least
+/// `blob.len()` bytes.
 fn strip_config_lock(blob: &[u8], out: &mut [u8]) -> usize {
     let mut i = 0;
     let mut n = 0;
