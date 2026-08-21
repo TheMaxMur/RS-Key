@@ -40,6 +40,35 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Internal
 
+- **The crate tiers were true and nothing could tell.** Applet-to-applet edges
+  reached zero over the tier refactor — six manifest edges (`fido→mgmt`,
+  `fido→rescue`, `openpgp→mgmt`, `piv→mgmt`, `piv→openpgp`, `otp→mgmt`) down to
+  none — and the only thing holding them there was that everyone remembered.
+  `deny.toml` now states the rule as a graph assertion on the existing
+  `cargo-deny` row: each of the eight applet crates is reachable only from
+  `firmware`, `rsk-device` and `rsk-display`; `sha2`, `sha1`, `rsk-sha512` and
+  `rsk-mldsa` only from `rsk-crypto`; `rsk-ec` and `rsk-rsa` from a named
+  allowlist rather than through the facade, because routing them behind it would
+  put 11 and 12 third-party crates into the closure of the five that do neither.
+  A sideways edge exits 2 there instead of waiting for a reviewer to notice it,
+  and `-D unused-wrapper` fails the row the other way too — when an allowlisted
+  edge is gone and its entry has quietly become decoration. Host-side only: no
+  firmware file moved, so no `bcdDevice` bump.
+
+- **The crate-layer drawing named 17 of 28 crates, under a footer reading
+  "Source: workspace Cargo.toml manifests".** So 57 of the 100 manifest edges
+  had an endpoint it could not draw at all. It also showed seven applets against
+  a registered eight, still carried the already-deleted `rsk-piv → rsk-openpgp`,
+  put `rsk-rsa` in the platform tier beside `rsk-sdk`, and claimed every applet
+  builds on `rsk-crypto` when `rsk-mgmt` and `rsk-vendor` do not.
+  `scripts/crate_graph.py` emits it now — every name, count and note off the
+  manifests — and a new `crate graph` gate row fails when the committed SVG has
+  drifted. The tier table is the one thing still written down, and the script
+  holds the manifests to it: a workspace member it does not place is a hard
+  failure, and so is any dependency that does not point into a later band.
+  `docs/architecture.md`'s alt text has to be the drawing's own `<desc>`, which
+  is how it came to say "seven applet crates" for a month.
+
 - **The FIDO applet declared the hash backend the crypto facade exists to hide,
   and compiled not one line against it.** `crates/rsk-fido/Cargo.toml` carried
   `sha2` in `[dependencies]`, while every digest the applet takes goes through

@@ -26,13 +26,15 @@ HERE = pathlib.Path(__file__).resolve().parent
 GATES = sorted(p.name for p in HERE.glob("*_gate.py") if not p.name.startswith("test_"))
 #: Guards the `*_gate.py` pattern cannot reach, so they are owed a table by name
 #: rather than by glob: `impact.py` is run by the pre-commit hook and not by
-#: `check.sh`, and `kani.sh` is a shell script. Both once had no table at all,
-#: which is the same blind spot one file over.
+#: `check.sh`, `kani.sh` is a shell script, and `crate_graph.py` is a generator
+#: whose `--check` mode is the gate row. Each once had no table at all, which is
+#: the same blind spot one file over.
 NAMED = {
     "../formal/run-tlc.sh": "test_run_tlc.py",
     "impact.py": "test_impact.py",
     "kani.sh": "test_kani_sh.py",
     "comutate.py": "test_comutate.py",
+    "crate_graph.py": "test_crate_graph.py",
 }
 #: The pytest invocation that has to reach the tests, wherever it is spelled.
 COLLECTS = re.compile(r"pytest\s+([^\n|;&]*)")

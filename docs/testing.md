@@ -37,6 +37,17 @@ below the 2560K code region), `cargo-audit`, `cargo-deny`, `cargo-vet` and
 `gitleaks`.
 Green check.sh is the bar for every commit.
 
+Two of those rows hold the crate tiers of
+[architecture.md](architecture.md#crates) rather than a dependency's licence or
+CVEs. `cargo-deny`'s `[bans]` stanza is the enforcing one: an applet that names
+another applet, or any crate but `rsk-crypto` that names one of the four
+hash/signature backends, is a banned edge and the row exits 2. The
+`-D unused-wrapper` flag fails it the other way too, when an allowlisted edge is
+gone and its entry has quietly become decoration. The `crate graph` row
+regenerates `docs/images/crate-graph.svg` from the manifests and fails when the
+committed drawing has drifted from them; its mutation table is
+`scripts/test_crate_graph.py`.
+
 ## Host tests
 
 `cargo test` must target the host explicitly (the workspace defaults to

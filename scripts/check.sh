@@ -518,7 +518,11 @@ run_tests "test (emu)"               cargo test --manifest-path tools/emu/Cargo.
 run_tests "test (emu security trace)" cargo test --manifest-path tools/emu/Cargo.toml --target "$HOST" --features security-trace
 run_tests "test (emu conformance)"   cargo test --manifest-path tools/emu/Cargo.toml --target "$HOST" --features fido-conformance
 run "cargo-audit (emu SCA)"    cargo audit --file tools/emu/Cargo.lock
-run "cargo-deny"               cargo deny check
+# Also the crate-tier rule (deny.toml `[bans] deny`): an applet may not name
+# another applet, and a crypto backend may only be named by the facade.
+# `-D unused-wrapper` is what keeps that allowlist honest — without it a wrapper
+# name whose edge is gone stays in the file as decoration and nothing says so.
+run "cargo-deny"               cargo deny check -D unused-wrapper
 # Supply-chain provenance-of-review: every dependency must be covered by an
 # imported audit (mozilla/google/isrg/zcash) or a recorded exemption. Fails when
 # a new, unreviewed crate enters the tree. --locked uses the committed
@@ -547,6 +551,11 @@ run "kani roster"              python scripts/kani_gate.py
 # rotted to 16 of 24 in the docs, 20 on the nightly coverage row, 12 in the
 # flake. This holds every copy of that selection to the tree.
 run "crate roster"             python scripts/roster_gate.py
+# The crate-layer drawing was hand-kept under a footer claiming the manifests
+# were its source: it named 17 of 28 crates, so 57 of the 100 edges had an
+# endpoint it could not draw, and it showed seven applets against eight. It is
+# emitted from the manifests now, and this row notices when it drifts.
+run "crate graph"              python scripts/crate_graph.py --check
 # Three conventions AGENTS.md states and nothing enforced: the `bcdDevice` bump
 # (skipped three times in two days), the CHANGELOG entry that owes it, and the
 # SPDX header on every source file. Ported from Wasefire's `ci-changelog.sh` and

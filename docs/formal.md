@@ -186,13 +186,13 @@ be named in production Rust somewhere. Firmware sources count as owners for the
 boot module. The shared check runs from both `assurance_gate.py` and
 `citation_gate.py`.
 
-The evidence table and 26-member workspace coverage ledger in
+The evidence table and 28-member workspace coverage ledger in
 `formal/README.md` are generated from that same audit. Cross-model `Supports`
 tags close the two FIDO properties whose persistent half is owned by the store
 module. The ordinary gate rejects a stale block; regenerate it after evidence
 moves with `python scripts/assurance_gate.py --write-readme`.
 
-`assurance/crates.toml` is the same discipline one level up: all 26 workspace
+`assurance/crates.toml` is the same discipline one level up: all 28 workspace
 members classified — state modelled, modelled in part with the gap named,
 unmodelled with the roadmap module named, pure with the differential or proof
 files named, or out of scope with a reason. The ledger exists because

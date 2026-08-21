@@ -30,6 +30,73 @@ private = { ignore = true }
 [bans]
 multiple-versions = "warn"
 
+# The crate-tier rules of docs/architecture.md, as a graph assertion.
+#
+# Nothing below is "a bad crate" — most entries are ours. `wrappers` is an
+# allowlist of the crates permitted to depend on the entry, so a tier violation
+# is a build error rather than a thing a reviewer has to notice. Every name is a
+# measured edge, not a reservation: `check.sh` passes `-D unused-wrapper`, so a
+# wrapper that stops being real fails the gate too and the list cannot rot into
+# decoration. Widening a list is the reviewable diff that admits a new edge.
+#
+# The root workspace is the whole surface for this. Every crate named below is a
+# member of it, so an edge *between* two of them is declared in a member's own
+# manifest and shows up here whoever adds it. `tools/emu`, `tools/tui` and
+# `fuzz/` are detached workspaces this row cannot see, and the only parent each
+# of them adds is its own binary — a composition root by construction, and
+# allowed to reach anything.
+deny = [
+    # R2 — an applet never reaches sideways. The eight applets are composed by
+    # the two device wirings and the firmware binary, and by nothing else. Six
+    # such edges stood before the tier refactor (fido→mgmt, fido→rescue,
+    # openpgp→mgmt, piv→mgmt, piv→openpgp, otp→mgmt); the machinery under each
+    # moved down into rsk-phy, rsk-devconf, rsk-ec and rsk-rsa instead.
+    { crate = "rsk-fido", wrappers = ["firmware", "rsk-device", "rsk-display"], reason = "R2: an applet is composed by a device wiring, never named by another applet" },
+    { crate = "rsk-openpgp", wrappers = ["firmware", "rsk-device", "rsk-display"], reason = "R2: an applet is composed by a device wiring, never named by another applet" },
+    { crate = "rsk-piv", wrappers = ["firmware", "rsk-device", "rsk-display"], reason = "R2: an applet is composed by a device wiring, never named by another applet" },
+    { crate = "rsk-oath", wrappers = ["firmware", "rsk-device", "rsk-display"], reason = "R2: an applet is composed by a device wiring, never named by another applet" },
+    { crate = "rsk-otp", wrappers = ["firmware", "rsk-device", "rsk-display"], reason = "R2: an applet is composed by a device wiring, never named by another applet" },
+    { crate = "rsk-mgmt", wrappers = ["firmware", "rsk-device", "rsk-display"], reason = "R2: an applet is composed by a device wiring, never named by another applet" },
+    # Rescue owns the BOOTSEL/OTP paths a display build deliberately leaves out,
+    # so its wrapper list is two, not three.
+    { crate = "rsk-rescue", wrappers = ["firmware", "rsk-device"], reason = "R2: an applet is composed by a device wiring, never named by another applet" },
+    { crate = "rsk-vendor", wrappers = ["firmware", "rsk-device", "rsk-display"], reason = "R2: an applet is composed by a device wiring, never named by another applet" },
+
+    # R3 — the crypto facade. No applet declares one of the four hash/signature
+    # backends below: `rsk-crypto` is the only crate of ours that does, bar two
+    # host-only test oracles. Swapping one then costs the facade and no applet —
+    # `5fbeeb3` moved the whole FIDO ratchet off `sha2` in 10 lines of
+    # rsk-crypto and zero applet files. Not every primitive is here: the
+    # RustCrypto curve crates are R6's accepted deviation, being the domain
+    # vocabulary, and rsk-fido and rsk-rescue do name those directly. sha2's
+    # third-party parents are graph facts rather than policy — those same curve
+    # crates hash internally.
+    { crate = "sha2", wrappers = [
+        "rsk-crypto",
+        "rsk-piv",       # dev-only: the RSA/ECDSA KAT oracle
+        "rsk-sha512",    # dev-only: byte-for-byte oracle for the crate it replaces
+        "bp256",
+        "bp384",
+        "ed25519-dalek",
+        "k256",
+        "p256",
+        "p384",
+        "p521",
+    ], reason = "R3: a hash backend is named by the crypto facade, not by an applet" },
+    { crate = "sha1", wrappers = ["rsk-crypto"], reason = "R3: a hash backend is named by the crypto facade, not by an applet" },
+    { crate = "rsk-sha512", wrappers = ["rsk-crypto"], reason = "R3: a hash backend is named by the crypto facade, not by an applet" },
+    { crate = "rsk-mldsa", wrappers = ["rsk-crypto"], reason = "R3: a signature backend is named by the crypto facade, not by an applet" },
+
+    # The asymmetric halves stay a named allowlist rather than a re-export
+    # behind rsk-crypto. Routing them through the facade would put 11 (EC) and
+    # 12 (RSA) third-party crates into the closure of the five that do neither —
+    # rsk-bip39, rsk-oath, rsk-otp, rsk-rescue, rsk-slip39. Feature-gating the
+    # re-export is worse: no `check.sh` row builds any of those five alone, so a
+    # single-crate `cargo clippy -p rsk-oath` could break under a green gate.
+    { crate = "rsk-ec", wrappers = ["rsk-fido", "rsk-openpgp", "rsk-piv"], reason = "R3: the EC layer is reached only by the applets that sign or seal an EC key" },
+    { crate = "rsk-rsa", wrappers = ["firmware", "rsk-device", "rsk-openpgp", "rsk-piv"], reason = "R3: the RSA layer is reached by an allowlisted applet or a composition root" },
+]
+
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
