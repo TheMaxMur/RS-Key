@@ -303,7 +303,7 @@ fuzz_targets_are_alive() {
   fi
 }
 
-# First because it is the cheapest row in the file (~0.2 s over eight files) and
+# First because it is the cheapest row in the file (~0.2 s over every file) and
 # because the class it catches makes a *different* check silently wrong: OpenSSF
 # Scorecard's SAST row parses EVERY file under `.github/workflows` with this same
 # actionlint, so one workflow that will not parse returns score -1 for the whole

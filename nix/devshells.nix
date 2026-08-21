@@ -40,7 +40,7 @@
       # which is the property the `require_pin_inputs` gap was invisible to.
       pkgs.cargo-mutants
 
-      # Workflow linting (the `workflows parse + lint` row in scripts/check.sh).
+      # Workflow linting (the `workflow lint` row in scripts/check.sh).
       # Nothing in the tree parsed `.github/workflows` at all, and a workflow
       # that does not parse is not merely a job that will not start: OpenSSF
       # Scorecard's SAST check runs actionlint over EVERY file in that directory,
