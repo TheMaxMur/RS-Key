@@ -48,8 +48,35 @@ fn every_reachable_point_width_re_parses() {
     }
 }
 
+#[test]
+fn every_width_the_encoder_is_specified_for_encodes_a_readable_length() {
+    // The test above walks the four widths a `PrivKey` can actually produce, and
+    // all four sit clear of the byte where a length stops fitting in the short
+    // form. Walk the whole documented domain instead: at a 126- or 127-byte
+    // point the point is still short-form while the object around it is 128 or
+    // 129, and choosing both forms from the point width put 0x80 (the indefinite
+    // length DER forbids) and 0x81 (a long form with no byte behind it) where a
+    // reader takes a short-form length.
+    for plen in 0..=MAX_EC_POINT {
+        let point: Vec<u8> = (0..plen).map(|i| i as u8).collect();
+        let mut out = [0u8; MAX_EC_PUBDO];
+        let n = make_ec_pubkey_do(&point, &mut out);
+        assert!(n <= MAX_EC_PUBDO, "plen {plen} overran MAX_EC_PUBDO");
+        let (tag, body) =
+            read_tlv(&out[..n]).unwrap_or_else(|| panic!("plen {plen}: outer DO unreadable"));
+        assert_eq!(tag, 0x7f49, "plen {plen}: outer tag");
+        let (tag, value) =
+            read_tlv(body).unwrap_or_else(|| panic!("plen {plen}: inner DO unreadable"));
+        assert_eq!(tag, 0x86, "plen {plen}: inner tag");
+        assert_eq!(value, &point[..], "plen {plen}: point survives the wrapper");
+    }
+}
+
 /// Minimal BER reader for the two shapes this DO uses: a 2-byte tag on the
 /// outer object, a 1-byte tag on the inner, and a short or `81`-long length.
+/// Strict about which form a length may take — DER wants the shortest encoding,
+/// so `81` may only carry a value the short form cannot hold. Without that, a
+/// mis-chosen threshold re-parses cleanly and the boundary is pinned by nothing.
 fn read_tlv(b: &[u8]) -> Option<(u16, &[u8])> {
     let mut p = 0;
     let mut tag = *b.get(p)? as u16;
@@ -61,7 +88,11 @@ fn read_tlv(b: &[u8]) -> Option<(u16, &[u8])> {
     let len = match *b.get(p)? {
         0x81 => {
             p += 2;
-            *b.get(p - 1)? as usize
+            let n = *b.get(p - 1)? as usize;
+            if n < 0x80 {
+                return None;
+            }
+            n
         }
         n if n < 0x80 => {
             p += 1;

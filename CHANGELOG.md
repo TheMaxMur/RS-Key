@@ -40,6 +40,29 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Internal
 
+- **The shared EC public-key DO chose both of its length forms from the point
+  width, and one of them measures something else.** `make_ec_pubkey_do` builds
+  `7F49 { 86 <point> }`: the inner length counts the point, the outer one counts
+  the whole `86` object around it, which is 2 or 3 bytes longer. Both took the
+  long form on `point.len() >= 128`, so a 126- or 127-byte point left the outer
+  length short-form while the value it had to carry was 128 or 129 — written out
+  as `80`, the indefinite length DER forbids, or as `81`, a long form with no
+  byte behind it. Either one mis-frames the key for every host that reads it.
+  Not reachable today and no shipped byte changes: `PrivKey::public_point`
+  returns 32, 65, 97 or 133 and nothing else, on all three call sites in both
+  applets, and an attacker-chosen IMPORT picks the scalar, not the point width.
+  But the encoder is `pub` in a tier-0 crate that exists to be called from more
+  than one place, and its own signature accepts the two widths it cannot encode.
+  Each length now takes the long form when the value *it* encodes reaches 128 —
+  the rule `rsk_sdk::tlv::format_len` already states two tiers up, where an
+  algorithm crate cannot reach it. The walk over reachable widths could not see
+  this (all four sit clear of the boundary), so a second one covers every width
+  the encoder is documented for, and its reader rejects a non-canonical length
+  instead of accepting it: without that, moving the threshold anywhere in
+  98..=133 re-parsed cleanly and was pinned by nothing. Falsified against the
+  previous encoder (`plen 126: outer DO unreadable`) and against a threshold
+  moved to 100 (`plen 100: inner DO unreadable`).
+
 - **The PIV applet borrowed the OpenPGP applet's elliptic-curve key type, and
   that was the last applet reaching sideways.** `Curve`, `PrivKey` and
   `make_ec_pubkey_do` lived in `rsk-openpgp/src/keys.rs`, so `rsk-piv` — which
@@ -108,15 +131,30 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   `curve_from_id` fails that test with "P256 decoded as the wrong curve",
   flipping one fixture byte with "record from the old build refused". Remapping
   `rsk_ec::Curve::from_id` leaves it GREEN — PIV reads through its own,
-  deliberately narrower table — and is caught by `rsk-ec`'s own two tests
-  instead. `docs/protocol.md` describes neither of these: the curve tag is
+  deliberately narrower table — and `curve_id_round_trips_and_rejects_unknown_tags`
+  in `rsk-ec` catches it instead (its sibling `curve_id_tags_are_frozen` reads
+  only `id()` and stays green, so it is one test, not two).
+  `docs/protocol.md` describes neither of these: the curve tag is
   at-rest only, and the `7F49` DO is the public spec's, byte-unchanged.
 
-  The image is **not** byte-identical this time, and should not be: dropping a
-  fat pointer from the six `sign` call sites in shipped code, narrowing a returned `Sw` to a
-  one-byte error and deleting PIV's duplicate tag table take the flashable
-  image from 811 504 to **810 584 bytes, 920 smaller** (same with `bcdDevice`
-  pinned, so the counter is not the difference).
+  The image is **not** byte-identical this time, and should not be: a clean
+  `cargo build --release -p firmware` goes from 811 500 to **810 580 bytes, 920
+  smaller** (`arm-none-eabi-size`, `text + data`, the sum `check.sh`'s budget row
+  takes; `bcdDevice` pinned, so the counter is not the difference). **None of the
+  deletions is why**, which is measured and not guessed: put the dead `_rng`
+  back at all six `sign` call sites and PIV's duplicate tag table back beside it,
+  and the image rebuilds at 810 580 — the same byte count, so the two of them
+  together are worth **zero**. PIV's `curve_id` never had a symbol of its own to
+  delete; it was already inlined into `store_ec_key`, and `Curve::id` inlines
+  into the same jump table. What actually moved is codegen: `PrivKey`'s four
+  large methods crossing a crate boundary re-cut the cross-crate inlining, 1047
+  symbols changed size, 80 512 bytes of gross movement, and −920 is the 1.2 %
+  that did not cancel. Nothing left the image. Every symbol that disappears is
+  one of the six that reappear under `rsk_ec::key::`, or a wrapper now inlined
+  into a caller that grew to match (`p521`'s `FieldElement::mul` into
+  `primeorder`, `sha2`'s `Sha512::finalize_into` into `hmac`), or two identical
+  one-instruction `Rng::fill` shims the linker folded (`RsaRng`, `EcRng`) — and
+  `.bss` is unchanged to the byte at 337 556.
 
 - **Four applets reached into the management applet for a config record and a
   serial.** `EF_DEV_CONF` — the Yubico DeviceInfo record `ykman config usb`

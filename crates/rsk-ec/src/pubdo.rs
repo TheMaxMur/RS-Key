@@ -18,25 +18,33 @@ use crate::MAX_EC_POINT;
 pub const MAX_EC_PUBDO: usize = 8 + MAX_EC_POINT;
 
 /// Wrap a public point as the public-key DO `7F49 { 86 <point> }`, with
-/// long-form lengths when the point ≥ 128 bytes (P-521). Returns the DO length;
-/// `out` must be at least [`MAX_EC_PUBDO`] wide.
+/// long-form lengths where they are needed (P-521 reaches both). Returns the DO
+/// length; `point` must be at most [`MAX_EC_POINT`] and `out` at least
+/// [`MAX_EC_PUBDO`] wide.
 pub fn make_ec_pubkey_do(point: &[u8], out: &mut [u8]) -> usize {
     let plen = point.len();
-    let long = plen >= 128;
+    // Each length takes the long form when the value *it* encodes reaches 128:
+    // the inner one measures the point, the outer one the whole `86` object
+    // around it. Deciding both from `plen` wrote 0x80 / 0x81 into the outer
+    // short-form slot at a 126- or 127-byte point. Same rule as
+    // `rsk_sdk::tlv::format_len`, which is two tiers up and cannot be called here.
+    let point_long = plen >= 128;
+    let body = plen + if point_long { 3 } else { 2 };
+    let body_long = body >= 128;
     let mut p = 0;
     out[p] = 0x7f;
     p += 1;
     out[p] = 0x49;
     p += 1;
-    if long {
+    if body_long {
         out[p] = 0x81;
         p += 1;
     }
-    out[p] = (plen + if long { 3 } else { 2 }) as u8;
+    out[p] = body as u8;
     p += 1;
     out[p] = 0x86;
     p += 1;
-    if long {
+    if point_long {
         out[p] = 0x81;
         p += 1;
     }
