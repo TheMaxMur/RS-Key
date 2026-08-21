@@ -135,7 +135,7 @@ evidence = ["crates/rsk-led/src/kani.rs"]
 [crate.rsk-phy]
 class = "pure"
 evidence = ["crates/rsk-phy/src/kani.rs", "fuzz/fuzz_targets/phy_tlv.rs"]
-note = "the EF_PHY codec, lifted out of rsk-rescue: parse/overlay/serialize are total functions over host- and flash-reachable bytes, with no state of their own."
+note = "the EF_PHY codec, lifted out of rsk-rescue: parse/overlay/serialize are total functions over host- and flash-reachable bytes. `load`/`save`/`merge_save` travel with them and DO touch flash — one FID, a read-modify-write, no lifecycle of its own — and who may drive that write is the callers' gate, not this crate's."
 
 [crate.rsk-bip39]
 class = "pure"

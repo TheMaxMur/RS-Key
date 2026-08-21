@@ -72,7 +72,7 @@ the rule does not miss.
 
 ## The paths
 
-`firmware/` and `crates/` — all 24 crates reach a shipped firmware flavour
+`firmware/` and `crates/` — every crate reaches a shipped firmware flavour
 (`rsk-ui`, `rsk-bip39`, `rsk-slip39` and `mipidsi` only the `display` one, which
 is shipped too), so there is no host-only crate to carve out. Cargo's own
 non-lib targets (`crates/*/tests|benches|examples/`) are excluded: cargo never

@@ -333,7 +333,7 @@ jobs:
       # workspace members that are not under crates/ and the two that are
       # thumbv8m-only, so the exclusion is the whole of it; scripts/roster_gate.py
       # holds this row and the header's copy of it to that pair. The 80% floor is
-      # a regression alarm, not a target: 85.0% line over the 24 crates
+      # a regression alarm, not a target: 85.0% line over the host crates
       # (aarch64-apple-darwin), so a real drop fails and noise does not.
       - name: llvm-cov — host-crate line coverage, floored at 80%
         run: |

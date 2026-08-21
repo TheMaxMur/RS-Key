@@ -47,6 +47,9 @@ FAST="rsk-sdk rsk-fs rsk-crypto rsk-openpgp rsk-otp rsk-piv rsk-oath rsk-usb rsk
 # once), `rsk-rsa` the functional division spec and the sieve, `rsk-mldsa` the
 # rounding round-trips, `rsk-fido` the three sequence proofs (~12 min together,
 # and one of them peaks at 9.3 GiB).
+# Both dated `rsk-phy` figures — this one and HEAVY's below — were taken while
+# that harness lived in `rsk-rescue`; `189f24c` moved the file byte-identical, so
+# they are inherited under the new crate name, not re-run.
 SLOW="rsk-phy rsk-rsa rsk-mldsa rsk-fido"
 
 # HEAVY: the crates that get a job of their own, because their peak

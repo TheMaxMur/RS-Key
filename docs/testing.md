@@ -322,7 +322,9 @@ run):
 
 `pr` and `state` are measured runs. `all` has never been run end to end here:
 its cover count is the two measured tiers plus `rsk-phy`'s one, so
-**`FLOOR_all` is a number no run has reached**.
+**`FLOOR_all` is a number no run has reached**. The `rsk-phy` times and the
+11.1 GB peak are **inherited**, not re-run: they were taken while that harness
+lived in `rsk-rescue`, and `189f24c` moved the file byte-identical.
 
 None of the six figures in the Harnesses and Covers columns is kept by hand, and
 neither are `kani.sh`'s `FLOOR_*`/`COVERS_*`. `scripts/kani_gate.py` counts the
