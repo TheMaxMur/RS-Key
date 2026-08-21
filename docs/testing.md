@@ -834,6 +834,13 @@ flowchart TB
     a ~~~ b ~~~ c
 ```
 
+One more workflow reports on a pull request and is deliberately absent from
+that diagram. `codeql.yml` runs GitHub's CodeQL over the Rust and Python
+sources — buildless (`build-mode: none`), since `firmware/` does not build on a
+host runner at all. It is advisory, not a gate: `check.sh` is still the whole
+bar. It runs on pull requests and on demand only, so there is no default-branch
+baseline and findings surface on the PR itself.
+
 ## Refactor metrics (advisory)
 
 `scripts/metrics.sh` is reconnaissance, **not** a gate. Run it to decide
