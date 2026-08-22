@@ -45,7 +45,7 @@ struct Glyph {
 struct Font {
     ascent: u8,
     descent: u8,
-    glyphs: &'static [Glyph; 97],
+    glyphs: &'static [Glyph; 98],
     data: &'static [u8],
 }
 
@@ -69,6 +69,8 @@ const fn glyph_index(char: char) -> usize {
         95
     } else if char == '\u{00B7}' {
         96
+    } else if char == '\u{2423}' {
+        97
     } else if char >= ' ' && char <= '~' {
         char as usize - ' ' as usize
     } else {

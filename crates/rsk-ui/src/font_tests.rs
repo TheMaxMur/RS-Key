@@ -324,3 +324,20 @@ fn a_following_glyph_never_lightens_the_one_before_it() {
         );
     }
 }
+
+/// The rename keypad's labels are drawn from this atlas, and a char that is not in it
+/// renders as `?` — which is how the space key came to read "SPACE". "Is it ASCII" was
+/// the wrong rule for that: the atlas is ASCII plus three, and the space key wants one
+/// of the three. Ask the atlas instead.
+#[test]
+fn every_t9_key_label_has_its_own_glyph() {
+    let fallback = glyph_index('?');
+    for (digit, letters) in crate::T9_KEY_LABELS {
+        for char in digit.chars().chain(letters.chars()) {
+            assert!(
+                char == '?' || glyph_index(char) != fallback,
+                "T9 label {digit:?}/{letters:?} uses {char:?}, which is not in the atlas"
+            );
+        }
+    }
+}

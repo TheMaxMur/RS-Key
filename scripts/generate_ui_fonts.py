@@ -16,7 +16,10 @@ from PIL import Image, ImageDraw, ImageFont, features
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 OUTPUT = ROOT / "third_party" / "ibm-plex" / "font_data.rs"
-CHARS = "".join(chr(code) for code in range(0x20, 0x7F)) + "\N{EM DASH}\N{MIDDLE DOT}"
+CHARS = (
+    "".join(chr(code) for code in range(0x20, 0x7F))
+    + "\N{EM DASH}\N{MIDDLE DOT}\N{OPEN BOX}"
+)
 ROLES = (
     ("READY", "sans", "IBMPlexSans-SemiBold.ttf", 30),
     ("HEADING", "sans", "IBMPlexSans-SemiBold.ttf", 19),

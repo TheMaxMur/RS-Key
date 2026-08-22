@@ -531,12 +531,8 @@ fn t9_groups_are_printable_and_have_distinct_chars() {
             seen[a as usize] = true;
         }
     }
-    assert!(
-        T9_KEY_LABELS
-            .iter()
-            .all(|(digit, letters)| digit.is_ascii() && letters.is_ascii()),
-        "T9 key labels must use glyphs from the ASCII font atlas"
-    );
+    // That every label has a glyph is asserted in `font_tests.rs`, where the atlas
+    // index is reachable: "is ASCII" was the right question with the wrong rule.
 }
 
 /// Every key grid on the panel is `origin + index * (size + gap)`, and thirteen

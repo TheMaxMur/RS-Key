@@ -981,6 +981,15 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **The rename keypad's space key read "SPACE" instead of `␣`.** The antialiasing
+  change swapped the symbol for the word because U+2423 OPEN BOX is not in the
+  generated atlas and would have rendered as `?` — a word on a key sized for a glyph.
+  The atlas gains the character instead (98 entries now, +493 B: 409 B of coverage plus seven glyph records), and
+  the key is a symbol again. The rule the old assertion stated, "T9 labels must be
+  ASCII", was the right question with the wrong answer: the atlas is ASCII plus three,
+  so the check now asks the atlas whether a label's characters resolve to their own
+  glyph rather than to the `?` fallback. **bcdDevice → 0x0981.**
+
 - **One colour the marquee could not place on its ramp blanked the whole PIN title.**
   The scrolling title composites into an off-screen four-bit band, and the band
   recovered each pixel's coverage by inverting the blend — so a colour that was
