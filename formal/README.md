@@ -2275,6 +2275,36 @@ What it deliberately does not catch: a family deleted from `gen-configs.sh`
 *and* from `formal/` in one commit. That is a visible diff in the file whose
 whole content is the roster, and a guard cannot tell a deletion from a decision.
 
+### And the citations the row did not read — 19 of 42
+
+`scripts/citation_gate.py` held the `formal/` pages and nothing else, and the
+same claim is written twice in this tree. The three token-gate call sites are
+cited on `formal/README.md` **and** in the Kani proof headers that drive them,
+and only the gated copy had followed the code:
+
+| Call site | `formal/README.md` | `state_kani.rs` / `credmgmt_kani.rs` | out by |
+|---|---|---|---|
+| getAssertion's UV gate | `getassertion.rs:384-387` | `376`–`379` — the zero-length-probe error mapping | 8 |
+| authenticatorConfig's gate | `config.rs:243-245` | `222-224` — a comment about `pinUvAuthProtocol: 0` | 21 |
+| credentialManagement's gate | `credmgmt.rs:278` | `277` — the doc comment line `/// has been located.` | 7 |
+
+The worst was 79: "the dispatch prologue every CBOR command runs first
+(`lib.rs` line 207)" pointed at `out[0] = CTAP2_OK;`, the response *epilogue*. Read by
+hand against the code, the 42 code citations came out **13 correct, 9 with a
+drifted endpoint, 1 unresolvable by construction** (a line number with no
+filename in front of it, which no rule can bind) **and 19 naming something the prose was never
+about**. All 29 are re-pointed; the gate reads them now.
+
+The code half is **derived**, not named: any tracked `.rs` under `crates/`,
+`firmware/` or `fuzz/` that cites by line is a page, so the next proof header
+does not have to be added to a tuple to be checked. What ratchets it is the same
+lock the model pages use — a page that stops being read turns every entry it had
+into a named orphan — and `CODE_PAGES_FLOOR` catches the derivation finding
+nothing at all. Deliberately outside: `CHANGELOG.md`, whose entries cite the tree
+as it stood and **must** be allowed to rot; the guard's own fixtures, which name
+files that exist only inside a fixture; and `docs/guides/fips.md`, which writes
+`piv/keygen.rs` line 48, a path fragment that resolves to nothing.
+
 ### And the dead-action check, which is the vacuity question
 
 An action that never fires makes every clause guarding it free — the same

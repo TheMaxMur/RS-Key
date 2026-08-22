@@ -2,6 +2,40 @@
 # page, cited file, span, and the first and last line as they read when
 # locked. Read the diff — a changed line here is a citation changing what
 # it points at, which is the thing this file exists to make visible.
+crates/rsk-fido/src/clientpin_tests.rs	crates/rsk-fido/src/clientpin.rs	392-392	let res = issue_token(ctx, proto, secret, permissions, req.rp_id, out);	let res = issue_token(ctx, proto, secret, permissions, req.rp_id, out);
+crates/rsk-fido/src/credmgmt_kani.rs	crates/rsk-fido/src/clientpin.rs	417-423	ctx.state.reset_pin_uv_auth_token(ctx.rng);	ctx.state.paut.permissions = permissions;
+crates/rsk-fido/src/credmgmt_kani.rs	crates/rsk-fido/src/config.rs	243-243	if !ctx.state.verify_token(proto, &vp[..vp_len], param)	if !ctx.state.verify_token(proto, &vp[..vp_len], param)
+crates/rsk-fido/src/credmgmt_kani.rs	crates/rsk-fido/src/config.rs	243-245	if !ctx.state.verify_token(proto, &vp[..vp_len], param)	{
+crates/rsk-fido/src/credmgmt_kani.rs	crates/rsk-fido/src/credmgmt.rs	240-242	if authorized_by_ppuat(ctx, proto, payload, param) {	}
+crates/rsk-fido/src/credmgmt_kani.rs	crates/rsk-fido/src/credmgmt.rs	278-288	fn verify_cm_token(	}
+crates/rsk-fido/src/credmgmt_kani.rs	crates/rsk-fido/src/getassertion.rs	384-384	if !ctx.state.verify_token(proto, req.client_data_hash, param)	if !ctx.state.verify_token(proto, req.client_data_hash, param)
+crates/rsk-fido/src/credmgmt_kani.rs	crates/rsk-fido/src/makecredential.rs	513-513	if !ctx.state.verify_token(proto, req.client_data_hash, param)	if !ctx.state.verify_token(proto, req.client_data_hash, param)
+crates/rsk-fido/src/credmgmt_kani.rs	crates/rsk-fido/src/state.rs	523-534	/// The CTAP 2.1 §6.5.5.7 post-user-presence triad — `clearUserPresentFlag()`,	}
+crates/rsk-fido/src/credmgmt_kani.rs	crates/rsk-fido/src/state.rs	547-557	/// `stopUsingPinUvAuthToken` — drop the in-use state, permissions, and	self.paut.user_verified = false;
+crates/rsk-fido/src/state_kani.rs	crates/rsk-fido/src/clientpin.rs	417-423	ctx.state.reset_pin_uv_auth_token(ctx.rng);	ctx.state.paut.permissions = permissions;
+crates/rsk-fido/src/state_kani.rs	crates/rsk-fido/src/clientpin.rs	424-430	match rp_id {	}
+crates/rsk-fido/src/state_kani.rs	crates/rsk-fido/src/config.rs	243-245	if !ctx.state.verify_token(proto, &vp[..vp_len], param)	{
+crates/rsk-fido/src/state_kani.rs	crates/rsk-fido/src/credmgmt.rs	164-164	ctx.state.cm.reset();	ctx.state.cm.reset();
+crates/rsk-fido/src/state_kani.rs	crates/rsk-fido/src/credmgmt.rs	284-284	if !state.verify_token(proto, payload, param) || state.paut.permissions & PERM_CM == 0 {	if !state.verify_token(proto, payload, param) || state.paut.permissions & PERM_CM == 0 {
+crates/rsk-fido/src/state_kani.rs	crates/rsk-fido/src/credmgmt.rs	340-344	if begin {	ctx.state.cm.rp_next_slot = 0;
+crates/rsk-fido/src/state_kani.rs	crates/rsk-fido/src/credmgmt.rs	345-345	} else if !ctx.state.cm.may_walk_rps(ctx.state.channel) {	} else if !ctx.state.cm.may_walk_rps(ctx.state.channel) {
+crates/rsk-fido/src/state_kani.rs	crates/rsk-fido/src/credmgmt.rs	386-393	if begin {	ctx.state.cm.last_leg_ms = ctx.now_ms;
+crates/rsk-fido/src/state_kani.rs	crates/rsk-fido/src/credmgmt.rs	389-393	ctx.state.cm.rp_counter = target.saturating_add(1);	ctx.state.cm.last_leg_ms = ctx.now_ms;
+crates/rsk-fido/src/state_kani.rs	crates/rsk-fido/src/credmgmt.rs	426-430	if begin {	ctx.state.cm.cred_next_slot = 0;
+crates/rsk-fido/src/state_kani.rs	crates/rsk-fido/src/credmgmt.rs	506-511	if begin {	ctx.state.cm.last_leg_ms = ctx.now_ms;
+crates/rsk-fido/src/state_kani.rs	crates/rsk-fido/src/getassertion.rs	384-387	if !ctx.state.verify_token(proto, req.client_data_hash, param)	|| (ctx.state.paut.has_rp_id && ctx.state.paut.rp_id_hash != *rp_id_hash)
+crates/rsk-fido/src/state_kani.rs	crates/rsk-fido/src/lib.rs	128-128	ctx.state.expire_stale_token(ctx.now_ms);	ctx.state.expire_stale_token(ctx.now_ms);
+crates/rsk-fido/src/state_kani.rs	crates/rsk-fido/src/lib.rs	128-135	ctx.state.expire_stale_token(ctx.now_ms);	ctx.state.retire_sequences_except(cmd);
+crates/rsk-fido/src/state_kani.rs	crates/rsk-fido/src/lib.rs	135-135	ctx.state.retire_sequences_except(cmd);	ctx.state.retire_sequences_except(cmd);
+crates/rsk-fido/src/state_kani.rs	crates/rsk-fido/src/makecredential.rs	513-516	if !ctx.state.verify_token(proto, req.client_data_hash, param)	|| !ctx.state.user_verified()
+crates/rsk-fido/src/state_kani.rs	crates/rsk-fido/src/state.rs	169-179	/// Whether `channel` may take the next leg of the RP walk: it opened it, and	self.channel == channel && self.cred_counter <= self.cred_total
+crates/rsk-fido/src/state_kani.rs	crates/rsk-fido/src/state.rs	327-332	/// can deny a handshake but can never redirect one. Fail closed both ways.	/// cannot tell the owner from an interloper forging it; what actually keeps
+crates/rsk-fido/src/state_kani.rs	crates/rsk-fido/src/state.rs	355-359	/// uptime. Power-cycle fact, not session state: survives [`Self::reset`].	/// request like `Ctx::now_ms`, stamped by the firmware before each dispatch;
+crates/rsk-fs/src/store_assurance.rs	crates/rsk-fs/src/fs.rs	128-130	fn known_absent(&self, fid: u16) -> bool {	}
+crates/rsk-fs/src/store_assurance.rs	crates/rsk-fs/src/fs.rs	391-411	pub fn put(&mut self, fid: u16, data: &[u8]) -> Result<()> {	}
+crates/rsk-fs/src/store_assurance.rs	crates/rsk-fs/src/fs.rs	440-449	pub fn delete(&mut self, fid: u16) -> Result<()> {	}
+crates/rsk-piv/src/tests.rs	crates/rsk-fido/src/clientpin.rs	761-761	if !matched && ctx.dev.otp_key.is_some() {	if !matched && ctx.dev.otp_key.is_some() {
+crates/rsk-usb/src/secure_pin_kani.rs	crates/rsk-usb/src/secure_pin.rs	96-96	// Force the canonical VERIFY class byte; never honour the host template's CLA.	// Force the canonical VERIFY class byte; never honour the host template's CLA.
 formal/README.md	crates/rsk-devconf/src/lib.rs	264-277	// and `read_enabled_caps` reads empty as "no record" and returns	return Ok(());
 formal/README.md	crates/rsk-device/src/ccid.rs	67-74	/// Refines `RSKeyAdminSurface!AdminSurfaceAlwaysReachable` — SEC-ADM-001.	rsk_devconf::CAP_PIV,
 formal/README.md	crates/rsk-device/src/ccid.rs	91-109	pub struct CcidApplets<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform> {	enabled_caps: u16,
@@ -438,3 +472,4 @@ formal/comutants.toml	crates/rsk-piv/src/lib.rs	1252-1252	if set_retries_left(fs
 formal/comutants.toml	crates/rsk-sdk/src/applet.rs	227-227	pub fn reset_card<C>(&mut self, applets: &mut [&mut dyn Applet<C>], ctx: &mut C) {	pub fn reset_card<C>(&mut self, applets: &mut [&mut dyn Applet<C>], ctx: &mut C) {
 formal/gen-configs.sh	crates/rsk-fido/src/consts.rs	364-364	pub const MAX_PIN_RETRIES: u8 = 8;	pub const MAX_PIN_RETRIES: u8 = 8;
 formal/gen-configs.sh	crates/rsk-fido/src/consts.rs	368-368	pub const PIN_MISMATCH_LIMIT: u8 = 3;	pub const PIN_MISMATCH_LIMIT: u8 = 3;
+fuzz/fuzz_targets/fido_session.rs	crates/rsk-fido/src/state.rs	488-502	/// `resetPinUvAuthToken`: new random token, cleared permissions / flags. The	}

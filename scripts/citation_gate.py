@@ -12,6 +12,16 @@ have rotted is worse than no model, because it reads as authoritative and sends
 the next reader to a line that no longer says what it claims. Same failure as a
 stale CHANGELOG or an unbumped counter, so it lives beside them.
 
+The same claim is made in code — Kani proof headers, two test files and one fuzz
+target cite the call site they stand in for — and for a long time only the
+`formal/` half was read. Measured when the code half was added: 42 such
+citations, **19 naming code the surrounding prose was never about**, while the
+SAME three token gates cited on `formal/README.md` had followed every shift.
+`lib.rs:207`, introduced as "the dispatch prologue every CBOR command runs
+first", was 79 lines out and pointed at the response *epilogue*. So the code
+half is [`code_pages`]: derived from the tree rather than named, because which
+proof headers cite is not a decision anyone should be re-transcribing.
+
 The phase-1 `Refines Module!Invariant — SEC-*` tags are the semantic-address
 half of the same bridge. This gate shares their assurance check: every tag must
 resolve to its defining module and registry row, and every invariant in the two
@@ -67,6 +77,11 @@ outright.
 
 ## The floor
 
+This is the NAMED half only. A derived page is in the set *because* it cites, so
+a per-page floor there asserts nothing; [`CODE_PAGES_FLOOR`] holds the size of
+the derived set instead, and what actually ratchets that half is [`LOCK`] — a
+page that stops being read turns every entry it had into an orphan, by name.
+
 Each page must carry at least its [`FLOOR`] citations — [`FLOOR_BY_PAGE`] where a
 page legitimately cites fewer, the default otherwise. A regex that has stopped
 matching finds nothing, loops over nothing and exits 0 — the shape four guards
@@ -81,8 +96,12 @@ page is ever padded with citations it does not mean just to clear one number.
 citations another agent's in-flight commits rotted while this guard was being
 written. Each names the commit that broke it and fails once it stops rotting.
 
-It does not read `.py`, `.md` or `.tla` citations, only `.rs` ones: those are all
-the pages carry. A citation *edited in place* still passes, and one that was
+It resolves `.rs` citations only, wherever they are written. What it does not
+read is the rest of the tree's 11: `CHANGELOG.md` cites the tree as it stood at
+each entry, so those MUST be allowed to rot; `scripts/test_citation_gate.py`
+carries 46 fixture citations naming files that exist only in a fixture;
+`docs/guides/fips.md` writes `piv/keygen.rs:48`, a path fragment that resolves to
+nothing. Named here so each stays a decision. A citation *edited in place* still passes, and one that was
 wrong the day it was written locks wrong — so the lock diff is a thing to read,
 not a proof it hands you. And [`SEARCH`] is
 a hand-written list; entries are asserted to exist, not to be used, so an entry
@@ -133,6 +152,40 @@ PAGES = (
     # and a doc comment, not MAX_PIN_RETRIES and PIN_MISMATCH_LIMIT.
     pathlib.Path("formal/gen-configs.sh"),
 )
+
+#: Where a CITATION IN CODE lives. The `formal/` pages above are named one by
+#: one because there are fourteen of them and each was a decision; the code half
+#: is DERIVED, because it is not a decision — a Kani proof header or a fuzz
+#: target that cites code by line is making exactly the claim this row exists
+#: for, and transcribing which ones do is how the next one arrives unchecked.
+#: Measured when this was added: 7 files, 42 citations, of which 19 named code
+#: the surrounding prose was never about — while the SAME three call sites,
+#: cited on the gated `formal/README.md`, had followed the code.
+#:
+#: `.rs` under these roots and nowhere else, and the exclusions are the reason:
+#: `CHANGELOG.md` cites the tree as it stood at each entry, so its citations MUST
+#: be allowed to rot; `scripts/test_citation_gate.py` holds 46 fixture citations
+#: naming files that exist only inside a fixture; `docs/guides/fips.md` writes
+#: `piv/keygen.rs:48`, a path fragment no rule can resolve. Those are named
+#: limits, not oversights — see "Limits" above.
+CODE_ROOTS = ("crates/", "firmware/", "fuzz/")
+
+#: Below this the derivation found nothing and every code page silently went
+#: unchecked — the loop-over-an-empty-set shape. It is deliberately 1 and not a
+#: transcribed count: what ratchets the derived set is [`LOCK`], which turns a
+#: page that stops being read into one orphaned entry per citation it had.
+CODE_PAGES_FLOOR = 1
+
+
+def code_pages(root, tracked):
+    """Tracked `.rs` files under [`CODE_ROOTS`] that cite code by line."""
+    return tuple(
+        pathlib.Path(rel)
+        for rel in sorted(tracked)
+        if rel.startswith(CODE_ROOTS)
+        and next(citations((root / rel).read_text()), None) is not None
+    )
+
 
 #: Pages that must write a repo path, never a bare basename. `comutants.toml`
 #: reasons about five applets at once, so `lib.rs:1020` names nothing decidable —
@@ -225,10 +278,21 @@ CITE = re.compile(
 SPAN = re.compile(rf"(\d+)(?:\s*[{DASH}]\s*(\d+))?")
 
 
-def resolve(rel, tracked):
-    """(the file a citation names, a complaint). A `/` makes it a path, verbatim."""
+def resolve(rel, tracked, page=None):
+    """(the file a citation names, a complaint). A `/` makes it a path, verbatim.
+
+    A bare name on a page that IS code resolves against that page's own directory
+    first. Without it every `lib.rs:207` in a proof header is ambiguous across
+    four of the five [`SEARCH`] roots, and the one it means is the sibling the
+    author was looking at. The `formal/` pages hold no `.rs` siblings, so this
+    cannot re-point any citation that predates it.
+    """
     if "/" in rel:
         return (rel, None) if rel in tracked else (None, None)
+    if page is not None:
+        sibling = str(pathlib.PurePosixPath(page).parent / rel)
+        if sibling in tracked:
+            return sibling, None
     hits = [f"{d}/{rel}" for d in SEARCH if f"{d}/{rel}" in tracked]
     if len(hits) < 2:
         return (hits[0] if hits else None), None
@@ -310,7 +374,13 @@ def audit(root, relock=False):
 
     for missing in (d for d in SEARCH if not (root / d).is_dir()):
         problems.append(f"{missing} is in SEARCH but is not a directory any more")
-    for page in PAGES:
+    derived = code_pages(root, tracked)
+    if len(derived) < CODE_PAGES_FLOOR:
+        problems.append(
+            f"{len(derived)} code page(s) under {'/, '.join(CODE_ROOTS)} cite by line,"
+            f" under the floor of {CODE_PAGES_FLOOR}: the derivation stopped finding them"
+        )
+    for page in PAGES + derived:
         if not (root / page).is_file():
             problems.append(f"{page} is gone; the model's citations are unchecked")
             continue
@@ -332,7 +402,7 @@ def audit(root, relock=False):
                         f"{page}: `{written}` is a bare name on a page that must"
                         " write a repo path; nothing decides which crate it means"
                     )
-                seen, complaint = resolve(name, tracked)
+                seen, complaint = resolve(name, tracked, page)
                 if complaint and complaint not in said:
                     said.add(complaint)
                     note(name, f"{page}: {complaint}")
@@ -401,7 +471,9 @@ def audit(root, relock=False):
                             f" `{was[0][:48]}`, which is now at :{near}{others};"
                             " the citation has drifted",
                         )
-        floor = floor_for(page)
+        # A derived page is in the set BECAUSE it cites, so a per-page floor
+        # there asserts nothing; what ratchets that half is the lock.
+        floor = CODE_PAGES_FLOOR if page in derived else floor_for(page)
         if here < floor:
             problems.append(
                 f"{page} yielded {here} citations, under the floor of {floor}:"
@@ -423,7 +495,8 @@ def audit(root, relock=False):
     assurance_gate.check_property_tags(root, problems)
     debt = f", {len(carried)} carried" if carried else ""
     return problems, (
-        f"citation-gate: ok — {total} citations across {len(PAGES)} pages resolve; "
+        f"citation-gate: ok — {total} citations across {len(PAGES)} model pages "
+        f"and {len(derived)} code pages resolve; "
         f"phase-1 property tags close both ways{debt}"
     )
 
