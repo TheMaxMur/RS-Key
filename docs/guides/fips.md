@@ -32,7 +32,7 @@ compiled into the image.
 | Area | Default build | `fips-profile` build | Gate |
 |---|---|---|---|
 | FIDO algorithms | ES256, EdDSA, ES384, ES512, ES256K, (ML-DSA-44/-65/-87) | drops **ES256K** (secp256k1 — never NIST-approved) from both the advertised list and credential negotiation | `getinfo.rs`, `makecredential.rs` |
-| FIDO minimum PIN | 4 | **6** (and `setMinPINLength` can only raise it, never lower it), plus trivially guessable PINs refused — a single repeated digit or a ±1 run like `123456` (the `strong-pin` policy) | `consts.rs`, `clientpin.rs`, `config.rs` |
+| FIDO minimum PIN | 4 | **6** (and `setMinPINLength` can only raise it, never lower it), plus trivially guessable PINs refused — a repeated period, a ±1 run, two or fewer distinct code points, or a denylisted keypad shape (the `strong-pin` policy) | `consts.rs`, `clientpin.rs`, `config.rs` |
 | Seed backup | one-time export window | **export refused** — non-exportable key material; restore (`BACKUP_LOAD`) still works, so keys may migrate *into* a profile device, never out | `vendor.rs` |
 | PIV management key | 3DES or AES | **no new 3DES keys** (SP 800-131A); an existing 3DES key still authenticates so a reflashed device can migrate itself to AES | `piv/lib.rs` |
 | PIV RSA | 1024 / 2048 | **no RSA-1024** generation *or* import | `piv/keygen.rs` |

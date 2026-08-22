@@ -1068,6 +1068,72 @@ fn strong_pin_floor_is_six() {
     assert!(fs.has_data(EF_PIN));
 }
 
+/// One representative per rule, driven through the real setPIN request rather than the
+/// helper: a rule the request path never reaches refuses nothing. The families the
+/// original check missed are the last four.
+#[cfg(feature = "strong-pin")]
+#[test]
+fn strong_pin_refuses_every_trivial_family() {
+    for (weak, why) in [
+        (&b"000000"[..], "one repeated code point"),
+        (b"123456", "an ascending run"),
+        (b"654321", "a descending run"),
+        (b"121212", "a two-code-point period"),
+        (b"123123", "a three-code-point period"),
+        (b"112211", "two distinct code points"),
+        (b"159753", "a keypad line, denylisted"),
+    ] {
+        let (mut fs, mut rng) = setup();
+        let mut state = FidoState::new();
+        let plat = key_agreement(&mut fs, &mut rng, &mut state, PinProto::Two, 2);
+        let mut out = [0u8; 256];
+        assert_eq!(
+            run(
+                &mut fs,
+                &mut rng,
+                &mut state,
+                &plat.set_pin_req(weak),
+                &mut out
+            ),
+            Err(CtapError::PinPolicyViolation),
+            "{} should be refused: {why}",
+            core::str::from_utf8(weak).unwrap()
+        );
+        assert!(!fs.has_data(EF_PIN));
+    }
+}
+
+/// The rule's own boundaries, where the request path cannot reach them: what it must
+/// still ACCEPT is half of this, or a check that refuses everything would pass the
+/// table above.
+#[cfg(feature = "strong-pin")]
+#[test]
+fn pin_triviality_holds_its_boundaries() {
+    // Refused.
+    for (weak, why) in [
+        (&b"12121"[..], "a period that does not divide the length"),
+        (b"abcdef", "a run is not a digits-only rule"),
+        (
+            "\u{0410}\u{0410}\u{0410}\u{0410}\u{0410}\u{0410}".as_bytes(),
+            "one repeated MULTI-BYTE code point",
+        ),
+        (
+            &[0xff, 0xfe, 0xfd, 0xfc, 0xfb, 0xfa],
+            "not UTF-8 — refused, not measured",
+        ),
+    ] {
+        assert!(pin_is_trivial(weak), "should be trivial: {why}");
+    }
+    // Accepted — the other direction, without which the rule could simply be `true`.
+    for (ok, why) in [
+        (&b"135790"[..], "no period, no run, six distinct"),
+        (b"100200", "exactly three distinct code points is enough"),
+        (b"481629", "the display suite's own PIN"),
+    ] {
+        assert!(!pin_is_trivial(ok), "should be allowed: {why}");
+    }
+}
+
 #[cfg(feature = "strong-pin")]
 #[test]
 fn strong_pin_rejects_trivial() {

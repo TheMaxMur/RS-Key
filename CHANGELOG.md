@@ -924,6 +924,21 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Changed
 
+- **The `strong-pin` / `fips-profile` PIN policy refuses three more families, and counts
+  code points like the floor beside it** ([#89](https://github.com/TheMaxMur/RS-Key/issues/89)).
+  It caught a repeated code point and a ±1 run; `121212`, `123123` and `112211` walked
+  through. It now refuses any PIN that is a repeated period (which subsumes the old
+  repeated-code-point rule at period 1), a ±1 run in either direction, one with **two or
+  fewer distinct code points**, or one of ten denylisted keypad shapes — the 3×3 lines and
+  diagonals (`159753`, `147258`, `258369`) plus the mirror/stutter runs people reach for
+  when told "not 123456" (`123321`, `112233`, `112358`). The two-symbol rule is not a
+  length argument: two symbols leave two smudges on the glass, and the space an onlooker
+  or a fingerprint leaves is then the orderings of two marks, however long the PIN.
+  Every rule reads **code points**, so a repeated multi-byte character (`АААААА`) is
+  refused where the old byte-wise check passed it, and a PIN that is not UTF-8 is refused
+  rather than measured. The default build is untouched — it keeps the CTAP-standard
+  four-code-point floor with no complexity rule. **bcdDevice → 0x0982.**
+
 - **The trusted display now antialiases the full GUI.** Text uses generated
   four-bit IBM Plex Sans and Mono coverage data. Icons, circles, status arcs,
   rounded cards, and controls use integer coverage blending against their real
