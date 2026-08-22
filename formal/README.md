@@ -353,7 +353,23 @@ those are where a hole costs the most:
 | `clientpin.rs:388` `\|` → `^` on `PERM_MC \| PERM_GA` | equivalent — `0x01` and `0x02` are disjoint | — |
 | `clientpin.rs:761` `&&` → `\|\|` — the kbase-migration fallback | equivalent by construction: the inner `ct_eq` cannot match in either case the widened guard admits | — |
 | `clientpin.rs:238` `>` → `<` | conformance only — the `!=` two lines down still refuses; the status word moves from `PinPolicyViolation` to `InvalidParameter` | recorded |
-| `clientpin.rs:242` `\|\|` → `&&` | survived; the consequence is not yet determined | **open** |
+| `clientpin.rs:242` `\|\|` → `&&` | **the guard is the only thing between an unauthenticated request and a slice-index panic** — see below | closed by `change_pin_refuses_a_pin_hash_of_the_wrong_length` |
+
+The row that stood open longest is closed by reading where its widened guard
+leads. `pinHashEnc` comes straight from the CBOR decoder and nothing bounds it;
+`macd` is `[0u8; 112]`, and `clientpin.rs:256` copies `newPinEnc ‖ pinHashEnc`
+into it **before** the MAC is verified at `:257`. With `||` the length pair is
+refused together; with `&&` a request whose `newPinEnc` is the right length and
+whose `pinHashEnc` is not walks past it. Driven at both protocols:
+
+```console
+panicked at crates/rsk-fido/src/clientpin.rs:256:9:
+range end index 128 out of range for slice of length 112
+```
+
+64 + 64 on protocol one, 80 + 80 on protocol two. So the consequence is an
+unauthenticated panic and the guard is load-bearing, not redundant — and nothing
+drove it, because no test had ever sent a `pinHashEnc` of the wrong length.
 
 Two of those are real defects the suite could not see, and the second one names
 a whole missing dimension rather than a line: **`PinProto::One` appears once in

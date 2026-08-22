@@ -2156,6 +2156,59 @@ fn cose_with_alg(x: &[u8; 32], y: &[u8; 32], alg: Option<i64>) -> std::vec::Vec<
     buf[..n].to_vec()
 }
 
+/// The two lengths `change_pin` checks TOGETHER, and the panic the `||` between
+/// them holds back.
+///
+/// `pinHashEnc` arrives straight from the CBOR decoder (`clientpin.rs:91`) and
+/// nothing bounds it; `macd` is `[0u8; 112]` and `clientpin.rs:256` copies
+/// `newPinEnc ‖ pinHashEnc` into it BEFORE the MAC is verified. Widen that guard
+/// (`clientpin.rs:241-243`) to `&&` — the shape a cargo-mutants MISSED row left
+/// open with "the consequence is not yet determined" — and a correct `newPinEnc`
+/// with an over-long `pinHashEnc` walks past it into a slice-index panic,
+/// unauthenticated. Both protocols, because 112 is `80 + 32` on two and `64 + 48`
+/// on one, and only the pair says which side the guard is load-bearing on.
+#[test]
+fn change_pin_refuses_a_pin_hash_of_the_wrong_length() {
+    for (proto, wire) in [(PinProto::One, 1u64), (PinProto::Two, 2u64)] {
+        let (mut fs, mut rng) = setup();
+        let mut state = FidoState::new();
+        let plat = key_agreement(&mut fs, &mut rng, &mut state, proto, wire);
+        let mut out = [0u8; 256];
+        run(
+            &mut fs,
+            &mut rng,
+            &mut state,
+            &plat.set_pin_req(b"1234"),
+            &mut out,
+        )
+        .unwrap();
+
+        let mut padded = [0u8; 64];
+        padded[..4].copy_from_slice(b"5678");
+        let npe = plat.enc(&padded);
+        // Four times the 16-byte hash it should carry: the length the guard
+        // rejects, and the length `macd` cannot hold.
+        let phe = plat.enc(&[0u8; 64]);
+        assert!(npe.len() + phe.len() > 112, "{} + {}", npe.len(), phe.len());
+        let mut macd = npe.clone();
+        macd.extend_from_slice(&phe);
+        let puap = plat.mac(&macd);
+        let req = build(&[
+            (1, V::U(wire)),
+            (2, V::U(4)),
+            (3, V::Cose(&plat.x, &plat.y)),
+            (4, V::B(&puap)),
+            (5, V::B(&npe)),
+            (6, V::B(&phe)),
+        ]);
+        assert_eq!(
+            run(&mut fs, &mut rng, &mut state, &req, &mut out),
+            Err(CtapError::InvalidParameter),
+            "protocol {wire}"
+        );
+    }
+}
+
 /// clientPIN's own copies of the "numeric 0 means absent" sentinel. A
 /// `pinUvAuthProtocol` of 0 answered MISSING_PARAMETER on every subcommand, and a
 /// keyAgreement whose `alg` was 0 — or simply omitted — was refused the same way.

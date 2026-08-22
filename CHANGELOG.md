@@ -40,6 +40,17 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Added
 
+- **The `changePIN` length pair is driven at last, and the mutation that stood
+  open turns out to reach an unauthenticated panic.** `clientpin.rs:241-243`
+  refuses `newPinEnc` and `pinHashEnc` together; a cargo-mutants MISSED row
+  widened the `||` to `&&` and survived every test with "the consequence is not
+  yet determined". It is determined now: `pinHashEnc` comes straight from the
+  CBOR decoder with no bound, `macd` is `[0u8; 112]`, and `clientpin.rs:256`
+  copies `newPinEnc ‖ pinHashEnc` into it **before** the MAC is verified — so the
+  widened guard admits a request that panics with `range end index 128 out of
+  range for slice of length 112`. Driven at both PIN protocols, because 112 is
+  `80 + 32` on two and `64 + 48` on one.
+
 - **`RSKeyStore`'s persistent half has a bridge to the code at last, and the two
   reasons it could not have the obvious one are both measured.** The per-FID
   state projection was refuted last round — every predicate came out as the same

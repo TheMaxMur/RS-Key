@@ -3,6 +3,9 @@
 # locked. Read the diff — a changed line here is a citation changing what
 # it points at, which is the thing this file exists to make visible.
 crates/rsk-device/src/ctap.rs	crates/rsk-fido/src/clientpin.rs	609-609	ctx.presence.uv_available() && ctx.fs.has_data(EF_PIN)	ctx.presence.uv_available() && ctx.fs.has_data(EF_PIN)
+crates/rsk-fido/src/clientpin_tests.rs	crates/rsk-fido/src/clientpin.rs	91-91	6 => req.pin_hash_enc = Some(cbor(d.bytes())?),	6 => req.pin_hash_enc = Some(cbor(d.bytes())?),
+crates/rsk-fido/src/clientpin_tests.rs	crates/rsk-fido/src/clientpin.rs	241-243	if new_pin_enc.len() != PADDED_PIN_LEN + proto.iv_overhead()	{
+crates/rsk-fido/src/clientpin_tests.rs	crates/rsk-fido/src/clientpin.rs	256-256	macd[new_pin_enc.len()..new_pin_enc.len() + pin_hash_enc.len()].copy_from_slice(pin_hash_enc);	macd[new_pin_enc.len()..new_pin_enc.len() + pin_hash_enc.len()].copy_from_slice(pin_hash_enc);
 crates/rsk-fido/src/clientpin_tests.rs	crates/rsk-fido/src/clientpin.rs	392-392	let res = issue_token(ctx, proto, secret, permissions, req.rp_id, out);	let res = issue_token(ctx, proto, secret, permissions, req.rp_id, out);
 crates/rsk-fido/src/credmgmt_kani.rs	crates/rsk-fido/src/clientpin.rs	417-423	ctx.state.reset_pin_uv_auth_token(ctx.rng);	ctx.state.paut.permissions = permissions;
 crates/rsk-fido/src/credmgmt_kani.rs	crates/rsk-fido/src/config.rs	243-243	if !ctx.state.verify_token(proto, &vp[..vp_len], param)	if !ctx.state.verify_token(proto, &vp[..vp_len], param)
@@ -67,6 +70,8 @@ formal/README.md	crates/rsk-fido/src/clientpin.rs	185-187	if ctx.fs.has_data(EF_
 formal/README.md	crates/rsk-fido/src/clientpin.rs	214-218	// No PIN was set, so no `pcmr` grant can be outstanding — except one a build	let res = store_new_pin(ctx, &padded);
 formal/README.md	crates/rsk-fido/src/clientpin.rs	238-238	if new_pin_enc.len() > PADDED_PIN_LEN + proto.iv_overhead() {	if new_pin_enc.len() > PADDED_PIN_LEN + proto.iv_overhead() {
 formal/README.md	crates/rsk-fido/src/clientpin.rs	242-242	|| pin_hash_enc.len() != 16 + proto.iv_overhead()	|| pin_hash_enc.len() != 16 + proto.iv_overhead()
+formal/README.md	crates/rsk-fido/src/clientpin.rs	256-256	macd[new_pin_enc.len()..new_pin_enc.len() + pin_hash_enc.len()].copy_from_slice(pin_hash_enc);	macd[new_pin_enc.len()..new_pin_enc.len() + pin_hash_enc.len()].copy_from_slice(pin_hash_enc);
+formal/README.md	crates/rsk-fido/src/clientpin.rs	257-257	if !pinproto::verify(	if !pinproto::verify(
 formal/README.md	crates/rsk-fido/src/clientpin.rs	300-304	}	// costs a re-fetch, which is the cheap direction.
 formal/README.md	crates/rsk-fido/src/clientpin.rs	302-306	// verifier lands: a power cut the other way round would leave the old holder's	let res = store_new_pin(ctx, &padded);
 formal/README.md	crates/rsk-fido/src/clientpin.rs	302-313	// verifier lands: a power cut the other way round would leave the old holder's	ctx.state.needs_power_cycle = false;
