@@ -548,13 +548,13 @@ fn an_off_ramp_colour_lands_as_ink_rather_than_refusing_the_frame() {
 }
 
 /// The band target cannot fail, and that is the point: an error type here is a way for
-/// a future frame to come back empty. `Infallible` is what removes the branch.
-const _: () = {
+/// a future frame to come back empty. `Infallible` is what removes the branch. Checked
+/// at compile time -- the body type-checks whether or not the test is run.
+#[test]
+fn the_band_target_has_no_way_to_fail() {
     fn infallible<D: DrawTarget<Error = core::convert::Infallible>>() {}
-    fn assert() {
-        infallible::<BandCoverage<'static>>();
-    }
-};
+    infallible::<BandCoverage<'static>>();
+}
 
 #[test]
 fn the_marquee_buffer_drops_a_pixel_outside_the_band() {
