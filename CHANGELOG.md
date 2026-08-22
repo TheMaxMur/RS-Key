@@ -709,6 +709,27 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Changed
 
+- **The release signature is `SHA256SUMS.sigstore.json`, and the build
+  provenance now ships as a file too.** Five signed releases read as *unsigned*
+  to anyone matching on the name: the asset was called
+  `SHA256SUMS.cosign.bundle`, and `.bundle` is in nobody's list of signature
+  extensions — OpenSSF Scorecard's, for one, which knows `.asc`, `.minisig`,
+  `.sig`, `.sign`, `.sigstore` and `.sigstore.json`. The file was never the
+  problem: it is byte-for-byte a
+  `application/vnd.dev.sigstore.bundle.v0.3+json` (read off the published
+  v0.4.10 asset), so `.sigstore.json` is simply its canonical extension.
+  Alongside it, `rs-key-<tag>.intoto.jsonl` now carries the attestation as a
+  release file — the copy in GitHub's attestation API and in Rekor stays
+  authoritative, but a consumer holding only a download could not reach either.
+  **The five releases already out cannot be corrected**: this repository has
+  immutable releases, and adding an asset to a published one is
+  `HTTP 422: Cannot upload assets to an immutable release` — measured on all
+  five. So both names exist in the wild permanently, and
+  [releases.md](docs/releases.md) and [supply-chain.md](docs/supply-chain.md)
+  document both rather than pretending the old one is gone. Attaching at CREATE
+  time is what immutability allows, which is why this works for the next release
+  and not for the last one.
+
 - **Changing an OpenPGP C1/C2/C3 algorithm attribute now invalidates that
   slot's old private/public key pair before publishing the new attribute.**
   Keeping the old key made the slot advertise one algorithm while operations
