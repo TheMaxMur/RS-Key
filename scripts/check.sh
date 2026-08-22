@@ -577,6 +577,9 @@ run "crate roster"             python scripts/roster_gate.py
 # endpoint it could not draw, and it showed seven applets against eight. It is
 # emitted from the manifests now, and this row notices when it drifts.
 run "crate graph"              python scripts/crate_graph.py --check
+# The panel links committed coverage tables, not the host fonts. Rebuild them
+# from the Nix-pinned IBM Plex files and fail if the checked-in copy drifted.
+run "IBM Plex font data"       python scripts/generate_ui_fonts.py --check
 # Three conventions AGENTS.md states and nothing enforced: the `bcdDevice` bump
 # (skipped three times in two days), the CHANGELOG entry that owes it, and the
 # SPDX header on every source file. Ported from Wasefire's `ci-changelog.sh` and

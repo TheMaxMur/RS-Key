@@ -74,11 +74,6 @@ rsk-bench = { path = "crates/rsk-bench" }
 # `ExclusiveDevice`, to present embassy-rp's SPI bus as the `SpiDevice` mipidsi
 # wants (its `std` default off for no_std).
 embedded-graphics = { version = "0.8", default-features = false }
-# Proportional 1-bit bitmap text (helvR/helvB/profont) — the high-fidelity
-# typography the trusted-display redesign calls for, in place of embedded-graphics'
-# monospace built-ins. no_std, renders onto the same `DrawTarget`; rsk-ui-only so it
-# never reaches the standard key (the size-guard asserts rsk-ui absent there).
-u8g2-fonts = { version = "0.8", default-features = false, features = ["embedded_graphics_textstyle"] }
 mipidsi = { version = "0.10" }
 embedded-hal-bus = { version = "0.3", default-features = false }
 minicbor = { version = "2.2", default-features = false }

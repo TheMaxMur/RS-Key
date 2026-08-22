@@ -25,7 +25,14 @@ where
     status_bar(t)?;
     title_bar(t, "Passkeys", theme::ACCENT, false)?;
     if rows.is_empty() {
-        glyph::draw(t, Glyph::Key, Point::new(MIDX as u16 - 18, 96), 36, MUTED)?;
+        glyph::draw(
+            t,
+            Glyph::Key,
+            Point::new(MIDX as u16 - 18, 96),
+            36,
+            MUTED,
+            BG,
+        )?;
         text(
             t,
             "No passkeys yet",
@@ -105,6 +112,7 @@ where
         Point::new(er.x + er.w - 18 - 4, er.y + er.h / 2 - 9),
         18,
         theme::ACCENT,
+        BG,
     )?;
     components::list::group_card(t, PK_LIST_TOP, accounts.len() as u16)?;
     for (i, a) in accounts.iter().enumerate() {
@@ -182,18 +190,14 @@ pub fn render_rename_field<D: DrawTarget<Color = Rgb565>>(
     .draw(t)?;
 
     let field = RN_FIELD_RECT;
-    RoundedRectangle::with_equal_corners(eg_rect(field), Size::new(8, 8))
-        .into_styled(PrimitiveStyle::with_fill(theme::SURFACE))
-        .draw(t)?;
-    RoundedRectangle::with_equal_corners(eg_rect(field), Size::new(8, 8))
-        .into_styled(
-            PrimitiveStyleBuilder::new()
-                .stroke_color(theme::BORDER_FIELD)
-                .stroke_width(1)
-                .stroke_alignment(StrokeAlignment::Inside)
-                .build(),
-        )
-        .draw(t)?;
+    crate::aa::rounded_rect(
+        t,
+        field,
+        8,
+        Some(theme::SURFACE),
+        Some((theme::BORDER_FIELD, 1)),
+        BG,
+    )?;
     let pad = 10i32;
     let inner = Rect::new(
         field.x + pad as u16,
@@ -202,12 +206,13 @@ pub fn render_rename_field<D: DrawTarget<Color = Rgb565>>(
         field.h,
     );
     let baseline = field.y as i32 + field.h as i32 / 2;
-    text_left_clipped(
+    text_left_clipped_on(
         t,
         value,
         EgPoint::new(inner.x as i32, baseline),
         Role::Body,
         FG,
+        theme::SURFACE,
         inner,
     )?;
     let text_w = font::width(value, Role::Body).unwrap_or(0) as i32;
@@ -218,7 +223,14 @@ pub fn render_rename_field<D: DrawTarget<Color = Rgb565>>(
         let ps = core::str::from_utf8(&b).unwrap_or("?");
         let pw = font::width(ps, Role::Body).unwrap_or(0) as i32;
         let px = cursor_x + 4;
-        text_left(t, ps, EgPoint::new(px, baseline), Role::Body, theme::ACCENT)?;
+        text_left_on(
+            t,
+            ps,
+            EgPoint::new(px, baseline),
+            Role::Body,
+            theme::ACCENT,
+            theme::SURFACE,
+        )?;
         Line::new(
             EgPoint::new(px, baseline + 4),
             EgPoint::new(px + pw, baseline + 4),
@@ -249,16 +261,11 @@ pub fn render_rename_keys<D: DrawTarget<Color = Rgb565>>(
             match (row, col) {
                 (3, 0) => {
                     key_surface(t, r, theme::KEY_DARK, true)?;
-                    glyph_centered(t, Glyph::Backspace, r, 20, MUTED)?;
+                    glyph_centered(t, Glyph::Backspace, r, 20, MUTED, theme::KEY_DARK)?;
                 }
                 (3, 2) => {
-                    RoundedRectangle::with_equal_corners(
-                        eg_rect(r),
-                        Size::new(KEY_RADIUS, KEY_RADIUS),
-                    )
-                    .into_styled(PrimitiveStyle::with_fill(ALLOW_FILL))
-                    .draw(t)?;
-                    text(t, "Save", center(r), Role::Strong, FG)?;
+                    crate::aa::rounded_rect(t, r, KEY_RADIUS, Some(ALLOW_FILL), None, BG)?;
+                    text_on(t, "Save", center(r), Role::Strong, FG, ALLOW_FILL)?;
                 }
                 _ => {
                     let idx = if row < 3 { (row * 3 + col) as usize } else { 9 };
@@ -272,19 +279,21 @@ pub fn render_rename_keys<D: DrawTarget<Color = Rgb565>>(
                     let color = if is_active { FG } else { theme::TEXT };
                     let (digit, letters) = T9_KEY_LABELS[idx];
                     let cx = r.x as i32 + r.w as i32 / 2;
-                    text(
+                    text_on(
                         t,
                         digit,
                         EgPoint::new(cx, r.y as i32 + 14),
                         Role::Strong,
                         color,
+                        fill,
                     )?;
-                    text(
+                    text_on(
                         t,
                         letters,
                         EgPoint::new(cx, r.y as i32 + 32),
                         Role::MonoSmall,
                         color,
+                        fill,
                     )?;
                 }
             }
@@ -314,15 +323,14 @@ where
     )?;
     // Card naming exactly what is about to be removed: relying party + account.
     let card = Rect::new(14, 54, PANEL_W - 28, 46);
-    RoundedRectangle::with_equal_corners(eg_rect(card), Size::new(8, 8))
-        .into_styled(PrimitiveStyle::with_fill(theme::ROW_BG))
-        .draw(t)?;
+    crate::aa::rounded_rect(t, card, 8, Some(theme::ROW_BG), None, BG)?;
     glyph::draw(
         t,
         Glyph::Globe,
         Point::new(card.x + 10, card.y + 13),
         20,
         theme::MUTED,
+        theme::ROW_BG,
     )?;
     let tx = card.x as i32 + 40;
     // Clip + ellipsize the untrusted rp/account to the card, marking any truncation —
@@ -332,21 +340,23 @@ where
     // The rp is attacker-chosen: head-ellipsize (leading "…") so the registrable-domain
     // suffix stays on screen and a padded look-alike can't hide the real domain behind
     // the cut on the very screen meant to expose it (matches the getAssertion ceremony).
-    text_right_ellipsized(
+    text_right_ellipsized_on(
         t,
         rp.as_str(),
         EgPoint::new(tx, card.y as i32 + 16),
         Role::Body,
         theme::TEXT,
+        theme::ROW_BG,
         clip,
         rp.truncated,
     )?;
-    text_left_ellipsized(
+    text_left_ellipsized_on(
         t,
         account.as_str(),
         EgPoint::new(tx, card.y as i32 + 32),
         Role::Body,
         theme::MUTED,
+        theme::ROW_BG,
         clip,
         account.truncated,
     )?;

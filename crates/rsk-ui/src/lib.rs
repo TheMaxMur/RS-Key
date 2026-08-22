@@ -1184,7 +1184,7 @@ pub const T9_KEY_LABELS: &[(&str, &str)] = &[
     ("7", "PQRS"),
     ("8", "TUV"),
     ("9", "WXYZ"),
-    ("0", "\u{2423}"),
+    ("0", "SPACE"),
 ];
 
 /// A key on the T9 rename keypad.

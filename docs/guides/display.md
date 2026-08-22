@@ -24,6 +24,13 @@ unaffected.
 
 ![The trusted display's Home screen: a bright "Ready" status beside a check, a status card reading USB connected / Device PIN set / Passkeys 0, and a bottom navigation bar with Home, Passkeys, Apps and Settings tabs](../images/display-home.png)
 
+The full GUI uses always-on antialiasing. Text uses four-bit IBM Plex Sans and
+Mono coverage data. Icons, circles, status rings, rounded cards, and controls
+blend their edges into the surface below them. The device does this with integer
+math and direct panel writes. It does not use a framebuffer or a heap, and there
+is no antialiasing setting to manage. Each text run, icon, or AA shape is sent as
+one contiguous RGB565 block to keep page changes responsive.
+
 ## Try it without a board
 
 The screens on this page are not photographs — they are what `rsk_ui::render`

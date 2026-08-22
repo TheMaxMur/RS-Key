@@ -76,6 +76,10 @@
       rskBin
       rskTui
 
+      # Host-only inputs for scripts/generate_ui_fonts.py. The generated 4-bit
+      # coverage data is committed, so neither package enters the firmware.
+      pkgs.ibm-plex
+
       # The emulator's `--display` window (tools/emu): SDL2 is what
       # embedded-graphics-simulator opens the panel in, so the trusted-display
       # flow can be driven with a mouse instead of a soldered CST328.
@@ -102,6 +106,8 @@
       export LIBRARY_PATH="${pkgs.lib.getLib sdl2}/lib''${LIBRARY_PATH:+:$LIBRARY_PATH}"
       # the Gnuk-derived OpenPGP card suite (third_party/) dlopens libgcrypt
       export DYLD_FALLBACK_LIBRARY_PATH="${pkgs.lib.getLib pkgs.libgcrypt}/lib''${DYLD_FALLBACK_LIBRARY_PATH:+:$DYLD_FALLBACK_LIBRARY_PATH}"
+      export IBM_PLEX_SANS_DIR="${pkgs.ibm-plex}/share/fonts/truetype"
+      export IBM_PLEX_MONO_DIR="${pkgs.ibm-plex}/share/fonts/truetype"
       # The dev-shell `rsk-tui` and `rsk-emu` are bare `cargo run`s (no nix
       # RPATH), so their DT_NEEDED libudev/libpcsclite/libSDL2 must be on the
       # loader path at run time — `LIBRARY_PATH` above only satisfies the linker.

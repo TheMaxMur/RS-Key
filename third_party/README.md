@@ -1,6 +1,6 @@
 # third_party — code from elsewhere
 
-Code that is not RS-Key's, kept in the tree so a checkout has what it needs. Two
+Code that is not RS-Key's, kept in the tree so a checkout has what it needs. Three
 unrelated kinds live here:
 
 - **Two external conformance suites** — `pico-fido-tests/`,
@@ -13,6 +13,14 @@ unrelated kinds live here:
   `fuzz/` and `tools/emu/` manifests. All three, or the emulator runs a
   different KV store from the firmware. The patch file's own header is the
   record of what each change is and why the fork stays inside `src/map.rs`.
+- **Generated font data** — `ibm-plex/`, the four-bit coverage tables the
+  trusted display draws its text from, emitted by
+  `scripts/generate_ui_fonts.py` from the Nix-pinned IBM Plex Sans/Mono files
+  (`scripts/check.sh` re-runs the generator and fails when the committed copy
+  drifted). Unlike the two above, this one **is compiled into the firmware** —
+  the display flavor links it — under **OFL-1.1**, which `ibm-plex/LICENSE.txt`
+  carries. OFL governs the font data, AGPL-3.0-only the rest of the image; the
+  two coexist because neither is a derivative of the other.
 
 Both suite directories carry their own licenses, distinct from the repository's own
 AGPL-3.0-only. Note the split between each file's **per-file header** (the

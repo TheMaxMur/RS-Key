@@ -1,17 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 RS-Key contributors
 
-//! Vector icons drawn as hand-authored 1-bit bitmaps — no bitmap *asset* files, no
-//! icon font, but no longer one contour scaled to every size either. Each glyph is
-//! drawn by hand at the **canonical render sizes** the UI actually paints it
-//! (`CANON`: a 14px list-row marker, a 16/18/20px nav/header icon, a 36/44px
-//! headline), so a detailed icon stays crisp at 14px instead of collapsing into a
-//! blob the way a single 16×16 contour did once the `(gx*g1+8)/16` grid map rounded
-//! its features off-axis. A request for an off-canonical size (12, 22, 28, 32, 38, …)
-//! blits the nearest canonical bitmap nearest-neighbour scaled — those are the large
-//! or simple glyphs where a scale reads clean.
+//! Icons drawn from hand-authored bitmaps with fixed-point coverage smoothing.
+//! Each glyph has art at the canonical sizes that the UI uses. A request for a
+//! different size selects the closest source and uses bilinear fixed-point
+//! sampling. A small symmetric filter gives canonical and scaled edges four-bit
+//! coverage without a heap or floating-point math.
 //!
-//! The bitmaps live in-source as `&[&str]` rows (`'#'` = ink) so they are readable
+//! The source bitmaps live as `&[&str]` rows (`'#'` = ink) so they are readable
 //! and hand-editable: the maintainer tweaks a pixel by editing a character. They are
 //! host-testable like the rest of the UI model — one test asserts every bitmap is
 //! square and paints inside its box, a second asserts each glyph is mirror-symmetric
@@ -24,10 +20,13 @@
 //! brand — so a relying party gets the generic [`Glyph::Globe`] plus its rpId text.
 
 use embedded_graphics::{
-    Pixel, draw_target::DrawTarget, geometry::Point as EgPoint, pixelcolor::Rgb565,
+    draw_target::DrawTarget,
+    geometry::{Point as EgPoint, Size},
+    pixelcolor::Rgb565,
+    primitives::Rectangle,
 };
 
-use crate::Point;
+use crate::{Point, aa::blend_coverage};
 
 /// A drawable icon. Abstract, not brand-specific (see the module note on logos).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -110,33 +109,60 @@ fn pick(tbl: &'static [Bitmap], s: u16) -> &'static Bitmap {
     best
 }
 
-/// Draw `g` into the square box at `at` (top-left) of side `s` pixels, stroked in `color`.
-/// Blits the canonical bitmap for `s` (an exact size is a 1:1 copy); an off-canonical `s`
-/// is nearest-neighbour scaled from the nearest canonical bitmap. One `draw_iter` so the
-/// glyph paints atomically. Pure and generic.
+fn source_ink(bitmap: &Bitmap, x: i32, y: i32) -> u16 {
+    if x < 0 || y < 0 || x >= i32::from(bitmap.size) || y >= i32::from(bitmap.size) {
+        return 0;
+    }
+    u16::from(bitmap.rows[y as usize].as_bytes()[x as usize] == b'#')
+}
+
+fn source_coverage(bitmap: &Bitmap, x: i32, y: i32) -> u16 {
+    let weight = source_ink(bitmap, x, y) * 12
+        + source_ink(bitmap, x - 1, y)
+        + source_ink(bitmap, x + 1, y)
+        + source_ink(bitmap, x, y - 1)
+        + source_ink(bitmap, x, y + 1);
+    (weight * 15 + 8) / 16
+}
+
+fn scaled_coverage(bitmap: &Bitmap, x: i32, y: i32, size: i32) -> u8 {
+    let source = i32::from(bitmap.size);
+    let fx = (2 * x + 1) * source * 128 / size - 128;
+    let fy = (2 * y + 1) * source * 128 / size - 128;
+    let x0 = fx.div_euclid(256);
+    let y0 = fy.div_euclid(256);
+    let dx = fx.rem_euclid(256) as u32;
+    let dy = fy.rem_euclid(256) as u32;
+    let top = u32::from(source_coverage(bitmap, x0, y0)) * (256 - dx)
+        + u32::from(source_coverage(bitmap, x0 + 1, y0)) * dx;
+    let bottom = u32::from(source_coverage(bitmap, x0, y0 + 1)) * (256 - dx)
+        + u32::from(source_coverage(bitmap, x0 + 1, y0 + 1)) * dx;
+    ((top * (256 - dy) + bottom * dy + 32_768) / 65_536) as u8
+}
+
+/// Draw `g` into a square and blend its coverage against `bg`.
 pub fn draw<D: DrawTarget<Color = Rgb565>>(
     t: &mut D,
     g: Glyph,
     at: Point,
     s: u16,
     color: Rgb565,
+    bg: Rgb565,
 ) -> Result<(), D::Error> {
     let bm = pick(table(g), s);
-    let src = bm.size as i32;
     let dst = (s as i32).max(1);
     let ax = at.x as i32;
     let ay = at.y as i32;
-    // Centre-sampled nearest-neighbour: target row `ty` reads source row `(2*ty+1)*src /
-    // (2*dst)`. At src == dst this is the identity (`(2*ty+1)/2 == ty`), i.e. an exact blit;
-    // for a scale it samples the pixel centre, which keeps a symmetric source symmetric.
-    t.draw_iter((0..dst).flat_map(move |ty| {
-        let sy = (((2 * ty + 1) * src) / (2 * dst)).min(src - 1) as usize;
-        let row = bm.rows[sy].as_bytes();
-        (0..dst).filter_map(move |tx| {
-            let sx = (((2 * tx + 1) * src) / (2 * dst)).min(src - 1) as usize;
-            (row[sx] == b'#').then(|| Pixel(EgPoint::new(ax + tx, ay + ty), color))
-        })
-    }))
+    let area = Rectangle::new(EgPoint::new(ax, ay), Size::new(u32::from(s), u32::from(s)));
+    t.fill_contiguous(
+        &area,
+        (0..dst).flat_map(move |ty| {
+            (0..dst).map(move |tx| {
+                let coverage = scaled_coverage(bm, tx, ty, dst);
+                blend_coverage(color, bg, coverage)
+            })
+        }),
+    )
 }
 
 /// The bitmap tables, kept in their own file so the art stays hand-editable

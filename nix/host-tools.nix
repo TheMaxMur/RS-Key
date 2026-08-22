@@ -47,6 +47,7 @@ let
     ps.shamir-mnemonic # SLIP-39 Shamir shares
     ps.fido2 # `rsk fido` set-pin / list-passkeys
     ps.pytest # third_party/ conformance suites
+    ps.pillow # deterministic IBM Plex rasterisation for the trusted-display assets
     inputimeoutPy # prompt helper used by the vendored FIDO suite
     dilithiumPy # ML-DSA-44 verification (PQC device test)
     # ykman as an importable module (keyboard-OTP test drives its OtpConnection)

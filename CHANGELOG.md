@@ -924,6 +924,14 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Changed
 
+- **The trusted display now antialiases the full GUI.** Text uses generated
+  four-bit IBM Plex Sans and Mono coverage data. Icons, circles, status arcs,
+  rounded cards, and controls use integer coverage blending against their real
+  surface colour. This is always active in display builds and needs no setting,
+  framebuffer, heap, or new firmware dependency. Text, icons, and AA shapes are
+  streamed as contiguous RGB565 blocks so page changes do not issue a long series
+  of small SPI writes. **bcdDevice → 0x097E.**
+
 - **The release signature is `SHA256SUMS.sigstore.json`, and the build
   provenance now ships as a file too.** Five signed releases read as *unsigned*
   to anyone matching on the name: the asset was called

@@ -531,6 +531,12 @@ fn t9_groups_are_printable_and_have_distinct_chars() {
             seen[a as usize] = true;
         }
     }
+    assert!(
+        T9_KEY_LABELS
+            .iter()
+            .all(|(digit, letters)| digit.is_ascii() && letters.is_ascii()),
+        "T9 key labels must use glyphs from the ASCII font atlas"
+    );
 }
 
 /// Every key grid on the panel is `origin + index * (size + gap)`, and thirteen

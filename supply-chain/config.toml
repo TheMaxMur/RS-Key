@@ -960,10 +960,6 @@ criteria = "safe-to-deploy"
 version = "1.20.1"
 criteria = "safe-to-deploy"
 
-[[exemptions.u8g2-fonts]]
-version = "0.8.0"
-criteria = "safe-to-deploy"
-
 [[exemptions.unicode-ident]]
 version = "1.0.24"
 criteria = "safe-to-deploy"

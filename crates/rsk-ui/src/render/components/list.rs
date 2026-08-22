@@ -11,13 +11,12 @@
 use embedded_graphics::{
     Drawable,
     draw_target::{DrawTarget, DrawTargetExt},
-    geometry::Size,
     pixelcolor::Rgb565,
     prelude::{Point as EgPoint, Primitive},
-    primitives::{Line, PrimitiveStyle, PrimitiveStyleBuilder, RoundedRectangle, StrokeAlignment},
+    primitives::{Line, PrimitiveStyle},
 };
 
-use super::super::{eg_rect, text_left_ellipsized, text_right_ellipsized};
+use super::super::{eg_rect, text_left_ellipsized_on, text_right_ellipsized_on};
 use crate::font;
 use crate::{Glyph, Point, Rect, glyph, theme};
 
@@ -41,18 +40,14 @@ pub fn group_card<D: DrawTarget<Color = Rgb565>>(
     let last = crate::row_rect(y0, n - 1);
     let span = Rect::new(first.x, first.y, first.w, last.y + last.h - first.y);
 
-    RoundedRectangle::with_equal_corners(eg_rect(span), Size::new(LIST_RADIUS, LIST_RADIUS))
-        .into_styled(PrimitiveStyle::with_fill(theme::ROW_BG))
-        .draw(t)?;
-    RoundedRectangle::with_equal_corners(eg_rect(span), Size::new(LIST_RADIUS, LIST_RADIUS))
-        .into_styled(
-            PrimitiveStyleBuilder::new()
-                .stroke_color(theme::BORDER_CARD)
-                .stroke_width(1)
-                .stroke_alignment(StrokeAlignment::Inside)
-                .build(),
-        )
-        .draw(t)?;
+    crate::aa::rounded_rect(
+        t,
+        span,
+        LIST_RADIUS,
+        Some(theme::ROW_BG),
+        Some((theme::BORDER_CARD, 1)),
+        theme::BG,
+    )?;
 
     // Hairline dividers at every inter-row gap midpoint.
     for i in 1..n {
@@ -93,17 +88,26 @@ pub fn row<D: DrawTarget<Color = Rgb565>>(
 
     // Optional icon chip (rounded tile behind the glyph for relying-party rows).
     let gx = if chip {
-        RoundedRectangle::with_equal_corners(
-            eg_rect(Rect::new(rect.x + 3, (cy - 11) as u16, 22, 22)),
-            Size::new(6, 6),
-        )
-        .into_styled(PrimitiveStyle::with_fill(theme::CHIP))
-        .draw(t)?;
+        crate::aa::rounded_rect(
+            t,
+            Rect::new(rect.x + 3, (cy - 11) as u16, 22, 22),
+            6,
+            Some(theme::CHIP),
+            None,
+            theme::ROW_BG,
+        )?;
         rect.x + 7
     } else {
         rect.x + 8
     };
-    glyph::draw(t, icon, Point::new(gx, (cy - 7) as u16), 14, theme::GREY)?;
+    glyph::draw(
+        t,
+        icon,
+        Point::new(gx, (cy - 7) as u16),
+        14,
+        theme::GREY,
+        if chip { theme::CHIP } else { theme::ROW_BG },
+    )?;
 
     // Trailing block: chevron then value, tracking the leftmost x.
     let mut right_x = rect.x as i32 + rect.w as i32 - 8;
@@ -115,6 +119,7 @@ pub fn row<D: DrawTarget<Color = Rgb565>>(
             Point::new(right_x as u16, (cy - 6) as u16),
             12,
             theme::MUTED,
+            theme::ROW_BG,
         )?;
     }
     let label_x = rect.x as i32 + 28;
@@ -134,6 +139,7 @@ pub fn row<D: DrawTarget<Color = Rgb565>>(
             EgPoint::new(tx, cy),
             font::Role::Body,
             col,
+            theme::ROW_BG,
         )?;
         let tw = (font::width(txt, font::Role::Body).unwrap_or(0) as i32).min(tx - tleft);
         tx - tw - TRAILING_GAP
@@ -148,8 +154,26 @@ pub fn row<D: DrawTarget<Color = Rgb565>>(
     );
     let at = EgPoint::new(label_x, cy);
     if domain {
-        text_right_ellipsized(t, label, at, font::Role::Body, theme::TEXT, clip, marked)
+        text_right_ellipsized_on(
+            t,
+            label,
+            at,
+            font::Role::Body,
+            theme::TEXT,
+            theme::ROW_BG,
+            clip,
+            marked,
+        )
     } else {
-        text_left_ellipsized(t, label, at, font::Role::Body, theme::TEXT, clip, marked)
+        text_left_ellipsized_on(
+            t,
+            label,
+            at,
+            font::Role::Body,
+            theme::TEXT,
+            theme::ROW_BG,
+            clip,
+            marked,
+        )
     }
 }

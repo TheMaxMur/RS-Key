@@ -13,12 +13,9 @@
 use embedded_graphics::{
     Drawable,
     draw_target::{DrawTarget, DrawTargetExt},
-    geometry::{Angle, Point as EgPoint, Size},
+    geometry::{Point as EgPoint, Size},
     pixelcolor::Rgb565,
-    primitives::{
-        Arc, Circle, Line, Primitive, PrimitiveStyle, PrimitiveStyleBuilder, Rectangle,
-        RoundedRectangle, StrokeAlignment,
-    },
+    primitives::{Line, Primitive, PrimitiveStyle, Rectangle},
 };
 
 use crate::{
@@ -187,6 +184,7 @@ fn render_pager<D: DrawTarget<Color = Rgb565>>(
         ),
         16,
         prev_col,
+        BG,
     )?;
     glyph::draw(
         t,
@@ -197,6 +195,7 @@ fn render_pager<D: DrawTarget<Color = Rgb565>>(
         ),
         16,
         next_col,
+        BG,
     )?;
     let mut buf = [0u8; 13];
     text(
@@ -248,21 +247,8 @@ fn outline_button<D: DrawTarget<Color = Rgb565>>(
     } else {
         (theme::TINT_BLUE, theme::BORDER_FIELD)
     };
-    RoundedRectangle::with_equal_corners(eg_rect(r), Size::new(BTN_RADIUS, BTN_RADIUS))
-        .into_styled(PrimitiveStyle::with_fill(bg))
-        .draw(t)?;
-    // Inside-aligned stroke: the outline stays within `r`, so a button's paint never
-    // bleeds past the exact rect the hit-test maps (the Allow/Deny contract).
-    RoundedRectangle::with_equal_corners(eg_rect(r), Size::new(BTN_RADIUS, BTN_RADIUS))
-        .into_styled(
-            PrimitiveStyleBuilder::new()
-                .stroke_color(border)
-                .stroke_width(1)
-                .stroke_alignment(StrokeAlignment::Inside)
-                .build(),
-        )
-        .draw(t)?;
-    text(t, label, center(r), Role::Strong, color)
+    crate::aa::rounded_rect(t, r, BTN_RADIUS, Some(bg), Some((border, 1)), BG)?;
+    text_on(t, label, center(r), Role::Strong, color, bg)
 }
 
 /// Fill a rounded floating button and center its caption — the fill and the
@@ -275,10 +261,8 @@ fn button<D: DrawTarget<Color = Rgb565>>(
     label: &str,
     fill: Rgb565,
 ) -> Result<(), D::Error> {
-    RoundedRectangle::with_equal_corners(eg_rect(r), Size::new(BTN_RADIUS, BTN_RADIUS))
-        .into_styled(PrimitiveStyle::with_fill(fill))
-        .draw(t)?;
-    text(t, label, center(r), Role::Strong, FG)
+    crate::aa::rounded_rect(t, r, BTN_RADIUS, Some(fill), None, BG)?;
+    text_on(t, label, center(r), Role::Strong, FG, fill)
 }
 
 /// Paint a rounded key surface at `r`: a `fill`, plus (when `bordered`) a subtle
@@ -290,21 +274,14 @@ fn key_surface<D: DrawTarget<Color = Rgb565>>(
     fill: Rgb565,
     bordered: bool,
 ) -> Result<(), D::Error> {
-    RoundedRectangle::with_equal_corners(eg_rect(r), Size::new(KEY_RADIUS, KEY_RADIUS))
-        .into_styled(PrimitiveStyle::with_fill(fill))
-        .draw(t)?;
-    if bordered {
-        RoundedRectangle::with_equal_corners(eg_rect(r), Size::new(KEY_RADIUS, KEY_RADIUS))
-            .into_styled(
-                PrimitiveStyleBuilder::new()
-                    .stroke_color(theme::KEY_BORDER)
-                    .stroke_width(1)
-                    .stroke_alignment(StrokeAlignment::Inside)
-                    .build(),
-            )
-            .draw(t)?;
-    }
-    Ok(())
+    crate::aa::rounded_rect(
+        t,
+        r,
+        KEY_RADIUS,
+        Some(fill),
+        bordered.then_some((theme::KEY_BORDER, 1)),
+        BG,
+    )
 }
 
 /// Draw glyph `g` of side `size` centred in `r`.
@@ -314,6 +291,7 @@ fn glyph_centered<D: DrawTarget<Color = Rgb565>>(
     r: Rect,
     size: u16,
     color: Rgb565,
+    bg: Rgb565,
 ) -> Result<(), D::Error> {
     glyph::draw(
         t,
@@ -321,6 +299,7 @@ fn glyph_centered<D: DrawTarget<Color = Rgb565>>(
         Point::new(r.x + r.w / 2 - size / 2, r.y + r.h / 2 - size / 2),
         size,
         color,
+        bg,
     )
 }
 
@@ -335,16 +314,8 @@ fn back_button<D: DrawTarget<Color = Rgb565>>(
     rect: Rect,
     color: Rgb565,
 ) -> Result<(), D::Error> {
-    RoundedRectangle::with_equal_corners(eg_rect(rect), Size::new(9, 9))
-        .into_styled(
-            PrimitiveStyleBuilder::new()
-                .stroke_color(color)
-                .stroke_width(1)
-                .stroke_alignment(StrokeAlignment::Inside)
-                .build(),
-        )
-        .draw(t)?;
-    glyph_centered(t, Glyph::Back, rect, 18, color)
+    crate::aa::rounded_rect(t, rect, 9, None, Some((color, 1)), BG)?;
+    glyph_centered(t, Glyph::Back, rect, 18, color, BG)
 }
 
 /// Draw `s` centered on `at` (horizontal center, vertical middle).
@@ -355,7 +326,18 @@ fn text<D: DrawTarget<Color = Rgb565>>(
     role: Role,
     color: Rgb565,
 ) -> Result<(), D::Error> {
-    font::centered(t, s, at, role, color)
+    font::centered(t, s, at, role, color, BG)
+}
+
+fn text_on<D: DrawTarget<Color = Rgb565>>(
+    t: &mut D,
+    s: &str,
+    at: EgPoint,
+    role: Role,
+    color: Rgb565,
+    bg: Rgb565,
+) -> Result<(), D::Error> {
+    font::centered(t, s, at, role, color, bg)
 }
 
 fn center(r: Rect) -> EgPoint {
@@ -379,7 +361,18 @@ fn text_left<D: DrawTarget<Color = Rgb565>>(
     role: Role,
     color: Rgb565,
 ) -> Result<(), D::Error> {
-    font::left(t, s, at, role, color)
+    font::left(t, s, at, role, color, BG)
+}
+
+fn text_left_on<D: DrawTarget<Color = Rgb565>>(
+    t: &mut D,
+    s: &str,
+    at: EgPoint,
+    role: Role,
+    color: Rgb565,
+    bg: Rgb565,
+) -> Result<(), D::Error> {
+    font::left(t, s, at, role, color, bg)
 }
 
 /// Right-aligned, vertically-centred text (trailing row status / values).
@@ -390,24 +383,22 @@ fn text_right<D: DrawTarget<Color = Rgb565>>(
     role: Role,
     color: Rgb565,
 ) -> Result<(), D::Error> {
-    font::right(t, s, at, role, color)
+    font::right(t, s, at, role, color, BG)
 }
 
-/// Left-aligned text hard-clipped to `clip`, so a label too long for its slot is cut at
-/// the boundary rather than overrunning a trailing value — proportional faces make long,
-/// variable rp names a real risk.
-fn text_left_clipped<D: DrawTarget<Color = Rgb565>>(
+fn text_left_clipped_on<D: DrawTarget<Color = Rgb565>>(
     t: &mut D,
     s: &str,
     at: EgPoint,
     role: Role,
     color: Rgb565,
+    bg: Rgb565,
     clip: Rect,
 ) -> Result<(), D::Error> {
-    font::left(&mut t.clipped(&eg_rect(clip)), s, at, role, color)
+    font::left(&mut t.clipped(&eg_rect(clip)), s, at, role, color, bg)
 }
 
-/// Like [`text_left_clipped`], but when `s` is too wide for `clip` it is shortened to the
+/// Like [`text_left_clipped_on`], but when `s` is too wide for `clip` it is shortened to the
 /// widest character prefix that fits with a trailing `"..."` — so an over-long label reads
 /// as deliberately truncated ("Authenticat...") instead of cut mid-glyph ("Authentica"),
 /// and on the anti-phishing screens a padded look-alike id is *visibly* truncated. Input is
@@ -426,8 +417,22 @@ fn text_left_ellipsized<D: DrawTarget<Color = Rgb565>>(
     clip: Rect,
     force_mark: bool,
 ) -> Result<(), D::Error> {
+    text_left_ellipsized_on(t, s, at, role, color, BG, clip, force_mark)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn text_left_ellipsized_on<D: DrawTarget<Color = Rgb565>>(
+    t: &mut D,
+    s: &str,
+    at: EgPoint,
+    role: Role,
+    color: Rgb565,
+    bg: Rgb565,
+    clip: Rect,
+    force_mark: bool,
+) -> Result<(), D::Error> {
     if !force_mark && font::width(s, role).unwrap_or(0) <= clip.w as u32 {
-        return font::left(&mut t.clipped(&eg_rect(clip)), s, at, role, color);
+        return font::left(&mut t.clipped(&eg_rect(clip)), s, at, role, color, bg);
     }
     const ELL: &str = "...";
     let budget = (clip.w as u32).saturating_sub(font::width(ELL, role).unwrap_or(0));
@@ -449,7 +454,7 @@ fn text_left_ellipsized<D: DrawTarget<Color = Rgb565>>(
     buf[..end].copy_from_slice(&s.as_bytes()[..end]);
     buf[end..end + ELL.len()].copy_from_slice(ELL.as_bytes());
     let out = core::str::from_utf8(&buf[..end + ELL.len()]).unwrap_or(ELL);
-    font::left(&mut t.clipped(&eg_rect(clip)), out, at, role, color)
+    font::left(&mut t.clipped(&eg_rect(clip)), out, at, role, color, bg)
 }
 
 /// Like [`text_left_ellipsized`] but keeps the **suffix** and prepends the marker:
@@ -466,8 +471,22 @@ fn text_right_ellipsized<D: DrawTarget<Color = Rgb565>>(
     clip: Rect,
     force_mark: bool,
 ) -> Result<(), D::Error> {
+    text_right_ellipsized_on(t, s, at, role, color, BG, clip, force_mark)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn text_right_ellipsized_on<D: DrawTarget<Color = Rgb565>>(
+    t: &mut D,
+    s: &str,
+    at: EgPoint,
+    role: Role,
+    color: Rgb565,
+    bg: Rgb565,
+    clip: Rect,
+    force_mark: bool,
+) -> Result<(), D::Error> {
     if !force_mark && font::width(s, role).unwrap_or(0) <= clip.w as u32 {
-        return font::left(&mut t.clipped(&eg_rect(clip)), s, at, role, color);
+        return font::left(&mut t.clipped(&eg_rect(clip)), s, at, role, color, bg);
     }
     const ELL: &str = "...";
     let budget = (clip.w as u32).saturating_sub(font::width(ELL, role).unwrap_or(0));
@@ -493,7 +512,7 @@ fn text_right_ellipsized<D: DrawTarget<Color = Rgb565>>(
     let suffix = &suffix[suffix.len() - n..];
     buf[ELL.len()..ELL.len() + n].copy_from_slice(suffix);
     let out = core::str::from_utf8(&buf[..ELL.len() + n]).unwrap_or(ELL);
-    font::left(&mut t.clipped(&eg_rect(clip)), out, at, role, color)
+    font::left(&mut t.clipped(&eg_rect(clip)), out, at, role, color, bg)
 }
 
 /// The persistent top **status bar** (the design's framing chrome): a mono "RS-Key"
@@ -526,6 +545,7 @@ pub fn status_bar<D: DrawTarget<Color = Rgb565>>(t: &mut D) -> Result<(), D::Err
         Point::new((label_right - label_w - 16).max(0) as u16, (cy - 7) as u16),
         14,
         theme::GREY,
+        BG,
     )
 }
 
@@ -654,7 +674,7 @@ pub fn render_header<D: DrawTarget<Color = Rgb565>>(
     let color = if accent { theme::ACCENT } else { theme::MUTED };
     text_left(t, title, EgPoint::new(12, 15), Role::Heading, color)?;
     if let Some(g) = right {
-        glyph::draw(t, g, Point::new(PANEL_W - 26, 6), 18, theme::MUTED)?;
+        glyph::draw(t, g, Point::new(PANEL_W - 26, 6), 18, theme::MUTED, BG)?;
     }
     Ok(())
 }
@@ -672,18 +692,7 @@ fn card<D: DrawTarget<Color = Rgb565>>(
     fill: Rgb565,
     border: Rgb565,
 ) -> Result<(), D::Error> {
-    RoundedRectangle::with_equal_corners(eg_rect(rect), Size::new(CARD_RADIUS, CARD_RADIUS))
-        .into_styled(PrimitiveStyle::with_fill(fill))
-        .draw(t)?;
-    RoundedRectangle::with_equal_corners(eg_rect(rect), Size::new(CARD_RADIUS, CARD_RADIUS))
-        .into_styled(
-            PrimitiveStyleBuilder::new()
-                .stroke_color(border)
-                .stroke_width(1)
-                .stroke_alignment(StrokeAlignment::Inside)
-                .build(),
-        )
-        .draw(t)
+    crate::aa::rounded_rect(t, rect, CARD_RADIUS, Some(fill), Some((border, 1)), BG)
 }
 
 /// The content of one list row — a leading glyph (on a service `chip` when set), the label,
@@ -701,17 +710,26 @@ fn row_body<D: DrawTarget<Color = Rgb565>>(
 ) -> Result<(), D::Error> {
     let cy = rect.y as i32 + rect.h as i32 / 2;
     let gx = if chip {
-        RoundedRectangle::with_equal_corners(
-            eg_rect(Rect::new(rect.x + 3, (cy - 11) as u16, 22, 22)),
-            Size::new(6, 6),
-        )
-        .into_styled(PrimitiveStyle::with_fill(theme::CHIP))
-        .draw(t)?;
+        crate::aa::rounded_rect(
+            t,
+            Rect::new(rect.x + 3, (cy - 11) as u16, 22, 22),
+            6,
+            Some(theme::CHIP),
+            None,
+            theme::ROW_BG,
+        )?;
         rect.x + 7
     } else {
         rect.x + 8
     };
-    glyph::draw(t, icon, Point::new(gx, (cy - 7) as u16), 14, theme::GREY)?;
+    glyph::draw(
+        t,
+        icon,
+        Point::new(gx, (cy - 7) as u16),
+        14,
+        theme::GREY,
+        if chip { theme::CHIP } else { theme::ROW_BG },
+    )?;
     let mut right_x = rect.x as i32 + rect.w as i32 - 8;
     if chevron {
         right_x -= 12;
@@ -721,6 +739,7 @@ fn row_body<D: DrawTarget<Color = Rgb565>>(
             Point::new(right_x as u16, (cy - 6) as u16),
             12,
             theme::MUTED,
+            theme::ROW_BG,
         )?;
     }
     let label_x = rect.x as i32 + 28;
@@ -733,6 +752,7 @@ fn row_body<D: DrawTarget<Color = Rgb565>>(
             EgPoint::new(tx, cy),
             Role::Body,
             col,
+            theme::ROW_BG,
         )?;
         tx - font::width(txt, Role::Body).unwrap_or(0) as i32 - ROW_TRAILING_GAP
     } else {
@@ -745,7 +765,16 @@ fn row_body<D: DrawTarget<Color = Rgb565>>(
         rect.h,
     );
     let at = EgPoint::new(label_x, cy);
-    text_left_ellipsized(t, label, at, Role::Body, theme::TEXT, clip, false)
+    text_left_ellipsized_on(
+        t,
+        label,
+        at,
+        Role::Body,
+        theme::TEXT,
+        theme::ROW_BG,
+        clip,
+        false,
+    )
 }
 
 /// Paint one grouped surface behind list rows `0..n` (each at `row_rect(y0, i)`), with a
@@ -840,13 +869,21 @@ pub fn render_nav<D: DrawTarget<Color = Rgb565>>(
         // Glyph high in the cell, its caption centred below — four tabs at 60px each
         // are tight, so the label disambiguates the (smaller, 16px) icon.
         let cx = r.x + r.w / 2;
-        glyph::draw(t, g, Point::new(cx - 8, NAV_TOP + 4), 16, color)?;
-        text(
+        glyph::draw(
+            t,
+            g,
+            Point::new(cx - 8, NAV_TOP + 4),
+            16,
+            color,
+            theme::NAV_BG,
+        )?;
+        text_on(
             t,
             tab.label(),
             EgPoint::new(cx as i32, NAV_TOP as i32 + 28),
             Role::MonoSmall,
             color,
+            theme::NAV_BG,
         )?;
     }
     Ok(())
@@ -870,8 +907,20 @@ fn hold_label<D: DrawTarget<Color = Rgb565>>(
     t: &mut D,
     rect: Rect,
     label: &str,
+    left_bg: Rgb565,
+    right_bg: Rgb565,
+    split_x: i32,
 ) -> Result<(), D::Error> {
-    text(t, label, center(rect), Role::Body, FG)
+    font::centered_split(
+        t,
+        label,
+        center(rect),
+        Role::Body,
+        FG,
+        left_bg,
+        right_bg,
+        split_x,
+    )
 }
 
 /// The **static base** of a hold-to-confirm button: a solid `fill` card (the design's
@@ -885,10 +934,8 @@ pub fn render_hold_button<D: DrawTarget<Color = Rgb565>>(
     label: &str,
     fill: Rgb565,
 ) -> Result<(), D::Error> {
-    RoundedRectangle::with_equal_corners(eg_rect(rect), Size::new(BTN_RADIUS, BTN_RADIUS))
-        .into_styled(PrimitiveStyle::with_fill(fill))
-        .draw(t)?;
-    hold_label(t, rect, label)
+    crate::aa::rounded_rect(t, rect, BTN_RADIUS, Some(fill), None, BG)?;
+    hold_label(t, rect, label, fill, fill, rect.x as i32)
 }
 
 /// Grow the hold wash from `prev_num/den` to `num/den` of the button width, drawn over the
@@ -918,12 +965,25 @@ pub fn render_hold_fill<D: DrawTarget<Color = Rgb565>>(
                 Size::new(w - pw, rect.h as u32),
             );
             let mut clipped = t.clipped(&strip);
-            RoundedRectangle::with_equal_corners(eg_rect(rect), Size::new(BTN_RADIUS, BTN_RADIUS))
-                .into_styled(PrimitiveStyle::with_fill(hold_overlay(fill)))
-                .draw(&mut clipped)?;
+            crate::aa::rounded_rect(
+                &mut clipped,
+                rect,
+                BTN_RADIUS,
+                Some(hold_overlay(fill)),
+                None,
+                BG,
+            )?;
         }
+        return hold_label(
+            t,
+            rect,
+            label,
+            hold_overlay(fill),
+            fill,
+            rect.x as i32 + w as i32,
+        );
     }
-    hold_label(t, rect, label)
+    hold_label(t, rect, label, fill, fill, rect.x as i32)
 }
 
 /// `&str` view of an all-ASCII fixed buffer (the hex/decimal we built); falls back to
