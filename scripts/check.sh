@@ -586,6 +586,11 @@ run "crate graph"              python scripts/crate_graph.py --check
 # pointing at a line that has moved reads as authoritative while being wrong.
 run "bcd bump + CHANGELOG"     python scripts/bcd_gate.py
 run "SPDX headers"             python scripts/spdx_gate.py
+# 187 of the 188 configurations say "do not edit by hand" in their first line,
+# and nothing made that true: deleting a whole mutant family left every row
+# green, because run-tlc.sh lists families with `ls` so the tiers shrank with
+# them. This regenerates into a temp tree and diffs.
+run "generated TLC configs"    python scripts/config_gen_gate.py
 run "formal citations"         python scripts/citation_gate.py
 run "assurance registry"       python scripts/assurance_gate.py
 # A model constant that stands for a fact about the world, not a defect switch.

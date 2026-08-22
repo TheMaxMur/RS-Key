@@ -7,7 +7,13 @@
 # the invariant it is expected to break FIRST, because TLC reports the first
 # violated invariant and stops.
 set -euo pipefail
-cd "$(dirname "$0")"
+# Where to write. Defaults to this directory, so `./gen-configs.sh` still
+# regenerates in place -- but scripts/config_gen_gate.py can regenerate into a
+# temp tree and diff, which is the only way to check the 187 files against
+# their generator without overwriting them first.
+out_dir=${1:-$(dirname "$0")}
+mkdir -p "$out_dir"
+cd "$out_dir"
 
 BUGS=(BugResetGatesFirst BugCredBeforeRp BugTokenSurvivesPinChange
       BugSetPinKeepsPpuat BugChangePinKeepsPpuat BugStopUsingKeepsPerms

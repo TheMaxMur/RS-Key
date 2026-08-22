@@ -31,6 +31,9 @@ GATES = sorted(p.name for p in HERE.glob("*_gate.py") if not p.name.startswith("
 #: the same blind spot one file over.
 NAMED = {
     "../formal/run-tlc.sh": "test_run_tlc.py",
+    # The config generator: `config_gen_gate.py` is only as good as the script it
+    # re-runs, and nothing else in `scripts/` names it.
+    "../formal/gen-configs.sh": "test_config_gen_gate.py",
     "impact.py": "test_impact.py",
     "kani.sh": "test_kani_sh.py",
     "comutate.py": "test_comutate.py",
