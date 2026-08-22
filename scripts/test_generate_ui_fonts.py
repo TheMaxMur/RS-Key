@@ -136,6 +136,16 @@ def test_an_edited_font_digest_is_stale(tree):
     assert STALE in done.stdout
 
 
+def test_an_edited_raster_stack_line_is_stale(tree):
+    """Recording FreeType and Raqm is decoration unless the row compares it too."""
+    text = data(tree).read_text()
+    line = next(l for l in text.splitlines() if l.startswith("// Pillow "))
+    edit(tree, line, "// Pillow 0.0.0, FreeType 0.0.0, Raqm 0.0.0")
+    done = check(tree)
+    assert done.returncode == 1
+    assert STALE in done.stdout
+
+
 def test_a_deleted_output_is_stale(tree):
     """Absent is not the same code path as different, and it is the likelier one."""
     data(tree).unlink()

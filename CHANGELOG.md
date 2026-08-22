@@ -1176,6 +1176,17 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Internal
 
+- **The GUI font tables record the stack that rasterised them, and pin the layout
+  engine.** The generated header hashed the IBM Plex files, which is half the input:
+  FreeType rasterises and Raqm lays out, and either moving rewrites the tables with
+  nothing in the diff to say why the gate row went red. Both versions are in the
+  header now. The layout engine is pinned rather than defaulted, because Pillow picks
+  Raqm when libraqm is present and FreeType's own layout when it is not — measured,
+  the two disagree about two advances in the 30 px face (`f` and the middle dot, 10 px
+  against 11), so a Pillow built without libraqm would have silently produced
+  different tables. It now refuses the run instead. The tables themselves are
+  byte-identical: Raqm was already what the committed data was built with.
+
 - **Three lockfiles pinned crate versions their own authors had withdrawn.**
   `cargo audit` reports a yanked version as a warning and exits 0 — the same
   shape that let two unsound advisories sit in `tools/tui` for weeks — so the
