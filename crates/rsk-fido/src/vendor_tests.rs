@@ -628,16 +628,56 @@ fn export_refused_after_another_channel_rekeys_the_mse() {
     }
 }
 
+/// What `fips-profile` does with the subcommand the two cases above stopped carrying:
+/// export is refused outright, ahead of the ceremony -- and the channel is spent
+/// anyway. The refusal returns from `backup_export`'s first line, so it is `vendor`'s
+/// wrapper, not the handler, that keeps the one-shot promise here; moving the spend
+/// into the handlers would quietly except this profile from it.
+#[cfg(feature = "fips-profile")]
 #[test]
-fn a_gated_subcommand_spends_the_mse_channel() {
-    // One handshake, one gated use: without this an interloper that squats the
-    // channel after a legitimate consumer would inherit a live key.
+fn fips_refuses_the_export_and_still_spends_the_channel() {
     let (mut fs, mut rng, mut st) = setup();
     handshake(&mut fs, &mut rng, &mut st);
     assert!(st.mse_active);
 
     let mut req = [0u8; 32];
     let n = one_byte_req(&mut req, VENDOR_BACKUP_EXPORT);
+    let mut out = [0u8; 128];
+    assert_eq!(
+        call(
+            &mut fs,
+            &mut rng,
+            &mut st,
+            &mut AlwaysConfirm,
+            &req[..n],
+            &mut out
+        ),
+        Err(CtapError::NotAllowed),
+        "the profile seals the seed in"
+    );
+    assert!(
+        !st.mse_active,
+        "a refused export must not leave the channel live"
+    );
+    assert_eq!(st.mse_key, [0u8; 32]);
+}
+
+#[test]
+fn a_gated_subcommand_spends_the_mse_channel() {
+    // One handshake, one gated use: without this an interloper that squats the
+    // channel after a legitimate consumer would inherit a live key.
+    //
+    // Carried on ATT_CLEAR, not BACKUP_EXPORT. The property is about `consumes_mse`,
+    // which lists five subcommands and does not care which — but `fips-profile`
+    // refuses export outright, ahead of the ceremony, so the declined-touch half below
+    // asserted a `OperationDenied` that profile never reaches. A carrier every profile
+    // actually runs is what makes the case mean the same thing on all of them.
+    let (mut fs, mut rng, mut st) = setup();
+    handshake(&mut fs, &mut rng, &mut st);
+    assert!(st.mse_active);
+
+    let mut req = [0u8; 32];
+    let n = one_byte_req(&mut req, VENDOR_ATT_CLEAR);
     let mut out = [0u8; 128];
     let _ = call(
         &mut fs,
@@ -2088,6 +2128,9 @@ fn mse_coordinate_must_be_exactly_32_bytes() {
 /// token it belongs to is found missing.
 #[test]
 fn an_unsupported_protocol_is_judged_before_the_missing_token() {
+    // ATT_CLEAR rather than BACKUP_EXPORT for the reason in
+    // `a_gated_subcommand_spends_the_mse_channel`: the ordering under test is inside
+    // the shared `gate()`, and `fips-profile` answers export before ever reaching it.
     for proto in [0u64, 3, 255] {
         let (mut fs, mut rng, mut st) = setup();
         fs.put(EF_PIN, &[8, 4, 1]).unwrap();
@@ -2099,7 +2142,7 @@ fn an_unsupported_protocol_is_judged_before_the_missing_token() {
                 .unwrap()
                 .u8(1)
                 .unwrap()
-                .u64(VENDOR_BACKUP_EXPORT)
+                .u64(VENDOR_ATT_CLEAR)
                 .unwrap()
                 .u8(3)
                 .unwrap()
