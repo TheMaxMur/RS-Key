@@ -1,11 +1,20 @@
-# third_party — vendored upstream test suites
+# third_party — code from elsewhere
 
-Two external conformance suites, vendored so the firmware can be validated
-without checking out the upstream repos. They are **not** part of RS-Key's
-own test suite (`tests/`, `cargo test`) — they are the upstream ecosystems'
-own tests, kept runnable against this implementation.
+Code that is not RS-Key's, kept in the tree so a checkout has what it needs. Two
+unrelated kinds live here:
 
-Both directories carry their own licenses, distinct from the repository's own
+- **Two external conformance suites** — `pico-fido-tests/`,
+  `openpgp-card-tests/` — vendored so the firmware can be validated without
+  checking out the upstream repos. They are **not** part of RS-Key's own test
+  suite (`tests/`, `cargo test`) — they are the upstream ecosystems' own tests,
+  kept runnable against this implementation. Everything below is about them.
+- **A vendored crate carrying a local fork** — `sequential-storage/` plus
+  `sequential-storage.patch`, wired into `[patch.crates-io]` by the root,
+  `fuzz/` and `tools/emu/` manifests. All three, or the emulator runs a
+  different KV store from the firmware. The patch file's own header is the
+  record of what each change is and why the fork stays inside `src/map.rs`.
+
+Both suite directories carry their own licenses, distinct from the repository's own
 AGPL-3.0-only. Note the split between each file's **per-file header** (the
 operative license for that file) and the **bundled `LICENSE`** (the upstream
 repo's top-level license file):

@@ -169,13 +169,15 @@ opt-level = "s"
 [profile.dev]
 opt-level = "s"    # embassy/HAL needs some opt even in dev to fit/behave
 
-# Vendored sequential-storage 8.0.0 carrying ONE local change: the map iterator
-# (`MapItemIter::next`) warms the key-pointer cache from the full-store scan the
-# boot already runs, so the first credential enumeration after a power-cycle is
-# O(1) per key instead of a cold backward ring-scan (~9 s at 256 passkeys). The
-# diff — plus its completion-gate that keeps a torn walk from caching a stale
-# pointer — is in third_party/sequential-storage.patch. This is the flash KV store
-# that holds every sealed secret, so the fork is deliberately kept to that one
-# documented function; upstream tracks the idea in tweedegolf/sequential-storage#105.
+# Vendored sequential-storage 8.0.0 carrying local changes confined to
+# `src/map.rs`; third_party/sequential-storage.patch enumerates them and is the
+# record. The headline: the map iterator (`MapItemIter::next`) warms the
+# key-pointer cache from the full-store scan the boot already runs, so the first
+# credential enumeration after a power-cycle is O(1) per key instead of a cold
+# backward ring-scan (~9 s at 256 passkeys). The rest harden that walk's
+# completion gate against a flash read fault and fix an upstream torn-remove
+# rollback. This is the flash KV store that holds every sealed secret, so the
+# fork is deliberately kept that narrow — one file, and the patch says which
+# functions; upstream tracks the idea in tweedegolf/sequential-storage#105.
 [patch.crates-io]
 sequential-storage = { path = "third_party/sequential-storage" }
