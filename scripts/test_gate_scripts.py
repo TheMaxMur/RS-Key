@@ -38,6 +38,9 @@ NAMED = {
     "kani.sh": "test_kani_sh.py",
     "comutate.py": "test_comutate.py",
     "crate_graph.py": "test_crate_graph.py",
+    # The font generator, the second of that shape: `check.sh` runs its `--check`
+    # as a row, the name does not end in `_gate.py`, and it landed with no table.
+    "generate_ui_fonts.py": "test_generate_ui_fonts.py",
     # The two `formal/` mappers: both are `check.sh` rows, neither ends in
     # `_gate.py`, so their tables could have been deleted with this file green.
     "security_trace.py": "test_security_trace.py",
