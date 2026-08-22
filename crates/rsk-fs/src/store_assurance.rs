@@ -117,3 +117,102 @@ impl<S: Storage> Fs<S> {
         self.known_absent(fid)
     }
 }
+
+// ---------------------------------------------------------------------------
+// The persistent half: `val`, `meta` and the blob's own `metaAbsent`.
+// ---------------------------------------------------------------------------
+
+/// The FIDs the persistent projection carries, and there are THREE on purpose.
+/// `NoRecordLostToMetaWrite` is about the records a rewrite DROPS rather than the
+/// one it writes, so a subject plus one neighbour cannot state it: with two, the
+/// neighbour is the only thing that can be lost, and "the write kept everything
+/// else" is indistinguishable from "the write kept the one file we looked at".
+pub const VIEW_FIDS: [u16; 3] = [0x0301, 0x0302, 0x0455];
+
+/// `RSKeyStore`'s PERSISTENT half over the whole projected population at once,
+/// read through the primitives a reader uses: `meta_find` for `meta[f]`,
+/// `has_data` for `val[f] # NoVal`, and EF_META's own present cache for
+/// `metaAbsent`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StoreView {
+    /// Whether EF_META holds a record for each of [`VIEW_FIDS`].
+    pub meta: [bool; VIEW_FIDS.len()],
+    /// Whether each of [`VIEW_FIDS`] has a value.
+    pub val: [bool; VIEW_FIDS.len()],
+    /// The model's `metaAbsent`: EF_META reads confirmed-absent.
+    pub meta_absent: bool,
+}
+
+impl<S: Storage> Fs<S> {
+    /// [`StoreView`] for this store: `meta` and `val` from the MEDIUM,
+    /// `metaAbsent` from the CACHE — which is the model's own split, and the
+    /// only split under which `NoFalseMetaAbsent` can be stated at all.
+    ///
+    /// `meta_find` short-circuits on `known_absent(EF_META)`, so a projection
+    /// read straight through this store cannot see the record a false-absent
+    /// cache is hiding — the violation would erase its own evidence. Clearing the
+    /// two bitmaps for the read and putting them back is what makes the
+    /// observation honest; re-parsing the blob here instead would be a second
+    /// copy of the rules, which is how the first attempt at this bridge came to
+    /// be a copy compared to itself.
+    ///
+    /// Named `read`, not `view`: over a medium that is FAULTING, the observation
+    /// is the thing that fails, and `meta_find` then answers `None` for a record
+    /// that is still there. Measured — the first version of the faulting sweep
+    /// reported `NoRecordLostToMetaWrite` on the shipped tree for exactly that.
+    /// A caller that arms a fault must disarm it before reading.
+    pub fn read_store_view(&mut self) -> StoreView {
+        let cached = (self.present, self.decided);
+        let absent = self.known_absent(crate::EF_META);
+        self.present.fill(0);
+        self.decided.fill(0);
+        let mut view = StoreView {
+            meta: [false; VIEW_FIDS.len()],
+            val: [false; VIEW_FIDS.len()],
+            meta_absent: absent,
+        };
+        for (i, &fid) in VIEW_FIDS.iter().enumerate() {
+            view.meta[i] = self.meta_find(fid, &mut [0u8; 8]).is_some();
+            view.val[i] = self.has_data(fid);
+        }
+        (self.present, self.decided) = cached;
+        view
+    }
+}
+
+// THE THREE STEP RECORDERS, and why they have to be steps.
+//
+// `store_refinement_kani.rs`'s cache clauses are STATE predicates: the model says
+// `present' = [present EXCEPT ![f] = TRUE]` and the projection reads the bit
+// back. None of the three below can be written that way, which is why the first
+// attempt at this bridge was refuted — each came out as the same boolean function
+// as its `powercut.rs` twin, a copy compared to itself.
+//
+// Each takes the pair the model's `viol'` is written over and answers whether the
+// step VIOLATED it, so the name reads the way a counterexample does.
+
+/// `RSKeyStore!NoOrphanedMetadata` at a `Delete(f)` step — SEC-STORE-001.
+///
+/// A STATE predicate cannot say this: a meta-only file legally has a record and
+/// no value, so the same state is a violation after a delete and the ordinary
+/// shape of a `MetaAdd`. The action it is read at is half the claim.
+pub fn delete_orphaned_metadata(after: &StoreView, subject: usize) -> bool {
+    after.meta[subject] && !after.val[subject]
+}
+
+/// `RSKeyStore!NoRecordLostToMetaWrite` at a `MetaAdd(f)` step — SEC-STORE-003.
+///
+/// Cross-FID: the subject's own record is what the write adds, so only a
+/// bystander's can be lost. Treating a faulted EF_META read as an empty blob is
+/// how one write drops every other record.
+pub fn meta_add_lost_a_record(before: &StoreView, after: &StoreView, subject: usize) -> bool {
+    (0..VIEW_FIDS.len()).any(|i| i != subject && before.meta[i] && !after.meta[i])
+}
+
+/// `RSKeyStore!NoFalseMetaAbsent` at a `MetaDelete(f)` step — SEC-STORE-004.
+///
+/// The blob may read absent only once the last record has gone. Caching a FAILED
+/// read as absence loses nothing here and everything on the NEXT write.
+pub fn meta_delete_false_absent(after: &StoreView) -> bool {
+    after.meta_absent && after.meta.iter().any(|&held| held)
+}

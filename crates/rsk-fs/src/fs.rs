@@ -657,3 +657,7 @@ mod store_refinement_proofs;
 #[cfg(test)]
 #[path = "fs_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "store_steps_tests.rs"]
+mod store_steps;

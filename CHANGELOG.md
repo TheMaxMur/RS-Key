@@ -40,6 +40,29 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Added
 
+- **`RSKeyStore`'s persistent half has a bridge to the code at last, and the two
+  reasons it could not have the obvious one are both measured.** The per-FID
+  state projection was refuted last round — every predicate came out as the same
+  boolean function as its `powercut.rs` twin. The second reason is new and is
+  this pilot's own doing: **no metadata path can run under `cfg(kani)` at all.**
+  Every one opens with `known_absent(EF_META)`, `EF_META` is `0xE010`, and the
+  `cfg(kani)` present map is three bytes, so the index is 7170 of 3 — measured on
+  a harness that does nothing but `meta_add`: `1 of 164 failed … index out of
+  bounds … fs.rs:118`, in 0.11 s. So `store_steps_tests.rs` is an exhaustive HOST
+  sweep instead: three step recorders (`NoOrphanedMetadata` at a `Delete`,
+  `NoRecordLostToMetaWrite` across FIDs at a `MetaAdd`, `NoFalseMetaAbsent` at a
+  `MetaDelete`), read after every step of every three-step sequence over twelve
+  operations at three FIDs, again after a reboot with no `scan`, and again over a
+  medium that fails for the duration of each step. The projection reads `meta`
+  and `val` from the MEDIUM and `metaAbsent` from the CACHE, which is the model's
+  own split and the only one under which `NoFalseMetaAbsent` is statable: read
+  through the caches, a false-absent erases its own evidence. Co-refuted:
+  `BugDeleteMetaOnlyUnderPresent` gives `NoOrphanedMetadata: [MetaAdd(0)] then
+  Delete(0) left a record over a gone value`; `BugDeleteValueBeforeMeta` survives,
+  correctly — the completed state is identical and only a power cut sees the
+  order. The three properties stay `MODELLED-ONLY`, because the registry reads
+  `BOUNDED` off a Kani harness name and there cannot be one.
+
 - **A RED row may now name the invariant it must break, and the runner compares
   it.** A mutant can go red for a defect it does not model — 2 of 24
   co-refutation patches in this tree once scored a kill that way — and the review

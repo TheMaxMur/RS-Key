@@ -74,17 +74,80 @@ ever have covered the FIDs a harness enumerated.
 
 ## What this is not
 
-- **Not the persistent half, and the obvious way to add it does not work.**
-  `NoOrphanedMetadata`, `NoRecordLostToMetaWrite` and `NoFalseMetaAbsent` stay
-  `MODELLED-ONLY`. The tempting move is to write the model's per-FID steps as
-  Rust predicates and hold them against `powercut.rs`; it was tried and measured,
-  and each predicate comes out as the *same boolean function* as its `*_landed`
-  twin — 0 disagreements over a five-valued domain, which is a copy compared to
-  itself. The reason is in the module's own comments: two of the three are STEP
-  recorders (a meta-only file legally has metadata and no value, so the violation
-  is a record outliving a delete rather than a state) and the third is CROSS-FID
-  (a `meta_add` dropping ANOTHER FID's record). A per-FID state projection can
-  carry none of them. `formal/README.md`'s phase 7 has the numbers.
+- **Not a Kani result for the persistent half, and the reason is this pilot's own
+  shrink.** `NoOrphanedMetadata`, `NoRecordLostToMetaWrite` and
+  `NoFalseMetaAbsent` have a bridge now — `store_steps_tests.rs`, below — but it
+  is a host sweep and the three stay `MODELLED-ONLY`, because `assurance_gate`
+  reads `BOUNDED` off a Kani harness name and there cannot be one. Every metadata
+  path opens with `known_absent(EF_META)`, `EF_META` is `0xE010`, and the
+  `cfg(kani)` present map is three bytes — index 7170 of 3. Measured on a harness
+  that does nothing but `meta_add`:
+
+  ```console
+  ** 1 of 164 failed (34 unreachable)
+  Failed Checks: index out of bounds: the length is less than or equal to the given index
+   File: "crates/rsk-fs/src/fs.rs", line 118, in fs::Fs::<…>::decided_bit
+  Verification Time: 0.109 s
+  ```
+
+  Widening the map back for it costs the cache harnesses the 2.5–13 minutes this
+  page shrank it to escape, and the constant is one per build.
+
+- **And it cannot be a per-FID state projection either.** The tempting move is to
+  write the model's per-FID steps as Rust predicates and hold them against
+  `powercut.rs`; it was tried and measured, and each predicate comes out as the
+  *same boolean function* as its `*_landed` twin — 0 disagreements over a
+  five-valued domain, which is a copy compared to itself. Two of the three are
+  STEP recorders (a meta-only file legally has metadata and no value, so the
+  violation is a record outliving a delete rather than a state) and the third is
+  CROSS-FID (a `meta_add` dropping ANOTHER FID's record). `formal/README.md`'s
+  phase 7 has the numbers.
+
+## The persistent half, exhaustively on the host
+
+`store_steps_tests.rs` drives the REAL `Fs` over a REAL medium at three FIDs and
+reads one of three step recorders after every step. Three FIDs because
+`NoRecordLostToMetaWrite` is about the records a rewrite *drops*: with a subject
+and one neighbour, "the write kept everything else" cannot be told from "the
+write kept the one file we looked at".
+
+| Sweep | What it covers | Size |
+|---|---|---|
+| every three-step sequence | the clauses over a fresh store | 12³ = 1728 orderings, 5184 steps |
+| the same, then a reboot with no `scan` | EF_META UNKNOWN rather than confirmed — the 0x077C door | 1728 × 12 more steps |
+| every two-step sequence over a failing medium | the FAULT path both meta recorders are about | 144 orderings |
+| each recorder against the state its invariant forbids | that the sweeps are not a loop over nothing | 6 assertions |
+
+Two measurements decide whether this is worth anything.
+
+**It has teeth.** `comutants.toml`'s `BugDeleteMetaOnlyUnderPresent` — the 0x077C
+databug verbatim — applied to `fs.rs` gives, in 0.00 s:
+
+```console
+NoOrphanedMetadata: [MetaAdd(0)] then Delete(0) left a record over a gone value
+```
+
+which is the shortest witness there is: a meta-only file deleted.
+
+**And it does not have all of them.** `BugDeleteValueBeforeMeta` — the two backend
+writes reversed — **survives**. That is correct and it is the boundary of this
+sweep: the completed end state is identical either way, and only a power cut sees
+the order. `powercut.rs`'s `delete_landed` owns that one, which is why both exist.
+
+Three shapes are deliberately not judged, each because the model does not state
+them:
+
+- **A faulted `Delete`.** `MetaAdd` and `MetaDelete` each carry a faulted disjunct
+  in the model; `Delete` carries none — `dead` there is a power *cut*, not a
+  medium error. Reading `NoOrphanedMetadata` at a faulted delete would be judging
+  a step nothing states. It is not hypothetical: `Fs::delete` swallows
+  `meta_delete`'s error (`let _ =`, `fs.rs:441`) and skips the backend remove when
+  the present bit is clear, so **a faulted delete of a meta-only file returns
+  `Ok` with the record standing**. Whether that is a defect or the intended cost
+  of the `let _ =` is a maintainer's call, recorded here rather than silently
+  judged by a test.
+- **`Scan`**, for the reason below.
+- **Whole behaviours.** These are bounded sequences, like the Kani half.
 - **Not `Scan`.** The model's truncated-walk clause needs a backend that can
   truncate, which is a medium, not a bitmap. `fs_tests.rs` carries it; Kani does
   not.

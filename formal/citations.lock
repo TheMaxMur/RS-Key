@@ -35,6 +35,9 @@ crates/rsk-fido/src/state_kani.rs	crates/rsk-fido/src/state.rs	357-361	/// Trans
 crates/rsk-fs/src/store_assurance.rs	crates/rsk-fs/src/fs.rs	128-130	fn known_absent(&self, fid: u16) -> bool {	}
 crates/rsk-fs/src/store_assurance.rs	crates/rsk-fs/src/fs.rs	391-411	pub fn put(&mut self, fid: u16, data: &[u8]) -> Result<()> {	}
 crates/rsk-fs/src/store_assurance.rs	crates/rsk-fs/src/fs.rs	440-449	pub fn delete(&mut self, fid: u16) -> Result<()> {	}
+crates/rsk-fs/src/store_steps_tests.rs	crates/rsk-fs/src/fs.rs	29-29	const FID_PRESENT_BYTES: usize = 3;	const FID_PRESENT_BYTES: usize = 3;
+crates/rsk-fs/src/store_steps_tests.rs	crates/rsk-fs/src/fs.rs	118-118	self.decided[(fid >> 3) as usize] & (1u8 << (fid & 7)) != 0	self.decided[(fid >> 3) as usize] & (1u8 << (fid & 7)) != 0
+crates/rsk-fs/src/store_steps_tests.rs	crates/rsk-fs/src/fs.rs	441-441	let _ = self.meta_delete(fid);	let _ = self.meta_delete(fid);
 crates/rsk-piv/src/tests.rs	crates/rsk-fido/src/clientpin.rs	761-761	if !matched && ctx.dev.otp_key.is_some() {	if !matched && ctx.dev.otp_key.is_some() {
 crates/rsk-usb/src/secure_pin_kani.rs	crates/rsk-usb/src/secure_pin.rs	96-96	// Force the canonical VERIFY class byte; never honour the host template's CLA.	// Force the canonical VERIFY class byte; never honour the host template's CLA.
 formal/README.md	crates/rsk-devconf/src/lib.rs	264-277	// and `read_enabled_caps` reads empty as "no record" and returns	return Ok(());
