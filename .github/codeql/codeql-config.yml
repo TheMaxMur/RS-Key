@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 RS-Key contributors
+
+# What CodeQL extracts, for the `codeql` workflow.
+#
+# Without this, a first run reports 289 alerts of which 229 are test vectors:
+# `rust/hard-coded-cryptographic-value` fires on every KAT and fixture, and the
+# firmware's test suites are full of them by construction. An alert list that is
+# 79% noise is one nobody reads, which costs more than the queries earn.
+#
+# ⚠️ `paths-ignore` is applied at EXTRACTION, not at analysis — measured against
+# the pinned bundle (CLI 2.26.3): passed to `database analyze` via
+# `--sarif-codescanning-config` it changed nothing at all, 279 results before and
+# after. It works only because `codeql-action/init` passes it to `database
+# create` as `--codescanning-config` (codeql.ts:560). So an ignored path is not
+# analysed rather than filtered afterwards, and nothing here can be recovered by
+# looking at the SARIF later.
+#
+# The tradeoff, stated: a genuine defect in a test helper will not be found.
+# Nothing under these paths reaches a shipped image, so that is the cheaper side.
+paths-ignore:
+  # AGENTS.md puts a crate root's tests in `tests.rs` and every other unit's in
+  # `<unit>_tests.rs`, so BOTH spellings are needed — `**/*_tests.rs` alone
+  # leaves `crates/rsk-oath/src/tests.rs`, which is the single largest source of
+  # alerts in the tree at 37, and nine more crate roots behind it.
+  - "**/*_tests.rs"
+  - "**/tests.rs"
+  # Same split for the Kani proof siblings.
+  - "**/*_kani.rs"
+  - "**/kani.rs"
+  - "fuzz/"
+  # The on-device suites: Python, and they drive protocols whose own definitions
+  # are the weak primitives (Yubico OTP is AES-ECB by specification).
+  - "tests/"
+  # Vendored upstream conformance suites under their own licences — theirs to fix.
+  - "third_party/"

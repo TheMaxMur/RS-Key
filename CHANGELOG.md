@@ -40,6 +40,27 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Internal
 
+- **CodeQL's first run would have reported 289 alerts, 229 of them test
+  vectors.** `rust/hard-coded-cryptographic-value` cannot tell a KAT from a
+  secret, and this tree is built out of KATs — `crates/rsk-oath/src/tests.rs`
+  alone accounted for 37. An alert list that is 79% noise is one nobody reads.
+  `.github/codeql/codeql-config.yml` keeps the test suites, the Kani siblings,
+  `fuzz/`, `tests/` and `third_party/` out of extraction; measured against the
+  pinned bundle, 289 alerts become 60, with nothing left in a test-shaped file.
+  Two things decided the shape of it. `**/*_tests.rs` alone is not enough —
+  AGENTS.md puts a crate root's tests in plain `tests.rs`, which is where the
+  largest single source of alerts was, so both spellings are listed. And
+  `paths-ignore` is applied at EXTRACTION, not at analysis: handed to
+  `database analyze` it changed nothing at all (279 results before and after),
+  and it works only because `codeql-action/init` passes it to `database create`.
+  A config written on the other assumption would have sat in the tree doing
+  nothing, with the check still green. This is not the workflow-level
+  `paths-ignore` that `codeql.yml`'s header refuses — that one skips the run,
+  which Scorecard counts against the SAST score; this one still runs and still
+  counts, and Scorecard still reports `SAST tool detected: CodeQL`. The cost,
+  stated in the config and in docs/testing.md: a defect in a test helper is now
+  not found, rather than found and filtered.
+
 - **Nothing in the tree parsed `.github/workflows`, and a workflow that does not
   parse breaks a check that is not about workflows at all.** OpenSSF Scorecard's
   SAST row runs actionlint over *every* file in that directory, so one malformed

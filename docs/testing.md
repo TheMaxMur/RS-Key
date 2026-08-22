@@ -841,6 +841,13 @@ host runner at all. It is advisory, not a gate: `check.sh` is still the whole
 bar. It runs on pull requests and on demand only, so there is no default-branch
 baseline and findings surface on the PR itself.
 
+Not over *all* of them: `.github/codeql/codeql-config.yml` keeps the test
+suites, the Kani siblings, `fuzz/`, `tests/` and `third_party/` out. Those are
+where the KATs and fixtures live, and a hard-coded-key query cannot tell a test
+vector from a secret — measured, they were 229 of 289 first-run alerts. The
+exclusion is at extraction, so a defect in a test helper is not found rather
+than found and filtered.
+
 ## Refactor metrics (advisory)
 
 `scripts/metrics.sh` is reconnaissance, **not** a gate. Run it to decide

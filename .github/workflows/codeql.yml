@@ -59,6 +59,10 @@ jobs:
         with:
           languages: ${{ matrix.language }}
           build-mode: none
+          # Extraction-time `paths-ignore`. NOT the workflow-level `paths-ignore`
+          # this file's header refuses: that one skips the run, which Scorecard
+          # counts against the SAST score; this one still runs and still counts.
+          config-file: ./.github/codeql/codeql-config.yml
 
       # The automation id Code Scanning matches analyses on. Left unset it is
       # derived from the workflow path, the job name and the matrix, so renaming
