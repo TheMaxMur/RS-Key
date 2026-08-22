@@ -15,11 +15,17 @@ Three rules, and the third is why this file exists:
   names a constant some configuration assigns (no orphans either way);
 * the entry carries what only a person can write — the statement, what would
   discharge it, and which way it fails if it is wrong;
-* the constant is ASSIGNED BOTH WAYS by some configuration and READ BY AN
-  ACTION. `PowerOnClearsScratch2` satisfied neither: it was `TRUE` in all seven
-  Boot configurations and appeared in its module only in `CONSTANTS` and in its
-  own `ASSUME`, so deleting the `ASSUME` left every run bit-identical. An
-  assumption nothing can vary and nothing reads is a comment with a type.
+* the constant is ASSIGNED BOTH WAYS by some configuration, and READ BY A
+  DEFINITION SOME CONFIGURATION REACHES. `PowerOnClearsScratch2` satisfied
+  neither: it was `TRUE` in all seven Boot configurations and appeared in its
+  module only in `CONSTANTS` and in its own `ASSUME`, so deleting the `ASSUME`
+  left every run bit-identical. An assumption nothing can vary and nothing
+  reads is a comment with a type.
+
+  The reachability half is the rule's own failure family one level in.
+  "Mentioned anywhere in the module" was what this checked first, and
+  `Orphan == PowerOnClearsScratch2` with nothing mentioning `Orphan` passes
+  that while being exactly as inert.
 
 Everything about *where* an assumption is used is derived here and printed.
 """
@@ -80,25 +86,106 @@ def assignments() -> dict[str, dict[str, str]]:
     return out
 
 
-def read_by_an_action(name: str, tla: Path) -> bool:
-    """Whether the module uses `name` outside its declaration and its own ASSUME.
+#: `Name ==` or `Name(args) ==` at column 0 — where a TLA+ definition starts.
+DEFINITION = re.compile(r"^([A-Za-z_]\w*)\s*(?:\([^)]*\))?\s*==")
 
-    This is the inert case's own signature, so it is checked directly rather
-    than inferred from a state count nobody would think to compare.
+#: A column-0 line that ENDS the definition above it. `ASSUME` leads for the
+#: reason this whole rule exists: a constant named only in its own `ASSUME` is
+#: the shape being refused, and folding that line into whatever definition
+#: happens to sit above it would satisfy the rule with the defect.
+CLOSES = re.compile(
+    r"^(====|ASSUME\b|THEOREM\b|VARIABLES?\b|CONSTANTS?\b|EXTENDS\b|RECURSIVE\b|LOCAL\b)"
+)
+
+
+def strip_comments(line: str, depth: int) -> tuple[str, int]:
+    """Drop `\\*` tails and `(* … *)` spans, carrying the nesting depth across lines.
+
+    Prose is not a reader. Every module carries block comments BELOW its first
+    definition, so a constant named in one would otherwise land in that
+    definition's mention set — a comment satisfying the rule against a comment.
     """
-    body, declaring = [], False
-    for line in tla.read_text(encoding="utf-8").splitlines():
-        if re.match(r"^CONSTANTS?\s*$", line):
-            declaring = True
+    out, i = [], 0
+    while i < len(line):
+        if depth:
+            close = line.find("*)", i)
+            if close < 0:
+                return "".join(out), depth
+            depth -= 1
+            i = close + 2
             continue
-        if declaring:
-            if line.startswith((" ", "\t")) or not line.strip():
+        block, tail = line.find("(*", i), line.find("\\*", i)
+        if tail >= 0 and (block < 0 or tail < block):
+            out.append(line[i:tail])
+            return "".join(out), depth
+        if block < 0:
+            out.append(line[i:])
+            return "".join(out), depth
+        out.append(line[i:block])
+        depth += 1
+        i = block + 2
+    return "".join(out), depth
+
+
+def definitions(tla: Path) -> dict[str, set[str]]:
+    """definition name -> the identifiers its body mentions, comments stripped."""
+    out: dict[str, set[str]] = {}
+    current, depth = None, 0
+    for raw in tla.read_text(encoding="utf-8").splitlines():
+        line, depth = strip_comments(raw, depth)
+        if CLOSES.match(line):
+            current = None
+            continue
+        head = DEFINITION.match(line)
+        if head:
+            current = head.group(1)
+            out.setdefault(current, set())
+            line = line[head.end():]
+        if current is not None:
+            out[current].update(re.findall(r"[A-Za-z_]\w*", line))
+    return out
+
+
+def checked_names() -> set[str]:
+    """Every name a configuration asks TLC to run or check, over all of them."""
+    roots: set[str] = set()
+    keys = re.compile(
+        r"^\s*(SPECIFICATION|INIT|NEXT|INVARIANTS?|PROPERT(?:Y|IES)"
+        r"|CONSTRAINTS?|SYMMETRY|VIEW|ALIAS)\b(.*)$")
+    for cfg in sorted(FORMAL.glob("*.cfg")):
+        listing = False
+        for line in cfg.read_text(encoding="utf-8").splitlines():
+            head = keys.match(line)
+            if head:
+                roots.update(re.findall(r"[A-Za-z_]\w*", head.group(2)))
+                listing = True
                 continue
-            declaring = False
-        if re.match(r"^\s*ASSUME\b", line) or re.match(r"^CONSTANTS?\b", line):
+            if listing:
+                if line.startswith((" ", "\t")) and line.strip():
+                    roots.update(re.findall(r"[A-Za-z_]\w*", line))
+                    continue
+                listing = False
+    return roots
+
+
+def read_by_an_action(name: str, tla: Path) -> bool:
+    """Whether some definition a CONFIGURATION reaches mentions `name`.
+
+    Mentioning it anywhere in the module is not the same thing, and the gap is
+    the rule's own failure family one level in — the module docstring says which
+    shapes, because they are the same ones a reader has to recognise.
+    """
+    defs = definitions(tla)
+    seen, queue = set(), [r for r in checked_names() if r in defs]
+    while queue:
+        current = queue.pop()
+        if current in seen:
             continue
-        body.append(line.split("\\*")[0])
-    return any(re.search(rf"\b{re.escape(name)}\b", line) for line in body)
+        seen.add(current)
+        if name in defs[current]:
+            return True
+        queue.extend(ref for ref in defs[current] if ref in defs and ref not in seen)
+    return False
 
 
 def audit() -> list[str]:
@@ -136,8 +223,9 @@ def audit() -> list[str]:
         for tla in owners:
             if not read_by_an_action(name, tla):
                 problems.append(
-                    f"{name}: {tla.name} declares it but no action reads it — "
-                    "deleting its ASSUME would leave every run identical")
+                    f"{name}: {tla.name} declares it, but nothing a configuration "
+                    "runs or checks reaches a definition that reads it — so both "
+                    "arms produce identical runs")
     return problems, booleans, entries
 
 

@@ -40,6 +40,23 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Added
 
+- **The assumption's other arm is exercised by the mutants, and the rule that
+  says so now checks what its message claims.** `358755f` measured that all three
+  boot mutants redden on the `FALSE` arm of `PowerOnClearsScratch2` too, and on
+  the same invariant each — then kept no configuration that would say so again.
+  `BootCarryMut_*.cfg` runs each of the three there, one invariant apiece, so a
+  RED names the same defect its `BootSolo_*` twin does rather than a sibling
+  reporting a mutant gone unreachable: `MarkerNeverLies` in 2 and 20 distinct,
+  `TheWholeLockRides` in 20, against 2/26/26 on the arm that clears. Separately,
+  `assumption_gate.py`'s third rule asked whether the module mentions the
+  constant *anywhere*, while its message promised an action reads it. It walks
+  the definition graph from the names the configurations run or check now, over a
+  body with block comments and everything past the module terminator stripped
+  out — six shapes that satisfied the weaker rule while being exactly as inert,
+  each refused by its own case: a bare `ASSUME`, an orphan definition, a
+  `(* … *)` comment, a line below `====`, a one-hop walk, and a root the keyword
+  list had forgotten. Formal artefacts and host tooling only.
+
 - **The trace replay had stopped following the recording fifteen steps from the
   end, and every observer said GREEN.** `TraceSecurity.cfg` reached 44 of 59
   states: the reset expansion emitted one step per live record, while the model's

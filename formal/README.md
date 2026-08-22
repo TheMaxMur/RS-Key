@@ -1793,7 +1793,20 @@ tier, and the measurement is this:
 | `BootCarry.cfg` — carries | 67 | 18 | GREEN | GREEN |
 
 All three boot mutants redden on **both** arms, and on the same invariant each
-time. So the assumption buys **reachability, not safety**: six distinct states go
+time — and that is a row now rather than a sentence. `BootCarryMut_*.cfg` runs
+each of the three on the `FALSE` arm, one invariant apiece, so a RED there names
+the same defect its `BootSolo_*` twin names and cannot be a sibling invariant
+reporting a mutant gone unreachable. Measured: `MarkerNeverLies` in 2 and 20
+distinct, `TheWholeLockRides` in 20, against 2 and 26 and 26 on the arm that
+clears (at the runner's default two workers — a RED row's distinct count belongs
+to the search rather than to the model, and one worker gives 2/21/21 and
+2/17/17). It was measured once when the arm landed and then thrown away, which is
+how "both arms behave" becomes something nobody can re-check. What no ROW holds
+is that these three files exist at all, because `run-tlc.sh` lists the family
+with `ls`; `test_every_boot_mutant_runs_on_the_arm_that_carries_too` pins their
+count and their arm instead.
+
+So the assumption buys **reachability, not safety**: six distinct states go
 unreachable without it, and no invariant this module checks — nor the detection
 of any defect it models — rests on the silicon fact. The board measurement is
 still worth taking, and `assurance/assumptions.toml` says what would settle it;
@@ -1802,11 +1815,21 @@ power cycle carries the mismatch batch with it, which locks harder rather than
 softer.
 
 **And the rule that came out of it.** `scripts/assumption_gate.py` refuses an
-assumption that every configuration pins the same way, and one no action reads —
-the two halves of the shape above, each checked directly rather than inferred
-from a state count nobody would think to compare. Driven against the pre-change
-model it reports both. A defect switch (`Bug*`, `Fix*`, `Mutate*`, `Check*`) is
-*meant* to be pinned per configuration and is excluded by name.
+assumption that every configuration pins the same way, and one no *reachable*
+definition reads — the two halves of the shape above, each checked directly
+rather than inferred from a state count nobody would think to compare. Driven
+against the pre-change model it reports both. A defect switch (`Bug*`, `Fix*`,
+`Mutate*`, `Check*`) is *meant* to be pinned per configuration and is excluded by
+name.
+
+The second half started out weaker than its own message. It asked whether the
+module mentions the name **anywhere** outside its declaration and its `ASSUME`,
+and `Orphan == PowerOnClearsScratch2` with nothing mentioning `Orphan` passes
+that while being exactly as inert as the `ASSUME` the rule was written for —
+measured on a toy module, `NO PROBLEMS`. It walks the definition graph from the
+names the configurations actually run or check now, and both directions are in
+its table: an orphan definition is refused, a constant two hops from a checked
+name is clean.
 
 **What it does NOT cover, stated.** The device is OTP-provisioned (`mkek`
 present — a pre-OTP board never laps and has nothing to scrub); the 0x0854

@@ -166,6 +166,7 @@ list_safety() {
   echo BootCarry.cfg           # …and its open hardware assumption's other arm
   ls BootMut_*.cfg
   ls BootSolo_*.cfg
+  ls BootCarryMut_*.cfg    # …and every mutant of it on that arm too
   echo Transport.cfg           # the eighth module: the CTAPHID reassembler
   ls TransMut_*.cfg
   ls TransSolo_*.cfg

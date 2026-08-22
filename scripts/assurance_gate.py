@@ -158,6 +158,9 @@ def solo_target_counts(formal: pathlib.Path) -> dict[str, int]:
                 "SoloClause_",
                 "LiveMut_",
                 "FairMut_",
+                # `BootCarryMut_` is deliberately absent though it is solo-shaped:
+                # it re-runs the SAME three defects on the assumption's other
+                # constant arm, and this column counts defects, not runs.
             )
         ):
             continue

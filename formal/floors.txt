@@ -137,6 +137,12 @@ DispMut_*.cfg                        RED     -
 DispSolo_*.cfg                       RED     -
 BootMut_*.cfg                        RED     -
 BootSolo_*.cfg                       RED     -
+\* The same three on the assumption's FALSE arm, ONE invariant each: a power-on
+\* that leaves the scratch word standing changes what is REACHABLE (18 distinct
+\* against 24), and these rows are what say it changes no verdict. Solo-style so
+\* a RED here names the same defect the TRUE arm's row names -- a full-invariant
+\* configuration would let a sibling report a mutant gone unreachable.
+BootCarryMut_*.cfg                   RED     -
 TransMut_*.cfg                       RED     -
 TransSolo_*.cfg                      RED     -
 LiveMut_*.cfg                        RED     -

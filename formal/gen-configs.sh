@@ -604,7 +604,11 @@ emit_boot Boot.cfg ""
 emit_boot BootCarry.cfg "" 0 FALSE
 for b in "${BOOT_BUGS[@]}"; do emit_boot "BootMut_$b.cfg" "$b"; done
 for b in "${BOOT_BUGS[@]}"; do emit_boot "BootSolo_$b.cfg" "$b" 1; done
-echo "wrote Boot.cfg, BootCarry.cfg and ${#BOOT_BUGS[@]} x 2 boot configs"
+# Every mutant on the OTHER arm too. That they all still fall there was measured
+# once when the arm landed and then thrown away, which is how "both arms behave"
+# becomes a sentence nobody can re-check.
+for b in "${BOOT_BUGS[@]}"; do emit_boot "BootCarryMut_$b.cfg" "$b" 1 FALSE; done
+echo "wrote Boot.cfg, BootCarry.cfg and ${#BOOT_BUGS[@]} x 3 boot configs"
 
 # ---------------------------------------------------------------------------
 # RSKeyTransport -- the CTAPHID frame reassembler. An eighth module for the
