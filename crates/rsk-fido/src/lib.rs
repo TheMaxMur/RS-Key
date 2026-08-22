@@ -225,3 +225,7 @@ mod conformance;
 /// never shipped (see the module docs).
 #[cfg(feature = "bench")]
 pub mod bench;
+
+#[cfg(test)]
+#[path = "test_pins.rs"]
+mod test_pins;

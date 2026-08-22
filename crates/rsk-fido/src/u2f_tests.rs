@@ -4,6 +4,7 @@
 use super::*;
 use crate::consts::EF_ALWAYS_UV;
 use crate::seed::ensure_seed;
+use crate::test_pins::{PIN, WRONG_PIN};
 use p256::Sec1Point;
 use p256::ecdsa::{Signature, VerifyingKey, signature::Verifier};
 use rsk_crypto::Device;
@@ -186,7 +187,7 @@ fn u2f_survives_always_uv_behind_builtin_uv() {
     let mut fs = Fs::new(RamStorage::new());
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
-    crate::clientpin::store_local_pin(&dev(), &mut fs, b"1234").unwrap();
+    crate::clientpin::store_local_pin(&dev(), &mut fs, PIN).unwrap();
     fs.put(EF_ALWAYS_UV, &[1]).unwrap();
 
     let mut reg_data = std::vec::Vec::new();
@@ -197,7 +198,7 @@ fn u2f_survives_always_uv_behind_builtin_uv() {
 
     let mut out = [0u8; 1024];
     let mut pad = UvPad {
-        digits: b"1234",
+        digits: PIN,
         touches: 0,
     };
     let (sw, n) = {
@@ -245,7 +246,7 @@ fn u2f_survives_always_uv_behind_builtin_uv() {
 
     // …and a wrong PIN refuses it.
     let mut wrong = UvPad {
-        digits: b"9999",
+        digits: WRONG_PIN,
         touches: 0,
     };
     let sw = {
@@ -279,7 +280,7 @@ fn u2f_disabled_under_always_uv_when_the_pad_has_no_pin() {
     let reg = Apdu::parse(&reg_bytes).unwrap();
     let mut out = [0u8; 1024];
     let mut pad = UvPad {
-        digits: b"1234",
+        digits: PIN,
         touches: 0,
     };
     let mut state = crate::FidoState::new();
@@ -306,7 +307,7 @@ fn u2f_dont_enforce_still_runs_builtin_uv() {
     let mut fs = Fs::new(RamStorage::new());
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
-    crate::clientpin::store_local_pin(&dev(), &mut fs, b"1234").unwrap();
+    crate::clientpin::store_local_pin(&dev(), &mut fs, PIN).unwrap();
 
     // Register first (alwaysUv still off, so this is a plain touch).
     let mut reg_data = std::vec::Vec::new();
@@ -342,7 +343,7 @@ fn u2f_dont_enforce_still_runs_builtin_uv() {
     let auth_bytes = ext_apdu(CTAP_AUTHENTICATE, U2F_AUTH_NO_ENFORCE, &auth_data);
     let auth = Apdu::parse(&auth_bytes).unwrap();
     let mut wrong = UvPad {
-        digits: b"9999",
+        digits: WRONG_PIN,
         touches: 0,
     };
     let mut state = crate::FidoState::new();

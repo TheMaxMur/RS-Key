@@ -5,6 +5,7 @@ use super::*;
 use crate::consts::{ALG_ES256, EF_ALWAYS_UV};
 use crate::makecredential::make_credential;
 use crate::seed::ensure_seed;
+use crate::test_pins::PIN;
 use minicbor::Decoder;
 use p256::Sec1Point;
 use p256::ecdsa::{Signature, VerifyingKey, signature::Verifier};
@@ -728,8 +729,8 @@ impl crate::UserPresence for UvPad {
         if let Some(o) = self.outcome {
             return o;
         }
-        out[..4].copy_from_slice(b"1234");
-        crate::PinEntry::Entered(4)
+        out[..PIN.len()].copy_from_slice(PIN);
+        crate::PinEntry::Entered(PIN.len())
     }
 }
 
@@ -810,7 +811,7 @@ fn uv_option_without_builtin_uv_is_invalid_option() {
 fn uv_option_runs_builtin_uv_and_supplies_user_presence() {
     let (mut fs, mut rng) = setup();
     let cred_id = register_non_resident(&mut fs, &mut rng);
-    crate::clientpin::store_local_pin(&dev(), &mut fs, b"1234").unwrap();
+    crate::clientpin::store_local_pin(&dev(), &mut fs, PIN).unwrap();
     let mut state = crate::FidoState::new();
     // §6.2.2 step 6.2: with the pad configured, uv:true is honored — the PIN is
     // typed on the device. Step 8: that ceremony IS the evidence of user
@@ -841,7 +842,7 @@ fn uv_option_runs_builtin_uv_and_supplies_user_presence() {
 fn builtin_uv_decline_is_operation_denied() {
     let (mut fs, mut rng) = setup();
     let cred_id = register_non_resident(&mut fs, &mut rng);
-    crate::clientpin::store_local_pin(&dev(), &mut fs, b"1234").unwrap();
+    crate::clientpin::store_local_pin(&dev(), &mut fs, PIN).unwrap();
     let mut state = crate::FidoState::new();
     // The one deliberate divergence from §6.2.2 step 6.2's error ladder: a Deny on
     // the pad stays OPERATION_DENIED. PUAT_REQUIRED would send the platform off to
@@ -866,7 +867,7 @@ fn builtin_uv_decline_is_operation_denied() {
 fn always_uv_upgrades_a_tokenless_request_to_builtin_uv() {
     let (mut fs, mut rng) = setup();
     let cred_id = register_non_resident(&mut fs, &mut rng);
-    crate::clientpin::store_local_pin(&dev(), &mut fs, b"1234").unwrap();
+    crate::clientpin::store_local_pin(&dev(), &mut fs, PIN).unwrap();
     fs.put(EF_ALWAYS_UV, &[1]).unwrap();
     let mut state = crate::FidoState::new();
     // §6.2.2 step 5.4: alwaysUv treats the "uv" option as true when the pad is
@@ -3830,8 +3831,8 @@ impl crate::UserPresence for DisplayPad {
         true
     }
     fn collect_pin(&mut self, _min: usize, out: &mut [u8]) -> crate::PinEntry {
-        out[..4].copy_from_slice(b"1234");
-        crate::PinEntry::Entered(4)
+        out[..PIN.len()].copy_from_slice(PIN);
+        crate::PinEntry::Entered(PIN.len())
     }
 }
 
@@ -3845,7 +3846,7 @@ fn builtin_uv_still_names_the_rp_on_a_display() {
     // backend that paints ceremonies the card must survive; the flags are unchanged.
     let (mut fs, mut rng) = setup();
     let cred_id = register_non_resident(&mut fs, &mut rng);
-    crate::clientpin::store_local_pin(&dev(), &mut fs, b"1234").unwrap();
+    crate::clientpin::store_local_pin(&dev(), &mut fs, PIN).unwrap();
     let mut state = crate::FidoState::new();
     let mut out = [0u8; 1024];
     let mut pad = DisplayPad::new();

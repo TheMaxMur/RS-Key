@@ -4,6 +4,7 @@
 use super::*;
 use crate::consts::{ALG_ED25519, ALG_ESP256, ALG_ESP384, ALG_ESP512, EF_ALWAYS_UV};
 use crate::seed::ensure_seed;
+use crate::test_pins::PIN;
 use minicbor::Decoder;
 use p256::Sec1Point;
 use p256::ecdsa::{Signature, VerifyingKey, signature::Verifier};
@@ -1396,7 +1397,7 @@ struct UvPad {
 impl UvPad {
     fn typing() -> Self {
         Self {
-            digits: b"1234",
+            digits: PIN,
             outcome: None,
             touches: 0,
         }
@@ -1516,7 +1517,7 @@ fn uv_option_runs_builtin_uv_and_supplies_user_presence() {
     let mut fs = Fs::new(RamStorage::new());
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
-    crate::clientpin::store_local_pin(&dev(), &mut fs, b"1234").unwrap();
+    crate::clientpin::store_local_pin(&dev(), &mut fs, PIN).unwrap();
     let mut state = crate::FidoState::new();
     // §6.1.2 step 11.2: with the pad configured, uv:true is honored — the PIN is
     // typed on the device and never crosses the host. Step 13: that ceremony IS the
@@ -1548,7 +1549,7 @@ fn builtin_uv_decline_is_operation_denied() {
     let mut fs = Fs::new(RamStorage::new());
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
-    crate::clientpin::store_local_pin(&dev(), &mut fs, b"1234").unwrap();
+    crate::clientpin::store_local_pin(&dev(), &mut fs, PIN).unwrap();
     let mut state = crate::FidoState::new();
     // The one deliberate divergence from §6.1.2 step 11.2's error ladder: a Deny on
     // the pad stays OPERATION_DENIED. PUAT_REQUIRED would send the platform off to
@@ -1574,7 +1575,7 @@ fn always_uv_upgrades_a_tokenless_request_to_builtin_uv() {
     let mut fs = Fs::new(RamStorage::new());
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
-    crate::clientpin::store_local_pin(&dev(), &mut fs, b"1234").unwrap();
+    crate::clientpin::store_local_pin(&dev(), &mut fs, PIN).unwrap();
     fs.put(EF_ALWAYS_UV, &[1]).unwrap();
     let mut state = crate::FidoState::new();
     // §6.1.2 step 6.3: alwaysUv treats the "uv" option as true when the pad is
@@ -2077,8 +2078,8 @@ impl crate::UserPresence for DisplayPad {
         true
     }
     fn collect_pin(&mut self, _min: usize, out: &mut [u8]) -> crate::PinEntry {
-        out[..4].copy_from_slice(b"1234");
-        crate::PinEntry::Entered(4)
+        out[..PIN.len()].copy_from_slice(PIN);
+        crate::PinEntry::Entered(PIN.len())
     }
 }
 
@@ -2092,7 +2093,7 @@ fn builtin_uv_still_names_the_registration_on_a_display() {
     let mut fs = Fs::new(RamStorage::new());
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
-    crate::clientpin::store_local_pin(&dev(), &mut fs, b"1234").unwrap();
+    crate::clientpin::store_local_pin(&dev(), &mut fs, PIN).unwrap();
     let mut state = crate::FidoState::new();
     let cdh = [0xCDu8; 32];
     let mut out = [0u8; 1024];
