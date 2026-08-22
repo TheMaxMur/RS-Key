@@ -71,10 +71,12 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   mean the committed matrix is not the one the generator describes.
   `TokenExport.cfg` is the single hand-written configuration and is registered as
   such, checked in both directions — including that it may not carry the
-  generated header. Ten mutations in `scripts/test_config_gen_gate.py`, each
-  driving the real generator over a copy of `formal/`, and the generator itself
-  is now a `NAMED` entry in the meta-guard so the table cannot be deleted with the
-  suite green.
+  generated header, and — found by the review, not by the first table — that the
+  187 generated ones DO carry it, which the row is named after and checked
+  nowhere. Nineteen mutations across 22 cases in
+  `scripts/test_config_gen_gate.py`, each driving the real generator over a copy
+  of `formal/`, and the generator itself is a `NAMED` entry in the meta-guard so
+  the table cannot be deleted with the suite green.
 
 - **Two induction probes, and the store's named a conjunct the model relies on
   and never stated.** Running an invariant as TLC's INIT predicate with `Next` as

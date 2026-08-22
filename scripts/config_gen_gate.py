@@ -66,28 +66,59 @@ def generate(root: pathlib.Path, into: pathlib.Path) -> tuple[int, str]:
     return done.returncode, done.stderr
 
 
-def first_difference(want: str, got: str) -> str:
-    """The first line where two configurations part, as a reader would say it."""
-    a, b = want.splitlines(), got.splitlines()
+def first_difference(want: bytes, got: bytes) -> str:
+    """The first line where two configurations part, as a reader would say it.
+
+    Bytes, not text: `read_text` folds `\r\n` to `\n`, so a CRLF copy compared
+    as text is equal to a LF one — and the row's own summary says byte-for-byte.
+    `split`, not `splitlines`: a trailing newline then shows up as a part of its
+    own, so the length branch always has something true to say — where
+    `splitlines` made "54 lines and 54 lines" the explanation for a difference,
+    and broke on the separators `\x0b`, `\x0c` and `\x85` besides.
+    """
+    a, b = want.split(b"\n"), got.split(b"\n")
     for n, (x, y) in enumerate(zip(a, b), 1):
         if x != y:
             return f"line {n}: generator writes {x!r}, the tree has {y!r}"
-    return f"the tree's copy is {len(b)} lines, the generator writes {len(a)}"
+    return (
+        f"every line they share is equal; the generator writes {len(a)}"
+        f" newline-separated part(s) and the tree has {len(b)} — a truncation, or"
+        " a trailing newline that moved"
+    )
+
+
+def summary_line(generated: int) -> str:
+    """Counted from what the GENERATOR wrote, never from what the tree holds: a
+    summary derived from `present` cannot notice the generator gaining a file."""
+    return (
+        f"config-gen-gate: ok — {generated} generated configuration(s) reproduce"
+        f" byte-for-byte, {len(HAND_WRITTEN)} hand-written"
+    )
 
 
 def audit(root):
     """(problems, one-line summary) for how `formal/*.cfg` matches its generator."""
     root = pathlib.Path(root)
     problems: list[str] = []
-    present = {p.name for p in (root / CONFIG_DIR).glob("*.cfg")}
+    present = set()
+    for path in (root / CONFIG_DIR).glob("*.cfg"):
+        if path.is_file():
+            present.add(path.name)
+        else:
+            problems.append(f"{path.name}: a {CONFIG_DIR}/*.cfg entry that is not a regular file")
 
     with tempfile.TemporaryDirectory() as tmp:
         into = pathlib.Path(tmp)
         code, stderr = generate(root, into)
         if code != 0:
             tail = stderr.strip().splitlines()[-1:] or ["no stderr"]
+            # ONE cause, ONE message. Everything below would also fire — a dead
+            # generator wrote nothing, so all 187 files read as unregistered —
+            # and 189 findings for one broken line is the report defect where a
+            # reader is told the tree is wrong when the generator is.
             problems.append(f"{GENERATOR} exited {code}: {tail[0]}")
-        written = {p.name: p.read_text() for p in into.glob("*.cfg")}
+            return problems, summary_line(0)
+        written = {p.name: p.read_bytes() for p in into.glob("*.cfg")}
 
         if len(written) < FLOOR:
             problems.append(
@@ -105,12 +136,28 @@ def audit(root):
                 " scripts/config_gen_gate.py — say which it is"
             )
         for name in sorted(set(written) & present):
-            got = (root / CONFIG_DIR / name).read_text()
+            got = (root / CONFIG_DIR / name).read_bytes()
             if got != written[name]:
                 problems.append(
                     f"{name}: differs from what {GENERATOR} writes —"
                     f" {first_difference(written[name], got)}"
                 )
+        # The sentence this row is named after, held on the side that has 187
+        # files. Without it the generator could stop writing the header, the
+        # tree could be regenerated to agree, and every `.cfg` would tell its
+        # next reader nothing while the row said ok.
+        for name in sorted(written):
+            if not written[name].startswith(b"\\* " + HEADER.encode()):
+                problems.append(
+                    f"{name}: {GENERATOR} writes it without the {HEADER!r} header —"
+                    " the one line that tells a reader not to edit it by hand"
+                )
+        for name in sorted(set(HAND_WRITTEN) & set(written)):
+            problems.append(
+                f"{name}: registered hand-written but {GENERATOR} writes it —"
+                " drop the carve-out, or stop generating it"
+            )
+        generated = len(written)
 
     for name in sorted(set(HAND_WRITTEN) - present):
         problems.append(f"{name}: registered hand-written but no such file — stale entry")
@@ -121,11 +168,7 @@ def audit(root):
                 " which tells its next reader not to edit the one file they may"
             )
 
-    summary = (
-        f"config-gen-gate: ok — {len(present) - len(HAND_WRITTEN)} generated"
-        f" configuration(s) reproduce byte-for-byte, {len(HAND_WRITTEN)} hand-written"
-    )
-    return problems, summary
+    return problems, summary_line(generated)
 
 
 def run(root: pathlib.Path) -> int:

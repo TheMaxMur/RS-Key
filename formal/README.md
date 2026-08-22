@@ -2268,12 +2268,30 @@ describes. Falsified through the row itself, exit codes taken with no pipe:
 | an unregistered `.cfg` added by hand | `neither generated nor registered hand-written` | **1** |
 | `TokenExport.cfg` (the one hand-written file) deleted | `registered hand-written but no such file — stale entry` | **1** |
 | `TokenExport.cfg` given the generated header | `tells its next reader not to edit the one file they may` | **1** |
-| the generator made to die mid-run | `formal/gen-configs.sh exited 1` + the floor | **1** |
+| the generator made to die mid-run | `formal/gen-configs.sh exited 1: <its stderr>`, and nothing else | **1** |
 | the generator made to write nothing | `wrote 0 configurations, under the floor of 100` | **1** |
+| the header rewritten in the generator, tree regenerated to agree | 187 rows `writes it without the … header` | **1** |
+| `TokenExport.cfg` generated as well as carved out | `registered hand-written but … writes it` | **1** |
+| one generated file rewritten with CRLF | `line 1: …` — bytes, not decoded text | **1** |
+| its final newline removed | `every line they share is equal; … 12 part(s) … 11` | **1** |
+
+The last four are the first review's, and the first two of them are the family
+this tree keeps shipping: **the header rule ran in one direction only.** The row
+is named after making "do not edit by hand" true and it asked that question of
+the ONE hand-written file, never of the 187 — rewrite the generator's header,
+regenerate, and every configuration stopped telling its reader anything while the
+row said ok. The `HAND_WRITTEN` docstring promised both directions and the second
+was not implemented at all. Neither was reachable from the ten cases above,
+because each of those mutates the *tree* and both of these live in the generator.
 
 What it deliberately does not catch: a family deleted from `gen-configs.sh`
 *and* from `formal/` in one commit. That is a visible diff in the file whose
 whole content is the roster, and a guard cannot tell a deletion from a decision.
+And it says nothing about `floors.txt`, which carries two of the five defences
+above — flip `Mut_*.cfg RED` to `GREEN` there and every mutant row's expectation
+is disarmed with no gate row the wiser. That is the largest remaining instance of
+this family in `formal/`, measured by the same review, and it wants a guard of
+its own rather than a rule bolted onto this one.
 
 ### And the citations the row did not read — 19 of 42
 

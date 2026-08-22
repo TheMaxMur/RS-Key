@@ -122,7 +122,8 @@ def test_an_edit_that_only_shortens_a_config_is_found(tree):
     path.write_text("\n".join(path.read_text().splitlines()[:-1]) + "\n")
     found = problems(tree)
     assert len(found) == 1, found
-    assert "lines, the generator writes" in found[0]
+    assert "line 11: generator writes b'    MarkerNeverLies', the tree has b''" \
+        in found[0], found
 
 
 # --- M3: the generator changed and nothing regenerated -----------------------
@@ -174,12 +175,24 @@ def test_a_hand_written_config_may_not_claim_it_was_generated(tree):
 # --- M7/M8: the generator itself failing, and failing quietly ----------------
 
 
-def test_a_generator_that_dies_is_a_finding_not_a_pass(tree):
+def test_a_generator_that_dies_says_so_and_says_nothing_else(tree):
     """`set -euo pipefail` and a `[ … ] && echo` as the last command of a `{ }`
-    group: measured, that wrote four of nineteen families and the caller saw 0."""
-    edit(tree / "formal/gen-configs.sh", "emit Shipped.cfg", "false\nemit Shipped.cfg")
+    group: measured, that wrote four of nineteen families and the caller saw 0.
+
+    ONE finding, because everything downstream would also fire — a generator that
+    wrote nothing leaves all 188 files reading as unregistered, and telling the
+    reader their tree is wrong when the generator is is the report defect this
+    tree has shipped before.
+    """
+    edit(
+        tree / "formal/gen-configs.sh",
+        "emit Shipped.cfg",
+        'echo "gen-configs: the roster went missing" >&2\nfalse\nemit Shipped.cfg',
+    )
     found = problems(tree)
-    assert any("exited 1" in problem for problem in found), found
+    assert found == [
+        "formal/gen-configs.sh exited 1: gen-configs: the roster went missing"
+    ], found
 
 
 def test_a_generator_that_writes_nothing_trips_the_floor(tree):
@@ -212,3 +225,67 @@ def test_the_generator_still_takes_an_output_directory():
     above would compare `formal/` with itself and pass."""
     text = (ROOT / "formal/gen-configs.sh").read_text()
     assert 'out_dir=${1:-' in text and 'cd "$out_dir"' in text
+
+
+# --- what the first review found: the rules the table did not have -----------
+
+
+def test_a_generated_config_that_lost_its_header_is_found(tree):
+    """The sentence the row is NAMED after, held on the side that has 187 files.
+
+    It was checked only on the one hand-written file: rewrite the generator's
+    header, regenerate so the tree agrees, and every configuration stopped
+    telling its reader not to edit it while the row said ok.
+    """
+    script = tree / "formal/gen-configs.sh"
+    text = script.read_text()
+    assert text.count(config_gen_gate.HEADER) == 14, text.count(config_gen_gate.HEADER)
+    script.write_text(text.replace(config_gen_gate.HEADER, "Auto-written; hands off"))
+    code, stderr = config_gen_gate.generate(tree, tree / "formal")
+    assert code == 0, stderr
+    found = problems(tree)
+    assert found, "the tree agrees with its generator, so only the header rule can fire"
+    assert all("without the" in problem and "header" in problem for problem in found), found
+
+
+def test_a_carve_out_the_generator_has_started_writing_is_found(tree):
+    """The other direction the docstring promised and the first version omitted."""
+    script = tree / "formal/gen-configs.sh"
+    script.write_text(script.read_text() + "cp Shipped.cfg TokenExport.cfg\n")
+    (tree / "formal/TokenExport.cfg").write_bytes(
+        (tree / "formal/Shipped.cfg").read_bytes()
+    )
+    found = problems(tree)
+    # Two, and the pair is the point: a carve-out the generator writes is both a
+    # stale carve-out AND a file wearing a header the carve-out forbids. There is
+    # no content that trips only one — the header rule owns both sides.
+    assert len(found) == 2, found
+    assert any("registered hand-written but formal/gen-configs.sh writes it" in p
+               for p in found), found
+
+
+def test_a_crlf_copy_is_not_byte_for_byte(tree):
+    """`read_text` folds `\r\n` to `\n`, so a text comparison calls these equal —
+    while the summary line claims byte-for-byte."""
+    path = tree / "formal" / VICTIM
+    path.write_bytes(path.read_bytes().replace(b"\n", b"\r\n"))
+    found = problems(tree)
+    assert len(found) == 1, found
+    assert "line 1:" in found[0], found
+
+
+def test_a_missing_final_newline_names_the_right_difference(tree):
+    """Every line equal and the files still different. `splitlines` counted these
+    the same and offered "N lines and N lines" as the explanation."""
+    path = tree / "formal" / VICTIM
+    path.write_bytes(path.read_bytes().rstrip(b"\n"))
+    found = problems(tree)
+    assert len(found) == 1, found
+    assert "every line they share is equal" in found[0], found
+    assert "12 newline-separated part(s) and the tree has 11" in found[0], found
+
+
+def test_a_cfg_that_is_not_a_regular_file_is_a_finding_not_a_traceback(tree):
+    (tree / "formal/Directory.cfg").mkdir()
+    found = problems(tree)
+    assert any("not a regular file" in problem for problem in found), found
