@@ -899,7 +899,7 @@ const PIN_DENYLIST: [&str; 10] = [
 /// * **Two or fewer distinct code points.** Not a length argument — a two-symbol PIN
 ///   leaves exactly two smudges on the glass, and the search space a shoulder or a
 ///   fingerprint leaves is then the orderings of two marks, whatever the length.
-/// * **On [`PIN_DENYLIST`]** — shapes the three rules above cannot express.
+/// * **On the denylist** below — shapes the three rules above cannot express.
 ///
 /// Not UTF-8 is refused rather than measured, the same call the host path makes one
 /// step earlier: a byte count over-measures every non-ASCII PIN, and guessing is the

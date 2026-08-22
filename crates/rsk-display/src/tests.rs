@@ -428,7 +428,7 @@ pub fn nowhere() -> rsk_ui::Point {
 pub fn pin_key(key: rsk_ui::PinKey) -> rsk_ui::Point {
     for row in 0..rsk_ui::PIN_ROWS {
         for col in 0..rsk_ui::PIN_COLS {
-            if rsk_ui::pin_grid_key(col, row) == key {
+            if rsk_ui::pin_grid_key(col, row, &rsk_ui::PinLayout::identity()) == key {
                 return center(rsk_ui::pin_key_rect(col, row));
             }
         }
@@ -601,6 +601,7 @@ fn a_declined_pin_offer_is_not_made_twice() {
     let env = Env::new();
     let cfg = rsk_ui::DisplayConfig {
         pin_declined: true,
+        scramble_pin: false,
         ..Default::default()
     };
     env.fs
@@ -619,6 +620,7 @@ fn boot_restores_the_saved_display_settings() {
         brightness: 2,
         sleep_secs: 15,
         pin_declined: false,
+        scramble_pin: false,
     };
     env.fs
         .borrow_mut()

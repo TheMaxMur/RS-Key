@@ -149,14 +149,15 @@ fn nav_tab(want: rsk_ui::NavTab) -> rsk_ui::Point {
 }
 
 fn pin_key(want: rsk_ui::PinKey) -> rsk_ui::Point {
-    target(|p| rsk_ui::hit_pin(p) == Some(want))
+    // The emulator drives a default device, whose pad is not scrambled.
+    target(|p| rsk_ui::hit_pin(p, &rsk_ui::PinLayout::identity()) == Some(want))
 }
 
 /// A contact every screen's hit test misses, so it is a no-op wherever it lands.
 fn nowhere() -> rsk_ui::Point {
     let miss = |p| {
         rsk_ui::hit_nav(p).is_none()
-            && rsk_ui::hit_pin(p).is_none()
+            && rsk_ui::hit_pin(p, &rsk_ui::PinLayout::identity()).is_none()
             && rsk_ui::hit_settings_root(p).is_none()
             && rsk_ui::hit_security(p).is_none()
             && rsk_ui::hit_onboard(p).is_none()

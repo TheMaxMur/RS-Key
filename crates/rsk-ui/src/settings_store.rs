@@ -7,8 +7,8 @@
 //!
 //! The block is `[brightness, sleep_secs_be(2), flags]` (4 bytes): the backlight
 //! level (`1..=BRIGHTNESS_LEVELS`), the display-sleep timeout in seconds (`0` =
-//! Off), and a flags byte (currently only [`FLAG_PIN_DECLINED`] — the user chose
-//! "continue without a device PIN" at first-run, so the panel must not re-prompt).
+//! Off), and a flags byte ([`FLAG_PIN_DECLINED`] — the user chose "continue without a device
+//! PIN" at first-run, so the panel must not re-prompt — and [`FLAG_SCRAMBLE_PIN`]).
 //! The **touch timeout** is *not* here — it persists in the phy record's
 //! `PresenceTimeout` tag (shared with `rsk hw --touch-timeout`), so it keeps one
 //! source of truth.
@@ -33,6 +33,12 @@ pub const CONF_LEN: usize = 4;
 /// still reads its two fields and leaves the flags at their default, so an already-provisioned
 /// device keeps its brightness / sleep across the upgrade that added the byte.
 const CORE_LEN: usize = 3;
+
+/// Flags-byte bit 1: scramble the PIN pad's digits on every entry. Off by default —
+/// it trades muscle memory for smudge/over-the-shoulder resistance, and the retry
+/// budget makes a typo expensive (`PIN_MISMATCH_LIMIT` is three per power cycle), so
+/// it is the owner's call rather than the firmware's.
+pub const FLAG_SCRAMBLE_PIN: u8 = 0x02;
 
 /// Flags-byte bit 0: the user chose "continue without a device PIN" at the
 /// first-run prompt. Set, the panel never re-shows that onboarding screen (until a
@@ -59,6 +65,9 @@ pub struct DisplayConfig {
     /// to continue without one — so the panel must not re-offer it. Cleared on a
     /// factory reset (which wipes the record), so a wiped device re-onboards.
     pub pin_declined: bool,
+    /// Draw the PIN pad's digits in a fresh random order for every entry (Settings →
+    /// Security → "Scramble PIN pad"). Off by default.
+    pub scramble_pin: bool,
 }
 
 impl Default for DisplayConfig {
@@ -67,6 +76,7 @@ impl Default for DisplayConfig {
             brightness: crate::BRIGHTNESS_LEVELS,
             sleep_secs: DEFAULT_SLEEP_SECS,
             pin_declined: false,
+            scramble_pin: false,
         }
     }
 }
@@ -76,11 +86,13 @@ impl DisplayConfig {
     /// (big-endian sleep, matching the phy record's byte order).
     pub fn encode(&self) -> [u8; CONF_LEN] {
         let s = self.sleep_secs.to_be_bytes();
-        let flags = if self.pin_declined {
-            FLAG_PIN_DECLINED
-        } else {
-            0
-        };
+        let mut flags = 0;
+        if self.pin_declined {
+            flags |= FLAG_PIN_DECLINED;
+        }
+        if self.scramble_pin {
+            flags |= FLAG_SCRAMBLE_PIN;
+        }
         [self.brightness, s[0], s[1], flags]
     }
 
@@ -98,6 +110,7 @@ impl DisplayConfig {
         }
         if b.len() >= CONF_LEN {
             self.pin_declined = b[3] & FLAG_PIN_DECLINED != 0;
+            self.scramble_pin = b[3] & FLAG_SCRAMBLE_PIN != 0;
         }
     }
 }

@@ -313,12 +313,30 @@ where
         let mut reveal = false;
         let mut last_input = Instant::now();
 
+        // One layout for this entry, drawn AND hit-tested through the same value: a pad
+        // painted from one order and tapped through another types digits nobody pressed,
+        // and nothing on screen would look wrong. Off unless the owner asked for it in
+        // Settings -> Security; each entry (and so each of "New" / "Confirm") gets its own.
+        let layout = if self.scramble_pin {
+            let mut entropy = [0u8; rsk_ui::PIN_SHUFFLE_ENTROPY];
+            self.rng.borrow_mut().fill(&mut entropy);
+            let laid = rsk_ui::PinLayout::shuffled(&entropy);
+            entropy.zeroize();
+            laid
+        } else {
+            rsk_ui::PinLayout::identity()
+        };
+
         // A built-in-UV PIN entry can arrive while the panel slept — restore it first.
         self.wake();
         note_activity();
         let _ = rsk_ui::render(
             &mut self.panel,
-            &Screen::Pin(PinPad::with_caption(entered, title, caption).expecting(expected)),
+            &Screen::Pin(
+                PinPad::with_caption(entered, title, caption)
+                    .expecting(expected)
+                    .laid_out(layout),
+            ),
         );
         self.shown = None; // force the status loop to repaint once we release it
         // The CST328 reports a level, not an edge, so a finger still down from whatever
@@ -352,7 +370,7 @@ where
             if let Some(p) = self.touch.read() {
                 last_input = Instant::now();
                 let mut repaint = true;
-                let done = match rsk_ui::hit_pin(p) {
+                let done = match rsk_ui::hit_pin(p, &layout) {
                     Some(PinKey::Digit(d)) => {
                         if entered < out.len() {
                             out[entered] = b'0' + d;

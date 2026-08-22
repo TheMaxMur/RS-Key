@@ -251,6 +251,14 @@ Grouped into three domains, plus the journal / backup / reset actions:
   a trade-off the panel states and gates behind the device PIN and a hold). Any
   existing host `PivmanData` (its PIN-change timestamp and other flags) is
   preserved (the obsolete derived-key salt is dropped, exactly as ykman does).
+  Last on the page, **Scramble PIN pad** — a toggle, **off by default**. On, the
+  ten digit keys are laid out afresh at random for every PIN entry (and again
+  between the "New PIN" and "Confirm PIN" steps), so a fingerprint trail, a worn
+  patch of glass, or an onlooker who sees your hand but not the panel learns
+  nothing from *where* you tapped. It buys nothing against anyone who can see the
+  screen — they read the digits off it — and it costs muscle memory: entry is
+  slower and mistyping is likelier, against a limit of three wrong PINs per power
+  cycle. That trade is the owner's to make, which is why it ships off.
 - **Firmware**: the installed `bcdDevice` build and chip serial, the real OTP
   secure-boot fuse state (it warns when secure boot is off rather than claiming a
   check it isn't doing), and the hold-to-**reboot into BOOTSEL** for an over-USB

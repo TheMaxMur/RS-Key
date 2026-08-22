@@ -3,6 +3,10 @@
 
 use super::*;
 
+/// The printed digit order. Every case here is about geometry or dispatch, not about
+/// the scrambled layout, so they all read the pad the way a default device draws it.
+const ID: PinLayout = PinLayout::identity();
+
 #[test]
 fn clamp_passes_printable_ascii() {
     let l = Label::clamp(b"github.com");
@@ -156,33 +160,33 @@ fn pin_key_centers_hit_their_keys() {
         for col in 0..PIN_COLS {
             let r = pin_key_rect(col, row);
             let c = Point::new(r.x + PIN_KEY_W / 2, r.y + PIN_KEY_H / 2);
-            assert_eq!(hit_pin(c), Some(pin_grid_key(col, row)));
+            assert_eq!(hit_pin(c, &ID), Some(pin_grid_key(col, row, &ID)));
         }
     }
     // Layout: rows 0–2 are digits 1–9 in reading order; the bottom row is Del/0/OK.
-    assert_eq!(pin_grid_key(0, 0), PinKey::Digit(1));
-    assert_eq!(pin_grid_key(2, 2), PinKey::Digit(9));
-    assert_eq!(pin_grid_key(0, 3), PinKey::Del);
-    assert_eq!(pin_grid_key(1, 3), PinKey::Digit(0));
-    assert_eq!(pin_grid_key(2, 3), PinKey::Ok);
+    assert_eq!(pin_grid_key(0, 0, &ID), PinKey::Digit(1));
+    assert_eq!(pin_grid_key(2, 2, &ID), PinKey::Digit(9));
+    assert_eq!(pin_grid_key(0, 3, &ID), PinKey::Del);
+    assert_eq!(pin_grid_key(1, 3, &ID), PinKey::Digit(0));
+    assert_eq!(pin_grid_key(2, 3, &ID), PinKey::Ok);
 }
 
 #[test]
 fn pin_cancel_hits_and_gaps_select_nothing() {
     let c = PIN_CANCEL_RECT;
     assert_eq!(
-        hit_pin(Point::new(c.x + c.w / 2, c.y + c.h / 2)),
+        hit_pin(Point::new(c.x + c.w / 2, c.y + c.h / 2), &ID),
         Some(PinKey::Cancel)
     );
     // The gap between column 0 and column 1 selects nothing.
     let k = pin_key_rect(0, 0);
-    assert_eq!(hit_pin(Point::new(k.x + PIN_KEY_W + 1, k.y + 2)), None);
+    assert_eq!(hit_pin(Point::new(k.x + PIN_KEY_W + 1, k.y + 2), &ID), None);
     // Below the grid (bottom-left margin) selects nothing.
-    assert_eq!(hit_pin(Point::new(0, PANEL_H - 1)), None);
+    assert_eq!(hit_pin(Point::new(0, PANEL_H - 1), &ID), None);
     // The eye toggle, between the header and the grid, maps to Reveal.
     let e = PIN_EYE_RECT;
     assert_eq!(
-        hit_pin(Point::new(e.x + e.w / 2, e.y + e.h / 2)),
+        hit_pin(Point::new(e.x + e.w / 2, e.y + e.h / 2), &ID),
         Some(PinKey::Reveal)
     );
 }
@@ -245,6 +249,7 @@ fn security_rows_map_in_order() {
         SecurityEntry::DevicePin,
         SecurityEntry::FidoPin,
         SecurityEntry::PivPin,
+        SecurityEntry::ScramblePin,
         SecurityEntry::AuditLog,
         SecurityEntry::Backup,
         SecurityEntry::FactoryReset,
@@ -561,8 +566,8 @@ fn the_key_grids_stay_inside_the_panel_and_hit_only_their_own_key() {
                 "pin key ({row},{col}) runs off the panel"
             );
             assert_eq!(
-                hit_pin(centre(r)),
-                Some(pin_grid_key(col, row)),
+                hit_pin(centre(r), &ID),
+                Some(pin_grid_key(col, row, &ID)),
                 "the centre of pin key ({row},{col}) must select it"
             );
             if col > 0 {
@@ -585,18 +590,24 @@ fn the_key_grids_stay_inside_the_panel_and_hit_only_their_own_key() {
     }
     let last = pin_key_rect(PIN_COLS - 1, PIN_ROWS - 1);
     assert_eq!(
-        hit_pin(Point {
-            x: centre(last).x,
-            y: last.y + last.h + PIN_GAP_Y + 1,
-        }),
+        hit_pin(
+            Point {
+                x: centre(last).x,
+                y: last.y + last.h + PIN_GAP_Y + 1,
+            },
+            &ID
+        ),
         None,
         "a tap below the last pin row must select nothing"
     );
     assert_eq!(
-        hit_pin(Point {
-            x: last.x + last.w + PIN_GAP_X + 1,
-            y: centre(last).y,
-        }),
+        hit_pin(
+            Point {
+                x: last.x + last.w + PIN_GAP_X + 1,
+                y: centre(last).y,
+            },
+            &ID
+        ),
         None,
         "nor one to the right of the last pin column"
     );
@@ -654,5 +665,91 @@ fn the_key_grids_stay_inside_the_panel_and_hit_only_their_own_key() {
             y: DEL_HOLD_RECT.y + DEL_HOLD_RECT.h + 1,
         }),
         "a point below the band is not the band"
+    );
+}
+
+/// The invariant the scrambled pad rests on: the digit PAINTED in a cell is the digit
+/// the hit-test returns for that cell. Paint and dispatch read `pin_grid_key` through
+/// the same `PinLayout` value, so this holds for any layout — but only while they keep
+/// reading the same one, which is what a second table would quietly stop doing.
+#[test]
+fn a_tap_types_the_digit_the_cell_shows() {
+    for seed in 0u8..24 {
+        let entropy = [seed.wrapping_mul(37).wrapping_add(11); PIN_SHUFFLE_ENTROPY];
+        for layout in [PinLayout::identity(), PinLayout::shuffled(&entropy)] {
+            for row in 0..PIN_ROWS {
+                for col in 0..PIN_COLS {
+                    let r = pin_key_rect(col, row);
+                    let centre = Point::new(r.x + PIN_KEY_W / 2, r.y + PIN_KEY_H / 2);
+                    assert_eq!(
+                        hit_pin(centre, &layout),
+                        Some(pin_grid_key(col, row, &layout)),
+                        "cell ({col},{row}) paints one key and taps another"
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// A layout is a permutation, not a resampling: every digit appears exactly once, or a
+/// pad would be missing a digit the owner needs and showing another twice.
+#[test]
+fn a_shuffled_layout_still_carries_every_digit() {
+    for seed in 0u8..64 {
+        let mut entropy = [0u8; PIN_SHUFFLE_ENTROPY];
+        for (i, b) in entropy.iter_mut().enumerate() {
+            *b = seed.wrapping_mul(31).wrapping_add(i as u8);
+        }
+        let layout = PinLayout::shuffled(&entropy);
+        let mut seen = [false; 10];
+        for row in 0..PIN_ROWS {
+            for col in 0..PIN_COLS {
+                if let PinKey::Digit(d) = pin_grid_key(col, row, &layout) {
+                    assert!(!seen[d as usize], "digit {d} appears twice (seed {seed})");
+                    seen[d as usize] = true;
+                }
+            }
+        }
+        assert!(seen.iter().all(|&s| s), "a digit is missing (seed {seed})");
+    }
+}
+
+/// The setting is off by default, so the shipped pad must be exactly the pad that
+/// shipped before it: `identity` is the printed order and nothing else.
+#[test]
+fn the_default_layout_is_the_printed_order() {
+    let id = PinLayout::identity();
+    assert_eq!(PinLayout::default(), id);
+    assert_eq!(PinPad::new(0).layout, id);
+    for row in 0..3 {
+        for col in 0..PIN_COLS {
+            assert_eq!(
+                pin_grid_key(col, row, &id),
+                PinKey::Digit((row * PIN_COLS + col + 1) as u8)
+            );
+        }
+    }
+    assert_eq!(pin_grid_key(1, 3, &id), PinKey::Digit(0));
+}
+
+/// Scrambling has to actually scramble: over a spread of entropy the pad must not keep
+/// coming back in the printed order, or the setting is a no-op nobody would notice.
+#[test]
+fn shuffling_moves_the_digits() {
+    let moved = (0u8..64)
+        .filter(|seed| {
+            let mut entropy = [0u8; PIN_SHUFFLE_ENTROPY];
+            for (i, b) in entropy.iter_mut().enumerate() {
+                *b = seed
+                    .wrapping_mul(97)
+                    .wrapping_add((i as u8).wrapping_mul(13));
+            }
+            PinLayout::shuffled(&entropy) != PinLayout::identity()
+        })
+        .count();
+    assert!(
+        moved >= 60,
+        "only {moved} of 64 layouts differed from the printed order"
     );
 }

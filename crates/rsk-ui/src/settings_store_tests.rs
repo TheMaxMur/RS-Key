@@ -23,6 +23,7 @@ fn encode_decode_roundtrip() {
         brightness: 3,
         sleep_secs: 120,
         pin_declined: true,
+        scramble_pin: false,
     };
     let mut got = DisplayConfig::default();
     got.apply_block(&cfg.encode());
@@ -35,6 +36,7 @@ fn encode_layout_is_brightness_then_be_sleep_then_flags() {
         brightness: 4,
         sleep_secs: 300,
         pin_declined: true,
+        scramble_pin: false,
     }
     .encode();
     assert_eq!(b.len(), 4);
@@ -49,6 +51,7 @@ fn pin_declined_clear_encodes_zero_flags() {
         brightness: 2,
         sleep_secs: 60,
         pin_declined: false,
+        scramble_pin: false,
     }
     .encode();
     assert_eq!(b[3], 0);
@@ -60,6 +63,7 @@ fn off_sentinel_roundtrips() {
         brightness: 5,
         sleep_secs: 0, // Off
         pin_declined: false,
+        scramble_pin: false,
     };
     let mut got = DisplayConfig::default();
     got.apply_block(&cfg.encode());
@@ -113,6 +117,7 @@ fn longer_future_block_reads_known_prefix() {
         brightness: 1,
         sleep_secs: 30,
         pin_declined: true,
+        scramble_pin: false,
     };
     let mut b = [0u8; 7];
     b[..CONF_LEN].copy_from_slice(&cfg.encode());
@@ -189,4 +194,55 @@ fn all_ones_block_loads_without_panic() {
     assert_eq!(got.brightness, 0xFF); // raw; firmware clamps to 1..=BRIGHTNESS_LEVELS
     assert_eq!(got.sleep_secs, 0xFFFF);
     assert!(got.pin_declined);
+}
+
+/// The scramble bit rides the flags byte that already existed, so the record does not
+/// grow and an already-provisioned device keeps every field across the upgrade. Both
+/// flags are independent: a device that dismissed onboarding must not come back with a
+/// scrambled pad it never asked for.
+#[test]
+fn the_scramble_flag_is_independent_of_the_onboarding_flag() {
+    for (declined, scramble) in [(false, false), (false, true), (true, false), (true, true)] {
+        let cfg = DisplayConfig {
+            brightness: 3,
+            sleep_secs: 45,
+            pin_declined: declined,
+            scramble_pin: scramble,
+        };
+        let mut back = DisplayConfig::default();
+        back.apply_block(&cfg.encode());
+        assert_eq!(back, cfg, "declined={declined} scramble={scramble}");
+    }
+}
+
+/// A record written before this bit existed — the flags-less `CORE_LEN` block and a
+/// full block with only the onboarding bit set — must load with scrambling OFF. It is
+/// opt-in, and a firmware upgrade is not the owner asking for it.
+#[test]
+fn an_older_record_loads_with_scrambling_off() {
+    for block in [&[4u8, 0, 60][..], &[4, 0, 60, FLAG_PIN_DECLINED][..]] {
+        let mut cfg = DisplayConfig::default();
+        cfg.apply_block(block);
+        assert!(!cfg.scramble_pin, "block {block:?} turned scrambling on");
+        assert_eq!(cfg.brightness, 4);
+        assert_eq!(cfg.sleep_secs, 60);
+    }
+}
+
+/// And the other direction: an older firmware reading a record this one wrote sees the
+/// fields it knows, because the bit went into a spare bit of a byte that was already
+/// there rather than lengthening the block.
+#[test]
+fn an_older_firmware_still_reads_a_record_carrying_the_new_bit() {
+    let block = DisplayConfig {
+        brightness: 2,
+        sleep_secs: 30,
+        pin_declined: true,
+        scramble_pin: true,
+    }
+    .encode();
+    assert_eq!(block.len(), CONF_LEN, "the record must not have grown");
+    assert_eq!(block[0], 2);
+    assert_eq!(u16::from_be_bytes([block[1], block[2]]), 30);
+    assert_eq!(block[3] & FLAG_PIN_DECLINED, FLAG_PIN_DECLINED);
 }

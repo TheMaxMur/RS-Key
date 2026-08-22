@@ -403,6 +403,10 @@ where
     /// `pin_declined`), held so every `EF_DISPLAY` write preserves it. Set true (and flushed)
     /// when the user dismisses onboarding; a factory reset wipes the record back to false.
     pin_declined: bool,
+    /// Scramble the PIN pad's digits on every entry (`EF_DISPLAY`'s `FLAG_SCRAMBLE_PIN`,
+    /// edited in Settings -> Security). Held here for the same reason as `pin_declined`:
+    /// every write to that record goes through one function and must carry all of it.
+    pub(crate) scramble_pin: bool,
     /// The shared flash store — the same `RefCell` the worker uses. The Passkeys tab
     /// borrows it to enumerate resident credentials; safe because the worker is parked
     /// (it never holds the borrow across an `.await`) while this thread-executor task
@@ -486,6 +490,7 @@ where
             locked,
             onboarding,
             pin_declined: dcfg.pin_declined,
+            scramble_pin: dcfg.scramble_pin,
             fs,
             keys,
             rng,

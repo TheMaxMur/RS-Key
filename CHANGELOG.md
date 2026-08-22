@@ -40,6 +40,27 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Added
 
+- **Settings → Security → "Scramble PIN pad", off by default**
+  ([#90](https://github.com/TheMaxMur/RS-Key/issues/90)). On, the ten digit keys are
+  laid out afresh at random for every PIN entry — and again between the "New PIN" and
+  "Confirm PIN" steps — so a fingerprint trail, a worn patch of glass, or an onlooker
+  who sees the hand but not the panel learns nothing from *where* the taps landed.
+  The order comes from the hardware RNG through Fisher–Yates with rejection sampling,
+  not `% 10`, which would have favoured the low digits by up to 6/256 and made the pad
+  leak a little of what it exists to hide. **It buys nothing against a screen
+  recording** — anyone who can see the panel reads the digits off it — which is why the
+  guide says so rather than implying broader cover. Off by default because it costs
+  muscle memory, and a mistype is expensive against a limit of three wrong PINs per
+  power cycle: that trade is the owner's. One `PinLayout` value both paints the labels
+  and answers the hit-test, so a pad drawn in one order and tapped in another (which
+  would type digits nobody pressed, with nothing on screen looking wrong) is not a state
+  the types can reach. The setting rides a spare bit of `EF_DISPLAY`'s existing flags
+  byte, so the record does not grow and a provisioned device keeps every field —
+  including a record written before this bit existed, which loads with scrambling off.
+  The shared settings rows shrink from 36 px to 32 px (gap 6 → 4) to fit a seventh
+  Security row; the compile-time layout assert is what refused the taller pitch.
+  **bcdDevice → 0x0983.**
+
 - **The store sweep's middle recorder had no teeth, and the reason it could not
   be a Kani proof was the wrong reason.** Both found by review. The faulting
   medium failed writes as well as reads, and `NoRecordLostToMetaWrite`'s loss
