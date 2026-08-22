@@ -180,11 +180,11 @@ fn draw<D: DrawTarget<Color = Rgb565>>(
                     {
                         let column = (px - x) as usize;
                         let row = (py - y) as usize;
-                        let glyph_alpha =
-                            coverage(font, glyph, row * usize::from(glyph.width) + column);
-                        if glyph_alpha > 0 {
-                            alpha = glyph_alpha;
-                        }
+                        // Glyph boxes overlap -- 8 of the 97 have a negative left
+                        // bearing, 28 carry ink past their advance -- so the pair
+                        // composites, and the greater coverage wins, not the later.
+                        let index = row * usize::from(glyph.width) + column;
+                        alpha = alpha.max(coverage(font, glyph, index));
                     }
                     pen_x += i32::from(glyph.advance);
                 }

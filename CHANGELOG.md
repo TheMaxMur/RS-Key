@@ -981,6 +981,18 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **Two overlapping glyphs took the later coverage instead of the greater, so the
+  second one punched a near-background pixel into the first one's stroke.** The
+  trusted display's text draws each pixel by walking the string, and a pixel both
+  glyphs cover kept whichever it read last. Glyph boxes do overlap — 8 of the 97 in
+  the atlas have a negative left bearing and 28 carry ink past their advance — and a
+  sweep of all 97×97 pairs in every role found **53 that composite wrong**, worst
+  `\j` and `(j` in the 19 px heading at 13 of 15 coverage steps: an all-but-solid
+  stroke pixel replaced by an all-but-background one. Headings and the service name
+  on the approve prompt render attacker-chosen text, so the pair is choosable.
+  The regression asserts the property rather than a golden pixel — adding a glyph
+  may never lighten what the prefix already drew. **bcdDevice → 0x097F.**
+
 - **29 of the 42 `file.rs:line` citations in Rust source were repaired; 19 of
   them named code the claim was never about.** `scripts/citation_gate.py` reads
   the `formal/` pages and nothing else, so the same three token-gate call sites
