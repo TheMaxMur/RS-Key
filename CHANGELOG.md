@@ -38,581 +38,6 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
-### Internal
-
-- **CodeQL's first run would have reported 289 alerts, 229 of them test
-  vectors.** `rust/hard-coded-cryptographic-value` cannot tell a KAT from a
-  secret, and this tree is built out of KATs — `crates/rsk-oath/src/tests.rs`
-  alone accounted for 37. An alert list that is 79% noise is one nobody reads.
-  `.github/codeql/codeql-config.yml` keeps the test suites, the Kani siblings,
-  `fuzz/`, `tests/` and `third_party/` out of extraction; measured against the
-  pinned bundle, 289 alerts become 60, with nothing left in a test-shaped file.
-  Two things decided the shape of it. `**/*_tests.rs` alone is not enough —
-  AGENTS.md puts a crate root's tests in plain `tests.rs`, which is where the
-  largest single source of alerts was, so both spellings are listed. And
-  `paths-ignore` is applied at EXTRACTION, not at analysis: handed to
-  `database analyze` it changed nothing at all (279 results before and after),
-  and it works only because `codeql-action/init` passes it to `database create`.
-  A config written on the other assumption would have sat in the tree doing
-  nothing, with the check still green. This is not the workflow-level
-  `paths-ignore` that `codeql.yml`'s header refuses — that one skips the run,
-  which Scorecard counts against the SAST score; this one still runs and still
-  counts, and Scorecard still reports `SAST tool detected: CodeQL`. The cost,
-  stated in the config and in docs/testing.md: a defect in a test helper is now
-  not found, rather than found and filtered.
-
-- **Nothing in the tree parsed `.github/workflows`, and a workflow that does not
-  parse breaks a check that is not about workflows at all.** OpenSSF Scorecard's
-  SAST row runs actionlint over *every* file in that directory, so one malformed
-  sibling returns score **-1** for the whole check rather than merely failing
-  detection — a single tab in `codeql.yml` was enough. Eight workflow files
-  rested on a tool nobody ran: no actionlint, yamllint, zizmor or
-  action-validator anywhere in the tree, and no `check.sh` row that read the
-  directory at all. `actionlint` joins the dev shell (`nix/devshells.nix` — a
-  toolchain addition, so it is maintainer-visible), and `workflow lint` is now
-  the **first** row of `check.sh`, ahead of `fmt`: it costs ~0.2 s, and a class
-  that makes another check lie should fail in the first second rather than the
-  fourteenth minute. It takes no file arguments on purpose — actionlint
-  discovers the workflows from the git root, which covers `.yaml` as well as
-  `.yml` (a `*.yml` glob does not) and which turns an empty or missing directory
-  into an error (`no YAML file was found`, exit 3) rather than the silent pass
-  over nothing this repo keeps rediscovering. `ci.yml`'s always-on `docs` job
-  runs the same command for the reason it already runs gitleaks: `pages.yml`
-  sits inside `ci-scope.sh`'s DOCS_ONLY set, so a change to that workflow alone
-  skips `check` entirely. Falsified through the row rather than the binary, exit
-  codes taken with no pipe: an unknown runner label, a bad `matrix.<prop>`, a tab
-  in the indentation and an unquoted `$var` in a `run:` block each stop the gate
-  at row 1 of 1 with rc 1 and its own message — and with the row deleted that
-  same tab left all 98 rows green, which is what makes it load-bearing rather
-  than decorative. Host tooling and CI only, so no `bcdDevice` bump.
-
-- **Two hand-written curve rosters bounded a buffer size, and nothing said so.**
-  `rsk-piv`'s `MAX_EC_POINT` is 97 — a P-384 point — while
-  `rsk_ec::PrivKey::public_point` writes up to 133 for P-521 and writes with
-  `copy_from_slice`, so a curve one byte too wide is a panic on the first key
-  operation, not an error. 97 was safe only because `curve_for_algo` and
-  `curve_from_id` each accept four curves and no wider one; no test tied either
-  roster to the number. One now walks both over their whole `u8` domain and
-  asserts the point fits. Falsified three ways: `5 => Curve::P521` fails on the
-  width assertion naming P-521 at 133 against 97; dropping a curve and blinding
-  the walk each fail on the roster count, so a loop that reads nothing cannot
-  pass. `curve_from_id` is `pub(crate)` to be reachable, matching its sibling —
-  refactor, no behaviour change, and the counter moves because bcdDevice counts
-  builds.
-
-- **The crate tiers were true and nothing could tell.** Applet-to-applet edges
-  reached zero over the tier refactor — six manifest edges (`fido→mgmt`,
-  `fido→rescue`, `openpgp→mgmt`, `piv→mgmt`, `piv→openpgp`, `otp→mgmt`) down to
-  none — and the only thing holding them there was that everyone remembered.
-  `deny.toml` now states the rule as a graph assertion on the existing
-  `cargo-deny` row: each of the eight applet crates is reachable only from
-  `firmware`, `rsk-device` and `rsk-display`; `sha2`, `sha1`, `rsk-sha512` and
-  `rsk-mldsa` only from `rsk-crypto`; `rsk-ec` and `rsk-rsa` from a named
-  allowlist rather than through the facade, because routing them behind it would
-  put 11 and 12 third-party crates into the closure of the five that do neither.
-  A sideways edge exits 2 there instead of waiting for a reviewer to notice it,
-  and `-D unused-wrapper` fails the row the other way too — when an allowlisted
-  edge is gone and its entry has quietly become decoration. Host-side only: no
-  firmware file moved, so no `bcdDevice` bump.
-
-- **The crate-layer drawing named 17 of 28 crates, under a footer reading
-  "Source: workspace Cargo.toml manifests".** So 57 of the 100 manifest edges
-  had an endpoint it could not draw at all. It also showed seven applets against
-  a registered eight, still carried the already-deleted `rsk-piv → rsk-openpgp`,
-  put `rsk-rsa` in the platform tier beside `rsk-sdk`, and claimed every applet
-  builds on `rsk-crypto` when `rsk-mgmt` and `rsk-vendor` do not.
-  `scripts/crate_graph.py` emits it now — every name, count and note off the
-  manifests — and a new `crate graph` gate row fails when the committed SVG has
-  drifted. The tier table is the one thing still written down, and the script
-  holds the manifests to it: a workspace member it does not place is a hard
-  failure, and so is any dependency that does not point into a later band.
-  `docs/architecture.md`'s alt text has to be the drawing's own `<desc>`, which
-  is how it came to say "seven applet crates" for a month.
-
-- **The FIDO applet declared the hash backend the crypto facade exists to hide,
-  and compiled not one line against it.** `crates/rsk-fido/Cargo.toml` carried
-  `sha2` in `[dependencies]`, while every digest the applet takes goes through
-  `rsk_crypto::{sha256, hmac_sha256, hkdf_sha256, hkdf_sha512}`: no `sha2::`
-  path, no `use sha2`, no `Sha256`/`Sha384`/`Sha512`/`Digest`/`FixedOutput`
-  anywhere under its `src/` — and the same grep, pointed at `rsk-crypto/src`,
-  returns 17 lines, so it can see one when there is one to see. That edge is
-  what the facade's own receipt is against:
-  `5fbeeb3` swapped SHA-512 from `sha2` to `rsk-sha512` by editing
-  `rsk-crypto/src/hash.rs` and `mac.rs` and no applet file at all. The
-  `kani-soft` feature's `sha2/force-soft` came down with the dependency and was
-  redundant next to `rsk-crypto/kani-soft`, which already sets it — which is
-  what `rsk-openpgp`, `rsk-oath` and `rsk-otp` forward and nothing else, along
-  with `rsk-bip39` and `rsk-slip39`. (`rsk-piv` still names its own beside that
-  one. Different shape, and left alone: its `sha2` is a dev-dependency its
-  `src/tests.rs` hashes with seven times.) Both are gone, and the dependency's
-  five-line explanation with them — the three-line pointer at `rsk-crypto` that
-  every other forwarder carries says it now. `cargo tree -p rsk-fido --features
-  kani-soft` still resolves `sha2 v0.10.9|force-soft`, and the SLOW and LIGHT1
-  tier selections still `cargo check` one package at a time, which is how
-  `cargo kani` re-invokes them — worth doing by hand, because **no row in
-  `check.sh` ever builds with `--features kani-soft`**; only the weekly Kani
-  tiers do. Refactor, no behaviour change — but the image moves, so the counter
-  does. Nothing grew: all 28 workspace members' normal-dependency closures
-  (`cargo tree --edges normal`) are identical before and after, and the
-  comparator was falsified first — pointed at an injected `rsk-oath → rsk-ec`
-  it names the 12 crates that edge would add. `sha2 0.10.9` still reaches
-  `rsk-fido` through `rsk-crypto` and `ed25519-dalek`. And the default shipping
-  image — `cargo build --release -p firmware`, no features, taken before the
-  16M/display/no-touch rebuilds overwrite the ELF — is the same program:
-  `.text` 810 500 and `.bss` 337 556 bytes on both sides, 1343 function labels
-  on both sides, 264 254 instructions on both sides, and **81 of those
-  instructions differ**, every one of them a relocated immediate — 79 `movw`
-  low halves of `movw`/`movt` address pairs, and 2 `d4d4` inter-function
-  padding half-words objdump renders as `bmi.n`, each sitting after a diverging
-  instruction and before the next function's symbol. Byte-identity is not
-  reachable for a manifest edit at all — dropping a dependency changes the
-  crate's `-C metadata` hash and with it the symbol and `.rodata` numbering — so
-  the bar is instead: same instruction count, same mnemonic profile, and every
-  difference enumerated and accounted for.
-
-- **The shared EC public-key DO chose both of its length forms from the point
-  width, and one of them measures something else.** `make_ec_pubkey_do` builds
-  `7F49 { 86 <point> }`: the inner length counts the point, the outer one counts
-  the whole `86` object around it, which is 2 or 3 bytes longer. Both took the
-  long form on `point.len() >= 128`, so a 126- or 127-byte point left the outer
-  length short-form while the value it had to carry was 128 or 129 — written out
-  as `80`, the indefinite length DER forbids, or as `81`, a long form with no
-  byte behind it. Either one mis-frames the key for every host that reads it.
-  Not reachable today and no shipped byte changes: `PrivKey::public_point`
-  returns 32, 65, 97 or 133 and nothing else, on all three call sites in both
-  applets, and an attacker-chosen IMPORT picks the scalar, not the point width.
-  But the encoder is `pub` in a tier-0 crate that exists to be called from more
-  than one place, and its own signature accepts the two widths it cannot encode.
-  Each length now takes the long form when the value *it* encodes reaches 128 —
-  the rule `rsk_sdk::tlv::format_len` already states two tiers up, where an
-  algorithm crate cannot reach it. The walk over reachable widths could not see
-  this (all four sit clear of the boundary), so a second one covers every width
-  the encoder is documented for, and its reader rejects a non-canonical length
-  instead of accepting it: without that, moving the threshold anywhere in
-  98..=133 re-parsed cleanly and was pinned by nothing. Falsified against the
-  previous encoder (`plen 126: outer DO unreadable`) and against a threshold
-  moved to 100 (`plen 100: inner DO unreadable`).
-
-- **The PIV applet borrowed the OpenPGP applet's elliptic-curve key type, and
-  that was the last applet reaching sideways.** `Curve`, `PrivKey` and
-  `make_ec_pubkey_do` lived in `rsk-openpgp/src/keys.rs`, so `rsk-piv` — which
-  shares none of OpenPGP's DO model, PW1/PW3 sessions or DEK seal — depended on
-  the whole applet for a key type, an eight-value curve tag and a TLV wrapper.
-  Six `use rsk_openpgp::keys::…` sites and one manifest dependency; both are
-  now zero, and with them the last applet→applet edge in the tree. Measured
-  over all 56 ordered applet pairs: **0 manifest edges, 0 `rsk_x::` uses in
-  code**. Six `rsk_<applet>::` references survive, every one inside a comment
-  where one applet explains its ordering by pointing at a sibling that does the
-  same thing — prose, not a dependency. Both halves are a `git grep` anyone can
-  re-run — `^rsk-<b> = ` in `crates/rsk-<a>/Cargo.toml`, and `rsk_<b>::` under
-  `crates/rsk-<a>/src` — and the counter was falsified before it was believed:
-  pointed at `rsk-sdk` the same two greps find the edge from all eight applets,
-  2 to 48 uses each.
-
-  The key type went to `rsk-ec`, beside the fixed-base comb it already signs
-  through, and the crate's charter grew to match: it is the EC layer now, not
-  just the comb. `Curve::id` — the persisted `[curve_id]` byte both applets tag
-  a sealed key with — became public, which deleted PIV's byte-identical hand
-  copy of the same eight-arm table. `MAX_EC_SIG` / `MAX_EC_POINT` followed the
-  operations whose output they bound. What did **not** follow: `curve_from_attr`
-  maps an OpenPGP *algorithm attribute* to a curve and stays with the DO model
-  that defines those attributes, and `store_ec_key` / `load_ec_key` stay with
-  the DEK seal they are I/O for. All 17 tests of the moved code went with it or
-  stayed with what they test — 14 to `rsk-ec` (4 raw-signature, 3 X25519, 7
-  brainpool KAT), 3 kept in `rsk-openpgp` (the attribute mapping, and the two
-  DEK-seal tests, in a file that no longer calls itself `keys_x25519_tests`) —
-  none rewritten, none lost, and 8 new ones on top.
-
-  `make_ec_pubkey_do` is not curve vocabulary — it is the `7F49 { 86 <point> }`
-  data object both applets answer GENERATE and IMPORT with. It went to
-  `rsk-ec/src/pubdo.rs`, which is where `rsk_rsa::pubdo` already holds
-  `7F49 { 81 <N> · 82 <E> }` for exactly the same reason; splitting the two
-  halves of one DO family across two crates would have been the worse answer.
-  `rsk-sdk::tlv` was the other candidate and is the wrong one: it holds generic
-  BER primitives, not named objects. Its new `MAX_EC_PUBDO` replaces PIV's
-  `[0u8; 110]` and OpenPGP's twice-written `8 + MAX_EC_POINT`.
-
-  `rsk-ec` is tier 0 and gained **no** `rsk-*` dependency (`cargo tree -p rsk-ec
-  -e normal --depth 1`: twelve third-party crates, not one of them `rsk-*`).
-  Two things had to be cut for that, both along seams `rsk-rsa` had already
-  cut. `Sw` became `EcError` — three variants, each naming the status word its
-  callers answer with, reproduced at each applet's APDU edge by `ec_sw` and
-  pinned arm by arm (`ec_sw_reproduces_every_status_word`, in both crates). The
-  split between `Failed` and `BadPoint` is load-bearing: it is what keeps a
-  refused signature at `6400` while a malformed ECDH peer point stays `6984`.
-  And `PrivKey::generate` takes `rsk_ec::Rng`, bridged by an `EcRng` beside each
-  applet's existing `RsaRng`. `PrivKey::sign` needed no bridge at all — its
-  `_rng` parameter had been dead since every curve here became deterministic,
-  and carrying it would have meant building an adapter for an argument nobody
-  reads.
-
-  **Nothing an already-provisioned key depends on moved**, and that is measured
-  rather than intended. Undo the one mechanical substitution the tier boundary
-  forced — `Sw::EXEC_ERROR`/`DATA_INVALID`/`FUNC_NOT_SUPPORTED` → the matching
-  `EcError` variant, and `rsk_ec::` → `crate::` — and the three moved spans
-  differ from their parent (`868653b`) **only** in the crate header, the module
-  docs, the test hooks, two `pub`s and `sign`'s signature. No arithmetic, no
-  control flow, no buffer width and no error direction moved. The
-  sealed blob is still `[curve_id] ‖ scalar`, the eight tags are written out
-  one by one in a test rather than round-tripped (a renumbering would move both
-  sides of a round-trip together), and four real records sealed by the
-  `868653b` build — P-256, P-384, Ed25519, X25519 — are checked into
-  `rsk-piv`'s tests and must still load. Falsified: remapping PIV's
-  `curve_from_id` fails that test with "P256 decoded as the wrong curve",
-  flipping one fixture byte with "record from the old build refused". Remapping
-  `rsk_ec::Curve::from_id` leaves it GREEN — PIV reads through its own,
-  deliberately narrower table — and `curve_id_round_trips_and_rejects_unknown_tags`
-  in `rsk-ec` catches it instead (its sibling `curve_id_tags_are_frozen` reads
-  only `id()` and stays green, so it is one test, not two).
-  `docs/protocol.md` describes neither of these: the curve tag is
-  at-rest only, and the `7F49` DO is the public spec's, byte-unchanged.
-
-  The image is **not** byte-identical this time, and should not be: a clean
-  `cargo build --release -p firmware` goes from 811 500 to **810 580 bytes, 920
-  smaller** (`arm-none-eabi-size`, `text + data`, the sum `check.sh`'s budget row
-  takes; `bcdDevice` pinned, so the counter is not the difference). **None of the
-  deletions is why**, which is measured and not guessed: put the dead `_rng`
-  back at all six `sign` call sites and PIV's duplicate tag table back beside it,
-  and the image rebuilds at 810 580 — the same byte count, so the two of them
-  together are worth **zero**. PIV's `curve_id` never had a symbol of its own to
-  delete; it was already inlined into `store_ec_key`, and `Curve::id` inlines
-  into the same jump table. What actually moved is codegen: `PrivKey`'s four
-  large methods crossing a crate boundary re-cut the cross-crate inlining, 1047
-  symbols changed size, 80 512 bytes of gross movement, and −920 is the 1.2 %
-  that did not cancel. Nothing left the image. Every symbol that disappears is
-  one of the six that reappear under `rsk_ec::key::`, or a wrapper now inlined
-  into a caller that grew to match (`p521`'s `FieldElement::mul` into
-  `primeorder`, `sha2`'s `Sha512::finalize_into` into `hmac`), or two identical
-  one-instruction `Rng::fill` shims the linker folded (`RsaRng`, `EcRng`) — and
-  `.bss` is unchanged to the byte at 337 556.
-
-- **Four applets reached into the management applet for a config record and a
-  serial.** `EF_DEV_CONF` — the Yubico DeviceInfo record `ykman config usb`
-  writes, and the READ CONFIG response built around it — lived inside
-  `rsk-mgmt`, so `rsk-fido` and `rsk-otp` depended on the management applet to
-  write it, while `rsk-openpgp` and `rsk-piv` depended on it for five lines that
-  derive the 8-digit serial from the chip id. Those are two different things and
-  they went to two different places. The record is its own crate now,
-  `rsk-devconf`, in the shape `rsk-led` and `rsk-phy` already had — below the
-  applets, depending only on `rsk-fs` and `rsk-sdk`. `serial4` is
-  `rsk_sdk::serial4`, beside `FIRMWARE_VERSION`: the same device identity four
-  applets report for four unrelated reasons, declared once where every applet
-  already looks. `git grep -c rsk_mgmt` over `rsk-fido`, `rsk-otp`,
-  `rsk-openpgp` and `rsk-piv` goes 3/7/5/3 → **0**, and all four drop the
-  dependency.
-
-  Crossing a crate boundary did **not** publish the record's vocabulary. Inside
-  `rsk-mgmt` the FID was crate-private, which is what let the FIDO vendor
-  `CONFIG_WRITE` say "ask the codec, you cannot reach the record"; a `pub const`
-  would have demoted that to a convention on a record which survives
-  `authenticatorReset` and which one unparseable byte hides the device behind
-  for good (audit run-33). So the FID, the stored-size cap and the thirteen
-  DeviceInfo tags stay private — as `rsk-phy` keeps its own twelve tags — and
-  are re-exported as `rsk_devconf::raw` only under `test-util`, which just the
-  applet tests and two fuzz targets turn on. Naming `rsk_devconf::EF_DEV_CONF`
-  from an applet is `error[E0603]`, and `raw` does not exist in an image build.
-  One constant is genuinely shared and genuinely public: `DEV_CONF_WRITE_MAX`,
-  the request bound the CCID WRITE CONFIG applies before the codec strips.
-  Visibility is compile-time only and `raw` is `cfg`-gated out, so the image
-  does not move — measured, not assumed: `objcopy -O binary` over the release
-  build before and after is the same `bc04bca3…`, and only the debug sections
-  differ, because a new `[features]` table changes the crate's `-Cmetadata`
-  fingerprint. The second `bcdDevice` step is a build counter, not a behaviour
-  change.
-
-  **No byte of the record moved**, and that is checked rather than intended:
-  every moved span of the codec is byte-identical to its old self bar eight
-  lines — that one `pub`, the import and the version tag naming
-  `rsk_sdk::FIRMWARE_VERSION` directly, and two doc clauses that named the
-  applet the codec no longer lives in. All 37 tests moved byte-identical, 21
-  to the record and 16 to the applet, none rewritten and none lost.
-  `EF_DEV_CONF = 0x1122` and every size constant keep their values, so a key
-  provisioned by an older build reads the same record through the same parser
-  and there is nothing to migrate. `docs/protocol.md` §6 describes the same
-  TLV; only the "Source:" pointers follow the file.
-
-- **FIDO reached across the applet tier for a config record, and only the crate
-  graph said so.** `EF_PHY` — the PicoForge-compatible device-config TLV that
-  carries USB identity, LED wiring and the interface mask — lived inside the
-  rescue applet, so everything that reads it depended on `rsk-rescue`: 19
-  references from `rsk-fido` alone, plus `rsk-device`, `rsk-display`,
-  `firmware`, `tools/emu`, a fuzz target and the Miri harness. It is its own
-  crate now, `rsk-phy`, in the shape `rsk-led` already had for `EF_LED_CONF` —
-  below the applets, depending only on `rsk-fs` and `rsk-sdk`. `rsk-fido` and
-  `rsk-display` no longer name `rsk-rescue` at all.
-
-  **No byte of the record moved**, and that is checked rather than intended:
-  the codec is line-for-line its old self — `diff` against the parent moves the
-  crate header and the trailing `#[path]` module hooks and not one line between
-  them — and its tests and Kani harnesses are byte-identical files, wire
-  vectors included. A key provisioned by an older build reads the same
-  `EF_PHY = 0xE020` through the same parser, so there is nothing to migrate.
-  `docs/protocol.md` §7.1 and `rsk hw` describe the same tags; only the
-  "Source:" pointers follow the file.
-
-  The Kani `heavy` tier moves with the proofs — it was `rsk-rescue` because of
-  this record's 11.1 GB round-trip, and is `rsk-phy` now; the harness and cover
-  floors are unchanged because nothing was added or dropped.
-
-- **Seven applets each declared the same presence seam, and the board answered
-  all seven.** `Rng`, `UserPresence`, `Presence`, `PinEntry` and `AlwaysConfirm`
-  were 29 declarations across the applet tier, byte-identical apart from FIDO's
-  fourth `Presence::Cancelled`; `rsk-device` carried two supertrait blocks and
-  their blanket impls purely to reconcile them, and `firmware`, `tools/emu` and
-  `rsk-display` wrote the same impl five and seven times over. They are declared
-  once now, in `rsk-sdk` — the crate every applet already depended on, so the
-  move added no dependency edge — and the glue is gone: `firmware` and the
-  emulator implement one `Rng` and one `UserPresence` each.
-
-  The seven presence impls were **not** actually identical, which is the part a
-  straight merge would have broken. The trusted display closes an approved
-  WebAuthn ceremony with a ~0.4 s "Approved" card and runs a registration screen
-  for `makeCredential`, and its own comment says paying that on OpenPGP/PIV —
-  which ask for presence once *per signature* — would be a latency regression.
-  A cancel differs too: only CTAP2 can be cancelled mid-wait, so only FIDO could
-  answer `Presence::Cancelled`; the six card applets got `Timeout`. The shared
-  trait keeps both apart by asking two questions rather than one — `request` for
-  a smartcard touch policy, `request_ceremony` for a CTAP2 ceremony, the latter
-  defaulting to the former — so every status word, every CTAP error and the pop's
-  scope are what they were.
-
-  The randomness seam stays split in two on purpose. `rsk-rsa` is an algorithm
-  crate below `rsk-sdk` and may not reach up for it, so it keeps its own `Rng`
-  and the two are bridged where they meet (`rsk_openpgp::keys::RsaRng`,
-  `rsk_piv::RsaRng`, `firmware`'s `core1::SdkRng`, the emulator's `EmuRsaRng`).
-  The alternative — `rsk-sdk` re-exporting `rsk_rsa::Rng` — was measured rather
-  than argued: `rsk-sdk` has 14 direct dependents and `rsk-rsa` has 4, so that
-  edge would pull `rsk-rsa` and `num-bigint-dig` into the closure of ten crates
-  that do no RSA. Same reasoning that kept the `RsaError → Sw` table duplicated.
-
-- **Two rows of that mutation table asserted the right outcome for the wrong
-  reason.** Measured one mutant at a time: deleting the `s ≥ n` refusal
-  (RFC 8017 §8.2.2 step 1) left the whole suite green, because the `s = n` case
-  reduces to zero and fails the EM comparison anyway — and without that refusal
-  the oracle accepts `sig + n`, a second representative of a signature it has
-  already seen. The over-wide-data case had the same shape: it sat ten bytes
-  short of the width where the check is what stops the EM construction indexing
-  past its own buffer. Both mutants now die, each on the assertion that names it
-  and in the direction that describes the defect.
-
-  Three comments outlived the crate they described. `firmware/Cargo.toml` still
-  blamed the 128 KiB heap on the `rsa` crate; two RSA tests still said they
-  verified through it. And one citation did not follow the shift its neighbours
-  did — `formal/comutants.toml` pointed `Session::set_pin` at the function after
-  it. `docs/testing.md` now records how the differential against `rsa` 0.9.10 is
-  rebuilt, since the crate cannot come back into the tree to hold it: including
-  that a comparison gated behind `is_ok() || is_err()` compares nothing, and that
-  upstream cannot be asked about an unbalanced key because its CRT recombination
-  does not terminate for `q ≫ p`.
-
-- **The new RSA test oracle could not be made to say "no".** `verify_pkcs1v15`
-  arrived with five call sites and not one negative case, so a version hard-wired
-  to `true` left the suite green — and the generated-key half of both applets'
-  RSA tests had nothing else checking them. It now has its own mutation table
-  (`crates/rsk-rsa/src/verify_tests.rs`): a flipped signature bit, a flipped
-  digest bit, another message's signature, the wrong modulus, the wrong exponent,
-  three wrong lengths, `s = n`, and over-wide data. Falsified by stubbing the
-  function to `true` and reading which assertions fell.
-
-  Three more from the same review. The EMSA-PKCS1-v1_5 block builder had been
-  copied into both signers rather than shared, so the PKCS#1 padding rule lived
-  in two places; it is one `emsa_block` now. `rsa_sign`'s DigestInfo arm maps
-  every failure back to `Failed`, which is the single status word the `rsa`
-  crate's `sign_with_rng` could answer there — the new width errors were
-  unreachable through `rsk-piv`'s certificate path, but "unreachable" is not
-  "identical". And three `mod_inverse` results — the private exponent, `qInv`,
-  and each blinding factor's inverse — were signed intermediates dropped without
-  scrubbing, where the crate they replaced wiped its own; they ride in
-  `Zeroizing` now.
-
-  Two comments were narrower than the truth they defend. The Garner
-  recombination is underflow-safe for *any* `p` and `q` — `m1 < p` is a `modpow`
-  postcondition — not only for the unbalanced pair the comment named; and
-  PSO:DECIPHER's legacy arm collapses every failure to `EXEC_ERROR` where the asm
-  arm answers the four-variant table first, which the comment read as identical.
-  A safety argument stated narrower than it is invites the next reader to weaken
-  it.
-
-- **`rsk-rsa` owns the RSA key type, so nothing above tier 0 names a foreign
-  one.** `rsa::RsaPrivateKey` used to cross from an algorithm crate into both
-  card applets, `rsk-device` and `firmware` — five manifests and eleven source
-  files spelling a dependency's type in their own signatures. `rsk_rsa::RsaKey`
-  replaces it, and its public surface is bytes: `size()`, `n_be()`, `e_be()`, and
-  a `from_p_q` reached through the byte-taking `rsa_from_pqe`. `rsk-piv` and
-  `rsk-openpgp` no longer name a bignum at all; `rsk-rsa` still has no `rsk-*`
-  dependency. Three PKCS#1 v1.5 helpers moved with it — the software private
-  operation, `rsa_sign` and a new `rsa_decrypt` — each a port of what the `rsa`
-  crate ran, arm for arm, including which of `check_public` and `validate`
-  refuses an imported key, because an applet's status word follows that.
-- **The citation gate said `ok` over 75 rotted citations, and one whole page was
-  outside it.** `formal/citations.lock` now records what each of the 423
-  `file.rs:line` citations pointed at, and a locked line found ELSEWHERE in its
-  file is reported with the line it moved to. A line edited *in place* still
-  passes: that false alarm is what the row was deliberately built without, and
-  both halves are pinned. `formal/comutants.toml` joins the guarded pages — 13
-  of its 16 citations named a file nothing could resolve, and two landed on
-  unrelated code, one of them wrong the day it was written. Pages that reason
-  about several applets at once must now write a repo path, because `lib.rs:1020`
-  decides nothing for this gate or for a reader. Four more citations were wrong
-  and are re-pointed, including `Ctx::load_keydev`, which named `require_presence`.
-  Host-side only: no firmware behaviour, so no bcdDevice bump.
-
-- **Why the RSA status-word table is allowed to exist twice.** `rsa_sw` maps
-  `RsaError` to a status word in both card applets, and the comment defending
-  that named the orphan rule — which in fact permits the shared
-  `impl From<RsaError> for Sw`, because `Sw` is `rsk-sdk`'s own type and the
-  `rsk-sdk` → `rsk-rsa` edge it needs points downward. What rules it out is the
-  cost: `rsk-sdk` is the seam every applet depends on, so that impl puts
-  `rsk-rsa` in FIDO's, OATH's, OTP's, mgmt's, rescue's, fs's and usb's
-  dependency closures, none of which do RSA. Both halves measured; both copies
-  stay, each pinned arm by arm. Comments only — refactor, no behaviour change,
-  and the counter moves because a bump counts builds.
-
-- **The RSA layer moved out of the OpenPGP applet and into `rsk-rsa`.** The CRT
-  parameter layout and its blinded, Bellcore-fault-checked private operation,
-  PKCS#1 v1.5 (the DigestInfo encoding, both signers, the constant-time decrypt
-  unpad), the key type, keygen, and the `7F49` public-key DO now live in the
-  crate that already held the assembly under them. PIV was reaching across a
-  tier for all of it — `rsk_openpgp::rsa_crt`, `keys::rsa_sign`,
-  `keys::RsaKeygen`, `keys::MAX_RSA_BYTES` and four more — and reaches down for
-  it now instead; the applets keep only what is theirs, the APDU framing and the
-  seal I/O. Behaviour-preserving: the `rsa` crate rode along with the code that
-  used it (the entry above has since dropped it), and no wire byte moves.
-
-  The status words could not ride along, because a tier-0 crate must not name
-  `rsk_sdk::Sw`. `rsk-rsa` returns its own four-variant `RsaError` and each
-  applet maps it at its APDU edge, reproducing every status word the old code
-  answered — including PSO:DECIPHER's deliberate `EXEC_ERROR` on a malformed
-  block. Both mappings are pinned arm by arm, and both pins were checked by
-  breaking an arm and reading which assertion fell.
-
-  Two constants that were written out twice collapsed on the way:
-  `MAX_RSA_BYTES` (`512` in `keys.rs`, `2 * MAX_MOD` in `rsa_crt.rs`) and the
-  maximum sealed plaintext (`5 * MAX_MOD` in `rsa_crt.rs` and again in
-  `rsk-piv/src/seal.rs`). Both survivors derive from `rsk_rsa::MAX_MOD`, so
-  neither can drift from the width the assembly actually accepts, and every
-  remaining user of both was read. `num-bigint-dig` left the OpenPGP and PIV
-  manifests, where nothing referenced it any more.
-
-- **`rsk-rsa-asm` is now `rsk-rsa`.** The crate held the vendored UMAAL assembly
-  and nothing else, while the RSA layer above it — CRT parameters, PKCS#1 v1.5,
-  the key type, keygen — lived inside the OpenPGP *applet*, which is why PIV
-  reaches across a tier to sign. RSA was the only algorithm family in the tree
-  without a crate of its own. The rename comes first and alone: a crate called
-  `-asm` cannot honestly hold pure Rust, and the moves land on top of it. Pure
-  rename, no code moved yet.
-
-### Security
-
-- **The `rsa` crate is out of the tree, and with it RUSTSEC-2023-0071.** The
-  Marvin timing side channel has **no fixed release** — OSV gives
-  `introduced: 0.0.0-0` with no `fixed` event, so every version is affected —
-  and the crate sat inside an authenticator's trust base behind a documented
-  carve-out. The two paths that still reached it are `rsk-rsa`'s own now: PIV
-  certificate signing at key generation, and PSO:DECIPHER for a legacy `P‖Q` key
-  whose prime width is not a multiple of 32 (which the asm CRT core cannot take).
-  Both run the same base-blinded, Bellcore-fault-checked private operation the
-  rest of the tree already used, and both end in the same constant-time unpad.
-
-  **The carve-out is deleted, not relocated.** `cargo audit` runs with no
-  `--ignore` on either lockfile, `deny.toml`'s `[advisories].ignore` carries no
-  vulnerability at all (only three "unmaintained" entries), and the `rsa`
-  exemption is gone from `supply-chain/config.toml`.
-
-  No wire byte moves: every status word is what it was, including PSO:DECIPHER's
-  deliberate `EXEC_ERROR` on a malformed block and `pso.rs`'s `WRONG_LENGTH`
-  fallback onto the legacy arm. The sealed `P‖Q‖dP‖dQ‖qInv` blob is byte-identical
-  — `dP`, `dQ` and `qInv` do not depend on which totient `d` was derived from —
-  so an already-provisioned key keeps signing and deciphering across the upgrade.
-
-  **What this does not close is the padding oracle.** PSO:DECIPHER still tells a
-  malformed block from a well-formed one by response code, because the command's
-  specification requires it to either return a session key or report failure.
-  Removing the dependency changes nothing about that; see
-  [limitations](docs/limitations.md).
-
-  The tests lost their oracle with the crate, so they gained a better one:
-  `crates/rsk-rsa/src/vectors.rs` holds OpenSSL 3.6.2 known-answer vectors
-  (regenerate with `scripts/rsa_vectors.py`), and every signature the card
-  produces is now compared to OpenSSL's byte for byte rather than merely
-  round-tripped against our own verifier.
-
-- **PSO:DECIPHER no longer runs its private operation on the `rsa` crate.** It
-  takes the same blinded, Bellcore-fault-checked asm CRT core as PSO:CDS
-  (`rsk_rsa::sign_crt`) and unpads PKCS#1 v1.5 with the applet's own
-  constant-time `pkcs1v15`, so RUSTSEC-2023-0071 — which has no fixed release —
-  no longer sits under the one command that decrypts a ciphertext the host chose.
-  The wire surface does not move with the implementation: a malformed block still
-  answers `EXEC_ERROR`, and a test pins the new path's status word to the old
-  one's. One arm still reaches the crate on purpose — a legacy `P‖Q` key whose
-  prime width is not a 32-multiple, which no current firmware can store and which
-  cannot sign either, would otherwise lose the ability to decrypt its own
-  archived messages — and the entry above has since taken that arm too, so the
-  crate is gone from the tree entirely.
-
-  This does not close the padding oracle, and nothing can: DECIPHER must either
-  return a session key or report failure, so the status word itself separates
-  well-formed from malformed. What the constant-time unpad buys is that the
-  *reason* for a refusal does not leak on top of the refusal.
-
-- **The `rsa` crate's RUSTSEC-2023-0071 carve-out now describes the code that
-  actually exists.** Its justification still claimed the crate was "the OpenPGP
-  RSA backend" and that the `hazmat` feature was there because PIV GENERAL
-  AUTHENTICATE needed the raw private op. Both stopped being true when signing
-  moved onto `rsk_rsa`: three of the five private-RSA paths never enter the
-  crate at all, and `rsa::hazmat` is referenced nowhere in the tree. The feature
-  is dropped — a smaller API surface for a dependency inside an authenticator's
-  trust base — and the two paths that do reach the crate (both since taken over
-  by `rsk-rsa`, see above) are named in `deny.toml` and in
-  [limitations](docs/limitations.md), together with the
-  residual risk on PSO:DECIPHER. No behaviour change, measured: no loadable
-  section moves or changes size and every symbol keeps its size — the only image
-  delta is mangled-name hashes and a reordering of three anonymous constants,
-  which is what feeding a different feature set to `-C metadata` looks like.
-
-### Fixed
-
-- **The pinpad's "Allow host PIN entry?" gate lost its Approved card when the
-  presence seam moved.** `handle_secure_req` — the CCID `PC_to_RDR_Secure` path
-  behind an OpenPGP/PIV pinpad VERIFY on a trusted-display build — asked for
-  presence through `rsk_fido::UserPresence`, the only presence trait its scope
-  imported. Splitting the merged trait into `request` (a per-signature smartcard
-  touch policy) and `request_ceremony` (a host-raised ceremony) re-pointed that
-  one call at the leaner ask, silently: it still compiled, because the FIDO name
-  is now a re-export of the shared trait. The hold still approved the same thing
-  and every CCID status byte was unchanged, but the ~0.43 s "Approved" card that
-  told the holder their tap had landed stopped playing before the pad appeared.
-  It asks `request_ceremony` now — the same ask its twin, clientPIN built-in UV,
-  has always used — and names the seam `rsk_sdk::` so the resolution is a choice
-  rather than whichever trait happened to be in scope.
-
-  Nothing could have caught it: the path is `display`-gated firmware, which no
-  host test executes and which the emulator has no counterpart for (its CCID
-  answers `PC_to_RDR_Secure` with the no-pad default). So the thing that is
-  checkable is checked instead — `ASK_CENSUS` lists every production presence
-  ask in `crates/` and `firmware/src` with which of the two it is, and
-  `every_presence_ask_is_the_one_its_caller_means` fails when a call changes
-  column. Falsified four ways, one at a time: putting the defect back reports
-  `worker.rs` as `(0 ceremony, 1 touch)` against a census of `(1, 0)`; the
-  inverse — PIV's slot policy taking the ceremony ask — reports `auth.rs` the
-  other way round; and blinding either half of the walk fails on the anchor
-  (`the scan missed …`) rather than passing over an empty scan.
-
-- **The accepted attestation-chain length depended on whether a PIN was set.**
-  `MAX_RAW_SUBPARA` is scratch for the pinUvAuth MAC, so its length check sits on
-  the PIN branch — a PIN-less `ATT_IMPORT` accepted chains a PIN-protected one
-  refused `CTAP2_ERR_REQUEST_TOO_LARGE`. `ATT_CHAIN_MAX` had been tied to the
-  store's per-value ceiling alone (audit run-32's fix), so when `MAX_VALUE_BYTES`
-  later doubled for reasons internal to the store, the accepted chain doubled with
-  it — past that MAC buffer and, once ML-DSA-87 widened the COSE key by 640 bytes,
-  past the CTAPHID response ceiling too. It is now the tightest of its three real
-  ceilings (store, MAC scratch, worst-case makeCredential response), applied in
-  `att_chain_pack` where both paths pass, and held by a build-time assert. The cap
-  falls 4069 → 2132 bytes. A device already holding a longer chain keeps
-  registering: the chain now has to parse intact to be used, so a truncated read
-  falls back to device attestation instead of failing the registration —
-  re-import within the new cap, or `ATT_CLEAR`, to restore org attestation.
-
 ### Added
 
 - **`MODELLED-ONLY` was reading as "no evidence below the model", and for 27 of
@@ -656,31 +81,6 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   210,152-byte main-stack ceiling — the earlier "-87 overflows the stack" note was
   measured before the worker moved off `main`'s init frame and did not survive
   re-measurement.
-
-### Fixed
-
-- **A getInfo test stopped being able to fail when the member count reached 24.**
-  `dispatch_get_info_ok` pinned the response's map size by comparing one raw byte
-  against `0xA0 + count`. That formula holds only to 23: from 24 upward CBOR writes
-  `0xB8` followed by a separate length byte, so the first byte reads `0xB8` for
-  every count from 24 to 255. The roster crossed 24 one commit earlier, and the
-  assertion went green on the new number while no longer distinguishing it from any
-  larger one. It now decodes the header instead of comparing a byte — verified by
-  declaring 25 members while writing 24, which the byte comparison accepted and the
-  decode rejects.
-
-- **A doc comment in `rsk-fs` described the function below the one it sat on.**
-  `mark_absent`'s one-line doc and its `#[inline]` had both landed on
-  `record_unless_faulted` during an earlier edit, leaving `mark_absent`
-  undocumented and its neighbour carrying someone else's description ahead of its
-  own. Only what was displaced moved back: `record_unless_faulted` gains no
-  `#[inline]`, because the evidence says the attribute belongs to `mark_absent` —
-  the doc above it names `mark_absent` — while nothing says the other ever had
-  one, and inventing it would be an optimizer hint smuggled into a comment fix.
-  Found while reading the cache primitives for the store refinement pilot.
-  `bcdDevice` 0x0960 → 0x0961: refactor, no behaviour change.
-
-### Added
 
 - **FIDO answered on one transport, and `ykman`/`python-fido2` could reach the
   other one.** CTAP2 and U2F are now served over CCID as well as CTAPHID, as ISO
@@ -1337,6 +737,68 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **The pinpad's "Allow host PIN entry?" gate lost its Approved card when the
+  presence seam moved.** `handle_secure_req` — the CCID `PC_to_RDR_Secure` path
+  behind an OpenPGP/PIV pinpad VERIFY on a trusted-display build — asked for
+  presence through `rsk_fido::UserPresence`, the only presence trait its scope
+  imported. Splitting the merged trait into `request` (a per-signature smartcard
+  touch policy) and `request_ceremony` (a host-raised ceremony) re-pointed that
+  one call at the leaner ask, silently: it still compiled, because the FIDO name
+  is now a re-export of the shared trait. The hold still approved the same thing
+  and every CCID status byte was unchanged, but the ~0.43 s "Approved" card that
+  told the holder their tap had landed stopped playing before the pad appeared.
+  It asks `request_ceremony` now — the same ask its twin, clientPIN built-in UV,
+  has always used — and names the seam `rsk_sdk::` so the resolution is a choice
+  rather than whichever trait happened to be in scope.
+
+  Nothing could have caught it: the path is `display`-gated firmware, which no
+  host test executes and which the emulator has no counterpart for (its CCID
+  answers `PC_to_RDR_Secure` with the no-pad default). So the thing that is
+  checkable is checked instead — `ASK_CENSUS` lists every production presence
+  ask in `crates/` and `firmware/src` with which of the two it is, and
+  `every_presence_ask_is_the_one_its_caller_means` fails when a call changes
+  column. Falsified four ways, one at a time: putting the defect back reports
+  `worker.rs` as `(0 ceremony, 1 touch)` against a census of `(1, 0)`; the
+  inverse — PIV's slot policy taking the ceremony ask — reports `auth.rs` the
+  other way round; and blinding either half of the walk fails on the anchor
+  (`the scan missed …`) rather than passing over an empty scan.
+
+- **The accepted attestation-chain length depended on whether a PIN was set.**
+  `MAX_RAW_SUBPARA` is scratch for the pinUvAuth MAC, so its length check sits on
+  the PIN branch — a PIN-less `ATT_IMPORT` accepted chains a PIN-protected one
+  refused `CTAP2_ERR_REQUEST_TOO_LARGE`. `ATT_CHAIN_MAX` had been tied to the
+  store's per-value ceiling alone (audit run-32's fix), so when `MAX_VALUE_BYTES`
+  later doubled for reasons internal to the store, the accepted chain doubled with
+  it — past that MAC buffer and, once ML-DSA-87 widened the COSE key by 640 bytes,
+  past the CTAPHID response ceiling too. It is now the tightest of its three real
+  ceilings (store, MAC scratch, worst-case makeCredential response), applied in
+  `att_chain_pack` where both paths pass, and held by a build-time assert. The cap
+  falls 4069 → 2132 bytes. A device already holding a longer chain keeps
+  registering: the chain now has to parse intact to be used, so a truncated read
+  falls back to device attestation instead of failing the registration —
+  re-import within the new cap, or `ATT_CLEAR`, to restore org attestation.
+
+- **A getInfo test stopped being able to fail when the member count reached 24.**
+  `dispatch_get_info_ok` pinned the response's map size by comparing one raw byte
+  against `0xA0 + count`. That formula holds only to 23: from 24 upward CBOR writes
+  `0xB8` followed by a separate length byte, so the first byte reads `0xB8` for
+  every count from 24 to 255. The roster crossed 24 one commit earlier, and the
+  assertion went green on the new number while no longer distinguishing it from any
+  larger one. It now decodes the header instead of comparing a byte — verified by
+  declaring 25 members while writing 24, which the byte comparison accepted and the
+  decode rejects.
+
+- **A doc comment in `rsk-fs` described the function below the one it sat on.**
+  `mark_absent`'s one-line doc and its `#[inline]` had both landed on
+  `record_unless_faulted` during an earlier edit, leaving `mark_absent`
+  undocumented and its neighbour carrying someone else's description ahead of its
+  own. Only what was displaced moved back: `record_unless_faulted` gains no
+  `#[inline]`, because the evidence says the attribute belongs to `mark_absent` —
+  the doc above it names `mark_absent` — while nothing says the other ever had
+  one, and inventing it would be an optimizer hint smuggled into a comment fix.
+  Found while reading the cache primitives for the store refinement pilot.
+  `bcdDevice` 0x0960 → 0x0961: refactor, no behaviour change.
+
 - **An RSA-3072 or RSA-4096 PIV key is usable again under Windows' own smart-card
   minidriver.** 0.4.10 began requiring GENERAL AUTHENTICATE's algorithm byte to
   equal the one the slot's key was stored under — the reference behaviour, and
@@ -1362,6 +824,538 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   firmware builds against `certutil -scinfo` on real hardware.
   **bcdDevice → 0x095A.**
 
+### Security
+
+- **The `rsa` crate is out of the tree, and with it RUSTSEC-2023-0071.** The
+  Marvin timing side channel has **no fixed release** — OSV gives
+  `introduced: 0.0.0-0` with no `fixed` event, so every version is affected —
+  and the crate sat inside an authenticator's trust base behind a documented
+  carve-out. The two paths that still reached it are `rsk-rsa`'s own now: PIV
+  certificate signing at key generation, and PSO:DECIPHER for a legacy `P‖Q` key
+  whose prime width is not a multiple of 32 (which the asm CRT core cannot take).
+  Both run the same base-blinded, Bellcore-fault-checked private operation the
+  rest of the tree already used, and both end in the same constant-time unpad.
+
+  **The carve-out is deleted, not relocated.** `cargo audit` runs with no
+  `--ignore` on either lockfile, `deny.toml`'s `[advisories].ignore` carries no
+  vulnerability at all (only three "unmaintained" entries), and the `rsa`
+  exemption is gone from `supply-chain/config.toml`.
+
+  No wire byte moves: every status word is what it was, including PSO:DECIPHER's
+  deliberate `EXEC_ERROR` on a malformed block and `pso.rs`'s `WRONG_LENGTH`
+  fallback onto the legacy arm. The sealed `P‖Q‖dP‖dQ‖qInv` blob is byte-identical
+  — `dP`, `dQ` and `qInv` do not depend on which totient `d` was derived from —
+  so an already-provisioned key keeps signing and deciphering across the upgrade.
+
+  **What this does not close is the padding oracle.** PSO:DECIPHER still tells a
+  malformed block from a well-formed one by response code, because the command's
+  specification requires it to either return a session key or report failure.
+  Removing the dependency changes nothing about that; see
+  [limitations](docs/limitations.md).
+
+  The tests lost their oracle with the crate, so they gained a better one:
+  `crates/rsk-rsa/src/vectors.rs` holds OpenSSL 3.6.2 known-answer vectors
+  (regenerate with `scripts/rsa_vectors.py`), and every signature the card
+  produces is now compared to OpenSSL's byte for byte rather than merely
+  round-tripped against our own verifier.
+
+- **PSO:DECIPHER no longer runs its private operation on the `rsa` crate.** It
+  takes the same blinded, Bellcore-fault-checked asm CRT core as PSO:CDS
+  (`rsk_rsa::sign_crt`) and unpads PKCS#1 v1.5 with the applet's own
+  constant-time `pkcs1v15`, so RUSTSEC-2023-0071 — which has no fixed release —
+  no longer sits under the one command that decrypts a ciphertext the host chose.
+  The wire surface does not move with the implementation: a malformed block still
+  answers `EXEC_ERROR`, and a test pins the new path's status word to the old
+  one's. One arm still reaches the crate on purpose — a legacy `P‖Q` key whose
+  prime width is not a 32-multiple, which no current firmware can store and which
+  cannot sign either, would otherwise lose the ability to decrypt its own
+  archived messages — and the entry above has since taken that arm too, so the
+  crate is gone from the tree entirely.
+
+  This does not close the padding oracle, and nothing can: DECIPHER must either
+  return a session key or report failure, so the status word itself separates
+  well-formed from malformed. What the constant-time unpad buys is that the
+  *reason* for a refusal does not leak on top of the refusal.
+
+- **The `rsa` crate's RUSTSEC-2023-0071 carve-out now describes the code that
+  actually exists.** Its justification still claimed the crate was "the OpenPGP
+  RSA backend" and that the `hazmat` feature was there because PIV GENERAL
+  AUTHENTICATE needed the raw private op. Both stopped being true when signing
+  moved onto `rsk_rsa`: three of the five private-RSA paths never enter the
+  crate at all, and `rsa::hazmat` is referenced nowhere in the tree. The feature
+  is dropped — a smaller API surface for a dependency inside an authenticator's
+  trust base — and the two paths that do reach the crate (both since taken over
+  by `rsk-rsa`, see above) are named in `deny.toml` and in
+  [limitations](docs/limitations.md), together with the
+  residual risk on PSO:DECIPHER. No behaviour change, measured: no loadable
+  section moves or changes size and every symbol keeps its size — the only image
+  delta is mangled-name hashes and a reordering of three anonymous constants,
+  which is what feeding a different feature set to `-C metadata` looks like.
+
+### Internal
+
+- **CodeQL's first run would have reported 289 alerts, 229 of them test
+  vectors.** `rust/hard-coded-cryptographic-value` cannot tell a KAT from a
+  secret, and this tree is built out of KATs — `crates/rsk-oath/src/tests.rs`
+  alone accounted for 37. An alert list that is 79% noise is one nobody reads.
+  `.github/codeql/codeql-config.yml` keeps the test suites, the Kani siblings,
+  `fuzz/`, `tests/` and `third_party/` out of extraction; measured against the
+  pinned bundle, 289 alerts become 60, with nothing left in a test-shaped file.
+  Two things decided the shape of it. `**/*_tests.rs` alone is not enough —
+  AGENTS.md puts a crate root's tests in plain `tests.rs`, which is where the
+  largest single source of alerts was, so both spellings are listed. And
+  `paths-ignore` is applied at EXTRACTION, not at analysis: handed to
+  `database analyze` it changed nothing at all (279 results before and after),
+  and it works only because `codeql-action/init` passes it to `database create`.
+  A config written on the other assumption would have sat in the tree doing
+  nothing, with the check still green. This is not the workflow-level
+  `paths-ignore` that `codeql.yml`'s header refuses — that one skips the run,
+  which Scorecard counts against the SAST score; this one still runs and still
+  counts, and Scorecard still reports `SAST tool detected: CodeQL`. The cost,
+  stated in the config and in docs/testing.md: a defect in a test helper is now
+  not found, rather than found and filtered.
+
+- **Nothing in the tree parsed `.github/workflows`, and a workflow that does not
+  parse breaks a check that is not about workflows at all.** OpenSSF Scorecard's
+  SAST row runs actionlint over *every* file in that directory, so one malformed
+  sibling returns score **-1** for the whole check rather than merely failing
+  detection — a single tab in `codeql.yml` was enough. Eight workflow files
+  rested on a tool nobody ran: no actionlint, yamllint, zizmor or
+  action-validator anywhere in the tree, and no `check.sh` row that read the
+  directory at all. `actionlint` joins the dev shell (`nix/devshells.nix` — a
+  toolchain addition, so it is maintainer-visible), and `workflow lint` is now
+  the **first** row of `check.sh`, ahead of `fmt`: it costs ~0.2 s, and a class
+  that makes another check lie should fail in the first second rather than the
+  fourteenth minute. It takes no file arguments on purpose — actionlint
+  discovers the workflows from the git root, which covers `.yaml` as well as
+  `.yml` (a `*.yml` glob does not) and which turns an empty or missing directory
+  into an error (`no YAML file was found`, exit 3) rather than the silent pass
+  over nothing this repo keeps rediscovering. `ci.yml`'s always-on `docs` job
+  runs the same command for the reason it already runs gitleaks: `pages.yml`
+  sits inside `ci-scope.sh`'s DOCS_ONLY set, so a change to that workflow alone
+  skips `check` entirely. Falsified through the row rather than the binary, exit
+  codes taken with no pipe: an unknown runner label, a bad `matrix.<prop>`, a tab
+  in the indentation and an unquoted `$var` in a `run:` block each stop the gate
+  at row 1 of 1 with rc 1 and its own message — and with the row deleted that
+  same tab left all 98 rows green, which is what makes it load-bearing rather
+  than decorative. Host tooling and CI only, so no `bcdDevice` bump.
+
+- **Two hand-written curve rosters bounded a buffer size, and nothing said so.**
+  `rsk-piv`'s `MAX_EC_POINT` is 97 — a P-384 point — while
+  `rsk_ec::PrivKey::public_point` writes up to 133 for P-521 and writes with
+  `copy_from_slice`, so a curve one byte too wide is a panic on the first key
+  operation, not an error. 97 was safe only because `curve_for_algo` and
+  `curve_from_id` each accept four curves and no wider one; no test tied either
+  roster to the number. One now walks both over their whole `u8` domain and
+  asserts the point fits. Falsified three ways: `5 => Curve::P521` fails on the
+  width assertion naming P-521 at 133 against 97; dropping a curve and blinding
+  the walk each fail on the roster count, so a loop that reads nothing cannot
+  pass. `curve_from_id` is `pub(crate)` to be reachable, matching its sibling —
+  refactor, no behaviour change, and the counter moves because bcdDevice counts
+  builds.
+
+- **The crate tiers were true and nothing could tell.** Applet-to-applet edges
+  reached zero over the tier refactor — six manifest edges (`fido→mgmt`,
+  `fido→rescue`, `openpgp→mgmt`, `piv→mgmt`, `piv→openpgp`, `otp→mgmt`) down to
+  none — and the only thing holding them there was that everyone remembered.
+  `deny.toml` now states the rule as a graph assertion on the existing
+  `cargo-deny` row: each of the eight applet crates is reachable only from
+  `firmware`, `rsk-device` and `rsk-display`; `sha2`, `sha1`, `rsk-sha512` and
+  `rsk-mldsa` only from `rsk-crypto`; `rsk-ec` and `rsk-rsa` from a named
+  allowlist rather than through the facade, because routing them behind it would
+  put 11 and 12 third-party crates into the closure of the five that do neither.
+  A sideways edge exits 2 there instead of waiting for a reviewer to notice it,
+  and `-D unused-wrapper` fails the row the other way too — when an allowlisted
+  edge is gone and its entry has quietly become decoration. Host-side only: no
+  firmware file moved, so no `bcdDevice` bump.
+
+- **The crate-layer drawing named 17 of 28 crates, under a footer reading
+  "Source: workspace Cargo.toml manifests".** So 57 of the 100 manifest edges
+  had an endpoint it could not draw at all. It also showed seven applets against
+  a registered eight, still carried the already-deleted `rsk-piv → rsk-openpgp`,
+  put `rsk-rsa` in the platform tier beside `rsk-sdk`, and claimed every applet
+  builds on `rsk-crypto` when `rsk-mgmt` and `rsk-vendor` do not.
+  `scripts/crate_graph.py` emits it now — every name, count and note off the
+  manifests — and a new `crate graph` gate row fails when the committed SVG has
+  drifted. The tier table is the one thing still written down, and the script
+  holds the manifests to it: a workspace member it does not place is a hard
+  failure, and so is any dependency that does not point into a later band.
+  `docs/architecture.md`'s alt text has to be the drawing's own `<desc>`, which
+  is how it came to say "seven applet crates" for a month.
+
+- **The FIDO applet declared the hash backend the crypto facade exists to hide,
+  and compiled not one line against it.** `crates/rsk-fido/Cargo.toml` carried
+  `sha2` in `[dependencies]`, while every digest the applet takes goes through
+  `rsk_crypto::{sha256, hmac_sha256, hkdf_sha256, hkdf_sha512}`: no `sha2::`
+  path, no `use sha2`, no `Sha256`/`Sha384`/`Sha512`/`Digest`/`FixedOutput`
+  anywhere under its `src/` — and the same grep, pointed at `rsk-crypto/src`,
+  returns 17 lines, so it can see one when there is one to see. That edge is
+  what the facade's own receipt is against:
+  `5fbeeb3` swapped SHA-512 from `sha2` to `rsk-sha512` by editing
+  `rsk-crypto/src/hash.rs` and `mac.rs` and no applet file at all. The
+  `kani-soft` feature's `sha2/force-soft` came down with the dependency and was
+  redundant next to `rsk-crypto/kani-soft`, which already sets it — which is
+  what `rsk-openpgp`, `rsk-oath` and `rsk-otp` forward and nothing else, along
+  with `rsk-bip39` and `rsk-slip39`. (`rsk-piv` still names its own beside that
+  one. Different shape, and left alone: its `sha2` is a dev-dependency its
+  `src/tests.rs` hashes with seven times.) Both are gone, and the dependency's
+  five-line explanation with them — the three-line pointer at `rsk-crypto` that
+  every other forwarder carries says it now. `cargo tree -p rsk-fido --features
+  kani-soft` still resolves `sha2 v0.10.9|force-soft`, and the SLOW and LIGHT1
+  tier selections still `cargo check` one package at a time, which is how
+  `cargo kani` re-invokes them — worth doing by hand, because **no row in
+  `check.sh` ever builds with `--features kani-soft`**; only the weekly Kani
+  tiers do. Refactor, no behaviour change — but the image moves, so the counter
+  does. Nothing grew: all 28 workspace members' normal-dependency closures
+  (`cargo tree --edges normal`) are identical before and after, and the
+  comparator was falsified first — pointed at an injected `rsk-oath → rsk-ec`
+  it names the 12 crates that edge would add. `sha2 0.10.9` still reaches
+  `rsk-fido` through `rsk-crypto` and `ed25519-dalek`. And the default shipping
+  image — `cargo build --release -p firmware`, no features, taken before the
+  16M/display/no-touch rebuilds overwrite the ELF — is the same program:
+  `.text` 810 500 and `.bss` 337 556 bytes on both sides, 1343 function labels
+  on both sides, 264 254 instructions on both sides, and **81 of those
+  instructions differ**, every one of them a relocated immediate — 79 `movw`
+  low halves of `movw`/`movt` address pairs, and 2 `d4d4` inter-function
+  padding half-words objdump renders as `bmi.n`, each sitting after a diverging
+  instruction and before the next function's symbol. Byte-identity is not
+  reachable for a manifest edit at all — dropping a dependency changes the
+  crate's `-C metadata` hash and with it the symbol and `.rodata` numbering — so
+  the bar is instead: same instruction count, same mnemonic profile, and every
+  difference enumerated and accounted for.
+
+- **The shared EC public-key DO chose both of its length forms from the point
+  width, and one of them measures something else.** `make_ec_pubkey_do` builds
+  `7F49 { 86 <point> }`: the inner length counts the point, the outer one counts
+  the whole `86` object around it, which is 2 or 3 bytes longer. Both took the
+  long form on `point.len() >= 128`, so a 126- or 127-byte point left the outer
+  length short-form while the value it had to carry was 128 or 129 — written out
+  as `80`, the indefinite length DER forbids, or as `81`, a long form with no
+  byte behind it. Either one mis-frames the key for every host that reads it.
+  Not reachable today and no shipped byte changes: `PrivKey::public_point`
+  returns 32, 65, 97 or 133 and nothing else, on all three call sites in both
+  applets, and an attacker-chosen IMPORT picks the scalar, not the point width.
+  But the encoder is `pub` in a tier-0 crate that exists to be called from more
+  than one place, and its own signature accepts the two widths it cannot encode.
+  Each length now takes the long form when the value *it* encodes reaches 128 —
+  the rule `rsk_sdk::tlv::format_len` already states two tiers up, where an
+  algorithm crate cannot reach it. The walk over reachable widths could not see
+  this (all four sit clear of the boundary), so a second one covers every width
+  the encoder is documented for, and its reader rejects a non-canonical length
+  instead of accepting it: without that, moving the threshold anywhere in
+  98..=133 re-parsed cleanly and was pinned by nothing. Falsified against the
+  previous encoder (`plen 126: outer DO unreadable`) and against a threshold
+  moved to 100 (`plen 100: inner DO unreadable`).
+
+- **The PIV applet borrowed the OpenPGP applet's elliptic-curve key type, and
+  that was the last applet reaching sideways.** `Curve`, `PrivKey` and
+  `make_ec_pubkey_do` lived in `rsk-openpgp/src/keys.rs`, so `rsk-piv` — which
+  shares none of OpenPGP's DO model, PW1/PW3 sessions or DEK seal — depended on
+  the whole applet for a key type, an eight-value curve tag and a TLV wrapper.
+  Six `use rsk_openpgp::keys::…` sites and one manifest dependency; both are
+  now zero, and with them the last applet→applet edge in the tree. Measured
+  over all 56 ordered applet pairs: **0 manifest edges, 0 `rsk_x::` uses in
+  code**. Six `rsk_<applet>::` references survive, every one inside a comment
+  where one applet explains its ordering by pointing at a sibling that does the
+  same thing — prose, not a dependency. Both halves are a `git grep` anyone can
+  re-run — `^rsk-<b> = ` in `crates/rsk-<a>/Cargo.toml`, and `rsk_<b>::` under
+  `crates/rsk-<a>/src` — and the counter was falsified before it was believed:
+  pointed at `rsk-sdk` the same two greps find the edge from all eight applets,
+  2 to 48 uses each.
+
+  The key type went to `rsk-ec`, beside the fixed-base comb it already signs
+  through, and the crate's charter grew to match: it is the EC layer now, not
+  just the comb. `Curve::id` — the persisted `[curve_id]` byte both applets tag
+  a sealed key with — became public, which deleted PIV's byte-identical hand
+  copy of the same eight-arm table. `MAX_EC_SIG` / `MAX_EC_POINT` followed the
+  operations whose output they bound. What did **not** follow: `curve_from_attr`
+  maps an OpenPGP *algorithm attribute* to a curve and stays with the DO model
+  that defines those attributes, and `store_ec_key` / `load_ec_key` stay with
+  the DEK seal they are I/O for. All 17 tests of the moved code went with it or
+  stayed with what they test — 14 to `rsk-ec` (4 raw-signature, 3 X25519, 7
+  brainpool KAT), 3 kept in `rsk-openpgp` (the attribute mapping, and the two
+  DEK-seal tests, in a file that no longer calls itself `keys_x25519_tests`) —
+  none rewritten, none lost, and 8 new ones on top.
+
+  `make_ec_pubkey_do` is not curve vocabulary — it is the `7F49 { 86 <point> }`
+  data object both applets answer GENERATE and IMPORT with. It went to
+  `rsk-ec/src/pubdo.rs`, which is where `rsk_rsa::pubdo` already holds
+  `7F49 { 81 <N> · 82 <E> }` for exactly the same reason; splitting the two
+  halves of one DO family across two crates would have been the worse answer.
+  `rsk-sdk::tlv` was the other candidate and is the wrong one: it holds generic
+  BER primitives, not named objects. Its new `MAX_EC_PUBDO` replaces PIV's
+  `[0u8; 110]` and OpenPGP's twice-written `8 + MAX_EC_POINT`.
+
+  `rsk-ec` is tier 0 and gained **no** `rsk-*` dependency (`cargo tree -p rsk-ec
+  -e normal --depth 1`: twelve third-party crates, not one of them `rsk-*`).
+  Two things had to be cut for that, both along seams `rsk-rsa` had already
+  cut. `Sw` became `EcError` — three variants, each naming the status word its
+  callers answer with, reproduced at each applet's APDU edge by `ec_sw` and
+  pinned arm by arm (`ec_sw_reproduces_every_status_word`, in both crates). The
+  split between `Failed` and `BadPoint` is load-bearing: it is what keeps a
+  refused signature at `6400` while a malformed ECDH peer point stays `6984`.
+  And `PrivKey::generate` takes `rsk_ec::Rng`, bridged by an `EcRng` beside each
+  applet's existing `RsaRng`. `PrivKey::sign` needed no bridge at all — its
+  `_rng` parameter had been dead since every curve here became deterministic,
+  and carrying it would have meant building an adapter for an argument nobody
+  reads.
+
+  **Nothing an already-provisioned key depends on moved**, and that is measured
+  rather than intended. Undo the one mechanical substitution the tier boundary
+  forced — `Sw::EXEC_ERROR`/`DATA_INVALID`/`FUNC_NOT_SUPPORTED` → the matching
+  `EcError` variant, and `rsk_ec::` → `crate::` — and the three moved spans
+  differ from their parent (`868653b`) **only** in the crate header, the module
+  docs, the test hooks, two `pub`s and `sign`'s signature. No arithmetic, no
+  control flow, no buffer width and no error direction moved. The
+  sealed blob is still `[curve_id] ‖ scalar`, the eight tags are written out
+  one by one in a test rather than round-tripped (a renumbering would move both
+  sides of a round-trip together), and four real records sealed by the
+  `868653b` build — P-256, P-384, Ed25519, X25519 — are checked into
+  `rsk-piv`'s tests and must still load. Falsified: remapping PIV's
+  `curve_from_id` fails that test with "P256 decoded as the wrong curve",
+  flipping one fixture byte with "record from the old build refused". Remapping
+  `rsk_ec::Curve::from_id` leaves it GREEN — PIV reads through its own,
+  deliberately narrower table — and `curve_id_round_trips_and_rejects_unknown_tags`
+  in `rsk-ec` catches it instead (its sibling `curve_id_tags_are_frozen` reads
+  only `id()` and stays green, so it is one test, not two).
+  `docs/protocol.md` describes neither of these: the curve tag is
+  at-rest only, and the `7F49` DO is the public spec's, byte-unchanged.
+
+  The image is **not** byte-identical this time, and should not be: a clean
+  `cargo build --release -p firmware` goes from 811 500 to **810 580 bytes, 920
+  smaller** (`arm-none-eabi-size`, `text + data`, the sum `check.sh`'s budget row
+  takes; `bcdDevice` pinned, so the counter is not the difference). **None of the
+  deletions is why**, which is measured and not guessed: put the dead `_rng`
+  back at all six `sign` call sites and PIV's duplicate tag table back beside it,
+  and the image rebuilds at 810 580 — the same byte count, so the two of them
+  together are worth **zero**. PIV's `curve_id` never had a symbol of its own to
+  delete; it was already inlined into `store_ec_key`, and `Curve::id` inlines
+  into the same jump table. What actually moved is codegen: `PrivKey`'s four
+  large methods crossing a crate boundary re-cut the cross-crate inlining, 1047
+  symbols changed size, 80 512 bytes of gross movement, and −920 is the 1.2 %
+  that did not cancel. Nothing left the image. Every symbol that disappears is
+  one of the six that reappear under `rsk_ec::key::`, or a wrapper now inlined
+  into a caller that grew to match (`p521`'s `FieldElement::mul` into
+  `primeorder`, `sha2`'s `Sha512::finalize_into` into `hmac`), or two identical
+  one-instruction `Rng::fill` shims the linker folded (`RsaRng`, `EcRng`) — and
+  `.bss` is unchanged to the byte at 337 556.
+
+- **Four applets reached into the management applet for a config record and a
+  serial.** `EF_DEV_CONF` — the Yubico DeviceInfo record `ykman config usb`
+  writes, and the READ CONFIG response built around it — lived inside
+  `rsk-mgmt`, so `rsk-fido` and `rsk-otp` depended on the management applet to
+  write it, while `rsk-openpgp` and `rsk-piv` depended on it for five lines that
+  derive the 8-digit serial from the chip id. Those are two different things and
+  they went to two different places. The record is its own crate now,
+  `rsk-devconf`, in the shape `rsk-led` and `rsk-phy` already had — below the
+  applets, depending only on `rsk-fs` and `rsk-sdk`. `serial4` is
+  `rsk_sdk::serial4`, beside `FIRMWARE_VERSION`: the same device identity four
+  applets report for four unrelated reasons, declared once where every applet
+  already looks. `git grep -c rsk_mgmt` over `rsk-fido`, `rsk-otp`,
+  `rsk-openpgp` and `rsk-piv` goes 3/7/5/3 → **0**, and all four drop the
+  dependency.
+
+  Crossing a crate boundary did **not** publish the record's vocabulary. Inside
+  `rsk-mgmt` the FID was crate-private, which is what let the FIDO vendor
+  `CONFIG_WRITE` say "ask the codec, you cannot reach the record"; a `pub const`
+  would have demoted that to a convention on a record which survives
+  `authenticatorReset` and which one unparseable byte hides the device behind
+  for good (audit run-33). So the FID, the stored-size cap and the thirteen
+  DeviceInfo tags stay private — as `rsk-phy` keeps its own twelve tags — and
+  are re-exported as `rsk_devconf::raw` only under `test-util`, which just the
+  applet tests and two fuzz targets turn on. Naming `rsk_devconf::EF_DEV_CONF`
+  from an applet is `error[E0603]`, and `raw` does not exist in an image build.
+  One constant is genuinely shared and genuinely public: `DEV_CONF_WRITE_MAX`,
+  the request bound the CCID WRITE CONFIG applies before the codec strips.
+  Visibility is compile-time only and `raw` is `cfg`-gated out, so the image
+  does not move — measured, not assumed: `objcopy -O binary` over the release
+  build before and after is the same `bc04bca3…`, and only the debug sections
+  differ, because a new `[features]` table changes the crate's `-Cmetadata`
+  fingerprint. The second `bcdDevice` step is a build counter, not a behaviour
+  change.
+
+  **No byte of the record moved**, and that is checked rather than intended:
+  every moved span of the codec is byte-identical to its old self bar eight
+  lines — that one `pub`, the import and the version tag naming
+  `rsk_sdk::FIRMWARE_VERSION` directly, and two doc clauses that named the
+  applet the codec no longer lives in. All 37 tests moved byte-identical, 21
+  to the record and 16 to the applet, none rewritten and none lost.
+  `EF_DEV_CONF = 0x1122` and every size constant keep their values, so a key
+  provisioned by an older build reads the same record through the same parser
+  and there is nothing to migrate. `docs/protocol.md` §6 describes the same
+  TLV; only the "Source:" pointers follow the file.
+
+- **FIDO reached across the applet tier for a config record, and only the crate
+  graph said so.** `EF_PHY` — the PicoForge-compatible device-config TLV that
+  carries USB identity, LED wiring and the interface mask — lived inside the
+  rescue applet, so everything that reads it depended on `rsk-rescue`: 19
+  references from `rsk-fido` alone, plus `rsk-device`, `rsk-display`,
+  `firmware`, `tools/emu`, a fuzz target and the Miri harness. It is its own
+  crate now, `rsk-phy`, in the shape `rsk-led` already had for `EF_LED_CONF` —
+  below the applets, depending only on `rsk-fs` and `rsk-sdk`. `rsk-fido` and
+  `rsk-display` no longer name `rsk-rescue` at all.
+
+  **No byte of the record moved**, and that is checked rather than intended:
+  the codec is line-for-line its old self — `diff` against the parent moves the
+  crate header and the trailing `#[path]` module hooks and not one line between
+  them — and its tests and Kani harnesses are byte-identical files, wire
+  vectors included. A key provisioned by an older build reads the same
+  `EF_PHY = 0xE020` through the same parser, so there is nothing to migrate.
+  `docs/protocol.md` §7.1 and `rsk hw` describe the same tags; only the
+  "Source:" pointers follow the file.
+
+  The Kani `heavy` tier moves with the proofs — it was `rsk-rescue` because of
+  this record's 11.1 GB round-trip, and is `rsk-phy` now; the harness and cover
+  floors are unchanged because nothing was added or dropped.
+
+- **Seven applets each declared the same presence seam, and the board answered
+  all seven.** `Rng`, `UserPresence`, `Presence`, `PinEntry` and `AlwaysConfirm`
+  were 29 declarations across the applet tier, byte-identical apart from FIDO's
+  fourth `Presence::Cancelled`; `rsk-device` carried two supertrait blocks and
+  their blanket impls purely to reconcile them, and `firmware`, `tools/emu` and
+  `rsk-display` wrote the same impl five and seven times over. They are declared
+  once now, in `rsk-sdk` — the crate every applet already depended on, so the
+  move added no dependency edge — and the glue is gone: `firmware` and the
+  emulator implement one `Rng` and one `UserPresence` each.
+
+  The seven presence impls were **not** actually identical, which is the part a
+  straight merge would have broken. The trusted display closes an approved
+  WebAuthn ceremony with a ~0.4 s "Approved" card and runs a registration screen
+  for `makeCredential`, and its own comment says paying that on OpenPGP/PIV —
+  which ask for presence once *per signature* — would be a latency regression.
+  A cancel differs too: only CTAP2 can be cancelled mid-wait, so only FIDO could
+  answer `Presence::Cancelled`; the six card applets got `Timeout`. The shared
+  trait keeps both apart by asking two questions rather than one — `request` for
+  a smartcard touch policy, `request_ceremony` for a CTAP2 ceremony, the latter
+  defaulting to the former — so every status word, every CTAP error and the pop's
+  scope are what they were.
+
+  The randomness seam stays split in two on purpose. `rsk-rsa` is an algorithm
+  crate below `rsk-sdk` and may not reach up for it, so it keeps its own `Rng`
+  and the two are bridged where they meet (`rsk_openpgp::keys::RsaRng`,
+  `rsk_piv::RsaRng`, `firmware`'s `core1::SdkRng`, the emulator's `EmuRsaRng`).
+  The alternative — `rsk-sdk` re-exporting `rsk_rsa::Rng` — was measured rather
+  than argued: `rsk-sdk` has 14 direct dependents and `rsk-rsa` has 4, so that
+  edge would pull `rsk-rsa` and `num-bigint-dig` into the closure of ten crates
+  that do no RSA. Same reasoning that kept the `RsaError → Sw` table duplicated.
+
+- **Two rows of that mutation table asserted the right outcome for the wrong
+  reason.** Measured one mutant at a time: deleting the `s ≥ n` refusal
+  (RFC 8017 §8.2.2 step 1) left the whole suite green, because the `s = n` case
+  reduces to zero and fails the EM comparison anyway — and without that refusal
+  the oracle accepts `sig + n`, a second representative of a signature it has
+  already seen. The over-wide-data case had the same shape: it sat ten bytes
+  short of the width where the check is what stops the EM construction indexing
+  past its own buffer. Both mutants now die, each on the assertion that names it
+  and in the direction that describes the defect.
+
+  Three comments outlived the crate they described. `firmware/Cargo.toml` still
+  blamed the 128 KiB heap on the `rsa` crate; two RSA tests still said they
+  verified through it. And one citation did not follow the shift its neighbours
+  did — `formal/comutants.toml` pointed `Session::set_pin` at the function after
+  it. `docs/testing.md` now records how the differential against `rsa` 0.9.10 is
+  rebuilt, since the crate cannot come back into the tree to hold it: including
+  that a comparison gated behind `is_ok() || is_err()` compares nothing, and that
+  upstream cannot be asked about an unbalanced key because its CRT recombination
+  does not terminate for `q ≫ p`.
+
+- **The new RSA test oracle could not be made to say "no".** `verify_pkcs1v15`
+  arrived with five call sites and not one negative case, so a version hard-wired
+  to `true` left the suite green — and the generated-key half of both applets'
+  RSA tests had nothing else checking them. It now has its own mutation table
+  (`crates/rsk-rsa/src/verify_tests.rs`): a flipped signature bit, a flipped
+  digest bit, another message's signature, the wrong modulus, the wrong exponent,
+  three wrong lengths, `s = n`, and over-wide data. Falsified by stubbing the
+  function to `true` and reading which assertions fell.
+
+  Three more from the same review. The EMSA-PKCS1-v1_5 block builder had been
+  copied into both signers rather than shared, so the PKCS#1 padding rule lived
+  in two places; it is one `emsa_block` now. `rsa_sign`'s DigestInfo arm maps
+  every failure back to `Failed`, which is the single status word the `rsa`
+  crate's `sign_with_rng` could answer there — the new width errors were
+  unreachable through `rsk-piv`'s certificate path, but "unreachable" is not
+  "identical". And three `mod_inverse` results — the private exponent, `qInv`,
+  and each blinding factor's inverse — were signed intermediates dropped without
+  scrubbing, where the crate they replaced wiped its own; they ride in
+  `Zeroizing` now.
+
+  Two comments were narrower than the truth they defend. The Garner
+  recombination is underflow-safe for *any* `p` and `q` — `m1 < p` is a `modpow`
+  postcondition — not only for the unbalanced pair the comment named; and
+  PSO:DECIPHER's legacy arm collapses every failure to `EXEC_ERROR` where the asm
+  arm answers the four-variant table first, which the comment read as identical.
+  A safety argument stated narrower than it is invites the next reader to weaken
+  it.
+
+- **`rsk-rsa` owns the RSA key type, so nothing above tier 0 names a foreign
+  one.** `rsa::RsaPrivateKey` used to cross from an algorithm crate into both
+  card applets, `rsk-device` and `firmware` — five manifests and eleven source
+  files spelling a dependency's type in their own signatures. `rsk_rsa::RsaKey`
+  replaces it, and its public surface is bytes: `size()`, `n_be()`, `e_be()`, and
+  a `from_p_q` reached through the byte-taking `rsa_from_pqe`. `rsk-piv` and
+  `rsk-openpgp` no longer name a bignum at all; `rsk-rsa` still has no `rsk-*`
+  dependency. Three PKCS#1 v1.5 helpers moved with it — the software private
+  operation, `rsa_sign` and a new `rsa_decrypt` — each a port of what the `rsa`
+  crate ran, arm for arm, including which of `check_public` and `validate`
+  refuses an imported key, because an applet's status word follows that.
+
+- **The citation gate said `ok` over 75 rotted citations, and one whole page was
+  outside it.** `formal/citations.lock` now records what each of the 423
+  `file.rs:line` citations pointed at, and a locked line found ELSEWHERE in its
+  file is reported with the line it moved to. A line edited *in place* still
+  passes: that false alarm is what the row was deliberately built without, and
+  both halves are pinned. `formal/comutants.toml` joins the guarded pages — 13
+  of its 16 citations named a file nothing could resolve, and two landed on
+  unrelated code, one of them wrong the day it was written. Pages that reason
+  about several applets at once must now write a repo path, because `lib.rs:1020`
+  decides nothing for this gate or for a reader. Four more citations were wrong
+  and are re-pointed, including `Ctx::load_keydev`, which named `require_presence`.
+  Host-side only: no firmware behaviour, so no bcdDevice bump.
+
+- **Why the RSA status-word table is allowed to exist twice.** `rsa_sw` maps
+  `RsaError` to a status word in both card applets, and the comment defending
+  that named the orphan rule — which in fact permits the shared
+  `impl From<RsaError> for Sw`, because `Sw` is `rsk-sdk`'s own type and the
+  `rsk-sdk` → `rsk-rsa` edge it needs points downward. What rules it out is the
+  cost: `rsk-sdk` is the seam every applet depends on, so that impl puts
+  `rsk-rsa` in FIDO's, OATH's, OTP's, mgmt's, rescue's, fs's and usb's
+  dependency closures, none of which do RSA. Both halves measured; both copies
+  stay, each pinned arm by arm. Comments only — refactor, no behaviour change,
+  and the counter moves because a bump counts builds.
+
+- **The RSA layer moved out of the OpenPGP applet and into `rsk-rsa`.** The CRT
+  parameter layout and its blinded, Bellcore-fault-checked private operation,
+  PKCS#1 v1.5 (the DigestInfo encoding, both signers, the constant-time decrypt
+  unpad), the key type, keygen, and the `7F49` public-key DO now live in the
+  crate that already held the assembly under them. PIV was reaching across a
+  tier for all of it — `rsk_openpgp::rsa_crt`, `keys::rsa_sign`,
+  `keys::RsaKeygen`, `keys::MAX_RSA_BYTES` and four more — and reaches down for
+  it now instead; the applets keep only what is theirs, the APDU framing and the
+  seal I/O. Behaviour-preserving: the `rsa` crate rode along with the code that
+  used it (the entry above has since dropped it), and no wire byte moves.
+
+  The status words could not ride along, because a tier-0 crate must not name
+  `rsk_sdk::Sw`. `rsk-rsa` returns its own four-variant `RsaError` and each
+  applet maps it at its APDU edge, reproducing every status word the old code
+  answered — including PSO:DECIPHER's deliberate `EXEC_ERROR` on a malformed
+  block. Both mappings are pinned arm by arm, and both pins were checked by
+  breaking an arm and reading which assertion fell.
+
+  Two constants that were written out twice collapsed on the way:
+  `MAX_RSA_BYTES` (`512` in `keys.rs`, `2 * MAX_MOD` in `rsa_crt.rs`) and the
+  maximum sealed plaintext (`5 * MAX_MOD` in `rsa_crt.rs` and again in
+  `rsk-piv/src/seal.rs`). Both survivors derive from `rsk_rsa::MAX_MOD`, so
+  neither can drift from the width the assembly actually accepts, and every
+  remaining user of both was read. `num-bigint-dig` left the OpenPGP and PIV
+  manifests, where nothing referenced it any more.
+
+- **`rsk-rsa-asm` is now `rsk-rsa`.** The crate held the vendored UMAAL assembly
+  and nothing else, while the RSA layer above it — CRT parameters, PKCS#1 v1.5,
+  the key type, keygen — lived inside the OpenPGP *applet*, which is why PIV
+  reaches across a tier to sign. RSA was the only algorithm family in the tree
+  without a crate of its own. The rename comes first and alone: a crate called
+  `-asm` cannot honestly hold pure Rust, and the moves land on top of it. Pure
+  rename, no code moved yet.
 
 ## [0.4.10] - 2026-08-14
 
