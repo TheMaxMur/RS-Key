@@ -111,9 +111,36 @@ fn title() -> &'static str {
 }
 
 #[test]
+fn random_pin_layouts_are_complete_permutations() {
+    let mut rng = HmacDrbg::new(b"PIN layout test");
+    let first = random_pin_layout(&mut rng);
+    let second = random_pin_layout(&mut rng);
+    for layout in [first, second] {
+        let mut seen = 0u16;
+        for slot in 0..10 {
+            seen |= 1u16 << layout.digit(slot);
+        }
+        assert_eq!(seen, 0x03FF);
+    }
+    assert_ne!(first, second, "the deterministic test stream must reroll");
+}
+
+#[test]
 fn a_typed_pin_is_committed_by_ok() {
     let env = Env::new();
-    let mut ui = env.ui(Pad::taps(&pin_entry(PIN)));
+    let mut pins = env.pin_taps();
+    let mut ui = env.ui(Pad::taps(&pins.entry(PIN)));
+    let mut out = [0u8; 64];
+    let got = ui.collect_pin(title(), None, FLOOR, FLOOR as u8, &mut out, false);
+    assert!(matches!(got, rsk_fido::PinEntry::Entered(n) if n == PIN.len()));
+    assert_eq!(&out[..PIN.len()], PIN);
+}
+
+#[test]
+fn disabling_randomization_uses_the_ordered_layout() {
+    let env = Env::new();
+    let mut ui = env.ui(Pad::taps(&pin_entry(PinLayout::ordered(), PIN)));
+    ui.random_pin_pad = false;
     let mut out = [0u8; 64];
     let got = ui.collect_pin(title(), None, FLOOR, FLOOR as u8, &mut out, false);
     assert!(matches!(got, rsk_fido::PinEntry::Entered(n) if n == PIN.len()));
@@ -123,9 +150,10 @@ fn a_typed_pin_is_committed_by_ok() {
 #[test]
 fn backspace_drops_the_last_digit() {
     let env = Env::new();
-    let mut taps = vec![pin_key(rsk_ui::PinKey::Digit(9))];
-    taps.push(pin_key(rsk_ui::PinKey::Del));
-    taps.extend(pin_entry(PIN));
+    let layout = env.pin_taps().next_layout();
+    let mut taps = vec![pin_key(layout, rsk_ui::PinKey::Digit(9))];
+    taps.push(pin_key(layout, rsk_ui::PinKey::Del));
+    taps.extend(pin_entry(layout, PIN));
     let mut ui = env.ui(Pad::taps(&taps));
     let mut out = [0u8; 64];
     let got = ui.collect_pin(title(), None, FLOOR, FLOOR as u8, &mut out, false);
@@ -138,8 +166,9 @@ fn the_eye_toggle_is_not_a_digit() {
     // The reveal toggle sits in the band between the header and the grid. A rect
     // that overlapped a key would type a digit the user did not — and burn a retry.
     let env = Env::new();
+    let layout = env.pin_taps().next_layout();
     let mut taps = vec![center(rsk_ui::PIN_EYE_RECT)];
-    taps.extend(pin_entry(PIN));
+    taps.extend(pin_entry(layout, PIN));
     let mut ui = env.ui(Pad::taps(&taps));
     let mut out = [0u8; 64];
     let got = ui.collect_pin(title(), None, FLOOR, FLOOR as u8, &mut out, false);
@@ -152,10 +181,11 @@ fn ok_below_the_floor_does_not_commit() {
     // A short entry handed to a verify would spend a retry on a PIN the user never
     // finished typing.
     let env = Env::new();
+    let layout = env.pin_taps().next_layout();
     let taps = [
-        pin_key(rsk_ui::PinKey::Digit(1)),
-        pin_key(rsk_ui::PinKey::Digit(2)),
-        pin_key(rsk_ui::PinKey::Ok),
+        pin_key(layout, rsk_ui::PinKey::Digit(1)),
+        pin_key(layout, rsk_ui::PinKey::Digit(2)),
+        pin_key(layout, rsk_ui::PinKey::Ok),
     ];
     let mut ui = env.ui(Pad::taps(&taps));
     let mut out = [0u8; 64];
@@ -268,7 +298,8 @@ fn the_pad_never_yields_mid_entry() {
     // A user half-way through typing must not have the pad shut under them by a
     // host command that arrived while they were reaching for the next digit.
     let env = Env::new();
-    let mut ui = env.ui(Pad::taps(&[pin_key(rsk_ui::PinKey::Digit(7))]));
+    let layout = env.pin_taps().next_layout();
+    let mut ui = env.ui(Pad::taps(&[pin_key(layout, rsk_ui::PinKey::Digit(7))]));
     ui.hooks.host_pending = true;
     ui.hooks.presence_ms = (UI_YIELD_FLOOR_MS + 500) as u32;
     let mut out = [0u8; 64];
@@ -284,8 +315,9 @@ fn the_pad_never_yields_mid_entry() {
 #[test]
 fn a_mismatched_confirmation_stores_nothing() {
     let env = Env::new();
-    let mut taps = pin_entry(PIN);
-    taps.extend(pin_entry(WRONG_PIN));
+    let mut pins = env.pin_taps();
+    let mut taps = pins.entry(PIN);
+    taps.extend(pins.entry(WRONG_PIN));
     let mut ui = env.ui(Pad::taps(&taps));
     ui.run_set_pin(PinScope::Device);
     assert!(!rsk_fido::passkeys::device_pin_is_set(
@@ -297,9 +329,10 @@ fn a_mismatched_confirmation_stores_nothing() {
 fn a_new_device_pin_replaces_the_old_one() {
     let env = Env::new();
     env.set_device_pin(PIN);
-    let mut taps = pin_entry(PIN); // the gate on the current PIN
-    taps.extend(pin_entry(NEW_PIN));
-    taps.extend(pin_entry(NEW_PIN));
+    let mut pins = env.pin_taps();
+    let mut taps = pins.entry(PIN); // the gate on the current PIN
+    taps.extend(pins.entry(NEW_PIN));
+    taps.extend(pins.entry(NEW_PIN));
     let mut ui = env.ui(Pad::taps(&taps));
     ui.run_set_pin(PinScope::Device);
     assert!(matches!(
@@ -340,8 +373,9 @@ fn setting_the_fido_pin_from_the_panel_revokes_live_tokens() {
     // the old PIN goes on deleting resident credentials, with no touch, right
     // after the owner did the one thing they believe revokes it.
     let env = Env::new();
-    let mut taps = pin_entry(PIN);
-    taps.extend(pin_entry(PIN));
+    let mut pins = env.pin_taps();
+    let mut taps = pins.entry(PIN);
+    taps.extend(pins.entry(PIN));
     let mut ui = env.ui(Pad::taps(&taps));
     ui.run_set_pin(PinScope::Fido);
     assert!(rsk_fido::passkeys::pin_is_set(&mut env.fs.borrow_mut()));

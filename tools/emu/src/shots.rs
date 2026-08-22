@@ -27,8 +27,8 @@ use embedded_graphics_simulator::{OutputSettingsBuilder, SimulatorDisplay};
 
 use rsk_ui::{
     AccountRow, AppsView, AuditKind, AuditRow, BackupView, ConfirmPrompt, HomeView, Label, OathRow,
-    OpenpgpView, PgpSlotRow, PinCaption, PinPad, PivSlotRow, PivView, Screen, SettingsPage,
-    SettingsView, StatusKind,
+    OpenpgpView, PgpSlotRow, PinCaption, PinLayout, PinPad, PivSlotRow, PivView, Screen,
+    SettingsPage, SettingsView, StatusKind,
 };
 
 /// The panel's own size. The PNGs are 1:1 with it — a doc image that has been
@@ -77,6 +77,8 @@ fn shoot(dir: &Path) -> std::io::Result<Vec<String>> {
                 title: "Enter PIN",
                 expected: 4,
                 caption: Some(PinCaption::TriesRemaining { left: 8 }),
+                layout: PinLayout::from_digits([7, 3, 9, 1, 6, 0, 8, 4, 2, 5])
+                    .expect("the screenshot PIN layout is a permutation"),
             }),
         );
     });
@@ -104,6 +106,7 @@ fn shoot(dir: &Path) -> std::io::Result<Vec<String>> {
                 brightness: rsk_ui::BRIGHTNESS_LEVELS,
                 timeout_secs: 15,
                 sleep_secs: 30,
+                random_pin_pad: true,
                 version: crate::bcd::BCD_DEVICE,
                 chipid: 0,
                 device_pin_set: true,

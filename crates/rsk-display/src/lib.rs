@@ -51,13 +51,13 @@ use embedded_graphics::{
 };
 use zeroize::Zeroize;
 
-use rsk_crypto::{Device, FusedKey, FusedRead, read_fused};
+use rsk_crypto::{Device, FusedKey, FusedRead, HmacDrbg, read_fused};
 use rsk_fs::Fs;
 use rsk_sdk::Confirm;
 use rsk_ui::{
     ALLOW_RECT, AccountRow, AdjustKey, AppEntry, AuditRow, BRIGHTNESS_LEVELS, BackupView, Button,
-    ConfirmPrompt, DisplayEntry, HomeView, Label, NavTab, PinCaption, PinKey, PinPad, RootEntry,
-    RpRow, Screen, SecurityEntry, SettingsPage, SettingsView, StatusKind, SuccessKind,
+    ConfirmPrompt, DisplayEntry, HomeView, Label, NavTab, PinCaption, PinKey, PinLayout, PinPad,
+    RootEntry, RpRow, Screen, SecurityEntry, SettingsPage, SettingsView, StatusKind, SuccessKind,
 };
 
 mod applets;
@@ -403,6 +403,12 @@ where
     /// `pin_declined`), held so every `EF_DISPLAY` write preserves it. Set true (and flushed)
     /// when the user dismisses onboarding; a factory reset wipes the record back to false.
     pin_declined: bool,
+    /// Whether each PIN request randomizes its numeric keys. Loaded from `EF_DISPLAY`;
+    /// defaults on for a missing or legacy record.
+    random_pin_pad: bool,
+    /// A display-local random stream for PIN layouts. It cannot borrow the shared applet
+    /// DRBG during built-in UV because that dispatch already holds its `RefCell` borrow.
+    pin_rng: HmacDrbg,
     /// The shared flash store — the same `RefCell` the worker uses. The Passkeys tab
     /// borrows it to enumerate resident credentials; safe because the worker is parked
     /// (it never holds the borrow across an `.await`) while this thread-executor task
@@ -448,6 +454,13 @@ where
     ) -> Self {
         let _ = rsk_ui::render(&mut panel, &Screen::Splash);
 
+        // Split a private stream while the shared DRBG is free. A host built-in-UV
+        // dispatch later holds the shared borrow across `collect_pin`.
+        let mut pin_seed = [0u8; 32];
+        rsk_fido::Rng::fill(&mut *rng.borrow_mut(), &mut pin_seed);
+        let pin_rng = HmacDrbg::new(&pin_seed);
+        pin_seed.zeroize();
+
         // Restore the persisted display settings before lighting the panel, so it
         // comes up at the saved brightness (no full-bright flash then dim) and the
         // saved sleep timeout. Absent (fresh device) keeps the live defaults.
@@ -486,6 +499,8 @@ where
             locked,
             onboarding,
             pin_declined: dcfg.pin_declined,
+            random_pin_pad: dcfg.random_pin_pad,
+            pin_rng,
             fs,
             keys,
             rng,

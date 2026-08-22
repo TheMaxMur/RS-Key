@@ -23,8 +23,14 @@ fn back_on_an_adjust_page_returns_to_the_display_list() {
 
 #[test]
 fn the_display_list_drills_into_each_knob() {
+    let mut random_pin_pad = true;
+    let mut dirty = false;
     assert!(matches!(
-        settings_display(center(rsk_ui::TITLE_BACK_RECT)),
+        settings_display(
+            center(rsk_ui::TITLE_BACK_RECT),
+            &mut random_pin_pad,
+            &mut dirty
+        ),
         Nav::Goto(SettingsPage::Root)
     ));
     for (i, want) in [
@@ -36,13 +42,65 @@ fn the_display_list_drills_into_each_knob() {
     .enumerate()
     {
         let row = center(rsk_ui::settings_row_rect(i as u16));
-        let got = settings_display(row);
+        let got = settings_display(row, &mut random_pin_pad, &mut dirty);
         assert!(
             matches!(got, Nav::Goto(page) if page == want),
             "display row {i} does not open {want:?}"
         );
     }
-    assert!(matches!(settings_display(nowhere()), Nav::Idle));
+    assert!(matches!(
+        settings_display(nowhere(), &mut random_pin_pad, &mut dirty),
+        Nav::Idle
+    ));
+    assert!(!dirty);
+}
+
+#[test]
+fn the_random_pin_pad_row_toggles_and_marks_the_display_record_dirty() {
+    let mut random_pin_pad = true;
+    let mut dirty = false;
+    let row = center(rsk_ui::settings_row_rect(3));
+    assert!(matches!(
+        settings_display(row, &mut random_pin_pad, &mut dirty),
+        Nav::Stay
+    ));
+    assert!(!random_pin_pad);
+    assert!(dirty);
+}
+
+#[test]
+fn factory_reset_does_not_restore_a_pending_display_edit() {
+    let env = Env::new();
+    let root_display = center(rsk_ui::settings_row_rect(0));
+    let random_pin_pad = center(rsk_ui::settings_row_rect(3));
+    let root_security = center(rsk_ui::settings_row_rect(1));
+    let factory_reset = center(rsk_ui::settings_row_rect(rsk_ui::SECURITY_ROWS - 1));
+    let mut script = vec![None];
+    for p in [
+        root_display,
+        random_pin_pad,
+        center(rsk_ui::TITLE_BACK_RECT),
+        root_security,
+        factory_reset,
+    ] {
+        script.push(Some(p));
+        script.extend([None; 2]);
+    }
+    let hold_polls = HOLD_MS as usize / TOUCH_POLL_MS as usize + 2;
+    script.extend(core::iter::repeat_n(
+        Some(center(rsk_ui::DEL_HOLD_RECT)),
+        hold_polls,
+    ));
+
+    let mut ui = env.ui(Pad::script(&script));
+    ui.run_settings();
+
+    assert!(!ui.random_pin_pad, "the setting was changed before reset");
+    assert!(ui.hooks.reboot_pending());
+    assert!(
+        !env.fs.borrow_mut().has_data(EF_DISPLAY),
+        "a pending edit must not recreate EF_DISPLAY after factory reset"
+    );
 }
 
 #[test]
@@ -119,6 +177,7 @@ fn saving_the_display_settings_preserves_the_onboarding_choice() {
     let env = Env::new();
     let mut ui = env.ui(Pad::idle());
     ui.pin_declined = true;
+    ui.random_pin_pad = false;
     ui.set_brightness(2);
     SLEEP_TIMEOUT_MS.store(15_000, Ordering::Relaxed);
     ui.save_display_config();
@@ -134,6 +193,7 @@ fn saving_the_display_settings_preserves_the_onboarding_choice() {
     assert_eq!(cfg.brightness, 2);
     assert_eq!(cfg.sleep_secs, 15);
     assert!(cfg.pin_declined);
+    assert!(!cfg.random_pin_pad);
 }
 
 #[test]

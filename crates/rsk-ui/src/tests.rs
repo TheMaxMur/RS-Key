@@ -151,38 +151,69 @@ fn rect_contains_edges() {
 
 #[test]
 fn pin_key_centers_hit_their_keys() {
+    let layout = PinLayout::ordered();
     // Every grid key's center hits exactly that key.
     for row in 0..PIN_ROWS {
         for col in 0..PIN_COLS {
             let r = pin_key_rect(col, row);
             let c = Point::new(r.x + PIN_KEY_W / 2, r.y + PIN_KEY_H / 2);
-            assert_eq!(hit_pin(c), Some(pin_grid_key(col, row)));
+            assert_eq!(hit_pin(c, layout), Some(pin_grid_key(layout, col, row)));
         }
     }
     // Layout: rows 0–2 are digits 1–9 in reading order; the bottom row is Del/0/OK.
-    assert_eq!(pin_grid_key(0, 0), PinKey::Digit(1));
-    assert_eq!(pin_grid_key(2, 2), PinKey::Digit(9));
-    assert_eq!(pin_grid_key(0, 3), PinKey::Del);
-    assert_eq!(pin_grid_key(1, 3), PinKey::Digit(0));
-    assert_eq!(pin_grid_key(2, 3), PinKey::Ok);
+    assert_eq!(pin_grid_key(layout, 0, 0), PinKey::Digit(1));
+    assert_eq!(pin_grid_key(layout, 2, 2), PinKey::Digit(9));
+    assert_eq!(pin_grid_key(layout, 0, 3), PinKey::Del);
+    assert_eq!(pin_grid_key(layout, 1, 3), PinKey::Digit(0));
+    assert_eq!(pin_grid_key(layout, 2, 3), PinKey::Ok);
+}
+
+#[test]
+fn pin_layout_rejects_invalid_digit_sets() {
+    assert!(PinLayout::from_digits([9, 8, 7, 6, 5, 4, 3, 2, 1, 0]).is_some());
+    assert!(PinLayout::from_digits([0, 0, 1, 2, 3, 4, 5, 6, 7, 8]).is_none());
+    assert!(PinLayout::from_digits([0, 1, 2, 3, 4, 5, 6, 7, 8, 10]).is_none());
+}
+
+#[test]
+fn shuffled_pin_layout_changes_digit_hits_but_not_controls() {
+    let layout = PinLayout::from_digits([9, 8, 7, 6, 5, 4, 3, 2, 1, 0]).unwrap();
+    let first = pin_key_rect(0, 0);
+    let bottom = |col| {
+        let r = pin_key_rect(col, 3);
+        Point::new(r.x + r.w / 2, r.y + r.h / 2)
+    };
+    assert_eq!(
+        hit_pin(
+            Point::new(first.x + first.w / 2, first.y + first.h / 2),
+            layout
+        ),
+        Some(PinKey::Digit(9))
+    );
+    assert_eq!(hit_pin(bottom(0), layout), Some(PinKey::Del));
+    assert_eq!(hit_pin(bottom(2), layout), Some(PinKey::Ok));
 }
 
 #[test]
 fn pin_cancel_hits_and_gaps_select_nothing() {
+    let layout = PinLayout::ordered();
     let c = PIN_CANCEL_RECT;
     assert_eq!(
-        hit_pin(Point::new(c.x + c.w / 2, c.y + c.h / 2)),
+        hit_pin(Point::new(c.x + c.w / 2, c.y + c.h / 2), layout),
         Some(PinKey::Cancel)
     );
     // The gap between column 0 and column 1 selects nothing.
     let k = pin_key_rect(0, 0);
-    assert_eq!(hit_pin(Point::new(k.x + PIN_KEY_W + 1, k.y + 2)), None);
+    assert_eq!(
+        hit_pin(Point::new(k.x + PIN_KEY_W + 1, k.y + 2), layout),
+        None
+    );
     // Below the grid (bottom-left margin) selects nothing.
-    assert_eq!(hit_pin(Point::new(0, PANEL_H - 1)), None);
+    assert_eq!(hit_pin(Point::new(0, PANEL_H - 1), layout), None);
     // The eye toggle, between the header and the grid, maps to Reveal.
     let e = PIN_EYE_RECT;
     assert_eq!(
-        hit_pin(Point::new(e.x + e.w / 2, e.y + e.h / 2)),
+        hit_pin(Point::new(e.x + e.w / 2, e.y + e.h / 2), layout),
         Some(PinKey::Reveal)
     );
 }
@@ -223,6 +254,7 @@ fn display_rows_map_in_order() {
         DisplayEntry::Brightness,
         DisplayEntry::Sleep,
         DisplayEntry::Timeout,
+        DisplayEntry::RandomPinPad,
     ];
     assert_eq!(want.len() as u16, DISPLAY_ROWS);
     for (i, &e) in want.iter().enumerate() {

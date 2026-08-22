@@ -7,6 +7,34 @@ use super::backup::REVEAL_MASK_MS;
 use super::gates::{PinScope, piv_ref_title};
 use super::*;
 
+/// Draw uniformly from `0..upper` using a 16-bit rejection zone. Modulo alone
+/// would make the first values slightly more likely when `upper` does not divide 65536.
+fn pin_random_below(rng: &mut HmacDrbg, upper: u16) -> usize {
+    const DOMAIN: u32 = 1 << 16;
+    let upper = u32::from(upper);
+    let zone = DOMAIN - DOMAIN % upper;
+    loop {
+        let mut bytes = [0u8; 2];
+        rng.fill(&mut bytes);
+        let value = u32::from(u16::from_le_bytes(bytes));
+        if value < zone {
+            return (value % upper) as usize;
+        }
+    }
+}
+
+/// One unbiased Fisher–Yates permutation of the ten numeric key positions.
+pub(crate) fn random_pin_layout(rng: &mut HmacDrbg) -> PinLayout {
+    let mut layout = PinLayout::ordered();
+    let mut end = 10usize;
+    while end > 1 {
+        let pick = pin_random_below(rng, end as u16);
+        layout.swap(end - 1, pick);
+        end -= 1;
+    }
+    layout
+}
+
 /// PIV PIN/PUK length floor for the on-panel change/unblock pads — the PIV minimum (the
 /// default PIN `123456` is six). The applet stores up to eight; `rsk_piv::pad_pin` pads the
 /// rest to the 8-byte `0xFF` wire form so a host VERIFY (which always pads) matches.
@@ -312,13 +340,18 @@ where
         // key so a revealed PIN can auto re-mask after a short idle.
         let mut reveal = false;
         let mut last_input = Instant::now();
+        let layout = if self.random_pin_pad {
+            random_pin_layout(&mut self.pin_rng)
+        } else {
+            PinLayout::ordered()
+        };
 
         // A built-in-UV PIN entry can arrive while the panel slept — restore it first.
         self.wake();
         note_activity();
         let _ = rsk_ui::render(
             &mut self.panel,
-            &Screen::Pin(PinPad::with_caption(entered, title, caption).expecting(expected)),
+            &Screen::Pin(PinPad::with_caption(entered, title, caption, layout).expecting(expected)),
         );
         self.shown = None; // force the status loop to repaint once we release it
         // The CST328 reports a level, not an edge, so a finger still down from whatever
@@ -352,7 +385,7 @@ where
             if let Some(p) = self.touch.read() {
                 last_input = Instant::now();
                 let mut repaint = true;
-                let done = match rsk_ui::hit_pin(p) {
+                let done = match rsk_ui::hit_pin(p, layout) {
                     Some(PinKey::Digit(d)) => {
                         if entered < out.len() {
                             out[entered] = b'0' + d;

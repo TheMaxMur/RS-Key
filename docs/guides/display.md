@@ -59,6 +59,10 @@ takes six taps to reach can be replayed instead of performed:
 119,123
 ```
 
+A tap script cannot use fixed coordinates to enter a known PIN while **Random
+PIN pad** is on. Enter the PIN with the interactive emulator, or turn the option
+off before you record a PIN-entry script.
+
 The images themselves are regenerated with `rsk-emu --screenshots docs/images`
 when a screen changes.
 
@@ -138,7 +142,7 @@ device-local nickname (which you set, not the host) keeps its head instead.
 
 ## Entering a PIN on the trusted screen
 
-![The trusted display's Device PIN screen: a row of masked entry dots and an eye reveal toggle above a 3×4 numeric keypad (1–9, a backspace key, 0, and a blue confirm key), with "8 tries remaining" beneath](../images/display-pin.png)
+![The trusted display's Device PIN screen: a row of masked entry dots and an eye reveal toggle above a 3×4 numeric keypad with shuffled digits, a backspace key, and a blue confirm key, with "8 tries remaining" beneath](../images/display-pin.png)
 
 The panel has an on-screen numeric **PIN pad**: digits are masked, an **eye
 toggle** reveals them briefly so you can check before committing, and the minimum
@@ -146,7 +150,12 @@ length shows as placeholder dots. Every PIN screen **names which credential it i
 collecting** in the header (**Device PIN**, **FIDO PIN**, **PIV PIN** / **PIV
 PUK**, or the OpenPGP PINs), so the independent PINs are never confused. The
 New / Confirm / current step rides in the caption beneath. The PIN never leaves
-the device.
+the device. The ten digits get a new random layout for each PIN request. The
+layout stays fixed while you enter that PIN, and Delete, confirm, reveal, and
+cancel do not move. This reduces the value of observed or recorded tap positions
+and touch traces. It does not hide a PIN from a clear recording that shows both
+the digit labels and the touches. You can restore the conventional digit order
+with **Settings → Display → Random PIN pad → Off**.
 
 Whichever way the PIN arrives — typed on the pad or sent by the host — the panel asks
 before a `pinUvAuthToken` is issued (CTAP 2.1 §6.5.5.7 requires the consent on any
@@ -233,11 +242,13 @@ point is ever shown, and no OATH code is computed (the device has no clock).
 
 Grouped into three domains, plus the journal / backup / reset actions:
 
-- **Display**: backlight brightness (PWM), the display-sleep timeout, and the
-  touch timeout, each adjusted live. All three **persist across reboots**:
-  brightness and sleep in an `EF_DISPLAY` flash record; the touch timeout in
-  `EF_PHY`'s `PresenceTimeout`, the same field `rsk hw --touch-timeout` writes,
-  so the panel and the host tool stay in sync.
+- **Display**: backlight brightness (PWM), the display-sleep timeout, the touch
+  timeout, and **Random PIN pad**. Random PIN pad is on by default and can be
+  toggled directly; the other three settings are adjusted live. All four
+  **persist across reboots**: brightness, sleep, and the PIN-pad choice in an
+  `EF_DISPLAY` flash record; the touch timeout in `EF_PHY`'s
+  `PresenceTimeout`, the same field `rsk hw --touch-timeout` writes, so the
+  panel and the host tool stay in sync.
 - **Security**: set / change the **device PIN** and the **FIDO clientPIN** (each
   chosen entirely on the panel). Changing the clientPIN asks for the current one
   first, and that prompt *is* the card's `changePIN` check: a **wrong** entry

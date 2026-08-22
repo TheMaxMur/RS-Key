@@ -15,6 +15,7 @@ fn default_mirrors_firmware_runtime_defaults() {
     assert_eq!(d.brightness, crate::BRIGHTNESS_LEVELS);
     assert_eq!(d.sleep_secs, 60);
     assert!(!d.pin_declined);
+    assert!(d.random_pin_pad);
 }
 
 #[test]
@@ -23,6 +24,7 @@ fn encode_decode_roundtrip() {
         brightness: 3,
         sleep_secs: 120,
         pin_declined: true,
+        random_pin_pad: false,
     };
     let mut got = DisplayConfig::default();
     got.apply_block(&cfg.encode());
@@ -35,12 +37,13 @@ fn encode_layout_is_brightness_then_be_sleep_then_flags() {
         brightness: 4,
         sleep_secs: 300,
         pin_declined: true,
+        random_pin_pad: false,
     }
     .encode();
     assert_eq!(b.len(), 4);
     assert_eq!(b[0], 4);
     assert_eq!(u16::from_be_bytes([b[1], b[2]]), 300);
-    assert_eq!(b[3], FLAG_PIN_DECLINED);
+    assert_eq!(b[3], FLAG_PIN_DECLINED | FLAG_FIXED_PIN_PAD);
 }
 
 #[test]
@@ -49,6 +52,7 @@ fn pin_declined_clear_encodes_zero_flags() {
         brightness: 2,
         sleep_secs: 60,
         pin_declined: false,
+        random_pin_pad: true,
     }
     .encode();
     assert_eq!(b[3], 0);
@@ -60,6 +64,7 @@ fn off_sentinel_roundtrips() {
         brightness: 5,
         sleep_secs: 0, // Off
         pin_declined: false,
+        random_pin_pad: true,
     };
     let mut got = DisplayConfig::default();
     got.apply_block(&cfg.encode());
@@ -77,15 +82,23 @@ fn legacy_core_block_loads_fields_and_keeps_flag_default() {
     assert_eq!(got.brightness, 3);
     assert_eq!(got.sleep_secs, 30);
     assert!(!got.pin_declined);
+    assert!(got.random_pin_pad);
 }
 
 #[test]
 fn unknown_flag_bits_do_not_set_pin_declined() {
-    // Only bit 0 is FLAG_PIN_DECLINED; a future bit set alone must not be read
-    // as a decline.
+    // A future bit set alone must not change either known option.
     let mut got = DisplayConfig::default();
-    got.apply_block(&[5, 0x00, 0x3C, 0x02]);
+    got.apply_block(&[5, 0x00, 0x3C, 0x04]);
     assert!(!got.pin_declined);
+    assert!(got.random_pin_pad);
+}
+
+#[test]
+fn fixed_pin_pad_flag_is_an_opt_out() {
+    let mut got = DisplayConfig::default();
+    got.apply_block(&[5, 0x00, 0x3C, FLAG_FIXED_PIN_PAD]);
+    assert!(!got.random_pin_pad);
 }
 
 #[test]
@@ -113,6 +126,7 @@ fn longer_future_block_reads_known_prefix() {
         brightness: 1,
         sleep_secs: 30,
         pin_declined: true,
+        random_pin_pad: false,
     };
     let mut b = [0u8; 7];
     b[..CONF_LEN].copy_from_slice(&cfg.encode());
@@ -173,8 +187,10 @@ fn apply_block_no_panic_and_idempotent_over_random_slices() {
         }
         if len >= CONF_LEN {
             assert_eq!(a.pin_declined, block[3] & FLAG_PIN_DECLINED != 0);
+            assert_eq!(a.random_pin_pad, block[3] & FLAG_FIXED_PIN_PAD == 0);
         } else {
             assert!(!a.pin_declined); // default
+            assert!(a.random_pin_pad);
         }
     }
 }
@@ -189,4 +205,5 @@ fn all_ones_block_loads_without_panic() {
     assert_eq!(got.brightness, 0xFF); // raw; firmware clamps to 1..=BRIGHTNESS_LEVELS
     assert_eq!(got.sleep_secs, 0xFFFF);
     assert!(got.pin_declined);
+    assert!(!got.random_pin_pad);
 }

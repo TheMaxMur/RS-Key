@@ -287,10 +287,12 @@ impl Hooks for Board {
     }
 }
 
-/// A deterministic stand-in for the device DRBG (xorshift64*). Nothing under test
-/// consumes randomness for a decision — it is drawn only by the SLIP-39 split —
-/// so a fixed stream is enough and keeps every run identical.
+/// A deterministic stand-in for the device DRBG (xorshift64*). The fixed stream
+/// makes PIN layouts and SLIP-39 test data repeatable.
+#[derive(Clone)]
 pub struct TestRng(u64);
+
+const TEST_RNG_SEED: u64 = 0x0DDB_A11C_0FFE_E1E5;
 
 impl TestRng {
     fn next(&mut self) -> u64 {
@@ -392,7 +394,7 @@ impl Env {
         note_local_activity();
         Self {
             fs: RefCell::new(Fs::new(RamStorage::new())),
-            rng: RefCell::new(TestRng(0x0DDB_A11C_0FFE_E1E5)),
+            rng: RefCell::new(TestRng(TEST_RNG_SEED)),
             _globals: guard,
         }
     }
@@ -419,6 +421,12 @@ impl Env {
             &self.rng,
         )
     }
+
+    /// Predict the layouts the next [`Ui`] built from this environment will use.
+    /// It clones the shared stream before `Ui::new` splits the display-local DRBG.
+    pub fn pin_taps(&self) -> PinTaps {
+        PinTaps::new(self.rng.borrow().clone())
+    }
 }
 
 pub type TestUi<'a> = Ui<'a, Panel, Pad, Board, RamStorage, TestRng>;
@@ -437,10 +445,10 @@ pub fn nowhere() -> rsk_ui::Point {
 
 /// The pad key that produces `key`, found through `rsk-ui`'s own grid — so a
 /// layout change moves these tests with it instead of past them.
-pub fn pin_key(key: rsk_ui::PinKey) -> rsk_ui::Point {
+pub fn pin_key(layout: rsk_ui::PinLayout, key: rsk_ui::PinKey) -> rsk_ui::Point {
     for row in 0..rsk_ui::PIN_ROWS {
         for col in 0..rsk_ui::PIN_COLS {
-            if rsk_ui::pin_grid_key(col, row) == key {
+            if rsk_ui::pin_grid_key(layout, col, row) == key {
                 return center(rsk_ui::pin_key_rect(col, row));
             }
         }
@@ -449,13 +457,36 @@ pub fn pin_key(key: rsk_ui::PinKey) -> rsk_ui::Point {
 }
 
 /// The taps that type `pin` and commit it with OK.
-pub fn pin_entry(pin: &[u8]) -> Vec<rsk_ui::Point> {
+pub fn pin_entry(layout: rsk_ui::PinLayout, pin: &[u8]) -> Vec<rsk_ui::Point> {
     let mut taps: Vec<_> = pin
         .iter()
-        .map(|&b| pin_key(rsk_ui::PinKey::Digit(b - b'0')))
+        .map(|&b| pin_key(layout, rsk_ui::PinKey::Digit(b - b'0')))
         .collect();
-    taps.push(pin_key(rsk_ui::PinKey::Ok));
+    taps.push(pin_key(layout, rsk_ui::PinKey::Ok));
     taps
+}
+
+/// Semantic PIN taps backed by the same deterministic sub-DRBG a test [`Ui`] gets.
+pub struct PinTaps {
+    rng: HmacDrbg,
+}
+
+impl PinTaps {
+    fn new(mut shared: TestRng) -> Self {
+        let mut seed = [0u8; 32];
+        rsk_fido::Rng::fill(&mut shared, &mut seed);
+        Self {
+            rng: HmacDrbg::new(&seed),
+        }
+    }
+
+    pub fn next_layout(&mut self) -> rsk_ui::PinLayout {
+        crate::pin::random_pin_layout(&mut self.rng)
+    }
+
+    pub fn entry(&mut self, pin: &[u8]) -> Vec<rsk_ui::Point> {
+        pin_entry(self.next_layout(), pin)
+    }
 }
 
 /// Backdate both activity stamps by `ms`, through the same wrapping arithmetic the
@@ -600,6 +631,7 @@ fn boot_restores_the_saved_display_settings() {
         brightness: 2,
         sleep_secs: 15,
         pin_declined: false,
+        random_pin_pad: false,
     };
     env.fs
         .borrow_mut()
@@ -607,6 +639,7 @@ fn boot_restores_the_saved_display_settings() {
         .expect("EF_DISPLAY");
     let ui = env.ui(Pad::idle());
     assert_eq!(ui.brightness, cfg.brightness);
+    assert_eq!(ui.random_pin_pad, cfg.random_pin_pad);
     assert_eq!(
         SLEEP_TIMEOUT_MS.load(Ordering::Relaxed),
         cfg.sleep_secs as u32 * 1000

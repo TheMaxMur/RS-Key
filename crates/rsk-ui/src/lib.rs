@@ -349,6 +349,51 @@ impl PinCaption {
     }
 }
 
+/// The ten digits assigned to the PIN pad's ten numeric key positions. The order is
+/// a permutation of `0..=9`; construction starts from [`PinLayout::ordered`] and
+/// [`PinLayout::swap`] preserves that invariant while the display shuffles it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct PinLayout {
+    digits: [u8; 10],
+}
+
+impl PinLayout {
+    /// The conventional layout: rows `1..=9`, then `0` between Del and OK.
+    pub const fn ordered() -> Self {
+        Self {
+            digits: [1, 2, 3, 4, 5, 6, 7, 8, 9, 0],
+        }
+    }
+
+    /// Build a layout from its numeric-key order, rejecting a missing, repeated, or
+    /// out-of-range digit so the painted keys can never make a PIN untypeable.
+    pub fn from_digits(digits: [u8; 10]) -> Option<Self> {
+        let mut seen = 0u16;
+        for &digit in &digits {
+            if digit > 9 {
+                return None;
+            }
+            let bit = 1u16 << digit;
+            if seen & bit != 0 {
+                return None;
+            }
+            seen |= bit;
+        }
+        (seen == 0x03FF).then_some(Self { digits })
+    }
+
+    /// The digit assigned to numeric key position `slot` (`0..10`).
+    pub const fn digit(self, slot: usize) -> u8 {
+        self.digits[slot]
+    }
+
+    /// Swap two numeric key positions. Starting from a valid layout, this cannot
+    /// introduce a duplicate or omit a digit.
+    pub fn swap(&mut self, a: usize, b: usize) {
+        self.digits.swap(a, b);
+    }
+}
+
 /// What the PIN screen shows: how many digits have been entered (rendered as masked
 /// dots — never the digits themselves, which the firmware keeps and never paints), a
 /// short header naming the step ("Enter PIN", "New PIN", "Confirm PIN", …) so the same
@@ -367,22 +412,25 @@ pub struct PinPad {
     pub expected: u8,
     /// Feedback / hint under the pad; `None` on a bare prompt.
     pub caption: Option<PinCaption>,
+    /// The digit assigned to each numeric key position for this request.
+    pub layout: PinLayout,
 }
 
 impl PinPad {
     /// The default pad header ("Enter PIN") — built-in UV and the local verify gates.
-    pub const fn new(entered: usize) -> Self {
-        Self::with_title(entered, "Enter PIN")
+    pub const fn new(entered: usize, layout: PinLayout) -> Self {
+        Self::with_title(entered, "Enter PIN", layout)
     }
 
     /// A pad with a custom header (the set/change flow's "New PIN" / "Confirm PIN" /
     /// "Current PIN" steps). `title` must be a trusted constant, not untrusted RP text.
-    pub const fn with_title(entered: usize, title: &'static str) -> Self {
+    pub const fn with_title(entered: usize, title: &'static str, layout: PinLayout) -> Self {
         Self {
             entered,
             title,
             expected: 0,
             caption: None,
+            layout,
         }
     }
 
@@ -391,12 +439,14 @@ impl PinPad {
         entered: usize,
         title: &'static str,
         caption: Option<PinCaption>,
+        layout: PinLayout,
     ) -> Self {
         Self {
             entered,
             title,
             expected: 0,
             caption,
+            layout,
         }
     }
 
@@ -408,9 +458,9 @@ impl PinPad {
     }
 }
 
-/// PIN-pad grid: 3 columns. The bottom row is Del / 0 / OK.
+/// PIN-pad grid: 3 columns. The bottom row is Del / the tenth digit / OK.
 pub const PIN_COLS: u16 = 3;
-/// PIN-pad grid rows (1–9, then Del / 0 / OK).
+/// PIN-pad grid rows (nine digits, then Del / the tenth digit / OK).
 pub const PIN_ROWS: u16 = 4;
 /// Key width.
 pub const PIN_KEY_W: u16 = 64;
@@ -446,14 +496,14 @@ pub const fn pin_key_rect(col: u16, row: u16) -> Rect {
     )
 }
 
-/// The key at grid position `(col, row)`: rows 0–2 hold digits 1–9 in reading
-/// order; the bottom row is Del / 0 / OK.
-pub const fn pin_grid_key(col: u16, row: u16) -> PinKey {
+/// The key at grid position `(col, row)`: rows 0–2 hold layout slots 0–8;
+/// the bottom row is Del / layout slot 9 / OK.
+pub const fn pin_grid_key(layout: PinLayout, col: u16, row: u16) -> PinKey {
     match (col, row) {
         (0, 3) => PinKey::Del,
-        (1, 3) => PinKey::Digit(0),
+        (1, 3) => PinKey::Digit(layout.digit(9)),
         (2, 3) => PinKey::Ok,
-        _ => PinKey::Digit((row * PIN_COLS + col + 1) as u8),
+        _ => PinKey::Digit(layout.digit((row * PIN_COLS + col) as usize)),
     }
 }
 
@@ -475,7 +525,7 @@ const _: () = {
 /// Which PIN-pad key, if any, a tap at `p` selects. Cancel (header) is tested first,
 /// then the 3×4 grid. The rects are disjoint by construction, so at most one matches;
 /// a tap in a gap or margin selects nothing.
-pub fn hit_pin(p: Point) -> Option<PinKey> {
+pub fn hit_pin(p: Point, layout: PinLayout) -> Option<PinKey> {
     if PIN_CANCEL_RECT.contains(p) {
         return Some(PinKey::Cancel);
     }
@@ -487,7 +537,7 @@ pub fn hit_pin(p: Point) -> Option<PinKey> {
         let mut col = 0;
         while col < PIN_COLS {
             if pin_key_rect(col, row).contains(p) {
-                return Some(pin_grid_key(col, row));
+                return Some(pin_grid_key(layout, col, row));
             }
             col += 1;
         }
@@ -504,9 +554,9 @@ pub enum SettingsPage {
     /// The top-level list: Display / Security / Firmware — three domains (the title-bar is
     /// gone here; the bottom nav, Settings active, is the way out).
     Root,
-    /// The Display sub-page: Brightness / Display sleep / Touch timeout. Reached from the
-    /// Root "Display" row; its back chevron returns to Root, and each row drills into an
-    /// adjust page that backs out to *this* page.
+    /// The Display sub-page: Brightness / Display sleep / Touch timeout / Random PIN pad.
+    /// Reached from the Root "Display" row; its back chevron returns to Root, and each
+    /// adjustable row drills into a page that backs out to *this* page.
     Display,
     /// Backlight-level adjust (−/+/Back).
     Brightness,
@@ -543,6 +593,8 @@ pub struct SettingsView {
     pub timeout_secs: u16,
     /// Current display-sleep timeout, seconds (`0` = Off, never blanks).
     pub sleep_secs: u16,
+    /// Whether every PIN request randomizes the ten numeric keys.
+    pub random_pin_pad: bool,
     /// bcdDevice firmware build counter, shown in hex on the Firmware row + screen.
     pub version: u16,
     /// RP2350 chip serial, shown in hex on the Firmware screen.
@@ -562,7 +614,7 @@ pub struct SettingsView {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum RootEntry {
     /// Drill into the Display sub-page ([`SettingsPage::Display`]) — brightness, display
-    /// sleep, and the touch timeout (all the panel/interaction knobs).
+    /// sleep, touch timeout, and PIN-pad randomization.
     Display,
     /// Drill into the Security sub-page ([`SettingsPage::Security`]) — device + FIDO PIN,
     /// the audit log, the backup status, and the (danger) Factory reset.
@@ -583,6 +635,8 @@ pub enum DisplayEntry {
     /// Touch / presence-confirm timeout — how long a touch request waits for a tap (and how
     /// long a revealed PIN stays lit).
     Timeout,
+    /// Toggle numeric-key randomization for each PIN request.
+    RandomPinPad,
 }
 
 /// An entry on the Security sub-page list.
@@ -647,16 +701,17 @@ pub const fn settings_row_entry(i: u16) -> RootEntry {
     }
 }
 
-/// Number of Display sub-page rows (Brightness / Display sleep / Touch timeout).
-pub const DISPLAY_ROWS: u16 = 3;
+/// Number of Display sub-page rows.
+pub const DISPLAY_ROWS: u16 = 4;
 
-/// The Display entry on row `i`, in list order (the two screen-output knobs first, then the
-/// touch timeout).
+/// The Display entry on row `i`, in list order: two screen-output knobs, touch timeout,
+/// then PIN-pad randomization.
 pub const fn display_row_entry(i: u16) -> DisplayEntry {
     match i {
         0 => DisplayEntry::Brightness,
         1 => DisplayEntry::Sleep,
-        _ => DisplayEntry::Timeout,
+        2 => DisplayEntry::Timeout,
+        _ => DisplayEntry::RandomPinPad,
     }
 }
 

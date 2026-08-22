@@ -17,7 +17,7 @@ pub(super) fn settings<D: DrawTarget<Color = Rgb565>>(
 ) -> Result<(), D::Error> {
     match v.page {
         SettingsPage::Root => settings_root(t, v.version),
-        SettingsPage::Display => settings_display(t),
+        SettingsPage::Display => settings_display(t, v.random_pin_pad),
         SettingsPage::Brightness => settings_brightness(t, v.brightness),
         SettingsPage::Timeout => settings_timeout(t, v.timeout_secs),
         SettingsPage::Sleep => settings_sleep(t, v.sleep_secs),
@@ -34,7 +34,7 @@ pub(super) fn settings<D: DrawTarget<Color = Rgb565>>(
 fn settings_root<D: DrawTarget<Color = Rgb565>>(t: &mut D, version: u16) -> Result<(), D::Error> {
     status_bar(t)?;
     title_bar(t, "Settings", theme::ACCENT, false)?;
-    // Display drills into the brightness / sleep / touch-timeout panel knobs.
+    // Display drills into the panel options.
     components::rect_card(t, settings_row_rect(0))?;
     components::rect_row(t, settings_row_rect(0), Glyph::Sun, "Display", None, true)?;
     // Security drills into the Set/Change PIN + Audit / Backup + Factory reset sub-page,
@@ -64,10 +64,11 @@ fn settings_root<D: DrawTarget<Color = Rgb565>>(t: &mut D, version: u16) -> Resu
     render_nav(t, NavTab::Settings)
 }
 
-/// The Display sub-page: the three panel/interaction knobs — Brightness, Display sleep, and
-/// the Touch timeout — each drilling into its −/+ adjust page (which backs out to here). The
-/// title-bar back chevron returns to the Root list; no nav (a sub-page).
-fn settings_display<D: DrawTarget<Color = Rgb565>>(t: &mut D) -> Result<(), D::Error> {
+/// The Display sub-page: three adjust pages plus the direct PIN-pad toggle.
+fn settings_display<D: DrawTarget<Color = Rgb565>>(
+    t: &mut D,
+    random_pin_pad: bool,
+) -> Result<(), D::Error> {
     status_bar(t)?;
     title_bar(t, "Display", theme::ACCENT, true)?;
     // Row order must match [`crate::display_row_entry`] — paint and tap-dispatch share
@@ -98,6 +99,19 @@ fn settings_display<D: DrawTarget<Color = Rgb565>>(t: &mut D) -> Result<(), D::E
         "Touch timeout",
         None,
         true,
+    )?;
+    components::rect_card(t, settings_row_rect(3))?;
+    components::rect_row(
+        t,
+        settings_row_rect(3),
+        Glyph::Rotate,
+        "Random PIN pad",
+        Some(if random_pin_pad {
+            ("On", theme::OK)
+        } else {
+            ("Off", theme::WARN)
+        }),
+        false,
     )
 }
 

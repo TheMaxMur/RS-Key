@@ -7,8 +7,7 @@
 //!
 //! The block is `[brightness, sleep_secs_be(2), flags]` (4 bytes): the backlight
 //! level (`1..=BRIGHTNESS_LEVELS`), the display-sleep timeout in seconds (`0` =
-//! Off), and a flags byte (currently only [`FLAG_PIN_DECLINED`] — the user chose
-//! "continue without a device PIN" at first-run, so the panel must not re-prompt).
+//! Off), and a flags byte ([`FLAG_PIN_DECLINED`] plus [`FLAG_FIXED_PIN_PAD`]).
 //! The **touch timeout** is *not* here — it persists in the phy record's
 //! `PresenceTimeout` tag (shared with `rsk hw --touch-timeout`), so it keeps one
 //! source of truth.
@@ -40,13 +39,16 @@ const CORE_LEN: usize = 3;
 /// offered the prompt once.
 pub const FLAG_PIN_DECLINED: u8 = 0x01;
 
+/// Flags-byte bit 1: keep the conventional ordered PIN pad. This is an opt-out so
+/// an absent record and every record written by older firmware enable randomization.
+pub const FLAG_FIXED_PIN_PAD: u8 = 0x02;
+
 /// Default display-sleep timeout in seconds — the single source of truth: the
 /// firmware derives its `DEFAULT_SLEEP_MS` from it, so a device with no record
 /// blanks on the same schedule it did before this record existed.
 pub const DEFAULT_SLEEP_SECS: u16 = 60;
 
-/// The persisted display settings: backlight level, the display-sleep timeout, and
-/// the first-run PIN-prompt flag.
+/// The persisted display settings.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct DisplayConfig {
     /// Backlight level `1..=BRIGHTNESS_LEVELS`. Stored raw; the firmware clamps it
@@ -59,6 +61,9 @@ pub struct DisplayConfig {
     /// to continue without one — so the panel must not re-offer it. Cleared on a
     /// factory reset (which wipes the record), so a wiped device re-onboards.
     pub pin_declined: bool,
+    /// Randomize the ten numeric keys for each PIN request. Enabled by default;
+    /// `false` is stored as [`FLAG_FIXED_PIN_PAD`].
+    pub random_pin_pad: bool,
 }
 
 impl Default for DisplayConfig {
@@ -67,6 +72,7 @@ impl Default for DisplayConfig {
             brightness: crate::BRIGHTNESS_LEVELS,
             sleep_secs: DEFAULT_SLEEP_SECS,
             pin_declined: false,
+            random_pin_pad: true,
         }
     }
 }
@@ -76,11 +82,13 @@ impl DisplayConfig {
     /// (big-endian sleep, matching the phy record's byte order).
     pub fn encode(&self) -> [u8; CONF_LEN] {
         let s = self.sleep_secs.to_be_bytes();
-        let flags = if self.pin_declined {
-            FLAG_PIN_DECLINED
-        } else {
-            0
-        };
+        let mut flags = 0;
+        if self.pin_declined {
+            flags |= FLAG_PIN_DECLINED;
+        }
+        if !self.random_pin_pad {
+            flags |= FLAG_FIXED_PIN_PAD;
+        }
         [self.brightness, s[0], s[1], flags]
     }
 
@@ -98,6 +106,7 @@ impl DisplayConfig {
         }
         if b.len() >= CONF_LEN {
             self.pin_declined = b[3] & FLAG_PIN_DECLINED != 0;
+            self.random_pin_pad = b[3] & FLAG_FIXED_PIN_PAD == 0;
         }
     }
 }

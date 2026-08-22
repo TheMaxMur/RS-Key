@@ -35,7 +35,9 @@ use crate::presence::PresenceMode;
 use crate::signals::Signals;
 use crate::taps::{Tap, TapPad};
 
-/// The clientPIN the host sets, and the one typed at the pad instead.
+/// The clientPIN the host sets, and repeated physical digit-key positions for a
+/// wrong pad entry. A shuffled layout can change the digit, but not make four
+/// identical digits equal this PIN.
 const PIN: &[u8] = b"1234";
 const WRONG_PIN: &[u8] = b"9999";
 
@@ -149,14 +151,14 @@ fn nav_tab(want: rsk_ui::NavTab) -> rsk_ui::Point {
 }
 
 fn pin_key(want: rsk_ui::PinKey) -> rsk_ui::Point {
-    target(|p| rsk_ui::hit_pin(p) == Some(want))
+    target(|p| rsk_ui::hit_pin(p, rsk_ui::PinLayout::ordered()) == Some(want))
 }
 
 /// A contact every screen's hit test misses, so it is a no-op wherever it lands.
 fn nowhere() -> rsk_ui::Point {
     let miss = |p| {
         rsk_ui::hit_nav(p).is_none()
-            && rsk_ui::hit_pin(p).is_none()
+            && rsk_ui::hit_pin(p, rsk_ui::PinLayout::ordered()).is_none()
             && rsk_ui::hit_settings_root(p).is_none()
             && rsk_ui::hit_security(p).is_none()
             && rsk_ui::hit_onboard(p).is_none()

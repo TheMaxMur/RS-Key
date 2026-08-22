@@ -40,6 +40,14 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Changed
 
+- **The on-screen PIN pad now randomizes all ten digit positions for each PIN
+  request.** Delete, confirm, reveal, and cancel stay fixed. This reduces the
+  value of observed tap positions and touch traces. Randomization is on by
+  default, including after an upgrade or factory reset, and can be disabled at
+  **Settings → Display → Random PIN pad**. Existing display settings remain
+  compatible because the saved flag is an opt-out. ([#90](https://github.com/TheMaxMur/RS-Key/issues/90))
+  **bcdDevice → 0x095C.**
+
 - **The trusted display now antialiases the full GUI.** Text uses generated
   four-bit IBM Plex Sans and Mono coverage data. Icons, circles, status arcs,
   rounded cards, and controls use integer coverage blending against their real

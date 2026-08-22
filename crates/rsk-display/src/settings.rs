@@ -7,13 +7,9 @@ use super::gates::PinScope;
 use super::status::{adjust_sleep, adjust_timeout};
 use super::*;
 
-/// Persisted display-settings record: the backlight level and display-sleep timeout
-/// edited in Settings → Display, read at boot ([`Ui::new`]) and rewritten on
-/// Settings exit ([`Ui::persist_settings`]) so they survive a reboot. In the system
-/// config FID range next to `EF_PHY` (`0xE020`) / `EF_META`, outside every applet's
-/// reset scope; not reachable by any host APDU. The touch timeout is *not* here — it
-/// rides `EF_PHY`'s `PresenceTimeout` tag, the same record `rsk hw --touch-timeout`
-/// writes (see [`rsk_ui::DisplayConfig`]).
+/// Persisted display record: brightness, sleep timeout, onboarding choice, and PIN-pad
+/// randomization. [`Ui::new`] loads it, and Settings exit saves it. The touch timeout
+/// stays in `EF_PHY`; this system FID is not reachable through a host APDU.
 pub(super) const EF_DISPLAY: u16 = 0xE030;
 
 /// What a Settings page did with a tap. The menu used to carry this as three
@@ -29,6 +25,8 @@ enum Nav {
     Goto(SettingsPage),
     /// Leave the menu, handing the ambient loop its next destination.
     Leave(Option<NavTab>),
+    /// A completed factory reset: leave without recreating wiped settings records.
+    Reset,
 }
 
 /// The −/+ of an adjust page, or `None` for Back / a miss — which [`adjust_exit`]
@@ -51,8 +49,8 @@ fn adjust_exit(p: rsk_ui::Point) -> Nav {
     }
 }
 
-/// Display: the back chevron, or a drill-down into one of the three knobs.
-fn settings_display(p: rsk_ui::Point) -> Nav {
+/// Display: the back chevron, three adjust pages, or the direct PIN-pad toggle.
+fn settings_display(p: rsk_ui::Point, random_pin_pad: &mut bool, dirty: &mut bool) -> Nav {
     if rsk_ui::hit_title_back(p) {
         return Nav::Goto(SettingsPage::Root);
     }
@@ -60,6 +58,11 @@ fn settings_display(p: rsk_ui::Point) -> Nav {
         Some(DisplayEntry::Brightness) => Nav::Goto(SettingsPage::Brightness),
         Some(DisplayEntry::Sleep) => Nav::Goto(SettingsPage::Sleep),
         Some(DisplayEntry::Timeout) => Nav::Goto(SettingsPage::Timeout),
+        Some(DisplayEntry::RandomPinPad) => {
+            *random_pin_pad = !*random_pin_pad;
+            *dirty = true;
+            Nav::Stay
+        }
         None => Nav::Idle,
     }
 }
@@ -101,6 +104,7 @@ where
             brightness: self.brightness,
             timeout_secs: (self.hooks.presence_timeout_ms() / 1000) as u16,
             sleep_secs: (SLEEP_TIMEOUT_MS.load(Ordering::Relaxed) / 1000) as u16,
+            random_pin_pad: self.random_pin_pad,
             version: self.info.version,
             chipid: self.info.chipid,
             device_pin_set,
@@ -115,7 +119,7 @@ where
     /// confirm / PIN modals, so it owns the panel with the same natural mutual
     /// exclusion against the worker (single thread executor: while this spins, no
     /// applet command is serviced — bounded by [`MENU_INACTIVITY_MS`]). Navigates
-    /// Root → sub-pages, applies brightness/timeout live, and hands the panel back to
+    /// Root → sub-pages, applies display options live, and hands the panel back to
     /// the ambient status loop on Close / Back or after the inactivity timeout.
     pub(super) fn run_settings(&mut self) -> Option<NavTab> {
         // Render first (so the switch feels instant), then let the opening finger lift
@@ -144,13 +148,20 @@ where
                 last = Instant::now();
                 let repaint = match match page {
                     SettingsPage::Root => self.settings_root(p, &mut last),
-                    SettingsPage::Display => settings_display(p),
+                    SettingsPage::Display => {
+                        settings_display(p, &mut self.random_pin_pad, &mut display_dirty)
+                    }
                     SettingsPage::Security => self.settings_security(p, &mut last),
                     SettingsPage::Brightness => self.settings_brightness(p, &mut display_dirty),
                     SettingsPage::Timeout => self.settings_timeout(p, &mut presence_dirty),
                     SettingsPage::Sleep => settings_sleep(p, &mut display_dirty),
                 } {
                     Nav::Leave(next) => break next,
+                    Nav::Reset => {
+                        display_dirty = false;
+                        presence_dirty = false;
+                        break None;
+                    }
                     Nav::Idle => false,
                     Nav::Stay => true,
                     Nav::Goto(next) => {
@@ -209,7 +220,7 @@ where
             };
         }
         match rsk_ui::hit_settings_root(p) {
-            // Display drills into the brightness / sleep / touch-timeout knobs.
+            // Display drills into the panel options.
             Some(RootEntry::Display) => Nav::Goto(SettingsPage::Display),
             // Security drills into Set/Change PIN + Factory reset (the destructive
             // reset lives one tap deeper).
@@ -247,7 +258,7 @@ where
             // the factory reset). A cancel falls back to this page.
             Some(SecurityEntry::FactoryReset) => {
                 if self.run_factory_reset() {
-                    return Nav::Leave(None);
+                    return Nav::Reset;
                 }
             }
             None => return Nav::Idle,
@@ -281,8 +292,8 @@ where
     /// Persist the display settings the user edited so they survive a reboot. Called
     /// once on Settings exit (every exit path — Back, a tab switch, the inactivity
     /// timeout, the power button), not per −/+ tap, so a tweak costs one flash write
-    /// rather than one per step. Brightness + display-sleep live in `EF_DISPLAY`; the
-    /// touch timeout shares `EF_PHY`'s `PresenceTimeout` tag with
+    /// rather than one per step. The display config lives in `EF_DISPLAY`; the touch
+    /// timeout shares `EF_PHY`'s `PresenceTimeout` tag with
     /// `rsk hw --touch-timeout`, so it is read-modify-written there (preserving the
     /// other phy fields) to keep a single source of truth — last writer wins, and an
     /// on-panel edit snaps to the menu's choices, so it overwrites a custom value a
@@ -301,15 +312,14 @@ where
         }
     }
 
-    /// Write the live display settings (brightness + sleep) plus the persisted
-    /// `pin_declined` flag to `EF_DISPLAY` in one record. Every `EF_DISPLAY` write goes
-    /// through here so the onboarding flag is never dropped by a brightness/sleep save (and
-    /// vice-versa) — the record carries all three fields. Synchronous; the worker is parked.
+    /// Write every live `EF_DISPLAY` field in one record so an unrelated edit cannot
+    /// drop the onboarding choice or PIN-pad option. Synchronous; the worker is parked.
     pub(super) fn save_display_config(&mut self) {
         let cfg = rsk_ui::DisplayConfig {
             brightness: self.brightness,
             sleep_secs: (SLEEP_TIMEOUT_MS.load(Ordering::Relaxed) / 1000) as u16,
             pin_declined: self.pin_declined,
+            random_pin_pad: self.random_pin_pad,
         };
         let _ = self.fs.borrow_mut().put(EF_DISPLAY, &cfg.encode());
     }

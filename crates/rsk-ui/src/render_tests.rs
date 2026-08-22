@@ -5,7 +5,7 @@ use super::ceremony::{CEREMONY_TITLE_BAND, CEREMONY_TITLE_ROLE, centered_clipped
 use super::components;
 use super::home::HOME_CARD_TOP;
 use super::*;
-use crate::{HomeView, PANEL_H, SuccessKind};
+use crate::{HomeView, PANEL_H, PinLayout, SuccessKind};
 use embedded_graphics::{Pixel, geometry::OriginDimensions};
 
 fn has_color(d: &Rec, r: Rect, c: Rgb565) -> bool {
@@ -1069,7 +1069,7 @@ fn confirm_delete_clips_a_wide_rp_and_account() {
 #[test]
 fn pin_pad_fits_and_paints_keys_in_their_hit_rects() {
     let mut d = Rec::new();
-    render(&mut d, &Screen::Pin(PinPad::new(4))).unwrap();
+    render(&mut d, &Screen::Pin(PinPad::new(4, PinLayout::ordered()))).unwrap();
     assert!(!d.oob, "pin pad drew outside the panel");
     // The OK key is filled in its own hit rect (the key you see is the key you tap).
     let ok = pin_key_rect(2, 3);
@@ -1085,6 +1085,32 @@ fn pin_pad_fits_and_paints_keys_in_their_hit_rects() {
         has_color(&d, crate::PIN_EYE_RECT, theme::FAINT),
         "reveal eye not drawn on the pad"
     );
+}
+
+#[test]
+fn pin_renderer_uses_the_supplied_digit_layout() {
+    let mut shuffled = PinLayout::ordered();
+    shuffled.swap(0, 1);
+    let mut ordered = Rec::new();
+    let mut moved = Rec::new();
+    render(
+        &mut ordered,
+        &Screen::Pin(PinPad::new(0, PinLayout::ordered())),
+    )
+    .unwrap();
+    render(&mut moved, &Screen::Pin(PinPad::new(0, shuffled))).unwrap();
+
+    let one = pin_key_rect(0, 0);
+    let two = pin_key_rect(1, 0);
+    for y in 0..one.h {
+        for x in 0..one.w {
+            assert_eq!(
+                ordered.at(one.x + x, one.y + y),
+                moved.at(two.x + x, two.y + y),
+                "digit 1 did not move with the layout"
+            );
+        }
+    }
 }
 
 #[test]
@@ -1143,6 +1169,7 @@ fn pin_caption_paints_below_the_grid_in_the_danger_colour() {
         0,
         "Enter PIN",
         Some(PinCaption::WrongPin { retries_left: 3 }),
+        PinLayout::ordered(),
     );
     render(&mut d, &Screen::Pin(pad)).unwrap();
     assert!(!d.oob, "caption drew outside the panel");
@@ -1152,7 +1179,11 @@ fn pin_caption_paints_below_the_grid_in_the_danger_colour() {
     );
     // A fresh prompt (no caption) leaves that strip blank.
     let mut clean = Rec::new();
-    render(&mut clean, &Screen::Pin(PinPad::new(0))).unwrap();
+    render(
+        &mut clean,
+        &Screen::Pin(PinPad::new(0, PinLayout::ordered())),
+    )
+    .unwrap();
     assert!(
         !has_color(
             &clean,
@@ -1166,7 +1197,7 @@ fn pin_caption_paints_below_the_grid_in_the_danger_colour() {
 #[test]
 fn pin_dots_partial_update_leaves_keys_intact() {
     let mut d = Rec::new();
-    render(&mut d, &Screen::Pin(PinPad::new(2))).unwrap();
+    render(&mut d, &Screen::Pin(PinPad::new(2, PinLayout::ordered()))).unwrap();
     let ok = pin_key_rect(2, 3);
     let key_px = d.at(ok.x + crate::PIN_KEY_W / 2, ok.y + 3);
     // A partial dots update touches only the entry band, never the keys.
@@ -1187,7 +1218,11 @@ fn pin_placeholders_outline_the_expected_minimum() {
     // An empty pad expecting 6 digits already outlines them — dim placeholder rings,
     // no filled accent dot yet.
     let mut empty = Rec::new();
-    render(&mut empty, &Screen::Pin(PinPad::new(0).expecting(6))).unwrap();
+    render(
+        &mut empty,
+        &Screen::Pin(PinPad::new(0, PinLayout::ordered()).expecting(6)),
+    )
+    .unwrap();
     assert!(!empty.oob);
     assert!(
         has_color(&empty, band, theme::CAPTION),
@@ -1199,7 +1234,11 @@ fn pin_placeholders_outline_the_expected_minimum() {
     );
     // Two of six entered: the row carries both filled (accent) and outlined (dim) dots.
     let mut some = Rec::new();
-    render(&mut some, &Screen::Pin(PinPad::new(2).expecting(6))).unwrap();
+    render(
+        &mut some,
+        &Screen::Pin(PinPad::new(2, PinLayout::ordered()).expecting(6)),
+    )
+    .unwrap();
     assert!(has_color(&some, band, theme::ACCENT), "entered digits fill");
     assert!(
         has_color(&some, band, theme::CAPTION),
@@ -1219,7 +1258,12 @@ fn pin_info_caption_paints_muted_not_danger() {
         let mut d = Rec::new();
         render(
             &mut d,
-            &Screen::Pin(PinPad::with_caption(0, "Enter PIN", Some(hint))),
+            &Screen::Pin(PinPad::with_caption(
+                0,
+                "Enter PIN",
+                Some(hint),
+                PinLayout::ordered(),
+            )),
         )
         .unwrap();
         assert!(!d.oob);
@@ -1240,6 +1284,7 @@ fn view(page: SettingsPage) -> SettingsView {
         brightness: 3,
         timeout_secs: 30,
         sleep_secs: 60,
+        random_pin_pad: true,
         version: 0x078A,
         chipid: 0x0123_4567_89ab_cdef,
         device_pin_set: true,
@@ -1636,6 +1681,20 @@ fn settings_display_paints_every_row_in_its_hit_rect() {
             "display row {i} unpainted"
         );
     }
+}
+
+#[test]
+fn random_pin_pad_setting_shows_its_live_state() {
+    let row = settings_row_rect(3);
+    let mut on = Rec::new();
+    render(&mut on, &Screen::Settings(view(SettingsPage::Display))).unwrap();
+    assert!(has_color(&on, row, theme::OK));
+
+    let mut off_view = view(SettingsPage::Display);
+    off_view.random_pin_pad = false;
+    let mut off = Rec::new();
+    render(&mut off, &Screen::Settings(off_view)).unwrap();
+    assert!(has_color(&off, row, theme::WARN));
 }
 
 #[test]
