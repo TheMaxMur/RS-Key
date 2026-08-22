@@ -2343,7 +2343,7 @@ and only the gated copy had followed the code:
 |---|---|---|---|
 | getAssertion's UV gate | `getassertion.rs:384-387` | `376`–`379` — the zero-length-probe error mapping | 8 |
 | authenticatorConfig's gate | `config.rs:243-245` | `222-224` — a comment about `pinUvAuthProtocol: 0` | 21 |
-| credentialManagement's gate | `credmgmt.rs:278` | `277` — the doc comment line `/// has been located.` | 7 |
+| credentialManagement's gate | `credmgmt.rs:278`, the item | `277` — the doc comment line `/// has been located.`, repaired to `284`, the condition | 7 |
 
 The worst was 79: "the dispatch prologue every CBOR command runs first
 (`lib.rs` line 207)" pointed at `out[0] = CTAP2_OK;`, the response *epilogue*. Read by
@@ -2351,6 +2351,19 @@ hand against the code, the 42 code citations came out **13 correct, 9 with a
 drifted endpoint, 1 unresolvable by construction** (a line number with no
 filename in front of it, which no rule can bind) **and 19 naming something the prose was never
 about**. All 29 are re-pointed; the gate reads them now.
+
+A second review round found four more of the same family, and two of them were
+in the thirteen this pass had called correct: `state.rs` lines 327-332 and
+355-359 open on the last line of the *previous* field's doc comment,
+carry the wrong field's declaration, and stop before the one their sentence
+names. The oracle that found them is worth keeping — *first cited line is a
+comment whose predecessor is also a comment, and the last is a comment whose
+successor is also a comment* — it flagged three of the 42 and two were real.
+Repaired to `329-335` and `357-361`. The other two are outside the read set and
+were rotted anyway: `docs/guides/fips.md` cited the RSA-1024 **import** gate
+~355 lines off (a `drop_slot_meta` doc comment), and
+`assurance/assumptions.toml` named `pin_lock.rs` line 52, the `Refines` line,
+for a write two lines below it.
 
 The code half is **derived**, not named: any tracked `.rs` under `crates/`,
 `firmware/` or `fuzz/` that cites by line is a page, so the next proof header
@@ -2468,7 +2481,7 @@ evidence columns and validated cross-model support edges below on every gate run
 
 | Crate | Class | Model / evidence | Named gap / disposition |
 |---|---|---|---|
-| `firmware` | embedded-binary | — | no_std binary: boot, worker sequencing, board halves of Hooks/Platform. The boot path's cross-boot state — the EF_HARDENED lap and scratch-word lock carry — is RSKeyBootHardening (M7), precisely because this crate has no host tests; the FIDO state it builds is reconstructed host-side in rsk-device (ctap.rs:76-89). Worker scheduling and USB bring-up remain implementation mechanics, with transport state owned by RSKeyTransport. |
+| `firmware` | embedded-binary | — | no_std binary: boot, worker sequencing, board halves of Hooks/Platform. The boot path's cross-boot state — the EF_HARDENED lap and scratch-word lock carry — is RSKeyBootHardening (M7), precisely because this crate has no host tests; the FIDO state it builds is reconstructed host-side in rsk-device (ctap.rs:76-87). Worker scheduling and USB bring-up remain implementation mechanics, with transport state owned by RSKeyTransport. |
 | `rsk-bench` | out-of-scope | — | latency statistics for the on-device harness; not part of the security argument. |
 | `rsk-bip39` | pure | `crates/rsk-bip39/src/kani.rs` | — |
 | `rsk-crypto` | pure | `crates/rsk-crypto/src/base64url_kani.rs`<br>`fuzz/fuzz_targets/aes_gcm.rs`<br>`fuzz/fuzz_targets/chachapoly.rs` | — |

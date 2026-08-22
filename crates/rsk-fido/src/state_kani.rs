@@ -329,7 +329,7 @@ const W_TIME_PASSES: u8 = 7;
 /// seed); `rp_index`/`rp_index_gen` staleness is untouched; the assertion walk
 /// (`gna`, which times itself in `getassertion.rs`) is not modelled; and a
 /// CTAPHID channel id is a routing label the sender writes, so channel ownership
-/// is a scoping rule, not an authentication one (`state.rs:327-332`).
+/// is a scoping rule, not an authentication one (`state.rs:329-335`).
 #[kani::proof]
 fn no_authorization_bypass_walk_owner() {
     let mut st = FidoState::new();
@@ -350,7 +350,7 @@ fn no_authorization_bypass_walk_owner() {
     let totals: [u16; STEPS] = kani::any();
     for i in 0..STEPS {
         // The firmware stamps the in-flight request's channel before every
-        // dispatch (`state.rs:355-359`).
+        // dispatch (`state.rs:357-361`).
         st.channel = if chans[i] { C1 } else { C2 };
 
         // The dispatch prologue (`lib.rs:128-135`); `retire_sequences_except`

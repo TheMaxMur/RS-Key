@@ -20,7 +20,7 @@
 [[assumption]]
 constant = "PowerOnClearsScratch2"
 statement = "A real RP2350 power-on reset clears WATCHDOG.scratch2, so the PIN soft-lock the previous cycle recorded does not ride through it."
-discharged_by = "A board measurement: write a known value to WATCHDOG.scratch2, cut power at the supply (not a warm reset — firmware/src/pin_lock.rs:52 writes the word on every CBOR dispatch, so the read must come from the first boot after), and read it back on the next boot. tests/54_sram_residue.py is the shape; the register is not SRAM, so it needs its own probe."
+discharged_by = "A board measurement: write a known value to WATCHDOG.scratch2, cut power at the supply (not a warm reset — firmware/src/pin_lock.rs:54 writes the word on every CBOR dispatch, so the read must come from the first boot after), and read it back on the next boot. tests/54_sram_residue.py is the shape; the register is not SRAM, so it needs its own probe."
 # Which way an unconfirmed assumption fails matters more than that it is
 # unconfirmed, and this one fails towards MORE locking, not less: a word that
 # rides a power cycle carries the mismatch batch with it. The undefined-register

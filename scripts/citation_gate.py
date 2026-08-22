@@ -96,12 +96,14 @@ page is ever padded with citations it does not mean just to clear one number.
 citations another agent's in-flight commits rotted while this guard was being
 written. Each names the commit that broke it and fails once it stops rotting.
 
-It resolves `.rs` citations only, wherever they are written. What it does not
-read is the rest of the tree's 11: `CHANGELOG.md` cites the tree as it stood at
-each entry, so those MUST be allowed to rot; `scripts/test_citation_gate.py`
-carries 46 fixture citations naming files that exist only in a fixture;
-`docs/guides/fips.md` writes `piv/keygen.rs:48`, a path fragment that resolves to
-nothing. Named here so each stays a decision. A citation *edited in place* still passes, and one that was
+It resolves `.rs` citations only, and only on `.rs` pages plus the named
+`formal/` ones. Thirteen other files cite and are not read; the largest are this
+guard and its own table, which quote the rotted examples they are about, and
+`CHANGELOG.md`, whose entries cite the tree as it stood and must be allowed to
+rot. Four prose files (`assurance/*.toml`, `docs/guides/fips.md`,
+`docs/token-refinement.md`) carry live model→code claims that only a person
+reads; two of them were found rotted by hand while this list was being written,
+and repaired. Named here so each stays a decision. A citation *edited in place* still passes, and one that was
 wrong the day it was written locks wrong — so the lock diff is a thing to read,
 not a proof it hands you. And [`SEARCH`] is
 a hand-written list; entries are asserted to exist, not to be used, so an entry
@@ -154,7 +156,7 @@ PAGES = (
 )
 
 #: Where a CITATION IN CODE lives. The `formal/` pages above are named one by
-#: one because there are fourteen of them and each was a decision; the code half
+#: one because there are thirteen of them and each was a decision; the code half
 #: is DERIVED, because it is not a decision — a Kani proof header or a fuzz
 #: target that cites code by line is making exactly the claim this row exists
 #: for, and transcribing which ones do is how the next one arrives unchecked.
@@ -162,18 +164,26 @@ PAGES = (
 #: the surrounding prose was never about — while the SAME three call sites,
 #: cited on the gated `formal/README.md`, had followed the code.
 #:
-#: `.rs` under these roots and nowhere else, and the exclusions are the reason:
-#: `CHANGELOG.md` cites the tree as it stood at each entry, so its citations MUST
-#: be allowed to rot; `scripts/test_citation_gate.py` holds 46 fixture citations
-#: naming files that exist only inside a fixture; `docs/guides/fips.md` writes
-#: `piv/keygen.rs:48`, a path fragment no rule can resolve. Those are named
-#: limits, not oversights — see "Limits" above.
-CODE_ROOTS = ("crates/", "firmware/", "fuzz/")
+#: `.rs` under these roots and nowhere else. The roots are every first-party
+#: Rust of the tree -- the workspace's two non-`crates/` members, the two detached
+#: workspaces under `tools/`, and the fuzz targets. `third_party/` is the one
+#: `.rs` directory left out, and it is left out because a vendored fork's
+#: citations are its author's, not this tree's. The rest of the exclusions are
+#: not Rust and each has its own reason. `CHANGELOG.md` cites the tree as it
+#: stood at each entry, so its citations MUST be allowed to rot; this guard's own
+#: fixtures, and `scripts/citation_gate.py` itself, quote the rotted examples they
+#: exist to describe; the two `assurance/*.toml` files and two `docs/` pages cite
+#: in prose and are read by nobody but a person. Named limits, not oversights —
+#: see "Limits" above.
+CODE_ROOTS = ("crates/", "firmware/", "fuzz/", "tools/", "rsk-wipe/")
 
 #: Below this the derivation found nothing and every code page silently went
 #: unchecked — the loop-over-an-empty-set shape. It is deliberately 1 and not a
 #: transcribed count: what ratchets the derived set is [`LOCK`], which turns a
-#: page that stops being read into one orphaned entry per citation it had.
+#: page that stops being read into one orphaned entry per citation it had -- by
+#: measurement, taking the set from 7 pages to 1 produces 34 orphan messages and
+#: no floor message. The floor is the only signal in exactly one state: a tree
+#: with no lock file at all, where every lock rule is skipped.
 CODE_PAGES_FLOOR = 1
 
 
@@ -183,7 +193,10 @@ def code_pages(root, tracked):
         pathlib.Path(rel)
         for rel in sorted(tracked)
         if rel.startswith(CODE_ROOTS)
-        and next(citations((root / rel).read_text()), None) is not None
+        # `errors="replace"`: `tree_files` lists untracked files too, and a `.rs`
+        # that is not valid UTF-8 would end this row in a traceback -- which reads
+        # as a broken guard, which is how a guard gets switched off.
+        and next(citations((root / rel).read_text(errors="replace")), None) is not None
     )
 
 
@@ -265,14 +278,22 @@ def floor_for(page):
 
 #: `path.rs:12`, `path.rs:12-20`, `path.rs:12-20, 44`, and the continuation
 #: `` `:44` `` that both pages use for a second reference to the same file. The
-#: bare form must sit right after a backtick so ordinary prose punctuation is not
-#: read as a line number.
+#: bare form must sit right after a backtick AND be closed by one: over the
+#: curated pages "a backtick before it" was enough, but the derived set is 450
+#: source files, where `` `LED_PERIOD_MS`: 250 ms `` is ordinary English and used
+#: to turn the row red with a message about a citation nobody wrote. Every real
+#: continuation in the tree is already closed (`` `:523-535` ``).
+#:
+#: A filename may not start right after a `:` either, or the path half of
+#: `https://host/path/pio.rs:120` reads as a citation to `//host/path/pio.rs` --
+#: realistic in an embedded crate that references upstream HAL source. Prose
+#: punctuation is unaffected: "see: state.rs:12" has a space in between.
 #: Every dash a prose editor can leave behind. An en dash reads as a citation to
 #: a single line with the upper bound silently discarded, in two pages whose prose
 #: already uses `—` and `·` throughout — measured: `state.rs:284–99991` passed.
 DASH = "-\u2010\u2011\u2012\u2013\u2014\u2212"
 CITE = re.compile(
-    r"(?:(?<![\w/.-])(?P<file>[\w./-]+\.rs)|(?<=`))"
+    r"(?:(?<![\w/.:-])(?P<file>[\w./-]+\.rs)|(?<=`)(?=:[^`]*`))"
     rf":\s*(?P<refs>\d+(?:\s*[{DASH}]\s*\d+)?(?:\s*,\s*\d+(?:\s*[{DASH}]\s*\d+)?)*)"
 )
 SPAN = re.compile(rf"(\d+)(?:\s*[{DASH}]\s*(\d+))?")
@@ -289,16 +310,22 @@ def resolve(rel, tracked, page=None):
     """
     if "/" in rel:
         return (rel, None) if rel in tracked else (None, None)
+    hits = [f"{d}/{rel}" for d in SEARCH if f"{d}/{rel}" in tracked]
+    if len(hits) == 1:
+        return hits[0], None
+    picked, why = AMBIGUOUS.get(rel, (None, None))
+    if picked in hits:
+        return picked, None
+    # Only now the sibling. Taken FIRST it silently outranked [`AMBIGUOUS`], which
+    # exists to stop exactly that: a page in `firmware/src/` citing `vendor.rs`
+    # would have got the 197-line file the registry says is not meant, with no
+    # complaint. As a tie-break it decides only what nothing else can.
     if page is not None:
         sibling = str(pathlib.PurePosixPath(page).parent / rel)
         if sibling in tracked:
             return sibling, None
-    hits = [f"{d}/{rel}" for d in SEARCH if f"{d}/{rel}" in tracked]
-    if len(hits) < 2:
-        return (hits[0] if hits else None), None
-    picked, why = AMBIGUOUS.get(rel, (None, None))
-    if picked in hits:
-        return picked, None
+    if not hits:
+        return None, None
     return hits[0], (
         f"`{rel}` is in {len(hits)} of the search directories"
         f" ({', '.join(hits)}); write the path, or register which one is meant"

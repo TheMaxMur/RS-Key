@@ -571,11 +571,79 @@ def test_a_bare_name_on_a_code_page_resolves_to_its_sibling(tree):
     assert tree.problems() == []
 
 
-def test_the_same_bare_name_on_a_model_page_is_still_reported(tree):
-    """The sibling rule is scoped to code pages: `formal/` holds no `.rs`
-    siblings, so nothing it cites can be re-pointed by it."""
+def test_the_sibling_never_outranks_the_registry(tree):
+    """It used to be taken FIRST, before `hits` was even computed, so on a code
+    page a bare name could not raise the ambiguity complaint and could not
+    consult [`AMBIGUOUS`] — reintroducing the silent first-hit-wins that registry
+    exists to stop, one layer down. As a tie-break it decides only what nothing
+    else can."""
+    tree.write("crates/rsk-device/src/clientpin.rs", "one line\n")
+    tracked = {str(rel) for rel in gate_lines.tree_files(tree.root) if rel.suffix == ".rs"}
+    was = dict(citation_gate.AMBIGUOUS)
+    citation_gate.AMBIGUOUS["clientpin.rs"] = ("crates/rsk-device/src/clientpin.rs", "measured")
+    try:
+        # The proof page's OWN directory holds a `clientpin.rs`; the registry says
+        # the other one is meant, and the registry wins.
+        picked, complaint = citation_gate.resolve("clientpin.rs", tracked, PROOF_PAGE)
+        assert picked == "crates/rsk-device/src/clientpin.rs", picked
+        assert complaint is None
+    finally:
+        citation_gate.AMBIGUOUS.clear()
+        citation_gate.AMBIGUOUS.update(was)
+
+
+def test_an_unambiguous_name_needs_no_sibling(tree):
+    """One hit in SEARCH is decided before the sibling is even looked at, so the
+    rule cannot re-point a name that was never in doubt."""
+    tracked = {str(rel) for rel in gate_lines.tree_files(tree.root) if rel.suffix == ".rs"}
+    assert citation_gate.resolve("clientpin.rs", tracked, PROOF_PAGE) == (
+        "crates/rsk-fido/src/clientpin.rs",
+        None,
+    )
+
+
+def test_a_bare_name_on_a_model_page_is_still_reported(tree):
+    """`formal/` holds no `.rs`, which is what makes the sibling rule unable to
+    reach a model page. Asserted, rather than left as a property of the tree."""
+    assert not [p for p in (tree.root / "formal").glob("*.rs")]
     tree.edit(MODEL_PAGE, "clientpin.rs:8", "lib.rs:8")
     assert only(tree.problems(), "search directories")
+
+
+def test_a_citing_file_under_tools_is_read(tree):
+    """`tools/` holds two detached Rust workspaces — 44 first-party `.rs` files
+    the first version of this list left out, where a nonsense citation was green."""
+    tree.write(
+        "tools/emu/src/main.rs",
+        "//! Mirrors the dispatch prologue (`clientpin.rs:99999`).\n",
+    )
+    assert only(tree.problems(), "which has")
+
+
+def test_an_ordinary_sentence_with_a_backticked_term_is_not_a_citation(tree):
+    """Over 13 curated pages "a backtick before it" was enough. Over 450 source
+    files `` `LED_PERIOD_MS`: 250 ms `` is English, and the row went red naming a
+    citation nobody wrote. Every real continuation is closed by a backtick."""
+    tree.write(
+        "crates/rsk-fido/src/quiet.rs",
+        "//! The blink budget is set by `LED_PERIOD_MS`: 250 ms per phase.\n",
+    )
+    assert tree.problems() == []
+
+
+def test_an_upstream_url_with_a_line_anchor_is_not_a_citation(tree):
+    """`https://host/a/b/pio.rs:120` used to read as a citation to
+    `//host/a/b/pio.rs` — realistic in a crate that references upstream HAL."""
+    tree.write(
+        "crates/rsk-fido/src/quiet.rs",
+        "//! Upstream: https://github.com/e/e/blob/main/src/pio.rs:120\n",
+    )
+    assert tree.problems() == []
+
+
+def test_a_source_file_that_is_not_utf8_does_not_end_the_row_in_a_traceback(tree):
+    (tree.root / "crates/rsk-fido/src/binary.rs").write_bytes(b"// \xff\xfe not utf-8\n")
+    assert tree.problems() == []
 
 
 def test_a_derivation_that_finds_nothing_trips_the_floor_and_the_lock(tree, monkeypatch):
@@ -584,14 +652,20 @@ def test_a_derivation_that_finds_nothing_trips_the_floor_and_the_lock(tree, monk
     tree.lock()
     monkeypatch.setattr(citation_gate, "CODE_ROOTS", ("no-such-root/",))
     problems = tree.problems()
-    assert only(problems, "under the floor of"), problems
+    # The derived-set message, not the per-page one — both say "under the floor
+    # of", and a case that cannot tell them apart is one fixture edit from noise.
+    assert only(problems, "the derivation stopped finding them"), problems
     assert only(problems, "which no longer cites it"), problems
 
 
 def test_a_citing_file_outside_the_code_roots_is_not_read(tree):
-    """A named limit, asserted so it stays a decision: `CHANGELOG.md` cites the
-    tree as it stood at each entry and MUST be allowed to rot, and the fixtures
-    in this very file name files that exist only inside a fixture."""
-    tree.write("tools/probe.rs", "// a citation nothing checks (`clientpin.rs:9999`)\n")
-    assert "tools/probe.rs" not in code_pages_of(tree)
+    """A named limit, asserted so it stays a decision. `third_party/` is the one
+    `.rs` directory left out — a vendored fork's citations are its author's — and
+    `CHANGELOG.md`, which cites the tree as it stood at each entry and MUST be
+    allowed to rot, is not Rust at all."""
+    tree.write(
+        "third_party/fork/src/probe.rs",
+        "// a citation nothing checks (`clientpin.rs:9999`)\n",
+    )
+    assert "third_party/fork/src/probe.rs" not in code_pages_of(tree)
     assert tree.problems() == []
