@@ -129,6 +129,20 @@ impl<S: Storage> Fs<S> {
 /// else" is indistinguishable from "the write kept the one file we looked at".
 pub const VIEW_FIDS: [u16; 3] = [0x0301, 0x0302, 0x0455];
 
+/// The VALUES are not load-bearing — measured, seven different triples (adjacent,
+/// one map byte, far apart, around EF_META) give an identical verdict on the
+/// shipped tree and on every mutant. The one thing that is: none may BE a record
+/// the store keeps for itself, or a `Put` would be writing the metadata blob and
+/// no recorder would notice.
+const _: () = assert!(
+    VIEW_FIDS[0] != crate::EF_META
+        && VIEW_FIDS[1] != crate::EF_META
+        && VIEW_FIDS[2] != crate::EF_META
+        && VIEW_FIDS[0] != crate::EF_SCRUB_FILLER
+        && VIEW_FIDS[1] != crate::EF_SCRUB_FILLER
+        && VIEW_FIDS[2] != crate::EF_SCRUB_FILLER
+);
+
 /// `RSKeyStore`'s PERSISTENT half over the whole projected population at once,
 /// read through the primitives a reader uses: `meta_find` for `meta[f]`,
 /// `has_data` for `val[f] # NoVal`, and EF_META's own present cache for
@@ -137,7 +151,10 @@ pub const VIEW_FIDS: [u16; 3] = [0x0301, 0x0302, 0x0455];
 pub struct StoreView {
     /// Whether EF_META holds a record for each of [`VIEW_FIDS`].
     pub meta: [bool; VIEW_FIDS.len()],
-    /// Whether each of [`VIEW_FIDS`] has a value.
+    /// Whether each of [`VIEW_FIDS`] has a value. `has_data`, so a zero-length
+    /// value reads FALSE here while `present_bit` calls it present — the model's
+    /// `val[f] # NoVal` is the latter. The alphabet writes one non-empty value,
+    /// which is the only thing keeping the two spellings from diverging.
     pub val: [bool; VIEW_FIDS.len()],
     /// The model's `metaAbsent`: EF_META reads confirmed-absent.
     pub meta_absent: bool,
@@ -161,6 +178,11 @@ impl<S: Storage> Fs<S> {
     /// that is still there. Measured — the first version of the faulting sweep
     /// reported `NoRecordLostToMetaWrite` on the shipped tree for exactly that.
     /// A caller that arms a fault must disarm it before reading.
+    ///
+    /// What it does NOT restore is the backend's error latch: the reads it makes
+    /// leave `Storage::last_error()` reporting on THEM. Harmless only because
+    /// every consumer in `Fs` reads the latch immediately after its own call —
+    /// an invariant nothing states, so it is stated here.
     pub fn read_store_view(&mut self) -> StoreView {
         let cached = (self.present, self.decided);
         let absent = self.known_absent(crate::EF_META);

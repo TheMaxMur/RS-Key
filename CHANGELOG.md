@@ -40,6 +40,31 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Added
 
+- **The store sweep's middle recorder had no teeth, and the reason it could not
+  be a Kani proof was the wrong reason.** Both found by review. The faulting
+  medium failed writes as well as reads, and `NoRecordLostToMetaWrite`'s loss
+  needs the EF_META read to fail while the rewrite LANDS — so
+  `BugMetaAddDropsOnFault`, its own co-mutant, **survived**. Read-only faults now,
+  which is what the docstring always claimed, and all three recorders have a kill
+  from their own co-mutant. The sweeps also passed while driving nothing: `drive`
+  ignores every `Result`, so making `put` and `meta_add` inert left ~26 000 dead
+  steps green. Four live-read counters per sweep are the host's `kani::cover!`,
+  and they are what would have caught the write-fault blinding without a mutant.
+  And the claim "no metadata path can run under `cfg(kani)` at all" is **false**:
+  the blocker is `EF_META`'s value, not the map's width, and a one-line
+  `#[cfg(kani)]` alias makes the probe pass in 0.244 s with two fault-site
+  obligations at 0.107 s each — what genuinely times out (>420 s) is the clauses
+  over a MEDIUM. Recorded as a cheap win not taken here, because it redefines a
+  public constant and moves two registry rows.
+- **And the faulted-`Delete` carve-out was hiding a broader defect than it
+  described.** Not a meta-only-file curiosity: over a medium whose EF_META read
+  fails once and then works, `Fs::delete` of a file that HAS data returns `Ok(())`
+  with the value gone and the record standing — the 0x077C end state, no power
+  cut. Reachable on hardware, and `rsk-piv`'s `files.rs:302-310` already reaches
+  for `force_delete` because of it. Two ways to close it are named in
+  [store-refinement.md](docs/store-refinement.md); both change what `delete`
+  returns to every applet, so both are the maintainer's.
+
 - **The `changePIN` length pair is driven at last, and the mutation that stood
   open turns out to reach an unauthenticated panic.** `clientpin.rs:241-243`
   refuses `newPinEnc` and `pinHashEnc` together; a cargo-mutants MISSED row

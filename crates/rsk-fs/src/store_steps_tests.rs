@@ -42,6 +42,9 @@ enum Step {
     Delete(usize),
     MetaAdd(usize),
     MetaDelete(usize),
+    /// Not in [`ALPHABET`] — a marker in a printed trail, so a counterexample
+    /// from the reboot sweep names the sequence that actually ran.
+    Reboot,
 }
 
 const ALPHABET: [Step; 12] = [
@@ -65,7 +68,13 @@ const ALPHABET: [Step; 12] = [
 /// observations. Reading a view through a dead medium answers `None` for a record
 /// that is still on it, and every refused write then looks like a lost record —
 /// measured, and it is the reason this parameter exists rather than a comment.
-fn drive<S: Storage>(fs: &mut Fs<S>, step: Step, trail: &[Step], arm: &mut dyn FnMut(bool)) {
+fn drive<S: Storage>(
+    fs: &mut Fs<S>,
+    step: Step,
+    trail: &[Step],
+    arm: &mut dyn FnMut(bool),
+    live: &mut [usize; 4],
+) {
     arm(false);
     let before: StoreView = fs.read_store_view();
     // A fault is armed only for the two actions the model gives one. `MetaAdd`
@@ -88,6 +97,13 @@ fn drive<S: Storage>(fs: &mut Fs<S>, step: Step, trail: &[Step], arm: &mut dyn F
             let _ = fs.delete(VIEW_FIDS[i]);
             arm(false);
             let after = fs.read_store_view();
+            live[0] += usize::from(before.meta[i]);
+            // And a delete of a file that HAD a value, which is the only thing
+            // `Step::Put` is in the alphabet for: without it `val` is constant
+            // FALSE and the recorder's second conjunct is never exercised in the
+            // direction that SUPPRESSES it. Measured — with `put` inert the three
+            // clauses stayed green on every other counter.
+            live[3] += usize::from(before.val[i]);
             assert!(
                 !delete_orphaned_metadata(&after, i),
                 "NoOrphanedMetadata: {trail:?} then {step:?} left a record over a gone value"
@@ -97,15 +113,18 @@ fn drive<S: Storage>(fs: &mut Fs<S>, step: Step, trail: &[Step], arm: &mut dyn F
             let _ = fs.meta_add(VIEW_FIDS[i], b"m");
             arm(false);
             let after = fs.read_store_view();
+            live[1] += usize::from((0..VIEW_FIDS.len()).any(|j| j != i && before.meta[j]));
             assert!(
                 !meta_add_lost_a_record(&before, &after, i),
                 "NoRecordLostToMetaWrite: {trail:?} then {step:?} dropped a bystander's record"
             );
         }
+        Step::Reboot => unreachable!("a marker for a printed trail, never driven"),
         Step::MetaDelete(i) => {
             let _ = fs.meta_delete(VIEW_FIDS[i]);
             arm(false);
             let after = fs.read_store_view();
+            live[2] += usize::from((0..VIEW_FIDS.len()).any(|j| j != i && before.meta[j]));
             assert!(
                 !meta_delete_false_absent(&after),
                 "NoFalseMetaAbsent: {trail:?} then {step:?} cached absence over a live record"
@@ -120,6 +139,7 @@ fn walk<S: Storage>(
     code: u32,
     len: u32,
     arm: &mut dyn FnMut(bool),
+    live: &mut [usize; 4],
 ) -> std::vec::Vec<Step> {
     let n = ALPHABET.len() as u32;
     let mut trail = std::vec::Vec::new();
@@ -127,10 +147,34 @@ fn walk<S: Storage>(
     for _ in 0..len {
         let step = ALPHABET[(rest % n) as usize];
         rest /= n;
-        drive(fs, step, &trail, arm);
+        drive(fs, step, &trail, arm, live);
         trail.push(step);
     }
     trail
+}
+
+const RECORDERS: [&str; 4] = [
+    "NoOrphanedMetadata",
+    "NoRecordLostToMetaWrite",
+    "NoFalseMetaAbsent",
+    "NoOrphanedMetadata over a file that had a value",
+];
+
+/// Every recorder must have been READ from a state it could have refused in.
+///
+/// Without this the sweeps pass while driving nothing: `drive` ignores every
+/// `Result`, so making `put` and `meta_add` return `Err` left ~26 000 steps green
+/// — a store that never changes never violates anything. This is `kani::cover!`
+/// for a host sweep, and it is what would have caught the faulting medium
+/// blinding `NoRecordLostToMetaWrite` without needing a mutant to say so.
+#[track_caller]
+fn assert_every_recorder_was_live(live: [usize; 4]) {
+    for (count, name) in live.iter().zip(RECORDERS) {
+        assert!(
+            *count > 0,
+            "{name} was never read from a state it could refuse"
+        );
+    }
 }
 
 /// The RAM sweeps' `arm`: nothing to turn on or off.
@@ -139,17 +183,21 @@ fn never(_: bool) {}
 /// Every sequence of three steps over the twelve, against a fresh store.
 ///
 /// Exhaustive rather than sampled: 12³ = 1728 orderings, 5184 steps, and a
-/// recorder is read after each of the 3888 that have one. Three is the length at
-/// which every recorder's own precondition is reachable — a `MetaAdd` to make a
-/// bystander's record, a second one to try to drop it, and a `Delete` or
-/// `MetaDelete` to close.
+/// recorder is read after each of the 3888 that have one. TWO is the length at
+/// which each recorder's precondition first becomes reachable — measured, every
+/// mutant that this sweep kills is already RED at LEN = 2, with
+/// `[MetaAdd(0)] then Delete(0)` and `[MetaAdd(1)] then MetaAdd(0)`. Three is
+/// chosen so one sequence can reach a precondition, exercise it and close over
+/// it; it costs 12× the orderings and buys no new witness.
 #[test]
 fn every_three_step_sequence_keeps_the_persistent_clauses() {
     const LEN: u32 = 3;
+    let mut live = [0usize; 4];
     for code in 0..(ALPHABET.len() as u32).pow(LEN) {
         let mut fs = Fs::new(RamStorage::new());
-        walk(&mut fs, code, LEN, &mut never);
+        walk(&mut fs, code, LEN, &mut never, &mut live);
     }
+    assert_every_recorder_was_live(live);
 }
 
 /// The same walk over a store the caller never scanned, which is the state a
@@ -159,15 +207,22 @@ fn every_three_step_sequence_keeps_the_persistent_clauses() {
 #[test]
 fn every_three_step_sequence_survives_an_unscanned_reboot_between_them() {
     const LEN: u32 = 3;
+    let mut live = [0usize; 4];
     for code in 0..(ALPHABET.len() as u32).pow(LEN) {
         let mut fs = Fs::new(RamStorage::new());
-        let trail = walk(&mut fs, code, LEN, &mut never);
+        let mut trail = walk(&mut fs, code, LEN, &mut never, &mut live);
         // Same medium, caches gone — `Fs::new` without `scan`.
         let mut rebooted = Fs::new(fs.into_storage());
+        trail.push(Step::Reboot);
         for step in ALPHABET {
-            drive(&mut rebooted, step, &trail, &mut never);
+            // The trail GROWS. It used to be the PRE-reboot prefix handed to all
+            // twelve, so a counterexample named a sequence that never ran and
+            // could not be replayed from its own message.
+            drive(&mut rebooted, step, &trail, &mut never, &mut live);
+            trail.push(step);
         }
     }
+    assert_every_recorder_was_live(live);
 }
 
 /// A medium whose reads fail while the budget is armed, so the walk meets
@@ -201,16 +256,20 @@ impl Storage for FaultAfter {
         }
         self.inner.read(fid, buf)
     }
+    // READS ONLY, which is what the docstring above always said. The first
+    // version faulted the writes too and that made the whole of
+    // `NoRecordLostToMetaWrite` unreachable: its loss needs the EF_META read to
+    // fail AND the rewrite to LAND, so with the write failing as well
+    // `meta_add_reserve`'s `?` propagated and the blob was never touched — the
+    // sweep stayed GREEN under `BugMetaAddDropsOnFault`, its own co-mutant. A
+    // read that fails while an append succeeds is also the realistic shape for a
+    // log-structured backend: a CRC failure on one item, a fresh page for the next.
     fn write(&mut self, fid: u16, data: &[u8]) -> Result<()> {
-        if self.faulting() {
-            return Err(rsk_sdk::error::Error::MemoryFatal);
-        }
+        self.err = false;
         self.inner.write(fid, data)
     }
     fn remove(&mut self, fid: u16) -> Result<()> {
-        if self.faulting() {
-            return Err(rsk_sdk::error::Error::MemoryFatal);
-        }
+        self.err = false;
         self.inner.remove(fid)
     }
     fn size(&mut self, fid: u16) -> Option<usize> {
@@ -238,6 +297,7 @@ impl Storage for FaultAfter {
 #[test]
 fn every_two_step_sequence_over_a_failing_medium_keeps_them_too() {
     const LEN: u32 = 2;
+    let mut live = [0usize; 4];
     let armed = std::rc::Rc::new(std::cell::Cell::new(false));
     for code in 0..(ALPHABET.len() as u32).pow(LEN) {
         let mut seed = Fs::new(RamStorage::new());
@@ -251,8 +311,11 @@ fn every_two_step_sequence_over_a_failing_medium_keeps_them_too() {
         // No `scan`: EF_META is UNKNOWN, so the fault is met head-on.
         let mut fs = Fs::new(medium);
         let handle = armed.clone();
-        walk(&mut fs, code, LEN, &mut move |on| handle.set(on));
+        walk(&mut fs, code, LEN, &mut move |on| handle.set(on), &mut live);
     }
+    // The two the fault is armed for; `Delete` is never faulted here, so its
+    // recorder is the RAM sweeps' to cover.
+    assert!(live[1] > 0 && live[2] > 0, "{live:?}");
 }
 
 /// The recorders have to be able to FIRE, or the two sweeps above are a loop
