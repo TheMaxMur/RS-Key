@@ -2678,8 +2678,40 @@ assertion now, and that is the stronger form: it is about the *shipped* width,
 where a proof would only have covered the FIDs a harness enumerated.
 
 `SEC-STORE-002` is `BOUNDED` on the strength of three of these; the other three
-store properties stay `MODELLED-ONLY`, because their evidence is the power-cut
-oracle's and connecting *that* to the model is the next increment. `Scan`'s
+store properties stay `MODELLED-ONLY`.
+
+**The obvious way to bridge them was tried, and it is a copy compared to
+itself.** Write the model's per-FID steps as Rust predicates — `Delete(f)`'s
+`\E k \in 1..2` as `k1 || k2 || stutter`, and so on — then hold them against
+`powercut.rs`'s four `*_landed` rules. Measured over a five-valued domain, wider
+than any test would walk: **0 disagreements, for all four actions.** They are the
+same boolean function. `delete_landed`'s `untouched` disjunct expands to
+`stutter \/ k1` and its second disjunct IS `k2`; the conjuncts a comparison
+"holds at their old value" to avoid cancelling are constantly true instead, and
+mutating them away kills nothing.
+
+The reason is in the module's own comments, and it says what a real bridge needs:
+
+* `NoOrphanedMetadata` and `NoFalseMetaAbsent` are **step recorders**. A
+  meta-only file — a `meta_add` with no `put` — legally has metadata and no
+  value, so the violation is a record OUTLIVING a delete, not a state. A state
+  predicate over one observed record is a strictly stronger, wrong claim, and it
+  **panics on correct `Fs` behaviour**: a meta-only file whose delete is cut
+  before the metadata write lands leaves exactly that shape, which the
+  `power_cut` fuzz target can reach.
+* `NoRecordLostToMetaWrite` is **cross-FID** — a `meta_add` of one FID dropping
+  another's committed record. One `Record` cannot express it, and neither can
+  `meta_add_landed`, so the two agree by shared blindness rather than by
+  agreement.
+* `dead` and `metaAbsent`, the two variables such a bridge would be named after,
+  have no per-FID face at all.
+
+So the persistent half needs a multi-FID projection with step recorders — the
+same shape the module itself had to adopt — and not four more predicates. What
+this attempt did leave behind is one power-cut shape nothing had driven: the
+delete of a **meta-only** file, from both sides of the cut. Honest limit: every
+mutation driven against it is killed by a sibling test as well; what it adds is
+the state shape, which is the one the module singles out. `Scan`'s
 truncated-walk clause needs a medium that can truncate rather than a bitmap, so
 it stays a unit test. The full map and its limits are in
 `docs/store-refinement.md`.

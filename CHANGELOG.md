@@ -40,6 +40,21 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Added
 
+- **The store model's persistent half cannot be bridged the obvious way, and the
+  measurement says so.** Writing `RSKeyStore`'s per-FID steps as Rust predicates
+  and holding them against `powercut.rs`'s four `*_landed` rules produces the
+  SAME boolean function each time — 0 disagreements over a five-valued domain —
+  because `delete_landed`'s `untouched` disjunct expands to the model's stutter
+  plus `k = 1`, and its other disjunct is `k = 2`. It is a copy compared to
+  itself. The module's own comments say why: two of the three unbridged
+  properties are step recorders (a meta-only file legally has metadata and no
+  value, so a state predicate over one record is a stronger, wrong claim that
+  panics on correct behaviour) and the third is cross-FID. A real bridge needs a
+  multi-FID projection with step recorders. Recorded in `formal/README.md` and
+  `docs/store-refinement.md` so the next attempt does not repeat it — and one
+  power-cut shape nothing had driven is closed on the way: the delete of a
+  metadata-only file, from both sides of the cut.
+
 - **The assumption's other arm is exercised by the mutants, and the rule that
   says so now checks what its message claims.** `358755f` measured that all three
   boot mutants redden on the `FALSE` arm of `PowerOnClearsScratch2` too, and on

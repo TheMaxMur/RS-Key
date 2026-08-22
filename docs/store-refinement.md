@@ -74,10 +74,17 @@ ever have covered the FIDs a harness enumerated.
 
 ## What this is not
 
-- **Not the persistent half.** `NoOrphanedMetadata`, `NoRecordLostToMetaWrite`
-  and `NoFalseMetaAbsent` stay `MODELLED-ONLY`; their evidence is the power-cut
-  oracle's, and connecting it to the model the way this pilot connects the cache
-  is the next increment.
+- **Not the persistent half, and the obvious way to add it does not work.**
+  `NoOrphanedMetadata`, `NoRecordLostToMetaWrite` and `NoFalseMetaAbsent` stay
+  `MODELLED-ONLY`. The tempting move is to write the model's per-FID steps as
+  Rust predicates and hold them against `powercut.rs`; it was tried and measured,
+  and each predicate comes out as the *same boolean function* as its `*_landed`
+  twin — 0 disagreements over a five-valued domain, which is a copy compared to
+  itself. The reason is in the module's own comments: two of the three are STEP
+  recorders (a meta-only file legally has metadata and no value, so the violation
+  is a record outliving a delete rather than a state) and the third is CROSS-FID
+  (a `meta_add` dropping ANOTHER FID's record). A per-FID state projection can
+  carry none of them. `formal/README.md`'s phase 7 has the numbers.
 - **Not `Scan`.** The model's truncated-walk clause needs a backend that can
   truncate, which is a medium, not a bitmap. `fs_tests.rs` carries it; Kani does
   not.
