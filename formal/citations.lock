@@ -112,8 +112,8 @@ formal/README.md	crates/rsk-fs/src/fs.rs	363-363	if !preserve(fid) && phase_of(f
 formal/README.md	crates/rsk-fs/src/fs.rs	434-439	/// rather than `known_absent`: an UNKNOWN FID is skipped, not confirmed. This	/// of it confirms-and-caches it present, after which delete works normally.
 formal/README.md	crates/rsk-fs/src/fs.rs	447-447	self.dynamic.retain(|&f| f != fid);	self.dynamic.retain(|&f| f != fid);
 formal/README.md	crates/rsk-fs/src/fs.rs	546-546	let n = if self.known_absent(EF_META) {	let n = if self.known_absent(EF_META) {
-formal/README.md	crates/rsk-fs/src/fs.rs	578-578	// Absent means there is nothing to drop; a FAILED read means we do not	// Absent means there is nothing to drop; a FAILED read means we do not
-formal/README.md	crates/rsk-fs/src/fs.rs	580-580	None if self.storage.last_error() => return Err(Error::MemoryFatal),	None if self.storage.last_error() => return Err(Error::MemoryFatal),
+formal/README.md	crates/rsk-fs/src/fs.rs	583-583	// Absent means there is nothing to drop; a FAILED read means we do not	// Absent means there is nothing to drop; a FAILED read means we do not
+formal/README.md	crates/rsk-fs/src/fs.rs	585-585	None if self.storage.last_error() => return Err(Error::MemoryFatal),	None if self.storage.last_error() => return Err(Error::MemoryFatal),
 formal/README.md	crates/rsk-fs/src/lib.rs	26-46	/// Set (`[1]`) once the post-OTP-provisioning at-rest hardening pass has run: the seal	let _ = fs.delete(EF_HARDENED);
 formal/README.md	crates/rsk-fs/src/lib.rs	46-46	let _ = fs.delete(EF_HARDENED);	let _ = fs.delete(EF_HARDENED);
 formal/README.md	crates/rsk-oath/src/lib.rs	327-329	if !self.validated {	}
@@ -390,8 +390,8 @@ formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	540-566	pub fn meta_add_reserve(&m
 formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	546-546	let n = if self.known_absent(EF_META) {	let n = if self.known_absent(EF_META) {
 formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	546-548	let n = if self.known_absent(EF_META) {	} else {
 formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	553-555	if r.is_none() && self.storage.last_error() {	}
-formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	571-601	pub fn meta_delete(&mut self, fid: u16) -> Result<()> {	}
-formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	580-580	None if self.storage.last_error() => return Err(Error::MemoryFatal),	None if self.storage.last_error() => return Err(Error::MemoryFatal),
+formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	576-606	pub fn meta_delete(&mut self, fid: u16) -> Result<()> {	}
+formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	585-585	None if self.storage.last_error() => return Err(Error::MemoryFatal),	None if self.storage.last_error() => return Err(Error::MemoryFatal),
 formal/RSKeyStore.tla	crates/rsk-fs/src/powercut.rs	43-51	pub fn delete_landed(	}
 formal/RSKeyStore.tla	crates/rsk-fs/src/powercut_model.rs	47-47	fn dead(&self) -> bool;	fn dead(&self) -> bool;
 formal/RSKeyTransport.tla	crates/rsk-usb/src/ctaphid.rs	209-209	#[cfg(not(kani))]	#[cfg(not(kani))]

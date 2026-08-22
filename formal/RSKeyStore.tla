@@ -78,7 +78,7 @@ CONSTANTS
     \* scratch would drop every other applet's record. The switch treats the
     \* faulted read as an empty blob, wiping them.
     BugMetaAddDropsOnFault,
-    \* fs.rs:580 -- `meta_delete` refuses a FAILED EF_META read (MemoryFatal)
+    \* fs.rs:585 -- `meta_delete` refuses a FAILED EF_META read (MemoryFatal)
     \* rather than caching it as absence. The switch caches it, and the damage is
     \* the write AFTER: `meta_add` trusts `known_absent` and rebuilds from empty.
     BugMetaDeleteDropsOnFault
@@ -89,7 +89,7 @@ CONSTANTS
 Vals  == {"v1", "v2"}
 NoVal == "none"
 
-InvNames == { "NoOrphanedMetadata", "NoFalseAbsent", "NoRecordLostToMetaWrite",
+InvNames == { "NoOrphanedMetadata", "NoRecordLostToMetaWrite",
               "NoFalseMetaAbsent" }
 
 VARIABLES
@@ -179,8 +179,8 @@ MetaAdd(f) ==
                THEN {"NoRecordLostToMetaWrite"} ELSE {})
        /\ UNCHANGED << val, present, decided, dead >>
 
-\* `Fs::meta_delete` (fs.rs:571-601): drop `fid`'s record, and clear EF_META
-\* once the last one goes. A FAILED read of EF_META must refuse (fs.rs:580) --
+\* `Fs::meta_delete` (fs.rs:576-606): drop `fid`'s record, and clear EF_META
+\* once the last one goes. A FAILED read of EF_META must refuse (fs.rs:585) --
 \* the switch caches it as absence instead, which is the door `meta_add`'s twin
 \* mutant does not reach: the loss happens on the NEXT write, not this one.
 MetaDelete(f) ==
@@ -336,6 +336,31 @@ NoRecordLostToMetaWrite == "NoRecordLostToMetaWrite" \notin viol
 \* so a false absent here loses every record on the next write rather than this
 \* one. A step recorder, because the losing write is legitimate once the cache
 \* has lied -- no state predicate over `meta` can tell the two apart.
+\*
+\* One over `metaAbsent` AND `meta` can, and `CacheHonest` below is it: measured,
+\* it reddens BugMetaDeleteDropsOnFault in the same 42 distinct states this ghost
+\* does. So the two are the same defect at different moments -- this names the
+\* losing WRITE, that names the state the cache is left in -- and the sentence
+\* above is true only of a predicate over `meta` alone.
 NoFalseMetaAbsent == "NoFalseMetaAbsent" \notin viol
+
+(***************************************************************************)
+(* THE INDUCTION PROBE. Everything above is checked over what `Init` can     *)
+(* REACH. `StoreInduction.cfg` asks the stronger question with the same      *)
+(* checker: does one step from ANY type-correct state the invariants admit    *)
+(* land in one that still does?                                              *)
+(***************************************************************************)
+StoreInv == NoOrphanedMetadata /\ NoFalseAbsent /\ NoRecordLostToMetaWrite
+              /\ NoFalseMetaAbsent
+
+\* SEC-STORE-005, AND THE CONJUNCT THE INDUCTION PROBE NAMED. `StoreInv` alone is
+\* not inductive: from a state where the cache says EF_META is absent while a
+\* record stands -- type-correct, and no invariant above forbids it -- `MetaAdd`
+\* trusts the cache, rebuilds the blob from empty and loses the other FID's
+\* record. Checked on the reachable states too (`Store.cfg`, bit-identical at 364
+\* distinct), because an induction step without `Init => IndInv` proves nothing.
+CacheHonest == metaAbsent => \A f \in Fids : ~meta[f]
+
+IndInv == TypeOK /\ StoreInv /\ CacheHonest
 
 =============================================================================

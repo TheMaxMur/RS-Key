@@ -209,4 +209,19 @@ MarkerNeverLies == ~(marker /\ weak > 0)
 \* half the word, which is the laundering pin_lock.rs:18-21 names.
 TheWholeLockRides == (phase = "serving") => (lock = recorded)
 
+(***************************************************************************)
+(* THE INDUCTION PROBE. Everything above is checked over the states `Init`   *)
+(* can REACH. This asks the stronger question TLC can also answer alone:     *)
+(* does one step of `Next` from ANY type-correct state satisfying the two    *)
+(* invariants land in one that still does?                                   *)
+(*                                                                           *)
+(* `BootInduction.cfg` runs it as `INIT IndInv` / `NEXT Next` -- so TLC       *)
+(* starts from every such state rather than from `Init`, and a violation is   *)
+(* a one-step counterexample to inductiveness rather than to the invariant.   *)
+(* A GREEN row is a proof that needs no reachability argument, which is what  *)
+(* a deductive prover would be bought for; a RED one names the conjunct the   *)
+(* invariant is missing, which is the more useful answer of the two.          *)
+(***************************************************************************)
+IndInv == TypeOK /\ MarkerNeverLies /\ TheWholeLockRides
+
 =============================================================================

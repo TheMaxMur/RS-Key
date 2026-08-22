@@ -263,6 +263,13 @@ statement = "EF_META's own presence cache reports absence only when no metadata 
 source = ["docs/architecture.md"]
 
 [[property]]
+id = "SEC-STORE-005"
+name = "CacheHonest"
+status = "MODELLED-ONLY"
+statement = "EF_META's presence cache says absent only when no metadata record stands, which is what makes a rebuild-from-empty safe."
+source = ["audit run-36", "formal/README.md — the induction probes"]
+
+[[property]]
 id = "SEC-LAT-001"
 name = "NoAuthWhenBlocked"
 status = "MODELLED-ONLY"

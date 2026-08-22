@@ -40,6 +40,28 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Added
 
+- **Two induction probes, and the store's named a conjunct the model relies on
+  and never stated.** Running an invariant as TLC's INIT predicate with `Next` as
+  the next-state relation asks whether one step from ANY state the invariant
+  admits lands inside it — a proof that needs no reachability argument, and no
+  second tool. `RSKeyBootHardening` is inductive as it stands (48 admitted
+  states, GREEN). `RSKeyStore` is not: from a type-correct state where the cache
+  says `EF_META` is absent while a record stands, `MetaAdd` trusts it and rebuilds
+  the blob from empty — SEC-STORE-004's damage arriving from a state rather than
+  from the step that made the cache lie. `CacheHonest == metaAbsent => \A f :
+  ~meta[f]` is the conjunct the counterexample named; it is `SEC-STORE-005` now
+  and `Store.cfg` checks it on the reachable states too, because an induction
+  step without `Init => IndInv` proves nothing (and it costs nothing: 364
+  distinct, unchanged). Two things fell out beside it: `"NoFalseAbsent"` was an
+  `InvNames` member no step ever wrote, and the runner's rule for these rows
+  is `depth = 1` — every successor already being initial IS the claim, where
+  the first version's `states > distinct` could never fail. One mutant probe per
+  module rather than nine: `Init` satisfies `IndInv`, so the induction rows fire
+  on a superset of their `*Solo_` twins' conditions and cannot see a mutant that
+  stopped firing. **TLAPS stays "not now"**, and the reason is the measurement:
+  the result it would be bought for arrived in a second, and the useful half was
+  the counterexample. Formal artefacts and host tooling only.
+
 - **The store model's persistent half cannot be bridged the obvious way, and the
   measurement says so.** Writing `RSKeyStore`'s per-FID steps as Rust predicates
   and holding them against `powercut.rs`'s four `*_landed` rules produces the

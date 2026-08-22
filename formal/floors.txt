@@ -24,8 +24,8 @@
 
 Shipped.cfg                          GREEN   20000000
 Seams.cfg                            GREEN   200
-\* The flash layer (RSKeyStore): a small exhaustive space -- 272 distinct at
-\* depth 7 -- so its floor is set near a third, the same rule as its siblings.
+\* The flash layer (RSKeyStore): a small exhaustive space -- 364 distinct at
+\* depth 6 -- so its floor is set near a third, the same rule as its siblings.
 Store.cfg                            GREEN   90
 \* The retry/recovery lattice (RSKeyRetryLattice): 243 distinct at depth 11, five
 \* budgeted references over a ceiling of two -- a third is the floor here too.
@@ -127,6 +127,15 @@ SeamMut_*.cfg                        RED     -
 SeamSolo_*.cfg                       RED     -
 StoreMut_*.cfg                       RED     -
 StoreSolo_*.cfg                      RED     -
+\* The store's induction probe, and it is the one that FOUND something.
+\* `StoreInv` alone is not inductive: from a type-correct state where the cache
+\* says EF_META is absent while a record stands, `MetaAdd` trusts it and rebuilds
+\* the blob from empty. `CacheHonest` is the conjunct the counterexample named.
+\* 1000 of the module's type-correct states survive `IndInv`; the floor is that
+\* count, because below it the predicate stopped admitting what it admitted.
+StoreInduction.cfg                   GREEN   1000
+\* One mutant, for the reason the boot family's row gives.
+StoreInductionMut_*.cfg              RED     -
 LatMut_*.cfg                         RED     -
 LatSolo_*.cfg                        RED     -
 PolicyMut_*.cfg                      RED     -
@@ -143,6 +152,21 @@ BootSolo_*.cfg                       RED     -
 \* a RED here names the same defect the TRUE arm's row names -- a full-invariant
 \* configuration would let a sibling report a mutant gone unreachable.
 BootCarryMut_*.cfg                   RED     -
+\* The induction probe: `INIT IndInv` / `NEXT Next`, so every type-correct state
+\* the invariants admit is an initial state. DEPTH 1 is the claim -- every
+\* successor already being initial IS `IndInv /\ Next => IndInv'` -- and the
+\* runner holds these rows to it instead of to the vacuity depth floor, which
+\* would refuse them all. 48 of the module's 108 type-correct states survive
+\* `IndInv`; the floor is that count. Both probes pin the scratch word CLEARED:
+\* what they vary is the state, not the hardware assumption.
+BootInduction.cfg                    GREEN   48
+\* ONE mutant of it, and only one. `Init` satisfies `IndInv`, so a defect that
+\* breaks the step from an admitted state also breaks it from a reachable one --
+\* the induction mutants fire on a SUPERSET of their `*Solo_` twins' conditions
+\* and so cannot see a mutant that stopped firing, which is what the verdict
+\* column exists for. This row says the INIT/NEXT wiring can go red; the Solo
+\* rows are what carry the defects.
+BootInductionMut_*.cfg               RED     -
 TransMut_*.cfg                       RED     -
 TransSolo_*.cfg                      RED     -
 LiveMut_*.cfg                        RED     -

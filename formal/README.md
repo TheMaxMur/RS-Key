@@ -275,11 +275,11 @@ split three ways, and the split is the point.
 |---|---|
 | **Equivalent, not a defect** | `ctaphid.rs:420` `\|` → `^` on `(f[5] << 8) \| f[6]` — disjoint bits, the two operators agree |
 | **Fail-safe direction** | `ctaphid.rs:431` `>` → `>=` refuses an exactly-maximum message: stricter, so `NoBufferOverrun` still holds. `fs.rs:147` and `fs.rs:190` `\|=` → `&=` clear *decided* bits, which sends more reads to the reliable backend |
-| **Model-blind** | the dynamic-file registry in `scan` (`fs.rs:195` and `fs.rs:198`, three mutants), `has_data`'s zero-length test (`fs.rs:250`), `factory_wipe`'s 64-key batch bound (`fs.rs:363`), the registry retain in `delete` (`fs.rs:447`), and **`meta_delete`'s fault guard (`fs.rs:578`)** |
+| **Model-blind** | the dynamic-file registry in `scan` (`fs.rs:195` and `fs.rs:198`, three mutants), `has_data`'s zero-length test (`fs.rs:250`), `factory_wipe`'s 64-key batch bound (`fs.rs:363`), the registry retain in `delete` (`fs.rs:447`), and **`meta_delete`'s fault guard (`fs.rs:583`)** |
 
 The last one was worth the exercise on its own. `Fs::meta_add_reserve` refuses a
 FAILED EF_META read and the model carries that as `BugMetaAddDropsOnFault`; its
-sibling `Fs::meta_delete` has the identical guard at `fs.rs:580`, and **nothing
+sibling `Fs::meta_delete` has the identical guard at `fs.rs:585`, and **nothing
 held it at either level**. No test killed it, and `MetaDelete` was modelled as an
 unconditional single write with no read to fail. Worse than a lost delete: the
 mutant caches EF_META as *absent*, and the next `meta_add` legitimately trusts
@@ -2072,6 +2072,91 @@ makeCredential but failed to retain Rust's first-use rpId binding.
 `BoundConsumedTok` is the resulting model correction. This is empirical
 conformance of the recorded traffic, not a proof that unrecorded code refines B.
 
+## The induction probes — and the one that found something
+
+Every row above is checked over the states `Init` can REACH. TLC can answer a
+stronger question with no extra tooling: run the invariant as the INIT predicate
+and `Next` as the next-state relation, and a violation is a **one-step
+counterexample to inductiveness** rather than to the invariant. `INIT IndInv` /
+`NEXT Next` is the whole mechanism — no TLAPS, no second checker.
+
+The runner needed one rule for it, and the first version of that rule was
+inert. Such a run's successors are already initial states, so the search ends at
+**depth 1**, and the generic vacuity heuristic reads that as nothing having been
+enabled. Exempting `INIT` rows from the depth floor and holding them to
+`states > distinct` instead looked reasonable and could never fail: with
+deadlock checking on, a run where `Next` fired nothing is reported RED before the
+vacuity branch is reached, so `states > distinct` is true on every run that gets
+there. **Depth 1 is not the exemption — it is the claim.** Every successor
+already being an initial state IS `IndInv /\ Next => IndInv'`, so an `INIT` row
+is held to `depth = 1` and depth 2 reads `NOT INDUCTIVE: a step left IndInv`.
+That matters because the INVARIANTS block need not carry every conjunct of
+`IndInv`: without the depth rule, an `IndInv` strengthened with something the
+model does not preserve comes back GREEN — driven, with `/\ ~dead`, which
+`Delete` falsifies in one step: GREEN before, `NOT INDUCTIVE (depth 2)` after.
+Three cases in `scripts/test_run_tlc.py`, one of them proving the rule does not
+reach an ordinary `SPECIFICATION` row.
+
+**`RSKeyBootHardening` is inductive as it stands.** `TypeOK /\ MarkerNeverLies
+/\ TheWholeLockRides` admits 48 of the module's 108 type-correct states, and one
+step from any of them lands inside: 180 states generated, 48 distinct, GREEN.
+
+**`RSKeyStore` is not, and the counterexample named the missing conjunct.** The
+first run came back RED on `NoRecordLostToMetaWrite` in two states:
+
+```
+State 1  metaAbsent = TRUE   meta = [a |-> FALSE, b |-> TRUE]
+State 2  MetaAdd("a")        meta = [a |-> TRUE,  b |-> FALSE]
+```
+
+The cache says `EF_META` is absent while `b`'s record stands. Nothing in
+`TypeOK` or the four invariants forbids that state, and from it `MetaAdd` does
+exactly what the shipped code does — trusts the cache and rebuilds the blob from
+empty (`fs.rs:546`), losing `b`. This is SEC-STORE-004's damage arriving from a
+STATE rather than from the step that made the cache lie, and the model had no
+way to say the cache is honest. One conjunct fixes it:
+
+```tla
+CacheHonest == metaAbsent => \A f \in Fids : ~meta[f]
+```
+
+and `StoreInduction.cfg` is then GREEN over 1000 admitted states (11 460
+generated). **That is the probe's whole worth: it named a state fact the model
+relies on and never stated.** `CacheHonest` is `SEC-STORE-005` now, checked on
+the reachable states by `Store.cfg` as well — an induction step without
+`Init => IndInv` proves nothing — and that costs nothing: 364 distinct, the same
+number as before.
+
+**One mutant probe per module, and the reason is that the rest would be
+ceremony.** `Init` satisfies `IndInv` in both modules, so reachable states are a
+subset of the ones the probe starts from: any defect its `*Solo_` twin catches,
+the induction row catches too. The implication runs the other way from what one
+would want — the induction rows fire on a SUPERSET of their twins' conditions, so
+they cannot see a mutant that has stopped firing, which is exactly what
+`floors.txt`'s verdict column exists for. Measured: delete `Put` from `Next` and
+`StoreSolo_BugCacheFaultAsAbsent` correctly goes GREEN-when-RED-was-expected while
+the induction row stays RED and notices nothing. So one row per module, to show
+the INIT/NEXT wiring can go red at all; the `*Solo_` rows carry the defects.
+
+Both probes pin `PowerOnClearsScratch2` cleared. What they vary is the state, not
+the hardware assumption — that is the carry arm's job, one section up.
+
+Two things fell out beside it. `"NoFalseAbsent"` was a member of `InvNames` that
+**no step ever wrote** — `NoFalseAbsent` is structural and needs no ghost slot —
+so `viol`'s domain carried a name nothing records, doubling the probe's initial
+set for nothing. Removing it leaves `Store.cfg` bit-identical at 3825 states and
+364 distinct, which is what says it was never reachable. And the floor comment
+for that row still said 272, from before `metaAbsent` joined the module.
+
+**The TLAPS question, answered by measurement the way Verus was.** Not now. The
+one result a deductive prover would have been bought for — an inductive
+invariant, independent of reachability — TLC produced for both modules in a
+second, and the useful half was the counterexample, which is what a model checker
+gives and a prover does not. What TLAPS would add is the unbounded scope, and
+`formal/scopes.txt` records that no mutant in the roster probes above two
+anywhere; buying an unbounded proof before the bounded one is exercised at three
+is paying for the wrong thing first.
+
 ## What now catches a run nobody watched
 
 That `VACUOUS` rule was one heuristic and a **reporting** guard: it printed a
@@ -2235,6 +2320,7 @@ evidence columns and validated cross-model support edges below on every gate run
 | `SEC-STORE-002` | `NoFalseAbsent` | BOUNDED | `RSKeyStore` | — | 2 | 2 | 2 | 3 | 0 | 0 |
 | `SEC-STORE-003` | `NoRecordLostToMetaWrite` | MODELLED-ONLY | `RSKeyStore` | — | 1 | 1 | 1 | 0 | 0 | 0 |
 | `SEC-STORE-004` | `NoFalseMetaAbsent` | MODELLED-ONLY | `RSKeyStore` | — | 1 | 1 | 1 | 0 | 0 | 0 |
+| `SEC-STORE-005` | `CacheHonest` | MODELLED-ONLY | `RSKeyStore` | — | 1 | 0 | 0 | 0 | 0 | 0 |
 | `SEC-LAT-001` | `NoAuthWhenBlocked` | MODELLED-ONLY | `RSKeyRetryLattice` | — | 2 | 1 | 1 | 0 | 0 | 0 |
 | `SEC-LAT-002` | `WrongAttemptIsCharged` | MODELLED-ONLY | `RSKeyRetryLattice` | — | 2 | 1 | 1 | 0 | 0 | 0 |
 | `SEC-LAT-003` | `BudgetRisesOnlyWithItsSecret` | MODELLED-ONLY | `RSKeyRetryLattice` | — | 2 | 1 | 1 | 0 | 0 | 0 |

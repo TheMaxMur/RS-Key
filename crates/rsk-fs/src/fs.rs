@@ -567,7 +567,12 @@ impl<S: Storage> Fs<S> {
 
     /// Remove the metadata for `fid` (clears EF_META once empty).
     ///
+    /// The `known_absent(EF_META)` bit is only ever set from a definitive answer
+    /// — a faulted read is `MemoryFatal` below, never absence — which is what
+    /// keeps the cache honest while records stand.
+    ///
     /// Refines `RSKeyStore!NoFalseMetaAbsent` — SEC-STORE-004.
+    /// Refines `RSKeyStore!CacheHonest` — SEC-STORE-005.
     pub fn meta_delete(&mut self, fid: u16) -> Result<()> {
         if self.known_absent(EF_META) {
             return Ok(()); // confirmed no meta blob → nothing to drop

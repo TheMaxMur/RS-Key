@@ -91,8 +91,22 @@ one() {
     # an extra guard (`fresh' = x /\ fresh` is `(fresh' = x) /\ fresh`). Every
     # invariant holds vacuously there. Two is the floor because it is not a
     # judgement call: below it the Next relation fired nothing at all.
-    if [ "${distinct:-0}" -lt 2 ] || [ "${depth:-0}" -lt 2 ]; then
+    # An INDUCTION probe (`INIT IndInv` / `NEXT Next`) starts from every state
+    # its invariant admits, so the depth floor above is inverted for it: depth 1
+    # IS the claim. Every successor already being an initial state is exactly
+    # `IndInv /\ Next => IndInv'`, and depth 2 means a step left the predicate --
+    # which the INVARIANTS block need not notice, because a conjunct of `IndInv`
+    # is not necessarily one of them.
+    local vacuous=0
+    if grep -qE '^INIT([[:space:]]|$)' "$cfg"; then
+      [ "${depth:-0}" = 1 ] || vacuous="NOT INDUCTIVE: a step left IndInv (depth ${depth:-?})"
+    elif [ "${distinct:-0}" -lt 2 ] || [ "${depth:-0}" -lt 2 ]; then
+      vacuous=1
+    fi
+    if [ "$vacuous" = 1 ]; then
       verdict="VACUOUS: nothing was enabled"
+    elif [ "$vacuous" != 0 ]; then
+      verdict="$vacuous"
     elif [ "${floor:--}" != "-" ] && [ -n "${floor:-}" ] \
          && [ "${distinct:-0}" -lt "$floor" ]; then
       # The VACUOUS rule above only sees the collapse all the way to nothing.
@@ -150,6 +164,8 @@ list_safety() {
   echo Store.cfg                # the third module: the flash layer
   ls StoreMut_*.cfg
   ls StoreSolo_*.cfg
+  echo StoreInduction.cfg   # IndInv /\ Next => IndInv' -- the probe that found one
+  ls StoreInductionMut_*.cfg
   echo Lattice.cfg             # the fourth module: the retry/recovery lattice
   ls LatMut_*.cfg
   ls LatSolo_*.cfg
@@ -167,6 +183,8 @@ list_safety() {
   ls BootMut_*.cfg
   ls BootSolo_*.cfg
   ls BootCarryMut_*.cfg    # …and every mutant of it on that arm too
+  echo BootInduction.cfg   # IndInv /\ Next => IndInv', from ANY admitted state
+  ls BootInductionMut_*.cfg  # and what says that probe can go red
   echo Transport.cfg           # the eighth module: the CTAPHID reassembler
   ls TransMut_*.cfg
   ls TransSolo_*.cfg

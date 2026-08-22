@@ -37,6 +37,24 @@ The depth of the complete state graph search is 2.
 Invariant NoAuthorizationBypass is violated.
 """
 
+#: What an INDUCTIVE probe looks like: every successor is already an initial
+#: state, so the search ends at depth 1 with more states generated than found.
+INDUCTIVE = """\
+22920 states generated
+1000 distinct states found
+The depth of the complete state graph search is 1.
+Model checking completed. No error has been found.
+"""
+
+#: And what it looks like when a step LEFT the predicate: a second level, which
+#: is the refutation of `IndInv /\ Next => IndInv'` whatever the invariants say.
+NOT_INDUCTIVE = """\
+10748 states generated
+788 distinct states found
+The depth of the complete state graph search is 2.
+Model checking completed. No error has been found.
+"""
+
 
 @pytest.fixture
 def fake_tlc(tmp_path):
@@ -94,6 +112,34 @@ def test_floor_regression_is_not_green(fake_tlc):
     assert result.returncode == 1
     assert "FLOOR: 100 < 20000000" in result.stdout
     assert "expected GREEN" in result.stdout
+
+
+def test_an_induction_probe_at_depth_one_is_green_and_not_vacuous(fake_tlc):
+    """Depth 1 is what INDUCTIVE looks like, not what vacuity looks like.
+
+    Every successor of an `INIT IndInv` run is already an initial state, so the
+    search terminates immediately. The generic rule reads that as nothing having
+    been enabled and would refuse every such row.
+    """
+    result = run(fake_tlc, "StoreInduction.cfg", INDUCTIVE)
+    assert result.returncode == 0
+    assert "GREEN" in result.stdout
+
+
+def test_an_induction_probe_whose_step_left_the_predicate_is_refused(fake_tlc):
+    """Depth 2 means a successor was NOT an initial state, which is the whole
+    claim failing — and the INVARIANTS block need not have noticed, because a
+    conjunct of `IndInv` is not necessarily one of them."""
+    result = run(fake_tlc, "StoreInduction.cfg", NOT_INDUCTIVE)
+    assert result.returncode == 1
+    assert "NOT INDUCTIVE" in result.stdout
+
+
+def test_the_exemption_does_not_reach_an_ordinary_specification(fake_tlc):
+    """`Shipped.cfg` has no `INIT` line, so the depth floor still binds it."""
+    result = run(fake_tlc, "Shipped.cfg", INDUCTIVE)
+    assert result.returncode == 1
+    assert "VACUOUS: nothing was enabled" in result.stdout
 
 
 def test_invariant_that_stops_catching_its_solo_mutant_is_rejected(fake_tlc):
