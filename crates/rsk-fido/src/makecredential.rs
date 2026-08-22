@@ -1063,6 +1063,11 @@ fn rp_min_pin_len<S: Storage>(fs: &mut Fs<S>, rp_id_hash: &[u8; 32]) -> u8 {
     0
 }
 
+/// The phase-4 trace reader (`formal/TraceSecurity.tla`).
+#[cfg(any(test, kani, feature = "assurance-trace"))]
+#[path = "makecredential_assurance.rs"]
+pub mod assurance;
+
 #[cfg(test)]
 #[path = "makecredential_tests.rs"]
 mod tests;

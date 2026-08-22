@@ -176,6 +176,8 @@ list_safety() {
   echo TraceSecurityBadAlpha.cfg # shifting alpha is refused by R4b
   echo TraceSecurityBadAlphaNoR4b.cfg # and no other observer catches that shift
   echo TraceSecurityBadOutcome.cfg # outcome_raw disagreement is refused
+  echo TraceSecurityBadUvNotRqd.cfg # the gate rule ignoring `rk` is refused
+  echo TraceSecurityBadResetWindow.cfg # and ignoring the reset window
   echo TokenRefinement.cfg       # phase 5: native B -> A state refinement
   echo TokenRefinementBadMap.cfg # a wrong gamma must be refused
   echo TokenRefinementOutcome.cfg # labelled B outcomes refine A events

@@ -31,6 +31,7 @@ impl Writer {
         cid: u32,
         command: u8,
         status: u8,
+        request: Option<RequestFlags>,
         pre: SecurityTraceSnapshot,
         post: SecurityTraceSnapshot,
         abstract_pre: AbstractTokenState,
@@ -39,7 +40,7 @@ impl Writer {
         self.sequence += 1;
         write!(
             self.out,
-            "{{\"schema\":3,\"sequence\":{},\"boundary\":{{\"mode\":\"coarse\",\"k\":8}},\"now_ms\":{},\"cid\":{},\"command_raw\":{},\"status_raw\":{},\"outcome_raw\":{},\"action_hint\":\"{}\",\"pre\":",
+            "{{\"schema\":4,\"sequence\":{},\"boundary\":{{\"mode\":\"coarse\",\"k\":8}},\"now_ms\":{},\"cid\":{},\"command_raw\":{},\"status_raw\":{},\"outcome_raw\":{},\"action_hint\":\"{}\",\"request\":",
             self.sequence,
             now_ms,
             cid,
@@ -48,6 +49,8 @@ impl Writer {
             status,
             action_hint(command),
         )?;
+        request_flags(&mut self.out, request)?;
+        write!(self.out, ",\"pre\":")?;
         snapshot(&mut self.out, pre)?;
         write!(self.out, ",\"post\":")?;
         snapshot(&mut self.out, post)?;
@@ -57,6 +60,22 @@ impl Writer {
         abstract_token(&mut self.out, abstract_post)?;
         writeln!(self.out, "}}")?;
         self.out.flush()
+    }
+}
+
+/// The REQUEST fields §6.1.2's token-less gate is a function of: whether the
+/// platform asked for a discoverable credential, and whether it carried a
+/// pinUvAuthParam. Both are INPUTS — the replay predicts the outcome from them
+/// and `outcome_raw` is what that prediction is checked against.
+pub struct RequestFlags {
+    pub rk: bool,
+    pub pin_uv_auth: bool,
+}
+
+fn request_flags(out: &mut impl Write, flags: Option<RequestFlags>) -> Result<()> {
+    match flags {
+        Some(f) => write!(out, "{{\"rk\":{},\"pin_uv_auth\":{}}}", f.rk, f.pin_uv_auth),
+        None => write!(out, "null"),
     }
 }
 

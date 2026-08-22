@@ -81,7 +81,7 @@ stop_emu
 
 # A bounded, security-dense slice of the real suite is replayed against the full
 # RSKeySecurityState model. Other sessions are traced too, but this one owns the
-# commands/steps/distinct-actions ratchets in formal/floors.txt.
+# five coverage ratchets in formal/floors.txt.
 #
 # These three suites in ONE emulator lifetime are what those ratchets were
 # measured on (formal/README.md, phase 4) — the replug between them is a recorded

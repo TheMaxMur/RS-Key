@@ -2626,3 +2626,30 @@ fn enterprise_attestation_outranks_a_none_preference() {
     assert_eq!(d.u8().unwrap(), 3);
     assert_eq!(d.map().unwrap().unwrap(), 3, "the full statement survives");
 }
+
+// The phase-4 trace reader. Its two bits are the ONLY thing R4c's makeCredential
+// arm computes from, so a swapped tuple or a misread key would leave the replay
+// describing a different request than the device answered — and still GREEN.
+#[test]
+fn the_trace_reader_reports_the_two_fields_the_gate_is_a_function_of() {
+    use super::assurance::trace_request_flags;
+    assert_eq!(
+        trace_request_flags(&build_request(true)),
+        Some((true, false))
+    );
+    assert_eq!(
+        trace_request_flags(&build_request(false)),
+        Some((false, false))
+    );
+    assert_eq!(
+        trace_request_flags(&build_request_pin(&[0xAA; 16], 1)),
+        Some((false, true))
+    );
+    assert_eq!(
+        trace_request_flags(&build_request_uv(true, Some((&[0xAA; 16], 2)))),
+        Some((true, true))
+    );
+    // A body the device itself would refuse to decode has no gate answer, and
+    // the mapper must not invent one from a default.
+    assert_eq!(trace_request_flags(&[0xFF, 0xFF]), None);
+}

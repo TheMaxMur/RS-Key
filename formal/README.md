@@ -1929,11 +1929,12 @@ full `RSKeySecurityState`, and that pipeline is separate:
    definition the phase-5 INSTANCE will consume too.
 4. The committed trace is three suites through one emulator lifetime —
    `21_pin_webauthn`, `20_clientpin`, `27_reset_window` — and has 21 CBOR
-   boundaries, 56 B steps and 20 distinct model actions. Those are ratchets in
-   `floors.txt` beside every other one, not literals in the script, and every run
-   prints both the reached set and the model actions no real traffic reached. The
-   same validation runs inside the socket emulator-suites CI row.
-5. A **power cycle is a recorded boundary** (`command_raw` `0xFF`, schema 3).
+   boundaries, 49 B steps, 21 distinct model actions and 3 gate boundaries. Those
+   are ratchets in `floors.txt` beside every other one, not literals in the
+   script, and every run prints both the reached set and the model actions no real
+   traffic reached. The same validation runs inside the socket emulator-suites CI
+   row.
+5. A **power cycle is a recorded boundary** (`command_raw` `0xFF`, schema 4).
    Without it the replug between suites moved security state outside every
    boundary and the replay saw a discontinuity it could not explain — which is
    why the trace used to be one suite. It is also the only way `PowerCut` is
@@ -1951,20 +1952,81 @@ full `RSKeySecurityState`, and that pipeline is separate:
 7. `TraceSecurityBadBeta.cfg` shifts one raw retry field and is RED under R4a.
    `TraceSecurityBadAlpha.cfg` shifts α's `live` field and is RED under R4b;
    `TraceSecurityBadAlphaNoR4b.cfg` is GREEN, demonstrating that only R4b catches
-   that second divergence.
+   that second divergence. `TraceSecurityBadUvNotRqd.cfg` and
+   `TraceSecurityBadResetWindow.cfg` take one half each out of R4c's gate rule.
 
-The first real replay found a fidelity defect: B consumed permissions after
-makeCredential but failed to retain Rust's first-use rpId binding.
-`BoundConsumedTok` is the resulting model correction. This is empirical
-conformance of the recorded traffic, not a proof that unrecorded code refines B.
+### R4c — the answers a model gives by disabling an action
+
+`R4bEventConsensus` compares B's inferred outcome with the device's, and it had
+two boundaries it could only answer `AMBIGUOUS`. Both were a `makeCredential`
+carrying no `pinUvAuthParam`, and the reason is structural rather than a want of
+cleverness: **the model expresses a refusal by DISABLING an action**, so a
+refused command reaches a replay as a stutter — and a *successful* one that
+stores nothing is the same stutter. `rk` is the only thing that separates them,
+CTAP 2.1 §6.1.2 step 10 being the whole rule (`makecredential.rs:540-546`): a
+discoverable credential still needs a token where a PIN is set, a non-discoverable
+one is served on presence alone. Step 6's `alwaysUv` arm is deliberately NOT in
+`McTokenlessRefused`: it refuses only where built-in UV is unavailable
+(`makecredential.rs:528-536`), which would need `req.uv` and the pad's
+availability recorded, and asserting it from `gate.alwaysUv` alone would be an
+uncited claim the code does not make.
+
+So the request's `rk` and whether it carried a `pinUvAuthParam` join the
+recording (trace schema 4, decoded by the applet's *own* parser), B states the
+gate rule over its own variables, and `R4cGateAnswers` holds the recorded outcome
+to it. The line that keeps this honest is **inputs, never the answer**: the
+status word is read only to REFUSE an event the rule does not reach — a
+`makeCredential` refused downstream of the gate by an excludeList hit leaves the
+same empty footprint, and predicting that would make R4c cry wolf on a recording
+that is perfectly correct. A build that answered `PUAT_REQUIRED` where it used to
+serve still produces a gate row, and B's own rule is what turns it into a
+violation; driving exactly that (seq 12's outcome flipped to `0x36` in a copy of
+the trace) gives `Error: Invariant R4cGateAnswers is violated`, and flipping the
+refused reset's `0x30` to `0x00` gives the same on the other arm.
+
+The reset window is the second gate and the same shape one level up. A reset
+outside `RESET_WINDOW_MS` is refused, and refusing it changes nothing — so over
+an already-emptied store it has the exact raw footprint of a second *successful*
+wipe, and the mapper read the refusal that ends `27_reset_window` as one for as
+long as it existed. `now_ms` is what separates them (`reset.rs:187`) and
+`ResetGateRefuses` is `~InResetWindowGuard`, the predicate the model already
+gates `ResetStart` on, read for its answer instead of its enabling.
+
+**Where B's clock comes from is the whole of that arm's honesty.** Spending the
+`Tick`s inside the out-of-window branch — the first version — made
+`~InResetWindowGuard` true BY CONSTRUCTION at every reset gate boundary, so R4c's
+reset arm was a constant and the check reduced to the mapper's own status test.
+`clock_ticks` advances B from `now_ms` at *every* boundary instead, before the
+event is mapped and whatever it turns out to be. A reset mis-read as in-window is
+then forced onto a `ResetStart` the closed window disables — driven: `Deadlock
+reached`, TLC exit 11, once the gate and step ratchets are lowered out of the way,
+since they see the lost gate row first. A refusal whose recorded answer is `0x00`
+disagrees with a B that refuses: `Error: Invariant R4cGateAnswers is violated`. Both directions are exercised: `TraceSecurityBadResetWindow.cfg` takes
+B's rule out, and `the_reset_gate_carries_the_answer_the_device_gave_either_way`
+holds the mapper to the other outcome.
+
+**What the recording does NOT exercise, said here rather than left to be
+assumed:** `pin.set` is TRUE and `gate.alwaysUv` FALSE at both makeCredential gate
+boundaries, so `rk` is the only input the session varies. A PIN-less or
+alwaysUv-on session is what would exercise the rest of the rule.
+
+The rules are stated in `TraceSecurity.tla` and not in `RSKeySecurityState.tla`,
+because `Next` still does not carry a token-less registration as a behaviour —
+the exhaustive model never explores one, and that is listed with the other places
+the model is narrower than the firmware. Folding it in is the next widening; the
+replay is what made the gap visible.
+
+**AMBIGUOUS is 0 and the floor now says so**, together with `@TraceSecurityGatesMin`
+— without a floor on the gate boundaries R4c goes vacuous the moment a re-record
+loses them, which is the failure every other ratchet in this file exists for.
 
 ### The replay had stopped following the recording, and every observer said GREEN
 
-`TraceSecurity.cfg` was GREEN over a replay that reached **44 of 59 states**: the
-recorded reset ran fifteen steps past the point where the model stopped following
-it, because the sweep expansion emitted one step per live record while the seed
-arm empties `cred` and `rpent` with the seed. Three things had to line up for that
-to read as a pass, and all three did:
+R4c's own falsification found it. `TraceSecurity.cfg` was GREEN over a replay that
+reached **44 of 59 states**: the recorded reset ran fifteen steps past the point
+where the model stopped following it, because the sweep expansion emitted one step
+per live record while the seed arm empties `cred` and `rpent` with the seed. Three
+things had to line up for that to read as a pass, and all three did:
 
 * `scripts/security_trace.py` ran TLC with **`-deadlock`**, so the divergence — a
   forced step with no successor, the mechanism this whole pipeline rests on — was
@@ -1981,6 +2043,11 @@ mutation alone gives `Deadlock reached`, TLC exit 11; with `-deadlock` back it
 gives `44 distinct states for 51 steps — the replay did not reach the end of the
 recording`; with the count check *also* removed it is GREEN and silent, which is
 the shape that shipped.
+
+The first real replay found a fidelity defect: B consumed permissions after
+makeCredential but failed to retain Rust's first-use rpId binding.
+`BoundConsumedTok` is the resulting model correction. This is empirical
+conformance of the recorded traffic, not a proof that unrecorded code refines B.
 
 ## What now catches a run nobody watched
 
@@ -2134,6 +2201,7 @@ evidence columns and validated cross-model support edges below on every gate run
 | `SEC-FIDO-L03` | `EveryWalkCloses` | MODELLED-ONLY | `RSKeySecurityState` | — | 0 | 1 | 0 | 0 | 0 | 0 |
 | `SEC-TRACE-001` | `R4aRawRefinesB` | MODELLED-ONLY | `TraceSecurity` | — | 0 | 0 | 0 | 0 | 0 | 0 |
 | `SEC-TRACE-002` | `R4bAlphaMatchesGamma` | MODELLED-ONLY | `TraceSecurity` | — | 0 | 0 | 0 | 0 | 0 | 0 |
+| `SEC-TRACE-004` | `R4cGateAnswers` | MODELLED-ONLY | `TraceSecurity` | — | 0 | 0 | 0 | 0 | 0 | 0 |
 | `SEC-SEAM-001` | `NoStatusOutsideItsSelection` | MODELLED-ONLY | `RSKeyAppletSeams` | — | 1 | 2 | 1 | 0 | 0 | 0 |
 | `SEC-SEAM-002` | `NoStatusAfterARefusedAuth` | MODELLED-ONLY | `RSKeyAppletSeams` | — | 1 | 2 | 2 | 0 | 0 | 0 |
 | `SEC-SEAM-003` | `NoKeyOpOnTheAdminStatus` | MODELLED-ONLY | `RSKeyAppletSeams` | — | 1 | 6 | 5 | 0 | 0 | 0 |
@@ -2289,6 +2357,15 @@ than a settled abstraction.
 - **The button build only** (`presence.shows_confirm() = FALSE`), so the reset
   window always applies; a display build bypasses it by design (`reset.rs:32`)
   and that path is unmodelled.
+- **A registration with a PIN set and no token is not a behaviour of `Next`.**
+  CTAP 2.1 §6.1.2 steps 7/10 serve a NON-discoverable credential on presence
+  alone even where a PIN is set (`makecredential.rs:540-546`). `RegisterStart`
+  conjoins `OpGuard("mc", r)`, which is `TRUE` when `~UvRequired` — so the model
+  does explore a token-less registration on a PIN-less key, and never the
+  carve-out itself, which is exactly the region a defect in it would live in. The
+  rule is stated and checked, but only against a recorded session
+  (`TraceSecurity!McTokenlessRefused`, R4c); the replay is what made the gap
+  visible, and folding it into `Next` is the widening it argues for.
 - **`largeBlobs`, `getNextAssertion`, the MSE seed-backup channel, built-in UV
   and the trusted-display flows are absent.** They carry their own
   channel-ownership rules (`state.rs:33-51`, `:326-333`) that this model does
@@ -2423,19 +2500,18 @@ establishes that named steps preserve it. The complete InitC, older-firmware
 persistent boundary, reset-class evidence table, `EF_ALWAYS_UV` decision, and
 the strict scope of the claim are in `docs/token-refinement.md`.
 
-Trace schema 3 adds `outcome_raw` from the response byte and the power-cycle
-boundary. R4b-event uses
-consensus over all inferred B interpretations; it never picks a convenient
-witness. Two coarse recorded boundaries are currently `AMBIGUOUS`, held by the
-`@TraceSecurityAmbiguousMax 2` ratchet in `floors.txt`. Both are the same shape,
-and it is not a mapping that could be sharpened: a `makeCredential` for a
-**non-discoverable** credential writes nothing, so a success and a refusal have
-identical raw footprints. Inferring which one it was from `outcome_raw` would be
-reading the answer off the C side and then confirming it, which is the one thing
-this check must not do. Reaching 0 needs a projection field B can also predict,
-not a cleverer inference. The fifth falsification
-feeds one Authorized and one Rejected interpretation for the same boundary and
-requires `AMBIGUOUS`.
+Trace schema 4 adds `outcome_raw` from the response byte, the power-cycle
+boundary, and the two request fields §6.1.2's token-less gate is a function of.
+R4b-event uses consensus over all inferred B interpretations; it never picks a
+convenient witness. It used to answer `AMBIGUOUS` at two boundaries — both a
+`makeCredential` for a **non-discoverable** credential, which writes nothing, so
+a success and a refusal have identical raw footprints. The note here said
+reaching 0 needed a projection field B can also predict rather than a cleverer
+inference, and that was right: `rk` is an INPUT, B answers the gate from it and
+from its own state, and `R4cGateAnswers` holds the recording to that answer. The
+ratchet is `@TraceSecurityAmbiguousMax 0` now. The fifth falsification feeds one
+Authorized and one Rejected interpretation for the same boundary and requires
+`AMBIGUOUS`, so the shrug is still proven reachable where it belongs.
 
 ## Phase 6: cross-reset refinement over `rsk-fs`
 

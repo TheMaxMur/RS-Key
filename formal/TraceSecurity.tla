@@ -10,6 +10,7 @@
 EXTENDS TraceSecurityData, RSKeyTokenView
 
 CONSTANTS MutateBeta, MutateAlpha, MutateOutcome, CheckR4b
+CONSTANTS MutateUvNotRqd, MutateResetWindow
 
 VARIABLE tracePc
 traceVars == << vars, tracePc >>
@@ -99,6 +100,51 @@ OutcomeAtBoundary ==
 
 R4bEventConsensus ==
     tracePc \in OutcomeBoundaryPcs => OutcomeAtBoundary = BoundaryOutcomeB(tracePc)
+
+(***************************************************************************)
+(* R4c -- the gate answers.                                                *)
+(*                                                                         *)
+(* A refusal the model expresses by DISABLING an action is a refusal it     *)
+(* cannot PREDICT. Both halves of makeCredential's token-less gate leave B  *)
+(* exactly where it was -- a discoverable request is refused before any     *)
+(* ceremony, a non-discoverable one is served on presence alone and stores  *)
+(* nothing -- so both reached the replay as stutters and R4b-event had to   *)
+(* answer AMBIGUOUS. So did the reset the window had closed. The rules are  *)
+(* stated here, over B's OWN state, and the recording is held to them.      *)
+(*                                                                         *)
+(* Stated here and not in RSKeySecurityState because `Next` does not carry  *)
+(* the token-less registration as a behaviour: the exhaustive model still   *)
+(* never explores one, and formal/README.md lists that among the places the *)
+(* model is narrower than the firmware. Folding it in is the next widening. *)
+(***************************************************************************)
+
+\* CTAP 2.1 6.1.2 step 10, crates/rsk-fido/src/makecredential.rs:540-546: with a
+\* PIN configured a DISCOVERABLE credential still needs a token, a
+\* non-discoverable one does not. `rk` is the request's, and it is an input.
+\*
+\* Step 6's alwaysUv arm is NOT here. It refuses only where built-in UV is
+\* unavailable (makecredential.rs:528-536), which needs `req.uv` and the pad's
+\* availability recorded; asserting it from `gate.alwaysUv` alone would be a
+\* claim the code does not make, uncited, and false on a display build.
+McTokenlessRefused(rk) == pin.set /\ rk
+
+\* CTAP 2.1 6.6, crates/rsk-fido/src/reset.rs:187 -- the same predicate the
+\* model already gates ResetStart on, read for its answer instead of its
+\* enabling. `InResetWindowGuard` is the Guard and not the Policy on purpose:
+\* what is being predicted is what the DEVICE does.
+ResetGateRefuses == ~InResetWindowGuard
+
+GateRefusesB(i) ==
+    CASE GateKind(i) = "mc" ->
+           McTokenlessRefused(IF MutateUvNotRqd THEN FALSE ELSE GateRk(i))
+      [] GateKind(i) = "reset" ->
+           IF MutateResetWindow THEN FALSE ELSE ResetGateRefuses
+      [] OTHER -> CHOOSE x : FALSE
+
+R4cGateAnswers ==
+    tracePc \notin GateBoundaryPcs \/
+      (IF GateRefusesB(tracePc) THEN "Rejected" ELSE "Authorized")
+        = GateOutcomeRaw(tracePc)
 
 \* `TraceComplete == tracePc <= TraceSteps` stood here and could not fail:
 \* `TraceNext` only advances under `tracePc < TraceSteps`, so it was an

@@ -179,6 +179,13 @@ status = "MODELLED-ONLY"
 statement = "At every recorded emulator boundary, the implementation's untrusted abstract token hint equals the canonical gamma projection of RSKeySecurityState."
 source = ["formal/README.md — phase 4 trace validation"]
 
+[[property]]
+id = "SEC-TRACE-004"
+name = "R4cGateAnswers"
+status = "MODELLED-ONLY"
+statement = "At every recorded boundary whose command was decided by a gate rather than by a state change, B's own answer to that gate equals the answer the device gave."
+source = ["CTAP 2.1 §6.1.2 steps 6-10", "CTAP 2.1 §6.6", "formal/README.md — phase 4 trace validation"]
+
 # ---- RSKeyAppletSeams — the applets' access statuses ------------------------
 
 [[property]]

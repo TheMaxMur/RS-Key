@@ -35,6 +35,10 @@ NAMED = {
     "kani.sh": "test_kani_sh.py",
     "comutate.py": "test_comutate.py",
     "crate_graph.py": "test_crate_graph.py",
+    # The two `formal/` mappers: both are `check.sh` rows, neither ends in
+    # `_gate.py`, so their tables could have been deleted with this file green.
+    "security_trace.py": "test_security_trace.py",
+    "trace_map.py": "test_trace_map.py",
 }
 #: The pytest invocation that has to reach the tests, wherever it is spelled.
 COLLECTS = re.compile(r"pytest\s+([^\n|;&]*)")

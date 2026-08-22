@@ -118,6 +118,10 @@ PAGES = (
     # unchecked — and one had rotted: `rsk-otp/src/lib.rs:564-569` was the swap's
     # write-back tail ending on a blank line, not the access-code gate it claims.
     pathlib.Path("formal/RSKeyAppletPolicies.tla"),
+    # The replay harness cites too, and R4c's whole content is a code rule
+    # quoted into TLA+ — the one page where a rotted citation would leave the
+    # model asserting a gate the firmware no longer has.
+    pathlib.Path("formal/TraceSecurity.tla"),
     pathlib.Path("formal/README.md"),
     # The co-refutation ledger cites as finely as the modules and was guarded by
     # nothing: 13 of its 16 citations named a file this gate could not resolve,
@@ -197,6 +201,9 @@ FLOOR_BY_PAGE = {
     # floor of 1 is thin, but the failure it exists for — a regex that has
     # stopped matching — still finds 0, and this page cannot grow much.
     "gen-configs.sh": 1,
+    # The harness carries only R4c's two rules and the arm they deliberately
+    # leave out; the β projection above them cites nothing.
+    "TraceSecurity.tla": 3,
 }
 
 

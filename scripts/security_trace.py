@@ -92,10 +92,22 @@ AMBIGUOUS_RATCHET = "@TraceSecurityAmbiguousMax"
 COMMANDS_RATCHET = "@TraceSecurityCommandsMin"
 STEPS_RATCHET = "@TraceSecurityStepsMin"
 ACTIONS_RATCHET = "@TraceSecurityActionsMin"
+GATES_RATCHET = "@TraceSecurityGatesMin"
 
 # The pseudo-command `tools/emu` records a power cycle under — outside the CTAP
 # command space, so it cannot collide with a real command byte.
 POWER_CYCLE = 0xFF
+
+# `crates/rsk-fido/src/consts.rs:400`, applied at `crates/rsk-fido/src/reset.rs:187`
+# as `!warm_boot && now_ms <= RESET_WINDOW_MS`. The model abstracts the clock to
+# `ResetWindow` plus a `Tick`; the mapper needs the real bound.
+RESET_WINDOW_MS = 10_000
+
+# THE SCOPE OF EACH GATE RULE, and a refusal to map rather than an answer: a
+# status outside these came from somewhere the rule does not reach, so the mapper
+# stops. Refusing an event by its status is not choosing one by it.
+MC_GATE_CODES = {0x00, 0x36}  # served, or the gate's own PUAT_REQUIRED
+RESET_GATE_CODES = {0x00, 0x30}  # served, or the window's own NOT_ALLOWED
 
 
 def die(message: str) -> None:
@@ -111,8 +123,13 @@ def load_events(paths: list[Path]) -> list[dict]:
                     event = json.loads(line)
                 except json.JSONDecodeError as error:
                     die(f"{path}:{line_no}: invalid JSON: {error}")
-                if event.get("schema") != 3:
+                if event.get("schema") != 4:
                     die(f"{path}:{line_no}: unsupported schema")
+                if "request" not in event:
+                    die(f"{path}:{line_no}: no request record")
+                request = event["request"]
+                if request is not None and set(request) != {"rk", "pin_uv_auth"}:
+                    die(f"{path}:{line_no}: request fields changed")
                 if event.get("boundary") != {"mode": "coarse", "k": 8}:
                     die(f"{path}:{line_no}: boundary must be coarse with k=8")
                 if set(event.get("pre", {})) != set(RAW_FIELDS):
@@ -152,7 +169,7 @@ def new_ledger() -> dict:
     how many that is. Nothing here is read back from the trace.
     """
     return {"seed": True, "cred": set(), "rpent": set(), "pin_set": False,
-            "always_uv": False, "ppuat": False, "sealed": False}
+            "always_uv": False, "ppuat": False, "sealed": False, "clock": 0}
 
 
 def reset_path(ledger: dict) -> list[tuple[str, str]]:
@@ -164,9 +181,9 @@ def reset_path(ledger: dict) -> list[tuple[str, str]]:
     SAME step, because nothing without the seed can be opened. The sweep's length
     therefore does not grow with the number of credentials B holds.
 
-    Counting one step per record is what this used to do, and the model had been
-    refusing the surplus — see `run_tlc` for the half of the repair that makes
-    that impossible to miss.
+    Counting one step per record is what this used to do, and it wedged the
+    replay fifteen steps from the end of the recording while every observer said
+    GREEN — see `run_tlc` for the half of the repair that makes that impossible.
 
     Each phase ends with one extra step: the `ELSE` arm that advances `op.step`
     once nothing is left to delete.
@@ -188,7 +205,73 @@ def reset_path(ledger: dict) -> list[tuple[str, str]]:
     return steps + [("ResetFinish", "ResetFinish"), ("PressUp", "PressUp")]
 
 
-def infer(event: dict, ledger: dict) -> list[tuple[str, str]]:
+def mc_tokenless_gate(event: dict) -> tuple[list[tuple[str, str]], tuple[str, bool]]:
+    """A makeCredential carrying no pinUvAuthParam: B answers the gate, not the raw state.
+
+    The model expresses a refusal by DISABLING an action, and a disabled action is
+    a refusal nothing can predict — a refused command reaches the replay as a
+    stutter, and a stutter can be anything. Both halves of §6.1.2's token-less
+    gate leave B's state exactly where it was: a discoverable request is refused
+    before any ceremony, and a non-discoverable one is served on presence alone
+    and stores nothing. `rk` is what separates them, and it is an INPUT.
+    """
+    if event["outcome_raw"] not in MC_GATE_CODES:
+        die(
+            f"event {event['sequence']}: a token-less makeCredential answered "
+            f"0x{event['outcome_raw']:02x} — a refusal downstream of the gate, "
+            "which this rule does not explain"
+        )
+    return [("Stutter", "TraceStutter")], ("mc", event["request"]["rk"])
+
+
+def clock_ticks(event: dict, ledger: dict) -> list[tuple[str, str]]:
+    """The `Tick`s B owes this boundary, read from `now_ms` and from nothing else.
+
+    Spending them inside the out-of-window branch made `~InResetWindowGuard` true
+    BY CONSTRUCTION, so R4c's reset arm answered a state the mapper had just
+    manufactured for it. Advancing the clock from elapsed time instead leaves B
+    an opinion: a reset mis-read as in-window is then forced onto a `ResetStart`
+    the closed window disables, and the replay deadlocks.
+    """
+    closed_at = cfg_constant("ResetWindow") + 1
+    if closed_at > cfg_constant("MaxClock"):
+        die("MaxClock cannot reach past ResetWindow, so B's window never closes")
+    want = closed_at if event["now_ms"] > RESET_WINDOW_MS else 0
+    ticks = [("Tick", "Tick")] * max(0, want - ledger["clock"])
+    ledger["clock"] += len(ticks)
+    return ticks
+
+
+def reset_gate(event: dict, ledger: dict) -> tuple[list[tuple[str, str]], tuple[str, bool] | None]:
+    """authenticatorReset, decided by the power-up window rather than by the wipe.
+
+    A refused reset changes nothing, and over an already-empty store neither does
+    a second successful one — so the raw footprint cannot tell them apart, and the
+    mapper read the refusal that ends `27_reset_window` as a full successful wipe.
+    `now_ms` is what separates them (`reset.rs:187`); B's clock is advanced by
+    `clock_ticks` before this runs, independently of the branch taken here.
+    """
+    before, after = event["pre"], event["post"]
+    if not before["warm_boot_raw"] and event["now_ms"] <= RESET_WINDOW_MS:
+        if after["credential_slots_raw"] or after["rp_slots_raw"] \
+                or after["pin_record_len"] is not None:
+            die(f"event {event['sequence']}: a reset inside the window left state behind")
+        actions = reset_path(ledger)
+        clock = ledger["clock"]
+        ledger.update(new_ledger())
+        ledger["clock"] = clock  # a wipe does not move `sys`
+        return actions, None
+    if event["outcome_raw"] not in RESET_GATE_CODES:
+        die(
+            f"event {event['sequence']}: a reset outside the window answered "
+            f"0x{event['outcome_raw']:02x}, which this rule does not explain"
+        )
+    if raw_changes(event) - {"channel_raw"}:
+        die(f"event {event['sequence']}: a refused reset moved raw state")
+    return [("Stutter", "TraceStutter")], ("reset", False)
+
+
+def infer(event: dict, ledger: dict) -> tuple[list[tuple[str, str]], tuple[str, bool] | None]:
     """Infer B actions from raw before/after state; action_hint is diagnostic."""
     before, after = event["pre"], event["post"]
     changed = raw_changes(event)
@@ -232,15 +315,17 @@ def infer(event: dict, ledger: dict) -> list[tuple[str, str]]:
         # Both counters move together only on a comparison that failed; a correct
         # PIN restores the retry budget and leaves the mismatch count alone.
         actions = [("WrongPin", "WrongPin")]
-    elif command == 0x07 and after["credential_slots_raw"] == 0 \
-            and after["pin_record_len"] is None and after["rp_slots_raw"] == 0:
-        actions = reset_path(ledger)
-        ledger.update(new_ledger())
+    elif command == 0x07:
+        return finish(event, *reset_gate(event, ledger))
+    elif command == 0x01 and not (changed - {"channel_raw"}) \
+            and event["request"] is not None and not event["request"]["pin_uv_auth"]:
+        return finish(event, *mc_tokenless_gate(event))
     elif command == POWER_CYCLE:
         # The event kind is the signature, not any state difference: the replayer
         # is told a power cycle happened and R4a then checks that the raw state
         # matches what `PowerCut` says one does.
         actions = [("PowerCut", "PowerCut")]
+        ledger["clock"] = 0
     elif not changed or changed == {"channel_raw"}:
         actions = [("Stutter", "TraceStutter")]
     else:
@@ -249,15 +334,29 @@ def infer(event: dict, ledger: dict) -> list[tuple[str, str]]:
             f"0x{command:02x}, changed={sorted(changed)}"
         )
 
-    if actions[0][0] != "Stutter":
+    return finish(event, actions, None)
+
+
+def finish(
+    event: dict,
+    actions: list[tuple[str, str]],
+    gate: tuple[str, bool] | None,
+) -> tuple[list[tuple[str, str]], tuple[str, bool] | None]:
+    """The diagnostic cross-check every mapped event passes on its way out.
+
+    A gate row names a family too, so it is held to the hint as well — only a
+    bare stutter, which claims no family, is exempt.
+    """
+    if actions[0][0] != "Stutter" or gate is not None:
         expected = {
             0x01: "makeCredential",
             0x02: "getAssertion",
             0x06: "clientPin",
-        }.get(command)
+            0x07: "reset",
+        }.get(event["command_raw"])
         if expected is not None and event.get("action_hint") != expected:
             die(f"event {event['sequence']}: action_hint disagrees with inferred family")
-    return actions
+    return actions, gate
 
 
 def presence_path(kind: str) -> list[tuple[str, str]]:
@@ -298,6 +397,38 @@ def event_consensus(event: dict, action_names: set[str]) -> str:
     if outcomes != {delta_c(event["outcome_raw"])}:
         return "VIOLATION"
     return "OK"
+
+
+def trace_verdicts() -> dict[str, str]:
+    """Every `TraceSecurity*.cfg` and the verdict `floors.txt` requires of it.
+
+    A hand-kept list here was a THIRD copy of the roster and had already lost
+    `TraceSecurityBadOutcome.cfg`, which the runner and the floors both carry.
+    """
+    out = {}
+    for line in (FORMAL / "floors.txt").read_text(encoding="utf-8").splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and parts[0].startswith("TraceSecurity") and parts[0].endswith(".cfg"):
+            out[parts[0]] = parts[1]
+    missing = {p.name for p in FORMAL.glob("TraceSecurity*.cfg")} - set(out)
+    if missing:
+        die(f"floors.txt names no verdict for {sorted(missing)}")
+    return out
+
+
+def cfg_constant(name: str) -> int:
+    """One numeric CONSTANT from the baseline trace configuration.
+
+    The replay has to spend enough `Tick`s to close B's reset window, and how
+    many that is belongs to the configuration rather than to this file. Read
+    rather than assumed, so changing the scope moves the mapper with it instead
+    of leaving a literal here that TLC has to refute.
+    """
+    for line in (FORMAL / "TraceSecurity.cfg").read_text(encoding="utf-8").splitlines():
+        parts = line.split()
+        if parts[:2] == [name, "="] and len(parts) == 3:
+            return int(parts[2])
+    die(f"TraceSecurity.cfg does not assign {name}")
 
 
 def ratchet(name: str) -> int:
@@ -348,25 +479,34 @@ def generate(events: list[dict], output: Path) -> dict:
     beta_boundary = None
     alpha_boundary = None
     outcome_boundaries: list[tuple[int, str, str]] = []
+    gates: list[tuple[int, str, bool, str]] = []
     ambiguous = 0
     ledger = new_ledger()
     for event in events:
-        inferred = infer(event, ledger)
+        actions.extend(clock_ticks(event, ledger))
+        inferred, gate = infer(event, ledger)
         actions.extend(inferred)
         pc = len(actions)
         boundaries.append((pc, event["post"], event["abstract_post"]))
-        action_names = {name for name, _ in inferred}
-        outcomes_b = inferred_outcomes(action_names, event["command_raw"])
-        consensus = event_consensus(event, action_names)
-        if consensus == "AMBIGUOUS":
-            ambiguous += 1
-        elif outcomes_b:
-            if consensus != "OK":
-                die(
-                    f"event {event['sequence']}: R4b-event {consensus.lower()} — "
-                    f"B={sorted(outcomes_b)}, C={delta_c(event['outcome_raw'])}"
+        if gate is not None:
+            # R4c owns this boundary's outcome, and it owns it from B's own rule
+            # rather than from the actions — there are none to read.
+            gates.append((pc, gate[0], gate[1], delta_c(event["outcome_raw"])))
+        else:
+            action_names = {name for name, _ in inferred}
+            outcomes_b = inferred_outcomes(action_names, event["command_raw"])
+            consensus = event_consensus(event, action_names)
+            if consensus == "AMBIGUOUS":
+                ambiguous += 1
+            elif outcomes_b:
+                if consensus != "OK":
+                    die(
+                        f"event {event['sequence']}: R4b-event {consensus.lower()} — "
+                        f"B={sorted(outcomes_b)}, C={delta_c(event['outcome_raw'])}"
+                    )
+                outcome_boundaries.append(
+                    (pc, delta_c(event["outcome_raw"]), next(iter(outcomes_b)))
                 )
-            outcome_boundaries.append((pc, delta_c(event["outcome_raw"]), next(iter(outcomes_b))))
         if beta_boundary is None and event["pre"]["pin_record_len"] is None \
                 and event["post"]["pin_record_len"] == 35:
             beta_boundary = pc
@@ -383,11 +523,15 @@ def generate(events: list[dict], output: Path) -> dict:
     action_values = [(index, expression) for index, (_, expression) in enumerate(actions)]
     outcome_raw_values = [(pc, f'"{raw}"') for pc, raw, _ in outcome_boundaries]
     outcome_b_values = [(pc, f'"{model}"') for pc, _, model in outcome_boundaries]
+    gate_kind_values = [(pc, f'"{kind}"') for pc, kind, _, _ in gates]
+    gate_rk_values = [(pc, "TRUE" if rk else "FALSE") for pc, _, rk, _ in gates]
+    gate_outcome_values = [(pc, f'"{outcome}"') for pc, _, _, outcome in gates]
     reached = {name for name, _ in actions if name != "Stutter"}
     floors = [
         ("commands", len(events), ratchet(COMMANDS_RATCHET)),
         ("steps", len(actions), ratchet(STEPS_RATCHET)),
         ("distinct-actions", len(reached), ratchet(ACTIONS_RATCHET)),
+        ("gate-boundaries", len(gates), ratchet(GATES_RATCHET)),
     ]
     short = [f"{what}={got} < {want}" for what, got, want in floors if got < want]
     if short:
@@ -408,6 +552,7 @@ def generate(events: list[dict], output: Path) -> dict:
         f"AlphaMutationBoundary == {alpha_boundary}",
         "OutcomeBoundaryPcs == {" + ", ".join(str(pc) for pc, _, _ in outcome_boundaries) + "}",
         f"OutcomeMutationBoundary == {outcome_boundaries[0][0]}",
+        "GateBoundaryPcs == {" + ", ".join(str(pc) for pc, _, _, _ in gates) + "}",
         "",
         "TraceStutter == UNCHANGED vars",
         "",
@@ -418,6 +563,12 @@ def generate(events: list[dict], output: Path) -> dict:
         case_operator("BoundaryOutcomeRaw", outcome_raw_values),
         "",
         case_operator("BoundaryOutcomeB", outcome_b_values),
+        "",
+        case_operator("GateKind", gate_kind_values),
+        "",
+        case_operator("GateRk", gate_rk_values),
+        "",
+        case_operator("GateOutcomeRaw", gate_outcome_values),
         "",
         case_operator("TraceAction", action_values),
         "",
@@ -431,6 +582,7 @@ def generate(events: list[dict], output: Path) -> dict:
         "reached": sorted(reached),
         "unreached": sorted(MODEL_ACTIONS - reached),
         "ambiguous": ambiguous,
+        "gates": len(gates),
     }
 
 
@@ -443,10 +595,10 @@ def run_tlc(work: Path, config: str) -> tuple[int, int | None]:
     `-deadlock` is NOT passed, and that is the point. A replay is forced step by
     step, so a step the model cannot take leaves TLC with nowhere to go — the
     divergence IS the deadlock, at the exact index. Suppressing the check turned
-    every such divergence into a short run reporting "No error has been found":
-    the recorded reset ran fifteen steps past where the model stopped following
-    it. The count is the second half, because a replay is linear and its length
-    is known in advance.
+    every such divergence into a short run that reported "No error has been
+    found": the recorded reset ran fifteen steps past where the model stopped
+    following it, and the row was GREEN for three days. The count is the second
+    half, because a replay is linear and its length is known in advance.
     """
     jar = os.environ.get("TLA2TOOLS_JAR")
     if not jar:
@@ -491,17 +643,12 @@ def validate(
                 f"{check_data} is stale; regenerate with "
                 "--keep-data formal/TraceSecurityData.tla"
             )
-        configs = ["TraceSecurity.cfg"]
-        if run_mutations:
-            configs += [
-                "TraceSecurityBadBeta.cfg",
-                "TraceSecurityBadAlpha.cfg",
-                "TraceSecurityBadAlphaNoR4b.cfg",
-            ]
+        verdicts = trace_verdicts()
+        configs = ["TraceSecurity.cfg"] if not run_mutations else sorted(verdicts)
         for config in configs:
             shutil.copy2(FORMAL / config, work / config)
             rc, distinct = run_tlc(work, config)
-            green = config in {"TraceSecurity.cfg", "TraceSecurityBadAlphaNoR4b.cfg"}
+            green = verdicts[config] == "GREEN"
             expected = 0 if green else 12
             if rc != expected:
                 die(f"{config}: TLC exit {rc}, expected {expected}")
@@ -515,7 +662,8 @@ def validate(
                 )
         print(
             f"security-trace: GREEN commands={report['commands']} steps={report['steps']} "
-            f"distinct_actions={len(report['reached'])} ambiguous={report['ambiguous']}"
+            f"distinct_actions={len(report['reached'])} gates={report['gates']} "
+            f"ambiguous={report['ambiguous']}"
         )
         limit = ratchet(AMBIGUOUS_RATCHET)
         if report["ambiguous"] > limit:

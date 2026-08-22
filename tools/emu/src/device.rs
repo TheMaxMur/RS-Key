@@ -626,6 +626,7 @@ async fn serve<PR: rsk_sdk::UserPresence + 'static>(
                         cid,
                         data.first().copied().unwrap_or(0),
                         body.first().copied().unwrap_or(0),
+                        make_credential_request_flags(&data),
                         pre,
                         post,
                         abstract_pre,
@@ -749,6 +750,7 @@ async fn serve<PR: rsk_sdk::UserPresence + 'static>(
                         0,
                         crate::security_trace::POWER_CYCLE,
                         0,
+                        None,
                         pre,
                         ctap.security_trace_snapshot(),
                         abstract_pre,
@@ -805,6 +807,20 @@ async fn serve<PR: rsk_sdk::UserPresence + 'static>(
             eprintln!("emu: warm reboot — RAM state dropped, the reset window stays shut");
         }
     }
+}
+
+/// The makeCredential request fields the phase-4 replay reads, taken from the
+/// applet's own parser. `None` for every other command, and for a body the
+/// device itself would refuse to decode — a request that never parsed has no
+/// gate answer to predict.
+#[cfg(feature = "security-trace")]
+fn make_credential_request_flags(data: &[u8]) -> Option<crate::security_trace::RequestFlags> {
+    let (&cmd, params) = data.split_first()?;
+    if cmd != rsk_fido::consts::CTAP_MAKE_CREDENTIAL {
+        return None;
+    }
+    let (rk, pin_uv_auth) = rsk_fido::makecredential::assurance::trace_request_flags(params)?;
+    Some(crate::security_trace::RequestFlags { rk, pin_uv_auth })
 }
 
 fn hex(b: &[u8]) -> String {

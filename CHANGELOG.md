@@ -45,12 +45,24 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   states: the reset expansion emitted one step per live record, while the model's
   seed arm empties `cred` and `rpent` with the seed in the same step. Three things
   had to line up — `scripts/security_trace.py` ran TLC with `-deadlock`, so the
-  divergence the whole pipeline rests on was not checked; `TraceComplete` was
+  divergence the whole pipeline rests on was not checked; `TraceComplete` is
   `tracePc <= TraceSteps`, a tautology that can only catch a replay running PAST
   its evidence; and the floor was 30. `-deadlock` is gone, the two GREEN rows are
-  pinned at `TraceSteps + 1`, the runner asserts the reported distinct count, and
-  the unfalsifiable invariant is retired along with its registry row. Host tooling
-  and formal artefacts only.
+  pinned at `TraceSteps + 1`, and the runner asserts the reported distinct count.
+  Host tooling and formal artefacts only.
+
+- **The replay answers the gates the model expresses by disabling an action
+  (R4c), and `AMBIGUOUS` is 0.** Two recorded boundaries could only be shrugged
+  at, both a `makeCredential` carrying no `pinUvAuthParam`: a refusal and a
+  successful non-discoverable registration write nothing either way, so their raw
+  footprints are identical and only `rk` separates them (CTAP 2.1 §6.1.2 steps
+  7/10). Trace schema 4 records that flag and whether a `pinUvAuthParam` was
+  offered — inputs, decoded by the applet's own parser — B states the gate rule
+  over its own variables, and `R4cGateAnswers` holds the recorded outcome to it.
+  The reset window is the second gate: a refused reset over an emptied store has
+  the exact footprint of a second successful wipe, and that refusal had been
+  replayed as one. Two configurations take one half each of the rule out and are
+  required RED. Host tooling and formal artefacts only.
 
 - **`MODELLED-ONLY` was reading as "no evidence below the model", and for 27 of
   42 rows that was wrong.** The status ladder's only code-facing rung is
@@ -294,14 +306,15 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   model's 50 actions, because a second suite could not be added: the replug
   between suites moves security state outside every CBOR boundary, and the
   replayer — correctly — refused the discontinuity. `tools/emu` now records the
-  power cycle as its own boundary (`command_raw` `0xFF`, trace schema 3), which is
-  also the only way `PowerCut` is ever reached. With the reset path mapped, the
-  committed trace is three suites through one emulator lifetime: **21 boundaries**
-  — the step count it landed with was re-measured by the entry above, which found
-  the reset expansion emitting steps the model was refusing. The replayer keeps a
-  small ledger of what B holds, updated only from actions it has itself emitted,
-  because a relying party's real credentials fold onto one model element and the
-  raw slot counters cannot say how many. The three coverage floors moved out of the script
+  power cycle as its own boundary (`command_raw` `0xFF`), which is also the only
+  way `PowerCut` is ever reached. With the reset path mapped, the committed trace
+  is three suites through one emulator lifetime: **21 boundaries** — the step and
+  action counts it landed with were re-measured by the R4c entry below, which
+  found the reset expansion emitting steps the model was refusing. The replayer
+  keeps a small ledger of what B holds, updated only from actions it has itself
+  emitted, because a relying party's real credentials fold onto one model element
+  and the raw slot counters cannot say how many. The three coverage floors moved
+  out of the script
   into `floors.txt` beside every other ratchet, where the file's own header says
   how to move one deliberately; each was driven red on its own, and deleting a
   ratchet line is fatal rather than permissive. Host tooling and formal

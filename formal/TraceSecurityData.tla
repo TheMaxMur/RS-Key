@@ -6,12 +6,13 @@
 (*****************************************************************************)
 EXTENDS RSKeySecurityState, Integers
 
-TraceSteps == 56
-BoundaryPcs == {0, 1, 2, 5, 6, 13, 14, 21, 22, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 47, 56}
+TraceSteps == 49
+BoundaryPcs == {0, 1, 2, 5, 6, 13, 14, 21, 22, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 47, 49}
 BetaMutationBoundary == 5
 AlphaMutationBoundary == 6
 OutcomeBoundaryPcs == {5, 6, 13, 14, 21, 22, 27, 33, 34}
 OutcomeMutationBoundary == 5
+GateBoundaryPcs == {29, 30, 49}
 
 TraceStutter == UNCHANGED vars
 
@@ -541,7 +542,7 @@ BoundaryRaw(i) ==
         warmBootRaw |-> FALSE,
         channelRaw |-> 16777218,
         keydevRamRaw |-> FALSE ]
-      [] i = 56 -> [ pinRecordLen |-> -1,
+      [] i = 49 -> [ pinRecordLen |-> -1,
         pinRetriesRaw |-> -1,
         alwaysUvRecordLen |-> -1,
         alwaysUvRaw |-> -1,
@@ -737,7 +738,7 @@ BoundaryAbstract(i) ==
         rpBound |-> FALSE,
         pinSet |-> FALSE,
         persistentGrant |-> FALSE ]
-      [] i = 56 -> [ live |-> FALSE,
+      [] i = 49 -> [ live |-> FALSE,
         permissionMc |-> FALSE,
         permissionGa |-> FALSE,
         permissionCm |-> FALSE,
@@ -769,6 +770,24 @@ BoundaryOutcomeB(i) ==
       [] i = 27 -> "Authorized"
       [] i = 33 -> "Authorized"
       [] i = 34 -> "Authorized"
+      [] OTHER -> CHOOSE x : FALSE
+
+GateKind(i) ==
+    CASE i = 29 -> "mc"
+      [] i = 30 -> "mc"
+      [] i = 49 -> "reset"
+      [] OTHER -> CHOOSE x : FALSE
+
+GateRk(i) ==
+    CASE i = 29 -> TRUE
+      [] i = 30 -> FALSE
+      [] i = 49 -> FALSE
+      [] OTHER -> CHOOSE x : FALSE
+
+GateOutcomeRaw(i) ==
+    CASE i = 29 -> "Rejected"
+      [] i = 30 -> "Authorized"
+      [] i = 49 -> "Rejected"
       [] OTHER -> CHOOSE x : FALSE
 
 TraceAction(i) ==
@@ -819,15 +838,8 @@ TraceAction(i) ==
       [] i = 44 -> ResetSweepGates
       [] i = 45 -> ResetFinish
       [] i = 46 -> PressUp
-      [] i = 47 -> ResetStart
-      [] i = 48 -> PressDown
-      [] i = 49 -> /\ TouchConfirm /\ pres'.pressing = TRUE
-      [] i = 50 -> ResetConfirmed
-      [] i = 51 -> ResetSweepSecrets
-      [] i = 52 -> ResetSweepSecrets
-      [] i = 53 -> ResetSweepGates
-      [] i = 54 -> ResetFinish
-      [] i = 55 -> PressUp
+      [] i = 47 -> Tick
+      [] i = 48 -> TraceStutter
       [] OTHER -> CHOOSE x : FALSE
 
 =============================================================================
