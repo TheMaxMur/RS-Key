@@ -60,13 +60,18 @@ Transport.cfg                        GREEN   4
 \* harness proven able to refuse a session at all.
 TraceSeams.cfg                       GREEN   5
 TraceSeamsBad.cfg                    RED     -
-\* Full RSKeySecurityState refinement replay: 30 inferred B micro-steps from
-\* 12 real CBOR boundaries. The α mutant's GREEN control, with R4b disabled,
-\* proves that the corresponding RED row is caught by R4b alone.
-TraceSecurity.cfg                    GREEN   30
+\* Full RSKeySecurityState refinement replay: 56 inferred B micro-steps from
+\* 21 real CBOR boundaries across three suites and one replug. The α mutant's
+\* GREEN control, with R4b disabled, proves that the corresponding RED row is
+\* caught by R4b alone.
+\*
+\* The two GREEN rows are PINS, not thirds: a linear replay of 56 forced steps
+\* has exactly 57 states, so anything less is the model refusing to follow the
+\* recording. It reached 44 of 59 for three days and read as GREEN.
+TraceSecurity.cfg                    GREEN   57
 TraceSecurityBadBeta.cfg             RED     -
 TraceSecurityBadAlpha.cfg            RED     -
-TraceSecurityBadAlphaNoR4b.cfg       GREEN   30
+TraceSecurityBadAlphaNoR4b.cfg       GREEN   57
 TraceSecurityBadOutcome.cfg          RED     -
 \* The recorded session's coverage, ratcheted so a re-record cannot quietly cover
 \* less. Unlike the distinct-state floors above these are PINS at the measured
@@ -74,7 +79,12 @@ TraceSecurityBadOutcome.cfg          RED     -
 \* fidelity churn -- only by someone recording a shorter session. Raise them when
 \* a richer session lands; never lower one without saying which flow was dropped.
 @TraceSecurityCommandsMin 21
-@TraceSecurityStepsMin 58
+\* 58 until the sweep expansion was measured against the model rather than
+\* against the device: it emitted one step per live record, but the seed arm
+\* empties `cred` and `rpent` with the seed, so the phase is two steps however
+\* many credentials B holds. The two that went were steps the model had been
+\* refusing, not coverage.
+@TraceSecurityStepsMin 56
 @TraceSecurityActionsMin 20
 @TraceSecurityAmbiguousMax 2
 \* Phase 5. Reduced constants keep the labelled action check separate from the

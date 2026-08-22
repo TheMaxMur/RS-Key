@@ -100,6 +100,11 @@ OutcomeAtBoundary ==
 R4bEventConsensus ==
     tracePc \in OutcomeBoundaryPcs => OutcomeAtBoundary = BoundaryOutcomeB(tracePc)
 
-TraceComplete == tracePc <= TraceSteps
+\* `TraceComplete == tracePc <= TraceSteps` stood here and could not fail:
+\* `TraceNext` only advances under `tracePc < TraceSteps`, so it was an
+\* invariant of the transition relation. What it read as promising — that the
+\* replay reached the END of its evidence — is asserted from outside now, by
+\* scripts/security_trace.py holding the reported distinct count to
+\* `TraceSteps + 1`, and by the deadlock check that is no longer suppressed.
 
 =============================================================================

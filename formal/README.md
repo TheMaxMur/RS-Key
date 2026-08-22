@@ -1929,7 +1929,7 @@ full `RSKeySecurityState`, and that pipeline is separate:
    definition the phase-5 INSTANCE will consume too.
 4. The committed trace is three suites through one emulator lifetime —
    `21_pin_webauthn`, `20_clientpin`, `27_reset_window` — and has 21 CBOR
-   boundaries, 58 B steps and 20 distinct model actions. Those are ratchets in
+   boundaries, 56 B steps and 20 distinct model actions. Those are ratchets in
    `floors.txt` beside every other one, not literals in the script, and every run
    prints both the reached set and the model actions no real traffic reached. The
    same validation runs inside the socket emulator-suites CI row.
@@ -1938,10 +1938,14 @@ full `RSKeySecurityState`, and that pipeline is separate:
    boundary and the replay saw a discontinuity it could not explain — which is
    why the trace used to be one suite. It is also the only way `PowerCut` is
    reached.
-6. The reset sweeps run once per live record, so their length is **B's** count,
-   not the device's: `RegisterStart("rp1", …)` folds every real credential of one
-   relying party onto one model element, and the raw slot counters cannot say how
-   many that is. `scripts/security_trace.py` therefore keeps a small ledger of
+6. The reset sweeps run once per live **secret**, and that count is B's rather
+   than the device's twice over. `RegisterStart("rp1", …)` folds every real
+   credential of one relying party onto one model element, so the raw slot
+   counters cannot say how many there are — and the seed is not one record among
+   them: `ResetSweepSecrets`'s first arm is `KeepOpen([store EXCEPT !.seed =
+   FALSE], ram)` over a `ram` that `ResetConfirmed` has already cleared, so `cred`
+   and `rpent` go with the seed in the SAME step. The phase is two steps however
+   many credentials B holds. `scripts/security_trace.py` keeps a small ledger of
    what B holds, updated only from the actions it has itself emitted — never read
    back from the trace.
 7. `TraceSecurityBadBeta.cfg` shifts one raw retry field and is RED under R4a.
@@ -1953,6 +1957,30 @@ The first real replay found a fidelity defect: B consumed permissions after
 makeCredential but failed to retain Rust's first-use rpId binding.
 `BoundConsumedTok` is the resulting model correction. This is empirical
 conformance of the recorded traffic, not a proof that unrecorded code refines B.
+
+### The replay had stopped following the recording, and every observer said GREEN
+
+`TraceSecurity.cfg` was GREEN over a replay that reached **44 of 59 states**: the
+recorded reset ran fifteen steps past the point where the model stopped following
+it, because the sweep expansion emitted one step per live record while the seed
+arm empties `cred` and `rpent` with the seed. Three things had to line up for that
+to read as a pass, and all three did:
+
+* `scripts/security_trace.py` ran TLC with **`-deadlock`**, so the divergence — a
+  forced step with no successor, the mechanism this whole pipeline rests on — was
+  not checked at all;
+* `TraceComplete` was `tracePc <= TraceSteps`, a tautology that can only catch a
+  replay running PAST its evidence, never one stopping short — it is retired, and
+  the obligation it read as carrying is now the runner's count check;
+* the floor was 30, well under 44.
+
+`-deadlock` is gone, the two GREEN rows are pinned at `TraceSteps + 1` rather than
+floored at a third, and the runner asserts the reported distinct count directly,
+because the exit code alone cannot say it. Driven, in that order: the sweep
+mutation alone gives `Deadlock reached`, TLC exit 11; with `-deadlock` back it
+gives `44 distinct states for 51 steps — the replay did not reach the end of the
+recording`; with the count check *also* removed it is GREEN and silent, which is
+the shape that shipped.
 
 ## What now catches a run nobody watched
 
@@ -2106,7 +2134,6 @@ evidence columns and validated cross-model support edges below on every gate run
 | `SEC-FIDO-L03` | `EveryWalkCloses` | MODELLED-ONLY | `RSKeySecurityState` | — | 0 | 1 | 0 | 0 | 0 | 0 |
 | `SEC-TRACE-001` | `R4aRawRefinesB` | MODELLED-ONLY | `TraceSecurity` | — | 0 | 0 | 0 | 0 | 0 | 0 |
 | `SEC-TRACE-002` | `R4bAlphaMatchesGamma` | MODELLED-ONLY | `TraceSecurity` | — | 0 | 0 | 0 | 0 | 0 | 0 |
-| `SEC-TRACE-003` | `TraceComplete` | MODELLED-ONLY | `TraceSecurity` | — | 0 | 0 | 0 | 0 | 0 | 0 |
 | `SEC-SEAM-001` | `NoStatusOutsideItsSelection` | MODELLED-ONLY | `RSKeyAppletSeams` | — | 1 | 2 | 1 | 0 | 0 | 0 |
 | `SEC-SEAM-002` | `NoStatusAfterARefusedAuth` | MODELLED-ONLY | `RSKeyAppletSeams` | — | 1 | 2 | 2 | 0 | 0 | 0 |
 | `SEC-SEAM-003` | `NoKeyOpOnTheAdminStatus` | MODELLED-ONLY | `RSKeyAppletSeams` | — | 1 | 6 | 5 | 0 | 0 | 0 |

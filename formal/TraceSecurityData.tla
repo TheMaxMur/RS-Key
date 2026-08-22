@@ -6,8 +6,8 @@
 (*****************************************************************************)
 EXTENDS RSKeySecurityState, Integers
 
-TraceSteps == 58
-BoundaryPcs == {0, 1, 2, 5, 6, 13, 14, 21, 22, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 49, 58}
+TraceSteps == 56
+BoundaryPcs == {0, 1, 2, 5, 6, 13, 14, 21, 22, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 47, 56}
 BetaMutationBoundary == 5
 AlphaMutationBoundary == 6
 OutcomeBoundaryPcs == {5, 6, 13, 14, 21, 22, 27, 33, 34}
@@ -516,7 +516,7 @@ BoundaryRaw(i) ==
         warmBootRaw |-> FALSE,
         channelRaw |-> 0,
         keydevRamRaw |-> FALSE ]
-      [] i = 49 -> [ pinRecordLen |-> -1,
+      [] i = 47 -> [ pinRecordLen |-> -1,
         pinRetriesRaw |-> -1,
         alwaysUvRecordLen |-> -1,
         alwaysUvRaw |-> -1,
@@ -541,7 +541,7 @@ BoundaryRaw(i) ==
         warmBootRaw |-> FALSE,
         channelRaw |-> 16777218,
         keydevRamRaw |-> FALSE ]
-      [] i = 58 -> [ pinRecordLen |-> -1,
+      [] i = 56 -> [ pinRecordLen |-> -1,
         pinRetriesRaw |-> -1,
         alwaysUvRecordLen |-> -1,
         alwaysUvRaw |-> -1,
@@ -729,7 +729,7 @@ BoundaryAbstract(i) ==
         rpBound |-> FALSE,
         pinSet |-> TRUE,
         persistentGrant |-> FALSE ]
-      [] i = 49 -> [ live |-> FALSE,
+      [] i = 47 -> [ live |-> FALSE,
         permissionMc |-> FALSE,
         permissionGa |-> FALSE,
         permissionCm |-> FALSE,
@@ -737,7 +737,7 @@ BoundaryAbstract(i) ==
         rpBound |-> FALSE,
         pinSet |-> FALSE,
         persistentGrant |-> FALSE ]
-      [] i = 58 -> [ live |-> FALSE,
+      [] i = 56 -> [ live |-> FALSE,
         permissionMc |-> FALSE,
         permissionGa |-> FALSE,
         permissionCm |-> FALSE,
@@ -815,21 +815,19 @@ TraceAction(i) ==
       [] i = 40 -> ResetConfirmed
       [] i = 41 -> ResetSweepSecrets
       [] i = 42 -> ResetSweepSecrets
-      [] i = 43 -> ResetSweepSecrets
-      [] i = 44 -> ResetSweepSecrets
-      [] i = 45 -> ResetSweepGates
-      [] i = 46 -> ResetSweepGates
-      [] i = 47 -> ResetFinish
-      [] i = 48 -> PressUp
-      [] i = 49 -> ResetStart
-      [] i = 50 -> PressDown
-      [] i = 51 -> /\ TouchConfirm /\ pres'.pressing = TRUE
-      [] i = 52 -> ResetConfirmed
-      [] i = 53 -> ResetSweepSecrets
-      [] i = 54 -> ResetSweepSecrets
-      [] i = 55 -> ResetSweepGates
-      [] i = 56 -> ResetFinish
-      [] i = 57 -> PressUp
+      [] i = 43 -> ResetSweepGates
+      [] i = 44 -> ResetSweepGates
+      [] i = 45 -> ResetFinish
+      [] i = 46 -> PressUp
+      [] i = 47 -> ResetStart
+      [] i = 48 -> PressDown
+      [] i = 49 -> /\ TouchConfirm /\ pres'.pressing = TRUE
+      [] i = 50 -> ResetConfirmed
+      [] i = 51 -> ResetSweepSecrets
+      [] i = 52 -> ResetSweepSecrets
+      [] i = 53 -> ResetSweepGates
+      [] i = 54 -> ResetFinish
+      [] i = 55 -> PressUp
       [] OTHER -> CHOOSE x : FALSE
 
 =============================================================================

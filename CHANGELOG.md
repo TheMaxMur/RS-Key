@@ -40,6 +40,18 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Added
 
+- **The trace replay had stopped following the recording fifteen steps from the
+  end, and every observer said GREEN.** `TraceSecurity.cfg` reached 44 of 59
+  states: the reset expansion emitted one step per live record, while the model's
+  seed arm empties `cred` and `rpent` with the seed in the same step. Three things
+  had to line up — `scripts/security_trace.py` ran TLC with `-deadlock`, so the
+  divergence the whole pipeline rests on was not checked; `TraceComplete` was
+  `tracePc <= TraceSteps`, a tautology that can only catch a replay running PAST
+  its evidence; and the floor was 30. `-deadlock` is gone, the two GREEN rows are
+  pinned at `TraceSteps + 1`, the runner asserts the reported distinct count, and
+  the unfalsifiable invariant is retired along with its registry row. Host tooling
+  and formal artefacts only.
+
 - **`MODELLED-ONLY` was reading as "no evidence below the model", and for 27 of
   42 rows that was wrong.** The status ladder's only code-facing rung is
   `BOUNDED`, which a Kani harness sets — so a property whose concrete face is
@@ -284,12 +296,12 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   replayer — correctly — refused the discontinuity. `tools/emu` now records the
   power cycle as its own boundary (`command_raw` `0xFF`, trace schema 3), which is
   also the only way `PowerCut` is ever reached. With the reset path mapped, the
-  committed trace is three suites through one emulator lifetime: **21 boundaries,
-  58 B steps, 20 distinct actions**, all four TLC configurations behaving as
-  before. The reset sweeps run once per live record, and that count is B's, not
-  the device's — one relying party's real credentials fold onto one model element
-  — so the replayer keeps a small ledger of what B holds, updated only from
-  actions it has itself emitted. The three coverage floors moved out of the script
+  committed trace is three suites through one emulator lifetime: **21 boundaries**
+  — the step count it landed with was re-measured by the entry above, which found
+  the reset expansion emitting steps the model was refusing. The replayer keeps a
+  small ledger of what B holds, updated only from actions it has itself emitted,
+  because a relying party's real credentials fold onto one model element and the
+  raw slot counters cannot say how many. The three coverage floors moved out of the script
   into `floors.txt` beside every other ratchet, where the file's own header says
   how to move one deliberately; each was driven red on its own, and deleting a
   ratchet line is fatal rather than permissive. Host tooling and formal

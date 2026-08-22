@@ -701,8 +701,7 @@ emit_security_trace() { # cfg, beta mutation, alpha mutation, outcome mutation, 
     echo "    TypeOK"
     echo "    R4aRawRefinesB"
     echo "    R4bEventConsensus"
-    [ "$r4b" = TRUE ] && echo "    R4bAlphaMatchesGamma"
-    echo "    TraceComplete"
+    if [ "$r4b" = TRUE ]; then echo "    R4bAlphaMatchesGamma"; fi
   } > "$out"
 }
 emit_security_trace TraceSecurity.cfg FALSE FALSE FALSE TRUE

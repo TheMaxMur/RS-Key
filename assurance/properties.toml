@@ -179,13 +179,6 @@ status = "MODELLED-ONLY"
 statement = "At every recorded emulator boundary, the implementation's untrusted abstract token hint equals the canonical gamma projection of RSKeySecurityState."
 source = ["formal/README.md — phase 4 trace validation"]
 
-[[property]]
-id = "SEC-TRACE-003"
-name = "TraceComplete"
-status = "MODELLED-ONLY"
-statement = "The replay position remains within the generated action trace, so the harness cannot run past or skip its recorded evidence."
-source = ["formal/README.md — phase 4 trace validation"]
-
 # ---- RSKeyAppletSeams — the applets' access statuses ------------------------
 
 [[property]]

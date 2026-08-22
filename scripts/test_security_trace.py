@@ -55,21 +55,47 @@ def test_a_power_cycle_is_one_power_cut_and_reads_no_state_difference():
     assert [n for n, _ in security_trace.infer(event, security_trace.new_ledger())] == ["PowerCut"]
 
 
-def test_the_reset_sweeps_count_bs_records_not_the_devices():
-    # Two real credentials for one relying party are ONE element of B's store, so
-    # the sweep runs once for it. Counting `credential_slots_raw` instead would
-    # emit a second `ResetSweepSecrets` the model cannot take.
+def test_the_secret_sweep_does_not_grow_with_the_records_the_seed_opens():
+    # `ResetSweepSecrets`'s seed arm is `KeepOpen([store EXCEPT !.seed = FALSE],
+    # ram)` over a `ram` that `ResetConfirmed` has already cleared, so `cred` and
+    # `rpent` go with the seed in ONE step. A step per record is what wedged the
+    # replay fifteen steps from the end of the recording.
     ledger = security_trace.new_ledger()
-    ledger["cred"].add("rp1")
-    ledger["rpent"].add("rp1")
+    ledger["cred"].update({"rp1", "rp2"})
+    ledger["rpent"].update({"rp1", "rp2"})
     ledger["pin_set"] = True
     names = [n for n, _ in security_trace.reset_path(ledger)]
-    assert names.count("ResetSweepSecrets") == 4  # seed + cred + rpent + advance
+    assert names.count("ResetSweepSecrets") == 2  # the seed, then the advance
     assert names.count("ResetSweepGates") == 2  # pin + advance
     assert names[0] == "ResetStart" and names[-2] == "ResetFinish"
+    # The grant is its own arm (`PpuatIsASecret`), so it does add a step.
+    ledger["ppuat"] = True
+    assert [n for n, _ in security_trace.reset_path(ledger)].count("ResetSweepSecrets") == 3
     assert security_trace.reset_path(security_trace.new_ledger()).count(
         ("ResetSweepGates", "ResetSweepGates")
     ) == 1  # nothing to delete: the advance step alone
+
+
+def test_each_gate_the_sweep_deletes_costs_its_own_step():
+    # `always_uv` and `sealed` are `GatesLive` terms the recording never sets, so
+    # nothing else here would notice one moved to the secrets phase.
+    for gate in ("pin_set", "always_uv", "sealed"):
+        ledger = security_trace.new_ledger()
+        ledger[gate] = True
+        names = [n for n, _ in security_trace.reset_path(ledger)]
+        assert names.count("ResetSweepGates") == 2, gate
+        assert names.count("ResetSweepSecrets") == 2, gate
+
+
+def test_a_seedless_store_holding_records_has_no_sweep_length():
+    ledger = security_trace.new_ledger()
+    ledger["seed"] = False
+    ledger["cred"].add("rp1")
+    with pytest.raises(SystemExit, match="no modelled sweep length"):
+        security_trace.reset_path(ledger)
+    # And the other direction: nothing to open is not the same as a lost seed.
+    ledger["cred"].clear()
+    assert [n for n, _ in security_trace.reset_path(ledger)].count("ResetSweepSecrets") == 1
 
 
 def test_a_wrong_pin_needs_both_counters_to_move():

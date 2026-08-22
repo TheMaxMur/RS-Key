@@ -9,8 +9,10 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -154,13 +156,26 @@ def new_ledger() -> dict:
 
 
 def reset_path(ledger: dict) -> list[tuple[str, str]]:
-    """`ResetStart` through `ResetFinish`, one sweep step per live record.
+    """`ResetStart` through `ResetFinish`, one sweep step per live SECRET.
+
+    The seed is not one record among many: `ResetSweepSecrets`'s first arm is
+    `store' = KeepOpen([store EXCEPT !.seed = FALSE], ram)`, and `ResetConfirmed`
+    has already cleared `ram` — so deleting it empties `cred` and `rpent` in the
+    SAME step, because nothing without the seed can be opened. The sweep's length
+    therefore does not grow with the number of credentials B holds.
+
+    Counting one step per record is what this used to do, and the model had been
+    refusing the surplus — see `run_tlc` for the half of the repair that makes
+    that impossible to miss.
 
     Each phase ends with one extra step: the `ELSE` arm that advances `op.step`
     once nothing is left to delete.
     """
-    secrets = int(ledger["seed"]) + len(ledger["cred"]) + len(ledger["rpent"]) \
-        + int(ledger["ppuat"])
+    if not ledger["seed"] and (ledger["cred"] or ledger["rpent"]):
+        die("a store with records but no seed has no modelled sweep length")
+    # `SealedIsASecret` needs `BugBackupSealedNotAGate`, which no trace
+    # configuration sets, so the seal is counted with the gates below.
+    secrets = int(ledger["seed"]) + int(ledger["ppuat"])
     gates = int(ledger["pin_set"]) + int(ledger["always_uv"]) + int(ledger["sealed"])
     steps = [
         ("ResetStart", "ResetStart"),
@@ -419,7 +434,20 @@ def generate(events: list[dict], output: Path) -> dict:
     }
 
 
-def run_tlc(work: Path, config: str) -> int:
+DISTINCT = re.compile(r"([\d,]+) distinct states found")
+
+
+def run_tlc(work: Path, config: str) -> tuple[int, int | None]:
+    """One TLC run, and the number of distinct states it reported.
+
+    `-deadlock` is NOT passed, and that is the point. A replay is forced step by
+    step, so a step the model cannot take leaves TLC with nowhere to go — the
+    divergence IS the deadlock, at the exact index. Suppressing the check turned
+    every such divergence into a short run reporting "No error has been found":
+    the recorded reset ran fifteen steps past where the model stopped following
+    it. The count is the second half, because a replay is linear and its length
+    is known in advance.
+    """
     jar = os.environ.get("TLA2TOOLS_JAR")
     if not jar:
         die("TLA2TOOLS_JAR unset -- run inside `nix develop`")
@@ -428,12 +456,17 @@ def run_tlc(work: Path, config: str) -> int:
         die("java not found")
     result = subprocess.run(
         [java, "-XX:+UseParallelGC", "-Xmx2g", "-cp", jar, "tlc2.TLC",
-         "-deadlock", "-nowarning", "-workers", "2", "-config", config,
-         "TraceSecurity"],
+         "-nowarning", "-workers", "2", "-config", config, "TraceSecurity"],
         cwd=work,
         check=False,
+        capture_output=True,
+        text=True,
     )
-    return result.returncode
+    print(result.stdout, end="")
+    print(result.stderr, end="", file=sys.stderr)
+    found = DISTINCT.findall(result.stdout)
+    distinct = int(found[-1].replace(",", "")) if found else None
+    return result.returncode, distinct
 
 
 def validate(
@@ -467,10 +500,19 @@ def validate(
             ]
         for config in configs:
             shutil.copy2(FORMAL / config, work / config)
-            rc = run_tlc(work, config)
-            expected = 0 if config in {"TraceSecurity.cfg", "TraceSecurityBadAlphaNoR4b.cfg"} else 12
+            rc, distinct = run_tlc(work, config)
+            green = config in {"TraceSecurity.cfg", "TraceSecurityBadAlphaNoR4b.cfg"}
+            expected = 0 if green else 12
             if rc != expected:
                 die(f"{config}: TLC exit {rc}, expected {expected}")
+            # A linear replay that reaches the end has exactly one state per step
+            # plus the initial one. Fewer means the model stopped following the
+            # recording; the exit code alone cannot say so.
+            if green and distinct != report["steps"] + 1:
+                die(
+                    f"{config}: {distinct} distinct states for {report['steps']} "
+                    "steps — the replay did not reach the end of the recording"
+                )
         print(
             f"security-trace: GREEN commands={report['commands']} steps={report['steps']} "
             f"distinct_actions={len(report['reached'])} ambiguous={report['ambiguous']}"
