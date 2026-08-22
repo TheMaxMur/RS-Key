@@ -63,7 +63,14 @@ def fake_tlc(tmp_path):
     java = tmp_path / "java"
     java.write_text(
         "#!/usr/bin/env python3\n"
-        "import os\n"
+        "import os, sys\n"
+        # A real JVM dies on `-Xmx-`, and the heap column can now hold `-` as a
+        # placeholder because a column follows it. Every row with one came back
+        # "Could not create the Java Virtual Machine" — a RED for no reason at
+        # all — so the stand-in refuses it too.
+        "if '-Xmx-' in sys.argv:\n"
+        "    sys.stderr.write('Error: Could not create the Java Virtual Machine.')\n"
+        "    raise SystemExit(1)\n"
         "print(os.environ['FAKE_TLC_OUTPUT'])\n"
     )
     java.chmod(0o755)
@@ -154,3 +161,48 @@ def test_mutant_that_stops_firing_is_rejected(fake_tlc):
     assert result.returncode == 1
     assert "GREEN" in result.stdout
     assert "expected RED" in result.stdout
+
+
+#: A RED naming an invariant whose name carries a DIGIT. `[A-Za-z]+` matched none
+#: of the nine trace rows for the whole life of the runner, so their verdict
+#: column printed the raw error line and read RED coarsely — invisible until the
+#: name started being compared.
+RED_R4C = """\
+37 states generated
+37 distinct states found
+The depth of the complete state graph search is 37.
+Error: Invariant R4cGateAnswers is violated.
+"""
+
+RED_R4A = RED_R4C.replace("R4cGateAnswers", "R4aRawRefinesB")
+
+
+def test_an_invariant_name_with_a_digit_is_read(fake_tlc):
+    result = run(fake_tlc, "TraceSecurityBadAlwaysUvArm.cfg", RED_R4C)
+    assert result.returncode == 0
+    assert "RED: R4cGateAnswers" in result.stdout
+
+
+def test_a_red_for_the_wrong_invariant_is_rejected(fake_tlc):
+    """The colour is right and the reason is not — 2 of 24 co-refutation patches
+    in this tree scored a kill that way. Measured on this very row: flipping the
+    alwaysUv mutant to the INVERSE defect kept it red at a different boundary."""
+    result = run(fake_tlc, "TraceSecurityBadAlwaysUvArm.cfg", RED_R4A)
+    assert result.returncode == 1
+    assert "expected RED: R4cGateAnswers" in result.stdout
+
+
+def test_a_row_that_names_no_invariant_is_not_held_to_one(fake_tlc):
+    """`TraceSeamsBad.cfg` is refused by a DEADLOCK, which names nothing, and the
+    `Mut_*` families name theirs in their own INVARIANTS block."""
+    result = run(fake_tlc, "Mut_BugResetGatesFirst.cfg", RED)
+    assert result.returncode == 0
+    assert "RED: NoAuthorizationBypass" in result.stdout
+
+
+def test_a_placeholder_heap_does_not_reach_the_jvm(fake_tlc):
+    """The row that exposed it: `RED - - <invariant>` gives `heap` the string
+    `-`, and `-Xmx-` is not a heap."""
+    result = run(fake_tlc, "TraceSecurityBadAlwaysUvArm.cfg", RED_R4C)
+    assert "Could not create the Java Virtual Machine" not in result.stdout
+    assert result.returncode == 0

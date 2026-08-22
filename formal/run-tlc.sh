@@ -58,8 +58,13 @@ one() {
   local cfg=$1 log="out/${1%.cfg}.log" SPEC
   SPEC=$(spec_for "$cfg")
   mkdir -p out
-  local want floor heap
-  read -r want floor heap <<< "$(expect_for "$cfg")"
+  local want floor heap inv
+  read -r want floor heap inv <<< "$(expect_for "$cfg")"
+  # `-` is this file's spelling of "no value" and the heap column now has rows
+  # after it, so it can be filled by a placeholder rather than left off the end.
+  # Passed through it becomes `-Xmx-`, and every such row died reporting
+  # "Could not create the Java Virtual Machine" -- a RED for no reason at all.
+  if [ "${heap:-}" = "-" ]; then heap=""; fi
   local t0 t1 cov=()
   # THE VACUITY QUESTION, and it is the same one `kani::cover!` answers: an
   # action that never fires makes every clause guarding it free. COVERAGE=1
@@ -116,7 +121,11 @@ one() {
       verdict="GREEN"
     fi
   else
-    verdict="RED: $(grep -oE 'Invariant [A-Za-z]+ is violated' "$log" | head -1 \
+    # `[A-Za-z]+` here for its whole life, and every R4* invariant has a DIGIT
+    # in its name -- so the nine trace rows fell through to the generic branch
+    # and their verdict column printed the raw error line. Coarsely they still
+    # read RED, which is why nobody saw it until the name was compared.
+    verdict="RED: $(grep -oE 'Invariant [A-Za-z][A-Za-z0-9_]* is violated' "$log" | head -1 \
                      | sed 's/Invariant //; s/ is violated//')"
     [ "$verdict" = "RED: " ] && verdict="RED: $(grep -m1 -E '^Error' "$log")"
   fi
@@ -127,6 +136,14 @@ one() {
   local mark="" got=${verdict%%:*}
   if [ -n "${want:-}" ] && [ "$want" != "$got" ]; then
     mark="  !! expected $want"
+    FAILED=$((FAILED + 1))
+  # A RED for the WRONG invariant is the same failure wearing the right colour:
+  # the mutant broke something, just not the thing it claims to model. Compared
+  # only where the row names one, because the mutant families already name theirs
+  # in their own INVARIANTS block.
+  elif [ "$got" = RED ] && [ -n "${inv:-}" ] && [ "${inv:-}" != "-" ] \
+       && [ "$verdict" != "RED: $inv" ]; then
+    mark="  !! expected RED: $inv"
     FAILED=$((FAILED + 1))
   fi
   printf '%-42s %-38s states=%-9s distinct=%-8s depth=%-3s %ss%s\n' \

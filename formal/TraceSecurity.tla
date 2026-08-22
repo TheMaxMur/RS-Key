@@ -135,6 +135,12 @@ R4bEventConsensus ==
 \* is the one that refutes `pin.set /\ rk` on its own (event 18: alwaysUv on,
 \* rk FALSE, PUAT_REQUIRED, where that rule predicts served). The pad is
 \* `clientpin.rs:609`'s first conjunct, recorded per boundary.
+\*
+\* `alwaysUv` here is B's, and B reads it from the RECORD (`Beta`, above). The
+\* firmware falls back to `cfg!(feature = "always-uv")` when EF_ALWAYS_UV is
+\* absent (`config.rs:317`), so this arm assumes a build that does not ship the
+\* feature -- which every recording apparatus is, `tools/emu` having no
+\* passthrough for it. Stated, like the pad, rather than left to be discovered.
 McTokenlessRefused(rk, alwaysUv) == alwaysUv \/ (pin.set /\ rk)
 
 \* CTAP 2.1 6.6, crates/rsk-fido/src/reset.rs:187 -- the same predicate the

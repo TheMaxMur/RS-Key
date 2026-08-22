@@ -1957,7 +1957,7 @@ full `RSKeySecurityState`, and that pipeline is separate:
    script, and every run prints both the reached set and the model actions no real
    traffic reached. The same validation runs inside the socket emulator-suites CI
    row.
-5. A **power cycle is a recorded boundary** (`command_raw` `0xFF`, schema 4).
+5. A **power cycle is a recorded boundary** (`command_raw` `0xFF`, schema 5).
    Without it the replug between suites moved security state outside every
    boundary and the replay saw a discontinuity it could not explain — which is
    why the trace used to be one suite. It is also the only way `PowerCut` is
@@ -1975,8 +1975,12 @@ full `RSKeySecurityState`, and that pipeline is separate:
 7. `TraceSecurityBadBeta.cfg` shifts one raw retry field and is RED under R4a.
    `TraceSecurityBadAlpha.cfg` shifts α's `live` field and is RED under R4b;
    `TraceSecurityBadAlphaNoR4b.cfg` is GREEN, demonstrating that only R4b catches
-   that second divergence. `TraceSecurityBadUvNotRqd.cfg` and
-   `TraceSecurityBadResetWindow.cfg` take one half each out of R4c's gate rule.
+   that second divergence.
+   `TraceSecurityBadUvNotRqd.cfg`, `TraceSecurityBadResetWindow.cfg` and
+   `TraceSecurityBadAlwaysUvArm.cfg` take one arm each out of R4c's gate rule,
+   and `floors.txt` names the invariant each of them must break — a mutant that
+   goes red for a defect it does not model is a kill for the wrong reason, and
+   this family had one.
 
 ### R4c — the answers a model gives by disabling an action
 
@@ -1988,14 +1992,16 @@ refused command reaches a replay as a stutter — and a *successful* one that
 stores nothing is the same stutter. `rk` is the only thing that separates them,
 CTAP 2.1 §6.1.2 step 10 being the whole rule (`makecredential.rs:540-546`): a
 discoverable credential still needs a token where a PIN is set, a non-discoverable
-one is served on presence alone. Step 6's `alwaysUv` arm is deliberately NOT in
+one is served on presence alone. Step 6's `alwaysUv` arm was deliberately NOT in
 `McTokenlessRefused`: it refuses only where built-in UV is unavailable
 (`makecredential.rs:528-536`), which would need `req.uv` and the pad's
 availability recorded, and asserting it from `gate.alwaysUv` alone would be an
-uncited claim the code does not make.
+uncited claim the code does not make. **That argument is wrong about the rule and
+the recording refuted it — see "The arm that was left out was wrong" below;** the
+pad is recorded now and the arm is stated.
 
 So the request's `rk` and whether it carried a `pinUvAuthParam` join the
-recording (trace schema 4, decoded by the applet's *own* parser), B states the
+recording (trace schema 5, decoded by the applet's *own* parser), B states the
 gate rule over its own variables, and `R4cGateAnswers` holds the recorded outcome
 to it. The line that keeps this honest is **inputs, never the answer**: the
 status word is read only to REFUSE an event the rule does not reach — a
@@ -2059,18 +2065,51 @@ The gate grid the recording now covers, and the cell it cannot:
 | TRUE | TRUE | FALSE | Rejected | 36 |
 | TRUE | TRUE | TRUE | Rejected | 37 |
 
-**`pin.set` is still TRUE at every gate boundary, and no correct build can make
-it FALSE at one.** The combination that would decide the conjunct — no PIN and
-`rk` true — is *served*, and a served discoverable registration writes a
-credential, so it reaches the replay as a `RegisterWrite` and not as the stutter
-a gate row is made of. The conjunct is not decoration: a build that started
-refusing there would produce the stutter and R4c would catch it. It is simply
-not falsifiable from a recording of a correct build, which is a different
-statement from "unexercised" and is why it is written down here.
+**`pin.set` is TRUE at every gate boundary this recording holds, and the first
+version of this paragraph said no correct build could make it FALSE at one. That
+was wrong, and the review measured it.** The argument was that a served
+discoverable registration writes a credential, so it arrives as a `RegisterWrite`
+and never as the stutter a gate row is made of. It does — the *first* time.
+`credential.rs:815-825` reuses the slot when `(rpIdHash, userId)` already match
+and `bump_rp` is then skipped, so a RE-registration of the same user writes
+nothing the snapshot can see. Driven on the emulator with no PIN: the second and
+third `makeCredential rk:true` each come back `0x00` having moved only
+`channel_raw`, i.e. a gate row at (`pin.set` FALSE, `rk` TRUE). A PIN-less
+non-discoverable create gives the fourth cell the same way.
+
+So the grid is six cells and this recording carries four; the other two are a
+coverage gap that is **reachable and not recorded**, which is a different thing
+from the shut door claimed here before. Both are benign for soundness —
+`McTokenlessRefused` answers `FALSE` at each and the device serves — and both are
+what would make the `pin.set` conjunct falsifiable rather than merely true. The
+suite that would record them is a PIN-less registration repeated, before `21`
+sets the PIN; it is the next widening and it is named here rather than argued
+away.
+
+**And the pad is recorded but never varied**, which is the same shape one level
+down: `builtin_uv` is `false` in all 32 events, so both refusals it feeds — the
+mapper's and `load_events`' — are killed only by their unit cases and neither is
+killed by the `check.sh` row. Deleting either leaves `security-trace: GREEN`
+untouched; measured. The claim this file may make is therefore that the scope is
+**stated and unit-tested**, not that the recording exercises it. Running the
+other arm needs `tools/emu --display` with a pad and a PIN typed on it, which is
+a session nobody has written.
 
 Coverage moved with the session: commands 21 → 32, steps 49 → 60, distinct
 actions 21 → 22 (`ConfigOp` is new), **gate boundaries 3 → 5**, AMBIGUOUS still
-0. `floors.txt` carries all four.
+0. `floors.txt` carries all four, and its GREEN trace rows are now **pinned** at
+`TraceSteps + 1` by `security_trace.py` rather than floored by hand — a floor is
+compared with `-lt`, and `check.sh` runs the mapper without `--mutations`, so the
+second GREEN row's own count was checked by nothing.
+
+The RED rows gained a column too. A mutant can go red for a defect it does not
+model, and this one did under test: flipping `MutateAlwaysUvArm` to the INVERSE
+defect kept `TraceSecurityBadAlwaysUvArm.cfg` red — at `tracePc = 30`, the other
+direction — and `run-tlc.sh` was satisfied. `floors.txt` names the invariant each
+RED trace row must break now, and the runner compares it. Repairing that found
+the reason nobody had noticed: the runner's `Invariant [A-Za-z]+ is violated`
+matched **no** name with a digit in it, so every `R4*` row had been printing the
+raw error line in its verdict column since the day it was written.
 
 The rules are stated in `TraceSecurity.tla` and not in `RSKeySecurityState.tla`,
 because `Next` still does not carry a token-less registration as a behaviour —
@@ -2741,8 +2780,9 @@ establishes that named steps preserve it. The complete InitC, older-firmware
 persistent boundary, reset-class evidence table, `EF_ALWAYS_UV` decision, and
 the strict scope of the claim are in `docs/token-refinement.md`.
 
-Trace schema 4 adds `outcome_raw` from the response byte, the power-cycle
-boundary, and the two request fields §6.1.2's token-less gate is a function of.
+Trace schema 4 added `outcome_raw` from the response byte, the power-cycle
+boundary, and the two request fields §6.1.2's token-less gate is a function of;
+schema 5 adds the pad, which is the third.
 R4b-event uses consensus over all inferred B interpretations; it never picks a
 convenient witness. It used to answer `AMBIGUOUS` at two boundaries — both a
 `makeCredential` for a **non-discoverable** credential, which writes nothing, so

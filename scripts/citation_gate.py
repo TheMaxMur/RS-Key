@@ -267,8 +267,8 @@ FLOOR_BY_PAGE = {
     # floor of 1 is thin, but the failure it exists for — a regex that has
     # stopped matching — still finds 0, and this page cannot grow much.
     "gen-configs.sh": 1,
-    # The harness carries only R4c's two rules and the arm they deliberately
-    # leave out; the β projection above them cites nothing.
+    # The harness carries R4c's two rules and the pad the first of them is scoped
+    # by; the β projection above them cites nothing.
     "TraceSecurity.tla": 3,
 }
 

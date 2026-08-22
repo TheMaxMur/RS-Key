@@ -461,3 +461,57 @@ def test_an_event_without_the_pad_field_is_refused(tmp_path):
     path.write_text(json.dumps(event) + "\n", encoding="utf-8")
     with pytest.raises(SystemExit, match="builtin_uv"):
         security_trace.load_events([path])
+
+
+def test_a_permission_set_of_zero_is_not_an_issuance():
+    """`ISSUED_PERMS` leaves the empty set out on purpose and nothing drove it.
+
+    A token spent down to no permissions lands on 0 with `in_use` still TRUE and
+    only token fields moved — every other conjunct of the issuance branch — so
+    admitting 0 would map a CONSUMPTION as a grant. Built rather than found: no
+    suite spends a token through clientPIN, which is why the omission had no
+    case, and the guard is for the shape and not for the scenario.
+    """
+    spent = copy.deepcopy(events()[3])  # the getPinToken that issued mc|ga
+    spent["command_raw"] = 0x06
+    spent["action_hint"] = "clientPin"
+    spent["pre"] = copy.deepcopy(spent["post"])
+    spent["post"]["token_permissions_raw"] = 0
+    assert spent["pre"]["token_permissions_raw"] == 3
+    assert spent["post"]["token_in_use_raw"]
+    assert security_trace.raw_changes(spent) == {"token_permissions_raw"}
+    # Refused, not guessed: no branch claims it, which is the mapper's discipline.
+    with pytest.raises(SystemExit, match="no independent B mapping"):
+        security_trace.infer(spent, security_trace.new_ledger())
+
+
+def test_admitting_a_zero_permission_set_would_map_a_consumption_as_a_grant(monkeypatch):
+    """The other arm, so the omission is a rule and not a comment."""
+    spent = copy.deepcopy(events()[3])
+    spent["command_raw"] = 0x06
+    spent["action_hint"] = "clientPin"
+    spent["pre"] = copy.deepcopy(spent["post"])
+    spent["post"]["token_permissions_raw"] = 0
+    monkeypatch.setitem(security_trace.ISSUED_PERMS, 0, "{}")
+    actions, _gate = security_trace.infer(spent, security_trace.new_ledger())
+    assert actions == [("GetPinToken", "GetPinToken({}, NoRp)")], actions
+    assert security_trace.event_consensus(spent, {"GetPinToken"}) == "OK"
+
+
+def test_a_green_trace_row_floored_below_the_step_ratchet_is_fatal(tmp_path, monkeypatch):
+    """`run-tlc.sh` compares a floor with `-lt`, so a GREEN trace row left at a
+    minimum could stop short of its evidence and read GREEN — the "44 of 59 for
+    three days" failure verbatim. The two numbers are related here."""
+    floors = tmp_path / "floors.txt"
+    floors.write_text(
+        "TraceSecurity.cfg GREEN 30\n"
+        f"{security_trace.STEPS_RATCHET} 60\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(security_trace, "FORMAL", tmp_path)
+    with pytest.raises(SystemExit, match="pinned, not floored"):
+        security_trace.check_green_floors_pin_the_replay()
+
+
+def test_the_real_floors_pin_every_green_trace_row():
+    security_trace.check_green_floors_pin_the_replay()

@@ -101,6 +101,10 @@ echo "== formal security-state trace (${SECURITY_TRACE_SUITES[*]})"
 start_emu security --auto-touch-ms 1
 for suite in "${SECURITY_TRACE_SUITES[@]}"; do
   read -r name args <<<"$suite"
+  # The split is on whitespace, so a suite whose NAME held a space would silently
+  # run a different file with the rest as arguments. None does; this makes the
+  # day one does a stop rather than a wrong recording.
+  [ -f "tests/$name.py" ] || { echo "FAIL: no suite tests/$name.py"; exit 1; }
   # shellcheck disable=SC2086 -- `args` is a suite's own argument list, split on purpose
   python tests/emu.py "tests/$name.py" $args >"$WORK/security-$name.out" 2>&1 || {
     echo "FAIL: the security trace suite $name failed"

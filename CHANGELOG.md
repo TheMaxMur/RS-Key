@@ -40,6 +40,21 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Added
 
+- **A RED row may now name the invariant it must break, and the runner compares
+  it.** A mutant can go red for a defect it does not model — 2 of 24
+  co-refutation patches in this tree once scored a kill that way — and the review
+  measured it happening here: flipping `MutateAlwaysUvArm` to the INVERSE defect
+  kept `TraceSecurityBadAlwaysUvArm.cfg` red, at a different boundary and in the
+  other direction, with `run-tlc.sh` satisfied. `floors.txt` gained a fifth
+  column for it. Repairing that turned up why nobody had noticed: the runner's
+  `Invariant [A-Za-z]+ is violated` matched **no name with a digit in it**, so
+  every `R4*` trace row had been printing the raw error line in its verdict
+  column since the day it was written, reading RED coarsely and naming nothing.
+  A GREEN trace row's floor is `TraceSteps + 1` now and `security_trace.py`
+  asserts it — `run-tlc.sh` compares a floor with `-lt`, and only one of the two
+  GREEN rows gets the mapper's exact distinct-count check, so the other could
+  have stopped short of its evidence and read GREEN.
+
 - **The phase-4 replay's gate rule was refuted by the first session that
   recorded `alwaysUv`, and now states both arms of §6.1.2's token-less gate.**
   The rule was `pin.set /\ rk` — CTAP §6.1.2 step 10 — and step 6's arm was left

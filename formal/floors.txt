@@ -19,7 +19,16 @@
 \* without a counterexample after a fix made its defect unreachable (E171) --
 \* far above any floor, and only visible because somebody read the matrix.
 \*
-\* Columns: <config or glob>  <GREEN|RED>  <min distinct, or - >  [heap]
+\* And a RED verdict alone is not the third half. A mutant can go red for a
+\* defect it does not model -- 2 of 24 co-refutation patches in this tree scored
+\* a kill that way -- so a RED row may name the invariant it must break, and the
+\* runner compares it. Measured on this file: flipping the alwaysUv mutant to the
+\* INVERSE defect kept `TraceSecurityBadAlwaysUvArm.cfg` red, on a different
+\* boundary and a different direction, and nothing noticed until the name was
+\* compared. The `Mut_*`/`Solo_*` families already name theirs through
+\* `gen-configs.sh`'s INVARIANTS block, so the column is for the rows that do not.
+\*
+\* Columns: <config or glob>  <GREEN|RED>  <min distinct, or - >  [heap]  [invariant]
 \* First match wins, so an exact name may precede its class glob.
 
 Shipped.cfg                          GREEN   20000000
@@ -69,13 +78,13 @@ TraceSeamsBad.cfg                    RED     -
 \* has exactly 50 states, so anything less is the model refusing to follow the
 \* recording. It reached 44 of 59 for three days and read as GREEN.
 TraceSecurity.cfg                    GREEN   61
-TraceSecurityBadBeta.cfg             RED     -
-TraceSecurityBadAlpha.cfg            RED     -
+TraceSecurityBadBeta.cfg             RED     -       -       R4aRawRefinesB
+TraceSecurityBadAlpha.cfg            RED     -       -       R4bAlphaMatchesGamma
 TraceSecurityBadAlphaNoR4b.cfg       GREEN   61
-TraceSecurityBadOutcome.cfg          RED     -
-TraceSecurityBadUvNotRqd.cfg         RED     -
-TraceSecurityBadResetWindow.cfg      RED     -
-TraceSecurityBadAlwaysUvArm.cfg      RED     -
+TraceSecurityBadOutcome.cfg          RED     -       -       R4bEventConsensus
+TraceSecurityBadUvNotRqd.cfg         RED     -       -       R4cGateAnswers
+TraceSecurityBadResetWindow.cfg      RED     -       -       R4cGateAnswers
+TraceSecurityBadAlwaysUvArm.cfg      RED     -       -       R4cGateAnswers
 \* The recorded session's coverage, ratcheted so a re-record cannot quietly cover
 \* less. Unlike the distinct-state floors above these are PINS at the measured
 \* value, not a third of it: a trace is a fixed recording, so it cannot shrink by

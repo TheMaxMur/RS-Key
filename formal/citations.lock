@@ -83,6 +83,7 @@ formal/README.md	crates/rsk-fido/src/consts.rs	334-334	/// absent slot entry mea
 formal/README.md	crates/rsk-fido/src/consts.rs	361-361	pub const EF_LARGEBLOB: u16 = 0x1101; // serialized large-blob array	pub const EF_LARGEBLOB: u16 = 0x1101; // serialized large-blob array
 formal/README.md	crates/rsk-fido/src/credential.rs	805-827	if !occupied[i as usize] {	let slot = slot.ok_or(Error::NoMemory)?; // KEY_STORE_FULL
 formal/README.md	crates/rsk-fido/src/credential.rs	808-827	}	let slot = slot.ok_or(Error::NoMemory)?; // KEY_STORE_FULL
+formal/README.md	crates/rsk-fido/src/credential.rs	815-825	if n < RECORD_PREFIX || rec[..32] != *rp_id_hash {	}
 formal/README.md	crates/rsk-fido/src/credential.rs	829-836	let total = compose_cred_record(rp_id_hash, &resident, pubkey, cred_id, &mut rec)	// both walk EF_RP to find, so neither can list or delete it, while `getAssertion`
 formal/README.md	crates/rsk-fido/src/credmgmt.rs	240-242	if authorized_by_ppuat(ctx, proto, payload, param) {	}
 formal/README.md	crates/rsk-fido/src/credmgmt.rs	249-266	/// Whether the MAC was made with the persistent token (CTAP 2.2 §6.8.2 step 4).	let Some(mut tok) = load_ppuat(&ctx.dev, ctx.fs) else {
@@ -448,6 +449,7 @@ formal/RSKeyTrustedDisplay.tla	crates/rsk-fido/src/makecredential.rs	660-661	// 
 formal/RSKeyTrustedDisplay.tla	crates/rsk-fido/src/u2f.rs	94-94	crate::clientpin::UvOutcome::BUILTIN.needs_confirm(ctx.presence.shows_confirm());	crate::clientpin::UvOutcome::BUILTIN.needs_confirm(ctx.presence.shows_confirm());
 formal/RSKeyTrustedDisplay.tla	crates/rsk-ui/src/lib.rs	248-256	/// Refines `RSKeyTrustedDisplay!OnlyAllowConfirms` — SEC-DISP-003.	}
 formal/TraceSecurity.tla	crates/rsk-fido/src/clientpin.rs	609-609	ctx.presence.uv_available() && ctx.fs.has_data(EF_PIN)	ctx.presence.uv_available() && ctx.fs.has_data(EF_PIN)
+formal/TraceSecurity.tla	crates/rsk-fido/src/config.rs	317-317	const DEFAULT_ALWAYS_UV: bool = cfg!(feature = "always-uv");	const DEFAULT_ALWAYS_UV: bool = cfg!(feature = "always-uv");
 formal/TraceSecurity.tla	crates/rsk-fido/src/makecredential.rs	528-546	let always_uv = crate::config::always_uv_enabled(ctx.fs);	Ok(UvOutcome::NONE)
 formal/TraceSecurity.tla	crates/rsk-fido/src/reset.rs	187-187	!ctx.state.warm_boot && ctx.now_ms <= RESET_WINDOW_MS	!ctx.state.warm_boot && ctx.now_ms <= RESET_WINDOW_MS
 formal/comutants.toml	crates/rsk-oath/src/lib.rs	1169-1176	/// Drop the VALIDATE result on deselect / card reset, so a later session must	}

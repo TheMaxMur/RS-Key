@@ -113,20 +113,27 @@ def main():
         cid = read(dev)[15:19]
 
         assert always_uv(dev, cid) is False, "start with alwaysUv off"
-        toggle_always_uv(dev, cid, pin)
+        # Inside the `try`, and the restore below wrapped: leaving the key with
+        # alwaysUv on is not a failed test, it is the next three suites of the
+        # phase-4 recording silently running under a different policy.
         try:
+            toggle_always_uv(dev, cid, pin)
             assert always_uv(dev, cid) is True, "alwaysUv did not engage"
             print("alwaysUv on")
 
-            # The arm makeCredUvNotRqd does not reach: with no pad to verify on,
-            # step 6.4 refuses before step 10 ever looks at `rk`.
+            # `rk=False` is the diagnostic row: with a PIN set, step 10 already
+            # refuses `rk=True` whether alwaysUv is on or not, so only this one
+            # tells step 6.4 from step 10. `rk=True` is the control beside it.
             for rk in (False, True):
                 sw = tokenless_make_credential(dev, cid, rk, b"\xA0" + bytes([rk]) * 3)
                 assert sw == PUAT_REQUIRED, \
                     f"token-less makeCredential rk={rk} status {sw:#x}, want 0x36"
                 print(f"token-less makeCredential rk={rk} -> PUAT_REQUIRED (0x36)")
         finally:
-            toggle_always_uv(dev, cid, pin)
+            try:
+                toggle_always_uv(dev, cid, pin)
+            except AssertionError as error:
+                print(f"restore attempt failed: {error}")
             if always_uv(dev, cid) is not False:
                 sys.exit("FAIL: could not restore alwaysUv — turn it off by hand")
             print("alwaysUv restored to off")

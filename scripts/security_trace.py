@@ -108,10 +108,13 @@ RESET_WINDOW_MS = 10_000
 # stops. Refusing an event by its status is not choosing one by it.
 MC_GATE_CODES = {0x00, 0x36}  # served, or the gate's own PUAT_REQUIRED
 
-# The permission sets `RSKeySecurityState!PermSets` has, and the raw byte each is
-# issued as. 0 is deliberately absent: an issuance granting nothing is not
-# something any suite asks for, and admitting it would let a token CONSUMPTION --
-# which also lands on 0 -- match the issuance branch.
+# Every NON-EMPTY member of `RSKeySecurityState!PermSets`, and the raw byte each
+# is issued as. The empty set is a member too and is deliberately absent here: an
+# issuance granting nothing is not something any suite asks for, and admitting it
+# would let a token CONSUMPTION -- which also lands on 0 -- match the issuance
+# branch. `PermsFromRaw` in TraceSecurity.tla is wider (it maps 1 and 2 as well),
+# and that is the model's looseness, not a gap here: `{"mc"}` and `{"ga"}` alone
+# are not PermSets members, so a recording carrying one has no B value to map to.
 ISSUED_PERMS = {
     3: '{"mc", "ga"}',
     4: '{"cm"}',
@@ -428,7 +431,16 @@ def inferred_outcomes(action_names: set[str], command: int) -> set[str]:
 
 
 def event_consensus(event: dict, action_names: set[str]) -> str:
+    """B's verdict on one boundary, and "none" is one of the four.
+
+    An empty outcome set used to fall through to VIOLATION, which is the wrong
+    word for it and was only harmless because the caller re-tested `outcomes_b`
+    before believing the verdict. One decision in two places, in the function
+    whose whole job is the verdict.
+    """
     outcomes = inferred_outcomes(action_names, event["command_raw"])
+    if not outcomes:
+        return "NO-OPINION"
     if len(outcomes) > 1:
         return "AMBIGUOUS"
     if outcomes != {delta_c(event["outcome_raw"])}:
@@ -451,6 +463,27 @@ def trace_verdicts() -> dict[str, str]:
     if missing:
         die(f"floors.txt names no verdict for {sorted(missing)}")
     return out
+
+
+def check_green_floors_pin_the_replay() -> None:
+    """Every GREEN trace row's floor must be `TraceSteps + 1` exactly.
+
+    `run-tlc.sh` compares a floor with `-lt`, so it is a MINIMUM — and only
+    `TraceSecurity.cfg` gets this file's exact distinct-count check, because
+    `check.sh` runs without `--mutations`. Left at a minimum, the second GREEN row
+    could stop twenty states short of its evidence and read GREEN, which is the
+    "44 of 59 for three days" failure verbatim. Two hand-kept numbers, related
+    here rather than by remembering.
+    """
+    want = ratchet(STEPS_RATCHET) + 1
+    for line in (FORMAL / "floors.txt").read_text(encoding="utf-8").splitlines():
+        parts = line.split()
+        if len(parts) >= 3 and parts[0].startswith("TraceSecurity") and parts[1] == "GREEN":
+            if parts[2] != str(want):
+                die(
+                    f"floors.txt: {parts[0]} is floored at {parts[2]}, not "
+                    f"{want} = {STEPS_RATCHET} + 1 — a GREEN trace row is pinned, not floored"
+                )
 
 
 def cfg_constant(name: str) -> int:
@@ -535,7 +568,17 @@ def generate(events: list[dict], output: Path) -> dict:
             consensus = event_consensus(event, action_names)
             if consensus == "AMBIGUOUS":
                 ambiguous += 1
-            elif outcomes_b:
+            elif consensus == "NO-OPINION":
+                # B claims nothing here, so there is nothing to disagree with.
+                # KNOWN LIMIT, and it is not empty: a clientPIN that RE-ISSUES a
+                # token with the permissions it already holds moves no raw field,
+                # so it arrives as a bare stutter and the issuance is invisible.
+                # The recording carries `command_raw` but not the clientPIN
+                # SUBCOMMAND, so nothing can tell that from a `getKeyAgreement`,
+                # which is legitimately state-free. Recording the subcommand the
+                # way `rk` is recorded is the fix and the next widening.
+                pass
+            else:
                 if consensus != "OK":
                     die(
                         f"event {event['sequence']}: R4b-event {consensus.lower()} — "
@@ -681,6 +724,7 @@ def validate(
                 "--keep-data formal/TraceSecurityData.tla"
             )
         verdicts = trace_verdicts()
+        check_green_floors_pin_the_replay()
         configs = ["TraceSecurity.cfg"] if not run_mutations else sorted(verdicts)
         for config in configs:
             shutil.copy2(FORMAL / config, work / config)
