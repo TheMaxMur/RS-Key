@@ -5,7 +5,7 @@
 //! site** rather than the state predicates behind it.
 //!
 //! Only one of the four token gates can be reached this way. The other three
-//! (`config.rs:222`, `getassertion.rs:376`, `makecredential.rs:513`) are inline
+//! (`config.rs:243`, `getassertion.rs:384`, `makecredential.rs:513`) are inline
 //! in functions that need a `Ctx`, and a `Ctx` drags `p256` into the reachable
 //! set, where Kani 0.67.0 does not merely time out — it aborts in codegen:
 //! `crypto-bigint 0.7.5 UintRef::lowest_u64` panics cprover_bindings' typecheck
@@ -41,7 +41,7 @@ const OP_STOP: u8 = 2;
 
 /// `NoTokenAfterInvalidation`, at the call site — the bounded, code-level
 /// instance of the TLA+ invariant of that name, driving the real
-/// [`verify_cm_token`] (`credmgmt.rs:271-282`) that `deleteCredential` and
+/// [`verify_cm_token`] (`credmgmt.rs:278-288`) that `deleteCredential` and
 /// `updateUserInformation` authorize with.
 ///
 /// The platform mints a genuine `pinUvAuthParam` while the grant is live, then a
@@ -51,8 +51,8 @@ const OP_STOP: u8 = 2;
 /// - **C1** the call site refuses unless the `cm` permission genuinely survived;
 /// - **C2** the replayed MAC still *verifies* — `stop_using_token` and
 ///   `consume_after_user_presence` do not touch the token bytes
-///   (`state.rs:545-556`, `:524-530`). So at this call site, and at
-///   `config.rs:222-224`, zeroing `permissions` is not defence in depth: it is
+///   (`state.rs:547-557`, `:523-534`). So at this call site, and at
+///   `config.rs:243-245`, zeroing `permissions` is not defence in depth: it is
 ///   the only defence. The TLA+ mutation experiment found exactly this by
 ///   failing to catch `BugStopUsingKeepsPerms` under a guard that also tested
 ///   "the token is in use" — a conjunct these two sites do not have.
@@ -71,7 +71,7 @@ fn no_token_after_invalidation_at_call_site() {
     let mut st = FidoState::new();
     let proto = PinProto::Two;
 
-    // Issuance, in `clientpin.rs:415-421`'s order, with a symbolic permission set.
+    // Issuance, in `clientpin.rs:417-423`'s order, with a symbolic permission set.
     let perms0: u8 = kani::any();
     st.reset_pin_uv_auth_token(&mut rng);
     st.begin_using_token(false, 1_000);

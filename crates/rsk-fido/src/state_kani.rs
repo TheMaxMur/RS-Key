@@ -74,8 +74,8 @@ const OP_POWER_CYCLE: u8 = 6;
 const OP_TIME_PASSES: u8 = 7;
 
 /// The token issuance `clientpin::issue_token` performs, in its own order
-/// (`clientpin.rs:415-421`): fresh token, begin using it, then the permission
-/// set. Its rpId binding (`:422-428`) is left out — `paut.has_rp_id` starts
+/// (`clientpin.rs:417-423`): fresh token, begin using it, then the permission
+/// set. Its rpId binding (`:424-430`) is left out — `paut.has_rp_id` starts
 /// false and no clause here reads the hash. Reproduced rather than called
 /// because the real function needs a whole `Ctx` — flash, a device identity and
 /// a presence source — none of which this sequence has. Not because *holding* a
@@ -96,9 +96,9 @@ fn issue_token(st: &mut FidoState, rng: &mut StepRng, permissions: u8, now_ms: u
 /// a symbolic five-operation sequence, against the two guard shapes the call
 /// sites actually use:
 ///
-/// - the **UV** shape — `getassertion.rs:376-379`, `makecredential.rs:513-516` —
+/// - the **UV** shape — `getassertion.rs:384-387`, `makecredential.rs:513-516` —
 ///   whose distinguishing conjunct is `user_verified()`;
-/// - the **bare** shape — `config.rs:222-224`, `credmgmt.rs:277` — which tests
+/// - the **bare** shape — `config.rs:243-245`, `credmgmt.rs:284` — which tests
 ///   the MAC and the permission bits and *nothing else*. For those two the only
 ///   thing between a stopped token and a live authorization is that
 ///   `stop_using_token` zeroes `permissions`: the token bytes stay put, so the
@@ -141,7 +141,7 @@ fn no_token_after_invalidation() {
     let ops: [u8; STEPS] = kani::any();
     let perms: [u8; STEPS] = kani::any();
     for i in 0..STEPS {
-        // The dispatch prologue every CBOR command runs first (`lib.rs:207`).
+        // The dispatch prologue every CBOR command runs first (`lib.rs:128`).
         // A grant issued before the jump has outrun both windows by now.
         st.expire_stale_token(now);
         if jumped && granted && !issued_late {
@@ -201,14 +201,14 @@ fn no_token_after_invalidation() {
             _ => {}
         }
 
-        // A1 — the UV-shaped call sites (getassertion.rs:376-379,
+        // A1 — the UV-shaped call sites (getassertion.rs:384-387,
         // makecredential.rs:513-516): their `user_verified()` conjunct is false after
         // an invalidation and true after an issuance, and at no other time.
         kani::assert(
             verified == st.user_verified(),
             "NoTokenAfterInvalidation/A1: user_verified() does not track the grant",
         );
-        // A2 — the bare-shaped call sites (config.rs:222-224, credmgmt.rs:277)
+        // A2 — the bare-shaped call sites (config.rs:243-245, credmgmt.rs:284)
         // read the permission bits and the MAC, nothing else. §6.5.5.7 keeps
         // largeBlobWrite across a consumed presence test and drops the rest.
         kani::assert(
@@ -242,8 +242,8 @@ fn no_token_after_invalidation() {
     kani::cover!(!verified && st.paut.in_use); // consumed after presence
 }
 
-/// The `enumerateRPsBegin` cursor write, `credmgmt.rs:334-337` plus the totals
-/// and the leg stamp its serving tail sets (`:380-386`). `total` is symbolic:
+/// The `enumerateRPsBegin` cursor write, `credmgmt.rs:340-344` plus the totals
+/// and the leg stamp its serving tail sets (`:386-393`). `total` is symbolic:
 /// how many RPs the store held is not this proof's business.
 ///
 /// The leading `cm.reset()` is `credmgmt.rs:164` — every credentialManagement
@@ -263,7 +263,7 @@ fn begin_rps(st: &mut FidoState, total: u16, now_ms: u64) {
     st.cm.last_leg_ms = now_ms;
 }
 
-/// `enumerateCredentialsBegin`, the same shape (`credmgmt.rs:164`, `:420-423`, `:503-504`).
+/// `enumerateCredentialsBegin`, the same shape (`credmgmt.rs:164`, `:426-430`, `:506-511`).
 fn begin_creds(st: &mut FidoState, total: u16, now_ms: u64) {
     st.cm.reset();
     st.cm.channel = st.channel;
@@ -307,7 +307,7 @@ const W_AUTHENTICATOR_RESET: u8 = 6;
 const W_TIME_PASSES: u8 = 7;
 
 /// `NoAuthorizationBypass`, walk-owner clause — the bounded, code-level instance
-/// of the TLA+ invariant's `state.rs:169-179` / `credmgmt.rs:338` row.
+/// of the TLA+ invariant's `state.rs:169-179` / `credmgmt.rs:345` row.
 ///
 /// CTAP 2.1 §6.8 exempts `enumerateRPsGetNextRP` / `enumerateCredentialsGetNext`
 /// from carrying a `pinUvAuthParam` of their own: they inherit the *Begin*'s
@@ -315,7 +315,7 @@ const W_TIME_PASSES: u8 = 7;
 /// authorization check for a *Next*, and this asserts that over a symbolic
 /// five-operation interleaving: a walk is servable only by the channel whose
 /// Begin opened it, and only while nothing has retired it — an unrelated command
-/// (`lib.rs:214`), another credentialManagement subcommand (`credmgmt.rs:164`),
+/// (`lib.rs:135`), another credentialManagement subcommand (`credmgmt.rs:164`),
 /// `stopUsingPinUvAuthToken`, an `authenticatorReset`, or the §6 idle window.
 ///
 /// This is the channel half of the maintainer's `cancel(transport, channel)`
@@ -353,7 +353,7 @@ fn no_authorization_bypass_walk_owner() {
         // dispatch (`state.rs:355-359`).
         st.channel = if chans[i] { C1 } else { C2 };
 
-        // The dispatch prologue (`lib.rs:207-214`); `retire_sequences_except`
+        // The dispatch prologue (`lib.rs:128-135`); `retire_sequences_except`
         // belongs to the opcode below, which is what knows the command. A walk
         // whose last leg predates the jump has outrun the §6 idle window.
         st.expire_stale_sequences(now);
@@ -386,7 +386,7 @@ fn no_authorization_bypass_walk_owner() {
             }
             W_NEXT_LEG => {
                 // A *Next* the guard admits: serve it exactly as `enumerate_rps`
-                // does (`credmgmt.rs:382-386`). The guard was just checked above,
+                // does (`credmgmt.rs:389-393`). The guard was just checked above,
                 // so an admission it should not have made is already recorded.
                 if st.cm.may_walk_rps(st.channel) {
                     st.cm.rp_counter = st.cm.rp_counter.saturating_add(1);

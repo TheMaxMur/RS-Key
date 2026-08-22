@@ -1345,7 +1345,7 @@ fn wrong_pin_decrements_then_locks_out() {
 fn the_legacy_get_pin_token_refuses_an_rp_id() {
     // CTAP 2.1 §6.5.5.7: subCommand 5 takes neither permissions nor an rpId —
     // it grants the fixed mc|ga set and no rp binding. The refusal was held by
-    // nothing: `:392` hands `req.rp_id` to `issue_token` whatever the
+    // nothing: `clientpin.rs:392` hands `req.rp_id` to `issue_token` whatever the
     // subcommand, so relaxing the guard mints a legacy token BOUND to an rp the
     // caller named. Found by the reverse mutation pass (D2).
     let (mut fs, mut rng) = setup();

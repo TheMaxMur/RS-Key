@@ -856,6 +856,22 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **29 of the 42 `file.rs:line` citations in Rust source were repaired; 19 of
+  them named code the claim was never about.** `scripts/citation_gate.py` reads
+  the `formal/` pages and nothing else, so the same three token-gate call sites
+  are cited twice in the tree — once on a gated page and once in a Kani proof
+  header — and only the gated copy had followed the code:
+  `formal/README.md` already said `getassertion.rs:384-387`, `config.rs:243-245`
+  and `credmgmt.rs:278`, while `state_kani.rs` and `credmgmt_kani.rs` still said
+  `376-379`, `222-224` and `277` — 8, 21 and 7 lines out, the last of them a
+  doc-comment line reading `/// has been located.`. The worst was 79 lines:
+  "the dispatch prologue every CBOR command runs first (`lib.rs:207`)" pointed at
+  `out[0] = CTAP2_OK;`, the response *epilogue*. Nine more had drifted endpoints
+  while still touching their subject, and one (`` `:392` `` in
+  `clientpin_tests.rs`) was a bare line number with no filename, which no rule
+  can resolve. Every one was re-pointed by reading the code, not by a guard —
+  the guard that would have caught them lands in the next commit.
+
 - **The pinpad's "Allow host PIN entry?" gate lost its Approved card when the
   presence seam moved.** `handle_secure_req` — the CCID `PC_to_RDR_Secure` path
   behind an OpenPGP/PIV pinpad VERIFY on a trusted-display build — asked for
