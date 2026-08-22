@@ -41,6 +41,7 @@ where
         Point::new((MIDX - 14) as u16, (cyc - 13) as u16),
         28,
         theme::DANGER,
+        theme::DANGER_BG,
     )?;
     text(
         t,
@@ -103,6 +104,7 @@ where
         Point::new(PANEL_W / 2 - 16, 104),
         32,
         theme::DENY,
+        BG,
     )?;
     text(
         t,
@@ -148,6 +150,7 @@ where
         Point::new((MIDX - 17) as u16, (cyc - 17) as u16),
         34,
         theme::DANGER,
+        theme::DANGER_BG,
     )?;
     text(
         t,
@@ -197,6 +200,7 @@ where
         Point::new((MIDX - 17) as u16, (cyc - 17) as u16),
         34,
         theme::DANGER,
+        theme::DANGER_BG,
     )?;
     text(
         t,
@@ -235,7 +239,9 @@ const SUCCESS_BOX: u32 = SUCCESS_DIA + 18;
 /// `(mark colour, circle fill, mark glyph, heading, subtitle)` for a success kind. A
 /// green check on a green tint for approve/delete; the grey [`Glyph::Rotate`] on a
 /// neutral chip for the wipe (which restarts, hence no green "all-good" check).
-fn success_visuals(kind: SuccessKind) -> (Rgb565, Rgb565, Glyph, &'static str, &'static str) {
+pub(super) fn success_visuals(
+    kind: SuccessKind,
+) -> (Rgb565, Rgb565, Glyph, &'static str, &'static str) {
     match kind {
         SuccessKind::Approved => (
             theme::SUCCESS,
@@ -284,13 +290,22 @@ where
         text(t, subtitle, EgPoint::new(MIDX, 206), Role::Body, MUTED)?;
     }
     if with_button {
-        RoundedRectangle::with_equal_corners(
-            eg_rect(DEL_HOLD_RECT),
-            Size::new(BTN_RADIUS, BTN_RADIUS),
-        )
-        .into_styled(PrimitiveStyle::with_fill(theme::ACCENT_FILL))
-        .draw(t)?;
-        text(t, "Done", center(DEL_HOLD_RECT), Role::Strong, FG)?;
+        crate::aa::rounded_rect(
+            t,
+            DEL_HOLD_RECT,
+            BTN_RADIUS,
+            Some(theme::ACCENT_FILL),
+            None,
+            BG,
+        )?;
+        text_on(
+            t,
+            "Done",
+            center(DEL_HOLD_RECT),
+            Role::Strong,
+            FG,
+            theme::ACCENT_FILL,
+        )?;
     }
     Ok(())
 }
@@ -336,5 +351,6 @@ where
         ),
         gs,
         mark,
+        fill,
     )
 }

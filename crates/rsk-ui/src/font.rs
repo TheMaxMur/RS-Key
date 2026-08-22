@@ -1,126 +1,302 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 RS-Key contributors
 
-//! Proportional 1-bit text for the high-fidelity redesign. The design is set in IBM
-//! Plex Sans/Mono; on the panel we substitute the closest u8g2 bitmap faces — bold
-//! `helvB**` for the 600/700 weights, regular `helvR**` for 400/500, and `profont`
-//! for the monospaced version/caption labels. Each [`Role`] pins one face so the px
-//! sizes in the handoff map to a single place. All faces are the `_tr` (reduced,
-//! transparent, 7-bit ASCII) variants — our text is already ASCII-sanitised
-//! ([`crate::Label::clamp`]), so the larger glyph tables would only cost flash.
-//!
-//! Text is drawn [`FontColor::Transparent`] (glyph pixels only, no rectangle behind),
-//! which suits the no-framebuffer partial repaints: a label can be overdrawn on top of
-//! an already-painted card without first clearing it.
+//! Four-bit IBM Plex text for the direct-write trusted display.
 
-use embedded_graphics::{draw_target::DrawTarget, geometry::Point as EgPoint, pixelcolor::Rgb565};
-use u8g2_fonts::{
-    FontRenderer, fonts,
-    types::{FontColor, HorizontalAlignment, VerticalPosition},
+use embedded_graphics::{
+    draw_target::DrawTarget,
+    geometry::{Point as EgPoint, Size},
+    pixelcolor::Rgb565,
+    primitives::Rectangle,
 };
 
-/// A typographic role from the handoff's "Типографика" table, mapped to one face.
+use crate::aa::blend_coverage;
+
+/// A typographic role from the display design.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Role {
-    /// The main "Ready" status — 30px, 600. `helvB24` (the largest bold helv).
+    /// IBM Plex Sans SemiBold, 30 px.
     Ready,
-    /// Screen titles (19px) and success / "Locked" headings (20–21px), 600. `helvB18`.
+    /// IBM Plex Sans SemiBold, 19 px.
     Heading,
-    /// The large service name inside the request/approve modals — 17–18px, 600. `helvB14`.
+    /// IBM Plex Sans SemiBold, 18 px.
     Strong,
-    /// Body text and list rows at 400 weight, and 13px sublabels. `helvR12`.
+    /// IBM Plex Sans Regular, 13 px.
     Body,
-    /// Body text / list rows at 600 weight (active row, emphasised value). `helvB12`.
+    /// IBM Plex Sans SemiBold, 13 px.
     BodyStrong,
-    /// Monospaced labels — UV+PIN tags, "OK", the version string, captions. `profont12`.
+    /// IBM Plex Mono Regular, 12 px.
     Mono,
-    /// The smallest monospaced label — "USB" in the status bar (11px). `profont11`.
+    /// IBM Plex Mono Regular, 11 px.
     MonoSmall,
 }
 
-/// The `FontRenderer` for `role`. `const` so the call sites pay nothing at runtime.
-const fn renderer(role: Role) -> FontRenderer {
+#[derive(Clone, Copy)]
+struct Glyph {
+    advance: u8,
+    left: i8,
+    top: i8,
+    width: u8,
+    height: u8,
+    offset: u32,
+}
+
+#[derive(Clone, Copy)]
+struct Font {
+    ascent: u8,
+    descent: u8,
+    glyphs: &'static [Glyph; 97],
+    data: &'static [u8],
+}
+
+#[path = "../../../third_party/ibm-plex/font_data.rs"]
+mod generated;
+
+const fn font(role: Role) -> Font {
     match role {
-        Role::Ready => FontRenderer::new::<fonts::u8g2_font_helvB24_tr>(),
-        Role::Heading => FontRenderer::new::<fonts::u8g2_font_helvB18_tr>(),
-        Role::Strong => FontRenderer::new::<fonts::u8g2_font_helvB14_tr>(),
-        Role::Body => FontRenderer::new::<fonts::u8g2_font_helvR12_tr>(),
-        Role::BodyStrong => FontRenderer::new::<fonts::u8g2_font_helvB12_tr>(),
-        Role::Mono => FontRenderer::new::<fonts::u8g2_font_profont12_tr>(),
-        Role::MonoSmall => FontRenderer::new::<fonts::u8g2_font_profont11_tr>(),
+        Role::Ready => generated::READY,
+        Role::Heading => generated::HEADING,
+        Role::Strong => generated::STRONG,
+        Role::Body => generated::BODY,
+        Role::BodyStrong => generated::BODY_STRONG,
+        Role::Mono => generated::MONO,
+        Role::MonoSmall => generated::MONO_SMALL,
     }
 }
 
-/// The workhorse: render `s` in `role`/`color`, aligned `h` horizontally and centred
-/// vertically on `at`. A panel write error is surfaced; a glyph-table miss (impossible
-/// on ASCII-sanitised input) is swallowed so a single odd byte can't abort a frame.
+const fn glyph_index(char: char) -> usize {
+    if char == '\u{2014}' {
+        95
+    } else if char == '\u{00B7}' {
+        96
+    } else if char >= ' ' && char <= '~' {
+        char as usize - ' ' as usize
+    } else {
+        '?' as usize - ' ' as usize
+    }
+}
+
+fn coverage(font: Font, glyph: Glyph, index: usize) -> u8 {
+    let packed = font.data[glyph.offset as usize + index / 2];
+    if index.is_multiple_of(2) {
+        packed >> 4
+    } else {
+        packed & 0x0F
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Alignment {
+    Left,
+    Center,
+    Right,
+}
+
+#[derive(Clone, Copy)]
+enum Background {
+    Solid(Rgb565),
+    Split {
+        left: Rgb565,
+        right: Rgb565,
+        split_x: i32,
+    },
+}
+
+impl Background {
+    fn at(self, x: i32) -> Rgb565 {
+        match self {
+            Self::Solid(color) => color,
+            Self::Split {
+                left,
+                right,
+                split_x,
+            } => {
+                if x < split_x {
+                    left
+                } else {
+                    right
+                }
+            }
+        }
+    }
+}
+
 fn draw<D: DrawTarget<Color = Rgb565>>(
     t: &mut D,
-    s: &str,
+    text: &str,
     at: EgPoint,
     role: Role,
     color: Rgb565,
-    h: HorizontalAlignment,
+    bg: Background,
+    alignment: Alignment,
 ) -> Result<(), D::Error> {
-    match renderer(role).render_aligned(
-        s,
-        at,
-        VerticalPosition::Center,
-        h,
-        FontColor::Transparent(color),
-        t,
-    ) {
-        Ok(_) => Ok(()),
-        Err(u8g2_fonts::Error::DisplayError(e)) => Err(e),
-        Err(_) => Ok(()),
+    let font = font(role);
+    let text_width = width(text, role).unwrap_or(0) as i32;
+    let start_x = match alignment {
+        Alignment::Left => at.x,
+        Alignment::Center => at.x - text_width / 2,
+        Alignment::Right => at.x - text_width,
+    };
+    let baseline = at.y + (i32::from(font.ascent) - i32::from(font.descent)) / 2;
+    let mut pen_x = start_x;
+    let mut left = i32::MAX;
+    let mut top = i32::MAX;
+    let mut right = i32::MIN;
+    let mut bottom = i32::MIN;
+    for char in text.chars() {
+        let glyph = font.glyphs[glyph_index(char)];
+        let x = pen_x + i32::from(glyph.left);
+        let y = baseline + i32::from(glyph.top);
+        if glyph.width > 0 && glyph.height > 0 {
+            left = left.min(x);
+            top = top.min(y);
+            right = right.max(x + i32::from(glyph.width));
+            bottom = bottom.max(y + i32::from(glyph.height));
+        }
+        pen_x += i32::from(glyph.advance);
     }
+    if left >= right || top >= bottom {
+        return Ok(());
+    }
+
+    let area = Rectangle::new(
+        EgPoint::new(left, top),
+        Size::new((right - left) as u32, (bottom - top) as u32),
+    );
+    t.fill_contiguous(
+        &area,
+        (top..bottom).flat_map(|py| {
+            (left..right).map(move |px| {
+                let mut alpha = 0;
+                let mut pen_x = start_x;
+                for char in text.chars() {
+                    let glyph = font.glyphs[glyph_index(char)];
+                    let x = pen_x + i32::from(glyph.left);
+                    let y = baseline + i32::from(glyph.top);
+                    if px >= x
+                        && px < x + i32::from(glyph.width)
+                        && py >= y
+                        && py < y + i32::from(glyph.height)
+                    {
+                        let column = (px - x) as usize;
+                        let row = (py - y) as usize;
+                        let glyph_alpha =
+                            coverage(font, glyph, row * usize::from(glyph.width) + column);
+                        if glyph_alpha > 0 {
+                            alpha = glyph_alpha;
+                        }
+                    }
+                    pen_x += i32::from(glyph.advance);
+                }
+                blend_coverage(color, bg.at(px), alpha)
+            })
+        }),
+    )
 }
 
-/// Horizontally-centred, vertically-centred text (titles, button captions, status).
+/// Draw horizontally centred and vertically centred text.
 pub fn centered<D: DrawTarget<Color = Rgb565>>(
     t: &mut D,
-    s: &str,
+    text: &str,
     at: EgPoint,
     role: Role,
     color: Rgb565,
+    bg: Rgb565,
 ) -> Result<(), D::Error> {
-    draw(t, s, at, role, color, HorizontalAlignment::Center)
+    draw(
+        t,
+        text,
+        at,
+        role,
+        color,
+        Background::Solid(bg),
+        Alignment::Center,
+    )
 }
 
-/// Left-aligned, vertically-centred text (row labels, header titles).
+/// Draw centred text over a vertical split between two known surfaces.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn centered_split<D: DrawTarget<Color = Rgb565>>(
+    t: &mut D,
+    text: &str,
+    at: EgPoint,
+    role: Role,
+    color: Rgb565,
+    left_bg: Rgb565,
+    right_bg: Rgb565,
+    split_x: i32,
+) -> Result<(), D::Error> {
+    draw(
+        t,
+        text,
+        at,
+        role,
+        color,
+        Background::Split {
+            left: left_bg,
+            right: right_bg,
+            split_x,
+        },
+        Alignment::Center,
+    )
+}
+
+/// Draw left-aligned and vertically centred text.
 pub fn left<D: DrawTarget<Color = Rgb565>>(
     t: &mut D,
-    s: &str,
+    text: &str,
     at: EgPoint,
     role: Role,
     color: Rgb565,
+    bg: Rgb565,
 ) -> Result<(), D::Error> {
-    draw(t, s, at, role, color, HorizontalAlignment::Left)
+    draw(
+        t,
+        text,
+        at,
+        role,
+        color,
+        Background::Solid(bg),
+        Alignment::Left,
+    )
 }
 
-/// Right-aligned, vertically-centred text (trailing row values / status).
+/// Draw right-aligned and vertically centred text.
 pub fn right<D: DrawTarget<Color = Rgb565>>(
     t: &mut D,
-    s: &str,
+    text: &str,
     at: EgPoint,
     role: Role,
     color: Rgb565,
+    bg: Rgb565,
 ) -> Result<(), D::Error> {
-    draw(t, s, at, role, color, HorizontalAlignment::Right)
+    draw(
+        t,
+        text,
+        at,
+        role,
+        color,
+        Background::Solid(bg),
+        Alignment::Right,
+    )
 }
 
-/// Pixel width `s` occupies in `role`, measured from the pen origin to the rightmost ink
-/// — i.e. the left side bearing (`top_left.x`) **plus** the ink width, not the ink width
-/// alone. Callers clip a label to this and lay trailing elements flush against it; using
-/// the bare `size.width` under-reports by the bearing, so a label that "fits" by ~1px has
-/// its last glyph's right edge clipped (a 'd' rendered as a 'c'). `None` only on the
-/// impossible glyph-miss.
-pub fn width(s: &str, role: Role) -> Option<u32> {
-    renderer(role)
-        .get_rendered_dimensions(s, EgPoint::zero(), VerticalPosition::Center)
-        .ok()
-        .map(|d| {
-            d.bounding_box
-                .map_or(0, |b| b.top_left.x.max(0) as u32 + b.size.width)
-        })
+/// Return the integer horizontal extent of `text` from its pen origin.
+pub fn width(text: &str, role: Role) -> Option<u32> {
+    let font = font(role);
+    let mut pen = 0u32;
+    let mut right = 0u32;
+    for char in text.chars() {
+        let glyph = font.glyphs[glyph_index(char)];
+        right = right.max(
+            pen.saturating_add_signed(i32::from(glyph.left))
+                .saturating_add(u32::from(glyph.width)),
+        );
+        pen = pen.saturating_add(u32::from(glyph.advance));
+    }
+    Some(pen.max(right))
 }
+
+#[cfg(test)]
+#[path = "font_tests.rs"]
+mod tests;

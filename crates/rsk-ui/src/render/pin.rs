@@ -72,6 +72,7 @@ pub fn render_pin_title<D: DrawTarget<Color = Rgb565>>(
         EgPoint::new(x0, PIN_TITLE_CY),
         Role::Heading,
         FG,
+        BG,
     )?;
     font::left(
         &mut clip,
@@ -79,6 +80,7 @@ pub fn render_pin_title<D: DrawTarget<Color = Rgb565>>(
         EgPoint::new(x0 + period as i32, PIN_TITLE_CY),
         Role::Heading,
         FG,
+        BG,
     )
 }
 
@@ -90,7 +92,7 @@ pub(super) fn pin<D: DrawTarget<Color = Rgb565>>(t: &mut D, pad: &PinPad) -> Res
     // like "OpenPGP Sign PIN" can't slide under either.
     let lock_x = PANEL_W - 26;
     render_pin_title(t, pad.title, 0)?;
-    glyph::draw(t, Glyph::Lock, Point::new(lock_x, 6), 18, theme::ACCENT)?;
+    glyph::draw(t, Glyph::Lock, Point::new(lock_x, 6), 18, theme::ACCENT, BG)?;
     // Cancel is an outlined back button (not a wide "Cancel" word that would collide
     // with the centred title) in the decline colour, filling its PIN_CANCEL_RECT hit area.
     back_button(t, PIN_CANCEL_RECT, theme::DENY)?;
@@ -106,17 +108,17 @@ pub(super) fn pin<D: DrawTarget<Color = Rgb565>>(t: &mut D, pad: &PinPad) -> Res
                 // dark card; the digits are dark cards with a white numeral.
                 PinKey::Ok => {
                     key_surface(t, r, ALLOW_FILL, false)?;
-                    glyph_centered(t, Glyph::Check, r, 24, FG)?;
+                    glyph_centered(t, Glyph::Check, r, 24, FG, ALLOW_FILL)?;
                 }
                 PinKey::Del => {
                     // The design's darker backspace key (#101317), set apart from the
                     // neutral digit cards (#15191F).
                     key_surface(t, r, theme::KEY_DARK, true)?;
-                    glyph_centered(t, Glyph::Backspace, r, 24, MUTED)?;
+                    glyph_centered(t, Glyph::Backspace, r, 24, MUTED, theme::KEY_DARK)?;
                 }
                 key => {
                     key_surface(t, r, KEY_FILL, true)?;
-                    text(t, key_label(key), center(r), Role::Strong, FG)?;
+                    text_on(t, key_label(key), center(r), Role::Strong, FG, KEY_FILL)?;
                 }
             }
             col += 1;
@@ -206,7 +208,7 @@ fn masked_entry<D: DrawTarget<Color = Rgb565>>(
     reveal: Option<&[u8]>,
 ) -> Result<(), D::Error> {
     // The reveal toggle, always present at the right of the band.
-    glyph_centered(t, Glyph::Eye, PIN_EYE_RECT, 18, theme::FAINT)?;
+    glyph_centered(t, Glyph::Eye, PIN_EYE_RECT, 18, theme::FAINT, BG)?;
     if let Some(digits) = reveal {
         // Build "<digits>[+]" in a small buffer (ASCII digits, device-internal → trusted).
         let shown = digits.len().min(ENTRY_MAX_SHOWN);
@@ -238,9 +240,7 @@ fn masked_entry<D: DrawTarget<Color = Rgb565>>(
         if i < entered {
             crate::aa::filled_circle(t, at, ENTRY_DIA, theme::ACCENT, theme::BG)?;
         } else {
-            Circle::new(at, ENTRY_DIA)
-                .into_styled(PrimitiveStyle::with_stroke(theme::CAPTION, 1))
-                .draw(t)?;
+            crate::aa::circle(t, at, ENTRY_DIA, 1, theme::CAPTION, BG)?;
         }
     }
     // A PIN longer than the row marks the extra digits with a "+", so the dot count never

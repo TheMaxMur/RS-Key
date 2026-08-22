@@ -208,12 +208,10 @@ const SUCCESS_POP_MS: u64 = 1100;
 /// PIN" reads in full without colliding with the back chevron.
 const MARQUEE_PAUSE_MS: u64 = 800;
 const MARQUEE_MS_PER_PX: u64 = 22;
-/// Bytes for the 1-bit off-screen mask the marquee composites into (one bit per band
-/// pixel: set = title glyph, clear = background). The whole band then blits in a single
-/// `fill_contiguous` transaction, so the panel never shows the cleared-then-redrawn flash
-/// that a direct per-frame clear+draw produces (the reported flicker).
-const MARQUEE_MASK_BYTES: usize =
-    (rsk_ui::PIN_TITLE_BAND.w as usize * rsk_ui::PIN_TITLE_BAND.h as usize).div_ceil(8);
+/// Bytes for the four-bit coverage buffer used by the marquee. The complete band blits
+/// in one transaction, so scrolling keeps antialiasing without clear-then-draw flicker.
+const MARQUEE_COVERAGE_BYTES: usize =
+    (rsk_ui::PIN_TITLE_BAND.w as usize * rsk_ui::PIN_TITLE_BAND.h as usize).div_ceil(2);
 
 /// Backlight PWM `top` (8-bit, like the LED): a brightness level maps to a compare
 /// value `0..=BL_TOP`.
@@ -285,40 +283,57 @@ fn level_duty(level: u8) -> u16 {
     (l * BL_TOP) / BRIGHTNESS_LEVELS as u16
 }
 
-/// A 1-bit off-screen `DrawTarget` over the PIN title band: rsk-ui's `render_pin_title`
-/// composites into it (one bit per band pixel — set = a title glyph, clear = background),
-/// then the firmware blits the whole band in a single `fill_contiguous`. Because our text
-/// is 1-bit (no anti-aliasing) the band is exactly two colours, so a mask captures it
-/// losslessly, and the single-transaction blit removes the per-frame clear→draw flash that
-/// made the marquee flicker. Coordinates are absolute (panel space) so the generic
-/// `render_pin_title` — which draws at the band's real position — lands correctly.
-struct BandMask<'a> {
-    bits: &'a mut [u8],
+/// A four-bit off-screen `DrawTarget` over the PIN title band. Coordinates are absolute,
+/// so the generic title renderer lands at the real panel position.
+struct BandCoverage<'a> {
+    coverage: &'a mut [u8],
     band: Rectangle,
 }
 
-impl<'a> BandMask<'a> {
-    fn new(bits: &'a mut [u8], band: rsk_ui::Rect) -> Self {
-        bits.fill(0);
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct UnsupportedBandColor;
+
+impl<'a> BandCoverage<'a> {
+    fn new(coverage: &'a mut [u8], band: rsk_ui::Rect) -> Self {
+        coverage.fill(0);
         Self {
-            bits,
+            coverage,
             band: Rectangle::new(
                 EgPoint::new(band.x as i32, band.y as i32),
                 Size::new(band.w as u32, band.h as u32),
             ),
         }
     }
+
+    fn encode(color: Rgb565) -> Result<u8, UnsupportedBandColor> {
+        (0..=rsk_ui::aa::COVERAGE_MAX)
+            .find(|&coverage| {
+                rsk_ui::aa::blend_coverage(rsk_ui::theme::TEXT, rsk_ui::theme::PANEL_BG, coverage)
+                    == color
+            })
+            .ok_or(UnsupportedBandColor)
+    }
+
+    fn set(&mut self, index: usize, value: u8) {
+        let shift = (index & 1) * 4;
+        self.coverage[index >> 1] &= !(0x0F << shift);
+        self.coverage[index >> 1] |= value << shift;
+    }
 }
 
-impl Dimensions for BandMask<'_> {
+fn packed_coverage(coverage: &[u8], index: usize) -> u8 {
+    (coverage[index >> 1] >> ((index & 1) * 4)) & 0x0F
+}
+
+impl Dimensions for BandCoverage<'_> {
     fn bounding_box(&self) -> Rectangle {
         self.band
     }
 }
 
-impl DrawTarget for BandMask<'_> {
+impl DrawTarget for BandCoverage<'_> {
     type Color = Rgb565;
-    type Error = core::convert::Infallible;
+    type Error = UnsupportedBandColor;
 
     fn draw_iter<I: IntoIterator<Item = Pixel<Rgb565>>>(
         &mut self,
@@ -330,13 +345,7 @@ impl DrawTarget for BandMask<'_> {
             let y = p.y - self.band.top_left.y;
             if x >= 0 && y >= 0 && x < w && (y as u32) < self.band.size.height {
                 let idx = y as usize * w as usize + x as usize;
-                // The only colours drawn are the background fill and the FG glyph; any
-                // non-background pixel is a glyph → set its bit.
-                if c != rsk_ui::theme::PANEL_BG {
-                    self.bits[idx >> 3] |= 1 << (idx & 7);
-                } else {
-                    self.bits[idx >> 3] &= !(1 << (idx & 7));
-                }
+                self.set(idx, Self::encode(c)?);
             }
         }
         Ok(())
@@ -405,8 +414,8 @@ where
     /// randomness an on-device SLIP-39 split needs (the share identifier + Shamir random
     /// shares); the worker is parked while this thread-executor task runs, so no race.
     rng: &'a RefCell<R>,
-    /// 1-bit scratch for the flicker-free PIN-title marquee blit ([`BandMask`]).
-    marquee_mask: [u8; MARQUEE_MASK_BYTES],
+    /// Four-bit scratch for the flicker-free PIN-title marquee blit ([`BandCoverage`]).
+    marquee_coverage: [u8; MARQUEE_COVERAGE_BYTES],
     /// Cached Home status-card facts (device-PIN-set + resident passkey count), refreshed
     /// by [`Ui::refresh_home_stats`] only at modal boundaries — boot, wake, a closed tab
     /// modal — so the idle Home frame never triggers a per-paint flash enumeration.
@@ -480,7 +489,7 @@ where
             fs,
             keys,
             rng,
-            marquee_mask: [0; MARQUEE_MASK_BYTES],
+            marquee_coverage: [0; MARQUEE_COVERAGE_BYTES],
             // Seeded from the cheap PIN bit (== `locked`); the count is filled by the first
             // `refresh_home_stats` before Home is ever painted.
             home_pin_set: locked,
@@ -506,20 +515,21 @@ where
         self.home_passkeys = creds;
     }
 
-    /// Composite one marquee frame of `title` (scrolled by `off` px) into the 1-bit mask,
-    /// then blit the whole title band in a single `fill_contiguous` — no per-frame
-    /// clear→draw flash, so the scroll is flicker-free. Only called for titles that
-    /// overflow the band; a fitting title is drawn once, centred, by `render`.
+    /// Composite one marquee frame and blit the whole title band in one transaction.
+    /// Only called for titles that overflow the band.
     fn render_marquee_frame(&mut self, title: &str, off: u32) {
         let band = rsk_ui::PIN_TITLE_BAND;
         let Self {
             panel,
-            marquee_mask,
+            marquee_coverage,
             ..
         } = self;
-        {
-            let mut mask = BandMask::new(marquee_mask, band);
-            let _ = rsk_ui::render_pin_title(&mut mask, title, off);
+        let rendered = {
+            let mut target = BandCoverage::new(marquee_coverage, band);
+            rsk_ui::render_pin_title(&mut target, title, off)
+        };
+        if rendered.is_err() {
+            marquee_coverage.fill(0);
         }
         let area = Rectangle::new(
             EgPoint::new(band.x as i32, band.y as i32),
@@ -527,11 +537,11 @@ where
         );
         let n = band.w as usize * band.h as usize;
         let colors = (0..n).map(|i| {
-            if marquee_mask[i >> 3] & (1 << (i & 7)) != 0 {
-                rsk_ui::theme::TEXT
-            } else {
-                rsk_ui::theme::PANEL_BG
-            }
+            rsk_ui::aa::blend_coverage(
+                rsk_ui::theme::TEXT,
+                rsk_ui::theme::PANEL_BG,
+                packed_coverage(marquee_coverage, i),
+            )
         });
         let _ = panel.fill_contiguous(&area, colors);
     }

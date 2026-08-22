@@ -8,15 +8,12 @@
 pub mod list;
 
 use embedded_graphics::{
-    Drawable,
     draw_target::{DrawTarget, DrawTargetExt},
-    geometry::Size,
     pixelcolor::Rgb565,
-    prelude::{Point as EgPoint, Primitive},
-    primitives::{PrimitiveStyle, PrimitiveStyleBuilder, RoundedRectangle, StrokeAlignment},
+    prelude::Point as EgPoint,
 };
 
-use super::{eg_rect, text, text_left, text_left_ellipsized};
+use super::{eg_rect, text, text_left_ellipsized_on, text_left_on, text_on};
 use crate::{Glyph, PANEL_W, Point, Rect, font, glyph, theme};
 
 /// Horizontal screen margin (both sides).
@@ -32,12 +29,14 @@ pub const CARD_RADIUS: u32 = 10;
 
 /// Draw a full-width rounded card surface.
 pub fn card<D: DrawTarget<Color = Rgb565>>(t: &mut D, y: u16, h: u16) -> Result<(), D::Error> {
-    RoundedRectangle::with_equal_corners(
-        eg_rect(Rect::new(MARGIN, y, PANEL_W - 2 * MARGIN, h)),
-        Size::new(CARD_RADIUS, CARD_RADIUS),
+    crate::aa::rounded_rect(
+        t,
+        Rect::new(MARGIN, y, PANEL_W - 2 * MARGIN, h),
+        CARD_RADIUS,
+        Some(theme::SURFACE),
+        None,
+        theme::BG,
     )
-    .into_styled(PrimitiveStyle::with_fill(theme::SURFACE))
-    .draw(t)
 }
 
 /// A card title row: icon + heading text, left-aligned.
@@ -48,13 +47,21 @@ pub fn card_title<D: DrawTarget<Color = Rgb565>>(
     label: &str,
 ) -> Result<(), D::Error> {
     let y = card_y + PAD;
-    glyph::draw(t, icon, Point::new(MARGIN + PAD, y), 28, theme::ACCENT)?;
-    text_left(
+    glyph::draw(
+        t,
+        icon,
+        Point::new(MARGIN + PAD, y),
+        28,
+        theme::ACCENT,
+        theme::SURFACE,
+    )?;
+    text_left_on(
         t,
         label,
         EgPoint::new((MARGIN + PAD + 28 + 8) as i32, y as i32 + 20),
         font::Role::Heading,
         theme::TEXT,
+        theme::SURFACE,
     )
 }
 
@@ -69,22 +76,24 @@ pub fn card_row<D: DrawTarget<Color = Rgb565>>(
 ) -> Result<(), D::Error> {
     let y = card_y + PAD + ROW_H + row_idx * (ROW_H + ROW_GAP);
     let x = MARGIN + PAD;
-    glyph::draw(t, icon, Point::new(x, y), 22, theme::MUTED)?;
-    text_left(
+    glyph::draw(t, icon, Point::new(x, y), 22, theme::MUTED, theme::SURFACE)?;
+    text_left_on(
         t,
         label,
         EgPoint::new((x + 22 + 8) as i32, y as i32 + 16),
         font::Role::Body,
         theme::TEXT,
+        theme::SURFACE,
     )?;
     if let Some((val, color)) = value {
         let w = font::width(val, font::Role::Body).unwrap_or(0) as i32;
-        text(
+        text_on(
             t,
             val,
             EgPoint::new((PANEL_W - MARGIN - PAD) as i32 - w, y as i32 + 16),
             font::Role::Body,
             color,
+            theme::SURFACE,
         )?;
     }
     Ok(())
@@ -93,18 +102,14 @@ pub fn card_row<D: DrawTarget<Color = Rgb565>>(
 /// Draw a rounded card surface at an arbitrary `rect` (for settings rows and other
 /// screens that use non-standard geometry).
 pub fn rect_card<D: DrawTarget<Color = Rgb565>>(t: &mut D, rect: Rect) -> Result<(), D::Error> {
-    RoundedRectangle::with_equal_corners(eg_rect(rect), Size::new(CARD_RADIUS, CARD_RADIUS))
-        .into_styled(PrimitiveStyle::with_fill(theme::ROW_BG))
-        .draw(t)?;
-    RoundedRectangle::with_equal_corners(eg_rect(rect), Size::new(CARD_RADIUS, CARD_RADIUS))
-        .into_styled(
-            PrimitiveStyleBuilder::new()
-                .stroke_color(theme::BORDER_CARD)
-                .stroke_width(1)
-                .stroke_alignment(StrokeAlignment::Inside)
-                .build(),
-        )
-        .draw(t)
+    crate::aa::rounded_rect(
+        t,
+        rect,
+        CARD_RADIUS,
+        Some(theme::ROW_BG),
+        Some((theme::BORDER_CARD, 1)),
+        theme::BG,
+    )
 }
 
 /// Total height of a card with `rows` rows (including title row if present).
@@ -131,6 +136,7 @@ pub fn card_row_chevron<D: DrawTarget<Color = Rgb565>>(
         Point::new(PANEL_W - MARGIN - PAD - 14, y + (ROW_H - 14) / 2),
         14,
         theme::MUTED,
+        theme::SURFACE,
     )?;
     Ok(())
 }
@@ -148,7 +154,14 @@ pub fn rect_row<D: DrawTarget<Color = Rgb565>>(
 ) -> Result<(), D::Error> {
     let cy = rect.y as i32 + rect.h as i32 / 2;
     let gx = rect.x + 8;
-    glyph::draw(t, icon, Point::new(gx, (cy - 7) as u16), 14, theme::GREY)?;
+    glyph::draw(
+        t,
+        icon,
+        Point::new(gx, (cy - 7) as u16),
+        14,
+        theme::GREY,
+        theme::ROW_BG,
+    )?;
     let mut right_x = rect.x as i32 + rect.w as i32 - 8;
     if chevron {
         right_x -= 12;
@@ -158,6 +171,7 @@ pub fn rect_row<D: DrawTarget<Color = Rgb565>>(
             Point::new(right_x as u16, (cy - 6) as u16),
             12,
             theme::MUTED,
+            theme::ROW_BG,
         )?;
     }
     let label_x = rect.x as i32 + 28;
@@ -174,6 +188,7 @@ pub fn rect_row<D: DrawTarget<Color = Rgb565>>(
             EgPoint::new(tx, cy),
             font::Role::Body,
             col,
+            theme::ROW_BG,
         )?;
         tx - font::width(txt, font::Role::Body).unwrap_or(0) as i32 - 8
     } else {
@@ -185,12 +200,13 @@ pub fn rect_row<D: DrawTarget<Color = Rgb565>>(
         (label_right - label_x).max(0) as u16,
         rect.h,
     );
-    text_left_ellipsized(
+    text_left_ellipsized_on(
         t,
         label,
         EgPoint::new(label_x, cy),
         font::Role::Body,
         theme::TEXT,
+        theme::ROW_BG,
         clip,
         false,
     )
@@ -211,6 +227,7 @@ pub fn empty_state<D: DrawTarget<Color = Rgb565>>(
         Point::new((crate::PANEL_W as i32 / 2) as u16 - 18, cy - 30),
         36,
         theme::MUTED,
+        theme::BG,
     )?;
     text(
         t,

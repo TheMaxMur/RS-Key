@@ -71,19 +71,15 @@ where
         )
     };
     let plate = Rect::new(14, CONTENT_TOP + 8, PANEL_W - 28, 54);
-    RoundedRectangle::with_equal_corners(eg_rect(plate), Size::new(11, 11))
-        .into_styled(PrimitiveStyle::with_fill(fill))
-        .draw(t)?;
-    RoundedRectangle::with_equal_corners(eg_rect(plate), Size::new(11, 11))
-        .into_styled(
-            PrimitiveStyleBuilder::new()
-                .stroke_color(border)
-                .stroke_width(1)
-                .stroke_alignment(StrokeAlignment::Inside)
-                .build(),
-        )
-        .draw(t)?;
-    glyph::draw(t, icon, Point::new(plate.x + 12, plate.y + 18), 18, fg)?;
+    crate::aa::rounded_rect(t, plate, 11, Some(fill), Some((border, 1)), BG)?;
+    glyph::draw(
+        t,
+        icon,
+        Point::new(plate.x + 12, plate.y + 18),
+        18,
+        fg,
+        fill,
+    )?;
     let tx = plate.x as i32 + 42;
     // Clip the two lines to the plate interior so a wider face never overruns the panel.
     let clip = Rect::new(
@@ -92,20 +88,22 @@ where
         (plate.x + plate.w).saturating_sub(6 + tx as u16),
         plate.h,
     );
-    text_left_clipped(
+    text_left_clipped_on(
         t,
         l1,
         EgPoint::new(tx, plate.y as i32 + 20),
         Role::Strong,
         fg,
+        fill,
         clip,
     )?;
-    text_left_clipped(
+    text_left_clipped_on(
         t,
         l2,
         EgPoint::new(tx, plate.y as i32 + 38),
         Role::Body,
         MUTED,
+        fill,
         clip,
     )?;
 
@@ -200,19 +198,21 @@ where
     D: DrawTarget<Color = Rgb565>,
 {
     key_surface(t, r, KEY_FILL, true)?;
-    text_left(
+    text_left_on(
         t,
         title,
         EgPoint::new(r.x as i32 + 14, r.y as i32 + 22),
         Role::Strong,
         FG,
+        KEY_FILL,
     )?;
-    text_left(
+    text_left_on(
         t,
         sub,
         EgPoint::new(r.x as i32 + 14, r.y as i32 + 44),
         Role::Body,
         MUTED,
+        KEY_FILL,
     )
 }
 
@@ -303,9 +303,9 @@ where
         MUTED,
     )?;
     key_surface(t, minus, KEY_FILL, true)?;
-    text(t, "-", center(minus), Role::Strong, FG)?;
+    text_on(t, "-", center(minus), Role::Strong, FG, KEY_FILL)?;
     key_surface(t, plus, KEY_FILL, true)?;
-    text(t, "+", center(plus), Role::Strong, FG)?;
+    text_on(t, "+", center(plus), Role::Strong, FG, KEY_FILL)?;
     let mut b = [0u8; 5];
     text(
         t,
@@ -343,6 +343,7 @@ where
         Point::new(PANEL_W / 2 - 16, 56),
         32,
         theme::WARN,
+        BG,
     )?;
     text_left(t, line1, EgPoint::new(16, 118), Role::Body, theme::WARN)?;
     text_left(
@@ -391,6 +392,7 @@ where
         Point::new(PANEL_W / 2 - 16, 56),
         32,
         theme::WARN,
+        BG,
     )?;
     text_left(
         t,

@@ -182,18 +182,14 @@ fn danger_row<D: DrawTarget<Color = Rgb565>>(
     label: &str,
 ) -> Result<(), D::Error> {
     let r = components::CARD_RADIUS;
-    RoundedRectangle::with_equal_corners(eg_rect(rect), Size::new(r, r))
-        .into_styled(PrimitiveStyle::with_fill(theme::DANGER_BG))
-        .draw(t)?;
-    RoundedRectangle::with_equal_corners(eg_rect(rect), Size::new(r, r))
-        .into_styled(
-            PrimitiveStyleBuilder::new()
-                .stroke_color(theme::DANGER_BORDER)
-                .stroke_width(1)
-                .stroke_alignment(StrokeAlignment::Inside)
-                .build(),
-        )
-        .draw(t)?;
+    crate::aa::rounded_rect(
+        t,
+        rect,
+        r,
+        Some(theme::DANGER_BG),
+        Some((theme::DANGER_BORDER, 1)),
+        BG,
+    )?;
     let cy = rect.y as i32 + rect.h as i32 / 2;
     glyph::draw(
         t,
@@ -201,13 +197,15 @@ fn danger_row<D: DrawTarget<Color = Rgb565>>(
         Point::new(rect.x + 8, (cy - 7) as u16),
         14,
         theme::DENY,
+        theme::DANGER_BG,
     )?;
-    text_left(
+    text_left_on(
         t,
         label,
         EgPoint::new(rect.x as i32 + 28, cy),
         Role::Body,
         theme::DENY,
+        theme::DANGER_BG,
     )?;
     glyph::draw(
         t,
@@ -215,6 +213,7 @@ fn danger_row<D: DrawTarget<Color = Rgb565>>(
         Point::new(rect.x + rect.w - 20, (cy - 6) as u16),
         12,
         theme::DENY,
+        theme::DANGER_BG,
     )
 }
 
@@ -303,6 +302,7 @@ where
         Point::new(PANEL_W / 2 - 14, 48),
         28,
         theme::ACCENT,
+        BG,
     )?;
     text(
         t,
@@ -379,6 +379,7 @@ where
         Point::new(PANEL_W / 2 - 16, 110),
         32,
         theme::ACCENT,
+        BG,
     )?;
     text(
         t,
@@ -400,9 +401,9 @@ where
 /// title-bar chevron (like every other screen), so these pages carry no bottom Back slab.
 fn adjust_controls<D: DrawTarget<Color = Rgb565>>(t: &mut D) -> Result<(), D::Error> {
     key_surface(t, ADJ_MINUS_RECT, KEY_FILL, true)?;
-    text(t, "-", center(ADJ_MINUS_RECT), Role::Strong, FG)?;
+    text_on(t, "-", center(ADJ_MINUS_RECT), Role::Strong, FG, KEY_FILL)?;
     key_surface(t, ADJ_PLUS_RECT, KEY_FILL, true)?;
-    text(t, "+", center(ADJ_PLUS_RECT), Role::Strong, FG)
+    text_on(t, "+", center(ADJ_PLUS_RECT), Role::Strong, FG, KEY_FILL)
 }
 
 /// A row of `BRIGHTNESS_LEVELS` segments, the first `filled` lit green — a coarse

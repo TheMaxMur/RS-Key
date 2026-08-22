@@ -37,7 +37,7 @@ where
         } else {
             (Glyph::Warn, theme::WARN, "Logging is off")
         };
-        glyph::draw(t, icon, Point::new(MIDX as u16 - 18, 96), 36, color)?;
+        glyph::draw(t, icon, Point::new(MIDX as u16 - 18, 96), 36, color, BG)?;
         text(t, headline, EgPoint::new(MIDX, 160), Role::Body, color)?;
         if !logging {
             text(
@@ -68,16 +68,27 @@ fn audit_body<D: DrawTarget<Color = Rgb565>>(
 ) -> Result<(), D::Error> {
     let cy = rect.y as i32 + rect.h as i32 / 2;
     let dot: u32 = 8;
-    Circle::new(EgPoint::new(rect.x as i32 + 10, cy - dot as i32 / 2), dot)
-        .into_styled(PrimitiveStyle::with_fill(audit_dot(r.kind)))
-        .draw(t)?;
+    crate::aa::filled_circle(
+        t,
+        EgPoint::new(rect.x as i32 + 10, cy - dot as i32 / 2),
+        dot,
+        audit_dot(r.kind),
+        theme::ROW_BG,
+    )?;
     // Trailing time first (right), then the label clipped to end before it.
     let right_x = rect.x as i32 + rect.w as i32 - 8;
     let label_x = rect.x as i32 + 30;
     let label_right = if let Some(secs) = r.secs_ago {
         let mut buf = [0u8; 8];
         let s = fmt_ago(secs, &mut buf);
-        text_right(t, s, EgPoint::new(right_x, cy), Role::Mono, theme::CAPTION)?;
+        font::right(
+            t,
+            s,
+            EgPoint::new(right_x, cy),
+            Role::Mono,
+            theme::CAPTION,
+            theme::ROW_BG,
+        )?;
         right_x - font::width(s, Role::Mono).unwrap_or(0) as i32 - ROW_TRAILING_GAP
     } else {
         right_x - ROW_TRAILING_GAP
@@ -88,12 +99,13 @@ fn audit_body<D: DrawTarget<Color = Rgb565>>(
         (label_right - label_x).max(0) as u16,
         rect.h,
     );
-    text_left_ellipsized(
+    text_left_ellipsized_on(
         t,
         r.kind.label(),
         EgPoint::new(label_x, cy),
         Role::Body,
         FG,
+        theme::ROW_BG,
         clip,
         false,
     )

@@ -501,6 +501,9 @@ run "kani roster"              python scripts/kani_gate.py
 # rotted to 16 of 24 in the docs, 20 on the nightly coverage row, 12 in the
 # flake. This holds every copy of that selection to the tree.
 run "crate roster"             python scripts/roster_gate.py
+# The panel links committed coverage tables, not the host fonts. Rebuild them
+# from the Nix-pinned IBM Plex files and fail if the checked-in copy drifted.
+run "IBM Plex font data"       python scripts/generate_ui_fonts.py --check
 # Three conventions AGENTS.md states and nothing enforced: the `bcdDevice` bump
 # (skipped three times in two days), the CHANGELOG entry that owes it, and the
 # SPDX header on every source file. Ported from Wasefire's `ci-changelog.sh` and

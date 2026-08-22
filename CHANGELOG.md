@@ -40,6 +40,14 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Changed
 
+- **The trusted display now antialiases the full GUI.** Text uses generated
+  four-bit IBM Plex Sans and Mono coverage data. Icons, circles, status arcs,
+  rounded cards, and controls use integer coverage blending against their real
+  surface colour. This is always active in display builds and needs no setting,
+  framebuffer, heap, or new firmware dependency. Text, icons, and AA shapes are
+  streamed as contiguous RGB565 blocks so page changes do not issue a long series
+  of small SPI writes. **bcdDevice → 0x095B.**
+
 - **`deep-checks` runs on two cadences and across matrices.** Miri (3 shards) and
   the libFuzzer pass (4 shards) stay daily; Kani moves to Sunday as four jobs —
   the three `light*` shards of `scripts/kani.sh` plus `heavy` — so the roster's

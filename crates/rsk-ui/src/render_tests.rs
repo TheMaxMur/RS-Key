@@ -12,6 +12,16 @@ fn has_color(d: &Rec, r: Rect, c: Rgb565) -> bool {
     (r.y..r.y + r.h).any(|y| (r.x..r.x + r.w).any(|x| d.at(x, y) == c))
 }
 
+fn has_aa_color(d: &Rec, r: Rect, fg: Rgb565, bg: Rgb565) -> bool {
+    (r.y..r.y + r.h).any(|y| {
+        (r.x..r.x + r.w).any(|x| {
+            let color = d.at(x, y);
+            (1..crate::aa::COVERAGE_MAX)
+                .any(|coverage| color == crate::aa::blend_coverage(fg, bg, coverage))
+        })
+    })
+}
+
 /// A `DrawTarget` that records into a 240×320 buffer and, like a real panel,
 /// clips out-of-bounds pixels — but flags that it had to (`oob`), so a test can
 /// assert a screen stayed inside the panel.
@@ -772,8 +782,9 @@ fn success_screens_fit_and_mark_their_kind() {
         render_success_circle(&mut d, kind, 100).unwrap();
         assert!(!d.oob, "{kind:?} success drew outside the panel");
         assert!(d.drew_anything(), "{kind:?} success drew nothing");
+        let fill = super::reset::success_visuals(kind).1;
         assert!(
-            has_color(&d, SUCCESS_BAND, mark),
+            has_aa_color(&d, SUCCESS_BAND, mark, fill),
             "{kind:?} success mark colour missing from the circle"
         );
     }
@@ -1493,7 +1504,7 @@ fn audit_log_empty_shows_placeholder_and_no_rows() {
 /// something was drawn.
 fn shows_centered(d: &Rec, s: &str, cy: i32, role: Role, color: Rgb565) -> bool {
     let mut want = Rec::new();
-    font::centered(&mut want, s, EgPoint::new(MIDX, cy), role, color).unwrap();
+    font::centered(&mut want, s, EgPoint::new(MIDX, cy), role, color, BG).unwrap();
     ((cy - 12) as u16..(cy + 12) as u16).all(|y| (0..PANEL_W).all(|x| d.at(x, y) == want.at(x, y)))
 }
 
@@ -1539,11 +1550,11 @@ fn multi_page_list_shows_pager_in_its_hit_rects() {
     render_audit_log(&mut d, &rows, 1, 13, true).unwrap();
     assert!(!d.oob, "paged audit log drew outside the panel");
     assert!(
-        has_color(&d, crate::PAGER_PREV_RECT, theme::ACCENT),
+        has_aa_color(&d, crate::PAGER_PREV_RECT, theme::ACCENT, BG),
         "prev arrow missing from its hit rect"
     );
     assert!(
-        has_color(&d, crate::PAGER_NEXT_RECT, theme::ACCENT),
+        has_aa_color(&d, crate::PAGER_NEXT_RECT, theme::ACCENT, BG),
         "next arrow missing from its hit rect"
     );
 }
@@ -1558,18 +1569,18 @@ fn pager_dims_the_unavailable_end_arrow() {
     let mut d = Rec::new();
     render_audit_log(&mut d, &rows, 0, 13, true).unwrap();
     assert!(
-        has_color(&d, crate::PAGER_PREV_RECT, theme::CAPTION),
+        has_aa_color(&d, crate::PAGER_PREV_RECT, theme::CAPTION, BG),
         "prev not dimmed on the first page"
     );
     assert!(
-        has_color(&d, crate::PAGER_NEXT_RECT, theme::ACCENT),
+        has_aa_color(&d, crate::PAGER_NEXT_RECT, theme::ACCENT, BG),
         "next not active on the first page"
     );
     // Last page (2 of 3): next is dimmed.
     let mut d2 = Rec::new();
     render_audit_log(&mut d2, &rows[..3], 2, 13, true).unwrap();
     assert!(
-        has_color(&d2, crate::PAGER_NEXT_RECT, theme::CAPTION),
+        has_aa_color(&d2, crate::PAGER_NEXT_RECT, theme::CAPTION, BG),
         "next not dimmed on the last page"
     );
 }
@@ -1744,6 +1755,10 @@ fn nav_accents_only_the_active_tab() {
     assert!(
         !has(crate::nav_tab_rect(0), theme::ACCENT),
         "inactive tab accented"
+    );
+    assert!(
+        !(NAV_TOP + 1..PANEL_H).any(|y| (0..PANEL_W).any(|x| d.at(x, y) == BG)),
+        "nav icon or caption stamped the page background over the bar"
     );
 }
 

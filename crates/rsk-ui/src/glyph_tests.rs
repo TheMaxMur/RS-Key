@@ -2,7 +2,12 @@
 // Copyright (C) 2026 RS-Key contributors
 
 use super::*;
-use embedded_graphics::{Pixel, geometry::OriginDimensions, geometry::Size, prelude::RgbColor};
+use embedded_graphics::{
+    Pixel,
+    geometry::{OriginDimensions, Size},
+    prelude::RgbColor,
+    primitives::Rectangle,
+};
 
 /// The canonical sizes every glyph is authored at — the sizes the UI paints most, where
 /// crispness matters. Off-canonical requests scale from the nearest of these. Kept in
@@ -36,6 +41,7 @@ struct Rec {
     w: i32,
     h: i32,
     drew: bool,
+    partial: bool,
     oob: bool,
 }
 
@@ -52,11 +58,12 @@ impl DrawTarget for Rec {
     where
         I: IntoIterator<Item = Pixel<Rgb565>>,
     {
-        for Pixel(p, _) in pixels {
+        for Pixel(p, color) in pixels {
             if p.x < 0 || p.y < 0 || p.x >= self.w || p.y >= self.h {
                 self.oob = true;
             } else {
                 self.drew = true;
+                self.partial |= color != Rgb565::BLACK && color != Rgb565::WHITE;
             }
         }
         Ok(())
@@ -126,10 +133,20 @@ fn every_glyph_paints_inside_its_box() {
             w: 24,
             h: 24,
             drew: false,
+            partial: false,
             oob: false,
         };
-        draw(&mut d, g, Point::new(4, 4), 16, Rgb565::WHITE).unwrap();
+        draw(
+            &mut d,
+            g,
+            Point::new(4, 4),
+            16,
+            Rgb565::WHITE,
+            Rgb565::BLACK,
+        )
+        .unwrap();
         assert!(d.drew, "{g:?} drew nothing");
+        assert!(d.partial, "{g:?} has no antialiased pixel");
         assert!(!d.oob, "{g:?} drew outside its 24×24 box");
     }
 }
@@ -142,9 +159,18 @@ fn nav_size_glyphs_also_fit() {
             w: 28,
             h: 28,
             drew: false,
+            partial: false,
             oob: false,
         };
-        draw(&mut d, g, Point::new(4, 4), 20, Rgb565::WHITE).unwrap();
+        draw(
+            &mut d,
+            g,
+            Point::new(4, 4),
+            20,
+            Rgb565::WHITE,
+            Rgb565::BLACK,
+        )
+        .unwrap();
         assert!(d.drew && !d.oob, "{g:?} did not fit at nav size");
     }
 }
@@ -161,6 +187,7 @@ fn off_canonical_sizes_stay_in_box() {
                 w: side,
                 h: side,
                 drew: false,
+                partial: false,
                 oob: false,
             };
             draw(
@@ -169,6 +196,7 @@ fn off_canonical_sizes_stay_in_box() {
                 Point::new(pad as u16, pad as u16),
                 s,
                 Rgb565::WHITE,
+                Rgb565::BLACK,
             )
             .unwrap();
             assert!(d.drew && !d.oob, "{g:?}@{s} scaled outside its box");
@@ -176,15 +204,71 @@ fn off_canonical_sizes_stay_in_box() {
     }
 }
 
+struct Transactions {
+    draw: usize,
+    contiguous: usize,
+}
+
+impl OriginDimensions for Transactions {
+    fn size(&self) -> Size {
+        Size::new(32, 32)
+    }
+}
+
+impl DrawTarget for Transactions {
+    type Color = Rgb565;
+    type Error = core::convert::Infallible;
+
+    fn draw_iter<I>(&mut self, pixels: I) -> Result<(), Self::Error>
+    where
+        I: IntoIterator<Item = Pixel<Rgb565>>,
+    {
+        self.draw += 1;
+        let _ = pixels.into_iter().count();
+        Ok(())
+    }
+
+    fn fill_contiguous<I>(&mut self, area: &Rectangle, colors: I) -> Result<(), Self::Error>
+    where
+        I: IntoIterator<Item = Rgb565>,
+    {
+        self.contiguous += 1;
+        assert_eq!(
+            colors.into_iter().count() as u32,
+            area.size.width * area.size.height
+        );
+        Ok(())
+    }
+}
+
+#[test]
+fn a_glyph_uses_one_contiguous_write() {
+    let mut target = Transactions {
+        draw: 0,
+        contiguous: 0,
+    };
+    draw(
+        &mut target,
+        Glyph::Key,
+        Point::new(4, 4),
+        20,
+        Rgb565::WHITE,
+        Rgb565::BLACK,
+    )
+    .unwrap();
+    assert_eq!(target.draw, 0);
+    assert_eq!(target.contiguous, 1);
+}
+
 struct Grid {
     n: usize,
-    px: std::vec::Vec<bool>,
+    px: std::vec::Vec<u8>,
 }
 impl Grid {
     fn new(n: usize) -> Self {
         Self {
             n,
-            px: std::vec![false; n * n],
+            px: std::vec![0; n * n],
         }
     }
 }
@@ -200,9 +284,9 @@ impl DrawTarget for Grid {
     where
         I: IntoIterator<Item = Pixel<Rgb565>>,
     {
-        for Pixel(p, _) in pixels {
+        for Pixel(p, color) in pixels {
             if p.x >= 0 && p.y >= 0 && (p.x as usize) < self.n && (p.y as usize) < self.n {
-                self.px[p.y as usize * self.n + p.x as usize] = true;
+                self.px[p.y as usize * self.n + p.x as usize] = color.r();
             }
         }
         Ok(())
@@ -226,21 +310,27 @@ fn glyphs_respect_their_symmetry_axes() {
         for s in CANON {
             let s = s as usize;
             let mut grid = Grid::new(s);
-            draw(&mut grid, g, Point::new(0, 0), s as u16, Rgb565::WHITE).unwrap();
+            draw(
+                &mut grid,
+                g,
+                Point::new(0, 0),
+                s as u16,
+                Rgb565::WHITE,
+                Rgb565::BLACK,
+            )
+            .unwrap();
             let center = |a: usize| (a as i32 - (s as i32 - 1 - a as i32)).abs() <= 1;
             for y in 0..s {
                 for x in 0..s {
                     if sy.v && !center(x) {
-                        assert_eq!(
-                            grid.px[y * s + x],
-                            grid.px[y * s + (s - 1 - x)],
+                        assert!(
+                            grid.px[y * s + x].abs_diff(grid.px[y * s + (s - 1 - x)]) <= 2,
                             "{g:?} at {s}px not left-right symmetric (row {y}, col {x})"
                         );
                     }
                     if sy.h && !center(y) {
-                        assert_eq!(
-                            grid.px[y * s + x],
-                            grid.px[(s - 1 - y) * s + x],
+                        assert!(
+                            grid.px[y * s + x].abs_diff(grid.px[(s - 1 - y) * s + x]) <= 2,
                             "{g:?} at {s}px not top-bottom symmetric (row {y}, col {x})"
                         );
                     }

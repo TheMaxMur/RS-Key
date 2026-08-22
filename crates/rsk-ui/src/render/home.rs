@@ -17,7 +17,14 @@ pub(super) fn home<D: DrawTarget<Color = Rgb565>>(t: &mut D, v: &HomeView) -> Re
     if matches!(v.status, StatusKind::Idle) {
         // The design's left-aligned "✓ Ready" header — a calm white headline beside the
         // accent check, not a lone centred accent word.
-        glyph::draw(t, Glyph::CheckCircle, Point::new(14, 40), 38, theme::ACCENT)?;
+        glyph::draw(
+            t,
+            Glyph::CheckCircle,
+            Point::new(14, 40),
+            38,
+            theme::ACCENT,
+            BG,
+        )?;
         text_left(t, "Ready", EgPoint::new(60, 58), Role::Ready, FG)?;
         // One grouped status card (USB / device PIN / passkey count), the design's panel —
         // not three floating pills.
@@ -94,27 +101,17 @@ pub fn render_status_arc<D: DrawTarget<Color = Rgb565>>(
     angle_deg: i32,
 ) -> Result<(), D::Error> {
     let (track, mark) = status_ring(kind);
-    Circle::with_center(EgPoint::new(MIDX, STATUS_RING_CY), STATUS_RING_D)
-        .into_styled(
-            PrimitiveStyleBuilder::new()
-                .stroke_color(track)
-                .stroke_width(3)
-                .build(),
-        )
-        .draw(t)?;
-    Arc::with_center(
+    crate::aa::ring_arc(
+        t,
         EgPoint::new(MIDX, STATUS_RING_CY),
         STATUS_RING_D,
-        Angle::from_degrees(angle_deg as f32),
-        Angle::from_degrees(270.0),
+        3,
+        angle_deg,
+        270,
+        track,
+        mark,
+        BG,
     )
-    .into_styled(
-        PrimitiveStyleBuilder::new()
-            .stroke_color(mark)
-            .stroke_width(3)
-            .build(),
-    )
-    .draw(t)
 }
 
 /// Track + accent colours for the non-idle status ring (themed, not the LED layer's raw

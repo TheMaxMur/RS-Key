@@ -499,39 +499,63 @@ fn brightness_levels_are_ordered() {
 }
 
 #[test]
-fn the_marquee_mask_takes_a_glyph_bit_per_pixel() {
+fn the_marquee_buffer_preserves_partial_coverage() {
     let band = rsk_ui::PIN_TITLE_BAND;
-    let mut bits = [0u8; MARQUEE_MASK_BYTES];
+    let mut coverage = [0u8; MARQUEE_COVERAGE_BYTES];
+    let partial = rsk_ui::aa::blend_coverage(rsk_ui::theme::TEXT, rsk_ui::theme::PANEL_BG, 7);
     {
-        let mut mask = BandMask::new(&mut bits, band);
+        let mut target = BandCoverage::new(&mut coverage, band);
         let at = |x: u16, y: u16| EgPoint::new(x as i32, y as i32);
-        // Absolute (panel) coordinates: the generic renderer draws the band where
-        // it really sits, so the mask has to accept it there.
-        let _ = mask.draw_iter([
-            Pixel(at(band.x, band.y), rsk_ui::theme::TEXT),
-            Pixel(at(band.x + 1, band.y), rsk_ui::theme::PANEL_BG),
-        ]);
+        target
+            .draw_iter([
+                Pixel(at(band.x, band.y), partial),
+                Pixel(at(band.x + 1, band.y), rsk_ui::theme::PANEL_BG),
+            ])
+            .unwrap();
     }
-    assert_eq!(bits[0] & 0b11, 0b01, "set = glyph, background = clear");
+    assert_eq!(
+        rsk_ui::aa::blend_coverage(
+            rsk_ui::theme::TEXT,
+            rsk_ui::theme::PANEL_BG,
+            packed_coverage(&coverage, 0),
+        ),
+        partial
+    );
+    assert_eq!(packed_coverage(&coverage, 1), 0);
 }
 
 #[test]
-fn the_marquee_mask_drops_a_pixel_outside_the_band() {
+fn the_marquee_buffer_keeps_antialiased_title_edges() {
     let band = rsk_ui::PIN_TITLE_BAND;
-    let mut bits = [0u8; MARQUEE_MASK_BYTES];
+    let mut coverage = [0u8; MARQUEE_COVERAGE_BYTES];
+    let mut target = BandCoverage::new(&mut coverage, band);
+    rsk_ui::render_pin_title(&mut target, "OpenPGP Sign PIN", 7).unwrap();
+    assert!(
+        (0..usize::from(band.w) * usize::from(band.h))
+            .map(|index| packed_coverage(&coverage, index))
+            .any(|value| value > 0 && value < rsk_ui::aa::COVERAGE_MAX)
+    );
+}
+
+#[test]
+fn the_marquee_buffer_drops_a_pixel_outside_the_band() {
+    let band = rsk_ui::PIN_TITLE_BAND;
+    let mut coverage = [0u8; MARQUEE_COVERAGE_BYTES];
     {
-        let mut mask = BandMask::new(&mut bits, band);
+        let mut target = BandCoverage::new(&mut coverage, band);
         let out = [
             EgPoint::new(band.x as i32 - 1, band.y as i32),
             EgPoint::new(band.x as i32, band.y as i32 - 1),
             EgPoint::new(band.x as i32 + band.w as i32, band.y as i32),
             EgPoint::new(band.x as i32, band.y as i32 + band.h as i32),
         ];
-        let _ = mask.draw_iter(out.map(|p| Pixel(p, rsk_ui::theme::TEXT)));
+        target
+            .draw_iter(out.map(|p| Pixel(p, rsk_ui::theme::TEXT)))
+            .unwrap();
     }
     assert!(
-        bits.iter().all(|&b| b == 0),
-        "a pixel outside the band reached the mask"
+        coverage.iter().all(|&value| value == 0),
+        "a pixel outside the band reached the buffer"
     );
 }
 
