@@ -96,15 +96,14 @@ fn service_head<D: DrawTarget<Color = Rgb565>>(
     account: &Label,
 ) -> Result<(), D::Error> {
     let chip = Rect::new(14, y as u16, 38, 38);
-    RoundedRectangle::with_equal_corners(eg_rect(chip), Size::new(9, 9))
-        .into_styled(PrimitiveStyle::with_fill(theme::CHIP))
-        .draw(t)?;
+    crate::aa::rounded_rect(t, chip, 9, Some(theme::CHIP), None, BG)?;
     glyph::draw(
         t,
         Glyph::Globe,
         Point::new(chip.x + 8, chip.y + 8),
         22,
         theme::TEXT,
+        theme::CHIP,
     )?;
     let tx = chip.x as i32 + chip.w as i32 + 11;
     let clip = Rect::new(tx as u16, y as u16, PANEL_W - 14 - tx as u16, 38);
@@ -162,48 +161,41 @@ fn ceremony_plate<D: DrawTarget<Color = Rgb565>>(
         PANEL_W - 28,
         CEREMONY_PLATE_H,
     );
-    RoundedRectangle::with_equal_corners(eg_rect(plate), Size::new(11, 11))
-        .into_styled(PrimitiveStyle::with_fill(fill))
-        .draw(t)?;
-    RoundedRectangle::with_equal_corners(eg_rect(plate), Size::new(11, 11))
-        .into_styled(
-            PrimitiveStyleBuilder::new()
-                .stroke_color(border)
-                .stroke_width(1)
-                .stroke_alignment(StrokeAlignment::Inside)
-                .build(),
-        )
-        .draw(t)?;
+    crate::aa::rounded_rect(t, plate, 11, Some(fill), Some((border, 1)), BG)?;
     glyph::draw(
         t,
         icon,
         Point::new(plate.x + 12, plate.y + 13),
         16,
         text_color,
+        fill,
     )?;
     let tx = plate.x as i32 + 38;
     if line2.is_empty() {
-        text_left(
+        text_left_on(
             t,
             line1,
             EgPoint::new(tx, plate.y as i32 + 23),
             Role::Body,
             text_color,
+            fill,
         )
     } else {
-        text_left(
+        text_left_on(
             t,
             line1,
             EgPoint::new(tx, plate.y as i32 + 16),
             Role::Body,
             text_color,
+            fill,
         )?;
-        text_left(
+        text_left_on(
             t,
             line2,
             EgPoint::new(tx, plate.y as i32 + 32),
             Role::Body,
             text_color,
+            fill,
         )
     }
 }
@@ -226,6 +218,7 @@ pub(super) fn confirm<D: DrawTarget<Color = Rgb565>>(
         Point::new(CEREMONY_ICON_X as u16, (CEREMONY_TITLE_CY - 9) as u16),
         18,
         theme::ACCENT,
+        BG,
     )?;
     // Clipped like every other label on this screen: an over-wide title used to paint
     // past the panel edge, and on a title-only prompt (`Confirm::titled`, e.g. the OTP
@@ -275,21 +268,14 @@ where
     // Placeholder tile for the (logo-less) relying party. embedded-graphics has no
     // dashed stroke, so the border is solid — the tile still reads as "new / pending".
     let tile = Rect::new((MIDX - 37) as u16, CONTENT_TOP + 16, 74, 74);
-    RoundedRectangle::with_equal_corners(eg_rect(tile), Size::new(16, 16))
-        .into_styled(
-            PrimitiveStyleBuilder::new()
-                .stroke_color(theme::BORDER_CARD)
-                .stroke_width(2)
-                .stroke_alignment(StrokeAlignment::Inside)
-                .build(),
-        )
-        .draw(t)?;
+    crate::aa::rounded_rect(t, tile, 16, None, Some((theme::BORDER_CARD, 2)), BG)?;
     glyph::draw(
         t,
         Glyph::Globe,
         Point::new(tile.x + 18, tile.y + 18),
         38,
         theme::TEXT,
+        BG,
     )?;
     // Untrusted fields, clipped to the panel (with side margins) so they cannot overrun.
     let rp_y = tile.y as i32 + 90;

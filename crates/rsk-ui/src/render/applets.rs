@@ -110,19 +110,21 @@ fn detail_card<D: DrawTarget<Color = Rgb565>>(
             .draw(t)?;
         }
         let cy = row_top + RH / 2;
-        text_left(
+        text_left_on(
             t,
             label,
             EgPoint::new(X as i32 + 12, cy),
             Role::Body,
             theme::MUTED,
+            theme::SURFACE,
         )?;
-        text_right(
+        font::right(
             t,
             value,
             EgPoint::new((X + W) as i32 - 12, cy),
             Role::Mono,
             *color,
+            theme::SURFACE,
         )?;
     }
     Ok(())
@@ -137,7 +139,7 @@ fn empty_slot<D: DrawTarget<Color = Rgb565>>(
     headline: &str,
     hint: &str,
 ) -> Result<(), D::Error> {
-    glyph::draw(t, icon, Point::new(MIDX as u16 - 22, 120), 44, MUTED)?;
+    glyph::draw(t, icon, Point::new(MIDX as u16 - 22, 120), 44, MUTED, BG)?;
     text(
         t,
         headline,
@@ -531,7 +533,14 @@ where
     status_bar(t)?;
     title_bar_wide(t, "OATH", theme::ACCENT, true)?;
     if total == 0 {
-        glyph::draw(t, Glyph::Clock, Point::new(MIDX as u16 - 18, 96), 36, MUTED)?;
+        glyph::draw(
+            t,
+            Glyph::Clock,
+            Point::new(MIDX as u16 - 18, 96),
+            36,
+            MUTED,
+            BG,
+        )?;
         text(
             t,
             "No codes yet",
@@ -854,12 +863,14 @@ where
         false,
         false,
     )?;
-    text_left(
+    text_left_ellipsized(
         t,
         "Generated on-device, never leaves it",
         EgPoint::new(14, PANEL_H as i32 - 18),
         Role::MonoSmall,
         theme::CAPTION,
+        Rect::new(14, PANEL_H - 30, PANEL_W - 28, 24),
+        false,
     )
 }
 

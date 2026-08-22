@@ -27,6 +27,7 @@ pub(super) fn locked<D: DrawTarget<Color = Rgb565>>(t: &mut D) -> Result<(), D::
         Point::new((cx - 17) as u16, (cyc - 17) as u16),
         34,
         theme::ACCENT,
+        theme::SURFACE,
     )?;
     text(t, "Locked", EgPoint::new(cx, 200), Role::Heading, FG)?;
     // The design breathes this hint (opacity 0.5↔1); the firmware pulses it by repainting
@@ -105,6 +106,7 @@ pub(super) fn onboard<D: DrawTarget<Color = Rgb565>>(t: &mut D) -> Result<(), D:
         Point::new((cx - 16) as u16, (cyc - 16) as u16),
         32,
         theme::ACCENT,
+        theme::SURFACE,
     )?;
     text(t, "Set a PIN?", EgPoint::new(cx, 120), Role::Heading, FG)?;
     text(
@@ -125,18 +127,7 @@ pub(super) fn onboard<D: DrawTarget<Color = Rgb565>>(t: &mut D) -> Result<(), D:
     )?;
     button(t, ONBOARD_SET_RECT, "Set a PIN", theme::ACCENT_FILL)?;
     // Low-emphasis outline; the Body font keeps the long caption inside the button.
-    RoundedRectangle::with_equal_corners(
-        eg_rect(ONBOARD_SKIP_RECT),
-        Size::new(BTN_RADIUS, BTN_RADIUS),
-    )
-    .into_styled(
-        PrimitiveStyleBuilder::new()
-            .stroke_color(MUTED)
-            .stroke_width(2)
-            .stroke_alignment(StrokeAlignment::Inside)
-            .build(),
-    )
-    .draw(t)?;
+    crate::aa::rounded_rect(t, ONBOARD_SKIP_RECT, BTN_RADIUS, None, Some((MUTED, 2)), BG)?;
     text(
         t,
         "Continue without PIN",
@@ -155,6 +146,7 @@ pub(super) fn splash<D: DrawTarget<Color = Rgb565>>(t: &mut D) -> Result<(), D::
         Point::new(MIDX as u16 - 20, 92),
         40,
         theme::ACCENT,
+        BG,
     )?;
     text(t, "RS-Key", EgPoint::new(MIDX, 158), Role::Heading, FG)?;
     text(

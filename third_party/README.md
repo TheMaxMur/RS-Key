@@ -1,4 +1,11 @@
-# third_party — vendored upstream test suites
+# third_party — vendored upstream material
+
+`ibm-plex/` contains generated four-bit coverage data for the GUI fonts and the
+IBM Plex license. `scripts/generate_ui_fonts.py` generates the data from IBM Plex
+Sans and Mono files supplied by Nix. The font software uses the SIL Open Font
+License 1.1.
+
+## Upstream test suites
 
 Two external conformance suites, vendored so the firmware can be validated
 without checking out the upstream repos. They are **not** part of RS-Key's
