@@ -10,7 +10,6 @@ import pathlib
 import subprocess
 import sys
 
-import PIL
 from PIL import Image, ImageDraw, ImageFont, features
 
 
@@ -130,7 +129,7 @@ def raster_versions():
             "FreeType instead and the tables would not match"
         )
     return (
-        f"Pillow {PIL.__version__}, "
+        f"Pillow {features.version('pil')}, "
         f"FreeType {features.version('freetype2')}, "
         f"Raqm {features.version('raqm')}"
     )
