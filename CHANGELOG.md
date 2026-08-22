@@ -915,6 +915,29 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Internal
 
+- **Three lockfiles pinned crate versions their own authors had withdrawn.**
+  `cargo audit` reports a yanked version as a warning and exits 0 — the same
+  shape that let two unsound advisories sit in `tools/tui` for weeks — so the
+  gate was green over `bitcoin_hashes` 0.14.100 and `time` 0.3.48 (tui) and
+  `spin` 0.9.8 (root **and** `fuzz/`). Swept as a class rather than by the three
+  names that were reported: all **564** distinct (crate, version) pairs across
+  the four lockfiles were checked against the crates.io index, and those three
+  are the only yanked ones. Now 0.14.101, 0.3.55 and 0.9.9 — four lines per
+  lockfile, nothing else moved. Refactor-grade: no behaviour change, and the
+  counter moves only because `spin` genuinely reaches the image
+  (`spin` → `lazy_static` → `num-bigint-dig` → `rsk-rsa` → `firmware`, confirmed
+  with `cargo tree -i --target thumbv8m.main-none-eabihf`) and `bcdDevice`
+  counts builds. Worth recording that nothing asked for that bump:
+  `scripts/bcd_gate.py`'s `VISIBLE` is `("firmware/", "crates/")`, so a root
+  `Cargo.lock` edit that re-pins a dependency compiled into the firmware is
+  invisible to it — measured, the row stayed green with the lockfile already
+  changed and the counter untouched. `cargo-vet` **did** notice, correctly:
+  `spin:0.9.9 missing ["safe-to-deploy"]` stopped the gate at rc 255, because
+  0.9.8 was covered by a local exemption rather than an audit, so there was no
+  baseline to delta from. The exemption moves to 0.9.9 — the same "unreviewed,
+  risk accepted" posture it already recorded, now on a version its author has
+  not withdrawn. No new review is claimed.
+
 - **CodeQL's first run would have reported 289 alerts, 229 of them test
   vectors.** `rust/hard-coded-cryptographic-value` cannot tell a KAT from a
   secret, and this tree is built out of KATs — `crates/rsk-oath/src/tests.rs`

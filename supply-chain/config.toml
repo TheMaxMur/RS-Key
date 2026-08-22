@@ -877,7 +877,7 @@ version = "0.3.2"
 criteria = "safe-to-deploy"
 
 [[exemptions.spin]]
-version = "0.9.8"
+version = "0.9.9"
 criteria = "safe-to-deploy"
 
 [[exemptions.spki]]
