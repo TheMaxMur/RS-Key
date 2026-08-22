@@ -981,6 +981,16 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **One colour the marquee could not place on its ramp blanked the whole PIN title.**
+  The scrolling title composites into an off-screen four-bit band, and the band
+  recovered each pixel's coverage by inverting the blend — so a colour that was
+  neither the text nor the panel background had no coverage to return, the frame
+  errored, and the error was answered by zeroing the buffer. The one-bit mask this
+  replaced took the tolerant rule instead ("not the background means ink"), and that
+  rule is back: an off-ramp colour is full coverage. The band target's error type is
+  `Infallible` again, which deletes the branch rather than fixing it, and a
+  compile-time assertion keeps it that way. **bcdDevice → 0x0980.**
+
 - **Two overlapping glyphs took the later coverage instead of the greater, so the
   second one punched a near-background pixel into the first one's stroke.** The
   trusted display's text draws each pixel by walking the string, and a pixel both

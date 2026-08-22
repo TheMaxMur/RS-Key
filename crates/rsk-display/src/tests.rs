@@ -525,6 +525,37 @@ fn the_marquee_buffer_keeps_antialiased_title_edges() {
     );
 }
 
+/// The band buffer used to refuse any colour it could not place on the TEXT/PANEL_BG
+/// ramp, and `render_marquee_frame` answered that refusal by zeroing the buffer -- so
+/// one off-ramp pixel blanked the whole title. The 1-bit mask this replaced took the
+/// tolerant rule instead: not the background means ink. Keep that rule.
+#[test]
+fn an_off_ramp_colour_lands_as_ink_rather_than_refusing_the_frame() {
+    let band = rsk_ui::PIN_TITLE_BAND;
+    let mut coverage = [0u8; MARQUEE_COVERAGE_BYTES];
+    {
+        let mut target = BandCoverage::new(&mut coverage, band);
+        let at = |x: u16, y: u16| EgPoint::new(x as i32, y as i32);
+        target
+            .draw_iter([
+                Pixel(at(band.x, band.y), rsk_ui::theme::ACCENT),
+                Pixel(at(band.x + 1, band.y), rsk_ui::theme::PANEL_BG),
+            ])
+            .unwrap();
+    }
+    assert_eq!(packed_coverage(&coverage, 0), rsk_ui::aa::COVERAGE_MAX);
+    assert_eq!(packed_coverage(&coverage, 1), 0);
+}
+
+/// The band target cannot fail, and that is the point: an error type here is a way for
+/// a future frame to come back empty. `Infallible` is what removes the branch.
+const _: () = {
+    fn infallible<D: DrawTarget<Error = core::convert::Infallible>>() {}
+    fn assert() {
+        infallible::<BandCoverage<'static>>();
+    }
+};
+
 #[test]
 fn the_marquee_buffer_drops_a_pixel_outside_the_band() {
     let band = rsk_ui::PIN_TITLE_BAND;
