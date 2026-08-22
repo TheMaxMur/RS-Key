@@ -114,6 +114,7 @@ UNSUPPORTED = {
 # `scripts/emu-suites.sh` gives them a session with that PIN; this is for the
 # hand-run, and it turns a suite it has not been told about into a skip.
 NEEDS_ARGS = {
+    "16_always_uv_gate": "--pin",
     "28_ctap_spec_alignment": "--pin",
     "76_soft_lock": "--pin",
 }

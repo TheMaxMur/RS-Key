@@ -18,6 +18,19 @@ def events():
     return security_trace.load_events([TRACE])
 
 
+def resets():
+    """The two authenticatorReset boundaries, in order: the one the power-up
+    window admits, then the one it has closed.
+
+    By SHAPE and not by index. These were `resets()[0]` and `resets()[1]`, and
+    every case that used them broke the day the recorded session grew a suite —
+    which is a test suite that reads the recording positionally, not a finding.
+    """
+    found = [e for e in events() if e["command_raw"] == 0x07]
+    assert len(found) == 2, [e["sequence"] for e in found]
+    return found
+
+
 def test_the_recorded_trace_is_exactly_what_the_ratchets_claim(tmp_path):
     # Equality, not a floor: a richer recording has to move `floors.txt` in the
     # same commit, and the numbers live in one place instead of here as well.
@@ -191,7 +204,7 @@ def test_a_token_bearing_make_credential_is_not_a_gate_row():
 
 def test_a_reset_outside_the_window_is_a_refusal_and_not_a_second_wipe():
     ledger = security_trace.new_ledger()
-    actions, gate = security_trace.infer(events()[20], ledger)
+    actions, gate = security_trace.infer(resets()[1], ledger)
     assert [n for n, _ in actions] == ["Stutter"]
     assert gate == ("reset", False)
 
@@ -201,19 +214,19 @@ def test_the_clock_advances_from_now_ms_and_not_from_the_branch_it_answers():
     # construction. They come from elapsed time, so a mis-read branch meets a B
     # that disagrees.
     ledger = security_trace.new_ledger()
-    assert security_trace.clock_ticks(events()[19], ledger) == []  # now_ms = 1
+    assert security_trace.clock_ticks(resets()[0], ledger) == []  # now_ms = 1
     assert ledger["clock"] == 0
-    assert [n for n, _ in security_trace.clock_ticks(events()[20], ledger)] == ["Tick"]
+    assert [n for n, _ in security_trace.clock_ticks(resets()[1], ledger)] == ["Tick"]
     assert ledger["clock"] == 1
     # `MaxClock = 1` allows no second one, so a further late boundary spends none.
-    assert security_trace.clock_ticks(events()[20], ledger) == []
+    assert security_trace.clock_ticks(resets()[1], ledger) == []
 
 
 def test_the_reset_gate_carries_the_answer_the_device_gave_either_way():
     # The refusing direction is what the recording holds; this is the other one,
     # and it is the only shape in which R4c's reset arm can go red on a real
     # recording — B says Rejected because the window is shut, C says served.
-    served = copy.deepcopy(events()[20])
+    served = copy.deepcopy(resets()[1])
     served["outcome_raw"] = 0x00
     _, gate = security_trace.infer(served, security_trace.new_ledger())
     assert gate == ("reset", False)
@@ -223,7 +236,7 @@ def test_the_reset_gate_carries_the_answer_the_device_gave_either_way():
 
 
 def test_a_reset_gate_row_is_held_to_the_action_hint_too():
-    event = copy.deepcopy(events()[20])
+    event = copy.deepcopy(resets()[1])
     event["action_hint"] = "clientPin"
     with pytest.raises(SystemExit, match="action_hint disagrees"):
         security_trace.infer(event, security_trace.new_ledger())
@@ -235,7 +248,7 @@ def test_the_tick_count_comes_from_the_configuration_and_not_from_a_literal(monk
         "CONSTANTS\n    ResetWindow = 2\n    MaxClock = 4\n", encoding="utf-8"
     )
     ledger = security_trace.new_ledger()
-    ticks = security_trace.clock_ticks(events()[20], ledger)
+    ticks = security_trace.clock_ticks(resets()[1], ledger)
     assert [n for n, _ in ticks] == ["Tick", "Tick", "Tick"]
     assert ledger["clock"] == 3
 
@@ -246,7 +259,7 @@ def test_a_clock_that_cannot_outrun_the_window_is_fatal(monkeypatch, tmp_path):
         "CONSTANTS\n    ResetWindow = 1\n    MaxClock = 1\n", encoding="utf-8"
     )
     with pytest.raises(SystemExit, match="never closes"):
-        security_trace.clock_ticks(events()[20], security_trace.new_ledger())
+        security_trace.clock_ticks(resets()[1], security_trace.new_ledger())
 
 
 def test_an_unassigned_constant_is_fatal_rather_than_a_default(monkeypatch, tmp_path):
@@ -257,21 +270,21 @@ def test_an_unassigned_constant_is_fatal_rather_than_a_default(monkeypatch, tmp_
 
 
 def test_a_reset_inside_the_window_that_kept_state_is_fatal():
-    event = copy.deepcopy(events()[19])
+    event = copy.deepcopy(resets()[0])
     event["post"]["credential_slots_raw"] = 1
     with pytest.raises(SystemExit, match="left state behind"):
         security_trace.infer(event, security_trace.new_ledger())
 
 
 def test_a_refused_reset_that_moved_state_is_fatal():
-    event = copy.deepcopy(events()[20])
+    event = copy.deepcopy(resets()[1])
     event["post"]["pin_mismatches_raw"] = 1
     with pytest.raises(SystemExit, match="refused reset moved raw state"):
         security_trace.infer(event, security_trace.new_ledger())
 
 
 def test_a_reset_refused_for_another_reason_is_not_predicted():
-    event = copy.deepcopy(events()[20])
+    event = copy.deepcopy(resets()[1])
     event["outcome_raw"] = 0x2E
     with pytest.raises(SystemExit, match="does not explain"):
         security_trace.infer(event, security_trace.new_ledger())
@@ -350,3 +363,101 @@ def test_check_sh_runs_this_row():
     """`NAMED` says this table exists; only this says the guard is wired in."""
     check = (pathlib.Path(__file__).parents[1] / "scripts/check.sh").read_text()
     assert "scripts/security_trace.py --check-data" in check
+
+
+# --- the alwaysUv arm, and the branches the session that recorded it needed ---
+
+
+def configs():
+    """The two authenticatorConfig boundaries: alwaysUv on, then off again."""
+    found = [e for e in events() if e["command_raw"] == 0x0D]
+    assert len(found) == 2, [e["sequence"] for e in found]
+    return found
+
+
+def gate_rows():
+    """(kind, rk, alwaysUv, recorded outcome) per gate boundary, in order."""
+    ledger = security_trace.new_ledger()
+    rows = []
+    for event in events():
+        security_trace.clock_ticks(event, ledger)
+        _actions, gate = security_trace.infer(event, ledger)
+        if gate is not None:
+            rows.append((gate[0], gate[1], ledger["always_uv"],
+                         security_trace.delta_c(event["outcome_raw"])))
+    return rows
+
+
+def test_a_config_op_toggling_always_uv_is_mapped():
+    ledger = security_trace.new_ledger()
+    on, off = configs()
+    assert names_of_with(on, ledger) == ["ConfigOp"] and ledger["always_uv"]
+    assert names_of_with(off, ledger) == ["ConfigOp"] and not ledger["always_uv"]
+
+
+def names_of_with(event, ledger):
+    return [name for name, _ in security_trace.infer(event, ledger)[0]]
+
+
+def test_a_token_issued_with_another_permission_set_is_still_an_issuance():
+    """It read `token_permissions_raw == 3` and nothing else, so the `acfg` token
+    the config op needs would have died as "no independent B mapping"."""
+    issued = [
+        e for e in events()
+        if e["command_raw"] == 0x06 and e["post"]["token_permissions_raw"] == 32
+        and e["pre"]["token_permissions_raw"] != 32
+    ]
+    assert len(issued) == 1, [e["sequence"] for e in issued]
+    actions, _ = security_trace.infer(issued[0], security_trace.new_ledger())
+    assert actions == [("GetPinToken", 'GetPinToken({"acfg"}, NoRp)')]
+
+
+def test_a_refusal_over_an_already_live_token_is_not_an_issuance():
+    """The conjunct that had to join it. A clientPIN answering PIN_AUTH_INVALID
+    while a token is live moves NOTHING, so on permissions alone it matched the
+    issuance branch and B claimed Authorized against a refusal — measured, on the
+    first recording that fetched an `acfg` token before an `mc|ga` one."""
+    refusals = [
+        e for e in events()
+        if e["command_raw"] == 0x06 and e["outcome_raw"] == 0x33
+        and e["post"]["token_in_use_raw"]
+        and e["post"]["token_permissions_raw"] in security_trace.ISSUED_PERMS
+        and not security_trace.raw_changes(e)
+    ]
+    assert refusals, "the recording no longer holds the shape this rule is for"
+    actions, gate = security_trace.infer(refusals[0], security_trace.new_ledger())
+    assert gate is None and [n for n, _ in actions] == ["Stutter"]
+
+
+def test_a_token_less_make_credential_on_a_build_with_a_pad_is_refused():
+    """§6.1.2 step 6.3 UPGRADES it to built-in UV there, so the answer stops being
+    a function of `rk` and `alwaysUv`. Refused rather than guessed — which is what
+    lets the rule state the alwaysUv arm at all."""
+    event = copy.deepcopy(events()[11])
+    event["builtin_uv"] = True
+    with pytest.raises(SystemExit, match="built-in UV pad"):
+        security_trace.infer(event, security_trace.new_ledger())
+
+
+def test_the_recording_carries_both_arms_of_the_gate_rule():
+    """`gate.alwaysUv` was FALSE at every gate boundary until this session, so the
+    arm the rule was missing could not be seen — and `pin.set /\\ rk` predicts
+    SERVED for the row that matters here."""
+    rows = gate_rows()
+    assert len(rows) == 5, rows
+    assert ("mc", True, False, "Rejected") in rows      # step 10, rk
+    assert ("mc", False, False, "Authorized") in rows   # step 10, no rk
+    assert ("mc", False, True, "Rejected") in rows      # step 6, and rk says served
+    assert ("mc", True, True, "Rejected") in rows       # step 6, whatever rk says
+    assert ("reset", False, False, "Rejected") in rows
+
+
+def test_an_event_without_the_pad_field_is_refused(tmp_path):
+    """A schema-4 recording read as a schema-5 one would leave the arm unchecked
+    and the mapper unable to refuse a display build."""
+    event = copy.deepcopy(events()[0])
+    del event["builtin_uv"]
+    path = tmp_path / "trace.jsonl"
+    path.write_text(json.dumps(event) + "\n", encoding="utf-8")
+    with pytest.raises(SystemExit, match="builtin_uv"):
+        security_trace.load_events([path])

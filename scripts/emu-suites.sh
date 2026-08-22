@@ -72,8 +72,9 @@ start_emu default
 for t in tests/[0-9]*.py; do
   case "$(basename "$t")" in
     # Their own sessions below: `30` wants the Yubico card identity, and `28`/`76`
-    # want a PIN already set.
-    30_* | 28_* | 76_*) continue ;;
+    # want a PIN already set. `16` wants one too and has no session of its own —
+    # it exists for the recording, which runs it where `21` has just set it.
+    30_* | 28_* | 76_* | 16_*) continue ;;
     *) run_suite "$t" ;;
   esac
 done
@@ -87,15 +88,23 @@ stop_emu
 # measured on (formal/README.md, phase 4) — the replug between them is a recorded
 # boundary, and it is the only way `PowerCut` is reached. Recording fewer misses
 # the floors; keep this list and the committed trace moving together.
-SECURITY_TRACE_SUITES=(21_pin_webauthn 20_clientpin 27_reset_window)
+# An entry may carry its own arguments; `16` needs the PIN `21` has just set.
+SECURITY_TRACE_SUITES=(
+  21_pin_webauthn
+  "16_always_uv_gate --pin 1234"
+  20_clientpin
+  27_reset_window
+)
 
 echo
 echo "== formal security-state trace (${SECURITY_TRACE_SUITES[*]})"
 start_emu security --auto-touch-ms 1
 for suite in "${SECURITY_TRACE_SUITES[@]}"; do
-  python tests/emu.py "tests/$suite.py" >"$WORK/security-$suite.out" 2>&1 || {
-    echo "FAIL: the security trace suite $suite failed"
-    cat "$WORK/security-$suite.out"
+  read -r name args <<<"$suite"
+  # shellcheck disable=SC2086 -- `args` is a suite's own argument list, split on purpose
+  python tests/emu.py "tests/$name.py" $args >"$WORK/security-$name.out" 2>&1 || {
+    echo "FAIL: the security trace suite $name failed"
+    cat "$WORK/security-$name.out"
     exit 1
   }
 done

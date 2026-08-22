@@ -107,6 +107,17 @@ RESET_WINDOW_MS = 10_000
 # status outside these came from somewhere the rule does not reach, so the mapper
 # stops. Refusing an event by its status is not choosing one by it.
 MC_GATE_CODES = {0x00, 0x36}  # served, or the gate's own PUAT_REQUIRED
+
+# The permission sets `RSKeySecurityState!PermSets` has, and the raw byte each is
+# issued as. 0 is deliberately absent: an issuance granting nothing is not
+# something any suite asks for, and admitting it would let a token CONSUMPTION --
+# which also lands on 0 -- match the issuance branch.
+ISSUED_PERMS = {
+    3: '{"mc", "ga"}',
+    4: '{"cm"}',
+    32: '{"acfg"}',
+    34: '{"ga", "acfg"}',
+}
 RESET_GATE_CODES = {0x00, 0x30}  # served, or the window's own NOT_ALLOWED
 
 
@@ -123,7 +134,7 @@ def load_events(paths: list[Path]) -> list[dict]:
                     event = json.loads(line)
                 except json.JSONDecodeError as error:
                     die(f"{path}:{line_no}: invalid JSON: {error}")
-                if event.get("schema") != 4:
+                if event.get("schema") != 5:
                     die(f"{path}:{line_no}: unsupported schema")
                 if "request" not in event:
                     die(f"{path}:{line_no}: no request record")
@@ -142,6 +153,8 @@ def load_events(paths: list[Path]) -> list[dict]:
                     die(f"{path}:{line_no}: abstract post fields changed")
                 if not isinstance(event.get("outcome_raw"), int):
                     die(f"{path}:{line_no}: outcome_raw must be the real integer response code")
+                if not isinstance(event.get("builtin_uv"), bool):
+                    die(f"{path}:{line_no}: builtin_uv must be the pad's availability")
                 events.append(event)
     if not events:
         die("no trace events")
@@ -221,6 +234,16 @@ def mc_tokenless_gate(event: dict) -> tuple[list[tuple[str, str]], tuple[str, bo
             f"0x{event['outcome_raw']:02x} — a refusal downstream of the gate, "
             "which this rule does not explain"
         )
+    # §6.1.2 step 6.3: with a pad, `alwaysUv` UPGRADES a token-less request to
+    # built-in UV instead of refusing it, so the answer stops being a function of
+    # `rk` and `alwaysUv` and becomes the ceremony's. Refused, not guessed —
+    # recording the capability is what makes this a check rather than a comment.
+    if event["builtin_uv"]:
+        die(
+            f"event {event['sequence']}: a token-less makeCredential on a build "
+            "with a built-in UV pad; §6.1.2 step 6.3 upgrades it and this rule "
+            "does not model the ceremony"
+        )
     return [("Stutter", "TraceStutter")], ("mc", event["request"]["rk"])
 
 
@@ -287,7 +310,12 @@ def infer(event: dict, ledger: dict) -> tuple[list[tuple[str, str]], tuple[str, 
     elif (
         command == 0x06
         and after["token_in_use_raw"]
-        and after["token_permissions_raw"] == 3
+        and after["token_permissions_raw"] in ISSUED_PERMS
+        # Something about the token has to have MOVED. Without this a clientPIN
+        # that answered PIN_AUTH_INVALID over an already-live token matches the
+        # issuance branch and B reports Authorized against a refusal -- measured,
+        # on the first recording that fetched an `acfg` token before one.
+        and changed & {"token_in_use_raw", "token_permissions_raw"}
         and changed <= {
             "token_in_use_raw", "token_permissions_raw", "token_has_rp_id_raw",
             "token_user_present_raw", "token_user_verified_raw", "pin_retries_raw",
@@ -295,7 +323,8 @@ def infer(event: dict, ledger: dict) -> tuple[list[tuple[str, str]], tuple[str, 
             "cm_cred_counter_raw", "cm_cred_total_raw",
         }
     ):
-        actions = [("GetPinToken", 'GetPinToken({"mc", "ga"}, NoRp)')]
+        perms = ISSUED_PERMS[after["token_permissions_raw"]]
+        actions = [("GetPinToken", f"GetPinToken({perms}, NoRp)")]
     elif command == 0x01 and after["credential_slots_raw"] > before["credential_slots_raw"]:
         actions = presence_path("register")
         ledger["cred"].add("rp1")
@@ -320,6 +349,14 @@ def infer(event: dict, ledger: dict) -> tuple[list[tuple[str, str]], tuple[str, 
     elif command == 0x01 and not (changed - {"channel_raw"}) \
             and event["request"] is not None and not event["request"]["pin_uv_auth"]:
         return finish(event, *mc_tokenless_gate(event))
+    elif command == 0x0D and changed - {"channel_raw"} == {
+        "always_uv_record_len", "always_uv_raw"
+    }:
+        # authenticatorConfig toggleAlwaysUv. The model's ConfigOp flips
+        # `gate.alwaysUv` and spends nothing (config.rs:243-247 marks the token
+        # used, which is not a raw field), so the record moving IS the signature.
+        actions = [("ConfigOp", "ConfigOp")]
+        ledger["always_uv"] = bool(after["always_uv_raw"])
     elif command == POWER_CYCLE:
         # The event kind is the signature, not any state difference: the replayer
         # is told a power cycle happened and R4a then checks that the raw state

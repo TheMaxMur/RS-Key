@@ -2028,10 +2028,49 @@ disagrees with a B that refuses: `Error: Invariant R4cGateAnswers is violated`. 
 B's rule out, and `the_reset_gate_carries_the_answer_the_device_gave_either_way`
 holds the mapper to the other outcome.
 
-**What the recording does NOT exercise, said here rather than left to be
-assumed:** `pin.set` is TRUE and `gate.alwaysUv` FALSE at both makeCredential gate
-boundaries, so `rk` is the only input the session varies. A PIN-less or
-alwaysUv-on session is what would exercise the rest of the rule.
+#### The arm that was left out was wrong, and the recording proved it
+
+`McTokenlessRefused` was `pin.set /\ rk` — step 10 alone. Step 6's `alwaysUv` arm
+was deliberately excluded, on the argument above: it refuses only where built-in
+UV is unavailable, so asserting it from `gate.alwaysUv` alone would be false on a
+display build. **That argument is right about the display build and wrong about
+the rule.** With a pad, §6.1.2 step 6.3 *upgrades* a token-less request to
+built-in UV; the answer is to RECORD the pad and refuse such a boundary, not to
+drop the arm. Recording it is one boolean —
+`Ctap::security_trace_builtin_uv`, trace schema 4 → 5 — and
+`scripts/security_trace.py` now dies on a token-less makeCredential recorded on a
+build that has one, so the rule's scope is checked rather than assumed.
+
+`tests/16_always_uv_gate.py` is the session that settles it. Measured, with
+`alwaysUv` on and no pad, the device answers **PUAT_REQUIRED for both values of
+`rk`** — where `pin.set /\ rk` predicts *served* for `rk` false.
+`TraceSecurityBadAlwaysUvArm.cfg` is that old rule kept as a mutant, and it is
+RED at exactly the boundary that refutes it: `tracePc = 36`, `gate.alwaysUv`
+TRUE, `GateRk` FALSE, recorded `Rejected`, predicted `Authorized`. The direction
+matches the defect the mutant models (a rule that stops refusing), which is the
+half a verdict column cannot show.
+
+The gate grid the recording now covers, and the cell it cannot:
+
+| `pin.set` | `gate.alwaysUv` | `rk` | recorded | boundary |
+|---|---|---|---|---|
+| TRUE | FALSE | TRUE | Rejected | 29 |
+| TRUE | FALSE | FALSE | Authorized | 30 |
+| TRUE | TRUE | FALSE | Rejected | 36 |
+| TRUE | TRUE | TRUE | Rejected | 37 |
+
+**`pin.set` is still TRUE at every gate boundary, and no correct build can make
+it FALSE at one.** The combination that would decide the conjunct — no PIN and
+`rk` true — is *served*, and a served discoverable registration writes a
+credential, so it reaches the replay as a `RegisterWrite` and not as the stutter
+a gate row is made of. The conjunct is not decoration: a build that started
+refusing there would produce the stutter and R4c would catch it. It is simply
+not falsifiable from a recording of a correct build, which is a different
+statement from "unexercised" and is why it is written down here.
+
+Coverage moved with the session: commands 21 → 32, steps 49 → 60, distinct
+actions 21 → 22 (`ConfigOp` is new), **gate boundaries 3 → 5**, AMBIGUOUS still
+0. `floors.txt` carries all four.
 
 The rules are stated in `TraceSecurity.tla` and not in `RSKeySecurityState.tla`,
 because `Next` still does not carry a token-less registration as a behaviour —

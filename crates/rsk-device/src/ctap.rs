@@ -231,6 +231,16 @@ impl<S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform> AppletHand
             })
     }
 
+    /// Whether §6.1.2 step 6.3's built-in-UV upgrade is available on this build —
+    /// the first conjunct of `crates/rsk-fido/src/clientpin.rs:609`. An INPUT to
+    /// the token-less makeCredential gate the phase-4 replay states, not state:
+    /// with a pad, `alwaysUv` upgrades a token-less request instead of refusing
+    /// it, so a recording that did not carry this could not tell the two apart.
+    #[cfg(feature = "security-trace")]
+    pub fn security_trace_builtin_uv(&self) -> bool {
+        self.presence.borrow().uv_available()
+    }
+
     /// Drop any applet selected over CTAPHID_MSG. Called (via the worker) on a
     /// CTAPHID_INIT so a fresh session starts with nothing selected — U2F has no
     /// SELECT and must not inherit a prior vendor-AID selection.

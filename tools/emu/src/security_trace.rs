@@ -31,6 +31,7 @@ impl Writer {
         cid: u32,
         command: u8,
         status: u8,
+        builtin_uv: bool,
         request: Option<RequestFlags>,
         pre: SecurityTraceSnapshot,
         post: SecurityTraceSnapshot,
@@ -40,7 +41,7 @@ impl Writer {
         self.sequence += 1;
         write!(
             self.out,
-            "{{\"schema\":4,\"sequence\":{},\"boundary\":{{\"mode\":\"coarse\",\"k\":8}},\"now_ms\":{},\"cid\":{},\"command_raw\":{},\"status_raw\":{},\"outcome_raw\":{},\"action_hint\":\"{}\",\"request\":",
+            "{{\"schema\":5,\"sequence\":{},\"boundary\":{{\"mode\":\"coarse\",\"k\":8}},\"now_ms\":{},\"cid\":{},\"command_raw\":{},\"status_raw\":{},\"outcome_raw\":{},\"action_hint\":\"{}\",\"builtin_uv\":{},\"request\":",
             self.sequence,
             now_ms,
             cid,
@@ -48,6 +49,7 @@ impl Writer {
             status,
             status,
             action_hint(command),
+            builtin_uv,
         )?;
         request_flags(&mut self.out, request)?;
         write!(self.out, ",\"pre\":")?;
@@ -63,6 +65,11 @@ impl Writer {
     }
 }
 
+/// `builtin_uv` sits beside them and is a CAPABILITY, not a request field: with a
+/// pad, §6.1.2 step 6.3 upgrades a token-less request under `alwaysUv` to
+/// built-in UV instead of refusing it, and the replay refuses to answer such a
+/// boundary rather than guess. Recorded so that refusal is checked, not assumed.
+///
 /// The REQUEST fields §6.1.2's token-less gate is a function of: whether the
 /// platform asked for a discoverable credential, and whether it carried a
 /// pinUvAuthParam. Both are INPUTS — the replay predicts the outcome from them

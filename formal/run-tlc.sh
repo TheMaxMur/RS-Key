@@ -197,6 +197,7 @@ list_safety() {
   echo TraceSecurityBadOutcome.cfg # outcome_raw disagreement is refused
   echo TraceSecurityBadUvNotRqd.cfg # the gate rule ignoring `rk` is refused
   echo TraceSecurityBadResetWindow.cfg # and ignoring the reset window
+  echo TraceSecurityBadAlwaysUvArm.cfg # and the alwaysUv arm of the same rule
   echo TokenRefinement.cfg       # phase 5: native B -> A state refinement
   echo TokenRefinementBadMap.cfg # a wrong gamma must be refused
   echo TokenRefinementOutcome.cfg # labelled B outcomes refine A events

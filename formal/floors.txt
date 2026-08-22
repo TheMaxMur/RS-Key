@@ -68,19 +68,20 @@ TraceSeamsBad.cfg                    RED     -
 \* The two GREEN rows are PINS, not thirds: a linear replay of 49 forced steps
 \* has exactly 50 states, so anything less is the model refusing to follow the
 \* recording. It reached 44 of 59 for three days and read as GREEN.
-TraceSecurity.cfg                    GREEN   50
+TraceSecurity.cfg                    GREEN   61
 TraceSecurityBadBeta.cfg             RED     -
 TraceSecurityBadAlpha.cfg            RED     -
-TraceSecurityBadAlphaNoR4b.cfg       GREEN   50
+TraceSecurityBadAlphaNoR4b.cfg       GREEN   61
 TraceSecurityBadOutcome.cfg          RED     -
 TraceSecurityBadUvNotRqd.cfg         RED     -
 TraceSecurityBadResetWindow.cfg      RED     -
+TraceSecurityBadAlwaysUvArm.cfg      RED     -
 \* The recorded session's coverage, ratcheted so a re-record cannot quietly cover
 \* less. Unlike the distinct-state floors above these are PINS at the measured
 \* value, not a third of it: a trace is a fixed recording, so it cannot shrink by
 \* fidelity churn -- only by someone recording a shorter session. Raise them when
 \* a richer session lands; never lower one without saying which flow was dropped.
-@TraceSecurityCommandsMin 21
+@TraceSecurityCommandsMin 32
 \* 58 until R4c, and every one of the nine that went was a MIS-MAPPING rather
 \* than coverage. Seven: the refused reset that ends `27_reset_window` was
 \* replayed as a full successful wipe, because over an already-empty store the
@@ -89,12 +90,12 @@ TraceSecurityBadResetWindow.cfg      RED     -
 \* seed arm empties `cred` and `rpent` with it, so the phase is two steps however
 \* many credentials B holds. The model had been refusing the surplus since the
 \* three-suite recording landed, and TLC was run with `-deadlock`.
-@TraceSecurityStepsMin 49
-@TraceSecurityActionsMin 21
+@TraceSecurityStepsMin 60
+@TraceSecurityActionsMin 22
 \* Boundaries whose outcome B answers from a GATE rule rather than from the
 \* actions -- there are none to read, both sides of each gate being a stutter.
 \* Without a floor here R4c is vacuous the moment a re-record loses them.
-@TraceSecurityGatesMin 3
+@TraceSecurityGatesMin 5
 \* Was 2, and both were the same shape: a token-less makeCredential, whose
 \* success and refusal write nothing either way. R4c answers them from `rk` and
 \* B's own state, so the replay commits to an outcome at every boundary it maps.

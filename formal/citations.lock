@@ -2,6 +2,7 @@
 # page, cited file, span, and the first and last line as they read when
 # locked. Read the diff — a changed line here is a citation changing what
 # it points at, which is the thing this file exists to make visible.
+crates/rsk-device/src/ctap.rs	crates/rsk-fido/src/clientpin.rs	609-609	ctx.presence.uv_available() && ctx.fs.has_data(EF_PIN)	ctx.presence.uv_available() && ctx.fs.has_data(EF_PIN)
 crates/rsk-fido/src/clientpin_tests.rs	crates/rsk-fido/src/clientpin.rs	392-392	let res = issue_token(ctx, proto, secret, permissions, req.rp_id, out);	let res = issue_token(ctx, proto, secret, permissions, req.rp_id, out);
 crates/rsk-fido/src/credmgmt_kani.rs	crates/rsk-fido/src/clientpin.rs	417-423	ctx.state.reset_pin_uv_auth_token(ctx.rng);	ctx.state.paut.permissions = permissions;
 crates/rsk-fido/src/credmgmt_kani.rs	crates/rsk-fido/src/config.rs	243-243	if !ctx.state.verify_token(proto, &vp[..vp_len], param)	if !ctx.state.verify_token(proto, &vp[..vp_len], param)
@@ -44,7 +45,7 @@ formal/README.md	crates/rsk-device/src/ccid.rs	334-334	self.disp.current() == So
 formal/README.md	crates/rsk-device/src/ccid.rs	348-363	/// Drop the selected applet's security status on an ICC power transition, so a	self.disp.reset_card(&mut applets, &mut *fsb);
 formal/README.md	crates/rsk-device/src/ctap.rs	76-89	fido_state: &'a RefCell<rsk_fido::FidoState>,	impl<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform>
 formal/README.md	crates/rsk-device/src/ctap.rs	171-175	EF_PIN, EF_RP, MAX_RESIDENT_CREDENTIALS,	let pin_size = fs.size(EF_PIN).and_then(|n| u8::try_from(n).ok());
-formal/README.md	crates/rsk-device/src/ctap.rs	228-235	.abstract_token(rsk_fido::TokenPersistentView {	/// CTAPHID_INIT so a fresh session starts with nothing selected — U2F has no
+formal/README.md	crates/rsk-device/src/ctap.rs	228-235	.abstract_token(rsk_fido::TokenPersistentView {	/// the first conjunct of `crates/rsk-fido/src/clientpin.rs:609`. An INPUT to
 formal/README.md	crates/rsk-device/src/presence.rs	25-26	/// No host request in flight: an on-panel (local) flow owns the button.	pub const SCOPE_NONE: u8 = 0;
 formal/README.md	crates/rsk-device/src/presence.rs	118-122	pub fn request_cancel(&self) {	}
 formal/README.md	crates/rsk-device/src/presence.rs	126-137	/// the wait, and without that every later command reads "would block" until	}
@@ -282,7 +283,7 @@ formal/RSKeyRetryLattice.tla	crates/rsk-piv/src/lib.rs	1232-1234	Err(sw) => retu
 formal/RSKeyRetryLattice.tla	crates/rsk-piv/src/lib.rs	1250-1250	// nothing. The cost is that a power cut here spends a retry the holder did	// nothing. The cost is that a power cut here spends a retry the holder did
 formal/RSKeyRetryLattice.tla	crates/rsk-piv/src/lib.rs	1383-1383	puk: &[u8],	puk: &[u8],
 formal/RSKeySecurityState.tla	crates/rsk-device/src/ctap.rs	196-199	backup_sealed_record: fs.has_data(EF_BACKUP_SEALED),	credential_slots_raw: credentials.iter().filter(|present| **present).count() as u16,
-formal/RSKeySecurityState.tla	crates/rsk-device/src/ctap.rs	228-235	.abstract_token(rsk_fido::TokenPersistentView {	/// CTAPHID_INIT so a fresh session starts with nothing selected — U2F has no
+formal/RSKeySecurityState.tla	crates/rsk-device/src/ctap.rs	343-350	// Persist the clientPIN soft lock across a warm reboot. It is RAM-only, and a	.store_pin_lock(self.fido_state.borrow().pin_lock());
 formal/RSKeySecurityState.tla	crates/rsk-device/src/presence.rs	25-26	/// No host request in flight: an on-panel (local) flow owns the button.	pub const SCOPE_NONE: u8 = 0;
 formal/RSKeySecurityState.tla	crates/rsk-device/src/presence.rs	25-169	/// No host request in flight: an on-panel (local) flow owns the button.	}
 formal/RSKeySecurityState.tla	crates/rsk-device/src/presence.rs	26-26	pub const SCOPE_NONE: u8 = 0;	pub const SCOPE_NONE: u8 = 0;
@@ -446,8 +447,8 @@ formal/RSKeyTrustedDisplay.tla	crates/rsk-fido/src/getassertion.rs	616-617	// be
 formal/RSKeyTrustedDisplay.tla	crates/rsk-fido/src/makecredential.rs	660-661	// naming the rp being registered ([`needs_confirm`]).	if verified.needs_confirm(ctx.presence.shows_confirm()) {
 formal/RSKeyTrustedDisplay.tla	crates/rsk-fido/src/u2f.rs	94-94	crate::clientpin::UvOutcome::BUILTIN.needs_confirm(ctx.presence.shows_confirm());	crate::clientpin::UvOutcome::BUILTIN.needs_confirm(ctx.presence.shows_confirm());
 formal/RSKeyTrustedDisplay.tla	crates/rsk-ui/src/lib.rs	248-256	/// Refines `RSKeyTrustedDisplay!OnlyAllowConfirms` — SEC-DISP-003.	}
-formal/TraceSecurity.tla	crates/rsk-fido/src/makecredential.rs	528-536	let always_uv = crate::config::always_uv_enabled(ctx.fs);	// always an advertised option ID here, so the code is PUAT_REQUIRED.
-formal/TraceSecurity.tla	crates/rsk-fido/src/makecredential.rs	540-546	// makeCredUvNotRqd (§6.1.2 steps 7/10): with a PIN configured a	Ok(UvOutcome::NONE)
+formal/TraceSecurity.tla	crates/rsk-fido/src/clientpin.rs	609-609	ctx.presence.uv_available() && ctx.fs.has_data(EF_PIN)	ctx.presence.uv_available() && ctx.fs.has_data(EF_PIN)
+formal/TraceSecurity.tla	crates/rsk-fido/src/makecredential.rs	528-546	let always_uv = crate::config::always_uv_enabled(ctx.fs);	Ok(UvOutcome::NONE)
 formal/TraceSecurity.tla	crates/rsk-fido/src/reset.rs	187-187	!ctx.state.warm_boot && ctx.now_ms <= RESET_WINDOW_MS	!ctx.state.warm_boot && ctx.now_ms <= RESET_WINDOW_MS
 formal/comutants.toml	crates/rsk-oath/src/lib.rs	1169-1176	/// Drop the VALIDATE result on deselect / card reset, so a later session must	}
 formal/comutants.toml	crates/rsk-oath/src/lib.rs	1205-1206	self.validated = !code_set;	self.otp_pin_verified = false;

@@ -40,6 +40,30 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Added
 
+- **The phase-4 replay's gate rule was refuted by the first session that
+  recorded `alwaysUv`, and now states both arms of §6.1.2's token-less gate.**
+  The rule was `pin.set /\ rk` — CTAP §6.1.2 step 10 — and step 6's arm was left
+  out on the argument that stating it from `gate.alwaysUv` alone would be false
+  on a display build. It was: with a pad, step 6.3 UPGRADES a token-less request
+  to built-in UV instead of refusing it. The answer is to record the pad's
+  availability and REFUSE such a boundary, not to leave the arm out, so
+  `SecurityTraceSnapshot`'s sibling `security_trace_builtin_uv` joins the
+  recording (trace schema 4 → 5) and `scripts/security_trace.py` dies on a
+  token-less makeCredential recorded with a pad rather than guessing. Measured on
+  the new recording: with `alwaysUv` on and no pad the device answers
+  PUAT_REQUIRED for **both** `rk` values, where the old rule predicts served —
+  `TraceSecurityBadAlwaysUvArm.cfg` is that rule kept, and it is RED at the
+  boundary that refutes it (`tracePc = 36`, `alwaysUv` TRUE, `rk` FALSE).
+  `tests/16_always_uv_gate.py` is the session; the mapper learned `ConfigOp` and
+  a `GetPinToken` that reads its own permission set, and the issuance branch now
+  requires the token to have MOVED — without that a clientPIN answering
+  PIN_AUTH_INVALID over an already-live token matched it and B reported
+  Authorized against a refusal. Coverage: commands 21 → 32, steps 49 → 60,
+  distinct actions 21 → 22, **gate boundaries 3 → 5**, AMBIGUOUS still 0.
+  `bcdDevice` 0x097C → 0x097D: `crates/rsk-device/src/ctap.rs` gained the
+  accessor, and `scripts/bcd_gate.py` asks whether a line can reach the image
+  rather than whether this feature is on — the same call `250be31` made.
+
 - **The citation gate reads the citations written in code now, and derives which
   files those are.** It held the `formal/` pages and nothing else, so the 42
   `file.rs:line` citations in Kani proof headers, two test files and one fuzz

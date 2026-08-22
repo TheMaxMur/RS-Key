@@ -11,6 +11,7 @@ EXTENDS TraceSecurityData, RSKeyTokenView
 
 CONSTANTS MutateBeta, MutateAlpha, MutateOutcome, CheckR4b
 CONSTANTS MutateUvNotRqd, MutateResetWindow
+CONSTANT MutateAlwaysUvArm
 
 VARIABLE tracePc
 traceVars == << vars, tracePc >>
@@ -118,15 +119,23 @@ R4bEventConsensus ==
 (* model is narrower than the firmware. Folding it in is the next widening. *)
 (***************************************************************************)
 
-\* CTAP 2.1 6.1.2 step 10, crates/rsk-fido/src/makecredential.rs:540-546: with a
-\* PIN configured a DISCOVERABLE credential still needs a token, a
-\* non-discoverable one does not. `rk` is the request's, and it is an input.
+\* CTAP 2.1 6.1.2, crates/rsk-fido/src/makecredential.rs:528-546. Two arms, and
+\* the recording now carries both:
+\*   step 6.2/6.4 -- alwaysUv with no way to verify refuses whatever `rk` says;
+\*   step 10      -- otherwise a DISCOVERABLE credential still needs a token
+\*                   where a PIN is set, and a non-discoverable one does not.
+\* `rk` is the request's and it is an input.
 \*
-\* Step 6's alwaysUv arm is NOT here. It refuses only where built-in UV is
-\* unavailable (makecredential.rs:528-536), which needs `req.uv` and the pad's
-\* availability recorded; asserting it from `gate.alwaysUv` alone would be a
-\* claim the code does not make, uncited, and false on a display build.
-McTokenlessRefused(rk) == pin.set /\ rk
+\* The alwaysUv arm used to be missing, on the argument that stating it from
+\* `gate.alwaysUv` alone would be false on a display build. It was: step 6.3
+\* UPGRADES a token-less request to built-in UV where there is a pad. The answer
+\* is to record the pad's availability and REFUSE such a boundary rather than to
+\* leave the arm out -- scripts/security_trace.py does that, so this rule holds
+\* only where it is a function of these two, and the recording it was omitted for
+\* is the one that refutes `pin.set /\ rk` on its own (event 18: alwaysUv on,
+\* rk FALSE, PUAT_REQUIRED, where that rule predicts served). The pad is
+\* `clientpin.rs:609`'s first conjunct, recorded per boundary.
+McTokenlessRefused(rk, alwaysUv) == alwaysUv \/ (pin.set /\ rk)
 
 \* CTAP 2.1 6.6, crates/rsk-fido/src/reset.rs:187 -- the same predicate the
 \* model already gates ResetStart on, read for its answer instead of its
@@ -136,7 +145,9 @@ ResetGateRefuses == ~InResetWindowGuard
 
 GateRefusesB(i) ==
     CASE GateKind(i) = "mc" ->
-           McTokenlessRefused(IF MutateUvNotRqd THEN FALSE ELSE GateRk(i))
+           McTokenlessRefused(
+             IF MutateUvNotRqd THEN FALSE ELSE GateRk(i),
+             IF MutateAlwaysUvArm THEN FALSE ELSE gate.alwaysUv)
       [] GateKind(i) = "reset" ->
            IF MutateResetWindow THEN FALSE ELSE ResetGateRefuses
       [] OTHER -> CHOOSE x : FALSE
