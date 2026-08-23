@@ -215,6 +215,7 @@ list_safety() {
   echo TraceSecurityBadUvNotRqd.cfg # the gate rule ignoring `rk` is refused
   echo TraceSecurityBadResetWindow.cfg # and ignoring the reset window
   echo TraceSecurityBadAlwaysUvArm.cfg # and the alwaysUv arm of the same rule
+  echo TraceSecurityBadPinSet.cfg # and the arm that only a PIN-less cell can refute
   echo TokenRefinement.cfg       # phase 5: native B -> A state refinement
   echo TokenRefinementBadMap.cfg # a wrong gamma must be refused
   echo TokenRefinementOutcome.cfg # labelled B outcomes refine A events

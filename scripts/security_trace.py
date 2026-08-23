@@ -93,6 +93,7 @@ COMMANDS_RATCHET = "@TraceSecurityCommandsMin"
 STEPS_RATCHET = "@TraceSecurityStepsMin"
 ACTIONS_RATCHET = "@TraceSecurityActionsMin"
 GATES_RATCHET = "@TraceSecurityGatesMin"
+OUTCOMES_RATCHET = "@TraceSecurityOutcomesMin"
 
 # The pseudo-command `tools/emu` records a power cycle under — outside the CTAP
 # command space, so it cannot collide with a real command byte.
@@ -123,6 +124,13 @@ ISSUED_PERMS = {
 }
 RESET_GATE_CODES = {0x00, 0x30}  # served, or the window's own NOT_ALLOWED
 
+# The clientPIN subcommands that hand out a pinUvAuthToken -- `clientpin.rs:136`'s
+# dispatch, where 0x05 and 0x09 share `get_pin_token` and 0x06 is the built-in-UV
+# door. A re-issuance through any of them over a token that already holds those
+# permissions moves NO raw field, so without the subcommand it is a bare stutter
+# and B claims nothing at a boundary that is plainly an issuance.
+TOKEN_SUBCOMMANDS = {0x05, 0x06, 0x09}
+
 
 def die(message: str) -> None:
     raise SystemExit(f"security-trace: {message}")
@@ -137,10 +145,18 @@ def load_events(paths: list[Path]) -> list[dict]:
                     event = json.loads(line)
                 except json.JSONDecodeError as error:
                     die(f"{path}:{line_no}: invalid JSON: {error}")
-                if event.get("schema") != 5:
+                if event.get("schema") != 6:
                     die(f"{path}:{line_no}: unsupported schema")
                 if "request" not in event:
                     die(f"{path}:{line_no}: no request record")
+                # Schema 6. A schema-5 recording read as this one would leave every
+                # token re-issuance looking like the `getKeyAgreement` it shares a
+                # raw footprint with, which is the gap the field closes.
+                if "subcommand" not in event:
+                    die(f"{path}:{line_no}: no subcommand record")
+                subcommand = event["subcommand"]
+                if subcommand is not None and not isinstance(subcommand, int):
+                    die(f"{path}:{line_no}: subcommand must be the clientPIN one, or null")
                 request = event["request"]
                 if request is not None and set(request) != {"rk", "pin_uv_auth"}:
                     die(f"{path}:{line_no}: request fields changed")
@@ -360,6 +376,22 @@ def infer(event: dict, ledger: dict) -> tuple[list[tuple[str, str]], tuple[str, 
         # used, which is not a raw field), so the record moving IS the signature.
         actions = [("ConfigOp", "ConfigOp")]
         ledger["always_uv"] = bool(after["always_uv_raw"])
+    elif (
+        command == 0x06
+        and not (changed - {"channel_raw"})
+        and event["subcommand"] in TOKEN_SUBCOMMANDS
+        and event["outcome_raw"] == 0x00
+        and after["token_in_use_raw"]
+        and after["token_permissions_raw"] in ISSUED_PERMS
+    ):
+        # A token RE-ISSUED with the permissions it already holds. The raw side
+        # cannot see it -- every field it would move is already at that value --
+        # so the subcommand is what says an issuance happened here at all.
+        # Refused rather than guessed everywhere else: an issuance door that
+        # answered 0x00 while leaving no live token, or one carrying permissions
+        # `PermSets` has no member for, falls through to the arms below.
+        perms = ISSUED_PERMS[after["token_permissions_raw"]]
+        actions = [("GetPinToken", f"GetPinToken({perms}, NoRp)")]
     elif command == POWER_CYCLE:
         # The event kind is the signature, not any state difference: the replayer
         # is told a power cycle happened and R4a then checks that the raw state
@@ -570,13 +602,13 @@ def generate(events: list[dict], output: Path) -> dict:
                 ambiguous += 1
             elif consensus == "NO-OPINION":
                 # B claims nothing here, so there is nothing to disagree with.
-                # KNOWN LIMIT, and it is not empty: a clientPIN that RE-ISSUES a
-                # token with the permissions it already holds moves no raw field,
-                # so it arrives as a bare stutter and the issuance is invisible.
-                # The recording carries `command_raw` but not the clientPIN
-                # SUBCOMMAND, so nothing can tell that from a `getKeyAgreement`,
-                # which is legitimately state-free. Recording the subcommand the
-                # way `rk` is recorded is the fix and the next widening.
+                # B claims nothing here, so there is nothing to disagree with.
+                # What is left is genuinely state-free — `getKeyAgreement`,
+                # `getPinRetries`, a refused `setPIN`. The one shape that used to
+                # hide in this arm, a token RE-ISSUED with the permissions it
+                # already holds, is mapped above now that the recording carries
+                # the subcommand; `@TraceSecurityOutcomesMin` is what keeps it
+                # from quietly falling back here (12 without the rule, 13 with).
                 pass
             else:
                 if consensus != "OK":
@@ -612,6 +644,11 @@ def generate(events: list[dict], output: Path) -> dict:
         ("steps", len(actions), ratchet(STEPS_RATCHET)),
         ("distinct-actions", len(reached), ratchet(ACTIONS_RATCHET)),
         ("gate-boundaries", len(gates), ratchet(GATES_RATCHET)),
+        # Boundaries where B COMMITS to an outcome and R4b compares it. Without a
+        # floor here a mapping that quietly retreats to NO-OPINION -- which is
+        # what every un-inferred clientPIN was until the subcommand joined the
+        # recording -- costs nothing and reads exactly as green.
+        ("outcome-boundaries", len(outcome_boundaries), ratchet(OUTCOMES_RATCHET)),
     ]
     short = [f"{what}={got} < {want}" for what, got, want in floors if got < want]
     if short:
@@ -663,6 +700,7 @@ def generate(events: list[dict], output: Path) -> dict:
         "unreached": sorted(MODEL_ACTIONS - reached),
         "ambiguous": ambiguous,
         "gates": len(gates),
+        "outcomes": len(outcome_boundaries),
     }
 
 

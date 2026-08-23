@@ -255,3 +255,25 @@ fn getinfo_advertises_the_transport_maximum() {
     // makeCredential runs ~4 KB).
     assert!(RESP_CAP >= advertised.unwrap() as usize);
 }
+
+#[test]
+fn the_security_trace_reports_the_pad_and_not_a_constant() {
+    // §6.1.2 step 6.3's arm of the token-less gate is stated in
+    // `formal/TraceSecurity.tla` ONLY because the recording carries the pad's
+    // availability per boundary — with a pad, `alwaysUv` upgrades a token-less
+    // request instead of refusing it, and the mapper refuses such a boundary
+    // rather than guess. But `builtin_uv` is `false` in every event of the
+    // committed trace, so neither the replay nor its mutants can tell this
+    // accessor from a hard-wired `false`. This is where that is decided.
+    let env = Env::new();
+    let ctap = env.ctap();
+    assert!(
+        !ctap.security_trace_builtin_uv(),
+        "a button-only build has no way to collect a PIN and must record no pad"
+    );
+    env.finger.borrow_mut().pad = true;
+    assert!(
+        ctap.security_trace_builtin_uv(),
+        "the recorded field is the backend's answer, not a constant"
+    );
+}

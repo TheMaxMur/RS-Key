@@ -236,7 +236,12 @@ impl<S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform> AppletHand
     /// the token-less makeCredential gate the phase-4 replay states, not state:
     /// with a pad, `alwaysUv` upgrades a token-less request instead of refusing
     /// it, so a recording that did not carry this could not tell the two apart.
-    #[cfg(feature = "security-trace")]
+    ///
+    /// `test` joins the cfg for the reason `makecredential::assurance` carries it:
+    /// the committed trace has `builtin_uv` FALSE in every event, so nothing in
+    /// the replay can tell this from a hard-wired `false`. The crate's own test
+    /// can, and the gate runs it without the feature.
+    #[cfg(any(test, feature = "security-trace"))]
     pub fn security_trace_builtin_uv(&self) -> bool {
         self.presence.borrow().uv_available()
     }

@@ -32,7 +32,7 @@ impl Writer {
         command: u8,
         status: u8,
         builtin_uv: bool,
-        request: Option<RequestFlags>,
+        request: RequestRecord,
         pre: SecurityTraceSnapshot,
         post: SecurityTraceSnapshot,
         abstract_pre: AbstractTokenState,
@@ -41,7 +41,7 @@ impl Writer {
         self.sequence += 1;
         write!(
             self.out,
-            "{{\"schema\":5,\"sequence\":{},\"boundary\":{{\"mode\":\"coarse\",\"k\":8}},\"now_ms\":{},\"cid\":{},\"command_raw\":{},\"status_raw\":{},\"outcome_raw\":{},\"action_hint\":\"{}\",\"builtin_uv\":{},\"request\":",
+            "{{\"schema\":6,\"sequence\":{},\"boundary\":{{\"mode\":\"coarse\",\"k\":8}},\"now_ms\":{},\"cid\":{},\"command_raw\":{},\"status_raw\":{},\"outcome_raw\":{},\"action_hint\":\"{}\",\"builtin_uv\":{},\"request\":",
             self.sequence,
             now_ms,
             cid,
@@ -51,7 +51,7 @@ impl Writer {
             action_hint(command),
             builtin_uv,
         )?;
-        request_flags(&mut self.out, request)?;
+        request_record(&mut self.out, request)?;
         write!(self.out, ",\"pre\":")?;
         snapshot(&mut self.out, pre)?;
         write!(self.out, ",\"post\":")?;
@@ -79,10 +79,29 @@ pub struct RequestFlags {
     pub pin_uv_auth: bool,
 }
 
-fn request_flags(out: &mut impl Write, flags: Option<RequestFlags>) -> Result<()> {
-    match flags {
-        Some(f) => write!(out, "{{\"rk\":{},\"pin_uv_auth\":{}}}", f.rk, f.pin_uv_auth),
-        None => write!(out, "null"),
+/// What one command's own parser said about its request. An enum rather than two
+/// nullable arguments: the two shapes are mutually exclusive by command, and a
+/// pair of `Option`s could record a makeCredential that also carried a clientPIN
+/// subcommand — a state no boundary can be in.
+pub enum RequestRecord {
+    /// A command whose request the replay reads nothing from.
+    Silent,
+    /// makeCredential: §6.1.2's token-less gate is a function of these.
+    MakeCredential(RequestFlags),
+    /// clientPIN: which subcommand, so a token RE-ISSUANCE (which moves no raw
+    /// field) is not read as the `getKeyAgreement` it otherwise looks like.
+    ClientPin(u64),
+}
+
+fn request_record(out: &mut impl Write, record: RequestRecord) -> Result<()> {
+    match record {
+        RequestRecord::MakeCredential(f) => write!(
+            out,
+            "{{\"rk\":{},\"pin_uv_auth\":{}}},\"subcommand\":null",
+            f.rk, f.pin_uv_auth
+        ),
+        RequestRecord::ClientPin(sub) => write!(out, "null,\"subcommand\":{sub}"),
+        RequestRecord::Silent => write!(out, "null,\"subcommand\":null"),
     }
 }
 

@@ -1015,6 +1015,44 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   red every week. `scripts/mutants-all.sh` fails on its own apparatus instead: a
   shard that tested nothing, or a run that produced no summary.
 
+### Changed
+
+- **The phase-4 replay's two blind spots are recorded now, and each was measured
+  rather than argued.** `pin.set` was TRUE at every gate boundary the recording
+  held, so `McTokenlessRefused`'s conjunct was true rather than falsifiable;
+  `tests/09_tokenless_gate_no_pin.py` records the two PIN-less cells (a
+  repeated discoverable registration, which reuses the slot and therefore writes
+  nothing, and a non-discoverable one), and the grid is six cells with all six
+  filled. **The proof that they carry weight is a new co-mutant:**
+  `TraceSecurityBadPinSet.cfg` — a rule that forgets `makeCredUvNotRqd` — is RED
+  at `tracePc = 11` against this recording and **GREEN against the recording
+  without them**, replaying all 61 states. The suite holds itself to getInfo
+  `0x14 remainingDiscoverableCredentials` rather than to the status word, because
+  `0x00` only says the gate served the request.
+
+  The second was the `NO-OPINION` arm: a clientPIN that re-issues a token with
+  the permissions it already holds moves no raw field, so it was
+  indistinguishable from a `getKeyAgreement`. Trace **schema 6** carries the
+  clientPIN subcommand, read by the command's own parser
+  (`clientpin::assurance`, cfg-gated out of the image like its makeCredential
+  sibling), and the one such boundary in the recording is an issuance again.
+  Outcome-committed boundaries: **13 with the rule, 12 without** — a floor now,
+  since a mapping that retreats to `NO-OPINION` otherwise costs nothing.
+
+  A third gap closed on the recorder's side rather than the replay's:
+  `AppletHandler::security_trace_builtin_uv` is the one line §6.1.2 step 6.3's
+  arm rests on, `builtin_uv` is `false` in every recorded byte, and the accessor
+  had no test — a hard-wired `false` would have read identically. It has a
+  two-arm one now, in the ordinary test row rather than behind the feature, and
+  it is driven red by hard-wiring the accessor either way. What stays unwritten
+  is the *session* with a pad, not the plumbing: the recording is produced by the
+  emulator-suites row, where no display window opens.
+
+  Coverage: commands 32 → 40, steps 60 → 74, gate boundaries 5 → 7, AMBIGUOUS
+  still 0. The mapper's own tests stopped reading the recording positionally
+  while doing this — six selectors by shape, the way `resets()` already did it,
+  because the eight new events broke eleven cases that indexed by number.
+
 ### Fixed
 
 - **OpenPGP charged a wrong password's retry *after* comparing it, so a decrement

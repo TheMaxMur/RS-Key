@@ -6,13 +6,13 @@
 (*****************************************************************************)
 EXTENDS RSKeySecurityState, Integers
 
-TraceSteps == 60
-BoundaryPcs == {0, 1, 2, 5, 6, 13, 14, 21, 22, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 58, 60}
-BetaMutationBoundary == 5
-AlphaMutationBoundary == 6
-OutcomeBoundaryPcs == {5, 6, 13, 14, 21, 22, 27, 33, 34, 40, 44}
-OutcomeMutationBoundary == 5
-GateBoundaryPcs == {29, 30, 36, 37, 60}
+TraceSteps == 74
+BoundaryPcs == {0, 1, 2, 9, 10, 11, 12, 13, 14, 15, 16, 19, 20, 27, 28, 35, 36, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 72, 74}
+BetaMutationBoundary == 19
+AlphaMutationBoundary == 20
+OutcomeBoundaryPcs == {9, 19, 20, 27, 28, 35, 36, 41, 47, 48, 53, 54, 58}
+OutcomeMutationBoundary == 9
+GateBoundaryPcs == {11, 13, 43, 44, 50, 51, 74}
 
 TraceStutter == UNCHANGED vars
 
@@ -92,16 +92,16 @@ BoundaryRaw(i) ==
         warmBootRaw |-> FALSE,
         channelRaw |-> 16777216,
         keydevRamRaw |-> FALSE ]
-      [] i = 5 -> [ pinRecordLen |-> 35,
-        pinRetriesRaw |-> 8,
+      [] i = 9 -> [ pinRecordLen |-> -1,
+        pinRetriesRaw |-> -1,
         alwaysUvRecordLen |-> -1,
         alwaysUvRaw |-> -1,
         persistentGrantRecord |-> FALSE,
         backupSealedRecord |-> FALSE,
         seedPlainRecord |-> TRUE,
         seedEncryptedRecord |-> FALSE,
-        credentialSlotsRaw |-> 0,
-        rpSlotsRaw |-> 0,
+        credentialSlotsRaw |-> 1,
+        rpSlotsRaw |-> 1,
         tokenInUseRaw |-> FALSE,
         tokenPermissionsRaw |-> 0,
         tokenHasRpIdRaw |-> FALSE,
@@ -117,33 +117,8 @@ BoundaryRaw(i) ==
         warmBootRaw |-> FALSE,
         channelRaw |-> 16777216,
         keydevRamRaw |-> FALSE ]
-      [] i = 6 -> [ pinRecordLen |-> 35,
-        pinRetriesRaw |-> 8,
-        alwaysUvRecordLen |-> -1,
-        alwaysUvRaw |-> -1,
-        persistentGrantRecord |-> FALSE,
-        backupSealedRecord |-> FALSE,
-        seedPlainRecord |-> TRUE,
-        seedEncryptedRecord |-> FALSE,
-        credentialSlotsRaw |-> 0,
-        rpSlotsRaw |-> 0,
-        tokenInUseRaw |-> TRUE,
-        tokenPermissionsRaw |-> 3,
-        tokenHasRpIdRaw |-> FALSE,
-        tokenUserPresentRaw |-> FALSE,
-        tokenUserVerifiedRaw |-> TRUE,
-        softLockRaw |-> FALSE,
-        pinMismatchesRaw |-> 0,
-        cmChannelRaw |-> 0,
-        cmRpCounterRaw |-> 1,
-        cmRpTotalRaw |-> 0,
-        cmCredCounterRaw |-> 1,
-        cmCredTotalRaw |-> 0,
-        warmBootRaw |-> FALSE,
-        channelRaw |-> 16777216,
-        keydevRamRaw |-> FALSE ]
-      [] i = 13 -> [ pinRecordLen |-> 35,
-        pinRetriesRaw |-> 8,
+      [] i = 10 -> [ pinRecordLen |-> -1,
+        pinRetriesRaw |-> -1,
         alwaysUvRecordLen |-> -1,
         alwaysUvRaw |-> -1,
         persistentGrantRecord |-> FALSE,
@@ -152,9 +127,9 @@ BoundaryRaw(i) ==
         seedEncryptedRecord |-> FALSE,
         credentialSlotsRaw |-> 1,
         rpSlotsRaw |-> 1,
-        tokenInUseRaw |-> TRUE,
+        tokenInUseRaw |-> FALSE,
         tokenPermissionsRaw |-> 0,
-        tokenHasRpIdRaw |-> TRUE,
+        tokenHasRpIdRaw |-> FALSE,
         tokenUserPresentRaw |-> FALSE,
         tokenUserVerifiedRaw |-> FALSE,
         softLockRaw |-> FALSE,
@@ -167,7 +142,182 @@ BoundaryRaw(i) ==
         warmBootRaw |-> FALSE,
         channelRaw |-> 16777216,
         keydevRamRaw |-> FALSE ]
-      [] i = 14 -> [ pinRecordLen |-> 35,
+      [] i = 11 -> [ pinRecordLen |-> -1,
+        pinRetriesRaw |-> -1,
+        alwaysUvRecordLen |-> -1,
+        alwaysUvRaw |-> -1,
+        persistentGrantRecord |-> FALSE,
+        backupSealedRecord |-> FALSE,
+        seedPlainRecord |-> TRUE,
+        seedEncryptedRecord |-> FALSE,
+        credentialSlotsRaw |-> 1,
+        rpSlotsRaw |-> 1,
+        tokenInUseRaw |-> FALSE,
+        tokenPermissionsRaw |-> 0,
+        tokenHasRpIdRaw |-> FALSE,
+        tokenUserPresentRaw |-> FALSE,
+        tokenUserVerifiedRaw |-> FALSE,
+        softLockRaw |-> FALSE,
+        pinMismatchesRaw |-> 0,
+        cmChannelRaw |-> 0,
+        cmRpCounterRaw |-> 1,
+        cmRpTotalRaw |-> 0,
+        cmCredCounterRaw |-> 1,
+        cmCredTotalRaw |-> 0,
+        warmBootRaw |-> FALSE,
+        channelRaw |-> 16777216,
+        keydevRamRaw |-> FALSE ]
+      [] i = 12 -> [ pinRecordLen |-> -1,
+        pinRetriesRaw |-> -1,
+        alwaysUvRecordLen |-> -1,
+        alwaysUvRaw |-> -1,
+        persistentGrantRecord |-> FALSE,
+        backupSealedRecord |-> FALSE,
+        seedPlainRecord |-> TRUE,
+        seedEncryptedRecord |-> FALSE,
+        credentialSlotsRaw |-> 1,
+        rpSlotsRaw |-> 1,
+        tokenInUseRaw |-> FALSE,
+        tokenPermissionsRaw |-> 0,
+        tokenHasRpIdRaw |-> FALSE,
+        tokenUserPresentRaw |-> FALSE,
+        tokenUserVerifiedRaw |-> FALSE,
+        softLockRaw |-> FALSE,
+        pinMismatchesRaw |-> 0,
+        cmChannelRaw |-> 0,
+        cmRpCounterRaw |-> 1,
+        cmRpTotalRaw |-> 0,
+        cmCredCounterRaw |-> 1,
+        cmCredTotalRaw |-> 0,
+        warmBootRaw |-> FALSE,
+        channelRaw |-> 16777216,
+        keydevRamRaw |-> FALSE ]
+      [] i = 13 -> [ pinRecordLen |-> -1,
+        pinRetriesRaw |-> -1,
+        alwaysUvRecordLen |-> -1,
+        alwaysUvRaw |-> -1,
+        persistentGrantRecord |-> FALSE,
+        backupSealedRecord |-> FALSE,
+        seedPlainRecord |-> TRUE,
+        seedEncryptedRecord |-> FALSE,
+        credentialSlotsRaw |-> 1,
+        rpSlotsRaw |-> 1,
+        tokenInUseRaw |-> FALSE,
+        tokenPermissionsRaw |-> 0,
+        tokenHasRpIdRaw |-> FALSE,
+        tokenUserPresentRaw |-> FALSE,
+        tokenUserVerifiedRaw |-> FALSE,
+        softLockRaw |-> FALSE,
+        pinMismatchesRaw |-> 0,
+        cmChannelRaw |-> 0,
+        cmRpCounterRaw |-> 1,
+        cmRpTotalRaw |-> 0,
+        cmCredCounterRaw |-> 1,
+        cmCredTotalRaw |-> 0,
+        warmBootRaw |-> FALSE,
+        channelRaw |-> 16777216,
+        keydevRamRaw |-> FALSE ]
+      [] i = 14 -> [ pinRecordLen |-> -1,
+        pinRetriesRaw |-> -1,
+        alwaysUvRecordLen |-> -1,
+        alwaysUvRaw |-> -1,
+        persistentGrantRecord |-> FALSE,
+        backupSealedRecord |-> FALSE,
+        seedPlainRecord |-> TRUE,
+        seedEncryptedRecord |-> FALSE,
+        credentialSlotsRaw |-> 1,
+        rpSlotsRaw |-> 1,
+        tokenInUseRaw |-> FALSE,
+        tokenPermissionsRaw |-> 0,
+        tokenHasRpIdRaw |-> FALSE,
+        tokenUserPresentRaw |-> FALSE,
+        tokenUserVerifiedRaw |-> FALSE,
+        softLockRaw |-> FALSE,
+        pinMismatchesRaw |-> 0,
+        cmChannelRaw |-> 0,
+        cmRpCounterRaw |-> 1,
+        cmRpTotalRaw |-> 0,
+        cmCredCounterRaw |-> 1,
+        cmCredTotalRaw |-> 0,
+        warmBootRaw |-> FALSE,
+        channelRaw |-> 16777216,
+        keydevRamRaw |-> FALSE ]
+      [] i = 15 -> [ pinRecordLen |-> -1,
+        pinRetriesRaw |-> -1,
+        alwaysUvRecordLen |-> -1,
+        alwaysUvRaw |-> -1,
+        persistentGrantRecord |-> FALSE,
+        backupSealedRecord |-> FALSE,
+        seedPlainRecord |-> TRUE,
+        seedEncryptedRecord |-> FALSE,
+        credentialSlotsRaw |-> 1,
+        rpSlotsRaw |-> 1,
+        tokenInUseRaw |-> FALSE,
+        tokenPermissionsRaw |-> 0,
+        tokenHasRpIdRaw |-> FALSE,
+        tokenUserPresentRaw |-> FALSE,
+        tokenUserVerifiedRaw |-> FALSE,
+        softLockRaw |-> FALSE,
+        pinMismatchesRaw |-> 0,
+        cmChannelRaw |-> 0,
+        cmRpCounterRaw |-> 1,
+        cmRpTotalRaw |-> 0,
+        cmCredCounterRaw |-> 1,
+        cmCredTotalRaw |-> 0,
+        warmBootRaw |-> FALSE,
+        channelRaw |-> 16777217,
+        keydevRamRaw |-> FALSE ]
+      [] i = 16 -> [ pinRecordLen |-> -1,
+        pinRetriesRaw |-> -1,
+        alwaysUvRecordLen |-> -1,
+        alwaysUvRaw |-> -1,
+        persistentGrantRecord |-> FALSE,
+        backupSealedRecord |-> FALSE,
+        seedPlainRecord |-> TRUE,
+        seedEncryptedRecord |-> FALSE,
+        credentialSlotsRaw |-> 1,
+        rpSlotsRaw |-> 1,
+        tokenInUseRaw |-> FALSE,
+        tokenPermissionsRaw |-> 0,
+        tokenHasRpIdRaw |-> FALSE,
+        tokenUserPresentRaw |-> FALSE,
+        tokenUserVerifiedRaw |-> FALSE,
+        softLockRaw |-> FALSE,
+        pinMismatchesRaw |-> 0,
+        cmChannelRaw |-> 0,
+        cmRpCounterRaw |-> 1,
+        cmRpTotalRaw |-> 0,
+        cmCredCounterRaw |-> 1,
+        cmCredTotalRaw |-> 0,
+        warmBootRaw |-> FALSE,
+        channelRaw |-> 16777217,
+        keydevRamRaw |-> FALSE ]
+      [] i = 19 -> [ pinRecordLen |-> 35,
+        pinRetriesRaw |-> 8,
+        alwaysUvRecordLen |-> -1,
+        alwaysUvRaw |-> -1,
+        persistentGrantRecord |-> FALSE,
+        backupSealedRecord |-> FALSE,
+        seedPlainRecord |-> TRUE,
+        seedEncryptedRecord |-> FALSE,
+        credentialSlotsRaw |-> 1,
+        rpSlotsRaw |-> 1,
+        tokenInUseRaw |-> FALSE,
+        tokenPermissionsRaw |-> 0,
+        tokenHasRpIdRaw |-> FALSE,
+        tokenUserPresentRaw |-> FALSE,
+        tokenUserVerifiedRaw |-> FALSE,
+        softLockRaw |-> FALSE,
+        pinMismatchesRaw |-> 0,
+        cmChannelRaw |-> 0,
+        cmRpCounterRaw |-> 1,
+        cmRpTotalRaw |-> 0,
+        cmCredCounterRaw |-> 1,
+        cmCredTotalRaw |-> 0,
+        warmBootRaw |-> FALSE,
+        channelRaw |-> 16777217,
+        keydevRamRaw |-> FALSE ]
+      [] i = 20 -> [ pinRecordLen |-> 35,
         pinRetriesRaw |-> 8,
         alwaysUvRecordLen |-> -1,
         alwaysUvRaw |-> -1,
@@ -190,57 +340,7 @@ BoundaryRaw(i) ==
         cmCredCounterRaw |-> 1,
         cmCredTotalRaw |-> 0,
         warmBootRaw |-> FALSE,
-        channelRaw |-> 16777216,
-        keydevRamRaw |-> FALSE ]
-      [] i = 21 -> [ pinRecordLen |-> 35,
-        pinRetriesRaw |-> 8,
-        alwaysUvRecordLen |-> -1,
-        alwaysUvRaw |-> -1,
-        persistentGrantRecord |-> FALSE,
-        backupSealedRecord |-> FALSE,
-        seedPlainRecord |-> TRUE,
-        seedEncryptedRecord |-> FALSE,
-        credentialSlotsRaw |-> 2,
-        rpSlotsRaw |-> 1,
-        tokenInUseRaw |-> TRUE,
-        tokenPermissionsRaw |-> 0,
-        tokenHasRpIdRaw |-> TRUE,
-        tokenUserPresentRaw |-> FALSE,
-        tokenUserVerifiedRaw |-> FALSE,
-        softLockRaw |-> FALSE,
-        pinMismatchesRaw |-> 0,
-        cmChannelRaw |-> 0,
-        cmRpCounterRaw |-> 1,
-        cmRpTotalRaw |-> 0,
-        cmCredCounterRaw |-> 1,
-        cmCredTotalRaw |-> 0,
-        warmBootRaw |-> FALSE,
-        channelRaw |-> 16777216,
-        keydevRamRaw |-> FALSE ]
-      [] i = 22 -> [ pinRecordLen |-> 35,
-        pinRetriesRaw |-> 8,
-        alwaysUvRecordLen |-> -1,
-        alwaysUvRaw |-> -1,
-        persistentGrantRecord |-> FALSE,
-        backupSealedRecord |-> FALSE,
-        seedPlainRecord |-> TRUE,
-        seedEncryptedRecord |-> FALSE,
-        credentialSlotsRaw |-> 2,
-        rpSlotsRaw |-> 1,
-        tokenInUseRaw |-> TRUE,
-        tokenPermissionsRaw |-> 3,
-        tokenHasRpIdRaw |-> FALSE,
-        tokenUserPresentRaw |-> FALSE,
-        tokenUserVerifiedRaw |-> TRUE,
-        softLockRaw |-> FALSE,
-        pinMismatchesRaw |-> 0,
-        cmChannelRaw |-> 0,
-        cmRpCounterRaw |-> 1,
-        cmRpTotalRaw |-> 0,
-        cmCredCounterRaw |-> 1,
-        cmCredTotalRaw |-> 0,
-        warmBootRaw |-> FALSE,
-        channelRaw |-> 16777216,
+        channelRaw |-> 16777217,
         keydevRamRaw |-> FALSE ]
       [] i = 27 -> [ pinRecordLen |-> 35,
         pinRetriesRaw |-> 8,
@@ -251,7 +351,7 @@ BoundaryRaw(i) ==
         seedPlainRecord |-> TRUE,
         seedEncryptedRecord |-> FALSE,
         credentialSlotsRaw |-> 2,
-        rpSlotsRaw |-> 1,
+        rpSlotsRaw |-> 2,
         tokenInUseRaw |-> TRUE,
         tokenPermissionsRaw |-> 0,
         tokenHasRpIdRaw |-> TRUE,
@@ -265,7 +365,7 @@ BoundaryRaw(i) ==
         cmCredCounterRaw |-> 1,
         cmCredTotalRaw |-> 0,
         warmBootRaw |-> FALSE,
-        channelRaw |-> 16777216,
+        channelRaw |-> 16777217,
         keydevRamRaw |-> FALSE ]
       [] i = 28 -> [ pinRecordLen |-> 35,
         pinRetriesRaw |-> 8,
@@ -276,159 +376,9 @@ BoundaryRaw(i) ==
         seedPlainRecord |-> TRUE,
         seedEncryptedRecord |-> FALSE,
         credentialSlotsRaw |-> 2,
-        rpSlotsRaw |-> 1,
+        rpSlotsRaw |-> 2,
         tokenInUseRaw |-> TRUE,
-        tokenPermissionsRaw |-> 0,
-        tokenHasRpIdRaw |-> TRUE,
-        tokenUserPresentRaw |-> FALSE,
-        tokenUserVerifiedRaw |-> FALSE,
-        softLockRaw |-> FALSE,
-        pinMismatchesRaw |-> 0,
-        cmChannelRaw |-> 0,
-        cmRpCounterRaw |-> 1,
-        cmRpTotalRaw |-> 0,
-        cmCredCounterRaw |-> 1,
-        cmCredTotalRaw |-> 0,
-        warmBootRaw |-> FALSE,
-        channelRaw |-> 16777216,
-        keydevRamRaw |-> FALSE ]
-      [] i = 29 -> [ pinRecordLen |-> 35,
-        pinRetriesRaw |-> 8,
-        alwaysUvRecordLen |-> -1,
-        alwaysUvRaw |-> -1,
-        persistentGrantRecord |-> FALSE,
-        backupSealedRecord |-> FALSE,
-        seedPlainRecord |-> TRUE,
-        seedEncryptedRecord |-> FALSE,
-        credentialSlotsRaw |-> 2,
-        rpSlotsRaw |-> 1,
-        tokenInUseRaw |-> TRUE,
-        tokenPermissionsRaw |-> 0,
-        tokenHasRpIdRaw |-> TRUE,
-        tokenUserPresentRaw |-> FALSE,
-        tokenUserVerifiedRaw |-> FALSE,
-        softLockRaw |-> FALSE,
-        pinMismatchesRaw |-> 0,
-        cmChannelRaw |-> 0,
-        cmRpCounterRaw |-> 1,
-        cmRpTotalRaw |-> 0,
-        cmCredCounterRaw |-> 1,
-        cmCredTotalRaw |-> 0,
-        warmBootRaw |-> FALSE,
-        channelRaw |-> 16777216,
-        keydevRamRaw |-> FALSE ]
-      [] i = 30 -> [ pinRecordLen |-> 35,
-        pinRetriesRaw |-> 8,
-        alwaysUvRecordLen |-> -1,
-        alwaysUvRaw |-> -1,
-        persistentGrantRecord |-> FALSE,
-        backupSealedRecord |-> FALSE,
-        seedPlainRecord |-> TRUE,
-        seedEncryptedRecord |-> FALSE,
-        credentialSlotsRaw |-> 2,
-        rpSlotsRaw |-> 1,
-        tokenInUseRaw |-> TRUE,
-        tokenPermissionsRaw |-> 0,
-        tokenHasRpIdRaw |-> TRUE,
-        tokenUserPresentRaw |-> FALSE,
-        tokenUserVerifiedRaw |-> FALSE,
-        softLockRaw |-> FALSE,
-        pinMismatchesRaw |-> 0,
-        cmChannelRaw |-> 0,
-        cmRpCounterRaw |-> 1,
-        cmRpTotalRaw |-> 0,
-        cmCredCounterRaw |-> 1,
-        cmCredTotalRaw |-> 0,
-        warmBootRaw |-> FALSE,
-        channelRaw |-> 16777216,
-        keydevRamRaw |-> FALSE ]
-      [] i = 31 -> [ pinRecordLen |-> 35,
-        pinRetriesRaw |-> 8,
-        alwaysUvRecordLen |-> -1,
-        alwaysUvRaw |-> -1,
-        persistentGrantRecord |-> FALSE,
-        backupSealedRecord |-> FALSE,
-        seedPlainRecord |-> TRUE,
-        seedEncryptedRecord |-> FALSE,
-        credentialSlotsRaw |-> 2,
-        rpSlotsRaw |-> 1,
-        tokenInUseRaw |-> TRUE,
-        tokenPermissionsRaw |-> 0,
-        tokenHasRpIdRaw |-> TRUE,
-        tokenUserPresentRaw |-> FALSE,
-        tokenUserVerifiedRaw |-> FALSE,
-        softLockRaw |-> FALSE,
-        pinMismatchesRaw |-> 0,
-        cmChannelRaw |-> 0,
-        cmRpCounterRaw |-> 1,
-        cmRpTotalRaw |-> 0,
-        cmCredCounterRaw |-> 1,
-        cmCredTotalRaw |-> 0,
-        warmBootRaw |-> FALSE,
-        channelRaw |-> 16777217,
-        keydevRamRaw |-> FALSE ]
-      [] i = 32 -> [ pinRecordLen |-> 35,
-        pinRetriesRaw |-> 8,
-        alwaysUvRecordLen |-> -1,
-        alwaysUvRaw |-> -1,
-        persistentGrantRecord |-> FALSE,
-        backupSealedRecord |-> FALSE,
-        seedPlainRecord |-> TRUE,
-        seedEncryptedRecord |-> FALSE,
-        credentialSlotsRaw |-> 2,
-        rpSlotsRaw |-> 1,
-        tokenInUseRaw |-> TRUE,
-        tokenPermissionsRaw |-> 0,
-        tokenHasRpIdRaw |-> TRUE,
-        tokenUserPresentRaw |-> FALSE,
-        tokenUserVerifiedRaw |-> FALSE,
-        softLockRaw |-> FALSE,
-        pinMismatchesRaw |-> 0,
-        cmChannelRaw |-> 0,
-        cmRpCounterRaw |-> 1,
-        cmRpTotalRaw |-> 0,
-        cmCredCounterRaw |-> 1,
-        cmCredTotalRaw |-> 0,
-        warmBootRaw |-> FALSE,
-        channelRaw |-> 16777217,
-        keydevRamRaw |-> FALSE ]
-      [] i = 33 -> [ pinRecordLen |-> 35,
-        pinRetriesRaw |-> 8,
-        alwaysUvRecordLen |-> -1,
-        alwaysUvRaw |-> -1,
-        persistentGrantRecord |-> FALSE,
-        backupSealedRecord |-> FALSE,
-        seedPlainRecord |-> TRUE,
-        seedEncryptedRecord |-> FALSE,
-        credentialSlotsRaw |-> 2,
-        rpSlotsRaw |-> 1,
-        tokenInUseRaw |-> TRUE,
-        tokenPermissionsRaw |-> 32,
-        tokenHasRpIdRaw |-> FALSE,
-        tokenUserPresentRaw |-> FALSE,
-        tokenUserVerifiedRaw |-> TRUE,
-        softLockRaw |-> FALSE,
-        pinMismatchesRaw |-> 0,
-        cmChannelRaw |-> 0,
-        cmRpCounterRaw |-> 1,
-        cmRpTotalRaw |-> 0,
-        cmCredCounterRaw |-> 1,
-        cmCredTotalRaw |-> 0,
-        warmBootRaw |-> FALSE,
-        channelRaw |-> 16777217,
-        keydevRamRaw |-> FALSE ]
-      [] i = 34 -> [ pinRecordLen |-> 35,
-        pinRetriesRaw |-> 8,
-        alwaysUvRecordLen |-> 1,
-        alwaysUvRaw |-> 1,
-        persistentGrantRecord |-> FALSE,
-        backupSealedRecord |-> FALSE,
-        seedPlainRecord |-> TRUE,
-        seedEncryptedRecord |-> FALSE,
-        credentialSlotsRaw |-> 2,
-        rpSlotsRaw |-> 1,
-        tokenInUseRaw |-> TRUE,
-        tokenPermissionsRaw |-> 32,
+        tokenPermissionsRaw |-> 3,
         tokenHasRpIdRaw |-> FALSE,
         tokenUserPresentRaw |-> FALSE,
         tokenUserVerifiedRaw |-> TRUE,
@@ -444,19 +394,19 @@ BoundaryRaw(i) ==
         keydevRamRaw |-> FALSE ]
       [] i = 35 -> [ pinRecordLen |-> 35,
         pinRetriesRaw |-> 8,
-        alwaysUvRecordLen |-> 1,
-        alwaysUvRaw |-> 1,
+        alwaysUvRecordLen |-> -1,
+        alwaysUvRaw |-> -1,
         persistentGrantRecord |-> FALSE,
         backupSealedRecord |-> FALSE,
         seedPlainRecord |-> TRUE,
         seedEncryptedRecord |-> FALSE,
-        credentialSlotsRaw |-> 2,
-        rpSlotsRaw |-> 1,
+        credentialSlotsRaw |-> 3,
+        rpSlotsRaw |-> 2,
         tokenInUseRaw |-> TRUE,
-        tokenPermissionsRaw |-> 32,
-        tokenHasRpIdRaw |-> FALSE,
+        tokenPermissionsRaw |-> 0,
+        tokenHasRpIdRaw |-> TRUE,
         tokenUserPresentRaw |-> FALSE,
-        tokenUserVerifiedRaw |-> TRUE,
+        tokenUserVerifiedRaw |-> FALSE,
         softLockRaw |-> FALSE,
         pinMismatchesRaw |-> 0,
         cmChannelRaw |-> 0,
@@ -469,116 +419,16 @@ BoundaryRaw(i) ==
         keydevRamRaw |-> FALSE ]
       [] i = 36 -> [ pinRecordLen |-> 35,
         pinRetriesRaw |-> 8,
-        alwaysUvRecordLen |-> 1,
-        alwaysUvRaw |-> 1,
-        persistentGrantRecord |-> FALSE,
-        backupSealedRecord |-> FALSE,
-        seedPlainRecord |-> TRUE,
-        seedEncryptedRecord |-> FALSE,
-        credentialSlotsRaw |-> 2,
-        rpSlotsRaw |-> 1,
-        tokenInUseRaw |-> TRUE,
-        tokenPermissionsRaw |-> 32,
-        tokenHasRpIdRaw |-> FALSE,
-        tokenUserPresentRaw |-> FALSE,
-        tokenUserVerifiedRaw |-> TRUE,
-        softLockRaw |-> FALSE,
-        pinMismatchesRaw |-> 0,
-        cmChannelRaw |-> 0,
-        cmRpCounterRaw |-> 1,
-        cmRpTotalRaw |-> 0,
-        cmCredCounterRaw |-> 1,
-        cmCredTotalRaw |-> 0,
-        warmBootRaw |-> FALSE,
-        channelRaw |-> 16777217,
-        keydevRamRaw |-> FALSE ]
-      [] i = 37 -> [ pinRecordLen |-> 35,
-        pinRetriesRaw |-> 8,
-        alwaysUvRecordLen |-> 1,
-        alwaysUvRaw |-> 1,
-        persistentGrantRecord |-> FALSE,
-        backupSealedRecord |-> FALSE,
-        seedPlainRecord |-> TRUE,
-        seedEncryptedRecord |-> FALSE,
-        credentialSlotsRaw |-> 2,
-        rpSlotsRaw |-> 1,
-        tokenInUseRaw |-> TRUE,
-        tokenPermissionsRaw |-> 32,
-        tokenHasRpIdRaw |-> FALSE,
-        tokenUserPresentRaw |-> FALSE,
-        tokenUserVerifiedRaw |-> TRUE,
-        softLockRaw |-> FALSE,
-        pinMismatchesRaw |-> 0,
-        cmChannelRaw |-> 0,
-        cmRpCounterRaw |-> 1,
-        cmRpTotalRaw |-> 0,
-        cmCredCounterRaw |-> 1,
-        cmCredTotalRaw |-> 0,
-        warmBootRaw |-> FALSE,
-        channelRaw |-> 16777217,
-        keydevRamRaw |-> FALSE ]
-      [] i = 38 -> [ pinRecordLen |-> 35,
-        pinRetriesRaw |-> 8,
-        alwaysUvRecordLen |-> 1,
-        alwaysUvRaw |-> 1,
-        persistentGrantRecord |-> FALSE,
-        backupSealedRecord |-> FALSE,
-        seedPlainRecord |-> TRUE,
-        seedEncryptedRecord |-> FALSE,
-        credentialSlotsRaw |-> 2,
-        rpSlotsRaw |-> 1,
-        tokenInUseRaw |-> TRUE,
-        tokenPermissionsRaw |-> 32,
-        tokenHasRpIdRaw |-> FALSE,
-        tokenUserPresentRaw |-> FALSE,
-        tokenUserVerifiedRaw |-> TRUE,
-        softLockRaw |-> FALSE,
-        pinMismatchesRaw |-> 0,
-        cmChannelRaw |-> 0,
-        cmRpCounterRaw |-> 1,
-        cmRpTotalRaw |-> 0,
-        cmCredCounterRaw |-> 1,
-        cmCredTotalRaw |-> 0,
-        warmBootRaw |-> FALSE,
-        channelRaw |-> 16777217,
-        keydevRamRaw |-> FALSE ]
-      [] i = 39 -> [ pinRecordLen |-> 35,
-        pinRetriesRaw |-> 8,
-        alwaysUvRecordLen |-> 1,
-        alwaysUvRaw |-> 1,
-        persistentGrantRecord |-> FALSE,
-        backupSealedRecord |-> FALSE,
-        seedPlainRecord |-> TRUE,
-        seedEncryptedRecord |-> FALSE,
-        credentialSlotsRaw |-> 2,
-        rpSlotsRaw |-> 1,
-        tokenInUseRaw |-> TRUE,
-        tokenPermissionsRaw |-> 32,
-        tokenHasRpIdRaw |-> FALSE,
-        tokenUserPresentRaw |-> FALSE,
-        tokenUserVerifiedRaw |-> TRUE,
-        softLockRaw |-> FALSE,
-        pinMismatchesRaw |-> 0,
-        cmChannelRaw |-> 0,
-        cmRpCounterRaw |-> 1,
-        cmRpTotalRaw |-> 0,
-        cmCredCounterRaw |-> 1,
-        cmCredTotalRaw |-> 0,
-        warmBootRaw |-> FALSE,
-        channelRaw |-> 16777217,
-        keydevRamRaw |-> FALSE ]
-      [] i = 40 -> [ pinRecordLen |-> 35,
-        pinRetriesRaw |-> 8,
         alwaysUvRecordLen |-> -1,
         alwaysUvRaw |-> -1,
         persistentGrantRecord |-> FALSE,
         backupSealedRecord |-> FALSE,
         seedPlainRecord |-> TRUE,
         seedEncryptedRecord |-> FALSE,
-        credentialSlotsRaw |-> 2,
-        rpSlotsRaw |-> 1,
+        credentialSlotsRaw |-> 3,
+        rpSlotsRaw |-> 2,
         tokenInUseRaw |-> TRUE,
-        tokenPermissionsRaw |-> 32,
+        tokenPermissionsRaw |-> 3,
         tokenHasRpIdRaw |-> FALSE,
         tokenUserPresentRaw |-> FALSE,
         tokenUserVerifiedRaw |-> TRUE,
@@ -600,13 +450,13 @@ BoundaryRaw(i) ==
         backupSealedRecord |-> FALSE,
         seedPlainRecord |-> TRUE,
         seedEncryptedRecord |-> FALSE,
-        credentialSlotsRaw |-> 2,
-        rpSlotsRaw |-> 1,
+        credentialSlotsRaw |-> 3,
+        rpSlotsRaw |-> 2,
         tokenInUseRaw |-> TRUE,
-        tokenPermissionsRaw |-> 32,
-        tokenHasRpIdRaw |-> FALSE,
+        tokenPermissionsRaw |-> 0,
+        tokenHasRpIdRaw |-> TRUE,
         tokenUserPresentRaw |-> FALSE,
-        tokenUserVerifiedRaw |-> TRUE,
+        tokenUserVerifiedRaw |-> FALSE,
         softLockRaw |-> FALSE,
         pinMismatchesRaw |-> 0,
         cmChannelRaw |-> 0,
@@ -625,13 +475,13 @@ BoundaryRaw(i) ==
         backupSealedRecord |-> FALSE,
         seedPlainRecord |-> TRUE,
         seedEncryptedRecord |-> FALSE,
-        credentialSlotsRaw |-> 2,
-        rpSlotsRaw |-> 1,
+        credentialSlotsRaw |-> 3,
+        rpSlotsRaw |-> 2,
         tokenInUseRaw |-> TRUE,
-        tokenPermissionsRaw |-> 32,
-        tokenHasRpIdRaw |-> FALSE,
+        tokenPermissionsRaw |-> 0,
+        tokenHasRpIdRaw |-> TRUE,
         tokenUserPresentRaw |-> FALSE,
-        tokenUserVerifiedRaw |-> TRUE,
+        tokenUserVerifiedRaw |-> FALSE,
         softLockRaw |-> FALSE,
         pinMismatchesRaw |-> 0,
         cmChannelRaw |-> 0,
@@ -640,7 +490,7 @@ BoundaryRaw(i) ==
         cmCredCounterRaw |-> 1,
         cmCredTotalRaw |-> 0,
         warmBootRaw |-> FALSE,
-        channelRaw |-> 16777218,
+        channelRaw |-> 16777217,
         keydevRamRaw |-> FALSE ]
       [] i = 43 -> [ pinRecordLen |-> 35,
         pinRetriesRaw |-> 8,
@@ -650,13 +500,13 @@ BoundaryRaw(i) ==
         backupSealedRecord |-> FALSE,
         seedPlainRecord |-> TRUE,
         seedEncryptedRecord |-> FALSE,
-        credentialSlotsRaw |-> 2,
-        rpSlotsRaw |-> 1,
+        credentialSlotsRaw |-> 3,
+        rpSlotsRaw |-> 2,
         tokenInUseRaw |-> TRUE,
-        tokenPermissionsRaw |-> 32,
-        tokenHasRpIdRaw |-> FALSE,
+        tokenPermissionsRaw |-> 0,
+        tokenHasRpIdRaw |-> TRUE,
         tokenUserPresentRaw |-> FALSE,
-        tokenUserVerifiedRaw |-> TRUE,
+        tokenUserVerifiedRaw |-> FALSE,
         softLockRaw |-> FALSE,
         pinMismatchesRaw |-> 0,
         cmChannelRaw |-> 0,
@@ -665,7 +515,7 @@ BoundaryRaw(i) ==
         cmCredCounterRaw |-> 1,
         cmCredTotalRaw |-> 0,
         warmBootRaw |-> FALSE,
-        channelRaw |-> 16777218,
+        channelRaw |-> 16777217,
         keydevRamRaw |-> FALSE ]
       [] i = 44 -> [ pinRecordLen |-> 35,
         pinRetriesRaw |-> 8,
@@ -675,13 +525,13 @@ BoundaryRaw(i) ==
         backupSealedRecord |-> FALSE,
         seedPlainRecord |-> TRUE,
         seedEncryptedRecord |-> FALSE,
-        credentialSlotsRaw |-> 2,
-        rpSlotsRaw |-> 1,
+        credentialSlotsRaw |-> 3,
+        rpSlotsRaw |-> 2,
         tokenInUseRaw |-> TRUE,
-        tokenPermissionsRaw |-> 3,
-        tokenHasRpIdRaw |-> FALSE,
+        tokenPermissionsRaw |-> 0,
+        tokenHasRpIdRaw |-> TRUE,
         tokenUserPresentRaw |-> FALSE,
-        tokenUserVerifiedRaw |-> TRUE,
+        tokenUserVerifiedRaw |-> FALSE,
         softLockRaw |-> FALSE,
         pinMismatchesRaw |-> 0,
         cmChannelRaw |-> 0,
@@ -690,7 +540,7 @@ BoundaryRaw(i) ==
         cmCredCounterRaw |-> 1,
         cmCredTotalRaw |-> 0,
         warmBootRaw |-> FALSE,
-        channelRaw |-> 16777218,
+        channelRaw |-> 16777217,
         keydevRamRaw |-> FALSE ]
       [] i = 45 -> [ pinRecordLen |-> 35,
         pinRetriesRaw |-> 8,
@@ -700,13 +550,13 @@ BoundaryRaw(i) ==
         backupSealedRecord |-> FALSE,
         seedPlainRecord |-> TRUE,
         seedEncryptedRecord |-> FALSE,
-        credentialSlotsRaw |-> 2,
-        rpSlotsRaw |-> 1,
+        credentialSlotsRaw |-> 3,
+        rpSlotsRaw |-> 2,
         tokenInUseRaw |-> TRUE,
-        tokenPermissionsRaw |-> 3,
-        tokenHasRpIdRaw |-> FALSE,
+        tokenPermissionsRaw |-> 0,
+        tokenHasRpIdRaw |-> TRUE,
         tokenUserPresentRaw |-> FALSE,
-        tokenUserVerifiedRaw |-> TRUE,
+        tokenUserVerifiedRaw |-> FALSE,
         softLockRaw |-> FALSE,
         pinMismatchesRaw |-> 0,
         cmChannelRaw |-> 0,
@@ -718,22 +568,22 @@ BoundaryRaw(i) ==
         channelRaw |-> 16777218,
         keydevRamRaw |-> FALSE ]
       [] i = 46 -> [ pinRecordLen |-> 35,
-        pinRetriesRaw |-> 7,
+        pinRetriesRaw |-> 8,
         alwaysUvRecordLen |-> -1,
         alwaysUvRaw |-> -1,
         persistentGrantRecord |-> FALSE,
         backupSealedRecord |-> FALSE,
         seedPlainRecord |-> TRUE,
         seedEncryptedRecord |-> FALSE,
-        credentialSlotsRaw |-> 2,
-        rpSlotsRaw |-> 1,
-        tokenInUseRaw |-> FALSE,
+        credentialSlotsRaw |-> 3,
+        rpSlotsRaw |-> 2,
+        tokenInUseRaw |-> TRUE,
         tokenPermissionsRaw |-> 0,
-        tokenHasRpIdRaw |-> FALSE,
+        tokenHasRpIdRaw |-> TRUE,
         tokenUserPresentRaw |-> FALSE,
         tokenUserVerifiedRaw |-> FALSE,
         softLockRaw |-> FALSE,
-        pinMismatchesRaw |-> 1,
+        pinMismatchesRaw |-> 0,
         cmChannelRaw |-> 0,
         cmRpCounterRaw |-> 1,
         cmRpTotalRaw |-> 0,
@@ -743,6 +593,331 @@ BoundaryRaw(i) ==
         channelRaw |-> 16777218,
         keydevRamRaw |-> FALSE ]
       [] i = 47 -> [ pinRecordLen |-> 35,
+        pinRetriesRaw |-> 8,
+        alwaysUvRecordLen |-> -1,
+        alwaysUvRaw |-> -1,
+        persistentGrantRecord |-> FALSE,
+        backupSealedRecord |-> FALSE,
+        seedPlainRecord |-> TRUE,
+        seedEncryptedRecord |-> FALSE,
+        credentialSlotsRaw |-> 3,
+        rpSlotsRaw |-> 2,
+        tokenInUseRaw |-> TRUE,
+        tokenPermissionsRaw |-> 32,
+        tokenHasRpIdRaw |-> FALSE,
+        tokenUserPresentRaw |-> FALSE,
+        tokenUserVerifiedRaw |-> TRUE,
+        softLockRaw |-> FALSE,
+        pinMismatchesRaw |-> 0,
+        cmChannelRaw |-> 0,
+        cmRpCounterRaw |-> 1,
+        cmRpTotalRaw |-> 0,
+        cmCredCounterRaw |-> 1,
+        cmCredTotalRaw |-> 0,
+        warmBootRaw |-> FALSE,
+        channelRaw |-> 16777218,
+        keydevRamRaw |-> FALSE ]
+      [] i = 48 -> [ pinRecordLen |-> 35,
+        pinRetriesRaw |-> 8,
+        alwaysUvRecordLen |-> 1,
+        alwaysUvRaw |-> 1,
+        persistentGrantRecord |-> FALSE,
+        backupSealedRecord |-> FALSE,
+        seedPlainRecord |-> TRUE,
+        seedEncryptedRecord |-> FALSE,
+        credentialSlotsRaw |-> 3,
+        rpSlotsRaw |-> 2,
+        tokenInUseRaw |-> TRUE,
+        tokenPermissionsRaw |-> 32,
+        tokenHasRpIdRaw |-> FALSE,
+        tokenUserPresentRaw |-> FALSE,
+        tokenUserVerifiedRaw |-> TRUE,
+        softLockRaw |-> FALSE,
+        pinMismatchesRaw |-> 0,
+        cmChannelRaw |-> 0,
+        cmRpCounterRaw |-> 1,
+        cmRpTotalRaw |-> 0,
+        cmCredCounterRaw |-> 1,
+        cmCredTotalRaw |-> 0,
+        warmBootRaw |-> FALSE,
+        channelRaw |-> 16777218,
+        keydevRamRaw |-> FALSE ]
+      [] i = 49 -> [ pinRecordLen |-> 35,
+        pinRetriesRaw |-> 8,
+        alwaysUvRecordLen |-> 1,
+        alwaysUvRaw |-> 1,
+        persistentGrantRecord |-> FALSE,
+        backupSealedRecord |-> FALSE,
+        seedPlainRecord |-> TRUE,
+        seedEncryptedRecord |-> FALSE,
+        credentialSlotsRaw |-> 3,
+        rpSlotsRaw |-> 2,
+        tokenInUseRaw |-> TRUE,
+        tokenPermissionsRaw |-> 32,
+        tokenHasRpIdRaw |-> FALSE,
+        tokenUserPresentRaw |-> FALSE,
+        tokenUserVerifiedRaw |-> TRUE,
+        softLockRaw |-> FALSE,
+        pinMismatchesRaw |-> 0,
+        cmChannelRaw |-> 0,
+        cmRpCounterRaw |-> 1,
+        cmRpTotalRaw |-> 0,
+        cmCredCounterRaw |-> 1,
+        cmCredTotalRaw |-> 0,
+        warmBootRaw |-> FALSE,
+        channelRaw |-> 16777218,
+        keydevRamRaw |-> FALSE ]
+      [] i = 50 -> [ pinRecordLen |-> 35,
+        pinRetriesRaw |-> 8,
+        alwaysUvRecordLen |-> 1,
+        alwaysUvRaw |-> 1,
+        persistentGrantRecord |-> FALSE,
+        backupSealedRecord |-> FALSE,
+        seedPlainRecord |-> TRUE,
+        seedEncryptedRecord |-> FALSE,
+        credentialSlotsRaw |-> 3,
+        rpSlotsRaw |-> 2,
+        tokenInUseRaw |-> TRUE,
+        tokenPermissionsRaw |-> 32,
+        tokenHasRpIdRaw |-> FALSE,
+        tokenUserPresentRaw |-> FALSE,
+        tokenUserVerifiedRaw |-> TRUE,
+        softLockRaw |-> FALSE,
+        pinMismatchesRaw |-> 0,
+        cmChannelRaw |-> 0,
+        cmRpCounterRaw |-> 1,
+        cmRpTotalRaw |-> 0,
+        cmCredCounterRaw |-> 1,
+        cmCredTotalRaw |-> 0,
+        warmBootRaw |-> FALSE,
+        channelRaw |-> 16777218,
+        keydevRamRaw |-> FALSE ]
+      [] i = 51 -> [ pinRecordLen |-> 35,
+        pinRetriesRaw |-> 8,
+        alwaysUvRecordLen |-> 1,
+        alwaysUvRaw |-> 1,
+        persistentGrantRecord |-> FALSE,
+        backupSealedRecord |-> FALSE,
+        seedPlainRecord |-> TRUE,
+        seedEncryptedRecord |-> FALSE,
+        credentialSlotsRaw |-> 3,
+        rpSlotsRaw |-> 2,
+        tokenInUseRaw |-> TRUE,
+        tokenPermissionsRaw |-> 32,
+        tokenHasRpIdRaw |-> FALSE,
+        tokenUserPresentRaw |-> FALSE,
+        tokenUserVerifiedRaw |-> TRUE,
+        softLockRaw |-> FALSE,
+        pinMismatchesRaw |-> 0,
+        cmChannelRaw |-> 0,
+        cmRpCounterRaw |-> 1,
+        cmRpTotalRaw |-> 0,
+        cmCredCounterRaw |-> 1,
+        cmCredTotalRaw |-> 0,
+        warmBootRaw |-> FALSE,
+        channelRaw |-> 16777218,
+        keydevRamRaw |-> FALSE ]
+      [] i = 52 -> [ pinRecordLen |-> 35,
+        pinRetriesRaw |-> 8,
+        alwaysUvRecordLen |-> 1,
+        alwaysUvRaw |-> 1,
+        persistentGrantRecord |-> FALSE,
+        backupSealedRecord |-> FALSE,
+        seedPlainRecord |-> TRUE,
+        seedEncryptedRecord |-> FALSE,
+        credentialSlotsRaw |-> 3,
+        rpSlotsRaw |-> 2,
+        tokenInUseRaw |-> TRUE,
+        tokenPermissionsRaw |-> 32,
+        tokenHasRpIdRaw |-> FALSE,
+        tokenUserPresentRaw |-> FALSE,
+        tokenUserVerifiedRaw |-> TRUE,
+        softLockRaw |-> FALSE,
+        pinMismatchesRaw |-> 0,
+        cmChannelRaw |-> 0,
+        cmRpCounterRaw |-> 1,
+        cmRpTotalRaw |-> 0,
+        cmCredCounterRaw |-> 1,
+        cmCredTotalRaw |-> 0,
+        warmBootRaw |-> FALSE,
+        channelRaw |-> 16777218,
+        keydevRamRaw |-> FALSE ]
+      [] i = 53 -> [ pinRecordLen |-> 35,
+        pinRetriesRaw |-> 8,
+        alwaysUvRecordLen |-> 1,
+        alwaysUvRaw |-> 1,
+        persistentGrantRecord |-> FALSE,
+        backupSealedRecord |-> FALSE,
+        seedPlainRecord |-> TRUE,
+        seedEncryptedRecord |-> FALSE,
+        credentialSlotsRaw |-> 3,
+        rpSlotsRaw |-> 2,
+        tokenInUseRaw |-> TRUE,
+        tokenPermissionsRaw |-> 32,
+        tokenHasRpIdRaw |-> FALSE,
+        tokenUserPresentRaw |-> FALSE,
+        tokenUserVerifiedRaw |-> TRUE,
+        softLockRaw |-> FALSE,
+        pinMismatchesRaw |-> 0,
+        cmChannelRaw |-> 0,
+        cmRpCounterRaw |-> 1,
+        cmRpTotalRaw |-> 0,
+        cmCredCounterRaw |-> 1,
+        cmCredTotalRaw |-> 0,
+        warmBootRaw |-> FALSE,
+        channelRaw |-> 16777218,
+        keydevRamRaw |-> FALSE ]
+      [] i = 54 -> [ pinRecordLen |-> 35,
+        pinRetriesRaw |-> 8,
+        alwaysUvRecordLen |-> -1,
+        alwaysUvRaw |-> -1,
+        persistentGrantRecord |-> FALSE,
+        backupSealedRecord |-> FALSE,
+        seedPlainRecord |-> TRUE,
+        seedEncryptedRecord |-> FALSE,
+        credentialSlotsRaw |-> 3,
+        rpSlotsRaw |-> 2,
+        tokenInUseRaw |-> TRUE,
+        tokenPermissionsRaw |-> 32,
+        tokenHasRpIdRaw |-> FALSE,
+        tokenUserPresentRaw |-> FALSE,
+        tokenUserVerifiedRaw |-> TRUE,
+        softLockRaw |-> FALSE,
+        pinMismatchesRaw |-> 0,
+        cmChannelRaw |-> 0,
+        cmRpCounterRaw |-> 1,
+        cmRpTotalRaw |-> 0,
+        cmCredCounterRaw |-> 1,
+        cmCredTotalRaw |-> 0,
+        warmBootRaw |-> FALSE,
+        channelRaw |-> 16777218,
+        keydevRamRaw |-> FALSE ]
+      [] i = 55 -> [ pinRecordLen |-> 35,
+        pinRetriesRaw |-> 8,
+        alwaysUvRecordLen |-> -1,
+        alwaysUvRaw |-> -1,
+        persistentGrantRecord |-> FALSE,
+        backupSealedRecord |-> FALSE,
+        seedPlainRecord |-> TRUE,
+        seedEncryptedRecord |-> FALSE,
+        credentialSlotsRaw |-> 3,
+        rpSlotsRaw |-> 2,
+        tokenInUseRaw |-> TRUE,
+        tokenPermissionsRaw |-> 32,
+        tokenHasRpIdRaw |-> FALSE,
+        tokenUserPresentRaw |-> FALSE,
+        tokenUserVerifiedRaw |-> TRUE,
+        softLockRaw |-> FALSE,
+        pinMismatchesRaw |-> 0,
+        cmChannelRaw |-> 0,
+        cmRpCounterRaw |-> 1,
+        cmRpTotalRaw |-> 0,
+        cmCredCounterRaw |-> 1,
+        cmCredTotalRaw |-> 0,
+        warmBootRaw |-> FALSE,
+        channelRaw |-> 16777218,
+        keydevRamRaw |-> FALSE ]
+      [] i = 56 -> [ pinRecordLen |-> 35,
+        pinRetriesRaw |-> 8,
+        alwaysUvRecordLen |-> -1,
+        alwaysUvRaw |-> -1,
+        persistentGrantRecord |-> FALSE,
+        backupSealedRecord |-> FALSE,
+        seedPlainRecord |-> TRUE,
+        seedEncryptedRecord |-> FALSE,
+        credentialSlotsRaw |-> 3,
+        rpSlotsRaw |-> 2,
+        tokenInUseRaw |-> TRUE,
+        tokenPermissionsRaw |-> 32,
+        tokenHasRpIdRaw |-> FALSE,
+        tokenUserPresentRaw |-> FALSE,
+        tokenUserVerifiedRaw |-> TRUE,
+        softLockRaw |-> FALSE,
+        pinMismatchesRaw |-> 0,
+        cmChannelRaw |-> 0,
+        cmRpCounterRaw |-> 1,
+        cmRpTotalRaw |-> 0,
+        cmCredCounterRaw |-> 1,
+        cmCredTotalRaw |-> 0,
+        warmBootRaw |-> FALSE,
+        channelRaw |-> 16777219,
+        keydevRamRaw |-> FALSE ]
+      [] i = 57 -> [ pinRecordLen |-> 35,
+        pinRetriesRaw |-> 8,
+        alwaysUvRecordLen |-> -1,
+        alwaysUvRaw |-> -1,
+        persistentGrantRecord |-> FALSE,
+        backupSealedRecord |-> FALSE,
+        seedPlainRecord |-> TRUE,
+        seedEncryptedRecord |-> FALSE,
+        credentialSlotsRaw |-> 3,
+        rpSlotsRaw |-> 2,
+        tokenInUseRaw |-> TRUE,
+        tokenPermissionsRaw |-> 32,
+        tokenHasRpIdRaw |-> FALSE,
+        tokenUserPresentRaw |-> FALSE,
+        tokenUserVerifiedRaw |-> TRUE,
+        softLockRaw |-> FALSE,
+        pinMismatchesRaw |-> 0,
+        cmChannelRaw |-> 0,
+        cmRpCounterRaw |-> 1,
+        cmRpTotalRaw |-> 0,
+        cmCredCounterRaw |-> 1,
+        cmCredTotalRaw |-> 0,
+        warmBootRaw |-> FALSE,
+        channelRaw |-> 16777219,
+        keydevRamRaw |-> FALSE ]
+      [] i = 58 -> [ pinRecordLen |-> 35,
+        pinRetriesRaw |-> 8,
+        alwaysUvRecordLen |-> -1,
+        alwaysUvRaw |-> -1,
+        persistentGrantRecord |-> FALSE,
+        backupSealedRecord |-> FALSE,
+        seedPlainRecord |-> TRUE,
+        seedEncryptedRecord |-> FALSE,
+        credentialSlotsRaw |-> 3,
+        rpSlotsRaw |-> 2,
+        tokenInUseRaw |-> TRUE,
+        tokenPermissionsRaw |-> 3,
+        tokenHasRpIdRaw |-> FALSE,
+        tokenUserPresentRaw |-> FALSE,
+        tokenUserVerifiedRaw |-> TRUE,
+        softLockRaw |-> FALSE,
+        pinMismatchesRaw |-> 0,
+        cmChannelRaw |-> 0,
+        cmRpCounterRaw |-> 1,
+        cmRpTotalRaw |-> 0,
+        cmCredCounterRaw |-> 1,
+        cmCredTotalRaw |-> 0,
+        warmBootRaw |-> FALSE,
+        channelRaw |-> 16777219,
+        keydevRamRaw |-> FALSE ]
+      [] i = 59 -> [ pinRecordLen |-> 35,
+        pinRetriesRaw |-> 8,
+        alwaysUvRecordLen |-> -1,
+        alwaysUvRaw |-> -1,
+        persistentGrantRecord |-> FALSE,
+        backupSealedRecord |-> FALSE,
+        seedPlainRecord |-> TRUE,
+        seedEncryptedRecord |-> FALSE,
+        credentialSlotsRaw |-> 3,
+        rpSlotsRaw |-> 2,
+        tokenInUseRaw |-> TRUE,
+        tokenPermissionsRaw |-> 3,
+        tokenHasRpIdRaw |-> FALSE,
+        tokenUserPresentRaw |-> FALSE,
+        tokenUserVerifiedRaw |-> TRUE,
+        softLockRaw |-> FALSE,
+        pinMismatchesRaw |-> 0,
+        cmChannelRaw |-> 0,
+        cmRpCounterRaw |-> 1,
+        cmRpTotalRaw |-> 0,
+        cmCredCounterRaw |-> 1,
+        cmCredTotalRaw |-> 0,
+        warmBootRaw |-> FALSE,
+        channelRaw |-> 16777219,
+        keydevRamRaw |-> FALSE ]
+      [] i = 60 -> [ pinRecordLen |-> 35,
         pinRetriesRaw |-> 7,
         alwaysUvRecordLen |-> -1,
         alwaysUvRaw |-> -1,
@@ -750,8 +925,8 @@ BoundaryRaw(i) ==
         backupSealedRecord |-> FALSE,
         seedPlainRecord |-> TRUE,
         seedEncryptedRecord |-> FALSE,
-        credentialSlotsRaw |-> 2,
-        rpSlotsRaw |-> 1,
+        credentialSlotsRaw |-> 3,
+        rpSlotsRaw |-> 2,
         tokenInUseRaw |-> FALSE,
         tokenPermissionsRaw |-> 0,
         tokenHasRpIdRaw |-> FALSE,
@@ -765,9 +940,9 @@ BoundaryRaw(i) ==
         cmCredCounterRaw |-> 1,
         cmCredTotalRaw |-> 0,
         warmBootRaw |-> FALSE,
-        channelRaw |-> 16777218,
+        channelRaw |-> 16777219,
         keydevRamRaw |-> FALSE ]
-      [] i = 48 -> [ pinRecordLen |-> 35,
+      [] i = 61 -> [ pinRecordLen |-> 35,
         pinRetriesRaw |-> 7,
         alwaysUvRecordLen |-> -1,
         alwaysUvRaw |-> -1,
@@ -775,8 +950,33 @@ BoundaryRaw(i) ==
         backupSealedRecord |-> FALSE,
         seedPlainRecord |-> TRUE,
         seedEncryptedRecord |-> FALSE,
-        credentialSlotsRaw |-> 2,
-        rpSlotsRaw |-> 1,
+        credentialSlotsRaw |-> 3,
+        rpSlotsRaw |-> 2,
+        tokenInUseRaw |-> FALSE,
+        tokenPermissionsRaw |-> 0,
+        tokenHasRpIdRaw |-> FALSE,
+        tokenUserPresentRaw |-> FALSE,
+        tokenUserVerifiedRaw |-> FALSE,
+        softLockRaw |-> FALSE,
+        pinMismatchesRaw |-> 1,
+        cmChannelRaw |-> 0,
+        cmRpCounterRaw |-> 1,
+        cmRpTotalRaw |-> 0,
+        cmCredCounterRaw |-> 1,
+        cmCredTotalRaw |-> 0,
+        warmBootRaw |-> FALSE,
+        channelRaw |-> 16777219,
+        keydevRamRaw |-> FALSE ]
+      [] i = 62 -> [ pinRecordLen |-> 35,
+        pinRetriesRaw |-> 7,
+        alwaysUvRecordLen |-> -1,
+        alwaysUvRaw |-> -1,
+        persistentGrantRecord |-> FALSE,
+        backupSealedRecord |-> FALSE,
+        seedPlainRecord |-> TRUE,
+        seedEncryptedRecord |-> FALSE,
+        credentialSlotsRaw |-> 3,
+        rpSlotsRaw |-> 2,
         tokenInUseRaw |-> FALSE,
         tokenPermissionsRaw |-> 0,
         tokenHasRpIdRaw |-> FALSE,
@@ -792,7 +992,7 @@ BoundaryRaw(i) ==
         warmBootRaw |-> FALSE,
         channelRaw |-> 0,
         keydevRamRaw |-> FALSE ]
-      [] i = 58 -> [ pinRecordLen |-> -1,
+      [] i = 72 -> [ pinRecordLen |-> -1,
         pinRetriesRaw |-> -1,
         alwaysUvRecordLen |-> -1,
         alwaysUvRaw |-> -1,
@@ -815,9 +1015,9 @@ BoundaryRaw(i) ==
         cmCredCounterRaw |-> 1,
         cmCredTotalRaw |-> 0,
         warmBootRaw |-> FALSE,
-        channelRaw |-> 16777219,
+        channelRaw |-> 16777220,
         keydevRamRaw |-> FALSE ]
-      [] i = 60 -> [ pinRecordLen |-> -1,
+      [] i = 74 -> [ pinRecordLen |-> -1,
         pinRetriesRaw |-> -1,
         alwaysUvRecordLen |-> -1,
         alwaysUvRaw |-> -1,
@@ -840,7 +1040,7 @@ BoundaryRaw(i) ==
         cmCredCounterRaw |-> 1,
         cmCredTotalRaw |-> 0,
         warmBootRaw |-> FALSE,
-        channelRaw |-> 16777219,
+        channelRaw |-> 16777220,
         keydevRamRaw |-> FALSE ]
       [] OTHER -> CHOOSE x : FALSE
 
@@ -869,7 +1069,71 @@ BoundaryAbstract(i) ==
         rpBound |-> FALSE,
         pinSet |-> FALSE,
         persistentGrant |-> FALSE ]
-      [] i = 5 -> [ live |-> FALSE,
+      [] i = 9 -> [ live |-> FALSE,
+        permissionMc |-> FALSE,
+        permissionGa |-> FALSE,
+        permissionCm |-> FALSE,
+        permissionAcfg |-> FALSE,
+        rpBound |-> FALSE,
+        pinSet |-> FALSE,
+        persistentGrant |-> FALSE ]
+      [] i = 10 -> [ live |-> FALSE,
+        permissionMc |-> FALSE,
+        permissionGa |-> FALSE,
+        permissionCm |-> FALSE,
+        permissionAcfg |-> FALSE,
+        rpBound |-> FALSE,
+        pinSet |-> FALSE,
+        persistentGrant |-> FALSE ]
+      [] i = 11 -> [ live |-> FALSE,
+        permissionMc |-> FALSE,
+        permissionGa |-> FALSE,
+        permissionCm |-> FALSE,
+        permissionAcfg |-> FALSE,
+        rpBound |-> FALSE,
+        pinSet |-> FALSE,
+        persistentGrant |-> FALSE ]
+      [] i = 12 -> [ live |-> FALSE,
+        permissionMc |-> FALSE,
+        permissionGa |-> FALSE,
+        permissionCm |-> FALSE,
+        permissionAcfg |-> FALSE,
+        rpBound |-> FALSE,
+        pinSet |-> FALSE,
+        persistentGrant |-> FALSE ]
+      [] i = 13 -> [ live |-> FALSE,
+        permissionMc |-> FALSE,
+        permissionGa |-> FALSE,
+        permissionCm |-> FALSE,
+        permissionAcfg |-> FALSE,
+        rpBound |-> FALSE,
+        pinSet |-> FALSE,
+        persistentGrant |-> FALSE ]
+      [] i = 14 -> [ live |-> FALSE,
+        permissionMc |-> FALSE,
+        permissionGa |-> FALSE,
+        permissionCm |-> FALSE,
+        permissionAcfg |-> FALSE,
+        rpBound |-> FALSE,
+        pinSet |-> FALSE,
+        persistentGrant |-> FALSE ]
+      [] i = 15 -> [ live |-> FALSE,
+        permissionMc |-> FALSE,
+        permissionGa |-> FALSE,
+        permissionCm |-> FALSE,
+        permissionAcfg |-> FALSE,
+        rpBound |-> FALSE,
+        pinSet |-> FALSE,
+        persistentGrant |-> FALSE ]
+      [] i = 16 -> [ live |-> FALSE,
+        permissionMc |-> FALSE,
+        permissionGa |-> FALSE,
+        permissionCm |-> FALSE,
+        permissionAcfg |-> FALSE,
+        rpBound |-> FALSE,
+        pinSet |-> FALSE,
+        persistentGrant |-> FALSE ]
+      [] i = 19 -> [ live |-> FALSE,
         permissionMc |-> FALSE,
         permissionGa |-> FALSE,
         permissionCm |-> FALSE,
@@ -877,39 +1141,7 @@ BoundaryAbstract(i) ==
         rpBound |-> FALSE,
         pinSet |-> TRUE,
         persistentGrant |-> FALSE ]
-      [] i = 6 -> [ live |-> TRUE,
-        permissionMc |-> TRUE,
-        permissionGa |-> TRUE,
-        permissionCm |-> FALSE,
-        permissionAcfg |-> FALSE,
-        rpBound |-> FALSE,
-        pinSet |-> TRUE,
-        persistentGrant |-> FALSE ]
-      [] i = 13 -> [ live |-> TRUE,
-        permissionMc |-> FALSE,
-        permissionGa |-> FALSE,
-        permissionCm |-> FALSE,
-        permissionAcfg |-> FALSE,
-        rpBound |-> TRUE,
-        pinSet |-> TRUE,
-        persistentGrant |-> FALSE ]
-      [] i = 14 -> [ live |-> TRUE,
-        permissionMc |-> TRUE,
-        permissionGa |-> TRUE,
-        permissionCm |-> FALSE,
-        permissionAcfg |-> FALSE,
-        rpBound |-> FALSE,
-        pinSet |-> TRUE,
-        persistentGrant |-> FALSE ]
-      [] i = 21 -> [ live |-> TRUE,
-        permissionMc |-> FALSE,
-        permissionGa |-> FALSE,
-        permissionCm |-> FALSE,
-        permissionAcfg |-> FALSE,
-        rpBound |-> TRUE,
-        pinSet |-> TRUE,
-        persistentGrant |-> FALSE ]
-      [] i = 22 -> [ live |-> TRUE,
+      [] i = 20 -> [ live |-> TRUE,
         permissionMc |-> TRUE,
         permissionGa |-> TRUE,
         permissionCm |-> FALSE,
@@ -926,58 +1158,10 @@ BoundaryAbstract(i) ==
         pinSet |-> TRUE,
         persistentGrant |-> FALSE ]
       [] i = 28 -> [ live |-> TRUE,
-        permissionMc |-> FALSE,
-        permissionGa |-> FALSE,
+        permissionMc |-> TRUE,
+        permissionGa |-> TRUE,
         permissionCm |-> FALSE,
         permissionAcfg |-> FALSE,
-        rpBound |-> TRUE,
-        pinSet |-> TRUE,
-        persistentGrant |-> FALSE ]
-      [] i = 29 -> [ live |-> TRUE,
-        permissionMc |-> FALSE,
-        permissionGa |-> FALSE,
-        permissionCm |-> FALSE,
-        permissionAcfg |-> FALSE,
-        rpBound |-> TRUE,
-        pinSet |-> TRUE,
-        persistentGrant |-> FALSE ]
-      [] i = 30 -> [ live |-> TRUE,
-        permissionMc |-> FALSE,
-        permissionGa |-> FALSE,
-        permissionCm |-> FALSE,
-        permissionAcfg |-> FALSE,
-        rpBound |-> TRUE,
-        pinSet |-> TRUE,
-        persistentGrant |-> FALSE ]
-      [] i = 31 -> [ live |-> TRUE,
-        permissionMc |-> FALSE,
-        permissionGa |-> FALSE,
-        permissionCm |-> FALSE,
-        permissionAcfg |-> FALSE,
-        rpBound |-> TRUE,
-        pinSet |-> TRUE,
-        persistentGrant |-> FALSE ]
-      [] i = 32 -> [ live |-> TRUE,
-        permissionMc |-> FALSE,
-        permissionGa |-> FALSE,
-        permissionCm |-> FALSE,
-        permissionAcfg |-> FALSE,
-        rpBound |-> TRUE,
-        pinSet |-> TRUE,
-        persistentGrant |-> FALSE ]
-      [] i = 33 -> [ live |-> TRUE,
-        permissionMc |-> FALSE,
-        permissionGa |-> FALSE,
-        permissionCm |-> FALSE,
-        permissionAcfg |-> TRUE,
-        rpBound |-> FALSE,
-        pinSet |-> TRUE,
-        persistentGrant |-> FALSE ]
-      [] i = 34 -> [ live |-> TRUE,
-        permissionMc |-> FALSE,
-        permissionGa |-> FALSE,
-        permissionCm |-> FALSE,
-        permissionAcfg |-> TRUE,
         rpBound |-> FALSE,
         pinSet |-> TRUE,
         persistentGrant |-> FALSE ]
@@ -985,47 +1169,15 @@ BoundaryAbstract(i) ==
         permissionMc |-> FALSE,
         permissionGa |-> FALSE,
         permissionCm |-> FALSE,
-        permissionAcfg |-> TRUE,
-        rpBound |-> FALSE,
+        permissionAcfg |-> FALSE,
+        rpBound |-> TRUE,
         pinSet |-> TRUE,
         persistentGrant |-> FALSE ]
       [] i = 36 -> [ live |-> TRUE,
-        permissionMc |-> FALSE,
-        permissionGa |-> FALSE,
+        permissionMc |-> TRUE,
+        permissionGa |-> TRUE,
         permissionCm |-> FALSE,
-        permissionAcfg |-> TRUE,
-        rpBound |-> FALSE,
-        pinSet |-> TRUE,
-        persistentGrant |-> FALSE ]
-      [] i = 37 -> [ live |-> TRUE,
-        permissionMc |-> FALSE,
-        permissionGa |-> FALSE,
-        permissionCm |-> FALSE,
-        permissionAcfg |-> TRUE,
-        rpBound |-> FALSE,
-        pinSet |-> TRUE,
-        persistentGrant |-> FALSE ]
-      [] i = 38 -> [ live |-> TRUE,
-        permissionMc |-> FALSE,
-        permissionGa |-> FALSE,
-        permissionCm |-> FALSE,
-        permissionAcfg |-> TRUE,
-        rpBound |-> FALSE,
-        pinSet |-> TRUE,
-        persistentGrant |-> FALSE ]
-      [] i = 39 -> [ live |-> TRUE,
-        permissionMc |-> FALSE,
-        permissionGa |-> FALSE,
-        permissionCm |-> FALSE,
-        permissionAcfg |-> TRUE,
-        rpBound |-> FALSE,
-        pinSet |-> TRUE,
-        persistentGrant |-> FALSE ]
-      [] i = 40 -> [ live |-> TRUE,
-        permissionMc |-> FALSE,
-        permissionGa |-> FALSE,
-        permissionCm |-> FALSE,
-        permissionAcfg |-> TRUE,
+        permissionAcfg |-> FALSE,
         rpBound |-> FALSE,
         pinSet |-> TRUE,
         persistentGrant |-> FALSE ]
@@ -1033,27 +1185,139 @@ BoundaryAbstract(i) ==
         permissionMc |-> FALSE,
         permissionGa |-> FALSE,
         permissionCm |-> FALSE,
-        permissionAcfg |-> TRUE,
-        rpBound |-> FALSE,
+        permissionAcfg |-> FALSE,
+        rpBound |-> TRUE,
         pinSet |-> TRUE,
         persistentGrant |-> FALSE ]
       [] i = 42 -> [ live |-> TRUE,
         permissionMc |-> FALSE,
         permissionGa |-> FALSE,
         permissionCm |-> FALSE,
-        permissionAcfg |-> TRUE,
-        rpBound |-> FALSE,
+        permissionAcfg |-> FALSE,
+        rpBound |-> TRUE,
         pinSet |-> TRUE,
         persistentGrant |-> FALSE ]
       [] i = 43 -> [ live |-> TRUE,
         permissionMc |-> FALSE,
         permissionGa |-> FALSE,
         permissionCm |-> FALSE,
+        permissionAcfg |-> FALSE,
+        rpBound |-> TRUE,
+        pinSet |-> TRUE,
+        persistentGrant |-> FALSE ]
+      [] i = 44 -> [ live |-> TRUE,
+        permissionMc |-> FALSE,
+        permissionGa |-> FALSE,
+        permissionCm |-> FALSE,
+        permissionAcfg |-> FALSE,
+        rpBound |-> TRUE,
+        pinSet |-> TRUE,
+        persistentGrant |-> FALSE ]
+      [] i = 45 -> [ live |-> TRUE,
+        permissionMc |-> FALSE,
+        permissionGa |-> FALSE,
+        permissionCm |-> FALSE,
+        permissionAcfg |-> FALSE,
+        rpBound |-> TRUE,
+        pinSet |-> TRUE,
+        persistentGrant |-> FALSE ]
+      [] i = 46 -> [ live |-> TRUE,
+        permissionMc |-> FALSE,
+        permissionGa |-> FALSE,
+        permissionCm |-> FALSE,
+        permissionAcfg |-> FALSE,
+        rpBound |-> TRUE,
+        pinSet |-> TRUE,
+        persistentGrant |-> FALSE ]
+      [] i = 47 -> [ live |-> TRUE,
+        permissionMc |-> FALSE,
+        permissionGa |-> FALSE,
+        permissionCm |-> FALSE,
         permissionAcfg |-> TRUE,
         rpBound |-> FALSE,
         pinSet |-> TRUE,
         persistentGrant |-> FALSE ]
-      [] i = 44 -> [ live |-> TRUE,
+      [] i = 48 -> [ live |-> TRUE,
+        permissionMc |-> FALSE,
+        permissionGa |-> FALSE,
+        permissionCm |-> FALSE,
+        permissionAcfg |-> TRUE,
+        rpBound |-> FALSE,
+        pinSet |-> TRUE,
+        persistentGrant |-> FALSE ]
+      [] i = 49 -> [ live |-> TRUE,
+        permissionMc |-> FALSE,
+        permissionGa |-> FALSE,
+        permissionCm |-> FALSE,
+        permissionAcfg |-> TRUE,
+        rpBound |-> FALSE,
+        pinSet |-> TRUE,
+        persistentGrant |-> FALSE ]
+      [] i = 50 -> [ live |-> TRUE,
+        permissionMc |-> FALSE,
+        permissionGa |-> FALSE,
+        permissionCm |-> FALSE,
+        permissionAcfg |-> TRUE,
+        rpBound |-> FALSE,
+        pinSet |-> TRUE,
+        persistentGrant |-> FALSE ]
+      [] i = 51 -> [ live |-> TRUE,
+        permissionMc |-> FALSE,
+        permissionGa |-> FALSE,
+        permissionCm |-> FALSE,
+        permissionAcfg |-> TRUE,
+        rpBound |-> FALSE,
+        pinSet |-> TRUE,
+        persistentGrant |-> FALSE ]
+      [] i = 52 -> [ live |-> TRUE,
+        permissionMc |-> FALSE,
+        permissionGa |-> FALSE,
+        permissionCm |-> FALSE,
+        permissionAcfg |-> TRUE,
+        rpBound |-> FALSE,
+        pinSet |-> TRUE,
+        persistentGrant |-> FALSE ]
+      [] i = 53 -> [ live |-> TRUE,
+        permissionMc |-> FALSE,
+        permissionGa |-> FALSE,
+        permissionCm |-> FALSE,
+        permissionAcfg |-> TRUE,
+        rpBound |-> FALSE,
+        pinSet |-> TRUE,
+        persistentGrant |-> FALSE ]
+      [] i = 54 -> [ live |-> TRUE,
+        permissionMc |-> FALSE,
+        permissionGa |-> FALSE,
+        permissionCm |-> FALSE,
+        permissionAcfg |-> TRUE,
+        rpBound |-> FALSE,
+        pinSet |-> TRUE,
+        persistentGrant |-> FALSE ]
+      [] i = 55 -> [ live |-> TRUE,
+        permissionMc |-> FALSE,
+        permissionGa |-> FALSE,
+        permissionCm |-> FALSE,
+        permissionAcfg |-> TRUE,
+        rpBound |-> FALSE,
+        pinSet |-> TRUE,
+        persistentGrant |-> FALSE ]
+      [] i = 56 -> [ live |-> TRUE,
+        permissionMc |-> FALSE,
+        permissionGa |-> FALSE,
+        permissionCm |-> FALSE,
+        permissionAcfg |-> TRUE,
+        rpBound |-> FALSE,
+        pinSet |-> TRUE,
+        persistentGrant |-> FALSE ]
+      [] i = 57 -> [ live |-> TRUE,
+        permissionMc |-> FALSE,
+        permissionGa |-> FALSE,
+        permissionCm |-> FALSE,
+        permissionAcfg |-> TRUE,
+        rpBound |-> FALSE,
+        pinSet |-> TRUE,
+        persistentGrant |-> FALSE ]
+      [] i = 58 -> [ live |-> TRUE,
         permissionMc |-> TRUE,
         permissionGa |-> TRUE,
         permissionCm |-> FALSE,
@@ -1061,7 +1325,7 @@ BoundaryAbstract(i) ==
         rpBound |-> FALSE,
         pinSet |-> TRUE,
         persistentGrant |-> FALSE ]
-      [] i = 45 -> [ live |-> TRUE,
+      [] i = 59 -> [ live |-> TRUE,
         permissionMc |-> TRUE,
         permissionGa |-> TRUE,
         permissionCm |-> FALSE,
@@ -1069,7 +1333,7 @@ BoundaryAbstract(i) ==
         rpBound |-> FALSE,
         pinSet |-> TRUE,
         persistentGrant |-> FALSE ]
-      [] i = 46 -> [ live |-> FALSE,
+      [] i = 60 -> [ live |-> FALSE,
         permissionMc |-> FALSE,
         permissionGa |-> FALSE,
         permissionCm |-> FALSE,
@@ -1077,7 +1341,7 @@ BoundaryAbstract(i) ==
         rpBound |-> FALSE,
         pinSet |-> TRUE,
         persistentGrant |-> FALSE ]
-      [] i = 47 -> [ live |-> FALSE,
+      [] i = 61 -> [ live |-> FALSE,
         permissionMc |-> FALSE,
         permissionGa |-> FALSE,
         permissionCm |-> FALSE,
@@ -1085,7 +1349,7 @@ BoundaryAbstract(i) ==
         rpBound |-> FALSE,
         pinSet |-> TRUE,
         persistentGrant |-> FALSE ]
-      [] i = 48 -> [ live |-> FALSE,
+      [] i = 62 -> [ live |-> FALSE,
         permissionMc |-> FALSE,
         permissionGa |-> FALSE,
         permissionCm |-> FALSE,
@@ -1093,7 +1357,7 @@ BoundaryAbstract(i) ==
         rpBound |-> FALSE,
         pinSet |-> TRUE,
         persistentGrant |-> FALSE ]
-      [] i = 58 -> [ live |-> FALSE,
+      [] i = 72 -> [ live |-> FALSE,
         permissionMc |-> FALSE,
         permissionGa |-> FALSE,
         permissionCm |-> FALSE,
@@ -1101,7 +1365,7 @@ BoundaryAbstract(i) ==
         rpBound |-> FALSE,
         pinSet |-> FALSE,
         persistentGrant |-> FALSE ]
-      [] i = 60 -> [ live |-> FALSE,
+      [] i = 74 -> [ live |-> FALSE,
         permissionMc |-> FALSE,
         permissionGa |-> FALSE,
         permissionCm |-> FALSE,
@@ -1112,118 +1376,142 @@ BoundaryAbstract(i) ==
       [] OTHER -> CHOOSE x : FALSE
 
 BoundaryOutcomeRaw(i) ==
-    CASE i = 5 -> "Authorized"
-      [] i = 6 -> "Authorized"
-      [] i = 13 -> "Authorized"
-      [] i = 14 -> "Authorized"
-      [] i = 21 -> "Authorized"
-      [] i = 22 -> "Authorized"
+    CASE i = 9 -> "Authorized"
+      [] i = 19 -> "Authorized"
+      [] i = 20 -> "Authorized"
       [] i = 27 -> "Authorized"
-      [] i = 33 -> "Authorized"
-      [] i = 34 -> "Authorized"
-      [] i = 40 -> "Authorized"
-      [] i = 44 -> "Authorized"
+      [] i = 28 -> "Authorized"
+      [] i = 35 -> "Authorized"
+      [] i = 36 -> "Authorized"
+      [] i = 41 -> "Authorized"
+      [] i = 47 -> "Authorized"
+      [] i = 48 -> "Authorized"
+      [] i = 53 -> "Authorized"
+      [] i = 54 -> "Authorized"
+      [] i = 58 -> "Authorized"
       [] OTHER -> CHOOSE x : FALSE
 
 BoundaryOutcomeB(i) ==
-    CASE i = 5 -> "Authorized"
-      [] i = 6 -> "Authorized"
-      [] i = 13 -> "Authorized"
-      [] i = 14 -> "Authorized"
-      [] i = 21 -> "Authorized"
-      [] i = 22 -> "Authorized"
+    CASE i = 9 -> "Authorized"
+      [] i = 19 -> "Authorized"
+      [] i = 20 -> "Authorized"
       [] i = 27 -> "Authorized"
-      [] i = 33 -> "Authorized"
-      [] i = 34 -> "Authorized"
-      [] i = 40 -> "Authorized"
-      [] i = 44 -> "Authorized"
+      [] i = 28 -> "Authorized"
+      [] i = 35 -> "Authorized"
+      [] i = 36 -> "Authorized"
+      [] i = 41 -> "Authorized"
+      [] i = 47 -> "Authorized"
+      [] i = 48 -> "Authorized"
+      [] i = 53 -> "Authorized"
+      [] i = 54 -> "Authorized"
+      [] i = 58 -> "Authorized"
       [] OTHER -> CHOOSE x : FALSE
 
 GateKind(i) ==
-    CASE i = 29 -> "mc"
-      [] i = 30 -> "mc"
-      [] i = 36 -> "mc"
-      [] i = 37 -> "mc"
-      [] i = 60 -> "reset"
+    CASE i = 11 -> "mc"
+      [] i = 13 -> "mc"
+      [] i = 43 -> "mc"
+      [] i = 44 -> "mc"
+      [] i = 50 -> "mc"
+      [] i = 51 -> "mc"
+      [] i = 74 -> "reset"
       [] OTHER -> CHOOSE x : FALSE
 
 GateRk(i) ==
-    CASE i = 29 -> TRUE
-      [] i = 30 -> FALSE
-      [] i = 36 -> FALSE
-      [] i = 37 -> TRUE
-      [] i = 60 -> FALSE
+    CASE i = 11 -> TRUE
+      [] i = 13 -> FALSE
+      [] i = 43 -> TRUE
+      [] i = 44 -> FALSE
+      [] i = 50 -> FALSE
+      [] i = 51 -> TRUE
+      [] i = 74 -> FALSE
       [] OTHER -> CHOOSE x : FALSE
 
 GateOutcomeRaw(i) ==
-    CASE i = 29 -> "Rejected"
-      [] i = 30 -> "Authorized"
-      [] i = 36 -> "Rejected"
-      [] i = 37 -> "Rejected"
-      [] i = 60 -> "Rejected"
+    CASE i = 11 -> "Authorized"
+      [] i = 13 -> "Authorized"
+      [] i = 43 -> "Rejected"
+      [] i = 44 -> "Authorized"
+      [] i = 50 -> "Rejected"
+      [] i = 51 -> "Rejected"
+      [] i = 74 -> "Rejected"
       [] OTHER -> CHOOSE x : FALSE
 
 TraceAction(i) ==
     CASE i = 0 -> TraceStutter
       [] i = 1 -> TraceStutter
-      [] i = 2 -> SetPinStart
-      [] i = 3 -> SetPinClearPpuat
-      [] i = 4 -> SetPinWrite
-      [] i = 5 -> GetPinToken({"mc", "ga"}, NoRp)
-      [] i = 6 -> RegisterStart("rp1", Fido)
-      [] i = 7 -> PressDown
-      [] i = 8 -> /\ TouchConfirm /\ pres'.pressing = TRUE
-      [] i = 9 -> RegisterTouched
-      [] i = 10 -> RegisterWriteA
-      [] i = 11 -> RegisterWriteB
-      [] i = 12 -> PressUp
-      [] i = 13 -> GetPinToken({"mc", "ga"}, NoRp)
-      [] i = 14 -> RegisterStart("rp1", Fido)
-      [] i = 15 -> PressDown
-      [] i = 16 -> /\ TouchConfirm /\ pres'.pressing = TRUE
-      [] i = 17 -> RegisterTouched
-      [] i = 18 -> RegisterWriteA
-      [] i = 19 -> RegisterWriteB
-      [] i = 20 -> PressUp
-      [] i = 21 -> GetPinToken({"mc", "ga"}, NoRp)
-      [] i = 22 -> AssertStart("rp1", Fido)
-      [] i = 23 -> PressDown
-      [] i = 24 -> /\ TouchConfirm /\ pres'.pressing = TRUE
-      [] i = 25 -> AssertFinish
+      [] i = 2 -> RegisterStart("rp1", Fido)
+      [] i = 3 -> PressDown
+      [] i = 4 -> /\ TouchConfirm /\ pres'.pressing = TRUE
+      [] i = 5 -> RegisterTouched
+      [] i = 6 -> RegisterWriteA
+      [] i = 7 -> RegisterWriteB
+      [] i = 8 -> PressUp
+      [] i = 9 -> TraceStutter
+      [] i = 10 -> TraceStutter
+      [] i = 11 -> TraceStutter
+      [] i = 12 -> TraceStutter
+      [] i = 13 -> TraceStutter
+      [] i = 14 -> TraceStutter
+      [] i = 15 -> TraceStutter
+      [] i = 16 -> SetPinStart
+      [] i = 17 -> SetPinClearPpuat
+      [] i = 18 -> SetPinWrite
+      [] i = 19 -> GetPinToken({"mc", "ga"}, NoRp)
+      [] i = 20 -> RegisterStart("rp1", Fido)
+      [] i = 21 -> PressDown
+      [] i = 22 -> /\ TouchConfirm /\ pres'.pressing = TRUE
+      [] i = 23 -> RegisterTouched
+      [] i = 24 -> RegisterWriteA
+      [] i = 25 -> RegisterWriteB
       [] i = 26 -> PressUp
-      [] i = 27 -> TraceStutter
-      [] i = 28 -> TraceStutter
-      [] i = 29 -> TraceStutter
-      [] i = 30 -> TraceStutter
-      [] i = 31 -> TraceStutter
-      [] i = 32 -> GetPinToken({"acfg"}, NoRp)
-      [] i = 33 -> ConfigOp
-      [] i = 34 -> TraceStutter
-      [] i = 35 -> TraceStutter
-      [] i = 36 -> TraceStutter
-      [] i = 37 -> TraceStutter
-      [] i = 38 -> TraceStutter
-      [] i = 39 -> ConfigOp
-      [] i = 40 -> TraceStutter
+      [] i = 27 -> GetPinToken({"mc", "ga"}, NoRp)
+      [] i = 28 -> RegisterStart("rp1", Fido)
+      [] i = 29 -> PressDown
+      [] i = 30 -> /\ TouchConfirm /\ pres'.pressing = TRUE
+      [] i = 31 -> RegisterTouched
+      [] i = 32 -> RegisterWriteA
+      [] i = 33 -> RegisterWriteB
+      [] i = 34 -> PressUp
+      [] i = 35 -> GetPinToken({"mc", "ga"}, NoRp)
+      [] i = 36 -> AssertStart("rp1", Fido)
+      [] i = 37 -> PressDown
+      [] i = 38 -> /\ TouchConfirm /\ pres'.pressing = TRUE
+      [] i = 39 -> AssertFinish
+      [] i = 40 -> PressUp
       [] i = 41 -> TraceStutter
       [] i = 42 -> TraceStutter
-      [] i = 43 -> GetPinToken({"mc", "ga"}, NoRp)
+      [] i = 43 -> TraceStutter
       [] i = 44 -> TraceStutter
-      [] i = 45 -> WrongPin
-      [] i = 46 -> TraceStutter
-      [] i = 47 -> PowerCut
-      [] i = 48 -> ResetStart
-      [] i = 49 -> PressDown
-      [] i = 50 -> /\ TouchConfirm /\ pres'.pressing = TRUE
-      [] i = 51 -> ResetConfirmed
-      [] i = 52 -> ResetSweepSecrets
-      [] i = 53 -> ResetSweepSecrets
-      [] i = 54 -> ResetSweepGates
-      [] i = 55 -> ResetSweepGates
-      [] i = 56 -> ResetFinish
-      [] i = 57 -> PressUp
-      [] i = 58 -> Tick
-      [] i = 59 -> TraceStutter
+      [] i = 45 -> TraceStutter
+      [] i = 46 -> GetPinToken({"acfg"}, NoRp)
+      [] i = 47 -> ConfigOp
+      [] i = 48 -> TraceStutter
+      [] i = 49 -> TraceStutter
+      [] i = 50 -> TraceStutter
+      [] i = 51 -> TraceStutter
+      [] i = 52 -> GetPinToken({"acfg"}, NoRp)
+      [] i = 53 -> ConfigOp
+      [] i = 54 -> TraceStutter
+      [] i = 55 -> TraceStutter
+      [] i = 56 -> TraceStutter
+      [] i = 57 -> GetPinToken({"mc", "ga"}, NoRp)
+      [] i = 58 -> TraceStutter
+      [] i = 59 -> WrongPin
+      [] i = 60 -> TraceStutter
+      [] i = 61 -> PowerCut
+      [] i = 62 -> ResetStart
+      [] i = 63 -> PressDown
+      [] i = 64 -> /\ TouchConfirm /\ pres'.pressing = TRUE
+      [] i = 65 -> ResetConfirmed
+      [] i = 66 -> ResetSweepSecrets
+      [] i = 67 -> ResetSweepSecrets
+      [] i = 68 -> ResetSweepGates
+      [] i = 69 -> ResetSweepGates
+      [] i = 70 -> ResetFinish
+      [] i = 71 -> PressUp
+      [] i = 72 -> Tick
+      [] i = 73 -> TraceStutter
       [] OTHER -> CHOOSE x : FALSE
 
 =============================================================================

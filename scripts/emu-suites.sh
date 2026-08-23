@@ -73,8 +73,10 @@ for t in tests/[0-9]*.py; do
   case "$(basename "$t")" in
     # Their own sessions below: `30` wants the Yubico card identity, and `28`/`76`
     # want a PIN already set. `16` wants one too and has no session of its own —
-    # it exists for the recording, which runs it where `21` has just set it.
-    30_* | 28_* | 76_* | 16_*) continue ;;
+    # it exists for the recording, which runs it where `21` has just set it. `09`
+    # is the mirror: it wants NO PIN, and in this sweep it would meet whichever
+    # one an earlier suite left behind.
+    30_* | 28_* | 76_* | 16_* | 09_*) continue ;;
     *) run_suite "$t" ;;
   esac
 done
@@ -84,12 +86,13 @@ stop_emu
 # RSKeySecurityState model. Other sessions are traced too, but this one owns the
 # five coverage ratchets in formal/floors.txt.
 #
-# These three suites in ONE emulator lifetime are what those ratchets were
+# These suites in ONE emulator lifetime are what those ratchets were
 # measured on (formal/README.md, phase 4) — the replug between them is a recorded
 # boundary, and it is the only way `PowerCut` is reached. Recording fewer misses
 # the floors; keep this list and the committed trace moving together.
 # An entry may carry its own arguments; `16` needs the PIN `21` has just set.
 SECURITY_TRACE_SUITES=(
+  09_tokenless_gate_no_pin
   21_pin_webauthn
   "16_always_uv_gate --pin 1234"
   20_clientpin

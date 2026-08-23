@@ -31,6 +31,62 @@ def resets():
     return found
 
 
+def clay():
+    """Raw material for a case that builds its own event. Any boundary will do —
+    every field those cases care about is overwritten before the assertion."""
+    return events()[0]
+
+
+def set_pin():
+    """The boundary where the PIN record appears. By SHAPE, for `resets()`' reason."""
+    found = [e for e in events()
+             if e["pre"]["pin_record_len"] is None and e["post"]["pin_record_len"] == 35]
+    assert len(found) == 1, [e["sequence"] for e in found]
+    return found[0]
+
+
+def wrong_pin():
+    """The boundary where BOTH PIN counters move — the only shape `WrongPin` maps."""
+    found = [e for e in events()
+             if e["pre"]["pin_retries_raw"] is not None
+             and e["post"]["pin_retries_raw"] is not None
+             and e["post"]["pin_retries_raw"] < e["pre"]["pin_retries_raw"]
+             and e["post"]["pin_mismatches_raw"] > e["pre"]["pin_mismatches_raw"]]
+    assert found, "the recording carries no wrong-PIN boundary"
+    return found[0]
+
+
+def issued_token(perms):
+    """The first clientPIN boundary that issues a token carrying `perms`."""
+    found = [e for e in events()
+             if e["command_raw"] == 0x06 and not e["pre"]["token_in_use_raw"]
+             and e["post"]["token_in_use_raw"]
+             and e["post"]["token_permissions_raw"] == perms]
+    assert found, f"the recording issues no token carrying {perms}"
+    return found[0]
+
+
+def first_register():
+    """The first makeCredential that actually stored a credential."""
+    found = [e for e in events()
+             if e["command_raw"] == 0x01
+             and e["post"]["credential_slots_raw"] > e["pre"]["credential_slots_raw"]]
+    assert found, "the recording registers nothing"
+    return found[0]
+
+
+def mc_gate(rk, always_uv=False, pin_set=True):
+    """The token-less makeCredential boundary filling one cell of the gate grid."""
+    found = [e for e in events()
+             if e["command_raw"] == 0x01
+             and e["request"] == {"rk": rk, "pin_uv_auth": False}
+             and not (security_trace.raw_changes(e) - {"channel_raw"})
+             and bool(e["pre"]["always_uv_raw"]) == always_uv
+             and (e["pre"]["pin_record_len"] is not None) == pin_set]
+    assert found, f"no gate cell rk={rk} alwaysUv={always_uv} pinSet={pin_set}"
+    return found[0]
+
+
 def test_the_recorded_trace_is_exactly_what_the_ratchets_claim(tmp_path):
     # Equality, not a floor: a richer recording has to move `floors.txt` in the
     # same commit, and the numbers live in one place instead of here as well.
@@ -63,11 +119,11 @@ def names_of(event, ledger=None):
 
 
 def test_mapper_infers_set_pin_without_using_the_hint():
-    assert names_of(events()[2]) == ["SetPinStart", "SetPinClearPpuat", "SetPinWrite"]
+    assert names_of(set_pin()) == ["SetPinStart", "SetPinClearPpuat", "SetPinWrite"]
 
 
 def test_a_power_cycle_is_one_power_cut_and_reads_no_state_difference():
-    event = copy.deepcopy(events()[0])
+    event = copy.deepcopy(clay())
     event["command_raw"] = security_trace.POWER_CYCLE
     # The event kind alone selects it: the raw sides are identical here, and the
     # unchanged-state arm below would otherwise claim it as a stutter.
@@ -124,7 +180,7 @@ def test_a_wrong_pin_needs_both_counters_to_move():
     # A retry drop alone is what a *correct* PIN shows on the attempt before the
     # budget is restored, so either half on its own must stay unmapped.
     for retries, mismatches in ((7, 0), (8, 1)):
-        event = copy.deepcopy(events()[16])
+        event = copy.deepcopy(wrong_pin())
         event["post"]["pin_retries_raw"] = retries
         event["post"]["pin_mismatches_raw"] = mismatches
         with pytest.raises(SystemExit, match="no independent B mapping"):
@@ -132,7 +188,7 @@ def test_a_wrong_pin_needs_both_counters_to_move():
 
 
 def test_an_unknown_raw_state_change_is_never_a_stutter():
-    event = copy.deepcopy(events()[1])
+    event = copy.deepcopy(clay())
     event["post"]["backup_sealed_record"] = True
     with pytest.raises(SystemExit, match="no independent B mapping"):
         security_trace.infer(event, security_trace.new_ledger())
@@ -148,14 +204,14 @@ def test_a_discontinuous_raw_trace_is_refused(tmp_path):
 
 
 def test_a_shifted_action_hint_cannot_select_another_transition():
-    event = copy.deepcopy(events()[3])
+    event = copy.deepcopy(issued_token(3))
     event["action_hint"] = "makeCredential"
     with pytest.raises(SystemExit, match="action_hint disagrees"):
         security_trace.infer(event, security_trace.new_ledger())
 
 
 def test_r4b_event_reports_ambiguous_instead_of_choosing_a_witness():
-    event = copy.deepcopy(events()[4])
+    event = copy.deepcopy(first_register())
     assert security_trace.event_consensus(
         event, {"RegisterWriteB", "RegisterRefused"}
     ) == "AMBIGUOUS"
@@ -171,10 +227,10 @@ def test_r4b_event_reports_ambiguous_instead_of_choosing_a_witness():
 
 
 def test_a_token_less_make_credential_is_answered_by_the_gate_and_rk_decides():
-    # Seq 11 and 12 are the same request twice, once with `rk` and once without,
-    # and neither writes anything: the raw sides are identical and only the
-    # INPUT separates them.
-    refused, allowed = events()[10], events()[11]
+    # The same request twice with a PIN set, once with `rk` and once without, and
+    # neither writes anything: the raw sides are identical and only the INPUT
+    # separates them.
+    refused, allowed = mc_gate(True), mc_gate(False)
     for event, rk, code in ((refused, True, 0x36), (allowed, False, 0x00)):
         assert event["request"] == {"rk": rk, "pin_uv_auth": False}
         assert event["outcome_raw"] == code
@@ -187,14 +243,14 @@ def test_a_make_credential_refused_below_the_gate_is_not_predicted():
     # An excludeList hit (0x19) leaves the same empty footprint and this rule
     # does not explain it. Predicting it would make R4c cry wolf on a recording
     # that is perfectly correct.
-    event = copy.deepcopy(events()[11])
+    event = copy.deepcopy(mc_gate(False))
     event["outcome_raw"] = 0x19
     with pytest.raises(SystemExit, match="downstream of the gate"):
         security_trace.infer(event, security_trace.new_ledger())
 
 
 def test_a_token_bearing_make_credential_is_not_a_gate_row():
-    event = copy.deepcopy(events()[11])
+    event = copy.deepcopy(mc_gate(False))
     event["request"] = {"rk": False, "pin_uv_auth": True}
     # Nothing moved and a token was offered, so B has no rule for it and the
     # ordinary stutter arm takes it — with no outcome claimed.
@@ -293,7 +349,7 @@ def test_a_reset_refused_for_another_reason_is_not_predicted():
 def test_a_gate_row_is_held_to_the_action_hint_too():
     # The exemption is for a BARE stutter, which claims no family. A gate row
     # names one, so a shifted hint must still be caught.
-    event = copy.deepcopy(events()[11])
+    event = copy.deepcopy(mc_gate(False))
     event["action_hint"] = "clientPin"
     with pytest.raises(SystemExit, match="action_hint disagrees"):
         security_trace.infer(event, security_trace.new_ledger())
@@ -302,7 +358,7 @@ def test_a_gate_row_is_held_to_the_action_hint_too():
 def test_the_power_cycle_reopens_the_reset_window_for_b_as_well():
     ledger = security_trace.new_ledger()
     ledger["clock"] = 1
-    event = copy.deepcopy(events()[0])
+    event = copy.deepcopy(clay())
     event["command_raw"] = security_trace.POWER_CYCLE
     event["post"] = copy.deepcopy(event["pre"])
     security_trace.infer(event, ledger)
@@ -310,7 +366,7 @@ def test_the_power_cycle_reopens_the_reset_window_for_b_as_well():
 
 
 def test_an_older_schema_is_refused_rather_than_read(tmp_path):
-    event = copy.deepcopy(events()[0])
+    event = copy.deepcopy(clay())
     event["schema"] = 3
     path = tmp_path / "old.jsonl"
     path.write_text(f"{json.dumps(event)}\n")
@@ -319,7 +375,7 @@ def test_an_older_schema_is_refused_rather_than_read(tmp_path):
 
 
 def test_a_trace_with_no_request_record_is_refused(tmp_path):
-    event = copy.deepcopy(events()[0])
+    event = copy.deepcopy(clay())
     del event["request"]
     path = tmp_path / "norequest.jsonl"
     path.write_text(f"{json.dumps(event)}\n")
@@ -336,7 +392,7 @@ def test_a_trace_with_no_request_record_is_refused(tmp_path):
     ],
 )
 def test_a_changed_request_shape_is_refused_rather_than_read(tmp_path, request_record):
-    event = copy.deepcopy(events()[10])
+    event = copy.deepcopy(mc_gate(True))
     event["request"] = request_record
     path = tmp_path / "changed.jsonl"
     path.write_text(f"{json.dumps(event)}\n")
@@ -376,14 +432,20 @@ def configs():
 
 
 def gate_rows():
-    """(kind, rk, alwaysUv, recorded outcome) per gate boundary, in order."""
+    """(kind, rk, alwaysUv, pinSet, recorded outcome) per gate boundary, in order.
+
+    `pinSet` joined the tuple when the PIN-less cells did: without it the new
+    (FALSE, rk FALSE, Authorized) row and the old (TRUE, rk FALSE, Authorized)
+    one are the same tuple, and a grid assertion could not tell six cells from
+    four.
+    """
     ledger = security_trace.new_ledger()
     rows = []
     for event in events():
         security_trace.clock_ticks(event, ledger)
         _actions, gate = security_trace.infer(event, ledger)
         if gate is not None:
-            rows.append((gate[0], gate[1], ledger["always_uv"],
+            rows.append((gate[0], gate[1], ledger["always_uv"], ledger["pin_set"],
                          security_trace.delta_c(event["outcome_raw"])))
     return rows
 
@@ -433,29 +495,105 @@ def test_a_token_less_make_credential_on_a_build_with_a_pad_is_refused():
     """§6.1.2 step 6.3 UPGRADES it to built-in UV there, so the answer stops being
     a function of `rk` and `alwaysUv`. Refused rather than guessed — which is what
     lets the rule state the alwaysUv arm at all."""
-    event = copy.deepcopy(events()[11])
+    event = copy.deepcopy(mc_gate(False))
     event["builtin_uv"] = True
     with pytest.raises(SystemExit, match="built-in UV pad"):
         security_trace.infer(event, security_trace.new_ledger())
 
 
-def test_the_recording_carries_both_arms_of_the_gate_rule():
-    """`gate.alwaysUv` was FALSE at every gate boundary until this session, so the
-    arm the rule was missing could not be seen — and `pin.set /\\ rk` predicts
-    SERVED for the row that matters here."""
+def test_the_recording_carries_every_cell_of_the_gate_grid():
+    """`gate.alwaysUv` was FALSE at every gate boundary until one session, and
+    `pin.set` TRUE at every one until `09_tokenless_gate_no_pin.py` — an arm the
+    recording cannot contradict is prose, whichever arm it is.
+
+    The count comes from the ratchet rather than a literal here, so a recording
+    that loses a cell fails in one place instead of two.
+    """
     rows = gate_rows()
-    assert len(rows) == 5, rows
-    assert ("mc", True, False, "Rejected") in rows      # step 10, rk
-    assert ("mc", False, False, "Authorized") in rows   # step 10, no rk
-    assert ("mc", False, True, "Rejected") in rows      # step 6, and rk says served
-    assert ("mc", True, True, "Rejected") in rows       # step 6, whatever rk says
-    assert ("reset", False, False, "Rejected") in rows
+    assert len(rows) == security_trace.ratchet(security_trace.GATES_RATCHET), rows
+    # (kind, rk, alwaysUv, pinSet, outcome)
+    assert ("mc", True, False, False, "Authorized") in rows   # makeCredUvNotRqd, rk
+    assert ("mc", False, False, False, "Authorized") in rows  # and without it
+    assert ("mc", True, False, True, "Rejected") in rows      # step 10, rk
+    assert ("mc", False, False, True, "Authorized") in rows   # step 10, no rk
+    assert ("mc", False, True, True, "Rejected") in rows      # step 6, rk says served
+    assert ("mc", True, True, True, "Rejected") in rows       # step 6, whatever rk says
+    # `pinSet` FALSE here and not an oversight: the refused reset is the one that
+    # ends `27_reset_window`, and the wipe it follows took the PIN with it.
+    assert ("reset", False, False, False, "Rejected") in rows
+
+
+def reissued_token():
+    """The clientPIN boundary that re-issues a token over the permissions it
+    already holds — the one shape the raw side cannot see."""
+    found = [e for e in events()
+             if e["command_raw"] == 0x06
+             and e["subcommand"] in security_trace.TOKEN_SUBCOMMANDS
+             and not (security_trace.raw_changes(e) - {"channel_raw"})
+             and e["outcome_raw"] == 0x00 and e["post"]["token_in_use_raw"]]
+    assert found, "the recording re-issues no token"
+    return found[0]
+
+
+def test_a_token_reissued_over_its_own_permissions_is_still_an_issuance():
+    """It moves no raw field — every one it would move already holds that value —
+    so the SUBCOMMAND is the only thing that says an issuance happened."""
+    event = reissued_token()
+    assert security_trace.raw_changes(event) - {"channel_raw"} == set()
+    assert names_of(event) == ["GetPinToken"]
+    assert security_trace.event_consensus(event, {"GetPinToken"}) == "OK"
+
+
+def test_without_the_subcommand_that_re_issuance_is_a_bare_stutter():
+    """The other arm, so the field is a rule and not a decoration: read as the
+    `getKeyAgreement` it shares a footprint with, B claims nothing at all."""
+    event = copy.deepcopy(reissued_token())
+    event["subcommand"] = 0x02
+    assert names_of(event) == ["Stutter"]
+    assert security_trace.event_consensus(event, set()) == "NO-OPINION"
+
+
+def test_a_re_issuance_the_device_refused_is_a_disagreement_and_not_a_shrug():
+    """B commits to Authorized here, which is what gives R4b something to catch."""
+    event = copy.deepcopy(reissued_token())
+    event["outcome_raw"] = 0x31  # PIN_INVALID
+    assert security_trace.event_consensus(event, {"GetPinToken"}) == "VIOLATION"
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [("token_in_use_raw", False), ("token_permissions_raw", 1)],
+)
+def test_an_issuance_door_without_a_mappable_token_claims_nothing(field, value):
+    """The rule reads the POST state as well as the subcommand: an issuance door
+    that ends with no live token is not an issuance, and `PermSets` has no member
+    for 1. B falls back to the stutter it was before the field existed rather
+    than to a guess — measured, because the first version of this case expected a
+    refusal and the mapper is right to answer a no-change boundary with a
+    stutter."""
+    event = copy.deepcopy(reissued_token())
+    event["pre"][field] = value
+    event["post"][field] = value
+    actions, gate = security_trace.infer(event, security_trace.new_ledger())
+    assert gate is None and [n for n, _ in actions] == ["Stutter"]
+    assert security_trace.event_consensus(event, set()) == "NO-OPINION"
+
+
+def test_a_trace_without_the_subcommand_field_is_refused(tmp_path):
+    """A schema-5 recording read as a schema-6 one would put every re-issuance
+    back under the stutter it cannot be told from."""
+    event = copy.deepcopy(clay())
+    del event["subcommand"]
+    path = tmp_path / "trace.jsonl"
+    path.write_text(json.dumps(event) + "\n", encoding="utf-8")
+    with pytest.raises(SystemExit, match="no subcommand record"):
+        security_trace.load_events([path])
 
 
 def test_an_event_without_the_pad_field_is_refused(tmp_path):
     """A schema-4 recording read as a schema-5 one would leave the arm unchecked
     and the mapper unable to refuse a display build."""
-    event = copy.deepcopy(events()[0])
+    event = copy.deepcopy(clay())
     del event["builtin_uv"]
     path = tmp_path / "trace.jsonl"
     path.write_text(json.dumps(event) + "\n", encoding="utf-8")
@@ -472,7 +610,7 @@ def test_a_permission_set_of_zero_is_not_an_issuance():
     suite spends a token through clientPIN, which is why the omission had no
     case, and the guard is for the shape and not for the scenario.
     """
-    spent = copy.deepcopy(events()[3])  # the getPinToken that issued mc|ga
+    spent = copy.deepcopy(issued_token(3))  # the getPinToken that issued mc|ga
     spent["command_raw"] = 0x06
     spent["action_hint"] = "clientPin"
     spent["pre"] = copy.deepcopy(spent["post"])
@@ -487,7 +625,7 @@ def test_a_permission_set_of_zero_is_not_an_issuance():
 
 def test_admitting_a_zero_permission_set_would_map_a_consumption_as_a_grant(monkeypatch):
     """The other arm, so the omission is a rule and not a comment."""
-    spent = copy.deepcopy(events()[3])
+    spent = copy.deepcopy(issued_token(3))
     spent["command_raw"] = 0x06
     spent["action_hint"] = "clientPin"
     spent["pre"] = copy.deepcopy(spent["post"])

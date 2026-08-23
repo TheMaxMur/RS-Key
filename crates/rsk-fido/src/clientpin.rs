@@ -1251,6 +1251,11 @@ where
     Ok(enc.writer().position())
 }
 
+/// The phase-4 trace reader (`formal/TraceSecurity.tla`).
+#[cfg(any(test, kani, feature = "assurance-trace"))]
+#[path = "clientpin_assurance.rs"]
+pub mod assurance;
+
 #[cfg(test)]
 #[path = "clientpin_tests.rs"]
 mod tests;

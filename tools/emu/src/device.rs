@@ -627,7 +627,7 @@ async fn serve<PR: rsk_sdk::UserPresence + 'static>(
                         data.first().copied().unwrap_or(0),
                         body.first().copied().unwrap_or(0),
                         ctap.security_trace_builtin_uv(),
-                        make_credential_request_flags(&data),
+                        request_record(&data),
                         pre,
                         post,
                         abstract_pre,
@@ -752,7 +752,7 @@ async fn serve<PR: rsk_sdk::UserPresence + 'static>(
                         crate::security_trace::POWER_CYCLE,
                         0,
                         ctap.security_trace_builtin_uv(),
-                        None,
+                        crate::security_trace::RequestRecord::Silent,
                         pre,
                         ctap.security_trace_snapshot(),
                         abstract_pre,
@@ -811,18 +811,33 @@ async fn serve<PR: rsk_sdk::UserPresence + 'static>(
     }
 }
 
-/// The makeCredential request fields the phase-4 replay reads, taken from the
-/// applet's own parser. `None` for every other command, and for a body the
-/// device itself would refuse to decode — a request that never parsed has no
-/// gate answer to predict.
+/// What the phase-4 replay reads out of a request, taken from the applet's own
+/// parser in every case. `Silent` for a command it reads nothing from, and for a
+/// body the device itself would refuse to decode — a request that never parsed
+/// has no answer to predict.
 #[cfg(feature = "security-trace")]
-fn make_credential_request_flags(data: &[u8]) -> Option<crate::security_trace::RequestFlags> {
-    let (&cmd, params) = data.split_first()?;
-    if cmd != rsk_fido::consts::CTAP_MAKE_CREDENTIAL {
-        return None;
+fn request_record(data: &[u8]) -> crate::security_trace::RequestRecord {
+    use crate::security_trace::{RequestFlags, RequestRecord};
+    let Some((&cmd, params)) = data.split_first() else {
+        return RequestRecord::Silent;
+    };
+    match cmd {
+        rsk_fido::consts::CTAP_MAKE_CREDENTIAL => {
+            match rsk_fido::makecredential::assurance::trace_request_flags(params) {
+                Some((rk, pin_uv_auth)) => {
+                    RequestRecord::MakeCredential(RequestFlags { rk, pin_uv_auth })
+                }
+                None => RequestRecord::Silent,
+            }
+        }
+        rsk_fido::consts::CTAP_CLIENT_PIN => {
+            match rsk_fido::clientpin::assurance::trace_subcommand(params) {
+                Some(sub) => RequestRecord::ClientPin(sub),
+                None => RequestRecord::Silent,
+            }
+        }
+        _ => RequestRecord::Silent,
     }
-    let (rk, pin_uv_auth) = rsk_fido::makecredential::assurance::trace_request_flags(params)?;
-    Some(crate::security_trace::RequestFlags { rk, pin_uv_auth })
 }
 
 fn hex(b: &[u8]) -> String {

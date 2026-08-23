@@ -12,6 +12,7 @@ EXTENDS TraceSecurityData, RSKeyTokenView
 CONSTANTS MutateBeta, MutateAlpha, MutateOutcome, CheckR4b
 CONSTANTS MutateUvNotRqd, MutateResetWindow
 CONSTANT MutateAlwaysUvArm
+CONSTANT MutatePinSet
 
 VARIABLE tracePc
 traceVars == << vars, tracePc >>
@@ -132,7 +133,7 @@ R4bEventConsensus ==
 \* is to record the pad's availability and REFUSE such a boundary rather than to
 \* leave the arm out -- scripts/security_trace.py does that, so this rule holds
 \* only where it is a function of these two, and the recording it was omitted for
-\* is the one that refutes `pin.set /\ rk` on its own (event 18: alwaysUv on,
+\* is the one that refutes `pin.set /\ rk` on its own (event 26: alwaysUv on,
 \* rk FALSE, PUAT_REQUIRED, where that rule predicts served). The pad is
 \* `clientpin.rs:609`'s first conjunct, recorded per boundary.
 \*
@@ -141,7 +142,7 @@ R4bEventConsensus ==
 \* absent (`config.rs:317`), so this arm assumes a build that does not ship the
 \* feature -- which every recording apparatus is, `tools/emu` having no
 \* passthrough for it. Stated, like the pad, rather than left to be discovered.
-McTokenlessRefused(rk, alwaysUv) == alwaysUv \/ (pin.set /\ rk)
+McTokenlessRefused(rk, alwaysUv, pinSet) == alwaysUv \/ (pinSet /\ rk)
 
 \* CTAP 2.1 6.6, crates/rsk-fido/src/reset.rs:187 -- the same predicate the
 \* model already gates ResetStart on, read for its answer instead of its
@@ -153,7 +154,8 @@ GateRefusesB(i) ==
     CASE GateKind(i) = "mc" ->
            McTokenlessRefused(
              IF MutateUvNotRqd THEN FALSE ELSE GateRk(i),
-             IF MutateAlwaysUvArm THEN FALSE ELSE gate.alwaysUv)
+             IF MutateAlwaysUvArm THEN FALSE ELSE gate.alwaysUv,
+             IF MutatePinSet THEN TRUE ELSE pin.set)
       [] GateKind(i) = "reset" ->
            IF MutateResetWindow THEN FALSE ELSE ResetGateRefuses
       [] OTHER -> CHOOSE x : FALSE

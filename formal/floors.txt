@@ -74,23 +74,24 @@ TraceSeamsBad.cfg                    RED     -
 \* GREEN control, with R4b disabled, proves that the corresponding RED row is
 \* caught by R4b alone. The last two are R4c's, one per half of the gate rule,
 \* so a RED names which half was load-bearing rather than "a gate somewhere".
-\* The two GREEN rows are PINS, not thirds: a linear replay of 49 forced steps
-\* has exactly 50 states, so anything less is the model refusing to follow the
+\* The two GREEN rows are PINS, not thirds: a linear replay of 74 forced steps
+\* has exactly 75 states, so anything less is the model refusing to follow the
 \* recording. It reached 44 of 59 for three days and read as GREEN.
-TraceSecurity.cfg                    GREEN   61
+TraceSecurity.cfg                    GREEN   75
 TraceSecurityBadBeta.cfg             RED     -       -       R4aRawRefinesB
 TraceSecurityBadAlpha.cfg            RED     -       -       R4bAlphaMatchesGamma
-TraceSecurityBadAlphaNoR4b.cfg       GREEN   61
+TraceSecurityBadAlphaNoR4b.cfg       GREEN   75
 TraceSecurityBadOutcome.cfg          RED     -       -       R4bEventConsensus
 TraceSecurityBadUvNotRqd.cfg         RED     -       -       R4cGateAnswers
 TraceSecurityBadResetWindow.cfg      RED     -       -       R4cGateAnswers
 TraceSecurityBadAlwaysUvArm.cfg      RED     -       -       R4cGateAnswers
+TraceSecurityBadPinSet.cfg           RED     -       -       R4cGateAnswers
 \* The recorded session's coverage, ratcheted so a re-record cannot quietly cover
 \* less. Unlike the distinct-state floors above these are PINS at the measured
 \* value, not a third of it: a trace is a fixed recording, so it cannot shrink by
 \* fidelity churn -- only by someone recording a shorter session. Raise them when
 \* a richer session lands; never lower one without saying which flow was dropped.
-@TraceSecurityCommandsMin 32
+@TraceSecurityCommandsMin 40
 \* 58 until R4c, and every one of the nine that went was a MIS-MAPPING rather
 \* than coverage. Seven: the refused reset that ends `27_reset_window` was
 \* replayed as a full successful wipe, because over an already-empty store the
@@ -99,16 +100,27 @@ TraceSecurityBadAlwaysUvArm.cfg      RED     -       -       R4cGateAnswers
 \* seed arm empties `cred` and `rpent` with it, so the phase is two steps however
 \* many credentials B holds. The model had been refusing the surplus since the
 \* three-suite recording landed, and TLC was run with `-deadlock`.
-@TraceSecurityStepsMin 60
+@TraceSecurityStepsMin 74
 @TraceSecurityActionsMin 22
 \* Boundaries whose outcome B answers from a GATE rule rather than from the
 \* actions -- there are none to read, both sides of each gate being a stutter.
-\* Without a floor here R4c is vacuous the moment a re-record loses them.
-@TraceSecurityGatesMin 5
+\* Without a floor here R4c is vacuous the moment a re-record loses them. Two of
+\* the seven carry `pin.set` FALSE (`tests/09_tokenless_gate_no_pin.py`), and
+\* they are the only ones `TraceSecurityBadPinSet.cfg` can go red at: against the
+\* recording without them that mutant replays green to the end.
+@TraceSecurityGatesMin 7
 \* Was 2, and both were the same shape: a token-less makeCredential, whose
 \* success and refusal write nothing either way. R4c answers them from `rk` and
 \* B's own state, so the replay commits to an outcome at every boundary it maps.
 @TraceSecurityAmbiguousMax 0
+\* Boundaries where B COMMITS to an outcome and R4b compares it with the device's.
+\* 12 until the recording carried the clientPIN SUBCOMMAND: a token re-issued with
+\* the permissions it already holds moves no raw field, so it arrived as a bare
+\* stutter and was indistinguishable from the `getKeyAgreement` that shares that
+\* footprint. Measured both ways -- with the rule 13, with `TOKEN_SUBCOMMANDS`
+\* emptied 12 -- because a mapping that retreats to NO-OPINION costs nothing and
+\* reads exactly as green without a floor here.
+@TraceSecurityOutcomesMin 13
 \* Phase 5. Reduced constants keep the labelled action check separate from the
 \* 60-million-state shipped safety row. Floors are calibrated after the first
 \* successful run; the non-vacuity guard still requires at least two states.

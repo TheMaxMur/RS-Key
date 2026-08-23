@@ -66,6 +66,7 @@ formal/README.md	crates/rsk-display/src/power.rs	55-65	pub(super) fn armed_touch
 formal/README.md	crates/rsk-display/src/presence.rs	45-48	let saved = self.hooks.led_status();	self.hooks.set_up_pending(true);
 formal/README.md	crates/rsk-display/src/presence.rs	120-124	let mut last_num: u16 = 0;	// no signature is ever produced without the deliberate on-screen hold.
 formal/README.md	crates/rsk-display/src/presence.rs	190-190	// a release wait a finger already down approves the card in the same	// a release wait a finger already down approves the card in the same
+formal/README.md	crates/rsk-fido/src/clientpin.rs	136-136	match req.subcommand {	match req.subcommand {
 formal/README.md	crates/rsk-fido/src/clientpin.rs	185-187	if ctx.fs.has_data(EF_PIN) {	}
 formal/README.md	crates/rsk-fido/src/clientpin.rs	214-218	// No PIN was set, so no `pcmr` grant can be outstanding — except one a build	let res = store_new_pin(ctx, &padded);
 formal/README.md	crates/rsk-fido/src/clientpin.rs	238-238	if new_pin_enc.len() > PADDED_PIN_LEN + proto.iv_overhead() {	if new_pin_enc.len() > PADDED_PIN_LEN + proto.iv_overhead() {
@@ -292,7 +293,7 @@ formal/RSKeyRetryLattice.tla	crates/rsk-piv/src/lib.rs	1232-1234	Err(sw) => retu
 formal/RSKeyRetryLattice.tla	crates/rsk-piv/src/lib.rs	1250-1250	// nothing. The cost is that a power cut here spends a retry the holder did	// nothing. The cost is that a power cut here spends a retry the holder did
 formal/RSKeyRetryLattice.tla	crates/rsk-piv/src/lib.rs	1383-1383	puk: &[u8],	puk: &[u8],
 formal/RSKeySecurityState.tla	crates/rsk-device/src/ctap.rs	196-199	backup_sealed_record: fs.has_data(EF_BACKUP_SEALED),	credential_slots_raw: credentials.iter().filter(|present| **present).count() as u16,
-formal/RSKeySecurityState.tla	crates/rsk-device/src/ctap.rs	343-350	// Persist the clientPIN soft lock across a warm reboot. It is RAM-only, and a	.store_pin_lock(self.fido_state.borrow().pin_lock());
+formal/RSKeySecurityState.tla	crates/rsk-device/src/ctap.rs	348-355	// Persist the clientPIN soft lock across a warm reboot. It is RAM-only, and a	.store_pin_lock(self.fido_state.borrow().pin_lock());
 formal/RSKeySecurityState.tla	crates/rsk-device/src/presence.rs	25-26	/// No host request in flight: an on-panel (local) flow owns the button.	pub const SCOPE_NONE: u8 = 0;
 formal/RSKeySecurityState.tla	crates/rsk-device/src/presence.rs	25-169	/// No host request in flight: an on-panel (local) flow owns the button.	}
 formal/RSKeySecurityState.tla	crates/rsk-device/src/presence.rs	26-26	pub const SCOPE_NONE: u8 = 0;	pub const SCOPE_NONE: u8 = 0;

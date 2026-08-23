@@ -71,10 +71,16 @@ impl Hooks<RamStorage> for Board {
 }
 
 /// Physical presence — one button, as on the device. Confirms by default; a
-/// test that needs a refusal flips `answer`.
+/// test that needs a refusal flips `answer`, and one that needs the trusted
+/// display's on-screen PIN pad flips `pad`.
 pub struct Finger {
     pub answer: bool,
     pub requests: usize,
+    /// What `uv_available()` answers. FALSE is the button-only device; only the
+    /// display backend overrides it in the firmware (`rsk-display`'s presence),
+    /// and it is an INPUT to §6.1.2's token-less gate that the phase-4 recording
+    /// carries per boundary.
+    pub pad: bool,
 }
 
 impl Default for Finger {
@@ -82,11 +88,16 @@ impl Default for Finger {
         Self {
             answer: true,
             requests: 0,
+            pad: false,
         }
     }
 }
 
 impl rsk_sdk::UserPresence for Finger {
+    fn uv_available(&self) -> bool {
+        self.pad
+    }
+
     fn request(&mut self, _confirm: rsk_sdk::Confirm<'_>) -> rsk_sdk::Presence {
         self.requests += 1;
         if self.answer {
