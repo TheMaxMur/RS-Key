@@ -1298,6 +1298,29 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Internal
 
+- **Two build flavours were gated by rows that ran four tests between them.**
+  `check.sh`'s `test (fips: rsk-fido)`, `test (fips: rsk-piv)` and
+  `test (strong-pin)` each passed a bare name to `cargo test`, so the only
+  behavioural coverage the shipped `firmware-fips` and `firmware-strong-pin`
+  images get was 4, 1 and 4 cases — measured, with 605, 134 and 611 reported as
+  "filtered out" on the same line. They run the whole suite now, as
+  `test (fido-conformance)` already did: the build for the permutation happens
+  either way, so the filter bought seconds and cost each flavour its coverage.
+  rsk-fido's fixtures had been swept already; rsk-piv was still red in the same
+  shape — six cases provision an RSA-1024 key or a 3DES management key, both of
+  which `fips-profile` refuses (SP 800-131A), so each asserted in its *setup* an
+  error the build cannot produce. Where the size is a case's fixture the two RSA
+  ids swap under that profile (`ALGO_RSA_FIXTURE` / `ALGO_RSA_OTHER` and their
+  lengths), so the freshness ladder and the two family-relaxation cases run at
+  2048 there and at 1024 everywhere else — a 2048 keygen costs 0.1–0.4 s here,
+  where 4096 would put a minute into every run. Where the refused algorithm is
+  the case's subject, the case is `cfg`'d out and
+  `fips_refuses_3des_mgm_and_rsa1024` carries the profile's half; it gained the
+  import arm, which is the second guard on the same rule and had nothing
+  asserting it. The default profile does not move (136 rsk-piv cases before and
+  after), and the three widened rows were each driven red through a mutation the
+  filtered row stayed green on.
+
 - **bcdDevice 0x0984 → 0x0985, no behaviour change.** The security-trace
   recorder's edit in `crates/rsk-device/src/ctap.rs` landed without one. It sits
   under `#[cfg(feature = "security-trace")]`, a feature no firmware flavour

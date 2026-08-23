@@ -432,14 +432,17 @@ run_tests "test (advertise-pqc)"     cargo test -p rsk-fido --features advertise
 # here unnoticed. This is also the only gate coverage `strict-up` gets.
 run_tests "test (fido-conformance)"  cargo test -p rsk-fido --features fido-conformance --target "$HOST"
 # The FIPS-style profile changes algorithm menus / PIN floor / export policy;
-# run its tests (name-filtered: the regular fixtures assume the 4-char PIN
-# floor) and type-check the locked firmware image.
-run_tests "test (fips: rsk-fido)"    cargo test -p rsk-fido --features fips-profile --target "$HOST" fips
-run_tests "test (fips: rsk-piv)"     cargo test -p rsk-piv --features fips-profile --target "$HOST" fips
+# run its tests and type-check the locked firmware image. The WHOLE suite, as for
+# fido-conformance above: the name filter these rows used to carry hid 63 failing
+# rsk-fido cases and 6 rsk-piv ones for as long as the feature existed — the
+# fixtures typed a PIN and provisioned a key size the profile refuses, so the
+# shipped image's only coverage was the handful of cases named after it.
+run_tests "test (fips: rsk-fido)"    cargo test -p rsk-fido --features fips-profile --target "$HOST"
+run_tests "test (fips: rsk-piv)"     cargo test -p rsk-piv --features fips-profile --target "$HOST"
 run "clippy (fips firmware)"   cargo clippy -p firmware --features fips-profile -- -D warnings
-# `strong-pin` raises the same 6-code-point floor and adds a trivial-PIN block, so it
-# reuses the fips name-filter dodge (regular fixtures assume the 4-char floor).
-run_tests "test (strong-pin)"        cargo test -p rsk-fido --features strong-pin --target "$HOST" strong_pin
+# `strong-pin` raises the same 6-code-point floor and adds a trivial-PIN block —
+# same reasoning as fips above, and its own filter hid 61 failing cases.
+run_tests "test (strong-pin)"        cargo test -p rsk-fido --features strong-pin --target "$HOST"
 run "clippy (strong-pin fw)"   cargo clippy -p firmware --features strong-pin -- -D warnings
 # `strict-config` restores today's strict admin-write authorization (the DEFAULT
 # build is the permissive full-YubiKey-compat surface). The default path is what

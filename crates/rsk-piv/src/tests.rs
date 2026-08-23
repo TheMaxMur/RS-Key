@@ -110,6 +110,33 @@ fn gen_template(algo: u8) -> Vec<u8> {
     vec![0xAC, 0x03, 0x80, 0x01, algo]
 }
 
+/// The RSA pair a case uses when the key size is its FIXTURE and not its
+/// subject: `fips-profile` refuses to *provision* RSA-1024 (SP 800-131A) but
+/// takes it as an algorithm id, so the two sizes swap under that profile rather
+/// than the case asserting an error the build cannot produce.
+const ALGO_RSA_FIXTURE: u8 = if cfg!(feature = "fips-profile") {
+    ALGO_RSA2048
+} else {
+    ALGO_RSA1024
+};
+/// The other id of that pair — the one the provisioned slot does NOT hold.
+const ALGO_RSA_OTHER: u8 = if cfg!(feature = "fips-profile") {
+    ALGO_RSA1024
+} else {
+    ALGO_RSA2048
+};
+/// Modulus bytes of each: the cryptogram length a slot holding that key takes.
+const RSA_FIXTURE_BYTES: usize = if cfg!(feature = "fips-profile") {
+    256
+} else {
+    128
+};
+const RSA_OTHER_BYTES: usize = if cfg!(feature = "fips-profile") {
+    128
+} else {
+    256
+};
+
 /// P-256 GENERAL AUTHENTICATE over a fixed digest at `slot`.
 fn sign_p256<S: Storage>(app: &mut PivApplet, fs: &mut Fs<S>, slot: u8) -> Sw {
     let mut msg = vec![0x7C, 0x24, 0x82, 0x00, 0x81, 0x20];
@@ -2405,6 +2432,17 @@ fn fips_refuses_3des_mgm_and_rsa1024() {
     let tmpl = [0xAC, 0x03, 0x80, 0x01, ALGO_RSA1024];
     let (sw, _) = run(&mut app, &mut fs, INS_ASYM_KEYGEN, 0x00, 0x9A, &tmpl);
     assert_eq!(sw, Sw::WRONG_DATA);
+    // The import is a second guard on the same rule, and the only other way a
+    // 1024-bit key could reach a slot.
+    use rsk_rsa::vectors::{P1024_HEX, Q1024_HEX, hex};
+    let (p, q) = (hex(P1024_HEX), hex(Q1024_HEX));
+    let mut imp = vec![0x01, p.len() as u8];
+    imp.extend_from_slice(&p);
+    imp.push(0x02);
+    imp.push(q.len() as u8);
+    imp.extend_from_slice(&q);
+    let (sw, _) = run(&mut app, &mut fs, INS_IMPORT_ASYM, ALGO_RSA1024, 0x9E, &imp);
+    assert_eq!(sw, Sw::WRONG_DATA);
     // AES management keys are unaffected.
     let mut msg = vec![ALGO_AES256, 0x9B, 32];
     msg.extend_from_slice(&[0x11; 32]);
@@ -2412,6 +2450,9 @@ fn fips_refuses_3des_mgm_and_rsa1024() {
     assert_eq!(sw, Sw::OK);
 }
 
+// 3DES is the subject here, not a fixture, and `fips-profile` refuses to install
+// one — that refusal is `fips_refuses_3des_mgm_and_rsa1024` above.
+#[cfg(not(feature = "fips-profile"))]
 #[test]
 fn mgm_3des_roundtrip() {
     let rng = RefCell::new(TestRng(7));
@@ -3116,7 +3157,7 @@ fn a_key_operation_that_fails_still_spends_the_freshness() {
         (SLOT_SIGNATURE, ALGO_ECCP256),
         (SLOT_AUTHENTICATION, ALGO_ECCP256),
         (SLOT_KEYMGM, ALGO_ECCP256),
-        (0x82, ALGO_RSA1024),
+        (0x82, ALGO_RSA_FIXTURE),
     ] {
         assert_eq!(
             run(
@@ -3149,7 +3190,7 @@ fn a_key_operation_that_fails_still_spends_the_freshness() {
             &mut app,
             &mut fs,
             INS_AUTHENTICATE,
-            ALGO_RSA1024,
+            ALGO_RSA_FIXTURE,
             0x82,
             &short
         )
@@ -4075,6 +4116,9 @@ fn ecdh_on_key_management_slot() {
     assert_eq!(shared, host_shared.raw_secret_bytes().as_slice());
 }
 
+// The 1024-bit round trip itself; the profile that will not generate one asserts
+// the refusal instead.
+#[cfg(not(feature = "fips-profile"))]
 #[test]
 fn rsa1024_keygen_sign_verify_and_metadata() {
     let rng = RefCell::new(TestRng(7));
@@ -4174,6 +4218,8 @@ fn rsa1024_keygen_sign_verify_and_metadata() {
     );
 }
 
+// Same: the vector this checks the import path against is a 1024-bit key.
+#[cfg(not(feature = "fips-profile"))]
 #[test]
 fn rsa_import_and_sign() {
     let rng = RefCell::new(TestRng(7));
@@ -7573,9 +7619,9 @@ fn rsa_ga_body(cryptogram: &[u8]) -> Vec<u8> {
 /// table cannot name such a key at all — Windows' own PIV minidriver could not,
 /// and answered SCARD_E_INVALID_PARAMETER (issue #79). A YubiKey 5.7.4 insists on
 /// the exact byte and is unusable there for the same reason; this is the
-/// deliberate divergence. The pairing is exercised at RSA-1024 rather than 4096
-/// because the rule is about the family, and a 4096 keygen would put a minute
-/// into every run of this suite.
+/// deliberate divergence. The pairing is exercised at [`ALGO_RSA_FIXTURE`] and
+/// [`ALGO_RSA_OTHER`] rather than at 4096 because the rule is about the family,
+/// and a 4096 keygen would put a minute into every run of this suite.
 #[test]
 fn an_rsa_key_answers_to_another_rsa_algorithm_id() {
     let rng = RefCell::new(TestRng(11));
@@ -7586,7 +7632,7 @@ fn an_rsa_key_answers_to_another_rsa_algorithm_id() {
     auth_mgm(&mut app, &mut fs);
     verify_pin(&mut app, &mut fs);
     for (slot, algo) in [
-        (SLOT_AUTHENTICATION, ALGO_RSA1024),
+        (SLOT_AUTHENTICATION, ALGO_RSA_FIXTURE),
         // 9C is PIN-policy ALWAYS, so whether it still signs is how the
         // freshness is read back below.
         (SLOT_SIGNATURE, ALGO_ECCP256),
@@ -7611,9 +7657,9 @@ fn an_rsa_key_answers_to_another_rsa_algorithm_id() {
         &mut app,
         &mut fs,
         INS_AUTHENTICATE,
-        ALGO_RSA1024,
+        ALGO_RSA_FIXTURE,
         SLOT_AUTHENTICATION,
-        &rsa_ga_body(&[0x42u8; 128]),
+        &rsa_ga_body(&[0x42u8; RSA_FIXTURE_BYTES]),
     );
     assert_eq!(sw, Sw::OK, "the slot's own algorithm id still works");
 
@@ -7623,9 +7669,9 @@ fn an_rsa_key_answers_to_another_rsa_algorithm_id() {
         &mut app,
         &mut fs,
         INS_AUTHENTICATE,
-        ALGO_RSA2048,
+        ALGO_RSA_OTHER,
         SLOT_AUTHENTICATION,
-        &rsa_ga_body(&[0x42u8; 128]),
+        &rsa_ga_body(&[0x42u8; RSA_FIXTURE_BYTES]),
     );
     assert_eq!(
         sw,
@@ -7641,9 +7687,9 @@ fn an_rsa_key_answers_to_another_rsa_algorithm_id() {
         &mut app,
         &mut fs,
         INS_AUTHENTICATE,
-        ALGO_RSA2048,
+        ALGO_RSA_OTHER,
         SLOT_AUTHENTICATION,
-        &rsa_ga_body(&[0x42u8; 256]),
+        &rsa_ga_body(&[0x42u8; RSA_OTHER_BYTES]),
     );
     assert_eq!(
         sw,
@@ -7677,7 +7723,7 @@ fn the_rsa_relaxation_does_not_cross_a_family_or_a_curve() {
     auth_mgm(&mut app, &mut fs);
     verify_pin(&mut app, &mut fs);
     for (slot, algo) in [
-        (SLOT_AUTHENTICATION, ALGO_RSA1024),
+        (SLOT_AUTHENTICATION, ALGO_RSA_FIXTURE),
         (SLOT_SIGNATURE, ALGO_ECCP256),
         (SLOT_KEYMGM, ALGO_ECCP384),
     ] {
@@ -7722,7 +7768,7 @@ fn the_rsa_relaxation_does_not_cross_a_family_or_a_curve() {
             INS_AUTHENTICATE,
             ALGO_ECCP256,
             SLOT_AUTHENTICATION,
-            &rsa_ga_body(&[0x42u8; 128])
+            &rsa_ga_body(&[0x42u8; RSA_FIXTURE_BYTES])
         )
         .0,
         Sw::WRONG_DATA,
