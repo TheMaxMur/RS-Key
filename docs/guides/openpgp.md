@@ -52,8 +52,12 @@ A fresh card has **no** Reset Code. It stays deactivated until an admin sets one
 (`passwd` option 4, below), so `RESET RETRY COUNTER` in its RC form cannot run
 against a known default.
 
-Each PIN has its **own retry counter**, default **3**. A correct entry resets
-that PIN's counter. A wrong one decrements it. `gpg --card-status` prints them
+Each PIN has its **own retry counter**, default **3**. Every attempt is charged
+against it *before* the card compares anything, and a correct entry gives the
+charge back; a wrong one keeps it. The one visible consequence: pulling the key
+out mid-`VERIFY` can cost a try the holder never used. That is the safe
+direction — charging afterwards would mean an interrupted write leaves a wrong
+guess free, and this counter is the only limit the card has. `gpg --card-status` prints them
 as `PIN retry counter : 3 3 3` (PW1, RC, PW3: all three default to 3).
 
 Change them first:

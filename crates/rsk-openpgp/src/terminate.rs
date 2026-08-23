@@ -76,7 +76,7 @@ pub fn terminate_df<S: Storage>(
         Some(n) => n,
         None => return Sw::REFERENCE_NOT_FOUND,
     };
-    // The live PW3 retry counter (`pin_wrong_retry` decrements it). A verifier that
+    // The live PW3 retry counter (`spend_pin_retry` charges it). A verifier that
     // can never be verified can never be decremented to blocked either, so count it
     // as blocked — else a card carrying one has no way back at all.
     if !has_pw3 && !verifier_unusable(fs, EF_PW3) && n > PW3_RETRY_IDX && pw[PW3_RETRY_IDX] > 0 {

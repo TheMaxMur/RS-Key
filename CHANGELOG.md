@@ -1017,6 +1017,27 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **OpenPGP charged a wrong password's retry *after* comparing it, so a decrement
+  that never reached flash made the guess free.** The counter is this applet's only
+  rate limit — unlike clientPIN there is no per-boot soft lock — and it was written
+  after the card had already answered, with no read-back: a program that silently
+  did not land answered `63Cx` to a wrong password with the counter frozen, i.e.
+  unlimited guesses at one power cycle apiece. `check_pin` now charges the attempt
+  before the comparison and reads the counter back, and the success path gives the
+  charge back — the shape `rsk-piv`'s `check_ref`, `rsk-fido`'s
+  `spend_and_verify_pin_hash` and `rsk-oath`'s `spend_and_match_otp_pin` have
+  carried for four audits; OpenPGP was the applet the sweep never reached.
+  **Ordering is what closes it, not the read-back:** on a full counter the success
+  path rewrites the value it already holds, so a read-back placed after the
+  comparison is satisfied by a store that stored nothing — which is why the
+  regression test asserts that the *right* password also fails when the charge
+  cannot be proved. A store that silently drops the write is the reproduction
+  (`DeafStorage`, one fid and the `write` verb only, so the interleaving stays
+  reachable). Two costs, both deliberate: an interrupted `VERIFY` now spends a try
+  the holder did not use (the direction to fail in, and the guide says so), and a
+  storage failure here answers `6581` instead of the `6983` the old code
+  conflated it with. **bcdDevice → 0x0984.**
+
 - **The rename keypad's space key read "SPACE" instead of `␣`.** The antialiasing
   change swapped the symbol for the word because U+2423 OPEN BOX is not in the
   generated atlas and would have rendered as `?` — a word on a key sized for a glyph.
