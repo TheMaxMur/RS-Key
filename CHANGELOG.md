@@ -1298,6 +1298,14 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Internal
 
+- **bcdDevice 0x0984 → 0x0985, no behaviour change.** The security-trace
+  recorder's edit in `crates/rsk-device/src/ctap.rs` landed without one. It sits
+  under `#[cfg(feature = "security-trace")]`, a feature no firmware flavour
+  declares — only `tools/emu` turns it on — so no image differs. The counter
+  counts builds rather than behaviour, and `bcd_gate.py` deliberately cannot tell
+  a feature nothing ships from one that does, so the tax is paid here rather than
+  the guard taught an exemption.
+
 - **The GUI font tables record the stack that rasterised them, and pin the layout
   engine.** The generated header hashed the IBM Plex files, which is half the input:
   FreeType rasterises and Raqm lays out, and either moving rewrites the tables with
