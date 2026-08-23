@@ -1017,6 +1017,24 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Changed
 
+- **The weekly `cargo-mutants` sweep runs in 12 shards, not 8, and the shard
+  denominator is derived.** `--shard` takes a **contiguous** slice rather than
+  every n-th mutant — measured, by reproducing the tool's own list at the commit
+  CI ran — so where the boundaries fall decides a shard's crate mix, and with it
+  how much build output piles up on the runner's ~14 GB. At 8, the 6th slice was
+  1802 mutants over six crates ending in `rsk-rsa-asm`, and it took the hosted
+  runner down twice: SIGTERM at 85 % of the shard, the same 358 survivors both
+  times, the tool healthy to its last line (`Auto-set test timeout to 44s`, 14
+  timeouts reported and survived). Both of the shard's suspect crates were then
+  re-run locally at that commit and completed clean — 255 `rsk-rsa-asm` mutants
+  with the same 12 timeouts CI saw, 264 in `rsk-sha512` + `rsk-slip39` in three
+  minutes — so nothing in the shard is poisoned and what died was the host. At 12
+  the slices are ~1201 over five crates. **A reduction in pressure, not a proven
+  fix:** the runner's own resource state was never in the log, and this entry
+  does not claim to have found the cause. The denominator is
+  `${{ strategy.job-total }}` so it cannot drift from the matrix — two numbers
+  that must agree by hand is how a shard space silently loses a slice.
+
 - **The phase-4 replay's two blind spots are recorded now, and each was measured
   rather than argued.** `pin.set` was TRUE at every gate boundary the recording
   held, so `McTokenlessRefused`'s conjunct was true rather than falsifiable;
