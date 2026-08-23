@@ -38,6 +38,52 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+## [0.4.11] - 2026-08-24
+
+The catch-up release, and the one where the instruments were audited harder than
+the firmware. Everything CTAP 2.2 and 2.3 added that RS-Key was missing is here —
+including FIDO over the card interface, so `ykman` and `python-fido2` can drive
+the same device the browser does — along with ML-DSA-87, a trusted display that
+antialiases, and a PIN policy that finally refuses the shapes it always claimed
+to. The other half is the verification layer: the formal model now replays
+against a real device's recorded state, and the gates that hold *it* honest found
+that several earlier instruments had been proving nothing at all.
+
+### TL;DR
+
+If you read nothing else:
+
+- **The CTAP 2.2/2.3 gap against a YubiKey 5.8 is closed.** `encIdentifier`,
+  `transportsForReset`, `longTouchForReset`, `pinComplexityPolicy`,
+  `attestationFormatsPreference`, `encCredStoreState` with conditional mediation,
+  and an enterprise-attestation RP-ID list you can actually aim. Two members are
+  deliberately absent and say why at the skip.
+- **FIDO now answers on the card interface too.** CTAP 2.x as ISO 7816 APDUs over
+  CCID, so tools that never learned CTAPHID reach the same authenticator.
+- **ML-DSA-87 (COSE `-50`)** joins -65 and -44, byte-exact against the ACVP
+  vectors. Still not advertised by default: shipping Firefoxes reject a getInfo
+  carrying an unknown COSE id, and that is measured, not assumed.
+- **The trusted display antialiases, and its PIN pad can scramble.** Scrambling is
+  off by default — it costs muscle memory, and that trade is the owner's.
+- **The `rsa` crate is out of the trust base**, and RUSTSEC-2023-0071 with it.
+- **Two fixes you may have felt.** An OpenPGP password charged its retry *after*
+  the comparison, so a decrement lost to a power cut made the guess free; and an
+  RSA-3072/4096 PIV key is usable again under Windows' own minidriver.
+- **`bcdDevice` is `0x0986`.** A firmware-behaviour change bumps it; the counter
+  counts builds, not features.
+
+Everything else is grouped below in the usual sections, security last — and the
+`Internal` one is longer than usual on purpose: it is where the instruments that
+could not fail are written down, each with what it missed.
+
+> ### ⚠️ Upgrading a 16 MB key provisioned before 0.4.8 still wipes it
+>
+> **Export your seed first** ([seed backup](docs/guides/seed-backup.md)). 0.4.8
+> moved the store 4 KB down on 16 MB parts to clear the RP2350-E10 block, so a
+> key provisioned by an older 16 MB build comes up factory-empty. The `display`
+> and `16mb` flavors and the `abrobot-16m` / `waveshare-touch-lcd` presets are
+> the affected ones; **4 MB and 2 MB keys upgrade in place.**
+
 ### Added
 
 - **Settings → Security → "Scramble PIN pad", off by default**
@@ -1014,8 +1060,6 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   guard masks, a coordinate no test pins on purpose — so a gating row would be
   red every week. `scripts/mutants-all.sh` fails on its own apparatus instead: a
   shard that tested nothing, or a run that produced no summary.
-
-### Changed
 
 - **The weekly `cargo-mutants` sweep runs in 12 shards, not 8, and the shard
   denominator is derived.** `--shard` takes a **contiguous** slice rather than
@@ -8482,7 +8526,8 @@ family that keeps the "enterprise" features in the open tree.
   signature of it, and a CycloneDX SBOM. See
   [docs/releases.md](docs/releases.md) to verify a download.
 
-[Unreleased]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.10...HEAD
+[Unreleased]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.11...HEAD
+[0.4.11]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.10...v0.4.11
 [0.4.10]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.9...v0.4.10
 [0.4.9]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.8...v0.4.9
 [0.4.8]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.7...v0.4.8
