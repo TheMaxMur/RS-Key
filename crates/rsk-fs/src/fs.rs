@@ -428,6 +428,16 @@ impl<S: Storage> Fs<S> {
     /// drop: `meta_delete` has its own EF_META present-cache guard and skips the
     /// rewrite when `fid` had no record.
     ///
+    /// **The metadata drop's failure is returned, and the value goes anyway.** A
+    /// failed EF_META read is "cannot tell", not "no record", and EF_META is one
+    /// blob shared by every applet — so refusing the removal would stop every
+    /// delete on the device (a wipe included, since most callers discard this
+    /// result) for the lifetime of one flash fault, which trades an orphaned
+    /// record for a secret that outlives its erase. `Err` therefore names a
+    /// state, not a no-op: the value is gone and a record may still stand over
+    /// it. A caller that cannot live with that reads it — `rsk-piv`'s MOVE does,
+    /// because GET METADATA would answer for a key that is no longer there.
+    ///
     /// Refines `RSKeyStore!NoOrphanedMetadata` — SEC-STORE-001.
     ///
     /// Unlike the read paths, the backend `remove` keys off the *raw* present bit
@@ -438,14 +448,14 @@ impl<S: Storage> Fs<S> {
     /// removal — the file lingers rather than data being lost, and the next read
     /// of it confirms-and-caches it present, after which delete works normally.
     pub fn delete(&mut self, fid: u16) -> Result<()> {
-        let _ = self.meta_delete(fid);
+        let meta = self.meta_delete(fid);
         if self.present_bit(fid) {
             self.storage.remove(fid)?;
             self.mark_absent(fid);
             self.write_gen = self.write_gen.wrapping_add(1);
         }
         self.dynamic.retain(|&f| f != fid);
-        Ok(())
+        meta
     }
 
     /// Delete `fid`, removing it from the backend UNCONDITIONALLY (unlike

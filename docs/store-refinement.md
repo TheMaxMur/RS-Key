@@ -185,10 +185,11 @@ nothing states, so the fault is armed only for the two actions that have one.
 
 That is a modelling decision, and it is standing in front of something real. The
 first version of this paragraph described it as a meta-only-file curiosity. **It
-is not.** `Fs::delete` swallows `meta_delete`'s error (`let _ =`, `fs.rs:441`) and
-then removes the value; over a medium whose EF_META read fails ONCE and then
-works, a delete of a file that **has data** returns `Ok(())` with the value gone
-and the record standing:
+is not.** `Fs::delete` used to swallow `meta_delete`'s error (a `let _ =` in
+`fs.rs`, deliberately quoted without a line — the fix moved it) and then remove
+the value; over a medium whose EF_META read failed ONCE and then worked, a delete
+of a file that **has data** returned `Ok(())` with the value gone and the record
+standing:
 
 ```console
 delete returned : Ok(())
@@ -204,13 +205,29 @@ already treats the consequence as a defect **in one place**: `rsk-piv`'s
 head left over a re-minted 24-byte DEFAULT_MGM wedges the slot on the length
 compare". PIV's other `meta_add_slot` sites have no such repair.
 
-Two ways to close it, both a maintainer's call because they change what `delete`
-returns to every applet: make the metadata drop propagate (`self.meta_delete(fid)?`
-before the value goes — `force_delete`'s `let _ =` at `fs.rs:457` is deliberate
-and documented, `delete`'s is not), or give `RSKeyStore!Delete` a faulted
-disjunct and let the recorder judge it. Until one of them happens, the model's
-silence and this sweep's silence are the same silence, which is the thing the
-apparatus exists to refuse — so it is written down rather than left implied.
+**Closed in the code half, and not the way the first draft of this paragraph
+proposed.** Propagating with `self.meta_delete(fid)?` *before* the value goes was
+the obvious repair and it is the wrong one: EF_META is one blob shared by every
+applet, a failed read of it means "cannot tell" rather than "no record", and most
+callers spell the delete `let _ = fs.delete(...)`. So a single flash-read fault
+would have stopped every delete on the device — a wipe included — while the
+callers that discard the result reported success, trading an orphaned record for
+a secret that outlives its erase.
+
+What `delete` does now is remove the value regardless and **return** the metadata
+error, so `Err` names a state (the value is gone, a record may stand) instead of
+hiding it. The one caller in the tree that deletes a fid carrying a head is PIV's
+MOVE with `to = 0xFF`, the slot delete — heads are minted by `rsk-piv` alone — and
+it reads the answer: the head gets a retry, because one read can fault where the
+next lands, and the key is read back, because a `remove` that failed leaves the
+source holding a live key. Both directions answer `6581`.
+
+The model's half is the other item, and it is still open: `RSKeyStore!Delete`
+carries no faulted disjunct, so the sweep still cannot judge the shape, and
+`NoOrphanedMetadata` still reads as unconditional where the code now permits an
+orphan on an error it reports. Until that lands the invariant is stated more
+strongly than the code holds it, which is the direction that at least fails
+loudly.
 
 The PR gate carries the same clauses at concrete FIDs
 (`a_cache_write_moves_one_fid_and_no_other_across_three_bytes` and

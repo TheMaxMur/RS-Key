@@ -275,15 +275,15 @@ split three ways, and the split is the point.
 |---|---|
 | **Equivalent, not a defect** | `ctaphid.rs:420` `\|` → `^` on `(f[5] << 8) \| f[6]` — disjoint bits, the two operators agree |
 | **Fail-safe direction** | `ctaphid.rs:431` `>` → `>=` refuses an exactly-maximum message: stricter, so `NoBufferOverrun` still holds. `fs.rs:147` and `fs.rs:190` `\|=` → `&=` clear *decided* bits, which sends more reads to the reliable backend |
-| **Model-blind** | the dynamic-file registry in `scan` (`fs.rs:195` and `fs.rs:198`, three mutants), `has_data`'s zero-length test (`fs.rs:250`), `factory_wipe`'s 64-key batch bound (`fs.rs:363`), the registry retain in `delete` (`fs.rs:447`), and **`meta_delete`'s fault guard (`fs.rs:583`)** |
+| **Model-blind** | the dynamic-file registry in `scan` (`fs.rs:195` and `fs.rs:198`, three mutants), `has_data`'s zero-length test (`fs.rs:250`), `factory_wipe`'s 64-key batch bound (`fs.rs:363`), the registry retain in `delete` (`fs.rs:457`), and **`meta_delete`'s fault guard (`fs.rs:593`)** |
 
 The last one was worth the exercise on its own. `Fs::meta_add_reserve` refuses a
 FAILED EF_META read and the model carries that as `BugMetaAddDropsOnFault`; its
-sibling `Fs::meta_delete` has the identical guard at `fs.rs:585`, and **nothing
+sibling `Fs::meta_delete` has the identical guard at `fs.rs:595`, and **nothing
 held it at either level**. No test killed it, and `MetaDelete` was modelled as an
 unconditional single write with no read to fail. Worse than a lost delete: the
 mutant caches EF_META as *absent*, and the next `meta_add` legitimately trusts
-`known_absent` and rebuilds the blob from empty (`fs.rs:546`), so the records go
+`known_absent` and rebuilds the blob from empty (`fs.rs:556`), so the records go
 on the write **after** the defect. That is why it is `NoFalseMetaAbsent`,
 SEC-STORE-004, a step recorder — once the cache has lied, the losing write is
 correct code and no state predicate over `meta` can tell the two apart.
@@ -388,7 +388,7 @@ whole seam module is about was handed to nobody who looked.
 
 #### The ninth row, and the column number that decided it
 
-`crates/rsk-piv/src/lib.rs:1263` `&&` → `||` is the sharpest thing this pass has
+`crates/rsk-piv/src/lib.rs:1272` `&&` → `||` is the sharpest thing this pass has
 produced. The PIV PIN gate ends in
 
 ```rust
@@ -1419,7 +1419,7 @@ other must not wipe, and two values so an overwrite is observable.
 
 | Mutation switch | Rebuilds | Target invariant | Caught in |
 |---|---|---|---|
-| `BugDeleteValueBeforeMeta` | `fs.rs:434-439` — the two backend writes reversed, so a torn delete leaves value-gone-meta-alive (`delete_landed`) | `NoOrphanedMetadata` | 54 states |
+| `BugDeleteValueBeforeMeta` | `fs.rs:444-449` — the two backend writes reversed, so a torn delete leaves value-gone-meta-alive (`delete_landed`) | `NoOrphanedMetadata` | 54 states |
 | `BugDeleteMetaOnlyUnderPresent` | the 0x077C databug — `delete` dropping `EF_META` only under `if present_bit`, so a meta-only file keeps its record | `NoOrphanedMetadata` | 55 states |
 | `BugCacheFaultAsAbsent` | audit run-36 — `record` in place of `record_unless_faulted`, caching a faulted read as a decided absence | `NoFalseAbsent` | 23 states |
 | `BugTruncatedScanDecidesAll` | `fs.rs:211-213` — `scan` deciding the whole FID space after a *truncated* walk, so a missed live key reads absent | `NoFalseAbsent` | 24 states |
@@ -1501,9 +1501,9 @@ seam modules keep, so a switch is one real thing a reviewer could break:
 
 | Mutation switch | Removes | Target invariant | Caught in |
 |---|---|---|---|
-| `BugUseWhenBlocked` | the `left == 0 => PIN_BLOCKED` floor (`crates/rsk-piv/src/lib.rs:1232-1234` / `crates/rsk-openpgp/src/pin.rs:218-220`), which guards a direct verify AND a recovery reference | `NoAuthWhenBlocked` | 30 states |
-| `BugWrongDoesNotSpend` | the decrement that IS the gate (`crates/rsk-piv/src/lib.rs:1250` / `crates/rsk-openpgp/src/pin.rs:125`) | `WrongAttemptIsCharged` | 2 states |
-| `BugRecoveryWithoutSecret` | the recovery secret verified before the refill (`crates/rsk-piv/src/lib.rs:1383` / `crates/rsk-openpgp/src/pin.rs:793`) | `BudgetRisesOnlyWithItsSecret` | 9 states |
+| `BugUseWhenBlocked` | the `left == 0 => PIN_BLOCKED` floor (`crates/rsk-piv/src/lib.rs:1241-1243` / `crates/rsk-openpgp/src/pin.rs:218-220`), which guards a direct verify AND a recovery reference | `NoAuthWhenBlocked` | 30 states |
+| `BugWrongDoesNotSpend` | the decrement that IS the gate (`crates/rsk-piv/src/lib.rs:1259` / `crates/rsk-openpgp/src/pin.rs:125`) | `WrongAttemptIsCharged` | 2 states |
+| `BugRecoveryWithoutSecret` | the recovery secret verified before the refill (`crates/rsk-piv/src/lib.rs:1392` / `crates/rsk-openpgp/src/pin.rs:793`) | `BudgetRisesOnlyWithItsSecret` | 9 states |
 
 `Lattice.cfg` is **GREEN, exhaustive** over 243 distinct states at depth 11, with
 no dead action; every `LatSolo_*.cfg` is RED on its own target. The all-blocked
@@ -2234,7 +2234,7 @@ State 2  MetaAdd("a")        meta = [a |-> TRUE,  b |-> FALSE]
 The cache says `EF_META` is absent while `b`'s record stands. Nothing in
 `TypeOK` or the four invariants forbids that state, and from it `MetaAdd` does
 exactly what the shipped code does — trusts the cache and rebuilds the blob from
-empty (`fs.rs:546`), losing `b`. This is SEC-STORE-004's damage arriving from a
+empty (`fs.rs:556`), losing `b`. This is SEC-STORE-004's damage arriving from a
 STATE rather than from the step that made the cache lie, and the model had no
 way to say the cache is honest. One conjunct fixes it:
 

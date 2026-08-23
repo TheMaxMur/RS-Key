@@ -496,7 +496,7 @@ boot_state() with a live lock — closed by a_warm_boot_carries_the_soft_lock_in
 status = "patch"
 file = "crates/rsk-fs/src/fs.rs"
 find = """
-        let _ = self.meta_delete(fid);
+        let meta = self.meta_delete(fid);
         if self.present_bit(fid) {
             self.storage.remove(fid)?;
             self.mark_absent(fid);
@@ -510,7 +510,7 @@ replace = """
             self.mark_absent(fid);
             self.write_gen = self.write_gen.wrapping_add(1);
         }
-        let _ = self.meta_delete(fid);
+        let meta = self.meta_delete(fid);
         self.dynamic.retain(|&f| f != fid);
 """
 slice = ["cargo", "test", "-p", "rsk-fs"]
@@ -524,13 +524,13 @@ the power-cut oracle's torn sweeps see the order."""
 status = "patch"
 file = "crates/rsk-fs/src/fs.rs"
 find = """
-        let _ = self.meta_delete(fid);
+        let meta = self.meta_delete(fid);
         if self.present_bit(fid) {
             self.storage.remove(fid)?;
 """
 replace = """
+        let meta = if self.present_bit(fid) { self.meta_delete(fid) } else { Ok(()) };
         if self.present_bit(fid) {
-            let _ = self.meta_delete(fid);
             self.storage.remove(fid)?;
 """
 slice = ["cargo", "test", "-p", "rsk-fs"]
@@ -896,7 +896,7 @@ replace = """
 """
 slice = ["cargo", "test", "-p", "rsk-openpgp"]
 expect = "killed"
-note = "spend_pin_retry stops charging the attempt: unlimited PW1/PW3/RC guesses at full speed. Deliberately the OpenPGP half of this switch, so the lattice's three entries cover both applets rather than PIV three times; PIV's twin is the `set_retries_left(fs, retry, left - 1)` at crates/rsk-piv/src/lib.rs:1252."
+note = "spend_pin_retry stops charging the attempt: unlimited PW1/PW3/RC guesses at full speed. Deliberately the OpenPGP half of this switch, so the lattice's three entries cover both applets rather than PIV three times; PIV's twin is the `set_retries_left(fs, retry, left - 1)` at crates/rsk-piv/src/lib.rs:1261."
 
 [comutant.BugRecoveryWithoutSecret]
 status = "patch"

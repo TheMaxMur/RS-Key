@@ -82,12 +82,11 @@ fn drive<S: Storage>(
     // mutants are its bug arm); `Delete` carries none — `dead` there is a power
     // CUT, not a medium error — so a faulted delete is a transition the model
     // does not have, and reading `NoOrphanedMetadata` at one would be judging a
-    // step nothing states. Measured, and it is not hypothetical: `Fs::delete`
-    // swallows `meta_delete`'s error (`let _ =`, `fs.rs:441`) and skips the
-    // backend remove when the present bit is clear, so a faulted delete of a
-    // META-ONLY file returns `Ok` with the record standing. Recorded in
-    // docs/store-refinement.md as an observation for the maintainer, not
-    // silently judged here.
+    // step nothing states. That gap is now the model's alone: `Fs::delete`
+    // (`fs.rs:451`) reports the failed drop instead of swallowing it, so the
+    // state a faulted delete leaves — value gone, record standing — is one the
+    // caller is told about. Giving `Delete` that disjunct, and arming it here,
+    // is the open half recorded in docs/store-refinement.md.
     arm(matches!(step, Step::MetaAdd(_) | Step::MetaDelete(_)));
     match step {
         Step::Put(i) => {

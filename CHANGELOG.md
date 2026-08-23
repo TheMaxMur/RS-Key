@@ -1298,6 +1298,30 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Internal
 
+- **`Fs::delete` answered `Ok(())` for a delete whose metadata drop had failed**,
+  and the value went anyway — over a medium whose EF_META read faults once, that
+  is a value gone with its record still standing, which is the 0x077C databug's
+  end state reached with no power cut in it. Reachable on hardware:
+  `rsk-store`'s `read`/`size` set `last_err` straight from `sequential-storage`'s
+  `fetch_item`. The obvious repair — propagate before removing the value — is the
+  wrong one and is not what shipped: EF_META is **one blob shared by every
+  applet**, a failed read of it means "cannot tell" rather than "no record", and
+  most callers spell this `let _ = fs.delete(…)`, so a single flash fault would
+  have stopped every delete on the device, wipes included, while the callers that
+  discard the result went on reporting success — an orphaned record traded for a
+  secret outliving its erase. The removal stays unconditional and the error is
+  **returned**: `Err` now names a state (value gone, record may stand) instead of
+  hiding it, and the five callers that check a delete report failure where they
+  used to claim success. The heads are minted by `rsk-piv` alone, so the one
+  caller that deletes a fid carrying one is PIV's MOVE with `to = 0xFF` — the
+  slot delete — and it reads the answer now: the head gets a retry, because one
+  EF_META read can fault where the next lands, and the key is read back, because
+  a `remove` that failed leaves the source holding a live key. Both directions
+  answer `6581` instead of `9000`. bcdDevice 0x0985 → 0x0986. The model's half is
+  **not** in this change and is recorded in `docs/store-refinement.md`:
+  `RSKeyStore!Delete` still carries no faulted disjunct, so the sweep cannot yet
+  judge the shape.
+
 - **Two build flavours were gated by rows that ran four tests between them.**
   `check.sh`'s `test (fips: rsk-fido)`, `test (fips: rsk-piv)` and
   `test (strong-pin)` each passed a bare name to `cargo test`, so the only

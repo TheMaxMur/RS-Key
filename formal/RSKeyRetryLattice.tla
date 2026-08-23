@@ -40,18 +40,18 @@ EXTENDS Naturals
 CONSTANTS
     Max,   \* the retry ceiling; models MAX_PIN_RETRIES / the per-reference default
     \* The `left == 0 => PIN_BLOCKED` floor, checked BEFORE the comparison at
-    \* crates/rsk-piv/src/lib.rs:1232-1234 (check_ref) and
+    \* crates/rsk-piv/src/lib.rs:1241-1243 (check_ref) and
     \* crates/rsk-openpgp/src/pin.rs:218-220 (check_pin). One switch: the same
     \* floor guards a direct verify AND a recovery reference (the PUK/RC that
     \* check_ref/check_pin is called on), so removing it opens both.
     BugUseWhenBlocked,
-    \* The decrement that IS the anti-bruteforce gate: crates/rsk-piv/src/lib.rs:1250
+    \* The decrement that IS the anti-bruteforce gate: crates/rsk-piv/src/lib.rs:1259
     \* (`set_retries_left(fs, retry, left - 1)`, spent BEFORE the compare) and
     \* crates/rsk-openpgp/src/pin.rs:125 (`pw[idx] -= 1`). Removing it lets a wrong
     \* attempt cost nothing -- unlimited guesses at full speed.
     BugWrongDoesNotSpend,
     \* The recovery reference verified BEFORE the target is refilled:
-    \* crates/rsk-piv/src/lib.rs:1383 (`check_ref(EF_PUK, ..)` opens
+    \* crates/rsk-piv/src/lib.rs:1392 (`check_ref(EF_PUK, ..)` opens
     \* unblock_pin_with_puk) and crates/rsk-openpgp/src/pin.rs:793 (`check_pin(EF_RC,
     \* ..)` opens reset_retry's P1=0 branch). Removing it refills the target on a
     \* WRONG recovery secret.
@@ -103,7 +103,7 @@ Init ==
     /\ viol = {}
 
 (***************************************************************************)
-(* VERIFY. crates/rsk-piv/src/lib.rs:1227-1290 (check_ref) and              *)
+(* VERIFY. crates/rsk-piv/src/lib.rs:1236-1299 (check_ref) and              *)
 (* crates/rsk-openpgp/src/pin.rs:195-286 (check_pin): refuse at zero, spend  *)
 (* on a wrong value, refill on a correct one.                              *)
 (***************************************************************************)

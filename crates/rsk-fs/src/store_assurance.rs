@@ -101,7 +101,7 @@ impl<S: Storage> Fs<S> {
         self.mark_present(fid);
     }
 
-    /// `Delete`'s cache clause (`fs.rs:440-449` → `mark_absent`).
+    /// `Delete`'s cache clause (`fs.rs:450-459` → `mark_absent`).
     pub fn step_delete(&mut self, fid: u16) {
         self.mark_absent(fid);
     }

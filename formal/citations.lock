@@ -37,10 +37,10 @@ crates/rsk-fido/src/state_kani.rs	crates/rsk-fido/src/state.rs	329-335	/// The c
 crates/rsk-fido/src/state_kani.rs	crates/rsk-fido/src/state.rs	357-361	/// Transport channel of the request being dispatched — the CTAPHID CID, or 0	pub channel: u32,
 crates/rsk-fs/src/store_assurance.rs	crates/rsk-fs/src/fs.rs	128-130	fn known_absent(&self, fid: u16) -> bool {	}
 crates/rsk-fs/src/store_assurance.rs	crates/rsk-fs/src/fs.rs	391-411	pub fn put(&mut self, fid: u16, data: &[u8]) -> Result<()> {	}
-crates/rsk-fs/src/store_assurance.rs	crates/rsk-fs/src/fs.rs	440-449	pub fn delete(&mut self, fid: u16) -> Result<()> {	}
+crates/rsk-fs/src/store_assurance.rs	crates/rsk-fs/src/fs.rs	450-459	pub fn delete(&mut self, fid: u16) -> Result<()> {	}
 crates/rsk-fs/src/store_steps_tests.rs	crates/rsk-fs/src/fs.rs	29-29	const FID_PRESENT_BYTES: usize = 3;	const FID_PRESENT_BYTES: usize = 3;
 crates/rsk-fs/src/store_steps_tests.rs	crates/rsk-fs/src/fs.rs	118-118	self.decided[(fid >> 3) as usize] & (1u8 << (fid & 7)) != 0	self.decided[(fid >> 3) as usize] & (1u8 << (fid & 7)) != 0
-crates/rsk-fs/src/store_steps_tests.rs	crates/rsk-fs/src/fs.rs	441-441	let _ = self.meta_delete(fid);	let _ = self.meta_delete(fid);
+crates/rsk-fs/src/store_steps_tests.rs	crates/rsk-fs/src/fs.rs	451-451	let meta = self.meta_delete(fid);	let meta = self.meta_delete(fid);
 crates/rsk-piv/src/tests.rs	crates/rsk-fido/src/clientpin.rs	761-761	if !matched && ctx.dev.otp_key.is_some() {	if !matched && ctx.dev.otp_key.is_some() {
 crates/rsk-usb/src/secure_pin_kani.rs	crates/rsk-usb/src/secure_pin.rs	96-96	// Force the canonical VERIFY class byte; never honour the host template's CLA.	// Force the canonical VERIFY class byte; never honour the host template's CLA.
 formal/README.md	crates/rsk-devconf/src/lib.rs	264-277	// and `read_enabled_caps` reads empty as "no record" and returns	return Ok(());
@@ -154,11 +154,11 @@ formal/README.md	crates/rsk-fs/src/fs.rs	211-213	// key from it. An un-yielded F
 formal/README.md	crates/rsk-fs/src/fs.rs	250-250	r.is_some_and(|n| n > 0)	r.is_some_and(|n| n > 0)
 formal/README.md	crates/rsk-fs/src/fs.rs	253-256	/// Invoke `f` once per live key in the backend, in a single storage pass.	/// while one `for_each_key` pass is O(items).
 formal/README.md	crates/rsk-fs/src/fs.rs	363-363	if !preserve(fid) && phase_of(fid) == phase && n < batch.len() {	if !preserve(fid) && phase_of(fid) == phase && n < batch.len() {
-formal/README.md	crates/rsk-fs/src/fs.rs	434-439	/// rather than `known_absent`: an UNKNOWN FID is skipped, not confirmed. This	/// of it confirms-and-caches it present, after which delete works normally.
-formal/README.md	crates/rsk-fs/src/fs.rs	447-447	self.dynamic.retain(|&f| f != fid);	self.dynamic.retain(|&f| f != fid);
-formal/README.md	crates/rsk-fs/src/fs.rs	546-546	let n = if self.known_absent(EF_META) {	let n = if self.known_absent(EF_META) {
-formal/README.md	crates/rsk-fs/src/fs.rs	583-583	// Absent means there is nothing to drop; a FAILED read means we do not	// Absent means there is nothing to drop; a FAILED read means we do not
-formal/README.md	crates/rsk-fs/src/fs.rs	585-585	None if self.storage.last_error() => return Err(Error::MemoryFatal),	None if self.storage.last_error() => return Err(Error::MemoryFatal),
+formal/README.md	crates/rsk-fs/src/fs.rs	444-449	/// rather than `known_absent`: an UNKNOWN FID is skipped, not confirmed. This	/// of it confirms-and-caches it present, after which delete works normally.
+formal/README.md	crates/rsk-fs/src/fs.rs	457-457	self.dynamic.retain(|&f| f != fid);	self.dynamic.retain(|&f| f != fid);
+formal/README.md	crates/rsk-fs/src/fs.rs	556-556	let n = if self.known_absent(EF_META) {	let n = if self.known_absent(EF_META) {
+formal/README.md	crates/rsk-fs/src/fs.rs	593-593	// Absent means there is nothing to drop; a FAILED read means we do not	// Absent means there is nothing to drop; a FAILED read means we do not
+formal/README.md	crates/rsk-fs/src/fs.rs	595-595	None if self.storage.last_error() => return Err(Error::MemoryFatal),	None if self.storage.last_error() => return Err(Error::MemoryFatal),
 formal/README.md	crates/rsk-fs/src/lib.rs	26-46	/// Set (`[1]`) once the post-OTP-provisioning at-rest hardening pass has run: the seal	let _ = fs.delete(EF_HARDENED);
 formal/README.md	crates/rsk-fs/src/lib.rs	46-46	let _ = fs.delete(EF_HARDENED);	let _ = fs.delete(EF_HARDENED);
 formal/README.md	crates/rsk-oath/src/lib.rs	327-329	if !self.validated {	}
@@ -190,10 +190,10 @@ formal/README.md	crates/rsk-piv/src/lib.rs	199-203	self.clear_challenge();	pub s
 formal/README.md	crates/rsk-piv/src/lib.rs	365-368	if !reselect {	// The default PIN/PUK/retry/mgmt/attestation files are provisioned once
 formal/README.md	crates/rsk-piv/src/lib.rs	391-391	self.sess.reset();	self.sess.reset();
 formal/README.md	crates/rsk-piv/src/lib.rs	543-577	// the retry counter … shall be decremented by one." A YubiKey 5.7.4 does	/// `6A88` for anything but `P1 = 00, P2 = 80`, as on `change_pin` — and here
-formal/README.md	crates/rsk-piv/src/lib.rs	1232-1234	Err(sw) => return sw,	if left == 0 {
-formal/README.md	crates/rsk-piv/src/lib.rs	1250-1250	// nothing. The cost is that a power cut here spends a retry the holder did	// nothing. The cost is that a power cut here spends a retry the holder did
-formal/README.md	crates/rsk-piv/src/lib.rs	1263-1263	&& ct_eq(	&& ct_eq(
-formal/README.md	crates/rsk-piv/src/lib.rs	1383-1383	puk: &[u8],	puk: &[u8],
+formal/README.md	crates/rsk-piv/src/lib.rs	1241-1243	Err(sw) => return sw,	if left == 0 {
+formal/README.md	crates/rsk-piv/src/lib.rs	1259-1259	// nothing. The cost is that a power cut here spends a retry the holder did	// nothing. The cost is that a power cut here spends a retry the holder did
+formal/README.md	crates/rsk-piv/src/lib.rs	1272-1272	&& ct_eq(	&& ct_eq(
+formal/README.md	crates/rsk-piv/src/lib.rs	1392-1392	puk: &[u8],	puk: &[u8],
 formal/README.md	crates/rsk-rescue/src/lib.rs	141-143	/// Refines `RSKeyAdminSurface!PrivilegedOpNeedsPresence` — SEC-ADM-002.	self.presence.borrow_mut().request(confirm) == Presence::Confirmed
 formal/README.md	crates/rsk-sdk/src/applet.rs	208-210	fn selectable(&self, i: usize) -> bool {	}
 formal/README.md	crates/rsk-sdk/src/applet.rs	374-390	// answered to the AID SP 800-85A-4 C.1.1.2 names as invalid. A YubiKey	{
@@ -274,7 +274,7 @@ formal/RSKeyBootHardening.tla	crates/rsk-fido/src/clientpin.rs	811-813	if migrat
 formal/RSKeyBootHardening.tla	crates/rsk-fs/src/lib.rs	26-46	/// Set (`[1]`) once the post-OTP-provisioning at-rest hardening pass has run: the seal	let _ = fs.delete(EF_HARDENED);
 formal/RSKeyBootHardening.tla	crates/rsk-oath/src/lib.rs	1156-1156	// (rsk-fs `EF_HARDENED` invariant; audit run-35).	// (rsk-fs `EF_HARDENED` invariant; audit run-35).
 formal/RSKeyBootHardening.tla	crates/rsk-openpgp/src/pin.rs	340-340	// both are rooted in the *public* chip serial (so the verifier is brute-forceable	// both are rooted in the *public* chip serial (so the verifier is brute-forceable
-formal/RSKeyBootHardening.tla	crates/rsk-piv/src/lib.rs	1272-1275	return Sw::MEMORY_FAILURE;	// the pre-OTP arm, which the public chip serial alone derives (rsk-fs
+formal/RSKeyBootHardening.tla	crates/rsk-piv/src/lib.rs	1281-1284	return Sw::MEMORY_FAILURE;	// the pre-OTP arm, which the public chip serial alone derives (rsk-fs
 formal/RSKeyBootHardening.tla	firmware/src/main.rs	615-626	// One-shot at-rest hardening. The seal migrations above re-key every secret	let _ = fs.put(rsk_fido::consts::EF_HARDENED, &[1u8]);
 formal/RSKeyBootHardening.tla	firmware/src/main.rs	625-625	if mkek.is_some() && !fs.has_data(rsk_fido::consts::EF_HARDENED) && fs.compact().is_ok() {	if mkek.is_some() && !fs.has_data(rsk_fido::consts::EF_HARDENED) && fs.compact().is_ok() {
 formal/RSKeyBootHardening.tla	firmware/src/pin_lock.rs	18-21	//! a real power cycle clears it. The *whole* lock moves: carrying the engaged flag	//!
@@ -288,10 +288,10 @@ formal/RSKeyRetryLattice.tla	crates/rsk-openpgp/src/pin.rs	770-820	/// resetting
 formal/RSKeyRetryLattice.tla	crates/rsk-openpgp/src/pin.rs	793-793	if data.len() <= rc_len {	if data.len() <= rc_len {
 formal/RSKeyRetryLattice.tla	crates/rsk-openpgp/src/pin.rs	825-825	if p1 != 0x02 {	if p1 != 0x02 {
 formal/RSKeyRetryLattice.tla	crates/rsk-piv/src/lib.rs	580-587	fn reset_retry<S: Storage>(&mut self, dev: &Device, fs: &mut Fs<S>, apdu: &Apdu) -> Sw {	unblock_pin_with_puk(dev, fs, puk, new)
-formal/RSKeyRetryLattice.tla	crates/rsk-piv/src/lib.rs	1227-1290	/// Refines `RSKeyRetryLattice!NoAuthWhenBlocked` — SEC-LAT-001.	Sw::retries(left)
-formal/RSKeyRetryLattice.tla	crates/rsk-piv/src/lib.rs	1232-1234	Err(sw) => return sw,	if left == 0 {
-formal/RSKeyRetryLattice.tla	crates/rsk-piv/src/lib.rs	1250-1250	// nothing. The cost is that a power cut here spends a retry the holder did	// nothing. The cost is that a power cut here spends a retry the holder did
-formal/RSKeyRetryLattice.tla	crates/rsk-piv/src/lib.rs	1383-1383	puk: &[u8],	puk: &[u8],
+formal/RSKeyRetryLattice.tla	crates/rsk-piv/src/lib.rs	1236-1299	/// Refines `RSKeyRetryLattice!NoAuthWhenBlocked` — SEC-LAT-001.	Sw::retries(left)
+formal/RSKeyRetryLattice.tla	crates/rsk-piv/src/lib.rs	1241-1243	Err(sw) => return sw,	if left == 0 {
+formal/RSKeyRetryLattice.tla	crates/rsk-piv/src/lib.rs	1259-1259	// nothing. The cost is that a power cut here spends a retry the holder did	// nothing. The cost is that a power cut here spends a retry the holder did
+formal/RSKeyRetryLattice.tla	crates/rsk-piv/src/lib.rs	1392-1392	puk: &[u8],	puk: &[u8],
 formal/RSKeySecurityState.tla	crates/rsk-device/src/ctap.rs	196-199	backup_sealed_record: fs.has_data(EF_BACKUP_SEALED),	credential_slots_raw: credentials.iter().filter(|present| **present).count() as u16,
 formal/RSKeySecurityState.tla	crates/rsk-device/src/ctap.rs	348-355	// Persist the clientPIN soft lock across a warm reboot. It is RAM-only, and a	.store_pin_lock(self.fido_state.borrow().pin_lock());
 formal/RSKeySecurityState.tla	crates/rsk-device/src/presence.rs	25-26	/// No host request in flight: an on-panel (local) flow owns the button.	pub const SCOPE_NONE: u8 = 0;
@@ -428,15 +428,15 @@ formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	176-219	pub fn scan(&mut self) {	}
 formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	216-218	if complete {	}
 formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	222-251	pub fn read(&mut self, fid: u16, buf: &mut [u8]) -> Option<usize> {	}
 formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	391-411	pub fn put(&mut self, fid: u16, data: &[u8]) -> Result<()> {	}
-formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	425-434	/// with no `put`) without its contents ever being present, so gating the meta	/// rather than `known_absent`: an UNKNOWN FID is skipped, not confirmed. This
-formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	441-441	let _ = self.meta_delete(fid);	let _ = self.meta_delete(fid);
-formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	441-448	let _ = self.meta_delete(fid);	Ok(())
-formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	540-566	pub fn meta_add_reserve(&mut self, fid: u16, data: &[u8], reserve: usize) -> Result<()> {	}
-formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	546-546	let n = if self.known_absent(EF_META) {	let n = if self.known_absent(EF_META) {
-formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	546-548	let n = if self.known_absent(EF_META) {	} else {
-formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	553-555	if r.is_none() && self.storage.last_error() {	}
-formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	576-606	pub fn meta_delete(&mut self, fid: u16) -> Result<()> {	}
-formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	585-585	None if self.storage.last_error() => return Err(Error::MemoryFatal),	None if self.storage.last_error() => return Err(Error::MemoryFatal),
+formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	425-444	/// with no `put`) without its contents ever being present, so gating the meta	/// rather than `known_absent`: an UNKNOWN FID is skipped, not confirmed. This
+formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	451-451	let meta = self.meta_delete(fid);	let meta = self.meta_delete(fid);
+formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	451-458	let meta = self.meta_delete(fid);	meta
+formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	550-576	pub fn meta_add_reserve(&mut self, fid: u16, data: &[u8], reserve: usize) -> Result<()> {	}
+formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	556-556	let n = if self.known_absent(EF_META) {	let n = if self.known_absent(EF_META) {
+formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	556-558	let n = if self.known_absent(EF_META) {	} else {
+formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	563-565	if r.is_none() && self.storage.last_error() {	}
+formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	586-616	pub fn meta_delete(&mut self, fid: u16) -> Result<()> {	}
+formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	595-595	None if self.storage.last_error() => return Err(Error::MemoryFatal),	None if self.storage.last_error() => return Err(Error::MemoryFatal),
 formal/RSKeyStore.tla	crates/rsk-fs/src/powercut.rs	43-51	pub fn delete_landed(	}
 formal/RSKeyStore.tla	crates/rsk-fs/src/powercut_model.rs	47-47	fn dead(&self) -> bool;	fn dead(&self) -> bool;
 formal/RSKeyTransport.tla	crates/rsk-usb/src/ctaphid.rs	209-209	#[cfg(not(kani))]	#[cfg(not(kani))]
@@ -480,7 +480,7 @@ formal/comutants.toml	crates/rsk-piv/src/lib.rs	665-665	if !self.sess.has_mgm {	
 formal/comutants.toml	crates/rsk-piv/src/lib.rs	793-793	if !self.sess.has_mgm {	if !self.sess.has_mgm {
 formal/comutants.toml	crates/rsk-piv/src/lib.rs	1030-1030	if !self.sess.has_mgm {	if !self.sess.has_mgm {
 formal/comutants.toml	crates/rsk-piv/src/lib.rs	1090-1090	if !self.sess.has_mgm {	if !self.sess.has_mgm {
-formal/comutants.toml	crates/rsk-piv/src/lib.rs	1252-1252	if set_retries_left(fs, retry, left - 1).is_err() {	if set_retries_left(fs, retry, left - 1).is_err() {
+formal/comutants.toml	crates/rsk-piv/src/lib.rs	1261-1261	if set_retries_left(fs, retry, left - 1).is_err() {	if set_retries_left(fs, retry, left - 1).is_err() {
 formal/comutants.toml	crates/rsk-sdk/src/applet.rs	227-227	pub fn reset_card<C>(&mut self, applets: &mut [&mut dyn Applet<C>], ctx: &mut C) {	pub fn reset_card<C>(&mut self, applets: &mut [&mut dyn Applet<C>], ctx: &mut C) {
 formal/gen-configs.sh	crates/rsk-fido/src/consts.rs	364-364	pub const MAX_PIN_RETRIES: u8 = 8;	pub const MAX_PIN_RETRIES: u8 = 8;
 formal/gen-configs.sh	crates/rsk-fido/src/consts.rs	368-368	pub const PIN_MISMATCH_LIMIT: u8 = 3;	pub const PIN_MISMATCH_LIMIT: u8 = 3;

@@ -1157,12 +1157,21 @@ impl PivApplet<'_> {
             }
         }
         blob.zeroize();
-        let _ = fs.delete_key(key_fid(from));
+        let dropped = fs.delete_key(key_fid(from));
         let _ = fs.delete(pubkey_fid(from));
         if let Some(f) = cert_from {
             let _ = fs.delete(f);
         }
-        let _ = fs.meta_delete(key_fid(from).get());
+        // A head left over a key that is GONE is what GET METADATA, and the
+        // PIN/touch gate reading the same record, would answer for. One EF_META
+        // read can fault where the next lands, so the head earns a retry; the key
+        // is read back too, because a `remove` that failed leaves the source
+        // holding a live key and that is not an OK move either.
+        if dropped.is_err()
+            && (fs.has_key(key_fid(from)) || fs.meta_delete(key_fid(from).get()).is_err())
+        {
+            return Sw::MEMORY_FAILURE;
+        }
         Sw::OK
     }
 }

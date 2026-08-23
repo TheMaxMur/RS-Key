@@ -7847,3 +7847,151 @@ fn every_curve_piv_accepts_fits_its_point_buffer() {
     // A roster this loop failed to read would pass every assertion above.
     assert_eq!(seen, 8, "expected 4 curves from each roster, walked {seen}");
 }
+
+/// A medium whose EF_META reads fail while the budget lasts, and whose `remove`
+/// can be made to fail for one fid — the two ways `Fs::delete` reports trouble.
+/// EF_META alone, because the observation must not be what fails: a blanket read
+/// fault would take the source key's own read with it and answer `FILE_NOT_FOUND`,
+/// which is a pass for the wrong reason.
+struct MetaFaults {
+    inner: RamStorage,
+    budget: std::rc::Rc<std::cell::Cell<usize>>,
+    unremovable: std::rc::Rc<std::cell::Cell<u16>>,
+    err: bool,
+}
+
+impl MetaFaults {
+    fn faulting(&mut self, fid: u16) -> bool {
+        if fid == rsk_fs::EF_META && self.budget.get() > 0 {
+            self.budget.set(self.budget.get().saturating_sub(1));
+            self.err = true;
+            return true;
+        }
+        self.err = false;
+        false
+    }
+}
+
+impl Storage for MetaFaults {
+    fn read(&mut self, fid: u16, buf: &mut [u8]) -> Option<usize> {
+        if self.faulting(fid) {
+            return None;
+        }
+        self.inner.read(fid, buf)
+    }
+    fn write(&mut self, fid: u16, data: &[u8]) -> Result<(), rsk_sdk::error::Error> {
+        self.inner.write(fid, data)
+    }
+    fn remove(&mut self, fid: u16) -> Result<(), rsk_sdk::error::Error> {
+        if fid == self.unremovable.get() {
+            return Err(rsk_sdk::error::Error::MemoryFatal);
+        }
+        self.inner.remove(fid)
+    }
+    fn size(&mut self, fid: u16) -> Option<usize> {
+        if self.faulting(fid) {
+            return None;
+        }
+        self.inner.size(fid)
+    }
+    fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) -> bool {
+        self.inner.for_each_key(f)
+    }
+    fn last_error(&self) -> bool {
+        self.err
+    }
+}
+
+/// MOVE with `to = 0xFF` is the slot DELETE, and it is the one path in the tree
+/// that deletes a fid carrying an EF_META head — the heads are minted by this
+/// crate alone. `Fs::delete` removes the value whatever the head does, so a
+/// faulted drop leaves a record over a key that is gone and GET METADATA would
+/// answer for a slot that cannot sign; a failed `remove` leaves the other
+/// direction, a live key with no head, which is the state `files.rs`'s mint-arm
+/// repair exists for.
+///
+/// The budget counts EF_META reads, and this path takes more than the two the
+/// head is about — the pubkey and certificate deletes each try one, for fids that
+/// carry no head at all. So the "nothing lands" case arms the medium for the whole
+/// command rather than counting: a flash that cannot be read is not a budget.
+fn move_delete_under_faults(meta_faults: usize, break_remove: bool) -> (Sw, bool, bool) {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let faults = std::rc::Rc::new(std::cell::Cell::new(0usize));
+    let unremovable = std::rc::Rc::new(std::cell::Cell::new(0u16));
+    let mut fs = Fs::new(MetaFaults {
+        inner: RamStorage::new(),
+        budget: faults.clone(),
+        unremovable: unremovable.clone(),
+        err: false,
+    });
+    fs.scan();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    verify_pin(&mut app, &mut fs);
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            INS_ASYM_KEYGEN,
+            0,
+            SLOT_AUTHENTICATION,
+            &gen_template(ALGO_ECCP256)
+        )
+        .0,
+        Sw::OK
+    );
+    let mut head = [0u8; 8];
+    assert!(
+        fs.meta_find(key_fid(SLOT_AUTHENTICATION).get(), &mut head)
+            .is_some(),
+        "the slot must carry a head, or this case tests nothing"
+    );
+
+    faults.set(meta_faults);
+    if break_remove {
+        unremovable.set(key_fid(SLOT_AUTHENTICATION).get());
+    }
+    let (sw, _) = run(
+        &mut app,
+        &mut fs,
+        INS_MOVE_KEY,
+        0xFF,
+        SLOT_AUTHENTICATION,
+        &[],
+    );
+    faults.set(0);
+    unremovable.set(0);
+
+    let orphan = fs
+        .meta_find(key_fid(SLOT_AUTHENTICATION).get(), &mut head)
+        .is_some();
+    let key_alive = fs.has_key(key_fid(SLOT_AUTHENTICATION));
+    (sw, orphan, key_alive)
+}
+
+#[test]
+fn a_slot_delete_answers_for_what_it_could_not_drop() {
+    assert_eq!(
+        move_delete_under_faults(0, false),
+        (Sw::OK, false, false),
+        "the clean control: the key and its head both go"
+    );
+    assert_eq!(
+        move_delete_under_faults(1, false),
+        (Sw::OK, false, false),
+        "one faulted read is not a failed delete — the retry drops the head"
+    );
+    assert_eq!(
+        move_delete_under_faults(usize::MAX, false),
+        (Sw::MEMORY_FAILURE, true, false),
+        "no read landed, so the record stands over a key that is gone"
+    );
+    assert_eq!(
+        move_delete_under_faults(0, true),
+        (Sw::MEMORY_FAILURE, false, true),
+        "the other direction: the head went and the key did not, so the move is \
+         not done and the answer must not say it is"
+    );
+}

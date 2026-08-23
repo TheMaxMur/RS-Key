@@ -953,3 +953,124 @@ fn a_faulted_confirm_caches_nothing_and_a_clean_one_caches_the_answer() {
     assert!(!fs.reads_absent(F));
     assert_eq!(fs.cache_view(G), CacheView::LIVE);
 }
+
+/// A medium whose reads fail while the budget is ARMED, holding its map behind an
+/// `Rc` so a case can read the medium back once the arm is off.
+///
+/// The arm is what keeps the observation honest: a projection taken over a dead
+/// medium answers "gone" for a record that is still on it, and every refused write
+/// then reads as a lost one (the G4 lesson). So the fault covers the step and
+/// nothing else — and it covers `read`/`size` only, which is the shape a
+/// log-structured backend actually fails in: a CRC failure on one item, a fresh
+/// page for the next.
+struct ArmedRead {
+    inner: std::rc::Rc<std::cell::RefCell<RamStorage>>,
+    armed: std::rc::Rc<std::cell::Cell<bool>>,
+    err: bool,
+}
+
+impl Storage for ArmedRead {
+    fn read(&mut self, fid: u16, buf: &mut [u8]) -> Option<usize> {
+        if self.armed.get() {
+            self.err = true;
+            return None;
+        }
+        self.err = false;
+        self.inner.borrow_mut().read(fid, buf)
+    }
+    fn write(&mut self, fid: u16, data: &[u8]) -> Result<()> {
+        self.inner.borrow_mut().write(fid, data)
+    }
+    fn remove(&mut self, fid: u16) -> Result<()> {
+        self.inner.borrow_mut().remove(fid)
+    }
+    fn size(&mut self, fid: u16) -> Option<usize> {
+        if self.armed.get() {
+            self.err = true;
+            return None;
+        }
+        self.err = false;
+        self.inner.borrow_mut().size(fid)
+    }
+    fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) -> bool {
+        self.inner.borrow_mut().for_each_key(f)
+    }
+    fn last_error(&self) -> bool {
+        self.err
+    }
+}
+
+/// A stand-in PIV key slot: the only FIDs that carry an EF_META head are
+/// `rsk-piv`'s, so the case is built at the shape it is about.
+const SLOT: u16 = 0x9A00;
+
+fn armed_fs() -> (
+    Fs<ArmedRead>,
+    std::rc::Rc<std::cell::RefCell<RamStorage>>,
+    std::rc::Rc<std::cell::Cell<bool>>,
+) {
+    let inner = std::rc::Rc::new(std::cell::RefCell::new(RamStorage::new()));
+    let armed = std::rc::Rc::new(std::cell::Cell::new(false));
+    let fs = Fs::new(ArmedRead {
+        inner: inner.clone(),
+        armed: armed.clone(),
+        err: false,
+    });
+    (fs, inner, armed)
+}
+
+/// `delete` used to swallow `meta_delete`'s error (`let _ =`) and remove the value
+/// anyway, so over a medium whose EF_META read fails ONCE the caller was told
+/// `Ok(())` about a file whose value was gone and whose record still stood — the
+/// 0x077C databug's end state, with no power cut in it.
+///
+/// The removal is still unconditional, because EF_META is one blob shared by every
+/// applet and refusing on a read fault would stop every delete on the device,
+/// wipes included. What changed is that the caller is told: `Err` names the state
+/// (value gone, record may stand) instead of hiding it.
+#[test]
+fn a_faulted_metadata_drop_is_reported_and_the_value_still_goes() {
+    let (mut fs, ram, armed) = armed_fs();
+    fs.put(SLOT, b"sealed key material").unwrap();
+    fs.meta_add(SLOT, &[0xAA, 0x01, 0x02, 0x03]).unwrap();
+
+    armed.set(true);
+    let answered = fs.delete(SLOT);
+    armed.set(false);
+
+    assert!(
+        matches!(answered, Err(Error::MemoryFatal)),
+        "a delete that could not drop the record answered {answered:?}"
+    );
+    // Read the MEDIUM, not the cache: the present bit is marked absent by the
+    // delete either way, so a cache-level assertion would pass with the backend
+    // `remove` never called.
+    let mut buf = [0u8; 32];
+    assert!(
+        ram.borrow_mut().read(SLOT, &mut buf).is_none(),
+        "the value must go even when the record could not be dropped"
+    );
+    assert!(
+        ram.borrow_mut().read(EF_META, &mut buf).is_some(),
+        "the record is what the error is about — it stands"
+    );
+}
+
+/// The control, and the half that says the case above is not simply asserting that
+/// deletes fail: with nothing armed the same sequence answers `Ok(())` and takes
+/// both halves with it.
+#[test]
+fn an_unfaulted_delete_takes_the_value_and_the_record() {
+    let (mut fs, ram, _armed) = armed_fs();
+    fs.put(SLOT, b"sealed key material").unwrap();
+    fs.meta_add(SLOT, &[0xAA, 0x01, 0x02, 0x03]).unwrap();
+
+    assert_eq!(fs.delete(SLOT), Ok(()));
+
+    let mut buf = [0u8; 32];
+    assert!(ram.borrow_mut().read(SLOT, &mut buf).is_none());
+    assert!(
+        ram.borrow_mut().read(EF_META, &mut buf).is_none(),
+        "the last record was dropped, so EF_META goes with it"
+    );
+}
