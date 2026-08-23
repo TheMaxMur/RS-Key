@@ -101,7 +101,7 @@ impl<S: Storage> Fs<S> {
         self.mark_present(fid);
     }
 
-    /// `Delete`'s cache clause (`fs.rs:450-459` → `mark_absent`).
+    /// `Delete`'s cache clause (`fs.rs:451-460` → `mark_absent`).
     pub fn step_delete(&mut self, fid: u16) {
         self.mark_absent(fid);
     }
@@ -212,6 +212,12 @@ impl<S: Storage> Fs<S> {
 //
 // Each takes the pair the model's `viol'` is written over and answers whether the
 // step VIOLATED it, so the name reads the way a counterexample does.
+//
+// A FOURTH step clause has no projection here, deliberately. `NoSilentOrphan` —
+// SEC-STORE-006 — forbids not a state but an ANSWER: the record may stand over a
+// value a faulted delete removed, provided the caller was told. So the sweep
+// pairs `delete_orphaned_metadata` below with what `Fs::delete` returned, and a
+// projection over `StoreView` alone could not see the half that decides it.
 
 /// `RSKeyStore!NoOrphanedMetadata` at a `Delete(f)` step — SEC-STORE-001.
 ///

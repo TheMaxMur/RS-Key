@@ -275,15 +275,15 @@ split three ways, and the split is the point.
 |---|---|
 | **Equivalent, not a defect** | `ctaphid.rs:420` `\|` → `^` on `(f[5] << 8) \| f[6]` — disjoint bits, the two operators agree |
 | **Fail-safe direction** | `ctaphid.rs:431` `>` → `>=` refuses an exactly-maximum message: stricter, so `NoBufferOverrun` still holds. `fs.rs:147` and `fs.rs:190` `\|=` → `&=` clear *decided* bits, which sends more reads to the reliable backend |
-| **Model-blind** | the dynamic-file registry in `scan` (`fs.rs:195` and `fs.rs:198`, three mutants), `has_data`'s zero-length test (`fs.rs:250`), `factory_wipe`'s 64-key batch bound (`fs.rs:363`), the registry retain in `delete` (`fs.rs:457`), and **`meta_delete`'s fault guard (`fs.rs:593`)** |
+| **Model-blind** | the dynamic-file registry in `scan` (`fs.rs:195` and `fs.rs:198`, three mutants), `has_data`'s zero-length test (`fs.rs:250`), `factory_wipe`'s 64-key batch bound (`fs.rs:363`), the registry retain in `delete` (`fs.rs:458`), and **`meta_delete`'s fault guard (`fs.rs:594`)** |
 
 The last one was worth the exercise on its own. `Fs::meta_add_reserve` refuses a
 FAILED EF_META read and the model carries that as `BugMetaAddDropsOnFault`; its
-sibling `Fs::meta_delete` has the identical guard at `fs.rs:595`, and **nothing
+sibling `Fs::meta_delete` has the identical guard at `fs.rs:596`, and **nothing
 held it at either level**. No test killed it, and `MetaDelete` was modelled as an
 unconditional single write with no read to fail. Worse than a lost delete: the
 mutant caches EF_META as *absent*, and the next `meta_add` legitimately trusts
-`known_absent` and rebuilds the blob from empty (`fs.rs:556`), so the records go
+`known_absent` and rebuilds the blob from empty (`fs.rs:557`), so the records go
 on the write **after** the defect. That is why it is `NoFalseMetaAbsent`,
 SEC-STORE-004, a step recorder — once the cache has lied, the losing write is
 correct code and no state predicate over `meta` can tell the two apart.
@@ -1414,18 +1414,28 @@ other must not wipe, and two values so an overwrite is observable.
   (a `meta_add` with no `put`) legally has metadata and no value, so the
   violation is a record *outliving a delete*, which is a step. It is a `viol`
   ghost with one writer, `Delete`.
+- **Enumeration over a faulted medium** is `NoSilentOrphan`. `Fs::delete` removes
+  the value even when the EF_META read fails and the record cannot follow it —
+  refusing there would stop every delete on the device, wipes included, for the
+  lifetime of one flash fault. So an orphan IS a state the shipped tree can be
+  in; what it may not do is answer `Ok` from it. Same ghost, same writer, and the
+  two split the arms between them: the clause above owns every delete whose drop
+  landed, this one owns the delete whose drop could not.
 
-**Five mutants, each a shipped defect, each RED on the invariant that names it.**
+**Six of the seven mutation switches are tabled here** — each a shipped defect,
+each RED on the invariant that names it. (`BugMetaDeleteDropsOnFault` is the
+seventh, recorded with the fault-disjunct work earlier in this file.)
 
 | Mutation switch | Rebuilds | Target invariant | Caught in |
 |---|---|---|---|
-| `BugDeleteValueBeforeMeta` | `fs.rs:444-449` — the two backend writes reversed, so a torn delete leaves value-gone-meta-alive (`delete_landed`) | `NoOrphanedMetadata` | 54 states |
+| `BugDeleteValueBeforeMeta` | `fs.rs:445-450` — the two backend writes reversed, so a torn delete leaves value-gone-meta-alive (`delete_landed`) | `NoOrphanedMetadata` | 54 states |
 | `BugDeleteMetaOnlyUnderPresent` | the 0x077C databug — `delete` dropping `EF_META` only under `if present_bit`, so a meta-only file keeps its record | `NoOrphanedMetadata` | 55 states |
+| `BugDeleteHidesFaultedDrop` | the shipped tree before `fs.rs:459` — a faulted `meta_delete` swallowed, so the caller hears `Ok` about a record standing over a value that is gone | `NoSilentOrphan` | 61 states |
 | `BugCacheFaultAsAbsent` | audit run-36 — `record` in place of `record_unless_faulted`, caching a faulted read as a decided absence | `NoFalseAbsent` | 23 states |
 | `BugTruncatedScanDecidesAll` | `fs.rs:211-213` — `scan` deciding the whole FID space after a *truncated* walk, so a missed live key reads absent | `NoFalseAbsent` | 24 states |
 | `BugMetaAddDropsOnFault` | the 0x077C databug's meta half — a faulted `EF_META` read rebuilt from empty, dropping every other record | `NoRecordLostToMetaWrite` | 51 states |
 
-`Store.cfg` is **GREEN, exhaustive** over 272 distinct states at depth 7 in
+`Store.cfg` is **GREEN, exhaustive** over 364 distinct states at depth 7 in
 about a second; every `StoreSolo_*.cfg` — the run that checks *only* the mutant's
 own target — is RED, so no mutant here is caught by a sibling. The counts are an
 order of magnitude, not a pin, the same as everywhere else.
@@ -2234,7 +2244,7 @@ State 2  MetaAdd("a")        meta = [a |-> TRUE,  b |-> FALSE]
 The cache says `EF_META` is absent while `b`'s record stands. Nothing in
 `TypeOK` or the four invariants forbids that state, and from it `MetaAdd` does
 exactly what the shipped code does — trusts the cache and rebuilds the blob from
-empty (`fs.rs:556`), losing `b`. This is SEC-STORE-004's damage arriving from a
+empty (`fs.rs:557`), losing `b`. This is SEC-STORE-004's damage arriving from a
 STATE rather than from the step that made the cache lie, and the model had no
 way to say the cache is honest. One conjunct fixes it:
 
@@ -2536,6 +2546,7 @@ evidence columns and validated cross-model support edges below on every gate run
 | `SEC-STORE-003` | `NoRecordLostToMetaWrite` | MODELLED-ONLY | `RSKeyStore` | — | 2 | 1 | 1 | 0 | 0 | 0 |
 | `SEC-STORE-004` | `NoFalseMetaAbsent` | MODELLED-ONLY | `RSKeyStore` | — | 2 | 1 | 1 | 0 | 0 | 0 |
 | `SEC-STORE-005` | `CacheHonest` | MODELLED-ONLY | `RSKeyStore` | — | 1 | 0 | 0 | 0 | 0 | 0 |
+| `SEC-STORE-006` | `NoSilentOrphan` | MODELLED-ONLY | `RSKeyStore` | — | 2 | 1 | 1 | 0 | 0 | 0 |
 | `SEC-LAT-001` | `NoAuthWhenBlocked` | MODELLED-ONLY | `RSKeyRetryLattice` | — | 2 | 1 | 1 | 0 | 0 | 0 |
 | `SEC-LAT-002` | `WrongAttemptIsCharged` | MODELLED-ONLY | `RSKeyRetryLattice` | — | 2 | 1 | 1 | 0 | 0 | 0 |
 | `SEC-LAT-003` | `BudgetRisesOnlyWithItsSecret` | MODELLED-ONLY | `RSKeyRetryLattice` | — | 2 | 1 | 1 | 0 | 0 | 0 |

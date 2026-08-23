@@ -342,6 +342,7 @@ echo "wrote Seams.cfg and ${#SEAM_BUGS[@]} x 2 seam configs"
 # whether a torn delete orphans metadata or the present-cache reads a committed
 # key absent. Both are `Fs` contracts and both have shipped as defects.
 STORE_BUGS=(BugDeleteValueBeforeMeta BugDeleteMetaOnlyUnderPresent
+            BugDeleteHidesFaultedDrop
             BugCacheFaultAsAbsent BugTruncatedScanDecidesAll
             BugMetaAddDropsOnFault BugMetaDeleteDropsOnFault)
 
@@ -349,13 +350,15 @@ store_target() {
   case "$1" in
     BugDeleteValueBeforeMeta)      echo NoOrphanedMetadata ;;
     BugDeleteMetaOnlyUnderPresent) echo NoOrphanedMetadata ;;
+    BugDeleteHidesFaultedDrop)     echo NoSilentOrphan ;;
     BugCacheFaultAsAbsent)         echo NoFalseAbsent ;;
     BugTruncatedScanDecidesAll)    echo NoFalseAbsent ;;
     BugMetaAddDropsOnFault)        echo NoRecordLostToMetaWrite ;;
     BugMetaDeleteDropsOnFault)     echo NoFalseMetaAbsent ;;
   esac
 }
-STORE_INV=(NoOrphanedMetadata NoFalseAbsent NoRecordLostToMetaWrite NoFalseMetaAbsent)
+STORE_INV=(NoOrphanedMetadata NoSilentOrphan NoFalseAbsent NoRecordLostToMetaWrite
+           NoFalseMetaAbsent)
 
 emit_store() { # $1 = cfg, $2 = switch (""), $3 = 1 for solo, $4 = 1 for induction
   local out=$1 on=${2:-} solo=${3:-0} induct=${4:-0}

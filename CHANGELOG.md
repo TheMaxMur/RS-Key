@@ -1298,6 +1298,23 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Internal
 
+- **The store model could not judge a delete the medium had refused.**
+  `RSKeyStore!Delete` carried one disjunct — the power cut — so the faulted
+  metadata drop was a transition nothing stated, and the sweep that walks it
+  armed its injector for `MetaAdd` and `MetaDelete` alone. It has the second
+  disjunct now, and a second enumeration clause to go with it: `NoSilentOrphan`
+  (SEC-STORE-006). The split is the point. An orphaned record IS a state the
+  shipped tree can be in — `Fs::delete` removes the value even when EF_META
+  cannot be read — so `NoOrphanedMetadata` keeps every arm whose drop landed, and
+  the new one forbids only answering `Ok` from the arm that could not.
+  `BugDeleteHidesFaultedDrop` is its mutant, and its code co-mutant is the
+  previous entry's fix inverted: RED at 61 distinct states in the model, killed in
+  the tree by two tests rather than one, because the host sweep arms the fault for
+  `Step::Delete` now and counts the times it met a record standing over a value it
+  had removed. The clean arm stays the RAM sweeps' — an injector armed for every
+  delete would leave it untested, which is the shape a review already paid for
+  once. Safety tier: 186 rows, no mismatches.
+
 - **`Fs::delete` answered `Ok(())` for a delete whose metadata drop had failed**,
   and the value went anyway — over a medium whose EF_META read faults once, that
   is a value gone with its record still standing, which is the 0x077C databug's

@@ -270,6 +270,13 @@ statement = "EF_META's presence cache says absent only when no metadata record s
 source = ["audit run-36", "formal/README.md — the induction probes"]
 
 [[property]]
+id = "SEC-STORE-006"
+name = "NoSilentOrphan"
+status = "MODELLED-ONLY"
+statement = "A delete whose metadata drop the medium refused removes the value anyway and reports the failure: the record may stand, but never behind an Ok."
+source = ["docs/store-refinement.md", "formal/README.md — the third module"]
+
+[[property]]
 id = "SEC-LAT-001"
 name = "NoAuthWhenBlocked"
 status = "MODELLED-ONLY"

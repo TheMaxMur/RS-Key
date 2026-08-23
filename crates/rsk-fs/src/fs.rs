@@ -438,7 +438,8 @@ impl<S: Storage> Fs<S> {
     /// it. A caller that cannot live with that reads it — `rsk-piv`'s MOVE does,
     /// because GET METADATA would answer for a key that is no longer there.
     ///
-    /// Refines `RSKeyStore!NoOrphanedMetadata` — SEC-STORE-001.
+    /// Refines `RSKeyStore!NoOrphanedMetadata` — SEC-STORE-001, where the drop
+    /// landed, and Refines `RSKeyStore!NoSilentOrphan` — SEC-STORE-006, where not.
     ///
     /// Unlike the read paths, the backend `remove` keys off the *raw* present bit
     /// rather than `known_absent`: an UNKNOWN FID is skipped, not confirmed. This

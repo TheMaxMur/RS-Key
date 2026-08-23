@@ -537,6 +537,37 @@ slice = ["cargo", "test", "-p", "rsk-fs"]
 expect = "killed"
 note = "the 0x077C databug verbatim: the metadata drop gated on the file's own present bit, so a meta-only file (meta_add with no put) keeps its record through its deletion and it reads back alive."
 
+[comutant.BugDeleteHidesFaultedDrop]
+status = "patch"
+file = "crates/rsk-fs/src/fs.rs"
+find = """
+        let meta = self.meta_delete(fid);
+        if self.present_bit(fid) {
+            self.storage.remove(fid)?;
+            self.mark_absent(fid);
+            self.write_gen = self.write_gen.wrapping_add(1);
+        }
+        self.dynamic.retain(|&f| f != fid);
+        meta
+"""
+replace = """
+        let _ = self.meta_delete(fid);
+        if self.present_bit(fid) {
+            self.storage.remove(fid)?;
+            self.mark_absent(fid);
+            self.write_gen = self.write_gen.wrapping_add(1);
+        }
+        self.dynamic.retain(|&f| f != fid);
+        Ok(())
+"""
+slice = ["cargo", "test", "-p", "rsk-fs"]
+expect = "killed"
+note = """the shipped tree before the delete contract was fixed: the failed metadata
+drop is swallowed and the value goes anyway, so the caller is told Ok(()) about a
+file whose value is gone and whose record still stands. The orphan is not what
+this mutant adds -- both arms leave one over a faulted read -- it is that nobody
+is told, which is why its target is NoSilentOrphan and not NoOrphanedMetadata."""
+
 [comutant.BugCacheFaultAsAbsent]
 status = "patch"
 file = "crates/rsk-fs/src/fs.rs"

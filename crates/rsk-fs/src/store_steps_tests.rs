@@ -73,27 +73,29 @@ fn drive<S: Storage>(
     step: Step,
     trail: &[Step],
     arm: &mut dyn FnMut(bool),
-    live: &mut [usize; 4],
+    live: &mut [usize; 5],
 ) {
     arm(false);
     let before: StoreView = fs.read_store_view();
-    // A fault is armed only for the two actions the model gives one. `MetaAdd`
-    // and `MetaDelete` each carry a faulted disjunct (their `*DropsOnFault`
-    // mutants are its bug arm); `Delete` carries none — `dead` there is a power
-    // CUT, not a medium error — so a faulted delete is a transition the model
-    // does not have, and reading `NoOrphanedMetadata` at one would be judging a
-    // step nothing states. That gap is now the model's alone: `Fs::delete`
-    // (`fs.rs:451`) reports the failed drop instead of swallowing it, so the
-    // state a faulted delete leaves — value gone, record standing — is one the
-    // caller is told about. Giving `Delete` that disjunct, and arming it here,
-    // is the open half recorded in docs/store-refinement.md.
-    arm(matches!(step, Step::MetaAdd(_) | Step::MetaDelete(_)));
+    // A fault is armed only for the actions the model gives one, and `Delete`
+    // is one of them now: its second disjunct is the EF_META read failing, where
+    // the value goes and the record cannot follow it (`fs.rs:452`). `dead` in the
+    // first disjunct is still a power CUT and not a medium error — the two are
+    // different transitions, which is why the mutant that hides the answer
+    // (`BugDeleteHidesFaultedDrop`) targets `NoSilentOrphan` and not the order's
+    // own clause. The RAM sweeps drive the clean arm, this arms the faulted one:
+    // one injector for every delete would leave the clean arm untested, which is
+    // the blindfold shape the G4 review paid for.
+    arm(matches!(
+        step,
+        Step::MetaAdd(_) | Step::MetaDelete(_) | Step::Delete(_)
+    ));
     match step {
         Step::Put(i) => {
             let _ = fs.put(VIEW_FIDS[i], b"v");
         }
         Step::Delete(i) => {
-            let _ = fs.delete(VIEW_FIDS[i]);
+            let answered = fs.delete(VIEW_FIDS[i]);
             arm(false);
             let after = fs.read_store_view();
             live[0] += usize::from(before.meta[i]);
@@ -103,10 +105,18 @@ fn drive<S: Storage>(
             // direction that SUPPRESSES it. Measured — with `put` inert the three
             // clauses stayed green on every other counter.
             live[3] += usize::from(before.val[i]);
+            let orphan = delete_orphaned_metadata(&after, i);
+            // Both clauses meet in one implication here. A clean delete may not
+            // leave a record at all (`NoOrphanedMetadata`); a faulted one may
+            // leave one but not ANSWER OK over it (`NoSilentOrphan`). Which arm
+            // produced the state is the model's distinction — the host sees only
+            // that a record stands over a value that is gone, and what it was
+            // told about it.
             assert!(
-                !delete_orphaned_metadata(&after, i),
-                "NoOrphanedMetadata: {trail:?} then {step:?} left a record over a gone value"
+                !orphan || answered.is_err(),
+                "{trail:?} then {step:?} left a record over a gone value and answered Ok"
             );
+            live[4] += usize::from(orphan && answered.is_err());
         }
         Step::MetaAdd(i) => {
             let _ = fs.meta_add(VIEW_FIDS[i], b"m");
@@ -138,7 +148,7 @@ fn walk<S: Storage>(
     code: u32,
     len: u32,
     arm: &mut dyn FnMut(bool),
-    live: &mut [usize; 4],
+    live: &mut [usize; 5],
 ) -> std::vec::Vec<Step> {
     let n = ALPHABET.len() as u32;
     let mut trail = std::vec::Vec::new();
@@ -152,11 +162,12 @@ fn walk<S: Storage>(
     trail
 }
 
-const RECORDERS: [&str; 4] = [
+const RECORDERS: [&str; 5] = [
     "NoOrphanedMetadata",
     "NoRecordLostToMetaWrite",
     "NoFalseMetaAbsent",
     "NoOrphanedMetadata over a file that had a value",
+    "NoSilentOrphan over a drop the medium refused",
 ];
 
 /// Every recorder must have been READ from a state it could have refused in.
@@ -166,12 +177,19 @@ const RECORDERS: [&str; 4] = [
 /// — a store that never changes never violates anything. This is `kani::cover!`
 /// for a host sweep, and it is what would have caught the faulting medium
 /// blinding `NoRecordLostToMetaWrite` without needing a mutant to say so.
+///
+/// `which` because the fifth is not every sweep's to reach: `RamStorage` never
+/// fails a read, so `NoSilentOrphan`'s precondition — a record standing over a
+/// value the delete removed anyway — belongs to the faulting sweep alone. Naming
+/// the indices keeps that a decision rather than a counter nobody noticed staying
+/// at zero.
 #[track_caller]
-fn assert_every_recorder_was_live(live: [usize; 4]) {
-    for (count, name) in live.iter().zip(RECORDERS) {
+fn assert_recorders_were_live(live: [usize; 5], which: &[usize]) {
+    for &i in which {
         assert!(
-            *count > 0,
-            "{name} was never read from a state it could refuse"
+            live[i] > 0,
+            "{} was never read from a state it could refuse",
+            RECORDERS[i]
         );
     }
 }
@@ -191,12 +209,12 @@ fn never(_: bool) {}
 #[test]
 fn every_three_step_sequence_keeps_the_persistent_clauses() {
     const LEN: u32 = 3;
-    let mut live = [0usize; 4];
+    let mut live = [0usize; 5];
     for code in 0..(ALPHABET.len() as u32).pow(LEN) {
         let mut fs = Fs::new(RamStorage::new());
         walk(&mut fs, code, LEN, &mut never, &mut live);
     }
-    assert_every_recorder_was_live(live);
+    assert_recorders_were_live(live, &[0, 1, 2, 3]);
 }
 
 /// The same walk over a store the caller never scanned, which is the state a
@@ -206,7 +224,7 @@ fn every_three_step_sequence_keeps_the_persistent_clauses() {
 #[test]
 fn every_three_step_sequence_survives_an_unscanned_reboot_between_them() {
     const LEN: u32 = 3;
-    let mut live = [0usize; 4];
+    let mut live = [0usize; 5];
     for code in 0..(ALPHABET.len() as u32).pow(LEN) {
         let mut fs = Fs::new(RamStorage::new());
         let mut trail = walk(&mut fs, code, LEN, &mut never, &mut live);
@@ -221,7 +239,7 @@ fn every_three_step_sequence_survives_an_unscanned_reboot_between_them() {
             trail.push(step);
         }
     }
-    assert_every_recorder_was_live(live);
+    assert_recorders_were_live(live, &[0, 1, 2, 3]);
 }
 
 /// A medium whose reads fail while the budget is armed, so the walk meets
@@ -296,7 +314,7 @@ impl Storage for FaultAfter {
 #[test]
 fn every_two_step_sequence_over_a_failing_medium_keeps_them_too() {
     const LEN: u32 = 2;
-    let mut live = [0usize; 4];
+    let mut live = [0usize; 5];
     let armed = std::rc::Rc::new(std::cell::Cell::new(false));
     for code in 0..(ALPHABET.len() as u32).pow(LEN) {
         let mut seed = Fs::new(RamStorage::new());
@@ -312,9 +330,10 @@ fn every_two_step_sequence_over_a_failing_medium_keeps_them_too() {
         let handle = armed.clone();
         walk(&mut fs, code, LEN, &mut move |on| handle.set(on), &mut live);
     }
-    // The two the fault is armed for; `Delete` is never faulted here, so its
-    // recorder is the RAM sweeps' to cover.
-    assert!(live[1] > 0 && live[2] > 0, "{live:?}");
+    // The three the fault is armed for. `Delete` joined them when the model gave
+    // it a faulted disjunct, and its counter is the one that says the walk ever
+    // reached a record standing over a value it had removed.
+    assert_recorders_were_live(live, &[1, 2, 4]);
 }
 
 /// The recorders have to be able to FIRE, or the two sweeps above are a loop
