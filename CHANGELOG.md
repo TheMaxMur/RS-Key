@@ -1298,6 +1298,22 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Internal
 
+- **The recording apparatus had no finger.** `tests/*.py` reach the device over
+  CTAPHID and nothing else, so no suite could answer a prompt the trusted display
+  puts up — which is why the formal replay's recording carries `builtin_uv` false
+  in every event, and §6.1.2 step 6.3's built-in-UV upgrade is a boundary
+  `scripts/security_trace.py` refuses rather than checks. `--taps-port` gives the
+  pad a socket: the `--taps` contact grammar one line at a time, plus a control's
+  NAME (`key 7`, `onboard skip`, `allow,800`) resolved through the panel's own hit
+  test, so a control that moves takes its name with it where a coordinate in a
+  Python file would not. The channel is what synchronises — a bound of one, the
+  same the crate's display tests use — so the `ok` answering a line means the pad
+  has taken the contact before it, and a suite can keep the finger in step with
+  the commands it sends. `--taps` stays fire-and-forget, and the two are refused
+  together: one is a queue and the other a rendezvous, so a file's contacts would
+  race the socket's. The consumer is the next change; this one is the mechanism,
+  its vocabulary and their test.
+
 - **The store model could not judge a delete the medium had refused.**
   `RSKeyStore!Delete` carried one disjunct — the power cut — so the faulted
   metadata drop was a transition nothing stated, and the sweep that walks it
