@@ -24,6 +24,12 @@ const RESP_CAP: usize = rsk_usb::ctaphid::CTAP_MAX_MESSAGE;
 // stops the two drifting. Over-declare it and a conforming platform sends a message
 // the transport drops before any CBOR is read; `MAX_FRAGMENT_LENGTH` (the
 // largeBlobs ceiling) is derived from the same literal and rides on this too.
+// `cfg(not(kani))` for the reason its sibling in `rsk-usb` carries: this is about
+// the SHIPPED width, and `CTAP_MAX_MESSAGE` deliberately shrinks to two
+// continuation frames under Kani (ctaphid.rs:218), where CBMC runs out of memory
+// at the real one. Unguarded it does not fail a proof — it stops `rsk-device`
+// COMPILING, so every harness in the crate goes with it.
+#[cfg(not(kani))]
 const _: () = assert!(rsk_fido::consts::MAX_MSG_SIZE as usize == RESP_CAP);
 
 /// Raw, non-secret implementation fields exported only by the host emulator.

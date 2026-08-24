@@ -15,7 +15,7 @@
 (* management / rescue / vendor (crates/rsk-device/src/ccid.rs:91-109),      *)
 (* while the CTAPHID side owns a SEPARATE Dispatcher whose applet array is   *)
 (* literally one element, its own VendorApplet                               *)
-(* (crates/rsk-device/src/ctap.rs:171-175). PIV, OpenPGP and OATH are not    *)
+(* (crates/rsk-device/src/ctap.rs:177-181). PIV, OpenPGP and OATH are not    *)
 (* reachable over CTAPHID at all, so no status can be established on one     *)
 (* transport and honoured on the other. A product of the two models would    *)
 (* therefore multiply 17 million states by this module's own and buy exactly *)

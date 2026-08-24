@@ -85,7 +85,7 @@ match more than one file in the tree.
 
 | Invariant | What it asserts here | The Rust construct that owns it |
 |---|---|---|
-| `NoAuthorizationBypass` | No protected operation completes without the live authorization its own gate requires | `crates/rsk-fido/src/`: `getassertion.rs:384-387` · `makecredential.rs:513-516` · `config.rs:243-245` · `credmgmt.rs:278` · retry ladder `clientpin.rs:723-808` · soft lock `state.rs:285-293` + `crates/rsk-device/src/ctap.rs:228-235` · reset window `reset.rs:182-188` · walk owner `state.rs:169-180`, `credmgmt.rs:339` |
+| `NoAuthorizationBypass` | No protected operation completes without the live authorization its own gate requires | `crates/rsk-fido/src/`: `getassertion.rs:384-387` · `makecredential.rs:513-516` · `config.rs:243-245` · `credmgmt.rs:278` · retry ladder `clientpin.rs:723-808` · soft lock `state.rs:285-293` + `crates/rsk-device/src/ctap.rs:234-241` · reset window `reset.rs:182-188` · walk owner `state.rs:169-180`, `credmgmt.rs:339` |
 | `NoCrossTransportTouchConsumption` | A presence decision produced for one transport is never applied to another — neither a confirm nor a cancel | `crates/rsk-device/src/presence.rs`: `Arbiter::pending_for` · `::request_cancel` / `::cancel_otp_wait` (the scope guards) · `ButtonWait::wait` (the `spent` latch). `firmware/src/presence.rs` keeps only the board half. **The stale-cancel drop that carries this property is the one at the wait's ENTRY.** The exit clear cannot substitute for it — a cancel latched by a dispatch that never entered `wait` is never seen by the exit — see "The cancel that no wait was open for" |
 | `NoTokenAfterInvalidation` | A grant invalidated by a PIN change, PIN set, reset, `stopUsingPinUvAuthToken` or power cycle never authorizes again | `crates/rsk-fido/src/`: `state.rs:488-502` (`reset_pin_uv_auth_token`) · `state.rs:547-562` (`stop_using_token`) · `state.rs:596-609` (`expire_stale_token`) · `clientpin.rs:302-313` · `seed.rs:312-313` (`clear_ppuat`) |
 | `NoAccessibleSecretWithoutGate` | No live secret is reachable while the gate record that protects it is gone | `crates/rsk-fido/src/`: `reset.rs:153-180` (`is_fido_gate_fid`) · `reset.rs:52-67` (phase order) · `credmgmt.rs:249-266` (`authorized_by_ppuat`) · `clientpin.rs:214-218`, `:824-828` |
@@ -197,7 +197,7 @@ says how deep TLC had to go to find it, roughly.
 | `BugNoConsumeAfterUp` | `state.rs:523-535` (GHSA-wqjm-653g-hgw3) | `NoAuthorizationBypass` | 275 564 states |
 | `BugUnscopedCancel` | `Arbiter::request_cancel`'s scope check | `NoCrossTransportTouchConsumption` | 127 states |
 | `BugTouchNotSpent` | `ButtonWait::wait`'s `spent` latch | `NoCrossTransportTouchConsumption` | 5 717 states |
-| `BugSoftLockLostOnWarmReset` | `ctap.rs:228-235` `PinLock` carry | `NoAuthorizationBypass` | 4 993 states |
+| `BugSoftLockLostOnWarmReset` | `ctap.rs:234-241` `PinLock` carry | `NoAuthorizationBypass` | 4 993 states |
 | `BugWarmResetReopensWindow` | `reset.rs:187` `!warm_boot` | `NoAuthorizationBypass` | 126 states |
 | `BugCmWalkIgnoresChannel` | `state.rs:173` channel equality | `NoAuthorizationBypass` | 1 242 states |
 | `BugSeedDoesNotLead` | `reset.rs:62-66` / `fs.rs`'s `first` — the pre-0x08BF wipe | `NoUnmanageableCredential` | 55 765 states |
@@ -1242,7 +1242,7 @@ than assumed. The CCID side owns a `Dispatcher` and the only instances of
 openpgp / oath / piv / otp / management / rescue / vendor
 (`crates/rsk-device/src/ccid.rs:91-109`); the CTAPHID side owns a **separate**
 `Dispatcher` whose applet array is literally one element, its own `VendorApplet`
-(`crates/rsk-device/src/ctap.rs:171-175`). PIV, OpenPGP and OATH are not
+(`crates/rsk-device/src/ctap.rs:177-181`). PIV, OpenPGP and OATH are not
 reachable over CTAPHID at all, so no status can be established on one transport
 and honoured on the other. A product of the two models would multiply 17 M
 states by this one's 205 and buy exactly zero new interleavings. What they do
@@ -2575,7 +2575,7 @@ evidence columns and validated cross-model support edges below on every gate run
 
 | Crate | Class | Model / evidence | Named gap / disposition |
 |---|---|---|---|
-| `firmware` | embedded-binary | — | no_std binary: boot, worker sequencing, board halves of Hooks/Platform. The boot path's cross-boot state — the EF_HARDENED lap and scratch-word lock carry — is RSKeyBootHardening (M7), precisely because this crate has no host tests; the FIDO state it builds is reconstructed host-side in rsk-device (ctap.rs:76-87). Worker scheduling and USB bring-up remain implementation mechanics, with transport state owned by RSKeyTransport. |
+| `firmware` | embedded-binary | — | no_std binary: boot, worker sequencing, board halves of Hooks/Platform. The boot path's cross-boot state — the EF_HARDENED lap and scratch-word lock carry — is RSKeyBootHardening (M7), precisely because this crate has no host tests; the FIDO state it builds is reconstructed host-side in rsk-device (ctap.rs:82-93). Worker scheduling and USB bring-up remain implementation mechanics, with transport state owned by RSKeyTransport. |
 | `rsk-bench` | out-of-scope | — | latency statistics for the on-device harness; not part of the security argument. |
 | `rsk-bip39` | pure | `crates/rsk-bip39/src/kani.rs` | — |
 | `rsk-crypto` | pure | `crates/rsk-crypto/src/base64url_kani.rs`<br>`fuzz/fuzz_targets/aes_gcm.rs`<br>`fuzz/fuzz_targets/chachapoly.rs` | — |

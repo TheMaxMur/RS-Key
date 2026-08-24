@@ -3,6 +3,7 @@
 # locked. Read the diff — a changed line here is a citation changing what
 # it points at, which is the thing this file exists to make visible.
 crates/rsk-device/src/ctap.rs	crates/rsk-fido/src/clientpin.rs	609-609	ctx.presence.uv_available() && ctx.fs.has_data(EF_PIN)	ctx.presence.uv_available() && ctx.fs.has_data(EF_PIN)
+crates/rsk-device/src/ctap.rs	crates/rsk-usb/src/ctaphid.rs	218-218	pub const CTAP_MAX_MESSAGE: usize = INIT_DATA + 2 * CONT_DATA;	pub const CTAP_MAX_MESSAGE: usize = INIT_DATA + 2 * CONT_DATA;
 crates/rsk-fido/src/clientpin_tests.rs	crates/rsk-fido/src/clientpin.rs	91-91	6 => req.pin_hash_enc = Some(cbor(d.bytes())?),	6 => req.pin_hash_enc = Some(cbor(d.bytes())?),
 crates/rsk-fido/src/clientpin_tests.rs	crates/rsk-fido/src/clientpin.rs	241-243	if new_pin_enc.len() != PADDED_PIN_LEN + proto.iv_overhead()	{
 crates/rsk-fido/src/clientpin_tests.rs	crates/rsk-fido/src/clientpin.rs	256-256	macd[new_pin_enc.len()..new_pin_enc.len() + pin_hash_enc.len()].copy_from_slice(pin_hash_enc);	macd[new_pin_enc.len()..new_pin_enc.len() + pin_hash_enc.len()].copy_from_slice(pin_hash_enc);
@@ -49,9 +50,9 @@ formal/README.md	crates/rsk-device/src/ccid.rs	91-109	pub struct CcidApplets<'a,
 formal/README.md	crates/rsk-device/src/ccid.rs	237-245	/// bit `i` set → applet `i` (in `APPLET_CAPS` order) is selectable.	mask
 formal/README.md	crates/rsk-device/src/ccid.rs	334-334	self.disp.current() == Some(idx) && self.caps_enabled(APPLET_CAPS[idx])	self.disp.current() == Some(idx) && self.caps_enabled(APPLET_CAPS[idx])
 formal/README.md	crates/rsk-device/src/ccid.rs	348-363	/// Drop the selected applet's security status on an ICC power transition, so a	self.disp.reset_card(&mut applets, &mut *fsb);
-formal/README.md	crates/rsk-device/src/ctap.rs	76-87	fido_state: &'a RefCell<rsk_fido::FidoState>,	}
-formal/README.md	crates/rsk-device/src/ctap.rs	171-175	EF_PIN, EF_RP, MAX_RESIDENT_CREDENTIALS,	let pin_size = fs.size(EF_PIN).and_then(|n| u8::try_from(n).ok());
-formal/README.md	crates/rsk-device/src/ctap.rs	228-235	.abstract_token(rsk_fido::TokenPersistentView {	/// the first conjunct of `crates/rsk-fido/src/clientpin.rs:609`. An INPUT to
+formal/README.md	crates/rsk-device/src/ctap.rs	82-93	fido_state: &'a RefCell<rsk_fido::FidoState>,	}
+formal/README.md	crates/rsk-device/src/ctap.rs	177-181	EF_PIN, EF_RP, MAX_RESIDENT_CREDENTIALS,	let pin_size = fs.size(EF_PIN).and_then(|n| u8::try_from(n).ok());
+formal/README.md	crates/rsk-device/src/ctap.rs	234-241	.abstract_token(rsk_fido::TokenPersistentView {	/// the first conjunct of `crates/rsk-fido/src/clientpin.rs:609`. An INPUT to
 formal/README.md	crates/rsk-device/src/presence.rs	25-26	/// No host request in flight: an on-panel (local) flow owns the button.	pub const SCOPE_NONE: u8 = 0;
 formal/README.md	crates/rsk-device/src/presence.rs	118-122	pub fn request_cancel(&self) {	}
 formal/README.md	crates/rsk-device/src/presence.rs	126-137	/// the wait, and without that every later command reads "would block" until	}
@@ -237,7 +238,7 @@ formal/RSKeyAppletPolicies.tla	crates/rsk-piv/src/auth.rs	114-118	/// Refines `R
 formal/RSKeyAppletSeams.tla	crates/rsk-device/src/ccid.rs	91-109	pub struct CcidApplets<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform> {	enabled_caps: u16,
 formal/RSKeyAppletSeams.tla	crates/rsk-device/src/ccid.rs	304-313	#[cfg(not(feature = "strict-config"))]	.is_ok()
 formal/RSKeyAppletSeams.tla	crates/rsk-device/src/ccid.rs	348-363	/// Drop the selected applet's security status on an ICC power transition, so a	self.disp.reset_card(&mut applets, &mut *fsb);
-formal/RSKeyAppletSeams.tla	crates/rsk-device/src/ctap.rs	171-175	EF_PIN, EF_RP, MAX_RESIDENT_CREDENTIALS,	let pin_size = fs.size(EF_PIN).and_then(|n| u8::try_from(n).ok());
+formal/RSKeyAppletSeams.tla	crates/rsk-device/src/ctap.rs	177-181	EF_PIN, EF_RP, MAX_RESIDENT_CREDENTIALS,	let pin_size = fs.size(EF_PIN).and_then(|n| u8::try_from(n).ok());
 formal/RSKeyAppletSeams.tla	crates/rsk-display/src/pin.rs	681-689	let _ = rsk_ui::render_erasing(&mut self.panel);	)
 formal/RSKeyAppletSeams.tla	crates/rsk-fido/src/reset.rs	159-193	/// never re-provisioned, its *absence* is the permissive state, and what it gates	/// not OpenPGP's, so the band is not contiguously one applet's) or the vendor counter
 formal/RSKeyAppletSeams.tla	crates/rsk-fs/src/fs.rs	326-373	/// that is still live and, for PIV, not PIN-bound at rest — or, for OATH, leaves	return Err(Error::MemoryFatal);
@@ -293,8 +294,8 @@ formal/RSKeyRetryLattice.tla	crates/rsk-piv/src/lib.rs	1236-1299	/// Refines `RS
 formal/RSKeyRetryLattice.tla	crates/rsk-piv/src/lib.rs	1241-1243	Err(sw) => return sw,	if left == 0 {
 formal/RSKeyRetryLattice.tla	crates/rsk-piv/src/lib.rs	1259-1259	// nothing. The cost is that a power cut here spends a retry the holder did	// nothing. The cost is that a power cut here spends a retry the holder did
 formal/RSKeyRetryLattice.tla	crates/rsk-piv/src/lib.rs	1392-1392	puk: &[u8],	puk: &[u8],
-formal/RSKeySecurityState.tla	crates/rsk-device/src/ctap.rs	196-199	backup_sealed_record: fs.has_data(EF_BACKUP_SEALED),	credential_slots_raw: credentials.iter().filter(|present| **present).count() as u16,
-formal/RSKeySecurityState.tla	crates/rsk-device/src/ctap.rs	348-355	// Persist the clientPIN soft lock across a warm reboot. It is RAM-only, and a	.store_pin_lock(self.fido_state.borrow().pin_lock());
+formal/RSKeySecurityState.tla	crates/rsk-device/src/ctap.rs	202-205	backup_sealed_record: fs.has_data(EF_BACKUP_SEALED),	credential_slots_raw: credentials.iter().filter(|present| **present).count() as u16,
+formal/RSKeySecurityState.tla	crates/rsk-device/src/ctap.rs	354-361	// Persist the clientPIN soft lock across a warm reboot. It is RAM-only, and a	.store_pin_lock(self.fido_state.borrow().pin_lock());
 formal/RSKeySecurityState.tla	crates/rsk-device/src/presence.rs	25-26	/// No host request in flight: an on-panel (local) flow owns the button.	pub const SCOPE_NONE: u8 = 0;
 formal/RSKeySecurityState.tla	crates/rsk-device/src/presence.rs	25-169	/// No host request in flight: an on-panel (local) flow owns the button.	}
 formal/RSKeySecurityState.tla	crates/rsk-device/src/presence.rs	26-26	pub const SCOPE_NONE: u8 = 0;	pub const SCOPE_NONE: u8 = 0;
